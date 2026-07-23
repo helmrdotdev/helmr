@@ -1,369 +1,482 @@
 package deployment
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
-	"reflect"
 	"strings"
-	"time"
+	"unicode/utf8"
 
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/compute"
-	"github.com/helmrdotdev/helmr/internal/schedule"
-	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
-func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObject, error) {
-	if strings.TrimSpace(result.BuildManifestDigest) == "" {
-		return nil, errors.New("build_manifest_digest is required")
-	}
-	if strings.TrimSpace(result.DeploymentManifestDigest) == "" {
-		return nil, errors.New("deployment_manifest_digest is required")
-	}
-	if len(result.Tasks) == 0 {
-		return nil, errors.New("deployment build must include at least one task")
-	}
-	objects, casObjects, err := NormalizeBuildCASObjects(result.CASObjects)
-	if err != nil {
-		return nil, err
-	}
-	if err := requireBuildObject(objects, result.BuildManifestDigest, api.BuildManifestArtifactMediaType, "build_manifest_digest"); err != nil {
-		return nil, err
-	}
-	if err := requireBuildObject(objects, result.DeploymentManifestDigest, api.DeploymentManifestArtifactMediaType, "deployment_manifest_digest"); err != nil {
-		return nil, err
-	}
-	seen := map[string]struct{}{}
-	queueLimits, err := validateDeploymentQueues(result.Queues)
-	if err != nil {
-		return nil, err
-	}
-	sandboxDefinitions := map[string]workerBuildSandboxDefinition{}
-	for _, task := range result.Tasks {
-		taskID := strings.TrimSpace(task.TaskID)
-		if err := api.ValidateTaskID(taskID); err != nil {
-			return nil, err
-		}
-		if _, ok := seen[taskID]; ok {
-			return nil, fmt.Errorf("duplicate task_id %q", taskID)
-		}
-		seen[taskID] = struct{}{}
-		if strings.TrimSpace(task.FilePath) == "" {
-			return nil, fmt.Errorf("task %q file_path is required", taskID)
-		}
-		if strings.TrimSpace(task.ExportName) == "" {
-			return nil, fmt.Errorf("task %q export_name is required", taskID)
-		}
-		if strings.TrimSpace(task.HandlerEntrypoint) == "" {
-			return nil, fmt.Errorf("task %q handler_entrypoint is required", taskID)
-		}
-		if strings.TrimSpace(task.BundleDigest) == "" {
-			return nil, fmt.Errorf("task %q bundle_digest is required", taskID)
-		}
-		if strings.TrimSpace(task.SandboxID) == "" {
-			return nil, fmt.Errorf("task %q sandbox_id is required", taskID)
-		}
-		if strings.TrimSpace(task.SandboxFingerprint) == "" {
-			return nil, fmt.Errorf("task %q sandbox_fingerprint is required", taskID)
-		}
-		if strings.TrimSpace(task.SandboxImageArtifact.Digest) == "" {
-			return nil, fmt.Errorf("task %q sandbox_image_artifact.digest is required", taskID)
-		}
-		if strings.TrimSpace(task.SandboxImageArtifactFormat) == "" {
-			return nil, fmt.Errorf("task %q sandbox_image_artifact_format is required", taskID)
-		}
-		if strings.TrimSpace(task.SandboxImageDigest) == "" {
-			return nil, fmt.Errorf("task %q sandbox_image_digest is required", taskID)
-		}
-		if strings.TrimSpace(task.SandboxImageFormat) == "" {
-			return nil, fmt.Errorf("task %q sandbox_image_format is required", taskID)
-		}
-		if strings.TrimSpace(task.SandboxImageArtifact.Digest) != strings.TrimSpace(task.SandboxImageDigest) {
-			return nil, fmt.Errorf("task %q sandbox_image_digest must match sandbox_image_artifact.digest", taskID)
-		}
-		if strings.TrimSpace(task.WorkspaceMountPath) == "" {
-			return nil, fmt.Errorf("task %q workspace_mount_path is required", taskID)
-		}
-		if strings.TrimSpace(task.FilesystemFormat) == "" {
-			return nil, fmt.Errorf("task %q filesystem_format is required", taskID)
-		}
-		bundleFormatVersion := task.BundleFormatVersion
-		if bundleFormatVersion == 0 {
-			bundleFormatVersion = api.CurrentBundleFormatVersion
-		}
-		if bundleFormatVersion != api.CurrentBundleFormatVersion {
-			return nil, fmt.Errorf("task %q bundle_format_version %d is not supported; current version is %d", taskID, bundleFormatVersion, api.CurrentBundleFormatVersion)
-		}
-		if err := requireBuildObject(objects, task.BundleDigest, api.TaskBundleArtifactMediaType, fmt.Sprintf("task %q bundle_digest", taskID)); err != nil {
-			return nil, err
-		}
-		if err := requireBuildObject(objects, task.SandboxImageArtifact.Digest, api.SandboxImageArtifactMediaType, fmt.Sprintf("task %q sandbox_image_artifact.digest", taskID)); err != nil {
-			return nil, err
-		}
-		normalizedImage := objects[strings.TrimSpace(task.SandboxImageArtifact.Digest)]
-		if normalizedImage.SizeBytes != task.SandboxImageArtifact.SizeBytes || normalizedImage.MediaType != strings.TrimSpace(task.SandboxImageArtifact.MediaType) {
-			return nil, fmt.Errorf("task %q sandbox_image_artifact metadata does not match CAS object", taskID)
-		}
-		resources := compute.ResourceVector{
-			MilliCPU:  task.RequestedMilliCPU,
-			MemoryMiB: task.RequestedMemoryMiB,
-			DiskMiB:   task.RequestedDiskMiB,
-			Slots:     1,
-		}
-		if err := resources.Validate(true); err != nil {
-			return nil, fmt.Errorf("task %q resources: %w", taskID, err)
-		}
-		if task.RequestedDiskMiB > math.MaxInt32 {
-			return nil, fmt.Errorf("task %q requested_disk_mib exceeds max %d", taskID, math.MaxInt32)
-		}
-		if err := task.Network.Validate(); err != nil {
-			return nil, fmt.Errorf("task %q network: %w", taskID, err)
-		}
-		sandboxID := strings.TrimSpace(task.SandboxID)
-		definition := workerBuildSandboxDefinition{
-			fingerprint:        strings.TrimSpace(task.SandboxFingerprint),
-			imageDigest:        strings.TrimSpace(task.SandboxImageDigest),
-			imageFormat:        strings.TrimSpace(task.SandboxImageFormat),
-			workspaceMountPath: strings.TrimSpace(task.WorkspaceMountPath),
-			filesystemFormat:   strings.TrimSpace(task.FilesystemFormat),
-			requestedMilliCPU:  task.RequestedMilliCPU,
-			requestedMemoryMiB: task.RequestedMemoryMiB,
-			requestedDiskMiB:   task.RequestedDiskMiB,
-			network:            task.Network,
-		}
-		if existing, ok := sandboxDefinitions[sandboxID]; ok && !sameWorkerBuildSandboxDefinition(existing, definition) {
-			return nil, fmt.Errorf("sandbox_id %q has conflicting definitions", sandboxID)
-		}
-		sandboxDefinitions[sandboxID] = definition
-		if task.MaxDurationSeconds <= 0 {
-			return nil, fmt.Errorf("task %q max_duration_seconds must be positive", taskID)
-		}
-		if err := api.ValidateQueueName(task.QueueName); err != nil {
-			return nil, fmt.Errorf("task %q queue_name: %w", taskID, err)
-		}
-		declaredLimit, ok := queueLimits[task.QueueName]
-		if !ok {
-			return nil, fmt.Errorf("task %q references undefined queue %q", taskID, task.QueueName)
-		}
-		if task.ConcurrencyLimit != nil && !sameOptionalInt32(task.ConcurrencyLimit, declaredLimit) {
-			return nil, fmt.Errorf("task %q concurrency_limit must match queue %q", taskID, task.QueueName)
-		}
-		if ttl := strings.TrimSpace(task.TTL); ttl != "" {
-			if _, err := api.ParsePositiveDuration(ttl, "ttl"); err != nil {
-				return nil, fmt.Errorf("task %q ttl: %w", taskID, err)
-			}
-		}
-		if err := validateTaskSchedules(taskID, task.Schedules); err != nil {
-			return nil, err
-		}
-		if err := validateTaskSecrets(taskID, task.Secrets); err != nil {
-			return nil, err
-		}
-	}
-	if err := validateDeploymentStreams(result.Streams); err != nil {
-		return nil, err
-	}
-	return casObjects, nil
+const (
+	BuildResultFormatVersion = 0
+
+	BuildOutcomeSucceeded = BuildOutcome("succeeded")
+	BuildOutcomeFailed    = BuildOutcome("failed")
+
+	BuildFailureInvalidSource        = BuildFailureReason("invalid_source")
+	BuildFailureManagerNotFound      = BuildFailureReason("manager_not_found")
+	BuildFailureManagerUnsupported   = BuildFailureReason("unsupported_manager_protocol")
+	BuildFailureLockfileUnsupported  = BuildFailureReason("unsupported_lockfile_format")
+	BuildFailureUnsupportedToolchain = BuildFailureReason("unsupported_toolchain")
+	BuildFailureDependencyFailed     = BuildFailureReason("dependency_failed")
+	BuildFailureTransformFailed      = BuildFailureReason("transform_failed")
+	BuildFailureAnalysisFailed       = BuildFailureReason("analysis_failed")
+	BuildFailureInvalidPlan          = BuildFailureReason("invalid_plan")
+	BuildFailureProgramInvalid       = BuildFailureReason("program_invalid")
+	BuildFailureWorkspaceImageFailed = BuildFailureReason("workspace_image_failed")
+	BuildFailureOutputInvalid        = BuildFailureReason("output_invalid")
+
+	WorkspaceImageArtifactMediaType = "application/vnd.helmr.workspace-image.v0.oci-tar"
+
+	maxBuildResultBytes               = 40 << 20
+	maxBuildFailureMessageBytes       = 16 << 10
+	maxWorkspaceImageBytes      int64 = 17179869184
+)
+
+type BuildOutcome string
+type BuildFailureReason string
+
+type BuildResult struct {
+	FormatVersion int          `json:"-"`
+	Outcome       BuildOutcome `json:"-"`
+	Succeeded     *BuildSucceeded
+	Failed        *BuildFailed
 }
 
-func ValidateBuildProgram(result api.WorkerDeploymentBuildResult) (ProgramReceipt, error) {
-	receipt, err := ParseProgramReceipt(result.ProgramReceipt)
-	if err != nil {
-		return ProgramReceipt{}, fmt.Errorf("program receipt: %w", err)
-	}
-	objects, _, err := NormalizeBuildCASObjects(result.CASObjects)
-	if err != nil {
-		return ProgramReceipt{}, err
-	}
-	for _, item := range []struct {
-		label      string
-		descriptor ProgramDescriptor
-	}{
-		{label: "program code", descriptor: receipt.Code},
-		{label: "program dependencies", descriptor: receipt.Dependencies},
-	} {
-		object, ok := objects[item.descriptor.Digest]
-		if !ok {
-			return ProgramReceipt{}, fmt.Errorf("%s must be included in cas_objects", item.label)
-		}
-		if object.SizeBytes != item.descriptor.SizeBytes ||
-			object.MediaType != item.descriptor.MediaType {
-			return ProgramReceipt{}, fmt.Errorf("%s metadata does not match program receipt", item.label)
-		}
-	}
-	return receipt, nil
+type BuildSucceeded struct {
+	Plan            BuildPlan        `json:"plan"`
+	Provenance      BuildProvenance  `json:"provenance"`
+	ProgramReceipt  *ProgramReceipt  `json:"programReceipt,omitempty"`
+	WorkspaceImages []WorkspaceImage `json:"workspaceImages"`
 }
 
-func validateDeploymentQueues(queues []api.WorkerDeploymentQueue) (map[string]*int32, error) {
-	if len(queues) == 0 {
-		return nil, errors.New("deployment build must include queue catalog")
-	}
-	out := map[string]*int32{}
-	for i, item := range queues {
-		name := strings.TrimSpace(item.Name)
-		if err := api.ValidateQueueName(name); err != nil {
-			return nil, fmt.Errorf("deployment queue %d: %w", i, err)
-		}
-		if item.ConcurrencyLimit != nil && *item.ConcurrencyLimit <= 0 {
-			return nil, fmt.Errorf("deployment queue %q concurrency_limit must be positive", name)
-		}
-		if existing, ok := out[name]; ok {
-			if !sameOptionalInt32(existing, item.ConcurrencyLimit) {
-				return nil, fmt.Errorf("queue %q has conflicting concurrency_limit values", name)
-			}
-			return nil, fmt.Errorf("duplicate queue %q", name)
-		}
-		out[name] = item.ConcurrencyLimit
-	}
-	return out, nil
+type BuildFailed struct {
+	Error BuildError `json:"error"`
 }
 
-func validateDeploymentStreams(streams []api.WorkerDeploymentStream) error {
-	seen := map[string]struct{}{}
-	for i, item := range streams {
-		name := strings.TrimSpace(item.Name)
-		if err := api.ValidateStreamName(name); err != nil {
-			return fmt.Errorf("deployment stream %d: %w", i, err)
+type BuildError struct {
+	ReasonCode BuildFailureReason `json:"reasonCode"`
+	Message    string             `json:"message"`
+}
+
+type WorkspaceImage struct {
+	DeclaredID string                 `json:"declaredId"`
+	Artifact   WorkspaceImageArtifact `json:"artifact"`
+}
+
+type WorkspaceImageArtifact struct {
+	Digest       string              `json:"digest"`
+	SizeBytes    int64               `json:"sizeBytes"`
+	MediaType    string              `json:"mediaType"`
+	Architecture RuntimeArchitecture `json:"architecture"`
+}
+
+func ParseBuildResult(raw []byte) (BuildResult, error) {
+	if len(raw) == 0 || len(raw) > maxBuildResultBytes {
+		return BuildResult{}, fmt.Errorf("build result size is outside [1,%d]", maxBuildResultBytes)
+	}
+	canonical, err := jsoncanon.Transform(raw)
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("canonicalize build result: %w", err)
+	}
+	if !bytes.Equal(raw, canonical) {
+		return BuildResult{}, errors.New("build result is not RFC 8785 canonical JSON")
+	}
+
+	var result BuildResult
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result); err != nil {
+		return BuildResult{}, fmt.Errorf("decode build result: %w", err)
+	}
+	if err := ensureEOF(decoder, "build result"); err != nil {
+		return BuildResult{}, err
+	}
+	if err := ValidateBuildResultContract(result); err != nil {
+		return BuildResult{}, err
+	}
+	complete, err := CanonicalBuildResult(result)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	if !bytes.Equal(raw, complete) {
+		return BuildResult{}, errors.New("build result does not match the complete canonical v0 shape")
+	}
+	return result, nil
+}
+
+func CanonicalBuildResult(result BuildResult) ([]byte, error) {
+	if err := ValidateBuildResultContract(result); err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("encode build result: %w", err)
+	}
+	canonical, err := jsoncanon.Transform(raw)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize build result: %w", err)
+	}
+	if len(canonical) > maxBuildResultBytes {
+		return nil, fmt.Errorf("build result size is outside [1,%d]", maxBuildResultBytes)
+	}
+	return canonical, nil
+}
+
+func ValidateBuildResultContract(result BuildResult) error {
+	if result.FormatVersion != BuildResultFormatVersion {
+		return fmt.Errorf(
+			"build result formatVersion = %d, want %d",
+			result.FormatVersion,
+			BuildResultFormatVersion,
+		)
+	}
+	if (result.Succeeded == nil) == (result.Failed == nil) {
+		return errors.New("build result must contain exactly one outcome value")
+	}
+	switch result.Outcome {
+	case BuildOutcomeSucceeded:
+		if result.Succeeded == nil {
+			return errors.New("succeeded build result requires success data")
 		}
-		direction := strings.TrimSpace(item.Direction)
-		if direction != "input" && direction != "output" {
-			return fmt.Errorf("deployment stream %q direction must be input or output", name)
+		return validateBuildSucceeded(*result.Succeeded)
+	case BuildOutcomeFailed:
+		if result.Failed == nil {
+			return errors.New("failed build result requires failure data")
 		}
-		key := direction + ":" + name
-		if _, ok := seen[key]; ok {
-			return fmt.Errorf("deployment has duplicate %s stream %q", direction, name)
+		return validateBuildFailed(*result.Failed)
+	default:
+		return fmt.Errorf("build result outcome %q is unsupported", result.Outcome)
+	}
+}
+
+func ValidateBuildResultTarget(
+	result BuildResult,
+	runtimeDigest string,
+	architecture RuntimeArchitecture,
+) error {
+	if err := ValidateBuildResultContract(result); err != nil {
+		return err
+	}
+	if !sha256DigestPattern.MatchString(runtimeDigest) {
+		return errors.New("build result target runtime digest is not a lowercase SHA-256 digest")
+	}
+	if !validArchitecture(architecture) {
+		return fmt.Errorf("build result target architecture %q is unsupported", architecture)
+	}
+	if result.Outcome == BuildOutcomeFailed {
+		return nil
+	}
+	succeeded := result.Succeeded
+	if succeeded.Provenance.RuntimeDigest != runtimeDigest {
+		return errors.New("build result provenance runtime digest does not match target")
+	}
+	if succeeded.Provenance.Architecture != architecture {
+		return errors.New("build result provenance architecture does not match target")
+	}
+	if succeeded.ProgramReceipt != nil {
+		if succeeded.ProgramReceipt.Index.RuntimeDigest != runtimeDigest {
+			return errors.New("build result program runtime digest does not match target")
 		}
-		seen[key] = struct{}{}
-		if raw := item.SchemaJSON; len(raw) > 0 && !json.Valid(raw) {
-			return fmt.Errorf("deployment stream %q schema_json must be valid JSON", name)
+		if succeeded.ProgramReceipt.Index.Architecture != architecture {
+			return errors.New("build result program architecture does not match target")
+		}
+	}
+	for _, workspace := range buildPlanWorkspaces(succeeded.Plan) {
+		if workspace.Architecture != architecture {
+			return fmt.Errorf(
+				"build result workspace %q architecture does not match target",
+				workspace.DeclaredID,
+			)
 		}
 	}
 	return nil
 }
 
-type workerBuildSandboxDefinition struct {
-	fingerprint        string
-	imageDigest        string
-	imageFormat        string
-	workspaceMountPath string
-	filesystemFormat   string
-	requestedMilliCPU  int64
-	requestedMemoryMiB int64
-	requestedDiskMiB   int64
-	network            compute.NetworkPolicy
+func (result BuildResult) MarshalJSON() ([]byte, error) {
+	if (result.Succeeded == nil) == (result.Failed == nil) {
+		return nil, errors.New("build result must contain exactly one outcome value")
+	}
+	switch result.Outcome {
+	case BuildOutcomeSucceeded:
+		if result.Succeeded == nil {
+			return nil, errors.New("succeeded build result requires success data")
+		}
+		return json.Marshal(struct {
+			FormatVersion   int              `json:"formatVersion"`
+			Outcome         BuildOutcome     `json:"outcome"`
+			Plan            BuildPlan        `json:"plan"`
+			Provenance      BuildProvenance  `json:"provenance"`
+			ProgramReceipt  *ProgramReceipt  `json:"programReceipt,omitempty"`
+			WorkspaceImages []WorkspaceImage `json:"workspaceImages"`
+		}{
+			result.FormatVersion,
+			result.Outcome,
+			result.Succeeded.Plan,
+			result.Succeeded.Provenance,
+			result.Succeeded.ProgramReceipt,
+			result.Succeeded.WorkspaceImages,
+		})
+	case BuildOutcomeFailed:
+		if result.Failed == nil {
+			return nil, errors.New("failed build result requires failure data")
+		}
+		return json.Marshal(struct {
+			FormatVersion int          `json:"formatVersion"`
+			Outcome       BuildOutcome `json:"outcome"`
+			Error         BuildError   `json:"error"`
+		}{
+			result.FormatVersion,
+			result.Outcome,
+			result.Failed.Error,
+		})
+	default:
+		return nil, fmt.Errorf("build result outcome %q is unsupported", result.Outcome)
+	}
 }
 
-func sameWorkerBuildSandboxDefinition(left workerBuildSandboxDefinition, right workerBuildSandboxDefinition) bool {
-	return left.fingerprint == right.fingerprint &&
-		left.imageDigest == right.imageDigest &&
-		left.imageFormat == right.imageFormat &&
-		left.workspaceMountPath == right.workspaceMountPath &&
-		left.filesystemFormat == right.filesystemFormat &&
-		left.requestedMilliCPU == right.requestedMilliCPU &&
-		left.requestedMemoryMiB == right.requestedMemoryMiB &&
-		left.requestedDiskMiB == right.requestedDiskMiB &&
-		reflect.DeepEqual(left.network, right.network)
+func (result *BuildResult) UnmarshalJSON(raw []byte) error {
+	var header struct {
+		FormatVersion int          `json:"formatVersion"`
+		Outcome       BuildOutcome `json:"outcome"`
+	}
+	if err := json.Unmarshal(raw, &header); err != nil {
+		return err
+	}
+
+	*result = BuildResult{
+		FormatVersion: header.FormatVersion,
+		Outcome:       header.Outcome,
+	}
+	switch header.Outcome {
+	case BuildOutcomeSucceeded:
+		var wire struct {
+			FormatVersion   int              `json:"formatVersion"`
+			Outcome         BuildOutcome     `json:"outcome"`
+			Plan            BuildPlan        `json:"plan"`
+			Provenance      BuildProvenance  `json:"provenance"`
+			ProgramReceipt  *ProgramReceipt  `json:"programReceipt,omitempty"`
+			WorkspaceImages []WorkspaceImage `json:"workspaceImages"`
+		}
+		if err := decodeClosedBuildResult(raw, &wire); err != nil {
+			return err
+		}
+		result.Succeeded = &BuildSucceeded{
+			Plan:            wire.Plan,
+			Provenance:      wire.Provenance,
+			ProgramReceipt:  wire.ProgramReceipt,
+			WorkspaceImages: wire.WorkspaceImages,
+		}
+	case BuildOutcomeFailed:
+		var wire struct {
+			FormatVersion int          `json:"formatVersion"`
+			Outcome       BuildOutcome `json:"outcome"`
+			Error         BuildError   `json:"error"`
+		}
+		if err := decodeClosedBuildResult(raw, &wire); err != nil {
+			return err
+		}
+		result.Failed = &BuildFailed{Error: wire.Error}
+	default:
+		return fmt.Errorf("build result outcome %q is unsupported", header.Outcome)
+	}
+	return nil
 }
 
-func validateTaskSchedules(taskID string, schedules []api.WorkerDeploymentTaskSchedule) error {
-	seen := map[string]struct{}{}
-	for i, item := range schedules {
-		scheduleID := strings.TrimSpace(item.ID)
-		if scheduleID == "" {
-			scheduleID = "primary"
+func decodeClosedBuildResult(raw []byte, value any) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	return ensureEOF(decoder, "build result")
+}
+
+func validateBuildSucceeded(succeeded BuildSucceeded) error {
+	if _, err := CanonicalBuildPlan(succeeded.Plan); err != nil {
+		return fmt.Errorf("build result plan: %w", err)
+	}
+	if err := validateBuildProvenance("build result provenance", succeeded.Provenance); err != nil {
+		return err
+	}
+	if succeeded.WorkspaceImages == nil {
+		return errors.New("build result workspaceImages must be an array")
+	}
+
+	programDeclarations := buildPlanProgramDeclarations(succeeded.Plan)
+	if len(programDeclarations) == 0 {
+		if succeeded.ProgramReceipt != nil {
+			return errors.New("workspace-only build result must not contain programReceipt")
 		}
-		if err := api.ValidateScheduleID(scheduleID); err != nil {
-			return fmt.Errorf("task %q schedule %d: %w", taskID, i, err)
+	} else {
+		if succeeded.ProgramReceipt == nil {
+			return errors.New("program-backed build result requires programReceipt")
 		}
-		if _, ok := seen[scheduleID]; ok {
-			return fmt.Errorf("task %q has duplicate schedule id %q", taskID, scheduleID)
+		if err := ValidateProgramReceipt(*succeeded.ProgramReceipt); err != nil {
+			return fmt.Errorf("build result programReceipt: %w", err)
 		}
-		seen[scheduleID] = struct{}{}
-		timezone := api.NormalizeTimezone(item.Timezone)
-		if _, err := schedule.NextCronTime(strings.TrimSpace(item.Cron), timezone, time.Now()); err != nil {
-			return fmt.Errorf("task %q schedule %q: %w", taskID, scheduleID, err)
+		if !equalProgramDeclarations(
+			succeeded.ProgramReceipt.Index.Declarations,
+			programDeclarations,
+		) {
+			return errors.New("build result programReceipt declarations do not match plan")
+		}
+		if succeeded.ProgramReceipt.Index.Architecture != succeeded.Provenance.Architecture ||
+			succeeded.ProgramReceipt.Index.BuildContractVersion != succeeded.Provenance.BuildContractVersion ||
+			succeeded.ProgramReceipt.Index.Manager != succeeded.Provenance.Manager ||
+			succeeded.ProgramReceipt.Index.RuntimeDigest != succeeded.Provenance.RuntimeDigest ||
+			succeeded.ProgramReceipt.Index.StandardToolchainDigest != succeeded.Provenance.StandardToolchainDigest ||
+			succeeded.ProgramReceipt.Index.Submitted != succeeded.Provenance.Submitted {
+			return errors.New("build result programReceipt provenance does not match")
+		}
+	}
+
+	workspaces := buildPlanWorkspaces(succeeded.Plan)
+	for _, workspace := range workspaces {
+		if workspace.Architecture != succeeded.Provenance.Architecture {
+			return fmt.Errorf(
+				"build result workspace %q architecture does not match provenance",
+				workspace.DeclaredID,
+			)
+		}
+	}
+	if len(succeeded.WorkspaceImages) != len(workspaces) {
+		return errors.New("build result workspaceImages do not match plan")
+	}
+	for index, image := range succeeded.WorkspaceImages {
+		workspace := workspaces[index]
+		if image.DeclaredID != workspace.DeclaredID {
+			return fmt.Errorf("build result workspaceImages[%d] declaredId does not match plan", index)
+		}
+		if !sha256DigestPattern.MatchString(image.Artifact.Digest) {
+			return fmt.Errorf("build result workspaceImages[%d] digest is not a lowercase SHA-256 digest", index)
+		}
+		if image.Artifact.SizeBytes < 1 || image.Artifact.SizeBytes > maxWorkspaceImageBytes {
+			return fmt.Errorf(
+				"build result workspaceImages[%d] sizeBytes is outside [1,%d]",
+				index,
+				maxWorkspaceImageBytes,
+			)
+		}
+		if image.Artifact.MediaType != WorkspaceImageArtifactMediaType {
+			return fmt.Errorf(
+				"build result workspaceImages[%d] mediaType = %q, want %q",
+				index,
+				image.Artifact.MediaType,
+				WorkspaceImageArtifactMediaType,
+			)
+		}
+		if image.Artifact.Architecture != workspace.Architecture {
+			return fmt.Errorf("build result workspaceImages[%d] architecture does not match plan", index)
 		}
 	}
 	return nil
 }
 
-func validateTaskSecrets(taskID string, secrets []api.SecretDeclaration) error {
-	seen := map[string]struct{}{}
-	for i, item := range secrets {
-		name := strings.TrimSpace(item.Name)
-		if err := secret.ValidateName(name); err != nil {
-			return fmt.Errorf("task %q secret %d: %w", taskID, i, err)
-		}
-		if _, ok := seen[name]; ok {
-			return fmt.Errorf("task %q has duplicate secret %q", taskID, name)
-		}
-		seen[name] = struct{}{}
-		placements := 0
-		for _, value := range []string{item.Env, item.File, item.Dir} {
-			if strings.TrimSpace(value) != "" {
-				placements++
-			}
-		}
-		if placements != 1 {
-			return fmt.Errorf("task %q secret %q must declare exactly one placement", taskID, name)
-		}
+func validateBuildFailed(failed BuildFailed) error {
+	switch failed.Error.ReasonCode {
+	case BuildFailureInvalidSource,
+		BuildFailureManagerNotFound,
+		BuildFailureManagerUnsupported,
+		BuildFailureLockfileUnsupported,
+		BuildFailureUnsupportedToolchain,
+		BuildFailureDependencyFailed,
+		BuildFailureTransformFailed,
+		BuildFailureAnalysisFailed,
+		BuildFailureInvalidPlan,
+		BuildFailureProgramInvalid,
+		BuildFailureWorkspaceImageFailed,
+		BuildFailureOutputInvalid:
+	default:
+		return fmt.Errorf("build failure reasonCode %q is unsupported", failed.Error.ReasonCode)
+	}
+	if !utf8.ValidString(failed.Error.Message) ||
+		len(failed.Error.Message) > maxBuildFailureMessageBytes ||
+		strings.TrimSpace(failed.Error.Message) == "" {
+		return fmt.Errorf(
+			"build failure message must be nonblank UTF-8 of at most %d bytes",
+			maxBuildFailureMessageBytes,
+		)
 	}
 	return nil
 }
 
-func sameOptionalInt32(a *int32, b *int32) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return *a == *b
+type buildPlanWorkspace struct {
+	DeclaredID   string
+	Architecture RuntimeArchitecture
 }
 
-func NormalizeBuildCASObjects(input []api.CASObject) (map[string]api.CASObject, []api.CASObject, error) {
-	objects := make(map[string]api.CASObject, len(input))
-	order := make([]string, 0, len(input))
-	for _, object := range input {
-		digest := strings.TrimSpace(object.Digest)
-		if _, err := cas.ObjectKey("", digest); err != nil {
-			return nil, nil, fmt.Errorf("deployment build CAS object digest is invalid: %w", err)
-		}
-		mediaType := strings.TrimSpace(object.MediaType)
-		if mediaType == "" {
-			return nil, nil, fmt.Errorf("deployment build CAS object %s media_type is required", digest)
-		}
-		if object.SizeBytes < 0 {
-			return nil, nil, fmt.Errorf("deployment build CAS object %s size_bytes must not be negative", digest)
-		}
-		normalized := api.CASObject{Digest: digest, SizeBytes: object.SizeBytes, MediaType: mediaType}
-		if existing, ok := objects[digest]; ok {
-			if existing.SizeBytes != normalized.SizeBytes || existing.MediaType != normalized.MediaType {
-				return nil, nil, fmt.Errorf("deployment build CAS object %s has conflicting metadata", digest)
-			}
+func buildPlanWorkspaces(plan BuildPlan) []buildPlanWorkspace {
+	workspaces := make([]buildPlanWorkspace, 0)
+	for _, definition := range plan.Definitions {
+		if definition.Workspace == nil {
 			continue
 		}
-		objects[digest] = normalized
-		order = append(order, digest)
+		workspaces = append(workspaces, buildPlanWorkspace{
+			DeclaredID:   definition.DeclaredID,
+			Architecture: definition.Workspace.Architecture,
+		})
 	}
-	casObjects := make([]api.CASObject, 0, len(order))
-	for _, digest := range order {
-		casObjects = append(casObjects, objects[digest])
-	}
-	return objects, casObjects, nil
+	return workspaces
 }
 
-func requireBuildObject(objects map[string]api.CASObject, digest string, mediaType string, field string) error {
-	digest = strings.TrimSpace(digest)
-	object, ok := objects[digest]
-	if !ok {
-		return fmt.Errorf("%s must be included in cas_objects", field)
+func buildPlanProgramDeclarations(plan BuildPlan) []ProgramDeclaration {
+	declarations := make([]ProgramDeclaration, 0)
+	for _, definition := range plan.Definitions {
+		switch definition.Kind {
+		case DefinitionKindTask:
+			slots := []DeclarationSlot{DeclarationSlotHandler}
+			if definition.Task.Payload.Kind == SchemaKindStandard {
+				slots = append(slots, DeclarationSlotPayloadSchema)
+			}
+			declarations = append(declarations, ProgramDeclaration{
+				Kind:       DeclarationKindTask,
+				DeclaredID: definition.DeclaredID,
+				Slots:      slots,
+			})
+		case DefinitionKindActor:
+			declarations = append(declarations, ProgramDeclaration{
+				Kind:       DeclarationKindActor,
+				DeclaredID: definition.DeclaredID,
+				Slots:      []DeclarationSlot{DeclarationSlotHandler},
+			})
+		case DefinitionKindRunStream:
+			declarations = append(declarations, ProgramDeclaration{
+				Kind:       DeclarationKindRunStream,
+				DeclaredID: definition.DeclaredID,
+				Slots:      []DeclarationSlot{DeclarationSlotSchema},
+			})
+		}
 	}
-	if strings.TrimSpace(object.MediaType) != mediaType {
-		return fmt.Errorf("%s media_type must be %s", field, mediaType)
+	return declarations
+}
+
+func equalProgramDeclarations(left, right []ProgramDeclaration) bool {
+	if len(left) != len(right) {
+		return false
 	}
-	if object.SizeBytes < 0 {
-		return fmt.Errorf("%s size_bytes must not be negative", field)
+	for index := range left {
+		if left[index].Kind != right[index].Kind ||
+			left[index].DeclaredID != right[index].DeclaredID ||
+			!equalDeclarationSlots(left[index].Slots, right[index].Slots) {
+			return false
+		}
 	}
-	return nil
+	return true
+}
+
+func equalDeclarationSlots(left, right []DeclarationSlot) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
