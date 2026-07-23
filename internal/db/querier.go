@@ -90,6 +90,8 @@ type Querier interface {
 	CreateActorContinuationRun(ctx context.Context, arg CreateActorContinuationRunParams) (CreateActorContinuationRunRow, error)
 	CreateActorInputReconcileOutbox(ctx context.Context, arg CreateActorInputReconcileOutboxParams) error
 	CreateActorRetryAttempt(ctx context.Context, arg CreateActorRetryAttemptParams) (RunAttempt, error)
+	CreateActorStartInputRecord(ctx context.Context, arg CreateActorStartInputRecordParams) (ActorRecord, error)
+	CreateActorStartRun(ctx context.Context, arg CreateActorStartRunParams) (CreateActorStartRunRow, error)
 	CreateAdmittedRootTaskRun(ctx context.Context, arg CreateAdmittedRootTaskRunParams) (CreateAdmittedRootTaskRunRow, error)
 	CreateArtifact(ctx context.Context, arg CreateArtifactParams) (Artifact, error)
 	CreateAuthSession(ctx context.Context, arg CreateAuthSessionParams) (AuthSession, error)
@@ -339,6 +341,8 @@ type Querier interface {
 	LockActorInputClaim(ctx context.Context, arg LockActorInputClaimParams) (IdempotencyClaim, error)
 	LockActorInputCurrentRun(ctx context.Context, arg LockActorInputCurrentRunParams) (Run, error)
 	LockActorInputWorkspace(ctx context.Context, arg LockActorInputWorkspaceParams) (Workspace, error)
+	LockActorStartAuthority(ctx context.Context, arg LockActorStartAuthorityParams) (LockActorStartAuthorityRow, error)
+	LockActorStartKey(ctx context.Context, arg LockActorStartKeyParams) error
 	LockAttemptSecretDelivery(ctx context.Context, arg LockAttemptSecretDeliveryParams) ([]LockAttemptSecretDeliveryRow, error)
 	LockClaimedSchedule(ctx context.Context, arg LockClaimedScheduleParams) (Schedule, error)
 	LockCreatingRunCheckpoint(ctx context.Context, arg LockCreatingRunCheckpointParams) (RunCheckpoint, error)
@@ -440,6 +444,7 @@ type Querier interface {
 	RequestWorkspaceMountStop(ctx context.Context, arg RequestWorkspaceMountStopParams) (RequestWorkspaceMountStopRow, error)
 	RequeueExpiredDeploymentBuildLeases(ctx context.Context) error
 	RequeueWrittenTelemetryOutbox(ctx context.Context, arg RequeueWrittenTelemetryOutboxParams) error
+	ReserveWorkspaceForActor(ctx context.Context, arg ReserveWorkspaceForActorParams) (Workspace, error)
 	ReserveWorkspaceForRun(ctx context.Context, arg ReserveWorkspaceForRunParams) (Workspace, error)
 	ResolveCurrentWorkspaceDefinitionForCreate(ctx context.Context, arg ResolveCurrentWorkspaceDefinitionForCreateParams) (DeploymentDefinition, error)
 	ResolveRunPinnedWorkspaceDefinitionForCreate(ctx context.Context, arg ResolveRunPinnedWorkspaceDefinitionForCreateParams) (DeploymentDefinition, error)
@@ -458,6 +463,7 @@ type Querier interface {
 	RevokeSecret(ctx context.Context, arg RevokeSecretParams) (Secret, error)
 	RotateSecret(ctx context.Context, arg RotateSecretParams) (Secret, error)
 	RunFinalizationScopeIsClear(ctx context.Context, arg RunFinalizationScopeIsClearParams) (pgtype.Bool, error)
+	SetActorCurrentRun(ctx context.Context, arg SetActorCurrentRunParams) (Actor, error)
 	SetDefaultProject(ctx context.Context, arg SetDefaultProjectParams) (int64, error)
 	SetRunCurrentLease(ctx context.Context, arg SetRunCurrentLeaseParams) (Run, error)
 	SetWorkerInstanceState(ctx context.Context, arg SetWorkerInstanceStateParams) (WorkerInstance, error)

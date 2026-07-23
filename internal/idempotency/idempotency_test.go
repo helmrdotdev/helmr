@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -254,6 +256,79 @@ func TestActorInputRequestUsesActorScopeAndCanonicalInputFingerprint(t *testing.
 	}
 	if firstFingerprint != secondFingerprint {
 		t.Fatalf("canonical-equivalent input fingerprints differ: %x != %x", firstFingerprint, secondFingerprint)
+	}
+}
+
+func TestActorStartRequestUsesDeclaredIDScopeAndCanonicalCallerSemantics(t *testing.T) {
+	environmentID := uuid.MustParse("00000000-0000-0000-0000-000000000301")
+	expiresAt := time.Date(2030, 1, 2, 3, 4, 5, 600, time.FixedZone("offset", 9*60*60))
+	key := "thread:42"
+	concurrencyKey := "customer:7"
+	ttl := int64(60_000)
+	first, err := NewActorStartRequest(environmentID, "operator.v1", "start-1", ActorStartFingerprint{
+		Key: &key, InputPresent: true, Input: json.RawMessage(`{"b":2,"a":1}`),
+		WorkspaceAddress: json.RawMessage(`{"id":"wsp_example"}`),
+		Metadata:         json.RawMessage(`{"z":false,"a":true}`),
+		Tags:             []string{"a", "b"}, ExpiresAt: &expiresAt,
+		ManagedQueueName: "default", ManagedConcurrencyKey: &concurrencyKey,
+		ManagedPriority: 3, ManagedQueuedTTLMS: &ttl,
+		ManagedRetryPolicy: json.RawMessage(`{"enabled":false}`),
+		ManagedRunMetadata: json.RawMessage(`{"request":1}`),
+		ManagedRunTags:     []string{"run"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewActorStartRequest(environmentID, "operator.v1", "start-1", ActorStartFingerprint{
+		Key: &key, InputPresent: true, Input: json.RawMessage("{\n\"a\":1.0,\"b\":2}"),
+		WorkspaceAddress: json.RawMessage(`{"id":"wsp_example"}`),
+		Metadata:         json.RawMessage(`{"a":true,"z":false}`),
+		Tags:             []string{"a", "b"}, ExpiresAt: &expiresAt,
+		ManagedQueueName: "default", ManagedConcurrencyKey: &concurrencyKey,
+		ManagedPriority: 3, ManagedQueuedTTLMS: &ttl,
+		ManagedRetryPolicy: json.RawMessage(`{"enabled":false}`),
+		ManagedRunMetadata: json.RawMessage(`{"request":1.0}`),
+		ManagedRunTags:     []string{"run"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstValue := first.idempotencyRequest()
+	secondValue := second.idempotencyRequest()
+	firstFingerprint, err := firstValue.fingerprint(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondFingerprint, err := secondValue.fingerprint(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstValue.operation != operationActorStart || string(firstValue.scope) != "operator.v1" {
+		t.Fatalf("operation = %q scope = %q", firstValue.operation, firstValue.scope)
+	}
+	if firstFingerprint != secondFingerprint {
+		t.Fatalf("canonical-equivalent Actor start fingerprints differ: %x != %x", firstFingerprint, secondFingerprint)
+	}
+
+	noInput, err := NewActorStartRequest(environmentID, "operator.v1", "start-1", ActorStartFingerprint{
+		WorkspaceAddress: json.RawMessage(`{"id":"wsp_example"}`),
+		ManagedQueueName: "default",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nullInput, err := NewActorStartRequest(environmentID, "operator.v1", "start-1", ActorStartFingerprint{
+		InputPresent: true, Input: json.RawMessage(`null`),
+		WorkspaceAddress: json.RawMessage(`{"id":"wsp_example"}`),
+		ManagedQueueName: "default",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	noInputFingerprint, _ := noInput.idempotencyRequest().fingerprint(1)
+	nullInputFingerprint, _ := nullInput.idempotencyRequest().fingerprint(1)
+	if noInputFingerprint == nullInputFingerprint {
+		t.Fatal("omitted input and explicit null input produced the same fingerprint")
 	}
 }
 

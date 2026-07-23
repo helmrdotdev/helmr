@@ -736,6 +736,90 @@ func (q *Queries) PatchWorkspace(ctx context.Context, arg PatchWorkspaceParams) 
 	return i, err
 }
 
+const reserveWorkspaceForActor = `-- name: ReserveWorkspaceForActor :one
+UPDATE workspaces
+   SET owner_actor_id = $1,
+       ownership_generation = ownership_generation + 1,
+       state_version = state_version + 1,
+       desired_state = 'active',
+       last_activity_at = now(),
+       updated_at = now()
+ WHERE workspaces.environment_id = $2
+   AND workspaces.id = $3
+   AND workspaces.state_version = $4
+   AND workspaces.head_version_id = $5
+   AND workspaces.state = 'active'
+   AND workspaces.desired_state IN ('active', 'stopped')
+   AND workspaces.dirty_state = 'clean'
+   AND workspaces.owner_actor_id IS NULL
+   AND workspaces.owner_run_id IS NULL
+   AND NOT EXISTS (
+       SELECT 1
+         FROM workspace_leases
+        WHERE workspace_leases.workspace_id = workspaces.id
+          AND workspace_leases.state IN ('active', 'releasing')
+   )
+   AND NOT EXISTS (
+       SELECT 1
+         FROM workspace_processes
+        WHERE workspace_processes.workspace_id = workspaces.id
+          AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+   )
+RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
+`
+
+type ReserveWorkspaceForActorParams struct {
+	ActorID               pgtype.UUID `json:"actor_id"`
+	EnvironmentID         pgtype.UUID `json:"environment_id"`
+	ID                    pgtype.UUID `json:"id"`
+	ExpectedStateVersion  int64       `json:"expected_state_version"`
+	ExpectedHeadVersionID pgtype.UUID `json:"expected_head_version_id"`
+}
+
+func (q *Queries) ReserveWorkspaceForActor(ctx context.Context, arg ReserveWorkspaceForActorParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, reserveWorkspaceForActor,
+		arg.ActorID,
+		arg.EnvironmentID,
+		arg.ID,
+		arg.ExpectedStateVersion,
+		arg.ExpectedHeadVersionID,
+	)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.DeclarationKind,
+		&i.WorkspaceDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.Key,
+		&i.CreateIdempotencyKey,
+		&i.CreateIdempotencyExpiresAt,
+		&i.CreateRequestFingerprint,
+		&i.StateVersion,
+		&i.StopGeneration,
+		&i.OwnerActorID,
+		&i.OwnerRunID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.HeadVersionID,
+		&i.State,
+		&i.DesiredState,
+		&i.DirtyState,
+		&i.Metadata,
+		&i.Tags,
+		&i.RetentionPolicy,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const reserveWorkspaceForRun = `-- name: ReserveWorkspaceForRun :one
 UPDATE workspaces
    SET owner_run_id = $1,

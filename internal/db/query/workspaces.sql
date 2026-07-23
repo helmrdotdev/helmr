@@ -268,3 +268,34 @@ UPDATE workspaces
           AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
    )
 RETURNING *;
+
+-- name: ReserveWorkspaceForActor :one
+UPDATE workspaces
+   SET owner_actor_id = sqlc.arg(actor_id),
+       ownership_generation = ownership_generation + 1,
+       state_version = state_version + 1,
+       desired_state = 'active',
+       last_activity_at = now(),
+       updated_at = now()
+ WHERE workspaces.environment_id = sqlc.arg(environment_id)
+   AND workspaces.id = sqlc.arg(id)
+   AND workspaces.state_version = sqlc.arg(expected_state_version)
+   AND workspaces.head_version_id = sqlc.arg(expected_head_version_id)
+   AND workspaces.state = 'active'
+   AND workspaces.desired_state IN ('active', 'stopped')
+   AND workspaces.dirty_state = 'clean'
+   AND workspaces.owner_actor_id IS NULL
+   AND workspaces.owner_run_id IS NULL
+   AND NOT EXISTS (
+       SELECT 1
+         FROM workspace_leases
+        WHERE workspace_leases.workspace_id = workspaces.id
+          AND workspace_leases.state IN ('active', 'releasing')
+   )
+   AND NOT EXISTS (
+       SELECT 1
+         FROM workspace_processes
+        WHERE workspace_processes.workspace_id = workspaces.id
+          AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+   )
+RETURNING *;

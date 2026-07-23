@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -30,6 +31,7 @@ const (
 	operationSecretCreate   operation = "secret.create"
 	operationSecretRotate   operation = "secret.rotate"
 	operationSecretRevoke   operation = "secret.revoke"
+	operationActorStart     operation = "actor.start"
 	operationActorInputSend operation = "actor.input.send"
 )
 
@@ -67,6 +69,23 @@ func (r sealedRequest) idempotencyRequest() request {
 type Result struct {
 	Claim db.IdempotencyClaim
 	New   bool
+}
+
+type ActorStartFingerprint struct {
+	Key                   *string
+	InputPresent          bool
+	Input                 json.RawMessage
+	WorkspaceAddress      json.RawMessage
+	Metadata              json.RawMessage
+	Tags                  []string
+	ExpiresAt             *time.Time
+	ManagedQueueName      string
+	ManagedConcurrencyKey *string
+	ManagedPriority       int32
+	ManagedQueuedTTLMS    *int64
+	ManagedRetryPolicy    json.RawMessage
+	ManagedRunMetadata    json.RawMessage
+	ManagedRunTags        []string
 }
 
 type ConflictError struct {
@@ -134,6 +153,100 @@ func NewActorInputSendRequest(environmentID uuid.UUID, actorID uuid.UUID, key st
 			return operationFingerprint(operationActorInputSend, input, 0, nil), nil
 		},
 	}}, nil
+}
+
+func NewActorStartRequest(
+	environmentID uuid.UUID,
+	actorDeclaredID string,
+	key string,
+	input ActorStartFingerprint,
+) (Request, error) {
+	if environmentID == uuid.Nil {
+		return nil, errors.New("idempotency environment is required")
+	}
+	if actorDeclaredID == "" {
+		return nil, errors.New("actor declared ID is required")
+	}
+	workspace, err := jsoncanon.Transform(input.WorkspaceAddress)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize Actor start Workspace address: %w", err)
+	}
+	metadata, err := canonicalActorStartJSON(input.Metadata, `{}`)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize Actor metadata: %w", err)
+	}
+	runMetadata, err := canonicalActorStartJSON(input.ManagedRunMetadata, `{}`)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize managed Run metadata: %w", err)
+	}
+	var retryPolicy json.RawMessage
+	if len(input.ManagedRetryPolicy) > 0 {
+		retryPolicy, err = jsoncanon.Transform(input.ManagedRetryPolicy)
+		if err != nil {
+			return nil, fmt.Errorf("canonicalize managed Run retry policy: %w", err)
+		}
+	}
+	var initialInput json.RawMessage
+	if input.InputPresent {
+		initialInput, err = jsoncanon.Transform(input.Input)
+		if err != nil {
+			return nil, fmt.Errorf("canonicalize initial Actor input: %w", err)
+		}
+	}
+	var expiresAt *string
+	if input.ExpiresAt != nil {
+		value := input.ExpiresAt.UTC().Format(time.RFC3339Nano)
+		expiresAt = &value
+	}
+	fields, err := json.Marshal(struct {
+		ActorDeclaredID       string          `json:"actorDeclaredId"`
+		Key                   *string         `json:"key"`
+		InputPresent          bool            `json:"inputPresent"`
+		Input                 json.RawMessage `json:"input"`
+		WorkspaceAddress      json.RawMessage `json:"workspaceAddress"`
+		Metadata              json.RawMessage `json:"metadata"`
+		Tags                  []string        `json:"tags"`
+		ExpiresAt             *string         `json:"expiresAt"`
+		ManagedQueueName      string          `json:"managedQueueName"`
+		ManagedConcurrencyKey *string         `json:"managedConcurrencyKey"`
+		ManagedPriority       int32           `json:"managedPriority"`
+		ManagedQueuedTTLMS    *int64          `json:"managedQueuedTtlMs"`
+		ManagedRetryPolicy    json.RawMessage `json:"managedRetryPolicy"`
+		ManagedRunMetadata    json.RawMessage `json:"managedRunMetadata"`
+		ManagedRunTags        []string        `json:"managedRunTags"`
+	}{
+		ActorDeclaredID: actorDeclaredID, Key: input.Key,
+		InputPresent: input.InputPresent, Input: initialInput,
+		WorkspaceAddress: workspace, Metadata: metadata,
+		Tags: append([]string{}, input.Tags...), ExpiresAt: expiresAt,
+		ManagedQueueName: input.ManagedQueueName, ManagedConcurrencyKey: input.ManagedConcurrencyKey,
+		ManagedPriority: input.ManagedPriority, ManagedQueuedTTLMS: input.ManagedQueuedTTLMS,
+		ManagedRetryPolicy: retryPolicy, ManagedRunMetadata: runMetadata,
+		ManagedRunTags: append([]string{}, input.ManagedRunTags...),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode Actor start fingerprint: %w", err)
+	}
+	canonicalFields, err := jsoncanon.Transform(fields)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize Actor start fingerprint: %w", err)
+	}
+	return sealedRequest{value: request{
+		environmentID: environmentID,
+		operation:     operationActorStart,
+		scope:         []byte(actorDeclaredID),
+		key:           key,
+		fingerprint: func(int32) ([sha256.Size]byte, error) {
+			return operationFingerprint(operationActorStart, canonicalFields, 0, nil), nil
+		},
+	}}, nil
+}
+
+func canonicalActorStartJSON(value json.RawMessage, fallback string) ([]byte, error) {
+	if len(value) == 0 {
+		value = json.RawMessage(fallback)
+	}
+	return jsoncanon.Transform(value)
 }
 
 func newSecretValueRequest(environmentID uuid.UUID, operation operation, scope []byte, key string, fields []byte, authenticator func(int32) ([sha256.Size]byte, error)) (Request, error) {
@@ -257,7 +370,7 @@ func (t *Transaction) Acquire(ctx context.Context, input Request) (Result, error
 
 func supportedOperation(value operation) bool {
 	switch value {
-	case operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationActorInputSend:
+	case operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationActorStart, operationActorInputSend:
 		return true
 	default:
 		return false

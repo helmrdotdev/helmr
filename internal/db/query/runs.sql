@@ -216,6 +216,122 @@ SELECT created_run.*
   FROM created_run
   JOIN created_attempt ON created_attempt.run_id = created_run.id;
 
+-- name: CreateActorStartRun :one
+WITH selected_actor AS MATERIALIZED (
+    SELECT actors.*,
+           deployment_definitions.deployment_id
+      FROM actors
+      JOIN deployment_definitions
+        ON deployment_definitions.environment_id = actors.environment_id
+       AND deployment_definitions.id = actors.deployment_definition_id
+       AND deployment_definitions.kind = actors.declaration_kind
+       AND deployment_definitions.declared_id = actors.actor_declared_id
+     WHERE actors.environment_id = sqlc.arg(environment_id)
+       AND actors.id = sqlc.arg(actor_id)
+       AND actors.workspace_id = sqlc.arg(workspace_id)
+       AND actors.state = 'open'
+       AND actors.current_run_id IS NULL
+       AND (
+           sqlc.narg(claim_id)::uuid IS NULL
+           OR EXISTS (
+               SELECT 1
+                 FROM idempotency_claims
+                WHERE idempotency_claims.environment_id = actors.environment_id
+                  AND idempotency_claims.id = sqlc.narg(claim_id)
+                  AND idempotency_claims.operation = 'actor.start'
+                  AND idempotency_claims.state = 'pending'
+                  AND idempotency_claims.retired_at IS NULL
+           )
+       )
+     FOR UPDATE OF actors
+), created_run AS (
+    INSERT INTO runs (
+        id,
+        public_id,
+        org_id,
+        project_id,
+        environment_id,
+        deployment_id,
+        deployment_definition_id,
+        entrypoint_kind,
+        entrypoint_declared_id,
+        actor_id,
+        cause_kind,
+        workspace_id,
+        base_workspace_version_id,
+        actor_start_input_sequence,
+        actor_start_input_high_watermark,
+        metadata,
+        tags,
+        queue_name,
+        concurrency_key,
+        queue_concurrency_limit,
+        priority,
+        queue_origin_at,
+        queue_score_at,
+        queued_expires_at,
+        max_active_duration_ms,
+        retry_policy,
+        trace_id,
+        root_span_id,
+        claim_id
+    )
+    SELECT sqlc.arg(id),
+           sqlc.arg(public_id),
+           selected_actor.org_id,
+           selected_actor.project_id,
+           selected_actor.environment_id,
+           selected_actor.deployment_id,
+           selected_actor.deployment_definition_id,
+           'actor',
+           selected_actor.actor_declared_id,
+           selected_actor.id,
+           'actor_start',
+           selected_actor.workspace_id,
+           sqlc.arg(base_workspace_version_id),
+           0,
+           sqlc.arg(input_high_watermark),
+           selected_actor.managed_run_metadata,
+           selected_actor.managed_run_tags,
+           selected_actor.managed_queue_name,
+           selected_actor.managed_concurrency_key,
+           selected_actor.managed_queue_concurrency_limit,
+           selected_actor.managed_priority,
+           now(),
+           now() - (selected_actor.managed_priority::double precision * interval '1 second'),
+           CASE
+               WHEN selected_actor.managed_queued_ttl_ms IS NULL THEN NULL
+               ELSE now() + (selected_actor.managed_queued_ttl_ms::double precision * interval '1 millisecond')
+           END,
+           selected_actor.managed_max_active_duration_ms,
+           selected_actor.managed_retry_policy,
+           sqlc.narg(trace_id),
+           sqlc.arg(root_span_id),
+           sqlc.narg(claim_id)
+      FROM selected_actor
+    RETURNING runs.*
+), created_attempt AS (
+    INSERT INTO run_attempts (
+        run_id,
+        number,
+        entrypoint_kind,
+        workspace_id,
+        actor_start_input_sequence,
+        base_workspace_version_id
+    )
+    SELECT created_run.id,
+           1,
+           created_run.entrypoint_kind,
+           created_run.workspace_id,
+           0,
+           created_run.base_workspace_version_id
+      FROM created_run
+    RETURNING run_id
+)
+SELECT created_run.*
+  FROM created_run
+  JOIN created_attempt ON created_attempt.run_id = created_run.id;
+
 -- name: CreateChildRunFromParentDeployment :one
 WITH selected_target AS MATERIALIZED (
     SELECT definitions.environment_id,

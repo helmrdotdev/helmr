@@ -455,3 +455,234 @@ func (q *Queries) GetActorByPublicID(ctx context.Context, arg GetActorByPublicID
 	)
 	return i, err
 }
+
+const lockActorStartAuthority = `-- name: LockActorStartAuthority :one
+SELECT actor_definition.id AS actor_definition_id,
+       actor_definition.deployment_id,
+       actor_definition.manifest_version AS actor_manifest_version,
+       actor_definition.manifest AS actor_manifest,
+       actor_definition.manifest_digest AS actor_manifest_digest,
+       deployments.queue_config,
+       workspaces.id AS workspace_id,
+       workspaces.head_version_id,
+       workspaces.state AS workspace_state,
+       workspaces.desired_state AS workspace_desired_state,
+       workspaces.dirty_state AS workspace_dirty_state,
+       workspaces.state_version AS workspace_state_version,
+       workspaces.owner_actor_id,
+       workspaces.owner_run_id,
+       deployments.program_architecture,
+       workspace_definition.workspace_architecture,
+       EXISTS (
+           SELECT 1
+             FROM workspace_leases
+            WHERE workspace_leases.workspace_id = workspaces.id
+              AND workspace_leases.state IN ('active', 'releasing')
+       ) AS has_active_lease,
+       EXISTS (
+           SELECT 1
+             FROM workspace_processes
+            WHERE workspace_processes.workspace_id = workspaces.id
+              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+       ) AS has_active_process
+  FROM environments
+  JOIN deployment_definitions AS actor_definition
+    ON actor_definition.environment_id = environments.id
+   AND actor_definition.deployment_id = environments.current_deployment_id
+   AND actor_definition.kind = 'actor'
+   AND actor_definition.declared_id = $1
+  JOIN deployments
+    ON deployments.org_id = environments.org_id
+   AND deployments.project_id = environments.project_id
+   AND deployments.environment_id = environments.id
+   AND deployments.id = actor_definition.deployment_id
+   AND deployments.status = 'deployed'
+   AND deployments.program_code_artifact_id IS NOT NULL
+   AND deployments.program_dependency_artifact_id IS NOT NULL
+   AND deployments.program_runtime_digest IS NOT NULL
+   AND deployments.program_architecture IS NOT NULL
+   AND deployments.program_architecture = deployments.build_architecture
+   AND deployments.program_runtime_digest = deployments.build_runtime_digest
+  JOIN workspaces
+    ON workspaces.org_id = environments.org_id
+   AND workspaces.project_id = environments.project_id
+   AND workspaces.environment_id = environments.id
+   AND workspaces.id = $2
+   AND workspaces.deleted_at IS NULL
+  JOIN deployment_definitions AS workspace_definition
+    ON workspace_definition.environment_id = workspaces.environment_id
+   AND workspace_definition.id = workspaces.deployment_definition_id
+   AND workspace_definition.kind = 'workspace'
+   AND workspace_definition.declared_id = workspaces.workspace_declared_id
+  JOIN workspace_versions AS head
+    ON head.workspace_id = workspaces.id
+   AND head.id = workspaces.head_version_id
+   AND head.state = 'committed'
+ WHERE environments.org_id = $3
+   AND environments.project_id = $4
+   AND environments.id = $5
+ FOR UPDATE OF environments, workspaces
+`
+
+type LockActorStartAuthorityParams struct {
+	ActorDeclaredID string      `json:"actor_declared_id"`
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+	OrgID           pgtype.UUID `json:"org_id"`
+	ProjectID       pgtype.UUID `json:"project_id"`
+	EnvironmentID   pgtype.UUID `json:"environment_id"`
+}
+
+type LockActorStartAuthorityRow struct {
+	ActorDefinitionID     pgtype.UUID           `json:"actor_definition_id"`
+	DeploymentID          pgtype.UUID           `json:"deployment_id"`
+	ActorManifestVersion  int32                 `json:"actor_manifest_version"`
+	ActorManifest         []byte                `json:"actor_manifest"`
+	ActorManifestDigest   []byte                `json:"actor_manifest_digest"`
+	QueueConfig           []byte                `json:"queue_config"`
+	WorkspaceID           pgtype.UUID           `json:"workspace_id"`
+	HeadVersionID         pgtype.UUID           `json:"head_version_id"`
+	WorkspaceState        WorkspaceState        `json:"workspace_state"`
+	WorkspaceDesiredState WorkspaceDesiredState `json:"workspace_desired_state"`
+	WorkspaceDirtyState   WorkspaceDirtyState   `json:"workspace_dirty_state"`
+	WorkspaceStateVersion int64                 `json:"workspace_state_version"`
+	OwnerActorID          pgtype.UUID           `json:"owner_actor_id"`
+	OwnerRunID            pgtype.UUID           `json:"owner_run_id"`
+	ProgramArchitecture   pgtype.Text           `json:"program_architecture"`
+	WorkspaceArchitecture pgtype.Text           `json:"workspace_architecture"`
+	HasActiveLease        bool                  `json:"has_active_lease"`
+	HasActiveProcess      bool                  `json:"has_active_process"`
+}
+
+func (q *Queries) LockActorStartAuthority(ctx context.Context, arg LockActorStartAuthorityParams) (LockActorStartAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, lockActorStartAuthority,
+		arg.ActorDeclaredID,
+		arg.WorkspaceID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+	)
+	var i LockActorStartAuthorityRow
+	err := row.Scan(
+		&i.ActorDefinitionID,
+		&i.DeploymentID,
+		&i.ActorManifestVersion,
+		&i.ActorManifest,
+		&i.ActorManifestDigest,
+		&i.QueueConfig,
+		&i.WorkspaceID,
+		&i.HeadVersionID,
+		&i.WorkspaceState,
+		&i.WorkspaceDesiredState,
+		&i.WorkspaceDirtyState,
+		&i.WorkspaceStateVersion,
+		&i.OwnerActorID,
+		&i.OwnerRunID,
+		&i.ProgramArchitecture,
+		&i.WorkspaceArchitecture,
+		&i.HasActiveLease,
+		&i.HasActiveProcess,
+	)
+	return i, err
+}
+
+const lockActorStartKey = `-- name: LockActorStartKey :exec
+SELECT pg_advisory_xact_lock(
+    hashtextextended(
+        jsonb_build_array(
+            'helmr.actor-start-key.v0',
+            $1::uuid::text,
+            $2::text,
+            $3::text
+        )::text,
+        0
+    )
+)
+`
+
+type LockActorStartKeyParams struct {
+	EnvironmentID   pgtype.UUID `json:"environment_id"`
+	ActorDeclaredID string      `json:"actor_declared_id"`
+	Key             string      `json:"key"`
+}
+
+func (q *Queries) LockActorStartKey(ctx context.Context, arg LockActorStartKeyParams) error {
+	_, err := q.db.Exec(ctx, lockActorStartKey, arg.EnvironmentID, arg.ActorDeclaredID, arg.Key)
+	return err
+}
+
+const setActorCurrentRun = `-- name: SetActorCurrentRun :one
+UPDATE actors
+   SET current_run_id = $1,
+       state_version = state_version + 1,
+       updated_at = now()
+ WHERE environment_id = $2
+   AND id = $3
+   AND workspace_id = $4
+   AND state = 'open'
+   AND current_run_id IS NULL
+   AND run_generation = 1
+   AND state_version = 1
+RETURNING id, public_id, org_id, project_id, environment_id, declaration_kind, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, managed_queue_name, managed_concurrency_key, managed_queue_concurrency_limit, managed_priority, managed_queued_ttl_ms, managed_max_active_duration_ms, managed_retry_policy_version, managed_retry_policy, managed_run_metadata, managed_run_tags, state, close_sequence, expires_at, metadata, tags, created_at, updated_at, closed_at, cancelled_at, failed_at, expired_at
+`
+
+type SetActorCurrentRunParams struct {
+	RunID         pgtype.UUID `json:"run_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) SetActorCurrentRun(ctx context.Context, arg SetActorCurrentRunParams) (Actor, error) {
+	row := q.db.QueryRow(ctx, setActorCurrentRun,
+		arg.RunID,
+		arg.EnvironmentID,
+		arg.ID,
+		arg.WorkspaceID,
+	)
+	var i Actor
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeclarationKind,
+		&i.ActorDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.WorkspaceID,
+		&i.Key,
+		&i.CurrentRunID,
+		&i.RunGeneration,
+		&i.StateVersion,
+		&i.ManualRunCancelled,
+		&i.FailureCode,
+		&i.FailureRunID,
+		&i.NextInputSequence,
+		&i.CommittedInputSequence,
+		&i.NextOutputSequence,
+		&i.InputRetentionFloor,
+		&i.OutputRetentionFloor,
+		&i.ManagedQueueName,
+		&i.ManagedConcurrencyKey,
+		&i.ManagedQueueConcurrencyLimit,
+		&i.ManagedPriority,
+		&i.ManagedQueuedTtlMs,
+		&i.ManagedMaxActiveDurationMs,
+		&i.ManagedRetryPolicyVersion,
+		&i.ManagedRetryPolicy,
+		&i.ManagedRunMetadata,
+		&i.ManagedRunTags,
+		&i.State,
+		&i.CloseSequence,
+		&i.ExpiresAt,
+		&i.Metadata,
+		&i.Tags,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClosedAt,
+		&i.CancelledAt,
+		&i.FailedAt,
+		&i.ExpiredAt,
+	)
+	return i, err
+}

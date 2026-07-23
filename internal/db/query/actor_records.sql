@@ -7,6 +7,59 @@ SELECT *
    AND retired_at IS NULL
  FOR UPDATE;
 
+-- name: CreateActorStartInputRecord :one
+WITH locked_actor AS MATERIALIZED (
+    SELECT actors.*
+      FROM actors
+     WHERE actors.environment_id = sqlc.arg(environment_id)
+       AND actors.id = sqlc.arg(actor_id)
+       AND actors.state = 'open'
+       AND actors.next_input_sequence = 1
+       AND actors.committed_input_sequence = 0
+       AND (
+           sqlc.narg(claim_id)::uuid IS NULL
+           OR EXISTS (
+               SELECT 1
+                 FROM idempotency_claims
+                WHERE idempotency_claims.environment_id = actors.environment_id
+                  AND idempotency_claims.id = sqlc.narg(claim_id)
+                  AND idempotency_claims.operation = 'actor.start'
+                  AND idempotency_claims.state = 'pending'
+                  AND idempotency_claims.retired_at IS NULL
+           )
+       )
+     FOR UPDATE OF actors
+), advanced AS (
+    UPDATE actors
+       SET next_input_sequence = 2,
+           updated_at = now()
+      FROM locked_actor
+     WHERE actors.id = locked_actor.id
+    RETURNING actors.*
+)
+INSERT INTO actor_records (
+    id,
+    environment_id,
+    actor_id,
+    direction,
+    sequence,
+    data,
+    content_type,
+    source_kind,
+    claim_id
+)
+SELECT sqlc.arg(id),
+       advanced.environment_id,
+       advanced.id,
+       'input',
+       1,
+       sqlc.arg(data),
+       'application/json',
+       'external',
+       sqlc.narg(claim_id)
+  FROM advanced
+RETURNING *;
+
 -- name: AppendActorInputRecord :one
 WITH selected_claim AS MATERIALIZED (
     SELECT id, state, request_fingerprint
