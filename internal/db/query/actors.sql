@@ -200,6 +200,72 @@ SELECT *
    AND actor_declared_id = sqlc.arg(actor_declared_id)
    AND key = sqlc.arg(key);
 
+-- name: UpdateActorAnnotations :one
+UPDATE actors
+   SET metadata = CASE
+           WHEN sqlc.arg(set_metadata)::boolean
+           THEN sqlc.arg(metadata)::jsonb
+           ELSE metadata
+       END,
+       tags = CASE
+           WHEN sqlc.arg(set_tags)::boolean
+           THEN sqlc.arg(tags)::text[]
+           ELSE tags
+       END,
+       expires_at = CASE
+           WHEN sqlc.arg(set_expires_at)::boolean
+           THEN sqlc.arg(expires_at)::timestamptz
+           ELSE expires_at
+       END,
+       updated_at = transaction_timestamp()
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND actor_declared_id = sqlc.arg(actor_declared_id)
+   AND (
+       (
+           sqlc.narg(address_public_id)::text IS NOT NULL
+           AND public_id = sqlc.narg(address_public_id)::text
+       )
+       OR
+       (
+           sqlc.narg(address_key)::text IS NOT NULL
+           AND key = sqlc.narg(address_key)::text
+       )
+   )
+   AND (
+       NOT sqlc.arg(set_expires_at)::boolean
+       OR (
+           state = 'open'
+           AND (
+               expires_at IS NULL
+               OR expires_at > transaction_timestamp()
+           )
+           AND sqlc.arg(expires_at)::timestamptz > transaction_timestamp()
+           AND (
+               expires_at IS NULL
+               OR sqlc.arg(expires_at)::timestamptz > expires_at
+           )
+       )
+   )
+RETURNING id;
+
+-- name: LockActorUpdateAddress :one
+SELECT id
+  FROM actors
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND actor_declared_id = sqlc.arg(actor_declared_id)
+   AND (
+       (
+           sqlc.narg(address_public_id)::text IS NOT NULL
+           AND public_id = sqlc.narg(address_public_id)::text
+       )
+       OR
+       (
+           sqlc.narg(address_key)::text IS NOT NULL
+           AND key = sqlc.narg(address_key)::text
+       )
+   )
+ FOR UPDATE;
+
 -- name: GetActorRead :one
 SELECT actors.*,
        current_runs.public_id AS current_run_public_id,

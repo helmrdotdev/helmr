@@ -95,6 +95,14 @@ type ActorReference struct {
 	ActorKey string
 }
 
+type UpdateActorRequest struct {
+	ActorID   string           `json:"actor_id,omitempty"`
+	ActorKey  string           `json:"actor_key,omitempty"`
+	Metadata  *json.RawMessage `json:"metadata,omitempty"`
+	Tags      *[]string        `json:"tags,omitempty"`
+	ExpiresAt *time.Time       `json:"expires_at,omitempty"`
+}
+
 type ActorOperationReceipt struct {
 	ActorID    string    `json:"actor_id"`
 	Lifecycle  string    `json:"lifecycle"`
@@ -198,6 +206,30 @@ func ValidateActorReference(reference ActorReference) error {
 		return ValidateActorPublicID(reference.ActorID)
 	}
 	return ValidateActorKey(reference.ActorKey)
+}
+
+func ValidateUpdateActorRequest(request UpdateActorRequest) error {
+	if err := ValidateActorReference(ActorReference{
+		ActorID:  request.ActorID,
+		ActorKey: request.ActorKey,
+	}); err != nil {
+		return err
+	}
+	if request.Metadata == nil && request.Tags == nil && request.ExpiresAt == nil {
+		return errors.New("at least one of metadata, tags, or expires_at is required")
+	}
+	if request.Metadata != nil {
+		if err := validateJSONObject(*request.Metadata, "metadata"); err != nil {
+			return err
+		}
+	}
+	if request.Tags != nil && *request.Tags == nil {
+		return errors.New("tags must be an array; use an empty array to clear tags")
+	}
+	if request.ExpiresAt != nil && request.ExpiresAt.IsZero() {
+		return errors.New("expires_at must be a valid instant")
+	}
+	return nil
 }
 
 func ValidateActorDeclaredID(id string) error {

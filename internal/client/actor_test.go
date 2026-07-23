@@ -68,6 +68,19 @@ func TestGetActorStatusUsesSessionRoute(t *testing.T) {
 	)
 }
 
+func TestUpdateActorUsesAPIKeyRoute(t *testing.T) {
+	testUpdateActorRoute(t, false, "/api/actors/operator.v1", EnvironmentScopeOptions{})
+}
+
+func TestUpdateActorUsesSessionRoute(t *testing.T) {
+	testUpdateActorRoute(
+		t,
+		true,
+		"/api/projects/project-1/environments/env-1/actors/operator.v1",
+		EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
+	)
+}
+
 func TestListActorsUsesAPIKeyRoute(t *testing.T) {
 	testListActorsRoute(t, false, "/api/actors/operator.v1", EnvironmentScopeOptions{})
 }
@@ -79,6 +92,54 @@ func TestListActorsUsesSessionRoute(t *testing.T) {
 		"/api/projects/project-1/environments/env-1/actors/operator.v1",
 		EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
 	)
+}
+
+func testUpdateActorRoute(
+	t *testing.T,
+	session bool,
+	wantPath string,
+	scope EnvironmentScopeOptions,
+) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch || r.URL.EscapedPath() != wantPath {
+			t.Fatalf("%s %s, want PATCH %s", r.Method, r.URL.EscapedPath(), wantPath)
+		}
+		var raw map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			t.Fatal(err)
+		}
+		if string(raw["actor_key"]) != `"thread:1"` ||
+			string(raw["metadata"]) != `{}` ||
+			string(raw["tags"]) != `[]` {
+			t.Fatalf("request = %s", raw)
+		}
+		_ = json.NewEncoder(w).Encode(actorStatusFixture())
+	}))
+	defer server.Close()
+
+	options := []Option{WithHTTPClient(server.Client())}
+	if session {
+		options = append(options, WithSessionScopedRoutes())
+	}
+	client, err := New(server.URL, options...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := json.RawMessage(`{}`)
+	tags := []string{}
+	response, err := client.UpdateActor(
+		context.Background(),
+		"operator.v1",
+		api.UpdateActorRequest{ActorKey: "thread:1", Metadata: &metadata, Tags: &tags},
+		scope,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.ID != "act_aaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("response = %+v", response)
+	}
 }
 
 func testGetActorStatusRoute(
@@ -362,6 +423,14 @@ func TestActorReadsRejectInvalidOptionsBeforeTransport(t *testing.T) {
 		EnvironmentScopeOptions{},
 	); err == nil {
 		t.Fatal("GetActorStatus() succeeded")
+	}
+	if _, err := client.UpdateActor(
+		context.Background(),
+		"operator.v1",
+		api.UpdateActorRequest{ActorKey: "thread:1"},
+		EnvironmentScopeOptions{},
+	); err == nil {
+		t.Fatal("UpdateActor() succeeded")
 	}
 	for _, options := range []ListActorsOptions{
 		{Lifecycle: "unknown"},

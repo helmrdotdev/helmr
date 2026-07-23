@@ -124,6 +124,19 @@ func TestActorStartPermissionIsWritableButNotReadableRoleAuthority(t *testing.T)
 	}
 }
 
+func TestActorUpdatePermissionIsWritableButNotReadableRoleAuthority(t *testing.T) {
+	if !RoleAllows(RoleDeveloper, PermissionActorsUpdate) {
+		t.Fatal("developer should be allowed to update an Actor")
+	}
+	if RoleAllows(RoleViewer, PermissionActorsUpdate) {
+		t.Fatal("viewer should not be allowed to update an Actor")
+	}
+	normalized := normalizeAPIKeyGrantPermission(string(PermissionActorsUpdate))
+	if len(normalized) != 1 || normalized[0] != PermissionActorsUpdate {
+		t.Fatalf("normalized Actor update permission = %v", normalized)
+	}
+}
+
 func TestActorReadPermissionAllowsReadOnlyRoles(t *testing.T) {
 	for _, role := range []Role{RoleOwner, RoleAdmin, RoleDeveloper, RoleViewer} {
 		if !RoleAllows(role, PermissionActorsRead) {

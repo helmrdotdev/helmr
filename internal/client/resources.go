@@ -152,6 +152,33 @@ func (c *Client) GetActorStatus(
 	return response, nil
 }
 
+func (c *Client) UpdateActor(
+	ctx context.Context,
+	actorDeclaredID string,
+	input api.UpdateActorRequest,
+	opts EnvironmentScopeOptions,
+) (api.ActorStatus, error) {
+	if err := api.ValidateActorDeclaredID(actorDeclaredID); err != nil {
+		return api.ActorStatus{}, err
+	}
+	if err := api.ValidateUpdateActorRequest(input); err != nil {
+		return api.ActorStatus{}, err
+	}
+	path, _, err := c.environmentScopedPath(
+		opts.ProjectID,
+		opts.EnvironmentID,
+		"/actors/"+url.PathEscape(actorDeclaredID),
+	)
+	if err != nil {
+		return api.ActorStatus{}, err
+	}
+	var response api.ActorStatus
+	if err := c.patchJSON(ctx, path, input, &response); err != nil {
+		return api.ActorStatus{}, err
+	}
+	return response, nil
+}
+
 type ListActorsOptions struct {
 	Lifecycle api.ActorLifecycle
 	Cursor    string

@@ -420,19 +420,19 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 	} else {
 		request.Input = nil
 	}
-	request.Metadata, err = normalizeActorStartMetadata(request.Metadata, maxActorMetadataBytes, "Actor")
+	request.Metadata, err = normalizeActorMetadata(request.Metadata, maxActorMetadataBytes, "Actor")
 	if err != nil {
 		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
 	}
-	request.ManagedRunMetadata, err = normalizeActorStartMetadata(request.ManagedRunMetadata, maxRunMetadataBytes, "managed Run")
+	request.ManagedRunMetadata, err = normalizeActorMetadata(request.ManagedRunMetadata, maxRunMetadataBytes, "managed Run")
 	if err != nil {
 		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
 	}
-	request.Tags, err = normalizeActorStartTags(request.Tags, "Actor")
+	request.Tags, err = normalizeActorTags(request.Tags, "Actor")
 	if err != nil {
 		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
 	}
-	request.ManagedRunTags, err = normalizeActorStartTags(request.ManagedRunTags, "managed Run")
+	request.ManagedRunTags, err = normalizeActorTags(request.ManagedRunTags, "managed Run")
 	if err != nil {
 		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
 	}
@@ -483,7 +483,7 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 	return normalizedActorStart{actorStartRequest: request, fingerprint: fingerprint}, nil
 }
 
-func normalizeActorStartMetadata(raw json.RawMessage, limit int, label string) ([]byte, error) {
+func normalizeActorMetadata(raw json.RawMessage, limit int, label string) ([]byte, error) {
 	if len(raw) == 0 {
 		raw = json.RawMessage(`{}`)
 	}
@@ -497,7 +497,7 @@ func normalizeActorStartMetadata(raw json.RawMessage, limit int, label string) (
 	return canonical, nil
 }
 
-func normalizeActorStartTags(raw []string, label string) ([]string, error) {
+func normalizeActorTags(raw []string, label string) ([]string, error) {
 	seen := make(map[string]struct{}, len(raw))
 	tags := make([]string, 0, len(raw))
 	for _, tag := range raw {

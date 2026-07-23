@@ -352,6 +352,7 @@ type Querier interface {
 	LockActorStartDeploymentAuthority(ctx context.Context, arg LockActorStartDeploymentAuthorityParams) (LockActorStartDeploymentAuthorityRow, error)
 	LockActorStartKey(ctx context.Context, arg LockActorStartKeyParams) error
 	LockActorStartWorkspaceAuthority(ctx context.Context, arg LockActorStartWorkspaceAuthorityParams) (LockActorStartWorkspaceAuthorityRow, error)
+	LockActorUpdateAddress(ctx context.Context, arg LockActorUpdateAddressParams) (pgtype.UUID, error)
 	LockAttemptSecretDelivery(ctx context.Context, arg LockAttemptSecretDeliveryParams) ([]LockAttemptSecretDeliveryRow, error)
 	LockClaimedSchedule(ctx context.Context, arg LockClaimedScheduleParams) (Schedule, error)
 	LockCreatingRunCheckpoint(ctx context.Context, arg LockCreatingRunCheckpointParams) (RunCheckpoint, error)
@@ -482,6 +483,7 @@ type Querier interface {
 	StopWorkspaceMount(ctx context.Context, arg StopWorkspaceMountParams) (StopWorkspaceMountRow, error)
 	TouchActiveAPIKeyByTokenHash(ctx context.Context, tokenHash []byte) (TouchActiveAPIKeyByTokenHashRow, error)
 	TouchRunWorkspaceActivity(ctx context.Context, arg TouchRunWorkspaceActivityParams) (Workspace, error)
+	UpdateActorAnnotations(ctx context.Context, arg UpdateActorAnnotationsParams) (pgtype.UUID, error)
 	UpdateEnvironmentDetails(ctx context.Context, arg UpdateEnvironmentDetailsParams) (Environment, error)
 	UpdateOrgMemberRole(ctx context.Context, arg UpdateOrgMemberRoleParams) (OrgMember, error)
 	UpdateProjectDetails(ctx context.Context, arg UpdateProjectDetailsParams) (Project, error)

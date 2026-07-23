@@ -941,6 +941,44 @@ func (q *Queries) LockActorStartWorkspaceAuthority(ctx context.Context, arg Lock
 	return i, err
 }
 
+const lockActorUpdateAddress = `-- name: LockActorUpdateAddress :one
+SELECT id
+  FROM actors
+ WHERE environment_id = $1
+   AND actor_declared_id = $2
+   AND (
+       (
+           $3::text IS NOT NULL
+           AND public_id = $3::text
+       )
+       OR
+       (
+           $4::text IS NOT NULL
+           AND key = $4::text
+       )
+   )
+ FOR UPDATE
+`
+
+type LockActorUpdateAddressParams struct {
+	EnvironmentID   pgtype.UUID `json:"environment_id"`
+	ActorDeclaredID string      `json:"actor_declared_id"`
+	AddressPublicID pgtype.Text `json:"address_public_id"`
+	AddressKey      pgtype.Text `json:"address_key"`
+}
+
+func (q *Queries) LockActorUpdateAddress(ctx context.Context, arg LockActorUpdateAddressParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockActorUpdateAddress,
+		arg.EnvironmentID,
+		arg.ActorDeclaredID,
+		arg.AddressPublicID,
+		arg.AddressKey,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const setActorCurrentRun = `-- name: SetActorCurrentRun :one
 UPDATE actors
    SET current_run_id = $1,
@@ -1016,4 +1054,84 @@ func (q *Queries) SetActorCurrentRun(ctx context.Context, arg SetActorCurrentRun
 		&i.ExpiredAt,
 	)
 	return i, err
+}
+
+const updateActorAnnotations = `-- name: UpdateActorAnnotations :one
+UPDATE actors
+   SET metadata = CASE
+           WHEN $1::boolean
+           THEN $2::jsonb
+           ELSE metadata
+       END,
+       tags = CASE
+           WHEN $3::boolean
+           THEN $4::text[]
+           ELSE tags
+       END,
+       expires_at = CASE
+           WHEN $5::boolean
+           THEN $6::timestamptz
+           ELSE expires_at
+       END,
+       updated_at = transaction_timestamp()
+ WHERE environment_id = $7
+   AND actor_declared_id = $8
+   AND (
+       (
+           $9::text IS NOT NULL
+           AND public_id = $9::text
+       )
+       OR
+       (
+           $10::text IS NOT NULL
+           AND key = $10::text
+       )
+   )
+   AND (
+       NOT $5::boolean
+       OR (
+           state = 'open'
+           AND (
+               expires_at IS NULL
+               OR expires_at > transaction_timestamp()
+           )
+           AND $6::timestamptz > transaction_timestamp()
+           AND (
+               expires_at IS NULL
+               OR $6::timestamptz > expires_at
+           )
+       )
+   )
+RETURNING id
+`
+
+type UpdateActorAnnotationsParams struct {
+	SetMetadata     bool               `json:"set_metadata"`
+	Metadata        []byte             `json:"metadata"`
+	SetTags         bool               `json:"set_tags"`
+	Tags            []string           `json:"tags"`
+	SetExpiresAt    bool               `json:"set_expires_at"`
+	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	ActorDeclaredID string             `json:"actor_declared_id"`
+	AddressPublicID pgtype.Text        `json:"address_public_id"`
+	AddressKey      pgtype.Text        `json:"address_key"`
+}
+
+func (q *Queries) UpdateActorAnnotations(ctx context.Context, arg UpdateActorAnnotationsParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, updateActorAnnotations,
+		arg.SetMetadata,
+		arg.Metadata,
+		arg.SetTags,
+		arg.Tags,
+		arg.SetExpiresAt,
+		arg.ExpiresAt,
+		arg.EnvironmentID,
+		arg.ActorDeclaredID,
+		arg.AddressPublicID,
+		arg.AddressKey,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }

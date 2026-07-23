@@ -57,9 +57,11 @@ GET /api/regions
 GET /api/secrets
 GET /api/secrets/{name}
 GET /api/worker/status
+PATCH /api/actors/{actorDeclaredID}
 PATCH /api/members/{userID}
 PATCH /api/projects/{projectID}
 PATCH /api/projects/{projectID}/environments/{environmentID}
+PATCH /api/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}
 POST /api/actors/{actorDeclaredID}/close
 POST /api/actors/{actorDeclaredID}/input
 POST /api/actors/{actorDeclaredID}/start
