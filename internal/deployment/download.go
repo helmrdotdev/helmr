@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -31,7 +30,7 @@ const (
 	bunReleaseAPIOriginRoot  = "https://api.github.com/repos/oven-sh/bun/releases/tags/bun-v"
 	bunChecksumAssetName     = "SHASUMS256.txt.asc"
 	npmManifestOriginRoot    = "https://registry.npmjs.org/npm/"
-	managerHTTPUserAgent     = "helmr-dependency-builder-v0"
+	managerHTTPUserAgent     = "helmr-manager-acquirer-v0"
 	managerMaxRedirects      = 5
 	managerResponseHeaderTTL = 30 * time.Second
 	managerDownloadTTL       = 5 * time.Minute
@@ -236,7 +235,7 @@ func (d *ManagerDownloader) downloadBun(
 			ErrManagerIntegrity,
 		)
 	}
-	distribution, checksum, err := selectBunAssets(release.Assets, assetName, origin, manager.Version)
+	distribution, checksum, err := selectBunAssets(release.Assets, assetName, origin)
 	if err != nil {
 		return ManagerSource{}, err
 	}
@@ -263,7 +262,7 @@ func (d *ManagerDownloader) downloadBun(
 		if err != nil {
 			return ManagerSource{}, fmt.Errorf("%w: Bun checksum: %v", ErrManagerIntegrity, err)
 		}
-	} else if !bunLegacyTOFU(manager.Version) {
+	} else {
 		return ManagerSource{}, fmt.Errorf(
 			"%w: Bun release does not list a signed checksum",
 			ErrManagerIntegrity,
@@ -458,7 +457,6 @@ func selectBunAssets(
 	assets []bunAsset,
 	assetName string,
 	origin string,
-	version string,
 ) (bunAsset, *bunAsset, error) {
 	var distribution bunAsset
 	var checksum *bunAsset
@@ -489,7 +487,7 @@ func selectBunAssets(
 		if err := validateBunAsset(*checksum, checksumOrigin, managerChecksumMaxBytes); err != nil {
 			return bunAsset{}, nil, err
 		}
-	} else if !bunLegacyTOFU(version) {
+	} else {
 		return bunAsset{}, nil, fmt.Errorf(
 			"%w: Bun release does not list a signed checksum",
 			ErrManagerIntegrity,
@@ -594,22 +592,6 @@ func managerChecksumName(value string) bool {
 		}
 	}
 	return true
-}
-
-func bunLegacyTOFU(version string) bool {
-	matches := packageManagerVersionPattern.FindStringSubmatch(version)
-	if len(matches) < 4 {
-		return false
-	}
-	major, errMajor := strconv.ParseUint(matches[1], 10, 64)
-	minor, errMinor := strconv.ParseUint(matches[2], 10, 64)
-	patch, errPatch := strconv.ParseUint(matches[3], 10, 64)
-	if errMajor != nil || errMinor != nil || errPatch != nil {
-		return false
-	}
-	return major == 0 &&
-		(minor < 5 ||
-			minor == 5 && (patch < 3 || patch == 3 && len(matches) > 4 && matches[4] != ""))
 }
 
 func decodeSHA512SRI(integrity string) ([]byte, error) {

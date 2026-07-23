@@ -1,749 +1,641 @@
 package deployment
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/archive"
-	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/compute"
-	"github.com/helmrdotdev/helmr/internal/frameio"
-	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
-	"github.com/helmrdotdev/helmr/internal/task"
+	buildmodel "github.com/helmrdotdev/helmr/internal/imagebuild"
+	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/vm"
-	"github.com/helmrdotdev/helmr/internal/wire"
-	"google.golang.org/protobuf/proto"
 )
 
 type Builder struct {
 	WorkDir      string
 	CAS          cas.Store
-	Indexer      Indexer
-	Compiler     task.Compiler
-	ImageBuilder builder.Engine
+	RuntimeStore cas.Reader
+	Managers     *ManagerStore
+	Acquirer     ManagerAcquirer
+	Policy       *BuildPolicy
+	Toolchains   *ToolchainCorpus
+	Connector    vm.Connector
+	Encoder      string
+	Images       buildmodel.Engine
 }
 
-type Indexer interface {
-	Index(context.Context, IndexRequest) (Catalog, error)
-}
-
-type IndexRequest struct {
-	Source builder.Source
-	RunID  string
-}
-
-type Catalog struct {
-	Tasks   map[string]CatalogTask
-	Queues  map[string]CatalogQueue
-	Streams []api.WorkerDeploymentStream
-}
-
-type CatalogTask struct {
-	FilePath   string
-	ExportName string
-}
-
-type CatalogQueue struct {
-	ConcurrencyLimit *int32
-}
-
-type GuestIndexer struct {
-	Connector vm.Connector
-	TempDir   string
-}
-
-func (p GuestIndexer) Index(ctx context.Context, request IndexRequest) (_ Catalog, returnErr error) {
-	if p.Connector == nil {
-		return Catalog{}, errors.New("deployment indexer guest connector is required")
-	}
-	source := request.Source
-	if strings.TrimSpace(source.ProjectRoot) == "" {
-		return Catalog{}, errors.New("source project root is required")
-	}
-	sourceTar, cleanup, err := archive.CreateTarWithOptions(source.ProjectRoot, p.TempDir, archive.TarOptions{
-		ExcludePatterns: []string{"**/.git/**"},
-	})
+func (builder Builder) Build(
+	ctx context.Context,
+	lease api.WorkerDeploymentBuildLease,
+	deployment api.WorkerDeploymentBuild,
+) (json.RawMessage, error) {
+	result, err := builder.build(ctx, lease, deployment)
 	if err != nil {
-		return Catalog{}, err
+		var guestError *vm.GuestError
+		if errors.As(err, &guestError) {
+			return nil, buildGuestDeliveryFailure(err)
+		}
+		var fatal interface{ FatalWorker() bool }
+		if errors.As(err, &fatal) && fatal.FatalWorker() {
+			return nil, err
+		}
+		return nil, err
 	}
-	defer cleanup()
-
-	session, err := p.Connector.Connect(ctx, vm.ConnectRequest{
-		OwnerKind: vm.OwnerBuild,
-		Resources: compute.BuildGuestResources(),
-		Network:   compute.DefaultNetworkPolicy(),
-	})
+	raw, err := CanonicalBuildResult(result)
 	if err != nil {
-		return Catalog{}, vm.NewGuestError(fmt.Errorf("connect deployment indexer guest: %w", err))
+		return nil, fmt.Errorf("encode canonical build result: %w", err)
+	}
+	return json.RawMessage(raw), nil
+}
+
+func (builder Builder) build(
+	ctx context.Context,
+	lease api.WorkerDeploymentBuildLease,
+	work api.WorkerDeploymentBuild,
+) (_ BuildResult, returnErr error) {
+	if err := builder.validate(); err != nil {
+		return BuildResult{}, err
+	}
+	runtimeDescriptor, err := RuntimeDescriptorFromWire(work.Runtime)
+	if err != nil {
+		return failedBuild(BuildFailureUnsupportedToolchain, err), nil
+	}
+	target, err := builder.Policy.Resolve(
+		runtimeDescriptor.Digest,
+		work.StandardToolchainDigest,
+		work.BuildContractVersion,
+	)
+	if err != nil || target.Runtime != runtimeDescriptor {
+		return failedBuild(
+			BuildFailureUnsupportedToolchain,
+			errors.New("Deployment build target is not admitted by Worker policy"),
+		), nil
+	}
+	toolchain, err := builder.Policy.ResolveToolchain(
+		target.StandardToolchainDigest,
+	)
+	if err != nil {
+		return failedBuild(BuildFailureUnsupportedToolchain, err), nil
+	}
+
+	source, selection, err := builder.snapshotSource(ctx, work.DeploymentSource)
+	if err != nil {
+		return failedBuild(BuildFailureInvalidSource, err), nil
 	}
 	defer func() {
-		if err := session.Close(context.Background()); err != nil {
-			returnErr = errors.Join(returnErr, vm.NewGuestError(fmt.Errorf("close deployment indexer guest: %w", err)))
+		returnErr = errors.Join(returnErr, source.Close())
+	}()
+
+	selector := NewManagerSelector(selection.Manager, target.Runtime.Architecture)
+	capsule, err := builder.Acquirer.Acquire(ctx, selector)
+	if err != nil {
+		var guestError *vm.GuestError
+		if errors.As(err, &guestError) {
+			return BuildResult{}, err
+		}
+		reason := BuildFailureManagerNotFound
+		if errors.Is(err, ErrManagerProtocolUnsupported) {
+			reason = BuildFailureManagerUnsupported
+		}
+		return failedBuild(reason, err), nil
+	}
+	capsuleDigest, err := ManagerCapsuleDigest(capsule)
+	if err != nil {
+		return BuildResult{}, err
+	}
+
+	managerSnapshot, err := builder.Managers.Snapshot(
+		ctx,
+		builder.WorkDir,
+		capsule,
+	)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, managerSnapshot.Close())
+	}()
+	runtimeSnapshot, err := SnapshotRuntimeObject(
+		ctx,
+		builder.RuntimeStore,
+		builder.WorkDir,
+		target.Runtime,
+	)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, runtimeSnapshot.Close())
+	}()
+	toolchainFile, err := builder.Toolchains.OpenToolchain(ctx, toolchain)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, toolchainFile.Close())
+	}()
+	toolchainSnapshot, err := snapshotToolchain(
+		ctx,
+		builder.WorkDir,
+		toolchain.ToolchainClosure,
+		toolchainFile.File(),
+	)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, toolchainSnapshot.Close())
+	}()
+
+	if _, err := source.Seek(0, io.SeekStart); err != nil {
+		return BuildResult{}, fmt.Errorf("rewind submitted source: %w", err)
+	}
+	guest := BuildGuest{
+		Connector: builder.Connector,
+		WorkDir:   builder.WorkDir,
+		Encoder:   builder.Encoder,
+	}
+	install, err := guest.Install(
+		ctx,
+		lease.ID,
+		BuildInstallRequest{
+			FormatVersion:        BuildGuestFormatVersion,
+			Manager:              capsule,
+			ManagerCapsuleDigest: capsuleDigest,
+			Runtime:              target.Runtime,
+			StandardToolchain:    toolchain,
+			SourceDigest:         work.DeploymentSource.Digest,
+			SourceSizeBytes:      work.DeploymentSource.SizeBytes,
+		},
+		source,
+		managerSnapshot,
+		runtimeSnapshot,
+		toolchainSnapshot,
+	)
+	if err != nil {
+		var failure BuildFailure
+		if errors.As(err, &failure) {
+			return failedBuild(failure.Reason, failure), nil
+		}
+		return BuildResult{}, err
+	}
+	tree := install.Tree
+	fail := func(reason BuildFailureReason, cause error) BuildResult {
+		result := failedBuild(reason, cause)
+		result.Logs = &install.Logs
+		return result
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, tree.Close())
+	}()
+	treeDescriptor, err := tree.Descriptor()
+	if err != nil {
+		return BuildResult{}, err
+	}
+	analysis, err := guest.Analyze(
+		ctx,
+		lease.ID,
+		BuildAnalysisRequest{
+			FormatVersion:     BuildGuestFormatVersion,
+			Runtime:           target.Runtime,
+			StandardToolchain: toolchain,
+			Tree:              treeDescriptor,
+		},
+		runtimeSnapshot,
+		toolchainSnapshot,
+		tree,
+	)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	if analysis.Outcome == AnalysisOutcomeFailed {
+		return fail(
+			BuildFailureAnalysisFailed,
+			errors.New(analysis.Failed.Error.Message),
+		), nil
+	}
+	plan, err := ParseBuildPlan([]byte(analysis.Succeeded.Files[0].Content))
+	if err != nil {
+		return fail(BuildFailureInvalidPlan, err), nil
+	}
+	provenance := BuildProvenance{
+		Architecture:         target.Runtime.Architecture,
+		BuildContractVersion: target.BuildContractVersion,
+		Manager: ProgramManager{
+			CapsuleDigest: capsuleDigest,
+			Name:          selection.Manager.Name,
+			Version:       selection.Manager.Version,
+		},
+		RuntimeDigest:           target.Runtime.Digest,
+		StandardToolchainDigest: target.StandardToolchainDigest,
+		Submitted: ProgramSubmittedSource{
+			LockfileDigest: selection.LockfileDigest,
+			LockfileName:   selection.LockfileName,
+			SourceDigest:   work.DeploymentSource.Digest,
+		},
+	}
+
+	var receipt *ProgramReceipt
+	if len(buildPlanProgramDeclarations(plan)) != 0 {
+		program, err := EncodeProgram(
+			ctx,
+			builder.WorkDir,
+			builder.Encoder,
+			tree,
+			analysis,
+			provenance,
+		)
+		if err != nil {
+			return fail(BuildFailureOutputInvalid, err), nil
+		}
+		defer func() {
+			returnErr = errors.Join(returnErr, program.Close())
+		}()
+		proof, err := guest.Prove(
+			ctx,
+			lease.ID,
+			ProgramProofRequest{
+				FormatVersion: BuildGuestFormatVersion,
+				Runtime:       target.Runtime,
+				Code:          program.Receipt.Code,
+				Dependencies:  program.Receipt.Dependencies,
+			},
+			runtimeSnapshot,
+			program,
+		)
+		if err != nil {
+			return BuildResult{}, err
+		}
+		if proof.Outcome == ProgramProofFailed {
+			return fail(
+				BuildFailureProgramInvalid,
+				errors.New(proof.Error.Message),
+			), nil
+		}
+		if err := ValidateProgramProof(proof, program.Receipt.Index); err != nil {
+			return BuildResult{}, err
+		}
+		published, err := program.Publish(ctx, builder.CAS)
+		if err != nil {
+			return BuildResult{}, err
+		}
+		receipt = &published
+	}
+
+	images, err := builder.buildWorkspaceImages(
+		ctx,
+		lease,
+		plan,
+		tree,
+	)
+	if err != nil {
+		var fatal interface{ FatalWorker() bool }
+		if errors.As(err, &fatal) && fatal.FatalWorker() {
+			return BuildResult{}, err
+		}
+		return fail(BuildFailureWorkspaceImageFailed, err), nil
+	}
+	result := BuildResult{
+		FormatVersion: BuildResultFormatVersion,
+		Outcome:       BuildOutcomeSucceeded,
+		Logs:          &install.Logs,
+		Succeeded: &BuildSucceeded{
+			Plan:            plan,
+			Provenance:      provenance,
+			ProgramReceipt:  receipt,
+			WorkspaceImages: images,
+		},
+	}
+	if err := ValidateBuildResultTarget(
+		result,
+		target.Runtime.Digest,
+		target.Runtime.Architecture,
+	); err != nil {
+		return BuildResult{}, err
+	}
+	return result, nil
+}
+
+func (builder Builder) validate() error {
+	switch {
+	case builder.WorkDir == "" ||
+		!filepath.IsAbs(builder.WorkDir) ||
+		filepath.Clean(builder.WorkDir) != builder.WorkDir:
+		return errors.New("deployment build work directory must be an absolute clean path")
+	case builder.CAS == nil:
+		return errors.New("deployment build CAS is required")
+	case builder.RuntimeStore == nil:
+		return errors.New("managed Runtime store is required")
+	case builder.Managers == nil:
+		return errors.New("Manager store is required")
+	case builder.Policy == nil:
+		return errors.New("build policy is required")
+	case builder.Toolchains == nil:
+		return errors.New("standard toolchain corpus is required")
+	case builder.Connector == nil:
+		return errors.New("build guest connector is required")
+	case builder.Images == nil:
+		return errors.New("Workspace image builder is required")
+	}
+	if err := validateProgramEncoder(builder.Encoder); err != nil {
+		return err
+	}
+	return nil
+}
+
+func failedBuild(reason BuildFailureReason, cause error) BuildResult {
+	message := "build failed"
+	if cause != nil && strings.TrimSpace(cause.Error()) != "" {
+		message = cause.Error()
+	}
+	if len(message) > maxBuildFailureMessageBytes {
+		message = truncateUTF8(message, maxBuildFailureMessageBytes)
+	}
+	result := BuildResult{
+		FormatVersion: BuildResultFormatVersion,
+		Outcome:       BuildOutcomeFailed,
+		Failed: &BuildFailed{Error: BuildError{
+			ReasonCode: reason,
+			Message:    message,
+		}},
+	}
+	var failure BuildFailure
+	if errors.As(cause, &failure) {
+		result.Logs = failure.Logs
+	}
+	return result
+}
+
+type submittedSource struct {
+	*os.File
+	path string
+}
+
+func (source *submittedSource) Close() error {
+	if source == nil || source.File == nil {
+		return nil
+	}
+	closeErr := source.File.Close()
+	removeErr := os.Remove(source.path)
+	source.File = nil
+	source.path = ""
+	return errors.Join(closeErr, removeErr)
+}
+
+func (builder Builder) snapshotSource(
+	ctx context.Context,
+	artifact api.DeploymentSourceArtifact,
+) (_ *submittedSource, selection SourceSelection, returnErr error) {
+	if artifact.MediaType != api.DeploymentSourceArtifactMediaType ||
+		!sha256DigestPattern.MatchString(artifact.Digest) ||
+		artifact.SizeBytes < 1 ||
+		artifact.SizeBytes > archive.MaxSourceArtifactBytes {
+		return nil, SourceSelection{}, errors.New("submitted source descriptor is invalid")
+	}
+	object, err := builder.CAS.Stat(ctx, artifact.Digest)
+	if err != nil {
+		return nil, SourceSelection{}, fmt.Errorf("stat submitted source: %w", err)
+	}
+	if object.Digest != artifact.Digest ||
+		object.SizeBytes != artifact.SizeBytes ||
+		object.MediaType != artifact.MediaType {
+		return nil, SourceSelection{}, errors.New("submitted source object does not match descriptor")
+	}
+	body, err := builder.CAS.Get(ctx, artifact.Digest)
+	if err != nil {
+		return nil, SourceSelection{}, fmt.Errorf("open submitted source: %w", err)
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, body.Close())
+	}()
+	file, err := os.CreateTemp(builder.WorkDir, ".helmr-source-")
+	if err != nil {
+		return nil, SourceSelection{}, err
+	}
+	source := &submittedSource{File: file, path: file.Name()}
+	defer func() {
+		if returnErr != nil {
+			returnErr = errors.Join(returnErr, source.Close())
 		}
 	}()
-	stream := session.Stream()
-
-	runID := strings.TrimSpace(request.RunID)
-	if runID == "" {
-		runID = "deployment-index"
+	if err := file.Chmod(0o600); err != nil {
+		return nil, SourceSelection{}, err
 	}
-	if err := wire.WriteFileFrame(stream, wire.StreamHeader{Type: wire.StreamTypeCatalogDeployment, RunID: runID}, sourceTar.Path); err != nil {
-		return Catalog{}, vm.NewGuestError(fmt.Errorf("write deployment source: %w", err))
-	}
-	body, err := frameio.ReadMessageFrame(stream)
-	if err != nil {
-		return Catalog{}, vm.NewGuestError(fmt.Errorf("read deployment index: %w", err))
-	}
-	if frame, ok, err := wire.DecodeParseErrorFrame(body); err != nil {
-		return Catalog{}, fmt.Errorf("read deployment index: %w", err)
-	} else if ok {
-		return Catalog{}, task.ParseError{Kind: frame.Kind, Message: frame.Message}
-	}
-	catalog, err := decodeCatalog(body)
-	if err != nil {
-		return Catalog{}, vm.NewGuestError(fmt.Errorf("decode deployment index: %w", err))
-	}
-	return catalog, nil
-}
-
-func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) (api.WorkerDeploymentBuildResult, error) {
-	result, err := e.buildDeployment(ctx, lease, deployment)
-	if err == nil {
-		return result, nil
-	}
-	var guestError *vm.GuestError
-	if errors.As(err, &guestError) {
-		return api.WorkerDeploymentBuildResult{}, buildGuestDeliveryFailure(err)
-	}
-	var fatal interface {
-		FatalWorker() bool
-	}
-	if errors.As(err, &fatal) && fatal.FatalWorker() {
-		return api.WorkerDeploymentBuildResult{}, err
-	}
-	return failedDeploymentBuild(err), nil
-}
-
-func (e Builder) buildDeployment(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) (api.WorkerDeploymentBuildResult, error) {
-	if e.CAS == nil {
-		return api.WorkerDeploymentBuildResult{}, errors.New("deployment build CAS is required")
-	}
-	if e.Indexer == nil {
-		return api.WorkerDeploymentBuildResult{}, errors.New("deployment indexer is required")
-	}
-	if e.Compiler == nil {
-		return api.WorkerDeploymentBuildResult{}, task.ErrCompilerRequired
-	}
-	if e.ImageBuilder == nil {
-		return api.WorkerDeploymentBuildResult{}, errors.New("deployment image builder is required")
-	}
-	source, cleanup, err := materializeSourceArtifact(ctx, e.WorkDir, e.CAS, deployment.DeploymentSource, "deployment")
-	if err != nil {
-		return api.WorkerDeploymentBuildResult{}, err
-	}
-	defer cleanup()
-
-	index, err := e.Indexer.Index(ctx, IndexRequest{Source: source, RunID: lease.DeploymentID})
-	if err != nil {
-		return api.WorkerDeploymentBuildResult{}, err
-	}
-	taskIDs := make([]string, 0, len(index.Tasks))
-	for taskID := range index.Tasks {
-		taskIDs = append(taskIDs, taskID)
-	}
-	sort.Strings(taskIDs)
-	if len(taskIDs) == 0 {
-		return api.WorkerDeploymentBuildResult{}, errors.New("deployment source must contain at least one task")
-	}
-
-	tasks := make([]api.WorkerDeploymentBuildTask, 0, len(taskIDs))
-	queues := make([]api.WorkerDeploymentQueue, 0, len(index.Queues))
-	for queueName, queue := range index.Queues {
-		queues = append(queues, api.WorkerDeploymentQueue{
-			Name:             queueName,
-			ConcurrencyLimit: queue.ConcurrencyLimit,
-		})
-	}
-	sort.Slice(queues, func(i, j int) bool {
-		return queues[i].Name < queues[j].Name
-	})
-	casObjects := make([]api.CASObject, 0, len(taskIDs)*2+2)
-	sandboxImages := map[string]api.CASObject{}
-	for _, taskID := range taskIDs {
-		indexTask := index.Tasks[taskID]
-		if err := api.ValidateTaskID(taskID); err != nil {
-			return api.WorkerDeploymentBuildResult{}, err
-		}
-		bundle, err := e.Compiler.Compile(ctx, task.CompileRequest{Source: source, TaskID: taskID})
-		if err != nil {
-			return api.WorkerDeploymentBuildResult{}, err
-		}
-		filePath := strings.TrimSpace(indexTask.FilePath)
-		if filePath == "" && bundle != nil && bundle.Task != nil {
-			filePath = strings.TrimSpace(bundle.Task.ModulePath)
-		}
-		if filePath == "" {
-			return api.WorkerDeploymentBuildResult{}, fmt.Errorf("task %q file_path is required", taskID)
-		}
-		exportName := strings.TrimSpace(indexTask.ExportName)
-		if exportName == "" {
-			return api.WorkerDeploymentBuildResult{}, fmt.Errorf("task %q export_name is required", taskID)
-		}
-		resources, err := deploymentTaskResources(bundle)
-		if err != nil {
-			return api.WorkerDeploymentBuildResult{}, fmt.Errorf("task %q resources: %w", taskID, err)
-		}
-		network, err := deploymentTaskNetwork(bundle)
-		if err != nil {
-			return api.WorkerDeploymentBuildResult{}, fmt.Errorf("task %q network: %w", taskID, err)
-		}
-		sandbox, err := deploymentTaskSandbox(bundle)
-		if err != nil {
-			return api.WorkerDeploymentBuildResult{}, fmt.Errorf("task %q sandbox: %w", taskID, err)
-		}
-		maxDurationSeconds, err := deploymentTaskMaxDurationSeconds(bundle)
-		if err != nil {
-			return api.WorkerDeploymentBuildResult{}, fmt.Errorf("task %q max duration: %w", taskID, err)
-		}
-		schedules := deploymentTaskSchedules(bundle)
-		imageObject, ok := sandboxImages[sandbox.id]
-		if !ok {
-			imageArtifact, err := e.ImageBuilder.Build(ctx, builder.Request{
-				RunID:  lease.DeploymentID,
-				TaskID: taskID,
-				Bundle: bundle,
-				Source: source,
-			})
-			if err != nil {
-				return api.WorkerDeploymentBuildResult{}, fmt.Errorf("build sandbox %q image: %w", sandbox.id, err)
-			}
-			imageFile, err := os.Open(imageArtifact.ImageTarPath)
-			if err != nil {
-				cleanupBuildArtifact(imageArtifact)
-				return api.WorkerDeploymentBuildResult{}, fmt.Errorf("open sandbox %q image artifact: %w", sandbox.id, err)
-			}
-			object, putErr := e.CAS.Put(ctx, api.SandboxImageArtifactMediaType, imageFile)
-			closeErr := imageFile.Close()
-			cleanupBuildArtifact(imageArtifact)
-			if putErr != nil {
-				return api.WorkerDeploymentBuildResult{}, fmt.Errorf("store sandbox %q image artifact: %w", sandbox.id, putErr)
-			}
-			if closeErr != nil {
-				return api.WorkerDeploymentBuildResult{}, fmt.Errorf("close sandbox %q image artifact: %w", sandbox.id, closeErr)
-			}
-			imageObject = api.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}
-			sandboxImages[sandbox.id] = imageObject
-			casObjects = append(casObjects, imageObject)
-		}
-		body, err := proto.Marshal(bundle)
-		if err != nil {
-			return api.WorkerDeploymentBuildResult{}, fmt.Errorf("marshal task %q bundle: %w", taskID, err)
-		}
-		object, err := e.CAS.Put(ctx, api.TaskBundleArtifactMediaType, bytes.NewReader(body))
-		if err != nil {
-			return api.WorkerDeploymentBuildResult{}, fmt.Errorf("store task %q bundle: %w", taskID, err)
-		}
-		casObjects = append(casObjects, api.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType})
-		queueName := deploymentTaskQueueName(bundle, taskID)
-		queue, ok := index.Queues[queueName]
-		if !ok {
-			return api.WorkerDeploymentBuildResult{}, fmt.Errorf("task %q references undefined queue %q", taskID, queueName)
-		}
-		tasks = append(tasks, api.WorkerDeploymentBuildTask{
-			TaskID:                     taskID,
-			SandboxID:                  sandbox.id,
-			SandboxFingerprint:         sandbox.fingerprint,
-			SandboxImageArtifact:       imageObject,
-			SandboxImageArtifactFormat: "oci-tar",
-			SandboxImageDigest:         imageObject.Digest,
-			SandboxImageFormat:         "oci-tar",
-			WorkspaceMountPath:         sandbox.workspaceMountPath,
-			FilesystemFormat:           sandbox.filesystemFormat,
-			FilePath:                   filePath,
-			ExportName:                 exportName,
-			HandlerEntrypoint:          filePath + "#" + exportName,
-			BundleDigest:               object.Digest,
-			BundleFormatVersion:        api.CurrentBundleFormatVersion,
-			RequestedMilliCPU:          resources.MilliCPU,
-			RequestedMemoryMiB:         resources.MemoryMiB,
-			RequestedDiskMiB:           resources.DiskMiB,
-			Network:                    network,
-			QueueName:                  queueName,
-			ConcurrencyLimit:           queue.ConcurrencyLimit,
-			TTL:                        deploymentTaskTTL(bundle),
-			MaxDurationSeconds:         maxDurationSeconds,
-			RetryPolicy:                deploymentTaskRetryPolicy(bundle),
-			Secrets:                    deploymentTaskSecrets(bundle),
-			Schedules:                  schedules,
-		})
-	}
-
-	manifest := map[string]any{
-		"deployment_id":            deployment.ID,
-		"deployment_version":       deployment.Version,
-		"api_version":              deployment.APIVersion,
-		"sdk_version":              deployment.SDKVersion,
-		"cli_version":              deployment.CLIVersion,
-		"bundle_format_version":    deployment.BundleFormatVersion,
-		"worker_protocol_version":  deployment.WorkerProtocolVersion,
-		"deployment_source_digest": deployment.DeploymentSource.Digest,
-		"tasks":                    tasks,
-	}
-	manifestBody, err := json.Marshal(manifest)
-	if err != nil {
-		return api.WorkerDeploymentBuildResult{}, fmt.Errorf("marshal deployment manifest: %w", err)
-	}
-	deploymentManifest, err := e.CAS.Put(ctx, api.DeploymentManifestArtifactMediaType, bytes.NewReader(manifestBody))
-	if err != nil {
-		return api.WorkerDeploymentBuildResult{}, fmt.Errorf("store deployment manifest: %w", err)
-	}
-	buildManifestBody, err := json.Marshal(map[string]any{
-		"deployment_id":              deployment.ID,
-		"deployment_version":         deployment.Version,
-		"api_version":                deployment.APIVersion,
-		"sdk_version":                deployment.SDKVersion,
-		"cli_version":                deployment.CLIVersion,
-		"bundle_format_version":      deployment.BundleFormatVersion,
-		"worker_protocol_version":    deployment.WorkerProtocolVersion,
-		"deployment_source_digest":   deployment.DeploymentSource.Digest,
-		"deployment_manifest_digest": deploymentManifest.Digest,
-	})
-	if err != nil {
-		return api.WorkerDeploymentBuildResult{}, fmt.Errorf("marshal build manifest: %w", err)
-	}
-	buildManifest, err := e.CAS.Put(ctx, api.BuildManifestArtifactMediaType, bytes.NewReader(buildManifestBody))
-	if err != nil {
-		return api.WorkerDeploymentBuildResult{}, fmt.Errorf("store build manifest: %w", err)
-	}
-	casObjects = append(casObjects,
-		api.CASObject{Digest: deploymentManifest.Digest, SizeBytes: deploymentManifest.SizeBytes, MediaType: deploymentManifest.MediaType},
-		api.CASObject{Digest: buildManifest.Digest, SizeBytes: buildManifest.SizeBytes, MediaType: buildManifest.MediaType},
+	digest := sha256.New()
+	written, err := io.Copy(
+		io.MultiWriter(file, digest),
+		io.LimitReader(body, artifact.SizeBytes+1),
 	)
-	return api.WorkerDeploymentBuildResult{
-		BuildManifestDigest:      buildManifest.Digest,
-		DeploymentManifestDigest: deploymentManifest.Digest,
-		Tasks:                    tasks,
-		Queues:                   queues,
-		Streams:                  index.Streams,
-		CASObjects:               casObjects,
-	}, nil
-}
-
-func failedDeploymentBuild(err error) api.WorkerDeploymentBuildResult {
-	message := err.Error()
-	return api.WorkerDeploymentBuildResult{Error: &message}
-}
-
-type deploymentSandboxBuildMetadata struct {
-	id                 string
-	fingerprint        string
-	workspaceMountPath string
-	filesystemFormat   string
-}
-
-func deploymentTaskSandbox(bundle *bundlev0.Bundle) (deploymentSandboxBuildMetadata, error) {
-	if bundle == nil || bundle.GetSandbox() == nil {
-		return deploymentSandboxBuildMetadata{}, errors.New("sandbox is required")
-	}
-	sandbox := bundle.GetSandbox()
-	sandboxID := strings.TrimSpace(sandbox.GetId())
-	if sandboxID == "" {
-		return deploymentSandboxBuildMetadata{}, errors.New("id is required")
-	}
-	workspace := sandbox.GetWorkspace()
-	if workspace == nil || strings.TrimSpace(workspace.GetMountPath()) == "" {
-		return deploymentSandboxBuildMetadata{}, errors.New("workspace mount_path is required")
-	}
-	fingerprint, err := sandboxContractFingerprint(bundle)
 	if err != nil {
-		return deploymentSandboxBuildMetadata{}, fmt.Errorf("sandbox fingerprint: %w", err)
+		return nil, SourceSelection{}, err
 	}
-	return deploymentSandboxBuildMetadata{
-		id:                 sandboxID,
-		fingerprint:        fingerprint,
-		workspaceMountPath: strings.TrimSpace(workspace.GetMountPath()),
-		filesystemFormat:   "tar",
-	}, nil
-}
-
-type sandboxContractFingerprintDocument struct {
-	ContractVersion  int                             `json:"contract_version"`
-	FilesystemFormat string                          `json:"filesystem_format"`
-	Network          sandboxContractNetwork          `json:"network"`
-	SandboxID        string                          `json:"sandbox_id"`
-	Workspace        sandboxContractWorkspaceBinding `json:"workspace"`
-}
-
-type sandboxContractWorkspaceBinding struct {
-	MountPath string `json:"mount_path"`
-}
-
-type sandboxContractNetwork struct {
-	Allow    []string `json:"allow"`
-	Deny     []string `json:"deny"`
-	Internet bool     `json:"internet"`
-}
-
-func sandboxContractFingerprint(bundle *bundlev0.Bundle) (string, error) {
-	if bundle == nil || bundle.GetSandbox() == nil {
-		return "", errors.New("sandbox is required")
+	if written != artifact.SizeBytes ||
+		"sha256:"+hex.EncodeToString(digest.Sum(nil)) != artifact.Digest {
+		return nil, SourceSelection{}, errors.New("submitted source bytes do not match descriptor")
 	}
-	sandbox := bundle.GetSandbox()
-	if sandbox.GetWorkspace() == nil {
-		return "", errors.New("workspace is required")
+	if err := file.Sync(); err != nil {
+		return nil, SourceSelection{}, err
 	}
-	network := compute.DefaultNetworkPolicy()
-	if input := sandbox.GetNetwork(); input != nil {
-		network = compute.NetworkPolicy{
-			Internet: input.GetInternet(),
-			Allow:    append([]string(nil), input.GetAllow()...),
-			Deny:     append([]string(nil), input.GetDeny()...),
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, SourceSelection{}, err
+	}
+	selection, err = InspectSource(file)
+	if err != nil {
+		return nil, SourceSelection{}, err
+	}
+	return source, selection, nil
+}
+
+func (builder Builder) buildWorkspaceImages(
+	ctx context.Context,
+	lease api.WorkerDeploymentBuildLease,
+	plan BuildPlan,
+	tree *BuildTree,
+) (_ []WorkspaceImage, returnErr error) {
+	workspaces := make([]DefinitionInput, 0)
+	for _, definition := range plan.Definitions {
+		if definition.Kind == DefinitionKindWorkspace {
+			workspaces = append(workspaces, definition)
 		}
 	}
-	sort.Strings(network.Allow)
-	sort.Strings(network.Deny)
-	document := sandboxContractFingerprintDocument{
-		ContractVersion:  1,
-		FilesystemFormat: "tar",
-		Network: sandboxContractNetwork{
-			Allow:    network.Allow,
-			Deny:     network.Deny,
-			Internet: network.Internet,
-		},
-		SandboxID: strings.TrimSpace(sandbox.GetId()),
-		Workspace: sandboxContractWorkspaceBinding{
-			MountPath: strings.TrimSpace(sandbox.GetWorkspace().GetMountPath()),
-		},
+	if len(workspaces) == 0 {
+		return []WorkspaceImage{}, nil
 	}
-	body, err := json.Marshal(document)
+	sourceRoot, cleanup, err := tree.MaterializeApplication(ctx, builder.WorkDir)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	canonical, err := jsoncanon.Transform(body)
-	if err != nil {
-		return "", err
+	defer func() {
+		returnErr = errors.Join(returnErr, cleanup())
+	}()
+	images := make([]WorkspaceImage, 0, len(workspaces))
+	for _, definition := range workspaces {
+		artifact, err := builder.Images.BuildImage(ctx, buildmodel.Request{
+			RunID:       lease.ID,
+			WorkspaceID: definition.DeclaredID,
+			CacheScope:  lease.EnvironmentID,
+			Build:       definition.Workspace.ImageBuild,
+			Source:      buildmodel.Source{ProjectRoot: sourceRoot},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("build Workspace %q image: %w", definition.DeclaredID, err)
+		}
+		object, verifyErr := builder.storeWorkspaceImage(
+			ctx,
+			artifact,
+			definition.Workspace.Architecture,
+		)
+		cleanupErr := cleanupImageArtifact(artifact)
+		if verifyErr != nil || cleanupErr != nil {
+			return nil, errors.Join(verifyErr, cleanupErr)
+		}
+		images = append(images, WorkspaceImage{
+			DeclaredID: definition.DeclaredID,
+			Artifact: WorkspaceImageArtifact{
+				Digest:       object.Digest,
+				SizeBytes:    object.SizeBytes,
+				MediaType:    object.MediaType,
+				Architecture: definition.Workspace.Architecture,
+			},
+		})
 	}
-	sum := sha256.Sum256(canonical)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	return images, nil
 }
 
-func materializeSourceArtifact(ctx context.Context, workDir string, store cas.Store, artifact api.DeploymentSourceArtifact, label string) (builder.Source, func(), error) {
-	if store == nil {
-		return builder.Source{}, func() {}, errors.New("deployment source artifact CAS is required")
-	}
-	if strings.TrimSpace(workDir) == "" {
-		workDir = filepath.Join(os.TempDir(), "helmr-worker")
-	}
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		return builder.Source{}, func() {}, fmt.Errorf("create worker work dir: %w", err)
-	}
-	destination, err := os.MkdirTemp(workDir, label+"-artifact-")
+func (builder Builder) storeWorkspaceImage(
+	ctx context.Context,
+	artifact buildmodel.Artifact,
+	architecture RuntimeArchitecture,
+) (cas.Object, error) {
+	info, err := os.Stat(artifact.ImageTarPath)
 	if err != nil {
-		return builder.Source{}, func() {}, fmt.Errorf("create deployment source artifact dir: %w", err)
+		return cas.Object{}, err
 	}
-	cleanup := func() { _ = os.RemoveAll(destination) }
-	body, err := store.Get(ctx, strings.TrimSpace(artifact.Digest))
+	if !info.Mode().IsRegular() ||
+		info.Size() < 1 ||
+		info.Size() > maxWorkspaceImageBytes {
+		return cas.Object{}, errors.New(
+			"Workspace image size is outside the build contract",
+		)
+	}
+	image, err := os.Open(artifact.ImageTarPath)
 	if err != nil {
-		cleanup()
-		return builder.Source{}, func() {}, fmt.Errorf("get deployment source artifact: %w", err)
+		return cas.Object{}, err
 	}
-	if err := archive.ExtractTar(body, destination); err != nil {
-		_ = body.Close()
-		cleanup()
-		return builder.Source{}, func() {}, fmt.Errorf("extract deployment source artifact: %w", err)
+	metadata, verifyErr := oci.Inspect(image)
+	if verifyErr == nil {
+		if metadata.ManifestCount != 1 {
+			verifyErr = errors.New(
+				"Workspace image must contain exactly one OCI manifest",
+			)
+		}
 	}
-	if err := body.Close(); err != nil {
-		cleanup()
-		return builder.Source{}, func() {}, fmt.Errorf("close deployment source artifact: %w", err)
+	if verifyErr == nil {
+		verifyErr = validateWorkspaceImagePlatform(
+			metadata.Platform,
+			architecture,
+		)
 	}
-	return builder.Source{CheckoutRoot: destination, ProjectRoot: destination, SHA: strings.TrimSpace(artifact.Digest)}, cleanup, nil
+	closeErr := image.Close()
+	if verifyErr != nil || closeErr != nil {
+		return cas.Object{}, errors.Join(verifyErr, closeErr)
+	}
+	image, err = os.Open(artifact.ImageTarPath)
+	if err != nil {
+		return cas.Object{}, err
+	}
+	object, putErr := builder.CAS.Put(
+		ctx,
+		WorkspaceImageArtifactMediaType,
+		io.LimitReader(image, maxWorkspaceImageBytes+1),
+	)
+	closeErr = image.Close()
+	if putErr != nil || closeErr != nil {
+		return cas.Object{}, errors.Join(putErr, closeErr)
+	}
+	if object.SizeBytes < 1 || object.SizeBytes > maxWorkspaceImageBytes {
+		return cas.Object{}, errors.New("Workspace image size is outside the build contract")
+	}
+	return object, nil
 }
 
-func cleanupBuildArtifact(artifact builder.Artifact) {
+func cleanupImageArtifact(artifact buildmodel.Artifact) error {
 	root := filepath.Clean(strings.TrimSpace(artifact.RootPath))
-	if root == "" || root == "." || root == string(filepath.Separator) {
-		return
+	if root == "" ||
+		!filepath.IsAbs(root) ||
+		root == string(filepath.Separator) {
+		return errors.New("Workspace image artifact root is unsafe")
 	}
-	_ = os.RemoveAll(root)
+	for _, name := range []string{
+		artifact.ImageTarPath,
+		artifact.ConfigPath,
+		artifact.ManifestPath,
+	} {
+		candidate := filepath.Clean(strings.TrimSpace(name))
+		relative, err := filepath.Rel(root, candidate)
+		if err != nil ||
+			relative == "." ||
+			relative == ".." ||
+			strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return errors.New("Workspace image artifact paths are not confined")
+		}
+	}
+	return os.RemoveAll(root)
 }
 
-func decodeCatalog(body []byte) (Catalog, error) {
-	var payload struct {
-		Tasks map[string]struct {
-			OriginFile string `json:"originFile"`
-			ModulePath string `json:"modulePath"`
-			ExportName string `json:"exportName"`
-		} `json:"tasks"`
-		Streams []struct {
-			Name              string          `json:"name"`
-			Direction         string          `json:"direction"`
-			SchemaFingerprint string          `json:"schema_fingerprint"`
-			SchemaJSON        json.RawMessage `json:"schema_json"`
-		} `json:"streams"`
-		Queues []struct {
-			Name             string `json:"name"`
-			ConcurrencyLimit *int32 `json:"concurrency_limit"`
-		} `json:"queues"`
+func validateWorkspaceImagePlatform(
+	platform *oci.Platform,
+	architecture RuntimeArchitecture,
+) error {
+	expected := ""
+	switch architecture {
+	case ArchitectureX8664:
+		expected = "amd64"
+	case ArchitectureAArch64:
+		expected = "arm64"
+	default:
+		return fmt.Errorf(
+			"Workspace image architecture %q is unsupported",
+			architecture,
+		)
 	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return Catalog{}, fmt.Errorf("decode deployment index: %w", err)
+	if platform == nil ||
+		platform.OS != "linux" ||
+		platform.Architecture != expected {
+		return fmt.Errorf(
+			"Workspace image platform does not match linux/%s",
+			expected,
+		)
 	}
-	index := Catalog{
-		Tasks:   make(map[string]CatalogTask, len(payload.Tasks)),
-		Queues:  make(map[string]CatalogQueue, len(payload.Queues)),
-		Streams: make([]api.WorkerDeploymentStream, 0, len(payload.Streams)),
-	}
-	for taskID, task := range payload.Tasks {
-		filePath := strings.TrimSpace(task.ModulePath)
-		if filePath == "" {
-			filePath = strings.TrimSpace(task.OriginFile)
-		}
-		index.Tasks[taskID] = CatalogTask{
-			FilePath:   filePath,
-			ExportName: strings.TrimSpace(task.ExportName),
-		}
-	}
-	for i, stream := range payload.Streams {
-		schemaJSON := json.RawMessage("null")
-		if len(stream.SchemaJSON) > 0 {
-			if !json.Valid(stream.SchemaJSON) {
-				return Catalog{}, fmt.Errorf("deployment index stream %d schema_json must be valid JSON", i)
-			}
-			schemaJSON = stream.SchemaJSON
-		}
-		index.Streams = append(index.Streams, api.WorkerDeploymentStream{
-			Name:              strings.TrimSpace(stream.Name),
-			Direction:         strings.TrimSpace(stream.Direction),
-			SchemaFingerprint: strings.TrimSpace(stream.SchemaFingerprint),
-			SchemaJSON:        schemaJSON,
-		})
-	}
-	for i, queue := range payload.Queues {
-		name := strings.TrimSpace(queue.Name)
-		if err := api.ValidateQueueName(name); err != nil {
-			return Catalog{}, fmt.Errorf("deployment index queue %d: %w", i, err)
-		}
-		if queue.ConcurrencyLimit != nil && *queue.ConcurrencyLimit <= 0 {
-			return Catalog{}, fmt.Errorf("deployment index queue %q concurrency_limit must be positive", name)
-		}
-		if existing, ok := index.Queues[name]; ok {
-			if !sameOptionalInt32(existing.ConcurrencyLimit, queue.ConcurrencyLimit) {
-				return Catalog{}, fmt.Errorf("queue %q has conflicting concurrency_limit values", name)
-			}
-			continue
-		}
-		index.Queues[name] = CatalogQueue{ConcurrencyLimit: queue.ConcurrencyLimit}
-	}
-	return index, nil
+	return nil
 }
 
-func deploymentTaskResources(bundle *bundlev0.Bundle) (compute.ResourceVector, error) {
-	resources := compute.DefaultRunResources()
-	if bundle == nil || bundle.GetSandbox() == nil || bundle.GetSandbox().GetResources() == nil {
-		return resources, resources.Validate(true)
+func truncateUTF8(value string, maxBytes int) string {
+	if len(value) <= maxBytes {
+		return value
 	}
-	input := bundle.GetSandbox().GetResources()
-	if input.GetCpu() != 0 {
-		resources.MilliCPU = int64(input.GetCpu()) * 1000
+	value = value[:maxBytes]
+	for !utf8.ValidString(value) {
+		value = value[:len(value)-1]
 	}
-	if memory := strings.TrimSpace(input.GetMemory()); memory != "" {
-		memoryMiB, err := parseMemoryMiB(memory)
-		if err != nil {
-			return compute.ResourceVector{}, err
-		}
-		resources.MemoryMiB = memoryMiB
-	}
-	if disk := strings.TrimSpace(input.GetDisk()); disk != "" {
-		diskMiB, err := parseDiskMiB(disk)
-		if err != nil {
-			return compute.ResourceVector{}, err
-		}
-		resources.DiskMiB = diskMiB
-	}
-	return resources, resources.Validate(true)
+	return value
 }
 
-func deploymentTaskNetwork(bundle *bundlev0.Bundle) (compute.NetworkPolicy, error) {
-	network := compute.DefaultNetworkPolicy()
-	if bundle == nil || bundle.GetSandbox() == nil || bundle.GetSandbox().GetNetwork() == nil {
-		return network, network.Validate()
+func FindEncoder() (string, error) {
+	path, err := exec.LookPath("mksquashfs")
+	if err != nil {
+		return "", err
 	}
-	input := bundle.GetSandbox().GetNetwork()
-	network = compute.NetworkPolicy{
-		Internet: input.GetInternet(),
-		Allow:    append([]string(nil), input.GetAllow()...),
-		Deny:     append([]string(nil), input.GetDeny()...),
-	}
-	if len(network.Allow) > 0 {
-		return compute.NetworkPolicy{}, errors.New("network allow rules are not supported yet")
-	}
-	return network, network.Validate()
-}
-
-func deploymentTaskMaxDurationSeconds(bundle *bundlev0.Bundle) (int32, error) {
-	if bundle == nil || bundle.GetTask() == nil {
-		return 0, errors.New("bundle task is required")
-	}
-	value := bundle.GetTask().GetMaxDurationSeconds()
-	if value == 0 {
-		return 0, errors.New("bundle task max_duration_seconds is required")
-	}
-	if value > uint32(1<<31-1) {
-		return 0, fmt.Errorf("max_duration_seconds %d exceeds int32", value)
-	}
-	return int32(value), nil
-}
-
-func deploymentTaskQueueName(bundle *bundlev0.Bundle, taskID string) string {
-	if bundle == nil || bundle.GetTask() == nil || bundle.GetTask().GetQueue() == nil {
-		return "task/" + taskID
-	}
-	queueName := strings.TrimSpace(bundle.GetTask().GetQueue().GetName())
-	if queueName == "" {
-		return "task/" + taskID
-	}
-	return queueName
-}
-
-func deploymentTaskTTL(bundle *bundlev0.Bundle) string {
-	if bundle == nil || bundle.GetTask() == nil {
-		return ""
-	}
-	return strings.TrimSpace(bundle.GetTask().GetTtl())
-}
-
-func deploymentTaskRetryPolicy(bundle *bundlev0.Bundle) json.RawMessage {
-	if bundle == nil || bundle.GetTask() == nil {
-		return nil
-	}
-	retryPolicy := strings.TrimSpace(bundle.GetTask().GetRetryPolicyJson())
-	if retryPolicy == "" {
-		return nil
-	}
-	return json.RawMessage(retryPolicy)
-}
-
-func deploymentTaskSchedules(bundle *bundlev0.Bundle) []api.WorkerDeploymentTaskSchedule {
-	if bundle == nil || bundle.GetTask() == nil {
-		return nil
-	}
-	specs := bundle.GetTask().GetSchedules()
-	schedules := make([]api.WorkerDeploymentTaskSchedule, 0, len(specs))
-	for _, spec := range specs {
-		if spec == nil {
-			continue
-		}
-		schedules = append(schedules, api.WorkerDeploymentTaskSchedule{
-			ID:       strings.TrimSpace(spec.GetId()),
-			Cron:     strings.TrimSpace(spec.GetCron()),
-			Timezone: strings.TrimSpace(spec.GetTimezone()),
-			Active:   spec.Active,
-		})
-	}
-	return schedules
-}
-
-func parseMemoryMiB(input string) (int64, error) {
-	return parseResourceMiB(input, "memory", math.MaxInt32)
-}
-
-func deploymentTaskSecrets(bundle *bundlev0.Bundle) []api.SecretDeclaration {
-	if bundle == nil || bundle.GetTask() == nil {
-		return nil
-	}
-	placements := bundle.GetTask().GetSecrets()
-	secrets := make([]api.SecretDeclaration, 0, len(placements))
-	for _, placement := range placements {
-		if placement == nil {
-			continue
-		}
-		item := api.SecretDeclaration{Name: strings.TrimSpace(placement.GetName())}
-		runtimePlacement := placement.GetPlacement()
-		if runtimePlacement == nil {
-			secrets = append(secrets, item)
-			continue
-		}
-		switch value := runtimePlacement.GetKind().(type) {
-		case *bundlev0.Placement_Env:
-			item.Env = strings.TrimSpace(value.Env.GetName())
-		case *bundlev0.Placement_File:
-			item.File = strings.TrimSpace(value.File.GetPath())
-			item.Mode = strings.TrimSpace(value.File.GetMode())
-			item.Owner = strings.TrimSpace(value.File.GetOwner())
-		case *bundlev0.Placement_Dir:
-			item.Dir = strings.TrimSpace(value.Dir.GetPath())
-			item.Mode = strings.TrimSpace(value.Dir.GetMode())
-			item.Owner = strings.TrimSpace(value.Dir.GetOwner())
-		}
-		secrets = append(secrets, item)
-	}
-	return secrets
-}
-
-func parseDiskMiB(input string) (int64, error) {
-	return parseResourceMiB(input, "disk", math.MaxInt32)
-}
-
-func parseResourceMiB(input string, name string, maxMiB int64) (int64, error) {
-	value := strings.TrimSpace(input)
-	if value == "" {
-		return 0, fmt.Errorf("%s is required", name)
-	}
-	units := []struct {
-		suffix     string
-		multiplier int64
-	}{
-		{suffix: "kib", multiplier: 1},
-		{suffix: "ki", multiplier: 1},
-		{suffix: "mib", multiplier: 1024},
-		{suffix: "mi", multiplier: 1024},
-		{suffix: "gib", multiplier: 1024 * 1024},
-		{suffix: "gi", multiplier: 1024 * 1024},
-	}
-	lower := strings.ToLower(value)
-	for _, unit := range units {
-		if strings.HasSuffix(lower, unit.suffix) {
-			amountText := strings.TrimSpace(value[:len(value)-len(unit.suffix)])
-			amount, err := strconv.ParseInt(amountText, 10, 64)
-			if err != nil || amount <= 0 {
-				return 0, fmt.Errorf("%s %q must be a positive integer quantity", name, input)
-			}
-			if unit.multiplier == 1 {
-				if amount%1024 != 0 {
-					return 0, fmt.Errorf("%s %q must resolve to whole MiB", name, input)
-				}
-				amount /= 1024
-				if amount > maxMiB {
-					return 0, fmt.Errorf("%s %q exceeds max %d MiB", name, input, maxMiB)
-				}
-				return amount, nil
-			}
-			if amount > maxMiB/(unit.multiplier/1024) {
-				return 0, fmt.Errorf("%s %q exceeds max %d MiB", name, input, maxMiB)
-			}
-			return amount * unit.multiplier / 1024, nil
-		}
-	}
-	amount, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || amount <= 0 {
-		return 0, fmt.Errorf("%s %q must use MiB or GiB units", name, input)
-	}
-	if amount > maxMiB {
-		return 0, fmt.Errorf("%s %q exceeds max %d MiB", name, input, maxMiB)
-	}
-	return amount, nil
+	return filepath.Abs(path)
 }

@@ -17,13 +17,9 @@ type ArtifactKind string
 
 const (
 	ArtifactKindDeploymentSource              ArtifactKind = "deployment_source"
-	ArtifactKindBuildManifest                 ArtifactKind = "build_manifest"
-	ArtifactKindDeploymentManifest            ArtifactKind = "deployment_manifest"
 	ArtifactKindDeploymentProgramCode         ArtifactKind = "deployment_program_code"
 	ArtifactKindDeploymentProgramDependencies ArtifactKind = "deployment_program_dependencies"
 	ArtifactKindWorkspaceImage                ArtifactKind = "workspace_image"
-	ArtifactKindSandboxImage                  ArtifactKind = "sandbox_image"
-	ArtifactKindTaskBundle                    ArtifactKind = "task_bundle"
 	ArtifactKindRuntimeSubstrate              ArtifactKind = "runtime_substrate"
 	ArtifactKindRunCheckpointConfig           ArtifactKind = "run_checkpoint_config"
 	ArtifactKindRunCheckpointVmState          ArtifactKind = "run_checkpoint_vm_state"
@@ -1834,7 +1830,6 @@ type Deployment struct {
 	ApiVersion                      string             `json:"api_version"`
 	SdkVersion                      string             `json:"sdk_version"`
 	CliVersion                      string             `json:"cli_version"`
-	BundleFormatVersion             int32              `json:"bundle_format_version"`
 	WorkerProtocolVersion           string             `json:"worker_protocol_version"`
 	DeploymentSourceArtifactID      pgtype.UUID        `json:"deployment_source_artifact_id"`
 	ProgramCodeArtifactID           pgtype.UUID        `json:"program_code_artifact_id"`

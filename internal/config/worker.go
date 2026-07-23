@@ -22,6 +22,7 @@ func LoadWorker() (Worker, error) {
 		WorkerProviderRegion:         envString("HELMR_WORKER_PROVIDER_REGION"),
 		BuildPolicyPath:              envString("HELMR_BUILD_POLICY_PATH"),
 		RuntimeStoreURI:              envString("HELMR_RUNTIME_STORE_URI"),
+		ManagerStoreURI:              envString("HELMR_MANAGER_STORE_URI"),
 		WorkDir:                      envString("HELMR_WORKER_WORK_DIR"),
 		BuildCacheDir:                envString("HELMR_WORKER_BUILD_CACHE_DIR"),
 		BuildScratchDir:              envString("HELMR_WORKER_BUILD_SCRATCH_DIR"),
@@ -241,6 +242,9 @@ func LoadWorker() (Worker, error) {
 	}
 	if slices.Contains(cfg.WorkerRoles, "build") && cfg.BuildPolicyPath == "" {
 		return cfg, errors.New("HELMR_BUILD_POLICY_PATH is required for build workers")
+	}
+	if slices.Contains(cfg.WorkerRoles, "build") && cfg.ManagerStoreURI == "" {
+		return cfg, errors.New("HELMR_MANAGER_STORE_URI is required for build workers")
 	}
 	if slices.Contains(cfg.WorkerRoles, "build") && cfg.BuildCacheDir == "" {
 		return cfg, errors.New("HELMR_WORKER_BUILD_CACHE_DIR is required for build workers")

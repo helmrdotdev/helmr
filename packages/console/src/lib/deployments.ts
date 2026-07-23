@@ -8,26 +8,17 @@ type DeploymentSourceArtifact = {
 
 export type DeploymentStatus = "queued" | "building" | "deployed" | "failed";
 
-export type DeploymentTask = {
-  id: string;
-  task_id: string;
-  file_path?: string;
-  export_name?: string;
-  handler_entrypoint?: string;
-  bundle_digest?: string;
-  created_at: string;
-};
-
 export type Deployment = {
   id: string;
   version: string;
   project_id: string;
   environment_id: string;
   deployment_source: DeploymentSourceArtifact;
-  build_manifest_digest?: string;
-  deployment_manifest_digest?: string;
   status: DeploymentStatus;
-  tasks: DeploymentTask[];
+  tasks: string[];
+  actors: string[];
+  workspaces: string[];
+  run_streams: string[];
   created_at: string;
   building_at?: string;
   built_at?: string;

@@ -13,17 +13,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/adapter"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/cli/format"
+	"github.com/helmrdotdev/helmr/internal/projectconfig"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/spf13/cobra"
 )
 
 var (
-	deployAdapterRuntimePath = "node"
-	deployArchiveTempDir     string
+	deployConfigRuntimePath = "node"
+	deployArchiveTempDir    string
 )
 
 const deployDefaultWaitTimeout = 20 * time.Minute
@@ -85,7 +85,7 @@ func deployCommand() *cobra.Command {
 				return err
 			}
 			tarArchive, cleanup, err := archive.CreateTarWithOptions(absRoot, deployArchiveTempDir, archive.TarOptions{
-				ExcludePatterns: deployArchiveExcludePatterns(config),
+				CanonicalSource: true,
 			})
 			if err != nil {
 				return err
@@ -113,7 +113,6 @@ func deployCommand() *cobra.Command {
 				APIVersion:            api.CurrentAPIVersion,
 				SDKVersion:            sdkVersion,
 				CLIVersion:            version.Version,
-				BundleFormatVersion:   api.CurrentBundleFormatVersion,
 				WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
 			}
 			if control.UsesSessionScopedRoutes() {
@@ -529,13 +528,11 @@ func taskProjectFileExists(path string) bool {
 }
 
 type deployConfig struct {
-	Project        string    `json:"project"`
-	Dirs           []string  `json:"dirs"`
-	IgnorePatterns *[]string `json:"ignorePatterns"`
+	Project string `json:"project"`
 }
 
 func inspectDeployConfig(cmd *cobra.Command, cwd string) (deployConfig, error) {
-	stdout, err := runDeployAdapter(cmd, "inspect-config", cwd)
+	stdout, err := runConfigInspector(cmd, cwd)
 	if err != nil {
 		return deployConfig{}, fmt.Errorf("inspect helmr.config.ts: %w", err)
 	}
@@ -670,42 +667,23 @@ func quoteIsEscaped(value string, index int) bool {
 	return backslashes%2 == 1
 }
 
-func deployArchiveExcludePatterns(config deployConfig) []string {
-	patterns := []string{}
-	if config.IgnorePatterns != nil {
-		patterns = append(patterns, (*config.IgnorePatterns)...)
-	} else {
-		patterns = append(patterns,
-			"**/*.test.*",
-			"**/*.spec.*",
-			"**/_*.*",
-		)
+func runConfigInspector(cmd *cobra.Command, cwd string) ([]byte, error) {
+	runtimePath := firstNonEmpty(os.Getenv("HELMR_CONFIG_RUNTIME_PATH"), deployConfigRuntimePath)
+	if runtimePath == "" {
+		return nil, errors.New("config runtime path is required")
 	}
-	patterns = append(patterns,
-		"**/node_modules/**",
-		"**/.git/**",
-		"**/.helmr/**",
-		"**/.next/**",
-		"**/.env",
-		"**/.env.*",
-	)
-	return patterns
-}
-
-func runDeployAdapter(cmd *cobra.Command, commandName string, cwd string) ([]byte, error) {
-	adapterRuntimePath := firstNonEmpty(os.Getenv("HELMR_ADAPTER_RUNTIME_PATH"), deployAdapterRuntimePath)
-	if adapterRuntimePath == "" {
-		return nil, errors.New("adapter runtime path is required")
-	}
-	if err := validateDeployAdapterRuntime(cmd.Context(), adapterRuntimePath); err != nil {
+	if err := validateConfigRuntime(cmd.Context(), runtimePath); err != nil {
 		return nil, err
 	}
-	adapter, err := resolveDeployAdapter()
+	inspector, err := resolveConfigInspector()
 	if err != nil {
 		return nil, err
 	}
-	args := deployAdapterRuntimeArgs(adapter, commandName, "--cwd", cwd)
-	command := exec.CommandContext(cmd.Context(), adapterRuntimePath, args...)
+	command := exec.CommandContext(
+		cmd.Context(),
+		runtimePath,
+		configInspectorArgs(inspector, "--cwd", cwd)...,
+	)
 	command.Env = os.Environ()
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -721,7 +699,7 @@ func runDeployAdapter(cmd *cobra.Command, commandName string, cwd string) ([]byt
 	return stdout.Bytes(), nil
 }
 
-func validateDeployAdapterRuntime(ctx context.Context, runtimePath string) error {
+func validateConfigRuntime(ctx context.Context, runtimePath string) error {
 	const check = `const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
 if (major < 22 || (major === 22 && minor < 18)) {
   console.error(` + "`" + `node >=22.18 is required for helmr deploy; found ${process.versions.node}` + "`" + `);
@@ -735,40 +713,40 @@ if (major < 22 || (major === 22 && minor < 18)) {
 		if message != "" {
 			return errors.New(message)
 		}
-		return fmt.Errorf("adapter runtime %q is not available; install node >=22.18 or set HELMR_ADAPTER_RUNTIME_PATH", runtimePath)
+		return fmt.Errorf("config runtime %q is not available; install node >=22.18 or set HELMR_CONFIG_RUNTIME_PATH", runtimePath)
 	}
 	return nil
 }
 
-type deployAdapterFiles struct {
-	MainPath     string
+type configInspectorFiles struct {
+	ScriptPath   string
 	RegisterPath string
 }
 
-func deployAdapterRuntimeArgs(adapter deployAdapterFiles, args ...string) []string {
-	return append([]string{"--import", adapter.RegisterPath, adapter.MainPath}, args...)
+func configInspectorArgs(inspector configInspectorFiles, args ...string) []string {
+	return append([]string{"--import", inspector.RegisterPath, inspector.ScriptPath}, args...)
 }
 
-func resolveDeployAdapter() (deployAdapterFiles, error) {
-	explicitMain := strings.TrimSpace(os.Getenv("HELMR_ADAPTER_PATH"))
-	explicitRegister := strings.TrimSpace(os.Getenv("HELMR_ADAPTER_REGISTER_PATH"))
-	if explicitMain != "" || explicitRegister != "" {
-		if explicitMain == "" || explicitRegister == "" {
-			return deployAdapterFiles{}, errors.New("HELMR_ADAPTER_PATH and HELMR_ADAPTER_REGISTER_PATH must be set together")
+func resolveConfigInspector() (configInspectorFiles, error) {
+	explicitScript := strings.TrimSpace(os.Getenv("HELMR_CONFIG_INSPECTOR_PATH"))
+	explicitRegister := strings.TrimSpace(os.Getenv("HELMR_CONFIG_REGISTER_PATH"))
+	if explicitScript != "" || explicitRegister != "" {
+		if explicitScript == "" || explicitRegister == "" {
+			return configInspectorFiles{}, errors.New("HELMR_CONFIG_INSPECTOR_PATH and HELMR_CONFIG_REGISTER_PATH must be set together")
 		}
-		if !isFile(explicitMain) {
-			return deployAdapterFiles{}, fmt.Errorf("adapter path not found: %s", explicitMain)
+		if !isFile(explicitScript) {
+			return configInspectorFiles{}, fmt.Errorf("config inspector path not found: %s", explicitScript)
 		}
 		if !isFile(explicitRegister) {
-			return deployAdapterFiles{}, fmt.Errorf("adapter register hook not found: %s", explicitRegister)
+			return configInspectorFiles{}, fmt.Errorf("config register hook not found: %s", explicitRegister)
 		}
-		return deployAdapterFiles{MainPath: explicitMain, RegisterPath: explicitRegister}, nil
+		return configInspectorFiles{ScriptPath: explicitScript, RegisterPath: explicitRegister}, nil
 	}
-	resolved, err := adapter.Ensure()
+	resolved, err := projectconfig.Ensure()
 	if err != nil {
-		return deployAdapterFiles{}, err
+		return configInspectorFiles{}, err
 	}
-	return deployAdapterFiles{MainPath: resolved.MainPath, RegisterPath: resolved.RegisterPath}, nil
+	return configInspectorFiles{ScriptPath: resolved.ScriptPath, RegisterPath: resolved.RegisterPath}, nil
 }
 
 func isFile(path string) bool {

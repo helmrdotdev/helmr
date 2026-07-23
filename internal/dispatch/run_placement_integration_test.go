@@ -282,10 +282,11 @@ INSERT INTO run_waits (
 INSERT INTO run_checkpoints (
     id, kind, run_id, attempt_number, run_wait_id, source_run_lease_id,
     source_workspace_lease_id, workspace_id, base_workspace_version_id,
-    private_workspace_version_id, state, restore_manifest, ready_at
+    private_workspace_version_id, state, restore_manifest,
+    ready_request_fingerprint, ready_at
 ) VALUES (
     $1, 'suspend', $2, 1, $3, $4, $5, $6, $7, $8,
-    'ready', '{"kind":"suspend"}'::jsonb, now()
+    'ready', '{"kind":"suspend"}'::jsonb, 'test-ready', now()
 )`,
 		checkpointID, fixture.runID, runWaitID, granted.Lease.ID,
 		sourceWorkspaceLeaseID, fixture.workspaceID, baseVersionID, privateVersionID,
@@ -1080,8 +1081,9 @@ INSERT INTO run_checkpoints (
     id, kind, run_id, attempt_number, run_wait_id, source_run_lease_id,
     source_workspace_lease_id, workspace_id, base_workspace_version_id,
     private_workspace_version_id, actor_speculative_input_sequence,
-    state, restore_manifest, ready_at
-) VALUES ($1, 'suspend', $2, 1, $3, $4, $5, $6, $7, $8, 1, 'ready', '{"kind":"suspend"}'::jsonb, now())`,
+    state, restore_manifest, ready_request_fingerprint, ready_at
+) VALUES ($1, 'suspend', $2, 1, $3, $4, $5, $6, $7, $8, 1,
+          'ready', '{"kind":"suspend"}'::jsonb, 'test-ready', now())`,
 		checkpointID, fixture.runID, waitID, grant.Lease.ID, sourceWorkspaceLeaseID,
 		fixture.workspaceID, baseVersionID, privateVersionID)
 	mustRunPlacementExec(t, fixture.ctx, tx, `UPDATE run_waits SET suspend_checkpoint_id = $2, resume_request_version = 1 WHERE id = $1`, waitID, checkpointID)

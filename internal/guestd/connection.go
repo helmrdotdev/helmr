@@ -3,25 +3,17 @@ package guestd
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
-	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -36,7 +28,9 @@ type guestProfile uint8
 const (
 	ordinaryGuestProfile guestProfile = iota
 	managerAcquireGuestProfile
-	dependencyGuestProfile
+	buildInstallGuestProfile
+	buildAnalyzeGuestProfile
+	programProofGuestProfile
 )
 
 func parseGuestProfile(value string) (guestProfile, error) {
@@ -45,8 +39,12 @@ func parseGuestProfile(value string) (guestProfile, error) {
 		return ordinaryGuestProfile, nil
 	case "manager-acquire":
 		return managerAcquireGuestProfile, nil
-	case "dependency":
-		return dependencyGuestProfile, nil
+	case "build-install":
+		return buildInstallGuestProfile, nil
+	case "build-analyze":
+		return buildAnalyzeGuestProfile, nil
+	case "program-proof":
+		return programProofGuestProfile, nil
 	default:
 		return 0, fmt.Errorf("unsupported guest profile %q", value)
 	}
@@ -56,11 +54,6 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, 
 	profile, err := parseGuestProfile(cfg.Profile)
 	if err != nil {
 		return false, err
-	}
-	if profile == dependencyGuestProfile {
-		return false, errors.New(
-			"dependency guest connections require dedicated admission",
-		)
 	}
 	start, err := readConnectionStart(conn)
 	if err != nil {
@@ -78,6 +71,28 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, 
 		}
 		return false, handleManagerAcquire(conn, start.bodyLen)
 	}
+	if profile != ordinaryGuestProfile {
+		if start.attach != nil {
+			return false, errors.New("build guest rejects resume attach")
+		}
+		switch profile {
+		case buildInstallGuestProfile:
+			if start.streamHeader.Type != wire.StreamTypeBuildInstall {
+				return false, fmt.Errorf("build install guest rejects input type %q", start.streamHeader.Type)
+			}
+			return false, handleBuildInstall(ctx, conn, start.bodyLen)
+		case buildAnalyzeGuestProfile:
+			if start.streamHeader.Type != wire.StreamTypeBuildAnalyze {
+				return false, fmt.Errorf("build analysis guest rejects input type %q", start.streamHeader.Type)
+			}
+			return false, handleBuildAnalysis(ctx, conn, start.bodyLen)
+		case programProofGuestProfile:
+			if start.streamHeader.Type != wire.StreamTypeProgramProof {
+				return false, fmt.Errorf("Program proof guest rejects input type %q", start.streamHeader.Type)
+			}
+			return false, handleProgramProof(ctx, conn, start.bodyLen)
+		}
+	}
 	if start.attach != nil {
 		if err := registry.attachResume(start.attach, conn); err != nil {
 			return false, err
@@ -85,20 +100,12 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, 
 		return true, nil
 	}
 	switch start.streamHeader.Type {
-	case wire.StreamTypeCatalogDeployment:
-		return false, handleCatalogDeployment(ctx, conn, cfg, start.streamHeader, start.bodyLen)
-	case wire.StreamTypeCompileTaskBundle:
-		return false, handleCompileTaskBundle(ctx, conn, cfg, start.streamHeader, start.bodyLen)
 	case wire.StreamTypeManagerAcquire:
 		return false, errors.New("ordinary guest rejects manager acquisition")
-	case wire.StreamTypeRunImage:
-		return false, handleRunConnection(ctx, conn, cfg, logger, registry, start.streamHeader, start.bodyLen)
 	case wire.StreamTypeWorkspaceMaterialize:
 		return false, handleWorkspaceMaterializeConnection(ctx, conn, logger, workspaceRegistry, registry)
 	case wire.StreamTypeWorkspaceRuntimePrepare:
 		return false, handleWorkspaceRuntimePrepareConnection(ctx, conn, logger, workspaceRegistry)
-	case wire.StreamTypeWorkspaceRun:
-		return false, handleWorkspaceRunConnection(ctx, conn, cfg, logger, registry, workspaceRegistry, start.streamHeader, start.bodyLen)
 	case wire.StreamTypeProgramRun:
 		return false, handleProgramRunConnection(ctx, conn, logger, registry, workspaceRegistry, start.streamHeader, start.bodyLen)
 	case wire.StreamTypeWorkspaceOperation:
@@ -171,517 +178,6 @@ func validateResumeAttach(attach *runv0.ResumeAttach) (connectionStart, error) {
 	return connectionStart{attach: attach}, nil
 }
 
-func handleCatalogDeployment(ctx context.Context, conn io.ReadWriter, cfg Config, header wire.StreamHeader, bodyLen uint64) error {
-	runRoot, err := mkdirGuestdTemp("helmr-index-*")
-	if err != nil {
-		return fmt.Errorf("create index temp dir: %w", err)
-	}
-	defer os.RemoveAll(runRoot)
-	sourceRoot := filepath.Join(runRoot, "source")
-	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
-		return fmt.Errorf("create index source dir: %w", err)
-	}
-	if strings.TrimSpace(header.RunID) == "" {
-		return errors.New("index source run_id is required")
-	}
-	body := &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	if err := archive.ExtractTar(body, sourceRoot); err != nil {
-		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
-			return errors.Join(fmt.Errorf("extract index source: %w", err), fmt.Errorf("drain index source: %w", drainErr))
-		}
-		return wire.WriteParseErrorFrame(conn, "bad_request", fmt.Sprintf("extract index source: %s", err))
-	}
-	if _, err := io.Copy(io.Discard, body); err != nil {
-		return wire.WriteParseErrorFrame(conn, "bad_request", fmt.Sprintf("drain index source: %s", err))
-	}
-	registry, err := indexAdapter(ctx, cfg, sourceRoot)
-	if err != nil {
-		var parseErr adapterParseError
-		if errors.As(err, &parseErr) {
-			return wire.WriteParseErrorFrame(conn, parseErr.Kind, parseErr.Message)
-		}
-		return err
-	}
-	return frameio.WriteMessageFrame(conn, registry)
-}
-
-func handleCompileTaskBundle(ctx context.Context, conn io.ReadWriter, cfg Config, header wire.StreamHeader, bodyLen uint64) error {
-	runRoot, err := mkdirGuestdTemp("helmr-run-*")
-	if err != nil {
-		return fmt.Errorf("create parse temp dir: %w", err)
-	}
-	defer os.RemoveAll(runRoot)
-	sourceRoot := filepath.Join(runRoot, "source")
-	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
-		return fmt.Errorf("create parse source dir: %w", err)
-	}
-	runID := strings.TrimSpace(header.RunID)
-	if runID == "" {
-		return errors.New("parse source run_id is required")
-	}
-	taskID := strings.TrimSpace(header.TaskID)
-	if taskID == "" {
-		return errors.New("parse source task_id is required")
-	}
-	body := &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	if err := archive.ExtractTar(body, sourceRoot); err != nil {
-		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
-			return errors.Join(fmt.Errorf("extract parse source: %w", err), fmt.Errorf("drain parse source: %w", drainErr))
-		}
-		return wire.WriteParseErrorFrame(conn, "bad_request", fmt.Sprintf("extract parse source: %s", err))
-	}
-	if _, err := io.Copy(io.Discard, body); err != nil {
-		return wire.WriteParseErrorFrame(conn, "bad_request", fmt.Sprintf("drain parse source: %s", err))
-	}
-	bundle, err := parseAdapter(ctx, cfg, sourceRoot, taskID)
-	if err != nil {
-		var parseErr adapterParseError
-		if errors.As(err, &parseErr) {
-			return wire.WriteParseErrorFrame(conn, parseErr.Kind, parseErr.Message)
-		}
-		return err
-	}
-	return frameio.WriteMessageFrame(conn, bundle)
-}
-
-func handleRunConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logger *slog.Logger, registry *waitingRunRegistry, header wire.StreamHeader, bodyLen uint64) error {
-	if err := handleRunStream(ctx, conn, cfg, logger, registry, header, bodyLen); err != nil {
-		if reportErr := writeRunSetupFailure(conn, err); reportErr != nil {
-			return errors.Join(err, fmt.Errorf("write run setup failure: %w", reportErr))
-		}
-	}
-	return nil
-}
-
-func handleRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger *slog.Logger, registry *waitingRunRegistry, header wire.StreamHeader, bodyLen uint64) error {
-	runRoot, err := mkdirGuestdTemp("helmr-run-*")
-	if err != nil {
-		return fmt.Errorf("create run temp dir: %w", err)
-	}
-	defer os.RemoveAll(runRoot)
-	deploymentSourceRoot := filepath.Join(runRoot, "deployment-source")
-	if err := os.MkdirAll(deploymentSourceRoot, 0o755); err != nil {
-		return fmt.Errorf("create deployment source dir: %w", err)
-	}
-	imageRoot := filepath.Join(runRoot, "image")
-	var image ociImage
-	runID := header.RunID
-	if strings.TrimSpace(runID) == "" {
-		return errors.New("runtime input run_id is required")
-	}
-	if header.Type != wire.StreamTypeRunImage {
-		return fmt.Errorf("unsupported runtime input type %q", header.Type)
-	}
-	body := &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	cleanupImage := func() {}
-	defer func() { cleanupImage() }()
-	if substrateRoot := guestdSubstrateRoot(); substrateRoot != "" {
-		image, cleanupImage, err = imageFromMountedSubstrate(body, substrateRoot)
-	} else {
-		image, err = unpackOCIImage(body, imageRoot)
-	}
-	if err != nil {
-		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
-			return errors.Join(fmt.Errorf("unpack run image: %w", err), fmt.Errorf("drain run image: %w", drainErr))
-		}
-		return fmt.Errorf("unpack run image: %w", err)
-	}
-	if _, err := io.Copy(io.Discard, body); err != nil {
-		return fmt.Errorf("drain run image: %w", err)
-	}
-	header, bodyLen, err = wire.ReadStreamFrameHeader(conn)
-	if err != nil {
-		return fmt.Errorf("read deployment source stream header: %w", err)
-	}
-	if header.RunID != runID {
-		return fmt.Errorf("deployment source run_id %q does not match run image run_id %q", header.RunID, runID)
-	}
-	if header.Type != wire.StreamTypeDeploymentSource {
-		return fmt.Errorf("unsupported runtime input type %q", header.Type)
-	}
-	body = &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	if err := archive.ExtractTar(body, deploymentSourceRoot); err != nil {
-		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
-			return errors.Join(fmt.Errorf("extract deployment source: %w", err), fmt.Errorf("drain deployment source: %w", drainErr))
-		}
-		drainRemainingRuntimeInput(conn, runID)
-		return fmt.Errorf("extract deployment source: %w", err)
-	}
-	if _, err := io.Copy(io.Discard, body); err != nil {
-		return fmt.Errorf("drain deployment source: %w", err)
-	}
-	var request runv0.RunTaskRequest
-	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
-		drainWorkspaceArtifact(conn, runID)
-		return fmt.Errorf("read run request: %w", err)
-	}
-	if request.RunId != runID {
-		drainWorkspaceArtifact(conn, runID)
-		return fmt.Errorf("run request run_id %q does not match runtime input run_id %q", request.RunId, runID)
-	}
-	mountPath, err := workspaceMountPath(&request)
-	if err != nil {
-		drainWorkspaceArtifact(conn, runID)
-		return err
-	}
-	workspaceRoot, err := workspaceRootForImage(image.RootfsDir, mountPath)
-	if err != nil {
-		drainWorkspaceArtifact(conn, runID)
-		return err
-	}
-	header, bodyLen, err = wire.ReadStreamFrameHeader(conn)
-	if err != nil {
-		return fmt.Errorf("read workspace artifact stream header: %w", err)
-	}
-	if header.RunID != runID {
-		return fmt.Errorf("workspace artifact run_id %q does not match run image run_id %q", header.RunID, runID)
-	}
-	if header.Type != wire.StreamTypeWorkspaceArtifact {
-		return fmt.Errorf("unsupported runtime input type %q", header.Type)
-	}
-	workspaceArtifactDigest := ""
-	if header.BodyDigest != nil {
-		workspaceArtifactDigest = strings.TrimSpace(*header.BodyDigest)
-	}
-	if err := validateWorkspaceArtifact(&request, workspaceArtifactDigest, bodyLen); err != nil {
-		drainStreamBody(conn, bodyLen)
-		return err
-	}
-	if err := restoreRunWorkspaceArtifact(conn, &request, workspaceRoot, bodyLen); err != nil {
-		return err
-	}
-	runCwd := request.Cwd
-	if strings.TrimSpace(runCwd) == "" {
-		runCwd = mountPath
-	}
-	logger.Info("running task", "run_id", request.RunId, "task_id", request.TaskId)
-	return runAdapter(ctx, conn, cfg, image.RootfsDir, deploymentSourceRoot, workspaceRoot, runCwd, image.Config, true, &request, registry)
-}
-
-func handleWorkspaceRunConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logger *slog.Logger, registry *waitingRunRegistry, workspaceRegistry *workspaceOperationRegistry, header wire.StreamHeader, bodyLen uint64) error {
-	if err := handleWorkspaceRunStream(ctx, conn, cfg, logger, registry, workspaceRegistry, header, bodyLen); err != nil {
-		if reportErr := writeRunSetupFailure(conn, err); reportErr != nil {
-			return errors.Join(err, fmt.Errorf("write workspace run setup failure: %w", reportErr))
-		}
-	}
-	return nil
-}
-
-func handleWorkspaceRunStream(ctx context.Context, conn io.ReadWriter, cfg Config, logger *slog.Logger, registry *waitingRunRegistry, workspaceRegistry *workspaceOperationRegistry, header wire.StreamHeader, bodyLen uint64) error {
-	totalStarted := time.Now()
-	if bodyLen != 0 {
-		drainStreamBody(conn, bodyLen)
-		return fmt.Errorf("workspace run header body length %d is invalid", bodyLen)
-	}
-	runID := strings.TrimSpace(header.RunID)
-	if runID == "" {
-		return errors.New("workspace run run_id is required")
-	}
-	if header.Type != wire.StreamTypeWorkspaceRun {
-		return fmt.Errorf("unsupported runtime input type %q", header.Type)
-	}
-	workspaceMountID := strings.TrimSpace(header.WorkspaceMountID)
-	if workspaceMountID == "" {
-		return errors.New("workspace run workspace_mount_id is required")
-	}
-	workspaceID := strings.TrimSpace(header.WorkspaceID)
-	if workspaceID == "" {
-		return errors.New("workspace run workspace_id is required")
-	}
-	var envelope workspacev0.WorkspaceOperationEnvelope
-	if err := frameio.ReadProtoFrame(conn, &envelope); err != nil {
-		return fmt.Errorf("read workspace run envelope: %w", err)
-	}
-	if strings.TrimSpace(envelope.GetWorkspaceMountId()) != workspaceMountID {
-		return fmt.Errorf("workspace run envelope workspace_mount_id %q does not match header workspace_mount_id %q", envelope.GetWorkspaceMountId(), workspaceMountID)
-	}
-	if strings.TrimSpace(envelope.GetWorkspaceId()) != workspaceID {
-		return fmt.Errorf("workspace run envelope workspace_id %q does not match header workspace_id %q", envelope.GetWorkspaceId(), workspaceID)
-	}
-	if strings.TrimSpace(envelope.GetWriteLeaseId()) == "" {
-		return errors.New("workspace run write_lease_id is required")
-	}
-	if strings.TrimSpace(envelope.GetFencingToken()) == "" {
-		return errors.New("workspace run fencing_token is required")
-	}
-	phaseStarted := time.Now()
-	entry, release, ok := workspaceRegistry.acquire(workspaceMountID, workspaceID, envelope.GetChannelToken(), envelope.GetFencingGeneration())
-	logger.Info("workspace run mount acquired", "run_id", runID, "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "ok", ok)
-	if !ok {
-		return errors.New("workspace run channel token or fencing generation is invalid")
-	}
-	defer release()
-	releaseProgram, err := workspaceRegistry.admitMountedProgram(entry)
-	if err != nil {
-		return err
-	}
-	defer releaseProgram()
-	runRoot, err := mkdirGuestdTemp("helmr-run-*")
-	if err != nil {
-		return fmt.Errorf("create run temp dir: %w", err)
-	}
-	defer os.RemoveAll(runRoot)
-	deploymentSourceRoot := filepath.Join(runRoot, "deployment-source")
-	if err := os.MkdirAll(deploymentSourceRoot, 0o755); err != nil {
-		return fmt.Errorf("create deployment source dir: %w", err)
-	}
-	header, bodyLen, err = wire.ReadStreamFrameHeader(conn)
-	if err != nil {
-		return fmt.Errorf("read deployment source stream header: %w", err)
-	}
-	if header.RunID != runID {
-		return fmt.Errorf("deployment source run_id %q does not match workspace run run_id %q", header.RunID, runID)
-	}
-	if header.Type != wire.StreamTypeDeploymentSource {
-		return fmt.Errorf("unsupported runtime input type %q", header.Type)
-	}
-	body := &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	phaseStarted = time.Now()
-	if err := archive.ExtractTar(body, deploymentSourceRoot); err != nil {
-		if _, drainErr := io.Copy(io.Discard, body); drainErr != nil {
-			return errors.Join(fmt.Errorf("extract deployment source: %w", err), fmt.Errorf("drain deployment source: %w", drainErr))
-		}
-		drainRunRequest(conn)
-		return fmt.Errorf("extract deployment source: %w", err)
-	}
-	logger.Info("workspace run deployment source extracted", "run_id", runID, "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", bodyLen)
-	if _, err := io.Copy(io.Discard, body); err != nil {
-		return fmt.Errorf("drain deployment source: %w", err)
-	}
-	var request runv0.RunTaskRequest
-	phaseStarted = time.Now()
-	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
-		return fmt.Errorf("read run request: %w", err)
-	}
-	logger.Info("workspace run request read", "run_id", runID, "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds())
-	if request.RunId != runID {
-		return fmt.Errorf("run request run_id %q does not match workspace run run_id %q", request.RunId, runID)
-	}
-	mountPath, err := workspaceMountPath(&request)
-	if err != nil {
-		return err
-	}
-	if filepath.Clean(mountPath) != filepath.Clean(entry.workspaceMount) {
-		return fmt.Errorf("run workspace path %q does not match materialized workspace mount %q", mountPath, entry.workspaceMount)
-	}
-	if err := validateMaterializedRunWorkspace(&request); err != nil {
-		return err
-	}
-	runCwd := request.Cwd
-	if strings.TrimSpace(runCwd) == "" {
-		runCwd = mountPath
-	}
-	logger.Info("running task", "run_id", request.RunId, "task_id", request.TaskId, "workspace_mount_id", workspaceMountID)
-	phaseStarted = time.Now()
-	err = runAdapter(ctx, conn, cfg, entry.imageRoot, deploymentSourceRoot, entry.workspaceRoot, runCwd, entry.imageConfig, true, &request, registry)
-	logger.Info("workspace run adapter returned", "run_id", runID, "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "total_duration_ms", time.Since(totalStarted).Milliseconds(), "error", errorString(err))
-	return err
-}
-
-func restoreRunWorkspaceArtifact(conn io.Reader, request *runv0.RunTaskRequest, workspaceRoot string, bodyLen uint64) error {
-	workspaceParent := filepath.Dir(workspaceRoot)
-	if err := os.MkdirAll(workspaceParent, 0o755); err != nil {
-		drainStreamBody(conn, bodyLen)
-		return fmt.Errorf("create workspace mount parent: %w", err)
-	}
-	stagingRoot, err := os.MkdirTemp(workspaceParent, ".helmr-workspace-restore-*")
-	if err != nil {
-		drainStreamBody(conn, bodyLen)
-		return fmt.Errorf("create workspace restore staging dir: %w", err)
-	}
-	cleanupStaging := func() { _ = os.RemoveAll(stagingRoot) }
-	body := &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	hashedBody := newDigestingReader(body)
-	extractStats, err := archive.ExtractTarWithStats(hashedBody, stagingRoot, archive.ExtractOptions{
-		MaxBytes:   workspace.MaxArtifactExtractedBytes,
-		MaxEntries: workspace.MaxArtifactEntries,
-	})
-	if err != nil {
-		if _, drainErr := io.Copy(io.Discard, hashedBody); drainErr != nil {
-			cleanupStaging()
-			return errors.Join(fmt.Errorf("extract workspace artifact: %w", err), fmt.Errorf("drain workspace artifact: %w", drainErr))
-		}
-		cleanupStaging()
-		return fmt.Errorf("extract workspace artifact: %w", err)
-	}
-	if _, err := io.Copy(io.Discard, hashedBody); err != nil {
-		cleanupStaging()
-		return fmt.Errorf("drain workspace artifact: %w", err)
-	}
-	if digest := hashedBody.Digest(); digest != strings.TrimSpace(request.GetWorkspace().GetArtifact().GetDigest()) {
-		cleanupStaging()
-		return fmt.Errorf("workspace artifact body digest %q does not match declared digest %q", digest, request.GetWorkspace().GetArtifact().GetDigest())
-	}
-	if extractStats.EntryCount != int(request.GetWorkspace().GetArtifact().GetEntryCount()) {
-		cleanupStaging()
-		return fmt.Errorf("workspace artifact entry_count %d does not match declared entry_count %d", extractStats.EntryCount, request.GetWorkspace().GetArtifact().GetEntryCount())
-	}
-	if err := replaceWorkspaceRoot(workspaceRoot, stagingRoot); err != nil {
-		cleanupStaging()
-		return fmt.Errorf("replace workspace mount: %w", err)
-	}
-	return nil
-}
-
-func validateMaterializedRunWorkspace(request *runv0.RunTaskRequest) error {
-	workspaceSpec := request.GetWorkspace()
-	if workspaceSpec == nil {
-		return errors.New("workspace volume is required")
-	}
-	artifact := workspaceSpec.GetArtifact()
-	if artifact == nil {
-		return errors.New("workspace artifact is required")
-	}
-	if strings.TrimSpace(artifact.Digest) == "" {
-		return errors.New("workspace artifact digest is required")
-	}
-	if artifact.SizeBytes == 0 {
-		return errors.New("workspace artifact size_bytes is required")
-	}
-	if artifact.SizeBytes > uint64(workspace.MaxArtifactArchiveBytes) {
-		return fmt.Errorf("workspace artifact size_bytes %d exceeds max %d", artifact.SizeBytes, workspace.MaxArtifactArchiveBytes)
-	}
-	if artifact.EntryCount > uint32(workspace.MaxArtifactEntries) {
-		return fmt.Errorf("workspace artifact entry_count %d exceeds max %d", artifact.EntryCount, workspace.MaxArtifactEntries)
-	}
-	if strings.TrimSpace(artifact.MediaType) != workspace.ArtifactMediaType {
-		return fmt.Errorf("unsupported workspace artifact media_type %q", artifact.MediaType)
-	}
-	if strings.TrimSpace(artifact.Encoding) != workspace.ArtifactEncoding {
-		return fmt.Errorf("unsupported workspace artifact encoding %q", artifact.Encoding)
-	}
-	if strings.TrimSpace(workspaceSpec.ProjectPath) != strings.TrimSpace(workspaceSpec.Path) {
-		return fmt.Errorf("workspace project_path %q must match workspace path %q", workspaceSpec.ProjectPath, workspaceSpec.Path)
-	}
-	if !workspaceSpec.Writable {
-		return errors.New("workspace volume must be writable")
-	}
-	return nil
-}
-
-func replaceWorkspaceRoot(workspaceRoot string, stagingRoot string) error {
-	workspaceParent := filepath.Dir(workspaceRoot)
-	backupRoot, err := os.MkdirTemp(workspaceParent, ".helmr-workspace-backup-*")
-	if err != nil {
-		return fmt.Errorf("create workspace backup marker: %w", err)
-	}
-	if err := os.Remove(backupRoot); err != nil {
-		return fmt.Errorf("remove workspace backup marker: %w", err)
-	}
-	backupCreated := false
-	if err := os.Rename(workspaceRoot, backupRoot); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("move existing workspace aside: %w", err)
-		}
-	} else {
-		backupCreated = true
-	}
-	if err := os.Rename(stagingRoot, workspaceRoot); err != nil {
-		if backupCreated {
-			if rollbackErr := os.Rename(backupRoot, workspaceRoot); rollbackErr != nil {
-				return errors.Join(fmt.Errorf("install restored workspace: %w", err), fmt.Errorf("rollback workspace restore: %w", rollbackErr))
-			}
-		}
-		return fmt.Errorf("install restored workspace: %w", err)
-	}
-	if backupCreated {
-		if err := os.RemoveAll(backupRoot); err != nil {
-			return fmt.Errorf("remove replaced workspace backup: %w", err)
-		}
-	}
-	return nil
-}
-
-func drainRunRequest(conn io.Reader) {
-	_, _ = frameio.ReadMessageFrame(conn)
-}
-
-func drainRemainingRuntimeInput(conn io.Reader, runID string) {
-	drainRunRequest(conn)
-	drainWorkspaceArtifact(conn, runID)
-}
-
-func drainWorkspaceArtifact(conn io.Reader, runID string) {
-	header, bodyLen, err := wire.ReadStreamFrameHeader(conn)
-	if err != nil {
-		return
-	}
-	if header.RunID != runID || header.Type != wire.StreamTypeWorkspaceArtifact {
-		return
-	}
-	drainStreamBody(conn, bodyLen)
-}
-
 func drainStreamBody(conn io.Reader, bodyLen uint64) {
 	_, _ = io.Copy(io.Discard, &io.LimitedReader{R: conn, N: int64(bodyLen)})
-}
-
-func validateWorkspaceArtifact(request *runv0.RunTaskRequest, frameDigest string, frameSize uint64) error {
-	workspaceSpec := request.GetWorkspace()
-	if workspaceSpec == nil {
-		return errors.New("workspace volume is required")
-	}
-	artifact := workspaceSpec.GetArtifact()
-	if artifact == nil {
-		return errors.New("workspace artifact is required")
-	}
-	if strings.TrimSpace(artifact.Digest) == "" {
-		return errors.New("workspace artifact digest is required")
-	}
-	if frameDigest != "" && strings.TrimSpace(artifact.Digest) != frameDigest {
-		return fmt.Errorf("workspace artifact digest %q does not match frame digest %q", artifact.Digest, frameDigest)
-	}
-	if artifact.SizeBytes == 0 {
-		return errors.New("workspace artifact size_bytes is required")
-	}
-	if artifact.SizeBytes != frameSize {
-		return fmt.Errorf("workspace artifact size_bytes %d does not match frame size %d", artifact.SizeBytes, frameSize)
-	}
-	if artifact.SizeBytes > uint64(workspace.MaxArtifactArchiveBytes) {
-		return fmt.Errorf("workspace artifact size_bytes %d exceeds max %d", artifact.SizeBytes, workspace.MaxArtifactArchiveBytes)
-	}
-	if artifact.EntryCount > uint32(workspace.MaxArtifactEntries) {
-		return fmt.Errorf("workspace artifact entry_count %d exceeds max %d", artifact.EntryCount, workspace.MaxArtifactEntries)
-	}
-	if strings.TrimSpace(artifact.MediaType) != workspace.ArtifactMediaType {
-		return fmt.Errorf("unsupported workspace artifact media_type %q", artifact.MediaType)
-	}
-	if strings.TrimSpace(artifact.Encoding) != workspace.ArtifactEncoding {
-		return fmt.Errorf("unsupported workspace artifact encoding %q", artifact.Encoding)
-	}
-	if strings.TrimSpace(workspaceSpec.ProjectPath) != strings.TrimSpace(workspaceSpec.Path) {
-		return fmt.Errorf("workspace project_path %q must match workspace path %q", workspaceSpec.ProjectPath, workspaceSpec.Path)
-	}
-	if !workspaceSpec.Writable {
-		return errors.New("workspace volume must be writable")
-	}
-	return nil
-}
-
-type digestingReader struct {
-	reader io.Reader
-	hash   hash.Hash
-}
-
-func newDigestingReader(reader io.Reader) *digestingReader {
-	return &digestingReader{reader: reader, hash: sha256.New()}
-}
-
-func (r *digestingReader) Read(p []byte) (int, error) {
-	n, err := r.reader.Read(p)
-	if n > 0 {
-		_, _ = r.hash.Write(p[:n])
-	}
-	return n, err
-}
-
-func (r *digestingReader) Digest() string {
-	return "sha256:" + hex.EncodeToString(r.hash.Sum(nil))
-}
-
-func errorString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }

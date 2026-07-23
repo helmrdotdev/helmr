@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/archive"
 )
 
 var environmentColorHexPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
@@ -74,7 +76,6 @@ type CreateDeploymentRequest struct {
 	APIVersion            string `json:"api_version,omitempty"`
 	SDKVersion            string `json:"sdk_version,omitempty"`
 	CLIVersion            string `json:"cli_version,omitempty"`
-	BundleFormatVersion   int32  `json:"bundle_format_version,omitempty"`
 	WorkerProtocolVersion string `json:"worker_protocol_version,omitempty"`
 }
 
@@ -89,7 +90,6 @@ type DeploymentResponse struct {
 	APIVersion            string                   `json:"api_version"`
 	SDKVersion            string                   `json:"sdk_version,omitempty"`
 	CLIVersion            string                   `json:"cli_version,omitempty"`
-	BundleFormatVersion   int32                    `json:"bundle_format_version"`
 	WorkerProtocolVersion string                   `json:"worker_protocol_version"`
 	ProjectID             string                   `json:"project_id"`
 	EnvironmentID         string                   `json:"environment_id"`
@@ -126,11 +126,7 @@ type ListDeploymentsResponse struct {
 	Deployments []DeploymentResponse `json:"deployments"`
 }
 
-const DeploymentSourceArtifactMediaType = "application/vnd.helmr.deployment-source.v0.tar"
-const TaskBundleArtifactMediaType = "application/vnd.helmr.task-bundle.v0+proto"
-const DeploymentManifestArtifactMediaType = "application/vnd.helmr.deployment-manifest.v0+json"
-const BuildManifestArtifactMediaType = "application/vnd.helmr.build-manifest.v0+json"
-const SandboxImageArtifactMediaType = "application/vnd.helmr.sandbox-image.v0.oci-tar"
+const DeploymentSourceArtifactMediaType = archive.SourceMediaType
 
 type DeploymentSourceArtifact struct {
 	Digest    string `json:"digest"`
@@ -139,17 +135,15 @@ type DeploymentSourceArtifact struct {
 }
 
 type DeploymentTaskResponse struct {
-	ID                  string    `json:"id"`
-	TaskID              string    `json:"task_id"`
-	FilePath            string    `json:"file_path,omitempty"`
-	ExportName          string    `json:"export_name,omitempty"`
-	HandlerEntrypoint   string    `json:"handler_entrypoint,omitempty"`
-	BundleDigest        string    `json:"bundle_digest,omitempty"`
-	BundleFormatVersion int32     `json:"bundle_format_version"`
-	QueueName           string    `json:"queue_name,omitempty"`
-	ConcurrencyLimit    *int32    `json:"concurrency_limit,omitempty"`
-	TTL                 string    `json:"ttl,omitempty"`
-	CreatedAt           time.Time `json:"created_at"`
+	ID                string    `json:"id"`
+	TaskID            string    `json:"task_id"`
+	FilePath          string    `json:"file_path,omitempty"`
+	ExportName        string    `json:"export_name,omitempty"`
+	HandlerEntrypoint string    `json:"handler_entrypoint,omitempty"`
+	QueueName         string    `json:"queue_name,omitempty"`
+	ConcurrencyLimit  *int32    `json:"concurrency_limit,omitempty"`
+	TTL               string    `json:"ttl,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type ListTasksResponse struct {

@@ -473,6 +473,7 @@ func setWorkerRuntimeEnv(t *testing.T, build bool) {
 	t.Setenv("HELMR_RUNTIME_STORE_URI", "s3://helmr-runtime")
 	if build {
 		t.Setenv("HELMR_BUILD_POLICY_PATH", "/etc/helmr/build-policy.json")
+		t.Setenv("HELMR_MANAGER_STORE_URI", "s3://helmr-managers")
 		t.Setenv("HELMR_WORKER_BUILD_CACHE_DIR", "/var/lib/helmr/cache")
 		t.Setenv("HELMR_WORKER_BUILD_SCRATCH_DIR", "/var/lib/helmr/scratch")
 		t.Setenv("HELMR_WORKER_SUBSTRATE_CACHE_MAX_MIB", "8192")
@@ -500,6 +501,7 @@ func setValidWorkerEnv(t *testing.T, build bool) {
 func TestLoadWorkerRequiresBuildStorageConfig(t *testing.T) {
 	for _, variable := range []string{
 		"HELMR_RUNTIME_STORE_URI",
+		"HELMR_MANAGER_STORE_URI",
 		"HELMR_WORKER_BUILD_CACHE_DIR",
 		"HELMR_WORKER_BUILD_SCRATCH_DIR",
 		"HELMR_WORKER_SUBSTRATE_CACHE_MAX_MIB",
@@ -604,7 +606,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if cfg.WorkerProviderRegion != "us-east-1" || cfg.WorkerLabels["pool"] != "standard" || cfg.WorkerLabels["dedicated_key"] != "tenant-a" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.RegionID != "us-east-1" || cfg.BuildPolicyPath != "/etc/helmr/build-policy.json" || cfg.RuntimeStoreURI != "s3://helmr-runtime" {
+	if cfg.RegionID != "us-east-1" || cfg.BuildPolicyPath != "/etc/helmr/build-policy.json" || cfg.RuntimeStoreURI != "s3://helmr-runtime" || cfg.ManagerStoreURI != "s3://helmr-managers" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.CheckpointKey == "" {

@@ -7,13 +7,13 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/helmrdotdev/helmr/internal/builder"
+	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/tonistiigi/fsutil"
 )
 
 func planDeclaredImage(
-	build builder.ImageBuild,
+	build imagebuild.Build,
 	sourceRoot string,
 	cacheNamespace string,
 ) (llbPlan, error) {
@@ -21,14 +21,14 @@ func planDeclaredImage(
 		return llbPlan{}, errors.New("image build images must be non-empty")
 	}
 	architecture := build.Images[0].Platform.Architecture
-	if err := builder.ValidateImageBuild(build, architecture); err != nil {
+	if err := imagebuild.Validate(build, architecture); err != nil {
 		return llbPlan{}, err
 	}
 	cacheNamespace = safeNamespace(cacheNamespace)
 	if cacheNamespace == "" || cacheNamespace == "_" {
 		cacheNamespace = defaultCacheNS
 	}
-	images := make(map[string]builder.ImageSpec, len(build.Images))
+	images := make(map[string]imagebuild.Spec, len(build.Images))
 	for _, image := range build.Images {
 		images[image.Key] = image
 	}
@@ -61,7 +61,7 @@ func planDeclaredImage(
 
 type declaredImagePlanner struct {
 	sourceRoot  string
-	images      map[string]builder.ImageSpec
+	images      map[string]imagebuild.Spec
 	localMounts map[string]fsutil.FS
 	cacheNS     string
 	contextID   int
@@ -195,7 +195,7 @@ func (planner *declaredImagePlanner) plan(
 }
 
 func (planner *declaredImagePlanner) runOptions(
-	run builder.ImageRun,
+	run imagebuild.Run,
 ) ([]llb.RunOption, error) {
 	if len(run.SecretMounts) != 0 {
 		return nil, errors.New(
@@ -222,7 +222,7 @@ func (planner *declaredImagePlanner) runOptions(
 
 func (planner *declaredImagePlanner) sourceFile(
 	index int,
-	source builder.ImageCopySourceFile,
+	source imagebuild.CopySourceFile,
 ) (localContext, error) {
 	relative, path, err := resolveApplicationSourcePath(
 		planner.sourceRoot,
@@ -262,7 +262,7 @@ func (planner *declaredImagePlanner) sourceFile(
 
 func (planner *declaredImagePlanner) sourceDirectory(
 	index int,
-	source builder.ImageCopySourceDir,
+	source imagebuild.CopySourceDir,
 ) (localContext, error) {
 	_, path, err := resolveApplicationSourcePath(
 		planner.sourceRoot,
@@ -299,4 +299,4 @@ func (planner *declaredImagePlanner) sourceDirectory(
 	}, nil
 }
 
-var _ builder.ImageEngine = (*Builder)(nil)
+var _ imagebuild.Engine = (*Builder)(nil)

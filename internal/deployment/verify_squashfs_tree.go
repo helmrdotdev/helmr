@@ -544,7 +544,7 @@ func (reader *squashFSTreeReader) readDirectory(
 					}
 				}
 			}
-			if childLength+1 > maxMountedPackagePath ||
+			if childLength+1 > maxMountedArtifactPathBytes ||
 				reader.inode.retainedRawBytes > uint64(maxArtifactNameBytes)-childLength {
 				return nil, &artifactContentError{
 					cause: fmt.Errorf("SquashFS path exceeds retained-byte bounds"),
@@ -617,7 +617,7 @@ func (cursor *squashFSLimitedCursor) readFull(destination []byte) error {
 
 func validateSquashFSComponent(component string) error {
 	if component == "" || component == "." || component == ".." ||
-		len(component) > maxPackagePathComponent ||
+		len(component) > maxArtifactPathComponentBytes ||
 		!utf8.ValidString(component) ||
 		strings.ContainsAny(component, `/\`) {
 		return &artifactContentError{

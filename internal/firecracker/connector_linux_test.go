@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -73,6 +74,47 @@ func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
 	}
 	if manifest.RecoveryPoint.Runtime.ID != runtimeID || manifest.RecoveryPoint.Runtime.InitramfsDigest != "sha256:initramfs" {
 		t.Fatalf("runtime = %+v", manifest.RecoveryPoint.Runtime)
+	}
+}
+
+func TestExt4FreeBytesReadsFreshFilesystemCapacity(t *testing.T) {
+	raw := make([]byte, ext4SuperblockOffset+ext4SuperblockBytes)
+	superblock := raw[ext4SuperblockOffset:]
+	binary.LittleEndian.PutUint16(superblock[56:58], ext4Magic)
+	binary.LittleEndian.PutUint32(superblock[24:28], 2)
+	binary.LittleEndian.PutUint32(superblock[12:16], 17)
+	binary.LittleEndian.PutUint32(superblock[0x158:0x15c], 1)
+	path := filepath.Join(t.TempDir(), "scratch.ext4")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ext4FreeBytes(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := (uint64(1)<<32 | 17) * 4096
+	if got != want {
+		t.Fatalf("free bytes = %d, want %d", got, want)
+	}
+}
+
+func TestScratchUsableFloorMatchesBuildProfiles(t *testing.T) {
+	tests := []struct {
+		name       string
+		kernelArgs string
+		want       uint64
+	}{
+		{name: "manager acquisition", kernelArgs: managerAcquireKernelArgs, want: 1536 * 1024 * 1024},
+		{name: "full source install", kernelArgs: buildInstallKernelArgs, want: 19 * 1024 * 1024 * 1024},
+		{name: "runtime", kernelArgs: defaultKernelArgs},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			connector := &Connector{kernelArgs: test.kernelArgs}
+			if got := connector.scratchUsableFloor(); got != test.want {
+				t.Fatalf("usable floor = %d, want %d", got, test.want)
+			}
+		})
 	}
 }
 
@@ -1139,116 +1181,6 @@ func TestPreparedGuestSeparatesHealthFromGuestPort(t *testing.T) {
 	}
 }
 
-func TestPreparedGuestOwnsPrivateHostEndpoints(t *testing.T) {
-	socketBase := filepath.Join(t.TempDir(), "vsock.sock")
-	session := &guestSession{
-		cfg: Config{
-			JailerUID: os.Getuid(),
-			JailerGID: os.Getgid(),
-		},
-		vsockHostPath: socketBase,
-	}
-	endpoint, err := session.BindHost(context.Background(), 5003)
-	if err != nil {
-		t.Fatal(err)
-	}
-	socketPath := socketBase + "_5003"
-	info, err := os.Stat(socketPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("host endpoint mode = %o, want 600", info.Mode().Perm())
-	}
-
-	for attempt := 0; attempt < 2; attempt++ {
-		client, err := net.DialUnix(
-			"unix",
-			nil,
-			&net.UnixAddr{Name: socketPath, Net: "unix"},
-		)
-		if err != nil {
-			t.Fatal(err)
-		}
-		server, err := endpoint.Accept(context.Background())
-		if err != nil {
-			_ = client.Close()
-			t.Fatal(err)
-		}
-		if _, err := client.Write([]byte("request")); err != nil {
-			t.Fatal(err)
-		}
-		request := make([]byte, len("request"))
-		if _, err := io.ReadFull(server, request); err != nil {
-			t.Fatal(err)
-		}
-		if string(request) != "request" {
-			t.Fatalf("request = %q", request)
-		}
-		if _, err := server.Write([]byte("response")); err != nil {
-			t.Fatal(err)
-		}
-		response := make([]byte, len("response"))
-		if _, err := io.ReadFull(client, response); err != nil {
-			t.Fatal(err)
-		}
-		if string(response) != "response" {
-			t.Fatalf("response = %q", response)
-		}
-		if err := server.Close(); err != nil {
-			t.Fatal(err)
-		}
-		if err := client.Close(); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	if err := endpoint.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Lstat(socketPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("host endpoint remains after close: %v", err)
-	}
-	if _, err := endpoint.Accept(context.Background()); err == nil {
-		t.Fatal("closed host endpoint accepted a connection")
-	}
-	if _, err := net.DialUnix(
-		"unix",
-		nil,
-		&net.UnixAddr{Name: socketPath, Net: "unix"},
-	); err == nil {
-		t.Fatal("closed host endpoint remained reachable")
-	}
-}
-
-func TestHostEndpointCancellationClosesPendingAccept(t *testing.T) {
-	socketBase := filepath.Join(t.TempDir(), "vsock.sock")
-	session := &guestSession{
-		cfg: Config{
-			JailerUID: os.Getuid(),
-			JailerGID: os.Getgid(),
-		},
-		vsockHostPath: socketBase,
-	}
-	endpoint, err := session.BindHost(context.Background(), 5003)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	result := make(chan error, 1)
-	go func() {
-		_, err := endpoint.Accept(ctx)
-		result <- err
-	}()
-	cancel()
-	if err := <-result; !errors.Is(err, context.Canceled) {
-		t.Fatalf("accept error = %v, want context canceled", err)
-	}
-	if _, err := os.Lstat(socketBase + "_5003"); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("host endpoint remains after cancellation: %v", err)
-	}
-}
-
 func TestCopySparseRangeRejectsShortRead(t *testing.T) {
 	dir := t.TempDir()
 	inputPath := filepath.Join(dir, "input.raw")
@@ -1488,66 +1420,75 @@ func TestMaterializeAcceptsOnlyCompleteProgramDriveSet(t *testing.T) {
 	}
 }
 
-func TestBuildGuestProfileAcceptsClosedDependencyDriveSets(t *testing.T) {
+func TestBuildGuestProfilesUseExactDriveSets(t *testing.T) {
 	source := &recordingReadOnlyDriveSource{}
-	base := []vm.ReadOnlyDrive{
-		{ID: vm.ToolchainDrive, Source: source},
-		{ID: vm.ManagerDrive, Source: source},
-		{ID: vm.ManagedRuntimeDrive, Source: source},
+	tests := map[string]struct {
+		request     vm.ConnectRequest
+		kernelArgs  string
+		networkless bool
+	}{
+		"install": {
+			request: vm.ConnectRequest{
+				Resources: compute.BuildGuestResources(),
+				PIDsMax:   compute.BuildGuestPIDsMax,
+				Network:   compute.DefaultNetworkPolicy(),
+				ReadOnlyDrives: []vm.ReadOnlyDrive{
+					{ID: vm.ToolchainDrive, Source: source},
+					{ID: vm.ManagerDrive, Source: source},
+					{ID: vm.ManagedRuntimeDrive, Source: source},
+				},
+			},
+			kernelArgs: buildInstallKernelArgs,
+		},
+		"analysis": {
+			request: vm.ConnectRequest{
+				Resources:   compute.BuildGuestResources(),
+				PIDsMax:     compute.BuildGuestPIDsMax,
+				Networkless: true,
+				ReadOnlyDrives: []vm.ReadOnlyDrive{
+					{ID: vm.ToolchainDrive, Source: source},
+					{ID: vm.BuildTreeDrive, Source: source},
+					{ID: vm.ManagedRuntimeDrive, Source: source},
+				},
+			},
+			kernelArgs:  buildAnalyzeKernelArgs,
+			networkless: true,
+		},
+		"proof": {
+			request: vm.ConnectRequest{
+				Resources:   compute.BuildGuestResources(),
+				PIDsMax:     compute.BuildGuestPIDsMax,
+				Networkless: true,
+				ReadOnlyDrives: []vm.ReadOnlyDrive{
+					{ID: vm.ProgramCodeDrive, Source: source},
+					{ID: vm.ProgramRuntimeDrive, Source: source},
+					{ID: vm.ProgramDependenciesDrive, Source: source},
+				},
+			},
+			kernelArgs:  programProofKernelArgs,
+			networkless: true,
+		},
 	}
-	tests := map[string][]vm.ReadOnlyDrive{
-		"probe": base,
-		"resolve": append(
-			append([]vm.ReadOnlyDrive{}, base...),
-			vm.ReadOnlyDrive{ID: vm.ProjectDrive, Source: source},
-		),
-		"lifecycle": append(
-			append([]vm.ReadOnlyDrive{}, base...),
-			vm.ReadOnlyDrive{ID: vm.OfflineStoreDrive, Source: source},
-			vm.ReadOnlyDrive{ID: vm.ProjectDrive, Source: source},
-		),
-	}
-	for name, drives := range tests {
+	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			kernelArgs, networkless, err := buildGuestProfile(vm.ConnectRequest{
-				OwnerKind:      vm.OwnerBuild,
-				Resources:      compute.BuildGuestResources(),
-				PIDsMax:        compute.DependencyGuestPIDsMax,
-				Networkless:    true,
-				ReadOnlyDrives: drives,
-			})
+			kernelArgs, networkless, err := buildGuestProfile(test.request)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if kernelArgs != dependencyManagerKernelArgs || !networkless {
-				t.Fatalf("profile = (%q, %t), want dependency profile", kernelArgs, networkless)
+			if kernelArgs != test.kernelArgs || networkless != test.networkless {
+				t.Fatalf(
+					"profile = (%q, %t), want (%q, %t)",
+					kernelArgs,
+					networkless,
+					test.kernelArgs,
+					test.networkless,
+				)
 			}
 		})
 	}
 }
 
-func TestConnectRejectsEagerDependencyResolve(t *testing.T) {
-	source := &recordingReadOnlyDriveSource{}
-	connector := &Connector{}
-	_, err := connector.Connect(context.Background(), vm.ConnectRequest{
-		OwnerKind: vm.OwnerBuild,
-		ReadOnlyDrives: []vm.ReadOnlyDrive{
-			{ID: vm.ManagerDrive, Source: source},
-			{ID: vm.ManagedRuntimeDrive, Source: source},
-			{ID: vm.ToolchainDrive, Source: source},
-			{ID: vm.ProjectDrive, Source: source},
-		},
-	})
-	if err == nil ||
-		err.Error() != "dependency resolve guests require prepared connection" {
-		t.Fatalf("Connect() error = %v", err)
-	}
-	if source.directory != "" {
-		t.Fatalf("Connect() linked drives before rejection: %q", source.directory)
-	}
-}
-
-func TestBuildGuestProfileRejectsOpenDependencyProfiles(t *testing.T) {
+func TestBuildGuestProfileRejectsOpenProfiles(t *testing.T) {
 	source := &recordingReadOnlyDriveSource{}
 	required := []vm.ReadOnlyDrive{
 		{ID: vm.ManagerDrive, Source: source},
@@ -1557,42 +1498,33 @@ func TestBuildGuestProfileRejectsOpenDependencyProfiles(t *testing.T) {
 	tests := map[string]vm.ConnectRequest{
 		"missing component": {
 			Resources:      compute.BuildGuestResources(),
-			PIDsMax:        compute.DependencyGuestPIDsMax,
+			PIDsMax:        compute.BuildGuestPIDsMax,
 			Networkless:    true,
 			ReadOnlyDrives: required[:2],
 		},
-		"offline store without project": {
-			Resources:   compute.BuildGuestResources(),
-			PIDsMax:     compute.DependencyGuestPIDsMax,
-			Networkless: true,
-			ReadOnlyDrives: append(
-				append([]vm.ReadOnlyDrive{}, required...),
-				vm.ReadOnlyDrive{ID: vm.OfflineStoreDrive, Source: source},
-			),
-		},
 		"wrong process limit": {
 			Resources:      compute.BuildGuestResources(),
-			PIDsMax:        compute.DependencyGuestPIDsMax - 1,
+			PIDsMax:        compute.BuildGuestPIDsMax - 1,
 			Networkless:    true,
 			ReadOnlyDrives: required,
 		},
 		"network policy": {
 			Resources:      compute.BuildGuestResources(),
-			PIDsMax:        compute.DependencyGuestPIDsMax,
+			PIDsMax:        compute.BuildGuestPIDsMax,
 			Networkless:    true,
 			Network:        compute.DefaultNetworkPolicy(),
 			ReadOnlyDrives: required,
 		},
 		"workspace substrate": {
 			Resources:   compute.BuildGuestResources(),
-			PIDsMax:     compute.DependencyGuestPIDsMax,
+			PIDsMax:     compute.BuildGuestPIDsMax,
 			Networkless: true,
 			Topology: vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{
 				Path: "workspace.ext4",
 			}},
 			ReadOnlyDrives: required,
 		},
-		"dependency drives on standard build": {
+		"build drives on standard build": {
 			Resources:      compute.BuildGuestResources(),
 			ReadOnlyDrives: required,
 		},
@@ -1606,15 +1538,14 @@ func TestBuildGuestProfileRejectsOpenDependencyProfiles(t *testing.T) {
 	}
 }
 
-func TestRuntimeDrivesUseFixedDependencyOrder(t *testing.T) {
+func TestRuntimeDrivesUseFixedBuildOrder(t *testing.T) {
 	source := &recordingReadOnlyDriveSource{}
 	drives := runtimeDrives(
 		"/rootfs.ext4",
 		"/scratch.ext4",
 		"",
 		[]vm.ReadOnlyDrive{
-			{ID: vm.OfflineStoreDrive, Source: source},
-			{ID: vm.ProjectDrive, Source: source},
+			{ID: vm.BuildTreeDrive, Source: source},
 			{ID: vm.ToolchainDrive, Source: source},
 			{ID: vm.ManagedRuntimeDrive, Source: source},
 			{ID: vm.ManagerDrive, Source: source},
@@ -1626,8 +1557,7 @@ func TestRuntimeDrivesUseFixedDependencyOrder(t *testing.T) {
 		vm.ManagerDrive,
 		vm.ManagedRuntimeDrive,
 		vm.ToolchainDrive,
-		vm.ProjectDrive,
-		vm.OfflineStoreDrive,
+		vm.BuildTreeDrive,
 	}
 	if len(drives) != len(want) {
 		t.Fatalf("drive count = %d, want %d", len(drives), len(want))
@@ -1722,9 +1652,9 @@ func TestSealedDriveChrootStrategySeparatesSourceCapabilities(t *testing.T) {
 	}
 }
 
-func TestSealedDriveChrootStrategyPreservesDependencyDriveOrder(t *testing.T) {
+func TestSealedDriveChrootStrategyPreservesBuildDriveOrder(t *testing.T) {
 	chrootBase := t.TempDir()
-	vmID := "vm-dependency"
+	vmID := "vm-build"
 	root := filepath.Join(chrootBase, "firecracker", vmID, "root")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
@@ -1742,12 +1672,10 @@ func TestSealedDriveChrootStrategyPreservesDependencyDriveOrder(t *testing.T) {
 		vm.ManagerDrive:        {},
 		vm.ManagedRuntimeDrive: {},
 		vm.ToolchainDrive:      {},
-		vm.ProjectDrive:        {},
-		vm.OfflineStoreDrive:   {},
+		vm.BuildTreeDrive:      {},
 	}
 	declared := []vm.ReadOnlyDrive{
-		{ID: vm.OfflineStoreDrive, Source: sources[vm.OfflineStoreDrive]},
-		{ID: vm.ProjectDrive, Source: sources[vm.ProjectDrive]},
+		{ID: vm.BuildTreeDrive, Source: sources[vm.BuildTreeDrive]},
 		{ID: vm.ToolchainDrive, Source: sources[vm.ToolchainDrive]},
 		{ID: vm.ManagedRuntimeDrive, Source: sources[vm.ManagedRuntimeDrive]},
 		{ID: vm.ManagerDrive, Source: sources[vm.ManagerDrive]},
@@ -1788,8 +1716,7 @@ func TestSealedDriveChrootStrategyPreservesDependencyDriveOrder(t *testing.T) {
 		vm.ManagerDrive,
 		vm.ManagedRuntimeDrive,
 		vm.ToolchainDrive,
-		vm.ProjectDrive,
-		vm.OfflineStoreDrive,
+		vm.BuildTreeDrive,
 	}
 	if len(machine.Cfg.Drives) != len(want) {
 		t.Fatalf("drive count = %d, want %d", len(machine.Cfg.Drives), len(want))

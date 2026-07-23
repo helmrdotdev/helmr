@@ -9,32 +9,20 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/mdlayher/vsock"
 )
 
 type Config struct {
-	AdapterRuntimePath  string
-	AdapterRegisterPath string
-	AdapterPath         string
-	AdapterBundlePath   string
-	Profile             string
-	VsockPort           uint
-	HealthPort          uint
+	Profile    string
+	VsockPort  uint
+	HealthPort uint
 }
-
-const resolveBootstrapTimeout = 30 * time.Second
 
 func ParseFlags() Config {
 	var cfg Config
-	flag.StringVar(&cfg.AdapterRuntimePath, "adapter-runtime-path", "/usr/bin/node", "adapter runtime executable path")
-	flag.StringVar(&cfg.AdapterRegisterPath, "adapter-register-path", "/opt/helmr/adapter/register.mjs", "adapter runtime register hook path")
-	flag.StringVar(&cfg.AdapterPath, "adapter-path", "/opt/helmr/adapter/main.js", "adapter entrypoint path")
-	flag.StringVar(&cfg.AdapterBundlePath, "adapter-bundle-path", "/opt/helmr-adapter", "adapter bundle path")
 	flag.StringVar(&cfg.Profile, "profile", "", "guest execution profile")
 	flag.UintVar(&cfg.VsockPort, "vsock-port", 5000, "guest task vsock port")
 	flag.UintVar(&cfg.HealthPort, "health-port", 5001, "health check vsock port")
@@ -46,14 +34,6 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	profile, err := parseGuestProfile(cfg.Profile)
 	if err != nil {
 		return err
-	}
-	if profile == ordinaryGuestProfile {
-		if strings.TrimSpace(cfg.AdapterRuntimePath) == "" {
-			return errors.New("adapter runtime path is required")
-		}
-		if strings.TrimSpace(cfg.AdapterPath) == "" {
-			return errors.New("adapter path is required")
-		}
 	}
 	healthListener, err := vsock.Listen(uint32(cfg.HealthPort), nil)
 	if err != nil {
@@ -68,31 +48,11 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		return fmt.Errorf("listen guest task vsock: %w", err)
 	}
 	defer runListener.Close()
-	var bootstrapListener net.Listener
-	if profile == dependencyGuestProfile {
-		resolve, err := dependencyResolveProfile()
-		if err != nil {
-			return err
-		}
-		if resolve {
-			bootstrapListener, err = vsock.Listen(
-				deployment.ResolveBootstrapPort,
-				nil,
-			)
-			if err != nil {
-				return fmt.Errorf("listen resolve bootstrap vsock: %w", err)
-			}
-			defer bootstrapListener.Close()
-		}
-	}
 	ready.Store(true)
 	logger.Info("guestd ready", "vsock_port", cfg.VsockPort, "health_port", cfg.HealthPort)
 
 	registry := newWaitingRunRegistry()
 	workspaceRegistry := newWorkspaceOperationRegistry()
-	if profile == dependencyGuestProfile {
-		return serveDependencyGuest(ctx, runListener, bootstrapListener)
-	}
 	if profile != ordinaryGuestProfile {
 		return serveOneShotGuest(
 			ctx,
@@ -127,69 +87,6 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			}
 		}()
 	}
-}
-
-func serveDependencyGuest(
-	ctx context.Context,
-	runListener net.Listener,
-	bootstrapListener net.Listener,
-) (retErr error) {
-	var token *deployment.RelayCapability
-	if bootstrapListener != nil {
-		conn, err := acceptDependencyConnection(ctx, bootstrapListener)
-		if err != nil {
-			return fmt.Errorf("accept resolve bootstrap: %w", err)
-		}
-		deadline := time.Now().Add(resolveBootstrapTimeout)
-		if contextDeadline, ok := ctx.Deadline(); ok &&
-			contextDeadline.Before(deadline) {
-			deadline = contextDeadline
-		}
-		if err := conn.SetDeadline(deadline); err != nil {
-			return errors.Join(
-				fmt.Errorf("set resolve bootstrap deadline: %w", err),
-				conn.Close(),
-			)
-		}
-		capability, bootstrapErr := deployment.AcceptResolveBootstrap(conn)
-		closeErr := conn.Close()
-		if bootstrapErr != nil || closeErr != nil {
-			return errors.Join(bootstrapErr, closeErr)
-		}
-		token = &capability
-		defer func() {
-			for index := range capability {
-				capability[index] = 0
-			}
-		}()
-	}
-
-	conn, err := acceptDependencyConnection(ctx, runListener)
-	if err != nil {
-		return fmt.Errorf("accept dependency manager connection: %w", err)
-	}
-	defer func() {
-		retErr = errors.Join(retErr, conn.Close())
-	}()
-	return handleDependencyConnection(ctx, conn, token)
-}
-
-func acceptDependencyConnection(
-	ctx context.Context,
-	listener net.Listener,
-) (net.Conn, error) {
-	stop := context.AfterFunc(ctx, func() {
-		_ = listener.Close()
-	})
-	defer stop()
-	conn, err := listener.Accept()
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
-		}
-		return nil, err
-	}
-	return conn, nil
 }
 
 func serveOneShotGuest(

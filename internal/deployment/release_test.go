@@ -518,7 +518,7 @@ func TestRuntimeReleaseToolchainIterationSelectsExactArchitecture(t *testing.T) 
 	foreign.Architecture = ArchitectureAArch64
 	foreign.ManagedRuntimeDigest = toolDigestForTest("aarch64 runtime")
 	foreignRaw := []byte("aarch64 standard toolchain")
-	foreign.ToolchainClosure = ManagerArtifact{
+	foreign.ToolchainClosure = ArtifactDescriptor{
 		Digest:    runtimeReleaseDigest(foreignRaw),
 		MediaType: ToolchainMediaType,
 		SizeBytes: int64(len(foreignRaw)),
@@ -1057,7 +1057,7 @@ func prepareRuntimeReleaseWithCatalogForTest(
 	}
 	toolchain := testToolchain(t)
 	toolchainRaw := []byte("standard toolchain closure")
-	toolchain.ToolchainClosure = ManagerArtifact{
+	toolchain.ToolchainClosure = ArtifactDescriptor{
 		Digest:    runtimeReleaseDigest(toolchainRaw),
 		MediaType: ToolchainMediaType,
 		SizeBytes: int64(len(toolchainRaw)),
@@ -1232,7 +1232,7 @@ func runtimeReleaseSnapshotForTest(
 func toolchainReleaseSnapshotForTest(
 	ctx context.Context,
 	_ string,
-	descriptor ManagerArtifact,
+	descriptor ArtifactDescriptor,
 	source io.Reader,
 ) (*toolchainSnapshot, error) {
 	raw, err := io.ReadAll(source)

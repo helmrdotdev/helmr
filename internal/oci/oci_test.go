@@ -44,6 +44,34 @@ func TestUnpackAppliesLayersAndConfig(t *testing.T) {
 	}
 }
 
+func TestInspectVerifiesCompleteImageWithoutExtractingLayers(t *testing.T) {
+	layer := tarBytes(t, map[string]string{"app/file.txt": "content"})
+	image := ociTar(t, []ociTestLayer{{
+		mediaType: "application/vnd.oci.image.layer.v1.tar",
+		body:      layer,
+	}}, []byte(`{"Config":{"WorkingDir":"/workspace"}}`))
+	metadata, err := Inspect(bytes.NewReader(image))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.ManifestCount != 1 ||
+		metadata.Platform == nil ||
+		metadata.Platform.Architecture != "amd64" ||
+		metadata.Config.WorkingDir != "/workspace" {
+		t.Fatalf("metadata = %#v", metadata)
+	}
+
+	corrupt := append([]byte(nil), image...)
+	offset := bytes.Index(corrupt, layer)
+	if offset < 0 {
+		t.Fatal("layer not found in image")
+	}
+	corrupt[offset] ^= 0xff
+	if _, err := Inspect(bytes.NewReader(corrupt)); err == nil {
+		t.Fatal("Inspect accepted a layer whose bytes do not match its descriptor")
+	}
+}
+
 func TestApplyLayerTarRejectsSymlinkParent(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Symlink(t.TempDir(), filepath.Join(root, "link")); err != nil {
@@ -91,11 +119,16 @@ func ociTar(t *testing.T, layers []ociTestLayer, config []byte) []byte {
 		layerDescriptors = append(layerDescriptors, Descriptor{
 			MediaType: layer.mediaType,
 			Digest:    "sha256:" + digest,
+			Size:      int64(len(layer.body)),
 		})
 		blobs[digest] = layer.body
 	}
 	manifest := mustJSON(t, Manifest{
-		Config: Descriptor{MediaType: "application/vnd.oci.image.Config.v1+json", Digest: "sha256:" + configDigest},
+		Config: Descriptor{
+			MediaType: "application/vnd.oci.image.config.v1+json",
+			Digest:    "sha256:" + configDigest,
+			Size:      int64(len(config)),
+		},
 		Layers: layerDescriptors,
 	})
 	manifestDigest := sha256Hex(manifest)
@@ -103,6 +136,8 @@ func ociTar(t *testing.T, layers []ociTestLayer, config []byte) []byte {
 	index := mustJSON(t, Index{Manifests: []Descriptor{{
 		MediaType: "application/vnd.oci.image.manifest.v1+json",
 		Digest:    "sha256:" + manifestDigest,
+		Size:      int64(len(manifest)),
+		Platform:  &Platform{Architecture: "amd64", OS: "linux"},
 	}}})
 	var buf bytes.Buffer
 	writer := tar.NewWriter(&buf)

@@ -212,7 +212,7 @@ func TestWorkspaceMaterializerPassesRequestedResourcesToConnector(t *testing.T) 
 
 func TestWorkspaceMountPhaseErrorUsesLatestGuestError(t *testing.T) {
 	got := workspaceMountPhaseError([]*workspacev0.WorkspaceMountPhase{
-		{Name: "guest_sandbox_image_restore"},
+		{Name: "guest_workspace_image_restore"},
 		{Name: "guest_workspace_artifact_restore", Error: "extract workspace artifact: permission denied"},
 	})
 	if got != "guest_workspace_artifact_restore: extract workspace artifact: permission denied" {

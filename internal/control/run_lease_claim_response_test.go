@@ -282,7 +282,7 @@ func claimResponseBuildPolicy() *deployment.BuildPolicy {
 		Architecture:         deployment.ArchitectureX8664,
 		FormatVersion:        deployment.ToolchainFormatVersion,
 		ManagedRuntimeDigest: claimResponseRuntimeDescriptor().Digest,
-		ToolchainClosure: deployment.ManagerArtifact{
+		ToolchainClosure: deployment.ArtifactDescriptor{
 			Digest:    "sha256:" + strings.Repeat("7", 64),
 			MediaType: deployment.ToolchainMediaType,
 			SizeBytes: 1,

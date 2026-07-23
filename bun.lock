@@ -46,27 +46,6 @@
         "zod": "^4.4.3",
       },
     },
-    "examples/human-in-the-loop": {
-      "name": "human-in-the-loop",
-      "version": "0.1.0",
-      "dependencies": {
-        "@helmr/sdk": "latest",
-      },
-    },
-    "examples/resend-email-approval": {
-      "name": "resend-email-approval",
-      "version": "0.1.0",
-      "dependencies": {
-        "@helmr/sdk": "latest",
-      },
-    },
-    "examples/slack-approval": {
-      "name": "slack-approval",
-      "version": "0.1.0",
-      "dependencies": {
-        "@helmr/sdk": "latest",
-      },
-    },
     "examples/task-secrets": {
       "name": "task-secrets",
       "version": "0.1.0",
@@ -785,8 +764,6 @@
 
     "http-cache-semantics": ["http-cache-semantics@4.2.0", "", {}, "sha512-dTxcvPXqPvXBQpq5dUr6mEMJX4oIEFv6bwom3FDwKRDsuIjjJGANqhBuoAn9c1RQJIdAKav33ED65E2ys+87QQ=="],
 
-    "human-in-the-loop": ["human-in-the-loop@workspace:examples/human-in-the-loop"],
-
     "iron-webcrypto": ["iron-webcrypto@1.2.1", "", {}, "sha512-feOM6FaSr6rEABp/eDfVseKyTMDt+KGpeB35SkVn9Tyn0CqvVsY3EwI0v5i8nMHyJnzCIQf7nsy3p41TPkJZhg=="],
 
     "is-docker": ["is-docker@4.0.0", "", { "bin": { "is-docker": "cli.js" } }, "sha512-LHE+wROyG/Y/0ZnbktRCoTix2c1RhgWaZraMZ8o1Q7zCh0VSrICJQO5oqIIISrcSBtrXv0o233w1IYwsWCjTzA=="],
@@ -1037,8 +1014,6 @@
 
     "require-from-string": ["require-from-string@2.0.2", "", {}, "sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw=="],
 
-    "resend-email-approval": ["resend-email-approval@workspace:examples/resend-email-approval"],
-
     "resolve-pkg-maps": ["resolve-pkg-maps@1.0.0", "", {}, "sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw=="],
 
     "retext": ["retext@9.0.0", "", { "dependencies": { "@types/nlcst": "^2.0.0", "retext-latin": "^4.0.0", "retext-stringify": "^4.0.0", "unified": "^11.0.0" } }, "sha512-sbMDcpHCNjvlheSgMfEcVrZko3cDzdbe1x/e7G66dFp0Ff7Mldvi2uv6JkJQzdRcvLYE8CA8Oe8siQx8ZOgTcA=="],
@@ -1066,8 +1041,6 @@
     "shiki": ["shiki@4.0.2", "", { "dependencies": { "@shikijs/core": "4.0.2", "@shikijs/engine-javascript": "4.0.2", "@shikijs/engine-oniguruma": "4.0.2", "@shikijs/langs": "4.0.2", "@shikijs/themes": "4.0.2", "@shikijs/types": "4.0.2", "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.4" } }, "sha512-eAVKTMedR5ckPo4xne/PjYQYrU3qx78gtJZ+sHlXEg5IHhhoQhMfZVzetTYuaJS0L2Ef3AcCRzCHV8T0WI6nIQ=="],
 
     "sisteransi": ["sisteransi@1.0.5", "", {}, "sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg=="],
-
-    "slack-approval": ["slack-approval@workspace:examples/slack-approval"],
 
     "smol-toml": ["smol-toml@1.6.1", "", {}, "sha512-dWUG8F5sIIARXih1DTaQAX4SsiTXhInKf1buxdY9DIg4ZYPZK5nGM1VRIYmEbDbsHt7USo99xSLFu5Q1IqTmsg=="],
 
@@ -1311,17 +1284,11 @@
 
     "hello-world/@helmr/sdk": ["@helmr/sdk@0.1.0", "", { "dependencies": { "@bufbuild/protobuf": "^2.11.0", "@helmr/proto": "0.1.0" } }, "sha512-BeOi5kC5FNSqSMO4ucelO0gKP6kZ6gneA5JpgnqBWXv2EZkLkc5IZTQXWshOxySysR5CWlJpFS6QnqWO9a+Ltg=="],
 
-    "human-in-the-loop/@helmr/sdk": ["@helmr/sdk@0.1.0", "", { "dependencies": { "@bufbuild/protobuf": "^2.11.0", "@helmr/proto": "0.1.0" } }, "sha512-BeOi5kC5FNSqSMO4ucelO0gKP6kZ6gneA5JpgnqBWXv2EZkLkc5IZTQXWshOxySysR5CWlJpFS6QnqWO9a+Ltg=="],
-
     "is-inside-container/is-docker": ["is-docker@3.0.0", "", { "bin": { "is-docker": "cli.js" } }, "sha512-eljcgEDlEns/7AXFosB5K/2nCM4P7FQPkGc/DWLy5rmFEWvZayGrik1d9/QIY5nJ4f9YsVvBkA6kJpHn9rISdQ=="],
 
     "magicast/@babel/parser": ["@babel/parser@7.29.3", "", { "dependencies": { "@babel/types": "^7.29.0" }, "bin": "./bin/babel-parser.js" }, "sha512-b3ctpQwp+PROvU/cttc4OYl4MzfJUWy6FZg+PMXfzmt/+39iHVF0sDfqay8TQM3JA2EUOyKcFZt75jWriQijsA=="],
 
     "magicast/@babel/types": ["@babel/types@7.29.0", "", { "dependencies": { "@babel/helper-string-parser": "^7.27.1", "@babel/helper-validator-identifier": "^7.28.5" } }, "sha512-LwdZHpScM4Qz8Xw2iKSzS+cfglZzJGvofQICy7W7v4caru4EaAmyUuO6BGrbyQ2mYV11W0U8j5mBhd14dd3B0A=="],
-
-    "resend-email-approval/@helmr/sdk": ["@helmr/sdk@0.1.0", "", { "dependencies": { "@bufbuild/protobuf": "^2.11.0", "@helmr/proto": "0.1.0" } }, "sha512-BeOi5kC5FNSqSMO4ucelO0gKP6kZ6gneA5JpgnqBWXv2EZkLkc5IZTQXWshOxySysR5CWlJpFS6QnqWO9a+Ltg=="],
-
-    "slack-approval/@helmr/sdk": ["@helmr/sdk@0.1.0", "", { "dependencies": { "@bufbuild/protobuf": "^2.11.0", "@helmr/proto": "0.1.0" } }, "sha512-BeOi5kC5FNSqSMO4ucelO0gKP6kZ6gneA5JpgnqBWXv2EZkLkc5IZTQXWshOxySysR5CWlJpFS6QnqWO9a+Ltg=="],
 
     "solid-refresh/@babel/generator": ["@babel/generator@7.29.1", "", { "dependencies": { "@babel/parser": "^7.29.0", "@babel/types": "^7.29.0", "@jridgewell/gen-mapping": "^0.3.12", "@jridgewell/trace-mapping": "^0.3.28", "jsesc": "^3.0.2" } }, "sha512-qsaF+9Qcm2Qv8SRIMMscAvG4O3lJ0F1GuMo5HR/Bp02LopNgnZBC/EkbevHFeGs4ls/oPz9v+Bsmzbkbe+0dUw=="],
 

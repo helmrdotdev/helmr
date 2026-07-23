@@ -4,7 +4,7 @@ import "errors"
 
 var ErrNoCapacity = errors.New("no compute capacity available")
 
-const DependencyGuestPIDsMax = int64(1024)
+const BuildGuestPIDsMax = int64(1024)
 
 type ResourceVector struct {
 	MilliCPU  int64 `json:"milli_cpu"`

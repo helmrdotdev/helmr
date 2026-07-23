@@ -1,4 +1,4 @@
-import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { cache, image, source, task, workspace } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 import { z } from "zod"
 
@@ -13,9 +13,9 @@ const base = image("hello-world")
   })
   .workdir("/workspace")
 
-const sbx = sandbox("hello-world")
+export const helloWorldWorkspace = workspace("hello-world")
   .image(base)
-  .resources({ cpu: 1, memory: "1Gi" })
+  .resources({ cpu: 1, memory: "1Gi", disk: "4Gi" })
 
 const payload = z.object({
   name: z.string().optional(),
@@ -23,8 +23,7 @@ const payload = z.object({
 
 export const helloWorld = task({
   id: "hello-world",
-  sandbox: sbx,
-  maxDuration: 300,
+  maxDuration: "5m",
   payload,
   run: async (payload, ctx) => {
     const name = payload.name?.trim() || "Helmr"

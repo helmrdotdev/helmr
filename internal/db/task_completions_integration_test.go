@@ -28,6 +28,7 @@ func TestTaskCompletionQueriesCommitReplayAndRollback(t *testing.T) {
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	authority := startTaskCompletionWork(t, ctx, fixture, work)
+	beginTaskCompletionFinalization(t, ctx, fixture, work)
 	fingerprint := "sha256:fresh-task-completion"
 
 	tx, err := fixture.pool.Begin(ctx)
@@ -100,6 +101,7 @@ func TestTaskCompletionQueriesCommitReplayAndRollback(t *testing.T) {
 
 	rollbackWork := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	rollbackAuthority := startTaskCompletionWork(t, ctx, fixture, rollbackWork)
+	beginTaskCompletionFinalization(t, ctx, fixture, rollbackWork)
 	tx, err = fixture.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -132,7 +134,7 @@ func TestTaskCompletionQueriesCommitReplayAndRollback(t *testing.T) {
 	`, rollbackWork.leaseID, rollbackWork.runID).Scan(&runStatus, &leaseState, &attemptOutcome); err != nil {
 		t.Fatal(err)
 	}
-	if runStatus != RunStatusRunning || leaseState != RunLeaseStateRunning || attemptOutcome.Valid {
+	if runStatus != RunStatusRunning || leaseState != RunLeaseStateFinalizing || attemptOutcome.Valid {
 		t.Fatalf("rollback state = run %s lease %s attempt %v", runStatus, leaseState, attemptOutcome)
 	}
 }
@@ -175,6 +177,7 @@ func TestRestoredTaskFailureRollsBackPhysicalFrontier(t *testing.T) {
 		UPDATE workspace_leases SET base_version_id = $1 WHERE id = $2
 	`, restoredVersionID, authority.workspaceLeaseID)
 	authority.physicalVersionID = restoredVersionID
+	beginTaskCompletionFinalization(t, ctx, fixture, work)
 
 	tx, err := fixture.pool.Begin(ctx)
 	if err != nil {
@@ -235,6 +238,7 @@ func TestReadyRunRetriesAdmitsOnceUnderConcurrency(t *testing.T) {
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	authority := startTaskCompletionWork(t, ctx, fixture, work)
+	beginTaskCompletionFinalization(t, ctx, fixture, work)
 
 	tx, err := fixture.pool.Begin(ctx)
 	if err != nil {
@@ -359,6 +363,37 @@ func startTaskCompletionWork(
 		t.Fatal(err)
 	}
 	return authority
+}
+
+func beginTaskCompletionFinalization(
+	t *testing.T,
+	ctx context.Context,
+	fixture runLeaseClaimFixture,
+	work runLeaseWork,
+) {
+	t.Helper()
+	mustRunLeaseExec(t, ctx, fixture.pool, `
+		UPDATE runs
+		   SET active_elapsed_ms = active_elapsed_ms
+		           + floor(extract(epoch FROM (now() - active_started_at)) * 1000)::bigint,
+		       active_started_at = NULL,
+		       state_version = state_version + 1,
+		       updated_at = now()
+		 WHERE id = $1
+		   AND current_run_lease_id = $2
+		   AND status = 'running'
+		   AND active_started_at IS NOT NULL
+	`, work.runID, work.leaseID)
+	mustRunLeaseExec(t, ctx, fixture.pool, `
+		UPDATE run_leases
+		   SET state = 'finalizing',
+		       finalization_operation_id = $2,
+		       finalization_kind = 'reset',
+		       finalization_started_at = now(),
+		       finalization_request_fingerprint = 'test-finalization'
+		 WHERE id = $1
+		   AND state = 'running'
+	`, work.leaseID, uuid.Must(uuid.NewV7()))
 }
 
 func completeTaskAttemptQueries(

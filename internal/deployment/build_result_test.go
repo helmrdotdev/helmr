@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/builder"
+	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
@@ -331,18 +331,18 @@ func TestValidateBuildResultAppliesPlanSizeBound(t *testing.T) {
 			Kind:       DefinitionKindWorkspace,
 			DeclaredID: id,
 			Workspace: &WorkspaceInputManifest{
-				ImageBuild: builder.ImageBuild{
-					FormatVersion: builder.ImageBuildFormatVersion,
+				ImageBuild: imagebuild.Build{
+					FormatVersion: imagebuild.FormatVersion,
 					Root:          id,
-					Images: []builder.ImageSpec{{
+					Images: []imagebuild.Spec{{
 						Key: id,
-						Platform: builder.ImagePlatform{
+						Platform: imagebuild.Platform{
 							OS:           "linux",
 							Architecture: "x86_64",
 						},
-						Steps: []builder.ImageStep{
-							{From: &builder.ImageFrom{Ref: "alpine:3.23"}},
-							{Env: &builder.ImageEnv{Key: "X", Value: value}},
+						Steps: []imagebuild.Step{
+							{From: &imagebuild.From{Ref: "alpine:3.23"}},
+							{Env: &imagebuild.Env{Key: "X", Value: value}},
 						},
 					}},
 				},
@@ -462,6 +462,11 @@ func testSucceededBuildResult(t *testing.T) BuildResult {
 	return BuildResult{
 		FormatVersion: BuildResultFormatVersion,
 		Outcome:       BuildOutcomeSucceeded,
+		Logs: &BuildLogs{
+			ExitStatus:   0,
+			StdoutBase64: "bWFuYWdlciBzdGRvdXQ=",
+			StderrBase64: "bWFuYWdlciBzdGRlcnI=",
+		},
 		Succeeded: &BuildSucceeded{
 			Plan:           plan,
 			Provenance:     testBuildProvenance(t),
@@ -496,6 +501,12 @@ func testFailedBuildResult() BuildResult {
 	return BuildResult{
 		FormatVersion: BuildResultFormatVersion,
 		Outcome:       BuildOutcomeFailed,
+		Logs: &BuildLogs{
+			ExitStatus:   17,
+			StdoutBase64: "bWFuYWdlciBzdGRvdXQ=",
+			StderrBase64: "bWFuYWdlciBzdGRlcnI=",
+			Truncated:    true,
+		},
 		Failed: &BuildFailed{
 			Error: BuildError{
 				ReasonCode: BuildFailureInvalidPlan,

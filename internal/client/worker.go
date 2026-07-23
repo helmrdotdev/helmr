@@ -28,14 +28,6 @@ func (c *Client) EnrollWorker(ctx context.Context, request api.WorkerEnrollmentR
 	return response, nil
 }
 
-func (c *Client) LeaseRun(ctx context.Context) (api.WorkerRunLeaseResponse, error) {
-	var response api.WorkerRunLeaseResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/lease", struct{}{}, &response); err != nil {
-		return api.WorkerRunLeaseResponse{}, err
-	}
-	return response, nil
-}
-
 func (c *Client) DiscoverRunLeases(ctx context.Context) (api.WorkerRunLeaseDiscoveryResponse, error) {
 	var response api.WorkerRunLeaseDiscoveryResponse
 	if err := c.postWorkerJSON(
@@ -57,10 +49,7 @@ func (c *Client) ClaimRunLease(
 	if err := c.postWorkerJSON(
 		ctx,
 		"/api/worker/leases/claim",
-		api.WorkerRunLeaseClaimRequest{
-			LeaseID:       work.LeaseID,
-			LeaseSequence: work.LeaseSequence,
-		},
+		api.WorkerRunLeaseClaimRequest(work),
 		&response,
 	); err != nil {
 		return api.WorkerRunLeaseClaimResponse{}, err
@@ -557,7 +546,7 @@ func (c *Client) ReleaseRun(ctx context.Context, lease api.WorkerRunLease, resul
 	return response, nil
 }
 
-func (c *Client) CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease, result api.WorkerDeploymentBuildResult) (api.WorkerDeploymentBuildResponse, error) {
+func (c *Client) CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease, result json.RawMessage) (api.WorkerDeploymentBuildResponse, error) {
 	var response api.WorkerDeploymentBuildResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/deployments/complete", api.WorkerCompleteDeploymentBuildRequest{Lease: lease, Result: result}, &response); err != nil {
 		return api.WorkerDeploymentBuildResponse{}, err

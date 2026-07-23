@@ -3261,24 +3261,17 @@ function writeTypeOfScalar(type) {
 var exports_run_pb = {};
 __export(exports_run_pb, {
   file_run: () => file_run,
-  WorkspaceArtifactSchema: () => WorkspaceArtifactSchema,
-  TraceContextSchema: () => TraceContextSchema,
   TokenCreateResultSchema: () => TokenCreateResultSchema,
   TokenCreateRequestedSchema: () => TokenCreateRequestedSchema,
   TaskSucceededSchema: () => TaskSucceededSchema,
   TaskStartSchema: () => TaskStartSchema,
-  TaskResultSchema: () => TaskResultSchema,
   TaskPayloadInvalidSchema: () => TaskPayloadInvalidSchema,
   TaskOutcomeSchema: () => TaskOutcomeSchema,
   TaskFailedSchema: () => TaskFailedSchema,
-  TaskErrorSchema: () => TaskErrorSchema,
   TaskEntrypointSchema: () => TaskEntrypointSchema,
   StreamRecordSchema: () => StreamRecordSchema,
-  SecretInjectSchema: () => SecretInjectSchema,
   ScheduleCauseSchema: () => ScheduleCauseSchema,
   RunWaitRequestedSchema: () => RunWaitRequestedSchema,
-  RunTaskWorkspaceSchema: () => RunTaskWorkspaceSchema,
-  RunTaskRequestSchema: () => RunTaskRequestSchema,
   RunEventSchema: () => RunEventSchema,
   RunCauseSchema: () => RunCauseSchema,
   ResumeDecisionSchema: () => ResumeDecisionSchema,
@@ -3293,17 +3286,13 @@ __export(exports_run_pb, {
   ProgramRunRequestSchema: () => ProgramRunRequestSchema,
   ProgramQuiescedSchema: () => ProgramQuiescedSchema,
   ProgramProcessStartedSchema: () => ProgramProcessStartedSchema,
-  PlacementSchema: () => PlacementSchema,
   OutputStreamAppendedSchema: () => OutputStreamAppendedSchema,
   NoPayloadSchema: () => NoPayloadSchema,
   MetadataUpdatedSchema: () => MetadataUpdatedSchema,
   ManualCauseSchema: () => ManualCauseSchema,
-  FilePlacementSchema: () => FilePlacementSchema,
-  EnvPlacementSchema: () => EnvPlacementSchema,
   EntrypointReleaseSchema: () => EntrypointReleaseSchema,
   EntrypointReadySchema: () => EntrypointReadySchema,
   EntrypointIdentitySchema: () => EntrypointIdentitySchema,
-  DirPlacementSchema: () => DirPlacementSchema,
   ContinuationCauseSchema: () => ContinuationCauseSchema,
   ChildCauseSchema: () => ChildCauseSchema,
   CheckpointPauseRequestSchema: () => CheckpointPauseRequestSchema,
@@ -3323,7 +3312,7 @@ __export(exports_run_pb, {
   ActiveStreamReadResultSchema: () => ActiveStreamReadResultSchema,
   ActiveStreamReadRequestedSchema: () => ActiveStreamReadRequestedSchema
 });
-var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCLLAgoMUHJvZ3JhbVN0YXJ0Eh4KFmVudHJ5cG9pbnRfZGVjbGFyZWRfaWQYASABKAkSDgoGcnVuX2lkGAIgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAMgASgNEiUKBWNhdXNlGAQgASgLMhYuaGVsbXIucnVuLnYwLlJ1bkNhdXNlEhUKDWRlcGxveW1lbnRfaWQYBSABKAkSGgoSZGVwbG95bWVudF92ZXJzaW9uGAYgASgJEhQKDHdvcmtzcGFjZV9pZBgHIAEoCRIhChliYXNlX3dvcmtzcGFjZV92ZXJzaW9uX2lkGAggASgJEicKBHRhc2sYCSABKAsyFy5oZWxtci5ydW4udjAuVGFza1N0YXJ0SAASKQoFYWN0b3IYCiABKAsyGC5oZWxtci5ydW4udjAuQWN0b3JTdGFydEgAQgwKCmVudHJ5cG9pbnQiXQoJVGFza1N0YXJ0Ei0KCm5vX3BheWxvYWQYASABKAsyFy5oZWxtci5ydW4udjAuTm9QYXlsb2FkSAASFgoMcGF5bG9hZF9qc29uGAIgASgMSABCCQoHcGF5bG9hZCILCglOb1BheWxvYWQidAoKQWN0b3JTdGFydBIQCghhY3Rvcl9pZBgBIAEoCRIQCgNrZXkYAiABKAlIAIgBARIcChRzdGFydF9pbnB1dF9zZXF1ZW5jZRgDIAEoAxIcChRpbnB1dF9oaWdoX3dhdGVybWFyaxgEIAEoA0IGCgRfa2V5IrECCghSdW5DYXVzZRIlCgNhcGkYASABKAsyFi5oZWxtci5ydW4udjAuQXBpQ2F1c2VIABIrCgZtYW51YWwYAiABKAsyGS5oZWxtci5ydW4udjAuTWFudWFsQ2F1c2VIABIpCgVjaGlsZBgDIAEoCzIYLmhlbG1yLnJ1bi52MC5DaGlsZENhdXNlSAASLwoIc2NoZWR1bGUYBCABKAsyGy5oZWxtci5ydW4udjAuU2NoZWR1bGVDYXVzZUgAEjQKC2FjdG9yX3N0YXJ0GAUgASgLMh0uaGVsbXIucnVuLnYwLkFjdG9yU3RhcnRDYXVzZUgAEjcKDGNvbnRpbnVhdGlvbhgGIAEoCzIfLmhlbG1yLnJ1bi52MC5Db250aW51YXRpb25DYXVzZUgAQgYKBGtpbmQiCgoIQXBpQ2F1c2UiDQoLTWFudWFsQ2F1c2UiIwoKQ2hpbGRDYXVzZRIVCg1wYXJlbnRfcnVuX2lkGAEgASgJIqIBCg1TY2hlZHVsZUNhdXNlEhMKC3NjaGVkdWxlX2lkGAEgASgJEhwKFHNjaGVkdWxlZF9hdF91bml4X21zGAIgASgDEioKHXByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zGAMgASgDSACIAQESEAoIdGltZXpvbmUYBCABKAlCIAoeX3ByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zIhEKD0FjdG9yU3RhcnRDYXVzZSITChFDb250aW51YXRpb25DYXVzZSKkAQoRUHJvZ3JhbVJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCRIbChNwcm9ncmFtX3N0YXJ0X2ZyYW1lGAQgASgMEhQKDHNlY3JldF9jb3VudBgFIAEoDRIeChZzdGFydF9kZWFkbGluZV91bml4X21zGAYgASgDIkoKDVByb2dyYW1TZWNyZXQSDQoDZW52GAEgASgJSAASDgoEZmlsZRgCIAEoCUgAEg0KBXZhbHVlGAMgASgMQgsKCXBsYWNlbWVudCJsChZQcm9ncmFtU2VjcmV0c0NvbXBsZXRlEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRIUCgxydW5fbGVhc2VfaWQYAyABKAkSFAoMc2VjcmV0X2NvdW50GAQgASgNIpoCChhQcm9ncmFtU3VwZXJ2aXNvckNvbW1hbmQSNgoPc2VjcmV0X2RlbGl2ZXJ5GAEgASgLMhsuaGVsbXIucnVuLnYwLlByb2dyYW1TZWNyZXRIABJAChBzZWNyZXRzX2NvbXBsZXRlGAIgASgLMiQuaGVsbXIucnVuLnYwLlByb2dyYW1TZWNyZXRzQ29tcGxldGVIABI6Cg1zdGFydF9yZWxlYXNlGAMgASgLMiEuaGVsbXIucnVuLnYwLlByb2dyYW1TdGFydFJlbGVhc2VIABI9ChJlbnRyeXBvaW50X3JlbGVhc2UYBCABKAsyHy5oZWxtci5ydW4udjAuRW50cnlwb2ludFJlbGVhc2VIAEIJCgdjb21tYW5kIlUKFVByb2dyYW1Qcm9jZXNzU3RhcnRlZBIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SFAoMcnVuX2xlYXNlX2lkGAMgASgJIlMKE1Byb2dyYW1TdGFydFJlbGVhc2USDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCSKPAQoSRW50cnlwb2ludElkZW50aXR5EhMKC2RlY2xhcmVkX2lkGAEgASgJEiwKBHRhc2sYAiABKAsyHC5oZWxtci5ydW4udjAuVGFza0VudHJ5cG9pbnRIABIuCgVhY3RvchgDIAEoCzIdLmhlbG1yLnJ1bi52MC5BY3RvckVudHJ5cG9pbnRIAEIGCgRraW5kIhAKDlRhc2tFbnRyeXBvaW50IhEKD0FjdG9yRW50cnlwb2ludCJvCg9FbnRyeXBvaW50UmVhZHkSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEjQKCmVudHJ5cG9pbnQYAyABKAsyIC5oZWxtci5ydW4udjAuRW50cnlwb2ludElkZW50aXR5InEKEUVudHJ5cG9pbnRSZWxlYXNlEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRI0CgplbnRyeXBvaW50GAMgASgLMiAuaGVsbXIucnVuLnYwLkVudHJ5cG9pbnRJZGVudGl0eSJ7ChBSdW5UYXNrV29ya3NwYWNlEgwKBHBhdGgYASABKAkSFAoMcHJvamVjdF9wYXRoGAIgASgJEjEKCGFydGlmYWN0GAMgASgLMh8uaGVsbXIucnVuLnYwLldvcmtzcGFjZUFydGlmYWN0EhAKCHdyaXRhYmxlGAUgASgIInIKEVdvcmtzcGFjZUFydGlmYWN0Eg4KBmRpZ2VzdBgBIAEoCRISCgptZWRpYV90eXBlGAIgASgJEhAKCGVuY29kaW5nGAMgASgJEhIKCnNpemVfYnl0ZXMYBCABKAQSEwoLZW50cnlfY291bnQYBSABKA0i5gIKDlJ1blRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkSEwoLbW9kdWxlX3BhdGgYAiABKAkSCwoDY3dkGAMgASgJEisKB3NlY3JldHMYBCADKAsyGi5oZWxtci5ydW4udjAuU2VjcmV0SW5qZWN0Eg4KBnJ1bl9pZBgFIAEoCRIUCgxwYXlsb2FkX2pzb24YBiABKAkSMQoJd29ya3NwYWNlGAcgASgLMh4uaGVsbXIucnVuLnYwLlJ1blRhc2tXb3Jrc3BhY2USKQoFdHJhY2UYCCABKAsyGi5oZWxtci5ydW4udjAuVHJhY2VDb250ZXh0EhYKDmF0dGVtcHRfbnVtYmVyGAkgASgNEhQKDHJ1bl9sZWFzZV9pZBgKIAEoCRIYChBzbmFwc2hvdF92ZXJzaW9uGAsgASgEEhIKCnNlc3Npb25faWQYDCABKAkSFAoMcmV0cnlfcmVhc29uGA0gASgJIkYKDFRyYWNlQ29udGV4dBIQCgh0cmFjZV9pZBgBIAEoCRIPCgdzcGFuX2lkGAIgASgJEhMKC3RyYWNlcGFyZW50GAMgASgJIl0KDFNlY3JldEluamVjdBIMCgRuYW1lGAEgASgJEioKCXBsYWNlbWVudBgCIAEoCzIXLmhlbG1yLnJ1bi52MC5QbGFjZW1lbnQSEwoLdmFsdWVfYnl0ZXMYAyABKAwilgEKCVBsYWNlbWVudBIpCgNlbnYYASABKAsyGi5oZWxtci5ydW4udjAuRW52UGxhY2VtZW50SAASKwoEZmlsZRgCIAEoCzIbLmhlbG1yLnJ1bi52MC5GaWxlUGxhY2VtZW50SAASKQoDZGlyGAMgASgLMhouaGVsbXIucnVuLnYwLkRpclBsYWNlbWVudEgAQgYKBGtpbmQiHAoMRW52UGxhY2VtZW50EgwKBG5hbWUYASABKAkiVwoNRmlsZVBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciJWCgxEaXJQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIirQgKCFJ1bkV2ZW50EhYKDHN0ZG91dF9jaHVuaxgBIAEoDEgAEhYKDHN0ZGVycl9jaHVuaxgCIAEoDEgAEhMKCWxvZ19lbnRyeRgDIAEoCUgAEi8KC3Rhc2tfcmVzdWx0GAQgASgLMhguaGVsbXIucnVuLnYwLlRhc2tSZXN1bHRIABI8ChJydW5fd2FpdF9yZXF1ZXN0ZWQYBSABKAsyHi5oZWxtci5ydW4udjAuUnVuV2FpdFJlcXVlc3RlZEgAEjkKEG1ldGFkYXRhX3VwZGF0ZWQYByABKAsyHS5oZWxtci5ydW4udjAuTWV0YWRhdGFVcGRhdGVkSAASRAoWdG9rZW5fY3JlYXRlX3JlcXVlc3RlZBgIIAEoCzIiLmhlbG1yLnJ1bi52MC5Ub2tlbkNyZWF0ZVJlcXVlc3RlZEgAEkQKFm91dHB1dF9zdHJlYW1fYXBwZW5kZWQYCSABKAsyIi5oZWxtci5ydW4udjAuT3V0cHV0U3RyZWFtQXBwZW5kZWRIABJPChxhY3RpdmVfc3RyZWFtX3JlYWRfcmVxdWVzdGVkGAogASgLMicuaGVsbXIucnVuLnYwLkFjdGl2ZVN0cmVhbVJlYWRSZXF1ZXN0ZWRIABI3Cg9yZXN1bWVfY29uc3VtZWQYBiABKAsyHC5oZWxtci5ydW4udjAuUmVzdW1lQ29uc3VtZWRIABJGChdwcm9ncmFtX3Byb2Nlc3Nfc3RhcnRlZBgLIAEoCzIjLmhlbG1yLnJ1bi52MC5Qcm9ncmFtUHJvY2Vzc1N0YXJ0ZWRIABI5ChBlbnRyeXBvaW50X3JlYWR5GAwgASgLMh0uaGVsbXIucnVuLnYwLkVudHJ5cG9pbnRSZWFkeUgAEjEKDHRhc2tfb3V0Y29tZRgNIAEoCzIZLmhlbG1yLnJ1bi52MC5UYXNrT3V0Y29tZUgAEjkKEHByb2dyYW1fcXVpZXNjZWQYDiABKAsyHS5oZWxtci5ydW4udjAuUHJvZ3JhbVF1aWVzY2VkSAASMwoNYWN0b3Jfb3V0Y29tZRgPIAEoCzIaLmhlbG1yLnJ1bi52MC5BY3Rvck91dGNvbWVIABJNChthY3Rvcl90dXJuX2NvbW1pdF9yZXF1ZXN0ZWQYECABKAsyJi5oZWxtci5ydW4udjAuQWN0b3JUdXJuQ29tbWl0UmVxdWVzdGVkSAASUQodYWN0b3Jfb3V0cHV0X2FwcGVuZF9yZXF1ZXN0ZWQYESABKAsyKC5oZWxtci5ydW4udjAuQWN0b3JPdXRwdXRBcHBlbmRSZXF1ZXN0ZWRIABJLChphY3Rvcl9pbnB1dF9zZW5kX3JlcXVlc3RlZBgSIAEoCzIlLmhlbG1yLnJ1bi52MC5BY3RvcklucHV0U2VuZFJlcXVlc3RlZEgAQgcKBWV2ZW50IrMBCgtUYXNrT3V0Y29tZRIwCglzdWNjZWVkZWQYASABKAsyGy5oZWxtci5ydW4udjAuVGFza1N1Y2NlZWRlZEgAEioKBmZhaWxlZBgCIAEoCzIYLmhlbG1yLnJ1bi52MC5UYXNrRmFpbGVkSAASOwoPcGF5bG9hZF9pbnZhbGlkGAMgASgLMiAuaGVsbXIucnVuLnYwLlRhc2tQYXlsb2FkSW52YWxpZEgAQgkKB291dGNvbWUiJAoNVGFza1N1Y2NlZWRlZBITCgtvdXRwdXRfanNvbhgBIAEoCSJJCgpUYXNrRmFpbGVkEg8KB21lc3NhZ2UYASABKAkSGQoMZGV0YWlsc19qc29uGAIgASgJSACIAQFCDwoNX2RldGFpbHNfanNvbiJRChJUYXNrUGF5bG9hZEludmFsaWQSDwoHbWVzc2FnZRgBIAEoCRIZCgxkZXRhaWxzX2pzb24YAiABKAlIAIgBAUIPCg1fZGV0YWlsc19qc29uIrsBCgxBY3Rvck91dGNvbWUSJAoXdGVybWluYWxfaW5wdXRfc2VxdWVuY2UYASABKANIAYgBARIxCglzdWNjZWVkZWQYAiABKAsyHC5oZWxtci5ydW4udjAuQWN0b3JTdWNjZWVkZWRIABIrCgZmYWlsZWQYAyABKAsyGS5oZWxtci5ydW4udjAuQWN0b3JGYWlsZWRIAEIJCgdvdXRjb21lQhoKGF90ZXJtaW5hbF9pbnB1dF9zZXF1ZW5jZSIQCg5BY3RvclN1Y2NlZWRlZCJKCgtBY3RvckZhaWxlZBIPCgdtZXNzYWdlGAEgASgJEhkKDGRldGFpbHNfanNvbhgCIAEoCUgAiAEBQg8KDV9kZXRhaWxzX2pzb24iUQoYQWN0b3JUdXJuQ29tbWl0UmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEh0KFXRhcmdldF9pbnB1dF9zZXF1ZW5jZRgCIAEoAyKhAgobQWN0b3JUdXJuQ29tbWl0UGF1c2VSZXF1ZXN0EhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEh0KFXRhcmdldF9pbnB1dF9zZXF1ZW5jZRgCIAEoAxIOCgZydW5faWQYAyABKAkSFgoOYXR0ZW1wdF9udW1iZXIYBCABKA0SFAoMcnVuX2xlYXNlX2lkGAUgASgJEhwKFGV4cGVjdGVkX3RyZWVfZGlnZXN0GAYgASgJEiAKGGV4cGVjdGVkX3RyZWVfc2l6ZV9ieXRlcxgHIAEoAxIhChlleHBlY3RlZF90cmVlX2VudHJ5X2NvdW50GAggASgNEioKImV4cGVjdGVkX2Jhc2Vfd29ya3NwYWNlX3ZlcnNpb25faWQYCSABKAki8wEKGUFjdG9yVHVybkNvbW1pdFBhdXNlUmVhZHkSFgoOY29ycmVsYXRpb25faWQYASABKAkSHQoVdGFyZ2V0X2lucHV0X3NlcXVlbmNlGAIgASgDEg4KBnJ1bl9pZBgDIAEoCRIWCg5hdHRlbXB0X251bWJlchgEIAEoDRIUCgxydW5fbGVhc2VfaWQYBSABKAkSEwoLdHJlZV9kaWdlc3QYBiABKAkSFwoPdHJlZV9zaXplX2J5dGVzGAcgASgDEhgKEHRyZWVfZW50cnlfY291bnQYCCABKA0SGQoRd29ya3NwYWNlX2NoYW5nZWQYCSABKAgijwEKGkFjdG9yT3V0cHV0QXBwZW5kUmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEhEKCWRhdGFfanNvbhgCIAEoCRIUCgxjb250ZW50X3R5cGUYAyABKAkSHAoPaWRlbXBvdGVuY3lfa2V5GAQgASgJSACIAQFCEgoQX2lkZW1wb3RlbmN5X2tleSK/AQoXQWN0b3JJbnB1dFNlbmRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSEwoLZGVjbGFyZWRfaWQYAiABKAkSEgoIYWN0b3JfaWQYAyABKAlIABITCglhY3Rvcl9rZXkYBCABKAlIABIRCglkYXRhX2pzb24YBSABKAkSHAoPaWRlbXBvdGVuY3lfa2V5GAYgASgJSAGIAQFCCQoHYWRkcmVzc0ISChBfaWRlbXBvdGVuY3lfa2V5Ik8KD1Byb2dyYW1RdWllc2NlZBIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SFAoMcnVuX2xlYXNlX2lkGAMgASgJIq4BCgpUYXNrUmVzdWx0EhEKCWV4aXRfY29kZRgBIAEoBRIaCg1lcnJvcl9tZXNzYWdlGAIgASgJSACIAQESGAoLb3V0cHV0X2pzb24YAyABKAlIAYgBARIrCgVlcnJvchgEIAEoCzIXLmhlbG1yLnJ1bi52MC5UYXNrRXJyb3JIAogBAUIQCg5fZXJyb3JfbWVzc2FnZUIOCgxfb3V0cHV0X2pzb25CCAoGX2Vycm9yImEKCVRhc2tFcnJvchIMCgR0eXBlGAEgASgJEgwKBGNvZGUYAiABKAkSDwoHbWVzc2FnZRgDIAEoCRIRCglyZXRyeWFibGUYBCABKAgSFAoMZGV0YWlsc19qc29uGAUgASgJIsMCChBSdW5XYWl0UmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEgwKBGtpbmQYAiABKAkSEwoLcGFyYW1zX2pzb24YAyABKAkSGgoNbWV0YWRhdGFfanNvbhgEIAEoCUgAiAEBEhcKCnRpbWVvdXRfbXMYBSABKARIAYgBARIMCgR0YWdzGAYgAygJEhwKD2lkbGVfdGltZW91dF9tcxgJIAEoBEgCiAEBEi0KIGFjdG9yX3NwZWN1bGF0aXZlX2lucHV0X3NlcXVlbmNlGAogASgDSAOIAQFCEAoOX21ldGFkYXRhX2pzb25CDQoLX3RpbWVvdXRfbXNCEgoQX2lkbGVfdGltZW91dF9tc0IjCiFfYWN0b3Jfc3BlY3VsYXRpdmVfaW5wdXRfc2VxdWVuY2VKBAgHEAhKBAgIEAkisgEKFFRva2VuQ3JlYXRlUmVxdWVzdGVkEhcKCnRpbWVvdXRfYXQYASABKAlIAIgBARIfChJ0aW1lb3V0X2luX3NlY29uZHMYAiABKA1IAYgBARIMCgR0YWdzGAQgAygJEhoKDW1ldGFkYXRhX2pzb24YBSABKAlIAogBAUINCgtfdGltZW91dF9hdEIVChNfdGltZW91dF9pbl9zZWNvbmRzQhAKDl9tZXRhZGF0YV9qc29uIqECChFUb2tlbkNyZWF0ZVJlc3VsdBIKCgJpZBgBIAEoCRIUCgxjYWxsYmFja191cmwYAiABKAkSIAoTcHVibGljX2FjY2Vzc190b2tlbhgDIAEoCUgAiAEBEhcKCnRpbWVvdXRfYXQYBCABKAlIAYgBARITCgZzdGF0dXMYBSABKAlIAogBARIMCgR0YWdzGAYgAygJEhoKDW1ldGFkYXRhX2pzb24YByABKAlIA4gBARIaCg1lcnJvcl9tZXNzYWdlGAkgASgJSASIAQFCFgoUX3B1YmxpY19hY2Nlc3NfdG9rZW5CDQoLX3RpbWVvdXRfYXRCCQoHX3N0YXR1c0IQCg5fbWV0YWRhdGFfanNvbkIQCg5fZXJyb3JfbWVzc2FnZSLKAQoZQWN0aXZlU3RyZWFtUmVhZFJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIOCgZzdHJlYW0YAiABKAkSFgoOYWZ0ZXJfc2VxdWVuY2UYAyABKAMSIgoVcmVjb3JkX2NvcnJlbGF0aW9uX2lkGAQgASgJSACIAQESFAoHdGltZW91dBgFIAEoDUgBiAEBEg0KBWJsb2NrGAYgASgIQhgKFl9yZWNvcmRfY29ycmVsYXRpb25faWRCCgoIX3RpbWVvdXQirAEKDFN0cmVhbVJlY29yZBIKCgJpZBgBIAEoCRIRCglzdHJlYW1faWQYAiABKAkSEAoIc2VxdWVuY2UYAyABKAMSEQoJZGF0YV9qc29uGAQgASgJEhsKDmNvcnJlbGF0aW9uX2lkGAUgASgJSACIAQESFAoMY29udGVudF90eXBlGAYgASgJEhIKCmNyZWF0ZWRfYXQYByABKAlCEQoPX2NvcnJlbGF0aW9uX2lkIq0BChZBY3RpdmVTdHJlYW1SZWFkUmVzdWx0EhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEi8KBnJlY29yZBgCIAEoCzIaLmhlbG1yLnJ1bi52MC5TdHJlYW1SZWNvcmRIAIgBARIRCgl0aW1lZF9vdXQYAyABKAgSGgoNZXJyb3JfbWVzc2FnZRgEIAEoCUgBiAEBQgkKB19yZWNvcmRCEAoOX2Vycm9yX21lc3NhZ2Ui8wEKFkNoZWNrcG9pbnRQYXVzZVJlcXVlc3QSEwoLcnVuX3dhaXRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCRIZChFjYXB0dXJlX3dvcmtzcGFjZRgDIAEoCBIOCgZydW5faWQYBCABKAkSFgoOYXR0ZW1wdF9udW1iZXIYBSABKA0SFAoMcnVuX2xlYXNlX2lkGAYgASgJEhgKEHJlc3VtZV9hdHRhY2hfaWQYByABKAkSIgoaY2hlY2twb2ludF9yZXF1ZXN0X3ZlcnNpb24YCCABKAMSFgoOY29ycmVsYXRpb25faWQYCSABKAki1gEKFENoZWNrcG9pbnRQYXVzZVJlYWR5EhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSDgoGcnVuX2lkGAMgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAQgASgNEhQKDHJ1bl9sZWFzZV9pZBgFIAEoCRIYChByZXN1bWVfYXR0YWNoX2lkGAYgASgJEiIKGmNoZWNrcG9pbnRfcmVxdWVzdF92ZXJzaW9uGAcgASgDEhYKDmNvcnJlbGF0aW9uX2lkGAggASgJIsoBCgxSZXN1bWVBdHRhY2gSFQoNY2hlY2twb2ludF9pZBgBIAEoCRITCgtydW5fd2FpdF9pZBgCIAEoCRIUCgxydW5fbGVhc2VfaWQYAyABKAkSDgoGcnVuX2lkGAQgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAUgASgNEhgKEHJlc3VtZV9hdHRhY2hfaWQYBiABKAkSHgoWcmVzdW1lX3JlcXVlc3RfdmVyc2lvbhgHIAEoAxIWCg5jb3JyZWxhdGlvbl9pZBgIIAEoCSL2AQoOUmVzdW1lRGVjaXNpb24SEwoLcnVuX3dhaXRfaWQYASABKAkSDAoEa2luZBgCIAEoCRIRCglkYXRhX2pzb24YAyABKAkSHAoUcmVxdWlyZV9jb25zdW1lZF9hY2sYBCABKAgSFQoNY2hlY2twb2ludF9pZBgFIAEoCRIYChByZXN1bWVfYXR0YWNoX2lkGAYgASgJEh4KFnJlc3VtZV9yZXF1ZXN0X3ZlcnNpb24YByABKAMSFAoMcnVuX2xlYXNlX2lkGAggASgJEhYKDmNvcnJlbGF0aW9uX2lkGAkgASgJEhEKCW5vX3Jlc3VsdBgKIAEoCCKfAQoJUmVzdW1lQWNrEhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSGAoQcmVzdW1lX2F0dGFjaF9pZBgDIAEoCRIeChZyZXN1bWVfcmVxdWVzdF92ZXJzaW9uGAQgASgDEhQKDHJ1bl9sZWFzZV9pZBgFIAEoCRIWCg5jb3JyZWxhdGlvbl9pZBgGIAEoCSKkAQoOUmVzdW1lQ29uc3VtZWQSEwoLcnVuX3dhaXRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCRIYChByZXN1bWVfYXR0YWNoX2lkGAMgASgJEh4KFnJlc3VtZV9yZXF1ZXN0X3ZlcnNpb24YBCABKAMSFAoMcnVuX2xlYXNlX2lkGAUgASgJEhYKDmNvcnJlbGF0aW9uX2lkGAYgASgJImgKFE91dHB1dFN0cmVhbUFwcGVuZGVkEg4KBnN0cmVhbRgBIAEoCRIUCgxwYXlsb2FkX2pzb24YAiABKAkSGQoMY29udGVudF90eXBlGAMgASgJSACIAQFCDwoNX2NvbnRlbnRfdHlwZSKuAQoPTWV0YWRhdGFVcGRhdGVkEhEKCW9wZXJhdGlvbhgBIAEoCRIQCgNrZXkYAiABKAlIAIgBARIXCgp2YWx1ZV9qc29uGAMgASgJSAGIAQESFwoKcGF0Y2hfanNvbhgEIAEoCUgCiAEBEhMKBmFtb3VudBgFIAEoAUgDiAEBQgYKBF9rZXlCDQoLX3ZhbHVlX2pzb25CDQoLX3BhdGNoX2pzb25CCQoHX2Ftb3VudEI6WjhnaXRodWIuY29tL2hlbG1yZG90ZGV2L2hlbG1yL2ludGVybmFsL3Byb3RvL3J1bi92MDtydW52MGIGcHJvdG8z");
+var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCLLAgoMUHJvZ3JhbVN0YXJ0Eh4KFmVudHJ5cG9pbnRfZGVjbGFyZWRfaWQYASABKAkSDgoGcnVuX2lkGAIgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAMgASgNEiUKBWNhdXNlGAQgASgLMhYuaGVsbXIucnVuLnYwLlJ1bkNhdXNlEhUKDWRlcGxveW1lbnRfaWQYBSABKAkSGgoSZGVwbG95bWVudF92ZXJzaW9uGAYgASgJEhQKDHdvcmtzcGFjZV9pZBgHIAEoCRIhChliYXNlX3dvcmtzcGFjZV92ZXJzaW9uX2lkGAggASgJEicKBHRhc2sYCSABKAsyFy5oZWxtci5ydW4udjAuVGFza1N0YXJ0SAASKQoFYWN0b3IYCiABKAsyGC5oZWxtci5ydW4udjAuQWN0b3JTdGFydEgAQgwKCmVudHJ5cG9pbnQiXQoJVGFza1N0YXJ0Ei0KCm5vX3BheWxvYWQYASABKAsyFy5oZWxtci5ydW4udjAuTm9QYXlsb2FkSAASFgoMcGF5bG9hZF9qc29uGAIgASgMSABCCQoHcGF5bG9hZCILCglOb1BheWxvYWQidAoKQWN0b3JTdGFydBIQCghhY3Rvcl9pZBgBIAEoCRIQCgNrZXkYAiABKAlIAIgBARIcChRzdGFydF9pbnB1dF9zZXF1ZW5jZRgDIAEoAxIcChRpbnB1dF9oaWdoX3dhdGVybWFyaxgEIAEoA0IGCgRfa2V5IrECCghSdW5DYXVzZRIlCgNhcGkYASABKAsyFi5oZWxtci5ydW4udjAuQXBpQ2F1c2VIABIrCgZtYW51YWwYAiABKAsyGS5oZWxtci5ydW4udjAuTWFudWFsQ2F1c2VIABIpCgVjaGlsZBgDIAEoCzIYLmhlbG1yLnJ1bi52MC5DaGlsZENhdXNlSAASLwoIc2NoZWR1bGUYBCABKAsyGy5oZWxtci5ydW4udjAuU2NoZWR1bGVDYXVzZUgAEjQKC2FjdG9yX3N0YXJ0GAUgASgLMh0uaGVsbXIucnVuLnYwLkFjdG9yU3RhcnRDYXVzZUgAEjcKDGNvbnRpbnVhdGlvbhgGIAEoCzIfLmhlbG1yLnJ1bi52MC5Db250aW51YXRpb25DYXVzZUgAQgYKBGtpbmQiCgoIQXBpQ2F1c2UiDQoLTWFudWFsQ2F1c2UiIwoKQ2hpbGRDYXVzZRIVCg1wYXJlbnRfcnVuX2lkGAEgASgJIqIBCg1TY2hlZHVsZUNhdXNlEhMKC3NjaGVkdWxlX2lkGAEgASgJEhwKFHNjaGVkdWxlZF9hdF91bml4X21zGAIgASgDEioKHXByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zGAMgASgDSACIAQESEAoIdGltZXpvbmUYBCABKAlCIAoeX3ByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zIhEKD0FjdG9yU3RhcnRDYXVzZSITChFDb250aW51YXRpb25DYXVzZSKkAQoRUHJvZ3JhbVJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCRIbChNwcm9ncmFtX3N0YXJ0X2ZyYW1lGAQgASgMEhQKDHNlY3JldF9jb3VudBgFIAEoDRIeChZzdGFydF9kZWFkbGluZV91bml4X21zGAYgASgDIkoKDVByb2dyYW1TZWNyZXQSDQoDZW52GAEgASgJSAASDgoEZmlsZRgCIAEoCUgAEg0KBXZhbHVlGAMgASgMQgsKCXBsYWNlbWVudCJsChZQcm9ncmFtU2VjcmV0c0NvbXBsZXRlEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRIUCgxydW5fbGVhc2VfaWQYAyABKAkSFAoMc2VjcmV0X2NvdW50GAQgASgNIpoCChhQcm9ncmFtU3VwZXJ2aXNvckNvbW1hbmQSNgoPc2VjcmV0X2RlbGl2ZXJ5GAEgASgLMhsuaGVsbXIucnVuLnYwLlByb2dyYW1TZWNyZXRIABJAChBzZWNyZXRzX2NvbXBsZXRlGAIgASgLMiQuaGVsbXIucnVuLnYwLlByb2dyYW1TZWNyZXRzQ29tcGxldGVIABI6Cg1zdGFydF9yZWxlYXNlGAMgASgLMiEuaGVsbXIucnVuLnYwLlByb2dyYW1TdGFydFJlbGVhc2VIABI9ChJlbnRyeXBvaW50X3JlbGVhc2UYBCABKAsyHy5oZWxtci5ydW4udjAuRW50cnlwb2ludFJlbGVhc2VIAEIJCgdjb21tYW5kIlUKFVByb2dyYW1Qcm9jZXNzU3RhcnRlZBIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SFAoMcnVuX2xlYXNlX2lkGAMgASgJIlMKE1Byb2dyYW1TdGFydFJlbGVhc2USDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCSKPAQoSRW50cnlwb2ludElkZW50aXR5EhMKC2RlY2xhcmVkX2lkGAEgASgJEiwKBHRhc2sYAiABKAsyHC5oZWxtci5ydW4udjAuVGFza0VudHJ5cG9pbnRIABIuCgVhY3RvchgDIAEoCzIdLmhlbG1yLnJ1bi52MC5BY3RvckVudHJ5cG9pbnRIAEIGCgRraW5kIhAKDlRhc2tFbnRyeXBvaW50IhEKD0FjdG9yRW50cnlwb2ludCJvCg9FbnRyeXBvaW50UmVhZHkSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEjQKCmVudHJ5cG9pbnQYAyABKAsyIC5oZWxtci5ydW4udjAuRW50cnlwb2ludElkZW50aXR5InEKEUVudHJ5cG9pbnRSZWxlYXNlEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRI0CgplbnRyeXBvaW50GAMgASgLMiAuaGVsbXIucnVuLnYwLkVudHJ5cG9pbnRJZGVudGl0eSL8BwoIUnVuRXZlbnQSFgoMc3Rkb3V0X2NodW5rGAEgASgMSAASFgoMc3RkZXJyX2NodW5rGAIgASgMSAASEwoJbG9nX2VudHJ5GAMgASgJSAASPAoScnVuX3dhaXRfcmVxdWVzdGVkGAUgASgLMh4uaGVsbXIucnVuLnYwLlJ1bldhaXRSZXF1ZXN0ZWRIABI5ChBtZXRhZGF0YV91cGRhdGVkGAcgASgLMh0uaGVsbXIucnVuLnYwLk1ldGFkYXRhVXBkYXRlZEgAEkQKFnRva2VuX2NyZWF0ZV9yZXF1ZXN0ZWQYCCABKAsyIi5oZWxtci5ydW4udjAuVG9rZW5DcmVhdGVSZXF1ZXN0ZWRIABJEChZvdXRwdXRfc3RyZWFtX2FwcGVuZGVkGAkgASgLMiIuaGVsbXIucnVuLnYwLk91dHB1dFN0cmVhbUFwcGVuZGVkSAASTwocYWN0aXZlX3N0cmVhbV9yZWFkX3JlcXVlc3RlZBgKIAEoCzInLmhlbG1yLnJ1bi52MC5BY3RpdmVTdHJlYW1SZWFkUmVxdWVzdGVkSAASNwoPcmVzdW1lX2NvbnN1bWVkGAYgASgLMhwuaGVsbXIucnVuLnYwLlJlc3VtZUNvbnN1bWVkSAASRgoXcHJvZ3JhbV9wcm9jZXNzX3N0YXJ0ZWQYCyABKAsyIy5oZWxtci5ydW4udjAuUHJvZ3JhbVByb2Nlc3NTdGFydGVkSAASOQoQZW50cnlwb2ludF9yZWFkeRgMIAEoCzIdLmhlbG1yLnJ1bi52MC5FbnRyeXBvaW50UmVhZHlIABIxCgx0YXNrX291dGNvbWUYDSABKAsyGS5oZWxtci5ydW4udjAuVGFza091dGNvbWVIABI5ChBwcm9ncmFtX3F1aWVzY2VkGA4gASgLMh0uaGVsbXIucnVuLnYwLlByb2dyYW1RdWllc2NlZEgAEjMKDWFjdG9yX291dGNvbWUYDyABKAsyGi5oZWxtci5ydW4udjAuQWN0b3JPdXRjb21lSAASTQobYWN0b3JfdHVybl9jb21taXRfcmVxdWVzdGVkGBAgASgLMiYuaGVsbXIucnVuLnYwLkFjdG9yVHVybkNvbW1pdFJlcXVlc3RlZEgAElEKHWFjdG9yX291dHB1dF9hcHBlbmRfcmVxdWVzdGVkGBEgASgLMiguaGVsbXIucnVuLnYwLkFjdG9yT3V0cHV0QXBwZW5kUmVxdWVzdGVkSAASSwoaYWN0b3JfaW5wdXRfc2VuZF9yZXF1ZXN0ZWQYEiABKAsyJS5oZWxtci5ydW4udjAuQWN0b3JJbnB1dFNlbmRSZXF1ZXN0ZWRIAEIHCgVldmVudCKzAQoLVGFza091dGNvbWUSMAoJc3VjY2VlZGVkGAEgASgLMhsuaGVsbXIucnVuLnYwLlRhc2tTdWNjZWVkZWRIABIqCgZmYWlsZWQYAiABKAsyGC5oZWxtci5ydW4udjAuVGFza0ZhaWxlZEgAEjsKD3BheWxvYWRfaW52YWxpZBgDIAEoCzIgLmhlbG1yLnJ1bi52MC5UYXNrUGF5bG9hZEludmFsaWRIAEIJCgdvdXRjb21lIiQKDVRhc2tTdWNjZWVkZWQSEwoLb3V0cHV0X2pzb24YASABKAkiSQoKVGFza0ZhaWxlZBIPCgdtZXNzYWdlGAEgASgJEhkKDGRldGFpbHNfanNvbhgCIAEoCUgAiAEBQg8KDV9kZXRhaWxzX2pzb24iUQoSVGFza1BheWxvYWRJbnZhbGlkEg8KB21lc3NhZ2UYASABKAkSGQoMZGV0YWlsc19qc29uGAIgASgJSACIAQFCDwoNX2RldGFpbHNfanNvbiK7AQoMQWN0b3JPdXRjb21lEiQKF3Rlcm1pbmFsX2lucHV0X3NlcXVlbmNlGAEgASgDSAGIAQESMQoJc3VjY2VlZGVkGAIgASgLMhwuaGVsbXIucnVuLnYwLkFjdG9yU3VjY2VlZGVkSAASKwoGZmFpbGVkGAMgASgLMhkuaGVsbXIucnVuLnYwLkFjdG9yRmFpbGVkSABCCQoHb3V0Y29tZUIaChhfdGVybWluYWxfaW5wdXRfc2VxdWVuY2UiEAoOQWN0b3JTdWNjZWVkZWQiSgoLQWN0b3JGYWlsZWQSDwoHbWVzc2FnZRgBIAEoCRIZCgxkZXRhaWxzX2pzb24YAiABKAlIAIgBAUIPCg1fZGV0YWlsc19qc29uIlEKGEFjdG9yVHVybkNvbW1pdFJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIdChV0YXJnZXRfaW5wdXRfc2VxdWVuY2UYAiABKAMioQIKG0FjdG9yVHVybkNvbW1pdFBhdXNlUmVxdWVzdBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIdChV0YXJnZXRfaW5wdXRfc2VxdWVuY2UYAiABKAMSDgoGcnVuX2lkGAMgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAQgASgNEhQKDHJ1bl9sZWFzZV9pZBgFIAEoCRIcChRleHBlY3RlZF90cmVlX2RpZ2VzdBgGIAEoCRIgChhleHBlY3RlZF90cmVlX3NpemVfYnl0ZXMYByABKAMSIQoZZXhwZWN0ZWRfdHJlZV9lbnRyeV9jb3VudBgIIAEoDRIqCiJleHBlY3RlZF9iYXNlX3dvcmtzcGFjZV92ZXJzaW9uX2lkGAkgASgJIvMBChlBY3RvclR1cm5Db21taXRQYXVzZVJlYWR5EhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEh0KFXRhcmdldF9pbnB1dF9zZXF1ZW5jZRgCIAEoAxIOCgZydW5faWQYAyABKAkSFgoOYXR0ZW1wdF9udW1iZXIYBCABKA0SFAoMcnVuX2xlYXNlX2lkGAUgASgJEhMKC3RyZWVfZGlnZXN0GAYgASgJEhcKD3RyZWVfc2l6ZV9ieXRlcxgHIAEoAxIYChB0cmVlX2VudHJ5X2NvdW50GAggASgNEhkKEXdvcmtzcGFjZV9jaGFuZ2VkGAkgASgIIo8BChpBY3Rvck91dHB1dEFwcGVuZFJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIRCglkYXRhX2pzb24YAiABKAkSFAoMY29udGVudF90eXBlGAMgASgJEhwKD2lkZW1wb3RlbmN5X2tleRgEIAEoCUgAiAEBQhIKEF9pZGVtcG90ZW5jeV9rZXkivwEKF0FjdG9ySW5wdXRTZW5kUmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEhMKC2RlY2xhcmVkX2lkGAIgASgJEhIKCGFjdG9yX2lkGAMgASgJSAASEwoJYWN0b3Jfa2V5GAQgASgJSAASEQoJZGF0YV9qc29uGAUgASgJEhwKD2lkZW1wb3RlbmN5X2tleRgGIAEoCUgBiAEBQgkKB2FkZHJlc3NCEgoQX2lkZW1wb3RlbmN5X2tleSJPCg9Qcm9ncmFtUXVpZXNjZWQSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCSLDAgoQUnVuV2FpdFJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIMCgRraW5kGAIgASgJEhMKC3BhcmFtc19qc29uGAMgASgJEhoKDW1ldGFkYXRhX2pzb24YBCABKAlIAIgBARIXCgp0aW1lb3V0X21zGAUgASgESAGIAQESDAoEdGFncxgGIAMoCRIcCg9pZGxlX3RpbWVvdXRfbXMYCSABKARIAogBARItCiBhY3Rvcl9zcGVjdWxhdGl2ZV9pbnB1dF9zZXF1ZW5jZRgKIAEoA0gDiAEBQhAKDl9tZXRhZGF0YV9qc29uQg0KC190aW1lb3V0X21zQhIKEF9pZGxlX3RpbWVvdXRfbXNCIwohX2FjdG9yX3NwZWN1bGF0aXZlX2lucHV0X3NlcXVlbmNlSgQIBxAISgQICBAJIrIBChRUb2tlbkNyZWF0ZVJlcXVlc3RlZBIXCgp0aW1lb3V0X2F0GAEgASgJSACIAQESHwoSdGltZW91dF9pbl9zZWNvbmRzGAIgASgNSAGIAQESDAoEdGFncxgEIAMoCRIaCg1tZXRhZGF0YV9qc29uGAUgASgJSAKIAQFCDQoLX3RpbWVvdXRfYXRCFQoTX3RpbWVvdXRfaW5fc2Vjb25kc0IQCg5fbWV0YWRhdGFfanNvbiKhAgoRVG9rZW5DcmVhdGVSZXN1bHQSCgoCaWQYASABKAkSFAoMY2FsbGJhY2tfdXJsGAIgASgJEiAKE3B1YmxpY19hY2Nlc3NfdG9rZW4YAyABKAlIAIgBARIXCgp0aW1lb3V0X2F0GAQgASgJSAGIAQESEwoGc3RhdHVzGAUgASgJSAKIAQESDAoEdGFncxgGIAMoCRIaCg1tZXRhZGF0YV9qc29uGAcgASgJSAOIAQESGgoNZXJyb3JfbWVzc2FnZRgJIAEoCUgEiAEBQhYKFF9wdWJsaWNfYWNjZXNzX3Rva2VuQg0KC190aW1lb3V0X2F0QgkKB19zdGF0dXNCEAoOX21ldGFkYXRhX2pzb25CEAoOX2Vycm9yX21lc3NhZ2UiygEKGUFjdGl2ZVN0cmVhbVJlYWRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSDgoGc3RyZWFtGAIgASgJEhYKDmFmdGVyX3NlcXVlbmNlGAMgASgDEiIKFXJlY29yZF9jb3JyZWxhdGlvbl9pZBgEIAEoCUgAiAEBEhQKB3RpbWVvdXQYBSABKA1IAYgBARINCgVibG9jaxgGIAEoCEIYChZfcmVjb3JkX2NvcnJlbGF0aW9uX2lkQgoKCF90aW1lb3V0IqwBCgxTdHJlYW1SZWNvcmQSCgoCaWQYASABKAkSEQoJc3RyZWFtX2lkGAIgASgJEhAKCHNlcXVlbmNlGAMgASgDEhEKCWRhdGFfanNvbhgEIAEoCRIbCg5jb3JyZWxhdGlvbl9pZBgFIAEoCUgAiAEBEhQKDGNvbnRlbnRfdHlwZRgGIAEoCRISCgpjcmVhdGVkX2F0GAcgASgJQhEKD19jb3JyZWxhdGlvbl9pZCKtAQoWQWN0aXZlU3RyZWFtUmVhZFJlc3VsdBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIvCgZyZWNvcmQYAiABKAsyGi5oZWxtci5ydW4udjAuU3RyZWFtUmVjb3JkSACIAQESEQoJdGltZWRfb3V0GAMgASgIEhoKDWVycm9yX21lc3NhZ2UYBCABKAlIAYgBAUIJCgdfcmVjb3JkQhAKDl9lcnJvcl9tZXNzYWdlIvMBChZDaGVja3BvaW50UGF1c2VSZXF1ZXN0EhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSGQoRY2FwdHVyZV93b3Jrc3BhY2UYAyABKAgSDgoGcnVuX2lkGAQgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAUgASgNEhQKDHJ1bl9sZWFzZV9pZBgGIAEoCRIYChByZXN1bWVfYXR0YWNoX2lkGAcgASgJEiIKGmNoZWNrcG9pbnRfcmVxdWVzdF92ZXJzaW9uGAggASgDEhYKDmNvcnJlbGF0aW9uX2lkGAkgASgJItYBChRDaGVja3BvaW50UGF1c2VSZWFkeRITCgtydW5fd2FpdF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJEg4KBnJ1bl9pZBgDIAEoCRIWCg5hdHRlbXB0X251bWJlchgEIAEoDRIUCgxydW5fbGVhc2VfaWQYBSABKAkSGAoQcmVzdW1lX2F0dGFjaF9pZBgGIAEoCRIiChpjaGVja3BvaW50X3JlcXVlc3RfdmVyc2lvbhgHIAEoAxIWCg5jb3JyZWxhdGlvbl9pZBgIIAEoCSLKAQoMUmVzdW1lQXR0YWNoEhUKDWNoZWNrcG9pbnRfaWQYASABKAkSEwoLcnVuX3dhaXRfaWQYAiABKAkSFAoMcnVuX2xlYXNlX2lkGAMgASgJEg4KBnJ1bl9pZBgEIAEoCRIWCg5hdHRlbXB0X251bWJlchgFIAEoDRIYChByZXN1bWVfYXR0YWNoX2lkGAYgASgJEh4KFnJlc3VtZV9yZXF1ZXN0X3ZlcnNpb24YByABKAMSFgoOY29ycmVsYXRpb25faWQYCCABKAki9gEKDlJlc3VtZURlY2lzaW9uEhMKC3J1bl93YWl0X2lkGAEgASgJEgwKBGtpbmQYAiABKAkSEQoJZGF0YV9qc29uGAMgASgJEhwKFHJlcXVpcmVfY29uc3VtZWRfYWNrGAQgASgIEhUKDWNoZWNrcG9pbnRfaWQYBSABKAkSGAoQcmVzdW1lX2F0dGFjaF9pZBgGIAEoCRIeChZyZXN1bWVfcmVxdWVzdF92ZXJzaW9uGAcgASgDEhQKDHJ1bl9sZWFzZV9pZBgIIAEoCRIWCg5jb3JyZWxhdGlvbl9pZBgJIAEoCRIRCglub19yZXN1bHQYCiABKAginwEKCVJlc3VtZUFjaxITCgtydW5fd2FpdF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJEhgKEHJlc3VtZV9hdHRhY2hfaWQYAyABKAkSHgoWcmVzdW1lX3JlcXVlc3RfdmVyc2lvbhgEIAEoAxIUCgxydW5fbGVhc2VfaWQYBSABKAkSFgoOY29ycmVsYXRpb25faWQYBiABKAkipAEKDlJlc3VtZUNvbnN1bWVkEhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSGAoQcmVzdW1lX2F0dGFjaF9pZBgDIAEoCRIeChZyZXN1bWVfcmVxdWVzdF92ZXJzaW9uGAQgASgDEhQKDHJ1bl9sZWFzZV9pZBgFIAEoCRIWCg5jb3JyZWxhdGlvbl9pZBgGIAEoCSJoChRPdXRwdXRTdHJlYW1BcHBlbmRlZBIOCgZzdHJlYW0YASABKAkSFAoMcGF5bG9hZF9qc29uGAIgASgJEhkKDGNvbnRlbnRfdHlwZRgDIAEoCUgAiAEBQg8KDV9jb250ZW50X3R5cGUirgEKD01ldGFkYXRhVXBkYXRlZBIRCglvcGVyYXRpb24YASABKAkSEAoDa2V5GAIgASgJSACIAQESFwoKdmFsdWVfanNvbhgDIAEoCUgBiAEBEhcKCnBhdGNoX2pzb24YBCABKAlIAogBARITCgZhbW91bnQYBSABKAFIA4gBAUIGCgRfa2V5Qg0KC192YWx1ZV9qc29uQg0KC19wYXRjaF9qc29uQgkKB19hbW91bnRCOlo4Z2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by9ydW4vdjA7cnVudjBiBnByb3RvMw");
 var ProgramStartSchema = /* @__PURE__ */ messageDesc(file_run, 0);
 var TaskStartSchema = /* @__PURE__ */ messageDesc(file_run, 1);
 var NoPayloadSchema = /* @__PURE__ */ messageDesc(file_run, 2);
@@ -3346,47 +3335,132 @@ var TaskEntrypointSchema = /* @__PURE__ */ messageDesc(file_run, 18);
 var ActorEntrypointSchema = /* @__PURE__ */ messageDesc(file_run, 19);
 var EntrypointReadySchema = /* @__PURE__ */ messageDesc(file_run, 20);
 var EntrypointReleaseSchema = /* @__PURE__ */ messageDesc(file_run, 21);
-var RunTaskWorkspaceSchema = /* @__PURE__ */ messageDesc(file_run, 22);
-var WorkspaceArtifactSchema = /* @__PURE__ */ messageDesc(file_run, 23);
-var RunTaskRequestSchema = /* @__PURE__ */ messageDesc(file_run, 24);
-var TraceContextSchema = /* @__PURE__ */ messageDesc(file_run, 25);
-var SecretInjectSchema = /* @__PURE__ */ messageDesc(file_run, 26);
-var PlacementSchema = /* @__PURE__ */ messageDesc(file_run, 27);
-var EnvPlacementSchema = /* @__PURE__ */ messageDesc(file_run, 28);
-var FilePlacementSchema = /* @__PURE__ */ messageDesc(file_run, 29);
-var DirPlacementSchema = /* @__PURE__ */ messageDesc(file_run, 30);
-var RunEventSchema = /* @__PURE__ */ messageDesc(file_run, 31);
-var TaskOutcomeSchema = /* @__PURE__ */ messageDesc(file_run, 32);
-var TaskSucceededSchema = /* @__PURE__ */ messageDesc(file_run, 33);
-var TaskFailedSchema = /* @__PURE__ */ messageDesc(file_run, 34);
-var TaskPayloadInvalidSchema = /* @__PURE__ */ messageDesc(file_run, 35);
-var ActorOutcomeSchema = /* @__PURE__ */ messageDesc(file_run, 36);
-var ActorSucceededSchema = /* @__PURE__ */ messageDesc(file_run, 37);
-var ActorFailedSchema = /* @__PURE__ */ messageDesc(file_run, 38);
-var ActorTurnCommitRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 39);
-var ActorTurnCommitPauseRequestSchema = /* @__PURE__ */ messageDesc(file_run, 40);
-var ActorTurnCommitPauseReadySchema = /* @__PURE__ */ messageDesc(file_run, 41);
-var ActorOutputAppendRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 42);
-var ActorInputSendRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 43);
-var ProgramQuiescedSchema = /* @__PURE__ */ messageDesc(file_run, 44);
-var TaskResultSchema = /* @__PURE__ */ messageDesc(file_run, 45);
-var TaskErrorSchema = /* @__PURE__ */ messageDesc(file_run, 46);
-var RunWaitRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 47);
-var TokenCreateRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 48);
-var TokenCreateResultSchema = /* @__PURE__ */ messageDesc(file_run, 49);
-var ActiveStreamReadRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 50);
-var StreamRecordSchema = /* @__PURE__ */ messageDesc(file_run, 51);
-var ActiveStreamReadResultSchema = /* @__PURE__ */ messageDesc(file_run, 52);
-var CheckpointPauseRequestSchema = /* @__PURE__ */ messageDesc(file_run, 53);
-var CheckpointPauseReadySchema = /* @__PURE__ */ messageDesc(file_run, 54);
-var ResumeAttachSchema = /* @__PURE__ */ messageDesc(file_run, 55);
-var ResumeDecisionSchema = /* @__PURE__ */ messageDesc(file_run, 56);
-var ResumeAckSchema = /* @__PURE__ */ messageDesc(file_run, 57);
-var ResumeConsumedSchema = /* @__PURE__ */ messageDesc(file_run, 58);
-var OutputStreamAppendedSchema = /* @__PURE__ */ messageDesc(file_run, 59);
-var MetadataUpdatedSchema = /* @__PURE__ */ messageDesc(file_run, 60);
+var RunEventSchema = /* @__PURE__ */ messageDesc(file_run, 22);
+var TaskOutcomeSchema = /* @__PURE__ */ messageDesc(file_run, 23);
+var TaskSucceededSchema = /* @__PURE__ */ messageDesc(file_run, 24);
+var TaskFailedSchema = /* @__PURE__ */ messageDesc(file_run, 25);
+var TaskPayloadInvalidSchema = /* @__PURE__ */ messageDesc(file_run, 26);
+var ActorOutcomeSchema = /* @__PURE__ */ messageDesc(file_run, 27);
+var ActorSucceededSchema = /* @__PURE__ */ messageDesc(file_run, 28);
+var ActorFailedSchema = /* @__PURE__ */ messageDesc(file_run, 29);
+var ActorTurnCommitRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 30);
+var ActorTurnCommitPauseRequestSchema = /* @__PURE__ */ messageDesc(file_run, 31);
+var ActorTurnCommitPauseReadySchema = /* @__PURE__ */ messageDesc(file_run, 32);
+var ActorOutputAppendRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 33);
+var ActorInputSendRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 34);
+var ProgramQuiescedSchema = /* @__PURE__ */ messageDesc(file_run, 35);
+var RunWaitRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 36);
+var TokenCreateRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 37);
+var TokenCreateResultSchema = /* @__PURE__ */ messageDesc(file_run, 38);
+var ActiveStreamReadRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 39);
+var StreamRecordSchema = /* @__PURE__ */ messageDesc(file_run, 40);
+var ActiveStreamReadResultSchema = /* @__PURE__ */ messageDesc(file_run, 41);
+var CheckpointPauseRequestSchema = /* @__PURE__ */ messageDesc(file_run, 42);
+var CheckpointPauseReadySchema = /* @__PURE__ */ messageDesc(file_run, 43);
+var ResumeAttachSchema = /* @__PURE__ */ messageDesc(file_run, 44);
+var ResumeDecisionSchema = /* @__PURE__ */ messageDesc(file_run, 45);
+var ResumeAckSchema = /* @__PURE__ */ messageDesc(file_run, 46);
+var ResumeConsumedSchema = /* @__PURE__ */ messageDesc(file_run, 47);
+var OutputStreamAppendedSchema = /* @__PURE__ */ messageDesc(file_run, 48);
+var MetadataUpdatedSchema = /* @__PURE__ */ messageDesc(file_run, 49);
 // sdk/typescript/src/config.ts
 var configBrand = Symbol.for("helmr.sdk.v0.config");
+function inspectConfig(value) {
+  if (typeof value !== "object" || value === null)
+    return;
+  if (!Object.hasOwn(value, configBrand))
+    return;
+  if (value[configBrand] !== true) {
+    throw new Error("invalid defineConfig() private record");
+  }
+  const config = value;
+  if (typeof config.project !== "string" || config.project.trim() === "" || hasControl(config.project) || !Array.isArray(config.dirs) || config.dirs.length === 0 || !Array.isArray(config.ignorePatterns)) {
+    throw new Error("invalid defineConfig() private record");
+  }
+  for (const directory of config.dirs)
+    validateDirectory(directory);
+  for (const pattern of config.ignorePatterns)
+    validateIgnorePattern(pattern);
+  return value;
+}
+function matchesIgnorePattern(pattern, path) {
+  const patternSegments = pattern.split("/");
+  const pathSegments = path.split("/");
+  const matches = (patternIndex, pathIndex) => {
+    if (patternIndex === patternSegments.length) {
+      return pathIndex === pathSegments.length;
+    }
+    const segment = patternSegments[patternIndex];
+    if (segment === "**") {
+      if (patternIndex === patternSegments.length - 1) {
+        return pathIndex < pathSegments.length;
+      }
+      for (let candidate = pathIndex;candidate <= pathSegments.length; candidate++) {
+        if (matches(patternIndex + 1, candidate))
+          return true;
+      }
+      return false;
+    }
+    return pathIndex < pathSegments.length && matchesSegment(segment, pathSegments[pathIndex]) && matches(patternIndex + 1, pathIndex + 1);
+  };
+  return matches(0, 0);
+}
+function validateDirectory(value) {
+  if (typeof value !== "string" || !value.startsWith("./") || value.includes("\\") || value.includes("?") || value.includes("#") || hasControl(value)) {
+    throw new Error("defineConfig({ dirs }) entries must be project-relative POSIX directories beginning ./");
+  }
+  if (value !== "./") {
+    const segments = value.slice(2).split("/");
+    if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+      throw new Error("defineConfig({ dirs }) entries must be normalized project-relative paths");
+    }
+  }
+  return value;
+}
+function validateIgnorePattern(value) {
+  if (typeof value !== "string" || value === "" || value.startsWith("./") || value.startsWith("/") || value.endsWith("/") || value.includes("//") || value.includes("\\") || value.split("/").includes("..") || hasControl(value) || value.startsWith("!") || /[[\]{}]/.test(value) || /[?*+@!]\(/.test(value) || value.split("/").some((segment) => segment.includes("**") && segment !== "**")) {
+    throw new Error(`unsupported ignorePattern ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+function matchesSegment(pattern, value) {
+  const patternCharacters = Array.from(pattern);
+  const valueCharacters = Array.from(value);
+  let patternIndex = 0;
+  let valueIndex = 0;
+  let star = -1;
+  let starValue = -1;
+  while (valueIndex < valueCharacters.length) {
+    const token = patternCharacters[patternIndex];
+    if (token === "?" || token === valueCharacters[valueIndex]) {
+      patternIndex++;
+      valueIndex++;
+      continue;
+    }
+    if (token === "*") {
+      star = patternIndex++;
+      starValue = valueIndex;
+      continue;
+    }
+    if (star !== -1) {
+      patternIndex = star + 1;
+      valueIndex = ++starValue;
+      continue;
+    }
+    return false;
+  }
+  while (patternCharacters[patternIndex] === "*")
+    patternIndex++;
+  return patternIndex === patternCharacters.length;
+}
+function hasControl(value) {
+  for (const character of value) {
+    const code = character.codePointAt(0);
+    if (code <= 31 || code >= 127 && code <= 159)
+      return true;
+  }
+  return false;
+}
 // sdk/typescript/src/schema/payload.ts
 var payloadSchemaValidationErrorBrand = Symbol.for("helmr.sdk.PayloadSchemaValidationError");
 function assertPayloadSchema(value, label = "payload") {
@@ -3412,6 +3486,9 @@ function assertStandardSchema(value, label = "schema") {
 // sdk/typescript/src/schema/task.ts
 var TASK_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$";
 var TASK_ID_MAX_LENGTH = 128;
+var QUEUE_NAME_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$";
+var QUEUE_NAME_MAX_LENGTH = 256;
+
 class TaskIdError extends Error {
   name = "TaskIdError";
   value;
@@ -3440,6 +3517,54 @@ function isValidTaskId(value) {
     }
   }
   return true;
+}
+
+class TaskQueueNameError extends Error {
+  name = "TaskQueueNameError";
+  value;
+  constructor(value) {
+    super(`queue name must match ${QUEUE_NAME_PATTERN}: ${JSON.stringify(value)}`);
+    this.value = value;
+  }
+}
+
+class TaskQueueConcurrencyLimitError extends Error {
+  name = "TaskQueueConcurrencyLimitError";
+  value;
+  constructor(value) {
+    super("queue concurrencyLimit must be a positive integer");
+    this.value = value;
+  }
+}
+function validateQueueName(value) {
+  if (!isValidQueueName(value)) {
+    throw new TaskQueueNameError(value);
+  }
+}
+function isValidQueueName(value) {
+  if (value.length === 0 || value.length > QUEUE_NAME_MAX_LENGTH) {
+    return false;
+  }
+  const first = value.charCodeAt(0);
+  if (!isAsciiAlnum(first)) {
+    return false;
+  }
+  for (let index = 1;index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (!(isAsciiAlnum(code) || code === 46 || code === 95 || code === 45 || code === 47)) {
+      return false;
+    }
+  }
+  return true;
+}
+function validateOptionalQueueConcurrencyLimit(value) {
+  if (value === undefined || value === null) {
+    return;
+  }
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
+    return;
+  }
+  throw new TaskQueueConcurrencyLimitError(value);
 }
 function isAsciiAlnum(code) {
   return code >= 48 && code <= 57 || code >= 65 && code <= 90 || code >= 97 && code <= 122;
@@ -3481,6 +3606,22 @@ function inspectDefinition(value) {
     throw new Error("invalid private definition record");
   }
   return definition;
+}
+function isQueueDefinition(value) {
+  if (typeof value !== "object" || value === null)
+    return false;
+  if (!Object.hasOwn(value, privateQueueBrand))
+    return false;
+  if (value[privateQueueBrand] !== true) {
+    throw new Error("invalid private queue record");
+  }
+  const queue = value;
+  if (typeof queue.id !== "string") {
+    throw new Error("invalid private queue record");
+  }
+  validateQueueName(queue.id);
+  validateOptionalQueueConcurrencyLimit(queue.concurrencyLimit);
+  return true;
 }
 function isInternalDefinition(value) {
   if (typeof value !== "object" || value === null)
@@ -3538,6 +3679,13 @@ var source = Object.freeze({
     return new SourceDirectory(path);
   }
 });
+function inspectImage(value) {
+  if (typeof value !== "object" || value === null || value[imageBrand] !== true) {
+    return;
+  }
+  const imageValue = value;
+  return { id: imageValue.id, steps: imageValue.steps };
+}
 // sdk/typescript/src/workspace.ts
 var workspaceDefinitionBrand = Symbol.for("helmr.sdk.v0.workspace");
 function workspaceRef(address) {
@@ -3552,6 +3700,21 @@ var workspaces = Object.freeze({
     return runtimeUnavailable("workspaces.list");
   }
 });
+function inspectWorkspaceDefinition(value) {
+  if (typeof value !== "object" || value === null)
+    return;
+  if (!Object.hasOwn(value, workspaceDefinitionBrand))
+    return;
+  if (value[workspaceDefinitionBrand] !== true) {
+    throw new Error("invalid private workspace record");
+  }
+  const internal = value.internal;
+  if (typeof internal !== "object" || internal === null || internal.kind !== "workspace" || typeof internal.id !== "string" || typeof internal.image !== "object" || internal.image === null || typeof internal.resources !== "object" || internal.resources === null) {
+    throw new Error("invalid private workspace record");
+  }
+  validateTaskId(internal.id);
+  return internal;
+}
 function createWorkspaceRef(address) {
   const operations = {
     retrieve(_options) {
@@ -3657,7 +3820,781 @@ function assertUnicodeString(value) {
 import { createWriteStream, promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL as pathToFileURL3 } from "node:url";
+
+// runtime/typescript/src/compile.ts
+var BUILD_PLAN_FORMAT_VERSION = 0;
+var DECLARATION_LOCATOR_FORMAT_VERSION = 0;
+var PROGRAM_ENTRYPOINT = `import { runProgram } from "file:///opt/helmr/runtime/helmr/entry.mjs";
+await runProgram(new URL("./declarations.json", import.meta.url));
+`;
+function analyze(options) {
+  if (options.architecture !== "aarch64" && options.architecture !== "x86_64") {
+    throw new Error(`unsupported architecture ${JSON.stringify(options.architecture)}`);
+  }
+  const located = discoverDefinitions(options.exports);
+  if (located.length === 0) {
+    throw new Error("BuildPlan definitions must be non-empty");
+  }
+  if (located.length > 1e4) {
+    throw new Error("BuildPlan definitions exceed 10000");
+  }
+  located.sort(compareLocatedDefinitions);
+  const queues = compileQueues(located, options.exports);
+  const definitions = located.map(({ definition }) => compileDefinition(definition, options, queues));
+  const locatorEntries = located.flatMap((item) => item.definition.kind === "workspace" ? [] : [locatorEntry(item)]);
+  const programDeclarations = located.flatMap(({ definition }) => definition.kind === "workspace" ? [] : [programDeclaration(definition)]);
+  const buildPlan = Object.freeze({
+    formatVersion: BUILD_PLAN_FORMAT_VERSION,
+    definitions: Object.freeze(definitions),
+    queues: Object.freeze([...queues.values()].map((entry) => Object.freeze({ ...entry })).sort((left, right) => compareUtf8(left.name, right.name)))
+  });
+  const declarationLocator = Object.freeze({
+    declarations: Object.freeze(locatorEntries),
+    formatVersion: DECLARATION_LOCATOR_FORMAT_VERSION
+  });
+  return {
+    buildPlan,
+    buildPlanBytes: canonicalizeJsonValue(buildPlan),
+    declarationLocator,
+    declarationLocatorBytes: canonicalizeJsonValue(declarationLocator),
+    programDeclarations: Object.freeze(programDeclarations),
+    entrypointBytes: new TextEncoder().encode(PROGRAM_ENTRYPOINT)
+  };
+}
+function normalizeWorkspaceResources(resources) {
+  return Object.freeze({
+    milliCpu: normalizeCpu(resources.cpu),
+    memoryMiB: normalizeIecMiB(resources.memory, "memory"),
+    diskMiB: normalizeIecMiB(resources.disk, "disk")
+  });
+}
+function normalizeWorkspaceNetwork(network) {
+  if (network === undefined) {
+    return Object.freeze({ internet: true, denyCidrs: Object.freeze([]) });
+  }
+  if (network.internet === false) {
+    return Object.freeze({ internet: false, denyCidrs: Object.freeze([]) });
+  }
+  const denyCidrs = [...new Set((network.denyCidrs ?? []).map(canonicalCidr))];
+  denyCidrs.sort(compareUtf8);
+  return Object.freeze({
+    internet: true,
+    denyCidrs: Object.freeze(denyCidrs)
+  });
+}
+function discoverDefinitions(exports) {
+  const identities = new Map;
+  for (const item of exports) {
+    const definition = inspectDefinition(item.value) ?? inspectWorkspaceDefinition(item.value);
+    if (definition === undefined)
+      continue;
+    validateModulePath(item.modulePath);
+    validateExportName(item.exportName);
+    const key = `${definition.kind}\x00${definition.id}`;
+    const existing = identities.get(key);
+    if (existing !== undefined) {
+      if (existing.value === item.value) {
+        const candidate = {
+          definition,
+          modulePath: item.modulePath,
+          exportName: item.exportName
+        };
+        if (compareLocatorOccurrence(candidate, existing.located) < 0) {
+          existing.located = candidate;
+        }
+        continue;
+      }
+      throw new Error(`duplicate ${definition.kind} declaration ${JSON.stringify(definition.id)} at ${existing.located.modulePath}#${existing.located.exportName} and ${item.modulePath}#${item.exportName}`);
+    }
+    const located = {
+      definition,
+      modulePath: item.modulePath,
+      exportName: item.exportName
+    };
+    identities.set(key, {
+      value: item.value,
+      located
+    });
+  }
+  return [...identities.values()].map((item) => item.located);
+}
+function compileDefinition(definition, options, queues) {
+  switch (definition.kind) {
+    case "task":
+      return {
+        kind: "task",
+        declaredId: definition.id,
+        manifest: {
+          payload: {
+            kind: definition.hasPayload ? "standard_schema" : "none"
+          },
+          run: normalizeRun(definition, "task", queues),
+          ...definition.schedule === undefined ? {} : {
+            schedule: {
+              cron: definition.schedule.cron,
+              timezone: definition.schedule.timezone,
+              workspace: "id" in definition.schedule.workspace ? { id: definition.schedule.workspace.id } : { key: definition.schedule.workspace.key }
+            }
+          }
+        }
+      };
+    case "actor":
+      return {
+        kind: "actor",
+        declaredId: definition.id,
+        manifest: {
+          run: normalizeRun(definition, "actor", queues),
+          idleTimeoutMs: definition.idleTimeout === undefined ? 30000 : normalizeDuration(definition.idleTimeout, `actor ${JSON.stringify(definition.id)} idleTimeout`, 1, 3600000)
+        }
+      };
+    case "run_stream":
+      return {
+        kind: "run_stream",
+        declaredId: definition.id,
+        manifest: { schema: { kind: "standard_schema" } }
+      };
+    case "workspace":
+      return {
+        kind: "workspace",
+        declaredId: definition.id,
+        manifest: {
+          imageBuild: compileImageBuild(definition.image, options),
+          resources: normalizeWorkspaceResources(definition.resources),
+          network: normalizeWorkspaceNetwork(definition.network),
+          architecture: options.architecture
+        }
+      };
+  }
+}
+function compileQueues(located, exports) {
+  const queues = new Map;
+  for (const item of exports) {
+    if (isQueueDefinition(item.value)) {
+      addQueue(queues, item.value, item.value);
+    }
+  }
+  for (const { definition } of located) {
+    if (definition.kind !== "task" && definition.kind !== "actor")
+      continue;
+    if (typeof definition.queue === "object") {
+      addQueue(queues, definition.queue, definition.queue);
+    } else if (definition.queue === undefined) {
+      addQueue(queues, {
+        id: `${definition.kind}/${definition.id}`
+      }, definition);
+    }
+  }
+  for (const { definition } of located) {
+    if ((definition.kind === "task" || definition.kind === "actor") && typeof definition.queue === "string" && !queues.has(definition.queue)) {
+      throw new Error(`${definition.kind} ${JSON.stringify(definition.id)} references undefined queue ${JSON.stringify(definition.queue)}`);
+    }
+  }
+  if (queues.size > 1000)
+    throw new Error("BuildPlan queues exceed 1000");
+  return new Map([...queues].map(([name, entry]) => [name, entry.queue]));
+}
+function addQueue(queues, queue, owner) {
+  validateQueueName(queue.id);
+  const next = {
+    name: queue.id,
+    ...queue.concurrencyLimit === undefined || queue.concurrencyLimit === null ? {} : { concurrencyLimit: queue.concurrencyLimit }
+  };
+  const existing = queues.get(queue.id);
+  if (existing !== undefined) {
+    if (existing.owner === owner)
+      return;
+    throw new Error(`duplicate queue declaration ${JSON.stringify(queue.id)}`);
+  }
+  queues.set(queue.id, { owner, queue: next });
+}
+function normalizeRun(definition, kind, queues) {
+  const queue = definition.queue === undefined ? `${kind}/${definition.id}` : typeof definition.queue === "string" ? definition.queue : definition.queue.id;
+  if (!queues.has(queue)) {
+    throw new Error(`${kind} ${JSON.stringify(definition.id)} queue is undefined`);
+  }
+  const maxDurationMs = definition.maxDuration === undefined ? 900000 : normalizeDuration(definition.maxDuration, `${kind} ${JSON.stringify(definition.id)} maxDuration`, 5000, 86400000);
+  return {
+    queue,
+    maxDurationMs,
+    retry: normalizeRetry(definition.retry),
+    ...definition.ttl === undefined ? {} : {
+      ttlMs: normalizeDuration(definition.ttl, `${kind} ${JSON.stringify(definition.id)} ttl`, 1, 31536000000)
+    }
+  };
+}
+function normalizeRetry(retry) {
+  if (retry === undefined || retry.enabled === false) {
+    return { enabled: false };
+  }
+  if (!Number.isInteger(retry.maxAttempts) || retry.maxAttempts < 1 || retry.maxAttempts > 10) {
+    throw new Error("retry maxAttempts must be an integer in [1,10]");
+  }
+  const minMs = retry.backoff?.minDelay === undefined ? 1000 : normalizeDuration(retry.backoff.minDelay, "retry backoff minDelay", 1, 86400000);
+  const maxMs = retry.backoff?.maxDelay === undefined ? 30000 : normalizeDuration(retry.backoff.maxDelay, "retry backoff maxDelay", 1, 86400000);
+  const factor = retry.backoff?.factor ?? 2;
+  const jitter = retry.backoff?.jitter ?? "full";
+  if (minMs > maxMs) {
+    throw new Error("retry backoff minDelay must not exceed maxDelay");
+  }
+  if (!Number.isSafeInteger(factor) || factor < 1 || factor > 100) {
+    throw new Error("retry backoff factor must be an integer in [1,100]");
+  }
+  if (jitter !== "none" && jitter !== "full") {
+    throw new Error("retry backoff jitter must be none or full");
+  }
+  return {
+    enabled: true,
+    maxAttempts: retry.maxAttempts,
+    backoff: { minMs, maxMs, factor, jitter }
+  };
+}
+function compileImageBuild(root, options) {
+  const images = new Map;
+  const visiting = new Set;
+  const visit = (image) => {
+    if (visiting.has(image.id)) {
+      throw new Error(`image graph contains a cycle at ${JSON.stringify(image.id)}`);
+    }
+    const existing = images.get(image.id);
+    if (existing !== undefined) {
+      if (existing !== image) {
+        throw new Error(`image key ${JSON.stringify(image.id)} is not unique`);
+      }
+      return;
+    }
+    visiting.add(image.id);
+    images.set(image.id, image);
+    for (const step of image.steps) {
+      if (step.kind === "copy_from_image") {
+        const source2 = inspectImage(step.source);
+        if (source2 === undefined)
+          throw new Error("invalid copyFrom image");
+        visit(source2);
+      }
+    }
+    visiting.delete(image.id);
+  };
+  visit(root);
+  const specs = [...images.values()].sort((left, right) => compareUtf8(left.id, right.id)).map((image) => ({
+    key: image.id,
+    platform: {
+      os: "linux",
+      architecture: options.architecture
+    },
+    steps: image.steps.map((step) => compileImageStep(step, options))
+  }));
+  const stepCount = specs.reduce((total, image) => total + image.steps.length, 0);
+  if (stepCount > 1e4)
+    throw new Error("image build exceeds 10000 steps");
+  return {
+    formatVersion: 0,
+    root: root.id,
+    images: specs
+  };
+}
+function compileImageStep(step, options) {
+  switch (step.kind) {
+    case "from":
+      return { from: { ref: step.ref } };
+    case "run":
+      return {
+        run: {
+          argv: [...step.argv],
+          cacheMounts: step.cache.map((binding) => ({
+            dst: binding.mountPath,
+            cacheId: binding.cache.id,
+            sharing: "locked"
+          })),
+          secretMounts: step.secrets.map((binding) => ({
+            dst: binding.mountPath,
+            name: binding.secret
+          }))
+        }
+      };
+    case "copy_source_file":
+      return {
+        copySourceFile: {
+          dst: step.destination,
+          path: step.source.path
+        }
+      };
+    case "copy_source_directory":
+      return {
+        copySourceDir: {
+          dst: step.destination,
+          path: step.source.path
+        }
+      };
+    case "copy_from_image": {
+      const source2 = inspectImage(step.source);
+      if (source2 === undefined)
+        throw new Error("invalid copyFrom image");
+      return {
+        copyFromImage: {
+          dst: step.destination,
+          imageKey: source2.id,
+          srcPath: step.sourcePath
+        }
+      };
+    }
+    case "workdir":
+      return { workdir: { path: step.path } };
+    case "env":
+      return { env: { key: step.key, value: step.value } };
+    case "user":
+      return { user: { name: step.name } };
+  }
+}
+function locatorEntry(item) {
+  if (item.definition.kind === "workspace") {
+    throw new Error("workspace has no executable locator");
+  }
+  return {
+    declaredId: item.definition.id,
+    exportName: item.exportName,
+    kind: item.definition.kind,
+    modulePath: item.modulePath
+  };
+}
+function programDeclaration(definition) {
+  switch (definition.kind) {
+    case "task":
+      return {
+        kind: "task",
+        declaredId: definition.id,
+        slots: definition.hasPayload ? ["handler", "payloadSchema"] : ["handler"]
+      };
+    case "actor":
+      return {
+        kind: "actor",
+        declaredId: definition.id,
+        slots: ["handler"]
+      };
+    case "run_stream":
+      return {
+        kind: "run_stream",
+        declaredId: definition.id,
+        slots: ["schema"]
+      };
+  }
+}
+function normalizeCpu(cpu) {
+  if (!Number.isFinite(cpu) || cpu <= 0) {
+    throw new Error("workspace cpu must be a finite positive number");
+  }
+  const text = cpu.toString();
+  const match = /^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(text);
+  if (match === null)
+    throw new Error("workspace cpu cannot be normalized");
+  const integer = match[1];
+  const fraction = match[2] ?? "";
+  const exponent = Number(match[3] ?? "0");
+  const significand = BigInt(`${integer}${fraction}`);
+  const scale = exponent - fraction.length + 3;
+  let milliCpu;
+  if (scale >= 0) {
+    milliCpu = significand * 10n ** BigInt(scale);
+  } else {
+    const divisor = 10n ** BigInt(-scale);
+    if (significand % divisor !== 0n) {
+      throw new Error("workspace cpu must resolve to whole milliCPU");
+    }
+    milliCpu = significand / divisor;
+  }
+  return safePositiveNumber(milliCpu, "workspace milliCPU");
+}
+function normalizeIecMiB(value, label) {
+  const match = /^([1-9]\d*)(MiB|GiB)$/.exec(value);
+  if (match === null) {
+    throw new Error(`workspace ${label} must be a positive canonical integer suffixed by MiB or GiB`);
+  }
+  const result = BigInt(match[1]) * (match[2] === "GiB" ? 1024n : 1n);
+  return safePositiveNumber(result, `workspace ${label} MiB`);
+}
+function normalizeDuration(value, label, minimumMs, maximumMs) {
+  const match = /^([1-9][0-9]*)(ms|s|m|h|d)$/.exec(value);
+  if (match === null) {
+    throw new Error(`${label} must match ^[1-9][0-9]*(ms|s|m|h|d)$`);
+  }
+  const multipliers = {
+    ms: 1n,
+    s: 1000n,
+    m: 60000n,
+    h: 3600000n,
+    d: 86400000n
+  };
+  const milliseconds = BigInt(match[1]) * multipliers[match[2]];
+  if (milliseconds < BigInt(minimumMs) || milliseconds > BigInt(maximumMs)) {
+    throw new Error(`${label} must resolve to milliseconds in [${minimumMs},${maximumMs}]`);
+  }
+  return Number(milliseconds);
+}
+function safePositiveNumber(value, label) {
+  if (value <= 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`${label} must be a positive safe integer`);
+  }
+  return Number(value);
+}
+function canonicalCidr(value) {
+  const parts = value.split("/");
+  if (parts.length !== 2)
+    throw new Error(`invalid CIDR ${JSON.stringify(value)}`);
+  const address = parts[0];
+  const prefixText = parts[1];
+  if (!/^(0|[1-9]\d*)$/.test(prefixText)) {
+    throw new Error(`invalid CIDR prefix ${JSON.stringify(value)}`);
+  }
+  const ipv4 = parseIpv4(address);
+  if (ipv4 !== undefined) {
+    const prefix2 = Number(prefixText);
+    if (prefix2 > 32)
+      throw new Error(`invalid IPv4 CIDR prefix ${prefix2}`);
+    const mask = prefix2 === 0 ? 0 : 4294967295 << 32 - prefix2 >>> 0;
+    const network = (ipv4 & mask) >>> 0;
+    return `${[network >>> 24 & 255, network >>> 16 & 255, network >>> 8 & 255, network & 255].join(".")}/${prefix2}`;
+  }
+  const words = parseIpv6(address);
+  const prefix = Number(prefixText);
+  if (prefix > 128)
+    throw new Error(`invalid IPv6 CIDR prefix ${prefix}`);
+  for (let bit = prefix;bit < 128; bit += 1) {
+    const word = Math.floor(bit / 16);
+    const shift = 15 - bit % 16;
+    words[word] = words[word] & ~(1 << shift);
+  }
+  return `${formatIpv6(words)}/${prefix}`;
+}
+function parseIpv4(value) {
+  const parts = value.split(".");
+  if (parts.length !== 4 || parts.some((part) => !/^(0|[1-9]\d{0,2})$/.test(part))) {
+    return;
+  }
+  const values = parts.map(Number);
+  if (values.some((part) => part > 255))
+    return;
+  return (values[0] << 24 | values[1] << 16 | values[2] << 8 | values[3]) >>> 0;
+}
+function parseIpv6(value) {
+  if (value.includes("."))
+    throw new Error(`invalid IPv6 address ${JSON.stringify(value)}`);
+  const halves = value.split("::");
+  if (halves.length > 2)
+    throw new Error(`invalid IPv6 address ${JSON.stringify(value)}`);
+  const left = halves[0] === "" ? [] : halves[0].split(":");
+  const right = halves.length === 1 || halves[1] === "" ? [] : halves[1].split(":");
+  if ([...left, ...right].some((part) => !/^[0-9A-Fa-f]{1,4}$/.test(part)) || halves.length === 1 && left.length !== 8 || halves.length === 2 && left.length + right.length >= 8) {
+    throw new Error(`invalid IPv6 address ${JSON.stringify(value)}`);
+  }
+  const zeros = halves.length === 2 ? 8 - left.length - right.length : 0;
+  return [
+    ...left.map((part) => Number.parseInt(part, 16)),
+    ...Array.from({ length: zeros }, () => 0),
+    ...right.map((part) => Number.parseInt(part, 16))
+  ];
+}
+function formatIpv6(words) {
+  let bestStart = -1;
+  let bestLength = 0;
+  for (let index = 0;index < words.length; ) {
+    if (words[index] !== 0) {
+      index += 1;
+      continue;
+    }
+    let end = index;
+    while (end < words.length && words[end] === 0)
+      end += 1;
+    if (end - index > bestLength && end - index >= 2) {
+      bestStart = index;
+      bestLength = end - index;
+    }
+    index = end;
+  }
+  if (bestStart === -1)
+    return words.map((word) => word.toString(16)).join(":");
+  const left = words.slice(0, bestStart).map((word) => word.toString(16)).join(":");
+  const right = words.slice(bestStart + bestLength).map((word) => word.toString(16)).join(":");
+  return `${left}::${right}`;
+}
+function validateModulePath(path) {
+  const suffixes = [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"];
+  const components = path.split("/");
+  if (path.length === 0 || !hasOnlyUnicodeScalarValues(path) || path.startsWith("/") || path.includes("\\") || /[\p{Cc}]/u.test(path) || components.some((component) => component === "" || component === "." || component === "..") || components.includes("node_modules") || components[0] === "helmr" || path.endsWith(".d.ts") || path.endsWith(".d.mts") || path.endsWith(".d.cts") || !suffixes.some((suffix) => path.endsWith(suffix))) {
+    throw new Error(`modulePath ${JSON.stringify(path)} is not an admitted first-party module path`);
+  }
+}
+function validateExportName(name) {
+  const length = new TextEncoder().encode(name).length;
+  if (length < 1 || length > 256 || !hasOnlyUnicodeScalarValues(name) || /[\p{Cc}]/u.test(name)) {
+    throw new Error(`exportName ${JSON.stringify(name)} is invalid`);
+  }
+}
+function hasOnlyUnicodeScalarValues(value) {
+  for (let index = 0;index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 55296 && code <= 56319) {
+      const next = value.charCodeAt(index + 1);
+      if (next < 56320 || next > 57343)
+        return false;
+      index += 1;
+    } else if (code >= 56320 && code <= 57343) {
+      return false;
+    }
+  }
+  return true;
+}
+function compareLocatedDefinitions(left, right) {
+  const order = {
+    task: 0,
+    actor: 1,
+    run_stream: 2,
+    workspace: 3
+  };
+  return order[left.definition.kind] - order[right.definition.kind] || compareUtf8(left.definition.id, right.definition.id);
+}
+function compareLocatorOccurrence(left, right) {
+  return compareUtf8(left.modulePath, right.modulePath) || compareUtf8(left.exportName, right.exportName);
+}
+function compareUtf8(left, right) {
+  const encoder = new TextEncoder;
+  const a = encoder.encode(left);
+  const b = encoder.encode(right);
+  for (let index = 0;index < Math.min(a.length, b.length); index += 1) {
+    const difference = a[index] - b[index];
+    if (difference !== 0)
+      return difference;
+  }
+  return a.length - b.length;
+}
+
+// runtime/typescript/src/config.ts
+import { lstat } from "node:fs/promises";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
+class MissingConfigError extends Error {
+  constructor(path) {
+    super(`missing helmr.config.ts at ${path}`);
+    this.name = "MissingConfigError";
+  }
+}
+async function loadConfig(root) {
+  const path = resolve(root, "helmr.config.ts");
+  let metadata;
+  try {
+    metadata = await lstat(path);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      throw new MissingConfigError(path);
+    }
+    throw error;
+  }
+  if (!metadata.isFile()) {
+    throw new Error("helmr.config.ts must be a regular file");
+  }
+  let namespace;
+  try {
+    const value = await import(pathToFileURL(path).href);
+    if (typeof value !== "object" || value === null) {
+      throw new Error("config did not evaluate to a module namespace");
+    }
+    namespace = value;
+  } catch (error) {
+    throw new Error("failed to evaluate helmr.config.ts", { cause: error });
+  }
+  const config = inspectConfig(namespace["default"]);
+  if (config === undefined) {
+    throw new Error("helmr.config.ts must default-export defineConfig()");
+  }
+  return config;
+}
+
+// runtime/typescript/src/analysis.ts
+import { lstat as lstat2, readdir, realpath } from "node:fs/promises";
+import { relative, resolve as resolve2, sep } from "node:path";
+import { pathToFileURL as pathToFileURL2 } from "node:url";
+var executableExtension = /\.(?:js|mjs|cjs|ts|mts|cts)$/;
+var declarationExtension = /\.d\.(?:ts|mts|cts)$/;
+var textDecoder2 = new TextDecoder("utf-8", { fatal: true });
+var maxAnalysisFailureMessageBytes = 16 << 10;
+var ANALYSIS_RESULT_FORMAT_VERSION = 0;
+async function analyzeProject(options) {
+  const root = await realpath(options.root);
+  await rejectReservedRoot(root);
+  const config = await loadConfig(root);
+  const modules = await discoverModules(root, config);
+  const exports = await importModules(root, modules);
+  const result = analyze({
+    architecture: options.architecture,
+    exports
+  });
+  return Object.freeze({
+    ...result,
+    modules: Object.freeze(modules)
+  });
+}
+function successfulAnalysisResult(analysis) {
+  const files = [{
+    path: "helmr/build-plan.json",
+    content: decodeGeneratedFile(analysis.buildPlanBytes)
+  }];
+  if (analysis.programDeclarations.length > 0) {
+    files.push({
+      path: "helmr/declarations.json",
+      content: decodeGeneratedFile(analysis.declarationLocatorBytes)
+    }, {
+      path: "helmr/entry.mjs",
+      content: decodeGeneratedFile(analysis.entrypointBytes)
+    });
+  }
+  return Object.freeze({
+    formatVersion: ANALYSIS_RESULT_FORMAT_VERSION,
+    outcome: "succeeded",
+    files: Object.freeze(files.map((file) => Object.freeze(file)))
+  });
+}
+function failedAnalysisResult(message) {
+  const encoded = new TextEncoder().encode(message);
+  if (encoded.length === 0 || encoded.length > maxAnalysisFailureMessageBytes || message.trim() === "") {
+    throw new Error(`analysis failure message must be nonblank UTF-8 of at most ${maxAnalysisFailureMessageBytes} bytes`);
+  }
+  return Object.freeze({
+    formatVersion: ANALYSIS_RESULT_FORMAT_VERSION,
+    outcome: "failed",
+    error: Object.freeze({
+      reason: "analysis_failed",
+      message
+    })
+  });
+}
+function encodeAnalysisResultFrame(result) {
+  const body = canonicalizeJsonValue(result);
+  const frame = new Uint8Array(4 + body.length);
+  new DataView(frame.buffer).setUint32(0, body.length, false);
+  frame.set(body, 4);
+  return frame;
+}
+async function discoverModules(root, config) {
+  const canonicalRoot = await realpath(root);
+  const candidates = new Set;
+  for (const configured of config.dirs) {
+    const directory = resolve2(canonicalRoot, configured);
+    if (!inside(canonicalRoot, directory)) {
+      throw new Error(`configured dir escapes the project root: ${configured}`);
+    }
+    const relativeDirectory = projectPath(canonicalRoot, directory);
+    if (hasComponent(relativeDirectory, "node_modules")) {
+      throw new Error(`configured dir enters the dependency namespace: ${configured}`);
+    }
+    await requireUnlinkedDirectory(canonicalRoot, directory, configured);
+    await appendCandidates(canonicalRoot, directory, candidates);
+  }
+  const modules = [...candidates].filter((path) => !config.ignorePatterns.some((pattern) => matchesIgnorePattern(pattern, path)));
+  modules.sort(compareUtf82);
+  return modules;
+}
+async function appendCandidates(root, directory, candidates) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  entries.sort((left, right) => compareUtf82(left.name, right.name));
+  for (const entry of entries) {
+    const absolute = resolve2(directory, entry.name);
+    const path = projectPath(root, absolute);
+    if (hasComponent(path, "node_modules"))
+      continue;
+    const metadata = await lstat2(absolute);
+    if (metadata.isSymbolicLink())
+      continue;
+    if (metadata.isDirectory()) {
+      await appendCandidates(root, absolute, candidates);
+      continue;
+    }
+    if (metadata.isFile() && executableExtension.test(path) && !declarationExtension.test(path) && path !== "helmr.config.ts") {
+      candidates.add(path);
+      continue;
+    }
+    if (!metadata.isFile()) {
+      throw new Error(`unsupported declaration tree entry: ${path}`);
+    }
+  }
+}
+async function importModules(root, modules) {
+  const exports = [];
+  for (const modulePath of modules) {
+    let namespace;
+    try {
+      namespace = await importNamespace(resolve2(root, modulePath));
+    } catch (error) {
+      throw new Error(`failed to import declaration module ${modulePath}`, {
+        cause: error
+      });
+    }
+    const names = Object.getOwnPropertyNames(namespace).sort(compareUtf82);
+    for (const exportName of names) {
+      exports.push({
+        modulePath,
+        exportName,
+        value: namespace[exportName]
+      });
+    }
+  }
+  return exports;
+}
+async function importNamespace(path) {
+  const value = await import(pathToFileURL2(path).href);
+  if (typeof value !== "object" || value === null) {
+    throw new Error(`${path} did not evaluate to a module namespace`);
+  }
+  return value;
+}
+async function rejectReservedRoot(root) {
+  try {
+    await lstat2(resolve2(root, "helmr"));
+  } catch (error) {
+    if (error.code === "ENOENT")
+      return;
+    throw error;
+  }
+  throw new Error("project root helmr/ is reserved for Platform output");
+}
+async function requireUnlinkedDirectory(root, directory, configured) {
+  let metadata;
+  try {
+    metadata = await lstat2(directory);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      throw new Error(`configured dir does not exist: ${configured}`);
+    }
+    throw error;
+  }
+  if (!metadata.isDirectory()) {
+    throw new Error(`configured dir is not a regular directory: ${configured}`);
+  }
+  if (await realpath(directory) !== directory || !inside(root, directory)) {
+    throw new Error(`configured dir traverses a symbolic link: ${configured}`);
+  }
+}
+function projectPath(root, value) {
+  return relative(root, value).split(sep).join("/");
+}
+function inside(root, value) {
+  const path = relative(root, value);
+  return path === "" || !path.startsWith(`..${sep}`) && path !== ".." && !path.startsWith("/");
+}
+function hasComponent(path, component) {
+  return path.split("/").includes(component);
+}
+function compareUtf82(left, right) {
+  return Buffer.compare(Buffer.from(left), Buffer.from(right));
+}
+function decodeGeneratedFile(value) {
+  try {
+    return textDecoder2.decode(value);
+  } catch {
+    throw new Error("generated analysis file is not valid UTF-8");
+  }
+}
+
+// runtime/typescript/src/program.ts
 var MAX_PROGRAM_FRAME_BYTES = 256 * 1024 * 1024;
 var MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024;
 var MAX_TASK_ERROR_BYTES = 16 * 1024;
@@ -3713,8 +4650,8 @@ class ResumeDecisionRouter {
     if (this.#pending.has(correlationId)) {
       return Promise.reject(new Error("duplicate runtime correlation id"));
     }
-    const result = new Promise((resolve, reject) => {
-      this.#pending.set(correlationId, { resolve, reject });
+    const result = new Promise((resolve3, reject) => {
+      this.#pending.set(correlationId, { resolve: resolve3, reject });
     });
     this.#pump();
     return result;
@@ -3876,6 +4813,10 @@ function parseRuntimeProtocolValue(label, parse) {
   }
 }
 async function runProgram(locatorURL, io = defaultProgramIO()) {
+  if (process.env["HELMR_PROGRAM_MODE"] === "proof") {
+    await writeSupervisorFrame(await proveProgram(locatorURL, io));
+    return;
+  }
   const reader = new FrameReader(io.input);
   const start = fromBinary(exports_run_pb.ProgramStartSchema, await reader.read());
   validateProgramStart(start);
@@ -3914,6 +4855,84 @@ async function runProgram(locatorURL, io = defaultProgramIO()) {
   }
   await runActor(start, definition, io, decisions);
 }
+async function runAnalysis(root, architecture) {
+  try {
+    const result = await analyzeProject({ root, architecture });
+    await writeSupervisorBytes(encodeAnalysisResultFrame(successfulAnalysisResult(result)));
+  } catch (error) {
+    await writeSupervisorBytes(encodeAnalysisResultFrame(failedAnalysisResult(supervisorFailureMessage(error, "analysis failed"))));
+  }
+}
+async function proveProgram(locatorURL, io) {
+  try {
+    const locator = await loadDeclarationLocator(locatorURL, io);
+    const declarations = [];
+    for (const located of locator.declarations) {
+      const moduleURL = resolveModuleURL(locatorURL, located.modulePath);
+      const imported = io.importModule === undefined ? await import(moduleURL.href) : await io.importModule(moduleURL);
+      const definition = inspectDefinition(imported[located.exportName]);
+      if (definition === undefined || definition.kind !== located.kind || definition.id !== located.declaredId) {
+        throw new Error(`Program export ${JSON.stringify(located.exportName)} does not match ${located.kind}:${JSON.stringify(located.declaredId)}`);
+      }
+      declarations.push(Object.freeze({
+        kind: located.kind,
+        declaredId: located.declaredId,
+        slots: Object.freeze(programSlots(definition))
+      }));
+    }
+    return Object.freeze({
+      formatVersion: 0,
+      outcome: "succeeded",
+      declarations: Object.freeze(declarations)
+    });
+  } catch (error) {
+    return Object.freeze({
+      formatVersion: 0,
+      outcome: "failed",
+      error: Object.freeze({
+        reason: "program_invalid",
+        message: supervisorFailureMessage(error, "Program proof failed")
+      })
+    });
+  }
+}
+function programSlots(definition) {
+  switch (definition.kind) {
+    case "task":
+      return definition.hasPayload ? ["handler", "payloadSchema"] : ["handler"];
+    case "actor":
+      return ["handler"];
+    case "run_stream":
+      return ["schema"];
+  }
+}
+async function writeSupervisorFrame(value) {
+  const body = canonicalizeJsonValue(value);
+  const frame = new Uint8Array(body.length + 4);
+  new DataView(frame.buffer).setUint32(0, body.length, false);
+  frame.set(body, 4);
+  await writeSupervisorBytes(frame);
+}
+async function writeSupervisorBytes(value) {
+  const configured = process.env["HELMR_SUPERVISOR_FD"];
+  const fd = configured === undefined ? 3 : Number(configured);
+  if (!Number.isSafeInteger(fd) || fd < 3) {
+    throw new Error("supervisor result descriptor is invalid");
+  }
+  const output = createWriteStream("", { fd, autoClose: false });
+  await new Promise((resolve3, reject) => {
+    output.once("error", reject);
+    output.end(value, resolve3);
+  });
+}
+function supervisorFailureMessage(error, fallback) {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.trim() || fallback;
+  const bytes = Buffer.from(normalized);
+  if (bytes.length <= 16384)
+    return normalized;
+  return bytes.subarray(0, 16384).toString("utf8").replace(/\uFFFD+$/u, "");
+}
 async function loadDeclarationLocator(url, io) {
   const raw = io.readLocator === undefined ? await fs.readFile(url, "utf8") : await io.readLocator(url);
   const value = JSON.parse(raw);
@@ -3939,10 +4958,10 @@ function parseLocatedDeclaration(value, index) {
     kind: record["kind"],
     declaredId: record["declaredId"],
     exportName: record["exportName"],
-    modulePath: validateModulePath(record["modulePath"])
+    modulePath: validateModulePath2(record["modulePath"])
   };
 }
-function validateModulePath(value) {
+function validateModulePath2(value) {
   if (value === "" || value.startsWith("/") || value.includes("\\") || path.posix.normalize(value) !== value || value === "helmr" || value.startsWith("helmr/") || value.split("/").includes("node_modules")) {
     throw new Error("declaration modulePath is outside first-party Program source");
   }
@@ -3951,11 +4970,11 @@ function validateModulePath(value) {
 function resolveModuleURL(locatorURL, modulePath) {
   const root = path.dirname(path.dirname(fileURLToPath(locatorURL)));
   const resolved = path.resolve(root, modulePath);
-  const relative = path.relative(root, resolved);
-  if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+  const relative2 = path.relative(root, resolved);
+  if (relative2 === "" || relative2 === ".." || relative2.startsWith(`..${path.sep}`) || path.isAbsolute(relative2)) {
     throw new Error("declaration modulePath escapes the Program root");
   }
-  return pathToFileURL(resolved);
+  return pathToFileURL3(resolved);
 }
 function validateProgramStart(start) {
   if (start.runId === "" || start.attemptNumber === 0 || start.entrypointDeclaredId === "" || start.deploymentId === "" || start.deploymentVersion === "" || start.workspaceId === "" || start.baseWorkspaceVersionId === "" || start.cause === undefined || start.cause.kind.case === undefined) {
@@ -4701,10 +5720,10 @@ function defaultProgramIO() {
   });
   return {
     input: process.stdin,
-    write: (value) => new Promise((resolve, reject) => {
+    write: (value) => new Promise((resolve3, reject) => {
       output.write(value, (error) => {
         if (error === null || error === undefined)
-          resolve();
+          resolve3();
         else
           reject(error);
       });
@@ -4715,5 +5734,6 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 export {
-  runProgram
+  runProgram,
+  runAnalysis
 };

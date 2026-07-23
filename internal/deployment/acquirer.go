@@ -170,42 +170,42 @@ func encodeManagerTree(
 	encoder string,
 	provisional *os.File,
 	destination *os.File,
-) (ManagerArtifact, error) {
+) (ArtifactDescriptor, error) {
 	if _, err := provisional.Seek(0, io.SeekStart); err != nil {
-		return ManagerArtifact{}, fmt.Errorf("rewind manager provisional tree: %w", err)
+		return ArtifactDescriptor{}, fmt.Errorf("rewind manager provisional tree: %w", err)
 	}
 	if err := encodeSquashFS(ctx, encoder, provisional, destination); err != nil {
-		return ManagerArtifact{}, err
+		return ArtifactDescriptor{}, err
 	}
 	if err := destination.Sync(); err != nil {
-		return ManagerArtifact{}, fmt.Errorf("sync manager Capsule tree: %w", err)
+		return ArtifactDescriptor{}, fmt.Errorf("sync manager Capsule tree: %w", err)
 	}
 	info, err := destination.Stat()
 	if err != nil {
-		return ManagerArtifact{}, fmt.Errorf("inspect manager Capsule tree: %w", err)
+		return ArtifactDescriptor{}, fmt.Errorf("inspect manager Capsule tree: %w", err)
 	}
 	if info.Size() < 1 || info.Size() > maxManagerCapsuleTreeBytes {
-		return ManagerArtifact{}, fmt.Errorf(
+		return ArtifactDescriptor{}, fmt.Errorf(
 			"%w: encoded manager tree size is outside [1,%d]",
 			ErrManagerProtocolUnsupported,
 			maxManagerCapsuleTreeBytes,
 		)
 	}
 	if _, err := destination.Seek(0, io.SeekStart); err != nil {
-		return ManagerArtifact{}, fmt.Errorf("rewind manager Capsule tree: %w", err)
+		return ArtifactDescriptor{}, fmt.Errorf("rewind manager Capsule tree: %w", err)
 	}
 	digest := sha256.New()
 	written, err := io.Copy(digest, io.LimitReader(destination, info.Size()+1))
 	if err != nil {
-		return ManagerArtifact{}, fmt.Errorf("hash manager Capsule tree: %w", err)
+		return ArtifactDescriptor{}, fmt.Errorf("hash manager Capsule tree: %w", err)
 	}
 	if written != info.Size() {
-		return ManagerArtifact{}, errors.New("manager Capsule tree changed while hashing")
+		return ArtifactDescriptor{}, errors.New("manager Capsule tree changed while hashing")
 	}
 	if _, err := destination.Seek(0, io.SeekStart); err != nil {
-		return ManagerArtifact{}, fmt.Errorf("rewind manager Capsule tree for publication: %w", err)
+		return ArtifactDescriptor{}, fmt.Errorf("rewind manager Capsule tree for publication: %w", err)
 	}
-	return ManagerArtifact{
+	return ArtifactDescriptor{
 		Digest:    "sha256:" + hex.EncodeToString(digest.Sum(nil)),
 		MediaType: ManagerTreeMediaType,
 		SizeBytes: info.Size(),

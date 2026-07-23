@@ -105,6 +105,7 @@ rec {
     repoChecks
     ++ [
       pkgs.gnutar
+      pkgs.postgresql_18
     ]
     ++ image;
 

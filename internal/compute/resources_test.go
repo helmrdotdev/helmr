@@ -28,8 +28,8 @@ func TestResourceVectorFits(t *testing.T) {
 }
 
 func TestBuildResourceContracts(t *testing.T) {
-	if DependencyGuestPIDsMax != 1024 {
-		t.Fatalf("dependency guest pids.max = %d, want 1024", DependencyGuestPIDsMax)
+	if BuildGuestPIDsMax != 1024 {
+		t.Fatalf("build guest pids.max = %d, want 1024", BuildGuestPIDsMax)
 	}
 	if got, want := BuildGuestResources(), (ResourceVector{MilliCPU: 2000, MemoryMiB: 2048, DiskMiB: 20480, Slots: 1}); got != want {
 		t.Fatalf("build guest = %+v, want %+v", got, want)

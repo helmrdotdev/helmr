@@ -329,7 +329,7 @@ func managerCapsuleFixture(
 			Origin:    origin,
 			SizeBytes: 1,
 		},
-		Tree: ManagerArtifact{
+		Tree: ArtifactDescriptor{
 			Digest:    "sha256:" + strings.Repeat("2", 64),
 			MediaType: ManagerTreeMediaType,
 			SizeBytes: 1,

@@ -2,18 +2,23 @@ package deployment
 
 import (
 	"archive/tar"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"path"
 	"strings"
+	"time"
+	"unicode/utf8"
 
+	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/safepath"
 )
 
 const (
 	maxSubmittedSourceEntries      = 100_000
 	maxSubmittedSourceLogicalBytes = int64(512 << 20)
+	maxSubmittedSourceIgnoreBytes  = 1 << 20
 )
 
 type SourceSelection struct {
@@ -31,21 +36,32 @@ func InspectSource(body io.Reader) (SourceSelection, error) {
 	if body == nil {
 		return SourceSelection{}, errors.New("submitted source is nil")
 	}
-	reader := tar.NewReader(body)
-	seen := make(map[string]struct{})
+	seen := make(map[string]byte)
 	candidates := make(map[string]sourceCandidate, 4)
+	var paths []submittedSourcePath
+	var ignoreBody []byte
+	var hasIgnore bool
 	var entries int
 	var logicalBytes int64
+	var previousName string
+	var artifactBytes int64
 	for {
-		header, err := reader.Next()
-		if errors.Is(err, io.EOF) {
+		rawHeader, terminal, err := readSourceHeader(body, &artifactBytes)
+		if err != nil {
+			return SourceSelection{}, err
+		}
+		if terminal {
 			break
 		}
+		header, err := parseSourceHeader(rawHeader)
 		if err != nil {
 			return SourceSelection{}, fmt.Errorf("read submitted source: %w", err)
 		}
-		if header.Typeflag == tar.TypeDir && path.Clean(header.Name) == "." {
-			continue
+		if err := validateSourceHeader(header); err != nil {
+			return SourceSelection{}, err
+		}
+		if err := validateCanonicalSourceHeader(rawHeader, header); err != nil {
+			return SourceSelection{}, err
 		}
 		entries++
 		if entries > maxSubmittedSourceEntries {
@@ -54,19 +70,69 @@ func InspectSource(body io.Reader) (SourceSelection, error) {
 				maxSubmittedSourceEntries,
 			)
 		}
-		name, err := safepath.CleanSlash(header.Name, safepath.CleanOptions{})
+		emittedName := header.Name
+		pathName := emittedName
+		if header.Typeflag == tar.TypeDir {
+			pathName = strings.TrimSuffix(pathName, "/")
+		}
+		name, err := safepath.CleanSlash(pathName, safepath.CleanOptions{})
 		if err != nil {
 			return SourceSelection{}, fmt.Errorf("submitted source path %q: %w", header.Name, err)
+		}
+		if name != pathName {
+			return SourceSelection{}, fmt.Errorf("submitted source path %q is not canonical", header.Name)
 		}
 		if _, exists := seen[name]; exists {
 			return SourceSelection{}, fmt.Errorf("submitted source contains duplicate path %q", name)
 		}
-		seen[name] = struct{}{}
+		if parent := path.Dir(name); parent != "." {
+			kind, exists := seen[parent]
+			if !exists || kind != tar.TypeDir {
+				return SourceSelection{}, fmt.Errorf(
+					"submitted source parent %q is not an explicit directory",
+					parent,
+				)
+			}
+		}
+		if previousName != "" && previousName >= emittedName {
+			return SourceSelection{}, errors.New(
+				"submitted source paths are not in canonical order",
+			)
+		}
+		previousName = emittedName
+		seen[name] = header.Typeflag
 		if sourceRootReserved(name) {
 			return SourceSelection{}, fmt.Errorf("submitted source contains reserved path %q", name)
 		}
+		var raw []byte
+		if header.Typeflag == tar.TypeReg &&
+			(sourceAuthorityPath(name) || name == ".helmrignore") {
+			limit := int64(maxSubmittedSourceIgnoreBytes)
+			if sourceAuthorityPath(name) {
+				limit = int64(maxPackageManifestSizeBytes)
+				if name != "package.json" {
+					limit = maxLockfileBytes
+				}
+			}
+			if header.Size > limit {
+				return SourceSelection{}, fmt.Errorf(
+					"submitted source %q exceeds %d bytes",
+					name,
+					limit,
+				)
+			}
+			raw = make([]byte, header.Size)
+		}
+		if err := readSourcePayload(body, header.Size, raw, &artifactBytes); err != nil {
+			return SourceSelection{}, fmt.Errorf("read submitted source %q: %w", name, err)
+		}
 		switch header.Typeflag {
 		case tar.TypeDir:
+			if name == ".helmrignore" {
+				return SourceSelection{}, errors.New(
+					"submitted source .helmrignore must be a regular UTF-8 file no larger than 1 MiB",
+				)
+			}
 		case tar.TypeReg:
 			if header.Size < 0 || logicalBytes > maxSubmittedSourceLogicalBytes-header.Size {
 				return SourceSelection{}, fmt.Errorf(
@@ -76,27 +142,18 @@ func InspectSource(body io.Reader) (SourceSelection, error) {
 			}
 			logicalBytes += header.Size
 			if sourceAuthorityPath(name) {
-				limit := int64(maxPackageManifestSizeBytes)
-				if name != "package.json" {
-					limit = maxLockfileBytes
-				}
-				if header.Size > limit {
-					return SourceSelection{}, fmt.Errorf(
-						"submitted source %q exceeds %d bytes",
-						name,
-						limit,
-					)
-				}
-				raw, err := io.ReadAll(io.LimitReader(reader, header.Size))
-				if err != nil {
-					return SourceSelection{}, fmt.Errorf("read submitted source %q: %w", name, err)
-				}
-				if int64(len(raw)) != header.Size {
-					return SourceSelection{}, fmt.Errorf("submitted source %q is truncated", name)
-				}
 				candidates[name] = sourceCandidate{kind: header.Typeflag, raw: raw}
 			}
+			if name == ".helmrignore" {
+				hasIgnore = true
+				ignoreBody = raw
+			}
 		case tar.TypeSymlink:
+			if name == ".helmrignore" {
+				return SourceSelection{}, errors.New(
+					"submitted source .helmrignore must be a regular UTF-8 file no larger than 1 MiB",
+				)
+			}
 			if err := validateSourceLink(name, header.Linkname); err != nil {
 				return SourceSelection{}, err
 			}
@@ -109,6 +166,30 @@ func InspectSource(body io.Reader) (SourceSelection, error) {
 				name,
 				header.Typeflag,
 			)
+		}
+		paths = append(paths, submittedSourcePath{
+			name:  name,
+			isDir: header.Typeflag == tar.TypeDir,
+		})
+	}
+	if hasIgnore {
+		if !utf8.Valid(ignoreBody) {
+			return SourceSelection{}, errors.New(
+				"submitted source .helmrignore must be a regular UTF-8 file no larger than 1 MiB",
+			)
+		}
+		ignore, err := archive.ParseSourceIgnore(ignoreBody)
+		if err != nil {
+			return SourceSelection{}, fmt.Errorf("submitted source .helmrignore: %w", err)
+		}
+		for _, sourcePath := range paths {
+			if sourcePath.name != ".helmrignore" &&
+				ignore.Match(sourcePath.name, sourcePath.isDir) {
+				return SourceSelection{}, fmt.Errorf(
+					"submitted source path %q is excluded by .helmrignore",
+					sourcePath.name,
+				)
+			}
 		}
 	}
 
@@ -141,8 +222,218 @@ func InspectSource(body io.Reader) (SourceSelection, error) {
 	}, nil
 }
 
+type submittedSourcePath struct {
+	name  string
+	isDir bool
+}
+
+func readSourceHeader(body io.Reader, artifactBytes *int64) ([]byte, bool, error) {
+	header := make([]byte, tarBlockSize)
+	if err := readSourceBytes(body, header, artifactBytes); err != nil {
+		return nil, false, fmt.Errorf("read submitted source header: %w", err)
+	}
+	if !allZero(header) {
+		return header, false, nil
+	}
+	terminal := make([]byte, tarBlockSize)
+	if err := readSourceBytes(body, terminal, artifactBytes); err != nil {
+		return nil, false, errors.New("submitted source has an incomplete terminal record")
+	}
+	if !allZero(terminal) {
+		return nil, false, errors.New("submitted source has a noncanonical terminal record")
+	}
+	var trailing [1]byte
+	n, err := body.Read(trailing[:])
+	if n != 0 || err == nil {
+		return nil, false, errors.New("submitted source contains bytes after its terminal records")
+	}
+	if !errors.Is(err, io.EOF) {
+		return nil, false, fmt.Errorf("finish submitted source: %w", err)
+	}
+	return nil, true, nil
+}
+
+const tarBlockSize = 512
+
+func parseSourceHeader(raw []byte) (*tar.Header, error) {
+	reader := tar.NewReader(bytes.NewReader(raw))
+	header, err := reader.Next()
+	if err != nil {
+		return nil, err
+	}
+	return header, nil
+}
+
+func validateCanonicalSourceHeader(raw []byte, header *tar.Header) error {
+	canonical := &tar.Header{
+		Name:     header.Name,
+		Linkname: header.Linkname,
+		Size:     header.Size,
+		Mode:     header.Mode,
+		Typeflag: header.Typeflag,
+		ModTime:  time.Unix(0, 0).UTC(),
+		Format:   tar.FormatUSTAR,
+	}
+	var encoded bytes.Buffer
+	writer := tar.NewWriter(&encoded)
+	if err := writer.WriteHeader(canonical); err != nil {
+		return fmt.Errorf("encode canonical submitted source header %q: %w", header.Name, err)
+	}
+	if encoded.Len() < tarBlockSize || !bytes.Equal(raw, encoded.Bytes()[:tarBlockSize]) {
+		return fmt.Errorf("submitted source path %q has noncanonical USTAR encoding", header.Name)
+	}
+	return nil
+}
+
+func readSourcePayload(
+	body io.Reader,
+	size int64,
+	captured []byte,
+	artifactBytes *int64,
+) error {
+	if size < 0 {
+		return errors.New("negative entry size")
+	}
+	padded := size
+	if remainder := padded % tarBlockSize; remainder != 0 {
+		padded += tarBlockSize - remainder
+	}
+	var offset int64
+	buffer := make([]byte, 32<<10)
+	for offset < padded {
+		chunk := int64(len(buffer))
+		if remaining := padded - offset; remaining < chunk {
+			chunk = remaining
+		}
+		block := buffer[:chunk]
+		if err := readSourceBytes(body, block, artifactBytes); err != nil {
+			return err
+		}
+		contentEnd := size - offset
+		if contentEnd < 0 {
+			contentEnd = 0
+		}
+		if contentEnd > chunk {
+			contentEnd = chunk
+		}
+		if contentEnd > 0 && len(captured) > 0 {
+			copy(captured[offset:offset+contentEnd], block[:contentEnd])
+		}
+		if contentEnd < chunk && !allZero(block[contentEnd:]) {
+			return errors.New("entry padding is not zero")
+		}
+		offset += chunk
+	}
+	return nil
+}
+
+func readSourceBytes(body io.Reader, destination []byte, artifactBytes *int64) error {
+	if int64(len(destination)) > archive.MaxSourceArtifactBytes-*artifactBytes {
+		return fmt.Errorf(
+			"submitted source artifact bytes exceed %d",
+			archive.MaxSourceArtifactBytes,
+		)
+	}
+	if _, err := io.ReadFull(body, destination); err != nil {
+		return err
+	}
+	*artifactBytes += int64(len(destination))
+	return nil
+}
+
+func allZero(value []byte) bool {
+	for _, current := range value {
+		if current != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func validateSourceHeader(header *tar.Header) error {
+	if header == nil {
+		return errors.New("submitted source header is nil")
+	}
+	if header.Format != tar.FormatUSTAR {
+		return fmt.Errorf(
+			"submitted source path %q is not encoded as USTAR",
+			header.Name,
+		)
+	}
+	switch header.Typeflag {
+	case tar.TypeReg:
+		if header.Size < 0 || header.Size > maxSubmittedSourceLogicalBytes ||
+			header.Mode != 0o644 && header.Mode != 0o755 {
+			return fmt.Errorf("submitted source path %q has noncanonical mode", header.Name)
+		}
+	case tar.TypeDir:
+		if !strings.HasSuffix(header.Name, "/") || header.Mode != 0o755 || header.Size != 0 {
+			return fmt.Errorf("submitted source directory %q has noncanonical metadata", header.Name)
+		}
+	case tar.TypeSymlink:
+		if header.Mode != 0o777 || header.Size != 0 {
+			return fmt.Errorf("submitted source link %q has noncanonical metadata", header.Name)
+		}
+	default:
+		return fmt.Errorf(
+			"submitted source path %q has unsupported type %d",
+			header.Name,
+			header.Typeflag,
+		)
+	}
+	if !utf8.ValidString(header.Name) || !ustarPathRepresentable(header.Name) {
+		return fmt.Errorf(
+			"submitted source path %q is not USTAR-representable",
+			header.Name,
+		)
+	}
+	if header.Linkname != "" &&
+		(!utf8.ValidString(header.Linkname) || len(header.Linkname) > 100) {
+		return fmt.Errorf(
+			"submitted source link target for %q is not USTAR-representable",
+			header.Name,
+		)
+	}
+	epoch := time.Unix(0, 0).UTC()
+	if header.Uid != 0 ||
+		header.Gid != 0 ||
+		header.Uname != "" ||
+		header.Gname != "" ||
+		!header.ModTime.Equal(epoch) ||
+		!header.AccessTime.IsZero() ||
+		!header.ChangeTime.IsZero() ||
+		header.Devmajor != 0 ||
+		header.Devminor != 0 ||
+		len(header.PAXRecords) != 0 ||
+		header.Mode < 0 ||
+		header.Mode&^0o777 != 0 {
+		return fmt.Errorf(
+			"submitted source path %q has noncanonical metadata",
+			header.Name,
+		)
+	}
+	return nil
+}
+
+func ustarPathRepresentable(name string) bool {
+	isDirectory := strings.HasSuffix(name, "/")
+	trimmed := strings.TrimSuffix(name, "/")
+	index := strings.LastIndexByte(trimmed, '/')
+	leaf := trimmed
+	parent := ""
+	if index >= 0 {
+		parent = trimmed[:index]
+		leaf = trimmed[index+1:]
+	}
+	if isDirectory {
+		leaf += "/"
+	}
+	return leaf != "" && len(leaf) <= 100 && len(parent) <= 155
+}
+
 func sourceRootReserved(name string) bool {
-	return name == "helmr" || strings.HasPrefix(name, "helmr/") ||
+	return name == ".git" || strings.HasPrefix(name, ".git/") ||
+		name == "helmr" || strings.HasPrefix(name, "helmr/") ||
 		name == "node_modules" || strings.HasPrefix(name, "node_modules/")
 }
 

@@ -220,10 +220,12 @@ SELECT 'current_deployment' AS section,
        deployments.api_version,
        deployments.sdk_version,
        deployments.cli_version,
-       deployments.bundle_format_version,
        deployments.worker_protocol_version,
+       encode(deployments.program_runtime_digest, 'hex') AS program_runtime_digest,
+       deployments.program_architecture,
        source_artifacts.digest AS source_digest,
-       manifest_artifacts.digest AS manifest_digest,
+       code_artifacts.digest AS program_code_digest,
+       dependency_artifacts.digest AS program_dependency_digest,
        deployments.created_at,
        deployments.built_at,
        deployments.deployed_at
@@ -238,11 +240,12 @@ SELECT 'current_deployment' AS section,
    AND source_artifacts.project_id = deployments.project_id
    AND source_artifacts.environment_id = deployments.environment_id
    AND source_artifacts.id = deployments.deployment_source_artifact_id
-  LEFT JOIN artifacts AS manifest_artifacts
-    ON manifest_artifacts.org_id = deployments.org_id
-   AND manifest_artifacts.project_id = deployments.project_id
-   AND manifest_artifacts.environment_id = deployments.environment_id
-   AND manifest_artifacts.id = deployments.deployment_manifest_artifact_id
+  LEFT JOIN artifacts AS code_artifacts
+    ON code_artifacts.environment_id = deployments.environment_id
+   AND code_artifacts.id = deployments.program_code_artifact_id
+  LEFT JOIN artifacts AS dependency_artifacts
+    ON dependency_artifacts.environment_id = deployments.environment_id
+   AND dependency_artifacts.id = deployments.program_dependency_artifact_id
  ORDER BY target_environments.slug;
 
 WITH target_project AS MATERIALIZED (
@@ -262,73 +265,25 @@ target_environments AS MATERIALIZED (
        AND environments.project_id = target_project.id
        AND environments.slug IN (${staging_lit}, ${production_lit})
 )
-SELECT 'deployment_sandbox' AS section,
+SELECT 'deployment_definition' AS section,
        target_environments.slug AS environment_slug,
-       deployment_sandboxes.sandbox_id,
-       deployment_sandboxes.fingerprint,
-       deployment_sandboxes.rootfs_digest,
-       deployment_sandboxes.image_digest,
-       image_artifacts.digest AS image_artifact_digest,
-       deployment_sandboxes.image_format,
-       deployment_sandboxes.runtime_abi,
-       deployment_sandboxes.guestd_abi,
-       deployment_sandboxes.adapter_abi,
-       deployment_sandboxes.filesystem_format,
-       deployment_sandboxes.contract_version,
-       deployment_sandboxes.disk_floor_mib,
-       deployment_sandboxes.created_at
+       deployment_definitions.kind,
+       deployment_definitions.declared_id,
+       deployment_definitions.manifest_version,
+       encode(deployment_definitions.manifest_digest, 'hex') AS manifest_digest,
+       deployment_definitions.workspace_architecture,
+       image_artifacts.digest AS workspace_image_digest,
+       deployment_definitions.created_at
   FROM target_environments
-  JOIN deployment_sandboxes
-    ON deployment_sandboxes.org_id = target_environments.org_id
-   AND deployment_sandboxes.project_id = target_environments.project_id
-   AND deployment_sandboxes.environment_id = target_environments.id
-   AND deployment_sandboxes.deployment_id = target_environments.current_deployment_id
+  JOIN deployment_definitions
+    ON deployment_definitions.environment_id = target_environments.id
+   AND deployment_definitions.deployment_id = target_environments.current_deployment_id
   LEFT JOIN artifacts AS image_artifacts
-    ON image_artifacts.org_id = deployment_sandboxes.org_id
-   AND image_artifacts.project_id = deployment_sandboxes.project_id
-   AND image_artifacts.environment_id = deployment_sandboxes.environment_id
-   AND image_artifacts.id = deployment_sandboxes.image_artifact_id
- ORDER BY target_environments.slug, deployment_sandboxes.sandbox_id;
-
-WITH target_project AS MATERIALIZED (
-    SELECT projects.id, projects.org_id, projects.slug
-      FROM projects
-     WHERE projects.slug = ${project_lit}
-),
-target_environments AS MATERIALIZED (
-    SELECT environments.id,
-           environments.org_id,
-           environments.project_id,
-           environments.slug,
-           environments.current_deployment_id
-      FROM target_project
-      JOIN environments
-        ON environments.org_id = target_project.org_id
-       AND environments.project_id = target_project.id
-       AND environments.slug IN (${staging_lit}, ${production_lit})
-)
-SELECT 'deployment_task' AS section,
-       target_environments.slug AS environment_slug,
-       deployment_tasks.task_id,
-       deployment_tasks.requested_milli_cpu,
-       deployment_tasks.requested_memory_mib,
-       deployment_tasks.requested_disk_mib,
-       deployment_tasks.max_active_duration_ms,
-       deployment_tasks.bundle_format_version,
-       bundle_artifacts.digest AS bundle_digest,
-       deployment_tasks.created_at
-  FROM target_environments
-  JOIN deployment_tasks
-    ON deployment_tasks.org_id = target_environments.org_id
-   AND deployment_tasks.project_id = target_environments.project_id
-   AND deployment_tasks.environment_id = target_environments.id
-   AND deployment_tasks.deployment_id = target_environments.current_deployment_id
-  LEFT JOIN artifacts AS bundle_artifacts
-    ON bundle_artifacts.org_id = deployment_tasks.org_id
-   AND bundle_artifacts.project_id = deployment_tasks.project_id
-   AND bundle_artifacts.environment_id = deployment_tasks.environment_id
-   AND bundle_artifacts.id = deployment_tasks.bundle_artifact_id
- ORDER BY target_environments.slug, deployment_tasks.task_id;
+    ON image_artifacts.environment_id = deployment_definitions.environment_id
+   AND image_artifacts.id = deployment_definitions.artifact_id
+ ORDER BY target_environments.slug,
+          deployment_definitions.kind,
+          deployment_definitions.declared_id;
 
 SELECT 'worker_runtime_identity' AS section,
        runtime_identities.id AS runtime_id,

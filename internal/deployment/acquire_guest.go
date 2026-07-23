@@ -33,6 +33,19 @@ type GuestManagerNormalizer struct {
 	Connector vm.Connector
 }
 
+func closeOnCancellation(ctx context.Context, closer io.Closer) func() bool {
+	return context.AfterFunc(ctx, func() {
+		_ = closer.Close()
+	})
+}
+
+func preferContextError(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return err
+}
+
 func (normalizer GuestManagerNormalizer) Normalize(
 	ctx context.Context,
 	selector ManagerSelector,

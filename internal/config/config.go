@@ -143,6 +143,7 @@ type Worker struct {
 	WorkerProviderRegion         string
 	BuildPolicyPath              string
 	RuntimeStoreURI              string
+	ManagerStoreURI              string
 	WorkerLabels                 map[string]string
 	WorkDir                      string
 	BuildCacheDir                string

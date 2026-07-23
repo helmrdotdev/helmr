@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -35,7 +36,7 @@ func TestShardedObjectKey(t *testing.T) {
 }
 
 func TestObjectTaggingKeepsDeploymentSourcesNonExpirable(t *testing.T) {
-	if got := objectTagging(DeploymentSourceArtifactMediaType); got != "" {
+	if got := objectTagging(archive.SourceMediaType); got != "" {
 		t.Fatalf("deployment source tagging = %q", got)
 	}
 	if got := objectTagging(CheckpointVMStateMediaType); got != "helmr-expirable=true" {

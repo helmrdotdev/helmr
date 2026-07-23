@@ -11,9 +11,6 @@
     "examples/cli-tooling",
     "examples/github-pr-review",
     "examples/hello-world",
-    "examples/human-in-the-loop",
-    "examples/resend-email-approval",
-    "examples/slack-approval",
     "examples/task-secrets",
     "packages/*"
   ],

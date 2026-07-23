@@ -103,7 +103,6 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 			APIVersion:            row.ApiVersion,
 			SDKVersion:            row.SdkVersion,
 			CLIVersion:            row.CliVersion,
-			BundleFormatVersion:   row.BundleFormatVersion,
 			WorkerProtocolVersion: row.WorkerProtocolVersion,
 			ProjectID:             pgvalue.MustUUIDValue(row.ProjectID).String(),
 			EnvironmentID:         pgvalue.MustUUIDValue(row.EnvironmentID).String(),
@@ -543,6 +542,19 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			if err != nil {
 				return errors.New("marshal deployment build error")
 			}
+			if resultErr == nil && result.Logs != nil {
+				if err := appendDeploymentBuildLogs(
+					r.Context(),
+					work.q,
+					locked.OrgID,
+					locked.ProjectID,
+					locked.EnvironmentID,
+					locked.DeploymentID,
+					*result.Logs,
+				); err != nil {
+					return errors.New("record deployment build logs")
+				}
+			}
 			row, err := work.q.FailDeploymentBuild(r.Context(), db.FailDeploymentBuildParams{
 				Failure: payload, ReasonCode: pgtype.Text{String: reasonCode, Valid: true},
 				TerminalRequestFingerprint: fingerprint,
@@ -820,6 +832,19 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 					definition.input.DeclaredID,
 					err,
 				)
+			}
+		}
+		if result.Logs != nil {
+			if err := appendDeploymentBuildLogs(
+				r.Context(),
+				work.q,
+				locked.OrgID,
+				locked.ProjectID,
+				locked.EnvironmentID,
+				locked.DeploymentID,
+				*result.Logs,
+			); err != nil {
+				return errors.New("record deployment build logs")
 			}
 		}
 		row, err := work.q.CompleteDeploymentBuild(r.Context(), db.CompleteDeploymentBuildParams{

@@ -112,7 +112,7 @@ func (entry *workspaceMountEntry) startWorkspaceExec(envelope *workspacev0.Works
 	if err := entry.prepareWorkspaceOwner(); err != nil {
 		return err
 	}
-	cmd, err := adapterCommand(context.Background(), runtimePath, request.Command[1:], launchCwd, env, entry.imageRoot, entry.runtimeUser, adapterCommandOptions{ImageMode: true})
+	cmd, err := imageCommand(context.Background(), runtimePath, request.Command[1:], launchCwd, env, entry.imageRoot, entry.runtimeUser, imageCommandOptions{})
 	if err != nil {
 		return err
 	}
@@ -192,7 +192,7 @@ func (entry *workspaceMountEntry) createWorkspacePty(envelope *workspacev0.Works
 	if err := entry.prepareWorkspaceOwner(); err != nil {
 		return err
 	}
-	cmd, err := adapterCommand(context.Background(), shell, []string{"-l"}, launchCwd, env, entry.imageRoot, entry.runtimeUser, adapterCommandOptions{ImageMode: true, Pty: true})
+	cmd, err := imageCommand(context.Background(), shell, []string{"-l"}, launchCwd, env, entry.imageRoot, entry.runtimeUser, imageCommandOptions{Pty: true})
 	if err != nil {
 		return err
 	}
@@ -653,6 +653,11 @@ func workspaceEnvValue(env []string, key string) string {
 		}
 	}
 	return ""
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0
 }
 
 func normalizeWorkspacePtySize(cols int32, rows int32) (int32, int32) {

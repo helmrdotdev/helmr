@@ -11,7 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/builder"
+	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/schedule"
@@ -79,7 +79,7 @@ type RunStreamManifest struct {
 }
 
 type WorkspaceInputManifest struct {
-	ImageBuild   builder.ImageBuild  `json:"imageBuild"`
+	ImageBuild   imagebuild.Build    `json:"imageBuild"`
 	Resources    ResourcesManifest   `json:"resources"`
 	Network      NetworkManifest     `json:"network"`
 	Architecture RuntimeArchitecture `json:"architecture"`
@@ -299,7 +299,7 @@ func ValidateBuildPlan(plan BuildPlan) error {
 			} else if definition.Workspace.Architecture != workspaceArchitecture {
 				return errors.New("build plan Workspace architectures must match")
 			}
-			imageSteps += builder.ImageBuildStepCount(definition.Workspace.ImageBuild)
+			imageSteps += imagebuild.StepCount(definition.Workspace.ImageBuild)
 			if imageSteps > maxBuildImageSteps {
 				return fmt.Errorf("build plan contains more than %d image steps", maxBuildImageSteps)
 			}
@@ -488,7 +488,7 @@ func validateDefinitionInput(input DefinitionInput, queues map[string]struct{}) 
 		if !validArchitecture(input.Workspace.Architecture) {
 			return fmt.Errorf("workspace architecture %q is unsupported", input.Workspace.Architecture)
 		}
-		if err := builder.ValidateImageBuild(
+		if err := imagebuild.Validate(
 			input.Workspace.ImageBuild,
 			string(input.Workspace.Architecture),
 		); err != nil {

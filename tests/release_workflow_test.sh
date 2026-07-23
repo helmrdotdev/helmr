@@ -174,18 +174,18 @@ require_text "COPY --chown=0:0 --chmod=0444 toolchain-release/catalog.sigstore.j
 require_text "COPY --chown=0:0 --chmod=0444 toolchain-release/trusted-root.json" "$control_builder" \
 	"control image standard-toolchain trusted root is not installed root-owned and read-only"
 
-if ! rg -F "scripts/build-embedded-adapter.sh" "$workflow" >/dev/null; then
-	printf 'release workflow does not refresh the embedded adapter before CLI builds\n' >&2
+if ! rg -F "scripts/build-config-inspector.sh" "$workflow" >/dev/null; then
+	printf 'release workflow does not refresh the config inspector before CLI builds\n' >&2
 	exit 1
 fi
 
-if ! rg -F "git diff --exit-code -- internal/adapter/js" "$workflow" >/dev/null; then
-	printf 'release workflow does not verify embedded adapter artifacts are current\n' >&2
+if ! rg -F "git diff --exit-code -- internal/projectconfig/js" "$workflow" >/dev/null; then
+	printf 'release workflow does not verify config inspector artifacts are current\n' >&2
 	exit 1
 fi
 
-if ! rg -F 'git status --porcelain -- internal/adapter/js' "$workflow" >/dev/null; then
-	printf 'release workflow does not reject untracked embedded adapter artifacts\n' >&2
+if ! rg -F 'git status --porcelain -- internal/projectconfig/js' "$workflow" >/dev/null; then
+	printf 'release workflow does not reject untracked config inspector artifacts\n' >&2
 	exit 1
 fi
 

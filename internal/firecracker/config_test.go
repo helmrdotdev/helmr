@@ -82,7 +82,7 @@ func TestConfigValidateRejectsHealthAttemptLongerThanHealthTimeout(t *testing.T)
 	}
 }
 
-func TestConfigValidateAllowsExplicitEmptyNetworkPolicy(t *testing.T) {
+func TestConfigValidateRejectsEmptyNetworkPolicy(t *testing.T) {
 	cfg := (Config{
 		NetworkBlockedIPv4CIDRs: []string{},
 		NetworkBlockedIPv6CIDRs: []string{},
@@ -92,9 +92,9 @@ func TestConfigValidateAllowsExplicitEmptyNetworkPolicy(t *testing.T) {
 		t.Fatal("expected boot input validation errors")
 	}
 	text := err.Error()
-	for _, unexpected := range []string{"firecracker network blocked IPv4 CIDRs are required", "firecracker network blocked IPv6 CIDRs are required"} {
-		if strings.Contains(text, unexpected) {
-			t.Fatalf("error %q contains %q", text, unexpected)
+	for _, want := range []string{"firecracker network blocked IPv4 CIDRs are required", "firecracker network blocked IPv6 CIDRs are required"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("error %q does not contain %q", text, want)
 		}
 	}
 }

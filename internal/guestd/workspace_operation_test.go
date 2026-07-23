@@ -376,7 +376,6 @@ func TestWorkspaceImageContractIsExact(t *testing.T) {
 		encoding  string
 		want      string
 	}{
-		{name: "old media type", mediaType: "application/vnd.helmr.sandbox-image.v0.oci-tar", encoding: workspaceImageEncoding, want: "media_type"},
 		{name: "padded media type", mediaType: " " + workspaceImageMediaType, encoding: workspaceImageEncoding, want: "media_type"},
 		{name: "wrong encoding", mediaType: workspaceImageMediaType, encoding: "tar", want: "encoding"},
 		{name: "padded encoding", mediaType: workspaceImageMediaType, encoding: workspaceImageEncoding + " ", want: "encoding"},

@@ -11,15 +11,15 @@ import (
 	"testing"
 )
 
-func TestImageAdapterCommandUsesNamespaceInit(t *testing.T) {
-	cmd, err := adapterCommand(context.Background(), "/usr/bin/node", []string{"/opt/helmr/adapter/main.js"}, "/workspace", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, adapterCommandOptions{ImageMode: true, ManagedProgram: true, CgroupNamespace: true, StartProof: true})
+func TestImageCommandUsesNamespaceInit(t *testing.T) {
+	cmd, err := imageCommand(context.Background(), "/usr/bin/node", []string{"/opt/helmr/program/helmr/entry.mjs"}, "/workspace", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, imageCommandOptions{ManagedProgram: true, CgroupNamespace: true, StartProof: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cmd.Path != "/proc/self/exe" {
 		t.Fatalf("path = %q", cmd.Path)
 	}
-	if len(cmd.Args) < 11 || cmd.Args[1] != imageAdapterInitArg {
+	if len(cmd.Args) < 11 || cmd.Args[1] != imageRuntimeInitArg {
 		t.Fatalf("args = %#v", cmd.Args)
 	}
 	if cmd.Args[2] != "/image" || cmd.Args[3] != "/workspace" || cmd.Args[4] != "1001" || cmd.Args[5] != "1002" || cmd.Args[6] != "true" || cmd.Args[7] != "true" || cmd.Args[8] != "true" || cmd.Args[9] != "/usr/bin/node" {
@@ -43,8 +43,8 @@ func TestImageAdapterCommandUsesNamespaceInit(t *testing.T) {
 	}
 }
 
-func TestImageAdapterPtyCommandUsesSessionWithoutSetpgid(t *testing.T) {
-	cmd, err := adapterCommand(context.Background(), "/bin/sh", []string{"-l"}, "/workspace", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, adapterCommandOptions{ImageMode: true, Pty: true})
+func TestImageCommandPtyUsesSessionWithoutSetpgid(t *testing.T) {
+	cmd, err := imageCommand(context.Background(), "/bin/sh", []string{"-l"}, "/workspace", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, imageCommandOptions{Pty: true})
 	if err != nil {
 		t.Fatal(err)
 	}

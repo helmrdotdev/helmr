@@ -21,6 +21,8 @@ WITH desired_group AS (
        SET claim_version = CASE
                WHEN worker_groups.enrollment_policy_fingerprint IS DISTINCT FROM EXCLUDED.enrollment_policy_fingerprint
                  OR worker_groups.protocol_version IS DISTINCT FROM EXCLUDED.protocol_version
+                 OR worker_groups.allows_run IS DISTINCT FROM EXCLUDED.allows_run
+                 OR worker_groups.allows_build IS DISTINCT FROM EXCLUDED.allows_build
                  OR worker_groups.required_cpu_millis IS DISTINCT FROM EXCLUDED.required_cpu_millis
                  OR worker_groups.required_memory_bytes IS DISTINCT FROM EXCLUDED.required_memory_bytes
                  OR worker_groups.required_workload_disk_bytes IS DISTINCT FROM EXCLUDED.required_workload_disk_bytes
@@ -60,6 +62,16 @@ WITH desired_group AS (
            NOT (worker_instances.attestation_fingerprint = ANY(sqlc.arg(allowed_attestation_fingerprints)::text[]))
            OR (worker_instances.supports_run AND NOT desired_group.allows_run)
            OR (worker_instances.supports_build AND NOT desired_group.allows_build)
+           OR EXISTS (
+               SELECT 1
+                 FROM worker_instance_credentials
+                WHERE worker_instance_credentials.worker_instance_id = worker_instances.id
+                  AND worker_instance_credentials.revoked_at IS NULL
+                  AND (
+                      (worker_instance_credentials.allows_run AND NOT desired_group.allows_run)
+                      OR (worker_instance_credentials.allows_build AND NOT desired_group.allows_build)
+                  )
+           )
            OR (worker_instances.state <> 'registering' AND (
                worker_instances.certified_cpu_millis < desired_group.required_cpu_millis
                OR worker_instances.certified_memory_bytes < desired_group.required_memory_bytes

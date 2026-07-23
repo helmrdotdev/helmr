@@ -1,4 +1,4 @@
-import { cache, image, logger, sandbox, source, task } from "@helmr/sdk"
+import { cache, image, source, task, workspace } from "@helmr/sdk"
 
 const base = image("task-secrets")
   .from("node:24-bookworm-slim")
@@ -11,20 +11,18 @@ const base = image("task-secrets")
   })
   .workdir("/workspace")
 
-const sbx = sandbox("task-secrets")
+export const taskSecretsWorkspace = workspace("task-secrets")
   .image(base)
-  .resources({ cpu: 1, memory: "1Gi" })
+  .resources({ cpu: 1, memory: "1Gi", disk: "4Gi" })
 
 export const useSecret = task({
   id: "use-secret",
-  sandbox: sbx,
-  maxDuration: 300,
-  secrets: [{ name: "API_TOKEN", env: "API_TOKEN" }],
+  maxDuration: "5m",
   run: async (ctx) => {
     if (!process.env.API_TOKEN) {
       throw new Error("API_TOKEN was not injected")
     }
-    logger.info({ secret: "API_TOKEN", available: true })
+    console.info({ secret: "API_TOKEN", available: true })
     return { ok: true }
   },
 })

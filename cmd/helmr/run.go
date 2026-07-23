@@ -289,7 +289,6 @@ func taskGetCommand() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "Task:       %s\n", task.TaskID)
 			fmt.Fprintf(cmd.OutOrStdout(), "File:       %s\n", task.FilePath)
 			fmt.Fprintf(cmd.OutOrStdout(), "Export:     %s\n", task.ExportName)
-			fmt.Fprintf(cmd.OutOrStdout(), "Bundle:     %s\n", task.BundleDigest)
 			return nil
 		},
 	}

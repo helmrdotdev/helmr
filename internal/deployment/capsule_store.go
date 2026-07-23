@@ -423,7 +423,7 @@ func (s *ManagerStore) readDocument(
 
 func (s *ManagerStore) statTree(
 	ctx context.Context,
-	expected ManagerArtifact,
+	expected ArtifactDescriptor,
 ) error {
 	object, err := s.trees.Stat(ctx, expected.Digest)
 	if err != nil {
@@ -445,7 +445,7 @@ func (s *ManagerStore) statTree(
 
 func (s *ManagerStore) verifyTree(
 	ctx context.Context,
-	expected ManagerArtifact,
+	expected ArtifactDescriptor,
 ) error {
 	if err := s.statTree(ctx, expected); err != nil {
 		return err

@@ -71,43 +71,43 @@ func runCandidate(args []string) error {
 	return writeCandidate(*output, canonical, artifact, *closure)
 }
 
-func describe(path, mediaType string) (deployment.ManagerArtifact, error) {
+func describe(path, mediaType string) (deployment.ArtifactDescriptor, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return deployment.ManagerArtifact{}, err
+		return deployment.ArtifactDescriptor{}, err
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return deployment.ManagerArtifact{}, err
+		return deployment.ArtifactDescriptor{}, err
 	}
 	if !info.Mode().IsRegular() || info.Size() < 1 {
-		return deployment.ManagerArtifact{}, errors.New(
+		return deployment.ArtifactDescriptor{}, errors.New(
 			"standard-toolchain object is not a non-empty regular file",
 		)
 	}
 	digest := sha256.New()
 	written, err := io.Copy(digest, file)
 	if err != nil {
-		return deployment.ManagerArtifact{}, err
+		return deployment.ArtifactDescriptor{}, err
 	}
 	if written != info.Size() {
-		return deployment.ManagerArtifact{}, errors.New(
+		return deployment.ArtifactDescriptor{}, errors.New(
 			"standard-toolchain object changed while hashing",
 		)
 	}
 	after, err := file.Stat()
 	if err != nil {
-		return deployment.ManagerArtifact{}, err
+		return deployment.ArtifactDescriptor{}, err
 	}
 	if !os.SameFile(info, after) ||
 		info.Size() != after.Size() ||
 		info.ModTime() != after.ModTime() {
-		return deployment.ManagerArtifact{}, errors.New(
+		return deployment.ArtifactDescriptor{}, errors.New(
 			"standard-toolchain object changed while hashing",
 		)
 	}
-	return deployment.ManagerArtifact{
+	return deployment.ArtifactDescriptor{
 		Digest:    "sha256:" + hex.EncodeToString(digest.Sum(nil)),
 		MediaType: mediaType,
 		SizeBytes: written,
@@ -117,7 +117,7 @@ func describe(path, mediaType string) (deployment.ManagerArtifact, error) {
 func writeCandidate(
 	directory string,
 	toolchain []byte,
-	descriptor deployment.ManagerArtifact,
+	descriptor deployment.ArtifactDescriptor,
 	source string,
 ) (returnErr error) {
 	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {
@@ -171,7 +171,7 @@ func writeCandidate(
 func copyExclusive(
 	destination,
 	source string,
-	descriptor deployment.ManagerArtifact,
+	descriptor deployment.ArtifactDescriptor,
 ) error {
 	input, err := os.Open(source)
 	if err != nil {

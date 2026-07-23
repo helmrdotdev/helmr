@@ -33,6 +33,7 @@ func TestValidateWorkerStoresRequiresDisjointNamespaces(t *testing.T) {
 	base := config.Worker{
 		CASURI:          "s3://ordinary",
 		RuntimeStoreURI: "s3://runtime/objects",
+		ManagerStoreURI: "s3://managers",
 	}
 	if err := validateWorkerStores(base); err != nil {
 		t.Fatal(err)
@@ -40,6 +41,12 @@ func TestValidateWorkerStoresRequiresDisjointNamespaces(t *testing.T) {
 	tests := map[string]func(*config.Worker){
 		"ordinary runtime": func(cfg *config.Worker) {
 			cfg.RuntimeStoreURI = "s3://ordinary/runtime"
+		},
+		"ordinary manager": func(cfg *config.Worker) {
+			cfg.ManagerStoreURI = "s3://ordinary/managers"
+		},
+		"runtime manager": func(cfg *config.Worker) {
+			cfg.ManagerStoreURI = "s3://runtime/managers"
 		},
 	}
 	for name, mutate := range tests {

@@ -80,9 +80,9 @@ func newInstalledToolchainCorpusFixture(
 	}
 }
 
-func toolArtifactForBytes(raw []byte, mediaType string) ManagerArtifact {
+func toolArtifactForBytes(raw []byte, mediaType string) ArtifactDescriptor {
 	digest := sha256.Sum256(raw)
-	return ManagerArtifact{
+	return ArtifactDescriptor{
 		Digest:    "sha256:" + hex.EncodeToString(digest[:]),
 		MediaType: mediaType,
 		SizeBytes: int64(len(raw)),

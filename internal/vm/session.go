@@ -16,11 +16,6 @@ type Connector interface {
 	Connect(context.Context, ConnectRequest) (Session, error)
 }
 
-type PreparedConnector interface {
-	Connector
-	Prepare(context.Context, ConnectRequest) (PreparedSession, error)
-}
-
 type RestoringConnector interface {
 	Connector
 	Restore(context.Context, RestoreRequest) (Session, error)
@@ -47,18 +42,6 @@ type Session interface {
 	Close(context.Context) error
 }
 
-type PreparedSession interface {
-	Open(context.Context) (Session, error)
-	DialGuest(context.Context, uint32) (Stream, error)
-	BindHost(context.Context, uint32) (HostEndpoint, error)
-	Close(context.Context) error
-}
-
-type HostEndpoint interface {
-	Accept(context.Context) (Stream, error)
-	Close() error
-}
-
 // NetworkFacts are CNI-assigned facts observed after runtime materialization.
 // Placement authority must not synthesize them.
 type NetworkFacts struct {
@@ -74,6 +57,16 @@ type NetworkFacts struct {
 type NetworkFactSession interface {
 	Session
 	NetworkFacts() (NetworkFacts, error)
+}
+
+type BuildNetworkStatus struct {
+	DeniedPackets uint64
+	LimitPackets  uint64
+}
+
+type BuildNetworkSession interface {
+	Session
+	BuildNetworkStatus(context.Context) (BuildNetworkStatus, error)
 }
 
 type CheckpointableSession interface {
@@ -108,8 +101,7 @@ const (
 	ManagerDrive             = "manager"
 	ManagedRuntimeDrive      = "managed_runtime"
 	ToolchainDrive           = "standard_toolchain"
-	ProjectDrive             = "project"
-	OfflineStoreDrive        = "offline_store"
+	BuildTreeDrive           = "build_tree"
 )
 
 type ReadOnlyDriveSource interface {

@@ -26,7 +26,7 @@ type Toolchain struct {
 	Architecture         RuntimeArchitecture `json:"architecture"`
 	FormatVersion        int                 `json:"formatVersion"`
 	ManagedRuntimeDigest string              `json:"managedRuntimeDigest"`
-	ToolchainClosure     ManagerArtifact     `json:"toolchainClosure"`
+	ToolchainClosure     ArtifactDescriptor  `json:"toolchainClosure"`
 }
 
 func CanonicalToolchain(value Toolchain) ([]byte, error) {
@@ -127,7 +127,7 @@ func validateToolchain(value Toolchain) error {
 	)
 }
 
-func validateToolArtifact(value ManagerArtifact, mediaType, label string) error {
+func validateToolArtifact(value ArtifactDescriptor, mediaType, label string) error {
 	if !validToolDigest(value.Digest) {
 		return fmt.Errorf("%s digest is not a lowercase SHA-256 digest", label)
 	}

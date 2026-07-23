@@ -2,9 +2,11 @@ package guestd
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"log/slog"
 	"os"
@@ -630,7 +632,7 @@ func restorePreparedWorkspaceRuntime(conn io.Reader, request *workspacev0.Prepar
 	phaseStarted := time.Now()
 	image, cleanupImage, err := restorePreparedWorkspaceImage(conn, request)
 	phases = append(phases, workspaceMountPhase("guest_workspace_image_restore", phaseStarted, workspaceImage.GetSizeBytes(), 0, err))
-	logger.Info("workspace runtime prepare workspace image restored", "runtime_instance_id_hash", runtimeInstanceLogID(runtimeInstanceID), "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", workspaceImage.GetSizeBytes(), "error", errorString(err))
+	logger.Info("workspace runtime prepare workspace image restored", "runtime_instance_id_hash", runtimeInstanceLogID(runtimeInstanceID), "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", workspaceImage.GetSizeBytes(), "error", errorText(err))
 	if err != nil {
 		return nil, phases, err
 	}
@@ -743,7 +745,7 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 		phaseStarted := time.Now()
 		image, cleanupImage, err := restoreWorkspaceMountWorkspaceImage(conn, request)
 		phases = append(phases, workspaceMountPhase("guest_workspace_image_restore", phaseStarted, workspaceImage.GetSizeBytes(), 0, err))
-		logger.Info("workspace materialize workspace image restored", "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", workspaceImage.GetSizeBytes(), "error", errorString(err))
+		logger.Info("workspace materialize workspace image restored", "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", workspaceImage.GetSizeBytes(), "error", errorText(err))
 		if err != nil {
 			return nil, phases, err
 		}
@@ -758,7 +760,7 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 		phaseStarted = time.Now()
 		runtimeUser, err := resolveRuntimeUser(entry.imageRoot, entry.imageConfig.User)
 		phases = append(phases, workspaceMountPhase("guest_runtime_user_resolve", phaseStarted, 0, 0, err))
-		logger.Info("workspace materialize runtime user resolved", "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
+		logger.Info("workspace materialize runtime user resolved", "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorText(err))
 		if err != nil {
 			entry.cleanup()
 			return nil, phases, fmt.Errorf("resolve workspace runtime user: %w", err)
@@ -767,7 +769,7 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 		phaseStarted = time.Now()
 		workspaceRoot, err := workspaceRootForImage(entry.imageRoot, mountPath)
 		phases = append(phases, workspaceMountPhase("guest_workspace_root_resolve", phaseStarted, 0, 0, err))
-		logger.Info("workspace materialize workspace root resolved", "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
+		logger.Info("workspace materialize workspace root resolved", "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorText(err))
 		if err != nil {
 			entry.cleanup()
 			return nil, phases, fmt.Errorf("resolve workspace mount: %w", err)
@@ -792,7 +794,7 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 		phaseStarted := time.Now()
 		err := initializeEmptyWorkspaceRoot(entry.workspaceRoot)
 		phases = append(phases, workspaceMountPhase("guest_workspace_empty_root_init", phaseStarted, 0, 0, err))
-		logger.Info("workspace materialize empty workspace root initialized", "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
+		logger.Info("workspace materialize empty workspace root initialized", "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorText(err))
 		if err != nil {
 			entry.cleanup()
 			return nil, phases, err
@@ -933,7 +935,7 @@ func workspaceMountPhase(name string, started time.Time, sizeBytes uint64, entry
 		DurationMs: uint64(time.Since(started).Milliseconds()),
 		SizeBytes:  sizeBytes,
 		EntryCount: entryCount,
-		Error:      errorString(err),
+		Error:      errorText(err),
 	}
 }
 
@@ -1253,4 +1255,98 @@ func writeWorkspaceOperationResult(conn io.Writer, err error) error {
 		result.ErrorJson = workspaceOperationErrorJSON(err)
 	}
 	return frameio.WriteProtoFrame(conn, result)
+}
+
+func workspaceRootForImage(imageRoot, mountPath string) (string, error) {
+	root, err := confinedLayerPath(
+		imageRoot,
+		strings.TrimPrefix(mountPath, "/"),
+	)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return root, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return "", fmt.Errorf(
+			"workspace mount path is not a directory: %s",
+			mountPath,
+		)
+	}
+	return root, nil
+}
+
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+type digestingReader struct {
+	reader io.Reader
+	hash   hash.Hash
+}
+
+func newDigestingReader(reader io.Reader) *digestingReader {
+	return &digestingReader{reader: reader, hash: sha256.New()}
+}
+
+func (reader *digestingReader) Read(body []byte) (int, error) {
+	count, err := reader.reader.Read(body)
+	if count > 0 {
+		_, _ = reader.hash.Write(body[:count])
+	}
+	return count, err
+}
+
+func (reader *digestingReader) Digest() string {
+	return sha256sum.DigestHash(reader.hash)
+}
+
+func replaceWorkspaceRoot(workspaceRoot, stagingRoot string) error {
+	workspaceParent := filepath.Dir(workspaceRoot)
+	backupRoot, err := os.MkdirTemp(
+		workspaceParent,
+		".helmr-workspace-backup-*",
+	)
+	if err != nil {
+		return fmt.Errorf("create workspace backup marker: %w", err)
+	}
+	if err := os.Remove(backupRoot); err != nil {
+		return fmt.Errorf("remove workspace backup marker: %w", err)
+	}
+	backupCreated := false
+	if err := os.Rename(workspaceRoot, backupRoot); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("move existing workspace aside: %w", err)
+		}
+	} else {
+		backupCreated = true
+	}
+	if err := os.Rename(stagingRoot, workspaceRoot); err != nil {
+		if backupCreated {
+			if rollbackErr := os.Rename(
+				backupRoot,
+				workspaceRoot,
+			); rollbackErr != nil {
+				return errors.Join(
+					fmt.Errorf("install restored workspace: %w", err),
+					fmt.Errorf("rollback workspace restore: %w", rollbackErr),
+				)
+			}
+		}
+		return fmt.Errorf("install restored workspace: %w", err)
+	}
+	if backupCreated {
+		if err := os.RemoveAll(backupRoot); err != nil {
+			return fmt.Errorf("remove replaced workspace backup: %w", err)
+		}
+	}
+	return nil
 }

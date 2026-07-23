@@ -18,7 +18,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
@@ -608,30 +607,6 @@ func TestWorkerLifecycleClient(t *testing.T) {
 					LeaseSequence: claim.LeaseSequence,
 				}},
 			})
-		case "/api/worker/leases/lease":
-			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
-				t.Fatalf("worker auth = %s", got)
-			}
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if strings.TrimSpace(string(body)) != "{}" {
-				t.Fatalf("run claim body = %s, want empty authority request", body)
-			}
-			_ = json.NewEncoder(w).Encode(api.WorkerRunLeaseResponse{
-				Lease: &claim,
-				Run: &api.WorkerRun{
-					ID:                    claim.RunID,
-					TaskID:                "deploy",
-					Payload:               json.RawMessage(`{}`),
-					Secrets:               api.ResolvedSecrets{},
-					DeploymentSource:      api.DeploymentSourceArtifact{Digest: "sha256:" + strings.Repeat("a", 64)},
-					WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
-					Requirements:          workerClientRequirements(),
-					MaxDurationSeconds:    3600,
-				},
-			})
 		case "/api/worker/activate":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
@@ -740,13 +715,6 @@ func TestWorkerLifecycleClient(t *testing.T) {
 		discovered.Items[0].LeaseSequence != claim.LeaseSequence {
 		t.Fatalf("discovered = %+v", discovered)
 	}
-	leased, err := client.LeaseRun(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if leased.Lease == nil || leased.Run == nil {
-		t.Fatalf("leased = %+v", leased)
-	}
 	if status, err := client.ActivateWorker(context.Background(), workerClientCapabilities()); err != nil || status.Status != api.WorkerStatusActive {
 		t.Fatalf("activate status = %+v err=%v", status, err)
 	}
@@ -764,26 +732,26 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	}); err != nil || status.Status != api.WorkerStatusDisabled {
 		t.Fatalf("complete worker drain status = %+v, err = %v", status, err)
 	}
-	if _, err := client.StartRun(context.Background(), *leased.Lease); err != nil {
+	if _, err := client.StartRun(context.Background(), claim); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.RenewRun(context.Background(), *leased.Lease); err != nil {
+	if _, err := client.RenewRun(context.Background(), claim); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.AppendLog(context.Background(), *leased.Lease, api.WorkerLogStreamStdout, 7, []byte("hello\n")); err != nil {
+	if _, err := client.AppendLog(context.Background(), claim, api.WorkerLogStreamStdout, 7, []byte("hello\n")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.RecordLogEntry(context.Background(), *leased.Lease, "building"); err != nil {
+	if _, err := client.RecordLogEntry(context.Background(), claim, "building"); err != nil {
 		t.Fatal(err)
 	}
 	exitCode := int32(0)
-	if _, err := client.ReleaseRun(context.Background(), *leased.Lease, api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode}); err != nil {
+	if _, err := client.ReleaseRun(context.Background(), claim, api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode}); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.FenceWorker(context.Background(), "termination_drain_failed"); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/leases/discover,/api/worker/leases/lease,/api/worker/activate,/api/worker/drain,/api/worker/status,/api/worker/drain/complete,/api/worker/leases/start,/api/worker/leases/renew,/api/worker/leases/logs,/api/worker/leases/log-entries,/api/worker/leases/release,/api/worker/fence" {
+	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/leases/discover,/api/worker/activate,/api/worker/drain,/api/worker/status,/api/worker/drain/complete,/api/worker/leases/start,/api/worker/leases/renew,/api/worker/leases/logs,/api/worker/leases/log-entries,/api/worker/leases/release,/api/worker/fence" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -1413,26 +1381,5 @@ func workerClientCapabilities() api.WorkerCapabilities {
 			BlockInternet: true,
 			DenyCIDRs:     true,
 		},
-	}
-}
-
-func workerClientRequirements() compute.RunRuntimeRequirements {
-	return compute.RunRuntimeRequirements{
-		Resources: compute.ResourceVector{
-			MilliCPU:  1000,
-			MemoryMiB: 512,
-			DiskMiB:   1024,
-			Slots:     1,
-		},
-		Runtime: compute.RuntimeSelector{
-			ID:              "sha256:runtime",
-			Arch:            "arm64",
-			ABI:             "helmr.firecracker.snapshot.v0",
-			KernelDigest:    "sha256:kernel",
-			InitramfsDigest: "sha256:initramfs",
-			RootfsDigest:    "sha256:rootfs",
-			CNIProfile:      "helmr/v0",
-		},
-		Network: compute.DefaultNetworkPolicy(),
 	}
 }

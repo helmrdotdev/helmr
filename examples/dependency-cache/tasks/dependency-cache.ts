@@ -1,4 +1,4 @@
-import { cache, image, logger, sandbox, source, task } from "@helmr/sdk"
+import { cache, image, source, task, workspace } from "@helmr/sdk"
 import { readFile, writeFile } from "node:fs/promises"
 
 const deps = image("dependency-cache-deps")
@@ -18,24 +18,23 @@ const deps = image("dependency-cache-deps")
     cache: [{ mountPath: "/root/.bun", cache: cache("bun-global") }],
   })
 
-const sbx = sandbox("dependency-cache")
+export const dependencyCacheWorkspace = workspace("dependency-cache")
   .image(deps)
-  .resources({ cpu: 2, memory: "2Gi" })
+  .resources({ cpu: 2, memory: "2Gi", disk: "8Gi" })
 
 export const dependencyCache = task({
   id: "dependency-cache",
-  sandbox: sbx,
-  maxDuration: 600,
+  maxDuration: "10m",
   run: async (ctx) => {
     const appPackage = JSON.parse(await readFile("/opt/app/package.json", "utf8")) as { readonly name?: string }
     const workspaceConfig = await readFile("helmr.config.ts", "utf8")
     const report = {
-      dependencyPackage: appPackage.name,
+      dependencyPackage: appPackage.name ?? null,
       hasWorkspaceConfig: workspaceConfig.includes("defineConfig"),
       runId: ctx.run.id,
     }
     await writeFile("dependency-cache-report.json", `${JSON.stringify(report, null, 2)}\n`)
-    logger.info({ report: "dependency-cache-report.json" })
+    console.info({ report: "dependency-cache-report.json" })
     return report
   },
 })

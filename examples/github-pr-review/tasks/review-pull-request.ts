@@ -1,4 +1,4 @@
-import { cache, image, logger, sandbox, source, task, tokens } from "@helmr/sdk"
+import { cache, image, source, task, workspace } from "@helmr/sdk"
 import { z } from "zod"
 
 const base = image("github-pr-review")
@@ -12,9 +12,9 @@ const base = image("github-pr-review")
   })
   .workdir("/workspace")
 
-const sbx = sandbox("github-pr-review")
+export const githubPRReviewWorkspace = workspace("github-pr-review")
   .image(base)
-  .resources({ cpu: 1, memory: "1Gi" })
+  .resources({ cpu: 1, memory: "1Gi", disk: "4Gi" })
 
 const payload = z.object({
   owner: z.string().optional(),
@@ -36,9 +36,7 @@ interface PullRequestFile {
 
 export const reviewPullRequest = task({
   id: "github-pr-review",
-  sandbox: sbx,
-  maxDuration: 600,
-  secrets: [{ name: "GITHUB_TOKEN", env: "GITHUB_TOKEN" }],
+  maxDuration: "10m",
   payload,
   run: async (payload, ctx) => {
     const token = requireEnv("GITHUB_TOKEN")
@@ -56,26 +54,9 @@ export const reviewPullRequest = task({
       ...files.slice(0, 10).map((file) => `- ${file.filename} (+${file.additions}/-${file.deletions})`),
     ].join("\n")
 
-    logger.info({ pullRequest: target.prNumber, filesChanged: files.length })
+    console.info({ pullRequest: target.prNumber, filesChanged: files.length })
 
-    const approvalToken = await tokens.create({ timeout: "10m" })
-    const decision = await approvalToken.wait({
-      schema: z.object({ approved: z.boolean() }),
-      metadata: {
-        prompt: "Post this review summary?",
-        summary,
-        form: { version: 1, type: "approval" },
-      },
-    }).unwrap()
-    if (!decision.approved) {
-      return { status: "skipped" }
-    }
-
-    await github(token, `/repos/${repoPath}/issues/${target.prNumber}/comments`, {
-      method: "POST",
-      body: JSON.stringify({ body: `Helmr review summary:\n\n${summary}` }),
-    })
-    return { status: "commented", filesChanged: files.length }
+    return { summary, filesChanged: files.length }
   },
 })
 

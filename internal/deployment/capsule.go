@@ -74,7 +74,7 @@ type ManagerCapsule struct {
 	FormatVersion  int                 `json:"formatVersion"`
 	PackageManager PackageManager      `json:"packageManager"`
 	Source         ManagerSource       `json:"source"`
-	Tree           ManagerArtifact     `json:"tree"`
+	Tree           ArtifactDescriptor  `json:"tree"`
 }
 
 func NewManagerSelector(
@@ -357,7 +357,7 @@ func validateManagerCapsule(capsule ManagerCapsule) error {
 			maxManagerDistributionBytes,
 		)
 	}
-	if err := validateManagerArtifact(
+	if err := validateInputArtifact(
 		capsule.Tree,
 		ManagerTreeMediaType,
 		maxManagerCapsuleTreeBytes,

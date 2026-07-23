@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/builder"
+	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/moby/buildkit/solver/pb"
 	"google.golang.org/protobuf/proto"
 )
@@ -24,19 +24,19 @@ func TestPlanDeclaredImageCopiesTheAddressedApplicationView(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	plan, err := planDeclaredImage(builder.ImageBuild{
-		FormatVersion: builder.ImageBuildFormatVersion,
+	plan, err := planDeclaredImage(imagebuild.Build{
+		FormatVersion: imagebuild.FormatVersion,
 		Root:          "app",
-		Images: []builder.ImageSpec{{
+		Images: []imagebuild.Spec{{
 			Key:      "app",
-			Platform: builder.ImagePlatform{OS: "linux", Architecture: "x86_64"},
-			Steps: []builder.ImageStep{
-				{From: &builder.ImageFrom{Ref: "debian:bookworm"}},
-				{CopySourceFile: &builder.ImageCopySourceFile{
+			Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
+			Steps: []imagebuild.Step{
+				{From: &imagebuild.From{Ref: "debian:bookworm"}},
+				{CopySourceFile: &imagebuild.CopySourceFile{
 					Dst:  "/app/config",
 					Path: ".git/config",
 				}},
-				{CopySourceDir: &builder.ImageCopySourceDir{
+				{CopySourceDir: &imagebuild.CopySourceDir{
 					Dst:  "/app/source",
 					Path: ".",
 				}},

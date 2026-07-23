@@ -60,9 +60,9 @@ in
     app "ci-generated" "check generated artifacts and formatting for CI" toolsets.ciChecks
       ''
         bun install --frozen-lockfile --ignore-scripts
-        scripts/build-embedded-adapter.sh
-        git diff --exit-code -- internal/adapter/js
-        test -z "$(git status --porcelain -- internal/adapter/js)"
+        scripts/build-config-inspector.sh
+        git diff --exit-code -- internal/projectconfig/js
+        test -z "$(git status --porcelain -- internal/projectconfig/js)"
         scripts/build-runtime-entry.sh --check
         make generate
         make fmt

@@ -88,7 +88,13 @@ func TestFreshRunStartQueriesCommitAndReplay(t *testing.T) {
 		t.Fatalf("replay changed state: before=%+v after=%+v", beforeReplay, afterReplay)
 	}
 	if _, err := fixture.pool.Exec(ctx,
-		`UPDATE run_leases SET expires_at = now() - interval '1 second' WHERE id = $1`,
+		`UPDATE run_leases
+		    SET assigned_at = now() - interval '3 minutes',
+		        start_deadline_at = now() - interval '2 minutes',
+		        claimed_at = now() - interval '2 minutes',
+		        started_at = now() - interval '2 minutes',
+		        expires_at = now() - interval '1 second'
+		  WHERE id = $1`,
 		work.leaseID,
 	); err != nil {
 		t.Fatal(err)
@@ -296,7 +302,13 @@ func TestRunEntrypointQueriesCommitOnceAndRejectExpiredLease(t *testing.T) {
 	}
 
 	if _, err := fixture.pool.Exec(ctx,
-		`UPDATE run_leases SET expires_at = now() - interval '1 second' WHERE id = $1`,
+		`UPDATE run_leases
+		    SET assigned_at = now() - interval '3 minutes',
+		        start_deadline_at = now() - interval '2 minutes',
+		        claimed_at = now() - interval '2 minutes',
+		        started_at = now() - interval '2 minutes',
+		        expires_at = now() - interval '1 second'
+		  WHERE id = $1`,
 		work.leaseID,
 	); err != nil {
 		t.Fatal(err)

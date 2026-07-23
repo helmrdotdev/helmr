@@ -1503,4 +1503,3 @@ export type WorkspaceInputFrame = Message<"helmr.workspace.v0.WorkspaceInputFram
  */
 export const WorkspaceInputFrameSchema: GenMessage<WorkspaceInputFrame> = /*@__PURE__*/
   messageDesc(file_workspace, 45);
-

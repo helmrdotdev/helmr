@@ -14,22 +14,26 @@ import (
 )
 
 const (
-	maxArtifactEntries               = 200000
-	maxArtifactDepth                 = 128
-	maxArtifactFileSize        int64 = 1 << 30
-	maxArtifactNameBytes       int64 = 128 << 20
-	maxCodeLogicalBytes        int64 = 2 << 30
-	maxDependencyLogicalBytes  int64 = 8 << 30
-	maxBuildTreeLogicalBytes         = maxCodeLogicalBytes + maxDependencyLogicalBytes
-	maxCodePhysicalBytes       int64 = 3 << 30
-	maxDependencyPhysicalBytes int64 = 10 << 30
-	maxBuildTreePhysicalBytes        = maxCodePhysicalBytes + maxDependencyPhysicalBytes
-	maxRuntimeLogicalBytes           = maxCodeLogicalBytes
-	maxRuntimePhysicalBytes          = maxCodePhysicalBytes
-	maxPackageJSONBytes        int64 = 256 << 20
-	maxLockfileBytes           int64 = 64 << 20
-	maxSymlinkTargetBytes            = 4095
-	maxSymlinkHops                   = 40
+	maxArtifactEntries                  = 200000
+	maxArtifactDepth                    = 128
+	maxArtifactFileSize           int64 = 1 << 30
+	maxArtifactNameBytes          int64 = 128 << 20
+	maxCodeLogicalBytes           int64 = 2 << 30
+	maxDependencyLogicalBytes     int64 = 8 << 30
+	maxBuildTreeLogicalBytes            = maxCodeLogicalBytes + maxDependencyLogicalBytes
+	maxCodePhysicalBytes          int64 = 3 << 30
+	maxDependencyPhysicalBytes    int64 = 10 << 30
+	maxBuildTreePhysicalBytes           = maxCodePhysicalBytes + maxDependencyPhysicalBytes
+	maxRuntimeLogicalBytes              = maxCodeLogicalBytes
+	maxRuntimePhysicalBytes             = maxCodePhysicalBytes
+	maxPackageJSONBytes           int64 = 256 << 20
+	maxLockfileBytes              int64 = 64 << 20
+	maxSymlinkTargetBytes               = 4095
+	maxSymlinkHops                      = 40
+	maxArtifactPathComponentBytes       = 255
+	maxMountedArtifactPathBytes         = 4096
+	programMountPath                    = "/opt/helmr/program"
+	dependencyMountPath                 = "/opt/helmr/program/node_modules"
 )
 
 type artifactEntryKind string
@@ -461,7 +465,7 @@ func validateArtifactPath(value string, role artifactRole) error {
 		return fmt.Errorf("path depth exceeds %d", maxArtifactDepth)
 	}
 	for _, component := range components {
-		if component == "" || component == "." || component == ".." || len(component) > maxPackagePathComponent {
+		if component == "" || component == "." || component == ".." || len(component) > maxArtifactPathComponentBytes {
 			return fmt.Errorf("path is not normalized or exceeds a component bound")
 		}
 	}
@@ -472,8 +476,8 @@ func validateArtifactPath(value string, role artifactRole) error {
 	case runtimeArtifact:
 		mount = runtimeMountPath
 	}
-	if len(mount)+1+len(value)+1 > maxMountedPackagePath {
-		return fmt.Errorf("mounted path exceeds %d bytes", maxMountedPackagePath)
+	if len(mount)+1+len(value)+1 > maxMountedArtifactPathBytes {
+		return fmt.Errorf("mounted path exceeds %d bytes", maxMountedArtifactPathBytes)
 	}
 	return nil
 }
@@ -489,7 +493,7 @@ func validateSymlinkTarget(target string) error {
 		}
 	}
 	for _, component := range strings.Split(target, "/") {
-		if component == "" || len(component) > maxPackagePathComponent {
+		if component == "" || len(component) > maxArtifactPathComponentBytes {
 			return fmt.Errorf("symbolic-link target has an empty or oversized component")
 		}
 	}
@@ -534,40 +538,7 @@ func (artifact *inspectedArtifact) read(
 	return raw, nil
 }
 
-func (artifact *inspectedArtifact) digest(ctx context.Context, path string) (string, error) {
-	entry, err := artifact.require(path, artifactEntryRegular)
-	if err != nil {
-		return "", err
-	}
-	reader, err := artifact.reader.Open(ctx, path)
-	if err != nil {
-		return "", fmt.Errorf("open %q: %w", path, err)
-	}
-	defer reader.Close()
-	hash := sha256.New()
-	written, err := io.Copy(hash, io.LimitReader(reader, entry.SizeBytes+1))
-	if err != nil {
-		return "", fmt.Errorf("hash %q: %w", path, err)
-	}
-	if written != entry.SizeBytes {
-		return "", fmt.Errorf("path %q read %d bytes, metadata declares %d", path, written, entry.SizeBytes)
-	}
-	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
-}
-
 func digestBytes(raw []byte) string {
 	digest := sha256.Sum256(raw)
 	return "sha256:" + hex.EncodeToString(digest[:])
-}
-
-func joinArtifactPath(parts ...string) string {
-	joined := path.Join(parts...)
-	if joined == "" {
-		return "."
-	}
-	return joined
-}
-
-func pointerStringsEqual(left, right *string) bool {
-	return left == nil && right == nil || left != nil && right != nil && *left == *right
 }

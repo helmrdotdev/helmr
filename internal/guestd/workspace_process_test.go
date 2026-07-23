@@ -35,7 +35,7 @@ func TestWorkspaceProcessEnvPreservesToolRuntimeConfiguration(t *testing.T) {
 		t.Fatalf("workspace process env: %v", err)
 	}
 	for key, want := range expected {
-		if got := envValue(env, key); got != want {
+		if got := workspaceEnvValue(env, key); got != want {
 			t.Fatalf("%s = %q, want %q", key, got, want)
 		}
 	}

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -22,7 +23,7 @@ type ControlClient interface {
 	RenewDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease) (api.WorkerDeploymentBuildRenewResponse, error)
 	RejectDeploymentBuild(ctx context.Context, request api.WorkerDeploymentBuildRejectRequest) error
 	ReportDeploymentBuildDeliveryFailure(ctx context.Context, request api.WorkerDeploymentBuildDeliveryFailureRequest) (api.WorkerDeploymentBuildResponse, error)
-	CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease, result api.WorkerDeploymentBuildResult) (api.WorkerDeploymentBuildResponse, error)
+	CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease, result json.RawMessage) (api.WorkerDeploymentBuildResponse, error)
 	ClaimWorkspaceMount(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerWorkspaceMountClaimResponse, error)
 	RenewWorkspaceMount(ctx context.Context, request api.WorkerWorkspaceMountRenewRequest) (api.WorkspaceMountResponse, error)
 	MarkWorkspaceMountMounted(ctx context.Context, request api.WorkerWorkspaceMountMountedRequest) (api.WorkspaceMountResponse, error)
@@ -49,8 +50,8 @@ type RunLeaseExecutor interface {
 	ExecuteRunLease(context.Context, api.WorkerRunLeaseWork) error
 }
 
-type DeploymentBuilder interface {
-	BuildDeployment(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) (api.WorkerDeploymentBuildResult, error)
+type BuildExecutor interface {
+	Build(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) (json.RawMessage, error)
 }
 
 type BuildPolicy interface {
@@ -64,7 +65,7 @@ type Materializer interface {
 type Runner struct {
 	client                         ControlClient
 	runLeaseExecutor               RunLeaseExecutor
-	deploymentBuilder              DeploymentBuilder
+	buildExecutor                  BuildExecutor
 	buildPolicy                    BuildPolicy
 	materializer                   Materializer
 	capabilities                   api.WorkerCapabilities
@@ -97,9 +98,9 @@ func WithLogger(log *slog.Logger) Option {
 	}
 }
 
-func WithDeploymentBuilder(builder DeploymentBuilder) Option {
+func WithBuildExecutor(executor BuildExecutor) Option {
 	return func(runner *Runner) {
-		runner.deploymentBuilder = builder
+		runner.buildExecutor = executor
 	}
 }
 

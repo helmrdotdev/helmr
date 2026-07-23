@@ -126,7 +126,7 @@ func TestProgramRestoreVerificationRequiresExactFrozenRegistration(t *testing.T)
 		t.Fatal(err)
 	}
 	if response.GetCheckpointId() != request.GetCheckpointId() || response.GetCorrelationId() != request.GetCorrelationId() {
-		t.Fatalf("verification response = %+v", response)
+		t.Fatalf("verification response = %+v", &response)
 	}
 	request.CorrelationId = "different"
 	body.Reset()
@@ -300,7 +300,7 @@ func TestWorkspaceFinalizationBeginSamplesTimeAfterReadingRequest(t *testing.T) 
 		t.Fatal(err)
 	}
 	if response.GetError() != "" || response.GetOperationId() != request.GetOperationId() {
-		t.Fatalf("Begin response = %+v", response)
+		t.Fatalf("Begin response = %+v", &response)
 	}
 }
 

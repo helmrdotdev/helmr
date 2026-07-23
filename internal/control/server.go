@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -34,12 +35,13 @@ import (
 )
 
 const (
-	readinessTimeout          = 2 * time.Second
-	apiRequestBodyLimit       = int64(128 << 20)
-	workerLogRequestBodyLimit = int64(256 << 10)
-	taskCompletionBodyLimit   = int64(17 << 20)
-	maxControlPageSize        = int32(500)
-	defaultRunLeaseTTL        = 5 * time.Minute
+	readinessTimeout           = 2 * time.Second
+	apiRequestBodyLimit        = int64(128 << 20)
+	deploymentRequestBodyLimit = archive.MaxSourceArtifactBytes + 2<<20
+	workerLogRequestBodyLimit  = int64(256 << 10)
+	taskCompletionBodyLimit    = int64(17 << 20)
+	maxControlPageSize         = int32(500)
+	defaultRunLeaseTTL         = 5 * time.Minute
 )
 
 type SecretManager interface {
@@ -331,11 +333,23 @@ func (s *Server) recoverPanics(next http.Handler) http.Handler {
 }
 
 func (s *Server) mountAPIRoutes(r chi.Router) {
-	r.Use(limitRequestBody(apiRequestBodyLimit))
+	r.Use(limitAPIRequestBody)
 	r.Use(s.requireRequestVersions)
 	s.mountAuthRoutes(r)
 	s.mountOwnerRoutes(r)
 	s.mountWorkerRoutes(r)
+}
+
+func limitAPIRequestBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limit := apiRequestBodyLimit
+		if r.Method == http.MethodPost &&
+			(r.URL.Path == "/api/deployments" ||
+				strings.HasSuffix(r.URL.Path, "/deployments")) {
+			limit = deploymentRequestBodyLimit
+		}
+		limitRequestBody(limit)(next).ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) requireRequestVersions(next http.Handler) http.Handler {

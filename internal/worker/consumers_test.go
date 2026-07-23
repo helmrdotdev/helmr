@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -84,7 +85,7 @@ func (c *consumerTestClient) StartDeploymentBuild(context.Context, api.WorkerDep
 	return api.WorkerDeploymentBuildStartResponse{Lease: c.buildLease}, nil
 }
 
-func (c *consumerTestClient) CompleteDeploymentBuild(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuildResult) (api.WorkerDeploymentBuildResponse, error) {
+func (c *consumerTestClient) CompleteDeploymentBuild(context.Context, api.WorkerDeploymentBuildLease, json.RawMessage) (api.WorkerDeploymentBuildResponse, error) {
 	c.buildComplete.Add(1)
 	return api.WorkerDeploymentBuildResponse{Status: "deployed"}, nil
 }
@@ -110,15 +111,15 @@ func (e *detachedTestExecutor) ExecuteRunLease(context.Context, api.WorkerRunLea
 
 type successfulTestBuilder struct{ calls atomic.Int32 }
 
-func (b *successfulTestBuilder) BuildDeployment(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (api.WorkerDeploymentBuildResult, error) {
+func (b *successfulTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (json.RawMessage, error) {
 	b.calls.Add(1)
-	return api.WorkerDeploymentBuildResult{}, nil
+	return json.RawMessage(`{"error":{"message":"test","reasonCode":"analysis_failed"},"formatVersion":0,"outcome":"failed"}`), nil
 }
 
 type deliveryFailureTestBuilder struct{}
 
-func (*deliveryFailureTestBuilder) BuildDeployment(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (api.WorkerDeploymentBuildResult, error) {
-	return api.WorkerDeploymentBuildResult{}, deliveryFailureTestError{}
+func (*deliveryFailureTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (json.RawMessage, error) {
+	return nil, deliveryFailureTestError{}
 }
 
 type deliveryFailureTestError struct{}
@@ -133,16 +134,16 @@ func (deliveryFailureTestError) DeploymentBuildDeliveryFailureReason() api.Worke
 
 type unclassifiedFailureTestBuilder struct{}
 
-func (*unclassifiedFailureTestBuilder) BuildDeployment(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (api.WorkerDeploymentBuildResult, error) {
-	return api.WorkerDeploymentBuildResult{}, errors.New("unclassified infrastructure failure")
+func (*unclassifiedFailureTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (json.RawMessage, error) {
+	return nil, errors.New("unclassified infrastructure failure")
 }
 
 type cleanupUnprovenTestBuilder struct {
 	owner vm.Owner
 }
 
-func (b *cleanupUnprovenTestBuilder) BuildDeployment(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (api.WorkerDeploymentBuildResult, error) {
-	return api.WorkerDeploymentBuildResult{}, vm.NewGuestError(&vm.CleanupUnprovenError{
+func (b *cleanupUnprovenTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (json.RawMessage, error) {
+	return nil, vm.NewGuestError(&vm.CleanupUnprovenError{
 		Owner: b.owner,
 		Cause: errors.New("guest process absence could not be proven"),
 	})
@@ -150,8 +151,8 @@ func (b *cleanupUnprovenTestBuilder) BuildDeployment(context.Context, api.Worker
 
 type fatalBuildTestBuilder struct{}
 
-func (*fatalBuildTestBuilder) BuildDeployment(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (api.WorkerDeploymentBuildResult, error) {
-	return api.WorkerDeploymentBuildResult{}, fatalBuildTestError{}
+func (*fatalBuildTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (json.RawMessage, error) {
+	return nil, fatalBuildTestError{}
 }
 
 type fatalBuildTestError struct{}
@@ -161,8 +162,8 @@ func (fatalBuildTestError) FatalWorker() bool { return true }
 
 type canceledBuildTestBuilder struct{}
 
-func (*canceledBuildTestBuilder) BuildDeployment(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (api.WorkerDeploymentBuildResult, error) {
-	return api.WorkerDeploymentBuildResult{}, context.Canceled
+func (*canceledBuildTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (json.RawMessage, error) {
+	return nil, context.Canceled
 }
 
 func TestRunConsumerExecutesDiscoveredLeaseInsideRegisteredWork(t *testing.T) {
@@ -240,7 +241,7 @@ func TestBuildConsumerStartsLeaseInsideRegisteredWork(t *testing.T) {
 		capabilities,
 		WithCapacity(testCapacity(t, capabilities)),
 		WithBuildPolicy(consumerBuildPolicy{}),
-		WithDeploymentBuilder(builder),
+		WithBuildExecutor(builder),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -285,7 +286,7 @@ func TestDefaultBuildEnvelopeFitsDefaultBuildWorker(t *testing.T) {
 		capabilities,
 		WithCapacity(testCapacity(t, capabilities)),
 		WithBuildPolicy(consumerBuildPolicy{}),
-		WithDeploymentBuilder(&successfulTestBuilder{}),
+		WithBuildExecutor(&successfulTestBuilder{}),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -359,7 +360,7 @@ func TestBuildPreStartRejectionsReturnSuccessfulNilWork(t *testing.T) {
 				WithBuildPolicy(consumerBuildPolicy{}),
 			}
 			if tt.withBuilder {
-				options = append(options, WithDeploymentBuilder(&successfulTestBuilder{}))
+				options = append(options, WithBuildExecutor(&successfulTestBuilder{}))
 			}
 			runner, err := NewRunner(client, &detachedTestExecutor{}, capabilities, options...)
 			if err != nil {
@@ -411,7 +412,7 @@ func TestBuildAdmissionIncludesRuntimeOccupancy(t *testing.T) {
 		capabilities,
 		WithCapacity(resources),
 		WithBuildPolicy(consumerBuildPolicy{}),
-		WithDeploymentBuilder(&successfulTestBuilder{}),
+		WithBuildExecutor(&successfulTestBuilder{}),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -435,7 +436,7 @@ func TestBuildAdmissionIncludesRuntimeOccupancy(t *testing.T) {
 func TestVerifierInfrastructureFailureUsesDeliveryFailureBoundary(t *testing.T) {
 	client := &consumerTestClient{}
 	capabilities := testCapabilities()
-	runner, err := NewRunner(client, &detachedTestExecutor{}, capabilities, WithCapacity(testCapacity(t, capabilities)), WithDeploymentBuilder(&deliveryFailureTestBuilder{}))
+	runner, err := NewRunner(client, &detachedTestExecutor{}, capabilities, WithCapacity(testCapacity(t, capabilities)), WithBuildExecutor(&deliveryFailureTestBuilder{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +458,7 @@ func TestVerifierInfrastructureFailureUsesDeliveryFailureBoundary(t *testing.T) 
 func TestUnclassifiedBuildFailureWaitsForLeaseExpiry(t *testing.T) {
 	client := &consumerTestClient{}
 	capabilities := testCapabilities()
-	runner, err := NewRunner(client, &detachedTestExecutor{}, capabilities, WithCapacity(testCapacity(t, capabilities)), WithDeploymentBuilder(&unclassifiedFailureTestBuilder{}))
+	runner, err := NewRunner(client, &detachedTestExecutor{}, capabilities, WithCapacity(testCapacity(t, capabilities)), WithBuildExecutor(&unclassifiedFailureTestBuilder{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,7 +497,7 @@ func TestBuildCleanupAmbiguityRetainsReservationAndTerminatesWorker(t *testing.T
 		capabilities,
 		WithCapacity(resources),
 		WithBuildPolicy(consumerBuildPolicy{}),
-		WithDeploymentBuilder(builder),
+		WithBuildExecutor(builder),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -542,7 +543,7 @@ func TestBuildServiceFailureRetainsReservationAndTerminatesWorker(t *testing.T) 
 		capabilities,
 		WithCapacity(resources),
 		WithBuildPolicy(consumerBuildPolicy{}),
-		WithDeploymentBuilder(&fatalBuildTestBuilder{}),
+		WithBuildExecutor(&fatalBuildTestBuilder{}),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -585,7 +586,7 @@ func TestCanceledBuildReleasesReservation(t *testing.T) {
 		capabilities,
 		WithCapacity(resources),
 		WithBuildPolicy(consumerBuildPolicy{}),
-		WithDeploymentBuilder(&canceledBuildTestBuilder{}),
+		WithBuildExecutor(&canceledBuildTestBuilder{}),
 	)
 	if err != nil {
 		t.Fatal(err)

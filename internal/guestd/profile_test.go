@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"net"
 	"strings"
 	"testing"
@@ -18,35 +17,6 @@ type profileTestConnection struct {
 }
 
 func (connection *profileTestConnection) Close() error {
-	return nil
-}
-
-type oneShotTestListener struct {
-	conn     net.Conn
-	accepted int
-}
-
-type orderedTestListener struct {
-	name   string
-	conn   net.Conn
-	events *[]string
-}
-
-func (listener *orderedTestListener) Accept() (net.Conn, error) {
-	*listener.events = append(*listener.events, listener.name)
-	if listener.conn == nil {
-		return nil, errors.New("unexpected second accept")
-	}
-	conn := listener.conn
-	listener.conn = nil
-	return conn, nil
-}
-
-func (*orderedTestListener) Close() error {
-	return nil
-}
-
-func (*orderedTestListener) Addr() net.Addr {
 	return nil
 }
 
@@ -69,6 +39,11 @@ func (*scriptedNetConn) RemoteAddr() net.Addr             { return nil }
 func (*scriptedNetConn) SetDeadline(time.Time) error      { return nil }
 func (*scriptedNetConn) SetReadDeadline(time.Time) error  { return nil }
 func (*scriptedNetConn) SetWriteDeadline(time.Time) error { return nil }
+
+type oneShotTestListener struct {
+	conn     net.Conn
+	accepted int
+}
 
 func (listener *oneShotTestListener) Accept() (net.Conn, error) {
 	listener.accepted++
@@ -99,7 +74,9 @@ func TestParseGuestProfile(t *testing.T) {
 	}{
 		{name: "ordinary", want: ordinaryGuestProfile},
 		{name: "manager acquisition", value: "manager-acquire", want: managerAcquireGuestProfile},
-		{name: "dependency", value: "dependency", want: dependencyGuestProfile},
+		{name: "build install", value: "build-install", want: buildInstallGuestProfile},
+		{name: "build analysis", value: "build-analyze", want: buildAnalyzeGuestProfile},
+		{name: "Program proof", value: "program-proof", want: programProofGuestProfile},
 		{name: "unknown", value: "runtime", wantErr: `unsupported guest profile "runtime"`},
 		{name: "whitespace", value: " dependency", wantErr: `unsupported guest profile " dependency"`},
 	} {
@@ -159,7 +136,7 @@ func TestGuestProfileProtocolIsolation(t *testing.T) {
 		connection := &profileTestConnection{}
 		if err := wire.WriteStreamFrameHeader(
 			connection,
-			wire.StreamHeader{Type: wire.StreamTypeCompileTaskBundle},
+			wire.StreamHeader{Type: wire.StreamTypeRunImage},
 			0,
 		); err != nil {
 			t.Fatal(err)
@@ -172,12 +149,12 @@ func TestGuestProfileProtocolIsolation(t *testing.T) {
 			newWaitingRunRegistry(),
 			newWorkspaceOperationRegistry(),
 		)
-		if err == nil || err.Error() != `manager acquisition guest rejects input type "compile-task-bundle"` {
+		if err == nil || err.Error() != `manager acquisition guest rejects input type "run-image"` {
 			t.Fatalf("handleConnection() error = %v", err)
 		}
 	})
 
-	t.Run("dependency requires dedicated admission", func(t *testing.T) {
+	t.Run("build profile rejects a mismatched stream", func(t *testing.T) {
 		t.Parallel()
 
 		connection := &profileTestConnection{}
@@ -191,13 +168,12 @@ func TestGuestProfileProtocolIsolation(t *testing.T) {
 		_, err := handleConnection(
 			context.Background(),
 			connection,
-			Config{Profile: "dependency"},
+			Config{Profile: "build-install"},
 			slogDiscard(),
 			newWaitingRunRegistry(),
 			newWorkspaceOperationRegistry(),
 		)
-		if err == nil || err.Error() !=
-			"dependency guest connections require dedicated admission" {
+		if err == nil || err.Error() != `build install guest rejects input type "manager-acquire"` {
 			t.Fatalf("handleConnection() error = %v", err)
 		}
 	})
@@ -221,7 +197,7 @@ func TestBuildGuestIsOneShot(t *testing.T) {
 	}()
 	if err := wire.WriteStreamFrameHeader(
 		client,
-		wire.StreamHeader{Type: wire.StreamTypeCompileTaskBundle},
+		wire.StreamHeader{Type: wire.StreamTypeRunImage},
 		0,
 	); err != nil {
 		t.Fatal(err)
@@ -243,44 +219,4 @@ func TestBuildGuestIsOneShot(t *testing.T) {
 	}
 }
 
-func TestResolveBootstrapPrecedesManagerAdmission(t *testing.T) {
-	token := bytes.Repeat([]byte{0x5a}, 32)
-	record := make([]byte, 37)
-	copy(record[:4], []byte("HRB0"))
-	record[4] = 0x01
-	copy(record[5:], token)
-	bootstrapConn := &scriptedNetConn{reader: bytes.NewReader(record)}
-	managerConn := &scriptedNetConn{reader: bytes.NewReader(nil)}
-	var events []string
-
-	err := serveDependencyGuest(
-		context.Background(),
-		&orderedTestListener{
-			name:   "manager",
-			conn:   managerConn,
-			events: &events,
-		},
-		&orderedTestListener{
-			name:   "bootstrap",
-			conn:   bootstrapConn,
-			events: &events,
-		},
-	)
-	if err == nil || !strings.Contains(err.Error(), "read manager request header") {
-		t.Fatalf("serveDependencyGuest() error = %v", err)
-	}
-	if len(events) != 2 ||
-		events[0] != "bootstrap" ||
-		events[1] != "manager" {
-		t.Fatalf("accept order = %v", events)
-	}
-	if bootstrapConn.written.String() != "HRA0" {
-		t.Fatalf(
-			"bootstrap acknowledgement = %q",
-			bootstrapConn.written.String(),
-		)
-	}
-}
-
-var _ io.ReadWriteCloser = (*profileTestConnection)(nil)
 var _ net.Listener = (*oneShotTestListener)(nil)

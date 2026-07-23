@@ -14,7 +14,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/buildkit"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -25,8 +24,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
+	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/substrate"
-	"github.com/helmrdotdev/helmr/internal/task"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	workerdaemon "github.com/helmrdotdev/helmr/internal/worker"
@@ -57,6 +56,9 @@ func run(log *slog.Logger) error {
 	var toolchainCatalogDigest string
 	var toolCorpus *deployment.ToolchainCorpus
 	var runtimeStore cas.Reader
+	var managerStore *deployment.ManagerStore
+	var managerAcquirer deployment.ManagerAcquirer
+	var squashfsEncoder string
 	runtimeCatalog, err := deployment.LoadRuntimeCatalog()
 	if err != nil {
 		return fmt.Errorf("authenticate managed runtime catalog: %w", err)
@@ -225,6 +227,24 @@ func run(log *slog.Logger) error {
 		if err := validateWorkerStores(cfg); err != nil {
 			return err
 		}
+		managerStore, err = deployment.NewManagerS3(ctx, cfg.ManagerStoreURI)
+		if err != nil {
+			return fmt.Errorf("configure Manager store: %w", err)
+		}
+		managerDownloader, err := deployment.NewManagerDownloader(nil)
+		if err != nil {
+			return fmt.Errorf("configure Manager downloader: %w", err)
+		}
+		squashfsEncoder, err = deployment.FindEncoder()
+		if err != nil {
+			return fmt.Errorf("resolve SquashFS encoder: %w", err)
+		}
+		managerAcquirer = deployment.ManagerAcquirer{
+			WorkDir:    workDir,
+			Store:      managerStore,
+			Downloader: managerDownloader,
+			Encoder:    squashfsEncoder,
+		}
 		toolchainCatalog, err := deployment.LoadToolchainCatalog()
 		if err != nil {
 			return fmt.Errorf("authenticate standard toolchain catalog: %w", err)
@@ -297,7 +317,7 @@ func run(log *slog.Logger) error {
 			)
 		}
 	}
-	var imageBuilder builder.Engine
+	var imageBuilder imagebuild.Engine
 	closeBuilder := func() error { return nil }
 	if supportsBuild {
 		imageBuilder, closeBuilder, err = buildkit.OpenFresh(ctx, buildkit.Config{
@@ -353,6 +373,11 @@ func run(log *slog.Logger) error {
 	runtimeConnector, err := vm.NewStartLimiter(connector, runtimeStartLimit)
 	if err != nil {
 		return fmt.Errorf("configure host runtime start limit: %w", err)
+	}
+	if supportsBuild {
+		managerAcquirer.Normalizer = deployment.GuestManagerNormalizer{
+			Connector: runtimeConnector,
+		}
 	}
 	hostDiskMiB, err := advertisedWorkerDiskMiB(workDir, cfg.WorkerDiskMiB, cfg.WorkerDiskReserveMiB)
 	if err != nil {
@@ -437,10 +462,6 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker capacity: %w", err)
 	}
-	compiler := task.GuestCompiler{
-		Connector: runtimeConnector,
-		TempDir:   filepath.Join(workDir, "tmp"),
-	}
 	substrateResolver := &substrate.Resolver{
 		CacheDir:      substrateCacheDir,
 		MkfsExt4Path:  "mkfs.ext4",
@@ -499,12 +520,17 @@ func run(log *slog.Logger) error {
 		workerdaemon.WithPollEvery(cfg.PollEvery),
 		workerdaemon.WithLogger(log),
 		workerdaemon.WithBuildPolicy(buildPolicy),
-		workerdaemon.WithDeploymentBuilder(deployment.Builder{
+		workerdaemon.WithBuildExecutor(deployment.Builder{
 			WorkDir:      workDir,
 			CAS:          store,
-			Indexer:      deployment.GuestIndexer{Connector: runtimeConnector, TempDir: filepath.Join(workDir, "tmp")},
-			Compiler:     compiler,
-			ImageBuilder: imageBuilder,
+			RuntimeStore: runtimeStore,
+			Managers:     managerStore,
+			Acquirer:     managerAcquirer,
+			Policy:       buildPolicy,
+			Toolchains:   toolCorpus,
+			Connector:    runtimeConnector,
+			Encoder:      squashfsEncoder,
+			Images:       imageBuilder,
 		}),
 		workerdaemon.WithMaterializer(executor.WorkspaceMaterializer{
 			Connector:             workspaceMountConnector,
@@ -645,6 +671,16 @@ func validateWorkerStores(cfg config.Worker) error {
 			label:  "ordinary CAS and managed runtime store",
 			first:  cfg.CASURI,
 			second: cfg.RuntimeStoreURI,
+		},
+		{
+			label:  "ordinary CAS and Manager store",
+			first:  cfg.CASURI,
+			second: cfg.ManagerStoreURI,
+		},
+		{
+			label:  "managed runtime and Manager stores",
+			first:  cfg.RuntimeStoreURI,
+			second: cfg.ManagerStoreURI,
 		},
 	}
 	for _, pair := range pairs {

@@ -11,11 +11,11 @@ import (
 type StreamType string
 
 const (
-	StreamTypeCatalogDeployment          StreamType = "catalog-deployment"
-	StreamTypeCompileTaskBundle          StreamType = "compile-task-bundle"
 	StreamTypeManagerAcquire             StreamType = "manager-acquire"
+	StreamTypeBuildInstall               StreamType = "build-install"
+	StreamTypeBuildAnalyze               StreamType = "build-analyze"
+	StreamTypeProgramProof               StreamType = "program-proof"
 	StreamTypeRunImage                   StreamType = "run-image"
-	StreamTypeDeploymentSource           StreamType = "deployment-source"
 	StreamTypeWorkspaceArtifact          StreamType = "workspace-artifact"
 	StreamTypeCheckpointPauseRequest     StreamType = "checkpoint-pause-request"
 	StreamTypeCheckpointPauseReady       StreamType = "checkpoint-pause-ready"
@@ -24,7 +24,6 @@ const (
 	StreamTypeResumeDecision             StreamType = "resume-decision"
 	StreamTypeWorkspaceMaterialize       StreamType = "workspace-materialize"
 	StreamTypeWorkspaceRuntimePrepare    StreamType = "workspace-runtime-prepare"
-	StreamTypeWorkspaceRun               StreamType = "workspace-run"
 	StreamTypeProgramRun                 StreamType = "program-run"
 	StreamTypeWorkspaceOperation         StreamType = "workspace-operation"
 	StreamTypeWorkspaceEvents            StreamType = "workspace-events"

@@ -48,7 +48,7 @@ func writeDeploymentEventSSE(t *testing.T, w http.ResponseWriter, r *http.Reques
 	_, _ = fmt.Fprintf(w, "id: 1\nevent: deployment_event\ndata: {\"id\":\"1\",\"deployment_id\":\"deployment-1\",\"kind\":%q,\"message\":\"Deployment lifecycle changed\"}\n\n", kind)
 }
 
-func requireNodeForEmbeddedAdapter(t *testing.T) string {
+func requireNodeForConfigInspector(t *testing.T) string {
 	t.Helper()
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
@@ -80,7 +80,7 @@ func linkLocalWorkspacePackage(t *testing.T, projectRoot string, name string, pa
 func deployCommandFixture(t *testing.T) (string, func()) {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "helmr.config.ts"), []byte(`export default { project: "agents", dirs: ["tasks"] }`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "helmr.config.ts"), []byte(`export default { project: "agents", dirs: ["./tasks"] }`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"packageManager":"bun@1.3.10","dependencies":{"@helmr/sdk":"latest"}}`), 0o644); err != nil {
@@ -92,53 +92,45 @@ func deployCommandFixture(t *testing.T) (string, func()) {
 	if err := os.WriteFile(filepath.Join(root, "node_modules", "@helmr", "sdk", "package.json"), []byte(`{"name":"@helmr/sdk"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, ".helmrignore"), []byte("node_modules/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(root, "tasks"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "tasks", "deploy.ts"), []byte(`export const deploy = task("deploy", async () => {})`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	adapter := filepath.Join(t.TempDir(), "adapter")
-	adapterScript := `#!/bin/sh
+	configRuntime := filepath.Join(t.TempDir(), "config-runtime")
+	configRuntimeScript := `#!/bin/sh
 if [ "$1" = "-e" ]; then
 	exit 0
 fi
 if [ "$1" = "--import" ]; then
 	shift 2
 fi
-case "$2" in
-	inspect-config)
-		printf '%s\n' '{"project":"agents","dirs":["tasks"]}'
-		;;
-	parse)
-		printf '%s\n' '{"tasks":{"deploy":{"modulePath":"tasks/deploy.ts","exportName":"deploy","bundle":{"sandbox":{"resources":{"cpu":3,"memory":"4Gi"}}}}}}'
-		;;
-	*)
-		echo "unexpected adapter command: $*" >&2
-		exit 1
-		;;
-esac
+printf '%s\n' '{"project":"agents"}'
 `
-	if err := os.WriteFile(adapter, []byte(adapterScript), 0o755); err != nil {
+	if err := os.WriteFile(configRuntime, []byte(configRuntimeScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	oldAdapterRuntime := deployAdapterRuntimePath
+	oldConfigRuntime := deployConfigRuntimePath
 	oldTemp := deployArchiveTempDir
-	deployAdapterRuntimePath = adapter
+	deployConfigRuntimePath = configRuntime
 	deployArchiveTempDir = t.TempDir()
-	adapterDir := t.TempDir()
-	adapterPath := filepath.Join(adapterDir, "main.js")
-	registerPath := filepath.Join(adapterDir, "register.mjs")
-	if err := os.WriteFile(adapterPath, []byte(""), 0o644); err != nil {
+	inspectorDir := t.TempDir()
+	inspectorPath := filepath.Join(inspectorDir, "inspect.js")
+	registerPath := filepath.Join(inspectorDir, "register.mjs")
+	if err := os.WriteFile(inspectorPath, []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(registerPath, []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HELMR_ADAPTER_PATH", adapterPath)
-	t.Setenv("HELMR_ADAPTER_REGISTER_PATH", registerPath)
+	t.Setenv("HELMR_CONFIG_INSPECTOR_PATH", inspectorPath)
+	t.Setenv("HELMR_CONFIG_REGISTER_PATH", registerPath)
 	cleanup := func() {
-		deployAdapterRuntimePath = oldAdapterRuntime
+		deployConfigRuntimePath = oldConfigRuntime
 		deployArchiveTempDir = oldTemp
 	}
 	t.Cleanup(cleanup)

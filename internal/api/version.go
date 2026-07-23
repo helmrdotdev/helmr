@@ -17,7 +17,6 @@ const (
 	MaxClientVersionBytes = 255
 
 	CurrentWorkerProtocolVersion = "helmr.worker.v0"
-	CurrentBundleFormatVersion   = 2
 )
 
 func ValidateClientVersion(value string) error {

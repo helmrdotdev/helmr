@@ -15,7 +15,7 @@ func testToolchain(t *testing.T) Toolchain {
 		Architecture:         ArchitectureAArch64,
 		FormatVersion:        ToolchainFormatVersion,
 		ManagedRuntimeDigest: toolDigestForTest("managed runtime"),
-		ToolchainClosure: ManagerArtifact{
+		ToolchainClosure: ArtifactDescriptor{
 			Digest:    toolDigestForTest("toolchain closure"),
 			MediaType: ToolchainMediaType,
 			SizeBytes: 2048,
@@ -182,7 +182,7 @@ func TestToolchainCatalogRejectsPhysicalCorpusOverflow(t *testing.T) {
 		toolchain.ManagedRuntimeDigest = toolDigestForTest(
 			fmt.Sprintf("runtime %d", index),
 		)
-		toolchain.ToolchainClosure = ManagerArtifact{
+		toolchain.ToolchainClosure = ArtifactDescriptor{
 			Digest: toolDigestForTest(
 				fmt.Sprintf("closure %d", index),
 			),

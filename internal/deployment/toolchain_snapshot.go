@@ -8,14 +8,26 @@ import (
 )
 
 type toolchainSnapshot struct {
-	descriptor ManagerArtifact
+	descriptor ArtifactDescriptor
 	content    *artifactSnapshot
+}
+
+func (snapshot *toolchainSnapshot) LinkInto(
+	directory string,
+	name string,
+	uid int,
+	gid int,
+) error {
+	if snapshot == nil || snapshot.content == nil {
+		return errors.New("standard toolchain snapshot is closed")
+	}
+	return snapshot.content.LinkInto(directory, name, uid, gid)
 }
 
 func snapshotToolchain(
 	ctx context.Context,
 	directory string,
-	descriptor ManagerArtifact,
+	descriptor ArtifactDescriptor,
 	source io.Reader,
 ) (*toolchainSnapshot, error) {
 	if err := validateToolArtifact(

@@ -23,9 +23,11 @@ import (
 const (
 	defaultMaxExtractedBytes   = int64(512 << 20)
 	defaultMaxExtractedEntries = 100000
+	MaxSourceArtifactBytes     = int64(640 << 20)
 )
 
 type TarOptions struct {
+	CanonicalSource bool
 	ExcludePatterns []string
 	MaxBytes        int64
 	MaxEntries      int
@@ -64,9 +66,26 @@ func CreateTarWithOptionsContext(ctx context.Context, root, tempDir string, opti
 	if root == "" {
 		return Tar{}, func() {}, errors.New("archive root is required")
 	}
-	excludeMatchers, err := compileExcludeMatchers(options.ExcludePatterns)
-	if err != nil {
-		return Tar{}, func() {}, err
+	var excludeMatchers []*regexp.Regexp
+	if options.CanonicalSource {
+		if len(options.ExcludePatterns) != 0 {
+			return Tar{}, func() {}, errors.New("canonical source does not accept caller exclude patterns")
+		}
+		if err := validateCanonicalSourceTempDir(root, tempDir); err != nil {
+			return Tar{}, func() {}, err
+		}
+		if options.MaxBytes == 0 {
+			options.MaxBytes = defaultMaxExtractedBytes
+		}
+		if options.MaxEntries == 0 {
+			options.MaxEntries = defaultMaxExtractedEntries
+		}
+	} else {
+		var err error
+		excludeMatchers, err = compileExcludeMatchers(options.ExcludePatterns)
+		if err != nil {
+			return Tar{}, func() {}, err
+		}
 	}
 	if strings.TrimSpace(tempDir) != "" {
 		if err := os.MkdirAll(tempDir, 0o700); err != nil {
@@ -82,11 +101,17 @@ func CreateTarWithOptionsContext(ctx context.Context, root, tempDir string, opti
 	hash := sha256.New()
 	writer := tar.NewWriter(io.MultiWriter(file, hash))
 	stats := tarStats{}
-	if err := appendTree(ctx, writer, root, excludeMatchers, options, &stats); err != nil {
+	var appendErr error
+	if options.CanonicalSource {
+		appendErr = appendCanonicalSource(ctx, writer, root, options, &stats)
+	} else {
+		appendErr = appendTree(ctx, writer, root, excludeMatchers, options, &stats)
+	}
+	if appendErr != nil {
 		_ = writer.Close()
 		_ = file.Close()
 		cleanup()
-		return Tar{}, func() {}, err
+		return Tar{}, func() {}, appendErr
 	}
 	if err := ctx.Err(); err != nil {
 		_ = writer.Close()
@@ -112,6 +137,10 @@ func CreateTarWithOptionsContext(ctx context.Context, root, tempDir string, opti
 		cleanup()
 		return Tar{}, func() {}, fmt.Errorf("stat tar archive: %w", err)
 	}
+	if options.CanonicalSource && info.Size() > MaxSourceArtifactBytes {
+		cleanup()
+		return Tar{}, func() {}, errors.New("canonical source artifact exceeds 640 MiB")
+	}
 	if err := ctx.Err(); err != nil {
 		cleanup()
 		return Tar{}, func() {}, err
@@ -122,6 +151,29 @@ func CreateTarWithOptionsContext(ctx context.Context, root, tempDir string, opti
 		SizeBytes:  info.Size(),
 		EntryCount: stats.entries,
 	}, cleanup, nil
+}
+
+func validateCanonicalSourceTempDir(root, tempDir string) error {
+	if strings.TrimSpace(tempDir) == "" {
+		return nil
+	}
+	rootPath, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve canonical source root: %w", err)
+	}
+	tempPath, err := filepath.Abs(tempDir)
+	if err != nil {
+		return fmt.Errorf("resolve canonical source temp dir: %w", err)
+	}
+	relative, err := filepath.Rel(rootPath, tempPath)
+	if err != nil {
+		return fmt.Errorf("compare canonical source temp dir: %w", err)
+	}
+	if relative == "." || relative != ".." &&
+		!strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return errors.New("canonical source temp dir must be outside the source root")
+	}
+	return nil
 }
 
 func ExtractTar(body io.Reader, destination string) error {
@@ -269,8 +321,21 @@ type tarStats struct {
 	bytes   int64
 }
 
-func appendTree(ctx context.Context, writer *tar.Writer, root string, excludeMatchers []*regexp.Regexp, options TarOptions, stats *tarStats) error {
-	return filepath.WalkDir(root, func(pathname string, entry os.DirEntry, walkErr error) error {
+func appendTree(
+	ctx context.Context,
+	writer *tar.Writer,
+	root string,
+	excludeMatchers []*regexp.Regexp,
+	options TarOptions,
+	stats *tarStats,
+) error {
+	type pendingEntry struct {
+		pathname string
+		name     string
+		sortKey  string
+	}
+	var entries []pendingEntry
+	err := filepath.WalkDir(root, func(pathname string, entry os.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -291,7 +356,28 @@ func appendTree(ctx context.Context, writer *tar.Writer, root string, excludeMat
 			}
 			return nil
 		}
-		info, err := entry.Info()
+		sortKey := rel
+		if entry.IsDir() {
+			sortKey += "/"
+		}
+		entries = append(entries, pendingEntry{
+			pathname: pathname,
+			name:     rel,
+			sortKey:  sortKey,
+		})
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	sort.Slice(entries, func(left, right int) bool {
+		return entries[left].sortKey < entries[right].sortKey
+	})
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		info, err := os.Lstat(entry.pathname)
 		if err != nil {
 			return err
 		}
@@ -301,13 +387,13 @@ func appendTree(ctx context.Context, writer *tar.Writer, root string, excludeMat
 		}
 		linkname := ""
 		if info.Mode()&os.ModeSymlink != 0 {
-			linkname, err = os.Readlink(pathname)
+			linkname, err = os.Readlink(entry.pathname)
 			if err != nil {
 				return err
 			}
 		}
 		if info.Mode().IsRegular() {
-			if err := validateAppendSize(rel, info.Size(), options.MaxBytes, stats); err != nil {
+			if err := validateAppendSize(entry.name, info.Size(), options.MaxBytes, stats); err != nil {
 				return err
 			}
 		}
@@ -315,14 +401,14 @@ func appendTree(ctx context.Context, writer *tar.Writer, root string, excludeMat
 		if err != nil {
 			return err
 		}
-		normalizeHeader(header, rel)
+		normalizeHeader(header, entry.name, options.CanonicalSource)
 		if err := writer.WriteHeader(header); err != nil {
 			return err
 		}
 		if !info.Mode().IsRegular() {
-			return nil
+			continue
 		}
-		file, err := os.Open(pathname)
+		file, err := os.Open(entry.pathname)
 		if err != nil {
 			return err
 		}
@@ -331,8 +417,11 @@ func appendTree(ctx context.Context, writer *tar.Writer, root string, excludeMat
 		if copyErr != nil {
 			return copyErr
 		}
-		return closeErr
-	})
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return nil
 }
 
 type contextReader struct {
@@ -365,11 +454,25 @@ func validateAppendSize(name string, size int64, maxBytes int64, stats *tarStats
 	return nil
 }
 
-func normalizeHeader(header *tar.Header, name string) {
-	header.Name = name
+func normalizeHeader(header *tar.Header, name string, canonicalSource bool) {
+	header.Name = filepath.ToSlash(name)
 	header.Mode &= 0o777
 	if header.Typeflag == tar.TypeSymlink {
 		header.Mode = 0o777
+	}
+	if canonicalSource {
+		executable := header.Mode&0o111 != 0
+		switch header.Typeflag {
+		case tar.TypeReg:
+			header.Mode = 0o644
+			if executable {
+				header.Mode = 0o755
+			}
+		case tar.TypeDir:
+			header.Name = strings.TrimSuffix(header.Name, "/") + "/"
+			header.Mode = 0o755
+		}
+		header.Format = tar.FormatUSTAR
 	}
 	header.ModTime = time.Unix(0, 0)
 	header.AccessTime = time.Time{}

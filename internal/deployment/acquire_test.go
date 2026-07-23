@@ -54,7 +54,11 @@ func TestManagerAcquireRequestRejectsAmbiguousDocuments(t *testing.T) {
 		t.Fatal(err)
 	}
 	object["unknown"] = true
-	unknown, err := jsoncanon.Transform(mustJSON(t, object))
+	rawUnknown, err := json.Marshal(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown, err := jsoncanon.Transform(rawUnknown)
 	if err != nil {
 		t.Fatal(err)
 	}

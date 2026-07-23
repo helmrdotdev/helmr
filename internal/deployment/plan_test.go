@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/builder"
+	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
@@ -238,17 +238,17 @@ func TestValidateBuildPlanDefinitions(t *testing.T) {
 					Kind:       DefinitionKindWorkspace,
 					DeclaredID: "repo-arm",
 					Workspace: &WorkspaceInputManifest{
-						ImageBuild: builder.ImageBuild{
-							FormatVersion: builder.ImageBuildFormatVersion,
+						ImageBuild: imagebuild.Build{
+							FormatVersion: imagebuild.FormatVersion,
 							Root:          "repo-arm",
-							Images: []builder.ImageSpec{{
+							Images: []imagebuild.Spec{{
 								Key: "repo-arm",
-								Platform: builder.ImagePlatform{
+								Platform: imagebuild.Platform{
 									OS:           "linux",
 									Architecture: "aarch64",
 								},
-								Steps: []builder.ImageStep{{
-									From: &builder.ImageFrom{Ref: "alpine:3.23"},
+								Steps: []imagebuild.Step{{
+									From: &imagebuild.From{Ref: "alpine:3.23"},
 								}},
 							}},
 						},
@@ -607,18 +607,18 @@ func testBuildPlan() BuildPlan {
 				Kind:       DefinitionKindWorkspace,
 				DeclaredID: "repo",
 				Workspace: &WorkspaceInputManifest{
-					ImageBuild: builder.ImageBuild{
-						FormatVersion: builder.ImageBuildFormatVersion,
+					ImageBuild: imagebuild.Build{
+						FormatVersion: imagebuild.FormatVersion,
 						Root:          "repo",
-						Images: []builder.ImageSpec{{
+						Images: []imagebuild.Spec{{
 							Key: "repo",
-							Platform: builder.ImagePlatform{
+							Platform: imagebuild.Platform{
 								OS:           "linux",
 								Architecture: "x86_64",
 							},
-							Steps: []builder.ImageStep{
-								{From: &builder.ImageFrom{Ref: "debian:bookworm-slim"}},
-								{CopySourceFile: &builder.ImageCopySourceFile{
+							Steps: []imagebuild.Step{
+								{From: &imagebuild.From{Ref: "debian:bookworm-slim"}},
+								{CopySourceFile: &imagebuild.CopySourceFile{
 									Dst:  "/app/package.json",
 									Path: "package.json",
 								}},

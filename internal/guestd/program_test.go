@@ -494,12 +494,12 @@ func TestRelayProgramRoutesActorInputSendDecisionWithoutConsumingWaitAuthority(t
 		t.Fatal(err)
 	}
 	if !proto.Equal(&staged, decision) {
-		t.Fatalf("staged decision = %+v", staged)
+		t.Fatalf("staged decision = %+v", &staged)
 	}
 	if staged.GetRequireConsumedAck() ||
 		staged.GetRunWaitId() != "" ||
 		staged.GetCheckpointId() != "" {
-		t.Fatalf("send decision carried consuming Wait authority: %+v", staged)
+		t.Fatalf("send decision carried consuming Wait authority: %+v", &staged)
 	}
 }
 
@@ -567,7 +567,7 @@ func TestPauseAndResumeProgramUsesExactFrozenAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	if ready.GetResumeAttachId() != "attach-1" || ready.GetCheckpointRequestVersion() != 3 {
-		t.Fatalf("pause proof = %+v", ready)
+		t.Fatalf("pause proof = %+v", &ready)
 	}
 	if cgroup.freezeCount() != 1 || cgroup.thawCount() != 0 {
 		t.Fatalf("cgroup before resume freeze=%d thaw=%d", cgroup.freezeCount(), cgroup.thawCount())
@@ -604,14 +604,14 @@ func TestPauseAndResumeProgramUsesExactFrozenAuthority(t *testing.T) {
 	}
 	if ack.GetRunWaitId() != "durable-wait-1" || ack.GetCorrelationId() != "wait-1" || ack.GetResumeRequestVersion() != 4 ||
 		ack.GetRunLeaseId() != "lease-2" || cgroup.thawCount() != 1 {
-		t.Fatalf("resume proof=%+v thaw=%d", ack, cgroup.thawCount())
+		t.Fatalf("resume proof=%+v thaw=%d", &ack, cgroup.thawCount())
 	}
 	var staged runv0.ResumeDecision
 	if err := frameio.ReadProtoFrame(bytes.NewReader(programInput.Bytes()), &staged); err != nil {
 		t.Fatal(err)
 	}
 	if !proto.Equal(&staged, decision) {
-		t.Fatalf("staged decision = %+v", staged)
+		t.Fatalf("staged decision = %+v", &staged)
 	}
 	if err := <-result; err != nil {
 		t.Fatal(err)

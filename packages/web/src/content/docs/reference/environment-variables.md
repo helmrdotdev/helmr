@@ -1,6 +1,6 @@
 ---
 title: Environment variables
-description: Environment variables read by Helmr control, worker, CLI, deploy adapter, and SDK client.
+description: Environment variables read by Helmr control, worker, CLI, project config inspector, and SDK client.
 section: Reference
 sidebarLabel: Environment variables
 order: 960
@@ -14,12 +14,12 @@ order: 960
 | --- | --- |
 | `HELMR_API_URL` | Control-plane base URL. |
 | `HELMR_API_KEY` | Bearer token for CLI or `HelmrClient`. |
-| `HELMR_ADAPTER_RUNTIME_PATH` | Adapter runtime executable used by `helmr deploy`. |
-| `HELMR_ADAPTER_CACHE_DIR` | Directory used to materialize the embedded deploy adapter before invoking the runtime. |
-| `HELMR_ADAPTER_PATH` | Development override for the adapter entrypoint. Must be set with `HELMR_ADAPTER_REGISTER_PATH`. |
-| `HELMR_ADAPTER_REGISTER_PATH` | Development override for the adapter register hook. Must be set with `HELMR_ADAPTER_PATH`. |
+| `HELMR_CONFIG_RUNTIME_PATH` | Node executable used to inspect `helmr.config.ts`. |
+| `HELMR_CONFIG_CACHE_DIR` | Directory used to materialize the embedded config inspector. |
+| `HELMR_CONFIG_INSPECTOR_PATH` | Development override for the config inspector. Must be set with `HELMR_CONFIG_REGISTER_PATH`. |
+| `HELMR_CONFIG_REGISTER_PATH` | Development override for the TypeScript register hook. Must be set with `HELMR_CONFIG_INSPECTOR_PATH`. |
 
-`HELMR_ADAPTER_CACHE_DIR` should point to a user-private directory when overridden.
+`HELMR_CONFIG_CACHE_DIR` should point to a user-private directory when overridden.
 
 ## Control plane
 

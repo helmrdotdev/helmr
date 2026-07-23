@@ -186,11 +186,6 @@ type WorkerNetworkCapabilities struct {
 	AllowDomains  bool `json:"allow_domains"`
 }
 
-type WorkerRunLeaseResponse struct {
-	Lease *WorkerRunLease `json:"lease,omitempty"`
-	Run   *WorkerRun      `json:"run,omitempty"`
-}
-
 type TraceContext struct {
 	TraceID     string `json:"trace_id"`
 	SpanID      string `json:"span_id,omitempty"`
@@ -786,7 +781,6 @@ type WorkerDeploymentBuild struct {
 	APIVersion              string                   `json:"api_version"`
 	SDKVersion              string                   `json:"sdk_version,omitempty"`
 	CLIVersion              string                   `json:"cli_version,omitempty"`
-	BundleFormatVersion     int32                    `json:"bundle_format_version"`
 	WorkerProtocolVersion   string                   `json:"worker_protocol_version"`
 	ProjectID               string                   `json:"project_id"`
 	EnvironmentID           string                   `json:"environment_id"`
@@ -803,40 +797,6 @@ type WorkerRuntimeDescriptor struct {
 	MediaType         string `json:"mediaType"`
 	RuntimeAPIVersion string `json:"runtimeApiVersion"`
 	SizeBytes         int64  `json:"sizeBytes"`
-}
-
-type WorkerRun struct {
-	ID                    string                         `json:"id"`
-	Version               string                         `json:"version"`
-	DeploymentVersion     string                         `json:"deployment_version"`
-	APIVersion            string                         `json:"api_version"`
-	SDKVersion            string                         `json:"sdk_version,omitempty"`
-	CLIVersion            string                         `json:"cli_version,omitempty"`
-	WorkerProtocolVersion string                         `json:"worker_protocol_version"`
-	AttemptNumber         int32                          `json:"attempt_number"`
-	RunLeaseID            string                         `json:"run_lease_id"`
-	SnapshotVersion       int64                          `json:"snapshot_version"`
-	SessionID             string                         `json:"session_id"`
-	TaskID                string                         `json:"task_id"`
-	Payload               json.RawMessage                `json:"payload"`
-	Secrets               ResolvedSecrets                `json:"secrets,omitempty"`
-	DeploymentSource      DeploymentSourceArtifact       `json:"deployment_source"`
-	DeploymentTask        WorkerDeploymentTask           `json:"deployment_task"`
-	Workspace             WorkerWorkspace                `json:"workspace"`
-	Requirements          compute.RunRuntimeRequirements `json:"requirements"`
-	Restore               *WorkerRestore                 `json:"restore,omitempty"`
-	MaxDurationSeconds    int32                          `json:"max_duration_seconds"`
-	ActiveDurationMs      int64                          `json:"active_duration_ms,omitempty"`
-	Trace                 TraceContext                   `json:"trace"`
-}
-
-type WorkerDeploymentTask struct {
-	ID                  string `json:"id"`
-	FilePath            string `json:"file_path,omitempty"`
-	ExportName          string `json:"export_name,omitempty"`
-	HandlerEntrypoint   string `json:"handler_entrypoint,omitempty"`
-	BundleDigest        string `json:"bundle_digest,omitempty"`
-	BundleFormatVersion int32  `json:"bundle_format_version"`
 }
 
 type WorkerWorkspace struct {
@@ -982,46 +942,6 @@ type WorkerReleaseResponse struct {
 	Status string `json:"status"`
 }
 
-type WorkerDeploymentBuildTask struct {
-	TaskID                     string                         `json:"task_id"`
-	SandboxID                  string                         `json:"sandbox_id"`
-	SandboxFingerprint         string                         `json:"sandbox_fingerprint"`
-	SandboxImageArtifact       CASObject                      `json:"sandbox_image_artifact"`
-	SandboxImageArtifactFormat string                         `json:"sandbox_image_artifact_format"`
-	SandboxImageDigest         string                         `json:"sandbox_image_digest"`
-	SandboxImageFormat         string                         `json:"sandbox_image_format"`
-	WorkspaceMountPath         string                         `json:"workspace_mount_path"`
-	FilesystemFormat           string                         `json:"filesystem_format"`
-	FilePath                   string                         `json:"file_path"`
-	ExportName                 string                         `json:"export_name"`
-	HandlerEntrypoint          string                         `json:"handler_entrypoint"`
-	BundleDigest               string                         `json:"bundle_digest"`
-	BundleFormatVersion        int32                          `json:"bundle_format_version"`
-	RequestedMilliCPU          int64                          `json:"requested_milli_cpu"`
-	RequestedMemoryMiB         int64                          `json:"requested_memory_mib"`
-	RequestedDiskMiB           int64                          `json:"requested_disk_mib"`
-	Network                    compute.NetworkPolicy          `json:"network"`
-	QueueName                  string                         `json:"queue_name"`
-	ConcurrencyLimit           *int32                         `json:"concurrency_limit,omitempty"`
-	TTL                        string                         `json:"ttl,omitempty"`
-	MaxDurationSeconds         int32                          `json:"max_duration_seconds"`
-	RetryPolicy                json.RawMessage                `json:"retry_policy,omitempty"`
-	Secrets                    []SecretDeclaration            `json:"secrets,omitempty"`
-	Schedules                  []WorkerDeploymentTaskSchedule `json:"schedules,omitempty"`
-}
-
-type WorkerDeploymentStream struct {
-	Name              string          `json:"name"`
-	Direction         string          `json:"direction"`
-	SchemaFingerprint string          `json:"schema_fingerprint,omitempty"`
-	SchemaJSON        json.RawMessage `json:"schema_json,omitempty"`
-}
-
-type WorkerDeploymentQueue struct {
-	Name             string `json:"name"`
-	ConcurrencyLimit *int32 `json:"concurrency_limit,omitempty"`
-}
-
 type SecretDeclaration struct {
 	Name  string `json:"name"`
 	Env   string `json:"env,omitempty"`
@@ -1031,27 +951,9 @@ type SecretDeclaration struct {
 	Owner string `json:"owner,omitempty"`
 }
 
-type WorkerDeploymentTaskSchedule struct {
-	ID       string `json:"id,omitempty"`
-	Cron     string `json:"cron"`
-	Timezone string `json:"timezone,omitempty"`
-	Active   *bool  `json:"active,omitempty"`
-}
-
-type WorkerDeploymentBuildResult struct {
-	BuildManifestDigest      string                      `json:"build_manifest_digest"`
-	DeploymentManifestDigest string                      `json:"deployment_manifest_digest"`
-	ProgramReceipt           json.RawMessage             `json:"program_receipt,omitempty"`
-	Tasks                    []WorkerDeploymentBuildTask `json:"tasks"`
-	Queues                   []WorkerDeploymentQueue     `json:"queues"`
-	Streams                  []WorkerDeploymentStream    `json:"streams,omitempty"`
-	CASObjects               []CASObject                 `json:"cas_objects,omitempty"`
-	Error                    *string                     `json:"error,omitempty"`
-}
-
 type WorkerCompleteDeploymentBuildRequest struct {
-	Lease  WorkerDeploymentBuildLease  `json:"lease"`
-	Result WorkerDeploymentBuildResult `json:"result"`
+	Lease  WorkerDeploymentBuildLease `json:"lease"`
+	Result json.RawMessage            `json:"result"`
 }
 
 type WorkerDeploymentBuildResponse struct {

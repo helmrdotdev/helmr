@@ -227,10 +227,10 @@ func (cfg Config) Validate() error {
 	if strings.TrimSpace(cfg.KVMPath) == "" {
 		problems = append(problems, errors.New("firecracker KVM path is required"))
 	}
-	if cfg.NetworkBlockedIPv4CIDRs == nil {
+	if len(cfg.NetworkBlockedIPv4CIDRs) == 0 {
 		problems = append(problems, errors.New("firecracker network blocked IPv4 CIDRs are required"))
 	}
-	if cfg.NetworkBlockedIPv6CIDRs == nil {
+	if len(cfg.NetworkBlockedIPv6CIDRs) == 0 {
 		problems = append(problems, errors.New("firecracker network blocked IPv6 CIDRs are required"))
 	}
 	if err := validateNetworkPolicyCIDRs("firecracker network blocked IPv4 CIDR", cfg.NetworkBlockedIPv4CIDRs, true); err != nil {

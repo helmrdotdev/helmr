@@ -286,7 +286,7 @@ export function Schedules() {
   const items = createMemo(() => schedules.data?.schedules ?? []);
   const activeCount = createMemo(() => items().filter((schedule) => schedule.active).length);
   const inactiveCount = createMemo(() => items().length - activeCount());
-  const taskIDs = createMemo(() => deployment.data?.deployment?.tasks.map((task) => task.task_id) ?? []);
+  const taskIDs = createMemo(() => deployment.data?.deployment?.tasks ?? []);
   const scopeIDs = () => ({
     projectID: scope.selectedProjectID(),
     environmentID: scope.selectedEnvironmentID(),

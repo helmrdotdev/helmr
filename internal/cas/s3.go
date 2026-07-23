@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+	"github.com/helmrdotdev/helmr/internal/archive"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -508,7 +509,7 @@ func (c *S3) Delete(ctx context.Context, digest string) error {
 }
 
 func objectTagging(mediaType string) string {
-	if strings.TrimSpace(mediaType) == DeploymentSourceArtifactMediaType {
+	if strings.TrimSpace(mediaType) == archive.SourceMediaType {
 		return ""
 	}
 	return url.QueryEscape(ExpirableTagKey) + "=" + url.QueryEscape(ExpirableTagValue)

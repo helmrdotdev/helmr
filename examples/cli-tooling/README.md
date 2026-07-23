@@ -1,12 +1,9 @@
 # CLI Tooling
 
-Install a command-line tool into the sandbox image, then use it from the run
-workspace. This example installs `ripgrep` with APT and runs `rg` from the
-task's workspace cwd before writing a workspace report.
+Install a command-line tool into a Workspace image, then use it from a Task Run.
+This example installs `ripgrep` with APT and runs `rg` from the Workspace cwd
+before writing a report.
 
 ```bash
 helmr deploy PATH/TO/cli-tooling
-
-helmr session start cli-tooling \
-  --payload pattern='export const'
 ```

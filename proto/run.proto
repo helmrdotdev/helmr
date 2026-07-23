@@ -135,87 +135,11 @@ message EntrypointRelease {
   EntrypointIdentity entrypoint = 3;
 }
 
-message RunTaskWorkspace {
-  string path = 1;
-  string project_path = 2;
-  WorkspaceArtifact artifact = 3;
-  bool writable = 5;
-}
-
-message WorkspaceArtifact {
-  string digest = 1;
-  string media_type = 2;
-  string encoding = 3;
-  uint64 size_bytes = 4;
-  uint32 entry_count = 5;
-}
-
-message RunTaskRequest {
-  string task_id = 1;
-  string module_path = 2;
-  string cwd = 3;
-  repeated SecretInject secrets = 4;
-  string run_id = 5;
-  string payload_json = 6;
-  RunTaskWorkspace workspace = 7;
-  TraceContext trace = 8;
-  uint32 attempt_number = 9;
-  string run_lease_id = 10;
-  uint64 snapshot_version = 11;
-  string session_id = 12;
-  string retry_reason = 13;
-}
-
-message TraceContext {
-  string trace_id = 1;
-  string span_id = 2;
-  string traceparent = 3;
-}
-
-message SecretInject {
-  string name = 1;
-  Placement placement = 2;
-  bytes value_bytes = 3;
-}
-
-message Placement {
-  oneof kind {
-    EnvPlacement env = 1;
-    FilePlacement file = 2;
-    DirPlacement dir = 3;
-  }
-}
-
-message EnvPlacement {
-  string name = 1;
-}
-
-message FilePlacement {
-  string path = 1;
-  // Optional octal permission bits for the materialized secret file.
-  // Accepts values such as "0400", "600", and "0o600"; special bits are rejected.
-  optional string mode = 2;
-  // Optional runtime owner as an OCI-style user or user:group spec.
-  // Defaults to the resolved runtime user.
-  optional string owner = 3;
-}
-
-message DirPlacement {
-  string path = 1;
-  // Optional octal permission bits for the materialized secret directory.
-  // Accepts values such as "0700", "700", and "0o700"; special bits are rejected.
-  optional string mode = 2;
-  // Optional runtime owner as an OCI-style user or user:group spec.
-  // Defaults to the resolved runtime user.
-  optional string owner = 3;
-}
-
 message RunEvent {
   oneof event {
     bytes stdout_chunk = 1;
     bytes stderr_chunk = 2;
     string log_entry = 3;
-    TaskResult task_result = 4;
     RunWaitRequested run_wait_requested = 5;
     MetadataUpdated metadata_updated = 7;
     TokenCreateRequested token_create_requested = 8;
@@ -321,21 +245,6 @@ message ProgramQuiesced {
   string run_id = 1;
   uint32 attempt_number = 2;
   string run_lease_id = 3;
-}
-
-message TaskResult {
-  int32 exit_code = 1;
-  optional string error_message = 2;
-  optional string output_json = 3;
-  optional TaskError error = 4;
-}
-
-message TaskError {
-  string type = 1;
-  string code = 2;
-  string message = 3;
-  bool retryable = 4;
-  string details_json = 5;
 }
 
 message RunWaitRequested {

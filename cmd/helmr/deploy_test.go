@@ -47,47 +47,46 @@ func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "tasks", ".env.local"), []byte("TOKEN=secret"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	adapter := filepath.Join(t.TempDir(), "adapter")
-	adapterScript := `#!/bin/sh
+	if err := os.WriteFile(
+		filepath.Join(root, ".helmrignore"),
+		[]byte("node_modules/\nsecrets/\ntasks/.env.local\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tasks", "generated.ts"), []byte("generated"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configRuntime := filepath.Join(t.TempDir(), "config-runtime")
+	configRuntimeScript := `#!/bin/sh
 if [ "$1" = "-e" ]; then
 	exit 0
 fi
 if [ "$1" = "--import" ]; then
 	shift 2
 fi
-case "$2" in
-	inspect-config)
-			printf '%s\n' '{"dirs":["tasks"],"ignorePatterns":["secrets/**"]}'
-		;;
-	parse)
-		printf '%s\n' '{"tasks":{"deploy":{"modulePath":"tasks/deploy.ts","exportName":"deploy","bundle":{"sandbox":{"resources":{"cpu":3,"memory":"4Gi"}}}}}}'
-		;;
-	*)
-		echo "unexpected adapter command: $*" >&2
-		exit 1
-		;;
-esac
+printf '%s\n' '{"project":""}'
 `
-	if err := os.WriteFile(adapter, []byte(adapterScript), 0o755); err != nil {
+	if err := os.WriteFile(configRuntime, []byte(configRuntimeScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	oldAdapterRuntime := deployAdapterRuntimePath
+	oldConfigRuntime := deployConfigRuntimePath
 	oldTemp := deployArchiveTempDir
-	deployAdapterRuntimePath = adapter
+	deployConfigRuntimePath = configRuntime
 	deployArchiveTempDir = t.TempDir()
-	adapterDir := t.TempDir()
-	adapterPath := filepath.Join(adapterDir, "main.js")
-	registerPath := filepath.Join(adapterDir, "register.mjs")
-	if err := os.WriteFile(adapterPath, []byte(""), 0o644); err != nil {
+	inspectorDir := t.TempDir()
+	inspectorPath := filepath.Join(inspectorDir, "inspect.js")
+	registerPath := filepath.Join(inspectorDir, "register.mjs")
+	if err := os.WriteFile(inspectorPath, []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(registerPath, []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HELMR_ADAPTER_PATH", adapterPath)
-	t.Setenv("HELMR_ADAPTER_REGISTER_PATH", registerPath)
+	t.Setenv("HELMR_CONFIG_INSPECTOR_PATH", inspectorPath)
+	t.Setenv("HELMR_CONFIG_REGISTER_PATH", registerPath)
 	t.Cleanup(func() {
-		deployAdapterRuntimePath = oldAdapterRuntime
+		deployConfigRuntimePath = oldConfigRuntime
 		deployArchiveTempDir = oldTemp
 	})
 
@@ -167,6 +166,9 @@ esac
 	uploadedEntries := readTarEntries(t, uploaded)
 	if uploadedEntries["secrets/token.txt"] || uploadedEntries["tasks/.env.local"] {
 		t.Fatalf("uploaded archive includes ignored file: %+v", uploadedEntries)
+	}
+	if !uploadedEntries[".helmrignore"] || !uploadedEntries["tasks/generated.ts"] {
+		t.Fatalf("source selection reused declaration ignorePatterns: %+v", uploadedEntries)
 	}
 }
 
@@ -391,11 +393,11 @@ func TestLoadEnvFileDoesNotOverrideExistingEnv(t *testing.T) {
 
 func TestLoadEnvFileRejectsReservedHelmrNamespace(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "deploy.env")
-	if err := os.WriteFile(path, []byte("HELMR_ADAPTER_RUNTIME_PATH=/tmp/adapter\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("HELMR_CONFIG_RUNTIME_PATH=/tmp/node\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	err := loadEnvFile(path)
-	if err == nil || !strings.Contains(err.Error(), "HELMR_ADAPTER_RUNTIME_PATH uses the reserved HELMR_ namespace") {
+	if err == nil || !strings.Contains(err.Error(), "HELMR_CONFIG_RUNTIME_PATH uses the reserved HELMR_ namespace") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -582,40 +584,40 @@ printf '%s\n' "$*" > bun-invocation.txt
 	}
 }
 
-func TestResolveDeployAdapterExtractsEmbeddedAdapter(t *testing.T) {
-	t.Setenv("HELMR_ADAPTER_PATH", "")
-	t.Setenv("HELMR_ADAPTER_REGISTER_PATH", "")
+func TestResolveConfigInspectorExtractsEmbeddedFiles(t *testing.T) {
+	t.Setenv("HELMR_CONFIG_INSPECTOR_PATH", "")
+	t.Setenv("HELMR_CONFIG_REGISTER_PATH", "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 
-	adapter, err := resolveDeployAdapter()
+	inspector, err := resolveConfigInspector()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{adapter.MainPath, adapter.RegisterPath} {
+	for _, path := range []string{inspector.ScriptPath, inspector.RegisterPath} {
 		if !isFile(path) {
-			t.Fatalf("adapter file was not extracted: %s", path)
+			t.Fatalf("config inspector file was not extracted: %s", path)
 		}
 	}
 }
 
-func TestResolveDeployAdapterRequiresCompleteOverride(t *testing.T) {
+func TestResolveConfigInspectorRequiresCompleteOverride(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "register.mjs")
-	t.Setenv("HELMR_ADAPTER_PATH", "")
-	t.Setenv("HELMR_ADAPTER_REGISTER_PATH", missing)
+	t.Setenv("HELMR_CONFIG_INSPECTOR_PATH", "")
+	t.Setenv("HELMR_CONFIG_REGISTER_PATH", missing)
 
-	_, err := resolveDeployAdapter()
-	if err == nil || !strings.Contains(err.Error(), "HELMR_ADAPTER_PATH and HELMR_ADAPTER_REGISTER_PATH must be set together") {
+	_, err := resolveConfigInspector()
+	if err == nil || !strings.Contains(err.Error(), "HELMR_CONFIG_INSPECTOR_PATH and HELMR_CONFIG_REGISTER_PATH must be set together") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestRunDeployAdapterUsesEmbeddedAdapter(t *testing.T) {
-	nodePath := requireNodeForEmbeddedAdapter(t)
+func TestRunConfigInspectorUsesEmbeddedScript(t *testing.T) {
+	nodePath := requireNodeForConfigInspector(t)
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "helmr.config.ts"), []byte(`import { defineConfig } from "@helmr/sdk"
-export default defineConfig({ project: "agents", dirs: ["tasks"] })
+export default defineConfig({ project: "agents", dirs: ["./tasks"] })
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -627,20 +629,20 @@ export default defineConfig({ project: "agents", dirs: ["tasks"] })
 	}
 	linkLocalWorkspacePackage(t, root, "@helmr/sdk", filepath.Join("sdk", "typescript"))
 	linkLocalWorkspacePackage(t, root, "@helmr/proto", filepath.Join("proto", "typescript"))
-	oldRuntime := deployAdapterRuntimePath
-	deployAdapterRuntimePath = nodePath
+	oldRuntime := deployConfigRuntimePath
+	deployConfigRuntimePath = nodePath
 	t.Cleanup(func() {
-		deployAdapterRuntimePath = oldRuntime
+		deployConfigRuntimePath = oldRuntime
 	})
-	t.Setenv("HELMR_ADAPTER_PATH", "")
-	t.Setenv("HELMR_ADAPTER_REGISTER_PATH", "")
+	t.Setenv("HELMR_CONFIG_INSPECTOR_PATH", "")
+	t.Setenv("HELMR_CONFIG_REGISTER_PATH", "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 
 	cmd := newRootCommand()
 	cmd.SetContext(context.Background())
-	stdout, err := runDeployAdapter(cmd, "inspect-config", root)
+	stdout, err := runConfigInspector(cmd, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -648,27 +650,27 @@ export default defineConfig({ project: "agents", dirs: ["tasks"] })
 	if err := json.Unmarshal(stdout, &config); err != nil {
 		t.Fatal(err)
 	}
-	if config.Project != "agents" || len(config.Dirs) != 1 || config.Dirs[0] != "tasks" {
+	if config.Project != "agents" {
 		t.Fatalf("config = %+v", config)
 	}
 }
 
-func TestRunDeployAdapterReportsMissingRuntime(t *testing.T) {
-	oldRuntime := deployAdapterRuntimePath
-	deployAdapterRuntimePath = filepath.Join(t.TempDir(), "missing-node")
+func TestRunConfigInspectorReportsMissingRuntime(t *testing.T) {
+	oldRuntime := deployConfigRuntimePath
+	deployConfigRuntimePath = filepath.Join(t.TempDir(), "missing-node")
 	t.Cleanup(func() {
-		deployAdapterRuntimePath = oldRuntime
+		deployConfigRuntimePath = oldRuntime
 	})
 
 	cmd := newRootCommand()
 	cmd.SetContext(context.Background())
-	_, err := runDeployAdapter(cmd, "inspect-config", t.TempDir())
+	_, err := runConfigInspector(cmd, t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "install node >=22.18") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestRunDeployAdapterReportsOldRuntime(t *testing.T) {
+func TestRunConfigInspectorReportsOldRuntime(t *testing.T) {
 	runtime := filepath.Join(t.TempDir(), "node")
 	if err := os.WriteFile(runtime, []byte(`#!/bin/sh
 if [ "$1" = "-e" ]; then
@@ -679,15 +681,15 @@ exit 0
 `), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	oldRuntime := deployAdapterRuntimePath
-	deployAdapterRuntimePath = runtime
+	oldRuntime := deployConfigRuntimePath
+	deployConfigRuntimePath = runtime
 	t.Cleanup(func() {
-		deployAdapterRuntimePath = oldRuntime
+		deployConfigRuntimePath = oldRuntime
 	})
 
 	cmd := newRootCommand()
 	cmd.SetContext(context.Background())
-	_, err := runDeployAdapter(cmd, "inspect-config", t.TempDir())
+	_, err := runConfigInspector(cmd, t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "node >=22.18 is required for helmr deploy; found 20.0.0") {
 		t.Fatalf("err = %v", err)
 	}

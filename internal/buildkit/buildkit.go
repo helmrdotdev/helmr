@@ -10,14 +10,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/builder"
+	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	bkclient "github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
-	"github.com/moby/buildkit/session"
-	"github.com/moby/buildkit/session/secrets/secretsprovider"
 	"github.com/moby/buildkit/util/grpcerrors"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -113,47 +112,15 @@ func New(client buildkitSolver, outputRoot string, cacheNamespace ...string) *Bu
 	return b
 }
 
-func (b *Builder) Build(ctx context.Context, request builder.Request) (builder.Artifact, error) {
-	if b.client == nil {
-		return builder.Artifact{}, errors.New("buildkit client is required")
-	}
-	if request.Bundle == nil || request.Bundle.Image == nil {
-		return builder.Artifact{}, errors.New("bundle image is required")
-	}
-	if strings.TrimSpace(request.Source.ProjectRoot) == "" {
-		return builder.Artifact{}, errors.New("source project root is required")
-	}
-	plan, err := planImage(
-		request.Bundle.Image,
-		request.Bundle.SubImages,
-		request.Source.ProjectRoot,
-		defaultPlatform,
-		b.cacheNamespaceFor(request.CacheScope, request.TaskID),
-	)
-	if err != nil {
-		return builder.Artifact{}, err
-	}
-	if err := validateBuildSecrets(request.Bundle.Image, request.Bundle.SubImages, request.BuildSecrets); err != nil {
-		return builder.Artifact{}, err
-	}
-	return b.solve(ctx, imageSolveRequest{
-		runID:        request.RunID,
-		itemID:       request.TaskID,
-		sourceSHA:    request.Source.SHA,
-		plan:         plan,
-		buildSecrets: request.BuildSecrets,
-	})
-}
-
 func (b *Builder) BuildImage(
 	ctx context.Context,
-	request builder.ImageRequest,
-) (builder.Artifact, error) {
+	request imagebuild.Request,
+) (imagebuild.Artifact, error) {
 	if b.client == nil {
-		return builder.Artifact{}, errors.New("buildkit client is required")
+		return imagebuild.Artifact{}, errors.New("buildkit client is required")
 	}
 	if strings.TrimSpace(request.Source.ProjectRoot) == "" {
-		return builder.Artifact{}, errors.New("source project root is required")
+		return imagebuild.Artifact{}, errors.New("source project root is required")
 	}
 	plan, err := planDeclaredImage(
 		request.Build,
@@ -161,7 +128,7 @@ func (b *Builder) BuildImage(
 		b.cacheNamespaceFor(request.CacheScope, request.WorkspaceID),
 	)
 	if err != nil {
-		return builder.Artifact{}, err
+		return imagebuild.Artifact{}, err
 	}
 	return b.solve(ctx, imageSolveRequest{
 		runID:     request.RunID,
@@ -172,36 +139,35 @@ func (b *Builder) BuildImage(
 }
 
 type imageSolveRequest struct {
-	runID        string
-	itemID       string
-	sourceSHA    string
-	plan         llbPlan
-	buildSecrets map[string][]byte
+	runID     string
+	itemID    string
+	sourceSHA string
+	plan      llbPlan
 }
 
 func (b *Builder) solve(
 	ctx context.Context,
 	request imageSolveRequest,
-) (builder.Artifact, error) {
+) (imagebuild.Artifact, error) {
 	output, err := b.output(request.runID, request.itemID)
 	if err != nil {
-		return builder.Artifact{}, err
+		return imagebuild.Artifact{}, err
 	}
 	platform, err := platformSpec(request.plan.Platform)
 	if err != nil {
-		return builder.Artifact{}, err
+		return imagebuild.Artifact{}, err
 	}
 	definition, err := request.plan.State.Marshal(ctx, llb.Platform(platform))
 	if err != nil {
-		return builder.Artifact{}, fmt.Errorf("marshal build graph: %w", err)
+		return imagebuild.Artifact{}, fmt.Errorf("marshal build graph: %w", err)
 	}
 	configJSON, err := json.Marshal(request.plan.Config)
 	if err != nil {
-		return builder.Artifact{}, fmt.Errorf("encode image config: %w", err)
+		return imagebuild.Artifact{}, fmt.Errorf("encode image config: %w", err)
 	}
 	imageFile, err := os.Create(output.imageTar)
 	if err != nil {
-		return builder.Artifact{}, fmt.Errorf("create image tar: %w", err)
+		return imagebuild.Artifact{}, fmt.Errorf("create image tar: %w", err)
 	}
 	closeImage := func() error {
 		if imageFile == nil {
@@ -226,23 +192,22 @@ func (b *Builder) solve(
 				return noCloseWriteCloser{Writer: imageFile}, nil
 			},
 		}},
-		Session: buildSecretSession(request.buildSecrets),
 	}, nil)
 	if err != nil {
 		closeErr := closeImage()
 		removeErr := os.RemoveAll(output.root)
-		solveErr := b.solveError(ctx, err, request.buildSecrets)
+		solveErr := b.solveError(ctx, err)
 		if closeErr != nil || removeErr != nil {
-			return builder.Artifact{}, &ServiceFailure{Cause: errors.Join(solveErr, closeErr, removeErr)}
+			return imagebuild.Artifact{}, &ServiceFailure{Cause: errors.Join(solveErr, closeErr, removeErr)}
 		}
-		return builder.Artifact{}, solveErr
+		return imagebuild.Artifact{}, solveErr
 	}
 	if err := closeImage(); err != nil {
 		removeErr := os.RemoveAll(output.root)
-		return builder.Artifact{}, &ServiceFailure{Cause: errors.Join(fmt.Errorf("close image tar: %w", err), removeErr)}
+		return imagebuild.Artifact{}, &ServiceFailure{Cause: errors.Join(fmt.Errorf("close image tar: %w", err), removeErr)}
 	}
 	if err := os.WriteFile(output.config, configJSON, 0o644); err != nil {
-		return builder.Artifact{}, err
+		return imagebuild.Artifact{}, err
 	}
 	if err := writeJSONFile(output.manifest, map[string]any{
 		"kind":      "buildkit-oci-tar",
@@ -252,29 +217,37 @@ func (b *Builder) solve(
 		"platform":  request.plan.Platform,
 		"exporter":  exporterResponse(response),
 	}); err != nil {
-		return builder.Artifact{}, err
+		return imagebuild.Artifact{}, err
 	}
-	return builder.Artifact{RootPath: output.root, ImageTarPath: output.imageTar, ConfigPath: output.config, ManifestPath: output.manifest}, nil
+	return imagebuild.Artifact{RootPath: output.root, ImageTarPath: output.imageTar, ConfigPath: output.config, ManifestPath: output.manifest}, nil
 }
 
-func (b *Builder) solveError(ctx context.Context, solveErr error, secrets map[string][]byte) error {
-	redacted := errors.New("solve build graph: " + redactBuildError(solveErr, secrets))
-	if b.health == nil {
-		return redacted
-	}
-	switch grpcerrors.Code(solveErr) {
+func (b *Builder) solveError(ctx context.Context, solveErr error) error {
+	failure := fmt.Errorf("solve build graph: %w", solveErr)
+	switch solveErrorCode(solveErr) {
 	case codes.Unavailable, codes.Internal, codes.ResourceExhausted:
-		return &ServiceFailure{Cause: redacted}
+		return &ServiceFailure{Cause: failure}
+	}
+	if b.health == nil {
+		return failure
 	}
 	healthCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), buildKitHealthTimeout)
 	defer cancel()
 	if err := b.health.Check(healthCtx); err != nil {
-		return &ServiceFailure{Cause: errors.Join(redacted, fmt.Errorf("prove BuildKit service generation healthy: %w", err))}
+		return &ServiceFailure{Cause: errors.Join(failure, fmt.Errorf("prove BuildKit service generation healthy: %w", err))}
 	}
 	if ctx.Err() != nil {
-		return errors.Join(redacted, context.Cause(ctx))
+		return errors.Join(failure, context.Cause(ctx))
 	}
-	return redacted
+	return failure
+}
+
+func solveErrorCode(err error) codes.Code {
+	code := grpcerrors.Code(err)
+	if direct := status.Code(err); direct != codes.Unknown {
+		return direct
+	}
+	return code
 }
 
 func (b *Builder) output(runID, itemID string) (buildOutput, error) {
@@ -360,13 +333,6 @@ func safeNamespace(value string) string {
 		return "_"
 	}
 	return strings.Join(safe, "/")
-}
-
-func buildSecretSession(secrets map[string][]byte) []session.Attachable {
-	if len(secrets) == 0 {
-		return nil
-	}
-	return []session.Attachable{secretsprovider.FromMap(secrets)}
 }
 
 func exporterResponse(response *bkclient.SolveResponse) map[string]string {

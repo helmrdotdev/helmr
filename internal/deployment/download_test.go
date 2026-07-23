@@ -291,50 +291,6 @@ func TestManagerDownloaderBunRejectsMissingModernChecksum(t *testing.T) {
 	}
 }
 
-func TestManagerDownloaderBunLegacyTOFU(t *testing.T) {
-	archive := []byte("legacy bun")
-	sum := sha256.Sum256(archive)
-	digest := "sha256:" + hex.EncodeToString(sum[:])
-	origin := "https://github.com/oven-sh/bun/releases/download/bun-v0.5.2/bun-linux-aarch64.zip"
-	listing := bunReleaseJSON(
-		"0.5.2",
-		"bun-linux-aarch64.zip",
-		origin,
-		int64(len(archive)),
-		digest,
-		nil,
-	)
-	client := &http.Client{Transport: managerRoundTrip(func(request *http.Request) (*http.Response, error) {
-		switch request.URL.String() {
-		case bunReleaseAPIOriginRoot + "0.5.2":
-			return managerResponse(http.StatusOK, listing), nil
-		case origin:
-			return managerResponse(http.StatusOK, string(archive)), nil
-		default:
-			t.Fatalf("unexpected request %q", request.URL.String())
-			return nil, nil
-		}
-	})}
-	downloader, err := NewManagerDownloader(client)
-	if err != nil {
-		t.Fatal(err)
-	}
-	source, err := downloader.Download(
-		context.Background(),
-		NewManagerSelector(
-			PackageManager{Name: PackageManagerBun, Version: "0.5.2"},
-			ArchitectureAArch64,
-		),
-		managerDownloadFile(t),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if source.Digest != digest {
-		t.Fatalf("source digest = %q, want %q", source.Digest, digest)
-	}
-}
-
 func TestVerifyBunSignatureUsesPinnedUpstreamKey(t *testing.T) {
 	raw, err := os.ReadFile("testdata/bun-shasums-1.3.11.asc")
 	if err != nil {
@@ -354,22 +310,6 @@ func TestVerifyBunSignatureUsesPinnedUpstreamKey(t *testing.T) {
 	}
 	if digest != "sha256:abe346f63414547cdf6b35b7a649a490c728b93d006226156923918a84c0e59b" {
 		t.Fatalf("digest = %q", digest)
-	}
-}
-
-func TestBunLegacyTOFUBoundary(t *testing.T) {
-	for version, want := range map[string]bool{
-		"0.5.2":       true,
-		"0.5.3-alpha": true,
-		"0.5.3":       false,
-		"0.6.0":       false,
-		"1.0.0":       false,
-	} {
-		t.Run(version, func(t *testing.T) {
-			if actual := bunLegacyTOFU(version); actual != want {
-				t.Fatalf("bunLegacyTOFU(%q) = %t, want %t", version, actual, want)
-			}
-		})
 	}
 }
 

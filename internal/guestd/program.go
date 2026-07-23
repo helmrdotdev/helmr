@@ -490,7 +490,7 @@ func newProgramProcess(
 		secretCleanup()
 		return nil, func() {}, err
 	}
-	cmd, err := adapterCommand(
+	cmd, err := imageCommand(
 		ctx,
 		managedProgramNode,
 		[]string{
@@ -502,8 +502,7 @@ func newProgramProcess(
 		sanitizeManagedRuntimeEnv(env),
 		entry.imageRoot,
 		entry.runtimeUser,
-		adapterCommandOptions{
-			ImageMode:       true,
+		imageCommandOptions{
 			ManagedProgram:  true,
 			CgroupNamespace: true,
 			StartProof:      true,
@@ -572,7 +571,7 @@ func newProgramProcess(
 		if cmd.Process == nil {
 			return os.ErrProcessDone
 		}
-		return signalAdapterProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
+		return signalProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
 	}
 	process := &programProcess{
 		cmd:           cmd,
@@ -1425,7 +1424,7 @@ func pauseActorTurnCommit(
 		process.workspaceRoot,
 		os.TempDir(),
 		process.workspaceRoot,
-		workspaceSecretExcludePatterns(process.workspaceRoot, process.secretPaths),
+		workspaceSecretExcludes(process.workspaceRoot, process.secretPaths),
 	)
 	if err != nil {
 		return fmt.Errorf("capture Actor turn Workspace: %w", err)
@@ -1763,6 +1762,14 @@ func clearProgramSecretValues(secrets []*runv0.ProgramSecret) {
 	}
 }
 
+func signalProcessGroup(pgid int, signal syscall.Signal) error {
+	err := syscall.Kill(-pgid, signal)
+	if errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	return err
+}
+
 func readProgramReady(
 	ctx context.Context,
 	deadline time.Time,
@@ -1795,7 +1802,7 @@ func (process *programProcess) terminate() {
 		_ = process.cgroup.kill()
 	}
 	if process.cmd.Process != nil && !process.exited.Load() {
-		_ = signalAdapterProcessGroup(process.cmd.Process.Pid, syscall.SIGKILL)
+		_ = signalProcessGroup(process.cmd.Process.Pid, syscall.SIGKILL)
 	}
 }
 
@@ -2037,6 +2044,51 @@ func readResumeDecisionUntilDone(conn programConnection, done <-chan struct{}) (
 	}
 }
 
+func readResumeDecision(
+	ctx context.Context,
+	reader io.Reader,
+) (*runv0.ResumeDecision, error) {
+	type result struct {
+		decision *runv0.ResumeDecision
+		err      error
+	}
+	read := make(chan result, 1)
+	go func() {
+		var decision runv0.ResumeDecision
+		err := frameio.ReadProtoFrame(reader, &decision)
+		read <- result{decision: &decision, err: err}
+	}()
+	select {
+	case result := <-read:
+		return result.decision, result.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func workspaceSecretExcludes(
+	workspaceRoot string,
+	secretPaths []string,
+) []string {
+	workspaceRoot = filepath.Clean(workspaceRoot)
+	patterns := make([]string, 0, len(secretPaths)*2)
+	for _, secretPath := range secretPaths {
+		relative, err := filepath.Rel(
+			workspaceRoot,
+			filepath.Clean(secretPath),
+		)
+		if err != nil ||
+			relative == "." ||
+			relative == ".." ||
+			strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			continue
+		}
+		relative = filepath.ToSlash(relative)
+		patterns = append(patterns, relative, relative+"/**")
+	}
+	return patterns
+}
+
 func (stream *programEventStream) writeCheckpointPauseReady(ready *runv0.CheckpointPauseReady) error {
 	stream.mu.Lock()
 	defer stream.mu.Unlock()
@@ -2061,7 +2113,7 @@ func (stream *programEventStream) writeWorkspaceArtifact(runID, workspaceRoot st
 		workspaceRoot,
 		os.TempDir(),
 		workspaceRoot,
-		workspaceSecretExcludePatterns(workspaceRoot, secretPaths),
+		workspaceSecretExcludes(workspaceRoot, secretPaths),
 	)
 	if err != nil {
 		return err

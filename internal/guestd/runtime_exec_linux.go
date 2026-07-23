@@ -16,7 +16,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const imageAdapterInitArg = "__helmr-image-adapter-init"
+const imageRuntimeInitArg = "__helmr-image-runtime-init"
 
 const (
 	secureNoRoot              = 1 << 0
@@ -46,32 +46,24 @@ var defaultImageRuntimeDevices = []runtimeDevice{
 }
 
 func init() {
-	if len(os.Args) > 1 && os.Args[1] == imageAdapterInitArg {
-		if err := runImageAdapterInit(os.Args[2:], os.Environ()); err != nil {
-			writeImageAdapterInitFailure(err)
-			_, _ = fmt.Fprintf(os.Stderr, "helmr image adapter init: %s\n", err)
+	if len(os.Args) > 1 && os.Args[1] == imageRuntimeInitArg {
+		if err := runImageRuntimeInit(os.Args[2:], os.Environ()); err != nil {
+			writeImageRuntimeInitFailure(err)
+			_, _ = fmt.Fprintf(os.Stderr, "helmr image runtime init: %s\n", err)
 			os.Exit(127)
 		}
 		os.Exit(127)
 	}
 }
 
-type adapterCommandOptions struct {
-	ImageMode       bool
+type imageCommandOptions struct {
 	ManagedProgram  bool
 	CgroupNamespace bool
 	StartProof      bool
 	Pty             bool
 }
 
-func adapterCommand(ctx context.Context, runtimePath string, args []string, launchCwd string, env []string, imageRoot string, user *resolvedRuntimeUser, opts adapterCommandOptions) (*exec.Cmd, error) {
-	if !opts.ImageMode {
-		cmd := exec.CommandContext(ctx, runtimePath, args...)
-		cmd.Dir = launchCwd
-		cmd.Env = env
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: !opts.Pty}
-		return cmd, nil
-	}
+func imageCommand(ctx context.Context, runtimePath string, args []string, launchCwd string, env []string, imageRoot string, user *resolvedRuntimeUser, opts imageCommandOptions) (*exec.Cmd, error) {
 	if user == nil {
 		return nil, errors.New("image runtime user is required")
 	}
@@ -79,7 +71,7 @@ func adapterCommand(ctx context.Context, runtimePath string, args []string, laun
 		return nil, errors.New("Program cgroup namespace requires managed Program mounts")
 	}
 	initArgs := []string{
-		imageAdapterInitArg,
+		imageRuntimeInitArg,
 		imageRoot,
 		launchCwd,
 		strconv.FormatUint(uint64(user.UID), 10),
@@ -100,9 +92,9 @@ func adapterCommand(ctx context.Context, runtimePath string, args []string, laun
 	return cmd, nil
 }
 
-func runImageAdapterInit(args []string, env []string) error {
+func runImageRuntimeInit(args []string, env []string) error {
 	if len(args) < 9 {
-		return errors.New("missing image adapter init arguments")
+		return errors.New("missing image runtime init arguments")
 	}
 	imageRoot := args[0]
 	launchCwd := args[1]
@@ -142,13 +134,13 @@ func runImageAdapterInit(args []string, env []string) error {
 		return fmt.Errorf("invalid start proof flag %q", args[6])
 	}
 	runtimePath := args[7]
-	adapterArgs := args[8:]
+	runtimeArgs := args[8:]
 	if cgroupNamespace {
 		if err := enterProgramCgroupNamespace(); err != nil {
 			return err
 		}
 	}
-	if err := setupImageAdapterNamespace(imageRoot, managedProgram); err != nil {
+	if err := setupImageRuntimeNamespace(imageRoot, managedProgram); err != nil {
 		return err
 	}
 	if err := pivotIntoImageRoot(imageRoot); err != nil {
@@ -157,20 +149,20 @@ func runImageAdapterInit(args []string, env []string) error {
 	if err := syscall.Chdir(launchCwd); err != nil {
 		return fmt.Errorf("chdir launch cwd: %w", err)
 	}
-	if err := applyAdapterRuntimeIdentity(uid, gid); err != nil {
+	if err := applyRuntimeIdentity(uid, gid); err != nil {
 		return err
 	}
-	argv := append([]string{runtimePath}, adapterArgs...)
+	argv := append([]string{runtimePath}, runtimeArgs...)
 	if startProof {
 		syscall.CloseOnExec(4)
 	}
 	if err := syscall.Exec(runtimePath, argv, env); err != nil {
-		return fmt.Errorf("exec adapter runtime: %w", err)
+		return fmt.Errorf("exec image runtime: %w", err)
 	}
 	return nil
 }
 
-func writeImageAdapterInitFailure(err error) {
+func writeImageRuntimeInitFailure(err error) {
 	message := err.Error()
 	if len(message) > 64*1024 {
 		message = message[:64*1024]
@@ -208,7 +200,7 @@ func parseInitUint32(name string, raw string) (uint32, error) {
 	return uint32(value), nil
 }
 
-func setupImageAdapterNamespace(imageRoot string, managedProgram bool) error {
+func setupImageRuntimeNamespace(imageRoot string, managedProgram bool) error {
 	if err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
 		return fmt.Errorf("make mount namespace private: %w", err)
 	}
@@ -429,7 +421,7 @@ func createRuntimeDevice(imageRoot string, device runtimeDevice) error {
 	return nil
 }
 
-func applyAdapterRuntimeIdentity(uid uint32, gid uint32) error {
+func applyRuntimeIdentity(uid uint32, gid uint32) error {
 	if uid == 0 {
 		// Root inside an image-mode VM is the user-defined runtime root. The
 		// Firecracker VM is the isolation boundary, so keep root capabilities
@@ -438,10 +430,10 @@ func applyAdapterRuntimeIdentity(uid uint32, gid uint32) error {
 			return fmt.Errorf("clear supplementary groups: %w", err)
 		}
 		if err := syscall.Setgid(int(gid)); err != nil {
-			return fmt.Errorf("setgid adapter user: %w", err)
+			return fmt.Errorf("setgid runtime user: %w", err)
 		}
 		if err := syscall.Setuid(0); err != nil {
-			return fmt.Errorf("setuid adapter user: %w", err)
+			return fmt.Errorf("setuid runtime user: %w", err)
 		}
 		if err := enableRootCapabilities(); err != nil {
 			return err
@@ -465,10 +457,10 @@ func applyAdapterRuntimeIdentity(uid uint32, gid uint32) error {
 		return fmt.Errorf("clear supplementary groups: %w", err)
 	}
 	if err := syscall.Setgid(int(gid)); err != nil {
-		return fmt.Errorf("setgid adapter user: %w", err)
+		return fmt.Errorf("setgid runtime user: %w", err)
 	}
 	if err := syscall.Setuid(int(uid)); err != nil {
-		return fmt.Errorf("setuid adapter user: %w", err)
+		return fmt.Errorf("setuid runtime user: %w", err)
 	}
 	data := [2]unix.CapUserData{}
 	header := unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}

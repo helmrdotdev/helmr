@@ -20,8 +20,10 @@ import (
 const maxJSONBlobBytes = 16 * 1024 * 1024
 
 type Image struct {
-	RootfsDir string
-	Config    RuntimeConfig
+	RootfsDir     string
+	Config        RuntimeConfig
+	Platform      *Platform
+	ManifestCount int
 }
 
 type RuntimeConfig struct {
@@ -32,18 +34,31 @@ type RuntimeConfig struct {
 	Cmd        []string
 }
 
+type Metadata struct {
+	Config        RuntimeConfig
+	Platform      *Platform
+	ManifestCount int
+}
+
 type Index struct {
 	Manifests []Descriptor `json:"manifests"`
 }
 
 type Manifest struct {
-	Config Descriptor   `json:"Config"`
+	Config Descriptor   `json:"config"`
 	Layers []Descriptor `json:"layers"`
 }
 
 type Descriptor struct {
-	MediaType string `json:"mediaType"`
-	Digest    string `json:"digest"`
+	MediaType string    `json:"mediaType"`
+	Digest    string    `json:"digest"`
+	Size      int64     `json:"size"`
+	Platform  *Platform `json:"platform,omitempty"`
+}
+
+type Platform struct {
+	Architecture string `json:"architecture"`
+	OS           string `json:"os"`
 }
 
 type configBlob struct {
@@ -57,10 +72,14 @@ type configBlob struct {
 }
 
 func Unpack(r io.Reader, destination string) (Image, error) {
+	return UnpackAt(r, destination, "")
+}
+
+func UnpackAt(r io.Reader, destination, scratchRoot string) (Image, error) {
 	if err := os.MkdirAll(destination, 0o755); err != nil {
 		return Image{}, fmt.Errorf("create oci destination: %w", err)
 	}
-	blobsDir, err := os.MkdirTemp("", "helmr-oci-blobs-*")
+	blobsDir, err := os.MkdirTemp(scratchRoot, "helmr-oci-blobs-*")
 	if err != nil {
 		return Image{}, fmt.Errorf("create oci blob temp dir: %w", err)
 	}
@@ -97,34 +116,61 @@ func Unpack(r io.Reader, destination string) (Image, error) {
 			return Image{}, err
 		}
 	}
-	return Image{RootfsDir: destination, Config: config}, nil
+	return Image{
+		RootfsDir:     destination,
+		Config:        config,
+		Platform:      index.Manifests[0].Platform,
+		ManifestCount: len(index.Manifests),
+	}, nil
 }
 
 func ReadConfig(r io.Reader) (RuntimeConfig, error) {
-	indexJSON, blobs, err := readConfigBlobs(r)
+	metadata, err := Inspect(r)
 	if err != nil {
 		return RuntimeConfig{}, err
+	}
+	return metadata.Config, nil
+}
+
+func Inspect(r io.Reader) (Metadata, error) {
+	indexJSON, blobs, err := inspectBlobs(r)
+	if err != nil {
+		return Metadata{}, err
 	}
 	var index Index
 	if err := json.Unmarshal(indexJSON, &index); err != nil {
-		return RuntimeConfig{}, fmt.Errorf("decode oci index: %w", err)
+		return Metadata{}, fmt.Errorf("decode oci index: %w", err)
 	}
 	if len(index.Manifests) == 0 {
-		return RuntimeConfig{}, errors.New("oci index has no manifests")
+		return Metadata{}, errors.New("oci index has no manifests")
 	}
-	manifestBytes, err := readConfigBlob(blobs, index.Manifests[0].Digest)
+	manifestDescriptor := index.Manifests[0]
+	manifestBytes, err := readMetadataBlob(blobs, manifestDescriptor)
 	if err != nil {
-		return RuntimeConfig{}, err
+		return Metadata{}, err
 	}
 	var manifest Manifest
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-		return RuntimeConfig{}, fmt.Errorf("decode oci manifest: %w", err)
+		return Metadata{}, fmt.Errorf("decode oci manifest: %w", err)
 	}
-	configBytes, err := readConfigBlob(blobs, manifest.Config.Digest)
+	configBytes, err := readMetadataBlob(blobs, manifest.Config)
 	if err != nil {
-		return RuntimeConfig{}, err
+		return Metadata{}, err
 	}
-	return DecodeConfig(configBytes)
+	config, err := DecodeConfig(configBytes)
+	if err != nil {
+		return Metadata{}, err
+	}
+	for _, layer := range manifest.Layers {
+		if err := validateLayerDescriptor(blobs, layer); err != nil {
+			return Metadata{}, err
+		}
+	}
+	return Metadata{
+		Config:        config,
+		Platform:      manifestDescriptor.Platform,
+		ManifestCount: len(index.Manifests),
+	}, nil
 }
 
 func DecodeConfig(body []byte) (RuntimeConfig, error) {
@@ -232,10 +278,16 @@ func ApplyLayerTar(r io.Reader, destination string) error {
 	}
 }
 
-func readConfigBlobs(r io.Reader) ([]byte, map[string][]byte, error) {
+type inspectedBlob struct {
+	body []byte
+	size int64
+}
+
+func inspectBlobs(r io.Reader) ([]byte, map[string]inspectedBlob, error) {
 	reader := tar.NewReader(r)
 	var indexJSON []byte
-	blobs := map[string][]byte{}
+	indexSeen := false
+	blobs := map[string]inspectedBlob{}
 	for {
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {
@@ -245,17 +297,33 @@ func readConfigBlobs(r io.Reader) ([]byte, map[string][]byte, error) {
 			return nil, nil, fmt.Errorf("read oci tar: %w", err)
 		}
 		name := filepath.ToSlash(filepath.Clean(header.Name))
+		if name == "." || filepath.IsAbs(name) || strings.HasPrefix(name, "../") {
+			return nil, nil, fmt.Errorf("unsafe oci tar path %q", header.Name)
+		}
+		if header.Typeflag == tar.TypeDir {
+			continue
+		}
+		if header.Typeflag != tar.TypeReg {
+			return nil, nil, fmt.Errorf("unsupported oci tar entry %q type %d", header.Name, header.Typeflag)
+		}
 		switch {
 		case name == "index.json":
+			if indexSeen {
+				return nil, nil, errors.New("oci image tar contains duplicate index.json")
+			}
 			body, err := readLimited(reader, maxJSONBlobBytes)
 			if err != nil {
 				return nil, nil, fmt.Errorf("read oci index: %w", err)
 			}
 			indexJSON = body
+			indexSeen = true
 		case strings.HasPrefix(name, "blobs/sha256/"):
 			digest := strings.TrimPrefix(name, "blobs/sha256/")
 			if err := validateHexDigest(digest); err != nil {
 				return nil, nil, err
+			}
+			if _, exists := blobs[digest]; exists {
+				return nil, nil, fmt.Errorf("oci image tar contains duplicate blob %s", digest)
 			}
 			hash := sha256.New()
 			var buf bytes.Buffer
@@ -270,27 +338,79 @@ func readConfigBlobs(r io.Reader) ([]byte, map[string][]byte, error) {
 			if actual != digest {
 				return nil, nil, fmt.Errorf("oci blob %s has sha256 %s", name, actual)
 			}
-			if buf.Len() > 0 {
-				blobs[digest] = append([]byte(nil), buf.Bytes()...)
+			blob := inspectedBlob{size: header.Size}
+			if header.Size <= maxJSONBlobBytes {
+				blob.body = append([]byte(nil), buf.Bytes()...)
 			}
+			blobs[digest] = blob
+		case name == "oci-layout":
+			if _, err := readLimited(reader, maxJSONBlobBytes); err != nil {
+				return nil, nil, fmt.Errorf("read oci layout: %w", err)
+			}
+		default:
+			return nil, nil, fmt.Errorf("unsupported oci tar entry %q", header.Name)
 		}
 	}
-	if len(indexJSON) == 0 {
+	if !indexSeen {
 		return nil, nil, errors.New("oci image tar missing index.json")
 	}
 	return indexJSON, blobs, nil
 }
 
-func readConfigBlob(blobs map[string][]byte, digest string) ([]byte, error) {
-	hexDigest, err := parseDigest(digest)
+func readMetadataBlob(blobs map[string]inspectedBlob, descriptor Descriptor) ([]byte, error) {
+	hexDigest, err := parseDigest(descriptor.Digest)
 	if err != nil {
 		return nil, err
 	}
-	body, ok := blobs[hexDigest]
+	blob, ok := blobs[hexDigest]
 	if !ok {
-		return nil, fmt.Errorf("oci JSON blob %s is missing or exceeds %d bytes", digest, maxJSONBlobBytes)
+		return nil, fmt.Errorf("oci blob %s is missing", descriptor.Digest)
 	}
-	return body, nil
+	if descriptor.Size < 0 || blob.size != descriptor.Size {
+		return nil, fmt.Errorf(
+			"oci blob %s size is %d, descriptor declares %d",
+			descriptor.Digest,
+			blob.size,
+			descriptor.Size,
+		)
+	}
+	if blob.body == nil {
+		return nil, fmt.Errorf(
+			"oci JSON blob %s exceeds %d bytes",
+			descriptor.Digest,
+			maxJSONBlobBytes,
+		)
+	}
+	return blob.body, nil
+}
+
+func validateLayerDescriptor(blobs map[string]inspectedBlob, descriptor Descriptor) error {
+	hexDigest, err := parseDigest(descriptor.Digest)
+	if err != nil {
+		return err
+	}
+	blob, ok := blobs[hexDigest]
+	if !ok {
+		return fmt.Errorf("oci layer %s is missing", descriptor.Digest)
+	}
+	if descriptor.Size < 0 || blob.size != descriptor.Size {
+		return fmt.Errorf(
+			"oci layer %s size is %d, descriptor declares %d",
+			descriptor.Digest,
+			blob.size,
+			descriptor.Size,
+		)
+	}
+	switch descriptor.MediaType {
+	case "application/vnd.oci.image.layer.v1.tar",
+		"application/vnd.docker.image.rootfs.diff.tar",
+		"application/vnd.oci.image.layer.v1.tar+gzip",
+		"application/vnd.docker.image.rootfs.diff.tar.gzip",
+		"application/vnd.oci.image.layer.v1.tar+zstd":
+		return nil
+	default:
+		return fmt.Errorf("unsupported oci layer media type %q", descriptor.MediaType)
+	}
 }
 
 func unpackTar(r io.Reader, blobsDir string) ([]byte, error) {

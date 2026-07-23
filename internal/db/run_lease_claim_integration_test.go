@@ -822,10 +822,10 @@ func (fixture runLeaseClaimFixture) parkNestedRun(
 			id, kind, run_id, attempt_number, run_wait_id,
 			source_run_lease_id, source_workspace_lease_id, workspace_id,
 			base_workspace_version_id, private_workspace_version_id,
-			state, restore_manifest, ready_at
+			state, restore_manifest, ready_request_fingerprint, ready_at
 		) VALUES (
 			$1, 'suspend', $2, 1, $3, $4, $5, $6,
-			$7, $7, 'ready', '{"test":true}'::jsonb, now()
+			$7, $7, 'ready', '{"test":true}'::jsonb, 'test-ready', now()
 		)
 	`, park.checkpointID, park.runID, park.waitID, park.leaseID,
 		park.workspaceLeaseID, workspaceID, park.versionID)

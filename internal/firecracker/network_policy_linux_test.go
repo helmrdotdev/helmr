@@ -11,6 +11,90 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 )
 
+func TestNFTBuildNetworkPolicyScriptClosesProgramBuildEgress(t *testing.T) {
+	ipv4, ipv6, err := effectiveBuildBlockedCIDRs(
+		compute.DefaultNetworkPolicy(),
+		[]string{"54.240.0.0/16"},
+		[]string{"2600:1f00::/24"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, err := nftBuildNetworkPolicyScript(
+		"tap0",
+		[]string{"1.1.1.1", "2606:4700:4700::1111"},
+		ipv4,
+		ipv6,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"policy drop",
+		"ct state new ct count over 256 counter name build_limit drop",
+		"quota name build_sent counter name build_limit drop",
+		"quota name build_received counter name build_limit drop",
+		`iifname "tap0" ip daddr @resolver_ipv4 udp dport 53 jump egress`,
+		`iifname "tap0" ip6 daddr @resolver_ipv6 udp dport 53 jump egress`,
+		`iifname "tap0" ip daddr @resolver_ipv4 tcp dport 53 jump egress`,
+		`iifname "tap0" ip6 daddr @resolver_ipv6 tcp dport 53 jump egress`,
+		`iifname "tap0" ip daddr @blocked_ipv4 counter name build_denied drop`,
+		`iifname "tap0" ip6 daddr @blocked_ipv6 counter name build_denied drop`,
+		`iifname "tap0" tcp jump egress`,
+		"counter name build_denied drop",
+		"198.18.0.0/15",
+		"203.0.113.0/24",
+		"2001::/23",
+		"3fff::/20",
+		"54.240.0.0/16",
+		"2600:1f00::/24",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("build policy script missing %q:\n%s", want, script)
+		}
+	}
+	if strings.Contains(script, "udp accept") {
+		t.Fatalf("build policy contains a broad UDP allowance:\n%s", script)
+	}
+}
+
+func TestEffectiveBuildBlockedCIDRsRejectsCallerPolicy(t *testing.T) {
+	_, _, err := effectiveBuildBlockedCIDRs(
+		compute.NetworkPolicy{
+			Internet: true,
+			Deny:     []string{"203.0.113.0/24"},
+		},
+		nil,
+		nil,
+	)
+	if err == nil {
+		t.Fatal("caller-controlled build network policy was accepted")
+	}
+}
+
+func TestParseBuildNetworkStatusRequiresBothCounters(t *testing.T) {
+	status, err := parseBuildNetworkStatus([]byte(`{
+		"nftables": [
+			{"metainfo": {"json_schema_version": 1}},
+			{"counter": {"family": "inet", "name": "build_denied", "table": "helmr_network_policy", "packets": 2, "bytes": 120}},
+			{"counter": {"family": "inet", "name": "build_limit", "table": "helmr_network_policy", "packets": 3, "bytes": 180}}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.DeniedPackets != 2 || status.LimitPackets != 3 {
+		t.Fatalf("build network status = %+v", status)
+	}
+	if _, err := parseBuildNetworkStatus([]byte(`{
+		"nftables": [
+			{"counter": {"name": "build_denied", "packets": 1}}
+		]
+	}`)); err == nil {
+		t.Fatal("incomplete build network counters were accepted")
+	}
+}
+
 func TestNFTNetworkPolicyScriptBlocksConfiguredCIDRs(t *testing.T) {
 	script := nftNetworkPolicyScript(
 		compute.DefaultNetworkPolicy(),

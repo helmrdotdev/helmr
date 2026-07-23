@@ -185,6 +185,6 @@ func validateToolObject(object ToolObject) error {
 	return nil
 }
 
-func toolObject(artifact ManagerArtifact) ToolObject {
+func toolObject(artifact ArtifactDescriptor) ToolObject {
 	return ToolObject(artifact)
 }

@@ -914,15 +914,6 @@ func (s *Server) validateWorkerBuildPolicy(capabilities api.WorkerCapabilities) 
 	return nil
 }
 
-func firstPositiveInt32(values ...int32) int32 {
-	for _, value := range values {
-		if value > 0 {
-			return value
-		}
-	}
-	return 0
-}
-
 func normalizeWorkerLabels(input map[string]string) (map[string]string, error) {
 	labels := make(map[string]string, len(input))
 	for key, value := range input {

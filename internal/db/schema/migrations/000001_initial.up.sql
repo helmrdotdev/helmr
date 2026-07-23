@@ -376,13 +376,9 @@ CREATE TABLE cas_objects (
 
 CREATE TYPE artifact_kind AS ENUM (
     'deployment_source',
-    'build_manifest',
-    'deployment_manifest',
     'deployment_program_code',
     'deployment_program_dependencies',
     'workspace_image',
-    'sandbox_image',
-    'task_bundle',
     'runtime_substrate',
     'run_checkpoint_config',
     'run_checkpoint_vm_state',
@@ -926,7 +922,6 @@ CREATE TABLE deployments (
     cli_version TEXT NOT NULL DEFAULT '' CHECK (
         cli_version = btrim(cli_version) AND octet_length(cli_version) <= 255
     ),
-    bundle_format_version INTEGER NOT NULL DEFAULT 2 CHECK (bundle_format_version > 0),
     worker_protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (worker_protocol_version = 'helmr.worker.v0'),
     deployment_source_artifact_id UUID NOT NULL,
     program_code_artifact_id UUID,
@@ -4010,24 +4005,6 @@ CREATE INDEX deployment_promotions_deployment_idx
     ON deployment_promotions(org_id, project_id, environment_id, deployment_id);
 CREATE INDEX deployment_promotions_environment_created_idx
     ON deployment_promotions(org_id, project_id, environment_id, created_at DESC);
-CREATE UNIQUE INDEX deployments_reusable_build_key_idx
-    ON deployments(
-        org_id,
-        build_region_id,
-        project_id,
-        environment_id,
-        content_hash,
-        api_version,
-        sdk_version,
-        cli_version,
-        bundle_format_version,
-        worker_protocol_version,
-        build_architecture,
-        build_runtime_digest,
-        build_standard_toolchain_digest,
-        build_contract_version
-    )
-    WHERE status IN ('queued', 'building');
 CREATE INDEX deployments_build_region_status_idx
     ON deployments(build_region_id, status, created_at)
     WHERE status IN ('queued', 'building');

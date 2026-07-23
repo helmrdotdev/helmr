@@ -14,7 +14,6 @@ INSERT INTO deployments (
     api_version,
     sdk_version,
     cli_version,
-    bundle_format_version,
     worker_protocol_version,
     content_hash,
     deployment_source_artifact_id,
@@ -34,7 +33,6 @@ SELECT sqlc.arg(id),
        sqlc.arg(api_version),
        sqlc.arg(sdk_version),
        sqlc.arg(cli_version),
-       sqlc.arg(bundle_format_version),
        sqlc.arg(worker_protocol_version),
        sqlc.arg(content_hash),
        sqlc.arg(deployment_source_artifact_id),
@@ -51,30 +49,6 @@ SELECT sqlc.arg(id),
 	      AND projects.default_region_id = sqlc.arg(build_region_id)
 	 )
 RETURNING *;
-
--- name: LockDeploymentBuildReuseKey :exec
-SELECT pg_advisory_xact_lock(
-    hashtextextended(sqlc.arg(reuse_key)::text, 0)
-);
-
--- name: GetReusableDeploymentBuild :one
-SELECT *
-  FROM deployments
- WHERE org_id = sqlc.arg(org_id)
-   AND build_region_id = sqlc.arg(build_region_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND content_hash = sqlc.arg(content_hash)
-   AND api_version = sqlc.arg(api_version)
-   AND sdk_version = sqlc.arg(sdk_version)
-   AND cli_version = sqlc.arg(cli_version)
-   AND bundle_format_version = sqlc.arg(bundle_format_version)
-   AND worker_protocol_version = sqlc.arg(worker_protocol_version)
-   AND build_architecture = sqlc.arg(build_architecture)
-   AND build_runtime_digest = sqlc.arg(build_runtime_digest)
-   AND build_standard_toolchain_digest = sqlc.arg(build_standard_toolchain_digest)
-   AND build_contract_version = sqlc.arg(build_contract_version)
-   AND status IN ('queued', 'building');
 
 -- name: AllocateDeploymentVersion :one
 WITH allocated AS (
@@ -177,7 +151,6 @@ SELECT inserted.*,
        advanced.api_version,
        advanced.sdk_version,
        advanced.cli_version,
-       advanced.bundle_format_version,
        advanced.content_hash,
        advanced.build_architecture,
        advanced.build_runtime_digest,
@@ -389,7 +362,7 @@ WITH candidate AS (
     RETURNING deployment_build_leases.*
 )
 SELECT claimed.*, deployments.version, deployments.api_version, deployments.sdk_version,
-       deployments.cli_version, deployments.bundle_format_version, deployments.content_hash,
+       deployments.cli_version, deployments.content_hash,
        deployments.build_architecture, deployments.build_runtime_digest,
        deployments.build_standard_toolchain_digest, deployments.build_contract_version,
        source_artifacts.digest AS deployment_source_digest,

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path"
 	"strings"
 )
@@ -13,6 +12,8 @@ import (
 // buildTreeSnapshotMediaType is an in-process snapshot discriminator. It is
 // never published, persisted, or used as Program identity.
 const buildTreeSnapshotMediaType = "application/vnd.helmr.internal-build-tree.v0+squashfs"
+
+const maxBuildTreeStreamBytes int64 = 11 << 30
 
 type BuildTreeDescriptor struct {
 	Digest    string
@@ -24,6 +25,16 @@ type BuildTreeDescriptor struct {
 type BuildTree struct {
 	content   *artifactSnapshot
 	inspected *inspectedArtifact
+}
+
+func (tree *BuildTree) Descriptor() (BuildTreeDescriptor, error) {
+	if tree == nil || tree.content == nil || tree.inspected == nil {
+		return BuildTreeDescriptor{}, errors.New("build tree is closed")
+	}
+	return BuildTreeDescriptor{
+		Digest:    tree.content.descriptor.Digest,
+		SizeBytes: tree.content.descriptor.SizeBytes,
+	}, nil
 }
 
 func IngestBuildTree(
@@ -174,13 +185,6 @@ func (tree *BuildTree) LinkInto(
 		return errors.New("build tree is closed")
 	}
 	return tree.content.LinkInto(directory, name, uid, gid)
-}
-
-func (tree *BuildTree) verifier() (*os.File, error) {
-	if tree == nil || tree.content == nil || tree.inspected == nil {
-		return nil, errors.New("build tree is closed")
-	}
-	return tree.content.verifierFile()
 }
 
 func (tree *BuildTree) Close() error {

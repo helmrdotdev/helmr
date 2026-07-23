@@ -5,6 +5,7 @@ package firecracker
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,12 +39,17 @@ import (
 
 const defaultKernelArgs = "console=ttyS0 reboot=k panic=1 root=/dev/vda rootfstype=ext4 ro init=/init"
 const managerAcquireKernelArgs = defaultKernelArgs + " helmr.profile=manager-acquire helmr.network=none helmr.pids_max=128"
-const dependencyManagerKernelArgs = defaultKernelArgs + " helmr.profile=dependency helmr.network=none helmr.pids_max=1024"
+const buildInstallKernelArgs = defaultKernelArgs + " helmr.profile=build-install helmr.pids_max=1024"
+const buildAnalyzeKernelArgs = defaultKernelArgs + " helmr.profile=build-analyze helmr.network=none helmr.pids_max=1024"
+const programProofKernelArgs = defaultKernelArgs + " helmr.profile=program-proof helmr.network=none helmr.pids_max=1024"
 const stopTimeout = 10 * time.Second
 const apiSocketName = "api.sock"
 const vsockSocketName = "vsock.sock"
 const scratchDiskName = "scratch.ext4"
 const maxGuestHealthResponseBytes = 4096
+const ext4SuperblockOffset = 1024
+const ext4SuperblockBytes = 1024
+const ext4Magic = 0xef53
 
 var readOnlyDriveOrder = [...]string{
 	vm.ProgramRuntimeDrive,
@@ -52,8 +58,7 @@ var readOnlyDriveOrder = [...]string{
 	vm.ManagerDrive,
 	vm.ManagedRuntimeDrive,
 	vm.ToolchainDrive,
-	vm.ProjectDrive,
-	vm.OfflineStoreDrive,
+	vm.BuildTreeDrive,
 }
 
 var nextGuestCID atomic.Uint32
@@ -111,11 +116,6 @@ func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 }
 
 func (c *Connector) Connect(ctx context.Context, request vm.ConnectRequest) (vm.Session, error) {
-	if isPreparedResolveRequest(request) {
-		return nil, errors.New(
-			"dependency resolve guests require prepared connection",
-		)
-	}
 	child, err := c.connectorForRequest(request)
 	if err != nil {
 		return nil, err
@@ -135,45 +135,11 @@ func (c *Connector) Connect(ctx context.Context, request vm.ConnectRequest) (vm.
 	)
 }
 
-func (c *Connector) Prepare(
-	ctx context.Context,
-	request vm.ConnectRequest,
-) (vm.PreparedSession, error) {
-	child, err := c.connectorForRequest(request)
-	if err != nil {
-		return nil, err
-	}
-	if !isPreparedResolveRequest(request) {
-		return nil, errors.New(
-			"only dependency resolve guests support prepared connection",
-		)
-	}
-	return child.prepareSession(
-		ctx,
-		request.ID,
-		request.OwnerKind,
-		"",
-		"",
-		"",
-		nil,
-		request.Network,
-		request.Topology,
-		request.ReadOnlyDrives,
-		nil,
-	)
-}
-
-func isPreparedResolveRequest(request vm.ConnectRequest) bool {
-	return request.OwnerKind == vm.OwnerBuild &&
-		len(request.ReadOnlyDrives) == 4 &&
-		isDependencyDriveSet(request.ReadOnlyDrives)
-}
-
 func (c *Connector) connectorForRequest(
 	request vm.ConnectRequest,
 ) (*Connector, error) {
 	cfg := c.cfg
-	kernelArgs := c.kernelArgsValue()
+	var kernelArgs string
 	networkless := false
 	if request.OwnerKind == vm.OwnerBuild {
 		if err := validateReadOnlyDrives(request.ReadOnlyDrives); err != nil {
@@ -221,12 +187,26 @@ func buildGuestProfile(request vm.ConnectRequest) (string, bool, error) {
 		len(request.ReadOnlyDrives) == 0:
 		return managerAcquireKernelArgs, true, nil
 	case request.Resources == compute.BuildGuestResources() &&
-		request.PIDsMax == compute.DependencyGuestPIDsMax &&
+		request.PIDsMax == compute.BuildGuestPIDsMax &&
+		!request.Networkless &&
+		request.Network.Internet &&
+		noSubstrate &&
+		isBuildInstallDriveSet(request.ReadOnlyDrives):
+		return buildInstallKernelArgs, false, nil
+	case request.Resources == compute.BuildGuestResources() &&
+		request.PIDsMax == compute.BuildGuestPIDsMax &&
 		request.Networkless &&
 		networkDisabled &&
 		noSubstrate &&
-		isDependencyDriveSet(request.ReadOnlyDrives):
-		return dependencyManagerKernelArgs, true, nil
+		isBuildAnalysisDriveSet(request.ReadOnlyDrives):
+		return buildAnalyzeKernelArgs, true, nil
+	case request.Resources == compute.BuildGuestResources() &&
+		request.PIDsMax == compute.BuildGuestPIDsMax &&
+		request.Networkless &&
+		networkDisabled &&
+		noSubstrate &&
+		isProgramDriveSet(request.ReadOnlyDrives):
+		return programProofKernelArgs, true, nil
 	case request.Resources == compute.BuildGuestResources() &&
 		request.PIDsMax == 0 &&
 		!request.Networkless &&
@@ -236,6 +216,41 @@ func buildGuestProfile(request vm.ConnectRequest) (string, bool, error) {
 	default:
 		return "", false, errors.New("build guest resources do not match the platform profile")
 	}
+}
+
+func isBuildInstallDriveSet(drives []vm.ReadOnlyDrive) bool {
+	return exactDriveSet(
+		drives,
+		vm.ManagerDrive,
+		vm.ManagedRuntimeDrive,
+		vm.ToolchainDrive,
+	)
+}
+
+func isBuildAnalysisDriveSet(drives []vm.ReadOnlyDrive) bool {
+	return exactDriveSet(
+		drives,
+		vm.ManagedRuntimeDrive,
+		vm.ToolchainDrive,
+		vm.BuildTreeDrive,
+	)
+}
+
+func exactDriveSet(drives []vm.ReadOnlyDrive, expected ...string) bool {
+	if len(drives) != len(expected) {
+		return false
+	}
+	present := make(map[string]bool, len(drives))
+	for _, drive := range drives {
+		present[drive.ID] = true
+	}
+	for _, id := range expected {
+		if !present[id] {
+			return false
+		}
+		delete(present, id)
+	}
+	return len(present) == 0
 }
 
 func isProgramDriveSet(drives []vm.ReadOnlyDrive) bool {
@@ -256,28 +271,6 @@ func isProgramDriveSet(drives []vm.ReadOnlyDrive) bool {
 	return present[vm.ProgramRuntimeDrive] &&
 		present[vm.ProgramCodeDrive] &&
 		present[vm.ProgramDependenciesDrive]
-}
-
-func isDependencyDriveSet(drives []vm.ReadOnlyDrive) bool {
-	present := make(map[string]bool, len(drives))
-	for _, drive := range drives {
-		present[drive.ID] = true
-	}
-	if !present[vm.ManagerDrive] ||
-		!present[vm.ManagedRuntimeDrive] ||
-		!present[vm.ToolchainDrive] {
-		return false
-	}
-	switch len(drives) {
-	case 3:
-		return !present[vm.ProjectDrive] && !present[vm.OfflineStoreDrive]
-	case 4:
-		return present[vm.ProjectDrive] && !present[vm.OfflineStoreDrive]
-	case 5:
-		return present[vm.ProjectDrive] && present[vm.OfflineStoreDrive]
-	default:
-		return false
-	}
 }
 
 func (c *Connector) Materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Session, error) {
@@ -1049,6 +1042,7 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 		readOnlyDrives: append([]vm.ReadOnlyDrive(nil), readOnlyDrives...),
 		owner:          owner,
 		cleaner:        c,
+		buildNetwork:   c.kernelArgsValue() == buildInstallKernelArgs,
 	}, nil
 }
 
@@ -1082,13 +1076,77 @@ func (c *Connector) createScratchDisk(ctx context.Context, scratchDiskPath strin
 		_ = os.Remove(scratchDiskPath)
 		return fmt.Errorf("close scratch disk: %w", closeErr)
 	}
-	cmd := exec.CommandContext(ctx, c.cfg.MkfsExt4Path, "-F", "-q", scratchDiskPath)
+	cmd := exec.CommandContext(
+		ctx,
+		c.cfg.MkfsExt4Path,
+		"-F",
+		"-q",
+		"-m",
+		"0",
+		scratchDiskPath,
+	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		_ = os.Remove(scratchDiskPath)
 		return fmt.Errorf("format scratch disk: %w: %s", err, strings.TrimSpace(string(output)))
 	}
+	floor := c.scratchUsableFloor()
+	if floor > 0 {
+		usable, err := ext4FreeBytes(scratchDiskPath)
+		if err != nil {
+			_ = os.Remove(scratchDiskPath)
+			return fmt.Errorf("inspect scratch filesystem: %w", err)
+		}
+		if usable < floor {
+			_ = os.Remove(scratchDiskPath)
+			return fmt.Errorf(
+				"scratch filesystem has %d usable bytes, build contract requires at least %d",
+				usable,
+				floor,
+			)
+		}
+	}
 	return nil
+}
+
+func (c *Connector) scratchUsableFloor() uint64 {
+	switch c.kernelArgsValue() {
+	case managerAcquireKernelArgs:
+		return 1536 * 1024 * 1024
+	case buildInstallKernelArgs:
+		return 19 * 1024 * 1024 * 1024
+	default:
+		return 0
+	}
+}
+
+func ext4FreeBytes(path string) (uint64, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	superblock := make([]byte, ext4SuperblockBytes)
+	if _, err := io.ReadFull(
+		io.NewSectionReader(file, ext4SuperblockOffset, ext4SuperblockBytes),
+		superblock,
+	); err != nil {
+		return 0, err
+	}
+	if binary.LittleEndian.Uint16(superblock[56:58]) != ext4Magic {
+		return 0, errors.New("scratch filesystem is not ext4")
+	}
+	logBlockSize := binary.LittleEndian.Uint32(superblock[24:28])
+	if logBlockSize > 6 {
+		return 0, fmt.Errorf("invalid ext4 block size shift %d", logBlockSize)
+	}
+	freeBlocks := uint64(binary.LittleEndian.Uint32(superblock[12:16])) |
+		uint64(binary.LittleEndian.Uint32(superblock[0x158:0x15c]))<<32
+	blockSize := uint64(1024) << logBlockSize
+	if freeBlocks > ^uint64(0)/blockSize {
+		return 0, errors.New("ext4 free byte count overflows")
+	}
+	return freeBlocks * blockSize, nil
 }
 
 func runtimeDrives(
@@ -1143,8 +1201,7 @@ func validateReadOnlyDrives(drives []vm.ReadOnlyDrive) error {
 			vm.ManagerDrive,
 			vm.ManagedRuntimeDrive,
 			vm.ToolchainDrive,
-			vm.ProjectDrive,
-			vm.OfflineStoreDrive:
+			vm.BuildTreeDrive:
 		default:
 			return fmt.Errorf(
 				"read-only drive %d ID %q is invalid",
@@ -1612,7 +1669,6 @@ type guestSession struct {
 	stream         vm.Stream
 	opened         bool
 	closed         bool
-	endpoints      map[*hostEndpoint]struct{}
 	machine        *firecracker.Machine
 	machineCancel  context.CancelFunc
 	machineExit    *machineExit
@@ -1626,6 +1682,7 @@ type guestSession struct {
 	readOnlyDrives []vm.ReadOnlyDrive
 	owner          vm.Owner
 	cleaner        vm.Cleaner
+	buildNetwork   bool
 	paused         atomic.Bool
 	once           sync.Once
 	err            error
@@ -1674,94 +1731,6 @@ func (s *guestSession) Open(ctx context.Context) (vm.Session, error) {
 	return s, nil
 }
 
-func (s *guestSession) DialGuest(
-	ctx context.Context,
-	port uint32,
-) (vm.Stream, error) {
-	if ctx == nil {
-		return nil, errors.New("guest dial context is nil")
-	}
-	if port == 0 {
-		return nil, errors.New("guest port is required")
-	}
-	s.mu.Lock()
-	closed := s.closed
-	s.mu.Unlock()
-	if closed {
-		return nil, errors.New("firecracker prepared session is closed")
-	}
-	return (&Connector{cfg: s.cfg}).connectGuestPortAt(
-		ctx,
-		s.vsockHostPath,
-		port,
-		s.machineExit,
-	)
-}
-
-func (s *guestSession) BindHost(
-	ctx context.Context,
-	port uint32,
-) (vm.HostEndpoint, error) {
-	if ctx == nil {
-		return nil, errors.New("host endpoint context is nil")
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if port == 0 {
-		return nil, errors.New("host endpoint port is required")
-	}
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return nil, errors.New("firecracker prepared session is closed")
-	}
-	s.mu.Unlock()
-
-	socketPath := s.vsockHostPath + "_" + strconv.FormatUint(uint64(port), 10)
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{
-		Name: socketPath,
-		Net:  "unix",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("bind firecracker host endpoint for port %d: %w", port, err)
-	}
-	listener.SetUnlinkOnClose(false)
-	fail := func(cause error) (vm.HostEndpoint, error) {
-		return nil, errors.Join(cause, listener.Close(), removeHostEndpoint(socketPath))
-	}
-	if err := os.Chown(socketPath, s.cfg.JailerUID, s.cfg.JailerGID); err != nil {
-		return fail(fmt.Errorf("set firecracker host endpoint owner: %w", err))
-	}
-	if err := os.Chmod(socketPath, 0o600); err != nil {
-		return fail(fmt.Errorf("set firecracker host endpoint mode: %w", err))
-	}
-	if err := ctx.Err(); err != nil {
-		return fail(err)
-	}
-	endpoint := &hostEndpoint{
-		listener: listener,
-		path:     socketPath,
-		streams:  make(map[*hostStream]struct{}),
-	}
-	endpoint.remove = func() {
-		s.mu.Lock()
-		delete(s.endpoints, endpoint)
-		s.mu.Unlock()
-	}
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return fail(errors.New("firecracker prepared session closed while binding host endpoint"))
-	}
-	if s.endpoints == nil {
-		s.endpoints = make(map[*hostEndpoint]struct{})
-	}
-	s.endpoints[endpoint] = struct{}{}
-	s.mu.Unlock()
-	return endpoint, nil
-}
-
 func (s *guestSession) OpenStream(ctx context.Context) (vm.Stream, error) {
 	return (&Connector{cfg: s.cfg}).connectGuestPort(ctx, s.vsockHostPath, s.machineExit)
 }
@@ -1793,6 +1762,20 @@ func (s *guestSession) NetworkFacts() (vm.NetworkFacts, error) {
 	}, nil
 }
 
+func (s *guestSession) BuildNetworkStatus(
+	ctx context.Context,
+) (vm.BuildNetworkStatus, error) {
+	if !s.buildNetwork {
+		return vm.BuildNetworkStatus{}, errors.New(
+			"firecracker session is not a build install guest",
+		)
+	}
+	return (&Connector{cfg: s.cfg}).readBuildNetworkStatus(
+		ctx,
+		s.owner.ID,
+	)
+}
+
 func (s *guestSession) Wait(ctx context.Context) error {
 	if s.machineExit == nil {
 		return errors.New("firecracker session exit watcher is not configured")
@@ -1804,16 +1787,8 @@ func (s *guestSession) Close(ctx context.Context) error {
 	s.once.Do(func() {
 		s.mu.Lock()
 		s.closed = true
-		endpoints := make([]*hostEndpoint, 0, len(s.endpoints))
-		for endpoint := range s.endpoints {
-			endpoints = append(endpoints, endpoint)
-		}
 		stream := s.stream
 		s.mu.Unlock()
-		var endpointErrs []error
-		for _, endpoint := range endpoints {
-			endpointErrs = append(endpointErrs, endpoint.Close())
-		}
 		stopErr := stopSessionMachine(ctx, s.machine, s.machineExit)
 		if s.machineCancel != nil {
 			s.machineCancel()
@@ -1832,135 +1807,12 @@ func (s *guestSession) Close(ctx context.Context) error {
 			cleanupErr = cleanupUnproven(s.owner, errors.New("firecracker session cleaner is not configured"))
 		}
 		s.err = errors.Join(
-			errors.Join(endpointErrs...),
 			streamErr,
 			stopErr,
 			cleanupErr,
 		)
 	})
 	return s.err
-}
-
-type hostEndpoint struct {
-	mu       sync.Mutex
-	listener *net.UnixListener
-	path     string
-	streams  map[*hostStream]struct{}
-	remove   func()
-	once     sync.Once
-	err      error
-}
-
-func (endpoint *hostEndpoint) Accept(ctx context.Context) (vm.Stream, error) {
-	if ctx == nil {
-		return nil, errors.New("host endpoint accept context is nil")
-	}
-	endpoint.mu.Lock()
-	listener := endpoint.listener
-	endpoint.mu.Unlock()
-	if listener == nil {
-		return nil, errors.New("firecracker host endpoint is closed")
-	}
-	if deadline, ok := ctx.Deadline(); ok {
-		if err := listener.SetDeadline(deadline); err != nil {
-			return nil, fmt.Errorf("set host endpoint accept deadline: %w", err)
-		}
-		defer listener.SetDeadline(time.Time{})
-	}
-	stop := context.AfterFunc(ctx, func() {
-		_ = endpoint.Close()
-	})
-	defer stop()
-	conn, err := listener.AcceptUnix()
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
-		}
-		return nil, fmt.Errorf("accept firecracker host endpoint: %w", err)
-	}
-	stream := &hostStream{UnixConn: conn, endpoint: endpoint}
-	endpoint.mu.Lock()
-	if endpoint.listener == nil {
-		endpoint.mu.Unlock()
-		return nil, errors.Join(
-			errors.New("firecracker host endpoint closed while accepting"),
-			conn.Close(),
-		)
-	}
-	endpoint.streams[stream] = struct{}{}
-	endpoint.mu.Unlock()
-	return stream, nil
-}
-
-func (endpoint *hostEndpoint) Close() error {
-	if endpoint == nil {
-		return nil
-	}
-	endpoint.once.Do(func() {
-		endpoint.mu.Lock()
-		listener := endpoint.listener
-		endpoint.listener = nil
-		streams := make([]*hostStream, 0, len(endpoint.streams))
-		for stream := range endpoint.streams {
-			streams = append(streams, stream)
-		}
-		endpoint.mu.Unlock()
-		var streamErrs []error
-		for _, stream := range streams {
-			streamErrs = append(streamErrs, stream.Close())
-		}
-		var listenerErr error
-		if listener != nil {
-			listenerErr = listener.Close()
-			if errors.Is(listenerErr, net.ErrClosed) ||
-				errors.Is(listenerErr, os.ErrClosed) {
-				listenerErr = nil
-			}
-		}
-		endpoint.err = errors.Join(
-			errors.Join(streamErrs...),
-			listenerErr,
-			removeHostEndpoint(endpoint.path),
-		)
-		if endpoint.remove != nil {
-			endpoint.remove()
-		}
-	})
-	return endpoint.err
-}
-
-type hostStream struct {
-	*net.UnixConn
-	endpoint *hostEndpoint
-	once     sync.Once
-	err      error
-}
-
-func (stream *hostStream) Close() error {
-	stream.once.Do(func() {
-		stream.err = stream.UnixConn.Close()
-		if stream.endpoint != nil {
-			stream.endpoint.mu.Lock()
-			delete(stream.endpoint.streams, stream)
-			stream.endpoint.mu.Unlock()
-		}
-	})
-	return stream.err
-}
-
-func removeHostEndpoint(socketPath string) error {
-	if socketPath == "" {
-		return nil
-	}
-	if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove firecracker host endpoint: %w", err)
-	}
-	if _, err := os.Lstat(socketPath); err == nil {
-		return errors.New("firecracker host endpoint remains after removal")
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("verify firecracker host endpoint removal: %w", err)
-	}
-	return nil
 }
 
 func cleanupGuestSessionResources(cleanup func()) {

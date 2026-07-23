@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/imagebuild"
 )
 
 type managerResolverFunc func(
@@ -230,17 +230,17 @@ func TestDeploymentDefinitionManifestProjectsWorkspaceImage(t *testing.T) {
 		Kind:       deployment.DefinitionKindWorkspace,
 		DeclaredID: "workspace",
 		Workspace: &deployment.WorkspaceInputManifest{
-			ImageBuild: builder.ImageBuild{
-				FormatVersion: builder.ImageBuildFormatVersion,
+			ImageBuild: imagebuild.Build{
+				FormatVersion: imagebuild.FormatVersion,
 				Root:          "workspace",
-				Images: []builder.ImageSpec{{
+				Images: []imagebuild.Spec{{
 					Key: "workspace",
-					Platform: builder.ImagePlatform{
+					Platform: imagebuild.Platform{
 						OS:           "linux",
 						Architecture: "x86_64",
 					},
-					Steps: []builder.ImageStep{{
-						From: &builder.ImageFrom{Ref: "alpine:3.23"},
+					Steps: []imagebuild.Step{{
+						From: &imagebuild.From{Ref: "alpine:3.23"},
 					}},
 				}},
 			},
@@ -342,7 +342,7 @@ func controlManagerCapsule() deployment.ManagerCapsule {
 				"bun-v1.3.10/bun-linux-x64-baseline.zip",
 			SizeBytes: 1,
 		},
-		Tree: deployment.ManagerArtifact{
+		Tree: deployment.ArtifactDescriptor{
 			Digest:    "sha256:" + strings.Repeat("2", 64),
 			MediaType: deployment.ManagerTreeMediaType,
 			SizeBytes: 1,

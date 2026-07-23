@@ -23,14 +23,6 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
 
-	var workspaceImageArtifactID uuid.UUID
-	if err := pool.QueryRow(ctx, `
-		SELECT image_artifact_id
-		  FROM deployment_sandboxes
-		 WHERE id = $1
-	`, ids.deploymentSandboxID).Scan(&workspaceImageArtifactID); err != nil {
-		t.Fatal(err)
-	}
 	definitionID := uuid.Must(uuid.NewV7())
 	mustExec(t, ctx, pool, `
 		INSERT INTO deployment_definitions (
@@ -38,7 +30,7 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 			manifest_version, manifest, manifest_digest, workspace_architecture, artifact_id
 		) VALUES ($1, $2, $3, 'workspace', 'substrate-test', 0, '{}'::jsonb,
 		          decode(repeat('01', 32), 'hex'), 'aarch64', $4)
-	`, definitionID, ids.environmentID, ids.deploymentID, workspaceImageArtifactID)
+	`, definitionID, ids.environmentID, ids.deploymentID, ids.workspaceImageArtifactID)
 
 	artifactID := seedRuntimeSubstrateArtifact(t, ctx, pool, ids, "first", 4096)
 	params := db.InsertRuntimeSubstrateParams{
@@ -389,17 +381,17 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 		INSERT INTO runtime_instances (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, runtime_identity_id, deployment_definition_id, worker_epoch,
-			runtime_key_hash, runtime_key, image_digest, image_format, network_policy,
-			reserved_cpu_millis, reserved_memory_bytes, reserved_workload_disk_bytes,
-			reserved_scratch_bytes, reserved_execution_slots, workspace_id, desired_reason
+			network_policy, reserved_cpu_millis, reserved_memory_bytes,
+			reserved_workload_disk_bytes, reserved_scratch_bytes,
+			reserved_execution_slots, workspace_id, desired_reason
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, 1,
-			$10, '{}'::jsonb, $11, 'oci-tar', '{}'::jsonb,
-			1000, 1073741824, 2147483648, 2147483648, 1, $12, 'authority-test'
+			'{}'::jsonb, 1000, 1073741824, 2147483648,
+			2147483648, 1, $10, 'authority-test'
 		)
 	`, runtimeID, orgID, dbtest.DefaultWorkerGroupID, projectID, environmentID,
 		dbtest.DefaultRegionID, workerID, runtimeIdentityID, definitionID,
-		"authority-"+runtimeID.String(), imageDigest, workspaceID)
+		workspaceID)
 	return runtimeSubstrateAuthorityFixture{definitionID: definitionID, workerID: workerID}
 }
 

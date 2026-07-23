@@ -119,7 +119,7 @@ func TestCopyExclusiveBindsDescriptorToCopiedBytes(t *testing.T) {
 }
 
 func toolchainForTest(
-	closure deployment.ManagerArtifact,
+	closure deployment.ArtifactDescriptor,
 ) deployment.Toolchain {
 	return deployment.Toolchain{
 		Architecture:         deployment.ArchitectureX8664,
@@ -142,7 +142,7 @@ func describeForTest(
 	t *testing.T,
 	path,
 	mediaType string,
-) deployment.ManagerArtifact {
+) deployment.ArtifactDescriptor {
 	t.Helper()
 	descriptor, err := describe(path, mediaType)
 	if err != nil {

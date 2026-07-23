@@ -233,7 +233,6 @@ type Querier interface {
 	GetReadyRunCheckpoint(ctx context.Context, arg GetReadyRunCheckpointParams) (RunCheckpoint, error)
 	GetRegion(ctx context.Context, id string) (Region, error)
 	GetRegionByProviderRegion(ctx context.Context, arg GetRegionByProviderRegionParams) (Region, error)
-	GetReusableDeploymentBuild(ctx context.Context, arg GetReusableDeploymentBuildParams) (Deployment, error)
 	GetRevocableInvitation(ctx context.Context, arg GetRevocableInvitationParams) (GetRevocableInvitationRow, error)
 	GetRun(ctx context.Context, arg GetRunParams) (Run, error)
 	GetRunCheckpointSource(ctx context.Context, arg GetRunCheckpointSourceParams) (GetRunCheckpointSourceRow, error)
@@ -356,7 +355,6 @@ type Querier interface {
 	LockAttemptSecretDelivery(ctx context.Context, arg LockAttemptSecretDeliveryParams) ([]LockAttemptSecretDeliveryRow, error)
 	LockClaimedSchedule(ctx context.Context, arg LockClaimedScheduleParams) (Schedule, error)
 	LockCreatingRunCheckpoint(ctx context.Context, arg LockCreatingRunCheckpointParams) (RunCheckpoint, error)
-	LockDeploymentBuildReuseKey(ctx context.Context, reuseKey string) error
 	LockDeploymentBuildTerminalFence(ctx context.Context, arg LockDeploymentBuildTerminalFenceParams) (LockDeploymentBuildTerminalFenceRow, error)
 	LockDeploymentBuildWorkerCertification(ctx context.Context, arg LockDeploymentBuildWorkerCertificationParams) (LockDeploymentBuildWorkerCertificationRow, error)
 	LockEnvironmentForScheduleAdmission(ctx context.Context, environmentID pgtype.UUID) (pgtype.UUID, error)

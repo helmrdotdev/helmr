@@ -35,7 +35,7 @@ const identitySchema: PayloadSchema<JsonValue> = {
   },
 }
 
-describe("greenfield declaration analysis", () => {
+describe("declaration analysis", () => {
   test("emits one deterministic BuildPlan and declaration locator", () => {
     const jobs = queue({ id: "jobs", concurrencyLimit: 3 })
     const payloadTask = task({

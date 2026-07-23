@@ -2,6 +2,7 @@ package deployment
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,7 +23,9 @@ const (
 	BuildFailureManagerUnsupported   = BuildFailureReason("unsupported_manager_protocol")
 	BuildFailureLockfileUnsupported  = BuildFailureReason("unsupported_lockfile_format")
 	BuildFailureUnsupportedToolchain = BuildFailureReason("unsupported_toolchain")
-	BuildFailureDependencyFailed     = BuildFailureReason("dependency_failed")
+	BuildFailureManagerFailed        = BuildFailureReason("manager_failed")
+	BuildFailureNetworkDenied        = BuildFailureReason("build_network_denied")
+	BuildFailureNetworkLimit         = BuildFailureReason("build_network_limit")
 	BuildFailureTransformFailed      = BuildFailureReason("transform_failed")
 	BuildFailureAnalysisFailed       = BuildFailureReason("analysis_failed")
 	BuildFailureInvalidPlan          = BuildFailureReason("invalid_plan")
@@ -34,6 +37,7 @@ const (
 
 	maxBuildResultBytes               = 40 << 20
 	maxBuildFailureMessageBytes       = 16 << 10
+	maxBuildLogBytes                  = 16 << 20
 	maxWorkspaceImageBytes      int64 = 17179869184
 )
 
@@ -45,6 +49,7 @@ type BuildResult struct {
 	Outcome       BuildOutcome `json:"-"`
 	Succeeded     *BuildSucceeded
 	Failed        *BuildFailed
+	Logs          *BuildLogs
 }
 
 type BuildSucceeded struct {
@@ -61,6 +66,13 @@ type BuildFailed struct {
 type BuildError struct {
 	ReasonCode BuildFailureReason `json:"reasonCode"`
 	Message    string             `json:"message"`
+}
+
+type BuildLogs struct {
+	ExitStatus   int32  `json:"exitStatus"`
+	StderrBase64 string `json:"stderrBase64"`
+	StdoutBase64 string `json:"stdoutBase64"`
+	Truncated    bool   `json:"truncated"`
 }
 
 type WorkspaceImage struct {
@@ -138,6 +150,11 @@ func ValidateBuildResultContract(result BuildResult) error {
 	if (result.Succeeded == nil) == (result.Failed == nil) {
 		return errors.New("build result must contain exactly one outcome value")
 	}
+	if result.Logs != nil {
+		if err := validateBuildLogs(*result.Logs); err != nil {
+			return err
+		}
+	}
 	switch result.Outcome {
 	case BuildOutcomeSucceeded:
 		if result.Succeeded == nil {
@@ -212,6 +229,7 @@ func (result BuildResult) MarshalJSON() ([]byte, error) {
 			Plan            BuildPlan        `json:"plan"`
 			Provenance      BuildProvenance  `json:"provenance"`
 			ProgramReceipt  *ProgramReceipt  `json:"programReceipt,omitempty"`
+			Logs            *BuildLogs       `json:"logs,omitempty"`
 			WorkspaceImages []WorkspaceImage `json:"workspaceImages"`
 		}{
 			result.FormatVersion,
@@ -219,6 +237,7 @@ func (result BuildResult) MarshalJSON() ([]byte, error) {
 			result.Succeeded.Plan,
 			result.Succeeded.Provenance,
 			result.Succeeded.ProgramReceipt,
+			result.Logs,
 			result.Succeeded.WorkspaceImages,
 		})
 	case BuildOutcomeFailed:
@@ -229,10 +248,12 @@ func (result BuildResult) MarshalJSON() ([]byte, error) {
 			FormatVersion int          `json:"formatVersion"`
 			Outcome       BuildOutcome `json:"outcome"`
 			Error         BuildError   `json:"error"`
+			Logs          *BuildLogs   `json:"logs,omitempty"`
 		}{
 			result.FormatVersion,
 			result.Outcome,
 			result.Failed.Error,
+			result.Logs,
 		})
 	default:
 		return nil, fmt.Errorf("build result outcome %q is unsupported", result.Outcome)
@@ -260,6 +281,7 @@ func (result *BuildResult) UnmarshalJSON(raw []byte) error {
 			Plan            BuildPlan        `json:"plan"`
 			Provenance      BuildProvenance  `json:"provenance"`
 			ProgramReceipt  *ProgramReceipt  `json:"programReceipt,omitempty"`
+			Logs            *BuildLogs       `json:"logs,omitempty"`
 			WorkspaceImages []WorkspaceImage `json:"workspaceImages"`
 		}
 		if err := decodeClosedBuildResult(raw, &wire); err != nil {
@@ -271,16 +293,19 @@ func (result *BuildResult) UnmarshalJSON(raw []byte) error {
 			ProgramReceipt:  wire.ProgramReceipt,
 			WorkspaceImages: wire.WorkspaceImages,
 		}
+		result.Logs = wire.Logs
 	case BuildOutcomeFailed:
 		var wire struct {
 			FormatVersion int          `json:"formatVersion"`
 			Outcome       BuildOutcome `json:"outcome"`
 			Error         BuildError   `json:"error"`
+			Logs          *BuildLogs   `json:"logs,omitempty"`
 		}
 		if err := decodeClosedBuildResult(raw, &wire); err != nil {
 			return err
 		}
 		result.Failed = &BuildFailed{Error: wire.Error}
+		result.Logs = wire.Logs
 	default:
 		return fmt.Errorf("build result outcome %q is unsupported", header.Outcome)
 	}
@@ -384,7 +409,9 @@ func validateBuildFailed(failed BuildFailed) error {
 		BuildFailureManagerUnsupported,
 		BuildFailureLockfileUnsupported,
 		BuildFailureUnsupportedToolchain,
-		BuildFailureDependencyFailed,
+		BuildFailureManagerFailed,
+		BuildFailureNetworkDenied,
+		BuildFailureNetworkLimit,
 		BuildFailureTransformFailed,
 		BuildFailureAnalysisFailed,
 		BuildFailureInvalidPlan,
@@ -401,6 +428,24 @@ func validateBuildFailed(failed BuildFailed) error {
 			"build failure message must be nonblank UTF-8 of at most %d bytes",
 			maxBuildFailureMessageBytes,
 		)
+	}
+	return nil
+}
+
+func validateBuildLogs(logs BuildLogs) error {
+	stdout, err := base64.StdEncoding.DecodeString(logs.StdoutBase64)
+	if err != nil {
+		return errors.New("build logs stdoutBase64 is invalid")
+	}
+	stderr, err := base64.StdEncoding.DecodeString(logs.StderrBase64)
+	if err != nil {
+		return errors.New("build logs stderrBase64 is invalid")
+	}
+	if len(stdout)+len(stderr) > maxBuildLogBytes {
+		return fmt.Errorf("build logs exceed %d decoded bytes", maxBuildLogBytes)
+	}
+	if logs.ExitStatus < -1 || logs.ExitStatus > 255 {
+		return errors.New("build logs exitStatus is outside [-1,255]")
 	}
 	return nil
 }

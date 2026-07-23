@@ -578,11 +578,11 @@ func runtimeELFInterpreter(file *elf.File) (string, bool, error) {
 		if count > 1 {
 			return "", false, fmt.Errorf("ELF declares multiple interpreters")
 		}
-		raw, err := io.ReadAll(io.LimitReader(program.Open(), maxMountedPackagePath+1))
+		raw, err := io.ReadAll(io.LimitReader(program.Open(), maxMountedArtifactPathBytes+1))
 		if err != nil {
 			return "", false, fmt.Errorf("read ELF interpreter: %w", err)
 		}
-		if len(raw) == 0 || len(raw) > maxMountedPackagePath || raw[len(raw)-1] != 0 {
+		if len(raw) == 0 || len(raw) > maxMountedArtifactPathBytes || raw[len(raw)-1] != 0 {
 			return "", false, fmt.Errorf("ELF interpreter is not a bounded NUL-terminated path")
 		}
 		value := string(raw[:len(raw)-1])

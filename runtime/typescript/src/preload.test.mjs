@@ -3,16 +3,25 @@ import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 
 const source = await readFile(new URL("./preload.mjs", import.meta.url), "utf8");
 const execFileAsync = promisify(execFile);
-const moduleURL = `data:text/javascript;base64,${
-  Buffer.from(source.replace(/\nregisterHooks\(createHooks\(\)\);\n$/, "\n")).toString("base64")
-}`;
-const { createHooks } = await import(moduleURL);
+const hooksRoot = await mkdtemp(join(tmpdir(), "helmr-preload-hooks-"));
+const hooksPath = join(hooksRoot, "hooks.mjs");
+await writeFile(
+  hooksPath,
+  source
+    .replace(
+      'import { registerHooks } from "node:module";',
+      "const registerHooks = () => {};",
+    )
+    .replace(/\nregisterHooks\(createHooks\(\)\);\n$/, "\n"),
+);
+const { createHooks } = await import(pathToFileURL(hooksPath).href);
+after(() => rm(hooksRoot, { force: true, recursive: true }));
 
 test("executes imported TypeScript without generated sidecars", async (context) => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "helmr-preload-")));
@@ -44,7 +53,7 @@ test("executes imported TypeScript without generated sidecars", async (context) 
     ].join("\n"),
   );
 
-  await execFileAsync(process.execPath, [
+  await execFileAsync("node", [
     "--experimental-transform-types",
     "--import",
     pathToFileURL(join(root, "preload.mjs")).href,

@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -172,4 +174,84 @@ func appendDeploymentLifecycleEvent(ctx context.Context, store deploymentEventAp
 		RedactionClass: "internal",
 	})
 	return err
+}
+
+func appendDeploymentBuildLogs(
+	ctx context.Context,
+	store deploymentEventAppender,
+	orgID pgtype.UUID,
+	projectID pgtype.UUID,
+	environmentID pgtype.UUID,
+	deploymentID pgtype.UUID,
+	logs deployment.BuildLogs,
+) error {
+	const chunkBytes = 256 << 10
+	metadata, err := json.Marshal(struct {
+		ExitStatus int32 `json:"exitStatus"`
+		Truncated  bool  `json:"truncated"`
+	}{
+		ExitStatus: logs.ExitStatus,
+		Truncated:  logs.Truncated,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := store.AppendDeploymentEvent(ctx, db.AppendDeploymentEventParams{
+		OrgID:          orgID,
+		ProjectID:      projectID,
+		EnvironmentID:  environmentID,
+		DeploymentID:   deploymentID,
+		Category:       "build",
+		Severity:       "info",
+		Source:         "worker",
+		Kind:           "deployment.build.exit",
+		Message:        "Package manager exited",
+		Payload:        metadata,
+		RedactionClass: "sensitive",
+	}); err != nil {
+		return err
+	}
+	for _, stream := range []struct {
+		name    string
+		encoded string
+	}{
+		{name: "stdout", encoded: logs.StdoutBase64},
+		{name: "stderr", encoded: logs.StderrBase64},
+	} {
+		content, err := base64.StdEncoding.DecodeString(stream.encoded)
+		if err != nil {
+			return fmt.Errorf("decode deployment build %s: %w", stream.name, err)
+		}
+		for offset := 0; offset < len(content); offset += chunkBytes {
+			end := min(offset+chunkBytes, len(content))
+			payload, err := json.Marshal(struct {
+				ContentBase64 string `json:"contentBase64"`
+				Offset        int    `json:"offset"`
+				Stream        string `json:"stream"`
+			}{
+				ContentBase64: base64.StdEncoding.EncodeToString(content[offset:end]),
+				Offset:        offset,
+				Stream:        stream.name,
+			})
+			if err != nil {
+				return err
+			}
+			if _, err := store.AppendDeploymentEvent(ctx, db.AppendDeploymentEventParams{
+				OrgID:          orgID,
+				ProjectID:      projectID,
+				EnvironmentID:  environmentID,
+				DeploymentID:   deploymentID,
+				Category:       "build",
+				Severity:       "info",
+				Source:         "worker",
+				Kind:           "deployment.build.log",
+				Message:        stream.name,
+				Payload:        payload,
+				RedactionClass: "sensitive",
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

@@ -3,7 +3,7 @@
 Runnable Helmr task projects live here. Each example is a small project that
 shows one customer-facing workflow.
 
-Most sandbox images here use Node as the TypeScript task runtime and install
+Most Workspace images here use Node as the TypeScript task runtime and install
 task project dependencies with the package manager declared in `package.json`.
 The examples install Bun explicitly as the package manager; task code itself
 runs on the image-provided `node` executable.
@@ -17,13 +17,10 @@ absolute paths keep normal Linux container semantics.
 
 ## Included Examples
 
-- `hello-world` — the smallest task shape: image, sandbox, payload, workspace output.
+- `hello-world` — the smallest Task and Workspace shape with payload and file output.
 - `dependency-cache` — dependency-layer image builds with a runtime workspace report.
-- `cli-tooling` — install a CLI in the sandbox image and run it against the workspace.
-- `human-in-the-loop` — generic token-backed human decision workflows.
-- `slack-approval` — app-owned Slack buttons backed by external-id session input.
-- `resend-email-approval` — app-owned Resend email links backed by Helmr tokens.
-- `task-secrets` — declared task secrets resolved from the selected project environment.
-- `github-pr-review` — a GitHub PR workflow with a human-approved write action.
+- `cli-tooling` — install a CLI in the Workspace image and run it against the Workspace.
+- `task-secrets` — read a Secret attached when the Workspace is created.
+- `github-pr-review` — inspect a GitHub pull request and return a review summary.
 
 Runtime contract task project fixtures live under `fixtures/`, not here.

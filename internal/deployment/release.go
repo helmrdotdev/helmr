@@ -153,7 +153,7 @@ type runtimeReleaseSnapshotter func(
 type toolchainReleaseSnapshotter func(
 	context.Context,
 	string,
-	ManagerArtifact,
+	ArtifactDescriptor,
 	io.Reader,
 ) (*toolchainSnapshot, error)
 
@@ -1168,7 +1168,7 @@ func capturePredecessorToolchainObjects(
 		captured, err := snapshot(
 			ctx,
 			scratchDirectory,
-			ManagerArtifact(descriptor),
+			ArtifactDescriptor(descriptor),
 			source,
 		)
 		if err != nil {
@@ -1202,7 +1202,7 @@ func validateCapturedToolchainObjects(
 				descriptor.Digest,
 			)
 		}
-		if snapshot.descriptor != ManagerArtifact(descriptor) {
+		if snapshot.descriptor != ArtifactDescriptor(descriptor) {
 			return fmt.Errorf(
 				"captured standard-toolchain object %q descriptor drifted",
 				descriptor.Digest,

@@ -117,8 +117,8 @@ func (c buildConsumer) Claim(ctx context.Context) (Work, bool, error) {
 	if err := validateBuildLeaseShape(r.capabilities, lease); err != nil {
 		return nil, true, r.rejectBuild(ctx, lease, "requirements_unsupported", err)
 	}
-	if r.deploymentBuilder == nil {
-		err := errors.New("deployment builder is not configured")
+	if r.buildExecutor == nil {
+		err := errors.New("build executor is not configured")
 		return nil, true, r.rejectBuild(ctx, lease, "builder_unavailable", err)
 	}
 	if !lease.ExpiresAt.Add(-r.deploymentBuildCompletionGrace).After(time.Now()) {
@@ -250,12 +250,12 @@ func (r *Runner) executeStartedBuild(ctx context.Context, lease api.WorkerDeploy
 	renewDone := make(chan error, 1)
 	go func() { renewDone <- r.renewBuildUntilDone(buildCtx, leaseState) }()
 	type buildOutcome struct {
-		result api.WorkerDeploymentBuildResult
+		result json.RawMessage
 		err    error
 	}
 	resultDone := make(chan buildOutcome, 1)
 	go func() {
-		result, err := r.deploymentBuilder.BuildDeployment(buildCtx, lease, deployment)
+		result, err := r.buildExecutor.Build(buildCtx, lease, deployment)
 		resultDone <- buildOutcome{result: result, err: err}
 	}()
 	var outcome buildOutcome
@@ -273,9 +273,8 @@ func (r *Runner) executeStartedBuild(ctx context.Context, lease api.WorkerDeploy
 		if isStaleLease(renewErr) {
 			return nil
 		}
-		if outcome.err == nil && outcome.result.Error == nil {
-			message := "deployment build lease renewal failed: " + renewErr.Error()
-			outcome.result.Error = &message
+		if outcome.err == nil {
+			outcome.err = fmt.Errorf("renew deployment build lease: %w", renewErr)
 		}
 	}
 	if outcome.err != nil {

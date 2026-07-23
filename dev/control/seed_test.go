@@ -72,48 +72,22 @@ func TestDevSeedWithFreshPostgres(t *testing.T) {
 		t.Fatalf("seed should be idempotent: %v", err)
 	}
 
-	var runs int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM runs WHERE org_id = '00000000-0000-0000-0000-000000000201'`).Scan(&runs); err != nil {
-		t.Fatal(err)
-	}
-	if runs != 4 {
-		t.Fatalf("seeded runs = %d, want 4", runs)
-	}
-	var placementLeaks int
+	var projects, environments, deployments int
 	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM information_schema.columns
-		 WHERE table_schema = 'public'
-		   AND table_name = ANY($1::text[])
-		   AND column_name IN ('worker_group_id', 'build_worker_group_id')
-	`, []string{"deployments", "workspaces", "sessions", "runs", "session_runs"}).Scan(&placementLeaks); err != nil {
+		SELECT
+		    (SELECT count(*) FROM projects WHERE org_id = '00000000-0000-0000-0000-000000000201'),
+		    (SELECT count(*) FROM environments WHERE org_id = '00000000-0000-0000-0000-000000000201'),
+		    (SELECT count(*) FROM deployments WHERE org_id = '00000000-0000-0000-0000-000000000201')
+	`).Scan(&projects, &environments, &deployments); err != nil {
 		t.Fatal(err)
 	}
-	if placementLeaks != 0 {
-		t.Fatalf("logical placement columns = %d, want 0", placementLeaks)
-	}
-	var invalidArtifactMediaTypes int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM artifacts
-		 WHERE id = ANY($1::uuid[])
-		   AND media_type <> CASE kind
-		       WHEN 'deployment_manifest' THEN 'application/vnd.helmr.deployment-manifest.v0+json'
-		       WHEN 'task_bundle' THEN 'application/vnd.helmr.task-bundle.v0+proto'
-		       WHEN 'sandbox_image' THEN 'application/vnd.helmr.sandbox-image.v0.oci-tar'
-		       WHEN 'workspace_version' THEN 'application/vnd.helmr.workspace.v0.tar'
-		       ELSE media_type
-		   END
-	`, []string{
-		"00000000-0000-0000-0000-000000000502",
-		"00000000-0000-0000-0000-000000000503",
-		"00000000-0000-0000-0000-000000000504",
-		"00000000-0000-0000-0000-000000000505",
-	}).Scan(&invalidArtifactMediaTypes); err != nil {
-		t.Fatal(err)
-	}
-	if invalidArtifactMediaTypes != 0 {
-		t.Fatalf("seeded artifacts with invalid media types = %d, want 0", invalidArtifactMediaTypes)
+	if projects != 1 || environments != 2 || deployments != 0 {
+		t.Fatalf(
+			"seeded projects/environments/deployments = %d/%d/%d, want 1/2/0",
+			projects,
+			environments,
+			deployments,
+		)
 	}
 }
 

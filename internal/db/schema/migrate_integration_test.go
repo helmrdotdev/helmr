@@ -634,53 +634,6 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 	if !definitionTable {
 		t.Fatal("deployment_definitions table was not created")
 	}
-	var obsoleteProjectionTables int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM unnest($1::text[]) AS table_name
-		 WHERE to_regclass('public.' || table_name) IS NOT NULL
-	`, []string{
-		"deployment_tasks",
-		"deployment_sandboxes",
-		"deployment_queues",
-		"deployment_streams",
-		"tasks",
-		"sessions",
-		"session_runs",
-		"session_continuation_requests",
-		"run_operations",
-		"run_state_snapshots",
-		"waits",
-		"task_schedules",
-		"task_schedule_instances",
-		"streams",
-		"stream_records",
-		"workspace_process_stream_chunks",
-		"workspace_process_stream_receipts",
-		"workspace_process_operations",
-		"actor_channels",
-		"actor_inputs",
-		"actor_outputs",
-		"workspace_handoffs",
-		"definitions",
-		"queues",
-		"deployment_queues",
-		"schedule_definitions",
-		"schedule_revisions",
-		"schedule_fires",
-		"schedule_leases",
-		"secret_grants",
-		"secret_histories",
-		"outbox_attempts",
-		"batches",
-		"batch_members",
-		"wait_groups",
-	}).Scan(&obsoleteProjectionTables); err != nil {
-		t.Fatal(err)
-	}
-	if obsoleteProjectionTables != 0 {
-		t.Fatalf("obsolete deployment projection tables = %d, want 0", obsoleteProjectionTables)
-	}
 	requiredExecutionTables := []string{
 		"deployment_definitions",
 		"lookup_hmac_versions",
@@ -910,15 +863,15 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		('00000000-0000-0000-0000-000000003001', 'env_' || repeat('c', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', 'definition-one', 'Definition One', '#112233'),
 		('00000000-0000-0000-0000-000000003002', 'env_' || repeat('d', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', 'definition-two', 'Definition Two', '#445566');
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES
-		('00000000-0000-0000-0000-000000001000', 'sha256:definition-source-one', 1, 'application/x-tar'),
-		('00000000-0000-0000-0000-000000001000', 'sha256:definition-source-two', 1, 'application/x-tar'),
+		('00000000-0000-0000-0000-000000001000', 'sha256:definition-source-one', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
+		('00000000-0000-0000-0000-000000001000', 'sha256:definition-source-two', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
 		('00000000-0000-0000-0000-000000001000', 'sha256:definition-program-code', 1, 'application/vnd.helmr.deployment-program-code.v0+squashfs'),
 		('00000000-0000-0000-0000-000000001000', 'sha256:definition-program-dependencies', 1, 'application/vnd.helmr.deployment-program-dependencies.v0+squashfs'),
 		('00000000-0000-0000-0000-000000001000', 'sha256:definition-workspace-one', 1, 'application/vnd.helmr.workspace-image.v0.oci-tar'),
 		('00000000-0000-0000-0000-000000001000', 'sha256:definition-workspace-two', 1, 'application/vnd.helmr.workspace-image.v0.oci-tar');
 		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type) VALUES
-		('00000000-0000-0000-0000-000000004001', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:definition-source-one', 'deployment_source', 1, 'application/x-tar'),
-		('00000000-0000-0000-0000-000000004002', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'sha256:definition-source-two', 'deployment_source', 1, 'application/x-tar'),
+		('00000000-0000-0000-0000-000000004001', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:definition-source-one', 'deployment_source', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
+		('00000000-0000-0000-0000-000000004002', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'sha256:definition-source-two', 'deployment_source', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
 		('00000000-0000-0000-0000-000000004003', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:definition-program-code', 'deployment_program_code', 1, 'application/vnd.helmr.deployment-program-code.v0+squashfs'),
 		('00000000-0000-0000-0000-000000004004', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:definition-workspace-one', 'workspace_image', 1, 'application/vnd.helmr.workspace-image.v0.oci-tar'),
 		('00000000-0000-0000-0000-000000004005', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'sha256:definition-workspace-two', 'workspace_image', 1, 'application/vnd.helmr.workspace-image.v0.oci-tar'),
@@ -967,7 +920,7 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		    '00000000-0000-0000-0000-000000004001'
 		)
 	`, maxRegionID); err != nil {
-		t.Fatalf("insert maximum-width deployment reuse tuple: %v", err)
+		t.Fatalf("insert deployment with maximum-width build pins: %v", err)
 	}
 	for _, invalidRegionID := range []string{
 		strings.Repeat("r", 256),
@@ -992,29 +945,6 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 			 WHERE id = '00000000-0000-0000-0000-000000005005'
 		`, column), value)
 	}
-
-	assertStatementRejected(t, ctx, tx, `
-		INSERT INTO deployments (
-		    id, public_id, org_id, project_id, environment_id, build_region_id,
-		    build_architecture, build_runtime_digest, build_standard_toolchain_digest,
-		    build_contract_version, version, content_hash,
-		    deployment_source_artifact_id
-		) VALUES (
-		    '00000000-0000-0000-0000-000000005004',
-		    'dep_' || repeat('b', 26),
-		    '00000000-0000-0000-0000-000000001000',
-		    '00000000-0000-0000-0000-000000002000',
-		    '00000000-0000-0000-0000-000000003001',
-		    'definition-region',
-		    'x86_64',
-		    decode(repeat('01', 32), 'hex'),
-		    decode(repeat('11', 32), 'hex'),
-		    'helmr.program-build.v0',
-		    'definition-one-duplicate',
-		    'sha256:' || repeat('1', 64),
-		    '00000000-0000-0000-0000-000000004001'
-		)
-	`)
 
 	assertStatementRejected(t, ctx, tx, `
 		UPDATE deployments
@@ -1113,7 +1043,7 @@ func assertStatementRejected(t *testing.T, ctx context.Context, tx pgx.Tx, query
 		t.Fatal(err)
 	}
 	if statementErr == nil {
-		t.Fatal("statement unexpectedly satisfied authority constraints")
+		t.Fatalf("statement unexpectedly satisfied authority constraints:\n%s", strings.TrimSpace(query))
 	}
 }
 

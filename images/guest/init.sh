@@ -86,7 +86,10 @@ configure_process_limit() {
 	esac
 	mkdir -p /sys/fs/cgroup
 	is_mounted /sys/fs/cgroup || mount -t cgroup2 cgroup2 /sys/fs/cgroup
-	if [ "$profile" != dependency ]; then
+	case "$profile" in
+		build-install|build-analyze|program-proof)
+			;;
+		*)
 		if ! grep -qw pids /sys/fs/cgroup/cgroup.controllers; then
 			echo "pids controller unavailable" >&2
 			exit 1
@@ -100,7 +103,8 @@ configure_process_limit() {
 			exit 1
 		fi
 		return 0
-	fi
+			;;
+	esac
 	for controller in cpu memory pids; do
 		if ! grep -qw "$controller" /sys/fs/cgroup/cgroup.controllers; then
 			echo "$controller controller unavailable" >&2
@@ -109,14 +113,9 @@ configure_process_limit() {
 	done
 	echo "+cpu +memory +pids" > /sys/fs/cgroup/cgroup.subtree_control
 	mkdir /sys/fs/cgroup/helmr
-	echo "$limit" > /sys/fs/cgroup/helmr/pids.max
 	echo "+cpu +memory +pids" > /sys/fs/cgroup/helmr/cgroup.subtree_control
 	mkdir /sys/fs/cgroup/helmr/supervisor
 	echo $$ > /sys/fs/cgroup/helmr/supervisor/cgroup.procs
-	if [ "$(cat /sys/fs/cgroup/helmr/pids.max)" != "$limit" ]; then
-		echo "Helmr process limit was not applied" >&2
-		exit 1
-	fi
 	for controller in cpu memory pids; do
 		if ! grep -qw "$controller" /sys/fs/cgroup/helmr/cgroup.subtree_control; then
 			echo "$controller controller was not delegated" >&2
@@ -316,7 +315,7 @@ guest_profile() {
 		return 1
 	fi
 	case "$profile" in
-		""|manager-acquire|dependency)
+		""|manager-acquire|build-install|build-analyze|program-proof)
 			echo "$profile"
 			;;
 		*)
@@ -454,6 +453,8 @@ if [ -z "$profile" ]; then
 	mount_substrate
 	mount_program
 	configure_network
+elif [ "$profile" = build-install ]; then
+	configure_network
 else
 	configure_isolated_network
 fi
@@ -464,10 +465,6 @@ if [ -f /etc/helmr/checkpoint-storage-telemetry ]; then
 	export HELMR_CHECKPOINT_STORAGE_TELEMETRY=1
 fi
 set -- /usr/bin/guestd \
-	--adapter-runtime-path /usr/bin/node \
-	--adapter-register-path /opt/helmr/adapter/register.mjs \
-	--adapter-path /opt/helmr/adapter/main.js \
-	--adapter-bundle-path /opt/helmr-adapter \
 	--vsock-port 5000 \
 	--health-port 5001
 if [ -n "$profile" ]; then

@@ -21,47 +21,6 @@ type contractFixture struct {
 		Name     string `json:"name"`
 		Mutation string `json:"mutation"`
 	} `json:"programRejections"`
-	DependencyIndex struct {
-		Canonical string `json:"canonical"`
-	} `json:"dependencyIndex"`
-	DependencyIndexRejections []struct {
-		Name     string `json:"name"`
-		Mutation string `json:"mutation"`
-	} `json:"dependencyIndexRejections"`
-	DependencyIndexRawRejections []struct {
-		Name     string `json:"name"`
-		Mutation string `json:"mutation"`
-	} `json:"dependencyIndexRawRejections"`
-	DependencyCacheInput struct {
-		Canonical string `json:"canonical"`
-		Key       string `json:"key"`
-	} `json:"dependencyCacheInput"`
-	DependencyCacheInputRejections []struct {
-		Name     string `json:"name"`
-		Mutation string `json:"mutation"`
-	} `json:"dependencyCacheInputRejections"`
-	PackageGraph struct {
-		Canonical         string `json:"canonical"`
-		DigestHex         string `json:"digestHex"`
-		RootOnlyCanonical string `json:"rootOnlyCanonical"`
-		RootOnlyDigestHex string `json:"rootOnlyDigestHex"`
-	} `json:"packageGraph"`
-	PackageGraphRejections []struct {
-		Name     string `json:"name"`
-		Mutation string `json:"mutation"`
-	} `json:"packageGraphRejections"`
-	PackageGraphRawRejections []struct {
-		Name     string `json:"name"`
-		Mutation string `json:"mutation"`
-	} `json:"packageGraphRawRejections"`
-	LocalManifests struct {
-		Canonical string `json:"canonical"`
-		DigestHex string `json:"digestHex"`
-	} `json:"localManifests"`
-	LocalManifestsRejections []struct {
-		Name     string `json:"name"`
-		Mutation string `json:"mutation"`
-	} `json:"localManifestsRejections"`
 	Manifest struct {
 		Input     string `json:"input"`
 		Canonical string `json:"canonical"`

@@ -25,9 +25,7 @@ type deploymentStore interface {
 	AppendDeploymentEvent(context.Context, db.AppendDeploymentEventParams) (db.AppendDeploymentEventRow, error)
 	CreateArtifact(context.Context, db.CreateArtifactParams) (db.Artifact, error)
 	CreateDeployment(context.Context, db.CreateDeploymentParams) (db.Deployment, error)
-	GetReusableDeploymentBuild(context.Context, db.GetReusableDeploymentBuildParams) (db.Deployment, error)
 	ListArtifactsByIDs(context.Context, db.ListArtifactsByIDsParams) ([]db.Artifact, error)
-	LockDeploymentBuildReuseKey(context.Context, string) error
 	UpsertCasObject(context.Context, db.UpsertCasObjectParams) (db.CasObject, error)
 }
 
@@ -250,27 +248,6 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, buildRe
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	reuseDescriptor := deployment.ReuseDescriptor{
-		FormatVersion:           deployment.ReuseFormatVersion,
-		OrgID:                   orgID.String(),
-		ProjectID:               pgvalue.MustUUIDValue(projectID).String(),
-		EnvironmentID:           pgvalue.MustUUIDValue(environmentID).String(),
-		BuildRegionID:           buildRegionID,
-		ContentHash:             contentHash,
-		APIVersion:              metadata.APIVersion,
-		SDKVersion:              metadata.SDKVersion,
-		CLIVersion:              metadata.CLIVersion,
-		BundleFormatVersion:     metadata.BundleFormatVersion,
-		WorkerProtocolVersion:   metadata.WorkerProtocolVersion,
-		Architecture:            target.Runtime.Architecture,
-		BuildContractVersion:    target.BuildContractVersion,
-		RuntimeDigest:           target.Runtime.Digest,
-		StandardToolchainDigest: target.StandardToolchainDigest,
-	}
-	reuseKey, err := deployment.ReuseKey(reuseDescriptor)
-	if err != nil {
-		return api.DeploymentResponse{}, err
-	}
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		OrgID:     pgvalue.UUID(orgID),
 		Digest:    artifact.Digest,
@@ -279,28 +256,7 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, buildRe
 	}); err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	if err := store.LockDeploymentBuildReuseKey(ctx, reuseKey); err != nil {
-		return api.DeploymentResponse{}, err
-	}
-	deployment, err := store.GetReusableDeploymentBuild(ctx, db.GetReusableDeploymentBuildParams{
-		OrgID:                        pgvalue.UUID(orgID),
-		BuildRegionID:                buildRegionID,
-		ProjectID:                    projectID,
-		EnvironmentID:                environmentID,
-		ContentHash:                  contentHash,
-		ApiVersion:                   metadata.APIVersion,
-		SdkVersion:                   metadata.SDKVersion,
-		CliVersion:                   metadata.CLIVersion,
-		BundleFormatVersion:          metadata.BundleFormatVersion,
-		WorkerProtocolVersion:        metadata.WorkerProtocolVersion,
-		BuildArchitecture:            string(target.Runtime.Architecture),
-		BuildRuntimeDigest:           runtimeDigest,
-		BuildStandardToolchainDigest: toolchainDigest,
-		BuildContractVersion:         target.BuildContractVersion,
-	})
-	if isNoRows(err) {
-		deployment, err = createQueuedDeployment(ctx, store, buildRegionID, target, runtimeDigest, toolchainDigest, orgID, projectID, environmentID, contentHash, artifact, metadata)
-	}
+	deployment, err := createQueuedDeployment(ctx, store, buildRegionID, target, runtimeDigest, toolchainDigest, orgID, projectID, environmentID, contentHash, artifact, metadata)
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
@@ -346,7 +302,6 @@ func createQueuedDeployment(ctx context.Context, store deploymentStore, buildReg
 			ApiVersion:                   metadata.APIVersion,
 			SdkVersion:                   metadata.SDKVersion,
 			CliVersion:                   metadata.CLIVersion,
-			BundleFormatVersion:          metadata.BundleFormatVersion,
 			WorkerProtocolVersion:        metadata.WorkerProtocolVersion,
 			ContentHash:                  contentHash,
 			DeploymentSourceArtifactID:   sourceArtifact.ID,
@@ -400,7 +355,6 @@ func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceA
 		APIVersion:            deployment.ApiVersion,
 		SDKVersion:            deployment.SdkVersion,
 		CLIVersion:            deployment.CliVersion,
-		BundleFormatVersion:   deployment.BundleFormatVersion,
 		WorkerProtocolVersion: deployment.WorkerProtocolVersion,
 		ProjectID:             pgvalue.MustUUIDValue(deployment.ProjectID).String(),
 		EnvironmentID:         pgvalue.MustUUIDValue(deployment.EnvironmentID).String(),
@@ -482,14 +436,6 @@ func deploymentErrorResponse(raw []byte) *api.DeploymentErrorResponse {
 		}
 	}
 	return nil
-}
-
-func int8Response(value pgtype.Int8) *int32 {
-	if !value.Valid {
-		return nil
-	}
-	out := int32(value.Int64)
-	return &out
 }
 
 func writeDeploymentError(w http.ResponseWriter, s *Server, err error) {

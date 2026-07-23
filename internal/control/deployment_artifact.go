@@ -15,7 +15,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -28,7 +27,6 @@ type deploymentVersionMetadata struct {
 	APIVersion            string
 	SDKVersion            string
 	CLIVersion            string
-	BundleFormatVersion   int32
 	WorkerProtocolVersion string
 }
 
@@ -169,13 +167,6 @@ func deploymentMetadataFromRequest(r *http.Request, request api.CreateDeployment
 	if apiVersion != api.CurrentAPIVersion {
 		return deploymentVersionMetadata{}, fmt.Errorf("unsupported deployment api_version %q; current version is %s", apiVersion, api.CurrentAPIVersion)
 	}
-	bundleFormatVersion := request.BundleFormatVersion
-	if bundleFormatVersion == 0 {
-		bundleFormatVersion = api.CurrentBundleFormatVersion
-	}
-	if bundleFormatVersion != api.CurrentBundleFormatVersion {
-		return deploymentVersionMetadata{}, fmt.Errorf("unsupported bundle_format_version %d; current version is %d", bundleFormatVersion, api.CurrentBundleFormatVersion)
-	}
 	workerProtocolVersion := firstPresentString(request.WorkerProtocolVersion, api.CurrentWorkerProtocolVersion)
 	if workerProtocolVersion != api.CurrentWorkerProtocolVersion {
 		return deploymentVersionMetadata{}, fmt.Errorf("unsupported worker_protocol_version %q; current version is %s", workerProtocolVersion, api.CurrentWorkerProtocolVersion)
@@ -199,7 +190,6 @@ func deploymentMetadataFromRequest(r *http.Request, request api.CreateDeployment
 		APIVersion:            apiVersion,
 		SDKVersion:            sdkVersion,
 		CLIVersion:            cliVersion,
-		BundleFormatVersion:   bundleFormatVersion,
 		WorkerProtocolVersion: workerProtocolVersion,
 	}, nil
 }
@@ -316,12 +306,7 @@ func validateDeploymentSourceArtifactArchive(archivePath string) error {
 		return fmt.Errorf("open deployment source artifact: %w", err)
 	}
 	defer file.Close()
-	destination, err := os.MkdirTemp("", "helmr-deployment-source-validate-*")
-	if err != nil {
-		return fmt.Errorf("create deployment source validation directory: %w", err)
-	}
-	defer os.RemoveAll(destination)
-	if err := archive.ExtractTar(file, destination); err != nil {
+	if _, err := deployment.InspectSource(file); err != nil {
 		return err
 	}
 	return nil

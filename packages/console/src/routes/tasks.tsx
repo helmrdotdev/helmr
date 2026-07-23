@@ -3,7 +3,7 @@ import { createQuery } from "@tanstack/solid-query";
 import { createMemo, For, Show } from "solid-js";
 import { formatRelative } from "../features/runs/display";
 import { ApiError } from "../lib/api";
-import { getCurrentDeployment, type Deployment, type DeploymentStatus, type DeploymentTask } from "../lib/deployments";
+import { getCurrentDeployment, type Deployment, type DeploymentStatus } from "../lib/deployments";
 import { useScope } from "../lib/scope";
 import { statusBadgeClass, ui } from "../ui/styles";
 
@@ -52,17 +52,11 @@ function deploymentTime(deployment: Deployment): { label: string; value: string 
   return { label: "Created", value: deployment.created_at };
 }
 
-function TaskRow(props: { task: DeploymentTask }) {
-  const sessionsHref = createMemo(() => `/sessions?${new URLSearchParams({ task_id: props.task.task_id }).toString()}`);
+function TaskRow(props: { task: string }) {
+  const sessionsHref = createMemo(() => `/sessions?${new URLSearchParams({ task_id: props.task }).toString()}`);
   return (
     <tr>
-      <td><strong class="font-medium text-console-text">{props.task.task_id}</strong></td>
-      <td><code>{props.task.file_path || "-"}</code></td>
-      <td><code>{props.task.export_name || "-"}</code></td>
-      <td><code>{props.task.handler_entrypoint || "-"}</code></td>
-      <td><code>{shortDigest(props.task.bundle_digest || "")}</code></td>
-      <td><span class={ui.muted}>{formatRelative(props.task.created_at)}</span></td>
-      <td><code>{shortID(props.task.id)}</code></td>
+      <td><strong class="font-medium text-console-text">{props.task}</strong></td>
       <td>
         <A href={sessionsHref()} class={"font-mono text-[11.5px] text-console-accent hover:text-console-accent-hover"}>
           Sessions
@@ -163,26 +157,14 @@ export function Tasks() {
                     <strong class="font-medium text-console-text">{formatRelative(deploymentTime(currentDeployment()).value)}</strong>
                   </span>
                   <span>Source <code>{shortDigest(currentDeployment().deployment_source.digest)}</code></span>
-                  <Show when={currentDeployment().build_manifest_digest}>
-                    {(digest) => <span>Build manifest <code>{shortDigest(digest())}</code></span>}
-                  </Show>
-                  <Show when={currentDeployment().deployment_manifest_digest}>
-                    {(digest) => <span>Deployment manifest <code>{shortDigest(digest())}</code></span>}
-                  </Show>
-                    <span>Deployment <code>{shortID(currentDeployment().id)}</code></span>
-                  </div>
+                  <span>Deployment <code>{shortID(currentDeployment().id)}</code></span>
+                </div>
 
                   <div class={ui.tableWrap}>
                     <table class={ui.dataTable}>
                       <thead>
                         <tr>
                           <th>Task</th>
-                          <th>File</th>
-                          <th>Export</th>
-                          <th>Handler</th>
-                          <th>Bundle</th>
-                          <th>Created</th>
-                          <th>ID</th>
                           <th>History</th>
                         </tr>
                       </thead>
@@ -191,7 +173,7 @@ export function Tasks() {
                           each={tasks()}
                           fallback={
                             <tr>
-                              <td colSpan={8}>
+                              <td colSpan={2}>
                                 <span class={ui.muted}>No task entries are available for this deployment yet.</span>
                               </td>
                             </tr>
