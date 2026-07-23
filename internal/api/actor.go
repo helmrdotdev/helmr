@@ -169,6 +169,27 @@ type ListActorsResponse struct {
 	NextCursor string        `json:"next_cursor,omitempty"`
 }
 
+type ActorOutputProvenance struct {
+	RunID         string `json:"run_id"`
+	AttemptNumber int32  `json:"attempt_number"`
+	DeploymentID  string `json:"deployment_id"`
+}
+
+type ActorOutputRecord struct {
+	ID          string                `json:"id"`
+	Sequence    int64                 `json:"sequence"`
+	Data        json.RawMessage       `json:"data"`
+	ContentType string                `json:"content_type"`
+	CreatedAt   time.Time             `json:"created_at"`
+	Provenance  ActorOutputProvenance `json:"provenance"`
+}
+
+type ActorOutputPage struct {
+	Records   []ActorOutputRecord `json:"records"`
+	NextAfter int64               `json:"next_after"`
+	HasMore   bool                `json:"has_more"`
+}
+
 func ValidateActorLifecycle(lifecycle string) error {
 	switch ActorLifecycle(lifecycle) {
 	case ActorLifecycleOpen,

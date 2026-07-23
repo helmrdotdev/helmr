@@ -233,6 +233,69 @@ SELECT *
  ORDER BY sequence, id
  LIMIT sqlc.arg(limit_count);
 
+-- name: ReadPublicActorOutputPage :many
+WITH scoped_actor AS MATERIALIZED (
+    SELECT actors.id,
+           actors.output_retention_floor,
+           actors.next_output_sequence,
+           CASE
+               WHEN sqlc.arg(after_present)::boolean
+               THEN sqlc.arg(after_sequence)::bigint
+               ELSE actors.output_retention_floor - 1
+           END::bigint AS effective_after
+      FROM actors
+     WHERE actors.environment_id = sqlc.arg(environment_id)
+       AND actors.actor_declared_id = sqlc.arg(actor_declared_id)
+       AND (
+           (
+               sqlc.narg(address_public_id)::text IS NOT NULL
+               AND actors.public_id = sqlc.narg(address_public_id)::text
+           )
+           OR
+           (
+               sqlc.narg(address_key)::text IS NOT NULL
+               AND actors.key = sqlc.narg(address_key)::text
+           )
+       )
+)
+SELECT scoped_actor.id AS actor_id,
+       scoped_actor.output_retention_floor,
+       scoped_actor.next_output_sequence,
+       scoped_actor.effective_after::bigint AS effective_after,
+       page.record_id,
+       coalesce(page.sequence, 0)::bigint AS sequence,
+       coalesce(page.data, 'null'::jsonb)::jsonb AS data,
+       coalesce(page.content_type, '')::text AS content_type,
+       coalesce(page.created_at, 'epoch'::timestamptz)::timestamptz AS created_at,
+       coalesce(page.run_public_id, '')::text AS run_public_id,
+       coalesce(page.producer_attempt_number, 0)::integer AS producer_attempt_number,
+       coalesce(page.deployment_public_id, '')::text AS deployment_public_id
+  FROM scoped_actor
+  LEFT JOIN LATERAL (
+      SELECT actor_records.id AS record_id,
+             actor_records.sequence,
+             actor_records.data,
+             actor_records.content_type,
+             actor_records.created_at,
+             runs.public_id AS run_public_id,
+             actor_records.producer_attempt_number,
+             deployments.public_id AS deployment_public_id
+        FROM actor_records
+        JOIN runs
+          ON runs.actor_id = actor_records.actor_id
+         AND runs.id = actor_records.producer_run_id
+        JOIN deployments
+          ON deployments.environment_id = runs.environment_id
+         AND deployments.id = runs.deployment_id
+       WHERE actor_records.actor_id = scoped_actor.id
+         AND actor_records.direction = 'output'
+         AND actor_records.sequence > scoped_actor.effective_after
+         AND actor_records.sequence < scoped_actor.next_output_sequence
+       ORDER BY actor_records.sequence, actor_records.id
+       LIMIT sqlc.arg(limit_count)::integer
+  ) AS page ON true
+ ORDER BY page.sequence NULLS LAST, page.record_id NULLS LAST;
+
 -- name: CommitActorInputCursor :one
 UPDATE actors
    SET committed_input_sequence = sqlc.arg(committed_input_sequence),

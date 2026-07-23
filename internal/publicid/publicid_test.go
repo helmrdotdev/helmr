@@ -2,9 +2,12 @@ package publicid
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestNewGeneratesRegisteredPrefixedID(t *testing.T) {
@@ -47,11 +50,14 @@ func TestRegisteredPrefixesAreValidAndUnambiguous(t *testing.T) {
 			t.Fatalf("prefix %q must include trailing underscore", prefix)
 		}
 	}
-	if len(seen) != 23 {
-		t.Fatalf("registered prefix count = %d, want 23", len(seen))
+	if len(seen) != 24 {
+		t.Fatalf("registered prefix count = %d, want 24", len(seen))
 	}
 	if _, ok := seen[Actor]; !ok {
 		t.Fatal("Actor prefix is not registered")
+	}
+	if _, ok := seen[ActorRecord]; !ok {
+		t.Fatal("ActorRecord prefix is not registered")
 	}
 }
 
@@ -99,5 +105,62 @@ func TestNewWithReaderReturnsEntropyError(t *testing.T) {
 	_, err := NewWithReader(Run, io.LimitReader(bytes.NewReader(nil), 0))
 	if err == nil {
 		t.Fatal("NewWithReader() succeeded, want error")
+	}
+}
+
+func TestActorRecordIDRoundTrip(t *testing.T) {
+	recordID := uuid.MustParse("018f0f31-4c7b-7d2a-8f5b-1a2b3c4d5e6f")
+	publicID, err := EncodeActorRecord(recordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if publicID != "arec_aghq6mkmpn6svd23divtytk6n4" {
+		t.Fatalf("EncodeActorRecord() = %q", publicID)
+	}
+	decoded, err := DecodeActorRecord(publicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded != recordID {
+		t.Fatalf("DecodeActorRecord() = %s, want %s", decoded, recordID)
+	}
+	if err := ValidateFor(ActorRecord, publicID); err != nil {
+		t.Fatalf("ValidateFor(ActorRecord) error = %v", err)
+	}
+}
+
+func TestActorRecordIDRejectsInvalidForms(t *testing.T) {
+	recordID := uuid.MustParse("018f0f31-4c7b-7d2a-8f5b-1a2b3c4d5e6f")
+	valid, err := EncodeActorRecord(recordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid := []string{
+		" " + valid,
+		strings.ToUpper(valid),
+		Run.String() + strings.TrimPrefix(valid, ActorRecord.String()),
+		valid[:len(valid)-1] + "7",
+	}
+	for _, value := range invalid {
+		t.Run(value, func(t *testing.T) {
+			if _, err := DecodeActorRecord(value); err == nil {
+				t.Fatalf("DecodeActorRecord(%q) succeeded", value)
+			}
+			if err := ValidateFor(ActorRecord, value); err == nil {
+				t.Fatalf("ValidateFor(ActorRecord, %q) succeeded", value)
+			}
+			if strings.HasPrefix(value, ActorRecord.String()) && Validate(value) == nil {
+				t.Fatalf("Validate(%q) succeeded", value)
+			}
+		})
+	}
+	if _, err := EncodeActorRecord(uuid.MustParse("018f0f31-4c7b-4d2a-8f5b-1a2b3c4d5e6f")); err == nil {
+		t.Fatal("EncodeActorRecord() accepted UUIDv4")
+	}
+}
+
+func TestRandomGeneratorRejectsActorRecordPrefix(t *testing.T) {
+	if _, err := New(ActorRecord); !errors.Is(err, ErrDerivedPrefix) {
+		t.Fatalf("New(ActorRecord) error = %v, want ErrDerivedPrefix", err)
 	}
 }

@@ -420,6 +420,7 @@ type Querier interface {
 	PruneTelemetryOutboxWritten(ctx context.Context, retainFor pgtype.Interval) ([]int64, error)
 	PublishRestoredActorCheckpointWorkspaceVersion(ctx context.Context, arg PublishRestoredActorCheckpointWorkspaceVersionParams) (WorkspaceVersion, error)
 	PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTaskWorkspaceVersionParams) (WorkspaceVersion, error)
+	ReadPublicActorOutputPage(ctx context.Context, arg ReadPublicActorOutputPageParams) ([]ReadPublicActorOutputPageRow, error)
 	ReadyRunRetries(ctx context.Context, rowLimit int32) ([]ReadyRunRetriesRow, error)
 	// Immediate fencing revokes credentials and terminalizes mount/runtime/slot
 	// observations. Run/build/workspace authority is recovered by its canonical

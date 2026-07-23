@@ -15,7 +15,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-const maxActorListLimit = int32(100)
+const (
+	maxActorListLimit       = int32(100)
+	maxActorOutputReadLimit = int32(100)
+	maxActorOutputSequence  = int64(1<<53 - 1)
+)
 
 func (c *Client) BaseURL() string {
 	return c.baseURL.String()
@@ -230,6 +234,71 @@ func (c *Client) ListActors(
 	var response api.ListActorsResponse
 	if err := c.doJSON(req, &response); err != nil {
 		return api.ListActorsResponse{}, err
+	}
+	return response, nil
+}
+
+type ActorOutputReadOptions struct {
+	After *int64
+	Limit int32
+	EnvironmentScopeOptions
+}
+
+func (c *Client) ReadActorOutput(
+	ctx context.Context,
+	actorDeclaredID string,
+	reference api.ActorReference,
+	opts ActorOutputReadOptions,
+) (api.ActorOutputPage, error) {
+	if err := api.ValidateActorDeclaredID(actorDeclaredID); err != nil {
+		return api.ActorOutputPage{}, err
+	}
+	if err := api.ValidateActorReference(reference); err != nil {
+		return api.ActorOutputPage{}, err
+	}
+	if opts.After != nil && (*opts.After < 0 || *opts.After > maxActorOutputSequence) {
+		return api.ActorOutputPage{}, fmt.Errorf(
+			"actor output after must be in [0,%d] when present",
+			maxActorOutputSequence,
+		)
+	}
+	if opts.Limit < 0 || opts.Limit > maxActorOutputReadLimit {
+		return api.ActorOutputPage{}, fmt.Errorf(
+			"actor output limit must be in [1,%d] when present",
+			maxActorOutputReadLimit,
+		)
+	}
+	path, _, err := c.environmentScopedPath(
+		opts.ProjectID,
+		opts.EnvironmentID,
+		"/actors/"+url.PathEscape(actorDeclaredID)+"/output",
+	)
+	if err != nil {
+		return api.ActorOutputPage{}, err
+	}
+	values := url.Values{}
+	if reference.ActorID != "" {
+		values.Set("actor_id", reference.ActorID)
+	} else {
+		values.Set("actor_key", reference.ActorKey)
+	}
+	if opts.After != nil {
+		values.Set("after", strconv.FormatInt(*opts.After, 10))
+	}
+	if opts.Limit > 0 {
+		values.Set("limit", strconv.FormatInt(int64(opts.Limit), 10))
+	}
+	path += "?" + values.Encode()
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return api.ActorOutputPage{}, err
+	}
+	var response api.ActorOutputPage
+	if err := c.doJSON(req, &response); err != nil {
+		return api.ActorOutputPage{}, err
+	}
+	if response.Records == nil {
+		response.Records = []api.ActorOutputRecord{}
 	}
 	return response, nil
 }

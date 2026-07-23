@@ -8,6 +8,8 @@ import (
 	"io"
 	"regexp"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -21,6 +23,7 @@ var (
 
 	ErrInvalidPrefix = errors.New("invalid public id prefix")
 	ErrInvalidFormat = errors.New("invalid public id format")
+	ErrDerivedPrefix = errors.New("public id prefix requires derived encoding")
 )
 
 type Prefix string
@@ -38,6 +41,7 @@ const (
 	Sandbox           Prefix = "sbx_"
 	Schedule          Prefix = "sch_"
 	Actor             Prefix = "act_"
+	ActorRecord       Prefix = "arec_"
 	Workspace         Prefix = "wsp_"
 	WorkspaceVersion  Prefix = "wsv_"
 	Session           Prefix = "ses_"
@@ -64,6 +68,7 @@ var registeredPrefixes = []Prefix{
 	Sandbox,
 	Schedule,
 	Actor,
+	ActorRecord,
 	Workspace,
 	WorkspaceVersion,
 	Session,
@@ -115,6 +120,9 @@ func NewWithReader(prefix Prefix, reader io.Reader) (string, error) {
 	if !prefix.Valid() {
 		return "", fmt.Errorf("%w: %q", ErrInvalidPrefix, prefix)
 	}
+	if prefix == ActorRecord {
+		return "", fmt.Errorf("%w: %q", ErrDerivedPrefix, prefix)
+	}
 	var entropy [randomBytes]byte
 	if _, err := io.ReadFull(reader, entropy[:]); err != nil {
 		return "", fmt.Errorf("generate public id entropy: %w", err)
@@ -141,13 +149,20 @@ func Parse(id string) (Prefix, string, error) {
 }
 
 func Validate(id string) error {
-	_, _, err := Parse(id)
+	prefix, _, err := Parse(id)
+	if err == nil && prefix == ActorRecord {
+		_, err = DecodeActorRecord(id)
+	}
 	return err
 }
 
 func ValidateFor(prefix Prefix, id string) error {
 	if !prefix.Valid() {
 		return fmt.Errorf("%w: %q", ErrInvalidPrefix, prefix)
+	}
+	if prefix == ActorRecord {
+		_, err := DecodeActorRecord(id)
+		return err
 	}
 	actual, _, err := Parse(id)
 	if err != nil {
@@ -157,4 +172,40 @@ func ValidateFor(prefix Prefix, id string) error {
 		return fmt.Errorf("%w: expected %s got %s", ErrInvalidPrefix, prefix, actual)
 	}
 	return nil
+}
+
+func EncodeActorRecord(id uuid.UUID) (string, error) {
+	if id.Version() != uuid.Version(7) || id.Variant() != uuid.RFC4122 {
+		return "", fmt.Errorf("%w: actor record identity must be an RFC 9562 UUIDv7", ErrInvalidFormat)
+	}
+	payload := strings.ToLower(randomEncoding.EncodeToString(id[:]))
+	return ActorRecord.String() + payload, nil
+}
+
+func DecodeActorRecord(id string) (uuid.UUID, error) {
+	if strings.TrimSpace(id) != id {
+		return uuid.Nil, fmt.Errorf("%w: %q", ErrInvalidFormat, id)
+	}
+	prefix, payload, err := Parse(id)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if prefix != ActorRecord {
+		return uuid.Nil, fmt.Errorf("%w: expected %s got %s", ErrInvalidPrefix, ActorRecord, prefix)
+	}
+	decoded, err := randomEncoding.DecodeString(strings.ToUpper(payload))
+	if err != nil || len(decoded) != randomBytes {
+		return uuid.Nil, fmt.Errorf("%w: %q", ErrInvalidFormat, id)
+	}
+	recordID, err := uuid.FromBytes(decoded)
+	if err != nil ||
+		recordID.Version() != uuid.Version(7) ||
+		recordID.Variant() != uuid.RFC4122 {
+		return uuid.Nil, fmt.Errorf("%w: %q", ErrInvalidFormat, id)
+	}
+	canonical, err := EncodeActorRecord(recordID)
+	if err != nil || canonical != id {
+		return uuid.Nil, fmt.Errorf("%w: %q", ErrInvalidFormat, id)
+	}
+	return recordID, nil
 }

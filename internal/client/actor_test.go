@@ -94,6 +94,115 @@ func TestListActorsUsesSessionRoute(t *testing.T) {
 	)
 }
 
+func TestReadActorOutputUsesAPIKeyRoute(t *testing.T) {
+	testReadActorOutputRoute(
+		t,
+		false,
+		"/api/actors/operator.v1/output",
+		EnvironmentScopeOptions{},
+	)
+}
+
+func TestReadActorOutputUsesSessionRoute(t *testing.T) {
+	testReadActorOutputRoute(
+		t,
+		true,
+		"/api/projects/project-1/environments/env-1/actors/operator.v1/output",
+		EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
+	)
+}
+
+func testReadActorOutputRoute(
+	t *testing.T,
+	session bool,
+	wantPath string,
+	scope EnvironmentScopeOptions,
+) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.EscapedPath() != wantPath {
+			t.Fatalf("%s %s, want GET %s", r.Method, r.URL.EscapedPath(), wantPath)
+		}
+		query := r.URL.Query()
+		if query.Get("actor_key") != "thread:東京" ||
+			query.Get("after") != "7" ||
+			query.Get("limit") != "25" {
+			t.Fatalf("query = %q", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(api.ActorOutputPage{
+			Records: []api.ActorOutputRecord{{
+				ID:          "arec_aghq6mkmpn6svd23divtytk6n4",
+				Sequence:    8,
+				Data:        json.RawMessage(`null`),
+				ContentType: "application/json",
+				CreatedAt:   time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
+				Provenance: api.ActorOutputProvenance{
+					RunID:         "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+					AttemptNumber: 1,
+					DeploymentID:  "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+				},
+			}},
+			NextAfter: 8,
+			HasMore:   true,
+		})
+	}))
+	defer server.Close()
+
+	options := []Option{WithHTTPClient(server.Client())}
+	if session {
+		options = append(options, WithSessionScopedRoutes())
+	}
+	client, err := New(server.URL, options...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := int64(7)
+	response, err := client.ReadActorOutput(
+		context.Background(),
+		"operator.v1",
+		api.ActorReference{ActorKey: "thread:東京"},
+		ActorOutputReadOptions{
+			After:                   &after,
+			Limit:                   25,
+			EnvironmentScopeOptions: scope,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Records) != 1 ||
+		response.Records[0].Sequence != 8 ||
+		string(response.Records[0].Data) != "null" ||
+		response.NextAfter != 8 ||
+		!response.HasMore {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestReadActorOutputValidatesCursorAndLimit(t *testing.T) {
+	client, err := New("http://127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tooLarge := int64(1 << 53)
+	if _, err := client.ReadActorOutput(
+		context.Background(),
+		"operator.v1",
+		api.ActorReference{ActorKey: "thread"},
+		ActorOutputReadOptions{After: &tooLarge},
+	); err == nil {
+		t.Fatal("ReadActorOutput() accepted an unsafe cursor")
+	}
+	if _, err := client.ReadActorOutput(
+		context.Background(),
+		"operator.v1",
+		api.ActorReference{ActorKey: "thread"},
+		ActorOutputReadOptions{Limit: 101},
+	); err == nil {
+		t.Fatal("ReadActorOutput() accepted an oversized limit")
+	}
+}
+
 func testUpdateActorRoute(
 	t *testing.T,
 	session bool,

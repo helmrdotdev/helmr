@@ -961,3 +961,133 @@ func (q *Queries) LockActorInputCurrentRun(ctx context.Context, arg LockActorInp
 	)
 	return i, err
 }
+
+const readPublicActorOutputPage = `-- name: ReadPublicActorOutputPage :many
+WITH scoped_actor AS MATERIALIZED (
+    SELECT actors.id,
+           actors.output_retention_floor,
+           actors.next_output_sequence,
+           CASE
+               WHEN $2::boolean
+               THEN $3::bigint
+               ELSE actors.output_retention_floor - 1
+           END::bigint AS effective_after
+      FROM actors
+     WHERE actors.environment_id = $4
+       AND actors.actor_declared_id = $5
+       AND (
+           (
+               $6::text IS NOT NULL
+               AND actors.public_id = $6::text
+           )
+           OR
+           (
+               $7::text IS NOT NULL
+               AND actors.key = $7::text
+           )
+       )
+)
+SELECT scoped_actor.id AS actor_id,
+       scoped_actor.output_retention_floor,
+       scoped_actor.next_output_sequence,
+       scoped_actor.effective_after::bigint AS effective_after,
+       page.record_id,
+       coalesce(page.sequence, 0)::bigint AS sequence,
+       coalesce(page.data, 'null'::jsonb)::jsonb AS data,
+       coalesce(page.content_type, '')::text AS content_type,
+       coalesce(page.created_at, 'epoch'::timestamptz)::timestamptz AS created_at,
+       coalesce(page.run_public_id, '')::text AS run_public_id,
+       coalesce(page.producer_attempt_number, 0)::integer AS producer_attempt_number,
+       coalesce(page.deployment_public_id, '')::text AS deployment_public_id
+  FROM scoped_actor
+  LEFT JOIN LATERAL (
+      SELECT actor_records.id AS record_id,
+             actor_records.sequence,
+             actor_records.data,
+             actor_records.content_type,
+             actor_records.created_at,
+             runs.public_id AS run_public_id,
+             actor_records.producer_attempt_number,
+             deployments.public_id AS deployment_public_id
+        FROM actor_records
+        JOIN runs
+          ON runs.actor_id = actor_records.actor_id
+         AND runs.id = actor_records.producer_run_id
+        JOIN deployments
+          ON deployments.environment_id = runs.environment_id
+         AND deployments.id = runs.deployment_id
+       WHERE actor_records.actor_id = scoped_actor.id
+         AND actor_records.direction = 'output'
+         AND actor_records.sequence > scoped_actor.effective_after
+         AND actor_records.sequence < scoped_actor.next_output_sequence
+       ORDER BY actor_records.sequence, actor_records.id
+       LIMIT $1::integer
+  ) AS page ON true
+ ORDER BY page.sequence NULLS LAST, page.record_id NULLS LAST
+`
+
+type ReadPublicActorOutputPageParams struct {
+	LimitCount      int32       `json:"limit_count"`
+	AfterPresent    bool        `json:"after_present"`
+	AfterSequence   int64       `json:"after_sequence"`
+	EnvironmentID   pgtype.UUID `json:"environment_id"`
+	ActorDeclaredID string      `json:"actor_declared_id"`
+	AddressPublicID pgtype.Text `json:"address_public_id"`
+	AddressKey      pgtype.Text `json:"address_key"`
+}
+
+type ReadPublicActorOutputPageRow struct {
+	ActorID               pgtype.UUID        `json:"actor_id"`
+	OutputRetentionFloor  int64              `json:"output_retention_floor"`
+	NextOutputSequence    int64              `json:"next_output_sequence"`
+	EffectiveAfter        int64              `json:"effective_after"`
+	RecordID              pgtype.UUID        `json:"record_id"`
+	Sequence              int64              `json:"sequence"`
+	Data                  []byte             `json:"data"`
+	ContentType           string             `json:"content_type"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	RunPublicID           string             `json:"run_public_id"`
+	ProducerAttemptNumber int32              `json:"producer_attempt_number"`
+	DeploymentPublicID    string             `json:"deployment_public_id"`
+}
+
+func (q *Queries) ReadPublicActorOutputPage(ctx context.Context, arg ReadPublicActorOutputPageParams) ([]ReadPublicActorOutputPageRow, error) {
+	rows, err := q.db.Query(ctx, readPublicActorOutputPage,
+		arg.LimitCount,
+		arg.AfterPresent,
+		arg.AfterSequence,
+		arg.EnvironmentID,
+		arg.ActorDeclaredID,
+		arg.AddressPublicID,
+		arg.AddressKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReadPublicActorOutputPageRow
+	for rows.Next() {
+		var i ReadPublicActorOutputPageRow
+		if err := rows.Scan(
+			&i.ActorID,
+			&i.OutputRetentionFloor,
+			&i.NextOutputSequence,
+			&i.EffectiveAfter,
+			&i.RecordID,
+			&i.Sequence,
+			&i.Data,
+			&i.ContentType,
+			&i.CreatedAt,
+			&i.RunPublicID,
+			&i.ProducerAttemptNumber,
+			&i.DeploymentPublicID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
