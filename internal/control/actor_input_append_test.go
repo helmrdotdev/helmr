@@ -37,6 +37,7 @@ func TestAppendActorInputCompletedClaimBypassesCurrentActorState(t *testing.T) {
 	store.calls = nil
 
 	server := &Server{db: store, claims: manager}
+	authorized := false
 	record, err := server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID:  environmentID,
 		ActorID:        actorID,
@@ -44,6 +45,10 @@ func TestAppendActorInputCompletedClaimBypassesCurrentActorState(t *testing.T) {
 		Data:           []byte(`{"b":2,"a":1}`),
 		SourceKind:     "external",
 		IdempotencyKey: "message:1",
+		Authorize: func(context.Context, db.Querier) error {
+			authorized = true
+			return errors.New("completed replay must not reauthorize")
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +58,9 @@ func TestAppendActorInputCompletedClaimBypassesCurrentActorState(t *testing.T) {
 	}
 	if store.actorReads != 0 {
 		t.Fatalf("Actor reads = %d, want 0", store.actorReads)
+	}
+	if authorized {
+		t.Fatal("completed claim replay reauthorized current source state")
 	}
 	if store.commits != 1 || store.rollbacks != 0 {
 		t.Fatalf("transactions: commits=%d rollbacks=%d", store.commits, store.rollbacks)
@@ -127,20 +135,54 @@ func TestAppendActorInputMapsPostgresStorageBoundAndRollsBack(t *testing.T) {
 	}
 }
 
+func TestAppendActorInputClassifiesLockedSequenceExhaustion(t *testing.T) {
+	environmentID := uuid.New()
+	actorID := uuid.New()
+	store, manager := newActorInputClaimStore(t)
+	store.locator = db.Actor{
+		ID:                pgvalue.UUID(actorID),
+		EnvironmentID:     pgvalue.UUID(environmentID),
+		WorkspaceID:       pgvalue.UUID(uuid.New()),
+		State:             "open",
+		NextInputSequence: maxActorSequence,
+	}
+	store.locatorAfterAppend = db.Actor{
+		ID:                pgvalue.UUID(actorID),
+		EnvironmentID:     pgvalue.UUID(environmentID),
+		WorkspaceID:       store.locator.WorkspaceID,
+		State:             "open",
+		NextInputSequence: maxActorSequence + 1,
+	}
+	store.appendErr = pgx.ErrNoRows
+	server := &Server{db: store, claims: manager}
+
+	_, err := server.appendActorInput(t.Context(), appendActorInputRequest{
+		EnvironmentID: environmentID,
+		ActorID:       actorID,
+		RecordID:      uuid.New(),
+		Data:          []byte(`{"message":"queued"}`),
+		SourceKind:    "external",
+	})
+	if !errors.Is(err, errActorSequenceExhausted) {
+		t.Fatalf("error = %v, want Actor sequence exhausted", err)
+	}
+}
+
 type actorInputClaimStore struct {
 	db.Querier
-	hmacVersion  db.LookupHmacVersion
-	claim        db.IdempotencyClaim
-	addressed    db.Actor
-	locator      db.Actor
-	project      db.Project
-	environment  db.Environment
-	appendErr    error
-	calls        []string
-	actorReads   int
-	addressReads int
-	commits      int
-	rollbacks    int
+	hmacVersion        db.LookupHmacVersion
+	claim              db.IdempotencyClaim
+	addressed          db.Actor
+	locator            db.Actor
+	locatorAfterAppend db.Actor
+	project            db.Project
+	environment        db.Environment
+	appendErr          error
+	calls              []string
+	actorReads         int
+	addressReads       int
+	commits            int
+	rollbacks          int
 }
 
 func newActorInputClaimStore(t *testing.T) (*actorInputClaimStore, idempotency.Manager) {
@@ -271,6 +313,9 @@ func (s *actorInputClaimStore) CreateIdempotencyClaim(
 func (s *actorInputClaimStore) GetActor(context.Context, db.GetActorParams) (db.Actor, error) {
 	s.calls = append(s.calls, "actor_get")
 	s.actorReads++
+	if s.actorReads > 1 && s.locatorAfterAppend.ID.Valid {
+		return s.locatorAfterAppend, nil
+	}
 	if s.locator.ID.Valid {
 		return s.locator, nil
 	}

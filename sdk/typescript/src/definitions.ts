@@ -35,6 +35,8 @@ import {
   validateQueueName,
   validateTaskId,
 } from "./schema/task"
+import { currentRuntimeOperations } from "./internal/runtime"
+import { trimGoSpace } from "./internal/strings"
 
 const privateDefinitionBrand = Symbol.for("helmr.sdk.v0.definition")
 const privateQueueBrand = Symbol.for("helmr.sdk.v0.queue")
@@ -229,14 +231,14 @@ export function actor(config: ActorConfig): ActorDefinition {
       : { idleTimeout: config.idleTimeout }),
   })
   const value = {
-    id: config.id,
+    id: internal.id,
     start(_options: ActorStartOptions) {
       return runtimeUnavailable<Promise<{ ref: ActorIdRef; run: RunHandle }>>(
         "actor.start",
       )
     },
     ref(address: { readonly id: string } | { readonly key: string }) {
-      return createActorRef(address)
+      return createActorRef(internal.id, address)
     },
   }
   return brandDefinition(value, internal) as ActorDefinition
@@ -374,10 +376,12 @@ function createTaskDefinition(
 }
 
 function createActorRef(
+  declaredId: string,
   address: { readonly id: string } | { readonly key: string },
 ): ActorIdRef | ActorKeyRef {
+  const immutableAddress = validatedActorRefAddress(address)
   const base: ActorRefBase = {
-    input: createActorInputRef(),
+    input: createActorInputRef(declaredId, immutableAddress),
     output: createActorOutputRef(),
     status() {
       return runtimeUnavailable<Promise<ActorStatus>>("actor.status")
@@ -392,14 +396,57 @@ function createActorRef(
       return runtimeUnavailable<Promise<ActorStatus>>("actor.cancel")
     },
   }
-  return Object.freeze({ ...base, ...address }) as ActorIdRef | ActorKeyRef
+  return Object.freeze({
+    ...base,
+    ...immutableAddress,
+  }) as ActorIdRef | ActorKeyRef
 }
 
-function createActorInputRef(): ActorInputRef {
+function validatedActorRefAddress(
+  address: { readonly id: string } | { readonly key: string },
+): Readonly<{ id: string }> | Readonly<{ key: string }> {
+  const value = address as Readonly<Record<string, unknown>>
+  const hasId = Object.prototype.hasOwnProperty.call(value, "id")
+  const hasKey = Object.prototype.hasOwnProperty.call(value, "key")
+  if (hasId === hasKey) {
+    throw new Error("actor ref requires exactly one of id or key")
+  }
+  if (hasId) {
+    if (
+      typeof value["id"] !== "string" ||
+      !/^act_[a-z2-7]{26}$/.test(value["id"])
+    ) {
+      throw new Error("actor ref id must be a canonical Actor public ID")
+    }
+    return Object.freeze({ id: value["id"] })
+  }
+  if (typeof value["key"] !== "string") {
+    throw new Error("actor ref key must be a string")
+  }
+  const encoded = new TextEncoder().encode(value["key"])
+  if (
+    encoded.byteLength === 0 ||
+    encoded.byteLength > 512 ||
+    value["key"].includes("\0") ||
+    trimGoSpace(value["key"]) !== value["key"]
+  ) {
+    throw new Error(
+      "actor ref key must be 1-512 UTF-8 bytes without NUL or edge whitespace",
+    )
+  }
+  return Object.freeze({ key: value["key"] })
+}
+
+function createActorInputRef(
+  declaredId: string,
+  address: { readonly id: string } | { readonly key: string },
+): ActorInputRef {
   return Object.freeze({
-    send(_input: JsonValue, _options?: import("./contract").SendOptions) {
-      return runtimeUnavailable<Promise<{ sequence: number }>>(
-        "actor.input.send",
+    send(input: JsonValue, options?: import("./contract").SendOptions) {
+      return currentRuntimeOperations().actorInputSend(
+        Object.freeze({ declaredId, address }),
+        input,
+        options,
       )
     },
   })

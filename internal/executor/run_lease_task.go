@@ -30,6 +30,7 @@ type RunLeaseControl interface {
 	CompleteTask(context.Context, api.WorkerCompleteTaskRequest) error
 	CompleteActor(context.Context, api.WorkerCompleteActorRequest) error
 	CommitActorTurn(context.Context, api.WorkerCommitActorTurnRequest) (api.WorkerCommitActorTurnResponse, error)
+	SendRunActorInput(context.Context, api.WorkerSendActorInputRequest) (api.WorkerSendActorInputResponse, error)
 	AppendRunLog(context.Context, api.WorkerRunLeaseReceipt, api.WorkerLogStream, uint64, []byte) error
 }
 
@@ -228,7 +229,13 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 
 func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, error) {
 	if task.program.entrypoint != nil && task.program.entrypoint.GetActor() != nil {
-		outcome, quiesced, err := task.program.awaitActorCompletion(ctx, taskControlEvents{task: task}, task.handleWait, task.handleActorTurnCommit)
+		outcome, quiesced, err := task.program.awaitActorCompletion(
+			ctx,
+			taskControlEvents{task: task},
+			task.handleWait,
+			task.handleActorTurnCommit,
+			task.handleActorInputSend,
+		)
 		if err != nil {
 			return RunLeaseTaskResult{}, err
 		}
@@ -241,7 +248,12 @@ func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, er
 			ProgramQuiesced: api.WorkerRunQuiescenceProof{RunID: quiesced.GetRunId(), AttemptNumber: int32(quiesced.GetAttemptNumber()), RunLeaseID: quiesced.GetRunLeaseId()},
 		}, nil
 	}
-	outcome, quiesced, err := task.program.awaitTaskCompletion(ctx, taskControlEvents{task: task}, task.handleWait)
+	outcome, quiesced, err := task.program.awaitTaskCompletion(
+		ctx,
+		taskControlEvents{task: task},
+		task.handleWait,
+		task.handleActorInputSend,
+	)
 	if err != nil {
 		return RunLeaseTaskResult{}, err
 	}

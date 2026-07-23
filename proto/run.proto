@@ -229,6 +229,7 @@ message RunEvent {
     ActorOutcome actor_outcome = 15;
     ActorTurnCommitRequested actor_turn_commit_requested = 16;
     ActorOutputAppendRequested actor_output_append_requested = 17;
+    ActorInputSendRequested actor_input_send_requested = 18;
   }
 }
 
@@ -303,6 +304,17 @@ message ActorOutputAppendRequested {
   string data_json = 2;
   string content_type = 3;
   optional string idempotency_key = 4;
+}
+
+message ActorInputSendRequested {
+  string correlation_id = 1;
+  string declared_id = 2;
+  oneof address {
+    string actor_id = 3;
+    string actor_key = 4;
+  }
+  string data_json = 5;
+  optional string idempotency_key = 6;
 }
 
 message ProgramQuiesced {

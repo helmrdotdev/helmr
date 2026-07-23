@@ -505,6 +505,28 @@ type WorkerCommitActorTurnResponse struct {
 	Tree                   WorkerWorkspaceTreeIdentity `json:"tree"`
 }
 
+type WorkerSendActorInputRequest struct {
+	Lease           WorkerRunLeaseReceipt `json:"lease"`
+	CorrelationID   string                `json:"correlation_id"`
+	ActorDeclaredID string                `json:"actor_declared_id"`
+	ActorID         string                `json:"actor_id,omitempty"`
+	ActorKey        string                `json:"actor_key,omitempty"`
+	Input           json.RawMessage       `json:"input"`
+	IdempotencyKey  string                `json:"idempotency_key,omitempty"`
+}
+
+type WorkerSendActorInputResponse struct {
+	CorrelationID string                         `json:"correlation_id"`
+	Completed     *SendActorInputResponse        `json:"completed,omitempty"`
+	Failed        *WorkerRuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type WorkerRuntimeOperationFailure struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	Retryable bool   `json:"retryable"`
+}
+
 type WorkerActorOutcome struct {
 	TerminalInputSequence int64                 `json:"terminal_input_sequence"`
 	Succeeded             *WorkerActorSucceeded `json:"succeeded,omitempty"`

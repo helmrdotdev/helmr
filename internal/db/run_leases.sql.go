@@ -379,6 +379,87 @@ func (q *Queries) DiscoverWorkerRunLeaseWork(ctx context.Context, arg DiscoverWo
 	return items, nil
 }
 
+const getActorInputSendSource = `-- name: GetActorInputSendSource :one
+SELECT environment_id, run_id
+  FROM run_leases
+ WHERE id = $1
+   AND run_id = $2
+   AND workspace_id = $3
+   AND attempt_number = $4
+   AND lease_sequence = $5
+   AND worker_group_id = $6
+   AND worker_instance_id = $7
+   AND worker_epoch = $8
+   AND worker_protocol_version = $9
+   AND runtime_instance_id = $10
+   AND network_slot_id = $11
+   AND network_slot_generation = $12
+   AND runtime_identity_id = $13
+   AND requested_cpu_millis = $14
+   AND requested_memory_bytes = $15
+   AND requested_workload_disk_bytes = $16
+   AND requested_scratch_bytes = $17
+   AND requested_execution_slots = $18
+   AND start_deadline_at = $19
+   AND expires_at = $20
+`
+
+type GetActorInputSendSourceParams struct {
+	ID                         pgtype.UUID        `json:"id"`
+	RunID                      pgtype.UUID        `json:"run_id"`
+	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
+	AttemptNumber              int32              `json:"attempt_number"`
+	LeaseSequence              int64              `json:"lease_sequence"`
+	WorkerGroupID              string             `json:"worker_group_id"`
+	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                int64              `json:"worker_epoch"`
+	WorkerProtocolVersion      string             `json:"worker_protocol_version"`
+	RuntimeInstanceID          pgtype.UUID        `json:"runtime_instance_id"`
+	NetworkSlotID              pgtype.UUID        `json:"network_slot_id"`
+	NetworkSlotGeneration      int64              `json:"network_slot_generation"`
+	RuntimeIdentityID          string             `json:"runtime_identity_id"`
+	RequestedCpuMillis         int64              `json:"requested_cpu_millis"`
+	RequestedMemoryBytes       int64              `json:"requested_memory_bytes"`
+	RequestedWorkloadDiskBytes int64              `json:"requested_workload_disk_bytes"`
+	RequestedScratchBytes      int64              `json:"requested_scratch_bytes"`
+	RequestedExecutionSlots    int32              `json:"requested_execution_slots"`
+	StartDeadlineAt            pgtype.Timestamptz `json:"start_deadline_at"`
+	ExpiresAt                  pgtype.Timestamptz `json:"expires_at"`
+}
+
+type GetActorInputSendSourceRow struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+}
+
+func (q *Queries) GetActorInputSendSource(ctx context.Context, arg GetActorInputSendSourceParams) (GetActorInputSendSourceRow, error) {
+	row := q.db.QueryRow(ctx, getActorInputSendSource,
+		arg.ID,
+		arg.RunID,
+		arg.WorkspaceID,
+		arg.AttemptNumber,
+		arg.LeaseSequence,
+		arg.WorkerGroupID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.WorkerProtocolVersion,
+		arg.RuntimeInstanceID,
+		arg.NetworkSlotID,
+		arg.NetworkSlotGeneration,
+		arg.RuntimeIdentityID,
+		arg.RequestedCpuMillis,
+		arg.RequestedMemoryBytes,
+		arg.RequestedWorkloadDiskBytes,
+		arg.RequestedScratchBytes,
+		arg.RequestedExecutionSlots,
+		arg.StartDeadlineAt,
+		arg.ExpiresAt,
+	)
+	var i GetActorInputSendSourceRow
+	err := row.Scan(&i.EnvironmentID, &i.RunID)
+	return i, err
+}
+
 const getCurrentRunLease = `-- name: GetCurrentRunLease :one
 SELECT run_leases.id, run_leases.org_id, run_leases.project_id, run_leases.environment_id, run_leases.run_id, run_leases.workspace_id, run_leases.region_id, run_leases.lease_sequence, run_leases.attempt_number, run_leases.worker_group_id, run_leases.worker_instance_id, run_leases.worker_epoch, run_leases.runtime_instance_id, run_leases.network_slot_id, run_leases.network_slot_generation, run_leases.runtime_identity_id, run_leases.worker_protocol_version, run_leases.requested_cpu_millis, run_leases.requested_memory_bytes, run_leases.requested_workload_disk_bytes, run_leases.requested_scratch_bytes, run_leases.requested_execution_slots, run_leases.trace_id, run_leases.span_id, run_leases.parent_span_id, run_leases.traceparent, run_leases.state, run_leases.assigned_at, run_leases.start_deadline_at, run_leases.claimed_at, run_leases.started_at, run_leases.renewed_at, run_leases.expires_at, run_leases.previous_expires_at, run_leases.finalization_operation_id, run_leases.finalization_kind, run_leases.finalization_started_at, run_leases.finalization_request_fingerprint, run_leases.checkpointed_at, run_leases.terminal_at, run_leases.terminal_reason_code, run_leases.terminal_error, run_leases.terminal_request_fingerprint, run_leases.created_at, run_leases.updated_at
   FROM runs

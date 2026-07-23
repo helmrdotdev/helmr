@@ -35,6 +35,7 @@ type appendActorInputRequest struct {
 	SourceKind     string
 	SourceRunID    uuid.UUID
 	IdempotencyKey string
+	Authorize      func(context.Context, db.Querier) error
 }
 
 // appendActorInput is the internal durable primitive behind ActorRef.input.send().
@@ -125,6 +126,15 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
+				current, readErr := work.q.GetActor(ctx, db.GetActorParams{
+					EnvironmentID: pgvalue.UUID(request.EnvironmentID),
+					ID:            pgvalue.UUID(request.ActorID),
+				})
+				if readErr == nil &&
+					current.State == "open" &&
+					current.NextInputSequence > maxActorSequence {
+					return errActorSequenceExhausted
+				}
 				return errActorInputUnavailable
 			}
 			var postgresError *pgconn.PgError
@@ -138,6 +148,11 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 			return errActorInputAppendConflict
 		}
 		result = actorRecordFromAppend(appended)
+		if request.Authorize != nil {
+			if err := request.Authorize(ctx, work.q); err != nil {
+				return err
+			}
+		}
 		if claimID.Valid {
 			_, claimErr := work.q.CompleteActorInputClaim(ctx, db.CompleteActorInputClaimParams{
 				EnvironmentID: result.EnvironmentID, ClaimID: claimID,
@@ -163,22 +178,14 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 		}
 		var currentRun db.Run
 		if actor.CurrentRunID.Valid {
-			currentRun, err = work.q.LockActorInputCurrentRun(ctx, db.LockActorInputCurrentRunParams{
+			// The Actor row remains locked for the transaction, so its current
+			// Run cannot be replaced by completion while this read is used.
+			// Avoiding a second Run lock also keeps A→B/B→A sends from acquiring
+			// source and target Runs in opposite orders.
+			currentRun, err = work.q.GetActorInputCurrentRun(ctx, db.GetActorInputCurrentRunParams{
 				EnvironmentID: result.EnvironmentID, RunID: actor.CurrentRunID, ActorID: result.ActorID,
 			})
 			if err != nil {
-				return errActorInputAppendConflict
-			}
-			workspace, err := work.q.LockActorInputWorkspace(ctx, db.LockActorInputWorkspaceParams{
-				EnvironmentID: result.EnvironmentID, ID: actor.WorkspaceID, ActorID: result.ActorID,
-			})
-			if err != nil {
-				return errActorInputAppendConflict
-			}
-			attempt, err := work.q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
-				RunID: currentRun.ID, Number: currentRun.CurrentAttemptNumber, WorkspaceID: workspace.ID,
-			})
-			if err != nil || attempt.TerminalAt.Valid {
 				return errActorInputAppendConflict
 			}
 		}

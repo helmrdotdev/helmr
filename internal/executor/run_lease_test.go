@@ -535,6 +535,13 @@ func (control *testRunLeaseControl) CommitActorTurn(
 	return api.WorkerCommitActorTurnResponse{}, errors.New("unexpected Actor turn commit")
 }
 
+func (control *testRunLeaseControl) SendRunActorInput(
+	context.Context,
+	api.WorkerSendActorInputRequest,
+) (api.WorkerSendActorInputResponse, error) {
+	return api.WorkerSendActorInputResponse{}, errors.New("unexpected Actor input send")
+}
+
 func (control *testRunLeaseControl) AppendRunLog(
 	context.Context,
 	api.WorkerRunLeaseReceipt,

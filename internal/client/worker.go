@@ -519,6 +519,17 @@ func (c *Client) CommitActorTurn(
 	return response, nil
 }
 
+func (c *Client) SendRunActorInput(
+	ctx context.Context,
+	request api.WorkerSendActorInputRequest,
+) (api.WorkerSendActorInputResponse, error) {
+	var response api.WorkerSendActorInputResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/actor-inputs/send", request, &response); err != nil {
+		return api.WorkerSendActorInputResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) CompleteTask(
 	ctx context.Context,
 	request api.WorkerCompleteTaskRequest,

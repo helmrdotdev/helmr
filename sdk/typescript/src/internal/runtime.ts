@@ -1,10 +1,22 @@
-import type { Duration } from "../contract"
+import type {
+  Duration,
+  JsonValue,
+  SendOptions,
+} from "../contract"
 
 const runtimeOperationsSymbol = Symbol.for("helmr.sdk.v0.runtime_operations")
 
 export interface RuntimeOperations {
   readonly waitFor: (duration: Duration) => Promise<void>
   readonly waitUntil: (date: Date) => Promise<void>
+  readonly actorInputSend: (
+    target: Readonly<{
+      declaredId: string
+      address: { readonly id: string } | { readonly key: string }
+    }>,
+    input: JsonValue,
+    options?: SendOptions,
+  ) => Promise<{ sequence: number }>
 }
 
 type RuntimeGlobal = typeof globalThis & {

@@ -528,6 +528,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/checkpoints/failed", s.workerMarkCheckpointFailed)
 				r.Post("/leases/finalization/begin", s.workerBeginRunFinalization)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actor-turns/commit", s.workerCommitActorTurn)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actor-inputs/send", s.workerSendActorInput)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/tasks/complete", s.workerCompleteTask)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/complete", s.workerCompleteActor)
 				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/run-logs", s.workerAppendRunLogs)

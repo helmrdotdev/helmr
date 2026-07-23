@@ -64,7 +64,7 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 		program.observedEventSeq != 4 {
 		t.Fatalf("fresh Program = %+v", program)
 	}
-	outcome, quiesced, err := program.awaitTaskCompletion(context.Background(), events, nil)
+	outcome, quiesced, err := program.awaitTaskCompletion(context.Background(), events, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,9 +283,99 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 				context.Background(),
 				&testFreshProgramEventSink{},
 				nil,
+				nil,
 			)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("awaitTaskCompletion() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
+	lease := api.WorkerRunLeaseReceipt{
+		ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
+	}
+	send := &runv0.ActorInputSendRequested{
+		CorrelationId: "00000000-0000-0000-0000-000000000111",
+		DeclaredId:    "mailbox",
+		Address: &runv0.ActorInputSendRequested_ActorKey{
+			ActorKey: "primary",
+		},
+		DataJson: `{"message":"hello"}`,
+	}
+	tests := []struct {
+		name       string
+		entrypoint *runv0.EntrypointIdentity
+		outcome    *runv0.RunEvent
+		await      func(*freshProgram, freshProgramEventSink, func(context.Context, *runv0.ActorInputSendRequested) error) error
+	}{
+		{
+			name: "Task",
+			entrypoint: &runv0.EntrypointIdentity{
+				Kind: &runv0.EntrypointIdentity_Task{Task: &runv0.TaskEntrypoint{}},
+			},
+			outcome: testTaskSucceededEvent(`null`),
+			await: func(program *freshProgram, events freshProgramEventSink, callback func(context.Context, *runv0.ActorInputSendRequested) error) error {
+				_, _, err := program.awaitTaskCompletion(t.Context(), events, nil, callback)
+				return err
+			},
+		},
+		{
+			name: "Actor",
+			entrypoint: &runv0.EntrypointIdentity{
+				Kind: &runv0.EntrypointIdentity_Actor{Actor: &runv0.ActorEntrypoint{}},
+			},
+			outcome: &runv0.RunEvent{
+				Event: &runv0.RunEvent_ActorOutcome{
+					ActorOutcome: &runv0.ActorOutcome{
+						TerminalInputSequence: int64Pointer(0),
+						Outcome: &runv0.ActorOutcome_Succeeded{
+							Succeeded: &runv0.ActorSucceeded{},
+						},
+					},
+				},
+			},
+			await: func(program *freshProgram, events freshProgramEventSink, callback func(context.Context, *runv0.ActorInputSendRequested) error) error {
+				_, _, err := program.awaitActorCompletion(t.Context(), events, nil, nil, callback)
+				return err
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			guest, host := net.Pipe()
+			go func() {
+				defer guest.Close()
+				_ = frameio.WriteProtoFrame(guest, &runv0.RunEvent{
+					Event: &runv0.RunEvent_ActorInputSendRequested{
+						ActorInputSendRequested: send,
+					},
+				})
+				_ = frameio.WriteProtoFrame(guest, test.outcome)
+				_ = frameio.WriteProtoFrame(guest, testProgramQuiescedEvent(lease))
+			}()
+			program := &freshProgram{
+				session:    fakeGuestSession{stream: host},
+				lease:      lease,
+				entrypoint: test.entrypoint,
+			}
+			var observed *runv0.ActorInputSendRequested
+			err := test.await(
+				program,
+				&testFreshProgramEventSink{},
+				func(_ context.Context, requested *runv0.ActorInputSendRequested) error {
+					observed = requested
+					return nil
+				},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if observed.GetCorrelationId() != send.GetCorrelationId() ||
+				observed.GetActorKey() != send.GetActorKey() ||
+				observed.GetDataJson() != send.GetDataJson() {
+				t.Fatalf("Actor input send = %+v", observed)
 			}
 		})
 	}
@@ -416,6 +506,10 @@ func testProgramQuiescedEvent(lease api.WorkerRunLeaseReceipt) *runv0.RunEvent {
 			},
 		},
 	}
+}
+
+func int64Pointer(value int64) *int64 {
+	return &value
 }
 
 func readFreshProgramAdmission(

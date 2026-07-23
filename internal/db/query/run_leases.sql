@@ -540,6 +540,30 @@ SELECT *
    AND expires_at > transaction_timestamp()
  FOR UPDATE;
 
+-- name: GetActorInputSendSource :one
+SELECT environment_id, run_id
+  FROM run_leases
+ WHERE id = sqlc.arg(id)
+   AND run_id = sqlc.arg(run_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND attempt_number = sqlc.arg(attempt_number)
+   AND lease_sequence = sqlc.arg(lease_sequence)
+   AND worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_instance_id = sqlc.arg(worker_instance_id)
+   AND worker_epoch = sqlc.arg(worker_epoch)
+   AND worker_protocol_version = sqlc.arg(worker_protocol_version)
+   AND runtime_instance_id = sqlc.arg(runtime_instance_id)
+   AND network_slot_id = sqlc.arg(network_slot_id)
+   AND network_slot_generation = sqlc.arg(network_slot_generation)
+   AND runtime_identity_id = sqlc.arg(runtime_identity_id)
+   AND requested_cpu_millis = sqlc.arg(requested_cpu_millis)
+   AND requested_memory_bytes = sqlc.arg(requested_memory_bytes)
+   AND requested_workload_disk_bytes = sqlc.arg(requested_workload_disk_bytes)
+   AND requested_scratch_bytes = sqlc.arg(requested_scratch_bytes)
+   AND requested_execution_slots = sqlc.arg(requested_execution_slots)
+   AND start_deadline_at = sqlc.arg(start_deadline_at)
+   AND expires_at = sqlc.arg(expires_at);
+
 -- name: GetRunLeaseRenewalTime :one
 SELECT clock_timestamp()::timestamptz;
 

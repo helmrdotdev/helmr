@@ -106,6 +106,13 @@ UPDATE idempotency_claims
    AND actor_records.claim_id = idempotency_claims.id
 RETURNING idempotency_claims.*;
 
+-- name: GetActorInputCurrentRun :one
+SELECT runs.*
+  FROM runs
+ WHERE runs.environment_id = sqlc.arg(environment_id)
+   AND runs.id = sqlc.arg(run_id)
+   AND runs.actor_id = sqlc.arg(actor_id);
+
 -- name: AppendActorOutputRecord :one
 WITH locked_actor AS MATERIALIZED (
     SELECT actors.*

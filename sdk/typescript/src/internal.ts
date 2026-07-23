@@ -37,4 +37,5 @@ export {
   installRuntimeOperations,
   type RuntimeOperations,
 } from "./internal/runtime"
+export { trimGoSpace } from "./internal/strings"
 export { validateQueueName } from "./schema/task"

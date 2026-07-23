@@ -374,6 +374,135 @@ func TestRelayProgramQuiescesDescendantHeldControlBeforeEOF(t *testing.T) {
 	}
 }
 
+func TestRelayProgramRoutesActorInputSendDecisionWithoutConsumingWaitAuthority(t *testing.T) {
+	blockedProcessInput, releaseProcess, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blockedProcessInput.Close()
+	defer releaseProcess.Close()
+	cmd := exec.Command("cat")
+	cmd.Stdin = blockedProcessInput
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	controlReader, controlWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	programDecisionReader, programDecisionWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer programDecisionReader.Close()
+	defer programDecisionWriter.Close()
+	process := &programProcess{
+		cmd:      cmd,
+		stdin:    programDecisionWriter,
+		control:  controlReader,
+		cgroup:   &testProgramCgroup{},
+		waitDone: make(chan struct{}),
+	}
+	defer process.close()
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	request := testProgramRunRequest(testProgramStartFrame(t))
+	result := make(chan error, 1)
+	go func() {
+		var outputDone sync.WaitGroup
+		result <- relayProgram(
+			t.Context(),
+			guest,
+			request,
+			&runv0.EntrypointIdentity{
+				Kind: &runv0.EntrypointIdentity_Task{Task: &runv0.TaskEntrypoint{}},
+			},
+			process,
+			&programEventStream{conn: guest},
+			make(chan error, 2),
+			&outputDone,
+			newWaitingRunRegistry(),
+			&programOutputCoordinator{},
+			nil,
+		)
+	}()
+	correlationID := "00000000-0000-0000-0000-000000000111"
+	if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
+		Event: &runv0.RunEvent_ActorInputSendRequested{
+			ActorInputSendRequested: &runv0.ActorInputSendRequested{
+				CorrelationId: correlationID,
+				DeclaredId:    "mailbox",
+				Address: &runv0.ActorInputSendRequested_ActorKey{
+					ActorKey: "primary",
+				},
+				DataJson: `{"message":"hello"}`,
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var event runv0.RunEvent
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.GetActorInputSendRequested().GetCorrelationId() != correlationID {
+		t.Fatalf("Actor input send event = %#v", event.GetEvent())
+	}
+	decision := &runv0.ResumeDecision{
+		CorrelationId: correlationID,
+		Kind:          "completed",
+		DataJson:      `{"sequence":7}`,
+	}
+	if err := wire.WriteResumeDecision(host, decision); err != nil {
+		t.Fatal(err)
+	}
+	var staged runv0.ResumeDecision
+	if err := frameio.ReadProtoFrame(programDecisionReader, &staged); err != nil {
+		t.Fatal(err)
+	}
+	if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
+		Event: &runv0.RunEvent_TaskOutcome{
+			TaskOutcome: &runv0.TaskOutcome{
+				Outcome: &runv0.TaskOutcome_Succeeded{
+					Succeeded: &runv0.TaskSucceeded{OutputJson: "null"},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := controlWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := releaseProcess.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.GetTaskOutcome() == nil {
+		t.Fatalf("Task outcome = %#v", event.GetEvent())
+	}
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.GetProgramQuiesced() == nil {
+		t.Fatalf("Program quiescence = %#v", event.GetEvent())
+	}
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(&staged, decision) {
+		t.Fatalf("staged decision = %+v", staged)
+	}
+	if staged.GetRequireConsumedAck() ||
+		staged.GetRunWaitId() != "" ||
+		staged.GetCheckpointId() != "" {
+		t.Fatalf("send decision carried consuming Wait authority: %+v", staged)
+	}
+}
+
 func TestPauseAndResumeProgramUsesExactFrozenAuthority(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workspaceRoot, "state.txt"), []byte("durable"), 0o600); err != nil {
@@ -511,6 +640,27 @@ func TestValidateResumeDecisionAuthorityRejectsMalformedResultUnion(t *testing.T
 				t.Fatalf("validate error = %v, want error %v", err, test.wantErr)
 			}
 		})
+	}
+}
+
+func TestValidateActorInputSendDecisionRejectsWaitAuthority(t *testing.T) {
+	valid := &runv0.ResumeDecision{
+		CorrelationId: "00000000-0000-0000-0000-000000000111",
+		Kind:          "completed",
+		DataJson:      `{"sequence":1}`,
+	}
+	if err := validateActorInputSendDecision(valid); err != nil {
+		t.Fatal(err)
+	}
+	for _, malformed := range []*runv0.ResumeDecision{
+		{CorrelationId: valid.CorrelationId, Kind: "cancelled", DataJson: `{"sequence":1}`},
+		{CorrelationId: valid.CorrelationId, Kind: "completed", DataJson: `{"sequence":1}`, RunWaitId: "wait"},
+		{CorrelationId: valid.CorrelationId, Kind: "completed", DataJson: `{"sequence":1}`, RequireConsumedAck: true},
+		{CorrelationId: valid.CorrelationId, Kind: "completed", DataJson: `{`},
+	} {
+		if err := validateActorInputSendDecision(malformed); err == nil {
+			t.Fatalf("malformed decision was accepted: %+v", malformed)
+		}
 	}
 }
 

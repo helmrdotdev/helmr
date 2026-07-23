@@ -4,6 +4,7 @@ import {
   canonicalizeJsonValue,
   inspectDefinition,
   installRuntimeOperations,
+  trimGoSpace,
   type InternalActorDefinition,
   type InternalTaskDefinition,
   type RuntimeOperations,
@@ -19,6 +20,7 @@ import type {
   OutputSequenceOptions,
   ReceiveOptions,
   RunCause,
+  SendOptions,
   Serializable,
   TaskExecutionContext,
 } from "@helmr/sdk"
@@ -31,6 +33,7 @@ const MAX_PROGRAM_FRAME_BYTES = 256 * 1024 * 1024
 const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024
 const MAX_TASK_ERROR_BYTES = 16 * 1024
 const MAX_TASK_ERROR_MESSAGE_BYTES = 1024
+const MAX_ACTOR_INPUT_BYTES = 1 * 1024 * 1024
 
 type InputChunk = Uint8Array | string
 
@@ -186,9 +189,10 @@ class ActorCancellationError extends Error {
   }
 }
 
-class ActorOperationState {
+class RunOperationState {
   readonly controller = new AbortController()
   #active = 0
+  readonly #drainable = new Set<Promise<unknown>>()
   #protocolFault: RuntimeProtocolError | undefined
 
   track<T>(operation: () => Promise<T>): Promise<T> {
@@ -209,6 +213,21 @@ class ActorOperationState {
     return result
   }
 
+  trackDrainable<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.track(operation)
+    this.#drainable.add(result)
+    void result.finally(() => {
+      this.#drainable.delete(result)
+    }).catch(() => {})
+    return result
+  }
+
+  async drainForCompletion(): Promise<void> {
+    while (this.#drainable.size !== 0) {
+      await Promise.allSettled([...this.#drainable])
+    }
+  }
+
   cancel(reasonCode: string): ActorCancellationError {
     const error = new ActorCancellationError(reasonCode)
     if (!this.controller.signal.aborted) this.controller.abort(error)
@@ -221,7 +240,7 @@ class ActorOperationState {
       throw this.controller.signal.reason as ActorCancellationError
     }
     if (this.#active !== 0) {
-      throw new RuntimeProtocolError("Actor handler returned with runtime operations still pending")
+      throw new RuntimeProtocolError("Run handler returned with runtime operations still pending")
     }
   }
 }
@@ -556,8 +575,9 @@ async function runTask(
   }
 
   const context = taskContext(start)
+  const runOperations = new RunOperationState()
 	const uninstallRuntime = installRuntimeOperations(
-		programRuntimeOperations(start, io, decisions, new ConsumingWaitGate()),
+		programRuntimeOperations(start, io, decisions, new ConsumingWaitGate(), runOperations),
 	)
   let normalized: Uint8Array
   try {
@@ -567,14 +587,18 @@ async function runTask(
     } else {
       output = await definition.handler(context)
     }
+    await runOperations.drainForCompletion()
+    runOperations.assertCanComplete()
     normalized = canonicalizeJsonValue(output as JsonValue)
     if (normalized.byteLength > MAX_TASK_OUTPUT_BYTES) {
       throw new Error(
         `task output exceeds ${MAX_TASK_OUTPUT_BYTES} bytes`,
       )
     }
-  } catch (error) {
+	} catch (error) {
 		if (error instanceof RuntimeProtocolError) throw error
+    await runOperations.drainForCompletion()
+    runOperations.assertCanComplete()
 		await writeTaskFailure(io, "failed", errorMessage(error))
 		return
 	} finally {
@@ -598,7 +622,7 @@ function programRuntimeOperations(
   io: ProgramIO,
   decisions: ResumeDecisionRouter,
   waitGate: ConsumingWaitGate,
-  actorOperations?: ActorOperationState,
+  runOperations: RunOperationState,
   actorCursor?: { readonly value: bigint },
 ): RuntimeOperations {
   const performWait = async (
@@ -641,12 +665,12 @@ function programRuntimeOperations(
 				}),
 			})
 		}
-      if (decision.kind === "cancelled" && actorOperations !== undefined) {
+      if (decision.kind === "cancelled" && actorCursor !== undefined) {
         const failure = parseRuntimeProtocolValue(
           "Actor timer cancellation decision",
           () => resumeFailure(decision.dataJson),
         )
-        throw actorOperations.cancel(failure.reasonCode)
+        throw runOperations.cancel(failure.reasonCode)
       }
       if (decision.kind !== "completed") {
         const failure = parseRuntimeProtocolValue(
@@ -660,9 +684,63 @@ function programRuntimeOperations(
     }
   }
   const wait = (params: JsonValue, timeoutMs: number): Promise<void> =>
-    actorOperations === undefined
-      ? performWait(params, timeoutMs)
-      : actorOperations.track(() => performWait(params, timeoutMs))
+    runOperations.track(() => performWait(params, timeoutMs))
+  const performActorInputSend = async (
+    target: Readonly<{
+      declaredId: string
+      address: { readonly id: string } | { readonly key: string }
+    }>,
+    input: JsonValue,
+    options?: SendOptions,
+  ): Promise<{ sequence: number }> => {
+    if (options?.signal?.aborted) {
+      throw abortSignalReason(options.signal)
+    }
+    const idempotencyKey = normalizeActorInputIdempotencyKey(
+      options?.idempotencyKey,
+    )
+    const normalized = canonicalizeJsonValue(input)
+    if (normalized.byteLength > MAX_ACTOR_INPUT_BYTES) {
+      throw actorInputSendError(
+        "actor_input_too_large",
+        `Actor input exceeds ${MAX_ACTOR_INPUT_BYTES} bytes`,
+        false,
+      )
+    }
+    const correlationId = randomUUID()
+    const operation = runOperations.trackDrainable(async () => {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "actorInputSendRequested",
+        value: create(runProto.ActorInputSendRequestedSchema, {
+          correlationId,
+          declaredId: target.declaredId,
+          address: "id" in target.address
+            ? { case: "actorId", value: target.address.id }
+            : { case: "actorKey", value: target.address.key },
+          dataJson: new TextDecoder().decode(normalized),
+          ...(idempotencyKey === undefined
+            ? {}
+            : { idempotencyKey }),
+        }),
+      })
+      requireRuntimeOperationDecision(
+        decision,
+        correlationId,
+        "Actor input send",
+      )
+      if (decision.kind === "failed") {
+        throw parseRuntimeProtocolValue(
+          "Actor input send failure",
+          () => parseActorInputSendFailure(decision.dataJson),
+        )
+      }
+      return parseRuntimeProtocolValue(
+        "Actor input send result",
+        () => parseActorInputSendResult(decision.dataJson),
+      )
+    })
+    return await abortableRuntimeOperation(operation, options?.signal)
+  }
   return {
     waitFor(duration) {
       return wait({ duration }, durationMilliseconds(duration))
@@ -678,7 +756,127 @@ function programRuntimeOperations(
         boundedTimerMilliseconds(Math.ceil(remainingMs)),
       )
     },
+    actorInputSend(target, input, options) {
+      return performActorInputSend(target, input, options)
+    },
   }
+}
+
+function normalizeActorInputIdempotencyKey(
+  value: string | undefined,
+): string | undefined {
+  if (value === undefined) return undefined
+  const normalized = trimGoSpace(value)
+  if (new TextEncoder().encode(normalized).byteLength > 512) {
+    throw actorInputSendError(
+      "invalid_idempotency_key",
+      "Actor input idempotency key must be at most 512 UTF-8 bytes",
+      false,
+    )
+  }
+  return normalized === "" ? undefined : normalized
+}
+
+function requireRuntimeOperationDecision(
+  decision: runProto.ResumeDecision,
+  correlationId: string,
+  operation: string,
+): void {
+  if (
+    decision.correlationId !== correlationId ||
+    (decision.kind !== "completed" && decision.kind !== "failed") ||
+    decision.runWaitId !== "" ||
+    decision.requireConsumedAck ||
+    decision.checkpointId !== "" ||
+    decision.resumeAttachId !== "" ||
+    decision.resumeRequestVersion !== 0n ||
+    decision.runLeaseId !== "" ||
+    decision.noResult
+  ) {
+    throw new RuntimeProtocolError(
+      `${operation} decision did not match the pending operation`,
+    )
+  }
+}
+
+function parseActorInputSendResult(
+  dataJson: string,
+): { readonly sequence: number } {
+  const value = parseObjectJSON(dataJson, "Actor input send result")
+  requireExactKeys(value, ["sequence"], "Actor input send result")
+  const sequence = safeJSONSequence(
+    value["sequence"],
+    "Actor input send result.sequence",
+  )
+  if (sequence === 0) {
+    throw new Error("Actor input send result.sequence must be positive")
+  }
+  return Object.freeze({ sequence })
+}
+
+function parseActorInputSendFailure(dataJson: string): Error {
+  const value = parseObjectJSON(dataJson, "Actor input send failure")
+  requireExactKeys(
+    value,
+    ["code", "message", "retryable"],
+    "Actor input send failure",
+  )
+  if (
+    typeof value["code"] !== "string" ||
+    value["code"].trim() === "" ||
+    typeof value["message"] !== "string" ||
+    value["message"].trim() === "" ||
+    typeof value["retryable"] !== "boolean"
+  ) {
+    throw new Error(
+      "Actor input send failure must contain code, message, and retryable",
+    )
+  }
+  return actorInputSendError(
+    value["code"],
+    value["message"],
+    value["retryable"],
+  )
+}
+
+function actorInputSendError(
+  code: string,
+  message: string,
+  retryable: boolean,
+): Error {
+  const error = new Error(message) as Error & {
+    code: string
+    retryable: boolean
+  }
+  error.name = "HelmrError"
+  error.code = code
+  error.retryable = retryable
+  return error
+}
+
+async function abortableRuntimeOperation<T>(
+  operation: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (signal === undefined) return operation
+  if (signal.aborted) throw abortSignalReason(signal)
+  let rejectAbort: ((reason?: unknown) => void) | undefined
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject
+  })
+  const onAbort = () => rejectAbort?.(abortSignalReason(signal))
+  signal.addEventListener("abort", onAbort, { once: true })
+  try {
+    return await Promise.race([operation, aborted])
+  } finally {
+    signal.removeEventListener("abort", onAbort)
+  }
+}
+
+function abortSignalReason(signal: AbortSignal): unknown {
+  return signal.reason === undefined
+    ? new DOMException("The operation was aborted", "AbortError")
+    : signal.reason
 }
 
 function resumeFailure(dataJson: string): { readonly reasonCode: string } {
@@ -746,7 +944,7 @@ async function runActor(
   }
   const cursor = { value: start.entrypoint.value.startInputSequence }
   const waitGate = new ConsumingWaitGate()
-  const actorOperations = new ActorOperationState()
+  const actorOperations = new RunOperationState()
   const uninstallRuntime = installRuntimeOperations(
     programRuntimeOperations(start, io, decisions, waitGate, actorOperations, cursor),
   )
@@ -756,6 +954,7 @@ async function runActor(
       actorContext(start, actorOperations.controller.signal),
     )
     try {
+      await actorOperations.drainForCompletion()
       actorOperations.assertCanComplete()
     } catch (error) {
       decisions.abandonPending()
@@ -765,6 +964,8 @@ async function runActor(
     if (error instanceof RuntimeProtocolError || error instanceof ActorCancellationError) {
       throw error
     }
+    await actorOperations.drainForCompletion()
+    actorOperations.assertCanComplete()
     await writeActorFailure(
       io,
       cursor.value,
@@ -792,7 +993,7 @@ function actorSelf(
   decisions: ResumeDecisionRouter,
   cursor: { value: bigint },
   waitGate: ConsumingWaitGate,
-  actorOperations: ActorOperationState,
+  actorOperations: RunOperationState,
 ): ActorSelf {
   if (start.entrypoint.case !== "actor") {
     throw new Error("Actor Program-start entrypoint is required")

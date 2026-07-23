@@ -957,6 +957,7 @@ func relayProgram(
 	quiesced := false
 	var pendingWait *runv0.RunWaitRequested
 	var pendingTurnCommit *runv0.ActorTurnCommitRequested
+	pendingActorInputSends := make(map[string]struct{})
 	for !processExited || !controlClosed {
 		select {
 		case event, ok := <-events:
@@ -1001,6 +1002,27 @@ func relayProgram(
 				pendingTurnCommit = turnCommit
 				continue
 			}
+			if send := event.GetActorInputSendRequested(); send != nil {
+				if outcomeSeen {
+					return errors.New("Program emitted an Actor input send after outcome")
+				}
+				correlationID := strings.TrimSpace(send.GetCorrelationId())
+				if correlationID == "" || strings.TrimSpace(send.GetDeclaredId()) == "" ||
+					strings.TrimSpace(send.GetDataJson()) == "" {
+					return errors.New("Actor input send identity is incomplete")
+				}
+				if _, exists := pendingActorInputSends[correlationID]; exists {
+					return errors.New("Program emitted a duplicate Actor input send correlation")
+				}
+				if len(pendingActorInputSends) >= 128 {
+					return errors.New("Program exceeded the pending Actor input send limit")
+				}
+				if err := stream.write(event); err != nil {
+					return err
+				}
+				pendingActorInputSends[correlationID] = struct{}{}
+				continue
+			}
 			var outcomeErr error
 			switch entrypoint.GetKind().(type) {
 			case *runv0.EntrypointIdentity_Task:
@@ -1018,6 +1040,9 @@ func relayProgram(
 			}
 			if outcomeSeen {
 				return errors.New("Program emitted more than one outcome")
+			}
+			if len(pendingActorInputSends) != 0 {
+				return errors.New("Program emitted an outcome with Actor input sends pending")
 			}
 			if outcomeErr != nil {
 				return outcomeErr
@@ -1040,6 +1065,20 @@ func relayProgram(
 					continue
 				}
 				return fmt.Errorf("read Program host control: %w", control.err)
+			}
+			if control.decision != nil {
+				correlationID := control.decision.GetCorrelationId()
+				if _, pending := pendingActorInputSends[correlationID]; pending {
+					if err := validateActorInputSendDecision(control.decision); err != nil {
+						return err
+					}
+					if err := frameio.WriteProtoFrame(process.stdin, control.decision); err != nil {
+						return fmt.Errorf("write Actor input send decision: %w", err)
+					}
+					delete(pendingActorInputSends, correlationID)
+					hostControls = readProgramHostControl(conn)
+					continue
+				}
 			}
 			if pendingTurnCommit != nil {
 				if control.turnCommit == nil {
@@ -1487,6 +1526,23 @@ func validateResumeDecisionAuthority(decision *runv0.ResumeDecision) error {
 	default:
 		return fmt.Errorf("unsupported Program resume decision kind %q", decision.GetKind())
 	}
+}
+
+func validateActorInputSendDecision(decision *runv0.ResumeDecision) error {
+	if decision == nil ||
+		strings.TrimSpace(decision.GetCorrelationId()) == "" ||
+		(decision.GetKind() != "completed" && decision.GetKind() != "failed") ||
+		decision.GetRunWaitId() != "" ||
+		decision.GetRequireConsumedAck() ||
+		decision.GetCheckpointId() != "" ||
+		decision.GetResumeAttachId() != "" ||
+		decision.GetResumeRequestVersion() != 0 ||
+		decision.GetRunLeaseId() != "" ||
+		decision.GetNoResult() ||
+		!json.Valid([]byte(decision.GetDataJson())) {
+		return errors.New("Actor input send decision is invalid")
+	}
+	return nil
 }
 
 func awaitProgramResumeConsumed(

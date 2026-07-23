@@ -517,6 +517,194 @@ describe("runProgram", () => {
     })
   })
 
+  test("sends Actor input from a Task with concurrent correlation-safe decisions", async () => {
+    const mailbox = actor({ id: "mailbox", run() {} })
+    let sent: unknown
+    const definition = task({
+      id: "deploy",
+      async run() {
+        sent = await Promise.all([
+          mailbox.ref({ id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa" }).input.send(
+            { z: 1, a: 2 },
+            { idempotencyKey: "\u0085first\u0085" },
+          ),
+          mailbox.ref({ key: "primary" }).input.send(null),
+        ])
+        return null
+      },
+    })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+    const sendsWritten = deferred<void>()
+    async function* input(): AsyncIterable<Uint8Array> {
+      yield frameMessage(runProto.ProgramStartSchema, start)
+      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      await sendsWritten.promise
+      const first = readEvent(output[1]!).event
+      const second = readEvent(output[2]!).event
+      expect(first.case).toBe("actorInputSendRequested")
+      expect(second.case).toBe("actorInputSendRequested")
+      if (first.case !== "actorInputSendRequested" ||
+          second.case !== "actorInputSendRequested") return
+      expect(first.value.declaredId).toBe("mailbox")
+      expect(first.value.address).toEqual({
+        case: "actorId",
+        value: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      })
+      expect(first.value.dataJson).toBe('{"a":2,"z":1}')
+      expect(first.value.idempotencyKey).toBe("first")
+      expect(second.value.address).toEqual({ case: "actorKey", value: "primary" })
+      expect(second.value.dataJson).toBe("null")
+      yield actorDecision(second.value.correlationId, "completed", '{"sequence":2}')
+      yield actorDecision(first.value.correlationId, "completed", '{"sequence":1}')
+    }
+    await runProgram(locatorURL, programIO({
+      input: input(),
+      definition,
+      output,
+      onWrite: () => { if (output.length === 3) sendsWritten.resolve() },
+    }))
+    expect(sent).toEqual([{ sequence: 1 }, { sequence: 2 }])
+    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+      "entrypointReady",
+      "actorInputSendRequested",
+      "actorInputSendRequested",
+      "taskOutcome",
+    ])
+  })
+
+  test("rejects an oversized Actor input idempotency key before emission", async () => {
+    const mailbox = actor({ id: "mailbox", run() {} })
+    let failure: unknown
+    const definition = task({
+      id: "deploy",
+      async run() {
+        try {
+          await mailbox.ref({ key: "primary" }).input.send(null, {
+            idempotencyKey: "a".repeat(513),
+          })
+        } catch (error) {
+          failure = error
+        }
+        return null
+      },
+    })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+    await runProgram(locatorURL, programIO({
+      input: frames(
+        frameMessage(runProto.ProgramStartSchema, start),
+        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+      ),
+      definition,
+      output,
+    }))
+    expect(failure).toMatchObject({
+      name: "HelmrError",
+      code: "invalid_idempotency_key",
+      retryable: false,
+    })
+    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+      "entrypointReady",
+      "taskOutcome",
+    ])
+  })
+
+  test("surfaces an Actor input send semantic failure to Actor user code", async () => {
+    const mailbox = actor({ id: "mailbox", run() {} })
+    let failure: unknown
+    const definition = actor({
+      id: "worker",
+      async run() {
+        try {
+          await mailbox.ref({ key: "closed" }).input.send({ hello: "world" })
+        } catch (error) {
+          failure = error
+        }
+      },
+    })
+    const start = actorStart(0n, 0n)
+    const output: Uint8Array[] = []
+    const sendWritten = deferred<void>()
+    async function* input(): AsyncIterable<Uint8Array> {
+      yield frameMessage(runProto.ProgramStartSchema, start)
+      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      await sendWritten.promise
+      const send = readEvent(output[1]!).event
+      if (send.case !== "actorInputSendRequested") return
+      yield actorDecision(send.value.correlationId, "failed", JSON.stringify({
+        code: "actor_not_open",
+        message: "Actor does not accept new input",
+        retryable: false,
+      }))
+    }
+    await runProgram(locatorURL, programIO({
+      input: input(),
+      definition,
+      output,
+      onWrite: () => { if (output.length === 2) sendWritten.resolve() },
+    }))
+    expect(failure).toMatchObject({
+      name: "HelmrError",
+      code: "actor_not_open",
+      retryable: false,
+      message: "Actor does not accept new input",
+    })
+    expect(readEvent(output[2]!).event.case).toBe("actorOutcome")
+  })
+
+  test("does not emit a pre-aborted send and drains a post-emission abort", async () => {
+    const mailbox = actor({ id: "mailbox", run() {} })
+    const preAborted = new AbortController()
+    preAborted.abort(new DOMException("pre-aborted", "AbortError"))
+    const postEmission = new AbortController()
+    const failures: unknown[] = []
+    const definition = task({
+      id: "deploy",
+      async run() {
+        for (const signal of [preAborted.signal, postEmission.signal]) {
+          try {
+            await mailbox.ref({ key: "primary" }).input.send(null, { signal })
+          } catch (error) {
+            failures.push(error)
+          }
+        }
+        return null
+      },
+    })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+    const sendWritten = deferred<void>()
+    async function* input(): AsyncIterable<Uint8Array> {
+      yield frameMessage(runProto.ProgramStartSchema, start)
+      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      await sendWritten.promise
+      const send = readEvent(output[1]!).event
+      if (send.case !== "actorInputSendRequested") return
+      yield actorDecision(send.value.correlationId, "completed", '{"sequence":3}')
+    }
+    await runProgram(locatorURL, programIO({
+      input: input(),
+      definition,
+      output,
+      onWrite: () => {
+        if (output.length === 2) {
+          postEmission.abort(new DOMException("post-emission", "AbortError"))
+          sendWritten.resolve()
+        }
+      },
+    }))
+    expect(failures).toHaveLength(2)
+    expect(failures.map((failure) =>
+      failure instanceof Error ? failure.message : String(failure)
+    )).toEqual(["pre-aborted", "post-emission"])
+    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+      "entrypointReady",
+      "actorInputSendRequested",
+      "taskOutcome",
+    ])
+  })
+
   test("waits for the exact entrypoint release before invoking a payload-free task", async () => {
     let invoked = false
     const definition = task({

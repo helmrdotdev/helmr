@@ -125,6 +125,7 @@ func (program *freshProgram) awaitTaskCompletion(
 	ctx context.Context,
 	events freshProgramEventSink,
 	wait func(context.Context, *runv0.RunWaitRequested) error,
+	sendActorInput func(context.Context, *runv0.ActorInputSendRequested) error,
 ) (*runv0.TaskOutcome, *runv0.ProgramQuiesced, error) {
 	if program == nil || program.session == nil {
 		return nil, nil, errors.New("fresh Program session is required")
@@ -188,6 +189,16 @@ func (program *freshProgram) awaitTaskCompletion(
 			if err := wait(ctx, value.RunWaitRequested); err != nil {
 				return nil, nil, err
 			}
+		case *runv0.RunEvent_ActorInputSendRequested:
+			if outcome != nil {
+				return nil, nil, errors.New("Program emitted an Actor input send after Task outcome")
+			}
+			if sendActorInput == nil {
+				return nil, nil, errors.New("fresh Program Actor input send support is required")
+			}
+			if err := sendActorInput(ctx, value.ActorInputSendRequested); err != nil {
+				return nil, nil, err
+			}
 		case *runv0.RunEvent_ProgramQuiesced:
 			if outcome == nil {
 				return nil, nil, errors.New("Program quiesced before emitting a Task outcome")
@@ -211,6 +222,7 @@ func (program *freshProgram) awaitActorCompletion(
 	events freshProgramEventSink,
 	wait func(context.Context, *runv0.RunWaitRequested) error,
 	turnCommit func(context.Context, *runv0.ActorTurnCommitRequested) error,
+	sendActorInput func(context.Context, *runv0.ActorInputSendRequested) error,
 ) (*runv0.ActorOutcome, *runv0.ProgramQuiesced, error) {
 	if program == nil || program.session == nil {
 		return nil, nil, errors.New("fresh Program session is required")
@@ -264,6 +276,16 @@ func (program *freshProgram) awaitActorCompletion(
 				return nil, nil, errors.New("fresh Actor turn commit support is required")
 			}
 			if err := turnCommit(ctx, value.ActorTurnCommitRequested); err != nil {
+				return nil, nil, err
+			}
+		case *runv0.RunEvent_ActorInputSendRequested:
+			if outcome != nil {
+				return nil, nil, errors.New("Program emitted an Actor input send after Actor outcome")
+			}
+			if sendActorInput == nil {
+				return nil, nil, errors.New("fresh Program Actor input send support is required")
+			}
+			if err := sendActorInput(ctx, value.ActorInputSendRequested); err != nil {
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_ProgramQuiesced:
