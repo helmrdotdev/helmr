@@ -12,6 +12,8 @@ export type {
   ActorInputSource,
   ActorKeyRef,
   ActorLifecycle,
+  ActorManagedRetryPolicy,
+  ActorManagedRunOptions,
   ActorOperationOptions,
   ActorOperationReceipt,
   ActorOutputRecord,

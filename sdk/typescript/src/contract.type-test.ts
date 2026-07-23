@@ -5,6 +5,8 @@ import {
   task,
   workspace,
   workspaces,
+  type ActorManagedRunOptions,
+  type ActorStatus,
   type JsonValue,
   type PayloadSchema,
 } from "."
@@ -20,6 +22,26 @@ const schema: PayloadSchema<{ readonly value: string }> = {
 }
 
 export function assertGreenfieldTypes(): void {
+  const managedRun: ActorManagedRunOptions = {
+    queue: "default",
+    priority: 0,
+    maxDuration: "5m",
+    retry: { enabled: false },
+    metadata: {},
+    tags: [],
+  }
+  const statusRun: ActorStatus["run"] = managedRun
+  void statusRun
+  // @ts-expect-error observed managed Run options always include maxDuration.
+  const incompleteManagedRun: ActorStatus["run"] = {
+    queue: "default",
+    priority: 0,
+    retry: { enabled: false },
+    metadata: {},
+    tags: [],
+  }
+  void incompleteManagedRun
+
   const builder = workspace("machine")
   // @ts-expect-error image is required before resources.
   builder.resources({ cpu: 1, memory: "1GiB", disk: "1GiB" })

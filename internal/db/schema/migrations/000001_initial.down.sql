@@ -5,6 +5,7 @@ DROP INDEX IF EXISTS run_stream_records_claim_idx;
 DROP INDEX IF EXISTS run_stream_records_sequence_idx;
 DROP INDEX IF EXISTS run_streams_deployment_definition_idx;
 DROP INDEX IF EXISTS actors_expiry_due_idx;
+DROP INDEX IF EXISTS actors_list_idx;
 DROP INDEX IF EXISTS workspace_leases_expiry_idx;
 DROP INDEX IF EXISTS workspace_leases_one_active_writer_workspace_mount_idx;
 DROP INDEX IF EXISTS workspace_leases_one_active_writer_workspace_idx;

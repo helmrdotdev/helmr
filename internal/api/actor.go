@@ -90,10 +90,90 @@ type ActorOperationRequest struct {
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
+type ActorReference struct {
+	ActorID  string
+	ActorKey string
+}
+
 type ActorOperationReceipt struct {
 	ActorID    string    `json:"actor_id"`
 	Lifecycle  string    `json:"lifecycle"`
 	AcceptedAt time.Time `json:"accepted_at"`
+}
+
+type ActorLifecycle string
+
+const (
+	ActorLifecycleOpen       ActorLifecycle = "open"
+	ActorLifecycleClosing    ActorLifecycle = "closing"
+	ActorLifecycleClosed     ActorLifecycle = "closed"
+	ActorLifecycleCancelling ActorLifecycle = "cancelling"
+	ActorLifecycleCancelled  ActorLifecycle = "cancelled"
+	ActorLifecycleFailed     ActorLifecycle = "failed"
+	ActorLifecycleExpired    ActorLifecycle = "expired"
+)
+
+type ActorManagedRetryBackoff struct {
+	MinDelay string `json:"min_delay"`
+	MaxDelay string `json:"max_delay"`
+	Factor   int64  `json:"factor"`
+	Jitter   string `json:"jitter"`
+}
+
+type ActorManagedRetryPolicy struct {
+	Enabled     bool                      `json:"enabled"`
+	MaxAttempts *int64                    `json:"max_attempts,omitempty"`
+	Backoff     *ActorManagedRetryBackoff `json:"backoff,omitempty"`
+}
+
+type ActorManagedRunOptions struct {
+	Queue          string                  `json:"queue"`
+	ConcurrencyKey *string                 `json:"concurrency_key,omitempty"`
+	Priority       int32                   `json:"priority"`
+	TTL            *string                 `json:"ttl,omitempty"`
+	MaxDuration    string                  `json:"max_duration"`
+	Retry          ActorManagedRetryPolicy `json:"retry"`
+	Metadata       json.RawMessage         `json:"metadata"`
+	Tags           []string                `json:"tags"`
+}
+
+type ActorFailure struct {
+	Code  string `json:"code"`
+	RunID string `json:"run_id"`
+}
+
+type ActorStatus struct {
+	ID           string                 `json:"id"`
+	Key          *string                `json:"key,omitempty"`
+	Lifecycle    ActorLifecycle         `json:"lifecycle"`
+	Metadata     json.RawMessage        `json:"metadata"`
+	Tags         []string               `json:"tags"`
+	ExpiresAt    *time.Time             `json:"expires_at,omitempty"`
+	Run          ActorManagedRunOptions `json:"run"`
+	CreatedAt    time.Time              `json:"created_at"`
+	UpdatedAt    time.Time              `json:"updated_at"`
+	CurrentRunID *string                `json:"current_run_id,omitempty"`
+	Failure      *ActorFailure          `json:"failure,omitempty"`
+}
+
+type ListActorsResponse struct {
+	Actors     []ActorStatus `json:"actors"`
+	NextCursor string        `json:"next_cursor,omitempty"`
+}
+
+func ValidateActorLifecycle(lifecycle string) error {
+	switch ActorLifecycle(lifecycle) {
+	case ActorLifecycleOpen,
+		ActorLifecycleClosing,
+		ActorLifecycleClosed,
+		ActorLifecycleCancelling,
+		ActorLifecycleCancelled,
+		ActorLifecycleFailed,
+		ActorLifecycleExpired:
+		return nil
+	default:
+		return fmt.Errorf("invalid Actor lifecycle %q", lifecycle)
+	}
 }
 
 func ValidateActorOperationRequest(request ActorOperationRequest) error {
@@ -106,6 +186,18 @@ func ValidateActorOperationRequest(request ActorOperationRequest) error {
 		return ValidateActorPublicID(request.ActorID)
 	}
 	return ValidateActorKey(request.ActorKey)
+}
+
+func ValidateActorReference(reference ActorReference) error {
+	hasID := reference.ActorID != ""
+	hasKey := reference.ActorKey != ""
+	if hasID == hasKey {
+		return errors.New("exactly one of actor_id or actor_key is required")
+	}
+	if hasID {
+		return ValidateActorPublicID(reference.ActorID)
+	}
+	return ValidateActorKey(reference.ActorKey)
 }
 
 func ValidateActorDeclaredID(id string) error {

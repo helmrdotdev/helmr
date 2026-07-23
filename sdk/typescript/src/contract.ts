@@ -438,6 +438,30 @@ export interface ActorFailure {
   readonly runId: string
 }
 
+export type ActorManagedRetryPolicy =
+  | Readonly<{
+      enabled: true
+      maxAttempts: number
+      backoff: Readonly<{
+        minDelay: Duration
+        maxDelay: Duration
+        factor: number
+        jitter: "none" | "full"
+      }>
+    }>
+  | Readonly<{ enabled: false }>
+
+export interface ActorManagedRunOptions {
+  readonly queue: string
+  readonly concurrencyKey?: string
+  readonly priority: number
+  readonly ttl?: Duration
+  readonly maxDuration: Duration
+  readonly retry: ActorManagedRetryPolicy
+  readonly metadata: Metadata
+  readonly tags: readonly string[]
+}
+
 export interface ActorStatus {
   readonly id: string
   readonly key?: string
@@ -445,7 +469,7 @@ export interface ActorStatus {
   readonly metadata: Metadata
   readonly tags: readonly string[]
   readonly expiresAt?: Date
-  readonly run: Readonly<RunOptions>
+  readonly run: ActorManagedRunOptions
   readonly createdAt: Date
   readonly updatedAt: Date
   readonly currentRunId?: string

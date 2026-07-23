@@ -204,3 +204,43 @@ func TestValidateActorOperationRequestRequiresOneExactAddress(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateActorReadContractUsesClosedEnumsAndReferences(t *testing.T) {
+	for _, lifecycle := range []ActorLifecycle{
+		ActorLifecycleOpen,
+		ActorLifecycleClosing,
+		ActorLifecycleClosed,
+		ActorLifecycleCancelling,
+		ActorLifecycleCancelled,
+		ActorLifecycleFailed,
+		ActorLifecycleExpired,
+	} {
+		if err := ValidateActorLifecycle(string(lifecycle)); err != nil {
+			t.Fatalf("ValidateActorLifecycle(%q): %v", lifecycle, err)
+		}
+	}
+	for _, lifecycle := range []string{"", "OPEN", "unknown"} {
+		if err := ValidateActorLifecycle(lifecycle); err == nil {
+			t.Fatalf("ValidateActorLifecycle(%q) succeeded", lifecycle)
+		}
+	}
+	validID := "act_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	for _, reference := range []ActorReference{
+		{ActorID: validID},
+		{ActorKey: "thread:1"},
+	} {
+		if err := ValidateActorReference(reference); err != nil {
+			t.Fatalf("ValidateActorReference(%+v): %v", reference, err)
+		}
+	}
+	for _, reference := range []ActorReference{
+		{},
+		{ActorID: validID, ActorKey: "thread:1"},
+		{ActorID: "act_invalid"},
+		{ActorKey: " thread:1"},
+	} {
+		if err := ValidateActorReference(reference); err == nil {
+			t.Fatalf("ValidateActorReference(%+v) succeeded", reference)
+		}
+	}
+}

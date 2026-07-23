@@ -456,6 +456,303 @@ func (q *Queries) GetActorByPublicID(ctx context.Context, arg GetActorByPublicID
 	return i, err
 }
 
+const getActorRead = `-- name: GetActorRead :one
+SELECT actors.id, actors.public_id, actors.org_id, actors.project_id, actors.environment_id, actors.declaration_kind, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.managed_queue_name, actors.managed_concurrency_key, actors.managed_queue_concurrency_limit, actors.managed_priority, actors.managed_queued_ttl_ms, actors.managed_max_active_duration_ms, actors.managed_retry_policy_version, actors.managed_retry_policy, actors.managed_run_metadata, actors.managed_run_tags, actors.state, actors.close_sequence, actors.expires_at, actors.metadata, actors.tags, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at, actors.expired_at,
+       current_runs.public_id AS current_run_public_id,
+       failure_runs.public_id AS failure_run_public_id
+  FROM actors
+  LEFT JOIN runs AS current_runs
+    ON current_runs.environment_id = actors.environment_id
+   AND current_runs.actor_id = actors.id
+   AND current_runs.id = actors.current_run_id
+  LEFT JOIN runs AS failure_runs
+    ON failure_runs.environment_id = actors.environment_id
+   AND failure_runs.actor_id = actors.id
+   AND failure_runs.id = actors.failure_run_id
+ WHERE actors.environment_id = $1
+   AND actors.actor_declared_id = $2
+   AND (
+       (
+           $3::text IS NOT NULL
+           AND actors.public_id = $3::text
+       )
+       OR
+       (
+           $4::text IS NOT NULL
+           AND actors.key = $4::text
+       )
+   )
+`
+
+type GetActorReadParams struct {
+	EnvironmentID   pgtype.UUID `json:"environment_id"`
+	ActorDeclaredID string      `json:"actor_declared_id"`
+	AddressPublicID pgtype.Text `json:"address_public_id"`
+	AddressKey      pgtype.Text `json:"address_key"`
+}
+
+type GetActorReadRow struct {
+	ID                           pgtype.UUID        `json:"id"`
+	PublicID                     string             `json:"public_id"`
+	OrgID                        pgtype.UUID        `json:"org_id"`
+	ProjectID                    pgtype.UUID        `json:"project_id"`
+	EnvironmentID                pgtype.UUID        `json:"environment_id"`
+	DeclarationKind              string             `json:"declaration_kind"`
+	ActorDeclaredID              string             `json:"actor_declared_id"`
+	DeploymentDefinitionID       pgtype.UUID        `json:"deployment_definition_id"`
+	WorkspaceID                  pgtype.UUID        `json:"workspace_id"`
+	Key                          pgtype.Text        `json:"key"`
+	CurrentRunID                 pgtype.UUID        `json:"current_run_id"`
+	RunGeneration                int64              `json:"run_generation"`
+	StateVersion                 int64              `json:"state_version"`
+	ManualRunCancelled           bool               `json:"manual_run_cancelled"`
+	FailureCode                  pgtype.Text        `json:"failure_code"`
+	FailureRunID                 pgtype.UUID        `json:"failure_run_id"`
+	NextInputSequence            int64              `json:"next_input_sequence"`
+	CommittedInputSequence       int64              `json:"committed_input_sequence"`
+	NextOutputSequence           int64              `json:"next_output_sequence"`
+	InputRetentionFloor          int64              `json:"input_retention_floor"`
+	OutputRetentionFloor         int64              `json:"output_retention_floor"`
+	ManagedQueueName             string             `json:"managed_queue_name"`
+	ManagedConcurrencyKey        pgtype.Text        `json:"managed_concurrency_key"`
+	ManagedQueueConcurrencyLimit pgtype.Int8        `json:"managed_queue_concurrency_limit"`
+	ManagedPriority              int32              `json:"managed_priority"`
+	ManagedQueuedTtlMs           pgtype.Int8        `json:"managed_queued_ttl_ms"`
+	ManagedMaxActiveDurationMs   int64              `json:"managed_max_active_duration_ms"`
+	ManagedRetryPolicyVersion    int32              `json:"managed_retry_policy_version"`
+	ManagedRetryPolicy           []byte             `json:"managed_retry_policy"`
+	ManagedRunMetadata           []byte             `json:"managed_run_metadata"`
+	ManagedRunTags               []string           `json:"managed_run_tags"`
+	State                        string             `json:"state"`
+	CloseSequence                pgtype.Int8        `json:"close_sequence"`
+	ExpiresAt                    pgtype.Timestamptz `json:"expires_at"`
+	Metadata                     []byte             `json:"metadata"`
+	Tags                         []string           `json:"tags"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	ClosedAt                     pgtype.Timestamptz `json:"closed_at"`
+	CancelledAt                  pgtype.Timestamptz `json:"cancelled_at"`
+	FailedAt                     pgtype.Timestamptz `json:"failed_at"`
+	ExpiredAt                    pgtype.Timestamptz `json:"expired_at"`
+	CurrentRunPublicID           pgtype.Text        `json:"current_run_public_id"`
+	FailureRunPublicID           pgtype.Text        `json:"failure_run_public_id"`
+}
+
+func (q *Queries) GetActorRead(ctx context.Context, arg GetActorReadParams) (GetActorReadRow, error) {
+	row := q.db.QueryRow(ctx, getActorRead,
+		arg.EnvironmentID,
+		arg.ActorDeclaredID,
+		arg.AddressPublicID,
+		arg.AddressKey,
+	)
+	var i GetActorReadRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeclarationKind,
+		&i.ActorDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.WorkspaceID,
+		&i.Key,
+		&i.CurrentRunID,
+		&i.RunGeneration,
+		&i.StateVersion,
+		&i.ManualRunCancelled,
+		&i.FailureCode,
+		&i.FailureRunID,
+		&i.NextInputSequence,
+		&i.CommittedInputSequence,
+		&i.NextOutputSequence,
+		&i.InputRetentionFloor,
+		&i.OutputRetentionFloor,
+		&i.ManagedQueueName,
+		&i.ManagedConcurrencyKey,
+		&i.ManagedQueueConcurrencyLimit,
+		&i.ManagedPriority,
+		&i.ManagedQueuedTtlMs,
+		&i.ManagedMaxActiveDurationMs,
+		&i.ManagedRetryPolicyVersion,
+		&i.ManagedRetryPolicy,
+		&i.ManagedRunMetadata,
+		&i.ManagedRunTags,
+		&i.State,
+		&i.CloseSequence,
+		&i.ExpiresAt,
+		&i.Metadata,
+		&i.Tags,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClosedAt,
+		&i.CancelledAt,
+		&i.FailedAt,
+		&i.ExpiredAt,
+		&i.CurrentRunPublicID,
+		&i.FailureRunPublicID,
+	)
+	return i, err
+}
+
+const listActorReads = `-- name: ListActorReads :many
+SELECT actors.id, actors.public_id, actors.org_id, actors.project_id, actors.environment_id, actors.declaration_kind, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.managed_queue_name, actors.managed_concurrency_key, actors.managed_queue_concurrency_limit, actors.managed_priority, actors.managed_queued_ttl_ms, actors.managed_max_active_duration_ms, actors.managed_retry_policy_version, actors.managed_retry_policy, actors.managed_run_metadata, actors.managed_run_tags, actors.state, actors.close_sequence, actors.expires_at, actors.metadata, actors.tags, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at, actors.expired_at,
+       current_runs.public_id AS current_run_public_id,
+       failure_runs.public_id AS failure_run_public_id
+  FROM actors
+  LEFT JOIN runs AS current_runs
+    ON current_runs.environment_id = actors.environment_id
+   AND current_runs.actor_id = actors.id
+   AND current_runs.id = actors.current_run_id
+  LEFT JOIN runs AS failure_runs
+    ON failure_runs.environment_id = actors.environment_id
+   AND failure_runs.actor_id = actors.id
+   AND failure_runs.id = actors.failure_run_id
+ WHERE actors.environment_id = $1
+   AND actors.actor_declared_id = $2
+   AND (
+       $3::text IS NULL
+       OR actors.state = $3::text
+   )
+   AND (
+       $4::timestamptz IS NULL
+       OR (actors.created_at, actors.public_id) < (
+           $4::timestamptz,
+           $5::text
+       )
+   )
+ ORDER BY actors.created_at DESC, actors.public_id DESC
+ LIMIT $6
+`
+
+type ListActorReadsParams struct {
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	ActorDeclaredID string             `json:"actor_declared_id"`
+	Lifecycle       pgtype.Text        `json:"lifecycle"`
+	CursorCreatedAt pgtype.Timestamptz `json:"cursor_created_at"`
+	CursorPublicID  pgtype.Text        `json:"cursor_public_id"`
+	LimitCount      int32              `json:"limit_count"`
+}
+
+type ListActorReadsRow struct {
+	ID                           pgtype.UUID        `json:"id"`
+	PublicID                     string             `json:"public_id"`
+	OrgID                        pgtype.UUID        `json:"org_id"`
+	ProjectID                    pgtype.UUID        `json:"project_id"`
+	EnvironmentID                pgtype.UUID        `json:"environment_id"`
+	DeclarationKind              string             `json:"declaration_kind"`
+	ActorDeclaredID              string             `json:"actor_declared_id"`
+	DeploymentDefinitionID       pgtype.UUID        `json:"deployment_definition_id"`
+	WorkspaceID                  pgtype.UUID        `json:"workspace_id"`
+	Key                          pgtype.Text        `json:"key"`
+	CurrentRunID                 pgtype.UUID        `json:"current_run_id"`
+	RunGeneration                int64              `json:"run_generation"`
+	StateVersion                 int64              `json:"state_version"`
+	ManualRunCancelled           bool               `json:"manual_run_cancelled"`
+	FailureCode                  pgtype.Text        `json:"failure_code"`
+	FailureRunID                 pgtype.UUID        `json:"failure_run_id"`
+	NextInputSequence            int64              `json:"next_input_sequence"`
+	CommittedInputSequence       int64              `json:"committed_input_sequence"`
+	NextOutputSequence           int64              `json:"next_output_sequence"`
+	InputRetentionFloor          int64              `json:"input_retention_floor"`
+	OutputRetentionFloor         int64              `json:"output_retention_floor"`
+	ManagedQueueName             string             `json:"managed_queue_name"`
+	ManagedConcurrencyKey        pgtype.Text        `json:"managed_concurrency_key"`
+	ManagedQueueConcurrencyLimit pgtype.Int8        `json:"managed_queue_concurrency_limit"`
+	ManagedPriority              int32              `json:"managed_priority"`
+	ManagedQueuedTtlMs           pgtype.Int8        `json:"managed_queued_ttl_ms"`
+	ManagedMaxActiveDurationMs   int64              `json:"managed_max_active_duration_ms"`
+	ManagedRetryPolicyVersion    int32              `json:"managed_retry_policy_version"`
+	ManagedRetryPolicy           []byte             `json:"managed_retry_policy"`
+	ManagedRunMetadata           []byte             `json:"managed_run_metadata"`
+	ManagedRunTags               []string           `json:"managed_run_tags"`
+	State                        string             `json:"state"`
+	CloseSequence                pgtype.Int8        `json:"close_sequence"`
+	ExpiresAt                    pgtype.Timestamptz `json:"expires_at"`
+	Metadata                     []byte             `json:"metadata"`
+	Tags                         []string           `json:"tags"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	ClosedAt                     pgtype.Timestamptz `json:"closed_at"`
+	CancelledAt                  pgtype.Timestamptz `json:"cancelled_at"`
+	FailedAt                     pgtype.Timestamptz `json:"failed_at"`
+	ExpiredAt                    pgtype.Timestamptz `json:"expired_at"`
+	CurrentRunPublicID           pgtype.Text        `json:"current_run_public_id"`
+	FailureRunPublicID           pgtype.Text        `json:"failure_run_public_id"`
+}
+
+func (q *Queries) ListActorReads(ctx context.Context, arg ListActorReadsParams) ([]ListActorReadsRow, error) {
+	rows, err := q.db.Query(ctx, listActorReads,
+		arg.EnvironmentID,
+		arg.ActorDeclaredID,
+		arg.Lifecycle,
+		arg.CursorCreatedAt,
+		arg.CursorPublicID,
+		arg.LimitCount,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActorReadsRow
+	for rows.Next() {
+		var i ListActorReadsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PublicID,
+			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.DeclarationKind,
+			&i.ActorDeclaredID,
+			&i.DeploymentDefinitionID,
+			&i.WorkspaceID,
+			&i.Key,
+			&i.CurrentRunID,
+			&i.RunGeneration,
+			&i.StateVersion,
+			&i.ManualRunCancelled,
+			&i.FailureCode,
+			&i.FailureRunID,
+			&i.NextInputSequence,
+			&i.CommittedInputSequence,
+			&i.NextOutputSequence,
+			&i.InputRetentionFloor,
+			&i.OutputRetentionFloor,
+			&i.ManagedQueueName,
+			&i.ManagedConcurrencyKey,
+			&i.ManagedQueueConcurrencyLimit,
+			&i.ManagedPriority,
+			&i.ManagedQueuedTtlMs,
+			&i.ManagedMaxActiveDurationMs,
+			&i.ManagedRetryPolicyVersion,
+			&i.ManagedRetryPolicy,
+			&i.ManagedRunMetadata,
+			&i.ManagedRunTags,
+			&i.State,
+			&i.CloseSequence,
+			&i.ExpiresAt,
+			&i.Metadata,
+			&i.Tags,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ClosedAt,
+			&i.CancelledAt,
+			&i.FailedAt,
+			&i.ExpiredAt,
+			&i.CurrentRunPublicID,
+			&i.FailureRunPublicID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockActorStartDeploymentAuthority = `-- name: LockActorStartDeploymentAuthority :one
 SELECT actor_definition.id AS actor_definition_id,
        actor_definition.deployment_id,

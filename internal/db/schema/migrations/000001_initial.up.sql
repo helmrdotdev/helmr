@@ -1673,6 +1673,14 @@ CREATE INDEX actors_deployment_definition_idx
         actor_declared_id
     );
 
+CREATE INDEX actors_list_idx
+    ON actors (
+        environment_id,
+        actor_declared_id,
+        created_at DESC,
+        public_id DESC
+    );
+
 CREATE INDEX actors_expiry_due_idx
     ON actors (org_id, expires_at, id)
     WHERE state = 'open'

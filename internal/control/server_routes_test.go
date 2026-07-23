@@ -31,6 +31,8 @@ DELETE /api/members/{userID}
 DELETE /api/projects/{projectID}
 DELETE /api/projects/{projectID}/environments/{environmentID}
 DELETE /api/projects/{projectID}/environments/{environmentID}/api-keys/{id}
+GET /api/actors/{actorDeclaredID}
+GET /api/actors/{actorDeclaredID}/status
 GET /api/auth/device/status
 GET /api/deployments
 GET /api/deployments/current
@@ -42,6 +44,8 @@ GET /api/members
 GET /api/projects
 GET /api/projects/{projectID}
 GET /api/projects/{projectID}/environments/{environmentID}
+GET /api/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}
+GET /api/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/status
 GET /api/projects/{projectID}/environments/{environmentID}/api-keys
 GET /api/projects/{projectID}/environments/{environmentID}/deployments
 GET /api/projects/{projectID}/environments/{environmentID}/deployments/current

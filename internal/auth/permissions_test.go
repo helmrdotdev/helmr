@@ -123,3 +123,15 @@ func TestActorStartPermissionIsWritableButNotReadableRoleAuthority(t *testing.T)
 		t.Fatalf("normalized Actor start permission = %v", normalized)
 	}
 }
+
+func TestActorReadPermissionAllowsReadOnlyRoles(t *testing.T) {
+	for _, role := range []Role{RoleOwner, RoleAdmin, RoleDeveloper, RoleViewer} {
+		if !RoleAllows(role, PermissionActorsRead) {
+			t.Fatalf("%s should be allowed to read Actors", role)
+		}
+	}
+	normalized := normalizeAPIKeyGrantPermission(string(PermissionActorsRead))
+	if len(normalized) != 1 || normalized[0] != PermissionActorsRead {
+		t.Fatalf("normalized Actor read permission = %v", normalized)
+	}
+}
