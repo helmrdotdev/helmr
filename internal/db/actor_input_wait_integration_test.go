@@ -157,9 +157,11 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 	first, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
 		ActorID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: fingerprint,
-		ID: pgvalue.UUID(recordID), Data: []byte(`{"keyed":true}`), SourceKind: pgvalue.Text("external"),
+		ID: pgvalue.UUID(recordID), Data: []byte(`{"keyed":true}`), SourceKind: pgvalue.Text("run"),
+		SourceRunID: pgvalue.UUID(work.runID),
 	})
-	if err != nil || !first.Appended {
+	if err != nil || !first.Appended || pgvalue.TextValue(first.SourceKind) != "run" ||
+		first.SourceRunID != pgvalue.UUID(work.runID) {
 		t.Fatalf("keyed append = %+v, %v", first, err)
 	}
 	claim, err := fixture.queries.CompleteActorInputClaim(ctx, CompleteActorInputClaimParams{
@@ -179,9 +181,11 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 	replay, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
 		ActorID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: fingerprint,
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Data: []byte(`{"keyed":true}`), SourceKind: pgvalue.Text("external"),
+		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Data: []byte(`{"keyed":true}`), SourceKind: pgvalue.Text("run"),
+		SourceRunID: pgvalue.UUID(work.runID),
 	})
-	if err != nil || replay.Appended || replay.ID != first.ID || replay.Sequence != first.Sequence || replay.ClaimFingerprintMismatch {
+	if err != nil || replay.Appended || replay.ID != first.ID || replay.Sequence != first.Sequence ||
+		replay.ClaimFingerprintMismatch || replay.SourceRunID != pgvalue.UUID(work.runID) {
 		t.Fatalf("keyed replay = %+v, %v", replay, err)
 	}
 	var manualRunCancelled bool
@@ -194,10 +198,138 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 	mismatch, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
 		ActorID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: bytes.Repeat([]byte{8}, 32),
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Data: []byte(`{"keyed":false}`), SourceKind: pgvalue.Text("external"),
+		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Data: []byte(`{"keyed":false}`), SourceKind: pgvalue.Text("run"),
+		SourceRunID: pgvalue.UUID(work.runID),
 	})
 	if err != nil || !mismatch.ClaimFingerprintMismatch || mismatch.ID != first.ID {
 		t.Fatalf("keyed mismatch = %+v, %v", mismatch, err)
+	}
+}
+
+func TestActorInputRunSourceTransactionRollbackLeavesNoResidue(t *testing.T) {
+	ctx := context.Background()
+	fixture := newRunLeaseClaimFixture(t, ctx)
+	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+	actorID := convertTokenWaitWorkToActor(t, ctx, fixture, work, `{"enabled":false}`, pgtype.Timestamptz{})
+
+	recordID := uuid.Must(uuid.NewV7())
+	reconcileID := uuid.Must(uuid.NewV7())
+	claimID := uuid.Must(uuid.NewV7())
+	fingerprint := bytes.Repeat([]byte{13}, 32)
+	tx, err := fixture.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	mustRunLeaseExec(t, ctx, tx, `
+		INSERT INTO idempotency_claims (
+			id, environment_id, operation, scope_hash, key_hash,
+			hash_key_version, generation, request_fingerprint, accepted_at, expires_at
+		) VALUES ($1, $2, 'actor.input.send', $3, $4, 1, 1, $5, now(), now() + interval '30 days')
+	`, claimID, fixture.environmentID, runLeaseTestHash("run-source-rollback-scope"),
+		runLeaseTestHash("run-source-rollback-key"), fingerprint)
+	queries := New(tx)
+	appended, err := queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
+		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
+		ActorID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: fingerprint,
+		ID: pgvalue.UUID(recordID), Data: []byte(`{"rollback":true}`),
+		SourceKind: pgvalue.Text("run"), SourceRunID: pgvalue.UUID(work.runID),
+	})
+	if err != nil || !appended.Appended {
+		t.Fatalf("provisional append = %+v, %v", appended, err)
+	}
+	if _, err := queries.CompleteActorInputClaim(ctx, CompleteActorInputClaimParams{
+		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
+		RequestFingerprint: fingerprint,
+		ActorID:            pgvalue.UUID(actorID), RecordID: appended.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.CreateActorInputReconcileOutbox(ctx, CreateActorInputReconcileOutboxParams{
+		ID: pgvalue.UUID(reconcileID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
+		ActorID: pgvalue.UUID(actorID), RecordID: appended.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// This models the control transaction aborting when source authority turns
+	// stale after its provisional durable writes.
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var nextInputSequence int64
+	var recordCount, claimCount, outboxCount int
+	if err := fixture.pool.QueryRow(ctx, `
+		SELECT next_input_sequence,
+		       (SELECT count(*) FROM actor_records WHERE id = $2),
+		       (SELECT count(*) FROM idempotency_claims
+		         WHERE environment_id = $3 AND operation = 'actor.input.send'),
+		       (SELECT count(*) FROM outbox_messages WHERE id = $4)
+		  FROM actors
+		 WHERE id = $1
+	`, actorID, recordID, fixture.environmentID, reconcileID).Scan(
+		&nextInputSequence, &recordCount, &claimCount, &outboxCount,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if nextInputSequence != 3 || recordCount != 0 || claimCount != 0 || outboxCount != 0 {
+		t.Fatalf("rollback residue = next %d records %d claims %d outbox %d, want 3/0/0/0",
+			nextInputSequence, recordCount, claimCount, outboxCount)
+	}
+}
+
+func TestActorInputSendSourceRequiresExactReceiptWithoutGrantingLiveness(t *testing.T) {
+	ctx := context.Background()
+	fixture := newRunLeaseClaimFixture(t, ctx)
+	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+	var params GetActorInputSendSourceParams
+	if err := fixture.pool.QueryRow(ctx, `
+		SELECT id, run_id, workspace_id, attempt_number, lease_sequence,
+		       worker_group_id, worker_instance_id, worker_epoch,
+		       worker_protocol_version, runtime_instance_id, network_slot_id,
+		       network_slot_generation, runtime_identity_id, requested_cpu_millis,
+		       requested_memory_bytes, requested_workload_disk_bytes,
+		       requested_scratch_bytes, requested_execution_slots,
+		       start_deadline_at, expires_at
+		  FROM run_leases
+		 WHERE id = $1
+	`, work.leaseID).Scan(
+		&params.ID, &params.RunID, &params.WorkspaceID, &params.AttemptNumber,
+		&params.LeaseSequence, &params.WorkerGroupID, &params.WorkerInstanceID,
+		&params.WorkerEpoch, &params.WorkerProtocolVersion, &params.RuntimeInstanceID,
+		&params.NetworkSlotID, &params.NetworkSlotGeneration, &params.RuntimeIdentityID,
+		&params.RequestedCpuMillis, &params.RequestedMemoryBytes,
+		&params.RequestedWorkloadDiskBytes, &params.RequestedScratchBytes,
+		&params.RequestedExecutionSlots, &params.StartDeadlineAt, &params.ExpiresAt,
+	); err != nil {
+		t.Fatal(err)
+	}
+	source, err := fixture.queries.GetActorInputSendSource(ctx, params)
+	if err != nil || source.EnvironmentID != pgvalue.UUID(fixture.environmentID) ||
+		source.RunID != pgvalue.UUID(work.runID) {
+		t.Fatalf("exact source receipt = %+v, %v", source, err)
+	}
+
+	previous := params
+	params.ExpiresAt = pgvalue.Timestamptz(params.ExpiresAt.Time.Add(time.Minute))
+	mustRunLeaseExec(t, ctx, fixture.pool, `
+		UPDATE run_leases
+		   SET state = 'cancelled', expires_at = $2, terminal_at = now(),
+		       terminal_reason_code = 'test_stale_actor_input_source'
+		 WHERE id = $1
+	`, work.leaseID, params.ExpiresAt)
+	if _, err := fixture.queries.GetActorInputSendSource(ctx, previous); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("superseded receipt error = %v, want no rows", err)
+	}
+	if _, err := fixture.queries.GetActorInputSendSource(ctx, params); err != nil {
+		t.Fatalf("current persisted terminal receipt error = %v", err)
+	}
+	if _, err := fixture.queries.GetLiveRunLeaseLocators(ctx, GetLiveRunLeaseLocatorsParams{
+		ID: params.ID, LeaseSequence: params.LeaseSequence,
+		WorkerGroupID: params.WorkerGroupID, WorkerInstanceID: params.WorkerInstanceID,
+		WorkerEpoch: params.WorkerEpoch, WorkerProtocolVersion: params.WorkerProtocolVersion,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("terminal source liveness error = %v, want no rows", err)
 	}
 }
 

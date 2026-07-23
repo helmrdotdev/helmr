@@ -103,6 +103,45 @@ func TestAppendActorInputRollsBackNewClaimWhenActorIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestAppendActorInputRollsBackProvisionalRunSourceWhenAuthorityIsStale(t *testing.T) {
+	environmentID := uuid.New()
+	actorID := uuid.New()
+	sourceRunID := uuid.New()
+	store, manager := newActorInputClaimStore(t)
+	store.locator = db.Actor{
+		ID:                pgvalue.UUID(actorID),
+		EnvironmentID:     pgvalue.UUID(environmentID),
+		WorkspaceID:       pgvalue.UUID(uuid.New()),
+		State:             "open",
+		NextInputSequence: 3,
+	}
+	server := &Server{db: store, claims: manager}
+	authorized := false
+
+	_, err := server.appendActorInput(t.Context(), appendActorInputRequest{
+		EnvironmentID:  environmentID,
+		ActorID:        actorID,
+		RecordID:       uuid.New(),
+		Data:           []byte(`{"message":"queued"}`),
+		SourceKind:     "run",
+		SourceRunID:    sourceRunID,
+		IdempotencyKey: "message:stale-source",
+		Authorize: func(context.Context, db.Querier) error {
+			authorized = true
+			return errStaleActorInputSend
+		},
+	})
+	if !errors.Is(err, errStaleActorInputSend) {
+		t.Fatalf("error = %v, want stale Actor input source", err)
+	}
+	if !authorized {
+		t.Fatal("new Run-sourced append did not authorize its source")
+	}
+	if store.commits != 0 || store.rollbacks != 1 {
+		t.Fatalf("transactions: commits=%d rollbacks=%d", store.commits, store.rollbacks)
+	}
+}
+
 func TestAppendActorInputMapsPostgresStorageBoundAndRollsBack(t *testing.T) {
 	environmentID := uuid.New()
 	actorID := uuid.New()
@@ -330,10 +369,25 @@ func (s *actorInputClaimStore) LockWorkspaceSecretsForAdmission(
 }
 
 func (s *actorInputClaimStore) AppendActorInputRecord(
-	context.Context,
-	db.AppendActorInputRecordParams,
+	_ context.Context,
+	params db.AppendActorInputRecordParams,
 ) (db.AppendActorInputRecordRow, error) {
-	return db.AppendActorInputRecordRow{}, s.appendErr
+	if s.appendErr != nil {
+		return db.AppendActorInputRecordRow{}, s.appendErr
+	}
+	return db.AppendActorInputRecordRow{
+		ID:            params.ID,
+		EnvironmentID: params.EnvironmentID,
+		ActorID:       params.ActorID,
+		Direction:     "input",
+		Sequence:      s.locator.NextInputSequence,
+		Data:          params.Data,
+		ContentType:   "application/json",
+		SourceKind:    params.SourceKind,
+		SourceRunID:   params.SourceRunID,
+		ClaimID:       params.ClaimID,
+		Appended:      true,
+	}, nil
 }
 
 func (s *actorInputClaimStore) GetActorByKey(

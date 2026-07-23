@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -311,6 +312,129 @@ func TestPostgresActorInputClaimCanonicalReplayAndConflict(t *testing.T) {
 		if !errors.As(err, &conflict) {
 			t.Fatalf("conflict error = %v", err)
 		}
+	}
+}
+
+func TestPostgresActorInputClaimConcurrentFirstWriterWins(t *testing.T) {
+	pool := openClaimPostgres(t)
+	environmentID := seedClaimEnvironment(t, pool)
+	manager := validatedClaimManager(t, 1, pool, db.New(pool))
+	request, err := NewActorInputSendRequest(
+		environmentID,
+		uuid.New(),
+		"message:concurrent",
+		[]byte(`{"message":"once"}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	winnerTX, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer winnerTX.Rollback(context.Background())
+	winnerClaims, err := manager.Transaction(winnerTX)
+	if err != nil {
+		t.Fatal(err)
+	}
+	winner, err := winnerClaims.Acquire(t.Context(), request)
+	if err != nil || !winner.New || winner.Claim.State != "pending" {
+		t.Fatalf("winner acquisition = %+v, %v", winner, err)
+	}
+
+	type contenderSetup struct {
+		backendPID int32
+		err        error
+	}
+	type contenderResult struct {
+		claim Result
+		err   error
+	}
+	setup := make(chan contenderSetup, 1)
+	result := make(chan contenderResult, 1)
+	go func() {
+		tx, err := pool.Begin(context.Background())
+		if err != nil {
+			setup <- contenderSetup{err: err}
+			return
+		}
+		defer tx.Rollback(context.Background())
+		var backendPID int32
+		if err := tx.QueryRow(context.Background(), `SELECT pg_backend_pid()`).Scan(&backendPID); err != nil {
+			setup <- contenderSetup{err: err}
+			return
+		}
+		claims, err := manager.Transaction(tx)
+		if err != nil {
+			setup <- contenderSetup{err: err}
+			return
+		}
+		setup <- contenderSetup{backendPID: backendPID}
+		acquired, err := claims.Acquire(context.Background(), request)
+		if err == nil {
+			err = tx.Commit(context.Background())
+		}
+		result <- contenderResult{claim: acquired, err: err}
+	}()
+
+	contender := <-setup
+	if contender.err != nil {
+		t.Fatal(contender.err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var waitType, waitEvent pgtype.Text
+		if err := pool.QueryRow(t.Context(), `
+			SELECT wait_event_type, wait_event
+			  FROM pg_stat_activity
+			 WHERE pid = $1
+		`, contender.backendPID).Scan(&waitType, &waitEvent); err != nil {
+			t.Fatal(err)
+		}
+		if waitType.String == "Lock" && strings.EqualFold(waitEvent.String, "advisory") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("contender did not block on the idempotency advisory lock: %s/%s",
+				waitType.String, waitEvent.String)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	recordID := uuid.New()
+	receipt := []byte(`{"recordId":"` + recordID.String() + `","sequence":3}`)
+	completed, err := winnerClaims.Complete(t.Context(), winner.Claim, receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := winnerTX.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	var replayed contenderResult
+	select {
+	case replayed = <-result:
+	case <-time.After(5 * time.Second):
+		t.Fatal("contender did not finish after the winner committed")
+	}
+	if replayed.err != nil {
+		t.Fatal(replayed.err)
+	}
+	if replayed.claim.New || replayed.claim.Claim.ID != completed.ID ||
+		replayed.claim.Claim.State != "completed" ||
+		!bytes.Equal(replayed.claim.Claim.Receipt, completed.Receipt) {
+		t.Fatalf("contended replay = %+v, want completed claim %+v", replayed.claim, completed)
+	}
+	var claimCount int
+	if err := pool.QueryRow(t.Context(), `
+		SELECT count(*) FROM idempotency_claims
+		 WHERE environment_id = $1 AND operation = 'actor.input.send'
+	`, environmentID).Scan(&claimCount); err != nil {
+		t.Fatal(err)
+	}
+	if claimCount != 1 {
+		t.Fatalf("Actor input claims = %d, want 1", claimCount)
 	}
 }
 
