@@ -20,8 +20,10 @@ const (
 	maxArtifactNameBytes       int64 = 128 << 20
 	maxCodeLogicalBytes        int64 = 2 << 30
 	maxDependencyLogicalBytes  int64 = 8 << 30
+	maxBuildTreeLogicalBytes         = maxCodeLogicalBytes + maxDependencyLogicalBytes
 	maxCodePhysicalBytes       int64 = 3 << 30
 	maxDependencyPhysicalBytes int64 = 10 << 30
+	maxBuildTreePhysicalBytes        = maxCodePhysicalBytes + maxDependencyPhysicalBytes
 	maxRuntimeLogicalBytes           = maxCodeLogicalBytes
 	maxRuntimePhysicalBytes          = maxCodePhysicalBytes
 	maxPackageJSONBytes        int64 = 256 << 20
@@ -172,6 +174,7 @@ const (
 	runtimeArtifact
 	toolchainArtifact
 	managerArtifact
+	buildTreeArtifact
 )
 
 type inspectedArtifact struct {

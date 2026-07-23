@@ -90,6 +90,12 @@ func artifactSnapshotSpecForRole(role artifactRole) (artifactSnapshotSpec, error
 			mediaType: ManagerTreeMediaType,
 			maxBytes:  maxManagerCapsuleTreeBytes,
 		}, nil
+	case buildTreeArtifact:
+		return artifactSnapshotSpec{
+			label:     "build tree",
+			mediaType: buildTreeSnapshotMediaType,
+			maxBytes:  maxBuildTreePhysicalBytes,
+		}, nil
 	default:
 		return artifactSnapshotSpec{}, fmt.Errorf("artifact snapshot role = %d", role)
 	}
