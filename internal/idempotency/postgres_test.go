@@ -249,6 +249,71 @@ func TestPostgresClaimProtocol(t *testing.T) {
 	}
 }
 
+func TestPostgresActorInputClaimCanonicalReplayAndConflict(t *testing.T) {
+	pool := openClaimPostgres(t)
+	environmentID := seedClaimEnvironment(t, pool)
+	manager := validatedClaimManager(t, 1, pool, db.New(pool))
+	actorID := uuid.New()
+
+	acquire := func(input string) (Result, error) {
+		t.Helper()
+		request, err := NewActorInputSendRequest(
+			environmentID,
+			actorID,
+			"message:1",
+			[]byte(input),
+		)
+		if err != nil {
+			return Result{}, err
+		}
+		tx, err := pool.Begin(t.Context())
+		if err != nil {
+			return Result{}, err
+		}
+		defer tx.Rollback(context.Background())
+		claims, err := manager.Transaction(tx)
+		if err != nil {
+			return Result{}, err
+		}
+		result, err := claims.Acquire(t.Context(), request)
+		if err != nil {
+			return Result{}, err
+		}
+		if result.New {
+			if _, err := claims.Complete(t.Context(), result.Claim, []byte(
+				`{"recordId":"`+uuid.New().String()+`","sequence":1}`,
+			)); err != nil {
+				return Result{}, err
+			}
+		}
+		if err := tx.Commit(t.Context()); err != nil {
+			return Result{}, err
+		}
+		return result, nil
+	}
+
+	created, err := acquire(`{"b":2,"a":1}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := acquire("{\n\"a\":1.0,\"b\":2}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created.New || replayed.New || replayed.Claim.ID != created.Claim.ID ||
+		replayed.Claim.State != "completed" {
+		t.Fatalf("created = %+v replayed = %+v", created, replayed)
+	}
+	if _, err := acquire(`{"a":1,"b":3}`); err == nil {
+		t.Fatal("expected different Actor input to conflict")
+	} else {
+		var conflict ConflictError
+		if !errors.As(err, &conflict) {
+			t.Fatalf("conflict error = %v", err)
+		}
+	}
+}
+
 func TestPostgresLookupHMACAuthorityFencesRotation(t *testing.T) {
 	pool := openClaimPostgres(t)
 	hashes := claimTestKeys(t)

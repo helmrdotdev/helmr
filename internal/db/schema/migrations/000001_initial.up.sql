@@ -1592,11 +1592,11 @@ CREATE TABLE actors (
     manual_run_cancelled BOOLEAN NOT NULL DEFAULT false,
     failure_code TEXT,
     failure_run_id UUID,
-    next_input_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_input_sequence > 0),
-    committed_input_sequence BIGINT NOT NULL DEFAULT 0 CHECK (committed_input_sequence >= 0),
-    next_output_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_output_sequence > 0),
-    input_retention_floor BIGINT NOT NULL DEFAULT 1 CHECK (input_retention_floor > 0),
-    output_retention_floor BIGINT NOT NULL DEFAULT 1 CHECK (output_retention_floor > 0),
+    next_input_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_input_sequence BETWEEN 1 AND 9007199254740992),
+    committed_input_sequence BIGINT NOT NULL DEFAULT 0 CHECK (committed_input_sequence BETWEEN 0 AND 9007199254740991),
+    next_output_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_output_sequence BETWEEN 1 AND 9007199254740992),
+    input_retention_floor BIGINT NOT NULL DEFAULT 1 CHECK (input_retention_floor BETWEEN 1 AND 9007199254740992),
+    output_retention_floor BIGINT NOT NULL DEFAULT 1 CHECK (output_retention_floor BETWEEN 1 AND 9007199254740992),
     managed_queue_name TEXT NOT NULL CHECK (btrim(managed_queue_name) <> '' AND octet_length(managed_queue_name) <= 256),
     managed_concurrency_key TEXT CHECK (
         managed_concurrency_key IS NULL
@@ -1943,7 +1943,7 @@ CREATE TABLE actor_records (
     environment_id UUID NOT NULL,
     actor_id UUID NOT NULL,
     direction TEXT NOT NULL CHECK (direction IN ('input', 'output')),
-    sequence BIGINT NOT NULL CHECK (sequence > 0),
+    sequence BIGINT NOT NULL CHECK (sequence BETWEEN 1 AND 9007199254740991),
     data JSONB NOT NULL,
     content_type TEXT NOT NULL DEFAULT 'application/json' CHECK (
         btrim(content_type) <> '' AND octet_length(content_type) <= 255
@@ -1972,7 +1972,8 @@ CREATE TABLE actor_records (
     FOREIGN KEY (environment_id, claim_id)
         REFERENCES idempotency_claims(environment_id, id)
         ON DELETE RESTRICT,
-    CHECK (octet_length(data::text) <= 1048576),
+    CONSTRAINT actor_records_data_size_check
+        CHECK (octet_length(data::text) <= 1048576),
     CHECK (
         (direction = 'input'
          AND source_kind IN ('external', 'run')

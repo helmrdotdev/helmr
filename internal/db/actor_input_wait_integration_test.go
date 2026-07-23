@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -196,6 +198,138 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 	})
 	if err != nil || !mismatch.ClaimFingerprintMismatch || mismatch.ID != first.ID {
 		t.Fatalf("keyed mismatch = %+v, %v", mismatch, err)
+	}
+}
+
+func TestActorInputAppendRejectsOversizedRetainedJSONAtomically(t *testing.T) {
+	ctx := context.Background()
+	fixture := newRunLeaseClaimFixture(t, ctx)
+	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+	actorID := convertTokenWaitWorkToActor(t, ctx, fixture, work, `{"enabled":false}`, pgtype.Timestamptz{})
+
+	// The submitted representation is small, but PostgreSQL expands each
+	// scientific-notation number when converting jsonb back to text.
+	data := []byte(`[` + strings.Repeat(`5e-324,`, 4_000) + `0]`)
+	if len(data) >= 1<<20 {
+		t.Fatalf("submitted JSON size = %d, want below 1 MiB", len(data))
+	}
+	recordID := uuid.Must(uuid.NewV7())
+	_, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
+		EnvironmentID: pgvalue.UUID(fixture.environmentID),
+		ActorID:       pgvalue.UUID(actorID),
+		ID:            pgvalue.UUID(recordID),
+		Data:          data,
+		SourceKind:    pgvalue.Text("external"),
+	})
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) ||
+		pgErr.Code != "23514" ||
+		pgErr.ConstraintName != "actor_records_data_size_check" {
+		t.Fatalf("append error = %v, want actor record data size check violation", err)
+	}
+
+	var nextInputSequence int64
+	if err := fixture.pool.QueryRow(ctx, `
+		SELECT next_input_sequence FROM actors WHERE id = $1
+	`, actorID).Scan(&nextInputSequence); err != nil {
+		t.Fatal(err)
+	}
+	if nextInputSequence != 3 {
+		t.Fatalf("next input sequence = %d, want 3 after failed append", nextInputSequence)
+	}
+	var recordCount int
+	if err := fixture.pool.QueryRow(ctx, `
+		SELECT count(*) FROM actor_records WHERE id = $1
+	`, recordID).Scan(&recordCount); err != nil {
+		t.Fatal(err)
+	}
+	if recordCount != 0 {
+		t.Fatalf("oversized record count = %d, want 0", recordCount)
+	}
+}
+
+func TestActorInputSequenceSafeIntegerBoundaryPreservesCompletedReplay(t *testing.T) {
+	ctx := context.Background()
+	fixture := newRunLeaseClaimFixture(t, ctx)
+	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+	actorID := convertTokenWaitWorkToActor(t, ctx, fixture, work, `{"enabled":false}`, pgtype.Timestamptz{})
+
+	const maxSafeSequence int64 = 9_007_199_254_740_991
+	const exhaustedSentinel int64 = maxSafeSequence + 1
+	mustRunLeaseExec(t, ctx, fixture.pool, `
+		UPDATE actors SET next_input_sequence = $2 WHERE id = $1
+	`, actorID, maxSafeSequence)
+
+	claimID := uuid.Must(uuid.NewV7())
+	fingerprint := bytes.Repeat([]byte{9}, 32)
+	mustRunLeaseExec(t, ctx, fixture.pool, `
+		INSERT INTO idempotency_claims (
+			id, environment_id, operation, scope_hash, key_hash,
+			hash_key_version, generation, request_fingerprint, accepted_at, expires_at
+		) VALUES ($1, $2, 'actor.input.send', $3, $4, 1, 1, $5, now(), now() + interval '30 days')
+	`, claimID, fixture.environmentID, runLeaseTestHash("actor-input-max-scope"), runLeaseTestHash("actor-input-max-key"), fingerprint)
+	recordID := uuid.Must(uuid.NewV7())
+	first, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
+		EnvironmentID:              pgvalue.UUID(fixture.environmentID),
+		ClaimID:                    pgvalue.UUID(claimID),
+		ActorID:                    pgvalue.UUID(actorID),
+		ExpectedRequestFingerprint: fingerprint,
+		ID:                         pgvalue.UUID(recordID),
+		Data:                       []byte(`{"at":"maximum"}`),
+		SourceKind:                 pgvalue.Text("external"),
+	})
+	if err != nil || !first.Appended || first.Sequence != maxSafeSequence {
+		t.Fatalf("maximum append = %+v, %v", first, err)
+	}
+	claim, err := fixture.queries.CompleteActorInputClaim(ctx, CompleteActorInputClaimParams{
+		EnvironmentID:      pgvalue.UUID(fixture.environmentID),
+		ClaimID:            pgvalue.UUID(claimID),
+		RequestFingerprint: fingerprint,
+		ActorID:            pgvalue.UUID(actorID),
+		RecordID:           first.ID,
+	})
+	if err != nil || claim.State != "completed" {
+		t.Fatalf("claim completion = %+v, %v", claim, err)
+	}
+
+	_, err = fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
+		EnvironmentID: pgvalue.UUID(fixture.environmentID),
+		ActorID:       pgvalue.UUID(actorID),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		Data:          []byte(`{"after":"maximum"}`),
+		SourceKind:    pgvalue.Text("external"),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("new append error = %v, want sequence exhaustion", err)
+	}
+
+	replay, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
+		EnvironmentID:              pgvalue.UUID(fixture.environmentID),
+		ClaimID:                    pgvalue.UUID(claimID),
+		ActorID:                    pgvalue.UUID(actorID),
+		ExpectedRequestFingerprint: fingerprint,
+		ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		Data:                       []byte(`{"at":"maximum"}`),
+		SourceKind:                 pgvalue.Text("external"),
+	})
+	if err != nil || replay.Appended || replay.ID != first.ID || replay.Sequence != maxSafeSequence {
+		t.Fatalf("completed replay = %+v, %v", replay, err)
+	}
+
+	var nextInputSequence int64
+	var recordCount int
+	if err := fixture.pool.QueryRow(ctx, `
+		SELECT next_input_sequence,
+		       (SELECT count(*) FROM actor_records
+		         WHERE actor_id = actors.id AND direction = 'input' AND sequence = $2)
+		  FROM actors
+		 WHERE id = $1
+	`, actorID, maxSafeSequence).Scan(&nextInputSequence, &recordCount); err != nil {
+		t.Fatal(err)
+	}
+	if nextInputSequence != exhaustedSentinel || recordCount != 1 {
+		t.Fatalf("Actor boundary = next %d records %d, want next %d records 1",
+			nextInputSequence, recordCount, exhaustedSentinel)
 	}
 }
 

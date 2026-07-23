@@ -97,3 +97,16 @@ func TestGranularWorkspacePermissionsDoNotEscalate(t *testing.T) {
 		}
 	}
 }
+
+func TestActorInputPermissionIsWritableButNotReadableRoleAuthority(t *testing.T) {
+	if !RoleAllows(RoleDeveloper, PermissionActorsInputSend) {
+		t.Fatal("developer should be allowed to send Actor input")
+	}
+	if RoleAllows(RoleViewer, PermissionActorsInputSend) {
+		t.Fatal("viewer should not be allowed to send Actor input")
+	}
+	normalized := normalizeAPIKeyGrantPermission(string(PermissionActorsInputSend))
+	if len(normalized) != 1 || normalized[0] != PermissionActorsInputSend {
+		t.Fatalf("normalized Actor input permission = %v", normalized)
+	}
+}

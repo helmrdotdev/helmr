@@ -24,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -70,6 +71,7 @@ type Server struct {
 	runtimeStore          cas.Reader
 	managerStore          ManagerResolver
 	secrets               SecretManager
+	claims                idempotency.Manager
 	secretDelivery        SecretDeliveryOpener
 	workspaceFencingKeys  workspace.FencingKeys
 	eventStream           *EventStream
@@ -131,6 +133,7 @@ type ServerConfig struct {
 	RuntimeStore         cas.Reader
 	ManagerStore         ManagerResolver
 	Secrets              SecretManager
+	Idempotency          idempotency.Manager
 	SecretDelivery       SecretDeliveryOpener
 	WorkspaceFencingKeys workspace.FencingKeys
 	EventStream          *EventStream
@@ -250,6 +253,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		runtimeStore:          cfg.RuntimeStore,
 		managerStore:          cfg.ManagerStore,
 		secrets:               cfg.Secrets,
+		claims:                cfg.Idempotency,
 		secretDelivery:        cfg.SecretDelivery,
 		workspaceFencingKeys:  cfg.WorkspaceFencingKeys,
 		eventStream:           cfg.EventStream,
@@ -446,6 +450,8 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.getSecret)
 		r.Put("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.setSecret)
 		r.Post("/projects/{projectID}/environments/{environmentID}/secrets/{name}/revoke", s.revokeSecret)
+		r.With(limitActorInputBody).
+			Post("/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/input", s.sendActorInput)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -472,6 +478,8 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/secrets/{name}", s.getSecret)
 		r.Put("/secrets/{name}", s.setSecret)
 		r.Post("/secrets/{name}/revoke", s.revokeSecret)
+		r.With(limitActorInputBody).
+			Post("/actors/{actorDeclaredID}/input", s.sendActorInput)
 	})
 }
 
@@ -686,6 +694,13 @@ func limitRequestBody(limit int64) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func limitActorInputBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, actorInputSendBodyLimit)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) userAuthConfigured() error {

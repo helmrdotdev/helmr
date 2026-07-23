@@ -31,6 +31,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -256,6 +257,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		RuntimeStore:         runtimeStore,
 		ManagerStore:         managerStore,
 		Secrets:              secretStore,
+		Idempotency:          idempotency.New(hashes),
 		SecretDelivery:       secretStore,
 		WorkspaceFencingKeys: workspaceFencingKeys,
 		EventStream:          eventStream,

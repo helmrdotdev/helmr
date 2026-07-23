@@ -172,6 +172,7 @@ type Querier interface {
 	GetActiveWorkerEnrollmentNonce(ctx context.Context, arg GetActiveWorkerEnrollmentNonceParams) (WorkerEnrollmentNonce, error)
 	GetActor(ctx context.Context, arg GetActorParams) (Actor, error)
 	GetActorByKey(ctx context.Context, arg GetActorByKeyParams) (Actor, error)
+	GetActorByPublicID(ctx context.Context, arg GetActorByPublicIDParams) (Actor, error)
 	GetActorCompletionReplay(ctx context.Context, arg GetActorCompletionReplayParams) (pgtype.Text, error)
 	GetActorInputRecordAtSequenceForUpdate(ctx context.Context, arg GetActorInputRecordAtSequenceForUpdateParams) (ActorRecord, error)
 	GetActorInputRecordByIDForUpdate(ctx context.Context, arg GetActorInputRecordByIDForUpdateParams) (ActorRecord, error)

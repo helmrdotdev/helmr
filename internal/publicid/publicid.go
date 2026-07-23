@@ -37,6 +37,7 @@ const (
 	DeploymentTask    Prefix = "dtask_"
 	Sandbox           Prefix = "sbx_"
 	Schedule          Prefix = "sch_"
+	Actor             Prefix = "act_"
 	Workspace         Prefix = "wsp_"
 	WorkspaceVersion  Prefix = "wsv_"
 	Session           Prefix = "ses_"
@@ -62,6 +63,7 @@ var registeredPrefixes = []Prefix{
 	DeploymentTask,
 	Sandbox,
 	Schedule,
+	Actor,
 	Workspace,
 	WorkspaceVersion,
 	Session,

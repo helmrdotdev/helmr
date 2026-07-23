@@ -28,6 +28,7 @@ WITH selected_claim AS MATERIALIZED (
      WHERE actors.environment_id = sqlc.arg(environment_id)
        AND actors.id = sqlc.arg(actor_id)
        AND actors.state = 'open'
+       AND actors.next_input_sequence <= 9007199254740991
        AND NOT EXISTS (SELECT 1 FROM existing_record)
        AND (
            sqlc.narg(claim_id)::uuid IS NULL
@@ -121,6 +122,7 @@ WITH locked_actor AS MATERIALIZED (
        AND actors.id = sqlc.arg(actor_id)
        AND actors.current_run_id = runs.id
        AND actors.state = 'open'
+       AND actors.next_output_sequence <= 9007199254740991
      FOR UPDATE OF actors
 ), allocated AS (
     UPDATE actors

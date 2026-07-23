@@ -56,6 +56,7 @@ GET /api/worker/status
 PATCH /api/members/{userID}
 PATCH /api/projects/{projectID}
 PATCH /api/projects/{projectID}/environments/{environmentID}
+POST /api/actors/{actorDeclaredID}/input
 POST /api/auth/device/approve
 POST /api/auth/device/deny
 POST /api/auth/device/start
@@ -72,6 +73,7 @@ POST /api/invitations
 POST /api/organizations
 POST /api/projects
 POST /api/projects/{projectID}/environments
+POST /api/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/input
 POST /api/projects/{projectID}/environments/{environmentID}/api-keys
 POST /api/projects/{projectID}/environments/{environmentID}/deployments
 POST /api/projects/{projectID}/environments/{environmentID}/secrets/{name}/revoke

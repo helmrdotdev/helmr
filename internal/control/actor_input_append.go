@@ -10,32 +10,36 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/actorinput"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const maxActorInputBytes = 1 << 20
+const maxActorSequence = int64(9007199254740991)
 
 var (
-	errActorInputAppendConflict = errors.New("Actor input append conflicts with durable authority")
-	errActorInputUnavailable    = errors.New("Actor input append is unavailable")
+	errActorInputAppendConflict = errors.New("actor input append conflicts with durable authority")
+	errActorInputUnavailable    = errors.New("actor input append is unavailable")
+	errActorInputTooLarge       = errors.New("actor input exceeds the maximum size")
+	errActorSequenceExhausted   = errors.New("actor input sequence is exhausted")
 )
 
 type appendActorInputRequest struct {
-	EnvironmentID      uuid.UUID
-	ActorID            uuid.UUID
-	RecordID           uuid.UUID
-	Data               json.RawMessage
-	SourceKind         string
-	SourceRunID        uuid.UUID
-	ClaimID            uuid.UUID
-	RequestFingerprint []byte
+	EnvironmentID  uuid.UUID
+	ActorID        uuid.UUID
+	RecordID       uuid.UUID
+	Data           json.RawMessage
+	SourceKind     string
+	SourceRunID    uuid.UUID
+	IdempotencyKey string
 }
 
 // appendActorInput is the internal durable primitive behind ActorRef.input.send().
-// It intentionally has no public HTTP/SDK transport until the Actor management
-// surface is implemented, but its transaction is complete and independently testable.
+// Claim acquisition, append, receipt completion, wait wakeup, continuation
+// admission, and repair intent are one transaction.
 func (s *Server) appendActorInput(ctx context.Context, request appendActorInputRequest) (db.ActorRecord, error) {
 	if request.EnvironmentID == uuid.Nil || request.ActorID == uuid.Nil || request.RecordID == uuid.Nil {
 		return db.ActorRecord{}, errActorInputAppendConflict
@@ -46,40 +50,64 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 	if (request.SourceKind == "run") != (request.SourceRunID != uuid.Nil) {
 		return db.ActorRecord{}, errActorInputAppendConflict
 	}
-	if (request.ClaimID != uuid.Nil) != (len(request.RequestFingerprint) == 32) {
+	if len(request.Data) == 0 || !json.Valid(request.Data) {
 		return db.ActorRecord{}, errActorInputAppendConflict
 	}
-	if len(request.Data) == 0 || len(request.Data) > maxActorInputBytes || !json.Valid(request.Data) {
+	canonical, err := canonicalJSON(request.Data)
+	if err != nil {
 		return db.ActorRecord{}, errActorInputAppendConflict
 	}
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, request.Data); err != nil {
-		return db.ActorRecord{}, errActorInputAppendConflict
+	if len(canonical) > maxActorInputBytes {
+		return db.ActorRecord{}, errActorInputTooLarge
 	}
-	locator, err := s.db.GetActor(ctx, db.GetActorParams{
-		EnvironmentID: pgvalue.UUID(request.EnvironmentID), ID: pgvalue.UUID(request.ActorID),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return db.ActorRecord{}, errActorInputUnavailable
-	}
-	if err != nil || !locator.WorkspaceID.Valid {
-		return db.ActorRecord{}, errActorInputAppendConflict
-	}
-
 	var result db.ActorRecord
 	err = s.inTx(ctx, func(work *txWork) error {
 		claimID := pgtype.UUID{}
 		fingerprint := []byte(nil)
-		if request.ClaimID != uuid.Nil {
-			claimID = pgvalue.UUID(request.ClaimID)
-			fingerprint = request.RequestFingerprint
-			claim, err := work.q.LockActorInputClaim(ctx, db.LockActorInputClaimParams{
-				EnvironmentID: pgvalue.UUID(request.EnvironmentID), ID: claimID,
-			})
-			if err != nil || (claim.State != "pending" && claim.State != "completed") ||
-				!bytes.Equal(claim.RequestFingerprint, fingerprint) {
+		if request.IdempotencyKey != "" {
+			claims, err := s.claims.TransactionForQueries(work.q)
+			if err != nil {
+				return err
+			}
+			idempotencyRequest, err := idempotency.NewActorInputSendRequest(
+				request.EnvironmentID,
+				request.ActorID,
+				request.IdempotencyKey,
+				canonical,
+			)
+			if err != nil {
 				return errActorInputAppendConflict
 			}
+			acquired, err := claims.Acquire(ctx, idempotencyRequest)
+			if err != nil {
+				return err
+			}
+			if acquired.Claim.State == "completed" {
+				replayed, err := actorInputRecordFromReceipt(request, acquired.Claim)
+				if err != nil {
+					return errActorInputAppendConflict
+				}
+				result = replayed
+				return nil
+			}
+			if acquired.Claim.State != "pending" {
+				return errActorInputAppendConflict
+			}
+			claimID = acquired.Claim.ID
+			fingerprint = bytes.Clone(acquired.Claim.RequestFingerprint)
+		}
+		locator, err := work.q.GetActor(ctx, db.GetActorParams{
+			EnvironmentID: pgvalue.UUID(request.EnvironmentID),
+			ID:            pgvalue.UUID(request.ActorID),
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errActorInputUnavailable
+		}
+		if err != nil || !locator.WorkspaceID.Valid {
+			return errActorInputAppendConflict
+		}
+		if locator.NextInputSequence > maxActorSequence {
+			return errActorSequenceExhausted
 		}
 		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, locator.WorkspaceID)
 		if err != nil {
@@ -92,12 +120,17 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 		appended, err := work.q.AppendActorInputRecord(ctx, db.AppendActorInputRecordParams{
 			EnvironmentID: pgvalue.UUID(request.EnvironmentID), ClaimID: claimID,
 			ActorID: pgvalue.UUID(request.ActorID), ExpectedRequestFingerprint: fingerprint,
-			ID: pgvalue.UUID(request.RecordID), Data: compact.Bytes(),
+			ID: pgvalue.UUID(request.RecordID), Data: canonical,
 			SourceKind: pgvalue.Text(request.SourceKind), SourceRunID: sourceRunID,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errActorInputUnavailable
+			}
+			var postgresError *pgconn.PgError
+			if errors.As(err, &postgresError) &&
+				postgresError.ConstraintName == "actor_records_data_size_check" {
+				return errActorInputTooLarge
 			}
 			return err
 		}
@@ -186,6 +219,30 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 		})
 	})
 	return result, err
+}
+
+type actorInputClaimReceipt struct {
+	RecordID string `json:"recordId"`
+	Sequence int64  `json:"sequence"`
+}
+
+func actorInputRecordFromReceipt(request appendActorInputRequest, claim db.IdempotencyClaim) (db.ActorRecord, error) {
+	var receipt actorInputClaimReceipt
+	if err := json.Unmarshal(claim.Receipt, &receipt); err != nil {
+		return db.ActorRecord{}, err
+	}
+	recordID, err := uuid.Parse(receipt.RecordID)
+	if err != nil || recordID == uuid.Nil || receipt.Sequence <= 0 || receipt.Sequence > maxActorSequence {
+		return db.ActorRecord{}, errActorInputAppendConflict
+	}
+	return db.ActorRecord{
+		ID:            pgvalue.UUID(recordID),
+		EnvironmentID: pgvalue.UUID(request.EnvironmentID),
+		ActorID:       pgvalue.UUID(request.ActorID),
+		Direction:     "input",
+		Sequence:      receipt.Sequence,
+		ClaimID:       claim.ID,
+	}, nil
 }
 
 func actorRecordFromAppend(row db.AppendActorInputRecordRow) db.ActorRecord {

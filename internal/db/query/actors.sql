@@ -84,6 +84,13 @@ SELECT *
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
 
+-- name: GetActorByPublicID :one
+SELECT *
+  FROM actors
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND actor_declared_id = sqlc.arg(actor_declared_id)
+   AND public_id = sqlc.arg(public_id);
+
 -- name: GetActorByKey :one
 SELECT *
   FROM actors

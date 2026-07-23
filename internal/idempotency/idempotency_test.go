@@ -228,6 +228,35 @@ func TestSecretRequestCanonicalization(t *testing.T) {
 	}
 }
 
+func TestActorInputRequestUsesActorScopeAndCanonicalInputFingerprint(t *testing.T) {
+	environmentID := uuid.MustParse("00000000-0000-0000-0000-000000000301")
+	actorID := uuid.MustParse("00000000-0000-0000-0000-000000000501")
+	first, err := NewActorInputSendRequest(environmentID, actorID, "message-1", []byte(`{"b":2,"a":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewActorInputSendRequest(environmentID, actorID, "message-1", []byte("{\n\"a\":1.0,\"b\":2}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstValue := first.idempotencyRequest()
+	secondValue := second.idempotencyRequest()
+	firstFingerprint, err := firstValue.fingerprint(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondFingerprint, err := secondValue.fingerprint(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstValue.operation != operationActorInputSend || !bytes.Equal(firstValue.scope, actorID[:]) {
+		t.Fatalf("operation = %q scope = %x", firstValue.operation, firstValue.scope)
+	}
+	if firstFingerprint != secondFingerprint {
+		t.Fatalf("canonical-equivalent input fingerprints differ: %x != %x", firstFingerprint, secondFingerprint)
+	}
+}
+
 func testManager(t *testing.T) Manager {
 	t.Helper()
 	hashes, err := keyedhash.New(map[int32][]byte{

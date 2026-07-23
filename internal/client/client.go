@@ -22,6 +22,9 @@ type HTTPError struct {
 	StatusCode int
 	Status     string
 	Message    string
+	Code       string
+	Retryable  bool
+	RequestID  string
 }
 
 func (e *HTTPError) HTTPStatusCode() int {
@@ -424,10 +427,25 @@ func decodeError(resp *http.Response) error {
 
 func decodeErrorBody(statusCode int, status string, body []byte) error {
 	var payload struct {
-		Error string `json:"error"`
+		Error           string `json:"error"`
+		Code            string `json:"code"`
+		Retryable       bool   `json:"retryable"`
+		RequestID       string `json:"requestId"`
+		LegacyRequestID string `json:"request_id"`
 	}
 	if err := json.Unmarshal(body, &payload); err == nil && payload.Error != "" {
-		return &HTTPError{StatusCode: statusCode, Status: status, Message: payload.Error}
+		requestID := payload.RequestID
+		if requestID == "" {
+			requestID = payload.LegacyRequestID
+		}
+		return &HTTPError{
+			StatusCode: statusCode,
+			Status:     status,
+			Message:    payload.Error,
+			Code:       payload.Code,
+			Retryable:  payload.Retryable,
+			RequestID:  requestID,
+		}
 	}
 	return &HTTPError{StatusCode: statusCode, Status: status}
 }

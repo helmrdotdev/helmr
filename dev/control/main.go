@@ -29,6 +29,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/region"
@@ -252,6 +253,7 @@ func main() {
 		CAS:                  casStore,
 		BuildPolicy:          buildPolicy,
 		Secrets:              secretStore,
+		Idempotency:          idempotency.New(hashes),
 		SecretDelivery:       secretStore,
 		WorkspaceFencingKeys: workspaceFencingKeys,
 		WorkerTokenSecret:    []byte(cfg.workerTokenSecret),

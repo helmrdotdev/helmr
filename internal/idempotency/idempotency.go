@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -26,9 +27,10 @@ const (
 type operation string
 
 const (
-	operationSecretCreate operation = "secret.create"
-	operationSecretRotate operation = "secret.rotate"
-	operationSecretRevoke operation = "secret.revoke"
+	operationSecretCreate   operation = "secret.create"
+	operationSecretRotate   operation = "secret.rotate"
+	operationSecretRevoke   operation = "secret.revoke"
+	operationActorInputSend operation = "actor.input.send"
 )
 
 type Manager struct {
@@ -111,6 +113,29 @@ func NewSecretRevokeRequest(environmentID uuid.UUID, secretID uuid.UUID, key str
 	}}, nil
 }
 
+func NewActorInputSendRequest(environmentID uuid.UUID, actorID uuid.UUID, key string, inputJSON []byte) (Request, error) {
+	if environmentID == uuid.Nil {
+		return nil, errors.New("idempotency environment is required")
+	}
+	if actorID == uuid.Nil {
+		return nil, errors.New("actor ID is required")
+	}
+	canonicalInput, err := jsoncanon.Transform(inputJSON)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize Actor input: %w", err)
+	}
+	input := bytes.Clone(canonicalInput)
+	return sealedRequest{value: request{
+		environmentID: environmentID,
+		operation:     operationActorInputSend,
+		scope:         bytes.Clone(actorID[:]),
+		key:           key,
+		fingerprint: func(int32) ([sha256.Size]byte, error) {
+			return operationFingerprint(operationActorInputSend, input, 0, nil), nil
+		},
+	}}, nil
+}
+
 func newSecretValueRequest(environmentID uuid.UUID, operation operation, scope []byte, key string, fields []byte, authenticator func(int32) ([sha256.Size]byte, error)) (Request, error) {
 	if environmentID == uuid.Nil {
 		return nil, errors.New("idempotency environment is required")
@@ -139,6 +164,13 @@ func (m Manager) Transaction(tx pgx.Tx) (*Transaction, error) {
 	}
 	queries := db.New(tx)
 	return &Transaction{manager: m, store: queries, queries: queries}, nil
+}
+
+func (m Manager) TransactionForQueries(queries db.Querier) (*Transaction, error) {
+	if queries == nil {
+		return nil, errors.New("idempotency query transaction is required")
+	}
+	return &Transaction{manager: m, store: queries}, nil
 }
 
 func (t *Transaction) Queries() *db.Queries {
@@ -225,7 +257,7 @@ func (t *Transaction) Acquire(ctx context.Context, input Request) (Result, error
 
 func supportedOperation(value operation) bool {
 	switch value {
-	case operationSecretCreate, operationSecretRotate, operationSecretRevoke:
+	case operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationActorInputSend:
 		return true
 	default:
 		return false

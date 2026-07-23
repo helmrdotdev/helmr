@@ -30,6 +30,33 @@ func (c *Client) GetMe(ctx context.Context) (api.MeResponse, error) {
 	return response, nil
 }
 
+func (c *Client) SendActorInput(
+	ctx context.Context,
+	actorDeclaredID string,
+	input api.SendActorInputRequest,
+	opts EnvironmentScopeOptions,
+) (api.SendActorInputResponse, error) {
+	if err := api.ValidateActorDeclaredID(actorDeclaredID); err != nil {
+		return api.SendActorInputResponse{}, err
+	}
+	if err := api.ValidateSendActorInputRequest(input); err != nil {
+		return api.SendActorInputResponse{}, err
+	}
+	path, _, err := c.environmentScopedPath(
+		opts.ProjectID,
+		opts.EnvironmentID,
+		"/actors/"+url.PathEscape(actorDeclaredID)+"/input",
+	)
+	if err != nil {
+		return api.SendActorInputResponse{}, err
+	}
+	var response api.SendActorInputResponse
+	if err := c.postJSON(ctx, path, input, &response); err != nil {
+		return api.SendActorInputResponse{}, err
+	}
+	return response, nil
+}
+
 type EnvironmentScopeOptions struct {
 	ProjectID     string
 	EnvironmentID string

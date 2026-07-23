@@ -32,6 +32,7 @@ WITH selected_claim AS MATERIALIZED (
      WHERE actors.environment_id = $1
        AND actors.id = $3
        AND actors.state = 'open'
+       AND actors.next_input_sequence <= 9007199254740991
        AND NOT EXISTS (SELECT 1 FROM existing_record)
        AND (
            $2::uuid IS NULL
@@ -165,6 +166,7 @@ WITH locked_actor AS MATERIALIZED (
        AND actors.id = $7
        AND actors.current_run_id = runs.id
        AND actors.state = 'open'
+       AND actors.next_output_sequence <= 9007199254740991
      FOR UPDATE OF actors
 ), allocated AS (
     UPDATE actors
