@@ -216,7 +216,10 @@ func validateActorCompletionAuthority(ctx context.Context, store db.Querier, req
 }
 
 func actorCompletionRetryAt(run db.Run, attempt db.RunAttempt, actor db.Actor, completion parsedActorCompletion, completedAt time.Time) (time.Time, bool, error) {
-	if completion.kind != actorCompletionFailed || (actor.ExpiresAt.Valid && !actor.ExpiresAt.Time.After(completedAt)) {
+	expiredWhileOpen := actor.State == "open" &&
+		actor.ExpiresAt.Valid &&
+		!actor.ExpiresAt.Time.After(completedAt)
+	if completion.kind != actorCompletionFailed || expiredWhileOpen {
 		return time.Time{}, false, nil
 	}
 	policy, err := deployment.ParseRetryManifest(run.RetryPolicy)
@@ -278,7 +281,9 @@ func decideActorRunTerminal(authority runLeaseClaimAuthority, completion parsedA
 		decision.runStatus = db.RunStatusFailed
 		decision.runReason = pgvalue.Text("actor_failed")
 		decision.commitCursor = false
-		if authority.actor.ExpiresAt.Valid && !authority.actor.ExpiresAt.Time.After(completedAt) {
+		if authority.actor.State == "open" &&
+			authority.actor.ExpiresAt.Valid &&
+			!authority.actor.ExpiresAt.Time.After(completedAt) {
 			decision.actorState = "expired"
 		} else {
 			decision.actorState = "failed"
@@ -297,7 +302,9 @@ func decideActorRunTerminal(authority runLeaseClaimAuthority, completion parsedA
 		decision.actorState = "closed"
 		return decision
 	}
-	if authority.actor.ExpiresAt.Valid && !authority.actor.ExpiresAt.Time.After(completedAt) {
+	if authority.actor.State == "open" &&
+		authority.actor.ExpiresAt.Valid &&
+		!authority.actor.ExpiresAt.Time.After(completedAt) {
 		decision.actorState = "expired"
 	}
 	return decision

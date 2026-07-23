@@ -18,6 +18,7 @@ const (
 	PermissionRunsManage               Permission = "runs.manage"
 	PermissionActorsStart              Permission = "actors.start"
 	PermissionActorsInputSend          Permission = "actors.input.send"
+	PermissionActorsLifecycleManage    Permission = "actors.lifecycle.manage"
 	PermissionSessionStreamsRead       Permission = "session.streams.read"
 	PermissionSessionInputSend         Permission = "session.input.send"
 	PermissionSessionOutputAppend      Permission = "session.output.append"
@@ -77,6 +78,7 @@ func RoleAllows(role Role, permission Permission) bool {
 			PermissionRunsManage,
 			PermissionActorsStart,
 			PermissionActorsInputSend,
+			PermissionActorsLifecycleManage,
 			PermissionSessionStreamsRead,
 			PermissionSessionInputSend,
 			PermissionSessionOutputAppend,

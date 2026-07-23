@@ -10,6 +10,7 @@ import {
   type ActorStatus,
   type ActorUpdateOptions,
   type ActorOperationOptions,
+  type ActorOperationReceipt,
   type JsonValue,
   type NoPayloadTaskDefinition,
   type OutputAppendOptions,
@@ -390,10 +391,7 @@ function createActorRef(
       return runtimeUnavailable<Promise<ActorStatus>>("actor.update")
     },
     close(_options?: ActorOperationOptions) {
-      return runtimeUnavailable<Promise<ActorStatus>>("actor.close")
-    },
-    cancel(_options?: ActorOperationOptions) {
-      return runtimeUnavailable<Promise<ActorStatus>>("actor.cancel")
+      return runtimeUnavailable<Promise<ActorOperationReceipt>>("actor.close")
     },
   }
   return Object.freeze({

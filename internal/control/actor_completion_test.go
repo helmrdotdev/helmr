@@ -89,6 +89,31 @@ func TestDecideActorRunTerminal(t *testing.T) {
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded, terminalInputSequence: 2},
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorState: "expired", commitCursor: true},
 		},
+		{
+			name: "accepted close remains authoritative after expiry",
+			authority: func() runLeaseClaimAuthority {
+				a := actorTerminalAuthority("closing", 2, 4)
+				a.actor.CloseSequence = pgtype.Int8{Int64: 4, Valid: true}
+				a.actor.ExpiresAt = pgvalue.Timestamptz(now)
+				return a
+			}(),
+			completion: parsedActorCompletion{kind: actorCompletionSucceeded, terminalInputSequence: 3},
+			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorState: "closing", commitCursor: true},
+		},
+		{
+			name: "runtime failure after accepted close is not expiry",
+			authority: func() runLeaseClaimAuthority {
+				a := actorTerminalAuthority("closing", 2, 4)
+				a.actor.CloseSequence = pgtype.Int8{Int64: 4, Valid: true}
+				a.actor.ExpiresAt = pgvalue.Timestamptz(now)
+				return a
+			}(),
+			completion: parsedActorCompletion{kind: actorCompletionFailed, terminalInputSequence: 3},
+			want: actorRunTerminalDecision{
+				runStatus: db.RunStatusFailed, runReason: pgvalue.Text("actor_failed"),
+				actorState: "failed", failureCode: pgvalue.Text("run-failed"),
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -102,13 +127,31 @@ func TestDecideActorRunTerminal(t *testing.T) {
 
 func TestActorCompletionDoesNotRetryExpiredActor(t *testing.T) {
 	now := time.Date(2026, time.July, 22, 1, 2, 3, 0, time.UTC)
-	actor := db.Actor{ExpiresAt: pgvalue.Timestamptz(now)}
+	actor := db.Actor{State: "open", ExpiresAt: pgvalue.Timestamptz(now)}
 	_, retry, err := actorCompletionRetryAt(db.Run{}, db.RunAttempt{}, actor, parsedActorCompletion{kind: actorCompletionFailed}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if retry {
 		t.Fatal("expired Actor scheduled a retry")
+	}
+
+	actor.State = "closing"
+	run := db.Run{
+		RetryPolicy: []byte(`{"enabled":true,"maxAttempts":3,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}`),
+	}
+	retryAt, retry, err := actorCompletionRetryAt(
+		run,
+		db.RunAttempt{Number: 1},
+		actor,
+		parsedActorCompletion{kind: actorCompletionFailed},
+		now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !retry || !retryAt.Equal(now.Add(time.Millisecond)) {
+		t.Fatalf("closing Actor retry = %s, %t", retryAt, retry)
 	}
 }
 

@@ -84,6 +84,30 @@ type SendActorInputResponse struct {
 	Sequence int64 `json:"sequence"`
 }
 
+type ActorOperationRequest struct {
+	ActorID        string `json:"actor_id,omitempty"`
+	ActorKey       string `json:"actor_key,omitempty"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type ActorOperationReceipt struct {
+	ActorID    string    `json:"actor_id"`
+	Lifecycle  string    `json:"lifecycle"`
+	AcceptedAt time.Time `json:"accepted_at"`
+}
+
+func ValidateActorOperationRequest(request ActorOperationRequest) error {
+	hasID := request.ActorID != ""
+	hasKey := request.ActorKey != ""
+	if hasID == hasKey {
+		return errors.New("exactly one of actor_id or actor_key is required")
+	}
+	if hasID {
+		return ValidateActorPublicID(request.ActorID)
+	}
+	return ValidateActorKey(request.ActorKey)
+}
+
 func ValidateActorDeclaredID(id string) error {
 	if !actorDeclaredIDPattern.MatchString(id) {
 		return fmt.Errorf("actor declared ID %q must match %s", id, actorDeclaredIDPattern.String())

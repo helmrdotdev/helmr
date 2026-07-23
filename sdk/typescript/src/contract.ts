@@ -429,6 +429,15 @@ export type ActorLifecycle =
   | "failed"
   | "expired"
 
+export interface ActorFailure {
+  readonly code:
+    | "no-progress"
+    | "run-failed"
+    | "run-expired"
+    | "platform-failure"
+  readonly runId: string
+}
+
 export interface ActorStatus {
   readonly id: string
   readonly key?: string
@@ -440,6 +449,7 @@ export interface ActorStatus {
   readonly createdAt: Date
   readonly updatedAt: Date
   readonly currentRunId?: string
+  readonly failure?: ActorFailure
 }
 
 export interface ActorUpdateOptions {
@@ -454,13 +464,18 @@ export interface ActorOperationOptions {
   readonly signal?: AbortSignal
 }
 
+export interface ActorOperationReceipt {
+  readonly actorId: string
+  readonly lifecycle: "closing" | "closed"
+  readonly acceptedAt: Date
+}
+
 export interface ActorRefBase {
   readonly input: ActorInputRef
   readonly output: ActorOutputRef
   status(): Promise<ActorStatus>
   update(options: ActorUpdateOptions): Promise<ActorStatus>
-  close(options?: ActorOperationOptions): Promise<ActorStatus>
-  cancel(options?: ActorOperationOptions): Promise<ActorStatus>
+  close(options?: ActorOperationOptions): Promise<ActorOperationReceipt>
 }
 
 export type ActorIdRef = ActorRefBase &

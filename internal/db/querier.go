@@ -35,6 +35,7 @@ type Querier interface {
 	AuthorizeRegisteringWorkerInstanceCredential(ctx context.Context, arg AuthorizeRegisteringWorkerInstanceCredentialParams) (AuthorizeRegisteringWorkerInstanceCredentialRow, error)
 	AuthorizeTerminalWorkerInstanceCredential(ctx context.Context, arg AuthorizeTerminalWorkerInstanceCredentialParams) (AuthorizeTerminalWorkerInstanceCredentialRow, error)
 	AuthorizeWorkerInstanceCredential(ctx context.Context, arg AuthorizeWorkerInstanceCredentialParams) (AuthorizeWorkerInstanceCredentialRow, error)
+	BeginActorClose(ctx context.Context, arg BeginActorCloseParams) (Actor, error)
 	BeginRunLeaseCheckpoint(ctx context.Context, arg BeginRunLeaseCheckpointParams) (RunLease, error)
 	BeginRunLeaseFinalization(ctx context.Context, arg BeginRunLeaseFinalizationParams) (RunLease, error)
 	BeginRunWorkspaceLeaseFinalization(ctx context.Context, arg BeginRunWorkspaceLeaseFinalizationParams) (WorkspaceLease, error)
@@ -70,6 +71,7 @@ type Querier interface {
 	CompleteDeploymentBuild(ctx context.Context, arg CompleteDeploymentBuildParams) (CompleteDeploymentBuildRow, error)
 	CompleteHotActorInputRunWait(ctx context.Context, arg CompleteHotActorInputRunWaitParams) (RunWait, error)
 	CompleteIdempotencyClaim(ctx context.Context, arg CompleteIdempotencyClaimParams) (IdempotencyClaim, error)
+	CompleteIdleActorClose(ctx context.Context, arg CompleteIdleActorCloseParams) (Actor, error)
 	CompleteParkedActorInputRunWait(ctx context.Context, arg CompleteParkedActorInputRunWaitParams) (RunWait, error)
 	CompleteRunWaitCondition(ctx context.Context, arg CompleteRunWaitConditionParams) (RunWait, error)
 	CompleteTaskAttempt(ctx context.Context, arg CompleteTaskAttemptParams) (RunAttempt, error)
@@ -89,6 +91,7 @@ type Querier interface {
 	CreateActorCheckpointFailureRetryAttempt(ctx context.Context, arg CreateActorCheckpointFailureRetryAttemptParams) (RunAttempt, error)
 	CreateActorContinuationRun(ctx context.Context, arg CreateActorContinuationRunParams) (CreateActorContinuationRunRow, error)
 	CreateActorInputReconcileOutbox(ctx context.Context, arg CreateActorInputReconcileOutboxParams) error
+	CreateActorLifecycleReconcileOutbox(ctx context.Context, arg CreateActorLifecycleReconcileOutboxParams) error
 	CreateActorRetryAttempt(ctx context.Context, arg CreateActorRetryAttemptParams) (RunAttempt, error)
 	CreateActorStartInputRecord(ctx context.Context, arg CreateActorStartInputRecordParams) (ActorRecord, error)
 	CreateActorStartRun(ctx context.Context, arg CreateActorStartRunParams) (CreateActorStartRunRow, error)
@@ -181,6 +184,7 @@ type Querier interface {
 	GetActorInputRecordByIDForUpdate(ctx context.Context, arg GetActorInputRecordByIDForUpdateParams) (ActorRecord, error)
 	GetActorInputRunWaitRegistrationReplay(ctx context.Context, arg GetActorInputRunWaitRegistrationReplayParams) (RunWait, error)
 	GetActorInputSendSource(ctx context.Context, arg GetActorInputSendSourceParams) (GetActorInputSendSourceRow, error)
+	GetActorLifecycleWorkspaceActivity(ctx context.Context, workspaceID pgtype.UUID) (GetActorLifecycleWorkspaceActivityRow, error)
 	GetActorWakeupRecord(ctx context.Context, arg GetActorWakeupRecordParams) (ActorRecord, error)
 	GetArtifact(ctx context.Context, arg GetArtifactParams) (Artifact, error)
 	GetAuthSessionByTokenHash(ctx context.Context, tokenHash []byte) (GetAuthSessionByTokenHashRow, error)
@@ -341,6 +345,8 @@ type Querier interface {
 	LockActorInputClaim(ctx context.Context, arg LockActorInputClaimParams) (IdempotencyClaim, error)
 	LockActorInputCurrentRun(ctx context.Context, arg LockActorInputCurrentRunParams) (Run, error)
 	LockActorInputWorkspace(ctx context.Context, arg LockActorInputWorkspaceParams) (Workspace, error)
+	LockActorLifecycle(ctx context.Context, arg LockActorLifecycleParams) (Actor, error)
+	LockActorLifecycleWorkspace(ctx context.Context, arg LockActorLifecycleWorkspaceParams) (Workspace, error)
 	LockActorStartDeploymentAuthority(ctx context.Context, arg LockActorStartDeploymentAuthorityParams) (LockActorStartDeploymentAuthorityRow, error)
 	LockActorStartKey(ctx context.Context, arg LockActorStartKeyParams) error
 	LockActorStartWorkspaceAuthority(ctx context.Context, arg LockActorStartWorkspaceAuthorityParams) (LockActorStartWorkspaceAuthorityRow, error)

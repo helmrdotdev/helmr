@@ -52,6 +52,7 @@ const (
 	APIKeyScopeRunsManage               APIKeyScope = "runs:manage"
 	APIKeyScopeActorsStart              APIKeyScope = "actors:start"
 	APIKeyScopeActorsInputSend          APIKeyScope = "actors-input:send"
+	APIKeyScopeActorsLifecycleManage    APIKeyScope = "actors-lifecycle:manage"
 	APIKeyScopeSessionStreamsRead       APIKeyScope = "session-streams:read"
 	APIKeyScopeSessionInputSend         APIKeyScope = "session-input:send"
 	APIKeyScopeSessionOutputAppend      APIKeyScope = "session-output:append"

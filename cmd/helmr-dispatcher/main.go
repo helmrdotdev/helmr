@@ -317,6 +317,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		log,
 		queries,
 		actorInputReconciler.Reconcile,
+		actorInputReconciler.ReconcileLifecycle,
 		actorInputReconciler.ReconcileTimeouts,
 	)
 	if err != nil {

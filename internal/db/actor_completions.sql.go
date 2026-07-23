@@ -266,7 +266,11 @@ WITH created_run AS (
        AND actors.run_generation = $9
        AND actors.state IN ('open', 'closing')
        AND actors.manual_run_cancelled = false
-       AND (actors.expires_at IS NULL OR actors.expires_at > $3::timestamptz)
+       AND (
+           actors.state = 'closing'
+           OR actors.expires_at IS NULL
+           OR actors.expires_at > $3::timestamptz
+       )
        AND actors.committed_input_sequence < actors.next_input_sequence - 1
        AND NOT EXISTS (
            SELECT 1

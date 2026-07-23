@@ -18,12 +18,14 @@ import (
 )
 
 type ActorInputReconcile func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error)
+type ActorLifecycleReconcile func(context.Context, uuid.UUID, uuid.UUID) (bool, error)
 type ActorInputTimeoutReconcile func(context.Context, int32) (int, error)
 
 type ActorInputDeliveryWorker struct {
 	log       *slog.Logger
 	store     TokenDeliveryStore
 	reconcile ActorInputReconcile
+	lifecycle ActorLifecycleReconcile
 	timeouts  ActorInputTimeoutReconcile
 	workerID  string
 	interval  time.Duration
@@ -36,6 +38,7 @@ func NewActorInputDeliveryWorker(
 	log *slog.Logger,
 	store TokenDeliveryStore,
 	reconcile ActorInputReconcile,
+	lifecycle ActorLifecycleReconcile,
 	timeouts ActorInputTimeoutReconcile,
 ) (*ActorInputDeliveryWorker, error) {
 	if store == nil {
@@ -44,6 +47,9 @@ func NewActorInputDeliveryWorker(
 	if reconcile == nil {
 		return nil, errors.New("Actor input reconciler is required")
 	}
+	if lifecycle == nil {
+		return nil, errors.New("Actor lifecycle reconciler is required")
+	}
 	if timeouts == nil {
 		return nil, errors.New("Actor input timeout reconciler is required")
 	}
@@ -51,7 +57,7 @@ func NewActorInputDeliveryWorker(
 		log = slog.Default()
 	}
 	return &ActorInputDeliveryWorker{
-		log: log, store: store, reconcile: reconcile, timeouts: timeouts,
+		log: log, store: store, reconcile: reconcile, lifecycle: lifecycle, timeouts: timeouts,
 		workerID: uuid.Must(uuid.NewV7()).String(), interval: tokenDeliveryPollInterval,
 		claimFor: tokenDeliveryClaimLease, claimSize: tokenDeliveryClaimLimit,
 		now: func() time.Time { return time.Now().UTC() },
@@ -81,7 +87,10 @@ func (w *ActorInputDeliveryWorker) tick(ctx context.Context) error {
 	messages, err := w.store.ClaimOutboxMessages(ctx, db.ClaimOutboxMessagesParams{
 		ClaimedBy:      pgtype.Text{String: w.workerID, Valid: true},
 		ClaimExpiresAt: pgvalue.TimestamptzUTCZeroInvalid(now.Add(w.claimFor)),
-		Lane:           "control", Topics: []string{"actor.input.reconcile"}, RowLimit: w.claimSize,
+		Lane:           "control", Topics: []string{
+			"actor.input.reconcile",
+			"actor.lifecycle.reconcile",
+		}, RowLimit: w.claimSize,
 	})
 	if err != nil {
 		return err
@@ -96,6 +105,12 @@ func (w *ActorInputDeliveryWorker) tick(ctx context.Context) error {
 }
 
 func (w *ActorInputDeliveryWorker) process(ctx context.Context, message db.OutboxMessage) error {
+	if message.Topic == "actor.lifecycle.reconcile" {
+		return w.processLifecycle(ctx, message)
+	}
+	if message.Topic != "actor.input.reconcile" {
+		return w.deadLetter(ctx, message, errors.New("unsupported Actor reconciliation topic"))
+	}
 	payload, err := decodeActorInputReconcilePayload(message.Payload)
 	if err != nil {
 		return w.deadLetter(ctx, message, err)
@@ -106,6 +121,35 @@ func (w *ActorInputDeliveryWorker) process(ctx context.Context, message db.Outbo
 	}
 	if deferred {
 		return w.retry(ctx, message, errors.New("Actor input continuation is waiting for Workspace authority"), tokenDeliveryRetryAfter(message.Attempts))
+	}
+	_, err = w.store.DeliverOutboxMessage(ctx, db.DeliverOutboxMessageParams{
+		ID: message.ID, ClaimedBy: message.ClaimedBy, ClaimAttempt: message.Attempts,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	return err
+}
+
+func (w *ActorInputDeliveryWorker) processLifecycle(
+	ctx context.Context,
+	message db.OutboxMessage,
+) error {
+	payload, err := decodeActorLifecycleReconcilePayload(message.Payload)
+	if err != nil {
+		return w.deadLetter(ctx, message, err)
+	}
+	deferred, err := w.lifecycle(ctx, payload.environmentID, payload.actorID)
+	if err != nil {
+		return w.retry(ctx, message, err, tokenDeliveryRetryAfter(message.Attempts))
+	}
+	if deferred {
+		return w.retry(
+			ctx,
+			message,
+			errors.New("Actor close is waiting for lifecycle authority"),
+			tokenDeliveryRetryAfter(message.Attempts),
+		)
 	}
 	_, err = w.store.DeliverOutboxMessage(ctx, db.DeliverOutboxMessageParams{
 		ID: message.ID, ClaimedBy: message.ClaimedBy, ClaimAttempt: message.Attempts,
@@ -148,6 +192,13 @@ type actorInputReconcilePayload struct {
 	recordID      uuid.UUID
 }
 
+type actorLifecycleReconcilePayload struct {
+	EnvironmentID string `json:"environmentId"`
+	ActorID       string `json:"actorId"`
+	environmentID uuid.UUID
+	actorID       uuid.UUID
+}
+
 func decodeActorInputReconcilePayload(raw []byte) (actorInputReconcilePayload, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -171,6 +222,41 @@ func decodeActorInputReconcilePayload(raw []byte) (actorInputReconcilePayload, e
 	}
 	if value.recordID, err = uuid.Parse(value.RecordID); err != nil {
 		return actorInputReconcilePayload{}, errors.New("Actor input reconciliation recordId is invalid")
+	}
+	return value, nil
+}
+
+func decodeActorLifecycleReconcilePayload(
+	raw []byte,
+) (actorLifecycleReconcilePayload, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var value actorLifecycleReconcilePayload
+	if err := decoder.Decode(&value); err != nil {
+		return actorLifecycleReconcilePayload{}, fmt.Errorf(
+			"decode Actor lifecycle reconciliation payload: %w",
+			err,
+		)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return actorLifecycleReconcilePayload{}, err
+		}
+		return actorLifecycleReconcilePayload{}, errors.New(
+			"Actor lifecycle reconciliation payload contains a trailing JSON value",
+		)
+	}
+	var err error
+	if value.environmentID, err = uuid.Parse(value.EnvironmentID); err != nil {
+		return actorLifecycleReconcilePayload{}, errors.New(
+			"Actor lifecycle reconciliation environmentId is invalid",
+		)
+	}
+	if value.actorID, err = uuid.Parse(value.ActorID); err != nil {
+		return actorLifecycleReconcilePayload{}, errors.New(
+			"Actor lifecycle reconciliation actorId is invalid",
+		)
 	}
 	return value, nil
 }

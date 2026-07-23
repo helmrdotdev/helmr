@@ -92,7 +92,7 @@ func TestDecideActorCheckpointFailureStopsAtActorOrRunExpiry(t *testing.T) {
 			RetryPolicy:         []byte(`{"enabled":true,"maxAttempts":3,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}`),
 		},
 		attempt: db.RunAttempt{Number: 1},
-		actor:   db.Actor{ExpiresAt: pgvalue.Timestamptz(failedAt)},
+		actor:   db.Actor{State: "open", ExpiresAt: pgvalue.Timestamptz(failedAt)},
 	}
 	decision, err := decideActorCheckpointFailure(authority, failedAt, 1)
 	if err != nil {
@@ -102,6 +102,16 @@ func TestDecideActorCheckpointFailureStopsAtActorOrRunExpiry(t *testing.T) {
 		t.Fatalf("Actor expiry decision = %+v", decision)
 	}
 
+	authority.actor.State = "closing"
+	decision, err = decideActorCheckpointFailure(authority, failedAt, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.retry || decision.actorExpired || decision.reason != "checkpoint_failed" {
+		t.Fatalf("closing Actor expiry decision = %+v", decision)
+	}
+
+	authority.actor.State = "open"
 	authority.actor.ExpiresAt = pgvalue.Timestamptz(failedAt.Add(time.Hour))
 	decision, err = decideActorCheckpointFailure(authority, failedAt, authority.run.MaxActiveDurationMs)
 	if err != nil {

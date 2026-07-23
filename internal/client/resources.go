@@ -84,6 +84,33 @@ func (c *Client) StartActor(
 	return response, nil
 }
 
+func (c *Client) CloseActor(
+	ctx context.Context,
+	actorDeclaredID string,
+	input api.ActorOperationRequest,
+	opts EnvironmentScopeOptions,
+) (api.ActorOperationReceipt, error) {
+	if err := api.ValidateActorDeclaredID(actorDeclaredID); err != nil {
+		return api.ActorOperationReceipt{}, err
+	}
+	if err := api.ValidateActorOperationRequest(input); err != nil {
+		return api.ActorOperationReceipt{}, err
+	}
+	path, _, err := c.environmentScopedPath(
+		opts.ProjectID,
+		opts.EnvironmentID,
+		"/actors/"+url.PathEscape(actorDeclaredID)+"/close",
+	)
+	if err != nil {
+		return api.ActorOperationReceipt{}, err
+	}
+	var response api.ActorOperationReceipt
+	if err := c.postJSON(ctx, path, input, &response); err != nil {
+		return api.ActorOperationReceipt{}, err
+	}
+	return response, nil
+}
+
 type EnvironmentScopeOptions struct {
 	ProjectID     string
 	EnvironmentID string

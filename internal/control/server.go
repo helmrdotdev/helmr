@@ -462,6 +462,13 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
+			return s.requireSessionWithErrorWriter(next, writeActorCloseAuthError)
+		})
+		r.With(limitActorCloseBody).
+			Post("/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/close", s.closeActorHTTP)
+	})
+	r.Group(func(r chi.Router) {
+		r.Use(func(next http.Handler) http.Handler {
 			return s.requireSessionPermission(auth.PermissionProjectsManage, next)
 		})
 		r.Post("/projects", s.createProject)
@@ -494,6 +501,13 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		})
 		r.With(limitActorStartBody).
 			Post("/actors/{actorDeclaredID}/start", s.startActorHTTP)
+	})
+	r.Group(func(r chi.Router) {
+		r.Use(func(next http.Handler) http.Handler {
+			return s.requireActorWithErrorWriter(next, writeActorCloseAuthError)
+		})
+		r.With(limitActorCloseBody).
+			Post("/actors/{actorDeclaredID}/close", s.closeActorHTTP)
 	})
 }
 

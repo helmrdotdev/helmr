@@ -33,6 +33,7 @@ const (
 	operationSecretRevoke   operation = "secret.revoke"
 	operationActorStart     operation = "actor.start"
 	operationActorInputSend operation = "actor.input.send"
+	operationActorClose     operation = "actor.close"
 )
 
 type Manager struct {
@@ -151,6 +152,24 @@ func NewActorInputSendRequest(environmentID uuid.UUID, actorID uuid.UUID, key st
 		key:           key,
 		fingerprint: func(int32) ([sha256.Size]byte, error) {
 			return operationFingerprint(operationActorInputSend, input, 0, nil), nil
+		},
+	}}, nil
+}
+
+func NewActorCloseRequest(environmentID uuid.UUID, actorID uuid.UUID, key string) (Request, error) {
+	if environmentID == uuid.Nil {
+		return nil, errors.New("idempotency environment is required")
+	}
+	if actorID == uuid.Nil {
+		return nil, errors.New("actor ID is required")
+	}
+	return sealedRequest{value: request{
+		environmentID: environmentID,
+		operation:     operationActorClose,
+		scope:         bytes.Clone(actorID[:]),
+		key:           key,
+		fingerprint: func(int32) ([sha256.Size]byte, error) {
+			return operationFingerprint(operationActorClose, nil, 0, nil), nil
 		},
 	}}, nil
 }
@@ -370,7 +389,8 @@ func (t *Transaction) Acquire(ctx context.Context, input Request) (Result, error
 
 func supportedOperation(value operation) bool {
 	switch value {
-	case operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationActorStart, operationActorInputSend:
+	case operationSecretCreate, operationSecretRotate, operationSecretRevoke,
+		operationActorStart, operationActorInputSend, operationActorClose:
 		return true
 	default:
 		return false

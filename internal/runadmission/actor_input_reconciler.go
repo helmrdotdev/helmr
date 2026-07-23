@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/actorinput"
+	"github.com/helmrdotdev/helmr/internal/actorlifecycle"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -27,6 +28,57 @@ func NewActorInputReconciler(database actorInputReconcileDB) (*ActorInputReconci
 		return nil, errors.New("Actor input reconciliation database is required")
 	}
 	return &ActorInputReconciler{db: database}, nil
+}
+
+func (r *ActorInputReconciler) ReconcileLifecycle(
+	ctx context.Context,
+	environmentID uuid.UUID,
+	actorID uuid.UUID,
+) (deferred bool, returnErr error) {
+	locator, err := db.New(r.db).GetActor(ctx, db.GetActorParams{
+		EnvironmentID: pgvalue.UUID(environmentID),
+		ID:            pgvalue.UUID(actorID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if locator.State != "closing" {
+		return false, nil
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin Actor lifecycle reconciliation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	q := db.New(tx)
+	bindings, err := q.LockWorkspaceSecretsForAdmission(ctx, locator.WorkspaceID)
+	if err != nil {
+		return false, err
+	}
+	actor, err := q.LockActorLifecycle(ctx, db.LockActorLifecycleParams{
+		EnvironmentID: pgvalue.UUID(environmentID),
+		ActorID:       pgvalue.UUID(actorID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, tx.Commit(ctx)
+	}
+	if err != nil {
+		return false, err
+	}
+	if actor.WorkspaceID != locator.WorkspaceID {
+		return false, actorlifecycle.ErrAuthority
+	}
+	_, deferred, err = actorlifecycle.ReconcileClose(ctx, q, actor, bindings)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return deferred, nil
 }
 
 // Reconcile repairs append delivery after the append transaction. It is safe to

@@ -426,8 +426,10 @@ func decideActorCheckpointFailure(
 	activeElapsed int64,
 ) (actorCheckpointFailureDecision, error) {
 	decision := actorCheckpointFailureDecision{
-		reason:       "checkpoint_failed",
-		actorExpired: authority.actor.ExpiresAt.Valid && !authority.actor.ExpiresAt.Time.After(failedAt),
+		reason: "checkpoint_failed",
+		actorExpired: authority.actor.State == "open" &&
+			authority.actor.ExpiresAt.Valid &&
+			!authority.actor.ExpiresAt.Time.After(failedAt),
 	}
 	if activeElapsed >= authority.run.MaxActiveDurationMs {
 		decision.reason = "max_active_duration_exceeded"

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 )
@@ -34,6 +35,60 @@ func TestStartActorUsesSessionRoute(t *testing.T) {
 		"/api/projects/project-1/environments/env-1/actors/operator.v1/start",
 		EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
 	)
+}
+
+func TestCloseActorUsesAPIKeyRoute(t *testing.T) {
+	testCloseActorRoute(t, false, "/api/actors/operator.v1/close", EnvironmentScopeOptions{})
+}
+
+func TestCloseActorUsesSessionRoute(t *testing.T) {
+	testCloseActorRoute(
+		t,
+		true,
+		"/api/projects/project-1/environments/env-1/actors/operator.v1/close",
+		EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
+	)
+}
+
+func testCloseActorRoute(t *testing.T, session bool, wantPath string, scope EnvironmentScopeOptions) {
+	t.Helper()
+	acceptedAt := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.EscapedPath() != wantPath {
+			t.Fatalf("%s %s, want POST %s", r.Method, r.URL.EscapedPath(), wantPath)
+		}
+		var request api.ActorOperationRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.ActorKey != "thread:1" || request.IdempotencyKey != "close-1" {
+			t.Fatalf("request = %+v", request)
+		}
+		_ = json.NewEncoder(w).Encode(api.ActorOperationReceipt{
+			ActorID: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa", Lifecycle: "closing",
+			AcceptedAt: acceptedAt,
+		})
+	}))
+	defer server.Close()
+
+	options := []Option{WithHTTPClient(server.Client())}
+	if session {
+		options = append(options, WithSessionScopedRoutes())
+	}
+	client, err := New(server.URL, options...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.CloseActor(context.Background(), "operator.v1", api.ActorOperationRequest{
+		ActorKey: "thread:1", IdempotencyKey: "close-1",
+	}, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.ActorID != "act_aaaaaaaaaaaaaaaaaaaaaaaaaa" ||
+		response.Lifecycle != "closing" || !response.AcceptedAt.Equal(acceptedAt) {
+		t.Fatalf("response = %+v", response)
+	}
 }
 
 func testStartActorRoute(t *testing.T, session bool, wantPath string, scope EnvironmentScopeOptions) {

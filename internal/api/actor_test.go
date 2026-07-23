@@ -182,3 +182,25 @@ func TestValidateStartActorRequestRejectsInvalidWorkspaceAndRetry(t *testing.T) 
 		}
 	}
 }
+
+func TestValidateActorOperationRequestRequiresOneExactAddress(t *testing.T) {
+	validID := "act_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	for _, request := range []ActorOperationRequest{
+		{ActorID: validID},
+		{ActorKey: "thread:1"},
+	} {
+		if err := ValidateActorOperationRequest(request); err != nil {
+			t.Fatalf("ValidateActorOperationRequest(%+v): %v", request, err)
+		}
+	}
+	for _, request := range []ActorOperationRequest{
+		{},
+		{ActorID: validID, ActorKey: "thread:1"},
+		{ActorID: "act_invalid"},
+		{ActorKey: " thread:1"},
+	} {
+		if err := ValidateActorOperationRequest(request); err == nil {
+			t.Fatalf("ValidateActorOperationRequest(%+v) succeeded", request)
+		}
+	}
+}

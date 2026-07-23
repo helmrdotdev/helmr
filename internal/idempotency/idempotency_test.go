@@ -259,6 +259,31 @@ func TestActorInputRequestUsesActorScopeAndCanonicalInputFingerprint(t *testing.
 	}
 }
 
+func TestActorCloseRequestUsesActorScopeAndOperationOnlyFingerprint(t *testing.T) {
+	environmentID := uuid.MustParse("00000000-0000-0000-0000-000000000301")
+	actorID := uuid.MustParse("00000000-0000-0000-0000-000000000501")
+	request, err := NewActorCloseRequest(environmentID, actorID, "close-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := request.idempotencyRequest()
+	first, err := value.fingerprint(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := value.fingerprint(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.operation != operationActorClose || !bytes.Equal(value.scope, actorID[:]) ||
+		value.key != "close-1" {
+		t.Fatalf("operation=%q scope=%x key=%q", value.operation, value.scope, value.key)
+	}
+	if first != second || first != operationFingerprint(operationActorClose, nil, 0, nil) {
+		t.Fatalf("Actor close fingerprint = %x / %x", first, second)
+	}
+}
+
 func TestActorStartRequestUsesDeclaredIDScopeAndCanonicalCallerSemantics(t *testing.T) {
 	environmentID := uuid.MustParse("00000000-0000-0000-0000-000000000301")
 	expiresAt := time.Date(2030, 1, 2, 3, 4, 5, 600, time.FixedZone("offset", 9*60*60))
