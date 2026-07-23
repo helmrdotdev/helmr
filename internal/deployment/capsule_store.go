@@ -163,6 +163,49 @@ func (s *ManagerStore) Resolve(
 	return capsule, nil
 }
 
+func (s *ManagerStore) Snapshot(
+	ctx context.Context,
+	directory string,
+	capsule ManagerCapsule,
+) (*ArtifactSnapshot, error) {
+	if s == nil || s.trees == nil {
+		return nil, errors.New("manager store is required")
+	}
+	if ctx == nil {
+		return nil, errors.New("manager snapshot context is nil")
+	}
+	if err := validateManagerCapsule(capsule); err != nil {
+		return nil, err
+	}
+	if err := s.statTree(ctx, capsule.Tree); err != nil {
+		return nil, err
+	}
+	body, err := s.trees.Get(ctx, capsule.Tree.Digest)
+	if err != nil {
+		return nil, fmt.Errorf("open manager tree: %w", err)
+	}
+	content, snapshotErr := snapshotArtifact(
+		ctx,
+		directory,
+		managerArtifact,
+		artifactSnapshotDescriptor{
+			Digest:    capsule.Tree.Digest,
+			SizeBytes: capsule.Tree.SizeBytes,
+			MediaType: capsule.Tree.MediaType,
+		},
+		body,
+	)
+	closeErr := body.Close()
+	if snapshotErr != nil {
+		return nil, snapshotErr
+	}
+	if closeErr != nil {
+		_ = content.Close()
+		return nil, fmt.Errorf("close manager tree: %w", closeErr)
+	}
+	return &ArtifactSnapshot{content: content}, nil
+}
+
 func (s *ManagerStore) Publish(
 	ctx context.Context,
 	selector ManagerSelector,

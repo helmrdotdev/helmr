@@ -12,7 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 )
 
-func TestSnapshotProgramObjectsBindsBothDescriptorsAndDriveSources(t *testing.T) {
+func TestSnapshotProgramBindsBothDescriptorsAndDriveSources(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Program snapshots require Linux")
 	}
@@ -32,7 +32,7 @@ func TestSnapshotProgramObjectsBindsBothDescriptorsAndDriveSources(t *testing.T)
 		code.Digest:         {descriptor: code, body: codeBody},
 		dependencies.Digest: {descriptor: dependencies, body: dependencyBody},
 	}}
-	snapshot, err := SnapshotProgramObjects(
+	snapshot, err := SnapshotProgram(
 		context.Background(),
 		store,
 		t.TempDir(),

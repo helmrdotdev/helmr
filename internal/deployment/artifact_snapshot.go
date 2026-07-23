@@ -26,6 +26,38 @@ type artifactSnapshot struct {
 	upload     *os.File
 }
 
+type ArtifactSnapshot struct {
+	content *artifactSnapshot
+}
+
+func (snapshot *ArtifactSnapshot) verifier() (*os.File, error) {
+	if snapshot == nil || snapshot.content == nil {
+		return nil, errors.New("Artifact snapshot is closed")
+	}
+	return snapshot.content.verifierFile()
+}
+
+func (snapshot *ArtifactSnapshot) LinkInto(
+	directory string,
+	name string,
+	uid int,
+	gid int,
+) error {
+	if snapshot == nil || snapshot.content == nil {
+		return errors.New("Artifact snapshot is closed")
+	}
+	return snapshot.content.LinkInto(directory, name, uid, gid)
+}
+
+func (snapshot *ArtifactSnapshot) Close() error {
+	if snapshot == nil || snapshot.content == nil {
+		return nil
+	}
+	err := snapshot.content.Close()
+	snapshot.content = nil
+	return err
+}
+
 func artifactSnapshotSpecForRole(role artifactRole) (artifactSnapshotSpec, error) {
 	switch role {
 	case codeArtifact:
@@ -51,6 +83,12 @@ func artifactSnapshotSpecForRole(role artifactRole) (artifactSnapshotSpec, error
 			label:     "standard toolchain",
 			mediaType: ToolchainMediaType,
 			maxBytes:  maxToolArtifactBytes,
+		}, nil
+	case managerArtifact:
+		return artifactSnapshotSpec{
+			label:     "manager",
+			mediaType: ManagerTreeMediaType,
+			maxBytes:  maxManagerCapsuleTreeBytes,
 		}, nil
 	default:
 		return artifactSnapshotSpec{}, fmt.Errorf("artifact snapshot role = %d", role)

@@ -9,22 +9,18 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 )
 
-type ProgramArtifactSnapshot struct {
-	Code         *ReadOnlyArtifactSnapshot
-	Dependencies *ReadOnlyArtifactSnapshot
+type ProgramSnapshot struct {
+	Code         *ArtifactSnapshot
+	Dependencies *ArtifactSnapshot
 }
 
-type ReadOnlyArtifactSnapshot struct {
-	content *artifactSnapshot
-}
-
-func SnapshotProgramObjects(
+func SnapshotProgram(
 	ctx context.Context,
 	store cas.Reader,
 	directory string,
 	code ProgramDescriptor,
 	dependencies ProgramDescriptor,
-) (*ProgramArtifactSnapshot, error) {
+) (*ProgramSnapshot, error) {
 	if store == nil {
 		return nil, errors.New("Program store is required")
 	}
@@ -45,7 +41,7 @@ func SnapshotProgramObjects(
 			codeSnapshot.Close(),
 		)
 	}
-	return &ProgramArtifactSnapshot{
+	return &ProgramSnapshot{
 		Code:         codeSnapshot,
 		Dependencies: dependencySnapshot,
 	}, nil
@@ -57,7 +53,7 @@ func snapshotProgramObject(
 	directory string,
 	descriptor ProgramDescriptor,
 	role artifactRole,
-) (*ReadOnlyArtifactSnapshot, error) {
+) (*ArtifactSnapshot, error) {
 	spec, err := artifactSnapshotSpecForRole(role)
 	if err != nil {
 		return nil, err
@@ -96,14 +92,14 @@ func snapshotProgramObject(
 		_ = content.Close()
 		return nil, fmt.Errorf("close Program object: %w", closeErr)
 	}
-	return &ReadOnlyArtifactSnapshot{content: content}, nil
+	return &ArtifactSnapshot{content: content}, nil
 }
 
-func VerifyProgramArtifacts(
+func VerifyProgram(
 	ctx context.Context,
 	unitCgroupRoot string,
 	leaseIdentity string,
-	snapshot *ProgramArtifactSnapshot,
+	snapshot *ProgramSnapshot,
 ) (ProgramIndex, error) {
 	if ctx == nil {
 		return ProgramIndex{}, errors.New("Program verification context is nil")
@@ -140,7 +136,7 @@ func VerifyProgramArtifacts(
 	}
 }
 
-func (snapshot *ProgramArtifactSnapshot) verifiers() (*os.File, *os.File, error) {
+func (snapshot *ProgramSnapshot) verifiers() (*os.File, *os.File, error) {
 	if snapshot == nil || snapshot.Code == nil || snapshot.Dependencies == nil {
 		return nil, nil, errors.New("Program Artifact snapshot is closed")
 	}
@@ -155,7 +151,7 @@ func (snapshot *ProgramArtifactSnapshot) verifiers() (*os.File, *os.File, error)
 	return code, dependencies, nil
 }
 
-func (snapshot *ProgramArtifactSnapshot) Close() error {
+func (snapshot *ProgramSnapshot) Close() error {
 	if snapshot == nil {
 		return nil
 	}
@@ -168,33 +164,5 @@ func (snapshot *ProgramArtifactSnapshot) Close() error {
 		err = errors.Join(err, snapshot.Dependencies.Close())
 		snapshot.Dependencies = nil
 	}
-	return err
-}
-
-func (snapshot *ReadOnlyArtifactSnapshot) verifier() (*os.File, error) {
-	if snapshot == nil || snapshot.content == nil {
-		return nil, errors.New("Artifact snapshot is closed")
-	}
-	return snapshot.content.verifierFile()
-}
-
-func (snapshot *ReadOnlyArtifactSnapshot) LinkInto(
-	directory string,
-	name string,
-	uid int,
-	gid int,
-) error {
-	if snapshot == nil || snapshot.content == nil {
-		return errors.New("Artifact snapshot is closed")
-	}
-	return snapshot.content.LinkInto(directory, name, uid, gid)
-}
-
-func (snapshot *ReadOnlyArtifactSnapshot) Close() error {
-	if snapshot == nil || snapshot.content == nil {
-		return nil
-	}
-	err := snapshot.content.Close()
-	snapshot.content = nil
 	return err
 }

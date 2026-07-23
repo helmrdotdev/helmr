@@ -171,6 +171,7 @@ const (
 	dependencyArtifact
 	runtimeArtifact
 	toolchainArtifact
+	managerArtifact
 )
 
 type inspectedArtifact struct {
