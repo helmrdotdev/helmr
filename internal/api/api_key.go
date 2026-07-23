@@ -50,6 +50,7 @@ const (
 	APIKeyScopeRunsCreate               APIKeyScope = "runs:create"
 	APIKeyScopeRunsRead                 APIKeyScope = "runs:read"
 	APIKeyScopeRunsManage               APIKeyScope = "runs:manage"
+	APIKeyScopeActorsStart              APIKeyScope = "actors:start"
 	APIKeyScopeActorsInputSend          APIKeyScope = "actors-input:send"
 	APIKeyScopeSessionStreamsRead       APIKeyScope = "session-streams:read"
 	APIKeyScopeSessionInputSend         APIKeyScope = "session-input:send"

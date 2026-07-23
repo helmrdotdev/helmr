@@ -7,13 +7,19 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -30,7 +36,10 @@ type actorStartPostgresFixture struct {
 	orgID         uuid.UUID
 	projectID     uuid.UUID
 	environmentID uuid.UUID
+	deploymentID  uuid.UUID
 	workspaceIDs  []uuid.UUID
+	workspaceRefs []string
+	workspaceKeys []string
 }
 
 func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
@@ -69,6 +78,23 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 		replayed.BootRunID != created.BootRunID ||
 		replayed.InitialRecordID == nil || *replayed.InitialRecordID != *created.InitialRecordID {
 		t.Fatalf("replayed = %+v, created = %+v", replayed, created)
+	}
+	if _, err := fixture.pool.Exec(t.Context(), `
+		UPDATE environments SET current_deployment_id = NULL WHERE id = $1
+	`, fixture.environmentID); err != nil {
+		t.Fatal(err)
+	}
+	replayedAfterUndeploy, err := fixture.server.startActor(t.Context(), request)
+	if err != nil {
+		t.Fatalf("replay after undeploy: %v", err)
+	}
+	if !replayedAfterUndeploy.Replayed || replayedAfterUndeploy.ActorID != created.ActorID {
+		t.Fatalf("undeployed replay = %+v, created = %+v", replayedAfterUndeploy, created)
+	}
+	if _, err := fixture.pool.Exec(t.Context(), `
+		UPDATE environments SET current_deployment_id = $1 WHERE id = $2
+	`, fixture.deploymentID, fixture.environmentID); err != nil {
+		t.Fatal(err)
 	}
 
 	changed := request
@@ -127,6 +153,142 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 	}
 }
 
+func TestActorStartHTTPPostgresCreatesAndReplaysPublicIDs(t *testing.T) {
+	fixture := newActorStartPostgresFixture(t, 1)
+	body := fmt.Sprintf(
+		`{"workspace":{"id":%q},"input":null,"idempotency_key":"http-start-1","run":{"ttl":"30m","retry":{"max_attempts":3}}}`,
+		fixture.workspaceRefs[0],
+	)
+	principal := auth.Actor{
+		OrgID:         fixture.orgID,
+		Kind:          auth.ActorKindAPIKey,
+		Role:          auth.RoleDeveloper,
+		ProjectID:     fixture.projectID.String(),
+		EnvironmentID: fixture.environmentID.String(),
+		Permissions:   []auth.Permission{auth.PermissionActorsStart},
+	}
+	var first api.StartActorResponse
+	for attempt := range 2 {
+		request := actorStartHTTPPostgresRequest(body, principal, "", "", "operator.v1")
+		recorder := httptest.NewRecorder()
+		fixture.server.startActorHTTP(recorder, request)
+		if recorder.Code != http.StatusCreated {
+			t.Fatalf("attempt %d status=%d body=%s", attempt, recorder.Code, recorder.Body.String())
+		}
+		var response api.StartActorResponse
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if err := publicid.ValidateFor(publicid.Actor, response.ActorID); err != nil {
+			t.Fatalf("Actor public ID: %v", err)
+		}
+		if err := publicid.ValidateFor(publicid.Run, response.RunID); err != nil {
+			t.Fatalf("Run public ID: %v", err)
+		}
+		if attempt == 0 {
+			first = response
+		} else if response != first {
+			t.Fatalf("replay response = %+v, first = %+v", response, first)
+		}
+	}
+}
+
+func TestActorStartHTTPPostgresDeniesBeforeAdmission(t *testing.T) {
+	fixture := newActorStartPostgresFixture(t, 1)
+	body := fmt.Sprintf(`{"workspace":{"id":%q}}`, fixture.workspaceRefs[0])
+	principal := auth.Actor{
+		OrgID:         fixture.orgID,
+		Kind:          auth.ActorKindAPIKey,
+		Role:          auth.RoleDeveloper,
+		ProjectID:     fixture.projectID.String(),
+		EnvironmentID: fixture.environmentID.String(),
+	}
+	recorder := httptest.NewRecorder()
+	fixture.server.startActorHTTP(
+		recorder,
+		actorStartHTTPPostgresRequest(body, principal, "", "", "operator.v1"),
+	)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var actors int
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM actors`).Scan(&actors); err != nil {
+		t.Fatal(err)
+	}
+	if actors != 0 {
+		t.Fatalf("actors = %d, want 0", actors)
+	}
+}
+
+func TestActorStartHTTPPostgresRejectsOversizeStoredInput(t *testing.T) {
+	fixture := newActorStartPostgresFixture(t, 1)
+	input := `[` + strings.Repeat(`0,`, 360_000) + `0]`
+	if len(input) >= maxActorInputBytes {
+		t.Fatalf("test input canonical size = %d", len(input))
+	}
+	body := fmt.Sprintf(
+		`{"workspace":{"id":%q},"input":%s}`,
+		fixture.workspaceRefs[0],
+		input,
+	)
+	principal := auth.Actor{
+		OrgID:         fixture.orgID,
+		Kind:          auth.ActorKindAPIKey,
+		Role:          auth.RoleDeveloper,
+		ProjectID:     fixture.projectID.String(),
+		EnvironmentID: fixture.environmentID.String(),
+		Permissions:   []auth.Permission{auth.PermissionActorsStart},
+	}
+	recorder := httptest.NewRecorder()
+	fixture.server.startActorHTTP(
+		recorder,
+		actorStartHTTPPostgresRequest(body, principal, "", "", "operator.v1"),
+	)
+	if recorder.Code != http.StatusRequestEntityTooLarge ||
+		!strings.Contains(recorder.Body.String(), `"code":"actor_input_too_large"`) ||
+		!strings.Contains(recorder.Body.String(), `"retryable":false`) {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var actors int
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM actors`).Scan(&actors); err != nil {
+		t.Fatal(err)
+	}
+	if actors != 0 {
+		t.Fatalf("actors = %d, want rollback with no residue", actors)
+	}
+}
+
+func TestActorStartHTTPSessionPostgresCreates(t *testing.T) {
+	fixture := newActorStartPostgresFixture(t, 1)
+	body := fmt.Sprintf(`{"workspace":{"key":%q}}`, fixture.workspaceKeys[0])
+	principal := auth.Actor{
+		OrgID: fixture.orgID,
+		Kind:  auth.ActorKindSession,
+		Role:  auth.RoleDeveloper,
+	}
+	recorder := httptest.NewRecorder()
+	fixture.server.startActorHTTP(
+		recorder,
+		actorStartHTTPPostgresRequest(
+			body,
+			principal,
+			fixture.projectID.String(),
+			fixture.environmentID.String(),
+			"operator.v1",
+		),
+	)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response api.StartActorResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if err := publicid.ValidateFor(publicid.Actor, response.ActorID); err != nil {
+		t.Fatalf("Actor public ID: %v", err)
+	}
+}
+
 func TestActorStartPostgresRollbackLeavesNoResidue(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
 	if _, err := fixture.pool.Exec(t.Context(), `
@@ -176,6 +338,7 @@ func TestActorStartPostgresNoInputBootsAtZeroHighWatermark(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
 	key := "no-input"
 	request := fixture.request(0, &key, "no-input-1")
+	request.Workspace = api.StartActorWorkspaceTarget{Key: &fixture.workspaceKeys[0]}
 	request.ManagedQueueName = "priority"
 	created, err := fixture.server.startActor(t.Context(), request)
 	if err != nil {
@@ -263,13 +426,34 @@ func TestActorStartPostgresConcurrentKeyCollisionCreatesOneIdentity(t *testing.T
 }
 
 func (fixture actorStartPostgresFixture) request(index int, key *string, idempotencyKey string) actorStartRequest {
-	workspaceID := fixture.workspaceIDs[index]
+	workspaceID := fixture.workspaceRefs[index]
 	return actorStartRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
-		ActorDeclaredID: "operator.v1", WorkspaceID: workspaceID,
-		WorkspaceAddress: json.RawMessage(fmt.Sprintf(`{"id":%q}`, workspaceID.String())),
-		Key:              key, IdempotencyKey: idempotencyKey,
+		ActorDeclaredID: "operator.v1",
+		Workspace:       api.StartActorWorkspaceTarget{ID: &workspaceID},
+		Key:             key, IdempotencyKey: idempotencyKey,
 	}
+}
+
+func actorStartHTTPPostgresRequest(
+	body string,
+	principal auth.Actor,
+	projectID string,
+	environmentID string,
+	actorDeclaredID string,
+) *http.Request {
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	route := chi.NewRouteContext()
+	if projectID != "" {
+		route.URLParams.Add("projectID", projectID)
+	}
+	if environmentID != "" {
+		route.URLParams.Add("environmentID", environmentID)
+	}
+	route.URLParams.Add("actorDeclaredID", actorDeclaredID)
+	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)
+	ctx = context.WithValue(ctx, actorContextKey{}, principal)
+	return request.WithContext(ctx)
 }
 
 func assertActorStartTuple(t *testing.T, fixture actorStartPostgresFixture, result actorStartResult, highWatermark int64) {
@@ -393,8 +577,10 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	fixture := actorStartPostgresFixture{
 		pool: pool, orgID: uuid.Must(uuid.NewV7()), projectID: uuid.Must(uuid.NewV7()),
 		environmentID: uuid.Must(uuid.NewV7()), workspaceIDs: make([]uuid.UUID, workspaceCount),
+		workspaceRefs: make([]string, workspaceCount), workspaceKeys: make([]string, workspaceCount),
 	}
 	deploymentID := uuid.Must(uuid.NewV7())
+	fixture.deploymentID = deploymentID
 	actorDefinitionID := uuid.Must(uuid.NewV7())
 	workspaceDefinitionID := uuid.Must(uuid.NewV7())
 	sourceID, codeID, dependencyID, imageID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()),
@@ -501,13 +687,16 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	for index := range workspaceCount {
 		workspaceID, versionID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 		fixture.workspaceIDs[index] = workspaceID
+		fixture.workspaceRefs[index] = actorStartPublicID(t, publicid.Workspace)
+		fixture.workspaceKeys[index] = fmt.Sprintf("workspace:%d", index)
 		mustActorStartExec(t, tx, `
 			INSERT INTO workspaces (
 			    id, public_id, org_id, project_id, environment_id, region_id,
-			    declaration_kind, workspace_declared_id, deployment_definition_id, head_version_id
-			) VALUES ($1, $2, $3, $4, $5, 'us-east-1', 'workspace', 'workspace.v1', $6, $7)
-		`, workspaceID, actorStartPublicID(t, publicid.Workspace), fixture.orgID,
-			fixture.projectID, fixture.environmentID, workspaceDefinitionID, versionID)
+			    declaration_kind, workspace_declared_id, deployment_definition_id, head_version_id, key
+			) VALUES ($1, $2, $3, $4, $5, 'us-east-1', 'workspace', 'workspace.v1', $6, $7, $8)
+		`, workspaceID, fixture.workspaceRefs[index], fixture.orgID,
+			fixture.projectID, fixture.environmentID, workspaceDefinitionID, versionID,
+			fixture.workspaceKeys[index])
 		mustActorStartExec(t, tx, `
 			INSERT INTO workspace_versions (
 			    id, public_id, org_id, project_id, environment_id, workspace_id,

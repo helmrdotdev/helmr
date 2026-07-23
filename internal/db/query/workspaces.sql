@@ -135,6 +135,23 @@ SELECT *
    AND id = sqlc.arg(id)
    AND deleted_at IS NULL;
 
+-- name: ResolveActorStartWorkspace :one
+SELECT id
+  FROM workspaces
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND deleted_at IS NULL
+   AND (
+       (sqlc.narg(public_id)::text IS NOT NULL
+        AND sqlc.narg(key)::text IS NULL
+        AND public_id = sqlc.narg(public_id)::text)
+       OR
+       (sqlc.narg(public_id)::text IS NULL
+        AND sqlc.narg(key)::text IS NOT NULL
+        AND key = sqlc.narg(key)::text)
+   );
+
 -- name: GetWorkspaceByOrgAndID :one
 SELECT *
   FROM workspaces

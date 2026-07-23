@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 )
 
@@ -14,10 +15,11 @@ func TestNormalizeActorStartCanonicalizesAnnotationsAndPreservesInputPresence(t 
 	now := time.Date(2028, 1, 1, 0, 0, 0, 0, time.UTC)
 	key := "thread:42"
 	ttl := maxQueuedRunTTLMS
+	workspaceID := actorStartTestPublicID(t, publicid.Workspace)
 	normalized, err := normalizeActorStart(actorStartRequest{
 		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
-		EnvironmentID: uuid.Must(uuid.NewV7()), WorkspaceID: uuid.Must(uuid.NewV7()),
-		ActorDeclaredID: "operator.v1", WorkspaceAddress: json.RawMessage(`{"id":"wsp_example"}`),
+		EnvironmentID:   uuid.Must(uuid.NewV7()),
+		ActorDeclaredID: "operator.v1", Workspace: api.StartActorWorkspaceTarget{ID: &workspaceID},
 		Key: &key, InputPresent: true, Input: json.RawMessage(`null`),
 		Metadata: json.RawMessage(`{"b":2,"a":1}`), Tags: []string{" beta ", "alpha", "alpha"},
 		ManagedQueueName: "default", ManagedQueuedTTLMS: &ttl,
@@ -42,11 +44,29 @@ func TestNormalizeActorStartCanonicalizesAnnotationsAndPreservesInputPresence(t 
 	}
 }
 
+func TestNormalizeActorStartLimitsNormalizedTagSet(t *testing.T) {
+	workspaceID := actorStartTestPublicID(t, publicid.Workspace)
+	request := actorStartRequest{
+		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
+		EnvironmentID:   uuid.Must(uuid.NewV7()),
+		ActorDeclaredID: "operator.v1", Workspace: api.StartActorWorkspaceTarget{ID: &workspaceID},
+		Tags: []string{"same", "same", "same", "same", "same", "same", "same", "same", "same", "same", "same"},
+	}
+	normalized, err := normalizeActorStart(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(normalized.Tags) != 1 || normalized.Tags[0] != "same" {
+		t.Fatalf("tags = %#v", normalized.Tags)
+	}
+}
+
 func TestNormalizeActorStartRejectsInvalidCallerOverridesAndOversizeFields(t *testing.T) {
+	workspaceID := actorStartTestPublicID(t, publicid.Workspace)
 	base := actorStartRequest{
 		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
-		EnvironmentID: uuid.Must(uuid.NewV7()), WorkspaceID: uuid.Must(uuid.NewV7()),
-		ActorDeclaredID: "operator.v1", WorkspaceAddress: json.RawMessage(`{"id":"wsp_example"}`),
+		EnvironmentID:   uuid.Must(uuid.NewV7()),
+		ActorDeclaredID: "operator.v1", Workspace: api.StartActorWorkspaceTarget{ID: &workspaceID},
 		ManagedQueueName: "default",
 	}
 	tooLongTTL := maxQueuedRunTTLMS + 1
@@ -68,10 +88,11 @@ func TestNormalizeActorStartRejectsInvalidCallerOverridesAndOversizeFields(t *te
 }
 
 func TestNormalizeActorStartUsesExactConcurrencyKeyBoundaryDomain(t *testing.T) {
+	workspaceID := actorStartTestPublicID(t, publicid.Workspace)
 	base := actorStartRequest{
 		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
-		EnvironmentID: uuid.Must(uuid.NewV7()), WorkspaceID: uuid.Must(uuid.NewV7()),
-		ActorDeclaredID: "operator.v1", WorkspaceAddress: json.RawMessage(`{"id":"wsp_example"}`),
+		EnvironmentID:   uuid.Must(uuid.NewV7()),
+		ActorDeclaredID: "operator.v1", Workspace: api.StartActorWorkspaceTarget{ID: &workspaceID},
 	}
 	nonBreakingSpace := "\u00a0opaque\u00a0"
 	base.ManagedConcurrencyKey = &nonBreakingSpace
@@ -118,4 +139,13 @@ func TestActorStartReceiptRoundTrip(t *testing.T) {
 
 func timePointer(value time.Time) *time.Time {
 	return &value
+}
+
+func actorStartTestPublicID(t *testing.T, kind publicid.Prefix) string {
+	t.Helper()
+	value, err := publicid.New(kind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
 }

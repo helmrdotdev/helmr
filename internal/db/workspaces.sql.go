@@ -904,6 +904,45 @@ func (q *Queries) ReserveWorkspaceForRun(ctx context.Context, arg ReserveWorkspa
 	return i, err
 }
 
+const resolveActorStartWorkspace = `-- name: ResolveActorStartWorkspace :one
+SELECT id
+  FROM workspaces
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND deleted_at IS NULL
+   AND (
+       ($4::text IS NOT NULL
+        AND $5::text IS NULL
+        AND public_id = $4::text)
+       OR
+       ($4::text IS NULL
+        AND $5::text IS NOT NULL
+        AND key = $5::text)
+   )
+`
+
+type ResolveActorStartWorkspaceParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	PublicID      pgtype.Text `json:"public_id"`
+	Key           pgtype.Text `json:"key"`
+}
+
+func (q *Queries) ResolveActorStartWorkspace(ctx context.Context, arg ResolveActorStartWorkspaceParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, resolveActorStartWorkspace,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.PublicID,
+		arg.Key,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const resolveCurrentWorkspaceDefinitionForCreate = `-- name: ResolveCurrentWorkspaceDefinitionForCreate :one
 SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.workspace_architecture, deployment_definitions.artifact_id, deployment_definitions.created_at
   FROM deployment_definitions

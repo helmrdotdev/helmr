@@ -23,6 +23,63 @@ func TestSendActorInputUsesSessionRoute(t *testing.T) {
 	)
 }
 
+func TestStartActorUsesAPIKeyRoute(t *testing.T) {
+	testStartActorRoute(t, false, "/api/actors/operator.v1/start", EnvironmentScopeOptions{})
+}
+
+func TestStartActorUsesSessionRoute(t *testing.T) {
+	testStartActorRoute(
+		t,
+		true,
+		"/api/projects/project-1/environments/env-1/actors/operator.v1/start",
+		EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
+	)
+}
+
+func testStartActorRoute(t *testing.T, session bool, wantPath string, scope EnvironmentScopeOptions) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.EscapedPath() != wantPath {
+			t.Fatalf("%s %s, want POST %s", r.Method, r.URL.EscapedPath(), wantPath)
+		}
+		var request api.StartActorRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Workspace.Key == nil || *request.Workspace.Key != "workspace:1" ||
+			string(request.Input) != `null` {
+			t.Fatalf("request = %+v input=%s", request, request.Input)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(api.StartActorResponse{
+			ActorID: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+			RunID:   "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		})
+	}))
+	defer server.Close()
+
+	options := []Option{WithHTTPClient(server.Client())}
+	if session {
+		options = append(options, WithSessionScopedRoutes())
+	}
+	client, err := New(server.URL, options...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceKey := "workspace:1"
+	response, err := client.StartActor(context.Background(), "operator.v1", api.StartActorRequest{
+		Workspace: api.StartActorWorkspaceTarget{Key: &workspaceKey},
+		Input:     json.RawMessage(`null`),
+	}, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.ActorID != "act_aaaaaaaaaaaaaaaaaaaaaaaaaa" ||
+		response.RunID != "run_aaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
 func testSendActorInputRoute(t *testing.T, session bool, wantPath string, scope EnvironmentScopeOptions) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -16,6 +16,7 @@ const (
 	PermissionRunsCreate               Permission = "runs.create"
 	PermissionRunsRead                 Permission = "runs.read"
 	PermissionRunsManage               Permission = "runs.manage"
+	PermissionActorsStart              Permission = "actors.start"
 	PermissionActorsInputSend          Permission = "actors.input.send"
 	PermissionSessionStreamsRead       Permission = "session.streams.read"
 	PermissionSessionInputSend         Permission = "session.input.send"
@@ -74,6 +75,7 @@ func RoleAllows(role Role, permission Permission) bool {
 		case PermissionRunsCreate,
 			PermissionRunsRead,
 			PermissionRunsManage,
+			PermissionActorsStart,
 			PermissionActorsInputSend,
 			PermissionSessionStreamsRead,
 			PermissionSessionInputSend,

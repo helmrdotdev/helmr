@@ -78,35 +78,18 @@ SELECT sqlc.arg(id),
    AND actor_definition.declared_id = sqlc.arg(actor_declared_id)
 RETURNING *;
 
--- name: LockActorStartAuthority :one
+-- name: LockActorStartDeploymentAuthority :one
 SELECT actor_definition.id AS actor_definition_id,
        actor_definition.deployment_id,
        actor_definition.manifest_version AS actor_manifest_version,
        actor_definition.manifest AS actor_manifest,
        actor_definition.manifest_digest AS actor_manifest_digest,
        deployments.queue_config,
-       workspaces.id AS workspace_id,
-       workspaces.head_version_id,
-       workspaces.state AS workspace_state,
-       workspaces.desired_state AS workspace_desired_state,
-       workspaces.dirty_state AS workspace_dirty_state,
-       workspaces.state_version AS workspace_state_version,
-       workspaces.owner_actor_id,
-       workspaces.owner_run_id,
        deployments.program_architecture,
-       workspace_definition.workspace_architecture,
-       EXISTS (
-           SELECT 1
-             FROM workspace_leases
-            WHERE workspace_leases.workspace_id = workspaces.id
-              AND workspace_leases.state IN ('active', 'releasing')
-       ) AS has_active_lease,
-       EXISTS (
-           SELECT 1
-             FROM workspace_processes
-            WHERE workspace_processes.workspace_id = workspaces.id
-              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
-       ) AS has_active_process
+       (
+           sqlc.narg(expires_at)::timestamptz IS NULL
+           OR sqlc.narg(expires_at)::timestamptz > transaction_timestamp()
+       )::boolean AS expires_at_valid
   FROM environments
   JOIN deployment_definitions AS actor_definition
     ON actor_definition.environment_id = environments.id
@@ -125,12 +108,35 @@ SELECT actor_definition.id AS actor_definition_id,
    AND deployments.program_architecture IS NOT NULL
    AND deployments.program_architecture = deployments.build_architecture
    AND deployments.program_runtime_digest = deployments.build_runtime_digest
-  JOIN workspaces
-    ON workspaces.org_id = environments.org_id
-   AND workspaces.project_id = environments.project_id
-   AND workspaces.environment_id = environments.id
-   AND workspaces.id = sqlc.arg(workspace_id)
-   AND workspaces.deleted_at IS NULL
+ WHERE environments.org_id = sqlc.arg(org_id)
+   AND environments.project_id = sqlc.arg(project_id)
+   AND environments.id = sqlc.arg(environment_id)
+ FOR UPDATE OF environments;
+
+-- name: LockActorStartWorkspaceAuthority :one
+SELECT
+       workspaces.id AS workspace_id,
+       workspaces.head_version_id,
+       workspaces.state AS workspace_state,
+       workspaces.desired_state AS workspace_desired_state,
+       workspaces.dirty_state AS workspace_dirty_state,
+       workspaces.state_version AS workspace_state_version,
+       workspaces.owner_actor_id,
+       workspaces.owner_run_id,
+       workspace_definition.workspace_architecture,
+       EXISTS (
+           SELECT 1
+             FROM workspace_leases
+            WHERE workspace_leases.workspace_id = workspaces.id
+              AND workspace_leases.state IN ('active', 'releasing')
+       ) AS has_active_lease,
+       EXISTS (
+           SELECT 1
+             FROM workspace_processes
+            WHERE workspace_processes.workspace_id = workspaces.id
+              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+       ) AS has_active_process
+  FROM workspaces
   JOIN deployment_definitions AS workspace_definition
     ON workspace_definition.environment_id = workspaces.environment_id
    AND workspace_definition.id = workspaces.deployment_definition_id
@@ -140,10 +146,12 @@ SELECT actor_definition.id AS actor_definition_id,
     ON head.workspace_id = workspaces.id
    AND head.id = workspaces.head_version_id
    AND head.state = 'committed'
- WHERE environments.org_id = sqlc.arg(org_id)
-   AND environments.project_id = sqlc.arg(project_id)
-   AND environments.id = sqlc.arg(environment_id)
- FOR UPDATE OF environments, workspaces;
+ WHERE workspaces.org_id = sqlc.arg(org_id)
+   AND workspaces.project_id = sqlc.arg(project_id)
+   AND workspaces.environment_id = sqlc.arg(environment_id)
+   AND workspaces.id = sqlc.arg(workspace_id)
+   AND workspaces.deleted_at IS NULL
+ FOR UPDATE OF workspaces;
 
 -- name: LockActorStartKey :exec
 SELECT pg_advisory_xact_lock(

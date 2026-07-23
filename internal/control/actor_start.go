@@ -33,6 +33,8 @@ const (
 
 var (
 	errActorStartInvalid            = errors.New("actor start request is invalid")
+	errActorStartNotDeployed        = errors.New("Actor declaration is not deployed")
+	errActorStartWorkspaceNotFound  = errors.New("Actor start Workspace was not found")
 	errActorStartAuthority          = errors.New("actor start authority is unavailable")
 	errActorStartWorkspaceConflict  = errors.New("actor start Workspace cannot accept execution")
 	errActorStartSecretUnavailable  = errors.New("actor start Workspace Secret is unavailable")
@@ -52,8 +54,7 @@ type actorStartRequest struct {
 	ProjectID             uuid.UUID
 	EnvironmentID         uuid.UUID
 	ActorDeclaredID       string
-	WorkspaceID           uuid.UUID
-	WorkspaceAddress      json.RawMessage
+	Workspace             api.StartActorWorkspaceTarget
 	Key                   *string
 	InputPresent          bool
 	Input                 json.RawMessage
@@ -68,7 +69,6 @@ type actorStartRequest struct {
 	ManagedRetryPolicy    json.RawMessage
 	ManagedRunMetadata    json.RawMessage
 	ManagedRunTags        []string
-	Authorize             func(context.Context, db.Querier) error
 }
 
 type actorStartResult struct {
@@ -117,15 +117,6 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 
 	var result actorStartResult
 	err = s.inTx(ctx, func(work *txWork) error {
-		if normalized.Key != nil {
-			if err := work.q.LockActorStartKey(ctx, db.LockActorStartKeyParams{
-				EnvironmentID:   pgvalue.UUID(normalized.EnvironmentID),
-				ActorDeclaredID: normalized.ActorDeclaredID,
-				Key:             *normalized.Key,
-			}); err != nil {
-				return fmt.Errorf("lock Actor start key: %w", err)
-			}
-		}
 		var claim *db.IdempotencyClaim
 		if claimRequest != nil {
 			claims, err := s.claims.TransactionForQueries(work.q)
@@ -150,7 +141,58 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			}
 			claim = &acquired.Claim
 		}
+
+		deploymentAuthority, err := work.q.LockActorStartDeploymentAuthority(
+			ctx,
+			db.LockActorStartDeploymentAuthorityParams{
+				ActorDeclaredID: normalized.ActorDeclaredID,
+				OrgID:           pgvalue.UUID(normalized.OrgID),
+				ProjectID:       pgvalue.UUID(normalized.ProjectID),
+				EnvironmentID:   pgvalue.UUID(normalized.EnvironmentID),
+				ExpiresAt:       pgvalue.TimestamptzUTCZeroInvalid(timePtrValue(normalized.ExpiresAt)),
+			},
+		)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errActorStartNotDeployed
+		}
+		if err != nil {
+			return fmt.Errorf("lock Actor start deployment authority: %w", err)
+		}
+		if !deploymentAuthority.ExpiresAtValid {
+			return fmt.Errorf("%w: expiresAt must be in the future", errActorStartInvalid)
+		}
+
+		workspaceID, err := work.q.ResolveActorStartWorkspace(ctx, db.ResolveActorStartWorkspaceParams{
+			OrgID:         pgvalue.UUID(normalized.OrgID),
+			ProjectID:     pgvalue.UUID(normalized.ProjectID),
+			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
+			PublicID:      pgvalue.TextPtr(normalized.Workspace.ID),
+			Key:           pgvalue.TextPtr(normalized.Workspace.Key),
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errActorStartWorkspaceNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("resolve Actor start Workspace: %w", err)
+		}
+		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, workspaceID)
+		if err != nil {
+			return fmt.Errorf("lock Actor start Workspace Secrets: %w", err)
+		}
+		for _, binding := range bindings {
+			if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
+				return errActorStartSecretUnavailable
+			}
+		}
+
 		if normalized.Key != nil {
+			if err := work.q.LockActorStartKey(ctx, db.LockActorStartKeyParams{
+				EnvironmentID:   pgvalue.UUID(normalized.EnvironmentID),
+				ActorDeclaredID: normalized.ActorDeclaredID,
+				Key:             *normalized.Key,
+			}); err != nil {
+				return fmt.Errorf("lock Actor start key: %w", err)
+			}
 			_, err := work.q.GetActorByKey(ctx, db.GetActorByKeyParams{
 				EnvironmentID:   pgvalue.UUID(normalized.EnvironmentID),
 				ActorDeclaredID: normalized.ActorDeclaredID,
@@ -163,27 +205,21 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 				return fmt.Errorf("check Actor start key: %w", err)
 			}
 		}
-		if normalized.ExpiresAt != nil && !normalized.ExpiresAt.After(time.Now().UTC()) {
-			return fmt.Errorf("%w: expiresAt must be in the future", errActorStartInvalid)
-		}
 
-		authority, err := work.q.LockActorStartAuthority(ctx, db.LockActorStartAuthorityParams{
-			ActorDeclaredID: normalized.ActorDeclaredID,
-			WorkspaceID:     pgvalue.UUID(normalized.WorkspaceID),
-			OrgID:           pgvalue.UUID(normalized.OrgID),
-			ProjectID:       pgvalue.UUID(normalized.ProjectID),
-			EnvironmentID:   pgvalue.UUID(normalized.EnvironmentID),
-		})
+		authority, err := work.q.LockActorStartWorkspaceAuthority(
+			ctx,
+			db.LockActorStartWorkspaceAuthorityParams{
+				WorkspaceID:   workspaceID,
+				OrgID:         pgvalue.UUID(normalized.OrgID),
+				ProjectID:     pgvalue.UUID(normalized.ProjectID),
+				EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
+			},
+		)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return errActorStartAuthority
+			return errActorStartWorkspaceConflict
 		}
 		if err != nil {
-			return fmt.Errorf("lock Actor start authority: %w", err)
-		}
-		if normalized.Authorize != nil {
-			if err := normalized.Authorize(ctx, work.q); err != nil {
-				return err
-			}
+			return fmt.Errorf("lock Actor start Workspace authority: %w", err)
 		}
 		if authority.WorkspaceState != db.WorkspaceStateActive ||
 			(authority.WorkspaceDesiredState != db.WorkspaceDesiredStateActive &&
@@ -194,17 +230,17 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			authority.HasActiveLease || authority.HasActiveProcess {
 			return errActorStartWorkspaceConflict
 		}
-		if !authority.ProgramArchitecture.Valid ||
+		if !deploymentAuthority.ProgramArchitecture.Valid ||
 			!authority.WorkspaceArchitecture.Valid ||
-			authority.ProgramArchitecture.String != authority.WorkspaceArchitecture.String {
+			deploymentAuthority.ProgramArchitecture.String != authority.WorkspaceArchitecture.String {
 			return errActorStartWorkspaceConflict
 		}
 		runAuthority, err := deployment.ResolveActorRunAdmission(
-			authority.ActorManifestVersion,
+			deploymentAuthority.ActorManifestVersion,
 			normalized.ActorDeclaredID,
-			authority.ActorManifest,
-			authority.ActorManifestDigest,
-			authority.QueueConfig,
+			deploymentAuthority.ActorManifest,
+			deploymentAuthority.ActorManifestDigest,
+			deploymentAuthority.QueueConfig,
 			normalized.ManagedQueueName,
 		)
 		if err != nil {
@@ -218,16 +254,6 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		if len(managedRetryPolicy) == 0 {
 			managedRetryPolicy = runAuthority.RetryPolicy
 		}
-		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, authority.WorkspaceID)
-		if err != nil {
-			return fmt.Errorf("lock Actor start Workspace Secrets: %w", err)
-		}
-		for _, binding := range bindings {
-			if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
-				return errActorStartSecretUnavailable
-			}
-		}
-
 		actorID := uuid.Must(uuid.NewV7())
 		runID := uuid.Must(uuid.NewV7())
 		actorPublicID, err := publicid.New(publicid.Actor)
@@ -259,7 +285,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			ExpiresAt: pgvalue.TimestamptzUTCZeroInvalid(timePtrValue(normalized.ExpiresAt)),
 			Metadata:  normalized.Metadata, Tags: normalized.Tags,
 			WorkspaceID: authority.WorkspaceID, EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
-			DeploymentDefinitionID: authority.ActorDefinitionID, ActorDeclaredID: normalized.ActorDeclaredID,
+			DeploymentDefinitionID: deploymentAuthority.ActorDefinitionID, ActorDeclaredID: normalized.ActorDeclaredID,
 		})
 		if err != nil {
 			var postgresError *pgconn.PgError
@@ -281,6 +307,11 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 				ID: pgvalue.UUID(recordID), Data: normalized.Input, ClaimID: claimID,
 				EnvironmentID: pgvalue.UUID(normalized.EnvironmentID), ActorID: pgvalue.UUID(actorID),
 			}); err != nil {
+				var postgresError *pgconn.PgError
+				if errors.As(err, &postgresError) &&
+					postgresError.ConstraintName == "actor_records_data_size_check" {
+					return errActorInputTooLarge
+				}
 				return fmt.Errorf("create initial Actor input: %w", err)
 			}
 			initialRecordID = &recordID
@@ -354,7 +385,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 
 func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error) {
 	if request.OrgID == uuid.Nil || request.ProjectID == uuid.Nil ||
-		request.EnvironmentID == uuid.Nil || request.WorkspaceID == uuid.Nil {
+		request.EnvironmentID == uuid.Nil {
 		return normalizedActorStart{}, errActorStartInvalid
 	}
 	if err := api.ValidateActorDeclaredID(request.ActorDeclaredID); err != nil {
@@ -367,11 +398,19 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 		key := *request.Key
 		request.Key = &key
 	}
-	workspace, err := canonicalJSON(request.WorkspaceAddress)
-	if err != nil || !jsonObject(workspace) {
-		return normalizedActorStart{}, fmt.Errorf("%w: Workspace address must be an unambiguous JSON object", errActorStartInvalid)
+	if err := api.ValidateStartActorRequest(api.StartActorRequest{
+		Workspace: request.Workspace,
+	}); err != nil {
+		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
 	}
-	request.WorkspaceAddress = workspace
+	workspaceRaw, err := json.Marshal(request.Workspace)
+	if err != nil {
+		return normalizedActorStart{}, fmt.Errorf("%w: encode Workspace address", errActorStartInvalid)
+	}
+	workspace, err := canonicalJSON(workspaceRaw)
+	if err != nil {
+		return normalizedActorStart{}, fmt.Errorf("%w: canonicalize Workspace address", errActorStartInvalid)
+	}
 	if request.InputPresent {
 		input, err := canonicalJSON(request.Input)
 		if err != nil || len(input) > maxActorInputBytes {
@@ -434,7 +473,7 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 	}
 	fingerprint := idempotency.ActorStartFingerprint{
 		Key: request.Key, InputPresent: request.InputPresent, Input: request.Input,
-		WorkspaceAddress: request.WorkspaceAddress, Metadata: request.Metadata,
+		WorkspaceAddress: workspace, Metadata: request.Metadata,
 		Tags: request.Tags, ExpiresAt: request.ExpiresAt,
 		ManagedQueueName: request.ManagedQueueName, ManagedConcurrencyKey: request.ManagedConcurrencyKey,
 		ManagedPriority: request.ManagedPriority, ManagedQueuedTTLMS: request.ManagedQueuedTTLMS,
@@ -459,9 +498,6 @@ func normalizeActorStartMetadata(raw json.RawMessage, limit int, label string) (
 }
 
 func normalizeActorStartTags(raw []string, label string) ([]string, error) {
-	if len(raw) > maxActorTags {
-		return nil, fmt.Errorf("%s tags must contain at most %d values", label, maxActorTags)
-	}
 	seen := make(map[string]struct{}, len(raw))
 	tags := make([]string, 0, len(raw))
 	for _, tag := range raw {
@@ -474,6 +510,9 @@ func normalizeActorStartTags(raw []string, label string) ([]string, error) {
 		}
 		seen[trimmed] = struct{}{}
 		tags = append(tags, trimmed)
+	}
+	if len(tags) > maxActorTags {
+		return nil, fmt.Errorf("%s tags must contain at most %d values", label, maxActorTags)
 	}
 	sort.Strings(tags)
 	return tags, nil

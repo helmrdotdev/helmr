@@ -341,8 +341,9 @@ type Querier interface {
 	LockActorInputClaim(ctx context.Context, arg LockActorInputClaimParams) (IdempotencyClaim, error)
 	LockActorInputCurrentRun(ctx context.Context, arg LockActorInputCurrentRunParams) (Run, error)
 	LockActorInputWorkspace(ctx context.Context, arg LockActorInputWorkspaceParams) (Workspace, error)
-	LockActorStartAuthority(ctx context.Context, arg LockActorStartAuthorityParams) (LockActorStartAuthorityRow, error)
+	LockActorStartDeploymentAuthority(ctx context.Context, arg LockActorStartDeploymentAuthorityParams) (LockActorStartDeploymentAuthorityRow, error)
 	LockActorStartKey(ctx context.Context, arg LockActorStartKeyParams) error
+	LockActorStartWorkspaceAuthority(ctx context.Context, arg LockActorStartWorkspaceAuthorityParams) (LockActorStartWorkspaceAuthorityRow, error)
 	LockAttemptSecretDelivery(ctx context.Context, arg LockAttemptSecretDeliveryParams) ([]LockAttemptSecretDeliveryRow, error)
 	LockClaimedSchedule(ctx context.Context, arg LockClaimedScheduleParams) (Schedule, error)
 	LockCreatingRunCheckpoint(ctx context.Context, arg LockCreatingRunCheckpointParams) (RunCheckpoint, error)
@@ -446,6 +447,7 @@ type Querier interface {
 	RequeueWrittenTelemetryOutbox(ctx context.Context, arg RequeueWrittenTelemetryOutboxParams) error
 	ReserveWorkspaceForActor(ctx context.Context, arg ReserveWorkspaceForActorParams) (Workspace, error)
 	ReserveWorkspaceForRun(ctx context.Context, arg ReserveWorkspaceForRunParams) (Workspace, error)
+	ResolveActorStartWorkspace(ctx context.Context, arg ResolveActorStartWorkspaceParams) (pgtype.UUID, error)
 	ResolveCurrentWorkspaceDefinitionForCreate(ctx context.Context, arg ResolveCurrentWorkspaceDefinitionForCreateParams) (DeploymentDefinition, error)
 	ResolveRunPinnedWorkspaceDefinitionForCreate(ctx context.Context, arg ResolveRunPinnedWorkspaceDefinitionForCreateParams) (DeploymentDefinition, error)
 	RetireExpiredIdempotencyClaim(ctx context.Context, arg RetireExpiredIdempotencyClaimParams) (IdempotencyClaim, error)

@@ -34,11 +34,20 @@ type workerActor struct {
 }
 
 func (s *Server) requireActor(next http.Handler) http.Handler {
+	return s.requireActorWithErrorWriter(next, writeActorAuthError)
+}
+
+type actorAuthErrorWriter func(http.ResponseWriter, *slog.Logger, error)
+
+func (s *Server) requireActorWithErrorWriter(
+	next http.Handler,
+	writeAuthError actorAuthErrorWriter,
+) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if token, ok := bearerToken(r.Header.Get("authorization")); ok {
 			actor, err := s.bearerActor(r, token)
 			if err != nil {
-				writeActorAuthError(w, s.log, err)
+				writeAuthError(w, s.log, err)
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor)))
@@ -46,13 +55,10 @@ func (s *Server) requireActor(next http.Handler) http.Handler {
 		}
 		actor, rawSession, err := s.sessionActor(r)
 		if err != nil {
-			if !errors.Is(err, auth.ErrUnauthenticated) {
-				s.log.Error("session authentication failed", "error", err)
-				writeError(w, unavailable(errors.New("authentication is unavailable")))
-				return
+			if errors.Is(err, auth.ErrUnauthenticated) {
+				clearSessionCookie(w, r)
 			}
-			clearSessionCookie(w, r)
-			writeError(w, unauthorized(errors.New("authentication is required")))
+			writeAuthError(w, s.log, err)
 			return
 		}
 		r = r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor))
@@ -111,16 +117,23 @@ func writeActorAuthError(w http.ResponseWriter, log *slog.Logger, err error) {
 }
 
 func (s *Server) requireSession(next http.Handler) http.Handler {
+	return s.requireSessionWithErrorWriter(next, writeSessionAuthError)
+}
+
+func (s *Server) requireSessionWithErrorWriter(
+	next http.Handler,
+	writeAuthError actorAuthErrorWriter,
+) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if token, ok := bearerToken(r.Header.Get("authorization")); ok {
 			token = strings.TrimSpace(token)
 			if strings.HasPrefix(token, auth.APIKeyPrefix) || !looksLikeSessionBearerToken(token) {
-				writeError(w, unauthorized(errors.New("session authentication is required")))
+				writeAuthError(w, s.log, auth.ErrUnauthenticated)
 				return
 			}
 			actor, err := s.sessionActorFromToken(r, token)
 			if err != nil {
-				writeError(w, unauthorized(errors.New("session authentication is required")))
+				writeAuthError(w, s.log, err)
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor)))
@@ -129,7 +142,7 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 		actor, rawSession, err := s.sessionActor(r)
 		if err != nil {
 			clearSessionCookie(w, r)
-			writeError(w, unauthorized(errors.New("authentication is required")))
+			writeAuthError(w, s.log, err)
 			return
 		}
 		r = r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor))
@@ -137,6 +150,26 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 		next.ServeHTTP(recorder, r)
 		recorder.finish()
 	})
+}
+
+func writeSessionAuthError(w http.ResponseWriter, _ *slog.Logger, _ error) {
+	writeError(w, unauthorized(errors.New("session authentication is required")))
+}
+
+func writeActorStartAuthError(w http.ResponseWriter, log *slog.Logger, err error) {
+	if !errors.Is(err, auth.ErrUnauthenticated) {
+		log.Error("Actor start authentication failed", "error", err)
+		writeError(w, unavailable(codedError{
+			code:      "actor_start_authority_unavailable",
+			message:   "Actor start authentication is unavailable",
+			retryable: true,
+		}))
+		return
+	}
+	writeError(w, unauthorized(codedError{
+		code:    "authentication_required",
+		message: "authentication is required",
+	}))
 }
 
 func looksLikeSessionBearerToken(token string) bool {

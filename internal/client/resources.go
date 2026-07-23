@@ -57,6 +57,33 @@ func (c *Client) SendActorInput(
 	return response, nil
 }
 
+func (c *Client) StartActor(
+	ctx context.Context,
+	actorDeclaredID string,
+	input api.StartActorRequest,
+	opts EnvironmentScopeOptions,
+) (api.StartActorResponse, error) {
+	if err := api.ValidateActorDeclaredID(actorDeclaredID); err != nil {
+		return api.StartActorResponse{}, err
+	}
+	if err := api.ValidateStartActorRequest(input); err != nil {
+		return api.StartActorResponse{}, err
+	}
+	path, _, err := c.environmentScopedPath(
+		opts.ProjectID,
+		opts.EnvironmentID,
+		"/actors/"+url.PathEscape(actorDeclaredID)+"/start",
+	)
+	if err != nil {
+		return api.StartActorResponse{}, err
+	}
+	var response api.StartActorResponse
+	if err := c.postJSON(ctx, path, input, &response); err != nil {
+		return api.StartActorResponse{}, err
+	}
+	return response, nil
+}
+
 type EnvironmentScopeOptions struct {
 	ProjectID     string
 	EnvironmentID string

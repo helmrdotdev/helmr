@@ -15,6 +15,23 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type environmentScopeReferenceError struct {
+	message string
+}
+
+func (e environmentScopeReferenceError) Error() string {
+	return e.message
+}
+
+func invalidEnvironmentScopeReference(message string) error {
+	return environmentScopeReferenceError{message: message}
+}
+
+func isInvalidEnvironmentScopeReference(err error) bool {
+	var referenceError environmentScopeReferenceError
+	return errors.As(err, &referenceError)
+}
+
 func (s *Server) requestEnvironmentScope(ctx context.Context, actor auth.Actor, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
 	projectID = strings.TrimSpace(projectID)
 	environmentID = strings.TrimSpace(environmentID)
@@ -172,7 +189,9 @@ func (s *Server) resolveProjectRef(ctx context.Context, orgID uuid.UUID, project
 	if parsed, err := uuid.Parse(projectRef); err == nil {
 		project, err := s.db.GetProject(ctx, db.GetProjectParams{OrgID: pgvalue.UUID(orgID), ID: pgvalue.UUID(parsed)})
 		if isNoRows(err) {
-			return db.Project{}, errors.New("project_id must reference an active project")
+			return db.Project{}, invalidEnvironmentScopeReference(
+				"project_id must reference an active project",
+			)
 		}
 		if err != nil {
 			return db.Project{}, fmt.Errorf("load project: %w", err)
@@ -181,7 +200,9 @@ func (s *Server) resolveProjectRef(ctx context.Context, orgID uuid.UUID, project
 	}
 	project, err := s.db.GetProjectBySlug(ctx, db.GetProjectBySlugParams{OrgID: pgvalue.UUID(orgID), Slug: strings.ToLower(projectRef)})
 	if isNoRows(err) {
-		return db.Project{}, errors.New("project_id must be a project UUID or a project slug")
+		return db.Project{}, invalidEnvironmentScopeReference(
+			"project_id must be a project UUID or a project slug",
+		)
 	}
 	if err != nil {
 		return db.Project{}, fmt.Errorf("load project: %w", err)
@@ -194,7 +215,9 @@ func (s *Server) resolveEnvironmentRef(ctx context.Context, orgID uuid.UUID, pro
 	if environmentRef == "" {
 		environment, err := s.db.GetDefaultEnvironment(ctx, db.GetDefaultEnvironmentParams{OrgID: pgvalue.UUID(orgID), ProjectID: projectID})
 		if isNoRows(err) {
-			return db.Environment{}, errors.New("environment_id must reference an active environment")
+			return db.Environment{}, invalidEnvironmentScopeReference(
+				"environment_id must reference an active environment",
+			)
 		}
 		if err != nil {
 			return db.Environment{}, fmt.Errorf("load environment: %w", err)
@@ -204,7 +227,9 @@ func (s *Server) resolveEnvironmentRef(ctx context.Context, orgID uuid.UUID, pro
 	if parsed, err := uuid.Parse(environmentRef); err == nil {
 		environment, err := s.db.GetEnvironment(ctx, db.GetEnvironmentParams{OrgID: pgvalue.UUID(orgID), ProjectID: projectID, ID: pgvalue.UUID(parsed)})
 		if isNoRows(err) {
-			return db.Environment{}, errors.New("environment_id must reference an active environment")
+			return db.Environment{}, invalidEnvironmentScopeReference(
+				"environment_id must reference an active environment",
+			)
 		}
 		if err != nil {
 			return db.Environment{}, fmt.Errorf("load environment: %w", err)
@@ -213,7 +238,9 @@ func (s *Server) resolveEnvironmentRef(ctx context.Context, orgID uuid.UUID, pro
 	}
 	environment, err := s.db.GetEnvironmentBySlug(ctx, db.GetEnvironmentBySlugParams{OrgID: pgvalue.UUID(orgID), ProjectID: projectID, Slug: strings.ToLower(environmentRef)})
 	if isNoRows(err) {
-		return db.Environment{}, errors.New("environment_id must be an environment UUID or an environment slug")
+		return db.Environment{}, invalidEnvironmentScopeReference(
+			"environment_id must be an environment UUID or an environment slug",
+		)
 	}
 	if err != nil {
 		return db.Environment{}, fmt.Errorf("load environment: %w", err)

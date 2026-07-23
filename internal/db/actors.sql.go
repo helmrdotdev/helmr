@@ -456,41 +456,24 @@ func (q *Queries) GetActorByPublicID(ctx context.Context, arg GetActorByPublicID
 	return i, err
 }
 
-const lockActorStartAuthority = `-- name: LockActorStartAuthority :one
+const lockActorStartDeploymentAuthority = `-- name: LockActorStartDeploymentAuthority :one
 SELECT actor_definition.id AS actor_definition_id,
        actor_definition.deployment_id,
        actor_definition.manifest_version AS actor_manifest_version,
        actor_definition.manifest AS actor_manifest,
        actor_definition.manifest_digest AS actor_manifest_digest,
        deployments.queue_config,
-       workspaces.id AS workspace_id,
-       workspaces.head_version_id,
-       workspaces.state AS workspace_state,
-       workspaces.desired_state AS workspace_desired_state,
-       workspaces.dirty_state AS workspace_dirty_state,
-       workspaces.state_version AS workspace_state_version,
-       workspaces.owner_actor_id,
-       workspaces.owner_run_id,
        deployments.program_architecture,
-       workspace_definition.workspace_architecture,
-       EXISTS (
-           SELECT 1
-             FROM workspace_leases
-            WHERE workspace_leases.workspace_id = workspaces.id
-              AND workspace_leases.state IN ('active', 'releasing')
-       ) AS has_active_lease,
-       EXISTS (
-           SELECT 1
-             FROM workspace_processes
-            WHERE workspace_processes.workspace_id = workspaces.id
-              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
-       ) AS has_active_process
+       (
+           $1::timestamptz IS NULL
+           OR $1::timestamptz > transaction_timestamp()
+       )::boolean AS expires_at_valid
   FROM environments
   JOIN deployment_definitions AS actor_definition
     ON actor_definition.environment_id = environments.id
    AND actor_definition.deployment_id = environments.current_deployment_id
    AND actor_definition.kind = 'actor'
-   AND actor_definition.declared_id = $1
+   AND actor_definition.declared_id = $2
   JOIN deployments
     ON deployments.org_id = environments.org_id
    AND deployments.project_id = environments.project_id
@@ -503,65 +486,40 @@ SELECT actor_definition.id AS actor_definition_id,
    AND deployments.program_architecture IS NOT NULL
    AND deployments.program_architecture = deployments.build_architecture
    AND deployments.program_runtime_digest = deployments.build_runtime_digest
-  JOIN workspaces
-    ON workspaces.org_id = environments.org_id
-   AND workspaces.project_id = environments.project_id
-   AND workspaces.environment_id = environments.id
-   AND workspaces.id = $2
-   AND workspaces.deleted_at IS NULL
-  JOIN deployment_definitions AS workspace_definition
-    ON workspace_definition.environment_id = workspaces.environment_id
-   AND workspace_definition.id = workspaces.deployment_definition_id
-   AND workspace_definition.kind = 'workspace'
-   AND workspace_definition.declared_id = workspaces.workspace_declared_id
-  JOIN workspace_versions AS head
-    ON head.workspace_id = workspaces.id
-   AND head.id = workspaces.head_version_id
-   AND head.state = 'committed'
  WHERE environments.org_id = $3
    AND environments.project_id = $4
    AND environments.id = $5
- FOR UPDATE OF environments, workspaces
+ FOR UPDATE OF environments
 `
 
-type LockActorStartAuthorityParams struct {
-	ActorDeclaredID string      `json:"actor_declared_id"`
-	WorkspaceID     pgtype.UUID `json:"workspace_id"`
-	OrgID           pgtype.UUID `json:"org_id"`
-	ProjectID       pgtype.UUID `json:"project_id"`
-	EnvironmentID   pgtype.UUID `json:"environment_id"`
+type LockActorStartDeploymentAuthorityParams struct {
+	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
+	ActorDeclaredID string             `json:"actor_declared_id"`
+	OrgID           pgtype.UUID        `json:"org_id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
 }
 
-type LockActorStartAuthorityRow struct {
-	ActorDefinitionID     pgtype.UUID           `json:"actor_definition_id"`
-	DeploymentID          pgtype.UUID           `json:"deployment_id"`
-	ActorManifestVersion  int32                 `json:"actor_manifest_version"`
-	ActorManifest         []byte                `json:"actor_manifest"`
-	ActorManifestDigest   []byte                `json:"actor_manifest_digest"`
-	QueueConfig           []byte                `json:"queue_config"`
-	WorkspaceID           pgtype.UUID           `json:"workspace_id"`
-	HeadVersionID         pgtype.UUID           `json:"head_version_id"`
-	WorkspaceState        WorkspaceState        `json:"workspace_state"`
-	WorkspaceDesiredState WorkspaceDesiredState `json:"workspace_desired_state"`
-	WorkspaceDirtyState   WorkspaceDirtyState   `json:"workspace_dirty_state"`
-	WorkspaceStateVersion int64                 `json:"workspace_state_version"`
-	OwnerActorID          pgtype.UUID           `json:"owner_actor_id"`
-	OwnerRunID            pgtype.UUID           `json:"owner_run_id"`
-	ProgramArchitecture   pgtype.Text           `json:"program_architecture"`
-	WorkspaceArchitecture pgtype.Text           `json:"workspace_architecture"`
-	HasActiveLease        bool                  `json:"has_active_lease"`
-	HasActiveProcess      bool                  `json:"has_active_process"`
+type LockActorStartDeploymentAuthorityRow struct {
+	ActorDefinitionID    pgtype.UUID `json:"actor_definition_id"`
+	DeploymentID         pgtype.UUID `json:"deployment_id"`
+	ActorManifestVersion int32       `json:"actor_manifest_version"`
+	ActorManifest        []byte      `json:"actor_manifest"`
+	ActorManifestDigest  []byte      `json:"actor_manifest_digest"`
+	QueueConfig          []byte      `json:"queue_config"`
+	ProgramArchitecture  pgtype.Text `json:"program_architecture"`
+	ExpiresAtValid       bool        `json:"expires_at_valid"`
 }
 
-func (q *Queries) LockActorStartAuthority(ctx context.Context, arg LockActorStartAuthorityParams) (LockActorStartAuthorityRow, error) {
-	row := q.db.QueryRow(ctx, lockActorStartAuthority,
+func (q *Queries) LockActorStartDeploymentAuthority(ctx context.Context, arg LockActorStartDeploymentAuthorityParams) (LockActorStartDeploymentAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, lockActorStartDeploymentAuthority,
+		arg.ExpiresAt,
 		arg.ActorDeclaredID,
-		arg.WorkspaceID,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 	)
-	var i LockActorStartAuthorityRow
+	var i LockActorStartDeploymentAuthorityRow
 	err := row.Scan(
 		&i.ActorDefinitionID,
 		&i.DeploymentID,
@@ -569,18 +527,8 @@ func (q *Queries) LockActorStartAuthority(ctx context.Context, arg LockActorStar
 		&i.ActorManifest,
 		&i.ActorManifestDigest,
 		&i.QueueConfig,
-		&i.WorkspaceID,
-		&i.HeadVersionID,
-		&i.WorkspaceState,
-		&i.WorkspaceDesiredState,
-		&i.WorkspaceDirtyState,
-		&i.WorkspaceStateVersion,
-		&i.OwnerActorID,
-		&i.OwnerRunID,
 		&i.ProgramArchitecture,
-		&i.WorkspaceArchitecture,
-		&i.HasActiveLease,
-		&i.HasActiveProcess,
+		&i.ExpiresAtValid,
 	)
 	return i, err
 }
@@ -608,6 +556,92 @@ type LockActorStartKeyParams struct {
 func (q *Queries) LockActorStartKey(ctx context.Context, arg LockActorStartKeyParams) error {
 	_, err := q.db.Exec(ctx, lockActorStartKey, arg.EnvironmentID, arg.ActorDeclaredID, arg.Key)
 	return err
+}
+
+const lockActorStartWorkspaceAuthority = `-- name: LockActorStartWorkspaceAuthority :one
+SELECT
+       workspaces.id AS workspace_id,
+       workspaces.head_version_id,
+       workspaces.state AS workspace_state,
+       workspaces.desired_state AS workspace_desired_state,
+       workspaces.dirty_state AS workspace_dirty_state,
+       workspaces.state_version AS workspace_state_version,
+       workspaces.owner_actor_id,
+       workspaces.owner_run_id,
+       workspace_definition.workspace_architecture,
+       EXISTS (
+           SELECT 1
+             FROM workspace_leases
+            WHERE workspace_leases.workspace_id = workspaces.id
+              AND workspace_leases.state IN ('active', 'releasing')
+       ) AS has_active_lease,
+       EXISTS (
+           SELECT 1
+             FROM workspace_processes
+            WHERE workspace_processes.workspace_id = workspaces.id
+              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+       ) AS has_active_process
+  FROM workspaces
+  JOIN deployment_definitions AS workspace_definition
+    ON workspace_definition.environment_id = workspaces.environment_id
+   AND workspace_definition.id = workspaces.deployment_definition_id
+   AND workspace_definition.kind = 'workspace'
+   AND workspace_definition.declared_id = workspaces.workspace_declared_id
+  JOIN workspace_versions AS head
+    ON head.workspace_id = workspaces.id
+   AND head.id = workspaces.head_version_id
+   AND head.state = 'committed'
+ WHERE workspaces.org_id = $1
+   AND workspaces.project_id = $2
+   AND workspaces.environment_id = $3
+   AND workspaces.id = $4
+   AND workspaces.deleted_at IS NULL
+ FOR UPDATE OF workspaces
+`
+
+type LockActorStartWorkspaceAuthorityParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+type LockActorStartWorkspaceAuthorityRow struct {
+	WorkspaceID           pgtype.UUID           `json:"workspace_id"`
+	HeadVersionID         pgtype.UUID           `json:"head_version_id"`
+	WorkspaceState        WorkspaceState        `json:"workspace_state"`
+	WorkspaceDesiredState WorkspaceDesiredState `json:"workspace_desired_state"`
+	WorkspaceDirtyState   WorkspaceDirtyState   `json:"workspace_dirty_state"`
+	WorkspaceStateVersion int64                 `json:"workspace_state_version"`
+	OwnerActorID          pgtype.UUID           `json:"owner_actor_id"`
+	OwnerRunID            pgtype.UUID           `json:"owner_run_id"`
+	WorkspaceArchitecture pgtype.Text           `json:"workspace_architecture"`
+	HasActiveLease        bool                  `json:"has_active_lease"`
+	HasActiveProcess      bool                  `json:"has_active_process"`
+}
+
+func (q *Queries) LockActorStartWorkspaceAuthority(ctx context.Context, arg LockActorStartWorkspaceAuthorityParams) (LockActorStartWorkspaceAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, lockActorStartWorkspaceAuthority,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+	)
+	var i LockActorStartWorkspaceAuthorityRow
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.HeadVersionID,
+		&i.WorkspaceState,
+		&i.WorkspaceDesiredState,
+		&i.WorkspaceDirtyState,
+		&i.WorkspaceStateVersion,
+		&i.OwnerActorID,
+		&i.OwnerRunID,
+		&i.WorkspaceArchitecture,
+		&i.HasActiveLease,
+		&i.HasActiveProcess,
+	)
+	return i, err
 }
 
 const setActorCurrentRun = `-- name: SetActorCurrentRun :one
