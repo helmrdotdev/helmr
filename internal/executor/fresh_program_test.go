@@ -47,7 +47,7 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 			control,
 		)
 	}()
-	program, err := (GuestRunner{
+	program, err := (ProgramRunner{
 		WorkspaceMounts: sessions,
 	}).startFreshProgram(
 		context.Background(),
@@ -141,7 +141,7 @@ func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 			},
 		})
 	}()
-	_, err := (GuestRunner{
+	_, err := (ProgramRunner{
 		WorkspaceMounts: sessions,
 	}).startFreshProgram(
 		context.Background(),
@@ -177,7 +177,7 @@ func TestStartFreshProgramStopsBlockedAdmissionAtStartDeadline(t *testing.T) {
 	)
 	defer unregister()
 	started := time.Now()
-	_, err := (GuestRunner{
+	_, err := (ProgramRunner{
 		WorkspaceMounts: sessions,
 	}).startFreshProgram(
 		context.Background(),

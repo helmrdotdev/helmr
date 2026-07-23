@@ -986,7 +986,7 @@ func (p *PreparedRuntimePool) prepareProgramArtifacts(
 			closeSnapshots(),
 		)
 	}
-	programSnapshot, err := deployment.SnapshotProgramObjects(
+	programSnapshot, err := deployment.SnapshotProgram(
 		ctx,
 		p.CAS,
 		tempDir,
@@ -1005,7 +1005,7 @@ func (p *PreparedRuntimePool) prepareProgramArtifacts(
 	closeSnapshots = func() error {
 		return errors.Join(runtimeSnapshot.Close(), programSnapshot.Close())
 	}
-	programIndex, err := deployment.VerifyProgramArtifacts(
+	programIndex, err := deployment.VerifyProgram(
 		ctx,
 		p.VerifierCgroupRoot,
 		target.ID,

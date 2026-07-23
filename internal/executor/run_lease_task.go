@@ -83,7 +83,7 @@ type guestRunLeaseTask struct {
 	finished       bool
 }
 
-func (r GuestRunner) StartRunLeaseTask(
+func (r ProgramRunner) StartRunLeaseTask(
 	ctx context.Context,
 	claim *api.WorkerRunLeaseClaimResponse,
 	control RunLeaseControl,
@@ -186,7 +186,7 @@ func (task *guestRunLeaseTask) handleWait(ctx context.Context, wait *runv0.RunWa
 	if task.waits == nil {
 		return errors.New("Run Lease Task wait control is required")
 	}
-	runtimeWait, err := runtimeWaitRequest(Request{Leases: task}, wait)
+	runtimeWait, err := parseWaitRequest(task, wait)
 	if err != nil {
 		return err
 	}
@@ -681,4 +681,4 @@ func canonicalTaskFailure(message string, details *string) api.WorkerTaskFailure
 	return failure
 }
 
-var _ RunLeaseTaskRunner = GuestRunner{}
+var _ RunLeaseTaskRunner = ProgramRunner{}

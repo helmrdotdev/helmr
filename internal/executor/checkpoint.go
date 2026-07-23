@@ -29,11 +29,11 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func (r GuestRunner) materializeCheckpointObject(ctx context.Context, digest string, suffix string) (string, error) {
+func (r ProgramRunner) materializeCheckpointObject(ctx context.Context, digest string, suffix string) (string, error) {
 	return r.materializeEncryptedObject(ctx, digest, suffix, checkpointPurpose(suffix))
 }
 
-func (r GuestRunner) materializeEncryptedObject(ctx context.Context, digest string, suffix string, purpose string) (string, error) {
+func (r ProgramRunner) materializeEncryptedObject(ctx context.Context, digest string, suffix string, purpose string) (string, error) {
 	if r.CheckpointEncryptor == nil {
 		return "", errors.New("checkpoint encryption is required")
 	}

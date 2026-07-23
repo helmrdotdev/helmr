@@ -481,34 +481,16 @@ func run(log *slog.Logger) error {
 		preparedRuntimePool.VerifierCgroupRoot = verifierCgroupRoot
 		log.Info("prepared runtime pool enabled", "pool_size", cfg.PreparedRuntimePoolSize)
 	}
-	runLeaseTasks := executor.GuestRunner{
-		Connector:             runtimeConnector,
-		CAS:                   store,
-		CheckpointEncryptor:   checkpointEncryptor,
-		WorkspaceMounts:       workspaceMountSessions,
-		Events:                controlClient,
-		TempDir:               filepath.Join(workDir, "tmp"),
-		ArtifactCacheDir:      artifactCacheDir,
-		ArtifactCacheMaxBytes: artifactCacheMaxBytes,
-		Substrates:            substrateResolver,
-		RuntimeSubstrates:     controlClient,
-		Log:                   log,
-		Stdout:                os.Stdout,
-		Stderr:                os.Stderr,
-		Capacity:              hostCapacity,
-		RuntimeScratchBytes:   workerCapabilities.VMMaxScratchBytes,
+	runLeaseTasks := executor.ProgramRunner{
+		CAS:                 store,
+		CheckpointEncryptor: checkpointEncryptor,
+		WorkspaceMounts:     workspaceMountSessions,
+		TempDir:             filepath.Join(workDir, "tmp"),
+		RuntimeSubstrates:   controlClient,
 	}
 	runner, err := workerdaemon.NewRunner(
 		controlClient,
 		executor.Executor{
-			WorkDir: workDir,
-			GitPath: cfg.GitPath,
-			CAS:     store,
-			Builder: imageBuilder,
-			RunWaits: executor.ControlRunWaits{
-				Client: controlClient,
-			},
-			Runner:        runLeaseTasks,
 			RunLeases:     controlClient,
 			RunLeaseTasks: runLeaseTasks,
 		},

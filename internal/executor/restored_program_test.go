@@ -36,7 +36,7 @@ func TestStartRestoredProgramOrdersGrantStartProofAndRelease(t *testing.T) {
 	guestErr := make(chan error, 2)
 	go func() { guestErr <- serveRestoredGrant(grantGuest) }()
 	go func() { guestErr <- serveRestoredResume(resumeGuest) }()
-	program, err := (GuestRunner{WorkspaceMounts: mounts}).startRestoredProgram(
+	program, err := (ProgramRunner{WorkspaceMounts: mounts}).startRestoredProgram(
 		context.Background(), &claim, control,
 	)
 	if err != nil {

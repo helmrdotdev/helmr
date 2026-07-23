@@ -14,7 +14,7 @@ import (
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 )
 
-func (r GuestRunner) startRestoredProgram(
+func (r ProgramRunner) startRestoredProgram(
 	ctx context.Context,
 	claim *api.WorkerRunLeaseClaimResponse,
 	control RunLeaseControl,

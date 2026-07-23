@@ -36,7 +36,7 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 	if p.CAS == nil || p.CheckpointEncryptor == nil {
 		return nil, errors.New("prepared runtime restore CAS and encryption are required")
 	}
-	runner := GuestRunner{CAS: p.CAS, CheckpointEncryptor: p.CheckpointEncryptor, TempDir: p.TempDir}
+	runner := ProgramRunner{CAS: p.CAS, CheckpointEncryptor: p.CheckpointEncryptor, TempDir: p.TempDir}
 	runtimeState := checkpoint.RuntimeState
 	paths := make([]string, 4)
 	group, groupCtx := errgroup.WithContext(ctx)

@@ -405,7 +405,7 @@ func validateFreshTaskFailure(message string, details *string) error {
 	return nil
 }
 
-func (r GuestRunner) startFreshProgram(
+func (r ProgramRunner) startFreshProgram(
 	ctx context.Context,
 	claim *api.WorkerRunLeaseClaimResponse,
 	control FreshProgramControl,
