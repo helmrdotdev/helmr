@@ -1,20 +1,16 @@
-import { del, postJson, request } from "./api";
+import { request } from "./api";
 
 export type Schedule = {
   id: string;
-  type: "imperative" | "declarative";
-  project_id: string;
-  environment_id: string;
   task: string;
-  deduplication_key?: string;
-  external_id?: string;
-  cron: string;
-  timezone: string;
-  active: boolean;
-  status: "active" | "inactive" | "errored";
-  last_error?: string;
+  workspace: { id?: string; key?: string };
+  cron: { pattern: string; timezone: string };
+  status: "pending-workspace" | "active" | "errored" | "archived";
+  generation: number;
+  effective_from: string;
   next_fire_at?: string;
   last_fire_at?: string;
+  last_error?: { code: string; message: string };
   created_at: string;
   updated_at: string;
 };
@@ -23,58 +19,15 @@ export type ListSchedulesResponse = {
   schedules: Schedule[];
 };
 
-export type CreateScheduleInput = {
-  project_id: string;
-  environment_id: string;
-  deduplication_key: string;
-  external_id?: string;
-  task: string;
-  cron: string;
-  timezone?: string;
-  active?: boolean;
-};
-
 export type ScheduleScope = {
   projectID: string;
   environmentID: string;
 };
 
 export async function listSchedules(scope: ScheduleScope): Promise<ListSchedulesResponse> {
-  return request<ListSchedulesResponse>(`${schedulePath(scope)}`);
-}
-
-export async function createSchedule(input: CreateScheduleInput): Promise<Schedule> {
-  return postJson<Omit<CreateScheduleInput, "project_id" | "environment_id">, Schedule>(
-    schedulePath({ projectID: input.project_id, environmentID: input.environment_id }),
-    scheduleRequest(input),
-  );
-}
-
-export async function activateSchedule(id: string, scope: ScheduleScope): Promise<Schedule> {
-  return postJson<Record<string, never>, Schedule>(
-    `${schedulePath(scope)}/${encodeURIComponent(id)}/activate`,
-    {},
-  );
-}
-
-export async function deactivateSchedule(id: string, scope: ScheduleScope): Promise<Schedule> {
-  return postJson<Record<string, never>, Schedule>(
-    `${schedulePath(scope)}/${encodeURIComponent(id)}/deactivate`,
-    {},
-  );
-}
-
-export async function deleteSchedule(id: string, scope: ScheduleScope): Promise<void> {
-  return del<void>(`${schedulePath(scope)}/${encodeURIComponent(id)}`);
+  return request<ListSchedulesResponse>(schedulePath(scope));
 }
 
 function schedulePath(scope: ScheduleScope): string {
   return `/api/projects/${encodeURIComponent(scope.projectID)}/environments/${encodeURIComponent(scope.environmentID)}/schedules`;
-}
-
-function scheduleRequest(input: CreateScheduleInput): Omit<CreateScheduleInput, "project_id" | "environment_id"> {
-  const request = { ...input } as Partial<CreateScheduleInput>;
-  delete request.project_id;
-  delete request.environment_id;
-  return request as Omit<CreateScheduleInput, "project_id" | "environment_id">;
 }

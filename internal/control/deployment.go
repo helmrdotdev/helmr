@@ -414,7 +414,6 @@ func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceA
 		Tasks:                 []string{},
 		Actors:                []string{},
 		Workspaces:            []string{},
-		RunStreams:            []string{},
 		CreatedAt:             pgvalue.Time(deployment.CreatedAt),
 		BuildingAt:            pgvalue.Time(deployment.BuildingAt),
 		BuiltAt:               pgvalue.Time(deployment.BuiltAt),
@@ -455,8 +454,6 @@ func populateDeploymentDeclarations(
 			response.Actors = append(response.Actors, row.DeclaredID)
 		case string(deployment.DefinitionKindWorkspace):
 			response.Workspaces = append(response.Workspaces, row.DeclaredID)
-		case string(deployment.DefinitionKindRunStream):
-			response.RunStreams = append(response.RunStreams, row.DeclaredID)
 		default:
 			return fmt.Errorf("deployment definition kind %q is unsupported", row.Kind)
 		}

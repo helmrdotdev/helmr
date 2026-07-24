@@ -2282,39 +2282,6 @@ type RunLease struct {
 	UpdatedAt                      pgtype.Timestamptz `json:"updated_at"`
 }
 
-type RunStream struct {
-	ID                     pgtype.UUID        `json:"id"`
-	PublicID               string             `json:"public_id"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
-	ProjectID              pgtype.UUID        `json:"project_id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	RunID                  pgtype.UUID        `json:"run_id"`
-	DeploymentID           pgtype.UUID        `json:"deployment_id"`
-	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
-	DeclarationKind        string             `json:"declaration_kind"`
-	StreamDeclaredID       string             `json:"stream_declared_id"`
-	NextSequence           int64              `json:"next_sequence"`
-	RetentionFloor         int64              `json:"retention_floor"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-}
-
-type RunStreamRecord struct {
-	ID                    pgtype.UUID        `json:"id"`
-	PublicID              string             `json:"public_id"`
-	OrgID                 pgtype.UUID        `json:"org_id"`
-	ProjectID             pgtype.UUID        `json:"project_id"`
-	EnvironmentID         pgtype.UUID        `json:"environment_id"`
-	RunStreamID           pgtype.UUID        `json:"run_stream_id"`
-	ProducerRunID         pgtype.UUID        `json:"producer_run_id"`
-	Sequence              int64              `json:"sequence"`
-	Data                  []byte             `json:"data"`
-	ContentType           string             `json:"content_type"`
-	ClaimID               pgtype.UUID        `json:"claim_id"`
-	ProducerAttemptNumber int32              `json:"producer_attempt_number"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-}
-
 type RunWait struct {
 	ID                               pgtype.UUID        `json:"id"`
 	EnvironmentID                    pgtype.UUID        `json:"environment_id"`
@@ -2457,48 +2424,34 @@ type RuntimeSubstrate struct {
 }
 
 type Schedule struct {
-	ID                                pgtype.UUID        `json:"id"`
-	PublicID                          string             `json:"public_id"`
-	OrgID                             pgtype.UUID        `json:"org_id"`
-	ProjectID                         pgtype.UUID        `json:"project_id"`
-	EnvironmentID                     pgtype.UUID        `json:"environment_id"`
-	Source                            string             `json:"source"`
-	Key                               string             `json:"key"`
-	TargetKind                        string             `json:"target_kind"`
-	TaskDeclaredID                    string             `json:"task_declared_id"`
-	DeclarativeDeploymentDefinitionID pgtype.UUID        `json:"declarative_deployment_definition_id"`
-	DeclarativeDeploymentID           pgtype.UUID        `json:"declarative_deployment_id"`
-	WorkspaceRefID                    pgtype.UUID        `json:"workspace_ref_id"`
-	WorkspaceRefKey                   pgtype.Text        `json:"workspace_ref_key"`
-	WorkspaceID                       pgtype.UUID        `json:"workspace_id"`
-	CronPattern                       string             `json:"cron_pattern"`
-	Timezone                          string             `json:"timezone"`
-	CronContractVersion               string             `json:"cron_contract_version"`
-	QueueName                         string             `json:"queue_name"`
-	ConcurrencyKey                    pgtype.Text        `json:"concurrency_key"`
-	QueueConcurrencyLimit             pgtype.Int8        `json:"queue_concurrency_limit"`
-	Priority                          int32              `json:"priority"`
-	QueuedTtlMs                       pgtype.Int8        `json:"queued_ttl_ms"`
-	MaxActiveDurationMs               int64              `json:"max_active_duration_ms"`
-	RetryPolicyVersion                int32              `json:"retry_policy_version"`
-	RetryPolicy                       []byte             `json:"retry_policy"`
-	RunMetadata                       []byte             `json:"run_metadata"`
-	RunTags                           []string           `json:"run_tags"`
-	Generation                        int64              `json:"generation"`
-	State                             string             `json:"state"`
-	StateVersion                      int64              `json:"state_version"`
-	EffectiveFrom                     pgtype.Timestamptz `json:"effective_from"`
-	NextFireAt                        pgtype.Timestamptz `json:"next_fire_at"`
-	LastFireAt                        pgtype.Timestamptz `json:"last_fire_at"`
-	ClaimedBy                         pgtype.Text        `json:"claimed_by"`
-	ClaimExpiresAt                    pgtype.Timestamptz `json:"claim_expires_at"`
-	RetryStep                         pgtype.Int2        `json:"retry_step"`
-	RetryAfter                        pgtype.Timestamptz `json:"retry_after"`
-	LastError                         []byte             `json:"last_error"`
-	Metadata                          []byte             `json:"metadata"`
-	Tags                              []string           `json:"tags"`
-	CreatedAt                         pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                         pgtype.Timestamptz `json:"updated_at"`
+	ID                     pgtype.UUID        `json:"id"`
+	PublicID               string             `json:"public_id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	TargetKind             string             `json:"target_kind"`
+	TaskDeclaredID         string             `json:"task_declared_id"`
+	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
+	DeploymentID           pgtype.UUID        `json:"deployment_id"`
+	WorkspaceRefID         pgtype.UUID        `json:"workspace_ref_id"`
+	WorkspaceRefKey        pgtype.Text        `json:"workspace_ref_key"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	CronPattern            string             `json:"cron_pattern"`
+	Timezone               string             `json:"timezone"`
+	CronSemanticsVersion   string             `json:"cron_semantics_version"`
+	Generation             int64              `json:"generation"`
+	State                  string             `json:"state"`
+	StateVersion           int64              `json:"state_version"`
+	EffectiveFrom          pgtype.Timestamptz `json:"effective_from"`
+	NextFireAt             pgtype.Timestamptz `json:"next_fire_at"`
+	LastFireAt             pgtype.Timestamptz `json:"last_fire_at"`
+	ClaimedBy              pgtype.Text        `json:"claimed_by"`
+	ClaimExpiresAt         pgtype.Timestamptz `json:"claim_expires_at"`
+	RetryStep              pgtype.Int2        `json:"retry_step"`
+	RetryAfter             pgtype.Timestamptz `json:"retry_after"`
+	LastError              []byte             `json:"last_error"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Secret struct {

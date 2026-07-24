@@ -100,7 +100,6 @@ type DeploymentResponse struct {
 	Tasks                 []string                 `json:"tasks"`
 	Actors                []string                 `json:"actors"`
 	Workspaces            []string                 `json:"workspaces"`
-	RunStreams            []string                 `json:"run_streams"`
 	CreatedAt             time.Time                `json:"created_at"`
 	BuildingAt            time.Time                `json:"building_at"`
 	BuiltAt               time.Time                `json:"built_at"`

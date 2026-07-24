@@ -15,15 +15,13 @@ func TestBuildAdmissionProducesStablePlatformInput(t *testing.T) {
 	scheduledAt := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 	lastScheduledAt := scheduledAt.Add(-24 * time.Hour)
 	value := db.Schedule{
-		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		PublicID:            "sch_abcdefghijklmnopqrstuvwxyz",
-		Source:              "imperative",
-		Key:                 "daily-report",
-		CronPattern:         "0 9 * * *",
-		Timezone:            "Asia/Tokyo",
-		CronContractVersion: CronContractVersion,
-		NextFireAt:          pgvalue.TimestamptzUTCZeroInvalid(scheduledAt),
-		LastFireAt:          pgvalue.TimestamptzUTCZeroInvalid(lastScheduledAt),
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		PublicID:             "sch_abcdefghijklmnopqrstuvwxyz",
+		CronPattern:          "0 9 * * *",
+		Timezone:             "Asia/Tokyo",
+		CronSemanticsVersion: CronSemanticsVersion,
+		NextFireAt:           pgvalue.TimestamptzUTCZeroInvalid(scheduledAt),
+		LastFireAt:           pgvalue.TimestamptzUTCZeroInvalid(lastScheduledAt),
 	}
 	admission, err := BuildAdmissionAt(value, scheduledAt)
 	if err != nil {
@@ -39,9 +37,7 @@ func TestBuildAdmissionProducesStablePlatformInput(t *testing.T) {
 	if payload.ScheduledAt != "2026-06-02T00:00:00Z" ||
 		payload.LastScheduledAt != "2026-06-01T00:00:00Z" ||
 		payload.Timezone != "Asia/Tokyo" ||
-		payload.ScheduleID != value.PublicID ||
-		payload.ScheduleType != "imperative" ||
-		payload.Key != "daily-report" {
+		payload.ScheduleID != value.PublicID {
 		t.Fatalf("payload = %+v", payload)
 	}
 	if len(payload.Upcoming) != upcomingCount || payload.Upcoming[0] != "2026-06-03T00:00:00Z" {
@@ -52,13 +48,11 @@ func TestBuildAdmissionProducesStablePlatformInput(t *testing.T) {
 func TestBuildAdmissionSkipsMissedInstants(t *testing.T) {
 	scheduledAt := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 	admission, err := BuildAdmissionAt(db.Schedule{
-		PublicID:            "sch_abcdefghijklmnopqrstuvwxyz",
-		Source:              "imperative",
-		Key:                 "daily-report",
-		CronPattern:         "0 9 * * *",
-		Timezone:            "Asia/Tokyo",
-		CronContractVersion: CronContractVersion,
-		NextFireAt:          pgvalue.TimestamptzUTCZeroInvalid(scheduledAt),
+		PublicID:             "sch_abcdefghijklmnopqrstuvwxyz",
+		CronPattern:          "0 9 * * *",
+		Timezone:             "Asia/Tokyo",
+		CronSemanticsVersion: CronSemanticsVersion,
+		NextFireAt:           pgvalue.TimestamptzUTCZeroInvalid(scheduledAt),
 	}, scheduledAt.Add(72*time.Hour))
 	if err != nil {
 		t.Fatal(err)
@@ -78,11 +72,10 @@ func TestBuildAdmissionSkipsMissedInstants(t *testing.T) {
 	}
 }
 
-func TestBuildAdmissionRejectsUnknownContract(t *testing.T) {
+func TestBuildAdmissionRejectsUnknownSemantics(t *testing.T) {
 	_, err := BuildAdmission(db.Schedule{
-		Source:              "imperative",
-		CronContractVersion: "helmr.cron.v1",
-		NextFireAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		CronSemanticsVersion: "other",
+		NextFireAt:           pgtype.Timestamptz{Time: time.Now(), Valid: true},
 	})
 	if err == nil {
 		t.Fatal("unknown cron contract was accepted")

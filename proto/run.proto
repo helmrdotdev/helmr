@@ -136,6 +136,8 @@ message EntrypointRelease {
 }
 
 message RunEvent {
+  reserved 9, 10;
+
   oneof event {
     bytes stdout_chunk = 1;
     bytes stderr_chunk = 2;
@@ -143,8 +145,6 @@ message RunEvent {
     RunWaitRequested run_wait_requested = 5;
     MetadataUpdated metadata_updated = 7;
     TokenCreateRequested token_create_requested = 8;
-    OutputStreamAppended output_stream_appended = 9;
-    ActiveStreamReadRequested active_stream_read_requested = 10;
     ResumeConsumed resume_consumed = 6;
     ProgramProcessStarted program_process_started = 11;
     EntrypointReady entrypoint_ready = 12;
@@ -278,32 +278,6 @@ message TokenCreateResult {
   optional string error_message = 9;
 }
 
-message ActiveStreamReadRequested {
-  string correlation_id = 1;
-  string stream = 2;
-  int64 after_sequence = 3;
-  optional string record_correlation_id = 4;
-  optional uint32 timeout = 5;
-  bool block = 6;
-}
-
-message StreamRecord {
-  string id = 1;
-  string stream_id = 2;
-  int64 sequence = 3;
-  string data_json = 4;
-  optional string correlation_id = 5;
-  string content_type = 6;
-  string created_at = 7;
-}
-
-message ActiveStreamReadResult {
-  string correlation_id = 1;
-  optional StreamRecord record = 2;
-  bool timed_out = 3;
-  optional string error_message = 4;
-}
-
 message CheckpointPauseRequest {
   string run_wait_id = 1;
   string checkpoint_id = 2;
@@ -367,12 +341,6 @@ message ResumeConsumed {
   int64 resume_request_version = 4;
   string run_lease_id = 5;
   string correlation_id = 6;
-}
-
-message OutputStreamAppended {
-  string stream = 1;
-  string payload_json = 2;
-  optional string content_type = 3;
 }
 
 message MetadataUpdated {

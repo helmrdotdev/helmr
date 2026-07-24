@@ -1176,7 +1176,7 @@ CREATE TABLE deployment_definitions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('task', 'actor', 'workspace', 'run_stream')),
+    kind TEXT NOT NULL CHECK (kind IN ('task', 'actor', 'workspace')),
     declared_id TEXT NOT NULL CHECK (
         declared_id ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
         AND octet_length(declared_id) BETWEEN 1 AND 128
@@ -1212,7 +1212,7 @@ CREATE TABLE deployment_definitions (
         )
         OR
         (
-            kind IN ('task', 'actor', 'run_stream')
+            kind IN ('task', 'actor')
             AND workspace_architecture IS NULL
             AND artifact_id IS NULL
         )
@@ -1472,43 +1472,22 @@ CREATE TABLE schedules (
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
-    source TEXT NOT NULL CHECK (source IN ('declarative', 'imperative')),
-    key TEXT NOT NULL CHECK (btrim(key) <> '' AND octet_length(key) <= 512),
     target_kind TEXT NOT NULL DEFAULT 'task' CHECK (target_kind = 'task'),
     task_declared_id TEXT NOT NULL CHECK (
         task_declared_id ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
         AND octet_length(task_declared_id) BETWEEN 1 AND 128
     ),
-    declarative_deployment_definition_id UUID,
-    declarative_deployment_id UUID,
+    deployment_definition_id UUID,
+    deployment_id UUID,
     workspace_ref_id UUID,
     workspace_ref_key TEXT,
     workspace_id UUID,
-    cron_pattern TEXT NOT NULL CHECK (btrim(cron_pattern) <> ''),
-    timezone TEXT NOT NULL CHECK (btrim(timezone) <> ''),
-    cron_contract_version TEXT NOT NULL DEFAULT 'helmr.cron.v0'
-        CHECK (cron_contract_version = 'helmr.cron.v0'),
-    queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
-    concurrency_key TEXT CHECK (
-        concurrency_key IS NULL
-        OR (
-            octet_length(concurrency_key) BETWEEN 1 AND 512
-            AND ascii(left(concurrency_key, 1)) NOT BETWEEN 9 AND 13
-            AND ascii(left(concurrency_key, 1)) <> 32
-            AND ascii(right(concurrency_key, 1)) NOT BETWEEN 9 AND 13
-            AND ascii(right(concurrency_key, 1)) <> 32
-        )
-    ),
-    queue_concurrency_limit BIGINT CHECK (queue_concurrency_limit BETWEEN 1 AND 9007199254740991),
-    priority INTEGER NOT NULL DEFAULT 0,
-    queued_ttl_ms BIGINT CHECK (queued_ttl_ms BETWEEN 1 AND 9007199254740991),
-    max_active_duration_ms BIGINT NOT NULL CHECK (max_active_duration_ms BETWEEN 5000 AND 86400000),
-    retry_policy_version INTEGER NOT NULL DEFAULT 0 CHECK (retry_policy_version = 0),
-    retry_policy JSONB NOT NULL CHECK (jsonb_typeof(retry_policy) = 'object'),
-    run_metadata JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(run_metadata) = 'object'),
-    run_tags TEXT[] NOT NULL DEFAULT '{}'::text[],
+    cron_pattern TEXT NOT NULL CHECK (octet_length(cron_pattern) BETWEEN 1 AND 1024),
+    timezone TEXT NOT NULL CHECK (octet_length(timezone) BETWEEN 1 AND 255),
+    cron_semantics_version TEXT NOT NULL DEFAULT 'robfig-cron-v3.0.1/standard-5-field'
+        CHECK (cron_semantics_version = 'robfig-cron-v3.0.1/standard-5-field'),
     generation BIGINT NOT NULL DEFAULT 1 CHECK (generation > 0),
-    state TEXT NOT NULL CHECK (state IN ('pending_workspace', 'active', 'inactive', 'errored', 'archived')),
+    state TEXT NOT NULL CHECK (state IN ('pending_workspace', 'active', 'errored', 'archived')),
     state_version BIGINT NOT NULL DEFAULT 1 CHECK (state_version > 0),
     effective_from TIMESTAMPTZ NOT NULL,
     next_fire_at TIMESTAMPTZ,
@@ -1518,21 +1497,19 @@ CREATE TABLE schedules (
     retry_step SMALLINT CHECK (retry_step BETWEEN 1 AND 10),
     retry_after TIMESTAMPTZ,
     last_error JSONB,
-    metadata JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(metadata) = 'object'),
-    tags TEXT[] NOT NULL DEFAULT '{}'::text[],
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (environment_id, id),
-    UNIQUE (environment_id, key),
+    UNIQUE (environment_id, task_declared_id),
     UNIQUE (environment_id, id, generation),
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE,
-    CONSTRAINT schedules_declarative_definition_fk
+    CONSTRAINT schedules_definition_fk
         FOREIGN KEY (
             environment_id,
-            declarative_deployment_id,
-            declarative_deployment_definition_id,
+            deployment_id,
+            deployment_definition_id,
             target_kind,
             task_declared_id
         )
@@ -1547,32 +1524,30 @@ CREATE TABLE schedules (
     CHECK ((workspace_ref_id IS NULL) <> (workspace_ref_key IS NULL)),
     CHECK (workspace_ref_key IS NULL OR (btrim(workspace_ref_key) <> '' AND octet_length(workspace_ref_key) <= 512)),
     CHECK (
-        (source = 'imperative'
-         AND declarative_deployment_definition_id IS NULL
-         AND declarative_deployment_id IS NULL
-         AND workspace_id IS NOT NULL
-         AND state <> 'pending_workspace')
+        (state = 'archived'
+         AND deployment_definition_id IS NULL
+         AND deployment_id IS NULL
+         AND next_fire_at IS NULL
+         AND claimed_by IS NULL
+         AND claim_expires_at IS NULL
+         AND retry_step IS NULL
+         AND retry_after IS NULL
+         AND last_error IS NULL)
         OR
-        (source = 'declarative'
-         AND key = task_declared_id
-         AND state = 'archived'
-         AND declarative_deployment_definition_id IS NULL
-         AND declarative_deployment_id IS NULL
-         AND workspace_id IS NOT NULL)
-        OR
-        (source = 'declarative'
-         AND state <> 'archived'
-         AND declarative_deployment_definition_id IS NOT NULL
-         AND declarative_deployment_id IS NOT NULL
+        (state <> 'archived'
+         AND deployment_definition_id IS NOT NULL
+         AND deployment_id IS NOT NULL
          AND (
              (state = 'pending_workspace'
               AND workspace_ref_key IS NOT NULL
               AND workspace_id IS NULL
               AND next_fire_at IS NULL
               AND claimed_by IS NULL
-              AND claim_expires_at IS NULL)
+             AND claim_expires_at IS NULL)
              OR
-             (state <> 'pending_workspace' AND workspace_id IS NOT NULL)
+             (state IN ('active', 'errored')
+              AND workspace_id IS NOT NULL
+              AND next_fire_at IS NOT NULL)
          ))
     ),
     CHECK ((claimed_by IS NULL) = (claim_expires_at IS NULL)),
@@ -1601,10 +1576,6 @@ CREATE TABLE schedules (
     )
 );
 
-CREATE UNIQUE INDEX schedules_declarative_task_uidx
-    ON schedules (environment_id, task_declared_id)
-    WHERE source = 'declarative';
-
 CREATE INDEX schedules_pending_workspace_idx
     ON schedules (environment_id, workspace_ref_key, id)
     WHERE state = 'pending_workspace';
@@ -1612,6 +1583,16 @@ CREATE INDEX schedules_pending_workspace_idx
 CREATE INDEX schedules_due_idx
     ON schedules (next_fire_at, id)
     WHERE state = 'active' AND next_fire_at IS NOT NULL;
+
+CREATE INDEX schedules_definition_idx
+    ON schedules (
+        environment_id,
+        deployment_id,
+        deployment_definition_id,
+        target_kind,
+        task_declared_id
+    )
+    WHERE state <> 'archived';
 
 CREATE TABLE workspaces (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -2803,64 +2784,6 @@ CREATE UNIQUE INDEX secret_resolutions_process_target_uidx
     ON secret_resolutions (process_id, placement_kind, placement_target)
     WHERE process_id IS NOT NULL;
 
-CREATE TABLE run_streams (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^str_[a-z2-7]{26}$'),
-    org_id UUID NOT NULL,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    run_id UUID NOT NULL,
-    deployment_id UUID NOT NULL,
-    deployment_definition_id UUID NOT NULL,
-    declaration_kind TEXT NOT NULL DEFAULT 'run_stream' CHECK (declaration_kind = 'run_stream'),
-    stream_declared_id TEXT NOT NULL CHECK (
-        stream_declared_id ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
-        AND octet_length(stream_declared_id) BETWEEN 1 AND 128
-    ),
-    next_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_sequence > 0),
-    retention_floor BIGINT NOT NULL DEFAULT 1 CHECK (
-        retention_floor > 0 AND retention_floor <= next_sequence
-    ),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, id),
-    UNIQUE (org_id, project_id, environment_id, id),
-    UNIQUE (run_id, id),
-    UNIQUE (run_id, deployment_definition_id),
-    FOREIGN KEY (org_id, project_id, environment_id, run_id)
-        REFERENCES runs(org_id, project_id, environment_id, id)
-        ON DELETE RESTRICT,
-    CONSTRAINT run_streams_run_deployment_fk
-        FOREIGN KEY (org_id, project_id, environment_id, run_id, deployment_id)
-        REFERENCES runs(org_id, project_id, environment_id, id, deployment_id)
-        ON DELETE RESTRICT,
-    CONSTRAINT run_streams_deployment_definition_fk
-        FOREIGN KEY (
-            environment_id,
-            deployment_id,
-            deployment_definition_id,
-            declaration_kind,
-            stream_declared_id
-        )
-        REFERENCES deployment_definitions(
-            environment_id,
-            deployment_id,
-            id,
-            kind,
-            declared_id
-        )
-        ON DELETE RESTRICT
-);
-
-CREATE INDEX run_streams_deployment_definition_idx
-    ON run_streams (
-        environment_id,
-        deployment_id,
-        deployment_definition_id,
-        declaration_kind,
-        stream_declared_id
-    );
-
 CREATE TABLE tokens (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^tok_[a-z2-7]{26}$'),
@@ -2938,36 +2861,6 @@ CREATE TABLE public_access_token_scopes (
         REFERENCES tokens(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
     UNIQUE (public_access_token_id, scope_type)
-);
-
-CREATE TABLE run_stream_records (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^srec_[a-z2-7]{26}$'),
-    org_id UUID NOT NULL,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    run_stream_id UUID NOT NULL,
-    producer_run_id UUID NOT NULL,
-    sequence BIGINT NOT NULL CHECK (sequence > 0),
-    data JSONB NOT NULL DEFAULT 'null'::jsonb,
-    content_type TEXT NOT NULL DEFAULT 'application/json' CHECK (
-        btrim(content_type) <> '' AND octet_length(content_type) <= 255
-    ),
-    claim_id UUID,
-    producer_attempt_number INTEGER NOT NULL CHECK (producer_attempt_number > 0),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (run_stream_id, sequence),
-    UNIQUE (org_id, project_id, environment_id, id),
-    FOREIGN KEY (producer_run_id, run_stream_id)
-        REFERENCES run_streams(run_id, id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (producer_run_id, producer_attempt_number)
-        REFERENCES run_attempts(run_id, number)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (environment_id, claim_id)
-        REFERENCES idempotency_claims(environment_id, id)
-        ON DELETE RESTRICT,
-    CHECK (jsonb_typeof(data) IN ('null', 'boolean', 'number', 'string', 'array', 'object'))
 );
 
 CREATE TABLE outbox_messages (
@@ -4225,14 +4118,6 @@ CREATE INDEX workspaces_create_idempotency_expiry_idx ON workspaces(org_id, proj
 CREATE UNIQUE INDEX workspaces_create_idempotency_idx ON workspaces(org_id, project_id, environment_id, create_idempotency_key)
     WHERE create_idempotency_key <> '';
 CREATE INDEX workspace_versions_workspace_created_idx ON workspace_versions(org_id, workspace_id, created_at DESC);
-CREATE INDEX run_stream_records_sequence_idx
-    ON run_stream_records(run_stream_id, sequence, id);
-CREATE UNIQUE INDEX run_stream_records_claim_idx
-    ON run_stream_records(run_stream_id, claim_id)
-    WHERE claim_id IS NOT NULL;
-CREATE INDEX run_stream_records_claim_lookup_idx
-    ON run_stream_records(claim_id)
-    WHERE claim_id IS NOT NULL;
 CREATE INDEX public_access_tokens_scope_expiry_idx ON public_access_tokens(org_id, project_id, environment_id, expires_at)
     WHERE state = 'active';
 CREATE INDEX public_access_token_scopes_token_idx ON public_access_token_scopes(org_id, project_id, environment_id, token_id, scope_type)

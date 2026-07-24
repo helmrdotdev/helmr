@@ -50,8 +50,8 @@ func TestRegisteredPrefixesAreValidAndUnambiguous(t *testing.T) {
 			t.Fatalf("prefix %q must include trailing underscore", prefix)
 		}
 	}
-	if len(seen) != 24 {
-		t.Fatalf("registered prefix count = %d, want 24", len(seen))
+	if len(seen) != 22 {
+		t.Fatalf("registered prefix count = %d, want 22", len(seen))
 	}
 	if _, ok := seen[Actor]; !ok {
 		t.Fatal("Actor prefix is not registered")

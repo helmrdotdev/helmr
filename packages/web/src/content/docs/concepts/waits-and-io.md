@@ -1,169 +1,58 @@
 ---
-title: Waits and session I/O
-description: Choose between session streams, external callback tokens, and timers.
+title: Waits and durable I/O
+description: Choose between Actor channels, Tokens, and timers.
 section: Concepts
 sidebarLabel: Waits and I/O
 order: 170
 ---
 
-# Waits and session I/O
+# Waits and durable I/O
 
-Helmr has four public surfaces for session interaction and waits:
+Helmr has three durable interaction boundaries:
 
-| Use case | Primitive | Why |
-| --- | --- | --- |
-| Human messages, approvals, corrections, webhook replies, cancel buttons | Session input stream | The input belongs to the session transcript and may be followed by more input later. |
-| Structured output for clients or operator tools | Session output stream | Consumers can read durable task output without parsing logs. |
-| Email links, third party callbacks, or one-shot bridge completions | Token | The outside system receives a scoped completion capability instead of a session stream address. |
-| Sleep until a duration or timestamp | Timer | The condition is time, not outside input. |
+| Use case | Primitive |
+| --- | --- |
+| Follow-up messages, corrections, commands, and progressive application output | Actor input/output |
+| One externally completed value such as an approval or callback | Token |
+| Sleep until a duration or timestamp | Timer |
 
-When a task calls a blocking `.wait()` API and the condition is not already
-satisfied, Helmr parks the current run with an internal wait record. The run
-resumes when matching stream input arrives, a token is completed, or the timer
-expires. These are peer wait types in Helmr; input streams are not modeled as
-tokens.
-
-Only one blocking wait can be active in a task execution at a time. Await the
-current wait before starting the next one.
-
-## Session Input
-
-Use input streams for human-in-the-loop agent sessions. They keep follow-up
-messages, operator decisions, webhook replies, and corrections attached to the
-session.
+Each Actor has exactly two ordered append logs: one input channel and one
+output channel. They are fixed, not named, and not separately declared.
+Application protocols use ordinary tagged JSON values.
 
 ```ts
-import { streams } from "@helmr/sdk"
-import { z } from "zod"
-
-const messages = streams.input("messages", {
-  schema: z.object({
-    text: z.string(),
-    actor: z.string(),
-  }),
-})
-
-const nextMessage = await messages.wait({
-  timeout: "30m",
-  correlationId: "thread-1",
-}).unwrap()
+const input = await self.input.receive({ idleTimeout: "30m" }).unwrap()
+await self.output.append({ type: "accepted", input })
 ```
 
-Backends and operator tools append input through session handles:
+External clients and other Runs send Actor input through `ActorRef.input`.
+Actor output may have many independent readers:
 
 ```ts
-await client.sessions.open(sessionId).input(messages.id).send(
-  {
-    text: "Please also update the tests.",
-    actor: "slack:U123",
-  },
-  {
-    correlationId: "thread-1",
-  },
+await operator.ref({ key: "production" }).input.send(
+  { type: "steer", instruction: "also update the tests" },
+  { idempotencyKey: "slack:thread-1:message-7" },
 )
+
+const records = await operator.ref({ key: "production" }).output.list()
 ```
 
-Use `.wait()` for long waits that should release compute. Use `once()` or
-`on(...)` only while the task should stay active and consume active runtime.
-Use `peek()` when the task should inspect buffered input without consuming it.
+Actor input may durably suspend the current managed Run. Only that Actor's
+current Run consumes and advances its input cursor. Accepted input can start a
+continuation Run while preserving the Actor and its channel history.
 
-## Session Output
-
-Use output streams when clients need structured records from the task. Output
-streams are durable session history, not logs.
+Use a Token when the outside system should complete one value without gaining
+an Actor channel capability:
 
 ```ts
-const events = streams.output("agent.events", {
-  schema: z.object({
-    type: z.string(),
-    message: z.string(),
-  }),
-})
-
-await events.append({
-  type: "review.started",
-  message: "Reviewing pull request.",
-})
+const approval = await tokens.create({ timeout: "1h" })
+await sendApproval({ callbackUrl: approval.callbackUrl })
+const decision = await approval.wait({ schema: approvalSchema }).unwrap()
 ```
 
-Clients can list or read output records from a cursor:
+The creation response is the only response that reveals the Token's callback
+URL and public access credential. Public access is limited to
+`token.complete`; Actor-channel browser grants are deferred.
 
-```ts
-const records = await client.sessions.open(sessionId).output(events.id).list()
-```
-
-## External Callback Tokens
-
-Use tokens when the outside world should complete a one-shot capability rather
-than append to a session stream. Common cases are email links, provider callback
-URLs, and bridge services that should not receive the session id and stream
-name.
-
-```ts
-import { tokens } from "@helmr/sdk"
-
-const token = await tokens.create({
-  timeout: "1h",
-  tags: ["approval", "email"],
-  metadata: { action: "release" },
-})
-
-await sendApprovalEmail({
-  callbackUrl: token.callbackUrl,
-})
-
-const decision = await token.wait({
-  schema: approvalDecisionSchema,
-}).unwrap()
-```
-
-Backend code and the CLI complete tokens with a Helmr API key or session:
-
-```ts
-await client.tokens.complete(token.id, {
-  approved: true,
-  reviewer: "email:reviewer@example.com",
-})
-```
-
-Browser or raw HTTP flows can complete the same token with the token's scoped
-public access token:
-
-```ts
-await fetch(`/api/v1/tokens/${token.id}/complete`, {
-  method: "POST",
-  headers: {
-    authorization: `Bearer ${token.publicAccessToken}`,
-    "content-type": "application/json",
-  },
-  body: JSON.stringify({ data: { approved: true } }),
-})
-```
-
-Server-to-server integrations can use `token.callbackUrl` as a pre-signed
-completion URL. The callback URL contains a single-token secret in the path and
-is intended for webhook providers, not browser UI. `publicAccessToken` and
-`callbackUrl` are returned only when a token is created; retrieve and list
-responses do not expose completion secrets again.
-
-Completing a token is idempotent when the completion `data` is the same. If the
-same token is completed again with the same canonical `data`, Helmr returns the
-first successful completion; a different `data` value is rejected as a conflict.
-
-## Timers
-
-Use time waits when the task should resume after a duration or timestamp:
-
-```ts
-await timers.waitFor("10m")
-await timers.waitUntil(new Date("2026-06-01T00:00:00Z"))
-```
-
-Timers are the right choice for backoff, delayed follow-up, scheduled polling,
-and timeboxed agent steps where no external data is needed to resume.
-
-## Checkpoints
-
-When a worker parks a run, Helmr durably stores the checkpoint and resume state
-needed to continue execution. The task process resumes with filesystem, memory,
-and the run context restored by the worker runtime.
+Timers suspend on time rather than external input. One Run owns at most one
+active suspension/release condition at a time.

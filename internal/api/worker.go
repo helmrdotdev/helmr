@@ -994,29 +994,6 @@ type WorkerRecordLogEntryRequest struct {
 	Entry string         `json:"entry"`
 }
 
-type WorkerOutputStreamAppendRequest struct {
-	Lease          WorkerRunLease  `json:"lease"`
-	Stream         string          `json:"stream"`
-	Data           json.RawMessage `json:"data"`
-	ContentType    string          `json:"content_type,omitempty"`
-	CorrelationID  string          `json:"correlation_id,omitempty"`
-	IdempotencyKey string          `json:"idempotency_key,omitempty"`
-}
-
-type WorkerActiveStreamReadRequest struct {
-	Lease          WorkerRunLease `json:"lease"`
-	Stream         string         `json:"stream"`
-	AfterSequence  int64          `json:"after_sequence,omitempty"`
-	CorrelationID  string         `json:"correlation_id,omitempty"`
-	TimeoutSeconds *int32         `json:"timeout_seconds,omitempty"`
-	Block          bool           `json:"block"`
-}
-
-type WorkerActiveStreamReadResponse struct {
-	Record   *StreamRecordResponse `json:"record,omitempty"`
-	TimedOut bool                  `json:"timed_out,omitempty"`
-}
-
 type WorkerUpdateRunMetadataRequest struct {
 	Lease     WorkerRunLease  `json:"lease"`
 	Operation string          `json:"operation"`

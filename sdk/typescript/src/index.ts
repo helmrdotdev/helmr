@@ -2,7 +2,6 @@ export { actor } from "./actor"
 export { cache, image, source } from "./image"
 export { defineConfig } from "./config"
 export { schedules } from "./schedules"
-export { streams } from "./streams"
 export { queue, task } from "./task"
 export { timers } from "./timers"
 export { workspace, workspaces } from "./workspace"
@@ -63,10 +62,6 @@ export type {
   RunOptions,
   RunSnapshot,
   RunStatus,
-  RunStreamData,
-  RunStreamDefinition,
-  RunStreamInput,
-  RunStreamRecord,
   SendOptions,
   Serializable,
   TaskCallOptions,
@@ -84,7 +79,6 @@ export type {
   TaskResult,
   TaskStartOptions,
   TaskWait,
-  TypedRunStreamDefinition,
   WaitTimeoutError,
   WorkspaceIdTarget,
   WorkspaceKeyTarget,

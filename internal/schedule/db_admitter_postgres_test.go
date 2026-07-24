@@ -107,76 +107,118 @@ func TestDBAdmitterRejectsTaskWithoutScheduledPayloadAuthority(t *testing.T) {
 	assertScheduleCursor(t, pool, value, value.NextFireAt.Time, time.Time{})
 }
 
-func TestDBAdmitterTakesEnvironmentLockBeforeSchedule(t *testing.T) {
+func TestPendingScheduleBindsMatchingWorkspaceWithGenerationFence(t *testing.T) {
 	pool := openSchedulePostgres(t)
-	value, runtimeDigest := seedScheduleAdmission(t, pool)
-	admitter, err := NewDBAdmitter(pool, fixedAuthority{digest: runtimeDigest})
-	if err != nil {
-		t.Fatal(err)
-	}
-	admitter.now = func() time.Time { return value.NextFireAt.Time }
-
-	promotion, err := pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer promotion.Rollback(t.Context())
-	if _, err := promotion.Exec(t.Context(), `
-		SELECT current_deployment_id
-		  FROM environments
+	value, _ := seedScheduleAdmission(t, pool)
+	mustScheduleExec(t, pool, `
+		UPDATE schedules
+		   SET state = 'pending_workspace',
+		       workspace_id = NULL,
+		       next_fire_at = NULL,
+		       claimed_by = NULL,
+		       claim_expires_at = NULL
 		 WHERE id = $1
-		 FOR UPDATE
-	`, value.EnvironmentID); err != nil {
+	`, value.ID)
+	queries := db.New(pool)
+	pending, err := queries.ListPendingScheduleBindings(t.Context(), 10)
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	result := make(chan error, 1)
-	go func() {
-		result <- admitter.AdmitSchedule(t.Context(), value)
-	}()
-	waitForScheduleAdmissionLock(t, pool)
-	if _, err := promotion.Exec(t.Context(), `
-		SELECT id FROM schedules WHERE id = $1 FOR UPDATE NOWAIT
-	`, value.ID); err != nil {
-		t.Fatalf("admission locked Schedule before Environment: %v", err)
+	if len(pending) != 1 || pending[0].ID != value.ID ||
+		pending[0].ResolvedWorkspaceID != value.WorkspaceID {
+		t.Fatalf("pending bindings = %+v", pending)
 	}
-	if err := promotion.Rollback(t.Context()); err != nil {
+	effectiveFrom := time.Date(2026, 7, 24, 3, 2, 0, 0, time.UTC)
+	nextFireAt := time.Date(2026, 7, 25, 9, 0, 0, 0, time.UTC)
+	activated, err := queries.ActivatePendingSchedule(
+		t.Context(),
+		db.ActivatePendingScheduleParams{
+			WorkspaceID:        pending[0].ResolvedWorkspaceID,
+			EffectiveFrom:      pgvalue.Timestamptz(effectiveFrom),
+			NextFireAt:         pgvalue.Timestamptz(nextFireAt),
+			EnvironmentID:      value.EnvironmentID,
+			ID:                 value.ID,
+			ExpectedGeneration: value.Generation,
+		},
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case err := <-result:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Schedule admission did not resume after Environment lock release")
+	if activated.State != "active" ||
+		activated.Generation != value.Generation+1 ||
+		activated.WorkspaceID != value.WorkspaceID ||
+		!activated.NextFireAt.Time.Equal(nextFireAt) {
+		t.Fatalf("activated Schedule = %+v", activated)
 	}
 }
 
-func waitForScheduleAdmissionLock(t *testing.T, pool *pgxpool.Pool) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		var waiting bool
-		if err := pool.QueryRow(t.Context(), `
-			SELECT EXISTS (
-				SELECT 1
-				  FROM pg_stat_activity
-				 WHERE datname = current_database()
-				   AND pid <> pg_backend_pid()
-				   AND wait_event_type = 'Lock'
-				   AND query LIKE '%current_deployment_id%'
-				   AND query LIKE '%FOR SHARE%'
-			)
-		`).Scan(&waiting); err != nil {
-			t.Fatal(err)
-		}
-		if waiting {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+func TestReconcileScheduleDoesNotReviveErroredAuthority(t *testing.T) {
+	pool := openSchedulePostgres(t)
+	value, _ := seedScheduleAdmission(t, pool)
+	lastError := json.RawMessage(`{"code":"task-authority-invalid","message":"Task authority is invalid"}`)
+	mustScheduleExec(t, pool, `
+		UPDATE schedules
+		   SET state = 'errored',
+		       state_version = state_version + 1,
+		       claimed_by = NULL,
+		       claim_expires_at = NULL,
+		       last_error = $2
+		 WHERE id = $1
+	`, value.ID, lastError)
+
+	queries := db.New(pool)
+	before, err := queries.GetSchedule(t.Context(), db.GetScheduleParams{
+		EnvironmentID: value.EnvironmentID,
+		ID:            value.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Fatal("Schedule admission did not block on the Environment lock")
+	if err := queries.ReconcileSchedule(t.Context(), db.ReconcileScheduleParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		PublicID:               schedulePublicID(t, publicid.Schedule),
+		OrgID:                  before.OrgID,
+		ProjectID:              before.ProjectID,
+		EnvironmentID:          before.EnvironmentID,
+		TaskDeclaredID:         before.TaskDeclaredID,
+		DeploymentDefinitionID: before.DeploymentDefinitionID,
+		DeploymentID:           before.DeploymentID,
+		WorkspaceRefID:         before.WorkspaceRefID,
+		WorkspaceRefKey:        before.WorkspaceRefKey,
+		WorkspaceID:            before.WorkspaceID,
+		CronPattern:            before.CronPattern,
+		Timezone:               before.Timezone,
+		CronSemanticsVersion:   before.CronSemanticsVersion,
+		State:                  "active",
+		EffectiveFrom:          before.EffectiveFrom,
+		NextFireAt:             before.NextFireAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := queries.GetSchedule(t.Context(), db.GetScheduleParams{
+		EnvironmentID: value.EnvironmentID,
+		ID:            value.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.State != "errored" ||
+		after.Generation != before.Generation ||
+		after.StateVersion != before.StateVersion ||
+		string(after.LastError) != string(before.LastError) {
+		t.Fatalf(
+			"reconciled errored Schedule = state %q, generation %d, state version %d, error %s; want %q, %d, %d, %s",
+			after.State,
+			after.Generation,
+			after.StateVersion,
+			after.LastError,
+			before.State,
+			before.Generation,
+			before.StateVersion,
+			before.LastError,
+		)
+	}
 }
 
 func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, string) {
@@ -234,6 +276,7 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 		INSERT INTO deployments (
 			id, public_id, org_id, project_id, environment_id, build_region_id,
 			build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+			build_manager_name, build_manager_version, build_manager_digest,
 			build_contract_version, version, content_hash, deployment_source_artifact_id,
 			program_artifact_id, program_runtime_digest, program_architecture,
 			program_receipt, queue_config, status
@@ -241,6 +284,7 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 		VALUES (
 			$1, $2, $3, $4, $5, $6,
 			'x86_64', decode($7, 'hex'), decode(repeat('02', 32), 'hex'),
+			'bun', '1.2.3', decode(repeat('22', 32), 'hex'),
 			'helmr.program-build.v0', 'v0', $8, $9,
 			$10, decode($7, 'hex'), 'x86_64', $11::jsonb, $12, 'deployed'
 		)
@@ -249,7 +293,7 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 		"sha256:"+strings.Repeat("03", 32), sourceArtifactID, programArtifactID,
 		programReceipt, queueConfig)
 	taskManifest := []byte(
-		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`,
+		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"key":"scheduler"}}}`,
 	)
 	taskManifestHash := sha256.New()
 	_, _ = taskManifestHash.Write([]byte("helmr.deployment-definition-manifest.v0\x00"))
@@ -351,19 +395,22 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	claimExpiresAt := time.Now().UTC().Add(5 * time.Minute)
 	mustScheduleExec(t, pool, `
 		INSERT INTO schedules (
-			id, public_id, org_id, project_id, environment_id, source, key,
-			task_declared_id, workspace_ref_id, workspace_id, cron_pattern, timezone,
-			queue_name, max_active_duration_ms, retry_policy, state, effective_from,
+			id, public_id, org_id, project_id, environment_id,
+			task_declared_id, deployment_definition_id, deployment_id,
+			workspace_ref_key, workspace_id, cron_pattern, timezone,
+			state, effective_from,
 			next_fire_at, claimed_by, claim_expires_at
 		)
 		VALUES (
-			$1, $2, $3, $4, $5, 'imperative', 'daily-report',
-			'daily-report', $6, $6, '0 9 * * *', 'UTC',
-			'default', 300000, '{"enabled":false}', 'active', now() - interval '1 hour',
-			$7, 'scheduler-test', $8
+			$1, $2, $3, $4, $5,
+			'daily-report', $6, $7,
+			'scheduler', $8, '0 9 * * *', 'UTC',
+			'active', now() - interval '1 hour',
+			$9, 'scheduler-test', $10
 		)
 	`, scheduleID, schedulePublicID(t, publicid.Schedule), orgID, projectID,
-		environmentID, workspaceID, scheduledAt, claimExpiresAt)
+		environmentID, taskDefinitionID, deploymentID, workspaceID,
+		scheduledAt, claimExpiresAt)
 	value, err := db.New(pool).GetSchedule(t.Context(), db.GetScheduleParams{
 		EnvironmentID: pgvalue.UUID(environmentID),
 		ID:            pgvalue.UUID(scheduleID),
@@ -536,29 +583,33 @@ func (r fixedAuthority) ResolveRuntime(value string) error {
 	return nil
 }
 
-func (fixedAuthority) ValidateScheduledTask(
+func (fixedAuthority) ResolveScheduledTask(
 	manifestVersion int32,
 	declaredID string,
 	manifest []byte,
 	manifestDigest []byte,
 	queueConfig []byte,
-) error {
+) (TaskRun, error) {
 	var value struct {
 		Payload struct {
 			Kind string `json:"kind"`
 		} `json:"payload"`
 	}
 	if err := json.Unmarshal(manifest, &value); err != nil {
-		return err
+		return TaskRun{}, err
 	}
 	if manifestVersion != 0 ||
 		declaredID != "daily-report" ||
 		value.Payload.Kind != "standard_schema" ||
 		len(manifestDigest) != sha256.Size ||
 		len(queueConfig) == 0 {
-		return errors.New("scheduled Task authority is invalid")
+		return TaskRun{}, errors.New("scheduled Task authority is invalid")
 	}
-	return nil
+	return TaskRun{
+		QueueName:           "default",
+		MaxActiveDurationMS: 300000,
+		RetryPolicy:         []byte(`{"enabled":false}`),
+	}, nil
 }
 
 func openSchedulePostgres(t *testing.T) *pgxpool.Pool {

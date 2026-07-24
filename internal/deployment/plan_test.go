@@ -28,8 +28,7 @@ func TestBuildPlanCanonicalRoundTrip(t *testing.T) {
 	}
 	if parsed.Definitions[0].Task == nil ||
 		parsed.Definitions[1].Actor == nil ||
-		parsed.Definitions[2].RunStream == nil ||
-		parsed.Definitions[3].Workspace == nil {
+		parsed.Definitions[2].Workspace == nil {
 		t.Fatalf("typed definition union was not preserved: %+v", parsed.Definitions)
 	}
 }
@@ -204,13 +203,6 @@ func TestValidateBuildPlanDefinitions(t *testing.T) {
 			errMsg: "scheduled task payload",
 		},
 		{
-			name: "run stream schema",
-			change: func(plan *BuildPlan) {
-				plan.Definitions[2].RunStream.Schema.Kind = SchemaKindNone
-			},
-			errMsg: "schema kind",
-		},
-		{
 			name: "actor idle timeout",
 			change: func(plan *BuildPlan) {
 				plan.Definitions[1].Actor.IdleTimeoutMs = 0
@@ -227,7 +219,7 @@ func TestValidateBuildPlanDefinitions(t *testing.T) {
 		{
 			name: "workspace architecture",
 			change: func(plan *BuildPlan) {
-				plan.Definitions[3].Workspace.Architecture = "amd64"
+				plan.Definitions[2].Workspace.Architecture = "amd64"
 			},
 			errMsg: "architecture",
 		},
@@ -270,42 +262,42 @@ func TestValidateBuildPlanDefinitions(t *testing.T) {
 		{
 			name: "image architecture",
 			change: func(plan *BuildPlan) {
-				plan.Definitions[3].Workspace.ImageBuild.Images[0].Platform.Architecture = "aarch64"
+				plan.Definitions[2].Workspace.ImageBuild.Images[0].Platform.Architecture = "aarch64"
 			},
 			errMsg: "imageBuild",
 		},
 		{
 			name: "workspace resources",
 			change: func(plan *BuildPlan) {
-				plan.Definitions[3].Workspace.Resources.MemoryMiB = 0
+				plan.Definitions[2].Workspace.Resources.MemoryMiB = 0
 			},
 			errMsg: "memoryMiB",
 		},
 		{
 			name: "workspace network array",
 			change: func(plan *BuildPlan) {
-				plan.Definitions[3].Workspace.Network.DenyCIDRs = nil
+				plan.Definitions[2].Workspace.Network.DenyCIDRs = nil
 			},
 			errMsg: "denyCidrs must be an array",
 		},
 		{
 			name: "workspace network canonical prefix",
 			change: func(plan *BuildPlan) {
-				plan.Definitions[3].Workspace.Network.DenyCIDRs = []string{"10.1.0.1/8"}
+				plan.Definitions[2].Workspace.Network.DenyCIDRs = []string{"10.1.0.1/8"}
 			},
 			errMsg: "canonical masked",
 		},
 		{
 			name: "workspace network disabled deny",
 			change: func(plan *BuildPlan) {
-				plan.Definitions[3].Workspace.Network.Internet = false
+				plan.Definitions[2].Workspace.Network.Internet = false
 			},
 			errMsg: "empty when internet is disabled",
 		},
 		{
 			name: "workspace network order",
 			change: func(plan *BuildPlan) {
-				plan.Definitions[3].Workspace.Network.DenyCIDRs = []string{
+				plan.Definitions[2].Workspace.Network.DenyCIDRs = []string{
 					"2001:db8::/32",
 					"10.0.0.0/8",
 				}
@@ -443,25 +435,25 @@ func TestValidateBuildPlanSchedule(t *testing.T) {
 		errMsg string
 	}{
 		{
-			name: "cron whitespace",
+			name: "cron empty",
 			change: func(manifest *ScheduleManifest) {
-				manifest.Cron = " 0 9 * * *"
+				manifest.Cron = ""
 			},
-			errMsg: "normalized",
+			errMsg: "1-1024 bytes",
 		},
 		{
 			name: "cron syntax",
 			change: func(manifest *ScheduleManifest) {
 				manifest.Cron = "every day"
 			},
-			errMsg: "5-field",
+			errMsg: "exactly 5 fields",
 		},
 		{
 			name: "timezone normalization",
 			change: func(manifest *ScheduleManifest) {
 				manifest.Timezone = "utc"
 			},
-			errMsg: "normalized IANA",
+			errMsg: "IANA timezone",
 		},
 		{
 			name: "timezone",
@@ -594,13 +586,6 @@ func testBuildPlan() BuildPlan {
 						Retry:         RetryManifest{Enabled: false},
 					},
 					IdleTimeoutMs: 30000,
-				},
-			},
-			{
-				Kind:       DefinitionKindRunStream,
-				DeclaredID: "events",
-				RunStream: &RunStreamManifest{
-					Schema: SchemaManifest{Kind: SchemaKindStandard},
 				},
 			},
 			{

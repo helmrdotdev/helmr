@@ -53,9 +53,13 @@ GET /api/projects/{projectID}/environments/{environmentID}/deployments
 GET /api/projects/{projectID}/environments/{environmentID}/deployments/current
 GET /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}
 GET /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/events
+GET /api/projects/{projectID}/environments/{environmentID}/schedules
+GET /api/projects/{projectID}/environments/{environmentID}/schedules/{scheduleID}
 GET /api/projects/{projectID}/environments/{environmentID}/secrets
 GET /api/projects/{projectID}/environments/{environmentID}/secrets/{name}
 GET /api/regions
+GET /api/schedules
+GET /api/schedules/{scheduleID}
 GET /api/secrets
 GET /api/secrets/{name}
 GET /api/worker/status
@@ -79,6 +83,7 @@ POST /api/auth/magic-link/finish
 POST /api/auth/magic-link/invite/start
 POST /api/auth/magic-link/start
 POST /api/deployments
+POST /api/deployments/{deploymentID}/promote
 POST /api/invitations
 POST /api/organizations
 POST /api/projects
@@ -88,6 +93,7 @@ POST /api/projects/{projectID}/environments/{environmentID}/actors/{actorDeclare
 POST /api/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/start
 POST /api/projects/{projectID}/environments/{environmentID}/api-keys
 POST /api/projects/{projectID}/environments/{environmentID}/deployments
+POST /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/promote
 POST /api/projects/{projectID}/environments/{environmentID}/secrets/{name}/revoke
 POST /api/secrets/{name}/revoke
 POST /api/worker/activate

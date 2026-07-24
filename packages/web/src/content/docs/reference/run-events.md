@@ -25,6 +25,10 @@ SDK event types:
 | `run_cancelled` | Run was cancelled. |
 | `run_expired` | Queued run TTL expired before a worker started it. |
 
-Raw protocol events include log notifications, task completion, waits, task output JSON, stream append notifications, run metadata update notifications, and platform execution lifecycle events such as `run.execution_lost` when a worker lease expires and the attempt is no longer accepted. Stream and metadata event payloads are notifications for timeline subscribers; read user-facing stream payloads through the session stream APIs and current run metadata from the run snapshot.
+Raw protocol events include log notifications, Task completion, waits, Task
+result JSON, Run metadata updates, and platform execution lifecycle events such
+as `run.execution_lost` when a worker Lease expires. Events are observation,
+not application-output authority: durable long-lived output is read from Actor
+records, while a one-shot Task returns its terminal result.
 
 Use event streams for live UI, agents watching progress, and waiting for terminal run state. `helmr run wait` follows the stream, resumes with the last cursor after reconnects, and fetches the final run snapshot after a terminal event. Use run logs for stdout/stderr bytes. `helmr run logs --follow` follows the dedicated log stream with a run-wide cursor, so stdout and stderr chunks can be resumed with a single `Last-Event-ID` value.

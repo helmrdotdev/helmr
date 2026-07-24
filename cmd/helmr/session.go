@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -22,7 +21,6 @@ func sessionCommand() *cobra.Command {
 		sessionGetCommand(),
 		sessionCloseCommand(),
 		sessionCancelCommand(),
-		sessionStreamCommand(),
 	)
 	return cmd
 }
@@ -171,186 +169,6 @@ func sessionCloseCommand() *cobra.Command {
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().StringVar(&reason, "reason", "", "Close reason.")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	return cmd
-}
-
-func sessionStreamCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "stream", Short: "Work with session streams."}
-	cmd.AddCommand(
-		sessionStreamListCommand(),
-		sessionStreamInputCommand(),
-		sessionStreamOutputCommand(),
-	)
-	return cmd
-}
-
-func sessionStreamListCommand() *cobra.Command {
-	var projectID string
-	var environmentID string
-	var jsonOutput bool
-	cmd := &cobra.Command{
-		Use:   "list SESSION",
-		Short: "List streams for a session.",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
-			if err != nil {
-				return err
-			}
-			scope, err := sessionScopeForClient(control, projectID, environmentID)
-			if err != nil {
-				return err
-			}
-			response, err := control.ListSessionStreams(cmd.Context(), args[0], scope)
-			if err != nil {
-				return err
-			}
-			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
-			}
-			for _, stream := range response.Streams {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%d\n", stream.Name, stream.Direction, stream.Sequence)
-			}
-			return nil
-		},
-	}
-	addScopeFlags(cmd, &projectID, &environmentID)
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	return cmd
-}
-
-func sessionStreamInputCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "input", Short: "Write and inspect session input streams."}
-	cmd.AddCommand(
-		sessionStreamInputSendCommand(),
-		sessionStreamInputListCommand(),
-	)
-	return cmd
-}
-
-func sessionStreamInputSendCommand() *cobra.Command {
-	var projectID string
-	var environmentID string
-	var dataJSON string
-	var correlationID string
-	var idempotencyKey string
-	var jsonOutput bool
-	cmd := &cobra.Command{
-		Use:   "send SESSION STREAM",
-		Short: "Send input to a session stream.",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			data := json.RawMessage(strings.TrimSpace(dataJSON))
-			if len(data) == 0 || !json.Valid(data) {
-				return fmt.Errorf("--data-json must be valid JSON")
-			}
-			control, err := controlClient(cmd)
-			if err != nil {
-				return err
-			}
-			scope, err := sessionScopeForClient(control, projectID, environmentID)
-			if err != nil {
-				return err
-			}
-			response, err := control.AppendSessionInput(cmd.Context(), args[0], args[1], api.AppendStreamRecordRequest{
-				Data:           data,
-				CorrelationID:  strings.TrimSpace(correlationID),
-				IdempotencyKey: strings.TrimSpace(idempotencyKey),
-			}, scope)
-			if err != nil {
-				return err
-			}
-			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s %d\n", response.Record.ID, response.Record.Sequence)
-			return nil
-		},
-	}
-	addScopeFlags(cmd, &projectID, &environmentID)
-	cmd.Flags().StringVar(&dataJSON, "data-json", "", "JSON payload to send.")
-	cmd.Flags().StringVar(&correlationID, "correlation-id", "", "Correlation ID.")
-	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key.")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	_ = cmd.MarkFlagRequired("data-json")
-	return cmd
-}
-
-func sessionStreamInputListCommand() *cobra.Command {
-	var projectID string
-	var environmentID string
-	var cursor int64
-	var limit int32
-	var jsonOutput bool
-	cmd := &cobra.Command{
-		Use:   "list SESSION STREAM",
-		Short: "List session input stream records.",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
-			if err != nil {
-				return err
-			}
-			scope, err := sessionScopeForClient(control, projectID, environmentID)
-			if err != nil {
-				return err
-			}
-			response, err := control.ListSessionInputs(cmd.Context(), args[0], args[1], cursor, limit, scope)
-			if err != nil {
-				return err
-			}
-			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
-			}
-			return format.JSONLines(cmd.OutOrStdout(), response.Records)
-		},
-	}
-	addScopeFlags(cmd, &projectID, &environmentID)
-	cmd.Flags().Int64Var(&cursor, "cursor", 0, "Return records after this sequence.")
-	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum records to return.")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	return cmd
-}
-
-func sessionStreamOutputCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "output", Short: "Read session output streams."}
-	cmd.AddCommand(sessionStreamOutputListCommand())
-	return cmd
-}
-
-func sessionStreamOutputListCommand() *cobra.Command {
-	var projectID string
-	var environmentID string
-	var cursor int64
-	var limit int32
-	var jsonOutput bool
-	cmd := &cobra.Command{
-		Use:   "list SESSION STREAM",
-		Short: "List session output stream records.",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
-			if err != nil {
-				return err
-			}
-			scope, err := sessionScopeForClient(control, projectID, environmentID)
-			if err != nil {
-				return err
-			}
-			response, err := control.ListSessionOutputs(cmd.Context(), args[0], args[1], cursor, limit, scope)
-			if err != nil {
-				return err
-			}
-			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
-			}
-			return format.JSONLines(cmd.OutOrStdout(), response.Records)
-		},
-	}
-	addScopeFlags(cmd, &projectID, &environmentID)
-	cmd.Flags().Int64Var(&cursor, "cursor", 0, "Return records after this sequence.")
-	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum records to return.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }

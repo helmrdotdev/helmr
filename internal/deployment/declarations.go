@@ -181,8 +181,6 @@ func locatedDeclarationProjection(declaration LocatedDeclaration) ProgramDeclara
 	switch declaration.Kind {
 	case DeclarationKindTask, DeclarationKindActor:
 		projection.Slots = []DeclarationSlot{DeclarationSlotHandler}
-	case DeclarationKindRunStream:
-		projection.Slots = []DeclarationSlot{DeclarationSlotSchema}
 	}
 	return projection
 }

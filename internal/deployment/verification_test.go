@@ -231,7 +231,7 @@ func TestVerificationFailureContract(t *testing.T) {
 func testWorkspaceVerificationResult(t *testing.T) VerificationResult {
 	t.Helper()
 	plan := testBuildPlan()
-	plan.Definitions = []DefinitionInput{plan.Definitions[3]}
+	plan.Definitions = []DefinitionInput{plan.Definitions[2]}
 	plan.Queues = []QueueInput{}
 	raw, err := CanonicalBuildPlan(plan)
 	if err != nil {
@@ -303,12 +303,6 @@ func testAnalysisDeclarationLocator() DeclarationLocator {
 				DeclaredID: "chat",
 				ModulePath: "src/chat.ts",
 				ExportName: "chat",
-			},
-			{
-				Kind:       DeclarationKindRunStream,
-				DeclaredID: "events",
-				ModulePath: "src/events.ts",
-				ExportName: "events",
 			},
 		},
 	}

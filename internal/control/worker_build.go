@@ -1047,8 +1047,6 @@ func deploymentDefinitionManifest(
 		manifest = definition.Task
 	case deployment.DefinitionKindActor:
 		manifest = definition.Actor
-	case deployment.DefinitionKindRunStream:
-		manifest = definition.RunStream
 	case deployment.DefinitionKindWorkspace:
 		if definition.Workspace == nil || workspaceImage == nil {
 			return nil, [sha256.Size]byte{}, fmt.Errorf(

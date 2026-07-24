@@ -10,7 +10,12 @@ func TestCronContract(t *testing.T) {
 		"0 9 * * *",
 		"*/5 * * * *",
 		"0,15,30,45 9-17 * * 1-5",
-		"0 0 1 * 0-7",
+		"0 9 * JAN MON",
+		"0 9 ? * *",
+		"00 9 * * *",
+		"0 9 * * 2,1",
+		"0  9 * * *",
+		" 0 9 * * * ",
 	}
 	for _, value := range valid {
 		if err := ValidateCron(value); err != nil {
@@ -18,17 +23,11 @@ func TestCronContract(t *testing.T) {
 		}
 	}
 	invalid := []string{
-		"0  9 * * *",
-		" 0 9 * * *",
-		"0 9 * * * ",
 		"@daily",
-		"0 9 * JAN *",
-		"0 9 * * MON",
-		"00 9 * * *",
+		"0 0 1 * 0-7",
 		"0 9 * * 0,7",
-		"0 9 * * 2,1",
-		"0/5 9 * * *",
-		"0 9 ? * *",
+		"0 9 * *",
+		"0 9 * * * *",
 	}
 	for _, value := range invalid {
 		if err := ValidateCron(value); err == nil {
@@ -53,29 +52,5 @@ func TestNextCronTimeUsesExactTimezone(t *testing.T) {
 		if err := ValidateTimezone(name); err == nil {
 			t.Fatalf("non-IANA tzfile %q was accepted", name)
 		}
-	}
-}
-
-func TestRestrictedFullDayOfWeekSetKeepsOrSemantics(t *testing.T) {
-	anchor := time.Date(2026, 6, 2, 1, 0, 0, 0, time.UTC)
-	for _, expression := range []string{
-		"0 0 1 * 0-7",
-		"0 0 1 * 0-6",
-		"0 0 1 * 0,1,2,3,4,5,6",
-	} {
-		next, err := NextCronTime(expression, "UTC", anchor)
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := time.Date(2026, 6, 3, 0, 0, 0, 0, time.UTC)
-		if !next.Equal(want) {
-			t.Fatalf("NextCronTime(%q) = %s, want %s", expression, next, want)
-		}
-	}
-}
-
-func TestCronOrderingUsesExpandedValues(t *testing.T) {
-	if err := ValidateCron("1-10/10,5 * * * *"); err != nil {
-		t.Fatal(err)
 	}
 }

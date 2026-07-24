@@ -71,21 +71,6 @@ const API_KEY_SCOPE_OPTIONS: {
     description: "Allow automation to cancel runs and sessions.",
   },
   {
-    value: "session-streams:read",
-    label: "Read streams",
-    description: "Allow automation to list session streams and read stream records.",
-  },
-  {
-    value: "session-input:send",
-    label: "Send input",
-    description: "Allow automation to append input stream records in the selected environment.",
-  },
-  {
-    value: "session-output:append",
-    label: "Append output",
-    description: "Allow automation to append output stream records in the selected environment.",
-  },
-  {
     value: "secrets:write",
     label: "Manage secrets",
     description: "Allow automation to list, create, rotate, and revoke secrets in the selected project and environment.",

@@ -18,7 +18,6 @@ export type Deployment = {
   tasks: string[];
   actors: string[];
   workspaces: string[];
-  run_streams: string[];
   created_at: string;
   building_at?: string;
   built_at?: string;

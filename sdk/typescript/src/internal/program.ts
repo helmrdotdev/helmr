@@ -24,11 +24,6 @@ export type ProgramDeclaration =
       slots: readonly ["handler"] | readonly ["handler", "payloadSchema"]
     }>
   | Readonly<{ kind: "actor"; declaredId: string; slots: readonly ["handler"] }>
-  | Readonly<{
-      kind: "run_stream"
-      declaredId: string
-      slots: readonly ["schema"]
-    }>
 
 export interface ProgramIndex {
   readonly architecture: RuntimeArchitecture
@@ -244,14 +239,11 @@ function parseDeclaration(value: JsonValue, position: number): ProgramDeclaratio
   if (kind === "actor" && sameStrings(slots, ["handler"])) {
     return { kind, declaredId, slots: slots as ["handler"] }
   }
-  if (kind === "run_stream" && sameStrings(slots, ["schema"])) {
-    return { kind, declaredId, slots: slots as ["schema"] }
-  }
   throw new Error(`program index declaration ${JSON.stringify(kind)} has invalid slots`)
 }
 
 function compareDeclarations(left: ProgramDeclaration, right: ProgramDeclaration): number {
-  const kindOrder = { task: 0, actor: 1, run_stream: 2 } as const
+  const kindOrder = { task: 0, actor: 1 } as const
   const kindDifference = kindOrder[left.kind] - kindOrder[right.kind]
   if (kindDifference !== 0) {
     return kindDifference

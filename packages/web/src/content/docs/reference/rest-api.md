@@ -42,12 +42,11 @@ Common user/API-key routes:
 | `POST` | `/api/sessions/{id}/close` |
 | `POST` | `/api/sessions/{id}/cancel` |
 | `GET` | `/api/sessions/{id}/runs` |
-| `GET` | `/api/sessions/{id}/streams` |
-| `POST` | `/api/sessions/{id}/inputs/{stream}` |
-| `GET` | `/api/sessions/{id}/inputs/{stream}` |
-| `POST` | `/api/sessions/{id}/outputs/{stream}` |
-| `GET` | `/api/sessions/{id}/outputs/{stream}` |
-| `GET` | `/api/sessions/{id}/outputs/{stream}/read` |
+| `POST` | `/api/actors/{actorDeclaredID}/start` |
+| `POST` | `/api/actors/{actorDeclaredID}/input` |
+| `GET` | `/api/actors/{actorDeclaredID}/output` |
+| `GET` | `/api/actors/{actorDeclaredID}/status` |
+| `POST` | `/api/actors/{actorDeclaredID}/close` |
 | `GET` | `/api/runs` |
 | `GET` | `/api/runs/counts` |
 | `GET` | `/api/runs/{id}` |
@@ -58,11 +57,8 @@ Common user/API-key routes:
 | `GET` | `/api/tokens/{id}` |
 | `POST` | `/api/tokens/{id}/complete` |
 | `POST` | `/api/tokens/{id}/cancel` |
-| `POST` | `/api/public-access-tokens` |
 | `POST` | `/api/v1/tokens/{id}/complete` |
 | `POST` | `/api/v1/tokens/{id}/callback/{secret}` |
-| `POST` | `/api/v1/sessions/{id}/inputs/{stream}` |
-| `GET` | `/api/v1/sessions/{id}/outputs/{stream}/read` |
 | `POST` | `/api/workspaces` |
 | `GET` | `/api/workspaces` |
 | `GET` | `/api/workspaces/{workspace_id}` |
@@ -90,15 +86,11 @@ Common user/API-key routes:
 | `GET` | `/api/workspaces/{workspace_id}/pty/{pty_id}/output` |
 | `POST` | `/api/workspaces/{workspace_id}/pty/{pty_id}/resize` |
 | `POST` | `/api/workspaces/{workspace_id}/pty/{pty_id}/close` |
-| `POST` | `/api/schedules` |
 | `GET` | `/api/schedules` |
 | `GET` | `/api/schedules/{id}` |
-| `PUT` | `/api/schedules/{id}` |
-| `POST` | `/api/schedules/{id}/activate` |
-| `POST` | `/api/schedules/{id}/deactivate` |
-| `DELETE` | `/api/schedules/{id}` |
 | `POST` | `/api/deployments` |
 | `GET` | `/api/deployments/current` |
+| `POST` | `/api/deployments/{id}/promote` |
 | `GET` | `/api/secrets` |
 | `GET` | `/api/secrets/{name}` |
 | `PUT` | `/api/secrets/{name}` |
@@ -106,13 +98,17 @@ Common user/API-key routes:
 
 Auth routes include GitHub OAuth, magic links, device auth, logout, API keys, members, invitations, projects, and environments.
 
-`GET /api/sessions?external_id=...` filters the session collection by an environment-scoped external conversation id. `/api/sessions/{id}` treats its path segment as a session id only. Session operations can address the same resource by external id through reserved routes such as `GET /api/sessions/by-external-id?external_id=...` and `POST /api/sessions/by-external-id/inputs/{stream}?external_id=...`.
-
 `POST /api/tokens/{id}/complete` accepts a Helmr API key or session bearer with `tokens.complete` permission for the token's project environment. Browser completion uses `POST /api/v1/tokens/{id}/complete` with the token's scoped `public_access_token`; provider callbacks use `POST /api/v1/tokens/{id}/callback/{secret}` and do not use CORS. Token id knowledge is not authorization. Completion responses are `{ "status": "completed" | "already_completed", "token": { ... } }`. Retrying the same canonical completion returns `already_completed`; completing with different data returns `409 token_completion_conflict` and never overwrites the token.
 
-`POST /api/public-access-tokens` creates narrow browser capabilities bound to one stream scope. Its scope accepts a typed session address, for example `{ "session": { "type": "id", "id": "..." } }` or `{ "session": { "type": "external_id", "external_id": "..." } }`. API keys use the environment bound to the key; user/session auth should include top-level `project_id` and `environment_id` when resolving an external id. `session.input.send` tokens can call `POST /api/v1/sessions/{id}/inputs/{stream}` or `POST /api/v1/sessions/by-external-id/inputs/{stream}?external_id=...`. `session.output.read` tokens can call the matching output read routes. The public token's stored scope is still checked against the concrete session stream row, stream direction, and optional `correlation_id` before the token is consumed.
+Actor input and output are fixed durable channels. They are addressed by the
+Actor declaration plus exactly one Actor ID or key; callers never create or
+name channel resources. Public browser grants for Actor channels are deferred.
+The only public-access grant in v0 is `token.complete`.
 
-Worker routes include registration, activation, drain/status, execution lease/start/renew/release, log/event append, internal wait suspension, token creation, stream output append, metadata updates, and checkpoint ready/failed notifications. Worker registration and status responses include `worker_group_id`. Worker run leases and worker run payloads include `attempt_number`; this is the task attempt number, not the queue dispatch attempt.
+Worker routes include registration, activation, drain/status, execution
+lease/start/renew/release, log/event append, Actor input/output operations,
+internal wait suspension, token creation, metadata updates, and checkpoint
+ready/failed notifications.
 
 `GET /api/runs/{id}/events` returns JSON pages by default and streams SSE when `follow=1` or `Accept: text/event-stream` is present. Page cursors and SSE `id` values are opaque run event cursors.
 
@@ -138,6 +134,9 @@ and stream SSE when `follow=1` or `Accept: text/event-stream` is present. Pass
 the cursor as `Last-Event-ID` or `?cursor=N` to continue after chunks already
 received.
 
-`POST /api/schedules` creates or replaces an imperative schedule for the selected project environment. The request body uses required `deduplication_key`, `task`, and `cron`, plus optional `external_id`, `timezone`, `active`, and schedule run `options`. `deduplication_key` is the stable public key for the project-level logical schedule and selected environment instance. Schedule requests do not accept arbitrary payload, secret bindings, or user-supplied idempotency options; scheduled runs receive Helmr-generated schedule metadata. `PUT /api/schedules/{id}` replaces the imperative schedule definition and selected environment instance settings and does not accept `deduplication_key`. Declarative schedules are synchronized from deployments and return `400 Bad Request` for imperative edit, activate, deactivate, or delete routes.
+Schedules are declared only with `schedules.task()` in source. Deployment
+promotion reconciles them atomically. Authenticated Schedule routes are
+read-only list/retrieve operations; timing or lifecycle changes require another
+source Deployment promotion.
 
 `POST /api/deployments` records the API version, CLI version, SDK version, bundle format version, and worker protocol version used to create the deployment. Deployment responses include those fields plus the immutable deployment `version`. Promotion is separate from creation; promoting a deployment moves the selected environment's current deployment pointer.

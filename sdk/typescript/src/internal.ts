@@ -8,7 +8,6 @@ export {
   isQueueDefinition,
   type InternalActorDefinition,
   type InternalDefinition,
-  type InternalRunStreamDefinition,
   type InternalTaskDefinition,
 } from "./definitions"
 export {

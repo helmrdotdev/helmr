@@ -1,34 +1,22 @@
--- name: CreateSchedule :one
+-- name: ReconcileSchedule :exec
 INSERT INTO schedules (
     id,
     public_id,
     org_id,
     project_id,
     environment_id,
-    source,
-    key,
     task_declared_id,
-    declarative_deployment_definition_id,
-    declarative_deployment_id,
+    deployment_definition_id,
+    deployment_id,
     workspace_ref_id,
     workspace_ref_key,
     workspace_id,
     cron_pattern,
     timezone,
-    queue_name,
-    concurrency_key,
-    queue_concurrency_limit,
-    priority,
-    queued_ttl_ms,
-    max_active_duration_ms,
-    retry_policy,
-    run_metadata,
-    run_tags,
+    cron_semantics_version,
     state,
     effective_from,
-    next_fire_at,
-    metadata,
-    tags
+    next_fire_at
 )
 VALUES (
     sqlc.arg(id),
@@ -36,32 +24,68 @@ VALUES (
     sqlc.arg(org_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
-    sqlc.arg(source),
-    sqlc.arg(key),
     sqlc.arg(task_declared_id),
-    sqlc.narg(declarative_deployment_definition_id),
-    sqlc.narg(declarative_deployment_id),
+    sqlc.arg(deployment_definition_id),
+    sqlc.arg(deployment_id),
     sqlc.narg(workspace_ref_id),
     sqlc.narg(workspace_ref_key),
     sqlc.narg(workspace_id),
     sqlc.arg(cron_pattern),
     sqlc.arg(timezone),
-    sqlc.arg(queue_name),
-    sqlc.narg(concurrency_key),
-    sqlc.narg(queue_concurrency_limit),
-    sqlc.arg(priority),
-    sqlc.narg(queued_ttl_ms),
-    sqlc.arg(max_active_duration_ms),
-    sqlc.arg(retry_policy),
-    coalesce(sqlc.narg(run_metadata)::jsonb, '{}'::jsonb),
-    coalesce(sqlc.narg(run_tags)::text[], '{}'::text[]),
+    sqlc.arg(cron_semantics_version),
     sqlc.arg(state),
     sqlc.arg(effective_from),
-    sqlc.narg(next_fire_at),
-    coalesce(sqlc.narg(metadata)::jsonb, '{}'::jsonb),
-    coalesce(sqlc.narg(tags)::text[], '{}'::text[])
+    sqlc.narg(next_fire_at)
 )
-RETURNING *;
+ON CONFLICT (environment_id, task_declared_id)
+DO UPDATE
+   SET deployment_definition_id = excluded.deployment_definition_id,
+       deployment_id = excluded.deployment_id,
+       workspace_ref_id = excluded.workspace_ref_id,
+       workspace_ref_key = excluded.workspace_ref_key,
+       workspace_id = excluded.workspace_id,
+       cron_pattern = excluded.cron_pattern,
+       timezone = excluded.timezone,
+       cron_semantics_version = excluded.cron_semantics_version,
+       generation = schedules.generation + 1,
+       state = excluded.state,
+       state_version = schedules.state_version + 1,
+       effective_from = excluded.effective_from,
+       next_fire_at = excluded.next_fire_at,
+       last_fire_at = NULL,
+       claimed_by = NULL,
+       claim_expires_at = NULL,
+       retry_step = NULL,
+       retry_after = NULL,
+       last_error = NULL,
+       updated_at = now()
+ WHERE schedules.deployment_definition_id IS DISTINCT FROM excluded.deployment_definition_id
+    OR schedules.deployment_id IS DISTINCT FROM excluded.deployment_id
+    OR schedules.workspace_ref_id IS DISTINCT FROM excluded.workspace_ref_id
+    OR schedules.workspace_ref_key IS DISTINCT FROM excluded.workspace_ref_key
+    OR schedules.workspace_id IS DISTINCT FROM excluded.workspace_id
+    OR schedules.cron_pattern IS DISTINCT FROM excluded.cron_pattern
+    OR schedules.timezone IS DISTINCT FROM excluded.timezone
+    OR schedules.cron_semantics_version IS DISTINCT FROM excluded.cron_semantics_version;
+
+-- name: ArchiveOmittedSchedules :exec
+UPDATE schedules
+   SET deployment_definition_id = NULL,
+       deployment_id = NULL,
+       generation = generation + 1,
+       state = 'archived',
+       state_version = state_version + 1,
+       effective_from = sqlc.arg(effective_from),
+       next_fire_at = NULL,
+       claimed_by = NULL,
+       claim_expires_at = NULL,
+       retry_step = NULL,
+       retry_after = NULL,
+       last_error = NULL,
+       updated_at = now()
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND state <> 'archived'
+   AND NOT (task_declared_id = ANY(sqlc.arg(task_declared_ids)::text[]));
 
 -- name: GetSchedule :one
 SELECT *
@@ -69,11 +93,72 @@ SELECT *
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
 
--- name: LockEnvironmentForScheduleAdmission :one
-SELECT current_deployment_id
-  FROM environments
- WHERE id = sqlc.arg(environment_id)
- FOR SHARE;
+-- name: GetScheduleByPublicID :one
+SELECT sqlc.embed(schedules),
+       workspaces.public_id AS workspace_ref_public_id
+  FROM schedules
+  LEFT JOIN workspaces
+    ON workspaces.environment_id = schedules.environment_id
+   AND workspaces.id = schedules.workspace_ref_id
+ WHERE schedules.org_id = sqlc.arg(org_id)
+   AND schedules.project_id = sqlc.arg(project_id)
+   AND schedules.environment_id = sqlc.arg(environment_id)
+   AND schedules.public_id = sqlc.arg(public_id);
+
+-- name: ListSchedules :many
+SELECT sqlc.embed(schedules),
+       workspaces.public_id AS workspace_ref_public_id
+  FROM schedules
+  LEFT JOIN workspaces
+    ON workspaces.environment_id = schedules.environment_id
+   AND workspaces.id = schedules.workspace_ref_id
+ WHERE schedules.org_id = sqlc.arg(org_id)
+   AND schedules.project_id = sqlc.arg(project_id)
+   AND schedules.environment_id = sqlc.arg(environment_id)
+   AND (
+       sqlc.narg(task_declared_id)::text IS NULL
+       OR schedules.task_declared_id = sqlc.narg(task_declared_id)::text
+   )
+ ORDER BY schedules.task_declared_id, schedules.id;
+
+-- name: ListPendingScheduleBindings :many
+SELECT schedules.*,
+       workspaces.id AS resolved_workspace_id
+  FROM schedules
+  JOIN workspaces
+    ON workspaces.org_id = schedules.org_id
+   AND workspaces.project_id = schedules.project_id
+   AND workspaces.environment_id = schedules.environment_id
+   AND workspaces.key = schedules.workspace_ref_key
+   AND workspaces.state = 'active'
+   AND workspaces.deleted_at IS NULL
+ WHERE schedules.state = 'pending_workspace'
+ ORDER BY schedules.environment_id, schedules.workspace_ref_key, schedules.id
+ LIMIT sqlc.arg(limit_count)::integer;
+
+-- name: ActivatePendingSchedule :one
+UPDATE schedules
+   SET workspace_id = sqlc.arg(workspace_id),
+       generation = generation + 1,
+       state = 'active',
+       state_version = state_version + 1,
+       effective_from = sqlc.arg(effective_from),
+       next_fire_at = sqlc.arg(next_fire_at),
+       updated_at = now()
+ WHERE schedules.environment_id = sqlc.arg(environment_id)
+   AND schedules.id = sqlc.arg(id)
+   AND schedules.state = 'pending_workspace'
+   AND schedules.generation = sqlc.arg(expected_generation)
+   AND EXISTS (
+       SELECT 1
+         FROM workspaces
+        WHERE workspaces.environment_id = schedules.environment_id
+          AND workspaces.id = sqlc.arg(workspace_id)
+          AND workspaces.key = schedules.workspace_ref_key
+          AND workspaces.state = 'active'
+          AND workspaces.deleted_at IS NULL
+   )
+RETURNING *;
 
 -- name: ClaimDueSchedules :many
 WITH candidates AS (

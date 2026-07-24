@@ -1,4 +1,4 @@
-import { cache, image, logger, metadata, sandbox, source, streams, task, tokens } from "@helmr/sdk"
+import { cache, image, logger, metadata, sandbox, source, task, tokens } from "@helmr/sdk"
 import { createHash, randomUUID } from "node:crypto"
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { checkCommand as checkProcessCommand } from "../lib/process"
@@ -52,9 +52,6 @@ const approvalDecision = z.object({
   note: z.string().optional(),
 })
 
-const progressStream = streams.output("runtime-smoke.progress", { schema: z.unknown() })
-const reportStream = streams.output("runtime-smoke.report", { schema: z.unknown() })
-
 interface Check {
   readonly name: string
   readonly ok: boolean
@@ -102,12 +99,6 @@ export const runtimeSmoke = task({
       marker,
       checks: checks.map((check) => check.name),
     })
-    await progressStream.append({
-      marker,
-      scenario: input.scenario,
-      completedChecks: checks.length,
-    })
-
     let tokenResult: unknown = null
     if (input.exerciseToken) {
       checks.push(await collectCheck("human-token", async () => {
@@ -142,7 +133,6 @@ export const runtimeSmoke = task({
       checks,
     }
     await writeFile("runtime-smoke-report.json", `${JSON.stringify(report, null, 2)}\n`)
-    await reportStream.append(report, { contentType: "application/vnd.helmr.runtime-smoke+json" })
     if (failures.length > 0) {
       logger.error({ phase: "runtime-smoke", marker, failures })
       throw new Error(`runtime smoke failed ${failures.length} check(s): ${failures.map((check) => check.name).join(", ")}`)

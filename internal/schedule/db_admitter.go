@@ -23,7 +23,15 @@ type TxBeginner interface {
 
 type Authority interface {
 	ResolveRuntime(string) error
-	ValidateScheduledTask(int32, string, []byte, []byte, []byte) error
+	ResolveScheduledTask(int32, string, []byte, []byte, []byte) (TaskRun, error)
+}
+
+type TaskRun struct {
+	QueueName             string
+	QueueConcurrencyLimit *int64
+	QueuedTTLMS           *int64
+	MaxActiveDurationMS   int64
+	RetryPolicy           []byte
 }
 
 type DBAdmitter struct {
@@ -66,13 +74,6 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		return err
 	}
 
-	var currentDeploymentID pgtype.UUID
-	if candidate.Source == "imperative" {
-		currentDeploymentID, err = queries.LockEnvironmentForScheduleAdmission(ctx, candidate.EnvironmentID)
-		if err != nil {
-			return err
-		}
-	}
 	locked, err := queries.LockClaimedSchedule(ctx, db.LockClaimedScheduleParams{
 		EnvironmentID:       candidate.EnvironmentID,
 		ID:                  candidate.ID,
@@ -86,21 +87,16 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 	if err != nil {
 		return err
 	}
-	if locked.Source != candidate.Source {
-		return ErrClaimSuperseded
-	}
-
 	admission, err := BuildAdmissionAt(locked, a.now())
 	if err != nil {
 		return err
 	}
-	deploymentID, err := resolveDeployment(locked, currentDeploymentID)
-	if err != nil {
-		return err
+	if !locked.DeploymentID.Valid || !locked.DeploymentDefinitionID.Valid {
+		return taskAuthorityError("Schedule has no pinned Task authority")
 	}
 	task, err := queries.GetDeploymentDefinition(ctx, db.GetDeploymentDefinitionParams{
 		EnvironmentID: locked.EnvironmentID,
-		DeploymentID:  deploymentID,
+		DeploymentID:  locked.DeploymentID,
 		Kind:          "task",
 		DeclaredID:    locked.TaskDeclaredID,
 	})
@@ -110,14 +106,12 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 	if err != nil {
 		return err
 	}
-	if locked.Source == "declarative" &&
-		(!locked.DeclarativeDeploymentDefinitionID.Valid ||
-			task.ID != locked.DeclarativeDeploymentDefinitionID) {
-		return taskAuthorityError("declarative Schedule Task authority does not match its generation")
+	if task.ID != locked.DeploymentDefinitionID {
+		return taskAuthorityError("Schedule Task authority does not match its generation")
 	}
 	program, err := queries.GetDeploymentProgramAuthority(ctx, db.GetDeploymentProgramAuthorityParams{
 		EnvironmentID: locked.EnvironmentID,
-		DeploymentID:  deploymentID,
+		DeploymentID:  locked.DeploymentID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return taskAuthorityError("scheduled Task Program authority is unavailable")
@@ -125,13 +119,14 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 	if err != nil {
 		return err
 	}
-	if err := a.authority.ValidateScheduledTask(
+	taskRun, err := a.authority.ResolveScheduledTask(
 		task.ManifestVersion,
 		task.DeclaredID,
 		task.Manifest,
 		task.ManifestDigest,
 		program.QueueConfig,
-	); err != nil {
+	)
+	if err != nil {
 		return taskAuthorityError("scheduled Task manifest authority is invalid")
 	}
 
@@ -187,7 +182,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 			OrgID:                  locked.OrgID,
 			ProjectID:              locked.ProjectID,
 			EnvironmentID:          locked.EnvironmentID,
-			DeploymentID:           deploymentID,
+			DeploymentID:           locked.DeploymentID,
 			DeploymentDefinitionID: task.ID,
 			EntrypointDeclaredID:   locked.TaskDeclaredID,
 			CauseKind:              "schedule",
@@ -199,15 +194,14 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 			WorkspaceID:            locked.WorkspaceID,
 			BaseWorkspaceVersionID: workspace.HeadVersionID,
 			Payload:                admission.Payload,
-			Metadata:               locked.RunMetadata,
-			Tags:                   locked.RunTags,
-			QueueName:              locked.QueueName,
-			ConcurrencyKey:         locked.ConcurrencyKey,
-			QueueConcurrencyLimit:  locked.QueueConcurrencyLimit,
-			Priority:               locked.Priority,
-			QueuedTtlMs:            locked.QueuedTtlMs,
-			MaxActiveDurationMs:    locked.MaxActiveDurationMs,
-			RetryPolicy:            locked.RetryPolicy,
+			Metadata:               []byte(`{}`),
+			Tags:                   []string{},
+			QueueName:              taskRun.QueueName,
+			QueueConcurrencyLimit:  optionalInt8(taskRun.QueueConcurrencyLimit),
+			Priority:               0,
+			QueuedTtlMs:            optionalInt8(taskRun.QueuedTTLMS),
+			MaxActiveDurationMs:    taskRun.MaxActiveDurationMS,
+			RetryPolicy:            taskRun.RetryPolicy,
 			RootSpanID:             rootSpanID,
 		},
 		WorkspaceStateVersion: workspace.StateVersion,
@@ -236,29 +230,17 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 	return nil
 }
 
-func resolveDeployment(value db.Schedule, currentDeploymentID pgtype.UUID) (pgtype.UUID, error) {
-	if value.Source == "declarative" {
-		if !value.DeclarativeDeploymentID.Valid {
-			return pgtype.UUID{}, taskAuthorityError("declarative Schedule has no pinned Deployment")
-		}
-		return value.DeclarativeDeploymentID, nil
-	}
-	if value.Source != "imperative" {
-		return pgtype.UUID{}, &AdmissionError{
-			Code:    ErrorGenerationInvalid,
-			Message: fmt.Sprintf("unsupported Schedule source %q", value.Source),
-		}
-	}
-	if !currentDeploymentID.Valid {
-		return pgtype.UUID{}, taskAuthorityError("Environment has no promoted Deployment")
-	}
-	return currentDeploymentID, nil
-}
-
 func taskAuthorityError(message string) error {
 	return &AdmissionError{Code: ErrorTaskAuthorityInvalid, Message: message}
 }
 
 func workspaceError(message string) error {
 	return &AdmissionError{Code: ErrorWorkspaceUnavailable, Message: message}
+}
+
+func optionalInt8(value *int64) pgtype.Int8 {
+	if value == nil {
+		return pgtype.Int8{}
+	}
+	return pgtype.Int8{Int64: *value, Valid: true}
 }

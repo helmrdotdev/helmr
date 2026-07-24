@@ -4,10 +4,7 @@ import {
   cancelSession,
   closeSession,
   listSessionRuns,
-  listSessionStreamRecords,
-  listSessionStreams,
   listSessions,
-  type SessionStream,
 } from "./sessions";
 
 const originalFetch = globalThis.fetch;
@@ -50,30 +47,14 @@ test("scopes session close and cancel actions", async () => {
   ]);
 });
 
-test("reads session runs, streams, and stream records", async () => {
-  const requestedUrls: string[] = [];
+test("reads session runs", async () => {
+  let requestedUrl: string | undefined;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
-    requestedUrls.push(String(input));
-    if (String(input).endsWith("/runs")) return Response.json({ runs: [] });
-    if (String(input).endsWith("/streams")) return Response.json({ streams: [] });
-    return Response.json({ records: [] });
+    requestedUrl = String(input);
+    return Response.json({ runs: [] });
   }) as typeof fetch;
 
-  const stream: SessionStream = {
-    id: "stream-1",
-    session_id: "session-1",
-    name: "agent.report",
-    direction: "output",
-    next_sequence: 1,
-    created_at: "2026-06-18T00:00:00Z",
-  };
   await listSessionRuns("session/1", { projectID: "project-1", environmentID: "env-1" });
-  await listSessionStreams("session/1", { projectID: "project-1", environmentID: "env-1" });
-  await listSessionStreamRecords("session/1", { projectID: "project-1", environmentID: "env-1" }, stream, { limit: 25 });
 
-  expect(requestedUrls).toEqual([
-    "/api/projects/project-1/environments/env-1/sessions/session%2F1/runs",
-    "/api/projects/project-1/environments/env-1/sessions/session%2F1/streams",
-    "/api/projects/project-1/environments/env-1/sessions/session%2F1/outputs/agent.report?limit=25",
-  ]);
+  expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/sessions/session%2F1/runs");
 });

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -22,7 +21,6 @@ const (
 
 	DefinitionKindTask      = DefinitionKind("task")
 	DefinitionKindActor     = DefinitionKind("actor")
-	DefinitionKindRunStream = DefinitionKind("run_stream")
 	DefinitionKindWorkspace = DefinitionKind("workspace")
 
 	SchemaKindNone     = SchemaKind("none")
@@ -59,7 +57,6 @@ type DefinitionInput struct {
 	DeclaredID string         `json:"-"`
 	Task       *TaskManifest
 	Actor      *ActorManifest
-	RunStream  *RunStreamManifest
 	Workspace  *WorkspaceInputManifest
 }
 
@@ -72,10 +69,6 @@ type TaskManifest struct {
 type ActorManifest struct {
 	Run           RunManifest `json:"run"`
 	IdleTimeoutMs int64       `json:"idleTimeoutMs"`
-}
-
-type RunStreamManifest struct {
-	Schema SchemaManifest `json:"schema"`
 }
 
 type WorkspaceInputManifest struct {
@@ -331,15 +324,6 @@ func (input DefinitionInput) MarshalJSON() ([]byte, error) {
 			DeclaredID string         `json:"declaredId"`
 			Manifest   *ActorManifest `json:"manifest"`
 		}{input.Kind, input.DeclaredID, input.Actor})
-	case DefinitionKindRunStream:
-		if input.RunStream == nil {
-			return nil, errors.New("run_stream definition requires a run-stream manifest")
-		}
-		return json.Marshal(struct {
-			Kind       DefinitionKind     `json:"kind"`
-			DeclaredID string             `json:"declaredId"`
-			Manifest   *RunStreamManifest `json:"manifest"`
-		}{input.Kind, input.DeclaredID, input.RunStream})
 	case DefinitionKindWorkspace:
 		if input.Workspace == nil {
 			return nil, errors.New("workspace definition requires a workspace manifest")
@@ -386,17 +370,6 @@ func (input *DefinitionInput) UnmarshalJSON(raw []byte) error {
 		}
 		input.DeclaredID = wire.DeclaredID
 		input.Actor = wire.Manifest
-	case DefinitionKindRunStream:
-		var wire struct {
-			Kind       DefinitionKind     `json:"kind"`
-			DeclaredID string             `json:"declaredId"`
-			Manifest   *RunStreamManifest `json:"manifest"`
-		}
-		if err := decodeClosedDefinition(raw, &wire); err != nil {
-			return err
-		}
-		input.DeclaredID = wire.DeclaredID
-		input.RunStream = wire.Manifest
 	case DefinitionKindWorkspace:
 		var wire struct {
 			Kind       DefinitionKind          `json:"kind"`
@@ -428,7 +401,6 @@ func (input DefinitionInput) manifestCount() int {
 	for _, present := range []bool{
 		input.Task != nil,
 		input.Actor != nil,
-		input.RunStream != nil,
 		input.Workspace != nil,
 	} {
 		if present {
@@ -473,13 +445,6 @@ func validateDefinitionInput(input DefinitionInput, queues map[string]struct{}) 
 		}
 		if input.Actor.IdleTimeoutMs < 1 || input.Actor.IdleTimeoutMs > maxActorIdleMs {
 			return fmt.Errorf("actor idleTimeoutMs must be in [1,%d]", maxActorIdleMs)
-		}
-	case DefinitionKindRunStream:
-		if input.RunStream == nil {
-			return errors.New("run_stream definition requires a run-stream manifest")
-		}
-		if input.RunStream.Schema.Kind != SchemaKindStandard {
-			return fmt.Errorf("run_stream schema kind %q is unsupported", input.RunStream.Schema.Kind)
 		}
 	case DefinitionKindWorkspace:
 		if input.Workspace == nil {
@@ -589,19 +554,16 @@ func ParseRetryManifest(raw []byte) (RetryManifest, error) {
 }
 
 func validateScheduleManifest(manifest ScheduleManifest) error {
-	if manifest.Cron == "" || strings.TrimSpace(manifest.Cron) != manifest.Cron {
-		return errors.New("cron must be a normalized non-empty expression")
+	if len(manifest.Cron) == 0 || len(manifest.Cron) > 1024 {
+		return errors.New("cron must be 1-1024 bytes")
 	}
-	if manifest.Timezone == "" ||
-		api.NormalizeTimezone(manifest.Timezone) != manifest.Timezone ||
-		manifest.Timezone == "Local" {
-		return errors.New("timezone must be a normalized IANA timezone")
+	if len(manifest.Timezone) == 0 || len(manifest.Timezone) > 255 {
+		return errors.New("timezone must be 1-255 bytes")
 	}
-	if _, err := schedule.NextCronTime(
-		manifest.Cron,
-		manifest.Timezone,
-		time.Unix(0, 0).UTC(),
-	); err != nil {
+	if err := schedule.ValidateCron(manifest.Cron); err != nil {
+		return err
+	}
+	if err := schedule.ValidateTimezone(manifest.Timezone); err != nil {
 		return err
 	}
 	return validateWorkspaceTarget(manifest.Workspace)
@@ -701,11 +663,9 @@ func definitionKindOrder(kind DefinitionKind) int {
 		return 0
 	case DefinitionKindActor:
 		return 1
-	case DefinitionKindRunStream:
-		return 2
 	case DefinitionKindWorkspace:
-		return 3
+		return 2
 	default:
-		return 4
+		return 3
 	}
 }

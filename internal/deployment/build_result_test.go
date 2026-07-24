@@ -236,7 +236,7 @@ func TestValidateBuildSucceeded(t *testing.T) {
 
 func TestValidateWorkspaceOnlyBuildResult(t *testing.T) {
 	result := testSucceededBuildResult(t)
-	result.Succeeded.Plan.Definitions = result.Succeeded.Plan.Definitions[3:]
+	result.Succeeded.Plan.Definitions = result.Succeeded.Plan.Definitions[2:]
 	result.Succeeded.Plan.Queues = []QueueInput{}
 	result.Succeeded.Program = nil
 	if err := ValidateBuildResultContract(result); err != nil {
@@ -300,7 +300,7 @@ func TestValidateBuildResultTarget(t *testing.T) {
 	}
 
 	workspaceOnly := testSucceededBuildResult(t)
-	workspaceOnly.Succeeded.Plan.Definitions = workspaceOnly.Succeeded.Plan.Definitions[3:]
+	workspaceOnly.Succeeded.Plan.Definitions = workspaceOnly.Succeeded.Plan.Definitions[2:]
 	workspaceOnly.Succeeded.Plan.Queues = []QueueInput{}
 	workspaceOnly.Succeeded.Program = nil
 	workspaceOnly.Succeeded.Provenance.Architecture = ArchitectureAArch64

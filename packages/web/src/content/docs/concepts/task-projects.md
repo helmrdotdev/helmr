@@ -23,7 +23,9 @@ export default defineConfig({
 
 `dirs` is required and must contain at least one directory inside the project root. Helmr discovers `.ts`, `.mts`, `.cts`, `.js`, `.mjs`, and `.cjs` files in those directories and indexes exported `task(...)` definitions.
 
-Task modules may also define deployment-level stream catalog entries with the module-level `streams.input(...)` and `streams.output(...)` primitives. Optional stream schemas validate runtime reads and writes; the catalog entry itself is the stream name and direction. `task(...)` is only the execution definition; do not redeclare streams inside task config.
+Task projects may export Tasks, Actors, Workspaces, and source-declared
+Schedules. Named Run or Session stream declarations are not part of v0;
+durable interactive I/O belongs to an Actor's fixed input/output channels.
 
 ## Deployment
 

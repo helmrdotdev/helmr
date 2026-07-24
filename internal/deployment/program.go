@@ -33,10 +33,8 @@ const (
 	ArchitectureX8664                     = RuntimeArchitecture("x86_64")
 	DeclarationKindTask                   = DeclarationKind("task")
 	DeclarationKindActor                  = DeclarationKind("actor")
-	DeclarationKindRunStream              = DeclarationKind("run_stream")
 	DeclarationSlotHandler                = DeclarationSlot("handler")
 	DeclarationSlotPayloadSchema          = DeclarationSlot("payloadSchema")
-	DeclarationSlotSchema                 = DeclarationSlot("schema")
 )
 
 var declaredIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
@@ -626,10 +624,6 @@ func validateDeclaration(declaration ProgramDeclaration) error {
 		if !slices.Equal(declaration.Slots, []DeclarationSlot{DeclarationSlotHandler}) {
 			return fmt.Errorf("actor slots must be [handler]")
 		}
-	case DeclarationKindRunStream:
-		if !slices.Equal(declaration.Slots, []DeclarationSlot{DeclarationSlotSchema}) {
-			return fmt.Errorf("run_stream slots must be [schema]")
-		}
 	default:
 		return fmt.Errorf("unknown kind %q", declaration.Kind)
 	}
@@ -654,10 +648,8 @@ func declarationKindOrder(kind DeclarationKind) int {
 		return 0
 	case DeclarationKindActor:
 		return 1
-	case DeclarationKindRunStream:
-		return 2
 	default:
-		return 3
+		return 2
 	}
 }
 

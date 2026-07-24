@@ -2337,6 +2337,81 @@ func (q *Queries) LockDeploymentBuildWorkerCertification(ctx context.Context, ar
 	return i, err
 }
 
+const lockDeploymentPromotionTarget = `-- name: LockDeploymentPromotionTarget :one
+SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_architecture, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_runtime_digest, deployments.program_architecture, deployments.program_receipt, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.build_requested_cpu_millis, deployments.build_requested_memory_bytes, deployments.build_requested_workload_disk_bytes, deployments.build_requested_scratch_bytes, deployments.build_requested_executors, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+  FROM environments
+  JOIN deployments
+    ON deployments.org_id = environments.org_id
+   AND deployments.project_id = environments.project_id
+   AND deployments.environment_id = environments.id
+ WHERE environments.org_id = $1
+   AND environments.project_id = $2
+   AND environments.id = $3
+   AND deployments.id = $4
+   AND deployments.status = 'deployed'
+ FOR UPDATE OF environments
+`
+
+type LockDeploymentPromotionTargetParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	DeploymentID  pgtype.UUID `json:"deployment_id"`
+}
+
+func (q *Queries) LockDeploymentPromotionTarget(ctx context.Context, arg LockDeploymentPromotionTargetParams) (Deployment, error) {
+	row := q.db.QueryRow(ctx, lockDeploymentPromotionTarget,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.DeploymentID,
+	)
+	var i Deployment
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.BuildRegionID,
+		&i.BuildArchitecture,
+		&i.BuildRuntimeDigest,
+		&i.BuildStandardToolchainDigest,
+		&i.BuildManagerName,
+		&i.BuildManagerVersion,
+		&i.BuildManagerDigest,
+		&i.BuildContractVersion,
+		&i.Version,
+		&i.ContentHash,
+		&i.ApiVersion,
+		&i.SdkVersion,
+		&i.CliVersion,
+		&i.WorkerProtocolVersion,
+		&i.DeploymentSourceArtifactID,
+		&i.ProgramArtifactID,
+		&i.ProgramArtifactKind,
+		&i.ProgramRuntimeDigest,
+		&i.ProgramArchitecture,
+		&i.ProgramReceipt,
+		&i.QueueConfig,
+		&i.Status,
+		&i.Failure,
+		&i.CurrentBuildLeaseID,
+		&i.BuildRequestedCpuMillis,
+		&i.BuildRequestedMemoryBytes,
+		&i.BuildRequestedWorkloadDiskBytes,
+		&i.BuildRequestedScratchBytes,
+		&i.BuildRequestedExecutors,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.BuildingAt,
+		&i.BuiltAt,
+		&i.DeployedAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
 const markDeploymentFailed = `-- name: MarkDeploymentFailed :one
 UPDATE deployments
    SET status = 'failed',

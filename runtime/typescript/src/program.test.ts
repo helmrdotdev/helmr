@@ -1118,12 +1118,6 @@ function programIO(options: {
       JSON.stringify({
         declarations: [
           {
-            declaredId: "events",
-            exportName: "events",
-            kind: "run_stream",
-            modulePath: "streams/events.ts",
-          },
-          {
             declaredId: "deploy",
             exportName: "definition",
             kind: "task",

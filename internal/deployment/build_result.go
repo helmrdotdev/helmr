@@ -487,12 +487,6 @@ func buildPlanProgramDeclarations(plan BuildPlan) []ProgramDeclaration {
 				DeclaredID: definition.DeclaredID,
 				Slots:      []DeclarationSlot{DeclarationSlotHandler},
 			})
-		case DefinitionKindRunStream:
-			declarations = append(declarations, ProgramDeclaration{
-				Kind:       DeclarationKindRunStream,
-				DeclaredID: definition.DeclaredID,
-				Slots:      []DeclarationSlot{DeclarationSlotSchema},
-			})
 		}
 	}
 	return declarations

@@ -593,25 +593,6 @@ func (c *Client) RecordLogEntry(ctx context.Context, lease api.WorkerRunLease, e
 	return response, nil
 }
 
-func (c *Client) AppendOutputStream(ctx context.Context, request api.WorkerOutputStreamAppendRequest) (api.AppendStreamRecordResponse, error) {
-	var response api.AppendStreamRecordResponse
-	if len(request.Data) == 0 {
-		request.Data = json.RawMessage(`null`)
-	}
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/streams/output", request, &response); err != nil {
-		return api.AppendStreamRecordResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) ReadInputStream(ctx context.Context, request api.WorkerActiveStreamReadRequest) (api.WorkerActiveStreamReadResponse, error) {
-	var response api.WorkerActiveStreamReadResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/streams/input/read", request, &response); err != nil {
-		return api.WorkerActiveStreamReadResponse{}, err
-	}
-	return response, nil
-}
-
 func (c *Client) UpdateRunMetadata(ctx context.Context, request api.WorkerUpdateRunMetadataRequest) (api.WorkerEventResponse, error) {
 	var response api.WorkerEventResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/leases/metadata", request, &response); err != nil {

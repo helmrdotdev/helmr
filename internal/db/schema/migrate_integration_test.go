@@ -504,7 +504,6 @@ func assertIdempotencyClaimCollectionIndexes(t *testing.T, ctx context.Context, 
 		"idempotency_claims_retired_idx",
 		"runs_claim_idx",
 		"actor_records_claim_idx",
-		"run_stream_records_claim_lookup_idx",
 		"run_waits_child_claim_idx",
 	}
 	var count int
@@ -777,8 +776,6 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		"run_checkpoints",
 		"run_checkpoint_artifacts",
 		"tokens",
-		"run_streams",
-		"run_stream_records",
 		"schedules",
 		"outbox_messages",
 	}
@@ -827,12 +824,11 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		"workspaces_deployment_definition_idx",
 		"actors_deployment_definition_idx",
 		"runs_deployment_definition_idx",
-		"run_streams_deployment_definition_idx",
 	}).Scan(&exactPinIndexes); err != nil {
 		t.Fatal(err)
 	}
-	if exactPinIndexes != 4 {
-		t.Fatalf("exact deployed-declaration pin indexes = %d, want 4", exactPinIndexes)
+	if exactPinIndexes != 3 {
+		t.Fatalf("exact deployed-declaration pin indexes = %d, want 3", exactPinIndexes)
 	}
 	var actorExpiryIndex bool
 	if err := pool.QueryRow(ctx, `
@@ -1002,11 +998,12 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		INSERT INTO deployments (
 		    id, public_id, org_id, project_id, environment_id, build_region_id,
 		    build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+		    build_manager_name, build_manager_version, build_manager_digest,
 		    build_contract_version, version, content_hash, deployment_source_artifact_id
 		) VALUES
-		('00000000-0000-0000-0000-000000005001', 'dep_' || repeat('e', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'definition-region', 'x86_64', decode(repeat('01', 32), 'hex'), decode(repeat('11', 32), 'hex'), 'helmr.program-build.v0', 'definition-one', 'sha256:' || repeat('1', 64), '00000000-0000-0000-0000-000000004001'),
-		('00000000-0000-0000-0000-000000005002', 'dep_' || repeat('f', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'definition-region', 'x86_64', decode(repeat('01', 32), 'hex'), decode(repeat('11', 32), 'hex'), 'helmr.program-build.v0', 'definition-two', 'sha256:' || repeat('2', 64), '00000000-0000-0000-0000-000000004002'),
-		('00000000-0000-0000-0000-000000005003', 'dep_' || repeat('a', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'definition-region', 'x86_64', decode(repeat('02', 32), 'hex'), decode(repeat('11', 32), 'hex'), 'helmr.program-build.v0', 'definition-one-runtime-two', 'sha256:' || repeat('1', 64), '00000000-0000-0000-0000-000000004001');
+		('00000000-0000-0000-0000-000000005001', 'dep_' || repeat('e', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'definition-region', 'x86_64', decode(repeat('01', 32), 'hex'), decode(repeat('11', 32), 'hex'), 'bun', '1.2.3', decode(repeat('22', 32), 'hex'), 'helmr.program-build.v0', 'definition-one', 'sha256:' || repeat('1', 64), '00000000-0000-0000-0000-000000004001'),
+		('00000000-0000-0000-0000-000000005002', 'dep_' || repeat('f', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'definition-region', 'x86_64', decode(repeat('01', 32), 'hex'), decode(repeat('11', 32), 'hex'), 'bun', '1.2.3', decode(repeat('22', 32), 'hex'), 'helmr.program-build.v0', 'definition-two', 'sha256:' || repeat('2', 64), '00000000-0000-0000-0000-000000004002'),
+		('00000000-0000-0000-0000-000000005003', 'dep_' || repeat('a', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'definition-region', 'x86_64', decode(repeat('02', 32), 'hex'), decode(repeat('11', 32), 'hex'), 'bun', '1.2.3', decode(repeat('22', 32), 'hex'), 'helmr.program-build.v0', 'definition-one-runtime-two', 'sha256:' || repeat('1', 64), '00000000-0000-0000-0000-000000004001');
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -1022,6 +1019,7 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		INSERT INTO deployments (
 		    id, public_id, org_id, project_id, environment_id, build_region_id,
 		    build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+		    build_manager_name, build_manager_version, build_manager_digest,
 		    build_contract_version, version, content_hash,
 		    api_version, sdk_version, cli_version, deployment_source_artifact_id
 		) VALUES (
@@ -1034,6 +1032,9 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		    'x86_64',
 		    decode(repeat('03', 32), 'hex'),
 		    decode(repeat('13', 32), 'hex'),
+		    'bun',
+		    '1.2.3',
+		    decode(repeat('22', 32), 'hex'),
 		    'helmr.program-build.v0',
 		    'max-width-reuse-key',
 		    'sha256:' || repeat('3', 64),
@@ -1216,8 +1217,7 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO deployment_definitions (id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest) VALUES
 		('00000000-0000-0000-0000-000000006001', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'constructor', 0, '{}'::jsonb, decode(repeat('02', 32), 'hex')),
-		('00000000-0000-0000-0000-000000006002', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'actor', 'constructor', 0, '{}'::jsonb, decode(repeat('03', 32), 'hex')),
-		('00000000-0000-0000-0000-000000006003', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'run_stream', 'Build-', 0, '{}'::jsonb, decode(repeat('04', 32), 'hex'));
+		('00000000-0000-0000-0000-000000006002', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'actor', 'constructor', 0, '{}'::jsonb, decode(repeat('03', 32), 'hex'));
 		INSERT INTO deployment_definitions (id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest, workspace_architecture, artifact_id)
 		VALUES ('00000000-0000-0000-0000-000000006004', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'workspace', 'Repository.Workspace', 0, '{}'::jsonb, decode(repeat('05', 32), 'hex'), 'x86_64', '00000000-0000-0000-0000-000000004004');
 	`); err != nil {
@@ -1324,7 +1324,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if !exactFit || overShape {
 		t.Fatalf("fixed build guest exact/over shape fence = %t/%t", exactFit, overShape)
 	}
-	logicalTables := []string{"idempotency_claims", "schedules", "workspaces", "actors", "actor_records", "runs", "run_attempts", "run_streams", "run_stream_records", "run_waits", "run_checkpoints", "run_checkpoint_artifacts", "meter_events", "telemetry_outbox"}
+	logicalTables := []string{"idempotency_claims", "schedules", "workspaces", "actors", "actor_records", "runs", "run_attempts", "run_waits", "run_checkpoints", "run_checkpoint_artifacts", "meter_events", "telemetry_outbox"}
 	var placementLeaks int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM information_schema.columns

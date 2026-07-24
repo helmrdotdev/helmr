@@ -78,11 +78,6 @@ WITH candidates AS (
        )
        AND NOT EXISTS (
            SELECT 1
-             FROM run_stream_records
-            WHERE run_stream_records.claim_id = idempotency_claims.id
-       )
-       AND NOT EXISTS (
-           SELECT 1
              FROM run_waits
             WHERE run_waits.child_claim_id = idempotency_claims.id
        )

@@ -3,7 +3,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import { pixelsFromRows } from "../lib/pixels";
 import { breadcrumbJsonLd, softwareJsonLd } from "../lib/seo";
 
-const runtimeCode = `import { cache, image, sandbox, source, streams, task } from "@helmr/sdk"
+const runtimeCode = `import { cache, image, sandbox, source, task, tokens } from "@helmr/sdk"
 import { Codex } from "@openai/codex-sdk"
 import { z } from "zod"
 
@@ -29,19 +29,16 @@ export const reviewPr = task({
     const thread = codex.startThread({ workingDirectory: process.cwd() })
     const turn = await thread.run("Review this PR and propose a patch.")
 
-    const approval = streams.input("approval", {
-      schema: z.object({ approved: z.boolean() })
-    })
+    const approval = await tokens.create({ timeout: "30m" })
     await sendSlackApproval({
-      sessionId: ctx.session.id,
-      stream: approval.id
+      callbackUrl: approval.callbackUrl
     })
     // The microVM freezes here — filesystem, memory, process.
     const decision = await approval.wait({
+      schema: z.object({ approved: z.boolean() }),
       timeout: "30m",
       tags: ["approval", "github-review"],
-      metadata: { subject: "Post this review to GitHub?" },
-      correlationId: \`pr:\${event.prNumber}\`
+      metadata: { subject: "Post this review to GitHub?" }
     }).unwrap()
     if (decision.approved) await postReview(event.prNumber, turn.finalResponse)
   }
@@ -225,17 +222,16 @@ const codeTags = codeRegions.map((region) => ({
 
 const features = [
   {
-    label: "session input",
+    label: "approval token",
     icon: "pause",
     tone: "yellow",
     title: "Pause for human input",
     caption:
-      "The microVM freezes whole while it waits. A webhook, UI, or operator appends human input and resumes it mid-instruction.",
-    code: `const approval = streams.input("approval", {
-  schema: z.object({ approved: z.boolean() })
-})
+      "The microVM freezes whole while it waits. A narrowly scoped callback completes one durable approval value.",
+    code: `const approval = await tokens.create({ timeout: "30m" })
 
 const decision = await approval.wait({
+  schema: z.object({ approved: z.boolean() }),
   timeout: "30m",
   tags: ["approval", "github-review"]
 }).unwrap()`,

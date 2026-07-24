@@ -965,6 +965,20 @@ promotion AS (
 )
 SELECT * FROM promotion;
 
+-- name: LockDeploymentPromotionTarget :one
+SELECT deployments.*
+  FROM environments
+  JOIN deployments
+    ON deployments.org_id = environments.org_id
+   AND deployments.project_id = environments.project_id
+   AND deployments.environment_id = environments.id
+ WHERE environments.org_id = sqlc.arg(org_id)
+   AND environments.project_id = sqlc.arg(project_id)
+   AND environments.id = sqlc.arg(environment_id)
+   AND deployments.id = sqlc.arg(deployment_id)
+   AND deployments.status = 'deployed'
+ FOR UPDATE OF environments;
+
 -- name: GetDeployment :one
 SELECT *
   FROM deployments

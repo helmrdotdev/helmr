@@ -18,7 +18,7 @@ export const GET: APIRoute = async ({ site }) => {
 
   const body = `# Helmr
 
-> Build your own coding agent runtime. Helmr runs TypeScript tasks in writable workspaces inside isolated Firecracker-backed Linux guests, with declared secrets, logs, session streams, run history, and durable waits before side effects.
+> Build your own coding agent runtime. Helmr runs TypeScript Tasks and Actors in writable Workspaces inside isolated Firecracker-backed Linux guests, with declared Secrets, logs, durable Actor input/output, Run history, and waits before side effects.
 
 Official site: ${absoluteUrl("/", base)}
 Documentation: ${absoluteUrl("/docs", base)}

@@ -21,9 +21,6 @@ const (
 	PermissionActorsUpdate             Permission = "actors.update"
 	PermissionActorsInputSend          Permission = "actors.input.send"
 	PermissionActorsLifecycleManage    Permission = "actors.lifecycle.manage"
-	PermissionSessionStreamsRead       Permission = "session.streams.read"
-	PermissionSessionInputSend         Permission = "session.input.send"
-	PermissionSessionOutputAppend      Permission = "session.output.append"
 	PermissionTokensCreate             Permission = "tokens.create"
 	PermissionTokensRead               Permission = "tokens.read"
 	PermissionTokensComplete           Permission = "tokens.complete"
@@ -83,9 +80,6 @@ func RoleAllows(role Role, permission Permission) bool {
 			PermissionActorsUpdate,
 			PermissionActorsInputSend,
 			PermissionActorsLifecycleManage,
-			PermissionSessionStreamsRead,
-			PermissionSessionInputSend,
-			PermissionSessionOutputAppend,
 			PermissionTokensCreate,
 			PermissionTokensRead,
 			PermissionTokensComplete,
@@ -112,7 +106,6 @@ func RoleAllows(role Role, permission Permission) bool {
 		switch permission {
 		case PermissionRunsRead,
 			PermissionActorsRead,
-			PermissionSessionStreamsRead,
 			PermissionTokensRead,
 			PermissionFilesRead,
 			PermissionVersionsRead,

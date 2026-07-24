@@ -40,7 +40,7 @@ Helmr manages:
 - Runtime filesystems such as `/proc`, `/dev`, `/dev/pts`, `/dev/shm`, `/tmp`,
   and `/run`.
 - Basic network readiness, DNS resolver files, and hostname setup.
-- Logs, events, session streams, metadata updates, waits, timers, and run status.
+- Logs, events, Actor input/output, metadata updates, waits, timers, and Run status.
 - Checkpoint compatibility checks.
 
 These details are product-managed. Task code should rely on the resulting Linux

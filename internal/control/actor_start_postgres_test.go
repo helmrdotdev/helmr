@@ -624,7 +624,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		`{"formatVersion":0,"queues":[{"concurrencyLimit":2,"name":"default"},{"name":"priority"}]}`,
 	)
 	programReceipt := dbtest.ProgramReceipt(dbtest.ProgramReceiptAuthority{
-		Architecture:            "aarch64",
+		Architecture:            "x86_64",
 		ProgramArtifactID:       programID,
 		ProgramDigest:           digests[1],
 		ProgramSizeBytes:        1,
@@ -651,14 +651,16 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		INSERT INTO deployments (
 		    id, public_id, org_id, project_id, environment_id, build_region_id,
 		    build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+		    build_manager_name, build_manager_version, build_manager_digest,
 		    build_contract_version, version, content_hash, deployment_source_artifact_id,
 		    program_artifact_id, program_runtime_digest, program_architecture,
 		    program_receipt, queue_config, status
 		) VALUES (
-		    $1, $2, $3, $4, $5, 'us-east-1', 'aarch64',
+		    $1, $2, $3, $4, $5, 'us-east-1', 'x86_64',
 		    decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
+		    'bun', '1.2.3', decode(repeat('22', 32), 'hex'),
 		    'helmr.program-build.v0', 'actor-start-test', $6, $7, $8,
-		    decode(repeat('01', 32), 'hex'), 'aarch64', $9::jsonb, $10::jsonb, 'deployed'
+		    decode(repeat('01', 32), 'hex'), 'x86_64', $9::jsonb, $10::jsonb, 'deployed'
 		)
 	`, deploymentID, actorStartPublicID(t, publicid.Deployment), fixture.orgID, fixture.projectID,
 		fixture.environmentID, digests[0], sourceID, programID, programReceipt, queueConfig)
@@ -668,7 +670,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		    manifest_version, manifest, manifest_digest, workspace_architecture, artifact_id
 		) VALUES
 		    ($1, $3, $4, 'actor', 'operator.v1', 0, $6::jsonb, $7, NULL, NULL),
-		    ($2, $3, $4, 'workspace', 'workspace.v1', 0, '{}'::jsonb, decode(repeat('04', 32), 'hex'), 'aarch64', $5)
+		    ($2, $3, $4, 'workspace', 'workspace.v1', 0, '{}'::jsonb, decode(repeat('04', 32), 'hex'), 'x86_64', $5)
 	`, actorDefinitionID, workspaceDefinitionID, fixture.environmentID, deploymentID, imageID,
 		actorManifest, actorManifestDigest[:])
 	mustActorStartExec(t, pool, `

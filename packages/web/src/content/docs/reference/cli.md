@@ -24,8 +24,6 @@ The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint wit
 | `helmr session get --external-id EXTERNAL_ID [-p PROJECT] [-e ENV]` | Show session details by external id. |
 | `helmr session close SESSION [-p PROJECT] [-e ENV] [--reason TEXT] [--json]` | Close a session normally. |
 | `helmr session cancel SESSION [-p PROJECT] [-e ENV] [--reason TEXT] [--json]` | Cancel a session. |
-| `helmr session stream input send SESSION STREAM [-p PROJECT] [-e ENV] --data-json JSON` | Append a session input record. |
-| `helmr session stream output list SESSION STREAM [-p PROJECT] [-e ENV]` | List retained session stream output. |
 | `helmr run list [-p PROJECT] [-e ENV] [--session SESSION] [--json]` | List run attempts. |
 | `helmr run get RUN [-p PROJECT] [-e ENV] [--json]` | Show run details. |
 | `helmr run logs RUN [-p PROJECT] [-e ENV] [--follow]` | Print latest stdout/stderr snapshots and optionally stream new log chunks. |
@@ -84,5 +82,3 @@ With saved login auth, environment-scoped commands require both `--project` and 
 `helmr run logs --follow` prints the current log snapshot, then follows the dedicated run log stream. It reconnects with the last log cursor and exits after the run reaches a terminal state.
 
 `helmr workspace exec` uses `--` before the remote command. Foreground exec streams stdout/stderr and exits with the remote process exit code. `--detach` returns the exec handle without waiting.
-
-`helmr session stream input send SESSION STREAM --data-json JSON` appends a record to a named session input stream. `helmr session stream output list SESSION STREAM` reads retained output records.

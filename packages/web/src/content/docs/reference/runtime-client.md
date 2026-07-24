@@ -19,7 +19,9 @@ const client = new HelmrClient({
 })
 ```
 
-Authenticated SDK calls require an API key. Scoped public access tokens can be used as raw HTTP bearer tokens for the single session stream or token action they grant. `http://` is allowed only for loopback hosts.
+Authenticated SDK calls require an API key. Scoped public access tokens are
+limited to one Token completion authority. `http://` is allowed only for
+loopback hosts.
 
 The SDK sends a pinned `Helmr-API-Version` header and `Helmr-SDK-Version` on every request. The pinned API version is the contract the SDK was built and tested against; it does not change with the current date.
 
@@ -30,10 +32,9 @@ Main surfaces:
 | `sessions.start(taskObject, payload, opts)` / `client.sessions.start(taskObject, payload, opts)` | Start or reuse a session and return the session plus first/current run handle. Pass a task object for local payload validation and type inference; pass a string id for external boundaries or dynamic task ids. |
 | `sessions.startAndWait(taskObject, payload, opts)` / `client.sessions.startAndWait(taskObject, payload, opts)` | Start or reuse a session, then wait for the first run to become terminal or time out. The session remains open unless explicitly closed or cancelled. Pass a task object for local payload validation and type inference; pass a string id for external boundaries or dynamic task ids. |
 | `sessions.retrieve(session)` / `client.sessions.retrieve(session)` | Fetch current session state. |
-| `sessions.open(session).input(stream).send(data)` / `client.sessions.open(session).input(stream).send(data)` | Append durable input to a session stream. |
-| `sessions.open(session).output(stream).list(opts)` / `client.sessions.open(session).output(stream).list(opts)` | Read durable session output records from a cursor. |
-| `sessions.open(session).output(stream).read(opts)` / `client.sessions.open(session).output(stream).read(opts)` | Read one durable session output record from a cursor. |
-| `auth.createPublicToken(opts)` / `client.auth.createPublicToken(opts)` | Create a scoped opaque bearer token for one session input append or output read grant. |
+| `actor.ref({ id | key }).input.send(value)` | Append one durable value to an Actor's fixed input channel. |
+| `actor.ref({ id | key }).output.list(opts)` | Read durable Actor output records from a cursor. |
+| `actor.ref({ id | key }).output.read(opts)` | Iterate durable Actor output records from a cursor. |
 | `workspaces.create(opts)` / `client.workspaces.create(opts)` | Create a durable workspace from a deployed sandbox. |
 | `workspaces.open(id)` / `client.workspaces.open(id)` | Create a lazy handle for a workspace. |
 | `workspaces.retrieve(idOrHandle, opts)` / `client.workspaces.retrieve(idOrHandle, opts)` | Fetch current workspace state. |
@@ -63,19 +64,17 @@ Main surfaces:
 | `tokens.list(opts)` / `client.tokens.list(opts)` | List tokens. |
 | `tokens.complete(token, data, opts)` / `client.tokens.complete(token, data, opts)` | Complete a token with JSON data and return `{ status, token }`. Same canonical duplicate data returns `already_completed`; different data returns `token_completion_conflict`. |
 | `tokens.cancel(token, opts)` / `client.tokens.cancel(token, opts)` | Cancel a pending token. |
-| `schedules.create(opts)` / `client.schedules.create(opts)` | Create an imperative cron schedule for a deployed task. |
 | `schedules.list(opts)` / `client.schedules.list(opts)` | List schedules in a project environment. |
 | `schedules.retrieve(idOrSchedule, opts)` / `client.schedules.retrieve(idOrSchedule, opts)` | Fetch one schedule. |
-| `schedules.update(idOrSchedule, opts)` / `client.schedules.update(idOrSchedule, opts)` | Update an imperative schedule. |
-| `schedules.activate(idOrSchedule, opts)` / `client.schedules.activate(idOrSchedule, opts)` | Activate an imperative schedule. |
-| `schedules.deactivate(idOrSchedule, opts)` / `client.schedules.deactivate(idOrSchedule, opts)` | Deactivate an imperative schedule. |
-| `schedules.delete(idOrSchedule, opts)` / `client.schedules.delete(idOrSchedule, opts)` | Delete an imperative schedule. |
 
 The top-level `sessions`, `runs`, `workspaces`, `tokens`, `schedules`, and `auth` facades mirror the client namespaces and use the default client from `HELMR_API_URL` and `HELMR_API_KEY`. Use `new HelmrClient(...)` when the caller needs explicit credentials or multiple control-plane targets. Imported task definitions are typed targets for the sessions namespace; they do not expose direct `.start()` or `.startAndWait()` helpers.
 
 Session handles are explicit. `sessions.open("session-id")` treats the string as a session id only. Use `sessions.open({ externalId })` or `sessions.retrieve({ externalId })` when the caller knows the environment-scoped external conversation id; the SDK sends that external id as a server-resolved session address. Session starts use the same `externalId` as the retry-safe resource identity; they do not expose a separate start-request idempotency key.
 
-Session start `payload` is persisted as audit data in the control plane. Put secret values in declared `secrets`, not in payload. Follow-up user messages, webhooks, or operator replies belong in session input streams, not in session start payload.
+Session start `payload` is persisted as audit data in the control plane. Put
+secret values in declared `secrets`, not in payload. Stable interactive
+workflows use Actor input/output; direct Task Run payload is not a follow-up
+message channel.
 
 Session starts create or reuse a session and attach a workspace. When no
 workspace is supplied, Helmr creates one from the deployed task's sandbox.
@@ -90,36 +89,10 @@ same workspace. Passing `versionId` without `source: "version"` is rejected.
 are available. `files.list()` accepts `limit` up to 500 with a default of 200.
 `versions.list()` accepts `limit` up to 200 with a default of 100.
 
-Session streams are named lanes on a session. Input streams accept
-follow-up records. Output streams expose task-published records through list
-and read APIs.
-
-Create public access tokens with explicit resource bindings. A session input grant can append only to the bound session stream; a session output grant can read only from the bound session stream. Use separate tokens for read and write grants.
-
-```ts
-import { auth, streams } from "@helmr/sdk"
-
-const reportStream = streams.output("agent.report", {
-  schema: {
-    "~standard": {
-      version: 1,
-      vendor: "report",
-      validate: (value: unknown) => ({ value }),
-    },
-  },
-})
-const outputToken = await auth.createPublicToken({
-  scope: {
-    type: "session.output.read",
-    session: { externalId: "slack:T123:C456" },
-    stream: reportStream,
-    correlationId: "thread-1",
-  },
-  maxUses: 100,
-})
-```
-
-API keys use the environment bound to the key. Session-addressed public token requests from user/session auth should pass `projectId` and `environmentId` when the session address is an external id.
+Each Actor has exactly two durable channels, `input` and `output`. They are not
+named or separately declared. Tagged JSON unions model application-level
+message kinds. Actor-channel browser grants are deferred; use a Token for one
+externally completed approval value.
 
 `client.runs.wait()` follows the durable run-event stream and uses run snapshots as the convergence source of truth. If the event stream disconnects, it reconnects from the last event cursor. If a malformed SSE frame is detected while waiting, the client falls back to snapshots instead of failing the wait.
 
@@ -133,4 +106,7 @@ Workspace exec stdout/stderr and PTY output are durable cursor streams.
 `list()` returns stored chunks after a cursor. `stream()` follows the same
 stream over SSE and reconnects from the last received cursor.
 
-Schedules use cron and generated schedule metadata payloads. `schedules.create()` / `client.schedules.create()` accepts required `deduplicationKey`, `task`, and `cron`, plus optional `externalId`, `timezone`, `active`, and schedule run `options` such as `queue`, `concurrencyKey`, `priority`, `ttl`, and `maxDurationSeconds`. Scheduled starts resolve the current deployment for the task when they fire. `deduplicationKey` is the stable public key that prevents duplicate logical schedules: creating again with the same key updates the existing project-level schedule and selected environment instance. Scheduled runs receive Helmr-generated schedule metadata rather than a caller-supplied payload. Declarative schedules are defined with `schedules.task()` and reconciled by deployment promotion, not by the imperative schedule methods.
+Schedules use cron and generated schedule metadata payloads. They are defined
+only with `schedules.task()` and reconciled by Deployment promotion. External
+Schedule APIs are observational; source owns timing, Workspace address, and
+lifecycle.

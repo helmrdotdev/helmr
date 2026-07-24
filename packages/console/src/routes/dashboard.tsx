@@ -220,7 +220,7 @@ export function Dashboard() {
               fallback={
                 <DashboardPlaceholder>
                   <strong class="text-console-text">No schedules configured.</strong>
-                  <span>Scheduled sessions will appear here.</span>
+                  <span>Source-declared Task schedules will appear here.</span>
                 </DashboardPlaceholder>
               }
             >
@@ -238,7 +238,7 @@ export function Dashboard() {
                       {(schedule) => (
                         <tr>
                           <td><strong class={"font-medium text-console-text"}>{schedule.task}</strong></td>
-                          <td>{schedule.active ? "active" : "inactive"}</td>
+                          <td>{schedule.status}</td>
                           <td><span class={ui.muted}>{formatRelative(schedule.next_fire_at)}</span></td>
                         </tr>
                       )}

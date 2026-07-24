@@ -11,20 +11,11 @@ import {
   closeSession,
   getSession,
   listSessionRuns,
-  listSessionStreamRecords,
-  listSessionStreams,
-  type StreamRecord,
   type Session,
   type SessionRun,
-  type SessionStream,
 } from "../lib/sessions";
 import { useScope } from "../lib/scope";
 import { cx, ui } from "../ui/styles";
-
-type TimelineStream = {
-  stream: SessionStream;
-  records: StreamRecord[];
-};
 
 function sessionErrorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
@@ -116,48 +107,6 @@ function SessionRuns(props: { sessionID: string; runs: SessionRun[]; projectID: 
   );
 }
 
-function StreamTimeline(props: { streams: TimelineStream[] }) {
-  const rows = createMemo(() => props.streams
-    .flatMap((item) => item.records.map((record) => ({ stream: item.stream, record })))
-    .sort((left, right) => left.record.created_at.localeCompare(right.record.created_at)));
-  return (
-    <section class={"border border-console-border bg-console-surface p-4"}>
-      <div class={"mb-3 flex items-center justify-between gap-3"}>
-        <h2 class={ui.h2}>Stream timeline</h2>
-        <span class={ui.muted}>{rows().length} records</span>
-      </div>
-      <Show
-        when={rows().length > 0}
-        fallback={<p class={ui.emptyState}>No stream records yet.</p>}
-      >
-        <ol class={"m-0 grid max-h-130 list-none gap-0 overflow-auto border border-console-border bg-console-bg-panel p-0"}>
-          <For each={rows()}>
-            {(item) => (
-              <li class={"grid grid-cols-[96px_170px_minmax(0,1fr)] gap-3 border-b border-console-border-soft px-3 py-2.5 last:border-b-0 max-[760px]:grid-cols-1 max-[760px]:gap-1.5"}>
-                <time class={"font-mono text-[10.5px] leading-5 text-console-subtle"} datetime={item.record.created_at}>
-                  {formatRelative(item.record.created_at)}
-                </time>
-                <div class={"min-w-0"}>
-                  <div class={"font-mono text-[11px] font-medium text-console-text"}>
-                    {item.stream.direction}:{item.stream.name}
-                  </div>
-                  <div class={"font-mono text-[10.5px] text-console-subtle"}>
-                    seq {item.record.sequence}
-                    <Show when={item.record.correlation_id}> · {item.record.correlation_id}</Show>
-                  </div>
-                </div>
-                <pre class={"m-0 whitespace-pre-wrap break-words font-mono text-[12px] leading-normal text-console-text"}>
-                  {formatJSON(item.record.data)}
-                </pre>
-              </li>
-            )}
-          </For>
-        </ol>
-      </Show>
-    </section>
-  );
-}
-
 function DetailsAside(props: { session: Session; currentRunHref: string | null }) {
   return (
     <aside class={"sticky top-13.5 flex flex-col gap-3 max-[960px]:static"}>
@@ -228,18 +177,6 @@ export function SessionDetail() {
   const runs = createQuery(() => ({
     queryKey: ["session-runs", sessionID(), projectID(), environmentID()],
     queryFn: () => listSessionRuns(sessionID(), scopeIDs()),
-    enabled: hasSessionID() && !!projectID() && !!environmentID(),
-    retry: false,
-  }));
-  const timeline = createQuery(() => ({
-    queryKey: ["session-streams", sessionID(), projectID(), environmentID()],
-    queryFn: async (): Promise<TimelineStream[]> => {
-      const streams = await listSessionStreams(sessionID(), scopeIDs());
-      return Promise.all(streams.streams.map(async (stream) => ({
-        stream,
-        records: (await listSessionStreamRecords(sessionID(), scopeIDs(), stream, { limit: 100 })).records,
-      })));
-    },
     enabled: hasSessionID() && !!projectID() && !!environmentID(),
     retry: false,
   }));
@@ -339,12 +276,6 @@ export function SessionDetail() {
                     <p class={ui.error} role="alert">{sessionErrorMessage(runs.error)}</p>
                   </Show>
                   <SessionRuns sessionID={current().id} runs={runs.data?.runs ?? []} projectID={projectID()} environmentID={environmentID()} />
-                  <Show when={timeline.isError}>
-                    <p class={ui.error} role="alert">{sessionErrorMessage(timeline.error)}</p>
-                  </Show>
-                  <Show when={!timeline.isPending} fallback={<p class={ui.muted}>Loading stream records...</p>}>
-                    <StreamTimeline streams={timeline.data ?? []} />
-                  </Show>
                 </div>
                 <DetailsAside session={current()} currentRunHref={currentRunHref()} />
               </div>

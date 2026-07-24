@@ -49,8 +49,6 @@ const (
 	Run               Prefix = "run_"
 	RunOperation      Prefix = "rop_"
 	Wait              Prefix = "wait_"
-	Stream            Prefix = "str_"
-	StreamRecord      Prefix = "srec_"
 	Token             Prefix = "tok_"
 	PublicAccessToken Prefix = "pat_"
 )
@@ -76,8 +74,6 @@ var registeredPrefixes = []Prefix{
 	Run,
 	RunOperation,
 	Wait,
-	Stream,
-	StreamRecord,
 	Token,
 	PublicAccessToken,
 }

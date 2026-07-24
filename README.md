@@ -15,12 +15,11 @@ for contributors, early adopters, and self-hosted evaluation.
 
 ## What Helmr provides
 
-- TypeScript tasks that declare images, sandboxes, resources, secrets, streams,
-  tokens, timers,
-  and run logic
+- TypeScript Tasks and Actors with declared Workspaces, Secrets, Tokens,
+  timers, and run logic
 - Durable writable workspaces mounted inside isolated Linux guests
-- Durable stream input, external completion tokens, and long timers before
-  reviews, patches, or other side effects
+- Durable Actor input/output, external completion Tokens, and long timers
+  before reviews, patches, or other side effects
 - Run status, logs, events, payloads, and history in the control plane
 - Task-declared secrets injected only at run time
 - A runtime boundary you own: your AWS account, your integrations, your workers
@@ -75,9 +74,8 @@ Use that URL to create a local owner session and inspect seeded runs.
 
 ## Define a task
 
-A task binds a sandbox, TypeScript run logic, declared secrets, and optional
-streams, tokens, and timers. The code inside the task can call any agent SDK or
-tool; Helmr owns the adapter protocol around it.
+A Task binds TypeScript run logic to an explicit Workspace. The code inside the
+Task can call any agent SDK or tool; Helmr owns the adapter protocol around it.
 
 Create a task project with `helmr.config.ts` and one or more task modules:
 
@@ -150,7 +148,7 @@ Tasks start in the mounted workspace directory. Use relative paths for workspace
 files; absolute paths keep normal Linux container semantics.
 
 See [examples/](examples/) for deployable task projects, including dependency
-caching, CLI tooling, stream/token/timer waits, task secrets, and GitHub PR review
+caching, CLI tooling, Token/timer waits, Task Secrets, and GitHub PR review
 flows.
 
 ## Run A Task

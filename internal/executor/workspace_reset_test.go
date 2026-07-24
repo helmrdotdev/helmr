@@ -17,7 +17,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func TestResetWorkspaceOnSessionStreamsVerifiedArtifact(t *testing.T) {
+func TestResetWorkspaceFromVerifiedArtifact(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "target")
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)

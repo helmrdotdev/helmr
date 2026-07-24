@@ -69,13 +69,6 @@ export type BuildPlanDefinition =
       }>
     }>
   | Readonly<{
-      kind: "run_stream"
-      declaredId: string
-      manifest: Readonly<{
-        schema: Readonly<{ kind: "standard_schema" }>
-      }>
-    }>
-  | Readonly<{
       kind: "workspace"
       declaredId: string
       manifest: Readonly<{
@@ -161,7 +154,7 @@ export type ImageStep =
 export interface DeclarationLocatorEntry {
   readonly declaredId: string
   readonly exportName: string
-  readonly kind: "task" | "actor" | "run_stream"
+  readonly kind: "task" | "actor"
   readonly modulePath: string
 }
 
@@ -368,12 +361,6 @@ function compileDefinition(
                   3_600_000,
                 ),
         },
-      }
-    case "run_stream":
-      return {
-        kind: "run_stream",
-        declaredId: definition.id,
-        manifest: { schema: { kind: "standard_schema" } },
       }
     case "workspace":
       return {
@@ -669,12 +656,6 @@ function programDeclaration(definition: InternalDefinition): ProgramDeclaration 
         declaredId: definition.id,
         slots: ["handler"],
       }
-    case "run_stream":
-      return {
-        kind: "run_stream",
-        declaredId: definition.id,
-        slots: ["schema"],
-      }
   }
 }
 
@@ -908,8 +889,7 @@ function compareLocatedDefinitions(
   const order: Readonly<Record<LocatedDefinition["definition"]["kind"], number>> = {
     task: 0,
     actor: 1,
-    run_stream: 2,
-    workspace: 3,
+    workspace: 2,
   }
   return (
     order[left.definition.kind] - order[right.definition.kind] ||

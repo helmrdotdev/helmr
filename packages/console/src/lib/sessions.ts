@@ -47,34 +47,6 @@ export type ListSessionRunsResponse = {
   runs: SessionRun[];
 };
 
-export type SessionStream = {
-  id: string;
-  session_id: string;
-  name: string;
-  direction: "input" | "output" | string;
-  backend?: string;
-  next_sequence: number;
-  created_at: string;
-};
-
-export type ListSessionStreamsResponse = {
-  streams: SessionStream[];
-};
-
-export type StreamRecord = {
-  id: string;
-  stream_id: string;
-  sequence: number;
-  data: unknown;
-  correlation_id?: string;
-  content_type?: string;
-  created_at: string;
-};
-
-export type ListStreamRecordsResponse = {
-  records: StreamRecord[];
-};
-
 export type ListSessionsOptions = {
   projectID: string;
   environmentID: string;
@@ -117,25 +89,6 @@ export async function cancelSession(id: string, scope: SessionScope, reason = "c
 
 export async function listSessionRuns(id: string, scope: SessionScope): Promise<ListSessionRunsResponse> {
   return request<ListSessionRunsResponse>(`${sessionPath(scope.projectID, scope.environmentID)}/${encodeURIComponent(id)}/runs`);
-}
-
-export async function listSessionStreams(id: string, scope: SessionScope): Promise<ListSessionStreamsResponse> {
-  return request<ListSessionStreamsResponse>(`${sessionPath(scope.projectID, scope.environmentID)}/${encodeURIComponent(id)}/streams`);
-}
-
-export async function listSessionStreamRecords(
-  id: string,
-  scope: SessionScope,
-  stream: SessionStream,
-  options: { limit?: number } = {},
-): Promise<ListStreamRecordsResponse> {
-  const params = new URLSearchParams();
-  if (options.limit !== undefined) params.set("limit", String(options.limit));
-  const query = params.toString();
-  const directionPath = stream.direction === "input" ? "inputs" : "outputs";
-  return request<ListStreamRecordsResponse>(
-    `${sessionPath(scope.projectID, scope.environmentID)}/${encodeURIComponent(id)}/${directionPath}/${encodeURIComponent(stream.name)}${query ? `?${query}` : ""}`,
-  );
 }
 
 function sessionPath(projectID: string | undefined, environmentID: string | undefined): string {

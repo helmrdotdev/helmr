@@ -22,8 +22,6 @@ type scheduledTaskInput struct {
 	LastScheduledAt string   `json:"lastScheduledAt,omitempty"`
 	Timezone        string   `json:"timezone"`
 	ScheduleID      string   `json:"scheduleId"`
-	ScheduleType    string   `json:"scheduleType"`
-	Key             string   `json:"key,omitempty"`
 	Upcoming        []string `json:"upcoming"`
 }
 
@@ -32,22 +30,16 @@ func BuildAdmission(value db.Schedule) (Admission, error) {
 }
 
 func BuildAdmissionAt(value db.Schedule, now time.Time) (Admission, error) {
-	if value.CronContractVersion != CronContractVersion {
+	if value.CronSemanticsVersion != CronSemanticsVersion {
 		return Admission{}, &AdmissionError{
 			Code:    ErrorGenerationInvalid,
-			Message: fmt.Sprintf("unsupported cron contract %q", value.CronContractVersion),
+			Message: fmt.Sprintf("unsupported cron semantics %q", value.CronSemanticsVersion),
 		}
 	}
 	if !value.NextFireAt.Valid {
 		return Admission{}, &AdmissionError{
 			Code:    ErrorGenerationInvalid,
 			Message: "schedule has no pending instant",
-		}
-	}
-	if value.Source != "declarative" && value.Source != "imperative" {
-		return Admission{}, &AdmissionError{
-			Code:    ErrorGenerationInvalid,
-			Message: fmt.Sprintf("unsupported schedule source %q", value.Source),
 		}
 	}
 	scheduledAt := value.NextFireAt.Time.UTC()
@@ -68,12 +60,10 @@ func BuildAdmissionAt(value db.Schedule, now time.Time) (Admission, error) {
 		encodedUpcoming = append(encodedUpcoming, instant.Format(time.RFC3339Nano))
 	}
 	input := scheduledTaskInput{
-		ScheduledAt:  scheduledAt.Format(time.RFC3339Nano),
-		Timezone:     value.Timezone,
-		ScheduleID:   value.PublicID,
-		ScheduleType: value.Source,
-		Key:          value.Key,
-		Upcoming:     encodedUpcoming,
+		ScheduledAt: scheduledAt.Format(time.RFC3339Nano),
+		Timezone:    value.Timezone,
+		ScheduleID:  value.PublicID,
+		Upcoming:    encodedUpcoming,
 	}
 	if value.LastFireAt.Valid {
 		input.LastScheduledAt = value.LastFireAt.Time.UTC().Format(time.RFC3339Nano)

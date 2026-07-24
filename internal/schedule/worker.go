@@ -49,7 +49,9 @@ func (e *AdmissionError) Error() string {
 }
 
 type Store interface {
+	ActivatePendingSchedule(context.Context, db.ActivatePendingScheduleParams) (db.Schedule, error)
 	ClaimDueSchedules(context.Context, db.ClaimDueSchedulesParams) ([]db.Schedule, error)
+	ListPendingScheduleBindings(context.Context, int32) ([]db.ListPendingScheduleBindingsRow, error)
 	MarkScheduleAdmissionErrored(context.Context, db.MarkScheduleAdmissionErroredParams) (db.Schedule, error)
 	MarkScheduleAdmissionRetryable(context.Context, db.MarkScheduleAdmissionRetryableParams) (db.Schedule, error)
 }
@@ -145,6 +147,9 @@ func (w *Worker) Run(ctx context.Context) error {
 
 func (w *Worker) tick(ctx context.Context) error {
 	now := w.now().UTC()
+	if err := w.bindPending(ctx, now); err != nil {
+		return err
+	}
 	claimed, err := w.store.ClaimDueSchedules(ctx, db.ClaimDueSchedulesParams{
 		ClaimedBy:      pgtype.Text{String: w.workerID, Valid: true},
 		ClaimExpiresAt: pgvalue.TimestamptzUTCZeroInvalid(now.Add(w.lease)),
@@ -168,6 +173,34 @@ func (w *Worker) tick(ctx context.Context) error {
 		})
 	}
 	return group.Wait()
+}
+
+func (w *Worker) bindPending(ctx context.Context, now time.Time) error {
+	pending, err := w.store.ListPendingScheduleBindings(ctx, w.limit)
+	if err != nil {
+		return err
+	}
+	for _, candidate := range pending {
+		next, err := NextCronTime(candidate.CronPattern, candidate.Timezone, now)
+		if err != nil {
+			return fmt.Errorf("calculate pending Schedule %s cursor: %w", candidate.PublicID, err)
+		}
+		_, err = w.store.ActivatePendingSchedule(ctx, db.ActivatePendingScheduleParams{
+			WorkspaceID:        candidate.ResolvedWorkspaceID,
+			EffectiveFrom:      pgvalue.Timestamptz(now),
+			NextFireAt:         pgvalue.Timestamptz(next),
+			EnvironmentID:      candidate.EnvironmentID,
+			ID:                 candidate.ID,
+			ExpectedGeneration: candidate.Generation,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (w *Worker) process(ctx context.Context, value db.Schedule) error {

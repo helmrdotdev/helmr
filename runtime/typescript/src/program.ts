@@ -53,7 +53,7 @@ export interface ProgramIO {
 interface LocatedDeclaration {
   readonly declaredId: string
   readonly exportName: string
-  readonly kind: "task" | "actor" | "run_stream"
+  readonly kind: "task" | "actor"
   readonly modulePath: string
 }
 
@@ -450,9 +450,7 @@ function parseLocatedDeclaration(
   }
   const record = value as Record<string, unknown>
   if (
-    (record["kind"] !== "task" &&
-      record["kind"] !== "actor" &&
-      record["kind"] !== "run_stream") ||
+    (record["kind"] !== "task" && record["kind"] !== "actor") ||
     typeof record["declaredId"] !== "string" ||
     record["declaredId"] === "" ||
     typeof record["exportName"] !== "string" ||

@@ -13,19 +13,15 @@ import {
   type ActorOperationReceipt,
   type JsonValue,
   type NoPayloadTaskDefinition,
-  type OutputAppendOptions,
   type OutputReadOptions,
-  type OutputSequenceOptions,
   type PayloadTaskDefinition,
   type QueueDefinition,
   type RunHandle,
-  type RunStreamRecord,
   type TaskCallOptions,
   type TaskConfigWithPayload,
   type TaskConfigWithoutPayload,
   type TaskStartOptions,
   type TaskWait,
-  type TypedRunStreamDefinition,
 } from "./contract"
 import {
   assertPayloadSchema,
@@ -70,16 +66,9 @@ export type InternalActorDefinition = Readonly<{
   idleTimeout?: ActorConfig["idleTimeout"]
 }>
 
-export type InternalRunStreamDefinition = Readonly<{
-  kind: "run_stream"
-  id: string
-  schema: PayloadSchema<JsonValue, JsonValue>
-}>
-
 export type InternalDefinition =
   | InternalTaskDefinition
   | InternalActorDefinition
-  | InternalRunStreamDefinition
 
 type BrandedDefinition = {
   readonly [privateDefinitionBrand]: InternalDefinition
@@ -128,7 +117,6 @@ function isInternalDefinition(
     readonly hasPayload?: unknown
     readonly handler?: unknown
     readonly payloadSchema?: unknown
-    readonly schema?: unknown
   }
   if (typeof definition.id !== "string") return false
   validateTaskId(definition.id)
@@ -151,12 +139,6 @@ function isInternalDefinition(
       return true
     case "actor":
       return typeof definition.handler === "function"
-    case "run_stream":
-      assertPayloadSchema(
-        definition.schema,
-        `run stream ${JSON.stringify(definition.id)} schema`,
-      )
-      return true
     default:
       return false
   }
@@ -245,59 +227,6 @@ export function actor(config: ActorConfig): ActorDefinition {
   return brandDefinition(value, internal) as ActorDefinition
 }
 
-export function stream<
-  TInput extends JsonValue,
-  TRecord extends JsonValue,
->(config: {
-  readonly id: string
-  readonly schema: PayloadSchema<TInput, TRecord>
-}): TypedRunStreamDefinition<TInput, TRecord> {
-  validateTaskId(config.id)
-  assertPayloadSchema(
-    config.schema,
-    `run stream ${JSON.stringify(config.id)} schema`,
-  )
-  const internal: InternalRunStreamDefinition = Object.freeze({
-    kind: "run_stream",
-    id: config.id,
-    schema: config.schema as PayloadSchema<JsonValue, JsonValue>,
-  })
-  const value = {
-    id: config.id,
-    append(_value: TInput, _options?: OutputAppendOptions) {
-      return runtimeUnavailable<Promise<RunStreamRecord<TRecord>>>(
-        "run stream append",
-      )
-    },
-    pipe(
-      _source: AsyncIterable<TInput> | Iterable<TInput>,
-      _options?: OutputSequenceOptions,
-    ) {
-      return runtimeUnavailable<Promise<void>>("run stream pipe")
-    },
-    writer(_options?: OutputSequenceOptions) {
-      return runtimeUnavailable<{
-        write(value: TInput): Promise<RunStreamRecord<TRecord>>
-        close(): Promise<void>
-      }>("run stream writer")
-    },
-    read(_runId: string, _options?: OutputReadOptions) {
-      return runtimeUnavailable<AsyncIterable<RunStreamRecord<TRecord>>>(
-        "run stream read",
-      )
-    },
-    list(_runId: string, _options?: OutputReadOptions) {
-      return runtimeUnavailable<Promise<readonly RunStreamRecord<TRecord>[]>>(
-        "run stream list",
-      )
-    },
-  }
-  return brandDefinition(value, internal) as unknown as TypedRunStreamDefinition<
-    TInput,
-    TRecord
-  >
-}
-
 export function createScheduledTask<
   TInput extends JsonValue,
   TPayload,
@@ -308,7 +237,7 @@ export function createScheduledTask<
     "payload"
   > & {
     readonly payload: PayloadSchema<TInput, TPayload>
-    readonly schedule?: InternalTaskDefinition["schedule"]
+    readonly schedule: NonNullable<InternalTaskDefinition["schedule"]>
   },
 ): PayloadTaskDefinition<TInput, TPayload, TOutput> {
   const base = task({
@@ -328,7 +257,7 @@ export function createScheduledTask<
   }
   const internal: InternalTaskDefinition = Object.freeze({
     ...inspected,
-    ...(config.schedule === undefined ? {} : { schedule: config.schedule }),
+    schedule: config.schedule,
   })
   return brandDefinition(
     {

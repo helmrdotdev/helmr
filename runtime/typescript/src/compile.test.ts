@@ -6,7 +6,6 @@ import {
   queue,
   schedules,
   source,
-  streams,
   task,
   workspace,
   workspaces,
@@ -56,10 +55,6 @@ describe("declaration analysis", () => {
       idleTimeout: "1500ms",
       run: async () => {},
     })
-    const events = streams.define({
-      id: "events",
-      schema: identitySchema,
-    })
     const machine = workspace("machine")
       .image(image("root").from("debian:bookworm"))
       .resources({ cpu: 0.125, memory: "1024MiB", disk: "2GiB" })
@@ -72,7 +67,6 @@ describe("declaration analysis", () => {
       })
     const exports = [
       { modulePath: "src/machine.ts", exportName: "machine", value: machine },
-      { modulePath: "src/events.ts", exportName: "events", value: events },
       { modulePath: "src/tasks.ts", exportName: "toString", value: noPayloadTask },
       { modulePath: "src/actor.ts", exportName: "service", value: service },
       { modulePath: "src/tasks.ts", exportName: "constructor", value: payloadTask },
@@ -93,7 +87,6 @@ describe("declaration analysis", () => {
       "task",
       "task",
       "actor",
-      "run_stream",
       "workspace",
     ])
     expect(result.buildPlan.queues).toEqual([
@@ -120,14 +113,8 @@ describe("declaration analysis", () => {
         kind: "actor",
         modulePath: "src/actor.ts",
       },
-      {
-        declaredId: "events",
-        exportName: "events",
-        kind: "run_stream",
-        modulePath: "src/events.ts",
-      },
     ])
-    const workspaceDefinition = result.buildPlan.definitions[4]
+    const workspaceDefinition = result.buildPlan.definitions[3]
     expect(workspaceDefinition?.kind).toBe("workspace")
     if (workspaceDefinition?.kind !== "workspace") throw new Error("workspace missing")
     expect(workspaceDefinition.manifest.resources).toEqual({
@@ -409,12 +396,13 @@ describe("declaration analysis", () => {
     ).toThrow()
   })
 
-  test("enforces the closed cron and timezone contract", () => {
-    const valid = [
+  test("leaves cron grammar authority to Control", () => {
+    for (const [index, pattern] of [
       "*/15 0-23/2 1,15 * 0-7",
-      "0 3 * * 1,3,5",
-    ]
-    for (const [index, pattern] of valid.entries()) {
+      "0  3 * * *",
+      "00 3 * JAN MON",
+      "@daily",
+    ].entries()) {
       expect(() =>
         schedules.task({
           id: `valid-${index}`,
@@ -424,27 +412,18 @@ describe("declaration analysis", () => {
         }),
       ).not.toThrow()
     }
-    for (const pattern of [
-      "0  3 * * *",
-      "00 3 * * *",
-      "0 3 * * 0,7",
-      "0 3 * * 5,3",
-      "0 3 * * 1/2",
-      "@daily",
-    ]) {
-      expect(() =>
-        schedules.task({
-          id: "invalid",
-          cron: { pattern, timezone: "UTC" },
-          workspace: workspaces.ref({ key: "maintenance" }),
-          run: () => null,
-        }),
-      ).toThrow()
-    }
     expect(() =>
       schedules.task({
         id: "timezone",
         cron: { pattern: "0 3 * * *", timezone: "utc" },
+        workspace: workspaces.ref({ key: "maintenance" }),
+        run: () => null,
+      }),
+    ).not.toThrow()
+    expect(() =>
+      schedules.task({
+        id: "empty",
+        cron: { pattern: "", timezone: "UTC" },
         workspace: workspaces.ref({ key: "maintenance" }),
         run: () => null,
       }),

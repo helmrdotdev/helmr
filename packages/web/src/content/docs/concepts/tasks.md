@@ -53,8 +53,15 @@ Payload is audit data. Helmr persists it in plaintext in the database, run event
 
 ## Runtime Context
 
-The task context provides read-only execution context such as `ctx.signal`, `ctx.run.id`, `ctx.task.id`, `ctx.workspace`, and `ctx.session.id`. Use module-level APIs for durable session streams, `logger` for logs, `timers` for durable time waits, `tokens` for external callback completions, and metadata APIs for current run state. The return value becomes run output when the task succeeds.
+The Task context provides read-only execution context such as `ctx.signal`,
+`ctx.run.id`, `ctx.task.id`, and `ctx.workspace`. Use `logger` for logs,
+`timers` for durable time waits, `tokens` for external callback completion,
+and metadata APIs for current Run state. A Task's durable application output is
+its terminal result; continuing input/output belongs to an Actor.
 
 ## Scheduled Tasks
 
-Use `schedules.task()` instead of `task()` for tasks that should run from cron. Scheduled tasks do not declare arbitrary `payload`; Helmr supplies schedule metadata such as `timestamp`, `lastTimestamp`, `scheduleId`, `externalId`, and `upcoming`. See [Schedules](/docs/concepts/schedules/) for the schedule model.
+Use `schedules.task()` instead of `task()` for Tasks that should run from cron.
+Scheduled Tasks do not declare arbitrary `payload`; Helmr supplies
+`scheduledAt`, optional `lastScheduledAt`, `timezone`, `scheduleId`, and
+`upcoming`. See [Schedules](/docs/concepts/schedules/) for the model.
