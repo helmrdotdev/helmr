@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file workspace.proto.
  */
 export const file_workspace: GenFile = /*@__PURE__*/
-  fileDesc("Cg93b3Jrc3BhY2UucHJvdG8SEmhlbG1yLndvcmtzcGFjZS52MCKmAgoaV29ya3NwYWNlT3BlcmF0aW9uRW52ZWxvcGUSFAoMb3BlcmF0aW9uX2lkGAEgASgJEhoKEndvcmtzcGFjZV9tb3VudF9pZBgCIAEoCRIUCgx3b3Jrc3BhY2VfaWQYAyABKAkSFQoNY2hhbm5lbF90b2tlbhgEIAEoCRIaChJmZW5jaW5nX2dlbmVyYXRpb24YBSABKAQSGQoRaW5zdGFuY2VfbGVhc2VfaWQYBiABKAkSFgoOd3JpdGVfbGVhc2VfaWQYByABKAkSFQoNZmVuY2luZ190b2tlbhgIIAEoCRImCh5vcGVyYXRpb25fZXhwaXJlc19hdF91bml4X25hbm8YCSABKAMSGwoTcmVxdWVzdF9maW5nZXJwcmludBgKIAEoCSJyChFXb3Jrc3BhY2VBcnRpZmFjdBIOCgZkaWdlc3QYASABKAkSEgoKbWVkaWFfdHlwZRgCIAEoCRIQCghlbmNvZGluZxgDIAEoCRISCgpzaXplX2J5dGVzGAQgASgEEhMKC2VudHJ5X2NvdW50GAUgASgNIsUDChdXb3Jrc3BhY2VBdXRob3JpdHlGZW5jZRIaChJ3b3JrZXJfaW5zdGFuY2VfaWQYASABKAkSFAoMd29ya2VyX2Vwb2NoGAIgASgDEhsKE3J1bnRpbWVfaW5zdGFuY2VfaWQYAyABKAkSGwoTcnVudGltZV9pZGVudGl0eV9pZBgEIAEoCRIUCgx3b3Jrc3BhY2VfaWQYBSABKAkSGgoSd29ya3NwYWNlX21vdW50X2lkGAYgASgJEg4KBnJ1bl9pZBgHIAEoCRIWCg5hdHRlbXB0X251bWJlchgIIAEoDRIUCgxydW5fbGVhc2VfaWQYCSABKAkSFgoObGVhc2Vfc2VxdWVuY2UYCiABKAMSGgoSd29ya3NwYWNlX2xlYXNlX2lkGAsgASgJEhwKFG93bmVyc2hpcF9nZW5lcmF0aW9uGAwgASgDEhkKEXdyaXRlcl9nZW5lcmF0aW9uGA0gASgDEiAKGG1vdW50X2ZlbmNpbmdfZ2VuZXJhdGlvbhgOIAEoAxIcChRleHBpcmVzX2F0X3VuaXhfbmFubxgPIAEoAxIhChliYXNlX3dvcmtzcGFjZV92ZXJzaW9uX2lkGBAgASgJIoQBChVXb3Jrc3BhY2VSdW5BdXRob3JpdHkSOgoFZmVuY2UYASABKAsyKy5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXV0aG9yaXR5RmVuY2USFQoNY2hhbm5lbF90b2tlbhgCIAEoCRIYChB3cml0ZV9jYXBhYmlsaXR5GAMgASgJIn8KHlJlbmV3V29ya3NwYWNlQXV0aG9yaXR5UmVxdWVzdBI7CghwcmV2aW91cxgBIAEoCzIpLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VSdW5BdXRob3JpdHkSIAoYbmV3X2V4cGlyZXNfYXRfdW5peF9uYW5vGAIgASgDImwKH1JlbmV3V29ya3NwYWNlQXV0aG9yaXR5UmVzcG9uc2USOgoFZmVuY2UYASABKAsyKy5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXV0aG9yaXR5RmVuY2USDQoFZXJyb3IYAiABKAki1wEKGUdyYW50UHJvZ3JhbVJlc3VtZVJlcXVlc3QSPAoJYXV0aG9yaXR5GAEgASgLMikuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZVJ1bkF1dGhvcml0eRITCgtydW5fd2FpdF9pZBgCIAEoCRIVCg1jaGVja3BvaW50X2lkGAMgASgJEhgKEHJlc3VtZV9hdHRhY2hfaWQYBCABKAkSHgoWcmVzdW1lX3JlcXVlc3RfdmVyc2lvbhgFIAEoAxIWCg5jb3JyZWxhdGlvbl9pZBgGIAEoCSLWAQoaR3JhbnRQcm9ncmFtUmVzdW1lUmVzcG9uc2USOgoFZmVuY2UYASABKAsyKy5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXV0aG9yaXR5RmVuY2USEwoLcnVuX3dhaXRfaWQYAiABKAkSFQoNY2hlY2twb2ludF9pZBgDIAEoCRIYChByZXN1bWVfYXR0YWNoX2lkGAQgASgJEh4KFnJlc3VtZV9yZXF1ZXN0X3ZlcnNpb24YBSABKAMSFgoOY29ycmVsYXRpb25faWQYBiABKAkiiQEKG1ZlcmlmeVByb2dyYW1SZXN0b3JlUmVxdWVzdBIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SEwoLcnVuX3dhaXRfaWQYAyABKAkSFQoNY2hlY2twb2ludF9pZBgEIAEoCRIWCg5jb3JyZWxhdGlvbl9pZBgFIAEoCSKKAQocVmVyaWZ5UHJvZ3JhbVJlc3RvcmVSZXNwb25zZRIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SEwoLcnVuX3dhaXRfaWQYAyABKAkSFQoNY2hlY2twb2ludF9pZBgEIAEoCRIWCg5jb3JyZWxhdGlvbl9pZBgFIAEoCSKvAQohQmVnaW5Xb3Jrc3BhY2VGaW5hbGl6YXRpb25SZXF1ZXN0EjsKCHByZXZpb3VzGAEgASgLMikuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZVJ1bkF1dGhvcml0eRIpCiFmaW5hbGl6YXRpb25fZXhwaXJlc19hdF91bml4X25hbm8YAiABKAMSFAoMb3BlcmF0aW9uX2lkGAMgASgJEgwKBGtpbmQYBCABKAkikwEKIkJlZ2luV29ya3NwYWNlRmluYWxpemF0aW9uUmVzcG9uc2USOgoFZmVuY2UYASABKAsyKy5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXV0aG9yaXR5RmVuY2USFAoMb3BlcmF0aW9uX2lkGAIgASgJEgwKBGtpbmQYAyABKAkSDQoFZXJyb3IYBCABKAkiUAoVV29ya3NwYWNlVHJlZUlkZW50aXR5Eg4KBmRpZ2VzdBgBIAEoCRISCgpzaXplX2J5dGVzGAIgASgDEhMKC2VudHJ5X2NvdW50GAMgASgNIpABCh1Xb3Jrc3BhY2VGaW5hbGl6YXRpb25FbnZlbG9wZRIUCgxvcGVyYXRpb25faWQYASABKAkSGwoTcmVxdWVzdF9maW5nZXJwcmludBgCIAEoCRI8CglhdXRob3JpdHkYAyABKAsyKS5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlUnVuQXV0aG9yaXR5Io0BChxXb3Jrc3BhY2VGaW5hbGl6YXRpb25SZWNlaXB0EhQKDG9wZXJhdGlvbl9pZBgBIAEoCRIbChNyZXF1ZXN0X2ZpbmdlcnByaW50GAIgASgJEjoKBWZlbmNlGAMgASgLMisuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZUF1dGhvcml0eUZlbmNlIuUCChtNYXRlcmlhbGl6ZVdvcmtzcGFjZVJlcXVlc3QSQAoIZW52ZWxvcGUYASABKAsyLi5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlT3BlcmF0aW9uRW52ZWxvcGUSEgoKbW91bnRfcGF0aBgCIAEoCRIXCg9iYXNlX3ZlcnNpb25faWQYAyABKAkSPAoNYmFzZV9hcnRpZmFjdBgEIAEoCzIlLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VBcnRpZmFjdBI+Cg93b3Jrc3BhY2VfaW1hZ2UYBSABKAsyJS5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXJ0aWZhY3QSHAoUdXNlX3ByZXBhcmVkX3J1bnRpbWUYBiABKAgSGwoTcnVudGltZV9pbnN0YW5jZV9pZBgHIAEoCRIeChZyZXN0b3JlZF9jaGVja3BvaW50X2lkGAggASgJInAKE1dvcmtzcGFjZU1vdW50UGhhc2USDAoEbmFtZRgBIAEoCRITCgtkdXJhdGlvbl9tcxgCIAEoBBISCgpzaXplX2J5dGVzGAMgASgEEhMKC2VudHJ5X2NvdW50GAQgASgNEg0KBWVycm9yGAUgASgJIokBChxNYXRlcmlhbGl6ZVdvcmtzcGFjZVJlc3BvbnNlEg0KBXN0YXRlGAEgASgJEiEKGWd1ZXN0ZF9jaGFubmVsX3Rva2VuX2hhc2gYAiABKAkSNwoGcGhhc2VzGAMgAygLMicuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU1vdW50UGhhc2UikQEKHlByZXBhcmVXb3Jrc3BhY2VSdW50aW1lUmVxdWVzdBIbChNydW50aW1lX2luc3RhbmNlX2lkGAEgASgJEhIKCm1vdW50X3BhdGgYAiABKAkSPgoPd29ya3NwYWNlX2ltYWdlGAMgASgLMiUuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZUFydGlmYWN0IoYBCh9QcmVwYXJlV29ya3NwYWNlUnVudGltZVJlc3BvbnNlEg0KBXN0YXRlGAEgASgJEhsKE3J1bnRpbWVfaW5zdGFuY2VfaWQYAiABKAkSNwoGcGhhc2VzGAMgAygLMicuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU1vdW50UGhhc2UihgEKGUhlYXJ0YmVhdFdvcmtzcGFjZVJlcXVlc3QSQAoIZW52ZWxvcGUYASABKAsyLi5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlT3BlcmF0aW9uRW52ZWxvcGUSDQoFc3RhdGUYAiABKAkSGAoQZGlydHlfZ2VuZXJhdGlvbhgDIAEoBCJDChpIZWFydGJlYXRXb3Jrc3BhY2VSZXNwb25zZRINCgVzdGF0ZRgBIAEoCRIWCg5zdG9wX3JlcXVlc3RlZBgCIAEoCCJeChdDYXB0dXJlV29ya3NwYWNlUmVxdWVzdBJDCghlbnZlbG9wZRgBIAEoCzIxLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VGaW5hbGl6YXRpb25FbnZlbG9wZSLeAQoYQ2FwdHVyZVdvcmtzcGFjZVJlc3BvbnNlEkEKB3JlY2VpcHQYASABKAsyMC5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlRmluYWxpemF0aW9uUmVjZWlwdBI3CgR0cmVlGAIgASgLMikuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZVRyZWVJZGVudGl0eRI3CghhcnRpZmFjdBgDIAEoCzIlLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VBcnRpZmFjdBINCgVlcnJvchgEIAEoCSIbChlFbXB0eVdvcmtzcGFjZVJlc2V0VGFyZ2V0Iu0BChRXb3Jrc3BhY2VSZXNldFRhcmdldBIXCg9iYXNlX3ZlcnNpb25faWQYASABKAkSNwoEdHJlZRgCIAEoCzIpLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VUcmVlSWRlbnRpdHkSPgoFZW1wdHkYAyABKAsyLS5oZWxtci53b3Jrc3BhY2UudjAuRW1wdHlXb3Jrc3BhY2VSZXNldFRhcmdldEgAEjkKCGFydGlmYWN0GAQgASgLMiUuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZUFydGlmYWN0SABCCAoGc291cmNlIpYBChVSZXNldFdvcmtzcGFjZVJlcXVlc3QSQwoIZW52ZWxvcGUYASABKAsyMS5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlRmluYWxpemF0aW9uRW52ZWxvcGUSOAoGdGFyZ2V0GAIgASgLMiguaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZVJlc2V0VGFyZ2V0IqQBChZSZXNldFdvcmtzcGFjZVJlc3BvbnNlEkEKB3JlY2VpcHQYASABKAsyMC5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlRmluYWxpemF0aW9uUmVjZWlwdBI4CgZ0YXJnZXQYAiABKAsyKC5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlUmVzZXRUYXJnZXQSDQoFZXJyb3IYAyABKAkijAEKFFN0b3BXb3Jrc3BhY2VSZXF1ZXN0EkAKCGVudmVsb3BlGAEgASgLMi4uaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU9wZXJhdGlvbkVudmVsb3BlEhsKE2NhcHR1cmVfYmVmb3JlX3N0b3AYAiABKAgSFQoNZmluYWxpemVfc3RvcBgDIAEoCCJ8ChVTdG9wV29ya3NwYWNlUmVzcG9uc2USDQoFc3RhdGUYASABKAkSQAoRY2FwdHVyZWRfYXJ0aWZhY3QYAiABKAsyJS5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXJ0aWZhY3QSEgoKZXJyb3JfanNvbhgDIAEoCSLYAQoZV29ya3NwYWNlT3BlcmF0aW9uUmVxdWVzdBJACghlbnZlbG9wZRgBIAEoCzIuLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VPcGVyYXRpb25FbnZlbG9wZRIWCg5vcGVyYXRpb25fa2luZBgCIAEoCRIUCgxyZXF1ZXN0X2pzb24YAyABKAkSPAoHc2VjcmV0cxgEIAMoCzIrLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VTZWNyZXREZWxpdmVyeRINCgVzdGRpbhgFIAEoDCKkAQoYV29ya3NwYWNlT3BlcmF0aW9uUmVzdWx0EhMKC3Jlc3VsdF9qc29uGAEgASgJEhIKCmVycm9yX2pzb24YAiABKAkSEQoJZXhpdF9jb2RlGAMgASgFEg4KBnN0ZG91dBgEIAEoDBIOCgZzdGRlcnIYBSABKAwSDwoHb3V0Y29tZRgGIAEoCRIbChNyZXF1ZXN0X2ZpbmdlcnByaW50GAcgASgJIloKF1dvcmtzcGFjZVNlY3JldERlbGl2ZXJ5EhYKDnBsYWNlbWVudF9raW5kGAEgASgJEhgKEHBsYWNlbWVudF90YXJnZXQYAiABKAkSDQoFdmFsdWUYAyABKAwiOwoUV29ya3NwYWNlRXhlY1N0YXJ0ZWQSDwoHZXhlY19pZBgBIAEoCRISCgpwcm9jZXNzX2lkGAIgASgJIjkKGFdvcmtzcGFjZUV4ZWNPdXRwdXRDaHVuaxIPCgdleGVjX2lkGAEgASgJEgwKBGRhdGEYAiABKAwiXQoTV29ya3NwYWNlRXhlY0V4aXRlZBIPCgdleGVjX2lkGAEgASgJEhEKCWV4aXRfY29kZRgCIAEoBRIOCgZzaWduYWwYAyABKAkSEgoKZXJyb3JfanNvbhgEIAEoCSI5ChJXb3Jrc3BhY2VFeGVjRXJyb3ISDwoHZXhlY19pZBgBIAEoCRISCgplcnJvcl9qc29uGAIgASgJIlQKEldvcmtzcGFjZVB0eU9wZW5lZBIOCgZwdHlfaWQYASABKAkSEgoKcHJvY2Vzc19pZBgCIAEoCRIMCgRjb2xzGAMgASgNEgwKBHJvd3MYBCABKA0iNwoXV29ya3NwYWNlUHR5T3V0cHV0Q2h1bmsSDgoGcHR5X2lkGAEgASgJEgwKBGRhdGEYAiABKAwiRwoZV29ya3NwYWNlUHR5UmVzaXplQXBwbGllZBIOCgZwdHlfaWQYASABKAkSDAoEY29scxgCIAEoDRIMCgRyb3dzGAMgASgNIkgKEldvcmtzcGFjZVB0eUNsb3NlZBIOCgZwdHlfaWQYASABKAkSDgoGcmVhc29uGAIgASgJEhIKCmVycm9yX2pzb24YAyABKAkiNwoRV29ya3NwYWNlUHR5RXJyb3ISDgoGcHR5X2lkGAEgASgJEhIKCmVycm9yX2pzb24YAiABKAkiiAYKF1dvcmtzcGFjZU9wZXJhdGlvbkV2ZW50EkAKCGVudmVsb3BlGAEgASgLMi4uaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU9wZXJhdGlvbkVudmVsb3BlEkAKDGV4ZWNfc3RhcnRlZBgCIAEoCzIoLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VFeGVjU3RhcnRlZEgAEkkKEWV4ZWNfc3Rkb3V0X2NodW5rGAMgASgLMiwuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZUV4ZWNPdXRwdXRDaHVua0gAEkkKEWV4ZWNfc3RkZXJyX2NodW5rGAQgASgLMiwuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZUV4ZWNPdXRwdXRDaHVua0gAEj4KC2V4ZWNfZXhpdGVkGAUgASgLMicuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZUV4ZWNFeGl0ZWRIABI8CgpleGVjX2Vycm9yGAYgASgLMiYuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZUV4ZWNFcnJvckgAEjwKCnB0eV9vcGVuZWQYByABKAsyJi5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlUHR5T3BlbmVkSAASRwoQcHR5X291dHB1dF9jaHVuaxgIIAEoCzIrLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VQdHlPdXRwdXRDaHVua0gAEksKEnB0eV9yZXNpemVfYXBwbGllZBgJIAEoCzItLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VQdHlSZXNpemVBcHBsaWVkSAASPAoKcHR5X2Nsb3NlZBgKIAEoCzImLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VQdHlDbG9zZWRIABI6CglwdHlfZXJyb3IYCyABKAsyJS5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlUHR5RXJyb3JIAEIHCgVldmVudCKqAQoSV29ya3NwYWNlU3RyZWFtQWNrEkAKCGVudmVsb3BlGAEgASgLMi4uaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU9wZXJhdGlvbkVudmVsb3BlEhUKDXJlc291cmNlX2tpbmQYAiABKAkSEwoLcmVzb3VyY2VfaWQYAyABKAkSDgoGc3RyZWFtGAQgASgJEhYKDmR1cmFibGVfb2Zmc2V0GAUgASgEIrcBChNXb3Jrc3BhY2VJbnB1dENodW5rEkAKCGVudmVsb3BlGAEgASgLMi4uaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU9wZXJhdGlvbkVudmVsb3BlEhUKDXJlc291cmNlX2tpbmQYAiABKAkSEwoLcmVzb3VyY2VfaWQYAyABKAkSDgoGc3RyZWFtGAQgASgJEhQKDG9mZnNldF9zdGFydBgFIAEoBBIMCgRkYXRhGAYgASgMIqMBChNXb3Jrc3BhY2VJbnB1dENsb3NlEkAKCGVudmVsb3BlGAEgASgLMi4uaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU9wZXJhdGlvbkVudmVsb3BlEhUKDXJlc291cmNlX2tpbmQYAiABKAkSEwoLcmVzb3VyY2VfaWQYAyABKAkSDgoGc3RyZWFtGAQgASgJEg4KBm9mZnNldBgFIAEoBCKSAQoTV29ya3NwYWNlSW5wdXRGcmFtZRI4CgVjaHVuaxgBIAEoCzInLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VJbnB1dENodW5rSAASOAoFY2xvc2UYAiABKAsyJy5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlSW5wdXRDbG9zZUgAQgcKBWZyYW1lQkZaRGdpdGh1Yi5jb20vaGVsbXJkb3RkZXYvaGVsbXIvaW50ZXJuYWwvcHJvdG8vd29ya3NwYWNlL3YwO3dvcmtzcGFjZXYwYgZwcm90bzM");
+  fileDesc("Cg93b3Jrc3BhY2UucHJvdG8SEmhlbG1yLndvcmtzcGFjZS52MCKmAgoaV29ya3NwYWNlT3BlcmF0aW9uRW52ZWxvcGUSFAoMb3BlcmF0aW9uX2lkGAEgASgJEhoKEndvcmtzcGFjZV9tb3VudF9pZBgCIAEoCRIUCgx3b3Jrc3BhY2VfaWQYAyABKAkSFQoNY2hhbm5lbF90b2tlbhgEIAEoCRIaChJmZW5jaW5nX2dlbmVyYXRpb24YBSABKAQSGQoRaW5zdGFuY2VfbGVhc2VfaWQYBiABKAkSFgoOd3JpdGVfbGVhc2VfaWQYByABKAkSFQoNZmVuY2luZ190b2tlbhgIIAEoCRImCh5vcGVyYXRpb25fZXhwaXJlc19hdF91bml4X25hbm8YCSABKAMSGwoTcmVxdWVzdF9maW5nZXJwcmludBgKIAEoCSJyChFXb3Jrc3BhY2VBcnRpZmFjdBIOCgZkaWdlc3QYASABKAkSEgoKbWVkaWFfdHlwZRgCIAEoCRIQCghlbmNvZGluZxgDIAEoCRISCgpzaXplX2J5dGVzGAQgASgEEhMKC2VudHJ5X2NvdW50GAUgASgNIsUDChdXb3Jrc3BhY2VBdXRob3JpdHlGZW5jZRIaChJ3b3JrZXJfaW5zdGFuY2VfaWQYASABKAkSFAoMd29ya2VyX2Vwb2NoGAIgASgDEhsKE3J1bnRpbWVfaW5zdGFuY2VfaWQYAyABKAkSGwoTcnVudGltZV9pZGVudGl0eV9pZBgEIAEoCRIUCgx3b3Jrc3BhY2VfaWQYBSABKAkSGgoSd29ya3NwYWNlX21vdW50X2lkGAYgASgJEg4KBnJ1bl9pZBgHIAEoCRIWCg5hdHRlbXB0X251bWJlchgIIAEoDRIUCgxydW5fbGVhc2VfaWQYCSABKAkSFgoObGVhc2Vfc2VxdWVuY2UYCiABKAMSGgoSd29ya3NwYWNlX2xlYXNlX2lkGAsgASgJEhwKFG93bmVyc2hpcF9nZW5lcmF0aW9uGAwgASgDEhkKEXdyaXRlcl9nZW5lcmF0aW9uGA0gASgDEiAKGG1vdW50X2ZlbmNpbmdfZ2VuZXJhdGlvbhgOIAEoAxIcChRleHBpcmVzX2F0X3VuaXhfbmFubxgPIAEoAxIhChliYXNlX3dvcmtzcGFjZV92ZXJzaW9uX2lkGBAgASgJIoQBChVXb3Jrc3BhY2VSdW5BdXRob3JpdHkSOgoFZmVuY2UYASABKAsyKy5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXV0aG9yaXR5RmVuY2USFQoNY2hhbm5lbF90b2tlbhgCIAEoCRIYChB3cml0ZV9jYXBhYmlsaXR5GAMgASgJIn8KHlJlbmV3V29ya3NwYWNlQXV0aG9yaXR5UmVxdWVzdBI7CghwcmV2aW91cxgBIAEoCzIpLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VSdW5BdXRob3JpdHkSIAoYbmV3X2V4cGlyZXNfYXRfdW5peF9uYW5vGAIgASgDImwKH1JlbmV3V29ya3NwYWNlQXV0aG9yaXR5UmVzcG9uc2USOgoFZmVuY2UYASABKAsyKy5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXV0aG9yaXR5RmVuY2USDQoFZXJyb3IYAiABKAki1wEKGUdyYW50UHJvZ3JhbVJlc3VtZVJlcXVlc3QSPAoJYXV0aG9yaXR5GAEgASgLMikuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZVJ1bkF1dGhvcml0eRITCgtydW5fd2FpdF9pZBgCIAEoCRIVCg1jaGVja3BvaW50X2lkGAMgASgJEhgKEHJlc3VtZV9hdHRhY2hfaWQYBCABKAkSHgoWcmVzdW1lX3JlcXVlc3RfdmVyc2lvbhgFIAEoAxIWCg5jb3JyZWxhdGlvbl9pZBgGIAEoCSLWAQoaR3JhbnRQcm9ncmFtUmVzdW1lUmVzcG9uc2USOgoFZmVuY2UYASABKAsyKy5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXV0aG9yaXR5RmVuY2USEwoLcnVuX3dhaXRfaWQYAiABKAkSFQoNY2hlY2twb2ludF9pZBgDIAEoCRIYChByZXN1bWVfYXR0YWNoX2lkGAQgASgJEh4KFnJlc3VtZV9yZXF1ZXN0X3ZlcnNpb24YBSABKAMSFgoOY29ycmVsYXRpb25faWQYBiABKAkiiQEKG1ZlcmlmeVByb2dyYW1SZXN0b3JlUmVxdWVzdBIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SEwoLcnVuX3dhaXRfaWQYAyABKAkSFQoNY2hlY2twb2ludF9pZBgEIAEoCRIWCg5jb3JyZWxhdGlvbl9pZBgFIAEoCSKKAQocVmVyaWZ5UHJvZ3JhbVJlc3RvcmVSZXNwb25zZRIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SEwoLcnVuX3dhaXRfaWQYAyABKAkSFQoNY2hlY2twb2ludF9pZBgEIAEoCRIWCg5jb3JyZWxhdGlvbl9pZBgFIAEoCSKvAQohQmVnaW5Xb3Jrc3BhY2VGaW5hbGl6YXRpb25SZXF1ZXN0EjsKCHByZXZpb3VzGAEgASgLMikuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZVJ1bkF1dGhvcml0eRIpCiFmaW5hbGl6YXRpb25fZXhwaXJlc19hdF91bml4X25hbm8YAiABKAMSFAoMb3BlcmF0aW9uX2lkGAMgASgJEgwKBGtpbmQYBCABKAkikwEKIkJlZ2luV29ya3NwYWNlRmluYWxpemF0aW9uUmVzcG9uc2USOgoFZmVuY2UYASABKAsyKy5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXV0aG9yaXR5RmVuY2USFAoMb3BlcmF0aW9uX2lkGAIgASgJEgwKBGtpbmQYAyABKAkSDQoFZXJyb3IYBCABKAkiUAoVV29ya3NwYWNlVHJlZUlkZW50aXR5Eg4KBmRpZ2VzdBgBIAEoCRISCgpzaXplX2J5dGVzGAIgASgDEhMKC2VudHJ5X2NvdW50GAMgASgNIpABCh1Xb3Jrc3BhY2VGaW5hbGl6YXRpb25FbnZlbG9wZRIUCgxvcGVyYXRpb25faWQYASABKAkSGwoTcmVxdWVzdF9maW5nZXJwcmludBgCIAEoCRI8CglhdXRob3JpdHkYAyABKAsyKS5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlUnVuQXV0aG9yaXR5Io0BChxXb3Jrc3BhY2VGaW5hbGl6YXRpb25SZWNlaXB0EhQKDG9wZXJhdGlvbl9pZBgBIAEoCRIbChNyZXF1ZXN0X2ZpbmdlcnByaW50GAIgASgJEjoKBWZlbmNlGAMgASgLMisuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZUF1dGhvcml0eUZlbmNlIuUCChtNYXRlcmlhbGl6ZVdvcmtzcGFjZVJlcXVlc3QSQAoIZW52ZWxvcGUYASABKAsyLi5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlT3BlcmF0aW9uRW52ZWxvcGUSEgoKbW91bnRfcGF0aBgCIAEoCRIXCg9iYXNlX3ZlcnNpb25faWQYAyABKAkSPAoNYmFzZV9hcnRpZmFjdBgEIAEoCzIlLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VBcnRpZmFjdBI+Cg93b3Jrc3BhY2VfaW1hZ2UYBSABKAsyJS5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXJ0aWZhY3QSHAoUdXNlX3ByZXBhcmVkX3J1bnRpbWUYBiABKAgSGwoTcnVudGltZV9pbnN0YW5jZV9pZBgHIAEoCRIeChZyZXN0b3JlZF9jaGVja3BvaW50X2lkGAggASgJInAKE1dvcmtzcGFjZU1vdW50UGhhc2USDAoEbmFtZRgBIAEoCRITCgtkdXJhdGlvbl9tcxgCIAEoBBISCgpzaXplX2J5dGVzGAMgASgEEhMKC2VudHJ5X2NvdW50GAQgASgNEg0KBWVycm9yGAUgASgJIokBChxNYXRlcmlhbGl6ZVdvcmtzcGFjZVJlc3BvbnNlEg0KBXN0YXRlGAEgASgJEiEKGWd1ZXN0ZF9jaGFubmVsX3Rva2VuX2hhc2gYAiABKAkSNwoGcGhhc2VzGAMgAygLMicuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU1vdW50UGhhc2UikQEKHlByZXBhcmVXb3Jrc3BhY2VSdW50aW1lUmVxdWVzdBIbChNydW50aW1lX2luc3RhbmNlX2lkGAEgASgJEhIKCm1vdW50X3BhdGgYAiABKAkSPgoPd29ya3NwYWNlX2ltYWdlGAMgASgLMiUuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZUFydGlmYWN0IoYBCh9QcmVwYXJlV29ya3NwYWNlUnVudGltZVJlc3BvbnNlEg0KBXN0YXRlGAEgASgJEhsKE3J1bnRpbWVfaW5zdGFuY2VfaWQYAiABKAkSNwoGcGhhc2VzGAMgAygLMicuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU1vdW50UGhhc2UihgEKGUhlYXJ0YmVhdFdvcmtzcGFjZVJlcXVlc3QSQAoIZW52ZWxvcGUYASABKAsyLi5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlT3BlcmF0aW9uRW52ZWxvcGUSDQoFc3RhdGUYAiABKAkSGAoQZGlydHlfZ2VuZXJhdGlvbhgDIAEoBCJDChpIZWFydGJlYXRXb3Jrc3BhY2VSZXNwb25zZRINCgVzdGF0ZRgBIAEoCRIWCg5zdG9wX3JlcXVlc3RlZBgCIAEoCCJeChdDYXB0dXJlV29ya3NwYWNlUmVxdWVzdBJDCghlbnZlbG9wZRgBIAEoCzIxLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VGaW5hbGl6YXRpb25FbnZlbG9wZSLeAQoYQ2FwdHVyZVdvcmtzcGFjZVJlc3BvbnNlEkEKB3JlY2VpcHQYASABKAsyMC5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlRmluYWxpemF0aW9uUmVjZWlwdBI3CgR0cmVlGAIgASgLMikuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZVRyZWVJZGVudGl0eRI3CghhcnRpZmFjdBgDIAEoCzIlLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VBcnRpZmFjdBINCgVlcnJvchgEIAEoCSIbChlFbXB0eVdvcmtzcGFjZVJlc2V0VGFyZ2V0Iu0BChRXb3Jrc3BhY2VSZXNldFRhcmdldBIXCg9iYXNlX3ZlcnNpb25faWQYASABKAkSNwoEdHJlZRgCIAEoCzIpLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VUcmVlSWRlbnRpdHkSPgoFZW1wdHkYAyABKAsyLS5oZWxtci53b3Jrc3BhY2UudjAuRW1wdHlXb3Jrc3BhY2VSZXNldFRhcmdldEgAEjkKCGFydGlmYWN0GAQgASgLMiUuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZUFydGlmYWN0SABCCAoGc291cmNlIpYBChVSZXNldFdvcmtzcGFjZVJlcXVlc3QSQwoIZW52ZWxvcGUYASABKAsyMS5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlRmluYWxpemF0aW9uRW52ZWxvcGUSOAoGdGFyZ2V0GAIgASgLMiguaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZVJlc2V0VGFyZ2V0IqQBChZSZXNldFdvcmtzcGFjZVJlc3BvbnNlEkEKB3JlY2VpcHQYASABKAsyMC5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlRmluYWxpemF0aW9uUmVjZWlwdBI4CgZ0YXJnZXQYAiABKAsyKC5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlUmVzZXRUYXJnZXQSDQoFZXJyb3IYAyABKAkijAEKFFN0b3BXb3Jrc3BhY2VSZXF1ZXN0EkAKCGVudmVsb3BlGAEgASgLMi4uaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU9wZXJhdGlvbkVudmVsb3BlEhsKE2NhcHR1cmVfYmVmb3JlX3N0b3AYAiABKAgSFQoNZmluYWxpemVfc3RvcBgDIAEoCCJ8ChVTdG9wV29ya3NwYWNlUmVzcG9uc2USDQoFc3RhdGUYASABKAkSQAoRY2FwdHVyZWRfYXJ0aWZhY3QYAiABKAsyJS5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXJ0aWZhY3QSEgoKZXJyb3JfanNvbhgDIAEoCSLAAQoZV29ya3NwYWNlQmFzaWNFeGVjUmVxdWVzdBJACghlbnZlbG9wZRgBIAEoCzIuLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VPcGVyYXRpb25FbnZlbG9wZRIUCgxyZXF1ZXN0X2pzb24YAiABKAkSPAoHc2VjcmV0cxgDIAMoCzIrLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VTZWNyZXREZWxpdmVyeRINCgVzdGRpbhgEIAEoDCKPAQoYV29ya3NwYWNlQmFzaWNFeGVjUmVzdWx0EhIKCmVycm9yX2pzb24YASABKAkSEQoJZXhpdF9jb2RlGAIgASgFEg4KBnN0ZG91dBgDIAEoDBIOCgZzdGRlcnIYBCABKAwSDwoHb3V0Y29tZRgFIAEoCRIbChNyZXF1ZXN0X2ZpbmdlcnByaW50GAYgASgJIloKF1dvcmtzcGFjZVNlY3JldERlbGl2ZXJ5EhYKDnBsYWNlbWVudF9raW5kGAEgASgJEhgKEHBsYWNlbWVudF90YXJnZXQYAiABKAkSDQoFdmFsdWUYAyABKAxCRlpEZ2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by93b3Jrc3BhY2UvdjA7d29ya3NwYWNldjBiBnByb3RvMw");
 
 /**
  * @generated from message helmr.workspace.v0.WorkspaceOperationEnvelope
@@ -1001,87 +1001,77 @@ export const StopWorkspaceResponseSchema: GenMessage<StopWorkspaceResponse> = /*
   messageDesc(file_workspace, 29);
 
 /**
- * @generated from message helmr.workspace.v0.WorkspaceOperationRequest
+ * @generated from message helmr.workspace.v0.WorkspaceBasicExecRequest
  */
-export type WorkspaceOperationRequest = Message<"helmr.workspace.v0.WorkspaceOperationRequest"> & {
+export type WorkspaceBasicExecRequest = Message<"helmr.workspace.v0.WorkspaceBasicExecRequest"> & {
   /**
    * @generated from field: helmr.workspace.v0.WorkspaceOperationEnvelope envelope = 1;
    */
   envelope?: WorkspaceOperationEnvelope;
 
   /**
-   * @generated from field: string operation_kind = 2;
-   */
-  operationKind: string;
-
-  /**
-   * @generated from field: string request_json = 3;
+   * @generated from field: string request_json = 2;
    */
   requestJson: string;
 
   /**
-   * @generated from field: repeated helmr.workspace.v0.WorkspaceSecretDelivery secrets = 4;
+   * @generated from field: repeated helmr.workspace.v0.WorkspaceSecretDelivery secrets = 3;
    */
   secrets: WorkspaceSecretDelivery[];
 
   /**
-   * @generated from field: bytes stdin = 5;
+   * @generated from field: bytes stdin = 4;
    */
   stdin: Uint8Array;
 };
 
 /**
- * Describes the message helmr.workspace.v0.WorkspaceOperationRequest.
- * Use `create(WorkspaceOperationRequestSchema)` to create a new message.
+ * Describes the message helmr.workspace.v0.WorkspaceBasicExecRequest.
+ * Use `create(WorkspaceBasicExecRequestSchema)` to create a new message.
  */
-export const WorkspaceOperationRequestSchema: GenMessage<WorkspaceOperationRequest> = /*@__PURE__*/
+export const WorkspaceBasicExecRequestSchema: GenMessage<WorkspaceBasicExecRequest> = /*@__PURE__*/
   messageDesc(file_workspace, 30);
 
 /**
- * @generated from message helmr.workspace.v0.WorkspaceOperationResult
+ * @generated from message helmr.workspace.v0.WorkspaceBasicExecResult
  */
-export type WorkspaceOperationResult = Message<"helmr.workspace.v0.WorkspaceOperationResult"> & {
+export type WorkspaceBasicExecResult = Message<"helmr.workspace.v0.WorkspaceBasicExecResult"> & {
   /**
-   * @generated from field: string result_json = 1;
-   */
-  resultJson: string;
-
-  /**
-   * @generated from field: string error_json = 2;
+   * @generated from field: string error_json = 1;
    */
   errorJson: string;
 
   /**
-   * @generated from field: int32 exit_code = 3;
+   * @generated from field: int32 exit_code = 2;
    */
   exitCode: number;
 
   /**
-   * @generated from field: bytes stdout = 4;
+   * @generated from field: bytes stdout = 3;
    */
   stdout: Uint8Array;
 
   /**
-   * @generated from field: bytes stderr = 5;
+   * @generated from field: bytes stderr = 4;
    */
   stderr: Uint8Array;
 
   /**
-   * @generated from field: string outcome = 6;
+   * @generated from field: string outcome = 5;
    */
   outcome: string;
 
   /**
-   * @generated from field: string request_fingerprint = 7;
+   * @generated from field: string request_fingerprint = 6;
    */
   requestFingerprint: string;
 };
 
 /**
- * Describes the message helmr.workspace.v0.WorkspaceOperationResult.
- * Use `create(WorkspaceOperationResultSchema)` to create a new message.
+ * Describes the message helmr.workspace.v0.WorkspaceBasicExecResult.
+ * Use `create(WorkspaceBasicExecResultSchema)` to create a new message.
  */
-export const WorkspaceOperationResultSchema: GenMessage<WorkspaceOperationResult> = /*@__PURE__*/
+export const WorkspaceBasicExecResultSchema: GenMessage<WorkspaceBasicExecResult> = /*@__PURE__*/
   messageDesc(file_workspace, 31);
 
 /**
@@ -1110,458 +1100,3 @@ export type WorkspaceSecretDelivery = Message<"helmr.workspace.v0.WorkspaceSecre
  */
 export const WorkspaceSecretDeliverySchema: GenMessage<WorkspaceSecretDelivery> = /*@__PURE__*/
   messageDesc(file_workspace, 32);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspaceExecStarted
- */
-export type WorkspaceExecStarted = Message<"helmr.workspace.v0.WorkspaceExecStarted"> & {
-  /**
-   * @generated from field: string exec_id = 1;
-   */
-  execId: string;
-
-  /**
-   * @generated from field: string process_id = 2;
-   */
-  processId: string;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspaceExecStarted.
- * Use `create(WorkspaceExecStartedSchema)` to create a new message.
- */
-export const WorkspaceExecStartedSchema: GenMessage<WorkspaceExecStarted> = /*@__PURE__*/
-  messageDesc(file_workspace, 33);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspaceExecOutputChunk
- */
-export type WorkspaceExecOutputChunk = Message<"helmr.workspace.v0.WorkspaceExecOutputChunk"> & {
-  /**
-   * @generated from field: string exec_id = 1;
-   */
-  execId: string;
-
-  /**
-   * @generated from field: bytes data = 2;
-   */
-  data: Uint8Array;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspaceExecOutputChunk.
- * Use `create(WorkspaceExecOutputChunkSchema)` to create a new message.
- */
-export const WorkspaceExecOutputChunkSchema: GenMessage<WorkspaceExecOutputChunk> = /*@__PURE__*/
-  messageDesc(file_workspace, 34);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspaceExecExited
- */
-export type WorkspaceExecExited = Message<"helmr.workspace.v0.WorkspaceExecExited"> & {
-  /**
-   * @generated from field: string exec_id = 1;
-   */
-  execId: string;
-
-  /**
-   * @generated from field: int32 exit_code = 2;
-   */
-  exitCode: number;
-
-  /**
-   * @generated from field: string signal = 3;
-   */
-  signal: string;
-
-  /**
-   * @generated from field: string error_json = 4;
-   */
-  errorJson: string;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspaceExecExited.
- * Use `create(WorkspaceExecExitedSchema)` to create a new message.
- */
-export const WorkspaceExecExitedSchema: GenMessage<WorkspaceExecExited> = /*@__PURE__*/
-  messageDesc(file_workspace, 35);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspaceExecError
- */
-export type WorkspaceExecError = Message<"helmr.workspace.v0.WorkspaceExecError"> & {
-  /**
-   * @generated from field: string exec_id = 1;
-   */
-  execId: string;
-
-  /**
-   * @generated from field: string error_json = 2;
-   */
-  errorJson: string;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspaceExecError.
- * Use `create(WorkspaceExecErrorSchema)` to create a new message.
- */
-export const WorkspaceExecErrorSchema: GenMessage<WorkspaceExecError> = /*@__PURE__*/
-  messageDesc(file_workspace, 36);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspacePtyOpened
- */
-export type WorkspacePtyOpened = Message<"helmr.workspace.v0.WorkspacePtyOpened"> & {
-  /**
-   * @generated from field: string pty_id = 1;
-   */
-  ptyId: string;
-
-  /**
-   * @generated from field: string process_id = 2;
-   */
-  processId: string;
-
-  /**
-   * @generated from field: uint32 cols = 3;
-   */
-  cols: number;
-
-  /**
-   * @generated from field: uint32 rows = 4;
-   */
-  rows: number;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspacePtyOpened.
- * Use `create(WorkspacePtyOpenedSchema)` to create a new message.
- */
-export const WorkspacePtyOpenedSchema: GenMessage<WorkspacePtyOpened> = /*@__PURE__*/
-  messageDesc(file_workspace, 37);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspacePtyOutputChunk
- */
-export type WorkspacePtyOutputChunk = Message<"helmr.workspace.v0.WorkspacePtyOutputChunk"> & {
-  /**
-   * @generated from field: string pty_id = 1;
-   */
-  ptyId: string;
-
-  /**
-   * @generated from field: bytes data = 2;
-   */
-  data: Uint8Array;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspacePtyOutputChunk.
- * Use `create(WorkspacePtyOutputChunkSchema)` to create a new message.
- */
-export const WorkspacePtyOutputChunkSchema: GenMessage<WorkspacePtyOutputChunk> = /*@__PURE__*/
-  messageDesc(file_workspace, 38);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspacePtyResizeApplied
- */
-export type WorkspacePtyResizeApplied = Message<"helmr.workspace.v0.WorkspacePtyResizeApplied"> & {
-  /**
-   * @generated from field: string pty_id = 1;
-   */
-  ptyId: string;
-
-  /**
-   * @generated from field: uint32 cols = 2;
-   */
-  cols: number;
-
-  /**
-   * @generated from field: uint32 rows = 3;
-   */
-  rows: number;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspacePtyResizeApplied.
- * Use `create(WorkspacePtyResizeAppliedSchema)` to create a new message.
- */
-export const WorkspacePtyResizeAppliedSchema: GenMessage<WorkspacePtyResizeApplied> = /*@__PURE__*/
-  messageDesc(file_workspace, 39);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspacePtyClosed
- */
-export type WorkspacePtyClosed = Message<"helmr.workspace.v0.WorkspacePtyClosed"> & {
-  /**
-   * @generated from field: string pty_id = 1;
-   */
-  ptyId: string;
-
-  /**
-   * @generated from field: string reason = 2;
-   */
-  reason: string;
-
-  /**
-   * @generated from field: string error_json = 3;
-   */
-  errorJson: string;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspacePtyClosed.
- * Use `create(WorkspacePtyClosedSchema)` to create a new message.
- */
-export const WorkspacePtyClosedSchema: GenMessage<WorkspacePtyClosed> = /*@__PURE__*/
-  messageDesc(file_workspace, 40);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspacePtyError
- */
-export type WorkspacePtyError = Message<"helmr.workspace.v0.WorkspacePtyError"> & {
-  /**
-   * @generated from field: string pty_id = 1;
-   */
-  ptyId: string;
-
-  /**
-   * @generated from field: string error_json = 2;
-   */
-  errorJson: string;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspacePtyError.
- * Use `create(WorkspacePtyErrorSchema)` to create a new message.
- */
-export const WorkspacePtyErrorSchema: GenMessage<WorkspacePtyError> = /*@__PURE__*/
-  messageDesc(file_workspace, 41);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspaceOperationEvent
- */
-export type WorkspaceOperationEvent = Message<"helmr.workspace.v0.WorkspaceOperationEvent"> & {
-  /**
-   * @generated from field: helmr.workspace.v0.WorkspaceOperationEnvelope envelope = 1;
-   */
-  envelope?: WorkspaceOperationEnvelope;
-
-  /**
-   * @generated from oneof helmr.workspace.v0.WorkspaceOperationEvent.event
-   */
-  event: {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspaceExecStarted exec_started = 2;
-     */
-    value: WorkspaceExecStarted;
-    case: "execStarted";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspaceExecOutputChunk exec_stdout_chunk = 3;
-     */
-    value: WorkspaceExecOutputChunk;
-    case: "execStdoutChunk";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspaceExecOutputChunk exec_stderr_chunk = 4;
-     */
-    value: WorkspaceExecOutputChunk;
-    case: "execStderrChunk";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspaceExecExited exec_exited = 5;
-     */
-    value: WorkspaceExecExited;
-    case: "execExited";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspaceExecError exec_error = 6;
-     */
-    value: WorkspaceExecError;
-    case: "execError";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspacePtyOpened pty_opened = 7;
-     */
-    value: WorkspacePtyOpened;
-    case: "ptyOpened";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspacePtyOutputChunk pty_output_chunk = 8;
-     */
-    value: WorkspacePtyOutputChunk;
-    case: "ptyOutputChunk";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspacePtyResizeApplied pty_resize_applied = 9;
-     */
-    value: WorkspacePtyResizeApplied;
-    case: "ptyResizeApplied";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspacePtyClosed pty_closed = 10;
-     */
-    value: WorkspacePtyClosed;
-    case: "ptyClosed";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspacePtyError pty_error = 11;
-     */
-    value: WorkspacePtyError;
-    case: "ptyError";
-  } | { case: undefined; value?: undefined };
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspaceOperationEvent.
- * Use `create(WorkspaceOperationEventSchema)` to create a new message.
- */
-export const WorkspaceOperationEventSchema: GenMessage<WorkspaceOperationEvent> = /*@__PURE__*/
-  messageDesc(file_workspace, 42);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspaceStreamAck
- */
-export type WorkspaceStreamAck = Message<"helmr.workspace.v0.WorkspaceStreamAck"> & {
-  /**
-   * @generated from field: helmr.workspace.v0.WorkspaceOperationEnvelope envelope = 1;
-   */
-  envelope?: WorkspaceOperationEnvelope;
-
-  /**
-   * @generated from field: string resource_kind = 2;
-   */
-  resourceKind: string;
-
-  /**
-   * @generated from field: string resource_id = 3;
-   */
-  resourceId: string;
-
-  /**
-   * @generated from field: string stream = 4;
-   */
-  stream: string;
-
-  /**
-   * @generated from field: uint64 durable_offset = 5;
-   */
-  durableOffset: bigint;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspaceStreamAck.
- * Use `create(WorkspaceStreamAckSchema)` to create a new message.
- */
-export const WorkspaceStreamAckSchema: GenMessage<WorkspaceStreamAck> = /*@__PURE__*/
-  messageDesc(file_workspace, 43);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspaceInputChunk
- */
-export type WorkspaceInputChunk = Message<"helmr.workspace.v0.WorkspaceInputChunk"> & {
-  /**
-   * @generated from field: helmr.workspace.v0.WorkspaceOperationEnvelope envelope = 1;
-   */
-  envelope?: WorkspaceOperationEnvelope;
-
-  /**
-   * @generated from field: string resource_kind = 2;
-   */
-  resourceKind: string;
-
-  /**
-   * @generated from field: string resource_id = 3;
-   */
-  resourceId: string;
-
-  /**
-   * @generated from field: string stream = 4;
-   */
-  stream: string;
-
-  /**
-   * @generated from field: uint64 offset_start = 5;
-   */
-  offsetStart: bigint;
-
-  /**
-   * @generated from field: bytes data = 6;
-   */
-  data: Uint8Array;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspaceInputChunk.
- * Use `create(WorkspaceInputChunkSchema)` to create a new message.
- */
-export const WorkspaceInputChunkSchema: GenMessage<WorkspaceInputChunk> = /*@__PURE__*/
-  messageDesc(file_workspace, 44);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspaceInputClose
- */
-export type WorkspaceInputClose = Message<"helmr.workspace.v0.WorkspaceInputClose"> & {
-  /**
-   * @generated from field: helmr.workspace.v0.WorkspaceOperationEnvelope envelope = 1;
-   */
-  envelope?: WorkspaceOperationEnvelope;
-
-  /**
-   * @generated from field: string resource_kind = 2;
-   */
-  resourceKind: string;
-
-  /**
-   * @generated from field: string resource_id = 3;
-   */
-  resourceId: string;
-
-  /**
-   * @generated from field: string stream = 4;
-   */
-  stream: string;
-
-  /**
-   * @generated from field: uint64 offset = 5;
-   */
-  offset: bigint;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspaceInputClose.
- * Use `create(WorkspaceInputCloseSchema)` to create a new message.
- */
-export const WorkspaceInputCloseSchema: GenMessage<WorkspaceInputClose> = /*@__PURE__*/
-  messageDesc(file_workspace, 45);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspaceInputFrame
- */
-export type WorkspaceInputFrame = Message<"helmr.workspace.v0.WorkspaceInputFrame"> & {
-  /**
-   * @generated from oneof helmr.workspace.v0.WorkspaceInputFrame.frame
-   */
-  frame: {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspaceInputChunk chunk = 1;
-     */
-    value: WorkspaceInputChunk;
-    case: "chunk";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspaceInputClose close = 2;
-     */
-    value: WorkspaceInputClose;
-    case: "close";
-  } | { case: undefined; value?: undefined };
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspaceInputFrame.
- * Use `create(WorkspaceInputFrameSchema)` to create a new message.
- */
-export const WorkspaceInputFrameSchema: GenMessage<WorkspaceInputFrame> = /*@__PURE__*/
-  messageDesc(file_workspace, 46);

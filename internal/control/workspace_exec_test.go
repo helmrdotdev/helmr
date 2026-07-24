@@ -7,7 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestNormalizeWorkspaceExecAppliesClosedDefaults(t *testing.T) {
@@ -22,11 +26,24 @@ func TestNormalizeWorkspaceExecAppliesClosedDefaults(t *testing.T) {
 		normalized.timeout != 5*time.Minute ||
 		normalized.timeoutMS != 300000 ||
 		len(normalized.command) != 3 ||
-		normalized.command[1] != "" {
+		normalized.command[1] != "" ||
+		normalized.stdin == nil {
 		t.Fatalf("normalized = %+v", normalized)
 	}
 	if string(normalized.requestJSON) != `{"command":["printf","","ok"],"cwd":"/workspace","env":{"LANG":"C.UTF-8"},"timeout_ms":300000}` {
 		t.Fatalf("request JSON = %s", normalized.requestJSON)
+	}
+}
+
+func TestNonNilWorkspaceExecBytesClonesInput(t *testing.T) {
+	if value := nonNilWorkspaceExecBytes(nil); value == nil || len(value) != 0 {
+		t.Fatalf("empty value = %#v", value)
+	}
+	source := []byte("secret")
+	cloned := nonNilWorkspaceExecBytes(source)
+	clear(source)
+	if string(cloned) != "secret" {
+		t.Fatalf("cloned value = %q", cloned)
 	}
 }
 
@@ -109,10 +126,79 @@ func TestNormalizeWorkspaceExecOutcomeDiscardsAbnormalExit(t *testing.T) {
 	}
 }
 
+func TestNormalizeWorkspaceExecOutcomeAcceptsClosedExecutionFailures(t *testing.T) {
+	for _, outcome := range []string{
+		"workspace_exec_failed",
+		"workspace_exec_secret_delivery_failed",
+		"workspace_exec_launch_failed",
+		"workspace_exec_output_limit_exceeded",
+		"workspace_exec_result_uncertain",
+	} {
+		t.Run(outcome, func(t *testing.T) {
+			kind, reason, _, err := normalizeWorkspaceExecOutcome(
+				api.WorkerWorkspaceExecCompleteRequest{
+					Outcome: outcome,
+					Error:   json.RawMessage(`{"code":"` + outcome + `"}`),
+				},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kind != "discard" || reason != outcome {
+				t.Fatalf("outcome = %q %q", kind, reason)
+			}
+		})
+	}
+}
+
 func TestNormalizeWorkspaceExecOutcomeRejectsAmbiguousExit(t *testing.T) {
 	if _, _, _, err := normalizeWorkspaceExecOutcome(
 		api.WorkerWorkspaceExecCompleteRequest{Outcome: "exited"},
 	); err == nil {
 		t.Fatal("normal exit without exit_code was accepted")
+	}
+}
+
+func TestWorkspaceExecPublicationSecretsRequireCurrentResolution(t *testing.T) {
+	processID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	valid := db.LockProcessSecretDeliveryRow{
+		Secret: db.Secret{
+			State:                "active",
+			RevocationGeneration: 3,
+		},
+		ResolutionID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ResolutionProcessID:            processID,
+		ResolutionSecretVersionID:      pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ResolutionRevocationGeneration: pgtype.Int8{Int64: 3, Valid: true},
+	}
+	if !workspaceExecPublicationSecretsValid(
+		[]db.LockProcessSecretDeliveryRow{valid},
+		processID,
+	) {
+		t.Fatal("current Secret resolution was rejected")
+	}
+	revoked := valid
+	revoked.Secret.State = "revoked"
+	if workspaceExecPublicationSecretsValid(
+		[]db.LockProcessSecretDeliveryRow{revoked},
+		processID,
+	) {
+		t.Fatal("revoked Secret resolution was accepted")
+	}
+	stale := valid
+	stale.Secret.RevocationGeneration++
+	if workspaceExecPublicationSecretsValid(
+		[]db.LockProcessSecretDeliveryRow{stale},
+		processID,
+	) {
+		t.Fatal("stale Secret resolution was accepted")
+	}
+	missing := valid
+	missing.ResolutionID = pgtype.UUID{}
+	if workspaceExecPublicationSecretsValid(
+		[]db.LockProcessSecretDeliveryRow{missing},
+		processID,
+	) {
+		t.Fatal("missing Secret resolution was accepted")
 	}
 }

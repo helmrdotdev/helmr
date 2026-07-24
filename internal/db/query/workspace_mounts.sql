@@ -432,18 +432,3 @@ UPDATE workspace_mounts
    AND workspace_mounts.id = target.id
    AND failed_runtime.id = target.runtime_instance_id
 RETURNING workspace_mounts.*;
-
--- name: MarkStaleWorkspaceMountsLost :many
-UPDATE workspace_mounts
-   SET state = 'lost', lost_at = now(), terminal_at = now(),
-       terminal_reason_code = 'worker_epoch_lost', updated_at = now()
- WHERE id IN (
-     SELECT workspace_mounts.id FROM workspace_mounts
-      JOIN worker_instances ON worker_instances.id = workspace_mounts.worker_instance_id
-      WHERE workspace_mounts.state IN ('mounting','mounted','unmounting')
-        AND (workspace_mounts.worker_epoch IS DISTINCT FROM worker_instances.current_epoch
-             OR worker_instances.state IN ('disabled', 'lost'))
-      ORDER BY workspace_mounts.updated_at, workspace_mounts.id
-      LIMIT sqlc.arg(limit_count) FOR UPDATE OF workspace_mounts SKIP LOCKED
- )
-RETURNING *;

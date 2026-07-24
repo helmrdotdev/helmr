@@ -56,10 +56,10 @@ func (entry *workspaceMountEntry) acquireActorTurnCommit(
 		release()
 		return func() {}, time.Time{}, errors.New("Workspace is unavailable for Actor turn commit")
 	}
-	if entry.processAdmissions != 0 || len(entry.processes) != 0 {
+	if entry.processAdmissions != 0 {
 		entry.processesMu.Unlock()
 		release()
-		return func() {}, time.Time{}, errors.New("Actor turn commit requires no active exec or PTY")
+		return func() {}, time.Time{}, errors.New("Actor turn commit requires no active exec")
 	}
 	entry.turnCommitBlocked = true
 	entry.processesMu.Unlock()

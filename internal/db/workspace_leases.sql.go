@@ -11,67 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const expireWorkspaceLeases = `-- name: ExpireWorkspaceLeases :many
-UPDATE workspace_leases
-   SET state = 'expired',
-       terminal_at = now(),
-       terminal_reason_code = 'lease_expired',
-       updated_at = now()
- WHERE state IN ('active', 'releasing')
-   AND expires_at <= now()
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_key_fingerprint, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
-`
-
-func (q *Queries) ExpireWorkspaceLeases(ctx context.Context) ([]WorkspaceLease, error) {
-	rows, err := q.db.Query(ctx, expireWorkspaceLeases)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []WorkspaceLease
-	for rows.Next() {
-		var i WorkspaceLease
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.WorkerGroupID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.RegionID,
-			&i.WorkerInstanceID,
-			&i.WorkerEpoch,
-			&i.RuntimeInstanceID,
-			&i.WorkspaceID,
-			&i.WorkspaceMountID,
-			&i.State,
-			&i.OwnerRunLeaseID,
-			&i.OwnerProcessID,
-			&i.BaseVersionID,
-			&i.OwnershipGeneration,
-			&i.WriterGeneration,
-			&i.MountFencingGeneration,
-			&i.FencingKeyFingerprint,
-			&i.FencingTokenHash,
-			&i.AcquiredAt,
-			&i.RenewedAt,
-			&i.ExpiresAt,
-			&i.ReleasedAt,
-			&i.LostAt,
-			&i.UpdatedAt,
-			&i.TerminalAt,
-			&i.TerminalReasonCode,
-			&i.TerminalError,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getRunOwnedWorkspaceLease = `-- name: GetRunOwnedWorkspaceLease :one
 SELECT workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.state, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_key_fingerprint, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error
   FROM workspace_leases

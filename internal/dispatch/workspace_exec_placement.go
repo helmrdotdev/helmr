@@ -278,7 +278,6 @@ SELECT secrets.state = 'active'
  WHERE workspace_processes.org_id = $1
    AND workspace_processes.id = $2
    AND workspace_processes.state_version = $3
-   AND workspace_processes.kind = 'exec'
    AND workspace_processes.state = 'pending'
  ORDER BY secrets.id, workspace_secrets.placement_kind, workspace_secrets.placement_target
  FOR UPDATE OF secrets`,
@@ -345,7 +344,6 @@ SELECT workspace_processes.id,
  WHERE workspace_processes.org_id = $1
    AND workspace_processes.id = $2
    AND workspace_processes.state_version = $3
-   AND workspace_processes.kind = 'exec'
    AND workspace_processes.state = 'pending'
    AND workspaces.state = 'active'
    AND workspaces.desired_state IN ('active', 'stopped')
@@ -722,20 +720,107 @@ func (d *Authority) finishRejectedWorkspaceExec(
 	if err != nil {
 		return WorkspaceExecPlacement{}, fmt.Errorf("encode Workspace exec rejection: %w", err)
 	}
-	if _, err := db.New(tx).FailPendingWorkspaceExec(ctx, db.FailPendingWorkspaceExecParams{
-		ReasonCode:           pgvalue.Text(permanent.code),
-		Error:                errorJSON,
-		OrgID:                candidate.OrgID,
-		ProcessID:            candidate.ProcessID,
-		ExpectedStateVersion: candidate.ExpectedStateVersion,
-	}); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return WorkspaceExecPlacement{}, ErrCandidateChanged
-		}
-		return WorkspaceExecPlacement{}, fmt.Errorf("fail rejected Workspace exec: %w", err)
+	if err := failPendingWorkspaceExec(
+		ctx,
+		tx,
+		candidate,
+		permanent.code,
+		errorJSON,
+	); err != nil {
+		return WorkspaceExecPlacement{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return WorkspaceExecPlacement{}, fmt.Errorf("commit rejected Workspace exec: %w", err)
 	}
 	return WorkspaceExecPlacement{}, nil
+}
+
+func (d *Authority) FailPendingWorkspaceExec(
+	ctx context.Context,
+	candidate ReadyWorkspaceExecCandidate,
+	reasonCode string,
+) error {
+	tx, err := d.begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin pending Workspace exec failure: %w", err)
+	}
+	defer rollback(ctx, tx)
+	errorJSON, err := json.Marshal(map[string]string{"code": reasonCode})
+	if err != nil {
+		return err
+	}
+	if err := failPendingWorkspaceExec(
+		ctx,
+		tx,
+		candidate,
+		reasonCode,
+		errorJSON,
+	); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit pending Workspace exec failure: %w", err)
+	}
+	return nil
+}
+
+func failPendingWorkspaceExec(
+	ctx context.Context,
+	tx pgx.Tx,
+	candidate ReadyWorkspaceExecCandidate,
+	reasonCode string,
+	errorJSON []byte,
+) error {
+	q := db.New(tx)
+	failed, err := q.FailPendingWorkspaceExecProcess(
+		ctx,
+		db.FailPendingWorkspaceExecProcessParams{
+			ReasonCode:           pgvalue.Text(reasonCode),
+			Error:                errorJSON,
+			OrgID:                candidate.OrgID,
+			ProcessID:            candidate.ProcessID,
+			ExpectedStateVersion: candidate.ExpectedStateVersion,
+		},
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrCandidateChanged
+		}
+		return fmt.Errorf("fail pending Workspace exec: %w", err)
+	}
+	claim, err := q.GetIdempotencyClaim(
+		ctx,
+		db.GetIdempotencyClaimParams{
+			EnvironmentID: failed.EnvironmentID,
+			ID:            failed.ClaimID,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("read pending Workspace exec claim: %w", err)
+	}
+	if claim.RetiredAt.Valid {
+		return nil
+	}
+	receipt, err := json.Marshal(map[string]string{
+		"process_id":  pgvalue.MustUUIDValue(failed.ID).String(),
+		"reason_code": reasonCode,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := q.FailIdempotencyClaim(
+		ctx,
+		db.FailIdempotencyClaimParams{
+			Receipt:            receipt,
+			EnvironmentID:      claim.EnvironmentID,
+			ID:                 claim.ID,
+			RequestFingerprint: claim.RequestFingerprint,
+		},
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrCandidateChanged
+		}
+		return fmt.Errorf("fail pending Workspace exec claim: %w", err)
+	}
+	return nil
 }

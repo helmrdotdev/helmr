@@ -21,7 +21,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
@@ -164,11 +163,18 @@ func normalizeWorkspaceExec(request workspaceExecRequest) (normalizedWorkspaceEx
 		cwd:         cwd,
 		env:         env,
 		envJSON:     envJSON,
-		stdin:       bytes.Clone(request.Stdin),
+		stdin:       nonNilWorkspaceExecBytes(request.Stdin),
 		stdinHash:   sha256.Sum256(request.Stdin),
 		timeout:     timeout,
 		timeoutMS:   timeoutMS,
 	}, nil
+}
+
+func nonNilWorkspaceExecBytes(value []byte) []byte {
+	if len(value) == 0 {
+		return []byte{}
+	}
+	return bytes.Clone(value)
 }
 
 func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRequest) (workspaceExecAdmission, error) {
@@ -281,32 +287,13 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 			BaseVersionID:        authority.HeadVersionID,
 			RestoreDesiredState:  authority.DesiredState,
 			Request:              normalized.requestJSON,
+			Stdin:                normalized.stdin,
 			ClaimID:              acquired.Claim.ID,
 			CreatedBySubjectType: string(request.Principal.Kind),
 			CreatedBySubjectID:   workspaceExecSubjectID(request.Principal),
 		})
 		if err != nil {
 			return fmt.Errorf("create Workspace exec: %w", err)
-		}
-		if len(normalized.stdin) > 0 {
-			if _, err := work.q.AppendWorkspaceProcessRecord(ctx, db.AppendWorkspaceProcessRecordParams{
-				ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				EnvironmentID:    authority.EnvironmentID,
-				ProcessID:        process.ID,
-				ProcessKind:      "exec",
-				Stream:           "stdin",
-				OffsetStart:      0,
-				OffsetEnd:        int64(len(normalized.stdin)),
-				ContentDigest:    normalized.stdinHash[:],
-				SizeBytes:        int64(len(normalized.stdin)),
-				Direction:        "input",
-				Data:             normalized.stdin,
-				ObservedAt:       acquired.Claim.AcceptedAt,
-				PayloadExpiresAt: acquired.Claim.ExpiresAt,
-			}); err != nil {
-				return fmt.Errorf("record Workspace exec stdin: %w", err)
-			}
-			process.StdinCursor = pgtype.Int8{Int64: int64(len(normalized.stdin)), Valid: true}
 		}
 		for _, binding := range bindings {
 			if _, err := work.q.CreateSecretResolution(ctx, db.CreateSecretResolutionParams{
@@ -348,8 +335,6 @@ func workspaceExecSubjectID(principal auth.Actor) string {
 func workspaceExecTerminal(state db.WorkspaceProcessState) bool {
 	switch state {
 	case db.WorkspaceProcessStateExited,
-		db.WorkspaceProcessStateCancelled,
-		db.WorkspaceProcessStateLost,
 		db.WorkspaceProcessStateFailed:
 		return true
 	default:
@@ -390,31 +375,16 @@ func (s *Server) waitWorkspaceExec(ctx context.Context, admitted workspaceExecAd
 			return api.ExecuteWorkspaceResult{}, apiError{kind: errUnprocessable, err: codedError{code: "workspace_exec_failed", message: "Workspace exec failed"}}
 		}
 	}
-	records, err := s.db.ListWorkspaceExecTerminalRecords(ctx, db.ListWorkspaceExecTerminalRecordsParams{
-		EnvironmentID: process.EnvironmentID,
-		ProcessID:     process.ID,
-	})
-	if err != nil {
-		return api.ExecuteWorkspaceResult{}, err
+	if process.Stdout == nil || process.Stderr == nil {
+		return api.ExecuteWorkspaceResult{}, errors.New("Workspace exec terminal output is unavailable")
 	}
-	var stdout, stderr []byte
-	for _, record := range records {
-		if record.PayloadCollectedAt.Valid || record.Data == nil {
-			return api.ExecuteWorkspaceResult{}, errors.New("Workspace exec terminal output is unavailable")
-		}
-		switch record.Stream {
-		case "stdout":
-			stdout = append(stdout, record.Data...)
-		case "stderr":
-			stderr = append(stderr, record.Data...)
-		}
-	}
-	if len(stdout) > workspaceExecOutputMaxBytes || len(stderr) > workspaceExecOutputMaxBytes {
+	if len(process.Stdout) > workspaceExecOutputMaxBytes ||
+		len(process.Stderr) > workspaceExecOutputMaxBytes {
 		return api.ExecuteWorkspaceResult{}, errors.New("Workspace exec terminal output exceeds its persisted limit")
 	}
 	return api.ExecuteWorkspaceResult{
 		ExitCode:     process.ExitCode.Int32,
-		StdoutBase64: base64.StdEncoding.EncodeToString(stdout),
-		StderrBase64: base64.StdEncoding.EncodeToString(stderr),
+		StdoutBase64: base64.StdEncoding.EncodeToString(process.Stdout),
+		StderrBase64: base64.StdEncoding.EncodeToString(process.Stderr),
 	}, nil
 }

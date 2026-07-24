@@ -68,14 +68,22 @@ func (isolationRunAuthority) PlaceWorkspaceExec(context.Context, ReadyWorkspaceE
 	return WorkspaceExecPlacement{}, nil
 }
 
+func (isolationRunAuthority) RecoverWorkspaceExec(context.Context, RecoverableWorkspaceExecCandidate) error {
+	return nil
+}
+
+func (isolationRunAuthority) FailPendingWorkspaceExec(context.Context, ReadyWorkspaceExecCandidate, string) error {
+	return nil
+}
+
 type noopWorkspaceExecDiscovery struct{}
 
 func (noopWorkspaceExecDiscovery) ListPendingWorkspaceExecCandidates(context.Context, int32) ([]db.ListPendingWorkspaceExecCandidatesRow, error) {
 	return nil, nil
 }
 
-func (noopWorkspaceExecDiscovery) ExpirePendingWorkspaceExecs(context.Context, db.ExpirePendingWorkspaceExecsParams) (int64, error) {
-	return 0, nil
+func (noopWorkspaceExecDiscovery) ListRecoverableWorkspaceExecCandidates(context.Context, int32) ([]db.ListRecoverableWorkspaceExecCandidatesRow, error) {
+	return nil, nil
 }
 
 type isolationBuildAuthority struct{}

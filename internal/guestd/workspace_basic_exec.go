@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path"
 	"strings"
 	"sync"
 	"syscall"
@@ -21,7 +23,7 @@ const workspaceBasicExecOutputLimit = 4 << 20
 type workspaceBasicExec struct {
 	fingerprint string
 	done        chan struct{}
-	result      *workspacev0.WorkspaceOperationResult
+	result      *workspacev0.WorkspaceBasicExecResult
 }
 
 type workspaceBasicExecSpec struct {
@@ -58,8 +60,8 @@ func (b *workspaceBoundedBuffer) Bytes() []byte {
 
 func (entry *workspaceMountEntry) runWorkspaceBasicExec(
 	ctx context.Context,
-	request *workspacev0.WorkspaceOperationRequest,
-) *workspacev0.WorkspaceOperationResult {
+	request *workspacev0.WorkspaceBasicExecRequest,
+) *workspacev0.WorkspaceBasicExecResult {
 	envelope := request.GetEnvelope()
 	processID := strings.TrimSpace(envelope.GetOperationId())
 	fingerprint := strings.TrimSpace(envelope.GetRequestFingerprint())
@@ -85,11 +87,16 @@ func (entry *workspaceMountEntry) runWorkspaceBasicExec(
 			return workspaceBasicExecFailure(fingerprint, "workspace_exec_result_uncertain", ctx.Err())
 		}
 	}
+	releaseAdmission, err := entry.beginWorkspaceExecAdmission()
+	if err != nil {
+		entry.basicExecMu.Unlock()
+		return workspaceBasicExecFailure(fingerprint, "workspace_exec_unavailable", err)
+	}
 	execution = &workspaceBasicExec{fingerprint: fingerprint, done: make(chan struct{})}
 	entry.basicExecs[processID] = execution
 	entry.basicExecMu.Unlock()
 
-	requestCopy := &workspacev0.WorkspaceOperationRequest{
+	requestCopy := &workspacev0.WorkspaceBasicExecRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
 			OperationId:        processID,
 			RequestFingerprint: fingerprint,
@@ -105,6 +112,7 @@ func (entry *workspaceMountEntry) runWorkspaceBasicExec(
 		})
 	}
 	go func() {
+		defer releaseAdmission()
 		execution.result = entry.executeBasicExec(requestCopy)
 		clearWorkspaceBasicExecRequest(requestCopy)
 		close(execution.done)
@@ -119,8 +127,8 @@ func (entry *workspaceMountEntry) runWorkspaceBasicExec(
 }
 
 func (entry *workspaceMountEntry) executeBasicExec(
-	request *workspacev0.WorkspaceOperationRequest,
-) *workspacev0.WorkspaceOperationResult {
+	request *workspacev0.WorkspaceBasicExecRequest,
+) *workspacev0.WorkspaceBasicExecResult {
 	if entry.basicExecRun != nil {
 		return entry.basicExecRun(request)
 	}
@@ -128,8 +136,8 @@ func (entry *workspaceMountEntry) executeBasicExec(
 }
 
 func (entry *workspaceMountEntry) executeWorkspaceBasicExec(
-	request *workspacev0.WorkspaceOperationRequest,
-) *workspacev0.WorkspaceOperationResult {
+	request *workspacev0.WorkspaceBasicExecRequest,
+) *workspacev0.WorkspaceBasicExecResult {
 	fingerprint := request.GetEnvelope().GetRequestFingerprint()
 	var spec workspaceBasicExecSpec
 	decoder := json.NewDecoder(strings.NewReader(request.GetRequestJson()))
@@ -242,7 +250,7 @@ func (entry *workspaceMountEntry) executeWorkspaceBasicExec(
 			)
 		}
 	}
-	return &workspacev0.WorkspaceOperationResult{
+	return &workspacev0.WorkspaceBasicExecResult{
 		ExitCode:           exitCode,
 		Stdout:             stdout.Bytes(),
 		Stderr:             stderr.Bytes(),
@@ -276,7 +284,7 @@ func workspaceBasicExecFailure(
 	fingerprint string,
 	code string,
 	err error,
-) *workspacev0.WorkspaceOperationResult {
+) *workspacev0.WorkspaceBasicExecResult {
 	return workspaceBasicExecFailureWithOutput(fingerprint, code, err, nil, nil)
 }
 
@@ -286,7 +294,7 @@ func workspaceBasicExecFailureWithOutput(
 	err error,
 	stdout []byte,
 	stderr []byte,
-) *workspacev0.WorkspaceOperationResult {
+) *workspacev0.WorkspaceBasicExecResult {
 	message := code
 	if err != nil {
 		message = err.Error()
@@ -295,7 +303,7 @@ func workspaceBasicExecFailureWithOutput(
 	if marshalErr != nil {
 		errorJSON = []byte(`{"code":"workspace_exec_failed"}`)
 	}
-	return &workspacev0.WorkspaceOperationResult{
+	return &workspacev0.WorkspaceBasicExecResult{
 		ErrorJson:          string(errorJSON),
 		Stdout:             stdout,
 		Stderr:             stderr,
@@ -304,7 +312,7 @@ func workspaceBasicExecFailureWithOutput(
 	}
 }
 
-func clearWorkspaceBasicExecRequest(request *workspacev0.WorkspaceOperationRequest) {
+func clearWorkspaceBasicExecRequest(request *workspacev0.WorkspaceBasicExecRequest) {
 	clear(request.Stdin)
 	request.Stdin = nil
 	for _, delivery := range request.Secrets {
@@ -312,4 +320,115 @@ func clearWorkspaceBasicExecRequest(request *workspacev0.WorkspaceOperationReque
 		delivery.Value = nil
 	}
 	request.Secrets = nil
+}
+
+func (entry *workspaceMountEntry) beginWorkspaceExecAdmission() (func(), error) {
+	entry.processesMu.Lock()
+	if entry.authorityState == workspaceAuthorityFinalizing ||
+		entry.recoveryRequired ||
+		entry.turnCommitBlocked {
+		entry.processesMu.Unlock()
+		return func() {}, errors.New("Workspace is unavailable for exec admission")
+	}
+	entry.processAdmissions++
+	entry.processesMu.Unlock()
+	return func() {
+		entry.processesMu.Lock()
+		entry.processAdmissions--
+		entry.processesMu.Unlock()
+	}, nil
+}
+
+func (entry *workspaceMountEntry) workspaceLaunchCwd(raw string) (string, error) {
+	return resolveLaunchCwd(raw, entry.workspaceMount)
+}
+
+func (entry *workspaceMountEntry) workspaceProcessEnv(
+	launchCwd string,
+	userEnv map[string]string,
+) ([]string, error) {
+	if entry.runtimeUser == nil {
+		return nil, errors.New("workspace runtime user is not resolved")
+	}
+	env := imageRuntimeEnv(entry.imageConfig, entry.runtimeUser, launchCwd)
+	for key, value := range userEnv {
+		if strings.Contains(key, "\x00") || strings.Contains(value, "\x00") {
+			return nil, fmt.Errorf("env %q contains NUL", key)
+		}
+		env = setEnvValue(env, key, value)
+	}
+	return env, nil
+}
+
+func (entry *workspaceMountEntry) prepareWorkspaceOwner() error {
+	if entry.runtimeUser == nil || os.Geteuid() != 0 {
+		return nil
+	}
+	if err := chownTree(
+		entry.workspaceRoot,
+		entry.runtimeUser.UID,
+		entry.runtimeUser.GID,
+	); err != nil {
+		return fmt.Errorf("prepare workspace owner: %w", err)
+	}
+	return nil
+}
+
+func (entry *workspaceMountEntry) workspaceRuntimePath(
+	command string,
+	launchCwd string,
+	env []string,
+) (string, error) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return "", errors.New("command is required")
+	}
+	if strings.Contains(command, "\x00") {
+		return "", errors.New("command contains NUL")
+	}
+	if strings.Contains(command, "/") {
+		if strings.HasPrefix(command, "/") {
+			return path.Clean(command), nil
+		}
+		return path.Clean(path.Join(launchCwd, command)), nil
+	}
+	searchPath := workspaceEnvValue(env, "PATH")
+	if strings.TrimSpace(searchPath) == "" {
+		searchPath = defaultRuntimePath
+	}
+	for dir := range strings.SplitSeq(searchPath, ":") {
+		if dir == "" {
+			dir = "."
+		}
+		candidate := path.Clean(path.Join(dir, command))
+		if !strings.HasPrefix(candidate, "/") {
+			candidate = path.Clean(path.Join(launchCwd, candidate))
+		}
+		hostPath, err := confinedLayerPath(
+			entry.imageRoot,
+			strings.TrimPrefix(candidate, "/"),
+		)
+		if err != nil {
+			continue
+		}
+		if isExecutableFile(hostPath) {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("command %q not found in image PATH", command)
+}
+
+func workspaceEnvValue(env []string, key string) string {
+	for _, entry := range env {
+		entryKey, value, ok := strings.Cut(entry, "=")
+		if ok && entryKey == key {
+			return value
+		}
+	}
+	return ""
+}
+
+func isExecutableFile(filePath string) bool {
+	info, err := os.Stat(filePath)
+	return err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0
 }

@@ -2,8 +2,6 @@ package control
 
 import (
 	"bytes"
-	"context"
-	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
@@ -11,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -97,24 +94,7 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 			return err
 		}
 		capability = derived.Token
-		records, err := work.q.ListWorkspaceProcessRecords(
-			r.Context(),
-			db.ListWorkspaceProcessRecordsParams{
-				ProcessID:   authority.WorkspaceProcess.ID,
-				Stream:      "stdin",
-				AfterOffset: 0,
-				RowLimit:    32,
-			},
-		)
-		if err != nil {
-			return err
-		}
-		for _, record := range records {
-			if record.Data == nil || record.PayloadCollectedAt.Valid {
-				return errors.New("Workspace exec stdin is unavailable")
-			}
-			stdin = append(stdin, record.Data...)
-		}
+		stdin = bytes.Clone(authority.WorkspaceProcess.Stdin)
 		if len(stdin) > workspaceExecStdinMaxBytes {
 			return errors.New("Workspace exec stdin exceeds its persisted limit")
 		}
@@ -128,6 +108,7 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 		writeError(w, errors.New("claim Workspace exec"))
 		return
 	}
+	defer clearWorkspaceExecBytes(stdin)
 	if !authority.WorkspaceProcess.ID.Valid ||
 		authority.WorkspaceProcess.State == db.WorkspaceProcessStateExitRequested {
 		writeJSON(w, http.StatusOK, api.WorkerWorkspaceExecClaimResponse{})
@@ -143,11 +124,13 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 		writeError(w, errors.New("open Workspace exec Secrets"))
 		return
 	}
+	defer clearWorkspaceExecMaterials(materials)
 	deliveries, err := projectSecretDeliveries(materials)
 	if err != nil {
 		writeError(w, errors.New("project Workspace exec Secrets"))
 		return
 	}
+	defer clearWorkspaceSecretDeliveries(deliveries)
 	writeJSON(w, http.StatusOK, api.WorkerWorkspaceExecClaimResponse{
 		Exec: &api.WorkerWorkspaceExec{
 			ProcessID:           pgvalue.MustUUIDValue(authority.WorkspaceProcess.ID).String(),
@@ -165,6 +148,24 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 			ExpiresAt:           authority.WorkspaceLease.ExpiresAt.Time,
 		},
 	})
+}
+
+func clearWorkspaceSecretDeliveries(deliveries []api.WorkerSecretDelivery) {
+	for index := range deliveries {
+		clearWorkspaceExecBytes(deliveries[index].Value)
+	}
+}
+
+func clearWorkspaceExecMaterials(materials []secret.DeliveryMaterial) {
+	for index := range materials {
+		clearWorkspaceExecBytes(materials[index].Value)
+	}
+}
+
+func clearWorkspaceExecBytes(value []byte) {
+	for index := range value {
+		value[index] = 0
+	}
 }
 
 func (s *Server) workerCompleteWorkspaceExec(w http.ResponseWriter, r *http.Request) {
@@ -241,17 +242,6 @@ func (s *Server) workerCompleteWorkspaceExec(w http.ResponseWriter, r *http.Requ
 		) != 1 {
 			return errors.New("Workspace exec write capability is invalid")
 		}
-		expiresAt := authority.ClaimExpiresAt
-		if err := appendWorkspaceExecResult(
-			r.Context(),
-			work.q,
-			authority.WorkspaceProcess,
-			request.Stdout,
-			request.Stderr,
-			expiresAt,
-		); err != nil {
-			return err
-		}
 		var exitCode pgtype.Int4
 		if request.ExitCode != nil {
 			exitCode = pgtype.Int4{Int32: *request.ExitCode, Valid: true}
@@ -260,6 +250,8 @@ func (s *Server) workerCompleteWorkspaceExec(w http.ResponseWriter, r *http.Requ
 			r.Context(),
 			db.SetWorkspaceExecResultParams{
 				ExitCode:         exitCode,
+				Stdout:           nonNilWorkspaceExecBytes(request.Stdout),
+				Stderr:           nonNilWorkspaceExecBytes(request.Stderr),
 				ProcessID:        authority.WorkspaceProcess.ID,
 				WorkspaceMountID: authority.WorkspaceMount.ID,
 			},
@@ -305,7 +297,9 @@ func normalizeWorkspaceExecOutcome(
 		return "capture", "workspace_exec_completed", nil, nil
 	}
 	switch outcome {
-	case "workspace_exec_timed_out",
+	case "workspace_exec_failed",
+		"workspace_exec_secret_delivery_failed",
+		"workspace_exec_timed_out",
 		"workspace_exec_signaled",
 		"workspace_exec_launch_failed",
 		"workspace_exec_output_limit_exceeded",
@@ -321,56 +315,6 @@ func normalizeWorkspaceExecOutcome(
 		errorJSON, _ = json.Marshal(map[string]string{"code": outcome})
 	}
 	return "discard", outcome, errorJSON, nil
-}
-
-func appendWorkspaceExecResult(
-	ctx context.Context,
-	q interface {
-		AppendWorkspaceProcessRecord(context.Context, db.AppendWorkspaceProcessRecordParams) (db.AppendWorkspaceProcessRecordRow, error)
-	},
-	process db.WorkspaceProcess,
-	stdout []byte,
-	stderr []byte,
-	expiresAt pgtype.Timestamptz,
-) error {
-	for _, output := range []struct {
-		stream string
-		value  []byte
-	}{
-		{stream: "stdout", value: stdout},
-		{stream: "stderr", value: stderr},
-	} {
-		if len(output.value) == 0 {
-			continue
-		}
-		sum := sha256Bytes(output.value)
-		if _, err := q.AppendWorkspaceProcessRecord(
-			ctx,
-			db.AppendWorkspaceProcessRecordParams{
-				ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				EnvironmentID:    process.EnvironmentID,
-				ProcessID:        process.ID,
-				ProcessKind:      "exec",
-				Stream:           output.stream,
-				OffsetStart:      0,
-				OffsetEnd:        int64(len(output.value)),
-				ContentDigest:    sum,
-				SizeBytes:        int64(len(output.value)),
-				Direction:        "output",
-				Data:             output.value,
-				ObservedAt:       pgvalue.Timestamptz(time.Now()),
-				PayloadExpiresAt: expiresAt,
-			},
-		); err != nil {
-			return fmt.Errorf("persist Workspace exec %s: %w", output.stream, err)
-		}
-	}
-	return nil
-}
-
-func sha256Bytes(value []byte) []byte {
-	sum := sha256.Sum256(value)
-	return sum[:]
 }
 
 func workspaceMountFromFinalization(row db.RequestWorkspaceExecMountFinalizationRow) db.WorkspaceMount {

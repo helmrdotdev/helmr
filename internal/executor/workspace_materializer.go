@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -340,7 +341,7 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 			errors.New("Workspace exec claim fence is invalid or expired"),
 		)
 	}
-	request := &workspacev0.WorkspaceOperationRequest{
+	request := &workspacev0.WorkspaceBasicExecRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
 			OperationId:                strings.TrimSpace(exec.ProcessID),
 			WorkspaceMountId:           strings.TrimSpace(exec.WorkspaceMountID),
@@ -353,9 +354,8 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 			OperationExpiresAtUnixNano: exec.ExpiresAt.UnixNano(),
 			RequestFingerprint:         strings.TrimSpace(exec.RequestFingerprint),
 		},
-		OperationKind: wire.GuestVerbBasicExec,
-		RequestJson:   string(exec.Request),
-		Stdin:         exec.Stdin,
+		RequestJson: string(exec.Request),
+		Stdin:       exec.Stdin,
 	}
 	for _, delivery := range exec.Secrets {
 		secret := &workspacev0.WorkspaceSecretDelivery{Value: delivery.Value}
@@ -384,7 +384,7 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 	}
 	defer stream.Close()
 	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
-		Type:        wire.StreamTypeWorkspaceOperation,
+		Type:        wire.StreamTypeWorkspaceBasicExec,
 		WorkspaceID: mount.WorkspaceID,
 		OperationID: exec.ProcessID,
 	}, 0); err != nil {
@@ -393,7 +393,7 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 	if err := frameio.WriteProtoFrame(stream, request); err != nil {
 		return api.WorkerWorkspaceExecCompleteRequest{}, fmt.Errorf("write Workspace exec request: %w", err)
 	}
-	var result workspacev0.WorkspaceOperationResult
+	var result workspacev0.WorkspaceBasicExecResult
 	if err := readProtoFrameFromReaderContext(ctx, session, stream, &result); err != nil {
 		return api.WorkerWorkspaceExecCompleteRequest{}, fmt.Errorf("read Workspace exec result: %w", err)
 	}
@@ -404,10 +404,8 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 		)
 	}
 	outcome := strings.TrimSpace(result.GetOutcome())
-	if outcome == "" {
-		return api.WorkerWorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
-			errors.New("Workspace exec result outcome is required"),
-		)
+	if err := validateWorkspaceBasicExecOutcome(outcome); err != nil {
+		return api.WorkerWorkspaceExecCompleteRequest{}, err
 	}
 	completion := api.WorkerWorkspaceExecCompleteRequest{
 		OrgID:               mount.OrgID,
@@ -442,6 +440,32 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 	return completion, nil
 }
 
+func validateWorkspaceBasicExecOutcome(outcome string) error {
+	switch outcome {
+	case "exited",
+		"workspace_exec_failed",
+		"workspace_exec_timed_out",
+		"workspace_exec_signaled",
+		"workspace_exec_launch_failed",
+		"workspace_exec_secret_delivery_failed",
+		"workspace_exec_output_limit_exceeded",
+		"workspace_exec_result_uncertain":
+		return nil
+	case "workspace_exec_fenced",
+		"workspace_exec_expired",
+		"workspace_exec_invalid",
+		"workspace_exec_fingerprint_conflict",
+		"workspace_exec_unavailable":
+		return workspaceBasicExecProtocol(
+			fmt.Errorf("Workspace exec guest rejected authority: %s", outcome),
+		)
+	default:
+		return workspaceBasicExecProtocol(
+			fmt.Errorf("Workspace exec result outcome %q is unsupported", outcome),
+		)
+	}
+}
+
 func (m WorkspaceMaterializer) completeWorkspaceBasicExec(
 	ctx context.Context,
 	client api.WorkerWorkspaceMaterializerControlClient,
@@ -456,6 +480,9 @@ func (m WorkspaceMaterializer) completeWorkspaceBasicExec(
 		if err == nil {
 			return response, nil
 		}
+		if !workspaceExecCompletionRetryable(err) {
+			return api.WorkspaceMountResponse{}, err
+		}
 		timer := time.NewTimer(backoff)
 		select {
 		case <-ctx.Done():
@@ -464,6 +491,18 @@ func (m WorkspaceMaterializer) completeWorkspaceBasicExec(
 		case <-timer.C:
 		}
 	}
+}
+
+func workspaceExecCompletionRetryable(err error) bool {
+	var statusError interface{ HTTPStatusCode() int }
+	if !errors.As(err, &statusError) {
+		return true
+	}
+	status := statusError.HTTPStatusCode()
+	return status == http.StatusRequestTimeout ||
+		status == http.StatusTooEarly ||
+		status == http.StatusTooManyRequests ||
+		status >= http.StatusInternalServerError
 }
 
 func (m WorkspaceMaterializer) logWorkspaceMountPhase(mount api.WorkerWorkspaceMount, message string, attrs ...any) {
@@ -1382,620 +1421,6 @@ func (m WorkspaceMaterializer) stopWorkspaceGuest(ctx context.Context, session v
 	}, nil
 }
 
-func (m WorkspaceMaterializer) dispatchOperation(ctx context.Context, session vm.Session, mount api.WorkerWorkspaceMount, operation api.WorkerWorkspaceOperation) (api.WorkerWorkspaceOperationCompleteRequest, error) {
-	channelToken := m.channelToken(mount)
-	if channelToken == "" {
-		return api.WorkerWorkspaceOperationCompleteRequest{}, errors.New("workspace mount guest channel token is required")
-	}
-	if strings.TrimSpace(operation.WorkspaceMountID) != strings.TrimSpace(mount.ID) {
-		return api.WorkerWorkspaceOperationCompleteRequest{}, fmt.Errorf("claimed operation mount %s does not match live mount %s", operation.WorkspaceMountID, mount.ID)
-	}
-	if strings.TrimSpace(operation.WorkspaceID) != strings.TrimSpace(mount.WorkspaceID) {
-		return api.WorkerWorkspaceOperationCompleteRequest{}, fmt.Errorf("claimed operation workspace %s does not match live workspace %s", operation.WorkspaceID, mount.WorkspaceID)
-	}
-	if strings.TrimSpace(operation.RequestFingerprint) == "" {
-		return api.WorkerWorkspaceOperationCompleteRequest{}, errors.New("claimed operation request_fingerprint is required")
-	}
-	if operation.OperationExpiresAt.IsZero() || !operation.OperationExpiresAt.After(time.Now()) {
-		return api.WorkerWorkspaceOperationCompleteRequest{}, errors.New("claimed operation expired")
-	}
-	if operation.FencingGeneration <= 0 {
-		return api.WorkerWorkspaceOperationCompleteRequest{}, errors.New("claimed operation fencing_generation is required")
-	}
-	stream, err := session.OpenStream(ctx)
-	if err != nil {
-		return api.WorkerWorkspaceOperationCompleteRequest{}, fmt.Errorf("open workspace operation stream: %w", err)
-	}
-	defer stream.Close()
-	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
-		Type:        wire.StreamTypeWorkspaceOperation,
-		WorkspaceID: mount.WorkspaceID,
-		OperationID: operation.ID,
-	}, 0); err != nil {
-		return api.WorkerWorkspaceOperationCompleteRequest{}, fmt.Errorf("write workspace operation header: %w", err)
-	}
-	if err := frameio.WriteProtoFrame(stream, &workspacev0.WorkspaceOperationRequest{
-		Envelope: &workspacev0.WorkspaceOperationEnvelope{
-			OperationId:                operation.ID,
-			WorkspaceMountId:           operation.WorkspaceMountID,
-			WorkspaceId:                operation.WorkspaceID,
-			ChannelToken:               channelToken,
-			FencingGeneration:          uint64(operation.FencingGeneration),
-			InstanceLeaseId:            operation.InstanceLeaseID,
-			WriteLeaseId:               operation.WriteLeaseID,
-			FencingToken:               operation.FencingToken,
-			OperationExpiresAtUnixNano: operation.OperationExpiresAt.UnixNano(),
-			RequestFingerprint:         strings.TrimSpace(operation.RequestFingerprint),
-		},
-		OperationKind: operation.OperationKind,
-		RequestJson:   string(operation.Request),
-	}); err != nil {
-		return api.WorkerWorkspaceOperationCompleteRequest{}, fmt.Errorf("write workspace operation request: %w", err)
-	}
-	var result workspacev0.WorkspaceOperationResult
-	if err := readProtoFrameFromReaderContext(ctx, session, stream, &result); err != nil {
-		return api.WorkerWorkspaceOperationCompleteRequest{}, fmt.Errorf("read workspace operation result: %w", err)
-	}
-	complete := api.WorkerWorkspaceOperationCompleteRequest{
-		OrgID:       operation.OrgID,
-		OperationID: operation.ID,
-		ClaimToken:  operation.ClaimToken,
-	}
-	if strings.TrimSpace(result.ErrorJson) != "" {
-		complete.Error = json.RawMessage(result.ErrorJson)
-	} else if strings.TrimSpace(result.ResultJson) != "" {
-		complete.Result = json.RawMessage(result.ResultJson)
-	} else {
-		complete.Result = json.RawMessage(`{}`)
-	}
-	return complete, nil
-}
-
-func (m WorkspaceMaterializer) openWorkspaceEventStream(ctx context.Context, session vm.Session, mount api.WorkerWorkspaceMount) (io.ReadWriteCloser, error) {
-	channelToken := m.channelToken(mount)
-	if channelToken == "" {
-		return nil, errors.New("workspace mount guest channel token is required")
-	}
-	stream, err := session.OpenStream(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("open workspace event stream: %w", err)
-	}
-	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
-		Type:        wire.StreamTypeWorkspaceEvents,
-		WorkspaceID: mount.WorkspaceID,
-	}, 0); err != nil {
-		_ = stream.Close()
-		return nil, fmt.Errorf("write workspace event stream header: %w", err)
-	}
-	if err := frameio.WriteProtoFrame(stream, workspaceEventEnvelope(mount, channelToken)); err != nil {
-		_ = stream.Close()
-		return nil, fmt.Errorf("write workspace event stream envelope: %w", err)
-	}
-	return stream, nil
-}
-
-func workspaceEventEnvelope(mount api.WorkerWorkspaceMount, channelToken string) *workspacev0.WorkspaceOperationEnvelope {
-	return &workspacev0.WorkspaceOperationEnvelope{
-		WorkspaceMountId:  mount.ID,
-		WorkspaceId:       mount.WorkspaceID,
-		ChannelToken:      channelToken,
-		FencingGeneration: uint64(mount.FencingGeneration),
-	}
-}
-
-func (m WorkspaceMaterializer) runWorkspaceEventLoop(ctx context.Context, session vm.Session, stream io.ReadWriteCloser, mount api.WorkerWorkspaceMount, client api.WorkerWorkspaceMaterializerControlClient) error {
-	defer stream.Close()
-	persistState := newWorkspaceOperationEventPersistState()
-	for {
-		var event workspacev0.WorkspaceOperationEvent
-		if err := readProtoFrameFromReaderContext(ctx, session, stream, &event); err != nil {
-			return fmt.Errorf("read workspace operation event: %w", err)
-		}
-		if err := retryWorkspaceOperation(ctx, m.CompleteErrorBackoff, func() error {
-			return m.persistWorkspaceOperationEvent(ctx, client, mount, persistState, &event)
-		}); err != nil {
-			return err
-		}
-	}
-}
-
-type workspaceInputRelayRegistry struct {
-	mu     sync.Mutex
-	active map[string]struct{}
-}
-
-func newWorkspaceInputRelayRegistry() *workspaceInputRelayRegistry {
-	return &workspaceInputRelayRegistry{active: make(map[string]struct{})}
-}
-
-func (r *workspaceInputRelayRegistry) start(resourceKind string, resourceID string) (func(), bool) {
-	key := resourceKind + ":" + resourceID
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, ok := r.active[key]; ok {
-		return nil, false
-	}
-	r.active[key] = struct{}{}
-	return func() {
-		r.mu.Lock()
-		delete(r.active, key)
-		r.mu.Unlock()
-	}, true
-}
-
-func (m WorkspaceMaterializer) startWorkspaceInputRelay(ctx context.Context, session vm.Session, mount api.WorkerWorkspaceMount, operation api.WorkerWorkspaceOperation, client api.WorkerWorkspaceMaterializerControlClient, failures chan<- error, relays *workspaceInputRelayRegistry) {
-	switch strings.TrimSpace(operation.OperationKind) {
-	case "StartExec":
-		execID := strings.TrimSpace(operation.ResourceID)
-		if execID != "" {
-			done, ok := relays.start("exec", execID)
-			if !ok {
-				return
-			}
-			go m.reportWorkspaceInputRelayFailure(ctx, failures, "exec", execID, func() error {
-				defer done()
-				return m.runWorkspaceExecInputRelay(ctx, session, mount, operation, execID, client)
-			})
-		}
-	case "CreatePty":
-		ptyID := strings.TrimSpace(operation.ResourceID)
-		if ptyID != "" {
-			done, ok := relays.start("pty", ptyID)
-			if !ok {
-				return
-			}
-			go m.reportWorkspaceInputRelayFailure(ctx, failures, "pty", ptyID, func() error {
-				defer done()
-				return m.runWorkspacePtyInputRelay(ctx, session, mount, operation, ptyID, client)
-			})
-		}
-	}
-}
-
-func (m WorkspaceMaterializer) reportWorkspaceInputRelayFailure(ctx context.Context, failures chan<- error, resourceKind string, resourceID string, run func() error) {
-	if err := run(); err != nil && ctx.Err() == nil {
-		failure := workspaceMountFailure{
-			code: "workspace_mount_input_stream_lost",
-			err:  fmt.Errorf("workspace %s %s input relay failed: %w", resourceKind, resourceID, err),
-		}
-		select {
-		case failures <- failure:
-		case <-ctx.Done():
-		}
-	}
-}
-
-func (m WorkspaceMaterializer) runWorkspaceExecInputRelay(ctx context.Context, session vm.Session, mount api.WorkerWorkspaceMount, operation api.WorkerWorkspaceOperation, execID string, client api.WorkerWorkspaceMaterializerControlClient) error {
-	stream, err := m.openWorkspaceInputStream(ctx, session, mount, operation)
-	if err != nil {
-		return err
-	}
-	defer stream.Close()
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	scope := workerPrimitiveScope(mount)
-	closed := false
-	deliveredOffset := int64(0)
-	for {
-		response, err := client.ListWorkspaceExecInput(ctx, api.WorkerWorkspaceExecInputRequest{
-			WorkerWorkspacePrimitiveScope: scope,
-			ExecID:                        execID,
-			Limit:                         100,
-		})
-		if err != nil {
-			return err
-		}
-		if response.StdinDeliveredCursor > deliveredOffset {
-			deliveredOffset = response.StdinDeliveredCursor
-		}
-		if workspaceExecStateTerminal(response.State) {
-			return nil
-		}
-		for _, chunk := range response.Chunks {
-			if err := writeWorkspaceInputChunk(ctx, session, stream, "workspace_exec", execID, "stdin", chunk.OffsetStart, chunk.Data); err != nil {
-				return err
-			}
-			if _, err := client.AdvanceWorkspaceExecInputDelivered(ctx, api.WorkerWorkspaceExecInputDeliveredRequest{
-				WorkerWorkspacePrimitiveScope: scope,
-				ExecID:                        execID,
-				OffsetStart:                   chunk.OffsetStart,
-				OffsetEnd:                     chunk.OffsetEnd,
-			}); err != nil {
-				return err
-			}
-			deliveredOffset = chunk.OffsetEnd
-		}
-		if !closed && response.StdinClosedAt != nil && deliveredOffset == response.StdinCursor {
-			closed = true
-			if err := writeWorkspaceInputClose(ctx, session, stream, "workspace_exec", execID, "stdin", response.StdinCursor); err != nil {
-				return err
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
-}
-
-func (m WorkspaceMaterializer) runWorkspacePtyInputRelay(ctx context.Context, session vm.Session, mount api.WorkerWorkspaceMount, operation api.WorkerWorkspaceOperation, ptyID string, client api.WorkerWorkspaceMaterializerControlClient) error {
-	stream, err := m.openWorkspaceInputStream(ctx, session, mount, operation)
-	if err != nil {
-		return err
-	}
-	defer stream.Close()
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	scope := workerPrimitiveScope(mount)
-	for {
-		response, err := client.ListWorkspacePtyInput(ctx, api.WorkerWorkspacePtyInputRequest{
-			WorkerWorkspacePrimitiveScope: scope,
-			PtyID:                         ptyID,
-			Limit:                         100,
-		})
-		if err != nil {
-			return err
-		}
-		if workspacePtyStateTerminal(response.State) {
-			return nil
-		}
-		for _, chunk := range response.Chunks {
-			if err := writeWorkspaceInputChunk(ctx, session, stream, "workspace_pty", ptyID, "input", chunk.OffsetStart, chunk.Data); err != nil {
-				return err
-			}
-			if _, err := client.AdvanceWorkspacePtyInputDelivered(ctx, api.WorkerWorkspacePtyInputDeliveredRequest{
-				WorkerWorkspacePrimitiveScope: scope,
-				PtyID:                         ptyID,
-				OffsetStart:                   chunk.OffsetStart,
-				OffsetEnd:                     chunk.OffsetEnd,
-			}); err != nil {
-				return err
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
-}
-
-func (m WorkspaceMaterializer) openWorkspaceInputStream(ctx context.Context, session vm.Session, mount api.WorkerWorkspaceMount, operation api.WorkerWorkspaceOperation) (io.ReadWriteCloser, error) {
-	channelToken := m.channelToken(mount)
-	if channelToken == "" {
-		return nil, errors.New("workspace mount guest channel token is required")
-	}
-	if strings.TrimSpace(operation.WorkspaceMountID) != strings.TrimSpace(mount.ID) {
-		return nil, fmt.Errorf("input relay operation mount %s does not match live mount %s", operation.WorkspaceMountID, mount.ID)
-	}
-	if strings.TrimSpace(operation.WorkspaceID) != strings.TrimSpace(mount.WorkspaceID) {
-		return nil, fmt.Errorf("input relay operation workspace %s does not match live workspace %s", operation.WorkspaceID, mount.WorkspaceID)
-	}
-	if operation.FencingGeneration <= 0 {
-		return nil, errors.New("input relay operation fencing_generation is required")
-	}
-	stream, err := session.OpenStream(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("open workspace input stream: %w", err)
-	}
-	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
-		Type:        wire.StreamTypeWorkspaceInput,
-		WorkspaceID: mount.WorkspaceID,
-	}, 0); err != nil {
-		_ = stream.Close()
-		return nil, fmt.Errorf("write workspace input header: %w", err)
-	}
-	if err := frameio.WriteProtoFrame(stream, workspaceInputEnvelope(operation, channelToken)); err != nil {
-		_ = stream.Close()
-		return nil, fmt.Errorf("write workspace input envelope: %w", err)
-	}
-	return stream, nil
-}
-
-func workspaceInputEnvelope(operation api.WorkerWorkspaceOperation, channelToken string) *workspacev0.WorkspaceOperationEnvelope {
-	return &workspacev0.WorkspaceOperationEnvelope{
-		OperationId:                operation.ID,
-		WorkspaceMountId:           operation.WorkspaceMountID,
-		WorkspaceId:                operation.WorkspaceID,
-		ChannelToken:               channelToken,
-		FencingGeneration:          uint64(operation.FencingGeneration),
-		InstanceLeaseId:            operation.InstanceLeaseID,
-		WriteLeaseId:               operation.WriteLeaseID,
-		FencingToken:               operation.FencingToken,
-		OperationExpiresAtUnixNano: operation.OperationExpiresAt.UnixNano(),
-		RequestFingerprint:         strings.TrimSpace(operation.RequestFingerprint),
-	}
-}
-
-func writeWorkspaceInputChunk(ctx context.Context, session vm.Session, stream io.ReadWriter, resourceKind string, resourceID string, streamName string, offsetStart int64, data []byte) error {
-	if offsetStart < 0 {
-		return fmt.Errorf("workspace input offset must be non-negative")
-	}
-	if err := frameio.WriteProtoFrame(stream, &workspacev0.WorkspaceInputFrame{
-		Frame: &workspacev0.WorkspaceInputFrame_Chunk{Chunk: &workspacev0.WorkspaceInputChunk{
-			ResourceKind: resourceKind,
-			ResourceId:   resourceID,
-			Stream:       streamName,
-			OffsetStart:  uint64(offsetStart),
-			Data:         data,
-		}},
-	}); err != nil {
-		return fmt.Errorf("write workspace input chunk: %w", err)
-	}
-	var ack workspacev0.WorkspaceStreamAck
-	if err := readProtoFrameFromReaderContext(ctx, session, stream, &ack); err != nil {
-		return fmt.Errorf("read workspace input ack: %w", err)
-	}
-	if err := validateWorkspaceInputAck(&ack, resourceKind, resourceID, streamName, offsetStart+int64(len(data))); err != nil {
-		return err
-	}
-	return nil
-}
-
-func validateWorkspaceInputAck(ack *workspacev0.WorkspaceStreamAck, resourceKind string, resourceID string, streamName string, durableOffset int64) error {
-	if int64(ack.DurableOffset) != durableOffset {
-		return fmt.Errorf("workspace input ack offset %d does not match expected offset %d", ack.DurableOffset, durableOffset)
-	}
-	if strings.TrimSpace(ack.ResourceKind) != resourceKind || strings.TrimSpace(ack.ResourceId) != resourceID || strings.TrimSpace(ack.Stream) != streamName {
-		return fmt.Errorf("workspace input ack scope mismatch")
-	}
-	return nil
-}
-
-func writeWorkspaceInputClose(ctx context.Context, session vm.Session, stream io.ReadWriter, resourceKind string, resourceID string, streamName string, offset int64) error {
-	if offset < 0 {
-		return fmt.Errorf("workspace input close offset must be non-negative")
-	}
-	if err := frameio.WriteProtoFrame(stream, &workspacev0.WorkspaceInputFrame{
-		Frame: &workspacev0.WorkspaceInputFrame_Close{Close: &workspacev0.WorkspaceInputClose{
-			ResourceKind: resourceKind,
-			ResourceId:   resourceID,
-			Stream:       streamName,
-			Offset:       uint64(offset),
-		}},
-	}); err != nil {
-		return fmt.Errorf("write workspace input close: %w", err)
-	}
-	var ack workspacev0.WorkspaceStreamAck
-	if err := readProtoFrameFromReaderContext(ctx, session, stream, &ack); err != nil {
-		return fmt.Errorf("read workspace input close ack: %w", err)
-	}
-	return validateWorkspaceInputAck(&ack, resourceKind, resourceID, streamName, offset)
-}
-
-func workerPrimitiveScope(mount api.WorkerWorkspaceMount) api.WorkerWorkspacePrimitiveScope {
-	return api.WorkerWorkspacePrimitiveScope{
-		OrgID: mount.OrgID, ProjectID: mount.ProjectID, EnvironmentID: mount.EnvironmentID,
-		WorkspaceID: mount.WorkspaceID, WorkspaceMountID: mount.ID,
-		RuntimeInstanceID: mount.RuntimeInstanceID, WorkerEpoch: mount.RuntimeEpoch,
-	}
-}
-
-func workspaceExecStateTerminal(state string) bool {
-	switch strings.TrimSpace(state) {
-	case "exited", "terminated", "lost", "failed":
-		return true
-	default:
-		return false
-	}
-}
-
-func workspacePtyStateTerminal(state string) bool {
-	switch strings.TrimSpace(state) {
-	case "closed", "lost", "failed":
-		return true
-	default:
-		return false
-	}
-}
-
-type workspaceOperationEventPersistState struct {
-	execOutputOffsets map[string]map[string]int64
-	ptyOutputOffsets  map[string]int64
-}
-
-func newWorkspaceOperationEventPersistState() *workspaceOperationEventPersistState {
-	return &workspaceOperationEventPersistState{
-		execOutputOffsets: map[string]map[string]int64{},
-		ptyOutputOffsets:  map[string]int64{},
-	}
-}
-
-func (s *workspaceOperationEventPersistState) seedExecOutputOffsets(execID string, stdoutCursor int64, stderrCursor int64) {
-	if s == nil {
-		return
-	}
-	streams := s.execOutputOffsets[execID]
-	if streams == nil {
-		streams = map[string]int64{}
-		s.execOutputOffsets[execID] = streams
-	}
-	if streams["stdout"] < stdoutCursor {
-		streams["stdout"] = stdoutCursor
-	}
-	if streams["stderr"] < stderrCursor {
-		streams["stderr"] = stderrCursor
-	}
-}
-
-func (s *workspaceOperationEventPersistState) execOutputOffset(execID string, stream string) int64 {
-	if s == nil {
-		return 0
-	}
-	streams := s.execOutputOffsets[execID]
-	if streams == nil {
-		streams = map[string]int64{}
-		s.execOutputOffsets[execID] = streams
-	}
-	return streams[stream]
-}
-
-func (s *workspaceOperationEventPersistState) advanceExecOutputOffset(execID string, stream string, offsetEnd int64) {
-	if s == nil {
-		return
-	}
-	streams := s.execOutputOffsets[execID]
-	if streams == nil {
-		streams = map[string]int64{}
-		s.execOutputOffsets[execID] = streams
-	}
-	if streams[stream] < offsetEnd {
-		streams[stream] = offsetEnd
-	}
-}
-
-func (s *workspaceOperationEventPersistState) seedPtyOutputOffset(ptyID string, outputCursor int64) {
-	if s == nil {
-		return
-	}
-	if s.ptyOutputOffsets[ptyID] < outputCursor {
-		s.ptyOutputOffsets[ptyID] = outputCursor
-	}
-}
-
-func (s *workspaceOperationEventPersistState) ptyOutputOffset(ptyID string) int64 {
-	if s == nil {
-		return 0
-	}
-	return s.ptyOutputOffsets[ptyID]
-}
-
-func (s *workspaceOperationEventPersistState) advancePtyOutputOffset(ptyID string, offsetEnd int64) {
-	if s == nil {
-		return
-	}
-	if s.ptyOutputOffsets[ptyID] < offsetEnd {
-		s.ptyOutputOffsets[ptyID] = offsetEnd
-	}
-}
-
-func (m WorkspaceMaterializer) persistWorkspaceOperationEvent(ctx context.Context, client api.WorkerWorkspaceMaterializerControlClient, mount api.WorkerWorkspaceMount, state *workspaceOperationEventPersistState, event *workspacev0.WorkspaceOperationEvent) error {
-	scope := workerPrimitiveScope(mount)
-	switch payload := event.GetEvent().(type) {
-	case *workspacev0.WorkspaceOperationEvent_ExecStarted:
-		response, err := client.MarkWorkspaceExecStarted(ctx, api.WorkerWorkspaceExecStartedRequest{
-			WorkerWorkspacePrimitiveScope: scope,
-			ExecID:                        payload.ExecStarted.GetExecId(),
-			ProcessID:                     payload.ExecStarted.GetProcessId(),
-		})
-		if err == nil {
-			state.seedExecOutputOffsets(payload.ExecStarted.GetExecId(), response.Exec.StdoutCursor, response.Exec.StderrCursor)
-		}
-		return err
-	case *workspacev0.WorkspaceOperationEvent_ExecStdoutChunk:
-		offset := state.execOutputOffset(payload.ExecStdoutChunk.GetExecId(), "stdout")
-		response, err := client.AppendWorkspaceExecOutput(ctx, api.WorkerWorkspaceExecOutputRequest{
-			WorkerWorkspacePrimitiveScope: scope,
-			ExecID:                        payload.ExecStdoutChunk.GetExecId(),
-			Chunks: []api.WorkerWorkspaceExecOutputChunk{{
-				Stream:      "stdout",
-				OffsetStart: &offset,
-				Data:        payload.ExecStdoutChunk.GetData(),
-			}},
-		})
-		if err == nil {
-			offsetEnd := offset + int64(len(payload.ExecStdoutChunk.GetData()))
-			if len(response.Chunks) > 0 {
-				offsetEnd = response.Chunks[len(response.Chunks)-1].OffsetEnd
-			}
-			state.advanceExecOutputOffset(payload.ExecStdoutChunk.GetExecId(), "stdout", offsetEnd)
-		}
-		return err
-	case *workspacev0.WorkspaceOperationEvent_ExecStderrChunk:
-		offset := state.execOutputOffset(payload.ExecStderrChunk.GetExecId(), "stderr")
-		response, err := client.AppendWorkspaceExecOutput(ctx, api.WorkerWorkspaceExecOutputRequest{
-			WorkerWorkspacePrimitiveScope: scope,
-			ExecID:                        payload.ExecStderrChunk.GetExecId(),
-			Chunks: []api.WorkerWorkspaceExecOutputChunk{{
-				Stream:      "stderr",
-				OffsetStart: &offset,
-				Data:        payload.ExecStderrChunk.GetData(),
-			}},
-		})
-		if err == nil {
-			offsetEnd := offset + int64(len(payload.ExecStderrChunk.GetData()))
-			if len(response.Chunks) > 0 {
-				offsetEnd = response.Chunks[len(response.Chunks)-1].OffsetEnd
-			}
-			state.advanceExecOutputOffset(payload.ExecStderrChunk.GetExecId(), "stderr", offsetEnd)
-		}
-		return err
-	case *workspacev0.WorkspaceOperationEvent_ExecExited:
-		exitCode := payload.ExecExited.GetExitCode()
-		_, err := client.MarkWorkspaceExecExited(ctx, api.WorkerWorkspaceExecExitedRequest{
-			WorkerWorkspacePrimitiveScope: scope,
-			ExecID:                        payload.ExecExited.GetExecId(),
-			State:                         "exited",
-			ExitCode:                      &exitCode,
-			Signal:                        payload.ExecExited.GetSignal(),
-			Error:                         json.RawMessage(payload.ExecExited.GetErrorJson()),
-		})
-		return err
-	case *workspacev0.WorkspaceOperationEvent_ExecError:
-		_, err := client.MarkWorkspaceExecExited(ctx, api.WorkerWorkspaceExecExitedRequest{
-			WorkerWorkspacePrimitiveScope: scope,
-			ExecID:                        payload.ExecError.GetExecId(),
-			State:                         "failed",
-			Error:                         json.RawMessage(payload.ExecError.GetErrorJson()),
-		})
-		return err
-	case *workspacev0.WorkspaceOperationEvent_PtyOpened:
-		response, err := client.MarkWorkspacePtyOpened(ctx, api.WorkerWorkspacePtyOpenedRequest{
-			WorkerWorkspacePrimitiveScope: scope,
-			PtyID:                         payload.PtyOpened.GetPtyId(),
-			ProcessID:                     payload.PtyOpened.GetProcessId(),
-		})
-		if err == nil {
-			state.seedPtyOutputOffset(payload.PtyOpened.GetPtyId(), response.Pty.OutputCursor)
-		}
-		return err
-	case *workspacev0.WorkspaceOperationEvent_PtyOutputChunk:
-		offset := state.ptyOutputOffset(payload.PtyOutputChunk.GetPtyId())
-		response, err := client.AppendWorkspacePtyOutput(ctx, api.WorkerWorkspacePtyOutputRequest{
-			WorkerWorkspacePrimitiveScope: scope,
-			PtyID:                         payload.PtyOutputChunk.GetPtyId(),
-			Chunks: []api.WorkerWorkspacePtyOutputChunk{{
-				OffsetStart: &offset,
-				Data:        payload.PtyOutputChunk.GetData(),
-			}},
-		})
-		if err == nil {
-			offsetEnd := offset + int64(len(payload.PtyOutputChunk.GetData()))
-			if len(response.Chunks) > 0 {
-				offsetEnd = response.Chunks[len(response.Chunks)-1].OffsetEnd
-			}
-			state.advancePtyOutputOffset(payload.PtyOutputChunk.GetPtyId(), offsetEnd)
-		}
-		return err
-	case *workspacev0.WorkspaceOperationEvent_PtyResizeApplied:
-		_, err := client.MarkWorkspacePtyResizeApplied(ctx, api.WorkerWorkspacePtyResizeAppliedRequest{
-			WorkerWorkspacePrimitiveScope: scope,
-			PtyID:                         payload.PtyResizeApplied.GetPtyId(),
-			Cols:                          int32(payload.PtyResizeApplied.GetCols()),
-			Rows:                          int32(payload.PtyResizeApplied.GetRows()),
-		})
-		return err
-	case *workspacev0.WorkspaceOperationEvent_PtyClosed:
-		_, err := client.MarkWorkspacePtyClosed(ctx, api.WorkerWorkspacePtyClosedRequest{
-			WorkerWorkspacePrimitiveScope: scope,
-			PtyID:                         payload.PtyClosed.GetPtyId(),
-			Reason:                        payload.PtyClosed.GetReason(),
-			Error:                         json.RawMessage(payload.PtyClosed.GetErrorJson()),
-		})
-		return err
-	case *workspacev0.WorkspaceOperationEvent_PtyError:
-		_, err := client.MarkWorkspacePtyClosed(ctx, api.WorkerWorkspacePtyClosedRequest{
-			WorkerWorkspacePrimitiveScope: scope,
-			PtyID:                         payload.PtyError.GetPtyId(),
-			Error:                         json.RawMessage(payload.PtyError.GetErrorJson()),
-		})
-		return err
-	default:
-		return errors.New("workspace operation event payload is required")
-	}
-}
-
 func (m WorkspaceMaterializer) networkPolicy() compute.NetworkPolicy {
 	if m.Network.Internet || len(m.Network.Allow) > 0 || len(m.Network.Deny) > 0 {
 		return m.Network
@@ -2060,58 +1485,4 @@ func workspaceMountError(err error) json.RawMessage {
 		return json.RawMessage(`{"code":"workspace_mount_failed"}`)
 	}
 	return body
-}
-
-func workspaceOperationDispatchError(err error) json.RawMessage {
-	body, marshalErr := json.Marshal(struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	}{
-		Code:    "workspace_operation_dispatch_failed",
-		Message: err.Error(),
-	})
-	if marshalErr != nil {
-		return json.RawMessage(`{"code":"workspace_operation_dispatch_failed"}`)
-	}
-	return body
-}
-
-func startWorkspaceOperation(ctx context.Context, client api.WorkerWorkspaceMaterializerControlClient, request api.WorkerWorkspaceOperationStartRequest, backoff time.Duration) error {
-	return retryWorkspaceOperation(ctx, backoff, func() error {
-		_, err := client.StartWorkspaceOperation(ctx, request)
-		return err
-	})
-}
-
-func completeWorkspaceOperation(ctx context.Context, client api.WorkerWorkspaceMaterializerControlClient, request api.WorkerWorkspaceOperationCompleteRequest, backoff time.Duration) error {
-	return retryWorkspaceOperation(ctx, backoff, func() error {
-		_, err := client.CompleteWorkspaceOperation(ctx, request)
-		return err
-	})
-}
-
-func retryWorkspaceOperation(ctx context.Context, backoff time.Duration, fn func() error) error {
-	const attempts = 3
-	if backoff <= 0 {
-		backoff = 250 * time.Millisecond
-	}
-	var lastErr error
-	for attempt := range attempts {
-		if err := fn(); err != nil {
-			lastErr = err
-		} else {
-			return nil
-		}
-		if attempt == attempts-1 {
-			break
-		}
-		timer := time.NewTimer(backoff)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
-		}
-	}
-	return lastErr
 }

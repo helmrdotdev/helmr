@@ -121,7 +121,6 @@ DROP TABLE IF EXISTS run_checkpoints;
 DROP TYPE IF EXISTS run_checkpoint_artifact_role;
 DROP TYPE IF EXISTS run_checkpoint_state;
 DROP TABLE IF EXISTS secret_resolutions;
-DROP TABLE IF EXISTS workspace_process_records;
 ALTER TABLE workspaces DROP CONSTRAINT IF EXISTS workspaces_head_version_id_fkey;
 ALTER TABLE workspace_leases DROP CONSTRAINT IF EXISTS workspace_leases_acquired_version_id_fkey;
 ALTER TABLE workspace_leases DROP CONSTRAINT IF EXISTS workspace_leases_base_version_id_fkey;

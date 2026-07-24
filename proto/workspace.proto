@@ -219,125 +219,24 @@ message StopWorkspaceResponse {
   string error_json = 3;
 }
 
-message WorkspaceOperationRequest {
+message WorkspaceBasicExecRequest {
   WorkspaceOperationEnvelope envelope = 1;
-  string operation_kind = 2;
-  string request_json = 3;
-  repeated WorkspaceSecretDelivery secrets = 4;
-  bytes stdin = 5;
+  string request_json = 2;
+  repeated WorkspaceSecretDelivery secrets = 3;
+  bytes stdin = 4;
 }
 
-message WorkspaceOperationResult {
-  string result_json = 1;
-  string error_json = 2;
-  int32 exit_code = 3;
-  bytes stdout = 4;
-  bytes stderr = 5;
-  string outcome = 6;
-  string request_fingerprint = 7;
+message WorkspaceBasicExecResult {
+  string error_json = 1;
+  int32 exit_code = 2;
+  bytes stdout = 3;
+  bytes stderr = 4;
+  string outcome = 5;
+  string request_fingerprint = 6;
 }
 
 message WorkspaceSecretDelivery {
   string placement_kind = 1;
   string placement_target = 2;
   bytes value = 3;
-}
-
-message WorkspaceExecStarted {
-  string exec_id = 1;
-  string process_id = 2;
-}
-
-message WorkspaceExecOutputChunk {
-  string exec_id = 1;
-  bytes data = 2;
-}
-
-message WorkspaceExecExited {
-  string exec_id = 1;
-  int32 exit_code = 2;
-  string signal = 3;
-  string error_json = 4;
-}
-
-message WorkspaceExecError {
-  string exec_id = 1;
-  string error_json = 2;
-}
-
-message WorkspacePtyOpened {
-  string pty_id = 1;
-  string process_id = 2;
-  uint32 cols = 3;
-  uint32 rows = 4;
-}
-
-message WorkspacePtyOutputChunk {
-  string pty_id = 1;
-  bytes data = 2;
-}
-
-message WorkspacePtyResizeApplied {
-  string pty_id = 1;
-  uint32 cols = 2;
-  uint32 rows = 3;
-}
-
-message WorkspacePtyClosed {
-  string pty_id = 1;
-  string reason = 2;
-  string error_json = 3;
-}
-
-message WorkspacePtyError {
-  string pty_id = 1;
-  string error_json = 2;
-}
-
-message WorkspaceOperationEvent {
-  WorkspaceOperationEnvelope envelope = 1;
-  oneof event {
-    WorkspaceExecStarted exec_started = 2;
-    WorkspaceExecOutputChunk exec_stdout_chunk = 3;
-    WorkspaceExecOutputChunk exec_stderr_chunk = 4;
-    WorkspaceExecExited exec_exited = 5;
-    WorkspaceExecError exec_error = 6;
-    WorkspacePtyOpened pty_opened = 7;
-    WorkspacePtyOutputChunk pty_output_chunk = 8;
-    WorkspacePtyResizeApplied pty_resize_applied = 9;
-    WorkspacePtyClosed pty_closed = 10;
-    WorkspacePtyError pty_error = 11;
-  }
-}
-
-message WorkspaceStreamAck {
-  WorkspaceOperationEnvelope envelope = 1;
-  string resource_kind = 2;
-  string resource_id = 3;
-  string stream = 4;
-  uint64 durable_offset = 5;
-}
-
-message WorkspaceInputChunk {
-  WorkspaceOperationEnvelope envelope = 1;
-  string resource_kind = 2;
-  string resource_id = 3;
-  string stream = 4;
-  uint64 offset_start = 5;
-  bytes data = 6;
-}
-
-message WorkspaceInputClose {
-  WorkspaceOperationEnvelope envelope = 1;
-  string resource_kind = 2;
-  string resource_id = 3;
-  string stream = 4;
-  uint64 offset = 5;
-}
-
-message WorkspaceInputFrame {
-  oneof frame {
-    WorkspaceInputChunk chunk = 1;
-    WorkspaceInputClose close = 2;
-  }
 }

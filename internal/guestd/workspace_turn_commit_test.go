@@ -10,7 +10,6 @@ import (
 
 func TestActorTurnCommitBarrierBlocksProcessesAndAdvancesAuthorityFrontier(t *testing.T) {
 	entry := testWorkspaceAuthorityEntry()
-	entry.processes = map[string]*workspaceProcess{}
 	entry.authority = testWorkspaceRunAuthority(time.Now().Add(time.Minute))
 	run := &runv0.ProgramRunRequest{
 		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1",
@@ -28,7 +27,7 @@ func TestActorTurnCommitBarrierBlocksProcessesAndAdvancesAuthorityFrontier(t *te
 		release()
 		t.Fatalf("Actor turn commit expiry = %v", expiresAt)
 	}
-	if _, err := entry.beginWorkspaceProcessAdmission(); err == nil || !strings.Contains(err.Error(), "unavailable") {
+	if _, err := entry.beginWorkspaceExecAdmission(); err == nil || !strings.Contains(err.Error(), "unavailable") {
 		release()
 		t.Fatalf("process admission while blocked = %v, want unavailable", err)
 	}
@@ -42,24 +41,22 @@ func TestActorTurnCommitBarrierBlocksProcessesAndAdvancesAuthorityFrontier(t *te
 	}
 	release()
 
-	releaseAdmission, err := entry.beginWorkspaceProcessAdmission()
+	releaseAdmission, err := entry.beginWorkspaceExecAdmission()
 	if err != nil {
 		t.Fatalf("process admission after release: %v", err)
 	}
 	releaseAdmission()
 }
 
-func TestActorTurnCommitBarrierRejectsActiveWorkspaceProcess(t *testing.T) {
+func TestActorTurnCommitBarrierRejectsActiveWorkspaceExec(t *testing.T) {
 	entry := testWorkspaceAuthorityEntry()
 	entry.authority = testWorkspaceRunAuthority(time.Now().Add(time.Minute))
-	entry.processes = map[string]*workspaceProcess{
-		"exec/exec-1": {resourceKind: "exec", resourceID: "exec-1"},
-	}
+	entry.processAdmissions = 1
 	_, _, err := entry.acquireActorTurnCommit(
 		&runv0.ProgramRunRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"},
 		&runv0.ActorTurnCommitPauseRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"},
 	)
-	if err == nil || !strings.Contains(err.Error(), "no active exec or PTY") {
+	if err == nil || !strings.Contains(err.Error(), "no active exec") {
 		t.Fatalf("active process barrier error = %v", err)
 	}
 	if entry.turnCommitBlocked {

@@ -50,10 +50,10 @@ type WorkspaceExecPlacementDiscovery interface {
 		context.Context,
 		int32,
 	) ([]db.ListPendingWorkspaceExecCandidatesRow, error)
-	ExpirePendingWorkspaceExecs(
+	ListRecoverableWorkspaceExecCandidates(
 		context.Context,
-		db.ExpirePendingWorkspaceExecsParams,
-	) (int64, error)
+		int32,
+	) ([]db.ListRecoverableWorkspaceExecCandidatesRow, error)
 }
 
 type WorkspaceExecPlacementAuthority interface {
@@ -62,6 +62,15 @@ type WorkspaceExecPlacementAuthority interface {
 		ReadyWorkspaceExecCandidate,
 		pgtype.Timestamptz,
 	) (WorkspaceExecPlacement, error)
+	RecoverWorkspaceExec(
+		context.Context,
+		RecoverableWorkspaceExecCandidate,
+	) error
+	FailPendingWorkspaceExec(
+		context.Context,
+		ReadyWorkspaceExecCandidate,
+		string,
+	) error
 }
 
 type WorkerWake struct {
@@ -169,14 +178,30 @@ func (r *PlacementReconciler) Run(ctx context.Context) error {
 }
 
 func (r *PlacementReconciler) ReconcileWorkspaceExecs(ctx context.Context) error {
-	if _, err := r.workspaceExecDiscovery.ExpirePendingWorkspaceExecs(
+	recoverable, err := r.workspaceExecDiscovery.ListRecoverableWorkspaceExecCandidates(
 		ctx,
-		db.ExpirePendingWorkspaceExecsParams{
-			ExpiredBefore: pgvalue.Timestamptz(time.Now().UTC().Add(-defaultWorkspaceExecPendingTimeout)),
-			RowLimit:      r.workspaceExecPolicy.limit,
-		},
-	); err != nil {
-		return fmt.Errorf("expire pending Workspace execs: %w", err)
+		r.workspaceExecPolicy.limit,
+	)
+	if err != nil {
+		return fmt.Errorf("list recoverable Workspace execs: %w", err)
+	}
+	var problems []error
+	for _, row := range recoverable {
+		err := r.workspaceExecAuthority.RecoverWorkspaceExec(
+			ctx,
+			RecoverableWorkspaceExecCandidate{
+				OrgID:                row.OrgID,
+				ProcessID:            row.ID,
+				WorkspaceID:          row.WorkspaceID,
+				ExpectedStateVersion: row.StateVersion,
+			},
+		)
+		if errors.Is(err, ErrCandidateChanged) || errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			problems = append(problems, err)
+		}
 	}
 	rows, err := r.workspaceExecDiscovery.ListPendingWorkspaceExecCandidates(
 		ctx,
@@ -185,19 +210,34 @@ func (r *PlacementReconciler) ReconcileWorkspaceExecs(ctx context.Context) error
 	if err != nil {
 		return fmt.Errorf("list pending Workspace execs: %w", err)
 	}
+	expiredBefore := time.Now().UTC().Add(-defaultWorkspaceExecPendingTimeout)
 	freshAfter := pgtype.Timestamptz{
 		Time:  time.Now().UTC().Add(-2 * time.Minute),
 		Valid: true,
 	}
-	var problems []error
 	for _, row := range rows {
+		candidate := ReadyWorkspaceExecCandidate{
+			OrgID:                row.OrgID,
+			ProcessID:            row.ID,
+			ExpectedStateVersion: row.StateVersion,
+		}
+		if !row.CreatedAt.Time.After(expiredBefore) {
+			err := r.workspaceExecAuthority.FailPendingWorkspaceExec(
+				ctx,
+				candidate,
+				"workspace_exec_placement_timed_out",
+			)
+			if errors.Is(err, ErrCandidateChanged) || errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				problems = append(problems, err)
+			}
+			continue
+		}
 		placement, err := r.workspaceExecAuthority.PlaceWorkspaceExec(
 			ctx,
-			ReadyWorkspaceExecCandidate{
-				OrgID:                row.OrgID,
-				ProcessID:            row.ID,
-				ExpectedStateVersion: row.StateVersion,
-			},
+			candidate,
 			freshAfter,
 		)
 		if err != nil {

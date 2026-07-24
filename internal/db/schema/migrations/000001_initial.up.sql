@@ -383,7 +383,6 @@ CREATE TYPE artifact_kind AS ENUM (
     'run_checkpoint_vm_state',
     'run_checkpoint_memory',
     'run_checkpoint_scratch_disk',
-    'workspace_process_record',
     'workspace_version'
 );
 
@@ -902,8 +901,6 @@ CREATE TYPE workspace_process_state AS ENUM (
     'running',
     'exit_requested',
     'exited',
-    'cancelled',
-    'lost',
     'failed'
 );
 
@@ -2392,34 +2389,14 @@ CREATE TABLE workspace_processes (
     worker_epoch BIGINT CHECK (worker_epoch IS NULL OR worker_epoch > 0),
     runtime_instance_id UUID,
     workspace_mount_id UUID,
-    kind TEXT NOT NULL CHECK (kind IN ('exec', 'pty')),
     state workspace_process_state NOT NULL DEFAULT 'pending',
     state_version BIGINT NOT NULL DEFAULT 1 CHECK (state_version > 0),
     request JSONB NOT NULL,
-    claim_id UUID,
-    runtime_process_id TEXT NOT NULL DEFAULT '',
+    stdin BYTEA NOT NULL DEFAULT ''::bytea,
+    stdout BYTEA,
+    stderr BYTEA,
+    claim_id UUID NOT NULL,
     exit_code INTEGER,
-    signal TEXT NOT NULL DEFAULT '',
-    pty_cols INTEGER CHECK (pty_cols IS NULL OR pty_cols > 0),
-    pty_rows INTEGER CHECK (pty_rows IS NULL OR pty_rows > 0),
-    pending_pty_cols INTEGER CHECK (pending_pty_cols IS NULL OR pending_pty_cols > 0),
-    pending_pty_rows INTEGER CHECK (pending_pty_rows IS NULL OR pending_pty_rows > 0),
-    resize_generation BIGINT CHECK (resize_generation IS NULL OR resize_generation >= 0),
-    pending_resize_generation BIGINT CHECK (pending_resize_generation IS NULL OR pending_resize_generation > 0),
-    stdout_cursor BIGINT CHECK (stdout_cursor IS NULL OR stdout_cursor >= 0),
-    stderr_cursor BIGINT CHECK (stderr_cursor IS NULL OR stderr_cursor >= 0),
-    stdin_cursor BIGINT CHECK (stdin_cursor IS NULL OR stdin_cursor >= 0),
-    stdin_delivered_cursor BIGINT CHECK (
-        stdin_delivered_cursor IS NULL
-        OR (stdin_delivered_cursor >= 0 AND stdin_delivered_cursor <= stdin_cursor)
-    ),
-    stdin_closed_at TIMESTAMPTZ,
-    input_cursor BIGINT CHECK (input_cursor IS NULL OR input_cursor >= 0),
-    input_delivered_cursor BIGINT CHECK (
-        input_delivered_cursor IS NULL
-        OR (input_delivered_cursor >= 0 AND input_delivered_cursor <= input_cursor)
-    ),
-    output_cursor BIGINT CHECK (output_cursor IS NULL OR output_cursor >= 0),
     created_by_subject_type TEXT NOT NULL DEFAULT '',
     created_by_subject_id TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -2430,45 +2407,9 @@ CREATE TABLE workspace_processes (
     error JSONB,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CHECK (jsonb_typeof(request) = 'object' AND octet_length(request::text) <= 393216),
-    CHECK (
-        (kind = 'exec'
-         AND stdout_cursor IS NOT NULL
-         AND stderr_cursor IS NOT NULL
-         AND stdin_cursor IS NOT NULL
-         AND stdin_delivered_cursor IS NOT NULL
-         AND input_cursor IS NULL
-         AND input_delivered_cursor IS NULL
-         AND output_cursor IS NULL
-         AND pty_cols IS NULL
-         AND pty_rows IS NULL
-         AND pending_pty_cols IS NULL
-         AND pending_pty_rows IS NULL
-         AND resize_generation IS NULL
-         AND pending_resize_generation IS NULL)
-        OR
-        (kind = 'pty'
-         AND stdout_cursor IS NULL
-         AND stderr_cursor IS NULL
-         AND stdin_cursor IS NULL
-         AND stdin_delivered_cursor IS NULL
-         AND stdin_closed_at IS NULL
-         AND input_cursor IS NOT NULL
-         AND input_delivered_cursor IS NOT NULL
-         AND output_cursor IS NOT NULL
-         AND pty_cols IS NOT NULL
-         AND pty_rows IS NOT NULL
-         AND resize_generation IS NOT NULL)
-    ),
-    CHECK (
-        (pending_pty_cols IS NULL
-         AND pending_pty_rows IS NULL
-         AND pending_resize_generation IS NULL)
-        OR
-        (pending_pty_cols IS NOT NULL
-         AND pending_pty_rows IS NOT NULL
-         AND pending_resize_generation IS NOT NULL
-         AND pending_resize_generation = resize_generation)
-    ),
+    CHECK (octet_length(stdin) <= 1048576),
+    CHECK (stdout IS NULL OR octet_length(stdout) <= 4194304),
+    CHECK (stderr IS NULL OR octet_length(stderr) <= 4194304),
     CHECK (
         num_nonnulls(
             region_id,
@@ -2482,10 +2423,8 @@ CREATE TABLE workspace_processes (
     CHECK (
         (state = 'pending' AND region_id IS NULL)
         OR
-        (state IN ('starting', 'running', 'exit_requested', 'exited', 'lost', 'failed')
+        (state IN ('starting', 'running', 'exit_requested', 'exited', 'failed')
          AND region_id IS NOT NULL)
-        OR
-        (state = 'cancelled')
     ),
     CHECK (
         (state IN ('pending', 'starting', 'running', 'exit_requested')
@@ -2493,21 +2432,20 @@ CREATE TABLE workspace_processes (
          AND terminal_reason_code IS NULL
          AND error IS NULL)
         OR (
-            state IN ('exited', 'cancelled', 'lost', 'failed')
+            state IN ('exited', 'failed')
             AND terminal_at IS NOT NULL
             AND terminal_reason_code IS NOT NULL
             AND btrim(terminal_reason_code) <> ''
             AND octet_length(terminal_reason_code) <= 128
         )
     ),
-    CHECK (state <> 'cancelled' OR num_nonnulls(region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id) IN (0, 6)),
+    CHECK (state NOT IN ('exit_requested', 'exited') OR (stdout IS NOT NULL AND stderr IS NOT NULL)),
     CHECK (state <> 'exited' OR exited_at IS NOT NULL),
     CHECK (error IS NULL OR (jsonb_typeof(error) = 'object' AND octet_length(error::text) <= 16384)),
     UNIQUE (org_id, id),
     UNIQUE (workspace_id, id),
     UNIQUE (id, workspace_id, runtime_instance_id),
     UNIQUE (environment_id, id),
-    UNIQUE (environment_id, id, kind),
     UNIQUE (org_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id),
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
@@ -2532,8 +2470,7 @@ CREATE UNIQUE INDEX workspace_processes_workspace_active_uidx
     WHERE state IN ('pending', 'starting', 'running', 'exit_requested');
 
 CREATE UNIQUE INDEX workspace_processes_claim_uidx
-    ON workspace_processes (claim_id)
-    WHERE claim_id IS NOT NULL;
+    ON workspace_processes (claim_id);
 
 CREATE INDEX workspace_processes_worker_replay_idx
     ON workspace_processes (worker_instance_id, worker_epoch, state, created_at, id)
@@ -2691,71 +2628,6 @@ ALTER TABLE run_attempts
     FOREIGN KEY (workspace_id, base_workspace_version_id)
     REFERENCES workspace_versions(workspace_id, id)
     ON DELETE RESTRICT;
-
-CREATE TABLE workspace_process_records (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    environment_id UUID NOT NULL,
-    process_id UUID NOT NULL,
-    process_kind TEXT NOT NULL CHECK (process_kind IN ('exec', 'pty')),
-    direction TEXT NOT NULL CHECK (direction IN ('input', 'output')),
-    stream TEXT NOT NULL CHECK (stream IN ('stdin', 'stdout', 'stderr', 'pty_input', 'pty_output')),
-    offset_start BIGINT NOT NULL CHECK (offset_start >= 0),
-    offset_end BIGINT NOT NULL CHECK (offset_end > offset_start),
-    data BYTEA,
-    artifact_id UUID,
-    artifact_kind artifact_kind,
-    artifact_digest TEXT,
-    content_digest BYTEA NOT NULL CHECK (octet_length(content_digest) = 32),
-    size_bytes BIGINT NOT NULL CHECK (size_bytes > 0),
-    observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    payload_expires_at TIMESTAMPTZ,
-    payload_collected_at TIMESTAMPTZ,
-    UNIQUE (process_id, stream, offset_start),
-    FOREIGN KEY (environment_id, process_id, process_kind)
-        REFERENCES workspace_processes(environment_id, id, kind)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (environment_id, artifact_id, artifact_kind, artifact_digest, size_bytes)
-        REFERENCES artifacts(environment_id, id, kind, digest, size_bytes)
-        ON DELETE RESTRICT,
-    CHECK (offset_end - offset_start = size_bytes),
-    CHECK (data IS NULL OR octet_length(data) = size_bytes),
-    CHECK (
-        (process_kind = 'exec' AND direction = 'input' AND stream = 'stdin')
-        OR
-        (process_kind = 'exec' AND direction = 'output' AND stream IN ('stdout', 'stderr'))
-        OR
-        (process_kind = 'pty' AND direction = 'input' AND stream = 'pty_input')
-        OR
-        (process_kind = 'pty' AND direction = 'output' AND stream = 'pty_output')
-    ),
-    CHECK (
-        (payload_collected_at IS NULL
-         AND (
-             (data IS NOT NULL
-              AND artifact_id IS NULL
-              AND artifact_kind IS NULL
-              AND artifact_digest IS NULL)
-             OR
-             (data IS NULL
-              AND artifact_id IS NOT NULL
-              AND artifact_kind = 'workspace_process_record'
-              AND artifact_digest = 'sha256:' || encode(content_digest, 'hex'))
-         ))
-        OR
-        (payload_collected_at IS NOT NULL
-         AND data IS NULL
-         AND artifact_id IS NULL
-         AND artifact_kind IS NULL
-         AND artifact_digest IS NULL)
-    ),
-    CHECK (payload_expires_at IS NULL OR payload_expires_at >= created_at),
-    CHECK (payload_collected_at IS NULL OR payload_expires_at IS NOT NULL)
-);
-
-CREATE INDEX workspace_process_records_payload_gc_idx
-    ON workspace_process_records (payload_expires_at, id)
-    WHERE payload_collected_at IS NULL AND payload_expires_at IS NOT NULL;
 
 CREATE TABLE secret_resolutions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),

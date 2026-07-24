@@ -24,7 +24,6 @@ const (
 	ArtifactKindRunCheckpointVmState     ArtifactKind = "run_checkpoint_vm_state"
 	ArtifactKindRunCheckpointMemory      ArtifactKind = "run_checkpoint_memory"
 	ArtifactKindRunCheckpointScratchDisk ArtifactKind = "run_checkpoint_scratch_disk"
-	ArtifactKindWorkspaceProcessRecord   ArtifactKind = "workspace_process_record"
 	ArtifactKindWorkspaceVersion         ArtifactKind = "workspace_version"
 )
 
@@ -1495,8 +1494,6 @@ const (
 	WorkspaceProcessStateRunning       WorkspaceProcessState = "running"
 	WorkspaceProcessStateExitRequested WorkspaceProcessState = "exit_requested"
 	WorkspaceProcessStateExited        WorkspaceProcessState = "exited"
-	WorkspaceProcessStateCancelled     WorkspaceProcessState = "cancelled"
-	WorkspaceProcessStateLost          WorkspaceProcessState = "lost"
 	WorkspaceProcessStateFailed        WorkspaceProcessState = "failed"
 )
 
@@ -2823,71 +2820,36 @@ type WorkspaceMount struct {
 }
 
 type WorkspaceProcess struct {
-	ID                      pgtype.UUID           `json:"id"`
-	OrgID                   pgtype.UUID           `json:"org_id"`
-	ProjectID               pgtype.UUID           `json:"project_id"`
-	EnvironmentID           pgtype.UUID           `json:"environment_id"`
-	WorkspaceID             pgtype.UUID           `json:"workspace_id"`
-	BaseVersionID           pgtype.UUID           `json:"base_version_id"`
-	RestoreDesiredState     WorkspaceDesiredState `json:"restore_desired_state"`
-	RegionID                pgtype.Text           `json:"region_id"`
-	WorkerGroupID           pgtype.Text           `json:"worker_group_id"`
-	WorkerInstanceID        pgtype.UUID           `json:"worker_instance_id"`
-	WorkerEpoch             pgtype.Int8           `json:"worker_epoch"`
-	RuntimeInstanceID       pgtype.UUID           `json:"runtime_instance_id"`
-	WorkspaceMountID        pgtype.UUID           `json:"workspace_mount_id"`
-	Kind                    string                `json:"kind"`
-	State                   WorkspaceProcessState `json:"state"`
-	StateVersion            int64                 `json:"state_version"`
-	Request                 []byte                `json:"request"`
-	ClaimID                 pgtype.UUID           `json:"claim_id"`
-	RuntimeProcessID        string                `json:"runtime_process_id"`
-	ExitCode                pgtype.Int4           `json:"exit_code"`
-	Signal                  string                `json:"signal"`
-	PtyCols                 pgtype.Int4           `json:"pty_cols"`
-	PtyRows                 pgtype.Int4           `json:"pty_rows"`
-	PendingPtyCols          pgtype.Int4           `json:"pending_pty_cols"`
-	PendingPtyRows          pgtype.Int4           `json:"pending_pty_rows"`
-	ResizeGeneration        pgtype.Int8           `json:"resize_generation"`
-	PendingResizeGeneration pgtype.Int8           `json:"pending_resize_generation"`
-	StdoutCursor            pgtype.Int8           `json:"stdout_cursor"`
-	StderrCursor            pgtype.Int8           `json:"stderr_cursor"`
-	StdinCursor             pgtype.Int8           `json:"stdin_cursor"`
-	StdinDeliveredCursor    pgtype.Int8           `json:"stdin_delivered_cursor"`
-	StdinClosedAt           pgtype.Timestamptz    `json:"stdin_closed_at"`
-	InputCursor             pgtype.Int8           `json:"input_cursor"`
-	InputDeliveredCursor    pgtype.Int8           `json:"input_delivered_cursor"`
-	OutputCursor            pgtype.Int8           `json:"output_cursor"`
-	CreatedBySubjectType    string                `json:"created_by_subject_type"`
-	CreatedBySubjectID      string                `json:"created_by_subject_id"`
-	CreatedAt               pgtype.Timestamptz    `json:"created_at"`
-	StartedAt               pgtype.Timestamptz    `json:"started_at"`
-	ExitedAt                pgtype.Timestamptz    `json:"exited_at"`
-	TerminalAt              pgtype.Timestamptz    `json:"terminal_at"`
-	TerminalReasonCode      pgtype.Text           `json:"terminal_reason_code"`
-	Error                   []byte                `json:"error"`
-	UpdatedAt               pgtype.Timestamptz    `json:"updated_at"`
-}
-
-type WorkspaceProcessRecord struct {
-	ID                 pgtype.UUID        `json:"id"`
-	EnvironmentID      pgtype.UUID        `json:"environment_id"`
-	ProcessID          pgtype.UUID        `json:"process_id"`
-	ProcessKind        string             `json:"process_kind"`
-	Direction          string             `json:"direction"`
-	Stream             string             `json:"stream"`
-	OffsetStart        int64              `json:"offset_start"`
-	OffsetEnd          int64              `json:"offset_end"`
-	Data               []byte             `json:"data"`
-	ArtifactID         pgtype.UUID        `json:"artifact_id"`
-	ArtifactKind       NullArtifactKind   `json:"artifact_kind"`
-	ArtifactDigest     pgtype.Text        `json:"artifact_digest"`
-	ContentDigest      []byte             `json:"content_digest"`
-	SizeBytes          int64              `json:"size_bytes"`
-	ObservedAt         pgtype.Timestamptz `json:"observed_at"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	PayloadExpiresAt   pgtype.Timestamptz `json:"payload_expires_at"`
-	PayloadCollectedAt pgtype.Timestamptz `json:"payload_collected_at"`
+	ID                   pgtype.UUID           `json:"id"`
+	OrgID                pgtype.UUID           `json:"org_id"`
+	ProjectID            pgtype.UUID           `json:"project_id"`
+	EnvironmentID        pgtype.UUID           `json:"environment_id"`
+	WorkspaceID          pgtype.UUID           `json:"workspace_id"`
+	BaseVersionID        pgtype.UUID           `json:"base_version_id"`
+	RestoreDesiredState  WorkspaceDesiredState `json:"restore_desired_state"`
+	RegionID             pgtype.Text           `json:"region_id"`
+	WorkerGroupID        pgtype.Text           `json:"worker_group_id"`
+	WorkerInstanceID     pgtype.UUID           `json:"worker_instance_id"`
+	WorkerEpoch          pgtype.Int8           `json:"worker_epoch"`
+	RuntimeInstanceID    pgtype.UUID           `json:"runtime_instance_id"`
+	WorkspaceMountID     pgtype.UUID           `json:"workspace_mount_id"`
+	State                WorkspaceProcessState `json:"state"`
+	StateVersion         int64                 `json:"state_version"`
+	Request              []byte                `json:"request"`
+	Stdin                []byte                `json:"stdin"`
+	Stdout               []byte                `json:"stdout"`
+	Stderr               []byte                `json:"stderr"`
+	ClaimID              pgtype.UUID           `json:"claim_id"`
+	ExitCode             pgtype.Int4           `json:"exit_code"`
+	CreatedBySubjectType string                `json:"created_by_subject_type"`
+	CreatedBySubjectID   string                `json:"created_by_subject_id"`
+	CreatedAt            pgtype.Timestamptz    `json:"created_at"`
+	StartedAt            pgtype.Timestamptz    `json:"started_at"`
+	ExitedAt             pgtype.Timestamptz    `json:"exited_at"`
+	TerminalAt           pgtype.Timestamptz    `json:"terminal_at"`
+	TerminalReasonCode   pgtype.Text           `json:"terminal_reason_code"`
+	Error                []byte                `json:"error"`
+	UpdatedAt            pgtype.Timestamptz    `json:"updated_at"`
 }
 
 type WorkspaceSecret struct {

@@ -7,15 +7,10 @@ INSERT INTO workspace_processes (
     workspace_id,
     base_version_id,
     restore_desired_state,
-    kind,
     state,
     request,
+    stdin,
     claim_id,
-    stdout_cursor,
-    stderr_cursor,
-    stdin_cursor,
-    stdin_delivered_cursor,
-    stdin_closed_at,
     created_by_subject_type,
     created_by_subject_id
 ) VALUES (
@@ -26,15 +21,10 @@ INSERT INTO workspace_processes (
     sqlc.arg(workspace_id),
     sqlc.arg(base_version_id),
     sqlc.arg(restore_desired_state),
-    'exec',
     'pending',
     sqlc.arg(request),
+    sqlc.arg(stdin),
     sqlc.arg(claim_id),
-    0,
-    0,
-    0,
-    0,
-    transaction_timestamp(),
     sqlc.arg(created_by_subject_type),
     sqlc.arg(created_by_subject_id)
 )
@@ -45,8 +35,7 @@ SELECT *
   FROM workspace_processes
  WHERE environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND claim_id = sqlc.arg(claim_id)
-   AND kind = 'exec';
+   AND claim_id = sqlc.arg(claim_id);
 
 -- name: GetWorkspaceExec :one
 SELECT *
@@ -55,92 +44,51 @@ SELECT *
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND id = sqlc.arg(id)
-   AND kind = 'exec';
-
--- name: ListWorkspaceExecTerminalRecords :many
-SELECT *
-  FROM workspace_process_records
- WHERE environment_id = sqlc.arg(environment_id)
-   AND process_id = sqlc.arg(process_id)
-   AND process_kind = 'exec'
-   AND direction = 'output'
-   AND stream IN ('stdout', 'stderr')
- ORDER BY stream, offset_start, id;
+   AND id = sqlc.arg(id);
 
 -- name: ListPendingWorkspaceExecCandidates :many
-SELECT org_id, id, state_version
+SELECT org_id, id, state_version, created_at
   FROM workspace_processes
- WHERE kind = 'exec'
-   AND state = 'pending'
+ WHERE state = 'pending'
  ORDER BY created_at, id
  LIMIT sqlc.arg(row_limit);
 
--- name: FailPendingWorkspaceExec :one
-WITH failed_process AS (
-    UPDATE workspace_processes
-       SET state = 'failed',
-           state_version = state_version + 1,
-           terminal_at = transaction_timestamp(),
-           terminal_reason_code = sqlc.arg(reason_code),
-           error = sqlc.arg(error),
-           updated_at = transaction_timestamp()
-     WHERE workspace_processes.org_id = sqlc.arg(org_id)
-       AND workspace_processes.id = sqlc.arg(process_id)
-       AND workspace_processes.state = 'pending'
-       AND workspace_processes.state_version = sqlc.arg(expected_state_version)
-    RETURNING *
-), failed_claim AS (
-    UPDATE idempotency_claims
-       SET state = 'failed',
-           receipt = jsonb_build_object(
-               'process_id', failed_process.id,
-               'reason_code', failed_process.terminal_reason_code
-           ),
-           completed_at = transaction_timestamp()
-      FROM failed_process
-     WHERE idempotency_claims.environment_id = failed_process.environment_id
-       AND idempotency_claims.id = failed_process.claim_id
-       AND idempotency_claims.state = 'pending'
-    RETURNING idempotency_claims.id
-)
-SELECT failed_process.*
-  FROM failed_process
-  JOIN failed_claim ON true;
+-- name: ListRecoverableWorkspaceExecCandidates :many
+SELECT workspace_processes.org_id,
+       workspace_processes.id,
+       workspace_processes.workspace_id,
+       workspace_processes.state_version
+  FROM workspace_processes
+  JOIN workspace_mounts
+    ON workspace_mounts.id = workspace_processes.workspace_mount_id
+   AND workspace_mounts.workspace_id = workspace_processes.workspace_id
+  JOIN workspace_leases
+    ON workspace_leases.workspace_mount_id = workspace_mounts.id
+   AND workspace_leases.owner_process_id = workspace_processes.id
+ WHERE workspace_processes.state IN ('starting', 'running', 'exit_requested')
+   AND (
+       workspace_mounts.state = 'lost'
+       OR (
+           workspace_leases.state IN ('active', 'releasing')
+           AND workspace_leases.expires_at <= transaction_timestamp()
+       )
+   )
+ ORDER BY workspace_processes.updated_at, workspace_processes.id
+ LIMIT sqlc.arg(row_limit);
 
--- name: ExpirePendingWorkspaceExecs :execrows
-WITH candidates AS (
-    SELECT workspace_processes.id
-      FROM workspace_processes
-     WHERE workspace_processes.kind = 'exec'
-       AND workspace_processes.state = 'pending'
-       AND workspace_processes.created_at <= sqlc.arg(expired_before)
-     ORDER BY workspace_processes.created_at, workspace_processes.id
-     LIMIT sqlc.arg(row_limit)
-     FOR UPDATE SKIP LOCKED
-), failed_processes AS (
-    UPDATE workspace_processes
-       SET state = 'failed',
-           state_version = state_version + 1,
-           terminal_at = transaction_timestamp(),
-           terminal_reason_code = 'workspace_exec_placement_timed_out',
-           error = '{"code":"workspace_exec_placement_timed_out"}'::jsonb,
-           updated_at = transaction_timestamp()
-      FROM candidates
-     WHERE workspace_processes.id = candidates.id
-    RETURNING workspace_processes.*
-)
-UPDATE idempotency_claims
+-- name: FailPendingWorkspaceExecProcess :one
+UPDATE workspace_processes
    SET state = 'failed',
-       receipt = jsonb_build_object(
-           'process_id', failed_processes.id,
-           'reason_code', failed_processes.terminal_reason_code
-       ),
-       completed_at = transaction_timestamp()
-  FROM failed_processes
- WHERE idempotency_claims.environment_id = failed_processes.environment_id
-   AND idempotency_claims.id = failed_processes.claim_id
-   AND idempotency_claims.state = 'pending';
+       state_version = state_version + 1,
+       terminal_at = transaction_timestamp(),
+       terminal_reason_code = sqlc.arg(reason_code),
+       error = sqlc.arg(error),
+       updated_at = transaction_timestamp()
+ WHERE org_id = sqlc.arg(org_id)
+   AND id = sqlc.arg(process_id)
+   AND state = 'pending'
+   AND state_version = sqlc.arg(expected_state_version)
+RETURNING *;
 
 -- name: CloseExpiredWorkspaceExecReservation :execrows
 WITH target AS (
@@ -391,8 +339,7 @@ UPDATE runtime_instances
 SELECT sqlc.embed(workspace_processes),
        sqlc.embed(workspace_mounts),
        sqlc.embed(workspace_leases),
-       idempotency_claims.request_fingerprint,
-       idempotency_claims.expires_at AS claim_expires_at
+       idempotency_claims.request_fingerprint
   FROM workspace_processes
   JOIN workspace_mounts
     ON workspace_mounts.org_id = workspace_processes.org_id
@@ -414,7 +361,6 @@ SELECT sqlc.embed(workspace_processes),
    AND idempotency_claims.id = workspace_processes.claim_id
  WHERE workspace_processes.org_id = sqlc.arg(org_id)
    AND workspace_processes.id = sqlc.arg(process_id)
-   AND workspace_processes.kind = 'exec'
    AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
    AND workspace_mounts.id = sqlc.arg(workspace_mount_id)
    AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
@@ -436,7 +382,6 @@ SELECT workspace_processes.id,
   FROM workspace_processes
  WHERE workspace_processes.org_id = sqlc.arg(org_id)
    AND workspace_processes.workspace_mount_id = sqlc.arg(workspace_mount_id)
-   AND workspace_processes.kind = 'exec'
    AND workspace_processes.state IN ('starting', 'running', 'exit_requested');
 
 -- name: GetWorkspaceExecLocator :one
@@ -446,7 +391,6 @@ SELECT workspace_processes.workspace_mount_id,
   FROM workspace_processes
  WHERE workspace_processes.org_id = sqlc.arg(org_id)
    AND workspace_processes.id = sqlc.arg(process_id)
-   AND workspace_processes.kind = 'exec'
    AND workspace_processes.state IN ('starting', 'running', 'exit_requested');
 
 -- name: LockWorkspaceExecFailureAuthority :one
@@ -464,7 +408,6 @@ SELECT sqlc.embed(workspace_processes),
     ON workspaces.id = workspace_processes.workspace_id
  WHERE workspace_processes.org_id = sqlc.arg(org_id)
    AND workspace_processes.id = sqlc.arg(process_id)
-   AND workspace_processes.kind = 'exec'
    AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
    AND workspace_mounts.id = sqlc.arg(workspace_mount_id)
    AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
@@ -484,6 +427,57 @@ SELECT *
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(workspace_id)
  FOR UPDATE;
+
+-- name: LockWorkspaceExecRecoveryAuthority :one
+SELECT sqlc.embed(workspace_processes),
+       sqlc.embed(workspace_mounts),
+       sqlc.embed(workspace_leases)
+  FROM workspace_processes
+  JOIN workspace_mounts
+    ON workspace_mounts.id = workspace_processes.workspace_mount_id
+   AND workspace_mounts.workspace_id = workspace_processes.workspace_id
+  JOIN workspace_leases
+    ON workspace_leases.workspace_mount_id = workspace_mounts.id
+   AND workspace_leases.owner_process_id = workspace_processes.id
+ WHERE workspace_processes.org_id = sqlc.arg(org_id)
+   AND workspace_processes.id = sqlc.arg(process_id)
+   AND workspace_processes.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_processes.state_version = sqlc.arg(expected_state_version)
+   AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
+   AND (
+       workspace_mounts.state = 'lost'
+       OR (
+           workspace_leases.state IN ('active', 'releasing')
+           AND workspace_leases.expires_at <= transaction_timestamp()
+       )
+   )
+ FOR UPDATE OF workspace_processes, workspace_mounts, workspace_leases;
+
+-- name: LoseWorkspaceExecMount :one
+UPDATE workspace_mounts
+   SET state = 'lost',
+       lost_at = COALESCE(lost_at, transaction_timestamp()),
+       terminal_at = COALESCE(terminal_at, transaction_timestamp()),
+       terminal_reason_code = sqlc.arg(reason_code),
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(workspace_mount_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND state IN ('mounting', 'mounted', 'unmounting')
+RETURNING *;
+
+-- name: CloseWorkspaceExecRuntime :execrows
+UPDATE runtime_instances
+   SET desired_state = 'closed',
+       desired_version = CASE
+           WHEN desired_state = 'closed' THEN desired_version
+           ELSE desired_version + 1
+       END,
+       desired_at = transaction_timestamp(),
+       desired_reason = sqlc.arg(reason_code),
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(runtime_instance_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND reclaimed_at IS NULL;
 
 -- name: StartWorkspaceExec :one
 UPDATE workspace_processes
@@ -514,6 +508,8 @@ UPDATE workspace_processes
            ELSE state_version
        END,
        exit_code = sqlc.narg(exit_code),
+       stdout = sqlc.arg(stdout),
+       stderr = sqlc.arg(stderr),
        updated_at = transaction_timestamp()
  WHERE id = sqlc.arg(process_id)
    AND workspace_mount_id = sqlc.arg(workspace_mount_id)
@@ -522,6 +518,8 @@ UPDATE workspace_processes
        OR (
            state = 'exit_requested'
            AND exit_code IS NOT DISTINCT FROM sqlc.narg(exit_code)
+           AND stdout = sqlc.arg(stdout)
+           AND stderr = sqlc.arg(stderr)
        )
    )
 RETURNING *;
@@ -703,6 +701,17 @@ UPDATE workspace_leases
    SET state = 'released',
        released_at = transaction_timestamp(),
        terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(lease_id)
+   AND owner_process_id = sqlc.arg(process_id)
+   AND state IN ('active', 'releasing')
+RETURNING *;
+
+-- name: ExpireWorkspaceExecLease :one
+UPDATE workspace_leases
+   SET state = 'expired',
+       terminal_at = COALESCE(terminal_at, transaction_timestamp()),
+       terminal_reason_code = sqlc.arg(reason_code),
        updated_at = transaction_timestamp()
  WHERE id = sqlc.arg(lease_id)
    AND owner_process_id = sqlc.arg(process_id)

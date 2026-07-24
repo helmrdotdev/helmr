@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
@@ -20,22 +18,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
-func testWorkspaceOperationFingerprint(t *testing.T, operationKind string, requestJSON string) string {
-	t.Helper()
-	fingerprint, err := wire.RequestFingerprint(operationKind, []byte(requestJSON))
-	if err != nil {
-		t.Fatal(fmt.Errorf("workspace operation fingerprint: %w", err))
-	}
-	return fingerprint
-}
-
 func TestRestoredWorkspaceRebindPreservesFrozenProgramAndReplacesMountAuthority(t *testing.T) {
 	registry := newWorkspaceOperationRegistry()
 	entry := &workspaceMountEntry{
 		workspaceID: "workspace-1", workspaceMountID: "old-mount", channelToken: "old-channel",
 		runtimeInstanceID: "old-runtime", workspaceMount: "/workspace", baseVersionID: "old-version",
-		authority: &workspacev0.WorkspaceRunAuthority{Fence: &workspacev0.WorkspaceAuthorityFence{RunLeaseId: "old-lease"}},
-		processes: map[string]*workspaceProcess{}, authorityState: workspaceAuthorityLive,
+		authority:      &workspacev0.WorkspaceRunAuthority{Fence: &workspacev0.WorkspaceAuthorityFence{RunLeaseId: "old-lease"}},
+		authorityState: workspaceAuthorityLive,
 	}
 	entry.setFencingGeneration(3)
 	registry.entries["old-mount"] = entry
@@ -177,137 +166,6 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	}
 	if string(body) != "hello" {
 		t.Fatalf("restored file = %q", body)
-	}
-	operationKind := "ResizePty"
-	operationRequest := `{"pty_id":"pty-1","cols":80,"rows":24}`
-
-	operationClient, operationServer := net.Pipe()
-	defer operationClient.Close()
-	defer operationServer.Close()
-	errCh = make(chan error, 1)
-	go func() {
-		errCh <- handleWorkspaceOperationConnection(context.Background(), operationServer, registry)
-	}()
-	if err := frameio.WriteProtoFrame(operationClient, &workspacev0.WorkspaceOperationRequest{
-		Envelope: &workspacev0.WorkspaceOperationEnvelope{
-			OperationId:                "op-1",
-			WorkspaceMountId:           "mat-1",
-			WorkspaceId:                "workspace-1",
-			ChannelToken:               "channel-token",
-			FencingGeneration:          1,
-			OperationExpiresAtUnixNano: time.Now().Add(time.Hour).UnixNano(),
-			RequestFingerprint:         testWorkspaceOperationFingerprint(t, operationKind, operationRequest),
-		},
-		OperationKind: operationKind,
-		RequestJson:   operationRequest,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	var result workspacev0.WorkspaceOperationResult
-	if err := frameio.ReadProtoFrame(operationClient, &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.ResultJson != "" || !strings.Contains(result.ErrorJson, `workspace pty \"pty-1\" is not open`) {
-		t.Fatalf("operation result_json=%q error_json=%q, want authorized primitive handler error", result.ResultJson, result.ErrorJson)
-	}
-	if err := <-errCh; err != nil {
-		t.Fatal(err)
-	}
-
-	mismatchClient, mismatchServer := net.Pipe()
-	defer mismatchClient.Close()
-	defer mismatchServer.Close()
-	errCh = make(chan error, 1)
-	go func() {
-		errCh <- handleWorkspaceOperationConnection(context.Background(), mismatchServer, registry)
-	}()
-	if err := frameio.WriteProtoFrame(mismatchClient, &workspacev0.WorkspaceOperationRequest{
-		Envelope: &workspacev0.WorkspaceOperationEnvelope{
-			OperationId:                "op-mismatch",
-			WorkspaceMountId:           "mat-1",
-			WorkspaceId:                "workspace-other",
-			ChannelToken:               "channel-token",
-			FencingGeneration:          1,
-			OperationExpiresAtUnixNano: time.Now().Add(time.Hour).UnixNano(),
-			RequestFingerprint:         testWorkspaceOperationFingerprint(t, operationKind, operationRequest),
-		},
-		OperationKind: operationKind,
-		RequestJson:   operationRequest,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := frameio.ReadProtoFrame(mismatchClient, &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.ResultJson != "" || !strings.Contains(result.ErrorJson, "channel token or fencing generation is invalid") {
-		t.Fatalf("workspace mismatch result_json=%q error_json=%q, want channel token/fencing rejection", result.ResultJson, result.ErrorJson)
-	}
-	if err := <-errCh; err != nil {
-		t.Fatal(err)
-	}
-
-	advanceFenceClient, advanceFenceServer := net.Pipe()
-	defer advanceFenceClient.Close()
-	defer advanceFenceServer.Close()
-	errCh = make(chan error, 1)
-	go func() {
-		errCh <- handleWorkspaceOperationConnection(context.Background(), advanceFenceServer, registry)
-	}()
-	if err := frameio.WriteProtoFrame(advanceFenceClient, &workspacev0.WorkspaceOperationRequest{
-		Envelope: &workspacev0.WorkspaceOperationEnvelope{
-			OperationId:                "op-advance-fence",
-			WorkspaceMountId:           "mat-1",
-			WorkspaceId:                "workspace-1",
-			ChannelToken:               "channel-token",
-			FencingGeneration:          2,
-			OperationExpiresAtUnixNano: time.Now().Add(time.Hour).UnixNano(),
-			RequestFingerprint:         testWorkspaceOperationFingerprint(t, operationKind, operationRequest),
-		},
-		OperationKind: operationKind,
-		RequestJson:   operationRequest,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := frameio.ReadProtoFrame(advanceFenceClient, &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.ResultJson != "" || !strings.Contains(result.ErrorJson, `workspace pty \"pty-1\" is not open`) {
-		t.Fatalf("advance fencing operation result_json=%q error_json=%q, want authorized primitive handler error", result.ResultJson, result.ErrorJson)
-	}
-	if err := <-errCh; err != nil {
-		t.Fatal(err)
-	}
-
-	staleFenceClient, staleFenceServer := net.Pipe()
-	defer staleFenceClient.Close()
-	defer staleFenceServer.Close()
-	errCh = make(chan error, 1)
-	go func() {
-		errCh <- handleWorkspaceOperationConnection(context.Background(), staleFenceServer, registry)
-	}()
-	if err := frameio.WriteProtoFrame(staleFenceClient, &workspacev0.WorkspaceOperationRequest{
-		Envelope: &workspacev0.WorkspaceOperationEnvelope{
-			OperationId:                "op-stale-fence",
-			WorkspaceMountId:           "mat-1",
-			WorkspaceId:                "workspace-1",
-			ChannelToken:               "channel-token",
-			FencingGeneration:          1,
-			OperationExpiresAtUnixNano: time.Now().Add(time.Hour).UnixNano(),
-			RequestFingerprint:         testWorkspaceOperationFingerprint(t, operationKind, operationRequest),
-		},
-		OperationKind: operationKind,
-		RequestJson:   operationRequest,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := frameio.ReadProtoFrame(staleFenceClient, &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.ResultJson != "" || !strings.Contains(result.ErrorJson, "channel token or fencing generation is invalid") {
-		t.Fatalf("stale fencing result_json=%q error_json=%q, want channel token/fencing rejection", result.ResultJson, result.ErrorJson)
-	}
-	if err := <-errCh; err != nil {
-		t.Fatal(err)
 	}
 }
 

@@ -251,6 +251,24 @@ func (s *Server) workerStopWorkspaceMount(w http.ResponseWriter, r *http.Request
 			},
 		)
 		if locatorErr == nil {
+			secretsValid, err := lockWorkspaceExecPublicationSecrets(
+				r.Context(),
+				work.q,
+				locator.ID,
+				params.mount.WorkspaceID,
+			)
+			if err != nil {
+				return err
+			}
+			if _, err := work.q.LockWorkspaceExecFailureWorkspace(
+				r.Context(),
+				db.LockWorkspaceExecFailureWorkspaceParams{
+					OrgID:       params.orgID,
+					WorkspaceID: params.mount.WorkspaceID,
+				},
+			); err != nil {
+				return err
+			}
 			authority, err := work.q.LockWorkspaceExecWorkerAuthority(
 				r.Context(),
 				db.LockWorkspaceExecWorkerAuthorityParams{
@@ -262,7 +280,12 @@ func (s *Server) workerStopWorkspaceMount(w http.ResponseWriter, r *http.Request
 			if err != nil {
 				return err
 			}
-			if err := s.finalizeWorkspaceExec(r.Context(), work, authority); err != nil {
+			if err := s.finalizeWorkspaceExec(
+				r.Context(),
+				work,
+				authority,
+				secretsValid,
+			); err != nil {
 				return err
 			}
 		} else if !errors.Is(locatorErr, pgx.ErrNoRows) {
@@ -296,27 +319,53 @@ func (s *Server) finalizeWorkspaceExec(
 	ctx context.Context,
 	work *txWork,
 	authority db.LockWorkspaceExecWorkerAuthorityRow,
+	secretsValid bool,
 ) error {
 	mount := authority.WorkspaceMount
 	process := authority.WorkspaceProcess
 	lease := authority.WorkspaceLease
 	var versionID pgtype.UUID
 	finalState := db.WorkspaceProcessStateFailed
+	reasonCode := mount.FinalizationReasonCode
+	errorJSON := mount.FinalizationError
 	if mount.FinalizationKind.String == "capture" {
 		if !mount.StagedVersionID.Valid {
 			return errors.New("Workspace exec capture is not staged")
 		}
-		if _, err := work.q.CommitStagedWorkspaceExecVersion(
-			ctx,
-			db.CommitStagedWorkspaceExecVersionParams{
-				VersionID:   mount.StagedVersionID,
-				WorkspaceID: mount.WorkspaceID,
-			},
-		); err != nil {
-			return err
+		if secretsValid {
+			if _, err := work.q.CommitStagedWorkspaceExecVersion(
+				ctx,
+				db.CommitStagedWorkspaceExecVersionParams{
+					VersionID:   mount.StagedVersionID,
+					WorkspaceID: mount.WorkspaceID,
+				},
+			); err != nil {
+				return err
+			}
+			versionID = mount.StagedVersionID
+			finalState = db.WorkspaceProcessStateExited
+		} else {
+			affected, err := work.q.DiscardStagedWorkspaceExecVersion(
+				ctx,
+				db.DiscardStagedWorkspaceExecVersionParams{
+					VersionID:   mount.StagedVersionID,
+					WorkspaceID: mount.WorkspaceID,
+				},
+			)
+			if err != nil {
+				return err
+			}
+			if affected != 1 {
+				return errors.New("revoked Workspace exec version is not discardable")
+			}
+			reasonCode = pgvalue.Text("workspace_exec_secret_revoked")
+			errorJSON, err = json.Marshal(map[string]string{
+				"code": "workspace_exec_secret_revoked",
+			})
+			if err != nil {
+				return err
+			}
 		}
-		versionID = mount.StagedVersionID
-		finalState = db.WorkspaceProcessStateExited
 	}
 	if _, err := work.q.FinalizeWorkspaceExecWorkspace(
 		ctx,
@@ -335,8 +384,8 @@ func (s *Server) finalizeWorkspaceExec(
 		ctx,
 		db.FinalizeWorkspaceExecProcessParams{
 			State:            finalState,
-			ReasonCode:       mount.FinalizationReasonCode,
-			Error:            mount.FinalizationError,
+			ReasonCode:       reasonCode,
+			Error:            errorJSON,
 			ProcessID:        process.ID,
 			WorkspaceMountID: mount.ID,
 		},
@@ -360,9 +409,12 @@ func (s *Server) finalizeWorkspaceExec(
 	if err != nil {
 		return err
 	}
+	if claim.RetiredAt.Valid {
+		return nil
+	}
 	receipt, err := json.Marshal(map[string]string{
 		"process_id":  pgvalue.MustUUIDValue(finalized.ID).String(),
-		"reason_code": mount.FinalizationReasonCode.String,
+		"reason_code": reasonCode.String,
 	})
 	if err != nil {
 		return err
@@ -377,6 +429,52 @@ func (s *Server) finalizeWorkspaceExec(
 		_, err = claims.Fail(ctx, claim, receipt)
 	}
 	return err
+}
+
+func lockWorkspaceExecPublicationSecrets(
+	ctx context.Context,
+	q interface {
+		LockProcessSecretDelivery(
+			context.Context,
+			db.LockProcessSecretDeliveryParams,
+		) ([]db.LockProcessSecretDeliveryRow, error)
+	},
+	processID pgtype.UUID,
+	workspaceID pgtype.UUID,
+) (bool, error) {
+	rows, err := q.LockProcessSecretDelivery(
+		ctx,
+		db.LockProcessSecretDeliveryParams{
+			ProcessID:   processID,
+			WorkspaceID: workspaceID,
+		},
+	)
+	if err != nil {
+		return false, err
+	}
+	if len(rows) > maxWorkspaceSecrets {
+		return false, errors.New("Workspace Secret placements exceed their bound")
+	}
+	return workspaceExecPublicationSecretsValid(rows, processID), nil
+}
+
+func workspaceExecPublicationSecretsValid(
+	rows []db.LockProcessSecretDeliveryRow,
+	processID pgtype.UUID,
+) bool {
+	for _, row := range rows {
+		if row.Secret.State != "active" ||
+			!row.ResolutionID.Valid ||
+			!row.ResolutionProcessID.Valid ||
+			row.ResolutionProcessID != processID ||
+			!row.ResolutionSecretVersionID.Valid ||
+			!row.ResolutionRevocationGeneration.Valid ||
+			row.ResolutionRevocationGeneration.Int64 !=
+				row.Secret.RevocationGeneration {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) workerFailWorkspaceMount(w http.ResponseWriter, r *http.Request) {
@@ -523,6 +621,9 @@ func (s *Server) failWorkspaceExec(
 	})
 	if err != nil {
 		return err
+	}
+	if claim.RetiredAt.Valid {
+		return nil
 	}
 	receipt, err := json.Marshal(map[string]string{
 		"process_id":  pgvalue.MustUUIDValue(failed.ID).String(),

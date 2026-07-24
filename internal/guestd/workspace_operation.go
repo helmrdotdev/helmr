@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash"
@@ -58,14 +59,10 @@ type workspaceMountEntry struct {
 	workspaceMount    string
 	workspaceRoot     string
 	cleanup           func()
-	events            chan *workspacev0.WorkspaceOperationEvent
-	eventsDone        chan struct{}
-	eventsDoneOnce    sync.Once
 	processesMu       sync.Mutex
-	processes         map[string]*workspaceProcess
 	basicExecMu       sync.Mutex
 	basicExecs        map[string]*workspaceBasicExec
-	basicExecRun      func(*workspacev0.WorkspaceOperationRequest) *workspacev0.WorkspaceOperationResult
+	basicExecRun      func(*workspacev0.WorkspaceBasicExecRequest) *workspacev0.WorkspaceBasicExecResult
 	active            int
 	retired           bool
 	authorityMu       sync.Mutex
@@ -739,11 +736,7 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 		entry.runtimeUser = prepared.runtimeUser
 		entry.workspaceMount = prepared.workspaceMount
 		entry.workspaceRoot = prepared.workspaceRoot
-		entry.cleanup = func() {
-			entry.stopWorkspaceProcesses()
-			entry.closeEvents()
-			prepared.cleanup()
-		}
+		entry.cleanup = prepared.cleanup
 	} else {
 		phaseStarted := time.Now()
 		image, cleanupImage, err := restoreWorkspaceMountWorkspaceImage(conn, request)
@@ -755,11 +748,7 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 		entry.imageRoot = image.RootfsDir
 		entry.imageConfig = image.Config
 		entry.workspaceMount = mountPath
-		entry.cleanup = func() {
-			entry.stopWorkspaceProcesses()
-			entry.closeEvents()
-			cleanupImage()
-		}
+		entry.cleanup = cleanupImage
 		phaseStarted = time.Now()
 		runtimeUser, err := resolveRuntimeUser(entry.imageRoot, entry.imageConfig.User)
 		phases = append(phases, workspaceMountPhase("guest_runtime_user_resolve", phaseStarted, 0, 0, err))
@@ -779,9 +768,6 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 		}
 		entry.workspaceRoot = workspaceRoot
 	}
-	entry.processes = map[string]*workspaceProcess{}
-	entry.events = make(chan *workspacev0.WorkspaceOperationEvent, 1024)
-	entry.eventsDone = make(chan struct{})
 	finalizationRoot, err := os.MkdirTemp(filepath.Dir(entry.imageRoot), ".helmr-workspace-state-*")
 	if err != nil {
 		entry.cleanup()
@@ -1070,54 +1056,11 @@ func restorePreparedWorkspaceImage(conn io.Reader, request *workspacev0.PrepareW
 	return image, cleanup, nil
 }
 
-func handleWorkspaceEventsConnection(ctx context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
-	var envelope workspacev0.WorkspaceOperationEnvelope
-	if err := frameio.ReadProtoFrame(conn, &envelope); err != nil {
-		return fmt.Errorf("read workspace events envelope: %w", err)
-	}
-	if strings.TrimSpace(envelope.WorkspaceMountId) == "" {
-		return errors.New("workspace events workspace_mount_id is required")
-	}
-	if strings.TrimSpace(envelope.WorkspaceId) == "" {
-		return errors.New("workspace events workspace_id is required")
-	}
-	entry, release, ok := registry.acquire(envelope.WorkspaceMountId, envelope.WorkspaceId, envelope.ChannelToken, envelope.FencingGeneration)
-	if !ok {
-		return errors.New("workspace events channel token or fencing generation is invalid")
-	}
-	defer release()
-	if entry.events == nil {
-		return errors.New("workspace events channel is not available")
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-entry.eventsDone:
-			return nil
-		case event, ok := <-entry.events:
-			if !ok {
-				return nil
-			}
-			if event.Envelope == nil {
-				event.Envelope = &workspacev0.WorkspaceOperationEnvelope{
-					WorkspaceMountId:  envelope.WorkspaceMountId,
-					WorkspaceId:       envelope.WorkspaceId,
-					FencingGeneration: envelope.FencingGeneration,
-				}
-			}
-			if err := frameio.WriteProtoFrame(conn, event); err != nil {
-				return fmt.Errorf("write workspace operation event: %w", err)
-			}
-		}
-	}
-}
-
 func handleWorkspaceStopConnection(_ context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
 	if err := handleWorkspaceStop(conn, registry); err != nil {
 		response := &workspacev0.StopWorkspaceResponse{
 			State:     "failed",
-			ErrorJson: workspaceOperationErrorJSON(err),
+			ErrorJson: workspaceStopErrorJSON(err),
 		}
 		if writeErr := frameio.WriteProtoFrame(conn, response); writeErr != nil {
 			return errors.Join(err, fmt.Errorf("write workspace stop failure: %w", writeErr))
@@ -1147,7 +1090,12 @@ func handleWorkspaceStop(conn io.ReadWriter, registry *workspaceOperationRegistr
 		return errors.New("workspace stop channel token or fencing generation is invalid")
 	}
 	defer release()
-	entry.stopWorkspaceProcesses()
+	entry.processesMu.Lock()
+	activeExecs := entry.processAdmissions
+	entry.processesMu.Unlock()
+	if activeExecs != 0 {
+		return errors.New("workspace stop requires no active exec")
+	}
 	finalize := request.GetFinalizeStop() || !request.GetCaptureBeforeStop()
 	response := &workspacev0.StopWorkspaceResponse{State: "stopped"}
 	var artifact workspace.WorkspaceArtifact
@@ -1194,74 +1142,84 @@ func handleWorkspaceStop(conn io.ReadWriter, registry *workspaceOperationRegistr
 	return nil
 }
 
-func handleWorkspaceOperationConnection(ctx context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
-	var request workspacev0.WorkspaceOperationRequest
-	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
-		return fmt.Errorf("read workspace operation request: %w", err)
-	}
-	envelope := request.GetEnvelope()
-	if envelope == nil {
-		return writeWorkspaceOperationResult(conn, errors.New("workspace operation envelope is required"))
-	}
-	if strings.TrimSpace(envelope.OperationId) == "" {
-		return writeWorkspaceOperationResult(conn, errors.New("workspace operation operation_id is required"))
-	}
-	if strings.TrimSpace(envelope.WorkspaceMountId) == "" {
-		return writeWorkspaceOperationResult(conn, errors.New("workspace operation workspace_mount_id is required"))
-	}
-	if strings.TrimSpace(envelope.WorkspaceId) == "" {
-		return writeWorkspaceOperationResult(conn, errors.New("workspace operation workspace_id is required"))
-	}
-	entry, release, ok := registry.acquire(envelope.WorkspaceMountId, envelope.WorkspaceId, envelope.ChannelToken, envelope.FencingGeneration)
-	if !ok {
-		return writeWorkspaceOperationResult(conn, errors.New("workspace operation channel token or fencing generation is invalid"))
-	}
-	defer release()
-	_ = entry
-	if envelope.OperationExpiresAtUnixNano <= 0 {
-		return writeWorkspaceOperationResult(conn, errors.New("workspace operation operation_expires_at is required"))
-	}
-	if time.Now().UnixNano() >= envelope.OperationExpiresAtUnixNano {
-		return writeWorkspaceOperationResult(conn, errors.New("workspace operation expired"))
-	}
-	fingerprint := strings.TrimSpace(envelope.RequestFingerprint)
-	if fingerprint == "" {
-		return writeWorkspaceOperationResult(conn, errors.New("workspace operation request_fingerprint is required"))
-	}
-	if strings.TrimSpace(request.OperationKind) == wire.GuestVerbBasicExec {
-		result := entry.runWorkspaceBasicExec(ctx, &request)
-		return frameio.WriteProtoFrame(conn, result)
-	}
-	actual, err := wire.RequestFingerprint(request.OperationKind, []byte(request.RequestJson))
+func workspaceStopErrorJSON(err error) string {
+	message := "Workspace stop failed"
 	if err != nil {
-		return writeWorkspaceOperationResult(conn, err)
+		message = err.Error()
 	}
-	if actual != fingerprint {
-		return writeWorkspaceOperationResult(conn, fmt.Errorf("workspace operation request_fingerprint %q does not match request %q", fingerprint, actual))
+	body, marshalErr := json.Marshal(map[string]string{"message": message})
+	if marshalErr != nil {
+		return `{"message":"Workspace stop failed"}`
 	}
-	switch strings.TrimSpace(request.OperationKind) {
-	case wire.GuestVerbStartExec:
-		return writeWorkspaceOperationResult(conn, entry.startWorkspaceExec(request.GetEnvelope(), request.RequestJson))
-	case wire.GuestVerbCreatePty:
-		return writeWorkspaceOperationResult(conn, entry.createWorkspacePty(request.GetEnvelope(), request.RequestJson))
-	case wire.GuestVerbResizePty:
-		return writeWorkspaceOperationResult(conn, entry.resizeWorkspacePty(request.RequestJson))
-	case wire.GuestVerbClosePty:
-		return writeWorkspaceOperationResult(conn, entry.closeWorkspacePty(request.RequestJson))
-	default:
-		return frameio.WriteProtoFrame(conn, &workspacev0.WorkspaceOperationResult{
-			ErrorJson: fmt.Sprintf(`{"message":"unsupported workspace operation %q"}`, strings.TrimSpace(request.OperationKind)),
-		})
-	}
+	return string(body)
 }
 
-func writeWorkspaceOperationResult(conn io.Writer, err error) error {
-	result := &workspacev0.WorkspaceOperationResult{ResultJson: `{"ok":true}`}
-	if err != nil {
-		result.ResultJson = ""
-		result.ErrorJson = workspaceOperationErrorJSON(err)
+func handleWorkspaceBasicExecConnection(
+	ctx context.Context,
+	conn io.ReadWriter,
+	registry *workspaceOperationRegistry,
+) error {
+	var request workspacev0.WorkspaceBasicExecRequest
+	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
+		return fmt.Errorf("read Workspace BasicExec request: %w", err)
 	}
-	return frameio.WriteProtoFrame(conn, result)
+	envelope := request.GetEnvelope()
+	fingerprint := ""
+	if envelope != nil {
+		fingerprint = strings.TrimSpace(envelope.GetRequestFingerprint())
+	}
+	fail := func(code string, err error) error {
+		return frameio.WriteProtoFrame(
+			conn,
+			workspaceBasicExecFailure(fingerprint, code, err),
+		)
+	}
+	if envelope == nil {
+		return fail(
+			"workspace_exec_invalid",
+			errors.New("Workspace BasicExec envelope is required"),
+		)
+	}
+	if strings.TrimSpace(envelope.OperationId) == "" ||
+		strings.TrimSpace(envelope.WorkspaceMountId) == "" ||
+		strings.TrimSpace(envelope.WorkspaceId) == "" {
+		return fail(
+			"workspace_exec_invalid",
+			errors.New("Workspace BasicExec identity is incomplete"),
+		)
+	}
+	entry, release, ok := registry.acquire(
+		envelope.WorkspaceMountId,
+		envelope.WorkspaceId,
+		envelope.ChannelToken,
+		envelope.FencingGeneration,
+	)
+	if !ok {
+		return fail(
+			"workspace_exec_fenced",
+			errors.New("Workspace BasicExec authority is invalid"),
+		)
+	}
+	defer release()
+	if envelope.OperationExpiresAtUnixNano <= 0 {
+		return fail(
+			"workspace_exec_invalid",
+			errors.New("Workspace BasicExec expiry is required"),
+		)
+	}
+	if time.Now().UnixNano() >= envelope.OperationExpiresAtUnixNano {
+		return fail(
+			"workspace_exec_expired",
+			errors.New("Workspace BasicExec claim expired"),
+		)
+	}
+	if fingerprint == "" {
+		return fail(
+			"workspace_exec_invalid",
+			errors.New("Workspace BasicExec fingerprint is required"),
+		)
+	}
+	return frameio.WriteProtoFrame(conn, entry.runWorkspaceBasicExec(ctx, &request))
 }
 
 func workspaceRootForImage(imageRoot, mountPath string) (string, error) {

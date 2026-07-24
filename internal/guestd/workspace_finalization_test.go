@@ -126,7 +126,7 @@ func TestMountedProgramParticipatesInFinalizationBarrier(t *testing.T) {
 
 func TestWorkspaceBeginFreezesBeforeExistingProcessFinishes(t *testing.T) {
 	entry, registry, authority := testWorkspaceFinalizationMount(t)
-	releaseAdmission, err := entry.beginWorkspaceProcessAdmission()
+	releaseAdmission, err := entry.beginWorkspaceExecAdmission()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestWorkspaceBeginFreezesBeforeExistingProcessFinishes(t *testing.T) {
 	if state != workspaceAuthorityFinalizing {
 		t.Fatal("Begin did not freeze authority while an existing process admission drained")
 	}
-	if _, err := entry.beginWorkspaceProcessAdmission(); err == nil {
+	if _, err := entry.beginWorkspaceExecAdmission(); err == nil {
 		t.Fatal("new process admission was accepted after Begin")
 	}
 	releaseAdmission()
@@ -522,7 +522,6 @@ func testWorkspaceFinalizationMountUnadmitted(t *testing.T) (*workspaceMountEntr
 	entry := testWorkspaceAuthorityEntry()
 	entry.workspaceRoot = workspaceRoot
 	entry.finalizationRoot = stateRoot
-	entry.processes = map[string]*workspaceProcess{}
 	authority := testWorkspaceRunAuthority(time.Now().Add(time.Minute))
 	registry := newWorkspaceOperationRegistry()
 	registry.register("mount-1", entry)

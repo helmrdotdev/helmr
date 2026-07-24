@@ -151,10 +151,10 @@ func acquireWorkspaceFinalization(ctx context.Context, registry *workspaceOperat
 		release()
 		return nil, func() {}, errors.New("Workspace finalization does not match the begun operation")
 	}
-	if entry.processAdmissions != 0 || len(entry.processes) != 0 {
+	if entry.processAdmissions != 0 {
 		entry.processesMu.Unlock()
 		release()
-		return nil, func() {}, errors.New("Workspace finalization requires no active exec or PTY")
+		return nil, func() {}, errors.New("Workspace finalization requires no active exec")
 	}
 	entry.processesMu.Unlock()
 	journal, found, err := entry.readWorkspaceFinalizationJournal()

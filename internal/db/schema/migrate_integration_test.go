@@ -80,7 +80,7 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	if !exists {
 		t.Fatal("runs table was not created")
 	}
-	assertWorkspaceStreamSchema(t, dbctx, pool)
+	assertWorkspaceExecSchema(t, dbctx, pool)
 	assertTelemetrySchema(t, dbctx, pool)
 	assertWorkerSchema(t, dbctx, pool)
 	assertDeploymentBuildCapacitySchema(t, dbctx, pool)
@@ -762,7 +762,6 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		"workspace_mounts",
 		"workspace_leases",
 		"workspace_processes",
-		"workspace_process_records",
 		"secrets",
 		"secret_versions",
 		"workspace_secrets",
@@ -912,12 +911,11 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 	`, []string{
 		"deployment_program",
 		"workspace_image",
-		"workspace_process_record",
 	}).Scan(&artifactKinds); err != nil {
 		t.Fatal(err)
 	}
-	if artifactKinds != 3 {
-		t.Fatalf("artifact kind labels = %d, want 3", artifactKinds)
+	if artifactKinds != 2 {
+		t.Fatalf("artifact kind labels = %d, want 2", artifactKinds)
 	}
 	var obsoleteArtifactKind bool
 	if err := pool.QueryRow(ctx, `
@@ -927,7 +925,8 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 			  JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
 			 WHERE pg_type.typname = 'artifact_kind'
 			   AND pg_enum.enumlabel = ANY(ARRAY[
-			       'deployment_program_code', 'deployment_program_dependencies'
+			       'deployment_program_code', 'deployment_program_dependencies',
+			       'workspace_process_record'
 			   ])
 		)
 	`).Scan(&obsoleteArtifactKind); err != nil {
@@ -1416,7 +1415,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	`).Scan(&processStates); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := strings.Join(processStates, ","), "pending,starting,running,exit_requested,exited,cancelled,lost,failed"; got != want {
+	if got, want := strings.Join(processStates, ","), "pending,starting,running,exit_requested,exited,failed"; got != want {
 		t.Fatalf("workspace process states = %q, want %q", got, want)
 	}
 
@@ -1495,78 +1494,78 @@ func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	}
 }
 
-func assertWorkspaceStreamSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+func assertWorkspaceExecSchema(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+) {
 	t.Helper()
-	var recordColumns int
+	var payloadColumns int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
 		  FROM information_schema.columns
 		 WHERE table_schema = 'public'
-		   AND table_name = 'workspace_process_records'
+		   AND table_name = 'workspace_processes'
 		   AND column_name = ANY($1::text[])
-	`, []string{
-		"process_id",
-		"direction",
-		"stream",
-		"offset_start",
-		"offset_end",
-		"data",
-		"artifact_id",
-		"content_digest",
-		"size_bytes",
-		"payload_expires_at",
-		"payload_collected_at",
-	}).Scan(&recordColumns); err != nil {
+	`, []string{"request", "stdin", "stdout", "stderr"}).Scan(&payloadColumns); err != nil {
 		t.Fatal(err)
 	}
-	if recordColumns != 11 {
-		t.Fatalf("workspace process record columns = %d, want 11", recordColumns)
+	if payloadColumns != 4 {
+		t.Fatalf("Workspace BasicExec payload columns = %d, want 4", payloadColumns)
 	}
-	var hasSequence bool
+	var claimRequired bool
 	if err := pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			  FROM information_schema.columns
-			 WHERE table_schema = 'public'
-			   AND table_name = 'workspace_process_records'
-			   AND column_name = 'sequence'
-		)
-	`).Scan(&hasSequence); err != nil {
+		SELECT is_nullable = 'NO'
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND table_name = 'workspace_processes'
+		   AND column_name = 'claim_id'
+	`).Scan(&claimRequired); err != nil {
 		t.Fatal(err)
 	}
-	if hasSequence {
-		t.Fatal("workspace process records must use byte offsets, not sequence numbers")
+	if !claimRequired {
+		t.Fatal("Workspace BasicExec claim_id is nullable")
 	}
-	var offsetReceiptKey bool
-	if err := pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			  FROM pg_indexes
-			 WHERE schemaname = 'public'
-			   AND tablename = 'workspace_process_records'
-			   AND indexdef LIKE '%(process_id, stream, offset_start)%'
-			   AND indexdef LIKE 'CREATE UNIQUE INDEX%'
-		)
-	`).Scan(&offsetReceiptKey); err != nil {
-		t.Fatal(err)
-	}
-	if !offsetReceiptKey {
-		t.Fatal("workspace process records must retain the stream offset replay key")
-	}
-	var obsoleteTables int
+	var legacyColumns int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
-		  FROM unnest($1::text[]) AS table_name
-		 WHERE to_regclass('public.' || table_name) IS NOT NULL
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND table_name = 'workspace_processes'
+		   AND column_name = ANY($1::text[])
 	`, []string{
-		"workspace_process_stream_chunks",
-		"workspace_process_stream_receipts",
-		"workspace_process_operations",
-	}).Scan(&obsoleteTables); err != nil {
+		"kind",
+		"runtime_process_id",
+		"signal",
+		"pty_cols",
+		"pty_rows",
+		"pending_pty_cols",
+		"pending_pty_rows",
+		"resize_generation",
+		"pending_resize_generation",
+		"stdout_cursor",
+		"stderr_cursor",
+		"stdin_cursor",
+		"stdin_delivered_cursor",
+		"stdin_closed_at",
+		"input_cursor",
+		"input_delivered_cursor",
+		"output_cursor",
+	}).Scan(&legacyColumns); err != nil {
 		t.Fatal(err)
 	}
-	if obsoleteTables != 0 {
-		t.Fatalf("obsolete workspace process tables = %d, want 0", obsoleteTables)
+	if legacyColumns != 0 {
+		t.Fatalf("legacy Workspace process columns = %d, want 0", legacyColumns)
+	}
+	var legacyTable bool
+	if err := pool.QueryRow(
+		ctx,
+		`SELECT to_regclass('public.workspace_process_records') IS NOT NULL`,
+	).Scan(&legacyTable); err != nil {
+		t.Fatal(err)
+	}
+	if legacyTable {
+		t.Fatal("legacy workspace_process_records table exists")
 	}
 }
 

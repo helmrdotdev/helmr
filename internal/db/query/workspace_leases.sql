@@ -15,13 +15,3 @@ SELECT workspace_leases.*
    AND run_leases.attempt_number = sqlc.arg(attempt_number)
    AND workspace_leases.workspace_id = sqlc.arg(workspace_id)
    AND workspace_leases.id = sqlc.arg(id);
-
--- name: ExpireWorkspaceLeases :many
-UPDATE workspace_leases
-   SET state = 'expired',
-       terminal_at = now(),
-       terminal_reason_code = 'lease_expired',
-       updated_at = now()
- WHERE state IN ('active', 'releasing')
-   AND expires_at <= now()
-RETURNING *;
