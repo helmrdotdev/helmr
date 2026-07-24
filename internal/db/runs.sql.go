@@ -668,7 +668,7 @@ WITH selected_target AS MATERIALIZED (
        AND idempotency_claims.retired_at IS NULL
      WHERE parent.environment_id = $5
        AND parent.id = $6
-       AND parent.status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested')
+       AND parent.status IN ('queued', 'running', 'waiting', 'retry_delayed')
      FOR UPDATE OF parent
 ), created_run AS (
     INSERT INTO runs (
@@ -1912,82 +1912,6 @@ func (q *Queries) LockTaskStartDeploymentAuthority(ctx context.Context, arg Lock
 		&i.TaskManifestDigest,
 		&i.QueueConfig,
 		&i.ProgramArchitecture,
-	)
-	return i, err
-}
-
-const requestRunCancellation = `-- name: RequestRunCancellation :one
-UPDATE runs
-   SET status = 'cancel_requested',
-       state_version = state_version + 1,
-       updated_at = now()
- WHERE environment_id = $1
-   AND id = $2
-   AND status IN ('queued', 'running', 'waiting', 'retry_delayed')
-RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
-`
-
-type RequestRunCancellationParams struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ID            pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) RequestRunCancellation(ctx context.Context, arg RequestRunCancellationParams) (Run, error) {
-	row := q.db.QueryRow(ctx, requestRunCancellation, arg.EnvironmentID, arg.ID)
-	var i Run
-	err := row.Scan(
-		&i.ID,
-		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.DeploymentID,
-		&i.DeploymentDefinitionID,
-		&i.EntrypointKind,
-		&i.EntrypointDeclaredID,
-		&i.ActorID,
-		&i.CauseKind,
-		&i.ScheduleID,
-		&i.ScheduleGeneration,
-		&i.ScheduledAt,
-		&i.PreviousScheduledAt,
-		&i.ScheduleTimezone,
-		&i.ParentRunID,
-		&i.ParentOwnsLifecycle,
-		&i.WorkspaceID,
-		&i.BaseWorkspaceVersionID,
-		&i.ActorStartInputSequence,
-		&i.ActorStartInputHighWatermark,
-		&i.Payload,
-		&i.Output,
-		&i.TerminalReasonCode,
-		&i.Error,
-		&i.Status,
-		&i.StateVersion,
-		&i.CurrentAttemptNumber,
-		&i.CurrentRunLeaseID,
-		&i.Metadata,
-		&i.Tags,
-		&i.QueueName,
-		&i.ConcurrencyKey,
-		&i.QueueConcurrencyLimit,
-		&i.Priority,
-		&i.QueueOriginAt,
-		&i.QueueScoreAt,
-		&i.QueuedExpiresAt,
-		&i.MaxActiveDurationMs,
-		&i.RetryPolicy,
-		&i.ActiveElapsedMs,
-		&i.ActiveStartedAt,
-		&i.TraceID,
-		&i.RootSpanID,
-		&i.ClaimID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.FirstLeaseAt,
-		&i.StartedAt,
-		&i.RetryAt,
-		&i.TerminalAt,
 	)
 	return i, err
 }

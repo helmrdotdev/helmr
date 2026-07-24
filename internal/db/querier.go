@@ -456,7 +456,6 @@ type Querier interface {
 	RenewWorkspaceMount(ctx context.Context, arg RenewWorkspaceMountParams) (WorkspaceMount, error)
 	RequestCapacityPressureIdleWorkspaceMountStopsForWorker(ctx context.Context, arg RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams) ([]WorkspaceMount, error)
 	RequestCheckpointFailureRuntimeClose(ctx context.Context, arg RequestCheckpointFailureRuntimeCloseParams) (WorkspaceMount, error)
-	RequestRunCancellation(ctx context.Context, arg RequestRunCancellationParams) (Run, error)
 	RequestRunWaitCheckpoint(ctx context.Context, arg RequestRunWaitCheckpointParams) (RunWait, error)
 	RequestWorkspaceMountStop(ctx context.Context, arg RequestWorkspaceMountStopParams) (RequestWorkspaceMountStopRow, error)
 	RequeueExpiredDeploymentBuildLeases(ctx context.Context) error

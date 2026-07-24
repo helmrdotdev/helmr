@@ -456,14 +456,18 @@ func (c *Client) GetRun(ctx context.Context, id string, opts ...RunScopeOptions)
 	return response, nil
 }
 
-func (c *Client) CancelRun(ctx context.Context, id string, input api.CancelRunRequest, opts ...RunScopeOptions) (api.CancelRunResponse, error) {
-	var response api.CancelRunResponse
+func (c *Client) CancelRun(ctx context.Context, id string, opts ...RunScopeOptions) (api.RunSnapshotResponse, error) {
 	path, err := c.runItemPath(id, "/cancel", opts...)
 	if err != nil {
-		return api.CancelRunResponse{}, err
+		return api.RunSnapshotResponse{}, err
 	}
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.CancelRunResponse{}, err
+	req, err := c.newRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return api.RunSnapshotResponse{}, err
+	}
+	var response api.RunSnapshotResponse
+	if err := c.doJSON(req, &response); err != nil {
+		return api.RunSnapshotResponse{}, err
 	}
 	return response, nil
 }

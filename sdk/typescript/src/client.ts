@@ -97,6 +97,10 @@ export interface ClientRunsApi {
   list(
     options?: ClientRunListOptions,
   ): Promise<CursorPage<RunSnapshot<JsonValue>>>
+  cancel(
+    runId: string,
+    options?: ClientRunRetrieveOptions,
+  ): Promise<RunSnapshot<JsonValue>>
   wait<TTask extends TaskDefinition = TaskDefinition>(
     runId: string,
     options?: ClientRunRetrieveOptions,
@@ -204,6 +208,19 @@ class ClientRuns implements ClientRunsApi {
     })
   }
 
+  async cancel(
+    runId: string,
+    options: ClientRunRetrieveOptions = {},
+  ): Promise<RunSnapshot<JsonValue>> {
+    return parseRunSnapshot(
+      await this.#transport.request(
+        "POST",
+        `/api/runs/${encodeURIComponent(runID(runId))}/cancel`,
+        options.signal === undefined ? {} : { signal: options.signal },
+      ),
+    )
+  }
+
   wait<TTask extends TaskDefinition = TaskDefinition>(
     runId: string,
     options: ClientRunRetrieveOptions = {},
@@ -239,7 +256,7 @@ class ClientRuns implements ClientRunsApi {
       options.signal?.throwIfAborted()
       const snapshot = await this.retrieve<TOutput>(runId, options)
       if (snapshot.status === "succeeded") {
-        if (!("output" in snapshot)) {
+        if (snapshot.output === undefined) {
           throw new Error("Succeeded Run response must include output")
         }
         return Object.freeze({

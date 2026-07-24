@@ -51,6 +51,8 @@ type nestedHandoffChain struct {
 	outerRunID          uuid.UUID
 	parentRunID         uuid.UUID
 	outerWaitID         uuid.UUID
+	outerCheckpoint     uuid.UUID
+	outerResumeID       uuid.UUID
 	enclosingWaitID     uuid.UUID
 	enclosingCheckpoint uuid.UUID
 	enclosingResumeID   uuid.UUID
@@ -563,6 +565,8 @@ func (fixture runLeaseClaimFixture) addNestedHandoffChain(
 		outerRunID:          uuid.Must(uuid.NewV7()),
 		parentRunID:         uuid.Must(uuid.NewV7()),
 		outerWaitID:         uuid.Must(uuid.NewV7()),
+		outerCheckpoint:     uuid.Must(uuid.NewV7()),
+		outerResumeID:       uuid.Must(uuid.NewV7()),
 		enclosingWaitID:     uuid.Must(uuid.NewV7()),
 		enclosingCheckpoint: uuid.Must(uuid.NewV7()),
 		enclosingResumeID:   uuid.Must(uuid.NewV7()),
@@ -570,7 +574,6 @@ func (fixture runLeaseClaimFixture) addNestedHandoffChain(
 	outerClaimID, enclosingClaimID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	outerLeaseID, parentLeaseID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	outerWorkspaceLeaseID, parentWorkspaceLeaseID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	outerCheckpointID := uuid.Must(uuid.NewV7())
 	historicalWaitID := uuid.Must(uuid.NewV7())
 
 	tx, err := fixture.pool.Begin(ctx)
@@ -672,10 +675,10 @@ func (fixture runLeaseClaimFixture) addNestedHandoffChain(
 		runID: chain.outerRunID, childRunID: chain.parentRunID,
 		claimID: outerClaimID, leaseID: outerLeaseID,
 		workspaceLeaseID: outerWorkspaceLeaseID, waitID: chain.outerWaitID,
-		checkpointID: outerCheckpointID, writerGeneration: 1,
+		checkpointID: chain.outerCheckpoint, writerGeneration: 1,
 		childWriterGeneration: 2, runtimeID: chain.runtimeID,
 		mountID: chain.mountID, versionID: chain.versionID,
-		resumeAttachID: uuid.Must(uuid.NewV7()),
+		resumeAttachID: chain.outerResumeID,
 	})
 	fixture.parkNestedRun(t, ctx, tx, nestedRunPark{
 		runID: chain.parentRunID, childRunID: work.runID,

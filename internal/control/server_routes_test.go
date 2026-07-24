@@ -103,12 +103,14 @@ POST /api/projects/{projectID}/environments/{environmentID}/actors/{actorDeclare
 POST /api/projects/{projectID}/environments/{environmentID}/api-keys
 POST /api/projects/{projectID}/environments/{environmentID}/deployments
 POST /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/promote
+POST /api/projects/{projectID}/environments/{environmentID}/runs/{runID}/cancel
 POST /api/projects/{projectID}/environments/{environmentID}/secrets/{name}/revoke
 POST /api/projects/{projectID}/environments/{environmentID}/tasks/{taskDeclaredID}/start
 POST /api/projects/{projectID}/environments/{environmentID}/tokens
 POST /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/cancel
 POST /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/complete
 POST /api/public/tokens/{tokenID}/complete
+POST /api/runs/{runID}/cancel
 POST /api/secrets/{name}/revoke
 POST /api/tasks/{taskDeclaredID}/start
 POST /api/token-callbacks/{tokenID}/{callbackSecret}

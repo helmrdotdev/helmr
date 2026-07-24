@@ -30,7 +30,7 @@ WITH selected_definition AS (
        AND projects.org_id = runs.org_id
      WHERE runs.environment_id = $2
        AND runs.id = $3
-       AND runs.status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested')
+       AND runs.status IN ('queued', 'running', 'waiting', 'retry_delayed')
      FOR UPDATE OF runs
 ), created_workspace AS (
     INSERT INTO workspaces (

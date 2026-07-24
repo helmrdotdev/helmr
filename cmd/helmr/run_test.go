@@ -95,17 +95,15 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 }
 
 func TestCancelCommandCancelsRun(t *testing.T) {
-	var request api.CancelRunRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/runs/run-1/cancel" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
+		if r.ContentLength > 0 {
+			t.Fatalf("cancel request body length = %d", r.ContentLength)
 		}
-		_ = json.NewEncoder(w).Encode(api.CancelRunResponse{
-			Run:       api.RunResponse{ID: "run-1", Status: "cancelled"},
-			Operation: api.RunOperationResponse{ID: "op-1", RunID: "run-1", Kind: "cancel", Status: "applied"},
+		_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{
+			ID: "run-1", Status: "cancelled",
 		})
 	}))
 	defer server.Close()
@@ -116,22 +114,17 @@ func TestCancelCommandCancelsRun(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "cancel", "run-1", "--reason", "cleanup", "--force", "--idempotency-key", "cancel-1"})
+	cmd.SetArgs([]string{"run", "cancel", "run-1"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	expected := strings.Join([]string{
 		"run_id: run-1",
 		"run_status: cancelled",
-		"operation_id: op-1",
-		"operation_status: applied",
 		"",
 	}, "\n")
 	if out.String() != expected {
 		t.Fatalf("output = %q, want %q", out.String(), expected)
-	}
-	if request.Reason != "cleanup" || !request.Force || request.IdempotencyKey != "cancel-1" {
-		t.Fatalf("request = %+v", request)
 	}
 }
 

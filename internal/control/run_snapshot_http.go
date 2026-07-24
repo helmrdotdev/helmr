@@ -96,6 +96,64 @@ func (s *Server) getRunSnapshotHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, snapshot)
 }
 
+func (s *Server) cancelRunHTTP(w http.ResponseWriter, r *http.Request) {
+	principal := actorFromContext(r.Context())
+	scope, projectID, environmentID, ok := s.authorizeRunRequest(
+		w, r, principal, auth.PermissionRunsManage,
+	)
+	if !ok {
+		return
+	}
+	runID := strings.TrimSpace(chi.URLParam(r, "runID"))
+	if publicid.ValidateFor(publicid.Run, runID) != nil {
+		writeError(w, notFound(codedError{code: "run_not_found", message: "Run not found"}))
+		return
+	}
+	projectUUID, projectErr := pgvalue.UUIDValue(projectID)
+	environmentUUID, environmentErr := pgvalue.UUIDValue(environmentID)
+	if projectErr != nil || environmentErr != nil || s.tx == nil {
+		s.writeRunCancellationAuthorityError(w)
+		return
+	}
+	canceller, err := db.NewRunCanceller(s.tx)
+	if err != nil {
+		s.writeRunCancellationAuthorityError(w)
+		return
+	}
+	_, err = canceller.Cancel(r.Context(), db.RunCancellationRequest{
+		OrgID: scope.OrgID, ProjectID: projectUUID, EnvironmentID: environmentUUID,
+		RunPublicID: runID,
+	})
+	if errors.Is(err, db.ErrRunCancellationNotFound) {
+		writeError(w, notFound(codedError{code: "run_not_found", message: "Run not found"}))
+		return
+	}
+	if errors.Is(err, db.ErrRunCancellationConflict) {
+		writeError(w, conflict(codedError{
+			code: "run_lifecycle_conflict", message: "Run already has another terminal outcome",
+		}))
+		return
+	}
+	if err != nil {
+		s.writeRunCancellationAuthorityError(w)
+		return
+	}
+	row, err := s.db.GetRunSnapshot(r.Context(), db.GetRunSnapshotParams{
+		OrgID: pgvalue.UUID(scope.OrgID), ProjectID: projectID,
+		EnvironmentID: environmentID, PublicID: runID,
+	})
+	if err != nil {
+		s.writeRunCancellationAuthorityError(w)
+		return
+	}
+	snapshot, err := projectRunSnapshot(runSnapshotRecordFromGet(row))
+	if err != nil {
+		s.writeRunCancellationAuthorityError(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, snapshot)
+}
+
 func (s *Server) listRunSnapshotsHTTP(w http.ResponseWriter, r *http.Request) {
 	principal := actorFromContext(r.Context())
 	scope, projectID, environmentID, ok := s.authorizeRunRequest(
@@ -224,6 +282,13 @@ func authorizeRunBeforeLookup(principal auth.Actor, permission auth.Permission) 
 func (s *Server) writeRunReadAuthorityError(w http.ResponseWriter) {
 	writeError(w, unavailable(codedError{
 		code: "run_authority_unavailable", message: "Run authority is unavailable", retryable: true,
+	}))
+}
+
+func (s *Server) writeRunCancellationAuthorityError(w http.ResponseWriter) {
+	writeError(w, unavailable(codedError{
+		code: "run_cancellation_unavailable", message: "Run cancellation is unavailable",
+		retryable: true,
 	}))
 }
 

@@ -37,27 +37,6 @@ type RunQueueOption struct {
 	Name string `json:"name,omitempty"`
 }
 
-type CancelRunRequest struct {
-	Reason         string `json:"reason,omitempty"`
-	Force          bool   `json:"force,omitempty"`
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
-}
-
-type RunOperationResponse struct {
-	ID        string     `json:"id"`
-	RunID     string     `json:"run_id"`
-	Kind      string     `json:"kind"`
-	Status    string     `json:"status"`
-	Reason    string     `json:"reason,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	AppliedAt *time.Time `json:"applied_at,omitempty"`
-}
-
-type CancelRunResponse struct {
-	Run       RunResponse          `json:"run"`
-	Operation RunOperationResponse `json:"operation"`
-}
-
 func ValidateTaskID(id string) error {
 	if !taskIDPattern.MatchString(id) {
 		return fmt.Errorf("task_id %q must match %s", id, taskIDPattern.String())

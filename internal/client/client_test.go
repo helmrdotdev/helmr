@@ -258,16 +258,11 @@ func TestRunOperations(t *testing.T) {
 		paths = append(paths, r.Method+" "+r.URL.Path)
 		switch r.URL.Path {
 		case "/api/runs/run-1/cancel":
-			var request api.CancelRunRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
+			if r.ContentLength > 0 {
+				t.Fatalf("cancel request body length = %d", r.ContentLength)
 			}
-			if request.Reason != "cleanup" || !request.Force || request.IdempotencyKey != "cancel-1" {
-				t.Fatalf("cancel request = %+v", request)
-			}
-			_ = json.NewEncoder(w).Encode(api.CancelRunResponse{
-				Run:       api.RunResponse{ID: "run-1", Status: "cancelled"},
-				Operation: api.RunOperationResponse{ID: "op-1", RunID: "run-1", Kind: "cancel", Status: "applied"},
+			_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{
+				ID: "run-1", Status: "cancelled",
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
@@ -279,15 +274,11 @@ func TestRunOperations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cancelled, err := client.CancelRun(context.Background(), "run-1", api.CancelRunRequest{
-		Reason:         "cleanup",
-		Force:          true,
-		IdempotencyKey: "cancel-1",
-	})
+	cancelled, err := client.CancelRun(context.Background(), "run-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cancelled.Run.Status != "cancelled" || cancelled.Operation.Kind != "cancel" {
+	if cancelled.ID != "run-1" || cancelled.Status != "cancelled" {
 		t.Fatalf("cancelled = %+v", cancelled)
 	}
 	if got := strings.Join(paths, ","); got != "POST /api/runs/run-1/cancel" {

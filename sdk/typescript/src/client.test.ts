@@ -197,6 +197,58 @@ describe("HelmrClient Runs", () => {
     )
   })
 
+  test("cancels a Run and returns its terminal snapshot", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async (input: URL | RequestInfo, init?: RequestInit) => {
+        requests.push({ url: String(input), init })
+        return Response.json({
+          id: runID,
+          status: "cancelled",
+          entrypoint: { kind: "task", id: "resize-image" },
+          deployment: {
+            id: "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+            version: "2026.07.24.1",
+          },
+          workspace_id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          current_attempt_number: 1,
+          cause: { type: "api" },
+          metadata: {},
+          tags: [],
+          terminal_reason_code: "run_cancelled",
+          error: {
+            code: "run_cancelled",
+            message: "Run was cancelled",
+            retryable: false,
+          },
+          created_at: "2026-07-24T11:50:00Z",
+          terminal_at: "2026-07-24T11:50:05Z",
+        })
+      }) as typeof fetch,
+    })
+
+    const snapshot = await client.runs.cancel(runID)
+
+    expect(snapshot).toMatchObject({
+      id: runID,
+      status: "cancelled",
+      terminalReasonCode: "run_cancelled",
+      error: {
+        code: "run_cancelled",
+        message: "Run was cancelled",
+        retryable: false,
+      },
+    })
+    expect(requests).toHaveLength(1)
+    expect(requests[0]!.url).toBe(
+      `https://api.example.test/api/runs/${runID}/cancel`,
+    )
+    expect(requests[0]!.init?.method).toBe("POST")
+    expect(requests[0]!.init?.body).toBeUndefined()
+  })
+
   test("wait unwraps success and throws a recorded RunError", async () => {
     const succeeded = new HelmrClient({
       url: "https://api.example.test",

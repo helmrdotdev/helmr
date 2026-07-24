@@ -398,7 +398,7 @@ WITH selected_target AS MATERIALIZED (
        AND idempotency_claims.retired_at IS NULL
      WHERE parent.environment_id = sqlc.arg(environment_id)
        AND parent.id = sqlc.arg(parent_run_id)
-       AND parent.status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested')
+       AND parent.status IN ('queued', 'running', 'waiting', 'retry_delayed')
      FOR UPDATE OF parent
 ), created_run AS (
     INSERT INTO runs (
@@ -584,15 +584,6 @@ UPDATE runs
    AND queued_expires_at <= now()
 RETURNING *;
 
--- name: RequestRunCancellation :one
-UPDATE runs
-   SET status = 'cancel_requested',
-       state_version = state_version + 1,
-       updated_at = now()
- WHERE environment_id = sqlc.arg(environment_id)
-   AND id = sqlc.arg(id)
-   AND status IN ('queued', 'running', 'waiting', 'retry_delayed')
-RETURNING *;
 -- name: CloseRunActiveIntervalForCheckpoint :one
 UPDATE runs
    SET active_elapsed_ms = active_elapsed_ms

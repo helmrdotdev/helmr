@@ -123,7 +123,7 @@ SELECT deployment_definitions.*
    AND deployment_definitions.declared_id = sqlc.arg(workspace_declared_id)
  WHERE runs.environment_id = sqlc.arg(environment_id)
    AND runs.id = sqlc.arg(run_id)
-   AND runs.status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested')
+   AND runs.status IN ('queued', 'running', 'waiting', 'retry_delayed')
  LIMIT 1;
 
 -- name: GetWorkspace :one

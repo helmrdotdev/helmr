@@ -955,7 +955,7 @@ SELECT deployment_definitions.id, deployment_definitions.environment_id, deploym
    AND deployment_definitions.declared_id = $1
  WHERE runs.environment_id = $2
    AND runs.id = $3
-   AND runs.status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested')
+   AND runs.status IN ('queued', 'running', 'waiting', 'retry_delayed')
  LIMIT 1
 `
 

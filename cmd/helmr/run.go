@@ -300,9 +300,6 @@ func taskGetCommand() *cobra.Command {
 func runCancelCommand() *cobra.Command {
 	var projectID string
 	var environmentID string
-	var reason string
-	var force bool
-	var idempotencyKey string
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "cancel RUN",
@@ -317,25 +314,19 @@ func runCancelCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			response, err := control.CancelRun(cmd.Context(), args[0], api.CancelRunRequest{
-				Reason:         strings.TrimSpace(reason),
-				Force:          force,
-				IdempotencyKey: strings.TrimSpace(idempotencyKey),
-			}, scope)
+			response, err := control.CancelRun(cmd.Context(), args[0], scope)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
 				return format.JSON(cmd.OutOrStdout(), response)
 			}
-			writeRunOperationLifecycleResult(cmd, response.Run, response.Operation)
+			fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", response.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "run_status: %s\n", response.Status)
 			return nil
 		},
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
-	cmd.Flags().StringVar(&reason, "reason", "", "Reason for the cancellation.")
-	cmd.Flags().BoolVar(&force, "force", false, "Force cancellation without waiting for graceful shutdown.")
-	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }
@@ -606,12 +597,6 @@ func writeRunLifecycleResult(cmd *cobra.Command, run api.RunResponse) {
 	if run.SessionID != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "session_id: %s\n", run.SessionID)
 	}
-}
-
-func writeRunOperationLifecycleResult(cmd *cobra.Command, run api.RunResponse, operation api.RunOperationResponse) {
-	writeRunLifecycleResult(cmd, run)
-	fmt.Fprintf(cmd.OutOrStdout(), "operation_id: %s\n", operation.ID)
-	fmt.Fprintf(cmd.OutOrStdout(), "operation_status: %s\n", operation.Status)
 }
 
 func parsePayload(file string, raw string, pairs []string) (json.RawMessage, error) {
