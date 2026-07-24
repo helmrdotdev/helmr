@@ -216,10 +216,7 @@ func validateActorCompletionAuthority(ctx context.Context, store db.Querier, req
 }
 
 func actorCompletionRetryAt(run db.Run, attempt db.RunAttempt, actor db.Actor, completion parsedActorCompletion, completedAt time.Time) (time.Time, bool, error) {
-	expiredWhileOpen := actor.State == "open" &&
-		actor.ExpiresAt.Valid &&
-		!actor.ExpiresAt.Time.After(completedAt)
-	if completion.kind != actorCompletionFailed || expiredWhileOpen {
+	if completion.kind != actorCompletionFailed {
 		return time.Time{}, false, nil
 	}
 	policy, err := deployment.ParseRetryManifest(run.RetryPolicy)
@@ -281,14 +278,8 @@ func decideActorRunTerminal(authority runLeaseClaimAuthority, completion parsedA
 		decision.runStatus = db.RunStatusFailed
 		decision.runReason = pgvalue.Text("actor_failed")
 		decision.commitCursor = false
-		if authority.actor.State == "open" &&
-			authority.actor.ExpiresAt.Valid &&
-			!authority.actor.ExpiresAt.Time.After(completedAt) {
-			decision.actorState = "expired"
-		} else {
-			decision.actorState = "failed"
-			decision.failureCode = pgvalue.Text("run-failed")
-		}
+		decision.actorState = "failed"
+		decision.failureCode = pgvalue.Text("run-failed")
 		return decision
 	}
 	if authority.run.ActorStartInputHighWatermark.Int64 > authority.run.ActorStartInputSequence.Int64 &&
@@ -301,11 +292,6 @@ func decideActorRunTerminal(authority runLeaseClaimAuthority, completion parsedA
 		completion.terminalInputSequence >= authority.actor.CloseSequence.Int64 {
 		decision.actorState = "closed"
 		return decision
-	}
-	if authority.actor.State == "open" &&
-		authority.actor.ExpiresAt.Valid &&
-		!authority.actor.ExpiresAt.Time.After(completedAt) {
-		decision.actorState = "expired"
 	}
 	return decision
 }
@@ -357,7 +343,7 @@ func finishActorRun(ctx context.Context, store db.Querier, authority runLeaseCla
 	if err != nil {
 		return staleActorCompletion(err)
 	}
-	terminalActor := actor.State == "failed" || actor.State == "closed" || actor.State == "expired"
+	terminalActor := actor.State == "failed" || actor.State == "closed"
 	if terminalActor {
 		if _, err := store.ReleaseActorWorkspaceOwner(ctx, db.ReleaseActorWorkspaceOwnerParams{
 			CompletedAt: completedAt, ID: authority.workspace.ID, OrgID: authority.run.OrgID,

@@ -177,8 +177,6 @@ func normalizeAPIKeyGrantPermission(permission string) []Permission {
 		return []Permission{PermissionActorsRead}
 	case string(PermissionActorsStart):
 		return []Permission{PermissionActorsStart}
-	case string(PermissionActorsUpdate):
-		return []Permission{PermissionActorsUpdate}
 	case string(PermissionActorsInputSend):
 		return []Permission{PermissionActorsInputSend}
 	case string(PermissionActorsLifecycleManage):

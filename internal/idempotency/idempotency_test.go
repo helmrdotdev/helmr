@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -364,15 +363,12 @@ func TestTokenCreateScopesSeparateRuntimeRunsAndExternalCallers(t *testing.T) {
 
 func TestActorStartRequestUsesDeclaredIDScopeAndCanonicalCallerSemantics(t *testing.T) {
 	environmentID := uuid.MustParse("00000000-0000-0000-0000-000000000301")
-	expiresAt := time.Date(2030, 1, 2, 3, 4, 5, 600, time.FixedZone("offset", 9*60*60))
 	key := "thread:42"
 	concurrencyKey := "customer:7"
 	ttl := int64(60_000)
 	first, err := NewActorStartRequest(environmentID, "operator.v1", "start-1", ActorStartFingerprint{
 		Key: &key, InputPresent: true, Input: json.RawMessage(`{"b":2,"a":1}`),
 		WorkspaceAddress: json.RawMessage(`{"id":"wsp_example"}`),
-		Metadata:         json.RawMessage(`{"z":false,"a":true}`),
-		Tags:             []string{"a", "b"}, ExpiresAt: &expiresAt,
 		ManagedQueueName: "default", ManagedConcurrencyKey: &concurrencyKey,
 		ManagedPriority: 3, ManagedQueuedTTLMS: &ttl,
 		ManagedRetryPolicy: json.RawMessage(`{"enabled":false}`),
@@ -385,8 +381,6 @@ func TestActorStartRequestUsesDeclaredIDScopeAndCanonicalCallerSemantics(t *test
 	second, err := NewActorStartRequest(environmentID, "operator.v1", "start-1", ActorStartFingerprint{
 		Key: &key, InputPresent: true, Input: json.RawMessage("{\n\"a\":1.0,\"b\":2}"),
 		WorkspaceAddress: json.RawMessage(`{"id":"wsp_example"}`),
-		Metadata:         json.RawMessage(`{"a":true,"z":false}`),
-		Tags:             []string{"a", "b"}, ExpiresAt: &expiresAt,
 		ManagedQueueName: "default", ManagedConcurrencyKey: &concurrencyKey,
 		ManagedPriority: 3, ManagedQueuedTTLMS: &ttl,
 		ManagedRetryPolicy: json.RawMessage(`{"enabled":false}`),

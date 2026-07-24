@@ -11,7 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
@@ -91,7 +90,7 @@ func TestTokenWaitDecisionIncludesCancellationReason(t *testing.T) {
 	}
 }
 
-func TestDecideActorCheckpointFailureStopsAtActorOrRunExpiry(t *testing.T) {
+func TestDecideActorCheckpointFailureStopsAtRunExpiry(t *testing.T) {
 	failedAt := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.UTC)
 	authority := runLeaseClaimAuthority{
 		run: db.Run{
@@ -99,32 +98,21 @@ func TestDecideActorCheckpointFailureStopsAtActorOrRunExpiry(t *testing.T) {
 			RetryPolicy:         []byte(`{"enabled":true,"maxAttempts":3,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}`),
 		},
 		attempt: db.RunAttempt{Number: 1},
-		actor:   db.Actor{State: "open", ExpiresAt: pgvalue.Timestamptz(failedAt)},
+		actor:   db.Actor{State: "open"},
 	}
 	decision, err := decideActorCheckpointFailure(authority, failedAt, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.retry || !decision.actorExpired || decision.reason != "checkpoint_failed" {
-		t.Fatalf("Actor expiry decision = %+v", decision)
+	if !decision.retry || decision.reason != "checkpoint_failed" {
+		t.Fatalf("retry decision = %+v", decision)
 	}
 
-	authority.actor.State = "closing"
-	decision, err = decideActorCheckpointFailure(authority, failedAt, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !decision.retry || decision.actorExpired || decision.reason != "checkpoint_failed" {
-		t.Fatalf("closing Actor expiry decision = %+v", decision)
-	}
-
-	authority.actor.State = "open"
-	authority.actor.ExpiresAt = pgvalue.Timestamptz(failedAt.Add(time.Hour))
 	decision, err = decideActorCheckpointFailure(authority, failedAt, authority.run.MaxActiveDurationMs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.retry || decision.actorExpired || decision.reason != "max_active_duration_exceeded" {
+	if decision.retry || decision.reason != "max_active_duration_exceeded" {
 		t.Fatalf("Run duration decision = %+v", decision)
 	}
 }

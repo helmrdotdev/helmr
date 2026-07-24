@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -49,8 +48,6 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 	request := fixture.request(0, &key, "start-1")
 	request.InputPresent = true
 	request.Input = json.RawMessage(`{"message":"hello"}`)
-	request.Metadata = json.RawMessage(`{"owner":"test"}`)
-	request.Tags = []string{"beta", "alpha"}
 	request.ManagedRunMetadata = json.RawMessage(`{"kind":"boot"}`)
 	request.ManagedRunTags = []string{"managed"}
 
@@ -65,8 +62,7 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 
 	if _, err := fixture.pool.Exec(t.Context(), `
 		UPDATE actors
-		   SET state = 'closing',
-		       metadata = '{"changed":true}'::jsonb
+		   SET state = 'closing'
 		 WHERE id = $1
 	`, created.ActorID); err != nil {
 		t.Fatal(err)
@@ -99,7 +95,7 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 	}
 
 	changed := request
-	changed.Metadata = json.RawMessage(`{"owner":"different"}`)
+	changed.ManagedRunMetadata = json.RawMessage(`{"kind":"different"}`)
 	var idempotencyConflict idempotency.ConflictError
 	if _, err := fixture.server.startActor(t.Context(), changed); !errors.As(err, &idempotencyConflict) {
 		t.Fatalf("fingerprint conflict = %v", err)
@@ -133,24 +129,6 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 		UPDATE workspaces SET dirty_state = 'clean' WHERE id = $1
 	`, fixture.workspaceIDs[1]); err != nil {
 		t.Fatal(err)
-	}
-	expiresAt := time.Now().UTC().Add(500 * time.Millisecond)
-	expiringKey := "expiring"
-	expiring := fixture.request(1, &expiringKey, "expiring-1")
-	expiring.ExpiresAt = &expiresAt
-	expiringCreated, err := fixture.server.startActor(t.Context(), expiring)
-	if err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(time.Until(expiresAt) + 20*time.Millisecond)
-	expiringReplayed, err := fixture.server.startActor(t.Context(), expiring)
-	if err != nil {
-		t.Fatalf("replay after Actor expiry: %v", err)
-	}
-	if !expiringReplayed.Replayed ||
-		expiringReplayed.ActorID != expiringCreated.ActorID ||
-		expiringReplayed.BootRunID != expiringCreated.BootRunID {
-		t.Fatalf("expired replay = %+v, created = %+v", expiringReplayed, expiringCreated)
 	}
 }
 

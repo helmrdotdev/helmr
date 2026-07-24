@@ -38,8 +38,7 @@ func TestActorClosePostgresClosesIdleActorAndReplaysBoundedReceipt(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if closed.ActorID != actorPublicID || closed.Lifecycle != "closed" ||
-		closed.AcceptedAt.IsZero() {
+	if closed.ActorID != actorPublicID || closed.AcceptedAt.IsZero() {
 		t.Fatalf("closed receipt = %+v", closed)
 	}
 
@@ -73,7 +72,7 @@ func TestActorClosePostgresClosesIdleActorAndReplaysBoundedReceipt(t *testing.T)
 	}
 
 	if _, err := fixture.pool.Exec(t.Context(), `
-		UPDATE actors SET metadata = '{"changed":true}'::jsonb WHERE id = $1
+		UPDATE actors SET state_version = state_version + 1 WHERE id = $1
 	`, started.ActorID); err != nil {
 		t.Fatal(err)
 	}
@@ -97,8 +96,8 @@ func TestActorClosePostgresClosesIdleActorAndReplaysBoundedReceipt(t *testing.T)
 	if err := json.Unmarshal(receipt, &members); err != nil {
 		t.Fatal(err)
 	}
-	if len(members) != 3 || members["actor_id"] == nil ||
-		members["lifecycle"] == nil || members["accepted_at"] == nil ||
+	if len(members) != 2 || members["actor_id"] == nil ||
+		members["accepted_at"] == nil ||
 		len(receipt) > 256 {
 		t.Fatalf("claim receipt = %s", receipt)
 	}
@@ -144,7 +143,7 @@ func TestActorClosePostgresClaimsOneBacklogContinuationAndReplays(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if closing.Lifecycle != "closing" {
+	if closing.ActorID != actorPublicID || closing.AcceptedAt.IsZero() {
 		t.Fatalf("closing receipt = %+v", closing)
 	}
 	assertActorCloseContinuation(t, fixture, started.ActorID)
@@ -217,7 +216,7 @@ func TestActorClosePostgresReconcilesAfterWorkspaceAuthorityRecovers(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if receipt.Lifecycle != "closing" {
+	if receipt.ActorID != actorPublicID || receipt.AcceptedAt.IsZero() {
 		t.Fatalf("receipt = %+v", receipt)
 	}
 	var state string
@@ -265,61 +264,6 @@ func TestActorClosePostgresReconcilesAfterWorkspaceAuthorityRecovers(t *testing.
 	if state != "closed" || ownerAfter != nil {
 		t.Fatalf("reconciled state=%s owner=%v", state, ownerAfter)
 	}
-}
-
-func TestActorClosePostgresDrainsDeferredBacklogAfterExpiry(t *testing.T) {
-	fixture := newActorStartPostgresFixture(t, 1)
-	request := fixture.request(0, nil, "")
-	request.InputPresent = true
-	request.Input = json.RawMessage(`{"message":"queued"}`)
-	started, err := fixture.server.startActor(t.Context(), request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	settleActorBootRun(t, fixture, started, 0)
-	if _, err := fixture.pool.Exec(t.Context(), `
-		UPDATE workspaces SET dirty_state = 'dirty' WHERE id = $1
-	`, fixture.workspaceIDs[0]); err != nil {
-		t.Fatal(err)
-	}
-	actorPublicID := actorPublicIDForTest(t, fixture, started.ActorID)
-	receipt, err := fixture.server.closeActor(t.Context(), actorCloseRequest{
-		EnvironmentID: fixture.environmentID, ActorID: started.ActorID,
-		ActorPublicID: actorPublicID, WorkspaceID: fixture.workspaceIDs[0],
-		IdempotencyKey: "close-deferred-expiry-1",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if receipt.Lifecycle != "closing" {
-		t.Fatalf("receipt = %+v", receipt)
-	}
-	if _, err := fixture.pool.Exec(t.Context(), `
-		UPDATE actors SET expires_at = now() - interval '1 second' WHERE id = $1
-	`, started.ActorID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fixture.pool.Exec(t.Context(), `
-		UPDATE workspaces SET dirty_state = 'clean' WHERE id = $1
-	`, fixture.workspaceIDs[0]); err != nil {
-		t.Fatal(err)
-	}
-	reconciler, err := runadmission.NewActorInputReconciler(fixture.pool)
-	if err != nil {
-		t.Fatal(err)
-	}
-	deferred, err := reconciler.ReconcileLifecycle(
-		t.Context(),
-		fixture.environmentID,
-		started.ActorID,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if deferred {
-		t.Fatal("closing backlog remained deferred only because Actor expiry passed")
-	}
-	assertActorCloseContinuation(t, fixture, started.ActorID)
 }
 
 func TestActorCloseHTTPPostgresAuthorizesBeforeLookupAndCloses(t *testing.T) {
@@ -370,8 +314,7 @@ func TestActorCloseHTTPPostgresAuthorizesBeforeLookupAndCloses(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &receipt); err != nil {
 		t.Fatal(err)
 	}
-	if receipt.ActorID != actorPublicID || receipt.Lifecycle != "closed" ||
-		receipt.AcceptedAt.IsZero() {
+	if receipt.ActorID != actorPublicID || receipt.AcceptedAt.IsZero() {
 		t.Fatalf("receipt = %+v", receipt)
 	}
 }

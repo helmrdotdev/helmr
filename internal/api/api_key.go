@@ -52,7 +52,6 @@ const (
 	APIKeyScopeRunsManage               APIKeyScope = "runs:manage"
 	APIKeyScopeActorsRead               APIKeyScope = "actors:read"
 	APIKeyScopeActorsStart              APIKeyScope = "actors:start"
-	APIKeyScopeActorsUpdate             APIKeyScope = "actors:update"
 	APIKeyScopeActorsInputSend          APIKeyScope = "actors-input:send"
 	APIKeyScopeActorsLifecycleManage    APIKeyScope = "actors-lifecycle:manage"
 	APIKeyScopeTokensCreate             APIKeyScope = "tokens:create"

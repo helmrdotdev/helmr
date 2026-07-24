@@ -409,15 +409,14 @@ func failCheckpointActorAttempt(
 		return scheduleActorCheckpointFailureRetry(ctx, store, authority, secrets, failedAt, decision.retryAt)
 	}
 	return finishCheckpointFailedActor(
-		ctx, store, authority, failedAt, failed.errorPayload, decision.reason, decision.actorExpired,
+		ctx, store, authority, failedAt, failed.errorPayload, decision.reason,
 	)
 }
 
 type actorCheckpointFailureDecision struct {
-	reason       string
-	retry        bool
-	retryAt      time.Time
-	actorExpired bool
+	reason  string
+	retry   bool
+	retryAt time.Time
 }
 
 func decideActorCheckpointFailure(
@@ -427,15 +426,9 @@ func decideActorCheckpointFailure(
 ) (actorCheckpointFailureDecision, error) {
 	decision := actorCheckpointFailureDecision{
 		reason: "checkpoint_failed",
-		actorExpired: authority.actor.State == "open" &&
-			authority.actor.ExpiresAt.Valid &&
-			!authority.actor.ExpiresAt.Time.After(failedAt),
 	}
 	if activeElapsed >= authority.run.MaxActiveDurationMs {
 		decision.reason = "max_active_duration_exceeded"
-		return decision, nil
-	}
-	if decision.actorExpired {
 		return decision, nil
 	}
 	policy, err := deployment.ParseRetryManifest(authority.run.RetryPolicy)
@@ -491,7 +484,6 @@ func finishCheckpointFailedActor(
 	failedAt pgtype.Timestamptz,
 	errorPayload []byte,
 	reason string,
-	actorExpired bool,
 ) error {
 	status := db.RunStatusSystemFailed
 	eventKind := api.RunEventKindFailed
@@ -502,15 +494,8 @@ func finishCheckpointFailedActor(
 		eventKind = api.RunEventKindExpired
 		failureCode = "run-expired"
 	}
-	var failureRunID pgtype.UUID
-	var actorFailureCode pgtype.Text
-	if actorExpired {
-		actorState = "expired"
-		failureCode = ""
-	} else {
-		failureRunID = authority.run.ID
-		actorFailureCode = pgvalue.Text(failureCode)
-	}
+	failureRunID := authority.run.ID
+	actorFailureCode := pgvalue.Text(failureCode)
 	if _, err := store.FinishCheckpointFailedActorRun(ctx, db.FinishCheckpointFailedActorRunParams{
 		Status: status, ReasonCode: pgvalue.Text(reason), Error: errorPayload, FailedAt: failedAt,
 		ID: authority.run.ID, WorkspaceID: authority.workspace.ID, ActorID: authority.actor.ID,

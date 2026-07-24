@@ -19,10 +19,7 @@ INSERT INTO actors (
     managed_retry_policy_version,
     managed_retry_policy,
     managed_run_metadata,
-    managed_run_tags,
-    expires_at,
-    metadata,
-    tags
+    managed_run_tags
 )
 SELECT sqlc.arg(id),
        sqlc.arg(public_id),
@@ -43,10 +40,7 @@ SELECT sqlc.arg(id),
        0,
        sqlc.arg(managed_retry_policy),
        coalesce(sqlc.narg(managed_run_metadata)::jsonb, '{}'::jsonb),
-       coalesce(sqlc.narg(managed_run_tags)::text[], '{}'::text[]),
-       sqlc.narg(expires_at),
-       coalesce(sqlc.narg(metadata)::jsonb, '{}'::jsonb),
-       coalesce(sqlc.narg(tags)::text[], '{}'::text[])
+       coalesce(sqlc.narg(managed_run_tags)::text[], '{}'::text[])
   FROM deployment_definitions AS actor_definition
   JOIN environments
     ON environments.id = actor_definition.environment_id
@@ -84,11 +78,7 @@ SELECT actor_definition.id AS actor_definition_id,
        actor_definition.manifest AS actor_manifest,
        actor_definition.manifest_digest AS actor_manifest_digest,
        deployments.queue_config,
-       deployments.program_architecture,
-       (
-           sqlc.narg(expires_at)::timestamptz IS NULL
-           OR sqlc.narg(expires_at)::timestamptz > transaction_timestamp()
-       )::boolean AS expires_at_valid
+       deployments.program_architecture
   FROM environments
   JOIN deployment_definitions AS actor_definition
     ON actor_definition.environment_id = environments.id
@@ -158,72 +148,6 @@ SELECT *
    AND actor_declared_id = sqlc.arg(actor_declared_id)
    AND key = sqlc.arg(key);
 
--- name: UpdateActorAnnotations :one
-UPDATE actors
-   SET metadata = CASE
-           WHEN sqlc.arg(set_metadata)::boolean
-           THEN sqlc.arg(metadata)::jsonb
-           ELSE metadata
-       END,
-       tags = CASE
-           WHEN sqlc.arg(set_tags)::boolean
-           THEN sqlc.arg(tags)::text[]
-           ELSE tags
-       END,
-       expires_at = CASE
-           WHEN sqlc.arg(set_expires_at)::boolean
-           THEN sqlc.arg(expires_at)::timestamptz
-           ELSE expires_at
-       END,
-       updated_at = transaction_timestamp()
- WHERE environment_id = sqlc.arg(environment_id)
-   AND actor_declared_id = sqlc.arg(actor_declared_id)
-   AND (
-       (
-           sqlc.narg(address_public_id)::text IS NOT NULL
-           AND public_id = sqlc.narg(address_public_id)::text
-       )
-       OR
-       (
-           sqlc.narg(address_key)::text IS NOT NULL
-           AND key = sqlc.narg(address_key)::text
-       )
-   )
-   AND (
-       NOT sqlc.arg(set_expires_at)::boolean
-       OR (
-           state = 'open'
-           AND (
-               expires_at IS NULL
-               OR expires_at > transaction_timestamp()
-           )
-           AND sqlc.arg(expires_at)::timestamptz > transaction_timestamp()
-           AND (
-               expires_at IS NULL
-               OR sqlc.arg(expires_at)::timestamptz > expires_at
-           )
-       )
-   )
-RETURNING id;
-
--- name: LockActorUpdateAddress :one
-SELECT id
-  FROM actors
- WHERE environment_id = sqlc.arg(environment_id)
-   AND actor_declared_id = sqlc.arg(actor_declared_id)
-   AND (
-       (
-           sqlc.narg(address_public_id)::text IS NOT NULL
-           AND public_id = sqlc.narg(address_public_id)::text
-       )
-       OR
-       (
-           sqlc.narg(address_key)::text IS NOT NULL
-           AND key = sqlc.narg(address_key)::text
-       )
-   )
- FOR UPDATE;
-
 -- name: GetActorRead :one
 SELECT actors.*,
        current_runs.public_id AS current_run_public_id,
@@ -250,46 +174,3 @@ SELECT actors.*,
            AND actors.key = sqlc.narg(address_key)::text
        )
    );
-
--- name: ListActorReads :many
-SELECT actors.*,
-       current_runs.public_id AS current_run_public_id,
-       failure_runs.public_id AS failure_run_public_id
-  FROM actors
-  LEFT JOIN runs AS current_runs
-    ON current_runs.environment_id = actors.environment_id
-   AND current_runs.actor_id = actors.id
-   AND current_runs.id = actors.current_run_id
-  LEFT JOIN runs AS failure_runs
-    ON failure_runs.environment_id = actors.environment_id
-   AND failure_runs.actor_id = actors.id
-   AND failure_runs.id = actors.failure_run_id
- WHERE actors.environment_id = sqlc.arg(environment_id)
-   AND actors.actor_declared_id = sqlc.arg(actor_declared_id)
-   AND (
-       sqlc.narg(lifecycle)::text IS NULL
-       OR actors.state = sqlc.narg(lifecycle)::text
-   )
-   AND (
-       sqlc.narg(cursor_created_at)::timestamptz IS NULL
-       OR (actors.created_at, actors.public_id) < (
-           sqlc.narg(cursor_created_at)::timestamptz,
-           sqlc.narg(cursor_public_id)::text
-       )
-   )
- ORDER BY actors.created_at DESC, actors.public_id DESC
- LIMIT sqlc.arg(limit_count);
-
--- name: ExpireDueActors :many
-UPDATE actors
-   SET state = 'expired',
-       state_version = state_version + 1,
-       run_generation = run_generation + 1,
-       expired_at = now(),
-       updated_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND state = 'open'
-   AND current_run_id IS NULL
-   AND expires_at IS NOT NULL
-   AND expires_at <= now()
-RETURNING *;

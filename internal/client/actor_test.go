@@ -68,32 +68,6 @@ func TestGetActorStatusUsesSessionRoute(t *testing.T) {
 	)
 }
 
-func TestUpdateActorUsesAPIKeyRoute(t *testing.T) {
-	testUpdateActorRoute(t, false, "/api/actors/operator.v1", EnvironmentScopeOptions{})
-}
-
-func TestUpdateActorUsesSessionRoute(t *testing.T) {
-	testUpdateActorRoute(
-		t,
-		true,
-		"/api/projects/project-1/environments/env-1/actors/operator.v1",
-		EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
-	)
-}
-
-func TestListActorsUsesAPIKeyRoute(t *testing.T) {
-	testListActorsRoute(t, false, "/api/actors/operator.v1", EnvironmentScopeOptions{})
-}
-
-func TestListActorsUsesSessionRoute(t *testing.T) {
-	testListActorsRoute(
-		t,
-		true,
-		"/api/projects/project-1/environments/env-1/actors/operator.v1",
-		EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
-	)
-}
-
 func TestReadActorOutputUsesAPIKeyRoute(t *testing.T) {
 	testReadActorOutputRoute(
 		t,
@@ -203,54 +177,6 @@ func TestReadActorOutputValidatesCursorAndLimit(t *testing.T) {
 	}
 }
 
-func testUpdateActorRoute(
-	t *testing.T,
-	session bool,
-	wantPath string,
-	scope EnvironmentScopeOptions,
-) {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPatch || r.URL.EscapedPath() != wantPath {
-			t.Fatalf("%s %s, want PATCH %s", r.Method, r.URL.EscapedPath(), wantPath)
-		}
-		var raw map[string]json.RawMessage
-		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-			t.Fatal(err)
-		}
-		if string(raw["actor_key"]) != `"thread:1"` ||
-			string(raw["metadata"]) != `{}` ||
-			string(raw["tags"]) != `[]` {
-			t.Fatalf("request = %s", raw)
-		}
-		_ = json.NewEncoder(w).Encode(actorStatusFixture())
-	}))
-	defer server.Close()
-
-	options := []Option{WithHTTPClient(server.Client())}
-	if session {
-		options = append(options, WithSessionScopedRoutes())
-	}
-	client, err := New(server.URL, options...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	metadata := json.RawMessage(`{}`)
-	tags := []string{}
-	response, err := client.UpdateActor(
-		context.Background(),
-		"operator.v1",
-		api.UpdateActorRequest{ActorKey: "thread:1", Metadata: &metadata, Tags: &tags},
-		scope,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.ID != "act_aaaaaaaaaaaaaaaaaaaaaaaaaa" {
-		t.Fatalf("response = %+v", response)
-	}
-}
-
 func testGetActorStatusRoute(
 	t *testing.T,
 	session bool,
@@ -287,55 +213,7 @@ func testGetActorStatusRoute(
 		t.Fatal(err)
 	}
 	if response.ID != "act_aaaaaaaaaaaaaaaaaaaaaaaaaa" ||
-		response.Lifecycle != api.ActorLifecycleOpen {
-		t.Fatalf("response = %+v", response)
-	}
-}
-
-func testListActorsRoute(
-	t *testing.T,
-	session bool,
-	wantPath string,
-	scope EnvironmentScopeOptions,
-) {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.EscapedPath() != wantPath {
-			t.Fatalf("%s %s, want GET %s", r.Method, r.URL.EscapedPath(), wantPath)
-		}
-		query := r.URL.Query()
-		if query.Get("lifecycle") != "open" ||
-			query.Get("cursor") != "ac1.cursor/value" ||
-			query.Get("limit") != "25" {
-			t.Fatalf("query = %q", r.URL.RawQuery)
-		}
-		_ = json.NewEncoder(w).Encode(api.ListActorsResponse{
-			Actors:     []api.ActorStatus{actorStatusFixture()},
-			NextCursor: "ac1.next",
-		})
-	}))
-	defer server.Close()
-
-	options := []Option{WithHTTPClient(server.Client())}
-	if session {
-		options = append(options, WithSessionScopedRoutes())
-	}
-	client, err := New(server.URL, options...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err := client.ListActors(context.Background(), "operator.v1", ListActorsOptions{
-		Lifecycle:               api.ActorLifecycleOpen,
-		Cursor:                  "ac1.cursor/value",
-		Limit:                   25,
-		EnvironmentScopeOptions: scope,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(response.Actors) != 1 ||
-		response.Actors[0].ID != "act_aaaaaaaaaaaaaaaaaaaaaaaaaa" ||
-		response.NextCursor != "ac1.next" {
+		response.Status != api.ActorPublicStatusOpen {
 		t.Fatalf("response = %+v", response)
 	}
 }
@@ -343,16 +221,7 @@ func testListActorsRoute(
 func actorStatusFixture() api.ActorStatus {
 	return api.ActorStatus{
 		ID:        "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Lifecycle: api.ActorLifecycleOpen,
-		Metadata:  json.RawMessage(`{}`),
-		Tags:      []string{},
-		Run: api.ActorManagedRunOptions{
-			Queue:       "default",
-			MaxDuration: "5m",
-			Retry:       api.ActorManagedRetryPolicy{Enabled: false},
-			Metadata:    json.RawMessage(`{}`),
-			Tags:        []string{},
-		},
+		Status:    api.ActorPublicStatusOpen,
 		CreatedAt: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
 		UpdatedAt: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
 	}
@@ -373,7 +242,7 @@ func testCloseActorRoute(t *testing.T, session bool, wantPath string, scope Envi
 			t.Fatalf("request = %+v", request)
 		}
 		_ = json.NewEncoder(w).Encode(api.ActorOperationReceipt{
-			ActorID: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa", Lifecycle: "closing",
+			ActorID:    "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
 			AcceptedAt: acceptedAt,
 		})
 	}))
@@ -394,7 +263,7 @@ func testCloseActorRoute(t *testing.T, session bool, wantPath string, scope Envi
 		t.Fatal(err)
 	}
 	if response.ActorID != "act_aaaaaaaaaaaaaaaaaaaaaaaaaa" ||
-		response.Lifecycle != "closing" || !response.AcceptedAt.Equal(acceptedAt) {
+		!response.AcceptedAt.Equal(acceptedAt) {
 		t.Fatalf("response = %+v", response)
 	}
 }
@@ -532,23 +401,6 @@ func TestActorReadsRejectInvalidOptionsBeforeTransport(t *testing.T) {
 		EnvironmentScopeOptions{},
 	); err == nil {
 		t.Fatal("GetActorStatus() succeeded")
-	}
-	if _, err := client.UpdateActor(
-		context.Background(),
-		"operator.v1",
-		api.UpdateActorRequest{ActorKey: "thread:1"},
-		EnvironmentScopeOptions{},
-	); err == nil {
-		t.Fatal("UpdateActor() succeeded")
-	}
-	for _, options := range []ListActorsOptions{
-		{Lifecycle: "unknown"},
-		{Limit: -1},
-		{Limit: 101},
-	} {
-		if _, err := client.ListActors(context.Background(), "operator.v1", options); err == nil {
-			t.Fatalf("ListActors(%+v) succeeded", options)
-		}
 	}
 	if requests != 0 {
 		t.Fatalf("transport requests = %d, want 0", requests)

@@ -4,15 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 )
 
-func TestNormalizeActorStartCanonicalizesAnnotationsAndPreservesInputPresence(t *testing.T) {
-	now := time.Date(2028, 1, 1, 0, 0, 0, 0, time.UTC)
+func TestNormalizeActorStartCanonicalizesRunOptionsAndPreservesInputPresence(t *testing.T) {
 	key := "thread:42"
 	ttl := maxQueuedRunTTLMS
 	workspaceID := actorStartTestPublicID(t, publicid.Workspace)
@@ -21,20 +19,21 @@ func TestNormalizeActorStartCanonicalizesAnnotationsAndPreservesInputPresence(t 
 		EnvironmentID:   uuid.Must(uuid.NewV7()),
 		ActorDeclaredID: "operator.v1", Workspace: api.WorkspaceTarget{ID: &workspaceID},
 		Key: &key, InputPresent: true, Input: json.RawMessage(`null`),
-		Metadata: json.RawMessage(`{"b":2,"a":1}`), Tags: []string{" beta ", "alpha", "alpha"},
 		ManagedQueueName: "default", ManagedQueuedTTLMS: &ttl,
 		ManagedRetryPolicy: json.RawMessage(`{"enabled":false}`),
-		ManagedRunMetadata: json.RawMessage(`{"request":1}`), ManagedRunTags: []string{"run"},
-		ExpiresAt: timePointer(now.Add(time.Hour)),
+		ManagedRunMetadata: json.RawMessage(`{"b":2,"a":1}`),
+		ManagedRunTags:     []string{" beta ", "alpha", "alpha"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(normalized.Metadata) != `{"a":1,"b":2}` {
-		t.Fatalf("metadata = %s", normalized.Metadata)
+	if string(normalized.ManagedRunMetadata) != `{"a":1,"b":2}` {
+		t.Fatalf("managed Run metadata = %s", normalized.ManagedRunMetadata)
 	}
-	if len(normalized.Tags) != 2 || normalized.Tags[0] != "alpha" || normalized.Tags[1] != "beta" {
-		t.Fatalf("tags = %#v", normalized.Tags)
+	if len(normalized.ManagedRunTags) != 2 ||
+		normalized.ManagedRunTags[0] != "alpha" ||
+		normalized.ManagedRunTags[1] != "beta" {
+		t.Fatalf("managed Run tags = %#v", normalized.ManagedRunTags)
 	}
 	if !normalized.InputPresent || string(normalized.Input) != "null" {
 		t.Fatalf("input present=%v value=%s", normalized.InputPresent, normalized.Input)
@@ -50,14 +49,14 @@ func TestNormalizeActorStartLimitsNormalizedTagSet(t *testing.T) {
 		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
 		EnvironmentID:   uuid.Must(uuid.NewV7()),
 		ActorDeclaredID: "operator.v1", Workspace: api.WorkspaceTarget{ID: &workspaceID},
-		Tags: []string{"same", "same", "same", "same", "same", "same", "same", "same", "same", "same", "same"},
+		ManagedRunTags: []string{"same", "same", "same", "same", "same", "same", "same", "same", "same", "same", "same"},
 	}
 	normalized, err := normalizeActorStart(request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(normalized.Tags) != 1 || normalized.Tags[0] != "same" {
-		t.Fatalf("tags = %#v", normalized.Tags)
+	if len(normalized.ManagedRunTags) != 1 || normalized.ManagedRunTags[0] != "same" {
+		t.Fatalf("managed Run tags = %#v", normalized.ManagedRunTags)
 	}
 }
 
@@ -81,7 +80,7 @@ func TestNormalizeActorStartRejectsInvalidCallerOverridesAndOversizeFields(t *te
 		t.Fatalf("retry error = %v", err)
 	}
 	oversize := base
-	oversize.Tags = []string{string(make([]byte, maxTagBytes+1))}
+	oversize.ManagedRunTags = []string{string(make([]byte, maxTagBytes+1))}
 	if _, err := normalizeActorStart(oversize); !errors.Is(err, errActorStartInvalid) {
 		t.Fatalf("oversize tag error = %v", err)
 	}
@@ -135,10 +134,6 @@ func TestActorStartReceiptRoundTrip(t *testing.T) {
 		decoded.BootRunID != value.BootRunID || decoded.BootRunPublicID != value.BootRunPublicID {
 		t.Fatalf("decoded = %+v", decoded)
 	}
-}
-
-func timePointer(value time.Time) *time.Time {
-	return &value
 }
 
 func actorStartTestPublicID(t *testing.T, kind publicid.Prefix) string {

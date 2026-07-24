@@ -24,7 +24,6 @@ UPDATE actors
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(actor_id)
    AND state IN ('open', 'closing')
-   AND (state <> 'open' OR expires_at IS NULL OR expires_at > transaction_timestamp())
 RETURNING *;
 
 -- name: LockActorLifecycleWorkspace :one

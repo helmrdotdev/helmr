@@ -19,9 +19,6 @@ import (
 var (
 	actorDeclaredIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 	durationPattern        = regexp.MustCompile(`^([1-9][0-9]*)(ms|s|m|h|d)$`)
-	rfc3339InstantPattern  = regexp.MustCompile(
-		`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})$`,
-	)
 )
 
 const (
@@ -62,9 +59,6 @@ type StartActorRequest struct {
 	Input          json.RawMessage       `json:"input,omitempty"`
 	IdempotencyKey string                `json:"idempotency_key,omitempty"`
 	Workspace      WorkspaceTarget       `json:"workspace"`
-	Metadata       json.RawMessage       `json:"metadata,omitempty"`
-	Tags           []string              `json:"tags,omitempty"`
-	ExpiresAt      *time.Time            `json:"expires_at,omitempty"`
 	Run            *StartActorRunOptions `json:"run,omitempty"`
 }
 
@@ -95,55 +89,19 @@ type ActorReference struct {
 	ActorKey string
 }
 
-type UpdateActorRequest struct {
-	ActorID   string           `json:"actor_id,omitempty"`
-	ActorKey  string           `json:"actor_key,omitempty"`
-	Metadata  *json.RawMessage `json:"metadata,omitempty"`
-	Tags      *[]string        `json:"tags,omitempty"`
-	ExpiresAt *time.Time       `json:"expires_at,omitempty"`
-}
-
 type ActorOperationReceipt struct {
 	ActorID    string    `json:"actor_id"`
-	Lifecycle  string    `json:"lifecycle"`
 	AcceptedAt time.Time `json:"accepted_at"`
 }
 
-type ActorLifecycle string
+type ActorPublicStatus string
 
 const (
-	ActorLifecycleOpen       ActorLifecycle = "open"
-	ActorLifecycleClosing    ActorLifecycle = "closing"
-	ActorLifecycleClosed     ActorLifecycle = "closed"
-	ActorLifecycleCancelling ActorLifecycle = "cancelling"
-	ActorLifecycleCancelled  ActorLifecycle = "cancelled"
-	ActorLifecycleFailed     ActorLifecycle = "failed"
-	ActorLifecycleExpired    ActorLifecycle = "expired"
+	ActorPublicStatusOpen      ActorPublicStatus = "open"
+	ActorPublicStatusClosed    ActorPublicStatus = "closed"
+	ActorPublicStatusCancelled ActorPublicStatus = "cancelled"
+	ActorPublicStatusFailed    ActorPublicStatus = "failed"
 )
-
-type ActorManagedRetryBackoff struct {
-	MinDelay string `json:"min_delay"`
-	MaxDelay string `json:"max_delay"`
-	Factor   int64  `json:"factor"`
-	Jitter   string `json:"jitter"`
-}
-
-type ActorManagedRetryPolicy struct {
-	Enabled     bool                      `json:"enabled"`
-	MaxAttempts *int64                    `json:"max_attempts,omitempty"`
-	Backoff     *ActorManagedRetryBackoff `json:"backoff,omitempty"`
-}
-
-type ActorManagedRunOptions struct {
-	Queue          string                  `json:"queue"`
-	ConcurrencyKey *string                 `json:"concurrency_key,omitempty"`
-	Priority       int32                   `json:"priority"`
-	TTL            *string                 `json:"ttl,omitempty"`
-	MaxDuration    string                  `json:"max_duration"`
-	Retry          ActorManagedRetryPolicy `json:"retry"`
-	Metadata       json.RawMessage         `json:"metadata"`
-	Tags           []string                `json:"tags"`
-}
 
 type ActorFailure struct {
 	Code  string `json:"code"`
@@ -151,22 +109,13 @@ type ActorFailure struct {
 }
 
 type ActorStatus struct {
-	ID           string                 `json:"id"`
-	Key          *string                `json:"key,omitempty"`
-	Lifecycle    ActorLifecycle         `json:"lifecycle"`
-	Metadata     json.RawMessage        `json:"metadata"`
-	Tags         []string               `json:"tags"`
-	ExpiresAt    *time.Time             `json:"expires_at,omitempty"`
-	Run          ActorManagedRunOptions `json:"run"`
-	CreatedAt    time.Time              `json:"created_at"`
-	UpdatedAt    time.Time              `json:"updated_at"`
-	CurrentRunID *string                `json:"current_run_id,omitempty"`
-	Failure      *ActorFailure          `json:"failure,omitempty"`
-}
-
-type ListActorsResponse struct {
-	Actors     []ActorStatus `json:"actors"`
-	NextCursor string        `json:"next_cursor,omitempty"`
+	ID           string            `json:"id"`
+	Key          *string           `json:"key,omitempty"`
+	Status       ActorPublicStatus `json:"status"`
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
+	CurrentRunID *string           `json:"current_run_id,omitempty"`
+	Failure      *ActorFailure     `json:"failure,omitempty"`
 }
 
 type ActorOutputProvenance struct {
@@ -190,18 +139,15 @@ type ActorOutputPage struct {
 	HasMore   bool                `json:"has_more"`
 }
 
-func ValidateActorLifecycle(lifecycle string) error {
-	switch ActorLifecycle(lifecycle) {
-	case ActorLifecycleOpen,
-		ActorLifecycleClosing,
-		ActorLifecycleClosed,
-		ActorLifecycleCancelling,
-		ActorLifecycleCancelled,
-		ActorLifecycleFailed,
-		ActorLifecycleExpired:
+func ValidateActorPublicStatus(status string) error {
+	switch ActorPublicStatus(status) {
+	case ActorPublicStatusOpen,
+		ActorPublicStatusClosed,
+		ActorPublicStatusCancelled,
+		ActorPublicStatusFailed:
 		return nil
 	default:
-		return fmt.Errorf("invalid Actor lifecycle %q", lifecycle)
+		return fmt.Errorf("invalid Actor status %q", status)
 	}
 }
 
@@ -227,30 +173,6 @@ func ValidateActorReference(reference ActorReference) error {
 		return ValidateActorPublicID(reference.ActorID)
 	}
 	return ValidateActorKey(reference.ActorKey)
-}
-
-func ValidateUpdateActorRequest(request UpdateActorRequest) error {
-	if err := ValidateActorReference(ActorReference{
-		ActorID:  request.ActorID,
-		ActorKey: request.ActorKey,
-	}); err != nil {
-		return err
-	}
-	if request.Metadata == nil && request.Tags == nil && request.ExpiresAt == nil {
-		return errors.New("at least one of metadata, tags, or expires_at is required")
-	}
-	if request.Metadata != nil {
-		if err := validateJSONObject(*request.Metadata, "metadata"); err != nil {
-			return err
-		}
-	}
-	if request.Tags != nil && *request.Tags == nil {
-		return errors.New("tags must be an array; use an empty array to clear tags")
-	}
-	if request.ExpiresAt != nil && request.ExpiresAt.IsZero() {
-		return errors.New("expires_at must be a valid instant")
-	}
-	return nil
 }
 
 func ValidateActorDeclaredID(id string) error {
@@ -339,11 +261,6 @@ func ValidateStartActorRequest(request StartActorRequest) error {
 			return fmt.Errorf("input must be unambiguous I-JSON: %w", err)
 		}
 	}
-	if len(request.Metadata) > 0 {
-		if err := validateJSONObject(request.Metadata, "metadata"); err != nil {
-			return err
-		}
-	}
 	if request.Run == nil {
 		return nil
 	}
@@ -376,27 +293,6 @@ func ValidateStartActorRequest(request StartActorRequest) error {
 		}
 	}
 	return nil
-}
-
-func ParseRFC3339NanosecondInstant(raw string) (time.Time, error) {
-	if !rfc3339InstantPattern.MatchString(raw) {
-		return time.Time{}, errors.New(
-			"expires_at must be an RFC 3339 instant with an explicit timezone and at most nanosecond precision",
-		)
-	}
-	if !strings.HasSuffix(raw, "Z") {
-		offset := raw[len(raw)-6:]
-		hours, _ := strconv.Atoi(offset[1:3])
-		minutes, _ := strconv.Atoi(offset[4:6])
-		if hours > 23 || minutes > 59 {
-			return time.Time{}, errors.New("expires_at timezone offset is outside RFC 3339")
-		}
-	}
-	value, err := time.Parse(time.RFC3339Nano, raw)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("expires_at must be a valid RFC 3339 instant: %w", err)
-	}
-	return value, nil
 }
 
 func ValidateWorkspaceTarget(workspace WorkspaceTarget) error {

@@ -24,10 +24,9 @@ import (
 )
 
 const (
-	maxActorMetadataBytes = 64 << 10
-	maxRunMetadataBytes   = 256 << 10
-	maxTags               = 10
-	maxQueuedRunTTLMS     = int64(31_536_000_000)
+	maxRunMetadataBytes = 256 << 10
+	maxTags             = 10
+	maxQueuedRunTTLMS   = int64(31_536_000_000)
 )
 
 var (
@@ -58,9 +57,6 @@ type actorStartRequest struct {
 	InputPresent          bool
 	Input                 json.RawMessage
 	IdempotencyKey        string
-	Metadata              json.RawMessage
-	Tags                  []string
-	ExpiresAt             *time.Time
 	ManagedQueueName      string
 	ManagedConcurrencyKey *string
 	ManagedPriority       int32
@@ -148,7 +144,6 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 				OrgID:           pgvalue.UUID(normalized.OrgID),
 				ProjectID:       pgvalue.UUID(normalized.ProjectID),
 				EnvironmentID:   pgvalue.UUID(normalized.EnvironmentID),
-				ExpiresAt:       pgvalue.TimestamptzUTCZeroInvalid(timePtrValue(normalized.ExpiresAt)),
 			},
 		)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -157,10 +152,6 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		if err != nil {
 			return fmt.Errorf("lock Actor start deployment authority: %w", err)
 		}
-		if !deploymentAuthority.ExpiresAtValid {
-			return fmt.Errorf("%w: expiresAt must be in the future", errActorStartInvalid)
-		}
-
 		workspaceID, err := work.q.ResolveWorkspaceTarget(ctx, db.ResolveWorkspaceTargetParams{
 			OrgID:         pgvalue.UUID(normalized.OrgID),
 			ProjectID:     pgvalue.UUID(normalized.ProjectID),
@@ -281,8 +272,6 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			ManagedMaxActiveDurationMs: runAuthority.MaxActiveDurationMS,
 			ManagedRetryPolicy:         managedRetryPolicy,
 			ManagedRunMetadata:         normalized.ManagedRunMetadata, ManagedRunTags: normalized.ManagedRunTags,
-			ExpiresAt: pgvalue.TimestamptzUTCZeroInvalid(timePtrValue(normalized.ExpiresAt)),
-			Metadata:  normalized.Metadata, Tags: normalized.Tags,
 			WorkspaceID: authority.ID, EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
 			DeploymentDefinitionID: deploymentAuthority.ActorDefinitionID, ActorDeclaredID: normalized.ActorDeclaredID,
 		})
@@ -419,25 +408,13 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 	} else {
 		request.Input = nil
 	}
-	request.Metadata, err = normalizeMetadata(request.Metadata, maxActorMetadataBytes, "Actor")
-	if err != nil {
-		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
-	}
 	request.ManagedRunMetadata, err = normalizeMetadata(request.ManagedRunMetadata, maxRunMetadataBytes, "managed Run")
-	if err != nil {
-		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
-	}
-	request.Tags, err = normalizeTags(request.Tags, maxTags, "Actor")
 	if err != nil {
 		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
 	}
 	request.ManagedRunTags, err = normalizeTags(request.ManagedRunTags, maxTags, "managed Run")
 	if err != nil {
 		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
-	}
-	if request.ExpiresAt != nil {
-		expiresAt := request.ExpiresAt.UTC()
-		request.ExpiresAt = &expiresAt
 	}
 	if request.ManagedQueueName != "" {
 		if err := api.ValidateQueueName(request.ManagedQueueName); err != nil {
@@ -472,8 +449,7 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 	}
 	fingerprint := idempotency.ActorStartFingerprint{
 		Key: request.Key, InputPresent: request.InputPresent, Input: request.Input,
-		WorkspaceAddress: workspace, Metadata: request.Metadata,
-		Tags: request.Tags, ExpiresAt: request.ExpiresAt,
+		WorkspaceAddress: workspace,
 		ManagedQueueName: request.ManagedQueueName, ManagedConcurrencyKey: request.ManagedConcurrencyKey,
 		ManagedPriority: request.ManagedPriority, ManagedQueuedTTLMS: request.ManagedQueuedTTLMS,
 		ManagedRetryPolicy: request.ManagedRetryPolicy,

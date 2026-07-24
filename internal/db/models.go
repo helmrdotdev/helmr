@@ -1715,15 +1715,11 @@ type Actor struct {
 	ManagedRunTags               []string           `json:"managed_run_tags"`
 	State                        string             `json:"state"`
 	CloseSequence                pgtype.Int8        `json:"close_sequence"`
-	ExpiresAt                    pgtype.Timestamptz `json:"expires_at"`
-	Metadata                     []byte             `json:"metadata"`
-	Tags                         []string           `json:"tags"`
 	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
 	ClosedAt                     pgtype.Timestamptz `json:"closed_at"`
 	CancelledAt                  pgtype.Timestamptz `json:"cancelled_at"`
 	FailedAt                     pgtype.Timestamptz `json:"failed_at"`
-	ExpiredAt                    pgtype.Timestamptz `json:"expired_at"`
 }
 
 type ActorRecord struct {

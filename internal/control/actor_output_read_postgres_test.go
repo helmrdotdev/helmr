@@ -103,8 +103,7 @@ func TestActorOutputReadPostgresPagesProvenanceAndRetention(t *testing.T) {
 	defer tx.Rollback(context.Background())
 	if _, err := tx.Exec(t.Context(), `
 		UPDATE actors
-		   SET next_output_sequence = 4,
-		       expires_at = transaction_timestamp() - interval '1 minute'
+		   SET next_output_sequence = 4
 		 WHERE id = $1
 	`, first.ActorID); err != nil {
 		t.Fatal(err)

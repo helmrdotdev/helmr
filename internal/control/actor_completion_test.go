@@ -69,51 +69,6 @@ func TestDecideActorRunTerminal(t *testing.T) {
 			completion: parsedActorCompletion{kind: actorCompletionFailed, terminalInputSequence: 3},
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusFailed, runReason: pgvalue.Text("actor_failed"), actorState: "failed", failureCode: pgvalue.Text("run-failed")},
 		},
-		{
-			name: "due expiry overrides runtime failure",
-			authority: func() runLeaseClaimAuthority {
-				a := actorTerminalAuthority("open", 2, 4)
-				a.actor.ExpiresAt = pgvalue.Timestamptz(now)
-				return a
-			}(),
-			completion: parsedActorCompletion{kind: actorCompletionFailed, terminalInputSequence: 3},
-			want:       actorRunTerminalDecision{runStatus: db.RunStatusFailed, runReason: pgvalue.Text("actor_failed"), actorState: "expired"},
-		},
-		{
-			name: "due expiry prevents successor",
-			authority: func() runLeaseClaimAuthority {
-				a := actorTerminalAuthority("open", 2, 2)
-				a.actor.ExpiresAt = pgvalue.Timestamptz(now)
-				return a
-			}(),
-			completion: parsedActorCompletion{kind: actorCompletionSucceeded, terminalInputSequence: 2},
-			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorState: "expired", commitCursor: true},
-		},
-		{
-			name: "accepted close remains authoritative after expiry",
-			authority: func() runLeaseClaimAuthority {
-				a := actorTerminalAuthority("closing", 2, 4)
-				a.actor.CloseSequence = pgtype.Int8{Int64: 4, Valid: true}
-				a.actor.ExpiresAt = pgvalue.Timestamptz(now)
-				return a
-			}(),
-			completion: parsedActorCompletion{kind: actorCompletionSucceeded, terminalInputSequence: 3},
-			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorState: "closing", commitCursor: true},
-		},
-		{
-			name: "runtime failure after accepted close is not expiry",
-			authority: func() runLeaseClaimAuthority {
-				a := actorTerminalAuthority("closing", 2, 4)
-				a.actor.CloseSequence = pgtype.Int8{Int64: 4, Valid: true}
-				a.actor.ExpiresAt = pgvalue.Timestamptz(now)
-				return a
-			}(),
-			completion: parsedActorCompletion{kind: actorCompletionFailed, terminalInputSequence: 3},
-			want: actorRunTerminalDecision{
-				runStatus: db.RunStatusFailed, runReason: pgvalue.Text("actor_failed"),
-				actorState: "failed", failureCode: pgvalue.Text("run-failed"),
-			},
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -125,25 +80,15 @@ func TestDecideActorRunTerminal(t *testing.T) {
 	}
 }
 
-func TestActorCompletionDoesNotRetryExpiredActor(t *testing.T) {
+func TestActorCompletionRetryUsesPinnedPolicy(t *testing.T) {
 	now := time.Date(2026, time.July, 22, 1, 2, 3, 0, time.UTC)
-	actor := db.Actor{State: "open", ExpiresAt: pgvalue.Timestamptz(now)}
-	_, retry, err := actorCompletionRetryAt(db.Run{}, db.RunAttempt{}, actor, parsedActorCompletion{kind: actorCompletionFailed}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if retry {
-		t.Fatal("expired Actor scheduled a retry")
-	}
-
-	actor.State = "closing"
 	run := db.Run{
 		RetryPolicy: []byte(`{"enabled":true,"maxAttempts":3,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}`),
 	}
 	retryAt, retry, err := actorCompletionRetryAt(
 		run,
 		db.RunAttempt{Number: 1},
-		actor,
+		db.Actor{State: "open"},
 		parsedActorCompletion{kind: actorCompletionFailed},
 		now,
 	)

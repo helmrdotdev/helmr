@@ -18,7 +18,6 @@ const (
 	PermissionRunsManage               Permission = "runs.manage"
 	PermissionActorsRead               Permission = "actors.read"
 	PermissionActorsStart              Permission = "actors.start"
-	PermissionActorsUpdate             Permission = "actors.update"
 	PermissionActorsInputSend          Permission = "actors.input.send"
 	PermissionActorsLifecycleManage    Permission = "actors.lifecycle.manage"
 	PermissionTokensCreate             Permission = "tokens.create"
@@ -77,7 +76,6 @@ func RoleAllows(role Role, permission Permission) bool {
 			PermissionRunsManage,
 			PermissionActorsRead,
 			PermissionActorsStart,
-			PermissionActorsUpdate,
 			PermissionActorsInputSend,
 			PermissionActorsLifecycleManage,
 			PermissionTokensCreate,

@@ -1774,18 +1774,14 @@ CREATE TABLE actors (
     managed_run_metadata JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(managed_run_metadata) = 'object'),
     managed_run_tags TEXT[] NOT NULL DEFAULT '{}'::text[],
     state TEXT NOT NULL DEFAULT 'open' CHECK (
-        state IN ('open', 'closing', 'closed', 'cancelling', 'cancelled', 'failed', 'expired')
+        state IN ('open', 'closing', 'closed', 'cancelling', 'cancelled', 'failed')
     ),
     close_sequence BIGINT,
-    expires_at TIMESTAMPTZ,
-    metadata JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(metadata) = 'object'),
-    tags TEXT[] NOT NULL DEFAULT '{}'::text[],
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     closed_at TIMESTAMPTZ,
     cancelled_at TIMESTAMPTZ,
     failed_at TIMESTAMPTZ,
-    expired_at TIMESTAMPTZ,
     UNIQUE (environment_id, id),
     UNIQUE (id, workspace_id),
     UNIQUE (id, actor_declared_id, deployment_definition_id),
@@ -1827,20 +1823,6 @@ CREATE INDEX actors_deployment_definition_idx
         declaration_kind,
         actor_declared_id
     );
-
-CREATE INDEX actors_list_idx
-    ON actors (
-        environment_id,
-        actor_declared_id,
-        created_at DESC,
-        public_id DESC
-    );
-
-CREATE INDEX actors_expiry_due_idx
-    ON actors (org_id, expires_at, id)
-    WHERE state = 'open'
-      AND current_run_id IS NULL
-      AND expires_at IS NOT NULL;
 
 CREATE TABLE runs (
     id UUID PRIMARY KEY DEFAULT uuidv7(),

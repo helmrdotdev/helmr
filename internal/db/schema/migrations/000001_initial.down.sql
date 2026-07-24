@@ -1,8 +1,6 @@
 DROP INDEX IF EXISTS public_access_token_scopes_stream_idx;
 DROP INDEX IF EXISTS public_access_token_scopes_token_idx;
 DROP INDEX IF EXISTS public_access_tokens_scope_expiry_idx;
-DROP INDEX IF EXISTS actors_expiry_due_idx;
-DROP INDEX IF EXISTS actors_list_idx;
 DROP INDEX IF EXISTS workspace_leases_expiry_idx;
 DROP INDEX IF EXISTS workspace_leases_one_active_writer_workspace_mount_idx;
 DROP INDEX IF EXISTS workspace_leases_one_active_writer_workspace_idx;

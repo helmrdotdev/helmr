@@ -31,7 +31,6 @@ DELETE /api/members/{userID}
 DELETE /api/projects/{projectID}
 DELETE /api/projects/{projectID}/environments/{environmentID}
 DELETE /api/projects/{projectID}/environments/{environmentID}/api-keys/{id}
-GET /api/actors/{actorDeclaredID}
 GET /api/actors/{actorDeclaredID}/output
 GET /api/actors/{actorDeclaredID}/status
 GET /api/auth/device/status
@@ -45,7 +44,6 @@ GET /api/members
 GET /api/projects
 GET /api/projects/{projectID}
 GET /api/projects/{projectID}/environments/{environmentID}
-GET /api/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}
 GET /api/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/output
 GET /api/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/status
 GET /api/projects/{projectID}/environments/{environmentID}/api-keys
@@ -72,11 +70,9 @@ GET /api/tokens
 GET /api/tokens/{tokenID}
 GET /api/worker/status
 OPTIONS /api/public/tokens/{tokenID}/complete
-PATCH /api/actors/{actorDeclaredID}
 PATCH /api/members/{userID}
 PATCH /api/projects/{projectID}
 PATCH /api/projects/{projectID}/environments/{environmentID}
-PATCH /api/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}
 POST /api/actors/{actorDeclaredID}/close
 POST /api/actors/{actorDeclaredID}/input
 POST /api/actors/{actorDeclaredID}/start

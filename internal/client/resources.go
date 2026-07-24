@@ -16,7 +16,6 @@ import (
 )
 
 const (
-	maxActorListLimit       = int32(100)
 	maxActorOutputReadLimit = int32(100)
 	maxActorOutputSequence  = int64(1<<53 - 1)
 )
@@ -152,88 +151,6 @@ func (c *Client) GetActorStatus(
 	var response api.ActorStatus
 	if err := c.doJSON(req, &response); err != nil {
 		return api.ActorStatus{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) UpdateActor(
-	ctx context.Context,
-	actorDeclaredID string,
-	input api.UpdateActorRequest,
-	opts EnvironmentScopeOptions,
-) (api.ActorStatus, error) {
-	if err := api.ValidateActorDeclaredID(actorDeclaredID); err != nil {
-		return api.ActorStatus{}, err
-	}
-	if err := api.ValidateUpdateActorRequest(input); err != nil {
-		return api.ActorStatus{}, err
-	}
-	path, _, err := c.environmentScopedPath(
-		opts.ProjectID,
-		opts.EnvironmentID,
-		"/actors/"+url.PathEscape(actorDeclaredID),
-	)
-	if err != nil {
-		return api.ActorStatus{}, err
-	}
-	var response api.ActorStatus
-	if err := c.patchJSON(ctx, path, input, &response); err != nil {
-		return api.ActorStatus{}, err
-	}
-	return response, nil
-}
-
-type ListActorsOptions struct {
-	Lifecycle api.ActorLifecycle
-	Cursor    string
-	Limit     int32
-	EnvironmentScopeOptions
-}
-
-func (c *Client) ListActors(
-	ctx context.Context,
-	actorDeclaredID string,
-	opts ListActorsOptions,
-) (api.ListActorsResponse, error) {
-	if err := api.ValidateActorDeclaredID(actorDeclaredID); err != nil {
-		return api.ListActorsResponse{}, err
-	}
-	if opts.Lifecycle != "" {
-		if err := api.ValidateActorLifecycle(string(opts.Lifecycle)); err != nil {
-			return api.ListActorsResponse{}, err
-		}
-	}
-	if opts.Limit < 0 || opts.Limit > maxActorListLimit {
-		return api.ListActorsResponse{}, fmt.Errorf("Actor list limit must be in [1,%d] when present", maxActorListLimit)
-	}
-	path, _, err := c.environmentScopedPath(
-		opts.ProjectID,
-		opts.EnvironmentID,
-		"/actors/"+url.PathEscape(actorDeclaredID),
-	)
-	if err != nil {
-		return api.ListActorsResponse{}, err
-	}
-	values := url.Values{}
-	if opts.Lifecycle != "" {
-		values.Set("lifecycle", string(opts.Lifecycle))
-	}
-	if opts.Cursor != "" {
-		values.Set("cursor", opts.Cursor)
-	}
-	if opts.Limit > 0 {
-		values.Set("limit", strconv.FormatInt(int64(opts.Limit), 10))
-	}
-	if encoded := values.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return api.ListActorsResponse{}, err
-	}
-	var response api.ListActorsResponse
-	if err := c.doJSON(req, &response); err != nil {
-		return api.ListActorsResponse{}, err
 	}
 	return response, nil
 }

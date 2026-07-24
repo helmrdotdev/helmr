@@ -121,7 +121,7 @@ func (s *Server) closeActor(
 				}
 			}
 		case "closed":
-		case "failed", "cancelling", "cancelled", "expired":
+		case "failed", "cancelling", "cancelled":
 			return errActorCloseConflict
 		default:
 			return errActorCloseAuthority
@@ -133,7 +133,6 @@ func (s *Server) closeActor(
 		}
 		receipt = api.ActorOperationReceipt{
 			ActorID:    actor.PublicID,
-			Lifecycle:  actor.State,
 			AcceptedAt: acceptedAt,
 		}
 		if claim != nil {
@@ -178,7 +177,6 @@ func actorCloseReceipt(raw []byte) (api.ActorOperationReceipt, error) {
 		return api.ActorOperationReceipt{}, errActorCloseReceipt
 	}
 	if err := api.ValidateActorPublicID(receipt.ActorID); err != nil ||
-		(receipt.Lifecycle != "closing" && receipt.Lifecycle != "closed") ||
 		receipt.AcceptedAt.IsZero() {
 		return api.ActorOperationReceipt{}, errActorCloseReceipt
 	}

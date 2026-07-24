@@ -8,7 +8,6 @@ import {
   type ActorRefBase,
   type ActorStartOptions,
   type ActorStatus,
-  type ActorUpdateOptions,
   type ActorOperationOptions,
   type ActorOperationReceipt,
   type JsonValue,
@@ -315,9 +314,6 @@ function createActorRef(
     output: createActorOutputRef(),
     status() {
       return runtimeUnavailable<Promise<ActorStatus>>("actor.status")
-    },
-    update(_options: ActorUpdateOptions) {
-      return runtimeUnavailable<Promise<ActorStatus>>("actor.update")
     },
     close(_options?: ActorOperationOptions) {
       return runtimeUnavailable<Promise<ActorOperationReceipt>>("actor.close")

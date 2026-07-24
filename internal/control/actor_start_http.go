@@ -21,7 +21,6 @@ import (
 
 const actorStartBodyLimit = int64(
 	maxActorInputBytes +
-		maxActorMetadataBytes +
 		maxRunMetadataBytes +
 		64<<10,
 )
@@ -208,25 +207,12 @@ func rejectActorStartNulls(canonical []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := rejectActorStartNullFields(root, "", "key", "metadata", "tags", "expires_at", "run"); err != nil {
-		return err
-	}
-	if err := rejectActorStartNullTagElements(root["tags"], "tags"); err != nil {
+	if err := rejectActorStartNullFields(root, "", "key", "run"); err != nil {
 		return err
 	}
 	if err := validateActorStartIdempotencyWire(root["idempotency_key"]); err != nil {
 		return err
 	}
-	if raw := root["expires_at"]; len(raw) > 0 {
-		var expiresAt string
-		if err := json.Unmarshal(raw, &expiresAt); err != nil {
-			return errors.New("expires_at must be a string")
-		}
-		if _, err := api.ParseRFC3339NanosecondInstant(expiresAt); err != nil {
-			return err
-		}
-	}
-
 	if raw := root["workspace"]; len(raw) > 0 {
 		workspace, err := decodeActorStartObject(raw, "workspace")
 		if err != nil {
@@ -440,9 +426,6 @@ func actorStartRequestFromAPI(
 		InputPresent:          len(request.Input) > 0,
 		Input:                 request.Input,
 		IdempotencyKey:        idempotencyKey,
-		Metadata:              request.Metadata,
-		Tags:                  request.Tags,
-		ExpiresAt:             request.ExpiresAt,
 		ManagedQueueName:      run.Queue,
 		ManagedConcurrencyKey: run.ConcurrencyKey,
 		ManagedPriority:       run.Priority,

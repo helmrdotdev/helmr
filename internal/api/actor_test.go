@@ -94,38 +94,6 @@ func TestParseDurationMillisecondsUsesExactPublicGrammar(t *testing.T) {
 	}
 }
 
-func TestParseRFC3339NanosecondInstantUsesExactPublicGrammar(t *testing.T) {
-	for _, raw := range []string{
-		"2028-01-02T03:04:05Z",
-		"2028-01-02T03:04:05.123456789+09:00",
-		"2028-01-02T03:04:05-23:59",
-	} {
-		got, err := ParseRFC3339NanosecondInstant(raw)
-		if err != nil {
-			t.Fatalf("ParseRFC3339NanosecondInstant(%q): %v", raw, err)
-		}
-		if got.Location() == nil {
-			t.Fatalf("ParseRFC3339NanosecondInstant(%q) has no location", raw)
-		}
-	}
-	for _, raw := range []string{
-		"",
-		"2028-01-02",
-		"2028-01-02T03:04:05",
-		"2028-01-02t03:04:05z",
-		"2028-01-02T03:04:05,1Z",
-		"2028-01-02T03:04:05.1234567890Z",
-		"2028-13-02T03:04:05Z",
-		"2028-01-02T03:04:05+24:00",
-		"2028-01-02T03:04:05+23:60",
-		"2028-01-02T03:04:05-24:00",
-	} {
-		if _, err := ParseRFC3339NanosecondInstant(raw); err == nil {
-			t.Fatalf("ParseRFC3339NanosecondInstant(%q) succeeded", raw)
-		}
-	}
-}
-
 func TestNormalizeStartActorRetryFillsPublicDefaults(t *testing.T) {
 	maxAttempts := int64(3)
 	got, err := NormalizeStartActorRetry(&StartActorRetryPolicy{MaxAttempts: &maxAttempts})
@@ -206,22 +174,19 @@ func TestValidateActorOperationRequestRequiresOneExactAddress(t *testing.T) {
 }
 
 func TestValidateActorReadContractUsesClosedEnumsAndReferences(t *testing.T) {
-	for _, lifecycle := range []ActorLifecycle{
-		ActorLifecycleOpen,
-		ActorLifecycleClosing,
-		ActorLifecycleClosed,
-		ActorLifecycleCancelling,
-		ActorLifecycleCancelled,
-		ActorLifecycleFailed,
-		ActorLifecycleExpired,
+	for _, status := range []ActorPublicStatus{
+		ActorPublicStatusOpen,
+		ActorPublicStatusClosed,
+		ActorPublicStatusCancelled,
+		ActorPublicStatusFailed,
 	} {
-		if err := ValidateActorLifecycle(string(lifecycle)); err != nil {
-			t.Fatalf("ValidateActorLifecycle(%q): %v", lifecycle, err)
+		if err := ValidateActorPublicStatus(string(status)); err != nil {
+			t.Fatalf("ValidateActorPublicStatus(%q): %v", status, err)
 		}
 	}
-	for _, lifecycle := range []string{"", "OPEN", "unknown"} {
-		if err := ValidateActorLifecycle(lifecycle); err == nil {
-			t.Fatalf("ValidateActorLifecycle(%q) succeeded", lifecycle)
+	for _, status := range []string{"", "OPEN", "closing", "unknown"} {
+		if err := ValidateActorPublicStatus(status); err == nil {
+			t.Fatalf("ValidateActorPublicStatus(%q) succeeded", status)
 		}
 	}
 	validID := "act_aaaaaaaaaaaaaaaaaaaaaaaaaa"

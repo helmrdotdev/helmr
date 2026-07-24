@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -82,9 +81,6 @@ type ActorStartFingerprint struct {
 	InputPresent          bool
 	Input                 json.RawMessage
 	WorkspaceAddress      json.RawMessage
-	Metadata              json.RawMessage
-	Tags                  []string
-	ExpiresAt             *time.Time
 	ManagedQueueName      string
 	ManagedConcurrencyKey *string
 	ManagedPriority       int32
@@ -362,10 +358,6 @@ func NewActorStartRequest(
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize Actor start Workspace address: %w", err)
 	}
-	metadata, err := canonicalJSONOr(input.Metadata, `{}`)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize Actor metadata: %w", err)
-	}
 	runMetadata, err := canonicalJSONOr(input.ManagedRunMetadata, `{}`)
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize managed Run metadata: %w", err)
@@ -384,20 +376,12 @@ func NewActorStartRequest(
 			return nil, fmt.Errorf("canonicalize initial Actor input: %w", err)
 		}
 	}
-	var expiresAt *string
-	if input.ExpiresAt != nil {
-		value := input.ExpiresAt.UTC().Format(time.RFC3339Nano)
-		expiresAt = &value
-	}
 	fields, err := json.Marshal(struct {
 		ActorDeclaredID       string          `json:"actorDeclaredId"`
 		Key                   *string         `json:"key"`
 		InputPresent          bool            `json:"inputPresent"`
 		Input                 json.RawMessage `json:"input"`
 		WorkspaceAddress      json.RawMessage `json:"workspaceAddress"`
-		Metadata              json.RawMessage `json:"metadata"`
-		Tags                  []string        `json:"tags"`
-		ExpiresAt             *string         `json:"expiresAt"`
 		ManagedQueueName      string          `json:"managedQueueName"`
 		ManagedConcurrencyKey *string         `json:"managedConcurrencyKey"`
 		ManagedPriority       int32           `json:"managedPriority"`
@@ -408,8 +392,7 @@ func NewActorStartRequest(
 	}{
 		ActorDeclaredID: actorDeclaredID, Key: input.Key,
 		InputPresent: input.InputPresent, Input: initialInput,
-		WorkspaceAddress: workspace, Metadata: metadata,
-		Tags: append([]string{}, input.Tags...), ExpiresAt: expiresAt,
+		WorkspaceAddress: workspace,
 		ManagedQueueName: input.ManagedQueueName, ManagedConcurrencyKey: input.ManagedConcurrencyKey,
 		ManagedPriority: input.ManagedPriority, ManagedQueuedTTLMS: input.ManagedQueuedTTLMS,
 		ManagedRetryPolicy: retryPolicy, ManagedRunMetadata: runMetadata,

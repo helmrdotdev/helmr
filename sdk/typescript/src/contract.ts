@@ -413,21 +413,11 @@ export interface ActorStartOptions {
   readonly input?: JsonValue
   readonly idempotencyKey?: string
   readonly workspace: WorkspaceTarget
-  readonly metadata?: Metadata
-  readonly tags?: readonly string[]
-  readonly expiresAt?: Date
   readonly run?: RunOptions
   readonly signal?: AbortSignal
 }
 
-export type ActorLifecycle =
-  | "open"
-  | "closing"
-  | "closed"
-  | "cancelling"
-  | "cancelled"
-  | "failed"
-  | "expired"
+export type ActorPublicStatus = "open" | "closed" | "cancelled" | "failed"
 
 export interface ActorFailure {
   readonly code:
@@ -438,49 +428,14 @@ export interface ActorFailure {
   readonly runId: string
 }
 
-export type ActorManagedRetryPolicy =
-  | Readonly<{
-      enabled: true
-      maxAttempts: number
-      backoff: Readonly<{
-        minDelay: Duration
-        maxDelay: Duration
-        factor: number
-        jitter: "none" | "full"
-      }>
-    }>
-  | Readonly<{ enabled: false }>
-
-export interface ActorManagedRunOptions {
-  readonly queue: string
-  readonly concurrencyKey?: string
-  readonly priority: number
-  readonly ttl?: Duration
-  readonly maxDuration: Duration
-  readonly retry: ActorManagedRetryPolicy
-  readonly metadata: Metadata
-  readonly tags: readonly string[]
-}
-
 export interface ActorStatus {
   readonly id: string
   readonly key?: string
-  readonly lifecycle: ActorLifecycle
-  readonly metadata: Metadata
-  readonly tags: readonly string[]
-  readonly expiresAt?: Date
-  readonly run: ActorManagedRunOptions
+  readonly status: ActorPublicStatus
   readonly createdAt: Date
   readonly updatedAt: Date
   readonly currentRunId?: string
   readonly failure?: ActorFailure
-}
-
-export interface ActorUpdateOptions {
-  readonly metadata?: Metadata
-  readonly tags?: readonly string[]
-  readonly expiresAt?: Date
-  readonly signal?: AbortSignal
 }
 
 export interface ActorOperationOptions {
@@ -490,7 +445,6 @@ export interface ActorOperationOptions {
 
 export interface ActorOperationReceipt {
   readonly actorId: string
-  readonly lifecycle: "closing" | "closed"
   readonly acceptedAt: Date
 }
 
@@ -498,7 +452,6 @@ export interface ActorRefBase {
   readonly input: ActorInputRef
   readonly output: ActorOutputRef
   status(): Promise<ActorStatus>
-  update(options: ActorUpdateOptions): Promise<ActorStatus>
   close(options?: ActorOperationOptions): Promise<ActorOperationReceipt>
 }
 

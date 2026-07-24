@@ -217,7 +217,6 @@ UPDATE actors
        failure_run_id = sqlc.narg(failure_run_id),
        closed_at = CASE WHEN sqlc.arg(state)::text = 'closed' THEN sqlc.arg(completed_at) ELSE closed_at END,
        failed_at = CASE WHEN sqlc.arg(state)::text = 'failed' THEN sqlc.arg(completed_at) ELSE failed_at END,
-       expired_at = CASE WHEN sqlc.arg(state)::text = 'expired' THEN sqlc.arg(completed_at) ELSE expired_at END,
        updated_at = sqlc.arg(completed_at)
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id)
@@ -301,11 +300,6 @@ WITH created_run AS (
        AND actors.run_generation = sqlc.arg(expected_run_generation)
        AND actors.state IN ('open', 'closing')
        AND actors.manual_run_cancelled = false
-       AND (
-           actors.state = 'closing'
-           OR actors.expires_at IS NULL
-           OR actors.expires_at > sqlc.arg(queue_origin_at)::timestamptz
-       )
        AND actors.committed_input_sequence < actors.next_input_sequence - 1
        AND NOT EXISTS (
            SELECT 1

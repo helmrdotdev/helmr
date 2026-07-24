@@ -266,11 +266,6 @@ WITH created_run AS (
        AND actors.run_generation = $9
        AND actors.state IN ('open', 'closing')
        AND actors.manual_run_cancelled = false
-       AND (
-           actors.state = 'closing'
-           OR actors.expires_at IS NULL
-           OR actors.expires_at > $3::timestamptz
-       )
        AND actors.committed_input_sequence < actors.next_input_sequence - 1
        AND NOT EXISTS (
            SELECT 1
@@ -991,7 +986,6 @@ UPDATE actors
        failure_run_id = $4,
        closed_at = CASE WHEN $1::text = 'closed' THEN $5 ELSE closed_at END,
        failed_at = CASE WHEN $1::text = 'failed' THEN $5 ELSE failed_at END,
-       expired_at = CASE WHEN $1::text = 'expired' THEN $5 ELSE expired_at END,
        updated_at = $5
  WHERE environment_id = $6
    AND id = $7
@@ -999,7 +993,7 @@ UPDATE actors
    AND current_run_id = $9
    AND run_generation = $10
    AND state IN ('open', 'closing')
-RETURNING id, public_id, org_id, project_id, environment_id, declaration_kind, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, managed_queue_name, managed_concurrency_key, managed_queue_concurrency_limit, managed_priority, managed_queued_ttl_ms, managed_max_active_duration_ms, managed_retry_policy_version, managed_retry_policy, managed_run_metadata, managed_run_tags, state, close_sequence, expires_at, metadata, tags, created_at, updated_at, closed_at, cancelled_at, failed_at, expired_at
+RETURNING id, public_id, org_id, project_id, environment_id, declaration_kind, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, managed_queue_name, managed_concurrency_key, managed_queue_concurrency_limit, managed_priority, managed_queued_ttl_ms, managed_max_active_duration_ms, managed_retry_policy_version, managed_retry_policy, managed_run_metadata, managed_run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
 `
 
 type ReconcileActorTerminalRunParams struct {
@@ -1063,15 +1057,11 @@ func (q *Queries) ReconcileActorTerminalRun(ctx context.Context, arg ReconcileAc
 		&i.ManagedRunTags,
 		&i.State,
 		&i.CloseSequence,
-		&i.ExpiresAt,
-		&i.Metadata,
-		&i.Tags,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClosedAt,
 		&i.CancelledAt,
 		&i.FailedAt,
-		&i.ExpiredAt,
 	)
 	return i, err
 }
