@@ -130,7 +130,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		return taskAuthorityError("scheduled Task manifest authority is invalid")
 	}
 
-	workspace, err := queries.GetWorkspaceAdmissionAuthority(ctx, db.GetWorkspaceAdmissionAuthorityParams{
+	workspace, err := queries.LockWorkspaceAdmissionAuthority(ctx, db.LockWorkspaceAdmissionAuthorityParams{
 		EnvironmentID: locked.EnvironmentID,
 		ID:            locked.WorkspaceID,
 	})

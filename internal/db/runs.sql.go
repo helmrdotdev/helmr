@@ -1370,6 +1370,17 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 	return i, err
 }
 
+const getRunAdmissionTime = `-- name: GetRunAdmissionTime :one
+SELECT transaction_timestamp()::timestamptz
+`
+
+func (q *Queries) GetRunAdmissionTime(ctx context.Context) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, getRunAdmissionTime)
+	var column_1 pgtype.Timestamptz
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listQueuedRunsForQueue = `-- name: ListQueuedRunsForQueue :many
 SELECT id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
   FROM runs
@@ -1466,6 +1477,74 @@ func (q *Queries) ListQueuedRunsForQueue(ctx context.Context, arg ListQueuedRuns
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockTaskStartDeploymentAuthority = `-- name: LockTaskStartDeploymentAuthority :one
+SELECT task_definition.id AS task_definition_id,
+       task_definition.deployment_id,
+       task_definition.manifest_version AS task_manifest_version,
+       task_definition.manifest AS task_manifest,
+       task_definition.manifest_digest AS task_manifest_digest,
+       deployments.queue_config,
+       deployments.program_architecture
+  FROM environments
+  JOIN deployment_definitions AS task_definition
+    ON task_definition.environment_id = environments.id
+   AND task_definition.deployment_id = environments.current_deployment_id
+   AND task_definition.kind = 'task'
+   AND task_definition.declared_id = $1
+  JOIN deployments
+    ON deployments.org_id = environments.org_id
+   AND deployments.project_id = environments.project_id
+   AND deployments.environment_id = environments.id
+   AND deployments.id = task_definition.deployment_id
+   AND deployments.status = 'deployed'
+   AND deployments.program_artifact_id IS NOT NULL
+   AND deployments.program_runtime_digest IS NOT NULL
+   AND deployments.program_architecture IS NOT NULL
+   AND deployments.program_architecture = deployments.build_architecture
+   AND deployments.program_runtime_digest = deployments.build_runtime_digest
+ WHERE environments.org_id = $2
+   AND environments.project_id = $3
+   AND environments.id = $4
+ FOR UPDATE OF environments
+`
+
+type LockTaskStartDeploymentAuthorityParams struct {
+	TaskDeclaredID string      `json:"task_declared_id"`
+	OrgID          pgtype.UUID `json:"org_id"`
+	ProjectID      pgtype.UUID `json:"project_id"`
+	EnvironmentID  pgtype.UUID `json:"environment_id"`
+}
+
+type LockTaskStartDeploymentAuthorityRow struct {
+	TaskDefinitionID    pgtype.UUID `json:"task_definition_id"`
+	DeploymentID        pgtype.UUID `json:"deployment_id"`
+	TaskManifestVersion int32       `json:"task_manifest_version"`
+	TaskManifest        []byte      `json:"task_manifest"`
+	TaskManifestDigest  []byte      `json:"task_manifest_digest"`
+	QueueConfig         []byte      `json:"queue_config"`
+	ProgramArchitecture pgtype.Text `json:"program_architecture"`
+}
+
+func (q *Queries) LockTaskStartDeploymentAuthority(ctx context.Context, arg LockTaskStartDeploymentAuthorityParams) (LockTaskStartDeploymentAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, lockTaskStartDeploymentAuthority,
+		arg.TaskDeclaredID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+	)
+	var i LockTaskStartDeploymentAuthorityRow
+	err := row.Scan(
+		&i.TaskDefinitionID,
+		&i.DeploymentID,
+		&i.TaskManifestVersion,
+		&i.TaskManifest,
+		&i.TaskManifestDigest,
+		&i.QueueConfig,
+		&i.ProgramArchitecture,
+	)
+	return i, err
 }
 
 const requestRunCancellation = `-- name: RequestRunCancellation :one

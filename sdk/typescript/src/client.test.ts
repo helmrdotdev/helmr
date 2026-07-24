@@ -1,12 +1,71 @@
 import { describe, expect, test } from "bun:test"
 
-import { HelmrClient } from "./index"
+import { HelmrClient, task, workspaces } from "./index"
 import {
   HELMR_API_VERSION,
   HELMR_API_VERSION_HEADER,
   HELMR_SDK_VERSION,
   HELMR_SDK_VERSION_HEADER,
 } from "./version"
+
+describe("HelmrClient Tasks", () => {
+  test("starts a typed Task by runtime declared ID", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    const resizeImage = task({
+      id: "resize-image",
+      payload: {
+        "~standard": {
+          version: 1,
+          vendor: "test",
+          validate(value: unknown) {
+            return { value: value as { imageId: string } }
+          },
+        },
+      },
+      run: async (payload) => ({ resized: payload.imageId }),
+    })
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async (input: URL | RequestInfo, init?: RequestInit) => {
+        requests.push({ url: String(input), init })
+        return Response.json({
+          run_id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        }, { status: 201 })
+      }) as typeof fetch,
+    })
+
+    const run = await client.tasks.start<typeof resizeImage>("resize-image", {
+      payload: { imageId: "image-1" },
+      options: {
+        workspace: workspaces.ref({
+          id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        }),
+        idempotencyKey: "image-1",
+        concurrencyKey: "customer-1",
+        retry: { maxAttempts: 3 },
+        metadata: { source: "backend" },
+        tags: ["image"],
+      },
+    })
+
+    expect(run).toEqual({ id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa" })
+    expect(requests[0]!.url).toBe(
+      "https://api.example.test/api/tasks/resize-image/start",
+    )
+    expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
+      payload: { imageId: "image-1" },
+      options: {
+        workspace: { id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
+        idempotency_key: "image-1",
+        concurrency_key: "customer-1",
+        retry: { max_attempts: 3 },
+        metadata: { source: "backend" },
+        tags: ["image"],
+      },
+    })
+  })
+})
 
 describe("HelmrClient Tokens", () => {
   test("creates an Environment-scoped Token through authenticated REST", async () => {

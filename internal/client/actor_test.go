@@ -431,7 +431,7 @@ func testStartActorRoute(t *testing.T, session bool, wantPath string, scope Envi
 	}
 	workspaceKey := "workspace:1"
 	response, err := client.StartActor(context.Background(), "operator.v1", api.StartActorRequest{
-		Workspace: api.StartActorWorkspaceTarget{Key: &workspaceKey},
+		Workspace: api.WorkspaceTarget{Key: &workspaceKey},
 		Input:     json.RawMessage(`null`),
 	}, scope)
 	if err != nil {

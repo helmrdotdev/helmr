@@ -122,7 +122,7 @@ func normalizeActorUpdate(request actorUpdateRequest) (normalizedActorUpdate, er
 	}
 	var err error
 	if request.MetadataPresent {
-		request.Metadata, err = normalizeActorMetadata(request.Metadata, maxActorMetadataBytes, "Actor")
+		request.Metadata, err = normalizeMetadata(request.Metadata, maxActorMetadataBytes, "Actor")
 		if err != nil {
 			return normalizedActorUpdate{}, fmt.Errorf("%w: %v", errActorUpdateInvalid, err)
 		}
@@ -130,7 +130,7 @@ func normalizeActorUpdate(request actorUpdateRequest) (normalizedActorUpdate, er
 		request.Metadata = json.RawMessage(`{}`)
 	}
 	if request.TagsPresent {
-		request.Tags, err = normalizeActorTags(request.Tags, "Actor")
+		request.Tags, err = normalizeTags(request.Tags, maxTags, "Actor")
 		if err != nil {
 			return normalizedActorUpdate{}, fmt.Errorf("%w: %v", errActorUpdateInvalid, err)
 		}

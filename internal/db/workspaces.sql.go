@@ -309,117 +309,6 @@ func (q *Queries) GetWorkspace(ctx context.Context, arg GetWorkspaceParams) (Wor
 	return i, err
 }
 
-const getWorkspaceAdmissionAuthority = `-- name: GetWorkspaceAdmissionAuthority :one
-SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.region_id, workspaces.declaration_kind, workspaces.workspace_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.create_idempotency_key, workspaces.create_idempotency_expires_at, workspaces.create_request_fingerprint, workspaces.state_version, workspaces.stop_generation, workspaces.owner_actor_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at,
-       definitions.workspace_architecture,
-       EXISTS (
-           SELECT 1
-             FROM workspace_leases
-            WHERE workspace_leases.workspace_id = workspaces.id
-              AND workspace_leases.state IN ('active', 'releasing')
-       ) AS has_active_lease,
-       EXISTS (
-           SELECT 1
-             FROM workspace_processes
-            WHERE workspace_processes.workspace_id = workspaces.id
-              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
-       ) AS has_active_process
-  FROM workspaces
-  JOIN deployment_definitions AS definitions
-    ON definitions.environment_id = workspaces.environment_id
-   AND definitions.id = workspaces.deployment_definition_id
-   AND definitions.kind = 'workspace'
-   AND definitions.declared_id = workspaces.workspace_declared_id
-  JOIN workspace_versions AS head
-    ON head.workspace_id = workspaces.id
-   AND head.id = workspaces.head_version_id
-   AND head.state = 'committed'
- WHERE workspaces.environment_id = $1
-   AND workspaces.id = $2
-`
-
-type GetWorkspaceAdmissionAuthorityParams struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ID            pgtype.UUID `json:"id"`
-}
-
-type GetWorkspaceAdmissionAuthorityRow struct {
-	ID                         pgtype.UUID           `json:"id"`
-	PublicID                   string                `json:"public_id"`
-	OrgID                      pgtype.UUID           `json:"org_id"`
-	ProjectID                  pgtype.UUID           `json:"project_id"`
-	EnvironmentID              pgtype.UUID           `json:"environment_id"`
-	RegionID                   string                `json:"region_id"`
-	DeclarationKind            pgtype.Text           `json:"declaration_kind"`
-	WorkspaceDeclaredID        pgtype.Text           `json:"workspace_declared_id"`
-	DeploymentDefinitionID     pgtype.UUID           `json:"deployment_definition_id"`
-	Key                        pgtype.Text           `json:"key"`
-	CreateIdempotencyKey       string                `json:"create_idempotency_key"`
-	CreateIdempotencyExpiresAt pgtype.Timestamptz    `json:"create_idempotency_expires_at"`
-	CreateRequestFingerprint   string                `json:"create_request_fingerprint"`
-	StateVersion               int64                 `json:"state_version"`
-	StopGeneration             int64                 `json:"stop_generation"`
-	OwnerActorID               pgtype.UUID           `json:"owner_actor_id"`
-	OwnerRunID                 pgtype.UUID           `json:"owner_run_id"`
-	OwnershipGeneration        int64                 `json:"ownership_generation"`
-	WriterGeneration           int64                 `json:"writer_generation"`
-	HeadVersionID              pgtype.UUID           `json:"head_version_id"`
-	State                      WorkspaceState        `json:"state"`
-	DesiredState               WorkspaceDesiredState `json:"desired_state"`
-	DirtyState                 WorkspaceDirtyState   `json:"dirty_state"`
-	Metadata                   []byte                `json:"metadata"`
-	Tags                       []string              `json:"tags"`
-	RetentionPolicy            []byte                `json:"retention_policy"`
-	LastActivityAt             pgtype.Timestamptz    `json:"last_activity_at"`
-	CreatedAt                  pgtype.Timestamptz    `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz    `json:"updated_at"`
-	DeletedAt                  pgtype.Timestamptz    `json:"deleted_at"`
-	WorkspaceArchitecture      pgtype.Text           `json:"workspace_architecture"`
-	HasActiveLease             bool                  `json:"has_active_lease"`
-	HasActiveProcess           bool                  `json:"has_active_process"`
-}
-
-func (q *Queries) GetWorkspaceAdmissionAuthority(ctx context.Context, arg GetWorkspaceAdmissionAuthorityParams) (GetWorkspaceAdmissionAuthorityRow, error) {
-	row := q.db.QueryRow(ctx, getWorkspaceAdmissionAuthority, arg.EnvironmentID, arg.ID)
-	var i GetWorkspaceAdmissionAuthorityRow
-	err := row.Scan(
-		&i.ID,
-		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.DeclarationKind,
-		&i.WorkspaceDeclaredID,
-		&i.DeploymentDefinitionID,
-		&i.Key,
-		&i.CreateIdempotencyKey,
-		&i.CreateIdempotencyExpiresAt,
-		&i.CreateRequestFingerprint,
-		&i.StateVersion,
-		&i.StopGeneration,
-		&i.OwnerActorID,
-		&i.OwnerRunID,
-		&i.OwnershipGeneration,
-		&i.WriterGeneration,
-		&i.HeadVersionID,
-		&i.State,
-		&i.DesiredState,
-		&i.DirtyState,
-		&i.Metadata,
-		&i.Tags,
-		&i.RetentionPolicy,
-		&i.LastActivityAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-		&i.WorkspaceArchitecture,
-		&i.HasActiveLease,
-		&i.HasActiveProcess,
-	)
-	return i, err
-}
-
 const getWorkspaceByCreateIdempotency = `-- name: GetWorkspaceByCreateIdempotency :one
 SELECT id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
   FROM workspaces
@@ -669,6 +558,118 @@ func (q *Queries) LockActorInputWorkspace(ctx context.Context, arg LockActorInpu
 	return i, err
 }
 
+const lockWorkspaceAdmissionAuthority = `-- name: LockWorkspaceAdmissionAuthority :one
+SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.region_id, workspaces.declaration_kind, workspaces.workspace_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.create_idempotency_key, workspaces.create_idempotency_expires_at, workspaces.create_request_fingerprint, workspaces.state_version, workspaces.stop_generation, workspaces.owner_actor_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at,
+       definitions.workspace_architecture,
+       EXISTS (
+           SELECT 1
+             FROM workspace_leases
+            WHERE workspace_leases.workspace_id = workspaces.id
+              AND workspace_leases.state IN ('active', 'releasing')
+       ) AS has_active_lease,
+       EXISTS (
+           SELECT 1
+             FROM workspace_processes
+            WHERE workspace_processes.workspace_id = workspaces.id
+              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+       ) AS has_active_process
+  FROM workspaces
+  JOIN deployment_definitions AS definitions
+    ON definitions.environment_id = workspaces.environment_id
+   AND definitions.id = workspaces.deployment_definition_id
+   AND definitions.kind = 'workspace'
+   AND definitions.declared_id = workspaces.workspace_declared_id
+  JOIN workspace_versions AS head
+    ON head.workspace_id = workspaces.id
+   AND head.id = workspaces.head_version_id
+   AND head.state = 'committed'
+ WHERE workspaces.environment_id = $1
+   AND workspaces.id = $2
+ FOR UPDATE OF workspaces
+`
+
+type LockWorkspaceAdmissionAuthorityParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+type LockWorkspaceAdmissionAuthorityRow struct {
+	ID                         pgtype.UUID           `json:"id"`
+	PublicID                   string                `json:"public_id"`
+	OrgID                      pgtype.UUID           `json:"org_id"`
+	ProjectID                  pgtype.UUID           `json:"project_id"`
+	EnvironmentID              pgtype.UUID           `json:"environment_id"`
+	RegionID                   string                `json:"region_id"`
+	DeclarationKind            pgtype.Text           `json:"declaration_kind"`
+	WorkspaceDeclaredID        pgtype.Text           `json:"workspace_declared_id"`
+	DeploymentDefinitionID     pgtype.UUID           `json:"deployment_definition_id"`
+	Key                        pgtype.Text           `json:"key"`
+	CreateIdempotencyKey       string                `json:"create_idempotency_key"`
+	CreateIdempotencyExpiresAt pgtype.Timestamptz    `json:"create_idempotency_expires_at"`
+	CreateRequestFingerprint   string                `json:"create_request_fingerprint"`
+	StateVersion               int64                 `json:"state_version"`
+	StopGeneration             int64                 `json:"stop_generation"`
+	OwnerActorID               pgtype.UUID           `json:"owner_actor_id"`
+	OwnerRunID                 pgtype.UUID           `json:"owner_run_id"`
+	OwnershipGeneration        int64                 `json:"ownership_generation"`
+	WriterGeneration           int64                 `json:"writer_generation"`
+	HeadVersionID              pgtype.UUID           `json:"head_version_id"`
+	State                      WorkspaceState        `json:"state"`
+	DesiredState               WorkspaceDesiredState `json:"desired_state"`
+	DirtyState                 WorkspaceDirtyState   `json:"dirty_state"`
+	Metadata                   []byte                `json:"metadata"`
+	Tags                       []string              `json:"tags"`
+	RetentionPolicy            []byte                `json:"retention_policy"`
+	LastActivityAt             pgtype.Timestamptz    `json:"last_activity_at"`
+	CreatedAt                  pgtype.Timestamptz    `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz    `json:"updated_at"`
+	DeletedAt                  pgtype.Timestamptz    `json:"deleted_at"`
+	WorkspaceArchitecture      pgtype.Text           `json:"workspace_architecture"`
+	HasActiveLease             bool                  `json:"has_active_lease"`
+	HasActiveProcess           bool                  `json:"has_active_process"`
+}
+
+func (q *Queries) LockWorkspaceAdmissionAuthority(ctx context.Context, arg LockWorkspaceAdmissionAuthorityParams) (LockWorkspaceAdmissionAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, lockWorkspaceAdmissionAuthority, arg.EnvironmentID, arg.ID)
+	var i LockWorkspaceAdmissionAuthorityRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.DeclarationKind,
+		&i.WorkspaceDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.Key,
+		&i.CreateIdempotencyKey,
+		&i.CreateIdempotencyExpiresAt,
+		&i.CreateRequestFingerprint,
+		&i.StateVersion,
+		&i.StopGeneration,
+		&i.OwnerActorID,
+		&i.OwnerRunID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.HeadVersionID,
+		&i.State,
+		&i.DesiredState,
+		&i.DirtyState,
+		&i.Metadata,
+		&i.Tags,
+		&i.RetentionPolicy,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.WorkspaceArchitecture,
+		&i.HasActiveLease,
+		&i.HasActiveProcess,
+	)
+	return i, err
+}
+
 const patchWorkspace = `-- name: PatchWorkspace :one
 UPDATE workspaces
    SET metadata = coalesce($1::jsonb, workspaces.metadata),
@@ -904,45 +905,6 @@ func (q *Queries) ReserveWorkspaceForRun(ctx context.Context, arg ReserveWorkspa
 	return i, err
 }
 
-const resolveActorStartWorkspace = `-- name: ResolveActorStartWorkspace :one
-SELECT id
-  FROM workspaces
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND deleted_at IS NULL
-   AND (
-       ($4::text IS NOT NULL
-        AND $5::text IS NULL
-        AND public_id = $4::text)
-       OR
-       ($4::text IS NULL
-        AND $5::text IS NOT NULL
-        AND key = $5::text)
-   )
-`
-
-type ResolveActorStartWorkspaceParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	PublicID      pgtype.Text `json:"public_id"`
-	Key           pgtype.Text `json:"key"`
-}
-
-func (q *Queries) ResolveActorStartWorkspace(ctx context.Context, arg ResolveActorStartWorkspaceParams) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, resolveActorStartWorkspace,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.PublicID,
-		arg.Key,
-	)
-	var id pgtype.UUID
-	err := row.Scan(&id)
-	return id, err
-}
-
 const resolveCurrentWorkspaceDefinitionForCreate = `-- name: ResolveCurrentWorkspaceDefinitionForCreate :one
 SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.workspace_architecture, deployment_definitions.artifact_id, deployment_definitions.created_at
   FROM deployment_definitions
@@ -1020,6 +982,45 @@ func (q *Queries) ResolveRunPinnedWorkspaceDefinitionForCreate(ctx context.Conte
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const resolveWorkspaceTarget = `-- name: ResolveWorkspaceTarget :one
+SELECT id
+  FROM workspaces
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND deleted_at IS NULL
+   AND (
+       ($4::text IS NOT NULL
+        AND $5::text IS NULL
+        AND public_id = $4::text)
+       OR
+       ($4::text IS NULL
+        AND $5::text IS NOT NULL
+        AND key = $5::text)
+   )
+`
+
+type ResolveWorkspaceTargetParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	PublicID      pgtype.Text `json:"public_id"`
+	Key           pgtype.Text `json:"key"`
+}
+
+func (q *Queries) ResolveWorkspaceTarget(ctx context.Context, arg ResolveWorkspaceTargetParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, resolveWorkspaceTarget,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.PublicID,
+		arg.Key,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const setWorkspaceDesiredStopped = `-- name: SetWorkspaceDesiredStopped :one

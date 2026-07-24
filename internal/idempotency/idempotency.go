@@ -35,6 +35,7 @@ const (
 	operationActorInputSend    operation = "actor.input.send"
 	operationActorOutputAppend operation = "actor.output.append"
 	operationActorClose        operation = "actor.close"
+	operationTaskStart         operation = "task.start"
 	operationTokenCreate       operation = "token.create"
 	operationTokenComplete     operation = "token.complete"
 	operationTokenCancel       operation = "token.cancel"
@@ -97,6 +98,19 @@ type TokenCreateFingerprint struct {
 	TimeoutMS *int64
 	Metadata  json.RawMessage
 	Tags      []string
+}
+
+type TaskStartFingerprint struct {
+	PayloadPresent bool
+	Payload        json.RawMessage
+	Workspace      json.RawMessage
+	QueueName      string
+	ConcurrencyKey *string
+	Priority       int32
+	QueuedTTLMS    *int64
+	RetryPolicy    json.RawMessage
+	Metadata       json.RawMessage
+	Tags           []string
 }
 
 type ConflictError struct {
@@ -256,7 +270,7 @@ func newTokenCreateRequest(
 	if environmentID == uuid.Nil {
 		return nil, errors.New("idempotency environment is required")
 	}
-	metadata, err := canonicalActorStartJSON(input.Metadata, `{}`)
+	metadata, err := canonicalJSONOr(input.Metadata, `{}`)
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize Token metadata: %w", err)
 	}
@@ -348,11 +362,11 @@ func NewActorStartRequest(
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize Actor start Workspace address: %w", err)
 	}
-	metadata, err := canonicalActorStartJSON(input.Metadata, `{}`)
+	metadata, err := canonicalJSONOr(input.Metadata, `{}`)
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize Actor metadata: %w", err)
 	}
-	runMetadata, err := canonicalActorStartJSON(input.ManagedRunMetadata, `{}`)
+	runMetadata, err := canonicalJSONOr(input.ManagedRunMetadata, `{}`)
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize managed Run metadata: %w", err)
 	}
@@ -419,7 +433,80 @@ func NewActorStartRequest(
 	}}, nil
 }
 
-func canonicalActorStartJSON(value json.RawMessage, fallback string) ([]byte, error) {
+func NewTaskStartRequest(
+	environmentID uuid.UUID,
+	taskDeclaredID string,
+	key string,
+	input TaskStartFingerprint,
+) (Request, error) {
+	if environmentID == uuid.Nil {
+		return nil, errors.New("idempotency environment is required")
+	}
+	if taskDeclaredID == "" {
+		return nil, errors.New("Task declared ID is required")
+	}
+	workspace, err := jsoncanon.Transform(input.Workspace)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize Task start Workspace: %w", err)
+	}
+	metadata, err := canonicalJSONOr(input.Metadata, `{}`)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize Task metadata: %w", err)
+	}
+	var payload json.RawMessage
+	if input.PayloadPresent {
+		payload, err = jsoncanon.Transform(input.Payload)
+		if err != nil {
+			return nil, fmt.Errorf("canonicalize Task payload: %w", err)
+		}
+	}
+	var retry json.RawMessage
+	if len(input.RetryPolicy) > 0 {
+		retry, err = jsoncanon.Transform(input.RetryPolicy)
+		if err != nil {
+			return nil, fmt.Errorf("canonicalize Task retry policy: %w", err)
+		}
+	}
+	fields, err := json.Marshal(struct {
+		TaskDeclaredID string          `json:"taskDeclaredId"`
+		PayloadPresent bool            `json:"payloadPresent"`
+		Payload        json.RawMessage `json:"payload"`
+		Workspace      json.RawMessage `json:"workspace"`
+		QueueName      string          `json:"queueName"`
+		ConcurrencyKey *string         `json:"concurrencyKey"`
+		Priority       int32           `json:"priority"`
+		QueuedTTLMS    *int64          `json:"queuedTtlMs"`
+		RetryPolicy    json.RawMessage `json:"retryPolicy"`
+		Metadata       json.RawMessage `json:"metadata"`
+		Tags           []string        `json:"tags"`
+	}{
+		TaskDeclaredID: taskDeclaredID,
+		PayloadPresent: input.PayloadPresent,
+		Payload:        payload, Workspace: workspace,
+		QueueName: input.QueueName, ConcurrencyKey: input.ConcurrencyKey,
+		Priority: input.Priority, QueuedTTLMS: input.QueuedTTLMS,
+		RetryPolicy: retry, Metadata: metadata,
+		Tags: append([]string{}, input.Tags...),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode Task start fingerprint: %w", err)
+	}
+	canonical, err := jsoncanon.Transform(fields)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize Task start fingerprint: %w", err)
+	}
+	return sealedRequest{value: request{
+		environmentID: environmentID,
+		operation:     operationTaskStart,
+		scope:         []byte(taskDeclaredID),
+		key:           key,
+		fingerprint: func(int32) ([sha256.Size]byte, error) {
+			return operationFingerprint(operationTaskStart, canonical, 0, nil), nil
+		},
+	}}, nil
+}
+
+func canonicalJSONOr(value json.RawMessage, fallback string) ([]byte, error) {
 	if len(value) == 0 {
 		value = json.RawMessage(fallback)
 	}
@@ -549,7 +636,7 @@ func supportedOperation(value operation) bool {
 	switch value {
 	case operationSecretCreate, operationSecretRotate, operationSecretRevoke,
 		operationActorStart, operationActorInputSend, operationActorOutputAppend, operationActorClose,
-		operationTokenCreate, operationTokenComplete, operationTokenCancel:
+		operationTaskStart, operationTokenCreate, operationTokenComplete, operationTokenCancel:
 		return true
 	default:
 		return false

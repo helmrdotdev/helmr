@@ -135,7 +135,7 @@ SELECT *
    AND id = sqlc.arg(id)
    AND deleted_at IS NULL;
 
--- name: ResolveActorStartWorkspace :one
+-- name: ResolveWorkspaceTarget :one
 SELECT id
   FROM workspaces
  WHERE org_id = sqlc.arg(org_id)
@@ -218,7 +218,7 @@ UPDATE workspaces
    AND workspaces.deleted_at IS NULL
 RETURNING *;
 
--- name: GetWorkspaceAdmissionAuthority :one
+-- name: LockWorkspaceAdmissionAuthority :one
 SELECT workspaces.*,
        definitions.workspace_architecture,
        EXISTS (
@@ -244,7 +244,8 @@ SELECT workspaces.*,
    AND head.id = workspaces.head_version_id
    AND head.state = 'committed'
  WHERE workspaces.environment_id = sqlc.arg(environment_id)
-   AND workspaces.id = sqlc.arg(id);
+   AND workspaces.id = sqlc.arg(id)
+ FOR UPDATE OF workspaces;
 
 -- name: LockActorInputWorkspace :one
 SELECT *

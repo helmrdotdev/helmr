@@ -8,6 +8,7 @@ import {
   type ActorManagedRunOptions,
   type ActorStatus,
   type JsonValue,
+  type HelmrClient,
   type PayloadSchema,
 } from "."
 
@@ -75,6 +76,15 @@ export function assertGreenfieldTypes(): void {
   )
   // @ts-expect-error a payload-bearing task always requires payload.
   payloadTask.start({ workspace: workspaces.ref({ key: "machine" }) })
+  const client = null as unknown as HelmrClient
+  client.tasks.start<typeof payloadTask>("payload", {
+    payload: { value: "ok" },
+    options: { workspace: workspaces.ref({ key: "machine" }) },
+  })
+  // @ts-expect-error the external typed Task envelope requires payload.
+  client.tasks.start<typeof payloadTask>("payload", {
+    options: { workspace: workspaces.ref({ key: "machine" }) },
+  })
 
   const noPayloadTask = task({
     id: "no-payload",
@@ -83,6 +93,14 @@ export function assertGreenfieldTypes(): void {
     },
   })
   noPayloadTask.start({ workspace: workspaces.ref({ key: "machine" }) })
+  client.tasks.start<typeof noPayloadTask>("no-payload", {
+    options: { workspace: workspaces.ref({ key: "machine" }) },
+  })
+  client.tasks.start<typeof noPayloadTask>("no-payload", {
+    // @ts-expect-error the external no-payload Task envelope forbids payload.
+    payload: null,
+    options: { workspace: workspaces.ref({ key: "machine" }) },
+  })
   // @ts-expect-error a no-payload task has no payload position.
   noPayloadTask.start(null, { workspace: workspaces.ref({ key: "machine" }) })
 

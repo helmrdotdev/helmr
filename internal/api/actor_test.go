@@ -61,7 +61,7 @@ func TestValidateSendActorInputRequestRejectsAmbiguousIJSON(t *testing.T) {
 func TestValidateStartActorRequestPreservesOptionalNullInput(t *testing.T) {
 	workspaceID := "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 	if err := ValidateStartActorRequest(StartActorRequest{
-		Workspace: StartActorWorkspaceTarget{ID: &workspaceID},
+		Workspace: WorkspaceTarget{ID: &workspaceID},
 		Input:     json.RawMessage(`null`),
 	}); err != nil {
 		t.Fatal(err)
@@ -153,22 +153,22 @@ func TestValidateStartActorRequestRejectsInvalidWorkspaceAndRetry(t *testing.T) 
 	emptyConcurrencyKey := ""
 	for _, request := range []StartActorRequest{
 		{},
-		{Workspace: StartActorWorkspaceTarget{ID: &workspaceID, Key: &workspaceKey}},
+		{Workspace: WorkspaceTarget{ID: &workspaceID, Key: &workspaceKey}},
 		{
-			Workspace: StartActorWorkspaceTarget{ID: &workspaceID},
+			Workspace: WorkspaceTarget{ID: &workspaceID},
 			Run: &StartActorRunOptions{
 				TTL:   "1h30m",
 				Retry: &StartActorRetryPolicy{MaxAttempts: &maxAttempts},
 			},
 		},
 		{
-			Workspace: StartActorWorkspaceTarget{ID: &workspaceID},
+			Workspace: WorkspaceTarget{ID: &workspaceID},
 			Run: &StartActorRunOptions{
 				ConcurrencyKey: &emptyConcurrencyKey,
 			},
 		},
 		{
-			Workspace: StartActorWorkspaceTarget{ID: &workspaceID},
+			Workspace: WorkspaceTarget{ID: &workspaceID},
 			Run: &StartActorRunOptions{
 				Retry: &StartActorRetryPolicy{
 					MaxAttempts: &maxAttempts,

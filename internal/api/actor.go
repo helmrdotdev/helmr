@@ -29,7 +29,7 @@ const (
 	MaxRetryDelayMilliseconds   = int64(24 * 60 * 60 * 1000)
 )
 
-type StartActorWorkspaceTarget struct {
+type WorkspaceTarget struct {
 	ID  *string `json:"id,omitempty"`
 	Key *string `json:"key,omitempty"`
 }
@@ -58,14 +58,14 @@ type StartActorRunOptions struct {
 }
 
 type StartActorRequest struct {
-	Key            *string                   `json:"key,omitempty"`
-	Input          json.RawMessage           `json:"input,omitempty"`
-	IdempotencyKey string                    `json:"idempotency_key,omitempty"`
-	Workspace      StartActorWorkspaceTarget `json:"workspace"`
-	Metadata       json.RawMessage           `json:"metadata,omitempty"`
-	Tags           []string                  `json:"tags,omitempty"`
-	ExpiresAt      *time.Time                `json:"expires_at,omitempty"`
-	Run            *StartActorRunOptions     `json:"run,omitempty"`
+	Key            *string               `json:"key,omitempty"`
+	Input          json.RawMessage       `json:"input,omitempty"`
+	IdempotencyKey string                `json:"idempotency_key,omitempty"`
+	Workspace      WorkspaceTarget       `json:"workspace"`
+	Metadata       json.RawMessage       `json:"metadata,omitempty"`
+	Tags           []string              `json:"tags,omitempty"`
+	ExpiresAt      *time.Time            `json:"expires_at,omitempty"`
+	Run            *StartActorRunOptions `json:"run,omitempty"`
 }
 
 type StartActorResponse struct {
@@ -326,7 +326,7 @@ func ValidateSendActorInputRequest(request SendActorInputRequest) error {
 }
 
 func ValidateStartActorRequest(request StartActorRequest) error {
-	if err := ValidateStartActorWorkspaceTarget(request.Workspace); err != nil {
+	if err := ValidateWorkspaceTarget(request.Workspace); err != nil {
 		return err
 	}
 	if request.Key != nil {
@@ -399,7 +399,7 @@ func ParseRFC3339NanosecondInstant(raw string) (time.Time, error) {
 	return value, nil
 }
 
-func ValidateStartActorWorkspaceTarget(workspace StartActorWorkspaceTarget) error {
+func ValidateWorkspaceTarget(workspace WorkspaceTarget) error {
 	hasWorkspaceID := workspace.ID != nil
 	hasWorkspaceKey := workspace.Key != nil
 	if hasWorkspaceID == hasWorkspaceKey {

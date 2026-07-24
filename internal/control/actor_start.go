@@ -26,8 +26,7 @@ import (
 const (
 	maxActorMetadataBytes = 64 << 10
 	maxRunMetadataBytes   = 256 << 10
-	maxActorTags          = 10
-	maxActorTagBytes      = 128
+	maxTags               = 10
 	maxQueuedRunTTLMS     = int64(31_536_000_000)
 )
 
@@ -54,7 +53,7 @@ type actorStartRequest struct {
 	ProjectID             uuid.UUID
 	EnvironmentID         uuid.UUID
 	ActorDeclaredID       string
-	Workspace             api.StartActorWorkspaceTarget
+	Workspace             api.WorkspaceTarget
 	Key                   *string
 	InputPresent          bool
 	Input                 json.RawMessage
@@ -162,7 +161,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			return fmt.Errorf("%w: expiresAt must be in the future", errActorStartInvalid)
 		}
 
-		workspaceID, err := work.q.ResolveActorStartWorkspace(ctx, db.ResolveActorStartWorkspaceParams{
+		workspaceID, err := work.q.ResolveWorkspaceTarget(ctx, db.ResolveWorkspaceTargetParams{
 			OrgID:         pgvalue.UUID(normalized.OrgID),
 			ProjectID:     pgvalue.UUID(normalized.ProjectID),
 			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
@@ -206,13 +205,11 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			}
 		}
 
-		authority, err := work.q.LockActorStartWorkspaceAuthority(
+		authority, err := work.q.LockWorkspaceAdmissionAuthority(
 			ctx,
-			db.LockActorStartWorkspaceAuthorityParams{
-				WorkspaceID:   workspaceID,
-				OrgID:         pgvalue.UUID(normalized.OrgID),
-				ProjectID:     pgvalue.UUID(normalized.ProjectID),
+			db.LockWorkspaceAdmissionAuthorityParams{
 				EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
+				ID:            workspaceID,
 			},
 		)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -221,10 +218,12 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		if err != nil {
 			return fmt.Errorf("lock Actor start Workspace authority: %w", err)
 		}
-		if authority.WorkspaceState != db.WorkspaceStateActive ||
-			(authority.WorkspaceDesiredState != db.WorkspaceDesiredStateActive &&
-				authority.WorkspaceDesiredState != db.WorkspaceDesiredStateStopped) ||
-			authority.WorkspaceDirtyState != db.WorkspaceDirtyStateClean ||
+		if authority.OrgID != pgvalue.UUID(normalized.OrgID) ||
+			authority.ProjectID != pgvalue.UUID(normalized.ProjectID) ||
+			authority.State != db.WorkspaceStateActive ||
+			(authority.DesiredState != db.WorkspaceDesiredStateActive &&
+				authority.DesiredState != db.WorkspaceDesiredStateStopped) ||
+			authority.DirtyState != db.WorkspaceDirtyStateClean ||
 			!authority.HeadVersionID.Valid ||
 			authority.OwnerActorID.Valid || authority.OwnerRunID.Valid ||
 			authority.HasActiveLease || authority.HasActiveProcess {
@@ -284,7 +283,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			ManagedRunMetadata:         normalized.ManagedRunMetadata, ManagedRunTags: normalized.ManagedRunTags,
 			ExpiresAt: pgvalue.TimestamptzUTCZeroInvalid(timePtrValue(normalized.ExpiresAt)),
 			Metadata:  normalized.Metadata, Tags: normalized.Tags,
-			WorkspaceID: authority.WorkspaceID, EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
+			WorkspaceID: authority.ID, EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
 			DeploymentDefinitionID: deploymentAuthority.ActorDefinitionID, ActorDeclaredID: normalized.ActorDeclaredID,
 		})
 		if err != nil {
@@ -319,7 +318,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		}
 		run, err := work.q.CreateActorStartRun(ctx, db.CreateActorStartRunParams{
 			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID), ActorID: pgvalue.UUID(actorID),
-			WorkspaceID: authority.WorkspaceID, ClaimID: claimID,
+			WorkspaceID: authority.ID, ClaimID: claimID,
 			ID: pgvalue.UUID(runID), PublicID: runPublicID,
 			BaseWorkspaceVersionID: authority.HeadVersionID,
 			InputHighWatermark:     pgtype.Int8{Int64: inputHighWatermark, Valid: true},
@@ -330,13 +329,13 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		}
 		if _, err := work.q.SetActorCurrentRun(ctx, db.SetActorCurrentRunParams{
 			RunID: run.ID, EnvironmentID: run.EnvironmentID,
-			ID: pgvalue.UUID(actorID), WorkspaceID: authority.WorkspaceID,
+			ID: pgvalue.UUID(actorID), WorkspaceID: authority.ID,
 		}); err != nil {
 			return fmt.Errorf("install Actor boot Run: %w", err)
 		}
 		if _, err := work.q.ReserveWorkspaceForActor(ctx, db.ReserveWorkspaceForActorParams{
 			ActorID: pgvalue.UUID(actorID), EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
-			ID: authority.WorkspaceID, ExpectedStateVersion: authority.WorkspaceStateVersion,
+			ID: authority.ID, ExpectedStateVersion: authority.StateVersion,
 			ExpectedHeadVersionID: authority.HeadVersionID,
 		}); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -346,7 +345,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		}
 		for _, binding := range bindings {
 			if _, err := work.q.CreateSecretResolution(ctx, db.CreateSecretResolutionParams{
-				ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: authority.WorkspaceID,
+				ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: authority.ID,
 				RunID: run.ID, AttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
 				PlacementKind: binding.PlacementKind, PlacementTarget: binding.PlacementTarget,
 				SecretID: binding.SecretID, SecretVersionID: binding.CurrentVersionID,
@@ -356,7 +355,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			}
 		}
 		if _, err := work.q.CreateRunAdmissionOutbox(ctx, db.CreateRunAdmissionOutboxParams{
-			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: authority.WorkspaceID,
+			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: authority.ID,
 			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID), RunID: run.ID,
 		}); err != nil {
 			return fmt.Errorf("create Actor boot Run admission outbox: %w", err)
@@ -420,19 +419,19 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 	} else {
 		request.Input = nil
 	}
-	request.Metadata, err = normalizeActorMetadata(request.Metadata, maxActorMetadataBytes, "Actor")
+	request.Metadata, err = normalizeMetadata(request.Metadata, maxActorMetadataBytes, "Actor")
 	if err != nil {
 		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
 	}
-	request.ManagedRunMetadata, err = normalizeActorMetadata(request.ManagedRunMetadata, maxRunMetadataBytes, "managed Run")
+	request.ManagedRunMetadata, err = normalizeMetadata(request.ManagedRunMetadata, maxRunMetadataBytes, "managed Run")
 	if err != nil {
 		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
 	}
-	request.Tags, err = normalizeActorTags(request.Tags, "Actor")
+	request.Tags, err = normalizeTags(request.Tags, maxTags, "Actor")
 	if err != nil {
 		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
 	}
-	request.ManagedRunTags, err = normalizeActorTags(request.ManagedRunTags, "managed Run")
+	request.ManagedRunTags, err = normalizeTags(request.ManagedRunTags, maxTags, "managed Run")
 	if err != nil {
 		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
 	}
@@ -483,7 +482,7 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 	return normalizedActorStart{actorStartRequest: request, fingerprint: fingerprint}, nil
 }
 
-func normalizeActorMetadata(raw json.RawMessage, limit int, label string) ([]byte, error) {
+func normalizeMetadata(raw json.RawMessage, limit int, label string) ([]byte, error) {
 	if len(raw) == 0 {
 		raw = json.RawMessage(`{}`)
 	}
@@ -497,13 +496,13 @@ func normalizeActorMetadata(raw json.RawMessage, limit int, label string) ([]byt
 	return canonical, nil
 }
 
-func normalizeActorTags(raw []string, label string) ([]string, error) {
+func normalizeTags(raw []string, limit int, label string) ([]string, error) {
 	seen := make(map[string]struct{}, len(raw))
 	tags := make([]string, 0, len(raw))
 	for _, tag := range raw {
 		trimmed := strings.TrimSpace(tag)
-		if trimmed == "" || len([]byte(trimmed)) > maxActorTagBytes || !utf8.ValidString(trimmed) {
-			return nil, fmt.Errorf("%s tags must be nonempty UTF-8 strings no larger than %d bytes", label, maxActorTagBytes)
+		if trimmed == "" || len([]byte(trimmed)) > maxTagBytes || !utf8.ValidString(trimmed) {
+			return nil, fmt.Errorf("%s tags must be nonempty UTF-8 strings no larger than %d bytes", label, maxTagBytes)
 		}
 		if _, exists := seen[trimmed]; exists {
 			continue
@@ -511,8 +510,8 @@ func normalizeActorTags(raw []string, label string) ([]string, error) {
 		seen[trimmed] = struct{}{}
 		tags = append(tags, trimmed)
 	}
-	if len(tags) > maxActorTags {
-		return nil, fmt.Errorf("%s tags must contain at most %d values", label, maxActorTags)
+	if len(tags) > limit {
+		return nil, fmt.Errorf("%s tags must contain at most %d values", label, limit)
 	}
 	sort.Strings(tags)
 	return tags, nil

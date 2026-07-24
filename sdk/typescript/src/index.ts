@@ -9,6 +9,8 @@ export { tokens } from "./tokens"
 export { workspace, workspaces } from "./workspace"
 
 export type {
+  ClientTasksApi,
+  ClientTaskStartRequest,
   ClientTokenCreateOptions,
   ClientTokenCreateResult,
   ClientTokensApi,

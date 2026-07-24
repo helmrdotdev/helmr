@@ -435,6 +435,48 @@ func TestActorStartRequestUsesDeclaredIDScopeAndCanonicalCallerSemantics(t *test
 	}
 }
 
+func TestTaskStartRequestUsesDeclaredIDScopeAndCanonicalCallerSemantics(t *testing.T) {
+	environmentID := uuid.MustParse("00000000-0000-0000-0000-000000000301")
+	first, err := NewTaskStartRequest(environmentID, "resize-image", "image-1", TaskStartFingerprint{
+		PayloadPresent: true,
+		Payload:        json.RawMessage(`{"source":"s3","size":1}`),
+		Workspace:      json.RawMessage(`{"id":"wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa"}`),
+		QueueName:      "default",
+		Metadata:       json.RawMessage(`{"b":2,"a":1}`),
+		Tags:           []string{"image", "resize"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewTaskStartRequest(environmentID, "resize-image", "image-1", TaskStartFingerprint{
+		PayloadPresent: true,
+		Payload:        json.RawMessage(`{"size":1.0,"source":"s3"}`),
+		Workspace:      json.RawMessage(`{"id":"wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa"}`),
+		QueueName:      "default",
+		Metadata:       json.RawMessage(`{"a":1.0,"b":2}`),
+		Tags:           []string{"image", "resize"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstValue := first.idempotencyRequest()
+	secondValue := second.idempotencyRequest()
+	firstFingerprint, err := firstValue.fingerprint(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondFingerprint, err := secondValue.fingerprint(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstValue.operation != operationTaskStart || string(firstValue.scope) != "resize-image" {
+		t.Fatalf("operation = %q scope = %q", firstValue.operation, firstValue.scope)
+	}
+	if firstFingerprint != secondFingerprint {
+		t.Fatalf("canonical-equivalent Task start fingerprints differ: %x != %x", firstFingerprint, secondFingerprint)
+	}
+}
+
 func testManager(t *testing.T) Manager {
 	t.Helper()
 	hashes, err := keyedhash.New(map[int32][]byte{

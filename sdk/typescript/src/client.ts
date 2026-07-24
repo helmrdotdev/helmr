@@ -1,4 +1,14 @@
-import type { CursorPage, JsonValue, Metadata } from "./contract"
+import type {
+  CursorPage,
+  JsonValue,
+  Metadata,
+  RunHandle,
+  TaskDefinition,
+  TaskHasPayload,
+  TaskPayloadInput,
+  TaskStartOptions,
+} from "./contract"
+import { validateTaskId } from "./schema/task"
 import type {
   TokenCreateOptions,
   TokenSnapshot,
@@ -44,12 +54,68 @@ export interface ClientTokensApi {
   }>): Promise<TokenSnapshot>
 }
 
+export type ClientTaskStartRequest<TTask extends TaskDefinition> =
+  TaskHasPayload<TTask> extends true
+    ? Readonly<{
+        payload: TaskPayloadInput<TTask>
+        options: TaskStartOptions
+      }>
+    : Readonly<{
+        payload?: never
+        options: TaskStartOptions
+      }>
+
+export interface ClientTasksApi {
+  start<TTask extends TaskDefinition>(
+    taskDeclaredId: string,
+    request: ClientTaskStartRequest<TTask>,
+  ): Promise<RunHandle>
+}
+
 export class HelmrClient {
+  readonly tasks: ClientTasksApi
   readonly tokens: ClientTokensApi
 
   constructor(options: HelmrClientOptions) {
     const transport = new ClientTransport(options)
+    this.tasks = Object.freeze(new ClientTasks(transport))
     this.tokens = Object.freeze(new ClientTokens(transport))
+  }
+}
+
+class ClientTasks implements ClientTasksApi {
+  readonly #transport: ClientTransport
+
+  constructor(transport: ClientTransport) {
+    this.#transport = transport
+  }
+
+  async start<TTask extends TaskDefinition>(
+    taskDeclaredId: string,
+    request: ClientTaskStartRequest<TTask>,
+  ): Promise<RunHandle> {
+    validateTaskId(taskDeclaredId)
+    const response = objectValue(
+      await this.#transport.request(
+        "POST",
+        `/api/tasks/${encodeURIComponent(taskDeclaredId)}/start`,
+        {
+          body: {
+            ...("payload" in request ? { payload: request.payload } : {}),
+            options: taskStartOptions(request.options),
+          },
+          ...(request.options.signal === undefined
+            ? {}
+            : { signal: request.options.signal }),
+        },
+      ),
+      "Task start response",
+    )
+    const runId = response["run_id"]
+    if (typeof runId !== "string" || !/^run_[a-z2-7]{26}$/.test(runId)) {
+      throw new Error("Task start response.run_id must be a canonical Run public ID")
+    }
+    return Object.freeze({ id: runId })
   }
 }
 
@@ -162,6 +228,55 @@ class ClientTokens implements ClientTokensApi {
       ),
       false,
     )
+  }
+}
+
+function taskStartOptions(options: TaskStartOptions): Record<string, unknown> {
+  return {
+    workspace: "id" in options.workspace
+      ? { id: options.workspace.id }
+      : { key: options.workspace.key },
+    ...(options.idempotencyKey === undefined
+      ? {}
+      : { idempotency_key: options.idempotencyKey }),
+    ...(options.queue === undefined ? {} : { queue: options.queue }),
+    ...(options.concurrencyKey === undefined
+      ? {}
+      : { concurrency_key: options.concurrencyKey }),
+    ...(options.priority === undefined ? {} : { priority: options.priority }),
+    ...(options.ttl === undefined ? {} : { ttl: options.ttl }),
+    ...(options.retry === undefined
+      ? {}
+      : {
+          retry: options.retry.enabled === false
+            ? { enabled: false }
+            : {
+                ...(options.retry.enabled === undefined
+                  ? {}
+                  : { enabled: options.retry.enabled }),
+                max_attempts: options.retry.maxAttempts,
+                ...(options.retry.backoff === undefined
+                  ? {}
+                  : {
+                      backoff: {
+                        ...(options.retry.backoff.minDelay === undefined
+                          ? {}
+                          : { min_delay: options.retry.backoff.minDelay }),
+                        ...(options.retry.backoff.maxDelay === undefined
+                          ? {}
+                          : { max_delay: options.retry.backoff.maxDelay }),
+                        ...(options.retry.backoff.factor === undefined
+                          ? {}
+                          : { factor: options.retry.backoff.factor }),
+                        ...(options.retry.backoff.jitter === undefined
+                          ? {}
+                          : { jitter: options.retry.backoff.jitter }),
+                      },
+                    }),
+              },
+        }),
+    ...(options.metadata === undefined ? {} : { metadata: options.metadata }),
+    ...(options.tags === undefined ? {} : { tags: [...options.tags] }),
   }
 }
 

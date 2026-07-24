@@ -19,7 +19,7 @@ func TestNormalizeActorStartCanonicalizesAnnotationsAndPreservesInputPresence(t 
 	normalized, err := normalizeActorStart(actorStartRequest{
 		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
 		EnvironmentID:   uuid.Must(uuid.NewV7()),
-		ActorDeclaredID: "operator.v1", Workspace: api.StartActorWorkspaceTarget{ID: &workspaceID},
+		ActorDeclaredID: "operator.v1", Workspace: api.WorkspaceTarget{ID: &workspaceID},
 		Key: &key, InputPresent: true, Input: json.RawMessage(`null`),
 		Metadata: json.RawMessage(`{"b":2,"a":1}`), Tags: []string{" beta ", "alpha", "alpha"},
 		ManagedQueueName: "default", ManagedQueuedTTLMS: &ttl,
@@ -49,7 +49,7 @@ func TestNormalizeActorStartLimitsNormalizedTagSet(t *testing.T) {
 	request := actorStartRequest{
 		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
 		EnvironmentID:   uuid.Must(uuid.NewV7()),
-		ActorDeclaredID: "operator.v1", Workspace: api.StartActorWorkspaceTarget{ID: &workspaceID},
+		ActorDeclaredID: "operator.v1", Workspace: api.WorkspaceTarget{ID: &workspaceID},
 		Tags: []string{"same", "same", "same", "same", "same", "same", "same", "same", "same", "same", "same"},
 	}
 	normalized, err := normalizeActorStart(request)
@@ -66,7 +66,7 @@ func TestNormalizeActorStartRejectsInvalidCallerOverridesAndOversizeFields(t *te
 	base := actorStartRequest{
 		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
 		EnvironmentID:   uuid.Must(uuid.NewV7()),
-		ActorDeclaredID: "operator.v1", Workspace: api.StartActorWorkspaceTarget{ID: &workspaceID},
+		ActorDeclaredID: "operator.v1", Workspace: api.WorkspaceTarget{ID: &workspaceID},
 		ManagedQueueName: "default",
 	}
 	tooLongTTL := maxQueuedRunTTLMS + 1
@@ -81,7 +81,7 @@ func TestNormalizeActorStartRejectsInvalidCallerOverridesAndOversizeFields(t *te
 		t.Fatalf("retry error = %v", err)
 	}
 	oversize := base
-	oversize.Tags = []string{string(make([]byte, maxActorTagBytes+1))}
+	oversize.Tags = []string{string(make([]byte, maxTagBytes+1))}
 	if _, err := normalizeActorStart(oversize); !errors.Is(err, errActorStartInvalid) {
 		t.Fatalf("oversize tag error = %v", err)
 	}
@@ -92,7 +92,7 @@ func TestNormalizeActorStartUsesExactConcurrencyKeyBoundaryDomain(t *testing.T) 
 	base := actorStartRequest{
 		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
 		EnvironmentID:   uuid.Must(uuid.NewV7()),
-		ActorDeclaredID: "operator.v1", Workspace: api.StartActorWorkspaceTarget{ID: &workspaceID},
+		ActorDeclaredID: "operator.v1", Workspace: api.WorkspaceTarget{ID: &workspaceID},
 	}
 	nonBreakingSpace := "\u00a0opaque\u00a0"
 	base.ManagedConcurrencyKey = &nonBreakingSpace

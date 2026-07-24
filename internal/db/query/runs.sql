@@ -1,3 +1,36 @@
+-- name: GetRunAdmissionTime :one
+SELECT transaction_timestamp()::timestamptz;
+
+-- name: LockTaskStartDeploymentAuthority :one
+SELECT task_definition.id AS task_definition_id,
+       task_definition.deployment_id,
+       task_definition.manifest_version AS task_manifest_version,
+       task_definition.manifest AS task_manifest,
+       task_definition.manifest_digest AS task_manifest_digest,
+       deployments.queue_config,
+       deployments.program_architecture
+  FROM environments
+  JOIN deployment_definitions AS task_definition
+    ON task_definition.environment_id = environments.id
+   AND task_definition.deployment_id = environments.current_deployment_id
+   AND task_definition.kind = 'task'
+   AND task_definition.declared_id = sqlc.arg(task_declared_id)
+  JOIN deployments
+    ON deployments.org_id = environments.org_id
+   AND deployments.project_id = environments.project_id
+   AND deployments.environment_id = environments.id
+   AND deployments.id = task_definition.deployment_id
+   AND deployments.status = 'deployed'
+   AND deployments.program_artifact_id IS NOT NULL
+   AND deployments.program_runtime_digest IS NOT NULL
+   AND deployments.program_architecture IS NOT NULL
+   AND deployments.program_architecture = deployments.build_architecture
+   AND deployments.program_runtime_digest = deployments.build_runtime_digest
+ WHERE environments.org_id = sqlc.arg(org_id)
+   AND environments.project_id = sqlc.arg(project_id)
+   AND environments.id = sqlc.arg(environment_id)
+ FOR UPDATE OF environments;
+
 -- name: CreateRootRunFromCurrentDeployment :one
 WITH selected_target AS MATERIALIZED (
     SELECT definitions.environment_id,

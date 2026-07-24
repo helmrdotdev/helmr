@@ -50,7 +50,7 @@ func (s *Server) startActorHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_actor_start", message: err.Error()}))
 		return
 	}
-	if err := api.ValidateStartActorWorkspaceTarget(request.Workspace); err != nil {
+	if err := api.ValidateWorkspaceTarget(request.Workspace); err != nil {
 		writeError(w, badRequest(codedError{
 			code:    "invalid_workspace_reference",
 			message: err.Error(),

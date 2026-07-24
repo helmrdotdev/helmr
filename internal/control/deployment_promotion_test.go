@@ -155,9 +155,9 @@ func (s *promotionScheduleStore) ListDeploymentDefinitionsForDeployment(
 	return s.definitions, nil
 }
 
-func (s *promotionScheduleStore) ResolveActorStartWorkspace(
+func (s *promotionScheduleStore) ResolveWorkspaceTarget(
 	context.Context,
-	db.ResolveActorStartWorkspaceParams,
+	db.ResolveWorkspaceTargetParams,
 ) (pgtype.UUID, error) {
 	if s.workspaceErr != nil {
 		return pgtype.UUID{}, s.workspaceErr

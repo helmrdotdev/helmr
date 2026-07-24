@@ -267,14 +267,14 @@ func resolveScheduleWorkspace(
 	target db.Deployment,
 	address deployment.WorkspaceTarget,
 ) (pgtype.UUID, pgtype.Text, pgtype.UUID, string, error) {
-	params := db.ResolveActorStartWorkspaceParams{
+	params := db.ResolveWorkspaceTargetParams{
 		OrgID:         target.OrgID,
 		ProjectID:     target.ProjectID,
 		EnvironmentID: target.EnvironmentID,
 	}
 	if address.ID != nil {
 		params.PublicID = pgvalue.Text(*address.ID)
-		workspaceID, err := store.ResolveActorStartWorkspace(ctx, params)
+		workspaceID, err := store.ResolveWorkspaceTarget(ctx, params)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return pgtype.UUID{}, pgtype.Text{}, pgtype.UUID{}, "", badRequest(
 				fmt.Errorf("ID-addressed Workspace %q does not exist", *address.ID),
@@ -283,7 +283,7 @@ func resolveScheduleWorkspace(
 		return workspaceID, pgtype.Text{}, workspaceID, "active", err
 	}
 	params.Key = pgvalue.Text(*address.Key)
-	workspaceID, err := store.ResolveActorStartWorkspace(ctx, params)
+	workspaceID, err := store.ResolveWorkspaceTarget(ctx, params)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pgtype.UUID{}, params.Key, pgtype.UUID{}, "pending_workspace", nil
 	}

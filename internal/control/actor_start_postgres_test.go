@@ -339,7 +339,7 @@ func TestActorStartPostgresNoInputBootsAtZeroHighWatermark(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
 	key := "no-input"
 	request := fixture.request(0, &key, "no-input-1")
-	request.Workspace = api.StartActorWorkspaceTarget{Key: &fixture.workspaceKeys[0]}
+	request.Workspace = api.WorkspaceTarget{Key: &fixture.workspaceKeys[0]}
 	request.ManagedQueueName = "priority"
 	created, err := fixture.server.startActor(t.Context(), request)
 	if err != nil {
@@ -431,7 +431,7 @@ func (fixture actorStartPostgresFixture) request(index int, key *string, idempot
 	return actorStartRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
 		ActorDeclaredID: "operator.v1",
-		Workspace:       api.StartActorWorkspaceTarget{ID: &workspaceID},
+		Workspace:       api.WorkspaceTarget{ID: &workspaceID},
 		Key:             key, IdempotencyKey: idempotencyKey,
 	}
 }
@@ -583,6 +583,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	deploymentID := uuid.Must(uuid.NewV7())
 	fixture.deploymentID = deploymentID
 	actorDefinitionID := uuid.Must(uuid.NewV7())
+	taskDefinitionID := uuid.Must(uuid.NewV7())
 	workspaceDefinitionID := uuid.Must(uuid.NewV7())
 	sourceID, programID, imageID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()),
 		uuid.Must(uuid.NewV7())
@@ -616,7 +617,14 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	actorManifest := []byte(
 		`{"idleTimeoutMs":30000,"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`,
 	)
+	taskManifest := []byte(
+		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`,
+	)
 	_, actorManifestDigest, err := deployment.CanonicalManifestAndDigest(actorManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, taskManifestDigest, err := deployment.CanonicalManifestAndDigest(taskManifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -669,10 +677,12 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		    id, environment_id, deployment_id, kind, declared_id,
 		    manifest_version, manifest, manifest_digest, workspace_architecture, artifact_id
 		) VALUES
-		    ($1, $3, $4, 'actor', 'operator.v1', 0, $6::jsonb, $7, NULL, NULL),
-		    ($2, $3, $4, 'workspace', 'workspace.v1', 0, '{}'::jsonb, decode(repeat('04', 32), 'hex'), 'x86_64', $5)
-	`, actorDefinitionID, workspaceDefinitionID, fixture.environmentID, deploymentID, imageID,
-		actorManifest, actorManifestDigest[:])
+		    ($1, $4, $5, 'actor', 'operator.v1', 0, $7::jsonb, $8, NULL, NULL),
+		    ($2, $4, $5, 'task', 'resize-image', 0, $9::jsonb, $10, NULL, NULL),
+		    ($3, $4, $5, 'workspace', 'workspace.v1', 0, '{}'::jsonb, decode(repeat('04', 32), 'hex'), 'x86_64', $6)
+	`, actorDefinitionID, taskDefinitionID, workspaceDefinitionID,
+		fixture.environmentID, deploymentID, imageID,
+		actorManifest, actorManifestDigest[:], taskManifest, taskManifestDigest[:])
 	mustActorStartExec(t, pool, `
 		UPDATE environments SET current_deployment_id = $1 WHERE id = $2
 	`, deploymentID, fixture.environmentID)
