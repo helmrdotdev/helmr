@@ -2,12 +2,19 @@ import type {
   CursorPage,
   JsonValue,
   Metadata,
+  RunError,
   RunHandle,
+  RunSnapshot,
+  RunStatus,
   TaskDefinition,
   TaskHasPayload,
+  TaskOutput,
   TaskPayloadInput,
+  TaskResult,
   TaskStartOptions,
+  TaskWait,
 } from "./contract"
+import { runtimeOperationsInstalled } from "./internal/runtime"
 import { validateTaskId } from "./schema/task"
 import type {
   TokenCreateOptions,
@@ -72,13 +79,39 @@ export interface ClientTasksApi {
   ): Promise<RunHandle>
 }
 
+export interface ClientRunRetrieveOptions {
+  readonly signal?: AbortSignal
+}
+
+export interface ClientRunListOptions extends ClientRunRetrieveOptions {
+  readonly status?: RunStatus | readonly RunStatus[]
+  readonly cursor?: string
+  readonly limit?: number
+}
+
+export interface ClientRunsApi {
+  retrieve<TOutput extends JsonValue = JsonValue>(
+    runId: string,
+    options?: ClientRunRetrieveOptions,
+  ): Promise<RunSnapshot<TOutput>>
+  list(
+    options?: ClientRunListOptions,
+  ): Promise<CursorPage<RunSnapshot<JsonValue>>>
+  wait<TTask extends TaskDefinition = TaskDefinition>(
+    runId: string,
+    options?: ClientRunRetrieveOptions,
+  ): TaskWait<TaskOutput<TTask>>
+}
+
 export class HelmrClient {
   readonly tasks: ClientTasksApi
+  readonly runs: ClientRunsApi
   readonly tokens: ClientTokensApi
 
   constructor(options: HelmrClientOptions) {
     const transport = new ClientTransport(options)
     this.tasks = Object.freeze(new ClientTasks(transport))
+    this.runs = Object.freeze(new ClientRuns(transport))
     this.tokens = Object.freeze(new ClientTokens(transport))
   }
 }
@@ -116,6 +149,114 @@ class ClientTasks implements ClientTasksApi {
       throw new Error("Task start response.run_id must be a canonical Run public ID")
     }
     return Object.freeze({ id: runId })
+  }
+}
+
+class ClientRuns implements ClientRunsApi {
+  readonly #transport: ClientTransport
+
+  constructor(transport: ClientTransport) {
+    this.#transport = transport
+  }
+
+  async retrieve<TOutput extends JsonValue = JsonValue>(
+    runId: string,
+    options: ClientRunRetrieveOptions = {},
+  ): Promise<RunSnapshot<TOutput>> {
+    return parseRunSnapshot<TOutput>(
+      await this.#transport.request(
+        "GET",
+        `/api/runs/${encodeURIComponent(runID(runId))}`,
+        options.signal === undefined ? {} : { signal: options.signal },
+      ),
+    )
+  }
+
+  async list(
+    options: ClientRunListOptions = {},
+  ): Promise<CursorPage<RunSnapshot<JsonValue>>> {
+    const query = new URLSearchParams()
+    const statuses = options.status === undefined
+      ? []
+      : Array.isArray(options.status)
+      ? options.status
+      : [options.status]
+    for (const status of statuses) query.append("status", runStatus(status))
+    if (options.cursor !== undefined) query.set("cursor", options.cursor)
+    if (options.limit !== undefined) query.set("limit", String(options.limit))
+    const suffix = query.size === 0 ? "" : `?${query.toString()}`
+    const response = objectValue(
+      await this.#transport.request("GET", `/api/runs${suffix}`, {
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      }),
+      "Run list response",
+    )
+    if (!Array.isArray(response["runs"])) {
+      throw new Error("Run list response.runs must be an array")
+    }
+    const nextCursor = response["next_cursor"]
+    if (nextCursor !== undefined && typeof nextCursor !== "string") {
+      throw new Error("Run list response.next_cursor must be a string")
+    }
+    return Object.freeze({
+      items: Object.freeze(response["runs"].map((run) => parseRunSnapshot(run))),
+      ...(nextCursor === undefined ? {} : { nextCursor }),
+    })
+  }
+
+  wait<TTask extends TaskDefinition = TaskDefinition>(
+    runId: string,
+    options: ClientRunRetrieveOptions = {},
+  ): TaskWait<TaskOutput<TTask>> {
+    if (runtimeOperationsInstalled()) {
+      throw new Error(
+        "client.runs.wait() is unavailable inside an active Helmr Run; use task.call()",
+      )
+    }
+    const id = runID(runId)
+    const result = this.#waitForTerminal<TaskOutput<TTask>>(id, options)
+    return Object.freeze({
+      then<TResult1 = TaskResult<TaskOutput<TTask>>, TResult2 = never>(
+        onfulfilled?: ((value: TaskResult<TaskOutput<TTask>>) => TResult1 | PromiseLike<TResult1>) | null,
+        onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+      ): PromiseLike<TResult1 | TResult2> {
+        return result.then(onfulfilled, onrejected)
+      },
+      async unwrap(): Promise<TaskOutput<TTask>> {
+        const settled = await result
+        if (!settled.ok) throw settled.error
+        return settled.output
+      },
+    })
+  }
+
+  async #waitForTerminal<TOutput extends JsonValue>(
+    runId: string,
+    options: ClientRunRetrieveOptions,
+  ): Promise<TaskResult<TOutput>> {
+    let delayMilliseconds = 250
+    while (true) {
+      options.signal?.throwIfAborted()
+      const snapshot = await this.retrieve<TOutput>(runId, options)
+      if (snapshot.status === "succeeded") {
+        if (!("output" in snapshot)) {
+          throw new Error("Succeeded Run response must include output")
+        }
+        return Object.freeze({
+          ok: true, output: snapshot.output, run: Object.freeze({ id: snapshot.id }),
+        })
+      }
+      if (runStatusIsTerminal(snapshot.status)) {
+        if (snapshot.error === undefined) {
+          throw new Error("Non-success terminal Run response must include error")
+        }
+        return Object.freeze({
+          ok: false, error: snapshot.error, run: Object.freeze({ id: snapshot.id }),
+        })
+      }
+      await abortableDelay(delayMilliseconds, options.signal)
+      delayMilliseconds = Math.min(delayMilliseconds * 2, 2_000)
+    }
   }
 }
 
@@ -397,6 +538,203 @@ function tokenID(value: string): string {
   return normalized
 }
 
+function runID(value: string): string {
+  const normalized = value.trim()
+  if (!/^run_[a-z2-7]{26}$/.test(normalized)) {
+    throw new Error("Run ID must be a canonical run_ public ID")
+  }
+  return normalized
+}
+
+function runStatus(value: string): RunStatus {
+  switch (value) {
+    case "queued":
+    case "running":
+    case "waiting":
+    case "retry-delayed":
+    case "cancel-requested":
+    case "succeeded":
+    case "failed":
+    case "cancelled":
+    case "expired":
+    case "system-failed":
+      return value
+    default:
+      throw new Error(`Run status ${JSON.stringify(value)} is invalid`)
+  }
+}
+
+function runStatusIsTerminal(status: RunStatus): boolean {
+  return status === "succeeded" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "expired" ||
+    status === "system-failed"
+}
+
+function parseRunSnapshot<TOutput extends JsonValue = JsonValue>(
+  value: unknown,
+): RunSnapshot<TOutput> {
+  const run = objectValue(value, "Run response")
+  const status = runStatus(requiredStringFrom(run, "status", "Run response"))
+  const entrypoint = objectValue(run["entrypoint"], "Run response.entrypoint")
+  const entrypointKind = requiredStringFrom(entrypoint, "kind", "Run response.entrypoint")
+  if (entrypointKind !== "task" && entrypointKind !== "actor") {
+    throw new Error("Run response.entrypoint.kind is invalid")
+  }
+  const deployment = objectValue(run["deployment"], "Run response.deployment")
+  const metadata = objectValue(run["metadata"], "Run response.metadata") as Metadata
+  const tags = run["tags"]
+  if (!Array.isArray(tags) || tags.some((tag) => typeof tag !== "string")) {
+    throw new Error("Run response.tags must be an array of strings")
+  }
+  const cause = parseRunCause(run["cause"])
+  const snapshot: RunSnapshot<TOutput> = {
+    id: runID(requiredStringFrom(run, "id", "Run response")),
+    status,
+    entrypoint: Object.freeze({
+      kind: entrypointKind,
+      id: requiredStringFrom(entrypoint, "id", "Run response.entrypoint"),
+    }),
+    deployment: Object.freeze({
+      id: requiredStringFrom(deployment, "id", "Run response.deployment"),
+      version: requiredStringFrom(deployment, "version", "Run response.deployment"),
+    }),
+    workspaceId: requiredStringFrom(run, "workspace_id", "Run response"),
+    ...(run["actor_id"] === undefined
+      ? {}
+      : { actorId: requiredStringFrom(run, "actor_id", "Run response") }),
+    ...(run["parent_run_id"] === undefined
+      ? {}
+      : { parentRunId: runID(requiredStringFrom(run, "parent_run_id", "Run response")) }),
+    ...(run["parent_owns_lifecycle"] === undefined
+      ? {}
+      : { parentOwnsLifecycle: requiredBoolean(run, "parent_owns_lifecycle", "Run response") }),
+    currentAttemptNumber: requiredPositiveInteger(
+      run, "current_attempt_number", "Run response",
+    ),
+    cause,
+    metadata: Object.freeze({ ...metadata }),
+    tags: Object.freeze([...tags]) as readonly string[],
+    ...(run["output"] === undefined ? {} : { output: run["output"] as TOutput }),
+    ...(run["terminal_reason_code"] === undefined
+      ? {}
+      : {
+          terminalReasonCode: requiredStringFrom(
+            run, "terminal_reason_code", "Run response",
+          ),
+        }),
+    ...(run["error"] === undefined ? {} : { error: parseRunError(run["error"]) }),
+    createdAt: requiredTimestamp(run, "created_at", "Run response"),
+    ...(run["started_at"] === undefined
+      ? {}
+      : { startedAt: requiredTimestamp(run, "started_at", "Run response") }),
+    ...(run["terminal_at"] === undefined
+      ? {}
+      : { terminalAt: requiredTimestamp(run, "terminal_at", "Run response") }),
+  }
+  if (status === "succeeded") {
+    if (
+      snapshot.error !== undefined ||
+      snapshot.terminalReasonCode !== undefined ||
+      snapshot.terminalAt === undefined
+    ) {
+      throw new Error("Succeeded Run response has an invalid terminal projection")
+    }
+  } else if (runStatusIsTerminal(status)) {
+    if (
+      snapshot.output !== undefined ||
+      snapshot.error === undefined ||
+      snapshot.terminalReasonCode === undefined ||
+      snapshot.terminalAt === undefined
+    ) {
+      throw new Error("Terminal Run response has an invalid failure projection")
+    }
+  } else if (
+    snapshot.output !== undefined ||
+    snapshot.error !== undefined ||
+    snapshot.terminalReasonCode !== undefined ||
+    snapshot.terminalAt !== undefined
+  ) {
+    throw new Error("Active Run response has terminal fields")
+  }
+  return Object.freeze(snapshot)
+}
+
+function parseRunCause(value: unknown): RunSnapshot["cause"] {
+  const cause = objectValue(value, "Run response.cause")
+  const type = requiredStringFrom(cause, "type", "Run response.cause")
+  switch (type) {
+    case "api":
+    case "manual":
+    case "actor-start":
+    case "continuation":
+      return Object.freeze({ type })
+    case "child":
+      return Object.freeze({
+        type,
+        parentRunId: runID(
+          requiredStringFrom(cause, "parent_run_id", "Run response.cause"),
+        ),
+      })
+    case "schedule":
+      return Object.freeze({
+        type,
+        scheduleId: requiredStringFrom(cause, "schedule_id", "Run response.cause"),
+        scheduledAt: requiredDate(cause, "scheduled_at", "Run response.cause"),
+        ...(cause["last_scheduled_at"] === undefined
+          ? {}
+          : {
+              lastScheduledAt: requiredDate(
+                cause, "last_scheduled_at", "Run response.cause",
+              ),
+            }),
+        timezone: requiredStringFrom(cause, "timezone", "Run response.cause"),
+      })
+    default:
+      throw new Error("Run response.cause.type is invalid")
+  }
+}
+
+function parseRunError(value: unknown): RunError {
+  const source = objectValue(value, "Run response.error")
+  const error = new Error(
+    requiredStringFrom(source, "message", "Run response.error"),
+  ) as Error & {
+    code: string
+    retryable: boolean
+    details?: JsonValue
+  }
+  error.name = "RunError"
+  error.code = requiredStringFrom(source, "code", "Run response.error")
+  error.retryable = requiredBoolean(source, "retryable", "Run response.error")
+  if (source["details"] !== undefined) error.details = source["details"] as JsonValue
+  return error
+}
+
+function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted()
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(done, milliseconds)
+    function done(): void {
+      signal?.removeEventListener("abort", aborted)
+      resolve()
+    }
+    function aborted(): void {
+      clearTimeout(timer)
+      signal?.removeEventListener("abort", aborted)
+      try {
+        signal?.throwIfAborted()
+      } catch (error) {
+        reject(error)
+        return
+      }
+      reject(new Error("Run wait was aborted"))
+    }
+    signal?.addEventListener("abort", aborted, { once: true })
+  })
+}
+
 function parseToken(value: unknown, credentials: boolean): TokenSnapshot | ClientTokenCreateResult {
   const token = objectValue(value, "Token response")
   const status = token["status"]
@@ -442,9 +780,66 @@ function objectValue(value: unknown, label: string): Record<string, unknown> {
 }
 
 function requiredString(value: Record<string, unknown>, field: string): string {
+  return requiredStringFrom(value, field, "Token response")
+}
+
+function requiredStringFrom(
+  value: Record<string, unknown>,
+  field: string,
+  label: string,
+): string {
   const result = value[field]
   if (typeof result !== "string" || result === "") {
-    throw new Error(`Token response.${field} must be a non-empty string`)
+    throw new Error(`${label}.${field} must be a non-empty string`)
   }
   return result
+}
+
+function requiredBoolean(
+  value: Record<string, unknown>,
+  field: string,
+  label: string,
+): boolean {
+  const result = value[field]
+  if (typeof result !== "boolean") {
+    throw new Error(`${label}.${field} must be a boolean`)
+  }
+  return result
+}
+
+function requiredPositiveInteger(
+  value: Record<string, unknown>,
+  field: string,
+  label: string,
+): number {
+  const result = value[field]
+  if (!Number.isSafeInteger(result) || (result as number) < 1) {
+    throw new Error(`${label}.${field} must be a positive safe integer`)
+  }
+  return result as number
+}
+
+function requiredDate(
+  value: Record<string, unknown>,
+  field: string,
+  label: string,
+): Date {
+  const raw = requiredStringFrom(value, field, label)
+  const result = new Date(raw)
+  if (Number.isNaN(result.getTime())) {
+    throw new Error(`${label}.${field} must be an RFC 3339 timestamp`)
+  }
+  return result
+}
+
+function requiredTimestamp(
+  value: Record<string, unknown>,
+  field: string,
+  label: string,
+): string {
+  const raw = requiredStringFrom(value, field, label)
+  if (Number.isNaN(new Date(raw).getTime())) {
+    throw new Error(`${label}.${field} must be an RFC 3339 timestamp`)
+  }
+  return raw
 }

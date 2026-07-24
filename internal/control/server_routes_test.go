@@ -53,6 +53,8 @@ GET /api/projects/{projectID}/environments/{environmentID}/deployments
 GET /api/projects/{projectID}/environments/{environmentID}/deployments/current
 GET /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}
 GET /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/events
+GET /api/projects/{projectID}/environments/{environmentID}/runs
+GET /api/projects/{projectID}/environments/{environmentID}/runs/{runID}
 GET /api/projects/{projectID}/environments/{environmentID}/schedules
 GET /api/projects/{projectID}/environments/{environmentID}/schedules/{scheduleID}
 GET /api/projects/{projectID}/environments/{environmentID}/secrets
@@ -60,6 +62,8 @@ GET /api/projects/{projectID}/environments/{environmentID}/secrets/{name}
 GET /api/projects/{projectID}/environments/{environmentID}/tokens
 GET /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}
 GET /api/regions
+GET /api/runs
+GET /api/runs/{runID}
 GET /api/schedules
 GET /api/schedules/{scheduleID}
 GET /api/secrets

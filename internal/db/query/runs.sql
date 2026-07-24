@@ -489,6 +489,76 @@ SELECT *
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
 
+-- name: GetRunSnapshot :one
+SELECT runs.*,
+       deployments.public_id AS deployment_public_id,
+       deployments.version AS deployment_version,
+       workspaces.public_id AS workspace_public_id,
+       actors.public_id AS actor_public_id,
+       coalesce(parent.public_id, '')::text AS parent_run_public_id,
+       schedules.public_id AS schedule_public_id
+  FROM runs
+  JOIN deployments
+    ON deployments.environment_id = runs.environment_id
+   AND deployments.id = runs.deployment_id
+  JOIN workspaces
+    ON workspaces.environment_id = runs.environment_id
+   AND workspaces.id = runs.workspace_id
+  LEFT JOIN actors
+    ON actors.environment_id = runs.environment_id
+   AND actors.id = runs.actor_id
+  LEFT JOIN runs AS parent
+    ON parent.environment_id = runs.environment_id
+   AND parent.id = runs.parent_run_id
+  LEFT JOIN schedules
+    ON schedules.environment_id = runs.environment_id
+   AND schedules.id = runs.schedule_id
+ WHERE runs.org_id = sqlc.arg(org_id)
+   AND runs.project_id = sqlc.arg(project_id)
+   AND runs.environment_id = sqlc.arg(environment_id)
+   AND runs.public_id = sqlc.arg(public_id);
+
+-- name: ListRunSnapshots :many
+SELECT runs.*,
+       deployments.public_id AS deployment_public_id,
+       deployments.version AS deployment_version,
+       workspaces.public_id AS workspace_public_id,
+       actors.public_id AS actor_public_id,
+       coalesce(parent.public_id, '')::text AS parent_run_public_id,
+       schedules.public_id AS schedule_public_id
+  FROM runs
+  JOIN deployments
+    ON deployments.environment_id = runs.environment_id
+   AND deployments.id = runs.deployment_id
+  JOIN workspaces
+    ON workspaces.environment_id = runs.environment_id
+   AND workspaces.id = runs.workspace_id
+  LEFT JOIN actors
+    ON actors.environment_id = runs.environment_id
+   AND actors.id = runs.actor_id
+  LEFT JOIN runs AS parent
+    ON parent.environment_id = runs.environment_id
+   AND parent.id = runs.parent_run_id
+  LEFT JOIN schedules
+    ON schedules.environment_id = runs.environment_id
+   AND schedules.id = runs.schedule_id
+ WHERE runs.org_id = sqlc.arg(org_id)
+   AND runs.project_id = sqlc.arg(project_id)
+   AND runs.environment_id = sqlc.arg(environment_id)
+   AND (
+       coalesce(cardinality(sqlc.arg(statuses)::run_status[]), 0) = 0
+       OR runs.status = ANY(sqlc.arg(statuses)::run_status[])
+   )
+   AND (
+       sqlc.narg(after_created_at)::timestamptz IS NULL
+       OR (runs.created_at, runs.public_id) < (
+           sqlc.narg(after_created_at)::timestamptz,
+           sqlc.arg(after_public_id)::text
+       )
+   )
+ ORDER BY runs.created_at DESC, runs.public_id DESC
+ LIMIT sqlc.arg(limit_count);
+
 -- name: ListQueuedRunsForQueue :many
 SELECT *
   FROM runs

@@ -46,7 +46,8 @@ func TestTaskStartPostgresCommitsAndReplaysOneAdmission(t *testing.T) {
 		t.Fatalf("conflicting replay = %v", err)
 	}
 
-	run, err := db.New(fixture.pool).GetRun(t.Context(), db.GetRunParams{
+	queries := db.New(fixture.pool)
+	run, err := queries.GetRun(t.Context(), db.GetRunParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID),
 		ID:            pgvalue.UUID(created.RunID),
 	})
@@ -75,5 +76,26 @@ func TestTaskStartPostgresCommitsAndReplaysOneAdmission(t *testing.T) {
 			"run=%+v owner=%v attempts=%d resolutions=%d outboxes=%d",
 			run, workspaceOwner, attempts, resolutions, outboxes,
 		)
+	}
+	snapshot, err := queries.GetRunSnapshot(t.Context(), db.GetRunSnapshotParams{
+		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
+		EnvironmentID: pgvalue.UUID(fixture.environmentID), PublicID: created.RunPublicID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.PublicID != created.RunPublicID || snapshot.DeploymentPublicID == "" ||
+		snapshot.WorkspacePublicID != workspaceID || snapshot.ParentRunPublicID != "" {
+		t.Fatalf("snapshot = %+v", snapshot)
+	}
+	listed, err := queries.ListRunSnapshots(t.Context(), db.ListRunSnapshotsParams{
+		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
+		EnvironmentID: pgvalue.UUID(fixture.environmentID), LimitCount: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].PublicID != created.RunPublicID {
+		t.Fatalf("listed = %+v", listed)
 	}
 }

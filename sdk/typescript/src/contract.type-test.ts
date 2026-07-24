@@ -85,6 +85,29 @@ export function assertGreenfieldTypes(): void {
   client.tasks.start<typeof payloadTask>("payload", {
     options: { workspace: workspaces.ref({ key: "machine" }) },
   })
+  const typedOutputTask = task({
+    id: "typed-output",
+    payload: schema,
+    run(payload) {
+      return { value: payload.value, count: payload.value.length }
+    },
+  })
+  const payloadTaskWait = client.runs.wait<typeof typedOutputTask>(
+    "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+  )
+  payloadTaskWait.unwrap().then((output) => {
+    output.value satisfies string
+    output.count satisfies number
+    // @ts-expect-error the Task output has no unknown member.
+    output.missing
+  })
+  payloadTaskWait.then((result) => {
+    if (result.ok) {
+      result.output.value satisfies string
+    } else {
+      result.error.code satisfies string
+    }
+  })
 
   const noPayloadTask = task({
     id: "no-payload",

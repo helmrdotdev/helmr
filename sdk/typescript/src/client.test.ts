@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import { HelmrClient, task, workspaces } from "./index"
+import { installRuntimeOperations } from "./internal"
 import {
   HELMR_API_VERSION,
   HELMR_API_VERSION_HEADER,
@@ -141,4 +142,216 @@ describe("HelmrClient Tokens", () => {
       }
     },
   )
+})
+
+describe("HelmrClient Runs", () => {
+  const runID = "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+  test("retrieves and lists the exact Run snapshot projection", async () => {
+    const requests: string[] = []
+    const snapshot = {
+      id: runID,
+      status: "running",
+      entrypoint: { kind: "task", id: "resize-image" },
+      deployment: {
+        id: "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        version: "2026.07.24.1",
+      },
+      workspace_id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      current_attempt_number: 2,
+      cause: { type: "api" },
+      metadata: { source: "backend" },
+      tags: ["image"],
+      created_at: "2026-07-24T11:50:00Z",
+      started_at: "2026-07-24T11:50:01Z",
+    }
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async (input: URL | RequestInfo) => {
+        requests.push(String(input))
+        return String(input).includes("?")
+          ? Response.json({ runs: [snapshot], next_cursor: "rn1.next" })
+          : Response.json(snapshot)
+      }) as typeof fetch,
+    })
+
+    const retrieved = await client.runs.retrieve(runID)
+    const listed = await client.runs.list({
+      status: ["running", "waiting"],
+      cursor: "rn1.previous",
+      limit: 10,
+    })
+
+    expect(retrieved).toMatchObject({
+      id: runID,
+      status: "running",
+      entrypoint: { kind: "task", id: "resize-image" },
+      currentAttemptNumber: 2,
+      cause: { type: "api" },
+    })
+    expect(listed.items).toHaveLength(1)
+    expect(listed.nextCursor).toBe("rn1.next")
+    expect(requests[1]).toBe(
+      "https://api.example.test/api/runs?status=running&status=waiting&cursor=rn1.previous&limit=10",
+    )
+  })
+
+  test("wait unwraps success and throws a recorded RunError", async () => {
+    const succeeded = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async () => Response.json({
+        id: runID,
+        status: "succeeded",
+        entrypoint: { kind: "task", id: "resize-image" },
+        deployment: {
+          id: "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          version: "2026.07.24.1",
+        },
+        workspace_id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        current_attempt_number: 1,
+        cause: { type: "api" },
+        metadata: {},
+        tags: [],
+        output: { resized: "image-1" },
+        created_at: "2026-07-24T11:50:00Z",
+        terminal_at: "2026-07-24T11:50:05Z",
+      })) as typeof fetch,
+    })
+    await expect(succeeded.runs.wait(runID).unwrap()).resolves.toEqual({
+      resized: "image-1",
+    })
+
+    const failed = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async () => Response.json({
+        id: runID,
+        status: "failed",
+        entrypoint: { kind: "task", id: "resize-image" },
+        deployment: {
+          id: "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          version: "2026.07.24.1",
+        },
+        workspace_id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        current_attempt_number: 3,
+        cause: { type: "api" },
+        metadata: {},
+        tags: [],
+        terminal_reason_code: "task_failed",
+        error: {
+          code: "task_failed",
+          message: "resize failed",
+          retryable: false,
+          details: { imageId: "image-1" },
+        },
+        created_at: "2026-07-24T11:50:00Z",
+        terminal_at: "2026-07-24T11:50:05Z",
+      })) as typeof fetch,
+    })
+    try {
+      await failed.runs.wait(runID).unwrap()
+      throw new Error("expected Run wait to fail")
+    } catch (error) {
+      expect(error).toMatchObject({
+        name: "RunError",
+        message: "resize failed",
+        code: "task_failed",
+        retryable: false,
+        details: { imageId: "image-1" },
+      })
+    }
+  })
+
+  test("polls active Runs and honors AbortSignal between requests", async () => {
+    let requests = 0
+    const active = {
+      id: runID,
+      status: "running",
+      entrypoint: { kind: "task", id: "resize-image" },
+      deployment: {
+        id: "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        version: "2026.07.24.1",
+      },
+      workspace_id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      current_attempt_number: 1,
+      cause: { type: "api" },
+      metadata: {},
+      tags: [],
+      created_at: "2026-07-24T11:50:00Z",
+      started_at: "2026-07-24T11:50:01Z",
+    }
+    const polling = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async () => {
+        requests++
+        return Response.json(requests === 1
+          ? active
+          : {
+              ...active,
+              status: "succeeded",
+              output: { resized: "image-1" },
+              terminal_at: "2026-07-24T11:50:05Z",
+            })
+      }) as typeof fetch,
+    })
+    await expect(polling.runs.wait(runID).unwrap()).resolves.toEqual({
+      resized: "image-1",
+    })
+    expect(requests).toBe(2)
+
+    requests = 0
+    const controller = new AbortController()
+    const aborting = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async () => {
+        requests++
+        return Response.json(active)
+      }) as typeof fetch,
+    })
+    const waiting = aborting.runs.wait(runID, { signal: controller.signal }).unwrap()
+    await Promise.resolve()
+    controller.abort(new Error("stop waiting"))
+    await expect(waiting).rejects.toThrow("stop waiting")
+    const requestsAtAbort = requests
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(requests).toBe(requestsAtAbort)
+  })
+
+  test("rejects external wait inside the managed runtime", () => {
+    const uninstall = installRuntimeOperations({
+      waitFor: async () => {},
+      waitUntil: async () => {},
+      actorInputSend: async () => ({ sequence: 1 }),
+      tokenCreate: async () => ({
+        id: "tok_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        status: "pending",
+        timeoutAt: "2026-07-24T12:00:00Z",
+        metadata: {},
+        tags: [],
+        createdAt: "2026-07-24T11:50:00Z",
+        updatedAt: "2026-07-24T11:50:00Z",
+        callbackUrl: "https://api.example.test/callback",
+        publicAccessToken: "hlmr_pat_secret",
+      }),
+      tokenWait: async () => null,
+    })
+    try {
+      const client = new HelmrClient({
+        url: "https://api.example.test",
+        apiKey: "api-key",
+        fetch: (async () => {
+          throw new Error("fetch must not be called")
+        }) as typeof fetch,
+      })
+      expect(() => client.runs.wait(runID)).toThrow(
+        "client.runs.wait() is unavailable inside an active Helmr Run",
+      )
+    } finally {
+      uninstall()
+    }
+  })
 })

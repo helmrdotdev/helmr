@@ -482,6 +482,8 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Post("/projects/{projectID}/environments/{environmentID}/secrets/{name}/revoke", s.revokeSecret)
 		r.With(limitRequestBody(taskStartBodyLimit)).
 			Post("/projects/{projectID}/environments/{environmentID}/tasks/{taskDeclaredID}/start", s.startTaskHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/runs", s.listRunSnapshotsHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{runID}", s.getRunSnapshotHTTP)
 		r.With(limitActorInputBody).
 			Post("/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/input", s.sendActorInput)
 	})
@@ -549,6 +551,8 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 			Post("/tokens/{tokenID}/cancel", s.cancelToken)
 		r.With(limitRequestBody(taskStartBodyLimit)).
 			Post("/tasks/{taskDeclaredID}/start", s.startTaskHTTP)
+		r.Get("/runs", s.listRunSnapshotsHTTP)
+		r.Get("/runs/{runID}", s.getRunSnapshotHTTP)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireActor)

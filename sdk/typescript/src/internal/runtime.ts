@@ -60,3 +60,7 @@ export function currentRuntimeOperations(): RuntimeOperations {
   }
   return operations
 }
+
+export function runtimeOperationsInstalled(): boolean {
+  return (globalThis as RuntimeGlobal)[runtimeOperationsSymbol] !== undefined
+}

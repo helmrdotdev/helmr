@@ -1381,6 +1381,175 @@ func (q *Queries) GetRunAdmissionTime(ctx context.Context) (pgtype.Timestamptz, 
 	return column_1, err
 }
 
+const getRunSnapshot = `-- name: GetRunSnapshot :one
+SELECT runs.id, runs.public_id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.actor_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.actor_start_input_sequence, runs.actor_start_input_high_watermark, runs.payload, runs.output, runs.terminal_reason_code, runs.error, runs.status, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.terminal_at,
+       deployments.public_id AS deployment_public_id,
+       deployments.version AS deployment_version,
+       workspaces.public_id AS workspace_public_id,
+       actors.public_id AS actor_public_id,
+       coalesce(parent.public_id, '')::text AS parent_run_public_id,
+       schedules.public_id AS schedule_public_id
+  FROM runs
+  JOIN deployments
+    ON deployments.environment_id = runs.environment_id
+   AND deployments.id = runs.deployment_id
+  JOIN workspaces
+    ON workspaces.environment_id = runs.environment_id
+   AND workspaces.id = runs.workspace_id
+  LEFT JOIN actors
+    ON actors.environment_id = runs.environment_id
+   AND actors.id = runs.actor_id
+  LEFT JOIN runs AS parent
+    ON parent.environment_id = runs.environment_id
+   AND parent.id = runs.parent_run_id
+  LEFT JOIN schedules
+    ON schedules.environment_id = runs.environment_id
+   AND schedules.id = runs.schedule_id
+ WHERE runs.org_id = $1
+   AND runs.project_id = $2
+   AND runs.environment_id = $3
+   AND runs.public_id = $4
+`
+
+type GetRunSnapshotParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	PublicID      string      `json:"public_id"`
+}
+
+type GetRunSnapshotRow struct {
+	ID                           pgtype.UUID        `json:"id"`
+	PublicID                     string             `json:"public_id"`
+	OrgID                        pgtype.UUID        `json:"org_id"`
+	ProjectID                    pgtype.UUID        `json:"project_id"`
+	EnvironmentID                pgtype.UUID        `json:"environment_id"`
+	DeploymentID                 pgtype.UUID        `json:"deployment_id"`
+	DeploymentDefinitionID       pgtype.UUID        `json:"deployment_definition_id"`
+	EntrypointKind               string             `json:"entrypoint_kind"`
+	EntrypointDeclaredID         string             `json:"entrypoint_declared_id"`
+	ActorID                      pgtype.UUID        `json:"actor_id"`
+	CauseKind                    string             `json:"cause_kind"`
+	ScheduleID                   pgtype.UUID        `json:"schedule_id"`
+	ScheduleGeneration           pgtype.Int8        `json:"schedule_generation"`
+	ScheduledAt                  pgtype.Timestamptz `json:"scheduled_at"`
+	PreviousScheduledAt          pgtype.Timestamptz `json:"previous_scheduled_at"`
+	ScheduleTimezone             pgtype.Text        `json:"schedule_timezone"`
+	ParentRunID                  pgtype.UUID        `json:"parent_run_id"`
+	ParentOwnsLifecycle          pgtype.Bool        `json:"parent_owns_lifecycle"`
+	WorkspaceID                  pgtype.UUID        `json:"workspace_id"`
+	BaseWorkspaceVersionID       pgtype.UUID        `json:"base_workspace_version_id"`
+	ActorStartInputSequence      pgtype.Int8        `json:"actor_start_input_sequence"`
+	ActorStartInputHighWatermark pgtype.Int8        `json:"actor_start_input_high_watermark"`
+	Payload                      []byte             `json:"payload"`
+	Output                       []byte             `json:"output"`
+	TerminalReasonCode           pgtype.Text        `json:"terminal_reason_code"`
+	Error                        []byte             `json:"error"`
+	Status                       RunStatus          `json:"status"`
+	StateVersion                 int64              `json:"state_version"`
+	CurrentAttemptNumber         int32              `json:"current_attempt_number"`
+	CurrentRunLeaseID            pgtype.UUID        `json:"current_run_lease_id"`
+	Metadata                     []byte             `json:"metadata"`
+	Tags                         []string           `json:"tags"`
+	QueueName                    string             `json:"queue_name"`
+	ConcurrencyKey               pgtype.Text        `json:"concurrency_key"`
+	QueueConcurrencyLimit        pgtype.Int8        `json:"queue_concurrency_limit"`
+	Priority                     int32              `json:"priority"`
+	QueueOriginAt                pgtype.Timestamptz `json:"queue_origin_at"`
+	QueueScoreAt                 pgtype.Timestamptz `json:"queue_score_at"`
+	QueuedExpiresAt              pgtype.Timestamptz `json:"queued_expires_at"`
+	MaxActiveDurationMs          int64              `json:"max_active_duration_ms"`
+	RetryPolicy                  []byte             `json:"retry_policy"`
+	ActiveElapsedMs              int64              `json:"active_elapsed_ms"`
+	ActiveStartedAt              pgtype.Timestamptz `json:"active_started_at"`
+	TraceID                      pgtype.Text        `json:"trace_id"`
+	RootSpanID                   string             `json:"root_span_id"`
+	ClaimID                      pgtype.UUID        `json:"claim_id"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	FirstLeaseAt                 pgtype.Timestamptz `json:"first_lease_at"`
+	StartedAt                    pgtype.Timestamptz `json:"started_at"`
+	RetryAt                      pgtype.Timestamptz `json:"retry_at"`
+	TerminalAt                   pgtype.Timestamptz `json:"terminal_at"`
+	DeploymentPublicID           string             `json:"deployment_public_id"`
+	DeploymentVersion            string             `json:"deployment_version"`
+	WorkspacePublicID            string             `json:"workspace_public_id"`
+	ActorPublicID                pgtype.Text        `json:"actor_public_id"`
+	ParentRunPublicID            string             `json:"parent_run_public_id"`
+	SchedulePublicID             pgtype.Text        `json:"schedule_public_id"`
+}
+
+func (q *Queries) GetRunSnapshot(ctx context.Context, arg GetRunSnapshotParams) (GetRunSnapshotRow, error) {
+	row := q.db.QueryRow(ctx, getRunSnapshot,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.PublicID,
+	)
+	var i GetRunSnapshotRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentDefinitionID,
+		&i.EntrypointKind,
+		&i.EntrypointDeclaredID,
+		&i.ActorID,
+		&i.CauseKind,
+		&i.ScheduleID,
+		&i.ScheduleGeneration,
+		&i.ScheduledAt,
+		&i.PreviousScheduledAt,
+		&i.ScheduleTimezone,
+		&i.ParentRunID,
+		&i.ParentOwnsLifecycle,
+		&i.WorkspaceID,
+		&i.BaseWorkspaceVersionID,
+		&i.ActorStartInputSequence,
+		&i.ActorStartInputHighWatermark,
+		&i.Payload,
+		&i.Output,
+		&i.TerminalReasonCode,
+		&i.Error,
+		&i.Status,
+		&i.StateVersion,
+		&i.CurrentAttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.Metadata,
+		&i.Tags,
+		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueConcurrencyLimit,
+		&i.Priority,
+		&i.QueueOriginAt,
+		&i.QueueScoreAt,
+		&i.QueuedExpiresAt,
+		&i.MaxActiveDurationMs,
+		&i.RetryPolicy,
+		&i.ActiveElapsedMs,
+		&i.ActiveStartedAt,
+		&i.TraceID,
+		&i.RootSpanID,
+		&i.ClaimID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FirstLeaseAt,
+		&i.StartedAt,
+		&i.RetryAt,
+		&i.TerminalAt,
+		&i.DeploymentPublicID,
+		&i.DeploymentVersion,
+		&i.WorkspacePublicID,
+		&i.ActorPublicID,
+		&i.ParentRunPublicID,
+		&i.SchedulePublicID,
+	)
+	return i, err
+}
+
 const listQueuedRunsForQueue = `-- name: ListQueuedRunsForQueue :many
 SELECT id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
   FROM runs
@@ -1468,6 +1637,206 @@ func (q *Queries) ListQueuedRunsForQueue(ctx context.Context, arg ListQueuedRuns
 			&i.StartedAt,
 			&i.RetryAt,
 			&i.TerminalAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRunSnapshots = `-- name: ListRunSnapshots :many
+SELECT runs.id, runs.public_id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.actor_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.actor_start_input_sequence, runs.actor_start_input_high_watermark, runs.payload, runs.output, runs.terminal_reason_code, runs.error, runs.status, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.terminal_at,
+       deployments.public_id AS deployment_public_id,
+       deployments.version AS deployment_version,
+       workspaces.public_id AS workspace_public_id,
+       actors.public_id AS actor_public_id,
+       coalesce(parent.public_id, '')::text AS parent_run_public_id,
+       schedules.public_id AS schedule_public_id
+  FROM runs
+  JOIN deployments
+    ON deployments.environment_id = runs.environment_id
+   AND deployments.id = runs.deployment_id
+  JOIN workspaces
+    ON workspaces.environment_id = runs.environment_id
+   AND workspaces.id = runs.workspace_id
+  LEFT JOIN actors
+    ON actors.environment_id = runs.environment_id
+   AND actors.id = runs.actor_id
+  LEFT JOIN runs AS parent
+    ON parent.environment_id = runs.environment_id
+   AND parent.id = runs.parent_run_id
+  LEFT JOIN schedules
+    ON schedules.environment_id = runs.environment_id
+   AND schedules.id = runs.schedule_id
+ WHERE runs.org_id = $1
+   AND runs.project_id = $2
+   AND runs.environment_id = $3
+   AND (
+       coalesce(cardinality($4::run_status[]), 0) = 0
+       OR runs.status = ANY($4::run_status[])
+   )
+   AND (
+       $5::timestamptz IS NULL
+       OR (runs.created_at, runs.public_id) < (
+           $5::timestamptz,
+           $6::text
+       )
+   )
+ ORDER BY runs.created_at DESC, runs.public_id DESC
+ LIMIT $7
+`
+
+type ListRunSnapshotsParams struct {
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	Statuses       []RunStatus        `json:"statuses"`
+	AfterCreatedAt pgtype.Timestamptz `json:"after_created_at"`
+	AfterPublicID  string             `json:"after_public_id"`
+	LimitCount     int32              `json:"limit_count"`
+}
+
+type ListRunSnapshotsRow struct {
+	ID                           pgtype.UUID        `json:"id"`
+	PublicID                     string             `json:"public_id"`
+	OrgID                        pgtype.UUID        `json:"org_id"`
+	ProjectID                    pgtype.UUID        `json:"project_id"`
+	EnvironmentID                pgtype.UUID        `json:"environment_id"`
+	DeploymentID                 pgtype.UUID        `json:"deployment_id"`
+	DeploymentDefinitionID       pgtype.UUID        `json:"deployment_definition_id"`
+	EntrypointKind               string             `json:"entrypoint_kind"`
+	EntrypointDeclaredID         string             `json:"entrypoint_declared_id"`
+	ActorID                      pgtype.UUID        `json:"actor_id"`
+	CauseKind                    string             `json:"cause_kind"`
+	ScheduleID                   pgtype.UUID        `json:"schedule_id"`
+	ScheduleGeneration           pgtype.Int8        `json:"schedule_generation"`
+	ScheduledAt                  pgtype.Timestamptz `json:"scheduled_at"`
+	PreviousScheduledAt          pgtype.Timestamptz `json:"previous_scheduled_at"`
+	ScheduleTimezone             pgtype.Text        `json:"schedule_timezone"`
+	ParentRunID                  pgtype.UUID        `json:"parent_run_id"`
+	ParentOwnsLifecycle          pgtype.Bool        `json:"parent_owns_lifecycle"`
+	WorkspaceID                  pgtype.UUID        `json:"workspace_id"`
+	BaseWorkspaceVersionID       pgtype.UUID        `json:"base_workspace_version_id"`
+	ActorStartInputSequence      pgtype.Int8        `json:"actor_start_input_sequence"`
+	ActorStartInputHighWatermark pgtype.Int8        `json:"actor_start_input_high_watermark"`
+	Payload                      []byte             `json:"payload"`
+	Output                       []byte             `json:"output"`
+	TerminalReasonCode           pgtype.Text        `json:"terminal_reason_code"`
+	Error                        []byte             `json:"error"`
+	Status                       RunStatus          `json:"status"`
+	StateVersion                 int64              `json:"state_version"`
+	CurrentAttemptNumber         int32              `json:"current_attempt_number"`
+	CurrentRunLeaseID            pgtype.UUID        `json:"current_run_lease_id"`
+	Metadata                     []byte             `json:"metadata"`
+	Tags                         []string           `json:"tags"`
+	QueueName                    string             `json:"queue_name"`
+	ConcurrencyKey               pgtype.Text        `json:"concurrency_key"`
+	QueueConcurrencyLimit        pgtype.Int8        `json:"queue_concurrency_limit"`
+	Priority                     int32              `json:"priority"`
+	QueueOriginAt                pgtype.Timestamptz `json:"queue_origin_at"`
+	QueueScoreAt                 pgtype.Timestamptz `json:"queue_score_at"`
+	QueuedExpiresAt              pgtype.Timestamptz `json:"queued_expires_at"`
+	MaxActiveDurationMs          int64              `json:"max_active_duration_ms"`
+	RetryPolicy                  []byte             `json:"retry_policy"`
+	ActiveElapsedMs              int64              `json:"active_elapsed_ms"`
+	ActiveStartedAt              pgtype.Timestamptz `json:"active_started_at"`
+	TraceID                      pgtype.Text        `json:"trace_id"`
+	RootSpanID                   string             `json:"root_span_id"`
+	ClaimID                      pgtype.UUID        `json:"claim_id"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	FirstLeaseAt                 pgtype.Timestamptz `json:"first_lease_at"`
+	StartedAt                    pgtype.Timestamptz `json:"started_at"`
+	RetryAt                      pgtype.Timestamptz `json:"retry_at"`
+	TerminalAt                   pgtype.Timestamptz `json:"terminal_at"`
+	DeploymentPublicID           string             `json:"deployment_public_id"`
+	DeploymentVersion            string             `json:"deployment_version"`
+	WorkspacePublicID            string             `json:"workspace_public_id"`
+	ActorPublicID                pgtype.Text        `json:"actor_public_id"`
+	ParentRunPublicID            string             `json:"parent_run_public_id"`
+	SchedulePublicID             pgtype.Text        `json:"schedule_public_id"`
+}
+
+func (q *Queries) ListRunSnapshots(ctx context.Context, arg ListRunSnapshotsParams) ([]ListRunSnapshotsRow, error) {
+	rows, err := q.db.Query(ctx, listRunSnapshots,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.Statuses,
+		arg.AfterCreatedAt,
+		arg.AfterPublicID,
+		arg.LimitCount,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRunSnapshotsRow
+	for rows.Next() {
+		var i ListRunSnapshotsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PublicID,
+			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.DeploymentID,
+			&i.DeploymentDefinitionID,
+			&i.EntrypointKind,
+			&i.EntrypointDeclaredID,
+			&i.ActorID,
+			&i.CauseKind,
+			&i.ScheduleID,
+			&i.ScheduleGeneration,
+			&i.ScheduledAt,
+			&i.PreviousScheduledAt,
+			&i.ScheduleTimezone,
+			&i.ParentRunID,
+			&i.ParentOwnsLifecycle,
+			&i.WorkspaceID,
+			&i.BaseWorkspaceVersionID,
+			&i.ActorStartInputSequence,
+			&i.ActorStartInputHighWatermark,
+			&i.Payload,
+			&i.Output,
+			&i.TerminalReasonCode,
+			&i.Error,
+			&i.Status,
+			&i.StateVersion,
+			&i.CurrentAttemptNumber,
+			&i.CurrentRunLeaseID,
+			&i.Metadata,
+			&i.Tags,
+			&i.QueueName,
+			&i.ConcurrencyKey,
+			&i.QueueConcurrencyLimit,
+			&i.Priority,
+			&i.QueueOriginAt,
+			&i.QueueScoreAt,
+			&i.QueuedExpiresAt,
+			&i.MaxActiveDurationMs,
+			&i.RetryPolicy,
+			&i.ActiveElapsedMs,
+			&i.ActiveStartedAt,
+			&i.TraceID,
+			&i.RootSpanID,
+			&i.ClaimID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FirstLeaseAt,
+			&i.StartedAt,
+			&i.RetryAt,
+			&i.TerminalAt,
+			&i.DeploymentPublicID,
+			&i.DeploymentVersion,
+			&i.WorkspacePublicID,
+			&i.ActorPublicID,
+			&i.ParentRunPublicID,
+			&i.SchedulePublicID,
 		); err != nil {
 			return nil, err
 		}
