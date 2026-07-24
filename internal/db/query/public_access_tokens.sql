@@ -6,6 +6,7 @@ INSERT INTO public_access_tokens (
     project_id,
     environment_id,
     token_hash,
+    credential_key_id,
     expires_at,
     max_uses,
     metadata,
@@ -18,7 +19,8 @@ VALUES (
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(token_hash),
-    sqlc.arg(expires_at),
+    sqlc.arg(credential_key_id),
+    sqlc.arg(expires_at)::timestamptz,
     sqlc.narg(max_uses)::integer,
     COALESCE(sqlc.arg(metadata)::jsonb, '{}'::jsonb),
     COALESCE(sqlc.arg(created_by)::jsonb, '{}'::jsonb)
@@ -58,9 +60,11 @@ RETURNING *;
 SELECT *
   FROM public_access_tokens
  WHERE token_hash = sqlc.arg(token_hash)
+   AND state = 'active'
+   AND expires_at > transaction_timestamp()
  FOR UPDATE;
 
--- name: ConsumePublicAccessToken :one
+-- name: MarkPublicAccessTokenUsed :one
 UPDATE public_access_tokens
    SET used_count = used_count + 1,
        last_used_at = now(),
@@ -77,6 +81,17 @@ SELECT *
  FROM public_access_tokens
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id);
+
+-- name: GetPublicAccessTokenForToken :one
+SELECT public_access_tokens.*
+  FROM public_access_tokens
+  JOIN public_access_token_scopes
+    ON public_access_token_scopes.public_access_token_id = public_access_tokens.id
+   AND public_access_token_scopes.org_id = public_access_tokens.org_id
+   AND public_access_token_scopes.project_id = public_access_tokens.project_id
+   AND public_access_token_scopes.environment_id = public_access_tokens.environment_id
+ WHERE public_access_token_scopes.token_id = sqlc.arg(token_id)
+   AND public_access_token_scopes.scope_type = 'token.complete';
 
 -- name: ListPublicAccessTokenScopes :many
 SELECT *
@@ -113,3 +128,22 @@ UPDATE public_access_tokens
    AND id = sqlc.arg(id)
    AND state = 'active'
 RETURNING *;
+
+-- name: ExpireDuePublicAccessTokens :many
+WITH candidates AS MATERIALIZED (
+    SELECT id
+      FROM public_access_tokens
+     WHERE state = 'active'
+       AND expires_at <= transaction_timestamp()
+     ORDER BY expires_at, id
+     FOR UPDATE SKIP LOCKED
+     LIMIT sqlc.arg(limit_count)
+)
+UPDATE public_access_tokens
+   SET state = 'expired',
+       expired_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+  FROM candidates
+ WHERE public_access_tokens.id = candidates.id
+   AND public_access_tokens.state = 'active'
+RETURNING public_access_tokens.*;

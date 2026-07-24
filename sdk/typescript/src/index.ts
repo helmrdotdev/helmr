@@ -1,10 +1,19 @@
 export { actor } from "./actor"
+export { HelmrClient } from "./client"
 export { cache, image, source } from "./image"
 export { defineConfig } from "./config"
 export { schedules } from "./schedules"
 export { queue, task } from "./task"
 export { timers } from "./timers"
+export { tokens } from "./tokens"
 export { workspace, workspaces } from "./workspace"
+
+export type {
+  ClientTokenCreateOptions,
+  ClientTokenCreateResult,
+  ClientTokensApi,
+  HelmrClientOptions,
+} from "./client"
 
 export type {
   HelmrConfig,
@@ -104,6 +113,19 @@ export type {
 } from "./schedules"
 
 export type { Timers } from "./timers"
+
+export type {
+  TokenCreateOptions,
+  TokenCreateResult,
+  TokenCancelledError,
+  TokenExpiredError,
+  TokenSnapshot,
+  Tokens,
+  TokenWait,
+  TokenWaitError,
+  TokenWaitOptions,
+  TokenWaitResult,
+} from "./tokens"
 
 export type {
   WorkspaceBuilder,

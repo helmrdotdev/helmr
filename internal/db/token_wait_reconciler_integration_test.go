@@ -117,6 +117,123 @@ func TestTokenWaitRegistrationBeforeCompletionIsReconciled(t *testing.T) {
 	}
 }
 
+func TestTokenCompletionReconcilesEveryWaitingRunInBoundedBatches(t *testing.T) {
+	ctx := context.Background()
+	fixture := newRunLeaseClaimFixture(t, ctx)
+	first := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+	second := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+	startTaskCompletionWork(t, ctx, fixture, first)
+	startTaskCompletionWork(t, ctx, fixture, second)
+	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
+	reconciler, err := NewTokenWaitReconciler(fixture.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, work := range []runLeaseWork{first, second} {
+		request := tokenWaitRegistrationRequest(
+			t,
+			ctx,
+			fixture,
+			work,
+			tokenID,
+			uuid.Must(uuid.NewV7()),
+		)
+		registered, err := reconciler.RegisterWait(ctx, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if registered.ConditionState != WaitStatePending ||
+			registered.SuspensionState != RunWaitStateHot {
+			t.Fatalf("pending registration = %+v", registered)
+		}
+	}
+	if _, err := fixture.queries.CompleteToken(ctx, tokenCompletionParams(
+		fixture,
+		tokenID,
+		"sha256:multi-run-fan-out",
+		`{"approved":true}`,
+	)); err != nil {
+		t.Fatal(err)
+	}
+
+	for batchNumber := 1; batchNumber <= 2; batchNumber++ {
+		batch, err := reconciler.ReconcileBatch(ctx, fixture.environmentID, tokenID, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if batch.Examined != 1 || batch.Resolved != 1 || batch.Deferred != 0 {
+			t.Fatalf("batch %d = %+v", batchNumber, batch)
+		}
+	}
+	replay, err := reconciler.ReconcileBatch(ctx, fixture.environmentID, tokenID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay.Examined != 0 || replay.Resolved != 0 || replay.Deferred != 0 {
+		t.Fatalf("replay batch = %+v", replay)
+	}
+
+	var completedWaits, runningRuns int
+	if err := fixture.pool.QueryRow(ctx, `
+SELECT count(*),
+       count(*) FILTER (WHERE runs.status = 'running')
+  FROM run_waits
+  JOIN runs ON runs.id = run_waits.run_id
+ WHERE run_waits.environment_id = $1
+   AND run_waits.token_id = $2
+   AND run_waits.condition_state = 'completed'
+   AND run_waits.suspension_state = 'released'
+   AND run_waits.condition_result = '{"approved":true}'::jsonb
+`, fixture.environmentID, tokenID).Scan(&completedWaits, &runningRuns); err != nil {
+		t.Fatal(err)
+	}
+	if completedWaits != 2 || runningRuns != 2 {
+		t.Fatalf("fan-out = completed Waits %d, running Runs %d", completedWaits, runningRuns)
+	}
+}
+
+func TestTokenWaitSchemaRejectsCrossEnvironmentReference(t *testing.T) {
+	ctx := context.Background()
+	fixture := newRunLeaseClaimFixture(t, ctx)
+	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+	otherEnvironmentID := uuid.Must(uuid.NewV7())
+	mustRunLeaseExec(t, ctx, fixture.pool, `
+		INSERT INTO environments (
+		    id, public_id, org_id, project_id, slug, name, color_hex
+		) VALUES ($1, $2, $3, $4, $5, 'Other Environment', '#3366ff')
+	`, otherEnvironmentID, runLeasePublicID(t, publicid.Environment),
+		fixture.orgID, fixture.projectID, "other-"+shortRunLeaseID(otherEnvironmentID))
+	otherTokenID := uuid.Must(uuid.NewV7())
+	if _, err := fixture.queries.CreateToken(ctx, CreateTokenParams{
+		ID: pgvalue.UUID(otherTokenID), PublicID: runLeasePublicID(t, publicid.Token),
+		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
+		EnvironmentID: pgvalue.UUID(otherEnvironmentID),
+		ExpiresAt:     pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		CallbackKeyID: "test-key", CallbackSecretFingerprint: make([]byte, 32),
+		Metadata: []byte(`{}`), Tags: []string{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var workspaceID uuid.UUID
+	if err := fixture.pool.QueryRow(
+		ctx,
+		`SELECT workspace_id FROM runs WHERE id = $1`,
+		work.runID,
+	).Scan(&workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.pool.Exec(ctx, `
+		INSERT INTO run_waits (
+		    id, environment_id, run_id, workspace_id, kind, token_id,
+		    token_registration_run_state_version, expected_run_state_version,
+		    attempt_number, current_run_lease_id, resume_attach_id
+		) VALUES ($1, $2, $3, $4, 'token', $5, 0, 1, 1, $6, $7)
+	`, uuid.Must(uuid.NewV7()), fixture.environmentID, work.runID, workspaceID,
+		otherTokenID, work.leaseID, uuid.Must(uuid.NewV7())); err == nil {
+		t.Fatal("cross-Environment Token Wait reference was accepted")
+	}
+}
+
 func TestFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T) {
 	testFailedCreatingCheckpointFailsAttemptAndClosesSource(t, checkpointFailureTestMode{})
 }
@@ -1069,7 +1186,7 @@ func TestTokenWaitReconcilerTransitionsHotCheckpointingAndParkedWaits(t *testing
 	t.Run("checkpointing expiry records only terminal condition", func(t *testing.T) {
 		fixture := newRunLeaseClaimFixture(t, ctx)
 		setup := newTokenWaitReconcileSetup(t, ctx, fixture, RunWaitStateCheckpointing, time.Now().Add(-time.Minute))
-		expired, err := fixture.queries.ExpireDueTokens(ctx, pgvalue.UUID(fixture.orgID))
+		expired, err := fixture.queries.ExpireDueTokens(ctx, 100)
 		if err != nil || len(expired) != 1 {
 			t.Fatalf("expire Token = rows %d error %v", len(expired), err)
 		}

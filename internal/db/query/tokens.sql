@@ -1,61 +1,32 @@
+-- name: GetTokenCreateTime :one
+SELECT transaction_timestamp()::timestamptz;
+
 -- name: CreateToken :one
-WITH existing_token AS MATERIALIZED (
-    SELECT tokens.*
-     FROM tokens
-     WHERE tokens.org_id = sqlc.arg(org_id)
-       AND tokens.project_id = sqlc.arg(project_id)
-       AND tokens.environment_id = sqlc.arg(environment_id)
-       AND tokens.idempotency_key = sqlc.arg(idempotency_key)
-       AND sqlc.arg(idempotency_key)::text <> ''
-     FOR UPDATE
-),
-inserted_token AS (
-    INSERT INTO tokens (
-        id,
-        public_id,
-        org_id,
-        project_id,
-        environment_id,
-        timeout_at,
-        idempotency_key,
-        idempotency_key_expires_at,
-        create_request_fingerprint,
-        callback_key_id,
-        callback_secret_fingerprint,
-        callback_secret_created_at,
-        metadata,
-        tags
-    )
-    SELECT sqlc.arg(id),
-           sqlc.arg(public_id),
-           sqlc.arg(org_id),
-           sqlc.arg(project_id),
-           sqlc.arg(environment_id),
-           sqlc.arg(timeout_at),
-           COALESCE(sqlc.arg(idempotency_key)::text, ''),
-           sqlc.narg(idempotency_key_expires_at)::timestamptz,
-           COALESCE(sqlc.arg(create_request_fingerprint)::text, ''),
-           COALESCE(sqlc.arg(callback_key_id)::text, ''),
-           COALESCE(sqlc.arg(callback_secret_fingerprint)::text, ''),
-           sqlc.narg(callback_secret_created_at)::timestamptz,
-           COALESCE(sqlc.arg(metadata)::jsonb, '{}'::jsonb),
-           COALESCE(sqlc.arg(tags)::text[], '{}'::text[])
-     WHERE NOT EXISTS (SELECT 1 FROM existing_token)
-    RETURNING tokens.*
-),
-selected_token AS (
-    SELECT inserted_token.*, false::boolean AS is_cached
-      FROM inserted_token
-    UNION ALL
-    SELECT existing_token.*, true::boolean AS is_cached
-      FROM existing_token
+INSERT INTO tokens (
+    id,
+    public_id,
+    org_id,
+    project_id,
+    environment_id,
+    expires_at,
+    callback_key_id,
+    callback_secret_fingerprint,
+    metadata,
+    tags
 )
-SELECT selected_token.*,
-       (
-           selected_token.is_cached
-           AND selected_token.create_request_fingerprint <> COALESCE(sqlc.arg(create_request_fingerprint)::text, '')
-       )::boolean AS idempotency_fingerprint_mismatch
-  FROM selected_token;
+VALUES (
+    sqlc.arg(id),
+    sqlc.arg(public_id),
+    sqlc.arg(org_id),
+    sqlc.arg(project_id),
+    sqlc.arg(environment_id),
+    sqlc.arg(expires_at)::timestamptz,
+    sqlc.arg(callback_key_id),
+    sqlc.arg(callback_secret_fingerprint),
+    COALESCE(sqlc.arg(metadata)::jsonb, '{}'::jsonb),
+    COALESCE(sqlc.arg(tags)::text[], '{}'::text[])
+)
+RETURNING *;
 
 -- name: GetToken :one
 SELECT *
@@ -69,6 +40,11 @@ SELECT *
 SELECT *
   FROM tokens
  WHERE id = sqlc.arg(id);
+
+-- name: GetTokenByPublicID :one
+SELECT *
+  FROM tokens
+ WHERE public_id = sqlc.arg(public_id);
 
 -- name: ListTokens :many
 WITH cursor_token AS (
@@ -97,48 +73,60 @@ SELECT *
 
 -- name: GetTokenForCallbackCompletion :one
 SELECT *
-  FROM tokens
- WHERE id = sqlc.arg(id)
-   AND callback_key_id = sqlc.arg(callback_key_id)
+ FROM tokens
+ WHERE public_id = sqlc.arg(public_id)
    AND callback_secret_fingerprint = sqlc.arg(callback_secret_fingerprint)
-   AND state IN ('pending', 'completed')
  FOR UPDATE;
 
 -- name: CompleteToken :one
-WITH target AS (
+WITH target AS MATERIALIZED (
     SELECT tokens.*
      FROM tokens
      WHERE tokens.org_id = sqlc.arg(org_id)
        AND tokens.project_id = sqlc.arg(project_id)
        AND tokens.environment_id = sqlc.arg(environment_id)
        AND tokens.id = sqlc.arg(id)
-       AND tokens.state IN ('pending', 'completed')
      FOR UPDATE
+),
+expired AS (
+    UPDATE tokens
+       SET state = 'expired',
+           expired_at = transaction_timestamp(),
+           updated_at = transaction_timestamp()
+     FROM target
+     WHERE tokens.id = target.id
+       AND target.state = 'pending'
+       AND target.expires_at <= transaction_timestamp()
+    RETURNING tokens.*
 ),
 completed AS (
     UPDATE tokens
        SET state = 'completed',
-           completion_data = COALESCE(sqlc.arg(completion_data)::jsonb, 'null'::jsonb),
-           completion_content_type = COALESCE(NULLIF(sqlc.arg(completion_content_type)::text, ''), 'application/json'),
-           completion_fingerprint = COALESCE(sqlc.arg(completion_fingerprint)::text, ''),
-           completed_at = now(),
-           updated_at = now()
+           result = COALESCE(sqlc.arg(result)::jsonb, 'null'::jsonb),
+           error = NULL,
+           completion_fingerprint = sqlc.arg(completion_fingerprint),
+           completed_at = transaction_timestamp(),
+           updated_at = transaction_timestamp()
      FROM target
-     WHERE tokens.org_id = target.org_id
-       AND tokens.id = target.id
+     WHERE tokens.id = target.id
        AND target.state = 'pending'
-       AND target.timeout_at > now()
+       AND target.expires_at > transaction_timestamp()
     RETURNING tokens.*
 ),
 selected_token AS (
-    SELECT completed.*, false::boolean AS was_already_completed, false::boolean AS is_expired
-      FROM completed
+    SELECT completed.* FROM completed
     UNION ALL
-    SELECT target.*,
-           (target.state = 'completed')::boolean AS was_already_completed,
-           (target.state = 'pending' AND target.timeout_at <= now())::boolean AS is_expired
+    SELECT expired.* FROM expired
+    UNION ALL
+    SELECT target.*
       FROM target
      WHERE NOT EXISTS (SELECT 1 FROM completed)
+       AND NOT EXISTS (SELECT 1 FROM expired)
+),
+changed AS (
+    SELECT id, environment_id FROM completed
+    UNION ALL
+    SELECT id, environment_id FROM expired
 ),
 reconciliation_intent AS (
     INSERT INTO outbox_messages (
@@ -150,41 +138,77 @@ reconciliation_intent AS (
     )
     SELECT 'control',
            'token.reconcile',
-           completed.id::text,
+           changed.id::text,
            jsonb_build_object(
-               'environmentId', completed.environment_id::text,
-               'tokenId', completed.id::text
+               'environmentId', changed.environment_id::text,
+               'tokenId', changed.id::text
            ),
            transaction_timestamp()
-      FROM completed
+      FROM changed
     RETURNING id
 )
 SELECT selected_token.*,
        (
-           selected_token.was_already_completed
-           AND selected_token.completion_fingerprint = COALESCE(sqlc.arg(completion_fingerprint)::text, '')
+           selected_token.state = 'completed'
+           AND selected_token.completion_fingerprint = sqlc.arg(completion_fingerprint)::bytea
+           AND NOT EXISTS (SELECT 1 FROM completed)
        )::boolean AS already_completed,
        (
-           selected_token.was_already_completed
-           AND selected_token.completion_fingerprint <> COALESCE(sqlc.arg(completion_fingerprint)::text, '')
+           selected_token.state = 'completed'
+           AND selected_token.completion_fingerprint <> sqlc.arg(completion_fingerprint)::bytea
+           AND NOT EXISTS (SELECT 1 FROM completed)
        )::boolean AS completion_conflict,
-       selected_token.is_expired AS completion_expired,
+       (selected_token.state = 'expired')::boolean AS completion_expired,
+       (selected_token.state = 'cancelled')::boolean AS completion_cancelled,
        EXISTS (SELECT 1 FROM reconciliation_intent) AS reconciliation_enqueued
   FROM selected_token;
 
 -- name: CancelToken :one
-WITH cancelled AS (
-    UPDATE tokens
-       SET state = 'cancelled',
-           cancelled_at = now(),
-           updated_at = now()
+WITH target AS MATERIALIZED (
+    SELECT tokens.*
+     FROM tokens
      WHERE tokens.org_id = sqlc.arg(org_id)
        AND tokens.project_id = sqlc.arg(project_id)
        AND tokens.environment_id = sqlc.arg(environment_id)
        AND tokens.id = sqlc.arg(id)
-       AND tokens.state = 'pending'
-       AND tokens.timeout_at > now()
+     FOR UPDATE
+),
+expired AS (
+    UPDATE tokens
+       SET state = 'expired',
+           expired_at = transaction_timestamp(),
+           updated_at = transaction_timestamp()
+     FROM target
+     WHERE tokens.id = target.id
+       AND target.state = 'pending'
+       AND target.expires_at <= transaction_timestamp()
     RETURNING tokens.*
+),
+cancelled AS (
+    UPDATE tokens
+       SET state = 'cancelled',
+           cancelled_at = transaction_timestamp(),
+           updated_at = transaction_timestamp()
+     FROM target
+     WHERE tokens.id = target.id
+       AND target.state = 'pending'
+       AND target.expires_at > transaction_timestamp()
+    RETURNING tokens.*
+),
+selected_token AS (
+    SELECT cancelled.* FROM cancelled
+    UNION ALL
+    SELECT expired.* FROM expired
+    UNION ALL
+    SELECT target.*
+      FROM target
+     WHERE NOT EXISTS (SELECT 1 FROM cancelled)
+       AND NOT EXISTS (SELECT 1 FROM expired)
+),
+changed AS (
+    SELECT id, environment_id FROM cancelled
+    UNION ALL
+    SELECT id, environment_id FROM expired
 ),
 reconciliation_intent AS (
     INSERT INTO outbox_messages (
@@ -196,27 +220,43 @@ reconciliation_intent AS (
     )
     SELECT 'control',
            'token.reconcile',
-           cancelled.id::text,
+           changed.id::text,
            jsonb_build_object(
-               'environmentId', cancelled.environment_id::text,
-               'tokenId', cancelled.id::text
+               'environmentId', changed.environment_id::text,
+               'tokenId', changed.id::text
            ),
            transaction_timestamp()
-      FROM cancelled
+      FROM changed
     RETURNING id
 )
-SELECT cancelled.*, EXISTS (SELECT 1 FROM reconciliation_intent) AS reconciliation_enqueued
-  FROM cancelled;
+SELECT selected_token.*,
+       (
+           selected_token.state = 'cancelled'
+           AND NOT EXISTS (SELECT 1 FROM cancelled)
+       )::boolean AS already_cancelled,
+       (selected_token.state = 'expired')::boolean AS cancellation_expired,
+       (selected_token.state = 'completed')::boolean AS cancellation_completed,
+       EXISTS (SELECT 1 FROM reconciliation_intent) AS reconciliation_enqueued
+  FROM selected_token;
 
 -- name: ExpireDueTokens :many
-WITH expired AS (
+WITH candidates AS MATERIALIZED (
+    SELECT id
+     FROM tokens
+     WHERE state = 'pending'
+       AND expires_at <= transaction_timestamp()
+     ORDER BY expires_at, id
+     FOR UPDATE SKIP LOCKED
+     LIMIT sqlc.arg(limit_count)
+),
+expired AS (
     UPDATE tokens
        SET state = 'expired',
-           expired_at = now(),
-           updated_at = now()
-     WHERE tokens.org_id = sqlc.arg(org_id)
+           expired_at = transaction_timestamp(),
+           updated_at = transaction_timestamp()
+     FROM candidates
+     WHERE tokens.id = candidates.id
        AND tokens.state = 'pending'
-       AND tokens.timeout_at <= now()
     RETURNING tokens.*
 ),
 reconciliation_intents AS (
@@ -242,4 +282,4 @@ SELECT expired.*
   FROM expired
   JOIN reconciliation_intents
     ON reconciliation_intents.partition_key = expired.id::text
- ORDER BY expired.timeout_at ASC, expired.id ASC;
+ ORDER BY expired.expires_at, expired.id;

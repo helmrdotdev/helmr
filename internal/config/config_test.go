@@ -121,6 +121,7 @@ func setDispatcherFencing(t *testing.T) {
 }
 
 func TestLoadControlReadsRequiredConfig(t *testing.T) {
+	setControlTokenCredentialEnv(t)
 	t.Setenv("HELMR_DATABASE_URL", " postgres://example\n")
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_DEPLOYMENT_MODE", " managed-cloud ")
@@ -454,6 +455,7 @@ func TestLoadControlReadsResendConfig(t *testing.T) {
 
 func setControlWorkerGroupEnv(t *testing.T) {
 	t.Helper()
+	setControlTokenCredentialEnv(t)
 	t.Setenv("HELMR_WORKER_GROUP_ID", "us-east-1-worker-group-1")
 	t.Setenv("HELMR_REGION_ID", "us-east-1")
 	t.Setenv("HELMR_DEFAULT_REGION_ID", "us-east-1")
@@ -462,6 +464,13 @@ func setControlWorkerGroupEnv(t *testing.T) {
 	t.Setenv("HELMR_RUNTIME_STORE_URI", "s3://helmr-cas/runtimes")
 	t.Setenv("HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT", "sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26")
 	t.Setenv("HELMR_WORKSPACE_FENCING_KEYS", `{"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}`)
+}
+
+func setControlTokenCredentialEnv(t *testing.T) {
+	t.Helper()
+	const keyID = "sha256:434f804453bb27ed658e7d3b6a251a2450c6d05c0989b349d6abfa55c1bce882"
+	t.Setenv("HELMR_TOKEN_CREDENTIAL_KEY_ID", keyID)
+	t.Setenv("HELMR_TOKEN_CREDENTIAL_KEYS", `{"`+keyID+`":"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM="}`)
 }
 
 func setWorkerRuntimeEnv(t *testing.T, build bool) {

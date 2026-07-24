@@ -37,6 +37,12 @@ func TestDeliveryWorkerReconcilesAndDeliversTokenIntent(t *testing.T) {
 		store.claim.Topics[0] != "token.reconcile" {
 		t.Fatalf("claim = %+v", store.claim)
 	}
+	if store.expireLimit != tokenReconcileBatchLimit {
+		t.Fatalf("Token expiry limit = %d", store.expireLimit)
+	}
+	if store.credentialExpireLimit != tokenReconcileBatchLimit {
+		t.Fatalf("Token credential expiry limit = %d", store.credentialExpireLimit)
+	}
 	if gotEnvironmentID != environmentID || gotTokenID != tokenID || gotLimit != tokenReconcileBatchLimit {
 		t.Fatalf("reconcile IDs/limit = %s/%s/%d", gotEnvironmentID, gotTokenID, gotLimit)
 	}
@@ -149,12 +155,24 @@ func TestDeliveryWorkerDeadLettersInvalidTokenIntent(t *testing.T) {
 }
 
 type tokenDeliveryStore struct {
-	messages     []db.OutboxMessage
-	claim        db.ClaimOutboxMessagesParams
-	delivered    int32
-	retried      bool
-	retryAt      time.Time
-	deadLettered bool
+	messages              []db.OutboxMessage
+	claim                 db.ClaimOutboxMessagesParams
+	delivered             int32
+	retried               bool
+	retryAt               time.Time
+	deadLettered          bool
+	expireLimit           int32
+	credentialExpireLimit int32
+}
+
+func (s *tokenDeliveryStore) ExpireDueTokens(_ context.Context, limit int32) ([]db.ExpireDueTokensRow, error) {
+	s.expireLimit = limit
+	return nil, nil
+}
+
+func (s *tokenDeliveryStore) ExpireDuePublicAccessTokens(_ context.Context, limit int32) ([]db.PublicAccessToken, error) {
+	s.credentialExpireLimit = limit
+	return nil, nil
 }
 
 func (s *tokenDeliveryStore) ClaimOutboxMessages(_ context.Context, claim db.ClaimOutboxMessagesParams) ([]db.OutboxMessage, error) {

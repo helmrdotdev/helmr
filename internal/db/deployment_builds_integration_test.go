@@ -57,6 +57,7 @@ func newDeploymentBuildFixture(t *testing.T) (*deploymentBuildFixture, *pgxpool.
 		INSERT INTO deployments (
 			id, public_id, org_id, project_id, environment_id, build_region_id,
 			build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+			build_manager_name, build_manager_version, build_manager_digest,
 			build_contract_version,
 			build_requested_cpu_millis, build_requested_memory_bytes,
 			build_requested_scratch_bytes,
@@ -64,6 +65,7 @@ func newDeploymentBuildFixture(t *testing.T) (*deploymentBuildFixture, *pgxpool.
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			'x86_64', decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
+			'bun', '1.2.3', decode(repeat('22', 32), 'hex'),
 			'helmr.program-build.v0',
 			$10, $11, $12,
 			$7, $8, $9, 'queued'

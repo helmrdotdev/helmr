@@ -227,6 +227,7 @@ module "control" {
   private_control_dns_name               = local.private_control_dns_name
   github_oauth_client_id                 = var.github_oauth_client_id
   workspace_fencing_key_fingerprint      = var.workspace_fencing_key_fingerprint
+  token_credential_key_id                = var.token_credential_key_id
   secret_encryption_key_old_arn          = var.secret_encryption_key_old_arn
   secret_encryption_key_old_kms_key_arns = var.secret_encryption_key_old_kms_key_arns
   database_instance_class                = var.database_instance_class

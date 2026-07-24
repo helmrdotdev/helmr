@@ -284,6 +284,43 @@ func TestActorCloseRequestUsesActorScopeAndOperationOnlyFingerprint(t *testing.T
 	}
 }
 
+func TestTokenCreateScopesSeparateRuntimeRunsAndExternalCallers(t *testing.T) {
+	environmentID := uuid.MustParse("00000000-0000-0000-0000-000000000301")
+	runA := uuid.MustParse("00000000-0000-0000-0000-000000000401")
+	runB := uuid.MustParse("00000000-0000-0000-0000-000000000402")
+	timeoutMS := int64(600_000)
+	input := TokenCreateFingerprint{
+		TimeoutMS: &timeoutMS,
+		Metadata:  json.RawMessage(`{"approval":true}`),
+		Tags:      []string{"review"},
+	}
+	runtimeA, err := NewRuntimeTokenCreateRequest(environmentID, runA, "same-key", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeB, err := NewRuntimeTokenCreateRequest(environmentID, runB, "same-key", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	external, err := NewExternalTokenCreateRequest(environmentID, "same-key", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopeA := runtimeA.idempotencyRequest().scope
+	scopeB := runtimeB.idempotencyRequest().scope
+	externalScope := external.idempotencyRequest().scope
+	if bytes.Equal(scopeA, scopeB) ||
+		bytes.Equal(scopeA, externalScope) ||
+		bytes.Equal(scopeB, externalScope) {
+		t.Fatalf("Token create scopes overlap: runtime A %x runtime B %x external %x", scopeA, scopeB, externalScope)
+	}
+	if string(externalScope) != "external" ||
+		!bytes.HasPrefix(scopeA, []byte("runtime\x00")) ||
+		!bytes.HasPrefix(scopeB, []byte("runtime\x00")) {
+		t.Fatalf("Token create scope domains are invalid: runtime A %x runtime B %x external %q", scopeA, scopeB, externalScope)
+	}
+}
+
 func TestActorStartRequestUsesDeclaredIDScopeAndCanonicalCallerSemantics(t *testing.T) {
 	environmentID := uuid.MustParse("00000000-0000-0000-0000-000000000301")
 	expiresAt := time.Date(2030, 1, 2, 3, 4, 5, 600, time.FixedZone("offset", 9*60*60))

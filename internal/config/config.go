@@ -48,6 +48,8 @@ type Control struct {
 	LookupHMACKeys                 string
 	WorkspaceFencingKeyFingerprint string
 	WorkspaceFencingKeys           string
+	TokenCredentialKeyID           string
+	TokenCredentialKeys            string
 	PublicURL                      string
 	MagicLinkDebugURLs             bool
 	EmailProvider                  string

@@ -1008,11 +1008,12 @@ type WorkerEventResponse struct {
 }
 
 type WorkerCreateTokenRequest struct {
-	Lease            WorkerRunLease  `json:"lease"`
-	TimeoutAt        *time.Time      `json:"timeout_at,omitempty"`
-	TimeoutInSeconds *int32          `json:"timeout_in_seconds,omitempty"`
-	Tags             []string        `json:"tags,omitempty"`
-	Metadata         json.RawMessage `json:"metadata,omitempty"`
+	Lease          WorkerRunLeaseReceipt `json:"lease"`
+	CorrelationID  string                `json:"correlation_id"`
+	TimeoutMS      *int64                `json:"timeout_ms,omitempty"`
+	Tags           []string              `json:"tags,omitempty"`
+	Metadata       json.RawMessage       `json:"metadata,omitempty"`
+	IdempotencyKey string                `json:"idempotency_key,omitempty"`
 }
 
 type WorkerRunWaitKind string

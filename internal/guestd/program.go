@@ -956,7 +956,7 @@ func relayProgram(
 	quiesced := false
 	var pendingWait *runv0.RunWaitRequested
 	var pendingTurnCommit *runv0.ActorTurnCommitRequested
-	pendingActorInputSends := make(map[string]struct{})
+	pendingRuntimeOperations := make(map[string]string)
 	for !processExited || !controlClosed {
 		select {
 		case event, ok := <-events:
@@ -1010,16 +1010,36 @@ func relayProgram(
 					strings.TrimSpace(send.GetDataJson()) == "" {
 					return errors.New("Actor input send identity is incomplete")
 				}
-				if _, exists := pendingActorInputSends[correlationID]; exists {
+				if _, exists := pendingRuntimeOperations[correlationID]; exists {
 					return errors.New("Program emitted a duplicate Actor input send correlation")
 				}
-				if len(pendingActorInputSends) >= 128 {
-					return errors.New("Program exceeded the pending Actor input send limit")
+				if len(pendingRuntimeOperations) >= 128 {
+					return errors.New("Program exceeded the pending runtime operation limit")
 				}
 				if err := stream.write(event); err != nil {
 					return err
 				}
-				pendingActorInputSends[correlationID] = struct{}{}
+				pendingRuntimeOperations[correlationID] = "Actor input send"
+				continue
+			}
+			if create := event.GetTokenCreateRequested(); create != nil {
+				if outcomeSeen {
+					return errors.New("Program emitted a Token create after outcome")
+				}
+				correlationID := strings.TrimSpace(create.GetCorrelationId())
+				if correlationID == "" {
+					return errors.New("Token create identity is incomplete")
+				}
+				if _, exists := pendingRuntimeOperations[correlationID]; exists {
+					return errors.New("Program emitted a duplicate Token create correlation")
+				}
+				if len(pendingRuntimeOperations) >= 128 {
+					return errors.New("Program exceeded the pending runtime operation limit")
+				}
+				if err := stream.write(event); err != nil {
+					return err
+				}
+				pendingRuntimeOperations[correlationID] = "Token create"
 				continue
 			}
 			var outcomeErr error
@@ -1040,8 +1060,8 @@ func relayProgram(
 			if outcomeSeen {
 				return errors.New("Program emitted more than one outcome")
 			}
-			if len(pendingActorInputSends) != 0 {
-				return errors.New("Program emitted an outcome with Actor input sends pending")
+			if len(pendingRuntimeOperations) != 0 {
+				return errors.New("Program emitted an outcome with runtime operations pending")
 			}
 			if outcomeErr != nil {
 				return outcomeErr
@@ -1067,14 +1087,14 @@ func relayProgram(
 			}
 			if control.decision != nil {
 				correlationID := control.decision.GetCorrelationId()
-				if _, pending := pendingActorInputSends[correlationID]; pending {
-					if err := validateActorInputSendDecision(control.decision); err != nil {
+				if operation, pending := pendingRuntimeOperations[correlationID]; pending {
+					if err := validateRuntimeOperationDecision(control.decision); err != nil {
 						return err
 					}
 					if err := frameio.WriteProtoFrame(process.stdin, control.decision); err != nil {
-						return fmt.Errorf("write Actor input send decision: %w", err)
+						return fmt.Errorf("write %s decision: %w", operation, err)
 					}
-					delete(pendingActorInputSends, correlationID)
+					delete(pendingRuntimeOperations, correlationID)
 					hostControls = readProgramHostControl(conn)
 					continue
 				}
@@ -1527,7 +1547,7 @@ func validateResumeDecisionAuthority(decision *runv0.ResumeDecision) error {
 	}
 }
 
-func validateActorInputSendDecision(decision *runv0.ResumeDecision) error {
+func validateRuntimeOperationDecision(decision *runv0.ResumeDecision) error {
 	if decision == nil ||
 		strings.TrimSpace(decision.GetCorrelationId()) == "" ||
 		(decision.GetKind() != "completed" && decision.GetKind() != "failed") ||
@@ -1539,7 +1559,7 @@ func validateActorInputSendDecision(decision *runv0.ResumeDecision) error {
 		decision.GetRunLeaseId() != "" ||
 		decision.GetNoResult() ||
 		!json.Valid([]byte(decision.GetDataJson())) {
-		return errors.New("Actor input send decision is invalid")
+		return errors.New("runtime operation decision is invalid")
 	}
 	return nil
 }

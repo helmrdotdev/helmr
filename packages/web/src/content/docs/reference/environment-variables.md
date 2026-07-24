@@ -23,7 +23,7 @@ order: 960
 
 ## Control plane
 
-Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CAS_URI`, `HELMR_CLICKHOUSE_URL`, `HELMR_WORKER_TOKEN_SIGNING_KEY`, `HELMR_WORKER_GROUPS`, `HELMR_WORKER_GROUP_ID`, `HELMR_REGION_ID`, `HELMR_DEFAULT_REGION_ID`, `HELMR_AUTH_SECRET`, `HELMR_SECRET_ENCRYPTION_KEY`, `HELMR_LOOKUP_HMAC_KEYS`, `HELMR_GITHUB_OAUTH_CLIENT_ID`, and `HELMR_GITHUB_OAUTH_CLIENT_SECRET`.
+Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CAS_URI`, `HELMR_CLICKHOUSE_URL`, `HELMR_WORKER_TOKEN_SIGNING_KEY`, `HELMR_WORKER_GROUPS`, `HELMR_WORKER_GROUP_ID`, `HELMR_REGION_ID`, `HELMR_DEFAULT_REGION_ID`, `HELMR_AUTH_SECRET`, `HELMR_SECRET_ENCRYPTION_KEY`, `HELMR_LOOKUP_HMAC_KEYS`, `HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT`, `HELMR_WORKSPACE_FENCING_KEYS`, `HELMR_TOKEN_CREDENTIAL_KEY_ID`, `HELMR_TOKEN_CREDENTIAL_KEYS`, `HELMR_GITHUB_OAUTH_CLIENT_ID`, and `HELMR_GITHUB_OAUTH_CLIENT_SECRET`.
 
 Deployment mode: `HELMR_DEPLOYMENT_MODE` defaults to `self-hosted`. In `self-hosted` mode, `HELMR_SETUP_TOKEN` is required to create the first and only organization. In `managed-cloud` mode, authenticated users can create organizations without a setup token.
 
@@ -56,6 +56,12 @@ followed by
 `helmr-control lookup-hmac retire --version <old-version>` before removing its
 bytes from configuration or KMS. A new database must receive its first explicit
 `lookup-hmac activate` before Control starts.
+
+`HELMR_TOKEN_CREDENTIAL_KEYS` is a JSON object from content-derived
+`sha256:<hex>` key IDs to base64-encoded 32-byte keys.
+`HELMR_TOKEN_CREDENTIAL_KEY_ID` selects the active derivation key. Keep every
+key referenced by a Token or its public completion credential readable; Control
+readiness fails closed when a referenced key is absent.
 
 When using the AWS module with `secret_encryption_key_old_arn`, also set
 `secret_encryption_key_old_kms_key_arns` if that old-key secret uses a

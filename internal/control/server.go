@@ -28,6 +28,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -69,6 +70,7 @@ type Server struct {
 	claims                idempotency.Manager
 	secretDelivery        SecretDeliveryOpener
 	workspaceFencingKeys  workspace.FencingKeys
+	tokenCredentialKeys   token.CredentialKeys
 	eventStream           *EventStream
 	telemetryReader       telemetry.Reader
 	workerTokenSecret     []byte
@@ -131,6 +133,7 @@ type ServerConfig struct {
 	Idempotency          idempotency.Manager
 	SecretDelivery       SecretDeliveryOpener
 	WorkspaceFencingKeys workspace.FencingKeys
+	TokenCredentialKeys  token.CredentialKeys
 	EventStream          *EventStream
 	TelemetryReader      telemetry.Reader
 	Mailer               email.Sender
@@ -186,6 +189,9 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		cfg.WorkspaceFencingKeys.ActiveFingerprint(),
 	) {
 		return nil, errors.New("Workspace fencing keys are required")
+	}
+	if !cfg.TokenCredentialKeys.Has(cfg.TokenCredentialKeys.ActiveID()) {
+		return nil, errors.New("Token credential keys are required")
 	}
 	regionID := cfg.RegionID
 	if err := region.ValidateID(regionID); err != nil {
@@ -251,6 +257,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		claims:                cfg.Idempotency,
 		secretDelivery:        cfg.SecretDelivery,
 		workspaceFencingKeys:  cfg.WorkspaceFencingKeys,
+		tokenCredentialKeys:   cfg.TokenCredentialKeys,
 		eventStream:           cfg.EventStream,
 		telemetryReader:       telemetryReader,
 		workerTokenSecret:     cfg.WorkerTokenSecret,
@@ -328,6 +335,11 @@ func (s *Server) recoverPanics(next http.Handler) http.Handler {
 func (s *Server) mountAPIRoutes(r chi.Router) {
 	r.Use(limitAPIRequestBody)
 	r.Use(s.requireRequestVersions)
+	r.With(limitRequestBody(tokenRequestBodyLimit)).
+		Post("/token-callbacks/{tokenID}/{callbackSecret}", s.completeTokenWithCallback)
+	r.With(limitRequestBody(tokenRequestBodyLimit)).
+		Post("/public/tokens/{tokenID}/complete", s.completeTokenWithBearer)
+	r.Options("/public/tokens/{tokenID}/complete", s.completeTokenBearerPreflight)
 	s.mountAuthRoutes(r)
 	s.mountOwnerRoutes(r)
 	s.mountWorkerRoutes(r)
@@ -456,6 +468,14 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Post("/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/promote", s.promoteDeployment)
 		r.Get("/projects/{projectID}/environments/{environmentID}/schedules", s.listSchedules)
 		r.Get("/projects/{projectID}/environments/{environmentID}/schedules/{scheduleID}", s.getSchedule)
+		r.Get("/projects/{projectID}/environments/{environmentID}/tokens", s.listTokens)
+		r.With(limitRequestBody(tokenRequestBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/tokens", s.createToken)
+		r.Get("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}", s.getToken)
+		r.With(limitRequestBody(tokenRequestBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/complete", s.completeToken)
+		r.With(limitRequestBody(tokenRequestBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/cancel", s.cancelToken)
 		r.Get("/projects/{projectID}/environments/{environmentID}/secrets", s.listSecrets)
 		r.Get("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.getSecret)
 		r.Put("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.setSecret)
@@ -518,6 +538,13 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Post("/deployments/{deploymentID}/promote", s.promoteDeployment)
 		r.Get("/schedules", s.listSchedules)
 		r.Get("/schedules/{scheduleID}", s.getSchedule)
+		r.Get("/tokens", s.listTokens)
+		r.With(limitRequestBody(tokenRequestBodyLimit)).Post("/tokens", s.createToken)
+		r.Get("/tokens/{tokenID}", s.getToken)
+		r.With(limitRequestBody(tokenRequestBodyLimit)).
+			Post("/tokens/{tokenID}/complete", s.completeToken)
+		r.With(limitRequestBody(tokenRequestBodyLimit)).
+			Post("/tokens/{tokenID}/cancel", s.cancelToken)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireActor)
@@ -610,6 +637,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.Post("/leases/finalization/begin", s.workerBeginRunFinalization)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actor-turns/commit", s.workerCommitActorTurn)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actor-inputs/send", s.workerSendActorInput)
+				r.With(limitRequestBody(tokenRequestBodyLimit)).Post("/leases/tokens", s.workerCreateToken)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/tasks/complete", s.workerCompleteTask)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/complete", s.workerCompleteActor)
 				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/run-logs", s.workerAppendRunLogs)
@@ -691,6 +719,67 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		if err != nil || !s.workspaceFencingKeys.Has(fingerprint) {
 			s.writeReadinessUnavailable(w, fmt.Errorf(
 				"Workspace fencing key %q is not readable",
+				encoded,
+			))
+			return
+		}
+	}
+	var rawTokenCredentialKeyIDs []byte
+	if err := s.readinessDB.QueryRow(ctx, `
+		SELECT COALESCE(
+			json_agg(referenced.key_id ORDER BY referenced.key_id),
+			'[]'::json
+		)
+		  FROM (
+			SELECT callback_key_id AS key_id
+			  FROM tokens
+			 WHERE expires_at > transaction_timestamp()
+			   AND callback_key_id <> ''
+			UNION
+			SELECT credential_key_id AS key_id
+			  FROM public_access_tokens
+			 WHERE expires_at > transaction_timestamp()
+			   AND credential_key_id <> ''
+			UNION
+			SELECT receipt->>'callback_key_id' AS key_id
+			  FROM idempotency_claims
+			 WHERE operation = 'token.create'
+			   AND state = 'completed'
+			   AND retired_at IS NULL
+			   AND expires_at > transaction_timestamp()
+			   AND receipt->>'callback_key_id' <> ''
+			UNION
+			SELECT receipt->>'credential_key_id' AS key_id
+			  FROM idempotency_claims
+			 WHERE operation = 'token.create'
+			   AND state = 'completed'
+			   AND retired_at IS NULL
+			   AND expires_at > transaction_timestamp()
+			   AND receipt->>'credential_key_id' <> ''
+		  ) AS referenced
+	`).Scan(&rawTokenCredentialKeyIDs); err != nil {
+		s.writeReadinessUnavailable(w, fmt.Errorf(
+			"read Token credential key references: %w",
+			err,
+		))
+		return
+	}
+	var tokenCredentialKeyIDs []string
+	if err := json.Unmarshal(
+		rawTokenCredentialKeyIDs,
+		&tokenCredentialKeyIDs,
+	); err != nil {
+		s.writeReadinessUnavailable(w, fmt.Errorf(
+			"decode Token credential key references: %w",
+			err,
+		))
+		return
+	}
+	for _, encoded := range tokenCredentialKeyIDs {
+		keyID, err := token.ParseCredentialKeyID(encoded)
+		if err != nil || !s.tokenCredentialKeys.Has(keyID) {
+			s.writeReadinessUnavailable(w, fmt.Errorf(
+				"Token credential key %q is not readable",
 				encoded,
 			))
 			return

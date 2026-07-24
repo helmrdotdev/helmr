@@ -649,7 +649,7 @@ func TestValidateActorInputSendDecisionRejectsWaitAuthority(t *testing.T) {
 		Kind:          "completed",
 		DataJson:      `{"sequence":1}`,
 	}
-	if err := validateActorInputSendDecision(valid); err != nil {
+	if err := validateRuntimeOperationDecision(valid); err != nil {
 		t.Fatal(err)
 	}
 	for _, malformed := range []*runv0.ResumeDecision{
@@ -658,7 +658,7 @@ func TestValidateActorInputSendDecisionRejectsWaitAuthority(t *testing.T) {
 		{CorrelationId: valid.CorrelationId, Kind: "completed", DataJson: `{"sequence":1}`, RequireConsumedAck: true},
 		{CorrelationId: valid.CorrelationId, Kind: "completed", DataJson: `{`},
 	} {
-		if err := validateActorInputSendDecision(malformed); err == nil {
+		if err := validateRuntimeOperationDecision(malformed); err == nil {
 			t.Fatalf("malformed decision was accepted: %+v", malformed)
 		}
 	}

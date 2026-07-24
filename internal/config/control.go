@@ -8,6 +8,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/keyedhash"
+	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
@@ -42,6 +43,8 @@ func LoadControl() (Control, error) {
 			"HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT",
 		),
 		WorkspaceFencingKeys:    envString("HELMR_WORKSPACE_FENCING_KEYS"),
+		TokenCredentialKeyID:    envString("HELMR_TOKEN_CREDENTIAL_KEY_ID"),
+		TokenCredentialKeys:     envString("HELMR_TOKEN_CREDENTIAL_KEYS"),
 		PublicURL:               publicURL,
 		MagicLinkDebugURLs:      magicLinkDebugURLs,
 		EmailProvider:           envLower("HELMR_EMAIL_PROVIDER"),
@@ -142,6 +145,18 @@ func LoadControl() (Control, error) {
 		cfg.WorkspaceFencingKeys,
 	); err != nil {
 		return cfg, fmt.Errorf("HELMR_WORKSPACE_FENCING_KEYS: %w", err)
+	}
+	if cfg.TokenCredentialKeyID == "" {
+		return cfg, errors.New("HELMR_TOKEN_CREDENTIAL_KEY_ID is required")
+	}
+	if cfg.TokenCredentialKeys == "" {
+		return cfg, errors.New("HELMR_TOKEN_CREDENTIAL_KEYS is required")
+	}
+	if _, err := token.CredentialKeysFromBase64JSON(
+		cfg.TokenCredentialKeyID,
+		cfg.TokenCredentialKeys,
+	); err != nil {
+		return cfg, fmt.Errorf("HELMR_TOKEN_CREDENTIAL_KEYS: %w", err)
 	}
 	if err := validatePublicURL(cfg.PublicURL); err != nil {
 		return cfg, err

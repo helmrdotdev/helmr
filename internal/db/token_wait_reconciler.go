@@ -166,14 +166,17 @@ SELECT state, current_run_id, committed_input_sequence, next_input_sequence
 	if err != nil {
 		return TokenWaitRegistrationResult{}, err
 	}
+	if run.parentRunID.Valid {
+		return TokenWaitRegistrationResult{}, tokenWaitAuthorityError(
+			"child Run Token Wait is not implemented",
+			nil,
+		)
+	}
 	if run.workspaceID != locator.workspaceID || run.status != RunStatusRunning ||
 		run.stateVersion != request.ExpectedRunStateVersion || run.currentAttempt != request.AttemptNumber ||
 		!run.currentRunLeaseID.Valid || uuid.UUID(run.currentRunLeaseID.Bytes) != request.CurrentRunLeaseID ||
 		!run.activeStartedAt.Valid {
 		return TokenWaitRegistrationResult{}, tokenWaitAuthorityError("Run registration fence does not match", nil)
-	}
-	if run.parentRunID.Valid {
-		return TokenWaitRegistrationResult{}, tokenWaitAuthorityError("child Token Wait registration is not implemented", nil)
 	}
 	if err := validateAndLockTokenWaitWorkspace(ctx, tx, request.EnvironmentID, locator, lineage, lockedActorCurrentRunID); err != nil {
 		return TokenWaitRegistrationResult{}, err
@@ -331,7 +334,7 @@ INSERT INTO run_waits (
 	var tokenState TokenState
 	var completionData []byte
 	if err := tx.QueryRow(ctx, `
-SELECT state, completion_data
+SELECT state, result
   FROM tokens
  WHERE environment_id = $1
    AND id = $2
@@ -712,13 +715,15 @@ SELECT state, current_run_id
 	if err != nil {
 		return false, false, err
 	}
+	if addressedRun.parentRunID.Valid {
+		return false, false, tokenWaitAuthorityError(
+			"child Run Token Wait is not implemented",
+			nil,
+		)
+	}
 	if addressedRun.workspaceID != locator.workspaceID || addressedRun.currentAttempt != locator.attempt {
 		return false, false, tokenWaitAuthorityError("Run locator changed", nil)
 	}
-	if addressedRun.parentRunID.Valid {
-		return false, false, tokenWaitAuthorityError("child Token Wait reconciliation is not implemented", nil)
-	}
-
 	var ownerActorID, ownerRunID pgtype.UUID
 	var workspaceState WorkspaceState
 	var desiredState WorkspaceDesiredState
@@ -786,7 +791,7 @@ SELECT terminal_at
 	var tokenState TokenState
 	var completionData []byte
 	err = tx.QueryRow(ctx, `
-SELECT state, completion_data
+SELECT state, result
   FROM tokens
  WHERE environment_id = $1
    AND id = $2

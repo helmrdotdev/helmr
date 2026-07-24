@@ -30,10 +30,9 @@ The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint wit
 | `helmr run events RUN [-p PROJECT] [-e ENV] [--cursor CURSOR] [--limit N] [--follow]` | Print run events as JSON lines. |
 | `helmr run wait RUN [-p PROJECT] [-e ENV] [--timeout DURATION] [--json]` | Wait for a run to finish using the run event stream. |
 | `helmr run cancel RUN [-p PROJECT] [-e ENV] [--reason TEXT] [--force] [--idempotency-key KEY] [--json]` | Cancel a run attempt. |
-| `helmr token create [-p PROJECT] [-e ENV] [--timeout DURATION] [--json]` | Create an external completion token. |
 | `helmr token get TOKEN [-p PROJECT] [-e ENV] [--json]` | Show an external completion token. |
-| `helmr token complete TOKEN [-p PROJECT] [-e ENV] --data-json JSON [--json]` | Complete an external token. |
-| `helmr token cancel TOKEN [-p PROJECT] [-e ENV] [--json]` | Cancel a pending external token. |
+| `helmr token complete TOKEN [-p PROJECT] [-e ENV] --data-json JSON [--idempotency-key KEY] [--json]` | Complete an external token. |
+| `helmr token cancel TOKEN [-p PROJECT] [-e ENV] [--idempotency-key KEY] [--json]` | Cancel a pending external token. |
 | `helmr workspace create` | Create a durable workspace. |
 | `helmr workspace list` | List durable workspaces. |
 | `helmr workspace get WORKSPACE` | Show workspace details. |

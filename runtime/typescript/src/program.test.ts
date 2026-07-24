@@ -1,6 +1,6 @@
 import { create, fromBinary, toBinary, type GenMessage } from "@bufbuild/protobuf"
 import { runProto } from "@helmr/proto"
-import { actor, task, timers } from "@helmr/sdk"
+import { actor, task, timers, tokens } from "@helmr/sdk"
 import { describe, expect, test } from "bun:test"
 
 import { runProgram, type ProgramIO } from "./program"
@@ -572,6 +572,126 @@ describe("runProgram", () => {
       "taskOutcome",
     ])
   })
+
+  test("creates and waits for an externally completed Token", async () => {
+    let completed: unknown
+    const definition = task({
+      id: "deploy",
+      async run() {
+        const token = await tokens.create({
+          timeout: "10m",
+          metadata: { approval: true },
+          tags: ["review"],
+          idempotencyKey: "approval-1",
+        })
+        completed = await token.wait({
+          timeout: "30m",
+          idleTimeout: "45s",
+          metadata: { stage: "approval" },
+          tags: ["human"],
+        }).unwrap()
+        return null
+      },
+    })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+    const createWritten = deferred<void>()
+    const waitWritten = deferred<void>()
+    async function* input(): AsyncIterable<Uint8Array> {
+      yield frameMessage(runProto.ProgramStartSchema, start)
+      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      await createWritten.promise
+      const createEvent = readEvent(output[1]!).event
+      expect(createEvent.case).toBe("tokenCreateRequested")
+      if (createEvent.case !== "tokenCreateRequested") return
+      expect(createEvent.value.timeoutMs).toBe(600_000n)
+      expect(createEvent.value.idempotencyKey).toBe("approval-1")
+      expect(createEvent.value.metadataJson).toBe('{"approval":true}')
+      expect(createEvent.value.tags).toEqual(["review"])
+      yield actorDecision(
+        createEvent.value.correlationId,
+        "completed",
+        JSON.stringify({
+          id: "tok_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          status: "pending",
+          callback_url: "https://api.example.test/callback",
+          public_access_token: "hlmr_pat_secret",
+          timeout_at: "2026-07-24T12:00:00Z",
+          metadata: { approval: true },
+          tags: ["review"],
+          created_at: "2026-07-24T11:50:00Z",
+          updated_at: "2026-07-24T11:50:00Z",
+        }),
+      )
+      await waitWritten.promise
+      const waitEvent = readEvent(output[2]!).event
+      expect(waitEvent.case).toBe("runWaitRequested")
+      if (waitEvent.case !== "runWaitRequested") return
+      expect(waitEvent.value.kind).toBe("token")
+      expect(waitEvent.value.timeoutMs).toBe(1_800_000n)
+      expect(waitEvent.value.idleTimeoutMs).toBe(45_000n)
+      expect(waitEvent.value.metadataJson).toBe('{"stage":"approval"}')
+      expect(waitEvent.value.tags).toEqual(["human"])
+      expect(JSON.parse(waitEvent.value.paramsJson)).toEqual({
+        token_id: "tok_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      })
+      yield actorDecision(
+        waitEvent.value.correlationId,
+        "completed",
+        '{"approved":true}',
+      )
+    }
+    await runProgram(locatorURL, programIO({
+      input: input(),
+      definition,
+      output,
+      onWrite: () => {
+        if (output.length === 2) createWritten.resolve()
+        if (output.length === 3) waitWritten.resolve()
+      },
+    }))
+    expect(completed).toEqual({ approved: true })
+    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+      "entrypointReady",
+      "tokenCreateRequested",
+      "runWaitRequested",
+      "taskOutcome",
+    ])
+  })
+
+  test.each(["0.5s", "01s", " 1s"])(
+    "rejects non-canonical Token duration %s before emission",
+    async (timeout) => {
+      let caught: unknown
+      const definition = task({
+        id: "deploy",
+        async run() {
+          try {
+            await tokens.create({ timeout: timeout as never })
+          } catch (error) {
+            caught = error
+          }
+          return null
+        },
+      })
+      const start = taskStart("noPayload")
+      const output: Uint8Array[] = []
+      await runProgram(locatorURL, programIO({
+        input: frames(
+          frameMessage(runProto.ProgramStartSchema, start),
+          frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+        ),
+        definition,
+        output,
+      }))
+      expect(caught).toBeInstanceOf(Error)
+      expect((caught as Error).message).toContain("positive integer")
+      expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+        "entrypointReady",
+        "taskOutcome",
+      ])
+    },
+  )
 
   test("rejects an oversized Actor input idempotency key before emission", async () => {
     const mailbox = actor({ id: "mailbox", run() {} })

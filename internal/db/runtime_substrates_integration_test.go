@@ -292,11 +292,13 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 		INSERT INTO deployments (
 			id, public_id, org_id, build_region_id, project_id, environment_id,
 			build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+			build_manager_name, build_manager_version, build_manager_digest,
 			build_contract_version, version, content_hash, deployment_source_artifact_id,
 			queue_config, status
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, 'aarch64',
+			$1, $2, $3, $4, $5, $6, 'x86_64',
 			decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
+			'bun', '1.2.3', decode(repeat('22', 32), 'hex'),
 			'helmr.program-build.v0', 'authority', $7, $8, '{}'::jsonb, 'deployed'
 		)
 	`, deploymentID, testPublicID(t, publicid.Deployment), orgID, dbtest.DefaultRegionID,

@@ -892,14 +892,10 @@ func (c *Client) tokenItemPath(tokenID string, suffix string, opts TokenScopeOpt
 	return environmentScopedResourcePath(path, tokenID, suffix), nil
 }
 
-func (c *Client) CreateToken(ctx context.Context, input api.CreateTokenRequest) (api.TokenResponse, error) {
-	path, scoped, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/tokens")
+func (c *Client) CreateToken(ctx context.Context, input api.CreateTokenRequest, opts TokenScopeOptions) (api.TokenResponse, error) {
+	path, err := c.tokenCollectionPath(opts)
 	if err != nil {
 		return api.TokenResponse{}, err
-	}
-	if scoped {
-		input.ProjectID = ""
-		input.EnvironmentID = ""
 	}
 	var response api.TokenResponse
 	if err := c.postJSON(ctx, path, input, &response); err != nil {
@@ -936,13 +932,13 @@ func (c *Client) CompleteToken(ctx context.Context, tokenID string, input api.Co
 	return response, nil
 }
 
-func (c *Client) CancelToken(ctx context.Context, tokenID string, opts TokenScopeOptions) (api.TokenResponse, error) {
+func (c *Client) CancelToken(ctx context.Context, tokenID string, input api.CancelTokenRequest, opts TokenScopeOptions) (api.TokenResponse, error) {
 	path, err := c.tokenItemPath(tokenID, "/cancel", opts)
 	if err != nil {
 		return api.TokenResponse{}, err
 	}
 	var response api.TokenResponse
-	if err := c.postJSON(ctx, path, struct{}{}, &response); err != nil {
+	if err := c.postJSON(ctx, path, input, &response); err != nil {
 		return api.TokenResponse{}, err
 	}
 	return response, nil

@@ -437,7 +437,7 @@ func newRunLeaseClaimFixture(t *testing.T, ctx context.Context) runLeaseClaimFix
 	sourceDigest, programDigest := runLeaseTestDigest("source"), runLeaseTestDigest("program")
 	imageDigest := runLeaseTestDigest("image")
 	programReceipt := dbtest.ProgramReceipt(dbtest.ProgramReceiptAuthority{
-		Architecture:            "aarch64",
+		Architecture:            "x86_64",
 		ProgramArtifactID:       programID,
 		ProgramDigest:           programDigest,
 		ProgramSizeBytes:        1,
@@ -495,14 +495,16 @@ func newRunLeaseClaimFixture(t *testing.T, ctx context.Context) runLeaseClaimFix
 		INSERT INTO deployments (
 			id, public_id, org_id, project_id, environment_id, build_region_id,
 			build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+			build_manager_name, build_manager_version, build_manager_digest,
 			build_contract_version, version, content_hash, deployment_source_artifact_id,
 			program_artifact_id, program_runtime_digest, program_architecture,
 			program_receipt, queue_config, status
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, 'aarch64',
+			$1, $2, $3, $4, $5, $6, 'x86_64',
 			decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
+			'bun', '1.2.3', decode(repeat('22', 32), 'hex'),
 			'helmr.program-build.v0', 'run-lease-test', $7, $8, $9,
-			decode(repeat('01', 32), 'hex'), 'aarch64', $10::jsonb, '{}'::jsonb, 'deployed'
+			decode(repeat('01', 32), 'hex'), 'x86_64', $10::jsonb, '{}'::jsonb, 'deployed'
 		)
 	`, fixture.deploymentID, runLeasePublicID(t, publicid.Deployment), fixture.orgID,
 		fixture.projectID, fixture.environmentID, runLeaseTestRegion, sourceDigest,
@@ -517,7 +519,7 @@ func newRunLeaseClaimFixture(t *testing.T, ctx context.Context) runLeaseClaimFix
 			decode(repeat('03', 32), 'hex'), NULL, NULL
 		), (
 			$2, $3, $4, 'workspace', 'test-workspace', 0, '{}'::jsonb,
-			decode(repeat('04', 32), 'hex'), 'aarch64', $5
+			decode(repeat('04', 32), 'hex'), 'x86_64', $5
 		)
 	`, fixture.taskDefinitionID, fixture.workspaceDefinitionID,
 		fixture.environmentID, fixture.deploymentID, imageID)
@@ -525,7 +527,7 @@ func newRunLeaseClaimFixture(t *testing.T, ctx context.Context) runLeaseClaimFix
 		INSERT INTO runtime_identities (
 			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
 			rootfs_digest, cni_profile
-		) VALUES ($1, 'aarch64', 'test', 'kernel', 'initramfs', 'rootfs', 'default')
+		) VALUES ($1, 'x86_64', 'test', 'kernel', 'initramfs', 'rootfs', 'default')
 	`, fixture.runtimeIdentityID)
 	mustRunLeaseExec(t, ctx, pool, `
 		INSERT INTO worker_instances (

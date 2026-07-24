@@ -42,7 +42,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"cmd/runtime-release": {"deployment"},
 		"cmd/tool-release":    {"deployment", "jsoncanon"},
 		"compute":             {"sha256sum"},
-		"config":              {"api", "auth", "keyedhash", "region", "workspace"},
+		"config":              {"api", "auth", "keyedhash", "region", "token", "workspace"},
 		"console":             {},
 		"control":             {"actorinput", "actorlifecycle", "api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "email", "frameio", "idempotency", "jsoncanon", "pgvalue", "proto/run/v0", "publicid", "region", "schedule", "secret", "telemetry", "token", "tracing", "workspace"},
 		"db":                  {},

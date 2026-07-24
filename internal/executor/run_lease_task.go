@@ -31,6 +31,7 @@ type RunLeaseControl interface {
 	CompleteActor(context.Context, api.WorkerCompleteActorRequest) error
 	CommitActorTurn(context.Context, api.WorkerCommitActorTurnRequest) (api.WorkerCommitActorTurnResponse, error)
 	SendRunActorInput(context.Context, api.WorkerSendActorInputRequest) (api.WorkerSendActorInputResponse, error)
+	CreateRuntimeToken(context.Context, api.WorkerCreateTokenRequest) (api.TokenResponse, error)
 	AppendRunLog(context.Context, api.WorkerRunLeaseReceipt, api.WorkerLogStream, uint64, []byte) error
 }
 
@@ -235,6 +236,7 @@ func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, er
 			task.handleWait,
 			task.handleActorTurnCommit,
 			task.handleActorInputSend,
+			task.handleTokenCreate,
 		)
 		if err != nil {
 			return RunLeaseTaskResult{}, err
@@ -253,6 +255,7 @@ func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, er
 		taskControlEvents{task: task},
 		task.handleWait,
 		task.handleActorInputSend,
+		task.handleTokenCreate,
 	)
 	if err != nil {
 		return RunLeaseTaskResult{}, err

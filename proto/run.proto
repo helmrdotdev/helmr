@@ -261,21 +261,11 @@ message RunWaitRequested {
 }
 
 message TokenCreateRequested {
-  optional string timeout_at = 1;
-  optional uint32 timeout_in_seconds = 2;
+  optional uint64 timeout_ms = 1;
+  string correlation_id = 2;
+  optional string idempotency_key = 3;
   repeated string tags = 4;
   optional string metadata_json = 5;
-}
-
-message TokenCreateResult {
-  string id = 1;
-  string callback_url = 2;
-  optional string public_access_token = 3;
-  optional string timeout_at = 4;
-  optional string status = 5;
-  repeated string tags = 6;
-  optional string metadata_json = 7;
-  optional string error_message = 9;
 }
 
 message CheckpointPauseRequest {

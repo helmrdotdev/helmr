@@ -34,6 +34,9 @@ const (
 	operationActorStart     operation = "actor.start"
 	operationActorInputSend operation = "actor.input.send"
 	operationActorClose     operation = "actor.close"
+	operationTokenCreate    operation = "token.create"
+	operationTokenComplete  operation = "token.complete"
+	operationTokenCancel    operation = "token.cancel"
 )
 
 type Manager struct {
@@ -87,6 +90,12 @@ type ActorStartFingerprint struct {
 	ManagedRetryPolicy    json.RawMessage
 	ManagedRunMetadata    json.RawMessage
 	ManagedRunTags        []string
+}
+
+type TokenCreateFingerprint struct {
+	TimeoutMS *int64
+	Metadata  json.RawMessage
+	Tags      []string
 }
 
 type ConflictError struct {
@@ -170,6 +179,112 @@ func NewActorCloseRequest(environmentID uuid.UUID, actorID uuid.UUID, key string
 		key:           key,
 		fingerprint: func(int32) ([sha256.Size]byte, error) {
 			return operationFingerprint(operationActorClose, nil, 0, nil), nil
+		},
+	}}, nil
+}
+
+func NewRuntimeTokenCreateRequest(
+	environmentID uuid.UUID,
+	runID uuid.UUID,
+	key string,
+	input TokenCreateFingerprint,
+) (Request, error) {
+	if runID == uuid.Nil {
+		return nil, errors.New("Token creating Run ID is required")
+	}
+	scope := append([]byte("runtime\x00"), runID[:]...)
+	return newTokenCreateRequest(environmentID, scope, key, input)
+}
+
+func NewExternalTokenCreateRequest(
+	environmentID uuid.UUID,
+	key string,
+	input TokenCreateFingerprint,
+) (Request, error) {
+	return newTokenCreateRequest(environmentID, []byte("external"), key, input)
+}
+
+func newTokenCreateRequest(
+	environmentID uuid.UUID,
+	scope []byte,
+	key string,
+	input TokenCreateFingerprint,
+) (Request, error) {
+	if environmentID == uuid.Nil {
+		return nil, errors.New("idempotency environment is required")
+	}
+	metadata, err := canonicalActorStartJSON(input.Metadata, `{}`)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize Token metadata: %w", err)
+	}
+	fields, err := json.Marshal(struct {
+		TimeoutMS *int64          `json:"timeoutMs"`
+		Metadata  json.RawMessage `json:"metadata"`
+		Tags      []string        `json:"tags"`
+	}{
+		TimeoutMS: input.TimeoutMS,
+		Metadata:  metadata,
+		Tags:      append([]string{}, input.Tags...),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode Token create fingerprint: %w", err)
+	}
+	canonical, err := jsoncanon.Transform(fields)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize Token create fingerprint: %w", err)
+	}
+	return sealedRequest{value: request{
+		environmentID: environmentID,
+		operation:     operationTokenCreate,
+		scope:         bytes.Clone(scope),
+		key:           key,
+		fingerprint: func(int32) ([sha256.Size]byte, error) {
+			return operationFingerprint(operationTokenCreate, canonical, 0, nil), nil
+		},
+	}}, nil
+}
+
+func NewTokenCompleteRequest(
+	environmentID uuid.UUID,
+	tokenID uuid.UUID,
+	key string,
+	resultJSON []byte,
+) (Request, error) {
+	if environmentID == uuid.Nil {
+		return nil, errors.New("idempotency environment is required")
+	}
+	if tokenID == uuid.Nil {
+		return nil, errors.New("Token ID is required")
+	}
+	canonical, err := jsoncanon.Transform(resultJSON)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize Token result: %w", err)
+	}
+	return sealedRequest{value: request{
+		environmentID: environmentID,
+		operation:     operationTokenComplete,
+		scope:         bytes.Clone(tokenID[:]),
+		key:           key,
+		fingerprint: func(int32) ([sha256.Size]byte, error) {
+			return operationFingerprint(operationTokenComplete, canonical, 0, nil), nil
+		},
+	}}, nil
+}
+
+func NewTokenCancelRequest(environmentID uuid.UUID, tokenID uuid.UUID, key string) (Request, error) {
+	if environmentID == uuid.Nil {
+		return nil, errors.New("idempotency environment is required")
+	}
+	if tokenID == uuid.Nil {
+		return nil, errors.New("Token ID is required")
+	}
+	return sealedRequest{value: request{
+		environmentID: environmentID,
+		operation:     operationTokenCancel,
+		scope:         bytes.Clone(tokenID[:]),
+		key:           key,
+		fingerprint: func(int32) ([sha256.Size]byte, error) {
+			return operationFingerprint(operationTokenCancel, nil, 0, nil), nil
 		},
 	}}, nil
 }
@@ -390,7 +505,8 @@ func (t *Transaction) Acquire(ctx context.Context, input Request) (Result, error
 func supportedOperation(value operation) bool {
 	switch value {
 	case operationSecretCreate, operationSecretRotate, operationSecretRevoke,
-		operationActorStart, operationActorInputSend, operationActorClose:
+		operationActorStart, operationActorInputSend, operationActorClose,
+		operationTokenCreate, operationTokenComplete, operationTokenCancel:
 		return true
 	default:
 		return false

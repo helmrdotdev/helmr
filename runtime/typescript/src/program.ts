@@ -15,7 +15,9 @@ import type {
   ActorOutputRecord,
   ActorReceive,
   ActorSelf,
+  Duration,
   JsonValue,
+  Metadata,
   OutputAppendOptions,
   OutputSequenceOptions,
   ReceiveOptions,
@@ -23,6 +25,9 @@ import type {
   SendOptions,
   Serializable,
   TaskExecutionContext,
+  TokenCreateOptions,
+  TokenCreateResult,
+  TokenWaitOptions,
 } from "@helmr/sdk"
 import { createWriteStream, promises as fs } from "node:fs"
 import { randomUUID } from "node:crypto"
@@ -784,6 +789,108 @@ function programRuntimeOperations(
     })
     return await abortableRuntimeOperation(operation, options?.signal)
   }
+  const performTokenCreate = async (
+    options: TokenCreateOptions,
+  ): Promise<Omit<TokenCreateResult, "wait">> => {
+    const correlationId = randomUUID()
+    const timeoutMs = options.timeout === undefined
+      ? undefined
+      : durationMilliseconds(options.timeout, "Token timeout")
+    const metadataJson = options.metadata === undefined
+      ? undefined
+      : new TextDecoder().decode(canonicalizeJsonValue(options.metadata))
+    const idempotencyKey = normalizeTokenIdempotencyKey(options.idempotencyKey)
+    const operation = runOperations.trackDrainable(async () => {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "tokenCreateRequested",
+        value: create(runProto.TokenCreateRequestedSchema, {
+          correlationId,
+          ...(timeoutMs === undefined ? {} : { timeoutMs: BigInt(timeoutMs) }),
+          ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+          tags: options.tags === undefined ? [] : [...options.tags],
+          ...(metadataJson === undefined ? {} : { metadataJson }),
+        }),
+      })
+      requireRuntimeOperationDecision(decision, correlationId, "Token create")
+      if (decision.kind === "failed") {
+        throw runtimeOperationFailure("Token create", decision.dataJson)
+      }
+      return parseRuntimeProtocolValue(
+        "Token create result",
+        () => parseTokenCreateResult(decision.dataJson),
+      )
+    })
+    return await operation
+  }
+  const performTokenWait = async (
+    tokenId: string,
+    options: TokenWaitOptions,
+  ): Promise<JsonValue> => {
+    const releaseWait = waitGate.acquire()
+    const correlationId = randomUUID()
+    const timeoutMs = options.timeout === undefined
+      ? undefined
+      : durationMilliseconds(options.timeout, "Token Wait timeout")
+    const idleTimeoutMs = options.idleTimeout === undefined
+      ? undefined
+      : tokenWaitIdleTimeoutMilliseconds(options.idleTimeout)
+    try {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "runWaitRequested",
+        value: create(runProto.RunWaitRequestedSchema, {
+          correlationId,
+          kind: "token",
+          paramsJson: JSON.stringify({ token_id: tokenId }),
+          ...(options.metadata === undefined
+            ? {}
+            : { metadataJson: new TextDecoder().decode(canonicalizeJsonValue(options.metadata)) }),
+          ...(timeoutMs === undefined ? {} : { timeoutMs: BigInt(timeoutMs) }),
+          ...(idleTimeoutMs === undefined ? {} : { idleTimeoutMs: BigInt(idleTimeoutMs) }),
+          tags: options.tags === undefined ? [] : [...options.tags],
+          ...(actorCursor === undefined
+            ? {}
+            : { actorSpeculativeInputSequence: actorCursor.value }),
+        }),
+      })
+      if (
+        (decision.correlationId || decision.runWaitId) !== correlationId ||
+        (decision.kind !== "completed" &&
+          decision.kind !== "failed" &&
+          decision.kind !== "cancelled")
+      ) {
+        throw new RuntimeProtocolError("Token resume decision did not match the pending Wait")
+      }
+      if (decision.requireConsumedAck) {
+        await writeRuntimeProtocolEvent(io, {
+          case: "resumeConsumed",
+          value: create(runProto.ResumeConsumedSchema, {
+            runWaitId: decision.runWaitId,
+            checkpointId: decision.checkpointId,
+            resumeAttachId: decision.resumeAttachId,
+            resumeRequestVersion: decision.resumeRequestVersion,
+            runLeaseId: decision.runLeaseId,
+            correlationId: decision.correlationId,
+          }),
+        })
+      }
+      if (decision.kind === "cancelled" && actorCursor !== undefined) {
+        const failure = parseRuntimeProtocolValue(
+          "Actor Token cancellation decision",
+          () => resumeFailure(decision.dataJson),
+        )
+        throw runOperations.cancel(failure.reasonCode)
+      }
+      if (decision.kind !== "completed") {
+        throw tokenWaitFailure(decision.kind, decision.dataJson)
+      }
+      return parseRuntimeProtocolValue(
+        "Token completion result",
+        () => JSON.parse(decision.dataJson) as JsonValue,
+      )
+    } finally {
+      releaseWait()
+    }
+  }
   return {
     waitFor(duration) {
       return wait({ duration }, durationMilliseconds(duration))
@@ -802,7 +909,83 @@ function programRuntimeOperations(
     actorInputSend(target, input, options) {
       return performActorInputSend(target, input, options)
     },
+    tokenCreate(options) {
+      return performTokenCreate(options)
+    },
+    tokenWait(tokenId, options) {
+      return runOperations.track(() => performTokenWait(tokenId, options))
+    },
   }
+}
+
+function normalizeTokenIdempotencyKey(
+  value: string | undefined,
+): string | undefined {
+  if (value === undefined) return undefined
+  const normalized = trimGoSpace(value)
+  if (new TextEncoder().encode(normalized).byteLength > 512) {
+    throw new Error("Token idempotency key must be at most 512 UTF-8 bytes")
+  }
+  return normalized === "" ? undefined : normalized
+}
+
+function parseTokenCreateResult(dataJson: string): Omit<TokenCreateResult, "wait"> {
+  const value = parseObjectJSON(dataJson, "Token create result")
+  const metadata = objectField(value, "metadata", "Token create result") as Metadata
+  const tags = value["tags"]
+  if (!Array.isArray(tags) || tags.some((tag) => typeof tag !== "string")) {
+    throw new Error("Token create result.tags must be an array of strings")
+  }
+  if (value["status"] !== "pending") {
+    throw new Error("Token create result.status must be pending")
+  }
+  return Object.freeze({
+    id: stringField(value, "id", "Token create result"),
+    callbackUrl: stringField(value, "callback_url", "Token create result"),
+    publicAccessToken: stringField(value, "public_access_token", "Token create result"),
+    timeoutAt: stringField(value, "timeout_at", "Token create result"),
+    status: "pending" as const,
+    metadata,
+    tags: Object.freeze([...tags]) as readonly string[],
+    createdAt: stringField(value, "created_at", "Token create result"),
+    updatedAt: stringField(value, "updated_at", "Token create result"),
+  })
+}
+
+function runtimeOperationFailure(operation: string, dataJson: string): Error {
+  const value = parseObjectJSON(dataJson, `${operation} failure`)
+  const code = stringField(value, "code", `${operation} failure`)
+  const message = stringField(value, "message", `${operation} failure`)
+  const retryable = value["retryable"]
+  if (typeof retryable !== "boolean") {
+    throw new Error(`${operation} failure.retryable must be a boolean`)
+  }
+  const error = new Error(message) as Error & { code: string; retryable: boolean }
+  error.name = "HelmrError"
+  error.code = code
+  error.retryable = retryable
+  return error
+}
+
+function tokenWaitFailure(kind: "failed" | "cancelled", dataJson: string): Error {
+  const failure = parseRuntimeProtocolValue(
+    "Token Wait failure",
+    () => resumeFailure(dataJson),
+  )
+  const code = failure.reasonCode
+  const error = new Error(
+    code === "wait_timeout"
+      ? "Token wait timed out"
+      : code === "token_expired"
+      ? "Token expired"
+      : code === "token_cancelled"
+      ? "Token was cancelled"
+      : `Token Wait ${kind}: ${code}`,
+  ) as Error & { code: string; retryable: false }
+  error.name = code === "wait_timeout" ? "WaitTimeoutError" : "HelmrError"
+  error.code = code
+  error.retryable = false
+  return error
 }
 
 function normalizeActorInputIdempotencyKey(
@@ -941,37 +1124,44 @@ function resumeFailure(dataJson: string): { readonly reasonCode: string } {
   return { reasonCode: (value as { readonly reason_code: string }).reason_code }
 }
 
-function durationMilliseconds(duration: string): number {
-  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h|d)$/.exec(duration.trim())
+function durationMilliseconds(duration: string, label = "timer duration"): number {
+  const match = /^([1-9][0-9]*)(ms|s|m|h|d)$/.exec(duration)
   if (match === null) {
-    throw new Error("timer duration must use ms, s, m, h, or d units")
+    throw new Error(
+      `${label} must be a positive integer followed by ms, s, m, h, or d`,
+    )
   }
-  const amount = Number(match[1])
+  const amount = BigInt(match[1]!)
   const unit = match[2]
   const multiplierMs = unit === "ms"
-    ? 1
+    ? 1n
     : unit === "s"
-    ? 1000
+    ? 1000n
     : unit === "m"
-    ? 60_000
+    ? 60_000n
     : unit === "h"
-    ? 3_600_000
-    : 86_400_000
-  if (!Number.isFinite(amount) || amount <= 0) {
-    throw new Error("timer duration must be positive")
-  }
+    ? 3_600_000n
+    : 86_400_000n
   const milliseconds = amount * multiplierMs
-  const maxMilliseconds = 365 * 24 * 60 * 60 * 1000
-  if (milliseconds < 1 || milliseconds > maxMilliseconds) {
-    throw new Error("timer duration must be between 1ms and 365d")
+  const maxMilliseconds = 365n * 24n * 60n * 60n * 1000n
+  if (milliseconds > maxMilliseconds) {
+    throw new Error(`${label} must be between 1ms and 365d`)
   }
-  return boundedTimerMilliseconds(Math.ceil(milliseconds))
+  return boundedTimerMilliseconds(Number(milliseconds))
 }
 
 function boundedTimerMilliseconds(milliseconds: number): number {
   const maxMilliseconds = 365 * 24 * 60 * 60 * 1000
   if (!Number.isSafeInteger(milliseconds) || milliseconds < 1 || milliseconds > maxMilliseconds) {
     throw new Error("timer duration must be between 1ms and 365d")
+  }
+  return milliseconds
+}
+
+function tokenWaitIdleTimeoutMilliseconds(duration: Duration): number {
+  const milliseconds = durationMilliseconds(duration, "Token Wait idle timeout")
+  if (milliseconds > 60 * 60 * 1000) {
+    throw new Error("Token Wait idle timeout must be between 1ms and 1h")
   }
   return milliseconds
 }

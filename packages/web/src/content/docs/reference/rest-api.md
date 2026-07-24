@@ -88,6 +88,11 @@ Common user/API-key routes:
 | `POST` | `/api/workspaces/{workspace_id}/pty/{pty_id}/close` |
 | `GET` | `/api/schedules` |
 | `GET` | `/api/schedules/{id}` |
+| `POST` | `/api/tokens` |
+| `GET` | `/api/tokens` |
+| `GET` | `/api/tokens/{id}` |
+| `POST` | `/api/tokens/{id}/complete` |
+| `POST` | `/api/tokens/{id}/cancel` |
 | `POST` | `/api/deployments` |
 | `GET` | `/api/deployments/current` |
 | `POST` | `/api/deployments/{id}/promote` |
@@ -98,7 +103,12 @@ Common user/API-key routes:
 
 Auth routes include GitHub OAuth, magic links, device auth, logout, API keys, members, invitations, projects, and environments.
 
-`POST /api/tokens/{id}/complete` accepts a Helmr API key or session bearer with `tokens.complete` permission for the token's project environment. Browser completion uses `POST /api/v1/tokens/{id}/complete` with the token's scoped `public_access_token`; provider callbacks use `POST /api/v1/tokens/{id}/callback/{secret}` and do not use CORS. Token id knowledge is not authorization. Completion responses are `{ "status": "completed" | "already_completed", "token": { ... } }`. Retrying the same canonical completion returns `already_completed`; completing with different data returns `409 token_completion_conflict` and never overwrites the token.
+`POST /api/tokens` accepts an authenticated Environment-scoped caller with
+`tokens.create`; omitted timeout defaults to 10 minutes. The SDK and REST API
+support this external creation path, while CLI and Console creation are not v0
+surfaces.
+
+`POST /api/tokens/{id}/complete` accepts a Helmr API key or session bearer with `tokens.complete` permission for the token's project environment. Browser completion uses `POST /api/public/tokens/{id}/complete` with the token's scoped `public_access_token`; provider callbacks use the creation response's `/api/token-callbacks/{id}/{secret}` URL and do not use CORS. Token ID knowledge alone is not authorization. Retrying the same canonical completion replays; completing with different data returns `409 token_completion_conflict` and never overwrites the accepted result.
 
 Actor input and output are fixed durable channels. They are addressed by the
 Actor declaration plus exactly one Actor ID or key; callers never create or

@@ -1312,7 +1312,7 @@ func newRunPlacementFixture(t *testing.T) runPlacementFixture {
 	programDigest := "sha256:" + strings.Repeat("2", 64)
 	imageDigest := "sha256:" + strings.Repeat("4", 64)
 	programReceipt := dbtest.ProgramReceipt(dbtest.ProgramReceiptAuthority{
-		Architecture:            "aarch64",
+		Architecture:            "x86_64",
 		ProgramArtifactID:       programID,
 		ProgramDigest:           programDigest,
 		ProgramSizeBytes:        1,
@@ -1382,14 +1382,16 @@ INSERT INTO artifacts (
 INSERT INTO deployments (
     id, public_id, org_id, project_id, environment_id, build_region_id,
     build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+    build_manager_name, build_manager_version, build_manager_digest,
     build_contract_version, version, content_hash, deployment_source_artifact_id,
     program_artifact_id, program_runtime_digest, program_architecture,
     program_receipt, queue_config, status
 ) VALUES (
-    $1, $2, $3, $4, $5, 'us-east-1', 'aarch64',
+    $1, $2, $3, $4, $5, 'us-east-1', 'x86_64',
     decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
+    'bun', '1.2.3', decode(repeat('22', 32), 'hex'),
     'helmr.program-build.v0', 'v1', $6, $7, $8,
-    decode(repeat('01', 32), 'hex'), 'aarch64', $9::jsonb, '{}'::jsonb, 'deployed'
+    decode(repeat('01', 32), 'hex'), 'x86_64', $9::jsonb, '{}'::jsonb, 'deployed'
 )`,
 		deploymentID,
 		dispatchPublicID(t, publicid.Deployment),
@@ -1402,7 +1404,7 @@ INSERT INTO deployments (
 		programReceipt,
 	)
 	workspaceManifest := fmt.Sprintf(
-		`{"image":{"artifactDigest":%q,"mediaType":"application/octet-stream"},"resources":{"milliCpu":1000,"memoryMiB":1024,"diskMiB":2048},"network":{"internet":true,"denyCidrs":[]},"architecture":"aarch64"}`,
+		`{"image":{"artifactDigest":%q,"mediaType":"application/octet-stream"},"resources":{"milliCpu":1000,"memoryMiB":1024,"diskMiB":2048},"network":{"internet":true,"denyCidrs":[]},"architecture":"x86_64"}`,
 		imageDigest,
 	)
 	mustRunPlacementExec(t, ctx, pool, `
@@ -1413,7 +1415,7 @@ INSERT INTO deployment_definitions (
     ($1, $3, $4, 'task', 'test-task', 0, '{}'::jsonb,
      decode(repeat('03', 32), 'hex'), NULL, NULL),
     ($2, $3, $4, 'workspace', 'test-workspace', 0, $5::jsonb,
-     decode(repeat('04', 32), 'hex'), 'aarch64', $6)`,
+     decode(repeat('04', 32), 'hex'), 'x86_64', $6)`,
 		taskDefinitionID,
 		workspaceDefinitionID,
 		fixture.environmentID,
@@ -1432,7 +1434,7 @@ INSERT INTO worker_groups (
 INSERT INTO runtime_identities (
     id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
     rootfs_digest, cni_profile
-) VALUES ($1, 'aarch64', 'helmr.runtime.v0', 'kernel', 'initramfs', 'rootfs', 'default')`,
+) VALUES ($1, 'x86_64', 'helmr.runtime.v0', 'kernel', 'initramfs', 'rootfs', 'default')`,
 		runtimeIdentityID,
 	)
 	mustRunPlacementExec(t, ctx, pool, `

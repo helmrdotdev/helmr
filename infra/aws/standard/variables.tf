@@ -280,6 +280,12 @@ variable "workspace_fencing_key_fingerprint" {
   default     = ""
 }
 
+variable "token_credential_key_id" {
+  description = "Active content-addressed Token credential key ID selected by this Control release. Required when create_control_service is true."
+  type        = string
+  default     = ""
+}
+
 variable "database_instance_class" {
   description = "RDS Postgres instance class."
   type        = string

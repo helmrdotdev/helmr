@@ -6,9 +6,7 @@ import (
 )
 
 type CreateTokenRequest struct {
-	ProjectID      string          `json:"project_id,omitempty"`
-	EnvironmentID  string          `json:"environment_id,omitempty"`
-	Timeout        json.RawMessage `json:"timeout,omitempty"`
+	Timeout        string          `json:"timeout,omitempty"`
 	Tags           []string        `json:"tags,omitempty"`
 	Metadata       json.RawMessage `json:"metadata,omitempty"`
 	IdempotencyKey string          `json:"idempotency_key,omitempty"`
@@ -16,13 +14,16 @@ type CreateTokenRequest struct {
 
 type TokenResponse struct {
 	ID                string          `json:"id"`
-	Status            string          `json:"status,omitempty"`
+	Status            string          `json:"status"`
 	CallbackURL       string          `json:"callback_url,omitempty"`
 	PublicAccessToken string          `json:"public_access_token,omitempty"`
 	TimeoutAt         *time.Time      `json:"timeout_at"`
-	Data              json.RawMessage `json:"data,omitempty"`
-	Tags              []string        `json:"tags,omitempty"`
-	Metadata          json.RawMessage `json:"metadata,omitempty"`
+	Result            json.RawMessage `json:"result,omitempty"`
+	Tags              []string        `json:"tags"`
+	Metadata          json.RawMessage `json:"metadata"`
+	CompletedAt       *time.Time      `json:"completed_at,omitempty"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
 }
 
 type ListTokensResponse struct {
@@ -31,7 +32,12 @@ type ListTokensResponse struct {
 }
 
 type CompleteTokenRequest struct {
-	Data json.RawMessage `json:"data,omitempty"`
+	Result         json.RawMessage `json:"result"`
+	IdempotencyKey string          `json:"idempotency_key,omitempty"`
+}
+
+type CancelTokenRequest struct {
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
 type CompleteTokenResponse struct {

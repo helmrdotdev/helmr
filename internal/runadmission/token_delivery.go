@@ -25,6 +25,8 @@ const (
 )
 
 type TokenDeliveryStore interface {
+	ExpireDueTokens(context.Context, int32) ([]db.ExpireDueTokensRow, error)
+	ExpireDuePublicAccessTokens(context.Context, int32) ([]db.PublicAccessToken, error)
 	ClaimOutboxMessages(context.Context, db.ClaimOutboxMessagesParams) ([]db.OutboxMessage, error)
 	DeliverOutboxMessage(context.Context, db.DeliverOutboxMessageParams) (db.OutboxMessage, error)
 	RetryOutboxMessage(context.Context, db.RetryOutboxMessageParams) (db.OutboxMessage, error)
@@ -84,6 +86,12 @@ func (w *TokenDeliveryWorker) Run(ctx context.Context) error {
 }
 
 func (w *TokenDeliveryWorker) tick(ctx context.Context) error {
+	if _, err := w.store.ExpireDueTokens(ctx, w.batchSize); err != nil {
+		return fmt.Errorf("expire due Tokens: %w", err)
+	}
+	if _, err := w.store.ExpireDuePublicAccessTokens(ctx, w.batchSize); err != nil {
+		return fmt.Errorf("expire due Token public access credentials: %w", err)
+	}
 	now := w.now().UTC()
 	messages, err := w.store.ClaimOutboxMessages(ctx, db.ClaimOutboxMessagesParams{
 		ClaimedBy:      pgtype.Text{String: w.workerID, Valid: true},

@@ -99,11 +99,14 @@ VALUES ($1, $2, $3, $4, $5, 'deployment_source', 1, 'application/vnd.helmr.deplo
 INSERT INTO deployments (
     id, public_id, org_id, project_id, environment_id, build_region_id,
     build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+    build_manager_name, build_manager_version, build_manager_digest,
     build_contract_version, version, content_hash,
     deployment_source_artifact_id, status
 ) VALUES (
     $1, $2, $3, $4, $5, 'us-east-1', $6, $7,
-    decode(repeat('02', 32), 'hex'), 'helmr.program-build.v0',
+    decode(repeat('02', 32), 'hex'),
+    'bun', '1.2.3', decode(repeat('22', 32), 'hex'),
+    'helmr.program-build.v0',
     'v1', $8, $9, 'queued'
 )`,
 		fixture.deploymentID, dispatchPublicID(t, publicid.Deployment), fixture.orgID,
@@ -180,14 +183,14 @@ func TestPlaceReadyBuildExcludesMismatchedAndUncertifiedWorkers(t *testing.T) {
 		workerArch string
 		certified  bool
 	}{
-		{name: "mismatched architecture", workerArch: "x86_64", certified: true},
-		{name: "uncertified worker", workerArch: "aarch64", certified: false},
+		{name: "mismatched architecture", workerArch: "aarch64", certified: true},
+		{name: "uncertified worker", workerArch: "x86_64", certified: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			fixture := newBuildPlacementFixture(t, "aarch64")
+			fixture := newBuildPlacementFixture(t, "x86_64")
 			fixture.addWorker(t, test.workerArch, test.certified)
 			_, err := fixture.authority.PlaceReadyBuild(
-				fixture.ctx, fixture.candidate("aarch64"),
+				fixture.ctx, fixture.candidate("x86_64"),
 				pgvalue.Timestamptz(time.Now().UTC().Add(-time.Minute)),
 			)
 			if !errors.Is(err, ErrCapacityUnavailable) {
@@ -207,15 +210,15 @@ func TestPlaceReadyBuildExcludesMismatchedAndUncertifiedWorkers(t *testing.T) {
 }
 
 func TestPlaceReadyBuildExcludesWorkerWithAnotherToolchainCatalog(t *testing.T) {
-	fixture := newBuildPlacementFixture(t, "aarch64")
-	workerID := fixture.addWorker(t, "aarch64", true)
+	fixture := newBuildPlacementFixture(t, "x86_64")
+	workerID := fixture.addWorker(t, "x86_64", true)
 	mustDispatchExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances
    SET toolchain_catalog_digest = decode(repeat('04', 32), 'hex')
  WHERE id = $1`, workerID)
 
 	_, err := fixture.authority.PlaceReadyBuild(
-		fixture.ctx, fixture.candidate("aarch64"),
+		fixture.ctx, fixture.candidate("x86_64"),
 		pgvalue.Timestamptz(time.Now().UTC().Add(-time.Minute)),
 	)
 	if !errors.Is(err, ErrCapacityUnavailable) {
@@ -224,15 +227,15 @@ UPDATE worker_instances
 }
 
 func TestPlaceReadyBuildUsesCatalogMembershipInsteadOfPinEquality(t *testing.T) {
-	fixture := newBuildPlacementFixture(t, "aarch64")
-	workerID := fixture.addWorker(t, "aarch64", true)
+	fixture := newBuildPlacementFixture(t, "x86_64")
+	workerID := fixture.addWorker(t, "x86_64", true)
 	mustDispatchExec(t, fixture.ctx, fixture.pool, `
 UPDATE deployments
    SET build_standard_toolchain_digest = decode(repeat('04', 32), 'hex')
  WHERE id = $1`, fixture.deploymentID)
 
 	lease, err := fixture.authority.PlaceReadyBuild(
-		fixture.ctx, fixture.candidate("aarch64"),
+		fixture.ctx, fixture.candidate("x86_64"),
 		pgvalue.Timestamptz(time.Now().UTC().Add(-time.Minute)),
 	)
 	if err != nil {
@@ -244,15 +247,15 @@ UPDATE deployments
 }
 
 func TestPlaceReadyBuildLeavesUnregisteredPinWaiting(t *testing.T) {
-	fixture := newBuildPlacementFixture(t, "aarch64")
-	fixture.addWorker(t, "aarch64", true)
+	fixture := newBuildPlacementFixture(t, "x86_64")
+	fixture.addWorker(t, "x86_64", true)
 	mustDispatchExec(t, fixture.ctx, fixture.pool, `
 UPDATE deployments
    SET build_standard_toolchain_digest = decode(repeat('05', 32), 'hex')
  WHERE id = $1`, fixture.deploymentID)
 
 	_, err := fixture.authority.PlaceReadyBuild(
-		fixture.ctx, fixture.candidate("aarch64"),
+		fixture.ctx, fixture.candidate("x86_64"),
 		pgvalue.Timestamptz(time.Now().UTC().Add(-time.Minute)),
 	)
 	if !errors.Is(err, ErrCapacityUnavailable) {
@@ -298,13 +301,13 @@ SELECT deployments.build_architecture
 }
 
 func TestPlaceBuildFinalLockRechecksRuntimeIdentityArchitecture(t *testing.T) {
-	fixture := newBuildPlacementFixture(t, "aarch64")
-	workerID := fixture.addWorker(t, "aarch64", true)
+	fixture := newBuildPlacementFixture(t, "x86_64")
+	workerID := fixture.addWorker(t, "x86_64", true)
 	mismatchedRuntimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	mustDispatchExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO runtime_identities (
     id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
-) VALUES ($1, 'x86_64', 'helmr.runtime.v0', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0')`,
+) VALUES ($1, 'aarch64', 'helmr.runtime.v0', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0')`,
 		mismatchedRuntimeID)
 	mustDispatchExec(t, fixture.ctx, fixture.pool,
 		`UPDATE worker_instances SET runtime_identity_id = $1 WHERE id = $2`,
@@ -316,7 +319,7 @@ INSERT INTO runtime_identities (
 		ExpectedLeaseSequence: 1,
 		Lease: db.LeaseQueuedDeploymentBuildParams{
 			OrgID: pgvalue.UUID(fixture.orgID), DeploymentID: pgvalue.UUID(fixture.deploymentID),
-			BuildRegionID: "us-east-1", BuildArchitecture: "aarch64",
+			BuildRegionID: "us-east-1", BuildArchitecture: "x86_64",
 			RequestedCpuMillis: 3000, RequestedMemoryBytes: 4 << 30,
 			RequestedScratchBytes: 32 << 30, RequestedBuildExecutors: 1,
 			LeaseSequence: 1, BuildLeaseID: pgvalue.UUID(uuid.Must(uuid.NewV7())),

@@ -2089,23 +2089,24 @@ type Project struct {
 }
 
 type PublicAccessToken struct {
-	ID            pgtype.UUID            `json:"id"`
-	PublicID      string                 `json:"public_id"`
-	OrgID         pgtype.UUID            `json:"org_id"`
-	ProjectID     pgtype.UUID            `json:"project_id"`
-	EnvironmentID pgtype.UUID            `json:"environment_id"`
-	TokenHash     []byte                 `json:"token_hash"`
-	State         PublicAccessTokenState `json:"state"`
-	Metadata      []byte                 `json:"metadata"`
-	CreatedBy     []byte                 `json:"created_by"`
-	CreatedAt     pgtype.Timestamptz     `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz     `json:"updated_at"`
-	LastUsedAt    pgtype.Timestamptz     `json:"last_used_at"`
-	ExpiresAt     pgtype.Timestamptz     `json:"expires_at"`
-	RevokedAt     pgtype.Timestamptz     `json:"revoked_at"`
-	ExpiredAt     pgtype.Timestamptz     `json:"expired_at"`
-	MaxUses       pgtype.Int4            `json:"max_uses"`
-	UsedCount     int32                  `json:"used_count"`
+	ID              pgtype.UUID            `json:"id"`
+	PublicID        string                 `json:"public_id"`
+	OrgID           pgtype.UUID            `json:"org_id"`
+	ProjectID       pgtype.UUID            `json:"project_id"`
+	EnvironmentID   pgtype.UUID            `json:"environment_id"`
+	TokenHash       []byte                 `json:"token_hash"`
+	CredentialKeyID string                 `json:"credential_key_id"`
+	State           PublicAccessTokenState `json:"state"`
+	Metadata        []byte                 `json:"metadata"`
+	CreatedBy       []byte                 `json:"created_by"`
+	CreatedAt       pgtype.Timestamptz     `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz     `json:"updated_at"`
+	LastUsedAt      pgtype.Timestamptz     `json:"last_used_at"`
+	ExpiresAt       pgtype.Timestamptz     `json:"expires_at"`
+	RevokedAt       pgtype.Timestamptz     `json:"revoked_at"`
+	ExpiredAt       pgtype.Timestamptz     `json:"expired_at"`
+	MaxUses         pgtype.Int4            `json:"max_uses"`
+	UsedCount       int32                  `json:"used_count"`
 }
 
 type PublicAccessTokenScope struct {
@@ -2550,16 +2551,12 @@ type Token struct {
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
 	State                     TokenState         `json:"state"`
-	TimeoutAt                 pgtype.Timestamptz `json:"timeout_at"`
-	IdempotencyKey            string             `json:"idempotency_key"`
-	IdempotencyKeyExpiresAt   pgtype.Timestamptz `json:"idempotency_key_expires_at"`
-	CreateRequestFingerprint  string             `json:"create_request_fingerprint"`
+	ExpiresAt                 pgtype.Timestamptz `json:"expires_at"`
 	CallbackKeyID             string             `json:"callback_key_id"`
-	CallbackSecretFingerprint string             `json:"callback_secret_fingerprint"`
-	CallbackSecretCreatedAt   pgtype.Timestamptz `json:"callback_secret_created_at"`
-	CompletionFingerprint     string             `json:"completion_fingerprint"`
-	CompletionData            []byte             `json:"completion_data"`
-	CompletionContentType     string             `json:"completion_content_type"`
+	CallbackSecretFingerprint []byte             `json:"callback_secret_fingerprint"`
+	CompletionFingerprint     []byte             `json:"completion_fingerprint"`
+	Result                    []byte             `json:"result"`
+	Error                     []byte             `json:"error"`
 	Metadata                  []byte             `json:"metadata"`
 	Tags                      []string           `json:"tags"`
 	CreatedAt                 pgtype.Timestamptz `json:"created_at"`

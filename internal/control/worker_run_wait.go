@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -57,9 +58,8 @@ func (s *Server) workerCreateTokenRunWait(w http.ResponseWriter, r *http.Request
 		writeError(w, badRequest(fmt.Errorf("invalid Token Wait params: %w", err)))
 		return
 	}
-	tokenID, err := parseCanonicalUUID("params.token_id", params.TokenID)
-	if err != nil {
-		writeError(w, badRequest(err))
+	if err := publicid.ValidateFor(publicid.Token, params.TokenID); err != nil {
+		writeError(w, badRequest(errors.New("params.token_id must be a Token public ID")))
 		return
 	}
 	metadata, tags, err := normalizeRunWaitPresentation(request.Metadata, request.Tags)
@@ -75,21 +75,27 @@ func (s *Server) workerCreateTokenRunWait(w http.ResponseWriter, r *http.Request
 	normalized := request
 	normalized.Lease.StartDeadlineAt = request.Lease.StartDeadlineAt.UTC()
 	normalized.Lease.ExpiresAt = request.Lease.ExpiresAt.UTC()
-	normalized.Params, err = json.Marshal(workerTokenWaitParams{TokenID: tokenID.String()})
+	normalized.Metadata = metadata
+	normalized.Tags = tags
+	parsed, worker, locators, run, err := s.loadRunWaitRegistrationAuthority(r.Context(), normalized.Lease)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	tokenRow, err := s.db.GetTokenByPublicID(r.Context(), params.TokenID)
+	if err != nil || tokenRow.EnvironmentID != locators.EnvironmentID {
+		writeError(w, notFound(errTokenNotFound))
+		return
+	}
+	tokenID := pgvalue.MustUUIDValue(tokenRow.ID)
+	normalized.Params, err = json.Marshal(workerTokenWaitParams{TokenID: params.TokenID})
 	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("normalize Token Wait params: %w", err)))
 		return
 	}
-	normalized.Metadata = metadata
-	normalized.Tags = tags
 	fingerprint, err := terminalRequestFingerprint("worker.run-wait.create.v1", normalized)
 	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("fingerprint Token Wait registration: %w", err)))
-		return
-	}
-	parsed, worker, locators, run, err := s.loadRunWaitRegistrationAuthority(r.Context(), normalized.Lease)
-	if err != nil {
-		writeError(w, err)
 		return
 	}
 	waitID := derivedRunWaitID(parsed.runID, request.Lease.AttemptNumber, correlationID, "wait")
@@ -494,10 +500,13 @@ func tokenWaitDecision(state db.WaitState, result json.RawMessage, reason string
 	case db.WaitStateCompleted:
 		return "completed", result, nil
 	case db.WaitStateCancelled:
-		return "cancelled", result, nil
+		if reason == "" {
+			reason = "token_cancelled"
+		}
+		return "cancelled", json.RawMessage(fmt.Sprintf(`{"reason_code":%q}`, reason)), nil
 	case db.WaitStateFailed:
-		if reason == "token_expired" {
-			return "timed_out", result, nil
+		if reason == "" {
+			return "", nil, errors.New("failed Run Wait decision has no reason")
 		}
 		return "failed", json.RawMessage(fmt.Sprintf(`{"reason_code":%q}`, reason)), nil
 	default:

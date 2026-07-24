@@ -404,6 +404,17 @@ variable "workspace_fencing_key_fingerprint" {
   }
 }
 
+variable "token_credential_key_id" {
+  description = "Active content-addressed Token credential key ID selected by this Control release. Required when create_control_service is true."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.token_credential_key_id == "" || can(regex("^sha256:[0-9a-f]{64}$", var.token_credential_key_id))
+    error_message = "token_credential_key_id must be empty during bootstrap or a lowercase sha256:<64 hexadecimal digits> key ID."
+  }
+}
+
 variable "dispatcher_environment" {
   description = "Additional non-secret environment variables for helmr-dispatcher. Managed Helmr variables such as HELMR_REDIS_URL are owned by this module."
   type        = map(string)

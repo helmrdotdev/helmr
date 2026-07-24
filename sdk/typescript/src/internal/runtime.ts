@@ -3,6 +3,11 @@ import type {
   JsonValue,
   SendOptions,
 } from "../contract"
+import type {
+  TokenCreateOptions,
+  TokenCreateResult,
+  TokenWaitOptions,
+} from "../tokens"
 
 const runtimeOperationsSymbol = Symbol.for("helmr.sdk.v0.runtime_operations")
 
@@ -17,6 +22,13 @@ export interface RuntimeOperations {
     input: JsonValue,
     options?: SendOptions,
   ) => Promise<{ sequence: number }>
+  readonly tokenCreate: (
+    options: TokenCreateOptions,
+  ) => Promise<Omit<TokenCreateResult, "wait">>
+  readonly tokenWait: (
+    tokenId: string,
+    options: TokenWaitOptions,
+  ) => Promise<JsonValue>
 }
 
 type RuntimeGlobal = typeof globalThis & {

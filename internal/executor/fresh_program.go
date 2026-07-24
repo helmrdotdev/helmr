@@ -126,6 +126,7 @@ func (program *freshProgram) awaitTaskCompletion(
 	events freshProgramEventSink,
 	wait func(context.Context, *runv0.RunWaitRequested) error,
 	sendActorInput func(context.Context, *runv0.ActorInputSendRequested) error,
+	createToken func(context.Context, *runv0.TokenCreateRequested) error,
 ) (*runv0.TaskOutcome, *runv0.ProgramQuiesced, error) {
 	if program == nil || program.session == nil {
 		return nil, nil, errors.New("fresh Program session is required")
@@ -199,6 +200,16 @@ func (program *freshProgram) awaitTaskCompletion(
 			if err := sendActorInput(ctx, value.ActorInputSendRequested); err != nil {
 				return nil, nil, err
 			}
+		case *runv0.RunEvent_TokenCreateRequested:
+			if outcome != nil {
+				return nil, nil, errors.New("Program emitted a Token create after Task outcome")
+			}
+			if createToken == nil {
+				return nil, nil, errors.New("fresh Program Token create support is required")
+			}
+			if err := createToken(ctx, value.TokenCreateRequested); err != nil {
+				return nil, nil, err
+			}
 		case *runv0.RunEvent_ProgramQuiesced:
 			if outcome == nil {
 				return nil, nil, errors.New("Program quiesced before emitting a Task outcome")
@@ -223,6 +234,7 @@ func (program *freshProgram) awaitActorCompletion(
 	wait func(context.Context, *runv0.RunWaitRequested) error,
 	turnCommit func(context.Context, *runv0.ActorTurnCommitRequested) error,
 	sendActorInput func(context.Context, *runv0.ActorInputSendRequested) error,
+	createToken func(context.Context, *runv0.TokenCreateRequested) error,
 ) (*runv0.ActorOutcome, *runv0.ProgramQuiesced, error) {
 	if program == nil || program.session == nil {
 		return nil, nil, errors.New("fresh Program session is required")
@@ -286,6 +298,16 @@ func (program *freshProgram) awaitActorCompletion(
 				return nil, nil, errors.New("fresh Program Actor input send support is required")
 			}
 			if err := sendActorInput(ctx, value.ActorInputSendRequested); err != nil {
+				return nil, nil, err
+			}
+		case *runv0.RunEvent_TokenCreateRequested:
+			if outcome != nil {
+				return nil, nil, errors.New("Program emitted a Token create after Actor outcome")
+			}
+			if createToken == nil {
+				return nil, nil, errors.New("fresh Program Token create support is required")
+			}
+			if err := createToken(ctx, value.TokenCreateRequested); err != nil {
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_ProgramQuiesced:

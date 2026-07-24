@@ -12,65 +12,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-func TestTokenCreateSendsDurationMetadataTagsAndIdempotency(t *testing.T) {
-	var request api.CreateTokenRequest
-	timeoutAt := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tokens" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		_ = json.NewEncoder(w).Encode(api.TokenResponse{
-			ID:          "token-1",
-			Status:      "pending",
-			CallbackURL: "https://api.example.test/api/v1/tokens/token-1/callback/secret",
-			TimeoutAt:   &timeoutAt,
-		})
-	}))
-	defer server.Close()
-	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	var out bytes.Buffer
-	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"token", "create", "--timeout", "7d", "--metadata-json", `{"release":"v1"}`, "--tag", "release", "--idempotency-key", "approval-1"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if string(request.Timeout) != `"7d"` || string(request.Metadata) != `{"release":"v1"}` || request.IdempotencyKey != "approval-1" {
-		t.Fatalf("request = %+v", request)
-	}
-	if len(request.Tags) != 1 || request.Tags[0] != "release" {
-		t.Fatalf("tags = %#v", request.Tags)
-	}
-	if !strings.Contains(out.String(), "Token:       token-1") || !strings.Contains(out.String(), "Callback:") {
-		t.Fatalf("output = %q", out.String())
-	}
-}
-
-func TestTokenCreateRejectsUnexpectedArgs(t *testing.T) {
-	cmd := newRootCommand()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"token", "create", "approval"})
-	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), `unknown command`) && !strings.Contains(err.Error(), `accepts 0 arg`) {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestTokenCreateInvalidMetadataNamesActualFlag(t *testing.T) {
-	cmd := newRootCommand()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"token", "create", "--metadata-json", `{bad`})
-	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "--metadata-json must be valid JSON") {
-		t.Fatalf("err = %v", err)
+func TestTokenCreateIsRuntimeOnly(t *testing.T) {
+	if commandByPath(newRootCommand(), "token", "create") != nil {
+		t.Fatal("token create command is registered")
 	}
 }
 
@@ -99,7 +43,7 @@ func TestTokenGetUsesCanonicalCommand(t *testing.T) {
 	}
 }
 
-func TestTokenCompleteSendsData(t *testing.T) {
+func TestTokenCompleteSendsResultAndIdempotencyKey(t *testing.T) {
 	var request api.CompleteTokenRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/tokens/token-1/complete" {
@@ -121,11 +65,15 @@ func TestTokenCompleteSendsData(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"token", "complete", "token-1", "--data-json", `{"approved":true}`})
+	cmd.SetArgs([]string{
+		"token", "complete", "token-1",
+		"--data-json", `{"approved":true}`,
+		"--idempotency-key", "approval-1",
+	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if string(request.Data) != `{"approved":true}` {
+	if string(request.Result) != `{"approved":true}` || request.IdempotencyKey != "approval-1" {
 		t.Fatalf("request = %+v", request)
 	}
 	for _, want := range []string{
@@ -167,9 +115,13 @@ func TestTokenCompleteJSONEmitsResponse(t *testing.T) {
 }
 
 func TestTokenCancelUsesCanonicalCommand(t *testing.T) {
+	var request api.CancelTokenRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/tokens/token-1/cancel" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
 		}
 		_ = json.NewEncoder(w).Encode(api.TokenResponse{ID: "token-1", Status: "cancelled"})
 	}))
@@ -181,11 +133,14 @@ func TestTokenCancelUsesCanonicalCommand(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"token", "cancel", "token-1"})
+	cmd.SetArgs([]string{"token", "cancel", "token-1", "--idempotency-key", "cancel-1"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.TrimSpace(out.String()); got != "token-1 cancelled" {
 		t.Fatalf("output = %q", out.String())
+	}
+	if request.IdempotencyKey != "cancel-1" {
+		t.Fatalf("request = %+v", request)
 	}
 }

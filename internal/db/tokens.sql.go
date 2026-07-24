@@ -12,18 +12,51 @@ import (
 )
 
 const cancelToken = `-- name: CancelToken :one
-WITH cancelled AS (
-    UPDATE tokens
-       SET state = 'cancelled',
-           cancelled_at = now(),
-           updated_at = now()
+WITH target AS MATERIALIZED (
+    SELECT tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
+     FROM tokens
      WHERE tokens.org_id = $1
        AND tokens.project_id = $2
        AND tokens.environment_id = $3
        AND tokens.id = $4
-       AND tokens.state = 'pending'
-       AND tokens.timeout_at > now()
-    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.timeout_at, tokens.idempotency_key, tokens.idempotency_key_expires_at, tokens.create_request_fingerprint, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.callback_secret_created_at, tokens.completion_fingerprint, tokens.completion_data, tokens.completion_content_type, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
+     FOR UPDATE
+),
+expired AS (
+    UPDATE tokens
+       SET state = 'expired',
+           expired_at = transaction_timestamp(),
+           updated_at = transaction_timestamp()
+     FROM target
+     WHERE tokens.id = target.id
+       AND target.state = 'pending'
+       AND target.expires_at <= transaction_timestamp()
+    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
+),
+cancelled AS (
+    UPDATE tokens
+       SET state = 'cancelled',
+           cancelled_at = transaction_timestamp(),
+           updated_at = transaction_timestamp()
+     FROM target
+     WHERE tokens.id = target.id
+       AND target.state = 'pending'
+       AND target.expires_at > transaction_timestamp()
+    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
+),
+selected_token AS (
+    SELECT cancelled.id, cancelled.public_id, cancelled.org_id, cancelled.project_id, cancelled.environment_id, cancelled.state, cancelled.expires_at, cancelled.callback_key_id, cancelled.callback_secret_fingerprint, cancelled.completion_fingerprint, cancelled.result, cancelled.error, cancelled.metadata, cancelled.tags, cancelled.created_at, cancelled.updated_at, cancelled.completed_at, cancelled.expired_at, cancelled.cancelled_at FROM cancelled
+    UNION ALL
+    SELECT expired.id, expired.public_id, expired.org_id, expired.project_id, expired.environment_id, expired.state, expired.expires_at, expired.callback_key_id, expired.callback_secret_fingerprint, expired.completion_fingerprint, expired.result, expired.error, expired.metadata, expired.tags, expired.created_at, expired.updated_at, expired.completed_at, expired.expired_at, expired.cancelled_at FROM expired
+    UNION ALL
+    SELECT target.id, target.public_id, target.org_id, target.project_id, target.environment_id, target.state, target.expires_at, target.callback_key_id, target.callback_secret_fingerprint, target.completion_fingerprint, target.result, target.error, target.metadata, target.tags, target.created_at, target.updated_at, target.completed_at, target.expired_at, target.cancelled_at
+      FROM target
+     WHERE NOT EXISTS (SELECT 1 FROM cancelled)
+       AND NOT EXISTS (SELECT 1 FROM expired)
+),
+changed AS (
+    SELECT id, environment_id FROM cancelled
+    UNION ALL
+    SELECT id, environment_id FROM expired
 ),
 reconciliation_intent AS (
     INSERT INTO outbox_messages (
@@ -35,17 +68,24 @@ reconciliation_intent AS (
     )
     SELECT 'control',
            'token.reconcile',
-           cancelled.id::text,
+           changed.id::text,
            jsonb_build_object(
-               'environmentId', cancelled.environment_id::text,
-               'tokenId', cancelled.id::text
+               'environmentId', changed.environment_id::text,
+               'tokenId', changed.id::text
            ),
            transaction_timestamp()
-      FROM cancelled
+      FROM changed
     RETURNING id
 )
-SELECT cancelled.id, cancelled.public_id, cancelled.org_id, cancelled.project_id, cancelled.environment_id, cancelled.state, cancelled.timeout_at, cancelled.idempotency_key, cancelled.idempotency_key_expires_at, cancelled.create_request_fingerprint, cancelled.callback_key_id, cancelled.callback_secret_fingerprint, cancelled.callback_secret_created_at, cancelled.completion_fingerprint, cancelled.completion_data, cancelled.completion_content_type, cancelled.metadata, cancelled.tags, cancelled.created_at, cancelled.updated_at, cancelled.completed_at, cancelled.expired_at, cancelled.cancelled_at, EXISTS (SELECT 1 FROM reconciliation_intent) AS reconciliation_enqueued
-  FROM cancelled
+SELECT selected_token.id, selected_token.public_id, selected_token.org_id, selected_token.project_id, selected_token.environment_id, selected_token.state, selected_token.expires_at, selected_token.callback_key_id, selected_token.callback_secret_fingerprint, selected_token.completion_fingerprint, selected_token.result, selected_token.error, selected_token.metadata, selected_token.tags, selected_token.created_at, selected_token.updated_at, selected_token.completed_at, selected_token.expired_at, selected_token.cancelled_at,
+       (
+           selected_token.state = 'cancelled'
+           AND NOT EXISTS (SELECT 1 FROM cancelled)
+       )::boolean AS already_cancelled,
+       (selected_token.state = 'expired')::boolean AS cancellation_expired,
+       (selected_token.state = 'completed')::boolean AS cancellation_completed,
+       EXISTS (SELECT 1 FROM reconciliation_intent) AS reconciliation_enqueued
+  FROM selected_token
 `
 
 type CancelTokenParams struct {
@@ -62,16 +102,12 @@ type CancelTokenRow struct {
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
 	State                     TokenState         `json:"state"`
-	TimeoutAt                 pgtype.Timestamptz `json:"timeout_at"`
-	IdempotencyKey            string             `json:"idempotency_key"`
-	IdempotencyKeyExpiresAt   pgtype.Timestamptz `json:"idempotency_key_expires_at"`
-	CreateRequestFingerprint  string             `json:"create_request_fingerprint"`
+	ExpiresAt                 pgtype.Timestamptz `json:"expires_at"`
 	CallbackKeyID             string             `json:"callback_key_id"`
-	CallbackSecretFingerprint string             `json:"callback_secret_fingerprint"`
-	CallbackSecretCreatedAt   pgtype.Timestamptz `json:"callback_secret_created_at"`
-	CompletionFingerprint     string             `json:"completion_fingerprint"`
-	CompletionData            []byte             `json:"completion_data"`
-	CompletionContentType     string             `json:"completion_content_type"`
+	CallbackSecretFingerprint []byte             `json:"callback_secret_fingerprint"`
+	CompletionFingerprint     []byte             `json:"completion_fingerprint"`
+	Result                    []byte             `json:"result"`
+	Error                     []byte             `json:"error"`
 	Metadata                  []byte             `json:"metadata"`
 	Tags                      []string           `json:"tags"`
 	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
@@ -79,6 +115,9 @@ type CancelTokenRow struct {
 	CompletedAt               pgtype.Timestamptz `json:"completed_at"`
 	ExpiredAt                 pgtype.Timestamptz `json:"expired_at"`
 	CancelledAt               pgtype.Timestamptz `json:"cancelled_at"`
+	AlreadyCancelled          bool               `json:"already_cancelled"`
+	CancellationExpired       bool               `json:"cancellation_expired"`
+	CancellationCompleted     bool               `json:"cancellation_completed"`
 	ReconciliationEnqueued    bool               `json:"reconciliation_enqueued"`
 }
 
@@ -97,16 +136,12 @@ func (q *Queries) CancelToken(ctx context.Context, arg CancelTokenParams) (Cance
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.State,
-		&i.TimeoutAt,
-		&i.IdempotencyKey,
-		&i.IdempotencyKeyExpiresAt,
-		&i.CreateRequestFingerprint,
+		&i.ExpiresAt,
 		&i.CallbackKeyID,
 		&i.CallbackSecretFingerprint,
-		&i.CallbackSecretCreatedAt,
 		&i.CompletionFingerprint,
-		&i.CompletionData,
-		&i.CompletionContentType,
+		&i.Result,
+		&i.Error,
 		&i.Metadata,
 		&i.Tags,
 		&i.CreatedAt,
@@ -114,46 +149,63 @@ func (q *Queries) CancelToken(ctx context.Context, arg CancelTokenParams) (Cance
 		&i.CompletedAt,
 		&i.ExpiredAt,
 		&i.CancelledAt,
+		&i.AlreadyCancelled,
+		&i.CancellationExpired,
+		&i.CancellationCompleted,
 		&i.ReconciliationEnqueued,
 	)
 	return i, err
 }
 
 const completeToken = `-- name: CompleteToken :one
-WITH target AS (
-    SELECT tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.timeout_at, tokens.idempotency_key, tokens.idempotency_key_expires_at, tokens.create_request_fingerprint, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.callback_secret_created_at, tokens.completion_fingerprint, tokens.completion_data, tokens.completion_content_type, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
+WITH target AS MATERIALIZED (
+    SELECT tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
      FROM tokens
      WHERE tokens.org_id = $2
        AND tokens.project_id = $3
        AND tokens.environment_id = $4
        AND tokens.id = $5
-       AND tokens.state IN ('pending', 'completed')
      FOR UPDATE
+),
+expired AS (
+    UPDATE tokens
+       SET state = 'expired',
+           expired_at = transaction_timestamp(),
+           updated_at = transaction_timestamp()
+     FROM target
+     WHERE tokens.id = target.id
+       AND target.state = 'pending'
+       AND target.expires_at <= transaction_timestamp()
+    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
 ),
 completed AS (
     UPDATE tokens
        SET state = 'completed',
-           completion_data = COALESCE($6::jsonb, 'null'::jsonb),
-           completion_content_type = COALESCE(NULLIF($7::text, ''), 'application/json'),
-           completion_fingerprint = COALESCE($1::text, ''),
-           completed_at = now(),
-           updated_at = now()
+           result = COALESCE($6::jsonb, 'null'::jsonb),
+           error = NULL,
+           completion_fingerprint = $1,
+           completed_at = transaction_timestamp(),
+           updated_at = transaction_timestamp()
      FROM target
-     WHERE tokens.org_id = target.org_id
-       AND tokens.id = target.id
+     WHERE tokens.id = target.id
        AND target.state = 'pending'
-       AND target.timeout_at > now()
-    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.timeout_at, tokens.idempotency_key, tokens.idempotency_key_expires_at, tokens.create_request_fingerprint, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.callback_secret_created_at, tokens.completion_fingerprint, tokens.completion_data, tokens.completion_content_type, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
+       AND target.expires_at > transaction_timestamp()
+    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
 ),
 selected_token AS (
-    SELECT completed.id, completed.public_id, completed.org_id, completed.project_id, completed.environment_id, completed.state, completed.timeout_at, completed.idempotency_key, completed.idempotency_key_expires_at, completed.create_request_fingerprint, completed.callback_key_id, completed.callback_secret_fingerprint, completed.callback_secret_created_at, completed.completion_fingerprint, completed.completion_data, completed.completion_content_type, completed.metadata, completed.tags, completed.created_at, completed.updated_at, completed.completed_at, completed.expired_at, completed.cancelled_at, false::boolean AS was_already_completed, false::boolean AS is_expired
-      FROM completed
+    SELECT completed.id, completed.public_id, completed.org_id, completed.project_id, completed.environment_id, completed.state, completed.expires_at, completed.callback_key_id, completed.callback_secret_fingerprint, completed.completion_fingerprint, completed.result, completed.error, completed.metadata, completed.tags, completed.created_at, completed.updated_at, completed.completed_at, completed.expired_at, completed.cancelled_at FROM completed
     UNION ALL
-    SELECT target.id, target.public_id, target.org_id, target.project_id, target.environment_id, target.state, target.timeout_at, target.idempotency_key, target.idempotency_key_expires_at, target.create_request_fingerprint, target.callback_key_id, target.callback_secret_fingerprint, target.callback_secret_created_at, target.completion_fingerprint, target.completion_data, target.completion_content_type, target.metadata, target.tags, target.created_at, target.updated_at, target.completed_at, target.expired_at, target.cancelled_at,
-           (target.state = 'completed')::boolean AS was_already_completed,
-           (target.state = 'pending' AND target.timeout_at <= now())::boolean AS is_expired
+    SELECT expired.id, expired.public_id, expired.org_id, expired.project_id, expired.environment_id, expired.state, expired.expires_at, expired.callback_key_id, expired.callback_secret_fingerprint, expired.completion_fingerprint, expired.result, expired.error, expired.metadata, expired.tags, expired.created_at, expired.updated_at, expired.completed_at, expired.expired_at, expired.cancelled_at FROM expired
+    UNION ALL
+    SELECT target.id, target.public_id, target.org_id, target.project_id, target.environment_id, target.state, target.expires_at, target.callback_key_id, target.callback_secret_fingerprint, target.completion_fingerprint, target.result, target.error, target.metadata, target.tags, target.created_at, target.updated_at, target.completed_at, target.expired_at, target.cancelled_at
       FROM target
      WHERE NOT EXISTS (SELECT 1 FROM completed)
+       AND NOT EXISTS (SELECT 1 FROM expired)
+),
+changed AS (
+    SELECT id, environment_id FROM completed
+    UNION ALL
+    SELECT id, environment_id FROM expired
 ),
 reconciliation_intent AS (
     INSERT INTO outbox_messages (
@@ -165,37 +217,39 @@ reconciliation_intent AS (
     )
     SELECT 'control',
            'token.reconcile',
-           completed.id::text,
+           changed.id::text,
            jsonb_build_object(
-               'environmentId', completed.environment_id::text,
-               'tokenId', completed.id::text
+               'environmentId', changed.environment_id::text,
+               'tokenId', changed.id::text
            ),
            transaction_timestamp()
-      FROM completed
+      FROM changed
     RETURNING id
 )
-SELECT selected_token.id, selected_token.public_id, selected_token.org_id, selected_token.project_id, selected_token.environment_id, selected_token.state, selected_token.timeout_at, selected_token.idempotency_key, selected_token.idempotency_key_expires_at, selected_token.create_request_fingerprint, selected_token.callback_key_id, selected_token.callback_secret_fingerprint, selected_token.callback_secret_created_at, selected_token.completion_fingerprint, selected_token.completion_data, selected_token.completion_content_type, selected_token.metadata, selected_token.tags, selected_token.created_at, selected_token.updated_at, selected_token.completed_at, selected_token.expired_at, selected_token.cancelled_at, selected_token.was_already_completed, selected_token.is_expired,
+SELECT selected_token.id, selected_token.public_id, selected_token.org_id, selected_token.project_id, selected_token.environment_id, selected_token.state, selected_token.expires_at, selected_token.callback_key_id, selected_token.callback_secret_fingerprint, selected_token.completion_fingerprint, selected_token.result, selected_token.error, selected_token.metadata, selected_token.tags, selected_token.created_at, selected_token.updated_at, selected_token.completed_at, selected_token.expired_at, selected_token.cancelled_at,
        (
-           selected_token.was_already_completed
-           AND selected_token.completion_fingerprint = COALESCE($1::text, '')
+           selected_token.state = 'completed'
+           AND selected_token.completion_fingerprint = $1::bytea
+           AND NOT EXISTS (SELECT 1 FROM completed)
        )::boolean AS already_completed,
        (
-           selected_token.was_already_completed
-           AND selected_token.completion_fingerprint <> COALESCE($1::text, '')
+           selected_token.state = 'completed'
+           AND selected_token.completion_fingerprint <> $1::bytea
+           AND NOT EXISTS (SELECT 1 FROM completed)
        )::boolean AS completion_conflict,
-       selected_token.is_expired AS completion_expired,
+       (selected_token.state = 'expired')::boolean AS completion_expired,
+       (selected_token.state = 'cancelled')::boolean AS completion_cancelled,
        EXISTS (SELECT 1 FROM reconciliation_intent) AS reconciliation_enqueued
   FROM selected_token
 `
 
 type CompleteTokenParams struct {
-	CompletionFingerprint string      `json:"completion_fingerprint"`
+	CompletionFingerprint []byte      `json:"completion_fingerprint"`
 	OrgID                 pgtype.UUID `json:"org_id"`
 	ProjectID             pgtype.UUID `json:"project_id"`
 	EnvironmentID         pgtype.UUID `json:"environment_id"`
 	ID                    pgtype.UUID `json:"id"`
-	CompletionData        []byte      `json:"completion_data"`
-	CompletionContentType string      `json:"completion_content_type"`
+	Result                []byte      `json:"result"`
 }
 
 type CompleteTokenRow struct {
@@ -205,16 +259,12 @@ type CompleteTokenRow struct {
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
 	State                     TokenState         `json:"state"`
-	TimeoutAt                 pgtype.Timestamptz `json:"timeout_at"`
-	IdempotencyKey            string             `json:"idempotency_key"`
-	IdempotencyKeyExpiresAt   pgtype.Timestamptz `json:"idempotency_key_expires_at"`
-	CreateRequestFingerprint  string             `json:"create_request_fingerprint"`
+	ExpiresAt                 pgtype.Timestamptz `json:"expires_at"`
 	CallbackKeyID             string             `json:"callback_key_id"`
-	CallbackSecretFingerprint string             `json:"callback_secret_fingerprint"`
-	CallbackSecretCreatedAt   pgtype.Timestamptz `json:"callback_secret_created_at"`
-	CompletionFingerprint     string             `json:"completion_fingerprint"`
-	CompletionData            []byte             `json:"completion_data"`
-	CompletionContentType     string             `json:"completion_content_type"`
+	CallbackSecretFingerprint []byte             `json:"callback_secret_fingerprint"`
+	CompletionFingerprint     []byte             `json:"completion_fingerprint"`
+	Result                    []byte             `json:"result"`
+	Error                     []byte             `json:"error"`
 	Metadata                  []byte             `json:"metadata"`
 	Tags                      []string           `json:"tags"`
 	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
@@ -222,11 +272,10 @@ type CompleteTokenRow struct {
 	CompletedAt               pgtype.Timestamptz `json:"completed_at"`
 	ExpiredAt                 pgtype.Timestamptz `json:"expired_at"`
 	CancelledAt               pgtype.Timestamptz `json:"cancelled_at"`
-	WasAlreadyCompleted       bool               `json:"was_already_completed"`
-	IsExpired                 bool               `json:"is_expired"`
 	AlreadyCompleted          bool               `json:"already_completed"`
 	CompletionConflict        bool               `json:"completion_conflict"`
 	CompletionExpired         bool               `json:"completion_expired"`
+	CompletionCancelled       bool               `json:"completion_cancelled"`
 	ReconciliationEnqueued    bool               `json:"reconciliation_enqueued"`
 }
 
@@ -237,8 +286,7 @@ func (q *Queries) CompleteToken(ctx context.Context, arg CompleteTokenParams) (C
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
-		arg.CompletionData,
-		arg.CompletionContentType,
+		arg.Result,
 	)
 	var i CompleteTokenRow
 	err := row.Scan(
@@ -248,16 +296,12 @@ func (q *Queries) CompleteToken(ctx context.Context, arg CompleteTokenParams) (C
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.State,
-		&i.TimeoutAt,
-		&i.IdempotencyKey,
-		&i.IdempotencyKeyExpiresAt,
-		&i.CreateRequestFingerprint,
+		&i.ExpiresAt,
 		&i.CallbackKeyID,
 		&i.CallbackSecretFingerprint,
-		&i.CallbackSecretCreatedAt,
 		&i.CompletionFingerprint,
-		&i.CompletionData,
-		&i.CompletionContentType,
+		&i.Result,
+		&i.Error,
 		&i.Metadata,
 		&i.Tags,
 		&i.CreatedAt,
@@ -265,139 +309,70 @@ func (q *Queries) CompleteToken(ctx context.Context, arg CompleteTokenParams) (C
 		&i.CompletedAt,
 		&i.ExpiredAt,
 		&i.CancelledAt,
-		&i.WasAlreadyCompleted,
-		&i.IsExpired,
 		&i.AlreadyCompleted,
 		&i.CompletionConflict,
 		&i.CompletionExpired,
+		&i.CompletionCancelled,
 		&i.ReconciliationEnqueued,
 	)
 	return i, err
 }
 
 const createToken = `-- name: CreateToken :one
-WITH existing_token AS MATERIALIZED (
-    SELECT tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.timeout_at, tokens.idempotency_key, tokens.idempotency_key_expires_at, tokens.create_request_fingerprint, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.callback_secret_created_at, tokens.completion_fingerprint, tokens.completion_data, tokens.completion_content_type, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
-     FROM tokens
-     WHERE tokens.org_id = $2
-       AND tokens.project_id = $3
-       AND tokens.environment_id = $4
-       AND tokens.idempotency_key = $5
-       AND $5::text <> ''
-     FOR UPDATE
-),
-inserted_token AS (
-    INSERT INTO tokens (
-        id,
-        public_id,
-        org_id,
-        project_id,
-        environment_id,
-        timeout_at,
-        idempotency_key,
-        idempotency_key_expires_at,
-        create_request_fingerprint,
-        callback_key_id,
-        callback_secret_fingerprint,
-        callback_secret_created_at,
-        metadata,
-        tags
-    )
-    SELECT $6,
-           $7,
-           $2,
-           $3,
-           $4,
-           $8,
-           COALESCE($5::text, ''),
-           $9::timestamptz,
-           COALESCE($1::text, ''),
-           COALESCE($10::text, ''),
-           COALESCE($11::text, ''),
-           $12::timestamptz,
-           COALESCE($13::jsonb, '{}'::jsonb),
-           COALESCE($14::text[], '{}'::text[])
-     WHERE NOT EXISTS (SELECT 1 FROM existing_token)
-    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.timeout_at, tokens.idempotency_key, tokens.idempotency_key_expires_at, tokens.create_request_fingerprint, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.callback_secret_created_at, tokens.completion_fingerprint, tokens.completion_data, tokens.completion_content_type, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
-),
-selected_token AS (
-    SELECT inserted_token.id, inserted_token.public_id, inserted_token.org_id, inserted_token.project_id, inserted_token.environment_id, inserted_token.state, inserted_token.timeout_at, inserted_token.idempotency_key, inserted_token.idempotency_key_expires_at, inserted_token.create_request_fingerprint, inserted_token.callback_key_id, inserted_token.callback_secret_fingerprint, inserted_token.callback_secret_created_at, inserted_token.completion_fingerprint, inserted_token.completion_data, inserted_token.completion_content_type, inserted_token.metadata, inserted_token.tags, inserted_token.created_at, inserted_token.updated_at, inserted_token.completed_at, inserted_token.expired_at, inserted_token.cancelled_at, false::boolean AS is_cached
-      FROM inserted_token
-    UNION ALL
-    SELECT existing_token.id, existing_token.public_id, existing_token.org_id, existing_token.project_id, existing_token.environment_id, existing_token.state, existing_token.timeout_at, existing_token.idempotency_key, existing_token.idempotency_key_expires_at, existing_token.create_request_fingerprint, existing_token.callback_key_id, existing_token.callback_secret_fingerprint, existing_token.callback_secret_created_at, existing_token.completion_fingerprint, existing_token.completion_data, existing_token.completion_content_type, existing_token.metadata, existing_token.tags, existing_token.created_at, existing_token.updated_at, existing_token.completed_at, existing_token.expired_at, existing_token.cancelled_at, true::boolean AS is_cached
-      FROM existing_token
+INSERT INTO tokens (
+    id,
+    public_id,
+    org_id,
+    project_id,
+    environment_id,
+    expires_at,
+    callback_key_id,
+    callback_secret_fingerprint,
+    metadata,
+    tags
 )
-SELECT selected_token.id, selected_token.public_id, selected_token.org_id, selected_token.project_id, selected_token.environment_id, selected_token.state, selected_token.timeout_at, selected_token.idempotency_key, selected_token.idempotency_key_expires_at, selected_token.create_request_fingerprint, selected_token.callback_key_id, selected_token.callback_secret_fingerprint, selected_token.callback_secret_created_at, selected_token.completion_fingerprint, selected_token.completion_data, selected_token.completion_content_type, selected_token.metadata, selected_token.tags, selected_token.created_at, selected_token.updated_at, selected_token.completed_at, selected_token.expired_at, selected_token.cancelled_at, selected_token.is_cached,
-       (
-           selected_token.is_cached
-           AND selected_token.create_request_fingerprint <> COALESCE($1::text, '')
-       )::boolean AS idempotency_fingerprint_mismatch
-  FROM selected_token
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6::timestamptz,
+    $7,
+    $8,
+    COALESCE($9::jsonb, '{}'::jsonb),
+    COALESCE($10::text[], '{}'::text[])
+)
+RETURNING id, public_id, org_id, project_id, environment_id, state, expires_at, callback_key_id, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
 `
 
 type CreateTokenParams struct {
-	CreateRequestFingerprint  string             `json:"create_request_fingerprint"`
+	ID                        pgtype.UUID        `json:"id"`
+	PublicID                  string             `json:"public_id"`
 	OrgID                     pgtype.UUID        `json:"org_id"`
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
-	IdempotencyKey            string             `json:"idempotency_key"`
-	ID                        pgtype.UUID        `json:"id"`
-	PublicID                  string             `json:"public_id"`
-	TimeoutAt                 pgtype.Timestamptz `json:"timeout_at"`
-	IdempotencyKeyExpiresAt   pgtype.Timestamptz `json:"idempotency_key_expires_at"`
+	ExpiresAt                 pgtype.Timestamptz `json:"expires_at"`
 	CallbackKeyID             string             `json:"callback_key_id"`
-	CallbackSecretFingerprint string             `json:"callback_secret_fingerprint"`
-	CallbackSecretCreatedAt   pgtype.Timestamptz `json:"callback_secret_created_at"`
+	CallbackSecretFingerprint []byte             `json:"callback_secret_fingerprint"`
 	Metadata                  []byte             `json:"metadata"`
 	Tags                      []string           `json:"tags"`
 }
 
-type CreateTokenRow struct {
-	ID                             pgtype.UUID        `json:"id"`
-	PublicID                       string             `json:"public_id"`
-	OrgID                          pgtype.UUID        `json:"org_id"`
-	ProjectID                      pgtype.UUID        `json:"project_id"`
-	EnvironmentID                  pgtype.UUID        `json:"environment_id"`
-	State                          TokenState         `json:"state"`
-	TimeoutAt                      pgtype.Timestamptz `json:"timeout_at"`
-	IdempotencyKey                 string             `json:"idempotency_key"`
-	IdempotencyKeyExpiresAt        pgtype.Timestamptz `json:"idempotency_key_expires_at"`
-	CreateRequestFingerprint       string             `json:"create_request_fingerprint"`
-	CallbackKeyID                  string             `json:"callback_key_id"`
-	CallbackSecretFingerprint      string             `json:"callback_secret_fingerprint"`
-	CallbackSecretCreatedAt        pgtype.Timestamptz `json:"callback_secret_created_at"`
-	CompletionFingerprint          string             `json:"completion_fingerprint"`
-	CompletionData                 []byte             `json:"completion_data"`
-	CompletionContentType          string             `json:"completion_content_type"`
-	Metadata                       []byte             `json:"metadata"`
-	Tags                           []string           `json:"tags"`
-	CreatedAt                      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                      pgtype.Timestamptz `json:"updated_at"`
-	CompletedAt                    pgtype.Timestamptz `json:"completed_at"`
-	ExpiredAt                      pgtype.Timestamptz `json:"expired_at"`
-	CancelledAt                    pgtype.Timestamptz `json:"cancelled_at"`
-	IsCached                       bool               `json:"is_cached"`
-	IdempotencyFingerprintMismatch bool               `json:"idempotency_fingerprint_mismatch"`
-}
-
-func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (CreateTokenRow, error) {
+func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (Token, error) {
 	row := q.db.QueryRow(ctx, createToken,
-		arg.CreateRequestFingerprint,
+		arg.ID,
+		arg.PublicID,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.IdempotencyKey,
-		arg.ID,
-		arg.PublicID,
-		arg.TimeoutAt,
-		arg.IdempotencyKeyExpiresAt,
+		arg.ExpiresAt,
 		arg.CallbackKeyID,
 		arg.CallbackSecretFingerprint,
-		arg.CallbackSecretCreatedAt,
 		arg.Metadata,
 		arg.Tags,
 	)
-	var i CreateTokenRow
+	var i Token
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
@@ -405,16 +380,12 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (Creat
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.State,
-		&i.TimeoutAt,
-		&i.IdempotencyKey,
-		&i.IdempotencyKeyExpiresAt,
-		&i.CreateRequestFingerprint,
+		&i.ExpiresAt,
 		&i.CallbackKeyID,
 		&i.CallbackSecretFingerprint,
-		&i.CallbackSecretCreatedAt,
 		&i.CompletionFingerprint,
-		&i.CompletionData,
-		&i.CompletionContentType,
+		&i.Result,
+		&i.Error,
 		&i.Metadata,
 		&i.Tags,
 		&i.CreatedAt,
@@ -422,22 +393,29 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (Creat
 		&i.CompletedAt,
 		&i.ExpiredAt,
 		&i.CancelledAt,
-		&i.IsCached,
-		&i.IdempotencyFingerprintMismatch,
 	)
 	return i, err
 }
 
 const expireDueTokens = `-- name: ExpireDueTokens :many
-WITH expired AS (
+WITH candidates AS MATERIALIZED (
+    SELECT id
+     FROM tokens
+     WHERE state = 'pending'
+       AND expires_at <= transaction_timestamp()
+     ORDER BY expires_at, id
+     FOR UPDATE SKIP LOCKED
+     LIMIT $1
+),
+expired AS (
     UPDATE tokens
        SET state = 'expired',
-           expired_at = now(),
-           updated_at = now()
-     WHERE tokens.org_id = $1
+           expired_at = transaction_timestamp(),
+           updated_at = transaction_timestamp()
+     FROM candidates
+     WHERE tokens.id = candidates.id
        AND tokens.state = 'pending'
-       AND tokens.timeout_at <= now()
-    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.timeout_at, tokens.idempotency_key, tokens.idempotency_key_expires_at, tokens.create_request_fingerprint, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.callback_secret_created_at, tokens.completion_fingerprint, tokens.completion_data, tokens.completion_content_type, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
+    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
 ),
 reconciliation_intents AS (
     INSERT INTO outbox_messages (
@@ -458,11 +436,11 @@ reconciliation_intents AS (
       FROM expired
     RETURNING partition_key
 )
-SELECT expired.id, expired.public_id, expired.org_id, expired.project_id, expired.environment_id, expired.state, expired.timeout_at, expired.idempotency_key, expired.idempotency_key_expires_at, expired.create_request_fingerprint, expired.callback_key_id, expired.callback_secret_fingerprint, expired.callback_secret_created_at, expired.completion_fingerprint, expired.completion_data, expired.completion_content_type, expired.metadata, expired.tags, expired.created_at, expired.updated_at, expired.completed_at, expired.expired_at, expired.cancelled_at
+SELECT expired.id, expired.public_id, expired.org_id, expired.project_id, expired.environment_id, expired.state, expired.expires_at, expired.callback_key_id, expired.callback_secret_fingerprint, expired.completion_fingerprint, expired.result, expired.error, expired.metadata, expired.tags, expired.created_at, expired.updated_at, expired.completed_at, expired.expired_at, expired.cancelled_at
   FROM expired
   JOIN reconciliation_intents
     ON reconciliation_intents.partition_key = expired.id::text
- ORDER BY expired.timeout_at ASC, expired.id ASC
+ ORDER BY expired.expires_at, expired.id
 `
 
 type ExpireDueTokensRow struct {
@@ -472,16 +450,12 @@ type ExpireDueTokensRow struct {
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
 	State                     TokenState         `json:"state"`
-	TimeoutAt                 pgtype.Timestamptz `json:"timeout_at"`
-	IdempotencyKey            string             `json:"idempotency_key"`
-	IdempotencyKeyExpiresAt   pgtype.Timestamptz `json:"idempotency_key_expires_at"`
-	CreateRequestFingerprint  string             `json:"create_request_fingerprint"`
+	ExpiresAt                 pgtype.Timestamptz `json:"expires_at"`
 	CallbackKeyID             string             `json:"callback_key_id"`
-	CallbackSecretFingerprint string             `json:"callback_secret_fingerprint"`
-	CallbackSecretCreatedAt   pgtype.Timestamptz `json:"callback_secret_created_at"`
-	CompletionFingerprint     string             `json:"completion_fingerprint"`
-	CompletionData            []byte             `json:"completion_data"`
-	CompletionContentType     string             `json:"completion_content_type"`
+	CallbackSecretFingerprint []byte             `json:"callback_secret_fingerprint"`
+	CompletionFingerprint     []byte             `json:"completion_fingerprint"`
+	Result                    []byte             `json:"result"`
+	Error                     []byte             `json:"error"`
 	Metadata                  []byte             `json:"metadata"`
 	Tags                      []string           `json:"tags"`
 	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
@@ -491,8 +465,8 @@ type ExpireDueTokensRow struct {
 	CancelledAt               pgtype.Timestamptz `json:"cancelled_at"`
 }
 
-func (q *Queries) ExpireDueTokens(ctx context.Context, orgID pgtype.UUID) ([]ExpireDueTokensRow, error) {
-	rows, err := q.db.Query(ctx, expireDueTokens, orgID)
+func (q *Queries) ExpireDueTokens(ctx context.Context, limitCount int32) ([]ExpireDueTokensRow, error) {
+	rows, err := q.db.Query(ctx, expireDueTokens, limitCount)
 	if err != nil {
 		return nil, err
 	}
@@ -507,16 +481,12 @@ func (q *Queries) ExpireDueTokens(ctx context.Context, orgID pgtype.UUID) ([]Exp
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.State,
-			&i.TimeoutAt,
-			&i.IdempotencyKey,
-			&i.IdempotencyKeyExpiresAt,
-			&i.CreateRequestFingerprint,
+			&i.ExpiresAt,
 			&i.CallbackKeyID,
 			&i.CallbackSecretFingerprint,
-			&i.CallbackSecretCreatedAt,
 			&i.CompletionFingerprint,
-			&i.CompletionData,
-			&i.CompletionContentType,
+			&i.Result,
+			&i.Error,
 			&i.Metadata,
 			&i.Tags,
 			&i.CreatedAt,
@@ -536,7 +506,7 @@ func (q *Queries) ExpireDueTokens(ctx context.Context, orgID pgtype.UUID) ([]Exp
 }
 
 const getToken = `-- name: GetToken :one
-SELECT id, public_id, org_id, project_id, environment_id, state, timeout_at, idempotency_key, idempotency_key_expires_at, create_request_fingerprint, callback_key_id, callback_secret_fingerprint, callback_secret_created_at, completion_fingerprint, completion_data, completion_content_type, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
+SELECT id, public_id, org_id, project_id, environment_id, state, expires_at, callback_key_id, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
  FROM tokens
  WHERE org_id = $1
    AND project_id = $2
@@ -566,16 +536,12 @@ func (q *Queries) GetToken(ctx context.Context, arg GetTokenParams) (Token, erro
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.State,
-		&i.TimeoutAt,
-		&i.IdempotencyKey,
-		&i.IdempotencyKeyExpiresAt,
-		&i.CreateRequestFingerprint,
+		&i.ExpiresAt,
 		&i.CallbackKeyID,
 		&i.CallbackSecretFingerprint,
-		&i.CallbackSecretCreatedAt,
 		&i.CompletionFingerprint,
-		&i.CompletionData,
-		&i.CompletionContentType,
+		&i.Result,
+		&i.Error,
 		&i.Metadata,
 		&i.Tags,
 		&i.CreatedAt,
@@ -588,7 +554,7 @@ func (q *Queries) GetToken(ctx context.Context, arg GetTokenParams) (Token, erro
 }
 
 const getTokenByID = `-- name: GetTokenByID :one
-SELECT id, public_id, org_id, project_id, environment_id, state, timeout_at, idempotency_key, idempotency_key_expires_at, create_request_fingerprint, callback_key_id, callback_secret_fingerprint, callback_secret_created_at, completion_fingerprint, completion_data, completion_content_type, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
+SELECT id, public_id, org_id, project_id, environment_id, state, expires_at, callback_key_id, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
   FROM tokens
  WHERE id = $1
 `
@@ -603,16 +569,12 @@ func (q *Queries) GetTokenByID(ctx context.Context, id pgtype.UUID) (Token, erro
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.State,
-		&i.TimeoutAt,
-		&i.IdempotencyKey,
-		&i.IdempotencyKeyExpiresAt,
-		&i.CreateRequestFingerprint,
+		&i.ExpiresAt,
 		&i.CallbackKeyID,
 		&i.CallbackSecretFingerprint,
-		&i.CallbackSecretCreatedAt,
 		&i.CompletionFingerprint,
-		&i.CompletionData,
-		&i.CompletionContentType,
+		&i.Result,
+		&i.Error,
 		&i.Metadata,
 		&i.Tags,
 		&i.CreatedAt,
@@ -624,24 +586,14 @@ func (q *Queries) GetTokenByID(ctx context.Context, id pgtype.UUID) (Token, erro
 	return i, err
 }
 
-const getTokenForCallbackCompletion = `-- name: GetTokenForCallbackCompletion :one
-SELECT id, public_id, org_id, project_id, environment_id, state, timeout_at, idempotency_key, idempotency_key_expires_at, create_request_fingerprint, callback_key_id, callback_secret_fingerprint, callback_secret_created_at, completion_fingerprint, completion_data, completion_content_type, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
+const getTokenByPublicID = `-- name: GetTokenByPublicID :one
+SELECT id, public_id, org_id, project_id, environment_id, state, expires_at, callback_key_id, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
   FROM tokens
- WHERE id = $1
-   AND callback_key_id = $2
-   AND callback_secret_fingerprint = $3
-   AND state IN ('pending', 'completed')
- FOR UPDATE
+ WHERE public_id = $1
 `
 
-type GetTokenForCallbackCompletionParams struct {
-	ID                        pgtype.UUID `json:"id"`
-	CallbackKeyID             string      `json:"callback_key_id"`
-	CallbackSecretFingerprint string      `json:"callback_secret_fingerprint"`
-}
-
-func (q *Queries) GetTokenForCallbackCompletion(ctx context.Context, arg GetTokenForCallbackCompletionParams) (Token, error) {
-	row := q.db.QueryRow(ctx, getTokenForCallbackCompletion, arg.ID, arg.CallbackKeyID, arg.CallbackSecretFingerprint)
+func (q *Queries) GetTokenByPublicID(ctx context.Context, publicID string) (Token, error) {
+	row := q.db.QueryRow(ctx, getTokenByPublicID, publicID)
 	var i Token
 	err := row.Scan(
 		&i.ID,
@@ -650,16 +602,63 @@ func (q *Queries) GetTokenForCallbackCompletion(ctx context.Context, arg GetToke
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.State,
-		&i.TimeoutAt,
-		&i.IdempotencyKey,
-		&i.IdempotencyKeyExpiresAt,
-		&i.CreateRequestFingerprint,
+		&i.ExpiresAt,
 		&i.CallbackKeyID,
 		&i.CallbackSecretFingerprint,
-		&i.CallbackSecretCreatedAt,
 		&i.CompletionFingerprint,
-		&i.CompletionData,
-		&i.CompletionContentType,
+		&i.Result,
+		&i.Error,
+		&i.Metadata,
+		&i.Tags,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.ExpiredAt,
+		&i.CancelledAt,
+	)
+	return i, err
+}
+
+const getTokenCreateTime = `-- name: GetTokenCreateTime :one
+SELECT transaction_timestamp()::timestamptz
+`
+
+func (q *Queries) GetTokenCreateTime(ctx context.Context) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, getTokenCreateTime)
+	var column_1 pgtype.Timestamptz
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const getTokenForCallbackCompletion = `-- name: GetTokenForCallbackCompletion :one
+SELECT id, public_id, org_id, project_id, environment_id, state, expires_at, callback_key_id, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
+ FROM tokens
+ WHERE public_id = $1
+   AND callback_secret_fingerprint = $2
+ FOR UPDATE
+`
+
+type GetTokenForCallbackCompletionParams struct {
+	PublicID                  string `json:"public_id"`
+	CallbackSecretFingerprint []byte `json:"callback_secret_fingerprint"`
+}
+
+func (q *Queries) GetTokenForCallbackCompletion(ctx context.Context, arg GetTokenForCallbackCompletionParams) (Token, error) {
+	row := q.db.QueryRow(ctx, getTokenForCallbackCompletion, arg.PublicID, arg.CallbackSecretFingerprint)
+	var i Token
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.State,
+		&i.ExpiresAt,
+		&i.CallbackKeyID,
+		&i.CallbackSecretFingerprint,
+		&i.CompletionFingerprint,
+		&i.Result,
+		&i.Error,
 		&i.Metadata,
 		&i.Tags,
 		&i.CreatedAt,
@@ -680,7 +679,7 @@ WITH cursor_token AS (
        AND environment_id = $3
        AND id = $5::uuid
 )
-SELECT id, public_id, org_id, project_id, environment_id, state, timeout_at, idempotency_key, idempotency_key_expires_at, create_request_fingerprint, callback_key_id, callback_secret_fingerprint, callback_secret_created_at, completion_fingerprint, completion_data, completion_content_type, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
+SELECT id, public_id, org_id, project_id, environment_id, state, expires_at, callback_key_id, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
  FROM tokens
  WHERE tokens.org_id = $1
    AND tokens.project_id = $2
@@ -729,16 +728,12 @@ func (q *Queries) ListTokens(ctx context.Context, arg ListTokensParams) ([]Token
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.State,
-			&i.TimeoutAt,
-			&i.IdempotencyKey,
-			&i.IdempotencyKeyExpiresAt,
-			&i.CreateRequestFingerprint,
+			&i.ExpiresAt,
 			&i.CallbackKeyID,
 			&i.CallbackSecretFingerprint,
-			&i.CallbackSecretCreatedAt,
 			&i.CompletionFingerprint,
-			&i.CompletionData,
-			&i.CompletionContentType,
+			&i.Result,
+			&i.Error,
 			&i.Metadata,
 			&i.Tags,
 			&i.CreatedAt,

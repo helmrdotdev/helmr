@@ -352,6 +352,7 @@ func permanentRunLeaseRequestError(err error) bool {
 		http.StatusForbidden,
 		http.StatusNotFound,
 		http.StatusConflict,
+		http.StatusRequestEntityTooLarge,
 		http.StatusUnprocessableEntity,
 	} {
 		if client.IsStatus(err, status) {

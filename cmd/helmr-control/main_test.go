@@ -28,6 +28,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	tokencredential "github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -59,6 +60,7 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		WorkerEnrollment:     controltestWorkerEnrollmentVerifier{},
 		SecretDelivery:       controltestSecretDeliveryOpener{},
 		WorkspaceFencingKeys: controltestWorkspaceFencingKeys(),
+		TokenCredentialKeys:  controltestTokenCredentialKeys(),
 		AuthSecret:           []byte("abcdefghijabcdefghijabcdefghij12"),
 		PublicURL:            publicURL,
 		WorkerGroupID:        "us-east-1-worker-group-1",
@@ -109,6 +111,24 @@ func controltestWorkspaceFencingKeys() workspace.FencingKeys {
 	return keys
 }
 
+func controltestTokenCredentialKeys() tokencredential.CredentialKeys {
+	key := make([]byte, tokencredential.CredentialKeySize)
+	for index := range key {
+		key[index] = 3
+	}
+	var fixed [tokencredential.CredentialKeySize]byte
+	copy(fixed[:], key)
+	id := tokencredential.CredentialKeyIDForKey(fixed)
+	keys, err := tokencredential.NewCredentialKeys(
+		id.String(),
+		map[string][]byte{id.String(): key},
+	)
+	if err != nil {
+		panic(err)
+	}
+	return keys
+}
+
 func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := newSmokeDatabase(t, ctx)
@@ -133,12 +153,25 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 		return deployment.ParseBuildPolicy([]byte(buildPolicy))
 	}
 	t.Cleanup(func() { loadControlBuildPolicy = originalBuildPolicyLoader })
+	originalManagerCatalogLoader := loadControlManagerCatalog
+	loadControlManagerCatalog = func() (*deployment.ManagerCatalog, error) {
+		return nil, nil
+	}
+	t.Cleanup(func() { loadControlManagerCatalog = originalManagerCatalogLoader })
 	t.Setenv("HELMR_WORKER_GROUP_ID", "us-east-1-worker-group-1")
 	t.Setenv("HELMR_REGION_ID", "us-east-1")
 	t.Setenv("HELMR_DEFAULT_REGION_ID", "us-east-1")
 	t.Setenv("HELMR_PROVIDER", "aws")
 	t.Setenv("HELMR_PROVIDER_REGION", "us-east-1")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
+	t.Setenv(
+		"HELMR_TOKEN_CREDENTIAL_KEY_ID",
+		"sha256:434f804453bb27ed658e7d3b6a251a2450c6d05c0989b349d6abfa55c1bce882",
+	)
+	t.Setenv(
+		"HELMR_TOKEN_CREDENTIAL_KEYS",
+		`{"sha256:434f804453bb27ed658e7d3b6a251a2450c6d05c0989b349d6abfa55c1bce882":"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM="}`,
+	)
 	t.Setenv("HELMR_WORKER_GROUPS", `[{"id":"us-east-1-worker-group-1","name":"run","region":"us-east-1","account_id":"123456789012","autoscaling_group":"test-run","instance_profile_arn":"arn:aws:iam::123456789012:instance-profile/test-run","launch_ami_id":"ami-test","ami_ids":["ami-test"],"allows_run":true,"allows_build":false,"instance_capacity":{"milli_cpu":1000,"memory_bytes":1024,"workload_disk_bytes":1024,"scratch_bytes":1024,"vm_slots":1}}]`)
 	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")

@@ -36,6 +36,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -220,6 +221,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Workspace fencing keys: %w", err)
 	}
+	tokenCredentialKeys, err := token.CredentialKeysFromBase64JSON(
+		cfg.TokenCredentialKeyID,
+		cfg.TokenCredentialKeys,
+	)
+	if err != nil {
+		return fmt.Errorf("configure Token credential keys: %w", err)
+	}
 	casStore, err := cas.NewS3(ctx, cfg.CASURI)
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
@@ -253,6 +261,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		Idempotency:          idempotency.New(hashes),
 		SecretDelivery:       secretStore,
 		WorkspaceFencingKeys: workspaceFencingKeys,
+		TokenCredentialKeys:  tokenCredentialKeys,
 		EventStream:          eventStream,
 		TelemetryReader:      telemetryReader,
 		Mailer:               mailer,

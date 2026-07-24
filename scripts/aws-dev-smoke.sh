@@ -1580,11 +1580,18 @@ workspace_fencing_fingerprint() {
   } | openssl dgst -sha256 -r | awk '{ print "sha256:" $1 }'
 }
 
-validate_workspace_fencing_key() {
+token_credential_key_id() {
+  {
+    printf 'helmr.token-credential-key.v0\0'
+    printf '%s' "$1" | openssl base64 -d -A
+  } | openssl dgst -sha256 -r | awk '{ print "sha256:" $1 }'
+}
+
+validate_base64_32_key() {
   encoded=$1
   canonical="$(printf '%s' "${encoded}" | openssl base64 -d -A | openssl base64 -A)"
   [ "${canonical}" = "${encoded}" ] ||
-    die "Workspace fencing key is not canonical base64"
+    die "key is not canonical base64"
   size="$(
     printf '%s' "${encoded}" |
       openssl base64 -d -A |
@@ -1592,7 +1599,7 @@ validate_workspace_fencing_key() {
       tr -d '[:space:]'
   )"
   [ "${size}" = "32" ] ||
-    die "Workspace fencing key must decode to exactly 32 bytes"
+    die "key must decode to exactly 32 bytes"
 }
 
 dev_workspace_fencing_authority() {
@@ -1625,7 +1632,7 @@ dev_workspace_fencing_authority() {
     die "Workspace fencing keys must be a non-empty fingerprint-to-base64 JSON object"
   while IFS= read -r entry_fingerprint; do
     encoded="$(printf '%s' "${keys}" | jq -er --arg fingerprint "${entry_fingerprint}" '.[$fingerprint]')"
-    validate_workspace_fencing_key "${encoded}"
+    validate_base64_32_key "${encoded}"
     fingerprint="$(workspace_fencing_fingerprint "${encoded}")"
     [ "${entry_fingerprint}" = "${fingerprint}" ] ||
       die "Workspace fencing key ${entry_fingerprint} does not match its content fingerprint"
@@ -1642,6 +1649,55 @@ dev_workspace_fencing_authority() {
   fi
   set_tfvar "${DEV_TFVARS}" "workspace_fencing_key_fingerprint" "$(tf_quote "${fingerprint}")"
   info "selected Workspace fencing key ${fingerprint}"
+}
+
+dev_token_credential_authority() {
+  selected="${HELMR_TOKEN_CREDENTIAL_KEY_ID:-}"
+  keys_arn="$(dev_secret_arn token_credential_keys)"
+  keys_status="$(secret_value_status "${keys_arn}")"
+  if [ "${keys_status}" = "present" ]; then
+    keys="$(
+      aws secretsmanager get-secret-value \
+        --region "${AWS_REGION}" \
+        --secret-id "${keys_arn}" \
+        --query SecretString \
+        --output text
+    )"
+  elif [ "${keys_status}" = "missing" ]; then
+    encoded="$(random_base64)"
+    key_id="$(token_credential_key_id "${encoded}")"
+    keys="{\"${key_id}\":\"${encoded}\"}"
+    put_secret_value "${keys_arn}" "${keys}"
+  else
+    die "unexpected secret status for ${keys_arn}: ${keys_status}"
+  fi
+
+  printf '%s' "${keys}" |
+    jq -e '
+      type == "object" and length > 0 and
+      all(keys[]; test("^sha256:[0-9a-f]{64}$")) and
+      all(.[]; type == "string")
+    ' >/dev/null ||
+    die "Token credential keys must be a non-empty key-ID-to-base64 JSON object"
+  while IFS= read -r entry_key_id; do
+    encoded="$(printf '%s' "${keys}" | jq -er --arg key_id "${entry_key_id}" '.[$key_id]')"
+    validate_base64_32_key "${encoded}"
+    key_id="$(token_credential_key_id "${encoded}")"
+    [ "${entry_key_id}" = "${key_id}" ] ||
+      die "Token credential key ${entry_key_id} does not match its content-derived key ID"
+  done < <(printf '%s' "${keys}" | jq -r 'keys[]')
+
+  if [ -n "${selected}" ]; then
+    printf '%s' "${keys}" | jq -e --arg key_id "${selected}" 'has($key_id)' >/dev/null ||
+      die "selected Token credential key ${selected} is not readable"
+    key_id="${selected}"
+  elif [ "$(printf '%s' "${keys}" | jq 'length')" -eq 1 ]; then
+    key_id="$(printf '%s' "${keys}" | jq -er 'keys[0]')"
+  else
+    die "HELMR_TOKEN_CREDENTIAL_KEY_ID is required when multiple Token credential keys are readable"
+  fi
+  set_tfvar "${DEV_TFVARS}" "token_credential_key_id" "$(tf_quote "${key_id}")"
+  info "selected Token credential key ${key_id}"
 }
 
 dev_database_url() {
@@ -1689,6 +1745,7 @@ dev_generated_secrets() {
   put_secret_value_if_missing "$(dev_secret_arn secret_encryption_key)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn lookup_hmac_keys)" "{\"1\":\"$(random_base64)\"}"
   dev_workspace_fencing_authority
+  dev_token_credential_authority
   put_secret_value_if_missing "$(dev_secret_arn checkpoint_encryption_key)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn setup_token)" "$(random_hex)"
   dev_resend_api_key_secret

@@ -83,7 +83,7 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
 			rootfs_digest, cni_profile
 		) VALUES (
-			'test-runtime', 'aarch64', 'test', 'sha256:kernel',
+			'test-runtime', 'x86_64', 'test', 'sha256:kernel',
 			'sha256:initramfs', 'sha256:rootfs', 'default'
 		)
 		ON CONFLICT DO NOTHING
@@ -133,6 +133,7 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		INSERT INTO deployments (
 			id, public_id, org_id, build_region_id, project_id, environment_id,
 			build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+			build_manager_name, build_manager_version, build_manager_digest,
 			build_contract_version, version, content_hash, deployment_source_artifact_id,
 			program_artifact_id, program_runtime_digest, program_architecture,
 			program_receipt, queue_config,
@@ -141,6 +142,7 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		VALUES (
 			$1, $8, $2, $3, $4, $5,
 			'x86_64', decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
+			'bun', '1.2.3', decode(repeat('22', 32), 'hex'),
 			'helmr.program-build.v0', 'v1', $6, $7,
 			$9, decode(repeat('01', 32), 'hex'), 'x86_64', $10::jsonb,
 			'{"formatVersion":0,"queues":[]}'::jsonb, 'deployed', now()

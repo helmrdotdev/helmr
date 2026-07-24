@@ -138,6 +138,7 @@ output "secret_arns" {
     secret_encryption_key      = aws_secretsmanager_secret.secret_encryption_key.arn
     lookup_hmac_keys           = aws_secretsmanager_secret.lookup_hmac_keys.arn
     workspace_fencing_keys     = aws_secretsmanager_secret.workspace_fencing_keys.arn
+    token_credential_keys      = aws_secretsmanager_secret.token_credential_keys.arn
     github_oauth_client_secret = aws_secretsmanager_secret.github_oauth_client_secret.arn
     checkpoint_encryption_key  = aws_secretsmanager_secret.checkpoint_encryption_key.arn
     },

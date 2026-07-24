@@ -2791,16 +2791,14 @@ CREATE TABLE tokens (
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     state token_state NOT NULL DEFAULT 'pending',
-    timeout_at TIMESTAMPTZ NOT NULL,
-    idempotency_key TEXT NOT NULL DEFAULT '',
-    idempotency_key_expires_at TIMESTAMPTZ,
-    create_request_fingerprint TEXT NOT NULL DEFAULT '',
+    expires_at TIMESTAMPTZ NOT NULL,
     callback_key_id TEXT NOT NULL DEFAULT '',
-    callback_secret_fingerprint TEXT NOT NULL DEFAULT '',
-    callback_secret_created_at TIMESTAMPTZ,
-    completion_fingerprint TEXT NOT NULL DEFAULT '',
-    completion_data JSONB,
-    completion_content_type TEXT NOT NULL DEFAULT 'application/json',
+    callback_secret_fingerprint BYTEA NOT NULL
+        CHECK (octet_length(callback_secret_fingerprint) = 32),
+    completion_fingerprint BYTEA
+        CHECK (completion_fingerprint IS NULL OR octet_length(completion_fingerprint) = 32),
+    result JSONB,
+    error JSONB,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     tags TEXT[] NOT NULL DEFAULT '{}'::text[],
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -2811,6 +2809,7 @@ CREATE TABLE tokens (
     UNIQUE (org_id, id),
     UNIQUE (environment_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
+    CHECK (expires_at > created_at),
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE
@@ -2822,7 +2821,8 @@ CREATE TABLE public_access_tokens (
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
-    token_hash BYTEA NOT NULL UNIQUE,
+    token_hash BYTEA NOT NULL UNIQUE CHECK (octet_length(token_hash) = 32),
+    credential_key_id TEXT NOT NULL,
     state public_access_token_state NOT NULL DEFAULT 'active',
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_by JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -2837,6 +2837,7 @@ CREATE TABLE public_access_tokens (
     UNIQUE (org_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
     CHECK (max_uses IS NULL OR used_count <= max_uses),
+    CHECK (expires_at > created_at),
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE
@@ -2860,7 +2861,8 @@ CREATE TABLE public_access_token_scopes (
     FOREIGN KEY (org_id, project_id, environment_id, token_id)
         REFERENCES tokens(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    UNIQUE (public_access_token_id, scope_type)
+    UNIQUE (public_access_token_id, scope_type),
+    UNIQUE (token_id, scope_type)
 );
 
 CREATE TABLE outbox_messages (
@@ -4101,9 +4103,7 @@ CREATE INDEX telemetry_outbox_run_attempt_number_idx ON telemetry_outbox(org_id,
 CREATE INDEX run_checkpoints_run_state_idx ON run_checkpoints(run_id, state, created_at DESC);
 CREATE INDEX run_checkpoint_artifacts_role_idx ON run_checkpoint_artifacts(run_checkpoint_id, role, ordinal);
 CREATE INDEX tokens_scope_state_idx ON tokens(org_id, project_id, environment_id, state, created_at DESC);
-CREATE UNIQUE INDEX tokens_idempotency_idx ON tokens(org_id, project_id, environment_id, idempotency_key)
-    WHERE idempotency_key <> '';
-CREATE INDEX tokens_timeout_pending_idx ON tokens(org_id, timeout_at)
+CREATE INDEX tokens_expiry_pending_idx ON tokens(expires_at, id)
     WHERE state = 'pending';
 CREATE INDEX tokens_callback_fingerprint_pending_idx ON tokens(callback_key_id, callback_secret_fingerprint)
     WHERE state = 'pending' AND callback_key_id <> '' AND callback_secret_fingerprint <> '';
@@ -4119,6 +4119,8 @@ CREATE UNIQUE INDEX workspaces_create_idempotency_idx ON workspaces(org_id, proj
     WHERE create_idempotency_key <> '';
 CREATE INDEX workspace_versions_workspace_created_idx ON workspace_versions(org_id, workspace_id, created_at DESC);
 CREATE INDEX public_access_tokens_scope_expiry_idx ON public_access_tokens(org_id, project_id, environment_id, expires_at)
+    WHERE state = 'active';
+CREATE INDEX public_access_tokens_expiry_active_idx ON public_access_tokens(expires_at, id)
     WHERE state = 'active';
 CREATE INDEX public_access_token_scopes_token_idx ON public_access_token_scopes(org_id, project_id, environment_id, token_id, scope_type)
     WHERE token_id IS NOT NULL;
