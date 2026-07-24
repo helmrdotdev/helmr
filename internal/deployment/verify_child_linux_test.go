@@ -124,15 +124,15 @@ func TestProgramArtifactFromDescriptorRejectsPhysicalBoundBeforeRead(t *testing.
 		t.Fatal(err)
 	}
 	defer file.Close()
-	if err := file.Truncate(maxCodePhysicalBytes + 1); err != nil {
+	if err := file.Truncate(maxProgramPhysicalBytes + 1); err != nil {
 		t.Fatal(err)
 	}
 
 	_, err = artifactFromDescriptor(
 		context.Background(),
 		int(file.Fd()),
-		codeArtifact,
-		ProgramCodeArtifactMediaType,
+		programArtifact,
+		ProgramArtifactMediaType,
 	)
 	var contentError *artifactContentError
 	if !errors.As(err, &contentError) {

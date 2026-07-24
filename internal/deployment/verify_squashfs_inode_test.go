@@ -70,7 +70,7 @@ func TestSquashFSInodeDecoderReadsAcrossMetadataBlocks(t *testing.T) {
 		decoder,
 		superblock,
 		[]uint32{11, 22},
-		uint64(maxCodeLogicalBytes),
+		uint64(maxProgramLogicalBytes),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -416,7 +416,7 @@ func TestSquashFSInodeDecoderRejectsInvalidFacts(t *testing.T) {
 				metadata,
 				superblock,
 				test.ids,
-				uint64(maxCodeLogicalBytes),
+				uint64(maxProgramLogicalBytes),
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -474,7 +474,7 @@ func squashFSTestInodeDecoder(
 		metadata,
 		superblock,
 		[]uint32{11, 22},
-		uint64(maxCodeLogicalBytes),
+		uint64(maxProgramLogicalBytes),
 	)
 	if err != nil {
 		t.Fatal(err)

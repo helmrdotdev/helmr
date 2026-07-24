@@ -45,55 +45,27 @@ func encodeProgramTree(
 		}
 	}()
 
-	archivePath := filepath.Join(leaseDirectory, "tree.tar")
-	archive, err := os.OpenFile(
-		archivePath,
-		os.O_CREATE|os.O_EXCL|os.O_RDWR,
-		0600,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("create Program archive: %w", err)
-	}
-	defer func() {
-		if archive != nil {
-			returnErr = errors.Join(returnErr, archive.Close())
-		}
-	}()
-	if err := writeTreeArchive(ctx, archive, role, entries, allowEmpty); err != nil {
-		return nil, err
-	}
-	if err := archive.Sync(); err != nil {
-		return nil, fmt.Errorf("sync Program archive: %w", err)
-	}
-	if _, err := archive.Seek(0, io.SeekStart); err != nil {
-		return nil, fmt.Errorf("rewind Program archive: %w", err)
-	}
-
 	snapshot, err := produceArtifactSnapshot(
 		ctx,
 		leaseDirectory,
 		role,
 		artifactSnapshotOwner{UID: os.Geteuid(), GID: os.Getegid()},
 		func(destination *os.File) error {
-			return encodeSquashFS(ctx, encoder, archive, destination)
+			reader, writer := io.Pipe()
+			writeResult := make(chan error, 1)
+			go func() {
+				err := writeTreeArchive(ctx, writer, role, entries, allowEmpty)
+				_ = writer.CloseWithError(err)
+				writeResult <- err
+			}()
+			encodeErr := encodeSquashFS(ctx, encoder, reader, destination)
+			closeErr := reader.Close()
+			writeErr := <-writeResult
+			return errors.Join(encodeErr, closeErr, writeErr)
 		},
 	)
 	if err != nil {
 		return nil, err
-	}
-	if err := archive.Close(); err != nil {
-		archive = nil
-		return nil, errors.Join(
-			fmt.Errorf("close Program archive: %w", err),
-			snapshot.Close(),
-		)
-	}
-	archive = nil
-	if err := os.Remove(archivePath); err != nil {
-		return nil, errors.Join(
-			fmt.Errorf("remove Program archive: %w", err),
-			snapshot.Close(),
-		)
 	}
 	snapshot.platform.removeDirectory = true
 	removeLease = false

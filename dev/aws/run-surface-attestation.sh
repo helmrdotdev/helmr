@@ -224,8 +224,7 @@ SELECT 'current_deployment' AS section,
        encode(deployments.program_runtime_digest, 'hex') AS program_runtime_digest,
        deployments.program_architecture,
        source_artifacts.digest AS source_digest,
-       code_artifacts.digest AS program_code_digest,
-       dependency_artifacts.digest AS program_dependency_digest,
+       program_artifacts.digest AS program_digest,
        deployments.created_at,
        deployments.built_at,
        deployments.deployed_at
@@ -240,12 +239,10 @@ SELECT 'current_deployment' AS section,
    AND source_artifacts.project_id = deployments.project_id
    AND source_artifacts.environment_id = deployments.environment_id
    AND source_artifacts.id = deployments.deployment_source_artifact_id
-  LEFT JOIN artifacts AS code_artifacts
-    ON code_artifacts.environment_id = deployments.environment_id
-   AND code_artifacts.id = deployments.program_code_artifact_id
-  LEFT JOIN artifacts AS dependency_artifacts
-    ON dependency_artifacts.environment_id = deployments.environment_id
-   AND dependency_artifacts.id = deployments.program_dependency_artifact_id
+  LEFT JOIN artifacts AS program_artifacts
+    ON program_artifacts.environment_id = deployments.environment_id
+   AND program_artifacts.id = deployments.program_artifact_id
+   AND program_artifacts.kind = 'deployment_program'
  ORDER BY target_environments.slug;
 
 WITH target_project AS MATERIALIZED (

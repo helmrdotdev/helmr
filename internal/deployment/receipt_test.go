@@ -22,34 +22,40 @@ func TestProgramReceiptRoundTrip(t *testing.T) {
 	}
 }
 
-func TestProgramReceiptRejectsDivergentArtifacts(t *testing.T) {
+func TestProgramReceiptRejectsInvalidAuthority(t *testing.T) {
 	base := testProgramReceipt(t)
 	tests := map[string]func(*ProgramReceipt){
 		"format version": func(receipt *ProgramReceipt) {
 			receipt.FormatVersion = 1
 		},
-		"code digest": func(receipt *ProgramReceipt) {
-			receipt.Code.Digest = "sha256:" + strings.Repeat("A", 64)
+		"program digest": func(receipt *ProgramReceipt) {
+			receipt.Program.Digest = "sha256:" + strings.Repeat("A", 64)
 		},
-		"code size": func(receipt *ProgramReceipt) {
-			receipt.Code.SizeBytes = maxCodePhysicalBytes + 1
+		"program size": func(receipt *ProgramReceipt) {
+			receipt.Program.SizeBytes = maxProgramPhysicalBytes + 1
 		},
-		"code media type": func(receipt *ProgramReceipt) {
-			receipt.Code.MediaType = ProgramDependencyArtifactMediaType
+		"program media type": func(receipt *ProgramReceipt) {
+			receipt.Program.MediaType = "application/octet-stream"
 		},
-		"dependency size": func(receipt *ProgramReceipt) {
-			receipt.Dependencies.SizeBytes = maxDependencyPhysicalBytes + 1
+		"program artifact ID": func(receipt *ProgramReceipt) {
+			receipt.Program.ArtifactID = "invalid"
 		},
-		"dependency digest": func(receipt *ProgramReceipt) {
-			receipt.Index.DependenciesDigest = "sha256:" + strings.Repeat("d", 64)
+		"index digest": func(receipt *ProgramReceipt) {
+			receipt.Program.IndexDigest = "sha256:invalid"
 		},
-		"index": func(receipt *ProgramReceipt) {
-			receipt.Index.RuntimeAPIVersion = "helmr.runtime.v1"
+		"runtime": func(receipt *ProgramReceipt) {
+			receipt.Runtime.APIVersion = "helmr.runtime.v1"
+		},
+		"source": func(receipt *ProgramReceipt) {
+			receipt.Source.ArtifactID = "invalid"
+		},
+		"source size": func(receipt *ProgramReceipt) {
+			receipt.Source.SizeBytes = maxJSONSafeInteger + 1
 		},
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
-			receipt := cloneProgramReceipt(base)
+			receipt := base
 			mutate(&receipt)
 			if err := ValidateProgramReceipt(receipt); err == nil {
 				t.Fatal("ValidateProgramReceipt returned nil error")
@@ -86,25 +92,6 @@ func TestProgramReceiptParserRequiresClosedCanonicalObject(t *testing.T) {
 	}
 }
 
-func TestProgramReceiptParserReturnsDefensiveDeclarations(t *testing.T) {
-	canonical, err := CanonicalProgramReceipt(testProgramReceipt(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	receipt, err := ParseProgramReceipt(canonical)
-	if err != nil {
-		t.Fatal(err)
-	}
-	receipt.Index.Declarations[0].Slots[0] = DeclarationSlotSchema
-	again, err := ParseProgramReceipt(canonical)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if again.Index.Declarations[0].Slots[0] != DeclarationSlotHandler {
-		t.Fatal("parsed receipt retained caller mutation")
-	}
-}
-
 func TestProgramReceiptCanonicalSizeBound(t *testing.T) {
 	if _, err := ParseProgramReceipt(make([]byte, maxProgramReceiptSizeBytes+1)); err == nil {
 		t.Fatal("ParseProgramReceipt accepted oversized input")
@@ -128,21 +115,33 @@ func TestProgramVerificationRoundTrip(t *testing.T) {
 
 func testProgramReceipt(t *testing.T) ProgramReceipt {
 	t.Helper()
+	receipt, err := NewProgramReceipt(
+		testProgramOutput(t),
+		"019b635d-a915-7dca-8b86-26acc1007001",
+		ProgramReceiptSource{
+			ArtifactID: "019b635d-a915-7dca-8b86-26acc1007002",
+			Digest:     "sha256:" + strings.Repeat("a", 64),
+			MediaType:  "application/vnd.helmr.deployment-source.v0+tar",
+			SizeBytes:  1,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return receipt
+}
+
+func testProgramOutput(t *testing.T) ProgramOutput {
+	t.Helper()
 	var verified programVerification
 	if err := json.Unmarshal(canonicalVerifierProgramVerification(t), &verified); err != nil {
 		t.Fatal(err)
 	}
-	return ProgramReceipt{
-		FormatVersion: ProgramReceiptFormatVersion,
-		Code: ProgramDescriptor{
+	return ProgramOutput{
+		Artifact: ProgramDescriptor{
 			Digest:    "sha256:" + strings.Repeat("c", 64),
 			SizeBytes: squashFSPhysicalAlign,
-			MediaType: ProgramCodeArtifactMediaType,
-		},
-		Dependencies: ProgramDescriptor{
-			Digest:    verified.Index.DependenciesDigest,
-			SizeBytes: squashFSPhysicalAlign,
-			MediaType: ProgramDependencyArtifactMediaType,
+			MediaType: ProgramArtifactMediaType,
 		},
 		Index: verified.Index,
 	}

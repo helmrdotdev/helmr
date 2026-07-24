@@ -20,7 +20,7 @@ func TestProgramArchiveMatchesGoldenStream(t *testing.T) {
 	if err := writeProgramArchive(
 		context.Background(),
 		&first,
-		codeArtifact,
+		programArtifact,
 		treeEntrySequence(entries),
 	); err != nil {
 		t.Fatalf("writeProgramArchive: %v", err)
@@ -29,7 +29,7 @@ func TestProgramArchiveMatchesGoldenStream(t *testing.T) {
 	if err := writeProgramArchive(
 		context.Background(),
 		&second,
-		codeArtifact,
+		programArtifact,
 		treeEntrySequence(programArchiveFixture()),
 	); err != nil {
 		t.Fatalf("writeProgramArchive second: %v", err)
@@ -137,7 +137,7 @@ func TestProgramArchiveRejectsInvalidTrees(t *testing.T) {
 			if err := writeProgramArchive(
 				context.Background(),
 				&output,
-				dependencyArtifact,
+				programArtifact,
 				treeEntrySequence(mutate(valid())),
 			); err == nil {
 				t.Fatal("writeProgramArchive returned nil error")
@@ -170,7 +170,7 @@ func TestProgramArchiveRejectsContentLengthMismatch(t *testing.T) {
 			if err := writeProgramArchive(
 				context.Background(),
 				&output,
-				codeArtifact,
+				programArtifact,
 				treeEntrySequence([]treeEntry{entry}),
 			); err == nil {
 				t.Fatal("writeProgramArchive returned nil error")
@@ -196,7 +196,7 @@ func TestProgramArchiveRejectsUnsupportedRoleAndCancellation(t *testing.T) {
 	if err := writeProgramArchive(
 		ctx,
 		&output,
-		codeArtifact,
+		programArtifact,
 		treeEntrySequence(programArchiveFixture()),
 	); err == nil {
 		t.Fatal("writeProgramArchive ignored cancellation")
@@ -213,7 +213,7 @@ func TestProgramArchiveStreamsEntriesAndPropagatesSourceFailure(t *testing.T) {
 		yield(treeEntry{}, sourceErr)
 	}
 	var output bytes.Buffer
-	err := writeProgramArchive(context.Background(), &output, codeArtifact, sequence)
+	err := writeProgramArchive(context.Background(), &output, programArtifact, sequence)
 	if !errors.Is(err, sourceErr) {
 		t.Fatalf("writeProgramArchive error = %v, want %v", err, sourceErr)
 	}

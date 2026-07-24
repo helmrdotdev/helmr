@@ -162,14 +162,12 @@ mount_program() {
 	fi
 	if [ "$(kernel_arg helmr.substrate || true)" = 1 ]; then
 		runtime_device=/dev/vdd
-		code_device=/dev/vde
-		dependencies_device=/dev/vdf
+		program_device=/dev/vde
 	else
 		runtime_device=/dev/vdc
-		code_device=/dev/vdd
-		dependencies_device=/dev/vde
+		program_device=/dev/vdd
 	fi
-	for device in "$runtime_device" "$code_device" "$dependencies_device"; do
+	for device in "$runtime_device" "$program_device"; do
 		if [ ! -b "$device" ]; then
 			echo "missing required Helmr Program drive $device" >&2
 			exit 1
@@ -177,11 +175,9 @@ mount_program() {
 	done
 	mkdir -p \
 		/var/lib/helmr/program/runtime \
-		/var/lib/helmr/program/code \
-		/var/lib/helmr/program/dependencies
+		/var/lib/helmr/program/artifact
 	mount -t squashfs -o ro,nodev,nosuid "$runtime_device" /var/lib/helmr/program/runtime
-	mount -t squashfs -o ro,nodev,nosuid "$code_device" /var/lib/helmr/program/code
-	mount -t squashfs -o ro,nodev,nosuid "$dependencies_device" /var/lib/helmr/program/dependencies
+	mount -t squashfs -o ro,nodev,nosuid "$program_device" /var/lib/helmr/program/artifact
 }
 
 load_vsock() {

@@ -13,7 +13,7 @@ func TestArtifactSnapshotFailsClosedOutsideLinux(t *testing.T) {
 	_, err := snapshotArtifact(
 		context.Background(),
 		t.TempDir(),
-		codeArtifact,
+		programArtifact,
 		artifactSnapshotDescriptor{},
 		bytes.NewReader(nil),
 	)

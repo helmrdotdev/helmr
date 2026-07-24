@@ -95,13 +95,12 @@ type ReadOnlyDrive struct {
 }
 
 const (
-	ProgramRuntimeDrive      = "program_runtime"
-	ProgramCodeDrive         = "program_code"
-	ProgramDependenciesDrive = "program_dependencies"
-	ManagerDrive             = "manager"
-	ManagedRuntimeDrive      = "managed_runtime"
-	ToolchainDrive           = "standard_toolchain"
-	BuildTreeDrive           = "build_tree"
+	ProgramRuntimeDrive = "program_runtime"
+	ProgramDrive        = "program"
+	ManagerDrive        = "manager"
+	ManagedRuntimeDrive = "managed_runtime"
+	ToolchainDrive      = "standard_toolchain"
+	BuildTreeDrive      = "build_tree"
 )
 
 type ReadOnlyDriveSource interface {

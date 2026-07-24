@@ -16,12 +16,9 @@ SELECT runtime_instances.*,
        program_deployments.program_runtime_digest,
        program_deployments.program_architecture,
        program_deployments.build_contract_version AS program_build_contract_version,
-       COALESCE(program_code.digest, '') AS program_code_digest,
-       COALESCE(program_code.size_bytes, 0) AS program_code_size_bytes,
-       COALESCE(program_code.media_type, '') AS program_code_media_type,
-       COALESCE(program_dependencies.digest, '') AS program_dependency_digest,
-       COALESCE(program_dependencies.size_bytes, 0) AS program_dependency_size_bytes,
-       COALESCE(program_dependencies.media_type, '') AS program_dependency_media_type,
+       COALESCE(program_artifact.digest, '') AS program_artifact_digest,
+       COALESCE(program_artifact.size_bytes, 0) AS program_artifact_size_bytes,
+       COALESCE(program_artifact.media_type, '') AS program_artifact_media_type,
        runtime_identities.rootfs_digest,
        runtime_identities.runtime_abi,
        runtime_substrates.substrate_digest,
@@ -65,12 +62,10 @@ SELECT runtime_instances.*,
     ON program_deployments.environment_id = runtime_instances.environment_id
    AND program_deployments.id = runtime_instances.program_deployment_id
    AND program_deployments.status = 'deployed'
-  LEFT JOIN artifacts AS program_code
-    ON program_code.environment_id = program_deployments.environment_id
-   AND program_code.id = program_deployments.program_code_artifact_id
-  LEFT JOIN artifacts AS program_dependencies
-    ON program_dependencies.environment_id = program_deployments.environment_id
-   AND program_dependencies.id = program_deployments.program_dependency_artifact_id
+  LEFT JOIN artifacts AS program_artifact
+    ON program_artifact.environment_id = program_deployments.environment_id
+   AND program_artifact.id = program_deployments.program_artifact_id
+   AND program_artifact.kind = 'deployment_program'
   LEFT JOIN runtime_substrates ON runtime_substrates.org_id = runtime_instances.org_id
                               AND runtime_substrates.project_id = runtime_instances.project_id
                               AND runtime_substrates.environment_id = runtime_instances.environment_id

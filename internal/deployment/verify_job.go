@@ -26,7 +26,7 @@ func parseVerifierJob(value string) (verifierJob, error) {
 func (job verifierJob) verifiedPayloadLimit() int64 {
 	switch job {
 	case programVerifierJob:
-		return maxProgramReceiptSizeBytes
+		return maxProgramVerificationSizeBytes
 	case runtimeVerifierJob:
 		return maxRuntimeDocumentBytes
 	default:

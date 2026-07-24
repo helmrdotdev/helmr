@@ -132,11 +132,11 @@ func TestValidateBuildSucceeded(t *testing.T) {
 			errMsg: "build result plan",
 		},
 		{
-			name: "missing receipt",
+			name: "missing program",
 			change: func(result *BuildResult) {
-				result.Succeeded.ProgramReceipt = nil
+				result.Succeeded.Program = nil
 			},
-			errMsg: "requires programReceipt",
+			errMsg: "requires program",
 		},
 		{
 			name: "missing provenance",
@@ -146,33 +146,33 @@ func TestValidateBuildSucceeded(t *testing.T) {
 			errMsg: "build result provenance",
 		},
 		{
-			name: "invalid receipt",
+			name: "invalid program",
 			change: func(result *BuildResult) {
-				result.Succeeded.ProgramReceipt.Code.Digest = "invalid"
+				result.Succeeded.Program.Artifact.Digest = "invalid"
 			},
-			errMsg: "programReceipt",
+			errMsg: "build result program",
 		},
 		{
-			name: "receipt declarations",
+			name: "program declarations",
 			change: func(result *BuildResult) {
-				result.Succeeded.ProgramReceipt.Index.Declarations[0].DeclaredID = "other"
+				result.Succeeded.Program.Index.Declarations[0].DeclaredID = "other"
 			},
 			errMsg: "declarations do not match",
 		},
 		{
 			name: "program Workspace architecture",
 			change: func(result *BuildResult) {
-				result.Succeeded.ProgramReceipt.Index.Architecture = ArchitectureAArch64
+				result.Succeeded.Program.Index.Architecture = ArchitectureAArch64
 				result.Succeeded.Provenance.Architecture = ArchitectureAArch64
 			},
 			errMsg: "architecture does not match provenance",
 		},
 		{
-			name: "receipt provenance",
+			name: "program provenance",
 			change: func(result *BuildResult) {
-				result.Succeeded.ProgramReceipt.Index.Manager.Version = "11.0.1"
+				result.Succeeded.Program.Index.Manager.Version = "11.0.1"
 			},
-			errMsg: "programReceipt provenance does not match",
+			errMsg: "program provenance does not match",
 		},
 		{
 			name: "workspace image array",
@@ -238,19 +238,19 @@ func TestValidateWorkspaceOnlyBuildResult(t *testing.T) {
 	result := testSucceededBuildResult(t)
 	result.Succeeded.Plan.Definitions = result.Succeeded.Plan.Definitions[3:]
 	result.Succeeded.Plan.Queues = []QueueInput{}
-	result.Succeeded.ProgramReceipt = nil
+	result.Succeeded.Program = nil
 	if err := ValidateBuildResultContract(result); err != nil {
 		t.Fatalf("workspace-only result: %v", err)
 	}
 
-	receipt := testProgramReceipt(t)
-	result.Succeeded.ProgramReceipt = &receipt
-	assertBuildResultError(t, result, "must not contain programReceipt")
+	program := testProgramOutput(t)
+	result.Succeeded.Program = &program
+	assertBuildResultError(t, result, "must not contain program")
 }
 
 func TestValidateBuildResultTarget(t *testing.T) {
 	result := testSucceededBuildResult(t)
-	runtimeDigest := result.Succeeded.ProgramReceipt.Index.RuntimeDigest
+	runtimeDigest := result.Succeeded.Program.Index.RuntimeDigest
 	if err := ValidateBuildResultTarget(
 		result,
 		runtimeDigest,
@@ -302,7 +302,7 @@ func TestValidateBuildResultTarget(t *testing.T) {
 	workspaceOnly := testSucceededBuildResult(t)
 	workspaceOnly.Succeeded.Plan.Definitions = workspaceOnly.Succeeded.Plan.Definitions[3:]
 	workspaceOnly.Succeeded.Plan.Queues = []QueueInput{}
-	workspaceOnly.Succeeded.ProgramReceipt = nil
+	workspaceOnly.Succeeded.Program = nil
 	workspaceOnly.Succeeded.Provenance.Architecture = ArchitectureAArch64
 	workspaceOnly.Succeeded.Plan.Definitions[0].Workspace.Architecture = ArchitectureAArch64
 	workspaceOnly.Succeeded.Plan.Definitions[0].Workspace.ImageBuild.Images[0].Platform.Architecture = "aarch64"
@@ -457,8 +457,8 @@ func TestParseBuildResultSizeBound(t *testing.T) {
 func testSucceededBuildResult(t *testing.T) BuildResult {
 	t.Helper()
 	plan := testBuildPlan()
-	receipt := testProgramReceipt(t)
-	receipt.Index.Declarations = buildPlanProgramDeclarations(plan)
+	program := testProgramOutput(t)
+	program.Index.Declarations = buildPlanProgramDeclarations(plan)
 	return BuildResult{
 		FormatVersion: BuildResultFormatVersion,
 		Outcome:       BuildOutcomeSucceeded,
@@ -468,9 +468,9 @@ func testSucceededBuildResult(t *testing.T) BuildResult {
 			StderrBase64: "bWFuYWdlciBzdGRlcnI=",
 		},
 		Succeeded: &BuildSucceeded{
-			Plan:           plan,
-			Provenance:     testBuildProvenance(t),
-			ProgramReceipt: &receipt,
+			Plan:       plan,
+			Provenance: testBuildProvenance(t),
+			Program:    &program,
 			WorkspaceImages: []WorkspaceImage{{
 				DeclaredID: "repo",
 				Artifact: WorkspaceImageArtifact{
@@ -486,7 +486,7 @@ func testSucceededBuildResult(t *testing.T) BuildResult {
 
 func testBuildProvenance(t *testing.T) BuildProvenance {
 	t.Helper()
-	index := testProgramReceipt(t).Index
+	index := testProgramOutput(t).Index
 	return BuildProvenance{
 		Architecture:            index.Architecture,
 		BuildContractVersion:    index.BuildContractVersion,

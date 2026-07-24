@@ -11,9 +11,9 @@ import (
 	"testing"
 )
 
-func TestProgramArtifactsAcceptAtomicProgram(t *testing.T) {
-	pair := newProgramPair(t)
-	verified, err := verifyProgramArtifacts(context.Background(), pair.artifacts)
+func TestProgramArtifactAcceptsProgram(t *testing.T) {
+	program := newTestProgram(t)
+	verified, err := verifyProgramArtifact(context.Background(), program.descriptor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,92 +22,86 @@ func TestProgramArtifactsAcceptAtomicProgram(t *testing.T) {
 	}
 }
 
-func TestProgramArtifactsRejectsContractDivergence(t *testing.T) {
-	tests := map[string]func(*testProgramPair){
-		"dependency descriptor": func(pair *testProgramPair) {
-			pair.artifacts.Dependencies.Digest = testDigest("other dependencies")
-		},
-		"code dependency": func(pair *testProgramPair) {
-			pair.code.addFile("node_modules/unexpected", []byte("x"), 0644)
-		},
-		"declaration locator": func(pair *testProgramPair) {
-			pair.code.files["helmr/declarations.json"] = []byte(
+func TestProgramArtifactRejectsContractDivergence(t *testing.T) {
+	tests := map[string]func(*testProgram){
+		"declaration locator": func(program *testProgram) {
+			program.artifact.files["helmr/declarations.json"] = []byte(
 				`{"declarations":[],"formatVersion":0}`,
 			)
 		},
-		"program entry": func(pair *testProgramPair) {
-			pair.code.files["helmr/entry.mjs"] = []byte("process.exit(0)\n")
+		"program entry": func(program *testProgram) {
+			program.artifact.files["helmr/entry.mjs"] = []byte("process.exit(0)\n")
 		},
-		"unknown Platform-owned path": func(pair *testProgramPair) {
-			pair.code.addFile("helmr/modules.json", []byte("{}"), 0o644)
+		"unknown Platform-owned path": func(program *testProgram) {
+			program.artifact.addFile("helmr/modules.json", []byte("{}"), 0o644)
 		},
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
-			pair := newProgramPair(t)
-			mutate(pair)
-			if _, err := verifyProgramArtifacts(context.Background(), pair.artifacts); err == nil {
-				t.Fatal("verifyProgramArtifacts returned nil error")
+			program := newTestProgram(t)
+			mutate(program)
+			if _, err := verifyProgramArtifact(context.Background(), program.descriptor); err == nil {
+				t.Fatal("verifyProgramArtifact returned nil error")
 			}
 		})
 	}
 }
 
-func TestProgramArtifactsAcceptsLifecycleModifiedLockfile(t *testing.T) {
-	pair := newProgramPair(t)
-	pair.code.files["bun.lock"] = []byte("changed by lifecycle")
-	if _, err := verifyProgramArtifacts(context.Background(), pair.artifacts); err != nil {
+func TestProgramArtifactAcceptsLifecycleModifiedLockfile(t *testing.T) {
+	program := newTestProgram(t)
+	program.artifact.files["bun.lock"] = []byte("changed by lifecycle")
+	if _, err := verifyProgramArtifact(context.Background(), program.descriptor); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestProgramArtifactsAcceptsManagerNativeDependencyTree(t *testing.T) {
-	pair := newProgramPair(t)
-	pair.dependencies.addDirectory("tool")
-	pair.dependencies.addFile("tool/package.json", []byte(`{"name":"tool"}`), 0644)
-	pair.code.addDirectory("packages")
-	pair.code.addDirectory("packages/local")
-	pair.code.addDirectory("packages/local/node_modules")
-	if _, err := verifyProgramArtifacts(context.Background(), pair.artifacts); err != nil {
+func TestProgramArtifactAcceptsManagerNativeDependencyTree(t *testing.T) {
+	program := newTestProgram(t)
+	program.artifact.addDirectory("node_modules/tool")
+	program.artifact.addFile("node_modules/tool/package.json", []byte(`{"name":"tool"}`), 0644)
+	program.artifact.addDirectory("packages")
+	program.artifact.addDirectory("packages/local")
+	program.artifact.addDirectory("packages/local/node_modules")
+	if _, err := verifyProgramArtifact(context.Background(), program.descriptor); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestProgramArtifactsValidatesCombinedNamespaceLinks(t *testing.T) {
-	pair := newProgramPair(t)
-	pair.dependencies.addDirectory(".bin")
-	pair.dependencies.addDirectory("tool")
-	pair.dependencies.addFile("tool/index.js", []byte("export {}\n"), 0644)
-	pair.dependencies.addLink(".bin/tool", "../tool/index.js")
-	if _, err := verifyProgramArtifacts(context.Background(), pair.artifacts); err != nil {
+func TestProgramArtifactValidatesNamespaceLinks(t *testing.T) {
+	program := newTestProgram(t)
+	program.artifact.addDirectory("node_modules/.bin")
+	program.artifact.addDirectory("node_modules/tool")
+	program.artifact.addFile("node_modules/tool/index.js", []byte("export {}\n"), 0644)
+	program.artifact.addLink("node_modules/.bin/tool", "../tool/index.js")
+	if _, err := verifyProgramArtifact(context.Background(), program.descriptor); err != nil {
 		t.Fatal(err)
 	}
 
-	escaping := newProgramPair(t)
-	escaping.dependencies.addLink("escape", "../../outside")
-	if _, err := verifyProgramArtifacts(context.Background(), escaping.artifacts); err == nil {
-		t.Fatal("verifyProgramArtifacts accepted an escaping dependency link")
+	escaping := newTestProgram(t)
+	escaping.artifact.addLink("node_modules/escape", "../../outside")
+	if _, err := verifyProgramArtifact(context.Background(), escaping.descriptor); err == nil {
+		t.Fatal("verifyProgramArtifact accepted an escaping dependency link")
 	}
 
-	dangling := newProgramPair(t)
-	dangling.code.addFile("file", []byte("x"), 0644)
-	dangling.code.addLink("safe", "file/../..")
-	if _, err := verifyProgramArtifacts(context.Background(), dangling.artifacts); err != nil {
-		t.Fatalf("verifyProgramArtifacts rejected a confined ENOTDIR link: %v", err)
+	dangling := newTestProgram(t)
+	dangling.artifact.addFile("file", []byte("x"), 0644)
+	dangling.artifact.addLink("safe", "file/../..")
+	if _, err := verifyProgramArtifact(context.Background(), dangling.descriptor); err != nil {
+		t.Fatalf("verifyProgramArtifact rejected a confined ENOTDIR link: %v", err)
 	}
 }
 
-func TestProgramArtifactsAcceptsUnrelatedTypeScriptWithoutSidecars(t *testing.T) {
-	pair := newProgramPair(t)
-	pair.code.addFile("source.ts", []byte("export const value = 1\n"), 0644)
-	if _, err := verifyProgramArtifacts(context.Background(), pair.artifacts); err != nil {
+func TestProgramArtifactAcceptsUnrelatedTypeScriptWithoutSidecars(t *testing.T) {
+	program := newTestProgram(t)
+	program.artifact.addFile("source.ts", []byte("export const value = 1\n"), 0644)
+	if _, err := verifyProgramArtifact(context.Background(), program.descriptor); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestProgramArtifactsAcceptsTypeScriptDeclarationLocator(t *testing.T) {
-	pair := newProgramPair(t)
-	pair.code.addFile("source.ts", []byte("export const build = {}\n"), 0644)
+func TestProgramArtifactAcceptsTypeScriptDeclarationLocator(t *testing.T) {
+	program := newTestProgram(t)
+	program.artifact.addFile("source.ts", []byte("export const build = {}\n"), 0644)
 	locatorRaw, err := CanonicalDeclarationLocator(DeclarationLocator{
 		FormatVersion: DeclarationLocatorFormatVersion,
 		Declarations: []LocatedDeclaration{{
@@ -120,21 +114,19 @@ func TestProgramArtifactsAcceptsTypeScriptDeclarationLocator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pair.code.setFile("helmr/declarations.json", locatorRaw)
-	if _, err := verifyProgramArtifacts(context.Background(), pair.artifacts); err != nil {
+	program.artifact.setFile("helmr/declarations.json", locatorRaw)
+	if _, err := verifyProgramArtifact(context.Background(), program.descriptor); err != nil {
 		t.Fatal(err)
 	}
 }
 
-type testProgramPair struct {
-	artifacts    programArtifacts
-	code         *memoryArtifact
-	dependencies *memoryArtifact
+type testProgram struct {
+	descriptor artifactInput
+	artifact   *memoryArtifact
 }
 
-func newProgramPair(t *testing.T) *testProgramPair {
+func newTestProgram(t *testing.T) *testProgram {
 	t.Helper()
-	dependencyDigest := testDigest("dependency Artifact")
 	lockfile := []byte("lockfileVersion = 1\n")
 	programRaw, err := CanonicalProgramIndex(ProgramIndex{
 		Architecture:         ArchitectureX8664,
@@ -144,8 +136,7 @@ func newProgramPair(t *testing.T) *testProgramPair {
 			DeclaredID: "build",
 			Slots:      []DeclarationSlot{DeclarationSlotHandler},
 		}},
-		DependenciesDigest: dependencyDigest,
-		FormatVersion:      ProgramIndexFormatVersion,
+		FormatVersion: ProgramIndexFormatVersion,
 		Manager: ProgramManager{
 			CapsuleDigest: testDigest("manager capsule"),
 			Name:          PackageManagerBun,
@@ -176,34 +167,24 @@ func newProgramPair(t *testing.T) *testProgramPair {
 		t.Fatal(err)
 	}
 
-	code := newMemoryArtifact()
-	code.addDirectory("helmr")
-	code.addDirectory("node_modules")
-	code.addFile("helmr/program.json", programRaw, 0644)
-	code.addFile("helmr/declarations.json", locatorRaw, 0644)
-	code.addFile("helmr/entry.mjs", []byte(ProgramEntry), 0644)
-	code.addFile("build.js", []byte("export const build = {}\n"), 0644)
-	code.addFile("package.json", []byte(`{"packageManager":"bun@1.3.10"}`), 0644)
-	code.addFile("bun.lock", lockfile, 0644)
-	dependencies := newMemoryArtifact()
+	artifact := newMemoryArtifact()
+	artifact.addDirectory("helmr")
+	artifact.addDirectory("node_modules")
+	artifact.addFile("helmr/program.json", programRaw, 0644)
+	artifact.addFile("helmr/declarations.json", locatorRaw, 0644)
+	artifact.addFile("helmr/entry.mjs", []byte(ProgramEntry), 0644)
+	artifact.addFile("build.js", []byte("export const build = {}\n"), 0644)
+	artifact.addFile("package.json", []byte(`{"packageManager":"bun@1.3.10"}`), 0644)
+	artifact.addFile("bun.lock", lockfile, 0644)
 
-	return &testProgramPair{
-		artifacts: programArtifacts{
-			Code: programArtifact{
-				Digest:    testDigest("code Artifact"),
-				SizeBytes: squashFSPhysicalAlign,
-				MediaType: ProgramCodeArtifactMediaType,
-				Reader:    code,
-			},
-			Dependencies: programArtifact{
-				Digest:    dependencyDigest,
-				SizeBytes: squashFSPhysicalAlign,
-				MediaType: ProgramDependencyArtifactMediaType,
-				Reader:    dependencies,
-			},
+	return &testProgram{
+		descriptor: artifactInput{
+			Digest:    testDigest("Program Artifact"),
+			SizeBytes: squashFSPhysicalAlign,
+			MediaType: ProgramArtifactMediaType,
+			Reader:    artifact,
 		},
-		code:         code,
-		dependencies: dependencies,
+		artifact: artifact,
 	}
 }
 

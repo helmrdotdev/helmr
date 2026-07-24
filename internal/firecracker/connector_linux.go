@@ -53,8 +53,7 @@ const ext4Magic = 0xef53
 
 var readOnlyDriveOrder = [...]string{
 	vm.ProgramRuntimeDrive,
-	vm.ProgramCodeDrive,
-	vm.ProgramDependenciesDrive,
+	vm.ProgramDrive,
 	vm.ManagerDrive,
 	vm.ManagedRuntimeDrive,
 	vm.ToolchainDrive,
@@ -254,23 +253,21 @@ func exactDriveSet(drives []vm.ReadOnlyDrive, expected ...string) bool {
 }
 
 func isProgramDriveSet(drives []vm.ReadOnlyDrive) bool {
-	if len(drives) != 3 {
+	if len(drives) != 2 {
 		return false
 	}
 	present := make(map[string]bool, len(drives))
 	for _, drive := range drives {
 		switch drive.ID {
 		case vm.ProgramRuntimeDrive,
-			vm.ProgramCodeDrive,
-			vm.ProgramDependenciesDrive:
+			vm.ProgramDrive:
 			present[drive.ID] = true
 		default:
 			return false
 		}
 	}
 	return present[vm.ProgramRuntimeDrive] &&
-		present[vm.ProgramCodeDrive] &&
-		present[vm.ProgramDependenciesDrive]
+		present[vm.ProgramDrive]
 }
 
 func (c *Connector) Materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Session, error) {
@@ -1196,8 +1193,7 @@ func validateReadOnlyDrives(drives []vm.ReadOnlyDrive) error {
 	for index, drive := range drives {
 		switch drive.ID {
 		case vm.ProgramRuntimeDrive,
-			vm.ProgramCodeDrive,
-			vm.ProgramDependenciesDrive,
+			vm.ProgramDrive,
 			vm.ManagerDrive,
 			vm.ManagedRuntimeDrive,
 			vm.ToolchainDrive,
@@ -2150,9 +2146,8 @@ type snapshotRuntimeManifest struct {
 }
 
 type snapshotProgramManifest struct {
-	Runtime      snapshotProgramArtifact `json:"runtime"`
-	Code         snapshotProgramArtifact `json:"code"`
-	Dependencies snapshotProgramArtifact `json:"dependencies"`
+	Runtime  snapshotProgramArtifact `json:"runtime"`
+	Artifact snapshotProgramArtifact `json:"artifact"`
 }
 
 type snapshotProgramArtifact struct {
@@ -2179,9 +2174,8 @@ func snapshotProgram(drives []vm.ReadOnlyDrive) (*snapshotProgramManifest, error
 		}
 	}
 	return &snapshotProgramManifest{
-		Runtime:      artifact(vm.ProgramRuntimeDrive),
-		Code:         artifact(vm.ProgramCodeDrive),
-		Dependencies: artifact(vm.ProgramDependenciesDrive),
+		Runtime:  artifact(vm.ProgramRuntimeDrive),
+		Artifact: artifact(vm.ProgramDrive),
 	}, nil
 }
 

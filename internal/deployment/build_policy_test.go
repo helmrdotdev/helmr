@@ -62,25 +62,28 @@ func TestBuildPolicyValidatesProgramTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt := testProgramReceipt(t)
-	receipt.Index.RuntimeDigest = runtime.Digest
-	receipt.Index.Architecture = runtime.Architecture
-	receipt.Index.StandardToolchainDigest = toolchainDigest
-	if err := ValidateProgramTarget(target, receipt); err != nil {
+	output := testProgramOutput(t)
+	output.Index.RuntimeDigest = runtime.Digest
+	output.Index.Architecture = runtime.Architecture
+	output.Index.StandardToolchainDigest = toolchainDigest
+	if err := ValidateProgramTarget(target, output); err != nil {
 		t.Fatal(err)
 	}
 
-	wrongRuntime := cloneProgramReceipt(receipt)
+	wrongRuntime := output
+	wrongRuntime.Index = cloneProgramIndex(output.Index)
 	wrongRuntime.Index.RuntimeDigest = "sha256:" + strings.Repeat("b", 64)
 	if err := ValidateProgramTarget(target, wrongRuntime); err == nil {
 		t.Fatal("ValidateProgramTarget accepted another runtime")
 	}
-	wrongManager := cloneProgramReceipt(receipt)
+	wrongManager := output
+	wrongManager.Index = cloneProgramIndex(output.Index)
 	wrongManager.Index.Manager.Version = "1.3.11"
 	if err := ValidateProgramTarget(target, wrongManager); err != nil {
 		t.Fatal(err)
 	}
-	wrongToolchain := cloneProgramReceipt(receipt)
+	wrongToolchain := output
+	wrongToolchain.Index = cloneProgramIndex(output.Index)
 	wrongToolchain.Index.StandardToolchainDigest = "sha256:" + strings.Repeat("c", 64)
 	if err := ValidateProgramTarget(target, wrongToolchain); err == nil {
 		t.Fatal("ValidateProgramTarget accepted another standard toolchain")

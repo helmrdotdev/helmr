@@ -782,7 +782,7 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		 WHERE table_schema = 'public'
 		   AND table_name = 'deployments'
 		   AND column_name = ANY($1::text[])
-	`, []string{"program_code_artifact_id", "program_dependency_artifact_id", "program_runtime_digest", "program_architecture"}).Scan(&programColumns); err != nil {
+	`, []string{"program_artifact_id", "program_runtime_digest", "program_architecture", "program_receipt"}).Scan(&programColumns); err != nil {
 		t.Fatal(err)
 	}
 	if programColumns != 4 {
@@ -795,7 +795,7 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		 WHERE table_schema = 'public'
 		   AND table_name IN ('deployments', 'deployment_definitions')
 		   AND column_name = ANY($1::text[])
-	`, []string{"program_artifact_id", "program_runtime_contract_digest", "program_supported_architectures", "runtime_contract_digest"}).Scan(&obsoleteProgramColumns); err != nil {
+	`, []string{"program_code_artifact_id", "program_dependency_artifact_id", "program_runtime_contract_digest", "program_supported_architectures", "runtime_contract_digest"}).Scan(&obsoleteProgramColumns); err != nil {
 		t.Fatal(err)
 	}
 	if obsoleteProgramColumns != 0 {
@@ -809,15 +809,14 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		 WHERE pg_type.typname = 'artifact_kind'
 		   AND pg_enum.enumlabel = ANY($1::text[])
 	`, []string{
-		"deployment_program_code",
-		"deployment_program_dependencies",
+		"deployment_program",
 		"workspace_image",
 		"workspace_process_record",
 	}).Scan(&artifactKinds); err != nil {
 		t.Fatal(err)
 	}
-	if artifactKinds != 4 {
-		t.Fatalf("new artifact kind labels = %d, want 4", artifactKinds)
+	if artifactKinds != 3 {
+		t.Fatalf("artifact kind labels = %d, want 3", artifactKinds)
 	}
 	var obsoleteArtifactKind bool
 	if err := pool.QueryRow(ctx, `
@@ -826,13 +825,15 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 			  FROM pg_enum
 			  JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
 			 WHERE pg_type.typname = 'artifact_kind'
-			   AND pg_enum.enumlabel = 'deployment_program'
+			   AND pg_enum.enumlabel = ANY(ARRAY[
+			       'deployment_program_code', 'deployment_program_dependencies'
+			   ])
 		)
 	`).Scan(&obsoleteArtifactKind); err != nil {
 		t.Fatal(err)
 	}
 	if obsoleteArtifactKind {
-		t.Fatal("obsolete deployment_program artifact kind exists")
+		t.Fatal("obsolete split Program artifact kind exists")
 	}
 	var artifactReferenceIndexes int
 	if err := pool.QueryRow(ctx, `
@@ -840,11 +841,11 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		  FROM pg_indexes
 		 WHERE schemaname = 'public'
 		   AND indexname = ANY($1::text[])
-	`, []string{"deployments_program_code_artifact_idx", "deployments_program_dependency_artifact_idx", "deployment_definitions_artifact_idx"}).Scan(&artifactReferenceIndexes); err != nil {
+	`, []string{"deployments_program_artifact_idx", "deployment_definitions_artifact_idx"}).Scan(&artifactReferenceIndexes); err != nil {
 		t.Fatal(err)
 	}
-	if artifactReferenceIndexes != 3 {
-		t.Fatalf("artifact reference indexes = %d, want 3", artifactReferenceIndexes)
+	if artifactReferenceIndexes != 2 {
+		t.Fatalf("artifact reference indexes = %d, want 2", artifactReferenceIndexes)
 	}
 
 	tx, err := pool.Begin(ctx)
@@ -863,19 +864,21 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		('00000000-0000-0000-0000-000000003001', 'env_' || repeat('c', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', 'definition-one', 'Definition One', '#112233'),
 		('00000000-0000-0000-0000-000000003002', 'env_' || repeat('d', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', 'definition-two', 'Definition Two', '#445566');
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES
-		('00000000-0000-0000-0000-000000001000', 'sha256:definition-source-one', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
-		('00000000-0000-0000-0000-000000001000', 'sha256:definition-source-two', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
-		('00000000-0000-0000-0000-000000001000', 'sha256:definition-program-code', 1, 'application/vnd.helmr.deployment-program-code.v0+squashfs'),
-		('00000000-0000-0000-0000-000000001000', 'sha256:definition-program-dependencies', 1, 'application/vnd.helmr.deployment-program-dependencies.v0+squashfs'),
+		('00000000-0000-0000-0000-000000001000', 'sha256:' || repeat('a', 64), 1, 'application/vnd.helmr.deployment-source.v0+tar'),
+		('00000000-0000-0000-0000-000000001000', 'sha256:' || repeat('b', 64), 1, 'application/vnd.helmr.deployment-source.v0+tar'),
+		('00000000-0000-0000-0000-000000001000', 'sha256:' || repeat('c', 64), 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+		('00000000-0000-0000-0000-000000001000', 'sha256:' || repeat('d', 64), 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+		('00000000-0000-0000-0000-000000001000', 'sha256:' || repeat('e', 64), 13958643713, 'application/vnd.helmr.deployment-program.v0+squashfs'),
 		('00000000-0000-0000-0000-000000001000', 'sha256:definition-workspace-one', 1, 'application/vnd.helmr.workspace-image.v0.oci-tar'),
 		('00000000-0000-0000-0000-000000001000', 'sha256:definition-workspace-two', 1, 'application/vnd.helmr.workspace-image.v0.oci-tar');
 		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type) VALUES
-		('00000000-0000-0000-0000-000000004001', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:definition-source-one', 'deployment_source', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
-		('00000000-0000-0000-0000-000000004002', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'sha256:definition-source-two', 'deployment_source', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
-		('00000000-0000-0000-0000-000000004003', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:definition-program-code', 'deployment_program_code', 1, 'application/vnd.helmr.deployment-program-code.v0+squashfs'),
+		('00000000-0000-0000-0000-000000004001', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:' || repeat('a', 64), 'deployment_source', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
+		('00000000-0000-0000-0000-000000004002', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'sha256:' || repeat('b', 64), 'deployment_source', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
+		('00000000-0000-0000-0000-000000004003', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:' || repeat('c', 64), 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
 		('00000000-0000-0000-0000-000000004004', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:definition-workspace-one', 'workspace_image', 1, 'application/vnd.helmr.workspace-image.v0.oci-tar'),
 		('00000000-0000-0000-0000-000000004005', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'sha256:definition-workspace-two', 'workspace_image', 1, 'application/vnd.helmr.workspace-image.v0.oci-tar'),
-		('00000000-0000-0000-0000-000000004006', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:definition-program-dependencies', 'deployment_program_dependencies', 1, 'application/vnd.helmr.deployment-program-dependencies.v0+squashfs');
+		('00000000-0000-0000-0000-000000004006', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'sha256:' || repeat('d', 64), 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+		('00000000-0000-0000-0000-000000004007', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:' || repeat('e', 64), 'deployment_program', 13958643713, 'application/vnd.helmr.deployment-program.v0+squashfs');
 		INSERT INTO deployments (
 		    id, public_id, org_id, project_id, environment_id, build_region_id,
 		    build_architecture, build_runtime_digest, build_standard_toolchain_digest,
@@ -946,29 +949,139 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		`, column), value)
 	}
 
+	validProgramReceipt := fmt.Sprintf(`{
+		"architecture":"x86_64",
+		"buildContractVersion":"helmr.program-build.v0",
+		"formatVersion":0,
+		"lockfile":{"digest":"sha256:%s","path":"bun.lock"},
+		"manager":{"digest":"sha256:%s","name":"bun","version":"1.2.3"},
+		"program":{
+			"artifactId":"00000000-0000-0000-0000-000000004003",
+			"digest":"sha256:%s",
+			"indexDigest":"sha256:%s",
+			"mediaType":"application/vnd.helmr.deployment-program.v0+squashfs",
+			"sizeBytes":1
+		},
+		"runtime":{"apiVersion":"helmr.runtime.v0","digest":"sha256:%s"},
+		"source":{
+			"artifactId":"00000000-0000-0000-0000-000000004001",
+			"digest":"sha256:%s",
+			"mediaType":"application/vnd.helmr.deployment-source.v0+tar",
+			"sizeBytes":1
+		},
+		"standardToolchainDigest":"sha256:%s"
+	}`,
+		strings.Repeat("1", 64),
+		strings.Repeat("2", 64),
+		strings.Repeat("c", 64),
+		strings.Repeat("3", 64),
+		strings.Repeat("01", 32),
+		strings.Repeat("a", 64),
+		strings.Repeat("11", 32),
+	)
 	assertStatementRejected(t, ctx, tx, `
 		UPDATE deployments
-		   SET program_code_artifact_id = '00000000-0000-0000-0000-000000004003'
+		   SET program_artifact_id = '00000000-0000-0000-0000-000000004003'
 		 WHERE id = '00000000-0000-0000-0000-000000005001'
 	`)
 	assertStatementRejected(t, ctx, tx, `
 		UPDATE deployments
-		   SET program_code_artifact_id = '00000000-0000-0000-0000-000000004003',
-		       program_dependency_artifact_id = '00000000-0000-0000-0000-000000004005',
+		   SET program_artifact_id = '00000000-0000-0000-0000-000000004004',
 		       program_runtime_digest = decode(repeat('01', 32), 'hex'),
-		       program_architecture = 'x86_64'
+		       program_architecture = 'x86_64',
+		       program_receipt = '{}'::jsonb
 		 WHERE id = '00000000-0000-0000-0000-000000005001'
 	`)
+	assertStatementRejected(t, ctx, tx, `
+		UPDATE deployments
+		   SET program_artifact_id = '00000000-0000-0000-0000-000000004006',
+		       program_runtime_digest = decode(repeat('01', 32), 'hex'),
+		       program_architecture = 'x86_64',
+		       program_receipt = '{}'::jsonb
+		 WHERE id = '00000000-0000-0000-0000-000000005001'
+	`)
+	assertStatementRejected(t, ctx, tx, `
+		UPDATE deployments
+		   SET program_artifact_id = '00000000-0000-0000-0000-000000004003',
+		       program_runtime_digest = decode(repeat('01', 32), 'hex'),
+		       program_architecture = 'x86_64',
+		       program_receipt = '{}'::jsonb
+		 WHERE id = '00000000-0000-0000-0000-000000005001'
+	`)
+	assertStatementRejected(t, ctx, tx, `
+		UPDATE deployments
+		   SET program_artifact_id = '00000000-0000-0000-0000-000000004003',
+		       program_runtime_digest = decode(repeat('01', 32), 'hex'),
+		       program_architecture = 'x86_64',
+		       program_receipt = jsonb_set(
+		           $1::jsonb,
+		           '{manager,version}',
+		           to_jsonb('latest'::text)
+		       )
+		 WHERE id = '00000000-0000-0000-0000-000000005001'
+	`, validProgramReceipt)
+	assertStatementRejected(t, ctx, tx, `
+		UPDATE deployments
+		   SET program_artifact_id = '00000000-0000-0000-0000-000000004007',
+		       program_runtime_digest = decode(repeat('01', 32), 'hex'),
+		       program_architecture = 'x86_64',
+		       program_receipt = jsonb_set(
+		           jsonb_set(
+		               jsonb_set(
+		                   $1::jsonb,
+		                   '{program,artifactId}',
+		                   to_jsonb('00000000-0000-0000-0000-000000004007'::text)
+		               ),
+		               '{program,digest}',
+		               to_jsonb(('sha256:' || repeat('e', 64))::text)
+		           ),
+		           '{program,sizeBytes}',
+		           '13958643713'::jsonb
+		       )
+		 WHERE id = '00000000-0000-0000-0000-000000005001'
+	`, validProgramReceipt)
 	if _, err := tx.Exec(ctx, `
 		UPDATE deployments
-		   SET program_code_artifact_id = '00000000-0000-0000-0000-000000004003',
-		       program_dependency_artifact_id = '00000000-0000-0000-0000-000000004006',
+		   SET program_artifact_id = '00000000-0000-0000-0000-000000004003',
 		       program_runtime_digest = decode(repeat('01', 32), 'hex'),
-		       program_architecture = 'x86_64'
+		       program_architecture = 'x86_64',
+		       program_receipt = $1::jsonb
 		 WHERE id = '00000000-0000-0000-0000-000000005001'
-	`); err != nil {
+	`, validProgramReceipt); err != nil {
 		t.Fatal(err)
 	}
+	assertStatementRejected(t, ctx, tx, `
+		UPDATE deployments
+		   SET program_receipt = jsonb_set(
+		       program_receipt,
+		       '{program,digest}',
+		       to_jsonb(('sha256:' || repeat('f', 64))::text)
+		   )
+		 WHERE id = '00000000-0000-0000-0000-000000005001'
+	`)
+	assertStatementRejected(t, ctx, tx, `
+		UPDATE deployments
+		   SET program_receipt = jsonb_set(
+		       program_receipt,
+		       '{manager,version}',
+		       to_jsonb('1.2.4'::text)
+		   )
+		 WHERE id = '00000000-0000-0000-0000-000000005001'
+	`)
+	assertStatementRejected(t, ctx, tx, `
+		UPDATE deployments
+		   SET program_receipt = jsonb_set(
+		       program_receipt,
+		       '{lockfile,digest}',
+		       to_jsonb(('sha256:' || repeat('4', 64))::text)
+		   )
+		 WHERE id = '00000000-0000-0000-0000-000000005001'
+	`)
+	assertStatementRejected(t, ctx, tx, `
+		UPDATE artifacts
+		   SET media_type = 'application/octet-stream'
+		 WHERE id = '00000000-0000-0000-0000-000000004003'
+	`)
 	assertStatementRejected(t, ctx, tx, `
 		UPDATE deployments
 		   SET program_architecture = 'amd64'
@@ -1017,16 +1130,16 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		VALUES ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'unsupported-manifest-version', 1, '{}'::jsonb, decode(repeat('0b', 32), 'hex'))
 	`)
 
-	var workspaceOnlyProgramCodeArtifactID *string
+	var workspaceOnlyProgramArtifactID *string
 	if err := tx.QueryRow(ctx, `
-		SELECT program_code_artifact_id::text
+		SELECT program_artifact_id::text
 		  FROM deployments
 		 WHERE id = '00000000-0000-0000-0000-000000005002'
-	`).Scan(&workspaceOnlyProgramCodeArtifactID); err != nil {
+	`).Scan(&workspaceOnlyProgramArtifactID); err != nil {
 		t.Fatal(err)
 	}
-	if workspaceOnlyProgramCodeArtifactID != nil {
-		t.Fatalf("workspace-only deployment program code artifact = %q, want null", *workspaceOnlyProgramCodeArtifactID)
+	if workspaceOnlyProgramArtifactID != nil {
+		t.Fatalf("workspace-only deployment Program artifact = %q, want null", *workspaceOnlyProgramArtifactID)
 	}
 }
 

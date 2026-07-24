@@ -103,7 +103,7 @@ func TestRuntimeTopologyRejectsOpenOrDivergentLayout(t *testing.T) {
 	}
 }
 
-func TestRuntimeArtifactRoleUsesCodeBounds(t *testing.T) {
+func TestRuntimeArtifactRoleUsesRuntimeBounds(t *testing.T) {
 	logical, err := artifactLogicalLimit(runtimeArtifact)
 	if err != nil {
 		t.Fatal(err)
@@ -112,13 +112,13 @@ func TestRuntimeArtifactRoleUsesCodeBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if logical != maxCodeLogicalBytes || physical != maxCodePhysicalBytes {
+	if logical != maxRuntimeLogicalBytes || physical != maxRuntimePhysicalBytes {
 		t.Fatalf(
 			"runtime bounds = (%d,%d), want (%d,%d)",
 			logical,
 			physical,
-			maxCodeLogicalBytes,
-			maxCodePhysicalBytes,
+			maxRuntimeLogicalBytes,
+			maxRuntimePhysicalBytes,
 		)
 	}
 }

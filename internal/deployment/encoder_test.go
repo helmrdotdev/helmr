@@ -134,7 +134,7 @@ func TestPinnedProgramEncoder(t *testing.T) {
 	if err := writeProgramArchive(
 		context.Background(),
 		&archive,
-		codeArtifact,
+		programArtifact,
 		treeEntrySequence(programArchiveFixture()),
 	); err != nil {
 		t.Fatal(err)
@@ -154,7 +154,7 @@ func TestPinnedProgramEncoder(t *testing.T) {
 		context.Background(),
 		bytes.NewReader(first),
 		int64(len(first)),
-		codeArtifact,
+		programArtifact,
 	)
 	if err != nil {
 		t.Fatal(err)

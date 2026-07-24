@@ -376,8 +376,7 @@ CREATE TABLE cas_objects (
 
 CREATE TYPE artifact_kind AS ENUM (
     'deployment_source',
-    'deployment_program_code',
-    'deployment_program_dependencies',
+    'deployment_program',
     'workspace_image',
     'runtime_substrate',
     'run_checkpoint_config',
@@ -710,6 +709,21 @@ CREATE TABLE artifacts (
         ON DELETE CASCADE
 );
 
+CREATE FUNCTION reject_artifact_update()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION 'Artifact rows are immutable'
+        USING ERRCODE = '23514';
+END
+$$;
+
+CREATE TRIGGER artifacts_immutable
+BEFORE UPDATE ON artifacts
+FOR EACH ROW
+EXECUTE FUNCTION reject_artifact_update();
+
 CREATE TYPE token_state AS ENUM (
     'pending',
     'completed',
@@ -924,10 +938,12 @@ CREATE TABLE deployments (
     ),
     worker_protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (worker_protocol_version = 'helmr.worker.v0'),
     deployment_source_artifact_id UUID NOT NULL,
-    program_code_artifact_id UUID,
-    program_dependency_artifact_id UUID,
+    program_artifact_id UUID,
+    program_artifact_kind artifact_kind NOT NULL DEFAULT 'deployment_program'
+        CHECK (program_artifact_kind = 'deployment_program'),
     program_runtime_digest BYTEA,
     program_architecture TEXT,
+    program_receipt JSONB,
     queue_config JSONB,
     status deployment_status NOT NULL DEFAULT 'queued',
     failure JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -957,28 +973,24 @@ CREATE TABLE deployments (
     FOREIGN KEY (org_id, project_id, environment_id, deployment_source_artifact_id)
         REFERENCES artifacts(org_id, project_id, environment_id, id)
         DEFERRABLE INITIALLY DEFERRED,
-    CONSTRAINT deployments_program_code_artifact_fk
-        FOREIGN KEY (environment_id, program_code_artifact_id)
-        REFERENCES artifacts(environment_id, id)
-        ON DELETE RESTRICT,
-    CONSTRAINT deployments_program_dependency_artifact_fk
-        FOREIGN KEY (environment_id, program_dependency_artifact_id)
-        REFERENCES artifacts(environment_id, id)
+    CONSTRAINT deployments_program_artifact_fk
+        FOREIGN KEY (environment_id, program_artifact_id, program_artifact_kind)
+        REFERENCES artifacts(environment_id, id, kind)
         ON DELETE RESTRICT,
     CONSTRAINT deployments_program_tuple_check CHECK (
-        (program_code_artifact_id IS NULL
-         AND program_dependency_artifact_id IS NULL
+        (program_artifact_id IS NULL
          AND program_runtime_digest IS NULL
-         AND program_architecture IS NULL)
+         AND program_architecture IS NULL
+         AND program_receipt IS NULL)
         OR
-        (program_code_artifact_id IS NOT NULL
-         AND program_dependency_artifact_id IS NOT NULL
+        (program_artifact_id IS NOT NULL
          AND program_runtime_digest IS NOT NULL
          AND octet_length(program_runtime_digest) = 32
          AND program_architecture IS NOT NULL
          AND program_architecture IN ('aarch64', 'x86_64')
          AND program_architecture = build_architecture
-         AND program_runtime_digest = build_runtime_digest)
+         AND program_runtime_digest = build_runtime_digest
+         AND jsonb_typeof(program_receipt) = 'object')
     ),
     CONSTRAINT deployments_queue_config_check CHECK (
         (status = 'deployed' AND jsonb_typeof(queue_config) = 'object')
@@ -987,11 +999,164 @@ CREATE TABLE deployments (
     )
 );
 
-CREATE INDEX deployments_program_code_artifact_idx
-    ON deployments (environment_id, program_code_artifact_id);
+CREATE FUNCTION enforce_deployment_program_receipt()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    program_artifact artifacts%ROWTYPE;
+    source_artifact artifacts%ROWTYPE;
+    receipt jsonb := NEW.program_receipt;
+    program_size numeric;
+    source_size numeric;
+BEGIN
+    IF TG_OP = 'UPDATE' AND OLD.program_receipt IS NOT NULL THEN
+        IF NEW.program_receipt IS DISTINCT FROM OLD.program_receipt
+           OR NEW.program_artifact_id IS DISTINCT FROM OLD.program_artifact_id
+           OR NEW.program_runtime_digest IS DISTINCT FROM OLD.program_runtime_digest
+           OR NEW.program_architecture IS DISTINCT FROM OLD.program_architecture
+           OR NEW.deployment_source_artifact_id IS DISTINCT FROM OLD.deployment_source_artifact_id
+           OR NEW.build_architecture IS DISTINCT FROM OLD.build_architecture
+           OR NEW.build_runtime_digest IS DISTINCT FROM OLD.build_runtime_digest
+           OR NEW.build_standard_toolchain_digest IS DISTINCT FROM OLD.build_standard_toolchain_digest
+           OR NEW.build_contract_version IS DISTINCT FROM OLD.build_contract_version THEN
+            RAISE EXCEPTION 'published deployment Program authority is immutable'
+                USING ERRCODE = '23514';
+        END IF;
+    END IF;
 
-CREATE INDEX deployments_program_dependency_artifact_idx
-    ON deployments (environment_id, program_dependency_artifact_id);
+    IF receipt IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    IF (
+        jsonb_typeof(receipt) = 'object'
+        AND receipt - ARRAY[
+            'architecture', 'buildContractVersion', 'formatVersion', 'lockfile',
+            'manager', 'program', 'runtime', 'source', 'standardToolchainDigest'
+        ]::text[] = '{}'::jsonb
+        AND jsonb_typeof(receipt->'architecture') = 'string'
+        AND jsonb_typeof(receipt->'buildContractVersion') = 'string'
+        AND receipt->'formatVersion' = '0'::jsonb
+        AND jsonb_typeof(receipt->'lockfile') = 'object'
+        AND (receipt->'lockfile') - ARRAY['digest', 'path']::text[] = '{}'::jsonb
+        AND jsonb_typeof(receipt#>'{lockfile,digest}') = 'string'
+        AND jsonb_typeof(receipt#>'{lockfile,path}') = 'string'
+        AND jsonb_typeof(receipt->'manager') = 'object'
+        AND (receipt->'manager') - ARRAY['digest', 'name', 'version']::text[] = '{}'::jsonb
+        AND jsonb_typeof(receipt#>'{manager,digest}') = 'string'
+        AND jsonb_typeof(receipt#>'{manager,name}') = 'string'
+        AND jsonb_typeof(receipt#>'{manager,version}') = 'string'
+        AND jsonb_typeof(receipt->'program') = 'object'
+        AND (receipt->'program') - ARRAY[
+            'artifactId', 'digest', 'indexDigest', 'mediaType', 'sizeBytes'
+        ]::text[] = '{}'::jsonb
+        AND jsonb_typeof(receipt#>'{program,artifactId}') = 'string'
+        AND jsonb_typeof(receipt#>'{program,digest}') = 'string'
+        AND jsonb_typeof(receipt#>'{program,indexDigest}') = 'string'
+        AND jsonb_typeof(receipt#>'{program,mediaType}') = 'string'
+        AND jsonb_typeof(receipt#>'{program,sizeBytes}') = 'number'
+        AND jsonb_typeof(receipt->'runtime') = 'object'
+        AND (receipt->'runtime') - ARRAY['apiVersion', 'digest']::text[] = '{}'::jsonb
+        AND jsonb_typeof(receipt#>'{runtime,apiVersion}') = 'string'
+        AND jsonb_typeof(receipt#>'{runtime,digest}') = 'string'
+        AND jsonb_typeof(receipt->'source') = 'object'
+        AND (receipt->'source') - ARRAY[
+            'artifactId', 'digest', 'mediaType', 'sizeBytes'
+        ]::text[] = '{}'::jsonb
+        AND jsonb_typeof(receipt#>'{source,artifactId}') = 'string'
+        AND jsonb_typeof(receipt#>'{source,digest}') = 'string'
+        AND jsonb_typeof(receipt#>'{source,mediaType}') = 'string'
+        AND jsonb_typeof(receipt#>'{source,sizeBytes}') = 'number'
+        AND jsonb_typeof(receipt->'standardToolchainDigest') = 'string'
+    ) IS DISTINCT FROM TRUE THEN
+        RAISE EXCEPTION 'deployment Program receipt has an invalid closed shape'
+            USING ERRCODE = '23514';
+    END IF;
+
+    program_size := (receipt#>>'{program,sizeBytes}')::numeric;
+    source_size := (receipt#>>'{source,sizeBytes}')::numeric;
+    IF (
+        receipt->>'architecture' = NEW.program_architecture
+        AND receipt->>'buildContractVersion' = NEW.build_contract_version
+        AND receipt#>>'{runtime,apiVersion}' = 'helmr.runtime.v0'
+        AND receipt#>>'{runtime,digest}' =
+            'sha256:' || encode(NEW.build_runtime_digest, 'hex')
+        AND receipt->>'standardToolchainDigest' =
+            'sha256:' || encode(NEW.build_standard_toolchain_digest, 'hex')
+        AND receipt#>>'{program,artifactId}' = NEW.program_artifact_id::text
+        AND receipt#>>'{source,artifactId}' = NEW.deployment_source_artifact_id::text
+        AND receipt#>>'{program,mediaType}' =
+            'application/vnd.helmr.deployment-program.v0+squashfs'
+        AND receipt#>>'{source,mediaType}' =
+            'application/vnd.helmr.deployment-source.v0+tar'
+        AND receipt#>>'{program,digest}' ~ '^sha256:[0-9a-f]{64}$'
+        AND receipt#>>'{program,indexDigest}' ~ '^sha256:[0-9a-f]{64}$'
+        AND receipt#>>'{source,digest}' ~ '^sha256:[0-9a-f]{64}$'
+        AND receipt#>>'{runtime,digest}' ~ '^sha256:[0-9a-f]{64}$'
+        AND receipt->>'standardToolchainDigest' ~ '^sha256:[0-9a-f]{64}$'
+        AND receipt#>>'{lockfile,digest}' ~ '^sha256:[0-9a-f]{64}$'
+        AND receipt#>>'{manager,digest}' ~ '^sha256:[0-9a-f]{64}$'
+        AND receipt#>>'{manager,name}' IN ('npm', 'bun')
+        AND (
+            (receipt#>>'{manager,name}' = 'npm'
+             AND receipt#>>'{lockfile,path}' = 'package-lock.json')
+            OR
+            (receipt#>>'{manager,name}' = 'bun'
+             AND receipt#>>'{lockfile,path}' IN ('bun.lock', 'bun.lockb'))
+        )
+        AND octet_length(receipt#>>'{manager,version}') BETWEEN 1 AND 64
+        AND receipt#>>'{manager,version}' ~
+            '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
+        AND program_size = trunc(program_size)
+        AND program_size BETWEEN 1 AND 13958643712
+        AND source_size = trunc(source_size)
+        AND source_size BETWEEN 1 AND 9007199254740991
+    ) IS DISTINCT FROM TRUE THEN
+        RAISE EXCEPTION 'deployment Program receipt contradicts immutable build authority'
+            USING ERRCODE = '23514';
+    END IF;
+
+    SELECT *
+      INTO program_artifact
+      FROM artifacts
+     WHERE environment_id = NEW.environment_id
+       AND id = NEW.program_artifact_id;
+    IF NOT FOUND
+       OR program_artifact.kind <> 'deployment_program'
+       OR program_artifact.digest IS DISTINCT FROM receipt#>>'{program,digest}'
+       OR program_artifact.size_bytes::numeric IS DISTINCT FROM program_size
+       OR program_artifact.media_type IS DISTINCT FROM receipt#>>'{program,mediaType}' THEN
+        RAISE EXCEPTION 'deployment Program receipt does not match its Program Artifact'
+            USING ERRCODE = '23514';
+    END IF;
+
+    SELECT *
+      INTO source_artifact
+      FROM artifacts
+     WHERE environment_id = NEW.environment_id
+       AND id = NEW.deployment_source_artifact_id;
+    IF NOT FOUND
+       OR source_artifact.kind <> 'deployment_source'
+       OR source_artifact.digest IS DISTINCT FROM receipt#>>'{source,digest}'
+       OR source_artifact.size_bytes::numeric IS DISTINCT FROM source_size
+       OR source_artifact.media_type IS DISTINCT FROM receipt#>>'{source,mediaType}' THEN
+        RAISE EXCEPTION 'deployment Program receipt does not match its source Artifact'
+            USING ERRCODE = '23514';
+    END IF;
+
+    RETURN NEW;
+END
+$$;
+
+CREATE CONSTRAINT TRIGGER deployments_program_receipt_authority
+AFTER INSERT OR UPDATE ON deployments
+DEFERRABLE INITIALLY IMMEDIATE
+FOR EACH ROW
+EXECUTE FUNCTION enforce_deployment_program_receipt();
+
+CREATE INDEX deployments_program_artifact_idx
+    ON deployments (environment_id, program_artifact_id);
 
 CREATE TABLE deployment_definitions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),

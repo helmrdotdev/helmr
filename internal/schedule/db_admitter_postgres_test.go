@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
@@ -211,30 +212,42 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	`, environmentID, schedulePublicID(t, publicid.Environment), orgID, projectID)
 
 	sourceArtifactID := seedScheduleArtifact(t, pool, orgID, projectID, environmentID, "deployment_source", "source")
-	codeArtifactID := seedScheduleArtifact(t, pool, orgID, projectID, environmentID, "deployment_program_code", "code")
-	dependencyArtifactID := seedScheduleArtifact(t, pool, orgID, projectID, environmentID, "deployment_program_dependencies", "dependencies")
+	programArtifactID := seedScheduleArtifact(t, pool, orgID, projectID, environmentID, "deployment_program", "program")
 	imageArtifactID := seedScheduleArtifact(t, pool, orgID, projectID, environmentID, "workspace_image", "image")
 	runtimeBytes := strings.Repeat("01", 32)
 	runtimeDigest := "sha256:" + runtimeBytes
 	queueConfig := `{"formatVersion":0,"queues":[{"name":"default"}]}`
+	sourceSum := sha256.Sum256([]byte("source"))
+	programSum := sha256.Sum256([]byte("program"))
+	programReceipt := dbtest.ProgramReceipt(dbtest.ProgramReceiptAuthority{
+		Architecture:            "x86_64",
+		ProgramArtifactID:       programArtifactID,
+		ProgramDigest:           "sha256:" + hex.EncodeToString(programSum[:]),
+		ProgramSizeBytes:        1,
+		RuntimeDigest:           runtimeDigest,
+		SourceArtifactID:        sourceArtifactID,
+		SourceDigest:            "sha256:" + hex.EncodeToString(sourceSum[:]),
+		SourceSizeBytes:         1,
+		StandardToolchainDigest: "sha256:" + strings.Repeat("02", 32),
+	})
 	mustScheduleExec(t, pool, `
 		INSERT INTO deployments (
 			id, public_id, org_id, project_id, environment_id, build_region_id,
 			build_architecture, build_runtime_digest, build_standard_toolchain_digest,
 			build_contract_version, version, content_hash, deployment_source_artifact_id,
-			program_code_artifact_id, program_dependency_artifact_id,
-			program_runtime_digest, program_architecture, queue_config, status
+			program_artifact_id, program_runtime_digest, program_architecture,
+			program_receipt, queue_config, status
 		)
 		VALUES (
 			$1, $2, $3, $4, $5, $6,
 			'x86_64', decode($7, 'hex'), decode(repeat('02', 32), 'hex'),
 			'helmr.program-build.v0', 'v0', $8, $9,
-			$10, $11, decode($7, 'hex'), 'x86_64', $12, 'deployed'
+			$10, decode($7, 'hex'), 'x86_64', $11::jsonb, $12, 'deployed'
 		)
 	`, deploymentID, schedulePublicID(t, publicid.Deployment), orgID, projectID,
 		environmentID, regionID, runtimeBytes,
-		"sha256:"+strings.Repeat("03", 32), sourceArtifactID, codeArtifactID,
-		dependencyArtifactID, queueConfig)
+		"sha256:"+strings.Repeat("03", 32), sourceArtifactID, programArtifactID,
+		programReceipt, queueConfig)
 	taskManifest := []byte(
 		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`,
 	)
@@ -374,16 +387,23 @@ func seedScheduleArtifact(
 	id := uuid.Must(uuid.NewV7())
 	sum := sha256.Sum256([]byte(seed))
 	digest := "sha256:" + hex.EncodeToString(sum[:])
+	mediaType := "application/octet-stream"
+	switch kind {
+	case "deployment_source":
+		mediaType = "application/vnd.helmr.deployment-source.v0+tar"
+	case "deployment_program":
+		mediaType = "application/vnd.helmr.deployment-program.v0+squashfs"
+	}
 	mustScheduleExec(t, pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, 1, 'application/octet-stream')
-	`, orgID, digest)
+		VALUES ($1, $2, 1, $3)
+	`, orgID, digest, mediaType)
 	mustScheduleExec(t, pool, `
 		INSERT INTO artifacts (
 			id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type
 		)
-		VALUES ($1, $2, $3, $4, $5, $6::artifact_kind, 1, 'application/octet-stream')
-	`, id, orgID, projectID, environmentID, digest, kind)
+		VALUES ($1, $2, $3, $4, $5, $6::artifact_kind, 1, $7)
+	`, id, orgID, projectID, environmentID, digest, kind, mediaType)
 	return id
 }
 

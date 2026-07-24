@@ -17,7 +17,7 @@ func TestSquashFSArtifactReaderInspectsAndOpensExactImage(t *testing.T) {
 		context.Background(),
 		source,
 		int64(len(image)),
-		codeArtifact,
+		programArtifact,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -29,8 +29,8 @@ func TestSquashFSArtifactReaderInspectsAndOpensExactImage(t *testing.T) {
 	inspected, err := inspectArtifact(
 		context.Background(),
 		reader,
-		codeArtifact,
-		maxCodeLogicalBytes,
+		programArtifact,
+		maxProgramLogicalBytes,
 		int64(len(image)),
 	)
 	if err != nil {
@@ -94,7 +94,7 @@ func TestSquashFSArtifactReaderReturnsDefensiveFacts(t *testing.T) {
 		context.Background(),
 		bytes.NewReader(image),
 		int64(len(image)),
-		codeArtifact,
+		programArtifact,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -121,8 +121,8 @@ func TestSquashFSArtifactReaderRejectsOversizedDescriptorBeforeRead(t *testing.T
 	if _, err := newSquashFSArtifactReader(
 		context.Background(),
 		source,
-		maxCodePhysicalBytes+1,
-		codeArtifact,
+		maxProgramPhysicalBytes+1,
+		programArtifact,
 	); err == nil {
 		t.Fatal("oversized descriptor was accepted")
 	}
@@ -178,7 +178,7 @@ func TestSquashFSArtifactReaderLeavesHeaderPolicyToPureVerifier(t *testing.T) {
 				context.Background(),
 				bytes.NewReader(image),
 				int64(len(image)),
-				codeArtifact,
+				programArtifact,
 			)
 			if err != nil {
 				t.Fatalf("reader rejected safely decoded facts: %v", err)
@@ -186,8 +186,8 @@ func TestSquashFSArtifactReaderLeavesHeaderPolicyToPureVerifier(t *testing.T) {
 			if _, err := inspectArtifact(
 				context.Background(),
 				reader,
-				codeArtifact,
-				maxCodeLogicalBytes,
+				programArtifact,
+				maxProgramLogicalBytes,
 				int64(len(image)),
 			); err == nil {
 				t.Fatal("pure verifier accepted mutated header")
@@ -220,7 +220,7 @@ func TestSquashFSArtifactReaderSurfacesTailAndIDFacts(t *testing.T) {
 				context.Background(),
 				bytes.NewReader(image),
 				int64(len(image)),
-				codeArtifact,
+				programArtifact,
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -228,8 +228,8 @@ func TestSquashFSArtifactReaderSurfacesTailAndIDFacts(t *testing.T) {
 			if _, err := inspectArtifact(
 				context.Background(),
 				reader,
-				codeArtifact,
-				maxCodeLogicalBytes,
+				programArtifact,
+				maxProgramLogicalBytes,
 				int64(len(image)),
 			); err == nil {
 				t.Fatal("pure verifier accepted invalid tail facts")
@@ -242,7 +242,7 @@ func TestSquashFSArtifactReaderSurfacesTailAndIDFacts(t *testing.T) {
 		context.Background(),
 		bytes.NewReader(image),
 		int64(len(image)),
-		codeArtifact,
+		programArtifact,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -250,8 +250,8 @@ func TestSquashFSArtifactReaderSurfacesTailAndIDFacts(t *testing.T) {
 	if _, err := inspectArtifact(
 		context.Background(),
 		reader,
-		codeArtifact,
-		maxCodeLogicalBytes,
+		programArtifact,
+		maxProgramLogicalBytes,
 		int64(len(image)),
 	); err == nil {
 		t.Fatal("pure verifier accepted a nonzero ID table")
@@ -332,7 +332,7 @@ func TestProjectSquashFSEntriesRetainsKnownForbiddenForms(t *testing.T) {
 		if len(entries) != 1 || entries[0].Form != inode.Form {
 			t.Fatalf("entries = %#v", entries)
 		}
-		if err := validateArtifactEntry(entries[0], codeArtifact); err == nil {
+		if err := validateArtifactEntry(entries[0], programArtifact); err == nil {
 			t.Fatalf("inode form %d reached pure verifier and was accepted", inode.Form)
 		}
 	}

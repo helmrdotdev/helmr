@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -344,6 +346,107 @@ func TestLostDeploymentBuildDeliveryReplayPreservesReplacementSuccess(t *testing
 	}
 	if status != db.DeploymentStatusDeployed || pgvalue.MustUUIDValue(current) != secondID {
 		t.Fatalf("old replay changed deployed replacement = status %s pointer %s", status, pgvalue.UUIDString(current))
+	}
+}
+
+func TestDeploymentBuildCompletionPublishesSingleProgramAuthority(t *testing.T) {
+	f, pool := newDeploymentBuildFixture(t)
+	leased := f.lease(t, 1)
+	leaseID := pgvalue.MustUUIDValue(leased.ID)
+	f.start(t, leaseID, 1)
+
+	artifactID := uuid.Must(uuid.NewV7())
+	digest := testDigest("deployment-program-" + artifactID.String())
+	const mediaType = "application/vnd.helmr.deployment-program.v0+squashfs"
+	mustExec(t, f.ctx, pool, `
+		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		VALUES ($1, $2, 123, $3)
+	`, f.orgID, digest, mediaType)
+	mustExec(t, f.ctx, pool, `
+		INSERT INTO artifacts (
+			id, org_id, project_id, environment_id, digest, kind,
+			size_bytes, media_type, created_by_worker_instance_id
+		) VALUES ($1, $2, $3, $4, $5, 'deployment_program', 123, $6, $7)
+	`, artifactID, f.orgID, f.projectID, f.environmentID, digest, mediaType, f.workerID)
+
+	runtimeDigest := make([]byte, 32)
+	for position := range runtimeDigest {
+		runtimeDigest[position] = 1
+	}
+	var sourceArtifactID pgtype.UUID
+	var sourceDigest string
+	var sourceSizeBytes int64
+	if err := pool.QueryRow(f.ctx, `
+		SELECT source.id, source.digest, source.size_bytes
+		  FROM deployments
+		  JOIN artifacts AS source
+		    ON source.environment_id = deployments.environment_id
+		   AND source.id = deployments.deployment_source_artifact_id
+		 WHERE deployments.id = $1
+	`, f.deploymentID).Scan(&sourceArtifactID, &sourceDigest, &sourceSizeBytes); err != nil {
+		t.Fatal(err)
+	}
+	receipt := dbtest.ProgramReceipt(dbtest.ProgramReceiptAuthority{
+		Architecture:            "x86_64",
+		ProgramArtifactID:       artifactID,
+		ProgramDigest:           digest,
+		ProgramSizeBytes:        123,
+		RuntimeDigest:           "sha256:" + strings.Repeat("01", 32),
+		SourceArtifactID:        pgvalue.MustUUIDValue(sourceArtifactID),
+		SourceDigest:            sourceDigest,
+		SourceSizeBytes:         sourceSizeBytes,
+		StandardToolchainDigest: "sha256:" + strings.Repeat("02", 32),
+	})
+	completed, err := f.queries.CompleteDeploymentBuild(
+		f.ctx,
+		db.CompleteDeploymentBuildParams{
+			TerminalRequestFingerprint: "sha256:complete-" + leaseID.String(),
+			OrgID:                      pgvalue.UUID(f.orgID),
+			ID:                         pgvalue.UUID(f.deploymentID),
+			BuildLeaseID:               pgvalue.UUID(leaseID),
+			BuildWorkerInstanceID:      pgvalue.UUID(f.workerID),
+			WorkerEpoch:                1,
+			LeaseSequence:              1,
+			ProgramArtifactID:          pgvalue.UUID(artifactID),
+			ProgramRuntimeDigest:       runtimeDigest,
+			ProgramArchitecture:        pgtype.Text{String: "x86_64", Valid: true},
+			ProgramReceipt:             receipt,
+			QueueConfig:                []byte(`{"formatVersion":0,"queues":[]}`),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.Status != db.DeploymentStatusDeployed ||
+		pgvalue.MustUUIDValue(completed.ProgramArtifactID) != artifactID ||
+		completed.ProgramArtifactKind != db.ArtifactKindDeploymentProgram ||
+		!completed.ProgramArchitecture.Valid ||
+		completed.ProgramArchitecture.String != "x86_64" {
+		t.Fatalf("completed Program authority = %+v", completed)
+	}
+	var completedReceipt, expectedReceipt any
+	if err := json.Unmarshal(completed.ProgramReceipt, &completedReceipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(receipt, &expectedReceipt); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(completedReceipt, expectedReceipt) {
+		t.Fatalf("completed Program receipt = %s, want %s", completed.ProgramReceipt, receipt)
+	}
+
+	var programArtifactCount int
+	if err := pool.QueryRow(f.ctx, `
+		SELECT count(*)
+		  FROM artifacts
+		 WHERE environment_id = $1
+		   AND id = $2
+		   AND kind = 'deployment_program'
+	`, f.environmentID, artifactID).Scan(&programArtifactCount); err != nil {
+		t.Fatal(err)
+	}
+	if programArtifactCount != 1 {
+		t.Fatalf("Program Artifact rows = %d, want 1", programArtifactCount)
 	}
 }
 

@@ -16,17 +16,16 @@ import (
 type ArtifactKind string
 
 const (
-	ArtifactKindDeploymentSource              ArtifactKind = "deployment_source"
-	ArtifactKindDeploymentProgramCode         ArtifactKind = "deployment_program_code"
-	ArtifactKindDeploymentProgramDependencies ArtifactKind = "deployment_program_dependencies"
-	ArtifactKindWorkspaceImage                ArtifactKind = "workspace_image"
-	ArtifactKindRuntimeSubstrate              ArtifactKind = "runtime_substrate"
-	ArtifactKindRunCheckpointConfig           ArtifactKind = "run_checkpoint_config"
-	ArtifactKindRunCheckpointVmState          ArtifactKind = "run_checkpoint_vm_state"
-	ArtifactKindRunCheckpointMemory           ArtifactKind = "run_checkpoint_memory"
-	ArtifactKindRunCheckpointScratchDisk      ArtifactKind = "run_checkpoint_scratch_disk"
-	ArtifactKindWorkspaceProcessRecord        ArtifactKind = "workspace_process_record"
-	ArtifactKindWorkspaceVersion              ArtifactKind = "workspace_version"
+	ArtifactKindDeploymentSource         ArtifactKind = "deployment_source"
+	ArtifactKindDeploymentProgram        ArtifactKind = "deployment_program"
+	ArtifactKindWorkspaceImage           ArtifactKind = "workspace_image"
+	ArtifactKindRuntimeSubstrate         ArtifactKind = "runtime_substrate"
+	ArtifactKindRunCheckpointConfig      ArtifactKind = "run_checkpoint_config"
+	ArtifactKindRunCheckpointVmState     ArtifactKind = "run_checkpoint_vm_state"
+	ArtifactKindRunCheckpointMemory      ArtifactKind = "run_checkpoint_memory"
+	ArtifactKindRunCheckpointScratchDisk ArtifactKind = "run_checkpoint_scratch_disk"
+	ArtifactKindWorkspaceProcessRecord   ArtifactKind = "workspace_process_record"
+	ArtifactKindWorkspaceVersion         ArtifactKind = "workspace_version"
 )
 
 func (e *ArtifactKind) Scan(src interface{}) error {
@@ -1832,10 +1831,11 @@ type Deployment struct {
 	CliVersion                      string             `json:"cli_version"`
 	WorkerProtocolVersion           string             `json:"worker_protocol_version"`
 	DeploymentSourceArtifactID      pgtype.UUID        `json:"deployment_source_artifact_id"`
-	ProgramCodeArtifactID           pgtype.UUID        `json:"program_code_artifact_id"`
-	ProgramDependencyArtifactID     pgtype.UUID        `json:"program_dependency_artifact_id"`
+	ProgramArtifactID               pgtype.UUID        `json:"program_artifact_id"`
+	ProgramArtifactKind             ArtifactKind       `json:"program_artifact_kind"`
 	ProgramRuntimeDigest            []byte             `json:"program_runtime_digest"`
 	ProgramArchitecture             pgtype.Text        `json:"program_architecture"`
+	ProgramReceipt                  []byte             `json:"program_receipt"`
 	QueueConfig                     []byte             `json:"queue_config"`
 	Status                          DeploymentStatus   `json:"status"`
 	Failure                         []byte             `json:"failure"`

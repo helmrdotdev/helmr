@@ -351,14 +351,14 @@ func TestPreparedRuntimeSourcePreservesWorkspaceReservationAuthority(t *testing.
 func TestPreparedRuntimeRejectsWorkspaceArchitectureOutsideWorkerCertification(t *testing.T) {
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
 	pool.RuntimeArchitecture = deployment.ArchitectureX8664
-	_, closeArtifacts, err := pool.prepareProgramArtifacts(
+	_, closeProgram, err := pool.prepareProgram(
 		context.Background(),
 		t.TempDir(),
 		api.WorkerRuntimeReconcileTarget{Source: api.WorkerRuntimeSource{
 			WorkspaceArchitecture: string(deployment.ArchitectureAArch64),
 		}},
 	)
-	if closeErr := closeArtifacts(); closeErr != nil {
+	if closeErr := closeProgram(); closeErr != nil {
 		t.Fatal(closeErr)
 	}
 	if err == nil || !strings.Contains(err.Error(), "does not match Workspace architecture") {

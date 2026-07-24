@@ -60,17 +60,11 @@ func (snapshot *ArtifactSnapshot) Close() error {
 
 func artifactSnapshotSpecForRole(role artifactRole) (artifactSnapshotSpec, error) {
 	switch role {
-	case codeArtifact:
+	case programArtifact:
 		return artifactSnapshotSpec{
-			label:     "code",
-			mediaType: ProgramCodeArtifactMediaType,
-			maxBytes:  maxCodePhysicalBytes,
-		}, nil
-	case dependencyArtifact:
-		return artifactSnapshotSpec{
-			label:     "dependencies",
-			mediaType: ProgramDependencyArtifactMediaType,
-			maxBytes:  maxDependencyPhysicalBytes,
+			label:     "program",
+			mediaType: ProgramArtifactMediaType,
+			maxBytes:  maxProgramPhysicalBytes,
 		}, nil
 	case runtimeArtifact:
 		return artifactSnapshotSpec{

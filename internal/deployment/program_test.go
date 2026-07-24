@@ -105,8 +105,6 @@ func TestProgramIndexRejectsSharedMutations(t *testing.T) {
 				index.RuntimeAPIVersion = "helmr.runtime.v1"
 			case "runtime_digest":
 				index.RuntimeDigest = "sha256:" + strings.Repeat("A", 64)
-			case "dependency_digest":
-				index.DependenciesDigest = "sha256:invalid"
 			case "toolchain_digest":
 				index.StandardToolchainDigest = "sha256:invalid"
 			case "manager_name":
@@ -175,16 +173,6 @@ func TestManifestDigestMatchesSharedGoldenFixture(t *testing.T) {
 	if hex.EncodeToString(manifestDigest[:]) != fixture.Manifest.DigestHex {
 		t.Fatalf("manifest digest = %x, want %s", manifestDigest, fixture.Manifest.DigestHex)
 	}
-}
-
-func cloneProgramIndex(index ProgramIndex) ProgramIndex {
-	cloned := index
-	cloned.Declarations = make([]ProgramDeclaration, len(index.Declarations))
-	for position, declaration := range index.Declarations {
-		cloned.Declarations[position] = declaration
-		cloned.Declarations[position].Slots = slices.Clone(declaration.Slots)
-	}
-	return cloned
 }
 
 func canonicalProgramInput(raw []byte) ([]byte, error) {

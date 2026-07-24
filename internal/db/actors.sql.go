@@ -68,8 +68,7 @@ SELECT $1,
     ON deployments.environment_id = actor_definition.environment_id
    AND deployments.id = actor_definition.deployment_id
    AND deployments.status = 'deployed'
-   AND deployments.program_code_artifact_id IS NOT NULL
-   AND deployments.program_dependency_artifact_id IS NOT NULL
+   AND deployments.program_artifact_id IS NOT NULL
    AND deployments.program_runtime_digest IS NOT NULL
    AND deployments.program_architecture IS NOT NULL
    AND deployments.program_architecture = deployments.build_architecture
@@ -777,8 +776,7 @@ SELECT actor_definition.id AS actor_definition_id,
    AND deployments.environment_id = environments.id
    AND deployments.id = actor_definition.deployment_id
    AND deployments.status = 'deployed'
-   AND deployments.program_code_artifact_id IS NOT NULL
-   AND deployments.program_dependency_artifact_id IS NOT NULL
+   AND deployments.program_artifact_id IS NOT NULL
    AND deployments.program_runtime_digest IS NOT NULL
    AND deployments.program_architecture IS NOT NULL
    AND deployments.program_architecture = deployments.build_architecture

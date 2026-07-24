@@ -117,10 +117,9 @@ func validateBuildProcessConfig(config buildProcessConfig) error {
 		}
 	}
 	for name, path := range map[string]string{
-		"dependencies": config.Dependencies,
-		"manager":      config.Manager,
-		"project":      config.Project,
-		"toolchain":    config.Toolchain,
+		"manager":   config.Manager,
+		"project":   config.Project,
+		"toolchain": config.Toolchain,
 	} {
 		if path != "" && (!filepath.IsAbs(path) || filepath.Clean(path) != path) {
 			return fmt.Errorf("build process %s path is not absolute and normalized", name)
@@ -187,7 +186,6 @@ func setupBuildProcessRoot(config buildProcessConfig) error {
 		{source: config.Runtime, target: "/opt/helmr/runtime"},
 		{source: config.Toolchain, target: "/nix"},
 		{source: config.Project, target: "/opt/helmr/program"},
-		{source: config.Dependencies, target: "/opt/helmr/program/node_modules"},
 	} {
 		if mount.source == "" {
 			continue

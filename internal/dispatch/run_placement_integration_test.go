@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -1304,14 +1305,23 @@ func newRunPlacementFixture(t *testing.T) runPlacementFixture {
 	workspaceDefinitionID := uuid.Must(uuid.NewV7())
 	versionID := uuid.Must(uuid.NewV7())
 	sourceID := uuid.Must(uuid.NewV7())
-	codeID := uuid.Must(uuid.NewV7())
-	dependenciesID := uuid.Must(uuid.NewV7())
+	programID := uuid.Must(uuid.NewV7())
 	imageID := uuid.Must(uuid.NewV7())
 	runtimeIdentityID := "run-runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	sourceDigest := "sha256:" + strings.Repeat("1", 64)
-	codeDigest := "sha256:" + strings.Repeat("2", 64)
-	dependenciesDigest := "sha256:" + strings.Repeat("3", 64)
+	programDigest := "sha256:" + strings.Repeat("2", 64)
 	imageDigest := "sha256:" + strings.Repeat("4", 64)
+	programReceipt := dbtest.ProgramReceipt(dbtest.ProgramReceiptAuthority{
+		Architecture:            "aarch64",
+		ProgramArtifactID:       programID,
+		ProgramDigest:           programDigest,
+		ProgramSizeBytes:        1,
+		RuntimeDigest:           "sha256:" + strings.Repeat("01", 32),
+		SourceArtifactID:        sourceID,
+		SourceDigest:            sourceDigest,
+		SourceSizeBytes:         1,
+		StandardToolchainDigest: "sha256:" + strings.Repeat("02", 32),
+	})
 
 	mustRunPlacementExec(t, ctx, pool, `
 INSERT INTO regions (id, provider, provider_region, display_name)
@@ -1343,34 +1353,29 @@ VALUES ($1, $2, $3, $4, $5, 'Environment', '#3366ff')`,
 	mustRunPlacementExec(t, ctx, pool, `
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES
-    ($1, $2, 1, 'application/octet-stream'),
-    ($1, $3, 1, 'application/octet-stream'),
-    ($1, $4, 1, 'application/octet-stream'),
-    ($1, $5, 1, 'application/octet-stream')`,
+    ($1, $2, 1, 'application/vnd.helmr.deployment-source.v0+tar'),
+    ($1, $3, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+    ($1, $4, 1, 'application/octet-stream')`,
 		fixture.orgID,
 		sourceDigest,
-		codeDigest,
-		dependenciesDigest,
+		programDigest,
 		imageDigest,
 	)
 	mustRunPlacementExec(t, ctx, pool, `
 INSERT INTO artifacts (
     id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type
 ) VALUES
-    ($1, $5, $6, $7, $8, 'deployment_source', 1, 'application/octet-stream'),
-    ($2, $5, $6, $7, $9, 'deployment_program_code', 1, 'application/octet-stream'),
-    ($3, $5, $6, $7, $10, 'deployment_program_dependencies', 1, 'application/octet-stream'),
-    ($4, $5, $6, $7, $11, 'workspace_image', 1, 'application/octet-stream')`,
+    ($1, $4, $5, $6, $7, 'deployment_source', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
+    ($2, $4, $5, $6, $8, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+    ($3, $4, $5, $6, $9, 'workspace_image', 1, 'application/octet-stream')`,
 		sourceID,
-		codeID,
-		dependenciesID,
+		programID,
 		imageID,
 		fixture.orgID,
 		fixture.projectID,
 		fixture.environmentID,
 		sourceDigest,
-		codeDigest,
-		dependenciesDigest,
+		programDigest,
 		imageDigest,
 	)
 	mustRunPlacementExec(t, ctx, pool, `
@@ -1378,13 +1383,13 @@ INSERT INTO deployments (
     id, public_id, org_id, project_id, environment_id, build_region_id,
     build_architecture, build_runtime_digest, build_standard_toolchain_digest,
     build_contract_version, version, content_hash, deployment_source_artifact_id,
-    program_code_artifact_id, program_dependency_artifact_id,
-    program_runtime_digest, program_architecture, queue_config, status
+    program_artifact_id, program_runtime_digest, program_architecture,
+    program_receipt, queue_config, status
 ) VALUES (
     $1, $2, $3, $4, $5, 'us-east-1', 'aarch64',
     decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
-    'helmr.program-build.v0', 'v1', $6, $7, $8, $9,
-    decode(repeat('01', 32), 'hex'), 'aarch64', '{}'::jsonb, 'deployed'
+    'helmr.program-build.v0', 'v1', $6, $7, $8,
+    decode(repeat('01', 32), 'hex'), 'aarch64', $9::jsonb, '{}'::jsonb, 'deployed'
 )`,
 		deploymentID,
 		dispatchPublicID(t, publicid.Deployment),
@@ -1393,8 +1398,8 @@ INSERT INTO deployments (
 		fixture.environmentID,
 		sourceDigest,
 		sourceID,
-		codeID,
-		dependenciesID,
+		programID,
+		programReceipt,
 	)
 	workspaceManifest := fmt.Sprintf(
 		`{"image":{"artifactDigest":%q,"mediaType":"application/octet-stream"},"resources":{"milliCpu":1000,"memoryMiB":1024,"diskMiB":2048},"network":{"internet":true,"denyCidrs":[]},"architecture":"aarch64"}`,

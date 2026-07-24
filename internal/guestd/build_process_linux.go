@@ -31,19 +31,18 @@ const (
 )
 
 type buildProcessConfig struct {
-	Aliases      []buildAlias       `json:"aliases"`
-	Command      buildCommand       `json:"command"`
-	Environment  []buildEnvironment `json:"environment"`
-	Identity     buildIdentity      `json:"identity"`
-	Manager      string             `json:"manager"`
-	Network      bool               `json:"network"`
-	OutputLimit  int                `json:"outputLimit"`
-	ProcessRoot  string             `json:"processRoot"`
-	Project      string             `json:"project"`
-	Dependencies string             `json:"dependencies"`
-	Runtime      string             `json:"runtime"`
-	Supervisor   bool               `json:"supervisor"`
-	Toolchain    string             `json:"toolchain"`
+	Aliases     []buildAlias       `json:"aliases"`
+	Command     buildCommand       `json:"command"`
+	Environment []buildEnvironment `json:"environment"`
+	Identity    buildIdentity      `json:"identity"`
+	Manager     string             `json:"manager"`
+	Network     bool               `json:"network"`
+	OutputLimit int                `json:"outputLimit"`
+	ProcessRoot string             `json:"processRoot"`
+	Project     string             `json:"project"`
+	Runtime     string             `json:"runtime"`
+	Supervisor  bool               `json:"supervisor"`
+	Toolchain   string             `json:"toolchain"`
 }
 
 type buildAlias struct {

@@ -104,9 +104,6 @@ describe("canonical deployment contract", async () => {
         case "runtime_digest":
           index.runtimeDigest = `sha256:${"A".repeat(64)}`
           break
-        case "dependency_digest":
-          index.dependenciesDigest = "sha256:invalid"
-          break
         case "toolchain_digest":
           index.standardToolchainDigest = "sha256:invalid"
           break
@@ -186,7 +183,6 @@ type MutableProgramIndex = {
     declaredId: string
     slots: string[]
   }>
-  dependenciesDigest: string
   formatVersion: number
   manager: {
     capsuleDigest: string

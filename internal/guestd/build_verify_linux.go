@@ -123,14 +123,9 @@ func handleProgramProof(
 			name:     "runtime",
 		},
 		{
-			artifact: programBuildArtifact(request.Code),
+			artifact: programBuildArtifact(request.Program),
 			device:   "/dev/vdd",
-			name:     "code",
-		},
-		{
-			artifact: programBuildArtifact(request.Dependencies),
-			device:   "/dev/vde",
-			name:     "dependencies",
+			name:     "program",
 		},
 	}
 	staged, err := stageBuildComponents(ctx, components)
@@ -144,11 +139,7 @@ func handleProgramProof(
 	if err != nil {
 		return err
 	}
-	code, err := staged.Path("code")
-	if err != nil {
-		return err
-	}
-	dependencies, err := staged.Path("dependencies")
+	program, err := staged.Path("program")
 	if err != nil {
 		return err
 	}
@@ -162,7 +153,6 @@ func handleProgramProof(
 			},
 			CWD: "/opt/helmr/program",
 		},
-		Dependencies: dependencies,
 		Environment: []buildEnvironment{
 			{Name: "HELMR_PROGRAM_MODE", Value: "proof"},
 			{Name: "HELMR_SUPERVISOR_FD", Value: "4"},
@@ -173,7 +163,7 @@ func handleProgramProof(
 		Identity:    buildIdentity{UID: buildInstallUID, GID: buildInstallGID},
 		Network:     false,
 		OutputLimit: buildInstallOutputLimit,
-		Project:     code,
+		Project:     program,
 		Runtime:     runtimePath,
 		Supervisor:  true,
 	}, 10*time.Minute)

@@ -55,7 +55,7 @@ type BuildResult struct {
 type BuildSucceeded struct {
 	Plan            BuildPlan        `json:"plan"`
 	Provenance      BuildProvenance  `json:"provenance"`
-	ProgramReceipt  *ProgramReceipt  `json:"programReceipt,omitempty"`
+	Program         *ProgramOutput   `json:"program,omitempty"`
 	WorkspaceImages []WorkspaceImage `json:"workspaceImages"`
 }
 
@@ -195,11 +195,11 @@ func ValidateBuildResultTarget(
 	if succeeded.Provenance.Architecture != architecture {
 		return errors.New("build result provenance architecture does not match target")
 	}
-	if succeeded.ProgramReceipt != nil {
-		if succeeded.ProgramReceipt.Index.RuntimeDigest != runtimeDigest {
+	if succeeded.Program != nil {
+		if succeeded.Program.Index.RuntimeDigest != runtimeDigest {
 			return errors.New("build result program runtime digest does not match target")
 		}
-		if succeeded.ProgramReceipt.Index.Architecture != architecture {
+		if succeeded.Program.Index.Architecture != architecture {
 			return errors.New("build result program architecture does not match target")
 		}
 	}
@@ -228,7 +228,7 @@ func (result BuildResult) MarshalJSON() ([]byte, error) {
 			Outcome         BuildOutcome     `json:"outcome"`
 			Plan            BuildPlan        `json:"plan"`
 			Provenance      BuildProvenance  `json:"provenance"`
-			ProgramReceipt  *ProgramReceipt  `json:"programReceipt,omitempty"`
+			Program         *ProgramOutput   `json:"program,omitempty"`
 			Logs            *BuildLogs       `json:"logs,omitempty"`
 			WorkspaceImages []WorkspaceImage `json:"workspaceImages"`
 		}{
@@ -236,7 +236,7 @@ func (result BuildResult) MarshalJSON() ([]byte, error) {
 			result.Outcome,
 			result.Succeeded.Plan,
 			result.Succeeded.Provenance,
-			result.Succeeded.ProgramReceipt,
+			result.Succeeded.Program,
 			result.Logs,
 			result.Succeeded.WorkspaceImages,
 		})
@@ -280,7 +280,7 @@ func (result *BuildResult) UnmarshalJSON(raw []byte) error {
 			Outcome         BuildOutcome     `json:"outcome"`
 			Plan            BuildPlan        `json:"plan"`
 			Provenance      BuildProvenance  `json:"provenance"`
-			ProgramReceipt  *ProgramReceipt  `json:"programReceipt,omitempty"`
+			Program         *ProgramOutput   `json:"program,omitempty"`
 			Logs            *BuildLogs       `json:"logs,omitempty"`
 			WorkspaceImages []WorkspaceImage `json:"workspaceImages"`
 		}
@@ -290,7 +290,7 @@ func (result *BuildResult) UnmarshalJSON(raw []byte) error {
 		result.Succeeded = &BuildSucceeded{
 			Plan:            wire.Plan,
 			Provenance:      wire.Provenance,
-			ProgramReceipt:  wire.ProgramReceipt,
+			Program:         wire.Program,
 			WorkspaceImages: wire.WorkspaceImages,
 		}
 		result.Logs = wire.Logs
@@ -334,29 +334,29 @@ func validateBuildSucceeded(succeeded BuildSucceeded) error {
 
 	programDeclarations := buildPlanProgramDeclarations(succeeded.Plan)
 	if len(programDeclarations) == 0 {
-		if succeeded.ProgramReceipt != nil {
-			return errors.New("workspace-only build result must not contain programReceipt")
+		if succeeded.Program != nil {
+			return errors.New("workspace-only build result must not contain program")
 		}
 	} else {
-		if succeeded.ProgramReceipt == nil {
-			return errors.New("program-backed build result requires programReceipt")
+		if succeeded.Program == nil {
+			return errors.New("program-backed build result requires program")
 		}
-		if err := ValidateProgramReceipt(*succeeded.ProgramReceipt); err != nil {
-			return fmt.Errorf("build result programReceipt: %w", err)
+		if err := ValidateProgramOutput(*succeeded.Program); err != nil {
+			return fmt.Errorf("build result program: %w", err)
 		}
 		if !equalProgramDeclarations(
-			succeeded.ProgramReceipt.Index.Declarations,
+			succeeded.Program.Index.Declarations,
 			programDeclarations,
 		) {
-			return errors.New("build result programReceipt declarations do not match plan")
+			return errors.New("build result program declarations do not match plan")
 		}
-		if succeeded.ProgramReceipt.Index.Architecture != succeeded.Provenance.Architecture ||
-			succeeded.ProgramReceipt.Index.BuildContractVersion != succeeded.Provenance.BuildContractVersion ||
-			succeeded.ProgramReceipt.Index.Manager != succeeded.Provenance.Manager ||
-			succeeded.ProgramReceipt.Index.RuntimeDigest != succeeded.Provenance.RuntimeDigest ||
-			succeeded.ProgramReceipt.Index.StandardToolchainDigest != succeeded.Provenance.StandardToolchainDigest ||
-			succeeded.ProgramReceipt.Index.Submitted != succeeded.Provenance.Submitted {
-			return errors.New("build result programReceipt provenance does not match")
+		if succeeded.Program.Index.Architecture != succeeded.Provenance.Architecture ||
+			succeeded.Program.Index.BuildContractVersion != succeeded.Provenance.BuildContractVersion ||
+			succeeded.Program.Index.Manager != succeeded.Provenance.Manager ||
+			succeeded.Program.Index.RuntimeDigest != succeeded.Provenance.RuntimeDigest ||
+			succeeded.Program.Index.StandardToolchainDigest != succeeded.Provenance.StandardToolchainDigest ||
+			succeeded.Program.Index.Submitted != succeeded.Provenance.Submitted {
+			return errors.New("build result program provenance does not match")
 		}
 	}
 

@@ -32,8 +32,8 @@ func TestArtifactSnapshotOwnsPrivateNamedBytes(t *testing.T) {
 	snapshot, err := snapshotArtifact(
 		context.Background(),
 		directory,
-		codeArtifact,
-		artifactSnapshotDescriptor(testProgramDescriptor(codeArtifact, []byte("original"))),
+		programArtifact,
+		artifactSnapshotDescriptor(testProgramDescriptor(programArtifact, []byte("original"))),
 		source,
 	)
 	if err != nil {
@@ -249,15 +249,15 @@ func TestArtifactSnapshotRejectsMismatchAndOversizeWithoutVisibleFiles(t *testin
 	}{
 		{
 			name:       "size mismatch",
-			descriptor: testProgramDescriptor(codeArtifact, []byte("short")),
+			descriptor: testProgramDescriptor(programArtifact, []byte("short")),
 			source:     []byte("longer"),
 		},
 		{
 			name: "oversize descriptor",
 			descriptor: ProgramDescriptor{
 				Digest:    "sha256:" + strings.Repeat("0", 64),
-				SizeBytes: maxCodePhysicalBytes + 1,
-				MediaType: ProgramCodeArtifactMediaType,
+				SizeBytes: maxProgramPhysicalBytes + 1,
+				MediaType: ProgramArtifactMediaType,
 			},
 			source: []byte("irrelevant"),
 		},
@@ -266,7 +266,7 @@ func TestArtifactSnapshotRejectsMismatchAndOversizeWithoutVisibleFiles(t *testin
 			descriptor: ProgramDescriptor{
 				Digest:    "sha256:" + strings.Repeat("0", 64),
 				SizeBytes: 1,
-				MediaType: ProgramDependencyArtifactMediaType,
+				MediaType: "application/octet-stream",
 			},
 			source: []byte("irrelevant"),
 		},
@@ -276,7 +276,7 @@ func TestArtifactSnapshotRejectsMismatchAndOversizeWithoutVisibleFiles(t *testin
 			snapshot, err := snapshotArtifact(
 				context.Background(),
 				directory,
-				codeArtifact,
+				programArtifact,
 				artifactSnapshotDescriptor(test.descriptor),
 				bytes.NewReader(test.source),
 			)
@@ -306,7 +306,7 @@ func TestArtifactSnapshotRejectsSharedDirectory(t *testing.T) {
 	snapshot, err := produceArtifactSnapshot(
 		context.Background(),
 		directory,
-		codeArtifact,
+		programArtifact,
 		artifactSnapshotOwner{UID: os.Geteuid(), GID: os.Getegid()},
 		func(file *os.File) error {
 			_, err := file.Write([]byte("content"))
@@ -347,7 +347,7 @@ func TestProduceArtifactSnapshotSealsDirectOutput(t *testing.T) {
 	snapshot, err := produceArtifactSnapshot(
 		context.Background(),
 		directory,
-		codeArtifact,
+		programArtifact,
 		artifactSnapshotOwner{UID: os.Geteuid(), GID: os.Getegid()},
 		func(file *os.File) error {
 			_, err := file.Write(content)
@@ -359,7 +359,7 @@ func TestProduceArtifactSnapshotSealsDirectOutput(t *testing.T) {
 	}
 	defer snapshot.Close()
 
-	want := artifactSnapshotDescriptor(testProgramDescriptor(codeArtifact, content))
+	want := artifactSnapshotDescriptor(testProgramDescriptor(programArtifact, content))
 	if snapshot.descriptor != want {
 		t.Fatalf("descriptor = %+v, want %+v", snapshot.descriptor, want)
 	}
@@ -386,7 +386,7 @@ func TestProduceArtifactSnapshotCleansFailedOutput(t *testing.T) {
 	snapshot, err := produceArtifactSnapshot(
 		context.Background(),
 		directory,
-		codeArtifact,
+		programArtifact,
 		artifactSnapshotOwner{UID: os.Geteuid(), GID: os.Getegid()},
 		func(file *os.File) error {
 			if _, err := file.Write([]byte("partial")); err != nil {
@@ -542,8 +542,8 @@ func newTestArtifactSnapshot(t *testing.T, content []byte) *artifactSnapshot {
 	snapshot, err := snapshotArtifact(
 		context.Background(),
 		t.TempDir(),
-		codeArtifact,
-		artifactSnapshotDescriptor(testProgramDescriptor(codeArtifact, content)),
+		programArtifact,
+		artifactSnapshotDescriptor(testProgramDescriptor(programArtifact, content)),
 		bytes.NewReader(content),
 	)
 	if err != nil {
@@ -559,13 +559,9 @@ func newTestArtifactSnapshot(t *testing.T, content []byte) *artifactSnapshot {
 
 func testProgramDescriptor(role artifactRole, content []byte) ProgramDescriptor {
 	digest := sha256.Sum256(content)
-	mediaType := ProgramCodeArtifactMediaType
-	if role == dependencyArtifact {
-		mediaType = ProgramDependencyArtifactMediaType
-	}
 	return ProgramDescriptor{
 		Digest:    fmt.Sprintf("sha256:%x", digest),
 		SizeBytes: int64(len(content)),
-		MediaType: mediaType,
+		MediaType: ProgramArtifactMediaType,
 	}
 }

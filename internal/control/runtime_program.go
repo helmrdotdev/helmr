@@ -27,12 +27,9 @@ func projectDeploymentProgram(
 			row.DeploymentID,
 			row.ProgramRuntimeDigest,
 			row.ProgramArchitecture.String,
-			row.ProgramCodeDigest,
-			row.ProgramCodeSizeBytes,
-			row.ProgramCodeMediaType,
-			row.ProgramDependencyDigest,
-			row.ProgramDependencySizeBytes,
-			row.ProgramDependencyMediaType,
+			row.ProgramArtifactDigest,
+			row.ProgramArtifactSizeBytes,
+			row.ProgramArtifactMediaType,
 			row.BuildContractVersion,
 		),
 		"",
@@ -44,12 +41,9 @@ type runtimeProgramAuthority struct {
 	deploymentID         pgtype.UUID
 	runtimeDigest        []byte
 	architecture         string
-	codeDigest           string
-	codeSizeBytes        int64
-	codeMediaType        string
-	dependencyDigest     string
-	dependencySizeBytes  int64
-	dependencyMediaType  string
+	artifactDigest       string
+	artifactSizeBytes    int64
+	artifactMediaType    string
 	buildContractVersion string
 }
 
@@ -83,20 +77,11 @@ func projectRuntimeProgram(
 	if err != nil {
 		return api.WorkerRuntimeProgram{}, fmt.Errorf("encode Program Managed Runtime descriptor: %w", err)
 	}
-	code, err := projectCASObject(
-		authority.codeDigest,
-		authority.codeSizeBytes,
-		authority.codeMediaType,
-		"Program code",
-	)
-	if err != nil {
-		return api.WorkerRuntimeProgram{}, err
-	}
-	dependencies, err := projectCASObject(
-		authority.dependencyDigest,
-		authority.dependencySizeBytes,
-		authority.dependencyMediaType,
-		"Program dependencies",
+	artifact, err := projectCASObject(
+		authority.artifactDigest,
+		authority.artifactSizeBytes,
+		authority.artifactMediaType,
+		"Program Artifact",
 	)
 	if err != nil {
 		return api.WorkerRuntimeProgram{}, err
@@ -107,8 +92,7 @@ func projectRuntimeProgram(
 	return api.WorkerRuntimeProgram{
 		DeploymentID:         deploymentID,
 		Runtime:              runtimeWire,
-		Code:                 code,
-		Dependencies:         dependencies,
+		Artifact:             artifact,
 		BuildContractVersion: authority.buildContractVersion,
 	}, nil
 }
@@ -132,24 +116,18 @@ func runtimeProgramAuthorityFromDeployment(
 	deploymentID pgtype.UUID,
 	runtimeDigest []byte,
 	architecture string,
-	codeDigest string,
-	codeSizeBytes int64,
-	codeMediaType string,
-	dependencyDigest string,
-	dependencySizeBytes int64,
-	dependencyMediaType string,
+	artifactDigest string,
+	artifactSizeBytes int64,
+	artifactMediaType string,
 	buildContractVersion string,
 ) runtimeProgramAuthority {
 	return runtimeProgramAuthority{
 		deploymentID:         deploymentID,
 		runtimeDigest:        runtimeDigest,
 		architecture:         architecture,
-		codeDigest:           codeDigest,
-		codeSizeBytes:        codeSizeBytes,
-		codeMediaType:        codeMediaType,
-		dependencyDigest:     dependencyDigest,
-		dependencySizeBytes:  dependencySizeBytes,
-		dependencyMediaType:  dependencyMediaType,
+		artifactDigest:       artifactDigest,
+		artifactSizeBytes:    artifactSizeBytes,
+		artifactMediaType:    artifactMediaType,
 		buildContractVersion: buildContractVersion,
 	}
 }

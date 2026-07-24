@@ -217,8 +217,7 @@ func canonicalVerifierProgramIndex(t *testing.T) []byte {
 			DeclaredID: "verify",
 			Slots:      []DeclarationSlot{DeclarationSlotHandler},
 		}},
-		DependenciesDigest: "sha256:" + strings.Repeat("1", 64),
-		FormatVersion:      ProgramIndexFormatVersion,
+		FormatVersion: ProgramIndexFormatVersion,
 		Manager: ProgramManager{
 			CapsuleDigest: "sha256:" + strings.Repeat("2", 64),
 			Name:          PackageManagerBun,
@@ -246,7 +245,7 @@ func canonicalVerifierProgramVerification(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	canonical, err := canonicalProgramVerification(programVerification{
-		FormatVersion: ProgramReceiptFormatVersion,
+		FormatVersion: programVerificationVersion,
 		Index:         index,
 	})
 	if err != nil {

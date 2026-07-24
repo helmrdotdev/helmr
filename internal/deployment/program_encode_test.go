@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestProgramTreeEntriesPartitionOneFrozenTree(t *testing.T) {
+func TestProgramTreeEntriesEncodeOneFrozenTree(t *testing.T) {
 	tree := newMemoryArtifact()
 	tree.addFile("app.js", []byte("export const app = true\n"), 0644)
 	tree.addDirectory("packages")
@@ -30,77 +30,55 @@ func TestProgramTreeEntriesPartitionOneFrozenTree(t *testing.T) {
 		"helmr/program.json":      []byte(`{"formatVersion":0}`),
 	}
 
-	code := writeProgramTreeFixture(
+	program := writeProgramTreeFixture(
 		t,
-		codeArtifact,
+		programArtifact,
 		programTreeEntries(
 			context.Background(),
 			inspected,
-			codeArtifact,
 			generated,
 		),
 		false,
 	)
-	dependencies := writeProgramTreeFixture(
-		t,
-		dependencyArtifact,
-		programTreeEntries(
-			context.Background(),
-			inspected,
-			dependencyArtifact,
-			nil,
-		),
-		true,
-	)
 
-	wantCode := map[string]string{
+	want := map[string]string{
 		"app.js":                             "export const app = true\n",
 		"helmr":                              "",
 		"helmr/declarations.json":            `{"declarations":[]}`,
 		"helmr/entry.mjs":                    "entry\n",
 		"helmr/program.json":                 `{"formatVersion":0}`,
 		"node_modules":                       "",
+		"node_modules/tool":                  "",
+		"node_modules/tool/index.js":         "dependency\n",
 		"packages":                           "",
 		"packages/app":                       "",
 		"packages/app/node_modules":          "",
 		"packages/app/node_modules/local.js": "nested\n",
 	}
-	if !maps.Equal(code, wantCode) {
-		t.Fatalf("code tree = %#v, want %#v", code, wantCode)
-	}
-	wantDependencies := map[string]string{
-		"tool":          "",
-		"tool/index.js": "dependency\n",
-	}
-	if !maps.Equal(dependencies, wantDependencies) {
-		t.Fatalf(
-			"dependency tree = %#v, want %#v",
-			dependencies,
-			wantDependencies,
-		)
+	if !maps.Equal(program, want) {
+		t.Fatalf("Program tree = %#v, want %#v", program, want)
 	}
 }
 
-func TestProgramTreeEntriesEncodeAbsentDependenciesAsEmptyTree(t *testing.T) {
+func TestProgramTreeEntriesCreateEmptyNodeModules(t *testing.T) {
 	tree := newMemoryArtifact()
 	tree.addFile("app.js", []byte("export {}\n"), 0644)
 	inspected, err := inspectMemoryBuildTree(t, tree)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dependencies := writeProgramTreeFixture(
+	program := writeProgramTreeFixture(
 		t,
-		dependencyArtifact,
+		programArtifact,
 		programTreeEntries(
 			context.Background(),
 			inspected,
-			dependencyArtifact,
 			nil,
 		),
-		true,
+		false,
 	)
-	if len(dependencies) != 0 {
-		t.Fatalf("empty dependency tree = %#v", dependencies)
+	if program["node_modules"] != "" {
+		t.Fatalf("Program tree = %#v", program)
 	}
 }
 

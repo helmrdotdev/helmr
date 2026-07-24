@@ -156,8 +156,7 @@ func TestSnapshotRuntimeConfigBindsManagedProgramTopology(t *testing.T) {
 	program := manifest.RecoveryPoint.Runtime.Program
 	if program == nil ||
 		program.Runtime.Digest != drives[0].Digest ||
-		program.Code.Digest != drives[1].Digest ||
-		program.Dependencies.Digest != drives[2].Digest {
+		program.Artifact.Digest != drives[1].Digest {
 		t.Fatalf("Program = %+v", program)
 	}
 	if err := validateSnapshotProgram(program, drives); err != nil {
@@ -1333,15 +1332,15 @@ func TestRuntimeDrivesIncludeSealedReadOnlyDrives(t *testing.T) {
 		"/rootfs.ext4",
 		"/scratch.ext4",
 		"",
-		[]vm.ReadOnlyDrive{{ID: vm.ProgramCodeDrive, Source: source}},
+		[]vm.ReadOnlyDrive{{ID: vm.ProgramDrive, Source: source}},
 	)
 	if len(drives) != 3 {
 		t.Fatalf("drive count = %d, want 3", len(drives))
 	}
-	if got := firecracker.StringValue(drives[2].DriveID); got != vm.ProgramCodeDrive {
+	if got := firecracker.StringValue(drives[2].DriveID); got != vm.ProgramDrive {
 		t.Fatalf("program drive id = %q", got)
 	}
-	if got := firecracker.StringValue(drives[2].PathOnHost); got != "program_code.squashfs" {
+	if got := firecracker.StringValue(drives[2].PathOnHost); got != "program.squashfs" {
 		t.Fatalf("program drive path = %q", got)
 	}
 	if !firecracker.BoolValue(drives[2].IsReadOnly) {
@@ -1356,8 +1355,7 @@ func TestRuntimeDrivesUseFixedProgramOrder(t *testing.T) {
 		"/scratch.ext4",
 		"/workspace.ext4",
 		[]vm.ReadOnlyDrive{
-			{ID: vm.ProgramDependenciesDrive, Source: source},
-			{ID: vm.ProgramCodeDrive, Source: source},
+			{ID: vm.ProgramDrive, Source: source},
 			{ID: vm.ProgramRuntimeDrive, Source: source},
 		},
 	)
@@ -1366,8 +1364,7 @@ func TestRuntimeDrivesUseFixedProgramOrder(t *testing.T) {
 		"scratch",
 		"substrate",
 		vm.ProgramRuntimeDrive,
-		vm.ProgramCodeDrive,
-		vm.ProgramDependenciesDrive,
+		vm.ProgramDrive,
 	}
 	if len(drives) != len(want) {
 		t.Fatalf("drive count = %d, want %d", len(drives), len(want))
@@ -1383,8 +1380,7 @@ func TestRuntimeKernelArgsDescribeExactDriveTopology(t *testing.T) {
 	source := &recordingReadOnlyDriveSource{}
 	program := []vm.ReadOnlyDrive{
 		{ID: vm.ProgramRuntimeDrive, Source: source},
-		{ID: vm.ProgramCodeDrive, Source: source},
-		{ID: vm.ProgramDependenciesDrive, Source: source},
+		{ID: vm.ProgramDrive, Source: source},
 	}
 	if got := runtimeKernelArgs(vm.RuntimeTopology{}, nil); got != defaultKernelArgs {
 		t.Fatalf("default args = %q", got)
@@ -1460,9 +1456,8 @@ func TestBuildGuestProfilesUseExactDriveSets(t *testing.T) {
 				PIDsMax:     compute.BuildGuestPIDsMax,
 				Networkless: true,
 				ReadOnlyDrives: []vm.ReadOnlyDrive{
-					{ID: vm.ProgramCodeDrive, Source: source},
+					{ID: vm.ProgramDrive, Source: source},
 					{ID: vm.ProgramRuntimeDrive, Source: source},
-					{ID: vm.ProgramDependenciesDrive, Source: source},
 				},
 			},
 			kernelArgs:  programProofKernelArgs,
@@ -1601,7 +1596,7 @@ func TestSealedDriveChrootStrategySeparatesSourceCapabilities(t *testing.T) {
 				scratchPath,
 				"",
 				[]vm.ReadOnlyDrive{{
-					ID:     vm.ProgramCodeDrive,
+					ID:     vm.ProgramDrive,
 					Source: source,
 				}},
 			),
@@ -1619,7 +1614,7 @@ func TestSealedDriveChrootStrategySeparatesSourceCapabilities(t *testing.T) {
 	strategy := sealedDriveChrootStrategy{
 		kernelImagePath: kernelPath,
 		drives: []vm.ReadOnlyDrive{{
-			ID:     vm.ProgramCodeDrive,
+			ID:     vm.ProgramDrive,
 			Source: source,
 		}},
 	}
@@ -1630,7 +1625,7 @@ func TestSealedDriveChrootStrategySeparatesSourceCapabilities(t *testing.T) {
 		t.Fatal(err)
 	}
 	if source.directory != root ||
-		source.name != "program_code.squashfs" ||
+		source.name != "program.squashfs" ||
 		source.uid != os.Getuid() ||
 		source.gid != os.Getgid() {
 		t.Fatalf("link request = %+v", source)
@@ -1638,7 +1633,7 @@ func TestSealedDriveChrootStrategySeparatesSourceCapabilities(t *testing.T) {
 	if len(machine.Cfg.Drives) != 3 {
 		t.Fatalf("drive count = %d, want 3", len(machine.Cfg.Drives))
 	}
-	if got := firecracker.StringValue(machine.Cfg.Drives[2].PathOnHost); got != "program_code.squashfs" {
+	if got := firecracker.StringValue(machine.Cfg.Drives[2].PathOnHost); got != "program.squashfs" {
 		t.Fatalf("program drive path = %q", got)
 	}
 	for _, name := range []string{
@@ -1749,13 +1744,13 @@ func TestValidateReadOnlyDrivesRejectsInvalidDeclarations(t *testing.T) {
 		},
 		{
 			name:   "nil source",
-			drives: []vm.ReadOnlyDrive{{ID: vm.ProgramCodeDrive}},
+			drives: []vm.ReadOnlyDrive{{ID: vm.ProgramDrive}},
 		},
 		{
 			name: "duplicate ID",
 			drives: []vm.ReadOnlyDrive{
-				{ID: vm.ProgramCodeDrive, Source: source},
-				{ID: vm.ProgramCodeDrive, Source: source},
+				{ID: vm.ProgramDrive, Source: source},
+				{ID: vm.ProgramDrive, Source: source},
 			},
 		},
 	} {
@@ -1782,13 +1777,8 @@ func testProgramDrives(source vm.ReadOnlyDriveSource) []vm.ReadOnlyDrive {
 			Source: source,
 		},
 		{
-			ID: vm.ProgramCodeDrive, Digest: "sha256:" + strings.Repeat("2", 64),
-			SizeBytes: 4096, MediaType: "application/vnd.helmr.program-code.v0+squashfs",
-			Source: source,
-		},
-		{
-			ID: vm.ProgramDependenciesDrive, Digest: "sha256:" + strings.Repeat("3", 64),
-			SizeBytes: 4096, MediaType: "application/vnd.helmr.program-dependencies.v0+squashfs",
+			ID: vm.ProgramDrive, Digest: "sha256:" + strings.Repeat("2", 64),
+			SizeBytes: 4096, MediaType: "application/vnd.helmr.deployment-program.v0+squashfs",
 			Source: source,
 		},
 	}

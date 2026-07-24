@@ -12,32 +12,24 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 )
 
-func TestSnapshotProgramBindsBothDescriptorsAndDriveSources(t *testing.T) {
+func TestSnapshotProgramBindsDescriptorAndDriveSource(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Program snapshots require Linux")
 	}
-	codeBody := []byte("Program code")
-	dependencyBody := []byte("Program dependencies")
-	code := ProgramDescriptor{
-		Digest:    digestBytes(codeBody),
-		SizeBytes: int64(len(codeBody)),
-		MediaType: ProgramCodeArtifactMediaType,
-	}
-	dependencies := ProgramDescriptor{
-		Digest:    digestBytes(dependencyBody),
-		SizeBytes: int64(len(dependencyBody)),
-		MediaType: ProgramDependencyArtifactMediaType,
+	body := []byte("Program")
+	program := ProgramDescriptor{
+		Digest:    digestBytes(body),
+		SizeBytes: int64(len(body)),
+		MediaType: ProgramArtifactMediaType,
 	}
 	store := programObjectStore{objects: map[string]programObject{
-		code.Digest:         {descriptor: code, body: codeBody},
-		dependencies.Digest: {descriptor: dependencies, body: dependencyBody},
+		program.Digest: {descriptor: program, body: body},
 	}}
 	snapshot, err := SnapshotProgram(
 		context.Background(),
 		store,
 		t.TempDir(),
-		code,
-		dependencies,
+		program,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -45,27 +37,15 @@ func TestSnapshotProgramBindsBothDescriptorsAndDriveSources(t *testing.T) {
 	defer snapshot.Close()
 
 	jail := t.TempDir()
-	if err := snapshot.Code.LinkInto(jail, "code.squashfs", os.Getuid(), os.Getgid()); err != nil {
+	if err := snapshot.LinkInto(jail, "program.squashfs", os.Getuid(), os.Getgid()); err != nil {
 		t.Fatal(err)
 	}
-	if err := snapshot.Dependencies.LinkInto(
-		jail,
-		"dependencies.squashfs",
-		os.Getuid(),
-		os.Getgid(),
-	); err != nil {
-		t.Fatal(err)
-	}
-	gotCode, err := os.ReadFile(filepath.Join(jail, "code.squashfs"))
+	got, err := os.ReadFile(filepath.Join(jail, "program.squashfs"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotDependencies, err := os.ReadFile(filepath.Join(jail, "dependencies.squashfs"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(gotCode, codeBody) || !bytes.Equal(gotDependencies, dependencyBody) {
-		t.Fatal("linked Program drives do not match their descriptors")
+	if !bytes.Equal(got, body) {
+		t.Fatal("linked Program drive does not match its descriptor")
 	}
 }
 

@@ -7,23 +7,18 @@ import (
 	"strings"
 )
 
-type pairVerifier struct {
-	ctx       context.Context
-	artifacts programArtifacts
-	code      *inspectedArtifact
-	deps      *inspectedArtifact
-	index     ProgramIndex
-	locator   DeclarationLocator
+type programVerifier struct {
+	ctx      context.Context
+	artifact *inspectedArtifact
+	index    ProgramIndex
+	locator  DeclarationLocator
 }
 
-func (verifier *pairVerifier) verify() error {
+func (verifier *programVerifier) verify() error {
 	if err := verifier.readDocuments(); err != nil {
 		return err
 	}
-	if err := verifier.verifyCodeLayout(); err != nil {
-		return err
-	}
-	if err := verifier.verifyDependencyLayout(); err != nil {
+	if err := verifier.verifyLayout(); err != nil {
 		return err
 	}
 	if err := verifier.verifyDeclarations(); err != nil {
@@ -32,8 +27,12 @@ func (verifier *pairVerifier) verify() error {
 	return verifier.verifyLinks()
 }
 
-func (verifier *pairVerifier) readDocuments() error {
-	programRaw, err := verifier.code.read(verifier.ctx, "helmr/program.json", maxProgramFileSizeBytes)
+func (verifier *programVerifier) readDocuments() error {
+	programRaw, err := verifier.artifact.read(
+		verifier.ctx,
+		"helmr/program.json",
+		maxProgramFileSizeBytes,
+	)
 	if err != nil {
 		return fmt.Errorf("program index: %w", err)
 	}
@@ -41,11 +40,8 @@ func (verifier *pairVerifier) readDocuments() error {
 	if err != nil {
 		return fmt.Errorf("program index: %w", err)
 	}
-	if verifier.index.DependenciesDigest != verifier.artifacts.Dependencies.Digest {
-		return fmt.Errorf("program index dependenciesDigest does not match the dependency Artifact")
-	}
 
-	declarationsRaw, err := verifier.code.read(
+	declarationsRaw, err := verifier.artifact.read(
 		verifier.ctx,
 		"helmr/declarations.json",
 		maxProgramFileSizeBytes,
@@ -58,7 +54,7 @@ func (verifier *pairVerifier) readDocuments() error {
 		return fmt.Errorf("declaration locator: %w", err)
 	}
 
-	entryRaw, err := verifier.code.read(
+	entryRaw, err := verifier.artifact.read(
 		verifier.ctx,
 		"helmr/entry.mjs",
 		maxProgramFileSizeBytes,
@@ -69,14 +65,13 @@ func (verifier *pairVerifier) readDocuments() error {
 	if string(entryRaw) != ProgramEntry {
 		return fmt.Errorf("helmr/entry.mjs does not match the fixed Program entry")
 	}
-
 	return nil
 }
 
-func (verifier *pairVerifier) verifyCodeLayout() error {
+func (verifier *programVerifier) verifyLayout() error {
 	for _, required := range []string{".", "helmr", "node_modules"} {
-		if _, err := verifier.code.require(required, artifactEntryDirectory); err != nil {
-			return fmt.Errorf("code layout: %w", err)
+		if _, err := verifier.artifact.require(required, artifactEntryDirectory); err != nil {
+			return fmt.Errorf("Program layout: %w", err)
 		}
 	}
 	for _, required := range []string{
@@ -84,33 +79,26 @@ func (verifier *pairVerifier) verifyCodeLayout() error {
 		"helmr/entry.mjs",
 		"helmr/program.json",
 	} {
-		if _, err := verifier.code.require(required, artifactEntryRegular); err != nil {
-			return fmt.Errorf("code layout: %w", err)
+		if _, err := verifier.artifact.require(required, artifactEntryRegular); err != nil {
+			return fmt.Errorf("Program layout: %w", err)
 		}
 	}
-	for _, entry := range verifier.code.ordered {
-		if strings.HasPrefix(entry.Path, "node_modules/") {
-			return fmt.Errorf("code Artifact dependency mountpoint is not empty at %q", entry.Path)
-		}
+	for _, entry := range verifier.artifact.ordered {
 		if strings.HasPrefix(entry.Path, "helmr/") {
 			switch entry.Path {
 			case "helmr/declarations.json", "helmr/entry.mjs", "helmr/program.json":
 			default:
-				return fmt.Errorf("code Artifact contains unknown Platform-owned path %q", entry.Path)
+				return fmt.Errorf(
+					"Program Artifact contains unknown Platform-owned path %q",
+					entry.Path,
+				)
 			}
 		}
 	}
 	return nil
 }
 
-func (verifier *pairVerifier) verifyDependencyLayout() error {
-	if _, err := verifier.deps.require(".", artifactEntryDirectory); err != nil {
-		return fmt.Errorf("dependency layout: %w", err)
-	}
-	return nil
-}
-
-func (verifier *pairVerifier) verifyDeclarations() error {
+func (verifier *programVerifier) verifyDeclarations() error {
 	if len(verifier.locator.Declarations) != len(verifier.index.Declarations) {
 		return fmt.Errorf(
 			"declaration locator count %d does not match program index count %d",
@@ -127,40 +115,25 @@ func (verifier *pairVerifier) verifyDeclarations() error {
 				index,
 			)
 		}
-		if _, err := verifier.code.require(located.ModulePath, artifactEntryRegular); err != nil {
-			return fmt.Errorf(
-				"declaration locator module %q: %w",
-				located.ModulePath,
-				err,
-			)
+		if _, err := verifier.artifact.require(located.ModulePath, artifactEntryRegular); err != nil {
+			return fmt.Errorf("declaration locator module %q: %w", located.ModulePath, err)
 		}
 	}
 	return nil
 }
 
-func (verifier *pairVerifier) verifyLinks() error {
-	for _, entry := range verifier.code.ordered {
+func (verifier *programVerifier) verifyLinks() error {
+	for _, entry := range verifier.artifact.ordered {
 		if entry.Kind == artifactEntrySymlink {
 			if err := verifier.verifyLink(entry.Path, entry.LinkTarget); err != nil {
-				return fmt.Errorf("code link %q: %w", entry.Path, err)
-			}
-		}
-	}
-	for _, entry := range verifier.deps.ordered {
-		if entry.Kind == artifactEntrySymlink {
-			link := "node_modules"
-			if entry.Path != "." {
-				link += "/" + entry.Path
-			}
-			if err := verifier.verifyLink(link, entry.LinkTarget); err != nil {
-				return fmt.Errorf("dependency link %q: %w", entry.Path, err)
+				return fmt.Errorf("Program link %q: %w", entry.Path, err)
 			}
 		}
 	}
 	return nil
 }
 
-func (verifier *pairVerifier) verifyLink(link, target string) error {
+func (verifier *programVerifier) verifyLink(link, target string) error {
 	pending := append(
 		strings.Split(path.Dir(link), "/"),
 		strings.Split(target, "/")...,
@@ -175,13 +148,13 @@ func (verifier *pairVerifier) verifyLink(link, target string) error {
 			continue
 		case "..":
 			if len(resolved) == 0 {
-				return fmt.Errorf("target escapes the combined Program namespace")
+				return fmt.Errorf("target escapes the Program namespace")
 			}
 			resolved = resolved[:len(resolved)-1]
 			continue
 		}
 		candidate := strings.Join(append(resolved, component), "/")
-		entry, exists := verifier.combinedEntry(candidate)
+		entry, exists := verifier.artifact.entries[candidate]
 		if !exists {
 			return nil
 		}
@@ -199,17 +172,4 @@ func (verifier *pairVerifier) verifyLink(link, target string) error {
 		resolved = append(resolved, component)
 	}
 	return nil
-}
-
-func (verifier *pairVerifier) combinedEntry(name string) (artifactEntry, bool) {
-	if name == "node_modules" {
-		entry, exists := verifier.code.entries[name]
-		return entry, exists
-	}
-	if strings.HasPrefix(name, "node_modules/") {
-		entry, exists := verifier.deps.entries[strings.TrimPrefix(name, "node_modules/")]
-		return entry, exists
-	}
-	entry, exists := verifier.code.entries[name]
-	return entry, exists
 }

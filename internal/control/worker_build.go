@@ -750,31 +750,40 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			return artifact, nil
 		}
 
-		var programCodeArtifactID pgtype.UUID
-		var programDependencyArtifactID pgtype.UUID
+		var programArtifactID pgtype.UUID
 		var programRuntimeDigest []byte
 		var programArchitecture pgtype.Text
-		if succeeded.ProgramReceipt != nil {
-			codeArtifact, err := createArtifact(
-				db.ArtifactKindDeploymentProgramCode,
-				deploymentBuildObjectFromProgram(succeeded.ProgramReceipt.Code),
+		var programReceipt []byte
+		if succeeded.Program != nil {
+			artifact, err := createArtifact(
+				db.ArtifactKindDeploymentProgram,
+				deploymentBuildObjectFromProgram(succeeded.Program.Artifact),
 			)
 			if err != nil {
-				return fmt.Errorf("record deployment program code: %w", err)
+				return fmt.Errorf("record deployment Program: %w", err)
 			}
-			dependencyArtifact, err := createArtifact(
-				db.ArtifactKindDeploymentProgramDependencies,
-				deploymentBuildObjectFromProgram(succeeded.ProgramReceipt.Dependencies),
-			)
-			if err != nil {
-				return fmt.Errorf("record deployment program dependencies: %w", err)
-			}
-			programCodeArtifactID = codeArtifact.ID
-			programDependencyArtifactID = dependencyArtifact.ID
+			programArtifactID = artifact.ID
 			programRuntimeDigest = append([]byte(nil), locked.BuildRuntimeDigest...)
 			programArchitecture = pgtype.Text{
 				String: locked.BuildArchitecture,
 				Valid:  true,
+			}
+			receipt, err := deployment.NewProgramReceipt(
+				*succeeded.Program,
+				pgvalue.MustUUIDValue(artifact.ID).String(),
+				deployment.ProgramReceiptSource{
+					ArtifactID: pgvalue.MustUUIDValue(locked.DeploymentSourceArtifactID).String(),
+					Digest:     locked.DeploymentSourceDigest,
+					MediaType:  locked.DeploymentSourceMediaType,
+					SizeBytes:  locked.DeploymentSourceSizeBytes,
+				},
+			)
+			if err != nil {
+				return failInvalid(err.Error())
+			}
+			programReceipt, err = deployment.CanonicalProgramReceipt(receipt)
+			if err != nil {
+				return failInvalid(err.Error())
 			}
 		}
 
@@ -848,18 +857,18 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			}
 		}
 		row, err := work.q.CompleteDeploymentBuild(r.Context(), db.CompleteDeploymentBuildParams{
-			ProgramCodeArtifactID:       programCodeArtifactID,
-			ProgramDependencyArtifactID: programDependencyArtifactID,
-			ProgramRuntimeDigest:        programRuntimeDigest,
-			ProgramArchitecture:         programArchitecture,
-			QueueConfig:                 queueConfigJSON,
-			OrgID:                       orgID,
-			ID:                          deploymentID,
-			BuildLeaseID:                pgvalue.UUID(buildLeaseUUID),
-			BuildWorkerInstanceID:       buildWorkerInstanceID,
-			WorkerEpoch:                 worker.WorkerEpoch,
-			LeaseSequence:               request.Lease.LeaseSequence,
-			TerminalRequestFingerprint:  fingerprint,
+			ProgramArtifactID:          programArtifactID,
+			ProgramRuntimeDigest:       programRuntimeDigest,
+			ProgramArchitecture:        programArchitecture,
+			ProgramReceipt:             programReceipt,
+			QueueConfig:                queueConfigJSON,
+			OrgID:                      orgID,
+			ID:                         deploymentID,
+			BuildLeaseID:               pgvalue.UUID(buildLeaseUUID),
+			BuildWorkerInstanceID:      buildWorkerInstanceID,
+			WorkerEpoch:                worker.WorkerEpoch,
+			LeaseSequence:              request.Lease.LeaseSequence,
+			TerminalRequestFingerprint: fingerprint,
 		})
 		if isNoRows(err) {
 			return conflict(errors.New("deployment build lease is stale"))
@@ -1022,12 +1031,11 @@ func deploymentBuildObjectFromWorkspace(
 func deploymentBuildObjects(
 	result deployment.BuildSucceeded,
 ) ([]deploymentBuildObject, error) {
-	objects := make([]deploymentBuildObject, 0, 2+len(result.WorkspaceImages))
-	if result.ProgramReceipt != nil {
+	objects := make([]deploymentBuildObject, 0, 1+len(result.WorkspaceImages))
+	if result.Program != nil {
 		objects = append(
 			objects,
-			deploymentBuildObjectFromProgram(result.ProgramReceipt.Code),
-			deploymentBuildObjectFromProgram(result.ProgramReceipt.Dependencies),
+			deploymentBuildObjectFromProgram(result.Program.Artifact),
 		)
 	}
 	for _, image := range result.WorkspaceImages {

@@ -59,8 +59,7 @@ type BuildAnalysisRequest struct {
 type ProgramProofRequest struct {
 	FormatVersion int               `json:"formatVersion"`
 	Runtime       RuntimeDescriptor `json:"runtime"`
-	Code          ProgramDescriptor `json:"code"`
-	Dependencies  ProgramDescriptor `json:"dependencies"`
+	Program       ProgramDescriptor `json:"program"`
 }
 
 type BuildGuest struct {
@@ -296,8 +295,7 @@ func (guest BuildGuest) Prove(
 		Networkless: true,
 		ReadOnlyDrives: []vm.ReadOnlyDrive{
 			{ID: vm.ProgramRuntimeDrive, Source: runtime},
-			{ID: vm.ProgramCodeDrive, Source: programCodeDrive{program}},
-			{ID: vm.ProgramDependenciesDrive, Source: programDependencyDrive{program}},
+			{ID: vm.ProgramDrive, Source: programDrive{program}},
 		},
 	})
 	if err != nil {
@@ -466,40 +464,23 @@ func validateProgramProofRequest(request ProgramProofRequest) error {
 		return err
 	}
 	if err := validateProgramDescriptor(
-		request.Code,
-		"code",
-		ProgramCodeArtifactMediaType,
-		maxCodePhysicalBytes,
-	); err != nil {
-		return err
-	}
-	if err := validateProgramDescriptor(
-		request.Dependencies,
-		"dependencies",
-		ProgramDependencyArtifactMediaType,
-		maxDependencyPhysicalBytes,
+		request.Program,
+		"program",
+		ProgramArtifactMediaType,
+		maxProgramPhysicalBytes,
 	); err != nil {
 		return err
 	}
 	return nil
 }
 
-type programCodeDrive struct{ program *EncodedProgram }
+type programDrive struct{ program *EncodedProgram }
 
-func (drive programCodeDrive) LinkInto(directory, name string, uid, gid int) error {
-	if drive.program == nil || drive.program.code == nil {
-		return errors.New("Program code snapshot is closed")
+func (drive programDrive) LinkInto(directory, name string, uid, gid int) error {
+	if drive.program == nil || drive.program.artifact == nil {
+		return errors.New("program snapshot is closed")
 	}
-	return drive.program.code.LinkInto(directory, name, uid, gid)
-}
-
-type programDependencyDrive struct{ program *EncodedProgram }
-
-func (drive programDependencyDrive) LinkInto(directory, name string, uid, gid int) error {
-	if drive.program == nil || drive.program.dependencies == nil {
-		return errors.New("Program dependency snapshot is closed")
-	}
-	return drive.program.dependencies.LinkInto(directory, name, uid, gid)
+	return drive.program.artifact.LinkInto(directory, name, uid, gid)
 }
 
 func canonicalBuildGuestDocument[T any](value T, validate func(T) error) ([]byte, error) {

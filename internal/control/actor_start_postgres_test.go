@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -583,8 +584,8 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	fixture.deploymentID = deploymentID
 	actorDefinitionID := uuid.Must(uuid.NewV7())
 	workspaceDefinitionID := uuid.Must(uuid.NewV7())
-	sourceID, codeID, dependencyID, imageID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()),
-		uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	sourceID, programID, imageID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()),
+		uuid.Must(uuid.NewV7())
 	mustActorStartExec(t, pool, `
 		INSERT INTO regions (id, provider, provider_region, display_name)
 		VALUES ('us-east-1', 'aws', 'us-east-1', 'Actor Start Test')
@@ -611,7 +612,6 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		"sha256:" + fmt.Sprintf("%064x", 1),
 		"sha256:" + fmt.Sprintf("%064x", 2),
 		"sha256:" + fmt.Sprintf("%064x", 3),
-		"sha256:" + fmt.Sprintf("%064x", 4),
 	}
 	actorManifest := []byte(
 		`{"idleTimeoutMs":30000,"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`,
@@ -623,36 +623,45 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	queueConfig := []byte(
 		`{"formatVersion":0,"queues":[{"concurrencyLimit":2,"name":"default"},{"name":"priority"}]}`,
 	)
+	programReceipt := dbtest.ProgramReceipt(dbtest.ProgramReceiptAuthority{
+		Architecture:            "aarch64",
+		ProgramArtifactID:       programID,
+		ProgramDigest:           digests[1],
+		ProgramSizeBytes:        1,
+		RuntimeDigest:           "sha256:" + strings.Repeat("01", 32),
+		SourceArtifactID:        sourceID,
+		SourceDigest:            digests[0],
+		SourceSizeBytes:         1,
+		StandardToolchainDigest: "sha256:" + strings.Repeat("02", 32),
+	})
 	mustActorStartExec(t, pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, 1, 'application/octet-stream'),
-		       ($1, $3, 1, 'application/octet-stream'),
-		       ($1, $4, 1, 'application/octet-stream'),
-		       ($1, $5, 1, 'application/octet-stream')
-	`, fixture.orgID, digests[0], digests[1], digests[2], digests[3])
+		VALUES ($1, $2, 1, 'application/vnd.helmr.deployment-source.v0+tar'),
+		       ($1, $3, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+		       ($1, $4, 1, 'application/octet-stream')
+	`, fixture.orgID, digests[0], digests[1], digests[2])
 	mustActorStartExec(t, pool, `
 		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $5, $6, $7, $8,  'deployment_source', 1, 'application/octet-stream'),
-		       ($2, $5, $6, $7, $9,  'deployment_program_code', 1, 'application/octet-stream'),
-		       ($3, $5, $6, $7, $10, 'deployment_program_dependencies', 1, 'application/octet-stream'),
-		       ($4, $5, $6, $7, $11, 'workspace_image', 1, 'application/octet-stream')
-	`, sourceID, codeID, dependencyID, imageID, fixture.orgID, fixture.projectID,
-		fixture.environmentID, digests[0], digests[1], digests[2], digests[3])
+		VALUES ($1, $4, $5, $6, $7, 'deployment_source', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
+		       ($2, $4, $5, $6, $8, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+		       ($3, $4, $5, $6, $9, 'workspace_image', 1, 'application/octet-stream')
+	`, sourceID, programID, imageID, fixture.orgID, fixture.projectID,
+		fixture.environmentID, digests[0], digests[1], digests[2])
 	mustActorStartExec(t, pool, `
 		INSERT INTO deployments (
 		    id, public_id, org_id, project_id, environment_id, build_region_id,
 		    build_architecture, build_runtime_digest, build_standard_toolchain_digest,
 		    build_contract_version, version, content_hash, deployment_source_artifact_id,
-		    program_code_artifact_id, program_dependency_artifact_id,
-		    program_runtime_digest, program_architecture, queue_config, status
+		    program_artifact_id, program_runtime_digest, program_architecture,
+		    program_receipt, queue_config, status
 		) VALUES (
 		    $1, $2, $3, $4, $5, 'us-east-1', 'aarch64',
 		    decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
-		    'helmr.program-build.v0', 'actor-start-test', $6, $7, $8, $9,
-		    decode(repeat('01', 32), 'hex'), 'aarch64', $10::jsonb, 'deployed'
+		    'helmr.program-build.v0', 'actor-start-test', $6, $7, $8,
+		    decode(repeat('01', 32), 'hex'), 'aarch64', $9::jsonb, $10::jsonb, 'deployed'
 		)
 	`, deploymentID, actorStartPublicID(t, publicid.Deployment), fixture.orgID, fixture.projectID,
-		fixture.environmentID, digests[0], sourceID, codeID, dependencyID, queueConfig)
+		fixture.environmentID, digests[0], sourceID, programID, programReceipt, queueConfig)
 	mustActorStartExec(t, pool, `
 		INSERT INTO deployment_definitions (
 		    id, environment_id, deployment_id, kind, declared_id,

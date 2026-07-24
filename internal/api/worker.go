@@ -303,8 +303,7 @@ type WorkerRuntimeRestore struct {
 type WorkerRuntimeProgram struct {
 	DeploymentID         string                  `json:"deployment_id"`
 	Runtime              WorkerRuntimeDescriptor `json:"runtime"`
-	Code                 CASObject               `json:"code"`
-	Dependencies         CASObject               `json:"dependencies"`
+	Artifact             CASObject               `json:"artifact"`
 	BuildContractVersion string                  `json:"build_contract_version"`
 }
 

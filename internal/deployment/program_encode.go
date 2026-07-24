@@ -7,15 +7,13 @@ import (
 	"fmt"
 	"iter"
 	"sort"
-	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 )
 
 type EncodedProgram struct {
-	Receipt      ProgramReceipt
-	code         *artifactSnapshot
-	dependencies *artifactSnapshot
+	Output   ProgramOutput
+	artifact *artifactSnapshot
 }
 
 func EncodeProgram(
@@ -52,29 +50,10 @@ func EncodeProgram(
 		return nil, errors.New("Program encoding requires Program-backed analysis")
 	}
 
-	dependencies, err := encodeProgramTree(
-		ctx,
-		directory,
-		encoder,
-		dependencyArtifact,
-		programTreeEntries(ctx, tree.inspected, dependencyArtifact, nil),
-		true,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("encode Program dependencies: %w", err)
-	}
-	defer func() {
-		if dependencies != nil {
-			returnErr = errors.Join(returnErr, dependencies.Close())
-		}
-	}()
-
-	dependencyDescriptor := ProgramDescriptor(dependencies.descriptor)
 	index := ProgramIndex{
 		Architecture:            provenance.Architecture,
 		BuildContractVersion:    provenance.BuildContractVersion,
 		Declarations:            declarations,
-		DependenciesDigest:      dependencyDescriptor.Digest,
 		FormatVersion:           ProgramIndexFormatVersion,
 		Manager:                 provenance.Manager,
 		RuntimeAPIVersion:       RuntimeAPIVersion,
@@ -91,91 +70,65 @@ func EncodeProgram(
 		AnalysisProgramEntryPath: []byte(analysis.Succeeded.Files[2].Content),
 		"helmr/program.json":     indexRaw,
 	}
-	code, err := encodeProgramTree(
+	artifact, err := encodeProgramTree(
 		ctx,
 		directory,
 		encoder,
-		codeArtifact,
-		programTreeEntries(ctx, tree.inspected, codeArtifact, generated),
+		programArtifact,
+		programTreeEntries(ctx, tree.inspected, generated),
 		false,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("encode Program code: %w", err)
+		return nil, fmt.Errorf("encode Program: %w", err)
 	}
 	defer func() {
-		if code != nil {
-			returnErr = errors.Join(returnErr, code.Close())
+		if artifact != nil {
+			returnErr = errors.Join(returnErr, artifact.Close())
 		}
 	}()
 
-	receipt := ProgramReceipt{
-		FormatVersion: ProgramReceiptFormatVersion,
-		Code:          ProgramDescriptor(code.descriptor),
-		Dependencies:  dependencyDescriptor,
-		Index:         index,
+	output := ProgramOutput{
+		Artifact: ProgramDescriptor(artifact.descriptor),
+		Index:    index,
 	}
-	if err := ValidateProgramReceipt(receipt); err != nil {
+	if err := ValidateProgramOutput(output); err != nil {
 		return nil, err
 	}
-	if err := verifyEncodedProgram(ctx, code, dependencies, receipt); err != nil {
+	if err := verifyEncodedProgram(ctx, artifact, output); err != nil {
 		return nil, err
 	}
 
 	program := &EncodedProgram{
-		Receipt:      receipt,
-		code:         code,
-		dependencies: dependencies,
+		Output:   output,
+		artifact: artifact,
 	}
-	code = nil
-	dependencies = nil
+	artifact = nil
 	return program, nil
 }
 
 func verifyEncodedProgram(
 	ctx context.Context,
-	code *artifactSnapshot,
-	dependencies *artifactSnapshot,
-	receipt ProgramReceipt,
+	artifact *artifactSnapshot,
+	output ProgramOutput,
 ) error {
-	codeFile, err := code.verifierFile()
+	file, err := artifact.verifierFile()
 	if err != nil {
 		return err
 	}
-	codeReader, err := newSquashFSArtifactReader(
+	reader, err := newSquashFSArtifactReader(
 		ctx,
-		codeFile,
-		receipt.Code.SizeBytes,
-		codeArtifact,
+		file,
+		output.Artifact.SizeBytes,
+		programArtifact,
 	)
 	if err != nil {
-		return fmt.Errorf("open encoded Program code: %w", err)
+		return fmt.Errorf("open encoded Program: %w", err)
 	}
-	dependencyFile, err := dependencies.verifierFile()
-	if err != nil {
-		return err
-	}
-	dependencyReader, err := newSquashFSArtifactReader(
-		ctx,
-		dependencyFile,
-		receipt.Dependencies.SizeBytes,
-		dependencyArtifact,
-	)
-	if err != nil {
-		return fmt.Errorf("open encoded Program dependencies: %w", err)
-	}
-	verified, err := verifyProgramArtifacts(ctx, programArtifacts{
-		Code: programArtifact{
-			Digest:    receipt.Code.Digest,
-			SizeBytes: receipt.Code.SizeBytes,
-			MediaType: receipt.Code.MediaType,
-			Reader:    codeReader,
-		},
-		Dependencies: programArtifact{
-			Digest:    receipt.Dependencies.Digest,
-			SizeBytes: receipt.Dependencies.SizeBytes,
-			MediaType: receipt.Dependencies.MediaType,
-			Reader:    dependencyReader,
-		},
+	verified, err := verifyProgramArtifact(ctx, artifactInput{
+		Digest:    output.Artifact.Digest,
+		SizeBytes: output.Artifact.SizeBytes,
+		MediaType: output.Artifact.MediaType,
+		Reader:    reader,
 	})
 	if err != nil {
 		return fmt.Errorf("verify encoded Program: %w", err)
@@ -184,7 +137,7 @@ func verifyEncodedProgram(
 	if err != nil {
 		return err
 	}
-	expectedIndex, err := CanonicalProgramIndex(receipt.Index)
+	expectedIndex, err := CanonicalProgramIndex(output.Index)
 	if err != nil {
 		return err
 	}
@@ -203,7 +156,6 @@ type programTreeSource struct {
 func programTreeEntries(
 	ctx context.Context,
 	tree *inspectedArtifact,
-	role artifactRole,
 	generated map[string][]byte,
 ) iter.Seq2[treeEntry, error] {
 	sources := make([]programTreeSource, 0, len(tree.ordered)+len(generated)+2)
@@ -212,52 +164,33 @@ func programTreeEntries(
 			continue
 		}
 		sourcePath := entry.Path
-		switch role {
-		case codeArtifact:
-			if entry.Path == "node_modules" ||
-				strings.HasPrefix(entry.Path, "node_modules/") {
-				continue
-			}
-		case dependencyArtifact:
-			if !strings.HasPrefix(entry.Path, "node_modules/") {
-				continue
-			}
-			entry.Path = strings.TrimPrefix(entry.Path, "node_modules/")
-		default:
-			return errorTreeEntries(
-				fmt.Errorf("Program tree role = %d", role),
-			)
-		}
 		sources = append(sources, programTreeSource{
 			entry:      entry,
 			sourcePath: sourcePath,
 		})
 	}
-	if role == codeArtifact {
-		sources = append(
-			sources,
-			programTreeSource{entry: artifactEntry{
-				Path: "helmr",
-				Kind: artifactEntryDirectory,
-				Mode: 0755,
-			}},
-			programTreeSource{entry: artifactEntry{
-				Path: "node_modules",
-				Kind: artifactEntryDirectory,
-				Mode: 0755,
-			}},
-		)
-		for name, content := range generated {
-			sources = append(sources, programTreeSource{
-				entry: artifactEntry{
-					Path:      name,
-					Kind:      artifactEntryRegular,
-					Mode:      0644,
-					SizeBytes: int64(len(content)),
-				},
-				content: append([]byte(nil), content...),
-			})
-		}
+	sources = append(sources, programTreeSource{entry: artifactEntry{
+		Path: "helmr",
+		Kind: artifactEntryDirectory,
+		Mode: 0755,
+	}})
+	if _, exists := tree.entries["node_modules"]; !exists {
+		sources = append(sources, programTreeSource{entry: artifactEntry{
+			Path: "node_modules",
+			Kind: artifactEntryDirectory,
+			Mode: 0755,
+		}})
+	}
+	for name, content := range generated {
+		sources = append(sources, programTreeSource{
+			entry: artifactEntry{
+				Path:      name,
+				Kind:      artifactEntryRegular,
+				Mode:      0644,
+				SizeBytes: int64(len(content)),
+			},
+			content: append([]byte(nil), content...),
+		})
 	}
 	sort.Slice(sources, func(left, right int) bool {
 		return bytes.Compare(
@@ -318,63 +251,27 @@ func programTreeEntries(
 	}
 }
 
-func errorTreeEntries(err error) iter.Seq2[treeEntry, error] {
-	return func(yield func(treeEntry, error) bool) {
-		yield(treeEntry{}, err)
-	}
-}
-
-func (program *EncodedProgram) LinkInto(
-	directory string,
-	codeName string,
-	dependencyName string,
-	uid int,
-	gid int,
-) error {
-	if program == nil || program.code == nil || program.dependencies == nil {
-		return errors.New("encoded Program is closed")
-	}
-	if err := program.code.LinkInto(directory, codeName, uid, gid); err != nil {
-		return fmt.Errorf("link Program code: %w", err)
-	}
-	if err := program.dependencies.LinkInto(
-		directory,
-		dependencyName,
-		uid,
-		gid,
-	); err != nil {
-		return fmt.Errorf("link Program dependencies: %w", err)
-	}
-	return nil
-}
-
 func (program *EncodedProgram) Publish(
 	ctx context.Context,
 	store cas.Store,
-) (ProgramReceipt, error) {
-	if program == nil || program.code == nil || program.dependencies == nil {
-		return ProgramReceipt{}, errors.New("encoded Program is closed")
+) (ProgramOutput, error) {
+	if program == nil || program.artifact == nil {
+		return ProgramOutput{}, errors.New("encoded Program is closed")
 	}
 	if store == nil {
-		return ProgramReceipt{}, errors.New("Program store is required")
+		return ProgramOutput{}, errors.New("program store is required")
 	}
 	if err := publishProgramArtifact(
 		ctx,
 		store,
-		program.code,
-		program.Receipt.Code,
+		program.artifact,
+		program.Output.Artifact,
 	); err != nil {
-		return ProgramReceipt{}, fmt.Errorf("publish Program code: %w", err)
+		return ProgramOutput{}, fmt.Errorf("publish Program: %w", err)
 	}
-	if err := publishProgramArtifact(
-		ctx,
-		store,
-		program.dependencies,
-		program.Receipt.Dependencies,
-	); err != nil {
-		return ProgramReceipt{}, fmt.Errorf("publish Program dependencies: %w", err)
-	}
-	return cloneProgramReceipt(program.Receipt), nil
+	output := program.Output
+	output.Index = cloneProgramIndex(output.Index)
+	return output, nil
 }
 
 func publishProgramArtifact(
@@ -404,13 +301,9 @@ func (program *EncodedProgram) Close() error {
 		return nil
 	}
 	var err error
-	if program.code != nil {
-		err = errors.Join(err, program.code.Close())
-		program.code = nil
-	}
-	if program.dependencies != nil {
-		err = errors.Join(err, program.dependencies.Close())
-		program.dependencies = nil
+	if program.artifact != nil {
+		err = errors.Join(err, program.artifact.Close())
+		program.artifact = nil
 	}
 	return err
 }

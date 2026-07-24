@@ -259,14 +259,9 @@ func TestBuildGuestAnalyzeUsesFreshIsolatedTree(t *testing.T) {
 
 func TestBuildGuestProveUsesFreshIsolatedProgram(t *testing.T) {
 	runtime := testRuntimeDescriptor()
-	code := ProgramDescriptor{
+	programDescriptor := ProgramDescriptor{
 		Digest:    "sha256:" + strings.Repeat("4", 64),
-		MediaType: ProgramCodeArtifactMediaType,
-		SizeBytes: squashFSPhysicalAlign,
-	}
-	dependencies := ProgramDescriptor{
-		Digest:    "sha256:" + strings.Repeat("5", 64),
-		MediaType: ProgramDependencyArtifactMediaType,
+		MediaType: ProgramArtifactMediaType,
 		SizeBytes: squashFSPhysicalAlign,
 	}
 	proof := ProgramProofResult{
@@ -299,7 +294,7 @@ func TestBuildGuestProveUsesFreshIsolatedProgram(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if request.Code != code || request.Dependencies != dependencies {
+			if request.Program != programDescriptor {
 				return errors.New("Program proof descriptors changed")
 			}
 			return frameio.WriteMessageFrame(stream, raw)
@@ -311,13 +306,11 @@ func TestBuildGuestProveUsesFreshIsolatedProgram(t *testing.T) {
 		ProgramProofRequest{
 			FormatVersion: BuildGuestFormatVersion,
 			Runtime:       runtime,
-			Code:          code,
-			Dependencies:  dependencies,
+			Program:       programDescriptor,
 		},
 		&RuntimeArtifactSnapshot{content: &artifactSnapshot{}},
 		&EncodedProgram{
-			code:         &artifactSnapshot{},
-			dependencies: &artifactSnapshot{},
+			artifact: &artifactSnapshot{},
 		},
 	)
 	if err != nil {
@@ -334,8 +327,7 @@ func TestBuildGuestProveUsesFreshIsolatedProgram(t *testing.T) {
 	}
 	wantDrives := []string{
 		vm.ProgramRuntimeDrive,
-		vm.ProgramCodeDrive,
-		vm.ProgramDependenciesDrive,
+		vm.ProgramDrive,
 	}
 	if len(request.ReadOnlyDrives) != len(wantDrives) {
 		t.Fatalf("Program proof drives = %+v", request.ReadOnlyDrives)

@@ -51,7 +51,7 @@
     }
   ],
   "programIndex": {
-    "canonical": "{\"architecture\":\"x86_64\",\"buildContractVersion\":\"helmr.program-build.v0\",\"declarations\":[{\"declaredId\":\"Build-\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Build.\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Build0\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"BuildA\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Build_\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Builda\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"operator\",\"kind\":\"actor\",\"slots\":[\"handler\"]},{\"declaredId\":\"progress\",\"kind\":\"run_stream\",\"slots\":[\"schema\"]}],\"dependenciesDigest\":\"sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"formatVersion\":0,\"manager\":{\"capsuleDigest\":\"sha256:7777777777777777777777777777777777777777777777777777777777777777\",\"name\":\"bun\",\"version\":\"1.3.10\"},\"runtimeApiVersion\":\"helmr.runtime.v0\",\"runtimeDigest\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"standardToolchainDigest\":\"sha256:6666666666666666666666666666666666666666666666666666666666666666\",\"submitted\":{\"lockfileDigest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"lockfileName\":\"bun.lock\",\"sourceDigest\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\"}}"
+    "canonical": "{\"architecture\":\"x86_64\",\"buildContractVersion\":\"helmr.program-build.v0\",\"declarations\":[{\"declaredId\":\"Build-\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Build.\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Build0\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"BuildA\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Build_\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Builda\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"operator\",\"kind\":\"actor\",\"slots\":[\"handler\"]},{\"declaredId\":\"progress\",\"kind\":\"run_stream\",\"slots\":[\"schema\"]}],\"formatVersion\":0,\"manager\":{\"capsuleDigest\":\"sha256:7777777777777777777777777777777777777777777777777777777777777777\",\"name\":\"bun\",\"version\":\"1.3.10\"},\"runtimeApiVersion\":\"helmr.runtime.v0\",\"runtimeDigest\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"standardToolchainDigest\":\"sha256:6666666666666666666666666666666666666666666666666666666666666666\",\"submitted\":{\"lockfileDigest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"lockfileName\":\"bun.lock\",\"sourceDigest\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\"}}"
   },
   "programRejections": [
     {
@@ -89,10 +89,6 @@
     {
       "name": "runtime-digest-mismatch",
       "mutation": "runtime_digest"
-    },
-    {
-      "name": "dependency-digest-mismatch",
-      "mutation": "dependency_digest"
     },
     {
       "name": "toolchain-digest-mismatch",

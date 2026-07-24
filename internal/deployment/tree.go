@@ -13,9 +13,8 @@ import (
 )
 
 const (
-	tarBlockBytes             int64 = 512
-	maxCodeArchiveBytes             = 3 << 30
-	maxDependencyArchiveBytes       = 9 << 30
+	tarBlockBytes          int64 = 512
+	maxProgramArchiveBytes       = 12 << 30
 )
 
 type treeEntry struct {
@@ -62,10 +61,13 @@ func writeTreeArchive(
 		nameBytes:    1,
 		archiveBytes: 2 * tarBlockBytes,
 	}
-	if role == dependencyArtifact {
-		state.logicalLimit = maxDependencyLogicalBytes
-	} else {
-		state.logicalLimit = maxCodeLogicalBytes
+	switch role {
+	case programArtifact:
+		state.logicalLimit = maxProgramLogicalBytes
+	case buildTreeArtifact:
+		state.logicalLimit = maxBuildTreeLogicalBytes
+	default:
+		return fmt.Errorf("program archive artifact role = %d", role)
 	}
 	for entry, sourceErr := range entries {
 		if sourceErr != nil {
@@ -254,10 +256,8 @@ func validateTreeEntry(entry treeEntry, role artifactRole) error {
 
 func programArchiveLimit(role artifactRole) (int64, error) {
 	switch role {
-	case codeArtifact:
-		return maxCodeArchiveBytes, nil
-	case dependencyArtifact:
-		return maxDependencyArchiveBytes, nil
+	case programArtifact, buildTreeArtifact:
+		return maxProgramArchiveBytes, nil
 	default:
 		return 0, fmt.Errorf("program archive artifact role = %d", role)
 	}

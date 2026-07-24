@@ -5,10 +5,8 @@ import { canonicalizeJsonValue, parseJson, type JsonObject, type JsonValue } fro
 export const PROGRAM_INDEX_FORMAT_VERSION = 0 as const
 export const RUNTIME_API_VERSION = "helmr.runtime.v0" as const
 export const PROGRAM_BUILD_CONTRACT_VERSION = "helmr.program-build.v0" as const
-export const PROGRAM_CODE_ARTIFACT_MEDIA_TYPE =
-  "application/vnd.helmr.deployment-program-code.v0+squashfs" as const
-export const PROGRAM_DEPENDENCY_ARTIFACT_MEDIA_TYPE =
-  "application/vnd.helmr.deployment-program-dependencies.v0+squashfs" as const
+export const PROGRAM_ARTIFACT_MEDIA_TYPE =
+  "application/vnd.helmr.deployment-program.v0+squashfs" as const
 
 const declaredIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const sha256DigestPattern = /^sha256:[0-9a-f]{64}$/
@@ -36,7 +34,6 @@ export interface ProgramIndex {
   readonly architecture: RuntimeArchitecture
   readonly buildContractVersion: typeof PROGRAM_BUILD_CONTRACT_VERSION
   readonly declarations: readonly ProgramDeclaration[]
-  readonly dependenciesDigest: string
   readonly formatVersion: 0
   readonly manager: Readonly<{
     capsuleDigest: string
@@ -100,7 +97,6 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
       "architecture",
       "buildContractVersion",
       "declarations",
-      "dependenciesDigest",
       "formatVersion",
       "manager",
       "runtimeApiVersion",
@@ -135,10 +131,6 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
   const standardToolchainDigest = requireDigest(
     root["standardToolchainDigest"],
     "program index standardToolchainDigest",
-  )
-  const dependenciesDigest = requireDigest(
-    root["dependenciesDigest"],
-    "program index dependenciesDigest",
   )
   const managerValue = requireObject(root["manager"], "program index manager")
   requireKeys(managerValue, ["capsuleDigest", "name", "version"], "program index manager")
@@ -217,7 +209,6 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
     architecture,
     buildContractVersion,
     declarations,
-    dependenciesDigest,
     formatVersion: PROGRAM_INDEX_FORMAT_VERSION,
     manager,
     runtimeApiVersion,

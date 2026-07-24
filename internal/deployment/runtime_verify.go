@@ -120,7 +120,7 @@ func verifyRuntimeArtifactReader(
 	if err != nil {
 		return RuntimeIndex{}, err
 	}
-	return verifyRuntimeArtifact(ctx, programArtifact{
+	return verifyRuntimeArtifact(ctx, artifactInput{
 		Digest:    digest,
 		SizeBytes: size,
 		MediaType: RuntimeArtifactMediaType,
@@ -130,7 +130,7 @@ func verifyRuntimeArtifactReader(
 
 func verifyRuntimeArtifact(
 	ctx context.Context,
-	artifact programArtifact,
+	artifact artifactInput,
 ) (RuntimeIndex, error) {
 	if err := validateArtifactDescriptor(artifact, runtimeArtifact); err != nil {
 		return RuntimeIndex{}, err

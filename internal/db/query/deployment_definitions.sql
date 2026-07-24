@@ -68,25 +68,19 @@ SELECT deployment_definitions.*
 SELECT deployments.id AS deployment_id,
        deployments.environment_id,
        deployments.version AS deployment_version,
-       deployments.program_code_artifact_id,
-       program_code.digest AS program_code_digest,
-       program_code.size_bytes AS program_code_size_bytes,
-       program_code.media_type AS program_code_media_type,
-       deployments.program_dependency_artifact_id,
-       program_dependencies.digest AS program_dependency_digest,
-       program_dependencies.size_bytes AS program_dependency_size_bytes,
-       program_dependencies.media_type AS program_dependency_media_type,
+       deployments.program_artifact_id,
+       program_artifact.digest AS program_artifact_digest,
+       program_artifact.size_bytes AS program_artifact_size_bytes,
+       program_artifact.media_type AS program_artifact_media_type,
        deployments.program_runtime_digest,
        deployments.program_architecture,
        deployments.build_contract_version,
        deployments.queue_config
   FROM deployments
-  JOIN artifacts AS program_code
-    ON program_code.environment_id = deployments.environment_id
-   AND program_code.id = deployments.program_code_artifact_id
-  JOIN artifacts AS program_dependencies
-    ON program_dependencies.environment_id = deployments.environment_id
-   AND program_dependencies.id = deployments.program_dependency_artifact_id
+  JOIN artifacts AS program_artifact
+    ON program_artifact.environment_id = deployments.environment_id
+   AND program_artifact.id = deployments.program_artifact_id
+   AND program_artifact.kind = 'deployment_program'
  WHERE deployments.environment_id = sqlc.arg(environment_id)
    AND deployments.id = sqlc.arg(deployment_id)
    AND deployments.status = 'deployed'

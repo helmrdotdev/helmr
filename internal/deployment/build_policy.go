@@ -217,16 +217,16 @@ func (p *BuildPolicy) Resolve(
 
 func ValidateProgramTarget(
 	target BuildTarget,
-	receipt ProgramReceipt,
+	output ProgramOutput,
 ) error {
-	if err := ValidateProgramReceipt(receipt); err != nil {
+	if err := ValidateProgramOutput(output); err != nil {
 		return err
 	}
-	if receipt.Index.RuntimeDigest != target.Runtime.Digest ||
-		receipt.Index.Architecture != target.Runtime.Architecture ||
-		receipt.Index.StandardToolchainDigest != target.StandardToolchainDigest ||
-		receipt.Index.BuildContractVersion != ProgramBuildContractVersion {
-		return errors.New("program receipt does not match the build target")
+	if output.Index.RuntimeDigest != target.Runtime.Digest ||
+		output.Index.Architecture != target.Runtime.Architecture ||
+		output.Index.StandardToolchainDigest != target.StandardToolchainDigest ||
+		output.Index.BuildContractVersion != ProgramBuildContractVersion {
+		return errors.New("program output does not match the build target")
 	}
 	return nil
 }

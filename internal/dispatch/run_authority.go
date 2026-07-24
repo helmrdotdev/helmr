@@ -434,8 +434,7 @@ SELECT deployments.program_architecture
  WHERE deployments.environment_id = $1
    AND deployments.id = $2
    AND deployments.status = 'deployed'
-   AND deployments.program_code_artifact_id IS NOT NULL
-   AND deployments.program_dependency_artifact_id IS NOT NULL
+   AND deployments.program_artifact_id IS NOT NULL
    AND deployments.program_runtime_digest IS NOT NULL
    AND deployments.program_architecture IS NOT NULL`,
 		authority.environmentID,

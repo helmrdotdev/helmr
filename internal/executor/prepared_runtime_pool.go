@@ -692,7 +692,7 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 	if err := p.verifyReservedWorkspaceVersion(ctx, materializer, tempDir, mount); err != nil {
 		return failInstance(err)
 	}
-	readOnlyDrives, closeProgramArtifacts, err := p.prepareProgramArtifacts(
+	readOnlyDrives, closeProgram, err := p.prepareProgram(
 		ctx,
 		tempDir,
 		target,
@@ -703,7 +703,7 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 	programArtifactsOpen := true
 	defer func() {
 		if programArtifactsOpen {
-			retErr = errors.Join(retErr, closeProgramArtifacts())
+			retErr = errors.Join(retErr, closeProgram())
 		}
 	}()
 	var runtimeSubstrateIDValue string
@@ -752,7 +752,7 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 			Network: mount.Network, Topology: topology, ReadOnlyDrives: readOnlyDrives,
 		})
 	}
-	closeProgramErr := closeProgramArtifacts()
+	closeProgramErr := closeProgram()
 	programArtifactsOpen = false
 	err = errors.Join(materializeErr, closeProgramErr)
 	p.logInfo("prepared runtime pool session materialized", "runtime_instance_id", runtimeInstanceID, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
@@ -906,7 +906,7 @@ func (p *PreparedRuntimePool) verifyReservedWorkspaceVersion(
 	return err
 }
 
-func (p *PreparedRuntimePool) prepareProgramArtifacts(
+func (p *PreparedRuntimePool) prepareProgram(
 	ctx context.Context,
 	tempDir string,
 	target api.WorkerRuntimeReconcileTarget,
@@ -991,12 +991,7 @@ func (p *PreparedRuntimePool) prepareProgramArtifacts(
 		p.CAS,
 		tempDir,
 		deployment.ProgramDescriptor{
-			Digest: program.Code.Digest, SizeBytes: program.Code.SizeBytes, MediaType: program.Code.MediaType,
-		},
-		deployment.ProgramDescriptor{
-			Digest:    program.Dependencies.Digest,
-			SizeBytes: program.Dependencies.SizeBytes,
-			MediaType: program.Dependencies.MediaType,
+			Digest: program.Artifact.Digest, SizeBytes: program.Artifact.SizeBytes, MediaType: program.Artifact.MediaType,
 		},
 	)
 	if err != nil {
@@ -1020,8 +1015,7 @@ func (p *PreparedRuntimePool) prepareProgramArtifacts(
 	if programIndex.RuntimeDigest != runtimeDescriptor.Digest ||
 		programIndex.RuntimeAPIVersion != runtimeDescriptor.RuntimeAPIVersion ||
 		programIndex.Architecture != runtimeDescriptor.Architecture ||
-		programIndex.BuildContractVersion != program.BuildContractVersion ||
-		programIndex.DependenciesDigest != program.Dependencies.Digest {
+		programIndex.BuildContractVersion != program.BuildContractVersion {
 		return nil, func() error { return nil }, errors.Join(
 			errors.New("Program index does not match runtime reservation authority"),
 			closeSnapshots(),
@@ -1034,14 +1028,9 @@ func (p *PreparedRuntimePool) prepareProgramArtifacts(
 			Source: runtimeSnapshot,
 		},
 		{
-			ID: vm.ProgramCodeDrive, Digest: program.Code.Digest,
-			SizeBytes: program.Code.SizeBytes, MediaType: program.Code.MediaType,
-			Source: programSnapshot.Code,
-		},
-		{
-			ID: vm.ProgramDependenciesDrive, Digest: program.Dependencies.Digest,
-			SizeBytes: program.Dependencies.SizeBytes, MediaType: program.Dependencies.MediaType,
-			Source: programSnapshot.Dependencies,
+			ID: vm.ProgramDrive, Digest: program.Artifact.Digest,
+			SizeBytes: program.Artifact.SizeBytes, MediaType: program.Artifact.MediaType,
+			Source: programSnapshot,
 		},
 	}, closeSnapshots, nil
 }

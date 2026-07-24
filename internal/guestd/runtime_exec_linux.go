@@ -338,8 +338,7 @@ func mountManagedProgram(imageRoot string) error {
 		target string
 	}{
 		{source: "/var/lib/helmr/program/runtime", target: "opt/helmr/runtime"},
-		{source: "/var/lib/helmr/program/code", target: "opt/helmr/program"},
-		{source: "/var/lib/helmr/program/dependencies", target: "opt/helmr/program/node_modules"},
+		{source: "/var/lib/helmr/program/artifact", target: "opt/helmr/program"},
 	}
 	for _, mount := range mounts {
 		info, err := os.Stat(mount.source)

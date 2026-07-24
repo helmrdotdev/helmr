@@ -18,14 +18,12 @@ const (
 	maxArtifactDepth                    = 128
 	maxArtifactFileSize           int64 = 1 << 30
 	maxArtifactNameBytes          int64 = 128 << 20
-	maxCodeLogicalBytes           int64 = 2 << 30
-	maxDependencyLogicalBytes     int64 = 8 << 30
-	maxBuildTreeLogicalBytes            = maxCodeLogicalBytes + maxDependencyLogicalBytes
-	maxCodePhysicalBytes          int64 = 3 << 30
-	maxDependencyPhysicalBytes    int64 = 10 << 30
-	maxBuildTreePhysicalBytes           = maxCodePhysicalBytes + maxDependencyPhysicalBytes
-	maxRuntimeLogicalBytes              = maxCodeLogicalBytes
-	maxRuntimePhysicalBytes             = maxCodePhysicalBytes
+	maxProgramLogicalBytes        int64 = 10 << 30
+	maxBuildTreeLogicalBytes            = maxProgramLogicalBytes
+	maxProgramPhysicalBytes       int64 = 13 << 30
+	maxBuildTreePhysicalBytes           = maxProgramPhysicalBytes
+	maxRuntimeLogicalBytes        int64 = 2 << 30
+	maxRuntimePhysicalBytes       int64 = 3 << 30
 	maxPackageJSONBytes           int64 = 256 << 20
 	maxLockfileBytes              int64 = 64 << 20
 	maxSymlinkTargetBytes               = 4095
@@ -33,7 +31,6 @@ const (
 	maxArtifactPathComponentBytes       = 255
 	maxMountedArtifactPathBytes         = 4096
 	programMountPath                    = "/opt/helmr/program"
-	dependencyMountPath                 = "/opt/helmr/program/node_modules"
 )
 
 type artifactEntryKind string
@@ -99,16 +96,11 @@ type artifactReader interface {
 	Open(context.Context, string) (io.ReadCloser, error)
 }
 
-type programArtifact struct {
+type artifactInput struct {
 	Digest    string
 	SizeBytes int64
 	MediaType string
 	Reader    artifactReader
-}
-
-type programArtifacts struct {
-	Code         programArtifact
-	Dependencies programArtifact
 }
 
 type verifiedProgram struct {
@@ -127,40 +119,25 @@ func (program *verifiedProgram) Index() ProgramIndex {
 	return index
 }
 
-func verifyProgramArtifacts(ctx context.Context, artifacts programArtifacts) (*verifiedProgram, error) {
-	if err := validateArtifactDescriptor(artifacts.Code, codeArtifact); err != nil {
-		return nil, err
-	}
-	if err := validateArtifactDescriptor(artifacts.Dependencies, dependencyArtifact); err != nil {
+func verifyProgramArtifact(ctx context.Context, artifact artifactInput) (*verifiedProgram, error) {
+	if err := validateArtifactDescriptor(artifact, programArtifact); err != nil {
 		return nil, err
 	}
 
-	code, err := inspectArtifact(
+	inspected, err := inspectArtifact(
 		ctx,
-		artifacts.Code.Reader,
-		codeArtifact,
-		maxCodeLogicalBytes,
-		artifacts.Code.SizeBytes,
+		artifact.Reader,
+		programArtifact,
+		maxProgramLogicalBytes,
+		artifact.SizeBytes,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("code Artifact: %w", err)
-	}
-	dependencies, err := inspectArtifact(
-		ctx,
-		artifacts.Dependencies.Reader,
-		dependencyArtifact,
-		maxDependencyLogicalBytes,
-		artifacts.Dependencies.SizeBytes,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("dependency Artifact: %w", err)
+		return nil, fmt.Errorf("program Artifact: %w", err)
 	}
 
-	verifier := pairVerifier{
-		ctx:       ctx,
-		artifacts: artifacts,
-		code:      code,
-		deps:      dependencies,
+	verifier := programVerifier{
+		ctx:      ctx,
+		artifact: inspected,
 	}
 	if err := verifier.verify(); err != nil {
 		return nil, err
@@ -173,8 +150,7 @@ func verifyProgramArtifacts(ctx context.Context, artifacts programArtifacts) (*v
 type artifactRole uint8
 
 const (
-	codeArtifact artifactRole = iota
-	dependencyArtifact
+	programArtifact artifactRole = iota
 	runtimeArtifact
 	toolchainArtifact
 	managerArtifact
@@ -189,20 +165,16 @@ type inspectedArtifact struct {
 }
 
 func validateArtifactDescriptor(
-	artifact programArtifact,
+	artifact artifactInput,
 	role artifactRole,
 ) error {
 	var label, mediaType string
 	var maxPhysicalBytes int64
 	switch role {
-	case codeArtifact:
-		label = "code"
-		mediaType = ProgramCodeArtifactMediaType
-		maxPhysicalBytes = maxCodePhysicalBytes
-	case dependencyArtifact:
-		label = "dependency"
-		mediaType = ProgramDependencyArtifactMediaType
-		maxPhysicalBytes = maxDependencyPhysicalBytes
+	case programArtifact:
+		label = "Program"
+		mediaType = ProgramArtifactMediaType
+		maxPhysicalBytes = maxProgramPhysicalBytes
 	case runtimeArtifact:
 		label = "runtime"
 		mediaType = RuntimeArtifactMediaType
@@ -471,8 +443,6 @@ func validateArtifactPath(value string, role artifactRole) error {
 	}
 	mount := programMountPath
 	switch role {
-	case dependencyArtifact:
-		mount = dependencyMountPath
 	case runtimeArtifact:
 		mount = runtimeMountPath
 	}

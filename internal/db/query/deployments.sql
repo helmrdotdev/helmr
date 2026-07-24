@@ -497,26 +497,26 @@ WITH completed AS (
 ), deployed AS (
 UPDATE deployments
    SET status = 'deployed',
-       program_code_artifact_id = sqlc.narg(program_code_artifact_id),
-       program_dependency_artifact_id = sqlc.narg(program_dependency_artifact_id),
+       program_artifact_id = sqlc.narg(program_artifact_id),
        program_runtime_digest = sqlc.narg(program_runtime_digest),
        program_architecture = sqlc.narg(program_architecture),
+       program_receipt = sqlc.narg(program_receipt),
        queue_config = sqlc.arg(queue_config),
        built_at = COALESCE(built_at, now()), deployed_at = now(), updated_at = now()
   FROM completed
  WHERE deployments.id = completed.deployment_id AND deployments.current_build_lease_id = completed.id
    AND (
        (
-           sqlc.narg(program_code_artifact_id)::uuid IS NULL
-           AND sqlc.narg(program_dependency_artifact_id)::uuid IS NULL
+           sqlc.narg(program_artifact_id)::uuid IS NULL
            AND sqlc.narg(program_runtime_digest)::bytea IS NULL
            AND sqlc.narg(program_architecture)::text IS NULL
+           AND sqlc.narg(program_receipt)::jsonb IS NULL
        )
        OR (
-           sqlc.narg(program_code_artifact_id)::uuid IS NOT NULL
-           AND sqlc.narg(program_dependency_artifact_id)::uuid IS NOT NULL
+           sqlc.narg(program_artifact_id)::uuid IS NOT NULL
            AND sqlc.narg(program_runtime_digest)::bytea = deployments.build_runtime_digest
            AND sqlc.narg(program_architecture)::text = deployments.build_architecture
+           AND jsonb_typeof(sqlc.narg(program_receipt)::jsonb) = 'object'
        )
    )
 RETURNING deployments.*
@@ -604,7 +604,10 @@ SELECT locked_lease.*,
        locked_deployment.build_runtime_digest,
        locked_deployment.build_standard_toolchain_digest,
        locked_deployment.build_contract_version,
-       source_artifacts.digest AS deployment_source_digest
+       locked_deployment.deployment_source_artifact_id,
+       source_artifacts.digest AS deployment_source_digest,
+       source_artifacts.size_bytes AS deployment_source_size_bytes,
+       source_artifacts.media_type AS deployment_source_media_type
   FROM locked_lease
   JOIN locked_deployment
     ON locked_deployment.org_id = locked_lease.org_id

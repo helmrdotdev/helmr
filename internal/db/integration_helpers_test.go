@@ -98,24 +98,28 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		api.DeploymentSourceArtifactMediaType,
 		"source",
 	)
-	codeArtifactID := seedIntegrationArtifact(
+	programArtifactID := seedIntegrationArtifact(
 		t,
 		ctx,
 		pool,
 		ids,
-		"deployment_program_code",
-		deployment.ProgramCodeArtifactMediaType,
-		"program-code",
+		"deployment_program",
+		deployment.ProgramArtifactMediaType,
+		"program",
 	)
-	dependencyArtifactID := seedIntegrationArtifact(
-		t,
-		ctx,
-		pool,
-		ids,
-		"deployment_program_dependencies",
-		deployment.ProgramDependencyArtifactMediaType,
-		"program-dependencies",
-	)
+	sourceDigest := testDigest("source-" + ids.deploymentID.String())
+	programDigest := testDigest("program-" + ids.deploymentID.String())
+	programReceipt := dbtest.ProgramReceipt(dbtest.ProgramReceiptAuthority{
+		Architecture:            "x86_64",
+		ProgramArtifactID:       programArtifactID,
+		ProgramDigest:           programDigest,
+		ProgramSizeBytes:        1,
+		RuntimeDigest:           "sha256:" + strings.Repeat("01", 32),
+		SourceArtifactID:        sourceArtifactID,
+		SourceDigest:            sourceDigest,
+		SourceSizeBytes:         1,
+		StandardToolchainDigest: "sha256:" + strings.Repeat("02", 32),
+	})
 	ids.workspaceImageArtifactID = seedIntegrationArtifact(
 		t,
 		ctx,
@@ -130,20 +134,20 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 			id, public_id, org_id, build_region_id, project_id, environment_id,
 			build_architecture, build_runtime_digest, build_standard_toolchain_digest,
 			build_contract_version, version, content_hash, deployment_source_artifact_id,
-			program_code_artifact_id, program_dependency_artifact_id,
-			program_runtime_digest, program_architecture, queue_config,
+			program_artifact_id, program_runtime_digest, program_architecture,
+			program_receipt, queue_config,
 			status, deployed_at
 		)
 		VALUES (
 			$1, $8, $2, $3, $4, $5,
 			'x86_64', decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
 			'helmr.program-build.v0', 'v1', $6, $7,
-			$9, $10, decode(repeat('01', 32), 'hex'), 'x86_64',
+			$9, decode(repeat('01', 32), 'hex'), 'x86_64', $10::jsonb,
 			'{"formatVersion":0,"queues":[]}'::jsonb, 'deployed', now()
 		)
 	`, ids.deploymentID, ids.orgID, dbtest.DefaultRegionID, ids.projectID, ids.environmentID,
 		testDigest("deployment-"+ids.deploymentID.String()), sourceArtifactID,
-		testPublicID(t, publicid.Deployment), codeArtifactID, dependencyArtifactID)
+		testPublicID(t, publicid.Deployment), programArtifactID, programReceipt)
 	return ids
 }
 

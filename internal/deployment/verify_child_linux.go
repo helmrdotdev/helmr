@@ -131,11 +131,7 @@ func executeVerifierJob(job verifierJob, result io.Writer) (returnErr error) {
 func verifyVerifierJob(ctx context.Context, job verifierJob) ([]byte, error) {
 	switch job {
 	case programVerifierJob:
-		return verifyProgramDescriptorPair(
-			ctx,
-			verifierArtifactBaseFD,
-			verifierArtifactBaseFD+1,
-		)
+		return verifyProgramDescriptor(ctx, verifierArtifactBaseFD)
 	case runtimeVerifierJob:
 		return verifyRuntimeDescriptor(ctx, verifierArtifactBaseFD)
 	default:
@@ -145,35 +141,23 @@ func verifyVerifierJob(ctx context.Context, job verifierJob) ([]byte, error) {
 	}
 }
 
-func verifyProgramDescriptorPair(ctx context.Context, codeFD, dependencyFD int) ([]byte, error) {
-	code, err := artifactFromDescriptor(
+func verifyProgramDescriptor(ctx context.Context, fd int) ([]byte, error) {
+	artifact, err := artifactFromDescriptor(
 		ctx,
-		codeFD,
-		codeArtifact,
-		ProgramCodeArtifactMediaType,
+		fd,
+		programArtifact,
+		ProgramArtifactMediaType,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("code Artifact: %w", err)
-	}
-	dependencies, err := artifactFromDescriptor(
-		ctx,
-		dependencyFD,
-		dependencyArtifact,
-		ProgramDependencyArtifactMediaType,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("dependency Artifact: %w", err)
+		return nil, fmt.Errorf("program Artifact: %w", err)
 	}
 
-	verified, err := verifyProgramArtifacts(ctx, programArtifacts{
-		Code:         code,
-		Dependencies: dependencies,
-	})
+	verified, err := verifyProgramArtifact(ctx, artifact)
 	if err != nil {
 		return nil, err
 	}
 	canonical, err := canonicalProgramVerification(programVerification{
-		FormatVersion: ProgramReceiptFormatVersion,
+		FormatVersion: programVerificationVersion,
 		Index:         verified.Index(),
 	})
 	if err != nil {
@@ -212,27 +196,27 @@ func artifactFromDescriptor(
 	fd int,
 	role artifactRole,
 	mediaType string,
-) (programArtifact, error) {
+) (artifactInput, error) {
 	if err := checkSquashFSContext(ctx); err != nil {
-		return programArtifact{}, err
+		return artifactInput{}, err
 	}
 	var stat unix.Stat_t
 	if err := unix.Fstat(fd, &stat); err != nil {
-		return programArtifact{}, &artifactInfrastructureError{
+		return artifactInput{}, &artifactInfrastructureError{
 			cause: fmt.Errorf("stat artifact descriptor: %w", err),
 		}
 	}
 	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Size < 0 {
-		return programArtifact{}, &artifactInfrastructureError{
+		return artifactInput{}, &artifactInfrastructureError{
 			cause: errors.New("artifact descriptor is not a regular file"),
 		}
 	}
 	physicalLimit, err := artifactPhysicalLimit(role)
 	if err != nil {
-		return programArtifact{}, err
+		return artifactInput{}, err
 	}
 	if stat.Size < 1 || stat.Size > physicalLimit {
-		return programArtifact{}, &artifactContentError{
+		return artifactInput{}, &artifactContentError{
 			cause: fmt.Errorf(
 				"artifact physical size = %d, want within [1,%d]",
 				stat.Size,
@@ -244,13 +228,13 @@ func artifactFromDescriptor(
 	source := verifierFDReader{fd: fd}
 	digest, err := digestVerifierDescriptor(ctx, source, stat.Size)
 	if err != nil {
-		return programArtifact{}, err
+		return artifactInput{}, err
 	}
 	reader, err := newSquashFSArtifactReader(ctx, source, stat.Size, role)
 	if err != nil {
-		return programArtifact{}, err
+		return artifactInput{}, err
 	}
-	return programArtifact{
+	return artifactInput{
 		Digest:    "sha256:" + digest,
 		SizeBytes: stat.Size,
 		MediaType: mediaType,

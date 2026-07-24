@@ -246,7 +246,7 @@ func (builder Builder) build(
 		},
 	}
 
-	var receipt *ProgramReceipt
+	var programOutput *ProgramOutput
 	if len(buildPlanProgramDeclarations(plan)) != 0 {
 		program, err := EncodeProgram(
 			ctx,
@@ -268,8 +268,7 @@ func (builder Builder) build(
 			ProgramProofRequest{
 				FormatVersion: BuildGuestFormatVersion,
 				Runtime:       target.Runtime,
-				Code:          program.Receipt.Code,
-				Dependencies:  program.Receipt.Dependencies,
+				Program:       program.Output.Artifact,
 			},
 			runtimeSnapshot,
 			program,
@@ -283,14 +282,14 @@ func (builder Builder) build(
 				errors.New(proof.Error.Message),
 			), nil
 		}
-		if err := ValidateProgramProof(proof, program.Receipt.Index); err != nil {
+		if err := ValidateProgramProof(proof, program.Output.Index); err != nil {
 			return BuildResult{}, err
 		}
 		published, err := program.Publish(ctx, builder.CAS)
 		if err != nil {
 			return BuildResult{}, err
 		}
-		receipt = &published
+		programOutput = &published
 	}
 
 	images, err := builder.buildWorkspaceImages(
@@ -313,7 +312,7 @@ func (builder Builder) build(
 		Succeeded: &BuildSucceeded{
 			Plan:            plan,
 			Provenance:      provenance,
-			ProgramReceipt:  receipt,
+			Program:         programOutput,
 			WorkspaceImages: images,
 		},
 	}

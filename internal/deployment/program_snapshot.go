@@ -9,42 +9,26 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 )
 
-type ProgramSnapshot struct {
-	Code         *ArtifactSnapshot
-	Dependencies *ArtifactSnapshot
-}
-
 func SnapshotProgram(
 	ctx context.Context,
 	store cas.Reader,
 	directory string,
-	code ProgramDescriptor,
-	dependencies ProgramDescriptor,
-) (*ProgramSnapshot, error) {
+	program ProgramDescriptor,
+) (*ArtifactSnapshot, error) {
 	if store == nil {
-		return nil, errors.New("Program store is required")
+		return nil, errors.New("program store is required")
 	}
-	codeSnapshot, err := snapshotProgramObject(ctx, store, directory, code, codeArtifact)
-	if err != nil {
-		return nil, fmt.Errorf("snapshot Program code: %w", err)
-	}
-	dependencySnapshot, err := snapshotProgramObject(
+	snapshot, err := snapshotProgramObject(
 		ctx,
 		store,
 		directory,
-		dependencies,
-		dependencyArtifact,
+		program,
+		programArtifact,
 	)
 	if err != nil {
-		return nil, errors.Join(
-			fmt.Errorf("snapshot Program dependencies: %w", err),
-			codeSnapshot.Close(),
-		)
+		return nil, fmt.Errorf("snapshot Program: %w", err)
 	}
-	return &ProgramSnapshot{
-		Code:         codeSnapshot,
-		Dependencies: dependencySnapshot,
-	}, nil
+	return snapshot, nil
 }
 
 func snapshotProgramObject(
@@ -99,12 +83,15 @@ func VerifyProgram(
 	ctx context.Context,
 	unitCgroupRoot string,
 	leaseIdentity string,
-	snapshot *ProgramSnapshot,
+	snapshot *ArtifactSnapshot,
 ) (ProgramIndex, error) {
 	if ctx == nil {
 		return ProgramIndex{}, errors.New("Program verification context is nil")
 	}
-	code, dependencies, err := snapshot.verifiers()
+	if snapshot == nil {
+		return ProgramIndex{}, errors.New("program Artifact snapshot is closed")
+	}
+	artifact, err := snapshot.verifier()
 	if err != nil {
 		return ProgramIndex{}, err
 	}
@@ -112,7 +99,7 @@ func VerifyProgram(
 		job:            programVerifierJob,
 		unitCgroupRoot: unitCgroupRoot,
 		leaseIdentity:  leaseIdentity,
-		artifacts:      []*os.File{code, dependencies},
+		artifacts:      []*os.File{artifact},
 	})
 	if err != nil {
 		return ProgramIndex{}, err
@@ -134,35 +121,4 @@ func VerifyProgram(
 			result.kind,
 		)
 	}
-}
-
-func (snapshot *ProgramSnapshot) verifiers() (*os.File, *os.File, error) {
-	if snapshot == nil || snapshot.Code == nil || snapshot.Dependencies == nil {
-		return nil, nil, errors.New("Program Artifact snapshot is closed")
-	}
-	code, err := snapshot.Code.verifier()
-	if err != nil {
-		return nil, nil, err
-	}
-	dependencies, err := snapshot.Dependencies.verifier()
-	if err != nil {
-		return nil, nil, err
-	}
-	return code, dependencies, nil
-}
-
-func (snapshot *ProgramSnapshot) Close() error {
-	if snapshot == nil {
-		return nil
-	}
-	var err error
-	if snapshot.Code != nil {
-		err = errors.Join(err, snapshot.Code.Close())
-		snapshot.Code = nil
-	}
-	if snapshot.Dependencies != nil {
-		err = errors.Join(err, snapshot.Dependencies.Close())
-		snapshot.Dependencies = nil
-	}
-	return err
 }
