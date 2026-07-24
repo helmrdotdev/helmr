@@ -153,9 +153,6 @@ variables {
   runtime_store_uri            = "s3://helmr-test-runtime/objects"
   runtime_store_bucket_arn     = "arn:aws:s3:::helmr-test-runtime"
   runtime_store_kms_key_arn    = "arn:aws:kms:us-east-1:000000000000:key/11111111-1111-1111-1111-111111111111"
-  manager_store_uri            = "s3://helmr-test-managers"
-  manager_store_bucket_arn     = "arn:aws:s3:::helmr-test-managers"
-  manager_store_kms_key_arn    = "arn:aws:kms:us-east-1:000000000000:key/22222222-2222-2222-2222-222222222222"
   build_policy_digest          = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   clickhouse_url               = "https://clickhouse.example.invalid"
   github_oauth_client_id       = "test-client"
@@ -203,7 +200,6 @@ run "control_installs_exact_policy_before_start" {
     condition = (
       { for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_BUILD_POLICY_PATH == "/release/build-policy.json" &&
       { for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_RUNTIME_STORE_URI == var.runtime_store_uri &&
-      { for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_MANAGER_STORE_URI == var.manager_store_uri &&
       !contains([for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name], "HELMR_RETAINED_CAS_URI")
     )
     error_message = "Only the main Control container must load the installed policy and immutable runtime store."
@@ -213,10 +209,8 @@ run "control_installs_exact_policy_before_start" {
     condition = (
       !contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name], "HELMR_BUILD_POLICY_PATH") &&
       !contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name], "HELMR_RUNTIME_STORE_URI") &&
-      !contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name], "HELMR_MANAGER_STORE_URI") &&
       !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "HELMR_BUILD_POLICY_PATH") &&
-      !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "HELMR_RUNTIME_STORE_URI") &&
-      !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "HELMR_MANAGER_STORE_URI")
+      !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "HELMR_RUNTIME_STORE_URI")
     )
     error_message = "Dispatcher and migration must not receive build policy configuration."
   }
@@ -224,16 +218,12 @@ run "control_installs_exact_policy_before_start" {
   assert {
     condition = (
       strcontains(aws_iam_role_policy.control_task.policy, "${var.runtime_store_bucket_arn}/objects/sha256/*") &&
-      strcontains(aws_iam_role_policy.control_task.policy, "${var.manager_store_bucket_arn}/v0/claims/sha256/*") &&
-      strcontains(aws_iam_role_policy.control_task.policy, "${var.manager_store_bucket_arn}/v0/capsules/sha256/*") &&
-      strcontains(aws_iam_role_policy.control_task.policy, "${var.manager_store_bucket_arn}/v0/trees/sha256/*") &&
-      strcontains(aws_iam_role_policy.control_task.policy, var.manager_store_kms_key_arn) &&
       !strcontains(aws_iam_role_policy.control_task.policy, "PublishRetainedArtifacts") &&
       !strcontains(aws_iam_role_policy.control_task.policy, "ReadRetainedArtifacts") &&
       !strcontains(aws_iam_role_policy.control_task.policy, "${var.runtime_store_bucket_arn}/control/runtime") &&
       aws_ecs_task_definition.migration.task_role_arn == aws_iam_role.migration_task.arn &&
       aws_iam_role.migration_task.name == "helmr-test-migration-task"
     )
-    error_message = "Control IAM must read only runtime objects, exclude rollout lineage and retained artifacts, and not leak to migration."
+    error_message = "Control IAM must read only runtime objects, exclude Manager storage, rollout lineage, and retained artifacts, and not leak to migration."
   }
 }

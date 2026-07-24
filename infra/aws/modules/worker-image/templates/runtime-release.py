@@ -8,6 +8,9 @@ import tarfile
 FIXED = {
     "catalog.json",
     "catalog.sigstore.json",
+    "manager-release/catalog.json",
+    "manager-release/catalog.sigstore.json",
+    "manager-release/trusted-root.json",
     "trusted-root.json",
     "toolchain-release/catalog.json",
     "toolchain-release/catalog.sigstore.json",

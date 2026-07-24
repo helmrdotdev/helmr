@@ -128,6 +128,11 @@ in
           inherit releaseTool squashfsTools;
         };
     }
+// lib.optionalAttrs (system == "x86_64-linux") {
+  managerRelease = pkgs.callPackage ./managers.nix {
+    inherit squashfsTools;
+  };
+}
 // lib.optionalAttrs (firecrackerRelease != null) {
   firecrackerRuntime = pkgs.stdenvNoCC.mkDerivation {
     pname = "firecracker-runtime";

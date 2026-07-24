@@ -356,36 +356,6 @@ variable "runtime_store_kms_key_arn" {
   }
 }
 
-variable "manager_store_uri" {
-  description = "Dedicated immutable package-manager authority store URI."
-  type        = string
-
-  validation {
-    condition     = can(regex("^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.manager_store_uri))
-    error_message = "manager_store_uri must be an S3 bucket URI without a prefix."
-  }
-}
-
-variable "manager_store_bucket_arn" {
-  description = "S3 bucket ARN backing manager_store_uri."
-  type        = string
-
-  validation {
-    condition     = can(regex("^arn:[^:]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.manager_store_bucket_arn))
-    error_message = "manager_store_bucket_arn must be an S3 bucket ARN."
-  }
-}
-
-variable "manager_store_kms_key_arn" {
-  description = "KMS key ARN used by the package-manager authority store."
-  type        = string
-
-  validation {
-    condition     = can(regex("^arn:[^:]+:kms:[^:]+:[0-9]{12}:key/[0-9a-fA-F-]+$", var.manager_store_kms_key_arn))
-    error_message = "manager_store_kms_key_arn must be a KMS key ARN."
-  }
-}
-
 variable "build_policy_digest" {
   description = "Exact build-policy digest installed by build-capable workers; must be null for run-only workers."
   type        = string

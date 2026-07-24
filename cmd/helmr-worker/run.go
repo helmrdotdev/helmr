@@ -57,7 +57,7 @@ func run(log *slog.Logger) error {
 	var toolCorpus *deployment.ToolchainCorpus
 	var runtimeStore cas.Reader
 	var managerCatalog *deployment.ManagerCatalog
-	var managerStore *deployment.ManagerStore
+	var managerTrees *deployment.ManagerTrees
 	var squashfsEncoder string
 	runtimeCatalog, err := deployment.LoadRuntimeCatalog()
 	if err != nil {
@@ -227,14 +227,11 @@ func run(log *slog.Logger) error {
 		if err := validateWorkerStores(cfg); err != nil {
 			return err
 		}
-		managerStore, err = deployment.NewManagerS3(ctx, cfg.ManagerStoreURI)
-		if err != nil {
-			return fmt.Errorf("configure Manager store: %w", err)
-		}
 		managerCatalog, err = deployment.LoadManagerCatalog()
 		if err != nil {
 			return fmt.Errorf("authenticate Manager catalog: %w", err)
 		}
+		managerTrees = &deployment.ManagerTrees{}
 		squashfsEncoder, err = deployment.FindEncoder()
 		if err != nil {
 			return fmt.Errorf("resolve SquashFS encoder: %w", err)
@@ -514,7 +511,7 @@ func run(log *slog.Logger) error {
 			CAS:            store,
 			RuntimeStore:   runtimeStore,
 			ManagerCatalog: managerCatalog,
-			Managers:       managerStore,
+			ManagerTrees:   managerTrees,
 			Policy:         buildPolicy,
 			Toolchains:     toolCorpus,
 			Connector:      runtimeConnector,
@@ -651,31 +648,14 @@ func fitsBuildHostCompute(resources compute.ResourceVector) bool {
 }
 
 func validateWorkerStores(cfg config.Worker) error {
-	pairs := []struct {
-		label  string
-		first  string
-		second string
-	}{
-		{
-			label:  "ordinary CAS and managed runtime store",
-			first:  cfg.CASURI,
-			second: cfg.RuntimeStoreURI,
-		},
-		{
-			label:  "ordinary CAS and Manager store",
-			first:  cfg.CASURI,
-			second: cfg.ManagerStoreURI,
-		},
-		{
-			label:  "managed runtime and Manager stores",
-			first:  cfg.RuntimeStoreURI,
-			second: cfg.ManagerStoreURI,
-		},
-	}
-	for _, pair := range pairs {
-		if err := cas.ValidateDistinctS3Stores(pair.first, pair.second); err != nil {
-			return fmt.Errorf("validate %s: %w", pair.label, err)
-		}
+	if err := cas.ValidateDistinctS3Stores(
+		cfg.CASURI,
+		cfg.RuntimeStoreURI,
+	); err != nil {
+		return fmt.Errorf(
+			"validate ordinary CAS and managed runtime store: %w",
+			err,
+		)
 	}
 	return nil
 }

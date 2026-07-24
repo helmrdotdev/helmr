@@ -61,4 +61,7 @@ func TestManagerCatalogLoaderUsesFixedReleasePaths(t *testing.T) {
 		managerTrustedRootPath != "/usr/lib/helmr/manager-release/trusted-root.json" {
 		t.Fatal("Manager catalog loader paths are not fixed release inputs")
 	}
+	if managerObjectDirectory != "/usr/lib/helmr/manager-release/objects/sha256" {
+		t.Fatal("Manager object directory is not a fixed release input")
+	}
 }

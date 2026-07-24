@@ -27,7 +27,7 @@ type Builder struct {
 	CAS            cas.Store
 	RuntimeStore   cas.Reader
 	ManagerCatalog *ManagerCatalog
-	Managers       *ManagerStore
+	ManagerTrees   *ManagerTrees
 	Policy         *BuildPolicy
 	Toolchains     *ToolchainCorpus
 	Connector      vm.Connector
@@ -116,7 +116,7 @@ func (builder Builder) build(
 		return failedBuild(BuildFailureManagerNotFound, err), nil
 	}
 
-	managerSnapshot, err := builder.Managers.Snapshot(
+	managerSnapshot, err := builder.ManagerTrees.Snapshot(
 		ctx,
 		builder.WorkDir,
 		manager,
@@ -322,8 +322,8 @@ func (builder Builder) validate() error {
 		return errors.New("managed Runtime store is required")
 	case builder.ManagerCatalog == nil:
 		return errors.New("Manager catalog is required")
-	case builder.Managers == nil:
-		return errors.New("Manager store is required")
+	case builder.ManagerTrees == nil:
+		return errors.New("Manager trees are required")
 	case builder.Policy == nil:
 		return errors.New("build policy is required")
 	case builder.Toolchains == nil:

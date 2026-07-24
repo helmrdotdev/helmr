@@ -126,18 +126,26 @@ require_text "--trusted-root \"\$trusted_root\"" "$dispatch_job" \
 
 require_text "name: runtime-release-assets" "$control_job" \
 	"control image does not consume the verified runtime release"
+require_text "name: manager-release-assets" "$control_job" \
+	"control image does not consume the verified Manager release"
 require_text "verify-archive" "$control_job" \
 	"control image does not re-verify its complete runtime distribution"
 require_text "CONTROL_IMAGE_RUNTIME_RELEASE_DIR=\"\$verified\"" "$control_job" \
 	"control image build is not bound to verifier output"
+require_text "CONTROL_IMAGE_MANAGER_RELEASE_DIR=\"\$GITHUB_WORKSPACE/dist/manager-release\"" "$control_job" \
+	"control image build is not bound to the Manager release"
 require_text "name: runtime-release-assets" "$worker_job" \
 	"worker AMI does not consume the verified runtime release"
+require_text "name: manager-release-assets" "$worker_job" \
+	"worker AMI does not consume the verified Manager release"
 require_text "verify-worker" "$worker_job" \
 	"worker AMI does not re-verify its architecture package"
-require_text "--snapshot \"\$verified_package\"" "$worker_job" \
-	"worker AMI does not stage the verifier-owned package snapshot"
+require_text "--snapshot \"\$verified_runtime\"" "$worker_job" \
+	"worker AMI does not snapshot the verifier-owned runtime package"
+require_text "python3 scripts/package-worker-release.py" "$worker_job" \
+	"worker AMI does not compose the verified runtime and Manager release"
 require_text "WORKER_IMAGE_RELEASE_PACKAGE=\"\$verified_package\"" "$worker_job" \
-	"worker AMI stages the original package instead of the verified snapshot"
+	"worker AMI does not stage the composed verified package"
 require_text "WORKER_IMAGE_RELEASE_PACKAGE_SHA256=\"\${digest#sha256:}\"" "$worker_job" \
 	"worker package staging is not bound to the verifier digest"
 require_text "WORKER_IMAGE_RELEASE_PACKAGE_SIZE_BYTES=\"\$size_bytes\"" "$worker_job" \
@@ -161,6 +169,8 @@ require_text "dist/worker/worker-artifacts.json" "$publish_job" \
 
 require_text "CONTROL_IMAGE_RUNTIME_RELEASE_DIR is required" "$control_builder" \
 	"control image builder accepts an unbound runtime release"
+require_text "CONTROL_IMAGE_MANAGER_RELEASE_DIR is required" "$control_builder" \
+	"control image builder accepts an unbound Manager release"
 require_text "COPY --chown=0:0 --chmod=0444 runtime-release/catalog.json" "$control_builder" \
 	"control image catalog is not installed root-owned and read-only"
 require_text "COPY --chown=0:0 --chmod=0444 runtime-release/catalog.sigstore.json" "$control_builder" \
@@ -173,6 +183,12 @@ require_text "COPY --chown=0:0 --chmod=0444 toolchain-release/catalog.sigstore.j
 	"control image standard-toolchain bundle is not installed root-owned and read-only"
 require_text "COPY --chown=0:0 --chmod=0444 toolchain-release/trusted-root.json" "$control_builder" \
 	"control image standard-toolchain trusted root is not installed root-owned and read-only"
+require_text "COPY --chown=0:0 --chmod=0444 manager-release/catalog.json" "$control_builder" \
+	"control image Manager catalog is not installed root-owned and read-only"
+require_text "COPY --chown=0:0 --chmod=0444 manager-release/catalog.sigstore.json" "$control_builder" \
+	"control image Manager bundle is not installed root-owned and read-only"
+require_text "COPY --chown=0:0 --chmod=0444 manager-release/trusted-root.json" "$control_builder" \
+	"control image Manager trusted root is not installed root-owned and read-only"
 
 if ! rg -F "scripts/build-config-inspector.sh" "$workflow" >/dev/null; then
 	printf 'release workflow does not refresh the config inspector before CLI builds\n' >&2

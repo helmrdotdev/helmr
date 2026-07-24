@@ -65,7 +65,6 @@ type Server struct {
 	buildPolicy           *deployment.BuildPolicy
 	runtimeStore          cas.Reader
 	managerCatalog        *deployment.ManagerCatalog
-	managerStore          *deployment.ManagerStore
 	secrets               SecretManager
 	claims                idempotency.Manager
 	secretDelivery        SecretDeliveryOpener
@@ -128,7 +127,6 @@ type ServerConfig struct {
 	BuildPolicy          *deployment.BuildPolicy
 	RuntimeStore         cas.Reader
 	ManagerCatalog       *deployment.ManagerCatalog
-	ManagerStore         *deployment.ManagerStore
 	Secrets              SecretManager
 	Idempotency          idempotency.Manager
 	SecretDelivery       SecretDeliveryOpener
@@ -249,7 +247,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		buildPolicy:           cfg.BuildPolicy,
 		runtimeStore:          cfg.RuntimeStore,
 		managerCatalog:        cfg.ManagerCatalog,
-		managerStore:          cfg.ManagerStore,
 		secrets:               cfg.Secrets,
 		claims:                cfg.Idempotency,
 		secretDelivery:        cfg.SecretDelivery,

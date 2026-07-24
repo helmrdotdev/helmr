@@ -38,6 +38,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"clickhouse":          {},
 		"clickhouse/schema":   {"clickhouse"},
 		"client":              {"api", "sha256sum", "version"},
+		"cmd/manager-release": {"deployment"},
 		"cmd/runtime-release": {"deployment"},
 		"cmd/tool-release":    {"deployment", "jsoncanon"},
 		"compute":             {"sha256sum"},

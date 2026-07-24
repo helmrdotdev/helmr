@@ -31,7 +31,6 @@ func LoadControl() (Control, error) {
 		CASURI:                 envString("HELMR_CAS_URI"),
 		BuildPolicyPath:        envString("HELMR_BUILD_POLICY_PATH"),
 		RuntimeStoreURI:        envString("HELMR_RUNTIME_STORE_URI"),
-		ManagerStoreURI:        envString("HELMR_MANAGER_STORE_URI"),
 		WorkerTokenSigningKey:  envString("HELMR_WORKER_TOKEN_SIGNING_KEY"),
 		WorkerGroupsJSON:       envString("HELMR_WORKER_GROUPS"),
 		SetupToken:             envString("HELMR_SETUP_TOKEN"),
@@ -108,9 +107,6 @@ func LoadControl() (Control, error) {
 	}
 	if cfg.RuntimeStoreURI == "" {
 		return cfg, errors.New("HELMR_RUNTIME_STORE_URI is required")
-	}
-	if cfg.ManagerStoreURI == "" {
-		return cfg, errors.New("HELMR_MANAGER_STORE_URI is required")
 	}
 	if cfg.WorkerTokenSigningKey == "" {
 		return cfg, errors.New("HELMR_WORKER_TOKEN_SIGNING_KEY is required")

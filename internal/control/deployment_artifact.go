@@ -79,7 +79,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.buildPolicy == nil || s.runtimeStore == nil ||
-		s.managerCatalog == nil || s.managerStore == nil {
+		s.managerCatalog == nil {
 		writeError(w, unavailable(errors.New("managed runtime is not configured")))
 		return
 	}
@@ -107,10 +107,6 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		writeError(w, badRequest(err))
-		return
-	}
-	if err := s.managerStore.Validate(r.Context(), manager); err != nil {
-		writeError(w, unavailable(fmt.Errorf("resolve certified Manager bytes: %w", err)))
 		return
 	}
 	file, err := os.Open(archivePath)

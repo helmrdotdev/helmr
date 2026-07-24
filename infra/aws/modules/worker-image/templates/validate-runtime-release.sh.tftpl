@@ -3,6 +3,7 @@ set -euo pipefail
 
 release_dir=/usr/lib/helmr/runtime-release
 toolchain_release_dir=/usr/lib/helmr/toolchain-release
+manager_release_dir=/usr/lib/helmr/manager-release
 umask 077
 release_stage=$(mktemp -d /tmp/helmr-runtime-release-validation.XXXXXXXX)
 trap 'rm -rf -- "$release_stage"' EXIT
@@ -102,3 +103,43 @@ done < <(
     -mindepth 1 -maxdepth 1 -type f -printf '%f\n' |
     LC_ALL=C sort
 )
+
+manager_files=(
+  catalog.json
+  catalog.sigstore.json
+  trusted-root.json
+)
+test -d "$manager_release_dir"
+test ! -L "$manager_release_dir"
+test "$(stat -c '%u:%g' "$manager_release_dir")" = "0:0"
+test "$(stat -c '%a' "$manager_release_dir")" = "755"
+test "$(find "$manager_release_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)" = \
+  "$(printf '%s\n' "$${manager_files[@]}" objects | LC_ALL=C sort)"
+for file in "$${manager_files[@]}"; do
+  path="$manager_release_dir/$file"
+  test -f "$path"
+  test ! -L "$path"
+  test "$(stat -c '%u:%g' "$path")" = "0:0"
+  test "$(stat -c '%a' "$path")" = "444"
+  test "$(sha256sum "$path" | awk '{print $1}')" = \
+    "$(sha256sum "$release_extract/manager-release/$file" | awk '{print $1}')"
+done
+expected_managers="$(
+  jq -er '
+    .managers[] |
+    select(.architecture == "x86_64") |
+    [.tree.digest[7:], (.tree.sizeBytes | tostring)] |
+    @tsv
+  ' "$manager_release_dir/catalog.json" | LC_ALL=C sort
+)"
+test -n "$expected_managers"
+test "$(
+  find "$manager_release_dir/objects/sha256" \
+    -mindepth 1 -maxdepth 1 -type f -printf '%f\n' |
+    LC_ALL=C sort
+)" = "$(printf '%s\n' "$expected_managers" | cut -f1)"
+while IFS=$'\t' read -r digest size_bytes; do
+  path="$manager_release_dir/objects/sha256/$digest"
+  test "$(stat -c '%s' "$path")" = "$size_bytes"
+  test "$(sha256sum "$path" | awk '{print $1}')" = "$digest"
+done <<<"$expected_managers"

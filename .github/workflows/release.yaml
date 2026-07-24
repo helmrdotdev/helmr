@@ -63,12 +63,16 @@ jobs:
           release_dir="$work/release"
           scratch="$work/scratch"
           dist="$GITHUB_WORKSPACE/dist/runtime-release"
+          manager_dist="$GITHUB_WORKSPACE/dist/manager-release"
+          manager_asset="$GITHUB_WORKSPACE/dist/manager-release.tar"
           verified_complete="$work/verified-complete"
           verified_worker="$work/verified-worker"
           tool="$work/runtime-release"
-          rm -rf "$work" "$dist"
-          mkdir -p "$downloads" "$release_dir" "$scratch" "$dist"
+          manager_tool="$work/manager-release"
+          rm -rf "$work" "$dist" "$manager_dist" "$manager_asset"
+          mkdir -p "$downloads" "$release_dir" "$scratch" "$dist" "$manager_dist"
           CGO_ENABLED=0 go build -trimpath -o "$tool" ./internal/cmd/runtime-release
+          CGO_ENABLED=0 go build -trimpath -o "$manager_tool" ./internal/cmd/manager-release
           trusted_root="$(nix build --no-link --print-out-paths .#runtimeTrustedRoot)"
 
           run_release() {
@@ -187,6 +191,43 @@ jobs:
             "$dist/runtime-release-x86_64.tar"
           chmod 0444 "$dist/runtime-release.tar" "$dist/runtime-release-x86_64.tar"
 
+          manager_published=0
+          if gh release view "$RELEASE_TAG" --json assets >"$release_json" 2>/dev/null &&
+            jq -e 'any(.assets[]; .name == "manager-release.tar")' "$release_json" >/dev/null; then
+            manager_published=1
+            gh release download "$RELEASE_TAG" \
+              --pattern manager-release.tar \
+              --dir "$GITHUB_WORKSPACE/dist"
+            test "$(tar -tf "$manager_asset" | LC_ALL=C sort | tr '\n' ' ')" = \
+              "catalog.json catalog.sigstore.json trusted-root.json "
+            tar -xf "$manager_asset" -C "$manager_dist"
+          else
+            manager="$(nix build --no-link --print-out-paths .#managerRelease)"
+            install -m 0444 "$manager/catalog.json" "$manager_dist/catalog.json"
+            install -m 0444 "$trusted_root" "$manager_dist/trusted-root.json"
+            cosign attest-blob \
+              --yes \
+              --new-bundle-format=true \
+              --bundle "$manager_dist/catalog.sigstore.json" \
+              --statement "$manager/attestation.json"
+            tar --create \
+              --file "$manager_asset" \
+              --format=ustar \
+              --sort=name \
+              --owner=0 \
+              --group=0 \
+              --numeric-owner \
+              --mode='a=r' \
+              --mtime='@0' \
+              --directory "$manager_dist" \
+              catalog.json catalog.sigstore.json trusted-root.json
+          fi
+
+          "$manager_tool" verify \
+            --catalog "$manager_dist/catalog.json" \
+            --bundle "$manager_dist/catalog.sigstore.json" \
+            --trusted-root "$manager_dist/trusted-root.json" >/dev/null
+
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             release_args=(--verify-tag --title "$RELEASE_TAG")
             case "$RELEASE_TAG" in
@@ -196,6 +237,9 @@ jobs:
           fi
           if [ "$complete_published" = 0 ]; then
             gh release upload "$RELEASE_TAG" "$dist/runtime-release.tar"
+          fi
+          if [ "$manager_published" = 0 ]; then
+            gh release upload "$RELEASE_TAG" "$manager_asset"
           fi
 
           if gh release view "$RELEASE_TAG" --json assets >"$release_json" 2>/dev/null &&
@@ -221,6 +265,16 @@ jobs:
             dist/runtime-release/runtime-release-x86_64.tar
             dist/runtime-release/runtime-release-result.json
 
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: manager-release-assets
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dist/manager-release/catalog.json
+            dist/manager-release/catalog.sigstore.json
+            dist/manager-release/trusted-root.json
+
   runtime-release-dispatch:
     name: consume runtime release
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
@@ -245,12 +299,16 @@ jobs:
           work="$RUNNER_TEMP/runtime-release"
           scratch="$work/scratch"
           dist="$GITHUB_WORKSPACE/dist/runtime-release"
+          manager_dist="$GITHUB_WORKSPACE/dist/manager-release"
+          manager_asset="$GITHUB_WORKSPACE/dist/manager-release.tar"
           complete="$work/complete"
           worker="$work/worker"
           tool="$work/runtime-release"
-          rm -rf "$work" "$dist"
-          mkdir -p "$scratch" "$dist"
+          manager_tool="$work/manager-release"
+          rm -rf "$work" "$dist" "$manager_dist" "$manager_asset"
+          mkdir -p "$scratch" "$dist" "$manager_dist"
           CGO_ENABLED=0 go build -trimpath -o "$tool" ./internal/cmd/runtime-release
+          CGO_ENABLED=0 go build -trimpath -o "$manager_tool" ./internal/cmd/manager-release
           trusted_root="$(nix build --no-link --print-out-paths .#runtimeTrustedRoot)"
           jq -e \
             --arg release "$RELEASE_TAG" \
@@ -260,6 +318,16 @@ jobs:
           gh release download "$RELEASE_TAG" \
             --pattern runtime-release.tar \
             --dir "$dist"
+          gh release download "$RELEASE_TAG" \
+            --pattern manager-release.tar \
+            --dir "$GITHUB_WORKSPACE/dist"
+          test "$(tar -tf "$manager_asset" | LC_ALL=C sort | tr '\n' ' ')" = \
+            "catalog.json catalog.sigstore.json trusted-root.json "
+          tar -xf "$manager_asset" -C "$manager_dist"
+          "$manager_tool" verify \
+            --catalog "$manager_dist/catalog.json" \
+            --bundle "$manager_dist/catalog.sigstore.json" \
+            --trusted-root "$manager_dist/trusted-root.json" >/dev/null
           sudo "$GITHUB_WORKSPACE/scripts/run-runtime-release.sh" "$tool" verify-archive \
             --tag "$RELEASE_TAG" \
             --input "$dist/runtime-release.tar" \
@@ -294,6 +362,16 @@ jobs:
             dist/runtime-release/runtime-release.tar
             dist/runtime-release/runtime-release-x86_64.tar
             dist/runtime-release/runtime-release-result.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: manager-release-assets
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dist/manager-release/catalog.json
+            dist/manager-release/catalog.sigstore.json
+            dist/manager-release/trusted-root.json
 
   cli:
     name: cli
@@ -397,6 +475,11 @@ jobs:
           name: runtime-release-assets
           path: dist/runtime-release
 
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: manager-release-assets
+          path: dist/manager-release
+
       - uses: ./.github/actions/setup-nix
 
       - name: Verify runtime release and build control image
@@ -420,6 +503,7 @@ jobs:
             --output "$verified" >/dev/null
           sudo chown -R "$(id -u):$(id -g)" "$verified"
           CONTROL_IMAGE_RUNTIME_RELEASE_DIR="$verified" \
+          CONTROL_IMAGE_MANAGER_RELEASE_DIR="$GITHUB_WORKSPACE/dist/manager-release" \
             ./scripts/build-control-image.sh "$IMAGE_URI"
           EOF
           mkdir -p dist
@@ -632,6 +716,11 @@ jobs:
           name: runtime-release-assets
           path: dist/runtime-release
 
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: manager-release-assets
+          path: dist/manager-release
+
       - name: Resolve worker AMI release identity
         id: worker_identity
         run: |
@@ -670,7 +759,8 @@ jobs:
           nix develop .#infra --command bash -seu <<'EOF'
             tool="$RUNNER_TEMP/runtime-release"
             scratch="$RUNNER_TEMP/worker-runtime-scratch"
-            verified_package="$RUNNER_TEMP/runtime-release-x86_64.verified.tar"
+            verified_runtime="$RUNNER_TEMP/runtime-release-x86_64.verified.tar"
+            verified_package="$RUNNER_TEMP/worker-release-x86_64.tar"
             result="$RUNNER_TEMP/worker-runtime-result.json"
             trusted_root="$(nix build --no-link --print-out-paths .#runtimeTrustedRoot)"
             mkdir -p "$scratch"
@@ -681,10 +771,14 @@ jobs:
               --architecture x86_64 \
               --trusted-root "$trusted_root" \
               --scratch "$scratch" \
-              --snapshot "$verified_package" >"$result"
-            sudo chown "$(id -u):$(id -g)" "$verified_package"
-            digest="$(jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' "$result")"
-            size_bytes="$(jq -er '.sizeBytes | select(type == "number" and . > 0 and floor == .)' "$result")"
+              --snapshot "$verified_runtime" >"$result"
+            sudo chown "$(id -u):$(id -g)" "$verified_runtime"
+            python3 scripts/package-worker-release.py \
+              "$verified_runtime" \
+              "$GITHUB_WORKSPACE/dist/manager-release" \
+              "$verified_package"
+            digest="sha256:$(sha256sum "$verified_package" | awk '{print $1}')"
+            size_bytes="$(stat -c %s "$verified_package")"
             export WORKER_IMAGE_RELEASE_PACKAGE="$verified_package"
             export WORKER_IMAGE_RELEASE_PACKAGE_BUCKET="$RELEASE_PACKAGE_BUCKET"
             export WORKER_IMAGE_RELEASE_PACKAGE_SHA256="${digest#sha256:}"

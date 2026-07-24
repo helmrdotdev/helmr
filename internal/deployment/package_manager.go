@@ -1,10 +1,8 @@
 package deployment
 
 import (
-	"encoding/base64"
 	"fmt"
 	"regexp"
-	"strings"
 )
 
 const (
@@ -12,7 +10,6 @@ const (
 	PackageManagerNPM = PackageManagerName("npm")
 
 	maxPackageManagerVersionBytes = 64
-	sha512DigestBytes             = 64
 )
 
 var packageManagerVersionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$`)
@@ -35,21 +32,6 @@ func validateManagerPackage(manager PackageManager) error {
 			"package manager version %q is not an admitted SemVer",
 			manager.Version,
 		)
-	}
-	return nil
-}
-
-func validatePackageIntegrity(integrity string) error {
-	const prefix = "sha512-"
-	if !strings.HasPrefix(integrity, prefix) {
-		return fmt.Errorf("integrity is not a canonical SHA-512 SRI value")
-	}
-	encoded := strings.TrimPrefix(integrity, prefix)
-	digest, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil ||
-		len(digest) != sha512DigestBytes ||
-		base64.StdEncoding.EncodeToString(digest) != encoded {
-		return fmt.Errorf("integrity is not a canonical SHA-512 SRI value")
 	}
 	return nil
 }

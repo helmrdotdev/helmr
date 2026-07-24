@@ -1435,7 +1435,7 @@ func TestBuildGuestProfilesUseExactDriveSets(t *testing.T) {
 			},
 			kernelArgs: buildInstallKernelArgs,
 		},
-		"analysis": {
+		"verify": {
 			request: vm.ConnectRequest{
 				Resources:   compute.BuildGuestResources(),
 				PIDsMax:     compute.BuildGuestPIDsMax,
@@ -1446,20 +1446,7 @@ func TestBuildGuestProfilesUseExactDriveSets(t *testing.T) {
 					{ID: vm.ManagedRuntimeDrive, Source: source},
 				},
 			},
-			kernelArgs:  buildAnalyzeKernelArgs,
-			networkless: true,
-		},
-		"proof": {
-			request: vm.ConnectRequest{
-				Resources:   compute.BuildGuestResources(),
-				PIDsMax:     compute.BuildGuestPIDsMax,
-				Networkless: true,
-				ReadOnlyDrives: []vm.ReadOnlyDrive{
-					{ID: vm.ProgramDrive, Source: source},
-					{ID: vm.ProgramRuntimeDrive, Source: source},
-				},
-			},
-			kernelArgs:  programProofKernelArgs,
+			kernelArgs:  buildVerifyKernelArgs,
 			networkless: true,
 		},
 	}

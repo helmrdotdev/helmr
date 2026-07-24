@@ -80,6 +80,17 @@ go build -tags embed_console -o /usr/local/bin/helmr ./cmd/helmr
 go build -tags embed_console -o /usr/local/bin/helmr-control ./cmd/helmr-control
 go build -tags embed_console -o /usr/local/bin/helmr-dispatcher ./cmd/helmr-dispatcher
 make images
+manager_release="$(nix build --no-link --print-out-paths .#managerRelease)"
+install -d -m 0755 /usr/lib/helmr/manager-release/objects/sha256
+while IFS= read -r object; do
+  install -m 0444 \
+    "$manager_release/objects/sha256/$object" \
+    "/usr/lib/helmr/manager-release/objects/sha256/$object"
+done < <(
+  find "$manager_release/objects/sha256" \
+    -mindepth 1 -maxdepth 1 -type f -printf '%f\n' |
+    LC_ALL=C sort
+)
 
 install -m 0755 "$(command -v firecracker)" /usr/local/bin/firecracker
 install -m 0755 "$(command -v jailer)" /usr/local/bin/jailer

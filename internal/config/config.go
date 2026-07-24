@@ -39,7 +39,6 @@ type Control struct {
 	CASURI                         string
 	BuildPolicyPath                string
 	RuntimeStoreURI                string
-	ManagerStoreURI                string
 	WorkerTokenSigningKey          string
 	WorkerGroupsJSON               string
 	SetupToken                     string
@@ -143,7 +142,6 @@ type Worker struct {
 	WorkerProviderRegion         string
 	BuildPolicyPath              string
 	RuntimeStoreURI              string
-	ManagerStoreURI              string
 	WorkerLabels                 map[string]string
 	WorkDir                      string
 	BuildCacheDir                string

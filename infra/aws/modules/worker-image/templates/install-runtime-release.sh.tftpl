@@ -26,6 +26,7 @@ python3 "$release_validator" "$release_archive" "$release_extract" x86_64
 
 release_dir=/usr/lib/helmr/runtime-release
 toolchain_release_dir=/usr/lib/helmr/toolchain-release
+manager_release_dir=/usr/lib/helmr/manager-release
 files=(
   catalog.json
   catalog.sigstore.json
@@ -47,8 +48,14 @@ install -d -o root -g root -m 0755 \
   "$toolchain_release_dir" \
   "$toolchain_release_dir/objects" \
   "$toolchain_release_dir/objects/sha256"
+install -d -o root -g root -m 0755 "$manager_release_dir"
 for file in "$${files[@]}"; do
   install -o root -g root -m 0444 "$release_extract/$file" "$release_dir/$file"
+done
+for file in catalog.json catalog.sigstore.json trusted-root.json; do
+  install -o root -g root -m 0444 \
+    "$release_extract/manager-release/$file" \
+    "$manager_release_dir/$file"
 done
 for file in "$${toolchain_files[@]}"; do
   install -o root -g root -m 0444 \

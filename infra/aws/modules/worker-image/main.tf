@@ -190,6 +190,7 @@ resource "aws_imagebuilder_component" "worker" {
                 "test -r /var/lib/helmr/images/guest/out/initramfs",
                 "test -r /var/lib/helmr/images/guest/out/rootfs.ext4",
                 "test -r /var/lib/helmr/images/guest/out/runtime-artifacts.json",
+                "test \"$(find /usr/lib/helmr/manager-release/objects/sha256 -mindepth 1 -maxdepth 1 -type f | wc -l)\" -ge 2",
                 "cd /var/lib/helmr/images/guest/out && jq -e '.schema == \"helmr.runtime-artifacts.v0\" and .arch == \"amd64\" and .runtime_abi == \"helmr.firecracker.snapshot.v0\"' runtime-artifacts.json >/dev/null && test \"$(sha256sum vmlinuz | awk '{print $1}')\" = \"$(jq -r .kernel.digest runtime-artifacts.json | sed 's/^sha256://')\" && test \"$(sha256sum initramfs | awk '{print $1}')\" = \"$(jq -r .initramfs.digest runtime-artifacts.json | sed 's/^sha256://')\" && test \"$(sha256sum rootfs.ext4 | awk '{print $1}')\" = \"$(jq -r .rootfs.digest runtime-artifacts.json | sed 's/^sha256://')\" && test \"$(stat -c %s vmlinuz)\" = \"$(jq -r .kernel.size_bytes runtime-artifacts.json)\" && test \"$(stat -c %s initramfs)\" = \"$(jq -r .initramfs.size_bytes runtime-artifacts.json)\" && test \"$(stat -c %s rootfs.ext4)\" = \"$(jq -r .rootfs.size_bytes runtime-artifacts.json)\"",
                 "test -r /etc/cni/conf.d/helmr.conflist",
                 "command -v fallocate findmnt losetup mountpoint blkid mkfs.ext4 >/dev/null",

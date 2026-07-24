@@ -52,7 +52,8 @@ initial release when any complete managed distribution already exists and refuse
 checked-in predecessor is not the current published lineage head. The mutable GitHub observation can
 only deny the descriptor; it cannot select a predecessor.
 
-`runtime-release.tar` and `runtime-release-x86_64.tar` are fixed create-only release assets. A tag
+`runtime-release.tar`, `runtime-release-x86_64.tar`, and `manager-release.tar` are fixed
+create-only release assets. A tag
 rerun verifies and consumes an existing complete distribution and byte-compares any existing
 Worker package. It never creates a second keyless signature for the same tag. A
 `workflow_dispatch` run checks out the requested existing tag, downloads and verifies its complete
@@ -64,14 +65,17 @@ for signature verification; an archive cannot nominate its own trust root.
 
 The verified release feeds both deployment targets:
 
-- the Control image receives the runtime and standard-toolchain
+- the Control image receives the runtime, standard-toolchain, and certified Manager
   `catalog.json`, `catalog.sigstore.json`, and `trusted-root.json` files,
-  installed root-owned and read-only, but no physical runtime or toolchain
+  installed root-owned and read-only, but no physical runtime, toolchain, or Manager
   objects;
 - the x86_64 Worker package contains the standard-toolchain closure objects derived from the
   authenticated catalog for that architecture under
-  `toolchain-release/objects/sha256/<digest>`. The catalog is the only serving-time manifest:
-  producer registries, composed toolsets, and Manager objects are not shipped. The verifier creates
+  `toolchain-release/objects/sha256/<digest>`, plus the authenticated Manager release documents.
+  The Worker image builds the exact Manager trees from the release-tag Nix inputs and installs them
+  under `manager-release/objects/sha256/<digest>`; Worker startup rehashes the selected tree against
+  the signed catalog before use. The catalogs are the only serving-time manifests:
+  producer registries and composed toolsets are not shipped. The verifier creates
   a read-only snapshot from the exact package bytes it authenticated. Staging exact-checks that
   snapshot against the verifier's SHA-256 and byte length, conditionally creates it in the versioned
   private bucket, downloads that exact version, and checks the bytes again before Image Builder can

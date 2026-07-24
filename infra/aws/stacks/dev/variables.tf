@@ -66,21 +66,6 @@ variable "runtime_store_kms_key_arn" {
   type        = string
 }
 
-variable "manager_store_uri" {
-  description = "Dedicated package-manager authority store URI exported by the bootstrap module."
-  type        = string
-}
-
-variable "manager_store_bucket_arn" {
-  description = "Package-manager authority store bucket ARN exported by the bootstrap module."
-  type        = string
-}
-
-variable "manager_store_kms_key_arn" {
-  description = "Package-manager authority store KMS key ARN exported by the bootstrap module."
-  type        = string
-}
-
 variable "build_policy_digest" {
   description = "Exact committed build-policy digest for this stack rollout."
   type        = string

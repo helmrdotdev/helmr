@@ -332,9 +332,6 @@ bootstrap_output() {
     runtime_store_uri \
     runtime_store_bucket_arn \
     runtime_store_kms_key_arn \
-    manager_store_uri \
-    manager_store_bucket_arn \
-    manager_store_kms_key_arn \
     retained_cas_uri \
     retained_cas_bucket_arn \
     retained_cas_kms_key_arn; do
@@ -385,7 +382,6 @@ bootstrap_destroy_prepare() {
   state_bucket="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw bucket_name)"
   artifact_bucket="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw source_artifact_bucket_name)"
   runtime_bucket_arn="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw runtime_store_bucket_arn)"
-  manager_bucket_arn="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw manager_store_bucket_arn)"
   retained_bucket_arn="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw retained_cas_bucket_arn)"
   if [ "${ALLOW_VALIDATION_EVIDENCE_DELETE:-0}" != "1" ]; then
     for protected_prefix in helmr/validation-evidence/ helmr/validation-claims/; do
@@ -406,13 +402,10 @@ bootstrap_destroy_prepare() {
     die "bootstrap teardown includes retained runtime and deployment artifacts; set ALLOW_RETAINED_STORE_DELETE=1 only for an explicitly approved teardown"
   fi
   runtime_bucket="${runtime_bucket_arn##*:}"
-  manager_bucket="${manager_bucket_arn##*:}"
   retained_bucket="${retained_bucket_arn##*:}"
   aws s3api delete-bucket-policy --region "${STATE_REGION}" --bucket "${runtime_bucket}"
-  aws s3api delete-bucket-policy --region "${STATE_REGION}" --bucket "${manager_bucket}"
   aws s3api delete-bucket-policy --region "${STATE_REGION}" --bucket "${retained_bucket}"
   delete_all_s3_object_versions "${runtime_bucket}"
-  delete_all_s3_object_versions "${manager_bucket}"
   delete_all_s3_object_versions "${retained_bucket}"
   delete_all_s3_object_versions "${artifact_bucket}"
   delete_all_s3_object_versions "${state_bucket}"
@@ -914,9 +907,6 @@ apply_bootstrap_contract_tfvars() {
   runtime_store_uri="$(bootstrap_contract_value RUNTIME_STORE_URI runtime_store_uri)"
   runtime_store_bucket_arn="$(bootstrap_contract_value RUNTIME_STORE_BUCKET_ARN runtime_store_bucket_arn)"
   runtime_store_kms_key_arn="$(bootstrap_contract_value RUNTIME_STORE_KMS_KEY_ARN runtime_store_kms_key_arn)"
-  manager_store_uri="$(bootstrap_contract_value MANAGER_STORE_URI manager_store_uri)"
-  manager_store_bucket_arn="$(bootstrap_contract_value MANAGER_STORE_BUCKET_ARN manager_store_bucket_arn)"
-  manager_store_kms_key_arn="$(bootstrap_contract_value MANAGER_STORE_KMS_KEY_ARN manager_store_kms_key_arn)"
   build_policy_digest="${DEV_BUILD_POLICY_DIGEST:-$(tfvar_value "${tfvars_file}" build_policy_digest 2>/dev/null || true)}"
   printf '%s\n' "${build_policy_digest}" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
     die "DEV_BUILD_POLICY_DIGEST must be sha256:<64 lowercase hexadecimal digits>"
@@ -924,9 +914,6 @@ apply_bootstrap_contract_tfvars() {
   set_tfvar "${tfvars_file}" "runtime_store_uri" "$(tf_quote "${runtime_store_uri}")"
   set_tfvar "${tfvars_file}" "runtime_store_bucket_arn" "$(tf_quote "${runtime_store_bucket_arn}")"
   set_tfvar "${tfvars_file}" "runtime_store_kms_key_arn" "$(tf_quote "${runtime_store_kms_key_arn}")"
-  set_tfvar "${tfvars_file}" "manager_store_uri" "$(tf_quote "${manager_store_uri}")"
-  set_tfvar "${tfvars_file}" "manager_store_bucket_arn" "$(tf_quote "${manager_store_bucket_arn}")"
-  set_tfvar "${tfvars_file}" "manager_store_kms_key_arn" "$(tf_quote "${manager_store_kms_key_arn}")"
   set_tfvar "${tfvars_file}" "build_policy_digest" "$(tf_quote "${build_policy_digest}")"
 }
 

@@ -87,7 +87,7 @@ configure_process_limit() {
 	mkdir -p /sys/fs/cgroup
 	is_mounted /sys/fs/cgroup || mount -t cgroup2 cgroup2 /sys/fs/cgroup
 	case "$profile" in
-		build-install|build-analyze|program-proof)
+		build-install|build-verify)
 			;;
 		*)
 		if ! grep -qw pids /sys/fs/cgroup/cgroup.controllers; then
@@ -311,7 +311,7 @@ guest_profile() {
 		return 1
 	fi
 	case "$profile" in
-		""|manager-acquire|build-install|build-analyze|program-proof)
+		""|build-install|build-verify)
 			echo "$profile"
 			;;
 		*)
