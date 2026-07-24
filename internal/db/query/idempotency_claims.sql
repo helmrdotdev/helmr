@@ -81,6 +81,11 @@ WITH candidates AS (
              FROM run_waits
             WHERE run_waits.child_claim_id = idempotency_claims.id
        )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM workspace_processes
+            WHERE workspace_processes.claim_id = idempotency_claims.id
+       )
      ORDER BY retired_at, id
      LIMIT sqlc.arg(row_limit)
      FOR UPDATE SKIP LOCKED

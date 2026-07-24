@@ -299,6 +299,48 @@ func TestActorOutputRequestUsesActorScopeAndCanonicalPayloadFingerprint(t *testi
 	}
 }
 
+func TestWorkspaceExecRequestUsesWorkspaceScopeAndClosedFingerprint(t *testing.T) {
+	environmentID := uuid.MustParse("00000000-0000-0000-0000-000000000301")
+	workspaceID := uuid.MustParse("00000000-0000-0000-0000-000000000601")
+	stdinHash := sha256.Sum256([]byte("input"))
+	first, err := NewWorkspaceExecRequest(environmentID, workspaceID, "exec-1", WorkspaceExecFingerprint{
+		Command:   []string{"env"},
+		Cwd:       "/workspace",
+		Env:       json.RawMessage(`{"B":"2","A":"1"}`),
+		StdinHash: stdinHash,
+		TimeoutMS: 300000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewWorkspaceExecRequest(environmentID, workspaceID, "exec-1", WorkspaceExecFingerprint{
+		Command:   []string{"env"},
+		Cwd:       "/workspace",
+		Env:       json.RawMessage("{\n\"A\":\"1\",\"B\":\"2\"}"),
+		StdinHash: stdinHash,
+		TimeoutMS: 300000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstValue := first.idempotencyRequest()
+	secondValue := second.idempotencyRequest()
+	firstFingerprint, err := firstValue.fingerprint(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondFingerprint, err := secondValue.fingerprint(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstValue.operation != operationWorkspaceExec || !bytes.Equal(firstValue.scope, workspaceID[:]) {
+		t.Fatalf("operation = %q scope = %x", firstValue.operation, firstValue.scope)
+	}
+	if firstFingerprint != secondFingerprint {
+		t.Fatalf("canonical-equivalent exec fingerprints differ: %x != %x", firstFingerprint, secondFingerprint)
+	}
+}
+
 func TestActorCloseRequestUsesActorScopeAndOperationOnlyFingerprint(t *testing.T) {
 	environmentID := uuid.MustParse("00000000-0000-0000-0000-000000000301")
 	actorID := uuid.MustParse("00000000-0000-0000-0000-000000000501")

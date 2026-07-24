@@ -486,6 +486,8 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files", s.listWorkspaceFilesHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/content", s.readWorkspaceFileHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/stat", s.statWorkspaceFileHTTP)
+		r.With(limitRequestBody(workspaceExecBodyMaxBytes)).
+			Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/exec", s.executeWorkspaceHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.getWorkspaceHTTP)
 		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/delete", s.deleteWorkspaceHTTP)
 		r.With(limitRequestBody(taskStartBodyLimit)).
@@ -568,6 +570,8 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/workspaces/{workspaceID}/files", s.listWorkspaceFilesHTTP)
 		r.Get("/workspaces/{workspaceID}/files/content", s.readWorkspaceFileHTTP)
 		r.Get("/workspaces/{workspaceID}/files/stat", s.statWorkspaceFileHTTP)
+		r.With(limitRequestBody(workspaceExecBodyMaxBytes)).
+			Post("/workspaces/{workspaceID}/exec", s.executeWorkspaceHTTP)
 		r.Get("/workspaces/{workspaceID}", s.getWorkspaceHTTP)
 		r.Post("/workspaces/{workspaceID}/delete", s.deleteWorkspaceHTTP)
 		r.With(limitActorInputBody).

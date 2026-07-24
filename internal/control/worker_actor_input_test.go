@@ -15,7 +15,7 @@ func TestParseWorkerActorInputSendRequiresExactAddress(t *testing.T) {
 	request := api.WorkerSendActorInputRequest{
 		Lease: lease, CorrelationID: uuid.Must(uuid.NewV7()).String(),
 		ActorDeclaredID: "mailbox", ActorKey: "primary",
-		Input: json.RawMessage(`{"hello":"world"}`), IdempotencyKey: " send-1 ",
+		Input: json.RawMessage(`{"hello":"world"}`), IdempotencyKey: "send-1",
 	}
 	parsed, err := parseWorkerActorInputSend(request)
 	if err != nil {
@@ -31,6 +31,10 @@ func TestParseWorkerActorInputSendRequiresExactAddress(t *testing.T) {
 		t.Fatal("both Actor address variants were accepted")
 	}
 	request.ActorID = ""
+	request.IdempotencyKey = " send-1 "
+	if _, err := parseWorkerActorInputSend(request); err == nil {
+		t.Fatal("padded idempotency key was accepted")
+	}
 	request.IdempotencyKey = string(make([]byte, maxIdempotencyKeyLength+1))
 	if _, err := parseWorkerActorInputSend(request); err == nil {
 		t.Fatal("oversized idempotency key was accepted")

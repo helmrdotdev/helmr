@@ -15,7 +15,7 @@ func TestParseWorkerActorOutputAppendNormalizesPayload(t *testing.T) {
 	request := api.WorkerAppendActorOutputRequest{
 		Lease: lease, CorrelationID: uuid.Must(uuid.NewV7()).String(),
 		Data: json.RawMessage(`{"b":2,"a":1}`), ContentType: " application/json ",
-		IdempotencyKey: " output-1 ",
+		IdempotencyKey: "output-1",
 	}
 	parsed, err := parseWorkerActorOutputAppend(request)
 	if err != nil {
@@ -36,6 +36,11 @@ func TestParseWorkerActorOutputAppendNormalizesPayload(t *testing.T) {
 	request.ContentType = " "
 	if _, err := parseWorkerActorOutputAppend(request); err == nil {
 		t.Fatal("empty normalized content type was accepted")
+	}
+	request.ContentType = "application/json"
+	request.IdempotencyKey = " output-1 "
+	if _, err := parseWorkerActorOutputAppend(request); err == nil {
+		t.Fatal("padded idempotency key was accepted")
 	}
 }
 

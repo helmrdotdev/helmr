@@ -2404,7 +2404,7 @@ CREATE TABLE workspace_processes (
     terminal_reason_code TEXT,
     error JSONB,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CHECK (jsonb_typeof(request) = 'object' AND octet_length(request::text) <= 16384),
+    CHECK (jsonb_typeof(request) = 'object' AND octet_length(request::text) <= 393216),
     CHECK (
         (kind = 'exec'
          AND stdout_cursor IS NOT NULL
@@ -2505,6 +2505,10 @@ CREATE TABLE workspace_processes (
 CREATE UNIQUE INDEX workspace_processes_workspace_active_uidx
     ON workspace_processes (workspace_id)
     WHERE state IN ('pending', 'starting', 'running', 'exit_requested');
+
+CREATE UNIQUE INDEX workspace_processes_claim_uidx
+    ON workspace_processes (claim_id)
+    WHERE claim_id IS NOT NULL;
 
 CREATE INDEX workspace_processes_worker_replay_idx
     ON workspace_processes (worker_instance_id, worker_epoch, state, created_at, id)

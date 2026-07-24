@@ -39,6 +39,7 @@ const (
 	operationTokenComplete     operation = "token.complete"
 	operationTokenCancel       operation = "token.cancel"
 	operationWorkspaceCreate   operation = "workspace.create"
+	operationWorkspaceExec     operation = "workspace.exec"
 	operationWorkspaceDelete   operation = "workspace.delete"
 )
 
@@ -114,6 +115,14 @@ type TaskStartFingerprint struct {
 type WorkspaceCreateFingerprint struct {
 	Key     *string
 	Secrets json.RawMessage
+}
+
+type WorkspaceExecFingerprint struct {
+	Command   []string
+	Cwd       string
+	Env       json.RawMessage
+	StdinHash [sha256.Size]byte
+	TimeoutMS int64
 }
 
 type ConflictError struct {
@@ -484,6 +493,53 @@ func NewWorkspaceDeleteRequest(environmentID uuid.UUID, workspaceID uuid.UUID, k
 	}}, nil
 }
 
+func NewWorkspaceExecRequest(
+	environmentID uuid.UUID,
+	workspaceID uuid.UUID,
+	key string,
+	input WorkspaceExecFingerprint,
+) (Request, error) {
+	if environmentID == uuid.Nil {
+		return nil, errors.New("idempotency environment is required")
+	}
+	if workspaceID == uuid.Nil {
+		return nil, errors.New("Workspace ID is required")
+	}
+	env, err := canonicalJSONOr(input.Env, `{}`)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize Workspace exec environment: %w", err)
+	}
+	fields, err := json.Marshal(struct {
+		Command   []string        `json:"command"`
+		Cwd       string          `json:"cwd"`
+		Env       json.RawMessage `json:"env"`
+		StdinHash string          `json:"stdinHash"`
+		TimeoutMS int64           `json:"timeoutMs"`
+	}{
+		Command:   append([]string{}, input.Command...),
+		Cwd:       input.Cwd,
+		Env:       env,
+		StdinHash: fmt.Sprintf("%x", input.StdinHash),
+		TimeoutMS: input.TimeoutMS,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode Workspace exec fingerprint: %w", err)
+	}
+	canonical, err := jsoncanon.Transform(fields)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize Workspace exec fingerprint: %w", err)
+	}
+	return sealedRequest{value: request{
+		environmentID: environmentID,
+		operation:     operationWorkspaceExec,
+		scope:         bytes.Clone(workspaceID[:]),
+		key:           key,
+		fingerprint: func(int32) ([sha256.Size]byte, error) {
+			return operationFingerprint(operationWorkspaceExec, canonical, 0, nil), nil
+		},
+	}}, nil
+}
+
 func NewTaskStartRequest(
 	environmentID uuid.UUID,
 	taskDeclaredID string,
@@ -688,7 +744,7 @@ func supportedOperation(value operation) bool {
 	case operationSecretCreate, operationSecretRotate, operationSecretRevoke,
 		operationActorStart, operationActorInputSend, operationActorOutputAppend, operationActorClose,
 		operationTaskStart, operationTokenCreate, operationTokenComplete, operationTokenCancel,
-		operationWorkspaceCreate, operationWorkspaceDelete:
+		operationWorkspaceCreate, operationWorkspaceExec, operationWorkspaceDelete:
 		return true
 	default:
 		return false

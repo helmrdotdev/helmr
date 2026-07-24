@@ -117,6 +117,7 @@ POST /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/can
 POST /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/complete
 POST /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceDeclaredID}/create
 POST /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/delete
+POST /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/exec
 POST /api/public/tokens/{tokenID}/complete
 POST /api/runs/{runID}/cancel
 POST /api/secrets/{name}/revoke
@@ -168,6 +169,7 @@ POST /api/worker/runtime-substrates/register
 POST /api/worker/startup-recovery
 POST /api/workspaces/{workspaceDeclaredID}/create
 POST /api/workspaces/{workspaceID}/delete
+POST /api/workspaces/{workspaceID}/exec
 PUT /api/projects/{projectID}/environments/{environmentID}/secrets/{name}
 PUT /api/secrets/{name}
 `), "\n")
