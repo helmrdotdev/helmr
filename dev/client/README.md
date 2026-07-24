@@ -1,23 +1,19 @@
-# Helmr Dev Client
+# Helmr Dev Client Smoke
 
-This directory contains reusable client-side diagnostics for Helmr API and SDK
-behavior. These scripts are not deployed as task workflows; they run from a
-developer machine against a control plane such as the AWS dev stack.
+This directory contains the external-client smoke run immediately before the
+AWS/Firecracker validation. It uses only the v0 public contract:
 
-## Workspace Lifecycle Smoke
+- typed Workspace create and ref by declared ID;
+- exact create and BasicExec idempotency replay;
+- synchronous one-shot BasicExec with bounded stdin, stdout, and stderr;
+- normal nonzero exit capture into the Workspace head;
+- committed file read, stat, and list without a live VM;
+- typed Task start on the same Workspace and typed Run wait;
+- authenticated Run-independent Token create, retrieve, and cancel;
+- idempotent Workspace deletion.
 
-The workspace lifecycle smoke exercises the SDK client surface for durable
-workspace APIs and task attachment:
-
-- `workspaces.create`
-- `workspaces.open`
-- `workspace.retrieve`
-- `workspace.update`
-- `workspace.materialize`
-- `workspace.connect`
-- `sessions.start` with `workspaceId`
-- `sessions.retrieve`
-- `runs.wait`
+The old public materialize/connect/stop, async process, stream, and PTY
+diagnostics were removed with those surfaces.
 
 Run from the repository root:
 
@@ -27,40 +23,9 @@ HELMR_API_KEY=... \
 dev/client/scripts/workspace-lifecycle-smoke.sh
 ```
 
-`HELMR_API_KEY` may be either an environment-bound API key or a session token.
-API keys use root API-key routes; session tokens use
-`HELMR_PROJECT`/`HELMR_ENV` scoped routes.
+The script deploys `dev/workflows` first. Set `SKIP_DEPLOY=1` to reuse the
+current deployment.
 
-Set `SKIP_DEPLOY=1` to reuse the currently deployed `dev/workflows` task
-project. The smoke creates a direct workspace from the `runtime-smoke` sandbox,
-materializes it, then attaches `runtime-smoke` task runs to that workspace as
-the VM-side probe.
-
-## Workspace Primitive Smokes
-
-Workspace primitive diagnostics are split by lifecycle authority:
-
-```sh
-bun run --cwd dev/client workspace:exec
-bun run --cwd dev/client workspace:pty
-bun run --cwd dev/client workspace:stop
-bun run --cwd dev/client workspace:files
-bun run --cwd dev/client workspace:ports
-```
-
-`workspace:exec` creates a direct workspace, materializes it, starts a real
-workspace exec, follows stdout/stderr through server push, writes and closes
-stdin, waits for the durable exit code, and verifies retained replay after the
-stream completes.
-
-`workspace:pty` creates a direct workspace, materializes it, opens a PTY,
-follows output through server push, writes input, resizes, closes, and verifies
-retained replay after terminal close.
-
-`workspace:stop` creates a direct workspace, writes a marker through a real
-workspace exec, calls `workspace.stop()`, waits for no active materialization,
-rematerializes the workspace, and verifies the marker was captured into the
-promoted system workspace version.
-
-`workspace:files` and `workspace:ports` remain planned-surface diagnostics until
-their public SDK and REST primitives are implemented.
+Set `HELMR_SMOKE_SECRET_NAME` to an Environment Secret name to additionally
+verify immutable Secret delivery to BasicExec. The secret value is never
+printed; the smoke only reports that a non-empty value was present.

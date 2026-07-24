@@ -117,27 +117,28 @@ END
 
 SELECT 'run' AS section,
        runs.id,
-       runs.task_id,
+       runs.public_id,
+       runs.entrypoint_kind,
+       runs.entrypoint_declared_id,
        runs.status,
-       runs.execution_status,
-       runs.terminal_outcome,
        runs.workspace_id,
+       runs.base_workspace_version_id,
        runs.current_run_lease_id,
-       runs.latest_run_checkpoint_id,
        runs.state_version,
        runs.current_attempt_number,
        runs.active_elapsed_ms,
        runs.active_started_at,
        runs.created_at,
        runs.started_at,
-       runs.finished_at
+       runs.terminal_at,
+       runs.terminal_reason_code
   FROM runs
  WHERE runs.id = '${run_id}'::uuid;
 
 SELECT 'run_lease' AS section,
        run_leases.id,
        run_leases.lease_sequence,
-       run_leases.task_attempt_number,
+       run_leases.attempt_number,
        run_leases.state,
        run_leases.worker_group_id,
        run_leases.worker_instance_id,
@@ -167,55 +168,47 @@ SELECT 'run_lease' AS section,
 
 SELECT 'run_wait' AS section,
        run_waits.id,
-       run_waits.wait_id,
-       waits.kind,
-       waits.state AS wait_state,
-       run_waits.state AS run_wait_state,
+       run_waits.kind,
+       run_waits.condition_state,
+       run_waits.suspension_state,
+       run_waits.token_id,
+       run_waits.child_run_id,
+       run_waits.actor_id,
        run_waits.current_run_lease_id,
        run_waits.prior_run_lease_id,
-       run_waits.run_checkpoint_id,
-       run_waits.reserved_workspace_id,
-       run_waits.reserved_workspace_version_id,
+       run_waits.suspend_checkpoint_id,
+       run_waits.handoff_resume_checkpoint_id,
+       run_waits.resume_attach_id,
+       run_waits.base_workspace_version_id,
+       run_waits.resume_workspace_version_id,
        run_waits.checkpoint_request_version,
        run_waits.checkpoint_ack_version,
-       run_waits.checkpoint_attempt_id,
        run_waits.resume_request_version,
        run_waits.resume_ack_version,
-       run_waits.hot_wait_started_at,
-       run_waits.checkpoint_requested_at,
-       run_waits.checkpoint_acknowledged_at,
-       run_waits.resume_requested_at,
-       run_waits.resume_acknowledged_at,
-       run_waits.resuming_at,
-       run_waits.released_at,
-       run_waits.terminal_at,
-       run_waits.terminal_reason_code
+       run_waits.condition_terminal_at,
+       run_waits.condition_reason_code,
+       run_waits.suspension_terminal_at,
+       run_waits.suspension_reason_code
   FROM run_waits
-  JOIN waits ON waits.org_id = run_waits.org_id
-            AND waits.id = run_waits.wait_id
  WHERE run_waits.run_id = '${run_id}'::uuid
  ORDER BY run_waits.created_at, run_waits.id;
 
 SELECT 'run_checkpoint' AS section,
        run_checkpoints.id,
+       run_checkpoints.kind,
+       run_checkpoints.attempt_number,
        run_checkpoints.run_wait_id,
        run_checkpoints.state,
        run_checkpoints.source_run_lease_id,
-       run_checkpoints.source_runtime_instance_id,
-       run_checkpoints.source_worker_instance_id,
-       run_checkpoints.source_worker_epoch,
        run_checkpoints.source_workspace_lease_id,
-       run_checkpoints.workspace_mount_id,
+       run_checkpoints.workspace_id,
        run_checkpoints.base_workspace_version_id,
-       run_checkpoints.runtime_backend,
-       run_checkpoints.runtime_identity_id,
-       run_checkpoints.runtime_substrate_id,
-       run_checkpoints.creation_started_at,
-       run_checkpoints.creation_expires_at,
+       run_checkpoints.private_workspace_version_id,
+       run_checkpoints.created_at,
        run_checkpoints.ready_at,
        run_checkpoints.invalidated_at,
        run_checkpoints.expires_at,
-       run_checkpoints.error
+       run_checkpoints.invalidation_reason_code
   FROM run_checkpoints
  WHERE run_checkpoints.run_id = '${run_id}'::uuid
  ORDER BY run_checkpoints.created_at, run_checkpoints.id;
@@ -225,14 +218,14 @@ SELECT 'run_checkpoint_artifact' AS section,
        run_checkpoint_artifacts.role,
        run_checkpoint_artifacts.ordinal,
        run_checkpoint_artifacts.artifact_id,
-       run_checkpoint_artifacts.size_bytes,
-       run_checkpoint_artifacts.media_type,
-       run_checkpoint_artifacts.digest,
-       run_checkpoint_artifacts.encrypt_duration_ms,
-       run_checkpoint_artifacts.store_duration_ms,
+       artifacts.size_bytes,
+       artifacts.media_type,
+       artifacts.digest,
        run_checkpoint_artifacts.created_at
   FROM run_checkpoint_artifacts
- WHERE run_checkpoint_artifacts.run_id = '${run_id}'::uuid
+  JOIN run_checkpoints ON run_checkpoints.id = run_checkpoint_artifacts.run_checkpoint_id
+  JOIN artifacts ON artifacts.id = run_checkpoint_artifacts.artifact_id
+ WHERE run_checkpoints.run_id = '${run_id}'::uuid
  ORDER BY run_checkpoint_artifacts.run_checkpoint_id,
           run_checkpoint_artifacts.role,
           run_checkpoint_artifacts.ordinal;
@@ -245,8 +238,9 @@ SELECT 'runtime_instance' AS section,
        runtime_instances.worker_epoch,
        runtime_instances.runtime_identity_id,
        runtime_instances.workspace_id,
-       runtime_instances.workspace_version_id,
-       runtime_instances.reserved_workspace_id,
+       runtime_instances.reserved_run_id,
+       runtime_instances.reserved_attempt_number,
+       runtime_instances.reserved_process_id,
        runtime_instances.reserved_workspace_version_id,
        runtime_instances.reservation_expires_at,
        runtime_instances.desired_state,
@@ -259,7 +253,6 @@ SELECT 'runtime_instance' AS section,
        runtime_instances.ready_at,
        runtime_instances.closing_at,
        runtime_instances.closed_at,
-       runtime_instances.failed_at,
        runtime_instances.lost_at,
        runtime_instances.reclaimed_at,
        runtime_instances.terminal_reason_code
@@ -296,12 +289,18 @@ SELECT 'workspace_mount' AS section,
        workspace_mounts.worker_instance_id,
        workspace_mounts.worker_epoch,
        workspace_mounts.workspace_id,
-       workspace_mounts.base_version_id,
+       workspace_mounts.materialized_version_id,
        workspace_mounts.state,
+       workspace_mounts.dirty_generation,
        workspace_mounts.fencing_generation,
+       workspace_mounts.finalization_kind,
+       workspace_mounts.staged_version_id,
        workspace_mounts.requested_at,
        workspace_mounts.mounted_at,
        workspace_mounts.unmounted_at,
+       workspace_mounts.stopped_at,
+       workspace_mounts.lost_at,
+       workspace_mounts.failed_at,
        workspace_mounts.terminal_at,
        workspace_mounts.terminal_reason_code
   FROM run_leases
@@ -327,9 +326,12 @@ WITH lease_evidence AS MATERIALIZED (
      WHERE run_leases.run_id = '${run_id}'::uuid
 ),
 wait_evidence AS MATERIALIZED (
-    SELECT bool_or(run_waits.state = 'hot_waiting') AS has_live_wait,
+    SELECT bool_or(
+               run_waits.condition_state = 'pending'
+               AND run_waits.suspension_state = 'hot'
+           ) AS has_live_wait,
            bool_or(
-               run_waits.run_checkpoint_id IS NOT NULL
+               run_waits.suspend_checkpoint_id IS NOT NULL
                AND run_waits.prior_run_lease_id IS NOT NULL
                AND run_waits.resume_request_version > 0
            ) AS has_checkpoint_resume
@@ -349,19 +351,23 @@ SELECT 'path_hints' AS section,
          WHEN COALESCE(wait_evidence.has_checkpoint_resume, false)
           AND EXISTS (
               SELECT 1
-                FROM run_waits
+               FROM run_waits
                WHERE run_waits.run_id = lease_evidence.run_id
                  AND run_waits.current_run_lease_id = lease_evidence.id
-                 AND run_waits.run_checkpoint_id IS NOT NULL
+                 AND (
+                     run_waits.suspend_checkpoint_id IS NOT NULL
+                     OR run_waits.handoff_resume_checkpoint_id IS NOT NULL
+                 )
           )
          THEN 'checkpoint_resume'
          WHEN COALESCE(wait_evidence.has_live_wait, false)
           AND EXISTS (
               SELECT 1
-                FROM run_waits
+               FROM run_waits
                WHERE run_waits.run_id = lease_evidence.run_id
                  AND run_waits.current_run_lease_id = lease_evidence.id
-                 AND run_waits.state = 'hot_waiting'
+                 AND run_waits.condition_state = 'pending'
+                 AND run_waits.suspension_state = 'hot'
           )
          THEN 'resident_live_wait'
          WHEN lease_evidence.ready_at IS NOT NULL

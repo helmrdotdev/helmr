@@ -1,6 +1,6 @@
 import { query, type Options as ClaudeOptions } from "@anthropic-ai/claude-agent-sdk"
 import { Agent } from "@cursor/sdk"
-import { cache, image, logger, sandbox, source, task } from "@helmr/sdk"
+import { image, source, task, workspace, type JsonValue } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 import { runCodex as runCodexTurn, type CodexThreadOptions } from "../lib/agents/codex-app-server"
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL } from "../lib/agents/models"
@@ -9,15 +9,11 @@ import { renderAgentGuideInstruction } from "../lib/guides"
 import { runCommand } from "../lib/process"
 import { z } from "zod"
 
-const dependencyInputs = source.directory(".", {
-  ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json", "!vendor", "!vendor/**"],
-})
 const guideInputs = source.directory("guides")
 
 const base = image("helmr-agent-toolchain-smoke")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
-  .copy("/opt/helmr-task", dependencyInputs)
   .copy("/opt/helmr-dev-workflows/guides", guideInputs)
   .run([
     "sh",
@@ -41,13 +37,9 @@ const base = image("helmr-agent-toolchain-smoke")
   ])
   .env("PATH", "/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
   .run(["npm", "install", "-g", "bun@1.3.10"])
-  .workdir("/opt/helmr-task")
-  .run(["bun", "install", "--frozen-lockfile"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("agent-toolchain-smoke-bun") }],
-  })
   .workdir("/workspace")
 
-const sbx = sandbox("helmr-agent-toolchain-smoke")
+export const agentToolchainSmokeWorkspace = workspace("helmr-agent-toolchain-smoke")
   .image(base)
   .resources({ cpu: 2, memory: "4Gi", disk: "32Gi" })
 
@@ -67,24 +59,17 @@ const payload = z.object({
   cursorModel: z.string().optional(),
 }).strict()
 
-interface CheckResult {
+type CheckResult = {
   readonly name: string
   readonly ok: boolean
-  readonly detail: unknown
+  readonly detail: JsonValue
 }
 
 export const agentToolchainSmoke = task({
   id: "agent-toolchain-smoke",
-  sandbox: sbx,
-  maxDuration: 1800,
-  secrets: [
-    { name: "ANTHROPIC_API_KEY", env: "ANTHROPIC_API_KEY" },
-    { name: "OPENAI_API_KEY", env: "OPENAI_API_KEY" },
-    { name: "CURSOR_API_KEY", env: "CURSOR_API_KEY" },
-    { name: "GITHUB_TOKEN", env: "GITHUB_TOKEN" },
-  ],
+  maxDuration: "30m",
   payload,
-  run: async (payload: Payload, ctx) => {
+  run: async (payload: Payload): Promise<JsonValue> => {
     const repository = payload.repository?.trim() || "helmrdotdev/helmr"
     const ref = payload.ref?.trim() || "main"
     assertRepository(repository)
@@ -129,7 +114,7 @@ export const agentToolchainSmoke = task({
       sdk,
     }
 
-    logger.info({
+    console.info({
       phase: "agent-toolchain-smoke",
       repository,
       ref,
@@ -138,7 +123,7 @@ export const agentToolchainSmoke = task({
     })
     await writeFile("agent-toolchain-smoke-report.json", `${JSON.stringify(report, null, 2)}\n`)
     if (failures.length > 0) {
-      logger.error({ phase: "agent-toolchain-smoke", repository, ref, failures })
+      console.error({ phase: "agent-toolchain-smoke", repository, ref, failures })
       throw new Error(`agent toolchain smoke failed ${failures.length} check(s): ${failureSummary(failures)}`)
     }
     return report
