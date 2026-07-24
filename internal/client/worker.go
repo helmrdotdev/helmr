@@ -192,6 +192,22 @@ func (c *Client) FailWorkspaceMount(ctx context.Context, request api.WorkerWorks
 	return response, nil
 }
 
+func (c *Client) ClaimWorkspaceExec(ctx context.Context, request api.WorkerWorkspaceExecClaimRequest) (api.WorkerWorkspaceExecClaimResponse, error) {
+	var response api.WorkerWorkspaceExecClaimResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/execs/claim", request, &response); err != nil {
+		return api.WorkerWorkspaceExecClaimResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CompleteWorkspaceExec(ctx context.Context, request api.WorkerWorkspaceExecCompleteRequest) (api.WorkspaceMountResponse, error) {
+	var response api.WorkspaceMountResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/execs/complete", request, &response); err != nil {
+		return api.WorkspaceMountResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) ClaimWorkspaceOperation(ctx context.Context, request api.WorkerWorkspaceOperationClaimRequest) (api.WorkerWorkspaceOperationClaimResponse, error) {
 	var response api.WorkerWorkspaceOperationClaimResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/mounts/operations/claim", request, &response); err != nil {

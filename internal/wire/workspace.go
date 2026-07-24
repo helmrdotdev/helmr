@@ -14,6 +14,7 @@ const (
 	GuestVerbCreatePty = "CreatePty"
 	GuestVerbResizePty = "ResizePty"
 	GuestVerbClosePty  = "ClosePty"
+	GuestVerbBasicExec = "BasicExec"
 )
 
 func GuestVerb(operationKind string) (string, error) {

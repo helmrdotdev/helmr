@@ -186,6 +186,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	placementReconciler, err := dispatch.NewPlacementReconciler(
 		runDispatchQueries, runDispatchAuthority,
 		buildDispatchQueries, buildDispatchAuthority,
+		runDispatchQueries, runDispatchAuthority,
 		queue, wakePublisher, log,
 	)
 	if err != nil {

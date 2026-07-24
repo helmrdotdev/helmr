@@ -2221,6 +2221,10 @@ CREATE TABLE workspace_mounts (
     request JSONB NOT NULL DEFAULT '{}'::jsonb,
     dirty_generation BIGINT NOT NULL DEFAULT 0 CHECK (dirty_generation >= 0),
     fencing_generation BIGINT NOT NULL DEFAULT 1 CHECK (fencing_generation > 0),
+    finalization_kind TEXT CHECK (finalization_kind IN ('capture', 'discard')),
+    finalization_reason_code TEXT,
+    finalization_error JSONB,
+    staged_version_id UUID,
     requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     mounted_at TIMESTAMPTZ,
     unmounted_at TIMESTAMPTZ,
@@ -2262,6 +2266,25 @@ CREATE TABLE workspace_mounts (
     CHECK (state <> 'unmounted' OR unmounted_at IS NOT NULL),
     CHECK (state <> 'lost' OR lost_at IS NOT NULL),
     CHECK (state <> 'failed' OR failed_at IS NOT NULL),
+    CHECK (
+        (finalization_kind IS NULL
+         AND finalization_reason_code IS NULL
+         AND finalization_error IS NULL
+         AND staged_version_id IS NULL)
+        OR
+        (finalization_kind = 'capture'
+         AND finalization_reason_code = 'workspace_exec_completed'
+         AND finalization_error IS NULL
+         AND state IN ('unmounting', 'unmounted', 'failed', 'lost'))
+        OR
+        (finalization_kind = 'discard'
+         AND finalization_reason_code IS NOT NULL
+         AND btrim(finalization_reason_code) <> ''
+         AND octet_length(finalization_reason_code) <= 128
+         AND state IN ('unmounting', 'unmounted', 'failed', 'lost'))
+    ),
+    CHECK (staged_version_id IS NULL OR finalization_kind = 'capture'),
+    CHECK (finalization_error IS NULL OR (jsonb_typeof(finalization_error) = 'object' AND octet_length(finalization_error::text) <= 16384)),
     CHECK (terminal_error IS NULL OR (jsonb_typeof(terminal_error) = 'object' AND octet_length(terminal_error::text) <= 16384))
 );
 
@@ -2361,6 +2384,8 @@ CREATE TABLE workspace_processes (
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
+    base_version_id UUID NOT NULL,
+    restore_desired_state workspace_desired_state NOT NULL,
     region_id TEXT,
     worker_group_id TEXT,
     worker_instance_id UUID,
@@ -2628,6 +2653,13 @@ ALTER TABLE workspace_mounts
     ON DELETE RESTRICT
     DEFERRABLE INITIALLY DEFERRED;
 
+ALTER TABLE workspace_mounts
+    ADD CONSTRAINT workspace_mounts_staged_version_id_fkey
+    FOREIGN KEY (workspace_id, staged_version_id)
+    REFERENCES workspace_versions(workspace_id, id)
+    ON DELETE RESTRICT
+    DEFERRABLE INITIALLY DEFERRED;
+
 ALTER TABLE workspace_leases
     ADD CONSTRAINT workspace_leases_base_version_id_fkey
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id, base_version_id)
@@ -2641,6 +2673,12 @@ ALTER TABLE workspaces
     REFERENCES workspace_versions(org_id, project_id, environment_id, workspace_id, id)
     ON DELETE RESTRICT
     DEFERRABLE INITIALLY DEFERRED;
+
+ALTER TABLE workspace_processes
+    ADD CONSTRAINT workspace_processes_base_version_id_fkey
+    FOREIGN KEY (workspace_id, base_version_id)
+    REFERENCES workspace_versions(workspace_id, id)
+    ON DELETE RESTRICT;
 
 ALTER TABLE runs
     ADD CONSTRAINT runs_base_workspace_version_fk

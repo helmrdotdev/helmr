@@ -1,10 +1,13 @@
 package control
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/api"
 )
 
 func TestNormalizeWorkspaceExecAppliesClosedDefaults(t *testing.T) {
@@ -69,5 +72,47 @@ func TestNormalizeIdempotencyKeyRejectsInsteadOfRewriting(t *testing.T) {
 		if _, err := normalizeIdempotencyKey(value); err == nil {
 			t.Fatalf("invalid idempotency key %q was accepted", value)
 		}
+	}
+}
+
+func TestNormalizeWorkspaceExecOutcomeCapturesEveryNormalExit(t *testing.T) {
+	exitCode := int32(17)
+	kind, reason, resultError, err := normalizeWorkspaceExecOutcome(
+		api.WorkerWorkspaceExecCompleteRequest{
+			Outcome: "exited", ExitCode: &exitCode,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != "capture" ||
+		reason != "workspace_exec_completed" ||
+		resultError != nil {
+		t.Fatalf("outcome = %q %q %s", kind, reason, resultError)
+	}
+}
+
+func TestNormalizeWorkspaceExecOutcomeDiscardsAbnormalExit(t *testing.T) {
+	kind, reason, resultError, err := normalizeWorkspaceExecOutcome(
+		api.WorkerWorkspaceExecCompleteRequest{
+			Outcome: "workspace_exec_timed_out",
+			Error:   json.RawMessage(`{"code":"workspace_exec_timed_out"}`),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != "discard" ||
+		reason != "workspace_exec_timed_out" ||
+		string(resultError) != `{"code":"workspace_exec_timed_out"}` {
+		t.Fatalf("outcome = %q %q %s", kind, reason, resultError)
+	}
+}
+
+func TestNormalizeWorkspaceExecOutcomeRejectsAmbiguousExit(t *testing.T) {
+	if _, _, _, err := normalizeWorkspaceExecOutcome(
+		api.WorkerWorkspaceExecCompleteRequest{Outcome: "exited"},
+	); err == nil {
+		t.Fatal("normal exit without exit_code was accepted")
 	}
 }

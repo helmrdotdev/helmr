@@ -37,6 +37,7 @@ type WorkspaceMountResponse struct {
 	ClaimAttempt         int32      `json:"claim_attempt"`
 	FencingGeneration    int64      `json:"fencing_generation"`
 	DirtyGeneration      int64      `json:"dirty_generation"`
+	FinalizationKind     string     `json:"finalization_kind,omitempty"`
 	ReservationExpiresAt *time.Time `json:"reservation_expires_at,omitempty"`
 	LastHeartbeatAt      *time.Time `json:"last_heartbeat_at,omitempty"`
 	CreatedAt            time.Time  `json:"created_at"`

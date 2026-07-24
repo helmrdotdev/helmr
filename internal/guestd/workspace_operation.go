@@ -63,6 +63,9 @@ type workspaceMountEntry struct {
 	eventsDoneOnce    sync.Once
 	processesMu       sync.Mutex
 	processes         map[string]*workspaceProcess
+	basicExecMu       sync.Mutex
+	basicExecs        map[string]*workspaceBasicExec
+	basicExecRun      func(*workspacev0.WorkspaceOperationRequest) *workspacev0.WorkspaceOperationResult
 	active            int
 	retired           bool
 	authorityMu       sync.Mutex
@@ -1191,7 +1194,7 @@ func handleWorkspaceStop(conn io.ReadWriter, registry *workspaceOperationRegistr
 	return nil
 }
 
-func handleWorkspaceOperationConnection(_ context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
+func handleWorkspaceOperationConnection(ctx context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
 	var request workspacev0.WorkspaceOperationRequest
 	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
 		return fmt.Errorf("read workspace operation request: %w", err)
@@ -1224,6 +1227,10 @@ func handleWorkspaceOperationConnection(_ context.Context, conn io.ReadWriter, r
 	fingerprint := strings.TrimSpace(envelope.RequestFingerprint)
 	if fingerprint == "" {
 		return writeWorkspaceOperationResult(conn, errors.New("workspace operation request_fingerprint is required"))
+	}
+	if strings.TrimSpace(request.OperationKind) == wire.GuestVerbBasicExec {
+		result := entry.runWorkspaceBasicExec(ctx, &request)
+		return frameio.WriteProtoFrame(conn, result)
 	}
 	actual, err := wire.RequestFingerprint(request.OperationKind, []byte(request.RequestJson))
 	if err != nil {

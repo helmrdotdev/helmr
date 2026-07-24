@@ -64,6 +64,20 @@ func (isolationRunAuthority) PlaceReadyRun(context.Context, ReadyRunCandidate, p
 	return ReadyRunPlacement{}, nil
 }
 
+func (isolationRunAuthority) PlaceWorkspaceExec(context.Context, ReadyWorkspaceExecCandidate, pgtype.Timestamptz) (WorkspaceExecPlacement, error) {
+	return WorkspaceExecPlacement{}, nil
+}
+
+type noopWorkspaceExecDiscovery struct{}
+
+func (noopWorkspaceExecDiscovery) ListPendingWorkspaceExecCandidates(context.Context, int32) ([]db.ListPendingWorkspaceExecCandidatesRow, error) {
+	return nil, nil
+}
+
+func (noopWorkspaceExecDiscovery) ExpirePendingWorkspaceExecs(context.Context, db.ExpirePendingWorkspaceExecsParams) (int64, error) {
+	return 0, nil
+}
+
 type isolationBuildAuthority struct{}
 
 func (isolationBuildAuthority) PlaceReadyBuild(context.Context, ReadyBuildCandidate, pgtype.Timestamptz) (db.LeaseQueuedDeploymentBuildRow, error) {
@@ -80,6 +94,7 @@ func TestPlacementReconcilerBlockedBuildDatabaseWorkDoesNotStarveRunPlacement(t 
 	reconciler, err := NewPlacementReconciler(
 		runDiscovery, isolationRunAuthority{},
 		blockingBuildPlacementDiscovery{started: buildStarted}, isolationBuildAuthority{},
+		noopWorkspaceExecDiscovery{}, isolationRunAuthority{},
 		isolationQueue{}, isolationWakePublisher{}, nil,
 	)
 	if err != nil {

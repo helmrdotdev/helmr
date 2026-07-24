@@ -2805,6 +2805,10 @@ type WorkspaceMount struct {
 	Request                    []byte              `json:"request"`
 	DirtyGeneration            int64               `json:"dirty_generation"`
 	FencingGeneration          int64               `json:"fencing_generation"`
+	FinalizationKind           pgtype.Text         `json:"finalization_kind"`
+	FinalizationReasonCode     pgtype.Text         `json:"finalization_reason_code"`
+	FinalizationError          []byte              `json:"finalization_error"`
+	StagedVersionID            pgtype.UUID         `json:"staged_version_id"`
 	RequestedAt                pgtype.Timestamptz  `json:"requested_at"`
 	MountedAt                  pgtype.Timestamptz  `json:"mounted_at"`
 	UnmountedAt                pgtype.Timestamptz  `json:"unmounted_at"`
@@ -2824,6 +2828,8 @@ type WorkspaceProcess struct {
 	ProjectID               pgtype.UUID           `json:"project_id"`
 	EnvironmentID           pgtype.UUID           `json:"environment_id"`
 	WorkspaceID             pgtype.UUID           `json:"workspace_id"`
+	BaseVersionID           pgtype.UUID           `json:"base_version_id"`
+	RestoreDesiredState     WorkspaceDesiredState `json:"restore_desired_state"`
 	RegionID                pgtype.Text           `json:"region_id"`
 	WorkerGroupID           pgtype.Text           `json:"worker_group_id"`
 	WorkerInstanceID        pgtype.UUID           `json:"worker_instance_id"`

@@ -29,6 +29,7 @@ type runRuntime struct {
 	restoreCheckpoint     pgtype.UUID
 	reservedRunID         pgtype.UUID
 	reservedAttempt       pgtype.Int4
+	reservedProcessID     pgtype.UUID
 	reservedVersionID     pgtype.UUID
 	reservationExpiresAt  pgtype.Timestamptz
 	reservationActive     bool
@@ -303,6 +304,7 @@ SELECT runtime_instances.id,
        runtime_instances.restore_checkpoint_id,
        runtime_instances.reserved_run_id,
        runtime_instances.reserved_attempt_number,
+       runtime_instances.reserved_process_id,
        runtime_instances.reserved_workspace_version_id,
        runtime_instances.reservation_expires_at,
        coalesce(
@@ -345,6 +347,7 @@ SELECT runtime_instances.id,
        runtime_instances.restore_checkpoint_id,
        runtime_instances.reserved_run_id,
        runtime_instances.reserved_attempt_number,
+       runtime_instances.reserved_process_id,
        runtime_instances.reserved_workspace_version_id,
        runtime_instances.reservation_expires_at,
        coalesce(
@@ -399,6 +402,7 @@ func scanRunRuntime(row rowScanner) (runRuntime, error) {
 		&runtime.restoreCheckpoint,
 		&runtime.reservedRunID,
 		&runtime.reservedAttempt,
+		&runtime.reservedProcessID,
 		&runtime.reservedVersionID,
 		&runtime.reservationExpiresAt,
 		&runtime.reservationActive,
@@ -440,6 +444,9 @@ func validateRunRuntime(
 		(runtime.runtimeIdentityID != authority.restoreRuntimeIdentityID ||
 			runtime.runtimeSubstrateID != authority.restoreSubstrateID) {
 		return errors.New("Workspace runtime does not match Checkpoint source")
+	}
+	if runtime.reservedProcessID.Valid {
+		return errors.New("Workspace runtime is reserved by a process")
 	}
 	if runtime.reservedRunID.Valid {
 		if runtime.reservedRunID != authority.runID ||

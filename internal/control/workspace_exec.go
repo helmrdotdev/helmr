@@ -259,6 +259,13 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 				return errWorkspaceBusy
 			}
 		}
+		if !authority.WorkspaceArchitecture.Valid ||
+			authority.WorkspaceArchitecture.String != "x86_64" {
+			return conflict(codedError{
+				code:    "workspace_architecture_unsupported",
+				message: "Workspace exec requires x86_64 in v0",
+			})
+		}
 		if authority.OwnerActorID.Valid || authority.OwnerRunID.Valid ||
 			authority.HasActiveLease || authority.HasActiveProcess {
 			return errWorkspaceBusy
@@ -271,6 +278,8 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 			ProjectID:            authority.ProjectID,
 			EnvironmentID:        authority.EnvironmentID,
 			WorkspaceID:          authority.ID,
+			BaseVersionID:        authority.HeadVersionID,
+			RestoreDesiredState:  authority.DesiredState,
 			Request:              normalized.requestJSON,
 			ClaimID:              acquired.Claim.ID,
 			CreatedBySubjectType: string(request.Principal.Kind),

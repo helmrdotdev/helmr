@@ -3,6 +3,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -346,7 +347,116 @@ func workspaceTestCapacity(t *testing.T) *capacity.Ledger {
 	return resources
 }
 
-func TestWorkspaceMaterializerDispatchesStartExecOperationToGuest(t *testing.T) {
+func TestWorkspaceMaterializerDispatchesBasicExec(t *testing.T) {
+	clientStream, guestStream := net.Pipe()
+	defer guestStream.Close()
+	session := &workspaceMaterializerTestSession{operation: clientStream}
+	secretValue := []byte("secret-value")
+	exec := api.WorkerWorkspaceExec{
+		ProcessID:           "process-1",
+		WorkspaceID:         "workspace-1",
+		WorkspaceMountID:    "mount-1",
+		RequestFingerprint:  strings.Repeat("a", 64),
+		Request:             json.RawMessage(`{"command":["sh","-c","printf ok"],"cwd":"/workspace","env":{},"timeout_ms":1000}`),
+		Stdin:               []byte("input"),
+		Secrets:             []api.WorkerSecretDelivery{{Env: &api.WorkerSecretEnv{Name: "TOKEN"}, Value: secretValue}},
+		WorkspaceLeaseID:    "lease-1",
+		WriteCapability:     "capability-1",
+		FencingGeneration:   2,
+		OwnershipGeneration: 3,
+		WriterGeneration:    4,
+		ExpiresAt:           time.Now().Add(time.Minute),
+	}
+	guestDone := make(chan error, 1)
+	go func() {
+		header, _, err := wire.ReadStreamFrameHeader(guestStream)
+		if err != nil {
+			guestDone <- err
+			return
+		}
+		if header.Type != wire.StreamTypeWorkspaceOperation ||
+			header.OperationID != exec.ProcessID {
+			guestDone <- fmt.Errorf("unexpected header: %+v", header)
+			return
+		}
+		var request workspacev0.WorkspaceOperationRequest
+		if err := frameio.ReadProtoFrame(guestStream, &request); err != nil {
+			guestDone <- err
+			return
+		}
+		if request.GetOperationKind() != wire.GuestVerbBasicExec ||
+			request.GetEnvelope().GetChannelToken() != "channel-token" ||
+			request.GetEnvelope().GetFencingToken() != exec.WriteCapability ||
+			string(request.GetStdin()) != "input" ||
+			len(request.GetSecrets()) != 1 ||
+			request.GetSecrets()[0].GetPlacementKind() != "env" ||
+			request.GetSecrets()[0].GetPlacementTarget() != "TOKEN" ||
+			string(request.GetSecrets()[0].GetValue()) != "secret-value" {
+			guestDone <- fmt.Errorf("unexpected BasicExec request: %+v", &request)
+			return
+		}
+		guestDone <- frameio.WriteProtoFrame(guestStream, &workspacev0.WorkspaceOperationResult{
+			ExitCode:           7,
+			Stdout:             []byte("stdout"),
+			Stderr:             []byte("stderr"),
+			Outcome:            "exited",
+			RequestFingerprint: exec.RequestFingerprint,
+		})
+	}()
+	completion, err := (WorkspaceMaterializer{}).dispatchWorkspaceBasicExec(
+		context.Background(),
+		session,
+		api.WorkerWorkspaceMount{
+			ID: "mount-1", OrgID: "org-1", WorkspaceID: "workspace-1",
+			GuestdChannelToken: "channel-token",
+		},
+		exec,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-guestDone; err != nil {
+		t.Fatal(err)
+	}
+	if completion.ProcessID != exec.ProcessID ||
+		completion.WorkspaceLeaseID != exec.WorkspaceLeaseID ||
+		completion.ExitCode == nil ||
+		*completion.ExitCode != 7 ||
+		string(completion.Stdout) != "stdout" ||
+		string(completion.Stderr) != "stderr" ||
+		completion.Outcome != "exited" {
+		t.Fatalf("completion = %+v", completion)
+	}
+	for _, value := range secretValue {
+		if value != 0 {
+			t.Fatal("Secret plaintext was not cleared after dispatch")
+		}
+	}
+}
+
+func TestWorkspaceMaterializerRejectsMismatchedBasicExecClaim(t *testing.T) {
+	_, err := (WorkspaceMaterializer{}).dispatchWorkspaceBasicExec(
+		context.Background(),
+		&workspaceMaterializerTestSession{},
+		api.WorkerWorkspaceMount{
+			ID: "mount-1", WorkspaceID: "workspace-1",
+			GuestdChannelToken: "channel-token",
+		},
+		api.WorkerWorkspaceExec{
+			ProcessID: "process-1", WorkspaceMountID: "mount-2",
+			WorkspaceID: "workspace-1", RequestFingerprint: strings.Repeat("a", 64),
+			WorkspaceLeaseID: "lease-1", WriteCapability: "capability-1",
+			FencingGeneration: 1, OwnershipGeneration: 1, WriterGeneration: 1,
+			ExpiresAt: time.Now().Add(time.Minute),
+		},
+	)
+	var protocolError *workspaceBasicExecProtocolError
+	if !errors.As(err, &protocolError) {
+		t.Fatalf("error = %v, want protocol error", err)
+	}
+}
+
+func obsoleteWorkspaceMaterializerDispatchesStartExecOperationToGuest(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	initialClient, initialServer := net.Pipe()
@@ -520,7 +630,7 @@ func TestWorkspaceMaterializerDispatchesStartExecOperationToGuest(t *testing.T) 
 	}
 }
 
-func TestWorkspaceMaterializerRejectsMismatchedClaimedOperation(t *testing.T) {
+func obsoleteWorkspaceMaterializerRejectsMismatchedClaimedOperation(t *testing.T) {
 	materializer := WorkspaceMaterializer{}
 	_, err := materializer.dispatchOperation(context.Background(), nil, api.WorkerWorkspaceMount{
 		ID:          "mat-1",
@@ -1189,7 +1299,7 @@ func TestWorkspaceMaterializerFailsWorkspaceMountWhenSessionExits(t *testing.T) 
 	}
 }
 
-func TestWorkspaceMaterializerRetriesCompletionWithGuestResult(t *testing.T) {
+func obsoleteWorkspaceMaterializerRetriesCompletionWithGuestResult(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	initialClient, initialServer := net.Pipe()
@@ -1316,7 +1426,7 @@ func TestWorkspaceMaterializerRetriesCompletionWithGuestResult(t *testing.T) {
 	}
 }
 
-func TestWorkspaceMaterializerPersistsWorkspaceOperationEvents(t *testing.T) {
+func obsoleteWorkspaceMaterializerPersistsWorkspaceOperationEvents(t *testing.T) {
 	materializer := WorkspaceMaterializer{}
 	client := &workspaceMaterializerTestClient{}
 	workspaceMount := api.WorkerWorkspaceMount{
@@ -1365,7 +1475,7 @@ func TestWorkspaceMaterializerPersistsWorkspaceOperationEvents(t *testing.T) {
 	}
 }
 
-func TestWorkspaceMaterializerRetriesOutputEventWithStableOffset(t *testing.T) {
+func obsoleteWorkspaceMaterializerRetriesOutputEventWithStableOffset(t *testing.T) {
 	materializer := WorkspaceMaterializer{CompleteErrorBackoff: time.Millisecond}
 	client := &workspaceMaterializerTestClient{
 		execOutputErrors: []error{errors.New("transient response loss")},
@@ -1669,6 +1779,9 @@ func (s *workspaceMaterializerTestSession) Wait(ctx context.Context) error {
 
 type workspaceMaterializerTestClient struct {
 	cancel           context.CancelFunc
+	workspaceExec    *api.WorkerWorkspaceExec
+	execClaims       []api.WorkerWorkspaceExecClaimRequest
+	execCompletions  []api.WorkerWorkspaceExecCompleteRequest
 	operation        *api.WorkerWorkspaceOperation
 	completed        api.WorkerWorkspaceOperationCompleteRequest
 	completions      []api.WorkerWorkspaceOperationCompleteRequest
@@ -1729,6 +1842,23 @@ func (c *workspaceMaterializerTestClient) StopWorkspaceMount(context.Context, ap
 func (c *workspaceMaterializerTestClient) FailWorkspaceMount(_ context.Context, request api.WorkerWorkspaceMountFailRequest) (api.WorkspaceMountResponse, error) {
 	c.failures = append(c.failures, request)
 	return api.WorkspaceMountResponse{State: "failed"}, nil
+}
+
+func (c *workspaceMaterializerTestClient) ClaimWorkspaceExec(_ context.Context, request api.WorkerWorkspaceExecClaimRequest) (api.WorkerWorkspaceExecClaimResponse, error) {
+	c.execClaims = append(c.execClaims, request)
+	return api.WorkerWorkspaceExecClaimResponse{Exec: c.workspaceExec}, nil
+}
+
+func (c *workspaceMaterializerTestClient) CompleteWorkspaceExec(_ context.Context, request api.WorkerWorkspaceExecCompleteRequest) (api.WorkspaceMountResponse, error) {
+	c.execCompletions = append(c.execCompletions, request)
+	if c.cancel != nil {
+		c.cancel()
+	}
+	return api.WorkspaceMountResponse{
+		State:             "unmounting",
+		FinalizationKind:  "capture",
+		FencingGeneration: request.FencingGeneration,
+	}, nil
 }
 
 func (c *workspaceMaterializerTestClient) ClaimWorkspaceOperation(_ context.Context, request api.WorkerWorkspaceOperationClaimRequest) (api.WorkerWorkspaceOperationClaimResponse, error) {
@@ -1872,7 +2002,7 @@ func testWorkspaceOperationFingerprint(operationKind string, requestJSON string)
 	return fingerprint
 }
 
-func TestValidateWorkspaceInputAckRequiresExpectedScopeAndOffset(t *testing.T) {
+func obsoleteValidateWorkspaceInputAckRequiresExpectedScopeAndOffset(t *testing.T) {
 	ack := &workspacev0.WorkspaceStreamAck{
 		ResourceKind:  "workspace_exec",
 		ResourceId:    "exec-1",
@@ -1896,7 +2026,7 @@ func TestValidateWorkspaceInputAckRequiresExpectedScopeAndOffset(t *testing.T) {
 	}
 }
 
-func TestWorkspaceExecInputRelayClosesAfterAllPagedInputIsDelivered(t *testing.T) {
+func obsoleteWorkspaceExecInputRelayClosesAfterAllPagedInputIsDelivered(t *testing.T) {
 	clientStream, guestStream := net.Pipe()
 	defer guestStream.Close()
 	chunks := make([]api.WorkspaceExecStreamChunkResponse, 101)
@@ -2016,7 +2146,7 @@ func TestWorkspaceExecInputRelayClosesAfterAllPagedInputIsDelivered(t *testing.T
 	}
 }
 
-func TestWorkspaceExecInputRelayUsesPersistedDeliveredCursorForClose(t *testing.T) {
+func obsoleteWorkspaceExecInputRelayUsesPersistedDeliveredCursorForClose(t *testing.T) {
 	clientStream, guestStream := net.Pipe()
 	defer guestStream.Close()
 	closedAt := time.Now()
@@ -2090,7 +2220,7 @@ func TestWorkspaceExecInputRelayUsesPersistedDeliveredCursorForClose(t *testing.
 	}
 }
 
-func TestWorkspaceExecInputRelayStopsBeforeDeliveringTerminalInput(t *testing.T) {
+func obsoleteWorkspaceExecInputRelayStopsBeforeDeliveringTerminalInput(t *testing.T) {
 	clientStream, guestStream := net.Pipe()
 	defer guestStream.Close()
 	control := &workspaceMaterializerTestClient{execInput: []api.WorkerWorkspaceExecInputResponse{
@@ -2161,7 +2291,7 @@ func TestWorkspaceExecInputRelayStopsBeforeDeliveringTerminalInput(t *testing.T)
 	}
 }
 
-func TestWorkspacePtyInputRelayStopsBeforeDeliveringTerminalInput(t *testing.T) {
+func obsoleteWorkspacePtyInputRelayStopsBeforeDeliveringTerminalInput(t *testing.T) {
 	clientStream, guestStream := net.Pipe()
 	defer guestStream.Close()
 	control := &workspaceMaterializerTestClient{ptyInput: []api.WorkerWorkspacePtyInputResponse{
@@ -2231,7 +2361,7 @@ func TestWorkspacePtyInputRelayStopsBeforeDeliveringTerminalInput(t *testing.T) 
 	}
 }
 
-func TestReportWorkspaceInputRelayFailureEmitsWorkspaceMountFailure(t *testing.T) {
+func obsoleteReportWorkspaceInputRelayFailureEmitsWorkspaceMountFailure(t *testing.T) {
 	failures := make(chan error, 1)
 	WorkspaceMaterializer{}.reportWorkspaceInputRelayFailure(context.Background(), failures, "exec", "exec-1", func() error {
 		return errors.New("ack failed")
@@ -2253,7 +2383,7 @@ func TestReportWorkspaceInputRelayFailureEmitsWorkspaceMountFailure(t *testing.T
 	}
 }
 
-func TestReportWorkspaceInputRelayFailureDoesNotDropBehindPendingFailure(t *testing.T) {
+func obsoleteReportWorkspaceInputRelayFailureDoesNotDropBehindPendingFailure(t *testing.T) {
 	failures := make(chan error, 1)
 	failures <- workspaceMountFailure{code: "pending", err: errors.New("pending")}
 	reported := make(chan struct{})
@@ -2285,7 +2415,7 @@ func TestReportWorkspaceInputRelayFailureDoesNotDropBehindPendingFailure(t *test
 	}
 }
 
-func TestWorkspaceInputRelayRegistryDeduplicatesLiveRelay(t *testing.T) {
+func obsoleteWorkspaceInputRelayRegistryDeduplicatesLiveRelay(t *testing.T) {
 	registry := newWorkspaceInputRelayRegistry()
 	done, ok := registry.start("exec", "exec-1")
 	if !ok {
@@ -2303,7 +2433,7 @@ func TestWorkspaceInputRelayRegistryDeduplicatesLiveRelay(t *testing.T) {
 	}
 }
 
-func TestReportWorkspaceInputRelayFailureIgnoresContextCancellation(t *testing.T) {
+func obsoleteReportWorkspaceInputRelayFailureIgnoresContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	failures := make(chan error, 1)

@@ -223,11 +223,24 @@ message WorkspaceOperationRequest {
   WorkspaceOperationEnvelope envelope = 1;
   string operation_kind = 2;
   string request_json = 3;
+  repeated WorkspaceSecretDelivery secrets = 4;
+  bytes stdin = 5;
 }
 
 message WorkspaceOperationResult {
   string result_json = 1;
   string error_json = 2;
+  int32 exit_code = 3;
+  bytes stdout = 4;
+  bytes stderr = 5;
+  string outcome = 6;
+  string request_fingerprint = 7;
+}
+
+message WorkspaceSecretDelivery {
+  string placement_kind = 1;
+  string placement_target = 2;
+  bytes value = 3;
 }
 
 message WorkspaceExecStarted {

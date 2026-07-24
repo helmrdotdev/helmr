@@ -41,6 +41,7 @@ const (
 	deploymentRequestBodyLimit = archive.MaxSourceArtifactBytes + 2<<20
 	workerLogRequestBodyLimit  = int64(256 << 10)
 	taskCompletionBodyLimit    = int64(17 << 20)
+	workspaceExecResultLimit   = int64(10 << 20)
 	maxControlPageSize         = int32(500)
 	defaultRunLeaseTTL         = 5 * time.Minute
 )
@@ -637,6 +638,15 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.Post("/runtime-instances/failed", s.workerMarkRuntimeInstanceFailed)
 				r.Post("/runtime-substrates/register", s.workerRegisterRuntimeSubstrate)
 				r.Post("/runtime-substrates/lookup", s.workerLookupRuntimeSubstrate)
+				r.Post("/workspaces/mounts/claim", s.workerClaimWorkspaceMount)
+				r.Post("/workspaces/mounts/renew", s.workerRenewWorkspaceMount)
+				r.Post("/workspaces/mounts/mounted", s.workerMarkWorkspaceMountMounted)
+				r.Post("/workspaces/mounts/capture", s.workerCaptureWorkspaceMount)
+				r.Post("/workspaces/mounts/stop", s.workerStopWorkspaceMount)
+				r.Post("/workspaces/mounts/fail", s.workerFailWorkspaceMount)
+				r.Post("/workspaces/execs/claim", s.workerClaimWorkspaceExec)
+				r.With(limitRequestBody(workspaceExecResultLimit)).
+					Post("/workspaces/execs/complete", s.workerCompleteWorkspaceExec)
 				r.Post("/leases/discover", s.workerDiscoverRunLeases)
 				r.Post("/leases/claim", s.workerClaimRunLease)
 				r.Post("/leases/start", s.workerStart)

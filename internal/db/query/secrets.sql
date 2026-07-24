@@ -351,6 +351,29 @@ ORDER BY secrets.id, workspace_secrets.placement_kind, workspace_secrets.placeme
 LIMIT 65
 FOR UPDATE OF secrets;
 
+-- name: LockProcessSecretDelivery :many
+SELECT
+    sqlc.embed(workspace_secrets),
+    sqlc.embed(secrets),
+    secret_resolutions.id AS resolution_id,
+    secret_resolutions.process_id AS resolution_process_id,
+    secret_resolutions.secret_version_id AS resolution_secret_version_id,
+    secret_resolutions.revocation_generation AS resolution_revocation_generation
+FROM workspace_secrets
+JOIN secrets
+  ON secrets.environment_id = workspace_secrets.environment_id
+ AND secrets.id = workspace_secrets.secret_id
+LEFT JOIN secret_resolutions
+  ON secret_resolutions.workspace_id = workspace_secrets.workspace_id
+ AND secret_resolutions.process_id = sqlc.arg(process_id)
+ AND secret_resolutions.placement_kind = workspace_secrets.placement_kind
+ AND secret_resolutions.placement_target = workspace_secrets.placement_target
+ AND secret_resolutions.secret_id = workspace_secrets.secret_id
+WHERE workspace_secrets.workspace_id = sqlc.arg(workspace_id)
+ORDER BY secrets.id, workspace_secrets.placement_kind, workspace_secrets.placement_target
+LIMIT 65
+FOR UPDATE OF secrets;
+
 -- name: CreateSecretResolution :one
 INSERT INTO secret_resolutions (
     id,

@@ -167,6 +167,14 @@ POST /api/worker/runtime-instances/reconcile
 POST /api/worker/runtime-substrates/lookup
 POST /api/worker/runtime-substrates/register
 POST /api/worker/startup-recovery
+POST /api/worker/workspaces/execs/claim
+POST /api/worker/workspaces/execs/complete
+POST /api/worker/workspaces/mounts/capture
+POST /api/worker/workspaces/mounts/claim
+POST /api/worker/workspaces/mounts/fail
+POST /api/worker/workspaces/mounts/mounted
+POST /api/worker/workspaces/mounts/renew
+POST /api/worker/workspaces/mounts/stop
 POST /api/workspaces/{workspaceDeclaredID}/create
 POST /api/workspaces/{workspaceID}/delete
 POST /api/workspaces/{workspaceID}/exec

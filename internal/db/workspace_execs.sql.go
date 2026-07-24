@@ -11,68 +11,232 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createWorkspaceExec = `-- name: CreateWorkspaceExec :one
-INSERT INTO workspace_processes (
-    id,
-    org_id,
-    project_id,
-    environment_id,
-    workspace_id,
-    kind,
-    state,
-    request,
-    claim_id,
-    stdout_cursor,
-    stderr_cursor,
-    stdin_cursor,
-    stdin_delivered_cursor,
-    stdin_closed_at,
-    created_by_subject_type,
-    created_by_subject_id
-) VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    'exec',
-    'pending',
-    $6,
-    $7,
-    0,
-    0,
-    0,
-    0,
-    transaction_timestamp(),
-    $8,
-    $9
-)
-RETURNING id, org_id, project_id, environment_id, workspace_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, kind, state, state_version, request, claim_id, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, resize_generation, pending_resize_generation, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, error, updated_at
+const advanceWorkspaceExecMountFence = `-- name: AdvanceWorkspaceExecMountFence :one
+UPDATE workspace_mounts
+   SET fencing_generation = $1,
+       updated_at = transaction_timestamp()
+ WHERE id = $2
+   AND org_id = $3
+   AND project_id = $4
+   AND environment_id = $5
+   AND region_id = $6
+   AND worker_group_id = $7
+   AND worker_instance_id = $8
+   AND worker_epoch = $9
+   AND runtime_instance_id = $10
+   AND workspace_id = $11
+   AND materialized_version_id = $12
+   AND fencing_generation = $13
+   AND state = 'mounted'
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, claim_attempt, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 `
 
-type CreateWorkspaceExecParams struct {
-	ID                   pgtype.UUID `json:"id"`
-	OrgID                pgtype.UUID `json:"org_id"`
-	ProjectID            pgtype.UUID `json:"project_id"`
-	EnvironmentID        pgtype.UUID `json:"environment_id"`
-	WorkspaceID          pgtype.UUID `json:"workspace_id"`
-	Request              []byte      `json:"request"`
-	ClaimID              pgtype.UUID `json:"claim_id"`
-	CreatedBySubjectType string      `json:"created_by_subject_type"`
-	CreatedBySubjectID   string      `json:"created_by_subject_id"`
+type AdvanceWorkspaceExecMountFenceParams struct {
+	FencingGeneration         int64       `json:"fencing_generation"`
+	ID                        pgtype.UUID `json:"id"`
+	OrgID                     pgtype.UUID `json:"org_id"`
+	ProjectID                 pgtype.UUID `json:"project_id"`
+	EnvironmentID             pgtype.UUID `json:"environment_id"`
+	RegionID                  string      `json:"region_id"`
+	WorkerGroupID             string      `json:"worker_group_id"`
+	WorkerInstanceID          pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch               int64       `json:"worker_epoch"`
+	RuntimeInstanceID         pgtype.UUID `json:"runtime_instance_id"`
+	WorkspaceID               pgtype.UUID `json:"workspace_id"`
+	BaseWorkspaceVersionID    pgtype.UUID `json:"base_workspace_version_id"`
+	ExpectedFencingGeneration int64       `json:"expected_fencing_generation"`
 }
 
-func (q *Queries) CreateWorkspaceExec(ctx context.Context, arg CreateWorkspaceExecParams) (WorkspaceProcess, error) {
-	row := q.db.QueryRow(ctx, createWorkspaceExec,
+func (q *Queries) AdvanceWorkspaceExecMountFence(ctx context.Context, arg AdvanceWorkspaceExecMountFenceParams) (WorkspaceMount, error) {
+	row := q.db.QueryRow(ctx, advanceWorkspaceExecMountFence,
+		arg.FencingGeneration,
 		arg.ID,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
+		arg.RegionID,
+		arg.WorkerGroupID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.RuntimeInstanceID,
 		arg.WorkspaceID,
-		arg.Request,
-		arg.ClaimID,
-		arg.CreatedBySubjectType,
-		arg.CreatedBySubjectID,
+		arg.BaseWorkspaceVersionID,
+		arg.ExpectedFencingGeneration,
+	)
+	var i WorkspaceMount
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.WorkspaceID,
+		&i.MaterializedVersionID,
+		&i.RuntimeInstanceID,
+		&i.ClaimAttempt,
+		&i.GuestChannelTokenHash,
+		&i.GuestChannelTokenExpiresAt,
+		&i.State,
+		&i.Request,
+		&i.DirtyGeneration,
+		&i.FencingGeneration,
+		&i.FinalizationKind,
+		&i.FinalizationReasonCode,
+		&i.FinalizationError,
+		&i.StagedVersionID,
+		&i.RequestedAt,
+		&i.MountedAt,
+		&i.UnmountedAt,
+		&i.StoppedAt,
+		&i.LostAt,
+		&i.FailedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const advanceWorkspaceExecWriter = `-- name: AdvanceWorkspaceExecWriter :one
+UPDATE workspaces
+   SET ownership_generation = $1,
+       writer_generation = $2,
+       desired_state = 'active',
+       state_version = state_version + 1,
+       last_activity_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE workspaces.org_id = $3
+   AND workspaces.project_id = $4
+   AND workspaces.environment_id = $5
+   AND workspaces.id = $6
+   AND workspaces.head_version_id = $7
+   AND workspaces.ownership_generation = $8
+   AND workspaces.writer_generation = $9
+   AND workspaces.state = 'active'
+   AND workspaces.desired_state IN ('active', 'stopped')
+   AND workspaces.dirty_state = 'clean'
+   AND workspaces.owner_actor_id IS NULL
+   AND workspaces.owner_run_id IS NULL
+   AND NOT EXISTS (
+       SELECT 1
+         FROM workspace_leases
+        WHERE workspace_leases.workspace_id = workspaces.id
+          AND workspace_leases.state IN ('active', 'releasing')
+   )
+RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+`
+
+type AdvanceWorkspaceExecWriterParams struct {
+	OwnershipGeneration         int64       `json:"ownership_generation"`
+	WriterGeneration            int64       `json:"writer_generation"`
+	OrgID                       pgtype.UUID `json:"org_id"`
+	ProjectID                   pgtype.UUID `json:"project_id"`
+	EnvironmentID               pgtype.UUID `json:"environment_id"`
+	WorkspaceID                 pgtype.UUID `json:"workspace_id"`
+	BaseWorkspaceVersionID      pgtype.UUID `json:"base_workspace_version_id"`
+	ExpectedOwnershipGeneration int64       `json:"expected_ownership_generation"`
+	ExpectedWriterGeneration    int64       `json:"expected_writer_generation"`
+}
+
+func (q *Queries) AdvanceWorkspaceExecWriter(ctx context.Context, arg AdvanceWorkspaceExecWriterParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, advanceWorkspaceExecWriter,
+		arg.OwnershipGeneration,
+		arg.WriterGeneration,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+		arg.BaseWorkspaceVersionID,
+		arg.ExpectedOwnershipGeneration,
+		arg.ExpectedWriterGeneration,
+	)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.DeclarationKind,
+		&i.WorkspaceDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.Key,
+		&i.StateVersion,
+		&i.OwnerActorID,
+		&i.OwnerRunID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.HeadVersionID,
+		&i.State,
+		&i.DesiredState,
+		&i.DirtyState,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const bindWorkspaceExecRuntime = `-- name: BindWorkspaceExecRuntime :one
+UPDATE workspace_processes
+   SET region_id = $1,
+       worker_group_id = $2,
+       worker_instance_id = $3,
+       worker_epoch = $4,
+       runtime_instance_id = $5,
+       workspace_mount_id = $6,
+       state = 'starting',
+       state_version = state_version + 1,
+       updated_at = transaction_timestamp()
+ WHERE org_id = $7
+   AND project_id = $8
+   AND environment_id = $9
+   AND workspace_id = $10
+   AND id = $11
+   AND base_version_id = $12
+   AND state = 'pending'
+   AND state_version = $13
+RETURNING id, org_id, project_id, environment_id, workspace_id, base_version_id, restore_desired_state, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, kind, state, state_version, request, claim_id, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, resize_generation, pending_resize_generation, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, error, updated_at
+`
+
+type BindWorkspaceExecRuntimeParams struct {
+	RegionID               pgtype.Text `json:"region_id"`
+	WorkerGroupID          pgtype.Text `json:"worker_group_id"`
+	WorkerInstanceID       pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch            pgtype.Int8 `json:"worker_epoch"`
+	RuntimeInstanceID      pgtype.UUID `json:"runtime_instance_id"`
+	WorkspaceMountID       pgtype.UUID `json:"workspace_mount_id"`
+	OrgID                  pgtype.UUID `json:"org_id"`
+	ProjectID              pgtype.UUID `json:"project_id"`
+	EnvironmentID          pgtype.UUID `json:"environment_id"`
+	WorkspaceID            pgtype.UUID `json:"workspace_id"`
+	ID                     pgtype.UUID `json:"id"`
+	BaseWorkspaceVersionID pgtype.UUID `json:"base_workspace_version_id"`
+	ExpectedStateVersion   int64       `json:"expected_state_version"`
+}
+
+func (q *Queries) BindWorkspaceExecRuntime(ctx context.Context, arg BindWorkspaceExecRuntimeParams) (WorkspaceProcess, error) {
+	row := q.db.QueryRow(ctx, bindWorkspaceExecRuntime,
+		arg.RegionID,
+		arg.WorkerGroupID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.RuntimeInstanceID,
+		arg.WorkspaceMountID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+		arg.ID,
+		arg.BaseWorkspaceVersionID,
+		arg.ExpectedStateVersion,
 	)
 	var i WorkspaceProcess
 	err := row.Scan(
@@ -81,6 +245,8 @@ func (q *Queries) CreateWorkspaceExec(ctx context.Context, arg CreateWorkspaceEx
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
+		&i.BaseVersionID,
+		&i.RestoreDesiredState,
 		&i.RegionID,
 		&i.WorkerGroupID,
 		&i.WorkerInstanceID,
@@ -122,8 +288,961 @@ func (q *Queries) CreateWorkspaceExec(ctx context.Context, arg CreateWorkspaceEx
 	return i, err
 }
 
+const closeExpiredWorkspaceExecReservation = `-- name: CloseExpiredWorkspaceExecReservation :execrows
+WITH target AS (
+    SELECT runtime_instances.id
+      FROM runtime_instances
+     WHERE runtime_instances.id = $1
+       AND runtime_instances.workspace_id = $2
+       AND runtime_instances.reserved_process_id = $3
+       AND runtime_instances.reservation_expires_at <= transaction_timestamp()
+       AND runtime_instances.reclaimed_at IS NULL
+       AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready')
+     FOR UPDATE
+), stopped_mount AS (
+    UPDATE workspace_mounts
+       SET state = 'unmounting',
+           finalization_kind = 'discard',
+           stopped_at = COALESCE(stopped_at, transaction_timestamp()),
+           updated_at = transaction_timestamp()
+      FROM target
+     WHERE workspace_mounts.runtime_instance_id = target.id
+       AND workspace_mounts.state IN ('mounting', 'mounted')
+    RETURNING workspace_mounts.id
+)
+UPDATE runtime_instances
+   SET desired_state = 'closed',
+       desired_version = CASE
+           WHEN desired_state = 'closed' THEN desired_version
+           ELSE desired_version + 1
+       END,
+       desired_at = transaction_timestamp(),
+       desired_reason = 'workspace_exec_reservation_expired',
+       updated_at = transaction_timestamp()
+  FROM target
+ WHERE runtime_instances.id = target.id
+`
+
+type CloseExpiredWorkspaceExecReservationParams struct {
+	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	ProcessID         pgtype.UUID `json:"process_id"`
+}
+
+func (q *Queries) CloseExpiredWorkspaceExecReservation(ctx context.Context, arg CloseExpiredWorkspaceExecReservationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, closeExpiredWorkspaceExecReservation, arg.RuntimeInstanceID, arg.WorkspaceID, arg.ProcessID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const commitStagedWorkspaceExecVersion = `-- name: CommitStagedWorkspaceExecVersion :one
+UPDATE workspace_versions
+   SET state = 'committed',
+       published_at = transaction_timestamp()
+ WHERE id = $1
+   AND workspace_id = $2
+   AND state = 'private'
+RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+`
+
+type CommitStagedWorkspaceExecVersionParams struct {
+	VersionID   pgtype.UUID `json:"version_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) CommitStagedWorkspaceExecVersion(ctx context.Context, arg CommitStagedWorkspaceExecVersionParams) (WorkspaceVersion, error) {
+	row := q.db.QueryRow(ctx, commitStagedWorkspaceExecVersion, arg.VersionID, arg.WorkspaceID)
+	var i WorkspaceVersion
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.WorkspaceID,
+		&i.ParentVersionID,
+		&i.ArtifactID,
+		&i.ArtifactKind,
+		&i.Kind,
+		&i.ContentDigest,
+		&i.SizeBytes,
+		&i.EntryCount,
+		&i.State,
+		&i.SourceWorkspaceLeaseID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.CreatedAt,
+		&i.PublishedAt,
+		&i.DiscardedAt,
+	)
+	return i, err
+}
+
+const consumeWorkspaceExecRuntimeReservation = `-- name: ConsumeWorkspaceExecRuntimeReservation :execrows
+UPDATE runtime_instances
+   SET reserved_process_id = NULL,
+       reserved_workspace_version_id = NULL,
+       reservation_expires_at = NULL,
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND workspace_id = $2
+   AND reserved_process_id = $3
+   AND reserved_workspace_version_id = $4
+   AND reservation_expires_at > transaction_timestamp()
+`
+
+type ConsumeWorkspaceExecRuntimeReservationParams struct {
+	ID                     pgtype.UUID `json:"id"`
+	WorkspaceID            pgtype.UUID `json:"workspace_id"`
+	ProcessID              pgtype.UUID `json:"process_id"`
+	BaseWorkspaceVersionID pgtype.UUID `json:"base_workspace_version_id"`
+}
+
+func (q *Queries) ConsumeWorkspaceExecRuntimeReservation(ctx context.Context, arg ConsumeWorkspaceExecRuntimeReservationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, consumeWorkspaceExecRuntimeReservation,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.ProcessID,
+		arg.BaseWorkspaceVersionID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const createWorkspaceExec = `-- name: CreateWorkspaceExec :one
+INSERT INTO workspace_processes (
+    id,
+    org_id,
+    project_id,
+    environment_id,
+    workspace_id,
+    base_version_id,
+    restore_desired_state,
+    kind,
+    state,
+    request,
+    claim_id,
+    stdout_cursor,
+    stderr_cursor,
+    stdin_cursor,
+    stdin_delivered_cursor,
+    stdin_closed_at,
+    created_by_subject_type,
+    created_by_subject_id
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    'exec',
+    'pending',
+    $8,
+    $9,
+    0,
+    0,
+    0,
+    0,
+    transaction_timestamp(),
+    $10,
+    $11
+)
+RETURNING id, org_id, project_id, environment_id, workspace_id, base_version_id, restore_desired_state, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, kind, state, state_version, request, claim_id, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, resize_generation, pending_resize_generation, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, error, updated_at
+`
+
+type CreateWorkspaceExecParams struct {
+	ID                   pgtype.UUID           `json:"id"`
+	OrgID                pgtype.UUID           `json:"org_id"`
+	ProjectID            pgtype.UUID           `json:"project_id"`
+	EnvironmentID        pgtype.UUID           `json:"environment_id"`
+	WorkspaceID          pgtype.UUID           `json:"workspace_id"`
+	BaseVersionID        pgtype.UUID           `json:"base_version_id"`
+	RestoreDesiredState  WorkspaceDesiredState `json:"restore_desired_state"`
+	Request              []byte                `json:"request"`
+	ClaimID              pgtype.UUID           `json:"claim_id"`
+	CreatedBySubjectType string                `json:"created_by_subject_type"`
+	CreatedBySubjectID   string                `json:"created_by_subject_id"`
+}
+
+func (q *Queries) CreateWorkspaceExec(ctx context.Context, arg CreateWorkspaceExecParams) (WorkspaceProcess, error) {
+	row := q.db.QueryRow(ctx, createWorkspaceExec,
+		arg.ID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+		arg.BaseVersionID,
+		arg.RestoreDesiredState,
+		arg.Request,
+		arg.ClaimID,
+		arg.CreatedBySubjectType,
+		arg.CreatedBySubjectID,
+	)
+	var i WorkspaceProcess
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.WorkspaceID,
+		&i.BaseVersionID,
+		&i.RestoreDesiredState,
+		&i.RegionID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
+		&i.WorkspaceMountID,
+		&i.Kind,
+		&i.State,
+		&i.StateVersion,
+		&i.Request,
+		&i.ClaimID,
+		&i.RuntimeProcessID,
+		&i.ExitCode,
+		&i.Signal,
+		&i.PtyCols,
+		&i.PtyRows,
+		&i.PendingPtyCols,
+		&i.PendingPtyRows,
+		&i.ResizeGeneration,
+		&i.PendingResizeGeneration,
+		&i.StdoutCursor,
+		&i.StderrCursor,
+		&i.StdinCursor,
+		&i.StdinDeliveredCursor,
+		&i.StdinClosedAt,
+		&i.InputCursor,
+		&i.InputDeliveredCursor,
+		&i.OutputCursor,
+		&i.CreatedBySubjectType,
+		&i.CreatedBySubjectID,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.ExitedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.Error,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createWorkspaceExecRuntimeReservation = `-- name: CreateWorkspaceExecRuntimeReservation :one
+WITH created_runtime AS (
+    INSERT INTO runtime_instances (
+        id,
+        org_id,
+        worker_group_id,
+        project_id,
+        environment_id,
+        region_id,
+        worker_instance_id,
+        runtime_identity_id,
+        deployment_definition_id,
+        worker_epoch,
+        network_policy,
+        reserved_cpu_millis,
+        reserved_memory_bytes,
+        reserved_workload_disk_bytes,
+        reserved_scratch_bytes,
+        reserved_execution_slots,
+        workspace_id,
+        reserved_process_id,
+        reserved_workspace_version_id,
+        reservation_expires_at,
+        desired_reason
+    ) VALUES (
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        $8,
+        $9,
+        $10,
+        $11,
+        $12,
+        $13,
+        $14,
+        $15,
+        $16,
+        $17,
+        $18,
+        $19,
+        $20,
+        'workspace_exec_reservation'
+    )
+    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, network_policy, reserved_cpu_millis, reserved_memory_bytes, reserved_workload_disk_bytes, reserved_scratch_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, preparing_at, ready_at, closing_at, closed_at, lost_at, failed_at, reclaimed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+), assigned_slot AS (
+    UPDATE worker_network_slots
+       SET state = 'assigned',
+           runtime_instance_id = created_runtime.id,
+           assigned_at = transaction_timestamp(),
+           updated_at = transaction_timestamp()
+      FROM created_runtime
+     WHERE worker_network_slots.id = $21
+       AND worker_network_slots.worker_group_id = created_runtime.worker_group_id
+       AND worker_network_slots.worker_instance_id = created_runtime.worker_instance_id
+       AND worker_network_slots.worker_epoch = created_runtime.worker_epoch
+       AND worker_network_slots.generation = $22
+       AND worker_network_slots.state = 'available'
+       AND worker_network_slots.runtime_instance_id IS NULL
+    RETURNING worker_network_slots.id
+)
+SELECT created_runtime.id, created_runtime.org_id, created_runtime.worker_group_id, created_runtime.project_id, created_runtime.environment_id, created_runtime.region_id, created_runtime.worker_instance_id, created_runtime.runtime_identity_id, created_runtime.deployment_definition_id, created_runtime.runtime_substrate_id, created_runtime.worker_epoch, created_runtime.network_policy, created_runtime.reserved_cpu_millis, created_runtime.reserved_memory_bytes, created_runtime.reserved_workload_disk_bytes, created_runtime.reserved_scratch_bytes, created_runtime.reserved_execution_slots, created_runtime.workspace_id, created_runtime.program_deployment_id, created_runtime.restore_checkpoint_id, created_runtime.reserved_run_id, created_runtime.reserved_attempt_number, created_runtime.reserved_process_id, created_runtime.reserved_workspace_version_id, created_runtime.reservation_expires_at, created_runtime.desired_state, created_runtime.desired_version, created_runtime.desired_at, created_runtime.desired_reason, created_runtime.observed_state, created_runtime.observed_version, created_runtime.observed_desired_version, created_runtime.observed_at, created_runtime.allocated_at, created_runtime.preparing_at, created_runtime.ready_at, created_runtime.closing_at, created_runtime.closed_at, created_runtime.lost_at, created_runtime.failed_at, created_runtime.reclaimed_at, created_runtime.terminal_at, created_runtime.terminal_reason_code, created_runtime.terminal_error, created_runtime.created_at, created_runtime.updated_at
+  FROM created_runtime
+  JOIN assigned_slot ON true
+`
+
+type CreateWorkspaceExecRuntimeReservationParams struct {
+	ID                        pgtype.UUID        `json:"id"`
+	OrgID                     pgtype.UUID        `json:"org_id"`
+	WorkerGroupID             string             `json:"worker_group_id"`
+	ProjectID                 pgtype.UUID        `json:"project_id"`
+	EnvironmentID             pgtype.UUID        `json:"environment_id"`
+	RegionID                  string             `json:"region_id"`
+	WorkerInstanceID          pgtype.UUID        `json:"worker_instance_id"`
+	RuntimeIdentityID         string             `json:"runtime_identity_id"`
+	DeploymentDefinitionID    pgtype.UUID        `json:"deployment_definition_id"`
+	WorkerEpoch               int64              `json:"worker_epoch"`
+	NetworkPolicy             []byte             `json:"network_policy"`
+	ReservedCpuMillis         int64              `json:"reserved_cpu_millis"`
+	ReservedMemoryBytes       int64              `json:"reserved_memory_bytes"`
+	ReservedWorkloadDiskBytes int64              `json:"reserved_workload_disk_bytes"`
+	ReservedScratchBytes      int64              `json:"reserved_scratch_bytes"`
+	ReservedExecutionSlots    int32              `json:"reserved_execution_slots"`
+	WorkspaceID               pgtype.UUID        `json:"workspace_id"`
+	ProcessID                 pgtype.UUID        `json:"process_id"`
+	BaseWorkspaceVersionID    pgtype.UUID        `json:"base_workspace_version_id"`
+	ReservationExpiresAt      pgtype.Timestamptz `json:"reservation_expires_at"`
+	NetworkSlotID             pgtype.UUID        `json:"network_slot_id"`
+	NetworkSlotGeneration     int64              `json:"network_slot_generation"`
+}
+
+type CreateWorkspaceExecRuntimeReservationRow struct {
+	ID                         pgtype.UUID          `json:"id"`
+	OrgID                      pgtype.UUID          `json:"org_id"`
+	WorkerGroupID              string               `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID          `json:"project_id"`
+	EnvironmentID              pgtype.UUID          `json:"environment_id"`
+	RegionID                   string               `json:"region_id"`
+	WorkerInstanceID           pgtype.UUID          `json:"worker_instance_id"`
+	RuntimeIdentityID          string               `json:"runtime_identity_id"`
+	DeploymentDefinitionID     pgtype.UUID          `json:"deployment_definition_id"`
+	RuntimeSubstrateID         pgtype.UUID          `json:"runtime_substrate_id"`
+	WorkerEpoch                int64                `json:"worker_epoch"`
+	NetworkPolicy              []byte               `json:"network_policy"`
+	ReservedCpuMillis          int64                `json:"reserved_cpu_millis"`
+	ReservedMemoryBytes        int64                `json:"reserved_memory_bytes"`
+	ReservedWorkloadDiskBytes  int64                `json:"reserved_workload_disk_bytes"`
+	ReservedScratchBytes       int64                `json:"reserved_scratch_bytes"`
+	ReservedExecutionSlots     int32                `json:"reserved_execution_slots"`
+	WorkspaceID                pgtype.UUID          `json:"workspace_id"`
+	ProgramDeploymentID        pgtype.UUID          `json:"program_deployment_id"`
+	RestoreCheckpointID        pgtype.UUID          `json:"restore_checkpoint_id"`
+	ReservedRunID              pgtype.UUID          `json:"reserved_run_id"`
+	ReservedAttemptNumber      pgtype.Int4          `json:"reserved_attempt_number"`
+	ReservedProcessID          pgtype.UUID          `json:"reserved_process_id"`
+	ReservedWorkspaceVersionID pgtype.UUID          `json:"reserved_workspace_version_id"`
+	ReservationExpiresAt       pgtype.Timestamptz   `json:"reservation_expires_at"`
+	DesiredState               RuntimeDesiredState  `json:"desired_state"`
+	DesiredVersion             int64                `json:"desired_version"`
+	DesiredAt                  pgtype.Timestamptz   `json:"desired_at"`
+	DesiredReason              string               `json:"desired_reason"`
+	ObservedState              RuntimeObservedState `json:"observed_state"`
+	ObservedVersion            int64                `json:"observed_version"`
+	ObservedDesiredVersion     int64                `json:"observed_desired_version"`
+	ObservedAt                 pgtype.Timestamptz   `json:"observed_at"`
+	AllocatedAt                pgtype.Timestamptz   `json:"allocated_at"`
+	PreparingAt                pgtype.Timestamptz   `json:"preparing_at"`
+	ReadyAt                    pgtype.Timestamptz   `json:"ready_at"`
+	ClosingAt                  pgtype.Timestamptz   `json:"closing_at"`
+	ClosedAt                   pgtype.Timestamptz   `json:"closed_at"`
+	LostAt                     pgtype.Timestamptz   `json:"lost_at"`
+	FailedAt                   pgtype.Timestamptz   `json:"failed_at"`
+	ReclaimedAt                pgtype.Timestamptz   `json:"reclaimed_at"`
+	TerminalAt                 pgtype.Timestamptz   `json:"terminal_at"`
+	TerminalReasonCode         pgtype.Text          `json:"terminal_reason_code"`
+	TerminalError              []byte               `json:"terminal_error"`
+	CreatedAt                  pgtype.Timestamptz   `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz   `json:"updated_at"`
+}
+
+func (q *Queries) CreateWorkspaceExecRuntimeReservation(ctx context.Context, arg CreateWorkspaceExecRuntimeReservationParams) (CreateWorkspaceExecRuntimeReservationRow, error) {
+	row := q.db.QueryRow(ctx, createWorkspaceExecRuntimeReservation,
+		arg.ID,
+		arg.OrgID,
+		arg.WorkerGroupID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.RegionID,
+		arg.WorkerInstanceID,
+		arg.RuntimeIdentityID,
+		arg.DeploymentDefinitionID,
+		arg.WorkerEpoch,
+		arg.NetworkPolicy,
+		arg.ReservedCpuMillis,
+		arg.ReservedMemoryBytes,
+		arg.ReservedWorkloadDiskBytes,
+		arg.ReservedScratchBytes,
+		arg.ReservedExecutionSlots,
+		arg.WorkspaceID,
+		arg.ProcessID,
+		arg.BaseWorkspaceVersionID,
+		arg.ReservationExpiresAt,
+		arg.NetworkSlotID,
+		arg.NetworkSlotGeneration,
+	)
+	var i CreateWorkspaceExecRuntimeReservationRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.WorkerInstanceID,
+		&i.RuntimeIdentityID,
+		&i.DeploymentDefinitionID,
+		&i.RuntimeSubstrateID,
+		&i.WorkerEpoch,
+		&i.NetworkPolicy,
+		&i.ReservedCpuMillis,
+		&i.ReservedMemoryBytes,
+		&i.ReservedWorkloadDiskBytes,
+		&i.ReservedScratchBytes,
+		&i.ReservedExecutionSlots,
+		&i.WorkspaceID,
+		&i.ProgramDeploymentID,
+		&i.RestoreCheckpointID,
+		&i.ReservedRunID,
+		&i.ReservedAttemptNumber,
+		&i.ReservedProcessID,
+		&i.ReservedWorkspaceVersionID,
+		&i.ReservationExpiresAt,
+		&i.DesiredState,
+		&i.DesiredVersion,
+		&i.DesiredAt,
+		&i.DesiredReason,
+		&i.ObservedState,
+		&i.ObservedVersion,
+		&i.ObservedDesiredVersion,
+		&i.ObservedAt,
+		&i.AllocatedAt,
+		&i.PreparingAt,
+		&i.ReadyAt,
+		&i.ClosingAt,
+		&i.ClosedAt,
+		&i.LostAt,
+		&i.FailedAt,
+		&i.ReclaimedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const discardStagedWorkspaceExecVersion = `-- name: DiscardStagedWorkspaceExecVersion :execrows
+UPDATE workspace_versions
+   SET state = 'discarded',
+       discarded_at = transaction_timestamp()
+ WHERE id = $1
+   AND workspace_id = $2
+   AND state = 'private'
+`
+
+type DiscardStagedWorkspaceExecVersionParams struct {
+	VersionID   pgtype.UUID `json:"version_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) DiscardStagedWorkspaceExecVersion(ctx context.Context, arg DiscardStagedWorkspaceExecVersionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, discardStagedWorkspaceExecVersion, arg.VersionID, arg.WorkspaceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const expirePendingWorkspaceExecs = `-- name: ExpirePendingWorkspaceExecs :execrows
+WITH candidates AS (
+    SELECT workspace_processes.id
+      FROM workspace_processes
+     WHERE workspace_processes.kind = 'exec'
+       AND workspace_processes.state = 'pending'
+       AND workspace_processes.created_at <= $1
+     ORDER BY workspace_processes.created_at, workspace_processes.id
+     LIMIT $2
+     FOR UPDATE SKIP LOCKED
+), failed_processes AS (
+    UPDATE workspace_processes
+       SET state = 'failed',
+           state_version = state_version + 1,
+           terminal_at = transaction_timestamp(),
+           terminal_reason_code = 'workspace_exec_placement_timed_out',
+           error = '{"code":"workspace_exec_placement_timed_out"}'::jsonb,
+           updated_at = transaction_timestamp()
+      FROM candidates
+     WHERE workspace_processes.id = candidates.id
+    RETURNING workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.base_version_id, workspace_processes.restore_desired_state, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.kind, workspace_processes.state, workspace_processes.state_version, workspace_processes.request, workspace_processes.claim_id, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.resize_generation, workspace_processes.pending_resize_generation, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.error, workspace_processes.updated_at
+)
+UPDATE idempotency_claims
+   SET state = 'failed',
+       receipt = jsonb_build_object(
+           'process_id', failed_processes.id,
+           'reason_code', failed_processes.terminal_reason_code
+       ),
+       completed_at = transaction_timestamp()
+  FROM failed_processes
+ WHERE idempotency_claims.environment_id = failed_processes.environment_id
+   AND idempotency_claims.id = failed_processes.claim_id
+   AND idempotency_claims.state = 'pending'
+`
+
+type ExpirePendingWorkspaceExecsParams struct {
+	ExpiredBefore pgtype.Timestamptz `json:"expired_before"`
+	RowLimit      int32              `json:"row_limit"`
+}
+
+func (q *Queries) ExpirePendingWorkspaceExecs(ctx context.Context, arg ExpirePendingWorkspaceExecsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, expirePendingWorkspaceExecs, arg.ExpiredBefore, arg.RowLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const failPendingWorkspaceExec = `-- name: FailPendingWorkspaceExec :one
+WITH failed_process AS (
+    UPDATE workspace_processes
+       SET state = 'failed',
+           state_version = state_version + 1,
+           terminal_at = transaction_timestamp(),
+           terminal_reason_code = $1,
+           error = $2,
+           updated_at = transaction_timestamp()
+     WHERE workspace_processes.org_id = $3
+       AND workspace_processes.id = $4
+       AND workspace_processes.state = 'pending'
+       AND workspace_processes.state_version = $5
+    RETURNING id, org_id, project_id, environment_id, workspace_id, base_version_id, restore_desired_state, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, kind, state, state_version, request, claim_id, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, resize_generation, pending_resize_generation, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, error, updated_at
+), failed_claim AS (
+    UPDATE idempotency_claims
+       SET state = 'failed',
+           receipt = jsonb_build_object(
+               'process_id', failed_process.id,
+               'reason_code', failed_process.terminal_reason_code
+           ),
+           completed_at = transaction_timestamp()
+      FROM failed_process
+     WHERE idempotency_claims.environment_id = failed_process.environment_id
+       AND idempotency_claims.id = failed_process.claim_id
+       AND idempotency_claims.state = 'pending'
+    RETURNING idempotency_claims.id
+)
+SELECT failed_process.id, failed_process.org_id, failed_process.project_id, failed_process.environment_id, failed_process.workspace_id, failed_process.base_version_id, failed_process.restore_desired_state, failed_process.region_id, failed_process.worker_group_id, failed_process.worker_instance_id, failed_process.worker_epoch, failed_process.runtime_instance_id, failed_process.workspace_mount_id, failed_process.kind, failed_process.state, failed_process.state_version, failed_process.request, failed_process.claim_id, failed_process.runtime_process_id, failed_process.exit_code, failed_process.signal, failed_process.pty_cols, failed_process.pty_rows, failed_process.pending_pty_cols, failed_process.pending_pty_rows, failed_process.resize_generation, failed_process.pending_resize_generation, failed_process.stdout_cursor, failed_process.stderr_cursor, failed_process.stdin_cursor, failed_process.stdin_delivered_cursor, failed_process.stdin_closed_at, failed_process.input_cursor, failed_process.input_delivered_cursor, failed_process.output_cursor, failed_process.created_by_subject_type, failed_process.created_by_subject_id, failed_process.created_at, failed_process.started_at, failed_process.exited_at, failed_process.terminal_at, failed_process.terminal_reason_code, failed_process.error, failed_process.updated_at
+  FROM failed_process
+  JOIN failed_claim ON true
+`
+
+type FailPendingWorkspaceExecParams struct {
+	ReasonCode           pgtype.Text `json:"reason_code"`
+	Error                []byte      `json:"error"`
+	OrgID                pgtype.UUID `json:"org_id"`
+	ProcessID            pgtype.UUID `json:"process_id"`
+	ExpectedStateVersion int64       `json:"expected_state_version"`
+}
+
+type FailPendingWorkspaceExecRow struct {
+	ID                      pgtype.UUID           `json:"id"`
+	OrgID                   pgtype.UUID           `json:"org_id"`
+	ProjectID               pgtype.UUID           `json:"project_id"`
+	EnvironmentID           pgtype.UUID           `json:"environment_id"`
+	WorkspaceID             pgtype.UUID           `json:"workspace_id"`
+	BaseVersionID           pgtype.UUID           `json:"base_version_id"`
+	RestoreDesiredState     WorkspaceDesiredState `json:"restore_desired_state"`
+	RegionID                pgtype.Text           `json:"region_id"`
+	WorkerGroupID           pgtype.Text           `json:"worker_group_id"`
+	WorkerInstanceID        pgtype.UUID           `json:"worker_instance_id"`
+	WorkerEpoch             pgtype.Int8           `json:"worker_epoch"`
+	RuntimeInstanceID       pgtype.UUID           `json:"runtime_instance_id"`
+	WorkspaceMountID        pgtype.UUID           `json:"workspace_mount_id"`
+	Kind                    string                `json:"kind"`
+	State                   WorkspaceProcessState `json:"state"`
+	StateVersion            int64                 `json:"state_version"`
+	Request                 []byte                `json:"request"`
+	ClaimID                 pgtype.UUID           `json:"claim_id"`
+	RuntimeProcessID        string                `json:"runtime_process_id"`
+	ExitCode                pgtype.Int4           `json:"exit_code"`
+	Signal                  string                `json:"signal"`
+	PtyCols                 pgtype.Int4           `json:"pty_cols"`
+	PtyRows                 pgtype.Int4           `json:"pty_rows"`
+	PendingPtyCols          pgtype.Int4           `json:"pending_pty_cols"`
+	PendingPtyRows          pgtype.Int4           `json:"pending_pty_rows"`
+	ResizeGeneration        pgtype.Int8           `json:"resize_generation"`
+	PendingResizeGeneration pgtype.Int8           `json:"pending_resize_generation"`
+	StdoutCursor            pgtype.Int8           `json:"stdout_cursor"`
+	StderrCursor            pgtype.Int8           `json:"stderr_cursor"`
+	StdinCursor             pgtype.Int8           `json:"stdin_cursor"`
+	StdinDeliveredCursor    pgtype.Int8           `json:"stdin_delivered_cursor"`
+	StdinClosedAt           pgtype.Timestamptz    `json:"stdin_closed_at"`
+	InputCursor             pgtype.Int8           `json:"input_cursor"`
+	InputDeliveredCursor    pgtype.Int8           `json:"input_delivered_cursor"`
+	OutputCursor            pgtype.Int8           `json:"output_cursor"`
+	CreatedBySubjectType    string                `json:"created_by_subject_type"`
+	CreatedBySubjectID      string                `json:"created_by_subject_id"`
+	CreatedAt               pgtype.Timestamptz    `json:"created_at"`
+	StartedAt               pgtype.Timestamptz    `json:"started_at"`
+	ExitedAt                pgtype.Timestamptz    `json:"exited_at"`
+	TerminalAt              pgtype.Timestamptz    `json:"terminal_at"`
+	TerminalReasonCode      pgtype.Text           `json:"terminal_reason_code"`
+	Error                   []byte                `json:"error"`
+	UpdatedAt               pgtype.Timestamptz    `json:"updated_at"`
+}
+
+func (q *Queries) FailPendingWorkspaceExec(ctx context.Context, arg FailPendingWorkspaceExecParams) (FailPendingWorkspaceExecRow, error) {
+	row := q.db.QueryRow(ctx, failPendingWorkspaceExec,
+		arg.ReasonCode,
+		arg.Error,
+		arg.OrgID,
+		arg.ProcessID,
+		arg.ExpectedStateVersion,
+	)
+	var i FailPendingWorkspaceExecRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.WorkspaceID,
+		&i.BaseVersionID,
+		&i.RestoreDesiredState,
+		&i.RegionID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
+		&i.WorkspaceMountID,
+		&i.Kind,
+		&i.State,
+		&i.StateVersion,
+		&i.Request,
+		&i.ClaimID,
+		&i.RuntimeProcessID,
+		&i.ExitCode,
+		&i.Signal,
+		&i.PtyCols,
+		&i.PtyRows,
+		&i.PendingPtyCols,
+		&i.PendingPtyRows,
+		&i.ResizeGeneration,
+		&i.PendingResizeGeneration,
+		&i.StdoutCursor,
+		&i.StderrCursor,
+		&i.StdinCursor,
+		&i.StdinDeliveredCursor,
+		&i.StdinClosedAt,
+		&i.InputCursor,
+		&i.InputDeliveredCursor,
+		&i.OutputCursor,
+		&i.CreatedBySubjectType,
+		&i.CreatedBySubjectID,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.ExitedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.Error,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const failWorkspaceExecProcess = `-- name: FailWorkspaceExecProcess :one
+UPDATE workspace_processes
+   SET state = 'failed',
+       state_version = state_version + 1,
+       terminal_at = transaction_timestamp(),
+       terminal_reason_code = $1,
+       error = $2,
+       updated_at = transaction_timestamp()
+ WHERE id = $3
+   AND workspace_mount_id = $4
+   AND state IN ('starting', 'running', 'exit_requested')
+RETURNING id, org_id, project_id, environment_id, workspace_id, base_version_id, restore_desired_state, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, kind, state, state_version, request, claim_id, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, resize_generation, pending_resize_generation, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, error, updated_at
+`
+
+type FailWorkspaceExecProcessParams struct {
+	ReasonCode       pgtype.Text `json:"reason_code"`
+	Error            []byte      `json:"error"`
+	ProcessID        pgtype.UUID `json:"process_id"`
+	WorkspaceMountID pgtype.UUID `json:"workspace_mount_id"`
+}
+
+func (q *Queries) FailWorkspaceExecProcess(ctx context.Context, arg FailWorkspaceExecProcessParams) (WorkspaceProcess, error) {
+	row := q.db.QueryRow(ctx, failWorkspaceExecProcess,
+		arg.ReasonCode,
+		arg.Error,
+		arg.ProcessID,
+		arg.WorkspaceMountID,
+	)
+	var i WorkspaceProcess
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.WorkspaceID,
+		&i.BaseVersionID,
+		&i.RestoreDesiredState,
+		&i.RegionID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
+		&i.WorkspaceMountID,
+		&i.Kind,
+		&i.State,
+		&i.StateVersion,
+		&i.Request,
+		&i.ClaimID,
+		&i.RuntimeProcessID,
+		&i.ExitCode,
+		&i.Signal,
+		&i.PtyCols,
+		&i.PtyRows,
+		&i.PendingPtyCols,
+		&i.PendingPtyRows,
+		&i.ResizeGeneration,
+		&i.PendingResizeGeneration,
+		&i.StdoutCursor,
+		&i.StderrCursor,
+		&i.StdinCursor,
+		&i.StdinDeliveredCursor,
+		&i.StdinClosedAt,
+		&i.InputCursor,
+		&i.InputDeliveredCursor,
+		&i.OutputCursor,
+		&i.CreatedBySubjectType,
+		&i.CreatedBySubjectID,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.ExitedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.Error,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const finalizeWorkspaceExecProcess = `-- name: FinalizeWorkspaceExecProcess :one
+UPDATE workspace_processes
+   SET state = $1,
+       state_version = state_version + 1,
+       exited_at = CASE
+           WHEN $1::workspace_process_state = 'exited'
+           THEN transaction_timestamp()
+           ELSE exited_at
+       END,
+       terminal_at = transaction_timestamp(),
+       terminal_reason_code = $2,
+       error = $3,
+       updated_at = transaction_timestamp()
+ WHERE id = $4
+   AND workspace_mount_id = $5
+   AND state = 'exit_requested'
+RETURNING id, org_id, project_id, environment_id, workspace_id, base_version_id, restore_desired_state, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, kind, state, state_version, request, claim_id, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, resize_generation, pending_resize_generation, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, error, updated_at
+`
+
+type FinalizeWorkspaceExecProcessParams struct {
+	State            WorkspaceProcessState `json:"state"`
+	ReasonCode       pgtype.Text           `json:"reason_code"`
+	Error            []byte                `json:"error"`
+	ProcessID        pgtype.UUID           `json:"process_id"`
+	WorkspaceMountID pgtype.UUID           `json:"workspace_mount_id"`
+}
+
+func (q *Queries) FinalizeWorkspaceExecProcess(ctx context.Context, arg FinalizeWorkspaceExecProcessParams) (WorkspaceProcess, error) {
+	row := q.db.QueryRow(ctx, finalizeWorkspaceExecProcess,
+		arg.State,
+		arg.ReasonCode,
+		arg.Error,
+		arg.ProcessID,
+		arg.WorkspaceMountID,
+	)
+	var i WorkspaceProcess
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.WorkspaceID,
+		&i.BaseVersionID,
+		&i.RestoreDesiredState,
+		&i.RegionID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
+		&i.WorkspaceMountID,
+		&i.Kind,
+		&i.State,
+		&i.StateVersion,
+		&i.Request,
+		&i.ClaimID,
+		&i.RuntimeProcessID,
+		&i.ExitCode,
+		&i.Signal,
+		&i.PtyCols,
+		&i.PtyRows,
+		&i.PendingPtyCols,
+		&i.PendingPtyRows,
+		&i.ResizeGeneration,
+		&i.PendingResizeGeneration,
+		&i.StdoutCursor,
+		&i.StderrCursor,
+		&i.StdinCursor,
+		&i.StdinDeliveredCursor,
+		&i.StdinClosedAt,
+		&i.InputCursor,
+		&i.InputDeliveredCursor,
+		&i.OutputCursor,
+		&i.CreatedBySubjectType,
+		&i.CreatedBySubjectID,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.ExitedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.Error,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const finalizeWorkspaceExecWorkspace = `-- name: FinalizeWorkspaceExecWorkspace :one
+UPDATE workspaces
+   SET head_version_id = COALESCE($1, head_version_id),
+       desired_state = $2,
+       dirty_state = 'clean',
+       state_version = state_version + 1,
+       updated_at = transaction_timestamp()
+ WHERE id = $3
+   AND head_version_id = $4
+   AND ownership_generation = $5
+   AND writer_generation = $6
+RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+`
+
+type FinalizeWorkspaceExecWorkspaceParams struct {
+	VersionID           pgtype.UUID           `json:"version_id"`
+	RestoreDesiredState WorkspaceDesiredState `json:"restore_desired_state"`
+	WorkspaceID         pgtype.UUID           `json:"workspace_id"`
+	BaseVersionID       pgtype.UUID           `json:"base_version_id"`
+	OwnershipGeneration int64                 `json:"ownership_generation"`
+	WriterGeneration    int64                 `json:"writer_generation"`
+}
+
+func (q *Queries) FinalizeWorkspaceExecWorkspace(ctx context.Context, arg FinalizeWorkspaceExecWorkspaceParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, finalizeWorkspaceExecWorkspace,
+		arg.VersionID,
+		arg.RestoreDesiredState,
+		arg.WorkspaceID,
+		arg.BaseVersionID,
+		arg.OwnershipGeneration,
+		arg.WriterGeneration,
+	)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.DeclarationKind,
+		&i.WorkspaceDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.Key,
+		&i.StateVersion,
+		&i.OwnerActorID,
+		&i.OwnerRunID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.HeadVersionID,
+		&i.State,
+		&i.DesiredState,
+		&i.DirtyState,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getStagedWorkspaceExecCapture = `-- name: GetStagedWorkspaceExecCapture :one
+SELECT workspace_versions.id, workspace_versions.public_id, workspace_versions.org_id, workspace_versions.project_id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.artifact_id, workspace_versions.artifact_kind, workspace_versions.kind, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.entry_count, workspace_versions.state, workspace_versions.source_workspace_lease_id, workspace_versions.ownership_generation, workspace_versions.writer_generation, workspace_versions.created_at, workspace_versions.published_at, workspace_versions.discarded_at
+  FROM workspace_mounts
+  JOIN workspace_versions
+    ON workspace_versions.workspace_id = workspace_mounts.workspace_id
+   AND workspace_versions.id = workspace_mounts.staged_version_id
+ WHERE workspace_mounts.id = $1
+   AND workspace_mounts.worker_instance_id = $2
+   AND workspace_mounts.worker_epoch = $3
+   AND workspace_mounts.state = 'unmounting'
+   AND workspace_mounts.finalization_kind = 'capture'
+`
+
+type GetStagedWorkspaceExecCaptureParams struct {
+	WorkspaceMountID pgtype.UUID `json:"workspace_mount_id"`
+	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch      int64       `json:"worker_epoch"`
+}
+
+func (q *Queries) GetStagedWorkspaceExecCapture(ctx context.Context, arg GetStagedWorkspaceExecCaptureParams) (WorkspaceVersion, error) {
+	row := q.db.QueryRow(ctx, getStagedWorkspaceExecCapture, arg.WorkspaceMountID, arg.WorkerInstanceID, arg.WorkerEpoch)
+	var i WorkspaceVersion
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.WorkspaceID,
+		&i.ParentVersionID,
+		&i.ArtifactID,
+		&i.ArtifactKind,
+		&i.Kind,
+		&i.ContentDigest,
+		&i.SizeBytes,
+		&i.EntryCount,
+		&i.State,
+		&i.SourceWorkspaceLeaseID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.CreatedAt,
+		&i.PublishedAt,
+		&i.DiscardedAt,
+	)
+	return i, err
+}
+
 const getWorkspaceExec = `-- name: GetWorkspaceExec :one
-SELECT id, org_id, project_id, environment_id, workspace_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, kind, state, state_version, request, claim_id, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, resize_generation, pending_resize_generation, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, error, updated_at
+SELECT id, org_id, project_id, environment_id, workspace_id, base_version_id, restore_desired_state, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, kind, state, state_version, request, claim_id, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, resize_generation, pending_resize_generation, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, error, updated_at
   FROM workspace_processes
  WHERE org_id = $1
    AND project_id = $2
@@ -156,6 +1275,8 @@ func (q *Queries) GetWorkspaceExec(ctx context.Context, arg GetWorkspaceExecPara
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
+		&i.BaseVersionID,
+		&i.RestoreDesiredState,
 		&i.RegionID,
 		&i.WorkerGroupID,
 		&i.WorkerInstanceID,
@@ -198,7 +1319,7 @@ func (q *Queries) GetWorkspaceExec(ctx context.Context, arg GetWorkspaceExecPara
 }
 
 const getWorkspaceExecByClaim = `-- name: GetWorkspaceExecByClaim :one
-SELECT id, org_id, project_id, environment_id, workspace_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, kind, state, state_version, request, claim_id, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, resize_generation, pending_resize_generation, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, error, updated_at
+SELECT id, org_id, project_id, environment_id, workspace_id, base_version_id, restore_desired_state, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, kind, state, state_version, request, claim_id, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, resize_generation, pending_resize_generation, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, error, updated_at
   FROM workspace_processes
  WHERE environment_id = $1
    AND workspace_id = $2
@@ -221,6 +1342,8 @@ func (q *Queries) GetWorkspaceExecByClaim(ctx context.Context, arg GetWorkspaceE
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
+		&i.BaseVersionID,
+		&i.RestoreDesiredState,
 		&i.RegionID,
 		&i.WorkerGroupID,
 		&i.WorkerInstanceID,
@@ -260,6 +1383,223 @@ func (q *Queries) GetWorkspaceExecByClaim(ctx context.Context, arg GetWorkspaceE
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getWorkspaceExecLocator = `-- name: GetWorkspaceExecLocator :one
+SELECT workspace_processes.workspace_mount_id,
+       workspace_processes.workspace_id,
+       workspace_processes.environment_id
+  FROM workspace_processes
+ WHERE workspace_processes.org_id = $1
+   AND workspace_processes.id = $2
+   AND workspace_processes.kind = 'exec'
+   AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
+`
+
+type GetWorkspaceExecLocatorParams struct {
+	OrgID     pgtype.UUID `json:"org_id"`
+	ProcessID pgtype.UUID `json:"process_id"`
+}
+
+type GetWorkspaceExecLocatorRow struct {
+	WorkspaceMountID pgtype.UUID `json:"workspace_mount_id"`
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	EnvironmentID    pgtype.UUID `json:"environment_id"`
+}
+
+func (q *Queries) GetWorkspaceExecLocator(ctx context.Context, arg GetWorkspaceExecLocatorParams) (GetWorkspaceExecLocatorRow, error) {
+	row := q.db.QueryRow(ctx, getWorkspaceExecLocator, arg.OrgID, arg.ProcessID)
+	var i GetWorkspaceExecLocatorRow
+	err := row.Scan(&i.WorkspaceMountID, &i.WorkspaceID, &i.EnvironmentID)
+	return i, err
+}
+
+const getWorkspaceExecLocatorForMount = `-- name: GetWorkspaceExecLocatorForMount :one
+SELECT workspace_processes.id,
+       workspace_processes.workspace_id,
+       workspace_processes.environment_id
+  FROM workspace_processes
+ WHERE workspace_processes.org_id = $1
+   AND workspace_processes.workspace_mount_id = $2
+   AND workspace_processes.kind = 'exec'
+   AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
+`
+
+type GetWorkspaceExecLocatorForMountParams struct {
+	OrgID            pgtype.UUID `json:"org_id"`
+	WorkspaceMountID pgtype.UUID `json:"workspace_mount_id"`
+}
+
+type GetWorkspaceExecLocatorForMountRow struct {
+	ID            pgtype.UUID `json:"id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+}
+
+func (q *Queries) GetWorkspaceExecLocatorForMount(ctx context.Context, arg GetWorkspaceExecLocatorForMountParams) (GetWorkspaceExecLocatorForMountRow, error) {
+	row := q.db.QueryRow(ctx, getWorkspaceExecLocatorForMount, arg.OrgID, arg.WorkspaceMountID)
+	var i GetWorkspaceExecLocatorForMountRow
+	err := row.Scan(&i.ID, &i.WorkspaceID, &i.EnvironmentID)
+	return i, err
+}
+
+const insertWorkspaceExecLease = `-- name: InsertWorkspaceExecLease :one
+INSERT INTO workspace_leases (
+    id,
+    org_id,
+    worker_group_id,
+    project_id,
+    environment_id,
+    region_id,
+    worker_instance_id,
+    worker_epoch,
+    runtime_instance_id,
+    workspace_id,
+    workspace_mount_id,
+    owner_process_id,
+    base_version_id,
+    ownership_generation,
+    writer_generation,
+    mount_fencing_generation,
+    fencing_key_fingerprint,
+    fencing_token_hash,
+    expires_at
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10,
+    $11,
+    $12,
+    $13,
+    $14,
+    $15,
+    $16,
+    $17,
+    $18,
+    $19
+)
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_key_fingerprint, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+`
+
+type InsertWorkspaceExecLeaseParams struct {
+	ID                     pgtype.UUID        `json:"id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	WorkerGroupID          string             `json:"worker_group_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	RegionID               string             `json:"region_id"`
+	WorkerInstanceID       pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch            int64              `json:"worker_epoch"`
+	RuntimeInstanceID      pgtype.UUID        `json:"runtime_instance_id"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	WorkspaceMountID       pgtype.UUID        `json:"workspace_mount_id"`
+	ProcessID              pgtype.UUID        `json:"process_id"`
+	BaseWorkspaceVersionID pgtype.UUID        `json:"base_workspace_version_id"`
+	OwnershipGeneration    int64              `json:"ownership_generation"`
+	WriterGeneration       int64              `json:"writer_generation"`
+	MountFencingGeneration int64              `json:"mount_fencing_generation"`
+	FencingKeyFingerprint  []byte             `json:"fencing_key_fingerprint"`
+	FencingTokenHash       string             `json:"fencing_token_hash"`
+	ExpiresAt              pgtype.Timestamptz `json:"expires_at"`
+}
+
+func (q *Queries) InsertWorkspaceExecLease(ctx context.Context, arg InsertWorkspaceExecLeaseParams) (WorkspaceLease, error) {
+	row := q.db.QueryRow(ctx, insertWorkspaceExecLease,
+		arg.ID,
+		arg.OrgID,
+		arg.WorkerGroupID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.RegionID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.RuntimeInstanceID,
+		arg.WorkspaceID,
+		arg.WorkspaceMountID,
+		arg.ProcessID,
+		arg.BaseWorkspaceVersionID,
+		arg.OwnershipGeneration,
+		arg.WriterGeneration,
+		arg.MountFencingGeneration,
+		arg.FencingKeyFingerprint,
+		arg.FencingTokenHash,
+		arg.ExpiresAt,
+	)
+	var i WorkspaceLease
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
+		&i.WorkspaceID,
+		&i.WorkspaceMountID,
+		&i.State,
+		&i.OwnerRunLeaseID,
+		&i.OwnerProcessID,
+		&i.BaseVersionID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.MountFencingGeneration,
+		&i.FencingKeyFingerprint,
+		&i.FencingTokenHash,
+		&i.AcquiredAt,
+		&i.RenewedAt,
+		&i.ExpiresAt,
+		&i.ReleasedAt,
+		&i.LostAt,
+		&i.UpdatedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+	)
+	return i, err
+}
+
+const listPendingWorkspaceExecCandidates = `-- name: ListPendingWorkspaceExecCandidates :many
+SELECT org_id, id, state_version
+  FROM workspace_processes
+ WHERE kind = 'exec'
+   AND state = 'pending'
+ ORDER BY created_at, id
+ LIMIT $1
+`
+
+type ListPendingWorkspaceExecCandidatesRow struct {
+	OrgID        pgtype.UUID `json:"org_id"`
+	ID           pgtype.UUID `json:"id"`
+	StateVersion int64       `json:"state_version"`
+}
+
+func (q *Queries) ListPendingWorkspaceExecCandidates(ctx context.Context, rowLimit int32) ([]ListPendingWorkspaceExecCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listPendingWorkspaceExecCandidates, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPendingWorkspaceExecCandidatesRow
+	for rows.Next() {
+		var i ListPendingWorkspaceExecCandidatesRow
+		if err := rows.Scan(&i.OrgID, &i.ID, &i.StateVersion); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listWorkspaceExecTerminalRecords = `-- name: ListWorkspaceExecTerminalRecords :many
@@ -315,4 +1655,1020 @@ func (q *Queries) ListWorkspaceExecTerminalRecords(ctx context.Context, arg List
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockWorkspaceExecFailureAuthority = `-- name: LockWorkspaceExecFailureAuthority :one
+SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.base_version_id, workspace_processes.restore_desired_state, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.kind, workspace_processes.state, workspace_processes.state_version, workspace_processes.request, workspace_processes.claim_id, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.resize_generation, workspace_processes.pending_resize_generation, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.error, workspace_processes.updated_at,
+       workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at,
+       workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.state, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_key_fingerprint, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error
+  FROM workspace_processes
+  JOIN workspace_mounts
+    ON workspace_mounts.id = workspace_processes.workspace_mount_id
+   AND workspace_mounts.workspace_id = workspace_processes.workspace_id
+  JOIN workspace_leases
+    ON workspace_leases.workspace_mount_id = workspace_mounts.id
+   AND workspace_leases.owner_process_id = workspace_processes.id
+  JOIN workspaces
+    ON workspaces.id = workspace_processes.workspace_id
+ WHERE workspace_processes.org_id = $1
+   AND workspace_processes.id = $2
+   AND workspace_processes.kind = 'exec'
+   AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
+   AND workspace_mounts.id = $3
+   AND workspace_mounts.worker_instance_id = $4
+   AND workspace_mounts.worker_epoch = $5
+   AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+   AND workspace_leases.worker_instance_id = $4
+   AND workspace_leases.worker_epoch = $5
+   AND workspace_leases.state IN ('active', 'releasing')
+   AND workspace_leases.ownership_generation = workspaces.ownership_generation
+   AND workspace_leases.writer_generation = workspaces.writer_generation
+   AND workspace_leases.mount_fencing_generation = workspace_mounts.fencing_generation
+ FOR UPDATE OF workspace_processes, workspace_mounts, workspace_leases
+`
+
+type LockWorkspaceExecFailureAuthorityParams struct {
+	OrgID            pgtype.UUID `json:"org_id"`
+	ProcessID        pgtype.UUID `json:"process_id"`
+	WorkspaceMountID pgtype.UUID `json:"workspace_mount_id"`
+	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch      int64       `json:"worker_epoch"`
+}
+
+type LockWorkspaceExecFailureAuthorityRow struct {
+	WorkspaceProcess WorkspaceProcess `json:"workspace_process"`
+	WorkspaceMount   WorkspaceMount   `json:"workspace_mount"`
+	WorkspaceLease   WorkspaceLease   `json:"workspace_lease"`
+}
+
+func (q *Queries) LockWorkspaceExecFailureAuthority(ctx context.Context, arg LockWorkspaceExecFailureAuthorityParams) (LockWorkspaceExecFailureAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, lockWorkspaceExecFailureAuthority,
+		arg.OrgID,
+		arg.ProcessID,
+		arg.WorkspaceMountID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+	)
+	var i LockWorkspaceExecFailureAuthorityRow
+	err := row.Scan(
+		&i.WorkspaceProcess.ID,
+		&i.WorkspaceProcess.OrgID,
+		&i.WorkspaceProcess.ProjectID,
+		&i.WorkspaceProcess.EnvironmentID,
+		&i.WorkspaceProcess.WorkspaceID,
+		&i.WorkspaceProcess.BaseVersionID,
+		&i.WorkspaceProcess.RestoreDesiredState,
+		&i.WorkspaceProcess.RegionID,
+		&i.WorkspaceProcess.WorkerGroupID,
+		&i.WorkspaceProcess.WorkerInstanceID,
+		&i.WorkspaceProcess.WorkerEpoch,
+		&i.WorkspaceProcess.RuntimeInstanceID,
+		&i.WorkspaceProcess.WorkspaceMountID,
+		&i.WorkspaceProcess.Kind,
+		&i.WorkspaceProcess.State,
+		&i.WorkspaceProcess.StateVersion,
+		&i.WorkspaceProcess.Request,
+		&i.WorkspaceProcess.ClaimID,
+		&i.WorkspaceProcess.RuntimeProcessID,
+		&i.WorkspaceProcess.ExitCode,
+		&i.WorkspaceProcess.Signal,
+		&i.WorkspaceProcess.PtyCols,
+		&i.WorkspaceProcess.PtyRows,
+		&i.WorkspaceProcess.PendingPtyCols,
+		&i.WorkspaceProcess.PendingPtyRows,
+		&i.WorkspaceProcess.ResizeGeneration,
+		&i.WorkspaceProcess.PendingResizeGeneration,
+		&i.WorkspaceProcess.StdoutCursor,
+		&i.WorkspaceProcess.StderrCursor,
+		&i.WorkspaceProcess.StdinCursor,
+		&i.WorkspaceProcess.StdinDeliveredCursor,
+		&i.WorkspaceProcess.StdinClosedAt,
+		&i.WorkspaceProcess.InputCursor,
+		&i.WorkspaceProcess.InputDeliveredCursor,
+		&i.WorkspaceProcess.OutputCursor,
+		&i.WorkspaceProcess.CreatedBySubjectType,
+		&i.WorkspaceProcess.CreatedBySubjectID,
+		&i.WorkspaceProcess.CreatedAt,
+		&i.WorkspaceProcess.StartedAt,
+		&i.WorkspaceProcess.ExitedAt,
+		&i.WorkspaceProcess.TerminalAt,
+		&i.WorkspaceProcess.TerminalReasonCode,
+		&i.WorkspaceProcess.Error,
+		&i.WorkspaceProcess.UpdatedAt,
+		&i.WorkspaceMount.ID,
+		&i.WorkspaceMount.OrgID,
+		&i.WorkspaceMount.WorkerGroupID,
+		&i.WorkspaceMount.ProjectID,
+		&i.WorkspaceMount.EnvironmentID,
+		&i.WorkspaceMount.RegionID,
+		&i.WorkspaceMount.WorkerInstanceID,
+		&i.WorkspaceMount.WorkerEpoch,
+		&i.WorkspaceMount.WorkspaceID,
+		&i.WorkspaceMount.MaterializedVersionID,
+		&i.WorkspaceMount.RuntimeInstanceID,
+		&i.WorkspaceMount.ClaimAttempt,
+		&i.WorkspaceMount.GuestChannelTokenHash,
+		&i.WorkspaceMount.GuestChannelTokenExpiresAt,
+		&i.WorkspaceMount.State,
+		&i.WorkspaceMount.Request,
+		&i.WorkspaceMount.DirtyGeneration,
+		&i.WorkspaceMount.FencingGeneration,
+		&i.WorkspaceMount.FinalizationKind,
+		&i.WorkspaceMount.FinalizationReasonCode,
+		&i.WorkspaceMount.FinalizationError,
+		&i.WorkspaceMount.StagedVersionID,
+		&i.WorkspaceMount.RequestedAt,
+		&i.WorkspaceMount.MountedAt,
+		&i.WorkspaceMount.UnmountedAt,
+		&i.WorkspaceMount.StoppedAt,
+		&i.WorkspaceMount.LostAt,
+		&i.WorkspaceMount.FailedAt,
+		&i.WorkspaceMount.TerminalAt,
+		&i.WorkspaceMount.TerminalReasonCode,
+		&i.WorkspaceMount.TerminalError,
+		&i.WorkspaceMount.CreatedAt,
+		&i.WorkspaceMount.UpdatedAt,
+		&i.WorkspaceLease.ID,
+		&i.WorkspaceLease.OrgID,
+		&i.WorkspaceLease.WorkerGroupID,
+		&i.WorkspaceLease.ProjectID,
+		&i.WorkspaceLease.EnvironmentID,
+		&i.WorkspaceLease.RegionID,
+		&i.WorkspaceLease.WorkerInstanceID,
+		&i.WorkspaceLease.WorkerEpoch,
+		&i.WorkspaceLease.RuntimeInstanceID,
+		&i.WorkspaceLease.WorkspaceID,
+		&i.WorkspaceLease.WorkspaceMountID,
+		&i.WorkspaceLease.State,
+		&i.WorkspaceLease.OwnerRunLeaseID,
+		&i.WorkspaceLease.OwnerProcessID,
+		&i.WorkspaceLease.BaseVersionID,
+		&i.WorkspaceLease.OwnershipGeneration,
+		&i.WorkspaceLease.WriterGeneration,
+		&i.WorkspaceLease.MountFencingGeneration,
+		&i.WorkspaceLease.FencingKeyFingerprint,
+		&i.WorkspaceLease.FencingTokenHash,
+		&i.WorkspaceLease.AcquiredAt,
+		&i.WorkspaceLease.RenewedAt,
+		&i.WorkspaceLease.ExpiresAt,
+		&i.WorkspaceLease.ReleasedAt,
+		&i.WorkspaceLease.LostAt,
+		&i.WorkspaceLease.UpdatedAt,
+		&i.WorkspaceLease.TerminalAt,
+		&i.WorkspaceLease.TerminalReasonCode,
+		&i.WorkspaceLease.TerminalError,
+	)
+	return i, err
+}
+
+const lockWorkspaceExecFailureWorkspace = `-- name: LockWorkspaceExecFailureWorkspace :one
+SELECT id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+  FROM workspaces
+ WHERE org_id = $1
+   AND id = $2
+ FOR UPDATE
+`
+
+type LockWorkspaceExecFailureWorkspaceParams struct {
+	OrgID       pgtype.UUID `json:"org_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockWorkspaceExecFailureWorkspace(ctx context.Context, arg LockWorkspaceExecFailureWorkspaceParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, lockWorkspaceExecFailureWorkspace, arg.OrgID, arg.WorkspaceID)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.DeclarationKind,
+		&i.WorkspaceDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.Key,
+		&i.StateVersion,
+		&i.OwnerActorID,
+		&i.OwnerRunID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.HeadVersionID,
+		&i.State,
+		&i.DesiredState,
+		&i.DirtyState,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const lockWorkspaceExecWorkerAuthority = `-- name: LockWorkspaceExecWorkerAuthority :one
+SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.base_version_id, workspace_processes.restore_desired_state, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.kind, workspace_processes.state, workspace_processes.state_version, workspace_processes.request, workspace_processes.claim_id, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.resize_generation, workspace_processes.pending_resize_generation, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.error, workspace_processes.updated_at,
+       workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at,
+       workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.state, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_key_fingerprint, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error,
+       idempotency_claims.request_fingerprint,
+       idempotency_claims.expires_at AS claim_expires_at
+  FROM workspace_processes
+  JOIN workspace_mounts
+    ON workspace_mounts.org_id = workspace_processes.org_id
+   AND workspace_mounts.project_id = workspace_processes.project_id
+   AND workspace_mounts.environment_id = workspace_processes.environment_id
+   AND workspace_mounts.workspace_id = workspace_processes.workspace_id
+   AND workspace_mounts.id = workspace_processes.workspace_mount_id
+  JOIN workspace_leases
+    ON workspace_leases.org_id = workspace_processes.org_id
+   AND workspace_leases.project_id = workspace_processes.project_id
+   AND workspace_leases.environment_id = workspace_processes.environment_id
+   AND workspace_leases.workspace_id = workspace_processes.workspace_id
+   AND workspace_leases.workspace_mount_id = workspace_processes.workspace_mount_id
+   AND workspace_leases.owner_process_id = workspace_processes.id
+  JOIN workspaces
+    ON workspaces.id = workspace_processes.workspace_id
+  JOIN idempotency_claims
+    ON idempotency_claims.environment_id = workspace_processes.environment_id
+   AND idempotency_claims.id = workspace_processes.claim_id
+ WHERE workspace_processes.org_id = $1
+   AND workspace_processes.id = $2
+   AND workspace_processes.kind = 'exec'
+   AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
+   AND workspace_mounts.id = $3
+   AND workspace_mounts.worker_instance_id = $4
+   AND workspace_mounts.worker_epoch = $5
+   AND workspace_mounts.state IN ('mounted', 'unmounting')
+   AND workspace_leases.worker_instance_id = $4
+   AND workspace_leases.worker_epoch = $5
+   AND workspace_leases.state IN ('active', 'releasing')
+   AND workspace_leases.expires_at > transaction_timestamp()
+   AND workspace_leases.ownership_generation = workspaces.ownership_generation
+   AND workspace_leases.writer_generation = workspaces.writer_generation
+   AND workspace_leases.mount_fencing_generation = workspace_mounts.fencing_generation
+ FOR UPDATE OF workspace_processes, workspace_mounts, workspace_leases
+`
+
+type LockWorkspaceExecWorkerAuthorityParams struct {
+	OrgID            pgtype.UUID `json:"org_id"`
+	ProcessID        pgtype.UUID `json:"process_id"`
+	WorkspaceMountID pgtype.UUID `json:"workspace_mount_id"`
+	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch      int64       `json:"worker_epoch"`
+}
+
+type LockWorkspaceExecWorkerAuthorityRow struct {
+	WorkspaceProcess   WorkspaceProcess   `json:"workspace_process"`
+	WorkspaceMount     WorkspaceMount     `json:"workspace_mount"`
+	WorkspaceLease     WorkspaceLease     `json:"workspace_lease"`
+	RequestFingerprint []byte             `json:"request_fingerprint"`
+	ClaimExpiresAt     pgtype.Timestamptz `json:"claim_expires_at"`
+}
+
+func (q *Queries) LockWorkspaceExecWorkerAuthority(ctx context.Context, arg LockWorkspaceExecWorkerAuthorityParams) (LockWorkspaceExecWorkerAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, lockWorkspaceExecWorkerAuthority,
+		arg.OrgID,
+		arg.ProcessID,
+		arg.WorkspaceMountID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+	)
+	var i LockWorkspaceExecWorkerAuthorityRow
+	err := row.Scan(
+		&i.WorkspaceProcess.ID,
+		&i.WorkspaceProcess.OrgID,
+		&i.WorkspaceProcess.ProjectID,
+		&i.WorkspaceProcess.EnvironmentID,
+		&i.WorkspaceProcess.WorkspaceID,
+		&i.WorkspaceProcess.BaseVersionID,
+		&i.WorkspaceProcess.RestoreDesiredState,
+		&i.WorkspaceProcess.RegionID,
+		&i.WorkspaceProcess.WorkerGroupID,
+		&i.WorkspaceProcess.WorkerInstanceID,
+		&i.WorkspaceProcess.WorkerEpoch,
+		&i.WorkspaceProcess.RuntimeInstanceID,
+		&i.WorkspaceProcess.WorkspaceMountID,
+		&i.WorkspaceProcess.Kind,
+		&i.WorkspaceProcess.State,
+		&i.WorkspaceProcess.StateVersion,
+		&i.WorkspaceProcess.Request,
+		&i.WorkspaceProcess.ClaimID,
+		&i.WorkspaceProcess.RuntimeProcessID,
+		&i.WorkspaceProcess.ExitCode,
+		&i.WorkspaceProcess.Signal,
+		&i.WorkspaceProcess.PtyCols,
+		&i.WorkspaceProcess.PtyRows,
+		&i.WorkspaceProcess.PendingPtyCols,
+		&i.WorkspaceProcess.PendingPtyRows,
+		&i.WorkspaceProcess.ResizeGeneration,
+		&i.WorkspaceProcess.PendingResizeGeneration,
+		&i.WorkspaceProcess.StdoutCursor,
+		&i.WorkspaceProcess.StderrCursor,
+		&i.WorkspaceProcess.StdinCursor,
+		&i.WorkspaceProcess.StdinDeliveredCursor,
+		&i.WorkspaceProcess.StdinClosedAt,
+		&i.WorkspaceProcess.InputCursor,
+		&i.WorkspaceProcess.InputDeliveredCursor,
+		&i.WorkspaceProcess.OutputCursor,
+		&i.WorkspaceProcess.CreatedBySubjectType,
+		&i.WorkspaceProcess.CreatedBySubjectID,
+		&i.WorkspaceProcess.CreatedAt,
+		&i.WorkspaceProcess.StartedAt,
+		&i.WorkspaceProcess.ExitedAt,
+		&i.WorkspaceProcess.TerminalAt,
+		&i.WorkspaceProcess.TerminalReasonCode,
+		&i.WorkspaceProcess.Error,
+		&i.WorkspaceProcess.UpdatedAt,
+		&i.WorkspaceMount.ID,
+		&i.WorkspaceMount.OrgID,
+		&i.WorkspaceMount.WorkerGroupID,
+		&i.WorkspaceMount.ProjectID,
+		&i.WorkspaceMount.EnvironmentID,
+		&i.WorkspaceMount.RegionID,
+		&i.WorkspaceMount.WorkerInstanceID,
+		&i.WorkspaceMount.WorkerEpoch,
+		&i.WorkspaceMount.WorkspaceID,
+		&i.WorkspaceMount.MaterializedVersionID,
+		&i.WorkspaceMount.RuntimeInstanceID,
+		&i.WorkspaceMount.ClaimAttempt,
+		&i.WorkspaceMount.GuestChannelTokenHash,
+		&i.WorkspaceMount.GuestChannelTokenExpiresAt,
+		&i.WorkspaceMount.State,
+		&i.WorkspaceMount.Request,
+		&i.WorkspaceMount.DirtyGeneration,
+		&i.WorkspaceMount.FencingGeneration,
+		&i.WorkspaceMount.FinalizationKind,
+		&i.WorkspaceMount.FinalizationReasonCode,
+		&i.WorkspaceMount.FinalizationError,
+		&i.WorkspaceMount.StagedVersionID,
+		&i.WorkspaceMount.RequestedAt,
+		&i.WorkspaceMount.MountedAt,
+		&i.WorkspaceMount.UnmountedAt,
+		&i.WorkspaceMount.StoppedAt,
+		&i.WorkspaceMount.LostAt,
+		&i.WorkspaceMount.FailedAt,
+		&i.WorkspaceMount.TerminalAt,
+		&i.WorkspaceMount.TerminalReasonCode,
+		&i.WorkspaceMount.TerminalError,
+		&i.WorkspaceMount.CreatedAt,
+		&i.WorkspaceMount.UpdatedAt,
+		&i.WorkspaceLease.ID,
+		&i.WorkspaceLease.OrgID,
+		&i.WorkspaceLease.WorkerGroupID,
+		&i.WorkspaceLease.ProjectID,
+		&i.WorkspaceLease.EnvironmentID,
+		&i.WorkspaceLease.RegionID,
+		&i.WorkspaceLease.WorkerInstanceID,
+		&i.WorkspaceLease.WorkerEpoch,
+		&i.WorkspaceLease.RuntimeInstanceID,
+		&i.WorkspaceLease.WorkspaceID,
+		&i.WorkspaceLease.WorkspaceMountID,
+		&i.WorkspaceLease.State,
+		&i.WorkspaceLease.OwnerRunLeaseID,
+		&i.WorkspaceLease.OwnerProcessID,
+		&i.WorkspaceLease.BaseVersionID,
+		&i.WorkspaceLease.OwnershipGeneration,
+		&i.WorkspaceLease.WriterGeneration,
+		&i.WorkspaceLease.MountFencingGeneration,
+		&i.WorkspaceLease.FencingKeyFingerprint,
+		&i.WorkspaceLease.FencingTokenHash,
+		&i.WorkspaceLease.AcquiredAt,
+		&i.WorkspaceLease.RenewedAt,
+		&i.WorkspaceLease.ExpiresAt,
+		&i.WorkspaceLease.ReleasedAt,
+		&i.WorkspaceLease.LostAt,
+		&i.WorkspaceLease.UpdatedAt,
+		&i.WorkspaceLease.TerminalAt,
+		&i.WorkspaceLease.TerminalReasonCode,
+		&i.WorkspaceLease.TerminalError,
+		&i.RequestFingerprint,
+		&i.ClaimExpiresAt,
+	)
+	return i, err
+}
+
+const markWorkspaceExecRecoveryRequired = `-- name: MarkWorkspaceExecRecoveryRequired :one
+UPDATE workspaces
+   SET state = 'recovery_required',
+       desired_state = 'stopped',
+       dirty_state = 'dirty_state_lost',
+       state_version = state_version + 1,
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND head_version_id = $2
+   AND ownership_generation = $3
+   AND writer_generation = $4
+RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+`
+
+type MarkWorkspaceExecRecoveryRequiredParams struct {
+	WorkspaceID         pgtype.UUID `json:"workspace_id"`
+	BaseVersionID       pgtype.UUID `json:"base_version_id"`
+	OwnershipGeneration int64       `json:"ownership_generation"`
+	WriterGeneration    int64       `json:"writer_generation"`
+}
+
+func (q *Queries) MarkWorkspaceExecRecoveryRequired(ctx context.Context, arg MarkWorkspaceExecRecoveryRequiredParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, markWorkspaceExecRecoveryRequired,
+		arg.WorkspaceID,
+		arg.BaseVersionID,
+		arg.OwnershipGeneration,
+		arg.WriterGeneration,
+	)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.DeclarationKind,
+		&i.WorkspaceDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.Key,
+		&i.StateVersion,
+		&i.OwnerActorID,
+		&i.OwnerRunID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.HeadVersionID,
+		&i.State,
+		&i.DesiredState,
+		&i.DirtyState,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const releaseWorkspaceExecLease = `-- name: ReleaseWorkspaceExecLease :one
+UPDATE workspace_leases
+   SET state = 'released',
+       released_at = transaction_timestamp(),
+       terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND owner_process_id = $2
+   AND state IN ('active', 'releasing')
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_key_fingerprint, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+`
+
+type ReleaseWorkspaceExecLeaseParams struct {
+	LeaseID   pgtype.UUID `json:"lease_id"`
+	ProcessID pgtype.UUID `json:"process_id"`
+}
+
+func (q *Queries) ReleaseWorkspaceExecLease(ctx context.Context, arg ReleaseWorkspaceExecLeaseParams) (WorkspaceLease, error) {
+	row := q.db.QueryRow(ctx, releaseWorkspaceExecLease, arg.LeaseID, arg.ProcessID)
+	var i WorkspaceLease
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
+		&i.WorkspaceID,
+		&i.WorkspaceMountID,
+		&i.State,
+		&i.OwnerRunLeaseID,
+		&i.OwnerProcessID,
+		&i.BaseVersionID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.MountFencingGeneration,
+		&i.FencingKeyFingerprint,
+		&i.FencingTokenHash,
+		&i.AcquiredAt,
+		&i.RenewedAt,
+		&i.ExpiresAt,
+		&i.ReleasedAt,
+		&i.LostAt,
+		&i.UpdatedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+	)
+	return i, err
+}
+
+const renewWorkspaceExecLeaseForMount = `-- name: RenewWorkspaceExecLeaseForMount :execrows
+UPDATE workspace_leases
+   SET expires_at = $1,
+       renewed_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE workspace_mount_id = $2
+   AND owner_process_id IS NOT NULL
+   AND state = 'active'
+   AND expires_at > transaction_timestamp()
+`
+
+type RenewWorkspaceExecLeaseForMountParams struct {
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	WorkspaceMountID pgtype.UUID        `json:"workspace_mount_id"`
+}
+
+func (q *Queries) RenewWorkspaceExecLeaseForMount(ctx context.Context, arg RenewWorkspaceExecLeaseForMountParams) (int64, error) {
+	result, err := q.db.Exec(ctx, renewWorkspaceExecLeaseForMount, arg.ExpiresAt, arg.WorkspaceMountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const requestWorkspaceExecMountFinalization = `-- name: RequestWorkspaceExecMountFinalization :one
+WITH requested AS (
+    UPDATE workspace_mounts
+       SET state = 'unmounting',
+           finalization_kind = $1,
+           finalization_reason_code = $2,
+           finalization_error = $3,
+           stopped_at = COALESCE(stopped_at, transaction_timestamp()),
+           updated_at = transaction_timestamp()
+     WHERE workspace_mounts.id = $4
+       AND workspace_mounts.worker_instance_id = $5
+       AND workspace_mounts.worker_epoch = $6
+       AND workspace_mounts.state IN ('mounted', 'unmounting')
+       AND (
+           workspace_mounts.finalization_kind IS NULL
+           OR (
+               workspace_mounts.finalization_kind = $1
+               AND workspace_mounts.finalization_reason_code = $2
+               AND workspace_mounts.finalization_error IS NOT DISTINCT FROM $3
+           )
+       )
+    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, claim_attempt, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+)
+UPDATE runtime_instances
+   SET desired_state = 'closed',
+       desired_version = CASE
+           WHEN desired_state = 'closed' THEN desired_version
+           ELSE desired_version + 1
+       END,
+       desired_at = transaction_timestamp(),
+       desired_reason = 'workspace_exec_finalization',
+       updated_at = transaction_timestamp()
+  FROM requested
+ WHERE runtime_instances.id = requested.runtime_instance_id
+RETURNING requested.id, requested.org_id, requested.worker_group_id, requested.project_id, requested.environment_id, requested.region_id, requested.worker_instance_id, requested.worker_epoch, requested.workspace_id, requested.materialized_version_id, requested.runtime_instance_id, requested.claim_attempt, requested.guest_channel_token_hash, requested.guest_channel_token_expires_at, requested.state, requested.request, requested.dirty_generation, requested.fencing_generation, requested.finalization_kind, requested.finalization_reason_code, requested.finalization_error, requested.staged_version_id, requested.requested_at, requested.mounted_at, requested.unmounted_at, requested.stopped_at, requested.lost_at, requested.failed_at, requested.terminal_at, requested.terminal_reason_code, requested.terminal_error, requested.created_at, requested.updated_at
+`
+
+type RequestWorkspaceExecMountFinalizationParams struct {
+	FinalizationKind pgtype.Text `json:"finalization_kind"`
+	ReasonCode       pgtype.Text `json:"reason_code"`
+	Error            []byte      `json:"error"`
+	WorkspaceMountID pgtype.UUID `json:"workspace_mount_id"`
+	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch      int64       `json:"worker_epoch"`
+}
+
+type RequestWorkspaceExecMountFinalizationRow struct {
+	ID                         pgtype.UUID         `json:"id"`
+	OrgID                      pgtype.UUID         `json:"org_id"`
+	WorkerGroupID              string              `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID         `json:"project_id"`
+	EnvironmentID              pgtype.UUID         `json:"environment_id"`
+	RegionID                   string              `json:"region_id"`
+	WorkerInstanceID           pgtype.UUID         `json:"worker_instance_id"`
+	WorkerEpoch                int64               `json:"worker_epoch"`
+	WorkspaceID                pgtype.UUID         `json:"workspace_id"`
+	MaterializedVersionID      pgtype.UUID         `json:"materialized_version_id"`
+	RuntimeInstanceID          pgtype.UUID         `json:"runtime_instance_id"`
+	ClaimAttempt               int32               `json:"claim_attempt"`
+	GuestChannelTokenHash      string              `json:"guest_channel_token_hash"`
+	GuestChannelTokenExpiresAt pgtype.Timestamptz  `json:"guest_channel_token_expires_at"`
+	State                      WorkspaceMountState `json:"state"`
+	Request                    []byte              `json:"request"`
+	DirtyGeneration            int64               `json:"dirty_generation"`
+	FencingGeneration          int64               `json:"fencing_generation"`
+	FinalizationKind           pgtype.Text         `json:"finalization_kind"`
+	FinalizationReasonCode     pgtype.Text         `json:"finalization_reason_code"`
+	FinalizationError          []byte              `json:"finalization_error"`
+	StagedVersionID            pgtype.UUID         `json:"staged_version_id"`
+	RequestedAt                pgtype.Timestamptz  `json:"requested_at"`
+	MountedAt                  pgtype.Timestamptz  `json:"mounted_at"`
+	UnmountedAt                pgtype.Timestamptz  `json:"unmounted_at"`
+	StoppedAt                  pgtype.Timestamptz  `json:"stopped_at"`
+	LostAt                     pgtype.Timestamptz  `json:"lost_at"`
+	FailedAt                   pgtype.Timestamptz  `json:"failed_at"`
+	TerminalAt                 pgtype.Timestamptz  `json:"terminal_at"`
+	TerminalReasonCode         pgtype.Text         `json:"terminal_reason_code"`
+	TerminalError              []byte              `json:"terminal_error"`
+	CreatedAt                  pgtype.Timestamptz  `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz  `json:"updated_at"`
+}
+
+func (q *Queries) RequestWorkspaceExecMountFinalization(ctx context.Context, arg RequestWorkspaceExecMountFinalizationParams) (RequestWorkspaceExecMountFinalizationRow, error) {
+	row := q.db.QueryRow(ctx, requestWorkspaceExecMountFinalization,
+		arg.FinalizationKind,
+		arg.ReasonCode,
+		arg.Error,
+		arg.WorkspaceMountID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+	)
+	var i RequestWorkspaceExecMountFinalizationRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.WorkspaceID,
+		&i.MaterializedVersionID,
+		&i.RuntimeInstanceID,
+		&i.ClaimAttempt,
+		&i.GuestChannelTokenHash,
+		&i.GuestChannelTokenExpiresAt,
+		&i.State,
+		&i.Request,
+		&i.DirtyGeneration,
+		&i.FencingGeneration,
+		&i.FinalizationKind,
+		&i.FinalizationReasonCode,
+		&i.FinalizationError,
+		&i.StagedVersionID,
+		&i.RequestedAt,
+		&i.MountedAt,
+		&i.UnmountedAt,
+		&i.StoppedAt,
+		&i.LostAt,
+		&i.FailedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const reserveReadyRuntimeForWorkspaceExec = `-- name: ReserveReadyRuntimeForWorkspaceExec :one
+UPDATE runtime_instances
+   SET reserved_process_id = $1,
+       reserved_workspace_version_id = $2,
+       reservation_expires_at = $3,
+       desired_reason = 'workspace_exec_reservation',
+       updated_at = transaction_timestamp()
+ WHERE id = $4
+   AND workspace_id = $5
+   AND deployment_definition_id = $6
+   AND observed_state = 'ready'
+   AND reclaimed_at IS NULL
+   AND reserved_run_id IS NULL
+   AND reserved_attempt_number IS NULL
+   AND reserved_process_id IS NULL
+   AND reserved_workspace_version_id IS NULL
+   AND reservation_expires_at IS NULL
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, network_policy, reserved_cpu_millis, reserved_memory_bytes, reserved_workload_disk_bytes, reserved_scratch_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, preparing_at, ready_at, closing_at, closed_at, lost_at, failed_at, reclaimed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+`
+
+type ReserveReadyRuntimeForWorkspaceExecParams struct {
+	ProcessID              pgtype.UUID        `json:"process_id"`
+	BaseWorkspaceVersionID pgtype.UUID        `json:"base_workspace_version_id"`
+	ReservationExpiresAt   pgtype.Timestamptz `json:"reservation_expires_at"`
+	ID                     pgtype.UUID        `json:"id"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
+}
+
+func (q *Queries) ReserveReadyRuntimeForWorkspaceExec(ctx context.Context, arg ReserveReadyRuntimeForWorkspaceExecParams) (RuntimeInstance, error) {
+	row := q.db.QueryRow(ctx, reserveReadyRuntimeForWorkspaceExec,
+		arg.ProcessID,
+		arg.BaseWorkspaceVersionID,
+		arg.ReservationExpiresAt,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.DeploymentDefinitionID,
+	)
+	var i RuntimeInstance
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.WorkerInstanceID,
+		&i.RuntimeIdentityID,
+		&i.DeploymentDefinitionID,
+		&i.RuntimeSubstrateID,
+		&i.WorkerEpoch,
+		&i.NetworkPolicy,
+		&i.ReservedCpuMillis,
+		&i.ReservedMemoryBytes,
+		&i.ReservedWorkloadDiskBytes,
+		&i.ReservedScratchBytes,
+		&i.ReservedExecutionSlots,
+		&i.WorkspaceID,
+		&i.ProgramDeploymentID,
+		&i.RestoreCheckpointID,
+		&i.ReservedRunID,
+		&i.ReservedAttemptNumber,
+		&i.ReservedProcessID,
+		&i.ReservedWorkspaceVersionID,
+		&i.ReservationExpiresAt,
+		&i.DesiredState,
+		&i.DesiredVersion,
+		&i.DesiredAt,
+		&i.DesiredReason,
+		&i.ObservedState,
+		&i.ObservedVersion,
+		&i.ObservedDesiredVersion,
+		&i.ObservedAt,
+		&i.AllocatedAt,
+		&i.PreparingAt,
+		&i.ReadyAt,
+		&i.ClosingAt,
+		&i.ClosedAt,
+		&i.LostAt,
+		&i.FailedAt,
+		&i.ReclaimedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setWorkspaceExecResult = `-- name: SetWorkspaceExecResult :one
+UPDATE workspace_processes
+   SET state = 'exit_requested',
+       state_version = CASE
+           WHEN state = 'running' THEN state_version + 1
+           ELSE state_version
+       END,
+       exit_code = $1,
+       updated_at = transaction_timestamp()
+ WHERE id = $2
+   AND workspace_mount_id = $3
+   AND (
+       state = 'running'
+       OR (
+           state = 'exit_requested'
+           AND exit_code IS NOT DISTINCT FROM $1
+       )
+   )
+RETURNING id, org_id, project_id, environment_id, workspace_id, base_version_id, restore_desired_state, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, kind, state, state_version, request, claim_id, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, resize_generation, pending_resize_generation, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, error, updated_at
+`
+
+type SetWorkspaceExecResultParams struct {
+	ExitCode         pgtype.Int4 `json:"exit_code"`
+	ProcessID        pgtype.UUID `json:"process_id"`
+	WorkspaceMountID pgtype.UUID `json:"workspace_mount_id"`
+}
+
+func (q *Queries) SetWorkspaceExecResult(ctx context.Context, arg SetWorkspaceExecResultParams) (WorkspaceProcess, error) {
+	row := q.db.QueryRow(ctx, setWorkspaceExecResult, arg.ExitCode, arg.ProcessID, arg.WorkspaceMountID)
+	var i WorkspaceProcess
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.WorkspaceID,
+		&i.BaseVersionID,
+		&i.RestoreDesiredState,
+		&i.RegionID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
+		&i.WorkspaceMountID,
+		&i.Kind,
+		&i.State,
+		&i.StateVersion,
+		&i.Request,
+		&i.ClaimID,
+		&i.RuntimeProcessID,
+		&i.ExitCode,
+		&i.Signal,
+		&i.PtyCols,
+		&i.PtyRows,
+		&i.PendingPtyCols,
+		&i.PendingPtyRows,
+		&i.ResizeGeneration,
+		&i.PendingResizeGeneration,
+		&i.StdoutCursor,
+		&i.StderrCursor,
+		&i.StdinCursor,
+		&i.StdinDeliveredCursor,
+		&i.StdinClosedAt,
+		&i.InputCursor,
+		&i.InputDeliveredCursor,
+		&i.OutputCursor,
+		&i.CreatedBySubjectType,
+		&i.CreatedBySubjectID,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.ExitedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.Error,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const stageWorkspaceExecCapture = `-- name: StageWorkspaceExecCapture :one
+WITH authority AS (
+    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at, workspace_processes.base_version_id,
+           workspace_leases.id AS source_workspace_lease_id,
+           workspace_leases.ownership_generation,
+           workspace_leases.writer_generation
+      FROM workspace_mounts
+      JOIN workspace_processes
+        ON workspace_processes.workspace_mount_id = workspace_mounts.id
+       AND workspace_processes.workspace_id = workspace_mounts.workspace_id
+       AND workspace_processes.state = 'exit_requested'
+      JOIN workspace_leases
+        ON workspace_leases.workspace_mount_id = workspace_mounts.id
+       AND workspace_leases.owner_process_id = workspace_processes.id
+       AND workspace_leases.state IN ('active', 'releasing')
+     WHERE workspace_mounts.id = $1
+       AND workspace_mounts.worker_instance_id = $2
+       AND workspace_mounts.worker_epoch = $3
+       AND workspace_mounts.state = 'unmounting'
+       AND workspace_mounts.finalization_kind = 'capture'
+       AND workspace_mounts.staged_version_id IS NULL
+     FOR UPDATE OF workspace_mounts, workspace_processes, workspace_leases
+), created AS (
+    INSERT INTO workspace_versions (
+        id, public_id, org_id, project_id, environment_id, workspace_id,
+        parent_version_id, artifact_id, artifact_kind, kind, content_digest,
+        size_bytes, entry_count, state, source_workspace_lease_id,
+        ownership_generation, writer_generation
+    )
+    SELECT $4, $5,
+           authority.org_id, authority.project_id, authority.environment_id,
+           authority.workspace_id, authority.base_version_id,
+           $6, 'workspace_version', 'system',
+           $7, $8, $9,
+           'private', authority.source_workspace_lease_id,
+           authority.ownership_generation, authority.writer_generation
+      FROM authority
+    RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+), staged AS (
+    UPDATE workspace_mounts
+       SET staged_version_id = created.id,
+           updated_at = transaction_timestamp()
+      FROM created
+     WHERE workspace_mounts.id = $1
+    RETURNING workspace_mounts.id
+)
+SELECT created.id, created.public_id, created.org_id, created.project_id, created.environment_id, created.workspace_id, created.parent_version_id, created.artifact_id, created.artifact_kind, created.kind, created.content_digest, created.size_bytes, created.entry_count, created.state, created.source_workspace_lease_id, created.ownership_generation, created.writer_generation, created.created_at, created.published_at, created.discarded_at
+  FROM created
+  JOIN staged ON true
+`
+
+type StageWorkspaceExecCaptureParams struct {
+	WorkspaceMountID         pgtype.UUID `json:"workspace_mount_id"`
+	WorkerInstanceID         pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch              int64       `json:"worker_epoch"`
+	WorkspaceVersionID       pgtype.UUID `json:"workspace_version_id"`
+	WorkspaceVersionPublicID string      `json:"workspace_version_public_id"`
+	ArtifactID               pgtype.UUID `json:"artifact_id"`
+	ContentDigest            string      `json:"content_digest"`
+	SizeBytes                int64       `json:"size_bytes"`
+	EntryCount               int32       `json:"entry_count"`
+}
+
+type StageWorkspaceExecCaptureRow struct {
+	ID                     pgtype.UUID           `json:"id"`
+	PublicID               string                `json:"public_id"`
+	OrgID                  pgtype.UUID           `json:"org_id"`
+	ProjectID              pgtype.UUID           `json:"project_id"`
+	EnvironmentID          pgtype.UUID           `json:"environment_id"`
+	WorkspaceID            pgtype.UUID           `json:"workspace_id"`
+	ParentVersionID        pgtype.UUID           `json:"parent_version_id"`
+	ArtifactID             pgtype.UUID           `json:"artifact_id"`
+	ArtifactKind           NullArtifactKind      `json:"artifact_kind"`
+	Kind                   WorkspaceVersionKind  `json:"kind"`
+	ContentDigest          string                `json:"content_digest"`
+	SizeBytes              int64                 `json:"size_bytes"`
+	EntryCount             int32                 `json:"entry_count"`
+	State                  WorkspaceVersionState `json:"state"`
+	SourceWorkspaceLeaseID pgtype.UUID           `json:"source_workspace_lease_id"`
+	OwnershipGeneration    int64                 `json:"ownership_generation"`
+	WriterGeneration       int64                 `json:"writer_generation"`
+	CreatedAt              pgtype.Timestamptz    `json:"created_at"`
+	PublishedAt            pgtype.Timestamptz    `json:"published_at"`
+	DiscardedAt            pgtype.Timestamptz    `json:"discarded_at"`
+}
+
+func (q *Queries) StageWorkspaceExecCapture(ctx context.Context, arg StageWorkspaceExecCaptureParams) (StageWorkspaceExecCaptureRow, error) {
+	row := q.db.QueryRow(ctx, stageWorkspaceExecCapture,
+		arg.WorkspaceMountID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.WorkspaceVersionID,
+		arg.WorkspaceVersionPublicID,
+		arg.ArtifactID,
+		arg.ContentDigest,
+		arg.SizeBytes,
+		arg.EntryCount,
+	)
+	var i StageWorkspaceExecCaptureRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.WorkspaceID,
+		&i.ParentVersionID,
+		&i.ArtifactID,
+		&i.ArtifactKind,
+		&i.Kind,
+		&i.ContentDigest,
+		&i.SizeBytes,
+		&i.EntryCount,
+		&i.State,
+		&i.SourceWorkspaceLeaseID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.CreatedAt,
+		&i.PublishedAt,
+		&i.DiscardedAt,
+	)
+	return i, err
+}
+
+const startWorkspaceExec = `-- name: StartWorkspaceExec :one
+UPDATE workspace_processes
+   SET state = 'running',
+       state_version = state_version + 1,
+       started_at = COALESCE(started_at, transaction_timestamp()),
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND workspace_mount_id = $2
+   AND state = 'starting'
+RETURNING id, org_id, project_id, environment_id, workspace_id, base_version_id, restore_desired_state, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, kind, state, state_version, request, claim_id, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, resize_generation, pending_resize_generation, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, error, updated_at
+`
+
+type StartWorkspaceExecParams struct {
+	ProcessID        pgtype.UUID `json:"process_id"`
+	WorkspaceMountID pgtype.UUID `json:"workspace_mount_id"`
+}
+
+func (q *Queries) StartWorkspaceExec(ctx context.Context, arg StartWorkspaceExecParams) (WorkspaceProcess, error) {
+	row := q.db.QueryRow(ctx, startWorkspaceExec, arg.ProcessID, arg.WorkspaceMountID)
+	var i WorkspaceProcess
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.WorkspaceID,
+		&i.BaseVersionID,
+		&i.RestoreDesiredState,
+		&i.RegionID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
+		&i.WorkspaceMountID,
+		&i.Kind,
+		&i.State,
+		&i.StateVersion,
+		&i.Request,
+		&i.ClaimID,
+		&i.RuntimeProcessID,
+		&i.ExitCode,
+		&i.Signal,
+		&i.PtyCols,
+		&i.PtyRows,
+		&i.PendingPtyCols,
+		&i.PendingPtyRows,
+		&i.ResizeGeneration,
+		&i.PendingResizeGeneration,
+		&i.StdoutCursor,
+		&i.StderrCursor,
+		&i.StdinCursor,
+		&i.StdinDeliveredCursor,
+		&i.StdinClosedAt,
+		&i.InputCursor,
+		&i.InputDeliveredCursor,
+		&i.OutputCursor,
+		&i.CreatedBySubjectType,
+		&i.CreatedBySubjectID,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.ExitedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.Error,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

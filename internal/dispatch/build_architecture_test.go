@@ -43,7 +43,9 @@ func TestBuildPostgresFallbackCarriesDeploymentArchitecture(t *testing.T) {
 	authority := &buildArchitectureAuthority{}
 	reconciler, err := NewPlacementReconciler(
 		&countingRunPlacementDiscovery{}, isolationRunAuthority{},
-		discovery, authority, isolationQueue{}, isolationWakePublisher{}, nil,
+		discovery, authority,
+		noopWorkspaceExecDiscovery{}, isolationRunAuthority{},
+		isolationQueue{}, isolationWakePublisher{}, nil,
 	)
 	if err != nil {
 		t.Fatal(err)
