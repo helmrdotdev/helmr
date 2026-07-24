@@ -8,6 +8,16 @@ SELECT *
    AND id = sqlc.arg(id)
    AND state = 'committed';
 
+-- name: GetWorkspaceVersionByPublicID :one
+SELECT *
+  FROM workspace_versions
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND public_id = sqlc.arg(public_id)
+   AND state = 'committed';
+
 -- name: GetWorkspaceResetTargetAuthority :one
 SELECT workspace_versions.id AS version_id,
        workspace_versions.parent_version_id,

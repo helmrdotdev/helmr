@@ -163,6 +163,29 @@ export interface Workspaces {
   }): WorkspaceKeyRef
 }
 
+export interface ClientWorkspacesApi {
+  create<TWorkspace extends WorkspaceDefinition>(
+    workspaceDeclaredId: string,
+    options?: WorkspaceCreateOptions,
+  ): Promise<WorkspaceIdRef>
+  ref<TWorkspace extends WorkspaceDefinition>(
+    workspaceDeclaredId: string,
+    address: Readonly<{ id: string; key?: never }>,
+  ): WorkspaceIdRef
+  ref<TWorkspace extends WorkspaceDefinition>(
+    workspaceDeclaredId: string,
+    address: Readonly<{ key: string; id?: never }>,
+  ): WorkspaceKeyRef
+}
+
+interface WorkspaceTransport {
+  request(
+    method: "GET" | "POST",
+    path: string,
+    options?: Readonly<{ body?: unknown; signal?: AbortSignal }>,
+  ): Promise<unknown>
+}
+
 export interface InternalWorkspaceDefinition {
   readonly kind: "workspace"
   readonly id: string
@@ -281,6 +304,65 @@ export const workspaces: Workspaces = Object.freeze({
   ref: workspaceRef,
 })
 
+export function createClientWorkspaces(
+  transport: WorkspaceTransport,
+): ClientWorkspacesApi {
+  function ref<TWorkspace extends WorkspaceDefinition>(
+    workspaceDeclaredId: string,
+    address:
+      | Readonly<{ id: string; key?: never }>
+      | Readonly<{ key: string; id?: never }>,
+  ): WorkspaceIdRef | WorkspaceKeyRef {
+    validateTaskId(workspaceDeclaredId)
+    validateWorkspaceAddress(address)
+    return createAuthenticatedWorkspaceRef(workspaceDeclaredId, address, transport)
+  }
+  return Object.freeze({
+    async create<TWorkspace extends WorkspaceDefinition>(
+      workspaceDeclaredId: string,
+      options: WorkspaceCreateOptions = {},
+    ): Promise<WorkspaceIdRef> {
+      validateTaskId(workspaceDeclaredId)
+      const response = workspaceObject(
+        await transport.request(
+          "POST",
+          `/api/workspaces/${encodeURIComponent(workspaceDeclaredId)}/create`,
+          {
+            body: {
+              ...(options.key === undefined ? {} : { key: options.key }),
+              ...(options.secrets === undefined
+                ? {}
+                : {
+                    secrets: options.secrets.map((secret) => ({
+                      name: secret.name,
+                      ...("env" in secret
+                        ? { env: secret.env }
+                        : { file: secret.file }),
+                    })),
+                  }),
+              ...(options.idempotencyKey === undefined
+                ? {}
+                : { idempotency_key: options.idempotencyKey }),
+            },
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+          },
+        ),
+        "Workspace create response",
+      )
+      const id = workspacePublicID(
+        response["workspace_id"],
+        "Workspace create response.workspace_id",
+      )
+      return createAuthenticatedWorkspaceRef(
+        workspaceDeclaredId,
+        { id },
+        transport,
+      ) as WorkspaceIdRef
+    },
+    ref,
+  }) as ClientWorkspacesApi
+}
+
 export function inspectWorkspaceDefinition(
   value: unknown,
 ): InternalWorkspaceDefinition | undefined {
@@ -348,6 +430,339 @@ function createWorkspaceRef(
   return Object.freeze({ ...address, ...operations }) as
     | WorkspaceIdRef
     | WorkspaceKeyRef
+}
+
+function createAuthenticatedWorkspaceRef(
+  declaredID: string,
+  address:
+    | Readonly<{ id: string; key?: never }>
+    | Readonly<{ key: string; id?: never }>,
+  transport: WorkspaceTransport,
+): WorkspaceIdRef | WorkspaceKeyRef {
+  const resolvePath = (): string => {
+    if ("id" in address && address.id !== undefined) {
+      return `/api/workspaces/${encodeURIComponent(workspacePublicID(address.id, "Workspace ID"))}`
+    }
+    return `/api/workspaces/by-key/${encodeURIComponent(declaredID)}?${
+      new URLSearchParams({ key: address.key }).toString()
+    }`
+  }
+  const retrieve = async (
+    options: WorkspaceRetrieveOptions = {},
+  ): Promise<WorkspaceSnapshot> =>
+    parseWorkspaceSnapshot(
+      await transport.request(
+        "GET",
+        resolvePath(),
+        options.signal === undefined ? {} : { signal: options.signal },
+      ),
+    )
+  const resolveID = async (signal?: AbortSignal): Promise<string> => {
+    if ("id" in address && address.id !== undefined) {
+      return workspacePublicID(address.id, "Workspace ID")
+    }
+    return (await retrieve(signal === undefined ? {} : { signal })).id
+  }
+  const files: WorkspaceFiles = Object.freeze({
+    async read(
+      path: string,
+      options: WorkspaceFileOptions = {},
+    ): Promise<Uint8Array> {
+      const id = await resolveID(options.signal)
+      const response = workspaceObject(
+        await transport.request(
+          "GET",
+          `/api/workspaces/${encodeURIComponent(id)}/files/content?${
+            new URLSearchParams({ path }).toString()
+          }`,
+          options.signal === undefined ? {} : { signal: options.signal },
+        ),
+        "Workspace file response",
+      )
+      return decodeWorkspaceBase64(
+        response["data_base64"],
+        "Workspace file response.data_base64",
+      )
+    },
+    async stat(
+      path: string,
+      options: WorkspaceFileOptions = {},
+    ): Promise<WorkspaceFileEntry> {
+      const id = await resolveID(options.signal)
+      return parseWorkspaceFileEntry(
+        await transport.request(
+          "GET",
+          `/api/workspaces/${encodeURIComponent(id)}/files/stat?${
+            new URLSearchParams({ path }).toString()
+          }`,
+          options.signal === undefined ? {} : { signal: options.signal },
+        ),
+      )
+    },
+    async list(
+      path: string,
+      options: WorkspaceFileListOptions = {},
+    ): Promise<CursorPage<WorkspaceFileEntry>> {
+      const id = await resolveID(options.signal)
+      const query = new URLSearchParams({ path })
+      if (options.cursor !== undefined) query.set("cursor", options.cursor)
+      if (options.limit !== undefined) query.set("limit", String(options.limit))
+      const response = workspaceObject(
+        await transport.request(
+          "GET",
+          `/api/workspaces/${encodeURIComponent(id)}/files?${query.toString()}`,
+          options.signal === undefined ? {} : { signal: options.signal },
+        ),
+        "Workspace file list response",
+      )
+      if (!Array.isArray(response["items"])) {
+        throw new Error("Workspace file list response.items must be an array")
+      }
+      const nextCursor = response["next_cursor"]
+      if (nextCursor !== undefined && typeof nextCursor !== "string") {
+        throw new Error("Workspace file list response.next_cursor must be a string")
+      }
+      return Object.freeze({
+        items: Object.freeze(response["items"].map(parseWorkspaceFileEntry)),
+        ...(nextCursor === undefined ? {} : { nextCursor }),
+      })
+    },
+  })
+  return Object.freeze({
+    ...address,
+    files,
+    retrieve,
+    async exec(options: WorkspaceExecOptions): Promise<WorkspaceExecResult> {
+      const id = await resolveID(options.signal)
+      const response = workspaceObject(
+        await transport.request(
+          "POST",
+          `/api/workspaces/${encodeURIComponent(id)}/exec`,
+          {
+            body: {
+              command: [...options.command],
+              ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+              ...(options.env === undefined ? {} : { env: options.env }),
+              ...(options.stdin === undefined
+                ? {}
+                : { stdin_base64: encodeWorkspaceBase64(options.stdin) }),
+              ...(options.timeout === undefined
+                ? {}
+                : { timeout: options.timeout }),
+              idempotency_key: options.idempotencyKey,
+            },
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+          },
+        ),
+        "Workspace exec response",
+      )
+      const exitCode = response["exit_code"]
+      if (!Number.isSafeInteger(exitCode)) {
+        throw new Error("Workspace exec response.exit_code must be an integer")
+      }
+      return Object.freeze({
+        exitCode: exitCode as number,
+        stdout: decodeWorkspaceBase64(
+          response["stdout_base64"],
+          "Workspace exec response.stdout_base64",
+        ),
+        stderr: decodeWorkspaceBase64(
+          response["stderr_base64"],
+          "Workspace exec response.stderr_base64",
+        ),
+      })
+    },
+    async delete(
+      options: WorkspaceDeleteOptions = {},
+    ): Promise<WorkspaceDeleteReceipt> {
+      const id = await resolveID(options.signal)
+      const response = workspaceObject(
+        await transport.request(
+          "POST",
+          `/api/workspaces/${encodeURIComponent(id)}/delete`,
+          {
+            body: options.idempotencyKey === undefined
+              ? {}
+              : { idempotency_key: options.idempotencyKey },
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+          },
+        ),
+        "Workspace delete response",
+      )
+      return Object.freeze({
+        workspaceId: workspacePublicID(
+          response["workspace_id"],
+          "Workspace delete response.workspace_id",
+        ),
+      })
+    },
+  }) as WorkspaceIdRef | WorkspaceKeyRef
+}
+
+function validateWorkspaceAddress(
+  address:
+    | Readonly<{ id: string; key?: never }>
+    | Readonly<{ key: string; id?: never }>,
+): void {
+  if (
+    ("id" in address && typeof address.id === "string") ===
+    ("key" in address && typeof address.key === "string")
+  ) {
+    throw new Error("Workspace ref requires exactly one of id or key")
+  }
+  if ("id" in address && address.id !== undefined) {
+    workspacePublicID(address.id, "Workspace ID")
+  } else if (address.key.length === 0) {
+    throw new Error("Workspace key is required")
+  }
+}
+
+function parseWorkspaceSnapshot(value: unknown): WorkspaceSnapshot {
+  const input = workspaceObject(value, "Workspace response")
+  const key = input["key"]
+  if (key !== undefined && typeof key !== "string") {
+    throw new Error("Workspace response.key must be a string")
+  }
+  const declaredId = input["declared_id"]
+  if (typeof declaredId !== "string") {
+    throw new Error("Workspace response.declared_id must be a string")
+  }
+  validateTaskId(declaredId)
+  const status = input["status"]
+  if (
+    status !== "available" &&
+    status !== "recovery-required" &&
+    status !== "deleting"
+  ) {
+    throw new Error("Workspace response.status is invalid")
+  }
+  if (!Array.isArray(input["secrets"])) {
+    throw new Error("Workspace response.secrets must be an array")
+  }
+  return Object.freeze({
+    id: workspacePublicID(input["id"], "Workspace response.id"),
+    ...(key === undefined ? {} : { key }),
+    declaredId,
+    status,
+    secrets: Object.freeze(input["secrets"].map(parseWorkspaceSecret)),
+    lastActivityAt: workspaceDate(input["last_activity_at"], "last_activity_at"),
+    createdAt: workspaceDate(input["created_at"], "created_at"),
+    updatedAt: workspaceDate(input["updated_at"], "updated_at"),
+  })
+}
+
+function parseWorkspaceSecret(value: unknown): WorkspaceSecret {
+  const input = workspaceObject(value, "Workspace Secret")
+  if (typeof input["name"] !== "string") {
+    throw new Error("Workspace Secret.name must be a string")
+  }
+  const hasEnv = typeof input["env"] === "string"
+  const hasFile = typeof input["file"] === "string"
+  if (hasEnv === hasFile) {
+    throw new Error("Workspace Secret must contain exactly one placement")
+  }
+  return Object.freeze({
+    name: input["name"],
+    ...(hasEnv ? { env: input["env"] as string } : { file: input["file"] as string }),
+  })
+}
+
+function parseWorkspaceFileEntry(value: unknown): WorkspaceFileEntry {
+  const input = workspaceObject(value, "Workspace file entry")
+  if (
+    typeof input["path"] !== "string" ||
+    typeof input["mode"] !== "number" ||
+    !Number.isInteger(input["mode"])
+  ) {
+    throw new Error("Workspace file entry identity is invalid")
+  }
+  switch (input["kind"]) {
+    case "file":
+      if (typeof input["size_bytes"] !== "number" || !Number.isSafeInteger(input["size_bytes"])) {
+        throw new Error("Workspace file entry.size_bytes must be an integer")
+      }
+      return Object.freeze({
+        path: input["path"],
+        kind: "file",
+        mode: input["mode"],
+        sizeBytes: input["size_bytes"],
+      })
+    case "directory":
+      return Object.freeze({
+        path: input["path"],
+        kind: "directory",
+        mode: input["mode"],
+      })
+    case "symlink":
+      if (typeof input["link_target"] !== "string") {
+        throw new Error("Workspace symlink entry.link_target must be a string")
+      }
+      return Object.freeze({
+        path: input["path"],
+        kind: "symlink",
+        mode: input["mode"],
+        linkTarget: input["link_target"],
+      })
+    default:
+      throw new Error("Workspace file entry.kind is invalid")
+  }
+}
+
+function workspaceObject(
+  value: unknown,
+  label: string,
+): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`)
+  }
+  return value as Record<string, unknown>
+}
+
+function workspacePublicID(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^wsp_[a-z2-7]{26}$/.test(value)) {
+    throw new Error(`${label} must be a canonical Workspace public ID`)
+  }
+  return value
+}
+
+function workspaceDate(value: unknown, field: string): Date {
+  if (typeof value !== "string") {
+    throw new Error(`Workspace response.${field} must be an RFC 3339 timestamp`)
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.valueOf())) {
+    throw new Error(`Workspace response.${field} must be an RFC 3339 timestamp`)
+  }
+  return date
+}
+
+function encodeWorkspaceBase64(value: Uint8Array): string {
+  let binary = ""
+  const chunkSize = 32_768
+  for (let offset = 0; offset < value.length; offset += chunkSize) {
+    binary += String.fromCharCode(...value.subarray(offset, offset + chunkSize))
+  }
+  return btoa(binary)
+}
+
+function decodeWorkspaceBase64(value: unknown, label: string): Uint8Array {
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be canonical padded base64`)
+  }
+  let binary: string
+  try {
+    binary = atob(value)
+  } catch {
+    throw new Error(`${label} must be canonical padded base64`)
+  }
+  if (btoa(binary) !== value) {
+    throw new Error(`${label} must be canonical padded base64`)
+  }
+  const output = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index++) {
+    output[index] = binary.charCodeAt(index)
+  }
+  return output
 }
 
 function assertResourceMembers(value: WorkspaceResources): void {

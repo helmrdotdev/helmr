@@ -148,6 +148,59 @@ func (q *Queries) GetWorkspaceVersion(ctx context.Context, arg GetWorkspaceVersi
 	return i, err
 }
 
+const getWorkspaceVersionByPublicID = `-- name: GetWorkspaceVersionByPublicID :one
+SELECT id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+  FROM workspace_versions
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND workspace_id = $4
+   AND public_id = $5
+   AND state = 'committed'
+`
+
+type GetWorkspaceVersionByPublicIDParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	PublicID      string      `json:"public_id"`
+}
+
+func (q *Queries) GetWorkspaceVersionByPublicID(ctx context.Context, arg GetWorkspaceVersionByPublicIDParams) (WorkspaceVersion, error) {
+	row := q.db.QueryRow(ctx, getWorkspaceVersionByPublicID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+		arg.PublicID,
+	)
+	var i WorkspaceVersion
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.WorkspaceID,
+		&i.ParentVersionID,
+		&i.ArtifactID,
+		&i.ArtifactKind,
+		&i.Kind,
+		&i.ContentDigest,
+		&i.SizeBytes,
+		&i.EntryCount,
+		&i.State,
+		&i.SourceWorkspaceLeaseID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.CreatedAt,
+		&i.PublishedAt,
+		&i.DiscardedAt,
+	)
+	return i, err
+}
+
 const listWorkspaceVersions = `-- name: ListWorkspaceVersions :many
 SELECT id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
   FROM workspace_versions

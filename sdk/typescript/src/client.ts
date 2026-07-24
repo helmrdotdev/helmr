@@ -26,6 +26,10 @@ import {
   HELMR_SDK_VERSION,
   HELMR_SDK_VERSION_HEADER,
 } from "./version"
+import {
+  createClientWorkspaces,
+  type ClientWorkspacesApi,
+} from "./workspace"
 
 export interface HelmrClientOptions {
   readonly url: string
@@ -111,12 +115,14 @@ export class HelmrClient {
   readonly tasks: ClientTasksApi
   readonly runs: ClientRunsApi
   readonly tokens: ClientTokensApi
+  readonly workspaces: ClientWorkspacesApi
 
   constructor(options: HelmrClientOptions) {
     const transport = new ClientTransport(options)
     this.tasks = Object.freeze(new ClientTasks(transport))
     this.runs = Object.freeze(new ClientRuns(transport))
     this.tokens = Object.freeze(new ClientTokens(transport))
+    this.workspaces = createClientWorkspaces(transport)
   }
 }
 

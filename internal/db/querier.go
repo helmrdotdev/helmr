@@ -285,6 +285,7 @@ type Querier interface {
 	GetWorkspaceProcessRecord(ctx context.Context, arg GetWorkspaceProcessRecordParams) (WorkspaceProcessRecord, error)
 	GetWorkspaceResetTargetAuthority(ctx context.Context, arg GetWorkspaceResetTargetAuthorityParams) (GetWorkspaceResetTargetAuthorityRow, error)
 	GetWorkspaceVersion(ctx context.Context, arg GetWorkspaceVersionParams) (WorkspaceVersion, error)
+	GetWorkspaceVersionByPublicID(ctx context.Context, arg GetWorkspaceVersionByPublicIDParams) (WorkspaceVersion, error)
 	HasUnpublishedLiveTelemetryOutbox(ctx context.Context, arg HasUnpublishedLiveTelemetryOutboxParams) (bool, error)
 	InsertAssignedRunLease(ctx context.Context, arg InsertAssignedRunLeaseParams) (RunLease, error)
 	InsertRunWorkspaceLease(ctx context.Context, arg InsertRunWorkspaceLeaseParams) (WorkspaceLease, error)

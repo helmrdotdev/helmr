@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import { HelmrClient, task, workspaces } from "./index"
+import type { WorkspaceDefinition } from "./index"
 import { installRuntimeOperations } from "./internal"
 import {
   HELMR_API_VERSION,
@@ -64,6 +65,85 @@ describe("HelmrClient Tasks", () => {
         metadata: { source: "backend" },
         tags: ["image"],
       },
+    })
+  })
+})
+
+describe("HelmrClient Workspaces", () => {
+  test("uses declared IDs for typed create and key refs", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    const responses: unknown[] = [
+      { workspace_id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      {
+        id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        key: "repository",
+        declared_id: "repository-agent",
+        status: "available",
+        secrets: [{ name: "github", env: "GITHUB_TOKEN" }],
+        last_activity_at: "2026-07-24T11:50:00Z",
+        created_at: "2026-07-24T11:50:00Z",
+        updated_at: "2026-07-24T11:50:00Z",
+      },
+      {
+        exit_code: 0,
+        stdout_base64: "b2sK",
+        stderr_base64: "",
+      },
+      { workspace_id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    ]
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async (input: URL | RequestInfo, init?: RequestInit) => {
+        requests.push({ url: String(input), init })
+        return Response.json(responses.shift(), { status: 200 })
+      }) as typeof fetch,
+    })
+    const repositoryWorkspace = null as unknown as WorkspaceDefinition
+
+    const created = await client.workspaces.create<typeof repositoryWorkspace>(
+      "repository-agent",
+      {
+        key: "repository",
+        secrets: [{ name: "github", env: "GITHUB_TOKEN" }],
+        idempotencyKey: "create-repository",
+      },
+    )
+    expect(created.id).toBe("wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+    expect(requests[0]!.url).toBe(
+      "https://api.example.test/api/workspaces/repository-agent/create",
+    )
+    expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
+      key: "repository",
+      secrets: [{ name: "github", env: "GITHUB_TOKEN" }],
+      idempotency_key: "create-repository",
+    })
+
+    const ref = client.workspaces.ref<typeof repositoryWorkspace>(
+      "repository-agent",
+      { key: "repository" },
+    )
+    const snapshot = await ref.retrieve()
+    expect(snapshot.declaredId).toBe("repository-agent")
+    expect(requests[1]!.url).toBe(
+      "https://api.example.test/api/workspaces/by-key/repository-agent?key=repository",
+    )
+
+    const result = await created.exec({
+      command: ["printf", "ok\n"],
+      stdin: new TextEncoder().encode("input"),
+      idempotencyKey: "exec-1",
+    })
+    expect(new TextDecoder().decode(result.stdout)).toBe("ok\n")
+    expect(JSON.parse(String(requests[2]!.init?.body))).toEqual({
+      command: ["printf", "ok\n"],
+      stdin_base64: "aW5wdXQ=",
+      idempotency_key: "exec-1",
+    })
+
+    await created.delete({ idempotencyKey: "delete-1" })
+    expect(JSON.parse(String(requests[3]!.init?.body))).toEqual({
+      idempotency_key: "delete-1",
     })
   })
 })

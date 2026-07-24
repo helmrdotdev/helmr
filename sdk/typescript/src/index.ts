@@ -131,6 +131,7 @@ export type {
 
 export type {
   WorkspaceBuilder,
+  ClientWorkspacesApi,
   WorkspaceCreateOptions,
   WorkspaceDeleteOptions,
   WorkspaceDeleteReceipt,
