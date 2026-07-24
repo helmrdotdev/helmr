@@ -1,53 +1,76 @@
 package api
 
 import (
-	"encoding/json"
+	"errors"
+	"fmt"
+	"regexp"
 	"time"
 )
 
-type WorkspaceCreateRequest struct {
-	ProjectID         string          `json:"project_id,omitempty"`
-	EnvironmentID     string          `json:"environment_id,omitempty"`
-	SandboxID         string          `json:"sandbox_id"`
-	DeploymentID      string          `json:"deployment_id,omitempty"`
-	ExternalID        string          `json:"external_id,omitempty"`
-	Metadata          json.RawMessage `json:"metadata,omitempty"`
-	Tags              []string        `json:"tags,omitempty"`
-	IdempotencyKey    string          `json:"idempotency_key,omitempty"`
-	IdempotencyKeyTTL string          `json:"idempotency_key_ttl,omitempty"`
+var workspaceDeclaredIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
+type WorkspaceSecret struct {
+	Name string `json:"name"`
+	Env  string `json:"env,omitempty"`
+	File string `json:"file,omitempty"`
 }
 
-type WorkspacePatchRequest struct {
-	Metadata json.RawMessage `json:"metadata,omitempty"`
-	Tags     []string        `json:"tags,omitempty"`
+type CreateWorkspaceRequest struct {
+	Key            *string           `json:"key,omitempty"`
+	Secrets        []WorkspaceSecret `json:"secrets,omitempty"`
+	IdempotencyKey string            `json:"idempotency_key,omitempty"`
 }
 
-type WorkspaceResponse struct {
-	ID                  string          `json:"id"`
-	ProjectID           string          `json:"project_id"`
-	EnvironmentID       string          `json:"environment_id"`
-	DeploymentSandboxID string          `json:"deployment_sandbox_id"`
-	SandboxID           string          `json:"sandbox_id"`
-	SandboxFingerprint  string          `json:"sandbox_fingerprint"`
-	ExternalID          string          `json:"external_id,omitempty"`
-	CurrentVersionID    string          `json:"current_version_id,omitempty"`
-	State               string          `json:"state"`
-	DesiredState        string          `json:"desired_state"`
-	DirtyState          string          `json:"dirty_state"`
-	Metadata            json.RawMessage `json:"metadata,omitempty"`
-	Tags                []string        `json:"tags,omitempty"`
-	LastActivityAt      time.Time       `json:"last_activity_at"`
-	CreatedAt           time.Time       `json:"created_at"`
-	UpdatedAt           time.Time       `json:"updated_at"`
-	ArchivedAt          *time.Time      `json:"archived_at,omitempty"`
-	DeletedAt           *time.Time      `json:"deleted_at,omitempty"`
+type CreateWorkspaceResponse struct {
+	WorkspaceID string `json:"workspace_id"`
 }
 
-type WorkspaceEnvelope struct {
-	Workspace WorkspaceResponse `json:"workspace"`
-	IsCached  bool              `json:"is_cached,omitempty"`
+type WorkspaceStatus string
+
+const (
+	WorkspaceStatusAvailable        WorkspaceStatus = "available"
+	WorkspaceStatusRecoveryRequired WorkspaceStatus = "recovery-required"
+	WorkspaceStatusDeleting         WorkspaceStatus = "deleting"
+)
+
+type WorkspaceSnapshot struct {
+	ID             string            `json:"id"`
+	Key            *string           `json:"key,omitempty"`
+	DeclaredID     string            `json:"declared_id"`
+	Status         WorkspaceStatus   `json:"status"`
+	Secrets        []WorkspaceSecret `json:"secrets"`
+	LastActivityAt time.Time         `json:"last_activity_at"`
+	CreatedAt      time.Time         `json:"created_at"`
+	UpdatedAt      time.Time         `json:"updated_at"`
 }
 
-type ListWorkspacesResponse struct {
-	Workspaces []WorkspaceResponse `json:"workspaces"`
+type DeleteWorkspaceRequest struct {
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type DeleteWorkspaceReceipt struct {
+	WorkspaceID string `json:"workspace_id"`
+}
+
+func ValidateWorkspaceDeclaredID(id string) error {
+	if !workspaceDeclaredIDPattern.MatchString(id) {
+		return fmt.Errorf(
+			"Workspace declared ID %q must match %s",
+			id,
+			workspaceDeclaredIDPattern.String(),
+		)
+	}
+	return nil
+}
+
+func ValidateWorkspaceSecret(secret WorkspaceSecret) error {
+	if secret.Name == "" {
+		return errors.New("Workspace Secret name is required")
+	}
+	hasEnv := secret.Env != ""
+	hasFile := secret.File != ""
+	if hasEnv == hasFile {
+		return errors.New("Workspace Secret must contain exactly one of env or file")
+	}
+	return nil
 }

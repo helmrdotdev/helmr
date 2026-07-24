@@ -1618,11 +1618,7 @@ CREATE TABLE workspaces (
             AND key !~ '[[:space:]]$'
         )
     ),
-    create_idempotency_key TEXT NOT NULL DEFAULT '',
-    create_idempotency_expires_at TIMESTAMPTZ,
-    create_request_fingerprint TEXT NOT NULL DEFAULT '',
     state_version BIGINT NOT NULL DEFAULT 1 CHECK (state_version > 0),
-    stop_generation BIGINT NOT NULL DEFAULT 0 CHECK (stop_generation >= 0),
     owner_actor_id UUID,
     owner_run_id UUID,
     ownership_generation BIGINT NOT NULL DEFAULT 0 CHECK (ownership_generation >= 0),
@@ -1631,9 +1627,6 @@ CREATE TABLE workspaces (
     state workspace_state NOT NULL DEFAULT 'active',
     desired_state workspace_desired_state NOT NULL DEFAULT 'active',
     dirty_state workspace_dirty_state NOT NULL DEFAULT 'clean',
-    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    tags TEXT[] NOT NULL DEFAULT '{}'::text[],
-    retention_policy JSONB NOT NULL DEFAULT '{}'::jsonb,
     last_activity_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1670,8 +1663,6 @@ CREATE TABLE workspaces (
          AND head_version_id IS NULL
          AND owner_actor_id IS NULL
          AND owner_run_id IS NULL
-         AND metadata = '{}'::jsonb
-         AND tags = '{}'::text[]
          AND dirty_state = 'clean'
          AND desired_state = 'deleted'
          AND deleted_at IS NOT NULL)
@@ -4094,13 +4085,8 @@ CREATE INDEX tokens_callback_fingerprint_pending_idx ON tokens(callback_key_id, 
 CREATE INDEX run_waits_run_state_idx
     ON run_waits(run_id, suspension_state, created_at DESC);
 CREATE INDEX workspaces_state_idx ON workspaces(org_id, project_id, environment_id, state, updated_at DESC);
-CREATE INDEX workspaces_tags_idx ON workspaces USING GIN (tags);
 CREATE UNIQUE INDEX workspaces_environment_key_uidx ON workspaces(environment_id, key)
     WHERE key IS NOT NULL;
-CREATE INDEX workspaces_create_idempotency_expiry_idx ON workspaces(org_id, project_id, environment_id, create_idempotency_expires_at)
-    WHERE create_idempotency_key <> '';
-CREATE UNIQUE INDEX workspaces_create_idempotency_idx ON workspaces(org_id, project_id, environment_id, create_idempotency_key)
-    WHERE create_idempotency_key <> '';
 CREATE INDEX workspace_versions_workspace_created_idx ON workspace_versions(org_id, workspace_id, created_at DESC);
 CREATE INDEX public_access_tokens_scope_expiry_idx ON public_access_tokens(org_id, project_id, environment_id, expires_at)
     WHERE state = 'active';

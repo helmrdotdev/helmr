@@ -260,32 +260,16 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeTokensComplete, true
 	case string(api.APIKeyScopeTokensCancel):
 		return api.APIKeyScopeTokensCancel, true
-	case string(api.APIKeyScopeWorkspaceLifecycleManage):
-		return api.APIKeyScopeWorkspaceLifecycleManage, true
+	case string(api.APIKeyScopeWorkspacesCreate):
+		return api.APIKeyScopeWorkspacesCreate, true
+	case string(api.APIKeyScopeWorkspacesRead):
+		return api.APIKeyScopeWorkspacesRead, true
+	case string(api.APIKeyScopeWorkspacesDelete):
+		return api.APIKeyScopeWorkspacesDelete, true
 	case string(api.APIKeyScopeWorkspaceFilesRead):
 		return api.APIKeyScopeWorkspaceFilesRead, true
-	case string(api.APIKeyScopeWorkspaceFilesWrite):
-		return api.APIKeyScopeWorkspaceFilesWrite, true
-	case string(api.APIKeyScopeWorkspaceVersionsRead):
-		return api.APIKeyScopeWorkspaceVersionsRead, true
-	case string(api.APIKeyScopeWorkspaceVersionsCapture):
-		return api.APIKeyScopeWorkspaceVersionsCapture, true
-	case string(api.APIKeyScopeWorkspaceVersionsRestore):
-		return api.APIKeyScopeWorkspaceVersionsRestore, true
-	case string(api.APIKeyScopeWorkspaceVersionsDiff):
-		return api.APIKeyScopeWorkspaceVersionsDiff, true
 	case string(api.APIKeyScopeWorkspaceExecCreate):
 		return api.APIKeyScopeWorkspaceExecCreate, true
-	case string(api.APIKeyScopeWorkspaceExecRead):
-		return api.APIKeyScopeWorkspaceExecRead, true
-	case string(api.APIKeyScopeWorkspaceExecManage):
-		return api.APIKeyScopeWorkspaceExecManage, true
-	case string(api.APIKeyScopeWorkspacePtyCreate):
-		return api.APIKeyScopeWorkspacePtyCreate, true
-	case string(api.APIKeyScopeWorkspacePtyRead):
-		return api.APIKeyScopeWorkspacePtyRead, true
-	case string(api.APIKeyScopeWorkspacePtyManage):
-		return api.APIKeyScopeWorkspacePtyManage, true
 	case string(api.APIKeyScopeSecretsWrite):
 		return api.APIKeyScopeSecretsWrite, true
 	case string(api.APIKeyScopeTasksDeploy):
@@ -319,32 +303,16 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionTokensComplete, true
 	case api.APIKeyScopeTokensCancel:
 		return auth.PermissionTokensCancel, true
-	case api.APIKeyScopeWorkspaceLifecycleManage:
-		return auth.PermissionWorkspaceLifecycleManage, true
+	case api.APIKeyScopeWorkspacesCreate:
+		return auth.PermissionWorkspacesCreate, true
+	case api.APIKeyScopeWorkspacesRead:
+		return auth.PermissionWorkspacesRead, true
+	case api.APIKeyScopeWorkspacesDelete:
+		return auth.PermissionWorkspacesDelete, true
 	case api.APIKeyScopeWorkspaceFilesRead:
-		return auth.PermissionFilesRead, true
-	case api.APIKeyScopeWorkspaceFilesWrite:
-		return auth.PermissionFilesWrite, true
-	case api.APIKeyScopeWorkspaceVersionsRead:
-		return auth.PermissionVersionsRead, true
-	case api.APIKeyScopeWorkspaceVersionsCapture:
-		return auth.PermissionVersionsCapture, true
-	case api.APIKeyScopeWorkspaceVersionsRestore:
-		return auth.PermissionVersionsRestore, true
-	case api.APIKeyScopeWorkspaceVersionsDiff:
-		return auth.PermissionVersionsDiff, true
+		return auth.PermissionWorkspaceFilesRead, true
 	case api.APIKeyScopeWorkspaceExecCreate:
-		return auth.PermissionExecCreate, true
-	case api.APIKeyScopeWorkspaceExecRead:
-		return auth.PermissionExecRead, true
-	case api.APIKeyScopeWorkspaceExecManage:
-		return auth.PermissionExecManage, true
-	case api.APIKeyScopeWorkspacePtyCreate:
-		return auth.PermissionPtyCreate, true
-	case api.APIKeyScopeWorkspacePtyRead:
-		return auth.PermissionPtyRead, true
-	case api.APIKeyScopeWorkspacePtyManage:
-		return auth.PermissionPtyManage, true
+		return auth.PermissionWorkspaceExecCreate, true
 	case api.APIKeyScopeSecretsWrite:
 		return auth.PermissionSecretsWrite, true
 	case api.APIKeyScopeTasksDeploy:
@@ -378,32 +346,16 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeTokensComplete, true
 	case string(auth.PermissionTokensCancel):
 		return api.APIKeyScopeTokensCancel, true
-	case string(auth.PermissionWorkspaceLifecycleManage):
-		return api.APIKeyScopeWorkspaceLifecycleManage, true
-	case string(auth.PermissionFilesRead):
+	case string(auth.PermissionWorkspacesCreate):
+		return api.APIKeyScopeWorkspacesCreate, true
+	case string(auth.PermissionWorkspacesRead):
+		return api.APIKeyScopeWorkspacesRead, true
+	case string(auth.PermissionWorkspacesDelete):
+		return api.APIKeyScopeWorkspacesDelete, true
+	case string(auth.PermissionWorkspaceFilesRead):
 		return api.APIKeyScopeWorkspaceFilesRead, true
-	case string(auth.PermissionFilesWrite):
-		return api.APIKeyScopeWorkspaceFilesWrite, true
-	case string(auth.PermissionVersionsRead):
-		return api.APIKeyScopeWorkspaceVersionsRead, true
-	case string(auth.PermissionVersionsCapture):
-		return api.APIKeyScopeWorkspaceVersionsCapture, true
-	case string(auth.PermissionVersionsRestore):
-		return api.APIKeyScopeWorkspaceVersionsRestore, true
-	case string(auth.PermissionVersionsDiff):
-		return api.APIKeyScopeWorkspaceVersionsDiff, true
-	case string(auth.PermissionExecCreate):
+	case string(auth.PermissionWorkspaceExecCreate):
 		return api.APIKeyScopeWorkspaceExecCreate, true
-	case string(auth.PermissionExecRead):
-		return api.APIKeyScopeWorkspaceExecRead, true
-	case string(auth.PermissionExecManage):
-		return api.APIKeyScopeWorkspaceExecManage, true
-	case string(auth.PermissionPtyCreate):
-		return api.APIKeyScopeWorkspacePtyCreate, true
-	case string(auth.PermissionPtyRead):
-		return api.APIKeyScopeWorkspacePtyRead, true
-	case string(auth.PermissionPtyManage):
-		return api.APIKeyScopeWorkspacePtyManage, true
 	case string(auth.PermissionSecretsWrite):
 		return api.APIKeyScopeSecretsWrite, true
 	case string(auth.PermissionTasksDeploy):

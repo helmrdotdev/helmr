@@ -44,13 +44,7 @@ WITH selected_definition AS (
         workspace_declared_id,
         deployment_definition_id,
         head_version_id,
-        key,
-        create_idempotency_key,
-        create_idempotency_expires_at,
-        create_request_fingerprint,
-        metadata,
-        tags,
-        retention_policy
+        key
     )
     SELECT $4,
            $5,
@@ -62,15 +56,9 @@ WITH selected_definition AS (
            selected_definition.workspace_declared_id,
            selected_definition.deployment_definition_id,
            $6,
-           $7,
-           coalesce($8::text, ''),
-           $9,
-           coalesce($10::text, ''),
-           coalesce($11::jsonb, '{}'::jsonb),
-           coalesce($12::text[], '{}'::text[]),
-           coalesce($13::jsonb, '{}'::jsonb)
+           $7
       FROM selected_definition
-    RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
+    RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
 ), created_version AS (
     INSERT INTO workspace_versions (
         id,
@@ -89,7 +77,7 @@ WITH selected_definition AS (
         published_at
     )
     SELECT $6,
-           $14,
+           $8,
            created_workspace.org_id,
            created_workspace.project_id,
            created_workspace.environment_id,
@@ -105,59 +93,46 @@ WITH selected_definition AS (
       FROM created_workspace
     RETURNING workspace_id
 )
-SELECT created_workspace.id, created_workspace.public_id, created_workspace.org_id, created_workspace.project_id, created_workspace.environment_id, created_workspace.region_id, created_workspace.declaration_kind, created_workspace.workspace_declared_id, created_workspace.deployment_definition_id, created_workspace.key, created_workspace.create_idempotency_key, created_workspace.create_idempotency_expires_at, created_workspace.create_request_fingerprint, created_workspace.state_version, created_workspace.stop_generation, created_workspace.owner_actor_id, created_workspace.owner_run_id, created_workspace.ownership_generation, created_workspace.writer_generation, created_workspace.head_version_id, created_workspace.state, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.metadata, created_workspace.tags, created_workspace.retention_policy, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.deleted_at
+SELECT created_workspace.id, created_workspace.public_id, created_workspace.org_id, created_workspace.project_id, created_workspace.environment_id, created_workspace.region_id, created_workspace.declaration_kind, created_workspace.workspace_declared_id, created_workspace.deployment_definition_id, created_workspace.key, created_workspace.state_version, created_workspace.owner_actor_id, created_workspace.owner_run_id, created_workspace.ownership_generation, created_workspace.writer_generation, created_workspace.head_version_id, created_workspace.state, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.deleted_at
   FROM created_workspace
   JOIN created_version ON created_version.workspace_id = created_workspace.id
 `
 
 type CreateWorkspaceFromRunDeploymentParams struct {
-	WorkspaceDeclaredID        string             `json:"workspace_declared_id"`
-	EnvironmentID              pgtype.UUID        `json:"environment_id"`
-	RunID                      pgtype.UUID        `json:"run_id"`
-	ID                         pgtype.UUID        `json:"id"`
-	PublicID                   string             `json:"public_id"`
-	InitialVersionID           pgtype.UUID        `json:"initial_version_id"`
-	Key                        pgtype.Text        `json:"key"`
-	CreateIdempotencyKey       string             `json:"create_idempotency_key"`
-	CreateIdempotencyExpiresAt pgtype.Timestamptz `json:"create_idempotency_expires_at"`
-	CreateRequestFingerprint   string             `json:"create_request_fingerprint"`
-	Metadata                   []byte             `json:"metadata"`
-	Tags                       []string           `json:"tags"`
-	RetentionPolicy            []byte             `json:"retention_policy"`
-	InitialVersionPublicID     string             `json:"initial_version_public_id"`
+	WorkspaceDeclaredID    string      `json:"workspace_declared_id"`
+	EnvironmentID          pgtype.UUID `json:"environment_id"`
+	RunID                  pgtype.UUID `json:"run_id"`
+	ID                     pgtype.UUID `json:"id"`
+	PublicID               string      `json:"public_id"`
+	InitialVersionID       pgtype.UUID `json:"initial_version_id"`
+	Key                    pgtype.Text `json:"key"`
+	InitialVersionPublicID string      `json:"initial_version_public_id"`
 }
 
 type CreateWorkspaceFromRunDeploymentRow struct {
-	ID                         pgtype.UUID           `json:"id"`
-	PublicID                   string                `json:"public_id"`
-	OrgID                      pgtype.UUID           `json:"org_id"`
-	ProjectID                  pgtype.UUID           `json:"project_id"`
-	EnvironmentID              pgtype.UUID           `json:"environment_id"`
-	RegionID                   string                `json:"region_id"`
-	DeclarationKind            pgtype.Text           `json:"declaration_kind"`
-	WorkspaceDeclaredID        pgtype.Text           `json:"workspace_declared_id"`
-	DeploymentDefinitionID     pgtype.UUID           `json:"deployment_definition_id"`
-	Key                        pgtype.Text           `json:"key"`
-	CreateIdempotencyKey       string                `json:"create_idempotency_key"`
-	CreateIdempotencyExpiresAt pgtype.Timestamptz    `json:"create_idempotency_expires_at"`
-	CreateRequestFingerprint   string                `json:"create_request_fingerprint"`
-	StateVersion               int64                 `json:"state_version"`
-	StopGeneration             int64                 `json:"stop_generation"`
-	OwnerActorID               pgtype.UUID           `json:"owner_actor_id"`
-	OwnerRunID                 pgtype.UUID           `json:"owner_run_id"`
-	OwnershipGeneration        int64                 `json:"ownership_generation"`
-	WriterGeneration           int64                 `json:"writer_generation"`
-	HeadVersionID              pgtype.UUID           `json:"head_version_id"`
-	State                      WorkspaceState        `json:"state"`
-	DesiredState               WorkspaceDesiredState `json:"desired_state"`
-	DirtyState                 WorkspaceDirtyState   `json:"dirty_state"`
-	Metadata                   []byte                `json:"metadata"`
-	Tags                       []string              `json:"tags"`
-	RetentionPolicy            []byte                `json:"retention_policy"`
-	LastActivityAt             pgtype.Timestamptz    `json:"last_activity_at"`
-	CreatedAt                  pgtype.Timestamptz    `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz    `json:"updated_at"`
-	DeletedAt                  pgtype.Timestamptz    `json:"deleted_at"`
+	ID                     pgtype.UUID           `json:"id"`
+	PublicID               string                `json:"public_id"`
+	OrgID                  pgtype.UUID           `json:"org_id"`
+	ProjectID              pgtype.UUID           `json:"project_id"`
+	EnvironmentID          pgtype.UUID           `json:"environment_id"`
+	RegionID               string                `json:"region_id"`
+	DeclarationKind        pgtype.Text           `json:"declaration_kind"`
+	WorkspaceDeclaredID    pgtype.Text           `json:"workspace_declared_id"`
+	DeploymentDefinitionID pgtype.UUID           `json:"deployment_definition_id"`
+	Key                    pgtype.Text           `json:"key"`
+	StateVersion           int64                 `json:"state_version"`
+	OwnerActorID           pgtype.UUID           `json:"owner_actor_id"`
+	OwnerRunID             pgtype.UUID           `json:"owner_run_id"`
+	OwnershipGeneration    int64                 `json:"ownership_generation"`
+	WriterGeneration       int64                 `json:"writer_generation"`
+	HeadVersionID          pgtype.UUID           `json:"head_version_id"`
+	State                  WorkspaceState        `json:"state"`
+	DesiredState           WorkspaceDesiredState `json:"desired_state"`
+	DirtyState             WorkspaceDirtyState   `json:"dirty_state"`
+	LastActivityAt         pgtype.Timestamptz    `json:"last_activity_at"`
+	CreatedAt              pgtype.Timestamptz    `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz    `json:"updated_at"`
+	DeletedAt              pgtype.Timestamptz    `json:"deleted_at"`
 }
 
 func (q *Queries) CreateWorkspaceFromRunDeployment(ctx context.Context, arg CreateWorkspaceFromRunDeploymentParams) (CreateWorkspaceFromRunDeploymentRow, error) {
@@ -169,12 +144,6 @@ func (q *Queries) CreateWorkspaceFromRunDeployment(ctx context.Context, arg Crea
 		arg.PublicID,
 		arg.InitialVersionID,
 		arg.Key,
-		arg.CreateIdempotencyKey,
-		arg.CreateIdempotencyExpiresAt,
-		arg.CreateRequestFingerprint,
-		arg.Metadata,
-		arg.Tags,
-		arg.RetentionPolicy,
 		arg.InitialVersionPublicID,
 	)
 	var i CreateWorkspaceFromRunDeploymentRow
@@ -189,11 +158,7 @@ func (q *Queries) CreateWorkspaceFromRunDeployment(ctx context.Context, arg Crea
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
-		&i.CreateIdempotencyKey,
-		&i.CreateIdempotencyExpiresAt,
-		&i.CreateRequestFingerprint,
 		&i.StateVersion,
-		&i.StopGeneration,
 		&i.OwnerActorID,
 		&i.OwnerRunID,
 		&i.OwnershipGeneration,
@@ -202,9 +167,6 @@ func (q *Queries) CreateWorkspaceFromRunDeployment(ctx context.Context, arg Crea
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,
-		&i.Metadata,
-		&i.Tags,
-		&i.RetentionPolicy,
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,

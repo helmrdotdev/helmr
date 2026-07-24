@@ -1,6 +1,6 @@
 import type {
   CursorPage,
-  Metadata,
+  Duration,
   WorkspaceIdTarget,
   WorkspaceKeyTarget,
 } from "./contract"
@@ -51,15 +51,10 @@ export type WorkspaceSecretPlacement =
 export type WorkspaceSecret = Readonly<{ name: string }> &
   WorkspaceSecretPlacement
 
-export type WorkspaceSecretSnapshot = Readonly<{ name: string }> &
-  WorkspaceSecretPlacement
-
 export interface WorkspaceCreateOptions {
   readonly key?: string
   readonly secrets?: readonly WorkspaceSecret[]
   readonly idempotencyKey?: string
-  readonly metadata?: Metadata
-  readonly tags?: readonly string[]
   readonly signal?: AbortSignal
 }
 
@@ -67,37 +62,88 @@ export interface WorkspaceRetrieveOptions {
   readonly signal?: AbortSignal
 }
 
-export interface WorkspaceStopOptions extends WorkspaceRetrieveOptions {
-  readonly idempotencyKey?: string
-}
-
-export interface WorkspaceUpdateOptions extends WorkspaceRetrieveOptions {
-  readonly metadata?: Metadata
-  readonly tags?: readonly string[]
-}
-
 export interface WorkspaceSnapshot {
   readonly id: string
   readonly key?: string
-  readonly currentVersionId: string
+  readonly declaredId: string
   readonly status: WorkspaceStatus
-  readonly secrets: readonly WorkspaceSecretSnapshot[]
-  readonly metadata: Metadata
-  readonly tags: readonly string[]
+  readonly secrets: readonly WorkspaceSecret[]
   readonly lastActivityAt: Date
   readonly createdAt: Date
   readonly updatedAt: Date
 }
 
-export interface WorkspaceOperations {
-  retrieve(options?: WorkspaceRetrieveOptions): Promise<WorkspaceSnapshot>
-  update(options: WorkspaceUpdateOptions): Promise<WorkspaceSnapshot>
-  stop(options?: WorkspaceStopOptions): Promise<void>
-  delete(options?: WorkspaceRetrieveOptions): Promise<void>
+export type WorkspaceFileEntry =
+  | Readonly<{
+      path: string
+      kind: "file"
+      mode: number
+      sizeBytes: number
+    }>
+  | Readonly<{
+      path: string
+      kind: "directory"
+      mode: number
+    }>
+  | Readonly<{
+      path: string
+      kind: "symlink"
+      mode: number
+      linkTarget: string
+    }>
+
+export type WorkspaceFileOptions = WorkspaceRetrieveOptions
+
+export interface WorkspaceFileListOptions extends WorkspaceRetrieveOptions {
+  readonly cursor?: string
+  readonly limit?: number
 }
 
-export type WorkspaceIdRef = WorkspaceIdTarget & WorkspaceOperations
-export type WorkspaceKeyRef = WorkspaceKeyTarget & WorkspaceOperations
+export interface WorkspaceFiles {
+  read(path: string, options?: WorkspaceFileOptions): Promise<Uint8Array>
+  stat(
+    path: string,
+    options?: WorkspaceFileOptions,
+  ): Promise<WorkspaceFileEntry>
+  list(
+    path: string,
+    options?: WorkspaceFileListOptions,
+  ): Promise<CursorPage<WorkspaceFileEntry>>
+}
+
+export interface WorkspaceExecOptions {
+  readonly command: readonly string[]
+  readonly cwd?: string
+  readonly env?: Readonly<Record<string, string>>
+  readonly stdin?: Uint8Array
+  readonly timeout?: Duration
+  readonly idempotencyKey: string
+  readonly signal?: AbortSignal
+}
+
+export interface WorkspaceExecResult {
+  readonly exitCode: number
+  readonly stdout: Uint8Array
+  readonly stderr: Uint8Array
+}
+
+export interface WorkspaceDeleteOptions extends WorkspaceRetrieveOptions {
+  readonly idempotencyKey?: string
+}
+
+export interface WorkspaceDeleteReceipt {
+  readonly workspaceId: string
+}
+
+export interface WorkspaceRefBase {
+  readonly files: WorkspaceFiles
+  retrieve(options?: WorkspaceRetrieveOptions): Promise<WorkspaceSnapshot>
+  exec(options: WorkspaceExecOptions): Promise<WorkspaceExecResult>
+  delete(options?: WorkspaceDeleteOptions): Promise<WorkspaceDeleteReceipt>
+}
+
+export type WorkspaceIdRef = WorkspaceIdTarget & WorkspaceRefBase
+export type WorkspaceKeyRef = WorkspaceKeyTarget & WorkspaceRefBase
 export type WorkspaceRef = WorkspaceIdRef | WorkspaceKeyRef
 
 export interface WorkspaceDefinition {
@@ -115,12 +161,6 @@ export interface Workspaces {
     readonly key: string
     readonly id?: never
   }): WorkspaceKeyRef
-  list(options?: {
-    readonly tag?: string
-    readonly cursor?: string
-    readonly limit?: number
-    readonly signal?: AbortSignal
-  }): Promise<CursorPage<WorkspaceSnapshot>>
 }
 
 export interface InternalWorkspaceDefinition {
@@ -239,16 +279,6 @@ function workspaceRef(
 
 export const workspaces: Workspaces = Object.freeze({
   ref: workspaceRef,
-  list(_options?: {
-    readonly tag?: string
-    readonly cursor?: string
-    readonly limit?: number
-    readonly signal?: AbortSignal
-  }): Promise<CursorPage<WorkspaceSnapshot>> {
-    return runtimeUnavailable<Promise<CursorPage<WorkspaceSnapshot>>>(
-      "workspaces.list",
-    )
-  },
 })
 
 export function inspectWorkspaceDefinition(
@@ -283,15 +313,33 @@ function createWorkspaceRef(
     | { readonly id: string; readonly key?: never }
     | { readonly key: string; readonly id?: never },
 ): WorkspaceIdRef | WorkspaceKeyRef {
-  const operations: WorkspaceOperations = {
+  const files: WorkspaceFiles = Object.freeze({
+    read(
+      _path: string,
+      _options?: WorkspaceFileOptions,
+    ): Promise<Uint8Array> {
+      return runtimeUnavailable("workspace.files.read")
+    },
+    stat(
+      _path: string,
+      _options?: WorkspaceFileOptions,
+    ): Promise<WorkspaceFileEntry> {
+      return runtimeUnavailable("workspace.files.stat")
+    },
+    list(
+      _path: string,
+      _options?: WorkspaceFileListOptions,
+    ): Promise<CursorPage<WorkspaceFileEntry>> {
+      return runtimeUnavailable("workspace.files.list")
+    },
+  })
+  const operations: WorkspaceRefBase = {
+    files,
     retrieve(_options) {
       return runtimeUnavailable("workspace.retrieve")
     },
-    update(_options) {
-      return runtimeUnavailable("workspace.update")
-    },
-    stop(_options) {
-      return runtimeUnavailable("workspace.stop")
+    exec(_options) {
+      return runtimeUnavailable("workspace.exec")
     },
     delete(_options) {
       return runtimeUnavailable("workspace.delete")

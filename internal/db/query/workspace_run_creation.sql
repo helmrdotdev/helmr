@@ -31,13 +31,7 @@ WITH selected_definition AS (
         workspace_declared_id,
         deployment_definition_id,
         head_version_id,
-        key,
-        create_idempotency_key,
-        create_idempotency_expires_at,
-        create_request_fingerprint,
-        metadata,
-        tags,
-        retention_policy
+        key
     )
     SELECT sqlc.arg(id),
            sqlc.arg(public_id),
@@ -49,13 +43,7 @@ WITH selected_definition AS (
            selected_definition.workspace_declared_id,
            selected_definition.deployment_definition_id,
            sqlc.arg(initial_version_id),
-           sqlc.narg(key),
-           coalesce(sqlc.arg(create_idempotency_key)::text, ''),
-           sqlc.narg(create_idempotency_expires_at),
-           coalesce(sqlc.arg(create_request_fingerprint)::text, ''),
-           coalesce(sqlc.narg(metadata)::jsonb, '{}'::jsonb),
-           coalesce(sqlc.narg(tags)::text[], '{}'::text[]),
-           coalesce(sqlc.narg(retention_policy)::jsonb, '{}'::jsonb)
+           sqlc.narg(key)
       FROM selected_definition
     RETURNING *
 ), created_version AS (

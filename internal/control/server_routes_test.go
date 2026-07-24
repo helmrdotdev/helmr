@@ -59,6 +59,8 @@ GET /api/projects/{projectID}/environments/{environmentID}/secrets
 GET /api/projects/{projectID}/environments/{environmentID}/secrets/{name}
 GET /api/projects/{projectID}/environments/{environmentID}/tokens
 GET /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}
+GET /api/projects/{projectID}/environments/{environmentID}/workspaces/by-key/{workspaceDeclaredID}
+GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}
 GET /api/regions
 GET /api/runs
 GET /api/runs/{runID}
@@ -69,6 +71,8 @@ GET /api/secrets/{name}
 GET /api/tokens
 GET /api/tokens/{tokenID}
 GET /api/worker/status
+GET /api/workspaces/by-key/{workspaceDeclaredID}
+GET /api/workspaces/{workspaceID}
 OPTIONS /api/public/tokens/{tokenID}/complete
 PATCH /api/members/{userID}
 PATCH /api/projects/{projectID}
@@ -105,6 +109,8 @@ POST /api/projects/{projectID}/environments/{environmentID}/tasks/{taskDeclaredI
 POST /api/projects/{projectID}/environments/{environmentID}/tokens
 POST /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/cancel
 POST /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/complete
+POST /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceDeclaredID}/create
+POST /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/delete
 POST /api/public/tokens/{tokenID}/complete
 POST /api/runs/{runID}/cancel
 POST /api/secrets/{name}/revoke
@@ -154,6 +160,8 @@ POST /api/worker/runtime-instances/reconcile
 POST /api/worker/runtime-substrates/lookup
 POST /api/worker/runtime-substrates/register
 POST /api/worker/startup-recovery
+POST /api/workspaces/{workspaceDeclaredID}/create
+POST /api/workspaces/{workspaceID}/delete
 PUT /api/projects/{projectID}/environments/{environmentID}/secrets/{name}
 PUT /api/secrets/{name}
 `), "\n")

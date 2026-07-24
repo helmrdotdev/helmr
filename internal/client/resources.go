@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -323,378 +322,177 @@ func (c *Client) workspaceItemPath(workspaceID string, suffix string, opts Works
 	return environmentScopedResourcePath(path, workspaceID, suffix), nil
 }
 
-func (c *Client) CreateWorkspace(ctx context.Context, input api.WorkspaceCreateRequest) (api.WorkspaceEnvelope, error) {
-	path, scoped, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/workspaces")
+func (c *Client) CreateWorkspace(
+	ctx context.Context,
+	declaredID string,
+	input api.CreateWorkspaceRequest,
+	opts WorkspaceScopeOptions,
+) (api.CreateWorkspaceResponse, error) {
+	path, err := c.workspaceItemPath(declaredID, "/create", opts)
 	if err != nil {
-		return api.WorkspaceEnvelope{}, err
+		return api.CreateWorkspaceResponse{}, err
 	}
-	if scoped {
-		input.ProjectID = ""
-		input.EnvironmentID = ""
-	}
-	var response api.WorkspaceEnvelope
+	var response api.CreateWorkspaceResponse
 	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.WorkspaceEnvelope{}, err
+		return api.CreateWorkspaceResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) ListWorkspaces(ctx context.Context, opts WorkspaceScopeOptions) (api.ListWorkspacesResponse, error) {
-	path, err := c.workspaceCollectionPath(opts)
-	if err != nil {
-		return api.ListWorkspacesResponse{}, err
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return api.ListWorkspacesResponse{}, err
-	}
-	var response api.ListWorkspacesResponse
-	if err := c.doJSON(req, &response); err != nil {
-		return api.ListWorkspacesResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) GetWorkspace(ctx context.Context, workspaceID string, opts WorkspaceScopeOptions) (api.WorkspaceEnvelope, error) {
+func (c *Client) GetWorkspace(ctx context.Context, workspaceID string, opts WorkspaceScopeOptions) (api.WorkspaceSnapshot, error) {
 	path, err := c.workspaceItemPath(workspaceID, "", opts)
 	if err != nil {
-		return api.WorkspaceEnvelope{}, err
+		return api.WorkspaceSnapshot{}, err
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.WorkspaceEnvelope{}, err
+		return api.WorkspaceSnapshot{}, err
 	}
-	var response api.WorkspaceEnvelope
+	var response api.WorkspaceSnapshot
 	if err := c.doJSON(req, &response); err != nil {
-		return api.WorkspaceEnvelope{}, err
+		return api.WorkspaceSnapshot{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) UpdateWorkspace(ctx context.Context, workspaceID string, input api.WorkspacePatchRequest, opts WorkspaceScopeOptions) (api.WorkspaceEnvelope, error) {
-	path, err := c.workspaceItemPath(workspaceID, "", opts)
+func (c *Client) GetWorkspaceByKey(
+	ctx context.Context,
+	declaredID string,
+	key string,
+	opts WorkspaceScopeOptions,
+) (api.WorkspaceSnapshot, error) {
+	path, err := c.workspaceItemPath("by-key", "/"+url.PathEscape(declaredID), opts)
 	if err != nil {
-		return api.WorkspaceEnvelope{}, err
+		return api.WorkspaceSnapshot{}, err
 	}
-	var response api.WorkspaceEnvelope
-	if err := c.patchJSON(ctx, path, input, &response); err != nil {
-		return api.WorkspaceEnvelope{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) DeleteWorkspace(ctx context.Context, workspaceID string, opts WorkspaceScopeOptions) error {
-	path, err := c.workspaceItemPath(workspaceID, "", opts)
-	if err != nil {
-		return err
-	}
-	req, err := c.newRequest(ctx, http.MethodDelete, path, nil)
-	if err != nil {
-		return err
-	}
-	return c.doJSON(req, nil)
-}
-
-func (c *Client) MaterializeWorkspace(ctx context.Context, workspaceID string, opts WorkspaceScopeOptions) (api.WorkspaceMountResponse, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/materialize", opts)
-	if err != nil {
-		return api.WorkspaceMountResponse{}, err
-	}
-	var response api.WorkspaceMountResponse
-	if err := c.postJSON(ctx, path, api.WorkspaceMaterializeRequest{}, &response); err != nil {
-		return api.WorkspaceMountResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) ConnectWorkspace(ctx context.Context, workspaceID string, opts WorkspaceScopeOptions) (api.WorkspaceMountResponse, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/connect", opts)
-	if err != nil {
-		return api.WorkspaceMountResponse{}, err
-	}
-	var response api.WorkspaceMountResponse
-	if err := c.postJSON(ctx, path, api.WorkspaceMaterializeRequest{}, &response); err != nil {
-		return api.WorkspaceMountResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) StopWorkspace(ctx context.Context, workspaceID string, input api.WorkspaceStopRequest, opts WorkspaceScopeOptions) (api.WorkspaceStopResponse, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/stop", opts)
-	if err != nil {
-		return api.WorkspaceStopResponse{}, err
-	}
-	var response api.WorkspaceStopResponse
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.WorkspaceStopResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) CreateWorkspaceExec(ctx context.Context, workspaceID string, input api.WorkspaceExecCreateRequest, opts WorkspaceScopeOptions) (api.WorkspaceExecEnvelope, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/execs", opts)
-	if err != nil {
-		return api.WorkspaceExecEnvelope{}, err
-	}
-	var response api.WorkspaceExecEnvelope
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.WorkspaceExecEnvelope{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) ListWorkspaceExecs(ctx context.Context, workspaceID string, opts WorkspaceScopeOptions) (api.ListWorkspaceExecsResponse, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/execs", opts)
-	if err != nil {
-		return api.ListWorkspaceExecsResponse{}, err
-	}
+	path += "?" + url.Values{"key": []string{key}}.Encode()
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.ListWorkspaceExecsResponse{}, err
+		return api.WorkspaceSnapshot{}, err
 	}
-	var response api.ListWorkspaceExecsResponse
+	var response api.WorkspaceSnapshot
 	if err := c.doJSON(req, &response); err != nil {
-		return api.ListWorkspaceExecsResponse{}, err
+		return api.WorkspaceSnapshot{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) GetWorkspaceExec(ctx context.Context, workspaceID string, execID string, opts WorkspaceScopeOptions) (api.WorkspaceExecEnvelope, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/execs/"+url.PathEscape(execID), opts)
+func (c *Client) DeleteWorkspace(
+	ctx context.Context,
+	workspaceID string,
+	input api.DeleteWorkspaceRequest,
+	opts WorkspaceScopeOptions,
+) (api.DeleteWorkspaceReceipt, error) {
+	path, err := c.workspaceItemPath(workspaceID, "/delete", opts)
 	if err != nil {
-		return api.WorkspaceExecEnvelope{}, err
+		return api.DeleteWorkspaceReceipt{}, err
 	}
+	var response api.DeleteWorkspaceReceipt
+	if err := c.postJSON(ctx, path, input, &response); err != nil {
+		return api.DeleteWorkspaceReceipt{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ReadWorkspaceFile(
+	ctx context.Context,
+	workspaceID string,
+	pathname string,
+	opts WorkspaceScopeOptions,
+) (api.WorkspaceFileContent, error) {
+	path, err := c.workspaceItemPath(workspaceID, "/files/content", opts)
+	if err != nil {
+		return api.WorkspaceFileContent{}, err
+	}
+	path += "?" + url.Values{"path": []string{pathname}}.Encode()
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.WorkspaceExecEnvelope{}, err
+		return api.WorkspaceFileContent{}, err
 	}
-	var response api.WorkspaceExecEnvelope
+	var response api.WorkspaceFileContent
 	if err := c.doJSON(req, &response); err != nil {
-		return api.WorkspaceExecEnvelope{}, err
+		return api.WorkspaceFileContent{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) WriteWorkspaceExecStdin(ctx context.Context, workspaceID string, execID string, input api.WorkspaceExecStdinWriteRequest, opts WorkspaceScopeOptions) (api.WorkspaceExecStreamChunkResponse, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/execs/"+url.PathEscape(execID)+"/stdin", opts)
-	if err != nil {
-		return api.WorkspaceExecStreamChunkResponse{}, err
-	}
-	var response api.WorkspaceExecStreamChunkResponse
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.WorkspaceExecStreamChunkResponse{}, err
-	}
-	return response, nil
+type WorkspaceFileListOptions struct {
+	Path   string
+	Cursor string
+	Limit  int32
 }
 
-func (c *Client) CloseWorkspaceExecStdin(ctx context.Context, workspaceID string, execID string, opts WorkspaceScopeOptions) (api.WorkspaceExecEnvelope, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/execs/"+url.PathEscape(execID)+"/stdin/close", opts)
+func (c *Client) ListWorkspaceFiles(
+	ctx context.Context,
+	workspaceID string,
+	input WorkspaceFileListOptions,
+	opts WorkspaceScopeOptions,
+) (api.WorkspaceFilePage, error) {
+	path, err := c.workspaceItemPath(workspaceID, "/files", opts)
 	if err != nil {
-		return api.WorkspaceExecEnvelope{}, err
+		return api.WorkspaceFilePage{}, err
 	}
-	var response api.WorkspaceExecEnvelope
-	if err := c.postJSON(ctx, path, struct{}{}, &response); err != nil {
-		return api.WorkspaceExecEnvelope{}, err
+	query := url.Values{}
+	if input.Path != "" {
+		query.Set("path", input.Path)
 	}
-	return response, nil
-}
-
-func (c *Client) ListWorkspaceExecStream(ctx context.Context, workspaceID string, execID string, stream string, cursor int64, opts WorkspaceScopeOptions) (api.ListWorkspaceExecStreamChunksResponse, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/execs/"+url.PathEscape(execID)+"/"+url.PathEscape(stream), opts)
-	if err != nil {
-		return api.ListWorkspaceExecStreamChunksResponse{}, err
+	if input.Cursor != "" {
+		query.Set("cursor", input.Cursor)
 	}
-	values := url.Values{}
-	if cursor > 0 {
-		values.Set("cursor", strconv.FormatInt(cursor, 10))
+	if input.Limit > 0 {
+		query.Set("limit", strconv.FormatInt(int64(input.Limit), 10))
 	}
-	if encoded := values.Encode(); encoded != "" {
+	if encoded := query.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.ListWorkspaceExecStreamChunksResponse{}, err
+		return api.WorkspaceFilePage{}, err
 	}
-	var response api.ListWorkspaceExecStreamChunksResponse
+	var response api.WorkspaceFilePage
 	if err := c.doJSON(req, &response); err != nil {
-		return api.ListWorkspaceExecStreamChunksResponse{}, err
+		return api.WorkspaceFilePage{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) FollowWorkspaceExecStream(ctx context.Context, workspaceID string, execID string, stream string, cursor int64, opts WorkspaceScopeOptions, handle func(WorkspaceStreamEvent) error) error {
-	path, err := c.workspaceItemPath(workspaceID, "/execs/"+url.PathEscape(execID)+"/"+url.PathEscape(stream), opts)
+func (c *Client) StatWorkspaceFile(
+	ctx context.Context,
+	workspaceID string,
+	pathname string,
+	opts WorkspaceScopeOptions,
+) (api.WorkspaceFileEntry, error) {
+	path, err := c.workspaceItemPath(workspaceID, "/files/stat", opts)
 	if err != nil {
-		return err
+		return api.WorkspaceFileEntry{}, err
 	}
-	return c.followWorkspaceStream(ctx, path, cursor, handle)
+	path += "?" + url.Values{"path": []string{pathname}}.Encode()
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return api.WorkspaceFileEntry{}, err
+	}
+	var response api.WorkspaceFileEntry
+	if err := c.doJSON(req, &response); err != nil {
+		return api.WorkspaceFileEntry{}, err
+	}
+	return response, nil
 }
 
-func (c *Client) CreateWorkspacePty(ctx context.Context, workspaceID string, input api.WorkspacePtyCreateRequest, opts WorkspaceScopeOptions) (api.WorkspacePtyEnvelope, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/pty", opts)
+func (c *Client) ExecuteWorkspace(
+	ctx context.Context,
+	workspaceID string,
+	input api.ExecuteWorkspaceRequest,
+	opts WorkspaceScopeOptions,
+) (api.ExecuteWorkspaceResult, error) {
+	path, err := c.workspaceItemPath(workspaceID, "/exec", opts)
 	if err != nil {
-		return api.WorkspacePtyEnvelope{}, err
+		return api.ExecuteWorkspaceResult{}, err
 	}
-	var response api.WorkspacePtyEnvelope
+	var response api.ExecuteWorkspaceResult
 	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.WorkspacePtyEnvelope{}, err
+		return api.ExecuteWorkspaceResult{}, err
 	}
 	return response, nil
-}
-
-func (c *Client) ListWorkspacePtys(ctx context.Context, workspaceID string, opts WorkspaceScopeOptions) (api.ListWorkspacePtySessionsResponse, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/pty", opts)
-	if err != nil {
-		return api.ListWorkspacePtySessionsResponse{}, err
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return api.ListWorkspacePtySessionsResponse{}, err
-	}
-	var response api.ListWorkspacePtySessionsResponse
-	if err := c.doJSON(req, &response); err != nil {
-		return api.ListWorkspacePtySessionsResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) GetWorkspacePty(ctx context.Context, workspaceID string, ptyID string, opts WorkspaceScopeOptions) (api.WorkspacePtyEnvelope, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/pty/"+url.PathEscape(ptyID), opts)
-	if err != nil {
-		return api.WorkspacePtyEnvelope{}, err
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return api.WorkspacePtyEnvelope{}, err
-	}
-	var response api.WorkspacePtyEnvelope
-	if err := c.doJSON(req, &response); err != nil {
-		return api.WorkspacePtyEnvelope{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) WriteWorkspacePtyInput(ctx context.Context, workspaceID string, ptyID string, input api.WorkspacePtyInputWriteRequest, opts WorkspaceScopeOptions) (api.WorkspacePtyStreamChunkResponse, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/pty/"+url.PathEscape(ptyID)+"/input", opts)
-	if err != nil {
-		return api.WorkspacePtyStreamChunkResponse{}, err
-	}
-	var response api.WorkspacePtyStreamChunkResponse
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.WorkspacePtyStreamChunkResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) ResizeWorkspacePty(ctx context.Context, workspaceID string, ptyID string, input api.WorkspacePtyResizeRequest, opts WorkspaceScopeOptions) (api.WorkspacePtyEnvelope, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/pty/"+url.PathEscape(ptyID)+"/resize", opts)
-	if err != nil {
-		return api.WorkspacePtyEnvelope{}, err
-	}
-	var response api.WorkspacePtyEnvelope
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.WorkspacePtyEnvelope{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) CloseWorkspacePty(ctx context.Context, workspaceID string, ptyID string, opts WorkspaceScopeOptions) (api.WorkspacePtyEnvelope, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/pty/"+url.PathEscape(ptyID)+"/close", opts)
-	if err != nil {
-		return api.WorkspacePtyEnvelope{}, err
-	}
-	var response api.WorkspacePtyEnvelope
-	if err := c.postJSON(ctx, path, struct{}{}, &response); err != nil {
-		return api.WorkspacePtyEnvelope{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) ListWorkspacePtyOutput(ctx context.Context, workspaceID string, ptyID string, cursor int64, opts WorkspaceScopeOptions) (api.ListWorkspacePtyStreamChunksResponse, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/pty/"+url.PathEscape(ptyID)+"/output", opts)
-	if err != nil {
-		return api.ListWorkspacePtyStreamChunksResponse{}, err
-	}
-	values := url.Values{}
-	if cursor > 0 {
-		values.Set("cursor", strconv.FormatInt(cursor, 10))
-	}
-	if encoded := values.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return api.ListWorkspacePtyStreamChunksResponse{}, err
-	}
-	var response api.ListWorkspacePtyStreamChunksResponse
-	if err := c.doJSON(req, &response); err != nil {
-		return api.ListWorkspacePtyStreamChunksResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) FollowWorkspacePtyOutput(ctx context.Context, workspaceID string, ptyID string, cursor int64, opts WorkspaceScopeOptions, handle func(WorkspaceStreamEvent) error) error {
-	path, err := c.workspaceItemPath(workspaceID, "/pty/"+url.PathEscape(ptyID)+"/output", opts)
-	if err != nil {
-		return err
-	}
-	return c.followWorkspaceStream(ctx, path, cursor, handle)
-}
-
-type WorkspaceStreamEvent struct {
-	Event    string
-	ID       string
-	Chunk    json.RawMessage
-	Terminal *api.WorkspaceStreamTerminalResponse
-	Error    *api.WorkspaceStreamErrorResponse
-}
-
-func (c *Client) followWorkspaceStream(ctx context.Context, path string, cursor int64, handle func(WorkspaceStreamEvent) error) error {
-	values := url.Values{}
-	values.Set("follow", "1")
-	if cursor > 0 {
-		values.Set("cursor", strconv.FormatInt(cursor, 10))
-	}
-	if strings.Contains(path, "?") {
-		path += "&" + values.Encode()
-	} else {
-		path += "?" + values.Encode()
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("accept", "text/event-stream")
-	res, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return decodeError(res)
-	}
-	return readSSE(res.Body, func(eventName string, eventID string, data []byte) error {
-		event := WorkspaceStreamEvent{Event: eventName, ID: eventID}
-		switch eventName {
-		case "workspace_stream_chunk":
-			event.Chunk = append(json.RawMessage(nil), data...)
-		case "workspace_stream_terminal", "workspace_stream_lost":
-			var terminal api.WorkspaceStreamTerminalResponse
-			if err := json.Unmarshal(data, &terminal); err != nil {
-				return err
-			}
-			event.Terminal = &terminal
-		case "workspace_stream_error":
-			var streamErr api.WorkspaceStreamErrorResponse
-			if err := json.Unmarshal(data, &streamErr); err != nil {
-				return err
-			}
-			event.Error = &streamErr
-		default:
-			return nil
-		}
-		return handle(event)
-	})
 }
 
 type SessionScopeOptions struct {

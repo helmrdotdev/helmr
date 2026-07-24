@@ -29,7 +29,7 @@ UPDATE workspaces
    AND state = 'active'
    AND desired_state = 'active'
    AND dirty_state = 'clean'
-RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
+RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
 `
 
 type AdvanceActorWorkspaceHeadParams struct {
@@ -70,11 +70,7 @@ func (q *Queries) AdvanceActorWorkspaceHead(ctx context.Context, arg AdvanceActo
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
-		&i.CreateIdempotencyKey,
-		&i.CreateIdempotencyExpiresAt,
-		&i.CreateRequestFingerprint,
 		&i.StateVersion,
-		&i.StopGeneration,
 		&i.OwnerActorID,
 		&i.OwnerRunID,
 		&i.OwnershipGeneration,
@@ -83,9 +79,6 @@ func (q *Queries) AdvanceActorWorkspaceHead(ctx context.Context, arg AdvanceActo
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,
-		&i.Metadata,
-		&i.Tags,
-		&i.RetentionPolicy,
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -1094,7 +1087,7 @@ UPDATE workspaces
         WHERE workspace_processes.workspace_id = workspaces.id
           AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
    )
-RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
+RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
 `
 
 type ReleaseActorWorkspaceOwnerParams struct {
@@ -1131,11 +1124,7 @@ func (q *Queries) ReleaseActorWorkspaceOwner(ctx context.Context, arg ReleaseAct
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
-		&i.CreateIdempotencyKey,
-		&i.CreateIdempotencyExpiresAt,
-		&i.CreateRequestFingerprint,
 		&i.StateVersion,
-		&i.StopGeneration,
 		&i.OwnerActorID,
 		&i.OwnerRunID,
 		&i.OwnershipGeneration,
@@ -1144,9 +1133,6 @@ func (q *Queries) ReleaseActorWorkspaceOwner(ctx context.Context, arg ReleaseAct
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,
-		&i.Metadata,
-		&i.Tags,
-		&i.RetentionPolicy,
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,

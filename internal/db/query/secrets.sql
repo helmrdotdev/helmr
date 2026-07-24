@@ -120,6 +120,15 @@ WHERE environment_id = sqlc.arg(environment_id)
   AND name = sqlc.arg(name)
   AND state <> 'deleted';
 
+-- name: LockActiveSecretByNameForWorkspaceCreate :one
+SELECT secrets.*
+FROM secrets
+WHERE environment_id = sqlc.arg(environment_id)
+  AND name = sqlc.arg(name)
+  AND state = 'active'
+  AND current_version_id IS NOT NULL
+FOR UPDATE;
+
 -- name: GetSecretSnapshotByName :one
 SELECT
     secrets.id,
@@ -294,6 +303,7 @@ WHERE id = sqlc.arg(version_id)
 -- name: ListWorkspaceSecrets :many
 SELECT
     workspace_secrets.*,
+    secrets.name AS secret_name,
     secrets.state AS secret_state,
     secrets.state_version AS secret_state_version,
     secrets.current_version_id,

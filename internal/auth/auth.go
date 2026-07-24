@@ -189,32 +189,16 @@ func normalizeAPIKeyGrantPermission(permission string) []Permission {
 		return []Permission{PermissionTokensComplete}
 	case string(PermissionTokensCancel):
 		return []Permission{PermissionTokensCancel}
-	case string(PermissionWorkspaceLifecycleManage):
-		return []Permission{PermissionWorkspaceLifecycleManage}
-	case string(PermissionFilesRead):
-		return []Permission{PermissionFilesRead}
-	case string(PermissionFilesWrite):
-		return []Permission{PermissionFilesWrite}
-	case string(PermissionVersionsRead):
-		return []Permission{PermissionVersionsRead}
-	case string(PermissionVersionsCapture):
-		return []Permission{PermissionVersionsCapture}
-	case string(PermissionVersionsRestore):
-		return []Permission{PermissionVersionsRestore}
-	case string(PermissionVersionsDiff):
-		return []Permission{PermissionVersionsDiff}
-	case string(PermissionExecCreate):
-		return []Permission{PermissionExecCreate}
-	case string(PermissionExecRead):
-		return []Permission{PermissionExecRead}
-	case string(PermissionExecManage):
-		return []Permission{PermissionExecManage}
-	case string(PermissionPtyCreate):
-		return []Permission{PermissionPtyCreate}
-	case string(PermissionPtyRead):
-		return []Permission{PermissionPtyRead}
-	case string(PermissionPtyManage):
-		return []Permission{PermissionPtyManage}
+	case string(PermissionWorkspacesCreate):
+		return []Permission{PermissionWorkspacesCreate}
+	case string(PermissionWorkspacesRead):
+		return []Permission{PermissionWorkspacesRead}
+	case string(PermissionWorkspacesDelete):
+		return []Permission{PermissionWorkspacesDelete}
+	case string(PermissionWorkspaceFilesRead):
+		return []Permission{PermissionWorkspaceFilesRead}
+	case string(PermissionWorkspaceExecCreate):
+		return []Permission{PermissionWorkspaceExecCreate}
 	case string(PermissionSecretsWrite):
 		return []Permission{PermissionSecretsWrite}
 	case string(PermissionTasksDeploy):

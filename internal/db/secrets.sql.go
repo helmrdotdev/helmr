@@ -699,6 +699,7 @@ func (q *Queries) ListSecrets(ctx context.Context, arg ListSecretsParams) ([]Lis
 const listWorkspaceSecrets = `-- name: ListWorkspaceSecrets :many
 SELECT
     workspace_secrets.workspace_id, workspace_secrets.environment_id, workspace_secrets.placement_kind, workspace_secrets.placement_target, workspace_secrets.secret_id, workspace_secrets.created_at,
+    secrets.name AS secret_name,
     secrets.state AS secret_state,
     secrets.state_version AS secret_state_version,
     secrets.current_version_id,
@@ -716,6 +717,7 @@ type ListWorkspaceSecretsRow struct {
 	PlacementTarget      string             `json:"placement_target"`
 	SecretID             pgtype.UUID        `json:"secret_id"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	SecretName           string             `json:"secret_name"`
 	SecretState          string             `json:"secret_state"`
 	SecretStateVersion   int64              `json:"secret_state_version"`
 	CurrentVersionID     pgtype.UUID        `json:"current_version_id"`
@@ -738,6 +740,7 @@ func (q *Queries) ListWorkspaceSecrets(ctx context.Context, workspaceID pgtype.U
 			&i.PlacementTarget,
 			&i.SecretID,
 			&i.CreatedAt,
+			&i.SecretName,
 			&i.SecretState,
 			&i.SecretStateVersion,
 			&i.CurrentVersionID,
@@ -751,6 +754,40 @@ func (q *Queries) ListWorkspaceSecrets(ctx context.Context, workspaceID pgtype.U
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockActiveSecretByNameForWorkspaceCreate = `-- name: LockActiveSecretByNameForWorkspaceCreate :one
+SELECT secrets.id, secrets.environment_id, secrets.name, secrets.state, secrets.state_version, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at, secrets.deleted_at
+FROM secrets
+WHERE environment_id = $1
+  AND name = $2
+  AND state = 'active'
+  AND current_version_id IS NOT NULL
+FOR UPDATE
+`
+
+type LockActiveSecretByNameForWorkspaceCreateParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	Name          string      `json:"name"`
+}
+
+func (q *Queries) LockActiveSecretByNameForWorkspaceCreate(ctx context.Context, arg LockActiveSecretByNameForWorkspaceCreateParams) (Secret, error) {
+	row := q.db.QueryRow(ctx, lockActiveSecretByNameForWorkspaceCreate, arg.EnvironmentID, arg.Name)
+	var i Secret
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.Name,
+		&i.State,
+		&i.StateVersion,
+		&i.CurrentVersionID,
+		&i.RevocationGeneration,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RevokedAt,
+		&i.DeletedAt,
+	)
+	return i, err
 }
 
 const lockAttemptSecretDelivery = `-- name: LockAttemptSecretDelivery :many

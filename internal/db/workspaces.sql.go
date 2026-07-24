@@ -11,36 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const clearExpiredWorkspaceCreateIdempotency = `-- name: ClearExpiredWorkspaceCreateIdempotency :exec
-UPDATE workspaces
-   SET create_idempotency_key = '',
-       create_idempotency_expires_at = NULL,
-       create_request_fingerprint = '',
-       updated_at = now()
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND create_idempotency_key = $4
-   AND create_idempotency_expires_at <= now()
-`
-
-type ClearExpiredWorkspaceCreateIdempotencyParams struct {
-	OrgID          pgtype.UUID `json:"org_id"`
-	ProjectID      pgtype.UUID `json:"project_id"`
-	EnvironmentID  pgtype.UUID `json:"environment_id"`
-	IdempotencyKey string      `json:"idempotency_key"`
-}
-
-func (q *Queries) ClearExpiredWorkspaceCreateIdempotency(ctx context.Context, arg ClearExpiredWorkspaceCreateIdempotencyParams) error {
-	_, err := q.db.Exec(ctx, clearExpiredWorkspaceCreateIdempotency,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.IdempotencyKey,
-	)
-	return err
-}
-
 const createWorkspaceFromCurrentDeployment = `-- name: CreateWorkspaceFromCurrentDeployment :one
 WITH selected_definition AS (
     SELECT deployment_definitions.environment_id,
@@ -76,13 +46,7 @@ WITH selected_definition AS (
         workspace_declared_id,
         deployment_definition_id,
         head_version_id,
-        key,
-        create_idempotency_key,
-        create_idempotency_expires_at,
-        create_request_fingerprint,
-        metadata,
-        tags,
-        retention_policy
+        key
     )
     SELECT $6,
            $7,
@@ -94,15 +58,9 @@ WITH selected_definition AS (
            selected_definition.workspace_declared_id,
            selected_definition.deployment_definition_id,
            $8,
-           $9,
-           coalesce($10::text, ''),
-           $11,
-           coalesce($12::text, ''),
-           coalesce($13::jsonb, '{}'::jsonb),
-           coalesce($14::text[], '{}'::text[]),
-           coalesce($15::jsonb, '{}'::jsonb)
+           $9
       FROM selected_definition
-    RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
+    RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
 ), created_version AS (
     INSERT INTO workspace_versions (
         id,
@@ -121,7 +79,7 @@ WITH selected_definition AS (
         published_at
     )
     SELECT $8,
-           $16,
+           $10,
            created_workspace.org_id,
            created_workspace.project_id,
            created_workspace.environment_id,
@@ -137,61 +95,48 @@ WITH selected_definition AS (
       FROM created_workspace
     RETURNING workspace_id
 )
-SELECT created_workspace.id, created_workspace.public_id, created_workspace.org_id, created_workspace.project_id, created_workspace.environment_id, created_workspace.region_id, created_workspace.declaration_kind, created_workspace.workspace_declared_id, created_workspace.deployment_definition_id, created_workspace.key, created_workspace.create_idempotency_key, created_workspace.create_idempotency_expires_at, created_workspace.create_request_fingerprint, created_workspace.state_version, created_workspace.stop_generation, created_workspace.owner_actor_id, created_workspace.owner_run_id, created_workspace.ownership_generation, created_workspace.writer_generation, created_workspace.head_version_id, created_workspace.state, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.metadata, created_workspace.tags, created_workspace.retention_policy, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.deleted_at
+SELECT created_workspace.id, created_workspace.public_id, created_workspace.org_id, created_workspace.project_id, created_workspace.environment_id, created_workspace.region_id, created_workspace.declaration_kind, created_workspace.workspace_declared_id, created_workspace.deployment_definition_id, created_workspace.key, created_workspace.state_version, created_workspace.owner_actor_id, created_workspace.owner_run_id, created_workspace.ownership_generation, created_workspace.writer_generation, created_workspace.head_version_id, created_workspace.state, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.deleted_at
   FROM created_workspace
   JOIN created_version ON created_version.workspace_id = created_workspace.id
 `
 
 type CreateWorkspaceFromCurrentDeploymentParams struct {
-	ProjectID                  pgtype.UUID        `json:"project_id"`
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	EnvironmentID              pgtype.UUID        `json:"environment_id"`
-	DeploymentDefinitionID     pgtype.UUID        `json:"deployment_definition_id"`
-	WorkspaceDeclaredID        string             `json:"workspace_declared_id"`
-	ID                         pgtype.UUID        `json:"id"`
-	PublicID                   string             `json:"public_id"`
-	InitialVersionID           pgtype.UUID        `json:"initial_version_id"`
-	Key                        pgtype.Text        `json:"key"`
-	CreateIdempotencyKey       string             `json:"create_idempotency_key"`
-	CreateIdempotencyExpiresAt pgtype.Timestamptz `json:"create_idempotency_expires_at"`
-	CreateRequestFingerprint   string             `json:"create_request_fingerprint"`
-	Metadata                   []byte             `json:"metadata"`
-	Tags                       []string           `json:"tags"`
-	RetentionPolicy            []byte             `json:"retention_policy"`
-	InitialVersionPublicID     string             `json:"initial_version_public_id"`
+	ProjectID              pgtype.UUID `json:"project_id"`
+	OrgID                  pgtype.UUID `json:"org_id"`
+	EnvironmentID          pgtype.UUID `json:"environment_id"`
+	DeploymentDefinitionID pgtype.UUID `json:"deployment_definition_id"`
+	WorkspaceDeclaredID    string      `json:"workspace_declared_id"`
+	ID                     pgtype.UUID `json:"id"`
+	PublicID               string      `json:"public_id"`
+	InitialVersionID       pgtype.UUID `json:"initial_version_id"`
+	Key                    pgtype.Text `json:"key"`
+	InitialVersionPublicID string      `json:"initial_version_public_id"`
 }
 
 type CreateWorkspaceFromCurrentDeploymentRow struct {
-	ID                         pgtype.UUID           `json:"id"`
-	PublicID                   string                `json:"public_id"`
-	OrgID                      pgtype.UUID           `json:"org_id"`
-	ProjectID                  pgtype.UUID           `json:"project_id"`
-	EnvironmentID              pgtype.UUID           `json:"environment_id"`
-	RegionID                   string                `json:"region_id"`
-	DeclarationKind            pgtype.Text           `json:"declaration_kind"`
-	WorkspaceDeclaredID        pgtype.Text           `json:"workspace_declared_id"`
-	DeploymentDefinitionID     pgtype.UUID           `json:"deployment_definition_id"`
-	Key                        pgtype.Text           `json:"key"`
-	CreateIdempotencyKey       string                `json:"create_idempotency_key"`
-	CreateIdempotencyExpiresAt pgtype.Timestamptz    `json:"create_idempotency_expires_at"`
-	CreateRequestFingerprint   string                `json:"create_request_fingerprint"`
-	StateVersion               int64                 `json:"state_version"`
-	StopGeneration             int64                 `json:"stop_generation"`
-	OwnerActorID               pgtype.UUID           `json:"owner_actor_id"`
-	OwnerRunID                 pgtype.UUID           `json:"owner_run_id"`
-	OwnershipGeneration        int64                 `json:"ownership_generation"`
-	WriterGeneration           int64                 `json:"writer_generation"`
-	HeadVersionID              pgtype.UUID           `json:"head_version_id"`
-	State                      WorkspaceState        `json:"state"`
-	DesiredState               WorkspaceDesiredState `json:"desired_state"`
-	DirtyState                 WorkspaceDirtyState   `json:"dirty_state"`
-	Metadata                   []byte                `json:"metadata"`
-	Tags                       []string              `json:"tags"`
-	RetentionPolicy            []byte                `json:"retention_policy"`
-	LastActivityAt             pgtype.Timestamptz    `json:"last_activity_at"`
-	CreatedAt                  pgtype.Timestamptz    `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz    `json:"updated_at"`
-	DeletedAt                  pgtype.Timestamptz    `json:"deleted_at"`
+	ID                     pgtype.UUID           `json:"id"`
+	PublicID               string                `json:"public_id"`
+	OrgID                  pgtype.UUID           `json:"org_id"`
+	ProjectID              pgtype.UUID           `json:"project_id"`
+	EnvironmentID          pgtype.UUID           `json:"environment_id"`
+	RegionID               string                `json:"region_id"`
+	DeclarationKind        pgtype.Text           `json:"declaration_kind"`
+	WorkspaceDeclaredID    pgtype.Text           `json:"workspace_declared_id"`
+	DeploymentDefinitionID pgtype.UUID           `json:"deployment_definition_id"`
+	Key                    pgtype.Text           `json:"key"`
+	StateVersion           int64                 `json:"state_version"`
+	OwnerActorID           pgtype.UUID           `json:"owner_actor_id"`
+	OwnerRunID             pgtype.UUID           `json:"owner_run_id"`
+	OwnershipGeneration    int64                 `json:"ownership_generation"`
+	WriterGeneration       int64                 `json:"writer_generation"`
+	HeadVersionID          pgtype.UUID           `json:"head_version_id"`
+	State                  WorkspaceState        `json:"state"`
+	DesiredState           WorkspaceDesiredState `json:"desired_state"`
+	DirtyState             WorkspaceDirtyState   `json:"dirty_state"`
+	LastActivityAt         pgtype.Timestamptz    `json:"last_activity_at"`
+	CreatedAt              pgtype.Timestamptz    `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz    `json:"updated_at"`
+	DeletedAt              pgtype.Timestamptz    `json:"deleted_at"`
 }
 
 func (q *Queries) CreateWorkspaceFromCurrentDeployment(ctx context.Context, arg CreateWorkspaceFromCurrentDeploymentParams) (CreateWorkspaceFromCurrentDeploymentRow, error) {
@@ -205,12 +150,6 @@ func (q *Queries) CreateWorkspaceFromCurrentDeployment(ctx context.Context, arg 
 		arg.PublicID,
 		arg.InitialVersionID,
 		arg.Key,
-		arg.CreateIdempotencyKey,
-		arg.CreateIdempotencyExpiresAt,
-		arg.CreateRequestFingerprint,
-		arg.Metadata,
-		arg.Tags,
-		arg.RetentionPolicy,
 		arg.InitialVersionPublicID,
 	)
 	var i CreateWorkspaceFromCurrentDeploymentRow
@@ -225,11 +164,7 @@ func (q *Queries) CreateWorkspaceFromCurrentDeployment(ctx context.Context, arg 
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
-		&i.CreateIdempotencyKey,
-		&i.CreateIdempotencyExpiresAt,
-		&i.CreateRequestFingerprint,
 		&i.StateVersion,
-		&i.StopGeneration,
 		&i.OwnerActorID,
 		&i.OwnerRunID,
 		&i.OwnershipGeneration,
@@ -238,9 +173,6 @@ func (q *Queries) CreateWorkspaceFromCurrentDeployment(ctx context.Context, arg 
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,
-		&i.Metadata,
-		&i.Tags,
-		&i.RetentionPolicy,
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -249,8 +181,53 @@ func (q *Queries) CreateWorkspaceFromCurrentDeployment(ctx context.Context, arg 
 	return i, err
 }
 
+const createWorkspaceSecret = `-- name: CreateWorkspaceSecret :one
+INSERT INTO workspace_secrets (
+    workspace_id,
+    environment_id,
+    placement_kind,
+    placement_target,
+    secret_id
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5
+)
+RETURNING workspace_id, environment_id, placement_kind, placement_target, secret_id, created_at
+`
+
+type CreateWorkspaceSecretParams struct {
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+	EnvironmentID   pgtype.UUID `json:"environment_id"`
+	PlacementKind   string      `json:"placement_kind"`
+	PlacementTarget string      `json:"placement_target"`
+	SecretID        pgtype.UUID `json:"secret_id"`
+}
+
+func (q *Queries) CreateWorkspaceSecret(ctx context.Context, arg CreateWorkspaceSecretParams) (WorkspaceSecret, error) {
+	row := q.db.QueryRow(ctx, createWorkspaceSecret,
+		arg.WorkspaceID,
+		arg.EnvironmentID,
+		arg.PlacementKind,
+		arg.PlacementTarget,
+		arg.SecretID,
+	)
+	var i WorkspaceSecret
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.EnvironmentID,
+		&i.PlacementKind,
+		&i.PlacementTarget,
+		&i.SecretID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getWorkspace = `-- name: GetWorkspace :one
-SELECT id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
+SELECT id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
   FROM workspaces
  WHERE org_id = $1
    AND project_id = $2
@@ -285,11 +262,7 @@ func (q *Queries) GetWorkspace(ctx context.Context, arg GetWorkspaceParams) (Wor
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
-		&i.CreateIdempotencyKey,
-		&i.CreateIdempotencyExpiresAt,
-		&i.CreateRequestFingerprint,
 		&i.StateVersion,
-		&i.StopGeneration,
 		&i.OwnerActorID,
 		&i.OwnerRunID,
 		&i.OwnershipGeneration,
@@ -298,9 +271,6 @@ func (q *Queries) GetWorkspace(ctx context.Context, arg GetWorkspaceParams) (Wor
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,
-		&i.Metadata,
-		&i.Tags,
-		&i.RetentionPolicy,
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -309,30 +279,32 @@ func (q *Queries) GetWorkspace(ctx context.Context, arg GetWorkspaceParams) (Wor
 	return i, err
 }
 
-const getWorkspaceByCreateIdempotency = `-- name: GetWorkspaceByCreateIdempotency :one
-SELECT id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
+const getWorkspaceByDeclaredIDAndKey = `-- name: GetWorkspaceByDeclaredIDAndKey :one
+SELECT id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
   FROM workspaces
  WHERE org_id = $1
    AND project_id = $2
    AND environment_id = $3
-   AND create_idempotency_key = $4
-   AND create_idempotency_expires_at > now()
+   AND workspace_declared_id = $4
+   AND key = $5
    AND deleted_at IS NULL
 `
 
-type GetWorkspaceByCreateIdempotencyParams struct {
-	OrgID          pgtype.UUID `json:"org_id"`
-	ProjectID      pgtype.UUID `json:"project_id"`
-	EnvironmentID  pgtype.UUID `json:"environment_id"`
-	IdempotencyKey string      `json:"idempotency_key"`
+type GetWorkspaceByDeclaredIDAndKeyParams struct {
+	OrgID               pgtype.UUID `json:"org_id"`
+	ProjectID           pgtype.UUID `json:"project_id"`
+	EnvironmentID       pgtype.UUID `json:"environment_id"`
+	WorkspaceDeclaredID pgtype.Text `json:"workspace_declared_id"`
+	Key                 pgtype.Text `json:"key"`
 }
 
-func (q *Queries) GetWorkspaceByCreateIdempotency(ctx context.Context, arg GetWorkspaceByCreateIdempotencyParams) (Workspace, error) {
-	row := q.db.QueryRow(ctx, getWorkspaceByCreateIdempotency,
+func (q *Queries) GetWorkspaceByDeclaredIDAndKey(ctx context.Context, arg GetWorkspaceByDeclaredIDAndKeyParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, getWorkspaceByDeclaredIDAndKey,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.IdempotencyKey,
+		arg.WorkspaceDeclaredID,
+		arg.Key,
 	)
 	var i Workspace
 	err := row.Scan(
@@ -346,11 +318,7 @@ func (q *Queries) GetWorkspaceByCreateIdempotency(ctx context.Context, arg GetWo
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
-		&i.CreateIdempotencyKey,
-		&i.CreateIdempotencyExpiresAt,
-		&i.CreateRequestFingerprint,
 		&i.StateVersion,
-		&i.StopGeneration,
 		&i.OwnerActorID,
 		&i.OwnerRunID,
 		&i.OwnershipGeneration,
@@ -359,9 +327,6 @@ func (q *Queries) GetWorkspaceByCreateIdempotency(ctx context.Context, arg GetWo
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,
-		&i.Metadata,
-		&i.Tags,
-		&i.RetentionPolicy,
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -371,7 +336,7 @@ func (q *Queries) GetWorkspaceByCreateIdempotency(ctx context.Context, arg GetWo
 }
 
 const getWorkspaceByOrgAndID = `-- name: GetWorkspaceByOrgAndID :one
-SELECT id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
+SELECT id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
   FROM workspaces
  WHERE org_id = $1
    AND id = $2
@@ -397,11 +362,7 @@ func (q *Queries) GetWorkspaceByOrgAndID(ctx context.Context, arg GetWorkspaceBy
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
-		&i.CreateIdempotencyKey,
-		&i.CreateIdempotencyExpiresAt,
-		&i.CreateRequestFingerprint,
 		&i.StateVersion,
-		&i.StopGeneration,
 		&i.OwnerActorID,
 		&i.OwnerRunID,
 		&i.OwnershipGeneration,
@@ -410,9 +371,6 @@ func (q *Queries) GetWorkspaceByOrgAndID(ctx context.Context, arg GetWorkspaceBy
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,
-		&i.Metadata,
-		&i.Tags,
-		&i.RetentionPolicy,
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -421,91 +379,61 @@ func (q *Queries) GetWorkspaceByOrgAndID(ctx context.Context, arg GetWorkspaceBy
 	return i, err
 }
 
-const listWorkspaces = `-- name: ListWorkspaces :many
-SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.region_id, workspaces.declaration_kind, workspaces.workspace_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.create_idempotency_key, workspaces.create_idempotency_expires_at, workspaces.create_request_fingerprint, workspaces.state_version, workspaces.stop_generation, workspaces.owner_actor_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+const getWorkspaceByPublicID = `-- name: GetWorkspaceByPublicID :one
+SELECT id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
   FROM workspaces
-WHERE workspaces.org_id = $1
-   AND workspaces.project_id = $2
-   AND workspaces.environment_id = $3
-   AND workspaces.deleted_at IS NULL
-   AND ($4::workspace_state IS NULL OR workspaces.state = $4::workspace_state)
-   AND ($5::text IS NULL OR workspaces.key = $5::text)
-   AND ($6::text IS NULL OR workspaces.tags @> ARRAY[$6::text])
- ORDER BY workspaces.updated_at DESC, workspaces.id DESC
- LIMIT $7
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND public_id = $4
+   AND deleted_at IS NULL
 `
 
-type ListWorkspacesParams struct {
-	OrgID         pgtype.UUID        `json:"org_id"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
-	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	State         NullWorkspaceState `json:"state"`
-	Key           pgtype.Text        `json:"key"`
-	Tag           pgtype.Text        `json:"tag"`
-	LimitCount    int32              `json:"limit_count"`
+type GetWorkspaceByPublicIDParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	PublicID      string      `json:"public_id"`
 }
 
-func (q *Queries) ListWorkspaces(ctx context.Context, arg ListWorkspacesParams) ([]Workspace, error) {
-	rows, err := q.db.Query(ctx, listWorkspaces,
+func (q *Queries) GetWorkspaceByPublicID(ctx context.Context, arg GetWorkspaceByPublicIDParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, getWorkspaceByPublicID,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.State,
-		arg.Key,
-		arg.Tag,
-		arg.LimitCount,
+		arg.PublicID,
 	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Workspace
-	for rows.Next() {
-		var i Workspace
-		if err := rows.Scan(
-			&i.ID,
-			&i.PublicID,
-			&i.OrgID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.RegionID,
-			&i.DeclarationKind,
-			&i.WorkspaceDeclaredID,
-			&i.DeploymentDefinitionID,
-			&i.Key,
-			&i.CreateIdempotencyKey,
-			&i.CreateIdempotencyExpiresAt,
-			&i.CreateRequestFingerprint,
-			&i.StateVersion,
-			&i.StopGeneration,
-			&i.OwnerActorID,
-			&i.OwnerRunID,
-			&i.OwnershipGeneration,
-			&i.WriterGeneration,
-			&i.HeadVersionID,
-			&i.State,
-			&i.DesiredState,
-			&i.DirtyState,
-			&i.Metadata,
-			&i.Tags,
-			&i.RetentionPolicy,
-			&i.LastActivityAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.DeletedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.DeclarationKind,
+		&i.WorkspaceDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.Key,
+		&i.StateVersion,
+		&i.OwnerActorID,
+		&i.OwnerRunID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.HeadVersionID,
+		&i.State,
+		&i.DesiredState,
+		&i.DirtyState,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
 }
 
 const lockActorInputWorkspace = `-- name: LockActorInputWorkspace :one
-SELECT id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
+SELECT id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
   FROM workspaces
  WHERE environment_id = $1
    AND id = $2
@@ -534,11 +462,7 @@ func (q *Queries) LockActorInputWorkspace(ctx context.Context, arg LockActorInpu
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
-		&i.CreateIdempotencyKey,
-		&i.CreateIdempotencyExpiresAt,
-		&i.CreateRequestFingerprint,
 		&i.StateVersion,
-		&i.StopGeneration,
 		&i.OwnerActorID,
 		&i.OwnerRunID,
 		&i.OwnershipGeneration,
@@ -547,9 +471,6 @@ func (q *Queries) LockActorInputWorkspace(ctx context.Context, arg LockActorInpu
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,
-		&i.Metadata,
-		&i.Tags,
-		&i.RetentionPolicy,
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -559,7 +480,7 @@ func (q *Queries) LockActorInputWorkspace(ctx context.Context, arg LockActorInpu
 }
 
 const lockWorkspaceAdmissionAuthority = `-- name: LockWorkspaceAdmissionAuthority :one
-SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.region_id, workspaces.declaration_kind, workspaces.workspace_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.create_idempotency_key, workspaces.create_idempotency_expires_at, workspaces.create_request_fingerprint, workspaces.state_version, workspaces.stop_generation, workspaces.owner_actor_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at,
+SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.region_id, workspaces.declaration_kind, workspaces.workspace_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_actor_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at,
        definitions.workspace_architecture,
        EXISTS (
            SELECT 1
@@ -594,39 +515,32 @@ type LockWorkspaceAdmissionAuthorityParams struct {
 }
 
 type LockWorkspaceAdmissionAuthorityRow struct {
-	ID                         pgtype.UUID           `json:"id"`
-	PublicID                   string                `json:"public_id"`
-	OrgID                      pgtype.UUID           `json:"org_id"`
-	ProjectID                  pgtype.UUID           `json:"project_id"`
-	EnvironmentID              pgtype.UUID           `json:"environment_id"`
-	RegionID                   string                `json:"region_id"`
-	DeclarationKind            pgtype.Text           `json:"declaration_kind"`
-	WorkspaceDeclaredID        pgtype.Text           `json:"workspace_declared_id"`
-	DeploymentDefinitionID     pgtype.UUID           `json:"deployment_definition_id"`
-	Key                        pgtype.Text           `json:"key"`
-	CreateIdempotencyKey       string                `json:"create_idempotency_key"`
-	CreateIdempotencyExpiresAt pgtype.Timestamptz    `json:"create_idempotency_expires_at"`
-	CreateRequestFingerprint   string                `json:"create_request_fingerprint"`
-	StateVersion               int64                 `json:"state_version"`
-	StopGeneration             int64                 `json:"stop_generation"`
-	OwnerActorID               pgtype.UUID           `json:"owner_actor_id"`
-	OwnerRunID                 pgtype.UUID           `json:"owner_run_id"`
-	OwnershipGeneration        int64                 `json:"ownership_generation"`
-	WriterGeneration           int64                 `json:"writer_generation"`
-	HeadVersionID              pgtype.UUID           `json:"head_version_id"`
-	State                      WorkspaceState        `json:"state"`
-	DesiredState               WorkspaceDesiredState `json:"desired_state"`
-	DirtyState                 WorkspaceDirtyState   `json:"dirty_state"`
-	Metadata                   []byte                `json:"metadata"`
-	Tags                       []string              `json:"tags"`
-	RetentionPolicy            []byte                `json:"retention_policy"`
-	LastActivityAt             pgtype.Timestamptz    `json:"last_activity_at"`
-	CreatedAt                  pgtype.Timestamptz    `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz    `json:"updated_at"`
-	DeletedAt                  pgtype.Timestamptz    `json:"deleted_at"`
-	WorkspaceArchitecture      pgtype.Text           `json:"workspace_architecture"`
-	HasActiveLease             bool                  `json:"has_active_lease"`
-	HasActiveProcess           bool                  `json:"has_active_process"`
+	ID                     pgtype.UUID           `json:"id"`
+	PublicID               string                `json:"public_id"`
+	OrgID                  pgtype.UUID           `json:"org_id"`
+	ProjectID              pgtype.UUID           `json:"project_id"`
+	EnvironmentID          pgtype.UUID           `json:"environment_id"`
+	RegionID               string                `json:"region_id"`
+	DeclarationKind        pgtype.Text           `json:"declaration_kind"`
+	WorkspaceDeclaredID    pgtype.Text           `json:"workspace_declared_id"`
+	DeploymentDefinitionID pgtype.UUID           `json:"deployment_definition_id"`
+	Key                    pgtype.Text           `json:"key"`
+	StateVersion           int64                 `json:"state_version"`
+	OwnerActorID           pgtype.UUID           `json:"owner_actor_id"`
+	OwnerRunID             pgtype.UUID           `json:"owner_run_id"`
+	OwnershipGeneration    int64                 `json:"ownership_generation"`
+	WriterGeneration       int64                 `json:"writer_generation"`
+	HeadVersionID          pgtype.UUID           `json:"head_version_id"`
+	State                  WorkspaceState        `json:"state"`
+	DesiredState           WorkspaceDesiredState `json:"desired_state"`
+	DirtyState             WorkspaceDirtyState   `json:"dirty_state"`
+	LastActivityAt         pgtype.Timestamptz    `json:"last_activity_at"`
+	CreatedAt              pgtype.Timestamptz    `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz    `json:"updated_at"`
+	DeletedAt              pgtype.Timestamptz    `json:"deleted_at"`
+	WorkspaceArchitecture  pgtype.Text           `json:"workspace_architecture"`
+	HasActiveLease         bool                  `json:"has_active_lease"`
+	HasActiveProcess       bool                  `json:"has_active_process"`
 }
 
 func (q *Queries) LockWorkspaceAdmissionAuthority(ctx context.Context, arg LockWorkspaceAdmissionAuthorityParams) (LockWorkspaceAdmissionAuthorityRow, error) {
@@ -643,11 +557,7 @@ func (q *Queries) LockWorkspaceAdmissionAuthority(ctx context.Context, arg LockW
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
-		&i.CreateIdempotencyKey,
-		&i.CreateIdempotencyExpiresAt,
-		&i.CreateRequestFingerprint,
 		&i.StateVersion,
-		&i.StopGeneration,
 		&i.OwnerActorID,
 		&i.OwnerRunID,
 		&i.OwnershipGeneration,
@@ -656,9 +566,6 @@ func (q *Queries) LockWorkspaceAdmissionAuthority(ctx context.Context, arg LockW
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,
-		&i.Metadata,
-		&i.Tags,
-		&i.RetentionPolicy,
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -670,37 +577,125 @@ func (q *Queries) LockWorkspaceAdmissionAuthority(ctx context.Context, arg LockW
 	return i, err
 }
 
-const patchWorkspace = `-- name: PatchWorkspace :one
-UPDATE workspaces
-   SET metadata = coalesce($1::jsonb, workspaces.metadata),
-       tags = coalesce($2::text[], workspaces.tags),
-       updated_at = now()
- WHERE workspaces.org_id = $3
-   AND workspaces.project_id = $4
-   AND workspaces.environment_id = $5
-   AND workspaces.id = $6
-   AND workspaces.deleted_at IS NULL
-RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
+const lockWorkspaceForDelete = `-- name: LockWorkspaceForDelete :one
+SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.region_id, workspaces.declaration_kind, workspaces.workspace_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_actor_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at,
+       EXISTS (
+           SELECT 1
+             FROM workspace_leases
+            WHERE workspace_leases.workspace_id = workspaces.id
+              AND workspace_leases.state IN ('active', 'releasing')
+       ) AS has_active_lease,
+       EXISTS (
+           SELECT 1
+             FROM workspace_processes
+            WHERE workspace_processes.workspace_id = workspaces.id
+              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+       ) AS has_active_process
+  FROM workspaces
+ WHERE workspaces.org_id = $1
+   AND workspaces.project_id = $2
+   AND workspaces.environment_id = $3
+   AND workspaces.public_id = $4
+   AND workspaces.state <> 'deleted'
+ FOR UPDATE OF workspaces
 `
 
-type PatchWorkspaceParams struct {
-	Metadata      []byte      `json:"metadata"`
-	Tags          []string    `json:"tags"`
+type LockWorkspaceForDeleteParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ID            pgtype.UUID `json:"id"`
+	PublicID      string      `json:"public_id"`
 }
 
-func (q *Queries) PatchWorkspace(ctx context.Context, arg PatchWorkspaceParams) (Workspace, error) {
-	row := q.db.QueryRow(ctx, patchWorkspace,
-		arg.Metadata,
-		arg.Tags,
+type LockWorkspaceForDeleteRow struct {
+	ID                     pgtype.UUID           `json:"id"`
+	PublicID               string                `json:"public_id"`
+	OrgID                  pgtype.UUID           `json:"org_id"`
+	ProjectID              pgtype.UUID           `json:"project_id"`
+	EnvironmentID          pgtype.UUID           `json:"environment_id"`
+	RegionID               string                `json:"region_id"`
+	DeclarationKind        pgtype.Text           `json:"declaration_kind"`
+	WorkspaceDeclaredID    pgtype.Text           `json:"workspace_declared_id"`
+	DeploymentDefinitionID pgtype.UUID           `json:"deployment_definition_id"`
+	Key                    pgtype.Text           `json:"key"`
+	StateVersion           int64                 `json:"state_version"`
+	OwnerActorID           pgtype.UUID           `json:"owner_actor_id"`
+	OwnerRunID             pgtype.UUID           `json:"owner_run_id"`
+	OwnershipGeneration    int64                 `json:"ownership_generation"`
+	WriterGeneration       int64                 `json:"writer_generation"`
+	HeadVersionID          pgtype.UUID           `json:"head_version_id"`
+	State                  WorkspaceState        `json:"state"`
+	DesiredState           WorkspaceDesiredState `json:"desired_state"`
+	DirtyState             WorkspaceDirtyState   `json:"dirty_state"`
+	LastActivityAt         pgtype.Timestamptz    `json:"last_activity_at"`
+	CreatedAt              pgtype.Timestamptz    `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz    `json:"updated_at"`
+	DeletedAt              pgtype.Timestamptz    `json:"deleted_at"`
+	HasActiveLease         bool                  `json:"has_active_lease"`
+	HasActiveProcess       bool                  `json:"has_active_process"`
+}
+
+func (q *Queries) LockWorkspaceForDelete(ctx context.Context, arg LockWorkspaceForDeleteParams) (LockWorkspaceForDeleteRow, error) {
+	row := q.db.QueryRow(ctx, lockWorkspaceForDelete,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.ID,
+		arg.PublicID,
 	)
+	var i LockWorkspaceForDeleteRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.DeclarationKind,
+		&i.WorkspaceDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.Key,
+		&i.StateVersion,
+		&i.OwnerActorID,
+		&i.OwnerRunID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.HeadVersionID,
+		&i.State,
+		&i.DesiredState,
+		&i.DirtyState,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.HasActiveLease,
+		&i.HasActiveProcess,
+	)
+	return i, err
+}
+
+const markWorkspaceDeleting = `-- name: MarkWorkspaceDeleting :one
+UPDATE workspaces
+   SET state = 'deleting',
+       desired_state = 'deleted',
+       state_version = state_version + 1,
+       updated_at = now()
+ WHERE environment_id = $1
+   AND id = $2
+   AND state_version = $3
+   AND state IN ('active', 'recovery_required')
+   AND owner_actor_id IS NULL
+   AND owner_run_id IS NULL
+RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+`
+
+type MarkWorkspaceDeletingParams struct {
+	EnvironmentID        pgtype.UUID `json:"environment_id"`
+	ID                   pgtype.UUID `json:"id"`
+	ExpectedStateVersion int64       `json:"expected_state_version"`
+}
+
+func (q *Queries) MarkWorkspaceDeleting(ctx context.Context, arg MarkWorkspaceDeletingParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, markWorkspaceDeleting, arg.EnvironmentID, arg.ID, arg.ExpectedStateVersion)
 	var i Workspace
 	err := row.Scan(
 		&i.ID,
@@ -713,11 +708,7 @@ func (q *Queries) PatchWorkspace(ctx context.Context, arg PatchWorkspaceParams) 
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
-		&i.CreateIdempotencyKey,
-		&i.CreateIdempotencyExpiresAt,
-		&i.CreateRequestFingerprint,
 		&i.StateVersion,
-		&i.StopGeneration,
 		&i.OwnerActorID,
 		&i.OwnerRunID,
 		&i.OwnershipGeneration,
@@ -726,9 +717,6 @@ func (q *Queries) PatchWorkspace(ctx context.Context, arg PatchWorkspaceParams) 
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,
-		&i.Metadata,
-		&i.Tags,
-		&i.RetentionPolicy,
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -766,7 +754,7 @@ UPDATE workspaces
         WHERE workspace_processes.workspace_id = workspaces.id
           AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
    )
-RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
+RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
 `
 
 type ReserveWorkspaceForActorParams struct {
@@ -797,11 +785,7 @@ func (q *Queries) ReserveWorkspaceForActor(ctx context.Context, arg ReserveWorks
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
-		&i.CreateIdempotencyKey,
-		&i.CreateIdempotencyExpiresAt,
-		&i.CreateRequestFingerprint,
 		&i.StateVersion,
-		&i.StopGeneration,
 		&i.OwnerActorID,
 		&i.OwnerRunID,
 		&i.OwnershipGeneration,
@@ -810,9 +794,6 @@ func (q *Queries) ReserveWorkspaceForActor(ctx context.Context, arg ReserveWorks
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,
-		&i.Metadata,
-		&i.Tags,
-		&i.RetentionPolicy,
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -850,7 +831,7 @@ UPDATE workspaces
         WHERE workspace_processes.workspace_id = workspaces.id
           AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
    )
-RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
+RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
 `
 
 type ReserveWorkspaceForRunParams struct {
@@ -881,11 +862,7 @@ func (q *Queries) ReserveWorkspaceForRun(ctx context.Context, arg ReserveWorkspa
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
-		&i.CreateIdempotencyKey,
-		&i.CreateIdempotencyExpiresAt,
-		&i.CreateRequestFingerprint,
 		&i.StateVersion,
-		&i.StopGeneration,
 		&i.OwnerActorID,
 		&i.OwnerRunID,
 		&i.OwnershipGeneration,
@@ -894,9 +871,6 @@ func (q *Queries) ReserveWorkspaceForRun(ctx context.Context, arg ReserveWorkspa
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,
-		&i.Metadata,
-		&i.Tags,
-		&i.RetentionPolicy,
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -1021,67 +995,4 @@ func (q *Queries) ResolveWorkspaceTarget(ctx context.Context, arg ResolveWorkspa
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
-}
-
-const setWorkspaceDesiredStopped = `-- name: SetWorkspaceDesiredStopped :one
-UPDATE workspaces
-   SET desired_state = 'stopped',
-       updated_at = now()
- WHERE workspaces.org_id = $1
-   AND workspaces.project_id = $2
-   AND workspaces.environment_id = $3
-   AND workspaces.id = $4
-   AND workspaces.state = 'active'
-   AND workspaces.deleted_at IS NULL
-RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
-`
-
-type SetWorkspaceDesiredStoppedParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ID            pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) SetWorkspaceDesiredStopped(ctx context.Context, arg SetWorkspaceDesiredStoppedParams) (Workspace, error) {
-	row := q.db.QueryRow(ctx, setWorkspaceDesiredStopped,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.ID,
-	)
-	var i Workspace
-	err := row.Scan(
-		&i.ID,
-		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.DeclarationKind,
-		&i.WorkspaceDeclaredID,
-		&i.DeploymentDefinitionID,
-		&i.Key,
-		&i.CreateIdempotencyKey,
-		&i.CreateIdempotencyExpiresAt,
-		&i.CreateRequestFingerprint,
-		&i.StateVersion,
-		&i.StopGeneration,
-		&i.OwnerActorID,
-		&i.OwnerRunID,
-		&i.OwnershipGeneration,
-		&i.WriterGeneration,
-		&i.HeadVersionID,
-		&i.State,
-		&i.DesiredState,
-		&i.DirtyState,
-		&i.Metadata,
-		&i.Tags,
-		&i.RetentionPolicy,
-		&i.LastActivityAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-	)
-	return i, err
 }

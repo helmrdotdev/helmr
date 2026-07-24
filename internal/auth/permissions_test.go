@@ -74,23 +74,15 @@ func TestGranularWorkspacePermissionsDoNotEscalate(t *testing.T) {
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		Permissions: []Permission{
-			PermissionFilesRead,
-			PermissionVersionsRead,
-			PermissionExecRead,
-			PermissionPtyRead,
+			PermissionWorkspacesRead,
+			PermissionWorkspaceFilesRead,
 		},
 	}
 
 	for _, permission := range []Permission{
-		PermissionWorkspaceLifecycleManage,
-		PermissionFilesWrite,
-		PermissionVersionsCapture,
-		PermissionVersionsRestore,
-		PermissionVersionsDiff,
-		PermissionExecCreate,
-		PermissionExecManage,
-		PermissionPtyCreate,
-		PermissionPtyManage,
+		PermissionWorkspacesCreate,
+		PermissionWorkspacesDelete,
+		PermissionWorkspaceExecCreate,
 	} {
 		if actor.HasPermission(permission, scope) {
 			t.Fatalf("read-only workspace grants allowed %s", permission)

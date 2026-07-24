@@ -480,6 +480,11 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.getSecret)
 		r.Put("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.setSecret)
 		r.Post("/projects/{projectID}/environments/{environmentID}/secrets/{name}/revoke", s.revokeSecret)
+		r.With(limitRequestBody(workspaceCreateBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceDeclaredID}/create", s.createWorkspaceHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/by-key/{workspaceDeclaredID}", s.getWorkspaceByKeyHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.getWorkspaceHTTP)
+		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/delete", s.deleteWorkspaceHTTP)
 		r.With(limitRequestBody(taskStartBodyLimit)).
 			Post("/projects/{projectID}/environments/{environmentID}/tasks/{taskDeclaredID}/start", s.startTaskHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs", s.listRunSnapshotsHTTP)
@@ -554,6 +559,11 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/secrets/{name}", s.getSecret)
 		r.Put("/secrets/{name}", s.setSecret)
 		r.Post("/secrets/{name}/revoke", s.revokeSecret)
+		r.With(limitRequestBody(workspaceCreateBodyLimit)).
+			Post("/workspaces/{workspaceDeclaredID}/create", s.createWorkspaceHTTP)
+		r.Get("/workspaces/by-key/{workspaceDeclaredID}", s.getWorkspaceByKeyHTTP)
+		r.Get("/workspaces/{workspaceID}", s.getWorkspaceHTTP)
+		r.Post("/workspaces/{workspaceID}/delete", s.deleteWorkspaceHTTP)
 		r.With(limitActorInputBody).
 			Post("/actors/{actorDeclaredID}/input", s.sendActorInput)
 	})

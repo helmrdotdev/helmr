@@ -33,13 +33,7 @@ WITH selected_definition AS (
         workspace_declared_id,
         deployment_definition_id,
         head_version_id,
-        key,
-        create_idempotency_key,
-        create_idempotency_expires_at,
-        create_request_fingerprint,
-        metadata,
-        tags,
-        retention_policy
+        key
     )
     SELECT sqlc.arg(id),
            sqlc.arg(public_id),
@@ -51,13 +45,7 @@ WITH selected_definition AS (
            selected_definition.workspace_declared_id,
            selected_definition.deployment_definition_id,
            sqlc.arg(initial_version_id),
-           sqlc.narg(key),
-           coalesce(sqlc.arg(create_idempotency_key)::text, ''),
-           sqlc.narg(create_idempotency_expires_at),
-           coalesce(sqlc.arg(create_request_fingerprint)::text, ''),
-           coalesce(sqlc.arg(metadata)::jsonb, '{}'::jsonb),
-           coalesce(sqlc.arg(tags)::text[], '{}'::text[]),
-           coalesce(sqlc.arg(retention_policy)::jsonb, '{}'::jsonb)
+           sqlc.narg(key)
       FROM selected_definition
     RETURNING *
 ), created_version AS (
@@ -135,6 +123,41 @@ SELECT *
    AND id = sqlc.arg(id)
    AND deleted_at IS NULL;
 
+-- name: GetWorkspaceByPublicID :one
+SELECT *
+  FROM workspaces
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND public_id = sqlc.arg(public_id)
+   AND deleted_at IS NULL;
+
+-- name: GetWorkspaceByDeclaredIDAndKey :one
+SELECT *
+  FROM workspaces
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND workspace_declared_id = sqlc.arg(workspace_declared_id)
+   AND key = sqlc.arg(key)
+   AND deleted_at IS NULL;
+
+-- name: CreateWorkspaceSecret :one
+INSERT INTO workspace_secrets (
+    workspace_id,
+    environment_id,
+    placement_kind,
+    placement_target,
+    secret_id
+) VALUES (
+    sqlc.arg(workspace_id),
+    sqlc.arg(environment_id),
+    sqlc.arg(placement_kind),
+    sqlc.arg(placement_target),
+    sqlc.arg(secret_id)
+)
+RETURNING *;
+
 -- name: ResolveWorkspaceTarget :one
 SELECT id
   FROM workspaces
@@ -158,65 +181,6 @@ SELECT *
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id)
    AND deleted_at IS NULL;
-
--- name: GetWorkspaceByCreateIdempotency :one
-SELECT *
-  FROM workspaces
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND create_idempotency_key = sqlc.arg(idempotency_key)
-   AND create_idempotency_expires_at > now()
-   AND deleted_at IS NULL;
-
--- name: ClearExpiredWorkspaceCreateIdempotency :exec
-UPDATE workspaces
-   SET create_idempotency_key = '',
-       create_idempotency_expires_at = NULL,
-       create_request_fingerprint = '',
-       updated_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND create_idempotency_key = sqlc.arg(idempotency_key)
-   AND create_idempotency_expires_at <= now();
-
--- name: ListWorkspaces :many
-SELECT workspaces.*
-  FROM workspaces
-WHERE workspaces.org_id = sqlc.arg(org_id)
-   AND workspaces.project_id = sqlc.arg(project_id)
-   AND workspaces.environment_id = sqlc.arg(environment_id)
-   AND workspaces.deleted_at IS NULL
-   AND (sqlc.narg(state)::workspace_state IS NULL OR workspaces.state = sqlc.narg(state)::workspace_state)
-   AND (sqlc.narg(key)::text IS NULL OR workspaces.key = sqlc.narg(key)::text)
-   AND (sqlc.narg(tag)::text IS NULL OR workspaces.tags @> ARRAY[sqlc.narg(tag)::text])
- ORDER BY workspaces.updated_at DESC, workspaces.id DESC
- LIMIT sqlc.arg(limit_count);
-
--- name: PatchWorkspace :one
-UPDATE workspaces
-   SET metadata = coalesce(sqlc.narg(metadata)::jsonb, workspaces.metadata),
-       tags = coalesce(sqlc.narg(tags)::text[], workspaces.tags),
-       updated_at = now()
- WHERE workspaces.org_id = sqlc.arg(org_id)
-   AND workspaces.project_id = sqlc.arg(project_id)
-   AND workspaces.environment_id = sqlc.arg(environment_id)
-   AND workspaces.id = sqlc.arg(id)
-   AND workspaces.deleted_at IS NULL
-RETURNING *;
-
--- name: SetWorkspaceDesiredStopped :one
-UPDATE workspaces
-   SET desired_state = 'stopped',
-       updated_at = now()
- WHERE workspaces.org_id = sqlc.arg(org_id)
-   AND workspaces.project_id = sqlc.arg(project_id)
-   AND workspaces.environment_id = sqlc.arg(environment_id)
-   AND workspaces.id = sqlc.arg(id)
-   AND workspaces.state = 'active'
-   AND workspaces.deleted_at IS NULL
-RETURNING *;
 
 -- name: LockWorkspaceAdmissionAuthority :one
 SELECT workspaces.*,
@@ -246,6 +210,42 @@ SELECT workspaces.*,
  WHERE workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.id = sqlc.arg(id)
  FOR UPDATE OF workspaces;
+
+-- name: LockWorkspaceForDelete :one
+SELECT workspaces.*,
+       EXISTS (
+           SELECT 1
+             FROM workspace_leases
+            WHERE workspace_leases.workspace_id = workspaces.id
+              AND workspace_leases.state IN ('active', 'releasing')
+       ) AS has_active_lease,
+       EXISTS (
+           SELECT 1
+             FROM workspace_processes
+            WHERE workspace_processes.workspace_id = workspaces.id
+              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+       ) AS has_active_process
+  FROM workspaces
+ WHERE workspaces.org_id = sqlc.arg(org_id)
+   AND workspaces.project_id = sqlc.arg(project_id)
+   AND workspaces.environment_id = sqlc.arg(environment_id)
+   AND workspaces.public_id = sqlc.arg(public_id)
+   AND workspaces.state <> 'deleted'
+ FOR UPDATE OF workspaces;
+
+-- name: MarkWorkspaceDeleting :one
+UPDATE workspaces
+   SET state = 'deleting',
+       desired_state = 'deleted',
+       state_version = state_version + 1,
+       updated_at = now()
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(id)
+   AND state_version = sqlc.arg(expected_state_version)
+   AND state IN ('active', 'recovery_required')
+   AND owner_actor_id IS NULL
+   AND owner_run_id IS NULL
+RETURNING *;
 
 -- name: LockActorInputWorkspace :one
 SELECT *

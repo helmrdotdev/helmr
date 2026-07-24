@@ -830,21 +830,6 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 	if exactPinIndexes != 3 {
 		t.Fatalf("exact deployed-declaration pin indexes = %d, want 3", exactPinIndexes)
 	}
-	var actorExpiryIndex bool
-	if err := pool.QueryRow(ctx, `
-		SELECT EXISTS (
-		    SELECT 1
-		      FROM pg_indexes
-		     WHERE schemaname = 'public'
-		       AND indexname = 'actors_expiry_due_idx'
-		       AND indexdef LIKE '%WHERE ((state = ''open''::text) AND (current_run_id IS NULL) AND (expires_at IS NOT NULL))%'
-		)
-	`).Scan(&actorExpiryIndex); err != nil {
-		t.Fatal(err)
-	}
-	if !actorExpiryIndex {
-		t.Fatal("actors_expiry_due_idx must select only open Actors without an incumbent Run and with an absolute expiry")
-	}
 	var safeIntegerColumns int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)

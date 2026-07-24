@@ -24,19 +24,11 @@ const (
 	PermissionTokensRead               Permission = "tokens.read"
 	PermissionTokensComplete           Permission = "tokens.complete"
 	PermissionTokensCancel             Permission = "tokens.cancel"
-	PermissionWorkspaceLifecycleManage Permission = "workspace.lifecycle.manage"
-	PermissionFilesRead                Permission = "workspace.files.read"
-	PermissionFilesWrite               Permission = "workspace.files.write"
-	PermissionVersionsRead             Permission = "workspace.versions.read"
-	PermissionVersionsCapture          Permission = "workspace.versions.capture"
-	PermissionVersionsRestore          Permission = "workspace.versions.restore"
-	PermissionVersionsDiff             Permission = "workspace.versions.diff"
-	PermissionExecCreate               Permission = "workspace.exec.create"
-	PermissionExecRead                 Permission = "workspace.exec.read"
-	PermissionExecManage               Permission = "workspace.exec.manage"
-	PermissionPtyCreate                Permission = "workspace.pty.create"
-	PermissionPtyRead                  Permission = "workspace.pty.read"
-	PermissionPtyManage                Permission = "workspace.pty.manage"
+	PermissionWorkspacesCreate         Permission = "workspaces.create"
+	PermissionWorkspacesRead           Permission = "workspaces.read"
+	PermissionWorkspacesDelete         Permission = "workspaces.delete"
+	PermissionWorkspaceFilesRead       Permission = "workspace.files.read"
+	PermissionWorkspaceExecCreate      Permission = "workspace.exec.create"
 	PermissionSecretsWrite             Permission = "secrets.write"
 	PermissionTasksDeploy              Permission = "tasks.deploy"
 )
@@ -82,19 +74,11 @@ func RoleAllows(role Role, permission Permission) bool {
 			PermissionTokensRead,
 			PermissionTokensComplete,
 			PermissionTokensCancel,
-			PermissionWorkspaceLifecycleManage,
-			PermissionFilesRead,
-			PermissionFilesWrite,
-			PermissionVersionsRead,
-			PermissionVersionsCapture,
-			PermissionVersionsRestore,
-			PermissionVersionsDiff,
-			PermissionExecCreate,
-			PermissionExecRead,
-			PermissionExecManage,
-			PermissionPtyCreate,
-			PermissionPtyRead,
-			PermissionPtyManage,
+			PermissionWorkspacesCreate,
+			PermissionWorkspacesRead,
+			PermissionWorkspacesDelete,
+			PermissionWorkspaceFilesRead,
+			PermissionWorkspaceExecCreate,
 			PermissionTasksDeploy:
 			return true
 		default:
@@ -105,10 +89,8 @@ func RoleAllows(role Role, permission Permission) bool {
 		case PermissionRunsRead,
 			PermissionActorsRead,
 			PermissionTokensRead,
-			PermissionFilesRead,
-			PermissionVersionsRead,
-			PermissionExecRead,
-			PermissionPtyRead:
+			PermissionWorkspacesRead,
+			PermissionWorkspaceFilesRead:
 			return true
 		default:
 			return false
