@@ -305,6 +305,7 @@ type WorkerRuntimeProgram struct {
 	Runtime              WorkerRuntimeDescriptor `json:"runtime"`
 	Artifact             CASObject               `json:"artifact"`
 	BuildContractVersion string                  `json:"build_contract_version"`
+	IndexDigest          string                  `json:"index_digest"`
 }
 
 type WorkerRuntimeInstanceStateRequest struct {

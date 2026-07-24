@@ -226,7 +226,8 @@ jobs:
           "$manager_tool" verify \
             --catalog "$manager_dist/catalog.json" \
             --bundle "$manager_dist/catalog.sigstore.json" \
-            --trusted-root "$manager_dist/trusted-root.json" >/dev/null
+            --trusted-root "$trusted_root" >/dev/null
+          cmp -s "$manager_dist/trusted-root.json" "$trusted_root"
 
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             release_args=(--verify-tag --title "$RELEASE_TAG")
@@ -327,7 +328,8 @@ jobs:
           "$manager_tool" verify \
             --catalog "$manager_dist/catalog.json" \
             --bundle "$manager_dist/catalog.sigstore.json" \
-            --trusted-root "$manager_dist/trusted-root.json" >/dev/null
+            --trusted-root "$trusted_root" >/dev/null
+          cmp -s "$manager_dist/trusted-root.json" "$trusted_root"
           sudo "$GITHUB_WORKSPACE/scripts/run-runtime-release.sh" "$tool" verify-archive \
             --tag "$RELEASE_TAG" \
             --input "$dist/runtime-release.tar" \

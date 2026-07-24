@@ -86,6 +86,7 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertDeploymentBuildCapacitySchema(t, dbctx, pool)
 	assertDeploymentDefinitionAuthority(t, dbctx, pool)
 	assertWorkspaceVersionAuthority(t, dbctx, pool)
+	assertArtifactCreatorAuthority(t, dbctx, pool)
 	assertIdempotencyClaimCollectionIndexes(t, dbctx, pool)
 	assertExecutionAttachmentConstraints(t, dbctx, pool)
 	assertRunWaitHandoffAuthority(t, dbctx, pool)
@@ -112,9 +113,128 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	}
 	assertDeploymentDefinitionAuthority(t, dbctx, pool)
 	assertWorkspaceVersionAuthority(t, dbctx, pool)
+	assertArtifactCreatorAuthority(t, dbctx, pool)
 	assertIdempotencyClaimCollectionIndexes(t, dbctx, pool)
 	assertExecutionAttachmentConstraints(t, dbctx, pool)
 	assertRunWaitHandoffAuthority(t, dbctx, pool)
+}
+
+func assertArtifactCreatorAuthority(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+) {
+	t.Helper()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := tx.Rollback(ctx); err != nil && err != pgx.ErrTxClosed {
+			t.Fatal(err)
+		}
+	}()
+	if _, err := tx.Exec(ctx, `
+INSERT INTO regions (
+    id, provider, provider_region, display_name
+) VALUES (
+    'artifact-test-region', 'test', 'test-1', 'Artifact test'
+);
+INSERT INTO organizations (
+    id, public_id, name, slug
+) VALUES (
+    '00000000-0000-0000-0000-000000000901',
+    'org_aaaaaaaaaaaaaaaaaaaaaaaaaa',
+    'Artifact test',
+    'artifact-test'
+);
+INSERT INTO projects (
+    id, public_id, org_id, default_region_id, slug, name
+) VALUES (
+    '00000000-0000-0000-0000-000000000902',
+    'prj_aaaaaaaaaaaaaaaaaaaaaaaaaa',
+    '00000000-0000-0000-0000-000000000901',
+    'artifact-test-region',
+    'artifact-test',
+    'Artifact test'
+);
+INSERT INTO environments (
+    id, public_id, org_id, project_id, slug, name, color_hex
+) VALUES (
+    '00000000-0000-0000-0000-000000000903',
+    'env_aaaaaaaaaaaaaaaaaaaaaaaaaa',
+    '00000000-0000-0000-0000-000000000901',
+    '00000000-0000-0000-0000-000000000902',
+    'artifact-test',
+    'Artifact test',
+    '#000000'
+);
+INSERT INTO worker_groups (
+    id, region_id, name, enrollment_policy_fingerprint,
+    allowed_attestation_fingerprints
+) VALUES (
+    'artifact-test-workers',
+    'artifact-test-region',
+    'Artifact test',
+    'policy',
+    ARRAY['attestation']
+);
+INSERT INTO worker_instances (
+    id, resource_id, worker_group_id, attestation_fingerprint
+) VALUES (
+    '00000000-0000-0000-0000-000000000904',
+    'artifact-test-worker',
+    'artifact-test-workers',
+    'attestation'
+);
+INSERT INTO cas_objects (
+    org_id, digest, size_bytes, media_type
+) VALUES (
+    '00000000-0000-0000-0000-000000000901',
+    'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    1,
+    'application/octet-stream'
+);
+INSERT INTO artifacts (
+    id, org_id, project_id, environment_id, digest, kind,
+    size_bytes, media_type, created_by_worker_instance_id
+) VALUES (
+    '00000000-0000-0000-0000-000000000905',
+    '00000000-0000-0000-0000-000000000901',
+    '00000000-0000-0000-0000-000000000902',
+    '00000000-0000-0000-0000-000000000903',
+    'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    'deployment_program',
+    1,
+    'application/vnd.helmr.program.v0+squashfs',
+    '00000000-0000-0000-0000-000000000904'
+);
+`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, "SAVEPOINT delete_artifact_creator"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+DELETE FROM worker_instances
+ WHERE id = '00000000-0000-0000-0000-000000000904'
+`); err == nil {
+		t.Fatal("worker deletion removed immutable Artifact creator authority")
+	}
+	if _, err := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT delete_artifact_creator"); err != nil {
+		t.Fatal(err)
+	}
+	var creatorID string
+	if err := tx.QueryRow(ctx, `
+SELECT created_by_worker_instance_id::text
+  FROM artifacts
+ WHERE id = '00000000-0000-0000-0000-000000000905'
+`).Scan(&creatorID); err != nil {
+		t.Fatal(err)
+	}
+	if creatorID != "00000000-0000-0000-0000-000000000904" {
+		t.Fatalf("Artifact creator = %q", creatorID)
+	}
 }
 
 func assertExecutionAttachmentConstraints(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {

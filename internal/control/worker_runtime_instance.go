@@ -144,6 +144,7 @@ func populateRuntimePrepareSource(
 			row.ProgramArtifactSizeBytes,
 			row.ProgramArtifactMediaType,
 			row.ProgramBuildContractVersion.String,
+			row.ProgramIndexDigest,
 		),
 		row.WorkspaceArchitecture.String,
 		policy,

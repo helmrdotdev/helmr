@@ -16,6 +16,10 @@ SELECT runtime_instances.*,
        program_deployments.program_runtime_digest,
        program_deployments.program_architecture,
        program_deployments.build_contract_version AS program_build_contract_version,
+       COALESCE(
+           program_deployments.program_receipt #>> '{program,indexDigest}',
+           ''
+       )::text AS program_index_digest,
        COALESCE(program_artifact.digest, '') AS program_artifact_digest,
        COALESCE(program_artifact.size_bytes, 0) AS program_artifact_size_bytes,
        COALESCE(program_artifact.media_type, '') AS program_artifact_media_type,

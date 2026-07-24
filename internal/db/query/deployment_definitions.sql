@@ -75,6 +75,10 @@ SELECT deployments.id AS deployment_id,
        deployments.program_runtime_digest,
        deployments.program_architecture,
        deployments.build_contract_version,
+       COALESCE(
+           deployments.program_receipt #>> '{program,indexDigest}',
+           ''
+       )::text AS program_index_digest,
        deployments.queue_config
   FROM deployments
   JOIN artifacts AS program_artifact

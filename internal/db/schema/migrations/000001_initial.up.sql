@@ -690,7 +690,7 @@ CREATE TABLE artifacts (
     kind artifact_kind NOT NULL,
     size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
     media_type TEXT NOT NULL CHECK (btrim(media_type) <> ''),
-    created_by_worker_instance_id UUID REFERENCES worker_instances(id) ON DELETE SET NULL,
+    created_by_worker_instance_id UUID REFERENCES worker_instances(id) ON DELETE RESTRICT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
     CONSTRAINT artifacts_environment_id_id_key UNIQUE (environment_id, id),

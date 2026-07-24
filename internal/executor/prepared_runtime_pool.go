@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
@@ -1021,6 +1022,12 @@ func (p *PreparedRuntimePool) prepareProgram(
 			closeSnapshots(),
 		)
 	}
+	if err := verifyProgramIndexReceipt(programIndex, program.IndexDigest); err != nil {
+		return nil, func() error { return nil }, errors.Join(
+			err,
+			closeSnapshots(),
+		)
+	}
 	return []vm.ReadOnlyDrive{
 		{
 			ID: vm.ProgramRuntimeDrive, Digest: runtimeDescriptor.Digest,
@@ -1033,6 +1040,20 @@ func (p *PreparedRuntimePool) prepareProgram(
 			Source: programSnapshot,
 		},
 	}, closeSnapshots, nil
+}
+
+func verifyProgramIndexReceipt(
+	index deployment.ProgramIndex,
+	expectedDigest string,
+) error {
+	indexBytes, err := deployment.CanonicalProgramIndex(index)
+	if err != nil {
+		return fmt.Errorf("canonicalize verified Program index: %w", err)
+	}
+	if sha256sum.DigestBytes(indexBytes) != expectedDigest {
+		return errors.New("Program index does not match deployment receipt authority")
+	}
+	return nil
 }
 
 func (p *PreparedRuntimePool) restoreWorkspaceImageAndRuntimeSubstrate(ctx context.Context, materializer WorkspaceMaterializer, tempDir string, mount api.WorkerWorkspaceMount, imageLogMessage string, substrateLogMessage string, logAttrs ...any) (string, func(), vm.RuntimeTopology, error) {

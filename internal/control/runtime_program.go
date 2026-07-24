@@ -31,6 +31,7 @@ func projectDeploymentProgram(
 			row.ProgramArtifactSizeBytes,
 			row.ProgramArtifactMediaType,
 			row.BuildContractVersion,
+			row.ProgramIndexDigest,
 		),
 		"",
 		policy,
@@ -45,6 +46,7 @@ type runtimeProgramAuthority struct {
 	artifactSizeBytes    int64
 	artifactMediaType    string
 	buildContractVersion string
+	indexDigest          string
 }
 
 func projectRuntimeProgram(
@@ -89,11 +91,18 @@ func projectRuntimeProgram(
 	if strings.TrimSpace(authority.buildContractVersion) == "" {
 		return api.WorkerRuntimeProgram{}, errors.New("Program build contract version is required")
 	}
+	if _, err := cas.ObjectKey("", authority.indexDigest); err != nil {
+		return api.WorkerRuntimeProgram{}, fmt.Errorf(
+			"Program index digest is invalid: %w",
+			err,
+		)
+	}
 	return api.WorkerRuntimeProgram{
 		DeploymentID:         deploymentID,
 		Runtime:              runtimeWire,
 		Artifact:             artifact,
 		BuildContractVersion: authority.buildContractVersion,
+		IndexDigest:          authority.indexDigest,
 	}, nil
 }
 
@@ -120,6 +129,7 @@ func runtimeProgramAuthorityFromDeployment(
 	artifactSizeBytes int64,
 	artifactMediaType string,
 	buildContractVersion string,
+	indexDigest string,
 ) runtimeProgramAuthority {
 	return runtimeProgramAuthority{
 		deploymentID:         deploymentID,
@@ -129,5 +139,6 @@ func runtimeProgramAuthorityFromDeployment(
 		artifactSizeBytes:    artifactSizeBytes,
 		artifactMediaType:    artifactMediaType,
 		buildContractVersion: buildContractVersion,
+		indexDigest:          indexDigest,
 	}
 }

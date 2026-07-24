@@ -178,6 +178,10 @@ SELECT deployments.id AS deployment_id,
        deployments.program_runtime_digest,
        deployments.program_architecture,
        deployments.build_contract_version,
+       COALESCE(
+           deployments.program_receipt #>> '{program,indexDigest}',
+           ''
+       )::text AS program_index_digest,
        deployments.queue_config
   FROM deployments
   JOIN artifacts AS program_artifact
@@ -206,6 +210,7 @@ type GetDeploymentProgramAuthorityRow struct {
 	ProgramRuntimeDigest     []byte      `json:"program_runtime_digest"`
 	ProgramArchitecture      pgtype.Text `json:"program_architecture"`
 	BuildContractVersion     string      `json:"build_contract_version"`
+	ProgramIndexDigest       string      `json:"program_index_digest"`
 	QueueConfig              []byte      `json:"queue_config"`
 }
 
@@ -223,6 +228,7 @@ func (q *Queries) GetDeploymentProgramAuthority(ctx context.Context, arg GetDepl
 		&i.ProgramRuntimeDigest,
 		&i.ProgramArchitecture,
 		&i.BuildContractVersion,
+		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 	)
 	return i, err

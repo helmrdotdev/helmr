@@ -123,6 +123,14 @@ require_text "--trusted-root \"\$trusted_root\"" "$tag_job" \
 	"tag rerun can trust the archive embedded root"
 require_text "--trusted-root \"\$trusted_root\"" "$dispatch_job" \
 	"manual dispatch can trust the archive embedded root"
+if [ "$(rg -F -- '--trusted-root "$trusted_root"' "$workflow" | wc -l | tr -d ' ')" -lt 6 ]; then
+	printf 'Manager verification does not use the checkout-pinned trust root in both release paths\n' >&2
+	exit 1
+fi
+if [ "$(rg -F -- 'cmp -s "$manager_dist/trusted-root.json" "$trusted_root"' "$workflow" | wc -l | tr -d ' ')" -ne 2 ]; then
+	printf 'Manager archives are not exact-checked against the pinned trust root in both release paths\n' >&2
+	exit 1
+fi
 
 require_text "name: runtime-release-assets" "$control_job" \
 	"control image does not consume the verified runtime release"

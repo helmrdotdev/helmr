@@ -221,6 +221,7 @@ func validRunLeaseClaimResponse(
 			ProgramArtifactSizeBytes: 100,
 			ProgramArtifactMediaType: deployment.ProgramArtifactMediaType,
 			BuildContractVersion:     deployment.ProgramBuildContractVersion,
+			ProgramIndexDigest:       validDigest('b'),
 		},
 		definition:  definition,
 		resetTarget: validWorkspaceResetTargetAuthority(physical),

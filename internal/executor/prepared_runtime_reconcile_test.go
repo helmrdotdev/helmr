@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -363,6 +364,46 @@ func TestPreparedRuntimeRejectsWorkspaceArchitectureOutsideWorkerCertification(t
 	}
 	if err == nil || !strings.Contains(err.Error(), "does not match Workspace architecture") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestPreparedRuntimeBindsProgramIndexToDeploymentReceipt(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	index := deployment.ProgramIndex{
+		Architecture:         deployment.ArchitectureX8664,
+		BuildContractVersion: deployment.ProgramBuildContractVersion,
+		Declarations: []deployment.ProgramDeclaration{{
+			Kind:       deployment.DeclarationKindTask,
+			DeclaredID: "task",
+			Slots:      []deployment.DeclarationSlot{deployment.DeclarationSlotHandler},
+		}},
+		FormatVersion: deployment.ProgramIndexFormatVersion,
+		Manager: deployment.ProgramManager{
+			Digest:  digest,
+			Name:    deployment.PackageManagerBun,
+			Version: "1.3.10",
+		},
+		RuntimeAPIVersion:       deployment.RuntimeAPIVersion,
+		RuntimeDigest:           digest,
+		StandardToolchainDigest: digest,
+		Submitted: deployment.ProgramSubmittedSource{
+			LockfileDigest: digest,
+			LockfileName:   "bun.lock",
+			SourceDigest:   digest,
+		},
+	}
+	canonical, err := deployment.CanonicalProgramIndex(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyProgramIndexReceipt(index, sha256sum.DigestBytes(canonical)); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyProgramIndexReceipt(
+		index,
+		"sha256:"+strings.Repeat("b", 64),
+	); err == nil {
+		t.Fatal("mismatched Program index digest was accepted")
 	}
 }
 
