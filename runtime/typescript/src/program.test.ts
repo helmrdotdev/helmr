@@ -517,6 +517,48 @@ describe("runProgram", () => {
     })
   })
 
+  test("exposes Actor output semantic failures to user code", async () => {
+    let failure: unknown
+    const definition = actor({
+      id: "worker",
+      async run(self) {
+        try {
+          await self.output.append("value", { idempotencyKey: "output-1" })
+        } catch (error) {
+          failure = error
+        }
+      },
+    })
+    const start = actorStart(0n, 0n)
+    const output: Uint8Array[] = []
+    const appendWritten = deferred<void>()
+    async function* input(): AsyncIterable<Uint8Array> {
+      yield frameMessage(runProto.ProgramStartSchema, start)
+      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      await appendWritten.promise
+      const event = readEvent(output[1]!).event
+      expect(event.case).toBe("actorOutputAppendRequested")
+      if (event.case !== "actorOutputAppendRequested") return
+      yield actorDecision(event.value.correlationId, "failed", JSON.stringify({
+        code: "idempotency_conflict",
+        message: "output key conflicts with an earlier append",
+        retryable: false,
+      }))
+    }
+    await runProgram(locatorURL, programIO({
+      input: input(),
+      definition,
+      output,
+      onWrite: () => { if (output.length === 2) appendWritten.resolve() },
+    }))
+    expect(failure).toMatchObject({
+      name: "HelmrError",
+      code: "idempotency_conflict",
+      message: "output key conflicts with an earlier append",
+      retryable: false,
+    })
+  })
+
   test("sends Actor input from a Task with concurrent correlation-safe decisions", async () => {
     const mailbox = actor({ id: "mailbox", run() {} })
     let sent: unknown

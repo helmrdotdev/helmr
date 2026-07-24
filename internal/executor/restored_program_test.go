@@ -264,6 +264,10 @@ func (*restoredProgramControl) CommitActorTurn(context.Context, api.WorkerCommit
 func (*restoredProgramControl) SendRunActorInput(context.Context, api.WorkerSendActorInputRequest) (api.WorkerSendActorInputResponse, error) {
 	return api.WorkerSendActorInputResponse{}, errors.New("unexpected Actor input send")
 }
+
+func (*restoredProgramControl) AppendActorOutput(context.Context, api.WorkerAppendActorOutputRequest) (api.WorkerAppendActorOutputResponse, error) {
+	return api.WorkerAppendActorOutputResponse{}, errors.New("unexpected Actor output append")
+}
 func (*restoredProgramControl) CreateRuntimeToken(context.Context, api.WorkerCreateTokenRequest) (api.TokenResponse, error) {
 	return api.TokenResponse{}, errors.New("unexpected Token create")
 }

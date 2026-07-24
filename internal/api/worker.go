@@ -516,6 +516,20 @@ type WorkerSendActorInputResponse struct {
 	Failed        *WorkerRuntimeOperationFailure `json:"failed,omitempty"`
 }
 
+type WorkerAppendActorOutputRequest struct {
+	Lease          WorkerRunLeaseReceipt `json:"lease"`
+	CorrelationID  string                `json:"correlation_id"`
+	Data           json.RawMessage       `json:"data"`
+	ContentType    string                `json:"content_type"`
+	IdempotencyKey string                `json:"idempotency_key,omitempty"`
+}
+
+type WorkerAppendActorOutputResponse struct {
+	CorrelationID string                         `json:"correlation_id"`
+	Completed     *ActorOutputRecord             `json:"completed,omitempty"`
+	Failed        *WorkerRuntimeOperationFailure `json:"failed,omitempty"`
+}
+
 type WorkerRuntimeOperationFailure struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`

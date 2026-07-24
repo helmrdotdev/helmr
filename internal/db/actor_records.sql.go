@@ -151,7 +151,21 @@ func (q *Queries) AppendActorInputRecord(ctx context.Context, arg AppendActorInp
 }
 
 const appendActorOutputRecord = `-- name: AppendActorOutputRecord :one
-WITH locked_actor AS MATERIALIZED (
+WITH selected_claim AS MATERIALIZED (
+    SELECT id, state, request_fingerprint
+      FROM idempotency_claims
+     WHERE idempotency_claims.environment_id = $1::uuid
+       AND idempotency_claims.id = $2
+       AND idempotency_claims.operation = 'actor.output.append'
+       AND idempotency_claims.retired_at IS NULL
+     FOR UPDATE
+), existing_record AS MATERIALIZED (
+    SELECT actor_records.id, actor_records.environment_id, actor_records.actor_id, actor_records.direction, actor_records.sequence, actor_records.data, actor_records.content_type, actor_records.source_kind, actor_records.source_run_id, actor_records.producer_run_id, actor_records.producer_attempt_number, actor_records.claim_id, actor_records.created_at
+      FROM actor_records
+      JOIN selected_claim ON selected_claim.id = actor_records.claim_id
+     WHERE actor_records.actor_id = $3
+       AND actor_records.direction = 'output'
+), locked_actor AS MATERIALIZED (
     SELECT actors.id, actors.public_id, actors.org_id, actors.project_id, actors.environment_id, actors.declaration_kind, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.managed_queue_name, actors.managed_concurrency_key, actors.managed_queue_concurrency_limit, actors.managed_priority, actors.managed_queued_ttl_ms, actors.managed_max_active_duration_ms, actors.managed_retry_policy_version, actors.managed_retry_policy, actors.managed_run_metadata, actors.managed_run_tags, actors.state, actors.close_sequence, actors.expires_at, actors.metadata, actors.tags, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at, actors.expired_at
       FROM actors
       JOIN runs
@@ -162,11 +176,21 @@ WITH locked_actor AS MATERIALIZED (
         ON run_attempts.run_id = runs.id
        AND run_attempts.number = $5
        AND run_attempts.workspace_id = actors.workspace_id
-     WHERE actors.environment_id = $6
-       AND actors.id = $7
+     WHERE actors.environment_id = $1
+       AND actors.id = $3
        AND actors.current_run_id = runs.id
-       AND actors.state = 'open'
+       AND actors.state IN ('open', 'closing')
        AND actors.next_output_sequence <= 9007199254740991
+       AND NOT EXISTS (SELECT 1 FROM existing_record)
+       AND (
+           $2::uuid IS NULL
+           OR EXISTS (
+               SELECT 1
+                 FROM selected_claim
+                WHERE selected_claim.state = 'pending'
+                  AND request_fingerprint = $6
+           )
+       )
      FOR UPDATE OF actors
 ), allocated AS (
     UPDATE actors
@@ -175,52 +199,86 @@ WITH locked_actor AS MATERIALIZED (
       FROM locked_actor
      WHERE actors.id = locked_actor.id
     RETURNING actors.id, actors.public_id, actors.org_id, actors.project_id, actors.environment_id, actors.declaration_kind, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.managed_queue_name, actors.managed_concurrency_key, actors.managed_queue_concurrency_limit, actors.managed_priority, actors.managed_queued_ttl_ms, actors.managed_max_active_duration_ms, actors.managed_retry_policy_version, actors.managed_retry_policy, actors.managed_run_metadata, actors.managed_run_tags, actors.state, actors.close_sequence, actors.expires_at, actors.metadata, actors.tags, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at, actors.expired_at, actors.next_output_sequence - 1 AS allocated_sequence
+), inserted_record AS (
+    INSERT INTO actor_records (
+        id,
+        environment_id,
+        actor_id,
+        direction,
+        sequence,
+        data,
+        content_type,
+        producer_run_id,
+        producer_attempt_number,
+        claim_id
+    )
+    SELECT $7,
+           allocated.environment_id,
+           allocated.id,
+           'output',
+           allocated.allocated_sequence,
+           $8,
+           $9,
+           $4,
+           $5,
+           $2
+      FROM allocated
+    RETURNING actor_records.id, actor_records.environment_id, actor_records.actor_id, actor_records.direction, actor_records.sequence, actor_records.data, actor_records.content_type, actor_records.source_kind, actor_records.source_run_id, actor_records.producer_run_id, actor_records.producer_attempt_number, actor_records.claim_id, actor_records.created_at
 )
-INSERT INTO actor_records (
-    id,
-    environment_id,
-    actor_id,
-    direction,
-    sequence,
-    data,
-    content_type,
-    producer_run_id,
-    producer_attempt_number
-)
-SELECT $1,
-       allocated.environment_id,
-       allocated.id,
-       'output',
-       allocated.allocated_sequence,
-       $2,
-       coalesce(nullif($3::text, ''), 'application/json'),
-       $4,
-       $5
-  FROM allocated
-RETURNING id, environment_id, actor_id, direction, sequence, data, content_type, source_kind, source_run_id, producer_run_id, producer_attempt_number, claim_id, created_at
+SELECT inserted_record.id, inserted_record.environment_id, inserted_record.actor_id, inserted_record.direction, inserted_record.sequence, inserted_record.data, inserted_record.content_type, inserted_record.source_kind, inserted_record.source_run_id, inserted_record.producer_run_id, inserted_record.producer_attempt_number, inserted_record.claim_id, inserted_record.created_at, false::boolean AS claim_fingerprint_mismatch, true::boolean AS appended
+  FROM inserted_record
+UNION ALL
+SELECT existing_record.id, existing_record.environment_id, existing_record.actor_id, existing_record.direction, existing_record.sequence, existing_record.data, existing_record.content_type, existing_record.source_kind, existing_record.source_run_id, existing_record.producer_run_id, existing_record.producer_attempt_number, existing_record.claim_id, existing_record.created_at,
+       (selected_claim.request_fingerprint <> $6)::boolean
+           AS claim_fingerprint_mismatch,
+       false::boolean AS appended
+  FROM existing_record
+  JOIN selected_claim ON selected_claim.id = existing_record.claim_id
 `
 
 type AppendActorOutputRecordParams struct {
-	ID                    pgtype.UUID `json:"id"`
-	Data                  []byte      `json:"data"`
-	ContentType           string      `json:"content_type"`
-	ProducerRunID         pgtype.UUID `json:"producer_run_id"`
-	ProducerAttemptNumber pgtype.Int4 `json:"producer_attempt_number"`
-	EnvironmentID         pgtype.UUID `json:"environment_id"`
-	ActorID               pgtype.UUID `json:"actor_id"`
+	EnvironmentID              pgtype.UUID `json:"environment_id"`
+	ClaimID                    pgtype.UUID `json:"claim_id"`
+	ActorID                    pgtype.UUID `json:"actor_id"`
+	ProducerRunID              pgtype.UUID `json:"producer_run_id"`
+	ProducerAttemptNumber      int32       `json:"producer_attempt_number"`
+	ExpectedRequestFingerprint []byte      `json:"expected_request_fingerprint"`
+	ID                         pgtype.UUID `json:"id"`
+	Data                       []byte      `json:"data"`
+	ContentType                string      `json:"content_type"`
 }
 
-func (q *Queries) AppendActorOutputRecord(ctx context.Context, arg AppendActorOutputRecordParams) (ActorRecord, error) {
+type AppendActorOutputRecordRow struct {
+	ID                       pgtype.UUID        `json:"id"`
+	EnvironmentID            pgtype.UUID        `json:"environment_id"`
+	ActorID                  pgtype.UUID        `json:"actor_id"`
+	Direction                string             `json:"direction"`
+	Sequence                 int64              `json:"sequence"`
+	Data                     []byte             `json:"data"`
+	ContentType              string             `json:"content_type"`
+	SourceKind               pgtype.Text        `json:"source_kind"`
+	SourceRunID              pgtype.UUID        `json:"source_run_id"`
+	ProducerRunID            pgtype.UUID        `json:"producer_run_id"`
+	ProducerAttemptNumber    pgtype.Int4        `json:"producer_attempt_number"`
+	ClaimID                  pgtype.UUID        `json:"claim_id"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	ClaimFingerprintMismatch bool               `json:"claim_fingerprint_mismatch"`
+	Appended                 bool               `json:"appended"`
+}
+
+func (q *Queries) AppendActorOutputRecord(ctx context.Context, arg AppendActorOutputRecordParams) (AppendActorOutputRecordRow, error) {
 	row := q.db.QueryRow(ctx, appendActorOutputRecord,
+		arg.EnvironmentID,
+		arg.ClaimID,
+		arg.ActorID,
+		arg.ProducerRunID,
+		arg.ProducerAttemptNumber,
+		arg.ExpectedRequestFingerprint,
 		arg.ID,
 		arg.Data,
 		arg.ContentType,
-		arg.ProducerRunID,
-		arg.ProducerAttemptNumber,
-		arg.EnvironmentID,
-		arg.ActorID,
 	)
-	var i ActorRecord
+	var i AppendActorOutputRecordRow
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
@@ -235,6 +293,8 @@ func (q *Queries) AppendActorOutputRecord(ctx context.Context, arg AppendActorOu
 		&i.ProducerAttemptNumber,
 		&i.ClaimID,
 		&i.CreatedAt,
+		&i.ClaimFingerprintMismatch,
+		&i.Appended,
 	)
 	return i, err
 }
@@ -350,6 +410,65 @@ type CompleteActorInputClaimParams struct {
 
 func (q *Queries) CompleteActorInputClaim(ctx context.Context, arg CompleteActorInputClaimParams) (IdempotencyClaim, error) {
 	row := q.db.QueryRow(ctx, completeActorInputClaim,
+		arg.EnvironmentID,
+		arg.ClaimID,
+		arg.RequestFingerprint,
+		arg.ActorID,
+		arg.RecordID,
+	)
+	var i IdempotencyClaim
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.Operation,
+		&i.ScopeHash,
+		&i.KeyHash,
+		&i.HashKeyVersion,
+		&i.Generation,
+		&i.RequestFingerprint,
+		&i.State,
+		&i.Receipt,
+		&i.AcceptedAt,
+		&i.ExpiresAt,
+		&i.RetiredAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const completeActorOutputClaim = `-- name: CompleteActorOutputClaim :one
+UPDATE idempotency_claims
+   SET state = 'completed',
+       receipt = jsonb_build_object(
+           'recordId', actor_records.id::text,
+           'sequence', actor_records.sequence
+       ),
+       completed_at = transaction_timestamp()
+  FROM actor_records
+ WHERE idempotency_claims.environment_id = $1::uuid
+   AND idempotency_claims.id = $2
+   AND idempotency_claims.operation = 'actor.output.append'
+   AND idempotency_claims.request_fingerprint = $3
+   AND idempotency_claims.state = 'pending'
+   AND idempotency_claims.retired_at IS NULL
+   AND actor_records.environment_id = idempotency_claims.environment_id
+   AND actor_records.actor_id = $4
+   AND actor_records.id = $5
+   AND actor_records.direction = 'output'
+   AND actor_records.claim_id = idempotency_claims.id
+RETURNING idempotency_claims.id, idempotency_claims.environment_id, idempotency_claims.operation, idempotency_claims.scope_hash, idempotency_claims.key_hash, idempotency_claims.hash_key_version, idempotency_claims.generation, idempotency_claims.request_fingerprint, idempotency_claims.state, idempotency_claims.receipt, idempotency_claims.accepted_at, idempotency_claims.expires_at, idempotency_claims.retired_at, idempotency_claims.completed_at
+`
+
+type CompleteActorOutputClaimParams struct {
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	ClaimID            pgtype.UUID `json:"claim_id"`
+	RequestFingerprint []byte      `json:"request_fingerprint"`
+	ActorID            pgtype.UUID `json:"actor_id"`
+	RecordID           pgtype.UUID `json:"record_id"`
+}
+
+func (q *Queries) CompleteActorOutputClaim(ctx context.Context, arg CompleteActorOutputClaimParams) (IdempotencyClaim, error) {
+	row := q.db.QueryRow(ctx, completeActorOutputClaim,
 		arg.EnvironmentID,
 		arg.ClaimID,
 		arg.RequestFingerprint,
@@ -628,6 +747,42 @@ type GetActorInputRecordByIDForUpdateParams struct {
 
 func (q *Queries) GetActorInputRecordByIDForUpdate(ctx context.Context, arg GetActorInputRecordByIDForUpdateParams) (ActorRecord, error) {
 	row := q.db.QueryRow(ctx, getActorInputRecordByIDForUpdate, arg.EnvironmentID, arg.ActorID, arg.ID)
+	var i ActorRecord
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.ActorID,
+		&i.Direction,
+		&i.Sequence,
+		&i.Data,
+		&i.ContentType,
+		&i.SourceKind,
+		&i.SourceRunID,
+		&i.ProducerRunID,
+		&i.ProducerAttemptNumber,
+		&i.ClaimID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getActorOutputRecordByID = `-- name: GetActorOutputRecordByID :one
+SELECT id, environment_id, actor_id, direction, sequence, data, content_type, source_kind, source_run_id, producer_run_id, producer_attempt_number, claim_id, created_at
+  FROM actor_records
+ WHERE environment_id = $1
+   AND actor_id = $2
+   AND id = $3
+   AND direction = 'output'
+`
+
+type GetActorOutputRecordByIDParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ActorID       pgtype.UUID `json:"actor_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetActorOutputRecordByID(ctx context.Context, arg GetActorOutputRecordByIDParams) (ActorRecord, error) {
+	row := q.db.QueryRow(ctx, getActorOutputRecordByID, arg.EnvironmentID, arg.ActorID, arg.ID)
 	var i ActorRecord
 	err := row.Scan(
 		&i.ID,

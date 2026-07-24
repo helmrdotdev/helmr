@@ -50,7 +50,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		writeError(w, badRequest(errors.New("Actor input Wait cursors must be present, non-negative, and equal")))
 		return
 	}
-	metadata, tags, err := normalizeRunWaitPresentation(request.Metadata, request.Tags)
+	metadata, tags, err := normalizeWaitAnnotations(request.Metadata, request.Tags)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return

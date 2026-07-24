@@ -228,13 +228,13 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 	return result, err
 }
 
-type actorInputClaimReceipt struct {
+type actorRecordClaimReceipt struct {
 	RecordID string `json:"recordId"`
 	Sequence int64  `json:"sequence"`
 }
 
 func actorInputRecordFromReceipt(request appendActorInputRequest, claim db.IdempotencyClaim) (db.ActorRecord, error) {
-	var receipt actorInputClaimReceipt
+	var receipt actorRecordClaimReceipt
 	if err := json.Unmarshal(claim.Receipt, &receipt); err != nil {
 		return db.ActorRecord{}, err
 	}

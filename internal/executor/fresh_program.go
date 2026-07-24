@@ -234,6 +234,7 @@ func (program *freshProgram) awaitActorCompletion(
 	wait func(context.Context, *runv0.RunWaitRequested) error,
 	turnCommit func(context.Context, *runv0.ActorTurnCommitRequested) error,
 	sendActorInput func(context.Context, *runv0.ActorInputSendRequested) error,
+	appendActorOutput func(context.Context, *runv0.ActorOutputAppendRequested) error,
 	createToken func(context.Context, *runv0.TokenCreateRequested) error,
 ) (*runv0.ActorOutcome, *runv0.ProgramQuiesced, error) {
 	if program == nil || program.session == nil {
@@ -298,6 +299,16 @@ func (program *freshProgram) awaitActorCompletion(
 				return nil, nil, errors.New("fresh Program Actor input send support is required")
 			}
 			if err := sendActorInput(ctx, value.ActorInputSendRequested); err != nil {
+				return nil, nil, err
+			}
+		case *runv0.RunEvent_ActorOutputAppendRequested:
+			if outcome != nil {
+				return nil, nil, errors.New("Program emitted an Actor output append after Actor outcome")
+			}
+			if appendActorOutput == nil {
+				return nil, nil, errors.New("fresh Program Actor output append support is required")
+			}
+			if err := appendActorOutput(ctx, value.ActorOutputAppendRequested); err != nil {
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_TokenCreateRequested:

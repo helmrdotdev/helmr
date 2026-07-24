@@ -232,6 +232,14 @@ func (c *Client) AppendWorkspaceExecOutput(ctx context.Context, request api.Work
 	return response, nil
 }
 
+func (c *Client) AppendActorOutput(ctx context.Context, request api.WorkerAppendActorOutputRequest) (api.WorkerAppendActorOutputResponse, error) {
+	var response api.WorkerAppendActorOutputResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/actor-outputs", request, &response); err != nil {
+		return api.WorkerAppendActorOutputResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) ListWorkspaceExecInput(ctx context.Context, request api.WorkerWorkspaceExecInputRequest) (api.WorkerWorkspaceExecInputResponse, error) {
 	var response api.WorkerWorkspaceExecInputResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/execs/input", request, &response); err != nil {

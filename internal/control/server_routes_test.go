@@ -124,6 +124,7 @@ POST /api/worker/enrollment
 POST /api/worker/enrollment/challenge
 POST /api/worker/fence
 POST /api/worker/leases/actor-inputs/send
+POST /api/worker/leases/actor-outputs
 POST /api/worker/leases/actor-turns/commit
 POST /api/worker/leases/actors/complete
 POST /api/worker/leases/checkpoints/failed

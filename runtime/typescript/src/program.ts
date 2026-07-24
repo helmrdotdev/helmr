@@ -1359,7 +1359,10 @@ function actorSelf(
           : { idempotencyKey: options.idempotencyKey }),
       }),
     })
-    requireActorDecision(decision, correlationId, "completed", "Actor output append")
+    requireRuntimeOperationDecision(decision, correlationId, "Actor output append")
+    if (decision.kind === "failed") {
+      throw runtimeOperationFailure("Actor output append", decision.dataJson)
+    }
     return parseRuntimeProtocolValue(
       "Actor output append result",
       () => parseActorOutputRecord(decision.dataJson),

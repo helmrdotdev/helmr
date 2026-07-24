@@ -167,7 +167,21 @@ SELECT runs.*
    AND runs.actor_id = sqlc.arg(actor_id);
 
 -- name: AppendActorOutputRecord :one
-WITH locked_actor AS MATERIALIZED (
+WITH selected_claim AS MATERIALIZED (
+    SELECT id, state, request_fingerprint
+      FROM idempotency_claims
+     WHERE idempotency_claims.environment_id = sqlc.arg(environment_id)::uuid
+       AND idempotency_claims.id = sqlc.narg(claim_id)
+       AND idempotency_claims.operation = 'actor.output.append'
+       AND idempotency_claims.retired_at IS NULL
+     FOR UPDATE
+), existing_record AS MATERIALIZED (
+    SELECT actor_records.*
+      FROM actor_records
+      JOIN selected_claim ON selected_claim.id = actor_records.claim_id
+     WHERE actor_records.actor_id = sqlc.arg(actor_id)
+       AND actor_records.direction = 'output'
+), locked_actor AS MATERIALIZED (
     SELECT actors.*
       FROM actors
       JOIN runs
@@ -181,8 +195,18 @@ WITH locked_actor AS MATERIALIZED (
      WHERE actors.environment_id = sqlc.arg(environment_id)
        AND actors.id = sqlc.arg(actor_id)
        AND actors.current_run_id = runs.id
-       AND actors.state = 'open'
+       AND actors.state IN ('open', 'closing')
        AND actors.next_output_sequence <= 9007199254740991
+       AND NOT EXISTS (SELECT 1 FROM existing_record)
+       AND (
+           sqlc.narg(claim_id)::uuid IS NULL
+           OR EXISTS (
+               SELECT 1
+                 FROM selected_claim
+                WHERE selected_claim.state = 'pending'
+                  AND request_fingerprint = sqlc.narg(expected_request_fingerprint)
+           )
+       )
      FOR UPDATE OF actors
 ), allocated AS (
     UPDATE actors
@@ -191,29 +215,71 @@ WITH locked_actor AS MATERIALIZED (
       FROM locked_actor
      WHERE actors.id = locked_actor.id
     RETURNING actors.*, actors.next_output_sequence - 1 AS allocated_sequence
+), inserted_record AS (
+    INSERT INTO actor_records (
+        id,
+        environment_id,
+        actor_id,
+        direction,
+        sequence,
+        data,
+        content_type,
+        producer_run_id,
+        producer_attempt_number,
+        claim_id
+    )
+    SELECT sqlc.arg(id),
+           allocated.environment_id,
+           allocated.id,
+           'output',
+           allocated.allocated_sequence,
+           sqlc.arg(data),
+           sqlc.arg(content_type),
+           sqlc.arg(producer_run_id),
+           sqlc.arg(producer_attempt_number),
+           sqlc.narg(claim_id)
+      FROM allocated
+    RETURNING actor_records.*
 )
-INSERT INTO actor_records (
-    id,
-    environment_id,
-    actor_id,
-    direction,
-    sequence,
-    data,
-    content_type,
-    producer_run_id,
-    producer_attempt_number
-)
-SELECT sqlc.arg(id),
-       allocated.environment_id,
-       allocated.id,
-       'output',
-       allocated.allocated_sequence,
-       sqlc.arg(data),
-       coalesce(nullif(sqlc.arg(content_type)::text, ''), 'application/json'),
-       sqlc.arg(producer_run_id),
-       sqlc.arg(producer_attempt_number)
-  FROM allocated
-RETURNING *;
+SELECT inserted_record.*, false::boolean AS claim_fingerprint_mismatch, true::boolean AS appended
+  FROM inserted_record
+UNION ALL
+SELECT existing_record.*,
+       (selected_claim.request_fingerprint <> sqlc.narg(expected_request_fingerprint))::boolean
+           AS claim_fingerprint_mismatch,
+       false::boolean AS appended
+  FROM existing_record
+  JOIN selected_claim ON selected_claim.id = existing_record.claim_id;
+
+-- name: CompleteActorOutputClaim :one
+UPDATE idempotency_claims
+   SET state = 'completed',
+       receipt = jsonb_build_object(
+           'recordId', actor_records.id::text,
+           'sequence', actor_records.sequence
+       ),
+       completed_at = transaction_timestamp()
+  FROM actor_records
+ WHERE idempotency_claims.environment_id = sqlc.arg(environment_id)::uuid
+   AND idempotency_claims.id = sqlc.arg(claim_id)
+   AND idempotency_claims.operation = 'actor.output.append'
+   AND idempotency_claims.request_fingerprint = sqlc.arg(request_fingerprint)
+   AND idempotency_claims.state = 'pending'
+   AND idempotency_claims.retired_at IS NULL
+   AND actor_records.environment_id = idempotency_claims.environment_id
+   AND actor_records.actor_id = sqlc.arg(actor_id)
+   AND actor_records.id = sqlc.arg(record_id)
+   AND actor_records.direction = 'output'
+   AND actor_records.claim_id = idempotency_claims.id
+RETURNING idempotency_claims.*;
+
+-- name: GetActorOutputRecordByID :one
+SELECT *
+  FROM actor_records
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND actor_id = sqlc.arg(actor_id)
+   AND id = sqlc.arg(id)
+   AND direction = 'output';
 
 -- name: ListActorInputRecords :many
 SELECT *

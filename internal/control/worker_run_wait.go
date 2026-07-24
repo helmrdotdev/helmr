@@ -62,7 +62,7 @@ func (s *Server) workerCreateTokenRunWait(w http.ResponseWriter, r *http.Request
 		writeError(w, badRequest(errors.New("params.token_id must be a Token public ID")))
 		return
 	}
-	metadata, tags, err := normalizeRunWaitPresentation(request.Metadata, request.Tags)
+	metadata, tags, err := normalizeWaitAnnotations(request.Metadata, request.Tags)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -462,34 +462,6 @@ func runWaitDeadlines(request api.WorkerCreateRunWaitRequest, defaultIdleTimeout
 		checkpointDelay = idleDuration
 	}
 	return timeoutAt, idleTimeout, pgvalue.Timestamptz(now.Add(checkpointDelay)), checkpointDelay, nil
-}
-
-func normalizeRunWaitPresentation(rawMetadata json.RawMessage, rawTags []string) (json.RawMessage, []string, error) {
-	metadata := rawMetadata
-	if len(metadata) == 0 {
-		metadata = json.RawMessage(`{}`)
-	}
-	if len(metadata) > 64<<10 || !json.Valid(metadata) {
-		return nil, nil, errors.New("metadata must be valid JSON no larger than 64 KiB")
-	}
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(metadata, &object); err != nil || object == nil {
-		return nil, nil, errors.New("metadata must be a JSON object")
-	}
-	if len(rawTags) > 32 {
-		return nil, nil, errors.New("tags must contain at most 32 values")
-	}
-	tags := append([]string(nil), rawTags...)
-	for _, tag := range tags {
-		if strings.TrimSpace(tag) == "" || tag != strings.TrimSpace(tag) || len(tag) > 128 {
-			return nil, nil, errors.New("tags must be trimmed nonempty strings no larger than 128 bytes")
-		}
-	}
-	canonical, err := canonicalJSON(metadata)
-	if err != nil {
-		return nil, nil, errors.New("metadata must be a canonicalizable JSON object")
-	}
-	return canonical, tags, nil
 }
 
 func tokenWaitDecision(state db.WaitState, result json.RawMessage, reason string) (string, json.RawMessage, error) {

@@ -2810,6 +2810,8 @@ CREATE TABLE tokens (
     UNIQUE (environment_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
     CHECK (expires_at > created_at),
+    CHECK (jsonb_typeof(metadata) = 'object'),
+    CHECK (cardinality(tags) <= 10),
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE
@@ -3534,7 +3536,7 @@ CREATE TABLE run_waits (
     FOREIGN KEY (workspace_id, resume_workspace_version_id)
         REFERENCES workspace_versions(workspace_id, id)
         ON DELETE RESTRICT,
-    CHECK (jsonb_typeof(metadata) = 'object' AND octet_length(metadata::text) <= 65536),
+    CHECK (jsonb_typeof(metadata) = 'object'),
     CHECK (cardinality(tags) <= 32),
     CHECK (condition_error IS NULL OR jsonb_typeof(condition_error) = 'object'),
     CHECK (suspension_error IS NULL OR jsonb_typeof(suspension_error) = 'object'),

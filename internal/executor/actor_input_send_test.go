@@ -3,6 +3,7 @@ package executor
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -24,6 +25,13 @@ func (control *actorInputSendControl) SendRunActorInput(
 ) (api.WorkerSendActorInputResponse, error) {
 	control.request = request
 	return control.response, nil
+}
+
+func (control *actorInputSendControl) AppendActorOutput(
+	context.Context,
+	api.WorkerAppendActorOutputRequest,
+) (api.WorkerAppendActorOutputResponse, error) {
+	return api.WorkerAppendActorOutputResponse{}, errors.New("unexpected Actor output append")
 }
 
 func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {

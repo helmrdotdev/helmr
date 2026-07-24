@@ -259,6 +259,47 @@ func TestActorInputRequestUsesActorScopeAndCanonicalInputFingerprint(t *testing.
 	}
 }
 
+func TestActorOutputRequestUsesActorScopeAndCanonicalPayloadFingerprint(t *testing.T) {
+	environmentID := uuid.MustParse("00000000-0000-0000-0000-000000000301")
+	actorID := uuid.MustParse("00000000-0000-0000-0000-000000000501")
+	first, err := NewActorOutputAppendRequest(
+		environmentID, actorID, "output-1", []byte(`{"b":2,"a":1}`), "application/json",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewActorOutputAppendRequest(
+		environmentID, actorID, "output-1", []byte("{\n\"a\":1.0,\"b\":2}"), "application/json",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstValue := first.idempotencyRequest()
+	secondValue := second.idempotencyRequest()
+	firstFingerprint, err := firstValue.fingerprint(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondFingerprint, err := secondValue.fingerprint(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstValue.operation != operationActorOutputAppend || !bytes.Equal(firstValue.scope, actorID[:]) {
+		t.Fatalf("operation = %q scope = %x", firstValue.operation, firstValue.scope)
+	}
+	if firstFingerprint != secondFingerprint {
+		t.Fatalf("canonical-equivalent output fingerprints differ: %x != %x", firstFingerprint, secondFingerprint)
+	}
+	transaction := &Transaction{manager: testManager(t), store: &fakeClaimStore{}}
+	acquired, err := transaction.Acquire(t.Context(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !acquired.New || acquired.Claim.Operation != string(operationActorOutputAppend) {
+		t.Fatalf("acquired = %+v", acquired)
+	}
+}
+
 func TestActorCloseRequestUsesActorScopeAndOperationOnlyFingerprint(t *testing.T) {
 	environmentID := uuid.MustParse("00000000-0000-0000-0000-000000000301")
 	actorID := uuid.MustParse("00000000-0000-0000-0000-000000000501")

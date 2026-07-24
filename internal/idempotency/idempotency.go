@@ -28,15 +28,16 @@ const (
 type operation string
 
 const (
-	operationSecretCreate   operation = "secret.create"
-	operationSecretRotate   operation = "secret.rotate"
-	operationSecretRevoke   operation = "secret.revoke"
-	operationActorStart     operation = "actor.start"
-	operationActorInputSend operation = "actor.input.send"
-	operationActorClose     operation = "actor.close"
-	operationTokenCreate    operation = "token.create"
-	operationTokenComplete  operation = "token.complete"
-	operationTokenCancel    operation = "token.cancel"
+	operationSecretCreate      operation = "secret.create"
+	operationSecretRotate      operation = "secret.rotate"
+	operationSecretRevoke      operation = "secret.revoke"
+	operationActorStart        operation = "actor.start"
+	operationActorInputSend    operation = "actor.input.send"
+	operationActorOutputAppend operation = "actor.output.append"
+	operationActorClose        operation = "actor.close"
+	operationTokenCreate       operation = "token.create"
+	operationTokenComplete     operation = "token.complete"
+	operationTokenCancel       operation = "token.cancel"
 )
 
 type Manager struct {
@@ -161,6 +162,48 @@ func NewActorInputSendRequest(environmentID uuid.UUID, actorID uuid.UUID, key st
 		key:           key,
 		fingerprint: func(int32) ([sha256.Size]byte, error) {
 			return operationFingerprint(operationActorInputSend, input, 0, nil), nil
+		},
+	}}, nil
+}
+
+func NewActorOutputAppendRequest(
+	environmentID uuid.UUID,
+	actorID uuid.UUID,
+	key string,
+	dataJSON []byte,
+	contentType string,
+) (Request, error) {
+	if environmentID == uuid.Nil {
+		return nil, errors.New("idempotency environment is required")
+	}
+	if actorID == uuid.Nil {
+		return nil, errors.New("actor ID is required")
+	}
+	canonicalData, err := jsoncanon.Transform(dataJSON)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize Actor output: %w", err)
+	}
+	fields, err := json.Marshal(struct {
+		Data        json.RawMessage `json:"data"`
+		ContentType string          `json:"contentType"`
+	}{
+		Data:        canonicalData,
+		ContentType: contentType,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode Actor output fingerprint: %w", err)
+	}
+	canonical, err := jsoncanon.Transform(fields)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize Actor output fingerprint: %w", err)
+	}
+	return sealedRequest{value: request{
+		environmentID: environmentID,
+		operation:     operationActorOutputAppend,
+		scope:         bytes.Clone(actorID[:]),
+		key:           key,
+		fingerprint: func(int32) ([sha256.Size]byte, error) {
+			return operationFingerprint(operationActorOutputAppend, canonical, 0, nil), nil
 		},
 	}}, nil
 }
@@ -505,7 +548,7 @@ func (t *Transaction) Acquire(ctx context.Context, input Request) (Result, error
 func supportedOperation(value operation) bool {
 	switch value {
 	case operationSecretCreate, operationSecretRotate, operationSecretRevoke,
-		operationActorStart, operationActorInputSend, operationActorClose,
+		operationActorStart, operationActorInputSend, operationActorOutputAppend, operationActorClose,
 		operationTokenCreate, operationTokenComplete, operationTokenCancel:
 		return true
 	default:

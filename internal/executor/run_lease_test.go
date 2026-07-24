@@ -542,6 +542,13 @@ func (control *testRunLeaseControl) SendRunActorInput(
 	return api.WorkerSendActorInputResponse{}, errors.New("unexpected Actor input send")
 }
 
+func (control *testRunLeaseControl) AppendActorOutput(
+	context.Context,
+	api.WorkerAppendActorOutputRequest,
+) (api.WorkerAppendActorOutputResponse, error) {
+	return api.WorkerAppendActorOutputResponse{}, errors.New("unexpected Actor output append")
+}
+
 func (control *testRunLeaseControl) CreateRuntimeToken(
 	context.Context,
 	api.WorkerCreateTokenRequest,

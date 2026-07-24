@@ -338,7 +338,7 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 				},
 			},
 			await: func(program *freshProgram, events freshProgramEventSink, callback func(context.Context, *runv0.ActorInputSendRequested) error) error {
-				_, _, err := program.awaitActorCompletion(t.Context(), events, nil, nil, callback, nil)
+				_, _, err := program.awaitActorCompletion(t.Context(), events, nil, nil, callback, nil, nil)
 				return err
 			},
 		},
@@ -379,6 +379,65 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 				t.Fatalf("Actor input send = %+v", observed)
 			}
 		})
+	}
+}
+
+func TestFreshProgramDispatchesActorOutputAppend(t *testing.T) {
+	lease := api.WorkerRunLeaseReceipt{
+		ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
+	}
+	requested := &runv0.ActorOutputAppendRequested{
+		CorrelationId: "00000000-0000-0000-0000-000000000112",
+		DataJson:      `{"status":"working"}`,
+		ContentType:   "application/json",
+	}
+	guest, host := net.Pipe()
+	go func() {
+		defer guest.Close()
+		_ = frameio.WriteProtoFrame(guest, &runv0.RunEvent{
+			Event: &runv0.RunEvent_ActorOutputAppendRequested{
+				ActorOutputAppendRequested: requested,
+			},
+		})
+		_ = frameio.WriteProtoFrame(guest, &runv0.RunEvent{
+			Event: &runv0.RunEvent_ActorOutcome{
+				ActorOutcome: &runv0.ActorOutcome{
+					TerminalInputSequence: int64Pointer(0),
+					Outcome: &runv0.ActorOutcome_Succeeded{
+						Succeeded: &runv0.ActorSucceeded{},
+					},
+				},
+			},
+		})
+		_ = frameio.WriteProtoFrame(guest, testProgramQuiescedEvent(lease))
+	}()
+	program := &freshProgram{
+		session: fakeGuestSession{stream: host},
+		lease:   lease,
+		entrypoint: &runv0.EntrypointIdentity{
+			Kind: &runv0.EntrypointIdentity_Actor{Actor: &runv0.ActorEntrypoint{}},
+		},
+	}
+	var observed *runv0.ActorOutputAppendRequested
+	_, _, err := program.awaitActorCompletion(
+		t.Context(),
+		&testFreshProgramEventSink{},
+		nil,
+		nil,
+		nil,
+		func(_ context.Context, value *runv0.ActorOutputAppendRequested) error {
+			observed = value
+			return nil
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observed.GetCorrelationId() != requested.GetCorrelationId() ||
+		observed.GetDataJson() != requested.GetDataJson() ||
+		observed.GetContentType() != requested.GetContentType() {
+		t.Fatalf("Actor output append = %+v", observed)
 	}
 }
 

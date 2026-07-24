@@ -110,7 +110,7 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	metadata, tags, err := normalizeRunWaitPresentation(request.Metadata, request.Tags)
+	metadata, tags, err := normalizeTokenAnnotations(request.Metadata, request.Tags)
 	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid Token annotations: %w", err)))
 		return
@@ -217,7 +217,7 @@ func (s *Server) workerCreateToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	metadata, tags, err := normalizeRunWaitPresentation(request.Metadata, request.Tags)
+	metadata, tags, err := normalizeTokenAnnotations(request.Metadata, request.Tags)
 	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid Token annotations: %w", err)))
 		return
