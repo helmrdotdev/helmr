@@ -35,7 +35,7 @@ func TestValidateDeploymentSourceArtifactArchiveRequiresCanonicalSource(t *testi
 		t.Fatal(err)
 	}
 	defer cleanup()
-	if err := validateDeploymentSourceArtifactArchive(canonical.Path); err != nil {
+	if _, err := inspectDeploymentSourceArtifactArchive(canonical.Path); err != nil {
 		t.Fatalf("canonical source rejected: %v", err)
 	}
 
@@ -61,7 +61,7 @@ func TestValidateDeploymentSourceArtifactArchiveRequiresCanonicalSource(t *testi
 	if err := os.WriteFile(noncanonical, body.Bytes(), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateDeploymentSourceArtifactArchive(noncanonical); err == nil ||
+	if _, err := inspectDeploymentSourceArtifactArchive(noncanonical); err == nil ||
 		!strings.Contains(err.Error(), "noncanonical") {
 		t.Fatalf("noncanonical source error = %v", err)
 	}

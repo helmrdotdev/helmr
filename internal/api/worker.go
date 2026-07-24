@@ -785,8 +785,15 @@ type WorkerDeploymentBuild struct {
 	EnvironmentID           string                   `json:"environment_id"`
 	DeploymentSource        DeploymentSourceArtifact `json:"deployment_source"`
 	Runtime                 WorkerRuntimeDescriptor  `json:"runtime"`
+	Manager                 WorkerManagerPin         `json:"manager"`
 	StandardToolchainDigest string                   `json:"standard_toolchain_digest"`
 	BuildContractVersion    string                   `json:"build_contract_version"`
+}
+
+type WorkerManagerPin struct {
+	Digest  string `json:"digest"`
+	Name    string `json:"name"`
+	Version string `json:"version"`
 }
 
 type WorkerRuntimeDescriptor struct {

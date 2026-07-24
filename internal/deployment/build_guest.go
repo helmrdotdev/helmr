@@ -31,13 +31,13 @@ const (
 type BuildInstallOutcome string
 
 type BuildInstallRequest struct {
-	FormatVersion        int               `json:"formatVersion"`
-	Manager              ManagerCapsule    `json:"manager"`
-	ManagerCapsuleDigest string            `json:"managerCapsuleDigest"`
-	Runtime              RuntimeDescriptor `json:"runtime"`
-	StandardToolchain    Toolchain         `json:"standardToolchain"`
-	SourceDigest         string            `json:"sourceDigest"`
-	SourceSizeBytes      int64             `json:"sourceSizeBytes"`
+	FormatVersion     int               `json:"formatVersion"`
+	Manager           Manager           `json:"manager"`
+	ManagerDigest     string            `json:"managerDigest"`
+	Runtime           RuntimeDescriptor `json:"runtime"`
+	StandardToolchain Toolchain         `json:"standardToolchain"`
+	SourceDigest      string            `json:"sourceDigest"`
+	SourceSizeBytes   int64             `json:"sourceSizeBytes"`
 }
 
 type BuildInstallResult struct {
@@ -49,17 +49,11 @@ type BuildInstallResult struct {
 	Logs          *BuildLogs          `json:"logs,omitempty"`
 }
 
-type BuildAnalysisRequest struct {
+type BuildVerificationRequest struct {
 	FormatVersion     int                 `json:"formatVersion"`
 	Runtime           RuntimeDescriptor   `json:"runtime"`
 	StandardToolchain Toolchain           `json:"standardToolchain"`
 	Tree              BuildTreeDescriptor `json:"tree"`
-}
-
-type ProgramProofRequest struct {
-	FormatVersion int               `json:"formatVersion"`
-	Runtime       RuntimeDescriptor `json:"runtime"`
-	Program       ProgramDescriptor `json:"program"`
 }
 
 type BuildGuest struct {
@@ -213,23 +207,23 @@ func readBuildNetworkFailure(
 	}
 }
 
-func (guest BuildGuest) Analyze(
+func (guest BuildGuest) Verify(
 	ctx context.Context,
 	runID string,
-	request BuildAnalysisRequest,
+	request BuildVerificationRequest,
 	runtime *RuntimeArtifactSnapshot,
 	toolchain *toolchainSnapshot,
 	tree *BuildTree,
-) (_ AnalysisResult, returnErr error) {
+) (_ VerificationResult, returnErr error) {
 	if guest.Connector == nil {
-		return AnalysisResult{}, errors.New("build guest connector is required")
+		return VerificationResult{}, errors.New("build guest connector is required")
 	}
 	if runtime == nil || toolchain == nil || tree == nil {
-		return AnalysisResult{}, errors.New("build analysis snapshots are incomplete")
+		return VerificationResult{}, errors.New("build verification snapshots are incomplete")
 	}
-	raw, err := canonicalBuildGuestDocument(request, validateBuildAnalysisRequest)
+	raw, err := canonicalBuildGuestDocument(request, validateBuildVerificationRequest)
 	if err != nil {
-		return AnalysisResult{}, err
+		return VerificationResult{}, err
 	}
 	session, err := guest.Connector.Connect(ctx, vm.ConnectRequest{
 		ID:          runID,
@@ -244,7 +238,7 @@ func (guest BuildGuest) Analyze(
 		},
 	})
 	if err != nil {
-		return AnalysisResult{}, vm.NewGuestError(fmt.Errorf("connect build analysis guest: %w", err))
+		return VerificationResult{}, vm.NewGuestError(fmt.Errorf("connect build verification guest: %w", err))
 	}
 	defer func() {
 		returnErr = errors.Join(returnErr, closeBuildGuest(session))
@@ -252,75 +246,20 @@ func (guest BuildGuest) Analyze(
 	stream := session.Stream()
 	if err := wire.WriteStreamFrameHeader(
 		stream,
-		wire.StreamHeader{Type: wire.StreamTypeBuildAnalyze, RunID: runID},
+		wire.StreamHeader{Type: wire.StreamTypeBuildVerify, RunID: runID},
 		uint64(len(raw)+4),
 	); err != nil {
-		return AnalysisResult{}, vm.NewGuestError(fmt.Errorf("write build analysis header: %w", err))
+		return VerificationResult{}, vm.NewGuestError(fmt.Errorf("write build verification header: %w", err))
 	}
 	if err := frameio.WriteMessageFrame(stream, raw); err != nil {
-		return AnalysisResult{}, vm.NewGuestError(fmt.Errorf("write build analysis request: %w", err))
+		return VerificationResult{}, vm.NewGuestError(fmt.Errorf("write build verification request: %w", err))
 	}
 	if err := stream.CloseWrite(); err != nil {
-		return AnalysisResult{}, vm.NewGuestError(fmt.Errorf("half-close build analysis request: %w", err))
+		return VerificationResult{}, vm.NewGuestError(fmt.Errorf("half-close build verification request: %w", err))
 	}
-	result, err := ReadAnalysisResultFrame(stream)
+	result, err := ReadVerificationResultFrame(stream)
 	if err != nil {
-		return AnalysisResult{}, vm.NewGuestError(err)
-	}
-	return result, nil
-}
-
-func (guest BuildGuest) Prove(
-	ctx context.Context,
-	runID string,
-	request ProgramProofRequest,
-	runtime *RuntimeArtifactSnapshot,
-	program *EncodedProgram,
-) (_ ProgramProofResult, returnErr error) {
-	if guest.Connector == nil {
-		return ProgramProofResult{}, errors.New("build guest connector is required")
-	}
-	if runtime == nil || program == nil {
-		return ProgramProofResult{}, errors.New("Program proof snapshots are incomplete")
-	}
-	raw, err := canonicalBuildGuestDocument(request, validateProgramProofRequest)
-	if err != nil {
-		return ProgramProofResult{}, err
-	}
-	session, err := guest.Connector.Connect(ctx, vm.ConnectRequest{
-		ID:          runID,
-		OwnerKind:   vm.OwnerBuild,
-		Resources:   compute.BuildGuestResources(),
-		PIDsMax:     compute.BuildGuestPIDsMax,
-		Networkless: true,
-		ReadOnlyDrives: []vm.ReadOnlyDrive{
-			{ID: vm.ProgramRuntimeDrive, Source: runtime},
-			{ID: vm.ProgramDrive, Source: programDrive{program}},
-		},
-	})
-	if err != nil {
-		return ProgramProofResult{}, vm.NewGuestError(fmt.Errorf("connect Program proof guest: %w", err))
-	}
-	defer func() {
-		returnErr = errors.Join(returnErr, closeBuildGuest(session))
-	}()
-	stream := session.Stream()
-	if err := wire.WriteStreamFrameHeader(
-		stream,
-		wire.StreamHeader{Type: wire.StreamTypeProgramProof, RunID: runID},
-		uint64(len(raw)+4),
-	); err != nil {
-		return ProgramProofResult{}, vm.NewGuestError(fmt.Errorf("write Program proof header: %w", err))
-	}
-	if err := frameio.WriteMessageFrame(stream, raw); err != nil {
-		return ProgramProofResult{}, vm.NewGuestError(fmt.Errorf("write Program proof request: %w", err))
-	}
-	if err := stream.CloseWrite(); err != nil {
-		return ProgramProofResult{}, vm.NewGuestError(fmt.Errorf("half-close Program proof request: %w", err))
-	}
-	result, err := ReadProgramProofFrame(stream)
-	if err != nil {
-		return ProgramProofResult{}, vm.NewGuestError(err)
+		return VerificationResult{}, vm.NewGuestError(err)
 	}
 	return result, nil
 }
@@ -341,18 +280,10 @@ func ParseBuildInstallResult(raw []byte) (BuildInstallResult, error) {
 	return result, nil
 }
 
-func ParseBuildAnalysisRequest(raw []byte) (BuildAnalysisRequest, error) {
-	var request BuildAnalysisRequest
-	if err := parseBuildGuestDocument(raw, &request, validateBuildAnalysisRequest); err != nil {
-		return BuildAnalysisRequest{}, err
-	}
-	return request, nil
-}
-
-func ParseProgramProofRequest(raw []byte) (ProgramProofRequest, error) {
-	var request ProgramProofRequest
-	if err := parseBuildGuestDocument(raw, &request, validateProgramProofRequest); err != nil {
-		return ProgramProofRequest{}, err
+func ParseBuildVerificationRequest(raw []byte) (BuildVerificationRequest, error) {
+	var request BuildVerificationRequest
+	if err := parseBuildGuestDocument(raw, &request, validateBuildVerificationRequest); err != nil {
+		return BuildVerificationRequest{}, err
 	}
 	return request, nil
 }
@@ -365,15 +296,11 @@ func validateBuildInstallRequest(request BuildInstallRequest) error {
 	if request.FormatVersion != BuildGuestFormatVersion {
 		return fmt.Errorf("build install formatVersion = %d, want %d", request.FormatVersion, BuildGuestFormatVersion)
 	}
-	if err := validateManagerCapsule(request.Manager); err != nil {
+	if err := validateManager(request.Manager); err != nil {
 		return err
 	}
-	digest, err := ManagerCapsuleDigest(request.Manager)
-	if err != nil {
-		return err
-	}
-	if request.ManagerCapsuleDigest != digest {
-		return errors.New("build install manager Capsule digest does not match")
+	if request.ManagerDigest != request.Manager.Tree.Digest {
+		return errors.New("build install Manager digest does not match")
 	}
 	if err := ValidateRuntimeDescriptor(request.Runtime); err != nil {
 		return err
@@ -434,9 +361,9 @@ func validateBuildInstallResult(result BuildInstallResult) error {
 	return nil
 }
 
-func validateBuildAnalysisRequest(request BuildAnalysisRequest) error {
+func validateBuildVerificationRequest(request BuildVerificationRequest) error {
 	if request.FormatVersion != BuildGuestFormatVersion {
-		return fmt.Errorf("build analysis formatVersion = %d, want %d", request.FormatVersion, BuildGuestFormatVersion)
+		return fmt.Errorf("build verification formatVersion = %d, want %d", request.FormatVersion, BuildGuestFormatVersion)
 	}
 	if err := ValidateRuntimeDescriptor(request.Runtime); err != nil {
 		return err
@@ -446,41 +373,14 @@ func validateBuildAnalysisRequest(request BuildAnalysisRequest) error {
 	}
 	if request.StandardToolchain.Architecture != request.Runtime.Architecture ||
 		request.StandardToolchain.ManagedRuntimeDigest != request.Runtime.Digest {
-		return errors.New("build analysis standard toolchain does not match Runtime")
+		return errors.New("build verification standard toolchain does not match Runtime")
 	}
 	if !sha256DigestPattern.MatchString(request.Tree.Digest) ||
 		request.Tree.SizeBytes < 1 ||
 		request.Tree.SizeBytes > maxBuildTreePhysicalBytes {
-		return errors.New("build analysis tree descriptor is invalid")
+		return errors.New("build verification tree descriptor is invalid")
 	}
 	return nil
-}
-
-func validateProgramProofRequest(request ProgramProofRequest) error {
-	if request.FormatVersion != BuildGuestFormatVersion {
-		return fmt.Errorf("Program proof formatVersion = %d, want %d", request.FormatVersion, BuildGuestFormatVersion)
-	}
-	if err := ValidateRuntimeDescriptor(request.Runtime); err != nil {
-		return err
-	}
-	if err := validateProgramDescriptor(
-		request.Program,
-		"program",
-		ProgramArtifactMediaType,
-		maxProgramPhysicalBytes,
-	); err != nil {
-		return err
-	}
-	return nil
-}
-
-type programDrive struct{ program *EncodedProgram }
-
-func (drive programDrive) LinkInto(directory, name string, uid, gid int) error {
-	if drive.program == nil || drive.program.artifact == nil {
-		return errors.New("program snapshot is closed")
-	}
-	return drive.program.artifact.LinkInto(directory, name, uid, gid)
 }
 
 func canonicalBuildGuestDocument[T any](value T, validate func(T) error) ([]byte, error) {

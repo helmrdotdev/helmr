@@ -69,7 +69,8 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cleanup()
-	if err := validateDeploymentSourceArtifactArchive(archivePath); err != nil {
+	selection, err := inspectDeploymentSourceArtifactArchive(archivePath)
+	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid deployment source artifact: %w", err)))
 		return
 	}
@@ -77,7 +78,8 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if s.buildPolicy == nil || s.runtimeStore == nil {
+	if s.buildPolicy == nil || s.runtimeStore == nil ||
+		s.managerCatalog == nil || s.managerStore == nil {
 		writeError(w, unavailable(errors.New("managed runtime is not configured")))
 		return
 	}
@@ -97,6 +99,18 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateRuntimeObject(r.Context(), s.runtimeStore, buildTarget.Runtime); err != nil {
 		writeError(w, unavailable(err))
+		return
+	}
+	manager, err := s.managerCatalog.Resolve(
+		selection.Manager,
+		buildTarget.Runtime.Architecture,
+	)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	if err := s.managerStore.Validate(r.Context(), manager); err != nil {
+		writeError(w, unavailable(fmt.Errorf("resolve certified Manager bytes: %w", err)))
 		return
 	}
 	file, err := os.Open(archivePath)
@@ -138,7 +152,19 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 			return conflict(errors.New("project default region changed; retry deployment creation"))
 		}
 		var createErr error
-		response, createErr = createDeploymentRecords(r.Context(), store, buildRegionID, buildTarget, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, metadata)
+		response, createErr = createDeploymentRecords(
+			r.Context(),
+			store,
+			buildRegionID,
+			buildTarget,
+			manager,
+			actor.OrgID,
+			projectID,
+			environmentID,
+			strings.TrimSpace(request.ContentHash),
+			artifact,
+			metadata,
+		)
 		return createErr
 	})
 	if err != nil {
@@ -300,16 +326,18 @@ func (s *Server) deleteUnreferencedDeploymentSourceArtifact(ctx context.Context,
 	}
 }
 
-func validateDeploymentSourceArtifactArchive(archivePath string) error {
+func inspectDeploymentSourceArtifactArchive(
+	archivePath string,
+) (deployment.SourceSelection, error) {
 	file, err := os.Open(archivePath)
 	if err != nil {
-		return fmt.Errorf("open deployment source artifact: %w", err)
+		return deployment.SourceSelection{}, fmt.Errorf(
+			"open deployment source artifact: %w",
+			err,
+		)
 	}
 	defer file.Close()
-	if _, err := deployment.InspectSource(file); err != nil {
-		return err
-	}
-	return nil
+	return deployment.InspectSource(file)
 }
 
 func deploymentArchiveDigest(archivePath string) (string, error) {

@@ -38,10 +38,8 @@ import (
 )
 
 const defaultKernelArgs = "console=ttyS0 reboot=k panic=1 root=/dev/vda rootfstype=ext4 ro init=/init"
-const managerAcquireKernelArgs = defaultKernelArgs + " helmr.profile=manager-acquire helmr.network=none helmr.pids_max=128"
 const buildInstallKernelArgs = defaultKernelArgs + " helmr.profile=build-install helmr.pids_max=1024"
-const buildAnalyzeKernelArgs = defaultKernelArgs + " helmr.profile=build-analyze helmr.network=none helmr.pids_max=1024"
-const programProofKernelArgs = defaultKernelArgs + " helmr.profile=program-proof helmr.network=none helmr.pids_max=1024"
+const buildVerifyKernelArgs = defaultKernelArgs + " helmr.profile=build-verify helmr.network=none helmr.pids_max=1024"
 const stopTimeout = 10 * time.Second
 const apiSocketName = "api.sock"
 const vsockSocketName = "vsock.sock"
@@ -178,13 +176,6 @@ func buildGuestProfile(request vm.ConnectRequest) (string, bool, error) {
 		len(request.Network.Deny) == 0
 	noSubstrate := request.Topology.Substrate == nil
 	switch {
-	case request.Resources == compute.ManagerAcquireResources() &&
-		request.PIDsMax == 128 &&
-		request.Networkless &&
-		networkDisabled &&
-		noSubstrate &&
-		len(request.ReadOnlyDrives) == 0:
-		return managerAcquireKernelArgs, true, nil
 	case request.Resources == compute.BuildGuestResources() &&
 		request.PIDsMax == compute.BuildGuestPIDsMax &&
 		!request.Networkless &&
@@ -197,15 +188,8 @@ func buildGuestProfile(request vm.ConnectRequest) (string, bool, error) {
 		request.Networkless &&
 		networkDisabled &&
 		noSubstrate &&
-		isBuildAnalysisDriveSet(request.ReadOnlyDrives):
-		return buildAnalyzeKernelArgs, true, nil
-	case request.Resources == compute.BuildGuestResources() &&
-		request.PIDsMax == compute.BuildGuestPIDsMax &&
-		request.Networkless &&
-		networkDisabled &&
-		noSubstrate &&
-		isProgramDriveSet(request.ReadOnlyDrives):
-		return programProofKernelArgs, true, nil
+		isBuildVerificationDriveSet(request.ReadOnlyDrives):
+		return buildVerifyKernelArgs, true, nil
 	case request.Resources == compute.BuildGuestResources() &&
 		request.PIDsMax == 0 &&
 		!request.Networkless &&
@@ -226,7 +210,7 @@ func isBuildInstallDriveSet(drives []vm.ReadOnlyDrive) bool {
 	)
 }
 
-func isBuildAnalysisDriveSet(drives []vm.ReadOnlyDrive) bool {
+func isBuildVerificationDriveSet(drives []vm.ReadOnlyDrive) bool {
 	return exactDriveSet(
 		drives,
 		vm.ManagedRuntimeDrive,
@@ -1108,8 +1092,6 @@ func (c *Connector) createScratchDisk(ctx context.Context, scratchDiskPath strin
 
 func (c *Connector) scratchUsableFloor() uint64 {
 	switch c.kernelArgsValue() {
-	case managerAcquireKernelArgs:
-		return 1536 * 1024 * 1024
 	case buildInstallKernelArgs:
 		return 19 * 1024 * 1024 * 1024
 	default:

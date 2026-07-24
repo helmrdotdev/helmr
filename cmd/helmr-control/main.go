@@ -58,6 +58,8 @@ var loadControlBuildPolicy = func(path string) (*deployment.BuildPolicy, error) 
 	return policy, nil
 }
 
+var loadControlManagerCatalog = deployment.LoadManagerCatalog
+
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	if len(os.Args) > 1 {
@@ -105,6 +107,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	buildPolicy, err := loadControlBuildPolicy(cfg.BuildPolicyPath)
 	if err != nil {
 		return err
+	}
+	managerCatalog, err := loadControlManagerCatalog()
+	if err != nil {
+		return fmt.Errorf("authenticate Manager catalog: %w", err)
 	}
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -255,6 +261,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		CAS:                  casStore,
 		BuildPolicy:          buildPolicy,
 		RuntimeStore:         runtimeStore,
+		ManagerCatalog:       managerCatalog,
 		ManagerStore:         managerStore,
 		Secrets:              secretStore,
 		Idempotency:          idempotency.New(hashes),

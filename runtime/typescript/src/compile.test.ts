@@ -20,9 +20,9 @@ import {
   normalizeWorkspaceResources,
 } from "./compile"
 import {
-  encodeAnalysisResultFrame,
-  failedAnalysisResult,
-  successfulAnalysisResult,
+  encodeVerificationResultFrame,
+  failedVerificationResult,
+  successfulVerificationResult,
 } from "./analysis"
 
 const identitySchema: PayloadSchema<JsonValue> = {
@@ -461,11 +461,12 @@ describe("declaration analysis", () => {
       }],
     })
     const succeeded = decodeAnalysisFrame(
-      encodeAnalysisResultFrame(successfulAnalysisResult(program)),
+      encodeVerificationResultFrame(successfulVerificationResult(program)),
     )
     expect(succeeded).toEqual({
       formatVersion: 0,
       outcome: "succeeded",
+      declarations: program.programDeclarations,
       files: [
         {
           path: "helmr/build-plan.json",
@@ -494,17 +495,18 @@ describe("declaration analysis", () => {
       }],
     })
     const workspaceResult = decodeAnalysisFrame(
-      encodeAnalysisResultFrame(successfulAnalysisResult(workspaceOnly)),
-    ) as { files: unknown[] }
+      encodeVerificationResultFrame(successfulVerificationResult(workspaceOnly)),
+    ) as { declarations: unknown[]; files: unknown[] }
+    expect(workspaceResult.declarations).toEqual([])
     expect(workspaceResult.files).toHaveLength(1)
 
     expect(decodeAnalysisFrame(
-      encodeAnalysisResultFrame(failedAnalysisResult("module import failed")),
+      encodeVerificationResultFrame(failedVerificationResult("module import failed")),
     )).toEqual({
       formatVersion: 0,
       outcome: "failed",
       error: {
-        reason: "analysis_failed",
+        reason: "verification_failed",
         message: "module import failed",
       },
     })

@@ -56,8 +56,8 @@ func run(log *slog.Logger) error {
 	var toolchainCatalogDigest string
 	var toolCorpus *deployment.ToolchainCorpus
 	var runtimeStore cas.Reader
+	var managerCatalog *deployment.ManagerCatalog
 	var managerStore *deployment.ManagerStore
-	var managerAcquirer deployment.ManagerAcquirer
 	var squashfsEncoder string
 	runtimeCatalog, err := deployment.LoadRuntimeCatalog()
 	if err != nil {
@@ -231,19 +231,13 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("configure Manager store: %w", err)
 		}
-		managerDownloader, err := deployment.NewManagerDownloader(nil)
+		managerCatalog, err = deployment.LoadManagerCatalog()
 		if err != nil {
-			return fmt.Errorf("configure Manager downloader: %w", err)
+			return fmt.Errorf("authenticate Manager catalog: %w", err)
 		}
 		squashfsEncoder, err = deployment.FindEncoder()
 		if err != nil {
 			return fmt.Errorf("resolve SquashFS encoder: %w", err)
-		}
-		managerAcquirer = deployment.ManagerAcquirer{
-			WorkDir:    workDir,
-			Store:      managerStore,
-			Downloader: managerDownloader,
-			Encoder:    squashfsEncoder,
 		}
 		toolchainCatalog, err := deployment.LoadToolchainCatalog()
 		if err != nil {
@@ -373,11 +367,6 @@ func run(log *slog.Logger) error {
 	runtimeConnector, err := vm.NewStartLimiter(connector, runtimeStartLimit)
 	if err != nil {
 		return fmt.Errorf("configure host runtime start limit: %w", err)
-	}
-	if supportsBuild {
-		managerAcquirer.Normalizer = deployment.GuestManagerNormalizer{
-			Connector: runtimeConnector,
-		}
 	}
 	hostDiskMiB, err := advertisedWorkerDiskMiB(workDir, cfg.WorkerDiskMiB, cfg.WorkerDiskReserveMiB)
 	if err != nil {
@@ -521,16 +510,16 @@ func run(log *slog.Logger) error {
 		workerdaemon.WithLogger(log),
 		workerdaemon.WithBuildPolicy(buildPolicy),
 		workerdaemon.WithBuildExecutor(deployment.Builder{
-			WorkDir:      workDir,
-			CAS:          store,
-			RuntimeStore: runtimeStore,
-			Managers:     managerStore,
-			Acquirer:     managerAcquirer,
-			Policy:       buildPolicy,
-			Toolchains:   toolCorpus,
-			Connector:    runtimeConnector,
-			Encoder:      squashfsEncoder,
-			Images:       imageBuilder,
+			WorkDir:        workDir,
+			CAS:            store,
+			RuntimeStore:   runtimeStore,
+			ManagerCatalog: managerCatalog,
+			Managers:       managerStore,
+			Policy:         buildPolicy,
+			Toolchains:     toolCorpus,
+			Connector:      runtimeConnector,
+			Encoder:        squashfsEncoder,
+			Images:         imageBuilder,
 		}),
 		workerdaemon.WithMaterializer(executor.WorkspaceMaterializer{
 			Connector:             workspaceMountConnector,

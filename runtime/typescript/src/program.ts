@@ -30,9 +30,9 @@ import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import {
   analyzeProject,
-  encodeAnalysisResultFrame,
-  failedAnalysisResult,
-  successfulAnalysisResult,
+  encodeVerificationResultFrame,
+  failedVerificationResult,
+  successfulVerificationResult,
 } from "./analysis"
 
 const MAX_PROGRAM_FRAME_BYTES = 256 * 1024 * 1024
@@ -61,27 +61,6 @@ interface DeclarationLocator {
   readonly declarations: readonly LocatedDeclaration[]
   readonly formatVersion: 0
 }
-
-type ProgramProofDeclaration = Readonly<{
-  kind: "task" | "actor" | "run_stream"
-  declaredId: string
-  slots: readonly string[]
-}>
-
-type ProgramProofResult =
-  | Readonly<{
-      formatVersion: 0
-      outcome: "succeeded"
-      declarations: readonly ProgramProofDeclaration[]
-    }>
-  | Readonly<{
-      formatVersion: 0
-      outcome: "failed"
-      error: Readonly<{
-        reason: "program_invalid"
-        message: string
-      }>
-    }>
 
 class FrameReader {
   readonly #iterator: AsyncIterator<InputChunk>
@@ -337,10 +316,6 @@ export async function runProgram(
   locatorURL: URL,
   io = defaultProgramIO(),
 ): Promise<void> {
-  if (process.env["HELMR_PROGRAM_MODE"] === "proof") {
-    await writeSupervisorFrame(await proveProgram(locatorURL, io))
-    return
-  }
   const reader = new FrameReader(io.input)
   const start = fromBinary(runProto.ProgramStartSchema, await reader.read())
   validateProgramStart(start)
@@ -402,88 +377,22 @@ export async function runProgram(
   await runActor(start, definition, io, decisions)
 }
 
-export async function runAnalysis(
+export async function runVerification(
   root: string,
   architecture: "x86_64" | "aarch64",
 ): Promise<void> {
   try {
     const result = await analyzeProject({ root, architecture })
     await writeSupervisorBytes(
-      encodeAnalysisResultFrame(successfulAnalysisResult(result)),
+      encodeVerificationResultFrame(successfulVerificationResult(result)),
     )
   } catch (error) {
-    await writeSupervisorBytes(encodeAnalysisResultFrame(
-      failedAnalysisResult(supervisorFailureMessage(error, "analysis failed")),
+    await writeSupervisorBytes(encodeVerificationResultFrame(
+      failedVerificationResult(
+        supervisorFailureMessage(error, "verification failed"),
+      ),
     ))
   }
-}
-
-async function proveProgram(
-  locatorURL: URL,
-  io: ProgramIO,
-): Promise<ProgramProofResult> {
-  try {
-    const locator = await loadDeclarationLocator(locatorURL, io)
-    const declarations: ProgramProofDeclaration[] = []
-    for (const located of locator.declarations) {
-      const moduleURL = resolveModuleURL(locatorURL, located.modulePath)
-      const imported = io.importModule === undefined
-        ? await import(moduleURL.href)
-        : await io.importModule(moduleURL)
-      const definition = inspectDefinition(imported[located.exportName])
-      if (
-        definition === undefined ||
-        definition.kind !== located.kind ||
-        definition.id !== located.declaredId
-      ) {
-        throw new Error(
-          `Program export ${JSON.stringify(located.exportName)} does not match ${located.kind}:${JSON.stringify(located.declaredId)}`,
-        )
-      }
-      declarations.push(Object.freeze({
-        kind: located.kind,
-        declaredId: located.declaredId,
-        slots: Object.freeze(programSlots(definition)),
-      }))
-    }
-    return Object.freeze({
-      formatVersion: 0,
-      outcome: "succeeded",
-      declarations: Object.freeze(declarations),
-    })
-  } catch (error) {
-    return Object.freeze({
-      formatVersion: 0,
-      outcome: "failed",
-      error: Object.freeze({
-        reason: "program_invalid",
-        message: supervisorFailureMessage(error, "Program proof failed"),
-      }),
-    })
-  }
-}
-
-function programSlots(
-  definition: ReturnType<typeof inspectDefinition> & {},
-): string[] {
-  switch (definition.kind) {
-    case "task":
-      return definition.hasPayload
-        ? ["handler", "payloadSchema"]
-        : ["handler"]
-    case "actor":
-      return ["handler"]
-    case "run_stream":
-      return ["schema"]
-  }
-}
-
-async function writeSupervisorFrame(value: ProgramProofResult): Promise<void> {
-  const body = canonicalizeJsonValue(value as unknown as JsonValue)
-  const frame = new Uint8Array(body.length + 4)
-  new DataView(frame.buffer).setUint32(0, body.length, false)
-  frame.set(body, 4)
-  await writeSupervisorBytes(frame)
 }
 
 async function writeSupervisorBytes(value: Uint8Array): Promise<void> {

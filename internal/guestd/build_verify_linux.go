@@ -13,7 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/frameio"
 )
 
-func handleBuildAnalysis(
+func handleBuildVerification(
 	ctx context.Context,
 	conn io.ReadWriter,
 	bodyLen uint64,
@@ -22,7 +22,7 @@ func handleBuildAnalysis(
 	if err != nil {
 		return err
 	}
-	request, err := deployment.ParseBuildAnalysisRequest(raw)
+	request, err := deployment.ParseBuildVerificationRequest(raw)
 	if err != nil {
 		return err
 	}
@@ -75,7 +75,7 @@ func handleBuildAnalysis(
 				"--import=file:///opt/helmr/runtime/helmr/preload.mjs",
 				"--input-type=module",
 				"--eval",
-				`import { runAnalysis } from "file:///opt/helmr/runtime/helmr/entry.mjs"; await runAnalysis("/opt/helmr/program", process.arch === "arm64" ? "aarch64" : "x86_64");`,
+				`import { runVerification } from "file:///opt/helmr/runtime/helmr/entry.mjs"; await runVerification("/opt/helmr/program", "x86_64");`,
 			},
 			CWD: "/opt/helmr/program",
 		},
@@ -97,81 +97,7 @@ func handleBuildAnalysis(
 		return err
 	}
 	if result.waitErr != nil || len(result.supervisor) == 0 {
-		return errors.New("build analysis Runtime failed without a valid result frame")
-	}
-	_, err = conn.Write(result.supervisor)
-	return err
-}
-
-func handleProgramProof(
-	ctx context.Context,
-	conn io.ReadWriter,
-	bodyLen uint64,
-) (returnErr error) {
-	raw, err := readExactBuildRequest(conn, bodyLen)
-	if err != nil {
-		return err
-	}
-	request, err := deployment.ParseProgramProofRequest(raw)
-	if err != nil {
-		return err
-	}
-	components := []buildComponent{
-		{
-			artifact: runtimeBuildArtifact(request.Runtime),
-			device:   "/dev/vdc",
-			name:     "runtime",
-		},
-		{
-			artifact: programBuildArtifact(request.Program),
-			device:   "/dev/vdd",
-			name:     "program",
-		},
-	}
-	staged, err := stageBuildComponents(ctx, components)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		returnErr = errors.Join(returnErr, staged.Close())
-	}()
-	runtimePath, err := staged.Path("runtime")
-	if err != nil {
-		return err
-	}
-	program, err := staged.Path("program")
-	if err != nil {
-		return err
-	}
-	result, err := runBuildVerifier(ctx, buildProcessConfig{
-		Command: buildCommand{
-			Argv: []string{
-				"/opt/helmr/runtime/bin/node",
-				"--experimental-transform-types",
-				"--import=file:///opt/helmr/runtime/helmr/preload.mjs",
-				"/opt/helmr/program/helmr/entry.mjs",
-			},
-			CWD: "/opt/helmr/program",
-		},
-		Environment: []buildEnvironment{
-			{Name: "HELMR_PROGRAM_MODE", Value: "proof"},
-			{Name: "HELMR_SUPERVISOR_FD", Value: "4"},
-			{Name: "HOME", Value: "/work/home"},
-			{Name: "PATH", Value: "/opt/helmr/runtime/bin"},
-			{Name: "TMPDIR", Value: "/tmp"},
-		},
-		Identity:    buildIdentity{UID: buildInstallUID, GID: buildInstallGID},
-		Network:     false,
-		OutputLimit: buildInstallOutputLimit,
-		Project:     program,
-		Runtime:     runtimePath,
-		Supervisor:  true,
-	}, 10*time.Minute)
-	if err != nil {
-		return err
-	}
-	if result.waitErr != nil || len(result.supervisor) == 0 {
-		return errors.New("Program proof Runtime failed without a valid result frame")
+		return errors.New("build verification Runtime failed without a valid result frame")
 	}
 	_, err = conn.Write(result.supervisor)
 	return err

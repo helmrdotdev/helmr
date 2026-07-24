@@ -21,21 +21,18 @@ import (
 func TestBuildGuestInstallUsesOneNetworkedManagerVM(t *testing.T) {
 	runtime := testRuntimeDescriptor()
 	toolchain, _ := testToolchainForRuntime(t, runtime)
-	capsule := managerCapsuleFixture(PackageManagerNPM, runtime.Architecture)
-	capsuleDigest, err := ManagerCapsuleDigest(capsule)
-	if err != nil {
-		t.Fatal(err)
-	}
+	manager := testManager(PackageManagerNPM, runtime.Architecture)
+	digest := manager.Tree.Digest
 	source := []byte("x")
 	sourceHash := sha256.Sum256(source)
 	request := BuildInstallRequest{
-		FormatVersion:        BuildGuestFormatVersion,
-		Manager:              capsule,
-		ManagerCapsuleDigest: capsuleDigest,
-		Runtime:              runtime,
-		StandardToolchain:    toolchain,
-		SourceDigest:         "sha256:" + hex.EncodeToString(sourceHash[:]),
-		SourceSizeBytes:      int64(len(source)),
+		FormatVersion:     BuildGuestFormatVersion,
+		Manager:           manager,
+		ManagerDigest:     digest,
+		Runtime:           runtime,
+		StandardToolchain: toolchain,
+		SourceDigest:      "sha256:" + hex.EncodeToString(sourceHash[:]),
+		SourceSizeBytes:   int64(len(source)),
 	}
 	response, err := CanonicalBuildInstallResult(BuildInstallResult{
 		FormatVersion: BuildGuestFormatVersion,
@@ -67,8 +64,8 @@ func TestBuildGuestInstallUsesOneNetworkedManagerVM(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if actual.ManagerCapsuleDigest != capsuleDigest {
-				return errors.New("Manager Capsule changed")
+			if actual.ManagerDigest != digest {
+				return errors.New("Manager changed")
 			}
 			actualSource, err := io.ReadAll(body)
 			if err != nil {
@@ -127,11 +124,8 @@ func TestBuildGuestInstallUsesOneNetworkedManagerVM(t *testing.T) {
 func TestBuildGuestInstallNetworkPolicyOverridesManagerFailure(t *testing.T) {
 	runtime := testRuntimeDescriptor()
 	toolchain, _ := testToolchainForRuntime(t, runtime)
-	capsule := managerCapsuleFixture(PackageManagerNPM, runtime.Architecture)
-	capsuleDigest, err := ManagerCapsuleDigest(capsule)
-	if err != nil {
-		t.Fatal(err)
-	}
+	manager := testManager(PackageManagerNPM, runtime.Architecture)
+	digest := manager.Tree.Digest
 	source := []byte("x")
 	sourceHash := sha256.Sum256(source)
 	response, err := CanonicalBuildInstallResult(BuildInstallResult{
@@ -159,13 +153,13 @@ func TestBuildGuestInstallNetworkPolicyOverridesManagerFailure(t *testing.T) {
 		context.Background(),
 		"run",
 		BuildInstallRequest{
-			FormatVersion:        BuildGuestFormatVersion,
-			Manager:              capsule,
-			ManagerCapsuleDigest: capsuleDigest,
-			Runtime:              runtime,
-			StandardToolchain:    toolchain,
-			SourceDigest:         "sha256:" + hex.EncodeToString(sourceHash[:]),
-			SourceSizeBytes:      int64(len(source)),
+			FormatVersion:     BuildGuestFormatVersion,
+			Manager:           manager,
+			ManagerDigest:     digest,
+			Runtime:           runtime,
+			StandardToolchain: toolchain,
+			SourceDigest:      "sha256:" + hex.EncodeToString(sourceHash[:]),
+			SourceSizeBytes:   int64(len(source)),
 		},
 		strings.NewReader(string(source)),
 		&ArtifactSnapshot{content: &artifactSnapshot{}},
@@ -179,15 +173,15 @@ func TestBuildGuestInstallNetworkPolicyOverridesManagerFailure(t *testing.T) {
 	}
 }
 
-func TestBuildGuestAnalyzeUsesFreshIsolatedTree(t *testing.T) {
+func TestBuildGuestVerifyUsesFreshIsolatedTree(t *testing.T) {
 	runtime := testRuntimeDescriptor()
 	toolchain, _ := testToolchainForRuntime(t, runtime)
 	treeDescriptor := BuildTreeDescriptor{
 		Digest:    "sha256:" + strings.Repeat("3", 64),
 		SizeBytes: squashFSPhysicalAlign,
 	}
-	want := testWorkspaceAnalysisResult(t)
-	raw, err := CanonicalAnalysisResult(want)
+	want := testWorkspaceVerificationResult(t)
+	raw, err := CanonicalVerificationResult(want)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,22 +196,22 @@ func TestBuildGuestAnalyzeUsesFreshIsolatedTree(t *testing.T) {
 				return err
 			}
 			if body.N != 0 {
-				return errors.New("analysis request has trailing data")
+				return errors.New("verification request has trailing data")
 			}
-			request, err := ParseBuildAnalysisRequest(requestRaw)
+			request, err := ParseBuildVerificationRequest(requestRaw)
 			if err != nil {
 				return err
 			}
 			if request.Tree != treeDescriptor {
-				return errors.New("analysis tree descriptor changed")
+				return errors.New("verification tree descriptor changed")
 			}
 			return frameio.WriteMessageFrame(stream, raw)
 		},
 	}
-	result, err := (BuildGuest{Connector: connector}).Analyze(
+	result, err := (BuildGuest{Connector: connector}).Verify(
 		context.Background(),
 		"run",
-		BuildAnalysisRequest{
+		BuildVerificationRequest{
 			FormatVersion:     BuildGuestFormatVersion,
 			Runtime:           runtime,
 			StandardToolchain: toolchain,
@@ -233,14 +227,14 @@ func TestBuildGuestAnalyzeUsesFreshIsolatedTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Outcome != AnalysisOutcomeSucceeded {
-		t.Fatalf("analysis outcome = %q", result.Outcome)
+	if result.Outcome != VerificationOutcomeSucceeded {
+		t.Fatalf("verification outcome = %q", result.Outcome)
 	}
 	request := connector.request
 	if !request.Networkless ||
 		request.Resources != compute.BuildGuestResources() ||
 		request.PIDsMax != compute.BuildGuestPIDsMax {
-		t.Fatalf("analysis VM request = %+v", request)
+		t.Fatalf("verification VM request = %+v", request)
 	}
 	wantDrives := []string{
 		vm.ManagedRuntimeDrive,
@@ -248,93 +242,11 @@ func TestBuildGuestAnalyzeUsesFreshIsolatedTree(t *testing.T) {
 		vm.BuildTreeDrive,
 	}
 	if len(request.ReadOnlyDrives) != len(wantDrives) {
-		t.Fatalf("analysis drives = %+v", request.ReadOnlyDrives)
+		t.Fatalf("verification drives = %+v", request.ReadOnlyDrives)
 	}
 	for index, drive := range request.ReadOnlyDrives {
 		if index >= len(wantDrives) || drive.ID != wantDrives[index] {
-			t.Fatalf("analysis drives = %+v", request.ReadOnlyDrives)
-		}
-	}
-}
-
-func TestBuildGuestProveUsesFreshIsolatedProgram(t *testing.T) {
-	runtime := testRuntimeDescriptor()
-	programDescriptor := ProgramDescriptor{
-		Digest:    "sha256:" + strings.Repeat("4", 64),
-		MediaType: ProgramArtifactMediaType,
-		SizeBytes: squashFSPhysicalAlign,
-	}
-	proof := ProgramProofResult{
-		FormatVersion: ProgramProofFormatVersion,
-		Outcome:       ProgramProofSucceeded,
-		Declarations: []ProgramDeclaration{{
-			Kind:       DeclarationKindTask,
-			DeclaredID: "build",
-			Slots:      []DeclarationSlot{DeclarationSlotHandler},
-		}},
-	}
-	raw, err := CanonicalProgramProofResult(proof)
-	if err != nil {
-		t.Fatal(err)
-	}
-	connector := &buildGuestTestConnector{
-		handle: func(stream io.ReadWriter, bodyLen uint64) error {
-			body := &io.LimitedReader{R: stream, N: int64(bodyLen)}
-			requestRaw, err := frameio.ReadMessageFrameBounded(
-				body,
-				maxBuildGuestRequestBytes,
-			)
-			if err != nil {
-				return err
-			}
-			if body.N != 0 {
-				return errors.New("Program proof request has trailing data")
-			}
-			request, err := ParseProgramProofRequest(requestRaw)
-			if err != nil {
-				return err
-			}
-			if request.Program != programDescriptor {
-				return errors.New("Program proof descriptors changed")
-			}
-			return frameio.WriteMessageFrame(stream, raw)
-		},
-	}
-	result, err := (BuildGuest{Connector: connector}).Prove(
-		context.Background(),
-		"run",
-		ProgramProofRequest{
-			FormatVersion: BuildGuestFormatVersion,
-			Runtime:       runtime,
-			Program:       programDescriptor,
-		},
-		&RuntimeArtifactSnapshot{content: &artifactSnapshot{}},
-		&EncodedProgram{
-			artifact: &artifactSnapshot{},
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Outcome != ProgramProofSucceeded {
-		t.Fatalf("Program proof outcome = %q", result.Outcome)
-	}
-	request := connector.request
-	if !request.Networkless ||
-		request.Resources != compute.BuildGuestResources() ||
-		request.PIDsMax != compute.BuildGuestPIDsMax {
-		t.Fatalf("Program proof VM request = %+v", request)
-	}
-	wantDrives := []string{
-		vm.ProgramRuntimeDrive,
-		vm.ProgramDrive,
-	}
-	if len(request.ReadOnlyDrives) != len(wantDrives) {
-		t.Fatalf("Program proof drives = %+v", request.ReadOnlyDrives)
-	}
-	for index, drive := range request.ReadOnlyDrives {
-		if index >= len(wantDrives) || drive.ID != wantDrives[index] {
-			t.Fatalf("Program proof drives = %+v", request.ReadOnlyDrives)
+			t.Fatalf("verification drives = %+v", request.ReadOnlyDrives)
 		}
 	}
 }
@@ -415,8 +327,7 @@ func (connector *buildGuestTestConnector) Connect(
 		if err == nil {
 			switch header.Type {
 			case wire.StreamTypeBuildInstall,
-				wire.StreamTypeBuildAnalyze,
-				wire.StreamTypeProgramProof:
+				wire.StreamTypeBuildVerify:
 			default:
 				err = errors.New("unexpected build guest stream type")
 			}
@@ -498,6 +409,39 @@ func (session buildNetworkTestSession) BuildNetworkStatus(
 }
 
 type buildNetworklessTestSession struct{}
+
+func testManager(
+	name PackageManagerName,
+	architecture RuntimeArchitecture,
+) Manager {
+	manager := PackageManager{Name: name, Version: "11.4.2"}
+	if name == PackageManagerBun {
+		manager.Version = "1.3.10"
+	}
+	kind, entrypoint, origin, err := managerDistribution(manager)
+	if err != nil {
+		panic(err)
+	}
+	return Manager{
+		AdapterVersion: ManagerAdapterVersion,
+		Architecture:   architecture,
+		Entrypoint: ManagerEntrypoint{
+			Kind: kind,
+			Path: entrypoint,
+		},
+		PackageManager: manager,
+		Source: ManagerSource{
+			Digest:    "sha256:" + strings.Repeat("1", 64),
+			Origin:    origin,
+			SizeBytes: 1,
+		},
+		Tree: ArtifactDescriptor{
+			Digest:    "sha256:" + strings.Repeat("2", 64),
+			MediaType: ManagerTreeMediaType,
+			SizeBytes: 1,
+		},
+	}
+}
 
 func (buildNetworklessTestSession) Stream() vm.Stream {
 	return nil

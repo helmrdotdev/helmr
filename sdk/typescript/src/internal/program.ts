@@ -36,7 +36,7 @@ export interface ProgramIndex {
   readonly declarations: readonly ProgramDeclaration[]
   readonly formatVersion: 0
   readonly manager: Readonly<{
-    capsuleDigest: string
+    digest: string
     name: "bun" | "npm"
     version: string
   }>
@@ -133,7 +133,7 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
     "program index standardToolchainDigest",
   )
   const managerValue = requireObject(root["manager"], "program index manager")
-  requireKeys(managerValue, ["capsuleDigest", "name", "version"], "program index manager")
+  requireKeys(managerValue, ["digest", "name", "version"], "program index manager")
   const managerName = requireString(managerValue["name"], "program index manager.name")
   if (managerName !== "npm" && managerName !== "bun") {
     throw new Error(`program index manager.name ${JSON.stringify(managerName)} is unsupported`)
@@ -148,9 +148,9 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
     )
   }
   const manager = {
-    capsuleDigest: requireDigest(
-      managerValue["capsuleDigest"],
-      "program index manager.capsuleDigest",
+    digest: requireDigest(
+      managerValue["digest"],
+      "program index manager.digest",
     ),
     name: managerName,
     version: managerVersion,

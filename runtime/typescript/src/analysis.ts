@@ -18,11 +18,11 @@ import { pathToFileURL } from "node:url"
 const executableExtension = /\.(?:js|mjs|cjs|ts|mts|cts)$/
 const declarationExtension = /\.d\.(?:ts|mts|cts)$/
 const textDecoder = new TextDecoder("utf-8", { fatal: true })
-const maxAnalysisFailureMessageBytes = 16 << 10
+const maxVerificationFailureMessageBytes = 16 << 10
 
-export const ANALYSIS_RESULT_FORMAT_VERSION = 0 as const
+export const VERIFICATION_RESULT_FORMAT_VERSION = 0 as const
 
-export type AnalysisGeneratedFile = Readonly<{
+export type VerificationGeneratedFile = Readonly<{
   path:
     | "helmr/build-plan.json"
     | "helmr/declarations.json"
@@ -30,17 +30,18 @@ export type AnalysisGeneratedFile = Readonly<{
   content: string
 }>
 
-export type AnalysisResultFrame =
+export type VerificationResultFrame =
   | Readonly<{
       formatVersion: 0
       outcome: "succeeded"
-      files: readonly AnalysisGeneratedFile[]
+      declarations: AnalysisResult["programDeclarations"]
+      files: readonly VerificationGeneratedFile[]
     }>
   | Readonly<{
       formatVersion: 0
       outcome: "failed"
       error: Readonly<{
-        reason: "analysis_failed"
+        reason: "verification_failed"
         message: string
       }>
     }>
@@ -72,10 +73,10 @@ export async function analyzeProject(
   })
 }
 
-export function successfulAnalysisResult(
+export function successfulVerificationResult(
   analysis: AnalysisResult,
-): AnalysisResultFrame {
-  const files: AnalysisGeneratedFile[] = [{
+): VerificationResultFrame {
+  const files: VerificationGeneratedFile[] = [{
     path: "helmr/build-plan.json",
     content: decodeGeneratedFile(analysis.buildPlanBytes),
   }]
@@ -92,35 +93,36 @@ export function successfulAnalysisResult(
     )
   }
   return Object.freeze({
-    formatVersion: ANALYSIS_RESULT_FORMAT_VERSION,
+    formatVersion: VERIFICATION_RESULT_FORMAT_VERSION,
     outcome: "succeeded",
+    declarations: analysis.programDeclarations,
     files: Object.freeze(files.map((file) => Object.freeze(file))),
   })
 }
 
-export function failedAnalysisResult(message: string): AnalysisResultFrame {
+export function failedVerificationResult(message: string): VerificationResultFrame {
   const encoded = new TextEncoder().encode(message)
   if (
     encoded.length === 0 ||
-    encoded.length > maxAnalysisFailureMessageBytes ||
+    encoded.length > maxVerificationFailureMessageBytes ||
     message.trim() === ""
   ) {
     throw new Error(
-      `analysis failure message must be nonblank UTF-8 of at most ${maxAnalysisFailureMessageBytes} bytes`,
+      `verification failure message must be nonblank UTF-8 of at most ${maxVerificationFailureMessageBytes} bytes`,
     )
   }
   return Object.freeze({
-    formatVersion: ANALYSIS_RESULT_FORMAT_VERSION,
+    formatVersion: VERIFICATION_RESULT_FORMAT_VERSION,
     outcome: "failed",
     error: Object.freeze({
-      reason: "analysis_failed",
+      reason: "verification_failed",
       message,
     }),
   })
 }
 
-export function encodeAnalysisResultFrame(
-  result: AnalysisResultFrame,
+export function encodeVerificationResultFrame(
+  result: VerificationResultFrame,
 ): Uint8Array {
   const body = canonicalizeJsonValue(result as unknown as JsonValue)
   const frame = new Uint8Array(4 + body.length)

@@ -51,13 +51,6 @@ type SecretManager interface {
 	ResolveScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) (api.ResolvedSecrets, error)
 }
 
-type ManagerResolver interface {
-	Resolve(
-		context.Context,
-		deployment.ManagerSelector,
-	) (deployment.ManagerCapsule, error)
-}
-
 type Server struct {
 	log                   *slog.Logger
 	deploymentMode        string
@@ -71,7 +64,8 @@ type Server struct {
 	cas                   cas.Store
 	buildPolicy           *deployment.BuildPolicy
 	runtimeStore          cas.Reader
-	managerStore          ManagerResolver
+	managerCatalog        *deployment.ManagerCatalog
+	managerStore          *deployment.ManagerStore
 	secrets               SecretManager
 	claims                idempotency.Manager
 	secretDelivery        SecretDeliveryOpener
@@ -133,7 +127,8 @@ type ServerConfig struct {
 	CAS                  cas.Store
 	BuildPolicy          *deployment.BuildPolicy
 	RuntimeStore         cas.Reader
-	ManagerStore         ManagerResolver
+	ManagerCatalog       *deployment.ManagerCatalog
+	ManagerStore         *deployment.ManagerStore
 	Secrets              SecretManager
 	Idempotency          idempotency.Manager
 	SecretDelivery       SecretDeliveryOpener
@@ -253,6 +248,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		cas:                   cfg.CAS,
 		buildPolicy:           cfg.BuildPolicy,
 		runtimeStore:          cfg.RuntimeStore,
+		managerCatalog:        cfg.ManagerCatalog,
 		managerStore:          cfg.ManagerStore,
 		secrets:               cfg.Secrets,
 		claims:                cfg.Idempotency,

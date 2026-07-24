@@ -138,9 +138,9 @@ func newTestProgram(t *testing.T) *testProgram {
 		}},
 		FormatVersion: ProgramIndexFormatVersion,
 		Manager: ProgramManager{
-			CapsuleDigest: testDigest("manager capsule"),
-			Name:          PackageManagerBun,
-			Version:       "1.3.10",
+			Digest:  testDigest("Manager"),
+			Name:    PackageManagerBun,
+			Version: "1.3.10",
 		},
 		RuntimeAPIVersion:       RuntimeAPIVersion,
 		RuntimeDigest:           testDigest("runtime"),

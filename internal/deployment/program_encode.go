@@ -21,7 +21,7 @@ func EncodeProgram(
 	directory string,
 	encoder string,
 	tree *BuildTree,
-	analysis AnalysisResult,
+	verification VerificationResult,
 	provenance BuildProvenance,
 ) (_ *EncodedProgram, returnErr error) {
 	if ctx == nil {
@@ -33,21 +33,21 @@ func EncodeProgram(
 	if err := validateBuildProvenance("Program encoding provenance", provenance); err != nil {
 		return nil, err
 	}
-	if err := ValidateAnalysisResult(analysis); err != nil {
+	if err := ValidateVerificationResult(verification); err != nil {
 		return nil, err
 	}
-	if analysis.Outcome != AnalysisOutcomeSucceeded {
-		return nil, errors.New("Program encoding requires successful analysis")
+	if verification.Outcome != VerificationOutcomeSucceeded {
+		return nil, errors.New("Program encoding requires successful verification")
 	}
 	plan, err := ParseBuildPlan(
-		[]byte(analysis.Succeeded.Files[0].Content),
+		[]byte(verification.Succeeded.Files[0].Content),
 	)
 	if err != nil {
 		return nil, err
 	}
 	declarations := buildPlanProgramDeclarations(plan)
 	if len(declarations) == 0 {
-		return nil, errors.New("Program encoding requires Program-backed analysis")
+		return nil, errors.New("Program encoding requires a Program-backed verification")
 	}
 
 	index := ProgramIndex{
@@ -66,9 +66,9 @@ func EncodeProgram(
 		return nil, err
 	}
 	generated := map[string][]byte{
-		AnalysisDeclarationsPath: []byte(analysis.Succeeded.Files[1].Content),
-		AnalysisProgramEntryPath: []byte(analysis.Succeeded.Files[2].Content),
-		"helmr/program.json":     indexRaw,
+		VerificationDeclarationsPath: []byte(verification.Succeeded.Files[1].Content),
+		VerificationProgramEntryPath: []byte(verification.Succeeded.Files[2].Content),
+		"helmr/program.json":         indexRaw,
 	}
 	artifact, err := encodeProgramTree(
 		ctx,

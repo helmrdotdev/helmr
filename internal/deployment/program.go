@@ -64,9 +64,9 @@ type ProgramFile struct {
 }
 
 type ProgramManager struct {
-	CapsuleDigest string             `json:"capsuleDigest"`
-	Name          PackageManagerName `json:"name"`
-	Version       string             `json:"version"`
+	Digest  string             `json:"digest"`
+	Name    PackageManagerName `json:"name"`
+	Version string             `json:"version"`
 }
 
 type ProgramSubmittedSource struct {
@@ -330,7 +330,7 @@ func NewProgramReceipt(
 			Path:   output.Index.Submitted.LockfileName,
 		},
 		Manager: ProgramReceiptManager{
-			Digest:  output.Index.Manager.CapsuleDigest,
+			Digest:  output.Index.Manager.Digest,
 			Name:    output.Index.Manager.Name,
 			Version: output.Index.Manager.Version,
 		},
@@ -545,8 +545,8 @@ func validateBuildProvenance(prefix string, provenance BuildProvenance) error {
 	if !sha256DigestPattern.MatchString(provenance.StandardToolchainDigest) {
 		return fmt.Errorf("%s standardToolchainDigest is not a lowercase SHA-256 digest", prefix)
 	}
-	if !sha256DigestPattern.MatchString(provenance.Manager.CapsuleDigest) {
-		return fmt.Errorf("%s manager.capsuleDigest is not a lowercase SHA-256 digest", prefix)
+	if !sha256DigestPattern.MatchString(provenance.Manager.Digest) {
+		return fmt.Errorf("%s manager.digest is not a lowercase SHA-256 digest", prefix)
 	}
 	if provenance.Manager.Name != PackageManagerNPM && provenance.Manager.Name != PackageManagerBun {
 		return fmt.Errorf("%s manager.name %q is unsupported", prefix, provenance.Manager.Name)

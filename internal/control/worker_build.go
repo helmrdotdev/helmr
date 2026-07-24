@@ -62,6 +62,12 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return fmt.Errorf("read deployment build standard toolchain digest: %w", err)
 		}
+		managerDigest, err := deployment.SHA256DigestString(
+			row.BuildManagerDigest,
+		)
+		if err != nil {
+			return fmt.Errorf("read deployment build Manager digest: %w", err)
+		}
 		target, err := s.buildPolicy.Resolve(
 			runtimeDigest,
 			toolchainDigest,
@@ -111,7 +117,12 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 				SizeBytes: row.SourceSizeBytes,
 				MediaType: row.SourceMediaType,
 			},
-			Runtime:                 runtimeWire,
+			Runtime: runtimeWire,
+			Manager: api.WorkerManagerPin{
+				Digest:  managerDigest,
+				Name:    row.BuildManagerName,
+				Version: row.BuildManagerVersion,
+			},
 			StandardToolchainDigest: target.StandardToolchainDigest,
 			BuildContractVersion:    target.BuildContractVersion,
 		}
@@ -638,18 +649,25 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		if closeErr != nil {
 			return fmt.Errorf("close deployment source authority: %w", closeErr)
 		}
-		if err := validateManagerAuthority(
-			r.Context(),
-			s.managerStore,
-			locked.DeploymentSourceDigest,
-			selection,
-			target,
-			succeeded.Provenance,
-		); err != nil {
-			if errors.Is(err, errManagerAuthorityMismatch) {
-				return failInvalid(err.Error())
-			}
-			return fmt.Errorf("validate package manager authority: %w", err)
+		managerDigest, err := deployment.SHA256DigestString(
+			locked.BuildManagerDigest,
+		)
+		if err != nil {
+			return failInvalid("deployment build Manager digest is invalid")
+		}
+		if succeeded.Provenance.Architecture != target.Runtime.Architecture ||
+			succeeded.Provenance.BuildContractVersion != target.BuildContractVersion ||
+			succeeded.Provenance.RuntimeDigest != target.Runtime.Digest ||
+			succeeded.Provenance.StandardToolchainDigest != target.StandardToolchainDigest ||
+			succeeded.Provenance.Submitted.SourceDigest != locked.DeploymentSourceDigest ||
+			succeeded.Provenance.Submitted.LockfileName != selection.LockfileName ||
+			succeeded.Provenance.Submitted.LockfileDigest != selection.LockfileDigest ||
+			succeeded.Provenance.Manager.Name != deployment.PackageManagerName(locked.BuildManagerName) ||
+			succeeded.Provenance.Manager.Version != locked.BuildManagerVersion ||
+			succeeded.Provenance.Manager.Name != selection.Manager.Name ||
+			succeeded.Provenance.Manager.Version != selection.Manager.Version ||
+			succeeded.Provenance.Manager.Digest != managerDigest {
+			return failInvalid(errManagerAuthorityMismatch.Error())
 		}
 		objects, err := deploymentBuildObjects(succeeded)
 		if err != nil {
@@ -941,46 +959,6 @@ func boundedWorkerMessagePayload(message, fallback string) ([]byte, error) {
 var errManagerAuthorityMismatch = errors.New(
 	"build provenance does not match fixed authority",
 )
-
-func validateManagerAuthority(
-	ctx context.Context,
-	store ManagerResolver,
-	sourceDigest string,
-	selection deployment.SourceSelection,
-	target deployment.BuildTarget,
-	provenance deployment.BuildProvenance,
-) error {
-	if store == nil {
-		return errors.New("manager store is required")
-	}
-	if provenance.Architecture != target.Runtime.Architecture ||
-		provenance.BuildContractVersion != target.BuildContractVersion ||
-		provenance.RuntimeDigest != target.Runtime.Digest ||
-		provenance.StandardToolchainDigest != target.StandardToolchainDigest ||
-		provenance.Submitted.SourceDigest != sourceDigest ||
-		provenance.Submitted.LockfileName != selection.LockfileName ||
-		provenance.Submitted.LockfileDigest != selection.LockfileDigest ||
-		provenance.Manager.Name != selection.Manager.Name ||
-		provenance.Manager.Version != selection.Manager.Version {
-		return errManagerAuthorityMismatch
-	}
-	selector := deployment.NewManagerSelector(
-		selection.Manager,
-		provenance.Architecture,
-	)
-	capsule, err := store.Resolve(ctx, selector)
-	if err != nil {
-		return err
-	}
-	digest, err := deployment.ManagerCapsuleDigest(capsule)
-	if err != nil {
-		return fmt.Errorf("digest manager capsule: %w", err)
-	}
-	if digest != provenance.Manager.CapsuleDigest {
-		return errManagerAuthorityMismatch
-	}
-	return nil
-}
 
 func parseDeploymentBuildLeaseIDs(lease api.WorkerDeploymentBuildLease) (pgtype.UUID, pgtype.UUID, pgtype.UUID, pgtype.UUID, error) {
 	orgID, err := uuid.Parse(lease.OrgID)

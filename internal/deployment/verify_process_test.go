@@ -219,9 +219,9 @@ func canonicalVerifierProgramIndex(t *testing.T) []byte {
 		}},
 		FormatVersion: ProgramIndexFormatVersion,
 		Manager: ProgramManager{
-			CapsuleDigest: "sha256:" + strings.Repeat("2", 64),
-			Name:          PackageManagerBun,
-			Version:       "1.3.10",
+			Digest:  "sha256:" + strings.Repeat("2", 64),
+			Name:    PackageManagerBun,
+			Version: "1.3.10",
 		},
 		RuntimeAPIVersion:       RuntimeAPIVersion,
 		RuntimeDigest:           "sha256:" + strings.Repeat("0", 64),

@@ -113,8 +113,8 @@ describe("canonical deployment contract", async () => {
         case "manager_version":
           index.manager.version = "^1.3.10"
           break
-        case "manager_capsule_digest":
-          index.manager.capsuleDigest = "sha256:invalid"
+        case "manager_digest":
+          index.manager.digest = "sha256:invalid"
           break
         case "lockfile_name":
           index.submitted.lockfileName = "package-lock.json"
@@ -185,7 +185,7 @@ type MutableProgramIndex = {
   }>
   formatVersion: number
   manager: {
-    capsuleDigest: string
+    digest: string
     name: string
     version: string
   }

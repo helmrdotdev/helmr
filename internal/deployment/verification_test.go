@@ -10,28 +10,28 @@ import (
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
-func TestAnalysisResultCanonicalRoundTrip(t *testing.T) {
+func TestVerificationResultCanonicalRoundTrip(t *testing.T) {
 	tests := []struct {
 		name   string
-		result AnalysisResult
+		result VerificationResult
 	}{
-		{name: "workspace only", result: testWorkspaceAnalysisResult(t)},
-		{name: "program backed", result: testProgramAnalysisResult(t)},
-		{name: "failed", result: testFailedAnalysisResult()},
+		{name: "workspace only", result: testWorkspaceVerificationResult(t)},
+		{name: "program backed", result: testProgramVerificationResult(t)},
+		{name: "failed", result: testFailedVerificationResult()},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			raw, err := CanonicalAnalysisResult(test.result)
+			raw, err := CanonicalVerificationResult(test.result)
 			if err != nil {
-				t.Fatalf("CanonicalAnalysisResult: %v", err)
+				t.Fatalf("CanonicalVerificationResult: %v", err)
 			}
-			parsed, err := ParseAnalysisResult(raw)
+			parsed, err := ParseVerificationResult(raw)
 			if err != nil {
-				t.Fatalf("ParseAnalysisResult: %v", err)
+				t.Fatalf("ParseVerificationResult: %v", err)
 			}
-			recoded, err := CanonicalAnalysisResult(parsed)
+			recoded, err := CanonicalVerificationResult(parsed)
 			if err != nil {
-				t.Fatalf("CanonicalAnalysisResult(parsed): %v", err)
+				t.Fatalf("CanonicalVerificationResult(parsed): %v", err)
 			}
 			if string(recoded) != string(raw) {
 				t.Fatalf("canonical bytes changed:\n%s\n%s", raw, recoded)
@@ -40,8 +40,8 @@ func TestAnalysisResultCanonicalRoundTrip(t *testing.T) {
 	}
 }
 
-func TestReadAnalysisResultFrameRequiresExactlyOneFrame(t *testing.T) {
-	raw, err := CanonicalAnalysisResult(testProgramAnalysisResult(t))
+func TestReadVerificationResultFrameRequiresExactlyOneFrame(t *testing.T) {
+	raw, err := CanonicalVerificationResult(testProgramVerificationResult(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,11 +49,11 @@ func TestReadAnalysisResultFrameRequiresExactlyOneFrame(t *testing.T) {
 	if err := frameio.WriteMessageFrame(&frame, raw); err != nil {
 		t.Fatal(err)
 	}
-	result, err := ReadAnalysisResultFrame(&frame)
+	result, err := ReadVerificationResultFrame(&frame)
 	if err != nil {
-		t.Fatalf("ReadAnalysisResultFrame: %v", err)
+		t.Fatalf("ReadVerificationResultFrame: %v", err)
 	}
-	if result.Outcome != AnalysisOutcomeSucceeded {
+	if result.Outcome != VerificationOutcomeSucceeded {
 		t.Fatalf("outcome = %q", result.Outcome)
 	}
 
@@ -62,14 +62,14 @@ func TestReadAnalysisResultFrameRequiresExactlyOneFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 	frame.WriteByte(0)
-	if _, err := ReadAnalysisResultFrame(&frame); err == nil ||
+	if _, err := ReadVerificationResultFrame(&frame); err == nil ||
 		!strings.Contains(err.Error(), "trailing data") {
 		t.Fatalf("trailing frame error = %v", err)
 	}
 }
 
-func TestParseAnalysisResultRejectsOpenOrNoncanonicalShape(t *testing.T) {
-	valid, err := CanonicalAnalysisResult(testProgramAnalysisResult(t))
+func TestParseVerificationResultRejectsOpenOrNoncanonicalShape(t *testing.T) {
+	valid, err := CanonicalVerificationResult(testProgramVerificationResult(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestParseAnalysisResultRejectsOpenOrNoncanonicalShape(t *testing.T) {
 			name: "duplicate file",
 			mutate: func(root map[string]any) {
 				files := root["files"].([]any)
-				files[1].(map[string]any)["path"] = AnalysisBuildPlanPath
+				files[1].(map[string]any)["path"] = VerificationBuildPlanPath
 			},
 			wantErr: "files[1].path",
 		},
@@ -118,29 +118,29 @@ func TestParseAnalysisResultRejectsOpenOrNoncanonicalShape(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			raw := mutateAnalysisResultJSON(t, valid, test.mutate)
-			_, err := ParseAnalysisResult(raw)
+			raw := mutateVerificationResultJSON(t, valid, test.mutate)
+			_, err := ParseVerificationResult(raw)
 			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 				t.Fatalf("error = %v, want containing %q", err, test.wantErr)
 			}
 		})
 	}
 
-	if _, err := ParseAnalysisResult(append([]byte(" "), valid...)); err == nil ||
+	if _, err := ParseVerificationResult(append([]byte(" "), valid...)); err == nil ||
 		!strings.Contains(err.Error(), "canonical") {
 		t.Fatalf("noncanonical error = %v", err)
 	}
 }
 
-func TestAnalysisResultVerifiesGeneratedFilesAgainstPlan(t *testing.T) {
+func TestVerificationResultVerifiesGeneratedFilesAgainstPlan(t *testing.T) {
 	tests := []struct {
 		name    string
-		change  func(*AnalysisResult)
+		change  func(*VerificationResult)
 		wantErr string
 	}{
 		{
 			name: "noncanonical build plan",
-			change: func(result *AnalysisResult) {
+			change: func(result *VerificationResult) {
 				result.Succeeded.Files[0].Content = " " +
 					result.Succeeded.Files[0].Content
 			},
@@ -148,7 +148,7 @@ func TestAnalysisResultVerifiesGeneratedFilesAgainstPlan(t *testing.T) {
 		},
 		{
 			name: "noncanonical declaration locator",
-			change: func(result *AnalysisResult) {
+			change: func(result *VerificationResult) {
 				result.Succeeded.Files[1].Content = " " +
 					result.Succeeded.Files[1].Content
 			},
@@ -156,7 +156,7 @@ func TestAnalysisResultVerifiesGeneratedFilesAgainstPlan(t *testing.T) {
 		},
 		{
 			name: "declaration identity mismatch",
-			change: func(result *AnalysisResult) {
+			change: func(result *VerificationResult) {
 				locator := testAnalysisDeclarationLocator()
 				locator.Declarations[0].DeclaredID = "different"
 				raw, err := CanonicalDeclarationLocator(locator)
@@ -169,7 +169,7 @@ func TestAnalysisResultVerifiesGeneratedFilesAgainstPlan(t *testing.T) {
 		},
 		{
 			name: "program entry mismatch",
-			change: func(result *AnalysisResult) {
+			change: func(result *VerificationResult) {
 				result.Succeeded.Files[2].Content = ProgramEntry + "\n"
 			},
 			wantErr: "fixed v0 bytes",
@@ -177,9 +177,9 @@ func TestAnalysisResultVerifiesGeneratedFilesAgainstPlan(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			result := testProgramAnalysisResult(t)
+			result := testProgramVerificationResult(t)
 			test.change(&result)
-			err := ValidateAnalysisResult(result)
+			err := ValidateVerificationResult(result)
 			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 				t.Fatalf("error = %v, want containing %q", err, test.wantErr)
 			}
@@ -187,29 +187,29 @@ func TestAnalysisResultVerifiesGeneratedFilesAgainstPlan(t *testing.T) {
 	}
 }
 
-func TestAnalysisFailureContract(t *testing.T) {
+func TestVerificationFailureContract(t *testing.T) {
 	tests := []struct {
 		name    string
-		change  func(*AnalysisResult)
+		change  func(*VerificationResult)
 		wantErr string
 	}{
 		{
 			name: "reason",
-			change: func(result *AnalysisResult) {
+			change: func(result *VerificationResult) {
 				result.Failed.Error.Reason = "invalid_source"
 			},
 			wantErr: "unsupported",
 		},
 		{
 			name: "blank message",
-			change: func(result *AnalysisResult) {
+			change: func(result *VerificationResult) {
 				result.Failed.Error.Message = " \n "
 			},
 			wantErr: "nonblank UTF-8",
 		},
 		{
 			name: "message bound",
-			change: func(result *AnalysisResult) {
+			change: func(result *VerificationResult) {
 				result.Failed.Error.Message =
 					strings.Repeat("x", maxBuildFailureMessageBytes+1)
 			},
@@ -218,9 +218,9 @@ func TestAnalysisFailureContract(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			result := testFailedAnalysisResult()
+			result := testFailedVerificationResult()
 			test.change(&result)
-			err := ValidateAnalysisResult(result)
+			err := ValidateVerificationResult(result)
 			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 				t.Fatalf("error = %v, want containing %q", err, test.wantErr)
 			}
@@ -228,7 +228,7 @@ func TestAnalysisFailureContract(t *testing.T) {
 	}
 }
 
-func testWorkspaceAnalysisResult(t *testing.T) AnalysisResult {
+func testWorkspaceVerificationResult(t *testing.T) VerificationResult {
 	t.Helper()
 	plan := testBuildPlan()
 	plan.Definitions = []DefinitionInput{plan.Definitions[3]}
@@ -237,17 +237,20 @@ func testWorkspaceAnalysisResult(t *testing.T) AnalysisResult {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return AnalysisResult{
-		FormatVersion: AnalysisResultFormatVersion,
-		Outcome:       AnalysisOutcomeSucceeded,
-		Succeeded: &AnalysisSucceeded{Files: []AnalysisFile{{
-			Path:    AnalysisBuildPlanPath,
-			Content: string(raw),
-		}}},
+	return VerificationResult{
+		FormatVersion: VerificationResultFormatVersion,
+		Outcome:       VerificationOutcomeSucceeded,
+		Succeeded: &VerificationSucceeded{
+			Declarations: []ProgramDeclaration{},
+			Files: []VerificationFile{{
+				Path:    VerificationBuildPlanPath,
+				Content: string(raw),
+			}},
+		},
 	}
 }
 
-func testProgramAnalysisResult(t *testing.T) AnalysisResult {
+func testProgramVerificationResult(t *testing.T) VerificationResult {
 	t.Helper()
 	plan := testBuildPlan()
 	planRaw, err := CanonicalBuildPlan(plan)
@@ -260,24 +263,27 @@ func testProgramAnalysisResult(t *testing.T) AnalysisResult {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return AnalysisResult{
-		FormatVersion: AnalysisResultFormatVersion,
-		Outcome:       AnalysisOutcomeSucceeded,
-		Succeeded: &AnalysisSucceeded{Files: []AnalysisFile{
-			{Path: AnalysisBuildPlanPath, Content: string(planRaw)},
-			{Path: AnalysisDeclarationsPath, Content: string(locatorRaw)},
-			{Path: AnalysisProgramEntryPath, Content: ProgramEntry},
-		}},
+	return VerificationResult{
+		FormatVersion: VerificationResultFormatVersion,
+		Outcome:       VerificationOutcomeSucceeded,
+		Succeeded: &VerificationSucceeded{
+			Declarations: buildPlanProgramDeclarations(plan),
+			Files: []VerificationFile{
+				{Path: VerificationBuildPlanPath, Content: string(planRaw)},
+				{Path: VerificationDeclarationsPath, Content: string(locatorRaw)},
+				{Path: VerificationProgramEntryPath, Content: ProgramEntry},
+			},
+		},
 	}
 }
 
-func testFailedAnalysisResult() AnalysisResult {
-	return AnalysisResult{
-		FormatVersion: AnalysisResultFormatVersion,
-		Outcome:       AnalysisOutcomeFailed,
-		Failed: &AnalysisFailed{Error: AnalysisError{
-			Reason:  AnalysisFailureReason,
-			Message: "declaration analysis failed",
+func testFailedVerificationResult() VerificationResult {
+	return VerificationResult{
+		FormatVersion: VerificationResultFormatVersion,
+		Outcome:       VerificationOutcomeFailed,
+		Failed: &VerificationFailed{Error: VerificationError{
+			Reason:  VerificationFailureReason,
+			Message: "declaration verification failed",
 		}},
 	}
 }
@@ -308,7 +314,7 @@ func testAnalysisDeclarationLocator() DeclarationLocator {
 	}
 }
 
-func mutateAnalysisResultJSON(
+func mutateVerificationResultJSON(
 	t *testing.T,
 	raw []byte,
 	mutate func(map[string]any),

@@ -23,16 +23,16 @@ import (
 )
 
 type Builder struct {
-	WorkDir      string
-	CAS          cas.Store
-	RuntimeStore cas.Reader
-	Managers     *ManagerStore
-	Acquirer     ManagerAcquirer
-	Policy       *BuildPolicy
-	Toolchains   *ToolchainCorpus
-	Connector    vm.Connector
-	Encoder      string
-	Images       buildmodel.Engine
+	WorkDir        string
+	CAS            cas.Store
+	RuntimeStore   cas.Reader
+	ManagerCatalog *ManagerCatalog
+	Managers       *ManagerStore
+	Policy         *BuildPolicy
+	Toolchains     *ToolchainCorpus
+	Connector      vm.Connector
+	Encoder        string
+	Images         buildmodel.Engine
 }
 
 func (builder Builder) Build(
@@ -97,28 +97,29 @@ func (builder Builder) build(
 		returnErr = errors.Join(returnErr, source.Close())
 	}()
 
-	selector := NewManagerSelector(selection.Manager, target.Runtime.Architecture)
-	capsule, err := builder.Acquirer.Acquire(ctx, selector)
-	if err != nil {
-		var guestError *vm.GuestError
-		if errors.As(err, &guestError) {
-			return BuildResult{}, err
-		}
-		reason := BuildFailureManagerNotFound
-		if errors.Is(err, ErrManagerProtocolUnsupported) {
-			reason = BuildFailureManagerUnsupported
-		}
-		return failedBuild(reason, err), nil
+	managerPin := PackageManager{
+		Name:    PackageManagerName(work.Manager.Name),
+		Version: work.Manager.Version,
 	}
-	capsuleDigest, err := ManagerCapsuleDigest(capsule)
+	if managerPin != selection.Manager {
+		return failedBuild(
+			BuildFailureInvalidSource,
+			errors.New("Deployment Manager pin does not match submitted source"),
+		), nil
+	}
+	manager, err := builder.ManagerCatalog.ResolvePinned(
+		managerPin,
+		target.Runtime.Architecture,
+		work.Manager.Digest,
+	)
 	if err != nil {
-		return BuildResult{}, err
+		return failedBuild(BuildFailureManagerNotFound, err), nil
 	}
 
 	managerSnapshot, err := builder.Managers.Snapshot(
 		ctx,
 		builder.WorkDir,
-		capsule,
+		manager,
 	)
 	if err != nil {
 		return BuildResult{}, err
@@ -170,13 +171,13 @@ func (builder Builder) build(
 		ctx,
 		lease.ID,
 		BuildInstallRequest{
-			FormatVersion:        BuildGuestFormatVersion,
-			Manager:              capsule,
-			ManagerCapsuleDigest: capsuleDigest,
-			Runtime:              target.Runtime,
-			StandardToolchain:    toolchain,
-			SourceDigest:         work.DeploymentSource.Digest,
-			SourceSizeBytes:      work.DeploymentSource.SizeBytes,
+			FormatVersion:     BuildGuestFormatVersion,
+			Manager:           manager,
+			ManagerDigest:     manager.Tree.Digest,
+			Runtime:           target.Runtime,
+			StandardToolchain: toolchain,
+			SourceDigest:      work.DeploymentSource.Digest,
+			SourceSizeBytes:   work.DeploymentSource.SizeBytes,
 		},
 		source,
 		managerSnapshot,
@@ -203,10 +204,10 @@ func (builder Builder) build(
 	if err != nil {
 		return BuildResult{}, err
 	}
-	analysis, err := guest.Analyze(
+	verification, err := guest.Verify(
 		ctx,
 		lease.ID,
-		BuildAnalysisRequest{
+		BuildVerificationRequest{
 			FormatVersion:     BuildGuestFormatVersion,
 			Runtime:           target.Runtime,
 			StandardToolchain: toolchain,
@@ -219,13 +220,13 @@ func (builder Builder) build(
 	if err != nil {
 		return BuildResult{}, err
 	}
-	if analysis.Outcome == AnalysisOutcomeFailed {
+	if verification.Outcome == VerificationOutcomeFailed {
 		return fail(
-			BuildFailureAnalysisFailed,
-			errors.New(analysis.Failed.Error.Message),
+			BuildFailureVerificationFailed,
+			errors.New(verification.Failed.Error.Message),
 		), nil
 	}
-	plan, err := ParseBuildPlan([]byte(analysis.Succeeded.Files[0].Content))
+	plan, err := ParseBuildPlan([]byte(verification.Succeeded.Files[0].Content))
 	if err != nil {
 		return fail(BuildFailureInvalidPlan, err), nil
 	}
@@ -233,9 +234,9 @@ func (builder Builder) build(
 		Architecture:         target.Runtime.Architecture,
 		BuildContractVersion: target.BuildContractVersion,
 		Manager: ProgramManager{
-			CapsuleDigest: capsuleDigest,
-			Name:          selection.Manager.Name,
-			Version:       selection.Manager.Version,
+			Digest:  manager.Tree.Digest,
+			Name:    selection.Manager.Name,
+			Version: selection.Manager.Version,
 		},
 		RuntimeDigest:           target.Runtime.Digest,
 		StandardToolchainDigest: target.StandardToolchainDigest,
@@ -253,7 +254,7 @@ func (builder Builder) build(
 			builder.WorkDir,
 			builder.Encoder,
 			tree,
-			analysis,
+			verification,
 			provenance,
 		)
 		if err != nil {
@@ -262,27 +263,10 @@ func (builder Builder) build(
 		defer func() {
 			returnErr = errors.Join(returnErr, program.Close())
 		}()
-		proof, err := guest.Prove(
-			ctx,
-			lease.ID,
-			ProgramProofRequest{
-				FormatVersion: BuildGuestFormatVersion,
-				Runtime:       target.Runtime,
-				Program:       program.Output.Artifact,
-			},
-			runtimeSnapshot,
-			program,
-		)
-		if err != nil {
-			return BuildResult{}, err
-		}
-		if proof.Outcome == ProgramProofFailed {
-			return fail(
-				BuildFailureProgramInvalid,
-				errors.New(proof.Error.Message),
-			), nil
-		}
-		if err := ValidateProgramProof(proof, program.Output.Index); err != nil {
+		if err := ValidateVerifiedProgram(
+			verification,
+			program.Output.Index,
+		); err != nil {
 			return BuildResult{}, err
 		}
 		published, err := program.Publish(ctx, builder.CAS)
@@ -336,6 +320,8 @@ func (builder Builder) validate() error {
 		return errors.New("deployment build CAS is required")
 	case builder.RuntimeStore == nil:
 		return errors.New("managed Runtime store is required")
+	case builder.ManagerCatalog == nil:
+		return errors.New("Manager catalog is required")
 	case builder.Managers == nil:
 		return errors.New("Manager store is required")
 	case builder.Policy == nil:

@@ -82,7 +82,7 @@ func artifactSnapshotSpecForRole(role artifactRole) (artifactSnapshotSpec, error
 		return artifactSnapshotSpec{
 			label:     "manager",
 			mediaType: ManagerTreeMediaType,
-			maxBytes:  maxManagerCapsuleTreeBytes,
+			maxBytes:  maxManagerTreeBytes,
 		}, nil
 	case buildTreeArtifact:
 		return artifactSnapshotSpec{

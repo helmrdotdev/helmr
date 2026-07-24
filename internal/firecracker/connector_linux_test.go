@@ -104,7 +104,6 @@ func TestScratchUsableFloorMatchesBuildProfiles(t *testing.T) {
 		kernelArgs string
 		want       uint64
 	}{
-		{name: "manager acquisition", kernelArgs: managerAcquireKernelArgs, want: 1536 * 1024 * 1024},
 		{name: "full source install", kernelArgs: buildInstallKernelArgs, want: 19 * 1024 * 1024 * 1024},
 		{name: "runtime", kernelArgs: defaultKernelArgs},
 	}

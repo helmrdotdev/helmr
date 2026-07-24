@@ -34,9 +34,6 @@ func TestBuildResourceContracts(t *testing.T) {
 	if got, want := BuildGuestResources(), (ResourceVector{MilliCPU: 2000, MemoryMiB: 2048, DiskMiB: 20480, Slots: 1}); got != want {
 		t.Fatalf("build guest = %+v, want %+v", got, want)
 	}
-	if got, want := ManagerAcquireResources(), (ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1}); got != want {
-		t.Fatalf("manager acquisition guest = %+v, want %+v", got, want)
-	}
 	if got, want := BuildEnvelopeResources(), (ResourceVector{MilliCPU: 3000, MemoryMiB: 4096, DiskMiB: 32768, Slots: 1}); got != want {
 		t.Fatalf("build envelope = %+v, want %+v", got, want)
 	}

@@ -921,9 +921,16 @@ CREATE TABLE deployments (
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     build_region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
-    build_architecture TEXT NOT NULL CHECK (build_architecture IN ('aarch64', 'x86_64')),
+    build_architecture TEXT NOT NULL CHECK (build_architecture = 'x86_64'),
     build_runtime_digest BYTEA NOT NULL CHECK (octet_length(build_runtime_digest) = 32),
     build_standard_toolchain_digest BYTEA NOT NULL CHECK (octet_length(build_standard_toolchain_digest) = 32),
+    build_manager_name TEXT NOT NULL CHECK (build_manager_name IN ('npm', 'bun')),
+    build_manager_version TEXT NOT NULL CHECK (
+        octet_length(build_manager_version) BETWEEN 1 AND 64
+        AND build_manager_version ~
+            '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
+    ),
+    build_manager_digest BYTEA NOT NULL CHECK (octet_length(build_manager_digest) = 32),
     build_contract_version TEXT NOT NULL CHECK (build_contract_version = 'helmr.program-build.v0'),
     version TEXT NOT NULL CHECK (btrim(version) <> ''),
     content_hash TEXT NOT NULL CHECK (content_hash ~ '^sha256:[0-9a-f]{64}$'),
@@ -1019,6 +1026,9 @@ BEGIN
            OR NEW.build_architecture IS DISTINCT FROM OLD.build_architecture
            OR NEW.build_runtime_digest IS DISTINCT FROM OLD.build_runtime_digest
            OR NEW.build_standard_toolchain_digest IS DISTINCT FROM OLD.build_standard_toolchain_digest
+           OR NEW.build_manager_name IS DISTINCT FROM OLD.build_manager_name
+           OR NEW.build_manager_version IS DISTINCT FROM OLD.build_manager_version
+           OR NEW.build_manager_digest IS DISTINCT FROM OLD.build_manager_digest
            OR NEW.build_contract_version IS DISTINCT FROM OLD.build_contract_version THEN
             RAISE EXCEPTION 'published deployment Program authority is immutable'
                 USING ERRCODE = '23514';
@@ -1084,6 +1094,10 @@ BEGIN
             'sha256:' || encode(NEW.build_runtime_digest, 'hex')
         AND receipt->>'standardToolchainDigest' =
             'sha256:' || encode(NEW.build_standard_toolchain_digest, 'hex')
+        AND receipt#>>'{manager,name}' = NEW.build_manager_name
+        AND receipt#>>'{manager,version}' = NEW.build_manager_version
+        AND receipt#>>'{manager,digest}' =
+            'sha256:' || encode(NEW.build_manager_digest, 'hex')
         AND receipt#>>'{program,artifactId}' = NEW.program_artifact_id::text
         AND receipt#>>'{source,artifactId}' = NEW.deployment_source_artifact_id::text
         AND receipt#>>'{program,mediaType}' =

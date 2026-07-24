@@ -239,16 +239,16 @@ func buildInstallAliases(
 }
 
 func buildInstallCommand(
-	capsule deployment.ManagerCapsule,
+	manager deployment.Manager,
 ) buildCommand {
 	argv := []string{
 		"/opt/helmr/runtime/bin/node",
-		capsule.Entrypoint.Path,
+		manager.Entrypoint.Path,
 		"ci",
 	}
-	if capsule.PackageManager.Name == deployment.PackageManagerBun {
+	if manager.PackageManager.Name == deployment.PackageManagerBun {
 		argv = []string{
-			capsule.Entrypoint.Path,
+			manager.Entrypoint.Path,
 			"install",
 			"--frozen-lockfile",
 		}

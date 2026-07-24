@@ -113,7 +113,7 @@ type successfulTestBuilder struct{ calls atomic.Int32 }
 
 func (b *successfulTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (json.RawMessage, error) {
 	b.calls.Add(1)
-	return json.RawMessage(`{"error":{"message":"test","reasonCode":"analysis_failed"},"formatVersion":0,"outcome":"failed"}`), nil
+	return json.RawMessage(`{"error":{"message":"test","reasonCode":"verification_failed"},"formatVersion":0,"outcome":"failed"}`), nil
 }
 
 type deliveryFailureTestBuilder struct{}

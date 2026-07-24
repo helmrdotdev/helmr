@@ -1823,6 +1823,9 @@ type Deployment struct {
 	BuildArchitecture               string             `json:"build_architecture"`
 	BuildRuntimeDigest              []byte             `json:"build_runtime_digest"`
 	BuildStandardToolchainDigest    []byte             `json:"build_standard_toolchain_digest"`
+	BuildManagerName                string             `json:"build_manager_name"`
+	BuildManagerVersion             string             `json:"build_manager_version"`
+	BuildManagerDigest              []byte             `json:"build_manager_digest"`
 	BuildContractVersion            string             `json:"build_contract_version"`
 	Version                         string             `json:"version"`
 	ContentHash                     string             `json:"content_hash"`

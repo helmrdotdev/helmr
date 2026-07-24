@@ -27,9 +27,8 @@ const (
 	BuildFailureNetworkDenied        = BuildFailureReason("build_network_denied")
 	BuildFailureNetworkLimit         = BuildFailureReason("build_network_limit")
 	BuildFailureTransformFailed      = BuildFailureReason("transform_failed")
-	BuildFailureAnalysisFailed       = BuildFailureReason("analysis_failed")
+	BuildFailureVerificationFailed   = BuildFailureReason("verification_failed")
 	BuildFailureInvalidPlan          = BuildFailureReason("invalid_plan")
-	BuildFailureProgramInvalid       = BuildFailureReason("program_invalid")
 	BuildFailureWorkspaceImageFailed = BuildFailureReason("workspace_image_failed")
 	BuildFailureOutputInvalid        = BuildFailureReason("output_invalid")
 
@@ -413,9 +412,8 @@ func validateBuildFailed(failed BuildFailed) error {
 		BuildFailureNetworkDenied,
 		BuildFailureNetworkLimit,
 		BuildFailureTransformFailed,
-		BuildFailureAnalysisFailed,
+		BuildFailureVerificationFailed,
 		BuildFailureInvalidPlan,
-		BuildFailureProgramInvalid,
 		BuildFailureWorkspaceImageFailed,
 		BuildFailureOutputInvalid:
 	default:

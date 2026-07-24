@@ -4416,8 +4416,8 @@ import { pathToFileURL as pathToFileURL2 } from "node:url";
 var executableExtension = /\.(?:js|mjs|cjs|ts|mts|cts)$/;
 var declarationExtension = /\.d\.(?:ts|mts|cts)$/;
 var textDecoder2 = new TextDecoder("utf-8", { fatal: true });
-var maxAnalysisFailureMessageBytes = 16 << 10;
-var ANALYSIS_RESULT_FORMAT_VERSION = 0;
+var maxVerificationFailureMessageBytes = 16 << 10;
+var VERIFICATION_RESULT_FORMAT_VERSION = 0;
 async function analyzeProject(options) {
   const root = await realpath(options.root);
   await rejectReservedRoot(root);
@@ -4433,7 +4433,7 @@ async function analyzeProject(options) {
     modules: Object.freeze(modules)
   });
 }
-function successfulAnalysisResult(analysis) {
+function successfulVerificationResult(analysis) {
   const files = [{
     path: "helmr/build-plan.json",
     content: decodeGeneratedFile(analysis.buildPlanBytes)
@@ -4448,26 +4448,27 @@ function successfulAnalysisResult(analysis) {
     });
   }
   return Object.freeze({
-    formatVersion: ANALYSIS_RESULT_FORMAT_VERSION,
+    formatVersion: VERIFICATION_RESULT_FORMAT_VERSION,
     outcome: "succeeded",
+    declarations: analysis.programDeclarations,
     files: Object.freeze(files.map((file) => Object.freeze(file)))
   });
 }
-function failedAnalysisResult(message) {
+function failedVerificationResult(message) {
   const encoded = new TextEncoder().encode(message);
-  if (encoded.length === 0 || encoded.length > maxAnalysisFailureMessageBytes || message.trim() === "") {
-    throw new Error(`analysis failure message must be nonblank UTF-8 of at most ${maxAnalysisFailureMessageBytes} bytes`);
+  if (encoded.length === 0 || encoded.length > maxVerificationFailureMessageBytes || message.trim() === "") {
+    throw new Error(`verification failure message must be nonblank UTF-8 of at most ${maxVerificationFailureMessageBytes} bytes`);
   }
   return Object.freeze({
-    formatVersion: ANALYSIS_RESULT_FORMAT_VERSION,
+    formatVersion: VERIFICATION_RESULT_FORMAT_VERSION,
     outcome: "failed",
     error: Object.freeze({
-      reason: "analysis_failed",
+      reason: "verification_failed",
       message
     })
   });
 }
-function encodeAnalysisResultFrame(result) {
+function encodeVerificationResultFrame(result) {
   const body = canonicalizeJsonValue(result);
   const frame = new Uint8Array(4 + body.length);
   new DataView(frame.buffer).setUint32(0, body.length, false);
@@ -4813,10 +4814,6 @@ function parseRuntimeProtocolValue(label, parse) {
   }
 }
 async function runProgram(locatorURL, io = defaultProgramIO()) {
-  if (process.env["HELMR_PROGRAM_MODE"] === "proof") {
-    await writeSupervisorFrame(await proveProgram(locatorURL, io));
-    return;
-  }
   const reader = new FrameReader(io.input);
   const start = fromBinary(exports_run_pb.ProgramStartSchema, await reader.read());
   validateProgramStart(start);
@@ -4855,63 +4852,13 @@ async function runProgram(locatorURL, io = defaultProgramIO()) {
   }
   await runActor(start, definition, io, decisions);
 }
-async function runAnalysis(root, architecture) {
+async function runVerification(root, architecture) {
   try {
     const result = await analyzeProject({ root, architecture });
-    await writeSupervisorBytes(encodeAnalysisResultFrame(successfulAnalysisResult(result)));
+    await writeSupervisorBytes(encodeVerificationResultFrame(successfulVerificationResult(result)));
   } catch (error) {
-    await writeSupervisorBytes(encodeAnalysisResultFrame(failedAnalysisResult(supervisorFailureMessage(error, "analysis failed"))));
+    await writeSupervisorBytes(encodeVerificationResultFrame(failedVerificationResult(supervisorFailureMessage(error, "verification failed"))));
   }
-}
-async function proveProgram(locatorURL, io) {
-  try {
-    const locator = await loadDeclarationLocator(locatorURL, io);
-    const declarations = [];
-    for (const located of locator.declarations) {
-      const moduleURL = resolveModuleURL(locatorURL, located.modulePath);
-      const imported = io.importModule === undefined ? await import(moduleURL.href) : await io.importModule(moduleURL);
-      const definition = inspectDefinition(imported[located.exportName]);
-      if (definition === undefined || definition.kind !== located.kind || definition.id !== located.declaredId) {
-        throw new Error(`Program export ${JSON.stringify(located.exportName)} does not match ${located.kind}:${JSON.stringify(located.declaredId)}`);
-      }
-      declarations.push(Object.freeze({
-        kind: located.kind,
-        declaredId: located.declaredId,
-        slots: Object.freeze(programSlots(definition))
-      }));
-    }
-    return Object.freeze({
-      formatVersion: 0,
-      outcome: "succeeded",
-      declarations: Object.freeze(declarations)
-    });
-  } catch (error) {
-    return Object.freeze({
-      formatVersion: 0,
-      outcome: "failed",
-      error: Object.freeze({
-        reason: "program_invalid",
-        message: supervisorFailureMessage(error, "Program proof failed")
-      })
-    });
-  }
-}
-function programSlots(definition) {
-  switch (definition.kind) {
-    case "task":
-      return definition.hasPayload ? ["handler", "payloadSchema"] : ["handler"];
-    case "actor":
-      return ["handler"];
-    case "run_stream":
-      return ["schema"];
-  }
-}
-async function writeSupervisorFrame(value) {
-  const body = canonicalizeJsonValue(value);
-  const frame = new Uint8Array(body.length + 4);
-  new DataView(frame.buffer).setUint32(0, body.length, false);
-  frame.set(body, 4);
-  await writeSupervisorBytes(frame);
 }
 async function writeSupervisorBytes(value) {
   const configured = process.env["HELMR_SUPERVISOR_FD"];
@@ -5734,6 +5681,6 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 export {
-  runProgram,
-  runAnalysis
+  runVerification,
+  runProgram
 };

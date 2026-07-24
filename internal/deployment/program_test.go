@@ -111,8 +111,8 @@ func TestProgramIndexRejectsSharedMutations(t *testing.T) {
 				index.Manager.Name = "pnpm"
 			case "manager_version":
 				index.Manager.Version = "^1.3.10"
-			case "manager_capsule_digest":
-				index.Manager.CapsuleDigest = "sha256:invalid"
+			case "manager_digest":
+				index.Manager.Digest = "sha256:invalid"
 			case "lockfile_name":
 				index.Submitted.LockfileName = "package-lock.json"
 			case "lockfile_digest":

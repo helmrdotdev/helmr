@@ -27,24 +27,18 @@ type guestProfile uint8
 
 const (
 	ordinaryGuestProfile guestProfile = iota
-	managerAcquireGuestProfile
 	buildInstallGuestProfile
-	buildAnalyzeGuestProfile
-	programProofGuestProfile
+	buildVerifyGuestProfile
 )
 
 func parseGuestProfile(value string) (guestProfile, error) {
 	switch value {
 	case "":
 		return ordinaryGuestProfile, nil
-	case "manager-acquire":
-		return managerAcquireGuestProfile, nil
 	case "build-install":
 		return buildInstallGuestProfile, nil
-	case "build-analyze":
-		return buildAnalyzeGuestProfile, nil
-	case "program-proof":
-		return programProofGuestProfile, nil
+	case "build-verify":
+		return buildVerifyGuestProfile, nil
 	default:
 		return 0, fmt.Errorf("unsupported guest profile %q", value)
 	}
@@ -59,18 +53,6 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, 
 	if err != nil {
 		return false, err
 	}
-	if profile == managerAcquireGuestProfile {
-		if start.attach != nil {
-			return false, errors.New("manager acquisition guest rejects resume attach")
-		}
-		if start.streamHeader.Type != wire.StreamTypeManagerAcquire {
-			return false, fmt.Errorf(
-				"manager acquisition guest rejects input type %q",
-				start.streamHeader.Type,
-			)
-		}
-		return false, handleManagerAcquire(conn, start.bodyLen)
-	}
 	if profile != ordinaryGuestProfile {
 		if start.attach != nil {
 			return false, errors.New("build guest rejects resume attach")
@@ -81,16 +63,11 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, 
 				return false, fmt.Errorf("build install guest rejects input type %q", start.streamHeader.Type)
 			}
 			return false, handleBuildInstall(ctx, conn, start.bodyLen)
-		case buildAnalyzeGuestProfile:
-			if start.streamHeader.Type != wire.StreamTypeBuildAnalyze {
-				return false, fmt.Errorf("build analysis guest rejects input type %q", start.streamHeader.Type)
+		case buildVerifyGuestProfile:
+			if start.streamHeader.Type != wire.StreamTypeBuildVerify {
+				return false, fmt.Errorf("build verification guest rejects input type %q", start.streamHeader.Type)
 			}
-			return false, handleBuildAnalysis(ctx, conn, start.bodyLen)
-		case programProofGuestProfile:
-			if start.streamHeader.Type != wire.StreamTypeProgramProof {
-				return false, fmt.Errorf("Program proof guest rejects input type %q", start.streamHeader.Type)
-			}
-			return false, handleProgramProof(ctx, conn, start.bodyLen)
+			return false, handleBuildVerification(ctx, conn, start.bodyLen)
 		}
 	}
 	if start.attach != nil {
@@ -100,8 +77,6 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, 
 		return true, nil
 	}
 	switch start.streamHeader.Type {
-	case wire.StreamTypeManagerAcquire:
-		return false, errors.New("ordinary guest rejects manager acquisition")
 	case wire.StreamTypeWorkspaceMaterialize:
 		return false, handleWorkspaceMaterializeConnection(ctx, conn, logger, workspaceRegistry, registry)
 	case wire.StreamTypeWorkspaceRuntimePrepare:

@@ -237,8 +237,24 @@ func validateDeploymentContentHash(archivePath string, contentHash string) error
 	return nil
 }
 
-func createDeploymentRecords(ctx context.Context, store deploymentStore, buildRegionID string, target deployment.BuildTarget, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (api.DeploymentResponse, error) {
+func createDeploymentRecords(
+	ctx context.Context,
+	store deploymentStore,
+	buildRegionID string,
+	target deployment.BuildTarget,
+	manager deployment.Manager,
+	orgID uuid.UUID,
+	projectID pgtype.UUID,
+	environmentID pgtype.UUID,
+	contentHash string,
+	artifact api.DeploymentSourceArtifact,
+	metadata deploymentVersionMetadata,
+) (api.DeploymentResponse, error) {
 	runtimeDigest, err := deployment.RuntimeDigestBytes(target.Runtime.Digest)
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	managerDigest, err := deployment.SHA256DigestBytes(manager.Tree.Digest)
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
@@ -256,7 +272,22 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, buildRe
 	}); err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	deployment, err := createQueuedDeployment(ctx, store, buildRegionID, target, runtimeDigest, toolchainDigest, orgID, projectID, environmentID, contentHash, artifact, metadata)
+	deployment, err := createQueuedDeployment(
+		ctx,
+		store,
+		buildRegionID,
+		target,
+		manager,
+		runtimeDigest,
+		toolchainDigest,
+		managerDigest,
+		orgID,
+		projectID,
+		environmentID,
+		contentHash,
+		artifact,
+		metadata,
+	)
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
@@ -267,7 +298,22 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, buildRe
 	return response, nil
 }
 
-func createQueuedDeployment(ctx context.Context, store deploymentStore, buildRegionID string, target deployment.BuildTarget, runtimeDigest, toolchainDigest []byte, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (db.Deployment, error) {
+func createQueuedDeployment(
+	ctx context.Context,
+	store deploymentStore,
+	buildRegionID string,
+	target deployment.BuildTarget,
+	manager deployment.Manager,
+	runtimeDigest,
+	toolchainDigest,
+	managerDigest []byte,
+	orgID uuid.UUID,
+	projectID pgtype.UUID,
+	environmentID pgtype.UUID,
+	contentHash string,
+	artifact api.DeploymentSourceArtifact,
+	metadata deploymentVersionMetadata,
+) (db.Deployment, error) {
 	version, err := nextDeploymentVersion(ctx, store, orgID, projectID, environmentID)
 	if err != nil {
 		return db.Deployment{}, err
@@ -295,6 +341,9 @@ func createQueuedDeployment(ctx context.Context, store deploymentStore, buildReg
 			BuildArchitecture:            string(target.Runtime.Architecture),
 			BuildRuntimeDigest:           runtimeDigest,
 			BuildStandardToolchainDigest: toolchainDigest,
+			BuildManagerName:             string(manager.PackageManager.Name),
+			BuildManagerVersion:          manager.PackageManager.Version,
+			BuildManagerDigest:           managerDigest,
 			BuildContractVersion:         target.BuildContractVersion,
 			ProjectID:                    projectID,
 			EnvironmentID:                environmentID,
