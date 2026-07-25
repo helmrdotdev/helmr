@@ -196,6 +196,383 @@ SELECT runs.current_run_lease_id,
 	}
 }
 
+func TestPlaceReadyRunGrantsSameWorkspaceChildOnRetainedRuntime(t *testing.T) {
+	fixture := newRunPlacementFixture(t)
+	freshAfter := pgvalue.Timestamptz(time.Now().Add(-time.Minute))
+	parentCandidate := fixture.candidate()
+	reserved, err := fixture.authority.PlaceReadyRun(
+		fixture.ctx,
+		parentCandidate,
+		freshAfter,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markRunPlacementRuntimeReady(t, fixture, reserved.RuntimeInstanceID)
+	mounting, err := fixture.authority.PlaceReadyRun(
+		fixture.ctx,
+		parentCandidate,
+		freshAfter,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markRunPlacementMountReady(t, fixture, mounting.WorkspaceMountID)
+	parent, err := fixture.authority.PlaceReadyRun(
+		fixture.ctx,
+		parentCandidate,
+		freshAfter,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var parentWorkspaceLeaseID, originalVersionID, taskDefinitionID pgtype.UUID
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT workspace_leases.id,
+       workspace_leases.base_version_id,
+       runs.deployment_definition_id
+  FROM workspace_leases
+  JOIN runs ON runs.id = $2
+ WHERE workspace_leases.owner_run_lease_id = $1`,
+		parent.Lease.ID,
+		fixture.runID,
+	).Scan(
+		&parentWorkspaceLeaseID,
+		&originalVersionID,
+		&taskDefinitionID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	claimID := uuid.Must(uuid.NewV7())
+	waitID := uuid.Must(uuid.NewV7())
+	checkpointID := uuid.Must(uuid.NewV7())
+	resumeAttachID := uuid.Must(uuid.NewV7())
+	childID := uuid.Must(uuid.NewV7())
+	privateVersionID := uuid.Must(uuid.NewV7())
+	privateArtifactID := uuid.Must(uuid.NewV7())
+	privateDigest := "sha256:" + strings.Repeat("9", 64)
+	tx, err := fixture.pool.Begin(fixture.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(
+		fixture.ctx,
+		`SET CONSTRAINTS ALL DEFERRED`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+INSERT INTO lookup_hmac_versions (
+    version, key_fingerprint, is_current
+) VALUES (1, decode(repeat('11', 32), 'hex'), true)`)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+INSERT INTO idempotency_claims (
+    id, environment_id, operation, scope_hash, key_hash,
+    hash_key_version, generation, request_fingerprint, accepted_at
+) VALUES (
+    $1, $2, 'task.child.invoke', decode(repeat('12', 32), 'hex'),
+    decode(repeat('13', 32), 'hex'), 1, 1,
+    decode(repeat('14', 32), 'hex'), now()
+)`,
+		claimID,
+		fixture.environmentID,
+	)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+VALUES ($1, $2, 1, $3)`,
+		fixture.orgID,
+		privateDigest,
+		workspace.ArtifactMediaType,
+	)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+INSERT INTO artifacts (
+    id, org_id, project_id, environment_id, digest, kind,
+    size_bytes, media_type
+) VALUES (
+    $1, $2, $3, $4, $5, 'workspace_version', 1, $6
+)`,
+		privateArtifactID,
+		fixture.orgID,
+		fixture.projectID,
+		fixture.environmentID,
+		privateDigest,
+		workspace.ArtifactMediaType,
+	)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+INSERT INTO workspace_versions (
+    id, public_id, org_id, project_id, environment_id, workspace_id,
+    parent_version_id, artifact_id, artifact_kind, kind, content_digest,
+    size_bytes, entry_count, state, source_workspace_lease_id,
+    ownership_generation, writer_generation
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, 'workspace_version',
+    'user', $9, 1, 1, 'private', $10, 1, 1
+)`,
+		privateVersionID,
+		dispatchPublicID(t, publicid.WorkspaceVersion),
+		fixture.orgID,
+		fixture.projectID,
+		fixture.environmentID,
+		fixture.workspaceID,
+		originalVersionID,
+		privateArtifactID,
+		privateDigest,
+		parentWorkspaceLeaseID,
+	)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+INSERT INTO runs (
+    id, public_id, org_id, project_id, environment_id, deployment_id,
+    deployment_definition_id, entrypoint_kind, entrypoint_declared_id,
+    cause_kind, parent_run_id, parent_owns_lifecycle, workspace_id,
+    base_workspace_version_id, payload, queue_name, queue_origin_at,
+    queue_score_at, max_active_duration_ms, retry_policy, trace_id,
+    root_span_id, claim_id
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, 'task', 'test-task', 'child',
+    $8, true, $9, $10, '{}'::jsonb, 'default', now(), now(),
+    300000, '{"enabled":false}'::jsonb,
+    '33333333333333333333333333333333', '4444444444444444', $11
+)`,
+		childID,
+		dispatchPublicID(t, publicid.Run),
+		fixture.orgID,
+		fixture.projectID,
+		fixture.environmentID,
+		fixture.deploymentID,
+		taskDefinitionID,
+		fixture.runID,
+		fixture.workspaceID,
+		privateVersionID,
+		claimID,
+	)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+INSERT INTO run_attempts (
+    run_id, number, entrypoint_kind, workspace_id,
+    base_workspace_version_id
+) VALUES ($1, 1, 'task', $2, $3)`,
+		childID,
+		fixture.workspaceID,
+		privateVersionID,
+	)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+INSERT INTO run_waits (
+    id, environment_id, run_id, workspace_id, kind, child_run_id,
+    child_parent_owned, child_target_declared_id, child_claim_id,
+    child_request, expected_run_state_version, attempt_number,
+    prior_run_lease_id, resume_attach_id, suspension_state
+) VALUES (
+    $1, $2, $3, $4, 'child', $5, true, 'test-task', $6,
+    '{"Method":"call"}'::jsonb, 3, 1, $7, $8, 'parked'
+)`,
+		waitID,
+		fixture.environmentID,
+		fixture.runID,
+		fixture.workspaceID,
+		childID,
+		claimID,
+		parent.Lease.ID,
+		resumeAttachID,
+	)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+INSERT INTO run_checkpoints (
+    id, kind, run_id, attempt_number, run_wait_id,
+    source_run_lease_id, source_workspace_lease_id, workspace_id,
+    base_workspace_version_id, private_workspace_version_id,
+    state, restore_manifest, ready_request_fingerprint, ready_at
+) VALUES (
+    $1, 'suspend', $2, 1, $3, $4, $5, $6, $7, $8,
+    'ready', '{"kind":"suspend"}'::jsonb, 'test-ready', now()
+)`,
+		checkpointID,
+		fixture.runID,
+		waitID,
+		parent.Lease.ID,
+		parentWorkspaceLeaseID,
+		fixture.workspaceID,
+		originalVersionID,
+		privateVersionID,
+	)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+UPDATE run_waits
+   SET suspend_checkpoint_id = $2,
+       base_workspace_version_id = $3,
+       base_workspace_content_digest = $4,
+       handoff_runtime_instance_id = $5,
+       handoff_workspace_mount_id = $6,
+       handoff_mount_generation = 2,
+       ownership_generation = 1,
+       parent_writer_generation = 1
+ WHERE id = $1`,
+		waitID,
+		checkpointID,
+		privateVersionID,
+		privateDigest,
+		reserved.RuntimeInstanceID,
+		mounting.WorkspaceMountID,
+	)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+UPDATE runs
+   SET status = 'waiting', state_version = 3,
+       current_run_lease_id = NULL, active_started_at = NULL
+ WHERE id = $1`,
+		fixture.runID,
+	)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+UPDATE run_leases
+   SET state = 'checkpointed', claimed_at = assigned_at,
+       started_at = assigned_at, checkpointed_at = now(),
+       terminal_at = now(), terminal_reason_code = 'checkpointed'
+ WHERE id = $1`,
+		parent.Lease.ID,
+	)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+UPDATE workspace_leases
+   SET state = 'released', released_at = now(), terminal_at = now()
+ WHERE id = $1`,
+		parentWorkspaceLeaseID,
+	)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+UPDATE workspace_mounts
+   SET materialized_version_id = $2, dirty_generation = 1
+ WHERE id = $1`,
+		mounting.WorkspaceMountID,
+		privateVersionID,
+	)
+	if err := tx.Commit(fixture.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	childCandidate := ReadyRunCandidate{
+		OrgID:                   pgvalue.UUID(fixture.orgID),
+		RunID:                   pgvalue.UUID(childID),
+		ExpectedRunStateVersion: 1,
+	}
+	if _, err := db.New(fixture.pool).GetQueuedRunReadyHint(
+		fixture.ctx,
+		db.GetQueuedRunReadyHintParams{
+			OrgID: pgvalue.UUID(fixture.orgID),
+			RunID: pgvalue.UUID(childID),
+		},
+	); err != nil {
+		t.Fatalf("same-Workspace child ready hint: %v", err)
+	}
+	granted, err := fixture.authority.PlaceReadyRun(
+		fixture.ctx,
+		childCandidate,
+		freshAfter,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !granted.LeaseCreated ||
+		granted.RuntimeInstanceID != reserved.RuntimeInstanceID ||
+		granted.WorkspaceMountID != mounting.WorkspaceMountID {
+		t.Fatalf("same-Workspace child placement = %+v", granted)
+	}
+	var ownerRunID, currentLeaseID pgtype.UUID
+	var writerGeneration, mountGeneration int64
+	var waitChildWriter, waitMountGeneration pgtype.Int8
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT workspaces.owner_run_id,
+       workspaces.writer_generation,
+       workspace_mounts.fencing_generation,
+       child.current_run_lease_id,
+       handoff.child_writer_generation,
+       handoff.handoff_mount_generation
+  FROM workspaces
+  JOIN workspace_mounts
+    ON workspace_mounts.id = $2
+  JOIN runs AS child
+    ON child.id = $3
+  JOIN run_waits AS handoff
+    ON handoff.id = $4
+ WHERE workspaces.id = $1`,
+		fixture.workspaceID,
+		mounting.WorkspaceMountID,
+		childID,
+		waitID,
+	).Scan(
+		&ownerRunID,
+		&writerGeneration,
+		&mountGeneration,
+		&currentLeaseID,
+		&waitChildWriter,
+		&waitMountGeneration,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if ownerRunID != pgvalue.UUID(fixture.runID) ||
+		currentLeaseID != granted.Lease.ID ||
+		writerGeneration != 2 ||
+		mountGeneration != 3 ||
+		!waitChildWriter.Valid ||
+		waitChildWriter.Int64 != 2 ||
+		!waitMountGeneration.Valid ||
+		waitMountGeneration.Int64 != 2 {
+		t.Fatalf(
+			"owner=%s lease=%s writer=%d mount=%d waitWriter=%v waitMount=%v",
+			pgvalue.UUIDString(ownerRunID),
+			pgvalue.UUIDString(currentLeaseID),
+			writerGeneration,
+			mountGeneration,
+			waitChildWriter,
+			waitMountGeneration,
+		)
+	}
+	var priorLeaseMountGeneration, childLeaseMountGeneration int64
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT parent_lease.mount_fencing_generation,
+       child_lease.mount_fencing_generation
+  FROM workspace_leases AS parent_lease
+  JOIN workspace_leases AS child_lease
+    ON child_lease.owner_run_lease_id = $2
+ WHERE parent_lease.id = $1`,
+		parentWorkspaceLeaseID,
+		granted.Lease.ID,
+	).Scan(&priorLeaseMountGeneration, &childLeaseMountGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if priorLeaseMountGeneration != 2 ||
+		childLeaseMountGeneration != mountGeneration {
+		t.Fatalf(
+			"Workspace Lease mount receipts = parent:%d child:%d current:%d",
+			priorLeaseMountGeneration,
+			childLeaseMountGeneration,
+			mountGeneration,
+		)
+	}
+
+	locators, err := db.New(fixture.pool).GetRunLeaseClaimLocators(
+		fixture.ctx,
+		db.GetRunLeaseClaimLocatorsParams{
+			ID:                    granted.Lease.ID,
+			LeaseSequence:         granted.Lease.LeaseSequence,
+			WorkerGroupID:         fixture.groupID,
+			WorkerInstanceID:      granted.Lease.WorkerInstanceID,
+			WorkerEpoch:           granted.Lease.WorkerEpoch,
+			WorkerProtocolVersion: granted.Lease.WorkerProtocolVersion,
+		},
+	)
+	if err != nil {
+		t.Fatalf("same-Workspace child claim locators: %v", err)
+	}
+	if locators.RunWaitID.Valid ||
+		locators.EnclosingWaitID != pgvalue.UUID(waitID) ||
+		locators.EnclosingSuspendCheckpointID != pgvalue.UUID(checkpointID) ||
+		locators.EnclosingResumeAttachID != pgvalue.UUID(resumeAttachID) ||
+		locators.EnclosingRuntimeInstanceID != granted.RuntimeInstanceID ||
+		locators.EnclosingWorkspaceMountID != granted.WorkspaceMountID ||
+		!locators.EnclosingMountGeneration.Valid ||
+		locators.EnclosingMountGeneration.Int64 != priorLeaseMountGeneration ||
+		!locators.EnclosingChildWriterGeneration.Valid ||
+		locators.EnclosingChildWriterGeneration.Int64 != writerGeneration {
+		t.Fatalf("same-Workspace child claim locators = %+v", locators)
+	}
+}
+
 func TestPlaceReadyRunRecreatesExactSuspendedRuntimeAndBindsWait(t *testing.T) {
 	fixture := newRunPlacementFixture(t)
 	candidate := fixture.candidate()

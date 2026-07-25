@@ -487,6 +487,146 @@ SELECT created_run.*
   FROM created_run
   JOIN created_attempt ON created_attempt.run_id = created_run.id;
 
+-- name: CreateSameWorkspaceChildRunFromParentDeployment :one
+WITH selected_target AS MATERIALIZED (
+    SELECT definitions.environment_id,
+           definitions.deployment_id,
+           definitions.id AS deployment_definition_id,
+           definitions.declared_id AS entrypoint_declared_id,
+           parent.org_id,
+           parent.project_id,
+           parent.id AS parent_run_id,
+           parent.workspace_id,
+           checkpoint.private_workspace_version_id AS base_workspace_version_id
+      FROM runs AS parent
+      JOIN run_waits AS wait
+        ON wait.environment_id = parent.environment_id
+       AND wait.run_id = parent.id
+       AND wait.workspace_id = parent.workspace_id
+       AND wait.id = sqlc.arg(run_wait_id)
+       AND wait.kind = 'child'
+       AND wait.child_run_id IS NULL
+       AND wait.child_parent_owned IS TRUE
+       AND wait.child_target_declared_id = sqlc.arg(entrypoint_declared_id)
+       AND wait.child_claim_id = sqlc.arg(claim_id)
+       AND wait.condition_state = 'pending'
+       AND wait.suspension_state = 'checkpointing'
+       AND wait.current_run_lease_id = sqlc.arg(parent_run_lease_id)
+       AND wait.suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id)
+      JOIN run_checkpoints AS checkpoint
+        ON checkpoint.run_id = parent.id
+       AND checkpoint.attempt_number = wait.attempt_number
+       AND checkpoint.workspace_id = parent.workspace_id
+       AND checkpoint.run_wait_id = wait.id
+       AND checkpoint.id = wait.suspend_checkpoint_id
+       AND checkpoint.kind = 'suspend'
+       AND checkpoint.state = 'ready'
+       AND checkpoint.private_workspace_version_id =
+           sqlc.arg(base_workspace_version_id)
+      JOIN workspace_versions AS base
+        ON base.workspace_id = parent.workspace_id
+       AND base.id = checkpoint.private_workspace_version_id
+       AND base.state = 'private'
+      JOIN deployment_definitions AS definitions
+        ON definitions.environment_id = parent.environment_id
+       AND definitions.deployment_id = parent.deployment_id
+       AND definitions.kind = 'task'
+       AND definitions.declared_id = wait.child_target_declared_id
+      JOIN idempotency_claims AS claim
+        ON claim.environment_id = parent.environment_id
+       AND claim.id = wait.child_claim_id
+       AND claim.operation = 'task.child.invoke'
+       AND claim.state = 'pending'
+       AND claim.retired_at IS NULL
+     WHERE parent.environment_id = sqlc.arg(environment_id)
+       AND parent.id = sqlc.arg(parent_run_id)
+       AND parent.status = 'waiting'
+       AND parent.current_attempt_number = sqlc.arg(parent_attempt_number)
+       AND parent.current_run_lease_id = sqlc.arg(parent_run_lease_id)
+     FOR UPDATE OF parent, wait
+), created_run AS (
+    INSERT INTO runs (
+        id,
+        public_id,
+        org_id,
+        project_id,
+        environment_id,
+        deployment_id,
+        deployment_definition_id,
+        entrypoint_kind,
+        entrypoint_declared_id,
+        cause_kind,
+        parent_run_id,
+        parent_owns_lifecycle,
+        workspace_id,
+        base_workspace_version_id,
+        payload,
+        metadata,
+        tags,
+        queue_name,
+        concurrency_key,
+        queue_concurrency_limit,
+        priority,
+        queue_origin_at,
+        queue_score_at,
+        queued_expires_at,
+        max_active_duration_ms,
+        retry_policy,
+        trace_id,
+        root_span_id,
+        claim_id
+    )
+    SELECT sqlc.arg(id),
+           sqlc.arg(public_id),
+           selected_target.org_id,
+           selected_target.project_id,
+           selected_target.environment_id,
+           selected_target.deployment_id,
+           selected_target.deployment_definition_id,
+           'task',
+           selected_target.entrypoint_declared_id,
+           'child',
+           selected_target.parent_run_id,
+           TRUE,
+           selected_target.workspace_id,
+           selected_target.base_workspace_version_id,
+           sqlc.narg(payload),
+           coalesce(sqlc.narg(metadata)::jsonb, '{}'::jsonb),
+           coalesce(sqlc.narg(tags)::text[], '{}'::text[]),
+           sqlc.arg(queue_name),
+           sqlc.narg(concurrency_key),
+           sqlc.narg(queue_concurrency_limit),
+           sqlc.arg(priority),
+           sqlc.arg(queue_origin_at),
+           sqlc.arg(queue_score_at),
+           sqlc.narg(queued_expires_at),
+           sqlc.arg(max_active_duration_ms),
+           sqlc.arg(retry_policy),
+           sqlc.narg(trace_id),
+           sqlc.arg(root_span_id),
+           sqlc.arg(claim_id)
+      FROM selected_target
+    RETURNING runs.*
+), created_attempt AS (
+    INSERT INTO run_attempts (
+        run_id,
+        number,
+        entrypoint_kind,
+        workspace_id,
+        base_workspace_version_id
+    )
+    SELECT created_run.id,
+           1,
+           created_run.entrypoint_kind,
+           created_run.workspace_id,
+           created_run.base_workspace_version_id
+      FROM created_run
+    RETURNING run_id
+)
+SELECT created_run.*
+  FROM created_run
+  JOIN created_attempt ON created_attempt.run_id = created_run.id;
+
 -- name: GetRun :one
 SELECT *
   FROM runs

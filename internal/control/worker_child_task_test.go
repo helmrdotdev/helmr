@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -100,6 +101,122 @@ func TestDecodeChildTaskReceiptRequiresCanonicalAuthority(t *testing.T) {
 	)); !errors.Is(err, errTaskStartReceiptInvalid) {
 		t.Fatalf("nil Workspace receipt error = %v", err)
 	}
+}
+
+func TestReplayBoundSameWorkspaceChildCallUsesReceiptAuthority(t *testing.T) {
+	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	parentRunID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	childRunID := uuid.Must(uuid.NewV7())
+	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	waitID := uuid.Must(uuid.NewV7())
+	baseID := uuid.Must(uuid.NewV7())
+	claimID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	resumeAttachID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	const digest = "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+	store := &sameWorkspaceChildReplayStore{
+		wait: db.RunWait{
+			ID:                       pgvalue.UUID(waitID),
+			EnvironmentID:            environmentID,
+			RunID:                    parentRunID,
+			WorkspaceID:              workspaceID,
+			ChildRunID:               pgvalue.UUID(childRunID),
+			SuspensionState:          db.RunWaitStateReleased,
+			ConditionState:           db.WaitStateCompleted,
+			ConditionResult:          json.RawMessage(`{"ok":true,"output":7}`),
+			ResumeAttachID:           resumeAttachID,
+			ResumeWorkspaceVersionID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		},
+	}
+	response, err := replayBoundSameWorkspaceChildCall(
+		t.Context(),
+		store,
+		childTaskInvokeInput{
+			Request: api.WorkerInvokeChildTaskRequest{
+				Lease: api.WorkerRunLeaseReceipt{
+					RunID:             "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+					RuntimeInstanceID: uuid.Must(uuid.NewV7()).String(),
+					WorkerEpoch:       3,
+				},
+			},
+			Normalized: normalizedTaskStart{
+				taskStartRequest: taskStartRequest{TaskDeclaredID: "child"},
+			},
+		},
+		runLeaseClaimAuthority{run: db.Run{
+			ID:            parentRunID,
+			EnvironmentID: environmentID,
+			WorkspaceID:   workspaceID,
+		}},
+		db.IdempotencyClaim{ID: claimID},
+		"sha256:"+strings.Repeat("0", 64),
+		childTaskReceipt{
+			RunID:                  childRunID.String(),
+			RunWaitID:              waitID.String(),
+			BaseWorkspaceVersionID: baseID.String(),
+			BaseWorkspaceDigest:    digest,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.RunWaitID != waitID.String() ||
+		response.ResumeAttachID != pgvalue.MustUUIDValue(resumeAttachID).String() ||
+		response.ResolutionKind != "completed" ||
+		string(response.Resolution) != `{"ok":true,"output":7}` {
+		t.Fatalf("response = %+v", response)
+	}
+	if store.params.ID != pgvalue.UUID(waitID) ||
+		store.params.ChildRunID != pgvalue.UUID(childRunID) ||
+		store.params.BaseWorkspaceVersionID != pgvalue.UUID(baseID) ||
+		store.params.BaseWorkspaceContentDigest.String != digest {
+		t.Fatalf("receipt authority query = %+v", store.params)
+	}
+}
+
+func TestReplayBoundSameWorkspaceChildCallRejectsDifferentFrontier(t *testing.T) {
+	_, err := replayBoundSameWorkspaceChildCall(
+		t.Context(),
+		&sameWorkspaceChildReplayStore{err: pgx.ErrNoRows},
+		childTaskInvokeInput{
+			Request: api.WorkerInvokeChildTaskRequest{
+				Lease: api.WorkerRunLeaseReceipt{RunID: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"},
+			},
+			Normalized: normalizedTaskStart{
+				taskStartRequest: taskStartRequest{TaskDeclaredID: "child"},
+			},
+		},
+		runLeaseClaimAuthority{run: db.Run{
+			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			EnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			WorkspaceID:   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		}},
+		db.IdempotencyClaim{ID: pgvalue.UUID(uuid.Must(uuid.NewV7()))},
+		"sha256:"+strings.Repeat("0", 64),
+		childTaskReceipt{
+			RunID:                  uuid.Must(uuid.NewV7()).String(),
+			RunWaitID:              uuid.Must(uuid.NewV7()).String(),
+			BaseWorkspaceVersionID: uuid.Must(uuid.NewV7()).String(),
+			BaseWorkspaceDigest:    "sha256:" + strings.Repeat("0", 64),
+		},
+	)
+	if !errors.Is(err, errWorkspaceHandoffConflict) {
+		t.Fatalf("different frontier error = %v", err)
+	}
+}
+
+type sameWorkspaceChildReplayStore struct {
+	db.Querier
+	params db.GetBoundSameWorkspaceChildCallReplayParams
+	wait   db.RunWait
+	err    error
+}
+
+func (s *sameWorkspaceChildReplayStore) GetBoundSameWorkspaceChildCallReplay(
+	_ context.Context,
+	params db.GetBoundSameWorkspaceChildCallReplayParams,
+) (db.RunWait, error) {
+	s.params = params
+	return s.wait, s.err
 }
 
 func TestChildTaskResultProjectsTerminalOutcome(t *testing.T) {

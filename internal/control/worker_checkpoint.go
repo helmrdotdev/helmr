@@ -14,9 +14,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -929,6 +931,16 @@ func (s *Server) commitCheckpointReady(
 		if _, err := secret.LockAttemptDelivery(ctx, work.q, pgvalue.UUID(ready.lease.runID), request.Lease.AttemptNumber, pgvalue.UUID(ready.lease.workspaceID)); err != nil {
 			return fmt.Errorf("lock checkpoint-ready Secret authority: %w", err)
 		}
+		handoffBindings, err := work.q.LockWorkspaceSecretsForAdmission(
+			ctx,
+			pgvalue.UUID(ready.lease.workspaceID),
+		)
+		if err != nil {
+			return fmt.Errorf(
+				"lock checkpoint-ready Workspace Secrets: %w",
+				err,
+			)
+		}
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(ready.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
 			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
@@ -1043,7 +1055,24 @@ func (s *Server) commitCheckpointReady(
 		}); err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		if wait.ConditionState == db.WaitStatePending {
+		if wait.Kind == db.WaitKindChild && !wait.ChildRunID.Valid {
+			if wait.ConditionState != db.WaitStatePending {
+				return errStaleRunLeaseClaim
+			}
+			if err := s.commitSameWorkspaceChildCheckpointReady(
+				ctx,
+				work.q,
+				authority,
+				wait,
+				workspaceVersionID,
+				ready.capture.tree.Digest,
+				checkpointedAt,
+				request.RequestVersion,
+				handoffBindings,
+			); err != nil {
+				return err
+			}
+		} else if wait.ConditionState == db.WaitStatePending {
 			if _, err := work.q.CommitPendingCheckpointReady(ctx, db.CommitPendingCheckpointReadyParams{
 				CheckpointedAt: checkpointedAt, RunID: authority.run.ID, WorkspaceID: authority.workspace.ID,
 				AttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
@@ -1080,6 +1109,227 @@ func (s *Server) commitCheckpointReady(
 		return nil
 	})
 	return response, err
+}
+
+func (s *Server) commitSameWorkspaceChildCheckpointReady(
+	ctx context.Context,
+	store db.Querier,
+	authority runLeaseClaimAuthority,
+	wait db.RunWait,
+	baseWorkspaceVersionID pgtype.UUID,
+	baseWorkspaceContentDigest string,
+	checkpointedAt pgtype.Timestamptz,
+	checkpointRequestVersion int64,
+	bindings []db.LockWorkspaceSecretsForAdmissionRow,
+) error {
+	if !wait.ChildClaimID.Valid ||
+		!wait.ChildTargetDeclaredID.Valid ||
+		wait.ChildTargetDeclaredID.String == "" ||
+		!wait.SuspendCheckpointID.Valid ||
+		wait.ChildRunID.Valid ||
+		wait.BaseWorkspaceVersionID.Valid ||
+		wait.HandoffRuntimeInstanceID.Valid {
+		return errStaleRunLeaseClaim
+	}
+	var request idempotency.TaskChildInvokeFingerprint
+	if err := decodeClosedJSON(wait.ChildRequest, &request); err != nil {
+		return staleRunLeaseClaim(err)
+	}
+	if request.Method != "call" {
+		return errStaleRunLeaseClaim
+	}
+	normalized := normalizedTaskStart{
+		taskStartRequest: taskStartRequest{
+			OrgID:          pgvalue.MustUUIDValue(authority.run.OrgID),
+			ProjectID:      pgvalue.MustUUIDValue(authority.run.ProjectID),
+			EnvironmentID:  pgvalue.MustUUIDValue(authority.run.EnvironmentID),
+			TaskDeclaredID: wait.ChildTargetDeclaredID.String,
+			PayloadPresent: request.PayloadPresent,
+			Payload:        request.Payload,
+			QueueName:      request.QueueName,
+			ConcurrencyKey: request.ConcurrencyKey,
+			Priority:       request.Priority,
+			QueuedTTLMS:    request.QueuedTTLMS,
+			RetryPolicy:    request.RetryPolicy,
+			Metadata:       request.Metadata,
+			Tags:           request.Tags,
+		},
+	}
+	admission, err := loadChildTaskAdmission(
+		ctx,
+		store,
+		authority.run,
+		normalized,
+	)
+	if err != nil {
+		return err
+	}
+	for _, binding := range bindings {
+		if binding.SecretState != "active" ||
+			!binding.CurrentVersionID.Valid {
+			return errTaskSecretUnavailable
+		}
+	}
+	claim, err := store.GetIdempotencyClaim(
+		ctx,
+		db.GetIdempotencyClaimParams{
+			EnvironmentID: authority.run.EnvironmentID,
+			ID:            wait.ChildClaimID,
+		},
+	)
+	if err != nil ||
+		claim.Operation != "task.child.invoke" ||
+		claim.State != "pending" ||
+		claim.RetiredAt.Valid {
+		return staleRunLeaseClaim(err)
+	}
+	if !authority.run.QueueOriginAt.Valid || !checkpointedAt.Valid {
+		return errStaleRunLeaseClaim
+	}
+	queuedExpiresAt := pgtype.Timestamptz{}
+	if admission.QueuedTTLMS != nil {
+		queuedExpiresAt = pgvalue.Timestamptz(
+			checkpointedAt.Time.Add(
+				time.Duration(*admission.QueuedTTLMS) * time.Millisecond,
+			),
+		)
+	}
+	queueScoreAt := pgvalue.Timestamptz(
+		authority.run.QueueOriginAt.Time.Add(
+			-time.Duration(request.Priority) * time.Second,
+		),
+	)
+	childRunID := uuid.Must(uuid.NewV7())
+	childRunPublicID, err := publicid.New(publicid.Run)
+	if err != nil {
+		return err
+	}
+	rootSpanID, err := tracing.NewSpanID()
+	if err != nil {
+		return err
+	}
+	child, err := store.CreateSameWorkspaceChildRunFromParentDeployment(
+		ctx,
+		db.CreateSameWorkspaceChildRunFromParentDeploymentParams{
+			RunWaitID:              wait.ID,
+			EntrypointDeclaredID:   wait.ChildTargetDeclaredID,
+			ClaimID:                wait.ChildClaimID,
+			ParentRunLeaseID:       authority.runLease.ID,
+			SuspendCheckpointID:    wait.SuspendCheckpointID,
+			BaseWorkspaceVersionID: baseWorkspaceVersionID,
+			EnvironmentID:          authority.run.EnvironmentID,
+			ParentRunID:            authority.run.ID,
+			ParentAttemptNumber:    authority.attempt.Number,
+			ID:                     pgvalue.UUID(childRunID),
+			PublicID:               childRunPublicID,
+			Payload:                request.Payload,
+			Metadata:               request.Metadata,
+			Tags:                   request.Tags,
+			QueueName:              admission.QueueName,
+			ConcurrencyKey:         pgvalue.TextPtr(request.ConcurrencyKey),
+			QueueConcurrencyLimit:  int8Ptr(admission.QueueConcurrencyLimit),
+			Priority:               request.Priority,
+			QueueOriginAt:          authority.run.QueueOriginAt,
+			QueueScoreAt:           queueScoreAt,
+			QueuedExpiresAt:        queuedExpiresAt,
+			MaxActiveDurationMs:    admission.MaxActiveDurationMS,
+			RetryPolicy:            admission.RetryPolicy,
+			TraceID:                authority.run.TraceID,
+			RootSpanID:             rootSpanID,
+		},
+	)
+	if err != nil {
+		return staleRunLeaseClaim(err)
+	}
+	for _, binding := range bindings {
+		if _, err := store.CreateSecretResolution(
+			ctx,
+			db.CreateSecretResolutionParams{
+				ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				WorkspaceID:          authority.workspace.ID,
+				RunID:                child.ID,
+				AttemptNumber:        pgtype.Int4{Int32: 1, Valid: true},
+				PlacementKind:        binding.PlacementKind,
+				PlacementTarget:      binding.PlacementTarget,
+				SecretID:             binding.SecretID,
+				SecretVersionID:      binding.CurrentVersionID,
+				RevocationGeneration: binding.RevocationGeneration,
+			},
+		); err != nil {
+			return fmt.Errorf(
+				"record same-Workspace child Task Secret resolution: %w",
+				err,
+			)
+		}
+	}
+	if _, err := store.CommitSameWorkspaceChildCheckpointReady(
+		ctx,
+		db.CommitSameWorkspaceChildCheckpointReadyParams{
+			CheckpointRequestVersion:   checkpointRequestVersion,
+			BaseWorkspaceVersionID:     baseWorkspaceVersionID,
+			BaseWorkspaceContentDigest: pgvalue.Text(baseWorkspaceContentDigest),
+			RuntimeInstanceID:          authority.runtime.ID,
+			WorkspaceMountID:           authority.workspaceMount.ID,
+			MountGeneration: pgtype.Int8{
+				Int64: authority.workspaceLease.MountFencingGeneration,
+				Valid: true,
+			},
+			OwnershipGeneration: pgtype.Int8{
+				Int64: authority.workspaceLease.OwnershipGeneration,
+				Valid: true,
+			},
+			ParentWriterGeneration: pgtype.Int8{
+				Int64: authority.workspaceLease.WriterGeneration,
+				Valid: true,
+			},
+			CheckpointedAt:          checkpointedAt,
+			RunWaitID:               wait.ID,
+			EnvironmentID:           authority.run.EnvironmentID,
+			ParentRunID:             authority.run.ID,
+			WorkspaceID:             authority.workspace.ID,
+			ParentAttemptNumber:     authority.attempt.Number,
+			ChildClaimID:            wait.ChildClaimID,
+			ParentRunLeaseID:        authority.runLease.ID,
+			SuspendCheckpointID:     wait.SuspendCheckpointID,
+			ChildRunID:              child.ID,
+			ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
+		},
+	); err != nil {
+		return staleRunLeaseClaim(err)
+	}
+	receipt, err := json.Marshal(childTaskReceipt{
+		RunID:                  childRunID.String(),
+		RunPublicID:            childRunPublicID,
+		WorkspaceID:            pgvalue.UUIDString(authority.workspace.ID),
+		RunWaitID:              pgvalue.UUIDString(wait.ID),
+		BaseWorkspaceVersionID: pgvalue.UUIDString(baseWorkspaceVersionID),
+		BaseWorkspaceDigest:    baseWorkspaceContentDigest,
+	})
+	if err != nil {
+		return err
+	}
+	claims, err := s.claims.TransactionForQueries(store)
+	if err != nil {
+		return err
+	}
+	if _, err := claims.Complete(ctx, claim, receipt); err != nil {
+		return err
+	}
+	if _, err := store.CreateRunAdmissionOutbox(
+		ctx,
+		db.CreateRunAdmissionOutboxParams{
+			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			WorkspaceID:   authority.workspace.ID,
+			EnvironmentID: authority.run.EnvironmentID,
+			RunID:         child.ID,
+		},
+	); err != nil {
+		return fmt.Errorf(
+			"create same-Workspace child Task admission outbox: %w",
+			err,
+		)
+	}
+	return nil
 }
 
 func validateCheckpointSubstrateAuthority(

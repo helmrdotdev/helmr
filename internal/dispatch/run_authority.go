@@ -20,6 +20,8 @@ const mebibyte = int64(1024 * 1024)
 type runPlacementAuthority struct {
 	entrypointKind           string
 	actorID                  pgtype.UUID
+	ownerActorID             pgtype.UUID
+	ownerActorRunID          pgtype.UUID
 	runID                    pgtype.UUID
 	orgID                    pgtype.UUID
 	projectID                pgtype.UUID
@@ -37,6 +39,12 @@ type runPlacementAuthority struct {
 	restoreSubstrateFormat   string
 	restoreSubstrateBuilder  string
 	restoreSubstrateLayout   string
+	handoffChildWaitID       pgtype.UUID
+	handoffRuntimeID         pgtype.UUID
+	handoffWorkspaceMountID  pgtype.UUID
+	handoffMountGeneration   pgtype.Int8
+	handoffOwnership         pgtype.Int8
+	handoffParentWriter      pgtype.Int8
 	attemptNumber            int32
 	stateVersion             int64
 	regionID                 string
@@ -96,6 +104,7 @@ func lockRunPlacementAuthority(
 	var actorRunGeneration int64
 	var actorCommittedInputSequence int64
 	var actorNextInputSequence int64
+	var err error
 	if err := tx.QueryRow(ctx, `
 SELECT entrypoint_kind, actor_id
   FROM runs
@@ -108,17 +117,30 @@ SELECT entrypoint_kind, actor_id
 	).Scan(&authority.entrypointKind, &authority.actorID); err != nil {
 		return runPlacementAuthority{}, err
 	}
+	authority.ownerActorID = authority.actorID
+	authority.ownerActorRunID = candidate.RunID
+	if authority.entrypointKind == "task" && !authority.actorID.Valid {
+		authority.ownerActorID, authority.ownerActorRunID, err =
+			discoverSameWorkspaceOwnerActor(ctx, tx, candidate.RunID)
+		if err != nil {
+			return runPlacementAuthority{}, err
+		}
+	}
 	if authority.entrypointKind == "actor" {
 		if !authority.actorID.Valid {
 			return runPlacementAuthority{}, pgx.ErrNoRows
 		}
+	} else if authority.entrypointKind != "task" || authority.actorID.Valid {
+		return runPlacementAuthority{}, pgx.ErrNoRows
+	}
+	if authority.ownerActorID.Valid {
 		err := tx.QueryRow(ctx, `
 SELECT run_generation, committed_input_sequence, next_input_sequence
   FROM actors
  WHERE id = $1
    AND current_run_id = $2
    AND state IN ('open', 'closing')
- FOR UPDATE`, authority.actorID, candidate.RunID).Scan(
+ FOR UPDATE`, authority.ownerActorID, authority.ownerActorRunID).Scan(
 			&actorRunGeneration,
 			&actorCommittedInputSequence,
 			&actorNextInputSequence,
@@ -129,10 +151,18 @@ SELECT run_generation, committed_input_sequence, next_input_sequence
 		if actorRunGeneration <= 0 {
 			return runPlacementAuthority{}, pgx.ErrNoRows
 		}
-	} else if authority.entrypointKind != "task" || authority.actorID.Valid {
-		return runPlacementAuthority{}, pgx.ErrNoRows
 	}
-	err := tx.QueryRow(ctx, `
+	handoffHintID, err := lockSameWorkspaceHandoffAncestors(
+		ctx,
+		tx,
+		candidate.RunID,
+		authority.ownerActorID,
+		authority.ownerActorRunID,
+	)
+	if err != nil {
+		return runPlacementAuthority{}, err
+	}
+	err = tx.QueryRow(ctx, `
 SELECT runs.id,
        runs.org_id,
        runs.project_id,
@@ -147,6 +177,12 @@ SELECT runs.id,
        runs.queue_concurrency_limit,
        runs.trace_id,
        runs.root_span_id,
+       child_handoff.id,
+       child_handoff.handoff_runtime_instance_id,
+       child_handoff.handoff_workspace_mount_id,
+       child_handoff.handoff_mount_generation,
+       child_handoff.ownership_generation,
+       child_handoff.parent_writer_generation,
        restore_wait.id,
        coalesce(restore_wait.resume_request_version, 0),
        restore_wait.suspend_checkpoint_id,
@@ -154,6 +190,48 @@ SELECT runs.id,
        runs.actor_start_input_sequence,
        runs.actor_start_input_high_watermark
   FROM runs
+  LEFT JOIN LATERAL (
+       SELECT handoff.id,
+              handoff.handoff_runtime_instance_id,
+              handoff.handoff_workspace_mount_id,
+              handoff.handoff_mount_generation,
+              handoff.ownership_generation,
+              handoff.parent_writer_generation
+         FROM run_waits AS handoff
+         JOIN runs AS parent
+           ON parent.environment_id = handoff.environment_id
+          AND parent.id = handoff.run_id
+          AND parent.workspace_id = handoff.workspace_id
+          AND parent.status = 'waiting'
+          AND parent.current_run_lease_id IS NULL
+         JOIN run_checkpoints AS checkpoint
+           ON checkpoint.id = handoff.suspend_checkpoint_id
+          AND checkpoint.kind = 'suspend'
+          AND checkpoint.run_id = handoff.run_id
+          AND checkpoint.attempt_number = handoff.attempt_number
+          AND checkpoint.run_wait_id = handoff.id
+          AND checkpoint.workspace_id = handoff.workspace_id
+          AND checkpoint.state = 'ready'
+          AND (checkpoint.expires_at IS NULL
+               OR checkpoint.expires_at > transaction_timestamp())
+         JOIN workspace_versions AS base
+           ON base.workspace_id = handoff.workspace_id
+          AND base.id = handoff.base_workspace_version_id
+          AND base.state = 'private'
+        WHERE handoff.child_run_id = runs.id
+          AND handoff.child_parent_owned IS TRUE
+          AND handoff.workspace_id = runs.workspace_id
+          AND handoff.condition_state = 'pending'
+          AND handoff.suspension_state = 'parked'
+          AND handoff.base_workspace_version_id =
+              runs.base_workspace_version_id
+          AND handoff.handoff_runtime_instance_id IS NOT NULL
+          AND handoff.handoff_workspace_mount_id IS NOT NULL
+          AND handoff.handoff_mount_generation IS NOT NULL
+          AND handoff.ownership_generation IS NOT NULL
+          AND handoff.parent_writer_generation IS NOT NULL
+          AND handoff.child_writer_generation IS NULL
+  ) AS child_handoff ON true
   LEFT JOIN LATERAL (
        SELECT run_waits.id,
               run_waits.resume_request_version,
@@ -192,8 +270,9 @@ SELECT runs.id,
             AND runs.parent_run_id IS NULL))
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
+   AND child_handoff.id IS NOT DISTINCT FROM $6::uuid
    AND (
-       ($4 = 'task' AND
+       ($4 = 'task' AND child_handoff.id IS NULL AND
            restore_wait.id IS NULL
            AND NOT EXISTS (
                SELECT 1
@@ -203,6 +282,7 @@ SELECT runs.id,
                       'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
                   )
            ))
+       OR ($4 = 'task' AND child_handoff.id IS NOT NULL)
        OR (
            restore_wait.id IS NOT NULL
            AND restore_checkpoint.id IS NOT NULL
@@ -221,6 +301,7 @@ SELECT runs.id,
 		candidate.ExpectedRunStateVersion,
 		authority.entrypointKind,
 		authority.actorID,
+		handoffHintID,
 	).Scan(
 		&authority.runID,
 		&authority.orgID,
@@ -236,6 +317,12 @@ SELECT runs.id,
 		&authority.queueLimit,
 		&authority.traceID,
 		&authority.rootSpanID,
+		&authority.handoffChildWaitID,
+		&authority.handoffRuntimeID,
+		&authority.handoffWorkspaceMountID,
+		&authority.handoffMountGeneration,
+		&authority.handoffOwnership,
+		&authority.handoffParentWriter,
 		&authority.resumeRunWaitID,
 		&authority.resumeRequestVersion,
 		&authority.restoreCheckpointID,
@@ -250,7 +337,14 @@ SELECT runs.id,
 	var workspaceArchitecture pgtype.Text
 	workspaceOwnerPredicate := "workspaces.owner_run_id = $5 AND workspaces.owner_actor_id IS NULL"
 	workspaceOwnerID := authority.runID
-	if authority.entrypointKind == "actor" {
+	if authority.handoffChildWaitID.Valid {
+		workspaceOwnerPredicate = `(
+			(workspaces.owner_run_id IS NOT NULL
+			 OR workspaces.owner_actor_id IS NOT NULL)
+			AND $5::uuid IS NULL
+		)`
+		workspaceOwnerID = pgtype.UUID{}
+	} else if authority.entrypointKind == "actor" {
 		workspaceOwnerPredicate = "workspaces.owner_actor_id = $5 AND workspaces.owner_run_id IS NULL"
 		workspaceOwnerID = authority.actorID
 	}
@@ -292,6 +386,15 @@ SELECT workspaces.deployment_definition_id,
 	if err != nil {
 		return runPlacementAuthority{}, err
 	}
+	if authority.handoffChildWaitID.Valid {
+		if !authority.handoffMountGeneration.Valid ||
+			!authority.handoffOwnership.Valid ||
+			authority.handoffOwnership.Int64 != authority.ownershipGeneration ||
+			!authority.handoffParentWriter.Valid ||
+			authority.handoffParentWriter.Int64 != authority.writerGeneration {
+			return runPlacementAuthority{}, pgx.ErrNoRows
+		}
+	}
 
 	var attemptBaseVersionID pgtype.UUID
 	var attemptActorStartInputSequence pgtype.Int8
@@ -302,7 +405,8 @@ SELECT run_attempts.base_workspace_version_id,
   JOIN workspace_versions
     ON workspace_versions.workspace_id = run_attempts.workspace_id
    AND workspace_versions.id = run_attempts.base_workspace_version_id
-   AND workspace_versions.state = 'committed'
+   AND (($5::boolean AND workspace_versions.state = 'private')
+        OR (NOT $5::boolean AND workspace_versions.state = 'committed'))
  WHERE run_attempts.run_id = $1
    AND run_attempts.number = $2
    AND run_attempts.entrypoint_kind = $4
@@ -312,6 +416,7 @@ SELECT run_attempts.base_workspace_version_id,
 		authority.attemptNumber,
 		authority.workspaceID,
 		authority.entrypointKind,
+		authority.handoffChildWaitID.Valid,
 	).Scan(&attemptBaseVersionID, &attemptActorStartInputSequence)
 	if err != nil {
 		return runPlacementAuthority{}, err
@@ -479,7 +584,525 @@ SELECT deployments.program_architecture
 	return authority, nil
 }
 
-func lockRunRestoreSecrets(
+func discoverSameWorkspaceOwnerActor(
+	ctx context.Context,
+	tx pgx.Tx,
+	childRunID pgtype.UUID,
+) (pgtype.UUID, pgtype.UUID, error) {
+	rows, err := tx.Query(ctx, `
+WITH RECURSIVE ancestors AS (
+    SELECT parent.id,
+           parent.environment_id,
+           parent.workspace_id,
+           parent.parent_run_id,
+           parent.parent_owns_lifecycle,
+           parent.actor_id
+      FROM run_waits AS handoff
+      JOIN runs AS parent
+        ON parent.environment_id = handoff.environment_id
+       AND parent.id = handoff.run_id
+       AND parent.workspace_id = handoff.workspace_id
+       AND parent.status = 'waiting'
+       AND parent.current_run_lease_id IS NULL
+     WHERE handoff.child_run_id = $1
+       AND handoff.child_parent_owned IS TRUE
+       AND handoff.condition_state = 'pending'
+       AND handoff.suspension_state = 'parked'
+       AND handoff.handoff_runtime_instance_id IS NOT NULL
+       AND handoff.handoff_workspace_mount_id IS NOT NULL
+       AND handoff.handoff_mount_generation IS NOT NULL
+       AND handoff.ownership_generation IS NOT NULL
+       AND handoff.parent_writer_generation IS NOT NULL
+       AND handoff.child_writer_generation IS NULL
+    UNION
+    SELECT parent.id,
+           parent.environment_id,
+           parent.workspace_id,
+           parent.parent_run_id,
+           parent.parent_owns_lifecycle,
+           parent.actor_id
+      FROM ancestors AS child
+      JOIN runs AS parent
+        ON parent.environment_id = child.environment_id
+       AND parent.id = child.parent_run_id
+       AND parent.workspace_id = child.workspace_id
+     WHERE child.parent_owns_lifecycle IS TRUE
+)
+SELECT actor_id, id
+  FROM ancestors
+ WHERE actor_id IS NOT NULL`,
+		childRunID,
+	)
+	if err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, err
+	}
+	defer rows.Close()
+	var actorID, actorRunID pgtype.UUID
+	for rows.Next() {
+		if actorID.Valid {
+			return pgtype.UUID{}, pgtype.UUID{}, pgx.ErrNoRows
+		}
+		if err := rows.Scan(&actorID, &actorRunID); err != nil {
+			return pgtype.UUID{}, pgtype.UUID{}, err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, err
+	}
+	return actorID, actorRunID, nil
+}
+
+func lockSameWorkspaceHandoffAncestors(
+	ctx context.Context,
+	tx pgx.Tx,
+	childRunID pgtype.UUID,
+	ownerActorID pgtype.UUID,
+	ownerActorRunID pgtype.UUID,
+) (pgtype.UUID, error) {
+	rows, err := tx.Query(ctx, `
+WITH RECURSIVE ancestors AS (
+    SELECT handoff.id AS wait_id,
+           parent.id,
+           parent.environment_id,
+           parent.workspace_id,
+           parent.parent_run_id,
+           parent.parent_owns_lifecycle,
+           parent.actor_id,
+           0 AS depth
+      FROM run_waits AS handoff
+      JOIN runs AS parent
+        ON parent.environment_id = handoff.environment_id
+       AND parent.id = handoff.run_id
+       AND parent.workspace_id = handoff.workspace_id
+       AND parent.status = 'waiting'
+       AND parent.current_run_lease_id IS NULL
+     WHERE handoff.child_run_id = $1
+       AND handoff.child_parent_owned IS TRUE
+       AND handoff.condition_state = 'pending'
+       AND handoff.suspension_state = 'parked'
+       AND handoff.handoff_runtime_instance_id IS NOT NULL
+       AND handoff.handoff_workspace_mount_id IS NOT NULL
+       AND handoff.handoff_mount_generation IS NOT NULL
+       AND handoff.ownership_generation IS NOT NULL
+       AND handoff.parent_writer_generation IS NOT NULL
+       AND handoff.child_writer_generation IS NULL
+    UNION
+    SELECT child.wait_id,
+           parent.id,
+           parent.environment_id,
+           parent.workspace_id,
+           parent.parent_run_id,
+           parent.parent_owns_lifecycle,
+           parent.actor_id,
+           child.depth + 1
+      FROM ancestors AS child
+      JOIN runs AS parent
+        ON parent.environment_id = child.environment_id
+       AND parent.id = child.parent_run_id
+       AND parent.workspace_id = child.workspace_id
+     WHERE child.parent_owns_lifecycle IS TRUE
+)
+SELECT ancestors.wait_id,
+       locked_parent.id,
+       locked_parent.actor_id
+  FROM ancestors
+  JOIN runs AS locked_parent
+    ON locked_parent.id = ancestors.id
+ ORDER BY ancestors.depth DESC
+ FOR UPDATE OF locked_parent`,
+		childRunID,
+	)
+	if err != nil {
+		return pgtype.UUID{}, err
+	}
+	defer rows.Close()
+	var waitID pgtype.UUID
+	found := false
+	actorFound := false
+	for rows.Next() {
+		var candidateWaitID pgtype.UUID
+		var parentID pgtype.UUID
+		var parentActorID pgtype.UUID
+		if err := rows.Scan(&candidateWaitID, &parentID, &parentActorID); err != nil {
+			return pgtype.UUID{}, err
+		}
+		if !found {
+			waitID = candidateWaitID
+			found = true
+		} else if waitID != candidateWaitID {
+			return pgtype.UUID{}, pgx.ErrNoRows
+		}
+		if parentActorID.Valid {
+			if actorFound ||
+				!ownerActorID.Valid ||
+				parentActorID != ownerActorID ||
+				parentID != ownerActorRunID {
+				return pgtype.UUID{}, pgx.ErrNoRows
+			}
+			actorFound = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return pgtype.UUID{}, err
+	}
+	if !found {
+		return pgtype.UUID{}, nil
+	}
+	if actorFound != ownerActorID.Valid {
+		return pgtype.UUID{}, pgx.ErrNoRows
+	}
+	return waitID, nil
+}
+
+type sameWorkspaceHandoffEdge struct {
+	waitID                 pgtype.UUID
+	parentRunID            pgtype.UUID
+	childRunID             pgtype.UUID
+	parentAttempt          int32
+	runtimeID              pgtype.UUID
+	mountID                pgtype.UUID
+	mountGeneration        int64
+	ownershipGeneration    int64
+	parentWriterGeneration int64
+	childWriterGeneration  pgtype.Int8
+	checkpointID           pgtype.UUID
+	checkpointBaseID       pgtype.UUID
+	checkpointPrivateID    pgtype.UUID
+	sourceRunLeaseID       pgtype.UUID
+	sourceWorkspaceLeaseID pgtype.UUID
+	depth                  int
+}
+
+func discoverSameWorkspaceHandoffChain(
+	ctx context.Context,
+	tx pgx.Tx,
+	authority runPlacementAuthority,
+) ([]sameWorkspaceHandoffEdge, error) {
+	rows, err := tx.Query(ctx, `
+WITH RECURSIVE edges AS (
+    SELECT handoff.id,
+           handoff.run_id AS parent_run_id,
+           handoff.child_run_id,
+           0 AS depth
+      FROM run_waits AS handoff
+     WHERE handoff.id = $1
+       AND handoff.child_run_id = $2
+       AND handoff.workspace_id = $3
+       AND handoff.child_parent_owned IS TRUE
+       AND handoff.condition_state = 'pending'
+       AND handoff.suspension_state = 'parked'
+    UNION ALL
+    SELECT outer_wait.id,
+           outer_wait.run_id,
+           outer_wait.child_run_id,
+           inner_edge.depth + 1
+      FROM edges AS inner_edge
+      JOIN runs AS inner_parent
+        ON inner_parent.id = inner_edge.parent_run_id
+       AND inner_parent.workspace_id = $3
+       AND inner_parent.parent_owns_lifecycle IS TRUE
+      JOIN run_waits AS outer_wait
+        ON outer_wait.run_id = inner_parent.parent_run_id
+       AND outer_wait.child_run_id = inner_parent.id
+       AND outer_wait.workspace_id = $3
+       AND outer_wait.child_parent_owned IS TRUE
+       AND outer_wait.condition_state = 'pending'
+       AND outer_wait.suspension_state = 'parked'
+)
+SELECT handoff.id,
+       handoff.run_id,
+       handoff.child_run_id,
+       handoff.attempt_number,
+       handoff.handoff_runtime_instance_id,
+       handoff.handoff_workspace_mount_id,
+       handoff.handoff_mount_generation,
+       handoff.ownership_generation,
+       handoff.parent_writer_generation,
+       handoff.child_writer_generation,
+       checkpoint.id,
+       checkpoint.base_workspace_version_id,
+       checkpoint.private_workspace_version_id,
+       checkpoint.source_run_lease_id,
+       checkpoint.source_workspace_lease_id,
+       edges.depth
+  FROM edges
+  JOIN run_waits AS handoff
+    ON handoff.id = edges.id
+  JOIN run_checkpoints AS checkpoint
+    ON checkpoint.id = handoff.suspend_checkpoint_id
+   AND checkpoint.kind = 'suspend'
+   AND checkpoint.run_id = handoff.run_id
+   AND checkpoint.attempt_number = handoff.attempt_number
+   AND checkpoint.run_wait_id = handoff.id
+   AND checkpoint.workspace_id = handoff.workspace_id
+   AND checkpoint.state = 'ready'
+   AND checkpoint.private_workspace_version_id =
+       handoff.base_workspace_version_id
+   AND (checkpoint.expires_at IS NULL
+        OR checkpoint.expires_at > transaction_timestamp())
+ ORDER BY edges.depth DESC`,
+		authority.handoffChildWaitID,
+		authority.runID,
+		authority.workspaceID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var edges []sameWorkspaceHandoffEdge
+	for rows.Next() {
+		var edge sameWorkspaceHandoffEdge
+		if err := rows.Scan(
+			&edge.waitID,
+			&edge.parentRunID,
+			&edge.childRunID,
+			&edge.parentAttempt,
+			&edge.runtimeID,
+			&edge.mountID,
+			&edge.mountGeneration,
+			&edge.ownershipGeneration,
+			&edge.parentWriterGeneration,
+			&edge.childWriterGeneration,
+			&edge.checkpointID,
+			&edge.checkpointBaseID,
+			&edge.checkpointPrivateID,
+			&edge.sourceRunLeaseID,
+			&edge.sourceWorkspaceLeaseID,
+			&edge.depth,
+		); err != nil {
+			return nil, err
+		}
+		edges = append(edges, edge)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(edges) == 0 {
+		return nil, pgx.ErrNoRows
+	}
+	return edges, nil
+}
+
+func lockSameWorkspaceHandoffChain(
+	ctx context.Context,
+	tx pgx.Tx,
+	authority runPlacementAuthority,
+	runtime runRuntime,
+	mount runWorkspaceMount,
+) error {
+	edges, err := discoverSameWorkspaceHandoffChain(ctx, tx, authority)
+	if err != nil {
+		return err
+	}
+
+	// The source Run and Workspace Lease receipts are locked before any Wait,
+	// preserving the canonical physical-authority-before-Wait order.
+	for _, edge := range edges {
+		var state string
+		var runtimeID, workspaceID pgtype.UUID
+		var attemptNumber int32
+		err := tx.QueryRow(ctx, `
+SELECT state, runtime_instance_id, workspace_id, attempt_number
+  FROM run_leases
+ WHERE id = $1
+   AND run_id = $2
+   AND attempt_number = $3
+   AND workspace_id = $4
+ FOR UPDATE`,
+			edge.sourceRunLeaseID,
+			edge.parentRunID,
+			edge.parentAttempt,
+			authority.workspaceID,
+		).Scan(&state, &runtimeID, &workspaceID, &attemptNumber)
+		if err != nil {
+			return err
+		}
+		if state != "checkpointed" ||
+			runtimeID != runtime.id ||
+			workspaceID != authority.workspaceID ||
+			attemptNumber != edge.parentAttempt ||
+			!edge.sourceRunLeaseID.Valid {
+			return pgx.ErrNoRows
+		}
+	}
+	for _, edge := range edges {
+		var state string
+		var ownerRunLeaseID, runtimeID, workspaceID, mountID, baseID pgtype.UUID
+		var ownership, writer, mountGeneration int64
+		err := tx.QueryRow(ctx, `
+SELECT state,
+       owner_run_lease_id,
+       runtime_instance_id,
+       workspace_id,
+       workspace_mount_id,
+       base_version_id,
+       ownership_generation,
+       writer_generation,
+       mount_fencing_generation
+  FROM workspace_leases
+ WHERE id = $1
+   AND workspace_id = $2
+   AND owner_run_lease_id = $3
+ FOR UPDATE`,
+			edge.sourceWorkspaceLeaseID,
+			authority.workspaceID,
+			edge.sourceRunLeaseID,
+		).Scan(
+			&state,
+			&ownerRunLeaseID,
+			&runtimeID,
+			&workspaceID,
+			&mountID,
+			&baseID,
+			&ownership,
+			&writer,
+			&mountGeneration,
+		)
+		if err != nil {
+			return err
+		}
+		if (state != "released" && state != "fenced") ||
+			ownerRunLeaseID != edge.sourceRunLeaseID ||
+			runtimeID != runtime.id ||
+			workspaceID != authority.workspaceID ||
+			mountID != mount.id ||
+			baseID != edge.checkpointBaseID ||
+			ownership != edge.ownershipGeneration ||
+			writer != edge.parentWriterGeneration ||
+			mountGeneration != edge.mountGeneration {
+			return pgx.ErrNoRows
+		}
+	}
+
+	var priorChildWriter pgtype.Int8
+	for index, edge := range edges {
+		var parentRunID, childRunID, runtimeID, mountID, priorRunLeaseID pgtype.UUID
+		var mountGeneration, ownership, parentWriter int64
+		var childWriter pgtype.Int8
+		var ownerMatch bool
+		err := tx.QueryRow(ctx, `
+SELECT handoff.run_id,
+       handoff.child_run_id,
+       handoff.handoff_runtime_instance_id,
+       handoff.handoff_workspace_mount_id,
+       handoff.handoff_mount_generation,
+       handoff.ownership_generation,
+       handoff.parent_writer_generation,
+       handoff.child_writer_generation,
+       handoff.prior_run_lease_id,
+       (
+           (workspaces.owner_run_id = parent.id
+            AND workspaces.owner_actor_id IS NULL)
+           OR
+           (workspaces.owner_actor_id = parent.actor_id
+            AND workspaces.owner_run_id IS NULL
+            AND parent.actor_id IS NOT NULL)
+       )
+  FROM run_waits AS handoff
+  JOIN runs AS parent
+    ON parent.id = handoff.run_id
+   AND parent.workspace_id = handoff.workspace_id
+   AND parent.status = 'waiting'
+   AND parent.current_run_lease_id IS NULL
+  JOIN workspaces
+    ON workspaces.id = handoff.workspace_id
+ WHERE handoff.id = $1
+   AND handoff.workspace_id = $2
+   AND handoff.child_parent_owned IS TRUE
+   AND handoff.condition_state = 'pending'
+   AND handoff.suspension_state = 'parked'
+ FOR UPDATE OF handoff`,
+			edge.waitID,
+			authority.workspaceID,
+		).Scan(
+			&parentRunID,
+			&childRunID,
+			&runtimeID,
+			&mountID,
+			&mountGeneration,
+			&ownership,
+			&parentWriter,
+			&childWriter,
+			&priorRunLeaseID,
+			&ownerMatch,
+		)
+		if err != nil {
+			return err
+		}
+		if parentRunID != edge.parentRunID ||
+			childRunID != edge.childRunID ||
+			runtimeID != runtime.id ||
+			mountID != mount.id ||
+			mountGeneration != edge.mountGeneration ||
+			ownership != authority.ownershipGeneration ||
+			parentWriter != edge.parentWriterGeneration ||
+			childWriter != edge.childWriterGeneration ||
+			priorRunLeaseID != edge.sourceRunLeaseID {
+			return pgx.ErrNoRows
+		}
+		if index == 0 {
+			if !ownerMatch {
+				return pgx.ErrNoRows
+			}
+		} else if !priorChildWriter.Valid ||
+			priorChildWriter.Int64 != parentWriter {
+			return pgx.ErrNoRows
+		}
+		if index == len(edges)-1 {
+			if edge.waitID != authority.handoffChildWaitID ||
+				edge.childRunID != authority.runID ||
+				childWriter.Valid ||
+				parentWriter != authority.handoffParentWriter.Int64 {
+				return pgx.ErrNoRows
+			}
+		} else if !childWriter.Valid {
+			return pgx.ErrNoRows
+		}
+		priorChildWriter = childWriter
+	}
+
+	for _, edge := range edges {
+		var sourceRunLeaseID, sourceWorkspaceLeaseID, baseID, privateID pgtype.UUID
+		err := tx.QueryRow(ctx, `
+SELECT source_run_lease_id,
+       source_workspace_lease_id,
+       base_workspace_version_id,
+       private_workspace_version_id
+  FROM run_checkpoints
+ WHERE id = $1
+   AND kind = 'suspend'
+   AND run_id = $2
+   AND attempt_number = $3
+   AND run_wait_id = $4
+   AND workspace_id = $5
+   AND state = 'ready'
+   AND (expires_at IS NULL OR expires_at > transaction_timestamp())
+ FOR UPDATE`,
+			edge.checkpointID,
+			edge.parentRunID,
+			edge.parentAttempt,
+			edge.waitID,
+			authority.workspaceID,
+		).Scan(
+			&sourceRunLeaseID,
+			&sourceWorkspaceLeaseID,
+			&baseID,
+			&privateID,
+		)
+		if err != nil {
+			return err
+		}
+		if sourceRunLeaseID != edge.sourceRunLeaseID ||
+			sourceWorkspaceLeaseID != edge.sourceWorkspaceLeaseID ||
+			baseID != edge.checkpointBaseID ||
+			privateID != edge.checkpointPrivateID {
+			return pgx.ErrNoRows
+		}
+	}
+	return nil
+}
+
+func lockRunSecrets(
 	ctx context.Context,
 	tx pgx.Tx,
 	candidate ReadyRunCandidate,
@@ -489,12 +1112,6 @@ SELECT secrets.state = 'active'
        AND secret_resolutions.id IS NOT NULL
        AND secret_resolutions.revocation_generation = secrets.revocation_generation
   FROM runs
-  JOIN run_waits
-    ON run_waits.run_id = runs.id
-   AND run_waits.suspension_state = 'resume_pending'
-   AND run_waits.handoff_runtime_instance_id IS NULL
-   AND run_waits.handoff_workspace_mount_id IS NULL
-   AND run_waits.handoff_resume_checkpoint_id IS NULL
   JOIN workspace_secrets ON workspace_secrets.workspace_id = runs.workspace_id
   JOIN secrets ON secrets.id = workspace_secrets.secret_id
   LEFT JOIN secret_resolutions
@@ -526,7 +1143,7 @@ SELECT secrets.state = 'active'
 		}
 		if !valid {
 			secretRows.Close()
-			return errors.New("Run restore Secret resolution is revoked or incomplete")
+			return errors.New("Run Secret resolution is revoked or incomplete")
 		}
 	}
 	if err := secretRows.Err(); err != nil {

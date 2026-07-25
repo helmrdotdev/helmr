@@ -25,7 +25,8 @@ import (
 var (
 	errChildTaskInvokeStale       = errors.New("child Task invocation authority is stale")
 	errChildTaskInvokeUnsupported = errors.New("child Task invocation method is unsupported")
-	errChildTaskSameWorkspace     = errors.New("same-Workspace child Task handoff is not implemented")
+	errChildTaskSameWorkspace     = errors.New("same-Workspace child Task start is unsupported")
+	errWorkspaceHandoffConflict   = errors.New("same-Workspace call reached a different Workspace frontier")
 )
 
 type childTaskOptions struct {
@@ -39,9 +40,12 @@ type childTaskOptions struct {
 }
 
 type childTaskReceipt struct {
-	RunID       string `json:"runId"`
-	RunPublicID string `json:"runPublicId"`
-	WorkspaceID string `json:"workspaceId"`
+	RunID                  string `json:"runId"`
+	RunPublicID            string `json:"runPublicId"`
+	WorkspaceID            string `json:"workspaceId"`
+	RunWaitID              string `json:"runWaitId,omitempty"`
+	BaseWorkspaceVersionID string `json:"baseWorkspaceVersionId,omitempty"`
+	BaseWorkspaceDigest    string `json:"baseWorkspaceDigest,omitempty"`
 }
 
 type childTaskInvokeInput struct {
@@ -124,11 +128,14 @@ func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
 		s.writeChildTaskInvokeError(w, request.CorrelationID, request.Method, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerInvokeChildTaskResponse{
+	response := api.WorkerInvokeChildTaskResponse{
 		CorrelationID: request.CorrelationID,
-		Completed:     &api.WorkerChildTaskStartResult{RunID: result.RunPublicID},
 		OpenedWait:    result.openedWait,
-	})
+	}
+	if result.RunPublicID != "" {
+		response.Completed = &api.WorkerChildTaskStartResult{RunID: result.RunPublicID}
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func normalizeWorkerChildTaskRequest(
@@ -233,13 +240,16 @@ func (s *Server) invokeChildTask(
 			}
 			targetWorkspaceID = pgvalue.MustUUIDValue(resolved)
 		}
-		if targetWorkspaceID == input.SourceWorkspaceID {
+		sameWorkspace := targetWorkspaceID == input.SourceWorkspaceID
+		if sameWorkspace && input.Request.Method != "call" {
 			return errChildTaskSameWorkspace
 		}
-		if err := work.q.LockChildWorkspacePair(
-			ctx, childWorkspacePairLock(input.SourceWorkspaceID, targetWorkspaceID),
-		); err != nil {
-			return fmt.Errorf("lock child Task Workspace pair: %w", err)
+		if !sameWorkspace {
+			if err := work.q.LockChildWorkspacePair(
+				ctx, childWorkspacePairLock(input.SourceWorkspaceID, targetWorkspaceID),
+			); err != nil {
+				return fmt.Errorf("lock child Task Workspace pair: %w", err)
+			}
 		}
 		authority, err := lockChildTaskInvokeAuthority(ctx, work.q, input)
 		if err != nil {
@@ -250,6 +260,40 @@ func (s *Server) invokeChildTask(
 			authority.run.EnvironmentID != pgvalue.UUID(input.Normalized.EnvironmentID) ||
 			authority.run.WorkspaceID != pgvalue.UUID(input.SourceWorkspaceID) {
 			return errChildTaskInvokeStale
+		}
+		if sameWorkspace {
+			if edgeClaim == nil {
+				return errors.New("same-Workspace child Task call claim is unavailable")
+			}
+			if _, err := loadChildTaskAdmission(
+				ctx,
+				work.q,
+				authority.run,
+				input.Normalized,
+			); err != nil {
+				return err
+			}
+			opened, err := registerSameWorkspaceChildCall(
+				ctx,
+				work.q,
+				input,
+				authority,
+				*edgeClaim,
+				invocationFingerprint,
+				replay,
+			)
+			if err != nil {
+				return err
+			}
+			result.openedWait = &opened
+			if replay != nil {
+				result.taskStartResult = taskStartResult{
+					RunID:       uuid.MustParse(replay.RunID),
+					RunPublicID: replay.RunPublicID,
+					Replayed:    true,
+				}
+			}
+			return nil
 		}
 		if replay != nil {
 			result.taskStartResult = taskStartResult{
@@ -434,6 +478,248 @@ func (s *Server) invokeChildTask(
 		return nil
 	})
 	return result, err
+}
+
+func loadChildTaskAdmission(
+	ctx context.Context,
+	store db.Querier,
+	parent db.Run,
+	request normalizedTaskStart,
+) (deployment.TaskRunAdmission, error) {
+	definition, err := store.GetDeploymentDefinition(ctx, db.GetDeploymentDefinitionParams{
+		EnvironmentID: parent.EnvironmentID,
+		DeploymentID:  parent.DeploymentID,
+		Kind:          "task",
+		DeclaredID:    request.TaskDeclaredID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return deployment.TaskRunAdmission{}, errTaskNotDeployed
+	}
+	if err != nil {
+		return deployment.TaskRunAdmission{}, fmt.Errorf(
+			"load child Task definition: %w",
+			err,
+		)
+	}
+	program, err := store.GetDeploymentProgramAuthority(
+		ctx,
+		db.GetDeploymentProgramAuthorityParams{
+			EnvironmentID: parent.EnvironmentID,
+			DeploymentID:  parent.DeploymentID,
+		},
+	)
+	if err != nil {
+		return deployment.TaskRunAdmission{}, fmt.Errorf(
+			"load child Task deployment authority: %w",
+			err,
+		)
+	}
+	admission, err := deployment.ResolveTaskRunAdmission(
+		definition.ManifestVersion,
+		definition.DeclaredID,
+		definition.Manifest,
+		definition.ManifestDigest,
+		program.QueueConfig,
+		request.QueueName,
+		request.QueuedTTLMS,
+		request.RetryPolicy,
+	)
+	if err != nil {
+		return deployment.TaskRunAdmission{}, fmt.Errorf(
+			"%w: %v",
+			errTaskStartAuthority,
+			err,
+		)
+	}
+	if admission.HasPayload != request.PayloadPresent {
+		return deployment.TaskRunAdmission{}, errTaskPayloadPresenceInvalid
+	}
+	return admission, nil
+}
+
+func registerSameWorkspaceChildCall(
+	ctx context.Context,
+	store db.Querier,
+	input childTaskInvokeInput,
+	authority runLeaseClaimAuthority,
+	claim db.IdempotencyClaim,
+	fingerprint idempotency.TaskChildInvokeFingerprint,
+	replay *childTaskReceipt,
+) (api.WorkerCreateRunWaitResponse, error) {
+	requestFingerprint := fmt.Sprintf("sha256:%x", claim.RequestFingerprint)
+	if replay != nil {
+		return replayBoundSameWorkspaceChildCall(
+			ctx,
+			store,
+			input,
+			authority,
+			claim,
+			requestFingerprint,
+			*replay,
+		)
+	}
+	correlationID, err := uuid.Parse(input.Request.CorrelationID)
+	if err != nil {
+		return api.WorkerCreateRunWaitResponse{}, errChildTaskInvokeStale
+	}
+	waitID := derivedRunWaitID(
+		input.Parsed.runID,
+		input.Request.Lease.AttemptNumber,
+		correlationID,
+		"child-call",
+	)
+	resumeAttachID := derivedRunWaitID(
+		input.Parsed.runID,
+		input.Request.Lease.AttemptNumber,
+		correlationID,
+		"resume-attach",
+	)
+	childRequest, err := json.Marshal(fingerprint)
+	if err != nil {
+		return api.WorkerCreateRunWaitResponse{}, fmt.Errorf(
+			"encode same-Workspace child Task call request: %w",
+			err,
+		)
+	}
+	response := api.WorkerCreateRunWaitResponse{
+		RunID:             input.Request.Lease.RunID,
+		RunWaitID:         waitID.String(),
+		ResumeAttachID:    resumeAttachID.String(),
+		RuntimeInstanceID: input.Request.Lease.RuntimeInstanceID,
+		RuntimeEpoch:      input.Request.Lease.WorkerEpoch,
+		CheckpointDelayMs: 0,
+	}
+	replayed, err := store.GetSameWorkspaceChildCallReplay(
+		ctx,
+		db.GetSameWorkspaceChildCallReplayParams{
+			EnvironmentID:                  authority.run.EnvironmentID,
+			RunID:                          authority.run.ID,
+			WorkspaceID:                    authority.run.WorkspaceID,
+			AttemptNumber:                  input.Request.Lease.AttemptNumber,
+			ID:                             pgvalue.UUID(waitID),
+			ChildTargetDeclaredID:          pgvalue.Text(input.Normalized.TaskDeclaredID),
+			ChildClaimID:                   claim.ID,
+			RegistrationRequestFingerprint: pgvalue.Text(requestFingerprint),
+			ResumeAttachID:                 pgvalue.UUID(resumeAttachID),
+			RunLeaseID:                     authority.runLease.ID,
+		},
+	)
+	if err == nil {
+		if err := validateRunWaitActorCursor(authority, replayed); err != nil {
+			return api.WorkerCreateRunWaitResponse{}, err
+		}
+		if replayed.SuspensionState == db.RunWaitStateReleased {
+			if replayed.ConditionState != db.WaitStateCompleted ||
+				replayed.ConditionResult == nil {
+				return api.WorkerCreateRunWaitResponse{}, errChildTaskInvokeStale
+			}
+			response.ResolutionKind = "completed"
+			response.Resolution = append(
+				json.RawMessage(nil),
+				replayed.ConditionResult...,
+			)
+		}
+		return response, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return api.WorkerCreateRunWaitResponse{}, fmt.Errorf(
+			"load same-Workspace child Task call replay: %w",
+			err,
+		)
+	}
+	actorCursor := pgtype.Int8{}
+	if input.Request.ActorSpeculativeInputSequence != nil {
+		actorCursor = pgtype.Int8{
+			Int64: *input.Request.ActorSpeculativeInputSequence,
+			Valid: true,
+		}
+	}
+	registered, err := store.RegisterSameWorkspaceChildCall(
+		ctx,
+		db.RegisterSameWorkspaceChildCallParams{
+			ID:                             pgvalue.UUID(waitID),
+			ChildTargetDeclaredID:          pgvalue.Text(input.Normalized.TaskDeclaredID),
+			ChildClaimID:                   claim.ID,
+			ChildRequest:                   childRequest,
+			RegistrationRequestFingerprint: pgvalue.Text(requestFingerprint),
+			AttemptNumber:                  input.Request.Lease.AttemptNumber,
+			ActorSpeculativeInputSequence:  actorCursor,
+			CurrentRunLeaseID:              authority.runLease.ID,
+			ResumeAttachID:                 pgvalue.UUID(resumeAttachID),
+			RunID:                          authority.run.ID,
+			EnvironmentID:                  authority.run.EnvironmentID,
+			WorkspaceID:                    authority.run.WorkspaceID,
+			ExpectedRunningStateVersion:    authority.run.StateVersion,
+		},
+	)
+	if err != nil {
+		return api.WorkerCreateRunWaitResponse{}, staleChildTaskInvoke(err)
+	}
+	if err := validateRunWaitActorCursor(authority, registered); err != nil {
+		return api.WorkerCreateRunWaitResponse{}, err
+	}
+	return response, nil
+}
+
+func replayBoundSameWorkspaceChildCall(
+	ctx context.Context,
+	store db.Querier,
+	input childTaskInvokeInput,
+	authority runLeaseClaimAuthority,
+	claim db.IdempotencyClaim,
+	requestFingerprint string,
+	receipt childTaskReceipt,
+) (api.WorkerCreateRunWaitResponse, error) {
+	if receipt.RunWaitID == "" ||
+		receipt.BaseWorkspaceVersionID == "" ||
+		receipt.BaseWorkspaceDigest == "" {
+		return api.WorkerCreateRunWaitResponse{}, errWorkspaceHandoffConflict
+	}
+	waitID := uuid.MustParse(receipt.RunWaitID)
+	childRunID := uuid.MustParse(receipt.RunID)
+	baseID := uuid.MustParse(receipt.BaseWorkspaceVersionID)
+	replayed, err := store.GetBoundSameWorkspaceChildCallReplay(
+		ctx,
+		db.GetBoundSameWorkspaceChildCallReplayParams{
+			EnvironmentID:                  authority.run.EnvironmentID,
+			RunID:                          authority.run.ID,
+			WorkspaceID:                    authority.run.WorkspaceID,
+			ID:                             pgvalue.UUID(waitID),
+			ChildTargetDeclaredID:          pgvalue.Text(input.Normalized.TaskDeclaredID),
+			ChildClaimID:                   claim.ID,
+			RegistrationRequestFingerprint: pgvalue.Text(requestFingerprint),
+			ChildRunID:                     pgvalue.UUID(childRunID),
+			BaseWorkspaceVersionID:         pgvalue.UUID(baseID),
+			BaseWorkspaceContentDigest:     pgvalue.Text(receipt.BaseWorkspaceDigest),
+		},
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return api.WorkerCreateRunWaitResponse{}, errWorkspaceHandoffConflict
+	}
+	if err != nil {
+		return api.WorkerCreateRunWaitResponse{}, fmt.Errorf(
+			"load bound same-Workspace child Task call: %w",
+			err,
+		)
+	}
+	if replayed.SuspensionState != db.RunWaitStateReleased ||
+		replayed.ConditionState != db.WaitStateCompleted ||
+		replayed.ConditionResult == nil ||
+		!replayed.ResumeWorkspaceVersionID.Valid {
+		return api.WorkerCreateRunWaitResponse{}, errWorkspaceHandoffConflict
+	}
+	return api.WorkerCreateRunWaitResponse{
+		RunID:             input.Request.Lease.RunID,
+		RunWaitID:         waitID.String(),
+		ResumeAttachID:    pgvalue.MustUUIDValue(replayed.ResumeAttachID).String(),
+		RuntimeInstanceID: input.Request.Lease.RuntimeInstanceID,
+		RuntimeEpoch:      input.Request.Lease.WorkerEpoch,
+		ResolutionKind:    "completed",
+		Resolution: append(
+			json.RawMessage(nil),
+			replayed.ConditionResult...,
+		),
+	}, nil
 }
 
 func loadChildTaskInvokeLocators(
@@ -687,6 +973,20 @@ func decodeChildTaskReceipt(raw []byte) (childTaskReceipt, error) {
 	if err := publicid.ValidateFor(publicid.Run, receipt.RunPublicID); err != nil {
 		return childTaskReceipt{}, errTaskStartReceiptInvalid
 	}
+	hasHandoff := receipt.RunWaitID != "" ||
+		receipt.BaseWorkspaceVersionID != "" ||
+		receipt.BaseWorkspaceDigest != ""
+	if hasHandoff {
+		waitID, waitErr := uuid.Parse(receipt.RunWaitID)
+		baseID, baseErr := uuid.Parse(receipt.BaseWorkspaceVersionID)
+		if waitErr != nil || waitID == uuid.Nil ||
+			waitID.String() != receipt.RunWaitID ||
+			baseErr != nil || baseID == uuid.Nil ||
+			baseID.String() != receipt.BaseWorkspaceVersionID ||
+			!taskWorkspaceDigestPattern.MatchString(receipt.BaseWorkspaceDigest) {
+			return childTaskReceipt{}, errTaskStartReceiptInvalid
+		}
+	}
 	return receipt, nil
 }
 
@@ -717,6 +1017,10 @@ func (s *Server) writeChildTaskInvokeError(
 	case errors.Is(err, errChildTaskSameWorkspace):
 		failure = api.WorkerRuntimeOperationFailure{
 			Code: "same_workspace_" + method + "_unsupported", Message: err.Error(),
+		}
+	case errors.Is(err, errWorkspaceHandoffConflict):
+		failure = api.WorkerRuntimeOperationFailure{
+			Code: "workspace_handoff_conflict", Message: err.Error(),
 		}
 	case errors.Is(err, errTaskNotDeployed):
 		failure = api.WorkerRuntimeOperationFailure{Code: "task_not_deployed", Message: err.Error()}

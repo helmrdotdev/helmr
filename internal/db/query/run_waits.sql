@@ -19,6 +19,78 @@ SELECT *
    AND registration_request_fingerprint = sqlc.arg(registration_request_fingerprint)
    AND resume_attach_id = sqlc.arg(resume_attach_id);
 
+-- name: GetSameWorkspaceChildCallReplay :one
+SELECT *
+  FROM run_waits
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND run_id = sqlc.arg(run_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND attempt_number = sqlc.arg(attempt_number)
+   AND id = sqlc.arg(id)
+   AND kind = 'child'
+   AND child_parent_owned IS TRUE
+   AND child_target_declared_id = sqlc.arg(child_target_declared_id)
+   AND child_claim_id = sqlc.arg(child_claim_id)
+   AND registration_request_fingerprint = sqlc.arg(registration_request_fingerprint)
+   AND resume_attach_id = sqlc.arg(resume_attach_id)
+   AND (current_run_lease_id = sqlc.arg(run_lease_id)
+        OR prior_run_lease_id = sqlc.arg(run_lease_id));
+
+-- name: GetBoundSameWorkspaceChildCallReplay :one
+SELECT *
+  FROM run_waits
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND run_id = sqlc.arg(run_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND id = sqlc.arg(id)
+   AND kind = 'child'
+   AND child_parent_owned IS TRUE
+   AND child_target_declared_id = sqlc.arg(child_target_declared_id)
+   AND child_claim_id = sqlc.arg(child_claim_id)
+   AND registration_request_fingerprint = sqlc.arg(registration_request_fingerprint)
+   AND child_run_id = sqlc.arg(child_run_id)
+   AND base_workspace_version_id = sqlc.arg(base_workspace_version_id)
+   AND base_workspace_content_digest = sqlc.arg(base_workspace_content_digest)
+   AND handoff_runtime_instance_id IS NOT NULL
+   AND handoff_workspace_mount_id IS NOT NULL
+   AND handoff_mount_generation IS NOT NULL
+   AND ownership_generation IS NOT NULL
+   AND parent_writer_generation IS NOT NULL;
+
+-- name: RegisterSameWorkspaceChildCall :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'waiting',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = sqlc.arg(run_id)
+       AND runs.environment_id = sqlc.arg(environment_id)
+       AND runs.workspace_id = sqlc.arg(workspace_id)
+       AND runs.status = 'running'
+       AND runs.state_version = sqlc.arg(expected_running_state_version)
+       AND runs.current_attempt_number = sqlc.arg(attempt_number)
+       AND runs.current_run_lease_id = sqlc.arg(current_run_lease_id)
+       AND runs.active_started_at IS NOT NULL
+    RETURNING *
+)
+INSERT INTO run_waits (
+    id, environment_id, run_id, workspace_id, kind,
+    child_parent_owned, child_target_declared_id, child_claim_id, child_request,
+    registration_request_fingerprint, expected_run_state_version,
+    attempt_number, actor_speculative_input_sequence, current_run_lease_id,
+    checkpoint_due_at, resume_attach_id, metadata, tags
+)
+SELECT sqlc.arg(id), moved_run.environment_id, moved_run.id,
+       moved_run.workspace_id, 'child', TRUE,
+       sqlc.arg(child_target_declared_id), sqlc.arg(child_claim_id),
+       sqlc.arg(child_request), sqlc.arg(registration_request_fingerprint),
+       moved_run.state_version, sqlc.arg(attempt_number),
+       sqlc.narg(actor_speculative_input_sequence),
+       sqlc.arg(current_run_lease_id), transaction_timestamp(),
+       sqlc.arg(resume_attach_id), '{}'::jsonb, '{}'::text[]
+  FROM moved_run
+RETURNING *;
+
 -- name: RegisterDifferentWorkspaceChildCall :one
 WITH moved_run AS (
     UPDATE runs

@@ -1374,6 +1374,117 @@ func (q *Queries) GetActorInputRunWaitRegistrationReplay(ctx context.Context, ar
 	return i, err
 }
 
+const getBoundSameWorkspaceChildCallReplay = `-- name: GetBoundSameWorkspaceChildCallReplay :one
+SELECT id, environment_id, run_id, workspace_id, kind, condition_state, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_parent_owned, child_target_declared_id, child_claim_id, child_request, actor_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_actor_record_id, completed_actor_record_direction, suspension_state, token_registration_run_state_version, registration_request_fingerprint, expected_run_state_version, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, handoff_resume_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, child_result_version_id, resume_workspace_version_id, handoff_runtime_instance_id, handoff_workspace_mount_id, handoff_mount_generation, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
+  FROM run_waits
+ WHERE environment_id = $1
+   AND run_id = $2
+   AND workspace_id = $3
+   AND id = $4
+   AND kind = 'child'
+   AND child_parent_owned IS TRUE
+   AND child_target_declared_id = $5
+   AND child_claim_id = $6
+   AND registration_request_fingerprint = $7
+   AND child_run_id = $8
+   AND base_workspace_version_id = $9
+   AND base_workspace_content_digest = $10
+   AND handoff_runtime_instance_id IS NOT NULL
+   AND handoff_workspace_mount_id IS NOT NULL
+   AND handoff_mount_generation IS NOT NULL
+   AND ownership_generation IS NOT NULL
+   AND parent_writer_generation IS NOT NULL
+`
+
+type GetBoundSameWorkspaceChildCallReplayParams struct {
+	EnvironmentID                  pgtype.UUID `json:"environment_id"`
+	RunID                          pgtype.UUID `json:"run_id"`
+	WorkspaceID                    pgtype.UUID `json:"workspace_id"`
+	ID                             pgtype.UUID `json:"id"`
+	ChildTargetDeclaredID          pgtype.Text `json:"child_target_declared_id"`
+	ChildClaimID                   pgtype.UUID `json:"child_claim_id"`
+	RegistrationRequestFingerprint pgtype.Text `json:"registration_request_fingerprint"`
+	ChildRunID                     pgtype.UUID `json:"child_run_id"`
+	BaseWorkspaceVersionID         pgtype.UUID `json:"base_workspace_version_id"`
+	BaseWorkspaceContentDigest     pgtype.Text `json:"base_workspace_content_digest"`
+}
+
+func (q *Queries) GetBoundSameWorkspaceChildCallReplay(ctx context.Context, arg GetBoundSameWorkspaceChildCallReplayParams) (RunWait, error) {
+	row := q.db.QueryRow(ctx, getBoundSameWorkspaceChildCallReplay,
+		arg.EnvironmentID,
+		arg.RunID,
+		arg.WorkspaceID,
+		arg.ID,
+		arg.ChildTargetDeclaredID,
+		arg.ChildClaimID,
+		arg.RegistrationRequestFingerprint,
+		arg.ChildRunID,
+		arg.BaseWorkspaceVersionID,
+		arg.BaseWorkspaceContentDigest,
+	)
+	var i RunWait
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.ConditionState,
+		&i.DueAt,
+		&i.TimeoutAt,
+		&i.IdleTimeoutMs,
+		&i.TokenID,
+		&i.ChildRunID,
+		&i.ChildParentOwned,
+		&i.ChildTargetDeclaredID,
+		&i.ChildClaimID,
+		&i.ChildRequest,
+		&i.ActorID,
+		&i.AfterInputSequence,
+		&i.ConditionResult,
+		&i.ConditionError,
+		&i.ConditionTerminalAt,
+		&i.ConditionReasonCode,
+		&i.CompletedActorRecordID,
+		&i.CompletedActorRecordDirection,
+		&i.SuspensionState,
+		&i.TokenRegistrationRunStateVersion,
+		&i.RegistrationRequestFingerprint,
+		&i.ExpectedRunStateVersion,
+		&i.AttemptNumber,
+		&i.ActorSpeculativeInputSequence,
+		&i.CurrentRunLeaseID,
+		&i.PriorRunLeaseID,
+		&i.CheckpointRequestVersion,
+		&i.CheckpointAckVersion,
+		&i.CheckpointDueAt,
+		&i.SuspendCheckpointID,
+		&i.HandoffResumeCheckpointID,
+		&i.ResumeAttachID,
+		&i.ResumeRequestVersion,
+		&i.ResumeAckVersion,
+		&i.BaseWorkspaceVersionID,
+		&i.BaseWorkspaceContentDigest,
+		&i.ChildResultVersionID,
+		&i.ResumeWorkspaceVersionID,
+		&i.HandoffRuntimeInstanceID,
+		&i.HandoffWorkspaceMountID,
+		&i.HandoffMountGeneration,
+		&i.OwnershipGeneration,
+		&i.ParentWriterGeneration,
+		&i.ChildWriterGeneration,
+		&i.ResumeWriterGeneration,
+		&i.Metadata,
+		&i.Tags,
+		&i.SuspensionTerminalAt,
+		&i.SuspensionReasonCode,
+		&i.SuspensionError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getChildCallRunWaitReplay = `-- name: GetChildCallRunWaitReplay :one
 SELECT id, environment_id, run_id, workspace_id, kind, condition_state, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_parent_owned, child_target_declared_id, child_claim_id, child_request, actor_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_actor_record_id, completed_actor_record_direction, suspension_state, token_registration_run_state_version, registration_request_fingerprint, expected_run_state_version, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, handoff_resume_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, child_result_version_id, resume_workspace_version_id, handoff_runtime_instance_id, handoff_workspace_mount_id, handoff_mount_generation, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
   FROM run_waits
@@ -1585,6 +1696,113 @@ type GetRunWaitParams struct {
 
 func (q *Queries) GetRunWait(ctx context.Context, arg GetRunWaitParams) (RunWait, error) {
 	row := q.db.QueryRow(ctx, getRunWait, arg.RunID, arg.AttemptNumber, arg.ID)
+	var i RunWait
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.ConditionState,
+		&i.DueAt,
+		&i.TimeoutAt,
+		&i.IdleTimeoutMs,
+		&i.TokenID,
+		&i.ChildRunID,
+		&i.ChildParentOwned,
+		&i.ChildTargetDeclaredID,
+		&i.ChildClaimID,
+		&i.ChildRequest,
+		&i.ActorID,
+		&i.AfterInputSequence,
+		&i.ConditionResult,
+		&i.ConditionError,
+		&i.ConditionTerminalAt,
+		&i.ConditionReasonCode,
+		&i.CompletedActorRecordID,
+		&i.CompletedActorRecordDirection,
+		&i.SuspensionState,
+		&i.TokenRegistrationRunStateVersion,
+		&i.RegistrationRequestFingerprint,
+		&i.ExpectedRunStateVersion,
+		&i.AttemptNumber,
+		&i.ActorSpeculativeInputSequence,
+		&i.CurrentRunLeaseID,
+		&i.PriorRunLeaseID,
+		&i.CheckpointRequestVersion,
+		&i.CheckpointAckVersion,
+		&i.CheckpointDueAt,
+		&i.SuspendCheckpointID,
+		&i.HandoffResumeCheckpointID,
+		&i.ResumeAttachID,
+		&i.ResumeRequestVersion,
+		&i.ResumeAckVersion,
+		&i.BaseWorkspaceVersionID,
+		&i.BaseWorkspaceContentDigest,
+		&i.ChildResultVersionID,
+		&i.ResumeWorkspaceVersionID,
+		&i.HandoffRuntimeInstanceID,
+		&i.HandoffWorkspaceMountID,
+		&i.HandoffMountGeneration,
+		&i.OwnershipGeneration,
+		&i.ParentWriterGeneration,
+		&i.ChildWriterGeneration,
+		&i.ResumeWriterGeneration,
+		&i.Metadata,
+		&i.Tags,
+		&i.SuspensionTerminalAt,
+		&i.SuspensionReasonCode,
+		&i.SuspensionError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSameWorkspaceChildCallReplay = `-- name: GetSameWorkspaceChildCallReplay :one
+SELECT id, environment_id, run_id, workspace_id, kind, condition_state, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_parent_owned, child_target_declared_id, child_claim_id, child_request, actor_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_actor_record_id, completed_actor_record_direction, suspension_state, token_registration_run_state_version, registration_request_fingerprint, expected_run_state_version, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, handoff_resume_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, child_result_version_id, resume_workspace_version_id, handoff_runtime_instance_id, handoff_workspace_mount_id, handoff_mount_generation, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
+  FROM run_waits
+ WHERE environment_id = $1
+   AND run_id = $2
+   AND workspace_id = $3
+   AND attempt_number = $4
+   AND id = $5
+   AND kind = 'child'
+   AND child_parent_owned IS TRUE
+   AND child_target_declared_id = $6
+   AND child_claim_id = $7
+   AND registration_request_fingerprint = $8
+   AND resume_attach_id = $9
+   AND (current_run_lease_id = $10
+        OR prior_run_lease_id = $10)
+`
+
+type GetSameWorkspaceChildCallReplayParams struct {
+	EnvironmentID                  pgtype.UUID `json:"environment_id"`
+	RunID                          pgtype.UUID `json:"run_id"`
+	WorkspaceID                    pgtype.UUID `json:"workspace_id"`
+	AttemptNumber                  int32       `json:"attempt_number"`
+	ID                             pgtype.UUID `json:"id"`
+	ChildTargetDeclaredID          pgtype.Text `json:"child_target_declared_id"`
+	ChildClaimID                   pgtype.UUID `json:"child_claim_id"`
+	RegistrationRequestFingerprint pgtype.Text `json:"registration_request_fingerprint"`
+	ResumeAttachID                 pgtype.UUID `json:"resume_attach_id"`
+	RunLeaseID                     pgtype.UUID `json:"run_lease_id"`
+}
+
+func (q *Queries) GetSameWorkspaceChildCallReplay(ctx context.Context, arg GetSameWorkspaceChildCallReplayParams) (RunWait, error) {
+	row := q.db.QueryRow(ctx, getSameWorkspaceChildCallReplay,
+		arg.EnvironmentID,
+		arg.RunID,
+		arg.WorkspaceID,
+		arg.AttemptNumber,
+		arg.ID,
+		arg.ChildTargetDeclaredID,
+		arg.ChildClaimID,
+		arg.RegistrationRequestFingerprint,
+		arg.ResumeAttachID,
+		arg.RunLeaseID,
+	)
 	var i RunWait
 	err := row.Scan(
 		&i.ID,
@@ -2435,6 +2653,136 @@ func (q *Queries) RegisterResolvedDifferentWorkspaceChildCall(ctx context.Contex
 		arg.ChildRunID,
 		arg.EnvironmentID,
 		arg.RunID,
+		arg.ExpectedRunningStateVersion,
+	)
+	var i RunWait
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.ConditionState,
+		&i.DueAt,
+		&i.TimeoutAt,
+		&i.IdleTimeoutMs,
+		&i.TokenID,
+		&i.ChildRunID,
+		&i.ChildParentOwned,
+		&i.ChildTargetDeclaredID,
+		&i.ChildClaimID,
+		&i.ChildRequest,
+		&i.ActorID,
+		&i.AfterInputSequence,
+		&i.ConditionResult,
+		&i.ConditionError,
+		&i.ConditionTerminalAt,
+		&i.ConditionReasonCode,
+		&i.CompletedActorRecordID,
+		&i.CompletedActorRecordDirection,
+		&i.SuspensionState,
+		&i.TokenRegistrationRunStateVersion,
+		&i.RegistrationRequestFingerprint,
+		&i.ExpectedRunStateVersion,
+		&i.AttemptNumber,
+		&i.ActorSpeculativeInputSequence,
+		&i.CurrentRunLeaseID,
+		&i.PriorRunLeaseID,
+		&i.CheckpointRequestVersion,
+		&i.CheckpointAckVersion,
+		&i.CheckpointDueAt,
+		&i.SuspendCheckpointID,
+		&i.HandoffResumeCheckpointID,
+		&i.ResumeAttachID,
+		&i.ResumeRequestVersion,
+		&i.ResumeAckVersion,
+		&i.BaseWorkspaceVersionID,
+		&i.BaseWorkspaceContentDigest,
+		&i.ChildResultVersionID,
+		&i.ResumeWorkspaceVersionID,
+		&i.HandoffRuntimeInstanceID,
+		&i.HandoffWorkspaceMountID,
+		&i.HandoffMountGeneration,
+		&i.OwnershipGeneration,
+		&i.ParentWriterGeneration,
+		&i.ChildWriterGeneration,
+		&i.ResumeWriterGeneration,
+		&i.Metadata,
+		&i.Tags,
+		&i.SuspensionTerminalAt,
+		&i.SuspensionReasonCode,
+		&i.SuspensionError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const registerSameWorkspaceChildCall = `-- name: RegisterSameWorkspaceChildCall :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'waiting',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = $10
+       AND runs.environment_id = $11
+       AND runs.workspace_id = $12
+       AND runs.status = 'running'
+       AND runs.state_version = $13
+       AND runs.current_attempt_number = $6
+       AND runs.current_run_lease_id = $8
+       AND runs.active_started_at IS NOT NULL
+    RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+)
+INSERT INTO run_waits (
+    id, environment_id, run_id, workspace_id, kind,
+    child_parent_owned, child_target_declared_id, child_claim_id, child_request,
+    registration_request_fingerprint, expected_run_state_version,
+    attempt_number, actor_speculative_input_sequence, current_run_lease_id,
+    checkpoint_due_at, resume_attach_id, metadata, tags
+)
+SELECT $1, moved_run.environment_id, moved_run.id,
+       moved_run.workspace_id, 'child', TRUE,
+       $2, $3,
+       $4, $5,
+       moved_run.state_version, $6,
+       $7,
+       $8, transaction_timestamp(),
+       $9, '{}'::jsonb, '{}'::text[]
+  FROM moved_run
+RETURNING id, environment_id, run_id, workspace_id, kind, condition_state, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_parent_owned, child_target_declared_id, child_claim_id, child_request, actor_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_actor_record_id, completed_actor_record_direction, suspension_state, token_registration_run_state_version, registration_request_fingerprint, expected_run_state_version, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, handoff_resume_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, child_result_version_id, resume_workspace_version_id, handoff_runtime_instance_id, handoff_workspace_mount_id, handoff_mount_generation, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
+`
+
+type RegisterSameWorkspaceChildCallParams struct {
+	ID                             pgtype.UUID `json:"id"`
+	ChildTargetDeclaredID          pgtype.Text `json:"child_target_declared_id"`
+	ChildClaimID                   pgtype.UUID `json:"child_claim_id"`
+	ChildRequest                   []byte      `json:"child_request"`
+	RegistrationRequestFingerprint pgtype.Text `json:"registration_request_fingerprint"`
+	AttemptNumber                  int32       `json:"attempt_number"`
+	ActorSpeculativeInputSequence  pgtype.Int8 `json:"actor_speculative_input_sequence"`
+	CurrentRunLeaseID              pgtype.UUID `json:"current_run_lease_id"`
+	ResumeAttachID                 pgtype.UUID `json:"resume_attach_id"`
+	RunID                          pgtype.UUID `json:"run_id"`
+	EnvironmentID                  pgtype.UUID `json:"environment_id"`
+	WorkspaceID                    pgtype.UUID `json:"workspace_id"`
+	ExpectedRunningStateVersion    int64       `json:"expected_running_state_version"`
+}
+
+func (q *Queries) RegisterSameWorkspaceChildCall(ctx context.Context, arg RegisterSameWorkspaceChildCallParams) (RunWait, error) {
+	row := q.db.QueryRow(ctx, registerSameWorkspaceChildCall,
+		arg.ID,
+		arg.ChildTargetDeclaredID,
+		arg.ChildClaimID,
+		arg.ChildRequest,
+		arg.RegistrationRequestFingerprint,
+		arg.AttemptNumber,
+		arg.ActorSpeculativeInputSequence,
+		arg.CurrentRunLeaseID,
+		arg.ResumeAttachID,
+		arg.RunID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
 		arg.ExpectedRunningStateVersion,
 	)
 	var i RunWait

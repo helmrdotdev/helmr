@@ -98,8 +98,7 @@ func projectRunLeaseExecution(
 			if len(authority.checkpointArtifacts) != 0 ||
 				authority.enclosingWait.HandoffRuntimeInstanceID != authority.runtime.ID ||
 				authority.enclosingWait.HandoffWorkspaceMountID != authority.workspaceMount.ID ||
-				!authority.enclosingWait.HandoffMountGeneration.Valid ||
-				authority.enclosingWait.HandoffMountGeneration.Int64 != authority.workspaceMount.FencingGeneration {
+				!authority.enclosingWait.HandoffMountGeneration.Valid {
 				return api.WorkerRunLeaseExecution{}, errors.New("retained restore authority is incomplete")
 			}
 			enclosingWaitID, err := requiredClaimUUIDString("enclosing Run Wait ID", authority.enclosingWait.ID)

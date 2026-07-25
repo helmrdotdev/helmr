@@ -29,14 +29,30 @@ func (d *Authority) grantFreshRun(
 	if err := lockRunQueueScope(ctx, tx, candidate); err != nil {
 		return db.RunLease{}, classifyRunCandidateError(err)
 	}
-	if err := lockRunRestoreSecrets(ctx, tx, candidate); err != nil {
+	if err := lockRunSecrets(ctx, tx, candidate); err != nil {
 		return db.RunLease{}, classifyRunCandidateError(err)
 	}
 	authority, err := lockRunPlacementAuthority(ctx, tx, candidate)
 	if err != nil {
 		return db.RunLease{}, classifyRunCandidateError(err)
 	}
-	runtime, err := discoverRunRuntime(ctx, tx, authority.workspaceID)
+	if authority.handoffChildWaitID.Valid &&
+		(expectedMount.runtimeID != authority.handoffRuntimeID ||
+			expectedMount.id != authority.handoffWorkspaceMountID ||
+			expectedMount.fencingGeneration != authority.handoffMountGeneration.Int64) {
+		return db.RunLease{}, ErrCapacityUnavailable
+	}
+	var runtime runRuntime
+	if authority.handoffChildWaitID.Valid {
+		runtime, err = discoverHandoffRunRuntime(
+			ctx,
+			tx,
+			authority.workspaceID,
+			authority.handoffRuntimeID,
+		)
+	} else {
+		runtime, err = discoverRunRuntime(ctx, tx, authority.workspaceID)
+	}
 	if err != nil {
 		return db.RunLease{}, err
 	}
@@ -71,8 +87,21 @@ func (d *Authority) grantFreshRun(
 		return db.RunLease{}, err
 	}
 	if mount.id != expectedMount.id ||
-		mount.state != db.WorkspaceMountStateMounted {
+		mount.state != db.WorkspaceMountStateMounted ||
+		(authority.handoffChildWaitID.Valid &&
+			mount.fencingGeneration != authority.handoffMountGeneration.Int64) {
 		return db.RunLease{}, ErrCapacityUnavailable
+	}
+	if authority.handoffChildWaitID.Valid {
+		if err := lockSameWorkspaceHandoffChain(
+			ctx,
+			tx,
+			authority,
+			runtime,
+			mount,
+		); err != nil {
+			return db.RunLease{}, err
+		}
 	}
 	if err := d.checkRunLeaseConcurrency(ctx, tx, authority); err != nil {
 		return db.RunLease{}, err
@@ -257,6 +286,44 @@ SELECT transaction_timestamp(),
 	)
 	if err != nil {
 		return db.RunLease{}, fmt.Errorf("set current Run Lease: %w", err)
+	}
+	if authority.handoffChildWaitID.Valid {
+		var boundWaitID pgtype.UUID
+		err = tx.QueryRow(ctx, `
+UPDATE run_waits
+   SET child_writer_generation = $1,
+       updated_at = transaction_timestamp()
+ WHERE id = $2
+   AND child_run_id = $3
+   AND workspace_id = $4
+   AND child_parent_owned IS TRUE
+   AND condition_state = 'pending'
+   AND suspension_state = 'parked'
+   AND current_run_lease_id IS NULL
+   AND prior_run_lease_id IS NOT NULL
+   AND handoff_runtime_instance_id = $5
+   AND handoff_workspace_mount_id = $6
+   AND handoff_mount_generation = $7
+   AND ownership_generation = $8
+   AND parent_writer_generation = $9
+   AND child_writer_generation IS NULL
+RETURNING id`,
+			writerGeneration,
+			authority.handoffChildWaitID,
+			authority.runID,
+			authority.workspaceID,
+			authority.handoffRuntimeID,
+			authority.handoffWorkspaceMountID,
+			authority.handoffMountGeneration.Int64,
+			authority.handoffOwnership.Int64,
+			authority.handoffParentWriter.Int64,
+		).Scan(&boundWaitID)
+		if err != nil {
+			return db.RunLease{}, fmt.Errorf(
+				"bind same-Workspace child Run Lease: %w",
+				err,
+			)
+		}
 	}
 	if authority.resumeRunWaitID.Valid {
 		var boundWaitID pgtype.UUID

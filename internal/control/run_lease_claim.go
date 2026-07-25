@@ -574,7 +574,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		return runLeaseClaimAuthority{}, err
 	}
 	if authority.sourceWorkspaceLease.WorkspaceMountID != authority.workspaceMount.ID ||
-		authority.sourceWorkspaceLease.MountFencingGeneration != authority.workspaceMount.FencingGeneration ||
+		authority.sourceWorkspaceLease.MountFencingGeneration != authority.runWait.HandoffMountGeneration.Int64 ||
 		authority.sourceWorkspaceLease.WriterGeneration != authority.runWait.ParentWriterGeneration.Int64 {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
@@ -870,7 +870,7 @@ func claimSameWorkspaceParentResumeRunLeaseInTx(
 		return runLeaseClaimAuthority{}, err
 	}
 	if authority.sourceWorkspaceLease.WorkspaceMountID != authority.workspaceMount.ID ||
-		authority.sourceWorkspaceLease.MountFencingGeneration != authority.workspaceMount.FencingGeneration ||
+		authority.sourceWorkspaceLease.MountFencingGeneration != authority.runWait.HandoffMountGeneration.Int64 ||
 		authority.sourceWorkspaceLease.WriterGeneration != authority.runWait.ParentWriterGeneration.Int64 {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
@@ -1116,7 +1116,7 @@ func claimCheckpointRestoreRunLeaseInTx(
 	if hasEnclosingWait &&
 		(authority.sourceRuntime.ID != authority.runtime.ID ||
 			authority.sourceWorkspaceLease.WorkspaceMountID != authority.workspaceMount.ID ||
-			authority.sourceWorkspaceLease.MountFencingGeneration != authority.workspaceMount.FencingGeneration) {
+			authority.sourceWorkspaceLease.MountFencingGeneration != authority.enclosingWait.HandoffMountGeneration.Int64) {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 	if hasEnclosingWait {
@@ -1531,7 +1531,6 @@ func validateActiveEnclosingWait(
 		wait.HandoffRuntimeInstanceID != authority.runtime.ID ||
 		wait.HandoffWorkspaceMountID != authority.workspaceMount.ID ||
 		!wait.HandoffMountGeneration.Valid ||
-		wait.HandoffMountGeneration.Int64 != authority.workspaceMount.FencingGeneration ||
 		!wait.OwnershipGeneration.Valid ||
 		wait.OwnershipGeneration.Int64 != authority.workspace.OwnershipGeneration ||
 		!wait.ParentWriterGeneration.Valid ||
@@ -1572,7 +1571,7 @@ func validateSameWorkspaceChildWait(
 		wait.ResumeWorkspaceVersionID.Valid ||
 		wait.HandoffRuntimeInstanceID != authority.runtime.ID ||
 		wait.HandoffWorkspaceMountID != authority.workspaceMount.ID ||
-		wait.HandoffMountGeneration.Int64 != authority.workspaceMount.FencingGeneration ||
+		!wait.HandoffMountGeneration.Valid ||
 		wait.OwnershipGeneration.Int64 != authority.workspace.OwnershipGeneration ||
 		!wait.ParentWriterGeneration.Valid ||
 		!wait.ChildWriterGeneration.Valid ||
@@ -1635,7 +1634,7 @@ func validateSameWorkspaceParentResumeWait(
 		wait.ResumeWorkspaceVersionID != locators.HandoffResumeWorkspaceVersionID ||
 		wait.HandoffRuntimeInstanceID != authority.runtime.ID ||
 		wait.HandoffWorkspaceMountID != authority.workspaceMount.ID ||
-		wait.HandoffMountGeneration.Int64 != authority.workspaceMount.FencingGeneration ||
+		!wait.HandoffMountGeneration.Valid ||
 		wait.OwnershipGeneration.Int64 != authority.workspace.OwnershipGeneration ||
 		wait.ParentWriterGeneration.Int64 >= wait.ChildWriterGeneration.Int64 ||
 		wait.ChildWriterGeneration.Int64 >= wait.ResumeWriterGeneration.Int64 ||

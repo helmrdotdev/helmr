@@ -168,7 +168,7 @@ RETURNING *;
 WITH updated_run AS (
     UPDATE runs
        SET current_run_lease_id = NULL,
-           state_version = state_version + 1,
+           state_version = runs.state_version + 1,
            updated_at = sqlc.arg(checkpointed_at)
      WHERE id = sqlc.arg(run_id)
        AND workspace_id = sqlc.arg(workspace_id)
@@ -176,8 +176,8 @@ WITH updated_run AS (
        AND current_run_lease_id = sqlc.arg(run_lease_id)
        AND status = 'waiting'
        AND active_started_at IS NULL
-       AND state_version = sqlc.arg(expected_run_state_version)
-    RETURNING state_version
+       AND runs.state_version = sqlc.arg(expected_run_state_version)
+    RETURNING runs.state_version
 )
 UPDATE run_waits
    SET suspension_state = 'parked',
@@ -196,6 +196,70 @@ UPDATE run_waits
    AND run_waits.suspension_state = 'checkpointing'
    AND run_waits.condition_state = 'pending'
    AND run_waits.checkpoint_request_version = sqlc.arg(checkpoint_request_version)
+RETURNING run_waits.*;
+
+-- name: CommitSameWorkspaceChildCheckpointReady :one
+WITH selected_child AS MATERIALIZED (
+    SELECT child.id
+      FROM runs AS child
+     WHERE child.environment_id = sqlc.arg(environment_id)
+       AND child.id = sqlc.arg(child_run_id)
+       AND child.parent_run_id = sqlc.arg(parent_run_id)
+       AND child.parent_owns_lifecycle IS TRUE
+       AND child.workspace_id = sqlc.arg(workspace_id)
+       AND child.base_workspace_version_id =
+           sqlc.arg(base_workspace_version_id)
+       AND child.claim_id = sqlc.arg(child_claim_id)
+       AND child.status = 'queued'
+), updated_run AS (
+    UPDATE runs
+       SET current_run_lease_id = NULL,
+           state_version = runs.state_version + 1,
+           updated_at = sqlc.arg(checkpointed_at)
+     WHERE id = sqlc.arg(parent_run_id)
+       AND environment_id = sqlc.arg(environment_id)
+       AND workspace_id = sqlc.arg(workspace_id)
+       AND current_attempt_number = sqlc.arg(parent_attempt_number)
+       AND current_run_lease_id = sqlc.arg(parent_run_lease_id)
+       AND status = 'waiting'
+       AND active_started_at IS NULL
+       AND runs.state_version = sqlc.arg(expected_run_state_version)
+       AND EXISTS (SELECT 1 FROM selected_child)
+    RETURNING runs.state_version
+)
+UPDATE run_waits
+   SET child_run_id = selected_child.id,
+       suspension_state = 'parked',
+       expected_run_state_version = updated_run.state_version,
+       checkpoint_ack_version = sqlc.arg(checkpoint_request_version),
+       prior_run_lease_id = current_run_lease_id,
+       current_run_lease_id = NULL,
+       base_workspace_version_id = sqlc.arg(base_workspace_version_id),
+       base_workspace_content_digest =
+           sqlc.arg(base_workspace_content_digest),
+       handoff_runtime_instance_id = sqlc.arg(runtime_instance_id),
+       handoff_workspace_mount_id = sqlc.arg(workspace_mount_id),
+       handoff_mount_generation = sqlc.arg(mount_generation),
+       ownership_generation = sqlc.arg(ownership_generation),
+       parent_writer_generation = sqlc.arg(parent_writer_generation),
+       updated_at = sqlc.arg(checkpointed_at)
+  FROM updated_run, selected_child
+ WHERE run_waits.id = sqlc.arg(run_wait_id)
+   AND run_waits.environment_id = sqlc.arg(environment_id)
+   AND run_waits.run_id = sqlc.arg(parent_run_id)
+   AND run_waits.workspace_id = sqlc.arg(workspace_id)
+   AND run_waits.attempt_number = sqlc.arg(parent_attempt_number)
+   AND run_waits.kind = 'child'
+   AND run_waits.child_run_id IS NULL
+   AND run_waits.child_parent_owned IS TRUE
+   AND run_waits.child_claim_id = sqlc.arg(child_claim_id)
+   AND run_waits.current_run_lease_id = sqlc.arg(parent_run_lease_id)
+   AND run_waits.suspend_checkpoint_id =
+       sqlc.arg(suspend_checkpoint_id)
+   AND run_waits.suspension_state = 'checkpointing'
+   AND run_waits.condition_state = 'pending'
+   AND run_waits.checkpoint_request_version =
+       sqlc.arg(checkpoint_request_version)
 RETURNING run_waits.*;
 
 -- name: CommitTerminalCheckpointReady :one

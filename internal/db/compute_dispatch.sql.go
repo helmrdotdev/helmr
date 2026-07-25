@@ -373,37 +373,82 @@ SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
         (runs.entrypoint_kind = 'task'
          AND runs.actor_id IS NULL
          AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
-         AND workspaces.owner_run_id = runs.id
-        AND workspaces.owner_actor_id IS NULL
-        AND (NOT EXISTS (
-           SELECT 1
-             FROM run_waits
-            WHERE run_waits.run_id = runs.id
-              AND run_waits.suspension_state IN (
-                  'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
-              )
-        ) OR EXISTS (
-           SELECT 1
-             FROM run_waits
-             JOIN run_checkpoints
-               ON run_checkpoints.id = run_waits.suspend_checkpoint_id
-              AND run_checkpoints.kind = 'suspend'
-              AND run_checkpoints.run_id = run_waits.run_id
-              AND run_checkpoints.attempt_number = run_waits.attempt_number
-              AND run_checkpoints.run_wait_id = run_waits.id
-              AND run_checkpoints.workspace_id = run_waits.workspace_id
-              AND run_checkpoints.state = 'ready'
-              AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-             JOIN workspace_versions
-               ON workspace_versions.workspace_id = run_checkpoints.workspace_id
-              AND workspace_versions.id = run_checkpoints.private_workspace_version_id
-              AND workspace_versions.state = 'private'
-            WHERE run_waits.run_id = runs.id
-              AND run_waits.suspension_state = 'resume_pending'
-              AND run_waits.handoff_runtime_instance_id IS NULL
-              AND run_waits.handoff_workspace_mount_id IS NULL
-              AND run_waits.handoff_resume_checkpoint_id IS NULL
-        )))
+         AND (
+             (workspaces.owner_run_id = runs.id
+              AND workspaces.owner_actor_id IS NULL
+              AND (NOT EXISTS (
+                 SELECT 1
+                   FROM run_waits
+                  WHERE run_waits.run_id = runs.id
+                    AND run_waits.suspension_state IN (
+                        'hot', 'checkpointing', 'parked',
+                        'resume_pending', 'resuming'
+                    )
+              ) OR EXISTS (
+                 SELECT 1
+                   FROM run_waits
+                   JOIN run_checkpoints
+                     ON run_checkpoints.id =
+                        run_waits.suspend_checkpoint_id
+                    AND run_checkpoints.kind = 'suspend'
+                    AND run_checkpoints.run_id = run_waits.run_id
+                    AND run_checkpoints.attempt_number =
+                        run_waits.attempt_number
+                    AND run_checkpoints.run_wait_id = run_waits.id
+                    AND run_checkpoints.workspace_id =
+                        run_waits.workspace_id
+                    AND run_checkpoints.state = 'ready'
+                    AND (run_checkpoints.expires_at IS NULL
+                         OR run_checkpoints.expires_at > now())
+                   JOIN workspace_versions
+                     ON workspace_versions.workspace_id =
+                        run_checkpoints.workspace_id
+                    AND workspace_versions.id =
+                        run_checkpoints.private_workspace_version_id
+                    AND workspace_versions.state = 'private'
+                  WHERE run_waits.run_id = runs.id
+                    AND run_waits.suspension_state = 'resume_pending'
+                    AND run_waits.handoff_runtime_instance_id IS NULL
+                    AND run_waits.handoff_workspace_mount_id IS NULL
+                    AND run_waits.handoff_resume_checkpoint_id IS NULL
+              )))
+             OR EXISTS (
+                 SELECT 1
+                   FROM run_waits AS handoff
+                   JOIN runs AS parent
+                     ON parent.environment_id = handoff.environment_id
+                    AND parent.id = handoff.run_id
+                    AND parent.workspace_id = handoff.workspace_id
+                    AND parent.status = 'waiting'
+                    AND parent.current_run_lease_id IS NULL
+                   JOIN run_checkpoints AS checkpoint
+                     ON checkpoint.id = handoff.suspend_checkpoint_id
+                    AND checkpoint.kind = 'suspend'
+                    AND checkpoint.run_id = handoff.run_id
+                    AND checkpoint.attempt_number =
+                        handoff.attempt_number
+                    AND checkpoint.run_wait_id = handoff.id
+                    AND checkpoint.workspace_id = handoff.workspace_id
+                    AND checkpoint.state = 'ready'
+                   JOIN workspace_versions AS base
+                     ON base.workspace_id = handoff.workspace_id
+                    AND base.id = handoff.base_workspace_version_id
+                    AND base.state = 'private'
+                  WHERE handoff.child_run_id = runs.id
+                    AND handoff.child_parent_owned IS TRUE
+                    AND handoff.workspace_id = runs.workspace_id
+                    AND handoff.condition_state = 'pending'
+                    AND handoff.suspension_state = 'parked'
+                    AND handoff.base_workspace_version_id =
+                        runs.base_workspace_version_id
+                    AND handoff.handoff_runtime_instance_id IS NOT NULL
+                    AND handoff.handoff_workspace_mount_id IS NOT NULL
+                    AND handoff.handoff_mount_generation IS NOT NULL
+                    AND handoff.ownership_generation IS NOT NULL
+                    AND handoff.parent_writer_generation IS NOT NULL
+                    AND handoff.child_writer_generation IS NULL
+             )
+         ))
        OR
        (runs.entrypoint_kind = 'actor'
         AND runs.actor_id IS NOT NULL
@@ -1061,9 +1106,10 @@ WITH candidate_scopes AS (
            (runs.entrypoint_kind = 'task'
             AND runs.actor_id IS NULL
             AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
-            AND workspaces.owner_run_id = runs.id
-            AND workspaces.owner_actor_id IS NULL
-            AND (NOT EXISTS (
+            AND (
+              (workspaces.owner_run_id = runs.id
+               AND workspaces.owner_actor_id IS NULL
+               AND (NOT EXISTS (
                SELECT 1
                  FROM run_waits
                 WHERE run_waits.run_id = runs.id
@@ -1091,7 +1137,44 @@ WITH candidate_scopes AS (
                   AND run_waits.handoff_runtime_instance_id IS NULL
                   AND run_waits.handoff_workspace_mount_id IS NULL
                   AND run_waits.handoff_resume_checkpoint_id IS NULL
-            )))
+              )))
+              OR EXISTS (
+                  SELECT 1
+                    FROM run_waits AS handoff
+                    JOIN runs AS parent
+                      ON parent.environment_id = handoff.environment_id
+                     AND parent.id = handoff.run_id
+                     AND parent.workspace_id = handoff.workspace_id
+                     AND parent.status = 'waiting'
+                     AND parent.current_run_lease_id IS NULL
+                    JOIN run_checkpoints AS checkpoint
+                      ON checkpoint.id = handoff.suspend_checkpoint_id
+                     AND checkpoint.kind = 'suspend'
+                     AND checkpoint.run_id = handoff.run_id
+                     AND checkpoint.attempt_number =
+                         handoff.attempt_number
+                     AND checkpoint.run_wait_id = handoff.id
+                     AND checkpoint.workspace_id = handoff.workspace_id
+                     AND checkpoint.state = 'ready'
+                    JOIN workspace_versions AS base
+                      ON base.workspace_id = handoff.workspace_id
+                     AND base.id = handoff.base_workspace_version_id
+                     AND base.state = 'private'
+                   WHERE handoff.child_run_id = runs.id
+                     AND handoff.child_parent_owned IS TRUE
+                     AND handoff.workspace_id = runs.workspace_id
+                     AND handoff.condition_state = 'pending'
+                     AND handoff.suspension_state = 'parked'
+                     AND handoff.base_workspace_version_id =
+                         runs.base_workspace_version_id
+                     AND handoff.handoff_runtime_instance_id IS NOT NULL
+                     AND handoff.handoff_workspace_mount_id IS NOT NULL
+                     AND handoff.handoff_mount_generation IS NOT NULL
+                     AND handoff.ownership_generation IS NOT NULL
+                     AND handoff.parent_writer_generation IS NOT NULL
+                     AND handoff.child_writer_generation IS NULL
+              )
+            ))
            OR
            (runs.entrypoint_kind = 'actor'
             AND runs.actor_id IS NOT NULL
@@ -1242,9 +1325,10 @@ SELECT runs.org_id, runs.id AS run_id, runs.state_version
        (runs.entrypoint_kind = 'task'
         AND runs.actor_id IS NULL
         AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
-        AND workspaces.owner_run_id = runs.id
-        AND workspaces.owner_actor_id IS NULL
-        AND (NOT EXISTS (
+        AND (
+          (workspaces.owner_run_id = runs.id
+           AND workspaces.owner_actor_id IS NULL
+           AND (NOT EXISTS (
            SELECT 1
              FROM run_waits
             WHERE run_waits.run_id = runs.id
@@ -1272,7 +1356,43 @@ SELECT runs.org_id, runs.id AS run_id, runs.state_version
               AND run_waits.handoff_runtime_instance_id IS NULL
               AND run_waits.handoff_workspace_mount_id IS NULL
               AND run_waits.handoff_resume_checkpoint_id IS NULL
-        )))
+          )))
+          OR EXISTS (
+              SELECT 1
+                FROM run_waits AS handoff
+                JOIN runs AS parent
+                  ON parent.environment_id = handoff.environment_id
+                 AND parent.id = handoff.run_id
+                 AND parent.workspace_id = handoff.workspace_id
+                 AND parent.status = 'waiting'
+                 AND parent.current_run_lease_id IS NULL
+                JOIN run_checkpoints AS checkpoint
+                  ON checkpoint.id = handoff.suspend_checkpoint_id
+                 AND checkpoint.kind = 'suspend'
+                 AND checkpoint.run_id = handoff.run_id
+                 AND checkpoint.attempt_number = handoff.attempt_number
+                 AND checkpoint.run_wait_id = handoff.id
+                 AND checkpoint.workspace_id = handoff.workspace_id
+                 AND checkpoint.state = 'ready'
+                JOIN workspace_versions AS base
+                  ON base.workspace_id = handoff.workspace_id
+                 AND base.id = handoff.base_workspace_version_id
+                 AND base.state = 'private'
+               WHERE handoff.child_run_id = runs.id
+                 AND handoff.child_parent_owned IS TRUE
+                 AND handoff.workspace_id = runs.workspace_id
+                 AND handoff.condition_state = 'pending'
+                 AND handoff.suspension_state = 'parked'
+                 AND handoff.base_workspace_version_id =
+                     runs.base_workspace_version_id
+                 AND handoff.handoff_runtime_instance_id IS NOT NULL
+                 AND handoff.handoff_workspace_mount_id IS NOT NULL
+                 AND handoff.handoff_mount_generation IS NOT NULL
+                 AND handoff.ownership_generation IS NOT NULL
+                 AND handoff.parent_writer_generation IS NOT NULL
+                 AND handoff.child_writer_generation IS NULL
+          )
+        ))
        OR
        (runs.entrypoint_kind = 'actor'
         AND runs.actor_id IS NOT NULL

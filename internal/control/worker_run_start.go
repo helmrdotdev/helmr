@@ -460,7 +460,6 @@ func validateRunStartArm(requested runStartArm, authority runStartValidationAuth
 			wait.HandoffRuntimeInstanceID != authority.runtime.ID ||
 			wait.HandoffWorkspaceMountID != authority.workspaceMount.ID ||
 			!wait.HandoffMountGeneration.Valid ||
-			wait.HandoffMountGeneration.Int64 != authority.workspaceMount.FencingGeneration ||
 			!wait.OwnershipGeneration.Valid ||
 			wait.OwnershipGeneration.Int64 != authority.workspace.OwnershipGeneration ||
 			!wait.ResumeWriterGeneration.Valid ||
@@ -483,7 +482,6 @@ func validateRunStartArm(requested runStartArm, authority runStartValidationAuth
 			wait.HandoffRuntimeInstanceID != authority.runtime.ID ||
 			wait.HandoffWorkspaceMountID != authority.workspaceMount.ID ||
 			!wait.HandoffMountGeneration.Valid ||
-			wait.HandoffMountGeneration.Int64 != authority.workspaceMount.FencingGeneration ||
 			!wait.OwnershipGeneration.Valid ||
 			wait.OwnershipGeneration.Int64 != authority.workspace.OwnershipGeneration ||
 			!wait.ChildWriterGeneration.Valid ||

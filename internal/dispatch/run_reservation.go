@@ -59,15 +59,29 @@ func (d *Authority) prepareRunWorkspace(
 	if err := lockRunQueueScope(ctx, tx, candidate); err != nil {
 		return runWorkspaceMount{}, classifyRunCandidateError(err)
 	}
-	if err := lockRunRestoreSecrets(ctx, tx, candidate); err != nil {
+	if err := lockRunSecrets(ctx, tx, candidate); err != nil {
 		return runWorkspaceMount{}, classifyRunCandidateError(err)
 	}
 	authority, err := lockRunPlacementAuthority(ctx, tx, candidate)
 	if err != nil {
 		return runWorkspaceMount{}, classifyRunCandidateError(err)
 	}
-	runtime, err := discoverRunRuntime(ctx, tx, authority.workspaceID)
+	var runtime runRuntime
+	if authority.handoffChildWaitID.Valid {
+		runtime, err = discoverHandoffRunRuntime(
+			ctx,
+			tx,
+			authority.workspaceID,
+			authority.handoffRuntimeID,
+		)
+	} else {
+		runtime, err = discoverRunRuntime(ctx, tx, authority.workspaceID)
+	}
 	if err == nil {
+		if authority.handoffChildWaitID.Valid &&
+			runtime.id != authority.handoffRuntimeID {
+			return runWorkspaceMount{}, ErrCapacityUnavailable
+		}
 		mount, err := d.useRunRuntime(
 			ctx,
 			tx,
@@ -85,6 +99,9 @@ func (d *Authority) prepareRunWorkspace(
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return runWorkspaceMount{}, fmt.Errorf("discover Workspace runtime: %w", err)
+	}
+	if authority.handoffChildWaitID.Valid {
+		return runWorkspaceMount{}, ErrCapacityUnavailable
 	}
 	if err := d.checkRunPreparationBudget(ctx, tx, authority); err != nil {
 		return runWorkspaceMount{}, err
@@ -202,12 +219,24 @@ func (d *Authority) useRunRuntime(
 	if err := validateRunRuntime(authority, locked); err != nil {
 		return runWorkspaceMount{}, ErrCapacityUnavailable
 	}
+	if authority.handoffChildWaitID.Valid &&
+		locked.id != authority.handoffRuntimeID {
+		return runWorkspaceMount{}, ErrCapacityUnavailable
+	}
 	mount, err := getActiveRunMount(ctx, tx, authority, locked)
 	if err == nil {
+		if authority.handoffChildWaitID.Valid &&
+			(mount.id != authority.handoffWorkspaceMountID ||
+				mount.fencingGeneration != authority.handoffMountGeneration.Int64) {
+			return runWorkspaceMount{}, ErrCapacityUnavailable
+		}
 		return mount, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return runWorkspaceMount{}, fmt.Errorf("read active Workspace Mount: %w", err)
+	}
+	if authority.handoffChildWaitID.Valid {
+		return runWorkspaceMount{}, ErrCapacityUnavailable
 	}
 	if locked.observedState != db.RuntimeObservedStateReady ||
 		!locked.reservedRunID.Valid ||
@@ -249,6 +278,20 @@ func discoverRunRuntime(
 	workspaceID pgtype.UUID,
 ) (runRuntime, error) {
 	return scanRunRuntime(tx.QueryRow(ctx, runRuntimeSQL(false), workspaceID))
+}
+
+func discoverHandoffRunRuntime(
+	ctx context.Context,
+	tx pgx.Tx,
+	workspaceID pgtype.UUID,
+	runtimeID pgtype.UUID,
+) (runRuntime, error) {
+	return scanRunRuntime(tx.QueryRow(
+		ctx,
+		runRuntimeSQL(false)+" AND runtime_instances.id = $2",
+		workspaceID,
+		runtimeID,
+	))
 }
 
 func lockRunRuntime(
@@ -431,7 +474,8 @@ func validateRunRuntime(
 	if runtime.deploymentDefinition != authority.workspaceDefinitionID ||
 		!runtime.programDeployment.Valid ||
 		runtime.programDeployment != authority.deploymentID ||
-		runtime.restoreCheckpoint != authority.restoreCheckpointID ||
+		(!authority.handoffChildWaitID.Valid &&
+			runtime.restoreCheckpoint != authority.restoreCheckpointID) ||
 		runtime.cpuMillis != authority.resources.cpuMillis ||
 		runtime.memoryBytes != authority.resources.memoryBytes ||
 		runtime.workloadDiskBytes != authority.resources.workloadDisk ||
