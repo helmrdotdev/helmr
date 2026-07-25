@@ -251,7 +251,7 @@ export function normalizeWorkspaceResources(
   return Object.freeze({
     milliCpu: normalizeCpu(resources.cpu),
     memoryMiB: normalizeIecMiB(resources.memory, "memory"),
-    diskMiB: normalizeIecMiB(resources.disk, "disk"),
+    diskMiB: 32768,
   })
 }
 

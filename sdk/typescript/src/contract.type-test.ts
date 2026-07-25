@@ -23,19 +23,18 @@ const schema: PayloadSchema<{ readonly value: string }> = {
 export function assertGreenfieldTypes(): void {
   const builder = workspace("machine")
   // @ts-expect-error image is required before resources.
-  builder.resources({ cpu: 1, memory: "1GiB", disk: "1GiB" })
+  builder.resources({ cpu: 1, memory: "1GiB" })
 
   const resourceBuilder = builder.image(image("root").from("debian"))
   source.directory("./src")
   // @ts-expect-error v0 directory copy has no implementation-defined ignore language.
   source.directory("./src", { ignore: ["**/*.test.ts"] })
-  // @ts-expect-error all three resource members are required.
-  resourceBuilder.resources({ cpu: 1, memory: "1GiB" })
+  // @ts-expect-error memory is required.
+  resourceBuilder.resources({ cpu: 1 })
 
   const definition = resourceBuilder.resources({
     cpu: 1,
     memory: "1GiB",
-    disk: "1GiB",
   })
   definition.network({ internet: false })
   // @ts-expect-error denyCidrs is meaningless when internet is disabled.
@@ -57,11 +56,11 @@ export function assertGreenfieldTypes(): void {
   const client = null as unknown as HelmrClient
   client.tasks.start<typeof payloadTask>("payload", {
     payload: { value: "ok" },
-    options: { workspace: workspaces.ref({ key: "machine" }) },
+    workspace: workspaces.ref({ key: "machine" }),
   })
   // @ts-expect-error the external typed Task envelope requires payload.
   client.tasks.start<typeof payloadTask>("payload", {
-    options: { workspace: workspaces.ref({ key: "machine" }) },
+    workspace: workspaces.ref({ key: "machine" }),
   })
   const typedOutputTask = task({
     id: "typed-output",
@@ -95,12 +94,12 @@ export function assertGreenfieldTypes(): void {
   })
   noPayloadTask.start({ workspace: workspaces.ref({ key: "machine" }) })
   client.tasks.start<typeof noPayloadTask>("no-payload", {
-    options: { workspace: workspaces.ref({ key: "machine" }) },
+    workspace: workspaces.ref({ key: "machine" }),
   })
   client.tasks.start<typeof noPayloadTask>("no-payload", {
     // @ts-expect-error the external no-payload Task envelope forbids payload.
     payload: null,
-    options: { workspace: workspaces.ref({ key: "machine" }) },
+    workspace: workspaces.ref({ key: "machine" }),
   })
   // @ts-expect-error a no-payload task has no payload position.
   noPayloadTask.start(null, { workspace: workspaces.ref({ key: "machine" }) })

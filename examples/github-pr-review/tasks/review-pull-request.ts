@@ -14,7 +14,7 @@ const base = image("github-pr-review")
 
 export const githubPRReviewWorkspace = workspace("github-pr-review")
   .image(base)
-  .resources({ cpu: 1, memory: "1Gi", disk: "4Gi" })
+  .resources({ cpu: 1, memory: "1Gi" })
 
 const payload = z.object({
   owner: z.string().optional(),

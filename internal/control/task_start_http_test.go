@@ -14,7 +14,7 @@ func TestDecodeStartTaskRequestIsClosedAndPayloadPresenceAware(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/",
-		strings.NewReader(`{"payload":null,"options":{"workspace":{"key":"workspace:1"}}}`),
+		strings.NewReader(`{"payload":null,"workspace":{"key":"workspace:1"}}`),
 	)
 	decoded, payloadPresent, err := decodeStartTaskRequest(request)
 	if err != nil {
@@ -28,17 +28,17 @@ func TestDecodeStartTaskRequestIsClosedAndPayloadPresenceAware(t *testing.T) {
 		`null`,
 		`{}`,
 		`{"options":null}`,
-		`{"options":{"workspace":null}}`,
-		`{"options":{"workspace":{"key":null}}}`,
-		`{"options":{"workspace":{"key":"workspace:1"},"unknown":true}}`,
-		`{"options":{"workspace":{"key":"workspace:1"},"idempotency_key":null}}`,
-		`{"options":{"workspace":{"key":"workspace:1"},"idempotency_key":""}}`,
-		`{"options":{"workspace":{"key":"workspace:1"},"queue":""}}`,
-		`{"options":{"workspace":{"key":"workspace:1"},"ttl":""}}`,
-		`{"options":{"workspace":{"key":"workspace:1"},"metadata":null}}`,
-		`{"options":{"workspace":{"key":"workspace:1"},"tags":[null]}}`,
-		`{"options":{"workspace":{"key":"workspace:1"},"retry":{"enabled":null}}}`,
-		`{"options":{"workspace":{"key":"workspace:1"},"retry":{"backoff":{"factor":null}}}}`,
+		`{"workspace":null}`,
+		`{"workspace":{"key":null}}`,
+		`{"workspace":{"key":"workspace:1"},"unknown":true}`,
+		`{"workspace":{"key":"workspace:1"},"idempotency_key":null}`,
+		`{"workspace":{"key":"workspace:1"},"idempotency_key":""}`,
+		`{"workspace":{"key":"workspace:1"},"queue":""}`,
+		`{"workspace":{"key":"workspace:1"},"ttl":""}`,
+		`{"workspace":{"key":"workspace:1"},"metadata":null}`,
+		`{"workspace":{"key":"workspace:1"},"tags":[null]}`,
+		`{"workspace":{"key":"workspace:1"},"retry":{"enabled":null}}`,
+		`{"workspace":{"key":"workspace:1"},"retry":{"backoff":{"factor":null}}}`,
 	} {
 		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 		if _, _, err := decodeStartTaskRequest(request); err == nil {

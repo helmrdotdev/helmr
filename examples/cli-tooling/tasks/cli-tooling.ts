@@ -23,7 +23,7 @@ const base = image("cli-tooling")
 
 export const cliToolingWorkspace = workspace("cli-tooling")
   .image(base)
-  .resources({ cpu: 1, memory: "1Gi", disk: "4Gi" })
+  .resources({ cpu: 1, memory: "1Gi" })
 
 const payload = z.object({
   pattern: z.string().optional(),

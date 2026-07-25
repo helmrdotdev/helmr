@@ -2,7 +2,8 @@ package api
 
 import "encoding/json"
 
-type StartTaskOptions struct {
+type StartTaskRequest struct {
+	Payload        json.RawMessage        `json:"payload,omitempty"`
 	IdempotencyKey string                 `json:"idempotency_key,omitempty"`
 	Workspace      WorkspaceTarget        `json:"workspace"`
 	Queue          string                 `json:"queue,omitempty"`
@@ -12,11 +13,6 @@ type StartTaskOptions struct {
 	Retry          *StartActorRetryPolicy `json:"retry,omitempty"`
 	Metadata       json.RawMessage        `json:"metadata,omitempty"`
 	Tags           []string               `json:"tags,omitempty"`
-}
-
-type StartTaskRequest struct {
-	Payload json.RawMessage  `json:"payload,omitempty"`
-	Options StartTaskOptions `json:"options"`
 }
 
 type StartTaskResponse struct {

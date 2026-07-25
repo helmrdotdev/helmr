@@ -20,7 +20,7 @@ const deps = image("dependency-cache-deps")
 
 export const dependencyCacheWorkspace = workspace("dependency-cache")
   .image(deps)
-  .resources({ cpu: 2, memory: "2Gi", disk: "8Gi" })
+  .resources({ cpu: 2, memory: "2Gi" })
 
 export const dependencyCache = task({
   id: "dependency-cache",

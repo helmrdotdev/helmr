@@ -11,7 +11,8 @@ import type {
   TaskOutput,
   TaskPayloadInput,
   TaskResult,
-  TaskStartOptions,
+  RunOptions,
+  WorkspaceTarget,
   TaskWait,
 } from "./contract"
 import { runtimeOperationsInstalled } from "./internal/runtime"
@@ -30,6 +31,7 @@ import {
   createClientWorkspaces,
   type ClientWorkspacesApi,
 } from "./workspace"
+import type { RequestOptions } from "./request"
 
 export interface HelmrClientOptions {
   readonly url: string
@@ -37,9 +39,7 @@ export interface HelmrClientOptions {
   readonly fetch?: typeof fetch
 }
 
-export interface ClientTokenCreateOptions extends TokenCreateOptions {
-  readonly signal?: AbortSignal
-}
+export type ClientTokenCreateRequest = TokenCreateOptions
 
 export interface ClientTokenCreateResult extends TokenSnapshot {
   readonly status: "pending"
@@ -48,46 +48,43 @@ export interface ClientTokenCreateResult extends TokenSnapshot {
 }
 
 export interface ClientTokensApi {
-  create(options?: ClientTokenCreateOptions): Promise<ClientTokenCreateResult>
-  retrieve(id: string, options?: Readonly<{ signal?: AbortSignal }>): Promise<TokenSnapshot>
-  list(options?: Readonly<{
+  create(
+    request?: ClientTokenCreateRequest,
+    options?: RequestOptions,
+  ): Promise<ClientTokenCreateResult>
+  retrieve(id: string, options?: RequestOptions): Promise<TokenSnapshot>
+  list(query?: Readonly<{
     cursor?: string
     limit?: number
-    signal?: AbortSignal
-  }>): Promise<CursorPage<TokenSnapshot>>
-  complete(id: string, result: JsonValue, options?: Readonly<{
+  }>, options?: RequestOptions): Promise<CursorPage<TokenSnapshot>>
+  complete(id: string, request: Readonly<{
+    result: JsonValue
     idempotencyKey?: string
-    signal?: AbortSignal
-  }>): Promise<TokenSnapshot>
-  cancel(id: string, options?: Readonly<{
+  }>, options?: RequestOptions): Promise<TokenSnapshot>
+  cancel(id: string, request?: Readonly<{
     idempotencyKey?: string
-    signal?: AbortSignal
-  }>): Promise<TokenSnapshot>
+  }>, options?: RequestOptions): Promise<TokenSnapshot>
 }
+
+type ClientTaskRunRequest = RunOptions & Readonly<{
+  idempotencyKey?: string
+  workspace: WorkspaceTarget
+}>
 
 export type ClientTaskStartRequest<TTask extends TaskDefinition> =
   TaskHasPayload<TTask> extends true
-    ? Readonly<{
-        payload: TaskPayloadInput<TTask>
-        options: TaskStartOptions
-      }>
-    : Readonly<{
-        payload?: never
-        options: TaskStartOptions
-      }>
+    ? ClientTaskRunRequest & Readonly<{ payload: TaskPayloadInput<TTask> }>
+    : ClientTaskRunRequest & Readonly<{ payload?: never }>
 
 export interface ClientTasksApi {
   start<TTask extends TaskDefinition>(
     taskDeclaredId: string,
     request: ClientTaskStartRequest<TTask>,
+    options?: RequestOptions,
   ): Promise<RunHandle>
 }
 
-export interface ClientRunRetrieveOptions {
-  readonly signal?: AbortSignal
-}
-
-export interface ClientRunListOptions extends ClientRunRetrieveOptions {
+export interface ClientRunListQuery {
   readonly status?: RunStatus | readonly RunStatus[]
   readonly cursor?: string
   readonly limit?: number
@@ -96,18 +93,19 @@ export interface ClientRunListOptions extends ClientRunRetrieveOptions {
 export interface ClientRunsApi {
   retrieve<TOutput extends JsonValue = JsonValue>(
     runId: string,
-    options?: ClientRunRetrieveOptions,
+    options?: RequestOptions,
   ): Promise<RunSnapshot<TOutput>>
   list(
-    options?: ClientRunListOptions,
+    query?: ClientRunListQuery,
+    options?: RequestOptions,
   ): Promise<CursorPage<RunSnapshot<JsonValue>>>
   cancel(
     runId: string,
-    options?: ClientRunRetrieveOptions,
+    options?: RequestOptions,
   ): Promise<RunSnapshot<JsonValue>>
-  wait<TTask extends TaskDefinition = TaskDefinition>(
+  wait<TTask extends TaskDefinition>(
     runId: string,
-    options?: ClientRunRetrieveOptions,
+    options?: RequestOptions,
   ): TaskWait<TaskOutput<TTask>>
 }
 
@@ -136,6 +134,7 @@ class ClientTasks implements ClientTasksApi {
   async start<TTask extends TaskDefinition>(
     taskDeclaredId: string,
     request: ClientTaskStartRequest<TTask>,
+    options: RequestOptions = {},
   ): Promise<RunHandle> {
     validateTaskId(taskDeclaredId)
     const response = objectValue(
@@ -145,11 +144,11 @@ class ClientTasks implements ClientTasksApi {
         {
           body: {
             ...("payload" in request ? { payload: request.payload } : {}),
-            options: taskStartOptions(request.options),
+            ...taskStartRequest(request),
           },
-          ...(request.options.signal === undefined
+          ...(options.signal === undefined
             ? {}
-            : { signal: request.options.signal }),
+            : { signal: options.signal }),
         },
       ),
       "Task start response",
@@ -171,7 +170,7 @@ class ClientRuns implements ClientRunsApi {
 
   async retrieve<TOutput extends JsonValue = JsonValue>(
     runId: string,
-    options: ClientRunRetrieveOptions = {},
+    options: RequestOptions = {},
   ): Promise<RunSnapshot<TOutput>> {
     return parseRunSnapshot<TOutput>(
       await this.#transport.request(
@@ -183,17 +182,18 @@ class ClientRuns implements ClientRunsApi {
   }
 
   async list(
-    options: ClientRunListOptions = {},
+    queryInput: ClientRunListQuery = {},
+    options: RequestOptions = {},
   ): Promise<CursorPage<RunSnapshot<JsonValue>>> {
     const query = new URLSearchParams()
-    const statuses = options.status === undefined
+    const statuses = queryInput.status === undefined
       ? []
-      : Array.isArray(options.status)
-      ? options.status
-      : [options.status]
+      : Array.isArray(queryInput.status)
+      ? queryInput.status
+      : [queryInput.status]
     for (const status of statuses) query.append("status", runStatus(status))
-    if (options.cursor !== undefined) query.set("cursor", options.cursor)
-    if (options.limit !== undefined) query.set("limit", String(options.limit))
+    if (queryInput.cursor !== undefined) query.set("cursor", queryInput.cursor)
+    if (queryInput.limit !== undefined) query.set("limit", String(queryInput.limit))
     const suffix = query.size === 0 ? "" : `?${query.toString()}`
     const response = objectValue(
       await this.#transport.request("GET", `/api/runs${suffix}`, {
@@ -216,7 +216,7 @@ class ClientRuns implements ClientRunsApi {
 
   async cancel(
     runId: string,
-    options: ClientRunRetrieveOptions = {},
+    options: RequestOptions = {},
   ): Promise<RunSnapshot<JsonValue>> {
     return parseRunSnapshot(
       await this.#transport.request(
@@ -227,9 +227,9 @@ class ClientRuns implements ClientRunsApi {
     )
   }
 
-  wait<TTask extends TaskDefinition = TaskDefinition>(
+  wait<TTask extends TaskDefinition>(
     runId: string,
-    options: ClientRunRetrieveOptions = {},
+    options: RequestOptions = {},
   ): TaskWait<TaskOutput<TTask>> {
     if (runtimeOperationsInstalled()) {
       throw new Error(
@@ -255,7 +255,7 @@ class ClientRuns implements ClientRunsApi {
 
   async #waitForTerminal<TOutput extends JsonValue>(
     runId: string,
-    options: ClientRunRetrieveOptions,
+    options: RequestOptions,
   ): Promise<TaskResult<TOutput>> {
     let delayMilliseconds = 250
     while (true) {
@@ -290,15 +290,18 @@ class ClientTokens implements ClientTokensApi {
     this.#transport = transport
   }
 
-  async create(options: ClientTokenCreateOptions = {}): Promise<ClientTokenCreateResult> {
+  async create(
+    request: ClientTokenCreateRequest = {},
+    options: RequestOptions = {},
+  ): Promise<ClientTokenCreateResult> {
     const response = await this.#transport.request("POST", "/api/tokens", {
       body: {
-        ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
-        ...(options.metadata === undefined ? {} : { metadata: options.metadata }),
-        ...(options.tags === undefined ? {} : { tags: [...options.tags] }),
-        ...(options.idempotencyKey === undefined
+        ...(request.timeout === undefined ? {} : { timeout: request.timeout }),
+        ...(request.metadata === undefined ? {} : { metadata: request.metadata }),
+        ...(request.tags === undefined ? {} : { tags: [...request.tags] }),
+        ...(request.idempotencyKey === undefined
           ? {}
-          : { idempotency_key: options.idempotencyKey }),
+          : { idempotency_key: request.idempotencyKey }),
       },
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
@@ -311,7 +314,7 @@ class ClientTokens implements ClientTokensApi {
 
   async retrieve(
     id: string,
-    options: Readonly<{ signal?: AbortSignal }> = {},
+    options: RequestOptions = {},
   ): Promise<TokenSnapshot> {
     return parseToken(
       await this.#transport.request(
@@ -323,14 +326,13 @@ class ClientTokens implements ClientTokensApi {
     )
   }
 
-  async list(options: Readonly<{
+  async list(queryInput: Readonly<{
     cursor?: string
     limit?: number
-    signal?: AbortSignal
-  }> = {}): Promise<CursorPage<TokenSnapshot>> {
+  }> = {}, options: RequestOptions = {}): Promise<CursorPage<TokenSnapshot>> {
     const query = new URLSearchParams()
-    if (options.cursor !== undefined) query.set("cursor", options.cursor)
-    if (options.limit !== undefined) query.set("limit", String(options.limit))
+    if (queryInput.cursor !== undefined) query.set("cursor", queryInput.cursor)
+    if (queryInput.limit !== undefined) query.set("limit", String(queryInput.limit))
     const suffix = query.size === 0 ? "" : `?${query.toString()}`
     const response = objectValue(
       await this.#transport.request("GET", `/api/tokens${suffix}`, {
@@ -353,8 +355,8 @@ class ClientTokens implements ClientTokensApi {
 
   async complete(
     id: string,
-    result: JsonValue,
-    options: Readonly<{ idempotencyKey?: string; signal?: AbortSignal }> = {},
+    request: Readonly<{ result: JsonValue; idempotencyKey?: string }>,
+    options: RequestOptions = {},
   ): Promise<TokenSnapshot> {
     const response = objectValue(
       await this.#transport.request(
@@ -362,10 +364,10 @@ class ClientTokens implements ClientTokensApi {
         `/api/tokens/${encodeURIComponent(tokenID(id))}/complete`,
         {
           body: {
-            result,
-            ...(options.idempotencyKey === undefined
+            result: request.result,
+            ...(request.idempotencyKey === undefined
               ? {}
-              : { idempotency_key: options.idempotencyKey }),
+              : { idempotency_key: request.idempotencyKey }),
           },
           ...(options.signal === undefined ? {} : { signal: options.signal }),
         },
@@ -377,16 +379,17 @@ class ClientTokens implements ClientTokensApi {
 
   async cancel(
     id: string,
-    options: Readonly<{ idempotencyKey?: string; signal?: AbortSignal }> = {},
+    request: Readonly<{ idempotencyKey?: string }> = {},
+    options: RequestOptions = {},
   ): Promise<TokenSnapshot> {
     return parseToken(
       await this.#transport.request(
         "POST",
         `/api/tokens/${encodeURIComponent(tokenID(id))}/cancel`,
         {
-          body: options.idempotencyKey === undefined
+          body: request.idempotencyKey === undefined
             ? {}
-            : { idempotency_key: options.idempotencyKey },
+            : { idempotency_key: request.idempotencyKey },
           ...(options.signal === undefined ? {} : { signal: options.signal }),
         },
       ),
@@ -395,52 +398,54 @@ class ClientTokens implements ClientTokensApi {
   }
 }
 
-function taskStartOptions(options: TaskStartOptions): Record<string, unknown> {
+function taskStartRequest(
+  request: ClientTaskRunRequest,
+): Record<string, unknown> {
   return {
-    workspace: "id" in options.workspace
-      ? { id: options.workspace.id }
-      : { key: options.workspace.key },
-    ...(options.idempotencyKey === undefined
+    workspace: "id" in request.workspace
+      ? { id: request.workspace.id }
+      : { key: request.workspace.key },
+    ...(request.idempotencyKey === undefined
       ? {}
-      : { idempotency_key: options.idempotencyKey }),
-    ...(options.queue === undefined ? {} : { queue: options.queue }),
-    ...(options.concurrencyKey === undefined
+      : { idempotency_key: request.idempotencyKey }),
+    ...(request.queue === undefined ? {} : { queue: request.queue }),
+    ...(request.concurrencyKey === undefined
       ? {}
-      : { concurrency_key: options.concurrencyKey }),
-    ...(options.priority === undefined ? {} : { priority: options.priority }),
-    ...(options.ttl === undefined ? {} : { ttl: options.ttl }),
-    ...(options.retry === undefined
+      : { concurrency_key: request.concurrencyKey }),
+    ...(request.priority === undefined ? {} : { priority: request.priority }),
+    ...(request.ttl === undefined ? {} : { ttl: request.ttl }),
+    ...(request.retry === undefined
       ? {}
       : {
-          retry: options.retry.enabled === false
+          retry: request.retry.enabled === false
             ? { enabled: false }
             : {
-                ...(options.retry.enabled === undefined
+                ...(request.retry.enabled === undefined
                   ? {}
-                  : { enabled: options.retry.enabled }),
-                max_attempts: options.retry.maxAttempts,
-                ...(options.retry.backoff === undefined
+                  : { enabled: request.retry.enabled }),
+                max_attempts: request.retry.maxAttempts,
+                ...(request.retry.backoff === undefined
                   ? {}
                   : {
                       backoff: {
-                        ...(options.retry.backoff.minDelay === undefined
+                        ...(request.retry.backoff.minDelay === undefined
                           ? {}
-                          : { min_delay: options.retry.backoff.minDelay }),
-                        ...(options.retry.backoff.maxDelay === undefined
+                          : { min_delay: request.retry.backoff.minDelay }),
+                        ...(request.retry.backoff.maxDelay === undefined
                           ? {}
-                          : { max_delay: options.retry.backoff.maxDelay }),
-                        ...(options.retry.backoff.factor === undefined
+                          : { max_delay: request.retry.backoff.maxDelay }),
+                        ...(request.retry.backoff.factor === undefined
                           ? {}
-                          : { factor: options.retry.backoff.factor }),
-                        ...(options.retry.backoff.jitter === undefined
+                          : { factor: request.retry.backoff.factor }),
+                        ...(request.retry.backoff.jitter === undefined
                           ? {}
-                          : { jitter: options.retry.backoff.jitter }),
+                          : { jitter: request.retry.backoff.jitter }),
                       },
                     }),
               },
         }),
-    ...(options.metadata === undefined ? {} : { metadata: options.metadata }),
-    ...(options.tags === undefined ? {} : { tags: [...options.tags] }),
+    ...(request.metadata === undefined ? {} : { metadata: request.metadata }),
+    ...(request.tags === undefined ? {} : { tags: [...request.tags] }),
   }
 }
 

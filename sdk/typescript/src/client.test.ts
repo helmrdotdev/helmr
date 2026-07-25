@@ -36,20 +36,19 @@ describe("HelmrClient Tasks", () => {
         }, { status: 201 })
       }) as typeof fetch,
     })
+    const signal = new AbortController().signal
 
     const run = await client.tasks.start<typeof resizeImage>("resize-image", {
       payload: { imageId: "image-1" },
-      options: {
-        workspace: workspaces.ref({
-          id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
-        }),
-        idempotencyKey: "image-1",
-        concurrencyKey: "customer-1",
-        retry: { maxAttempts: 3 },
-        metadata: { source: "backend" },
-        tags: ["image"],
-      },
-    })
+      workspace: workspaces.ref({
+        id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      }),
+      idempotencyKey: "image-1",
+      concurrencyKey: "customer-1",
+      retry: { maxAttempts: 3 },
+      metadata: { source: "backend" },
+      tags: ["image"],
+    }, { signal })
 
     expect(run).toEqual({ id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa" })
     expect(requests[0]!.url).toBe(
@@ -57,15 +56,14 @@ describe("HelmrClient Tasks", () => {
     )
     expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
       payload: { imageId: "image-1" },
-      options: {
-        workspace: { id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
-        idempotency_key: "image-1",
-        concurrency_key: "customer-1",
-        retry: { max_attempts: 3 },
-        metadata: { source: "backend" },
-        tags: ["image"],
-      },
+      workspace: { id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      idempotency_key: "image-1",
+      concurrency_key: "customer-1",
+      retry: { max_attempts: 3 },
+      metadata: { source: "backend" },
+      tags: ["image"],
     })
+    expect(requests[0]!.init?.signal).toBe(signal)
   })
 })
 
@@ -100,6 +98,7 @@ describe("HelmrClient Workspaces", () => {
       }) as typeof fetch,
     })
     const repositoryWorkspace = null as unknown as WorkspaceDefinition
+    const signal = new AbortController().signal
 
     const created = await client.workspaces.create<typeof repositoryWorkspace>(
       "repository-agent",
@@ -108,6 +107,7 @@ describe("HelmrClient Workspaces", () => {
         secrets: [{ name: "github", env: "GITHUB_TOKEN" }],
         idempotencyKey: "create-repository",
       },
+      { signal },
     )
     expect(created.id).toBe("wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa")
     expect(requests[0]!.url).toBe(
@@ -118,6 +118,7 @@ describe("HelmrClient Workspaces", () => {
       secrets: [{ name: "github", env: "GITHUB_TOKEN" }],
       idempotency_key: "create-repository",
     })
+    expect(requests[0]!.init?.signal).toBe(signal)
 
     const ref = client.workspaces.ref<typeof repositoryWorkspace>(
       "repository-agent",
@@ -133,7 +134,7 @@ describe("HelmrClient Workspaces", () => {
       command: ["printf", "ok\n"],
       stdin: new TextEncoder().encode("input"),
       idempotencyKey: "exec-1",
-    })
+    }, { signal })
     expect(new TextDecoder().decode(result.stdout)).toBe("ok\n")
     expect(JSON.parse(String(requests[2]!.init?.body))).toEqual({
       command: ["printf", "ok\n"],
@@ -141,7 +142,7 @@ describe("HelmrClient Workspaces", () => {
       idempotency_key: "exec-1",
     })
 
-    await created.delete({ idempotencyKey: "delete-1" })
+    await created.delete({ idempotencyKey: "delete-1" }, { signal })
     expect(JSON.parse(String(requests[3]!.init?.body))).toEqual({
       idempotency_key: "delete-1",
     })
@@ -169,13 +170,14 @@ describe("HelmrClient Tokens", () => {
         }, { status: 201 })
       }) as typeof fetch,
     })
+    const signal = new AbortController().signal
 
     const token = await client.tokens.create({
       timeout: "10m",
       metadata: { approval: true },
       tags: ["review"],
       idempotencyKey: "approval-1",
-    })
+    }, { signal })
 
     expect(token.id).toBe("tok_aaaaaaaaaaaaaaaaaaaaaaaaaa")
     expect(requests).toHaveLength(1)
@@ -192,6 +194,7 @@ describe("HelmrClient Tokens", () => {
       tags: ["review"],
       idempotency_key: "approval-1",
     })
+    expect(requests[0]!.init?.signal).toBe(signal)
   })
 
   test.each([400, 401, 403, 409, 410])(
@@ -257,11 +260,12 @@ describe("HelmrClient Runs", () => {
     })
 
     const retrieved = await client.runs.retrieve(runID)
+    const signal = new AbortController().signal
     const listed = await client.runs.list({
       status: ["running", "waiting"],
       cursor: "rn1.previous",
       limit: 10,
-    })
+    }, { signal })
 
     expect(retrieved).toMatchObject({
       id: runID,

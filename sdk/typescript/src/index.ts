@@ -9,16 +9,17 @@ export { tokens } from "./tokens"
 export { workspace, workspaces } from "./workspace"
 
 export type {
-  ClientRunListOptions,
-  ClientRunRetrieveOptions,
+  ClientRunListQuery,
   ClientRunsApi,
   ClientTasksApi,
   ClientTaskStartRequest,
-  ClientTokenCreateOptions,
+  ClientTokenCreateRequest,
   ClientTokenCreateResult,
   ClientTokensApi,
   HelmrClientOptions,
 } from "./client"
+
+export type { RequestOptions } from "./request"
 
 export type {
   HelmrConfig,
@@ -132,15 +133,15 @@ export type {
 export type {
   WorkspaceBuilder,
   ClientWorkspacesApi,
-  WorkspaceCreateOptions,
-  WorkspaceDeleteOptions,
+  RuntimeWorkspaceCreateOptions,
+  WorkspaceCreateRequest,
+  WorkspaceDeleteRequest,
   WorkspaceDeleteReceipt,
   WorkspaceDefinition,
-  WorkspaceExecOptions,
+  WorkspaceExecRequest,
   WorkspaceExecResult,
   WorkspaceFileEntry,
-  WorkspaceFileListOptions,
-  WorkspaceFileOptions,
+  WorkspaceFileListQuery,
   WorkspaceFiles,
   WorkspaceIdRef,
   WorkspaceKeyRef,
@@ -149,7 +150,6 @@ export type {
   WorkspaceRefBase,
   WorkspaceResources,
   WorkspaceResourceBuilder,
-  WorkspaceRetrieveOptions,
   WorkspaceSecret,
   WorkspaceSecretPlacement,
   WorkspaceSnapshot,

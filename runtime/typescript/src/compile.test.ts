@@ -57,7 +57,7 @@ describe("declaration analysis", () => {
     })
     const machine = workspace("machine")
       .image(image("root").from("debian:bookworm"))
-      .resources({ cpu: 0.125, memory: "1024MiB", disk: "2GiB" })
+      .resources({ cpu: 0.125, memory: "1024MiB" })
       .network({
         denyCidrs: [
           "10.0.0.5/24",
@@ -120,7 +120,7 @@ describe("declaration analysis", () => {
     expect(workspaceDefinition.manifest.resources).toEqual({
       milliCpu: 125,
       memoryMiB: 1024,
-      diskMiB: 2048,
+      diskMiB: 32768,
     })
     expect(workspaceDefinition.manifest.network).toEqual({
       internet: true,
@@ -257,16 +257,14 @@ describe("declaration analysis", () => {
       normalizeWorkspaceResources({
         cpu: 1e-3,
         memory: "1GiB",
-        disk: "2048MiB",
       }),
-    ).toEqual({ milliCpu: 1, memoryMiB: 1024, diskMiB: 2048 })
+    ).toEqual({ milliCpu: 1, memoryMiB: 1024, diskMiB: 32768 })
 
     for (const cpu of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 0.0001]) {
       expect(() =>
         normalizeWorkspaceResources({
           cpu,
           memory: "1MiB",
-          disk: "1MiB",
         }),
       ).toThrow()
     }
@@ -275,7 +273,6 @@ describe("declaration analysis", () => {
         normalizeWorkspaceResources({
           cpu: 1,
           memory,
-          disk: "1MiB",
         }),
       ).toThrow()
     }
@@ -300,7 +297,7 @@ describe("declaration analysis", () => {
           .copy("/app/package.json", source.file("package.json"))
           .copy("/app/src", source.directory("src")),
       )
-      .resources({ cpu: 1, memory: "1GiB", disk: "1GiB" })
+      .resources({ cpu: 1, memory: "1GiB" })
     const result = analyze({
       architecture: "x86_64",
       exports: [{
@@ -464,7 +461,7 @@ describe("declaration analysis", () => {
 
     const machine = workspace("machine")
       .image(image("root").from("debian:bookworm"))
-      .resources({ cpu: 1, memory: "1GiB", disk: "8GiB" })
+      .resources({ cpu: 1, memory: "1GiB" })
     const workspaceOnly = analyze({
       architecture: "x86_64",
       exports: [{

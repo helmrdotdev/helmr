@@ -9,7 +9,7 @@ const base = image("helmr-secret-smoke")
 
 export const secretSmokeWorkspace = workspace("helmr-secret-smoke")
   .image(base)
-  .resources({ cpu: 1, memory: "1Gi", disk: "8Gi" })
+  .resources({ cpu: 1, memory: "1Gi" })
 
 const payload = z.object({
   scenario: z.string().default("secret-smoke"),

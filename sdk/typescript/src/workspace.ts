@@ -9,6 +9,7 @@ import {
   type ImageBuilder,
   type InternalImage,
 } from "./image"
+import type { RequestOptions } from "./request"
 import { validateTaskId } from "./schema/task"
 
 const workspaceDefinitionBrand = Symbol.for("helmr.sdk.v0.workspace")
@@ -16,7 +17,6 @@ const workspaceDefinitionBrand = Symbol.for("helmr.sdk.v0.workspace")
 export interface WorkspaceResources {
   readonly cpu: number
   readonly memory: string
-  readonly disk: string
 }
 
 export type WorkspaceNetwork =
@@ -51,14 +51,13 @@ export type WorkspaceSecretPlacement =
 export type WorkspaceSecret = Readonly<{ name: string }> &
   WorkspaceSecretPlacement
 
-export interface WorkspaceCreateOptions {
+export interface WorkspaceCreateRequest {
   readonly key?: string
   readonly secrets?: readonly WorkspaceSecret[]
   readonly idempotencyKey?: string
-  readonly signal?: AbortSignal
 }
 
-export interface WorkspaceRetrieveOptions {
+export interface RuntimeWorkspaceCreateOptions extends WorkspaceCreateRequest {
   readonly signal?: AbortSignal
 }
 
@@ -92,33 +91,31 @@ export type WorkspaceFileEntry =
       linkTarget: string
     }>
 
-export type WorkspaceFileOptions = WorkspaceRetrieveOptions
-
-export interface WorkspaceFileListOptions extends WorkspaceRetrieveOptions {
+export interface WorkspaceFileListQuery {
   readonly cursor?: string
   readonly limit?: number
 }
 
 export interface WorkspaceFiles {
-  read(path: string, options?: WorkspaceFileOptions): Promise<Uint8Array>
+  read(path: string, options?: RequestOptions): Promise<Uint8Array>
   stat(
     path: string,
-    options?: WorkspaceFileOptions,
+    options?: RequestOptions,
   ): Promise<WorkspaceFileEntry>
   list(
     path: string,
-    options?: WorkspaceFileListOptions,
+    query?: WorkspaceFileListQuery,
+    options?: RequestOptions,
   ): Promise<CursorPage<WorkspaceFileEntry>>
 }
 
-export interface WorkspaceExecOptions {
+export interface WorkspaceExecRequest {
   readonly command: readonly string[]
   readonly cwd?: string
   readonly env?: Readonly<Record<string, string>>
   readonly stdin?: Uint8Array
   readonly timeout?: Duration
   readonly idempotencyKey: string
-  readonly signal?: AbortSignal
 }
 
 export interface WorkspaceExecResult {
@@ -127,7 +124,7 @@ export interface WorkspaceExecResult {
   readonly stderr: Uint8Array
 }
 
-export interface WorkspaceDeleteOptions extends WorkspaceRetrieveOptions {
+export interface WorkspaceDeleteRequest {
   readonly idempotencyKey?: string
 }
 
@@ -137,9 +134,15 @@ export interface WorkspaceDeleteReceipt {
 
 export interface WorkspaceRefBase {
   readonly files: WorkspaceFiles
-  retrieve(options?: WorkspaceRetrieveOptions): Promise<WorkspaceSnapshot>
-  exec(options: WorkspaceExecOptions): Promise<WorkspaceExecResult>
-  delete(options?: WorkspaceDeleteOptions): Promise<WorkspaceDeleteReceipt>
+  retrieve(options?: RequestOptions): Promise<WorkspaceSnapshot>
+  exec(
+    request: WorkspaceExecRequest,
+    options?: RequestOptions,
+  ): Promise<WorkspaceExecResult>
+  delete(
+    request?: WorkspaceDeleteRequest,
+    options?: RequestOptions,
+  ): Promise<WorkspaceDeleteReceipt>
 }
 
 export type WorkspaceIdRef = WorkspaceIdTarget & WorkspaceRefBase
@@ -149,7 +152,7 @@ export type WorkspaceRef = WorkspaceIdRef | WorkspaceKeyRef
 export interface WorkspaceDefinition {
   readonly id: string
   network(value: WorkspaceNetwork): WorkspaceDefinition
-  create(options?: WorkspaceCreateOptions): Promise<WorkspaceIdRef>
+  create(options?: RuntimeWorkspaceCreateOptions): Promise<WorkspaceIdRef>
 }
 
 export interface Workspaces {
@@ -166,7 +169,8 @@ export interface Workspaces {
 export interface ClientWorkspacesApi {
   create<TWorkspace extends WorkspaceDefinition>(
     workspaceDeclaredId: string,
-    options?: WorkspaceCreateOptions,
+    request?: WorkspaceCreateRequest,
+    options?: RequestOptions,
   ): Promise<WorkspaceIdRef>
   ref<TWorkspace extends WorkspaceDefinition>(
     workspaceDeclaredId: string,
@@ -268,7 +272,7 @@ class Definition implements WorkspaceDefinition {
   }
 
   create(
-    _options?: WorkspaceCreateOptions,
+    _options?: RuntimeWorkspaceCreateOptions,
   ): Promise<WorkspaceIdRef> {
     return runtimeUnavailable("workspace.create")
   }
@@ -320,7 +324,8 @@ export function createClientWorkspaces(
   return Object.freeze({
     async create<TWorkspace extends WorkspaceDefinition>(
       workspaceDeclaredId: string,
-      options: WorkspaceCreateOptions = {},
+      request: WorkspaceCreateRequest = {},
+      options: RequestOptions = {},
     ): Promise<WorkspaceIdRef> {
       validateTaskId(workspaceDeclaredId)
       const response = workspaceObject(
@@ -329,20 +334,20 @@ export function createClientWorkspaces(
           `/api/workspaces/${encodeURIComponent(workspaceDeclaredId)}/create`,
           {
             body: {
-              ...(options.key === undefined ? {} : { key: options.key }),
-              ...(options.secrets === undefined
+              ...(request.key === undefined ? {} : { key: request.key }),
+              ...(request.secrets === undefined
                 ? {}
                 : {
-                    secrets: options.secrets.map((secret) => ({
+                    secrets: request.secrets.map((secret) => ({
                       name: secret.name,
                       ...("env" in secret
                         ? { env: secret.env }
                         : { file: secret.file }),
                     })),
                   }),
-              ...(options.idempotencyKey === undefined
+              ...(request.idempotencyKey === undefined
                 ? {}
-                : { idempotency_key: options.idempotencyKey }),
+                : { idempotency_key: request.idempotencyKey }),
             },
             ...(options.signal === undefined ? {} : { signal: options.signal }),
           },
@@ -398,19 +403,20 @@ function createWorkspaceRef(
   const files: WorkspaceFiles = Object.freeze({
     read(
       _path: string,
-      _options?: WorkspaceFileOptions,
+      _options?: RequestOptions,
     ): Promise<Uint8Array> {
       return runtimeUnavailable("workspace.files.read")
     },
     stat(
       _path: string,
-      _options?: WorkspaceFileOptions,
+      _options?: RequestOptions,
     ): Promise<WorkspaceFileEntry> {
       return runtimeUnavailable("workspace.files.stat")
     },
     list(
       _path: string,
-      _options?: WorkspaceFileListOptions,
+      _query?: WorkspaceFileListQuery,
+      _options?: RequestOptions,
     ): Promise<CursorPage<WorkspaceFileEntry>> {
       return runtimeUnavailable("workspace.files.list")
     },
@@ -448,7 +454,7 @@ function createAuthenticatedWorkspaceRef(
     }`
   }
   const retrieve = async (
-    options: WorkspaceRetrieveOptions = {},
+    options: RequestOptions = {},
   ): Promise<WorkspaceSnapshot> =>
     parseWorkspaceSnapshot(
       await transport.request(
@@ -466,7 +472,7 @@ function createAuthenticatedWorkspaceRef(
   const files: WorkspaceFiles = Object.freeze({
     async read(
       path: string,
-      options: WorkspaceFileOptions = {},
+      options: RequestOptions = {},
     ): Promise<Uint8Array> {
       const id = await resolveID(options.signal)
       const response = workspaceObject(
@@ -486,7 +492,7 @@ function createAuthenticatedWorkspaceRef(
     },
     async stat(
       path: string,
-      options: WorkspaceFileOptions = {},
+      options: RequestOptions = {},
     ): Promise<WorkspaceFileEntry> {
       const id = await resolveID(options.signal)
       return parseWorkspaceFileEntry(
@@ -501,12 +507,13 @@ function createAuthenticatedWorkspaceRef(
     },
     async list(
       path: string,
-      options: WorkspaceFileListOptions = {},
+      queryInput: WorkspaceFileListQuery = {},
+      options: RequestOptions = {},
     ): Promise<CursorPage<WorkspaceFileEntry>> {
       const id = await resolveID(options.signal)
       const query = new URLSearchParams({ path })
-      if (options.cursor !== undefined) query.set("cursor", options.cursor)
-      if (options.limit !== undefined) query.set("limit", String(options.limit))
+      if (queryInput.cursor !== undefined) query.set("cursor", queryInput.cursor)
+      if (queryInput.limit !== undefined) query.set("limit", String(queryInput.limit))
       const response = workspaceObject(
         await transport.request(
           "GET",
@@ -532,7 +539,10 @@ function createAuthenticatedWorkspaceRef(
     ...address,
     files,
     retrieve,
-    async exec(options: WorkspaceExecOptions): Promise<WorkspaceExecResult> {
+    async exec(
+      request: WorkspaceExecRequest,
+      options: RequestOptions = {},
+    ): Promise<WorkspaceExecResult> {
       const id = await resolveID(options.signal)
       const response = workspaceObject(
         await transport.request(
@@ -540,16 +550,16 @@ function createAuthenticatedWorkspaceRef(
           `/api/workspaces/${encodeURIComponent(id)}/exec`,
           {
             body: {
-              command: [...options.command],
-              ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-              ...(options.env === undefined ? {} : { env: options.env }),
-              ...(options.stdin === undefined
+              command: [...request.command],
+              ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
+              ...(request.env === undefined ? {} : { env: request.env }),
+              ...(request.stdin === undefined
                 ? {}
-                : { stdin_base64: encodeWorkspaceBase64(options.stdin) }),
-              ...(options.timeout === undefined
+                : { stdin_base64: encodeWorkspaceBase64(request.stdin) }),
+              ...(request.timeout === undefined
                 ? {}
-                : { timeout: options.timeout }),
-              idempotency_key: options.idempotencyKey,
+                : { timeout: request.timeout }),
+              idempotency_key: request.idempotencyKey,
             },
             ...(options.signal === undefined ? {} : { signal: options.signal }),
           },
@@ -573,7 +583,8 @@ function createAuthenticatedWorkspaceRef(
       })
     },
     async delete(
-      options: WorkspaceDeleteOptions = {},
+      request: WorkspaceDeleteRequest = {},
+      options: RequestOptions = {},
     ): Promise<WorkspaceDeleteReceipt> {
       const id = await resolveID(options.signal)
       const response = workspaceObject(
@@ -581,9 +592,9 @@ function createAuthenticatedWorkspaceRef(
           "POST",
           `/api/workspaces/${encodeURIComponent(id)}/delete`,
           {
-            body: options.idempotencyKey === undefined
+            body: request.idempotencyKey === undefined
               ? {}
-              : { idempotency_key: options.idempotencyKey },
+              : { idempotency_key: request.idempotencyKey },
             ...(options.signal === undefined ? {} : { signal: options.signal }),
           },
         ),
@@ -770,12 +781,9 @@ function assertResourceMembers(value: WorkspaceResources): void {
     value === null ||
     typeof value !== "object" ||
     !Object.hasOwn(value, "cpu") ||
-    !Object.hasOwn(value, "memory") ||
-    !Object.hasOwn(value, "disk")
+    !Object.hasOwn(value, "memory")
   ) {
-    throw new Error(
-      "workspace resources require cpu, memory, and disk",
-    )
+    throw new Error("workspace resources require cpu and memory")
   }
 }
 
