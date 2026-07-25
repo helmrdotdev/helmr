@@ -57,7 +57,8 @@ The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint wit
 | `helmr sandbox get SANDBOX` | Show deployed sandbox details. |
 | `helmr secret list [--json]` | List remote secret metadata. |
 | `helmr secret get NAME [--json]` | Show remote secret metadata. Secret values are never returned. |
-| `helmr secret set NAME [VALUE] [--json]` | Create or update a remote secret; reads stdin if value is omitted. |
+| `helmr secret create NAME [VALUE] [--json]` | Create a remote secret; reads stdin if value is omitted. |
+| `helmr secret rotate NAME [VALUE] [--json]` | Add a new immutable version behind a stable Secret; reads stdin if value is omitted. |
 | `helmr secret revoke NAME --yes` | Revoke a remote secret. |
 
 Common options:

@@ -649,12 +649,19 @@ LEFT JOIN LATERAL (
 ) AS latest ON true
 WHERE secrets.environment_id = $1
   AND secrets.state <> 'deleted'
+  AND (
+      $2::text IS NULL
+      OR (secrets.name, secrets.id) >
+         ($2::text, $3::uuid)
+  )
 ORDER BY secrets.name, secrets.id
-LIMIT $2
+LIMIT $4
 `
 
 type ListSecretsParams struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
+	AfterName     pgtype.Text `json:"after_name"`
+	AfterID       pgtype.UUID `json:"after_id"`
 	RowLimit      int32       `json:"row_limit"`
 }
 
@@ -669,7 +676,12 @@ type ListSecretsRow struct {
 }
 
 func (q *Queries) ListSecrets(ctx context.Context, arg ListSecretsParams) ([]ListSecretsRow, error) {
-	rows, err := q.db.Query(ctx, listSecrets, arg.EnvironmentID, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listSecrets,
+		arg.EnvironmentID,
+		arg.AfterName,
+		arg.AfterID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

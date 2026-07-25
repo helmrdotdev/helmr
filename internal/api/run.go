@@ -87,10 +87,15 @@ func ParsePositiveDuration(raw string, label string) (time.Duration, error) {
 	return duration, nil
 }
 
-type SetSecretRequest struct {
-	ProjectID     string `json:"project_id,omitempty"`
-	EnvironmentID string `json:"environment_id,omitempty"`
-	Value         string `json:"value"`
+type CreateSecretRequest struct {
+	Name           string `json:"name"`
+	Value          string `json:"value"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type RotateSecretRequest struct {
+	Value          string `json:"value"`
+	IdempotencyKey string `json:"idempotency_key"`
 }
 
 type RevokeSecretRequest struct {
@@ -107,7 +112,8 @@ type SecretResponse struct {
 }
 
 type ListSecretsResponse struct {
-	Secrets []SecretResponse `json:"secrets"`
+	Secrets    []SecretResponse `json:"secrets"`
+	NextCursor string           `json:"next_cursor,omitempty"`
 }
 
 type RunResponse struct {

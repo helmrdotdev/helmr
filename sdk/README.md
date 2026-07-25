@@ -14,7 +14,7 @@ Keep this layer stable and ergonomic. Runtime adapter internals, VM details, and
 Payload is audit data: Helmr persists it in plaintext in the `run.created` event, DB, and events stream. Do not put secret values (tokens, API keys, credentials, or PII) in payload; use `secrets:` instead. Use payload for business context such as PR numbers, repo names, ticket ids, and other identifiers.
 
 Task code declares required secret names and runtime placements. Store each value
-with `helmr secret set NAME`; run creation does not accept secret values or
+with `helmr secret create NAME`; run creation does not accept secret values or
 binding maps.
 
 ## TypeScript Runtime Client

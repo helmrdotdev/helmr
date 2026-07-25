@@ -26,7 +26,7 @@ export const useSecret = task({
 Store the secret value in Helmr:
 
 ```sh
-printf '%s' "$API_TOKEN" | helmr secret set API_TOKEN
+printf '%s' "$API_TOKEN" | helmr secret create API_TOKEN
 ```
 
 List or inspect stored secret metadata without revealing values:

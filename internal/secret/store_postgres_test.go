@@ -20,7 +20,7 @@ import (
 
 func TestStoreRevokeCommitsOneAuthorityTuple(t *testing.T) {
 	pool := openSecretPostgres(t)
-	orgID, projectID, environmentID := seedSecretEnvironment(t, pool)
+	_, _, environmentID := seedSecretEnvironment(t, pool)
 	hashes := seedSecretHashAuthority(t, pool)
 	encryption, err := NewKeyring(makeKey(1), nil)
 	if err != nil {
@@ -30,14 +30,53 @@ func TestStoreRevokeCommitsOneAuthorityTuple(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := store.PutScoped(t.Context(), orgID, projectID, environmentID, "API_TOKEN", []byte("first"))
+	created, err := store.Create(
+		t.Context(),
+		environmentID,
+		"API_TOKEN",
+		[]byte("first"),
+		"create-1",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.PutScoped(t.Context(), orgID, projectID, environmentID, "API_TOKEN", []byte("second")); err != nil {
+	replayedCreate, err := store.Create(
+		t.Context(),
+		environmentID,
+		"API_TOKEN",
+		[]byte("first"),
+		"create-1",
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if replayedCreate.ID != created.ID {
+		t.Fatalf("create replay changed Secret: first=%+v replay=%+v", created, replayedCreate)
+	}
 	secretID := pgvalue.MustUUIDValue(created.ID)
+	rotated, err := store.Rotate(
+		t.Context(),
+		environmentID,
+		secretID,
+		[]byte("second"),
+		"rotate-1",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayedRotate, err := store.Rotate(
+		t.Context(),
+		environmentID,
+		secretID,
+		[]byte("second"),
+		"rotate-1",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rotated.RotatedAt.Valid || replayedRotate.RotatedAt != rotated.RotatedAt {
+		t.Fatalf("rotate replay changed Secret: first=%+v replay=%+v", rotated, replayedRotate)
+	}
 	first, err := store.Revoke(t.Context(), environmentID, secretID, "revoke-1")
 	if err != nil {
 		t.Fatal(err)
@@ -67,8 +106,16 @@ func TestStoreRevokeCommitsOneAuthorityTuple(t *testing.T) {
 		t.Fatalf("secret authority = %s/%d/%d", state, stateVersion, revocationGeneration)
 	}
 	assertSecretRevokeCounts(t, pool, environmentID, 1, 1)
+	assertSecretMutationClaimCount(t, pool, environmentID, "secret.create", 1)
+	assertSecretMutationClaimCount(t, pool, environmentID, "secret.rotate", 1)
 
-	rollbackSecret, err := store.PutScoped(t.Context(), orgID, projectID, environmentID, "ROLLBACK_TOKEN", []byte("value"))
+	rollbackSecret, err := store.Create(
+		t.Context(),
+		environmentID,
+		"ROLLBACK_TOKEN",
+		[]byte("value"),
+		"",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,6 +158,29 @@ func TestStoreRevokeCommitsOneAuthorityTuple(t *testing.T) {
 		t.Fatalf("rolled-back secret = %s/%d", rollbackState, rollbackGeneration)
 	}
 	assertSecretRevokeCounts(t, pool, environmentID, 1, 1)
+}
+
+func assertSecretMutationClaimCount(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	environmentID uuid.UUID,
+	operation string,
+	want int,
+) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(t.Context(), `
+		SELECT count(*)
+		  FROM idempotency_claims
+		 WHERE environment_id = $1
+		   AND operation = $2
+		   AND state = 'completed'
+	`, environmentID, operation).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != want {
+		t.Fatalf("%s claim count = %d, want %d", operation, count, want)
+	}
 }
 
 func assertSecretRevokeCounts(t *testing.T, pool *pgxpool.Pool, environmentID uuid.UUID, claims int, outbox int) {

@@ -32,6 +32,15 @@ export type {
 } from "./client-schedule"
 
 export type {
+  ClientSecretsApi,
+  SecretAddress,
+  SecretRef,
+  SecretSnapshot,
+  SecretState,
+  SecretValue,
+} from "./client-secret"
+
+export type {
   ClientRunListQuery,
   ClientRunsApi,
   ClientTasksApi,

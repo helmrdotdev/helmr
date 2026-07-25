@@ -224,6 +224,11 @@ LEFT JOIN LATERAL (
 ) AS latest ON true
 WHERE secrets.environment_id = sqlc.arg(environment_id)
   AND secrets.state <> 'deleted'
+  AND (
+      sqlc.narg(after_name)::text IS NULL
+      OR (secrets.name, secrets.id) >
+         (sqlc.narg(after_name)::text, sqlc.narg(after_id)::uuid)
+  )
 ORDER BY secrets.name, secrets.id
 LIMIT sqlc.arg(row_limit);
 

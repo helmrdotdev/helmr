@@ -56,7 +56,8 @@ GET /api/projects/{projectID}/environments/{environmentID}/runs/{runID}
 GET /api/projects/{projectID}/environments/{environmentID}/schedules
 GET /api/projects/{projectID}/environments/{environmentID}/schedules/{scheduleID}
 GET /api/projects/{projectID}/environments/{environmentID}/secrets
-GET /api/projects/{projectID}/environments/{environmentID}/secrets/{name}
+GET /api/projects/{projectID}/environments/{environmentID}/secrets/by-name/{name}
+GET /api/projects/{projectID}/environments/{environmentID}/secrets/{secretID}
 GET /api/projects/{projectID}/environments/{environmentID}/tokens
 GET /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/by-key/{workspaceDeclaredID}
@@ -70,7 +71,8 @@ GET /api/runs/{runID}
 GET /api/schedules
 GET /api/schedules/{scheduleID}
 GET /api/secrets
-GET /api/secrets/{name}
+GET /api/secrets/by-name/{name}
+GET /api/secrets/{secretID}
 GET /api/tokens
 GET /api/tokens/{tokenID}
 GET /api/worker/status
@@ -110,7 +112,11 @@ POST /api/projects/{projectID}/environments/{environmentID}/api-keys
 POST /api/projects/{projectID}/environments/{environmentID}/deployments
 POST /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/promote
 POST /api/projects/{projectID}/environments/{environmentID}/runs/{runID}/cancel
-POST /api/projects/{projectID}/environments/{environmentID}/secrets/{name}/revoke
+POST /api/projects/{projectID}/environments/{environmentID}/secrets
+POST /api/projects/{projectID}/environments/{environmentID}/secrets/by-name/{name}/revoke
+POST /api/projects/{projectID}/environments/{environmentID}/secrets/by-name/{name}/rotate
+POST /api/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/revoke
+POST /api/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/rotate
 POST /api/projects/{projectID}/environments/{environmentID}/tasks/{taskDeclaredID}/start
 POST /api/projects/{projectID}/environments/{environmentID}/tokens
 POST /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/cancel
@@ -120,7 +126,11 @@ POST /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspac
 POST /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/exec
 POST /api/public/tokens/{tokenID}/complete
 POST /api/runs/{runID}/cancel
-POST /api/secrets/{name}/revoke
+POST /api/secrets
+POST /api/secrets/by-name/{name}/revoke
+POST /api/secrets/by-name/{name}/rotate
+POST /api/secrets/{secretID}/revoke
+POST /api/secrets/{secretID}/rotate
 POST /api/tasks/{taskDeclaredID}/start
 POST /api/token-callbacks/{tokenID}/{callbackSecret}
 POST /api/tokens
@@ -178,8 +188,6 @@ POST /api/worker/workspaces/mounts/stop
 POST /api/workspaces/{workspaceDeclaredID}/create
 POST /api/workspaces/{workspaceID}/delete
 POST /api/workspaces/{workspaceID}/exec
-PUT /api/projects/{projectID}/environments/{environmentID}/secrets/{name}
-PUT /api/secrets/{name}
 `), "\n")
 	if !slices.IsSorted(want) {
 		t.Fatal("control route snapshot must stay sorted")

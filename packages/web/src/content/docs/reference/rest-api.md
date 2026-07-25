@@ -96,10 +96,14 @@ Common user/API-key routes:
 | `POST` | `/api/deployments` |
 | `GET` | `/api/deployments/current` |
 | `POST` | `/api/deployments/{id}/promote` |
+| `POST` | `/api/secrets` |
 | `GET` | `/api/secrets` |
-| `GET` | `/api/secrets/{name}` |
-| `PUT` | `/api/secrets/{name}` |
-| `POST` | `/api/secrets/{name}/revoke` |
+| `GET` | `/api/secrets/{secret_id}` |
+| `GET` | `/api/secrets/by-name/{name}` |
+| `POST` | `/api/secrets/{secret_id}/rotate` |
+| `POST` | `/api/secrets/by-name/{name}/rotate` |
+| `POST` | `/api/secrets/{secret_id}/revoke` |
+| `POST` | `/api/secrets/by-name/{name}/revoke` |
 
 Auth routes include GitHub OAuth, magic links, device auth, logout, API keys, members, invitations, projects, and environments.
 

@@ -353,6 +353,95 @@ describe("HelmrClient Tokens", () => {
   )
 })
 
+describe("HelmrClient Secrets", () => {
+  test("uses stable ID and name refs with flat mutation requests", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    const secretID = "019c8f1e-9b42-7b2c-8a4c-4b3a7f9f6d21"
+    const active = {
+      id: secretID,
+      name: "github-token",
+      state: "active",
+      created_at: "2026-07-25T01:00:00Z",
+    }
+    const responses: unknown[] = [
+      active,
+      active,
+      {
+        ...active,
+        rotated_at: "2026-07-25T01:01:00Z",
+      },
+      {
+        secrets: [active],
+        next_cursor: "sec1.next",
+      },
+      {
+        ...active,
+        state: "revoked",
+        revoked_at: "2026-07-25T01:02:00Z",
+      },
+    ]
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async (input: URL | RequestInfo, init?: RequestInit) => {
+        requests.push({ url: String(input), init })
+        return Response.json(responses.shift(), { status: 200 })
+      }) as typeof fetch,
+    })
+    const signal = new AbortController().signal
+
+    const created = await client.secrets.create({
+      name: "github-token",
+      value: "first",
+      idempotencyKey: "create-1",
+    }, { signal })
+    expect(created.id).toBe(secretID)
+    expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
+      name: "github-token",
+      value: "first",
+      idempotency_key: "create-1",
+    })
+    expect(requests[0]!.init?.signal).toBe(signal)
+
+    await client.secrets.ref({ id: secretID }).retrieve({ signal })
+    expect(requests[1]!.url).toBe(
+      `https://api.example.test/api/secrets/${secretID}`,
+    )
+
+    const byName = client.secrets.ref({ name: "github-token" })
+    const rotated = await byName.rotate({
+      value: "second",
+      idempotencyKey: "rotate-1",
+    }, { signal })
+    expect(rotated.rotatedAt?.toISOString()).toBe("2026-07-25T01:01:00.000Z")
+    expect(requests[2]!.url).toBe(
+      "https://api.example.test/api/secrets/by-name/github-token/rotate",
+    )
+    expect(JSON.parse(String(requests[2]!.init?.body))).toEqual({
+      value: "second",
+      idempotency_key: "rotate-1",
+    })
+
+    const page = await client.secrets.list(
+      { cursor: "sec1.current", limit: 10 },
+      { signal },
+    )
+    expect(page.nextCursor).toBe("sec1.next")
+    expect(requests[3]!.url).toBe(
+      "https://api.example.test/api/secrets?cursor=sec1.current&limit=10",
+    )
+
+    const revoked = await byName.revoke(
+      { idempotencyKey: "revoke-1" },
+      { signal },
+    )
+    expect(revoked.state).toBe("revoked")
+    expect(JSON.parse(String(requests[4]!.init?.body))).toEqual({
+      idempotency_key: "revoke-1",
+    })
+  })
+})
+
 describe("HelmrClient Deployments", () => {
   test("distinguishes an absent current Deployment from retrieval", async () => {
     const responses: unknown[] = [

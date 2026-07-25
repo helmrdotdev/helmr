@@ -177,7 +177,7 @@ Tasks declare the Helmr secret names they need and where each value appears
 inside the guest, such as an environment variable:
 
 ```sh
-printf '%s' "$OPENAI_API_KEY" | helmr secret set OPENAI_API_KEY
+printf '%s' "$OPENAI_API_KEY" | helmr secret create OPENAI_API_KEY
 helmr session start my-task
 ```
 

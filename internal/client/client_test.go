@@ -461,7 +461,7 @@ func TestListRunsOptionsAndGetRunLogs(t *testing.T) {
 func TestRevokeSecretUsesExplicitOperation(t *testing.T) {
 	var request api.RevokeSecretRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/secrets/API_TOKEN/revoke" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/secrets/by-name/API_TOKEN/revoke" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {

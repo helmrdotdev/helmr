@@ -290,6 +290,246 @@ func (s *Store) rotate(ctx context.Context, environmentID uuid.UUID, secretID uu
 	return db.Secret{}, fmt.Errorf("rotate secret after concurrent updates: %w", lastErr)
 }
 
+type mutationReceipt struct {
+	SecretID string `json:"secretId"`
+}
+
+func (s *Store) Create(
+	ctx context.Context,
+	environmentID uuid.UUID,
+	name string,
+	value []byte,
+	idempotencyKey string,
+) (db.GetSecretSnapshotRow, error) {
+	if s.tx == nil {
+		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
+	}
+	if err := ValidateName(name); err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("begin Secret creation: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	queries := db.New(tx)
+	var claim *db.IdempotencyClaim
+	var authenticatorKeyVersion int32
+	if idempotencyKey == "" {
+		selection, err := s.authority.Lock(ctx, queries)
+		if err != nil {
+			return db.GetSecretSnapshotRow{}, err
+		}
+		authenticatorKeyVersion = selection.Current
+	} else {
+		claims, err := s.claims.Transaction(tx)
+		if err != nil {
+			return db.GetSecretSnapshotRow{}, err
+		}
+		request, err := idempotency.NewSecretCreateRequest(
+			environmentID,
+			name,
+			idempotencyKey,
+			func(version int32) ([sha256.Size]byte, error) {
+				return s.idempotencyAuthenticator(environmentID, name, value, version)
+			},
+		)
+		if err != nil {
+			return db.GetSecretSnapshotRow{}, err
+		}
+		acquired, err := claims.Acquire(ctx, request)
+		if err != nil {
+			return db.GetSecretSnapshotRow{}, err
+		}
+		if !acquired.New {
+			snapshot, err := replayMutation(ctx, queries, acquired.Claim)
+			if err != nil {
+				return db.GetSecretSnapshotRow{}, err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return db.GetSecretSnapshotRow{}, fmt.Errorf("commit Secret creation replay: %w", err)
+			}
+			return snapshot, nil
+		}
+		claim = &acquired.Claim
+		authenticatorKeyVersion = acquired.Claim.HashKeyVersion
+	}
+
+	bound := *s
+	bound.db = queries
+	record, err := bound.create(
+		ctx,
+		environmentID,
+		name,
+		value,
+		authenticatorKeyVersion,
+	)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	snapshot, err := queries.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{
+		EnvironmentID: pgvalue.UUID(environmentID),
+		ID:            record.ID,
+	})
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	if claim != nil {
+		claims, err := s.claims.Transaction(tx)
+		if err != nil {
+			return db.GetSecretSnapshotRow{}, err
+		}
+		if err := completeMutation(ctx, claims, *claim, record.ID); err != nil {
+			return db.GetSecretSnapshotRow{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("commit Secret creation: %w", err)
+	}
+	return snapshot, nil
+}
+
+func (s *Store) Rotate(
+	ctx context.Context,
+	environmentID uuid.UUID,
+	secretID uuid.UUID,
+	value []byte,
+	idempotencyKey string,
+) (db.GetSecretSnapshotRow, error) {
+	if s.tx == nil {
+		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
+	}
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("begin Secret rotation: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	claims, err := s.claims.Transaction(tx)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	queries := claims.Queries()
+	record, err := queries.GetSecret(ctx, db.GetSecretParams{
+		EnvironmentID: pgvalue.UUID(environmentID),
+		ID:            pgvalue.UUID(secretID),
+	})
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	request, err := idempotency.NewSecretRotateRequest(
+		environmentID,
+		secretID,
+		strings.TrimSpace(idempotencyKey),
+		func(version int32) ([sha256.Size]byte, error) {
+			return s.idempotencyAuthenticator(environmentID, record.Name, value, version)
+		},
+	)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	acquired, err := claims.Acquire(ctx, request)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	if !acquired.New {
+		snapshot, err := replayMutation(ctx, queries, acquired.Claim)
+		if err != nil {
+			return db.GetSecretSnapshotRow{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return db.GetSecretSnapshotRow{}, fmt.Errorf("commit Secret rotation replay: %w", err)
+		}
+		return snapshot, nil
+	}
+	bound := *s
+	bound.db = queries
+	rotated, err := bound.rotate(
+		ctx,
+		environmentID,
+		secretID,
+		value,
+		acquired.Claim.HashKeyVersion,
+	)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	snapshot, err := queries.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{
+		EnvironmentID: pgvalue.UUID(environmentID),
+		ID:            rotated.ID,
+	})
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	if err := completeMutation(ctx, claims, acquired.Claim, rotated.ID); err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("commit Secret rotation: %w", err)
+	}
+	return snapshot, nil
+}
+
+func (s *Store) idempotencyAuthenticator(
+	environmentID uuid.UUID,
+	name string,
+	value []byte,
+	version int32,
+) ([sha256.Size]byte, error) {
+	raw, err := s.authenticator(environmentID, name, value, version)
+	if err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	if len(raw) != sha256.Size {
+		return [sha256.Size]byte{}, errors.New("secret value authenticator has invalid size")
+	}
+	var result [sha256.Size]byte
+	copy(result[:], raw)
+	return result, nil
+}
+
+func completeMutation(
+	ctx context.Context,
+	claims *idempotency.Transaction,
+	claim db.IdempotencyClaim,
+	secretID pgtype.UUID,
+) error {
+	receipt, err := json.Marshal(mutationReceipt{
+		SecretID: pgvalue.MustUUIDValue(secretID).String(),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal Secret mutation receipt: %w", err)
+	}
+	_, err = claims.Complete(ctx, claim, receipt)
+	return err
+}
+
+func replayMutation(
+	ctx context.Context,
+	queries *db.Queries,
+	claim db.IdempotencyClaim,
+) (db.GetSecretSnapshotRow, error) {
+	if claim.State != "completed" {
+		return db.GetSecretSnapshotRow{}, fmt.Errorf(
+			"secret mutation claim is %s",
+			claim.State,
+		)
+	}
+	var receipt mutationReceipt
+	if err := json.Unmarshal(claim.Receipt, &receipt); err != nil {
+		return db.GetSecretSnapshotRow{}, errors.New("secret mutation receipt is invalid")
+	}
+	secretID, err := uuid.Parse(receipt.SecretID)
+	if err != nil || secretID == uuid.Nil || secretID.String() != receipt.SecretID {
+		return db.GetSecretSnapshotRow{}, errors.New("secret mutation receipt is invalid")
+	}
+	return queries.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{
+		EnvironmentID: claim.EnvironmentID,
+		ID:            pgvalue.UUID(secretID),
+	})
+}
+
 func (s *Store) Revoke(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
 	if s.tx == nil {
 		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")

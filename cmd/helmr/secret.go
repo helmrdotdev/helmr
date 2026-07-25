@@ -25,7 +25,8 @@ func secretCommand() *cobra.Command {
 	secret.AddCommand(
 		secretListCommand(),
 		secretGetCommand(),
-		secretSetCommand(),
+		secretCreateCommand(),
+		secretRotateCommand(),
 		secretRevokeCommand(),
 	)
 	return secret
@@ -90,35 +91,32 @@ func secretGetCommand() *cobra.Command {
 	return cmd
 }
 
-func secretSetCommand() *cobra.Command {
+func secretCreateCommand() *cobra.Command {
 	var valueFlag string
 	var projectID string
 	var environmentID string
+	var idempotencyKey string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "set NAME [VALUE]",
-		Short: "Create or update a remote secret.",
+		Use:   "create NAME [VALUE]",
+		Short: "Create a remote secret.",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 2 && valueFlag != "" {
-				return errors.New("secret value cannot be provided both positionally and with --value")
-			}
-			value := valueFlag
-			if len(args) == 2 {
-				value = args[1]
-			}
-			if len(args) == 1 && valueFlag == "" {
-				bytes, err := io.ReadAll(cmd.InOrStdin())
-				if err != nil {
-					return err
-				}
-				value = string(bytes)
+			value, err := readSecretValue(cmd, args, valueFlag)
+			if err != nil {
+				return err
 			}
 			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
-			secret, err := control.SetSecret(cmd.Context(), args[0], value, client.SecretOptions(secretOptions(projectID, environmentID)))
+			secret, err := control.CreateSecret(
+				cmd.Context(),
+				args[0],
+				value,
+				idempotencyKey,
+				client.SecretOptions(secretOptions(projectID, environmentID)),
+			)
 			if err != nil {
 				return err
 			}
@@ -130,9 +128,73 @@ func secretSetCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&valueFlag, "value", "", "Secret value. Reads stdin if omitted.")
+	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Stable key for retrying this creation.")
 	addSecretScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
+}
+
+func secretRotateCommand() *cobra.Command {
+	var valueFlag string
+	var projectID string
+	var environmentID string
+	var idempotencyKey string
+	var jsonOutput bool
+	cmd := &cobra.Command{
+		Use:   "rotate NAME [VALUE]",
+		Short: "Rotate a remote secret.",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			value, err := readSecretValue(cmd, args, valueFlag)
+			if err != nil {
+				return err
+			}
+			control, err := controlClient(cmd)
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(idempotencyKey) == "" {
+				idempotencyKey = uuid.Must(uuid.NewV7()).String()
+			}
+			record, err := control.RotateSecret(
+				cmd.Context(),
+				args[0],
+				value,
+				idempotencyKey,
+				client.SecretOptions(secretOptions(projectID, environmentID)),
+			)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return format.JSON(cmd.OutOrStdout(), record)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", record.Name)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&valueFlag, "value", "", "Secret value. Reads stdin if omitted.")
+	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Stable key for retrying this rotation.")
+	addSecretScopeFlags(cmd, &projectID, &environmentID)
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
+	return cmd
+}
+
+func readSecretValue(cmd *cobra.Command, args []string, valueFlag string) (string, error) {
+	if len(args) == 2 && valueFlag != "" {
+		return "", errors.New("secret value cannot be provided both positionally and with --value")
+	}
+	if len(args) == 2 {
+		return args[1], nil
+	}
+	if valueFlag != "" {
+		return valueFlag, nil
+	}
+	value, err := io.ReadAll(cmd.InOrStdin())
+	if err != nil {
+		return "", err
+	}
+	return string(value), nil
 }
 
 func secretRevokeCommand() *cobra.Command {

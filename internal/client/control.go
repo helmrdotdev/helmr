@@ -342,7 +342,7 @@ func (c *Client) ListSecrets(ctx context.Context, opts ...SecretOptions) (api.Li
 }
 
 func (c *Client) GetSecret(ctx context.Context, name string, opts ...SecretOptions) (api.SecretResponse, error) {
-	path, err := c.secretItemPath(name, opts...)
+	path, err := c.secretNamePath(name, opts...)
 	if err != nil {
 		return api.SecretResponse{}, err
 	}
@@ -357,22 +357,29 @@ func (c *Client) GetSecret(ctx context.Context, name string, opts ...SecretOptio
 	return response, nil
 }
 
-func (c *Client) SetSecret(ctx context.Context, name string, value string, opts ...SecretOptions) (api.SecretResponse, error) {
+func (c *Client) CreateSecret(ctx context.Context, name string, value string, idempotencyKey string, opts ...SecretOptions) (api.SecretResponse, error) {
 	var response api.SecretResponse
-	request := api.SetSecretRequest{Value: value}
-	path, scoped, err := c.secretItemPathWithScope(name, opts...)
+	path, err := c.secretCollectionPath(opts...)
 	if err != nil {
 		return api.SecretResponse{}, err
 	}
-	if len(opts) > 0 {
-		request.ProjectID = opts[0].ProjectID
-		request.EnvironmentID = opts[0].EnvironmentID
+	if err := c.postJSON(ctx, path, api.CreateSecretRequest{
+		Name: name, Value: value, IdempotencyKey: idempotencyKey,
+	}, &response); err != nil {
+		return api.SecretResponse{}, err
 	}
-	if scoped {
-		request.ProjectID = ""
-		request.EnvironmentID = ""
+	return response, nil
+}
+
+func (c *Client) RotateSecret(ctx context.Context, name string, value string, idempotencyKey string, opts ...SecretOptions) (api.SecretResponse, error) {
+	var response api.SecretResponse
+	path, err := c.secretNamePath(name, opts...)
+	if err != nil {
+		return api.SecretResponse{}, err
 	}
-	if err := c.putJSON(ctx, path, request, &response); err != nil {
+	if err := c.postJSON(ctx, path+"/rotate", api.RotateSecretRequest{
+		Value: value, IdempotencyKey: idempotencyKey,
+	}, &response); err != nil {
 		return api.SecretResponse{}, err
 	}
 	return response, nil
@@ -380,7 +387,7 @@ func (c *Client) SetSecret(ctx context.Context, name string, value string, opts 
 
 func (c *Client) RevokeSecret(ctx context.Context, name string, idempotencyKey string, opts ...SecretOptions) (api.SecretResponse, error) {
 	var response api.SecretResponse
-	path, err := c.secretItemPath(name, opts...)
+	path, err := c.secretNamePath(name, opts...)
 	if err != nil {
 		return api.SecretResponse{}, err
 	}
@@ -411,28 +418,23 @@ func (c *Client) secretCollectionPathWithScope(opts SecretOptions) (string, erro
 	return path, err
 }
 
-func (c *Client) secretItemPath(name string, opts ...SecretOptions) (string, error) {
-	path, _, err := c.secretItemPathWithScope(name, opts...)
-	return path, err
-}
-
-func (c *Client) secretItemPathWithScope(name string, opts ...SecretOptions) (string, bool, error) {
+func (c *Client) secretNamePath(name string, opts ...SecretOptions) (string, error) {
 	hasScope := len(opts) > 0 && (strings.TrimSpace(opts[0].ProjectID) != "" || strings.TrimSpace(opts[0].EnvironmentID) != "")
 	if c.sessionScopedRoutes {
 		scope := SecretOptions{}
 		if len(opts) > 0 {
 			scope = opts[0]
 		}
-		basePath, scoped, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/secrets")
+		basePath, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/secrets")
 		if err != nil {
-			return "", false, err
+			return "", err
 		}
-		return environmentScopedResourcePath(basePath, name, ""), scoped, nil
+		return environmentScopedResourcePath(basePath+"/by-name", name, ""), nil
 	}
 	if hasScope {
-		return "", false, errors.New("project and environment scope is only accepted on session-scoped API routes")
+		return "", errors.New("project and environment scope is only accepted on session-scoped API routes")
 	}
-	return "/api/secrets/" + url.PathEscape(name), false, nil
+	return "/api/secrets/by-name/" + url.PathEscape(name), nil
 }
 
 type RunScopeOptions struct {

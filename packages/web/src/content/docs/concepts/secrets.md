@@ -27,7 +27,7 @@ export const useSecret = task({
 ## Store Values
 
 ```sh
-printf '%s' "$API_TOKEN" | helmr secret set API_TOKEN
+printf '%s' "$API_TOKEN" | helmr secret create API_TOKEN
 ```
 
 The web UI lists secret names and timestamps, but it does not display saved values.

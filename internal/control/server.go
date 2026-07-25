@@ -42,11 +42,14 @@ const (
 	workerLogRequestBodyLimit  = int64(256 << 10)
 	taskCompletionBodyLimit    = int64(17 << 20)
 	workspaceExecResultLimit   = int64(10 << 20)
+	secretRequestBodyLimit     = int64(1 << 20)
 	maxControlPageSize         = int32(500)
 	defaultRunLeaseTTL         = 5 * time.Minute
 )
 
 type SecretManager interface {
+	Create(ctx context.Context, environmentID uuid.UUID, name string, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error)
+	Rotate(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error)
 	PutScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error)
 	Revoke(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID, idempotencyKey string) (db.GetSecretSnapshotRow, error)
 	CheckScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) error
@@ -478,9 +481,18 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.With(limitRequestBody(tokenRequestBodyLimit)).
 			Post("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/cancel", s.cancelToken)
 		r.Get("/projects/{projectID}/environments/{environmentID}/secrets", s.listSecrets)
-		r.Get("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.getSecret)
-		r.Put("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.setSecret)
-		r.Post("/projects/{projectID}/environments/{environmentID}/secrets/{name}/revoke", s.revokeSecret)
+		r.With(limitRequestBody(secretRequestBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/secrets", s.createSecret)
+		r.Get("/projects/{projectID}/environments/{environmentID}/secrets/by-name/{name}", s.getSecretByName)
+		r.Get("/projects/{projectID}/environments/{environmentID}/secrets/{secretID}", s.getSecretByID)
+		r.With(limitRequestBody(secretRequestBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/secrets/by-name/{name}/rotate", s.rotateSecretByName)
+		r.With(limitRequestBody(secretRequestBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/rotate", s.rotateSecretByID)
+		r.With(limitRequestBody(secretRequestBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/secrets/by-name/{name}/revoke", s.revokeSecretByName)
+		r.With(limitRequestBody(secretRequestBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/revoke", s.revokeSecretByID)
 		r.With(limitRequestBody(workspaceCreateBodyLimit)).
 			Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceDeclaredID}/create", s.createWorkspaceHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/by-key/{workspaceDeclaredID}", s.getWorkspaceByKeyHTTP)
@@ -562,9 +574,17 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireActor)
 		r.Get("/secrets", s.listSecrets)
-		r.Get("/secrets/{name}", s.getSecret)
-		r.Put("/secrets/{name}", s.setSecret)
-		r.Post("/secrets/{name}/revoke", s.revokeSecret)
+		r.With(limitRequestBody(secretRequestBodyLimit)).Post("/secrets", s.createSecret)
+		r.Get("/secrets/by-name/{name}", s.getSecretByName)
+		r.Get("/secrets/{secretID}", s.getSecretByID)
+		r.With(limitRequestBody(secretRequestBodyLimit)).
+			Post("/secrets/by-name/{name}/rotate", s.rotateSecretByName)
+		r.With(limitRequestBody(secretRequestBodyLimit)).
+			Post("/secrets/{secretID}/rotate", s.rotateSecretByID)
+		r.With(limitRequestBody(secretRequestBodyLimit)).
+			Post("/secrets/by-name/{name}/revoke", s.revokeSecretByName)
+		r.With(limitRequestBody(secretRequestBodyLimit)).
+			Post("/secrets/{secretID}/revoke", s.revokeSecretByID)
 		r.With(limitRequestBody(workspaceCreateBodyLimit)).
 			Post("/workspaces/{workspaceDeclaredID}/create", s.createWorkspaceHTTP)
 		r.Get("/workspaces/by-key/{workspaceDeclaredID}", s.getWorkspaceByKeyHTTP)

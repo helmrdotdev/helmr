@@ -43,6 +43,10 @@ import {
   createClientSchedules,
   type ClientSchedulesApi,
 } from "./client-schedule"
+import {
+  createClientSecrets,
+  type ClientSecretsApi,
+} from "./client-secret"
 import type { RequestOptions } from "./request"
 
 export interface HelmrClientOptions {
@@ -126,6 +130,7 @@ export class HelmrClient {
   readonly actors: ClientActorsApi
   readonly deployments: ClientDeploymentsApi
   readonly schedules: ClientSchedulesApi
+  readonly secrets: ClientSecretsApi
   readonly runs: ClientRunsApi
   readonly tokens: ClientTokensApi
   readonly workspaces: ClientWorkspacesApi
@@ -136,6 +141,7 @@ export class HelmrClient {
     this.actors = createClientActors(transport)
     this.deployments = createClientDeployments(transport)
     this.schedules = createClientSchedules(transport)
+    this.secrets = createClientSecrets(transport)
     this.runs = Object.freeze(new ClientRuns(transport))
     this.tokens = Object.freeze(new ClientTokens(transport))
     this.workspaces = createClientWorkspaces(transport)
