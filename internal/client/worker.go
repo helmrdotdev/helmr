@@ -466,19 +466,6 @@ func (c *Client) CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDe
 	return response, nil
 }
 
-func (c *Client) AppendLog(ctx context.Context, lease api.WorkerRunLease, stream api.WorkerLogStream, observedSeq uint64, content []byte) (api.WorkerEventResponse, error) {
-	var response api.WorkerEventResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/logs", api.WorkerAppendLogRequest{
-		Lease:         lease,
-		Stream:        stream,
-		ObservedSeq:   observedSeq,
-		ContentBase64: base64.StdEncoding.EncodeToString(content),
-	}, &response); err != nil {
-		return api.WorkerEventResponse{}, err
-	}
-	return response, nil
-}
-
 func (c *Client) AppendRunLog(
 	ctx context.Context,
 	lease api.WorkerRunLeaseReceipt,
@@ -494,23 +481,12 @@ func (c *Client) AppendRunLog(
 	}, nil)
 }
 
-func (c *Client) RecordLogEntry(ctx context.Context, lease api.WorkerRunLease, entry string) (api.WorkerEventResponse, error) {
-	var response api.WorkerEventResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/log-entries", api.WorkerRecordLogEntryRequest{
-		Lease: lease,
-		Entry: entry,
-	}, &response); err != nil {
-		return api.WorkerEventResponse{}, err
-	}
-	return response, nil
+func (c *Client) UpdateRunMetadata(ctx context.Context, request api.WorkerUpdateRunMetadataRequest) error {
+	return c.postWorkerJSON(ctx, "/api/worker/leases/run-metadata", request, nil)
 }
 
-func (c *Client) UpdateRunMetadata(ctx context.Context, request api.WorkerUpdateRunMetadataRequest) (api.WorkerEventResponse, error) {
-	var response api.WorkerEventResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/metadata", request, &response); err != nil {
-		return api.WorkerEventResponse{}, err
-	}
-	return response, nil
+func (c *Client) AppendStructuredRunLog(ctx context.Context, request api.WorkerStructuredLogRequest) error {
+	return c.postWorkerJSON(ctx, "/api/worker/leases/structured-logs", request, nil)
 }
 
 func (c *Client) CreateRuntimeToken(ctx context.Context, request api.WorkerCreateTokenRequest) (api.TokenResponse, error) {

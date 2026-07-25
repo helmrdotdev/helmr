@@ -48,6 +48,7 @@ import {
   type ClientSecretsApi,
 } from "./client-secret"
 import type { RequestOptions } from "./request"
+import type { LogAttributes, RunLogLevel } from "./logger"
 
 export interface HelmrClientOptions {
   readonly url: string
@@ -106,6 +107,56 @@ export interface ClientRunListQuery {
   readonly limit?: number
 }
 
+export interface ClientRunLogQuery {
+  readonly cursor?: string
+  readonly limit?: number
+  readonly level?: RunLogLevel | readonly RunLogLevel[]
+}
+
+export interface ClientRunEventQuery {
+  readonly cursor?: string
+  readonly limit?: number
+  readonly severity?: RunLogLevel | readonly RunLogLevel[]
+}
+
+export interface StructuredRunLogRecord {
+  readonly id: string
+  readonly kind: "structured"
+  readonly runId: string
+  readonly attemptNumber: number
+  readonly level: RunLogLevel
+  readonly message: string
+  readonly attributes: LogAttributes
+  readonly at: string
+}
+
+export interface StreamRunLogRecord {
+  readonly id: string
+  readonly kind: "stdout" | "stderr"
+  readonly runId: string
+  readonly attemptNumber: number
+  readonly observedSequence: number
+  readonly contentBase64: string
+  readonly bytes: number
+  readonly at: string
+}
+
+export type RunLogRecord = StructuredRunLogRecord | StreamRunLogRecord
+
+export interface RunEventRecord {
+  readonly id: string
+  readonly runId: string
+  readonly attemptNumber?: number
+  readonly category: string
+  readonly severity: RunLogLevel
+  readonly source: string
+  readonly kind: string
+  readonly message: string
+  readonly attributes: JsonValue
+  readonly occurredAt: string
+  readonly at: string
+}
+
 export interface ClientRunsApi {
   retrieve<TOutput extends JsonValue = JsonValue>(
     runId: string,
@@ -123,6 +174,16 @@ export interface ClientRunsApi {
     runId: string,
     options?: RequestOptions,
   ): TaskWait<TaskOutput<TTask>>
+  logs(
+    runId: string,
+    query?: ClientRunLogQuery,
+    options?: RequestOptions,
+  ): Promise<CursorPage<RunLogRecord>>
+  events(
+    runId: string,
+    query?: ClientRunEventQuery,
+    options?: RequestOptions,
+  ): Promise<CursorPage<RunEventRecord>>
 }
 
 export class HelmrClient {
@@ -248,6 +309,64 @@ class ClientRuns implements ClientRunsApi {
         `/api/runs/${encodeURIComponent(runID(runId))}/cancel`,
         options.signal === undefined ? {} : { signal: options.signal },
       ),
+    )
+  }
+
+  async logs(
+    runId: string,
+    queryInput: ClientRunLogQuery = {},
+    options: RequestOptions = {},
+  ): Promise<CursorPage<RunLogRecord>> {
+    const query = runTelemetryQuery(
+      queryInput.cursor,
+      queryInput.limit,
+      "level",
+      queryInput.level,
+    )
+    const response = objectValue(
+      await this.#transport.request(
+        "GET",
+        `/api/runs/${encodeURIComponent(runID(runId))}/logs${query}`,
+        options.signal === undefined ? {} : { signal: options.signal },
+      ),
+      "Run log page",
+    )
+    if (!Array.isArray(response["logs"])) {
+      throw new Error("Run log page.logs must be an array")
+    }
+    return cursorPage(
+      response["logs"].map(parseRunLogRecord),
+      response["next_cursor"],
+      "Run log page",
+    )
+  }
+
+  async events(
+    runId: string,
+    queryInput: ClientRunEventQuery = {},
+    options: RequestOptions = {},
+  ): Promise<CursorPage<RunEventRecord>> {
+    const query = runTelemetryQuery(
+      queryInput.cursor,
+      queryInput.limit,
+      "severity",
+      queryInput.severity,
+    )
+    const response = objectValue(
+      await this.#transport.request(
+        "GET",
+        `/api/runs/${encodeURIComponent(runID(runId))}/events${query}`,
+        options.signal === undefined ? {} : { signal: options.signal },
+      ),
+      "Run event page",
+    )
+    if (!Array.isArray(response["events"])) {
+      throw new Error("Run event page.events must be an array")
+    }
+    return cursorPage(
+      response["events"].map(parseRunEventRecord),
+      response["next_cursor"],
+      "Run event page",
     )
   }
 
@@ -764,6 +883,131 @@ function parseRunError(value: unknown): RunError {
   return error
 }
 
+function runTelemetryQuery(
+  cursor: string | undefined,
+  limit: number | undefined,
+  filterName: "level" | "severity",
+  filter: RunLogLevel | readonly RunLogLevel[] | undefined,
+): string {
+  const query = new URLSearchParams()
+  if (cursor !== undefined) query.set("cursor", cursor)
+  if (limit !== undefined) query.set("limit", String(limit))
+  const values = filter === undefined
+    ? []
+    : Array.isArray(filter)
+    ? filter
+    : [filter]
+  for (const value of values) query.append(filterName, runLogLevel(value))
+  return query.size === 0 ? "" : `?${query.toString()}`
+}
+
+function parseRunLogRecord(value: unknown): RunLogRecord {
+  const record = objectValue(value, "Run log record")
+  const kind = requiredStringFrom(record, "kind", "Run log record")
+  const common = {
+    id: requiredStringFrom(record, "id", "Run log record"),
+    runId: runID(requiredStringFrom(record, "run_id", "Run log record")),
+    attemptNumber: requiredPositiveInteger(
+      record,
+      "attempt_number",
+      "Run log record",
+    ),
+    at: requiredTimestamp(record, "at", "Run log record"),
+  }
+  if (kind === "structured") {
+    const attributes = objectValue(
+      record["attributes"],
+      "Run log record.attributes",
+    ) as LogAttributes
+    return Object.freeze({
+      ...common,
+      kind,
+      level: runLogLevel(record["level"]),
+      message: stringValue(record, "message", "Run log record"),
+      attributes: Object.freeze({ ...attributes }),
+    })
+  }
+  if (kind !== "stdout" && kind !== "stderr") {
+    throw new Error("Run log record.kind is invalid")
+  }
+  const contentBase64 = stringValue(
+    record,
+    "content_base64",
+    "Run log record",
+  )
+  if (!validBase64(contentBase64)) {
+    throw new Error("Run log record.content_base64 must be canonical base64")
+  }
+  return Object.freeze({
+    ...common,
+    kind,
+    observedSequence: requiredPositiveInteger(
+      record,
+      "observed_sequence",
+      "Run log record",
+    ),
+    contentBase64,
+    bytes: requiredNonnegativeInteger(record, "bytes", "Run log record"),
+  })
+}
+
+function parseRunEventRecord(value: unknown): RunEventRecord {
+  const event = objectValue(value, "Run event record")
+  return Object.freeze({
+    id: requiredStringFrom(event, "id", "Run event record"),
+    runId: runID(requiredStringFrom(event, "run_id", "Run event record")),
+    ...(event["attempt_number"] === undefined
+      ? {}
+      : {
+          attemptNumber: requiredPositiveInteger(
+            event,
+            "attempt_number",
+            "Run event record",
+          ),
+        }),
+    category: requiredStringFrom(event, "category", "Run event record"),
+    severity: runLogLevel(event["severity"]),
+    source: requiredStringFrom(event, "source", "Run event record"),
+    kind: requiredStringFrom(event, "kind", "Run event record"),
+    message: stringValue(event, "message", "Run event record"),
+    attributes: event["attributes"] as JsonValue,
+    occurredAt: requiredTimestamp(event, "occurred_at", "Run event record"),
+    at: requiredTimestamp(event, "at", "Run event record"),
+  })
+}
+
+function cursorPage<T>(
+  items: T[],
+  nextCursor: unknown,
+  label: string,
+): CursorPage<T> {
+  if (nextCursor !== undefined && typeof nextCursor !== "string") {
+    throw new Error(`${label}.next_cursor must be a string`)
+  }
+  return Object.freeze({
+    items: Object.freeze(items),
+    ...(nextCursor === undefined ? {} : { nextCursor }),
+  })
+}
+
+function runLogLevel(value: unknown): RunLogLevel {
+  if (
+    value !== "debug" &&
+    value !== "info" &&
+    value !== "warn" &&
+    value !== "error"
+  ) {
+    throw new Error("Run log level must be debug, info, warn, or error")
+  }
+  return value
+}
+
+function validBase64(value: string): boolean {
+  return /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+    value,
+  )
+}
+
 function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
   signal?.throwIfAborted()
   return new Promise((resolve, reject) => {
@@ -847,6 +1091,18 @@ function requiredStringFrom(
   return result
 }
 
+function stringValue(
+  value: Record<string, unknown>,
+  field: string,
+  label: string,
+): string {
+  const result = value[field]
+  if (typeof result !== "string") {
+    throw new Error(`${label}.${field} must be a string`)
+  }
+  return result
+}
+
 function requiredBoolean(
   value: Record<string, unknown>,
   field: string,
@@ -867,6 +1123,18 @@ function requiredPositiveInteger(
   const result = value[field]
   if (!Number.isSafeInteger(result) || (result as number) < 1) {
     throw new Error(`${label}.${field} must be a positive safe integer`)
+  }
+  return result as number
+}
+
+function requiredNonnegativeInteger(
+  value: Record<string, unknown>,
+  field: string,
+  label: string,
+): number {
+  const result = value[field]
+  if (!Number.isSafeInteger(result) || (result as number) < 0) {
+    throw new Error(`${label}.${field} must be a nonnegative safe integer`)
   }
   return result as number
 }

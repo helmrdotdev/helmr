@@ -1,4 +1,13 @@
-import { image, source, task, tokens, workspace, type JsonValue } from "@helmr/sdk"
+import {
+  image,
+  logger,
+  metadata,
+  source,
+  task,
+  tokens,
+  workspace,
+  type JsonValue,
+} from "@helmr/sdk"
 import { createHash, randomUUID } from "node:crypto"
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { checkCommand as checkProcessCommand } from "../lib/process"
@@ -80,6 +89,29 @@ export const runtimeSmoke = task({
     checks.push(await collectCheck("bun-version", () => checkCommand("bun-version", ["bun", "--version"])))
     checks.push(await collectCheck("ripgrep-json", () => checkCommand("ripgrep-json", ["rg", "--json", "Helmr", "/opt/helmr-dev-workflows/guides"])))
 
+    await metadata.set("smoke.phase", "running")
+    await metadata.patch({
+      "smoke.marker": marker,
+      "smoke.scenario": input.scenario,
+    })
+    await metadata.increment("smoke.checks", checks.length)
+    await logger.debug("runtime smoke diagnostics complete", {
+      marker,
+      checkCount: checks.length,
+    })
+    await logger.info("runtime smoke reached token phase", {
+      marker,
+      exerciseToken: input.exerciseToken,
+    })
+    await logger.warn("runtime smoke warning probe", {
+      marker,
+      expected: true,
+    })
+    await logger.error("runtime smoke error-level probe", {
+      marker,
+      expected: true,
+    })
+
     console.info({
       phase: "runtime-smoke",
       scenario: input.scenario,
@@ -124,6 +156,7 @@ export const runtimeSmoke = task({
       console.error({ phase: "runtime-smoke", marker, failures })
       throw new Error(`runtime smoke failed ${failures.length} check(s): ${failures.map((check) => check.name).join(", ")}`)
     }
+    await metadata.set("smoke.phase", "complete")
     return report
   },
 })

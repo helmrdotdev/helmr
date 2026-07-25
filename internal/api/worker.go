@@ -985,16 +985,10 @@ type WorkerDeploymentBuildResponse struct {
 type WorkerLogStream string
 
 const (
-	WorkerLogStreamStdout WorkerLogStream = "stdout"
-	WorkerLogStreamStderr WorkerLogStream = "stderr"
+	WorkerLogStreamStdout     WorkerLogStream = "stdout"
+	WorkerLogStreamStderr     WorkerLogStream = "stderr"
+	WorkerLogStreamStructured WorkerLogStream = "structured"
 )
-
-type WorkerAppendLogRequest struct {
-	Lease         WorkerRunLease  `json:"lease"`
-	Stream        WorkerLogStream `json:"stream"`
-	ObservedSeq   uint64          `json:"observed_seq"`
-	ContentBase64 string          `json:"content_base64"`
-}
 
 type WorkerRunLogAppendRequest struct {
 	Lease         WorkerRunLeaseReceipt `json:"lease"`
@@ -1003,22 +997,22 @@ type WorkerRunLogAppendRequest struct {
 	ContentBase64 string                `json:"content_base64"`
 }
 
-type WorkerRecordLogEntryRequest struct {
-	Lease WorkerRunLease `json:"lease"`
-	Entry string         `json:"entry"`
-}
-
 type WorkerUpdateRunMetadataRequest struct {
-	Lease     WorkerRunLease  `json:"lease"`
-	Operation string          `json:"operation"`
-	Key       string          `json:"key,omitempty"`
-	Value     json.RawMessage `json:"value,omitempty"`
-	Patch     json.RawMessage `json:"patch,omitempty"`
-	Amount    float64         `json:"amount,omitempty"`
+	Lease       WorkerRunLeaseReceipt `json:"lease"`
+	OperationID string                `json:"operation_id"`
+	Operation   string                `json:"operation"`
+	Key         string                `json:"key,omitempty"`
+	Value       json.RawMessage       `json:"value,omitempty"`
+	Patch       json.RawMessage       `json:"patch,omitempty"`
+	Amount      *float64              `json:"amount,omitempty"`
 }
 
-type WorkerEventResponse struct {
-	RunID string `json:"run_id"`
+type WorkerStructuredLogRequest struct {
+	Lease       WorkerRunLeaseReceipt `json:"lease"`
+	ObservedSeq uint64                `json:"observed_seq"`
+	Level       string                `json:"level"`
+	Message     string                `json:"message"`
+	Attributes  json.RawMessage       `json:"attributes"`
 }
 
 type WorkerCreateTokenRequest struct {

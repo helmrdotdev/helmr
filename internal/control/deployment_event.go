@@ -104,7 +104,7 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		value := rows[len(rows)-1].ID
 		nextCursor = &value
 	}
-	writeJSON(w, http.StatusOK, api.RunEventPage{Events: rows, Cursor: telemetryCursor(cursor), NextCursor: nextCursor})
+	writeJSON(w, http.StatusOK, api.RunEventPage{Events: rows, NextCursor: nextCursor})
 }
 
 func (s *Server) followDeploymentEvents(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, deploymentID uuid.UUID, cursor int64) {

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,7 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-func TestWaitCommandFollowsEventsUntilTerminal(t *testing.T) {
+func TestWaitCommandPollsUntilTerminal(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -30,12 +29,6 @@ func TestWaitCommandFollowsEventsUntilTerminal(t *testing.T) {
 				status = "succeeded"
 			}
 			_ = json.NewEncoder(w).Encode(api.RunResponse{ID: "run-1", Status: status})
-		case "/api/runs/run-1/events":
-			if r.URL.Query().Get("follow") != "1" {
-				t.Fatalf("query = %s", r.URL.RawQuery)
-			}
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = w.Write([]byte("id: 1\nevent: run_event\ndata: {\"id\":\"1\",\"kind\":\"run.completed\"}\n\n"))
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
@@ -66,12 +59,10 @@ func TestRunEventsFollowStopsAfterTerminalEvent(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1/events" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		if r.URL.Query().Get("follow") != "1" {
-			t.Fatalf("query = %s", r.URL.RawQuery)
-		}
 		eventRequests++
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("id: 7\nevent: run_event\ndata: {\"id\":\"7\",\"kind\":\"run.completed\",\"message\":\"run.completed\"}\n\n"))
+		_ = json.NewEncoder(w).Encode(api.RunEventPage{Events: []api.RunEvent{{
+			ID: "7", Kind: api.RunEventKindCompleted, Message: "run.completed",
+		}}})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -96,127 +87,30 @@ func TestRunEventsFollowStopsAfterTerminalEvent(t *testing.T) {
 	}
 }
 
-func TestWaitCommandChecksStatusAfterStreamDisconnect(t *testing.T) {
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		switch r.URL.Path {
-		case "/api/runs/run-1":
-			requests++
-			status := "running"
-			if requests > 1 {
-				status = "succeeded"
-			}
-			_ = json.NewEncoder(w).Encode(api.RunResponse{ID: "run-1", Status: status})
-		case "/api/runs/run-1/events":
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = w.Write([]byte("id: 1\nevent: run_event\ndata: {\"id\":\"1\",\"kind\":\"run.created\"}\n\n"))
-		default:
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	var out bytes.Buffer
-	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "wait", "run-1", "--timeout", "1s"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "run_id: run-1") || !strings.Contains(out.String(), "run_status: succeeded") {
-		t.Fatalf("output = %q", out.String())
-	}
-	if requests != 2 {
-		t.Fatalf("requests = %d", requests)
-	}
-}
-
-func TestWaitCommandReconnectsAfterTransientEventStreamError(t *testing.T) {
-	oldReconnectDelay := runEventReconnectDelay
-	runEventReconnectDelay = time.Millisecond
-	t.Cleanup(func() { runEventReconnectDelay = oldReconnectDelay })
-
-	runRequests := 0
-	eventRequests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		switch r.URL.Path {
-		case "/api/runs/run-1":
-			runRequests++
-			status := "running"
-			if runRequests > 2 {
-				status = "succeeded"
-			}
-			_ = json.NewEncoder(w).Encode(api.RunResponse{ID: "run-1", Status: status})
-		case "/api/runs/run-1/events":
-			eventRequests++
-			if eventRequests == 1 {
-				http.Error(w, "temporary", http.StatusBadGateway)
-				return
-			}
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = w.Write([]byte("id: 2\nevent: run_event\ndata: {\"id\":\"2\",\"kind\":\"run.completed\"}\n\n"))
-		default:
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	var out bytes.Buffer
-	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "wait", "run-1", "--timeout", "1s"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "run_id: run-1") || !strings.Contains(out.String(), "run_status: succeeded") {
-		t.Fatalf("output = %q", out.String())
-	}
-	if eventRequests != 2 {
-		t.Fatalf("eventRequests = %d", eventRequests)
-	}
-}
-
 func TestEventsCommandFollowsRunEvents(t *testing.T) {
-	oldReconnectDelay := runEventReconnectDelay
-	runEventReconnectDelay = time.Millisecond
-	t.Cleanup(func() { runEventReconnectDelay = oldReconnectDelay })
+	oldPollInterval := runFollowPollInterval
+	runFollowPollInterval = time.Millisecond
+	t.Cleanup(func() { runFollowPollInterval = oldPollInterval })
 	var requests int32
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1/events" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		request := atomic.AddInt32(&requests, 1)
-		if r.URL.Query().Get("follow") != "1" {
+		if request == 1 {
+			next := "rt1.next"
+			_ = json.NewEncoder(w).Encode(api.RunEventPage{
+				Events:     []api.RunEvent{{ID: "event-1", Kind: "run.created"}},
+				NextCursor: &next,
+			})
+			return
+		}
+		if r.URL.Query().Get("cursor") != "rt1.next" {
 			t.Fatalf("query = %s", r.URL.RawQuery)
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		if request == 1 {
-			_, _ = w.Write([]byte("id: tc1.eyJzIjoxfQ\nevent: run_event\ndata: {\"id\":\"tc1.eyJzIjoxfQ\",\"kind\":\"run.created\"}\n\n"))
-			return
-		}
-		if request > 2 {
-			<-r.Context().Done()
-			return
-		}
-		if got := r.Header.Get("Last-Event-ID"); got != "tc1.eyJzIjoxfQ" {
-			t.Fatalf("last event id = %q", got)
-		}
-		_, _ = w.Write([]byte("id: tc1.eyJzIjoyfQ\nevent: run_event\ndata: {\"id\":\"tc1.eyJzIjoyfQ\",\"kind\":\"run.completed\"}\n\n"))
-		time.AfterFunc(10*time.Millisecond, cancel)
+		_ = json.NewEncoder(w).Encode(api.RunEventPage{
+			Events: []api.RunEvent{{ID: "event-2", Kind: api.RunEventKindCompleted}},
+		})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -224,14 +118,13 @@ func TestEventsCommandFollowsRunEvents(t *testing.T) {
 
 	var out bytes.Buffer
 	cmd := newRootCommand()
-	cmd.SetContext(ctx)
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{"run", "events", "run-1", "--follow"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), `"id":"tc1.eyJzIjoxfQ"`) || !strings.Contains(out.String(), `"id":"tc1.eyJzIjoyfQ"`) {
+	if !strings.Contains(out.String(), `"id":"event-1"`) || !strings.Contains(out.String(), `"id":"event-2"`) {
 		t.Fatalf("output = %q", out.String())
 	}
 	if requests < 2 {
@@ -241,51 +134,26 @@ func TestEventsCommandFollowsRunEvents(t *testing.T) {
 
 func TestLogsCommandFollowsRunLogs(t *testing.T) {
 	var requests []string
-	var followRequests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1/logs" && r.URL.Query().Get("follow") == "":
-			_ = json.NewEncoder(w).Encode(api.LogSnapshotResponse{
-				StdoutBase64: base64.StdEncoding.EncodeToString([]byte("old\n")),
-				StderrBase64: "",
-				Cursor:       "tc1.eyJzIjo3fQ",
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1/logs" && r.URL.Query().Get("cursor") == "":
+			_ = json.NewEncoder(w).Encode(api.RunLogPage{
+				Logs: []api.RunLogRecord{{
+					Kind: "stdout", ContentBase64: base64.StdEncoding.EncodeToString([]byte("old\n")),
+				}},
+				NextCursor: "rt1.old",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1/logs" && r.URL.Query().Get("follow") == "1":
-			followRequests++
-			wantCursor := "tc1.eyJzIjo3fQ"
-			if followRequests == 2 {
-				wantCursor = "tc1.eyJzIjo5fQ"
-			}
-			if got := r.Header.Get("Last-Event-ID"); got != wantCursor {
-				t.Fatalf("last event id = %q", got)
-			}
-			w.Header().Set("content-type", "text/event-stream")
-			if followRequests == 2 {
-				return
-			}
-			_, _ = io.WriteString(w, "id: tc1.eyJzIjo4fQ\nevent: run_log\ndata: ")
-			_ = json.NewEncoder(w).Encode(api.RunLogChunk{
-				ID:            "tc1.eyJzIjo4fQ",
-				RunID:         "run-1",
-				AttemptNumber: 1,
-				Stream:        "stdout",
-				ContentBase64: base64.StdEncoding.EncodeToString([]byte("new\n")),
-				Bytes:         4,
-				ObservedSeq:   8,
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1/logs" && r.URL.Query().Get("cursor") == "rt1.old":
+			_ = json.NewEncoder(w).Encode(api.RunLogPage{
+				Logs: []api.RunLogRecord{
+					{Kind: "stdout", ContentBase64: base64.StdEncoding.EncodeToString([]byte("new\n"))},
+					{Kind: "stderr", ContentBase64: base64.StdEncoding.EncodeToString([]byte("warn\n"))},
+				},
+				NextCursor: "rt1.new",
 			})
-			_, _ = io.WriteString(w, "\n")
-			_, _ = io.WriteString(w, "id: tc1.eyJzIjo5fQ\nevent: run_log\ndata: ")
-			_ = json.NewEncoder(w).Encode(api.RunLogChunk{
-				ID:            "tc1.eyJzIjo5fQ",
-				RunID:         "run-1",
-				AttemptNumber: 1,
-				Stream:        "stderr",
-				ContentBase64: base64.StdEncoding.EncodeToString([]byte("warn\n")),
-				Bytes:         5,
-				ObservedSeq:   9,
-			})
-			_, _ = io.WriteString(w, "\n")
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1/logs" && r.URL.Query().Get("cursor") == "rt1.new":
+			_ = json.NewEncoder(w).Encode(api.RunLogPage{})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1":
 			_ = json.NewEncoder(w).Encode(api.RunResponse{ID: "run-1", Status: api.RunStatusSucceeded})
 		default:
@@ -311,7 +179,7 @@ func TestLogsCommandFollowsRunLogs(t *testing.T) {
 	if errOut.String() != "warn\n" {
 		t.Fatalf("stderr = %q", errOut.String())
 	}
-	if got := strings.Join(requests, ","); got != "GET /api/runs/run-1/logs,GET /api/runs/run-1/logs?follow=1,GET /api/runs/run-1,GET /api/runs/run-1/logs?follow=1" {
+	if got := strings.Join(requests, ","); got != "GET /api/runs/run-1/logs,GET /api/runs/run-1/logs?cursor=rt1.old,GET /api/runs/run-1,GET /api/runs/run-1/logs?cursor=rt1.new" {
 		t.Fatalf("requests = %s", got)
 	}
 }
@@ -321,10 +189,10 @@ func TestLogsCommandPrintsStreams(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1/logs" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		_ = json.NewEncoder(w).Encode(api.LogSnapshotResponse{
-			StdoutBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
-			StderrBase64: base64.StdEncoding.EncodeToString([]byte("warn\n")),
-		})
+		_ = json.NewEncoder(w).Encode(api.RunLogPage{Logs: []api.RunLogRecord{
+			{Kind: "stdout", ContentBase64: base64.StdEncoding.EncodeToString([]byte("hello\n"))},
+			{Kind: "stderr", ContentBase64: base64.StdEncoding.EncodeToString([]byte("warn\n"))},
+		}})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -350,7 +218,6 @@ func TestEventsCommandPrintsJSONLines(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(api.RunEventPage{
 			Events: []api.RunEvent{{ID: "tc1.eyJzIjo1fQ", Kind: "run.started"}},
-			Cursor: "tc1.eyJzIjo1fQ",
 		})
 	}))
 	defer server.Close()

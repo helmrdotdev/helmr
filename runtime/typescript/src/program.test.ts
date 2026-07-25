@@ -1,6 +1,6 @@
 import { create, fromBinary, toBinary, type GenMessage } from "@bufbuild/protobuf"
 import { runProto } from "@helmr/proto"
-import { actor, task, timers, tokens } from "@helmr/sdk"
+import { actor, logger, metadata, task, timers, tokens } from "@helmr/sdk"
 import { describe, expect, test } from "bun:test"
 
 import { runProgram, type ProgramIO } from "./program"
@@ -699,6 +699,72 @@ describe("runProgram", () => {
       "runWaitRequested",
       "taskOutcome",
     ])
+  })
+
+  test("emits acknowledged metadata mutations and structured logs", async () => {
+    const definition = task({
+      id: "deploy",
+      async run() {
+        await metadata.set("phase", "running")
+        await metadata.increment("steps", 2)
+        await logger.error("step failed", { step: 2, retryable: false })
+        return null
+      },
+    })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+    const writes = [deferred<void>(), deferred<void>(), deferred<void>()]
+    async function* input(): AsyncIterable<Uint8Array> {
+      yield frameMessage(runProto.ProgramStartSchema, start)
+      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+
+      await writes[0]!.promise
+      const set = readEvent(output[1]!).event
+      expect(set.case).toBe("metadataUpdated")
+      if (set.case !== "metadataUpdated") return
+      expect(set.value).toMatchObject({
+        operation: "set",
+        key: "phase",
+        valueJson: '"running"',
+      })
+      yield actorDecision(set.value.correlationId, "completed", "{}")
+
+      await writes[1]!.promise
+      const increment = readEvent(output[2]!).event
+      expect(increment.case).toBe("metadataUpdated")
+      if (increment.case !== "metadataUpdated") return
+      expect(increment.value).toMatchObject({
+        operation: "increment",
+        key: "steps",
+        amount: 2,
+      })
+      yield actorDecision(increment.value.correlationId, "completed", "{}")
+
+      await writes[2]!.promise
+      const log = readEvent(output[3]!).event
+      expect(log.case).toBe("structuredLogRequested")
+      if (log.case !== "structuredLogRequested") return
+      expect(log.value).toMatchObject({
+        level: "error",
+        message: "step failed",
+      })
+      expect(JSON.parse(log.value.attributesJson)).toEqual({
+        retryable: false,
+        step: 2,
+      })
+      yield actorDecision(log.value.correlationId, "completed", "{}")
+    }
+    await runProgram(locatorURL, programIO({
+      input: input(),
+      definition,
+      output,
+      onWrite: () => {
+        if (output.length >= 2 && output.length <= 4) {
+          writes[output.length - 2]!.resolve()
+        }
+      },
+    }))
+    expect(readEvent(output[4]!).event.case).toBe("taskOutcome")
   })
 
   test.each(["0.5s", "01s", " 1s"])(

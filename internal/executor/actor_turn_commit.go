@@ -207,6 +207,42 @@ func (task *guestRunLeaseTask) readActorTurnCommitReady(
 			err = task.control.AppendRunLog(ctx, task.lease, api.WorkerLogStreamStdout, task.program.observedEventSeq, value.StdoutChunk)
 		case *runv0.RunEvent_StderrChunk:
 			err = task.control.AppendRunLog(ctx, task.lease, api.WorkerLogStreamStderr, task.program.observedEventSeq, value.StderrChunk)
+		case *runv0.RunEvent_MetadataUpdated:
+			var observability runObservabilityControl
+			observability, err = requireRunObservabilityControl(task.control)
+			if err == nil {
+				err = updateRunMetadata(ctx, observability, task.lease, value.MetadataUpdated)
+			}
+			if err == nil || isRuntimeOperationRejection(err) {
+				err = writeRuntimeOperationDecision(
+					task.program.session.Stream(),
+					value.MetadataUpdated.GetCorrelationId(),
+					err,
+					"run_metadata_rejected",
+					"Run metadata request was rejected",
+				)
+			}
+		case *runv0.RunEvent_StructuredLogRequested:
+			var observability runObservabilityControl
+			observability, err = requireRunObservabilityControl(task.control)
+			if err == nil {
+				err = appendStructuredRunLog(
+					ctx,
+					observability,
+					task.lease,
+					task.program.observedEventSeq,
+					value.StructuredLogRequested,
+				)
+			}
+			if err == nil || isRuntimeOperationRejection(err) {
+				err = writeRuntimeOperationDecision(
+					task.program.session.Stream(),
+					value.StructuredLogRequested.GetCorrelationId(),
+					err,
+					"structured_log_rejected",
+					"Structured log request was rejected",
+				)
+			}
 		default:
 			err = errors.New("unsupported Program event while Actor turn commit is pending")
 		}

@@ -1042,6 +1042,47 @@ func relayProgram(
 				pendingRuntimeOperations[correlationID] = "Token create"
 				continue
 			}
+			if metadata := event.GetMetadataUpdated(); metadata != nil {
+				if outcomeSeen {
+					return errors.New("Program emitted a metadata mutation after outcome")
+				}
+				correlationID := strings.TrimSpace(metadata.GetCorrelationId())
+				if correlationID == "" || strings.TrimSpace(metadata.GetOperation()) == "" {
+					return errors.New("Metadata mutation identity is incomplete")
+				}
+				if _, exists := pendingRuntimeOperations[correlationID]; exists {
+					return errors.New("Program emitted a duplicate metadata mutation correlation")
+				}
+				if len(pendingRuntimeOperations) >= 128 {
+					return errors.New("Program exceeded the pending runtime operation limit")
+				}
+				if err := stream.write(event); err != nil {
+					return err
+				}
+				pendingRuntimeOperations[correlationID] = "metadata mutation"
+				continue
+			}
+			if log := event.GetStructuredLogRequested(); log != nil {
+				if outcomeSeen {
+					return errors.New("Program emitted a structured log after outcome")
+				}
+				correlationID := strings.TrimSpace(log.GetCorrelationId())
+				if correlationID == "" || strings.TrimSpace(log.GetLevel()) == "" ||
+					strings.TrimSpace(log.GetAttributesJson()) == "" {
+					return errors.New("Structured log identity is incomplete")
+				}
+				if _, exists := pendingRuntimeOperations[correlationID]; exists {
+					return errors.New("Program emitted a duplicate structured log correlation")
+				}
+				if len(pendingRuntimeOperations) >= 128 {
+					return errors.New("Program exceeded the pending runtime operation limit")
+				}
+				if err := stream.write(event); err != nil {
+					return err
+				}
+				pendingRuntimeOperations[correlationID] = "structured log"
+				continue
+			}
 			var outcomeErr error
 			switch entrypoint.GetKind().(type) {
 			case *runv0.EntrypointIdentity_Task:

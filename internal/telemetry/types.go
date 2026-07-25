@@ -33,6 +33,7 @@ type EventQuery struct {
 	SubjectID   uuid.UUID
 	AfterSeq    int64
 	Limit       int32
+	Severities  []string
 }
 
 type EventPage struct {
@@ -48,6 +49,7 @@ type RunLogChunkQuery struct {
 	RunID    uuid.UUID
 	AfterSeq int64
 	Limit    int32
+	Levels   []string
 }
 
 type RunLogChunkPage struct {

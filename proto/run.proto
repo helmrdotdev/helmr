@@ -136,12 +136,11 @@ message EntrypointRelease {
 }
 
 message RunEvent {
-  reserved 9, 10;
+  reserved 3, 9, 10;
 
   oneof event {
     bytes stdout_chunk = 1;
     bytes stderr_chunk = 2;
-    string log_entry = 3;
     RunWaitRequested run_wait_requested = 5;
     MetadataUpdated metadata_updated = 7;
     TokenCreateRequested token_create_requested = 8;
@@ -154,6 +153,7 @@ message RunEvent {
     ActorTurnCommitRequested actor_turn_commit_requested = 16;
     ActorOutputAppendRequested actor_output_append_requested = 17;
     ActorInputSendRequested actor_input_send_requested = 18;
+    StructuredLogRequested structured_log_requested = 19;
   }
 }
 
@@ -339,4 +339,12 @@ message MetadataUpdated {
   optional string value_json = 3;
   optional string patch_json = 4;
   optional double amount = 5;
+  string correlation_id = 6;
+}
+
+message StructuredLogRequested {
+  string correlation_id = 1;
+  string level = 2;
+  string message = 3;
+  string attributes_json = 4;
 }

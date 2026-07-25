@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -75,43 +76,13 @@ func (s *Server) workerAppendRunLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("encode worker log event"))
 		return
 	}
-	row, err := s.db.AppendReceiptRunLogChunk(r.Context(), db.AppendReceiptRunLogChunkParams{
-		Kind:                       kind,
-		Payload:                    payload,
-		WorkspaceMountID:           pgvalue.UUID(parsed.workspaceMountID),
-		WorkspaceLeaseID:           pgvalue.UUID(parsed.workspaceLeaseID),
-		RunLeaseID:                 pgvalue.UUID(parsed.leaseID),
-		RunID:                      pgvalue.UUID(parsed.runID),
-		AttemptNumber:              request.Lease.AttemptNumber,
-		LeaseSequence:              request.Lease.LeaseSequence,
-		WorkerGroupID:              request.Lease.WorkerGroupID,
-		WorkerInstanceID:           pgvalue.UUID(parsed.workerInstanceID),
-		WorkerEpoch:                request.Lease.WorkerEpoch,
-		WorkerProtocolVersion:      request.Lease.WorkerProtocolVersion,
-		RuntimeInstanceID:          pgvalue.UUID(parsed.runtimeInstanceID),
-		RuntimeIdentityID:          request.Lease.RuntimeIdentityID,
-		NetworkSlotID:              pgvalue.UUID(parsed.networkSlotID),
-		NetworkSlotGeneration:      request.Lease.NetworkSlotGeneration,
-		WorkspaceID:                pgvalue.UUID(parsed.workspaceID),
-		BaseWorkspaceVersionID:     pgvalue.UUID(parsed.baseWorkspaceVersionID),
-		MountFencingGeneration:     request.Lease.MountFencingGeneration,
-		OwnershipGeneration:        request.Lease.OwnershipGeneration,
-		WriterGeneration:           request.Lease.WriterGeneration,
-		RequestedCpuMillis:         request.Lease.RequestedCPUMillis,
-		RequestedMemoryBytes:       request.Lease.RequestedMemoryBytes,
-		RequestedWorkloadDiskBytes: request.Lease.RequestedWorkloadDiskBytes,
-		RequestedScratchBytes:      request.Lease.RequestedScratchBytes,
-		RequestedExecutionSlots:    request.Lease.RequestedExecutionSlots,
-		MaxActiveDurationMs:        request.Lease.MaxActiveDurationMs,
-		ActiveElapsedMs:            request.Lease.ActiveElapsedMs,
-		TraceID:                    pgtype.Text{String: request.Lease.Trace.TraceID, Valid: true},
-		SpanID:                     pgtype.Text{String: request.Lease.Trace.SpanID, Valid: true},
-		Traceparent:                pgtype.Text{String: request.Lease.Trace.Traceparent, Valid: true},
-		StartDeadlineAt:            pgtype.Timestamptz{Time: request.Lease.StartDeadlineAt, Valid: true},
-		ExpiresAt:                  pgtype.Timestamptz{Time: request.Lease.ExpiresAt, Valid: true},
-		Stream:                     string(request.Stream),
-		ObservedSeq:                int64(request.ObservedSeq),
-		Content:                    content,
+	row, err := s.appendReceiptRunLog(r.Context(), request.Lease, parsed, db.AppendReceiptRunLogChunkParams{
+		Kind:        kind,
+		Payload:     payload,
+		Severity:    "info",
+		Stream:      string(request.Stream),
+		ObservedSeq: int64(request.ObservedSeq),
+		Content:     content,
 	})
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("worker run lease is stale or the log chunk sequence contains different content")))
@@ -127,6 +98,46 @@ func (s *Server) workerAppendRunLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) appendReceiptRunLog(
+	ctx context.Context,
+	lease api.WorkerRunLeaseReceipt,
+	parsed parsedRunLeaseReceipt,
+	input db.AppendReceiptRunLogChunkParams,
+) (db.AppendReceiptRunLogChunkRow, error) {
+	input.WorkspaceMountID = pgvalue.UUID(parsed.workspaceMountID)
+	input.WorkspaceLeaseID = pgvalue.UUID(parsed.workspaceLeaseID)
+	input.RunLeaseID = pgvalue.UUID(parsed.leaseID)
+	input.RunID = pgvalue.UUID(parsed.runID)
+	input.AttemptNumber = lease.AttemptNumber
+	input.LeaseSequence = lease.LeaseSequence
+	input.WorkerGroupID = lease.WorkerGroupID
+	input.WorkerInstanceID = pgvalue.UUID(parsed.workerInstanceID)
+	input.WorkerEpoch = lease.WorkerEpoch
+	input.WorkerProtocolVersion = lease.WorkerProtocolVersion
+	input.RuntimeInstanceID = pgvalue.UUID(parsed.runtimeInstanceID)
+	input.RuntimeIdentityID = lease.RuntimeIdentityID
+	input.NetworkSlotID = pgvalue.UUID(parsed.networkSlotID)
+	input.NetworkSlotGeneration = lease.NetworkSlotGeneration
+	input.WorkspaceID = pgvalue.UUID(parsed.workspaceID)
+	input.BaseWorkspaceVersionID = pgvalue.UUID(parsed.baseWorkspaceVersionID)
+	input.MountFencingGeneration = lease.MountFencingGeneration
+	input.OwnershipGeneration = lease.OwnershipGeneration
+	input.WriterGeneration = lease.WriterGeneration
+	input.RequestedCpuMillis = lease.RequestedCPUMillis
+	input.RequestedMemoryBytes = lease.RequestedMemoryBytes
+	input.RequestedWorkloadDiskBytes = lease.RequestedWorkloadDiskBytes
+	input.RequestedScratchBytes = lease.RequestedScratchBytes
+	input.RequestedExecutionSlots = lease.RequestedExecutionSlots
+	input.MaxActiveDurationMs = lease.MaxActiveDurationMs
+	input.ActiveElapsedMs = lease.ActiveElapsedMs
+	input.TraceID = pgtype.Text{String: lease.Trace.TraceID, Valid: true}
+	input.SpanID = pgtype.Text{String: lease.Trace.SpanID, Valid: true}
+	input.Traceparent = pgtype.Text{String: lease.Trace.Traceparent, Valid: true}
+	input.StartDeadlineAt = pgtype.Timestamptz{Time: lease.StartDeadlineAt, Valid: true}
+	input.ExpiresAt = pgtype.Timestamptz{Time: lease.ExpiresAt, Valid: true}
+	return s.db.AppendReceiptRunLogChunk(ctx, input)
 }
 
 type workerLogChunkPayload struct {

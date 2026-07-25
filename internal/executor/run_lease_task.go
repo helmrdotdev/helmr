@@ -101,7 +101,12 @@ func (r ProgramRunner) StartRunLeaseTask(
 	if claim != nil && claim.Execution.Restore != nil {
 		program, err = r.startRestoredProgram(ctx, claim, control)
 	} else {
-		program, err = r.startFreshProgram(ctx, claim, control, control)
+		program, err = r.startFreshProgram(
+			ctx,
+			claim,
+			control,
+			runLeaseProgramEventSink{control: control},
+		)
 	}
 	if err != nil {
 		return nil, err
@@ -153,6 +158,45 @@ func (r ProgramRunner) StartRunLeaseTask(
 		}
 	}
 	return task, nil
+}
+
+type runLeaseProgramEventSink struct {
+	control RunLeaseControl
+}
+
+func (sink runLeaseProgramEventSink) AppendRunLog(
+	ctx context.Context,
+	lease api.WorkerRunLeaseReceipt,
+	stream api.WorkerLogStream,
+	sequence uint64,
+	content []byte,
+) error {
+	return sink.control.AppendRunLog(ctx, lease, stream, sequence, content)
+}
+
+func (sink runLeaseProgramEventSink) ApplyRunMetadata(
+	ctx context.Context,
+	lease api.WorkerRunLeaseReceipt,
+	request *runv0.MetadataUpdated,
+) error {
+	control, err := requireRunObservabilityControl(sink.control)
+	if err != nil {
+		return err
+	}
+	return updateRunMetadata(ctx, control, lease, request)
+}
+
+func (sink runLeaseProgramEventSink) RecordStructuredRunLog(
+	ctx context.Context,
+	lease api.WorkerRunLeaseReceipt,
+	sequence uint64,
+	request *runv0.StructuredLogRequested,
+) error {
+	control, err := requireRunObservabilityControl(sink.control)
+	if err != nil {
+		return err
+	}
+	return appendStructuredRunLog(ctx, control, lease, sequence, request)
 }
 
 func (task *guestRunLeaseTask) CurrentWorkerRunLease() api.WorkerRunLease {
@@ -224,6 +268,23 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 		return taskControlEvents{task: task}.AppendRunLog(ctx, api.WorkerRunLeaseReceipt{}, api.WorkerLogStreamStdout, task.program.observedEventSeq, value.StdoutChunk)
 	case *runv0.RunEvent_StderrChunk:
 		return taskControlEvents{task: task}.AppendRunLog(ctx, api.WorkerRunLeaseReceipt{}, api.WorkerLogStreamStderr, task.program.observedEventSeq, value.StderrChunk)
+	case *runv0.RunEvent_MetadataUpdated:
+		return processRunMetadataEvent(
+			ctx,
+			taskControlEvents{task: task},
+			api.WorkerRunLeaseReceipt{},
+			task.program.session.Stream(),
+			value.MetadataUpdated,
+		)
+	case *runv0.RunEvent_StructuredLogRequested:
+		return processStructuredLogEvent(
+			ctx,
+			taskControlEvents{task: task},
+			api.WorkerRunLeaseReceipt{},
+			task.program.session.Stream(),
+			task.program.observedEventSeq,
+			value.StructuredLogRequested,
+		)
 	default:
 		return errors.New("unsupported Program event while checkpoint pause is pending")
 	}
@@ -313,6 +374,35 @@ func (events taskControlEvents) AppendRunLog(
 	}
 	defer cancel()
 	return events.task.control.AppendRunLog(logCtx, lease, stream, sequence, content)
+}
+
+func (events taskControlEvents) ApplyRunMetadata(
+	ctx context.Context,
+	_ api.WorkerRunLeaseReceipt,
+	request *runv0.MetadataUpdated,
+) error {
+	events.task.mu.Lock()
+	defer events.task.mu.Unlock()
+	control, err := requireRunObservabilityControl(events.task.control)
+	if err != nil {
+		return err
+	}
+	return updateRunMetadata(ctx, control, events.task.lease, request)
+}
+
+func (events taskControlEvents) RecordStructuredRunLog(
+	ctx context.Context,
+	_ api.WorkerRunLeaseReceipt,
+	sequence uint64,
+	request *runv0.StructuredLogRequested,
+) error {
+	events.task.mu.Lock()
+	defer events.task.mu.Unlock()
+	control, err := requireRunObservabilityControl(events.task.control)
+	if err != nil {
+		return err
+	}
+	return appendStructuredRunLog(ctx, control, events.task.lease, sequence, request)
 }
 
 func (task *guestRunLeaseTask) RenewRunLease(

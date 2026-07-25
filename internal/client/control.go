@@ -483,8 +483,16 @@ type ListRunsOptions struct {
 }
 
 type ListRunEventsOptions struct {
+	Cursor     string
+	Limit      int32
+	Severities []string
+	RunScopeOptions
+}
+
+type ListRunLogsOptions struct {
 	Cursor string
 	Limit  int32
+	Levels []string
 	RunScopeOptions
 }
 
@@ -536,63 +544,39 @@ func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.Lis
 	return response, nil
 }
 
-func (c *Client) GetRunLogs(ctx context.Context, id string, opts ...RunScopeOptions) (api.LogSnapshotResponse, error) {
-	path, err := c.runItemPath(id, "/logs", opts...)
+func (c *Client) ListRunLogs(ctx context.Context, id string, opts ...ListRunLogsOptions) (api.RunLogPage, error) {
+	scope := RunScopeOptions{}
+	if len(opts) > 0 {
+		scope = opts[0].RunScopeOptions
+	}
+	path, err := c.runItemPath(id, "/logs", scope)
 	if err != nil {
-		return api.LogSnapshotResponse{}, err
+		return api.RunLogPage{}, err
+	}
+	if len(opts) > 0 {
+		values := url.Values{}
+		if opts[0].Cursor != "" {
+			values.Set("cursor", opts[0].Cursor)
+		}
+		if opts[0].Limit > 0 {
+			values.Set("limit", strconv.FormatInt(int64(opts[0].Limit), 10))
+		}
+		for _, level := range opts[0].Levels {
+			values.Add("level", level)
+		}
+		if encoded := values.Encode(); encoded != "" {
+			path += "?" + encoded
+		}
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.LogSnapshotResponse{}, err
+		return api.RunLogPage{}, err
 	}
-	var response api.LogSnapshotResponse
+	var response api.RunLogPage
 	if err := c.doJSON(req, &response); err != nil {
-		return api.LogSnapshotResponse{}, err
+		return api.RunLogPage{}, err
 	}
 	return response, nil
-}
-
-func (c *Client) FollowRunLogs(ctx context.Context, id string, cursor string, handle func(api.RunLogChunk) error, opts ...RunScopeOptions) error {
-	values := url.Values{}
-	values.Set("follow", "1")
-	path, err := c.runItemPath(id, "/logs", opts...)
-	if err != nil {
-		return err
-	}
-	path += "?" + values.Encode()
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("accept", "text/event-stream")
-	if cursor != "" {
-		req.Header.Set("Last-Event-ID", cursor)
-	}
-	res, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return decodeError(res)
-	}
-	scanner := bufio.NewScanner(res.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		data, ok := strings.CutPrefix(line, "data: ")
-		if !ok {
-			continue
-		}
-		var chunk api.RunLogChunk
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			return err
-		}
-		if err := handle(chunk); err != nil {
-			return err
-		}
-	}
-	return scanner.Err()
 }
 
 func (c *Client) ListRunEvents(ctx context.Context, id string, opts ...ListRunEventsOptions) (api.RunEventPage, error) {
@@ -612,6 +596,9 @@ func (c *Client) ListRunEvents(ctx context.Context, id string, opts ...ListRunEv
 		if opts[0].Limit > 0 {
 			values.Set("limit", strconv.FormatInt(int64(opts[0].Limit), 10))
 		}
+		for _, severity := range opts[0].Severities {
+			values.Add("severity", severity)
+		}
 		if encoded := values.Encode(); encoded != "" {
 			path += "?" + encoded
 		}
@@ -625,47 +612,4 @@ func (c *Client) ListRunEvents(ctx context.Context, id string, opts ...ListRunEv
 		return api.RunEventPage{}, err
 	}
 	return response, nil
-}
-
-func (c *Client) FollowRunEvents(ctx context.Context, id string, cursor string, handle func(api.RunEvent) error, opts ...RunScopeOptions) error {
-	values := url.Values{}
-	values.Set("follow", "1")
-	path, err := c.runItemPath(id, "/events", opts...)
-	if err != nil {
-		return err
-	}
-	path += "?" + values.Encode()
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("accept", "text/event-stream")
-	if cursor != "" {
-		req.Header.Set("Last-Event-ID", cursor)
-	}
-	res, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return decodeError(res)
-	}
-	scanner := bufio.NewScanner(res.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		data, ok := strings.CutPrefix(line, "data: ")
-		if !ok {
-			continue
-		}
-		var event api.RunEvent
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			return err
-		}
-		if err := handle(event); err != nil {
-			return err
-		}
-	}
-	return scanner.Err()
 }

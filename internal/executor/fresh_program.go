@@ -52,6 +52,17 @@ type freshProgramEventSink interface {
 		uint64,
 		[]byte,
 	) error
+	ApplyRunMetadata(
+		context.Context,
+		api.WorkerRunLeaseReceipt,
+		*runv0.MetadataUpdated,
+	) error
+	RecordStructuredRunLog(
+		context.Context,
+		api.WorkerRunLeaseReceipt,
+		uint64,
+		*runv0.StructuredLogRequested,
+	) error
 }
 
 type freshProgram struct {
@@ -93,6 +104,35 @@ func (state *freshAdmissionState) AppendRunLog(
 		sequence,
 		content,
 	)
+}
+
+func (state *freshAdmissionState) ApplyRunMetadata(
+	ctx context.Context,
+	_ api.WorkerRunLeaseReceipt,
+	request *runv0.MetadataUpdated,
+) error {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	control, err := requireRunObservabilityControl(state.control)
+	if err != nil {
+		return err
+	}
+	return updateRunMetadata(ctx, control, state.lease, request)
+}
+
+func (state *freshAdmissionState) RecordStructuredRunLog(
+	ctx context.Context,
+	_ api.WorkerRunLeaseReceipt,
+	sequence uint64,
+	request *runv0.StructuredLogRequested,
+) error {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	control, err := requireRunObservabilityControl(state.control)
+	if err != nil {
+		return err
+	}
+	return appendStructuredRunLog(ctx, control, state.lease, sequence, request)
 }
 
 func (state *freshAdmissionState) expiresAt() time.Time {
@@ -171,6 +211,33 @@ func (program *freshProgram) awaitTaskCompletion(
 				value.StderrChunk,
 			); err != nil {
 				return nil, nil, fmt.Errorf("append Task stderr: %w", err)
+			}
+		case *runv0.RunEvent_MetadataUpdated:
+			if outcome != nil {
+				return nil, nil, errors.New("Program emitted a metadata update after Task outcome")
+			}
+			if err := processRunMetadataEvent(
+				ctx,
+				events,
+				program.lease,
+				program.session.Stream(),
+				value.MetadataUpdated,
+			); err != nil {
+				return nil, nil, fmt.Errorf("update Task Run metadata: %w", err)
+			}
+		case *runv0.RunEvent_StructuredLogRequested:
+			if outcome != nil {
+				return nil, nil, errors.New("Program emitted a structured log after Task outcome")
+			}
+			if err := processStructuredLogEvent(
+				ctx,
+				events,
+				program.lease,
+				program.session.Stream(),
+				program.observedEventSeq,
+				value.StructuredLogRequested,
+			); err != nil {
+				return nil, nil, fmt.Errorf("append Task structured log: %w", err)
 			}
 		case *runv0.RunEvent_TaskOutcome:
 			if outcome != nil {
@@ -262,6 +329,33 @@ func (program *freshProgram) awaitActorCompletion(
 		case *runv0.RunEvent_StderrChunk:
 			if err := events.AppendRunLog(ctx, program.lease, api.WorkerLogStreamStderr, program.observedEventSeq, value.StderrChunk); err != nil {
 				return nil, nil, fmt.Errorf("append Actor stderr: %w", err)
+			}
+		case *runv0.RunEvent_MetadataUpdated:
+			if outcome != nil {
+				return nil, nil, errors.New("Program emitted a metadata update after Actor outcome")
+			}
+			if err := processRunMetadataEvent(
+				ctx,
+				events,
+				program.lease,
+				program.session.Stream(),
+				value.MetadataUpdated,
+			); err != nil {
+				return nil, nil, fmt.Errorf("update Actor Run metadata: %w", err)
+			}
+		case *runv0.RunEvent_StructuredLogRequested:
+			if outcome != nil {
+				return nil, nil, errors.New("Program emitted a structured log after Actor outcome")
+			}
+			if err := processStructuredLogEvent(
+				ctx,
+				events,
+				program.lease,
+				program.session.Stream(),
+				program.observedEventSeq,
+				value.StructuredLogRequested,
+			); err != nil {
+				return nil, nil, fmt.Errorf("append Actor structured log: %w", err)
 			}
 		case *runv0.RunEvent_ActorOutcome:
 			if outcome != nil {

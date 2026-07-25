@@ -1,6 +1,8 @@
 export { actor } from "./actor"
 export { HelmrClient } from "./client"
 export { cache, image, source } from "./image"
+export { logger } from "./logger"
+export { metadata } from "./metadata"
 export { defineConfig } from "./config"
 export { schedules } from "./schedules"
 export { queue, task } from "./task"
@@ -42,6 +44,8 @@ export type {
 
 export type {
   ClientRunListQuery,
+  ClientRunLogQuery,
+  ClientRunEventQuery,
   ClientRunsApi,
   ClientTasksApi,
   ClientTaskStartRequest,
@@ -49,9 +53,18 @@ export type {
   ClientTokenCreateResult,
   ClientTokensApi,
   HelmrClientOptions,
+  RunEventRecord,
+  RunLogRecord,
+  StreamRunLogRecord,
+  StructuredRunLogRecord,
 } from "./client"
 
 export type { RequestOptions } from "./request"
+
+export type {
+  LogAttributes,
+  RunLogLevel,
+} from "./logger"
 
 export type {
   HelmrConfig,

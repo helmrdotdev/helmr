@@ -256,25 +256,12 @@ func TestSessionStartWaitWaitsForInitialRun(t *testing.T) {
 	}
 }
 
-func TestSessionStartWaitPollsSnapshotWhileEventStreamIsIdle(t *testing.T) {
-	oldSnapshotPollInterval := runEventSnapshotPollInterval
-	runEventSnapshotPollInterval = 10 * time.Millisecond
-	t.Cleanup(func() {
-		runEventSnapshotPollInterval = oldSnapshotPollInterval
-	})
+func TestSessionStartWaitPollsRunSnapshot(t *testing.T) {
 	getRunCalls := 0
-	followCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/sessions":
 			_ = json.NewEncoder(w).Encode(sessionStartResponseFixture())
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1/events" && r.URL.Query().Get("follow") == "1":
-			followCalls++
-			w.Header().Set("content-type", "text/event-stream")
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
-			}
-			<-r.Context().Done()
 		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1":
 			getRunCalls++
 			status := api.RunStatusQueued
@@ -298,8 +285,8 @@ func TestSessionStartWaitPollsSnapshotWhileEventStreamIsIdle(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if followCalls != 1 || getRunCalls != 2 {
-		t.Fatalf("follow calls = %d, snapshot calls = %d, want 1/2", followCalls, getRunCalls)
+	if getRunCalls != 2 {
+		t.Fatalf("snapshot calls = %d, want 2", getRunCalls)
 	}
 	if !strings.Contains(out.String(), "run_status: succeeded") {
 		t.Fatalf("output = %q", out.String())
@@ -329,22 +316,21 @@ func TestSessionStartRejectsJSONFollow(t *testing.T) {
 }
 
 func TestSessionStartFollowTimeoutReturnsError(t *testing.T) {
-	oldReconnectDelay := runEventReconnectDelay
-	runEventReconnectDelay = time.Millisecond
+	oldPollInterval := runFollowPollInterval
+	runFollowPollInterval = 10 * time.Millisecond
 	t.Cleanup(func() {
-		runEventReconnectDelay = oldReconnectDelay
+		runFollowPollInterval = oldPollInterval
 	})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/sessions":
 			_ = json.NewEncoder(w).Encode(sessionStartResponseFixture())
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1/logs" && r.URL.Query().Get("follow") == "1":
-			w.Header().Set("content-type", "text/event-stream")
-			flusher, _ := w.(http.Flusher)
-			if flusher != nil {
-				flusher.Flush()
-			}
-			<-r.Context().Done()
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1/logs":
+			_ = json.NewEncoder(w).Encode(api.RunLogPage{})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1":
+			_ = json.NewEncoder(w).Encode(api.RunResponse{
+				ID: "run-1", Status: api.RunStatusQueued,
+			})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/sessions/session-1":
 			_ = json.NewEncoder(w).Encode(api.SessionResponse{ID: "session-1", Status: "open"})
 		default:

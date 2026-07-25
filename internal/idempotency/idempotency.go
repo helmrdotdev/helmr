@@ -30,6 +30,7 @@ const (
 	operationSecretCreate      operation = "secret.create"
 	operationSecretRotate      operation = "secret.rotate"
 	operationSecretRevoke      operation = "secret.revoke"
+	operationRunMetadata       operation = "run.metadata"
 	operationActorStart        operation = "actor.start"
 	operationActorInputSend    operation = "actor.input.send"
 	operationActorOutputAppend operation = "actor.output.append"
@@ -165,6 +166,43 @@ func NewSecretRevokeRequest(environmentID uuid.UUID, secretID uuid.UUID, key str
 		key:           key,
 		fingerprint: func(int32) ([sha256.Size]byte, error) {
 			return operationFingerprint(operationSecretRevoke, nil, 0, nil), nil
+		},
+	}}, nil
+}
+
+func NewRunMetadataRequest(
+	environmentID uuid.UUID,
+	runID uuid.UUID,
+	attemptNumber int32,
+	operationID string,
+	mutationJSON []byte,
+) (Request, error) {
+	if environmentID == uuid.Nil {
+		return nil, errors.New("idempotency environment is required")
+	}
+	if runID == uuid.Nil {
+		return nil, errors.New("Run ID is required")
+	}
+	if attemptNumber <= 0 {
+		return nil, errors.New("Run Attempt number must be positive")
+	}
+	canonical, err := jsoncanon.Transform(mutationJSON)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize Run metadata mutation: %w", err)
+	}
+	scope := make([]byte, 0, len("attempt\x00")+len(runID)+4)
+	scope = append(scope, "attempt\x00"...)
+	scope = append(scope, runID[:]...)
+	var attempt [4]byte
+	binary.BigEndian.PutUint32(attempt[:], uint32(attemptNumber))
+	scope = append(scope, attempt[:]...)
+	return sealedRequest{value: request{
+		environmentID: environmentID,
+		operation:     operationRunMetadata,
+		scope:         scope,
+		key:           operationID,
+		fingerprint: func(int32) ([sha256.Size]byte, error) {
+			return operationFingerprint(operationRunMetadata, canonical, 0, nil), nil
 		},
 	}}, nil
 }
@@ -741,7 +779,7 @@ func (t *Transaction) Acquire(ctx context.Context, input Request) (Result, error
 
 func supportedOperation(value operation) bool {
 	switch value {
-	case operationSecretCreate, operationSecretRotate, operationSecretRevoke,
+	case operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationRunMetadata,
 		operationActorStart, operationActorInputSend, operationActorOutputAppend, operationActorClose,
 		operationTaskStart, operationTokenCreate, operationTokenComplete, operationTokenCancel,
 		operationWorkspaceCreate, operationWorkspaceExec, operationWorkspaceDelete:

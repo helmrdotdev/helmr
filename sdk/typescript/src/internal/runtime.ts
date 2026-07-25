@@ -1,8 +1,10 @@
 import type {
   Duration,
   JsonValue,
+  Metadata,
   SendOptions,
 } from "../contract"
+import type { LogAttributes, RunLogLevel } from "../logger"
 import type {
   TokenCreateOptions,
   TokenCreateResult,
@@ -29,6 +31,14 @@ export interface RuntimeOperations {
     tokenId: string,
     options: TokenWaitOptions,
   ) => Promise<JsonValue>
+  readonly metadataSet: (key: string, value: JsonValue) => Promise<void>
+  readonly metadataPatch: (values: Metadata) => Promise<void>
+  readonly metadataIncrement: (key: string, amount: number) => Promise<void>
+  readonly structuredLog: (
+    level: RunLogLevel,
+    message: string,
+    attributes: LogAttributes,
+  ) => Promise<void>
 }
 
 type RuntimeGlobal = typeof globalThis & {

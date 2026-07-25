@@ -17,11 +17,13 @@ import type {
   ActorSelf,
   Duration,
   JsonValue,
+  LogAttributes,
   Metadata,
   OutputAppendOptions,
   OutputSequenceOptions,
   ReceiveOptions,
   RunCause,
+  RunLogLevel,
   SendOptions,
   Serializable,
   TaskExecutionContext,
@@ -43,6 +45,8 @@ import {
 const MAX_PROGRAM_FRAME_BYTES = 256 * 1024 * 1024
 const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024
 const MAX_TASK_ERROR_BYTES = 16 * 1024
+const MAX_RUN_LOG_MESSAGE_BYTES = 4 * 1024
+const MAX_RUN_LOG_ATTRIBUTES_BYTES = 16 * 1024
 const MAX_TASK_ERROR_MESSAGE_BYTES = 1024
 const MAX_ACTOR_INPUT_BYTES = 1 * 1024 * 1024
 
@@ -891,6 +895,85 @@ function programRuntimeOperations(
       releaseWait()
     }
   }
+  const performMetadataMutation = async (
+    request:
+      | Readonly<{ operation: "set"; key: string; value: JsonValue }>
+      | Readonly<{ operation: "patch"; values: Metadata }>
+      | Readonly<{ operation: "increment"; key: string; amount: number }>,
+  ): Promise<void> => {
+    const correlationId = randomUUID()
+    const operation = runOperations.trackDrainable(async () => {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "metadataUpdated",
+        value: create(runProto.MetadataUpdatedSchema, {
+          correlationId,
+          operation: request.operation,
+          ...(request.operation === "set"
+            ? {
+                key: normalizeMetadataKey(request.key),
+                valueJson: new TextDecoder().decode(
+                  canonicalizeJsonValue(request.value),
+                ),
+              }
+            : request.operation === "patch"
+            ? {
+                patchJson: new TextDecoder().decode(
+                  canonicalizeMetadataPatch(request.values),
+                ),
+              }
+            : {
+                key: normalizeMetadataKey(request.key),
+                amount: finiteMetadataIncrement(request.amount),
+              }),
+        }),
+      })
+      requireRuntimeOperationDecision(decision, correlationId, "Metadata mutation")
+      if (decision.kind === "failed") {
+        throw runtimeOperationFailure("Metadata mutation", decision.dataJson)
+      }
+    })
+    await operation
+  }
+  const performStructuredLog = async (
+    level: RunLogLevel,
+    message: string,
+    attributes: LogAttributes,
+  ): Promise<void> => {
+    if (
+      level !== "debug" &&
+      level !== "info" &&
+      level !== "warn" &&
+      level !== "error"
+    ) {
+      throw new Error("logger level must be debug, info, warn, or error")
+    }
+    if (typeof message !== "string") {
+      throw new Error("logger message must be a string")
+    }
+    if (new TextEncoder().encode(message).byteLength > MAX_RUN_LOG_MESSAGE_BYTES) {
+      throw new Error(
+        `logger message must be at most ${MAX_RUN_LOG_MESSAGE_BYTES} UTF-8 bytes`,
+      )
+    }
+    const attributesJson = canonicalizeLogAttributes(attributes)
+    const correlationId = randomUUID()
+    const operation = runOperations.trackDrainable(async () => {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "structuredLogRequested",
+        value: create(runProto.StructuredLogRequestedSchema, {
+          correlationId,
+          level,
+          message,
+          attributesJson: new TextDecoder().decode(attributesJson),
+        }),
+      })
+      requireRuntimeOperationDecision(decision, correlationId, "Structured log")
+      if (decision.kind === "failed") {
+        throw runtimeOperationFailure("Structured log", decision.dataJson)
+      }
+    })
+    await operation
+  }
   return {
     waitFor(duration) {
       return wait({ duration }, durationMilliseconds(duration))
@@ -915,7 +998,61 @@ function programRuntimeOperations(
     tokenWait(tokenId, options) {
       return runOperations.track(() => performTokenWait(tokenId, options))
     },
+    metadataSet(key, value) {
+      return performMetadataMutation({ operation: "set", key, value })
+    },
+    metadataPatch(values) {
+      return performMetadataMutation({ operation: "patch", values })
+    },
+    metadataIncrement(key, amount) {
+      return performMetadataMutation({ operation: "increment", key, amount })
+    },
+    structuredLog(level, message, attributes) {
+      return performStructuredLog(level, message, attributes)
+    },
   }
+}
+
+function normalizeMetadataKey(value: string): string {
+  if (typeof value !== "string" || value === "") {
+    throw new Error("metadata key must be a nonempty string")
+  }
+  if (new TextEncoder().encode(value).byteLength > 512) {
+    throw new Error("metadata key must be at most 512 UTF-8 bytes")
+  }
+  return value
+}
+
+function canonicalizeMetadataPatch(values: Metadata): Uint8Array {
+  if (values === null || typeof values !== "object" || Array.isArray(values)) {
+    throw new Error("metadata.patch() requires an object")
+  }
+  for (const key of Object.keys(values)) normalizeMetadataKey(key)
+  return canonicalizeJsonValue(values)
+}
+
+function finiteMetadataIncrement(value: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error("metadata.increment() amount must be finite")
+  }
+  return value
+}
+
+function canonicalizeLogAttributes(attributes: LogAttributes): Uint8Array {
+  if (
+    attributes === null ||
+    typeof attributes !== "object" ||
+    Array.isArray(attributes)
+  ) {
+    throw new Error("logger attributes must be an object")
+  }
+  const normalized = canonicalizeJsonValue(attributes)
+  if (normalized.byteLength > MAX_RUN_LOG_ATTRIBUTES_BYTES) {
+    throw new Error(
+      `logger attributes must be at most ${MAX_RUN_LOG_ATTRIBUTES_BYTES} canonical JSON bytes`,
+    )
+  }
+  return normalized
 }
 
 function normalizeTokenIdempotencyKey(

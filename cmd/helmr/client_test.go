@@ -20,10 +20,9 @@ func TestAPIURLFlagOverridesEnvironmentURL(t *testing.T) {
 		if got := r.Header.Get("authorization"); got != "Bearer env-key" {
 			t.Fatalf("auth = %s", got)
 		}
-		_ = json.NewEncoder(w).Encode(api.LogSnapshotResponse{
-			StdoutBase64: base64.StdEncoding.EncodeToString([]byte("from flag\n")),
-			StderrBase64: "",
-		})
+		_ = json.NewEncoder(w).Encode(api.RunLogPage{Logs: []api.RunLogRecord{{
+			Kind: "stdout", ContentBase64: base64.StdEncoding.EncodeToString([]byte("from flag\n")),
+		}}})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, "https://ignored.example.test")

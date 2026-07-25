@@ -19,8 +19,7 @@ import (
 )
 
 var (
-	runEventReconnectDelay           = time.Second
-	runEventSnapshotPollInterval     = 2 * time.Second
+	runFollowPollInterval            = time.Second
 	runTerminalSnapshotRetryDelay    = 100 * time.Millisecond
 	runTerminalSnapshotConvergeLimit = 5 * time.Second
 )
@@ -430,15 +429,26 @@ func runLogsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			logs, err := control.GetRunLogs(cmd.Context(), args[0], scope)
+			logs, err := control.ListRunLogs(
+				cmd.Context(),
+				args[0],
+				client.ListRunLogsOptions{RunScopeOptions: scope},
+			)
 			if err != nil {
 				return err
 			}
-			if err := writeRunLogSnapshot(cmd, logs); err != nil {
+			if err := writeRunLogPage(cmd, logs); err != nil {
 				return err
 			}
 			if follow {
-				return followRunLogs(cmd.Context(), cmd, control, args[0], strings.TrimSpace(logs.Cursor), scope)
+				return followRunLogs(
+					cmd.Context(),
+					cmd,
+					control,
+					args[0],
+					strings.TrimSpace(logs.NextCursor),
+					scope,
+				)
 			}
 			return nil
 		},
@@ -448,20 +458,29 @@ func runLogsCommand() *cobra.Command {
 	return cmd
 }
 
-func writeRunLogSnapshot(cmd *cobra.Command, logs api.LogSnapshotResponse) error {
-	stdout, err := base64.StdEncoding.DecodeString(logs.StdoutBase64)
-	if err != nil {
-		return fmt.Errorf("decode stdout logs: %w", err)
-	}
-	stderr, err := base64.StdEncoding.DecodeString(logs.StderrBase64)
-	if err != nil {
-		return fmt.Errorf("decode stderr logs: %w", err)
-	}
-	if _, err := cmd.OutOrStdout().Write(stdout); err != nil {
-		return err
-	}
-	if _, err := cmd.ErrOrStderr().Write(stderr); err != nil {
-		return err
+func writeRunLogPage(cmd *cobra.Command, page api.RunLogPage) error {
+	for _, record := range page.Logs {
+		switch record.Kind {
+		case string(api.WorkerLogStreamStdout), string(api.WorkerLogStreamStderr):
+			content, err := base64.StdEncoding.DecodeString(record.ContentBase64)
+			if err != nil {
+				return fmt.Errorf("decode %s log: %w", record.Kind, err)
+			}
+			if record.Kind == string(api.WorkerLogStreamStdout) {
+				_, err = cmd.OutOrStdout().Write(content)
+			} else {
+				_, err = cmd.ErrOrStderr().Write(content)
+			}
+			if err != nil {
+				return err
+			}
+		case string(api.WorkerLogStreamStructured):
+			if err := format.JSONLines(cmd.OutOrStdout(), []api.RunLogRecord{record}); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown log kind %q", record.Kind)
+		}
 	}
 	return nil
 }
@@ -685,25 +704,39 @@ func cleanTags(tags []string) []string {
 func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, cursor string, scope client.RunScopeOptions) error {
 	for {
 		terminal := false
-		err := control.FollowRunEvents(cmd.Context(), runID, cursor, func(event api.RunEvent) error {
-			if event.ID != "" {
-				cursor = event.ID
+		page, err := control.ListRunEvents(
+			cmd.Context(),
+			runID,
+			client.ListRunEventsOptions{
+				Cursor: cursor, RunScopeOptions: scope,
+			},
+		)
+		if err == nil {
+			for _, event := range page.Events {
+				if api.RunEventKindIsTerminal(event.Kind) {
+					terminal = true
+				}
+				if writeErr := format.JSONLines(
+					cmd.OutOrStdout(),
+					[]api.RunEvent{event},
+				); writeErr != nil {
+					return writeErr
+				}
 			}
-			if api.RunEventKindIsTerminal(event.Kind) {
-				terminal = true
+			if page.NextCursor != nil {
+				cursor = *page.NextCursor
 			}
-			return format.JSONLines(cmd.OutOrStdout(), []api.RunEvent{event})
-		}, scope)
+		}
 		if errors.Is(err, context.Canceled) || errors.Is(cmd.Context().Err(), context.Canceled) {
 			return nil
 		}
-		if err != nil && runEventStreamErrorIsFatal(err) {
+		if err != nil && runReadErrorIsFatal(err) {
 			return err
 		}
 		if terminal {
 			return nil
 		}
-		timer := time.NewTimer(runEventReconnectDelay)
+		timer := time.NewTimer(runFollowPollInterval)
 		select {
 		case <-cmd.Context().Done():
 			timer.Stop()
@@ -717,47 +750,49 @@ func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, c
 }
 
 func followRunLogs(ctx context.Context, cmd *cobra.Command, control *client.Client, runID string, cursor string, scope client.RunScopeOptions) error {
-	handleChunk := func(chunk api.RunLogChunk) error {
-		content, err := base64.StdEncoding.DecodeString(chunk.ContentBase64)
-		if err != nil {
-			return fmt.Errorf("decode log chunk: %w", err)
-		}
-		switch chunk.Stream {
-		case string(api.WorkerLogStreamStdout):
-			_, err = cmd.OutOrStdout().Write(content)
-		case string(api.WorkerLogStreamStderr):
-			_, err = cmd.ErrOrStderr().Write(content)
-		default:
-			err = fmt.Errorf("unknown log stream %q", chunk.Stream)
-		}
-		if err != nil {
-			return err
-		}
-		if chunk.ID != "" {
-			cursor = chunk.ID
-		}
-		return nil
-	}
 	for {
-		err := control.FollowRunLogs(ctx, runID, cursor, handleChunk, scope)
+		page, err := control.ListRunLogs(
+			ctx,
+			runID,
+			client.ListRunLogsOptions{
+				Cursor: cursor, RunScopeOptions: scope,
+			},
+		)
+		if err == nil {
+			if err := writeRunLogPage(cmd, page); err != nil {
+				return err
+			}
+			if page.NextCursor != "" {
+				cursor = page.NextCursor
+			}
+		}
 		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
 			return nil
 		}
-		if err != nil && runEventStreamErrorIsFatal(err) {
+		if err != nil && runReadErrorIsFatal(err) {
 			return err
 		}
 		run, snapshotErr := control.GetRun(ctx, runID, scope)
 		if snapshotErr == nil && api.RunStatusIsTerminal(run.Status) {
-			drainErr := control.FollowRunLogs(ctx, runID, cursor, handleChunk, scope)
-			if drainErr != nil && runEventStreamErrorIsFatal(drainErr) {
+			drain, drainErr := control.ListRunLogs(
+				ctx,
+				runID,
+				client.ListRunLogsOptions{
+					Cursor: cursor, RunScopeOptions: scope,
+				},
+			)
+			if drainErr == nil {
+				return writeRunLogPage(cmd, drain)
+			}
+			if runReadErrorIsFatal(drainErr) {
 				return drainErr
 			}
 			return nil
 		}
-		if snapshotErr != nil && runEventStreamErrorIsFatal(snapshotErr) {
+		if snapshotErr != nil && runReadErrorIsFatal(snapshotErr) {
 			return snapshotErr
 		}
-		timer := time.NewTimer(runEventReconnectDelay)
+		timer := time.NewTimer(runFollowPollInterval)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -778,30 +813,7 @@ func waitForRun(ctx context.Context, control *client.Client, runID string, scope
 	if api.RunStatusIsTerminal(run.Status) {
 		return run, nil
 	}
-	var cursor string
 	for {
-		streamCtx, cancel := context.WithTimeout(ctx, runEventSnapshotPollInterval)
-		terminal := false
-		err := control.FollowRunEvents(streamCtx, runID, cursor, func(event api.RunEvent) error {
-			if event.ID != "" {
-				cursor = event.ID
-			}
-			if api.RunEventKindIsTerminal(event.Kind) {
-				terminal = true
-				cancel()
-			}
-			return nil
-		}, scope)
-		cancel()
-		if ctx.Err() != nil {
-			return api.RunResponse{}, ctx.Err()
-		}
-		if terminal {
-			return waitForTerminalRunSnapshot(ctx, control, runID, scope)
-		}
-		if err != nil && !errors.Is(err, context.Canceled) && runEventStreamErrorIsFatal(err) {
-			return api.RunResponse{}, err
-		}
 		run, err = control.GetRun(ctx, runID, scope)
 		if err != nil {
 			return api.RunResponse{}, err
@@ -809,7 +821,7 @@ func waitForRun(ctx context.Context, control *client.Client, runID string, scope
 		if api.RunStatusIsTerminal(run.Status) {
 			return run, nil
 		}
-		timer := time.NewTimer(runEventReconnectDelay)
+		timer := time.NewTimer(runFollowPollInterval)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -843,7 +855,7 @@ func waitForTerminalRunSnapshot(ctx context.Context, control *client.Client, run
 	}
 }
 
-func runEventStreamErrorIsFatal(err error) bool {
+func runReadErrorIsFatal(err error) bool {
 	var httpErr *client.HTTPError
 	if errors.As(err, &httpErr) {
 		return httpErr.StatusCode >= 400 && httpErr.StatusCode < 500

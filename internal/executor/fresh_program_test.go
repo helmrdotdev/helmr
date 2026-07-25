@@ -760,6 +760,23 @@ func (s *testFreshProgramEventSink) AppendRunLog(
 	return nil
 }
 
+func (s *testFreshProgramEventSink) ApplyRunMetadata(
+	context.Context,
+	api.WorkerRunLeaseReceipt,
+	*runv0.MetadataUpdated,
+) error {
+	return nil
+}
+
+func (s *testFreshProgramEventSink) RecordStructuredRunLog(
+	context.Context,
+	api.WorkerRunLeaseReceipt,
+	uint64,
+	*runv0.StructuredLogRequested,
+) error {
+	return nil
+}
+
 func (s *testFreshProgramEventSink) snapshot() []testFreshProgramLog {
 	s.mu.Lock()
 	defer s.mu.Unlock()

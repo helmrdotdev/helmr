@@ -406,7 +406,7 @@ func TestDeviceCodeFlowClient(t *testing.T) {
 	}
 }
 
-func TestListRunsOptionsAndGetRunLogs(t *testing.T) {
+func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	paths := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -424,10 +424,13 @@ func TestListRunsOptionsAndGetRunLogs(t *testing.T) {
 				UpdatedAt: now,
 			}}})
 		case "/api/runs/run-1/logs":
-			_ = json.NewEncoder(w).Encode(api.LogSnapshotResponse{
-				StdoutBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
-				StderrBase64: base64.StdEncoding.EncodeToString([]byte("warn\n")),
-				Cursor:       "0",
+			_ = json.NewEncoder(w).Encode(api.RunLogPage{
+				Logs: []api.RunLogRecord{{
+					ID: "rt1.log", Kind: "stdout", RunID: "run-1",
+					AttemptNumber: 1,
+					ContentBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
+				}},
+				NextCursor: "rt1.next",
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
@@ -446,11 +449,13 @@ func TestListRunsOptionsAndGetRunLogs(t *testing.T) {
 	if len(runs.Runs) != 1 || runs.Runs[0].ID != "run-1" {
 		t.Fatalf("runs = %+v", runs)
 	}
-	logs, err := client.GetRunLogs(context.Background(), "run-1")
+	logs, err := client.ListRunLogs(context.Background(), "run-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if logs.StdoutBase64 != base64.StdEncoding.EncodeToString([]byte("hello\n")) || logs.StderrBase64 != base64.StdEncoding.EncodeToString([]byte("warn\n")) {
+	if len(logs.Logs) != 1 ||
+		logs.Logs[0].ContentBase64 != base64.StdEncoding.EncodeToString([]byte("hello\n")) ||
+		logs.NextCursor != "rt1.next" {
 		t.Fatalf("logs = %+v", logs)
 	}
 	if got := strings.Join(paths, ","); got != "/api/runs?limit=25&session_id=session-1&status=all,/api/runs/run-1/logs" {
@@ -511,28 +516,26 @@ func TestSessionScopedClientRequiresEnvironmentScope(t *testing.T) {
 	}
 }
 
-func TestFollowRunLogsSendsCursorAndDecodesChunks(t *testing.T) {
-	var gotLastEventID string
+func TestListRunLogsSendsCursorAndFilters(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1/logs" || r.URL.Query().Get("follow") != "1" {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1/logs" ||
+			r.URL.Query().Get("cursor") != "rt1.previous" ||
+			r.URL.Query().Get("limit") != "25" ||
+			strings.Join(r.URL.Query()["level"], ",") != "warn,error" {
 			t.Fatalf("%s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
 		}
-		gotLastEventID = r.Header.Get("Last-Event-ID")
-		w.Header().Set("content-type", "text/event-stream")
-		_, _ = io.WriteString(w, "id: tc1.eyJzIjo5fQ\n")
-		_, _ = io.WriteString(w, "event: run_log\n")
-		_, _ = io.WriteString(w, "data: ")
-		_ = json.NewEncoder(w).Encode(api.RunLogChunk{
-			ID:            "tc1.eyJzIjo5fQ",
-			RunID:         "run-1",
-			AttemptNumber: 1,
-			Stream:        "stdout",
-			ContentBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
-			Bytes:         6,
-			ObservedSeq:   2,
-			At:            time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC),
-		})
-		_, _ = io.WriteString(w, "\n")
+		observed := int64(2)
+		bytes := int64(6)
+		_ = json.NewEncoder(w).Encode(api.RunLogPage{Logs: []api.RunLogRecord{{
+			ID:               "rt1.log",
+			RunID:            "run-1",
+			AttemptNumber:    1,
+			Kind:             "stdout",
+			ContentBase64:    base64.StdEncoding.EncodeToString([]byte("hello\n")),
+			Bytes:            &bytes,
+			ObservedSequence: &observed,
+			At:               time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC),
+		}}, NextCursor: "rt1.next"})
 	}))
 	defer server.Close()
 
@@ -540,18 +543,19 @@ func TestFollowRunLogsSendsCursorAndDecodesChunks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var chunks []api.RunLogChunk
-	if err := client.FollowRunLogs(context.Background(), "run-1", "tc1.eyJzIjo4fQ", func(chunk api.RunLogChunk) error {
-		chunks = append(chunks, chunk)
-		return nil
-	}); err != nil {
+	page, err := client.ListRunLogs(
+		context.Background(),
+		"run-1",
+		ListRunLogsOptions{
+			Cursor: "rt1.previous", Limit: 25, Levels: []string{"warn", "error"},
+		},
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if gotLastEventID != "tc1.eyJzIjo4fQ" {
-		t.Fatalf("last event id = %q", gotLastEventID)
-	}
-	if len(chunks) != 1 || chunks[0].ID != "tc1.eyJzIjo5fQ" || chunks[0].ContentBase64 != base64.StdEncoding.EncodeToString([]byte("hello\n")) {
-		t.Fatalf("chunks = %+v", chunks)
+	if len(page.Logs) != 1 || page.Logs[0].ID != "rt1.log" ||
+		page.NextCursor != "rt1.next" {
+		t.Fatalf("page = %+v", page)
 	}
 }
 
@@ -654,34 +658,6 @@ func TestWorkerLifecycleClient(t *testing.T) {
 				t.Fatalf("worker auth = %s", got)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerRenewResponse{Lease: claim})
-		case "/api/worker/leases/logs":
-			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
-				t.Fatalf("worker auth = %s", got)
-			}
-			var request api.WorkerAppendLogRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
-			}
-			content, err := base64.StdEncoding.DecodeString(request.ContentBase64)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if request.Lease.ID != claim.ID || request.Stream != api.WorkerLogStreamStdout || request.ObservedSeq != 7 || string(content) != "hello\n" {
-				t.Fatalf("log request = %+v content=%q", request, content)
-			}
-			_ = json.NewEncoder(w).Encode(api.WorkerEventResponse{RunID: claim.RunID})
-		case "/api/worker/leases/log-entries":
-			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
-				t.Fatalf("worker auth = %s", got)
-			}
-			var request api.WorkerRecordLogEntryRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
-			}
-			if request.Lease.ID != claim.ID || request.Entry != "building" {
-				t.Fatalf("log entry request = %+v", request)
-			}
-			_ = json.NewEncoder(w).Encode(api.WorkerEventResponse{RunID: claim.RunID})
 		case "/api/worker/leases/release":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
@@ -729,12 +705,6 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	if _, err := client.RenewRun(context.Background(), claim); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.AppendLog(context.Background(), claim, api.WorkerLogStreamStdout, 7, []byte("hello\n")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.RecordLogEntry(context.Background(), claim, "building"); err != nil {
-		t.Fatal(err)
-	}
 	exitCode := int32(0)
 	if _, err := client.ReleaseRun(context.Background(), claim, api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode}); err != nil {
 		t.Fatal(err)
@@ -742,7 +712,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	if err := client.FenceWorker(context.Background(), "termination_drain_failed"); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/leases/discover,/api/worker/activate,/api/worker/drain,/api/worker/status,/api/worker/drain/complete,/api/worker/leases/start,/api/worker/leases/renew,/api/worker/leases/logs,/api/worker/leases/log-entries,/api/worker/leases/release,/api/worker/fence" {
+	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/leases/discover,/api/worker/activate,/api/worker/drain,/api/worker/status,/api/worker/drain/complete,/api/worker/leases/start,/api/worker/leases/renew,/api/worker/leases/release,/api/worker/fence" {
 		t.Fatalf("paths = %s", got)
 	}
 }

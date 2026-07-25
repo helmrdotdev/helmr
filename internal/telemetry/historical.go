@@ -94,6 +94,7 @@ FROM helmr_telemetry.events FINAL
 WHERE org_id = @org_id
   AND subject_kind = @subject_kind
   AND subject_id = @subject_id
+  AND (@all_severities OR severity IN @severities)
   AND seq > @after
 ORDER BY seq ASC
 LIMIT @row_limit`
@@ -102,6 +103,8 @@ LIMIT @row_limit`
 		clickhouse.Named("org_id", q.OrgID),
 		clickhouse.Named("subject_kind", q.SubjectType),
 		clickhouse.Named("subject_id", q.SubjectID),
+		clickhouse.Named("all_severities", len(q.Severities) == 0),
+		clickhouse.Named("severities", q.Severities),
 		clickhouse.Named("after", uint64(q.AfterSeq)),
 		clickhouse.Named("row_limit", uint32(q.Limit)),
 	); err != nil {
@@ -121,6 +124,13 @@ func (r *HistoricalReader) ListRunLogChunks(ctx context.Context, q RunLogChunkQu
 FROM helmr_telemetry.run_logs FINAL
 WHERE org_id = @org_id
   AND run_id = @run_id
+  AND (
+    @all_levels
+    OR (
+      stream_name = 'structured'
+      AND JSONExtractString(base64Decode(content), 'level') IN @levels
+    )
+  )
   AND seq > @after
 ORDER BY seq ASC
 LIMIT @row_limit`
@@ -128,6 +138,8 @@ LIMIT @row_limit`
 	if err := r.client.Select(ctx, &rows, sql,
 		clickhouse.Named("org_id", q.OrgID),
 		clickhouse.Named("run_id", q.RunID),
+		clickhouse.Named("all_levels", len(q.Levels) == 0),
+		clickhouse.Named("levels", q.Levels),
 		clickhouse.Named("after", uint64(q.AfterSeq)),
 		clickhouse.Named("row_limit", uint32(q.Limit)),
 	); err != nil {

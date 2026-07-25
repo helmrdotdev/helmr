@@ -216,7 +216,7 @@ func TestRuntimeCheckpointerSeparatesWorkspaceCaptureFromRuntimeManifest(t *test
 
 func TestRuntimeCheckpointerProcessesRunEventsBeforePauseReady(t *testing.T) {
 	stream := newInterleavedCheckpointStream(t,
-		[]proto.Message{&runv0.RunEvent{Event: &runv0.RunEvent_LogEntry{LogEntry: "flushed before checkpoint"}}},
+		[]proto.Message{&runv0.RunEvent{Event: &runv0.RunEvent_StdoutChunk{StdoutChunk: []byte("flushed before checkpoint")}}},
 		&runv0.CheckpointPauseReady{
 			RunWaitId:    "run-wait-id-1",
 			CheckpointId: "checkpoint-1",
@@ -236,7 +236,7 @@ func TestRuntimeCheckpointerProcessesRunEventsBeforePauseReady(t *testing.T) {
 		stream:    stream,
 		workspace: testCheckpointWorkspaceBase(),
 		runEvent: func(_ context.Context, event *runv0.RunEvent) error {
-			events = append(events, event.GetLogEntry())
+			events = append(events, string(event.GetStdoutChunk()))
 			return nil
 		},
 	}.CreateCheckpoint(context.Background(), CheckpointRequest{

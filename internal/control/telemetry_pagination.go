@@ -10,7 +10,6 @@ import (
 
 const (
 	runEventsPageSize          = int32(200)
-	runLogStreamBatchSize      = int32(100)
 	runEventsFollowMaxDuration = 30 * time.Minute
 )
 

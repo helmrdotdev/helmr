@@ -2,7 +2,6 @@ package control
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -123,8 +122,6 @@ func (s *EventStream) publishOutboxRow(ctx context.Context, row db.ClaimLiveTele
 	switch row.StreamKind {
 	case db.TelemetryStreamKindEvent:
 		return s.publishEventOutboxRow(ctx, row)
-	case db.TelemetryStreamKindRunLog:
-		return s.publishRunLogOutboxRow(ctx, row)
 	case db.TelemetryStreamKindTerminalOutput:
 		return s.publishTerminalOutputOutboxRow(ctx, row)
 	default:
@@ -139,15 +136,6 @@ func (s *EventStream) publishEventOutboxRow(ctx context.Context, row db.ClaimLiv
 		return fmt.Errorf("encode event: %w", err)
 	}
 	return s.publishJSON(ctx, row.StreamKey, redisEventID(row.Seq), "event", payload, row.Seq)
-}
-
-func (s *EventStream) publishRunLogOutboxRow(ctx context.Context, row db.ClaimLiveTelemetryOutboxRow) error {
-	chunk := runLogChunkResponseFromClaim(row)
-	payload, err := json.Marshal(chunk)
-	if err != nil {
-		return fmt.Errorf("encode run log: %w", err)
-	}
-	return s.publishJSON(ctx, row.StreamKey, redisEventID(row.Seq), "run_log", payload, row.Seq)
 }
 
 func (s *EventStream) publishTerminalOutputOutboxRow(ctx context.Context, row db.ClaimLiveTelemetryOutboxRow) error {
@@ -274,95 +262,6 @@ func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectT
 			}
 		}
 	}
-}
-
-func (s *EventStream) ReadRunLogs(ctx context.Context, orgID uuid.UUID, runID uuid.UUID, cursor int64, onChunk func(api.RunLogChunk) error, onIdle func() error) error {
-	streamKey := runLogStreamKey(orgID, runID)
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		nextCursor, hasMore, err := s.readDurableRunLogs(ctx, orgID, runID, cursor, onChunk)
-		durableErr := err
-		if err != nil {
-			s.log.Debug("read durable run logs failed; continuing with redis live stream", "run_id", runID.String(), "error", err)
-			hasMore = false
-		}
-		if nextCursor > cursor {
-			cursor = nextCursor
-		}
-		if hasMore {
-			continue
-		}
-		if durableErr != nil {
-			covers, coverErr := s.redisEventStreamCoversCursor(ctx, streamKey, cursor)
-			if coverErr != nil {
-				return coverErr
-			}
-			if !covers {
-				return durableErr
-			}
-		}
-		streams, err := s.redis.XRead(ctx, &redis.XReadArgs{
-			Streams: []string{streamKey, redisEventID(cursor)},
-			Count:   int64(runLogStreamBatchSize),
-			Block:   liveTelemetryStreamBlockEvery,
-		}).Result()
-		if errors.Is(err, redis.Nil) {
-			if onIdle != nil {
-				if idleErr := onIdle(); idleErr != nil {
-					return idleErr
-				}
-			}
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		for _, stream := range streams {
-			for _, message := range stream.Messages {
-				seq, err := redisSeq(message.ID)
-				if err != nil {
-					return err
-				}
-				raw, ok := message.Values["run_log"].(string)
-				if !ok {
-					return fmt.Errorf("run log stream record %s missing run_log field", message.ID)
-				}
-				var chunk api.RunLogChunk
-				if err := json.Unmarshal([]byte(raw), &chunk); err != nil {
-					return fmt.Errorf("decode run log stream record %s: %w", message.ID, err)
-				}
-				cursor = seq
-				if err := onChunk(chunk); err != nil {
-					return err
-				}
-			}
-		}
-	}
-}
-
-func (s *EventStream) readDurableRunLogs(ctx context.Context, orgID uuid.UUID, runID uuid.UUID, cursor int64, onChunk func(api.RunLogChunk) error) (int64, bool, error) {
-	page, err := s.telemetryReader.ListRunLogChunks(ctx, telemetry.RunLogChunkQuery{
-		OrgID:    orgID,
-		RunID:    runID,
-		AfterSeq: cursor,
-		Limit:    runLogStreamBatchSize,
-	})
-	if err != nil {
-		return cursor, false, fmt.Errorf("list durable run logs: %w", err)
-	}
-	for _, chunk := range page.Chunks {
-		nextCursor, err := telemetry.ParseCursor(chunk.ID)
-		if err != nil {
-			return cursor, false, err
-		}
-		cursor = nextCursor
-		if err := onChunk(chunk); err != nil {
-			return cursor, false, err
-		}
-	}
-	return cursor, len(page.Chunks) == int(runLogStreamBatchSize), nil
 }
 
 func (s *EventStream) ReadTerminalOutput(ctx context.Context, query telemetry.TerminalOutputQuery, cursor int64, limit int32, onChunk func(telemetry.TerminalOutputChunk) error, onIdle func() error) error {
@@ -515,10 +414,6 @@ func eventStreamKey(orgID uuid.UUID, subjectType string, subjectID uuid.UUID) st
 	return "helmr:events:" + orgID.String() + ":" + subjectType + ":" + subjectID.String()
 }
 
-func runLogStreamKey(orgID uuid.UUID, runID uuid.UUID) string {
-	return "helmr:run_logs:" + orgID.String() + ":" + runID.String()
-}
-
 func terminalOutputStreamKey(orgID uuid.UUID, workspaceID uuid.UUID, resourceKind string, resourceID uuid.UUID, streamName string) string {
 	return "helmr:terminal_outputs:" + orgID.String() + ":" + workspaceID.String() + ":" + resourceKind + ":" + resourceID.String() + ":" + streamName
 }
@@ -577,23 +472,6 @@ func sleepWithContext(ctx context.Context, duration time.Duration) error {
 
 func eventResponseFromClaim(event db.ClaimLiveTelemetryOutboxRow) api.RunEvent {
 	return apiEventResponse(event.Seq, event.RunID, event.DeploymentID, event.RunLeaseID, event.AttemptNumber, event.TraceID, event.SpanID, event.Traceparent, event.Category, event.Severity, event.Source, event.Kind, event.Message, event.Payload, event.RedactionClass, event.CreatedAt, event.OccurredAt)
-}
-
-func runLogChunkResponseFromClaim(row db.ClaimLiveTelemetryOutboxRow) api.RunLogChunk {
-	attemptNumber := int32(0)
-	if row.AttemptNumber.Valid {
-		attemptNumber = row.AttemptNumber.Int32
-	}
-	return api.RunLogChunk{
-		ID:            telemetryCursor(row.Seq),
-		RunID:         pgvalue.MustUUIDValue(row.RunID).String(),
-		AttemptNumber: attemptNumber,
-		Stream:        row.StreamName,
-		ContentBase64: base64.StdEncoding.EncodeToString(row.Content),
-		Bytes:         row.SizeBytes,
-		ObservedSeq:   row.ObservedSeq,
-		At:            pgvalue.Time(row.CreatedAt),
-	}
 }
 
 func terminalOutputChunkFromClaim(row db.ClaimLiveTelemetryOutboxRow) telemetry.TerminalOutputChunk {

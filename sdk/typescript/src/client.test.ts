@@ -579,6 +579,111 @@ describe("HelmrClient Runs", () => {
     )
   })
 
+  test("reads finite structured logs and events with bound query cursors", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    const responses = [
+      {
+        logs: [
+          {
+            id: "rt1.log",
+            kind: "structured",
+            run_id: runID,
+            attempt_number: 2,
+            level: "warn",
+            message: "retrying",
+            attributes: { dependency: "image-service" },
+            at: "2026-07-24T11:50:02Z",
+          },
+          {
+            id: "rt1.stderr",
+            kind: "stderr",
+            run_id: runID,
+            attempt_number: 2,
+            observed_sequence: 8,
+            content_base64: "d2FybmluZwo=",
+            bytes: 8,
+            at: "2026-07-24T11:50:03Z",
+          },
+        ],
+        next_cursor: "rt1.logs-next",
+      },
+      {
+        events: [
+          {
+            id: "rt1.event",
+            run_id: runID,
+            attempt_number: 2,
+            category: "lifecycle",
+            severity: "error",
+            source: "runtime",
+            kind: "run.failed",
+            message: "Task failed",
+            attributes: { code: "task_failed" },
+            occurred_at: "2026-07-24T11:50:04Z",
+            at: "2026-07-24T11:50:05Z",
+          },
+        ],
+      },
+    ]
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async (input: URL | RequestInfo, init?: RequestInit) => {
+        requests.push({ url: String(input), init })
+        return Response.json(responses.shift())
+      }) as typeof fetch,
+    })
+    const signal = new AbortController().signal
+
+    const logs = await client.runs.logs(runID, {
+      cursor: "rt1.logs",
+      limit: 25,
+      level: ["warn", "error"],
+    }, { signal })
+    const events = await client.runs.events(runID, {
+      severity: "error",
+    })
+
+    expect(logs).toEqual({
+      items: [
+        {
+          id: "rt1.log",
+          kind: "structured",
+          runId: runID,
+          attemptNumber: 2,
+          level: "warn",
+          message: "retrying",
+          attributes: { dependency: "image-service" },
+          at: "2026-07-24T11:50:02Z",
+        },
+        {
+          id: "rt1.stderr",
+          kind: "stderr",
+          runId: runID,
+          attemptNumber: 2,
+          observedSequence: 8,
+          contentBase64: "d2FybmluZwo=",
+          bytes: 8,
+          at: "2026-07-24T11:50:03Z",
+        },
+      ],
+      nextCursor: "rt1.logs-next",
+    })
+    expect(events.items[0]).toMatchObject({
+      id: "rt1.event",
+      runId: runID,
+      severity: "error",
+      attributes: { code: "task_failed" },
+    })
+    expect(requests[0]!.url).toBe(
+      `https://api.example.test/api/runs/${runID}/logs?cursor=rt1.logs&limit=25&level=warn&level=error`,
+    )
+    expect(requests[0]!.init?.signal).toBe(signal)
+    expect(requests[1]!.url).toBe(
+      `https://api.example.test/api/runs/${runID}/events?severity=error`,
+    )
+  })
+
   test("cancels a Run and returns its terminal snapshot", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
     const client = new HelmrClient({

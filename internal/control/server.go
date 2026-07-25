@@ -507,6 +507,8 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 			Post("/projects/{projectID}/environments/{environmentID}/tasks/{taskDeclaredID}/start", s.startTaskHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs", s.listRunSnapshotsHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{runID}", s.getRunSnapshotHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{runID}/logs", s.listRunLogsHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{runID}/events", s.listRunEventsHTTP)
 		r.Post("/projects/{projectID}/environments/{environmentID}/runs/{runID}/cancel", s.cancelRunHTTP)
 		r.With(limitActorInputBody).
 			Post("/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/input", s.sendActorInput)
@@ -569,6 +571,8 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 			Post("/tasks/{taskDeclaredID}/start", s.startTaskHTTP)
 		r.Get("/runs", s.listRunSnapshotsHTTP)
 		r.Get("/runs/{runID}", s.getRunSnapshotHTTP)
+		r.Get("/runs/{runID}/logs", s.listRunLogsHTTP)
+		r.Get("/runs/{runID}/events", s.listRunEventsHTTP)
 		r.Post("/runs/{runID}/cancel", s.cancelRunHTTP)
 	})
 	r.Group(func(r chi.Router) {
@@ -686,6 +690,8 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/tasks/complete", s.workerCompleteTask)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/complete", s.workerCompleteActor)
 				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/run-logs", s.workerAppendRunLogs)
+				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/structured-logs", s.workerAppendStructuredLog)
+				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/run-metadata", s.workerUpdateRunMetadata)
 			})
 		})
 	})

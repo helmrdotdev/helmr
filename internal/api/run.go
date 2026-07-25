@@ -197,15 +197,6 @@ type RunCountsResponse struct {
 	Expired   int64 `json:"expired"`
 }
 
-type LogSnapshotResponse struct {
-	StdoutBase64 string `json:"stdout_base64"`
-	StderrBase64 string `json:"stderr_base64"`
-	Cursor       string `json:"cursor"`
-	StdoutBytes  int64  `json:"stdout_bytes"`
-	StderrBytes  int64  `json:"stderr_bytes"`
-	Truncated    bool   `json:"truncated"`
-}
-
 type RunLogChunk struct {
 	ID            string    `json:"id"`
 	RunID         string    `json:"run_id"`
@@ -215,6 +206,25 @@ type RunLogChunk struct {
 	Bytes         int64     `json:"bytes"`
 	ObservedSeq   int64     `json:"observed_seq"`
 	At            time.Time `json:"at"`
+}
+
+type RunLogRecord struct {
+	ID               string          `json:"id"`
+	Kind             string          `json:"kind"`
+	RunID            string          `json:"run_id"`
+	AttemptNumber    int32           `json:"attempt_number"`
+	Level            string          `json:"level,omitempty"`
+	Message          string          `json:"message,omitempty"`
+	Attributes       json.RawMessage `json:"attributes,omitempty"`
+	ObservedSequence *int64          `json:"observed_sequence,omitempty"`
+	ContentBase64    string          `json:"content_base64,omitempty"`
+	Bytes            *int64          `json:"bytes,omitempty"`
+	At               time.Time       `json:"at"`
+}
+
+type RunLogPage struct {
+	Logs       []RunLogRecord `json:"logs"`
+	NextCursor string         `json:"next_cursor,omitempty"`
 }
 
 type RunEvent struct {
@@ -236,6 +246,5 @@ type RunEvent struct {
 
 type RunEventPage struct {
 	Events     []RunEvent `json:"events"`
-	Cursor     string     `json:"cursor"`
 	NextCursor *string    `json:"next_cursor,omitempty"`
 }

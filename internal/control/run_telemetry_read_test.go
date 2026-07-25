@@ -1,0 +1,148 @@
+package control
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
+)
+
+type runTelemetryFrontierStore struct {
+	db.Querier
+	frontier db.GetRunTelemetryFrontierRow
+	params   db.GetRunTelemetryFrontierParams
+}
+
+func (store *runTelemetryFrontierStore) GetRunTelemetryFrontier(
+	_ context.Context,
+	params db.GetRunTelemetryFrontierParams,
+) (db.GetRunTelemetryFrontierRow, error) {
+	store.params = params
+	return store.frontier, nil
+}
+
+func TestRunTelemetryCursorIsIntegrityAndScopeBound(t *testing.T) {
+	server := &Server{authSecret: []byte("01234567890123456789012345678901")}
+	want := runTelemetryCursor{
+		EnvironmentID: "00000000-0000-0000-0000-000000000001",
+		RunID:         "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		RecordKind:    "logs",
+		Filters:       []string{"error", "warn"},
+		Sequence:      42,
+	}
+	raw, err := server.signRunTelemetryCursor(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := server.parseRunTelemetryCursor(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.EnvironmentID != want.EnvironmentID ||
+		got.RunID != want.RunID ||
+		got.RecordKind != want.RecordKind ||
+		got.Sequence != want.Sequence {
+		t.Fatalf("cursor = %+v, want %+v", got, want)
+	}
+	if _, err := server.parseRunTelemetryCursor(raw + "x"); err == nil {
+		t.Fatal("tampered cursor was accepted")
+	}
+}
+
+func TestRunTelemetryFilterIsNormalized(t *testing.T) {
+	request := httptest.NewRequest(
+		"GET",
+		"/?level=warn,error&level=warn",
+		nil,
+	)
+	got, err := parseRunTelemetryFilter(request, "level")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "error" || got[1] != "warn" {
+		t.Fatalf("levels = %+v", got)
+	}
+}
+
+func TestProjectRunLogRecordDistinguishesStructuredAndStream(t *testing.T) {
+	at := time.Date(2026, 7, 25, 1, 2, 3, 0, time.UTC)
+	structuredBody, err := json.Marshal(map[string]any{
+		"level": "error", "message": "failed",
+		"attributes": map[string]any{"step": 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	structured, err := projectRunLogRecord(api.RunLogChunk{
+		ID: "tc1.structured", RunID: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		AttemptNumber: 2, Stream: string(api.WorkerLogStreamStructured),
+		ContentBase64: base64.StdEncoding.EncodeToString(structuredBody), At: at,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if structured.Kind != "structured" ||
+		structured.Level != "error" ||
+		structured.Message != "failed" ||
+		string(structured.Attributes) != `{"step":2}` {
+		t.Fatalf("structured = %+v", structured)
+	}
+	stream, err := projectRunLogRecord(api.RunLogChunk{
+		ID: "tc1.stdout", RunID: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		AttemptNumber: 2, Stream: string(api.WorkerLogStreamStdout),
+		ObservedSeq: 3, ContentBase64: "b2sK", Bytes: 3, At: at,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stream.Kind != "stdout" ||
+		stream.ObservedSequence == nil ||
+		*stream.ObservedSequence != 3 ||
+		stream.Bytes == nil ||
+		*stream.Bytes != 3 {
+		t.Fatalf("stream = %+v", stream)
+	}
+}
+
+func TestRunTelemetryFrontierFailsClosedWhileProjectionLags(t *testing.T) {
+	orgID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	runID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	store := &runTelemetryFrontierStore{
+		frontier: db.GetRunTelemetryFrontierRow{
+			ObservedSeq:  12,
+			ProjectedSeq: 10,
+		},
+	}
+	server := &Server{db: store}
+	request := httptest.NewRequest("GET", "/", nil)
+	err := server.requireProjectedRunTelemetry(
+		request,
+		runTelemetryTarget{
+			orgID: pgvalue.UUID(orgID),
+			runID: pgvalue.UUID(runID),
+		},
+		db.TelemetryStreamKindRunLog,
+		[]string{"error"},
+		10,
+	)
+	var lagging telemetry.LaggingError
+	if !errors.As(err, &lagging) ||
+		lagging.WatermarkSeq != 10 ||
+		lagging.WantSeq != 12 {
+		t.Fatalf("error = %v", err)
+	}
+	if store.params.StreamKind != db.TelemetryStreamKindRunLog ||
+		len(store.params.FilterValues) != 1 ||
+		store.params.FilterValues[0] != "error" {
+		t.Fatalf("params = %+v", store.params)
+	}
+}

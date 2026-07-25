@@ -14,7 +14,8 @@ import (
 const appendReceiptRunLogChunk = `-- name: AppendReceiptRunLogChunk :one
 WITH event_args AS (
     SELECT $1::text AS event_kind,
-           $2::jsonb AS event_payload
+           $2::jsonb AS event_payload,
+           $3::text AS event_severity
 ),
 current_run_lease AS (
     SELECT runs.org_id,
@@ -61,7 +62,7 @@ current_run_lease AS (
                                AND worker_network_slots.worker_instance_id = run_leases.worker_instance_id
                                AND worker_network_slots.worker_epoch = run_leases.worker_epoch
                                AND worker_network_slots.runtime_instance_id = run_leases.runtime_instance_id
-      JOIN workspace_mounts ON workspace_mounts.id = $3
+      JOIN workspace_mounts ON workspace_mounts.id = $4
                            AND workspace_mounts.org_id = run_leases.org_id
                            AND workspace_mounts.project_id = run_leases.project_id
                            AND workspace_mounts.environment_id = run_leases.environment_id
@@ -71,7 +72,7 @@ current_run_lease AS (
                            AND workspace_mounts.worker_epoch = run_leases.worker_epoch
                            AND workspace_mounts.runtime_instance_id = run_leases.runtime_instance_id
                            AND workspace_mounts.workspace_id = run_leases.workspace_id
-      JOIN workspace_leases ON workspace_leases.id = $4
+      JOIN workspace_leases ON workspace_leases.id = $5
                            AND workspace_leases.org_id = run_leases.org_id
                            AND workspace_leases.project_id = run_leases.project_id
                            AND workspace_leases.environment_id = run_leases.environment_id
@@ -83,37 +84,37 @@ current_run_lease AS (
                            AND workspace_leases.workspace_id = run_leases.workspace_id
                            AND workspace_leases.workspace_mount_id = workspace_mounts.id
                            AND workspace_leases.owner_run_lease_id = run_leases.id
-     WHERE run_leases.id = $5
-       AND run_leases.run_id = $6
-       AND run_leases.attempt_number = $7
-       AND run_leases.lease_sequence = $8
-       AND run_leases.worker_group_id = $9
-       AND run_leases.worker_instance_id = $10
-       AND run_leases.worker_epoch = $11
-       AND run_leases.worker_protocol_version = $12
-       AND run_leases.runtime_instance_id = $13
-       AND run_leases.runtime_identity_id = $14
-       AND run_leases.network_slot_id = $15
-       AND run_leases.network_slot_generation = $16
-       AND run_leases.workspace_id = $17
-       AND workspace_mounts.materialized_version_id = $18
-       AND workspace_mounts.fencing_generation = $19
-       AND workspace_leases.base_version_id = $18
-       AND workspace_leases.ownership_generation = $20
-       AND workspace_leases.writer_generation = $21
-       AND workspace_leases.mount_fencing_generation = $19
-       AND run_leases.requested_cpu_millis = $22
-       AND run_leases.requested_memory_bytes = $23
-       AND run_leases.requested_workload_disk_bytes = $24
-       AND run_leases.requested_scratch_bytes = $25
-       AND run_leases.requested_execution_slots = $26
-       AND runs.max_active_duration_ms = $27
-       AND runs.active_elapsed_ms = $28
-       AND COALESCE(run_leases.trace_id, '') = $29
-       AND COALESCE(run_leases.span_id, '') = $30
-       AND COALESCE(run_leases.traceparent, '') = $31
-       AND run_leases.start_deadline_at = $32
-       AND run_leases.expires_at = $33
+     WHERE run_leases.id = $6
+       AND run_leases.run_id = $7
+       AND run_leases.attempt_number = $8
+       AND run_leases.lease_sequence = $9
+       AND run_leases.worker_group_id = $10
+       AND run_leases.worker_instance_id = $11
+       AND run_leases.worker_epoch = $12
+       AND run_leases.worker_protocol_version = $13
+       AND run_leases.runtime_instance_id = $14
+       AND run_leases.runtime_identity_id = $15
+       AND run_leases.network_slot_id = $16
+       AND run_leases.network_slot_generation = $17
+       AND run_leases.workspace_id = $18
+       AND workspace_mounts.materialized_version_id = $19
+       AND workspace_mounts.fencing_generation = $20
+       AND workspace_leases.base_version_id = $19
+       AND workspace_leases.ownership_generation = $21
+       AND workspace_leases.writer_generation = $22
+       AND workspace_leases.mount_fencing_generation = $20
+       AND run_leases.requested_cpu_millis = $23
+       AND run_leases.requested_memory_bytes = $24
+       AND run_leases.requested_workload_disk_bytes = $25
+       AND run_leases.requested_scratch_bytes = $26
+       AND run_leases.requested_execution_slots = $27
+       AND runs.max_active_duration_ms = $28
+       AND runs.active_elapsed_ms = $29
+       AND COALESCE(run_leases.trace_id, '') = $30
+       AND COALESCE(run_leases.span_id, '') = $31
+       AND COALESCE(run_leases.traceparent, '') = $32
+       AND run_leases.start_deadline_at = $33
+       AND run_leases.expires_at = $34
        AND runs.current_run_lease_id = run_leases.id
        AND runs.current_attempt_number = run_leases.attempt_number
        AND runs.status = 'running'
@@ -160,13 +161,13 @@ current_run_lease AS (
 ),
 candidate AS (
     SELECT current_run_lease.org_id, current_run_lease.project_id, current_run_lease.environment_id, current_run_lease.trace_id, current_run_lease.state_version, current_run_lease.id, current_run_lease.run_lease_id, current_run_lease.span_id, current_run_lease.parent_span_id, current_run_lease.traceparent, current_run_lease.attempt_number,
-           $34::text AS stream,
-           $35::bigint AS observed_seq,
-           $36::bytea AS content,
-           octet_length($36::bytea)::bigint AS size_bytes,
+           $35::text AS stream,
+           $36::bigint AS observed_seq,
+           $37::bytea AS content,
+           octet_length($37::bytea)::bigint AS size_bytes,
            event_args.event_kind,
            event_args.event_payload,
-           'run_log:' || current_run_lease.run_lease_id::text || ':' || $34::text || ':' || ($35::bigint)::text AS idempotency_key
+           'run_log:' || current_run_lease.id::text || ':' || current_run_lease.attempt_number::text || ':' || $35::text || ':' || ($36::bigint)::text AS idempotency_key
       FROM current_run_lease
       CROSS JOIN event_args
 ),
@@ -242,7 +243,7 @@ event_input AS (
            current_run_lease.parent_span_id,
            current_run_lease.traceparent,
            'log' AS category,
-           'info' AS severity,
+           event_args.event_severity AS severity,
            'worker' AS source,
            event_args.event_kind AS kind,
            event_args.event_kind AS message,
@@ -305,7 +306,7 @@ meter_event AS (
            selected_chunk.size_bytes,
            'bytes',
            jsonb_build_object('stream', selected_chunk.stream, 'observed_seq', selected_chunk.observed_seq),
-           'log:' || selected_chunk.run_lease_id::text || ':' || selected_chunk.stream::text || ':' || selected_chunk.observed_seq::text,
+           'log:' || selected_chunk.run_id::text || ':' || selected_chunk.attempt_number::text || ':' || selected_chunk.stream::text || ':' || selected_chunk.observed_seq::text,
            jsonb_build_object(
                'quantity', selected_chunk.size_bytes,
                'unit', 'bytes',
@@ -370,6 +371,7 @@ SELECT selected_chunk.org_id,
 type AppendReceiptRunLogChunkParams struct {
 	Kind                       string             `json:"kind"`
 	Payload                    []byte             `json:"payload"`
+	Severity                   string             `json:"severity"`
 	WorkspaceMountID           pgtype.UUID        `json:"workspace_mount_id"`
 	WorkspaceLeaseID           pgtype.UUID        `json:"workspace_lease_id"`
 	RunLeaseID                 pgtype.UUID        `json:"run_lease_id"`
@@ -424,6 +426,7 @@ func (q *Queries) AppendReceiptRunLogChunk(ctx context.Context, arg AppendReceip
 	row := q.db.QueryRow(ctx, appendReceiptRunLogChunk,
 		arg.Kind,
 		arg.Payload,
+		arg.Severity,
 		arg.WorkspaceMountID,
 		arg.WorkspaceLeaseID,
 		arg.RunLeaseID,

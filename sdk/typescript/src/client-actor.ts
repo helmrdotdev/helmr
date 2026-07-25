@@ -132,7 +132,7 @@ function createClientActorRef(
     | Readonly<{ id?: never; key: string }>,
   transport: ActorTransport,
 ): ClientActorIdRef | ClientActorKeyRef {
-  const addressBody = () =>
+  const addressBody = (): Record<string, string> =>
     "id" in address && address.id !== undefined
       ? { actor_id: address.id }
       : { actor_key: address.key }

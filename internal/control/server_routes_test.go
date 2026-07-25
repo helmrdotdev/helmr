@@ -53,6 +53,8 @@ GET /api/projects/{projectID}/environments/{environmentID}/deployments/{deployme
 GET /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/events
 GET /api/projects/{projectID}/environments/{environmentID}/runs
 GET /api/projects/{projectID}/environments/{environmentID}/runs/{runID}
+GET /api/projects/{projectID}/environments/{environmentID}/runs/{runID}/events
+GET /api/projects/{projectID}/environments/{environmentID}/runs/{runID}/logs
 GET /api/projects/{projectID}/environments/{environmentID}/schedules
 GET /api/projects/{projectID}/environments/{environmentID}/schedules/{scheduleID}
 GET /api/projects/{projectID}/environments/{environmentID}/secrets
@@ -68,6 +70,8 @@ GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspace
 GET /api/regions
 GET /api/runs
 GET /api/runs/{runID}
+GET /api/runs/{runID}/events
+GET /api/runs/{runID}/logs
 GET /api/schedules
 GET /api/schedules/{scheduleID}
 GET /api/secrets
@@ -162,11 +166,13 @@ POST /api/worker/leases/entrypoint
 POST /api/worker/leases/finalization/begin
 POST /api/worker/leases/resume-release
 POST /api/worker/leases/run-logs
+POST /api/worker/leases/run-metadata
 POST /api/worker/leases/run-renew
 POST /api/worker/leases/run-waits
 POST /api/worker/leases/run-waits/poll
 POST /api/worker/leases/run-waits/resume-ack
 POST /api/worker/leases/start
+POST /api/worker/leases/structured-logs
 POST /api/worker/leases/tasks/complete
 POST /api/worker/leases/tokens
 POST /api/worker/observe

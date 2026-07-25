@@ -1519,7 +1519,6 @@ type RunEvent struct {
 	//
 	//	*RunEvent_StdoutChunk
 	//	*RunEvent_StderrChunk
-	//	*RunEvent_LogEntry
 	//	*RunEvent_RunWaitRequested
 	//	*RunEvent_MetadataUpdated
 	//	*RunEvent_TokenCreateRequested
@@ -1532,6 +1531,7 @@ type RunEvent struct {
 	//	*RunEvent_ActorTurnCommitRequested
 	//	*RunEvent_ActorOutputAppendRequested
 	//	*RunEvent_ActorInputSendRequested
+	//	*RunEvent_StructuredLogRequested
 	Event         isRunEvent_Event `protobuf_oneof:"event"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1590,15 +1590,6 @@ func (x *RunEvent) GetStderrChunk() []byte {
 		}
 	}
 	return nil
-}
-
-func (x *RunEvent) GetLogEntry() string {
-	if x != nil {
-		if x, ok := x.Event.(*RunEvent_LogEntry); ok {
-			return x.LogEntry
-		}
-	}
-	return ""
 }
 
 func (x *RunEvent) GetRunWaitRequested() *RunWaitRequested {
@@ -1709,6 +1700,15 @@ func (x *RunEvent) GetActorInputSendRequested() *ActorInputSendRequested {
 	return nil
 }
 
+func (x *RunEvent) GetStructuredLogRequested() *StructuredLogRequested {
+	if x != nil {
+		if x, ok := x.Event.(*RunEvent_StructuredLogRequested); ok {
+			return x.StructuredLogRequested
+		}
+	}
+	return nil
+}
+
 type isRunEvent_Event interface {
 	isRunEvent_Event()
 }
@@ -1719,10 +1719,6 @@ type RunEvent_StdoutChunk struct {
 
 type RunEvent_StderrChunk struct {
 	StderrChunk []byte `protobuf:"bytes,2,opt,name=stderr_chunk,json=stderrChunk,proto3,oneof"`
-}
-
-type RunEvent_LogEntry struct {
-	LogEntry string `protobuf:"bytes,3,opt,name=log_entry,json=logEntry,proto3,oneof"`
 }
 
 type RunEvent_RunWaitRequested struct {
@@ -1773,11 +1769,13 @@ type RunEvent_ActorInputSendRequested struct {
 	ActorInputSendRequested *ActorInputSendRequested `protobuf:"bytes,18,opt,name=actor_input_send_requested,json=actorInputSendRequested,proto3,oneof"`
 }
 
+type RunEvent_StructuredLogRequested struct {
+	StructuredLogRequested *StructuredLogRequested `protobuf:"bytes,19,opt,name=structured_log_requested,json=structuredLogRequested,proto3,oneof"`
+}
+
 func (*RunEvent_StdoutChunk) isRunEvent_Event() {}
 
 func (*RunEvent_StderrChunk) isRunEvent_Event() {}
-
-func (*RunEvent_LogEntry) isRunEvent_Event() {}
 
 func (*RunEvent_RunWaitRequested) isRunEvent_Event() {}
 
@@ -1802,6 +1800,8 @@ func (*RunEvent_ActorTurnCommitRequested) isRunEvent_Event() {}
 func (*RunEvent_ActorOutputAppendRequested) isRunEvent_Event() {}
 
 func (*RunEvent_ActorInputSendRequested) isRunEvent_Event() {}
+
+func (*RunEvent_StructuredLogRequested) isRunEvent_Event() {}
 
 type TaskOutcome struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -3512,6 +3512,7 @@ type MetadataUpdated struct {
 	ValueJson     *string                `protobuf:"bytes,3,opt,name=value_json,json=valueJson,proto3,oneof" json:"value_json,omitempty"`
 	PatchJson     *string                `protobuf:"bytes,4,opt,name=patch_json,json=patchJson,proto3,oneof" json:"patch_json,omitempty"`
 	Amount        *float64               `protobuf:"fixed64,5,opt,name=amount,proto3,oneof" json:"amount,omitempty"`
+	CorrelationId string                 `protobuf:"bytes,6,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3579,6 +3580,81 @@ func (x *MetadataUpdated) GetAmount() float64 {
 		return *x.Amount
 	}
 	return 0
+}
+
+func (x *MetadataUpdated) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
+type StructuredLogRequested struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId  string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	Level          string                 `protobuf:"bytes,2,opt,name=level,proto3" json:"level,omitempty"`
+	Message        string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	AttributesJson string                 `protobuf:"bytes,4,opt,name=attributes_json,json=attributesJson,proto3" json:"attributes_json,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *StructuredLogRequested) Reset() {
+	*x = StructuredLogRequested{}
+	mi := &file_run_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StructuredLogRequested) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StructuredLogRequested) ProtoMessage() {}
+
+func (x *StructuredLogRequested) ProtoReflect() protoreflect.Message {
+	mi := &file_run_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StructuredLogRequested.ProtoReflect.Descriptor instead.
+func (*StructuredLogRequested) Descriptor() ([]byte, []int) {
+	return file_run_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *StructuredLogRequested) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
+func (x *StructuredLogRequested) GetLevel() string {
+	if x != nil {
+		return x.Level
+	}
+	return ""
+}
+
+func (x *StructuredLogRequested) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *StructuredLogRequested) GetAttributesJson() string {
+	if x != nil {
+		return x.AttributesJson
+	}
+	return ""
 }
 
 var File_run_proto protoreflect.FileDescriptor
@@ -3691,11 +3767,10 @@ const file_run_proto_rawDesc = "" +
 	"\x0eattempt_number\x18\x02 \x01(\rR\rattemptNumber\x12@\n" +
 	"\n" +
 	"entrypoint\x18\x03 \x01(\v2 .helmr.run.v0.EntrypointIdentityR\n" +
-	"entrypoint\"\x81\t\n" +
+	"entrypoint\"\xca\t\n" +
 	"\bRunEvent\x12#\n" +
 	"\fstdout_chunk\x18\x01 \x01(\fH\x00R\vstdoutChunk\x12#\n" +
-	"\fstderr_chunk\x18\x02 \x01(\fH\x00R\vstderrChunk\x12\x1d\n" +
-	"\tlog_entry\x18\x03 \x01(\tH\x00R\blogEntry\x12N\n" +
+	"\fstderr_chunk\x18\x02 \x01(\fH\x00R\vstderrChunk\x12N\n" +
 	"\x12run_wait_requested\x18\x05 \x01(\v2\x1e.helmr.run.v0.RunWaitRequestedH\x00R\x10runWaitRequested\x12J\n" +
 	"\x10metadata_updated\x18\a \x01(\v2\x1d.helmr.run.v0.MetadataUpdatedH\x00R\x0fmetadataUpdated\x12Z\n" +
 	"\x16token_create_requested\x18\b \x01(\v2\".helmr.run.v0.TokenCreateRequestedH\x00R\x14tokenCreateRequested\x12G\n" +
@@ -3707,8 +3782,9 @@ const file_run_proto_rawDesc = "" +
 	"\ractor_outcome\x18\x0f \x01(\v2\x1a.helmr.run.v0.ActorOutcomeH\x00R\factorOutcome\x12g\n" +
 	"\x1bactor_turn_commit_requested\x18\x10 \x01(\v2&.helmr.run.v0.ActorTurnCommitRequestedH\x00R\x18actorTurnCommitRequested\x12m\n" +
 	"\x1dactor_output_append_requested\x18\x11 \x01(\v2(.helmr.run.v0.ActorOutputAppendRequestedH\x00R\x1aactorOutputAppendRequested\x12d\n" +
-	"\x1aactor_input_send_requested\x18\x12 \x01(\v2%.helmr.run.v0.ActorInputSendRequestedH\x00R\x17actorInputSendRequestedB\a\n" +
-	"\x05eventJ\x04\b\t\x10\n" +
+	"\x1aactor_input_send_requested\x18\x12 \x01(\v2%.helmr.run.v0.ActorInputSendRequestedH\x00R\x17actorInputSendRequested\x12`\n" +
+	"\x18structured_log_requested\x18\x13 \x01(\v2$.helmr.run.v0.StructuredLogRequestedH\x00R\x16structuredLogRequestedB\a\n" +
+	"\x05eventJ\x04\b\x03\x10\x04J\x04\b\t\x10\n" +
 	"J\x04\b\n" +
 	"\x10\v\"\xd6\x01\n" +
 	"\vTaskOutcome\x12;\n" +
@@ -3871,7 +3947,7 @@ const file_run_proto_rawDesc = "" +
 	"\x16resume_request_version\x18\x04 \x01(\x03R\x14resumeRequestVersion\x12 \n" +
 	"\frun_lease_id\x18\x05 \x01(\tR\n" +
 	"runLeaseId\x12%\n" +
-	"\x0ecorrelation_id\x18\x06 \x01(\tR\rcorrelationId\"\xdc\x01\n" +
+	"\x0ecorrelation_id\x18\x06 \x01(\tR\rcorrelationId\"\x83\x02\n" +
 	"\x0fMetadataUpdated\x12\x1c\n" +
 	"\toperation\x18\x01 \x01(\tR\toperation\x12\x15\n" +
 	"\x03key\x18\x02 \x01(\tH\x00R\x03key\x88\x01\x01\x12\"\n" +
@@ -3879,11 +3955,17 @@ const file_run_proto_rawDesc = "" +
 	"value_json\x18\x03 \x01(\tH\x01R\tvalueJson\x88\x01\x01\x12\"\n" +
 	"\n" +
 	"patch_json\x18\x04 \x01(\tH\x02R\tpatchJson\x88\x01\x01\x12\x1b\n" +
-	"\x06amount\x18\x05 \x01(\x01H\x03R\x06amount\x88\x01\x01B\x06\n" +
+	"\x06amount\x18\x05 \x01(\x01H\x03R\x06amount\x88\x01\x01\x12%\n" +
+	"\x0ecorrelation_id\x18\x06 \x01(\tR\rcorrelationIdB\x06\n" +
 	"\x04_keyB\r\n" +
 	"\v_value_jsonB\r\n" +
 	"\v_patch_jsonB\t\n" +
-	"\a_amountB:Z8github.com/helmrdotdev/helmr/internal/proto/run/v0;runv0b\x06proto3"
+	"\a_amount\"\x98\x01\n" +
+	"\x16StructuredLogRequested\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x14\n" +
+	"\x05level\x18\x02 \x01(\tR\x05level\x12\x18\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\x12'\n" +
+	"\x0fattributes_json\x18\x04 \x01(\tR\x0eattributesJsonB:Z8github.com/helmrdotdev/helmr/internal/proto/run/v0;runv0b\x06proto3"
 
 var (
 	file_run_proto_rawDescOnce sync.Once
@@ -3897,7 +3979,7 @@ func file_run_proto_rawDescGZIP() []byte {
 	return file_run_proto_rawDescData
 }
 
-var file_run_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
+var file_run_proto_msgTypes = make([]protoimpl.MessageInfo, 46)
 var file_run_proto_goTypes = []any{
 	(*ProgramStart)(nil),                // 0: helmr.run.v0.ProgramStart
 	(*TaskStart)(nil),                   // 1: helmr.run.v0.TaskStart
@@ -3944,6 +4026,7 @@ var file_run_proto_goTypes = []any{
 	(*ResumeAck)(nil),                   // 42: helmr.run.v0.ResumeAck
 	(*ResumeConsumed)(nil),              // 43: helmr.run.v0.ResumeConsumed
 	(*MetadataUpdated)(nil),             // 44: helmr.run.v0.MetadataUpdated
+	(*StructuredLogRequested)(nil),      // 45: helmr.run.v0.StructuredLogRequested
 }
 var file_run_proto_depIdxs = []int32{
 	4,  // 0: helmr.run.v0.ProgramStart.cause:type_name -> helmr.run.v0.RunCause
@@ -3976,16 +4059,17 @@ var file_run_proto_depIdxs = []int32{
 	30, // 27: helmr.run.v0.RunEvent.actor_turn_commit_requested:type_name -> helmr.run.v0.ActorTurnCommitRequested
 	33, // 28: helmr.run.v0.RunEvent.actor_output_append_requested:type_name -> helmr.run.v0.ActorOutputAppendRequested
 	34, // 29: helmr.run.v0.RunEvent.actor_input_send_requested:type_name -> helmr.run.v0.ActorInputSendRequested
-	24, // 30: helmr.run.v0.TaskOutcome.succeeded:type_name -> helmr.run.v0.TaskSucceeded
-	25, // 31: helmr.run.v0.TaskOutcome.failed:type_name -> helmr.run.v0.TaskFailed
-	26, // 32: helmr.run.v0.TaskOutcome.payload_invalid:type_name -> helmr.run.v0.TaskPayloadInvalid
-	28, // 33: helmr.run.v0.ActorOutcome.succeeded:type_name -> helmr.run.v0.ActorSucceeded
-	29, // 34: helmr.run.v0.ActorOutcome.failed:type_name -> helmr.run.v0.ActorFailed
-	35, // [35:35] is the sub-list for method output_type
-	35, // [35:35] is the sub-list for method input_type
-	35, // [35:35] is the sub-list for extension type_name
-	35, // [35:35] is the sub-list for extension extendee
-	0,  // [0:35] is the sub-list for field type_name
+	45, // 30: helmr.run.v0.RunEvent.structured_log_requested:type_name -> helmr.run.v0.StructuredLogRequested
+	24, // 31: helmr.run.v0.TaskOutcome.succeeded:type_name -> helmr.run.v0.TaskSucceeded
+	25, // 32: helmr.run.v0.TaskOutcome.failed:type_name -> helmr.run.v0.TaskFailed
+	26, // 33: helmr.run.v0.TaskOutcome.payload_invalid:type_name -> helmr.run.v0.TaskPayloadInvalid
+	28, // 34: helmr.run.v0.ActorOutcome.succeeded:type_name -> helmr.run.v0.ActorSucceeded
+	29, // 35: helmr.run.v0.ActorOutcome.failed:type_name -> helmr.run.v0.ActorFailed
+	36, // [36:36] is the sub-list for method output_type
+	36, // [36:36] is the sub-list for method input_type
+	36, // [36:36] is the sub-list for extension type_name
+	36, // [36:36] is the sub-list for extension extendee
+	0,  // [0:36] is the sub-list for field type_name
 }
 
 func init() { file_run_proto_init() }
@@ -4028,7 +4112,6 @@ func file_run_proto_init() {
 	file_run_proto_msgTypes[22].OneofWrappers = []any{
 		(*RunEvent_StdoutChunk)(nil),
 		(*RunEvent_StderrChunk)(nil),
-		(*RunEvent_LogEntry)(nil),
 		(*RunEvent_RunWaitRequested)(nil),
 		(*RunEvent_MetadataUpdated)(nil),
 		(*RunEvent_TokenCreateRequested)(nil),
@@ -4041,6 +4124,7 @@ func file_run_proto_init() {
 		(*RunEvent_ActorTurnCommitRequested)(nil),
 		(*RunEvent_ActorOutputAppendRequested)(nil),
 		(*RunEvent_ActorInputSendRequested)(nil),
+		(*RunEvent_StructuredLogRequested)(nil),
 	}
 	file_run_proto_msgTypes[23].OneofWrappers = []any{
 		(*TaskOutcome_Succeeded)(nil),
@@ -4068,7 +4152,7 @@ func file_run_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_run_proto_rawDesc), len(file_run_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   45,
+			NumMessages:   46,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

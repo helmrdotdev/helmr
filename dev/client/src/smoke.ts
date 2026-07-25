@@ -2,6 +2,8 @@ import { createHash } from "node:crypto"
 import {
   HelmrClient,
   type JsonValue,
+  type RunEventRecord,
+  type RunLogRecord,
   type WorkspaceExecResult,
   type WorkspaceFileEntry,
 } from "@helmr/sdk"
@@ -25,6 +27,8 @@ type Evidence = {
   }
   readonly taskRunId: string
   readonly taskOutput: JsonValue
+  readonly taskLogs: readonly RunLogRecord[]
+  readonly taskEvents: readonly RunEventRecord[]
   readonly tokenId: string
   readonly secretDelivery: "covered" | "skipped"
   readonly deletedWorkspaceId: string
@@ -133,17 +137,31 @@ async function runSmoke(): Promise<Evidence> {
         tokenTimeout: 120,
         largeFileKiB: 256,
       },
-      options: {
-        workspace: byKey,
-        idempotencyKey: `task:start:${config.marker}`,
-        tags: ["smoke", "workspace-basic-exec"],
-        metadata: { marker: config.marker },
-      },
+      workspace: byKey,
+      idempotencyKey: `task:start:${config.marker}`,
+      tags: ["smoke", "workspace-basic-exec"],
+      metadata: { marker: config.marker },
     },
   )
   const taskOutput = await client.runs.wait<typeof runtimeSmoke>(started.id, {
     signal: AbortSignal.timeout(20 * 60 * 1_000),
   }).unwrap()
+  const taskLogs = await readTelemetry(() => client.runs.logs(started.id, { limit: 100 }))
+  const taskEvents = await readTelemetry(() => client.runs.events(started.id, { limit: 100 }))
+  for (const level of ["debug", "info", "warn", "error"] as const) {
+    assert(
+      taskLogs.items.some((record) =>
+        record.kind === "structured" &&
+        record.level === level &&
+        record.attributes["marker"] === taskMarker
+      ),
+      `Task logs did not include the ${level} structured logger probe`,
+    )
+  }
+  assert(
+    taskEvents.items.some((event) => event.runId === started.id),
+    "Task events did not include the completed Run",
+  )
   const taskFile = new TextDecoder().decode(await byKey.files.read(markerPath))
   assert(taskFile.includes(`marker=${taskMarker}`), "Task did not advance the Workspace head")
 
@@ -182,10 +200,34 @@ async function runSmoke(): Promise<Evidence> {
     },
     taskRunId: started.id,
     taskOutput,
+    taskLogs: taskLogs.items,
+    taskEvents: taskEvents.items,
     tokenId: token.id,
     secretDelivery: config.secretName === undefined ? "skipped" : "covered",
     deletedWorkspaceId: deleted.workspaceId,
   }
+}
+
+async function readTelemetry<T>(
+  read: () => Promise<Readonly<{ items: readonly T[] }>>,
+): Promise<Readonly<{ items: readonly T[] }>> {
+  const deadline = Date.now() + 60_000
+  for (;;) {
+    try {
+      return await read()
+    } catch (error) {
+      const code = errorCode(error)
+      if (code !== "telemetry_lagging" || Date.now() >= deadline) throw error
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+  }
+}
+
+function errorCode(error: unknown): string | undefined {
+  return error !== null && typeof error === "object" && "code" in error &&
+      typeof error.code === "string"
+    ? error.code
+    : undefined
 }
 
 function assertExec(result: WorkspaceExecResult, marker: string): void {

@@ -2864,7 +2864,7 @@ CREATE TABLE telemetry_outbox (
         OR (
             source_kind = 'run'
             AND run_id = source_id
-            AND stream_name IN ('stdout', 'stderr')
+            AND stream_name IN ('stdout', 'stderr', 'structured')
             AND content IS NOT NULL
             AND size_bytes IS NOT NULL
             AND observed_seq IS NOT NULL
@@ -3979,7 +3979,7 @@ CREATE UNIQUE INDEX artifacts_runtime_substrate_digest_uidx
     ON artifacts(org_id, project_id, environment_id, digest, kind)
     WHERE kind = 'runtime_substrate';
 CREATE UNIQUE INDEX telemetry_outbox_run_log_observed_idx
-    ON telemetry_outbox(org_id, run_id, run_lease_id, stream_name, observed_seq)
+    ON telemetry_outbox(org_id, run_id, attempt_number, stream_name, observed_seq)
     WHERE stream_kind = 'run_log';
 CREATE INDEX telemetry_outbox_run_id_idx ON telemetry_outbox(run_id)
     WHERE run_id IS NOT NULL;

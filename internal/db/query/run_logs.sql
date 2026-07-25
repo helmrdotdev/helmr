@@ -1,7 +1,8 @@
 -- name: AppendReceiptRunLogChunk :one
 WITH event_args AS (
     SELECT sqlc.arg(kind)::text AS event_kind,
-           sqlc.arg(payload)::jsonb AS event_payload
+           sqlc.arg(payload)::jsonb AS event_payload,
+           sqlc.arg(severity)::text AS event_severity
 ),
 current_run_lease AS (
     SELECT runs.org_id,
@@ -153,7 +154,7 @@ candidate AS (
            octet_length(sqlc.arg(content)::bytea)::bigint AS size_bytes,
            event_args.event_kind,
            event_args.event_payload,
-           'run_log:' || current_run_lease.run_lease_id::text || ':' || sqlc.arg(stream)::text || ':' || (sqlc.arg(observed_seq)::bigint)::text AS idempotency_key
+           'run_log:' || current_run_lease.id::text || ':' || current_run_lease.attempt_number::text || ':' || sqlc.arg(stream)::text || ':' || (sqlc.arg(observed_seq)::bigint)::text AS idempotency_key
       FROM current_run_lease
       CROSS JOIN event_args
 ),
@@ -229,7 +230,7 @@ event_input AS (
            current_run_lease.parent_span_id,
            current_run_lease.traceparent,
            'log' AS category,
-           'info' AS severity,
+           event_args.event_severity AS severity,
            'worker' AS source,
            event_args.event_kind AS kind,
            event_args.event_kind AS message,
@@ -292,7 +293,7 @@ meter_event AS (
            selected_chunk.size_bytes,
            'bytes',
            jsonb_build_object('stream', selected_chunk.stream, 'observed_seq', selected_chunk.observed_seq),
-           'log:' || selected_chunk.run_lease_id::text || ':' || selected_chunk.stream::text || ':' || selected_chunk.observed_seq::text,
+           'log:' || selected_chunk.run_id::text || ':' || selected_chunk.attempt_number::text || ':' || selected_chunk.stream::text || ':' || selected_chunk.observed_seq::text,
            jsonb_build_object(
                'quantity', selected_chunk.size_bytes,
                'unit', 'bytes',
