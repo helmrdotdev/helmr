@@ -15,7 +15,8 @@ const appendReceiptRunLogChunk = `-- name: AppendReceiptRunLogChunk :one
 WITH event_args AS (
     SELECT $1::text AS event_kind,
            $2::jsonb AS event_payload,
-           $3::text AS event_severity
+           $3::text AS event_severity,
+           $4::text AS receipt_fingerprint
 ),
 current_run_lease AS (
     SELECT runs.org_id,
@@ -62,7 +63,7 @@ current_run_lease AS (
                                AND worker_network_slots.worker_instance_id = run_leases.worker_instance_id
                                AND worker_network_slots.worker_epoch = run_leases.worker_epoch
                                AND worker_network_slots.runtime_instance_id = run_leases.runtime_instance_id
-      JOIN workspace_mounts ON workspace_mounts.id = $4
+      JOIN workspace_mounts ON workspace_mounts.id = $5
                            AND workspace_mounts.org_id = run_leases.org_id
                            AND workspace_mounts.project_id = run_leases.project_id
                            AND workspace_mounts.environment_id = run_leases.environment_id
@@ -72,7 +73,7 @@ current_run_lease AS (
                            AND workspace_mounts.worker_epoch = run_leases.worker_epoch
                            AND workspace_mounts.runtime_instance_id = run_leases.runtime_instance_id
                            AND workspace_mounts.workspace_id = run_leases.workspace_id
-      JOIN workspace_leases ON workspace_leases.id = $5
+      JOIN workspace_leases ON workspace_leases.id = $6
                            AND workspace_leases.org_id = run_leases.org_id
                            AND workspace_leases.project_id = run_leases.project_id
                            AND workspace_leases.environment_id = run_leases.environment_id
@@ -84,37 +85,37 @@ current_run_lease AS (
                            AND workspace_leases.workspace_id = run_leases.workspace_id
                            AND workspace_leases.workspace_mount_id = workspace_mounts.id
                            AND workspace_leases.owner_run_lease_id = run_leases.id
-     WHERE run_leases.id = $6
-       AND run_leases.run_id = $7
-       AND run_leases.attempt_number = $8
-       AND run_leases.lease_sequence = $9
-       AND run_leases.worker_group_id = $10
-       AND run_leases.worker_instance_id = $11
-       AND run_leases.worker_epoch = $12
-       AND run_leases.worker_protocol_version = $13
-       AND run_leases.runtime_instance_id = $14
-       AND run_leases.runtime_identity_id = $15
-       AND run_leases.network_slot_id = $16
-       AND run_leases.network_slot_generation = $17
-       AND run_leases.workspace_id = $18
-       AND workspace_mounts.materialized_version_id = $19
-       AND workspace_mounts.fencing_generation = $20
-       AND workspace_leases.base_version_id = $19
-       AND workspace_leases.ownership_generation = $21
-       AND workspace_leases.writer_generation = $22
-       AND workspace_leases.mount_fencing_generation = $20
-       AND run_leases.requested_cpu_millis = $23
-       AND run_leases.requested_memory_bytes = $24
-       AND run_leases.requested_workload_disk_bytes = $25
-       AND run_leases.requested_scratch_bytes = $26
-       AND run_leases.requested_execution_slots = $27
-       AND runs.max_active_duration_ms = $28
-       AND runs.active_elapsed_ms = $29
-       AND COALESCE(run_leases.trace_id, '') = $30
-       AND COALESCE(run_leases.span_id, '') = $31
-       AND COALESCE(run_leases.traceparent, '') = $32
-       AND run_leases.start_deadline_at = $33
-       AND run_leases.expires_at = $34
+     WHERE run_leases.id = $7
+       AND run_leases.run_id = $8
+       AND run_leases.attempt_number = $9
+       AND run_leases.lease_sequence = $10
+       AND run_leases.worker_group_id = $11
+       AND run_leases.worker_instance_id = $12
+       AND run_leases.worker_epoch = $13
+       AND run_leases.worker_protocol_version = $14
+       AND run_leases.runtime_instance_id = $15
+       AND run_leases.runtime_identity_id = $16
+       AND run_leases.network_slot_id = $17
+       AND run_leases.network_slot_generation = $18
+       AND run_leases.workspace_id = $19
+       AND workspace_mounts.materialized_version_id = $20
+       AND workspace_mounts.fencing_generation = $21
+       AND workspace_leases.base_version_id = $20
+       AND workspace_leases.ownership_generation = $22
+       AND workspace_leases.writer_generation = $23
+       AND workspace_leases.mount_fencing_generation = $21
+       AND run_leases.requested_cpu_millis = $24
+       AND run_leases.requested_memory_bytes = $25
+       AND run_leases.requested_workload_disk_bytes = $26
+       AND run_leases.requested_scratch_bytes = $27
+       AND run_leases.requested_execution_slots = $28
+       AND runs.max_active_duration_ms = $29
+       AND runs.active_elapsed_ms = $30
+       AND COALESCE(run_leases.trace_id, '') = $31
+       AND COALESCE(run_leases.span_id, '') = $32
+       AND COALESCE(run_leases.traceparent, '') = $33
+       AND run_leases.start_deadline_at = $34
+       AND run_leases.expires_at = $35
        AND runs.current_run_lease_id = run_leases.id
        AND runs.current_attempt_number = run_leases.attempt_number
        AND runs.status = 'running'
@@ -161,13 +162,14 @@ current_run_lease AS (
 ),
 candidate AS (
     SELECT current_run_lease.org_id, current_run_lease.project_id, current_run_lease.environment_id, current_run_lease.trace_id, current_run_lease.state_version, current_run_lease.id, current_run_lease.run_lease_id, current_run_lease.span_id, current_run_lease.parent_span_id, current_run_lease.traceparent, current_run_lease.attempt_number,
-           $35::text AS stream,
-           $36::bigint AS observed_seq,
-           $37::bytea AS content,
-           octet_length($37::bytea)::bigint AS size_bytes,
+           $36::text AS stream,
+           $37::bigint AS observed_seq,
+           $38::bytea AS content,
+           octet_length($38::bytea)::bigint AS size_bytes,
            event_args.event_kind,
            event_args.event_payload,
-           'run_log:' || current_run_lease.id::text || ':' || current_run_lease.attempt_number::text || ':' || $35::text || ':' || ($36::bigint)::text AS idempotency_key
+           event_args.receipt_fingerprint,
+           'run_log:' || current_run_lease.attempt_number::text || ':' || $36::text || ':' || ($37::bigint)::text AS idempotency_key
       FROM current_run_lease
       CROSS JOIN event_args
 ),
@@ -201,7 +203,8 @@ inserted_chunk AS (
                'observed_seq', candidate.observed_seq,
                'bytes', candidate.size_bytes,
                'event_kind', candidate.event_kind,
-               'event_payload', candidate.event_payload
+               'event_payload', candidate.event_payload,
+               'receipt_fingerprint', candidate.receipt_fingerprint
            ),
            candidate.content,
            candidate.size_bytes,
@@ -372,6 +375,7 @@ type AppendReceiptRunLogChunkParams struct {
 	Kind                       string             `json:"kind"`
 	Payload                    []byte             `json:"payload"`
 	Severity                   string             `json:"severity"`
+	ReceiptFingerprint         string             `json:"receipt_fingerprint"`
 	WorkspaceMountID           pgtype.UUID        `json:"workspace_mount_id"`
 	WorkspaceLeaseID           pgtype.UUID        `json:"workspace_lease_id"`
 	RunLeaseID                 pgtype.UUID        `json:"run_lease_id"`
@@ -427,6 +431,7 @@ func (q *Queries) AppendReceiptRunLogChunk(ctx context.Context, arg AppendReceip
 		arg.Kind,
 		arg.Payload,
 		arg.Severity,
+		arg.ReceiptFingerprint,
 		arg.WorkspaceMountID,
 		arg.WorkspaceLeaseID,
 		arg.RunLeaseID,
@@ -475,6 +480,81 @@ func (q *Queries) AppendReceiptRunLogChunk(ctx context.Context, arg AppendReceip
 		&i.SizeBytes,
 		&i.CreatedAt,
 		&i.ReplayMatches,
+	)
+	return i, err
+}
+
+const getRunLogChunkReplay = `-- name: GetRunLogChunkReplay :one
+SELECT org_id,
+       run_id,
+       run_lease_id,
+       attempt_number,
+       stream_name AS stream,
+       id AS seq,
+       observed_seq,
+       content,
+       size_bytes,
+       COALESCE(payload ->> 'event_payload', '')::text AS event_payload,
+       COALESCE(payload ->> 'receipt_fingerprint', '')::text AS receipt_fingerprint,
+       created_at
+  FROM telemetry_outbox
+ WHERE stream_kind = 'run_log'
+   AND source_kind = 'run'
+   AND source_id = $1
+   AND run_id = $1
+   AND run_lease_id = $2
+   AND attempt_number = $3
+   AND stream_name = $4
+   AND observed_seq = $5
+ ORDER BY id
+ LIMIT 1
+`
+
+type GetRunLogChunkReplayParams struct {
+	RunID         pgtype.UUID `json:"run_id"`
+	RunLeaseID    pgtype.UUID `json:"run_lease_id"`
+	AttemptNumber pgtype.Int4 `json:"attempt_number"`
+	Stream        string      `json:"stream"`
+	ObservedSeq   pgtype.Int8 `json:"observed_seq"`
+}
+
+type GetRunLogChunkReplayRow struct {
+	OrgID              pgtype.UUID        `json:"org_id"`
+	RunID              pgtype.UUID        `json:"run_id"`
+	RunLeaseID         pgtype.UUID        `json:"run_lease_id"`
+	AttemptNumber      pgtype.Int4        `json:"attempt_number"`
+	Stream             string             `json:"stream"`
+	Seq                int64              `json:"seq"`
+	ObservedSeq        pgtype.Int8        `json:"observed_seq"`
+	Content            []byte             `json:"content"`
+	SizeBytes          pgtype.Int8        `json:"size_bytes"`
+	EventPayload       string             `json:"event_payload"`
+	ReceiptFingerprint string             `json:"receipt_fingerprint"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) GetRunLogChunkReplay(ctx context.Context, arg GetRunLogChunkReplayParams) (GetRunLogChunkReplayRow, error) {
+	row := q.db.QueryRow(ctx, getRunLogChunkReplay,
+		arg.RunID,
+		arg.RunLeaseID,
+		arg.AttemptNumber,
+		arg.Stream,
+		arg.ObservedSeq,
+	)
+	var i GetRunLogChunkReplayRow
+	err := row.Scan(
+		&i.OrgID,
+		&i.RunID,
+		&i.RunLeaseID,
+		&i.AttemptNumber,
+		&i.Stream,
+		&i.Seq,
+		&i.ObservedSeq,
+		&i.Content,
+		&i.SizeBytes,
+		&i.EventPayload,
+		&i.ReceiptFingerprint,
+		&i.CreatedAt,
 	)
 	return i, err
 }

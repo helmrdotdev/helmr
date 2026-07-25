@@ -8,10 +8,10 @@ order: 350
 
 # Custom images
 
-Declare an image in TypeScript and attach it to a sandbox:
+Declare an image in TypeScript and attach it to a Workspace declaration:
 
 ```ts
-import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { cache, image, source, workspace } from "@helmr/sdk"
 
 const base = image("cli-tooling")
   .from("node:24-bookworm-slim")
@@ -27,7 +27,7 @@ const base = image("cli-tooling")
     "apt-get update && apt-get install -y --no-install-recommends ripgrep && rm -rf /var/lib/apt/lists/*",
   ])
 
-const sbx = sandbox("cli-tooling")
+export const cliToolingWorkspace = workspace("cli-tooling")
   .image(base)
   .resources({ cpu: 1, memory: "1Gi" })
 ```

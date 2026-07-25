@@ -20,10 +20,10 @@ execution, secret injection, logs, events, and operator approval points.
 
 - A TypeScript SDK for declaring Tasks, Actors, Workspaces, source Schedules,
   Secrets, waits, Tokens, metadata, and logs.
-- A runtime client for starting tasks, opening workspaces, creating execs, and
-  opening PTY sessions.
+- A runtime client for starting Tasks, operating Workspaces, and inspecting
+  Runs.
 - A CLI for login, Deployments, Task starts, Run inspection,
-  workspace exec and PTY, and remote secrets.
+  bounded Workspace exec and remote Secrets.
 - A control plane that stores Projects, Environments, Deployments, Workspaces,
   Actors, Runs, waits, Actor records, metadata, logs, events, Secrets,
   and API keys.

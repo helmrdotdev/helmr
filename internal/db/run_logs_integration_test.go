@@ -32,6 +32,26 @@ func TestAppendReceiptRunLogChunkRequiresExactCurrentReceipt(t *testing.T) {
 	if !replay.ReplayMatches || replay.Seq != first.Seq {
 		t.Fatalf("replay = %+v, want seq %d", replay, first.Seq)
 	}
+	stored, err := fixture.queries.GetRunLogChunkReplay(ctx, GetRunLogChunkReplayParams{
+		RunID:      params.RunID,
+		RunLeaseID: params.RunLeaseID,
+		AttemptNumber: pgtype.Int4{
+			Int32: params.AttemptNumber,
+			Valid: true,
+		},
+		Stream: params.Stream,
+		ObservedSeq: pgtype.Int8{
+			Int64: params.ObservedSeq,
+			Valid: true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.EventPayload != string(params.Payload) ||
+		stored.ReceiptFingerprint != params.ReceiptFingerprint {
+		t.Fatalf("replay event payload = %s, want %s", stored.EventPayload, params.Payload)
+	}
 
 	changed := params
 	changed.Content = []byte("beta")
@@ -146,6 +166,47 @@ func TestAppendReceiptRunLogChunkRejectsSupersededAuthority(t *testing.T) {
 	}
 }
 
+func TestGetRunMetadataClaimScopeUsesStableAttemptAuthority(t *testing.T) {
+	ctx := context.Background()
+	fixture := newRunLeaseClaimFixture(t, ctx)
+	logParams := fixture.runningRunLogParams(t, ctx)
+	params := GetRunMetadataClaimScopeParams{
+		RunLeaseID:            logParams.RunLeaseID,
+		RunID:                 logParams.RunID,
+		AttemptNumber:         logParams.AttemptNumber,
+		LeaseSequence:         logParams.LeaseSequence,
+		WorkerGroupID:         logParams.WorkerGroupID,
+		WorkerInstanceID:      logParams.WorkerInstanceID,
+		WorkerEpoch:           logParams.WorkerEpoch,
+		WorkerProtocolVersion: logParams.WorkerProtocolVersion,
+	}
+
+	scope, err := fixture.queries.GetRunMetadataClaimScope(ctx, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scope.RunID != params.RunID || scope.AttemptNumber != params.AttemptNumber {
+		t.Fatalf("claim scope = %+v, want Run %v attempt %d", scope, params.RunID, params.AttemptNumber)
+	}
+
+	if _, err := fixture.pool.Exec(
+		ctx,
+		`UPDATE runs SET active_elapsed_ms = active_elapsed_ms + 1 WHERE id = $1`,
+		params.RunID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.queries.GetRunMetadataClaimScope(ctx, params); err != nil {
+		t.Fatalf("mutable Run accounting invalidated stable claim scope: %v", err)
+	}
+
+	stale := params
+	stale.WorkerEpoch++
+	if _, err := fixture.queries.GetRunMetadataClaimScope(ctx, stale); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("stale worker authority error = %v, want no rows", err)
+	}
+}
+
 func TestAppendReceiptRunLogChunkConcurrentReplay(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
@@ -216,7 +277,8 @@ func (fixture runLeaseClaimFixture) runningRunLogParams(
 
 	params := AppendReceiptRunLogChunkParams{
 		Kind: "log.stdout", Payload: []byte(`{"stream":"stdout"}`),
-		WorkspaceMountID: locators.WorkspaceMountID, WorkspaceLeaseID: locators.WorkspaceLeaseID,
+		ReceiptFingerprint: "fixture-receipt-fingerprint",
+		WorkspaceMountID:   locators.WorkspaceMountID, WorkspaceLeaseID: locators.WorkspaceLeaseID,
 		RunLeaseID: workUUID(work.leaseID), RunID: workUUID(work.runID), AttemptNumber: 1,
 		LeaseSequence: 1, WorkerGroupID: runLeaseTestWorkerGroup,
 		WorkerInstanceID: workUUID(fixture.workerID), WorkerEpoch: 1,

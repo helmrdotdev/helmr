@@ -471,15 +471,3 @@ type exitCodeError struct {
 func (e exitCodeError) Error() string {
 	return fmt.Sprintf("Workspace command exited with status %d", e.code)
 }
-
-func consoleURL(command *cobra.Command, control *client.Client, pathname string) string {
-	if strings.TrimSpace(os.Getenv(helmrAPIKeyEnv)) != "" {
-		return ""
-	}
-	me, err := control.GetMe(command.Context())
-	if err != nil || strings.TrimSpace(me.PublicURL) == "" {
-		return ""
-	}
-	base := strings.TrimRight(me.PublicURL, "/")
-	return base + "/" + strings.TrimLeft(pathname, "/")
-}

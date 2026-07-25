@@ -33,7 +33,12 @@ func TestClientErrorUsesServerMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.StartSession(context.Background(), "deploy", api.SessionStartRequest{})
+	_, err = client.StartTask(
+		context.Background(),
+		"deploy",
+		api.StartTaskRequest{},
+		EnvironmentScopeOptions{},
+	)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -79,11 +84,7 @@ func TestClientSendsPinnedVersionHeaders(t *testing.T) {
 		if got := r.Header.Get(api.SDKVersionHeader); got != "" {
 			t.Fatalf("%s = %q", api.SDKVersionHeader, got)
 		}
-		_ = json.NewEncoder(w).Encode(api.SessionStartResponse{Run: api.RunResponse{
-			ID:     "run-1",
-			TaskID: "deploy",
-			Status: "queued",
-		}})
+		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "run-1"})
 	}))
 	defer server.Close()
 
@@ -91,7 +92,7 @@ func TestClientSendsPinnedVersionHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.StartSession(context.Background(), "deploy", api.SessionStartRequest{}); err != nil {
+	if _, err := client.StartTask(context.Background(), "deploy", api.StartTaskRequest{}, EnvironmentScopeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -107,11 +108,7 @@ func TestClientSendsSDKVersionHeaderForSDKIdentity(t *testing.T) {
 		if got := r.Header.Get(api.CLIVersionHeader); got != "" {
 			t.Fatalf("%s = %q", api.CLIVersionHeader, got)
 		}
-		_ = json.NewEncoder(w).Encode(api.SessionStartResponse{Run: api.RunResponse{
-			ID:     "run-1",
-			TaskID: "deploy",
-			Status: "queued",
-		}})
+		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "run-1"})
 	}))
 	defer server.Close()
 
@@ -119,14 +116,14 @@ func TestClientSendsSDKVersionHeaderForSDKIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.StartSession(context.Background(), "deploy", api.SessionStartRequest{}); err != nil {
+	if _, err := client.StartTask(context.Background(), "deploy", api.StartTaskRequest{}, EnvironmentScopeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestClientRejectsPlainHTTPNonLoopbackRedirect(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://helmr.example/api/sessions", http.StatusTemporaryRedirect)
+		http.Redirect(w, r, "http://helmr.example/api/tasks/deploy/start", http.StatusTemporaryRedirect)
 	}))
 	defer server.Close()
 
@@ -134,16 +131,15 @@ func TestClientRejectsPlainHTTPNonLoopbackRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.StartSession(context.Background(), "deploy", api.SessionStartRequest{})
+	_, err = client.StartTask(context.Background(), "deploy", api.StartTaskRequest{}, EnvironmentScopeOptions{})
 	if err == nil || !strings.Contains(err.Error(), "plaintext non-loopback") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestStartSession(t *testing.T) {
-	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
+func TestStartTask(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		body, err := io.ReadAll(r.Body)
@@ -154,20 +150,14 @@ func TestStartSession(t *testing.T) {
 		if err := json.Unmarshal(body, &raw); err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := raw["source"]; ok {
-			t.Fatalf("request JSON included source: %s", body)
-		}
-		var request api.SessionStartRequest
+		var request api.StartTaskRequest
 		if err := json.Unmarshal(body, &request); err != nil {
 			t.Fatal(err)
 		}
-		_ = json.NewEncoder(w).Encode(api.SessionStartResponse{Run: api.RunResponse{
-			ID:        "run-1",
-			TaskID:    "deploy",
-			Status:    "queued",
-			CreatedAt: now,
-			UpdatedAt: now,
-		}})
+		if request.Workspace.ID == nil || *request.Workspace.ID != "ws_1" {
+			t.Fatalf("request = %+v", request)
+		}
+		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "run-1"})
 	}))
 	defer server.Close()
 
@@ -175,26 +165,28 @@ func TestStartSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	started, err := client.StartSession(context.Background(), "deploy", api.SessionStartRequest{
-		Payload: json.RawMessage(`{"env":"prod"}`),
-	})
+	workspaceID := "ws_1"
+	started, err := client.StartTask(context.Background(), "deploy", api.StartTaskRequest{
+		Payload:   json.RawMessage(`{"env":"prod"}`),
+		Workspace: api.WorkspaceTarget{ID: &workspaceID},
+	}, EnvironmentScopeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if started.Run.ID != "run-1" || started.Run.Status != "queued" {
+	if started.RunID != "run-1" {
 		t.Fatalf("started = %+v", started)
 	}
 }
 
-func TestStartSessionReturnsAcceptedHTTPError(t *testing.T) {
+func TestStartTaskReturnsHTTPError(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{"error":"accepted elsewhere"}`))
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"already started differently"}`))
 	}))
 	defer server.Close()
 
@@ -202,36 +194,26 @@ func TestStartSessionReturnsAcceptedHTTPError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.StartSession(context.Background(), "deploy", api.SessionStartRequest{})
+	_, err = client.StartTask(context.Background(), "deploy", api.StartTaskRequest{}, EnvironmentScopeOptions{})
 	var httpErr *HTTPError
-	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusAccepted || !strings.Contains(httpErr.Message, "accepted elsewhere") {
-		t.Fatalf("err = %#v, want 202 HTTPError", err)
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict || !strings.Contains(httpErr.Message, "already started differently") {
+		t.Fatalf("err = %#v, want 409 HTTPError", err)
 	}
 	if calls != 1 {
 		t.Fatalf("calls = %d, want 1", calls)
 	}
 }
 
-func TestStartSessionUsesSessionScopedRoute(t *testing.T) {
-	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
+func TestStartTaskUsesEnvironmentScopedRoute(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/project-1/environments/env-1/sessions" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/project-1/environments/env-1/tasks/deploy/start" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		var request api.SessionStartRequest
+		var request api.StartTaskRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		if request.ProjectID != "" || request.EnvironmentID != "" {
-			t.Fatalf("scoped route leaked body scope: %+v", request)
-		}
-		_ = json.NewEncoder(w).Encode(api.SessionStartResponse{Run: api.RunResponse{
-			ID:        "run-1",
-			TaskID:    "deploy",
-			Status:    "queued",
-			CreatedAt: now,
-			UpdatedAt: now,
-		}})
+		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "run-1"})
 	}))
 	defer server.Close()
 
@@ -239,15 +221,13 @@ func TestStartSessionUsesSessionScopedRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	started, err := client.StartSession(context.Background(), "deploy", api.SessionStartRequest{
-		ProjectID:     "project-1",
-		EnvironmentID: "env-1",
-		Payload:       json.RawMessage(`{"env":"prod"}`),
-	})
+	started, err := client.StartTask(context.Background(), "deploy", api.StartTaskRequest{
+		Payload: json.RawMessage(`{"env":"prod"}`),
+	}, EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if started.Run.ID != "run-1" || started.Run.Status != "queued" {
+	if started.RunID != "run-1" {
 		t.Fatalf("started = %+v", started)
 	}
 }
@@ -413,7 +393,7 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 		paths = append(paths, r.URL.RequestURI())
 		switch r.URL.Path {
 		case "/api/runs":
-			if r.URL.Query().Get("status") != "all" || r.URL.Query().Get("limit") != "25" || r.URL.Query().Get("session_id") != "session-1" {
+			if r.URL.Query().Get("status") != "all" || r.URL.Query().Get("limit") != "25" {
 				t.Fatalf("query = %s", r.URL.RawQuery)
 			}
 			_ = json.NewEncoder(w).Encode(api.ListRunsResponse{Runs: []api.RunResponse{{
@@ -442,7 +422,7 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runs, err := client.ListRuns(context.Background(), ListRunsOptions{Status: "all", Limit: 25, SessionID: "session-1"})
+	runs, err := client.ListRuns(context.Background(), ListRunsOptions{Status: "all", Limit: 25})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +438,7 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 		logs.NextCursor != "rt1.next" {
 		t.Fatalf("logs = %+v", logs)
 	}
-	if got := strings.Join(paths, ","); got != "/api/runs?limit=25&session_id=session-1&status=all,/api/runs/run-1/logs" {
+	if got := strings.Join(paths, ","); got != "/api/runs?limit=25&status=all,/api/runs/run-1/logs" {
 		t.Fatalf("paths = %s", got)
 	}
 }

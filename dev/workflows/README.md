@@ -35,7 +35,7 @@ Expected release-smoke coverage:
 | Token UX and approval state | `staging` or `production` | `runtime-smoke` with `exerciseToken=true` |
 | Timer parked wait resume | `staging` | `timer-smoke` |
 | Missing-secret, invalid-payload, and failed-run observability | `staging` | `missing-secret-smoke` request expected to be rejected; malformed payload to `runtime-smoke`; `edge-smoke` expected-error |
-| CLI, API, and console inspection | both | `helmr run get`, `helmr run events`, `helmr run logs`, and the console session/task views |
+| CLI, API, and console inspection | both | `helmr run get`, `helmr run events`, `helmr run logs`, and the console Run/Task views |
 
 ## Deploy & Run
 
@@ -43,24 +43,44 @@ Expected release-smoke coverage:
 helmr deploy ./dev/workflows --project helmr --env staging
 helmr deploy ./dev/workflows --project helmr --env production
 
-helmr session start runtime-smoke \
+RUNTIME_WORKSPACE="$(helmr workspace create helmr-runtime-smoke \
+  --project helmr --env staging --key release-smoke-runtime \
+  --idempotency-key release-smoke-runtime-create)"
+
+helmr run start runtime-smoke \
   --project helmr \
   --env staging \
+  --workspace "${RUNTIME_WORKSPACE}" \
   --payload-json '{"scenario":"staging-runtime","expectedEnvironment":"staging"}'
 
-helmr session start secret-smoke \
+SECRET_WORKSPACE="$(helmr workspace create helmr-secret-smoke \
+  --project helmr --env production --key release-smoke-secrets \
+  --idempotency-key release-smoke-secrets-create)"
+
+helmr run start secret-smoke \
   --project helmr \
   --env production \
+  --workspace "${SECRET_WORKSPACE}" \
   --payload-json '{"scenario":"production-secrets","expectedEnvironment":"production"}'
 
-helmr session start edge-smoke \
+EDGE_WORKSPACE="$(helmr workspace create helmr-edge-smoke \
+  --project helmr --env staging --key release-smoke-edge \
+  --idempotency-key release-smoke-edge-create)"
+
+helmr run start edge-smoke \
   --project helmr \
   --env staging \
+  --workspace "${EDGE_WORKSPACE}" \
   --payload-json '{"mode":"workspace-overwrite"}'
 
-helmr session start agent-toolchain-smoke \
+AGENT_WORKSPACE="$(helmr workspace create helmr-agent-toolchain-smoke \
+  --project helmr --env production --key release-smoke-agent \
+  --idempotency-key release-smoke-agent-create)"
+
+helmr run start agent-toolchain-smoke \
   --project helmr \
   --env production \
+  --workspace "${AGENT_WORKSPACE}" \
   --payload-json '{"repository":"helmrdotdev/helmr","ref":"main"}'
 ```
 
@@ -120,9 +140,10 @@ For token UX checks, start a run and complete the pending token from the
 console or a trusted bridge:
 
 ```sh
-helmr session start runtime-smoke \
+helmr run start runtime-smoke \
   --project helmr \
   --env staging \
+  --workspace "${RUNTIME_WORKSPACE}" \
   --payload-json '{"scenario":"token-ui","exerciseToken":true,"tokenTimeout":300}'
 ```
 
@@ -139,19 +160,25 @@ and console evidence:
 ```sh
 # Missing-secret observability: expected to fail before run creation because
 # this task intentionally declares a required absent smoke secret.
-helmr session start missing-secret-smoke --project helmr --env staging
+STAGING_SECRET_WORKSPACE="$(helmr workspace create helmr-secret-smoke \
+  --project helmr --env staging --key release-smoke-missing-secret \
+  --idempotency-key release-smoke-missing-secret-create)"
+helmr run start missing-secret-smoke --project helmr --env staging \
+  --workspace "${STAGING_SECRET_WORKSPACE}"
 
 # Strict payload observability: expected to create a failed run with a validation
 # error from the task adapter.
-helmr session start runtime-smoke \
+helmr run start runtime-smoke \
   --project helmr \
   --env staging \
+  --workspace "${RUNTIME_WORKSPACE}" \
   --payload-json '{"scenario":"bad-payload","unknown":true}'
 
 # Runtime expected-error observability: expected to fail inside task code.
-helmr session start edge-smoke \
+helmr run start edge-smoke \
   --project helmr \
   --env staging \
+  --workspace "${EDGE_WORKSPACE}" \
   --payload-json '{"mode":"expected-error"}'
 ```
 

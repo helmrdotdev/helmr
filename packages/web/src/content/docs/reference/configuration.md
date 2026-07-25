@@ -1,6 +1,6 @@
 ---
 title: Configuration reference
-description: Task project, sandbox, image, resource, and secret configuration.
+description: Task project, Workspace, image, and Run configuration.
 section: Reference
 sidebarLabel: Configuration
 order: 930
@@ -28,18 +28,18 @@ export default defineConfig({
 
 | Surface | Fields |
 | --- | --- |
-| `task` | `id`, `sandbox`, `maxDuration`, `secrets`, `run` |
-| `sandbox` | `image(img)`, `workspace(mountPath)`, `resources({ cpu, memory })` |
+| `task` | `id`, `payload`, `queue`, `maxDuration`, `ttl`, `retry`, `run` |
+| `actor` | `id`, `input`, `output`, Run defaults, `run` |
+| `workspace` | `image(img)`, `resources({ cpu, memory })`, `network(...)` |
 | `image` | `from`, `run`, `copy`, `copyFrom`, `workdir`, `env`, `user` |
 | `source` | `file(path)`, `directory(path, { ignore })` |
 
-Secret declarations use placements:
+Workspace create requests use Secret placements:
 
 ```ts
 secrets: [
   { name: "TOKEN", env: "TOKEN" },
-  { name: "config-json", file: "/run/secrets/config.json", mode: "0400" },
-  { name: "creds", dir: "/run/secrets/creds", mode: "0700" },
+  { name: "config-json", file: "/run/secrets/config.json" },
 ]
 ```
 

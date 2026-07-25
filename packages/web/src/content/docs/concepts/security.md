@@ -29,7 +29,9 @@ permissions remain separate. Secret API responses never return Secret values.
 
 ## Payloads Are Plaintext
 
-Run payload is audit data. Helmr persists it in plaintext in the database, run events, and event streams. Do not put tokens, API keys, credentials, or sensitive personal data in payloads.
+Run payload is audit data. Helmr persists it in plaintext in the database and
+telemetry. Do not put tokens, API keys, credentials, or sensitive personal data
+in payloads.
 
 ## Workspaces
 

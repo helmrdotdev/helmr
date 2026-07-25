@@ -9,6 +9,23 @@ UPDATE runs
    AND status = 'running'
 RETURNING state_version;
 
+-- name: GetRunMetadataClaimScope :one
+SELECT run_leases.environment_id,
+       run_leases.run_id,
+       run_leases.attempt_number
+  FROM run_leases
+  JOIN runs
+    ON runs.id = run_leases.run_id
+   AND runs.environment_id = run_leases.environment_id
+ WHERE run_leases.id = sqlc.arg(run_lease_id)
+   AND run_leases.run_id = sqlc.arg(run_id)
+   AND run_leases.attempt_number = sqlc.arg(attempt_number)
+   AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
+   AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
+   AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
+   AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
+   AND run_leases.worker_protocol_version = sqlc.arg(worker_protocol_version);
+
 -- name: CreateRunMetadataEvent :one
 INSERT INTO telemetry_outbox (
     org_id,

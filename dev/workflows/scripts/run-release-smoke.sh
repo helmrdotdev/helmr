@@ -9,19 +9,17 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TOKEN_WAIT_TIMEOUT_SECONDS="${TOKEN_WAIT_TIMEOUT_SECONDS:-420}"
 TOKEN_DECISION_DELAY_SECONDS="${TOKEN_DECISION_DELAY_SECONDS:-0}"
 
-session_ids=()
+workspace_ids=()
 run_ids=()
-stopped_workspace_ids=()
+deleted_workspace_ids=()
 executed_smoke_cases=()
 skipped_smoke_cases=()
 helmr_cmd=()
 staging_scope_args=()
 production_scope_args=()
 skip_production="${SKIP_PRODUCTION:-}"
-root_api_smoke_enabled=0
 selected_smoke_cases="${SMOKE_CASES:-}"
 all_smoke_cases=(
-  root-api-start-and-wait
   runtime
   token
   timer
@@ -43,7 +41,6 @@ if [ -z "${HELMR_API_KEY:-}" ]; then
   production_scope_args=(--project "${PROJECT}" --env "${PRODUCTION_ENV}")
 else
   skip_production="${skip_production:-1}"
-  root_api_smoke_enabled=1
 fi
 
 run_helmr() {
@@ -69,11 +66,11 @@ now_ms() {
 ux_timing() {
   local case_name=$1
   local event=$2
-  local session_id="${3:-}"
+  local workspace_id="${3:-}"
   local run_id="${4:-}"
   local detail="${5:-}"
-  printf 'ux_timing case=%s event=%s at_ms=%s session_id=%s run_id=%s detail=%s\n' \
-    "${case_name}" "${event}" "$(now_ms)" "${session_id}" "${run_id}" "${detail}"
+  printf 'ux_timing case=%s event=%s at_ms=%s workspace_id=%s run_id=%s detail=%s\n' \
+    "${case_name}" "${event}" "$(now_ms)" "${workspace_id}" "${run_id}" "${detail}"
 }
 
 mark_smoke_executed() {
@@ -124,10 +121,6 @@ validate_selected_smoke_preconditions() {
   if [ -z "${selected_smoke_cases}" ]; then
     return 0
   fi
-  if smoke_case_enabled root-api-start-and-wait && [ "${root_api_smoke_enabled}" != "1" ]; then
-    printf 'SMOKE_CASES=root-api-start-and-wait requires HELMR_API_KEY for root API checks\n' >&2
-    return 2
-  fi
   if smoke_case_enabled production-secrets && [ "${skip_production}" = "1" ]; then
     printf 'SMOKE_CASES=production-secrets cannot run while SKIP_PRODUCTION=1; HELMR_API_KEY mode defaults SKIP_PRODUCTION to 1\n' >&2
     return 2
@@ -135,9 +128,9 @@ validate_selected_smoke_preconditions() {
 }
 
 print_smoke_summary() {
-  printf 'release smoke session ids: %s\n' "${session_ids[*]-}"
+  printf 'release smoke workspace ids: %s\n' "${workspace_ids[*]-}"
   printf 'release smoke run ids: %s\n' "${run_ids[*]-}"
-  printf 'release smoke stopped workspace ids: %s\n' "${stopped_workspace_ids[*]-}"
+  printf 'release smoke deleted workspace ids: %s\n' "${deleted_workspace_ids[*]-}"
   printf 'release smoke executed cases: %s\n' "${executed_smoke_cases[*]-}"
   printf 'release smoke skipped cases: %s\n' "${skipped_smoke_cases[*]-}"
 }
@@ -159,9 +152,9 @@ write_smoke_result() {
     --arg selected "${selected_smoke_cases}" \
     --argjson executed "$(printf '%s\n' "${executed_smoke_cases[@]-}" | jq -Rsc 'split("\n") | map(select(length > 0))')" \
     --argjson skipped "$(printf '%s\n' "${skipped_smoke_cases[@]-}" | jq -Rsc 'split("\n") | map(select(length > 0))')" \
-    --argjson sessions "$(printf '%s\n' "${session_ids[@]-}" | jq -Rsc 'split("\n") | map(select(length > 0))')" \
+    --argjson workspaces "$(printf '%s\n' "${workspace_ids[@]-}" | jq -Rsc 'split("\n") | map(select(length > 0))')" \
     --argjson runs "$(printf '%s\n' "${run_ids[@]-}" | jq -Rsc 'split("\n") | map(select(length > 0))')" \
-    '{schema:$schema,status:$status,exit_code:$exit_code,selected_cases:($selected | split(",") | map(select(length > 0))),executed_cases:$executed,skipped_cases:$skipped,session_ids:$sessions,run_ids:$runs}' \
+    '{schema:$schema,status:$status,exit_code:$exit_code,selected_cases:($selected | split(",") | map(select(length > 0))),executed_cases:$executed,skipped_cases:$skipped,workspace_ids:$workspaces,run_ids:$runs}' \
     >"${result_file}.tmp"
   chmod 0600 "${result_file}.tmp"
   mv "${result_file}.tmp" "${result_file}"
@@ -192,69 +185,64 @@ validate_selected_smoke_execution() {
   fi
 }
 
-api_url() {
-  printf '%s/api%s' "${API_URL%/}" "$1"
-}
-
-api_json() {
-  local method=$1
-  local path=$2
-  local body="${3:-}"
-  local bearer="${4:-${HELMR_API_KEY:?HELMR_API_KEY is required}}"
-  if [ "${method}" = "GET" ]; then
-    curl -fsS \
-      -H "authorization: Bearer ${bearer}" \
-      -H "accept: application/json" \
-      "$(api_url "${path}")"
-  else
-    curl -fsS \
-      -X "${method}" \
-      -H "authorization: Bearer ${bearer}" \
-      -H "accept: application/json" \
-      -H "content-type: application/json" \
-      --data "${body}" \
-      "$(api_url "${path}")"
-  fi
-}
-
-api_status() {
-  local method=$1
-  local path=$2
-  local body="${3:-}"
-  local bearer="${4:-${HELMR_API_KEY:?HELMR_API_KEY is required}}"
-  local log_file
-  local status
-  log_file="$(mktemp)"
-  if [ "${method}" = "GET" ]; then
-    status="$(curl -sS -o "${log_file}" -w '%{http_code}' \
-      -H "authorization: Bearer ${bearer}" \
-      -H "accept: application/json" \
-      "$(api_url "${path}")")"
-  else
-    status="$(curl -sS -o "${log_file}" -w '%{http_code}' \
-      -X "${method}" \
-      -H "authorization: Bearer ${bearer}" \
-      -H "accept: application/json" \
-      -H "content-type: application/json" \
-      --data "${body}" \
-      "$(api_url "${path}")")"
-  fi
-  cat "${log_file}" >&2
-  rm -f "${log_file}"
-  printf '%s\n' "${status}"
-}
-
 start_capture_ids() {
   local task=$1
   shift
+  local declared_id
+  local key
+  local workspace
   local output
-  if ! output="$(run_helmr session start "${task}" "$@" --json)"; then
+  local scope_args=()
+  local secret_args=()
+  case "${task}" in
+    runtime-smoke) declared_id=helmr-runtime-smoke ;;
+    timer-smoke) declared_id=helmr-timer-smoke ;;
+    edge-smoke) declared_id=helmr-edge-smoke ;;
+    agent-toolchain-smoke) declared_id=helmr-agent-toolchain-smoke ;;
+    secret-smoke)
+      declared_id=helmr-secret-smoke
+      secret_args=(
+        --secret-env ANTHROPIC_API_KEY=ANTHROPIC_API_KEY
+        --secret-env CURSOR_API_KEY=CURSOR_API_KEY
+        --secret-env GITHUB_TOKEN=GITHUB_TOKEN
+        --secret-env OPENAI_API_KEY=OPENAI_API_KEY
+      )
+      ;;
+    missing-secret-smoke)
+      declared_id=helmr-secret-smoke
+      secret_args=(
+        --secret-env HELMR_RELEASE_SMOKE_MISSING=HELMR_RELEASE_SMOKE_MISSING
+      )
+      ;;
+    *) printf 'no smoke Workspace declaration for Task %s\n' "${task}" >&2; return 2 ;;
+  esac
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project|-p|--env|-e)
+        scope_args+=("$1" "$2")
+        shift 2
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+  key="release-smoke:${task}:$(date -u +%Y%m%d%H%M%S):${RANDOM}"
+  workspace="$(run_helmr workspace create "${declared_id}" "${scope_args[@]}" \
+    --key "${key}" "${secret_args[@]}" \
+    --idempotency-key "${key}:create" --json)"
+  printf '%s\n' "${workspace}" >&2
+  workspace="$(printf '%s\n' "${workspace}" | jq -er '.workspace_id')"
+  if ! output="$(run_helmr run start "${task}" "${scope_args[@]}" "$@" \
+    --workspace "${workspace}" --idempotency-key "${key}:run" --json)"; then
+    run_helmr workspace delete --id "${workspace}" "${scope_args[@]}" \
+      --idempotency-key "${key}:rollback" --json >&2 || true
     return 1
   fi
   printf '%s\n' "${output}" >&2
   printf '%s %s\n' \
-    "$(printf '%s\n' "${output}" | jq -er '.session.id')" \
-    "$(printf '%s\n' "${output}" | jq -er '.run.id')"
+    "${workspace}" \
+    "$(printf '%s\n' "${output}" | jq -er '.run_id')"
 }
 
 inspect_run() {
@@ -277,11 +265,9 @@ inspect_run() {
   run_helmr run logs "${run_id}" "${scope_args[@]}"
 }
 
-stop_session_workspace() {
-  local session_id=$1
+delete_smoke_workspace() {
+  local workspace_id=$1
   shift
-  local session_json
-  local workspace_id
   local scope_args=()
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -294,12 +280,10 @@ stop_session_workspace() {
         ;;
     esac
   done
-  session_json="$(run_helmr session get "${session_id}" "${scope_args[@]}" --json)"
-  workspace_id="$(printf '%s\n' "${session_json}" | jq -er '.workspace_id')"
-  run_helmr workspace stop "${workspace_id}" "${scope_args[@]}" \
-    --idempotency-key "release-smoke:${session_id}:workspace-stop" \
+  run_helmr workspace delete --id "${workspace_id}" "${scope_args[@]}" \
+    --idempotency-key "release-smoke:${workspace_id}:delete" \
     --json
-  stopped_workspace_ids+=("${workspace_id}")
+  deleted_workspace_ids+=("${workspace_id}")
 }
 
 wait_status() {
@@ -327,13 +311,13 @@ expect_run_success() {
   local name=$1
   shift
   local ids
-  local session_id
+  local workspace_id
   local run_id
   local status
   ids="$(start_capture_ids "$@")"
-  session_id="${ids%% *}"
+  workspace_id="${ids%% *}"
   run_id="${ids##* }"
-  session_ids+=("${session_id}")
+  workspace_ids+=("${workspace_id}")
   run_ids+=("${run_id}")
   status="$(wait_status "${run_id}" "$@")"
   if [ "${status}" != "succeeded" ]; then
@@ -342,8 +326,8 @@ expect_run_success() {
     return 1
   fi
   inspect_run "${run_id}" "$@"
-  stop_session_workspace "${session_id}" "$@"
-  printf 'PASS %s session_id=%s run_id=%s\n' "${name}" "${session_id}" "${run_id}"
+  delete_smoke_workspace "${workspace_id}" "$@"
+  printf 'PASS %s workspace_id=%s run_id=%s\n' "${name}" "${workspace_id}" "${run_id}"
 }
 
 wait_for_pending_token() {
@@ -390,7 +374,7 @@ expect_token_success() {
   shift
   local marker
   local ids
-  local session_id
+  local workspace_id
   local run_id
   local token_id
   local status
@@ -402,87 +386,26 @@ expect_token_success() {
     exerciseToken: true,
     tokenTimeout: 900
   }')")"
-  session_id="${ids%% *}"
+  workspace_id="${ids%% *}"
   run_id="${ids##* }"
-  session_ids+=("${session_id}")
+  workspace_ids+=("${workspace_id}")
   run_ids+=("${run_id}")
-  ux_timing "${name}" "start_returned" "${session_id}" "${run_id}" "task=runtime-smoke"
+  ux_timing "${name}" "start_returned" "${workspace_id}" "${run_id}" "task=runtime-smoke"
   token_id="$(wait_for_pending_token "${run_id}" "$@")"
-  ux_timing "${name}" "token_visible" "${session_id}" "${run_id}"
+  ux_timing "${name}" "token_visible" "${workspace_id}" "${run_id}"
   sleep_seconds "${TOKEN_DECISION_DELAY_SECONDS}"
   run_helmr token complete "${token_id}" "$@" --data-json '{"approved":true,"note":"release smoke"}'
-  ux_timing "${name}" "token_complete_accepted" "${session_id}" "${run_id}"
+  ux_timing "${name}" "token_complete_accepted" "${workspace_id}" "${run_id}"
   status="$(wait_status "${run_id}" "$@")"
-  ux_timing "${name}" "terminal_observed" "${session_id}" "${run_id}" "status=${status}"
+  ux_timing "${name}" "terminal_observed" "${workspace_id}" "${run_id}" "status=${status}"
   if [ "${status}" != "succeeded" ]; then
     inspect_run "${run_id}" "$@" >&2
     printf 'FAIL %s: expected succeeded, got %s: %s\n' "${name}" "${status}" "${run_id}" >&2
     return 1
   fi
   inspect_run "${run_id}" "$@"
-  stop_session_workspace "${session_id}" "$@"
-  printf 'PASS %s session_id=%s run_id=%s token_id=%s\n' "${name}" "${session_id}" "${run_id}" "${token_id}"
-}
-
-session_run_id() {
-  local session_id=$1
-  shift
-  run_helmr run list --session "${session_id}" "$@" --json | jq -er '.runs[0].id'
-}
-
-expect_workspace_version() {
-  local name=$1
-  local session_id=$2
-  local run_id=$3
-  local session_json
-  local workspace_json
-  local workspace_id
-  local workspace_version
-  session_json="$(api_json GET "/sessions/${session_id}")"
-  workspace_id="$(printf '%s\n' "${session_json}" | jq -er '.workspace_id')" || {
-    inspect_run "${run_id}" >&2
-    printf 'FAIL %s: completed session did not expose workspace_id\n' "${name}" >&2
-    printf '%s\n' "${session_json}" >&2
-    return 1
-  }
-  workspace_json="$(api_json GET "/workspaces/${workspace_id}")"
-  workspace_version="$(printf '%s\n' "${workspace_json}" | jq -er '.workspace.current_version_id')" || {
-    inspect_run "${run_id}" >&2
-    printf 'FAIL %s: completed session workspace did not publish current workspace version\n' "${name}" >&2
-    printf '%s\n' "${workspace_json}" >&2
-    return 1
-  }
-  printf '%s\n' "${workspace_version}"
-}
-
-expect_start_and_wait_success() {
-  local name=$1
-  local marker
-  local response
-  local session_id
-  local run_id
-  local status
-  marker="release-smoke-${name}-$(date -u +%Y%m%d%H%M%S)"
-  response="$(api_json POST /sessions/start-and-wait "$(jq -nc --arg marker "${marker}" '{
-    task_id: "runtime-smoke",
-    payload: {
-      scenario: "start-and-wait",
-      marker: $marker,
-      expectedEnvironment: "staging"
-    },
-    timeout_seconds: 900
-  }')")"
-  printf '%s\n' "${response}" >&2
-  status="$(printf '%s\n' "${response}" | jq -er '.status')"
-  if [ "${status}" != "completed" ]; then
-    printf 'FAIL %s: expected completed, got %s\n' "${name}" "${status}" >&2
-    return 1
-  fi
-  session_id="$(printf '%s\n' "${response}" | jq -er '.id')"
-  run_id="$(session_run_id "${session_id}")"
-  session_ids+=("${session_id}")
-  run_ids+=("${run_id}")
-  printf 'PASS %s session_id=%s run_id=%s\n' "${name}" "${session_id}" "${run_id}"
+  delete_smoke_workspace "${workspace_id}" "$@"
+  printf 'PASS %s workspace_id=%s run_id=%s token_id=%s\n' "${name}" "${workspace_id}" "${run_id}" "${token_id}"
 }
 
 expect_run_rejected() {
@@ -505,13 +428,13 @@ expect_run_failure() {
   local name=$1
   shift
   local ids
-  local session_id
+  local workspace_id
   local run_id
   local status
   ids="$(start_capture_ids "$@")"
-  session_id="${ids%% *}"
+  workspace_id="${ids%% *}"
   run_id="${ids##* }"
-  session_ids+=("${session_id}")
+  workspace_ids+=("${workspace_id}")
   run_ids+=("${run_id}")
   status="$(wait_status "${run_id}" "$@")"
   if [ "${status}" = "succeeded" ]; then
@@ -525,7 +448,7 @@ expect_run_failure() {
     return 1
   fi
   inspect_run "${run_id}" "$@"
-  stop_session_workspace "${session_id}" "$@"
+  delete_smoke_workspace "${workspace_id}" "$@"
   printf 'PASS %s failed as expected run_id=%s\n' "${name}" "${run_id}"
 }
 
@@ -540,14 +463,6 @@ if [ "${SKIP_DEPLOY:-0}" != "1" ]; then
   if production_smoke_enabled; then
     run_helmr deploy ./dev/workflows "${production_scope_args[@]}" --timeout 20m
   fi
-fi
-
-if [ "${root_api_smoke_enabled}" = "1" ] && smoke_case_enabled root-api-start-and-wait; then
-  mark_smoke_executed root-api-start-and-wait
-  expect_start_and_wait_success root-api-start-and-wait
-elif [ "${root_api_smoke_enabled}" != "1" ] && smoke_case_enabled root-api-start-and-wait; then
-  printf 'SKIP root API smoke: HELMR_API_KEY is required for root API checks\n'
-  mark_smoke_skipped root-api-start-and-wait
 fi
 
 if smoke_case_enabled runtime; then

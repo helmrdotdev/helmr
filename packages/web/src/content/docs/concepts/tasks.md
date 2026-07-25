@@ -8,25 +8,12 @@ order: 130
 
 # Tasks
 
-A task is a TypeScript unit of work exported from a task project. It has an ID, sandbox, optional max duration, optional secret declarations, and a `run` function.
+A Task is a TypeScript unit of work exported from a project. It has an ID,
+optional Run defaults, an optional payload schema, and a `run` function.
 
 ```ts
-import { cache, image, logger, sandbox, source, task } from "@helmr/sdk"
+import { logger, task } from "@helmr/sdk"
 import { z } from "zod"
-
-const runtime = image("review")
-  .from("node:24-bookworm-slim")
-  .workdir("/workspace")
-  .run(["npm", "install", "-g", "bun@1.3.10"])
-  .copy("/workspace/package.json", source.file("package.json"))
-  .run(["bun", "install"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("review-bun") }],
-  })
-
-const sb = sandbox("review")
-  .image(runtime)
-  .workspace("/workspace")
-  .resources({ cpu: 2, memory: "4Gi" })
 
 const reviewPayload = z.object({
   prNumber: z.number().int().positive(),
@@ -34,12 +21,10 @@ const reviewPayload = z.object({
 
 export const reviewPr = task({
   id: "review-pr",
-  sandbox: sb,
-  maxDuration: 900,
-  secrets: [{ name: "OPENAI_API_KEY", env: "OPENAI_API_KEY" }],
+  maxDuration: "15m",
   payload: reviewPayload,
   run: async (payload, ctx) => {
-    logger.info("reviewing", payload.prNumber)
+    logger.info("reviewing", { prNumber: payload.prNumber })
     return { ok: true }
   },
 })
@@ -49,7 +34,9 @@ export const reviewPr = task({
 
 Task IDs must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Tasks without `payload` do not accept payload. Tasks with `payload` validate payload at start time and before `run`.
 
-Payload is audit data. Helmr persists it in plaintext in the database, run events, and event streams. Do not put tokens, API keys, credentials, or sensitive personal data in payloads.
+Payload is audit data. Helmr persists it in plaintext in the database and
+telemetry. Do not put tokens, API keys, credentials, or sensitive personal data
+in payloads.
 
 ## Runtime Context
 

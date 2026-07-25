@@ -17,6 +17,10 @@ let
   runtimeFiles = lib.fileset.intersection moduleFiles (
     lib.fileset.fileFilter (file: file.type != "regular" || !(lib.hasSuffix "_test.go" file.name)) ../..
   );
+  moduleSource = lib.fileset.toSource {
+    root = ../..;
+    fileset = moduleFiles;
+  };
 in
 buildGoModule {
   pname = "helmr";
@@ -27,7 +31,13 @@ buildGoModule {
     fileset = runtimeFiles;
   };
 
-  vendorHash = "sha256-NKFVYiRGUy3a9BRXkUSKEmzEqTzfY7+F/w0H3JntEEA=";
+  vendorHash = "sha256-MMJnK7ywvQa7SQkO0umfUuApthc4Cx63S3gK4Mz/20w=";
+  overrideModAttrs = _: {
+    # Contract checks reuse goModules while compiling package tests. Resolve
+    # dependencies from the complete module source even though the shipped CLI
+    # source intentionally excludes test files.
+    src = moduleSource;
+  };
   subPackages = [ "cmd/helmr" ];
 
   ldflags = [

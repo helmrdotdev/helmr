@@ -2,7 +2,6 @@ package client
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -19,44 +18,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
-
-func (c *Client) StartSession(ctx context.Context, taskID string, input api.SessionStartRequest) (api.SessionStartResponse, error) {
-	taskID = strings.TrimSpace(taskID)
-	if err := api.ValidateTaskID(taskID); err != nil {
-		return api.SessionStartResponse{}, err
-	}
-	input.TaskID = taskID
-	path, scoped, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/sessions")
-	if err != nil {
-		return api.SessionStartResponse{}, err
-	}
-	if scoped {
-		input.ProjectID = ""
-		input.EnvironmentID = ""
-	}
-	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(input); err != nil {
-		return api.SessionStartResponse{}, fmt.Errorf("encode request: %w", err)
-	}
-	req, err := c.newRequestWithBearer(ctx, http.MethodPost, path, bytes.NewReader(body.Bytes()), c.bearer)
-	if err != nil {
-		return api.SessionStartResponse{}, err
-	}
-	req.Header.Set("content-type", "application/json")
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return api.SessionStartResponse{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return api.SessionStartResponse{}, decodeError(resp)
-	}
-	var response api.SessionStartResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return api.SessionStartResponse{}, fmt.Errorf("decode response: %w", err)
-	}
-	return response, nil
-}
 
 func (c *Client) ListProjects(ctx context.Context) (api.ListProjectsResponse, error) {
 	req, err := c.newRequest(ctx, http.MethodGet, "/api/projects", nil)
@@ -477,7 +438,6 @@ func (c *Client) CancelRun(ctx context.Context, id string, opts ...RunScopeOptio
 type ListRunsOptions struct {
 	Status        string
 	Limit         int32
-	SessionID     string
 	ProjectID     string
 	EnvironmentID string
 }
@@ -525,9 +485,6 @@ func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.Lis
 		}
 		if opts[0].Limit > 0 {
 			values.Set("limit", strconv.FormatInt(int64(opts[0].Limit), 10))
-		}
-		if strings.TrimSpace(opts[0].SessionID) != "" {
-			values.Set("session_id", strings.TrimSpace(opts[0].SessionID))
 		}
 		if encoded := values.Encode(); encoded != "" {
 			path += "?" + encoded

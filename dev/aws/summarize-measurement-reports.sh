@@ -205,7 +205,7 @@ def parse_ux_timing_line(line):
             continue
         key, value = item.split("=", 1)
         fields[key] = value
-    required = ("case", "event", "at_ms", "session_id", "run_id", "detail")
+    required = ("case", "event", "at_ms", "workspace_id", "run_id", "detail")
     if any(key not in fields for key in required):
         return None
     try:
@@ -236,7 +236,7 @@ def ux_deltas(report_dir):
 
     by_key_event = {}
     for record in records:
-        key = (record["case"], record["session_id"], record["run_id"], record["detail"])
+        key = (record["case"], record["workspace_id"], record["run_id"], record["detail"])
         by_key_event.setdefault(key, {})[record["event"]] = record
 
     event_pairs = (
@@ -251,7 +251,7 @@ def ux_deltas(report_dir):
     )
 
     deltas = []
-    for (case, session_id, run_id, detail), events in by_key_event.items():
+    for (case, workspace_id, run_id, detail), events in by_key_event.items():
         for metric, start_event, end_event in event_pairs:
             if start_event not in events or end_event not in events:
                 continue
@@ -260,7 +260,7 @@ def ux_deltas(report_dir):
                 continue
             deltas.append({
                 "case": case,
-                "session_id": session_id,
+                "workspace_id": workspace_id,
                 "run_id": run_id,
                 "detail": detail,
                 "metric": metric,
@@ -278,7 +278,7 @@ def ux_deltas(report_dir):
         "continuation_terminal_observed",
     }
     def is_next_visible_candidate(record, candidate):
-        if candidate["case"] != record["case"] or candidate["session_id"] != record["session_id"]:
+        if candidate["case"] != record["case"] or candidate["workspace_id"] != record["workspace_id"]:
             return False
         if candidate["event"] not in visible_events or candidate["at_ms"] < record["at_ms"]:
             return False
@@ -299,7 +299,7 @@ def ux_deltas(report_dir):
         metric = "next_visible_after_input_ack" if record["event"] == "input_send_accepted" else "next_visible_after_token_ack"
         deltas.append({
             "case": record["case"],
-            "session_id": record["session_id"],
+            "workspace_id": record["workspace_id"],
             "run_id": record["run_id"],
             "detail": record["detail"],
             "metric": metric,
@@ -312,8 +312,8 @@ def ux_deltas(report_dir):
     by_run = {}
     for record in records:
         by_case.setdefault(record["case"], []).append(record)
-        if record["session_id"] and record["run_id"]:
-            by_run.setdefault((record["case"], record["session_id"], record["run_id"]), []).append(record)
+        if record["workspace_id"] and record["run_id"]:
+            by_run.setdefault((record["case"], record["workspace_id"], record["run_id"]), []).append(record)
 
     for case, case_records in by_case.items():
         starts = sorted([record for record in case_records if record["event"] == "start_requested"], key=lambda item: item["at_ms"])
@@ -325,7 +325,7 @@ def ux_deltas(report_dir):
             returned = later_returns[0]
             deltas.append({
                 "case": case,
-                "session_id": returned["session_id"],
+                "workspace_id": returned["workspace_id"],
                 "run_id": returned["run_id"],
                 "detail": start["detail"],
                 "metric": "start_ack",
@@ -334,7 +334,7 @@ def ux_deltas(report_dir):
                 "delta_ms": returned["at_ms"] - start["at_ms"],
             })
 
-    for (case, session_id, run_id), run_records in by_run.items():
+    for (case, workspace_id, run_id), run_records in by_run.items():
         starts = sorted([record for record in run_records if record["event"] == "start_returned"], key=lambda item: item["at_ms"])
         terminals = sorted([
             record for record in run_records
@@ -345,7 +345,7 @@ def ux_deltas(report_dir):
             if terminal:
                 deltas.append({
                     "case": case,
-                    "session_id": session_id,
+                    "workspace_id": workspace_id,
                     "run_id": run_id,
                     "detail": terminal["detail"],
                     "metric": "terminal_after_start",
@@ -361,7 +361,7 @@ def ux_deltas(report_dir):
         initial_starts = [
             candidate for candidate in records
             if candidate["case"] == record["case"]
-            and candidate["session_id"] == record["session_id"]
+            and candidate["workspace_id"] == record["workspace_id"]
             and candidate["run_id"] == initial_run_id
             and candidate["event"] == "start_returned"
             and candidate["at_ms"] <= record["at_ms"]
@@ -369,7 +369,7 @@ def ux_deltas(report_dir):
         terminals = [
             candidate for candidate in records
             if candidate["case"] == record["case"]
-            and candidate["session_id"] == record["session_id"]
+            and candidate["workspace_id"] == record["workspace_id"]
             and candidate["run_id"] == record["run_id"]
             and candidate["event"] == "continuation_terminal_observed"
             and candidate["at_ms"] >= record["at_ms"]
@@ -379,7 +379,7 @@ def ux_deltas(report_dir):
             terminal = min(terminals, key=lambda item: item["at_ms"])
             deltas.append({
                 "case": record["case"],
-                "session_id": record["session_id"],
+                "workspace_id": record["workspace_id"],
                 "run_id": record["run_id"],
                 "detail": terminal["detail"],
                 "metric": "terminal_after_start",
@@ -389,7 +389,7 @@ def ux_deltas(report_dir):
             })
             deltas.append({
                 "case": record["case"],
-                "session_id": record["session_id"],
+                "workspace_id": record["workspace_id"],
                 "run_id": record["run_id"],
                 "detail": record["detail"],
                 "metric": "terminal_after_continuation_visible",
@@ -477,7 +477,7 @@ for report_dir in report_dirs:
                 *(row.get(key, "") for key in checkpoint_restore_phase_columns),
             )
 
-tsv("section", "report_dir", "case", "session_id", "run_id", "detail", "metric", "start_event", "end_event", "delta_ms")
+tsv("section", "report_dir", "case", "workspace_id", "run_id", "detail", "metric", "start_event", "end_event", "delta_ms")
 for report_dir in report_dirs:
     for delta in ux_deltas(report_dir):
         all_deltas.append(delta)
@@ -485,7 +485,7 @@ for report_dir in report_dirs:
             "ux_delta",
             report_dir,
             delta["case"],
-            delta["session_id"],
+            delta["workspace_id"],
             delta["run_id"],
             delta["detail"],
             delta["metric"],

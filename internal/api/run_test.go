@@ -1,38 +1,28 @@
 package api
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
-func TestValidateConcurrencyKey(t *testing.T) {
-	t.Parallel()
-
-	valid := []string{
-		"a",
-		strings.Repeat("a", 512),
-		"\u00a0key\u00a0",
-		"日本語",
-	}
-	for _, key := range valid {
-		if err := ValidateConcurrencyKey(key); err != nil {
-			t.Errorf("ValidateConcurrencyKey(%q) returned %v", key, err)
+func TestRunStatusIsTerminal(t *testing.T) {
+	for _, status := range []string{
+		RunStatusSucceeded,
+		RunStatusFailed,
+		RunStatusCancelled,
+		RunStatusExpired,
+		RunStatusSystemFailed,
+	} {
+		if !RunStatusIsTerminal(status) {
+			t.Fatalf("%q must be terminal", status)
 		}
 	}
-
-	invalid := []string{
-		"",
-		" key",
-		"key ",
-		"\tkey",
-		"key\n",
-		"key\x00value",
-		strings.Repeat("a", 513),
-		string([]byte{0xff}),
-	}
-	for _, key := range invalid {
-		if err := ValidateConcurrencyKey(key); err == nil {
-			t.Errorf("ValidateConcurrencyKey(%q) returned nil", key)
+	for _, status := range []string{
+		RunStatusQueued,
+		RunStatusRunning,
+		RunStatusWaiting,
+		RunStatusRetryDelayed,
+		RunStatusCancelRequested,
+	} {
+		if RunStatusIsTerminal(status) {
+			t.Fatalf("%q must not be terminal", status)
 		}
 	}
 }

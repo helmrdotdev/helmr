@@ -267,6 +267,7 @@ func TestRunMetadataRequestIsAttemptScopedAndCanonical(t *testing.T) {
 		2,
 		"00000000-0000-0000-0000-000000000701",
 		[]byte(`{"operation":"set","value":{"b":2,"a":1}}`),
+		"receipt-1",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -277,6 +278,7 @@ func TestRunMetadataRequestIsAttemptScopedAndCanonical(t *testing.T) {
 		2,
 		"00000000-0000-0000-0000-000000000701",
 		[]byte("{\"value\":{\"a\":1.0,\"b\":2},\"operation\":\"set\"}"),
+		"receipt-1",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -287,6 +289,18 @@ func TestRunMetadataRequestIsAttemptScopedAndCanonical(t *testing.T) {
 		3,
 		"00000000-0000-0000-0000-000000000701",
 		[]byte(`{"operation":"set","value":{"a":1,"b":2}}`),
+		"receipt-1",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anotherReceipt, err := NewRunMetadataRequest(
+		environmentID,
+		runID,
+		2,
+		"00000000-0000-0000-0000-000000000701",
+		[]byte(`{"operation":"set","value":{"a":1,"b":2}}`),
+		"receipt-2",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -294,6 +308,7 @@ func TestRunMetadataRequestIsAttemptScopedAndCanonical(t *testing.T) {
 	firstValue := first.idempotencyRequest()
 	secondValue := second.idempotencyRequest()
 	nextValue := nextAttempt.idempotencyRequest()
+	anotherReceiptValue := anotherReceipt.idempotencyRequest()
 	firstFingerprint, err := firstValue.fingerprint(1)
 	if err != nil {
 		t.Fatal(err)
@@ -302,10 +317,15 @@ func TestRunMetadataRequestIsAttemptScopedAndCanonical(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	anotherReceiptFingerprint, err := anotherReceiptValue.fingerprint(1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if firstValue.operation != operationRunMetadata ||
 		!bytes.Equal(firstValue.scope, secondValue.scope) ||
 		bytes.Equal(firstValue.scope, nextValue.scope) ||
-		firstFingerprint != secondFingerprint {
+		firstFingerprint != secondFingerprint ||
+		firstFingerprint == anotherReceiptFingerprint {
 		t.Fatalf(
 			"first=%+v second=%+v next=%+v fingerprints=%x/%x",
 			firstValue,

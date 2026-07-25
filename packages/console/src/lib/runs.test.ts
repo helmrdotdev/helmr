@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { completePendingToken, getRunEvents, listRuns } from "./runs";
+import { getRunEvents, getRunLogs, listRuns } from "./runs";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
@@ -16,7 +16,7 @@ test("lists runs under the selected environment", async () => {
 
   await listRuns({ projectID: "project-1", environmentID: "env-1" });
 
-  expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/runs?status=all&limit=100");
+  expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/runs?limit=100");
 });
 
 test("gets run events with cursor and limit", async () => {
@@ -43,18 +43,19 @@ test("gets run events without empty params and escapes ids", async () => {
   expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/runs/run%2F1/events");
 });
 
-test("completes a pending token through the authenticated scoped endpoint", async () => {
+test("gets finite run log pages with a bound cursor", async () => {
   let requestedUrl: string | undefined;
-  let requestedBody: unknown;
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
     requestedUrl = String(input);
-    requestedBody = JSON.parse(String(init?.body));
-    return Response.json({ status: "already_completed", token: { id: "token/1" } });
+    return Response.json({ logs: [], next_cursor: null });
   }) as typeof fetch;
 
-  const response = await completePendingToken("token/1", { approved: false }, "project-1", "env-1");
+  await getRunLogs("run/1", "project-1", "env-1", {
+    cursor: "rt1.cursor",
+    limit: 50,
+  });
 
-  expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/tokens/token%2F1/complete");
-  expect(requestedBody).toEqual({ data: { approved: false } });
-  expect(response.status).toBe("already_completed");
+  expect(requestedUrl).toBe(
+    "/api/projects/project-1/environments/env-1/runs/run%2F1/logs?cursor=rt1.cursor&limit=50",
+  );
 });

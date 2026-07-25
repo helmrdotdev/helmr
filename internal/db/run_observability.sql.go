@@ -103,6 +103,57 @@ func (q *Queries) CreateRunMetadataEvent(ctx context.Context, arg CreateRunMetad
 	return id, err
 }
 
+const getRunMetadataClaimScope = `-- name: GetRunMetadataClaimScope :one
+SELECT run_leases.environment_id,
+       run_leases.run_id,
+       run_leases.attempt_number
+  FROM run_leases
+  JOIN runs
+    ON runs.id = run_leases.run_id
+   AND runs.environment_id = run_leases.environment_id
+ WHERE run_leases.id = $1
+   AND run_leases.run_id = $2
+   AND run_leases.attempt_number = $3
+   AND run_leases.lease_sequence = $4
+   AND run_leases.worker_group_id = $5
+   AND run_leases.worker_instance_id = $6
+   AND run_leases.worker_epoch = $7
+   AND run_leases.worker_protocol_version = $8
+`
+
+type GetRunMetadataClaimScopeParams struct {
+	RunLeaseID            pgtype.UUID `json:"run_lease_id"`
+	RunID                 pgtype.UUID `json:"run_id"`
+	AttemptNumber         int32       `json:"attempt_number"`
+	LeaseSequence         int64       `json:"lease_sequence"`
+	WorkerGroupID         string      `json:"worker_group_id"`
+	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch           int64       `json:"worker_epoch"`
+	WorkerProtocolVersion string      `json:"worker_protocol_version"`
+}
+
+type GetRunMetadataClaimScopeRow struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+	AttemptNumber int32       `json:"attempt_number"`
+}
+
+func (q *Queries) GetRunMetadataClaimScope(ctx context.Context, arg GetRunMetadataClaimScopeParams) (GetRunMetadataClaimScopeRow, error) {
+	row := q.db.QueryRow(ctx, getRunMetadataClaimScope,
+		arg.RunLeaseID,
+		arg.RunID,
+		arg.AttemptNumber,
+		arg.LeaseSequence,
+		arg.WorkerGroupID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.WorkerProtocolVersion,
+	)
+	var i GetRunMetadataClaimScopeRow
+	err := row.Scan(&i.EnvironmentID, &i.RunID, &i.AttemptNumber)
+	return i, err
+}
+
 const updateRunMetadata = `-- name: UpdateRunMetadata :one
 UPDATE runs
    SET metadata = $1::jsonb,

@@ -137,7 +137,7 @@ in
       if err != nil {
         t.Fatal(err)
       }
-      if _, err := parseRuntimeTrustedRoot(raw); err != nil {
+      if _, err := parseReleaseTrustedRoot(raw); err != nil {
         t.Fatal(err)
       }
     }

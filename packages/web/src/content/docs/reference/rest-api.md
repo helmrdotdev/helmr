@@ -34,14 +34,7 @@ Common user/API-key routes:
 
 | Method | Path |
 | --- | --- |
-| `POST` | `/api/sessions` |
-| `POST` | `/api/sessions/start-and-wait` |
-| `GET` | `/api/sessions` |
-| `GET` | `/api/sessions/{id}` |
-| `PATCH` | `/api/sessions/{id}` |
-| `POST` | `/api/sessions/{id}/close` |
-| `POST` | `/api/sessions/{id}/cancel` |
-| `GET` | `/api/sessions/{id}/runs` |
+| `POST` | `/api/tasks/{taskDeclaredID}/start` |
 | `POST` | `/api/actors/{actorDeclaredID}/start` |
 | `POST` | `/api/actors/{actorDeclaredID}/input` |
 | `GET` | `/api/actors/{actorDeclaredID}/output` |
@@ -59,33 +52,14 @@ Common user/API-key routes:
 | `POST` | `/api/tokens/{id}/cancel` |
 | `POST` | `/api/v1/tokens/{id}/complete` |
 | `POST` | `/api/v1/tokens/{id}/callback/{secret}` |
-| `POST` | `/api/workspaces` |
-| `GET` | `/api/workspaces` |
+| `POST` | `/api/workspaces/{workspaceDeclaredID}/create` |
+| `GET` | `/api/workspaces/by-key/{workspaceDeclaredID}?key=...` |
 | `GET` | `/api/workspaces/{workspace_id}` |
-| `PATCH` | `/api/workspaces/{workspace_id}` |
-| `DELETE` | `/api/workspaces/{workspace_id}` |
-| `POST` | `/api/workspaces/{workspace_id}/materialize` |
-| `POST` | `/api/workspaces/{workspace_id}/connect` |
-| `POST` | `/api/workspaces/{workspace_id}/stop` |
+| `POST` | `/api/workspaces/{workspace_id}/delete` |
 | `GET` | `/api/workspaces/{workspace_id}/files` |
 | `GET` | `/api/workspaces/{workspace_id}/files/content` |
 | `GET` | `/api/workspaces/{workspace_id}/files/stat` |
-| `GET` | `/api/workspaces/{workspace_id}/versions` |
-| `GET` | `/api/workspaces/{workspace_id}/versions/{version_id}` |
-| `POST` | `/api/workspaces/{workspace_id}/execs` |
-| `GET` | `/api/workspaces/{workspace_id}/execs` |
-| `GET` | `/api/workspaces/{workspace_id}/execs/{exec_id}` |
-| `POST` | `/api/workspaces/{workspace_id}/execs/{exec_id}/stdin` |
-| `POST` | `/api/workspaces/{workspace_id}/execs/{exec_id}/stdin/close` |
-| `GET` | `/api/workspaces/{workspace_id}/execs/{exec_id}/stdout` |
-| `GET` | `/api/workspaces/{workspace_id}/execs/{exec_id}/stderr` |
-| `POST` | `/api/workspaces/{workspace_id}/pty` |
-| `GET` | `/api/workspaces/{workspace_id}/pty` |
-| `GET` | `/api/workspaces/{workspace_id}/pty/{pty_id}` |
-| `POST` | `/api/workspaces/{workspace_id}/pty/{pty_id}/input` |
-| `GET` | `/api/workspaces/{workspace_id}/pty/{pty_id}/output` |
-| `POST` | `/api/workspaces/{workspace_id}/pty/{pty_id}/resize` |
-| `POST` | `/api/workspaces/{workspace_id}/pty/{pty_id}/close` |
+| `POST` | `/api/workspaces/{workspace_id}/exec` |
 | `GET` | `/api/schedules` |
 | `GET` | `/api/schedules/{id}` |
 | `POST` | `/api/tokens` |
@@ -124,29 +98,20 @@ lease/start/renew/release, log/event append, Actor input/output operations,
 internal wait suspension, token creation, metadata updates, and checkpoint
 ready/failed notifications.
 
-`GET /api/runs/{id}/events` returns JSON pages by default and streams SSE when `follow=1` or `Accept: text/event-stream` is present. Page cursors and SSE `id` values are opaque run event cursors.
+`GET /api/runs/{id}/events` returns one finite JSON page. Its cursor is opaque.
 
-`GET /api/runs/{id}/logs` returns the latest stdout/stderr snapshot by default. The response `cursor` is a run-wide opaque log cursor. When `follow=1` or `Accept: text/event-stream` is present, the same route streams `run_log` SSE records after the supplied cursor. Pass the cursor as `Last-Event-ID` or `?cursor=CURSOR` to continue after chunks already received.
+`GET /api/runs/{id}/logs` returns one finite page of stdout, stderr, and
+structured log records. The response cursor is opaque. Clients poll from the
+next cursor when they need to follow progress.
 
-Workspace routes manage durable workspace records and live materializations.
-`GET /api/workspaces/{workspace_id}/files/content?path=...` reads raw bytes
-from a ready workspace version. `GET /api/workspaces/{workspace_id}/files`
-lists direct children and `GET /api/workspaces/{workspace_id}/files/stat`
-returns one file entry. File reads use `source=current` by default, where
-`current` means the workspace's ready `current_version_id`. To read another
-ready version in the same workspace, pass `source=version&version_id=...`.
-`version_id` without `source=version` is rejected. `source=live` is reserved and
-returns not implemented until live file reads are available. Version routes list
-and retrieve ready versions only. File listing uses `limit` with a default of
-200 and a maximum of 500. Version listing uses `limit` with a default of 100 and
-a maximum of 200.
+Workspace routes expose create/ref/retrieve/delete, committed file reads, and
+one bounded basic exec. `GET /api/workspaces/{workspace_id}/files/content`
+reads raw bytes; the list and stat routes return committed file metadata.
 
-`POST /api/workspaces/{workspace_id}/execs` starts a write-capable command in
-the workspace. `POST /api/workspaces/{workspace_id}/pty` starts an interactive
-PTY. Exec stdout/stderr and PTY output routes return stored chunks by default
-and stream SSE when `follow=1` or `Accept: text/event-stream` is present. Pass
-the cursor as `Last-Event-ID` or `?cursor=N` to continue after chunks already
-received.
+`POST /api/workspaces/{workspace_id}/exec` executes one write-capable command
+and returns its bounded terminal stdout, stderr, and exit code. Process handles,
+PTYs, materialization controls, and public Workspace-version management are not
+v0 routes.
 
 Schedules are declared only with `schedules.task()` in source. Deployment
 promotion reconciles them atomically. Authenticated Schedule routes are

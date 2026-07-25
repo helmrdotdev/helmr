@@ -151,7 +151,7 @@ func isSemverVersion(value string) bool {
 	return true
 }
 
-const starterHelloTask = `import { cache, image, sandbox, source, task } from "@helmr/sdk"
+const starterHelloTask = `import { cache, image, source, task, workspace } from "@helmr/sdk"
 
 const runtime = image("hello")
   .from("node:24-bookworm-slim")
@@ -162,13 +162,12 @@ const runtime = image("hello")
     cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("hello-bun") }],
   })
 
-const sb = sandbox("hello")
+export const helloWorkspace = workspace("hello")
   .image(runtime)
-  .workspace("/app")
+  .resources({ cpu: 1, memory: "1Gi" })
 
 export const hello = task({
   id: "hello",
-  sandbox: sb,
   run: async () => ({ ok: true }),
 })
 `

@@ -50,10 +50,10 @@ else
 fi
 if command -v sha256sum >/dev/null 2>&1; then
   build_payload_sha="$(printf '%s\n' '{"scenario":"build-placement","expectedEnvironment":"staging","smokeCase":"runtime"}' | jq -cS . | sha256sum | awk '{print $1}')"
-  run_payload_sha="$(printf '%s\n' '{"scenario":"run-placement","expectedEnvironment":"staging","smokeCase":"session-continuation"}' | jq -cS . | sha256sum | awk '{print $1}')"
+  run_payload_sha="$(printf '%s\n' '{"scenario":"run-placement","expectedEnvironment":"staging","smokeCase":"actor-continuation"}' | jq -cS . | sha256sum | awk '{print $1}')"
 else
   build_payload_sha="$(printf '%s\n' '{"scenario":"build-placement","expectedEnvironment":"staging","smokeCase":"runtime"}' | jq -cS . | shasum -a 256 | awk '{print $1}')"
-  run_payload_sha="$(printf '%s\n' '{"scenario":"run-placement","expectedEnvironment":"staging","smokeCase":"session-continuation"}' | jq -cS . | shasum -a 256 | awk '{print $1}')"
+  run_payload_sha="$(printf '%s\n' '{"scenario":"run-placement","expectedEnvironment":"staging","smokeCase":"actor-continuation"}' | jq -cS . | shasum -a 256 | awk '{print $1}')"
 fi
 control_tfvars_fixture="${tmp}/control.tfvars"
 worker_tfvars_fixture="${tmp}/worker.tfvars"
@@ -112,7 +112,7 @@ jq -n \
       fixtures_root:"dev/workflows",fixture_tree:$fixture_tree,project:"helmr",environments:["staging","production"],
       cases:[
         {id:"build-on-build-worker",category:"build",task:"runtime-smoke",payload:{scenario:"build-placement",expectedEnvironment:"staging",smokeCase:"runtime"},payload_sha256:$build_payload_sha,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["build-completed","build-group-only"]},repetitions:1},
-        {id:"run-on-run-worker",category:"run",task:"runtime-smoke",payload:{scenario:"run-placement",expectedEnvironment:"staging",smokeCase:"session-continuation"},payload_sha256:$run_payload_sha,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["run-completed","run-group-only"]},repetitions:1},
+        {id:"run-on-run-worker",category:"run",task:"runtime-smoke",payload:{scenario:"run-placement",expectedEnvironment:"staging",smokeCase:"actor-continuation"},payload_sha256:$run_payload_sha,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["run-completed","run-group-only"]},repetitions:1},
         {id:"build-failure-isolation",category:"build_failure_isolation",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["run-unaffected"]},repetitions:1},
         {id:"worker-restart",category:"worker_restart",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["authority-recovered"]},repetitions:1},
         {id:"identity-fencing",category:"identity_fencing",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["stale-epoch-rejected"]},repetitions:1},

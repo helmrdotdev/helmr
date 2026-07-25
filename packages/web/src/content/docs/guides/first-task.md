@@ -23,7 +23,7 @@ helmr init --dir ./my-helmr-tasks
 The starter shape is:
 
 ```ts
-import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { cache, image, source, task, workspace } from "@helmr/sdk"
 
 const runtime = image("hello")
   .from("node:24-bookworm-slim")
@@ -34,18 +34,18 @@ const runtime = image("hello")
     cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("hello-bun") }],
   })
 
-const sb = sandbox("hello")
+export const helloWorkspace = workspace("hello")
   .image(runtime)
-  .workspace("/app")
+  .resources({ cpu: 1, memory: "1Gi" })
 
 export const hello = task({
   id: "hello",
-  sandbox: sb,
   run: async () => ({ ok: true }),
 })
 ```
 
-Tasks declare their runtime before they run: image, sandbox, workspace mount, resources, secrets, max duration, payload type, and return value.
+Workspace declarations own the image and resources. Tasks declare their payload,
+duration, retry policy, Secrets, and return value.
 
 Use `ctx` for read-only execution context and module-level APIs for operations:
 
@@ -60,8 +60,7 @@ const helloPayload = z.object({
 
 export const hello = task({
   id: "hello",
-  sandbox: sb,
-  maxDuration: 300,
+  maxDuration: "5m",
   payload: helloPayload,
   run: async (payload, ctx) => {
     const greeting = `hello ${payload.name?.trim() || "Helmr"}`

@@ -3,7 +3,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import { pixelsFromRows } from "../lib/pixels";
 import { breadcrumbJsonLd, softwareJsonLd } from "../lib/seo";
 
-const runtimeCode = `import { cache, image, sandbox, source, task, tokens } from "@helmr/sdk"
+const runtimeCode = `import { cache, image, source, task, tokens, workspace } from "@helmr/sdk"
 import { Codex } from "@openai/codex-sdk"
 import { z } from "zod"
 
@@ -16,14 +16,17 @@ const base = image("repo-agent")
     cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("bun") }]
   })
 
-const sbx = sandbox("repo-agent")
+export const repoWorkspace = workspace("repo-agent")
   .image(base)
   .resources({ cpu: 2, memory: "4Gi" })
 
+const reviewRequest = z.object({
+  prNumber: z.number().int().positive()
+})
+
 export const reviewPr = task({
   id: "review-pr",
-  sandbox: sbx,
-  secrets: [{ name: "OPENAI_API_KEY", env: "OPENAI_API_KEY" }],
+  payload: reviewRequest,
   run: async (event, ctx) => {
     const codex = new Codex()
     const thread = codex.startThread({ workingDirectory: process.cwd() })
@@ -88,9 +91,9 @@ const highlightTypeScript = (value: string) => {
 
 const codeRegions = [
   { key: "image", label: "image", from: 5, to: 12, tone: "blue", strong: "#5079e4" },
-  { key: "sandbox", label: "sandbox", from: 14, to: 16, tone: "green", strong: "#3c8a59" },
-  { key: "task", label: "task", from: 18, to: 25, tone: "pink", strong: "#da5992" },
-  { key: "input", label: "human input", from: 27, to: 40, tone: "yellow", strong: "#dfa400" },
+  { key: "workspace", label: "workspace", from: 14, to: 16, tone: "green", strong: "#3c8a59" },
+  { key: "task", label: "task", from: 18, to: 29, tone: "pink", strong: "#da5992" },
+  { key: "input", label: "human input", from: 30, to: 43, tone: "yellow", strong: "#dfa400" },
 ] as const;
 
 const codeLines = runtimeCode.split("\n").map((line, index) => ({
@@ -256,15 +259,26 @@ const decision = await approval.wait({
     lang: "ts",
   },
   {
-    label: "sessions.start",
+    label: "client.tasks.start",
     icon: "bolt",
     tone: "pink",
     title: "Start from anywhere",
-    caption: "Your product, a webhook, CI, or another task — keyed by a durable session identity.",
-    code: `const started = await sessions.start(
-  reviewPr,
-  { prNumber: 482 },
-  { externalId: \`github-pr:\${pr.id}:\${pr.head.sha}\` }
+    caption: "Your product, a webhook, or CI starts a declared Task in an existing durable Workspace.",
+    code: `const workspace = await client.workspaces.create<typeof repoWorkspace>(
+  "repo-agent",
+  {
+    key: \`github-pr:\${pr.id}\`,
+    secrets: [{ name: "OPENAI_API_KEY", env: "OPENAI_API_KEY" }]
+  }
+)
+
+const run = await client.tasks.start<typeof reviewPr>(
+  "review-pr",
+  {
+    payload: { prNumber: 482 },
+    workspace: { id: workspace.id },
+    idempotencyKey: \`github-pr:\${pr.id}:\${pr.head.sha}\`
+  }
 )`,
     lang: "ts",
   },
@@ -273,12 +287,13 @@ const decision = await approval.wait({
     icon: "resume",
     tone: "green",
     title: "Reuse the workspace",
-    caption: "The session records the workflow. The workspace stays available for follow-up execs and terminals.",
-    code: `const workspace = workspaces.open(started.session.workspaceId)
-const exec = await workspace.exec(["bash", "-lc", "bun test"], {
-  cwd: "/workspace"
+    caption: "The Workspace outlives one Run and supports bounded follow-up file reads and commands.",
+    code: `const result = await workspace.exec({
+  command: ["bash", "-lc", "bun test"],
+  cwd: "/workspace",
+  idempotencyKey: "verify:482"
 })
-await exec.wait()`,
+if (result.exitCode !== 0) throw new Error(result.stderr)`,
     lang: "ts",
   },
 ] as const;
@@ -293,7 +308,7 @@ const renderedFeatures = features.map((feature) => ({
 <BaseLayout
   title="Helmr — The durable runtime for AI agents"
   socialTitle="The durable runtime for AI agents"
-  description="The durable runtime for AI agents. Define TypeScript tasks, start durable sessions, and keep inputs, outputs, waits, logs, and events attached across Firecracker microVM runs."
+  description="The durable runtime for AI agents. Define TypeScript Tasks, run them in durable Workspaces, and preserve waits, logs, events, and outputs across Firecracker microVM execution."
   path="/"
   jsonLd={[softwareJsonLd(), breadcrumbJsonLd([{ name: "Home", path: "/" }])]}
 >
@@ -349,11 +364,11 @@ const renderedFeatures = features.map((feature) => ({
             <p class="t-line"><span class="t-prompt">$</span> <span class="t-cmd">helmr deploy</span></p>
             <p class="t-line t-dim">Deployment dpl_4e21 queued</p>
             <p class="t-line"><span class="t-ok">v12</span></p>
-            <p class="t-line t-gap"><span class="t-prompt">$</span> <span class="t-cmd">helmr run review-pr --payload prNumber=482</span></p>
+            <p class="t-line t-gap"><span class="t-prompt">$</span> <span class="t-cmd">helmr run start review-pr --workspace ws_7b2d --payload-json '&lbrace;&quot;prNumber&quot;:482&rbrace;'</span></p>
             <p class="t-line">run_8f3a</p>
-            <p class="t-line t-gap"><span class="t-prompt">$</span> <span class="t-cmd">helmr ps</span></p>
-            <p class="t-line t-dim">RUN ID    TASK       STATUS   INPUT CHANNEL</p>
-            <p class="t-line">run_8f3a  review-pr  <span class="t-wait">waiting</span>  <span class="t-accent">approval</span></p>
+            <p class="t-line t-gap"><span class="t-prompt">$</span> <span class="t-cmd">helmr run list</span></p>
+            <p class="t-line t-dim">RUN ID    TASK       STATUS</p>
+            <p class="t-line">run_8f3a  review-pr  <span class="t-wait">waiting</span>  <span class="t-accent">token</span></p>
             <p class="t-line t-gap" data-cursor><span class="t-prompt">$</span> <span class="t-cursor"></span></p>
           </div>
           <div class="term-foot" data-term-foot>
@@ -381,11 +396,12 @@ const renderedFeatures = features.map((feature) => ({
       <div class="section-head">
         <h2 class="headline section-title">
           One TypeScript file.
-          <span class="faint">Image, sandbox, task, secrets, human input.</span>
+          <span class="faint">Image, Workspace, Task, Secrets, human input.</span>
         </h2>
         <p class="section-note">
           Codex here &mdash; or Claude Code, the AI SDK, any agent SDK that runs on
-          Node. Follow-up input stays attached to the session, not the start payload.
+          Node. Durable continuation uses Actor input or independently completable Tokens;
+          one-shot Task input remains an explicit start payload.
         </p>
       </div>
       <div class="code-frame panel panel-screen">
@@ -615,7 +631,7 @@ const renderedFeatures = features.map((feature) => ({
       cursorLine?.removeAttribute("data-cursor");
       const respondCommand = document.createElement("span");
       cursorLine?.appendChild(respondCommand);
-      await typeInto(respondCommand, "curl -sS -H 'authorization: Bearer $SESSION_INPUT_TOKEN' -H 'content-type: application/json' -d '{\"data\":{\"approved\":true}}' $HELMR_API_URL/api/sessions/sess_9d2c/inputs/approval");
+      await typeInto(respondCommand, "curl -sS -H 'authorization: Bearer $TOKEN_PUBLIC_ACCESS_TOKEN' -H 'content-type: application/json' -d '{\"result\":{\"approved\":true}}' $HELMR_API_URL/api/public/tokens/tok_9d2c/complete");
       await sleep(reduceMotion ? 0 : 500);
 
       const psLine = appendLine('<span class="t-prompt">$</span> <span class="t-cmd"></span>', "t-line t-gap");
@@ -1092,7 +1108,7 @@ const renderedFeatures = features.map((feature) => ({
   }
 
   .cl[data-region="image"] .ln { box-shadow: inset -3px 0 0 #5079e4; }
-  .cl[data-region="sandbox"] .ln { box-shadow: inset -3px 0 0 #3c8a59; }
+  .cl[data-region="workspace"] .ln { box-shadow: inset -3px 0 0 #3c8a59; }
   .cl[data-region="task"] .ln { box-shadow: inset -3px 0 0 #da5992; }
   .cl[data-region="input"] .ln { box-shadow: inset -3px 0 0 #dfa400; }
 
@@ -1101,8 +1117,8 @@ const renderedFeatures = features.map((feature) => ({
     background: rgba(80, 121, 228, 0.1);
   }
 
-  .code-frame:has(.code-tag-sandbox:hover) .cl[data-region="sandbox"],
-  .code-frame:has(.cl[data-region="sandbox"]:hover) .cl[data-region="sandbox"] {
+  .code-frame:has(.code-tag-workspace:hover) .cl[data-region="workspace"],
+  .code-frame:has(.cl[data-region="workspace"]:hover) .cl[data-region="workspace"] {
     background: rgba(60, 138, 89, 0.12);
   }
 
@@ -1118,8 +1134,8 @@ const renderedFeatures = features.map((feature) => ({
 
   .code-frame:has(.code-tag-image:hover) .code-tag-image,
   .code-frame:has(.cl[data-region="image"]:hover) .code-tag-image,
-  .code-frame:has(.code-tag-sandbox:hover) .code-tag-sandbox,
-  .code-frame:has(.cl[data-region="sandbox"]:hover) .code-tag-sandbox,
+  .code-frame:has(.code-tag-workspace:hover) .code-tag-workspace,
+  .code-frame:has(.cl[data-region="workspace"]:hover) .code-tag-workspace,
   .code-frame:has(.code-tag-task:hover) .code-tag-task,
   .code-frame:has(.cl[data-region="task"]:hover) .code-tag-task,
   .code-frame:has(.code-tag-input:hover) .code-tag-input,

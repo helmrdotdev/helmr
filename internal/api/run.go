@@ -122,7 +122,6 @@ type RunResponse struct {
 	EnvironmentID     string          `json:"environment_id"`
 	DeploymentID      string          `json:"deployment_id"`
 	DeploymentTaskID  string          `json:"deployment_task_id"`
-	SessionID         string          `json:"session_id"`
 	Version           string          `json:"version"`
 	DeploymentVersion string          `json:"deployment_version"`
 	APIVersion        string          `json:"api_version"`
@@ -140,13 +139,16 @@ type RunResponse struct {
 }
 
 const (
-	RunStatusQueued    = "queued"
-	RunStatusRunning   = "running"
-	RunStatusWaiting   = "waiting"
-	RunStatusSucceeded = "succeeded"
-	RunStatusFailed    = "failed"
-	RunStatusCancelled = "cancelled"
-	RunStatusExpired   = "expired"
+	RunStatusQueued          = "queued"
+	RunStatusRunning         = "running"
+	RunStatusWaiting         = "waiting"
+	RunStatusRetryDelayed    = "retry-delayed"
+	RunStatusCancelRequested = "cancel-requested"
+	RunStatusSucceeded       = "succeeded"
+	RunStatusFailed          = "failed"
+	RunStatusCancelled       = "cancelled"
+	RunStatusExpired         = "expired"
+	RunStatusSystemFailed    = "system-failed"
 
 	RunEventKindCompleted = "run.completed"
 	RunEventKindFailed    = "run.failed"
@@ -156,7 +158,7 @@ const (
 
 func RunStatusIsTerminal(status string) bool {
 	switch strings.TrimSpace(status) {
-	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled, RunStatusExpired:
+	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled, RunStatusExpired, RunStatusSystemFailed:
 		return true
 	default:
 		return false

@@ -1,8 +1,11 @@
 package control
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +14,9 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -84,7 +89,7 @@ func (s *Server) workerAppendRunLogs(w http.ResponseWriter, r *http.Request) {
 		ObservedSeq: int64(request.ObservedSeq),
 		Content:     content,
 	})
-	if isNoRows(err) {
+	if isNoRows(err) || errors.Is(err, errStaleRunLeaseClaim) {
 		writeError(w, conflict(errors.New("worker run lease is stale or the log chunk sequence contains different content")))
 		return
 	}
@@ -106,6 +111,44 @@ func (s *Server) appendReceiptRunLog(
 	parsed parsedRunLeaseReceipt,
 	input db.AppendReceiptRunLogChunkParams,
 ) (db.AppendReceiptRunLogChunkRow, error) {
+	receiptFingerprint, err := runLeaseReceiptFingerprint(lease)
+	if err != nil {
+		return db.AppendReceiptRunLogChunkRow{}, err
+	}
+	replay, err := s.db.GetRunLogChunkReplay(ctx, db.GetRunLogChunkReplayParams{
+		RunID:      pgvalue.UUID(parsed.runID),
+		RunLeaseID: pgvalue.UUID(parsed.leaseID),
+		AttemptNumber: pgtype.Int4{
+			Int32: lease.AttemptNumber,
+			Valid: true,
+		},
+		Stream: input.Stream,
+		ObservedSeq: pgtype.Int8{
+			Int64: input.ObservedSeq,
+			Valid: true,
+		},
+	})
+	switch {
+	case err == nil:
+		payloadMatches, compareErr := equalJSON(
+			[]byte(replay.EventPayload),
+			input.Payload,
+		)
+		if compareErr != nil {
+			return db.AppendReceiptRunLogChunkRow{}, compareErr
+		}
+		return db.AppendReceiptRunLogChunkRow{
+			OrgID: replay.OrgID, RunID: replay.RunID,
+			RunLeaseID: replay.RunLeaseID, AttemptNumber: replay.AttemptNumber,
+			Stream: replay.Stream, Seq: replay.Seq, ObservedSeq: replay.ObservedSeq,
+			Content: replay.Content, SizeBytes: replay.SizeBytes, CreatedAt: replay.CreatedAt,
+			ReplayMatches: bytes.Equal(replay.Content, input.Content) &&
+				payloadMatches &&
+				replay.ReceiptFingerprint == receiptFingerprint,
+		}, nil
+	case !errors.Is(err, pgx.ErrNoRows):
+		return db.AppendReceiptRunLogChunkRow{}, err
+	}
 	input.WorkspaceMountID = pgvalue.UUID(parsed.workspaceMountID)
 	input.WorkspaceLeaseID = pgvalue.UUID(parsed.workspaceLeaseID)
 	input.RunLeaseID = pgvalue.UUID(parsed.leaseID)
@@ -137,7 +180,43 @@ func (s *Server) appendReceiptRunLog(
 	input.Traceparent = pgtype.Text{String: lease.Trace.Traceparent, Valid: true}
 	input.StartDeadlineAt = pgtype.Timestamptz{Time: lease.StartDeadlineAt, Valid: true}
 	input.ExpiresAt = pgtype.Timestamptz{Time: lease.ExpiresAt, Valid: true}
+	input.ReceiptFingerprint = receiptFingerprint
 	return s.db.AppendReceiptRunLogChunk(ctx, input)
+}
+
+func runMetadataClaimScopeParams(
+	lease api.WorkerRunLeaseReceipt,
+	parsed parsedRunLeaseReceipt,
+) db.GetRunMetadataClaimScopeParams {
+	return db.GetRunMetadataClaimScopeParams{
+		RunLeaseID: pgvalue.UUID(parsed.leaseID), RunID: pgvalue.UUID(parsed.runID),
+		AttemptNumber: lease.AttemptNumber, LeaseSequence: lease.LeaseSequence,
+		WorkerGroupID:         lease.WorkerGroupID,
+		WorkerInstanceID:      pgvalue.UUID(parsed.workerInstanceID),
+		WorkerEpoch:           lease.WorkerEpoch,
+		WorkerProtocolVersion: lease.WorkerProtocolVersion,
+	}
+}
+
+func runLeaseReceiptFingerprint(lease api.WorkerRunLeaseReceipt) (string, error) {
+	canonical, err := jsoncanon.Transform(mustJSON(lease))
+	if err != nil {
+		return "", fmt.Errorf("canonicalize Run Lease receipt: %w", err)
+	}
+	digest := sha256.Sum256(canonical)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func equalJSON(left, right []byte) (bool, error) {
+	leftCanonical, err := jsoncanon.Transform(left)
+	if err != nil {
+		return false, fmt.Errorf("canonicalize stored Run log payload: %w", err)
+	}
+	rightCanonical, err := jsoncanon.Transform(right)
+	if err != nil {
+		return false, fmt.Errorf("canonicalize Run log payload: %w", err)
+	}
+	return bytes.Equal(leftCanonical, rightCanonical), nil
 }
 
 type workerLogChunkPayload struct {

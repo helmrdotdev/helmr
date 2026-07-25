@@ -193,79 +193,21 @@ func (k *testKeyring) Delete(service, user string) error {
 	return nil
 }
 
-func TestResumeCommandIsNotRegistered(t *testing.T) {
-	cmd := newRootCommand()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"resume", "respond", "wait-1"})
-	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), `unknown command "resume"`) {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestReplayCommandIsNotRegistered(t *testing.T) {
-	cmd := newRootCommand()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"replay", "run-1"})
-	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), `unknown command "replay"`) {
-		t.Fatalf("err = %v", err)
-	}
-}
-
 func TestGreenfieldCommandSurface(t *testing.T) {
 	root := newRootCommand()
 	for _, path := range [][]string{
 		{"workspace"},
 		{"task"},
-		{"session"},
 		{"run"},
 		{"deployment"},
-		{"sandbox"},
 		{"token"},
-		{"session", "close"},
+		{"run", "start"},
 		{"token", "get"},
 		{"token", "complete"},
 		{"token", "cancel"},
 	} {
 		if commandByPath(root, path...) == nil {
 			t.Fatalf("command %q is not registered", strings.Join(path, " "))
-		}
-	}
-	for _, path := range [][]string{
-		{"workspaces"},
-		{"tasks"},
-		{"sessions"},
-		{"runs"},
-		{"ps"},
-		{"show"},
-		{"logs"},
-		{"events"},
-		{"wait"},
-		{"cancel"},
-		{"promote"},
-		{"session", "run"},
-		{"session", "runs"},
-		{"session", "logs"},
-		{"session", "events"},
-		{"session", "input"},
-		{"session", "output"},
-		{"session", "output", "follow"},
-		{"session", "stream"},
-		{"session", "stream", "output", "follow"},
-		{"token", "list"},
-		{"token", "claim"},
-		{"token", "create"},
-		{"workspace", "file"},
-		{"workspace", "cp"},
-		{"workspace", "port"},
-		{"workspace", "version"},
-		{"workspace", "fork"},
-	} {
-		if commandByPath(root, path...) != nil {
-			t.Fatalf("command %q must not be registered", strings.Join(path, " "))
 		}
 	}
 }

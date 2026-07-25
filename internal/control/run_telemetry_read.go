@@ -78,8 +78,8 @@ func (s *Server) listRunLogsHTTP(w http.ResponseWriter, r *http.Request) {
 		writeRunTelemetryError(w, err)
 		return
 	}
-	hasNext := len(page.Chunks) > int(limit)
-	if hasNext {
+	hasNext := hasRunTelemetryPageBoundary(len(page.Chunks), limit)
+	if len(page.Chunks) > int(limit) {
 		page.Chunks = page.Chunks[:limit]
 	}
 	last := after
@@ -90,7 +90,7 @@ func (s *Server) listRunLogsHTTP(w http.ResponseWriter, r *http.Request) {
 			writeRunTelemetryError(w, telemetry.ErrHistoricalUnavailable)
 			return
 		}
-		record, err := projectRunLogRecord(chunk)
+		record, err := projectRunLogRecord(chunk, target.runPublicID)
 		if err != nil {
 			writeRunTelemetryError(w, telemetry.ErrHistoricalUnavailable)
 			return
@@ -98,17 +98,22 @@ func (s *Server) listRunLogsHTTP(w http.ResponseWriter, r *http.Request) {
 		last = seq
 		records = append(records, record)
 	}
-	if !hasNext {
-		if err := s.requireProjectedRunTelemetry(
-			r,
-			target,
-			db.TelemetryStreamKindRunLog,
-			levels,
-			last,
-		); err != nil {
-			writeRunTelemetryError(w, err)
-			return
-		}
+	through := int64(0)
+	if hasNext {
+		through = last
+	}
+	if err := s.requireProjectedRunTelemetry(
+		r,
+		target,
+		db.TelemetryStreamKindRunLog,
+		levels,
+		after,
+		through,
+		last,
+		!hasNext,
+	); err != nil {
+		writeRunTelemetryError(w, err)
+		return
 	}
 	nextCursor := ""
 	if last > after {
@@ -157,30 +162,39 @@ func (s *Server) listRunEventsHTTP(w http.ResponseWriter, r *http.Request) {
 		writeRunTelemetryError(w, err)
 		return
 	}
-	hasNext := len(page.Events) > int(limit)
-	if hasNext {
+	hasNext := hasRunTelemetryPageBoundary(len(page.Events), limit)
+	if len(page.Events) > int(limit) {
 		page.Events = page.Events[:limit]
 	}
 	last := after
-	for _, event := range page.Events {
+	for index := range page.Events {
+		event := &page.Events[index]
 		seq, err := telemetry.ParseCursor(event.ID)
 		if err != nil {
 			writeRunTelemetryError(w, telemetry.ErrHistoricalUnavailable)
 			return
 		}
 		last = seq
+		event.RunID = optionalString(target.runPublicID)
+		event.DeploymentID = nil
+		event.Trace = api.TraceContext{}
 	}
-	if !hasNext {
-		if err := s.requireProjectedRunTelemetry(
-			r,
-			target,
-			db.TelemetryStreamKindEvent,
-			severities,
-			last,
-		); err != nil {
-			writeRunTelemetryError(w, err)
-			return
-		}
+	through := int64(0)
+	if hasNext {
+		through = last
+	}
+	if err := s.requireProjectedRunTelemetry(
+		r,
+		target,
+		db.TelemetryStreamKindEvent,
+		severities,
+		after,
+		through,
+		last,
+		!hasNext,
+	); err != nil {
+		writeRunTelemetryError(w, err)
+		return
 	}
 	nextCursor := ""
 	if last > after {
@@ -267,30 +281,39 @@ func (s *Server) requireProjectedRunTelemetry(
 	streamKind db.TelemetryStreamKind,
 	filters []string,
 	after int64,
+	through int64,
+	projectedThrough int64,
+	requireComplete bool,
 ) error {
 	frontier, err := s.db.GetRunTelemetryFrontier(
 		r.Context(),
 		db.GetRunTelemetryFrontierParams{
-			AfterSeq: after, OrgID: target.orgID, RunID: target.runID,
+			AfterSeq: after, ThroughSeq: through,
+			OrgID: target.orgID, RunID: target.runID,
 			StreamKind: streamKind, FilterValues: filters,
 		},
 	)
 	if err != nil {
 		return fmt.Errorf("read Run telemetry frontier: %w", err)
 	}
-	if frontier.ObservedSeq <= after {
-		return nil
-	}
 	if frontier.DeadLetteredAfter {
 		return telemetry.ErrHistoricalUnavailable
 	}
-	return telemetry.LaggingError{
-		WatermarkSeq: after,
-		WantSeq:      frontier.ObservedSeq,
+	if frontier.PendingSeq > after ||
+		(requireComplete && frontier.ObservedSeq > projectedThrough) {
+		return telemetry.LaggingError{
+			WatermarkSeq: projectedThrough,
+			WantSeq:      frontier.ObservedSeq,
+		}
 	}
+	return nil
 }
 
-func projectRunLogRecord(chunk api.RunLogChunk) (api.RunLogRecord, error) {
+func hasRunTelemetryPageBoundary(recordCount int, limit int32) bool {
+	return recordCount >= int(limit)
+}
+
+func projectRunLogRecord(chunk api.RunLogChunk, runPublicID string) (api.RunLogRecord, error) {
 	if chunk.Stream != string(api.WorkerLogStreamStructured) {
 		if chunk.Stream != string(api.WorkerLogStreamStdout) &&
 			chunk.Stream != string(api.WorkerLogStreamStderr) {
@@ -299,7 +322,7 @@ func projectRunLogRecord(chunk api.RunLogChunk) (api.RunLogRecord, error) {
 		observed := chunk.ObservedSeq
 		size := chunk.Bytes
 		return api.RunLogRecord{
-			ID: chunk.ID, Kind: chunk.Stream, RunID: chunk.RunID,
+			ID: chunk.ID, Kind: chunk.Stream, RunID: runPublicID,
 			AttemptNumber:    chunk.AttemptNumber,
 			ObservedSequence: &observed, ContentBase64: chunk.ContentBase64,
 			Bytes: &size, At: chunk.At,
@@ -322,7 +345,7 @@ func projectRunLogRecord(chunk api.RunLogChunk) (api.RunLogRecord, error) {
 		return api.RunLogRecord{}, errors.New("structured Run log is invalid")
 	}
 	return api.RunLogRecord{
-		ID: chunk.ID, Kind: "structured", RunID: chunk.RunID,
+		ID: chunk.ID, Kind: "structured", RunID: runPublicID,
 		AttemptNumber: chunk.AttemptNumber, Level: value.Level,
 		Message: value.Message, Attributes: value.Attributes, At: chunk.At,
 	}, nil

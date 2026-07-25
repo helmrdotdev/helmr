@@ -257,6 +257,8 @@ type Querier interface {
 	GetRunLeaseRenewalTime(ctx context.Context) (pgtype.Timestamptz, error)
 	GetRunLeaseSecretDeliveryLocators(ctx context.Context, arg GetRunLeaseSecretDeliveryLocatorsParams) (GetRunLeaseSecretDeliveryLocatorsRow, error)
 	GetRunLeaseStartLocators(ctx context.Context, arg GetRunLeaseStartLocatorsParams) (GetRunLeaseStartLocatorsRow, error)
+	GetRunLogChunkReplay(ctx context.Context, arg GetRunLogChunkReplayParams) (GetRunLogChunkReplayRow, error)
+	GetRunMetadataClaimScope(ctx context.Context, arg GetRunMetadataClaimScopeParams) (GetRunMetadataClaimScopeRow, error)
 	GetRunOwnedWorkspaceLease(ctx context.Context, arg GetRunOwnedWorkspaceLeaseParams) (WorkspaceLease, error)
 	GetRunResumeHintAuthority(ctx context.Context, arg GetRunResumeHintAuthorityParams) (GetRunResumeHintAuthorityRow, error)
 	GetRunSnapshot(ctx context.Context, arg GetRunSnapshotParams) (GetRunSnapshotRow, error)

@@ -54,25 +54,32 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 		writeError(w, err)
 		return
 	}
+	receiptFingerprint, err := runLeaseReceiptFingerprint(request.Lease)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		authority, err := lockReceiptRunMutation(
+		// Resolve only the stable attempt/worker claim scope before idempotency
+		// acquisition. Mutable lease and Run receipt fields are bound by the
+		// canonical receipt fingerprint in the claim request, while a new
+		// mutation still validates the complete live receipt under lock below.
+		replayContext, err := work.q.GetRunMetadataClaimScope(
 			r.Context(),
-			work.q,
-			worker,
-			request.Lease,
-			parsed,
+			runMetadataClaimScopeParams(request.Lease, parsed),
 		)
 		if err != nil {
-			return err
+			return staleRunLeaseClaim(err)
 		}
-		environmentID := pgvalue.MustUUIDValue(authority.run.EnvironmentID)
-		runID := pgvalue.MustUUIDValue(authority.run.ID)
+		environmentID := pgvalue.MustUUIDValue(replayContext.EnvironmentID)
+		runID := pgvalue.MustUUIDValue(replayContext.RunID)
 		claimRequest, err := idempotency.NewRunMetadataRequest(
 			environmentID,
 			runID,
-			authority.attempt.Number,
+			replayContext.AttemptNumber,
 			operationID.String(),
 			mutation.canonical,
+			receiptFingerprint,
 		)
 		if err != nil {
 			return err
@@ -93,6 +100,21 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 				)
 			}
 			return nil
+		}
+		authority, err := lockReceiptRunMutation(
+			r.Context(),
+			work.q,
+			worker,
+			request.Lease,
+			parsed,
+		)
+		if err != nil {
+			return err
+		}
+		if authority.run.EnvironmentID != replayContext.EnvironmentID ||
+			authority.run.ID != replayContext.RunID ||
+			authority.attempt.Number != replayContext.AttemptNumber {
+			return errStaleRunLeaseClaim
 		}
 		next, err := applyRunMetadataMutation(authority.run.Metadata, mutation)
 		if err != nil {
@@ -229,7 +251,7 @@ func (s *Server) workerAppendStructuredLog(w http.ResponseWriter, r *http.Reques
 			ObservedSeq: int64(request.ObservedSeq), Content: content,
 		},
 	)
-	if isNoRows(err) {
+	if isNoRows(err) || errors.Is(err, errStaleRunLeaseClaim) {
 		writeError(w, conflict(errors.New(
 			"worker Run Lease is stale or the structured log sequence contains different content",
 		)))

@@ -14,6 +14,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type workerLogReplayStore struct {
@@ -21,6 +23,14 @@ type workerLogReplayStore struct {
 	replayMatches bool
 	called        *bool
 	params        *db.AppendReceiptRunLogChunkParams
+	replay        *db.GetRunLogChunkReplayRow
+}
+
+func (s workerLogReplayStore) GetRunLogChunkReplay(_ context.Context, _ db.GetRunLogChunkReplayParams) (db.GetRunLogChunkReplayRow, error) {
+	if s.replay == nil {
+		return db.GetRunLogChunkReplayRow{}, pgx.ErrNoRows
+	}
+	return *s.replay, nil
 }
 
 func (s workerLogReplayStore) AppendReceiptRunLogChunk(_ context.Context, params db.AppendReceiptRunLogChunkParams) (db.AppendReceiptRunLogChunkRow, error) {
@@ -102,6 +112,55 @@ func TestWorkerAppendLogsAcceptsIdenticalReplay(t *testing.T) {
 		!params.StartDeadlineAt.Time.Equal(lease.StartDeadlineAt) ||
 		!params.ExpiresAt.Time.Equal(lease.ExpiresAt) {
 		t.Fatalf("database receipt params = %+v", params)
+	}
+}
+
+func TestWorkerAppendLogsReplaysAfterLeaseIsNoLongerLive(t *testing.T) {
+	workerID := uuid.Must(uuid.NewV7())
+	lease := validRunLeaseReceipt(workerID)
+	body, err := json.Marshal(api.WorkerRunLogAppendRequest{
+		Lease: lease, Stream: api.WorkerLogStreamStdout, ObservedSeq: 1,
+		ContentBase64: "YWxwaGE=",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptFingerprint, err := runLeaseReceiptFingerprint(lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	server := &Server{
+		db: workerLogReplayStore{
+			called: &called,
+			replay: &db.GetRunLogChunkReplayRow{
+				RunID:              pgvalue.UUID(uuid.MustParse(lease.RunID)),
+				RunLeaseID:         pgvalue.UUID(uuid.MustParse(lease.ID)),
+				AttemptNumber:      pgtype.Int4{Int32: lease.AttemptNumber, Valid: true},
+				Stream:             string(api.WorkerLogStreamStdout),
+				ObservedSeq:        pgtype.Int8{Int64: 1, Valid: true},
+				Content:            []byte("alpha"),
+				SizeBytes:          pgtype.Int8{Int64: 5, Valid: true},
+				EventPayload:       `{"bytes":5,"observed_seq":1,"run_id":"` + lease.RunID + `","stream":"stdout"}`,
+				ReceiptFingerprint: receiptFingerprint,
+			},
+		},
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/worker/leases/run-logs", bytes.NewReader(body))
+	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
+		WorkerInstanceID: workerID, WorkerGroupID: lease.WorkerGroupID,
+		WorkerEpoch: lease.WorkerEpoch, ProtocolVersion: lease.WorkerProtocolVersion,
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.workerAppendRunLogs(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s, want success", recorder.Code, recorder.Body.String())
+	}
+	if called {
+		t.Fatal("live lease append was called for a completed replay")
 	}
 }
 

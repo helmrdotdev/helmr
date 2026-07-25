@@ -18,13 +18,8 @@ The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint wit
 | `helmr deploy [path] [-p PROJECT] [-e ENV] [--env-file FILE] [--timeout DURATION] [--json]` | Parse `helmr.config.ts`, archive source, stream deployment progress, and create a deployment. |
 | `helmr task list [--json]` | List deployed task definitions. |
 | `helmr task get TASK [--json]` | Show a deployed task definition. |
-| `helmr session start TASK [-p PROJECT] [-e ENV] [--wait] [--follow] [--json]` | Start a session for a deployed task. |
-| `helmr session list [-p PROJECT] [-e ENV] [--external-id EXTERNAL_ID]` | List sessions. |
-| `helmr session get SESSION [-p PROJECT] [-e ENV]` | Show session details by session id. |
-| `helmr session get --external-id EXTERNAL_ID [-p PROJECT] [-e ENV]` | Show session details by external id. |
-| `helmr session close SESSION [-p PROJECT] [-e ENV] [--reason TEXT] [--json]` | Close a session normally. |
-| `helmr session cancel SESSION [-p PROJECT] [-e ENV] [--reason TEXT] [--json]` | Cancel a session. |
-| `helmr run list [-p PROJECT] [-e ENV] [--session SESSION] [--json]` | List run attempts. |
+| `helmr run start TASK --workspace WORKSPACE [-p PROJECT] [-e ENV] [--wait] [--follow] [--json]` | Start a deployed Task Run in an existing Workspace. |
+| `helmr run list [-p PROJECT] [-e ENV] [--json]` | List Runs. |
 | `helmr run get RUN [-p PROJECT] [-e ENV] [--json]` | Show run details. |
 | `helmr run logs RUN [-p PROJECT] [-e ENV] [--follow]` | Print latest stdout/stderr snapshots and optionally stream new log chunks. |
 | `helmr run events RUN [-p PROJECT] [-e ENV] [--cursor CURSOR] [--limit N] [--follow]` | Print run events as JSON lines. |
@@ -33,28 +28,13 @@ The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint wit
 | `helmr token get TOKEN [-p PROJECT] [-e ENV] [--json]` | Show an external completion token. |
 | `helmr token complete TOKEN [-p PROJECT] [-e ENV] --data-json JSON [--idempotency-key KEY] [--json]` | Complete an external token. |
 | `helmr token cancel TOKEN [-p PROJECT] [-e ENV] [--idempotency-key KEY] [--json]` | Cancel a pending external token. |
-| `helmr workspace create` | Create a durable workspace. |
-| `helmr workspace list` | List durable workspaces. |
-| `helmr workspace get WORKSPACE` | Show workspace details. |
-| `helmr workspace update WORKSPACE` | Update workspace metadata. |
-| `helmr workspace delete WORKSPACE` | Delete a workspace. |
-| `helmr workspace open WORKSPACE` | Print the workspace console URL. |
-| `helmr workspace materialize WORKSPACE` | Ensure a live workspace mount exists. |
-| `helmr workspace connect WORKSPACE` | Connect to a live workspace mount. |
-| `helmr workspace stop WORKSPACE` | Stop the live materialization while keeping the durable workspace. |
-| `helmr workspace exec WORKSPACE -- COMMAND [ARGS...]` | Run a command in a workspace. |
-| `helmr workspace exec list WORKSPACE` | List workspace exec records. |
-| `helmr workspace exec get WORKSPACE EXEC` | Show workspace exec details. |
-| `helmr workspace exec logs WORKSPACE EXEC` | Read workspace exec stdout/stderr. |
-| `helmr workspace exec wait WORKSPACE EXEC` | Wait for a workspace exec to finish. |
-| `helmr workspace shell WORKSPACE` | Open an interactive shell in a workspace. |
-| `helmr workspace pty create WORKSPACE` | Create a workspace PTY session. |
-| `helmr workspace pty connect WORKSPACE PTY` | Connect to a workspace PTY session. |
-| `helmr workspace pty close WORKSPACE PTY` | Close a workspace PTY session. |
+| `helmr workspace create DECLARED_ID` | Create a durable Workspace. |
+| `helmr workspace get --id WORKSPACE` | Show Workspace details. |
+| `helmr workspace delete --id WORKSPACE` | Delete a Workspace. |
+| `helmr workspace files read/list/stat ...` | Read the current committed filesystem. |
+| `helmr workspace exec --id WORKSPACE --idempotency-key KEY -- COMMAND [ARGS...]` | Run one bounded command and return its terminal output. |
 | `helmr deployment list` | List deployments. |
 | `helmr deployment get DEPLOYMENT` | Show deployment details. |
-| `helmr sandbox list` | List deployed sandbox definitions. |
-| `helmr sandbox get SANDBOX` | Show deployed sandbox details. |
 | `helmr secret list [--json]` | List remote secret metadata. |
 | `helmr secret get NAME [--json]` | Show remote secret metadata. Secret values are never returned. |
 | `helmr secret create NAME [VALUE] [--json]` | Create a remote secret; reads stdin if value is omitted. |
@@ -71,14 +51,17 @@ Common options:
 
 `helmr deploy` writes human-readable progress to stderr and the final deployment version or ID to stdout. With `--json`, it emits JSON lines for local steps, deployment events, and the final deployment result.
 
-`helmr session start` accepts payloads from `--payload-file`, `--payload-json`, or repeated `--payload KEY=VALUE`. `-p` is reserved for `--project`. Use `--workspace WORKSPACE_ID` to attach the new session to an existing durable workspace. Secrets are declared by deployed task source and resolved from the selected project environment at run time. `--wait` waits for the initial run to finish; it does not wait for the session lifecycle to close.
+`helmr run start` accepts payloads from `--payload-file`, `--payload-json`, or
+repeated `--payload KEY=VALUE`. `--workspace` is required. Secrets are declared
+in source and placed when the Workspace is created. `--wait` waits for the Run
+to finish.
 
 With saved login auth, environment-scoped commands require both `--project` and `--env`. With `HELMR_API_KEY`, the key is already bound to one environment and project/environment flags are rejected.
 
-`helmr session close` is normal lifecycle completion. `helmr session cancel` aborts the session and cancels active work when the control plane can do so. `helmr run cancel` is a lower-level operator primitive for a specific run attempt.
+`helmr run wait` polls finite Run snapshots and telemetry pages until the Run is terminal.
 
-`helmr run wait` follows durable run events and reconnects with the last event cursor. It no longer polls on an interval.
+`helmr run logs --follow` prints finite log pages from the last opaque cursor and exits after the Run reaches a terminal state.
 
-`helmr run logs --follow` prints the current log snapshot, then follows the dedicated run log stream. It reconnects with the last log cursor and exits after the run reaches a terminal state.
-
-`helmr workspace exec` uses `--` before the remote command. Foreground exec streams stdout/stderr and exits with the remote process exit code. `--detach` returns the exec handle without waiting.
+`helmr workspace exec` uses `--` before the remote command and requires an
+idempotency key. It returns bounded stdout/stderr and exits with the remote
+process exit code.

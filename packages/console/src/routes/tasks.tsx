@@ -53,13 +53,12 @@ function deploymentTime(deployment: Deployment): { label: string; value: string 
 }
 
 function TaskRow(props: { task: string }) {
-  const sessionsHref = createMemo(() => `/sessions?${new URLSearchParams({ task_id: props.task }).toString()}`);
   return (
     <tr>
       <td><strong class="font-medium text-console-text">{props.task}</strong></td>
       <td>
-        <A href={sessionsHref()} class={"font-mono text-[11.5px] text-console-accent hover:text-console-accent-hover"}>
-          Sessions
+        <A href="/runs" class={"font-mono text-[11.5px] text-console-accent hover:text-console-accent-hover"}>
+          Runs
         </A>
       </td>
     </tr>

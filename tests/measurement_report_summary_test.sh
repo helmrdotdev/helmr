@@ -73,25 +73,25 @@ cat >"$report_b/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.path.txt" <<'EOF'
 EOF
 
 cat >"$report_a/ux-timing.log" <<'EOF'
-ux_timing case=staging-token-checkpoint event=start_requested at_ms=1000 session_id= run_id= detail=task=token-checkpoint-smoke
-ux_timing case=staging-token-checkpoint event=start_returned at_ms=1250 session_id=s1 run_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa detail=task=token-checkpoint-smoke
-ux_timing case=staging-token-checkpoint event=token_wait_requested at_ms=2000 session_id=s1 run_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa detail=step=decision
-ux_timing case=staging-token-checkpoint event=token_visible at_ms=2600 session_id=s1 run_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa detail=step=decision
-ux_timing case=staging-token-checkpoint event=token_complete_requested at_ms=3000 session_id=s1 run_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa detail=step=decision
-ux_timing case=staging-token-checkpoint event=token_complete_accepted at_ms=3050 session_id=s1 run_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa detail=step=decision
-ux_timing case=staging-token-checkpoint event=token_visible at_ms=3650 session_id=s1 run_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa detail=step=reply
-ux_timing case=staging-token-checkpoint event=terminal_observed at_ms=5000 session_id=s1 run_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa detail=status=succeeded
+ux_timing case=staging-token-checkpoint event=start_requested at_ms=1000 workspace_id= run_id= detail=task=token-checkpoint-smoke
+ux_timing case=staging-token-checkpoint event=start_returned at_ms=1250 workspace_id=s1 run_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa detail=task=token-checkpoint-smoke
+ux_timing case=staging-token-checkpoint event=token_wait_requested at_ms=2000 workspace_id=s1 run_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa detail=step=decision
+ux_timing case=staging-token-checkpoint event=token_visible at_ms=2600 workspace_id=s1 run_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa detail=step=decision
+ux_timing case=staging-token-checkpoint event=token_complete_requested at_ms=3000 workspace_id=s1 run_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa detail=step=decision
+ux_timing case=staging-token-checkpoint event=token_complete_accepted at_ms=3050 workspace_id=s1 run_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa detail=step=decision
+ux_timing case=staging-token-checkpoint event=token_visible at_ms=3650 workspace_id=s1 run_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa detail=step=reply
+ux_timing case=staging-token-checkpoint event=terminal_observed at_ms=5000 workspace_id=s1 run_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa detail=status=succeeded
 EOF
 
 cat >"$report_b/ux-timing.log" <<'EOF'
-ux_timing case=staging-token-checkpoint event=start_requested at_ms=1000 session_id= run_id= detail=task=token-checkpoint-smoke
-ux_timing case=staging-token-checkpoint event=start_returned at_ms=1100 session_id=s2 run_id=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb detail=task=token-checkpoint-smoke
-ux_timing case=staging-token-checkpoint event=token_wait_requested at_ms=2000 session_id=s2 run_id=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb detail=step=decision
-ux_timing case=staging-token-checkpoint event=token_visible at_ms=2200 session_id=s2 run_id=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb detail=step=decision
-ux_timing case=staging-token-checkpoint event=token_complete_requested at_ms=3000 session_id=s2 run_id=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb detail=step=decision
-ux_timing case=staging-token-checkpoint event=token_complete_accepted at_ms=3025 session_id=s2 run_id=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb detail=step=decision
-ux_timing case=staging-token-checkpoint event=token_visible at_ms=3225 session_id=s2 run_id=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb detail=step=reply
-ux_timing case=staging-token-checkpoint event=terminal_observed at_ms=4000 session_id=s2 run_id=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb detail=status=succeeded
+ux_timing case=staging-token-checkpoint event=start_requested at_ms=1000 workspace_id= run_id= detail=task=token-checkpoint-smoke
+ux_timing case=staging-token-checkpoint event=start_returned at_ms=1100 workspace_id=s2 run_id=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb detail=task=token-checkpoint-smoke
+ux_timing case=staging-token-checkpoint event=token_wait_requested at_ms=2000 workspace_id=s2 run_id=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb detail=step=decision
+ux_timing case=staging-token-checkpoint event=token_visible at_ms=2200 workspace_id=s2 run_id=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb detail=step=decision
+ux_timing case=staging-token-checkpoint event=token_complete_requested at_ms=3000 workspace_id=s2 run_id=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb detail=step=decision
+ux_timing case=staging-token-checkpoint event=token_complete_accepted at_ms=3025 workspace_id=s2 run_id=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb detail=step=decision
+ux_timing case=staging-token-checkpoint event=token_visible at_ms=3225 workspace_id=s2 run_id=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb detail=step=reply
+ux_timing case=staging-token-checkpoint event=terminal_observed at_ms=4000 workspace_id=s2 run_id=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb detail=status=succeeded
 EOF
 
 cat >"$report_c/summary.txt" <<'EOF'
@@ -119,13 +119,13 @@ cat >"$report_c/dddddddd-dddd-dddd-dddd-dddddddddddd.path.txt" <<'EOF'
 EOF
 
 cat >"$report_c/ux-timing.log" <<'EOF'
-ux_timing case=staging-session-continuation event=start_requested at_ms=1000 session_id= run_id= detail=task=session-continuation-smoke
-ux_timing case=staging-session-continuation event=start_returned at_ms=1200 session_id=s3 run_id=cccccccc-cccc-cccc-cccc-cccccccccccc detail=task=session-continuation-smoke
-ux_timing case=staging-session-continuation event=input_send_requested at_ms=3000 session_id=s3 run_id=cccccccc-cccc-cccc-cccc-cccccccccccc detail=step=continuation
-ux_timing case=staging-session-continuation event=input_send_accepted at_ms=3100 session_id=s3 run_id=cccccccc-cccc-cccc-cccc-cccccccccccc detail=step=continuation
-ux_timing case=staging-session-continuation event=continuation_run_visible at_ms=4700 session_id=s3 run_id=dddddddd-dddd-dddd-dddd-dddddddddddd detail=initial_run_id=cccccccc-cccc-cccc-cccc-cccccccccccc
-ux_timing case=staging-session-continuation event=continuation_terminal_observed at_ms=6200 session_id=s3 run_id=dddddddd-dddd-dddd-dddd-dddddddddddd detail=status=succeeded
-ux_timing case=staging-session-continuation event=continuation_visible at_ms=6400 session_id=s3 run_id=dddddddd-dddd-dddd-dddd-dddddddddddd detail=phase=continuation
+ux_timing case=staging-actor-continuation event=start_requested at_ms=1000 workspace_id= run_id= detail=task=actor-continuation-smoke
+ux_timing case=staging-actor-continuation event=start_returned at_ms=1200 workspace_id=ws3 run_id=cccccccc-cccc-cccc-cccc-cccccccccccc detail=task=actor-continuation-smoke
+ux_timing case=staging-actor-continuation event=input_send_requested at_ms=3000 workspace_id=ws3 run_id=cccccccc-cccc-cccc-cccc-cccccccccccc detail=step=continuation
+ux_timing case=staging-actor-continuation event=input_send_accepted at_ms=3100 workspace_id=ws3 run_id=cccccccc-cccc-cccc-cccc-cccccccccccc detail=step=continuation
+ux_timing case=staging-actor-continuation event=continuation_run_visible at_ms=4700 workspace_id=ws3 run_id=dddddddd-dddd-dddd-dddd-dddddddddddd detail=initial_run_id=cccccccc-cccc-cccc-cccc-cccccccccccc
+ux_timing case=staging-actor-continuation event=continuation_terminal_observed at_ms=6200 workspace_id=ws3 run_id=dddddddd-dddd-dddd-dddd-dddddddddddd detail=status=succeeded
+ux_timing case=staging-actor-continuation event=continuation_visible at_ms=6400 workspace_id=ws3 run_id=dddddddd-dddd-dddd-dddd-dddddddddddd detail=phase=continuation
 EOF
 
 out="$tmp/summary.tsv"
@@ -143,9 +143,9 @@ assert_contains "$out" $'checkpoint_restore_phase	'"$report_a"$'	aaaaaaaa-aaaa-a
 assert_contains "$out" $'ux_delta	'"$report_a"$'	staging-token-checkpoint	s1	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	step=decision	token_visible	token_wait_requested	token_visible	600' "token visible delta"
 assert_contains "$out" $'ux_delta	'"$report_a"$'	staging-token-checkpoint	s1	aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa	step=decision	next_visible_after_token_ack	token_complete_accepted	token_visible	600' "next visible after token completion"
 assert_contains "$out" $'ux_delta	'"$report_b"$'	staging-token-checkpoint	s2	bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb	status=succeeded	terminal_after_start	start_returned	terminal_observed	2900' "terminal after start delta"
-assert_contains "$out" $'ux_delta	'"$report_c"$'	staging-session-continuation	s3	cccccccc-cccc-cccc-cccc-cccccccccccc	step=continuation	input_ack	input_send_requested	input_send_accepted	100' "continuation input ack delta"
-assert_contains "$out" $'ux_delta	'"$report_c"$'	staging-session-continuation	s3	cccccccc-cccc-cccc-cccc-cccccccccccc	step=continuation	next_visible_after_input_ack	input_send_accepted	continuation_run_visible	1600' "continuation next visible after input ack across run ids"
-assert_contains "$out" $'ux_delta	'"$report_c"$'	staging-session-continuation	s3	dddddddd-dddd-dddd-dddd-dddddddddddd	status=succeeded	terminal_after_start	start_returned	continuation_terminal_observed	5000' "continuation terminal after start"
+assert_contains "$out" $'ux_delta	'"$report_c"$'	staging-actor-continuation	ws3	cccccccc-cccc-cccc-cccc-cccccccccccc	step=continuation	input_ack	input_send_requested	input_send_accepted	100' "continuation input ack delta"
+assert_contains "$out" $'ux_delta	'"$report_c"$'	staging-actor-continuation	ws3	cccccccc-cccc-cccc-cccc-cccccccccccc	step=continuation	next_visible_after_input_ack	input_send_accepted	continuation_run_visible	1600' "continuation next visible after input ack across run ids"
+assert_contains "$out" $'ux_delta	'"$report_c"$'	staging-actor-continuation	ws3	dddddddd-dddd-dddd-dddd-dddddddddddd	status=succeeded	terminal_after_start	start_returned	continuation_terminal_observed	5000' "continuation terminal after start"
 assert_contains "$out" $'ux_aggregate	staging-token-checkpoint	token_visible	step=decision	2	200	200	600	600' "token visible aggregate"
 assert_contains "$out" $'ux_aggregate	staging-token-checkpoint	next_visible_after_token_ack	step=decision	2	200	200	600	600' "next-visible aggregate"
 

@@ -28,7 +28,9 @@ The deployment has these runtime components:
 
 AWS infrastructure provides the shared dependencies:
 
-- Amazon RDS for PostgreSQL stores orgs, auth state, projects, sessions, runs, workers, waits, stream records, tokens, metadata, checkpoints, and events.
+- Amazon RDS for PostgreSQL stores organizations, auth state, Projects,
+  Deployments, Workspaces, Actors, Runs, Waits, Tokens, metadata, checkpoints,
+  and telemetry outbox state.
 - ClickHouse Cloud stores historical run logs, events, traces, terminal output, and telemetry analytics.
 - Cluster-mode disabled ElastiCache Valkey/Redis backs the dispatch queue used by
   `HELMR_REDIS_URL`.

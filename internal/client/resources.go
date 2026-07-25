@@ -272,34 +272,27 @@ func (c *Client) GetTask(ctx context.Context, taskID string, opts EnvironmentSco
 	return response, nil
 }
 
-func (c *Client) ListSandboxes(ctx context.Context, opts EnvironmentScopeOptions) (api.ListSandboxesResponse, error) {
-	path, _, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/sandboxes")
+func (c *Client) StartTask(
+	ctx context.Context,
+	taskID string,
+	request api.StartTaskRequest,
+	opts EnvironmentScopeOptions,
+) (api.StartTaskResponse, error) {
+	taskID = strings.TrimSpace(taskID)
+	if err := api.ValidateTaskID(taskID); err != nil {
+		return api.StartTaskResponse{}, err
+	}
+	path, _, err := c.environmentScopedPath(
+		opts.ProjectID,
+		opts.EnvironmentID,
+		"/tasks/"+url.PathEscape(taskID)+"/start",
+	)
 	if err != nil {
-		return api.ListSandboxesResponse{}, err
+		return api.StartTaskResponse{}, err
 	}
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return api.ListSandboxesResponse{}, err
-	}
-	var response api.ListSandboxesResponse
-	if err := c.doJSON(req, &response); err != nil {
-		return api.ListSandboxesResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) GetSandbox(ctx context.Context, sandboxID string, opts EnvironmentScopeOptions) (api.SandboxResponse, error) {
-	path, _, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/sandboxes/"+url.PathEscape(sandboxID))
-	if err != nil {
-		return api.SandboxResponse{}, err
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return api.SandboxResponse{}, err
-	}
-	var response api.SandboxResponse
-	if err := c.doJSON(req, &response); err != nil {
-		return api.SandboxResponse{}, err
+	var response api.StartTaskResponse
+	if err := c.postJSON(ctx, path, request, &response); err != nil {
+		return api.StartTaskResponse{}, err
 	}
 	return response, nil
 }
@@ -491,100 +484,6 @@ func (c *Client) ExecuteWorkspace(
 	var response api.ExecuteWorkspaceResult
 	if err := c.postJSON(ctx, path, input, &response); err != nil {
 		return api.ExecuteWorkspaceResult{}, err
-	}
-	return response, nil
-}
-
-type SessionScopeOptions struct {
-	ProjectID     string
-	EnvironmentID string
-	ExternalID    string
-	Status        string
-	TaskID        string
-	Limit         int32
-}
-
-func (c *Client) sessionCollectionPath(opts SessionScopeOptions) (string, error) {
-	path, _, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/sessions")
-	return path, err
-}
-
-func (c *Client) sessionItemPath(sessionID string, suffix string, opts SessionScopeOptions) (string, error) {
-	path, err := c.sessionCollectionPath(opts)
-	if err != nil {
-		return "", err
-	}
-	return environmentScopedResourcePath(path, sessionID, suffix), nil
-}
-
-func (c *Client) ListSessions(ctx context.Context, opts SessionScopeOptions) (api.ListSessionsResponse, error) {
-	path, err := c.sessionCollectionPath(opts)
-	if err != nil {
-		return api.ListSessionsResponse{}, err
-	}
-	query := url.Values{}
-	if strings.TrimSpace(opts.ExternalID) != "" {
-		query.Set("external_id", strings.TrimSpace(opts.ExternalID))
-	}
-	if strings.TrimSpace(opts.Status) != "" {
-		query.Set("status", strings.TrimSpace(opts.Status))
-	}
-	if strings.TrimSpace(opts.TaskID) != "" {
-		query.Set("task_id", strings.TrimSpace(opts.TaskID))
-	}
-	if opts.Limit > 0 {
-		query.Set("limit", strconv.FormatInt(int64(opts.Limit), 10))
-	}
-	if encoded := query.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return api.ListSessionsResponse{}, err
-	}
-	var response api.ListSessionsResponse
-	if err := c.doJSON(req, &response); err != nil {
-		return api.ListSessionsResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) GetSession(ctx context.Context, sessionID string, opts SessionScopeOptions) (api.SessionResponse, error) {
-	path, err := c.sessionItemPath(sessionID, "", opts)
-	if err != nil {
-		return api.SessionResponse{}, err
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return api.SessionResponse{}, err
-	}
-	var response api.SessionResponse
-	if err := c.doJSON(req, &response); err != nil {
-		return api.SessionResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) CancelSession(ctx context.Context, sessionID string, input api.CancelSessionRequest, opts SessionScopeOptions) (api.SessionResponse, error) {
-	path, err := c.sessionItemPath(sessionID, "/cancel", opts)
-	if err != nil {
-		return api.SessionResponse{}, err
-	}
-	var response api.SessionResponse
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.SessionResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) CloseSession(ctx context.Context, sessionID string, input api.CloseSessionRequest, opts SessionScopeOptions) (api.SessionResponse, error) {
-	path, err := c.sessionItemPath(sessionID, "/close", opts)
-	if err != nil {
-		return api.SessionResponse{}, err
-	}
-	var response api.SessionResponse
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.SessionResponse{}, err
 	}
 	return response, nil
 }

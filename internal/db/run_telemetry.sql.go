@@ -14,52 +14,64 @@ import (
 const getRunTelemetryFrontier = `-- name: GetRunTelemetryFrontier :one
 SELECT
     COALESCE(MAX(id), 0)::bigint AS observed_seq,
-    COALESCE(MAX(id) FILTER (WHERE state = 'written'), 0)::bigint AS projected_seq,
     COALESCE(
-        BOOL_OR(state = 'dead_lettered' AND id > $1::bigint),
+        MIN(id) FILTER (
+            WHERE state <> 'written' OR written_at IS NULL
+        ),
+        0
+    )::bigint AS pending_seq,
+    COALESCE(
+        BOOL_OR(state = 'dead_lettered'),
         false
     )::boolean AS dead_lettered_after
 FROM telemetry_outbox
-WHERE org_id = $2
-  AND run_id = $3
-  AND stream_kind = $4::telemetry_stream_kind
+WHERE org_id = $1
+  AND run_id = $2
+  AND stream_kind = $3::telemetry_stream_kind
+  AND id > $4::bigint
   AND (
-      cardinality($5::text[]) = 0
+      $5::bigint = 0
+      OR id <= $5::bigint
+  )
+  AND (
+      cardinality($6::text[]) = 0
       OR (
           stream_kind = 'event'
-          AND severity = ANY($5::text[])
+          AND severity = ANY($6::text[])
       )
       OR (
           stream_kind = 'run_log'
           AND stream_name = 'structured'
-          AND severity = ANY($5::text[])
+          AND severity = ANY($6::text[])
       )
   )
 `
 
 type GetRunTelemetryFrontierParams struct {
-	AfterSeq     int64               `json:"after_seq"`
 	OrgID        pgtype.UUID         `json:"org_id"`
 	RunID        pgtype.UUID         `json:"run_id"`
 	StreamKind   TelemetryStreamKind `json:"stream_kind"`
+	AfterSeq     int64               `json:"after_seq"`
+	ThroughSeq   int64               `json:"through_seq"`
 	FilterValues []string            `json:"filter_values"`
 }
 
 type GetRunTelemetryFrontierRow struct {
 	ObservedSeq       int64 `json:"observed_seq"`
-	ProjectedSeq      int64 `json:"projected_seq"`
+	PendingSeq        int64 `json:"pending_seq"`
 	DeadLetteredAfter bool  `json:"dead_lettered_after"`
 }
 
 func (q *Queries) GetRunTelemetryFrontier(ctx context.Context, arg GetRunTelemetryFrontierParams) (GetRunTelemetryFrontierRow, error) {
 	row := q.db.QueryRow(ctx, getRunTelemetryFrontier,
-		arg.AfterSeq,
 		arg.OrgID,
 		arg.RunID,
 		arg.StreamKind,
+		arg.AfterSeq,
+		arg.ThroughSeq,
 		arg.FilterValues,
 	)
 	var i GetRunTelemetryFrontierRow
-	err := row.Scan(&i.ObservedSeq, &i.ProjectedSeq, &i.DeadLetteredAfter)
+	err := row.Scan(&i.ObservedSeq, &i.PendingSeq, &i.DeadLetteredAfter)
 	return i, err
 }

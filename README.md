@@ -80,7 +80,7 @@ Task can call any agent SDK or tool; Helmr owns the adapter protocol around it.
 Create a task project with `helmr.config.ts` and one or more task modules:
 
 ```ts
-import { cache, image, sandbox, source, task, tokens } from "@helmr/sdk"
+import { cache, image, source, task, tokens, workspace } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 import { z } from "zod"
 
@@ -102,15 +102,13 @@ const base = image("repo-agent")
     "apt-get update && apt-get install -y git ripgrep",
   ])
 
-const sbx = sandbox("repo-agent")
+export const repoWorkspace = workspace("github-pr-review")
   .image(base)
   .resources({ cpu: 2, memory: "4Gi" })
 
 export const reviewPr = task({
   id: "review-pr",
-  sandbox: sbx,
-  maxDuration: 900,
-  secrets: [{ name: "OPENAI_API_KEY", env: "OPENAI_API_KEY" }],
+  maxDuration: "15m",
   payload,
   run: async (event, ctx) => {
     // Call your agent SDK or review tooling here.
@@ -153,13 +151,19 @@ flows.
 
 ## Run A Task
 
-Remote runs execute a deployed task in an attached writable workspace. If no
-workspace is supplied, Helmr creates one from the deployed task's sandbox:
+Remote Runs execute a deployed Task in an existing writable Workspace:
 
 ```sh
 helmr deploy PATH/TO/TASK_PROJECT
 
-helmr session start review-pr \
+WORKSPACE_ID="$(helmr workspace create github-pr-review \
+  --key review-pr-123 \
+  --secret-env OPENAI_API_KEY=OPENAI_API_KEY \
+  --idempotency-key review-pr-123-workspace)"
+
+helmr run start review-pr \
+  --workspace "${WORKSPACE_ID}" \
+  --idempotency-key review-pr-123-run \
   --payload-json '{"owner":"OWNER","repo":"REPO","prNumber":123}'
 ```
 
@@ -170,7 +174,7 @@ GitHub is a task integration, not a required run source.
 ## Payloads and secrets
 
 Payload is audit data. Helmr persists it in plaintext in the database, run
-events, and event streams. Do not put tokens, API keys, credentials, or sensitive
+events, and telemetry. Do not put tokens, API keys, credentials, or sensitive
 personal data in payloads.
 
 Tasks declare the Helmr secret names they need and where each value appears
@@ -178,7 +182,7 @@ inside the guest, such as an environment variable:
 
 ```sh
 printf '%s' "$OPENAI_API_KEY" | helmr secret create OPENAI_API_KEY
-helmr session start my-task
+helmr run start my-task --workspace WORKSPACE_ID
 ```
 
 Runs never receive secret values or binding maps. The deployed task definition is

@@ -8,21 +8,6 @@ order: 340
 
 # Task secrets
 
-Declare each runtime secret on the task:
-
-```ts
-export const useSecret = task({
-  id: "use-secret",
-  sandbox: sbx,
-  secrets: [{ name: "API_TOKEN", env: "API_TOKEN" }],
-  run: async () => {
-    const token = process.env.API_TOKEN
-    if (!token) throw new Error("API_TOKEN was not injected")
-    return { ok: true }
-  },
-})
-```
-
 Store the secret value in Helmr:
 
 ```sh
@@ -34,6 +19,15 @@ List or inspect stored secret metadata without revealing values:
 ```sh
 helmr secret list
 helmr secret get API_TOKEN
+```
+
+Place it when creating the Workspace:
+
+```sh
+WORKSPACE_ID="$(helmr workspace create app-workspace \
+  --key secret-demo \
+  --secret-env API_TOKEN=API_TOKEN \
+  --idempotency-key secret-demo-workspace)"
 ```
 
 Revoke a Secret when Tasks should no longer be able to resolve it. Revocation
@@ -48,16 +42,15 @@ The task secret `name` is the Helmr secret name. If the task declares
 `API_TOKEN`, store the value under that name:
 
 ```sh
-helmr session start use-secret
+helmr run start use-secret --workspace "${WORKSPACE_ID}"
 ```
 
-Run creation does not accept secret values or binding maps. Helmr resolves
-declared secret names from the selected project environment when the run starts.
+Run creation does not accept secret values or binding maps.
 
 Secret placements can target:
 
 - Environment variables: `{ name: "API_TOKEN", env: "API_TOKEN" }`
-- Files: `{ name: "ssh-key", file: "secrets/token", mode: "0600" }`
+- Files: `{ name: "ssh-key", file: "/run/secrets/token" }`
 - Directories: `{ name: "certs", dir: "secrets", mode: "0700" }`
 
 Relative file and directory paths are materialized under the workspace. Absolute paths are materialized inside the image root and cannot target reserved runtime paths.

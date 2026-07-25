@@ -2,7 +2,8 @@
 WITH event_args AS (
     SELECT sqlc.arg(kind)::text AS event_kind,
            sqlc.arg(payload)::jsonb AS event_payload,
-           sqlc.arg(severity)::text AS event_severity
+           sqlc.arg(severity)::text AS event_severity,
+           sqlc.arg(receipt_fingerprint)::text AS receipt_fingerprint
 ),
 current_run_lease AS (
     SELECT runs.org_id,
@@ -154,7 +155,8 @@ candidate AS (
            octet_length(sqlc.arg(content)::bytea)::bigint AS size_bytes,
            event_args.event_kind,
            event_args.event_payload,
-           'run_log:' || current_run_lease.id::text || ':' || current_run_lease.attempt_number::text || ':' || sqlc.arg(stream)::text || ':' || (sqlc.arg(observed_seq)::bigint)::text AS idempotency_key
+           event_args.receipt_fingerprint,
+           'run_log:' || current_run_lease.attempt_number::text || ':' || sqlc.arg(stream)::text || ':' || (sqlc.arg(observed_seq)::bigint)::text AS idempotency_key
       FROM current_run_lease
       CROSS JOIN event_args
 ),
@@ -188,7 +190,8 @@ inserted_chunk AS (
                'observed_seq', candidate.observed_seq,
                'bytes', candidate.size_bytes,
                'event_kind', candidate.event_kind,
-               'event_payload', candidate.event_payload
+               'event_payload', candidate.event_payload,
+               'receipt_fingerprint', candidate.receipt_fingerprint
            ),
            candidate.content,
            candidate.size_bytes,
@@ -353,3 +356,28 @@ SELECT selected_chunk.org_id,
        OR selected_chunk.size_bytes = 0
        OR EXISTS (SELECT 1 FROM meter_event_outbox)
    );
+
+-- name: GetRunLogChunkReplay :one
+SELECT org_id,
+       run_id,
+       run_lease_id,
+       attempt_number,
+       stream_name AS stream,
+       id AS seq,
+       observed_seq,
+       content,
+       size_bytes,
+       COALESCE(payload ->> 'event_payload', '')::text AS event_payload,
+       COALESCE(payload ->> 'receipt_fingerprint', '')::text AS receipt_fingerprint,
+       created_at
+  FROM telemetry_outbox
+ WHERE stream_kind = 'run_log'
+   AND source_kind = 'run'
+   AND source_id = sqlc.arg(run_id)
+   AND run_id = sqlc.arg(run_id)
+   AND run_lease_id = sqlc.arg(run_lease_id)
+   AND attempt_number = sqlc.arg(attempt_number)
+   AND stream_name = sqlc.arg(stream)
+   AND observed_seq = sqlc.arg(observed_seq)
+ ORDER BY id
+ LIMIT 1;

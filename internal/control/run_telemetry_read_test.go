@@ -86,11 +86,12 @@ func TestProjectRunLogRecordDistinguishesStructuredAndStream(t *testing.T) {
 		ID: "tc1.structured", RunID: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
 		AttemptNumber: 2, Stream: string(api.WorkerLogStreamStructured),
 		ContentBase64: base64.StdEncoding.EncodeToString(structuredBody), At: at,
-	})
+	}, "run_bbbbbbbbbbbbbbbbbbbbbbbbbb")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if structured.Kind != "structured" ||
+		structured.RunID != "run_bbbbbbbbbbbbbbbbbbbbbbbbbb" ||
 		structured.Level != "error" ||
 		structured.Message != "failed" ||
 		string(structured.Attributes) != `{"step":2}` {
@@ -100,7 +101,7 @@ func TestProjectRunLogRecordDistinguishesStructuredAndStream(t *testing.T) {
 		ID: "tc1.stdout", RunID: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
 		AttemptNumber: 2, Stream: string(api.WorkerLogStreamStdout),
 		ObservedSeq: 3, ContentBase64: "b2sK", Bytes: 3, At: at,
-	})
+	}, "run_bbbbbbbbbbbbbbbbbbbbbbbbbb")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,8 +119,8 @@ func TestRunTelemetryFrontierFailsClosedWhileProjectionLags(t *testing.T) {
 	runID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
 	store := &runTelemetryFrontierStore{
 		frontier: db.GetRunTelemetryFrontierRow{
-			ObservedSeq:  12,
-			ProjectedSeq: 10,
+			ObservedSeq: 12,
+			PendingSeq:  11,
 		},
 	}
 	server := &Server{db: store}
@@ -133,6 +134,9 @@ func TestRunTelemetryFrontierFailsClosedWhileProjectionLags(t *testing.T) {
 		db.TelemetryStreamKindRunLog,
 		[]string{"error"},
 		10,
+		0,
+		10,
+		true,
 	)
 	var lagging telemetry.LaggingError
 	if !errors.As(err, &lagging) ||
@@ -144,5 +148,44 @@ func TestRunTelemetryFrontierFailsClosedWhileProjectionLags(t *testing.T) {
 		len(store.params.FilterValues) != 1 ||
 		store.params.FilterValues[0] != "error" {
 		t.Fatalf("params = %+v", store.params)
+	}
+}
+
+func TestRunTelemetryFrontierChecksOnlyCandidatePageBoundary(t *testing.T) {
+	orgID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	runID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	store := &runTelemetryFrontierStore{
+		frontier: db.GetRunTelemetryFrontierRow{
+			ObservedSeq: 100,
+		},
+	}
+	server := &Server{db: store}
+	err := server.requireProjectedRunTelemetry(
+		httptest.NewRequest("GET", "/", nil),
+		runTelemetryTarget{
+			orgID: pgvalue.UUID(orgID),
+			runID: pgvalue.UUID(runID),
+		},
+		db.TelemetryStreamKindRunLog,
+		nil,
+		10,
+		100,
+		100,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("error = %v", err)
+	}
+	if store.params.ThroughSeq != 100 {
+		t.Fatalf("frontier through seq = %d, want 100", store.params.ThroughSeq)
+	}
+}
+
+func TestRunTelemetryExactLimitRetainsCandidatePageBoundary(t *testing.T) {
+	if !hasRunTelemetryPageBoundary(100, 100) {
+		t.Fatal("an exact-limit page must remain bounded")
+	}
+	if hasRunTelemetryPageBoundary(99, 100) {
+		t.Fatal("a short page must run the unbounded completeness check")
 	}
 }

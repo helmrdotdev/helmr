@@ -6,7 +6,7 @@ export const SITE = {
   githubUrl: "https://github.com/helmrdotdev/helmr",
   defaultTitle: "Helmr — The durable runtime for AI agents",
   defaultDescription:
-    "The durable runtime for AI agents. Define TypeScript tasks, start durable sessions, and keep inputs, outputs, waits, logs, and events attached across Firecracker microVM runs.",
+    "The durable runtime for AI agents. Define TypeScript Tasks and Actors, keep durable state in Workspaces, and preserve inputs, outputs, waits, logs, and events across Firecracker microVM Runs.",
   defaultImage: "/og/helmr.png",
   locale: "en_US",
 };

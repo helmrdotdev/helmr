@@ -22,10 +22,14 @@ Deploy the task project from a local checkout:
 helmr deploy .
 ```
 
-Start a small session and watch the run attempt reach a terminal state:
+Create a Workspace, start a small Task Run, and watch it reach a terminal state:
 
 ```sh
-helmr session start TASK_ID --wait --follow
+WORKSPACE_ID="$(helmr workspace create WORKSPACE_DECLARED_ID \
+  --key verify \
+  --idempotency-key verify-workspace)"
+helmr run start TASK_ID --workspace "${WORKSPACE_ID}" \
+  --idempotency-key verify-run --wait --follow
 helmr run list
 helmr run logs RUN_ID
 ```

@@ -1,6 +1,6 @@
 ---
 title: Architecture
-description: The runtime components behind Helmr workspaces, sessions, and runs.
+description: The runtime components behind Helmr Workspaces, Actors, and Runs.
 section: Start
 sidebarLabel: Architecture
 order: 30
@@ -16,7 +16,7 @@ Helmr is split between authoring tools, a control plane, and workers.
 | CLI | Logs in, deploys source, starts Tasks, inspects Runs, and operates supported Workspace and Secret surfaces. |
 | Control plane | Stores Deployments, Schedules, Actors, Runs, Workspaces, records, events, logs, metadata, Secrets, API keys, workers, and waits. |
 | Dispatcher | Admits queued Runs, binds pending Schedule Workspaces, fires Schedule cursors, and sweeps expired execution authority. |
-| Worker | Leases queued runs, materializes workspaces, starts isolated guests, runs task code, serves direct workspace exec and PTY requests, streams logs, and releases results. |
+| Worker | Leases queued Runs, materializes Workspaces, starts isolated guests, runs Task code, serves bounded Workspace exec requests, records logs, and releases results. |
 | Guest runtime | Loads the immutable Program inside the guest and bridges Task results, Actor input/output, logs, metadata updates, waits, and internal Process I/O. |
 
 Workers enroll into explicitly configured worker groups. Run and build groups use the same identity and lifecycle model but scale independently. Enrollment proves AWS instance identity and binds the issued credential to the group's account, region, Auto Scaling group, instance profile, AMI policy, and permitted role.
@@ -38,7 +38,7 @@ as billing; it does not branch worker enrollment, scheduling, runtime, or storag
 1. A task project is deployed from a directory containing `helmr.config.ts`.
 2. The control plane stores the deployment-source artifact and marks the deployment active for a project environment.
 3. A Task start, Actor continuation, or Schedule fire creates a Run and attaches an explicit Workspace.
-4. If no workspace is supplied, Helmr creates one from the deployed task's sandbox. If a workspace is supplied, Helmr validates that it matches the task's sandbox.
+4. Helmr validates the explicitly supplied Workspace and its deployed declaration.
 5. A worker in the matching worker group leases the run and receives the resolved task source, workspace mount metadata, secrets, and duration limit.
 6. The worker starts an isolated Linux guest, materializes the workspace, injects task-declared secrets, and runs the TypeScript task.
 7. Logs, events, Task result or Actor records, metadata updates, failures, and waits return to the control plane.
@@ -46,13 +46,11 @@ as billing; it does not branch worker enrollment, scheduling, runtime, or storag
 
 ## Workspace Flow
 
-Workspace APIs operate on the durable workspace directly. Opening, retrieving,
-updating, materializing, connecting, stopping, deleting, creating execs, creating
-PTYs, and reading workspace streams do not create sessions.
+Workspace APIs operate on the durable Workspace directly. Create, retrieve,
+committed file reads, bounded exec, and delete do not create Runs.
 
-Direct execs and PTYs use the workspace sandbox and filesystem state. They are
-useful for operator inspection, setup commands, and interactive work that should
-not be modeled as a task run.
+Direct exec uses the Workspace sandbox and filesystem state. It is useful for
+bounded setup and inspection that should not be modeled as a Task Run.
 
 ## Isolation Boundary
 

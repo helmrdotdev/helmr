@@ -1,6 +1,6 @@
 ---
 title: Actor starts
-description: Start a stable Actor and continue it with durable input.
+description: Start a stable Actor and continue it through fixed durable channels.
 section: Guides
 sidebarLabel: Actor starts
 order: 370

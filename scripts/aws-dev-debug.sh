@@ -739,15 +739,27 @@ default_run_ref() {
 run_hello_world() {
   check_tools
   task="${DEBUG_RUN_TASK:-hello-world}"
-  max_duration="${DEBUG_RUN_MAX_DURATION_SECONDS:-600}"
+  workspace_declared_id="${DEBUG_RUN_WORKSPACE_DECLARED_ID:-hello-world}"
+  workspace_id="${DEBUG_RUN_WORKSPACE_ID:-}"
   project="${DEBUG_RUN_PROJECT:-helmr}"
   env="${DEBUG_RUN_ENV:-production}"
   payload_json="${DEBUG_RUN_PAYLOAD_JSON:-{\"name\":\"Ada\"}}"
-  HELMR_API_URL="$(control_url)" go run ./cmd/helmr session start "${task}" \
+  key="aws-debug:${task}:$(date -u +%Y%m%d%H%M%S)"
+  if [ -z "${workspace_id}" ]; then
+    workspace_id="$(
+      HELMR_API_URL="$(control_url)" go run ./cmd/helmr workspace create "${workspace_declared_id}" \
+        --project "${project}" \
+        --env "${env}" \
+        --key "${key}" \
+        --idempotency-key "${key}:workspace"
+    )"
+  fi
+  HELMR_API_URL="$(control_url)" go run ./cmd/helmr run start "${task}" \
     --project "${project}" \
     --env "${env}" \
+    --workspace "${workspace_id}" \
+    --idempotency-key "${key}:run" \
     --payload-json "${payload_json}" \
-    --max-duration-seconds "${max_duration}" \
     --wait \
     --json
 }

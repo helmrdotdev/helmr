@@ -20,9 +20,8 @@ Task authors define:
 | --- | --- |
 | Image contents | `image(...).from(...).run(...).copy(...)` |
 | Runtime dependencies | Package manager and install steps in the image build |
-| Workspace mount path | `sandbox(...).workspace("/path")` |
-| CPU and memory | `sandbox(...).resources(...)` |
-| Secrets | Task `secrets` declarations and run-time bindings |
+| CPU and memory | `workspace(...).resources(...)` |
+| Secrets | Workspace create Secret placements |
 | Task behavior | The exported `task(...).run` function |
 
 TypeScript task images must provide Node.js 22.18 or newer as `node` on `PATH`.
@@ -34,7 +33,7 @@ tools, package manager, and dependencies installed in your image.
 Helmr manages:
 
 - Firecracker VM lifecycle, guest boot, and guest agent startup.
-- A writable workspace mounted at the sandbox workspace path.
+- A writable Workspace mounted at `/workspace`.
 - Deployment task source used to load the task module.
 - Secret materialization as environment variables, files, or directories.
 - Runtime filesystems such as `/proc`, `/dev`, `/dev/pts`, `/dev/shm`, `/tmp`,
