@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
+	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
 
@@ -34,7 +35,7 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	defer guest.Close()
 	sessions := NewWorkspaceMountSessions()
 	unregister := sessions.RegisterWorkspaceMountSession(
-		api.WorkerWorkspaceMount{ID: claim.Lease.WorkspaceMountID},
+		testWorkspaceMount(claim.Lease),
 		fakeGuestSession{stream: host},
 		"channel-1",
 	)
@@ -49,7 +50,7 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	}()
 	program, err := (ProgramRunner{
 		WorkspaceMounts: sessions,
-	}).startFreshProgram(
+	}).startNewProgram(
 		context.Background(),
 		&claim,
 		control,
@@ -106,6 +107,176 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	}
 }
 
+func TestChildAttachStartsNewProgramOnRetainedMount(t *testing.T) {
+	claim := testChildAttachProgramClaim(t)
+	control := &testFreshProgramControl{
+		lease:     claim.Lease,
+		wantChild: true,
+	}
+	guest, host := net.Pipe()
+	defer guest.Close()
+	verifyGuest, verifyHost := net.Pipe()
+	defer verifyGuest.Close()
+	parent := &queuedStreamSession{
+		streams: []vm.Stream{
+			testVMStream(host),
+			testVMStream(verifyHost),
+		},
+	}
+	sessions := NewWorkspaceMountSessions()
+	unregister := sessions.RegisterWorkspaceMountSession(
+		testWorkspaceMount(claim.Lease),
+		parent,
+		"channel-1",
+	)
+	defer unregister()
+	guestResult := make(chan error, 1)
+	go func() {
+		guestResult <- serveFreshProgramProtocol(
+			guest,
+			claim.Lease,
+			control,
+		)
+	}()
+	verifyResult := make(chan error, 1)
+	go func() {
+		verifyResult <- serveFrozenParentVerification(verifyGuest)
+	}()
+	program, err := (ProgramRunner{
+		WorkspaceMounts: sessions,
+	}).startNewProgram(
+		context.Background(),
+		&claim,
+		control,
+		&testFreshProgramEventSink{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer program.session.Close(context.Background())
+	if _, _, err := program.awaitTaskCompletion(
+		context.Background(),
+		&testFreshProgramEventSink{},
+		nil,
+		nil,
+		nil,
+		nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-guestResult; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-verifyResult; err != nil {
+		t.Fatal(err)
+	}
+	if claim.Execution.Attach.Child.ProgramStart != nil {
+		t.Fatal("child Program start authority was retained")
+	}
+}
+
+func TestChildAttachRejectsMismatchedFrozenParentProof(t *testing.T) {
+	claim := testChildAttachProgramClaim(t)
+	programGuest, programHost := net.Pipe()
+	defer programGuest.Close()
+	verifyGuest, verifyHost := net.Pipe()
+	defer verifyGuest.Close()
+	parent := &queuedStreamSession{
+		streams: []vm.Stream{
+			testVMStream(programHost),
+			testVMStream(verifyHost),
+		},
+	}
+	sessions := NewWorkspaceMountSessions()
+	unregister := sessions.RegisterWorkspaceMountSession(
+		testWorkspaceMount(claim.Lease),
+		parent,
+		"channel-1",
+	)
+	defer unregister()
+	verifyResult := make(chan error, 1)
+	go func() {
+		defer verifyGuest.Close()
+		if _, _, err := wire.ReadStreamFrameHeader(verifyGuest); err != nil {
+			verifyResult <- err
+			return
+		}
+		var request workspacev0.VerifyProgramRestoreRequest
+		if err := frameio.ReadProtoFrame(verifyGuest, &request); err != nil {
+			verifyResult <- err
+			return
+		}
+		request.CorrelationId = "wrong-correlation"
+		verifyResult <- frameio.WriteProtoFrame(
+			verifyGuest,
+			&workspacev0.VerifyProgramRestoreResponse{
+				RunId:         request.GetRunId(),
+				AttemptNumber: request.GetAttemptNumber(),
+				RunWaitId:     request.GetRunWaitId(),
+				CheckpointId:  request.GetCheckpointId(),
+				CorrelationId: request.GetCorrelationId(),
+			},
+		)
+	}()
+	control := &testFreshProgramControl{
+		lease:     claim.Lease,
+		wantChild: true,
+	}
+	_, err := (ProgramRunner{
+		WorkspaceMounts: sessions,
+	}).startNewProgram(
+		context.Background(),
+		&claim,
+		control,
+		&testFreshProgramEventSink{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "verification response changed") {
+		t.Fatalf("startNewProgram() error = %v", err)
+	}
+	if err := <-verifyResult; err != nil {
+		t.Fatal(err)
+	}
+	if len(control.snapshot()) != 0 {
+		t.Fatalf("control calls = %v", control.snapshot())
+	}
+}
+
+func serveFrozenParentVerification(conn net.Conn) error {
+	defer conn.Close()
+	header, bodyLen, err := wire.ReadStreamFrameHeader(conn)
+	if err != nil {
+		return err
+	}
+	if header.Type != wire.StreamTypeProgramRestoreVerify ||
+		header.RunID != "parent-run-1" ||
+		header.RunWaitID != "wait-1" ||
+		header.CheckpointID != "checkpoint-1" ||
+		bodyLen != 0 {
+		return fmt.Errorf("parent verification header = %+v body=%d", header, bodyLen)
+	}
+	var request workspacev0.VerifyProgramRestoreRequest
+	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
+		return err
+	}
+	if request.GetRunId() != "parent-run-1" ||
+		request.GetAttemptNumber() != 3 ||
+		request.GetRunWaitId() != "wait-1" ||
+		request.GetCheckpointId() != "checkpoint-1" ||
+		request.GetCorrelationId() != "correlation-1" {
+		return fmt.Errorf("parent verification request = %+v", &request)
+	}
+	return frameio.WriteProtoFrame(
+		conn,
+		&workspacev0.VerifyProgramRestoreResponse{
+			RunId:         request.GetRunId(),
+			AttemptNumber: request.GetAttemptNumber(),
+			RunWaitId:     request.GetRunWaitId(),
+			CheckpointId:  request.GetCheckpointId(),
+			CorrelationId: request.GetCorrelationId(),
+		},
+	)
+}
+
 func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 	claim := testFreshProgramClaim(t)
 	control := &testFreshProgramControl{
@@ -120,7 +291,7 @@ func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 	defer guest.Close()
 	sessions := NewWorkspaceMountSessions()
 	unregister := sessions.RegisterWorkspaceMountSession(
-		api.WorkerWorkspaceMount{ID: claim.Lease.WorkspaceMountID},
+		testWorkspaceMount(claim.Lease),
 		fakeGuestSession{stream: host},
 		"channel-1",
 	)
@@ -143,14 +314,14 @@ func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 	}()
 	_, err := (ProgramRunner{
 		WorkspaceMounts: sessions,
-	}).startFreshProgram(
+	}).startNewProgram(
 		context.Background(),
 		&claim,
 		control,
 		&testFreshProgramEventSink{},
 	)
 	if err == nil || !strings.Contains(err.Error(), "stale start") {
-		t.Fatalf("startFreshProgram() error = %v", err)
+		t.Fatalf("startNewProgram() error = %v", err)
 	}
 	if err := <-proofSent; err != nil {
 		t.Fatal(err)
@@ -171,7 +342,7 @@ func TestStartFreshProgramStopsBlockedAdmissionAtStartDeadline(t *testing.T) {
 	defer guest.Close()
 	sessions := NewWorkspaceMountSessions()
 	unregister := sessions.RegisterWorkspaceMountSession(
-		api.WorkerWorkspaceMount{ID: claim.Lease.WorkspaceMountID},
+		testWorkspaceMount(claim.Lease),
 		fakeGuestSession{stream: host},
 		"channel-1",
 	)
@@ -179,14 +350,14 @@ func TestStartFreshProgramStopsBlockedAdmissionAtStartDeadline(t *testing.T) {
 	started := time.Now()
 	_, err := (ProgramRunner{
 		WorkspaceMounts: sessions,
-	}).startFreshProgram(
+	}).startNewProgram(
 		context.Background(),
 		&claim,
 		&testFreshProgramControl{lease: claim.Lease},
 		&testFreshProgramEventSink{},
 	)
 	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("startFreshProgram() error = %v", err)
+		t.Fatalf("startNewProgram() error = %v", err)
 	}
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("blocked admission stopped after %s", elapsed)
@@ -202,9 +373,9 @@ func TestValidateFreshProgramClaimRejectsSecretAggregateAboveBound(t *testing.T)
 	shared := make([]byte, maxFreshProgramSecretBytes/2+1)
 	claim.Secrets[0].Value = shared
 	claim.Secrets[1].Value = shared
-	_, err := validateFreshProgramClaim(&claim)
+	_, err := validateNewProgramClaim(&claim)
 	if err == nil || !strings.Contains(err.Error(), "plaintext exceeds") {
-		t.Fatalf("validateFreshProgramClaim() error = %v", err)
+		t.Fatalf("validateNewProgramClaim() error = %v", err)
 	}
 }
 
@@ -723,6 +894,40 @@ func testFreshProgramClaim(
 	}
 }
 
+func testChildAttachProgramClaim(
+	t *testing.T,
+) api.WorkerRunLeaseClaimResponse {
+	t.Helper()
+	claim := testFreshProgramClaim(t)
+	start := claim.Execution.Fresh.ProgramStart
+	claim.Execution = api.WorkerRunLeaseExecution{
+		Attach: &api.WorkerRunLeaseAttach{
+			Child: &api.WorkerRunLeaseChildAttach{
+				ParentRunID:         "parent-run-1",
+				ParentAttemptNumber: 3,
+				RunWaitID:           "wait-1",
+				CheckpointID:        "checkpoint-1",
+				ResumeAttachID:      "attach-1",
+				CorrelationID:       "correlation-1",
+				ProgramStart:        start,
+			},
+		},
+	}
+	return claim
+}
+
+func testWorkspaceMount(
+	lease api.WorkerRunLeaseReceipt,
+) api.WorkerWorkspaceMount {
+	return api.WorkerWorkspaceMount{
+		ID:                lease.WorkspaceMountID,
+		WorkspaceID:       lease.WorkspaceID,
+		RuntimeInstanceID: lease.RuntimeInstanceID,
+		BaseVersionID:     lease.BaseWorkspaceVersionID,
+		FencingGeneration: lease.MountFencingGeneration,
+	}
+}
+
 type testFreshProgramControl struct {
 	mu                 sync.Mutex
 	lease              api.WorkerRunLeaseReceipt
@@ -732,6 +937,7 @@ type testFreshProgramControl struct {
 	startFailures      int
 	entrypointFailures int
 	renewals           int
+	wantChild          bool
 }
 
 type testFreshProgramLog struct {
@@ -792,8 +998,20 @@ func (c *testFreshProgramControl) AcknowledgeRunStart(
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.calls = append(c.calls, "start")
-	if request.Fresh == nil || request.Restore != nil || request.Attach != nil ||
-		!equalRunLeaseReceipt(request.Lease, c.lease) {
+	validArm := request.Fresh != nil &&
+		request.Restore == nil &&
+		request.Attach == nil
+	if c.wantChild {
+		validArm = request.Fresh == nil &&
+			request.Restore == nil &&
+			request.Attach != nil &&
+			request.Attach.Child != nil &&
+			request.Attach.Parent == nil &&
+			request.Attach.Child.RunWaitID == "wait-1" &&
+			request.Attach.Child.CheckpointID == "checkpoint-1" &&
+			request.Attach.Child.ResumeAttachID == "attach-1"
+	}
+	if !validArm || !equalRunLeaseReceipt(request.Lease, c.lease) {
 		return api.WorkerRunStartResponse{}, errors.New(
 			"unexpected start receipt",
 		)

@@ -74,6 +74,12 @@ type freshProgram struct {
 	observedEventSeq uint64
 }
 
+type newProgramAdmission struct {
+	programStart []byte
+	start        api.WorkerRunStartRequest
+	parent       *workspacev0.VerifyProgramRestoreRequest
+}
+
 type freshAdmissionState struct {
 	mu        sync.Mutex
 	lease     api.WorkerRunLeaseReceipt
@@ -554,7 +560,7 @@ func validateFreshTaskFailure(message string, details *string) error {
 	return nil
 }
 
-func (r ProgramRunner) startFreshProgram(
+func (r ProgramRunner) startNewProgram(
 	ctx context.Context,
 	claim *api.WorkerRunLeaseClaimResponse,
 	control FreshProgramControl,
@@ -575,7 +581,7 @@ func (r ProgramRunner) startFreshProgram(
 			"workspace mount session registry is required",
 		)
 	}
-	fresh, err := validateFreshProgramClaim(claim)
+	admission, err := validateNewProgramClaim(claim)
 	if err != nil {
 		return freshProgram{}, err
 	}
@@ -600,6 +606,26 @@ func (r ProgramRunner) startFreshProgram(
 	if opened.Session.Stream() == nil {
 		return freshProgram{}, errors.New("Workspace mount stream is required")
 	}
+	if err := validateNewProgramMount(claim.Lease, opened.Mount); err != nil {
+		return freshProgram{}, err
+	}
+	if admission.parent != nil {
+		if opened.ControlSession == nil {
+			return freshProgram{}, errors.New(
+				"child-attached Program mount control session is required",
+			)
+		}
+		if err := verifyRestoredProgramOnSession(
+			admissionCtx,
+			opened.ControlSession,
+			admission.parent,
+		); err != nil {
+			return freshProgram{}, fmt.Errorf(
+				"verify frozen parent Program: %w",
+				err,
+			)
+		}
+	}
 	if err := writeFreshProgramContext(
 		admissionCtx,
 		opened.Session,
@@ -608,7 +634,7 @@ func (r ProgramRunner) startFreshProgram(
 				stream,
 				opened.ChannelToken,
 				claim,
-				fresh,
+				admission.programStart,
 			)
 		},
 	); err != nil {
@@ -641,16 +667,14 @@ func (r ProgramRunner) startFreshProgram(
 	var startResponse api.WorkerRunStartResponse
 	if err := retryRunLeaseRequest(ackCtx, func(requestCtx context.Context) error {
 		var requestErr error
+		admission.start.Lease = claim.Lease
 		startResponse, requestErr = control.AcknowledgeRunStart(
 			requestCtx,
-			api.WorkerRunStartRequest{
-				Lease: claim.Lease,
-				Fresh: &api.WorkerRunStartFresh{},
-			},
+			admission.start,
 		)
 		return requestErr
 	}); err != nil {
-		return freshProgram{}, fmt.Errorf("acknowledge fresh Run start: %w", err)
+		return freshProgram{}, fmt.Errorf("acknowledge new Program Run start: %w", err)
 	}
 	if !equalRunLeaseReceipt(startResponse.Lease, claim.Lease) {
 		return freshProgram{}, errors.New(
@@ -866,9 +890,9 @@ func readFreshEntrypointReady(
 	}
 }
 
-func validateFreshProgramClaim(
+func validateNewProgramClaim(
 	claim *api.WorkerRunLeaseClaimResponse,
-) (*api.WorkerRunLeaseFresh, error) {
+) (newProgramAdmission, error) {
 	lease := claim.Lease
 	if strings.TrimSpace(lease.ID) == "" ||
 		strings.TrimSpace(lease.RunID) == "" ||
@@ -889,25 +913,70 @@ func validateFreshProgramClaim(
 		!lease.StartDeadlineAt.After(time.Now()) ||
 		lease.ExpiresAt.IsZero() ||
 		!lease.ExpiresAt.After(time.Now()) {
-		return nil, errors.New("fresh Program Run Lease receipt is incomplete")
+		return newProgramAdmission{}, errors.New("new Program Run Lease receipt is incomplete")
 	}
 	if strings.TrimSpace(claim.Workspace.WriteCapability) == "" {
-		return nil, errors.New(
-			"fresh Program Workspace write capability is required",
+		return newProgramAdmission{}, errors.New(
+			"new Program Workspace write capability is required",
 		)
 	}
 	execution := claim.Execution
-	if execution.Fresh == nil ||
-		execution.Restore != nil ||
-		execution.Attach != nil ||
-		len(execution.Fresh.ProgramStart) == 0 {
-		return nil, errors.New(
-			"Run Lease execution must contain exactly one fresh Program",
+	var admission newProgramAdmission
+	switch {
+	case execution.Fresh != nil &&
+		execution.Restore == nil &&
+		execution.Attach == nil &&
+		len(execution.Fresh.ProgramStart) > 0:
+		admission = newProgramAdmission{
+			programStart: execution.Fresh.ProgramStart,
+			start: api.WorkerRunStartRequest{
+				Fresh: &api.WorkerRunStartFresh{},
+			},
+		}
+	case execution.Fresh == nil &&
+		execution.Restore == nil &&
+		execution.Attach != nil &&
+		execution.Attach.Child != nil &&
+		execution.Attach.Parent == nil:
+		child := execution.Attach.Child
+		if strings.TrimSpace(child.RunWaitID) == "" ||
+			strings.TrimSpace(child.ParentRunID) == "" ||
+			child.ParentAttemptNumber <= 0 ||
+			strings.TrimSpace(child.CheckpointID) == "" ||
+			strings.TrimSpace(child.ResumeAttachID) == "" ||
+			strings.TrimSpace(child.CorrelationID) == "" ||
+			len(child.ProgramStart) == 0 {
+			return newProgramAdmission{}, errors.New(
+				"child-attached Program authority is incomplete",
+			)
+		}
+		admission = newProgramAdmission{
+			programStart: child.ProgramStart,
+			parent: &workspacev0.VerifyProgramRestoreRequest{
+				RunId:         child.ParentRunID,
+				AttemptNumber: uint32(child.ParentAttemptNumber),
+				RunWaitId:     child.RunWaitID,
+				CheckpointId:  child.CheckpointID,
+				CorrelationId: child.CorrelationID,
+			},
+			start: api.WorkerRunStartRequest{
+				Attach: &api.WorkerRunStartAttach{
+					Child: &api.WorkerRunStartChildAttach{
+						RunWaitID:      child.RunWaitID,
+						CheckpointID:   child.CheckpointID,
+						ResumeAttachID: child.ResumeAttachID,
+					},
+				},
+			},
+		}
+	default:
+		return newProgramAdmission{}, errors.New(
+			"Run Lease execution must contain exactly one fresh or child-attached Program",
 		)
 	}
 	if len(claim.Secrets) > maxFreshProgramSecrets {
-		return nil, fmt.Errorf(
-			"fresh Program has %d Secrets, exceeds max %d",
+		return newProgramAdmission{}, fmt.Errorf(
+			"new Program has %d Secrets, exceeds max %d",
 			len(claim.Secrets),
 			maxFreshProgramSecrets,
 		)
@@ -915,21 +984,37 @@ func validateFreshProgramClaim(
 	totalSecretBytes := 0
 	for _, secret := range claim.Secrets {
 		if len(secret.Value) > maxFreshProgramSecretBytes-totalSecretBytes {
-			return nil, fmt.Errorf(
-				"fresh Program Secret plaintext exceeds max %d bytes",
+			return newProgramAdmission{}, fmt.Errorf(
+				"new Program Secret plaintext exceeds max %d bytes",
 				maxFreshProgramSecretBytes,
 			)
 		}
 		totalSecretBytes += len(secret.Value)
 	}
-	return execution.Fresh, nil
+	return admission, nil
+}
+
+func validateNewProgramMount(
+	lease api.WorkerRunLeaseReceipt,
+	mount api.WorkerWorkspaceMount,
+) error {
+	if mount.ID != lease.WorkspaceMountID ||
+		mount.WorkspaceID != lease.WorkspaceID ||
+		mount.RuntimeInstanceID != lease.RuntimeInstanceID ||
+		mount.BaseVersionID != lease.BaseWorkspaceVersionID ||
+		mount.FencingGeneration != lease.MountFencingGeneration {
+		return errors.New(
+			"new Program Workspace mount does not match the claimed physical authority",
+		)
+	}
+	return nil
 }
 
 func writeFreshProgramAdmission(
 	stream vm.Stream,
 	channelToken string,
 	claim *api.WorkerRunLeaseClaimResponse,
-	fresh *api.WorkerRunLeaseFresh,
+	programStart []byte,
 ) error {
 	lease := claim.Lease
 	channelToken = strings.TrimSpace(channelToken)
@@ -960,7 +1045,7 @@ func writeFreshProgramAdmission(
 			RunId:               lease.RunID,
 			AttemptNumber:       uint32(lease.AttemptNumber),
 			RunLeaseId:          lease.ID,
-			ProgramStartFrame:   fresh.ProgramStart,
+			ProgramStartFrame:   programStart,
 			SecretCount:         uint32(len(claim.Secrets)),
 			StartDeadlineUnixMs: lease.StartDeadlineAt.UnixMilli(),
 		},
@@ -1118,6 +1203,10 @@ func clearFreshProgramDelivery(claim *api.WorkerRunLeaseClaimResponse) {
 	if claim.Execution.Fresh != nil {
 		clearBytes(claim.Execution.Fresh.ProgramStart)
 		claim.Execution.Fresh.ProgramStart = nil
+	}
+	if claim.Execution.Attach != nil && claim.Execution.Attach.Child != nil {
+		clearBytes(claim.Execution.Attach.Child.ProgramStart)
+		claim.Execution.Attach.Child.ProgramStart = nil
 	}
 	for index := range claim.Secrets {
 		clearBytes(claim.Secrets[index].Value)

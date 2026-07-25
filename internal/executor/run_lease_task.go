@@ -98,10 +98,12 @@ func (r ProgramRunner) StartRunLeaseTask(
 		return nil, err
 	}
 	var program freshProgram
-	if claim != nil && claim.Execution.Restore != nil {
-		program, err = r.startRestoredProgram(ctx, claim, control)
+	if claim != nil &&
+		(claim.Execution.Restore != nil ||
+			(claim.Execution.Attach != nil && claim.Execution.Attach.Parent != nil)) {
+		program, err = r.startResumedProgram(ctx, claim, control)
 	} else {
-		program, err = r.startFreshProgram(
+		program, err = r.startNewProgram(
 			ctx,
 			claim,
 			control,

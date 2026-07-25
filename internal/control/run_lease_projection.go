@@ -9,6 +9,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
@@ -86,11 +87,21 @@ func projectRunLeaseExecution(
 		if err != nil {
 			return api.WorkerRunLeaseExecution{}, err
 		}
+		correlationID, err := checkpointCorrelationID(
+			authority.checkpoint,
+			authority.runWait,
+		)
+		if err != nil {
+			return api.WorkerRunLeaseExecution{}, err
+		}
 		restore := api.WorkerRunLeaseRestore{
 			RunWaitID:            waitID,
 			CheckpointID:         checkpointID,
 			ResumeAttachID:       attachID,
 			ResumeRequestVersion: authority.runWait.ResumeRequestVersion,
+			CorrelationID:        correlationID,
+			EntrypointKind:       authority.run.EntrypointKind,
+			EntrypointDeclaredID: authority.run.EntrypointDeclaredID,
 			Decision:             decision,
 		}
 		switch authority.restoreSource {
@@ -146,6 +157,13 @@ func projectRunLeaseExecution(
 		if err != nil {
 			return api.WorkerRunLeaseExecution{}, err
 		}
+		correlationID, err := checkpointCorrelationID(
+			authority.checkpoint,
+			authority.runWait,
+		)
+		if err != nil {
+			return api.WorkerRunLeaseExecution{}, err
+		}
 		start, err := encodeProgramStart(
 			authority.run,
 			authority.attempt,
@@ -159,10 +177,13 @@ func projectRunLeaseExecution(
 		return api.WorkerRunLeaseExecution{
 			Attach: &api.WorkerRunLeaseAttach{
 				Child: &api.WorkerRunLeaseChildAttach{
-					RunWaitID:      waitID,
-					CheckpointID:   checkpointID,
-					ResumeAttachID: attachID,
-					ProgramStart:   start,
+					ParentRunID:         pgvalue.UUIDString(authority.checkpoint.RunID),
+					ParentAttemptNumber: authority.checkpoint.AttemptNumber,
+					RunWaitID:           waitID,
+					CheckpointID:        checkpointID,
+					ResumeAttachID:      attachID,
+					CorrelationID:       correlationID,
+					ProgramStart:        start,
 				},
 			},
 		}, nil
@@ -187,6 +208,13 @@ func projectRunLeaseExecution(
 		if err != nil {
 			return api.WorkerRunLeaseExecution{}, err
 		}
+		correlationID, err := checkpointCorrelationID(
+			authority.checkpoint,
+			authority.runWait,
+		)
+		if err != nil {
+			return api.WorkerRunLeaseExecution{}, err
+		}
 		decision, err := projectRunWaitDecision(authority.runWait)
 		if err != nil {
 			return api.WorkerRunLeaseExecution{}, err
@@ -198,6 +226,9 @@ func projectRunLeaseExecution(
 					CheckpointID:         checkpointID,
 					ResumeAttachID:       attachID,
 					ResumeRequestVersion: authority.runWait.ResumeRequestVersion,
+					CorrelationID:        correlationID,
+					EntrypointKind:       authority.run.EntrypointKind,
+					EntrypointDeclaredID: authority.run.EntrypointDeclaredID,
 					Decision:             decision,
 				},
 			},
@@ -208,6 +239,25 @@ func projectRunLeaseExecution(
 			authority.mode,
 		)
 	}
+}
+
+func checkpointCorrelationID(
+	checkpoint db.RunCheckpoint,
+	wait db.RunWait,
+) (string, error) {
+	var manifest api.WorkerCheckpointManifest
+	if err := json.Unmarshal(checkpoint.RestoreManifest, &manifest); err != nil {
+		return "", fmt.Errorf("decode Run Checkpoint correlation authority: %w", err)
+	}
+	correlationID := strings.TrimSpace(manifest.RecoveryPoint.CorrelationID)
+	if correlationID == "" ||
+		manifest.RecoveryPoint.ID != pgvalue.UUIDString(checkpoint.ID) ||
+		manifest.RecoveryPoint.RunID != pgvalue.UUIDString(checkpoint.RunID) ||
+		manifest.RecoveryPoint.AttemptNumber != checkpoint.AttemptNumber ||
+		manifest.RecoveryPoint.RunWaitID != pgvalue.UUIDString(wait.ID) {
+		return "", errors.New("Run Checkpoint correlation authority is inconsistent")
+	}
+	return correlationID, nil
 }
 
 func projectSecretDeliveries(materials []secret.DeliveryMaterial) ([]api.WorkerSecretDelivery, error) {

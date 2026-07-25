@@ -32,11 +32,11 @@ func TestStartRestoredProgramOrdersGrantStartProofAndRelease(t *testing.T) {
 		}, parent, "restored-channel",
 	)
 	defer unregister()
-	control := &restoredProgramControl{lease: claim.Lease}
+	control := &restoredProgramControl{lease: claim.Lease, wantStart: "restore"}
 	guestErr := make(chan error, 2)
 	go func() { guestErr <- serveRestoredGrant(grantGuest) }()
 	go func() { guestErr <- serveRestoredResume(resumeGuest) }()
-	program, err := (ProgramRunner{WorkspaceMounts: mounts}).startRestoredProgram(
+	program, err := (ProgramRunner{WorkspaceMounts: mounts}).startResumedProgram(
 		context.Background(), &claim, control,
 	)
 	if err != nil {
@@ -55,6 +55,98 @@ func TestStartRestoredProgramOrdersGrantStartProofAndRelease(t *testing.T) {
 	defer control.mu.Unlock()
 	if !control.started || !control.released || control.releaseCalls != 2 {
 		t.Fatalf("start=%v release=%v release calls=%d", control.started, control.released, control.releaseCalls)
+	}
+}
+
+func TestRetainedRestoreAndParentAttachResumeOnExistingMount(t *testing.T) {
+	tests := []struct {
+		name      string
+		wantStart string
+		wantActor bool
+		prepare   func(api.WorkerRunLeaseClaimResponse) api.WorkerRunLeaseClaimResponse
+	}{
+		{
+			name:      "retained restore",
+			wantStart: "restore",
+			prepare: func(claim api.WorkerRunLeaseClaimResponse) api.WorkerRunLeaseClaimResponse {
+				restore := claim.Execution.Restore
+				restore.Recreated = nil
+				restore.Retained = &api.WorkerRunLeaseRetainedRestore{
+					EnclosingRunWaitID: "outer-wait-1",
+				}
+				return claim
+			},
+		},
+		{
+			name:      "parent attach",
+			wantStart: "parent",
+			wantActor: true,
+			prepare: func(claim api.WorkerRunLeaseClaimResponse) api.WorkerRunLeaseClaimResponse {
+				restore := claim.Execution.Restore
+				claim.Execution = api.WorkerRunLeaseExecution{
+					Attach: &api.WorkerRunLeaseAttach{
+						Parent: &api.WorkerRunLeaseParentAttach{
+							RunWaitID:            restore.RunWaitID,
+							CheckpointID:         restore.CheckpointID,
+							ResumeAttachID:       restore.ResumeAttachID,
+							ResumeRequestVersion: restore.ResumeRequestVersion,
+							CorrelationID:        restore.CorrelationID,
+							EntrypointKind:       "actor",
+							EntrypointDeclaredID: "operator",
+							Decision:             restore.Decision,
+						},
+					},
+				}
+				return claim
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			claim := test.prepare(testRestoredProgramClaim(t))
+			resumeGuest, resumeHost := net.Pipe()
+			grantGuest, grantHost := net.Pipe()
+			parent := &queuedStreamSession{
+				streams: []vm.Stream{
+					testVMStream(resumeHost),
+					testVMStream(grantHost),
+				},
+			}
+			mount := testWorkspaceMount(claim.Lease)
+			mounts := NewWorkspaceMountSessions()
+			unregister := mounts.RegisterWorkspaceMountSession(
+				mount,
+				parent,
+				"restored-channel",
+			)
+			defer unregister()
+			control := &restoredProgramControl{
+				lease:     claim.Lease,
+				wantStart: test.wantStart,
+			}
+			guestErr := make(chan error, 2)
+			go func() { guestErr <- serveRestoredGrant(grantGuest) }()
+			go func() { guestErr <- serveRestoredResume(resumeGuest) }()
+			program, err := (ProgramRunner{
+				WorkspaceMounts: mounts,
+			}).startResumedProgram(
+				context.Background(),
+				&claim,
+				control,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer program.session.Close(context.Background())
+			if (program.entrypoint.GetActor() != nil) != test.wantActor {
+				t.Fatalf("resumed entrypoint = %+v", program.entrypoint)
+			}
+			for range 2 {
+				if err := <-guestErr; err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
 	}
 }
 
@@ -198,8 +290,10 @@ func testRestoredProgramClaim(t *testing.T) api.WorkerRunLeaseClaimResponse {
 	claim.Secrets = nil
 	claim.Execution = api.WorkerRunLeaseExecution{Restore: &api.WorkerRunLeaseRestore{
 		RunWaitID: "wait-1", CheckpointID: "checkpoint-1", ResumeAttachID: "attach-1",
-		ResumeRequestVersion: 4, Recreated: &api.WorkerRunLeaseRecreatedRestore{Kind: "suspend", Manifest: manifest},
-		Decision: api.WorkerRunLeaseDecision{Completed: &api.WorkerRunLeaseCompleted{NoResult: &struct{}{}}},
+		ResumeRequestVersion: 4, CorrelationID: "correlation-1",
+		EntrypointKind: "task", EntrypointDeclaredID: "deploy",
+		Recreated: &api.WorkerRunLeaseRecreatedRestore{Kind: "suspend", Manifest: manifest},
+		Decision:  api.WorkerRunLeaseDecision{Completed: &api.WorkerRunLeaseCompleted{NoResult: &struct{}{}}},
 	}}
 	return claim
 }
@@ -229,6 +323,7 @@ type restoredProgramControl struct {
 	started      bool
 	released     bool
 	releaseCalls int
+	wantStart    string
 }
 
 func (c *restoredProgramControl) ClaimRunLease(context.Context, api.WorkerRunLeaseWork) (api.WorkerRunLeaseClaimResponse, error) {
@@ -237,7 +332,17 @@ func (c *restoredProgramControl) ClaimRunLease(context.Context, api.WorkerRunLea
 func (c *restoredProgramControl) AcknowledgeRunStart(_ context.Context, request api.WorkerRunStartRequest) (api.WorkerRunStartResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if request.Restore == nil || !equalRunLeaseReceipt(request.Lease, c.lease) {
+	validArm := request.Restore != nil &&
+		request.Fresh == nil &&
+		request.Attach == nil
+	if c.wantStart == "parent" {
+		validArm = request.Restore == nil &&
+			request.Fresh == nil &&
+			request.Attach != nil &&
+			request.Attach.Parent != nil &&
+			request.Attach.Child == nil
+	}
+	if !validArm || !equalRunLeaseReceipt(request.Lease, c.lease) {
 		return api.WorkerRunStartResponse{}, errors.New("unexpected restore start")
 	}
 	c.started = true

@@ -706,6 +706,9 @@ type WorkerRunLeaseRestore struct {
 	CheckpointID         string                          `json:"checkpoint_id"`
 	ResumeAttachID       string                          `json:"resume_attach_id"`
 	ResumeRequestVersion int64                           `json:"resume_request_version"`
+	CorrelationID        string                          `json:"correlation_id"`
+	EntrypointKind       string                          `json:"entrypoint_kind"`
+	EntrypointDeclaredID string                          `json:"entrypoint_declared_id"`
 	Recreated            *WorkerRunLeaseRecreatedRestore `json:"recreated,omitempty"`
 	Retained             *WorkerRunLeaseRetainedRestore  `json:"retained,omitempty"`
 	Decision             WorkerRunLeaseDecision          `json:"decision"`
@@ -727,10 +730,13 @@ type WorkerRunLeaseAttach struct {
 }
 
 type WorkerRunLeaseChildAttach struct {
-	RunWaitID      string `json:"run_wait_id"`
-	CheckpointID   string `json:"checkpoint_id"`
-	ResumeAttachID string `json:"resume_attach_id"`
-	ProgramStart   []byte `json:"program_start"`
+	ParentRunID         string `json:"parent_run_id"`
+	ParentAttemptNumber int32  `json:"parent_attempt_number"`
+	RunWaitID           string `json:"run_wait_id"`
+	CheckpointID        string `json:"checkpoint_id"`
+	ResumeAttachID      string `json:"resume_attach_id"`
+	CorrelationID       string `json:"correlation_id"`
+	ProgramStart        []byte `json:"program_start"`
 }
 
 type WorkerRunLeaseParentAttach struct {
@@ -738,6 +744,9 @@ type WorkerRunLeaseParentAttach struct {
 	CheckpointID         string                 `json:"checkpoint_id"`
 	ResumeAttachID       string                 `json:"resume_attach_id"`
 	ResumeRequestVersion int64                  `json:"resume_request_version"`
+	CorrelationID        string                 `json:"correlation_id"`
+	EntrypointKind       string                 `json:"entrypoint_kind"`
+	EntrypointDeclaredID string                 `json:"entrypoint_declared_id"`
 	Decision             WorkerRunLeaseDecision `json:"decision"`
 }
 

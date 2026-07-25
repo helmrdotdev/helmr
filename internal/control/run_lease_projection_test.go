@@ -57,8 +57,17 @@ func TestProjectRunLeaseExecutionKeepsFreshAndParentAttachClosed(t *testing.T) {
 			ConditionTerminalAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			ResumeAttachID:      attachID, ResumeRequestVersion: 2,
 		},
-		checkpoint: db.RunCheckpoint{ID: checkpointID},
-		childRun:   db.Run{ID: pgvalue.UUID(uuid.New())},
+		checkpoint: db.RunCheckpoint{
+			ID: checkpointID, RunID: run.ID, AttemptNumber: attempt.Number,
+			RestoreManifest: testCheckpointManifest(
+				t,
+				checkpointID,
+				run.ID,
+				attempt.Number,
+				waitID,
+			),
+		},
+		childRun: db.Run{ID: pgvalue.UUID(uuid.New())},
 	})
 	if err != nil {
 		t.Fatalf("project parent attach execution: %v", err)
@@ -87,8 +96,15 @@ func TestProjectRunLeaseExecutionSeparatesRecreatedAndRetainedRestore(t *testing
 		ResumeAttachID:      attachID, ResumeRequestVersion: 2,
 	}
 	checkpoint := db.RunCheckpoint{
-		ID: checkpointID, Kind: db.RunCheckpointKindSuspend,
-		State: db.RunCheckpointStateReady, RestoreManifest: []byte(`{"version":0}`),
+		ID: checkpointID, RunID: run.ID, AttemptNumber: attempt.Number,
+		Kind: db.RunCheckpointKindSuspend, State: db.RunCheckpointStateReady,
+		RestoreManifest: testCheckpointManifest(
+			t,
+			checkpointID,
+			run.ID,
+			attempt.Number,
+			waitID,
+		),
 	}
 	artifacts := []db.ListRunCheckpointArtifactAuthorityRow{
 		{Role: db.RunCheckpointArtifactRoleRuntimeConfig, Ordinal: 0, Digest: validDigest('a'), SizeBytes: 8, MediaType: "application/example"},
@@ -152,6 +168,29 @@ func TestProjectRunLeaseExecutionSeparatesRecreatedAndRetainedRestore(t *testing
 	}); err == nil {
 		t.Fatal("restore without a source was accepted")
 	}
+}
+
+func testCheckpointManifest(
+	t *testing.T,
+	checkpointID pgtype.UUID,
+	runID pgtype.UUID,
+	attemptNumber int32,
+	waitID pgtype.UUID,
+) []byte {
+	t.Helper()
+	manifest, err := json.Marshal(api.WorkerCheckpointManifest{
+		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
+			ID:            pgvalue.UUIDString(checkpointID),
+			RunID:         pgvalue.UUIDString(runID),
+			AttemptNumber: attemptNumber,
+			RunWaitID:     pgvalue.UUIDString(waitID),
+			CorrelationID: "correlation-1",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manifest
 }
 
 func TestProjectFreshRunLeaseRejectsRestoreProvenance(t *testing.T) {

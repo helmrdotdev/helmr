@@ -113,9 +113,18 @@ func TestRestoreRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
 		ResumeAttachID:      pgvalue.UUID(uuid.New()), ResumeRequestVersion: 2,
 	}
 	authority.checkpoint = db.RunCheckpoint{
-		ID: pgvalue.UUID(uuid.New()), Kind: db.RunCheckpointKindSuspend,
-		State: db.RunCheckpointStateReady, RestoreManifest: []byte(`{"version":0}`),
+		ID: pgvalue.UUID(uuid.New()), RunID: authority.run.ID,
+		AttemptNumber: authority.attempt.Number,
+		Kind:          db.RunCheckpointKindSuspend,
+		State:         db.RunCheckpointStateReady,
 	}
+	authority.checkpoint.RestoreManifest = testCheckpointManifest(
+		t,
+		authority.checkpoint.ID,
+		authority.run.ID,
+		authority.attempt.Number,
+		authority.runWait.ID,
+	)
 	authority.runtime.RestoreCheckpointID = authority.checkpoint.ID
 	projection.checkpointArtifacts = []db.ListRunCheckpointArtifactAuthorityRow{
 		{Role: db.RunCheckpointArtifactRoleRuntimeConfig, Ordinal: 0, Digest: validDigest('a'), SizeBytes: 8, MediaType: "application/example"},
@@ -148,7 +157,17 @@ func TestParentAttachRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
 		ConditionTerminalAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		ResumeAttachID:      pgvalue.UUID(uuid.New()), ResumeRequestVersion: 2,
 	}
-	authority.checkpoint = db.RunCheckpoint{ID: pgvalue.UUID(uuid.New())}
+	authority.checkpoint = db.RunCheckpoint{
+		ID: pgvalue.UUID(uuid.New()), RunID: authority.run.ID,
+		AttemptNumber: authority.attempt.Number,
+	}
+	authority.checkpoint.RestoreManifest = testCheckpointManifest(
+		t,
+		authority.checkpoint.ID,
+		authority.run.ID,
+		authority.attempt.Number,
+		authority.runWait.ID,
+	)
 	authority.childRun = db.Run{ID: pgvalue.UUID(uuid.New())}
 	response, err := projectRunLeaseClaimResponse(
 		authority,
