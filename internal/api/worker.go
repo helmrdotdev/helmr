@@ -517,15 +517,16 @@ type WorkerSendActorInputResponse struct {
 }
 
 type WorkerInvokeChildTaskRequest struct {
-	Lease          WorkerRunLeaseReceipt `json:"lease"`
-	CorrelationID  string                `json:"correlation_id"`
-	TaskDeclaredID string                `json:"task_declared_id"`
-	Method         string                `json:"method"`
-	PayloadPresent bool                  `json:"payload_present"`
-	Payload        json.RawMessage       `json:"payload,omitempty"`
-	Workspace      json.RawMessage       `json:"workspace"`
-	Options        json.RawMessage       `json:"options"`
-	IdempotencyKey string                `json:"idempotency_key,omitempty"`
+	Lease                         WorkerRunLeaseReceipt `json:"lease"`
+	CorrelationID                 string                `json:"correlation_id"`
+	TaskDeclaredID                string                `json:"task_declared_id"`
+	Method                        string                `json:"method"`
+	PayloadPresent                bool                  `json:"payload_present"`
+	Payload                       json.RawMessage       `json:"payload,omitempty"`
+	Workspace                     json.RawMessage       `json:"workspace"`
+	Options                       json.RawMessage       `json:"options"`
+	IdempotencyKey                string                `json:"idempotency_key,omitempty"`
+	ActorSpeculativeInputSequence *int64                `json:"actor_speculative_input_sequence,omitempty"`
 }
 
 type WorkerChildTaskStartResult struct {
@@ -535,6 +536,7 @@ type WorkerChildTaskStartResult struct {
 type WorkerInvokeChildTaskResponse struct {
 	CorrelationID string                         `json:"correlation_id"`
 	Completed     *WorkerChildTaskStartResult    `json:"completed,omitempty"`
+	OpenedWait    *WorkerCreateRunWaitResponse   `json:"opened_wait,omitempty"`
 	Failed        *WorkerRuntimeOperationFailure `json:"failed,omitempty"`
 }
 
@@ -1052,6 +1054,7 @@ const (
 	WorkerRunWaitKindToken      WorkerRunWaitKind = "token"
 	WorkerRunWaitKindTimer      WorkerRunWaitKind = "timer"
 	WorkerRunWaitKindActorInput WorkerRunWaitKind = "actor_input"
+	WorkerRunWaitKindChild      WorkerRunWaitKind = "child"
 )
 
 type WorkerCreateRunWaitRequest struct {

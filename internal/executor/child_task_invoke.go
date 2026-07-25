@@ -27,35 +27,85 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 	if err != nil {
 		return err
 	}
-	task.mu.Lock()
-	defer task.mu.Unlock()
-	if task.finished || task.finalizingKind != "" {
-		return errors.New("Run Lease Task cannot invoke a child Task")
-	}
-	request.Lease = task.lease
-	control, ok := task.control.(childTaskInvokeControl)
-	if !ok {
-		return errors.New("Run Lease Task child Task invocation control is required")
-	}
-	var response api.WorkerInvokeChildTaskResponse
-	requestCtx, cancel, err := runLeaseLogContext(ctx, task.lease.ExpiresAt)
+	response, err := func() (api.WorkerInvokeChildTaskResponse, error) {
+		task.mu.Lock()
+		defer task.mu.Unlock()
+		if task.finished || task.finalizingKind != "" {
+			return api.WorkerInvokeChildTaskResponse{}, errors.New(
+				"Run Lease Task cannot invoke a child Task",
+			)
+		}
+		request.Lease = task.lease
+		control, ok := task.control.(childTaskInvokeControl)
+		if !ok {
+			return api.WorkerInvokeChildTaskResponse{}, errors.New(
+				"Run Lease Task child Task invocation control is required",
+			)
+		}
+		var response api.WorkerInvokeChildTaskResponse
+		requestCtx, cancel, err := runLeaseLogContext(ctx, task.lease.ExpiresAt)
+		if err != nil {
+			return api.WorkerInvokeChildTaskResponse{}, err
+		}
+		defer cancel()
+		if err := retryRunLeaseRequest(requestCtx, func(callCtx context.Context) error {
+			var callErr error
+			response, callErr = control.InvokeChildTask(callCtx, request)
+			return callErr
+		}); err != nil {
+			if failure, ok := childTaskInvokeFailure(err); ok {
+				response = api.WorkerInvokeChildTaskResponse{
+					CorrelationID: request.CorrelationID,
+					Failed:        &failure,
+				}
+			} else {
+				return api.WorkerInvokeChildTaskResponse{}, fmt.Errorf(
+					"invoke child Task: %w",
+					err,
+				)
+			}
+		}
+		return response, nil
+	}()
 	if err != nil {
 		return err
 	}
-	defer cancel()
-	if err := retryRunLeaseRequest(requestCtx, func(callCtx context.Context) error {
-		var callErr error
-		response, callErr = control.InvokeChildTask(callCtx, request)
-		return callErr
-	}); err != nil {
-		if failure, ok := childTaskInvokeFailure(err); ok {
-			response = api.WorkerInvokeChildTaskResponse{
-				CorrelationID: request.CorrelationID,
-				Failed:        &failure,
-			}
-		} else {
-			return fmt.Errorf("invoke child Task: %w", err)
+	if response.CorrelationID != request.CorrelationID {
+		return errors.New("child Task invocation response correlation ID did not match")
+	}
+	if response.OpenedWait != nil {
+		if response.Failed != nil {
+			return errors.New("child Task invocation response contained conflicting outcomes")
 		}
+		if task.waits == nil {
+			return errors.New("Run Lease Task wait control is required")
+		}
+		runtimeWait := WaitRequest{
+			Leases:                        task,
+			CorrelationID:                 request.CorrelationID,
+			Kind:                          api.WorkerRunWaitKindChild,
+			ActorSpeculativeInputSequence: request.ActorSpeculativeInputSequence,
+			Workspace:                     task.waitWorkspace,
+			Checkpointer:                  task.checkpointer,
+			Resume: func(_ context.Context, decision WaitResumeDecision) error {
+				if strings.TrimSpace(decision.Kind) == "" {
+					return errors.New("Program resume kind is required")
+				}
+				if len(decision.Data) == 0 {
+					decision.Data = json.RawMessage(`null`)
+				}
+				return wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
+					RunWaitId:     response.OpenedWait.RunWaitID,
+					CorrelationId: request.CorrelationID,
+					Kind:          decision.Kind,
+					DataJson:      string(decision.Data),
+				})
+			},
+		}
+		return task.waits.ContinueRunWait(ctx, runtimeWait, *response.OpenedWait)
+	}
+	if (response.Completed == nil) == (response.Failed == nil) {
+		return errors.New("child Task invocation response must contain exactly one outcome")
 	}
 	kind := "completed"
 	data := any(response.Completed)
@@ -101,6 +151,7 @@ func workerChildTaskInvokeRequest(
 	if requested.IdempotencyKey != nil {
 		request.IdempotencyKey = requested.GetIdempotencyKey()
 	}
+	request.ActorSpeculativeInputSequence = requested.ActorSpeculativeInputSequence
 	return request, nil
 }
 

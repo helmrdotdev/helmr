@@ -78,6 +78,10 @@ func (s *Server) completeTask(
 		if err != nil {
 			return staleTaskCompletion(err)
 		}
+		owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
+		if err != nil {
+			return staleTaskCompletion(err)
+		}
 		authority, err := lockLiveRunLeaseAuthority(
 			ctx,
 			work.q,
@@ -88,6 +92,27 @@ func (s *Server) completeTask(
 		)
 		if err != nil {
 			return staleTaskCompletion(err)
+		}
+		authority.actor = owner.actor
+		authority.parentRun = owner.parent
+		if err := validateRunFinalizationOwner(authority, locators); err != nil {
+			return staleTaskCompletion(err)
+		}
+		if authority.run.ParentRunID.Valid && authority.run.ParentOwnsLifecycle.Valid &&
+			authority.run.ParentOwnsLifecycle.Bool {
+			authority.enclosingWait, err = lockParentOwnedChildWaitIfActive(
+				ctx,
+				work.q,
+				authority.parentRun,
+				db.LockParentOwnedChildWaitParams{
+					EnvironmentID: authority.run.EnvironmentID,
+					ParentRunID:   authority.run.ParentRunID,
+					ChildRunID:    authority.run.ID,
+				},
+			)
+			if err != nil {
+				return staleTaskCompletion(err)
+			}
 		}
 		if err := validateTaskCompletionAuthority(ctx, work.q, request, completion, authority); err != nil {
 			return err
@@ -234,9 +259,26 @@ func validateTaskCompletionAuthority(
 		authority.workspace.HeadVersionID != authority.run.BaseWorkspaceVersionID ||
 		authority.workspace.OwnerRunID != authority.run.ID ||
 		authority.workspace.OwnerActorID.Valid ||
-		(authority.run.ParentRunID.Valid != authority.run.ParentOwnsLifecycle.Valid) ||
-		(authority.run.ParentRunID.Valid && authority.run.ParentOwnsLifecycle.Bool) {
+		(authority.run.ParentRunID.Valid != authority.run.ParentOwnsLifecycle.Valid) {
 		return errStaleTaskCompletion
+	}
+	if authority.run.ParentRunID.Valid && authority.run.ParentOwnsLifecycle.Bool {
+		if authority.parentRun.ID != authority.run.ParentRunID ||
+			authority.parentRun.WorkspaceID == authority.run.WorkspaceID {
+			return errStaleTaskCompletion
+		}
+		if authority.enclosingWait.ID.Valid {
+			if authority.enclosingWait.RunID != authority.parentRun.ID ||
+				authority.enclosingWait.ChildRunID != authority.run.ID ||
+				!authority.enclosingWait.ChildParentOwned.Valid ||
+				!authority.enclosingWait.ChildParentOwned.Bool ||
+				authority.enclosingWait.Kind != db.WaitKindChild ||
+				authority.enclosingWait.ConditionState != db.WaitStatePending {
+				return errStaleTaskCompletion
+			}
+		} else if authority.parentRun.Status == db.RunStatusCancelRequested {
+			return errStaleTaskCompletion
+		}
 	}
 	if completion.kind != taskCompletionSucceeded &&
 		(completion.rollback == nil || pgvalue.UUID(completion.rollback.baseID) != authority.run.BaseWorkspaceVersionID) {
@@ -587,6 +629,107 @@ func finishTask(
 		OrgID: authority.run.OrgID, RunID: authority.run.ID, Kind: eventKind, Payload: payload,
 	}); err != nil {
 		return fmt.Errorf("append Task terminal event: %w", err)
+	}
+	if authority.run.ParentRunID.Valid && authority.run.ParentOwnsLifecycle.Valid &&
+		authority.run.ParentOwnsLifecycle.Bool && authority.enclosingWait.ID.Valid {
+		terminalRun := authority.run
+		terminalRun.Status = status
+		terminalRun.Output = output
+		terminalRun.TerminalReasonCode = reason
+		terminalRun.Error = terminalError
+		if err := resolveParentOwnedChildWait(
+			ctx, store, authority, terminalRun, completedAt,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func lockParentOwnedChildWaitIfActive(
+	ctx context.Context,
+	store db.Querier,
+	parent db.Run,
+	params db.LockParentOwnedChildWaitParams,
+) (db.RunWait, error) {
+	wait, err := store.LockParentOwnedChildWait(ctx, params)
+	if err == nil {
+		return wait, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return db.RunWait{}, err
+	}
+	if parent.Status == db.RunStatusQueued ||
+		parent.Status == db.RunStatusRunning ||
+		parent.Status == db.RunStatusWaiting ||
+		parent.Status == db.RunStatusRetryDelayed {
+		return db.RunWait{}, nil
+	}
+	return db.RunWait{}, errStaleTaskCompletion
+}
+
+func resolveParentOwnedChildWait(
+	ctx context.Context,
+	store db.Querier,
+	authority runLeaseClaimAuthority,
+	child db.Run,
+	completedAt pgtype.Timestamptz,
+) error {
+	wait := authority.enclosingWait
+	result, err := childTaskResult(child)
+	if err != nil {
+		return err
+	}
+	switch wait.SuspensionState {
+	case db.RunWaitStateHot:
+		_, err = store.CompleteHotChildRunWait(ctx, db.CompleteHotChildRunWaitParams{
+			RunID: wait.RunID, EnvironmentID: wait.EnvironmentID,
+			ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
+			AttemptNumber:           wait.AttemptNumber, CurrentRunLeaseID: wait.CurrentRunLeaseID,
+			ConditionResult: result, ID: wait.ID, ChildRunID: child.ID,
+		})
+	case db.RunWaitStateCheckpointing:
+		_, err = store.CompleteCheckpointingChildRunWait(
+			ctx,
+			db.CompleteCheckpointingChildRunWaitParams{
+				ConditionResult: result, ID: wait.ID, RunID: wait.RunID,
+				ChildRunID: child.ID, ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
+				CurrentRunLeaseID: wait.CurrentRunLeaseID,
+			},
+		)
+	case db.RunWaitStateParked:
+		var completed db.RunWait
+		completed, err = store.CompleteParkedChildRunWait(
+			ctx,
+			db.CompleteParkedChildRunWaitParams{
+				RunID: wait.RunID, EnvironmentID: wait.EnvironmentID,
+				ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
+				AttemptNumber:           wait.AttemptNumber, ConditionResult: result,
+				ID: wait.ID, ChildRunID: child.ID, PriorRunLeaseID: wait.PriorRunLeaseID,
+				SuspendCheckpointID: wait.SuspendCheckpointID,
+			},
+		)
+		if err == nil {
+			payload, marshalErr := json.Marshal(map[string]any{
+				"environmentId":        pgvalue.UUIDString(wait.EnvironmentID),
+				"runId":                pgvalue.UUIDString(wait.RunID),
+				"runWaitId":            pgvalue.UUIDString(wait.ID),
+				"resumeRequestVersion": completed.ResumeRequestVersion,
+			})
+			if marshalErr != nil {
+				return marshalErr
+			}
+			_, err = store.CreateOutboxMessage(ctx, db.CreateOutboxMessageParams{
+				ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Lane: "control", Topic: "run.resume",
+				PartitionKey: pgvalue.UUIDString(authority.parentRun.WorkspaceID),
+				Payload:      payload, AvailableAt: completedAt,
+			})
+		}
+	default:
+		return errStaleTaskCompletion
+	}
+	if err != nil {
+		return staleTaskCompletion(err)
 	}
 	return nil
 }

@@ -18,6 +18,7 @@ type queryTransactionBeginner interface {
 
 type txWork struct {
 	q           db.Querier
+	tx          controlTransaction
 	afterCommit []func(context.Context)
 }
 
@@ -87,7 +88,7 @@ func runControlTransaction(ctx context.Context, q db.Querier, tx controlTransact
 	if tx == nil {
 		return errors.New("transaction is required")
 	}
-	work := &txWork{q: q}
+	work := &txWork{q: q, tx: tx}
 	committed := false
 	defer func() {
 		if recovered := recover(); recovered != nil {

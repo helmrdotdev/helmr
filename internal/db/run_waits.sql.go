@@ -189,6 +189,103 @@ func (q *Queries) CompleteCheckpointingActorInputRunWait(ctx context.Context, ar
 	return i, err
 }
 
+const completeCheckpointingChildRunWait = `-- name: CompleteCheckpointingChildRunWait :one
+UPDATE run_waits
+   SET condition_state = 'completed',
+       condition_result = $1,
+       condition_terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = $2
+   AND run_id = $3
+   AND child_run_id = $4
+   AND condition_state = 'pending'
+   AND suspension_state = 'checkpointing'
+   AND expected_run_state_version = $5
+   AND current_run_lease_id = $6
+RETURNING id, environment_id, run_id, workspace_id, kind, condition_state, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_parent_owned, child_target_declared_id, child_claim_id, child_request, actor_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_actor_record_id, completed_actor_record_direction, suspension_state, token_registration_run_state_version, registration_request_fingerprint, expected_run_state_version, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, handoff_resume_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, child_result_version_id, resume_workspace_version_id, handoff_runtime_instance_id, handoff_workspace_mount_id, handoff_mount_generation, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
+`
+
+type CompleteCheckpointingChildRunWaitParams struct {
+	ConditionResult         []byte      `json:"condition_result"`
+	ID                      pgtype.UUID `json:"id"`
+	RunID                   pgtype.UUID `json:"run_id"`
+	ChildRunID              pgtype.UUID `json:"child_run_id"`
+	ExpectedRunStateVersion int64       `json:"expected_run_state_version"`
+	CurrentRunLeaseID       pgtype.UUID `json:"current_run_lease_id"`
+}
+
+func (q *Queries) CompleteCheckpointingChildRunWait(ctx context.Context, arg CompleteCheckpointingChildRunWaitParams) (RunWait, error) {
+	row := q.db.QueryRow(ctx, completeCheckpointingChildRunWait,
+		arg.ConditionResult,
+		arg.ID,
+		arg.RunID,
+		arg.ChildRunID,
+		arg.ExpectedRunStateVersion,
+		arg.CurrentRunLeaseID,
+	)
+	var i RunWait
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.ConditionState,
+		&i.DueAt,
+		&i.TimeoutAt,
+		&i.IdleTimeoutMs,
+		&i.TokenID,
+		&i.ChildRunID,
+		&i.ChildParentOwned,
+		&i.ChildTargetDeclaredID,
+		&i.ChildClaimID,
+		&i.ChildRequest,
+		&i.ActorID,
+		&i.AfterInputSequence,
+		&i.ConditionResult,
+		&i.ConditionError,
+		&i.ConditionTerminalAt,
+		&i.ConditionReasonCode,
+		&i.CompletedActorRecordID,
+		&i.CompletedActorRecordDirection,
+		&i.SuspensionState,
+		&i.TokenRegistrationRunStateVersion,
+		&i.RegistrationRequestFingerprint,
+		&i.ExpectedRunStateVersion,
+		&i.AttemptNumber,
+		&i.ActorSpeculativeInputSequence,
+		&i.CurrentRunLeaseID,
+		&i.PriorRunLeaseID,
+		&i.CheckpointRequestVersion,
+		&i.CheckpointAckVersion,
+		&i.CheckpointDueAt,
+		&i.SuspendCheckpointID,
+		&i.HandoffResumeCheckpointID,
+		&i.ResumeAttachID,
+		&i.ResumeRequestVersion,
+		&i.ResumeAckVersion,
+		&i.BaseWorkspaceVersionID,
+		&i.BaseWorkspaceContentDigest,
+		&i.ChildResultVersionID,
+		&i.ResumeWorkspaceVersionID,
+		&i.HandoffRuntimeInstanceID,
+		&i.HandoffWorkspaceMountID,
+		&i.HandoffMountGeneration,
+		&i.OwnershipGeneration,
+		&i.ParentWriterGeneration,
+		&i.ChildWriterGeneration,
+		&i.ResumeWriterGeneration,
+		&i.Metadata,
+		&i.Tags,
+		&i.SuspensionTerminalAt,
+		&i.SuspensionReasonCode,
+		&i.SuspensionError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const completeHotActorInputRunWait = `-- name: CompleteHotActorInputRunWait :one
 WITH moved_run AS (
     UPDATE runs
@@ -239,6 +336,124 @@ func (q *Queries) CompleteHotActorInputRunWait(ctx context.Context, arg Complete
 		arg.RunID,
 		arg.ExpectedRunStateVersion,
 		arg.CurrentRunLeaseID,
+		arg.AttemptNumber,
+	)
+	var i RunWait
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.ConditionState,
+		&i.DueAt,
+		&i.TimeoutAt,
+		&i.IdleTimeoutMs,
+		&i.TokenID,
+		&i.ChildRunID,
+		&i.ChildParentOwned,
+		&i.ChildTargetDeclaredID,
+		&i.ChildClaimID,
+		&i.ChildRequest,
+		&i.ActorID,
+		&i.AfterInputSequence,
+		&i.ConditionResult,
+		&i.ConditionError,
+		&i.ConditionTerminalAt,
+		&i.ConditionReasonCode,
+		&i.CompletedActorRecordID,
+		&i.CompletedActorRecordDirection,
+		&i.SuspensionState,
+		&i.TokenRegistrationRunStateVersion,
+		&i.RegistrationRequestFingerprint,
+		&i.ExpectedRunStateVersion,
+		&i.AttemptNumber,
+		&i.ActorSpeculativeInputSequence,
+		&i.CurrentRunLeaseID,
+		&i.PriorRunLeaseID,
+		&i.CheckpointRequestVersion,
+		&i.CheckpointAckVersion,
+		&i.CheckpointDueAt,
+		&i.SuspendCheckpointID,
+		&i.HandoffResumeCheckpointID,
+		&i.ResumeAttachID,
+		&i.ResumeRequestVersion,
+		&i.ResumeAckVersion,
+		&i.BaseWorkspaceVersionID,
+		&i.BaseWorkspaceContentDigest,
+		&i.ChildResultVersionID,
+		&i.ResumeWorkspaceVersionID,
+		&i.HandoffRuntimeInstanceID,
+		&i.HandoffWorkspaceMountID,
+		&i.HandoffMountGeneration,
+		&i.OwnershipGeneration,
+		&i.ParentWriterGeneration,
+		&i.ChildWriterGeneration,
+		&i.ResumeWriterGeneration,
+		&i.Metadata,
+		&i.Tags,
+		&i.SuspensionTerminalAt,
+		&i.SuspensionReasonCode,
+		&i.SuspensionError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const completeHotChildRunWait = `-- name: CompleteHotChildRunWait :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'running',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = $3
+       AND runs.environment_id = $7
+       AND runs.status = 'waiting'
+       AND runs.state_version = $5
+       AND runs.current_attempt_number = $8
+       AND runs.current_run_lease_id = $6
+    RETURNING state_version
+)
+UPDATE run_waits
+   SET condition_state = 'completed',
+       condition_result = $1,
+       condition_terminal_at = transaction_timestamp(),
+       suspension_state = 'released',
+       expected_run_state_version = moved_run.state_version,
+       suspension_terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+  FROM moved_run
+ WHERE run_waits.id = $2
+   AND run_waits.run_id = $3
+   AND run_waits.child_run_id = $4
+   AND run_waits.condition_state = 'pending'
+   AND run_waits.suspension_state = 'hot'
+   AND run_waits.expected_run_state_version = $5
+   AND run_waits.current_run_lease_id = $6
+RETURNING run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.kind, run_waits.condition_state, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_parent_owned, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.actor_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_actor_record_id, run_waits.completed_actor_record_direction, run_waits.suspension_state, run_waits.token_registration_run_state_version, run_waits.registration_request_fingerprint, run_waits.expected_run_state_version, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.handoff_resume_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.child_result_version_id, run_waits.resume_workspace_version_id, run_waits.handoff_runtime_instance_id, run_waits.handoff_workspace_mount_id, run_waits.handoff_mount_generation, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at
+`
+
+type CompleteHotChildRunWaitParams struct {
+	ConditionResult         []byte      `json:"condition_result"`
+	ID                      pgtype.UUID `json:"id"`
+	RunID                   pgtype.UUID `json:"run_id"`
+	ChildRunID              pgtype.UUID `json:"child_run_id"`
+	ExpectedRunStateVersion int64       `json:"expected_run_state_version"`
+	CurrentRunLeaseID       pgtype.UUID `json:"current_run_lease_id"`
+	EnvironmentID           pgtype.UUID `json:"environment_id"`
+	AttemptNumber           int32       `json:"attempt_number"`
+}
+
+func (q *Queries) CompleteHotChildRunWait(ctx context.Context, arg CompleteHotChildRunWaitParams) (RunWait, error) {
+	row := q.db.QueryRow(ctx, completeHotChildRunWait,
+		arg.ConditionResult,
+		arg.ID,
+		arg.RunID,
+		arg.ChildRunID,
+		arg.ExpectedRunStateVersion,
+		arg.CurrentRunLeaseID,
+		arg.EnvironmentID,
 		arg.AttemptNumber,
 	)
 	var i RunWait
@@ -358,6 +573,128 @@ func (q *Queries) CompleteParkedActorInputRunWait(ctx context.Context, arg Compl
 		arg.ExpectedRunStateVersion,
 		arg.PriorRunLeaseID,
 		arg.SuspendCheckpointID,
+		arg.AttemptNumber,
+	)
+	var i RunWait
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.ConditionState,
+		&i.DueAt,
+		&i.TimeoutAt,
+		&i.IdleTimeoutMs,
+		&i.TokenID,
+		&i.ChildRunID,
+		&i.ChildParentOwned,
+		&i.ChildTargetDeclaredID,
+		&i.ChildClaimID,
+		&i.ChildRequest,
+		&i.ActorID,
+		&i.AfterInputSequence,
+		&i.ConditionResult,
+		&i.ConditionError,
+		&i.ConditionTerminalAt,
+		&i.ConditionReasonCode,
+		&i.CompletedActorRecordID,
+		&i.CompletedActorRecordDirection,
+		&i.SuspensionState,
+		&i.TokenRegistrationRunStateVersion,
+		&i.RegistrationRequestFingerprint,
+		&i.ExpectedRunStateVersion,
+		&i.AttemptNumber,
+		&i.ActorSpeculativeInputSequence,
+		&i.CurrentRunLeaseID,
+		&i.PriorRunLeaseID,
+		&i.CheckpointRequestVersion,
+		&i.CheckpointAckVersion,
+		&i.CheckpointDueAt,
+		&i.SuspendCheckpointID,
+		&i.HandoffResumeCheckpointID,
+		&i.ResumeAttachID,
+		&i.ResumeRequestVersion,
+		&i.ResumeAckVersion,
+		&i.BaseWorkspaceVersionID,
+		&i.BaseWorkspaceContentDigest,
+		&i.ChildResultVersionID,
+		&i.ResumeWorkspaceVersionID,
+		&i.HandoffRuntimeInstanceID,
+		&i.HandoffWorkspaceMountID,
+		&i.HandoffMountGeneration,
+		&i.OwnershipGeneration,
+		&i.ParentWriterGeneration,
+		&i.ChildWriterGeneration,
+		&i.ResumeWriterGeneration,
+		&i.Metadata,
+		&i.Tags,
+		&i.SuspensionTerminalAt,
+		&i.SuspensionReasonCode,
+		&i.SuspensionError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const completeParkedChildRunWait = `-- name: CompleteParkedChildRunWait :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'queued',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = $3
+       AND runs.environment_id = $8
+       AND runs.status = 'waiting'
+       AND runs.state_version = $5
+       AND runs.current_attempt_number = $9
+       AND runs.current_run_lease_id IS NULL
+    RETURNING state_version
+)
+UPDATE run_waits
+   SET condition_state = 'completed',
+       condition_result = $1,
+       condition_terminal_at = transaction_timestamp(),
+       suspension_state = 'resume_pending',
+       resume_request_version = run_waits.resume_request_version + 1,
+       expected_run_state_version = moved_run.state_version,
+       updated_at = transaction_timestamp()
+  FROM moved_run
+ WHERE run_waits.id = $2
+   AND run_waits.run_id = $3
+   AND run_waits.child_run_id = $4
+   AND run_waits.condition_state = 'pending'
+   AND run_waits.suspension_state = 'parked'
+   AND run_waits.expected_run_state_version = $5
+   AND run_waits.current_run_lease_id IS NULL
+   AND run_waits.prior_run_lease_id = $6
+   AND run_waits.suspend_checkpoint_id = $7
+RETURNING run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.kind, run_waits.condition_state, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_parent_owned, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.actor_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_actor_record_id, run_waits.completed_actor_record_direction, run_waits.suspension_state, run_waits.token_registration_run_state_version, run_waits.registration_request_fingerprint, run_waits.expected_run_state_version, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.handoff_resume_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.child_result_version_id, run_waits.resume_workspace_version_id, run_waits.handoff_runtime_instance_id, run_waits.handoff_workspace_mount_id, run_waits.handoff_mount_generation, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at
+`
+
+type CompleteParkedChildRunWaitParams struct {
+	ConditionResult         []byte      `json:"condition_result"`
+	ID                      pgtype.UUID `json:"id"`
+	RunID                   pgtype.UUID `json:"run_id"`
+	ChildRunID              pgtype.UUID `json:"child_run_id"`
+	ExpectedRunStateVersion int64       `json:"expected_run_state_version"`
+	PriorRunLeaseID         pgtype.UUID `json:"prior_run_lease_id"`
+	SuspendCheckpointID     pgtype.UUID `json:"suspend_checkpoint_id"`
+	EnvironmentID           pgtype.UUID `json:"environment_id"`
+	AttemptNumber           int32       `json:"attempt_number"`
+}
+
+func (q *Queries) CompleteParkedChildRunWait(ctx context.Context, arg CompleteParkedChildRunWaitParams) (RunWait, error) {
+	row := q.db.QueryRow(ctx, completeParkedChildRunWait,
+		arg.ConditionResult,
+		arg.ID,
+		arg.RunID,
+		arg.ChildRunID,
+		arg.ExpectedRunStateVersion,
+		arg.PriorRunLeaseID,
+		arg.SuspendCheckpointID,
+		arg.EnvironmentID,
 		arg.AttemptNumber,
 	)
 	var i RunWait
@@ -1037,6 +1374,106 @@ func (q *Queries) GetActorInputRunWaitRegistrationReplay(ctx context.Context, ar
 	return i, err
 }
 
+const getChildCallRunWaitReplay = `-- name: GetChildCallRunWaitReplay :one
+SELECT id, environment_id, run_id, workspace_id, kind, condition_state, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_parent_owned, child_target_declared_id, child_claim_id, child_request, actor_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_actor_record_id, completed_actor_record_direction, suspension_state, token_registration_run_state_version, registration_request_fingerprint, expected_run_state_version, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, handoff_resume_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, child_result_version_id, resume_workspace_version_id, handoff_runtime_instance_id, handoff_workspace_mount_id, handoff_mount_generation, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
+  FROM run_waits
+ WHERE environment_id = $1
+   AND run_id = $2
+   AND attempt_number = $3
+   AND id = $4
+   AND kind = 'child'
+   AND child_run_id = $5
+   AND child_parent_owned IS TRUE
+   AND child_claim_id = $6
+   AND registration_request_fingerprint = $7
+   AND resume_attach_id = $8
+`
+
+type GetChildCallRunWaitReplayParams struct {
+	EnvironmentID                  pgtype.UUID `json:"environment_id"`
+	RunID                          pgtype.UUID `json:"run_id"`
+	AttemptNumber                  int32       `json:"attempt_number"`
+	ID                             pgtype.UUID `json:"id"`
+	ChildRunID                     pgtype.UUID `json:"child_run_id"`
+	ChildClaimID                   pgtype.UUID `json:"child_claim_id"`
+	RegistrationRequestFingerprint pgtype.Text `json:"registration_request_fingerprint"`
+	ResumeAttachID                 pgtype.UUID `json:"resume_attach_id"`
+}
+
+func (q *Queries) GetChildCallRunWaitReplay(ctx context.Context, arg GetChildCallRunWaitReplayParams) (RunWait, error) {
+	row := q.db.QueryRow(ctx, getChildCallRunWaitReplay,
+		arg.EnvironmentID,
+		arg.RunID,
+		arg.AttemptNumber,
+		arg.ID,
+		arg.ChildRunID,
+		arg.ChildClaimID,
+		arg.RegistrationRequestFingerprint,
+		arg.ResumeAttachID,
+	)
+	var i RunWait
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.ConditionState,
+		&i.DueAt,
+		&i.TimeoutAt,
+		&i.IdleTimeoutMs,
+		&i.TokenID,
+		&i.ChildRunID,
+		&i.ChildParentOwned,
+		&i.ChildTargetDeclaredID,
+		&i.ChildClaimID,
+		&i.ChildRequest,
+		&i.ActorID,
+		&i.AfterInputSequence,
+		&i.ConditionResult,
+		&i.ConditionError,
+		&i.ConditionTerminalAt,
+		&i.ConditionReasonCode,
+		&i.CompletedActorRecordID,
+		&i.CompletedActorRecordDirection,
+		&i.SuspensionState,
+		&i.TokenRegistrationRunStateVersion,
+		&i.RegistrationRequestFingerprint,
+		&i.ExpectedRunStateVersion,
+		&i.AttemptNumber,
+		&i.ActorSpeculativeInputSequence,
+		&i.CurrentRunLeaseID,
+		&i.PriorRunLeaseID,
+		&i.CheckpointRequestVersion,
+		&i.CheckpointAckVersion,
+		&i.CheckpointDueAt,
+		&i.SuspendCheckpointID,
+		&i.HandoffResumeCheckpointID,
+		&i.ResumeAttachID,
+		&i.ResumeRequestVersion,
+		&i.ResumeAckVersion,
+		&i.BaseWorkspaceVersionID,
+		&i.BaseWorkspaceContentDigest,
+		&i.ChildResultVersionID,
+		&i.ResumeWorkspaceVersionID,
+		&i.HandoffRuntimeInstanceID,
+		&i.HandoffWorkspaceMountID,
+		&i.HandoffMountGeneration,
+		&i.OwnershipGeneration,
+		&i.ParentWriterGeneration,
+		&i.ChildWriterGeneration,
+		&i.ResumeWriterGeneration,
+		&i.Metadata,
+		&i.Tags,
+		&i.SuspensionTerminalAt,
+		&i.SuspensionReasonCode,
+		&i.SuspensionError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getPendingActorInputRunWait = `-- name: GetPendingActorInputRunWait :one
 SELECT id, environment_id, run_id, workspace_id, kind, condition_state, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_parent_owned, child_target_declared_id, child_claim_id, child_request, actor_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_actor_record_id, completed_actor_record_direction, suspension_state, token_registration_run_state_version, registration_request_fingerprint, expected_run_state_version, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, handoff_resume_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, child_result_version_id, resume_workspace_version_id, handoff_runtime_instance_id, handoff_workspace_mount_id, handoff_mount_generation, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
   FROM run_waits
@@ -1389,6 +1826,95 @@ func (q *Queries) ListPendingRunWaitTimeouts(ctx context.Context, limitCount int
 	return items, nil
 }
 
+const lockParentOwnedChildWait = `-- name: LockParentOwnedChildWait :one
+SELECT run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.kind, run_waits.condition_state, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_parent_owned, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.actor_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_actor_record_id, run_waits.completed_actor_record_direction, run_waits.suspension_state, run_waits.token_registration_run_state_version, run_waits.registration_request_fingerprint, run_waits.expected_run_state_version, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.handoff_resume_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.child_result_version_id, run_waits.resume_workspace_version_id, run_waits.handoff_runtime_instance_id, run_waits.handoff_workspace_mount_id, run_waits.handoff_mount_generation, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at
+  FROM runs AS parent
+  JOIN run_waits
+    ON run_waits.environment_id = parent.environment_id
+   AND run_waits.run_id = parent.id
+ WHERE parent.environment_id = $1
+   AND parent.id = $2
+   AND run_waits.child_run_id = $3
+   AND run_waits.child_parent_owned IS TRUE
+   AND run_waits.kind = 'child'
+   AND run_waits.condition_state = 'pending'
+   AND run_waits.suspension_state IN ('hot', 'checkpointing', 'parked')
+ ORDER BY run_waits.created_at DESC, run_waits.id DESC
+ LIMIT 1
+ FOR UPDATE OF parent, run_waits
+`
+
+type LockParentOwnedChildWaitParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ParentRunID   pgtype.UUID `json:"parent_run_id"`
+	ChildRunID    pgtype.UUID `json:"child_run_id"`
+}
+
+func (q *Queries) LockParentOwnedChildWait(ctx context.Context, arg LockParentOwnedChildWaitParams) (RunWait, error) {
+	row := q.db.QueryRow(ctx, lockParentOwnedChildWait, arg.EnvironmentID, arg.ParentRunID, arg.ChildRunID)
+	var i RunWait
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.ConditionState,
+		&i.DueAt,
+		&i.TimeoutAt,
+		&i.IdleTimeoutMs,
+		&i.TokenID,
+		&i.ChildRunID,
+		&i.ChildParentOwned,
+		&i.ChildTargetDeclaredID,
+		&i.ChildClaimID,
+		&i.ChildRequest,
+		&i.ActorID,
+		&i.AfterInputSequence,
+		&i.ConditionResult,
+		&i.ConditionError,
+		&i.ConditionTerminalAt,
+		&i.ConditionReasonCode,
+		&i.CompletedActorRecordID,
+		&i.CompletedActorRecordDirection,
+		&i.SuspensionState,
+		&i.TokenRegistrationRunStateVersion,
+		&i.RegistrationRequestFingerprint,
+		&i.ExpectedRunStateVersion,
+		&i.AttemptNumber,
+		&i.ActorSpeculativeInputSequence,
+		&i.CurrentRunLeaseID,
+		&i.PriorRunLeaseID,
+		&i.CheckpointRequestVersion,
+		&i.CheckpointAckVersion,
+		&i.CheckpointDueAt,
+		&i.SuspendCheckpointID,
+		&i.HandoffResumeCheckpointID,
+		&i.ResumeAttachID,
+		&i.ResumeRequestVersion,
+		&i.ResumeAckVersion,
+		&i.BaseWorkspaceVersionID,
+		&i.BaseWorkspaceContentDigest,
+		&i.ChildResultVersionID,
+		&i.ResumeWorkspaceVersionID,
+		&i.HandoffRuntimeInstanceID,
+		&i.HandoffWorkspaceMountID,
+		&i.HandoffMountGeneration,
+		&i.OwnershipGeneration,
+		&i.ParentWriterGeneration,
+		&i.ChildWriterGeneration,
+		&i.ResumeWriterGeneration,
+		&i.Metadata,
+		&i.Tags,
+		&i.SuspensionTerminalAt,
+		&i.SuspensionReasonCode,
+		&i.SuspensionError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const markRunWaitParked = `-- name: MarkRunWaitParked :one
 UPDATE run_waits
    SET suspension_state = 'parked',
@@ -1643,6 +2169,271 @@ func (q *Queries) RegisterActorInputRunWait(ctx context.Context, arg RegisterAct
 		arg.ResumeAttachID,
 		arg.Metadata,
 		arg.Tags,
+		arg.RunID,
+		arg.ExpectedRunningStateVersion,
+	)
+	var i RunWait
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.ConditionState,
+		&i.DueAt,
+		&i.TimeoutAt,
+		&i.IdleTimeoutMs,
+		&i.TokenID,
+		&i.ChildRunID,
+		&i.ChildParentOwned,
+		&i.ChildTargetDeclaredID,
+		&i.ChildClaimID,
+		&i.ChildRequest,
+		&i.ActorID,
+		&i.AfterInputSequence,
+		&i.ConditionResult,
+		&i.ConditionError,
+		&i.ConditionTerminalAt,
+		&i.ConditionReasonCode,
+		&i.CompletedActorRecordID,
+		&i.CompletedActorRecordDirection,
+		&i.SuspensionState,
+		&i.TokenRegistrationRunStateVersion,
+		&i.RegistrationRequestFingerprint,
+		&i.ExpectedRunStateVersion,
+		&i.AttemptNumber,
+		&i.ActorSpeculativeInputSequence,
+		&i.CurrentRunLeaseID,
+		&i.PriorRunLeaseID,
+		&i.CheckpointRequestVersion,
+		&i.CheckpointAckVersion,
+		&i.CheckpointDueAt,
+		&i.SuspendCheckpointID,
+		&i.HandoffResumeCheckpointID,
+		&i.ResumeAttachID,
+		&i.ResumeRequestVersion,
+		&i.ResumeAckVersion,
+		&i.BaseWorkspaceVersionID,
+		&i.BaseWorkspaceContentDigest,
+		&i.ChildResultVersionID,
+		&i.ResumeWorkspaceVersionID,
+		&i.HandoffRuntimeInstanceID,
+		&i.HandoffWorkspaceMountID,
+		&i.HandoffMountGeneration,
+		&i.OwnershipGeneration,
+		&i.ParentWriterGeneration,
+		&i.ChildWriterGeneration,
+		&i.ResumeWriterGeneration,
+		&i.Metadata,
+		&i.Tags,
+		&i.SuspensionTerminalAt,
+		&i.SuspensionReasonCode,
+		&i.SuspensionError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const registerDifferentWorkspaceChildCall = `-- name: RegisterDifferentWorkspaceChildCall :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'waiting',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = $11
+       AND runs.environment_id = $12
+       AND runs.status = 'running'
+       AND runs.state_version = $13
+       AND runs.current_attempt_number = $7
+       AND runs.current_run_lease_id = $9
+       AND runs.workspace_id <> $14
+       AND runs.active_started_at IS NOT NULL
+    RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+)
+INSERT INTO run_waits (
+    id, environment_id, run_id, workspace_id, kind,
+    child_run_id, child_parent_owned, child_target_declared_id,
+    child_claim_id, child_request, registration_request_fingerprint,
+    expected_run_state_version, attempt_number,
+    actor_speculative_input_sequence, current_run_lease_id,
+    checkpoint_due_at, resume_attach_id, metadata, tags
+)
+SELECT $1, moved_run.environment_id, moved_run.id, moved_run.workspace_id,
+       'child', $2, TRUE, $3,
+       $4, $5,
+       $6, moved_run.state_version,
+       $7, $8,
+       $9, transaction_timestamp(),
+       $10, '{}'::jsonb, '{}'::text[]
+  FROM moved_run
+RETURNING id, environment_id, run_id, workspace_id, kind, condition_state, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_parent_owned, child_target_declared_id, child_claim_id, child_request, actor_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_actor_record_id, completed_actor_record_direction, suspension_state, token_registration_run_state_version, registration_request_fingerprint, expected_run_state_version, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, handoff_resume_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, child_result_version_id, resume_workspace_version_id, handoff_runtime_instance_id, handoff_workspace_mount_id, handoff_mount_generation, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
+`
+
+type RegisterDifferentWorkspaceChildCallParams struct {
+	ID                             pgtype.UUID `json:"id"`
+	ChildRunID                     pgtype.UUID `json:"child_run_id"`
+	ChildTargetDeclaredID          pgtype.Text `json:"child_target_declared_id"`
+	ChildClaimID                   pgtype.UUID `json:"child_claim_id"`
+	ChildRequest                   []byte      `json:"child_request"`
+	RegistrationRequestFingerprint pgtype.Text `json:"registration_request_fingerprint"`
+	AttemptNumber                  int32       `json:"attempt_number"`
+	ActorSpeculativeInputSequence  pgtype.Int8 `json:"actor_speculative_input_sequence"`
+	CurrentRunLeaseID              pgtype.UUID `json:"current_run_lease_id"`
+	ResumeAttachID                 pgtype.UUID `json:"resume_attach_id"`
+	RunID                          pgtype.UUID `json:"run_id"`
+	EnvironmentID                  pgtype.UUID `json:"environment_id"`
+	ExpectedRunningStateVersion    int64       `json:"expected_running_state_version"`
+	ChildWorkspaceID               pgtype.UUID `json:"child_workspace_id"`
+}
+
+func (q *Queries) RegisterDifferentWorkspaceChildCall(ctx context.Context, arg RegisterDifferentWorkspaceChildCallParams) (RunWait, error) {
+	row := q.db.QueryRow(ctx, registerDifferentWorkspaceChildCall,
+		arg.ID,
+		arg.ChildRunID,
+		arg.ChildTargetDeclaredID,
+		arg.ChildClaimID,
+		arg.ChildRequest,
+		arg.RegistrationRequestFingerprint,
+		arg.AttemptNumber,
+		arg.ActorSpeculativeInputSequence,
+		arg.CurrentRunLeaseID,
+		arg.ResumeAttachID,
+		arg.RunID,
+		arg.EnvironmentID,
+		arg.ExpectedRunningStateVersion,
+		arg.ChildWorkspaceID,
+	)
+	var i RunWait
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.ConditionState,
+		&i.DueAt,
+		&i.TimeoutAt,
+		&i.IdleTimeoutMs,
+		&i.TokenID,
+		&i.ChildRunID,
+		&i.ChildParentOwned,
+		&i.ChildTargetDeclaredID,
+		&i.ChildClaimID,
+		&i.ChildRequest,
+		&i.ActorID,
+		&i.AfterInputSequence,
+		&i.ConditionResult,
+		&i.ConditionError,
+		&i.ConditionTerminalAt,
+		&i.ConditionReasonCode,
+		&i.CompletedActorRecordID,
+		&i.CompletedActorRecordDirection,
+		&i.SuspensionState,
+		&i.TokenRegistrationRunStateVersion,
+		&i.RegistrationRequestFingerprint,
+		&i.ExpectedRunStateVersion,
+		&i.AttemptNumber,
+		&i.ActorSpeculativeInputSequence,
+		&i.CurrentRunLeaseID,
+		&i.PriorRunLeaseID,
+		&i.CheckpointRequestVersion,
+		&i.CheckpointAckVersion,
+		&i.CheckpointDueAt,
+		&i.SuspendCheckpointID,
+		&i.HandoffResumeCheckpointID,
+		&i.ResumeAttachID,
+		&i.ResumeRequestVersion,
+		&i.ResumeAckVersion,
+		&i.BaseWorkspaceVersionID,
+		&i.BaseWorkspaceContentDigest,
+		&i.ChildResultVersionID,
+		&i.ResumeWorkspaceVersionID,
+		&i.HandoffRuntimeInstanceID,
+		&i.HandoffWorkspaceMountID,
+		&i.HandoffMountGeneration,
+		&i.OwnershipGeneration,
+		&i.ParentWriterGeneration,
+		&i.ChildWriterGeneration,
+		&i.ResumeWriterGeneration,
+		&i.Metadata,
+		&i.Tags,
+		&i.SuspensionTerminalAt,
+		&i.SuspensionReasonCode,
+		&i.SuspensionError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const registerResolvedDifferentWorkspaceChildCall = `-- name: RegisterResolvedDifferentWorkspaceChildCall :one
+INSERT INTO run_waits (
+    id, environment_id, run_id, workspace_id, kind,
+    condition_state, child_run_id, child_parent_owned,
+    child_target_declared_id, child_claim_id, child_request,
+    condition_result, condition_terminal_at, suspension_state,
+    registration_request_fingerprint, expected_run_state_version,
+    attempt_number, actor_speculative_input_sequence, current_run_lease_id,
+    resume_attach_id, suspension_terminal_at, metadata, tags
+)
+SELECT $1, parent.environment_id, parent.id, parent.workspace_id,
+       'child', 'completed', child.id, TRUE,
+       $2, $3,
+       $4, $5,
+       transaction_timestamp(), 'released',
+       $6, parent.state_version,
+       $7, $8,
+       $9, $10,
+       transaction_timestamp(), '{}'::jsonb, '{}'::text[]
+  FROM runs AS parent
+  JOIN runs AS child
+    ON child.environment_id = parent.environment_id
+   AND child.parent_run_id = parent.id
+   AND child.parent_owns_lifecycle IS TRUE
+   AND child.id = $11
+   AND child.workspace_id <> parent.workspace_id
+ WHERE parent.environment_id = $12
+   AND parent.id = $13
+   AND parent.status = 'running'
+   AND parent.state_version = $14
+   AND parent.current_attempt_number = $7
+   AND parent.current_run_lease_id = $9
+   AND child.status IN ('succeeded', 'failed', 'cancelled', 'expired', 'system_failed')
+RETURNING id, environment_id, run_id, workspace_id, kind, condition_state, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_parent_owned, child_target_declared_id, child_claim_id, child_request, actor_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_actor_record_id, completed_actor_record_direction, suspension_state, token_registration_run_state_version, registration_request_fingerprint, expected_run_state_version, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, handoff_resume_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, child_result_version_id, resume_workspace_version_id, handoff_runtime_instance_id, handoff_workspace_mount_id, handoff_mount_generation, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
+`
+
+type RegisterResolvedDifferentWorkspaceChildCallParams struct {
+	ID                             pgtype.UUID `json:"id"`
+	ChildTargetDeclaredID          pgtype.Text `json:"child_target_declared_id"`
+	ChildClaimID                   pgtype.UUID `json:"child_claim_id"`
+	ChildRequest                   []byte      `json:"child_request"`
+	ConditionResult                []byte      `json:"condition_result"`
+	RegistrationRequestFingerprint pgtype.Text `json:"registration_request_fingerprint"`
+	AttemptNumber                  int32       `json:"attempt_number"`
+	ActorSpeculativeInputSequence  pgtype.Int8 `json:"actor_speculative_input_sequence"`
+	CurrentRunLeaseID              pgtype.UUID `json:"current_run_lease_id"`
+	ResumeAttachID                 pgtype.UUID `json:"resume_attach_id"`
+	ChildRunID                     pgtype.UUID `json:"child_run_id"`
+	EnvironmentID                  pgtype.UUID `json:"environment_id"`
+	RunID                          pgtype.UUID `json:"run_id"`
+	ExpectedRunningStateVersion    int64       `json:"expected_running_state_version"`
+}
+
+func (q *Queries) RegisterResolvedDifferentWorkspaceChildCall(ctx context.Context, arg RegisterResolvedDifferentWorkspaceChildCallParams) (RunWait, error) {
+	row := q.db.QueryRow(ctx, registerResolvedDifferentWorkspaceChildCall,
+		arg.ID,
+		arg.ChildTargetDeclaredID,
+		arg.ChildClaimID,
+		arg.ChildRequest,
+		arg.ConditionResult,
+		arg.RegistrationRequestFingerprint,
+		arg.AttemptNumber,
+		arg.ActorSpeculativeInputSequence,
+		arg.CurrentRunLeaseID,
+		arg.ResumeAttachID,
+		arg.ChildRunID,
+		arg.EnvironmentID,
 		arg.RunID,
 		arg.ExpectedRunningStateVersion,
 	)

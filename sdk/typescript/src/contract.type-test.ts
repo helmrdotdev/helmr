@@ -51,6 +51,21 @@ export function assertGreenfieldTypes(): void {
     { value: "ok" },
     { workspace: workspaces.ref({ key: "machine" }) },
   )
+  const childWait = payloadTask.call(
+    { value: "ok" },
+    {
+      workspace: workspaces.ref({ key: "machine" }),
+      idempotencyKey: "payload:ok",
+    },
+  )
+  childWait.unwrap().then((output) => {
+    output satisfies JsonValue
+  })
+  payloadTask.call(
+    { value: "ok" },
+    // @ts-expect-error task.call requires an explicit idempotency key.
+    { workspace: workspaces.ref({ key: "machine" }) },
+  )
   // @ts-expect-error a payload-bearing task always requires payload.
   payloadTask.start({ workspace: workspaces.ref({ key: "machine" }) })
   const client = null as unknown as HelmrClient
@@ -93,6 +108,12 @@ export function assertGreenfieldTypes(): void {
     },
   })
   noPayloadTask.start({ workspace: workspaces.ref({ key: "machine" }) })
+  noPayloadTask.call({
+    workspace: workspaces.ref({ key: "machine" }),
+    idempotencyKey: "no-payload",
+  })
+  // @ts-expect-error task.call requires an explicit idempotency key.
+  noPayloadTask.call({ workspace: workspaces.ref({ key: "machine" }) })
   client.tasks.start<typeof noPayloadTask>("no-payload", {
     workspace: workspaces.ref({ key: "machine" }),
   })

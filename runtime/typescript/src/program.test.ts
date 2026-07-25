@@ -711,6 +711,146 @@ describe("runProgram", () => {
     }
   })
 
+  test("calls a parent-owned child Task and returns its durable result", async () => {
+    const child = task({
+      id: "resize-image",
+      payload: {
+        "~standard": {
+          version: 1,
+          vendor: "test",
+          validate: (value: unknown) => ({ value }),
+        },
+      },
+      run() {
+        return { resized: true }
+      },
+    })
+    let result: unknown
+    let overlappingWaitError = ""
+    const definition = actor({
+      id: "worker",
+      async run() {
+        const called = child.call(
+          { imageId: "image-1" },
+          {
+            workspace: workspaces.ref({ key: "child-workspace" }),
+            idempotencyKey: "resize:image-1",
+          },
+        )
+        try {
+          await timers.waitFor("1m")
+        } catch (error) {
+          overlappingWaitError =
+            error instanceof Error ? error.message : String(error)
+        }
+        result = await called
+      },
+    })
+    const start = actorStart(4n, 4n)
+    const output: Uint8Array[] = []
+    const requested = deferred<void>()
+    async function* input(): AsyncIterable<Uint8Array> {
+      yield frameMessage(runProto.ProgramStartSchema, start)
+      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      await requested.promise
+      const event = readEvent(output[1]!).event
+      expect(event.case).toBe("taskChildInvokeRequested")
+      if (event.case !== "taskChildInvokeRequested") return
+      expect(event.value.method).toBe("call")
+      expect(event.value.actorSpeculativeInputSequence).toBe(4n)
+      expect(event.value.idempotencyKey).toBe("resize:image-1")
+      yield actorDecision(
+        event.value.correlationId,
+        "completed",
+        JSON.stringify({
+          ok: true,
+          output: { resized: true },
+          run: { id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
+        }),
+      )
+    }
+    await runProgram(locatorURL, programIO({
+      input: input(),
+      definition,
+      output,
+      onWrite: () => {
+        if (output.length === 2) requested.resolve()
+      },
+    }))
+    expect(overlappingWaitError).toBe("only one consuming Wait may be pending")
+    expect(result).toEqual({
+      ok: true,
+      output: { resized: true },
+      run: { id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    })
+    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+      "entrypointReady",
+      "taskChildInvokeRequested",
+      "actorOutcome",
+    ])
+  })
+
+  test("task.call unwrap throws the recorded remote RunError", async () => {
+    const child = task({ id: "resize-image", run: () => null })
+    let failure: unknown
+    const definition = task({
+      id: "deploy",
+      async run() {
+        try {
+          await child.call({
+            workspace: workspaces.ref({ key: "child-workspace" }),
+            idempotencyKey: "resize:image-1",
+          }).unwrap()
+        } catch (error) {
+          failure = error
+        }
+        return null
+      },
+    })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+    const requested = deferred<void>()
+    async function* input(): AsyncIterable<Uint8Array> {
+      yield frameMessage(runProto.ProgramStartSchema, start)
+      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      await requested.promise
+      const event = readEvent(output[1]!).event
+      if (event.case !== "taskChildInvokeRequested") return
+      expect(event.value.method).toBe("call")
+      expect(event.value.actorSpeculativeInputSequence).toBeUndefined()
+      yield actorDecision(
+        event.value.correlationId,
+        "completed",
+        JSON.stringify({
+          ok: false,
+          error: {
+            code: "task_failed",
+            message: "resize failed",
+            retryable: false,
+            details: { stage: "decode" },
+          },
+          run: { id: "run_bbbbbbbbbbbbbbbbbbbbbbbbbb" },
+        }),
+      )
+    }
+    await runProgram(locatorURL, programIO({
+      input: input(),
+      definition,
+      output,
+      onWrite: () => {
+        if (output.length === 2) requested.resolve()
+      },
+    }))
+    expect(failure).toBeInstanceOf(Error)
+    expect(failure).toMatchObject({
+      name: "HelmrError",
+      message: "resize failed",
+      code: "task_failed",
+      retryable: false,
+      details: { stage: "decode" },
+    })
+  })
+
   test("creates and waits for an externally completed Token", async () => {
     let completed: unknown
     const definition = task({

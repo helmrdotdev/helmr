@@ -70,6 +70,19 @@ func (w ControlRunWaits) Wait(ctx context.Context, request WaitRequest) error {
 	if err != nil {
 		return fmt.Errorf("create run wait: %w", err)
 	}
+	return w.ContinueRunWait(ctx, request, opened)
+}
+
+// ContinueRunWait drives an already-created durable Wait. It is used when
+// creating a resource and registering the Wait must be one atomic operation.
+func (w ControlRunWaits) ContinueRunWait(
+	ctx context.Context,
+	request WaitRequest,
+	opened api.WorkerCreateRunWaitResponse,
+) error {
+	if w.Client == nil {
+		return errors.New("run wait control client is required")
+	}
 	if opened.ResolutionKind != "" {
 		if request.Resume == nil {
 			return errors.New("runtime resume support is required")
@@ -81,6 +94,9 @@ func (w ControlRunWaits) Wait(ctx context.Context, request WaitRequest) error {
 	}
 	if opened.RunWaitID == "" {
 		return errors.New("run wait id is required")
+	}
+	if opened.RunID == "" {
+		return errors.New("run wait Run id is required")
 	}
 	request.ResumeAttachID = opened.ResumeAttachID
 	pollDelay := 100 * time.Millisecond

@@ -286,8 +286,14 @@ function createTaskDefinition(
             options,
           )
         },
-        call(_payload: JsonValue, _options: TaskCallOptions) {
-          return runtimeUnavailable<TaskWait<JsonValue>>("task.call")
+        call(payload: JsonValue, options: TaskCallOptions) {
+          return taskWait(
+            currentRuntimeOperations().taskCall(
+              Object.freeze({ declaredId: internal.id, payloadPresent: true }),
+              payload,
+              options,
+            ),
+          )
         },
       },
       internal,
@@ -304,8 +310,14 @@ function createTaskDefinition(
           options,
         )
       },
-      call(_options: TaskCallOptions) {
-        return runtimeUnavailable<TaskWait<JsonValue>>("task.call")
+      call(options: TaskCallOptions) {
+        return taskWait(
+          currentRuntimeOperations().taskCall(
+            Object.freeze({ declaredId: internal.id, payloadPresent: false }),
+            undefined,
+            options,
+          ),
+        )
       },
     },
     internal,
@@ -450,4 +462,26 @@ function runtimeUnavailable<T>(operation: string): T {
   throw new Error(
     `${operation} is unavailable without the Helmr managed runtime or authenticated client`,
   )
+}
+
+function taskWait<T extends JsonValue>(
+  result: Promise<import("./contract").TaskResult<T>>,
+): TaskWait<T> {
+  return Object.freeze({
+    then<TResult1 = import("./contract").TaskResult<T>, TResult2 = never>(
+      onfulfilled?: (
+        (value: import("./contract").TaskResult<T>) =>
+          | TResult1
+          | PromiseLike<TResult1>
+      ) | null,
+      onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+    ): PromiseLike<TResult1 | TResult2> {
+      return result.then(onfulfilled, onrejected)
+    },
+    async unwrap(): Promise<T> {
+      const settled = await result
+      if (!settled.ok) throw settled.error
+      return settled.output
+    },
+  })
 }

@@ -278,6 +278,7 @@ message TaskChildInvokeRequested {
   string workspace_json = 6;
   string options_json = 7;
   optional string idempotency_key = 8;
+  optional int64 actor_speculative_input_sequence = 9;
 }
 
 message CheckpointPauseRequest {

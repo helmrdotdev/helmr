@@ -575,18 +575,23 @@ SELECT *
  ORDER BY queue_score_at, id
  LIMIT sqlc.arg(limit_count);
 
--- name: ExpireInitiallyQueuedRuns :many
-UPDATE runs
-   SET status = 'expired',
-       terminal_at = now(),
-       terminal_reason_code = 'queued_ttl_expired',
-       state_version = state_version + 1,
-       updated_at = now()
- WHERE status = 'queued'
-   AND first_lease_at IS NULL
-   AND queued_expires_at IS NOT NULL
-   AND queued_expires_at <= now()
-RETURNING *;
+-- name: ListExpiredParentOwnedChildRuns :many
+SELECT child.id,
+       child.parent_run_id,
+       child.org_id,
+       child.project_id,
+       child.environment_id
+  FROM runs AS child
+ WHERE child.entrypoint_kind = 'task'
+   AND child.actor_id IS NULL
+   AND child.parent_run_id IS NOT NULL
+   AND child.parent_owns_lifecycle IS TRUE
+   AND child.status = 'queued'
+   AND child.first_lease_at IS NULL
+   AND child.queued_expires_at IS NOT NULL
+   AND child.queued_expires_at <= transaction_timestamp()
+ ORDER BY child.queued_expires_at, child.id
+ LIMIT sqlc.arg(limit_count);
 
 -- name: CloseRunActiveIntervalForCheckpoint :one
 UPDATE runs

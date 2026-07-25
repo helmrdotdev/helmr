@@ -27,7 +27,9 @@ import type {
   RetryPolicy,
   SendOptions,
   Serializable,
+  TaskCallOptions,
   TaskExecutionContext,
+  TaskResult,
   TokenCreateOptions,
   TokenCreateResult,
   TokenWaitOptions,
@@ -758,6 +760,119 @@ function programRuntimeOperations(
     })
     return await abortableRuntimeOperation(operation, options.signal)
   }
+  const performTaskCall = (
+    target: Readonly<{ declaredId: string; payloadPresent: boolean }>,
+    payload: JsonValue | undefined,
+    options: TaskCallOptions,
+  ): Promise<TaskResult<JsonValue>> => {
+    if (options.signal?.aborted) {
+      return Promise.reject(abortSignalReason(options.signal))
+    }
+    const operation = runOperations.track(async () => {
+      const releaseWait = waitGate.acquire()
+      try {
+        const correlationId = randomUUID()
+        const payloadJson = target.payloadPresent
+          ? new TextDecoder().decode(
+              canonicalizeJsonValue(payload as JsonValue),
+            )
+          : undefined
+        const workspaceJson = new TextDecoder().decode(
+          canonicalizeJsonValue(
+            "id" in options.workspace
+              ? { id: options.workspace.id }
+              : { key: options.workspace.key },
+          ),
+        )
+        const requestOptions = {
+          ...(options.queue === undefined ? {} : { queue: options.queue }),
+          ...(options.concurrencyKey === undefined
+            ? {}
+            : { concurrency_key: options.concurrencyKey }),
+          ...(options.priority === undefined
+            ? {}
+            : { priority: options.priority }),
+          ...(options.ttl === undefined ? {} : { ttl: options.ttl }),
+          ...(options.retry === undefined
+            ? {}
+            : { retry: taskRetryRequest(options.retry) }),
+          ...(options.metadata === undefined
+            ? {}
+            : { metadata: options.metadata }),
+          ...(options.tags === undefined ? {} : { tags: [...options.tags] }),
+        } satisfies JsonValue
+        const decision = await requestRuntimeDecision(
+          io,
+          decisions,
+          correlationId,
+          {
+            case: "taskChildInvokeRequested",
+            value: create(runProto.TaskChildInvokeRequestedSchema, {
+              correlationId,
+              declaredId: target.declaredId,
+              method: "call",
+              payloadPresent: target.payloadPresent,
+              ...(payloadJson === undefined ? {} : { payloadJson }),
+              workspaceJson,
+              optionsJson: new TextDecoder().decode(
+                canonicalizeJsonValue(requestOptions),
+              ),
+              idempotencyKey: options.idempotencyKey,
+              ...(actorCursor === undefined
+                ? {}
+                : { actorSpeculativeInputSequence: actorCursor.value }),
+            }),
+          },
+        )
+        if (
+          (decision.correlationId || decision.runWaitId) !== correlationId ||
+          (decision.kind !== "completed" &&
+            decision.kind !== "failed" &&
+            decision.kind !== "cancelled")
+        ) {
+          throw new RuntimeProtocolError(
+            "Task child call decision did not match the pending Wait",
+          )
+        }
+        if (decision.requireConsumedAck) {
+          await writeRuntimeProtocolEvent(io, {
+            case: "resumeConsumed",
+            value: create(runProto.ResumeConsumedSchema, {
+              runWaitId: decision.runWaitId,
+              checkpointId: decision.checkpointId,
+              resumeAttachId: decision.resumeAttachId,
+              resumeRequestVersion: decision.resumeRequestVersion,
+              runLeaseId: decision.runLeaseId,
+              correlationId: decision.correlationId,
+            }),
+          })
+        }
+        if (decision.kind === "cancelled" && actorCursor !== undefined) {
+          const failure = parseRuntimeProtocolValue(
+            "Actor child Task cancellation decision",
+            () => resumeFailure(decision.dataJson),
+          )
+          throw runOperations.cancel(failure.reasonCode)
+        }
+        if (decision.kind !== "completed") {
+          throw decision.kind === "failed"
+            ? runtimeOperationFailure("Task child call", decision.dataJson)
+            : new RuntimeProtocolError(
+                `Task child call was cancelled: ${
+                  resumeFailure(decision.dataJson).reasonCode
+                }`,
+              )
+        }
+        return parseRuntimeProtocolValue(
+          "Task child call result",
+          () => parseTaskResult(decision.dataJson),
+        )
+      } finally {
+        releaseWait()
+      }
+    })
+    return abortableRuntimeOperation(operation, options.signal)
+  }
   const performWait = async (
     params: JsonValue,
     timeoutMs: number,
@@ -1057,6 +1172,7 @@ function programRuntimeOperations(
   }
   return {
     taskStart: performTaskStart,
+    taskCall: performTaskCall,
     waitFor(duration) {
       return wait({ duration }, durationMilliseconds(duration))
     },
@@ -1210,6 +1326,86 @@ function runtimeOperationFailure(operation: string, dataJson: string): Error {
   error.code = code
   error.retryable = retryable
   return error
+}
+
+function parseTaskResult(dataJson: string): TaskResult<JsonValue> {
+  const value = parseObjectJSON(dataJson, "Task child call result")
+  const ok = value["ok"]
+  if (ok === true) {
+    requireExactKeys(
+      value,
+      ["ok", "output", "run"],
+      "Task child call success",
+    )
+    return Object.freeze({
+      ok: true,
+      output: jsonValueField(value, "output", "Task child call success"),
+      run: parseTaskResultRun(value),
+    })
+  }
+  if (ok !== false) {
+    throw new Error("Task child call result.ok must be a boolean")
+  }
+  requireExactKeys(
+    value,
+    ["error", "ok", "run"],
+    "Task child call failure",
+  )
+  const rawError = objectField(value, "error", "Task child call failure")
+  const errorKeys = Object.keys(rawError)
+  requireExactKeys(
+    rawError,
+    errorKeys.includes("details")
+      ? ["code", "details", "message", "retryable"]
+      : ["code", "message", "retryable"],
+    "Task child call failure.error",
+  )
+  const retryable = rawError["retryable"]
+  if (typeof retryable !== "boolean") {
+    throw new Error(
+      "Task child call failure.error.retryable must be a boolean",
+    )
+  }
+  const error = new Error(
+    stringField(rawError, "message", "Task child call failure.error"),
+  ) as Error & {
+    code: string
+    retryable: boolean
+    details?: JsonValue
+  }
+  error.name = "HelmrError"
+  error.code = stringField(
+    rawError,
+    "code",
+    "Task child call failure.error",
+  )
+  error.retryable = retryable
+  if (errorKeys.includes("details")) {
+    error.details = jsonValueField(
+      rawError,
+      "details",
+      "Task child call failure.error",
+    )
+  }
+  return Object.freeze({
+    ok: false,
+    error: Object.freeze(error),
+    run: parseTaskResultRun(value),
+  })
+}
+
+function parseTaskResultRun(
+  value: Record<string, unknown>,
+): Readonly<{ id: string }> {
+  const run = objectField(value, "run", "Task child call result")
+  requireExactKeys(run, ["id"], "Task child call result.run")
+  const id = stringField(run, "id", "Task child call result.run")
+  if (!/^run_[a-z2-7]{26}$/.test(id)) {
+    throw new Error(
+      "Task child call result.run.id must be a canonical Run public ID",
+    )
+  }
+  return Object.freeze({ id })
 }
 
 function tokenWaitFailure(kind: "failed" | "cancelled", dataJson: string): Error {

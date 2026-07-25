@@ -4,6 +4,8 @@ import type {
   Metadata,
   RunHandle,
   SendOptions,
+  TaskCallOptions,
+  TaskResult,
   TaskStartOptions,
 } from "../contract"
 import type { LogAttributes, RunLogLevel } from "../logger"
@@ -21,6 +23,11 @@ export interface RuntimeOperations {
     payload: JsonValue | undefined,
     options: TaskStartOptions,
   ) => Promise<RunHandle>
+  readonly taskCall: (
+    target: Readonly<{ declaredId: string; payloadPresent: boolean }>,
+    payload: JsonValue | undefined,
+    options: TaskCallOptions,
+  ) => Promise<TaskResult<JsonValue>>
   readonly waitFor: (duration: Duration) => Promise<void>
   readonly waitUntil: (date: Date) => Promise<void>
   readonly actorInputSend: (

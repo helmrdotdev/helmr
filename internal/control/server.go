@@ -283,6 +283,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	if cfg.BackgroundContext != nil {
 		go (runRetryReadyWorkflow{log: server.log, store: server.db}).run(cfg.BackgroundContext)
+		go (queuedChildExpiryWorkflow{server: server}).run(cfg.BackgroundContext)
 	}
 	router := chi.NewRouter()
 	router.Use(server.recoverPanics)

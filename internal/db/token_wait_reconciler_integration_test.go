@@ -250,19 +250,14 @@ func TestFailedCreatingActorCheckpointExhaustionFailsActor(t *testing.T) {
 	testFailedCreatingCheckpointFailsAttemptAndClosesSource(t, checkpointFailureTestMode{actor: true})
 }
 
-func TestFailedCreatingActorCheckpointExpiresDueActor(t *testing.T) {
-	testFailedCreatingCheckpointFailsAttemptAndClosesSource(t, checkpointFailureTestMode{actor: true, actorExpired: true})
-}
-
 func TestFailedCreatingActorCheckpointMaxDurationExpiresRun(t *testing.T) {
 	testFailedCreatingCheckpointFailsAttemptAndClosesSource(t, checkpointFailureTestMode{actor: true, maxDuration: true})
 }
 
 type checkpointFailureTestMode struct {
-	retry        bool
-	actor        bool
-	actorExpired bool
-	maxDuration  bool
+	retry       bool
+	actor       bool
+	maxDuration bool
 }
 
 func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode checkpointFailureTestMode) {
@@ -273,14 +268,10 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	var actorID uuid.UUID
 	if mode.actor {
 		retryPolicy := `{"enabled":false}`
-		if mode.retry || mode.actorExpired {
+		if mode.retry {
 			retryPolicy = `{"enabled":true,"maxAttempts":3,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}`
 		}
-		var expiresAt pgtype.Timestamptz
-		if mode.actorExpired {
-			expiresAt = pgvalue.Timestamptz(time.Now().Add(-time.Hour))
-		}
-		actorID = convertTokenWaitWorkToActor(t, ctx, fixture, work, retryPolicy, expiresAt)
+		actorID = convertTokenWaitWorkToActor(t, ctx, fixture, work, retryPolicy)
 	}
 	authority := startTaskCompletionWork(t, ctx, fixture, work)
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
@@ -445,11 +436,6 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 			actorState := "failed"
 			failureCode := pgvalue.Text("platform-failure")
 			failureRunID := pgvalue.UUID(registration.RunID)
-			if mode.actorExpired {
-				actorState = "expired"
-				failureCode = pgtype.Text{}
-				failureRunID = pgtype.UUID{}
-			}
 			if mode.maxDuration {
 				runStatus = RunStatusExpired
 				reason = "max_active_duration_exceeded"
@@ -595,9 +581,7 @@ SELECT actors.state, actors.current_run_id, actors.run_generation,
 		} else {
 			wantState := "failed"
 			wantFailure := "platform-failure"
-			if mode.actorExpired {
-				wantState, wantFailure = "expired", ""
-			} else if mode.maxDuration {
+			if mode.maxDuration {
 				wantFailure = "run-expired"
 			}
 			if actorState != wantState || actorCurrentRunID.Valid || runGeneration != 2 || ownerActorID.Valid ||
@@ -624,7 +608,7 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	if actor {
-		convertTokenWaitWorkToActor(t, ctx, fixture, work, `{"enabled":false}`, pgtype.Timestamptz{})
+		convertTokenWaitWorkToActor(t, ctx, fixture, work, `{"enabled":false}`)
 	}
 	authority := startTaskCompletionWork(t, ctx, fixture, work)
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
@@ -1086,7 +1070,6 @@ func convertTokenWaitWorkToActor(
 	fixture runLeaseClaimFixture,
 	work runLeaseWork,
 	retryPolicy string,
-	expiresAt pgtype.Timestamptz,
 ) uuid.UUID {
 	t.Helper()
 	actorDefinitionID := uuid.Must(uuid.NewV7())
@@ -1120,14 +1103,13 @@ INSERT INTO actors (
     id, public_id, org_id, project_id, environment_id,
     actor_declared_id, deployment_definition_id, workspace_id, current_run_id,
     next_input_sequence, committed_input_sequence,
-    managed_queue_name, managed_max_active_duration_ms, managed_retry_policy,
-    expires_at
+    managed_queue_name, managed_max_active_duration_ms, managed_retry_policy
 ) VALUES (
     $1, $2, $3, $4, $5,
     'test-actor', $6, $7, $8,
-    3, 1, 'default', 300000, $9::jsonb, $10
+    3, 1, 'default', 300000, $9::jsonb
 )`, actorID, "act_aaaaaaaaaaaaaaaaaaaaaaaaaa", fixture.orgID, fixture.projectID,
-		fixture.environmentID, actorDefinitionID, workspaceID, work.runID, retryPolicy, expiresAt)
+		fixture.environmentID, actorDefinitionID, workspaceID, work.runID, retryPolicy)
 	mustRunLeaseExec(t, ctx, tx, `
 UPDATE workspaces
    SET owner_actor_id = $1, owner_run_id = NULL

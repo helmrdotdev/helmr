@@ -152,6 +152,23 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
+		tx, ok := work.tx.(pgx.Tx)
+		if !ok {
+			return errors.New("checkpoint failure transaction does not expose PostgreSQL authority")
+		}
+		ownedGraph, err := db.LockOwnedRunFinalizationGraphInTransaction(
+			r.Context(),
+			tx,
+			db.OwnedRunFinalizationGraphRequest{
+				OrgID:         pgvalue.MustUUIDValue(locators.OrgID),
+				ProjectID:     pgvalue.MustUUIDValue(locators.ProjectID),
+				EnvironmentID: pgvalue.MustUUIDValue(locators.EnvironmentID),
+				RunID:         pgvalue.MustUUIDValue(locators.RunID),
+			},
+		)
+		if err != nil {
+			return staleRunLeaseClaim(err)
+		}
 		owner, err := lockRunFinalizationOwner(r.Context(), work.q, locators)
 		if err != nil {
 			return err
@@ -163,6 +180,26 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 			return err
 		}
 		authority.actor = owner.actor
+		authority.parentRun = owner.parent
+		if err := validateRunFinalizationOwner(authority, locators); err != nil {
+			return staleRunLeaseClaim(err)
+		}
+		if authority.run.ParentRunID.Valid && authority.run.ParentOwnsLifecycle.Valid &&
+			authority.run.ParentOwnsLifecycle.Bool {
+			authority.enclosingWait, err = lockParentOwnedChildWaitIfActive(
+				r.Context(),
+				work.q,
+				authority.parentRun,
+				db.LockParentOwnedChildWaitParams{
+					EnvironmentID: authority.run.EnvironmentID,
+					ParentRunID:   authority.run.ParentRunID,
+					ChildRunID:    authority.run.ID,
+				},
+			)
+			if err != nil {
+				return staleRunLeaseClaim(err)
+			}
+		}
 		if authority.run.Status != db.RunStatusWaiting ||
 			authority.runLease.State != db.RunLeaseStateCheckpointing {
 			return errStaleRunLeaseClaim
@@ -196,9 +233,13 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 			return staleRunLeaseClaim(err)
 		}
 		if authority.run.EntrypointKind == "actor" {
-			return failCheckpointActorAttempt(r.Context(), work.q, worker, authority, wait, parsed, secrets)
+			return failCheckpointActorAttempt(
+				r.Context(), work.q, ownedGraph, worker, authority, wait, parsed, secrets,
+			)
 		}
-		return failCheckpointTaskAttempt(r.Context(), work.q, worker, authority, wait, parsed, secrets)
+		return failCheckpointTaskAttempt(
+			r.Context(), work.q, ownedGraph, worker, authority, wait, parsed, secrets,
+		)
 	})
 	if err != nil {
 		if response, replayed, replayErr := s.checkpointFailedReplay(r.Context(), parsed); replayErr == nil && replayed {
@@ -222,6 +263,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 func failCheckpointTaskAttempt(
 	ctx context.Context,
 	store db.Querier,
+	ownedGraph db.OwnedRunFinalizationGraph,
 	worker workerActor,
 	authority runLeaseClaimAuthority,
 	wait db.RunWait,
@@ -259,6 +301,14 @@ func failCheckpointTaskAttempt(
 		)
 		if err != nil {
 			return err
+		}
+	}
+	if !retry {
+		if _, err := ownedGraph.CancelDescendants(ctx); err != nil {
+			return fmt.Errorf(
+				"cancel child Tasks after exhausted parent checkpoint failure: %w",
+				err,
+			)
 		}
 	}
 
@@ -324,6 +374,7 @@ func failCheckpointTaskAttempt(
 func failCheckpointActorAttempt(
 	ctx context.Context,
 	store db.Querier,
+	ownedGraph db.OwnedRunFinalizationGraph,
 	worker workerActor,
 	authority runLeaseClaimAuthority,
 	wait db.RunWait,
@@ -350,6 +401,14 @@ func failCheckpointActorAttempt(
 	decision, err := decideActorCheckpointFailure(authority, failedAt.Time, activeElapsed)
 	if err != nil {
 		return err
+	}
+	if !decision.retry {
+		if _, err := ownedGraph.CancelDescendants(ctx); err != nil {
+			return fmt.Errorf(
+				"cancel child Tasks after exhausted Actor checkpoint failure: %w",
+				err,
+			)
+		}
 	}
 
 	if _, err := store.InvalidateFailedRunCheckpoint(ctx, db.InvalidateFailedRunCheckpointParams{
@@ -615,6 +674,18 @@ func finishCheckpointFailedTask(
 	}); err != nil {
 		return fmt.Errorf("append checkpoint-failed Task terminal event: %w", err)
 	}
+	if authority.run.ParentRunID.Valid && authority.run.ParentOwnsLifecycle.Valid &&
+		authority.run.ParentOwnsLifecycle.Bool && authority.enclosingWait.ID.Valid {
+		terminalRun := authority.run
+		terminalRun.Status = status
+		terminalRun.TerminalReasonCode = pgvalue.Text(reason)
+		terminalRun.Error = errorPayload
+		if err := resolveParentOwnedChildWait(
+			ctx, store, authority, terminalRun, failedAt,
+		); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -877,6 +948,10 @@ func (s *Server) commitCheckpointReady(
 			return err
 		}
 		authority.actor = owner.actor
+		authority.parentRun = owner.parent
+		if err := validateRunFinalizationOwner(authority, locators); err != nil {
+			return staleRunLeaseClaim(err)
+		}
 		if authority.run.Status != db.RunStatusWaiting ||
 			authority.runLease.State != db.RunLeaseStateCheckpointing {
 			return errStaleRunLeaseClaim
@@ -894,7 +969,8 @@ func (s *Server) commitCheckpointReady(
 			AttemptNumber: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
 			CurrentRunLeaseID: authority.runLease.ID,
 		})
-		if err != nil || (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindActorInput) ||
+		if err != nil || (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindActorInput &&
+			wait.Kind != db.WaitKindChild) ||
 			wait.SuspensionState != db.RunWaitStateCheckpointing ||
 			wait.CheckpointRequestVersion != request.RequestVersion || wait.SuspendCheckpointID != pgvalue.UUID(ready.checkpointID) {
 			return staleRunLeaseClaim(err)

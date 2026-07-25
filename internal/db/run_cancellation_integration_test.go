@@ -188,6 +188,97 @@ SELECT count(*)
 	}
 }
 
+func TestOwnedActorRunFinalizationGraphCancelsOnlyDescendants(t *testing.T) {
+	ctx := context.Background()
+	fixture := newRunLeaseClaimFixture(t, ctx)
+	leaf := fixture.addWork(t, ctx, "assigned", time.Now().Add(-time.Minute))
+	chain := fixture.addNestedHandoffChain(t, ctx, leaf)
+	var outerLeaseID uuid.UUID
+	if err := fixture.pool.QueryRow(ctx,
+		`SELECT current_run_lease_id FROM runs WHERE id = $1`,
+		chain.outerRunID,
+	).Scan(&outerLeaseID); err != nil {
+		t.Fatal(err)
+	}
+	convertTokenWaitWorkToActor(
+		t,
+		ctx,
+		fixture,
+		runLeaseWork{leaseID: outerLeaseID, runID: chain.outerRunID},
+		`{"enabled":false}`,
+	)
+
+	tx, err := fixture.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	graph, err := LockOwnedRunFinalizationGraphInTransaction(
+		ctx,
+		tx,
+		OwnedRunFinalizationGraphRequest{
+			OrgID:         fixture.orgID,
+			ProjectID:     fixture.projectID,
+			EnvironmentID: fixture.environmentID,
+			RunID:         chain.outerRunID,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled, err := graph.CancelDescendants(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled != 2 {
+		t.Fatalf("cancelled descendants = %d, want 2", cancelled)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var outerStatus, parentStatus, childStatus RunStatus
+	var outerCondition WaitState
+	var outerSuspension RunWaitState
+	if err := fixture.pool.QueryRow(ctx, `
+SELECT outer_run.status,
+       parent_run.status,
+       child_run.status,
+       outer_wait.condition_state,
+       outer_wait.suspension_state
+  FROM runs AS outer_run
+  JOIN runs AS parent_run ON parent_run.parent_run_id = outer_run.id
+  JOIN runs AS child_run ON child_run.parent_run_id = parent_run.id
+  JOIN run_waits AS outer_wait
+    ON outer_wait.run_id = outer_run.id
+   AND outer_wait.child_run_id = parent_run.id
+ WHERE outer_run.id = $1`,
+		chain.outerRunID,
+	).Scan(
+		&outerStatus,
+		&parentStatus,
+		&childStatus,
+		&outerCondition,
+		&outerSuspension,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if outerStatus != RunStatusWaiting ||
+		parentStatus != RunStatusCancelled ||
+		childStatus != RunStatusCancelled ||
+		outerCondition != WaitStatePending ||
+		outerSuspension != RunWaitStateParked {
+		t.Fatalf(
+			"finalization graph = outer:%s parent:%s child:%s wait:%s/%s",
+			outerStatus,
+			parentStatus,
+			childStatus,
+			outerCondition,
+			outerSuspension,
+		)
+	}
+}
+
 func TestRunCancellerUnwindsDirectOwnedChildCancellation(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)

@@ -83,6 +83,131 @@ func NewRunCanceller(database RunCancellationDB) (*RunCanceller, error) {
 	return &RunCanceller{db: database}, nil
 }
 
+type OwnedRunFinalizationGraphRequest struct {
+	OrgID         uuid.UUID
+	ProjectID     uuid.UUID
+	EnvironmentID uuid.UUID
+	RunID         uuid.UUID
+}
+
+type OwnedRunFinalizationGraph struct {
+	tx          pgx.Tx
+	currentRun  uuid.UUID
+	descendants []cancellationRun
+}
+
+// LockOwnedRunFinalizationGraphInTransaction acquires the global cancellation
+// lock order before ordinary Run authority is locked. It lets terminal
+// finalization re-lock its exact authority without later reaching from a
+// Workspace lock back to an unlocked descendant Run.
+func LockOwnedRunFinalizationGraphInTransaction(
+	ctx context.Context,
+	tx pgx.Tx,
+	request OwnedRunFinalizationGraphRequest,
+) (OwnedRunFinalizationGraph, error) {
+	if tx == nil || request.OrgID == uuid.Nil || request.ProjectID == uuid.Nil ||
+		request.EnvironmentID == uuid.Nil || request.RunID == uuid.Nil {
+		return OwnedRunFinalizationGraph{}, errors.New("owned Run finalization graph authority is required")
+	}
+	scope := RunCancellationRequest{
+		OrgID: request.OrgID, ProjectID: request.ProjectID,
+		EnvironmentID: request.EnvironmentID,
+	}
+	lineage, err := cancellationLineage(ctx, tx, request.RunID)
+	if err != nil {
+		return OwnedRunFinalizationGraph{}, err
+	}
+	descendantIDs, err := discoverOwnedCancellationRuns(
+		ctx, tx, scope, request.RunID,
+	)
+	if err != nil {
+		return OwnedRunFinalizationGraph{}, err
+	}
+	lockOrder := append(slices.Clone(lineage), descendantIDs[1:]...)
+	if len(lockOrder) > maxRunCancellationGraphSize {
+		return OwnedRunFinalizationGraph{}, cancellationAuthority(
+			"owned Run finalization graph exceeds the transaction bound",
+			nil,
+		)
+	}
+	if err := lockCancellationActors(ctx, tx, scope, lockOrder); err != nil {
+		return OwnedRunFinalizationGraph{}, err
+	}
+	locked := make(map[uuid.UUID]cancellationRun, len(lockOrder))
+	for _, id := range lockOrder {
+		run, err := lockCancellationRun(ctx, tx, scope, id)
+		if err != nil {
+			return OwnedRunFinalizationGraph{}, cancellationAuthority(
+				"lock owned Run finalization graph",
+				err,
+			)
+		}
+		locked[id] = run
+	}
+	reloaded, err := discoverOwnedCancellationRuns(
+		ctx, tx, scope, request.RunID,
+	)
+	if err != nil {
+		return OwnedRunFinalizationGraph{}, err
+	}
+	if !slices.Equal(descendantIDs, reloaded) {
+		return OwnedRunFinalizationGraph{}, cancellationAuthority(
+			"owned Run finalization graph changed during lock acquisition",
+			nil,
+		)
+	}
+	descendants := make([]cancellationRun, 0, len(descendantIDs))
+	for depth, id := range descendantIDs {
+		run, found := locked[id]
+		if !found {
+			return OwnedRunFinalizationGraph{}, cancellationAuthority(
+				"owned Run finalization descendant was not locked",
+				nil,
+			)
+		}
+		run.depth = depth
+		descendants = append(descendants, run)
+	}
+	if _, err := lockCancellationResources(
+		ctx, tx, lockOrder, descendants,
+	); err != nil {
+		return OwnedRunFinalizationGraph{}, err
+	}
+	return OwnedRunFinalizationGraph{
+		tx: tx, currentRun: request.RunID, descendants: descendants,
+	}, nil
+}
+
+// CancelDescendants terminalizes all still-active owned descendants without
+// resolving the current Run's boundary Wait. The current Run is terminalized
+// by the caller in the same transaction.
+func (g OwnedRunFinalizationGraph) CancelDescendants(ctx context.Context) (int, error) {
+	if g.tx == nil || g.currentRun == uuid.Nil || len(g.descendants) == 0 ||
+		g.descendants[0].id != g.currentRun {
+		return 0, errors.New("owned Run finalization graph is invalid")
+	}
+	runs := slices.Clone(g.descendants[1:])
+	slices.SortFunc(runs, func(left, right cancellationRun) int {
+		if left.depth != right.depth {
+			return right.depth - left.depth
+		}
+		return slices.Compare(left.id[:], right.id[:])
+	})
+	cancelled := 0
+	for _, run := range runs {
+		if runStatusTerminal(run.status) {
+			continue
+		}
+		if err := cancelLockedRun(
+			ctx, g.tx, run, pgtype.UUID{}, pgtype.UUID{},
+		); err != nil {
+			return 0, err
+		}
+		cancelled++
+	}
+	return cancelled, nil
+}
+
 func (c *RunCanceller) Cancel(
 	ctx context.Context,
 	request RunCancellationRequest,
@@ -1105,6 +1230,9 @@ func resolveCancelledChildWait(
 		parent.stateVersion != wait.expectedRunStateVersion {
 		return cancellationAuthority("cancelled child Wait fence does not match", nil)
 	}
+	if !wait.handoffRuntimeInstanceID.Valid {
+		return resolveCancelledDifferentWorkspaceChildWait(ctx, tx, parent, child, wait)
+	}
 	errorPayload := json.RawMessage(`{"code":"child_run_cancelled","message":"Child Run was cancelled","retryable":false}`)
 	var resumeWorkspaceVersion any
 	if wait.handoffRuntimeInstanceID.Valid {
@@ -1261,6 +1389,141 @@ INSERT INTO outbox_messages (
 		}
 	default:
 		return cancellationAuthority("cancelled child Wait is already resuming", nil)
+	}
+	return nil
+}
+
+func resolveCancelledDifferentWorkspaceChildWait(
+	ctx context.Context,
+	tx pgx.Tx,
+	parent cancellationRun,
+	child cancellationRun,
+	wait cancellationWait,
+) error {
+	result, err := json.Marshal(map[string]any{
+		"ok": false,
+		"error": map[string]any{
+			"code": "child_run_cancelled", "message": "Child Run was cancelled",
+			"retryable": false,
+		},
+		"run": map[string]any{"id": child.publicID},
+	})
+	if err != nil {
+		return err
+	}
+	return resolveDifferentWorkspaceChildWait(ctx, tx, parent, wait, result)
+}
+
+func resolveDifferentWorkspaceChildWait(
+	ctx context.Context,
+	tx pgx.Tx,
+	parent cancellationRun,
+	wait cancellationWait,
+	result json.RawMessage,
+) error {
+	switch wait.suspensionState {
+	case RunWaitStateHot:
+		if !wait.currentRunLeaseID.Valid || !parent.currentRunLeaseID.Valid ||
+			wait.currentRunLeaseID != parent.currentRunLeaseID {
+			return cancellationAuthority("hot cancelled child Wait Lease does not match", nil)
+		}
+		var nextVersion int64
+		if err := tx.QueryRow(ctx, `
+UPDATE runs
+   SET status = 'running', state_version = state_version + 1,
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND status = 'waiting'
+   AND state_version = $2
+   AND current_attempt_number = $3
+   AND current_run_lease_id = $4
+RETURNING state_version`,
+			parent.id, parent.stateVersion, parent.currentAttemptNumber,
+			uuid.UUID(parent.currentRunLeaseID.Bytes),
+		).Scan(&nextVersion); err != nil {
+			return cancellationAuthority("resume hot cancelled child parent", err)
+		}
+		command, err := tx.Exec(ctx, `
+UPDATE run_waits
+   SET condition_state = 'completed', condition_result = $2::jsonb,
+       condition_terminal_at = transaction_timestamp(),
+       suspension_state = 'released', expected_run_state_version = $3,
+       suspension_terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND condition_state = 'pending'
+   AND suspension_state = 'hot'`, wait.id, result, nextVersion)
+		if err != nil || command.RowsAffected() != 1 {
+			return cancellationAuthority("release hot cancelled child Wait", err)
+		}
+	case RunWaitStateCheckpointing:
+		command, err := tx.Exec(ctx, `
+UPDATE run_waits
+   SET condition_state = 'completed', condition_result = $2::jsonb,
+       condition_terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND condition_state = 'pending'
+   AND suspension_state = 'checkpointing'`, wait.id, result)
+		if err != nil || command.RowsAffected() != 1 {
+			return cancellationAuthority("complete checkpointing cancelled child Wait", err)
+		}
+	case RunWaitStateParked:
+		if !wait.priorRunLeaseID.Valid || !wait.suspendCheckpointID.Valid ||
+			parent.currentRunLeaseID.Valid {
+			return cancellationAuthority("parked cancelled child Wait fence does not match", nil)
+		}
+		var nextVersion int64
+		if err := tx.QueryRow(ctx, `
+UPDATE runs
+   SET status = 'queued', state_version = state_version + 1,
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND status = 'waiting'
+   AND state_version = $2
+   AND current_attempt_number = $3
+   AND current_run_lease_id IS NULL
+RETURNING state_version`,
+			parent.id, parent.stateVersion, parent.currentAttemptNumber,
+		).Scan(&nextVersion); err != nil {
+			return cancellationAuthority("queue parked cancelled child parent", err)
+		}
+		nextResumeVersion := wait.resumeRequestVersion + 1
+		command, err := tx.Exec(ctx, `
+UPDATE run_waits
+   SET condition_state = 'completed', condition_result = $2::jsonb,
+       condition_terminal_at = transaction_timestamp(),
+       suspension_state = 'resume_pending', resume_request_version = $3,
+       expected_run_state_version = $4, updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND condition_state = 'pending'
+   AND suspension_state = 'parked'`,
+			wait.id, result, nextResumeVersion, nextVersion,
+		)
+		if err != nil || command.RowsAffected() != 1 {
+			return cancellationAuthority("resume parked cancelled child Wait", err)
+		}
+		command, err = tx.Exec(ctx, `
+INSERT INTO outbox_messages (
+    lane, topic, partition_key, payload, available_at
+) VALUES (
+    'control', 'run.resume', $1,
+    jsonb_build_object(
+        'environmentId', $2::text,
+        'runId', $3::text,
+        'runWaitId', $4::text,
+        'resumeRequestVersion', $5::bigint
+    ),
+    transaction_timestamp()
+)`,
+			parent.workspaceID.String(), parent.environmentID.String(),
+			parent.id.String(), wait.id.String(), nextResumeVersion,
+		)
+		if err != nil || command.RowsAffected() != 1 {
+			return cancellationAuthority("publish cancelled child resume", err)
+		}
+	default:
+		return cancellationAuthority("cancelled child Wait suspension is ineligible", nil)
 	}
 	return nil
 }

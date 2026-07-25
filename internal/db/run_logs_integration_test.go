@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -48,7 +50,15 @@ func TestAppendReceiptRunLogChunkRequiresExactCurrentReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.EventPayload != string(params.Payload) ||
+	storedPayload, err := jsoncanon.Transform([]byte(stored.EventPayload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestPayload, err := jsoncanon.Transform(params.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(storedPayload, requestPayload) ||
 		stored.ReceiptFingerprint != params.ReceiptFingerprint {
 		t.Fatalf("replay event payload = %s, want %s", stored.EventPayload, params.Payload)
 	}

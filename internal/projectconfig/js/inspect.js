@@ -94,21 +94,27 @@ function workspaceRef(address) {
   return createWorkspaceRef(address);
 }
 var workspaces = Object.freeze({
-  ref: workspaceRef,
-  list(_options) {
-    return runtimeUnavailable("workspaces.list");
-  }
+  ref: workspaceRef
 });
 function createWorkspaceRef(address) {
+  const files = Object.freeze({
+    read(_path, _options) {
+      return runtimeUnavailable("workspace.files.read");
+    },
+    stat(_path, _options) {
+      return runtimeUnavailable("workspace.files.stat");
+    },
+    list(_path, _query, _options) {
+      return runtimeUnavailable("workspace.files.list");
+    }
+  });
   const operations = {
+    files,
     retrieve(_options) {
       return runtimeUnavailable("workspace.retrieve");
     },
-    update(_options) {
-      return runtimeUnavailable("workspace.update");
-    },
-    stop(_options) {
-      return runtimeUnavailable("workspace.stop");
+    exec(_options) {
+      return runtimeUnavailable("workspace.exec");
     },
     delete(_options) {
       return runtimeUnavailable("workspace.delete");

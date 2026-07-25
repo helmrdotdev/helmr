@@ -6,7 +6,7 @@ import {
   installRuntimeOperations,
   isQueueDefinition,
 } from "./internal"
-import { actor, queue, task } from "./index"
+import { actor, queue, task, workspaces } from "./index"
 
 describe("private definition inspection", () => {
   test("distinguishes helpers from malformed branded values", () => {
@@ -41,6 +41,51 @@ describe("private definition inspection", () => {
       id: "resize",
     })
     expect(isQueueDefinition(queue({ id: "images" }))).toBe(true)
+  })
+
+  test("delegates task.call through a TaskWait facade", async () => {
+    const calls: unknown[] = []
+    const uninstall = installRuntimeOperations({
+      taskCall: async (target, payload, options) => {
+        calls.push({ target, payload, options })
+        return {
+          ok: true,
+          output: { resized: true },
+          run: { id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
+        }
+      },
+    } as never)
+    try {
+      const child = task({
+        id: "resize",
+        payload: {
+          "~standard": {
+            version: 1,
+            vendor: "test",
+            validate: (value: unknown) => ({ value }),
+          },
+        },
+        run: () => ({ resized: true }),
+      })
+      const options = {
+        workspace: workspaces.ref({ key: "images" }),
+        idempotencyKey: "resize:image-1",
+      }
+      const wait = child.call({ imageId: "image-1" }, options)
+      expect(await wait).toEqual({
+        ok: true,
+        output: { resized: true },
+        run: { id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      })
+      await expect(wait.unwrap()).resolves.toEqual({ resized: true })
+      expect(calls).toEqual([{
+        target: { declaredId: "resize", payloadPresent: true },
+        payload: { imageId: "image-1" },
+        options,
+      }])
+    } finally {
+      uninstall()
+    }
   })
 
   test("captures the Actor declared ID and exact address for input send", async () => {

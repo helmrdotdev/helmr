@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -10,6 +11,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestNormalizeWorkerChildTaskRequestUsesParentScopeAndCallerOptions(t *testing.T) {
@@ -97,4 +100,94 @@ func TestDecodeChildTaskReceiptRequiresCanonicalAuthority(t *testing.T) {
 	)); !errors.Is(err, errTaskStartReceiptInvalid) {
 		t.Fatalf("nil Workspace receipt error = %v", err)
 	}
+}
+
+func TestChildTaskResultProjectsTerminalOutcome(t *testing.T) {
+	const runID = "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	tests := []struct {
+		name string
+		run  db.Run
+		want string
+	}{
+		{
+			name: "success",
+			run: db.Run{
+				PublicID: runID,
+				Status:   db.RunStatusSucceeded,
+				Output:   json.RawMessage(`{"value":7}`),
+			},
+			want: `{"ok":true,"output":{"value":7},"run":{"id":"run_aaaaaaaaaaaaaaaaaaaaaaaaaa"}}`,
+		},
+		{
+			name: "failure",
+			run: db.Run{
+				PublicID:           runID,
+				Status:             db.RunStatusFailed,
+				TerminalReasonCode: pgtype.Text{String: "dependency_failed", Valid: true},
+				Error: json.RawMessage(
+					`{"code":"upstream_failed","message":"upstream failed","retryable":true,"details":{"service":"images"}}`,
+				),
+			},
+			want: `{"ok":false,"error":{"code":"upstream_failed","message":"upstream failed","retryable":true,"details":{"service":"images"}},"run":{"id":"run_aaaaaaaaaaaaaaaaaaaaaaaaaa"}}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := childTaskResult(test.run)
+			if err != nil {
+				t.Fatalf("childTaskResult() error = %v", err)
+			}
+			if string(got) != test.want {
+				t.Fatalf("childTaskResult() = %s, want %s", got, test.want)
+			}
+		})
+	}
+}
+
+func TestChildTaskResultRejectsIncompleteTerminalState(t *testing.T) {
+	_, err := childTaskResult(db.Run{
+		PublicID: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Status:   db.RunStatusFailed,
+	})
+	if err == nil {
+		t.Fatal("childTaskResult() accepted a failed Run without a terminal reason")
+	}
+}
+
+func TestParentOwnedChildMayFinishBetweenParentAttempts(t *testing.T) {
+	store := &parentOwnedChildWaitStore{err: pgx.ErrNoRows}
+	params := db.LockParentOwnedChildWaitParams{}
+	for _, status := range []db.RunStatus{
+		db.RunStatusQueued,
+		db.RunStatusRunning,
+		db.RunStatusWaiting,
+		db.RunStatusRetryDelayed,
+	} {
+		wait, err := lockParentOwnedChildWaitIfActive(
+			t.Context(), store, db.Run{Status: status}, params,
+		)
+		if err != nil || wait.ID.Valid {
+			t.Fatalf("parent status %s = wait:%+v error:%v", status, wait, err)
+		}
+	}
+	if _, err := lockParentOwnedChildWaitIfActive(
+		t.Context(), store, db.Run{Status: db.RunStatusCancelRequested}, params,
+	); !errors.Is(err, errStaleTaskCompletion) {
+		t.Fatalf("cancelling parent without active child Wait error = %v", err)
+	}
+}
+
+type parentOwnedChildWaitStore struct {
+	db.Querier
+	wait db.RunWait
+	err  error
+}
+
+func (s *parentOwnedChildWaitStore) LockParentOwnedChildWait(
+	context.Context,
+	db.LockParentOwnedChildWaitParams,
+) (db.RunWait, error) {
+	return s.wait, s.err
 }

@@ -281,7 +281,10 @@ func validateRunFinalizationOwner(
 		if locators.ParentRunID.Valid && locators.ParentOwnsLifecycle.Bool {
 			if authority.parentRun.ID != locators.ParentRunID ||
 				authority.parentRun.WorkspaceID == authority.run.WorkspaceID ||
-				(authority.parentRun.Status != db.RunStatusWaiting &&
+				(authority.parentRun.Status != db.RunStatusQueued &&
+					authority.parentRun.Status != db.RunStatusRunning &&
+					authority.parentRun.Status != db.RunStatusWaiting &&
+					authority.parentRun.Status != db.RunStatusRetryDelayed &&
 					authority.parentRun.Status != db.RunStatusCancelRequested) {
 				return errStaleRunFinalization
 			}

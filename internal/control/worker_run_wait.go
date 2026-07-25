@@ -186,7 +186,8 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("load worker Run Wait"))
 		return
 	}
-	if (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindActorInput) ||
+	if (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindActorInput &&
+		wait.Kind != db.WaitKindChild) ||
 		wait.AttemptNumber != request.Lease.AttemptNumber ||
 		wait.WorkspaceID != locators.WorkspaceID ||
 		(wait.CurrentRunLeaseID != pgvalue.UUID(parsed.leaseID) && wait.PriorRunLeaseID != pgvalue.UUID(parsed.leaseID)) {
@@ -199,6 +200,8 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		response.Status = api.WorkerRunWaitPollStatusResumeRequested
 		if wait.Kind == db.WaitKindActorInput {
 			response.ResumeKind, response.ResumePayload, err = actorInputWaitDecision(wait)
+		} else if wait.Kind == db.WaitKindChild {
+			response.ResumeKind, response.ResumePayload, err = childRunWaitDecision(wait)
 		} else {
 			response.ResumeKind, response.ResumePayload, err = tokenWaitDecision(
 				wait.ConditionState, wait.ConditionResult, pgvalue.TextValue(wait.ConditionReasonCode),
@@ -319,7 +322,8 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 			updated = wait
 			return nil
 		}
-		if (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindActorInput) ||
+		if (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindActorInput &&
+			wait.Kind != db.WaitKindChild) ||
 			wait.ConditionState != db.WaitStatePending ||
 			wait.SuspensionState != db.RunWaitStateHot || !wait.CheckpointDueAt.Valid {
 			return errStaleRunLeaseClaim
@@ -393,6 +397,14 @@ func validateRunWaitActorCursor(authority runLeaseClaimAuthority, wait db.RunWai
 		return errStaleRunLeaseClaim
 	}
 	return nil
+}
+
+func childRunWaitDecision(wait db.RunWait) (string, json.RawMessage, error) {
+	if wait.Kind != db.WaitKindChild || wait.ConditionState != db.WaitStateCompleted ||
+		wait.ConditionResult == nil || !json.Valid(wait.ConditionResult) {
+		return "", nil, errors.New("child Run Wait decision is invalid")
+	}
+	return "completed", append(json.RawMessage(nil), wait.ConditionResult...), nil
 }
 
 func (s *Server) loadRunWaitLeaseAuthority(

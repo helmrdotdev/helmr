@@ -5,6 +5,187 @@ SELECT *
    AND attempt_number = sqlc.arg(attempt_number)
    AND id = sqlc.arg(id);
 
+-- name: GetChildCallRunWaitReplay :one
+SELECT *
+  FROM run_waits
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND run_id = sqlc.arg(run_id)
+   AND attempt_number = sqlc.arg(attempt_number)
+   AND id = sqlc.arg(id)
+   AND kind = 'child'
+   AND child_run_id = sqlc.arg(child_run_id)
+   AND child_parent_owned IS TRUE
+   AND child_claim_id = sqlc.arg(child_claim_id)
+   AND registration_request_fingerprint = sqlc.arg(registration_request_fingerprint)
+   AND resume_attach_id = sqlc.arg(resume_attach_id);
+
+-- name: RegisterDifferentWorkspaceChildCall :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'waiting',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = sqlc.arg(run_id)
+       AND runs.environment_id = sqlc.arg(environment_id)
+       AND runs.status = 'running'
+       AND runs.state_version = sqlc.arg(expected_running_state_version)
+       AND runs.current_attempt_number = sqlc.arg(attempt_number)
+       AND runs.current_run_lease_id = sqlc.arg(current_run_lease_id)
+       AND runs.workspace_id <> sqlc.arg(child_workspace_id)
+       AND runs.active_started_at IS NOT NULL
+    RETURNING *
+)
+INSERT INTO run_waits (
+    id, environment_id, run_id, workspace_id, kind,
+    child_run_id, child_parent_owned, child_target_declared_id,
+    child_claim_id, child_request, registration_request_fingerprint,
+    expected_run_state_version, attempt_number,
+    actor_speculative_input_sequence, current_run_lease_id,
+    checkpoint_due_at, resume_attach_id, metadata, tags
+)
+SELECT sqlc.arg(id), moved_run.environment_id, moved_run.id, moved_run.workspace_id,
+       'child', sqlc.arg(child_run_id), TRUE, sqlc.arg(child_target_declared_id),
+       sqlc.arg(child_claim_id), sqlc.arg(child_request),
+       sqlc.arg(registration_request_fingerprint), moved_run.state_version,
+       sqlc.arg(attempt_number), sqlc.narg(actor_speculative_input_sequence),
+       sqlc.arg(current_run_lease_id), transaction_timestamp(),
+       sqlc.arg(resume_attach_id), '{}'::jsonb, '{}'::text[]
+  FROM moved_run
+RETURNING *;
+
+-- name: RegisterResolvedDifferentWorkspaceChildCall :one
+INSERT INTO run_waits (
+    id, environment_id, run_id, workspace_id, kind,
+    condition_state, child_run_id, child_parent_owned,
+    child_target_declared_id, child_claim_id, child_request,
+    condition_result, condition_terminal_at, suspension_state,
+    registration_request_fingerprint, expected_run_state_version,
+    attempt_number, actor_speculative_input_sequence, current_run_lease_id,
+    resume_attach_id, suspension_terminal_at, metadata, tags
+)
+SELECT sqlc.arg(id), parent.environment_id, parent.id, parent.workspace_id,
+       'child', 'completed', child.id, TRUE,
+       sqlc.arg(child_target_declared_id), sqlc.arg(child_claim_id),
+       sqlc.arg(child_request), sqlc.arg(condition_result),
+       transaction_timestamp(), 'released',
+       sqlc.arg(registration_request_fingerprint), parent.state_version,
+       sqlc.arg(attempt_number), sqlc.narg(actor_speculative_input_sequence),
+       sqlc.arg(current_run_lease_id), sqlc.arg(resume_attach_id),
+       transaction_timestamp(), '{}'::jsonb, '{}'::text[]
+  FROM runs AS parent
+  JOIN runs AS child
+    ON child.environment_id = parent.environment_id
+   AND child.parent_run_id = parent.id
+   AND child.parent_owns_lifecycle IS TRUE
+   AND child.id = sqlc.arg(child_run_id)
+   AND child.workspace_id <> parent.workspace_id
+ WHERE parent.environment_id = sqlc.arg(environment_id)
+   AND parent.id = sqlc.arg(run_id)
+   AND parent.status = 'running'
+   AND parent.state_version = sqlc.arg(expected_running_state_version)
+   AND parent.current_attempt_number = sqlc.arg(attempt_number)
+   AND parent.current_run_lease_id = sqlc.arg(current_run_lease_id)
+   AND child.status IN ('succeeded', 'failed', 'cancelled', 'expired', 'system_failed')
+RETURNING *;
+
+-- name: LockParentOwnedChildWait :one
+SELECT run_waits.*
+  FROM runs AS parent
+  JOIN run_waits
+    ON run_waits.environment_id = parent.environment_id
+   AND run_waits.run_id = parent.id
+ WHERE parent.environment_id = sqlc.arg(environment_id)
+   AND parent.id = sqlc.arg(parent_run_id)
+   AND run_waits.child_run_id = sqlc.arg(child_run_id)
+   AND run_waits.child_parent_owned IS TRUE
+   AND run_waits.kind = 'child'
+   AND run_waits.condition_state = 'pending'
+   AND run_waits.suspension_state IN ('hot', 'checkpointing', 'parked')
+ ORDER BY run_waits.created_at DESC, run_waits.id DESC
+ LIMIT 1
+ FOR UPDATE OF parent, run_waits;
+
+-- name: CompleteHotChildRunWait :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'running',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = sqlc.arg(run_id)
+       AND runs.environment_id = sqlc.arg(environment_id)
+       AND runs.status = 'waiting'
+       AND runs.state_version = sqlc.arg(expected_run_state_version)
+       AND runs.current_attempt_number = sqlc.arg(attempt_number)
+       AND runs.current_run_lease_id = sqlc.arg(current_run_lease_id)
+    RETURNING state_version
+)
+UPDATE run_waits
+   SET condition_state = 'completed',
+       condition_result = sqlc.arg(condition_result),
+       condition_terminal_at = transaction_timestamp(),
+       suspension_state = 'released',
+       expected_run_state_version = moved_run.state_version,
+       suspension_terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+  FROM moved_run
+ WHERE run_waits.id = sqlc.arg(id)
+   AND run_waits.run_id = sqlc.arg(run_id)
+   AND run_waits.child_run_id = sqlc.arg(child_run_id)
+   AND run_waits.condition_state = 'pending'
+   AND run_waits.suspension_state = 'hot'
+   AND run_waits.expected_run_state_version = sqlc.arg(expected_run_state_version)
+   AND run_waits.current_run_lease_id = sqlc.arg(current_run_lease_id)
+RETURNING run_waits.*;
+
+-- name: CompleteCheckpointingChildRunWait :one
+UPDATE run_waits
+   SET condition_state = 'completed',
+       condition_result = sqlc.arg(condition_result),
+       condition_terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(id)
+   AND run_id = sqlc.arg(run_id)
+   AND child_run_id = sqlc.arg(child_run_id)
+   AND condition_state = 'pending'
+   AND suspension_state = 'checkpointing'
+   AND expected_run_state_version = sqlc.arg(expected_run_state_version)
+   AND current_run_lease_id = sqlc.arg(current_run_lease_id)
+RETURNING *;
+
+-- name: CompleteParkedChildRunWait :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'queued',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = sqlc.arg(run_id)
+       AND runs.environment_id = sqlc.arg(environment_id)
+       AND runs.status = 'waiting'
+       AND runs.state_version = sqlc.arg(expected_run_state_version)
+       AND runs.current_attempt_number = sqlc.arg(attempt_number)
+       AND runs.current_run_lease_id IS NULL
+    RETURNING state_version
+)
+UPDATE run_waits
+   SET condition_state = 'completed',
+       condition_result = sqlc.arg(condition_result),
+       condition_terminal_at = transaction_timestamp(),
+       suspension_state = 'resume_pending',
+       resume_request_version = run_waits.resume_request_version + 1,
+       expected_run_state_version = moved_run.state_version,
+       updated_at = transaction_timestamp()
+  FROM moved_run
+ WHERE run_waits.id = sqlc.arg(id)
+   AND run_waits.run_id = sqlc.arg(run_id)
+   AND run_waits.child_run_id = sqlc.arg(child_run_id)
+   AND run_waits.condition_state = 'pending'
+   AND run_waits.suspension_state = 'parked'
+   AND run_waits.expected_run_state_version = sqlc.arg(expected_run_state_version)
+   AND run_waits.current_run_lease_id IS NULL
+   AND run_waits.prior_run_lease_id = sqlc.arg(prior_run_lease_id)
+   AND run_waits.suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id)
+RETURNING run_waits.*;
+
 -- name: CompleteRunWaitCondition :one
 UPDATE run_waits
    SET condition_state = 'completed',

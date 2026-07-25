@@ -186,8 +186,7 @@ SELECT runs.id,
    AND runs.state_version = $3
    AND runs.entrypoint_kind = $4
    AND (($4 = 'task' AND runs.actor_id IS NULL
-         AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
-         AND (runs.parent_run_id IS NULL OR runs.parent_owns_lifecycle IS FALSE))
+         AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child'))
         OR ($4 = 'actor' AND runs.actor_id = $5
             AND runs.cause_kind IN ('actor_start', 'continuation')
             AND runs.parent_run_id IS NULL))

@@ -94,6 +94,79 @@ func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
 	}
 }
 
+func TestHandleChildTaskCallContinuesOpenedWait(t *testing.T) {
+	lease := testFreshProgramClaim(t).Lease
+	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
+	correlationID := "00000000-0000-0000-0000-000000000123"
+	actorSequence := int64(9)
+	waitClient := &fakeRunWaitClient{
+		polls: []api.WorkerRunWaitPollResponse{{
+			RunID: "run-1", RunWaitID: "run-wait-id-1",
+			Status:     api.WorkerRunWaitPollStatusResumeRequested,
+			ResumeKind: "completed",
+			ResumePayload: json.RawMessage(
+				`{"ok":true,"output":{"resized":true},"run":{"id":"run_aaaaaaaaaaaaaaaaaaaaaaaaaa"}}`,
+			),
+		}},
+	}
+	openedWait := liveRunWaitResponse()
+	control := &childTaskControl{
+		testRunLeaseControl: &testRunLeaseControl{},
+		response: api.WorkerInvokeChildTaskResponse{
+			CorrelationID: correlationID,
+			Completed: &api.WorkerChildTaskStartResult{
+				RunID: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+			},
+			OpenedWait: &openedWait,
+		},
+	}
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	task := &guestRunLeaseTask{
+		program: freshProgram{session: fakeGuestSession{stream: guest}},
+		control: control,
+		lease:   lease,
+		waits:   &ControlRunWaits{Client: waitClient},
+	}
+	result := make(chan error, 1)
+	go func() {
+		result <- task.handleChildTaskInvoke(t.Context(), &runv0.TaskChildInvokeRequested{
+			CorrelationId:                 correlationID,
+			DeclaredId:                    "resize-image",
+			Method:                        "call",
+			WorkspaceJson:                 `{"key":"image-workspace"}`,
+			OptionsJson:                   `{}`,
+			ActorSpeculativeInputSequence: &actorSequence,
+		})
+	}()
+	reader := bufio.NewReader(host)
+	header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := wire.ReadResumeDecision(header, reader, bodyLen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if decision.GetRunWaitId() != openedWait.RunWaitID ||
+		decision.GetCorrelationId() != correlationID ||
+		decision.GetKind() != "completed" ||
+		decision.GetDataJson() != `{"ok":true,"output":{"resized":true},"run":{"id":"run_aaaaaaaaaaaaaaaaaaaaaaaaaa"}}` {
+		t.Fatalf("decision = %+v", decision)
+	}
+	if control.request.ActorSpeculativeInputSequence == nil ||
+		*control.request.ActorSpeculativeInputSequence != actorSequence {
+		t.Fatalf("request = %+v", control.request)
+	}
+	if waitClient.createdRequest.CorrelationID != "" {
+		t.Fatalf("unexpected duplicate Wait registration = %+v", waitClient.createdRequest)
+	}
+}
+
 func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()

@@ -2930,17 +2930,18 @@ func (x *TokenCreateRequested) GetMetadataJson() string {
 }
 
 type TaskChildInvokeRequested struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	CorrelationId  string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	DeclaredId     string                 `protobuf:"bytes,2,opt,name=declared_id,json=declaredId,proto3" json:"declared_id,omitempty"`
-	Method         string                 `protobuf:"bytes,3,opt,name=method,proto3" json:"method,omitempty"`
-	PayloadPresent bool                   `protobuf:"varint,4,opt,name=payload_present,json=payloadPresent,proto3" json:"payload_present,omitempty"`
-	PayloadJson    *string                `protobuf:"bytes,5,opt,name=payload_json,json=payloadJson,proto3,oneof" json:"payload_json,omitempty"`
-	WorkspaceJson  string                 `protobuf:"bytes,6,opt,name=workspace_json,json=workspaceJson,proto3" json:"workspace_json,omitempty"`
-	OptionsJson    string                 `protobuf:"bytes,7,opt,name=options_json,json=optionsJson,proto3" json:"options_json,omitempty"`
-	IdempotencyKey *string                `protobuf:"bytes,8,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state                         protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId                 string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	DeclaredId                    string                 `protobuf:"bytes,2,opt,name=declared_id,json=declaredId,proto3" json:"declared_id,omitempty"`
+	Method                        string                 `protobuf:"bytes,3,opt,name=method,proto3" json:"method,omitempty"`
+	PayloadPresent                bool                   `protobuf:"varint,4,opt,name=payload_present,json=payloadPresent,proto3" json:"payload_present,omitempty"`
+	PayloadJson                   *string                `protobuf:"bytes,5,opt,name=payload_json,json=payloadJson,proto3,oneof" json:"payload_json,omitempty"`
+	WorkspaceJson                 string                 `protobuf:"bytes,6,opt,name=workspace_json,json=workspaceJson,proto3" json:"workspace_json,omitempty"`
+	OptionsJson                   string                 `protobuf:"bytes,7,opt,name=options_json,json=optionsJson,proto3" json:"options_json,omitempty"`
+	IdempotencyKey                *string                `protobuf:"bytes,8,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
+	ActorSpeculativeInputSequence *int64                 `protobuf:"varint,9,opt,name=actor_speculative_input_sequence,json=actorSpeculativeInputSequence,proto3,oneof" json:"actor_speculative_input_sequence,omitempty"`
+	unknownFields                 protoimpl.UnknownFields
+	sizeCache                     protoimpl.SizeCache
 }
 
 func (x *TaskChildInvokeRequested) Reset() {
@@ -3027,6 +3028,13 @@ func (x *TaskChildInvokeRequested) GetIdempotencyKey() string {
 		return *x.IdempotencyKey
 	}
 	return ""
+}
+
+func (x *TaskChildInvokeRequested) GetActorSpeculativeInputSequence() int64 {
+	if x != nil && x.ActorSpeculativeInputSequence != nil {
+		return *x.ActorSpeculativeInputSequence
+	}
+	return 0
 }
 
 type CheckpointPauseRequest struct {
@@ -4005,7 +4013,7 @@ const file_run_proto_rawDesc = "" +
 	"\rmetadata_json\x18\x05 \x01(\tH\x02R\fmetadataJson\x88\x01\x01B\r\n" +
 	"\v_timeout_msB\x12\n" +
 	"\x10_idempotency_keyB\x10\n" +
-	"\x0e_metadata_json\"\xe8\x02\n" +
+	"\x0e_metadata_json\"\xdb\x03\n" +
 	"\x18TaskChildInvokeRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1f\n" +
 	"\vdeclared_id\x18\x02 \x01(\tR\n" +
@@ -4015,9 +4023,11 @@ const file_run_proto_rawDesc = "" +
 	"\fpayload_json\x18\x05 \x01(\tH\x00R\vpayloadJson\x88\x01\x01\x12%\n" +
 	"\x0eworkspace_json\x18\x06 \x01(\tR\rworkspaceJson\x12!\n" +
 	"\foptions_json\x18\a \x01(\tR\voptionsJson\x12,\n" +
-	"\x0fidempotency_key\x18\b \x01(\tH\x01R\x0eidempotencyKey\x88\x01\x01B\x0f\n" +
+	"\x0fidempotency_key\x18\b \x01(\tH\x01R\x0eidempotencyKey\x88\x01\x01\x12L\n" +
+	" actor_speculative_input_sequence\x18\t \x01(\x03H\x02R\x1dactorSpeculativeInputSequence\x88\x01\x01B\x0f\n" +
 	"\r_payload_jsonB\x12\n" +
-	"\x10_idempotency_key\"\xf9\x02\n" +
+	"\x10_idempotency_keyB#\n" +
+	"!_actor_speculative_input_sequence\"\xf9\x02\n" +
 	"\x16CheckpointPauseRequest\x12\x1e\n" +
 	"\vrun_wait_id\x18\x01 \x01(\tR\trunWaitId\x12#\n" +
 	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\x12+\n" +

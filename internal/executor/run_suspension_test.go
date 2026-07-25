@@ -47,6 +47,37 @@ func TestControlRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
 	}
 }
 
+func TestControlRunWaitsContinuesAlreadyOpenedWaitWithoutCreatingAnother(t *testing.T) {
+	client := &fakeRunWaitClient{
+		polls: []api.WorkerRunWaitPollResponse{{
+			RunID: "run-1", RunWaitID: "run-wait-id-1", Status: "resume_requested",
+			ResumeKind: "completed", ResumePayload: json.RawMessage(`{"ok":true}`),
+		}},
+	}
+	var resumed WaitResumeDecision
+	err := (ControlRunWaits{Client: client}).ContinueRunWait(
+		context.Background(),
+		WaitRequest{
+			LeaseReceipt: testWaitRunLeaseReceipt(),
+			Kind:         api.WorkerRunWaitKindChild,
+			Resume: func(_ context.Context, decision WaitResumeDecision) error {
+				resumed = decision
+				return nil
+			},
+		},
+		liveRunWaitResponse(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.createdRequest.CorrelationID != "" {
+		t.Fatalf("unexpected duplicate create request = %+v", client.createdRequest)
+	}
+	if resumed.Kind != "completed" || string(resumed.Data) != `{"ok":true}` {
+		t.Fatalf("resume = %+v", resumed)
+	}
+}
+
 func TestControlRunWaitsCapturesWorkspaceForTypedCheckpointIntent(t *testing.T) {
 	client := &fakeRunWaitClient{
 		created: liveRunWaitResponse(),

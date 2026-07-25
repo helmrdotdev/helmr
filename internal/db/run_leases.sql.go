@@ -3195,7 +3195,6 @@ WITH candidates AS MATERIALIZED (
                 AND runs.actor_id = placement_candidates.actor_id
                 AND runs.cause_kind IN ('actor_start', 'continuation')
                 AND placement_candidates.entrypoint_kind = 'actor'))
-       AND (runs.parent_run_id IS NULL OR runs.parent_owns_lifecycle IS FALSE)
        AND ((runs.status = 'queued' AND runs.active_started_at IS NULL)
             OR (runs.status = 'running' AND runs.active_started_at IS NOT NULL))
        AND runs.current_run_lease_id = placement_candidates.run_lease_id

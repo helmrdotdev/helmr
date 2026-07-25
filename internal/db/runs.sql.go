@@ -1215,93 +1215,6 @@ func (q *Queries) CreateRootRunFromCurrentDeployment(ctx context.Context, arg Cr
 	return i, err
 }
 
-const expireInitiallyQueuedRuns = `-- name: ExpireInitiallyQueuedRuns :many
-UPDATE runs
-   SET status = 'expired',
-       terminal_at = now(),
-       terminal_reason_code = 'queued_ttl_expired',
-       state_version = state_version + 1,
-       updated_at = now()
- WHERE status = 'queued'
-   AND first_lease_at IS NULL
-   AND queued_expires_at IS NOT NULL
-   AND queued_expires_at <= now()
-RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
-`
-
-func (q *Queries) ExpireInitiallyQueuedRuns(ctx context.Context) ([]Run, error) {
-	rows, err := q.db.Query(ctx, expireInitiallyQueuedRuns)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Run
-	for rows.Next() {
-		var i Run
-		if err := rows.Scan(
-			&i.ID,
-			&i.PublicID,
-			&i.OrgID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.DeploymentID,
-			&i.DeploymentDefinitionID,
-			&i.EntrypointKind,
-			&i.EntrypointDeclaredID,
-			&i.ActorID,
-			&i.CauseKind,
-			&i.ScheduleID,
-			&i.ScheduleGeneration,
-			&i.ScheduledAt,
-			&i.PreviousScheduledAt,
-			&i.ScheduleTimezone,
-			&i.ParentRunID,
-			&i.ParentOwnsLifecycle,
-			&i.WorkspaceID,
-			&i.BaseWorkspaceVersionID,
-			&i.ActorStartInputSequence,
-			&i.ActorStartInputHighWatermark,
-			&i.Payload,
-			&i.Output,
-			&i.TerminalReasonCode,
-			&i.Error,
-			&i.Status,
-			&i.StateVersion,
-			&i.CurrentAttemptNumber,
-			&i.CurrentRunLeaseID,
-			&i.Metadata,
-			&i.Tags,
-			&i.QueueName,
-			&i.ConcurrencyKey,
-			&i.QueueConcurrencyLimit,
-			&i.Priority,
-			&i.QueueOriginAt,
-			&i.QueueScoreAt,
-			&i.QueuedExpiresAt,
-			&i.MaxActiveDurationMs,
-			&i.RetryPolicy,
-			&i.ActiveElapsedMs,
-			&i.ActiveStartedAt,
-			&i.TraceID,
-			&i.RootSpanID,
-			&i.ClaimID,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.FirstLeaseAt,
-			&i.StartedAt,
-			&i.RetryAt,
-			&i.TerminalAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getRun = `-- name: GetRun :one
 SELECT id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
   FROM runs
@@ -1552,6 +1465,59 @@ func (q *Queries) GetRunSnapshot(ctx context.Context, arg GetRunSnapshotParams) 
 		&i.SchedulePublicID,
 	)
 	return i, err
+}
+
+const listExpiredParentOwnedChildRuns = `-- name: ListExpiredParentOwnedChildRuns :many
+SELECT child.id,
+       child.parent_run_id,
+       child.org_id,
+       child.project_id,
+       child.environment_id
+  FROM runs AS child
+ WHERE child.entrypoint_kind = 'task'
+   AND child.actor_id IS NULL
+   AND child.parent_run_id IS NOT NULL
+   AND child.parent_owns_lifecycle IS TRUE
+   AND child.status = 'queued'
+   AND child.first_lease_at IS NULL
+   AND child.queued_expires_at IS NOT NULL
+   AND child.queued_expires_at <= transaction_timestamp()
+ ORDER BY child.queued_expires_at, child.id
+ LIMIT $1
+`
+
+type ListExpiredParentOwnedChildRunsRow struct {
+	ID            pgtype.UUID `json:"id"`
+	ParentRunID   pgtype.UUID `json:"parent_run_id"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+}
+
+func (q *Queries) ListExpiredParentOwnedChildRuns(ctx context.Context, limitCount int32) ([]ListExpiredParentOwnedChildRunsRow, error) {
+	rows, err := q.db.Query(ctx, listExpiredParentOwnedChildRuns, limitCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListExpiredParentOwnedChildRunsRow
+	for rows.Next() {
+		var i ListExpiredParentOwnedChildRunsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ParentRunID,
+			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listQueuedRunsForQueue = `-- name: ListQueuedRunsForQueue :many
