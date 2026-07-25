@@ -31,7 +31,7 @@ The web UI lists secret names and timestamps, but it does not display saved valu
 ## Run With Secrets
 
 ```sh
-helmr run start use-secret --workspace WORKSPACE_ID
+helmr task start use-secret --workspace WORKSPACE_ID
 ```
 
 Runs do not accept secret values or binding maps. They use the placements fixed

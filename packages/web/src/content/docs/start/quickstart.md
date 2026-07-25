@@ -64,7 +64,7 @@ WORKSPACE_ID="$(helmr workspace create hello \
   --key quickstart \
   --idempotency-key quickstart-workspace)"
 
-helmr run start hello \
+helmr task start hello \
   --workspace "${WORKSPACE_ID}" \
   --idempotency-key quickstart-run
 ```

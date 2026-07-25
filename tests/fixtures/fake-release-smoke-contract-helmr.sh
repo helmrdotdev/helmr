@@ -33,7 +33,7 @@ case "${1:-} ${2:-}" in
   "workspace delete")
     printf '{"workspace_id":"%s"}\n' "${4:-unknown}"
     ;;
-  "run start")
+  "task start")
     case "${3:-} $*" in
       "network-smoke "*)
         printf '{"run_id":"%s"}\n' "${network_run}"

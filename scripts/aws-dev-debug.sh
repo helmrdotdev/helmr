@@ -754,7 +754,7 @@ run_hello_world() {
         --idempotency-key "${key}:workspace"
     )"
   fi
-  HELMR_API_URL="$(control_url)" go run ./cmd/helmr run start "${task}" \
+  HELMR_API_URL="$(control_url)" go run ./cmd/helmr task start "${task}" \
     --project "${project}" \
     --env "${env}" \
     --workspace "${workspace_id}" \

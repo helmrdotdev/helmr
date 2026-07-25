@@ -27,7 +27,7 @@ case "${1:-} ${2:-}" in
     fi
     printf '{"workspace_id":"%s"}\n' "${4:-unknown}"
     ;;
-  "run start")
+  "task start")
     case "$*" in
       *'"mode":"call-success"'*)
         printf '{"run_id":"run-call-success"}\n'

@@ -28,7 +28,7 @@ Create a Workspace, start a small Task Run, and watch it reach a terminal state:
 WORKSPACE_ID="$(helmr workspace create WORKSPACE_DECLARED_ID \
   --key verify \
   --idempotency-key verify-workspace)"
-helmr run start TASK_ID --workspace "${WORKSPACE_ID}" \
+helmr task start TASK_ID --workspace "${WORKSPACE_ID}" \
   --idempotency-key verify-run --wait --follow
 helmr run list
 helmr run logs RUN_ID

@@ -16,7 +16,7 @@ WORKSPACE_ID="$(helmr workspace create app-workspace \
   --key demo \
   --idempotency-key workspace:demo)"
 
-helmr run start hello \
+helmr task start hello \
   --workspace "${WORKSPACE_ID}" \
   --idempotency-key hello:demo \
   --payload-json '{"name":"Ada"}'
@@ -30,7 +30,7 @@ Use `--wait` for the terminal snapshot or `--follow` to print finite log pages
 until the Run becomes terminal:
 
 ```sh
-helmr run start hello \
+helmr task start hello \
   --workspace "${WORKSPACE_ID}" \
   --idempotency-key hello:demo:2 \
   --payload-file payload.json \

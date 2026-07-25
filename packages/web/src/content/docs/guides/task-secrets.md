@@ -42,7 +42,7 @@ The task secret `name` is the Helmr secret name. If the task declares
 `API_TOKEN`, store the value under that name:
 
 ```sh
-helmr run start use-secret --workspace "${WORKSPACE_ID}"
+helmr task start use-secret --workspace "${WORKSPACE_ID}"
 ```
 
 Run creation does not accept secret values or binding maps.

@@ -47,6 +47,15 @@ run_check public-run-path-report \
 run_check packed-sdk-consumer \
   'bash scripts/check-packed-sdk-consumer.sh' \
   bash scripts/check-packed-sdk-consumer.sh
+run_check cli-resource-boundary \
+  'go test ./cmd/helmr -run "TestGreenfieldCommandSurface|TestTaskStart" -count=1' \
+  go test ./cmd/helmr -run 'TestGreenfieldCommandSurface|TestTaskStart' -count=1
+run_check actor-cli \
+  'go test ./cmd/helmr ./internal/client -run Actor -count=1' \
+  go test ./cmd/helmr ./internal/client -run Actor -count=1
+run_check schedule-cli \
+  'go test ./cmd/helmr ./internal/client -run Schedule -count=1' \
+  go test ./cmd/helmr ./internal/client -run Schedule -count=1
 
 # These are known product or certification gaps. Keep them explicit until a
 # positive executable contract replaces each blocker; absence of an old stub
@@ -59,10 +68,6 @@ record network-deny-runtime-evidence blocked \
   'missing known-reachable private endpoint or nft deny-counter evidence'
 record same-workspace-call blocked \
   'same-Workspace child Task handoff is not implemented'
-record actor-cli blocked \
-  'Actor CLI lifecycle surface is not implemented'
-record schedule-cli blocked \
-  'Schedule CLI read surface is not implemented'
 record actor-console blocked \
   'Actor Console inspection surface is not implemented'
 record external-token-wait-registration blocked \

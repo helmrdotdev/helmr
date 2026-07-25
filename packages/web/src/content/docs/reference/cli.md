@@ -18,13 +18,20 @@ The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint wit
 | `helmr deploy [path] [-p PROJECT] [-e ENV] [--env-file FILE] [--timeout DURATION] [--json]` | Parse `helmr.config.ts`, archive source, stream deployment progress, and create a deployment. |
 | `helmr task list [--json]` | List deployed task definitions. |
 | `helmr task get TASK [--json]` | Show a deployed task definition. |
-| `helmr run start TASK --workspace WORKSPACE [-p PROJECT] [-e ENV] [--wait] [--follow] [--json]` | Start a deployed Task Run in an existing Workspace. |
+| `helmr task start TASK --workspace WORKSPACE [-p PROJECT] [-e ENV] [--wait] [--follow] [--json]` | Start a deployed Task in an existing Workspace and return its Run. |
+| `helmr actor start ACTOR --workspace WORKSPACE [--key KEY] [--input-json JSON] [--json]` | Start an Actor and return its stable identity and boot Run. |
+| `helmr actor get ACTOR (--id ID \| --key KEY) [--json]` | Show Actor status. |
+| `helmr actor input send ACTOR (--id ID \| --key KEY) --input-json JSON [--json]` | Append one durable input record. |
+| `helmr actor output read ACTOR (--id ID \| --key KEY) [--after SEQUENCE] [--limit N] [--json \| --jsonl]` | Read one finite durable output page. |
+| `helmr actor close ACTOR (--id ID \| --key KEY) [--idempotency-key KEY] [--json]` | Close an Actor. |
 | `helmr run list [-p PROJECT] [-e ENV] [--json]` | List Runs. |
 | `helmr run get RUN [-p PROJECT] [-e ENV] [--json]` | Show run details. |
 | `helmr run logs RUN [-p PROJECT] [-e ENV] [--follow]` | Print latest stdout/stderr snapshots and optionally stream new log chunks. |
 | `helmr run events RUN [-p PROJECT] [-e ENV] [--cursor CURSOR] [--limit N] [--follow]` | Print run events as JSON lines. |
-| `helmr run wait RUN [-p PROJECT] [-e ENV] [--timeout DURATION] [--json]` | Wait for a run to finish using the run event stream. |
-| `helmr run cancel RUN [-p PROJECT] [-e ENV] [--reason TEXT] [--force] [--idempotency-key KEY] [--json]` | Cancel a run attempt. |
+| `helmr run wait RUN [-p PROJECT] [-e ENV] [--timeout DURATION] [--json]` | Poll finite Run snapshots until terminal. |
+| `helmr run cancel RUN [-p PROJECT] [-e ENV] [--json]` | Request Run cancellation. |
+| `helmr schedule list [-p PROJECT] [-e ENV] [--cursor CURSOR] [--limit N] [--json \| --jsonl]` | List source-declared Schedules. |
+| `helmr schedule get SCHEDULE [-p PROJECT] [-e ENV] [--json]` | Show read-only Schedule status. |
 | `helmr token get TOKEN [-p PROJECT] [-e ENV] [--json]` | Show an external completion token. |
 | `helmr token complete TOKEN [-p PROJECT] [-e ENV] --data-json JSON [--idempotency-key KEY] [--json]` | Complete an external token. |
 | `helmr token cancel TOKEN [-p PROJECT] [-e ENV] [--idempotency-key KEY] [--json]` | Cancel a pending external token. |
@@ -51,10 +58,15 @@ Common options:
 
 `helmr deploy` writes human-readable progress to stderr and the final deployment version or ID to stdout. With `--json`, it emits JSON lines for local steps, deployment events, and the final deployment result.
 
-`helmr run start` accepts payloads from `--payload-file`, `--payload-json`, or
+`helmr task start` accepts payloads from `--payload-file`, `--payload-json`, or
 repeated `--payload KEY=VALUE`. `--workspace` is required. Secrets are declared
 in source and placed when the Workspace is created. `--wait` waits for the Run
 to finish.
+
+Actor commands always take the deployed Actor declaration ID positionally.
+Addressed operations additionally require exactly one of `--id` or `--key`.
+Actor output uses the durable integer `--after` sequence and reads one finite
+page; it has no follow mode.
 
 With saved login auth, environment-scoped commands require both `--project` and `--env`. With `HELMR_API_KEY`, the key is already bound to one environment and project/environment flags are rejected.
 

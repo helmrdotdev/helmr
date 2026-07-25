@@ -161,7 +161,7 @@ WORKSPACE_ID="$(helmr workspace create github-pr-review \
   --secret-env OPENAI_API_KEY=OPENAI_API_KEY \
   --idempotency-key review-pr-123-workspace)"
 
-helmr run start review-pr \
+helmr task start review-pr \
   --workspace "${WORKSPACE_ID}" \
   --idempotency-key review-pr-123-run \
   --payload-json '{"owner":"OWNER","repo":"REPO","prNumber":123}'
@@ -182,7 +182,7 @@ inside the guest, such as an environment variable:
 
 ```sh
 printf '%s' "$OPENAI_API_KEY" | helmr secret create OPENAI_API_KEY
-helmr run start my-task --workspace WORKSPACE_ID
+helmr task start my-task --workspace WORKSPACE_ID
 ```
 
 Runs never receive secret values or binding maps. The deployed task definition is

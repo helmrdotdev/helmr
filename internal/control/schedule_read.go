@@ -199,8 +199,8 @@ func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scheduleID := strings.TrimSpace(chi.URLParam(r, "scheduleID"))
-	if scheduleID == "" {
-		writeError(w, badRequest(errors.New("schedule ID is required")))
+	if err := api.ValidateScheduleID(scheduleID); err != nil {
+		writeError(w, badRequest(err))
 		return
 	}
 	row, err := s.db.GetScheduleByPublicID(r.Context(), db.GetScheduleByPublicIDParams{

@@ -198,16 +198,42 @@ func TestGreenfieldCommandSurface(t *testing.T) {
 	for _, path := range [][]string{
 		{"workspace"},
 		{"task"},
+		{"actor"},
 		{"run"},
+		{"schedule"},
 		{"deployment"},
 		{"token"},
-		{"run", "start"},
+		{"task", "start"},
+		{"actor", "start"},
+		{"actor", "get"},
+		{"actor", "input", "send"},
+		{"actor", "output", "read"},
+		{"actor", "close"},
+		{"schedule", "list"},
+		{"schedule", "get"},
 		{"token", "get"},
 		{"token", "complete"},
 		{"token", "cancel"},
 	} {
 		if commandByPath(root, path...) == nil {
 			t.Fatalf("command %q is not registered", strings.Join(path, " "))
+		}
+	}
+	if commandByPath(root, "run", "start") != nil {
+		t.Fatal("removed command \"run start\" is still registered")
+	}
+	for _, path := range [][]string{
+		{"schedule", "create"},
+		{"schedule", "update"},
+		{"schedule", "delete"},
+		{"schedule", "activate"},
+		{"schedule", "deactivate"},
+		{"actor", "list"},
+		{"actor", "update"},
+		{"actor", "cancel"},
+	} {
+		if commandByPath(root, path...) != nil {
+			t.Fatalf("unsupported command %q is registered", strings.Join(path, " "))
 		}
 	}
 }

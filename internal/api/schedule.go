@@ -1,6 +1,11 @@
 package api
 
-import "time"
+import (
+	"fmt"
+	"time"
+
+	"github.com/helmrdotdev/helmr/internal/publicid"
+)
 
 type ScheduleWorkspace struct {
 	ID  string `json:"id,omitempty"`
@@ -35,4 +40,11 @@ type ScheduleResponse struct {
 type ListSchedulesResponse struct {
 	Schedules  []ScheduleResponse `json:"schedules"`
 	NextCursor string             `json:"next_cursor,omitempty"`
+}
+
+func ValidateScheduleID(id string) error {
+	if err := publicid.ValidateFor(publicid.Schedule, id); err != nil {
+		return fmt.Errorf("invalid Schedule ID: %w", err)
+	}
+	return nil
 }

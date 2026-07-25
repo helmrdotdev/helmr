@@ -56,7 +56,7 @@ RUNTIME_WORKSPACE="$(helmr workspace create helmr-runtime-smoke \
   --project helmr --env staging --key release-smoke-runtime \
   --idempotency-key release-smoke-runtime-create)"
 
-helmr run start runtime-smoke \
+helmr task start runtime-smoke \
   --project helmr \
   --env staging \
   --workspace "${RUNTIME_WORKSPACE}" \
@@ -66,7 +66,7 @@ SECRET_WORKSPACE="$(helmr workspace create helmr-secret-smoke \
   --project helmr --env production --key release-smoke-secrets \
   --idempotency-key release-smoke-secrets-create)"
 
-helmr run start secret-smoke \
+helmr task start secret-smoke \
   --project helmr \
   --env production \
   --workspace "${SECRET_WORKSPACE}" \
@@ -76,7 +76,7 @@ EDGE_WORKSPACE="$(helmr workspace create helmr-edge-smoke \
   --project helmr --env staging --key release-smoke-edge \
   --idempotency-key release-smoke-edge-create)"
 
-helmr run start edge-smoke \
+helmr task start edge-smoke \
   --project helmr \
   --env staging \
   --workspace "${EDGE_WORKSPACE}" \
@@ -86,7 +86,7 @@ AGENT_WORKSPACE="$(helmr workspace create helmr-agent-toolchain-smoke \
   --project helmr --env production --key release-smoke-agent \
   --idempotency-key release-smoke-agent-create)"
 
-helmr run start agent-toolchain-smoke \
+helmr task start agent-toolchain-smoke \
   --project helmr \
   --env production \
   --workspace "${AGENT_WORKSPACE}" \
@@ -159,7 +159,7 @@ For token UX checks, start a run and complete the pending token from the
 console or a trusted bridge:
 
 ```sh
-helmr run start runtime-smoke \
+helmr task start runtime-smoke \
   --project helmr \
   --env staging \
   --workspace "${RUNTIME_WORKSPACE}" \
@@ -182,19 +182,19 @@ and console evidence:
 STAGING_SECRET_WORKSPACE="$(helmr workspace create helmr-secret-smoke \
   --project helmr --env staging --key release-smoke-missing-secret \
   --idempotency-key release-smoke-missing-secret-create)"
-helmr run start missing-secret-smoke --project helmr --env staging \
+helmr task start missing-secret-smoke --project helmr --env staging \
   --workspace "${STAGING_SECRET_WORKSPACE}"
 
 # Strict payload observability: expected to create a failed run with a validation
 # error from the task adapter.
-helmr run start runtime-smoke \
+helmr task start runtime-smoke \
   --project helmr \
   --env staging \
   --workspace "${RUNTIME_WORKSPACE}" \
   --payload-json '{"scenario":"bad-payload","unknown":true}'
 
 # Runtime expected-error observability: expected to fail inside task code.
-helmr run start edge-smoke \
+helmr task start edge-smoke \
   --project helmr \
   --env staging \
   --workspace "${EDGE_WORKSPACE}" \

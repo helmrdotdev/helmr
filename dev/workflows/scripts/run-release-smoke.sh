@@ -247,7 +247,7 @@ start_capture_ids() {
   if ! workspace="$(printf '%s\n' "${workspace_response}" | jq -er '.workspace_id')"; then
     return 1
   fi
-  if ! output="$(run_helmr run start "${task}" "${scope_args[@]}" "$@" \
+  if ! output="$(run_helmr task start "${task}" "${scope_args[@]}" "$@" \
     --workspace "${workspace}" --idempotency-key "${key}:run" --json)"; then
     run_helmr workspace delete --id "${workspace}" "${scope_args[@]}" \
       --idempotency-key "${key}:rollback" --json >&2 || true
