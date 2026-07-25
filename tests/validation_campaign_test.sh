@@ -27,6 +27,19 @@ printf 'export const task = { id: "runtime-smoke" };\n' >"${product}/dev/workflo
 cat >"${product}/dev/aws/validation-cases/test.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+case_id="$(jq -er '.id' <<<"${HELMR_VALIDATION_CASE}")"
+if [ -n "${HELMR_VALIDATION_CASE_LOG:-}" ]; then
+  printf '%s\n' "${case_id}" >>"${HELMR_VALIDATION_CASE_LOG}"
+fi
+if [ "${case_id}" = "${HELMR_VALIDATION_FAIL_CASE:-}" ]; then
+  jq -n --argjson checks "$(jq -c '.producer.checks' <<<"${HELMR_VALIDATION_CASE}")" \
+    '{schema:"helmrdotdev.validation-case-source-result.v2",status:"failed",reason:"injected_failure",
+      checks:[$checks[]|{id:.,status:"failed"}],
+      objects:{run_ids:[],workspace_ids:[],deployment_ids:[],schedule_ids:[],token_ids:[],actor_ids:[]},
+      observations:{}}' \
+    >"${HELMR_VALIDATION_CASE_RESULT_FILE}"
+  exit 1
+fi
 jq -n --argjson checks "$(jq -c '.producer.checks' <<<"${HELMR_VALIDATION_CASE}")" \
   '{schema:"helmrdotdev.validation-case-source-result.v2",status:"passed",reason:null,
     checks:[$checks[]|{id:.,status:"passed"}],
@@ -35,6 +48,21 @@ jq -n --argjson checks "$(jq -c '.producer.checks' <<<"${HELMR_VALIDATION_CASE}"
   >"${HELMR_VALIDATION_CASE_RESULT_FILE}"
 EOF
 chmod +x "${product}/dev/aws/validation-cases/test.sh"
+profile="${product}/dev/aws/release-validation-profile.json"
+jq -n '{
+  schema:"helmrdotdev.aws-release-validation-profile.v1",
+  cases:[
+    {id:"build-on-build-worker",category:"build",task:"runtime-smoke",repetitions:1,timeout_seconds:60,producer:{path:"dev/aws/validation-cases/test.sh",checks:["build-completed","build-group-only"]}},
+    {id:"run-on-run-worker",category:"run",task:"runtime-smoke",repetitions:1,timeout_seconds:60,producer:{path:"dev/aws/validation-cases/test.sh",checks:["run-completed","run-group-only"]}},
+    {id:"build-failure-isolation",category:"build_failure_isolation",task:null,repetitions:1,timeout_seconds:60,producer:{path:"dev/aws/validation-cases/test.sh",checks:["run-unaffected"]}},
+    {id:"network-deny",category:"network_deny",task:null,repetitions:1,timeout_seconds:60,producer:{path:"dev/aws/validation-cases/test.sh",checks:["deny-counter-increased"]}},
+    {id:"worker-restart",category:"worker_restart",task:null,repetitions:1,timeout_seconds:60,producer:{path:"dev/aws/validation-cases/test.sh",checks:["authority-recovered"]}},
+    {id:"identity-fencing",category:"identity_fencing",task:null,repetitions:1,timeout_seconds:60,producer:{path:"dev/aws/validation-cases/test.sh",checks:["old-epoch-fenced","startup-recovery-recorded"]}},
+    {id:"queue-preservation",category:"queue_preservation",task:null,repetitions:1,timeout_seconds:60,producer:{path:"dev/aws/validation-cases/test.sh",checks:["queue-conserved"]}},
+    {id:"protected-drain",category:"protected_drain",task:null,repetitions:1,timeout_seconds:60,producer:{path:"dev/aws/validation-cases/test.sh",checks:["drain-before-termination"]}},
+    {id:"provider-loss",category:"provider_loss",task:null,repetitions:1,timeout_seconds:60,producer:{path:"dev/aws/validation-cases/test.sh",checks:["capacity-deficit-visible"]}}
+  ]
+}' >"${profile}"
 cp "${repo_root}/dev/aws/run-auth-readiness.sh" "${product}/dev/aws/run-auth-readiness.sh"
 cp "${repo_root}/dev/aws/worker-price-fixture.json" "${product}/dev/aws/worker-price-fixture.json"
 git -C "${product}" add .
@@ -114,14 +142,15 @@ jq -n \
     workload:{
       fixtures_root:"dev/workflows",fixture_tree:$fixture_tree,project:"helmr",environments:["staging","production"],
       cases:[
-        {id:"build-on-build-worker",category:"build",task:"runtime-smoke",payload:{scenario:"build-placement",expectedEnvironment:"staging",smokeCase:"runtime"},payload_sha256:$build_payload_sha,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["build-completed","build-group-only"]},repetitions:1},
-        {id:"run-on-run-worker",category:"run",task:"runtime-smoke",payload:{scenario:"run-placement",expectedEnvironment:"staging",smokeCase:"actor-continuation"},payload_sha256:$run_payload_sha,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["run-completed","run-group-only"]},repetitions:1},
-        {id:"build-failure-isolation",category:"build_failure_isolation",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["run-unaffected"]},repetitions:1},
-        {id:"worker-restart",category:"worker_restart",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["authority-recovered"]},repetitions:1},
-        {id:"identity-fencing",category:"identity_fencing",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["stale-epoch-rejected"]},repetitions:1},
-        {id:"queue-preservation",category:"queue_preservation",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["queue-conserved"]},repetitions:1},
-        {id:"protected-drain",category:"protected_drain",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["drain-before-termination"]},repetitions:1},
-        {id:"provider-loss",category:"provider_loss",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["capacity-deficit-visible"]},repetitions:1}
+        {id:"build-on-build-worker",category:"build",task:"runtime-smoke",payload:{scenario:"build-placement",expectedEnvironment:"staging",smokeCase:"runtime"},payload_sha256:$build_payload_sha,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["build-completed","build-group-only"]},repetitions:1,timeout_seconds:60},
+        {id:"run-on-run-worker",category:"run",task:"runtime-smoke",payload:{scenario:"run-placement",expectedEnvironment:"staging",smokeCase:"actor-continuation"},payload_sha256:$run_payload_sha,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["run-completed","run-group-only"]},repetitions:1,timeout_seconds:60},
+        {id:"build-failure-isolation",category:"build_failure_isolation",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["run-unaffected"]},repetitions:1,timeout_seconds:60},
+        {id:"network-deny",category:"network_deny",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["deny-counter-increased"]},repetitions:1,timeout_seconds:60},
+        {id:"worker-restart",category:"worker_restart",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["authority-recovered"]},repetitions:1,timeout_seconds:60},
+        {id:"identity-fencing",category:"identity_fencing",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["old-epoch-fenced","startup-recovery-recorded"]},repetitions:1,timeout_seconds:60},
+        {id:"queue-preservation",category:"queue_preservation",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["queue-conserved"]},repetitions:1,timeout_seconds:60},
+        {id:"protected-drain",category:"protected_drain",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["drain-before-termination"]},repetitions:1,timeout_seconds:60},
+        {id:"provider-loss",category:"provider_loss",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["capacity-deficit-visible"]},repetitions:1,timeout_seconds:60}
       ]
     },
     cost_guard:{run_worker_max:1,build_worker_max:1,nat_gateway_max:1,max_bundle_bytes:52428800},
@@ -159,6 +188,16 @@ fi
 jq '.workload.cases[0].producer.checks += [.workload.cases[0].producer.checks[0]]' "${manifest}" >"${tmp}/duplicate-check.json"
 if campaign validate "${tmp}/duplicate-check.json" >/dev/null 2>&1; then
   fail "duplicate producer checks should fail"
+fi
+
+jq '.workload.cases |= [.[1],.[0]] + .[2:]' "${manifest}" >"${tmp}/reordered-cases.json"
+if campaign validate "${tmp}/reordered-cases.json" >/dev/null 2>&1; then
+  fail "reordered release cases should fail"
+fi
+
+jq '.workload.cases[0].producer.checks[0]="substituted-check"' "${manifest}" >"${tmp}/substituted-check.json"
+if campaign validate "${tmp}/substituted-check.json" >/dev/null 2>&1; then
+  fail "substituted release checks should fail"
 fi
 
 valid_case_result="${tmp}/valid-case-result.json"
@@ -459,7 +498,7 @@ grep -Eq 'product checkout is dirty|producer drifted' "${tmp}/stderr" || fail "p
 git -C "${product}" checkout -q -- .
 campaign_b workload "${manifest_b}"
 workload_result="${state_root}/managed-worker-20260714-b/results/05-workload.json"
-jq -e '(.cases | length) == 8 and all(.cases[]; .status == "passed") and .observations.nat_bytes_in_from_destination == 1024' "${workload_result}" >/dev/null ||
+jq -e '(.cases | length) == 9 and all(.cases[]; .status == "passed") and .observations.nat_bytes_in_from_destination == 1024' "${workload_result}" >/dev/null ||
   fail "harness-owned workload result"
 case_evidence="${state_root}/managed-worker-20260714-b/case-evidence/run-on-run-worker-01.json"
 jq -e '.schema == "helmrdotdev.validation-case-source-result.v2" and .objects.run_ids == ["run_aaaaaaaaaaaaaaaaaaaaaaaaaa"]' "${case_evidence}" >/dev/null ||
@@ -633,5 +672,40 @@ jq -e '
 ' "${final_sampling_result}" >/dev/null ||
   fail "final sampling error should retain structured producer evidence"
 campaign_b validate-evidence "${manifest_g}"
+
+manifest_h="${ops}/docs/validation/managed-worker-campaign-h.json"
+jq '.evidence.namespace="managed-worker-20260714-h"' "${manifest}" >"${manifest_h}"
+git -C "${ops}" add .
+git -C "${ops}" commit -qm eighth-manifest
+campaign_b init "${manifest_h}" >/dev/null
+campaign_b claim "${manifest_h}"
+jq -n '{schema:"helmrdotdev.validation-stage-result.v1",stage:"preflight",status:"passed",reason:null,observations:{},cases:[]}' >"${result}"
+campaign_b start "${manifest_h}" preflight
+campaign_b complete "${manifest_h}" preflight "${result}"
+cp "${control_tfvars_fixture}" "${tfvars}"
+campaign_b run-collect "${manifest_h}" control_up -- true
+jq -n '{schema:"helmrdotdev.validation-stage-result.v1",stage:"awaiting_human",status:"passed",reason:null,observations:{},cases:[]}' >"${result}"
+campaign_b start "${manifest_h}" awaiting_human
+campaign_b complete "${manifest_h}" awaiting_human "${result}"
+campaign_b auth "${manifest_h}"
+cp "${worker_tfvars_fixture}" "${tfvars}"
+campaign_b run-collect "${manifest_h}" worker_up -- true
+case_log="${tmp}/executed-cases"
+if HELMR_VALIDATION_FAIL_CASE=network-deny HELMR_VALIDATION_CASE_LOG="${case_log}" \
+  campaign_b workload "${manifest_h}" >/dev/null 2>"${tmp}/stderr"; then
+  fail "producer failure should fail the workload"
+fi
+[ "$(tail -1 "${case_log}")" = "network-deny" ] ||
+  fail "cases after a producer failure must not execute"
+if grep -Fq 'provider-loss' "${case_log}"; then
+  fail "destructive cases must not execute after an earlier failure"
+fi
+aborted_evidence="${state_root}/managed-worker-20260714-h/case-evidence/provider-loss-01.json"
+jq -e '
+  .status == "failed" and .reason == "prior_case_failed" and
+  all(.checks[]; .status == "failed")
+' "${aborted_evidence}" >/dev/null ||
+  fail "unexecuted destructive case must retain explicit failed evidence"
+campaign_b validate-evidence "${manifest_h}"
 
 printf 'ok - validation campaign tests\n'

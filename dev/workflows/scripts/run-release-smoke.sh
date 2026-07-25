@@ -470,6 +470,12 @@ expect_child_task_lifecycle() {
         --arg workspace "${target_workspace_id}" \
         '{mode:"call-success",marker:$marker,childWorkspaceId:$workspace}')"; then
     result=1
+  elif ! expect_run_success "${name}-same-workspace-call" child-task-smoke \
+      "${scope_args[@]}" \
+      --payload-json "$(jq -nc \
+        --arg marker "${marker}-same-workspace-call" \
+        '{mode:"same-workspace-call",marker:$marker}')"; then
+    result=1
   elif ! expect_run_success "${name}-call-failure" child-task-smoke \
       "${scope_args[@]}" \
       --payload-json "$(jq -nc \

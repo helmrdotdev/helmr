@@ -5,7 +5,6 @@ package firecracker
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -20,9 +19,6 @@ import (
 )
 
 const (
-	networkPolicyTableName        = "helmr_network_policy"
-	buildNetworkDeniedCounterName = "build_denied"
-	buildNetworkLimitCounterName  = "build_limit"
 	buildNetworkReceivedQuotaName = "build_received"
 	buildNetworkSentQuotaName     = "build_sent"
 	buildNetworkConnectionLimit   = 256
@@ -379,31 +375,14 @@ add rule inet %[1]s egress accept
 }
 
 func nftNetworkPolicyScript(policy compute.NetworkPolicy, blockedIPv4CIDRs []string, blockedIPv6CIDRs []string) string {
-	chainPolicy := "accept"
-	if !policy.Internet {
-		chainPolicy = "drop"
-	}
-	return fmt.Sprintf(strings.TrimSpace(`
-add table inet %[1]s
-add chain inet %[1]s forward { type filter hook forward priority 0; policy %[2]s; }
-add rule inet %[1]s forward meta nfproto ipv6 drop
-add rule inet %[1]s forward ct state established,related accept
-%[3]s
-%[4]s
-add rule inet %[1]s forward ip daddr @blocked_ipv4 drop
-add rule inet %[1]s forward ip6 daddr @blocked_ipv6 drop
-	`)+"\n",
-		networkPolicyTableName,
-		chainPolicy,
-		nftNetworkPolicySet("blocked_ipv4", "ipv4_addr", blockedIPv4CIDRs),
-		nftNetworkPolicySet("blocked_ipv6", "ipv6_addr", blockedIPv6CIDRs),
-	)
+	return renderRunNetworkPolicy(policy, blockedIPv4CIDRs, blockedIPv6CIDRs)
 }
 
-func (c *Connector) readBuildNetworkStatus(
+func (c *Connector) readNetworkCounters(
 	ctx context.Context,
 	netns string,
-) (vm.BuildNetworkStatus, error) {
+	label string,
+) ([]byte, error) {
 	cmd := exec.CommandContext(
 		ctx,
 		c.cfg.IPPath,
@@ -424,80 +403,40 @@ func (c *Connector) readBuildNetworkStatus(
 	if err != nil {
 		detail := strings.TrimSpace(stderr.String())
 		if detail != "" {
-			return vm.BuildNetworkStatus{}, fmt.Errorf(
-				"read build network counters: %w: %s",
+			return nil, fmt.Errorf(
+				"read %s network counters: %w: %s",
+				label,
 				err,
 				detail,
 			)
 		}
-		return vm.BuildNetworkStatus{}, fmt.Errorf(
-			"read build network counters: %w",
+		return nil, fmt.Errorf(
+			"read %s network counters: %w",
+			label,
 			err,
 		)
+	}
+	return raw, nil
+}
+
+func (c *Connector) readRunNetworkStatus(
+	ctx context.Context,
+	netns string,
+) (vm.RunNetworkStatus, error) {
+	raw, err := c.readNetworkCounters(ctx, netns, "Run")
+	if err != nil {
+		return vm.RunNetworkStatus{}, err
+	}
+	return parseRunNetworkStatus(raw)
+}
+
+func (c *Connector) readBuildNetworkStatus(
+	ctx context.Context,
+	netns string,
+) (vm.BuildNetworkStatus, error) {
+	raw, err := c.readNetworkCounters(ctx, netns, "build")
+	if err != nil {
+		return vm.BuildNetworkStatus{}, err
 	}
 	return parseBuildNetworkStatus(raw)
-}
-
-func parseBuildNetworkStatus(
-	raw []byte,
-) (vm.BuildNetworkStatus, error) {
-	var document struct {
-		Objects []struct {
-			Counter *struct {
-				Name    string `json:"name"`
-				Packets uint64 `json:"packets"`
-			} `json:"counter,omitempty"`
-		} `json:"nftables"`
-	}
-	if err := json.Unmarshal(raw, &document); err != nil {
-		return vm.BuildNetworkStatus{}, fmt.Errorf(
-			"decode build network counters: %w",
-			err,
-		)
-	}
-	var status vm.BuildNetworkStatus
-	foundDenied := false
-	foundLimit := false
-	for _, object := range document.Objects {
-		if object.Counter == nil {
-			continue
-		}
-		switch object.Counter.Name {
-		case buildNetworkDeniedCounterName:
-			if foundDenied {
-				return vm.BuildNetworkStatus{}, errors.New(
-					"build denied counter is duplicated",
-				)
-			}
-			foundDenied = true
-			status.DeniedPackets = object.Counter.Packets
-		case buildNetworkLimitCounterName:
-			if foundLimit {
-				return vm.BuildNetworkStatus{}, errors.New(
-					"build limit counter is duplicated",
-				)
-			}
-			foundLimit = true
-			status.LimitPackets = object.Counter.Packets
-		}
-	}
-	if !foundDenied || !foundLimit {
-		return vm.BuildNetworkStatus{}, errors.New(
-			"build network counters are incomplete",
-		)
-	}
-	return status, nil
-}
-
-func nftNetworkPolicySet(name string, nftType string, cidrs []string) string {
-	if len(cidrs) == 0 {
-		return fmt.Sprintf("add set inet %s %s { type %s; flags interval; }", networkPolicyTableName, name, nftType)
-	}
-	return fmt.Sprintf(
-		"add set inet %s %s { type %s; flags interval; elements = { %s } }",
-		networkPolicyTableName,
-		name,
-		nftType,
-		strings.Join(cidrs, ", "),
-	)
 }

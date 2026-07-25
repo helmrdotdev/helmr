@@ -103,4 +103,60 @@ describe("tokens", () => {
       uninstall()
     }
   })
+
+  test("references an externally created Token without creating another resource", async () => {
+    const calls: unknown[] = []
+    const uninstall = installRuntimeOperations({
+      waitFor: async () => {},
+      waitUntil: async () => {},
+      actorInputSend: async () => ({ sequence: 1 }),
+      tokenCreate: async () => {
+        throw new Error("unexpected Token create")
+      },
+      tokenWait: async (tokenId, options) => {
+        calls.push({ tokenId, options })
+        return { approved: true }
+      },
+    })
+    try {
+      const token = tokens.ref(" tok_aaaaaaaaaaaaaaaaaaaaaaaaaa ")
+      expect(token.id).toBe("tok_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+      await expect(token.wait({ idleTimeout: "30s" }).unwrap()).resolves.toEqual({
+        approved: true,
+      })
+      expect(calls).toEqual([{
+        tokenId: "tok_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        options: { idleTimeout: "30s" },
+      }])
+    } finally {
+      uninstall()
+    }
+  })
+
+  test("rejects a malformed external Token ID before a runtime operation", () => {
+    let waits = 0
+    const uninstall = installRuntimeOperations({
+      waitFor: async () => {},
+      waitUntil: async () => {},
+      actorInputSend: async () => ({ sequence: 1 }),
+      tokenCreate: async () => {
+        throw new Error("unexpected Token create")
+      },
+      tokenWait: async () => {
+        waits += 1
+        return null
+      },
+    })
+    try {
+      expect(() => tokens.ref("tok_bad")).toThrow(
+        "Token ID must be a canonical tok_ public ID",
+      )
+      expect(() => tokens.ref("run_aaaaaaaaaaaaaaaaaaaaaaaaaa")).toThrow(
+        "Token ID must be a canonical tok_ public ID",
+      )
+      expect(waits).toBe(0)
+    } finally {
+      uninstall()
+    }
+  })
 })

@@ -69,6 +69,15 @@ type BuildNetworkSession interface {
 	BuildNetworkStatus(context.Context) (BuildNetworkStatus, error)
 }
 
+type RunNetworkStatus struct {
+	DeniedPackets uint64
+}
+
+type RunNetworkSession interface {
+	Session
+	RunNetworkStatus(context.Context) (RunNetworkStatus, error)
+}
+
 type CheckpointableSession interface {
 	Session
 	CreateSnapshot(context.Context, SnapshotRequest) (SnapshotArtifact, error)

@@ -11,6 +11,10 @@ import type {
   timerSmoke,
   timerSmokeWorkspace,
 } from "../../workflows/tasks/smoke/timer"
+import type {
+  runtimeSmoke,
+  runtimeSmokeWorkspace,
+} from "../../workflows/tasks/smoke/runtime"
 import { assert, assertEqual } from "./assert"
 
 export type ManagementEvidence = Readonly<{
@@ -19,6 +23,8 @@ export type ManagementEvidence = Readonly<{
   scheduledRunId: string
   secretId: string
   completedTokenId: string
+  externalTokenRunIds: readonly string[]
+  externalTokenWorkspaceIds: readonly string[]
   cancelledRunId: string
 }>
 
@@ -136,6 +142,46 @@ export async function runManagementSmoke(
       },
       { signal: AbortSignal.timeout(30_000) },
     )
+    const externalTokenRuns: string[] = []
+    const externalTokenWorkspaces: string[] = []
+    for (const suffix of ["fanout-a", "fanout-b"] as const) {
+      const tokenWorkspace = await client.workspaces.create<typeof runtimeSmokeWorkspace>(
+        "helmr-runtime-smoke",
+        {
+          key: `${suffix}-${marker}`,
+          idempotencyKey: `token-workspace:create:${suffix}:${marker}`,
+        },
+        { signal: AbortSignal.timeout(10 * 60_000) },
+      )
+      workspaces.push({
+        ref: tokenWorkspace,
+        deleteKey: `token-workspace:delete:${suffix}:${marker}`,
+      })
+      externalTokenWorkspaces.push(tokenWorkspace.id)
+      const run = await client.tasks.start<typeof runtimeSmoke>(
+        "runtime-smoke",
+        {
+          payload: {
+            scenario: suffix,
+            marker: `${marker}-${suffix}`,
+            expectedEnvironment: "unknown",
+            exerciseToken: true,
+            externalTokenId: completedToken.id,
+            tokenTimeout: 600,
+            largeFileKiB: 1,
+          },
+          workspace: tokenWorkspace,
+          idempotencyKey: `token-run:start:${suffix}:${marker}`,
+        },
+        { signal: AbortSignal.timeout(30_000) },
+      )
+      externalTokenRuns.push(run.id)
+    }
+    await Promise.all(
+      externalTokenRuns.map((runID) =>
+        waitForRunStatus(client, runID, ["waiting"])
+      ),
+    )
     const completed = await client.tokens.complete(
       completedToken.id,
       {
@@ -145,6 +191,58 @@ export async function runManagementSmoke(
       { signal: AbortSignal.timeout(30_000) },
     )
     assertEqual(completed.status, "completed", "external Token did not complete")
+    const fanoutResults = await Promise.all(
+      externalTokenRuns.map((runID) =>
+        client.runs.wait<typeof runtimeSmoke>(
+          runID,
+          { signal: AbortSignal.timeout(10 * 60_000) },
+        ).unwrap()
+      ),
+    )
+    assert(
+      fanoutResults.every(approvedTokenOutput),
+      "external Token completion did not resume every waiting Run",
+    )
+
+    const lateWorkspace = await client.workspaces.create<typeof runtimeSmokeWorkspace>(
+      "helmr-runtime-smoke",
+      {
+        key: `completion-before-wait-${marker}`,
+        idempotencyKey: `token-workspace:create:late:${marker}`,
+      },
+      { signal: AbortSignal.timeout(10 * 60_000) },
+    )
+    workspaces.push({
+      ref: lateWorkspace,
+      deleteKey: `token-workspace:delete:late:${marker}`,
+    })
+    externalTokenWorkspaces.push(lateWorkspace.id)
+    const lateRun = await client.tasks.start<typeof runtimeSmoke>(
+      "runtime-smoke",
+      {
+        payload: {
+          scenario: "completion-before-wait",
+          marker: `${marker}-completion-before-wait`,
+          expectedEnvironment: "unknown",
+          exerciseToken: true,
+          externalTokenId: completedToken.id,
+          tokenTimeout: 600,
+          largeFileKiB: 1,
+        },
+        workspace: lateWorkspace,
+        idempotencyKey: `token-run:start:late:${marker}`,
+      },
+      { signal: AbortSignal.timeout(30_000) },
+    )
+    externalTokenRuns.push(lateRun.id)
+    const lateResult = await client.runs.wait<typeof runtimeSmoke>(
+      lateRun.id,
+      { signal: AbortSignal.timeout(10 * 60_000) },
+    ).unwrap()
+    assert(
+      approvedTokenOutput(lateResult),
+      "completion-before-wait did not resolve from the terminal Token result",
+    )
     const tokenPage = await client.tokens.list(
       { limit: 100 },
       { signal: AbortSignal.timeout(30_000) },
@@ -197,6 +295,8 @@ export async function runManagementSmoke(
       scheduledRunId: scheduledRun.id,
       secretId: secret.id,
       completedTokenId: completedToken.id,
+      externalTokenRunIds: externalTokenRuns,
+      externalTokenWorkspaceIds: externalTokenWorkspaces,
       cancelledRunId: cancellable.id,
     }
   } finally {
@@ -210,6 +310,17 @@ export async function runManagementSmoke(
       if (failure?.status === "rejected") throw failure.reason
     }
   }
+}
+
+function approvedTokenOutput(value: import("@helmr/sdk").JsonValue): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false
+  }
+  const token = (value as Readonly<Record<string, import("@helmr/sdk").JsonValue>>)["token"]
+  if (token === null || typeof token !== "object" || Array.isArray(token)) {
+    return false
+  }
+  return (token as Readonly<Record<string, import("@helmr/sdk").JsonValue>>)["approved"] === true
 }
 
 async function waitForActiveSchedule(client: HelmrClient) {

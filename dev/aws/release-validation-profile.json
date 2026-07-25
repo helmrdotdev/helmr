@@ -1,0 +1,141 @@
+{
+  "schema": "helmrdotdev.aws-release-validation-profile.v1",
+  "cases": [
+    {
+      "id": "build-on-build-worker",
+      "category": "build",
+      "task": null,
+      "repetitions": 1,
+      "timeout_seconds": 1800,
+      "producer": {
+        "path": "dev/aws/validation-cases/build-placement.sh",
+        "checks": [
+          "build-completed",
+          "build-group-only"
+        ]
+      }
+    },
+    {
+      "id": "run-on-run-worker",
+      "category": "run",
+      "task": null,
+      "repetitions": 1,
+      "timeout_seconds": 1800,
+      "producer": {
+        "path": "dev/aws/validation-cases/run-product-smoke.sh",
+        "checks": [
+          "run-completed",
+          "run-group-only",
+          "same-workspace-call-completed",
+          "external-token-wait-completed",
+          "actor-output-observed"
+        ]
+      }
+    },
+    {
+      "id": "build-failure-isolation",
+      "category": "build_failure_isolation",
+      "task": null,
+      "repetitions": 1,
+      "timeout_seconds": 1800,
+      "producer": {
+        "path": "dev/aws/validation-cases/build-failure-isolation.sh",
+        "checks": [
+          "build-failure-observed",
+          "build-group-only",
+          "run-unaffected"
+        ]
+      }
+    },
+    {
+      "id": "network-deny",
+      "category": "network_deny",
+      "task": null,
+      "repetitions": 1,
+      "timeout_seconds": 600,
+      "producer": {
+        "path": "dev/aws/validation-cases/network-deny.sh",
+        "checks": [
+          "metadata-cidr-blocked",
+          "exact-runtime-attribution",
+          "deny-counter-increased"
+        ]
+      }
+    },
+    {
+      "id": "worker-restart",
+      "category": "worker_restart",
+      "task": null,
+      "repetitions": 1,
+      "timeout_seconds": 1200,
+      "producer": {
+        "path": "dev/aws/validation-cases/worker-restart.sh",
+        "checks": [
+          "service-restarted",
+          "epoch-advanced",
+          "active-run-recovered"
+        ]
+      }
+    },
+    {
+      "id": "identity-fencing",
+      "category": "identity_fencing",
+      "task": null,
+      "repetitions": 1,
+      "timeout_seconds": 300,
+      "producer": {
+        "path": "dev/aws/validation-cases/identity-fencing.sh",
+        "checks": [
+          "old-epoch-fenced",
+          "startup-recovery-recorded"
+        ]
+      }
+    },
+    {
+      "id": "queue-preservation",
+      "category": "queue_preservation",
+      "task": null,
+      "repetitions": 1,
+      "timeout_seconds": 1200,
+      "producer": {
+        "path": "dev/aws/validation-cases/queue-preservation.sh",
+        "checks": [
+          "queued-before-fault",
+          "queue-preserved",
+          "queued-run-completed"
+        ]
+      }
+    },
+    {
+      "id": "protected-drain",
+      "category": "protected_drain",
+      "task": null,
+      "repetitions": 1,
+      "timeout_seconds": 1200,
+      "producer": {
+        "path": "dev/aws/validation-cases/protected-drain.sh",
+        "checks": [
+          "scale-in-protection-held",
+          "drain-completed",
+          "termination-after-drain"
+        ]
+      }
+    },
+    {
+      "id": "provider-loss",
+      "category": "provider_loss",
+      "task": null,
+      "repetitions": 1,
+      "timeout_seconds": 1800,
+      "producer": {
+        "path": "dev/aws/validation-cases/provider-loss.sh",
+        "checks": [
+          "instance-loss-observed",
+          "capacity-deficit-visible",
+          "replacement-ready",
+          "lost-run-recovered"
+        ]
+      }
+    }
+  ]
+}

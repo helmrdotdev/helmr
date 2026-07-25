@@ -167,6 +167,7 @@ export type {
   TokenCreateResult,
   TokenCancelledError,
   TokenExpiredError,
+  TokenRef,
   TokenSnapshot,
   Tokens,
   TokenWait,

@@ -10,8 +10,9 @@ TF_BIN="${TF_BIN:-tofu}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 DEV_TFVARS="${DEV_TFVARS:-${ROOT}/infra/aws/stacks/dev/full-run-smoke.tfvars}"
 DEV_STACK="${DEV_STACK:-${ROOT}/infra/aws/stacks/dev}"
+RELEASE_PROFILE="${ROOT}/dev/aws/release-validation-profile.json"
 EXPECTED_STAGES='["preflight","control_up","awaiting_human","auth_ready","worker_up","workload","pre_shutdown_publish","cleanup","closed","post_shutdown_publish"]'
-REQUIRED_CASE_CATEGORIES='["build","run","build_failure_isolation","worker_restart","identity_fencing","queue_preservation","protected_drain","provider_loss"]'
+REQUIRED_CASE_CATEGORIES='["build","run","build_failure_isolation","network_deny","worker_restart","identity_fencing","queue_preservation","protected_drain","provider_loss"]'
 TRAP_MANIFEST=""
 TRAP_STAGE=""
 TRAP_RESULT=""
@@ -21,6 +22,8 @@ ALLOW_COLLECTOR_COMPLETE=0
 ALLOW_COLLECTOR_STAGE=0
 ALLOW_AUTH_COMPLETE=0
 ALLOW_WORKLOAD_COMPLETE=0
+WORKLOAD_SAMPLER_PID=""
+WORKLOAD_SAMPLER_SENTINEL=""
 PRICE_FIXTURE="${PRICE_FIXTURE:-${ROOT}/dev/aws/worker-price-fixture.json}"
 
 usage() {
@@ -119,6 +122,23 @@ atomic_json_write() {
 validate_manifest() {
   local manifest=$1
   [ -f "${manifest}" ] || die "manifest does not exist: ${manifest}"
+  [ -f "${RELEASE_PROFILE}" ] || die "release validation profile does not exist: ${RELEASE_PROFILE}"
+  jq -e '
+    type == "object" and keys == ["cases","schema"] and
+    .schema == "helmrdotdev.aws-release-validation-profile.v1" and
+    (.cases | type == "array" and length >= 1 and
+      all(.[];
+        type == "object" and
+        keys == ["category","id","producer","repetitions","task","timeout_seconds"] and
+        (.producer | keys == ["checks","path"]) and
+        (.timeout_seconds | type == "number" and floor == . and . >= 60 and . <= 3600)
+      )
+    )
+  ' "${RELEASE_PROFILE}" >/dev/null || die "release validation profile failed strict schema validation"
+  git -C "${ROOT}" cat-file -e "HEAD:dev/aws/release-validation-profile.json" 2>/dev/null ||
+    die "release validation profile is not committed at product HEAD"
+  [ "$(git -C "${ROOT}" show "HEAD:dev/aws/release-validation-profile.json" | sha256_stdin)" = "$(sha256_file "${RELEASE_PROFILE}")" ] ||
+    die "release validation profile differs from product HEAD"
   jq -e \
     --argjson expected_stages "${EXPECTED_STAGES}" \
     --argjson required_categories "${REQUIRED_CASE_CATEGORIES}" '
@@ -143,7 +163,7 @@ validate_manifest() {
       .fixtures_root == "dev/workflows" and .project == "helmr" and .environments == ["staging","production"] and
       (.fixture_tree | test("^[0-9a-f]{40,64}$")) and
       (.cases | type == "array" and length >= 1 and
-        all(.[]; type == "object" and has("category") and has("id") and has("payload") and has("payload_sha256") and has("producer") and has("repetitions") and has("task") and
+        all(.[]; type == "object" and keys == ["category","id","payload","payload_sha256","producer","repetitions","task","timeout_seconds"] and
           (.id | test("^[a-z][a-z0-9-]{0,63}$")) and
           (.category | test("^[a-z][a-z0-9_]{0,63}$")) and
           (.task == null or (.task | type == "string" and test("^[a-z][a-z0-9-]{0,63}$"))) and
@@ -155,7 +175,8 @@ validate_manifest() {
             (.checks | type == "array" and length >= 1 and length <= 64 and
               ([.[]] | unique | length) == length and
               all(.[]; type == "string" and test("^[a-z][a-z0-9-]{0,63}$")))) and
-          (.repetitions | type == "number" and . >= 1 and . <= 10)) and
+          (.repetitions | type == "number" and . >= 1 and . <= 10) and
+          (.timeout_seconds | type == "number" and floor == . and . >= 60 and . <= 3600)) and
         ([.[].id] | unique | length) == length and
         ([.[].category] | unique | sort) == ($required_categories | sort))) and
     (.cost_guard | type == "object" and keys == ["build_worker_max","max_bundle_bytes","nat_gateway_max","run_worker_max"] and
@@ -169,6 +190,13 @@ validate_manifest() {
       (.workload_attempts | type == "number" and . >= 1 and . <= 3)) and
     .stages == $expected_stages
   ' "${manifest}" >/dev/null || die "manifest failed strict schema validation"
+
+  jq -e -n --slurpfile manifest "${manifest}" --slurpfile profile "${RELEASE_PROFILE}" '
+    [$manifest[0].workload.cases[] | {
+      id,category,task,repetitions,timeout_seconds,
+      producer:{path:.producer.path,checks:.producer.checks}
+    }] == $profile[0].cases
+  ' >/dev/null || die "manifest workload differs from the exact release validation profile"
 
   local source_commit fixture_tree harness_sha
   source_commit="$(jq -r '.source.commit' "${manifest}")"
@@ -1426,6 +1454,42 @@ sample_worker_groups() {
     '{at:$at,run:$run,build:$build,run_instances:$run_instances,build_instances:$build_instances}' >>"${output}"
 }
 
+cleanup_workload_sampler() {
+  if [ -n "${WORKLOAD_SAMPLER_SENTINEL}" ]; then
+    rm -f "${WORKLOAD_SAMPLER_SENTINEL}"
+  fi
+  if [ -n "${WORKLOAD_SAMPLER_PID}" ]; then
+    kill "${WORKLOAD_SAMPLER_PID}" 2>/dev/null || true
+    wait "${WORKLOAD_SAMPLER_PID}" 2>/dev/null || true
+  fi
+  WORKLOAD_SAMPLER_PID=""
+  WORKLOAD_SAMPLER_SENTINEL=""
+}
+
+run_bounded() {
+  local timeout_seconds=$1
+  shift
+  python3 - "${timeout_seconds}" "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+timeout = int(sys.argv[1])
+process = subprocess.Popen(sys.argv[2:], start_new_session=True)
+try:
+    raise SystemExit(process.wait(timeout=timeout))
+except subprocess.TimeoutExpired:
+    os.killpg(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+    raise SystemExit(124)
+PY
+}
+
 nat_metric_sum() {
   local nat_id=$1 metric=$2 started=$3 finished=$4
   aws cloudwatch get-metric-statistics --namespace AWS/NATGateway --metric-name "${metric}" \
@@ -1435,7 +1499,8 @@ nat_metric_sum() {
 
 run_workload() {
   local manifest=$1 contract dir outputs run_asg build_asg nat_id result cases_file samples sentinel sampler_pid
-  local started finished case_json case_id producer producer_sha repetitions attempt raw status reason command_status evidence_sha
+  local started finished case_json case_id producer producer_sha repetitions timeout_seconds attempt raw status reason command_status evidence_sha
+  local abort_remaining=0
   contract="$(campaign_dir "${manifest}")/manifest.json"
   verify_frozen "${manifest}" forward
   verify_aws_identity "${contract}"
@@ -1466,23 +1531,39 @@ run_workload() {
     done
   ) &
   sampler_pid=$!
+  WORKLOAD_SAMPLER_PID="${sampler_pid}"
+  WORKLOAD_SAMPLER_SENTINEL="${sentinel}"
   started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   while IFS= read -r case_json; do
     case_id="$(jq -r '.id' <<<"${case_json}")"
     producer="$(jq -r '.producer.path' <<<"${case_json}")"
     producer_sha="$(jq -r '.producer.sha256' <<<"${case_json}")"
+    timeout_seconds="$(jq -r '.timeout_seconds' <<<"${case_json}")"
     [ "$(sha256_file "${ROOT}/${producer}")" = "${producer_sha}" ] || die "workload producer drifted: ${producer}"
     repetitions="$(jq -r '.repetitions' <<<"${case_json}")"
     local attempts='[]'
     for ((attempt = 1; attempt <= repetitions; attempt++)); do
       raw="${dir}/producer-result.tmp"
       rm -f "${raw}"
-      set +e
-      HELMR_VALIDATION_CASE="${case_json}" HELMR_VALIDATION_CASE_RESULT_FILE="${raw}" HELMR_VALIDATION_CASE_ATTEMPT="${attempt}" \
-        "${ROOT}/${producer}"
-      command_status=$?
-      set -e
+      if [ "${abort_remaining}" = 1 ]; then
+        write_failed_case_evidence "${case_json}" prior_case_failed "${raw}"
+        command_status=1
+      elif ! HELMR_VALIDATION_SAMPLE_PHASE=case_before \
+        sample_worker_groups "${run_asg}" "${build_asg}" "${samples}"; then
+        write_failed_case_evidence "${case_json}" worker_sampling_failed "${raw}"
+        command_status=1
+      else
+        set +e
+        HELMR_VALIDATION_CASE="${case_json}" HELMR_VALIDATION_CASE_RESULT_FILE="${raw}" HELMR_VALIDATION_CASE_ATTEMPT="${attempt}" \
+          run_bounded "${timeout_seconds}" "${ROOT}/${producer}"
+        command_status=$?
+        set -e
+      fi
       normalize_case_evidence "${case_json}" "${raw}" "${command_status}" "${raw}.normalized"
+      if [ "${abort_remaining}" = 0 ] && ! HELMR_VALIDATION_SAMPLE_PHASE=case_after \
+        sample_worker_groups "${run_asg}" "${build_asg}" "${samples}"; then
+        write_failed_case_evidence "${case_json}" worker_sampling_failed "${raw}.normalized"
+      fi
       mv "${raw}.normalized" "${raw}"
       status="$(jq -r '.status' "${raw}")"
       reason="$(jq -c '.reason' "${raw}")"
@@ -1496,12 +1577,17 @@ run_workload() {
     done
     local case_status=passed
     jq -e 'all(.[]; .status == "passed")' <<<"${attempts}" >/dev/null || case_status=failed
+    if [ "${case_status}" = failed ]; then
+      abort_remaining=1
+    fi
     jq --arg id "${case_id}" --arg status "${case_status}" --argjson attempts "${attempts}" '. + [{id:$id,status:$status,attempts:$attempts}]' "${cases_file}" >"${cases_file}.next"
     mv "${cases_file}.next" "${cases_file}"
   done < <(jq -c '.workload.cases[]' "${contract}")
   finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   rm -f "${sentinel}"
   wait "${sampler_pid}"
+  WORKLOAD_SAMPLER_PID=""
+  WORKLOAD_SAMPLER_SENTINEL=""
   HELMR_VALIDATION_SAMPLE_PHASE=final \
     sample_worker_groups "${run_asg}" "${build_asg}" "${samples}" ||
     printf '{"sampling_error":true}\n' >>"${samples}"
@@ -1542,7 +1628,9 @@ run_workload() {
 
 main() {
   need_command jq
+  need_command python3
   command -v sha256sum >/dev/null 2>&1 || need_command shasum
+  trap cleanup_workload_sampler EXIT
   local command=${1:-}
   case "${command}" in
     validate) [ "$#" = 2 ] || { usage >&2; exit 2; }; validate_manifest "$2" ;;

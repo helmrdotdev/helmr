@@ -5,7 +5,7 @@ import {
   workspace,
   workspaces,
 } from "@helmr/sdk"
-import { writeFile } from "node:fs/promises"
+import { readFile, writeFile } from "node:fs/promises"
 import { z } from "zod"
 
 const base = image("helmr-child-task-smoke")
@@ -58,9 +58,14 @@ export const childTaskSmokeChild = task({
 })
 
 const callerPayload = z.object({
-  mode: z.enum(["call-success", "call-failure", "start-detached"]),
+  mode: z.enum([
+    "call-success",
+    "call-failure",
+    "same-workspace-call",
+    "start-detached",
+  ]),
   marker: z.string().min(1),
-  childWorkspaceId: z.string().min(1),
+  childWorkspaceId: z.string().min(1).optional(),
 }).strict()
 
 type CallerPayload = z.infer<typeof callerPayload>
@@ -70,7 +75,15 @@ export const childTaskSmoke = task({
   maxDuration: "10m",
   payload: callerPayload,
   run: async (input: CallerPayload, ctx) => {
-    const childWorkspace = workspaces.ref({ id: input.childWorkspaceId })
+    if (input.mode !== "same-workspace-call" && input.childWorkspaceId === undefined) {
+      throw new Error("childWorkspaceId is required for a separate-Workspace child")
+    }
+    if (input.mode === "same-workspace-call" && ctx.workspace === null) {
+      throw new Error("same-Workspace child call requires a Workspace")
+    }
+    const childWorkspace = input.mode === "same-workspace-call"
+      ? ctx.workspace!
+      : workspaces.ref({ id: input.childWorkspaceId! })
     const childInput = {
       marker: input.marker,
       fail: input.mode === "call-failure",
@@ -91,14 +104,22 @@ export const childTaskSmoke = task({
         childRunId: child.id,
         childAttemptNumber: null,
         childError: null,
+        sameWorkspaceMarkerObserved: false,
       }
     }
 
     const child = childTaskSmokeChild.call(childInput, options)
-    if (input.mode === "call-success") {
+    if (input.mode === "call-success" || input.mode === "same-workspace-call") {
       const output = await child.unwrap()
       if (output.marker !== input.marker || output.childRunId === ctx.run.id) {
         throw new Error("successful child Task result did not match its parent call")
+      }
+      let sharedMarker: string | null = null
+      if (input.mode === "same-workspace-call") {
+        sharedMarker = await readFile("child-task-smoke.json", "utf8")
+        if (!sharedMarker.includes(input.marker) || !sharedMarker.includes(output.childRunId)) {
+          throw new Error("resumed parent did not observe the child Workspace marker")
+        }
       }
       return {
         ok: true,
@@ -107,6 +128,7 @@ export const childTaskSmoke = task({
         childRunId: output.childRunId,
         childAttemptNumber: output.attemptNumber,
         childError: null,
+        sameWorkspaceMarkerObserved: sharedMarker !== null,
       }
     }
 
@@ -125,6 +147,7 @@ export const childTaskSmoke = task({
         message: result.error.message,
         retryable: result.error.retryable,
       },
+      sameWorkspaceMarkerObserved: false,
     }
   },
 })

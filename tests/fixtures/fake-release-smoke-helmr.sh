@@ -32,6 +32,9 @@ case "${1:-} ${2:-}" in
       *'"mode":"call-success"'*)
         printf '{"run_id":"run-call-success"}\n'
         ;;
+      *'"mode":"same-workspace-call"'*)
+        printf '{"run_id":"run-same-workspace-call"}\n'
+        ;;
       *'"mode":"call-failure"'*)
         printf '{"run_id":"run-call-failure"}\n'
         ;;

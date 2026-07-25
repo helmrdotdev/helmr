@@ -71,61 +71,84 @@ export interface TokenCreateResult extends TokenSnapshot {
   ): TokenWait<PayloadSchemaOutput<TSchema>>
 }
 
+export interface TokenRef {
+  readonly id: string
+  wait(options?: TokenWaitOptions): TokenWait<JsonValue>
+  wait<TSchema extends StandardSchemaV1<any, any>>(
+    options: TokenWaitOptions & Readonly<{ schema: TSchema }>,
+  ): TokenWait<PayloadSchemaOutput<TSchema>>
+}
+
 export interface Tokens {
   create(options?: TokenCreateOptions): Promise<TokenCreateResult>
+  ref(id: string): TokenRef
 }
 
 export const tokens: Tokens = Object.freeze({
   async create(options: TokenCreateOptions = {}): Promise<TokenCreateResult> {
     const snapshot = await currentRuntimeOperations().tokenCreate(options)
-    const wait = <TSchema extends StandardSchemaV1<any, any>>(
-      waitOptions: (TokenWaitOptions & Readonly<{ schema?: TSchema }>) = {},
-    ): TokenWait<JsonValue | PayloadSchemaOutput<TSchema>> => {
-      const pending = currentRuntimeOperations()
-        .tokenWait(snapshot.id, waitOptions)
-        .then(async (value) => {
-          const parsed = waitOptions.schema === undefined
-            ? value
-            : await parsePayloadWithSchema(
-              waitOptions.schema,
-              value,
-              "Token completion result",
-            )
-          return Object.freeze({
-            ok: true as const,
-            data: parsed,
-            unwrap: () => parsed,
-          })
-        })
-        .catch((error: unknown) =>
-          Object.freeze({
-            ok: false as const,
-            error: tokenWaitError(error),
-            unwrap(): never {
-              throw this.error
-            },
-          })
-        )
-      return Object.freeze({
-        then<TResult1 = TokenWaitResult<JsonValue | PayloadSchemaOutput<TSchema>>, TResult2 = never>(
-          onfulfilled?: ((value: TokenWaitResult<JsonValue | PayloadSchemaOutput<TSchema>>) => TResult1 | PromiseLike<TResult1>) | null,
-          onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
-        ): PromiseLike<TResult1 | TResult2> {
-          return pending.then(onfulfilled, onrejected)
-        },
-        async unwrap(): Promise<JsonValue | PayloadSchemaOutput<TSchema>> {
-          const result = await pending
-          if (!result.ok) throw result.error
-          return result.data
-        },
-      })
-    }
     return Object.freeze({
       ...snapshot,
-      wait,
+      wait: tokenWait(snapshot.id),
     }) as TokenCreateResult
   },
+  ref(id: string): TokenRef {
+    const normalized = id.trim()
+    if (!/^tok_[a-z2-7]{26}$/.test(normalized)) {
+      throw new Error("Token ID must be a canonical tok_ public ID")
+    }
+    return Object.freeze({
+      id: normalized,
+      wait: tokenWait(normalized),
+    })
+  },
 })
+
+function tokenWait(tokenId: string): TokenRef["wait"] {
+  const wait = <TSchema extends StandardSchemaV1<any, any>>(
+    waitOptions: (TokenWaitOptions & Readonly<{ schema?: TSchema }>) = {},
+  ): TokenWait<JsonValue | PayloadSchemaOutput<TSchema>> => {
+    const pending = currentRuntimeOperations()
+      .tokenWait(tokenId, waitOptions)
+      .then(async (value) => {
+        const parsed = waitOptions.schema === undefined
+          ? value
+          : await parsePayloadWithSchema(
+            waitOptions.schema,
+            value,
+            "Token completion result",
+          )
+        return Object.freeze({
+          ok: true as const,
+          data: parsed,
+          unwrap: () => parsed,
+        })
+      })
+      .catch((error: unknown) =>
+        Object.freeze({
+          ok: false as const,
+          error: tokenWaitError(error),
+          unwrap(): never {
+            throw this.error
+          },
+        })
+      )
+    return Object.freeze({
+      then<TResult1 = TokenWaitResult<JsonValue | PayloadSchemaOutput<TSchema>>, TResult2 = never>(
+        onfulfilled?: ((value: TokenWaitResult<JsonValue | PayloadSchemaOutput<TSchema>>) => TResult1 | PromiseLike<TResult1>) | null,
+        onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+      ): PromiseLike<TResult1 | TResult2> {
+        return pending.then(onfulfilled, onrejected)
+      },
+      async unwrap(): Promise<JsonValue | PayloadSchemaOutput<TSchema>> {
+        const result = await pending
+        if (!result.ok) throw result.error
+        return result.data
+      },
+    })
+  }
+  return wait as TokenRef["wait"]
+}
 
 function tokenWaitError(value: unknown): TokenWaitError {
   if (

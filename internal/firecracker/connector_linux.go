@@ -1754,6 +1754,20 @@ func (s *guestSession) BuildNetworkStatus(
 	)
 }
 
+func (s *guestSession) RunNetworkStatus(
+	ctx context.Context,
+) (vm.RunNetworkStatus, error) {
+	if s.buildNetwork {
+		return vm.RunNetworkStatus{}, errors.New(
+			"firecracker session is a build install guest",
+		)
+	}
+	return (&Connector{cfg: s.cfg}).readRunNetworkStatus(
+		ctx,
+		s.owner.ID,
+	)
+}
+
 func (s *guestSession) Wait(ctx context.Context) error {
 	if s.machineExit == nil {
 		return errors.New("firecracker session exit watcher is not configured")

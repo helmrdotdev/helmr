@@ -41,6 +41,7 @@ const payload = z.object({
   expectedWorkspaceMarker: z.string().optional(),
   expectedEnvironment: z.enum(["production", "staging", "unknown"]).default("unknown"),
   exerciseToken: z.boolean().default(false),
+  externalTokenId: z.string().regex(/^tok_[a-z2-7]{26}$/).optional(),
   tokenTimeout: z.number().int().positive().max(900).default(120),
   largeFileKiB: z.number().int().min(1).max(4096).default(256),
 }).strict()
@@ -123,11 +124,13 @@ export const runtimeSmoke = task({
     if (input.exerciseToken) {
       checks.push(await collectCheck("human-token", async () => {
         const timeout = `${input.tokenTimeout}s`
-        const token = await tokens.create({
-          timeout,
-          tags: ["smoke", "runtime"],
-          metadata: { marker, subject: `Approve Helmr product smoke marker ${marker}` },
-        })
+        const token = input.externalTokenId === undefined
+          ? await tokens.create({
+              timeout,
+              tags: ["smoke", "runtime"],
+              metadata: { marker, subject: `Approve Helmr product smoke marker ${marker}` },
+            })
+          : tokens.ref(input.externalTokenId)
         tokenResult = await token.wait({
           schema: approvalDecision,
           timeout,

@@ -650,6 +650,7 @@ async function writeClientSmokeResult(
     "schedule-fire",
     "secret-lifecycle",
     "token-management",
+    "external-token-fanout",
     "run-list-cancel",
   ] as const
   const status = evidence === undefined ? "failed" : "passed"
@@ -669,6 +670,7 @@ async function writeClientSmokeResult(
             evidence.childTasks.actorChildRunId,
             evidence.management.scheduledRunId,
             evidence.management.cancelledRunId,
+            ...evidence.management.externalTokenRunIds,
           ],
       workspace_ids: evidence === undefined
         ? []
@@ -677,6 +679,7 @@ async function writeClientSmokeResult(
             evidence.childTasks.targetWorkspaceId,
             evidence.childTasks.taskCallerWorkspaceId,
             evidence.childTasks.actorWorkspaceId,
+            ...evidence.management.externalTokenWorkspaceIds,
           ],
       deployment_ids: evidence === undefined
         ? []

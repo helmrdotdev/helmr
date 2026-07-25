@@ -104,8 +104,9 @@ func TestNFTNetworkPolicyScriptBlocksConfiguredCIDRs(t *testing.T) {
 	)
 	for _, want := range []string{
 		"add table inet helmr_network_policy",
+		"add counter inet helmr_network_policy run_denied",
 		"type filter hook forward priority 0; policy accept;",
-		"meta nfproto ipv6 drop",
+		"meta nfproto ipv6 counter name run_denied drop",
 		"10.0.0.0/8",
 		"172.16.0.0/12",
 		"192.168.0.0/16",
@@ -113,8 +114,8 @@ func TestNFTNetworkPolicyScriptBlocksConfiguredCIDRs(t *testing.T) {
 		"100.64.0.0/10",
 		"fc00::/7",
 		"fe80::/10",
-		"ip daddr @blocked_ipv4 drop",
-		"ip6 daddr @blocked_ipv6 drop",
+		"ip daddr @blocked_ipv4 counter name run_denied drop",
+		"ip6 daddr @blocked_ipv6 counter name run_denied drop",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)
@@ -152,14 +153,43 @@ func TestNFTNetworkPolicyScriptDropsWhenInternetDisabled(t *testing.T) {
 	if strings.Contains(script, "policy accept;") {
 		t.Fatalf("script unexpectedly defaults to accept:\n%s", script)
 	}
+	if !strings.Contains(script, "forward counter name run_denied drop") {
+		t.Fatalf("script does not count the terminal deny path:\n%s", script)
+	}
 }
 
 func TestNFTNetworkPolicyScriptDropsIPv6BeforeEstablishedTraffic(t *testing.T) {
 	script := nftNetworkPolicyScript(compute.DefaultNetworkPolicy(), nil, nil)
-	ipv6Drop := strings.Index(script, "meta nfproto ipv6 drop")
+	ipv6Drop := strings.Index(script, "meta nfproto ipv6 counter name run_denied drop")
 	established := strings.Index(script, "ct state established,related accept")
 	if ipv6Drop < 0 || established < 0 || ipv6Drop > established {
 		t.Fatalf("IPv6 must be dropped before established traffic is accepted:\n%s", script)
+	}
+}
+
+func TestParseRunNetworkStatusRequiresOneDeniedCounter(t *testing.T) {
+	status, err := parseRunNetworkStatus([]byte(`{
+		"nftables": [
+			{"metainfo": {"json_schema_version": 1}},
+			{"counter": {"family": "inet", "name": "run_denied", "table": "helmr_network_policy", "packets": 7, "bytes": 420}}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.DeniedPackets != 7 {
+		t.Fatalf("Run network status = %+v", status)
+	}
+	for _, raw := range []string{
+		`{"nftables":[]}`,
+		`{"nftables":[
+			{"counter":{"name":"run_denied","packets":1}},
+			{"counter":{"name":"run_denied","packets":2}}
+		]}`,
+	} {
+		if _, err := parseRunNetworkStatus([]byte(raw)); err == nil {
+			t.Fatalf("invalid Run counters were accepted: %s", raw)
+		}
 	}
 }
 

@@ -17,6 +17,8 @@ AWS/Firecracker validation. It uses only the v0 public contract:
 - current Deployment retrieve and declarative Schedule list/retrieve/fire;
 - Secret create, name ref, list, rotate, and revoke without reading its value;
 - authenticated Run-independent Token create, retrieve, complete, list, and cancel;
+- one externally created Token resuming two waiting Runs plus a
+  completion-before-wait Run through `tokens.ref(id)`;
 - Run list and cancellation of a parked timer Run;
 - idempotent Workspace deletion.
 

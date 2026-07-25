@@ -17,22 +17,29 @@ Run the product readiness check from the repository root:
 dev/release-gate/check-pre-aws.sh
 ```
 
-The output uses `helmrdotdev.pre-aws-release-gate.v1`. A blocked result is a
-release failure, not an optional skip. Implemented preparation is accepted only
-through executable tests, type checks, or a packed-package consumer. Known
-product gaps remain explicit blockers until each has a positive executable
-contract; source strings and the disappearance of an old stub are never
+The output uses `helmrdotdev.pre-aws-release-gate.v1`. A blocked result means
+the repository is not ready to start the AWS campaign. Implemented preparation
+is accepted only through executable tests, type checks, or a packed-package
+consumer. Source strings and the disappearance of an old stub are never
 readiness evidence.
 
-The network workflow proves public IPv4 access and the absence of an IPv6
-default route. Private-range and metadata denial require a known-reachable
-private endpoint or a retained host nftables deny-counter observation. An
-arbitrary connection failure is not accepted as denial evidence, so that AWS
-observation remains an explicit blocker.
+Passing this gate is readiness, not release certification. In particular, the
+local network check proves the named nftables counter and evidence producer
+contract. The AWS case must still attribute a live Run to its exact network
+namespace and retain a positive `run_denied` counter delta. An arbitrary
+connection failure is not accepted as denial evidence.
 
-The final AWS manifest must also use a frozen v0 profile with exact case and
-check IDs. Category-only coverage remains blocked because substituting a
-different case in the same category could otherwise hide a missing contract.
+The AWS manifest must match
+`dev/aws/release-validation-profile.json` exactly, including case order,
+producer path, check IDs, repetitions, and per-case timeout. `provider-loss` is
+last and additionally requires `HELMR_ALLOW_PROVIDER_LOSS=1`; setting it is an
+explicit approval for terminating only the manifest-attributed worker instance.
+Without that approval, the case fails before mutation.
+
+Every producer that creates a temporary Workspace verifies deletion before it
+can emit passing evidence. The campaign owns the sampler process and bounds
+each producer. A producer timeout, cleanup failure, or worker sampling failure
+therefore fails the case and leaves the campaign in its cleanup path.
 
 Provider credentials and external agent toolchains are certification checks.
 They may run after the core product campaign, but they do not replace the

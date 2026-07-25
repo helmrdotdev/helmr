@@ -27,8 +27,8 @@ run_check() {
 # declaration string is not release evidence because it can survive in dead
 # code or comments.
 run_check ipv6-host-policy \
-  'go test ./internal/firecracker -run TestNFTNetworkPolicyScript -count=1' \
-  go test ./internal/firecracker -run TestNFTNetworkPolicyScript -count=1
+  'go test ./internal/firecracker -run TestRunNetworkPolicyContractCountsEveryDenyPath -count=1' \
+  go test ./internal/firecracker -run TestRunNetworkPolicyContractCountsEveryDenyPath -count=1
 run_check workflow-samples-typecheck \
   'bun run --cwd dev/workflows typecheck' \
   bun run --cwd dev/workflows typecheck
@@ -41,6 +41,30 @@ run_check release-smoke-contract \
 run_check bounded-campaign-evidence \
   'bash tests/validation_campaign_test.sh' \
   bash tests/validation_campaign_test.sh
+run_check campaign-fault-producers \
+  'bash tests/validation_case_contract_test.sh' \
+  bash tests/validation_case_contract_test.sh
+run_check failing-build-source \
+  'sync local packages and prove the failing fixture reaches deployment creation' \
+  bash -c "dev/workflows/scripts/sync-local-sdk.sh && go test ./cmd/helmr -run TestFailingBuildFixtureReachesDeploymentCreation -count=1"
+run_check campaign-exact-release-profile \
+  'exact ordered release profile and producer contract' \
+  bash tests/validation_case_contract_test.sh
+run_check network-deny-evidence-producer \
+  'named nft deny counter tests plus bounded evidence-producer contract' \
+  bash -c "go test ./internal/firecracker -run 'TestRunNetworkPolicyContract|TestRunNetworkCounterContract' -count=1 && bash tests/validation_case_contract_test.sh"
+run_check same-workspace-call \
+  'same-Workspace child handoff tests plus release smoke selector contract' \
+  bash -c "go test ./internal/control ./internal/executor ./internal/dispatch -run 'SameWorkspace|Same.Workspace' -count=1 && bash tests/release_smoke_selector_test.sh"
+run_check actor-console \
+  'Actor detail route data contract and Console typecheck' \
+  bash -c "bun test packages/console/src/lib/actors.test.ts && bun run --cwd packages/console typecheck"
+run_check external-token-wait-registration \
+  'runtime Token ref tests and smoke client typecheck' \
+  bash -c "bun test sdk/typescript/src/tokens.test.ts && bun run --cwd dev/client typecheck && bun run --cwd dev/workflows typecheck"
+run_check identity-fencing-contract \
+  'deterministic stale Lease and prior worker epoch rejection tests' \
+  bash -c "go test ./internal/control -run TestRenewRunLeaseRejectsPriorWorkerEpoch -count=1 && go test ./internal/dispatch -run TestStaleWorkerFencerOldEpochCannotFenceNewEpoch -count=1"
 run_check public-run-path-report \
   'bash tests/run_path_report_local_test.sh && bash tests/path_report_wrapper_test.sh' \
   bash -c 'bash tests/run_path_report_local_test.sh && bash tests/path_report_wrapper_test.sh'
@@ -56,22 +80,6 @@ run_check actor-cli \
 run_check schedule-cli \
   'go test ./cmd/helmr ./internal/client -run Schedule -count=1' \
   go test ./cmd/helmr ./internal/client -run Schedule -count=1
-
-# These are known product or certification gaps. Keep them explicit until a
-# positive executable contract replaces each blocker; absence of an old stub
-# or presence of a command/route string must never make the gate pass.
-record campaign-fault-producers blocked \
-  'missing executable fault-producer contract tests'
-record campaign-exact-release-profile blocked \
-  'manifest validates categories but does not yet freeze exact v0 case/check IDs'
-record network-deny-runtime-evidence blocked \
-  'missing known-reachable private endpoint or nft deny-counter evidence'
-record same-workspace-call blocked \
-  'same-Workspace child Task handoff is not implemented'
-record actor-console blocked \
-  'Actor Console inspection surface is not implemented'
-record external-token-wait-registration blocked \
-  'runtime cannot register a Wait for an externally created Token'
 
 status=passed
 reason_json=null

@@ -301,6 +301,108 @@ func TestDeployCommandDetachReturnsQueuedDeploymentID(t *testing.T) {
 	}
 }
 
+func TestFailingBuildFixtureReachesDeploymentCreation(t *testing.T) {
+	root, err := filepath.Abs("../../dev/workflows-failing-build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		"bun.lock",
+		"vendor/helmr-sdk/package.json",
+		"vendor/helmr-proto/package.json",
+		"node_modules/@helmr/sdk/package.json",
+	} {
+		if info, err := os.Stat(filepath.Join(root, path)); err != nil || info.IsDir() {
+			t.Fatalf("failing-build fixture must be prepared by sync-local-sdk.sh: %s", path)
+		}
+	}
+
+	configRuntime := filepath.Join(t.TempDir(), "config-runtime")
+	if err := os.WriteFile(configRuntime, []byte(`#!/bin/sh
+if [ "$1" = "-e" ]; then
+	exit 0
+fi
+if [ "$1" = "--import" ]; then
+	shift 2
+fi
+printf '%s\n' '{"project":"helmr"}'
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldConfigRuntime := deployConfigRuntimePath
+	oldTemp := deployArchiveTempDir
+	deployConfigRuntimePath = configRuntime
+	deployArchiveTempDir = t.TempDir()
+	inspectorDir := t.TempDir()
+	inspectorPath := filepath.Join(inspectorDir, "inspect.js")
+	registerPath := filepath.Join(inspectorDir, "register.mjs")
+	if err := os.WriteFile(inspectorPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(registerPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HELMR_CONFIG_INSPECTOR_PATH", inspectorPath)
+	t.Setenv("HELMR_CONFIG_REGISTER_PATH", registerPath)
+	t.Cleanup(func() {
+		deployConfigRuntimePath = oldConfigRuntime
+		deployArchiveTempDir = oldTemp
+	})
+
+	var uploaded []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/deployments" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			t.Fatal(err)
+		}
+		file, _, err := r.FormFile("deployment_source")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		uploaded, err = io.ReadAll(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+			ID:            "deployment-1",
+			ProjectID:     "project-resolved",
+			EnvironmentID: "environment-resolved",
+			Status:        "queued",
+		})
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"deploy", root, "--detach", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"type":"deployment_created"`) {
+		t.Fatalf("deployment creation evidence missing: %s", out.String())
+	}
+	entries := readTarEntries(t, uploaded)
+	for _, path := range []string{
+		".helmrignore",
+		"bun.lock",
+		"package.json",
+		"tasks/failing-build.ts",
+		"vendor/helmr-sdk/package.json",
+		"vendor/helmr-proto/package.json",
+	} {
+		if !entries[path] {
+			t.Fatalf("uploaded failing-build source is not self-contained: %s", path)
+		}
+	}
+}
+
 func TestDeployCommandJSONUsesProjectAndEnv(t *testing.T) {
 	state, _ := installTestCLIConfig(t)
 	root, _ := deployCommandFixture(t)
