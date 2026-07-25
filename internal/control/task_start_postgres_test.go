@@ -4,11 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
+	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -97,5 +101,85 @@ func TestTaskStartPostgresCommitsAndReplaysOneAdmission(t *testing.T) {
 	}
 	if len(listed) != 1 || listed[0].PublicID != created.RunPublicID {
 		t.Fatalf("listed = %+v", listed)
+	}
+}
+
+func TestCreateKeylessDetachedChildTaskRunFromParentDeployment(t *testing.T) {
+	fixture := newActorStartPostgresFixture(t, 2)
+	parentWorkspaceID := fixture.workspaceRefs[0]
+	parent, err := fixture.server.startTask(t.Context(), taskStartRequest{
+		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
+		TaskDeclaredID: "resize-image", PayloadPresent: true,
+		Payload:   json.RawMessage(`{"imageId":"parent"}`),
+		Workspace: api.WorkspaceTarget{ID: &parentWorkspaceID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var targetVersionID uuid.UUID
+	if err := fixture.pool.QueryRow(t.Context(), `
+		SELECT head_version_id
+		  FROM workspaces
+		 WHERE id = $1
+	`, fixture.workspaceIDs[1]).Scan(&targetVersionID); err != nil {
+		t.Fatal(err)
+	}
+	runID := uuid.Must(uuid.NewV7())
+	runPublicID := actorStartTestPublicID(t, publicid.Run)
+	rootSpanID, err := tracing.NewSpanID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	queries := db.New(fixture.pool)
+	child, err := queries.CreateChildRunFromParentDeployment(
+		t.Context(),
+		db.CreateChildRunFromParentDeploymentParams{
+			EntrypointDeclaredID:   "resize-image",
+			WorkspaceID:            pgvalue.UUID(fixture.workspaceIDs[1]),
+			BaseWorkspaceVersionID: pgvalue.UUID(targetVersionID),
+			EnvironmentID:          pgvalue.UUID(fixture.environmentID),
+			ParentRunID:            pgvalue.UUID(parent.RunID),
+			ID:                     pgvalue.UUID(runID),
+			PublicID:               runPublicID,
+			ParentOwnsLifecycle:    pgtype.Bool{Bool: false, Valid: true},
+			Payload:                json.RawMessage(`{"imageId":"child"}`),
+			Metadata:               json.RawMessage(`{"source":"parent"}`),
+			Tags:                   []string{"child"},
+			QueueName:              "default",
+			QueueOriginAt:          pgvalue.Timestamptz(now),
+			QueueScoreAt:           pgvalue.Timestamptz(now),
+			MaxActiveDurationMs:    300_000,
+			RetryPolicy:            json.RawMessage(`{"enabled":false}`),
+			RootSpanID:             rootSpanID,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.ID != pgvalue.UUID(runID) ||
+		child.PublicID != runPublicID ||
+		child.CauseKind != "child" ||
+		child.ParentRunID != pgvalue.UUID(parent.RunID) ||
+		!child.ParentOwnsLifecycle.Valid ||
+		child.ParentOwnsLifecycle.Bool ||
+		child.ClaimID.Valid ||
+		child.WorkspaceID != pgvalue.UUID(fixture.workspaceIDs[1]) ||
+		child.Status != db.RunStatusQueued {
+		t.Fatalf("child = %+v", child)
+	}
+	var attempts int
+	if err := fixture.pool.QueryRow(t.Context(), `
+		SELECT count(*)
+		  FROM run_attempts
+		 WHERE run_id = $1
+		   AND number = 1
+		   AND workspace_id = $2
+	`, runID, fixture.workspaceIDs[1]).Scan(&attempts); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d", attempts)
 	}
 }

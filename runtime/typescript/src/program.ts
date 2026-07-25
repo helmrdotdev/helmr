@@ -24,6 +24,7 @@ import type {
   ReceiveOptions,
   RunCause,
   RunLogLevel,
+  RetryPolicy,
   SendOptions,
   Serializable,
   TaskExecutionContext,
@@ -677,6 +678,86 @@ function programRuntimeOperations(
   runOperations: RunOperationState,
   actorCursor?: { readonly value: bigint },
 ): RuntimeOperations {
+  const performTaskStart = async (
+    target: Readonly<{ declaredId: string; payloadPresent: boolean }>,
+    payload: JsonValue | undefined,
+    options: import("@helmr/sdk").TaskStartOptions,
+  ): Promise<import("@helmr/sdk").RunHandle> => {
+    if (options.signal?.aborted) throw abortSignalReason(options.signal)
+    const idempotencyKey =
+      options.idempotencyKey === "" ? undefined : options.idempotencyKey
+    if (
+      idempotencyKey === undefined &&
+      process.env["NODE_ENV"] !== "production"
+    ) {
+      process.emitWarning(
+        `Task "${target.declaredId}" was started without an idempotencyKey; retrying the parent Run may create another child Run.`,
+        { code: "HELMR_KEYLESS_CHILD_TASK_START" },
+      )
+    }
+    const correlationId = randomUUID()
+    const payloadJson = target.payloadPresent
+      ? new TextDecoder().decode(canonicalizeJsonValue(payload as JsonValue))
+      : undefined
+    const workspaceJson = new TextDecoder().decode(
+      canonicalizeJsonValue(
+        "id" in options.workspace
+          ? { id: options.workspace.id }
+          : { key: options.workspace.key },
+      ),
+    )
+    const requestOptions = {
+      ...(options.queue === undefined ? {} : { queue: options.queue }),
+      ...(options.concurrencyKey === undefined
+        ? {}
+        : { concurrency_key: options.concurrencyKey }),
+      ...(options.priority === undefined ? {} : { priority: options.priority }),
+      ...(options.ttl === undefined ? {} : { ttl: options.ttl }),
+      ...(options.retry === undefined
+        ? {}
+        : { retry: taskRetryRequest(options.retry) }),
+      ...(options.metadata === undefined ? {} : { metadata: options.metadata }),
+      ...(options.tags === undefined ? {} : { tags: [...options.tags] }),
+    } satisfies JsonValue
+    const optionsJson = new TextDecoder().decode(
+      canonicalizeJsonValue(requestOptions),
+    )
+    const operation = runOperations.trackDrainable(async () => {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "taskChildInvokeRequested",
+        value: create(runProto.TaskChildInvokeRequestedSchema, {
+          correlationId,
+          declaredId: target.declaredId,
+          method: "start",
+          payloadPresent: target.payloadPresent,
+          ...(payloadJson === undefined ? {} : { payloadJson }),
+          workspaceJson,
+          optionsJson,
+          ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+        }),
+      })
+      requireRuntimeOperationDecision(decision, correlationId, "Task child start")
+      if (decision.kind === "failed") {
+        throw runtimeOperationFailure("Task child start", decision.dataJson)
+      }
+      return parseRuntimeProtocolValue("Task child start result", () => {
+        const value = JSON.parse(decision.dataJson) as unknown
+        if (typeof value !== "object" || value === null || Array.isArray(value)) {
+          throw new Error("result must be an object")
+        }
+        const keys = Object.keys(value)
+        if (keys.length !== 1 || keys[0] !== "run_id") {
+          throw new Error("result fields are invalid")
+        }
+        const id = (value as Record<string, unknown>)["run_id"]
+        if (typeof id !== "string" || !/^run_[a-z2-7]{26}$/.test(id)) {
+          throw new Error("run_id is invalid")
+        }
+        return Object.freeze({ id })
+      })
+    })
+    return await abortableRuntimeOperation(operation, options.signal)
+  }
   const performWait = async (
     params: JsonValue,
     timeoutMs: number,
@@ -975,6 +1056,7 @@ function programRuntimeOperations(
     await operation
   }
   return {
+    taskStart: performTaskStart,
     waitFor(duration) {
       return wait({ duration }, durationMilliseconds(duration))
     },
@@ -1064,6 +1146,32 @@ function normalizeTokenIdempotencyKey(
     throw new Error("Token idempotency key must be at most 512 UTF-8 bytes")
   }
   return normalized === "" ? undefined : normalized
+}
+
+function taskRetryRequest(retry: RetryPolicy): JsonValue {
+  if (retry.enabled === false) return { enabled: false }
+  return {
+    ...(retry.enabled === undefined ? {} : { enabled: retry.enabled }),
+    max_attempts: retry.maxAttempts,
+    ...(retry.backoff === undefined
+      ? {}
+      : {
+          backoff: {
+            ...(retry.backoff.minDelay === undefined
+              ? {}
+              : { min_delay: retry.backoff.minDelay }),
+            ...(retry.backoff.maxDelay === undefined
+              ? {}
+              : { max_delay: retry.backoff.maxDelay }),
+            ...(retry.backoff.factor === undefined
+              ? {}
+              : { factor: retry.backoff.factor }),
+            ...(retry.backoff.jitter === undefined
+              ? {}
+              : { jitter: retry.backoff.jitter }),
+          },
+        }),
+  }
 }
 
 function parseTokenCreateResult(dataJson: string): Omit<TokenCreateResult, "wait"> {

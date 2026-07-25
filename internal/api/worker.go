@@ -516,6 +516,28 @@ type WorkerSendActorInputResponse struct {
 	Failed        *WorkerRuntimeOperationFailure `json:"failed,omitempty"`
 }
 
+type WorkerInvokeChildTaskRequest struct {
+	Lease          WorkerRunLeaseReceipt `json:"lease"`
+	CorrelationID  string                `json:"correlation_id"`
+	TaskDeclaredID string                `json:"task_declared_id"`
+	Method         string                `json:"method"`
+	PayloadPresent bool                  `json:"payload_present"`
+	Payload        json.RawMessage       `json:"payload,omitempty"`
+	Workspace      json.RawMessage       `json:"workspace"`
+	Options        json.RawMessage       `json:"options"`
+	IdempotencyKey string                `json:"idempotency_key,omitempty"`
+}
+
+type WorkerChildTaskStartResult struct {
+	RunID string `json:"run_id"`
+}
+
+type WorkerInvokeChildTaskResponse struct {
+	CorrelationID string                         `json:"correlation_id"`
+	Completed     *WorkerChildTaskStartResult    `json:"completed,omitempty"`
+	Failed        *WorkerRuntimeOperationFailure `json:"failed,omitempty"`
+}
+
 type WorkerAppendActorOutputRequest struct {
 	Lease          WorkerRunLeaseReceipt `json:"lease"`
 	CorrelationID  string                `json:"correlation_id"`

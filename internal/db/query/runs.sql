@@ -390,15 +390,19 @@ WITH selected_target AS MATERIALIZED (
         ON workspace_versions.workspace_id = workspaces.id
        AND workspace_versions.id = sqlc.arg(base_workspace_version_id)
        AND workspace_versions.state = 'committed'
-      JOIN idempotency_claims
+      LEFT JOIN idempotency_claims
         ON idempotency_claims.environment_id = parent.environment_id
-       AND idempotency_claims.id = sqlc.arg(claim_id)
+       AND idempotency_claims.id = sqlc.narg(claim_id)
        AND idempotency_claims.operation = 'task.child.invoke'
        AND idempotency_claims.state = 'pending'
        AND idempotency_claims.retired_at IS NULL
      WHERE parent.environment_id = sqlc.arg(environment_id)
        AND parent.id = sqlc.arg(parent_run_id)
        AND parent.status IN ('queued', 'running', 'waiting', 'retry_delayed')
+       AND (
+           sqlc.narg(claim_id)::uuid IS NULL
+           OR idempotency_claims.id IS NOT NULL
+       )
      FOR UPDATE OF parent
 ), created_run AS (
     INSERT INTO runs (
@@ -460,7 +464,7 @@ WITH selected_target AS MATERIALIZED (
            sqlc.arg(retry_policy),
            sqlc.narg(trace_id),
            sqlc.arg(root_span_id),
-           sqlc.arg(claim_id)
+           sqlc.narg(claim_id)
       FROM selected_target
     RETURNING runs.*
 ), created_attempt AS (

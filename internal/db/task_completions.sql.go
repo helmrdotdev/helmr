@@ -183,7 +183,7 @@ SELECT runs.id,
    AND runs.workspace_id = $3
    AND runs.entrypoint_kind = 'task'
    AND runs.actor_id IS NULL
-   AND runs.parent_run_id IS NULL
+   AND (runs.parent_run_id IS NULL OR runs.parent_owns_lifecycle IS FALSE)
    AND runs.status = 'waiting'
    AND runs.current_attempt_number = $4
    AND runs.current_run_lease_id = $5
@@ -244,7 +244,7 @@ SELECT runs.id,
    AND runs.workspace_id = $3
    AND runs.entrypoint_kind = 'task'
    AND runs.actor_id IS NULL
-   AND runs.parent_run_id IS NULL
+   AND (runs.parent_run_id IS NULL OR runs.parent_owns_lifecycle IS FALSE)
    AND runs.status = 'running'
    AND runs.current_attempt_number = $4
    AND runs.current_run_lease_id = $5
@@ -298,7 +298,7 @@ UPDATE runs
    AND workspace_id = $5
    AND entrypoint_kind = 'task'
    AND actor_id IS NULL
-   AND parent_run_id IS NULL
+   AND (parent_run_id IS NULL OR parent_owns_lifecycle IS FALSE)
    AND status = 'waiting'
    AND current_attempt_number = $6
    AND current_run_lease_id = $7
@@ -396,7 +396,7 @@ UPDATE runs
    AND workspace_id = $5
    AND entrypoint_kind = 'task'
    AND actor_id IS NULL
-   AND parent_run_id IS NULL
+   AND (parent_run_id IS NULL OR parent_owns_lifecycle IS FALSE)
    AND status = 'running'
    AND current_attempt_number = $6
    AND current_run_lease_id = $7
@@ -496,7 +496,7 @@ UPDATE runs
    AND workspace_id = $6
    AND entrypoint_kind = 'task'
    AND actor_id IS NULL
-   AND parent_run_id IS NULL
+   AND (parent_run_id IS NULL OR parent_owns_lifecycle IS FALSE)
    AND status = 'waiting'
    AND current_attempt_number = $7
    AND current_run_lease_id = $8
@@ -599,7 +599,7 @@ UPDATE runs
    AND workspace_id = $7
    AND entrypoint_kind = 'task'
    AND actor_id IS NULL
-   AND parent_run_id IS NULL
+   AND (parent_run_id IS NULL OR parent_owns_lifecycle IS FALSE)
    AND status = 'running'
    AND current_attempt_number = $8
    AND current_run_lease_id = $9

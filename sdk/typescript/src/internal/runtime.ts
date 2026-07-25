@@ -2,7 +2,9 @@ import type {
   Duration,
   JsonValue,
   Metadata,
+  RunHandle,
   SendOptions,
+  TaskStartOptions,
 } from "../contract"
 import type { LogAttributes, RunLogLevel } from "../logger"
 import type {
@@ -14,6 +16,11 @@ import type {
 const runtimeOperationsSymbol = Symbol.for("helmr.sdk.v0.runtime_operations")
 
 export interface RuntimeOperations {
+  readonly taskStart: (
+    target: Readonly<{ declaredId: string; payloadPresent: boolean }>,
+    payload: JsonValue | undefined,
+    options: TaskStartOptions,
+  ) => Promise<RunHandle>
   readonly waitFor: (duration: Duration) => Promise<void>
   readonly waitUntil: (date: Date) => Promise<void>
   readonly actorInputSend: (

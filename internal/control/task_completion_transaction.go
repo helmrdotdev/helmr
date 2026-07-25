@@ -222,7 +222,6 @@ func validateTaskCompletionAuthority(
 	authority runLeaseClaimAuthority,
 ) error {
 	if authority.run.EntrypointKind != "task" || authority.run.ActorID.Valid ||
-		authority.run.ParentRunID.Valid || authority.run.ParentOwnsLifecycle.Valid ||
 		authority.runLease.State != db.RunLeaseStateFinalizing ||
 		!authority.attempt.EntrypointEnteredAt.Valid ||
 		authority.run.ActiveStartedAt.Valid ||
@@ -232,7 +231,11 @@ func validateTaskCompletionAuthority(
 		!authority.runLease.FinalizationRequestFingerprint.Valid ||
 		authority.attempt.BaseWorkspaceVersionID != authority.run.BaseWorkspaceVersionID ||
 		!authority.workspace.HeadVersionID.Valid ||
-		authority.workspace.HeadVersionID != authority.run.BaseWorkspaceVersionID {
+		authority.workspace.HeadVersionID != authority.run.BaseWorkspaceVersionID ||
+		authority.workspace.OwnerRunID != authority.run.ID ||
+		authority.workspace.OwnerActorID.Valid ||
+		(authority.run.ParentRunID.Valid != authority.run.ParentOwnsLifecycle.Valid) ||
+		(authority.run.ParentRunID.Valid && authority.run.ParentOwnsLifecycle.Bool) {
 		return errStaleTaskCompletion
 	}
 	if completion.kind != taskCompletionSucceeded &&

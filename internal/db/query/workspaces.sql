@@ -317,3 +317,5 @@ UPDATE workspaces
           AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
    )
 RETURNING *;
+-- name: LockChildWorkspacePair :exec
+SELECT pg_advisory_xact_lock(sqlc.arg(lock_key)::bigint);

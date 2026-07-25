@@ -1,6 +1,6 @@
 import { create, fromBinary, toBinary, type GenMessage } from "@bufbuild/protobuf"
 import { runProto } from "@helmr/proto"
-import { actor, logger, metadata, task, timers, tokens } from "@helmr/sdk"
+import { actor, logger, metadata, task, timers, tokens, workspaces } from "@helmr/sdk"
 import { describe, expect, test } from "bun:test"
 
 import { runProgram, type ProgramIO } from "./program"
@@ -613,6 +613,102 @@ describe("runProgram", () => {
       "actorInputSendRequested",
       "taskOutcome",
     ])
+  })
+
+  test("starts a detached child Task through the runtime protocol", async () => {
+    const child = task({
+      id: "resize-image",
+      payload: {
+        "~standard": {
+          version: 1,
+          vendor: "test",
+          validate: (value: unknown) => ({ value }),
+        },
+      },
+      run() {
+        return null
+      },
+    })
+    const definition = task({
+      id: "deploy",
+      async run() {
+        return await child.start(
+          { imageId: "image-1" },
+          {
+            workspace: workspaces.ref({ key: "child-workspace" }),
+            idempotencyKey: "resize:image-1",
+            queue: "priority",
+            retry: {
+              maxAttempts: 3,
+              backoff: {
+                minDelay: "1s",
+                maxDelay: "30s",
+                factor: 2,
+                jitter: "full",
+              },
+            },
+            metadata: { source: "parent" },
+            tags: ["image"],
+          },
+        )
+      },
+    })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+    const requested = deferred<void>()
+    async function* input(): AsyncIterable<Uint8Array> {
+      yield frameMessage(runProto.ProgramStartSchema, start)
+      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      await requested.promise
+      const event = readEvent(output[1]!).event
+      expect(event.case).toBe("taskChildInvokeRequested")
+      if (event.case !== "taskChildInvokeRequested") return
+      expect(event.value.declaredId).toBe("resize-image")
+      expect(event.value.method).toBe("start")
+      expect(event.value.payloadPresent).toBe(true)
+      expect(event.value.payloadJson).toBe('{"imageId":"image-1"}')
+      expect(event.value.workspaceJson).toBe('{"key":"child-workspace"}')
+      expect(JSON.parse(event.value.optionsJson)).toEqual({
+        metadata: { source: "parent" },
+        queue: "priority",
+        retry: {
+          backoff: {
+            factor: 2,
+            jitter: "full",
+            max_delay: "30s",
+            min_delay: "1s",
+          },
+          max_attempts: 3,
+        },
+        tags: ["image"],
+      })
+      expect(event.value.idempotencyKey).toBe("resize:image-1")
+      yield actorDecision(
+        event.value.correlationId,
+        "completed",
+        '{"run_id":"run_aaaaaaaaaaaaaaaaaaaaaaaaaa"}',
+      )
+    }
+    await runProgram(locatorURL, programIO({
+      input: input(),
+      definition,
+      output,
+      onWrite: () => {
+        if (output.length === 2) requested.resolve()
+      },
+    }))
+    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+      "entrypointReady",
+      "taskChildInvokeRequested",
+      "taskOutcome",
+    ])
+    const outcome = readEvent(output[2]!).event
+    expect(outcome.case).toBe("taskOutcome")
+    if (outcome.case === "taskOutcome" && outcome.value.outcome.case === "succeeded") {
+      expect(outcome.value.outcome.value.outputJson).toBe(
+        '{"id":"run_aaaaaaaaaaaaaaaaaaaaaaaaaa"}',
+      )
+    }
   })
 
   test("creates and waits for an externally completed Token", async () => {

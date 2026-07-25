@@ -36,6 +36,7 @@ const (
 	operationActorOutputAppend operation = "actor.output.append"
 	operationActorClose        operation = "actor.close"
 	operationTaskStart         operation = "task.start"
+	operationTaskChildInvoke   operation = "task.child.invoke"
 	operationTokenCreate       operation = "token.create"
 	operationTokenComplete     operation = "token.complete"
 	operationTokenCancel       operation = "token.cancel"
@@ -101,6 +102,20 @@ type TokenCreateFingerprint struct {
 }
 
 type TaskStartFingerprint struct {
+	PayloadPresent bool
+	Payload        json.RawMessage
+	Workspace      json.RawMessage
+	QueueName      string
+	ConcurrencyKey *string
+	Priority       int32
+	QueuedTTLMS    *int64
+	RetryPolicy    json.RawMessage
+	Metadata       json.RawMessage
+	Tags           []string
+}
+
+type TaskChildInvokeFingerprint struct {
+	Method         string
 	PayloadPresent bool
 	Payload        json.RawMessage
 	Workspace      json.RawMessage
@@ -668,6 +683,73 @@ func NewTaskStartRequest(
 	}}, nil
 }
 
+func NewTaskChildInvokeRequest(
+	environmentID uuid.UUID,
+	parentRunID uuid.UUID,
+	taskDeclaredID string,
+	key string,
+	input TaskChildInvokeFingerprint,
+) (Request, error) {
+	if parentRunID == uuid.Nil {
+		return nil, errors.New("parent Run ID is required")
+	}
+	if taskDeclaredID == "" {
+		return nil, errors.New("Task declared ID is required")
+	}
+	if input.Method != "start" && input.Method != "call" {
+		return nil, errors.New("child Task invocation method is invalid")
+	}
+	taskFingerprint := TaskStartFingerprint{
+		PayloadPresent: input.PayloadPresent,
+		Payload:        input.Payload,
+		Workspace:      input.Workspace,
+		QueueName:      input.QueueName,
+		ConcurrencyKey: input.ConcurrencyKey,
+		Priority:       input.Priority,
+		QueuedTTLMS:    input.QueuedTTLMS,
+		RetryPolicy:    input.RetryPolicy,
+		Metadata:       input.Metadata,
+		Tags:           input.Tags,
+	}
+	taskRequest, err := NewTaskStartRequest(
+		environmentID,
+		taskDeclaredID,
+		key,
+		taskFingerprint,
+	)
+	if err != nil {
+		return nil, err
+	}
+	base := taskRequest.idempotencyRequest()
+	fingerprint, err := base.fingerprint(0)
+	if err != nil {
+		return nil, err
+	}
+	fields, err := json.Marshal(struct {
+		Method          string `json:"method"`
+		TaskFingerprint string `json:"taskFingerprint"`
+	}{
+		Method:          input.Method,
+		TaskFingerprint: fmt.Sprintf("%x", fingerprint),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode child Task invocation fingerprint: %w", err)
+	}
+	scope := make([]byte, 0, len(parentRunID)+1+len(taskDeclaredID))
+	scope = append(scope, parentRunID[:]...)
+	scope = append(scope, 0)
+	scope = append(scope, taskDeclaredID...)
+	return sealedRequest{value: request{
+		environmentID: environmentID,
+		operation:     operationTaskChildInvoke,
+		scope:         scope,
+		key:           key,
+		fingerprint: func(int32) ([sha256.Size]byte, error) {
+			return operationFingerprint(operationTaskChildInvoke, fields, 0, nil), nil
+		},
+	}}, nil
+}
+
 func canonicalJSONOr(value json.RawMessage, fallback string) ([]byte, error) {
 	if len(value) == 0 {
 		value = json.RawMessage(fallback)
@@ -798,7 +880,7 @@ func supportedOperation(value operation) bool {
 	switch value {
 	case operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationRunMetadata,
 		operationActorStart, operationActorInputSend, operationActorOutputAppend, operationActorClose,
-		operationTaskStart, operationTokenCreate, operationTokenComplete, operationTokenCancel,
+		operationTaskStart, operationTaskChildInvoke, operationTokenCreate, operationTokenComplete, operationTokenCancel,
 		operationWorkspaceCreate, operationWorkspaceExec, operationWorkspaceDelete:
 		return true
 	default:

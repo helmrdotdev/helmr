@@ -319,10 +319,11 @@ SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
    AND (
-       (runs.entrypoint_kind = 'task'
-        AND runs.actor_id IS NULL
-        AND runs.cause_kind IN ('api', 'manual', 'schedule')
-        AND workspaces.owner_run_id = runs.id
+        (runs.entrypoint_kind = 'task'
+         AND runs.actor_id IS NULL
+         AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
+         AND (runs.parent_run_id IS NULL OR runs.parent_owns_lifecycle IS FALSE)
+         AND workspaces.owner_run_id = runs.id
         AND workspaces.owner_actor_id IS NULL
         AND (NOT EXISTS (
            SELECT 1
@@ -442,7 +443,7 @@ SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
    AND workspace_versions.state = 'private'
  WHERE runs.environment_id = sqlc.arg(environment_id)
    AND runs.id = sqlc.arg(run_id)
-   AND runs.parent_run_id IS NULL
+   AND (runs.parent_run_id IS NULL OR runs.parent_owns_lifecycle IS FALSE)
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
    AND run_waits.id = sqlc.arg(run_wait_id)
@@ -486,7 +487,8 @@ WITH candidate_scopes AS (
        AND (
            (runs.entrypoint_kind = 'task'
             AND runs.actor_id IS NULL
-            AND runs.cause_kind IN ('api', 'manual', 'schedule')
+            AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
+            AND (runs.parent_run_id IS NULL OR runs.parent_owns_lifecycle IS FALSE)
             AND workspaces.owner_run_id = runs.id
             AND workspaces.owner_actor_id IS NULL
             AND (NOT EXISTS (
@@ -606,7 +608,8 @@ SELECT runs.org_id, runs.id AS run_id, runs.state_version
    AND (
        (runs.entrypoint_kind = 'task'
         AND runs.actor_id IS NULL
-        AND runs.cause_kind IN ('api', 'manual', 'schedule')
+        AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
+        AND (runs.parent_run_id IS NULL OR runs.parent_owns_lifecycle IS FALSE)
         AND workspaces.owner_run_id = runs.id
         AND workspaces.owner_actor_id IS NULL
         AND (NOT EXISTS (

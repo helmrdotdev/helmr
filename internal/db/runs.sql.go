@@ -660,7 +660,7 @@ WITH selected_target AS MATERIALIZED (
         ON workspace_versions.workspace_id = workspaces.id
        AND workspace_versions.id = $3
        AND workspace_versions.state = 'committed'
-      JOIN idempotency_claims
+      LEFT JOIN idempotency_claims
         ON idempotency_claims.environment_id = parent.environment_id
        AND idempotency_claims.id = $4
        AND idempotency_claims.operation = 'task.child.invoke'
@@ -669,6 +669,10 @@ WITH selected_target AS MATERIALIZED (
      WHERE parent.environment_id = $5
        AND parent.id = $6
        AND parent.status IN ('queued', 'running', 'waiting', 'retry_delayed')
+       AND (
+           $4::uuid IS NULL
+           OR idempotency_claims.id IS NOT NULL
+       )
      FOR UPDATE OF parent
 ), created_run AS (
     INSERT INTO runs (

@@ -154,6 +154,7 @@ message RunEvent {
     ActorOutputAppendRequested actor_output_append_requested = 17;
     ActorInputSendRequested actor_input_send_requested = 18;
     StructuredLogRequested structured_log_requested = 19;
+    TaskChildInvokeRequested task_child_invoke_requested = 20;
   }
 }
 
@@ -266,6 +267,17 @@ message TokenCreateRequested {
   optional string idempotency_key = 3;
   repeated string tags = 4;
   optional string metadata_json = 5;
+}
+
+message TaskChildInvokeRequested {
+  string correlation_id = 1;
+  string declared_id = 2;
+  string method = 3;
+  bool payload_present = 4;
+  optional string payload_json = 5;
+  string workspace_json = 6;
+  string options_json = 7;
+  optional string idempotency_key = 8;
 }
 
 message CheckpointPauseRequest {

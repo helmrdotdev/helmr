@@ -285,6 +285,8 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 			task.program.observedEventSeq,
 			value.StructuredLogRequested,
 		)
+	case *runv0.RunEvent_TaskChildInvokeRequested:
+		return task.handleChildTaskInvoke(ctx, value.TaskChildInvokeRequested)
 	default:
 		return errors.New("unsupported Program event while checkpoint pause is pending")
 	}
@@ -300,6 +302,7 @@ func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, er
 			task.handleActorInputSend,
 			task.handleActorOutputAppend,
 			task.handleTokenCreate,
+			task.handleChildTaskInvoke,
 		)
 		if err != nil {
 			return RunLeaseTaskResult{}, err
@@ -319,6 +322,7 @@ func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, er
 		task.handleWait,
 		task.handleActorInputSend,
 		task.handleTokenCreate,
+		task.handleChildTaskInvoke,
 	)
 	if err != nil {
 		return RunLeaseTaskResult{}, err

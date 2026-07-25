@@ -279,8 +279,12 @@ function createTaskDefinition(
       {
         id: internal.id,
         hasPayload: true as const,
-        start(_payload: JsonValue, _options: TaskStartOptions) {
-          return runtimeUnavailable<Promise<RunHandle>>("task.start")
+        start(payload: JsonValue, options: TaskStartOptions) {
+          return currentRuntimeOperations().taskStart(
+            Object.freeze({ declaredId: internal.id, payloadPresent: true }),
+            payload,
+            options,
+          )
         },
         call(_payload: JsonValue, _options: TaskCallOptions) {
           return runtimeUnavailable<TaskWait<JsonValue>>("task.call")
@@ -293,8 +297,12 @@ function createTaskDefinition(
     {
       id: internal.id,
       hasPayload: false as const,
-      start(_options: TaskStartOptions) {
-        return runtimeUnavailable<Promise<RunHandle>>("task.start")
+      start(options: TaskStartOptions) {
+        return currentRuntimeOperations().taskStart(
+          Object.freeze({ declaredId: internal.id, payloadPresent: false }),
+          undefined,
+          options,
+        )
       },
       call(_options: TaskCallOptions) {
         return runtimeUnavailable<TaskWait<JsonValue>>("task.call")

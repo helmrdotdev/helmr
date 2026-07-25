@@ -479,6 +479,15 @@ func (q *Queries) LockActorInputWorkspace(ctx context.Context, arg LockActorInpu
 	return i, err
 }
 
+const lockChildWorkspacePair = `-- name: LockChildWorkspacePair :exec
+SELECT pg_advisory_xact_lock($1::bigint)
+`
+
+func (q *Queries) LockChildWorkspacePair(ctx context.Context, lockKey int64) error {
+	_, err := q.db.Exec(ctx, lockChildWorkspacePair, lockKey)
+	return err
+}
+
 const lockWorkspaceAdmissionAuthority = `-- name: LockWorkspaceAdmissionAuthority :one
 SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.region_id, workspaces.declaration_kind, workspaces.workspace_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_actor_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at,
        definitions.workspace_architecture,

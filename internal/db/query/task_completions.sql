@@ -160,7 +160,7 @@ UPDATE runs
    AND workspace_id = sqlc.arg(workspace_id)
    AND entrypoint_kind = 'task'
    AND actor_id IS NULL
-   AND parent_run_id IS NULL
+   AND (parent_run_id IS NULL OR parent_owns_lifecycle IS FALSE)
    AND status = 'running'
    AND current_attempt_number = sqlc.arg(attempt_number)
    AND current_run_lease_id = sqlc.arg(run_lease_id)
@@ -185,7 +185,7 @@ SELECT runs.id,
    AND runs.workspace_id = sqlc.arg(workspace_id)
    AND runs.entrypoint_kind = 'task'
    AND runs.actor_id IS NULL
-   AND runs.parent_run_id IS NULL
+   AND (runs.parent_run_id IS NULL OR runs.parent_owns_lifecycle IS FALSE)
    AND runs.status = 'running'
    AND runs.current_attempt_number = sqlc.arg(previous_attempt_number)
    AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
@@ -203,7 +203,7 @@ UPDATE runs
    AND workspace_id = sqlc.arg(workspace_id)
    AND entrypoint_kind = 'task'
    AND actor_id IS NULL
-   AND parent_run_id IS NULL
+   AND (parent_run_id IS NULL OR parent_owns_lifecycle IS FALSE)
    AND status = 'running'
    AND current_attempt_number = sqlc.arg(previous_attempt_number)
    AND current_run_lease_id = sqlc.arg(run_lease_id)
@@ -228,7 +228,7 @@ SELECT runs.id,
    AND runs.workspace_id = sqlc.arg(workspace_id)
    AND runs.entrypoint_kind = 'task'
    AND runs.actor_id IS NULL
-   AND runs.parent_run_id IS NULL
+   AND (runs.parent_run_id IS NULL OR runs.parent_owns_lifecycle IS FALSE)
    AND runs.status = 'waiting'
    AND runs.current_attempt_number = sqlc.arg(previous_attempt_number)
    AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
@@ -247,7 +247,7 @@ UPDATE runs
    AND workspace_id = sqlc.arg(workspace_id)
    AND entrypoint_kind = 'task'
    AND actor_id IS NULL
-   AND parent_run_id IS NULL
+   AND (parent_run_id IS NULL OR parent_owns_lifecycle IS FALSE)
    AND status = 'waiting'
    AND current_attempt_number = sqlc.arg(previous_attempt_number)
    AND current_run_lease_id = sqlc.arg(run_lease_id)
@@ -268,7 +268,7 @@ UPDATE runs
    AND workspace_id = sqlc.arg(workspace_id)
    AND entrypoint_kind = 'task'
    AND actor_id IS NULL
-   AND parent_run_id IS NULL
+   AND (parent_run_id IS NULL OR parent_owns_lifecycle IS FALSE)
    AND status = 'waiting'
    AND current_attempt_number = sqlc.arg(attempt_number)
    AND current_run_lease_id = sqlc.arg(run_lease_id)

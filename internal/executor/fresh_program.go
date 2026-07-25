@@ -167,6 +167,7 @@ func (program *freshProgram) awaitTaskCompletion(
 	wait func(context.Context, *runv0.RunWaitRequested) error,
 	sendActorInput func(context.Context, *runv0.ActorInputSendRequested) error,
 	createToken func(context.Context, *runv0.TokenCreateRequested) error,
+	invokeChildTask func(context.Context, *runv0.TaskChildInvokeRequested) error,
 ) (*runv0.TaskOutcome, *runv0.ProgramQuiesced, error) {
 	if program == nil || program.session == nil {
 		return nil, nil, errors.New("fresh Program session is required")
@@ -277,6 +278,16 @@ func (program *freshProgram) awaitTaskCompletion(
 			if err := createToken(ctx, value.TokenCreateRequested); err != nil {
 				return nil, nil, err
 			}
+		case *runv0.RunEvent_TaskChildInvokeRequested:
+			if outcome != nil {
+				return nil, nil, errors.New("Program emitted a child Task invocation after Task outcome")
+			}
+			if invokeChildTask == nil {
+				return nil, nil, errors.New("fresh Program child Task invocation support is required")
+			}
+			if err := invokeChildTask(ctx, value.TaskChildInvokeRequested); err != nil {
+				return nil, nil, err
+			}
 		case *runv0.RunEvent_ProgramQuiesced:
 			if outcome == nil {
 				return nil, nil, errors.New("Program quiesced before emitting a Task outcome")
@@ -303,6 +314,7 @@ func (program *freshProgram) awaitActorCompletion(
 	sendActorInput func(context.Context, *runv0.ActorInputSendRequested) error,
 	appendActorOutput func(context.Context, *runv0.ActorOutputAppendRequested) error,
 	createToken func(context.Context, *runv0.TokenCreateRequested) error,
+	invokeChildTask func(context.Context, *runv0.TaskChildInvokeRequested) error,
 ) (*runv0.ActorOutcome, *runv0.ProgramQuiesced, error) {
 	if program == nil || program.session == nil {
 		return nil, nil, errors.New("fresh Program session is required")
@@ -413,6 +425,16 @@ func (program *freshProgram) awaitActorCompletion(
 				return nil, nil, errors.New("fresh Program Token create support is required")
 			}
 			if err := createToken(ctx, value.TokenCreateRequested); err != nil {
+				return nil, nil, err
+			}
+		case *runv0.RunEvent_TaskChildInvokeRequested:
+			if outcome != nil {
+				return nil, nil, errors.New("Program emitted a child Task invocation after Actor outcome")
+			}
+			if invokeChildTask == nil {
+				return nil, nil, errors.New("fresh Program child Task invocation support is required")
+			}
+			if err := invokeChildTask(ctx, value.TaskChildInvokeRequested); err != nil {
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_ProgramQuiesced:

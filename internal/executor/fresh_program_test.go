@@ -64,7 +64,7 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 		program.observedEventSeq != 4 {
 		t.Fatalf("fresh Program = %+v", program)
 	}
-	outcome, quiesced, err := program.awaitTaskCompletion(context.Background(), events, nil, nil, nil)
+	outcome, quiesced, err := program.awaitTaskCompletion(context.Background(), events, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,6 +285,7 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 				nil,
 				nil,
 				nil,
+				nil,
 			)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("awaitTaskCompletion() error = %v", err)
@@ -318,7 +319,7 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 			},
 			outcome: testTaskSucceededEvent(`null`),
 			await: func(program *freshProgram, events freshProgramEventSink, callback func(context.Context, *runv0.ActorInputSendRequested) error) error {
-				_, _, err := program.awaitTaskCompletion(t.Context(), events, nil, callback, nil)
+				_, _, err := program.awaitTaskCompletion(t.Context(), events, nil, callback, nil, nil)
 				return err
 			},
 		},
@@ -338,7 +339,7 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 				},
 			},
 			await: func(program *freshProgram, events freshProgramEventSink, callback func(context.Context, *runv0.ActorInputSendRequested) error) error {
-				_, _, err := program.awaitActorCompletion(t.Context(), events, nil, nil, callback, nil, nil)
+				_, _, err := program.awaitActorCompletion(t.Context(), events, nil, nil, callback, nil, nil, nil)
 				return err
 			},
 		},
@@ -429,6 +430,7 @@ func TestFreshProgramDispatchesActorOutputAppend(t *testing.T) {
 			observed = value
 			return nil
 		},
+		nil,
 		nil,
 	)
 	if err != nil {

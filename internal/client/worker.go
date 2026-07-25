@@ -431,6 +431,17 @@ func (c *Client) SendRunActorInput(
 	return response, nil
 }
 
+func (c *Client) InvokeChildTask(
+	ctx context.Context,
+	request api.WorkerInvokeChildTaskRequest,
+) (api.WorkerInvokeChildTaskResponse, error) {
+	var response api.WorkerInvokeChildTaskResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/task-children/invoke", request, &response); err != nil {
+		return api.WorkerInvokeChildTaskResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) CompleteTask(
 	ctx context.Context,
 	request api.WorkerCompleteTaskRequest,

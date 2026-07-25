@@ -592,6 +592,93 @@ func TestTaskStartRequestUsesDeclaredIDScopeAndCanonicalCallerSemantics(t *testi
 	}
 }
 
+func TestTaskChildInvokeRequestUsesParentAndTaskScope(t *testing.T) {
+	environmentID := uuid.MustParse("00000000-0000-0000-0000-000000000301")
+	parentRunID := uuid.MustParse("00000000-0000-0000-0000-000000000601")
+	start, err := NewTaskChildInvokeRequest(
+		environmentID,
+		parentRunID,
+		"resize-image",
+		"image-1",
+		TaskChildInvokeFingerprint{
+			Method:         "start",
+			PayloadPresent: true,
+			Payload:        json.RawMessage(`{"source":"s3","size":1}`),
+			Workspace:      json.RawMessage(`{"key":"image-workspace"}`),
+			QueueName:      "default",
+			Metadata:       json.RawMessage(`{"b":2,"a":1}`),
+			Tags:           []string{"image", "resize"},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	equivalent, err := NewTaskChildInvokeRequest(
+		environmentID,
+		parentRunID,
+		"resize-image",
+		"image-1",
+		TaskChildInvokeFingerprint{
+			Method:         "start",
+			PayloadPresent: true,
+			Payload:        json.RawMessage(`{"size":1.0,"source":"s3"}`),
+			Workspace:      json.RawMessage(`{"key":"image-workspace"}`),
+			QueueName:      "default",
+			Metadata:       json.RawMessage(`{"a":1.0,"b":2}`),
+			Tags:           []string{"image", "resize"},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, err := NewTaskChildInvokeRequest(
+		environmentID,
+		parentRunID,
+		"resize-image",
+		"image-1",
+		TaskChildInvokeFingerprint{
+			Method:         "call",
+			PayloadPresent: true,
+			Payload:        json.RawMessage(`{"source":"s3","size":1}`),
+			Workspace:      json.RawMessage(`{"key":"image-workspace"}`),
+			QueueName:      "default",
+			Metadata:       json.RawMessage(`{"b":2,"a":1}`),
+			Tags:           []string{"image", "resize"},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	startValue := start.idempotencyRequest()
+	equivalentValue := equivalent.idempotencyRequest()
+	callValue := call.idempotencyRequest()
+	wantScope := append(append(bytes.Clone(parentRunID[:]), 0), "resize-image"...)
+	if startValue.operation != operationTaskChildInvoke ||
+		!bytes.Equal(startValue.scope, wantScope) ||
+		!bytes.Equal(startValue.scope, callValue.scope) {
+		t.Fatalf("operation = %q scope = %x call scope = %x", startValue.operation, startValue.scope, callValue.scope)
+	}
+	startFingerprint, err := startValue.fingerprint(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	equivalentFingerprint, err := equivalentValue.fingerprint(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callFingerprint, err := callValue.fingerprint(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if startFingerprint != equivalentFingerprint {
+		t.Fatalf("canonical-equivalent child Task fingerprints differ: %x != %x", startFingerprint, equivalentFingerprint)
+	}
+	if startFingerprint == callFingerprint {
+		t.Fatal("start and call produced the same child Task fingerprint")
+	}
+}
+
 func testManager(t *testing.T) Manager {
 	t.Helper()
 	hashes, err := keyedhash.New(map[int32][]byte{

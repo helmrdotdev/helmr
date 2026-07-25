@@ -173,6 +173,7 @@ POST /api/worker/leases/run-waits/poll
 POST /api/worker/leases/run-waits/resume-ack
 POST /api/worker/leases/start
 POST /api/worker/leases/structured-logs
+POST /api/worker/leases/task-children/invoke
 POST /api/worker/leases/tasks/complete
 POST /api/worker/leases/tokens
 POST /api/worker/observe
