@@ -19,6 +19,8 @@ product repo.
 | `edge-smoke` | Focused edge diagnostics for concurrent wait rejection, workspace overwrite behavior, and intentionally failed runs. Missing-secret and invalid-payload cases are external CLI/API assertions because they fail before task code runs. |
 | `agent-toolchain-smoke` | Validates the task image, Nix, GitHub access, Claude/Codex/Cursor SDKs, and namespace/runtime assumptions. |
 | `timer-smoke` | Parks on a wall-clock timer and verifies workspace state survives resume without active sleep. |
+| `child-task-smoke` | Exercises detached `task.start()`, durable `task.call()` success, and a child failure returned as `TaskResult`. |
+| `child-task-smoke-actor` | Exercises `task.call()` from an Actor turn and appends the terminal child result to durable Actor output. |
 
 ## Environment Strategy
 
@@ -34,6 +36,7 @@ Expected release-smoke coverage:
 | Secret resolution and agent SDK credentials | `production` | `secret-smoke`, then `agent-toolchain-smoke` |
 | Token UX and approval state | `staging` or `production` | `runtime-smoke` with `exerciseToken=true` |
 | Timer parked wait resume | `staging` | `timer-smoke` |
+| Child Task lifecycle | `staging` | `child-task-smoke` through the `child-tasks` release-smoke case; `child-task-smoke-actor` through the authenticated client smoke. |
 | Missing-secret, invalid-payload, and failed-run observability | `staging` | `missing-secret-smoke` request expected to be rejected; malformed payload to `runtime-smoke`; `edge-smoke` expected-error |
 | CLI, API, and console inspection | both | `helmr run get`, `helmr run events`, `helmr run logs`, and the console Run/Task views |
 
@@ -97,8 +100,8 @@ harness runs `go run ./cmd/helmr` from the repository root. Set `SKIP_DEPLOY=1`
 to reuse the currently promoted deployments and run only the smoke cases.
 
 Use comma-separated `SMOKE_CASES` entries to run multiple focused real-usecase
-checks, for example `SMOKE_CASES=runtime,token,timer`. Leave `SMOKE_CASES` unset for
-the full release smoke.
+checks, for example `SMOKE_CASES=runtime,token,timer,child-tasks`. Leave
+`SMOKE_CASES` unset for the full release smoke.
 
 Before interpreting AWS dev latency numbers, run the measurement preflight:
 

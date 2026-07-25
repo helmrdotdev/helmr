@@ -13,7 +13,7 @@ const base = image("task-secrets")
 
 export const taskSecretsWorkspace = workspace("task-secrets")
   .image(base)
-  .resources({ cpu: 1, memory: "1Gi" })
+  .resources({ cpu: 1, memory: "1GiB" })
 
 export const useSecret = task({
   id: "use-secret",

@@ -13,7 +13,6 @@ import {
   type ProgramDeclaration,
   type RuntimeArchitecture,
   type WorkspaceNetwork,
-  type WorkspaceResources,
 } from "@helmr/sdk/internal"
 import { canonicalizeJsonValue, type JsonValue } from "@helmr/sdk/internal"
 
@@ -242,7 +241,7 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
 }
 
 export function normalizeWorkspaceResources(
-  resources: WorkspaceResources,
+  resources: Readonly<{ cpu: number; memory: string }>,
 ): Readonly<{
   milliCpu: number
   memoryMiB: number

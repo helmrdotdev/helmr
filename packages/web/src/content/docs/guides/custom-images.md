@@ -29,7 +29,7 @@ const base = image("cli-tooling")
 
 export const cliToolingWorkspace = workspace("cli-tooling")
   .image(base)
-  .resources({ cpu: 1, memory: "1Gi" })
+  .resources({ cpu: 1, memory: "1GiB" })
 ```
 
 Image builders support:

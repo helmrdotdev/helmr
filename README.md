@@ -104,7 +104,7 @@ const base = image("repo-agent")
 
 export const repoWorkspace = workspace("github-pr-review")
   .image(base)
-  .resources({ cpu: 2, memory: "4Gi" })
+  .resources({ cpu: 2, memory: "4GiB" })
 
 export const reviewPr = task({
   id: "review-pr",

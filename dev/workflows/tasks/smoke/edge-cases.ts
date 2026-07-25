@@ -10,7 +10,7 @@ const base = image("helmr-edge-smoke")
 
 export const edgeSmokeWorkspace = workspace("helmr-edge-smoke")
   .image(base)
-  .resources({ cpu: 1, memory: "1Gi" })
+  .resources({ cpu: 1, memory: "1GiB" })
 
 const payload = z.object({
   mode: z.enum(["concurrent-wait", "workspace-overwrite", "expected-error"]),

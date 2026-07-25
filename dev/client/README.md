@@ -9,6 +9,8 @@ AWS/Firecracker validation. It uses only the v0 public contract:
 - normal nonzero exit capture into the Workspace head;
 - committed file read, stat, and list without a live VM;
 - typed Task start on the same Workspace and typed Run wait;
+- typed different-Workspace child Task calls from both a Task and an Actor;
+- terminal Actor Run polling and durable Actor output inspection;
 - attempt-scoped metadata mutation and all four structured logger levels;
 - finite, authenticated Run log and event page reads after projection;
 - authenticated Run-independent Token create, retrieve, and cancel;

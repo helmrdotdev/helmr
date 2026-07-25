@@ -15,7 +15,7 @@ const base = image("hello-world")
 
 export const helloWorldWorkspace = workspace("hello-world")
   .image(base)
-  .resources({ cpu: 1, memory: "1Gi" })
+  .resources({ cpu: 1, memory: "1GiB" })
 
 const payload = z.object({
   name: z.string().optional(),

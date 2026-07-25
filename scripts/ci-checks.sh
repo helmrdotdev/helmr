@@ -5,6 +5,7 @@ repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_root"
 
 bun install --frozen-lockfile --ignore-scripts
+scripts/check-dev-samples.sh
 scripts/build-config-inspector.sh
 git diff --exit-code -- internal/projectconfig/js
 test -z "$(git status --porcelain -- internal/projectconfig/js)"

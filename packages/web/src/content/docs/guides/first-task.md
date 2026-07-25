@@ -36,7 +36,7 @@ const runtime = image("hello")
 
 export const helloWorkspace = workspace("hello")
   .image(runtime)
-  .resources({ cpu: 1, memory: "1Gi" })
+  .resources({ cpu: 1, memory: "1GiB" })
 
 export const hello = task({
   id: "hello",

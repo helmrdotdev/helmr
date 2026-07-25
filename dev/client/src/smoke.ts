@@ -1,12 +1,22 @@
 import { createHash } from "node:crypto"
 import {
   HelmrClient,
+  type ActorStatus,
+  type ClientActorIdRef,
   type JsonValue,
   type RunEventRecord,
   type RunLogRecord,
+  type RunSnapshot,
   type WorkspaceExecResult,
   type WorkspaceFileEntry,
+  type WorkspaceIdRef,
 } from "@helmr/sdk"
+import type {
+  childTaskSmoke,
+  childTaskSmokeActor,
+  childTaskSmokeCallerWorkspace,
+  childTaskSmokeTargetWorkspace,
+} from "../../workflows/tasks/smoke/child-task"
 import type {
   runtimeSmoke,
   runtimeSmokeWorkspace,
@@ -29,6 +39,7 @@ type Evidence = {
   readonly taskOutput: JsonValue
   readonly taskLogs: readonly RunLogRecord[]
   readonly taskEvents: readonly RunEventRecord[]
+  readonly childTasks: ChildTaskEvidence
   readonly tokenId: string
   readonly secretDelivery: "covered" | "skipped"
   readonly deletedWorkspaceId: string
@@ -38,6 +49,17 @@ type ExecEvidence = {
   readonly exitCode: number
   readonly stdout: string
   readonly stderr: string
+}
+
+type ChildTaskEvidence = {
+  readonly targetWorkspaceId: string
+  readonly taskCallerWorkspaceId: string
+  readonly taskRunId: string
+  readonly taskOutput: JsonValue
+  readonly actorWorkspaceId: string
+  readonly actorId: string
+  readonly actorRunId: string
+  readonly actorChildRunId: string
 }
 
 const config = readConfig()
@@ -165,6 +187,8 @@ async function runSmoke(): Promise<Evidence> {
   const taskFile = new TextDecoder().decode(await byKey.files.read(markerPath))
   assert(taskFile.includes(`marker=${taskMarker}`), "Task did not advance the Workspace head")
 
+  const childTasks = await runChildTaskSmoke()
+
   const token = await client.tokens.create({
     timeout: "10m",
     tags: ["smoke", "workspace-basic-exec"],
@@ -202,10 +226,210 @@ async function runSmoke(): Promise<Evidence> {
     taskOutput,
     taskLogs: taskLogs.items,
     taskEvents: taskEvents.items,
+    childTasks,
     tokenId: token.id,
     secretDelivery: config.secretName === undefined ? "skipped" : "covered",
     deletedWorkspaceId: deleted.workspaceId,
   }
+}
+
+async function runChildTaskSmoke(): Promise<ChildTaskEvidence> {
+  const workspaces: Array<Readonly<{
+    ref: WorkspaceIdRef
+    deleteKey: string
+  }>> = []
+  let actorRef: ClientActorIdRef | undefined
+  try {
+    const targetWorkspace = await client.workspaces.create<
+      typeof childTaskSmokeTargetWorkspace
+    >(
+      "helmr-child-task-target-smoke",
+      {
+        key: `child-target-${config.marker}`,
+        idempotencyKey: `child-target:create:${config.marker}`,
+      },
+    )
+    workspaces.push({
+      ref: targetWorkspace,
+      deleteKey: `child-target:delete:${config.marker}`,
+    })
+    const taskCallerWorkspace = await client.workspaces.create<
+      typeof childTaskSmokeCallerWorkspace
+    >(
+      "helmr-child-task-caller-smoke",
+      {
+        key: `child-task-caller-${config.marker}`,
+        idempotencyKey: `child-task-caller:create:${config.marker}`,
+      },
+    )
+    workspaces.push({
+      ref: taskCallerWorkspace,
+      deleteKey: `child-task-caller:delete:${config.marker}`,
+    })
+    const task = await client.tasks.start<typeof childTaskSmoke>(
+      "child-task-smoke",
+      {
+        payload: {
+          mode: "call-success",
+          marker: `${config.marker}-task-call`,
+          childWorkspaceId: targetWorkspace.id,
+        },
+        workspace: taskCallerWorkspace,
+        idempotencyKey: `child-task:start:${config.marker}`,
+      },
+    )
+    const taskOutput = await client.runs.wait<typeof childTaskSmoke>(
+      task.id,
+      { signal: AbortSignal.timeout(20 * 60 * 1_000) },
+    ).unwrap()
+    assert(
+      taskOutput.mode === "call-success" &&
+        taskOutput.marker === `${config.marker}-task-call`,
+      "Task child call output did not match the requested smoke marker",
+    )
+
+    const actorWorkspace = await client.workspaces.create<
+      typeof childTaskSmokeCallerWorkspace
+    >(
+      "helmr-child-task-caller-smoke",
+      {
+        key: `child-actor-caller-${config.marker}`,
+        idempotencyKey: `child-actor-caller:create:${config.marker}`,
+      },
+    )
+    workspaces.push({
+      ref: actorWorkspace,
+      deleteKey: `child-actor-caller:delete:${config.marker}`,
+    })
+    const actor = await client.actors.start<typeof childTaskSmokeActor>(
+      "child-task-smoke-actor",
+      {
+        key: `child-call:${config.marker}`,
+        input: {
+          marker: `${config.marker}-actor-call`,
+          childWorkspaceId: targetWorkspace.id,
+        },
+        workspace: actorWorkspace,
+        idempotencyKey: `child-actor:start:${config.marker}`,
+      },
+    )
+    actorRef = actor.ref
+    const actorRun = await waitForTerminalRun(actor.run.id)
+    assertEqual(actorRun.status, "succeeded", "Actor child call Run did not succeed")
+    const actorOutput = await waitForActorOutput(actor.ref)
+    assert(
+      actorOutput.data !== null &&
+        typeof actorOutput.data === "object" &&
+        "kind" in actorOutput.data &&
+        actorOutput.data.kind === "child-task-call-completed" &&
+        "marker" in actorOutput.data &&
+        actorOutput.data.marker === `${config.marker}-actor-call` &&
+        "childRunId" in actorOutput.data &&
+        typeof actorOutput.data.childRunId === "string",
+      "Actor output did not contain its child Task result",
+    )
+    const actorChildRunId = actorOutput.data.childRunId
+
+    await closeSmokeActor(actor.ref)
+    for (const workspace of workspaces.toReversed()) {
+      await workspace.ref.delete({ idempotencyKey: workspace.deleteKey })
+    }
+
+    return {
+      targetWorkspaceId: targetWorkspace.id,
+      taskCallerWorkspaceId: taskCallerWorkspace.id,
+      taskRunId: task.id,
+      taskOutput,
+      actorWorkspaceId: actorWorkspace.id,
+      actorId: actor.ref.id,
+      actorRunId: actor.run.id,
+      actorChildRunId,
+    }
+  } catch (error) {
+    await cleanupChildTaskSmoke(actorRef, workspaces)
+    throw error
+  }
+}
+
+async function waitForTerminalRun(runId: string): Promise<RunSnapshot> {
+  const deadline = Date.now() + 20 * 60 * 1_000
+  for (;;) {
+    const run = await client.runs.retrieve(runId)
+    if (
+      run.status === "succeeded" ||
+      run.status === "failed" ||
+      run.status === "cancelled" ||
+      run.status === "expired" ||
+      run.status === "system-failed"
+    ) {
+      return run
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`timed out waiting for Actor Run ${runId}`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+}
+
+async function waitForActorOutput(
+  ref: ClientActorIdRef,
+) {
+  const deadline = Date.now() + 60_000
+  for (;;) {
+    const records = await ref.output.list({ after: 0, limit: 10 })
+    if (records[0] !== undefined) return records[0]
+    if (Date.now() >= deadline) {
+      throw new Error(`timed out waiting for Actor output ${ref.id}`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+}
+
+async function closeSmokeActor(ref: ClientActorIdRef): Promise<void> {
+  await ref.close({
+    idempotencyKey: `child-actor:close:${config.marker}`,
+  })
+  const status = await waitForActorClosed(ref)
+  assertEqual(status.status, "closed", "Actor did not close after its smoke turn")
+}
+
+async function waitForActorClosed(ref: ClientActorIdRef): Promise<ActorStatus> {
+  const deadline = Date.now() + 20 * 60 * 1_000
+  for (;;) {
+    const status = await ref.status()
+    if (status.status === "closed") return status
+    if (status.status === "cancelled" || status.status === "failed") {
+      return status
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`timed out closing Actor ${ref.id}`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+}
+
+async function cleanupChildTaskSmoke(
+  actorRef: ClientActorIdRef | undefined,
+  workspaces: readonly Readonly<{
+    ref: WorkspaceIdRef
+    deleteKey: string
+  }>[],
+): Promise<void> {
+  if (actorRef !== undefined) {
+    try {
+      await actorRef.close({
+        idempotencyKey: `child-actor:close:${config.marker}`,
+      })
+      await waitForActorClosed(actorRef)
+    } catch {
+      // Preserve the original smoke failure while still attempting Workspace cleanup.
+    }
+  }
+  await Promise.allSettled(
+    workspaces.toReversed().map((workspace) =>
+      workspace.ref.delete({ idempotencyKey: workspace.deleteKey })
+    ),
+  )
 }
 
 async function readTelemetry<T>(

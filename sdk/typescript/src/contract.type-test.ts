@@ -31,6 +31,10 @@ export function assertGreenfieldTypes(): void {
   source.directory("./src", { ignore: ["**/*.test.ts"] })
   // @ts-expect-error memory is required.
   resourceBuilder.resources({ cpu: 1 })
+  // @ts-expect-error memory uses canonical MiB or GiB suffixes.
+  resourceBuilder.resources({ cpu: 1, memory: "1Gi" })
+  // @ts-expect-error v0 ephemeral disk capacity is not public input.
+  resourceBuilder.resources({ cpu: 1, memory: "1GiB", disk: "64GiB" })
 
   const definition = resourceBuilder.resources({
     cpu: 1,

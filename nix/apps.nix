@@ -73,6 +73,7 @@ in
     app "ci-typescript" "run TypeScript type checks and tests for CI" toolsets.ciChecks
       ''
         bun install --frozen-lockfile --ignore-scripts
+        scripts/check-dev-samples.sh
         bun run typecheck
         bun run test:ts
       '';

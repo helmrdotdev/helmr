@@ -14,9 +14,11 @@ import { validateTaskId } from "./schema/task"
 
 const workspaceDefinitionBrand = Symbol.for("helmr.sdk.v0.workspace")
 
+export type WorkspaceMemory = `${bigint}MiB` | `${bigint}GiB`
+
 export interface WorkspaceResources {
   readonly cpu: number
-  readonly memory: string
+  readonly memory: WorkspaceMemory
 }
 
 export type WorkspaceNetwork =
@@ -227,7 +229,11 @@ class ResourceBuilder implements WorkspaceResourceBuilder {
 
   resources(value: WorkspaceResources): WorkspaceDefinition {
     assertResourceMembers(value)
-    return new Definition(this.id, this.imageValue, Object.freeze({ ...value }))
+    return new Definition(
+      this.id,
+      this.imageValue,
+      Object.freeze({ cpu: value.cpu, memory: value.memory }),
+    )
   }
 }
 
@@ -780,10 +786,19 @@ function assertResourceMembers(value: WorkspaceResources): void {
   if (
     value === null ||
     typeof value !== "object" ||
+    Array.isArray(value) ||
     !Object.hasOwn(value, "cpu") ||
     !Object.hasOwn(value, "memory")
   ) {
     throw new Error("workspace resources require cpu and memory")
+  }
+  const members = Object.keys(value)
+  if (
+    members.length !== 2 ||
+    !members.includes("cpu") ||
+    !members.includes("memory")
+  ) {
+    throw new Error("workspace resources support only cpu and memory")
   }
 }
 

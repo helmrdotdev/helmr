@@ -190,6 +190,7 @@ export type {
   WorkspaceFiles,
   WorkspaceIdRef,
   WorkspaceKeyRef,
+  WorkspaceMemory,
   WorkspaceNetwork,
   WorkspaceRef,
   WorkspaceRefBase,

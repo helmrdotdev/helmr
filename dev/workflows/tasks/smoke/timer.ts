@@ -10,7 +10,7 @@ const base = image("helmr-timer-smoke")
 
 export const timerSmokeWorkspace = workspace("helmr-timer-smoke")
   .image(base)
-  .resources({ cpu: 1, memory: "1Gi" })
+  .resources({ cpu: 1, memory: "1GiB" })
 
 const payload = z.object({
   marker: z.string().optional(),

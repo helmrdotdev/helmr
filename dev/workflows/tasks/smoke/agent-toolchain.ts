@@ -41,7 +41,7 @@ const base = image("helmr-agent-toolchain-smoke")
 
 export const agentToolchainSmokeWorkspace = workspace("helmr-agent-toolchain-smoke")
   .image(base)
-  .resources({ cpu: 2, memory: "4Gi" })
+  .resources({ cpu: 2, memory: "4GiB" })
 
 interface Payload {
   readonly repository?: string

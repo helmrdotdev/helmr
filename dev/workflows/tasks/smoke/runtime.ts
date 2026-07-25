@@ -33,7 +33,7 @@ const base = image("helmr-runtime-smoke")
 
 export const runtimeSmokeWorkspace = workspace("helmr-runtime-smoke")
   .image(base)
-  .resources({ cpu: 2, memory: "2Gi" })
+  .resources({ cpu: 2, memory: "2GiB" })
 
 const payload = z.object({
   scenario: z.string().default("release-smoke"),

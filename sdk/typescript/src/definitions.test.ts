@@ -6,7 +6,7 @@ import {
   installRuntimeOperations,
   isQueueDefinition,
 } from "./internal"
-import { actor, queue, task, workspaces } from "./index"
+import { actor, image, queue, task, workspace, workspaces } from "./index"
 
 describe("private definition inspection", () => {
   test("distinguishes helpers from malformed branded values", () => {
@@ -41,6 +41,18 @@ describe("private definition inspection", () => {
       id: "resize",
     })
     expect(isQueueDefinition(queue({ id: "images" }))).toBe(true)
+  })
+
+  test("rejects untyped Workspace resource extensions", () => {
+    const builder = workspace("machine")
+      .image(image("root").from("debian:bookworm-slim"))
+    expect(() =>
+      builder.resources({
+        cpu: 1,
+        memory: "1GiB",
+        disk: "64GiB",
+      } as never)
+    ).toThrow("only cpu and memory")
   })
 
   test("delegates task.call through a TaskWait facade", async () => {

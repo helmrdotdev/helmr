@@ -23,6 +23,7 @@ all_smoke_cases=(
   runtime
   token
   timer
+  child-tasks
   edge-workspace
   missing-secrets
   invalid-payload
@@ -191,12 +192,15 @@ start_capture_ids() {
   local declared_id
   local key
   local workspace
+  local workspace_response
   local output
+  local run_id
   local scope_args=()
   local secret_args=()
   case "${task}" in
     runtime-smoke) declared_id=helmr-runtime-smoke ;;
     timer-smoke) declared_id=helmr-timer-smoke ;;
+    child-task-smoke) declared_id=helmr-child-task-caller-smoke ;;
     edge-smoke) declared_id=helmr-edge-smoke ;;
     agent-toolchain-smoke) declared_id=helmr-agent-toolchain-smoke ;;
     secret-smoke)
@@ -228,11 +232,18 @@ start_capture_ids() {
     esac
   done
   key="release-smoke:${task}:$(date -u +%Y%m%d%H%M%S):${RANDOM}"
-  workspace="$(run_helmr workspace create "${declared_id}" "${scope_args[@]}" \
-    --key "${key}" "${secret_args[@]}" \
-    --idempotency-key "${key}:create" --json)"
-  printf '%s\n' "${workspace}" >&2
-  workspace="$(printf '%s\n' "${workspace}" | jq -er '.workspace_id')"
+  if [ "${#secret_args[@]}" -gt 0 ]; then
+    workspace_response="$(run_helmr workspace create "${declared_id}" "${scope_args[@]}" \
+      --key "${key}" "${secret_args[@]}" \
+      --idempotency-key "${key}:create" --json)"
+  else
+    workspace_response="$(run_helmr workspace create "${declared_id}" "${scope_args[@]}" \
+      --key "${key}" --idempotency-key "${key}:create" --json)"
+  fi
+  printf '%s\n' "${workspace_response}" >&2
+  if ! workspace="$(printf '%s\n' "${workspace_response}" | jq -er '.workspace_id')"; then
+    return 1
+  fi
   if ! output="$(run_helmr run start "${task}" "${scope_args[@]}" "$@" \
     --workspace "${workspace}" --idempotency-key "${key}:run" --json)"; then
     run_helmr workspace delete --id "${workspace}" "${scope_args[@]}" \
@@ -240,9 +251,37 @@ start_capture_ids() {
     return 1
   fi
   printf '%s\n' "${output}" >&2
-  printf '%s %s\n' \
-    "${workspace}" \
-    "$(printf '%s\n' "${output}" | jq -er '.run_id')"
+  if ! run_id="$(printf '%s\n' "${output}" | jq -er '.run_id')"; then
+    run_helmr workspace delete --id "${workspace}" "${scope_args[@]}" \
+      --idempotency-key "${key}:rollback" --json >&2 || true
+    return 1
+  fi
+  printf '%s %s\n' "${workspace}" "${run_id}"
+}
+
+create_smoke_workspace() {
+  local declared_id=$1
+  local key_prefix=$2
+  shift 2
+  local scope_args=()
+  local key
+  local workspace
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project|-p|--env|-e)
+        scope_args+=("$1" "$2")
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  key="release-smoke:${key_prefix}:$(date -u +%Y%m%d%H%M%S):${RANDOM}"
+  workspace="$(run_helmr workspace create "${declared_id}" "${scope_args[@]}" \
+    --key "${key}" --idempotency-key "${key}:create" --json)"
+  printf '%s\n' "${workspace}" >&2
+  printf '%s\n' "${workspace}" | jq -er '.workspace_id'
 }
 
 inspect_run() {
@@ -260,9 +299,15 @@ inspect_run() {
         ;;
     esac
   done
-  run_helmr run get "${run_id}" "${scope_args[@]}"
-  run_helmr run events "${run_id}" "${scope_args[@]}"
-  run_helmr run logs "${run_id}" "${scope_args[@]}"
+  if ! run_helmr run get "${run_id}" "${scope_args[@]}"; then
+    return 1
+  fi
+  if ! run_helmr run events "${run_id}" "${scope_args[@]}"; then
+    return 1
+  fi
+  if ! run_helmr run logs "${run_id}" "${scope_args[@]}"; then
+    return 1
+  fi
 }
 
 delete_smoke_workspace() {
@@ -280,9 +325,11 @@ delete_smoke_workspace() {
         ;;
     esac
   done
-  run_helmr workspace delete --id "${workspace_id}" "${scope_args[@]}" \
-    --idempotency-key "release-smoke:${workspace_id}:delete" \
-    --json
+  if ! run_helmr workspace delete --id "${workspace_id}" "${scope_args[@]}" \
+      --idempotency-key "release-smoke:${workspace_id}:delete" \
+      --json; then
+    return 1
+  fi
   deleted_workspace_ids+=("${workspace_id}")
 }
 
@@ -314,20 +361,130 @@ expect_run_success() {
   local workspace_id
   local run_id
   local status
-  ids="$(start_capture_ids "$@")"
+  local result=0
+  if ! ids="$(start_capture_ids "$@")"; then
+    return 1
+  fi
   workspace_id="${ids%% *}"
   run_id="${ids##* }"
   workspace_ids+=("${workspace_id}")
   run_ids+=("${run_id}")
-  status="$(wait_status "${run_id}" "$@")"
-  if [ "${status}" != "succeeded" ]; then
-    inspect_run "${run_id}" "$@" >&2
+  if ! status="$(wait_status "${run_id}" "$@")"; then
+    printf 'FAIL %s: could not read terminal status: %s\n' "${name}" "${run_id}" >&2
+    result=1
+  elif [ "${status}" != "succeeded" ]; then
+    inspect_run "${run_id}" "$@" >&2 || true
     printf 'FAIL %s: expected succeeded, got %s: %s\n' "${name}" "${status}" "${run_id}" >&2
-    return 1
+    result=1
+  elif ! inspect_run "${run_id}" "$@"; then
+    result=1
   fi
-  inspect_run "${run_id}" "$@"
-  delete_smoke_workspace "${workspace_id}" "$@"
+  if ! delete_smoke_workspace "${workspace_id}" "$@"; then
+    result=1
+  fi
+  if [ "${result}" != "0" ]; then
+    return "${result}"
+  fi
   printf 'PASS %s workspace_id=%s run_id=%s\n' "${name}" "${workspace_id}" "${run_id}"
+}
+
+expect_child_task_lifecycle() {
+  local name=$1
+  shift
+  local target_workspace_id
+  local ids
+  local caller_workspace_id
+  local parent_run_id
+  local child_run_id
+  local status
+  local parent
+  local result=0
+  local scope_args=()
+  local marker
+  local arg
+  local next
+  local -a arguments=("$@")
+  marker="release-smoke-${name}-$(date -u +%Y%m%d%H%M%S)"
+  for ((arg = 0; arg < ${#arguments[@]}; arg++)); do
+    case "${arguments[arg]}" in
+      --project|-p|--env|-e)
+        next=$((arg + 1))
+        scope_args+=("${arguments[arg]}" "${arguments[next]}")
+        arg=$next
+        ;;
+    esac
+  done
+
+  target_workspace_id="$(
+    create_smoke_workspace helmr-child-task-target-smoke child-task-target \
+      "${scope_args[@]}"
+  )"
+  workspace_ids+=("${target_workspace_id}")
+
+  if ! expect_run_success "${name}-call-success" child-task-smoke \
+      "${scope_args[@]}" \
+      --payload-json "$(jq -nc \
+        --arg marker "${marker}-call-success" \
+        --arg workspace "${target_workspace_id}" \
+        '{mode:"call-success",marker:$marker,childWorkspaceId:$workspace}')"; then
+    result=1
+  elif ! expect_run_success "${name}-call-failure" child-task-smoke \
+      "${scope_args[@]}" \
+      --payload-json "$(jq -nc \
+        --arg marker "${marker}-call-failure" \
+        --arg workspace "${target_workspace_id}" \
+        '{mode:"call-failure",marker:$marker,childWorkspaceId:$workspace}')"; then
+    result=1
+  elif ! ids="$(start_capture_ids child-task-smoke "${scope_args[@]}" \
+      --payload-json "$(jq -nc \
+        --arg marker "${marker}-start-detached" \
+        --arg workspace "${target_workspace_id}" \
+        '{mode:"start-detached",marker:$marker,childWorkspaceId:$workspace}')")"; then
+    result=1
+  else
+    caller_workspace_id="${ids%% *}"
+    parent_run_id="${ids##* }"
+    workspace_ids+=("${caller_workspace_id}")
+    run_ids+=("${parent_run_id}")
+    if ! status="$(wait_status "${parent_run_id}" "${scope_args[@]}")"; then
+      printf 'FAIL %s: could not read detached parent status\n' "${name}" >&2
+      result=1
+    elif [ "${status}" != "succeeded" ]; then
+      inspect_run "${parent_run_id}" "${scope_args[@]}" >&2 || true
+      printf 'FAIL %s: detached parent expected succeeded, got %s\n' "${name}" "${status}" >&2
+      result=1
+    elif ! parent="$(run_helmr run get "${parent_run_id}" "${scope_args[@]}" --json)"; then
+      result=1
+    elif ! child_run_id="$(printf '%s\n' "${parent}" | jq -er '.output.childRunId')"; then
+      result=1
+    else
+      run_ids+=("${child_run_id}")
+      if ! status="$(wait_status "${child_run_id}" "${scope_args[@]}")"; then
+        printf 'FAIL %s: could not read detached child status\n' "${name}" >&2
+        result=1
+      elif [ "${status}" != "succeeded" ]; then
+        inspect_run "${child_run_id}" "${scope_args[@]}" >&2 || true
+        printf 'FAIL %s: detached child expected succeeded, got %s\n' "${name}" "${status}" >&2
+        result=1
+      elif ! inspect_run "${parent_run_id}" "${scope_args[@]}"; then
+        result=1
+      elif ! inspect_run "${child_run_id}" "${scope_args[@]}"; then
+        result=1
+      fi
+    fi
+  fi
+  if [ -n "${caller_workspace_id:-}" ] &&
+    ! delete_smoke_workspace "${caller_workspace_id}" "${scope_args[@]}"; then
+    result=1
+  fi
+  if ! delete_smoke_workspace "${target_workspace_id}" "${scope_args[@]}"; then
+    result=1
+  fi
+  if [ "${result}" != "0" ]; then
+    return "${result}"
+  fi
+  printf 'PASS %s parent_run_id=%s child_run_id=%s\n' \
+    "${name}" "${parent_run_id}" "${child_run_id}"
 }
 
 wait_for_pending_token() {
@@ -482,6 +639,11 @@ if smoke_case_enabled timer; then
   expect_run_success staging-timer timer-smoke \
     "${staging_scope_args[@]}" \
     --payload-json '{"waitFor":"5s"}'
+fi
+
+if smoke_case_enabled child-tasks; then
+  mark_smoke_executed child-tasks
+  expect_child_task_lifecycle staging-child-tasks "${staging_scope_args[@]}"
 fi
 
 if smoke_case_enabled edge-workspace; then
