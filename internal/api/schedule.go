@@ -33,5 +33,6 @@ type ScheduleResponse struct {
 }
 
 type ListSchedulesResponse struct {
-	Schedules []ScheduleResponse `json:"schedules"`
+	Schedules  []ScheduleResponse `json:"schedules"`
+	NextCursor string             `json:"next_cursor,omitempty"`
 }

@@ -569,16 +569,20 @@ SELECT schedules.id, schedules.public_id, schedules.org_id, schedules.project_id
    AND schedules.environment_id = $3
    AND (
        $4::text IS NULL
-       OR schedules.task_declared_id = $4::text
+       OR (schedules.task_declared_id, schedules.public_id) >
+          ($4::text, $5::text)
    )
- ORDER BY schedules.task_declared_id, schedules.id
+ ORDER BY schedules.task_declared_id, schedules.public_id
+ LIMIT $6::integer
 `
 
 type ListSchedulesParams struct {
-	OrgID          pgtype.UUID `json:"org_id"`
-	ProjectID      pgtype.UUID `json:"project_id"`
-	EnvironmentID  pgtype.UUID `json:"environment_id"`
-	TaskDeclaredID pgtype.Text `json:"task_declared_id"`
+	OrgID               pgtype.UUID `json:"org_id"`
+	ProjectID           pgtype.UUID `json:"project_id"`
+	EnvironmentID       pgtype.UUID `json:"environment_id"`
+	AfterTaskDeclaredID pgtype.Text `json:"after_task_declared_id"`
+	AfterPublicID       string      `json:"after_public_id"`
+	LimitCount          int32       `json:"limit_count"`
 }
 
 type ListSchedulesRow struct {
@@ -591,7 +595,9 @@ func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.TaskDeclaredID,
+		arg.AfterTaskDeclaredID,
+		arg.AfterPublicID,
+		arg.LimitCount,
 	)
 	if err != nil {
 		return nil, err

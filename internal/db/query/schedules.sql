@@ -116,10 +116,12 @@ SELECT sqlc.embed(schedules),
    AND schedules.project_id = sqlc.arg(project_id)
    AND schedules.environment_id = sqlc.arg(environment_id)
    AND (
-       sqlc.narg(task_declared_id)::text IS NULL
-       OR schedules.task_declared_id = sqlc.narg(task_declared_id)::text
+       sqlc.narg(after_task_declared_id)::text IS NULL
+       OR (schedules.task_declared_id, schedules.public_id) >
+          (sqlc.narg(after_task_declared_id)::text, sqlc.arg(after_public_id)::text)
    )
- ORDER BY schedules.task_declared_id, schedules.id;
+ ORDER BY schedules.task_declared_id, schedules.public_id
+ LIMIT sqlc.arg(limit_count)::integer;
 
 -- name: ListPendingScheduleBindings :many
 SELECT schedules.*,

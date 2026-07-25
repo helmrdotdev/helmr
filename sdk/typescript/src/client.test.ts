@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { HelmrClient, task, workspaces } from "./index"
+import { HelmrClient, actor, task, workspaces } from "./index"
 import type { WorkspaceDefinition } from "./index"
 import { installRuntimeOperations } from "./internal"
 import {
@@ -149,6 +149,132 @@ describe("HelmrClient Workspaces", () => {
   })
 })
 
+describe("HelmrClient Actors", () => {
+  test("uses declared IDs and client-bound refs for the complete Actor surface", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    const responses: unknown[] = [
+      {
+        actor_id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        run_id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      },
+      { sequence: 1 },
+      {
+        id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        key: "thread:1",
+        status: "open",
+        current_run_id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        created_at: "2026-07-24T11:50:00Z",
+        updated_at: "2026-07-24T11:50:01Z",
+      },
+      {
+        records: [{
+          id: "arec_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          sequence: 1,
+          data: { stage: "started" },
+          content_type: "application/json",
+          created_at: "2026-07-24T11:50:02Z",
+          provenance: {
+            run_id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+            attempt_number: 1,
+            deployment_id: "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          },
+        }],
+        next_after: 1,
+        has_more: false,
+      },
+      {
+        actor_id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        accepted_at: "2026-07-24T11:50:03Z",
+      },
+    ]
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async (input: URL | RequestInfo, init?: RequestInit) => {
+        requests.push({ url: String(input), init })
+        return Response.json(responses.shift(), { status: 200 })
+      }) as typeof fetch,
+    })
+    const operator = actor({ id: "operator", run: async () => {} })
+    const workspace = workspaces.ref({
+      id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    })
+    const signal = new AbortController().signal
+
+    const started = await client.actors.start<typeof operator>(
+      "operator",
+      {
+        key: "thread:1",
+        input: { type: "start" },
+        workspace,
+        idempotencyKey: "actor-1",
+        run: {
+          concurrencyKey: "thread:1",
+          retry: { maxAttempts: 2 },
+          metadata: { source: "backend" },
+          tags: ["agent"],
+        },
+      },
+      { signal },
+    )
+    expect(started.run.id).toBe("run_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+    expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
+      key: "thread:1",
+      input: { type: "start" },
+      workspace: { id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      idempotency_key: "actor-1",
+      run: {
+        concurrency_key: "thread:1",
+        retry: { max_attempts: 2 },
+        metadata: { source: "backend" },
+        tags: ["agent"],
+      },
+    })
+    expect(requests[0]!.init?.signal).toBe(signal)
+
+    await started.ref.input.send(
+      { type: "continue" },
+      { idempotencyKey: "input-1" },
+      { signal },
+    )
+    expect(JSON.parse(String(requests[1]!.init?.body))).toEqual({
+      actor_id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      input: { type: "continue" },
+      idempotency_key: "input-1",
+    })
+
+    const status = await started.ref.status({ signal })
+    expect(status).toMatchObject({
+      id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      key: "thread:1",
+      status: "open",
+      currentRunId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    })
+    expect(requests[2]!.url).toContain(
+      "/api/actors/operator/status?actor_id=act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+
+    const records = await started.ref.output.list(
+      { after: 0, limit: 10 },
+      { signal },
+    )
+    expect(records).toEqual([expect.objectContaining({
+      id: "arec_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      sequence: 1,
+      data: { stage: "started" },
+    })])
+    expect(requests[3]!.url).toContain(
+      "/api/actors/operator/output?actor_id=act_aaaaaaaaaaaaaaaaaaaaaaaaaa&after=0&limit=10",
+    )
+
+    await started.ref.close({ idempotencyKey: "close-1" }, { signal })
+    expect(JSON.parse(String(requests[4]!.init?.body))).toEqual({
+      actor_id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      idempotency_key: "close-1",
+    })
+  })
+})
+
 describe("HelmrClient Tokens", () => {
   test("creates an Environment-scoped Token through authenticated REST", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
@@ -225,6 +351,89 @@ describe("HelmrClient Tokens", () => {
       }
     },
   )
+})
+
+describe("HelmrClient Deployments", () => {
+  test("distinguishes an absent current Deployment from retrieval", async () => {
+    const responses: unknown[] = [
+      { deployment: null },
+      {
+        id: "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        version: "2026.07.25.1",
+        tasks: ["resize-image"],
+        actors: ["operator"],
+        workspaces: ["repository-agent"],
+      },
+    ]
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async () =>
+        Response.json(responses.shift(), { status: 200 })) as typeof fetch,
+    })
+
+    await expect(client.deployments.current()).resolves.toBeNull()
+    await expect(
+      client.deployments.retrieve("dep_aaaaaaaaaaaaaaaaaaaaaaaaaa"),
+    ).resolves.toEqual({
+      id: "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      version: "2026.07.25.1",
+      tasks: ["resize-image"],
+      actors: ["operator"],
+      workspaces: ["repository-agent"],
+    })
+  })
+})
+
+describe("HelmrClient Schedules", () => {
+  test("retrieves and pages declarative Schedule status", async () => {
+    const snapshot = {
+      id: "sch_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      task: "scheduled-maintenance",
+      workspace: { key: "maintenance" },
+      cron: { pattern: "0 * * * *", timezone: "UTC" },
+      status: "active",
+      generation: 1,
+      effective_from: "2026-07-24T11:00:00Z",
+      next_fire_at: "2026-07-24T12:00:00Z",
+      created_at: "2026-07-24T11:00:00Z",
+      updated_at: "2026-07-24T11:00:00Z",
+    }
+    const requests: string[] = []
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async (input: URL | RequestInfo) => {
+        requests.push(String(input))
+        return String(input).includes("?")
+          ? Response.json({
+              schedules: [snapshot],
+              next_cursor: "sc1.next",
+            })
+          : Response.json(snapshot)
+      }) as typeof fetch,
+    })
+
+    const retrieved = await client.schedules.retrieve(
+      "sch_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    const listed = await client.schedules.list({
+      cursor: "sc1.previous",
+      limit: 10,
+    })
+
+    expect(retrieved).toMatchObject({
+      id: "sch_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      task: "scheduled-maintenance",
+      status: "active",
+      workspace: { key: "maintenance" },
+    })
+    expect(listed.items).toHaveLength(1)
+    expect(listed.nextCursor).toBe("sc1.next")
+    expect(requests[1]).toBe(
+      "https://api.example.test/api/schedules?cursor=sc1.previous&limit=10",
+    )
+  })
 })
 
 describe("HelmrClient Runs", () => {

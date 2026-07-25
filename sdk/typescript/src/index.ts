@@ -9,6 +9,29 @@ export { tokens } from "./tokens"
 export { workspace, workspaces } from "./workspace"
 
 export type {
+  ClientActorIdRef,
+  ClientActorInputRef,
+  ClientActorKeyRef,
+  ClientActorOutputQuery,
+  ClientActorOutputRef,
+  ClientActorRefBase,
+  ClientActorsApi,
+  ClientActorStartRequest,
+} from "./client-actor"
+
+export type {
+  ClientDeploymentsApi,
+  DeploymentSnapshot,
+} from "./client-deployment"
+
+export type {
+  ClientSchedulesApi,
+  ScheduleError,
+  ScheduleListQuery,
+  ScheduleSnapshot,
+} from "./client-schedule"
+
+export type {
   ClientRunListQuery,
   ClientRunsApi,
   ClientTasksApi,
