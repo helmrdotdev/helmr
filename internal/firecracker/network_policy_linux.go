@@ -350,14 +350,12 @@ add set inet %[1]s resolver_ipv4 { type ipv4_addr; elements = { %[10]s } }
 add set inet %[1]s resolver_ipv6 { type ipv6_addr; elements = { %[11]s } }
 add chain inet %[1]s forward { type filter hook forward priority 0; policy drop; }
 add chain inet %[1]s egress
+add rule inet %[1]s forward meta nfproto ipv6 counter name %[2]s drop
 add rule inet %[1]s forward oifname %[12]s quota name %[4]s counter name %[3]s drop
 add rule inet %[1]s forward oifname %[12]s ct state established,related accept
 add rule inet %[1]s forward iifname %[12]s ip daddr @resolver_ipv4 udp dport 53 jump egress
-add rule inet %[1]s forward iifname %[12]s ip6 daddr @resolver_ipv6 udp dport 53 jump egress
 add rule inet %[1]s forward iifname %[12]s ip daddr @resolver_ipv4 tcp dport 53 jump egress
-add rule inet %[1]s forward iifname %[12]s ip6 daddr @resolver_ipv6 tcp dport 53 jump egress
 add rule inet %[1]s forward iifname %[12]s ip daddr @blocked_ipv4 counter name %[2]s drop
-add rule inet %[1]s forward iifname %[12]s ip6 daddr @blocked_ipv6 counter name %[2]s drop
 add rule inet %[1]s forward iifname %[12]s tcp jump egress
 add rule inet %[1]s forward counter name %[2]s drop
 add rule inet %[1]s egress ct state new ct count over %[13]d counter name %[3]s drop
@@ -388,6 +386,7 @@ func nftNetworkPolicyScript(policy compute.NetworkPolicy, blockedIPv4CIDRs []str
 	return fmt.Sprintf(strings.TrimSpace(`
 add table inet %[1]s
 add chain inet %[1]s forward { type filter hook forward priority 0; policy %[2]s; }
+add rule inet %[1]s forward meta nfproto ipv6 drop
 add rule inet %[1]s forward ct state established,related accept
 %[3]s
 %[4]s

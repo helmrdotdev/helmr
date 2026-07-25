@@ -23,8 +23,10 @@ all_smoke_cases=(
   runtime
   token
   timer
+  network
   child-tasks
   edge-workspace
+  concurrent-wait
   missing-secrets
   invalid-payload
   expected-error
@@ -200,6 +202,7 @@ start_capture_ids() {
   case "${task}" in
     runtime-smoke) declared_id=helmr-runtime-smoke ;;
     timer-smoke) declared_id=helmr-timer-smoke ;;
+    network-smoke) declared_id=helmr-network-smoke ;;
     child-task-smoke) declared_id=helmr-child-task-caller-smoke ;;
     edge-smoke) declared_id=helmr-edge-smoke ;;
     agent-toolchain-smoke) declared_id=helmr-agent-toolchain-smoke ;;
@@ -308,6 +311,45 @@ inspect_run() {
   if ! run_helmr run logs "${run_id}" "${scope_args[@]}"; then
     return 1
   fi
+}
+
+run_snapshot_json() {
+  local run_id=$1
+  shift
+  local scope_args=()
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project|-p|--env|-e)
+        scope_args+=("$1" "$2")
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  run_helmr run get "${run_id}" "${scope_args[@]}" --json
+}
+
+assert_run_output() {
+  local run_id=$1
+  local filter=$2
+  shift 2
+  local scope_args=()
+  local output
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project|-p|--env|-e)
+        scope_args+=("$1" "$2")
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  output="$(run_helmr run get "${run_id}" "${scope_args[@]}" --json)"
+  printf '%s\n' "${output}" | jq -e "${filter}" >/dev/null
 }
 
 delete_smoke_workspace() {
@@ -583,29 +625,50 @@ expect_run_rejected() {
 
 expect_run_failure() {
   local name=$1
-  shift
+  local expected_code=$2
+  shift 2
   local ids
   local workspace_id
   local run_id
   local status
-  ids="$(start_capture_ids "$@")"
+  local snapshot
+  local actual_code
+  local result=0
+  if ! ids="$(start_capture_ids "$@")"; then
+    return 1
+  fi
   workspace_id="${ids%% *}"
   run_id="${ids##* }"
   workspace_ids+=("${workspace_id}")
   run_ids+=("${run_id}")
-  status="$(wait_status "${run_id}" "$@")"
-  if [ "${status}" = "succeeded" ]; then
+  if ! status="$(wait_status "${run_id}" "$@")"; then
+    printf 'FAIL %s: could not read terminal status: %s\n' \
+      "${name}" "${run_id}" >&2
+    result=1
+  elif [ "${status}" = "succeeded" ]; then
     inspect_run "${run_id}" "$@" >&2
     printf 'FAIL %s: run unexpectedly succeeded: %s\n' "${name}" "${run_id}" >&2
-    return 1
-  fi
-  if [ "${status}" != "failed" ]; then
+    result=1
+  elif [ "${status}" != "failed" ]; then
     inspect_run "${run_id}" "$@" >&2
     printf 'FAIL %s: expected failed, got %s: %s\n' "${name}" "${status}" "${run_id}" >&2
-    return 1
+    result=1
+  elif ! snapshot="$(run_snapshot_json "${run_id}" "$@")"; then
+    result=1
+  elif ! actual_code="$(printf '%s\n' "${snapshot}" | jq -er '.error.code')"; then
+    printf 'FAIL %s: failed Run did not expose error.code\n' "${name}" >&2
+    result=1
+  elif [ "${actual_code}" != "${expected_code}" ]; then
+    printf 'FAIL %s: expected error code %s, got %s\n' \
+      "${name}" "${expected_code}" "${actual_code}" >&2
+    result=1
+  elif ! inspect_run "${run_id}" "$@"; then
+    result=1
   fi
-  inspect_run "${run_id}" "$@"
-  delete_smoke_workspace "${workspace_id}" "$@"
+  if ! delete_smoke_workspace "${workspace_id}" "$@"; then
+    result=1
+  fi
+  [ "${result}" = "0" ] || return "${result}"
   printf 'PASS %s failed as expected run_id=%s\n' "${name}" "${run_id}"
 }
 
@@ -641,6 +704,19 @@ if smoke_case_enabled timer; then
     --payload-json '{"waitFor":"5s"}'
 fi
 
+if smoke_case_enabled network; then
+  mark_smoke_executed network
+  expect_run_success staging-network network-smoke \
+    "${staging_scope_args[@]}"
+  network_run_index=$((${#run_ids[@]} - 1))
+  assert_run_output "${run_ids[network_run_index]}" '
+    .output == {
+      publicIPv4:true,
+      ipv6DefaultRoute:false
+    }
+  ' "${staging_scope_args[@]}"
+fi
+
 if smoke_case_enabled child-tasks; then
   mark_smoke_executed child-tasks
   expect_child_task_lifecycle staging-child-tasks "${staging_scope_args[@]}"
@@ -653,6 +729,13 @@ if smoke_case_enabled edge-workspace; then
     --payload-json '{"mode":"workspace-overwrite"}'
 fi
 
+if smoke_case_enabled concurrent-wait; then
+  mark_smoke_executed concurrent-wait
+  expect_run_success staging-concurrent-wait edge-smoke \
+    "${staging_scope_args[@]}" \
+    --payload-json '{"mode":"concurrent-wait","waitTimeout":30}'
+fi
+
 if smoke_case_enabled missing-secrets; then
   mark_smoke_executed missing-secrets
   expect_run_rejected staging-missing-secrets missing-secret-smoke \
@@ -662,14 +745,16 @@ fi
 
 if smoke_case_enabled invalid-payload; then
   mark_smoke_executed invalid-payload
-  expect_run_failure staging-invalid-payload runtime-smoke \
+  expect_run_failure staging-invalid-payload task_payload_invalid \
+    runtime-smoke \
     "${staging_scope_args[@]}" \
     --payload-json '{"scenario":"bad-payload","unknown":true}'
 fi
 
 if smoke_case_enabled expected-error; then
   mark_smoke_executed expected-error
-  expect_run_failure staging-expected-error edge-smoke \
+  expect_run_failure staging-expected-error task_failed \
+    edge-smoke \
     "${staging_scope_args[@]}" \
     --payload-json '{"mode":"expected-error"}'
 fi

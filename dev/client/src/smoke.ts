@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto"
+import { mkdir, rename, writeFile } from "node:fs/promises"
+import { dirname } from "node:path"
 import {
   HelmrClient,
   type ActorStatus,
@@ -23,6 +25,10 @@ import type {
 } from "../../workflows/tasks/smoke/runtime"
 import { assert, assertEqual } from "./assert"
 import { readConfig } from "./config"
+import {
+  runManagementSmoke,
+  type ManagementEvidence,
+} from "./management-smoke"
 
 type Evidence = {
   readonly marker: string
@@ -40,6 +46,7 @@ type Evidence = {
   readonly taskLogs: readonly RunLogRecord[]
   readonly taskEvents: readonly RunEventRecord[]
   readonly childTasks: ChildTaskEvidence
+  readonly management: ManagementEvidence
   readonly tokenId: string
   readonly secretDelivery: "covered" | "skipped"
   readonly deletedWorkspaceId: string
@@ -59,13 +66,25 @@ type ChildTaskEvidence = {
   readonly actorWorkspaceId: string
   readonly actorId: string
   readonly actorRunId: string
+  readonly actorContinuationRunId: string
   readonly actorChildRunId: string
+  readonly actorOutputSequences: readonly number[]
 }
 
 const config = readConfig()
 const client = new HelmrClient({ url: config.apiUrl, apiKey: config.apiKey })
-const evidence = await runSmoke()
-console.log(JSON.stringify(evidence, null, 2))
+let cleanupPrimaryWorkspace: (() => Promise<unknown>) | undefined
+try {
+  const evidence = await runSmoke()
+  await writeClientSmokeResult(evidence)
+  console.log(JSON.stringify(evidence, null, 2))
+} catch (error) {
+  if (cleanupPrimaryWorkspace !== undefined) {
+    await Promise.allSettled([cleanupPrimaryWorkspace()])
+  }
+  await writeClientSmokeResult(undefined)
+  throw error
+}
 
 async function runSmoke(): Promise<Evidence> {
   const workspaceKey = `runtime-smoke-${config.marker}`
@@ -85,11 +104,37 @@ async function runSmoke(): Promise<Evidence> {
     "helmr-runtime-smoke",
     workspaceCreateOptions,
   )
+  cleanupPrimaryWorkspace = () =>
+    created.delete({ idempotencyKey: `workspace:delete:${config.marker}` })
   const replayedCreate = await client.workspaces.create<typeof runtimeSmokeWorkspace>(
     "helmr-runtime-smoke",
     workspaceCreateOptions,
   )
   assertEqual(replayedCreate.id, created.id, "workspace create replay changed the ID")
+  let unexpectedConflictWorkspace: WorkspaceIdRef | undefined
+  try {
+    unexpectedConflictWorkspace = await client.workspaces.create<
+      typeof runtimeSmokeWorkspace
+    >(
+      "helmr-runtime-smoke",
+      {
+        ...workspaceCreateOptions,
+        key: `${workspaceKey}-conflict`,
+      },
+    )
+  } catch (error) {
+    assertEqual(
+      errorCode(error),
+      "idempotency_conflict",
+      "divergent Workspace create returned the wrong error",
+    )
+  }
+  if (unexpectedConflictWorkspace !== undefined) {
+    await unexpectedConflictWorkspace.delete({
+      idempotencyKey: `workspace:conflict-cleanup:${config.marker}`,
+    })
+    throw new Error("divergent Workspace create reused an idempotency key")
+  }
 
   const byKey = client.workspaces.ref<typeof runtimeSmokeWorkspace>(
     "helmr-runtime-smoke",
@@ -188,6 +233,7 @@ async function runSmoke(): Promise<Evidence> {
   assert(taskFile.includes(`marker=${taskMarker}`), "Task did not advance the Workspace head")
 
   const childTasks = await runChildTaskSmoke()
+  const management = await runManagementSmoke(client, config.marker)
 
   const token = await client.tokens.create({
     timeout: "10m",
@@ -210,6 +256,7 @@ async function runSmoke(): Promise<Evidence> {
     idempotencyKey: `workspace:delete:${config.marker}`,
   })
   assertEqual(deleteReplay.workspaceId, created.id, "Workspace delete replay changed the ID")
+  cleanupPrimaryWorkspace = undefined
 
   return {
     marker: config.marker,
@@ -227,6 +274,7 @@ async function runSmoke(): Promise<Evidence> {
     taskLogs: taskLogs.items,
     taskEvents: taskEvents.items,
     childTasks,
+    management,
     tokenId: token.id,
     secretDelivery: config.secretName === undefined ? "skipped" : "covered",
     deletedWorkspaceId: deleted.workspaceId,
@@ -329,8 +377,86 @@ async function runChildTaskSmoke(): Promise<ChildTaskEvidence> {
       "Actor output did not contain its child Task result",
     )
     const actorChildRunId = actorOutput.data.childRunId
+    const actorByID = client.actors.ref<typeof childTaskSmokeActor>(
+      "child-task-smoke-actor",
+      { id: actor.ref.id },
+    )
+    const actorByKey = client.actors.ref<typeof childTaskSmokeActor>(
+      "child-task-smoke-actor",
+      { key: `child-call:${config.marker}` },
+    )
+    const replayedInput = {
+      marker: `${config.marker}-actor-continuation`,
+      childWorkspaceId: targetWorkspace.id,
+    }
+    const sent = await actorByKey.input.send(
+      replayedInput,
+      { idempotencyKey: `child-actor:input:${config.marker}` },
+      { signal: AbortSignal.timeout(30_000) },
+    )
+    const replayedSend = await actorByID.input.send(
+      replayedInput,
+      { idempotencyKey: `child-actor:input:${config.marker}` },
+      { signal: AbortSignal.timeout(30_000) },
+    )
+    assertEqual(
+      replayedSend.sequence,
+      sent.sequence,
+      "Actor input idempotency replay changed the sequence",
+    )
+    const actorOutputs = await waitForActorOutputs(actorByID, 2)
+    const continuationOutput = actorOutputs.find((record) =>
+      record.data !== null &&
+      typeof record.data === "object" &&
+      "marker" in record.data &&
+      record.data.marker === `${config.marker}-actor-continuation`
+    )
+    assert(
+      continuationOutput !== undefined,
+      "Actor output omitted the continuation marker",
+    )
+    const actorContinuationRunId = continuationOutput.provenance.runId
+    assert(
+      actorContinuationRunId !== actor.run.id,
+      "Actor continuation reused its initial Run",
+    )
+    const actorContinuationRun = await waitForTerminalRun(
+      actorContinuationRunId,
+    )
+    assertEqual(
+      actorContinuationRun.status,
+      "succeeded",
+      "Actor continuation Run did not succeed",
+    )
+    const outputSequences = actorOutputs.map((record) => record.sequence)
+    assert(
+      outputSequences.every((sequence, index) =>
+        index === 0 || sequence > outputSequences[index - 1]!
+      ),
+      "Actor output sequences were not strictly ordered",
+    )
+    const streamedOutputs = []
+    for await (
+      const record of actorByID.output.read(
+        { after: 0, limit: 1 },
+        { signal: AbortSignal.timeout(30_000) },
+      )
+    ) {
+      streamedOutputs.push(record)
+    }
+    assertEqual(
+      streamedOutputs.length,
+      actorOutputs.length,
+      "Actor streaming output read did not paginate through all records",
+    )
 
-    await closeSmokeActor(actor.ref)
+    await closeSmokeActor(actorByID)
+    const retainedOutputs = await actorByID.output.list({ after: 0, limit: 10 })
+    assertEqual(
+      retainedOutputs.length,
+      actorOutputs.length,
+      "Actor close discarded durable output",
+    )
     for (const workspace of workspaces.toReversed()) {
       await workspace.ref.delete({ idempotencyKey: workspace.deleteKey })
     }
@@ -343,7 +469,9 @@ async function runChildTaskSmoke(): Promise<ChildTaskEvidence> {
       actorWorkspaceId: actorWorkspace.id,
       actorId: actor.ref.id,
       actorRunId: actor.run.id,
+      actorContinuationRunId,
       actorChildRunId,
+      actorOutputSequences: outputSequences,
     }
   } catch (error) {
     await cleanupChildTaskSmoke(actorRef, workspaces)
@@ -380,6 +508,21 @@ async function waitForActorOutput(
     if (records[0] !== undefined) return records[0]
     if (Date.now() >= deadline) {
       throw new Error(`timed out waiting for Actor output ${ref.id}`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+}
+
+async function waitForActorOutputs(
+  ref: ClientActorIdRef,
+  count: number,
+) {
+  const deadline = Date.now() + 60_000
+  for (;;) {
+    const records = await ref.output.list({ after: 0, limit: 10 })
+    if (records.length >= count) return records
+    if (Date.now() >= deadline) {
+      throw new Error(`timed out waiting for ${count} Actor outputs ${ref.id}`)
     }
     await new Promise((resolve) => setTimeout(resolve, 500))
   }
@@ -487,4 +630,73 @@ function encodeExec(result: WorkspaceExecResult): string {
     stdout: Buffer.from(result.stdout).toString("base64"),
     stderr: Buffer.from(result.stderr).toString("base64"),
   })
+}
+
+async function writeClientSmokeResult(
+  evidence: Evidence | undefined,
+): Promise<void> {
+  const path = process.env["HELMR_CLIENT_SMOKE_RESULT_FILE"]
+  if (path === undefined || path === "") return
+  const checkIDs = [
+    "workspace-lifecycle",
+    "workspace-basic-exec",
+    "idempotency-conflict",
+    "task-runtime-telemetry",
+    "child-task-call",
+    "actor-continuation",
+    "actor-output-pagination",
+    "deployment-read",
+    "schedule-read",
+    "schedule-fire",
+    "secret-lifecycle",
+    "token-management",
+    "run-list-cancel",
+  ] as const
+  const status = evidence === undefined ? "failed" : "passed"
+  const result = {
+    schema: "helmrdotdev.client-smoke-result.v1",
+    status,
+    reason: evidence === undefined ? "client_smoke_failed" : null,
+    checks: checkIDs.map((id) => ({ id, status })),
+    objects: {
+      run_ids: evidence === undefined
+        ? []
+        : [
+            evidence.taskRunId,
+            evidence.childTasks.taskRunId,
+            evidence.childTasks.actorRunId,
+            evidence.childTasks.actorContinuationRunId,
+            evidence.childTasks.actorChildRunId,
+            evidence.management.scheduledRunId,
+            evidence.management.cancelledRunId,
+          ],
+      workspace_ids: evidence === undefined
+        ? []
+        : [
+            evidence.workspaceId,
+            evidence.childTasks.targetWorkspaceId,
+            evidence.childTasks.taskCallerWorkspaceId,
+            evidence.childTasks.actorWorkspaceId,
+          ],
+      deployment_ids: evidence === undefined
+        ? []
+        : [evidence.management.deploymentId],
+      schedule_ids: evidence === undefined
+        ? []
+        : [evidence.management.scheduleId],
+      token_ids: evidence === undefined
+        ? []
+        : [evidence.tokenId, evidence.management.completedTokenId],
+      actor_ids: evidence === undefined ? [] : [evidence.childTasks.actorId],
+    },
+    observations: evidence === undefined
+      ? {}
+      : {
+          actor_output_count: evidence.childTasks.actorOutputSequences.length,
+          secret_delivery: evidence.secretDelivery,
+        },
+  }
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(`${path}.tmp`, `${JSON.stringify(result)}\n`, { mode: 0o600 })
+  await rename(`${path}.tmp`, path)
 }

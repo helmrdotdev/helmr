@@ -28,7 +28,10 @@ cat >"${product}/dev/aws/validation-cases/test.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 jq -n --argjson checks "$(jq -c '.producer.checks' <<<"${HELMR_VALIDATION_CASE}")" \
-  '{schema:"helmrdotdev.validation-case-source-result.v1",status:"passed",reason:null,checks:[$checks[]|{id:.,status:"passed"}]}' \
+  '{schema:"helmrdotdev.validation-case-source-result.v2",status:"passed",reason:null,
+    checks:[$checks[]|{id:.,status:"passed"}],
+    objects:{run_ids:["run_aaaaaaaaaaaaaaaaaaaaaaaaaa"],workspace_ids:[],deployment_ids:[],schedule_ids:[],token_ids:[],actor_ids:[]},
+    observations:{attempt:1}}' \
   >"${HELMR_VALIDATION_CASE_RESULT_FILE}"
 EOF
 chmod +x "${product}/dev/aws/validation-cases/test.sh"
@@ -118,8 +121,7 @@ jq -n \
         {id:"identity-fencing",category:"identity_fencing",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["stale-epoch-rejected"]},repetitions:1},
         {id:"queue-preservation",category:"queue_preservation",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["queue-conserved"]},repetitions:1},
         {id:"protected-drain",category:"protected_drain",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["drain-before-termination"]},repetitions:1},
-        {id:"provider-loss",category:"provider_loss",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["capacity-deficit-visible"]},repetitions:1},
-        {id:"final-zero",category:"final_zero",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["workers-zero"]},repetitions:1}
+        {id:"provider-loss",category:"provider_loss",task:null,payload:null,payload_sha256:null,producer:{path:"dev/aws/validation-cases/test.sh",sha256:$producer_sha,checks:["capacity-deficit-visible"]},repetitions:1}
       ]
     },
     cost_guard:{run_worker_max:1,build_worker_max:1,nat_gateway_max:1,max_bundle_bytes:52428800},
@@ -148,6 +150,78 @@ jq '.unexpected=true' "${manifest}" >"${tmp}/invalid.json"
 if campaign validate "${tmp}/invalid.json" >/dev/null 2>&1; then
   fail "unknown manifest fields should fail"
 fi
+
+jq 'del(.workload.cases[] | select(.category == "provider_loss"))' "${manifest}" >"${tmp}/missing-category.json"
+if campaign validate "${tmp}/missing-category.json" >/dev/null 2>&1; then
+  fail "missing required workload category should fail"
+fi
+
+jq '.workload.cases[0].producer.checks += [.workload.cases[0].producer.checks[0]]' "${manifest}" >"${tmp}/duplicate-check.json"
+if campaign validate "${tmp}/duplicate-check.json" >/dev/null 2>&1; then
+  fail "duplicate producer checks should fail"
+fi
+
+valid_case_result="${tmp}/valid-case-result.json"
+jq -n '{
+  schema:"helmrdotdev.validation-case-source-result.v2",
+  status:"passed",
+  reason:null,
+  checks:[
+    {id:"build-completed",status:"passed"},
+    {id:"build-group-only",status:"passed"}
+  ],
+  objects:{
+    run_ids:["run_aaaaaaaaaaaaaaaaaaaaaaaaaa"],
+    workspace_ids:[],deployment_ids:[],schedule_ids:[],token_ids:[],actor_ids:[]
+  },
+  observations:{attempt:1}
+}' >"${valid_case_result}"
+normalized="${tmp}/normalized-case-result.json"
+campaign normalize-case-evidence "${manifest}" build-on-build-worker \
+  "${valid_case_result}" 0 "${normalized}"
+jq -e '.status == "passed" and .reason == null' "${normalized}" >/dev/null ||
+  fail "valid producer evidence should remain passed"
+
+assert_invalid_case_result() {
+  local input=$1 label=$2
+  campaign normalize-case-evidence "${manifest}" build-on-build-worker \
+    "${input}" 0 "${normalized}"
+  jq -e '
+    .status == "failed" and
+    .reason == "invalid_producer_result" and
+    all(.checks[]; .status == "failed")
+  ' "${normalized}" >/dev/null || fail "${label}"
+}
+
+jq '.unexpected=true' "${valid_case_result}" >"${tmp}/unknown-case-field.json"
+assert_invalid_case_result "${tmp}/unknown-case-field.json" \
+  "unknown producer evidence fields should canonicalize to failed"
+jq '.objects.run_ids=["00000000-0000-0000-0000-000000000000"]' \
+  "${valid_case_result}" >"${tmp}/private-case-id.json"
+assert_invalid_case_result "${tmp}/private-case-id.json" \
+  "private IDs should canonicalize to failed evidence"
+jq '.observations.blob=("x" * 9000)' \
+  "${valid_case_result}" >"${tmp}/oversized-case-result.json"
+assert_invalid_case_result "${tmp}/oversized-case-result.json" \
+  "oversized producer evidence should canonicalize to failed"
+jq '.checks[0].id="unexpected-check"' \
+  "${valid_case_result}" >"${tmp}/mismatched-case-checks.json"
+assert_invalid_case_result "${tmp}/mismatched-case-checks.json" \
+  "mismatched producer checks should canonicalize to failed"
+
+campaign normalize-case-evidence "${manifest}" build-on-build-worker \
+  "${tmp}/missing-case-result.json" 1 "${normalized}"
+jq -e '.status == "failed" and .reason == "producer_result_missing"' \
+  "${normalized}" >/dev/null ||
+  fail "missing producer evidence should be explicit"
+campaign normalize-case-evidence "${manifest}" build-on-build-worker \
+  "${valid_case_result}" 7 "${normalized}"
+jq -e '
+  .status == "failed" and
+  .reason == "producer_exit_conflict" and
+  all(.checks[]; .status == "failed")
+' "${normalized}" >/dev/null ||
+  fail "nonzero producer exit should override passed evidence"
 
 if campaign start "${manifest}" preflight >"${tmp}/stdout" 2>"${tmp}/stderr"; then
   fail "formal stages should require an evidence claim"
@@ -191,6 +265,15 @@ case "${command_line}" in
   *"elasticache describe-replication-groups"*"--replication-group-id"*) printf '{"ReplicationGroups":[{"ReplicationGroupId":"managed-worker-dispatch","Status":"available","Engine":"valkey","MemberClusters":["cache-1"],"ReplicationGroupCreateTime":"2026-07-14T00:00:00Z"}]}\n' ;;
   *"elasticache describe-replication-groups"*) printf '{"ReplicationGroups":[]}\n' ;;
   *"autoscaling describe-auto-scaling-groups"*)
+    if [ "${HELMR_VALIDATION_SAMPLE_PHASE:-}" = final ] &&
+      [ -e "${MOCK_ASG_FINAL_SAMPLE_ERROR_FILE}" ]; then
+      mv "${MOCK_ASG_FINAL_SAMPLE_ERROR_FILE}" "${MOCK_ASG_FINAL_SAMPLE_ERROR_FILE}.used"
+      exit 1
+    fi
+    if [ -e "${MOCK_ASG_SAMPLE_ERROR_FILE}" ]; then
+      mv "${MOCK_ASG_SAMPLE_ERROR_FILE}" "${MOCK_ASG_SAMPLE_ERROR_FILE}.used"
+      exit 1
+    fi
     if [[ "${command_line}" == *"managed-worker-run-worker"* ]]; then id=lt-0123456789abcdef0; elif [[ "${command_line}" == *"managed-worker-build-worker"* ]]; then id=lt-1123456789abcdef0; else printf '{"AutoScalingGroups":[]}\n'; exit 0; fi
     if [ -e "${MOCK_DESTROYED_FILE}" ]; then printf '{"AutoScalingGroups":[]}\n'; elif grep -q '^create_worker = true$' "${DEV_TFVARS}"; then if [ -e "${MOCK_ASG_DRIFT_FILE}" ]; then max=2; else max=1; fi; printf '{"AutoScalingGroups":[{"AutoScalingGroupName":"mock","MinSize":0,"MaxSize":%s,"DesiredCapacity":0,"CreatedTime":"2026-07-14T00:10:00Z","Instances":[],"LaunchTemplate":{"LaunchTemplateId":"%s","Version":"1"}}]}\n' "${max}" "${id}"; else printf '{"AutoScalingGroups":[]}\n'; fi
     ;;
@@ -266,6 +349,8 @@ campaign_b() {
   MOCK_DESTROYED_FILE="${tmp}/destroyed" \
   MOCK_UNHEALTHY_CONTROL_FILE="${tmp}/unhealthy-control" \
   MOCK_ASG_DRIFT_FILE="${tmp}/asg-drift" \
+  MOCK_ASG_SAMPLE_ERROR_FILE="${tmp}/asg-sample-error" \
+  MOCK_ASG_FINAL_SAMPLE_ERROR_FILE="${tmp}/asg-final-sample-error" \
   MOCK_HOOK_DRIFT_FILE="${tmp}/hook-drift" \
   BOOTSTRAP_STACK="${tmp}/bootstrap" \
   DEV_STACK="${dev_stack}" \
@@ -374,8 +459,34 @@ grep -Eq 'product checkout is dirty|producer drifted' "${tmp}/stderr" || fail "p
 git -C "${product}" checkout -q -- .
 campaign_b workload "${manifest_b}"
 workload_result="${state_root}/managed-worker-20260714-b/results/05-workload.json"
-jq -e '(.cases | length) == 9 and all(.cases[]; .status == "passed") and .observations.nat_bytes_in_from_destination == 1024' "${workload_result}" >/dev/null ||
+jq -e '(.cases | length) == 8 and all(.cases[]; .status == "passed") and .observations.nat_bytes_in_from_destination == 1024' "${workload_result}" >/dev/null ||
   fail "harness-owned workload result"
+case_evidence="${state_root}/managed-worker-20260714-b/case-evidence/run-on-run-worker-01.json"
+jq -e '.schema == "helmrdotdev.validation-case-source-result.v2" and .objects.run_ids == ["run_aaaaaaaaaaaaaaaaaaaaaaaaaa"]' "${case_evidence}" >/dev/null ||
+  fail "bounded case evidence should be retained"
+cp "${case_evidence}" "${case_evidence}.original"
+jq '.observations.attempt=2' "${case_evidence}.original" >"${case_evidence}"
+if campaign_b validate-evidence "${manifest_b}" >/dev/null 2>"${tmp}/stderr"; then
+  fail "case evidence hash mismatch should fail validation"
+fi
+grep -Fq 'case evidence hash mismatch' "${tmp}/stderr" ||
+  fail "case evidence hash mismatch reason"
+mv "${case_evidence}.original" "${case_evidence}"
+unreferenced_evidence="${state_root}/managed-worker-20260714-b/case-evidence/unreferenced-01.json"
+cp "${case_evidence}" "${unreferenced_evidence}"
+if campaign_b validate-evidence "${manifest_b}" >/dev/null 2>"${tmp}/stderr"; then
+  fail "unreferenced case evidence should fail validation"
+fi
+grep -Fq 'unreferenced case evidence file' "${tmp}/stderr" ||
+  fail "unreferenced case evidence reason"
+rm -f "${unreferenced_evidence}"
+mv "${case_evidence}" "${case_evidence}.missing"
+if campaign_b validate-evidence "${manifest_b}" >/dev/null 2>"${tmp}/stderr"; then
+  fail "missing linked case evidence should fail validation"
+fi
+grep -Fq 'references missing case evidence' "${tmp}/stderr" ||
+  fail "missing linked case evidence reason"
+mv "${case_evidence}.missing" "${case_evidence}"
 fake_publish="${tmp}/fake-publish.json"
 jq -n '{schema:"helmrdotdev.validation-stage-result.v1",stage:"pre_shutdown_publish",status:"passed",reason:null,observations:{bytes:1,checkpoint:"pre-shutdown",checksum_sha256:"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",logical_key:"helmr/validation-evidence/managed-worker-20260714-b/pre-shutdown/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.tar.gz",sha256:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",version_id:"fake"},cases:[]}' >"${fake_publish}"
 if campaign_b complete "${manifest_b}" pre_shutdown_publish "${fake_publish}" >/dev/null 2>"${tmp}/stderr"; then
@@ -394,6 +505,8 @@ campaign_b publish "${manifest_b}" post-shutdown >/dev/null
 post_bundle="$(find "${tmp}/s3" -maxdepth 1 -type f -name 'helmr_validation-evidence_managed-worker-20260714-b_post-shutdown_*.tar.gz' | head -1)"
 [ -n "${post_bundle}" ] || fail "post-shutdown bundle should be stored"
 tar -tzf "${post_bundle}" | grep -Fq 'results/08-closed.json' || fail "post-shutdown bundle should contain durable closure"
+tar -tzf "${post_bundle}" | grep -Fq 'case-evidence/run-on-run-worker-01.json' ||
+  fail "post-shutdown bundle should contain bounded case evidence"
 [ "$(campaign_b status "${manifest_b}" | jq -r '.status')" = "closed" ] || fail "campaign should close"
 git -C "${product}" checkout -q -- .
 
@@ -451,5 +564,74 @@ fi
   fail "command/result conflict should be persisted"
 [ "$(campaign_b status "${manifest_e}" | jq -r '.running_stage == null')" = "true" ] ||
   fail "command/result conflict should not strand a running stage"
+
+manifest_f="${ops}/docs/validation/managed-worker-campaign-f.json"
+jq '.evidence.namespace="managed-worker-20260714-f"' "${manifest}" >"${manifest_f}"
+git -C "${ops}" add .
+git -C "${ops}" commit -qm sixth-manifest
+campaign_b init "${manifest_f}" >/dev/null
+campaign_b claim "${manifest_f}"
+jq -n '{schema:"helmrdotdev.validation-stage-result.v1",stage:"preflight",status:"passed",reason:null,observations:{},cases:[]}' >"${result}"
+campaign_b start "${manifest_f}" preflight
+campaign_b complete "${manifest_f}" preflight "${result}"
+cp "${control_tfvars_fixture}" "${tfvars}"
+campaign_b run-collect "${manifest_f}" control_up -- true
+jq -n '{schema:"helmrdotdev.validation-stage-result.v1",stage:"awaiting_human",status:"passed",reason:null,observations:{},cases:[]}' >"${result}"
+campaign_b start "${manifest_f}" awaiting_human
+campaign_b complete "${manifest_f}" awaiting_human "${result}"
+campaign_b auth "${manifest_f}"
+cp "${worker_tfvars_fixture}" "${tfvars}"
+if [ -e "${tmp}/destroyed" ]; then
+  mv "${tmp}/destroyed" "${tmp}/destroyed.previous"
+fi
+campaign_b run-collect "${manifest_f}" worker_up -- true
+touch "${tmp}/asg-sample-error"
+if campaign_b workload "${manifest_f}" >/dev/null 2>"${tmp}/stderr"; then
+  fail "worker sampling error should fail the workload"
+fi
+sampling_result="${state_root}/managed-worker-20260714-f/results/05-workload.json"
+[ -f "${sampling_result}" ] || {
+  cat "${tmp}/stderr" >&2
+  fail "worker sampling failure should retain a workload result"
+}
+jq -e '
+  .status == "failed" and
+  .reason == "worker_sampling_failed" and
+  all(.cases[]; .status == "passed")
+' "${sampling_result}" >/dev/null ||
+  fail "worker sampling error should not corrupt producer case evidence"
+campaign_b validate-evidence "${manifest_f}"
+
+manifest_g="${ops}/docs/validation/managed-worker-campaign-g.json"
+jq '.evidence.namespace="managed-worker-20260714-g"' "${manifest}" >"${manifest_g}"
+git -C "${ops}" add .
+git -C "${ops}" commit -qm seventh-manifest
+campaign_b init "${manifest_g}" >/dev/null
+campaign_b claim "${manifest_g}"
+jq -n '{schema:"helmrdotdev.validation-stage-result.v1",stage:"preflight",status:"passed",reason:null,observations:{},cases:[]}' >"${result}"
+campaign_b start "${manifest_g}" preflight
+campaign_b complete "${manifest_g}" preflight "${result}"
+cp "${control_tfvars_fixture}" "${tfvars}"
+campaign_b run-collect "${manifest_g}" control_up -- true
+jq -n '{schema:"helmrdotdev.validation-stage-result.v1",stage:"awaiting_human",status:"passed",reason:null,observations:{},cases:[]}' >"${result}"
+campaign_b start "${manifest_g}" awaiting_human
+campaign_b complete "${manifest_g}" awaiting_human "${result}"
+campaign_b auth "${manifest_g}"
+cp "${worker_tfvars_fixture}" "${tfvars}"
+campaign_b run-collect "${manifest_g}" worker_up -- true
+touch "${tmp}/asg-final-sample-error"
+if campaign_b workload "${manifest_g}" >/dev/null 2>"${tmp}/stderr"; then
+  fail "final worker sampling error should fail the workload"
+fi
+[ -f "${tmp}/asg-final-sample-error.used" ] ||
+  fail "final worker sampling failure injection was not consumed"
+final_sampling_result="${state_root}/managed-worker-20260714-g/results/05-workload.json"
+jq -e '
+  .status == "failed" and
+  .reason == "worker_sampling_failed" and
+  all(.cases[]; .status == "passed")
+' "${final_sampling_result}" >/dev/null ||
+  fail "final sampling error should retain structured producer evidence"
+campaign_b validate-evidence "${manifest_g}"
 
 printf 'ok - validation campaign tests\n'

@@ -20,7 +20,9 @@ product repo.
 | `agent-toolchain-smoke` | Validates the task image, Nix, GitHub access, Claude/Codex/Cursor SDKs, and namespace/runtime assumptions. |
 | `timer-smoke` | Parks on a wall-clock timer and verifies workspace state survives resume without active sleep. |
 | `child-task-smoke` | Exercises detached `task.start()`, durable `task.call()` success, and a child failure returned as `TaskResult`. |
-| `child-task-smoke-actor` | Exercises `task.call()` from an Actor turn and appends the terminal child result to durable Actor output. |
+| `child-task-smoke-actor` | Exercises `task.call()` from successive Actor turns, durable input continuation, and ordered durable Actor output. |
+| `schedule-smoke` | Declares a one-minute scheduled Task and records the schedule cause and timestamps from the runtime context. |
+| `network-smoke` | Proves public IPv4 egress while metadata, private IPv4, IPv6 default routing, and public IPv6 are unavailable. |
 
 ## Environment Strategy
 
@@ -37,8 +39,12 @@ Expected release-smoke coverage:
 | Token UX and approval state | `staging` or `production` | `runtime-smoke` with `exerciseToken=true` |
 | Timer parked wait resume | `staging` | `timer-smoke` |
 | Child Task lifecycle | `staging` | `child-task-smoke` through the `child-tasks` release-smoke case; `child-task-smoke-actor` through the authenticated client smoke. |
+| Actor continuation and durable output | `staging` | The authenticated client smoke sends two inputs to one Actor, observes a new continuation Run, reads output with pagination, and verifies output remains after close. |
+| Declarative Schedule admission and fire | `staging` | `schedule-smoke` through the authenticated client smoke, including list/retrieve, cursor advance, scheduled Run receipt, terminal result, and Schedule cause. |
+| IPv4-only network boundary | `staging` | `network-smoke` plus the deterministic host-policy test. The guest probe alone is not sufficient evidence. |
 | Missing-secret, invalid-payload, and failed-run observability | `staging` | `missing-secret-smoke` request expected to be rejected; malformed payload to `runtime-smoke`; `edge-smoke` expected-error |
-| CLI, API, and console inspection | both | `helmr run get`, `helmr run events`, `helmr run logs`, and the console Run/Task views |
+| Management resources | `staging` | The authenticated client smoke covers Deployment, Schedule, Secret, Token, Run list/cancel, and Workspace cleanup through the public SDK. |
+| CLI, API, and console inspection | both | `helmr run get`, `helmr run events`, `helmr run logs`, and the console Run/Task views. Missing v0 surfaces are reported by the pre-AWS gate. |
 
 ## Deploy & Run
 
@@ -100,8 +106,18 @@ harness runs `go run ./cmd/helmr` from the repository root. Set `SKIP_DEPLOY=1`
 to reuse the currently promoted deployments and run only the smoke cases.
 
 Use comma-separated `SMOKE_CASES` entries to run multiple focused real-usecase
-checks, for example `SMOKE_CASES=runtime,token,timer,child-tasks`. Leave
+checks, for example
+`SMOKE_CASES=runtime,token,timer,child-tasks,concurrent-wait,network`. Leave
 `SMOKE_CASES` unset for the full release smoke.
+
+Before creating AWS resources, run the zero-spend product readiness gate:
+
+```sh
+dev/release-gate/check-pre-aws.sh
+```
+
+The command exits nonzero while a required product contract is still absent.
+It does not turn known implementation gaps into skipped or passing smoke cases.
 
 Before interpreting AWS dev latency numbers, run the measurement preflight:
 

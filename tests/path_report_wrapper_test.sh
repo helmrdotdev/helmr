@@ -110,9 +110,9 @@ no-runs-strict-after" "$(cat "$attestation_calls")" "strict measurement should a
 
 : >"$calls"
 : >"$attestation_calls"
-top_level_id="11111111-1111-1111-1111-111111111111"
-json_run_id="22222222-2222-2222-2222-222222222222"
-line_run_id="33333333-3333-3333-3333-333333333333"
+top_level_id="obj_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+json_run_id="run_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+line_run_id="run_bbbbbbbbbbbbbbbbbbbbbbbbbb"
 STATE_DIR="$state_dir" FAKE_PATH_REPORT_CALLS="$calls" FAKE_SURFACE_ATTESTATION_CALLS="$attestation_calls" HELMR_PATH_REPORT_REQUIRE_RUNS=1 \
 	"$fake_root/dev/aws/run-smoke-with-path-report.sh" extract-json -- \
 	sh -c 'printf "%s\n" "{\"id\":\"'"$top_level_id"'\",\"run\":{\"id\":\"'"$json_run_id"'\"}}" "ux_timing case=extract-json event=start_returned at_ms=123 session_id=s run_id='"$json_run_id"' detail=test" "run_id='"$line_run_id"'"' >"$stdout" 2>"$stderr"
@@ -136,7 +136,7 @@ extract-json-after" "$(cat "$attestation_calls")" "strict measurement should att
 : >"$attestation_calls"
 if STATE_DIR="$state_dir" FAKE_PATH_REPORT_CALLS="$calls" FAKE_SURFACE_ATTESTATION_CALLS="$attestation_calls" FAKE_PATH_REPORT_MODE=missing_restore HELMR_PATH_REPORT_REQUIRE_RUNS=1 \
 	"$fake_root/dev/aws/run-smoke-with-path-report.sh" missing-restore -- \
-	sh -c 'printf "run_id=44444444-4444-4444-4444-444444444444\n"' >"$stdout" 2>"$stderr"; then
+	sh -c 'printf "run_id=run_cccccccccccccccccccccccccc\n"' >"$stdout" 2>"$stderr"; then
 	fail "strict checkpoint restore without durable restore evidence should fail"
 fi
 missing_restore_report_dir="$(awk -F= '/^report_dir=/ { print $2 }' "$stdout" | tail -1)"
@@ -147,7 +147,7 @@ assert_contains "$stderr" "path_report_error=restore_evidence_failed" "missing r
 : >"$attestation_calls"
 if STATE_DIR="$state_dir" FAKE_PATH_REPORT_CALLS="$calls" FAKE_SURFACE_ATTESTATION_CALLS="$attestation_calls" FAKE_PATH_REPORT_MODE=orphan_restore HELMR_PATH_REPORT_REQUIRE_RUNS=1 \
 	"$fake_root/dev/aws/run-smoke-with-path-report.sh" orphan-restore -- \
-	sh -c 'printf "run_id=55555555-5555-5555-5555-555555555555\n"' >"$stdout" 2>"$stderr"; then
+	sh -c 'printf "run_id=run_dddddddddddddddddddddddddd\n"' >"$stdout" 2>"$stderr"; then
 	fail "strict checkpoint restore with orphan restoring row should fail"
 fi
 orphan_restore_report_dir="$(awk -F= '/^report_dir=/ { print $2 }' "$stdout" | tail -1)"
@@ -158,7 +158,7 @@ assert_contains "$stderr" "status=restoring" "orphan restoring status should be 
 : >"$attestation_calls"
 STATE_DIR="$state_dir" FAKE_PATH_REPORT_CALLS="$calls" FAKE_SURFACE_ATTESTATION_CALLS="$attestation_calls" FAKE_PATH_REPORT_MODE=missing_restore \
 	"$fake_root/dev/aws/run-smoke-with-path-report.sh" non-strict-missing-restore -- \
-	sh -c 'printf "run_id=66666666-6666-6666-6666-666666666666\n"' >"$stdout" 2>"$stderr"
+	sh -c 'printf "run_id=run_eeeeeeeeeeeeeeeeeeeeeeeeee\n"' >"$stdout" 2>"$stderr"
 non_strict_report_dir="$(awk -F= '/^report_dir=/ { print $2 }' "$stdout" | tail -1)"
 assert_contains "$non_strict_report_dir/summary.txt" "restore_evidence_failures=0" "non-strict observation should not enforce restore evidence"
 

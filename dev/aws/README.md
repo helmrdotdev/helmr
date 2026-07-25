@@ -67,6 +67,15 @@ dev/aws/run-validation-campaign.sh auth MANIFEST
 dev/aws/run-validation-campaign.sh workload MANIFEST
 ```
 
+Every producer emits
+`helmrdotdev.validation-case-source-result.v2`. Its exact manifest-bound check
+list, terminal statuses, public resource IDs, and small typed observations are
+validated and canonicalized into `case-evidence/`. Unknown fields, duplicate
+or missing checks, private/internal IDs, arbitrary logs, and records over
+8 KiB are rejected. The canonical source result is bundled with the workload
+summary so a passing campaign proves what each case checked instead of only
+recording that its command exited zero.
+
 Typical local setup after both repositories are committed:
 
 ```sh

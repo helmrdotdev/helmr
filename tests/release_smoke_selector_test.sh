@@ -107,4 +107,70 @@ assert_contains "$fake_log" "workspace delete --id workspace-caller" "inspection
 assert_contains "$fake_log" "workspace delete --id workspace-target" "inspection failure target cleanup"
 assert_equal "failed" "$(jq -r '.status' "$result_json")" "inspection failure structured terminal status"
 
+contract_fake="$repo_root/tests/fixtures/fake-release-smoke-contract-helmr.sh"
+
+: >"$fake_log"
+run_expect_status 0 env \
+	FAKE_HELMR_LOG="$fake_log" \
+	HELMR_BIN="$contract_fake" \
+	HELMR_SMOKE_RESULT_FILE="$result_json" \
+	SMOKE_CASES=network \
+	SKIP_DEPLOY=1 \
+	bash "$script"
+assert_contains "$stdout" "PASS staging-network" "network contract pass"
+assert_contains "$fake_log" "run get run_aaaaaaaaaaaaaaaaaaaaaaaaaa" "network output inspection"
+assert_equal '["network"]' "$(jq -c '.executed_cases' "$result_json")" "network executed case"
+
+: >"$fake_log"
+run_expect_status 0 env \
+	FAKE_HELMR_LOG="$fake_log" \
+	HELMR_BIN="$contract_fake" \
+	HELMR_SMOKE_RESULT_FILE="$result_json" \
+	SMOKE_CASES=concurrent-wait \
+	SKIP_DEPLOY=1 \
+	bash "$script"
+assert_contains "$stdout" "PASS staging-concurrent-wait" "concurrent Wait contract pass"
+
+: >"$fake_log"
+run_expect_status 0 env \
+	FAKE_HELMR_LOG="$fake_log" \
+	HELMR_BIN="$contract_fake" \
+	HELMR_SMOKE_RESULT_FILE="$result_json" \
+	SMOKE_CASES=invalid-payload \
+	SKIP_DEPLOY=1 \
+	bash "$script"
+assert_contains "$stdout" "PASS staging-invalid-payload failed as expected" "payload error contract pass"
+
+: >"$fake_log"
+run_expect_status 1 env \
+	FAKE_CONTRACT_ERROR_CODE=wrong_error \
+	FAKE_HELMR_LOG="$fake_log" \
+	HELMR_BIN="$contract_fake" \
+	HELMR_SMOKE_RESULT_FILE="$result_json" \
+	SMOKE_CASES=invalid-payload \
+	SKIP_DEPLOY=1 \
+	bash "$script"
+assert_contains "$stderr" "expected error code task_payload_invalid, got wrong_error" "payload error code mismatch"
+assert_contains "$fake_log" "workspace delete --id wsp_bbbbbbbbbbbbbbbbbbbbbbbbbb" "payload mismatch cleanup"
+
+: >"$fake_log"
+run_expect_status 0 env \
+	FAKE_HELMR_LOG="$fake_log" \
+	HELMR_BIN="$contract_fake" \
+	HELMR_SMOKE_RESULT_FILE="$result_json" \
+	SMOKE_CASES=expected-error \
+	SKIP_DEPLOY=1 \
+	bash "$script"
+assert_contains "$stdout" "PASS staging-expected-error failed as expected" "Task failure contract pass"
+
+: >"$fake_log"
+run_expect_status 0 env \
+	FAKE_HELMR_LOG="$fake_log" \
+	HELMR_BIN="$contract_fake" \
+	HELMR_SMOKE_RESULT_FILE="$result_json" \
+	SMOKE_CASES=missing-secrets \
+	SKIP_DEPLOY=1 \
+	bash "$script"
+assert_contains "$stdout" "PASS staging-missing-secrets rejected before run creation" "missing Secret rejection"
+
 printf 'ok - release smoke selector tests\n'

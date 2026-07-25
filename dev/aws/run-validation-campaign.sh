@@ -11,7 +11,7 @@ AWS_REGION="${AWS_REGION:-us-east-1}"
 DEV_TFVARS="${DEV_TFVARS:-${ROOT}/infra/aws/stacks/dev/full-run-smoke.tfvars}"
 DEV_STACK="${DEV_STACK:-${ROOT}/infra/aws/stacks/dev}"
 EXPECTED_STAGES='["preflight","control_up","awaiting_human","auth_ready","worker_up","workload","pre_shutdown_publish","cleanup","closed","post_shutdown_publish"]'
-REQUIRED_CASE_CATEGORIES='["build","run","build_failure_isolation","worker_restart","identity_fencing","queue_preservation","protected_drain","provider_loss","final_zero"]'
+REQUIRED_CASE_CATEGORIES='["build","run","build_failure_isolation","worker_restart","identity_fencing","queue_preservation","protected_drain","provider_loss"]'
 TRAP_MANIFEST=""
 TRAP_STAGE=""
 TRAP_RESULT=""
@@ -41,6 +41,8 @@ Commands:
   auth MANIFEST
   close MANIFEST
   workload MANIFEST
+  normalize-case-evidence MANIFEST CASE_ID RAW_JSON COMMAND_STATUS OUTPUT_JSON
+  validate-evidence MANIFEST
 
 The campaign is resumable. Source or manifest drift blocks forward stages but
 never blocks evidence publication or cleanup. Commands must write a structured
@@ -147,11 +149,15 @@ validate_manifest() {
           (.task == null or (.task | type == "string" and test("^[a-z][a-z0-9-]{0,63}$"))) and
           ((.task == null and .payload == null and .payload_sha256 == null) or
            (.task != null and (.payload | type == "object" and (.smokeCase | type == "string" and test("^[a-z][a-z0-9-]{0,63}$"))) and (.payload_sha256 | type == "string" and test("^[0-9a-f]{64}$")))) and
-          (.producer | type == "object" and has("path") and has("sha256") and
+          (.producer | type == "object" and keys == ["checks","path","sha256"] and
             (.path | test("^dev/aws/validation-cases/[a-z0-9-]+\\.sh$") and (contains("..") | not)) and
-            (.sha256 | test("^[0-9a-f]{64}$"))) and
+            (.sha256 | test("^[0-9a-f]{64}$")) and
+            (.checks | type == "array" and length >= 1 and length <= 64 and
+              ([.[]] | unique | length) == length and
+              all(.[]; type == "string" and test("^[a-z][a-z0-9-]{0,63}$")))) and
           (.repetitions | type == "number" and . >= 1 and . <= 10)) and
-        ([.[].id] | unique | length) == length)) and
+        ([.[].id] | unique | length) == length and
+        ([.[].category] | unique | sort) == ($required_categories | sort))) and
     (.cost_guard | type == "object" and keys == ["build_worker_max","max_bundle_bytes","nat_gateway_max","run_worker_max"] and
       .run_worker_max == 1 and .build_worker_max == 1 and .nat_gateway_max == 1 and
       (.max_bundle_bytes | type == "number" and . >= 1048576 and . <= 52428800)) and
@@ -367,8 +373,8 @@ init_campaign() {
   dir="${STATE_ROOT}/${namespace}"
   [ ! -e "${dir}" ] || die "campaign namespace already exists locally"
   umask 077
-  mkdir -p "${dir}/results" "${dir}/publishes"
-  chmod 0700 "${STATE_ROOT}" "${dir}" "${dir}/results" "${dir}/publishes"
+  mkdir -p "${dir}/results" "${dir}/publishes" "${dir}/case-evidence"
+  chmod 0700 "${STATE_ROOT}" "${dir}" "${dir}/results" "${dir}/publishes" "${dir}/case-evidence"
   cp "${manifest_abs}" "${dir}/manifest.json"
   chmod 0600 "${dir}/manifest.json"
   manifest_raw="$(sha256_file "${manifest_abs}")"
@@ -554,7 +560,8 @@ validate_stage_result() {
       ;;
     workload)
     jq -e --slurpfile manifest "${manifest}" '
-      (((.status == "passed" and .reason == null) or (.status == "failed" and .reason == "workload_case_failed")) and
+      (((.status == "passed" and .reason == null) or
+        (.status == "failed" and (.reason == "workload_case_failed" or .reason == "worker_sampling_failed"))) and
         (.observations | keys == ["build_worker_peak","finished_at","nat_bytes_in_from_destination","nat_bytes_out_to_destination","run_worker_peak","started_at","worker_observed_intervals"]) and
         (.observations.started_at | fromdateiso8601 | type == "number") and (.observations.finished_at | fromdateiso8601 | type == "number") and
         (.observations.run_worker_peak | type == "number" and . >= 0 and floor == .) and
@@ -574,12 +581,18 @@ validate_stage_result() {
         (.id as $id | $manifest[0].workload.cases[] | select(.id == $id) as $case |
           ($result_case.attempts | type == "array" and length == $case.repetitions and
             ([.[].index] == [range(1; length + 1)]) and
-            all(.[]; keys == ["evidence_sha256","index","producer_sha256","reason","status"] and
+            all(.[]; keys == ["evidence_file","evidence_sha256","index","producer_sha256","reason","status"] and
               (.index | type == "number") and (.status == "passed" or .status == "failed") and
               ((.status == "passed" and .reason == null) or (.status == "failed" and (.reason | test("^[a-z0-9._-]{1,80}$")))) and
+              (.evidence_file | test("^case-evidence/[a-z][a-z0-9-]{0,63}-[0-9]{2}\\.json$")) and
               (.evidence_sha256 | test("^[0-9a-f]{64}$")) and .producer_sha256 == $case.producer.sha256)) and
           ($result_case.status == (if all($result_case.attempts[]; .status == "passed") then "passed" else "failed" end)))) and
-      (.status == (if all(.cases[]; .status == "passed") then "passed" else "failed" end))
+      ((all(.cases[]; .status == "passed") and
+          ((.status == "passed" and .reason == null) or
+           (.status == "failed" and .reason == "worker_sampling_failed"))) or
+        ((any(.cases[]; .status == "failed")) and
+          .status == "failed" and
+          (.reason == "workload_case_failed" or .reason == "worker_sampling_failed")))
     ' "${result}" >/dev/null || die "workload result does not cover the exact manifest case set"
       [ "${mode}" = "evidence" ] || verify_worker_cost_guard "${manifest}"
       ;;
@@ -1059,7 +1072,7 @@ claim_namespace() {
 }
 
 validate_evidence_tree() {
-  local manifest=$1 dir file base stage
+  local manifest=$1 dir file base stage workload_result=""
   dir="$(campaign_dir "${manifest}")"
   [ "$(sha256_file "${dir}/manifest.json")" = "$(jq -r '.manifest.raw_sha256' "${dir}/state.json")" ] || die "evidence manifest copy drifted"
   jq -e '
@@ -1112,7 +1125,150 @@ validate_evidence_tree() {
       *) die "unexpected structured evidence result: ${base}" ;;
     esac
     validate_stage_result "${manifest}" "${stage}" "${file}" evidence
+    if [ "${stage}" = workload ]; then
+      [ -z "${workload_result}" ] || die "multiple workload evidence results"
+      workload_result="${file}"
+    fi
   done
+  if [ -n "${workload_result}" ]; then
+    validate_case_evidence_links "${manifest}" "${workload_result}"
+  elif find "${dir}/case-evidence" -type f -name '*.json' -print -quit | grep -q .; then
+    die "case evidence exists without a workload result"
+  fi
+  for file in "${dir}"/case-evidence/*.json; do
+    [ -e "${file}" ] || continue
+    validate_case_evidence_file "${file}"
+  done
+}
+
+validate_case_evidence_links() {
+  local manifest=$1 workload_result=$2 dir case_id attempt evidence_file evidence_sha actual_sha file rel
+  dir="$(campaign_dir "${manifest}")"
+  while IFS=$'\t' read -r case_id attempt evidence_file evidence_sha; do
+    file="${dir}/${evidence_file}"
+    [ -f "${file}" ] || die "workload result references missing case evidence: ${evidence_file}"
+    actual_sha="$(sha256_file "${file}")"
+    [ "${actual_sha}" = "${evidence_sha}" ] ||
+      die "workload result case evidence hash mismatch: ${evidence_file}"
+    jq -e \
+      --arg case_id "${case_id}" \
+      --argjson attempt "${attempt}" \
+      --slurpfile manifest "${manifest}" \
+      --slurpfile evidence "${file}" '
+      (.cases[] | select(.id == $case_id) | .attempts[] | select(.index == $attempt)) as $attempt_result |
+      ($manifest[0].workload.cases[] | select(.id == $case_id).producer.checks | sort) as $expected_checks |
+      $evidence[0] as $source |
+      ([ $source.checks[].id ] | sort) == $expected_checks and
+      $source.status == $attempt_result.status and
+      $source.reason == $attempt_result.reason
+    ' "${workload_result}" >/dev/null ||
+      die "case evidence does not match its manifest or workload attempt: ${evidence_file}"
+  done < <(
+    jq -r '.cases[] as $case | $case.attempts[] |
+      [$case.id, (.index | tostring), .evidence_file, .evidence_sha256] | @tsv
+    ' "${workload_result}"
+  )
+  for file in "${dir}"/case-evidence/*.json; do
+    [ -e "${file}" ] || continue
+    rel="case-evidence/$(basename "${file}")"
+    jq -e --arg rel "${rel}" 'any(.cases[].attempts[]; .evidence_file == $rel)' \
+      "${workload_result}" >/dev/null ||
+      die "unreferenced case evidence file: ${rel}"
+  done
+}
+
+validate_case_evidence_file() {
+  local file=$1
+  case_evidence_is_valid "${file}" ||
+    die "case evidence violates the bounded v2 schema: ${file}"
+}
+
+case_evidence_is_valid() {
+  local file=$1 bytes
+  bytes="$(wc -c <"${file}" | tr -d ' ')"
+  [ "${bytes}" -le 8192 ] || return 1
+  jq -e '
+    type == "object" and
+    keys == ["checks","objects","observations","reason","schema","status"] and
+    .schema == "helmrdotdev.validation-case-source-result.v2" and
+    (.status == "passed" or .status == "failed") and
+    ((.status == "passed" and .reason == null) or
+      (.status == "failed" and (.reason | type == "string" and test("^[a-z0-9._-]{1,80}$")))) and
+    (.checks | type == "array" and length <= 64 and
+      all(.[]; keys == ["id","status"] and
+        (.id | type == "string" and test("^[a-z][a-z0-9-]{0,63}$")) and
+        (.status == "passed" or .status == "failed"))) and
+    (.objects | type == "object" and
+      keys == ["actor_ids","deployment_ids","run_ids","schedule_ids","token_ids","workspace_ids"] and
+      ([.[] | length] | add) <= 128 and
+      all(.run_ids[]; test("^run_[a-z2-7]{26}$")) and
+      all(.workspace_ids[]; test("^wsp_[a-z2-7]{26}$")) and
+      all(.deployment_ids[]; test("^dep_[a-z2-7]{26}$")) and
+      all(.schedule_ids[]; test("^sch_[a-z2-7]{26}$")) and
+      all(.token_ids[]; test("^tok_[a-z2-7]{26}$")) and
+      all(.actor_ids[]; test("^act_[a-z2-7]{26}$")) and
+      all(.[]; type == "array" and length <= 64 and ([.[]] | unique | length) == length)) and
+    (.observations | type == "object" and length <= 64 and
+      all(keys[]; test("^[a-z][a-z0-9_]{0,63}$")) and
+      all(.[]; type == "boolean" or type == "number" or
+        (type == "string" and test("^[a-zA-Z0-9._:/+-]{1,128}$"))))
+  ' "${file}" >/dev/null
+}
+
+write_failed_case_evidence() {
+  local case_json=$1 reason=$2 output=$3
+  jq -n \
+    --arg reason "${reason}" \
+    --argjson checks "$(jq -c '.producer.checks' <<<"${case_json}")" '
+    {
+      schema:"helmrdotdev.validation-case-source-result.v2",
+      status:"failed",
+      reason:$reason,
+      checks:[$checks[] | {id:.,status:"failed"}],
+      objects:{
+        run_ids:[],workspace_ids:[],deployment_ids:[],
+        schedule_ids:[],token_ids:[],actor_ids:[]
+      },
+      observations:{}
+    }
+  ' >"${output}"
+}
+
+normalize_case_evidence() {
+  local case_json=$1 raw=$2 command_status=$3 output=$4
+  [[ "${command_status}" =~ ^[0-9]+$ ]] ||
+    die "producer command status must be a non-negative integer"
+  if [ ! -f "${raw}" ]; then
+    write_failed_case_evidence "${case_json}" producer_result_missing "${output}"
+    return
+  fi
+  if ! case_evidence_is_valid "${raw}" || ! jq -e --argjson expected "$(jq -c '.producer.checks | sort' <<<"${case_json}")" '
+    ([.checks[].id] | unique | sort) == $expected and
+    ([.checks[].id] | length) == ($expected | length) and
+    (.status == (if all(.checks[]; .status == "passed") then "passed" else "failed" end))
+  ' "${raw}" >/dev/null; then
+    write_failed_case_evidence "${case_json}" invalid_producer_result "${output}"
+    return
+  fi
+  if [ "${command_status}" != 0 ] && [ "$(jq -r '.status' "${raw}")" = passed ]; then
+    jq -cS '
+      .status = "failed" |
+      .reason = "producer_exit_conflict" |
+      .checks |= map(.status = "failed")
+    ' "${raw}" >"${output}"
+    return
+  fi
+  jq -cS . "${raw}" >"${output}"
+}
+
+normalize_manifest_case_evidence() {
+  local manifest=$1 case_id=$2 raw=$3 command_status=$4 output=$5 case_json
+  validate_manifest "${manifest}"
+  case_json="$(jq -c --arg id "${case_id}" '.workload.cases[] | select(.id == $id)' "${manifest}")"
+  [ -n "${case_json}" ] || die "manifest does not contain workload case: ${case_id}"
+  normalize_case_evidence "${case_json}" "${raw}" "${command_status}" "${output}.tmp"
+  chmod 0600 "${output}.tmp"
+  mv "${output}.tmp" "${output}"
 }
 
 make_bundle() {
@@ -1149,12 +1305,15 @@ for path in root.rglob("*.json"):
     valid = (
         (len(rel.parts) == 1 and rel.name in root_names) or
         (len(rel.parts) == 2 and rel.parts[0] == "results" and rel.name in stage_names) or
-        (len(rel.parts) == 2 and rel.parts[0] == "publishes" and rel.name in publish_names)
+        (len(rel.parts) == 2 and rel.parts[0] == "publishes" and rel.name in publish_names) or
+        (len(rel.parts) == 2 and rel.parts[0] == "case-evidence" and
+         rel.name.endswith(".json") and len(rel.name) <= 96)
     )
     if not valid:
         raise SystemExit(f"unexpected JSON evidence path: {rel}")
-    if path.stat().st_size > 65536:
-        raise SystemExit(f"JSON evidence file exceeds 64 KiB: {rel}")
+    max_size = 8192 if rel.parts[0] == "case-evidence" else 65536
+    if path.stat().st_size > max_size:
+        raise SystemExit(f"JSON evidence file exceeds {max_size} bytes: {rel}")
     value = json.loads(path.read_text())
     if rel.name == "state.json":
         value["manifest"].pop("path", None)
@@ -1254,12 +1413,16 @@ publish_bundle() {
 }
 
 sample_worker_groups() {
-  local run_asg=$1 build_asg=$2 output=$3 at run build
+  local run_asg=$1 build_asg=$2 output=$3 at run build run_count build_count run_instances build_instances
   at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  run="$(asg_inventory "${run_asg}")"
-  build="$(asg_inventory "${build_asg}")"
-  jq -cn --arg at "${at}" --argjson run "$(jq '[.AutoScalingGroups[].Instances[]] | length' <<<"${run}")" --argjson build "$(jq '[.AutoScalingGroups[].Instances[]] | length' <<<"${build}")" \
-    --argjson run_instances "$(jq '[.AutoScalingGroups[].Instances[].InstanceId]' <<<"${run}")" --argjson build_instances "$(jq '[.AutoScalingGroups[].Instances[].InstanceId]' <<<"${build}")" \
+  run="$(asg_inventory "${run_asg}")" || return 1
+  build="$(asg_inventory "${build_asg}")" || return 1
+  run_count="$(jq -ce '[.AutoScalingGroups[].Instances[]] | length' <<<"${run}")" || return 1
+  build_count="$(jq -ce '[.AutoScalingGroups[].Instances[]] | length' <<<"${build}")" || return 1
+  run_instances="$(jq -ce '[.AutoScalingGroups[].Instances[].InstanceId]' <<<"${run}")" || return 1
+  build_instances="$(jq -ce '[.AutoScalingGroups[].Instances[].InstanceId]' <<<"${build}")" || return 1
+  jq -cn --arg at "${at}" --argjson run "${run_count}" --argjson build "${build_count}" \
+    --argjson run_instances "${run_instances}" --argjson build_instances "${build_instances}" \
     '{at:$at,run:$run,build:$build,run_instances:$run_instances,build_instances:$build_instances}' >>"${output}"
 }
 
@@ -1296,7 +1459,9 @@ run_workload() {
   : >"${sentinel}"
   (
     while [ -e "${sentinel}" ]; do
-      sample_worker_groups "${run_asg}" "${build_asg}" "${samples}" || printf '{"sampling_error":true}\n' >>"${samples}"
+      HELMR_VALIDATION_SAMPLE_PHASE=periodic \
+        sample_worker_groups "${run_asg}" "${build_asg}" "${samples}" ||
+        printf '{"sampling_error":true}\n' >>"${samples}"
       sleep 2
     done
   ) &
@@ -1317,25 +1482,17 @@ run_workload() {
         "${ROOT}/${producer}"
       command_status=$?
       set -e
-      if [ ! -f "${raw}" ]; then
-        jq -n '{schema:"helmrdotdev.validation-case-source-result.v1",status:"failed",reason:"producer_result_missing",checks:[]}' >"${raw}"
-      fi
-      if ! jq -e '
-        type == "object" and has("schema") and has("status") and has("reason") and
-        .schema == "helmrdotdev.validation-case-source-result.v1" and (.status == "passed" or .status == "failed") and
-        ((.status == "passed" and .reason == null) or (.status == "failed" and (.reason | test("^[a-z0-9._-]{1,80}$"))))
-      ' "${raw}" >/dev/null; then
-        jq -n '{schema:"helmrdotdev.validation-case-source-result.v1",status:"failed",reason:"invalid_producer_result"}' >"${raw}"
-        command_status=1
-      fi
+      normalize_case_evidence "${case_json}" "${raw}" "${command_status}" "${raw}.normalized"
+      mv "${raw}.normalized" "${raw}"
       status="$(jq -r '.status' "${raw}")"
       reason="$(jq -c '.reason' "${raw}")"
-      if [ "${command_status}" != 0 ] && [ "${status}" = passed ]; then
-        status=failed
-        reason='"producer_exit_conflict"'
-      fi
-      evidence_sha="$(sha256_file "${raw}")"
-      attempts="$(jq -c --argjson index "${attempt}" --arg status "${status}" --argjson reason "${reason}" --arg evidence "${evidence_sha}" --arg producer "${producer_sha}" '. + [{index:$index,status:$status,reason:$reason,evidence_sha256:$evidence,producer_sha256:$producer}]' <<<"${attempts}")"
+      local evidence_file
+      evidence_file="${dir}/case-evidence/${case_id}-$(printf '%02d' "${attempt}").json"
+      jq -cS . "${raw}" >"${evidence_file}.tmp"
+      chmod 0600 "${evidence_file}.tmp"
+      mv "${evidence_file}.tmp" "${evidence_file}"
+      evidence_sha="$(sha256_file "${evidence_file}")"
+      attempts="$(jq -c --argjson index "${attempt}" --arg status "${status}" --argjson reason "${reason}" --arg evidence "${evidence_sha}" --arg evidence_file "case-evidence/${case_id}-$(printf '%02d' "${attempt}").json" --arg producer "${producer_sha}" '. + [{index:$index,status:$status,reason:$reason,evidence_file:$evidence_file,evidence_sha256:$evidence,producer_sha256:$producer}]' <<<"${attempts}")"
     done
     local case_status=passed
     jq -e 'all(.[]; .status == "passed")' <<<"${attempts}" >/dev/null || case_status=failed
@@ -1345,11 +1502,13 @@ run_workload() {
   finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   rm -f "${sentinel}"
   wait "${sampler_pid}"
-  sample_worker_groups "${run_asg}" "${build_asg}" "${samples}"
-  local run_peak build_peak nat_in nat_out intervals workload_status workload_reason
+  HELMR_VALIDATION_SAMPLE_PHASE=final \
+    sample_worker_groups "${run_asg}" "${build_asg}" "${samples}" ||
+    printf '{"sampling_error":true}\n' >>"${samples}"
+  local run_peak build_peak nat_in nat_out intervals workload_status workload_reason sampling_failed
+  sampling_failed=0
   if jq -e 'select(.sampling_error == true)' "${samples}" >/dev/null; then
-    jq '.[0].status="failed" | .[0].attempts[0].status="failed" | .[0].attempts[0].reason="worker_sampling_failed"' "${cases_file}" >"${cases_file}.next"
-    mv "${cases_file}.next" "${cases_file}"
+    sampling_failed=1
     run_peak=0
     build_peak=0
     nat_in=0
@@ -1364,7 +1523,13 @@ run_workload() {
   fi
   workload_status=passed
   workload_reason=null
-  jq -e 'all(.[]; .status == "passed")' "${cases_file}" >/dev/null || { workload_status=failed; workload_reason='"workload_case_failed"'; }
+  if [ "${sampling_failed}" = 1 ]; then
+    workload_status=failed
+    workload_reason='"worker_sampling_failed"'
+  elif ! jq -e 'all(.[]; .status == "passed")' "${cases_file}" >/dev/null; then
+    workload_status=failed
+    workload_reason='"workload_case_failed"'
+  fi
   jq -n --arg status "${workload_status}" --argjson reason "${workload_reason}" --arg started "${started}" --arg finished "${finished}" \
     --argjson cases "$(cat "${cases_file}")" --argjson run_peak "${run_peak}" --argjson build_peak "${build_peak}" --argjson nat_in "${nat_in}" --argjson nat_out "${nat_out}" --argjson intervals "${intervals}" \
     '{schema:"helmrdotdev.validation-stage-result.v1",stage:"workload",status:$status,reason:$reason,observations:{started_at:$started,finished_at:$finished,run_worker_peak:$run_peak,build_worker_peak:$build_peak,nat_bytes_in_from_destination:$nat_in,nat_bytes_out_to_destination:$nat_out,worker_observed_intervals:$intervals},cases:$cases}' >"${result}"
@@ -1393,6 +1558,14 @@ main() {
     auth) [ "$#" = 2 ] || { usage >&2; exit 2; }; run_auth_stage "$2" ;;
     close) [ "$#" = 2 ] || { usage >&2; exit 2; }; close_campaign "$2" ;;
     workload) [ "$#" = 2 ] || { usage >&2; exit 2; }; run_workload "$2" ;;
+    normalize-case-evidence)
+      [ "$#" = 6 ] || { usage >&2; exit 2; }
+      normalize_manifest_case_evidence "$2" "$3" "$4" "$5" "$6"
+      ;;
+    validate-evidence)
+      [ "$#" = 2 ] || { usage >&2; exit 2; }
+      validate_evidence_tree "$2"
+      ;;
     -h|--help) usage ;;
     *) usage >&2; exit 2 ;;
   esac

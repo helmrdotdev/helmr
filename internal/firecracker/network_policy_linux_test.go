@@ -35,11 +35,9 @@ func TestNFTBuildNetworkPolicyScriptClosesProgramBuildEgress(t *testing.T) {
 		"quota name build_sent counter name build_limit drop",
 		"quota name build_received counter name build_limit drop",
 		`iifname "tap0" ip daddr @resolver_ipv4 udp dport 53 jump egress`,
-		`iifname "tap0" ip6 daddr @resolver_ipv6 udp dport 53 jump egress`,
 		`iifname "tap0" ip daddr @resolver_ipv4 tcp dport 53 jump egress`,
-		`iifname "tap0" ip6 daddr @resolver_ipv6 tcp dport 53 jump egress`,
 		`iifname "tap0" ip daddr @blocked_ipv4 counter name build_denied drop`,
-		`iifname "tap0" ip6 daddr @blocked_ipv6 counter name build_denied drop`,
+		"meta nfproto ipv6 counter name build_denied drop",
 		`iifname "tap0" tcp jump egress`,
 		"counter name build_denied drop",
 		"198.18.0.0/15",
@@ -55,6 +53,9 @@ func TestNFTBuildNetworkPolicyScriptClosesProgramBuildEgress(t *testing.T) {
 	}
 	if strings.Contains(script, "udp accept") {
 		t.Fatalf("build policy contains a broad UDP allowance:\n%s", script)
+	}
+	if strings.Contains(script, "ip6 daddr @resolver_ipv6") {
+		t.Fatalf("build policy permits IPv6 resolver traffic:\n%s", script)
 	}
 }
 
@@ -104,6 +105,7 @@ func TestNFTNetworkPolicyScriptBlocksConfiguredCIDRs(t *testing.T) {
 	for _, want := range []string{
 		"add table inet helmr_network_policy",
 		"type filter hook forward priority 0; policy accept;",
+		"meta nfproto ipv6 drop",
 		"10.0.0.0/8",
 		"172.16.0.0/12",
 		"192.168.0.0/16",
@@ -149,6 +151,15 @@ func TestNFTNetworkPolicyScriptDropsWhenInternetDisabled(t *testing.T) {
 	}
 	if strings.Contains(script, "policy accept;") {
 		t.Fatalf("script unexpectedly defaults to accept:\n%s", script)
+	}
+}
+
+func TestNFTNetworkPolicyScriptDropsIPv6BeforeEstablishedTraffic(t *testing.T) {
+	script := nftNetworkPolicyScript(compute.DefaultNetworkPolicy(), nil, nil)
+	ipv6Drop := strings.Index(script, "meta nfproto ipv6 drop")
+	established := strings.Index(script, "ct state established,related accept")
+	if ipv6Drop < 0 || established < 0 || ipv6Drop > established {
+		t.Fatalf("IPv6 must be dropped before established traffic is accepted:\n%s", script)
 	}
 }
 

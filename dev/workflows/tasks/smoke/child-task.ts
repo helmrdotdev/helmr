@@ -159,8 +159,10 @@ export const childTaskSmokeActor = actor({
         kind: "child-task-call-completed",
         marker: output.marker,
         childRunId: output.childRunId,
+        actorRunId: ctx.run.id,
+        inputRecordId: received.record.id,
       },
-      { idempotencyKey: `${ctx.run.id}:actor-output` },
+      { idempotencyKey: `input:${received.record.id}:actor-output` },
     )
   },
 })

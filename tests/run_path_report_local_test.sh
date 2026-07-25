@@ -40,7 +40,7 @@ service_file="$tmp/service.conf"
 service_name="$tmp/service-name.txt"
 sql_stdin="$tmp/sql-stdin.sql"
 psql_calls="$tmp/psql-calls.txt"
-run_id="22222222-2222-2222-2222-222222222222"
+run_id="run_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 PATH="$tmp/bin:$PATH" \
 	HELMR_DATABASE_URL='postgresql://user%40name:p%40ss%3Aword@[::1]:6543/main_db?connect_timeout=7&target_session_attrs=read-write&channel_binding=prefer' \
@@ -59,7 +59,8 @@ assert_contains "$service_file" "password=p@ss:word" "encoded password should de
 assert_contains "$service_file" "target_session_attrs=read-write" "unknown libpq parameter should be preserved"
 assert_contains "$service_file" "channel_binding=prefer" "second unknown libpq parameter should be preserved"
 assert_contains "$service_name" "helmr_path_report" "service name"
-assert_contains "$sql_stdin" "WHERE id = '${run_id}'::uuid" "run id should be bound into report SQL"
+assert_contains "$sql_stdin" "WHERE public_id = '${run_id}'" "public run id should be bound into report SQL"
+assert_contains "$sql_stdin" "SELECT id FROM runs WHERE public_id = '${run_id}'" "public run id should resolve internal authority"
 assert_contains "$sql_stdin" "run_leases" "run lease evidence query should be present"
 assert_contains "$sql_stdin" "run_waits" "run wait evidence query should be present"
 assert_contains "$sql_stdin" "run_checkpoints" "checkpoint evidence query should be present"
@@ -115,10 +116,21 @@ if PATH="$tmp/bin:$PATH" \
 	"$repo_root/dev/aws/run-path-report.sh" not-a-run >"$tmp/bad-uuid.out" 2>"$tmp/bad-uuid.err"; then
 	fail "invalid run id should fail"
 fi
-assert_contains "$tmp/bad-uuid.err" "RUN_ID must be a UUID" "invalid UUID error"
+assert_contains "$tmp/bad-uuid.err" "RUN_ID must be a canonical run_ public ID" "invalid public Run ID error"
 if [ -e "$psql_calls" ]; then
 	fail "invalid run id should fail before psql is invoked"
 fi
+if PATH="$tmp/bin:$PATH" \
+	HELMR_DATABASE_URL='postgresql://u:p@host/db' \
+	CAPTURED_SERVICE_FILE="$service_file" \
+	CAPTURED_SERVICE_NAME="$service_name" \
+	CAPTURED_SQL_STDIN="$sql_stdin" \
+	CAPTURED_PSQL_CALLS="$psql_calls" \
+	"$repo_root/dev/aws/run-path-report.sh" $'run_aaaaaaaaaaaaaaaaaaaaaaaaaa\nignored' \
+	>"$tmp/multiline-run.out" 2>"$tmp/multiline-run.err"; then
+	fail "multi-line run id should fail"
+fi
+assert_contains "$tmp/multiline-run.err" "RUN_ID must be a canonical run_ public ID" "multi-line public Run ID error"
 
 if env -u HELMR_DATABASE_URL -u DATABASE_URL -u HELMR_PATH_REPORT_ALLOW_ECS_TASK \
 	"$repo_root/dev/aws/run-path-report.sh" "$run_id" >"$tmp/no-db.out" 2>"$tmp/no-db.err"; then

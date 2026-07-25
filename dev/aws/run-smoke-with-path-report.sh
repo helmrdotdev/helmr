@@ -105,30 +105,30 @@ if ! run_surface_attestation "after"; then
   attestation_failures=$((attestation_failures + 1))
 fi
 
-uuid_egrep='[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+run_id_egrep='run_[a-z2-7]{26}'
 {
   awk '/^release smoke run ids:/ { for (i = 5; i <= NF; i++) print $i }' "${smoke_log}" |
-    grep -E "^${uuid_egrep}$" || true
-  grep -Eo "(^|[[:space:]])[A-Za-z_]*run_id=${uuid_egrep}([^0-9a-fA-F-]|$)" "${smoke_log}" |
-    sed -E "s/.*=(${uuid_egrep})([^0-9a-fA-F-])?$/\\1/" || true
+    grep -E "^${run_id_egrep}$" || true
+  grep -Eo "(^|[[:space:]])[A-Za-z_]*run_id=${run_id_egrep}([^a-z2-7]|$)" "${smoke_log}" |
+    sed -E "s/.*=(${run_id_egrep})([^a-z2-7])?$/\\1/" || true
   if command -v jq >/dev/null 2>&1; then
-    jq -Rr --arg uuid_re "^${uuid_egrep}$" '
+    jq -Rr --arg run_id_re "^${run_id_egrep}$" '
       fromjson?
       | select(type == "object")
       | (.run.id? // .run_id? // .runId? // empty)
-      | select(type == "string" and test($uuid_re))
+      | select(type == "string" and test($run_id_re))
     ' "${smoke_log}" || true
   fi
   if command -v perl >/dev/null 2>&1; then
-    export HELMR_PATH_REPORT_UUID_RE="^${uuid_egrep}$"
+    export HELMR_PATH_REPORT_RUN_ID_RE="^${run_id_egrep}$"
     perl -0ne '
-      my $uuid_re = qr/$ENV{HELMR_PATH_REPORT_UUID_RE}/;
-      while (/"run"\s*:\s*\{[^{}]*"id"\s*:\s*"([^"]+)"/sg) { my $id = $1; print "$id\n" if $id =~ $uuid_re }
-      while (/"(?:run_id|runId)"\s*:\s*"([^"]+)"/sg) { my $id = $1; print "$id\n" if $id =~ $uuid_re }
+      my $run_id_re = qr/$ENV{HELMR_PATH_REPORT_RUN_ID_RE}/;
+      while (/"run"\s*:\s*\{[^{}]*"id"\s*:\s*"([^"]+)"/sg) { my $id = $1; print "$id\n" if $id =~ $run_id_re }
+      while (/"(?:run_id|runId)"\s*:\s*"([^"]+)"/sg) { my $id = $1; print "$id\n" if $id =~ $run_id_re }
     ' "${smoke_log}" || true
   fi
 } |
-  grep -E "^${uuid_egrep}$" |
+  grep -E "^${run_id_egrep}$" |
   sort -u >"${run_ids_file}" || true
 
 run_count="$(wc -l <"${run_ids_file}" | tr -d ' ')"
