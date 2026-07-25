@@ -292,7 +292,7 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 			return err
 		}
 		authority.actor = owner.actor
-		if authority.run.Status != db.RunStatusWaiting || authority.run.ParentRunID.Valid ||
+		if authority.run.Status != db.RunStatusWaiting ||
 			authority.runLease.State != db.RunLeaseStateRunning {
 			return errStaleRunLeaseClaim
 		}
@@ -312,7 +312,7 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		if err := validateRootRunWaitActorCursor(authority, wait); err != nil {
+		if err := validateRunWaitActorCursor(authority, wait); err != nil {
 			return err
 		}
 		if wait.SuspensionState == db.RunWaitStateCheckpointing && wait.SuspendCheckpointID.Valid {
@@ -360,17 +360,17 @@ func (s *Server) loadRunWaitRegistrationAuthority(
 	}
 	run, err := s.db.GetRun(ctx, db.GetRunParams{EnvironmentID: locators.EnvironmentID, ID: locators.RunID})
 	if err != nil || (run.Status != db.RunStatusRunning && run.Status != db.RunStatusWaiting) ||
-		(run.EntrypointKind != "task" && run.EntrypointKind != "actor") || run.ParentRunID.Valid ||
+		(run.EntrypointKind != "task" && run.EntrypointKind != "actor") ||
 		(run.EntrypointKind == "task") != !run.ActorID.Valid || run.CurrentRunLeaseID != pgvalue.UUID(parsed.leaseID) {
 		if err == nil {
-			err = errors.New("run is not an active root Task or Actor")
+			err = errors.New("run is not an active Task or Actor")
 		}
 		return parsedRunLeaseReceipt{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, db.Run{}, conflict(err)
 	}
 	return parsed, worker, locators, run, nil
 }
 
-func validateRootRunWaitActorCursor(authority runLeaseClaimAuthority, wait db.RunWait) error {
+func validateRunWaitActorCursor(authority runLeaseClaimAuthority, wait db.RunWait) error {
 	switch authority.run.EntrypointKind {
 	case "task":
 		if authority.run.ActorID.Valid || wait.ActorSpeculativeInputSequence.Valid {

@@ -166,12 +166,6 @@ SELECT state, current_run_id, committed_input_sequence, next_input_sequence
 	if err != nil {
 		return TokenWaitRegistrationResult{}, err
 	}
-	if run.parentRunID.Valid {
-		return TokenWaitRegistrationResult{}, tokenWaitAuthorityError(
-			"child Run Token Wait is not implemented",
-			nil,
-		)
-	}
 	if run.workspaceID != locator.workspaceID || run.status != RunStatusRunning ||
 		run.stateVersion != request.ExpectedRunStateVersion || run.currentAttempt != request.AttemptNumber ||
 		!run.currentRunLeaseID.Valid || uuid.UUID(run.currentRunLeaseID.Bytes) != request.CurrentRunLeaseID ||
@@ -714,12 +708,6 @@ SELECT state, current_run_id
 	lineage, addressedRun, err := lockTokenWaitLineage(ctx, tx, environmentID, locator.runID)
 	if err != nil {
 		return false, false, err
-	}
-	if addressedRun.parentRunID.Valid {
-		return false, false, tokenWaitAuthorityError(
-			"child Run Token Wait is not implemented",
-			nil,
-		)
 	}
 	if addressedRun.workspaceID != locator.workspaceID || addressedRun.currentAttempt != locator.attempt {
 		return false, false, tokenWaitAuthorityError("Run locator changed", nil)

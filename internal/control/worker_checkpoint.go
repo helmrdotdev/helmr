@@ -163,7 +163,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 			return err
 		}
 		authority.actor = owner.actor
-		if authority.run.Status != db.RunStatusWaiting || authority.run.ParentRunID.Valid ||
+		if authority.run.Status != db.RunStatusWaiting ||
 			authority.runLease.State != db.RunLeaseStateCheckpointing {
 			return errStaleRunLeaseClaim
 		}
@@ -184,7 +184,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 			wait.CheckpointRequestVersion != parsed.requestVersion || wait.SuspendCheckpointID != pgvalue.UUID(parsed.checkpointID) {
 			return staleRunLeaseClaim(err)
 		}
-		if err := validateRootRunWaitActorCursor(authority, wait); err != nil {
+		if err := validateRunWaitActorCursor(authority, wait); err != nil {
 			return err
 		}
 		checkpoint, err := work.q.LockCreatingRunCheckpoint(r.Context(), db.LockCreatingRunCheckpointParams{
@@ -877,7 +877,7 @@ func (s *Server) commitCheckpointReady(
 			return err
 		}
 		authority.actor = owner.actor
-		if authority.run.Status != db.RunStatusWaiting || authority.run.ParentRunID.Valid ||
+		if authority.run.Status != db.RunStatusWaiting ||
 			authority.runLease.State != db.RunLeaseStateCheckpointing {
 			return errStaleRunLeaseClaim
 		}
@@ -899,7 +899,7 @@ func (s *Server) commitCheckpointReady(
 			wait.CheckpointRequestVersion != request.RequestVersion || wait.SuspendCheckpointID != pgvalue.UUID(ready.checkpointID) {
 			return staleRunLeaseClaim(err)
 		}
-		if err := validateRootRunWaitActorCursor(authority, wait); err != nil {
+		if err := validateRunWaitActorCursor(authority, wait); err != nil {
 			return err
 		}
 		checkpoint, err := work.q.LockCreatingRunCheckpoint(ctx, db.LockCreatingRunCheckpointParams{

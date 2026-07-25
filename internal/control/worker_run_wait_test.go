@@ -98,23 +98,23 @@ func TestValidateRootRunWaitActorCursor(t *testing.T) {
 		workspace: db.Workspace{OwnerActorID: actorID},
 	}
 	for _, cursor := range []int64{4, 5} {
-		if err := validateRootRunWaitActorCursor(authority, db.RunWait{
+		if err := validateRunWaitActorCursor(authority, db.RunWait{
 			ActorSpeculativeInputSequence: pgtype.Int8{Int64: cursor, Valid: true},
 		}); err != nil {
 			t.Fatalf("cursor %d rejected: %v", cursor, err)
 		}
 	}
 	for _, cursor := range []pgtype.Int8{{}, {Int64: 3, Valid: true}, {Int64: 6, Valid: true}} {
-		if err := validateRootRunWaitActorCursor(authority, db.RunWait{ActorSpeculativeInputSequence: cursor}); err == nil {
+		if err := validateRunWaitActorCursor(authority, db.RunWait{ActorSpeculativeInputSequence: cursor}); err == nil {
 			t.Fatalf("invalid cursor %+v was accepted", cursor)
 		}
 	}
 
 	authority = runLeaseClaimAuthority{run: db.Run{EntrypointKind: "task"}}
-	if err := validateRootRunWaitActorCursor(authority, db.RunWait{}); err != nil {
+	if err := validateRunWaitActorCursor(authority, db.RunWait{}); err != nil {
 		t.Fatalf("Task NULL cursor rejected: %v", err)
 	}
-	if err := validateRootRunWaitActorCursor(authority, db.RunWait{
+	if err := validateRunWaitActorCursor(authority, db.RunWait{
 		ActorSpeculativeInputSequence: pgtype.Int8{Int64: 0, Valid: true},
 	}); err == nil {
 		t.Fatal("Task Actor cursor was accepted")

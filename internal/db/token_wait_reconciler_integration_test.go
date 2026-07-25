@@ -1004,7 +1004,7 @@ func TestTokenWaitRegistrationRejectsExpiredPhysicalAuthority(t *testing.T) {
 	}
 }
 
-func TestTokenWaitRegistrationRejectsChildRunUntilChildPlacementIsImplemented(t *testing.T) {
+func TestTokenWaitRegistrationAcceptsChildRun(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	parent := fixture.addWork(t, ctx, "starting", time.Now().Add(-2*time.Minute))
@@ -1022,15 +1022,16 @@ func TestTokenWaitRegistrationRejectsChildRunUntilChildPlacementIsImplemented(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reconciler.RegisterWait(ctx, request); !errors.Is(err, ErrTokenWaitReconcileAuthority) {
-		t.Fatalf("child registration error = %v", err)
+	registered, err := reconciler.RegisterWait(ctx, request)
+	if err != nil {
+		t.Fatalf("register child Run Wait: %v", err)
 	}
 	var count int
 	if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM run_waits WHERE id = $1`, waitID).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 0 {
-		t.Fatalf("child registration created %d waits", count)
+	if registered.WaitID != waitID || registered.ConditionState != WaitStatePending || count != 1 {
+		t.Fatalf("child registration = %+v, waits=%d", registered, count)
 	}
 }
 

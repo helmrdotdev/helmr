@@ -143,7 +143,7 @@ func (s *Server) workerCreateActorInputRunWait(
 			return errStaleRunLeaseClaim
 		}
 		cursor := pgtype.Int8{Int64: params.AfterInputSequence, Valid: true}
-		if err := validateRootRunWaitActorCursor(authority, db.RunWait{ActorSpeculativeInputSequence: cursor}); err != nil {
+		if err := validateRunWaitActorCursor(authority, db.RunWait{ActorSpeculativeInputSequence: cursor}); err != nil {
 			return err
 		}
 		replayParams := db.GetActorInputRunWaitRegistrationReplayParams{
