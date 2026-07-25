@@ -322,13 +322,45 @@ WITH restore_secret_authority AS MATERIALIZED (
        AND run_waits.attempt_number = runtime_instances.reserved_attempt_number
        AND run_waits.workspace_id = runtime_instances.workspace_id
        AND run_waits.suspension_state = 'resume_pending'
-       AND run_waits.handoff_runtime_instance_id IS NULL
-       AND run_waits.handoff_workspace_mount_id IS NULL
-       AND run_waits.handoff_resume_checkpoint_id IS NULL
+       AND run_waits.resume_writer_generation IS NULL
+       AND (
+           (run_waits.handoff_runtime_instance_id IS NULL
+            AND run_waits.handoff_workspace_mount_id IS NULL
+            AND run_waits.handoff_resume_checkpoint_id IS NULL)
+           OR
+           (run_waits.handoff_runtime_instance_id IS NOT NULL
+            AND run_waits.handoff_workspace_mount_id IS NOT NULL
+            AND run_waits.handoff_mount_generation IS NOT NULL
+            AND run_waits.ownership_generation IS NOT NULL
+            AND run_waits.parent_writer_generation IS NOT NULL
+            AND run_waits.child_writer_generation IS NOT NULL
+            AND run_waits.resume_workspace_version_id
+                = runtime_instances.reserved_workspace_version_id
+            AND (
+                (run_waits.condition_state = 'completed'
+                 AND run_waits.handoff_resume_checkpoint_id
+                     = runtime_instances.restore_checkpoint_id)
+                OR
+                (run_waits.condition_state IN ('failed', 'cancelled')
+                 AND run_waits.handoff_resume_checkpoint_id IS NULL
+                 AND run_waits.suspend_checkpoint_id
+                     = runtime_instances.restore_checkpoint_id)
+            ))
+       )
       JOIN run_checkpoints
         ON run_checkpoints.id = runtime_instances.restore_checkpoint_id
-       AND run_checkpoints.id = run_waits.suspend_checkpoint_id
-       AND run_checkpoints.kind = 'suspend'
+       AND run_checkpoints.id = CASE
+               WHEN run_waits.handoff_runtime_instance_id IS NOT NULL
+                AND run_waits.condition_state = 'completed'
+               THEN run_waits.handoff_resume_checkpoint_id
+               ELSE run_waits.suspend_checkpoint_id
+           END
+       AND run_checkpoints.kind = CASE
+               WHEN run_waits.handoff_runtime_instance_id IS NOT NULL
+                AND run_waits.condition_state = 'completed'
+               THEN 'handoff_resume'::run_checkpoint_kind
+               ELSE 'suspend'::run_checkpoint_kind
+           END
        AND run_checkpoints.run_id = runtime_instances.reserved_run_id
        AND run_checkpoints.attempt_number = runtime_instances.reserved_attempt_number
        AND run_checkpoints.run_wait_id = run_waits.id

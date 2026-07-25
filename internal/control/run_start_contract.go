@@ -82,6 +82,10 @@ func deriveRunStartMode(locators db.GetRunLeaseStartLocatorsRow) (runLeaseClaimM
 		if locators.ResumeChildRunID.Valid &&
 			locators.ResumeChildParentOwned.Valid &&
 			locators.ResumeChildParentOwned.Bool {
+			if locators.RuntimeRestoreCheckpointID.Valid &&
+				locators.RuntimeRestoreCheckpointID == locators.RunWaitCheckpointID {
+				return runLeaseClaimRestore, nil
+			}
 			return runLeaseClaimAttachParent, nil
 		}
 		return runLeaseClaimRestore, nil

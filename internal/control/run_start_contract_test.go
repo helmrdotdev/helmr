@@ -66,6 +66,11 @@ func TestDeriveRunStartModeFromDurableLocators(t *testing.T) {
 			RunWaitID: valid, ResumeChildRunID: valid,
 			ResumeChildParentOwned: pgtype.Bool{Bool: true, Valid: true},
 		}, mode: runLeaseClaimAttachParent, ok: true},
+		{name: "recreated parent", locators: db.GetRunLeaseStartLocatorsRow{
+			RunWaitID: valid, RunWaitCheckpointID: valid,
+			RuntimeRestoreCheckpointID: valid, ResumeChildRunID: valid,
+			ResumeChildParentOwned: pgtype.Bool{Bool: true, Valid: true},
+		}, mode: runLeaseClaimRestore, ok: true},
 		{name: "nested restore", locators: db.GetRunLeaseStartLocatorsRow{
 			RunWaitID: valid, EnclosingWaitID: valid,
 		}, mode: runLeaseClaimRestore, ok: true},

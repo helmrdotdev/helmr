@@ -1859,3 +1859,106 @@ func (q *Queries) RequestCheckpointFailureRuntimeClose(ctx context.Context, arg 
 	)
 	return i, err
 }
+
+const requestHandoffFailureRuntimeClose = `-- name: RequestHandoffFailureRuntimeClose :one
+WITH closing_runtime AS (
+    UPDATE runtime_instances
+       SET desired_state = 'closed',
+           desired_version = desired_version + 1,
+           desired_at = $1,
+           desired_reason = 'child_handoff_failed',
+           updated_at = $1
+     WHERE runtime_instances.id = $10
+       AND runtime_instances.org_id = $3
+       AND runtime_instances.project_id = $4
+       AND runtime_instances.environment_id = $5
+       AND runtime_instances.workspace_id = $6
+       AND runtime_instances.worker_instance_id = $7
+       AND runtime_instances.worker_epoch = $8
+       AND runtime_instances.desired_state = 'ready'
+       AND runtime_instances.observed_state = 'ready'
+       AND runtime_instances.reclaimed_at IS NULL
+    RETURNING id
+)
+UPDATE workspace_mounts
+   SET state = 'unmounting',
+       stopped_at = COALESCE(stopped_at, $1),
+       updated_at = $1
+  FROM closing_runtime
+ WHERE workspace_mounts.id = $2
+   AND workspace_mounts.org_id = $3
+   AND workspace_mounts.project_id = $4
+   AND workspace_mounts.environment_id = $5
+   AND workspace_mounts.workspace_id = $6
+   AND workspace_mounts.runtime_instance_id = closing_runtime.id
+   AND workspace_mounts.worker_instance_id = $7
+   AND workspace_mounts.worker_epoch = $8
+   AND workspace_mounts.fencing_generation = $9
+   AND workspace_mounts.state = 'mounted'
+RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+`
+
+type RequestHandoffFailureRuntimeCloseParams struct {
+	FailedAt               pgtype.Timestamptz `json:"failed_at"`
+	WorkspaceMountID       pgtype.UUID        `json:"workspace_mount_id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	WorkerInstanceID       pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch            int64              `json:"worker_epoch"`
+	MountFencingGeneration int64              `json:"mount_fencing_generation"`
+	RuntimeInstanceID      pgtype.UUID        `json:"runtime_instance_id"`
+}
+
+func (q *Queries) RequestHandoffFailureRuntimeClose(ctx context.Context, arg RequestHandoffFailureRuntimeCloseParams) (WorkspaceMount, error) {
+	row := q.db.QueryRow(ctx, requestHandoffFailureRuntimeClose,
+		arg.FailedAt,
+		arg.WorkspaceMountID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.MountFencingGeneration,
+		arg.RuntimeInstanceID,
+	)
+	var i WorkspaceMount
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.WorkspaceID,
+		&i.MaterializedVersionID,
+		&i.RuntimeInstanceID,
+		&i.ClaimAttempt,
+		&i.GuestChannelTokenHash,
+		&i.GuestChannelTokenExpiresAt,
+		&i.State,
+		&i.Request,
+		&i.DirtyGeneration,
+		&i.FencingGeneration,
+		&i.FinalizationKind,
+		&i.FinalizationReasonCode,
+		&i.FinalizationError,
+		&i.StagedVersionID,
+		&i.RequestedAt,
+		&i.MountedAt,
+		&i.UnmountedAt,
+		&i.StoppedAt,
+		&i.LostAt,
+		&i.FailedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

@@ -65,6 +65,7 @@ SELECT run_leases.org_id,
        run_leases.attempt_number,
        run_leases.region_id,
        run_leases.runtime_instance_id,
+       runtime_instances.restore_checkpoint_id AS runtime_restore_checkpoint_id,
        run_leases.network_slot_id,
        run_leases.network_slot_generation,
        runs.actor_id,
@@ -129,6 +130,12 @@ SELECT run_leases.org_id,
    AND worker_instances.protocol_version = run_leases.worker_protocol_version
    AND worker_instances.state IN ('active', 'draining')
    AND worker_instances.supports_run
+  JOIN runtime_instances
+    ON runtime_instances.id = run_leases.runtime_instance_id
+   AND runtime_instances.workspace_id = run_leases.workspace_id
+   AND runtime_instances.worker_group_id = run_leases.worker_group_id
+   AND runtime_instances.worker_instance_id = run_leases.worker_instance_id
+   AND runtime_instances.worker_epoch = run_leases.worker_epoch
   JOIN workspace_leases
     ON workspace_leases.owner_run_lease_id = run_leases.id
    AND workspace_leases.workspace_id = run_leases.workspace_id
@@ -195,6 +202,7 @@ SELECT run_leases.org_id,
        run_leases.attempt_number,
        run_leases.region_id,
        run_leases.runtime_instance_id,
+       runtime_instances.restore_checkpoint_id AS runtime_restore_checkpoint_id,
        run_leases.network_slot_id,
        run_leases.network_slot_generation,
        runs.actor_id,
@@ -237,6 +245,12 @@ SELECT run_leases.org_id,
    AND worker_instances.protocol_version = run_leases.worker_protocol_version
    AND worker_instances.state IN ('active', 'draining')
    AND worker_instances.supports_run
+  JOIN runtime_instances
+    ON runtime_instances.id = run_leases.runtime_instance_id
+   AND runtime_instances.workspace_id = run_leases.workspace_id
+   AND runtime_instances.worker_group_id = run_leases.worker_group_id
+   AND runtime_instances.worker_instance_id = run_leases.worker_instance_id
+   AND runtime_instances.worker_epoch = run_leases.worker_epoch
   JOIN workspace_leases
     ON workspace_leases.owner_run_lease_id = run_leases.id
    AND workspace_leases.workspace_id = run_leases.workspace_id
@@ -841,7 +855,7 @@ UPDATE run_attempts
    AND entrypoint_entered_at IS NULL
    AND terminal_at IS NULL
 RETURNING *;
--- name: RecoverExpiredRecreatedRunResumes :many
+-- name: RecoverExpiredRunResumes :many
 WITH candidates AS MATERIALIZED (
     SELECT runs.id AS run_id,
            runs.entrypoint_kind,
@@ -855,7 +869,18 @@ WITH candidates AS MATERIALIZED (
            workspace_leases.id AS workspace_lease_id,
            workspace_mounts.id AS workspace_mount_id,
            run_waits.id AS run_wait_id,
-           runtime_instances.restore_checkpoint_id
+           CASE
+               WHEN run_waits.handoff_runtime_instance_id IS NOT NULL
+                AND run_waits.condition_state = 'completed'
+               THEN run_waits.handoff_resume_checkpoint_id
+               ELSE run_waits.suspend_checkpoint_id
+           END AS restore_checkpoint_id,
+           run_waits.condition_state,
+           (run_waits.handoff_runtime_instance_id IS NOT NULL) AS same_workspace_resume,
+           coalesce(
+               run_waits.handoff_runtime_instance_id = runtime_instances.id,
+               false
+           ) AS retained_resume
       FROM runs
       JOIN run_leases
         ON run_leases.id = runs.current_run_lease_id
@@ -868,6 +893,35 @@ WITH candidates AS MATERIALIZED (
        AND workspace_leases.workspace_id = runs.workspace_id
        AND workspace_leases.runtime_instance_id = run_leases.runtime_instance_id
        AND workspace_leases.state IN ('active', 'releasing')
+      JOIN run_waits
+        ON run_waits.run_id = runs.id
+       AND run_waits.attempt_number = runs.current_attempt_number
+       AND run_waits.workspace_id = runs.workspace_id
+       AND run_waits.current_run_lease_id = run_leases.id
+       AND run_waits.suspension_state = 'resuming'
+       AND (
+           (run_waits.handoff_runtime_instance_id IS NULL
+            AND run_waits.handoff_workspace_mount_id IS NULL
+            AND run_waits.handoff_resume_checkpoint_id IS NULL
+            AND run_waits.resume_writer_generation IS NULL)
+           OR
+           (run_waits.handoff_runtime_instance_id IS NOT NULL
+            AND run_waits.handoff_workspace_mount_id IS NOT NULL
+            AND run_waits.handoff_mount_generation IS NOT NULL
+            AND run_waits.ownership_generation IS NOT NULL
+            AND run_waits.parent_writer_generation IS NOT NULL
+            AND run_waits.child_writer_generation IS NOT NULL
+            AND run_waits.resume_writer_generation IS NOT NULL
+            AND run_waits.resume_workspace_version_id IS NOT NULL
+            AND run_waits.child_run_id IS NOT NULL
+            AND (
+                (run_waits.condition_state = 'completed'
+                 AND run_waits.handoff_resume_checkpoint_id IS NOT NULL)
+                OR
+                (run_waits.condition_state IN ('failed', 'cancelled')
+                 AND run_waits.handoff_resume_checkpoint_id IS NULL)
+            ))
+       )
       JOIN workspace_mounts
         ON workspace_mounts.id = workspace_leases.workspace_mount_id
        AND workspace_mounts.runtime_instance_id = run_leases.runtime_instance_id
@@ -876,7 +930,21 @@ WITH candidates AS MATERIALIZED (
       JOIN runtime_instances
         ON runtime_instances.id = run_leases.runtime_instance_id
        AND runtime_instances.workspace_id = runs.workspace_id
-       AND runtime_instances.restore_checkpoint_id IS NOT NULL
+       AND (
+           (run_waits.handoff_runtime_instance_id IS NULL
+            AND runtime_instances.restore_checkpoint_id = run_waits.suspend_checkpoint_id)
+           OR
+           (run_waits.handoff_runtime_instance_id IS NOT NULL
+            AND (
+                (runtime_instances.id = run_waits.handoff_runtime_instance_id
+                 AND workspace_mounts.id = run_waits.handoff_workspace_mount_id)
+                OR runtime_instances.restore_checkpoint_id = CASE
+                    WHEN run_waits.condition_state = 'completed'
+                    THEN run_waits.handoff_resume_checkpoint_id
+                    ELSE run_waits.suspend_checkpoint_id
+                END
+            ))
+       )
        AND runtime_instances.reclaimed_at IS NULL
       JOIN worker_instances
         ON worker_instances.id = run_leases.worker_instance_id
@@ -889,16 +957,6 @@ WITH candidates AS MATERIALIZED (
              AND worker_network_slots.state IN ('bound', 'reclaiming', 'quarantined'))
             OR (worker_network_slots.state = 'lost'
                 AND worker_network_slots.generation = run_leases.network_slot_generation + 1))
-      JOIN run_waits
-        ON run_waits.run_id = runs.id
-       AND run_waits.attempt_number = runs.current_attempt_number
-       AND run_waits.workspace_id = runs.workspace_id
-       AND run_waits.current_run_lease_id = run_leases.id
-       AND run_waits.suspension_state = 'resuming'
-       AND run_waits.suspend_checkpoint_id = runtime_instances.restore_checkpoint_id
-       AND run_waits.handoff_runtime_instance_id IS NULL
-       AND run_waits.handoff_workspace_mount_id IS NULL
-       AND run_waits.handoff_resume_checkpoint_id IS NULL
      WHERE (run_leases.expires_at <= transaction_timestamp()
             OR (run_leases.state IN ('assigned', 'starting')
                 AND run_leases.start_deadline_at <= transaction_timestamp())
@@ -968,7 +1026,10 @@ WITH candidates AS MATERIALIZED (
            placement_candidates.workspace_lease_id,
            placement_candidates.workspace_mount_id,
            placement_candidates.run_wait_id,
-           placement_candidates.restore_checkpoint_id
+           placement_candidates.restore_checkpoint_id,
+           placement_candidates.condition_state,
+           placement_candidates.same_workspace_resume,
+           placement_candidates.retained_resume
       FROM placement_candidates
       JOIN runs ON runs.id = placement_candidates.run_id
      WHERE ((runs.entrypoint_kind = 'task'
@@ -1065,7 +1126,8 @@ WITH candidates AS MATERIALIZED (
        AND runtime_instances.worker_instance_id = locked_slots.worker_instance_id
        AND runtime_instances.worker_epoch = locked_slots.worker_epoch
        AND runtime_instances.workspace_id = locked_slots.workspace_id
-       AND runtime_instances.restore_checkpoint_id = locked_slots.restore_checkpoint_id
+       AND (locked_slots.retained_resume
+            OR runtime_instances.restore_checkpoint_id = locked_slots.restore_checkpoint_id)
        AND runtime_instances.reclaimed_at IS NULL
      ORDER BY runtime_instances.id
      FOR UPDATE OF runtime_instances
@@ -1131,10 +1193,32 @@ WITH candidates AS MATERIALIZED (
        AND run_waits.workspace_id = locked_workspace_leases.workspace_id
        AND run_waits.current_run_lease_id = locked_workspace_leases.run_lease_id
        AND run_waits.suspension_state = 'resuming'
-       AND run_waits.suspend_checkpoint_id = locked_workspace_leases.restore_checkpoint_id
-       AND run_waits.handoff_runtime_instance_id IS NULL
-       AND run_waits.handoff_workspace_mount_id IS NULL
-       AND run_waits.handoff_resume_checkpoint_id IS NULL
+       AND CASE
+               WHEN run_waits.handoff_runtime_instance_id IS NOT NULL
+                AND run_waits.condition_state = 'completed'
+               THEN run_waits.handoff_resume_checkpoint_id
+               ELSE run_waits.suspend_checkpoint_id
+           END = locked_workspace_leases.restore_checkpoint_id
+       AND run_waits.condition_state = locked_workspace_leases.condition_state
+       AND (run_waits.handoff_runtime_instance_id IS NOT NULL)
+           = locked_workspace_leases.same_workspace_resume
+       AND coalesce(
+               run_waits.handoff_runtime_instance_id = locked_workspace_leases.runtime_instance_id,
+               false
+           )
+           = locked_workspace_leases.retained_resume
+       AND (
+           (NOT locked_workspace_leases.same_workspace_resume
+            AND run_waits.handoff_workspace_mount_id IS NULL
+            AND run_waits.handoff_resume_checkpoint_id IS NULL
+            AND run_waits.resume_writer_generation IS NULL)
+           OR
+           (locked_workspace_leases.same_workspace_resume
+            AND run_waits.handoff_workspace_mount_id IS NOT NULL
+            AND run_waits.resume_writer_generation = locked_workspace_leases.writer_generation
+            AND run_waits.resume_workspace_version_id
+                = locked_workspace_leases.restore_workspace_version_id)
+       )
      ORDER BY run_waits.id
      FOR UPDATE OF run_waits
 ), loss_authority AS MATERIALIZED (
@@ -1212,7 +1296,12 @@ WITH candidates AS MATERIALIZED (
       FROM loss_authority
       JOIN run_checkpoints
         ON run_checkpoints.id = loss_authority.restore_checkpoint_id
-       AND run_checkpoints.kind = 'suspend'
+       AND run_checkpoints.kind = CASE
+               WHEN loss_authority.same_workspace_resume
+                AND loss_authority.condition_state = 'completed'
+               THEN 'handoff_resume'::run_checkpoint_kind
+               ELSE 'suspend'::run_checkpoint_kind
+           END
        AND run_checkpoints.run_id = loss_authority.run_id
        AND run_checkpoints.attempt_number = loss_authority.current_attempt_number
        AND run_checkpoints.run_wait_id = loss_authority.run_wait_id
@@ -1300,6 +1389,7 @@ WITH candidates AS MATERIALIZED (
     UPDATE run_waits
        SET suspension_state = 'resume_pending',
            current_run_lease_id = NULL,
+           resume_writer_generation = NULL,
            resume_request_version = run_waits.resume_request_version + 1,
            expected_run_state_version = requeued_runs.state_version,
            updated_at = transaction_timestamp()
@@ -1517,6 +1607,10 @@ WITH candidates AS MATERIALIZED (
       LEFT JOIN failed_waits ON failed_waits.id = locked_checkpoints.run_wait_id
      WHERE runtime_instances.id = locked_checkpoints.runtime_instance_id
        AND (requeued_waits.id IS NOT NULL OR failed_waits.id IS NOT NULL)
+       AND (NOT locked_checkpoints.retained_resume
+            OR locked_checkpoints.run_lease_state = 'running'
+            OR locked_checkpoints.physical_loss_at <= transaction_timestamp()
+            OR locked_checkpoints.physical_failure_at <= transaction_timestamp())
        AND runtime_instances.desired_state = 'ready'
     RETURNING runtime_instances.id
 ), unmounting AS (

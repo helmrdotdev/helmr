@@ -18,46 +18,54 @@ import (
 const mebibyte = int64(1024 * 1024)
 
 type runPlacementAuthority struct {
-	entrypointKind           string
-	actorID                  pgtype.UUID
-	ownerActorID             pgtype.UUID
-	ownerActorRunID          pgtype.UUID
-	runID                    pgtype.UUID
-	orgID                    pgtype.UUID
-	projectID                pgtype.UUID
-	environmentID            pgtype.UUID
-	deploymentID             pgtype.UUID
-	workspaceDefinitionID    pgtype.UUID
-	workspaceID              pgtype.UUID
-	baseVersionID            pgtype.UUID
-	restoreCheckpointID      pgtype.UUID
-	resumeRunWaitID          pgtype.UUID
-	resumeRequestVersion     int64
-	restoreRuntimeID         pgtype.UUID
-	restoreRuntimeIdentityID string
-	restoreSubstrateID       pgtype.UUID
-	restoreSubstrateFormat   string
-	restoreSubstrateBuilder  string
-	restoreSubstrateLayout   string
-	handoffChildWaitID       pgtype.UUID
-	handoffRuntimeID         pgtype.UUID
-	handoffWorkspaceMountID  pgtype.UUID
-	handoffMountGeneration   pgtype.Int8
-	handoffOwnership         pgtype.Int8
-	handoffParentWriter      pgtype.Int8
-	attemptNumber            int32
-	stateVersion             int64
-	regionID                 string
-	queueName                string
-	concurrencyKey           pgtype.Text
-	queueLimit               pgtype.Int8
-	ownershipGeneration      int64
-	writerGeneration         int64
-	traceID                  pgtype.Text
-	rootSpanID               string
-	resources                runResources
-	networkPolicy            []byte
-	architecture             string
+	entrypointKind            string
+	actorID                   pgtype.UUID
+	ownerActorID              pgtype.UUID
+	ownerActorRunID           pgtype.UUID
+	runID                     pgtype.UUID
+	orgID                     pgtype.UUID
+	projectID                 pgtype.UUID
+	environmentID             pgtype.UUID
+	deploymentID              pgtype.UUID
+	workspaceDefinitionID     pgtype.UUID
+	workspaceID               pgtype.UUID
+	baseVersionID             pgtype.UUID
+	restoreCheckpointID       pgtype.UUID
+	resumeRunWaitID           pgtype.UUID
+	resumeRequestVersion      int64
+	restoreRuntimeID          pgtype.UUID
+	restoreRuntimeIdentityID  string
+	restoreSubstrateID        pgtype.UUID
+	restoreSubstrateFormat    string
+	restoreSubstrateBuilder   string
+	restoreSubstrateLayout    string
+	sameWorkspaceResume       bool
+	handoffResumeSucceeded    bool
+	resumeHandoffRuntimeID    pgtype.UUID
+	resumeHandoffMountID      pgtype.UUID
+	resumeHandoffMountGen     pgtype.Int8
+	resumeHandoffOwnership    pgtype.Int8
+	resumeHandoffParentWriter pgtype.Int8
+	resumeHandoffChildWriter  pgtype.Int8
+	handoffChildWaitID        pgtype.UUID
+	handoffRuntimeID          pgtype.UUID
+	handoffWorkspaceMountID   pgtype.UUID
+	handoffMountGeneration    pgtype.Int8
+	handoffOwnership          pgtype.Int8
+	handoffParentWriter       pgtype.Int8
+	attemptNumber             int32
+	stateVersion              int64
+	regionID                  string
+	queueName                 string
+	concurrencyKey            pgtype.Text
+	queueLimit                pgtype.Int8
+	ownershipGeneration       int64
+	writerGeneration          int64
+	traceID                   pgtype.Text
+	rootSpanID                string
+	resources                 runResources
+	networkPolicy             []byte
+	architecture              string
 }
 
 type runResources struct {
@@ -66,6 +74,28 @@ type runResources struct {
 	workloadDisk   int64
 	scratchBytes   int64
 	executionSlots int32
+}
+
+func (a runPlacementAuthority) retainedHandoffRuntimeID() (pgtype.UUID, bool) {
+	if a.sameWorkspaceResume {
+		if !a.handoffResumeSucceeded || !a.resumeHandoffRuntimeID.Valid {
+			return pgtype.UUID{}, false
+		}
+		if a.handoffChildWaitID.Valid &&
+			a.handoffRuntimeID != a.resumeHandoffRuntimeID {
+			return pgtype.UUID{}, false
+		}
+		return a.resumeHandoffRuntimeID, true
+	}
+	if a.handoffChildWaitID.Valid {
+		return a.handoffRuntimeID, a.handoffRuntimeID.Valid
+	}
+	return pgtype.UUID{}, false
+}
+
+func (a runPlacementAuthority) usesRetainedHandoff(runtimeID pgtype.UUID) bool {
+	retainedID, ok := a.retainedHandoffRuntimeID()
+	return ok && retainedID == runtimeID
 }
 
 func discoverRunQueueScope(
@@ -183,11 +213,18 @@ SELECT runs.id,
        child_handoff.handoff_mount_generation,
        child_handoff.ownership_generation,
        child_handoff.parent_writer_generation,
-       restore_wait.id,
-       coalesce(restore_wait.resume_request_version, 0),
-       restore_wait.suspend_checkpoint_id,
-       restore_checkpoint.private_workspace_version_id,
-       runs.actor_start_input_sequence,
+	       restore_wait.id,
+	       coalesce(restore_wait.resume_request_version, 0),
+	       restore_wait.checkpoint_id,
+	       restore_checkpoint.private_workspace_version_id,
+	       restore_wait.handoff_runtime_instance_id,
+	       restore_wait.handoff_workspace_mount_id,
+	       restore_wait.handoff_mount_generation,
+	       restore_wait.ownership_generation,
+	       restore_wait.parent_writer_generation,
+	       restore_wait.child_writer_generation,
+	       coalesce(restore_wait.condition_state = 'completed', false),
+	       runs.actor_start_input_sequence,
        runs.actor_start_input_high_watermark
   FROM runs
   LEFT JOIN LATERAL (
@@ -233,21 +270,55 @@ SELECT runs.id,
           AND handoff.child_writer_generation IS NULL
   ) AS child_handoff ON true
   LEFT JOIN LATERAL (
-       SELECT run_waits.id,
-              run_waits.resume_request_version,
-              run_waits.suspend_checkpoint_id,
-              run_waits.attempt_number,
-              run_waits.workspace_id
-         FROM run_waits
-        WHERE run_waits.run_id = runs.id
-          AND run_waits.suspension_state = 'resume_pending'
-          AND run_waits.handoff_runtime_instance_id IS NULL
-          AND run_waits.handoff_workspace_mount_id IS NULL
-          AND run_waits.handoff_resume_checkpoint_id IS NULL
-  ) AS restore_wait ON true
-  LEFT JOIN run_checkpoints AS restore_checkpoint
-    ON restore_checkpoint.id = restore_wait.suspend_checkpoint_id
-   AND restore_checkpoint.kind = 'suspend'
+	       SELECT run_waits.id,
+	              run_waits.resume_request_version,
+	              CASE
+	                  WHEN run_waits.handoff_runtime_instance_id IS NOT NULL
+	                   AND run_waits.condition_state = 'completed'
+	                  THEN run_waits.handoff_resume_checkpoint_id
+	                  ELSE run_waits.suspend_checkpoint_id
+	              END AS checkpoint_id,
+	              run_waits.attempt_number,
+	              run_waits.workspace_id,
+	              run_waits.handoff_runtime_instance_id,
+	              run_waits.handoff_workspace_mount_id,
+	              run_waits.handoff_mount_generation,
+	              run_waits.ownership_generation,
+	              run_waits.parent_writer_generation,
+	              run_waits.child_writer_generation,
+	              run_waits.condition_state
+	         FROM run_waits
+	        WHERE run_waits.run_id = runs.id
+	          AND run_waits.suspension_state = 'resume_pending'
+	          AND (
+	              (run_waits.handoff_runtime_instance_id IS NULL
+	               AND run_waits.handoff_workspace_mount_id IS NULL
+	               AND run_waits.handoff_resume_checkpoint_id IS NULL)
+	              OR
+	              (run_waits.handoff_runtime_instance_id IS NOT NULL
+	               AND run_waits.handoff_workspace_mount_id IS NOT NULL
+	               AND run_waits.child_run_id IS NOT NULL
+	               AND run_waits.child_writer_generation IS NOT NULL
+	               AND run_waits.resume_writer_generation IS NULL
+	               AND run_waits.resume_workspace_version_id IS NOT NULL
+	               AND run_waits.condition_state IN ('completed', 'failed', 'cancelled')
+	               AND (
+	                   (run_waits.condition_state = 'completed'
+	                    AND run_waits.handoff_resume_checkpoint_id IS NOT NULL)
+	                   OR
+	                   (run_waits.condition_state IN ('failed', 'cancelled')
+	                    AND run_waits.handoff_resume_checkpoint_id IS NULL)
+	               ))
+	          )
+	  ) AS restore_wait ON true
+	  LEFT JOIN run_checkpoints AS restore_checkpoint
+	    ON restore_checkpoint.id = restore_wait.checkpoint_id
+	   AND restore_checkpoint.kind = CASE
+	       WHEN restore_wait.handoff_runtime_instance_id IS NOT NULL
+	        AND restore_wait.condition_state = 'completed'
+	       THEN 'handoff_resume'::run_checkpoint_kind
+	       ELSE 'suspend'::run_checkpoint_kind
+	   END
    AND restore_checkpoint.run_id = runs.id
    AND restore_checkpoint.attempt_number = restore_wait.attempt_number
    AND restore_checkpoint.run_wait_id = restore_wait.id
@@ -327,11 +398,33 @@ SELECT runs.id,
 		&authority.resumeRequestVersion,
 		&authority.restoreCheckpointID,
 		&authority.baseVersionID,
+		&authority.resumeHandoffRuntimeID,
+		&authority.resumeHandoffMountID,
+		&authority.resumeHandoffMountGen,
+		&authority.resumeHandoffOwnership,
+		&authority.resumeHandoffParentWriter,
+		&authority.resumeHandoffChildWriter,
+		&authority.handoffResumeSucceeded,
 		&actorStartInputSequence,
 		&actorStartInputHighWatermark,
 	)
 	if err != nil {
 		return runPlacementAuthority{}, err
+	}
+	authority.sameWorkspaceResume = authority.resumeHandoffRuntimeID.Valid
+	if authority.sameWorkspaceResume &&
+		(!authority.resumeHandoffMountID.Valid ||
+			!authority.resumeHandoffMountGen.Valid ||
+			!authority.resumeHandoffOwnership.Valid ||
+			!authority.resumeHandoffParentWriter.Valid ||
+			!authority.resumeHandoffChildWriter.Valid) {
+		return runPlacementAuthority{}, pgx.ErrNoRows
+	}
+	// A nested failed handoff cannot migrate its enclosing same-kernel edge.
+	// Its completion transaction unwinds that edge before placement can see it.
+	if authority.sameWorkspaceResume && authority.handoffChildWaitID.Valid &&
+		!authority.handoffResumeSucceeded {
+		return runPlacementAuthority{}, pgx.ErrNoRows
 	}
 	var manifest []byte
 	var workspaceArchitecture pgtype.Text
@@ -386,13 +479,54 @@ SELECT workspaces.deployment_definition_id,
 	if err != nil {
 		return runPlacementAuthority{}, err
 	}
-	if authority.handoffChildWaitID.Valid {
+	if authority.handoffChildWaitID.Valid && !authority.sameWorkspaceResume {
 		if !authority.handoffMountGeneration.Valid ||
 			!authority.handoffOwnership.Valid ||
 			authority.handoffOwnership.Int64 != authority.ownershipGeneration ||
 			!authority.handoffParentWriter.Valid ||
 			authority.handoffParentWriter.Int64 != authority.writerGeneration {
 			return runPlacementAuthority{}, pgx.ErrNoRows
+		}
+	}
+	if authority.sameWorkspaceResume {
+		if authority.resumeHandoffOwnership.Int64 != authority.ownershipGeneration ||
+			authority.resumeHandoffChildWriter.Int64 > authority.writerGeneration {
+			return runPlacementAuthority{}, pgx.ErrNoRows
+		}
+		if authority.handoffResumeSucceeded &&
+			authority.resumeHandoffChildWriter.Int64 != authority.writerGeneration {
+			var fenced pgtype.Bool
+			err = tx.QueryRow(ctx, `
+SELECT EXISTS (
+    SELECT 1
+      FROM workspace_leases
+      JOIN run_leases
+        ON run_leases.id = workspace_leases.owner_run_lease_id
+       AND run_leases.run_id = $5
+       AND run_leases.attempt_number = $6
+       AND run_leases.workspace_id = $1
+       AND run_leases.state = 'expired'
+       AND run_leases.terminal_reason_code IN (
+           'lease_expired',
+           'worker_lost',
+           'runtime_failed'
+       )
+     WHERE workspace_leases.workspace_id = $1
+       AND workspace_leases.ownership_generation = $2
+       AND workspace_leases.writer_generation = $3
+       AND workspace_leases.base_version_id = $4
+       AND workspace_leases.state = 'expired'
+)`,
+				authority.workspaceID,
+				authority.ownershipGeneration,
+				authority.writerGeneration,
+				authority.baseVersionID,
+				authority.runID,
+				authority.attemptNumber,
+			).Scan(&fenced)
+			if err != nil || !fenced.Valid || !fenced.Bool {
+				return runPlacementAuthority{}, pgx.ErrNoRows
+			}
 		}
 	}
 
@@ -441,10 +575,18 @@ SELECT source_runtime.id,
        runtime_substrates.substrate_format,
        runtime_substrates.builder_abi,
        runtime_substrates.layout_abi
-  FROM run_waits
-  JOIN run_checkpoints
-    ON run_checkpoints.id = run_waits.suspend_checkpoint_id
-   AND run_checkpoints.kind = 'suspend'
+	  FROM run_waits
+	  JOIN run_checkpoints
+	    ON run_checkpoints.id = CASE
+	        WHEN $14::boolean AND run_waits.condition_state = 'completed'
+	        THEN run_waits.handoff_resume_checkpoint_id
+	        ELSE run_waits.suspend_checkpoint_id
+	    END
+	   AND run_checkpoints.kind = CASE
+	        WHEN $14::boolean AND run_waits.condition_state = 'completed'
+	        THEN 'handoff_resume'::run_checkpoint_kind
+	        ELSE 'suspend'::run_checkpoint_kind
+	    END
    AND run_checkpoints.run_id = run_waits.run_id
    AND run_checkpoints.attempt_number = run_waits.attempt_number
    AND run_checkpoints.run_wait_id = run_waits.id
@@ -496,10 +638,29 @@ SELECT source_runtime.id,
    AND run_waits.workspace_id = $4
    AND run_waits.suspension_state = 'resume_pending'
    AND run_waits.resume_request_version = $6
-   AND run_checkpoints.id = $7
-   AND run_waits.handoff_runtime_instance_id IS NULL
-   AND run_waits.handoff_workspace_mount_id IS NULL
-   AND run_waits.handoff_resume_checkpoint_id IS NULL
+	   AND run_checkpoints.id = $7
+	   AND (
+	       (NOT $14::boolean
+	        AND run_waits.handoff_runtime_instance_id IS NULL
+	        AND run_waits.handoff_workspace_mount_id IS NULL
+	        AND run_waits.handoff_resume_checkpoint_id IS NULL)
+	       OR
+	       ($14::boolean
+	        AND run_waits.handoff_runtime_instance_id IS NOT NULL
+	        AND run_waits.handoff_workspace_mount_id IS NOT NULL
+	        AND run_waits.resume_workspace_version_id = $5
+	        AND run_waits.child_writer_generation IS NOT NULL
+	        AND run_waits.resume_writer_generation IS NULL
+	        AND (
+	            (run_waits.condition_state = 'completed'
+	             AND run_checkpoints.kind = 'handoff_resume'
+	             AND run_waits.handoff_resume_checkpoint_id = run_checkpoints.id)
+	            OR
+	            (run_waits.condition_state IN ('failed', 'cancelled')
+	             AND run_checkpoints.kind = 'suspend'
+	             AND run_waits.handoff_resume_checkpoint_id IS NULL)
+	        ))
+	   )
  FOR UPDATE OF run_waits, run_checkpoints, workspace_versions`,
 			authority.resumeRunWaitID,
 			authority.runID,
@@ -514,6 +675,7 @@ SELECT source_runtime.id,
 			authority.entrypointKind,
 			actorCommittedInputSequence,
 			actorNextInputSequence-1,
+			authority.sameWorkspaceResume,
 		).Scan(
 			&authority.restoreRuntimeID,
 			&authority.restoreRuntimeIdentityID,

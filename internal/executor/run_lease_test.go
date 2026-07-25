@@ -66,6 +66,61 @@ func TestExecutorCompletesSuccessfulRunLeaseTask(t *testing.T) {
 	}
 }
 
+func TestExecutorCompletesSuccessfulTaskHandoff(t *testing.T) {
+	trace := &runLeaseTrace{}
+	lease := testRunLeaseReceipt(time.Now().Add(time.Minute))
+	frozen := lease
+	frozen.ExpiresAt = lease.ExpiresAt.Add(20 * time.Minute)
+	task := &testRunLeaseTask{
+		trace:   trace,
+		renewed: lease,
+		result: RunLeaseTaskResult{
+			Outcome: api.WorkerTaskOutcome{Succeeded: &api.WorkerTaskSucceeded{
+				Output: json.RawMessage(`{"ok":true}`),
+			}},
+			ProgramQuiesced: api.WorkerRunQuiescenceProof{
+				RunID: lease.RunID, AttemptNumber: lease.AttemptNumber,
+				RunLeaseID: lease.ID,
+			},
+		},
+	}
+	control := &testRunLeaseControl{
+		trace:   trace,
+		claim:   api.WorkerRunLeaseClaimResponse{Lease: lease},
+		renewed: api.WorkerRunLeaseRenewResponse{Lease: lease},
+		begin: api.WorkerBeginRunFinalizationResponse{
+			Lease: frozen, Kind: api.WorkerRunFinalizationCapture,
+			Handoff: &api.WorkerRunFinalizationHandoff{
+				ParentRunID: "parent-run", ParentAttemptNumber: 1,
+				RunWaitID: "wait", SuspendCheckpointID: "suspend",
+				ResumeAttachID: "attach", CorrelationID: "correlation",
+			},
+		},
+	}
+	executor := Executor{
+		RunLeases:     control,
+		RunLeaseTasks: &testRunLeaseTaskRunner{trace: trace, task: task},
+	}
+
+	if err := executor.ExecuteRunLease(context.Background(), api.WorkerRunLeaseWork{
+		LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(trace.calls, []string{
+		"claim", "start", "wait", "renew", "begin", "guest-begin", "capture",
+		"handoff-checkpoint", "complete",
+	}) {
+		t.Fatalf("calls = %v", trace.calls)
+	}
+	if control.completed.Handoff == nil ||
+		control.completed.Handoff.CheckpointID == "" ||
+		control.completed.Workspace.Captured == nil ||
+		control.completed.Outcome.Succeeded == nil {
+		t.Fatalf("completion = %+v", control.completed)
+	}
+}
+
 func TestExecutorRollsBackFailedRunLeaseTask(t *testing.T) {
 	trace := &runLeaseTrace{}
 	lease := testRunLeaseReceipt(time.Now().Add(time.Minute))
@@ -438,6 +493,16 @@ func (task *testRunLeaseTask) CaptureWorkspace(context.Context) (api.WorkerTaskW
 		return api.WorkerTaskWorkspaceCapture{}, errors.New("transient capture failure")
 	}
 	return api.WorkerTaskWorkspaceCapture{}, nil
+}
+
+func (task *testRunLeaseTask) CreateHandoffCheckpoint(
+	context.Context,
+	api.WorkerRunFinalizationHandoff,
+	string,
+	api.WorkerTaskWorkspaceCapture,
+) (api.WorkerCheckpointManifest, error) {
+	task.trace.add("handoff-checkpoint")
+	return api.WorkerCheckpointManifest{}, nil
 }
 
 func (task *testRunLeaseTask) ResetWorkspace(context.Context) (api.WorkerTaskWorkspaceRollback, error) {

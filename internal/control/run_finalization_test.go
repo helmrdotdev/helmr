@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -132,7 +133,7 @@ func TestBeginRunFinalizationRejectsUnenteredAttempt(t *testing.T) {
 	}
 }
 
-func TestBeginRunFinalizationRejectsSameWorkspaceChild(t *testing.T) {
+func TestBeginRunFinalizationRejectsMissingSameWorkspaceHandoff(t *testing.T) {
 	server, store, worker, request, parsed := validRunFinalizationFixture(t)
 	parentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store.renewal.ParentRunID = parentID
@@ -249,6 +250,82 @@ func TestBeginRunFinalizationAcceptsReset(t *testing.T) {
 	}
 }
 
+func TestLockLiveRunFinalizationAuthorityLocksLineageBeforePhysicalAuthority(t *testing.T) {
+	_, store, worker, receipt := validRunLeaseRenewalFixture(t)
+	id := func() pgtype.UUID { return pgvalue.UUID(uuid.Must(uuid.NewV7())) }
+	environmentID := store.renewal.EnvironmentID
+	workspaceID := store.renewal.WorkspaceID
+	actorID := id()
+	rootID, middleID, parentID, childID := id(), id(), id(), id()
+	store.renewal.RunID = childID
+	store.renewal.ParentRunID = parentID
+	store.renewal.ParentOwnsLifecycle = pgtype.Bool{Bool: true, Valid: true}
+	store.authority.run.ID = childID
+	store.authority.run.ParentRunID = parentID
+	store.authority.run.ParentOwnsLifecycle = pgtype.Bool{Bool: true, Valid: true}
+	store.authority.attempt.RunID = childID
+	store.authority.runLease.RunID = childID
+	lineageRun := func(runID, parentRunID pgtype.UUID) db.Run {
+		return db.Run{
+			ID: runID, OrgID: store.renewal.OrgID, ProjectID: store.renewal.ProjectID,
+			EnvironmentID: environmentID,
+			WorkspaceID:   workspaceID, Status: db.RunStatusWaiting, CurrentAttemptNumber: 1,
+			ParentRunID: parentRunID,
+			ParentOwnsLifecycle: pgtype.Bool{
+				Bool: parentRunID.Valid, Valid: parentRunID.Valid,
+			},
+		}
+	}
+	root := lineageRun(rootID, pgtype.UUID{})
+	root.EntrypointKind = "actor"
+	root.ActorID = actorID
+	store.authority.actor = db.Actor{
+		ID: actorID, CurrentRunID: rootID, WorkspaceID: workspaceID, State: "open",
+	}
+	store.finalizationLineage = []db.ListSameWorkspaceHandoffAncestorRunsRow{
+		{Run: root, Depth: 2},
+		{Run: lineageRun(middleID, rootID), Depth: 1},
+		{Run: lineageRun(parentID, middleID), Depth: 0},
+	}
+	store.calls = nil
+	authority, err := lockLiveRunFinalizationAuthority(
+		context.Background(),
+		store,
+		worker,
+		pgvalue.UUID(uuid.MustParse(receipt.ID)),
+		receipt.LeaseSequence,
+		store.renewal,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authority.parentRun.ID != parentID {
+		t.Fatalf("parent = %s, want %s", pgvalue.UUIDString(authority.parentRun.ID), pgvalue.UUIDString(parentID))
+	}
+	want := []string{
+		"actor",
+		"parent_run:" + pgvalue.UUIDString(rootID),
+		"parent_run:" + pgvalue.UUIDString(middleID),
+		"parent_run:" + pgvalue.UUIDString(parentID),
+		"run",
+		"workspace",
+		"lineage_attempt:" + pgvalue.UUIDString(rootID),
+		"lineage_attempt:" + pgvalue.UUIDString(middleID),
+		"lineage_attempt:" + pgvalue.UUIDString(parentID),
+		"attempt",
+		"worker_group",
+		"worker",
+		"network_slot",
+		"runtime",
+		"renewal_lease",
+		"workspace_mount",
+		"workspace_lease",
+	}
+	if !slices.Equal(store.calls, want) {
+		t.Fatalf("lock calls = %v, want %v", store.calls, want)
+	}
+}
+
 func assertRunFinalizationRejected(
 	t *testing.T,
 	server *Server,
@@ -290,11 +367,30 @@ func validRunFinalizationFixture(
 	return server, store, worker, request, parsed
 }
 
-func (s *runLeaseClaimStore) LockRunFinalizationParentRun(
+func (s *runLeaseClaimStore) LockParentOwnedChildWait(
 	context.Context,
-	db.LockRunFinalizationParentRunParams,
+	db.LockParentOwnedChildWaitParams,
+) (db.RunWait, error) {
+	return db.RunWait{}, pgx.ErrNoRows
+}
+
+func (s *runLeaseClaimStore) ListSameWorkspaceHandoffAncestorRuns(
+	context.Context,
+	db.ListSameWorkspaceHandoffAncestorRunsParams,
+) ([]db.ListSameWorkspaceHandoffAncestorRunsRow, error) {
+	return s.finalizationLineage, nil
+}
+
+func (s *runLeaseClaimStore) LockRunFinalizationParentRun(
+	_ context.Context,
+	params db.LockRunFinalizationParentRunParams,
 ) (db.Run, error) {
-	s.calls = append(s.calls, "parent_run")
+	s.calls = append(s.calls, "parent_run:"+pgvalue.UUIDString(params.ID))
+	for _, row := range s.finalizationLineage {
+		if row.Run.ID == params.ID {
+			return row.Run, nil
+		}
+	}
 	return s.authority.parentRun, nil
 }
 

@@ -240,6 +240,65 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 	return CheckpointResult{Manifest: manifest, WorkspaceCapture: workspaceCapture}, nil
 }
 
+func (c runtimeCheckpointer) CreateHandoffCheckpoint(
+	ctx context.Context,
+	request CheckpointRequest,
+	workspaceBase api.WorkerCheckpointWorkspaceBase,
+) (result api.WorkerCheckpointManifest, err error) {
+	if c.session == nil {
+		return api.WorkerCheckpointManifest{}, errors.New("handoff checkpoint source session is required")
+	}
+	if c.cas == nil {
+		return api.WorkerCheckpointManifest{}, errors.New("handoff checkpoint CAS is required")
+	}
+	if c.encryptor == nil {
+		return api.WorkerCheckpointManifest{}, errors.New("handoff checkpoint encryption is required")
+	}
+	if strings.TrimSpace(request.CheckpointID) == "" ||
+		strings.TrimSpace(request.RunID) == "" ||
+		request.AttemptNumber <= 0 ||
+		strings.TrimSpace(request.RunWaitID) == "" ||
+		strings.TrimSpace(request.CorrelationID) == "" ||
+		strings.TrimSpace(request.ResumeAttachID) == "" ||
+		strings.TrimSpace(workspaceBase.ArtifactDigest) == "" ||
+		strings.TrimSpace(workspaceBase.MountPath) == "" {
+		return api.WorkerCheckpointManifest{}, errors.New("handoff checkpoint authority is incomplete")
+	}
+
+	phases := []api.WorkerCheckpointPhase{}
+	recordPhase := func(name string, started time.Time) {
+		phases = append(phases, api.WorkerCheckpointPhase{
+			Name: name, DurationMs: durationMilliseconds(time.Since(started)),
+		})
+	}
+	started := time.Now()
+	artifact, err := c.session.CreateSnapshot(ctx, vm.SnapshotRequest{ID: request.CheckpointID})
+	if err != nil {
+		return api.WorkerCheckpointManifest{}, err
+	}
+	recordPhase("create_runtime_snapshot", started)
+	phases = append(phases, workerCheckpointPhases(artifact.Phases)...)
+	defer cleanupSnapshotArtifact(artifact)
+	defer func() {
+		resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		resumeErr := c.session.Resume(resumeCtx)
+		if resumeErr != nil {
+			err = errors.Join(err, fmt.Errorf("resume handoff checkpoint source: %w", resumeErr))
+		}
+	}()
+
+	c.workspace = workspaceBase
+	started = time.Now()
+	result, err = c.storeSnapshotArtifact(ctx, request, artifact)
+	if err != nil {
+		return api.WorkerCheckpointManifest{}, err
+	}
+	recordPhase("store_checkpoint_artifacts", started)
+	result.Phases = phases
+	return result, nil
+}
+
 func (c runtimeCheckpointer) releaseCheckpointSource(ctx context.Context) error {
 	if releaser, ok := c.session.(CheckpointSourceReleaser); ok {
 		return releaser.ReleaseCheckpointSource(ctx)

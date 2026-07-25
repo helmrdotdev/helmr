@@ -189,60 +189,114 @@ func lockRunLeaseAuthorityForStatuses(
 	if err != nil {
 		return authority, staleRunLeaseClaim(err)
 	}
-	statusAllowed := false
-	for _, allowed := range allowedStatuses {
-		statusAllowed = statusAllowed || authority.run.Status == allowed
-	}
-	if !statusAllowed ||
-		authority.run.CurrentAttemptNumber != locators.AttemptNumber ||
-		authority.run.CurrentRunLeaseID != leaseID {
-		return authority, errStaleRunLeaseClaim
+	if err := validateLockedRunLeaseRun(authority.run, leaseID, locators, allowedStatuses...); err != nil {
+		return authority, err
 	}
 
+	if err := lockRunLeaseWorkspace(ctx, q, &authority, locators); err != nil {
+		return authority, err
+	}
+	if err := lockRunLeaseAttempt(ctx, q, &authority, locators); err != nil {
+		return authority, err
+	}
+	if err := lockRunLeasePhysicalAuthority(
+		ctx, q, worker, leaseID, leaseSequence, locators, &authority,
+	); err != nil {
+		return authority, err
+	}
+	return authority, nil
+}
+
+func validateLockedRunLeaseRun(
+	run db.Run,
+	leaseID pgtype.UUID,
+	locators db.GetLiveRunLeaseLocatorsRow,
+	allowedStatuses ...db.RunStatus,
+) error {
+	statusAllowed := false
+	for _, allowed := range allowedStatuses {
+		statusAllowed = statusAllowed || run.Status == allowed
+	}
+	if !statusAllowed ||
+		run.CurrentAttemptNumber != locators.AttemptNumber ||
+		run.CurrentRunLeaseID != leaseID {
+		return errStaleRunLeaseClaim
+	}
+	return nil
+}
+
+func lockRunLeaseWorkspace(
+	ctx context.Context,
+	q db.Querier,
+	authority *runLeaseClaimAuthority,
+	locators db.GetLiveRunLeaseLocatorsRow,
+) error {
+	var err error
 	authority.workspace, err = q.LockRunLeaseClaimWorkspace(ctx, db.LockRunLeaseClaimWorkspaceParams{
 		ID: locators.WorkspaceID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
 		EnvironmentID: locators.EnvironmentID, RegionID: locators.RegionID,
 	})
 	if err != nil {
-		return authority, staleRunLeaseClaim(err)
+		return staleRunLeaseClaim(err)
 	}
 	if authority.workspace.State != db.WorkspaceStateActive ||
 		authority.workspace.DesiredState != db.WorkspaceDesiredStateActive {
-		return authority, errStaleRunLeaseClaim
+		return errStaleRunLeaseClaim
 	}
+	return nil
+}
 
+func lockRunLeaseAttempt(
+	ctx context.Context,
+	q db.Querier,
+	authority *runLeaseClaimAuthority,
+	locators db.GetLiveRunLeaseLocatorsRow,
+) error {
+	var err error
 	authority.attempt, err = q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
 		RunID: locators.RunID, Number: locators.AttemptNumber, WorkspaceID: locators.WorkspaceID,
 	})
 	if err != nil {
-		return authority, staleRunLeaseClaim(err)
+		return staleRunLeaseClaim(err)
 	}
 	if authority.attempt.TerminalAt.Valid || authority.attempt.EntrypointKind != authority.run.EntrypointKind {
-		return authority, errStaleRunLeaseClaim
+		return errStaleRunLeaseClaim
 	}
+	return nil
+}
 
+func lockRunLeasePhysicalAuthority(
+	ctx context.Context,
+	q db.Querier,
+	worker workerActor,
+	leaseID pgtype.UUID,
+	leaseSequence int64,
+	locators db.GetLiveRunLeaseLocatorsRow,
+	authority *runLeaseClaimAuthority,
+) error {
+	var err error
 	authority.workerGroup, err = q.LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{
 		ID: worker.WorkerGroupID, RegionID: locators.RegionID,
 	})
 	if err != nil {
-		return authority, staleRunLeaseClaim(err)
+		return staleRunLeaseClaim(err)
 	}
 	if (authority.workerGroup.State != db.WorkerGroupStateActive &&
 		authority.workerGroup.State != db.WorkerGroupStateDraining) ||
 		!authority.workerGroup.AllowsRun ||
 		authority.workerGroup.ClaimVersion != worker.GroupClaimVersion ||
 		authority.workerGroup.ProtocolVersion != worker.ProtocolVersion {
-		return authority, errStaleRunLeaseClaim
+		return errStaleRunLeaseClaim
 	}
 
 	authority.worker, err = q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{
 		ID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
 	})
 	if err != nil {
-		return authority, staleRunLeaseClaim(err)
+		return staleRunLeaseClaim(err)
 	}
 	if err := validateClaimWorker(worker, authority.worker); err != nil {
-		return authority, err
+		return err
 	}
 
 	authority.networkSlot, err = q.LockRunLeaseClaimNetworkSlot(ctx, db.LockRunLeaseClaimNetworkSlotParams{
@@ -251,10 +305,10 @@ func lockRunLeaseAuthorityForStatuses(
 		Generation: locators.NetworkSlotGeneration, RuntimeInstanceID: locators.RuntimeInstanceID,
 	})
 	if err != nil {
-		return authority, staleRunLeaseClaim(err)
+		return staleRunLeaseClaim(err)
 	}
 	if authority.networkSlot.State != db.WorkerNetworkSlotStateBound {
-		return authority, errStaleRunLeaseClaim
+		return errStaleRunLeaseClaim
 	}
 
 	authority.runtime, err = q.LockRunLeaseClaimRuntime(ctx, db.LockRunLeaseClaimRuntimeParams{
@@ -264,7 +318,7 @@ func lockRunLeaseAuthorityForStatuses(
 		WorkerEpoch: worker.WorkerEpoch, WorkspaceID: locators.WorkspaceID,
 	})
 	if err != nil {
-		return authority, staleRunLeaseClaim(err)
+		return staleRunLeaseClaim(err)
 	}
 
 	authority.runLease, err = q.LockLiveRunLease(ctx, db.LockLiveRunLeaseParams{
@@ -272,13 +326,13 @@ func lockRunLeaseAuthorityForStatuses(
 		AttemptNumber: locators.AttemptNumber, LeaseSequence: leaseSequence,
 	})
 	if err != nil {
-		return authority, staleRunLeaseClaim(err)
+		return staleRunLeaseClaim(err)
 	}
 	if !authority.runLease.StartedAt.Valid || !authority.run.StartedAt.Valid {
-		return authority, errStaleRunLeaseClaim
+		return errStaleRunLeaseClaim
 	}
-	if err := validateClaimPhysicalAuthority(worker, authority); err != nil {
-		return authority, err
+	if err := validateClaimPhysicalAuthority(worker, *authority); err != nil {
+		return err
 	}
 
 	authority.workspaceMount, err = q.LockRunLeaseClaimMount(ctx, db.LockRunLeaseClaimMountParams{
@@ -289,7 +343,7 @@ func lockRunLeaseAuthorityForStatuses(
 		WorkspaceID: locators.WorkspaceID,
 	})
 	if err != nil {
-		return authority, staleRunLeaseClaim(err)
+		return staleRunLeaseClaim(err)
 	}
 	authority.workspaceLease, err = q.LockRunLeaseClaimWorkspaceLease(ctx, db.LockRunLeaseClaimWorkspaceLeaseParams{
 		ID: locators.WorkspaceLeaseID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
@@ -299,13 +353,13 @@ func lockRunLeaseAuthorityForStatuses(
 		WorkspaceID: locators.WorkspaceID, WorkspaceMountID: locators.WorkspaceMountID,
 	})
 	if err != nil {
-		return authority, staleRunLeaseClaim(err)
+		return staleRunLeaseClaim(err)
 	}
-	if err := validateRunLeaseWorkspaceAuthority(authority); err != nil {
-		return authority, err
+	if err := validateRunLeaseWorkspaceAuthority(*authority); err != nil {
+		return err
 	}
 	if !authority.workspaceLease.ExpiresAt.Time.Equal(authority.runLease.ExpiresAt.Time) {
-		return authority, errStaleRunLeaseClaim
+		return errStaleRunLeaseClaim
 	}
-	return authority, nil
+	return nil
 }

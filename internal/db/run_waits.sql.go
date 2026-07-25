@@ -2044,6 +2044,133 @@ func (q *Queries) ListPendingRunWaitTimeouts(ctx context.Context, limitCount int
 	return items, nil
 }
 
+const listSameWorkspaceHandoffAncestorRuns = `-- name: ListSameWorkspaceHandoffAncestorRuns :many
+WITH RECURSIVE ancestors AS (
+    SELECT handoff.run_id AS parent_run_id,
+           handoff.child_run_id,
+           0 AS depth
+      FROM run_waits AS handoff
+     WHERE handoff.environment_id = $1
+       AND handoff.child_run_id = $3
+       AND handoff.workspace_id = $2
+       AND handoff.child_parent_owned IS TRUE
+       AND handoff.condition_state = 'pending'
+       AND handoff.suspension_state = 'parked'
+    UNION ALL
+    SELECT outer_wait.run_id,
+           outer_wait.child_run_id,
+           ancestors.depth + 1
+      FROM ancestors
+      JOIN runs AS child
+        ON child.id = ancestors.parent_run_id
+       AND child.workspace_id = $2
+       AND child.parent_owns_lifecycle IS TRUE
+      JOIN run_waits AS outer_wait
+        ON outer_wait.environment_id = $1
+       AND outer_wait.run_id = child.parent_run_id
+       AND outer_wait.child_run_id = child.id
+       AND outer_wait.workspace_id = $2
+       AND outer_wait.child_parent_owned IS TRUE
+       AND outer_wait.condition_state = 'pending'
+       AND outer_wait.suspension_state = 'parked'
+)
+SELECT parent.id, parent.public_id, parent.org_id, parent.project_id, parent.environment_id, parent.deployment_id, parent.deployment_definition_id, parent.entrypoint_kind, parent.entrypoint_declared_id, parent.actor_id, parent.cause_kind, parent.schedule_id, parent.schedule_generation, parent.scheduled_at, parent.previous_scheduled_at, parent.schedule_timezone, parent.parent_run_id, parent.parent_owns_lifecycle, parent.workspace_id, parent.base_workspace_version_id, parent.actor_start_input_sequence, parent.actor_start_input_high_watermark, parent.payload, parent.output, parent.terminal_reason_code, parent.error, parent.status, parent.state_version, parent.current_attempt_number, parent.current_run_lease_id, parent.metadata, parent.tags, parent.queue_name, parent.concurrency_key, parent.queue_concurrency_limit, parent.priority, parent.queue_origin_at, parent.queue_score_at, parent.queued_expires_at, parent.max_active_duration_ms, parent.retry_policy, parent.active_elapsed_ms, parent.active_started_at, parent.trace_id, parent.root_span_id, parent.claim_id, parent.created_at, parent.updated_at, parent.first_lease_at, parent.started_at, parent.retry_at, parent.terminal_at,
+       ancestors.depth
+  FROM ancestors
+  JOIN runs AS parent
+    ON parent.id = ancestors.parent_run_id
+   AND parent.environment_id = $1
+   AND parent.workspace_id = $2
+   AND parent.status = 'waiting'
+   AND parent.current_run_lease_id IS NULL
+ ORDER BY ancestors.depth DESC
+`
+
+type ListSameWorkspaceHandoffAncestorRunsParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	ChildRunID    pgtype.UUID `json:"child_run_id"`
+}
+
+type ListSameWorkspaceHandoffAncestorRunsRow struct {
+	Run   Run   `json:"run"`
+	Depth int32 `json:"depth"`
+}
+
+func (q *Queries) ListSameWorkspaceHandoffAncestorRuns(ctx context.Context, arg ListSameWorkspaceHandoffAncestorRunsParams) ([]ListSameWorkspaceHandoffAncestorRunsRow, error) {
+	rows, err := q.db.Query(ctx, listSameWorkspaceHandoffAncestorRuns, arg.EnvironmentID, arg.WorkspaceID, arg.ChildRunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSameWorkspaceHandoffAncestorRunsRow
+	for rows.Next() {
+		var i ListSameWorkspaceHandoffAncestorRunsRow
+		if err := rows.Scan(
+			&i.Run.ID,
+			&i.Run.PublicID,
+			&i.Run.OrgID,
+			&i.Run.ProjectID,
+			&i.Run.EnvironmentID,
+			&i.Run.DeploymentID,
+			&i.Run.DeploymentDefinitionID,
+			&i.Run.EntrypointKind,
+			&i.Run.EntrypointDeclaredID,
+			&i.Run.ActorID,
+			&i.Run.CauseKind,
+			&i.Run.ScheduleID,
+			&i.Run.ScheduleGeneration,
+			&i.Run.ScheduledAt,
+			&i.Run.PreviousScheduledAt,
+			&i.Run.ScheduleTimezone,
+			&i.Run.ParentRunID,
+			&i.Run.ParentOwnsLifecycle,
+			&i.Run.WorkspaceID,
+			&i.Run.BaseWorkspaceVersionID,
+			&i.Run.ActorStartInputSequence,
+			&i.Run.ActorStartInputHighWatermark,
+			&i.Run.Payload,
+			&i.Run.Output,
+			&i.Run.TerminalReasonCode,
+			&i.Run.Error,
+			&i.Run.Status,
+			&i.Run.StateVersion,
+			&i.Run.CurrentAttemptNumber,
+			&i.Run.CurrentRunLeaseID,
+			&i.Run.Metadata,
+			&i.Run.Tags,
+			&i.Run.QueueName,
+			&i.Run.ConcurrencyKey,
+			&i.Run.QueueConcurrencyLimit,
+			&i.Run.Priority,
+			&i.Run.QueueOriginAt,
+			&i.Run.QueueScoreAt,
+			&i.Run.QueuedExpiresAt,
+			&i.Run.MaxActiveDurationMs,
+			&i.Run.RetryPolicy,
+			&i.Run.ActiveElapsedMs,
+			&i.Run.ActiveStartedAt,
+			&i.Run.TraceID,
+			&i.Run.RootSpanID,
+			&i.Run.ClaimID,
+			&i.Run.CreatedAt,
+			&i.Run.UpdatedAt,
+			&i.Run.FirstLeaseAt,
+			&i.Run.StartedAt,
+			&i.Run.RetryAt,
+			&i.Run.TerminalAt,
+			&i.Depth,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockParentOwnedChildWait = `-- name: LockParentOwnedChildWait :one
 SELECT run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.kind, run_waits.condition_state, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_parent_owned, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.actor_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_actor_record_id, run_waits.completed_actor_record_direction, run_waits.suspension_state, run_waits.token_registration_run_state_version, run_waits.registration_request_fingerprint, run_waits.expected_run_state_version, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.handoff_resume_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.child_result_version_id, run_waits.resume_workspace_version_id, run_waits.handoff_runtime_instance_id, run_waits.handoff_workspace_mount_id, run_waits.handoff_mount_generation, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at
   FROM runs AS parent
@@ -2131,6 +2258,217 @@ func (q *Queries) LockParentOwnedChildWait(ctx context.Context, arg LockParentOw
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const lockSameWorkspaceHandoffAncestors = `-- name: LockSameWorkspaceHandoffAncestors :many
+WITH RECURSIVE ancestors AS (
+    SELECT handoff.id,
+           handoff.run_id AS parent_run_id,
+           handoff.child_run_id,
+           0 AS depth
+      FROM run_waits AS handoff
+     WHERE handoff.environment_id = $1
+       AND handoff.child_run_id = $2
+       AND handoff.workspace_id = $3
+       AND handoff.child_parent_owned IS TRUE
+       AND handoff.condition_state = 'pending'
+       AND handoff.suspension_state = 'parked'
+    UNION ALL
+    SELECT outer_wait.id,
+           outer_wait.run_id,
+           outer_wait.child_run_id,
+           ancestors.depth + 1
+      FROM ancestors
+      JOIN runs AS child
+        ON child.id = ancestors.parent_run_id
+       AND child.workspace_id = $3
+       AND child.parent_owns_lifecycle IS TRUE
+      JOIN run_waits AS outer_wait
+        ON outer_wait.environment_id = $1
+       AND outer_wait.run_id = child.parent_run_id
+       AND outer_wait.child_run_id = child.id
+       AND outer_wait.workspace_id = $3
+       AND outer_wait.child_parent_owned IS TRUE
+       AND outer_wait.condition_state = 'pending'
+       AND outer_wait.suspension_state = 'parked'
+)
+SELECT handoff.id, handoff.environment_id, handoff.run_id, handoff.workspace_id, handoff.kind, handoff.condition_state, handoff.due_at, handoff.timeout_at, handoff.idle_timeout_ms, handoff.token_id, handoff.child_run_id, handoff.child_parent_owned, handoff.child_target_declared_id, handoff.child_claim_id, handoff.child_request, handoff.actor_id, handoff.after_input_sequence, handoff.condition_result, handoff.condition_error, handoff.condition_terminal_at, handoff.condition_reason_code, handoff.completed_actor_record_id, handoff.completed_actor_record_direction, handoff.suspension_state, handoff.token_registration_run_state_version, handoff.registration_request_fingerprint, handoff.expected_run_state_version, handoff.attempt_number, handoff.actor_speculative_input_sequence, handoff.current_run_lease_id, handoff.prior_run_lease_id, handoff.checkpoint_request_version, handoff.checkpoint_ack_version, handoff.checkpoint_due_at, handoff.suspend_checkpoint_id, handoff.handoff_resume_checkpoint_id, handoff.resume_attach_id, handoff.resume_request_version, handoff.resume_ack_version, handoff.base_workspace_version_id, handoff.base_workspace_content_digest, handoff.child_result_version_id, handoff.resume_workspace_version_id, handoff.handoff_runtime_instance_id, handoff.handoff_workspace_mount_id, handoff.handoff_mount_generation, handoff.ownership_generation, handoff.parent_writer_generation, handoff.child_writer_generation, handoff.resume_writer_generation, handoff.metadata, handoff.tags, handoff.suspension_terminal_at, handoff.suspension_reason_code, handoff.suspension_error, handoff.created_at, handoff.updated_at,
+       parent.id, parent.public_id, parent.org_id, parent.project_id, parent.environment_id, parent.deployment_id, parent.deployment_definition_id, parent.entrypoint_kind, parent.entrypoint_declared_id, parent.actor_id, parent.cause_kind, parent.schedule_id, parent.schedule_generation, parent.scheduled_at, parent.previous_scheduled_at, parent.schedule_timezone, parent.parent_run_id, parent.parent_owns_lifecycle, parent.workspace_id, parent.base_workspace_version_id, parent.actor_start_input_sequence, parent.actor_start_input_high_watermark, parent.payload, parent.output, parent.terminal_reason_code, parent.error, parent.status, parent.state_version, parent.current_attempt_number, parent.current_run_lease_id, parent.metadata, parent.tags, parent.queue_name, parent.concurrency_key, parent.queue_concurrency_limit, parent.priority, parent.queue_origin_at, parent.queue_score_at, parent.queued_expires_at, parent.max_active_duration_ms, parent.retry_policy, parent.active_elapsed_ms, parent.active_started_at, parent.trace_id, parent.root_span_id, parent.claim_id, parent.created_at, parent.updated_at, parent.first_lease_at, parent.started_at, parent.retry_at, parent.terminal_at,
+       attempt.run_id, attempt.number, attempt.entrypoint_kind, attempt.workspace_id, attempt.entrypoint_entered_at, attempt.actor_start_input_sequence, attempt.base_workspace_version_id, attempt.terminal_actor_input_sequence, attempt.terminal_outcome, attempt.terminal_reason_code, attempt.terminal_error, attempt.created_at, attempt.terminal_at,
+       ancestors.depth
+  FROM ancestors
+  JOIN run_waits AS handoff
+    ON handoff.id = ancestors.id
+  JOIN runs AS parent
+    ON parent.id = handoff.run_id
+   AND parent.environment_id = handoff.environment_id
+   AND parent.workspace_id = handoff.workspace_id
+   AND parent.status = 'waiting'
+   AND parent.current_run_lease_id IS NULL
+  JOIN run_attempts AS attempt
+    ON attempt.run_id = parent.id
+   AND attempt.number = parent.current_attempt_number
+   AND attempt.workspace_id = parent.workspace_id
+   AND attempt.terminal_at IS NULL
+ ORDER BY ancestors.depth DESC
+ FOR UPDATE OF parent, attempt, handoff
+`
+
+type LockSameWorkspaceHandoffAncestorsParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ChildRunID    pgtype.UUID `json:"child_run_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+type LockSameWorkspaceHandoffAncestorsRow struct {
+	RunWait    RunWait    `json:"run_wait"`
+	Run        Run        `json:"run"`
+	RunAttempt RunAttempt `json:"run_attempt"`
+	Depth      int32      `json:"depth"`
+}
+
+func (q *Queries) LockSameWorkspaceHandoffAncestors(ctx context.Context, arg LockSameWorkspaceHandoffAncestorsParams) ([]LockSameWorkspaceHandoffAncestorsRow, error) {
+	rows, err := q.db.Query(ctx, lockSameWorkspaceHandoffAncestors, arg.EnvironmentID, arg.ChildRunID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LockSameWorkspaceHandoffAncestorsRow
+	for rows.Next() {
+		var i LockSameWorkspaceHandoffAncestorsRow
+		if err := rows.Scan(
+			&i.RunWait.ID,
+			&i.RunWait.EnvironmentID,
+			&i.RunWait.RunID,
+			&i.RunWait.WorkspaceID,
+			&i.RunWait.Kind,
+			&i.RunWait.ConditionState,
+			&i.RunWait.DueAt,
+			&i.RunWait.TimeoutAt,
+			&i.RunWait.IdleTimeoutMs,
+			&i.RunWait.TokenID,
+			&i.RunWait.ChildRunID,
+			&i.RunWait.ChildParentOwned,
+			&i.RunWait.ChildTargetDeclaredID,
+			&i.RunWait.ChildClaimID,
+			&i.RunWait.ChildRequest,
+			&i.RunWait.ActorID,
+			&i.RunWait.AfterInputSequence,
+			&i.RunWait.ConditionResult,
+			&i.RunWait.ConditionError,
+			&i.RunWait.ConditionTerminalAt,
+			&i.RunWait.ConditionReasonCode,
+			&i.RunWait.CompletedActorRecordID,
+			&i.RunWait.CompletedActorRecordDirection,
+			&i.RunWait.SuspensionState,
+			&i.RunWait.TokenRegistrationRunStateVersion,
+			&i.RunWait.RegistrationRequestFingerprint,
+			&i.RunWait.ExpectedRunStateVersion,
+			&i.RunWait.AttemptNumber,
+			&i.RunWait.ActorSpeculativeInputSequence,
+			&i.RunWait.CurrentRunLeaseID,
+			&i.RunWait.PriorRunLeaseID,
+			&i.RunWait.CheckpointRequestVersion,
+			&i.RunWait.CheckpointAckVersion,
+			&i.RunWait.CheckpointDueAt,
+			&i.RunWait.SuspendCheckpointID,
+			&i.RunWait.HandoffResumeCheckpointID,
+			&i.RunWait.ResumeAttachID,
+			&i.RunWait.ResumeRequestVersion,
+			&i.RunWait.ResumeAckVersion,
+			&i.RunWait.BaseWorkspaceVersionID,
+			&i.RunWait.BaseWorkspaceContentDigest,
+			&i.RunWait.ChildResultVersionID,
+			&i.RunWait.ResumeWorkspaceVersionID,
+			&i.RunWait.HandoffRuntimeInstanceID,
+			&i.RunWait.HandoffWorkspaceMountID,
+			&i.RunWait.HandoffMountGeneration,
+			&i.RunWait.OwnershipGeneration,
+			&i.RunWait.ParentWriterGeneration,
+			&i.RunWait.ChildWriterGeneration,
+			&i.RunWait.ResumeWriterGeneration,
+			&i.RunWait.Metadata,
+			&i.RunWait.Tags,
+			&i.RunWait.SuspensionTerminalAt,
+			&i.RunWait.SuspensionReasonCode,
+			&i.RunWait.SuspensionError,
+			&i.RunWait.CreatedAt,
+			&i.RunWait.UpdatedAt,
+			&i.Run.ID,
+			&i.Run.PublicID,
+			&i.Run.OrgID,
+			&i.Run.ProjectID,
+			&i.Run.EnvironmentID,
+			&i.Run.DeploymentID,
+			&i.Run.DeploymentDefinitionID,
+			&i.Run.EntrypointKind,
+			&i.Run.EntrypointDeclaredID,
+			&i.Run.ActorID,
+			&i.Run.CauseKind,
+			&i.Run.ScheduleID,
+			&i.Run.ScheduleGeneration,
+			&i.Run.ScheduledAt,
+			&i.Run.PreviousScheduledAt,
+			&i.Run.ScheduleTimezone,
+			&i.Run.ParentRunID,
+			&i.Run.ParentOwnsLifecycle,
+			&i.Run.WorkspaceID,
+			&i.Run.BaseWorkspaceVersionID,
+			&i.Run.ActorStartInputSequence,
+			&i.Run.ActorStartInputHighWatermark,
+			&i.Run.Payload,
+			&i.Run.Output,
+			&i.Run.TerminalReasonCode,
+			&i.Run.Error,
+			&i.Run.Status,
+			&i.Run.StateVersion,
+			&i.Run.CurrentAttemptNumber,
+			&i.Run.CurrentRunLeaseID,
+			&i.Run.Metadata,
+			&i.Run.Tags,
+			&i.Run.QueueName,
+			&i.Run.ConcurrencyKey,
+			&i.Run.QueueConcurrencyLimit,
+			&i.Run.Priority,
+			&i.Run.QueueOriginAt,
+			&i.Run.QueueScoreAt,
+			&i.Run.QueuedExpiresAt,
+			&i.Run.MaxActiveDurationMs,
+			&i.Run.RetryPolicy,
+			&i.Run.ActiveElapsedMs,
+			&i.Run.ActiveStartedAt,
+			&i.Run.TraceID,
+			&i.Run.RootSpanID,
+			&i.Run.ClaimID,
+			&i.Run.CreatedAt,
+			&i.Run.UpdatedAt,
+			&i.Run.FirstLeaseAt,
+			&i.Run.StartedAt,
+			&i.Run.RetryAt,
+			&i.Run.TerminalAt,
+			&i.RunAttempt.RunID,
+			&i.RunAttempt.Number,
+			&i.RunAttempt.EntrypointKind,
+			&i.RunAttempt.WorkspaceID,
+			&i.RunAttempt.EntrypointEnteredAt,
+			&i.RunAttempt.ActorStartInputSequence,
+			&i.RunAttempt.BaseWorkspaceVersionID,
+			&i.RunAttempt.TerminalActorInputSequence,
+			&i.RunAttempt.TerminalOutcome,
+			&i.RunAttempt.TerminalReasonCode,
+			&i.RunAttempt.TerminalError,
+			&i.RunAttempt.CreatedAt,
+			&i.RunAttempt.TerminalAt,
+			&i.Depth,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const markRunWaitParked = `-- name: MarkRunWaitParked :one

@@ -59,6 +59,14 @@ type Checkpointer interface {
 	CreateCheckpoint(context.Context, CheckpointRequest) (CheckpointResult, error)
 }
 
+type HandoffCheckpointer interface {
+	CreateHandoffCheckpoint(
+		context.Context,
+		CheckpointRequest,
+		api.WorkerCheckpointWorkspaceBase,
+	) (api.WorkerCheckpointManifest, error)
+}
+
 type CheckpointRequest struct {
 	RunID                    string
 	AttemptNumber            int32

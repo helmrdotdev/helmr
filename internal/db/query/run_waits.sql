@@ -177,6 +177,100 @@ SELECT run_waits.*
  LIMIT 1
  FOR UPDATE OF parent, run_waits;
 
+-- name: ListSameWorkspaceHandoffAncestorRuns :many
+WITH RECURSIVE ancestors AS (
+    SELECT handoff.run_id AS parent_run_id,
+           handoff.child_run_id,
+           0 AS depth
+      FROM run_waits AS handoff
+     WHERE handoff.environment_id = sqlc.arg(environment_id)
+       AND handoff.child_run_id = sqlc.arg(child_run_id)
+       AND handoff.workspace_id = sqlc.arg(workspace_id)
+       AND handoff.child_parent_owned IS TRUE
+       AND handoff.condition_state = 'pending'
+       AND handoff.suspension_state = 'parked'
+    UNION ALL
+    SELECT outer_wait.run_id,
+           outer_wait.child_run_id,
+           ancestors.depth + 1
+      FROM ancestors
+      JOIN runs AS child
+        ON child.id = ancestors.parent_run_id
+       AND child.workspace_id = sqlc.arg(workspace_id)
+       AND child.parent_owns_lifecycle IS TRUE
+      JOIN run_waits AS outer_wait
+        ON outer_wait.environment_id = sqlc.arg(environment_id)
+       AND outer_wait.run_id = child.parent_run_id
+       AND outer_wait.child_run_id = child.id
+       AND outer_wait.workspace_id = sqlc.arg(workspace_id)
+       AND outer_wait.child_parent_owned IS TRUE
+       AND outer_wait.condition_state = 'pending'
+       AND outer_wait.suspension_state = 'parked'
+)
+SELECT sqlc.embed(parent),
+       ancestors.depth
+  FROM ancestors
+  JOIN runs AS parent
+    ON parent.id = ancestors.parent_run_id
+   AND parent.environment_id = sqlc.arg(environment_id)
+   AND parent.workspace_id = sqlc.arg(workspace_id)
+   AND parent.status = 'waiting'
+   AND parent.current_run_lease_id IS NULL
+ ORDER BY ancestors.depth DESC;
+
+-- name: LockSameWorkspaceHandoffAncestors :many
+WITH RECURSIVE ancestors AS (
+    SELECT handoff.id,
+           handoff.run_id AS parent_run_id,
+           handoff.child_run_id,
+           0 AS depth
+      FROM run_waits AS handoff
+     WHERE handoff.environment_id = sqlc.arg(environment_id)
+       AND handoff.child_run_id = sqlc.arg(child_run_id)
+       AND handoff.workspace_id = sqlc.arg(workspace_id)
+       AND handoff.child_parent_owned IS TRUE
+       AND handoff.condition_state = 'pending'
+       AND handoff.suspension_state = 'parked'
+    UNION ALL
+    SELECT outer_wait.id,
+           outer_wait.run_id,
+           outer_wait.child_run_id,
+           ancestors.depth + 1
+      FROM ancestors
+      JOIN runs AS child
+        ON child.id = ancestors.parent_run_id
+       AND child.workspace_id = sqlc.arg(workspace_id)
+       AND child.parent_owns_lifecycle IS TRUE
+      JOIN run_waits AS outer_wait
+        ON outer_wait.environment_id = sqlc.arg(environment_id)
+       AND outer_wait.run_id = child.parent_run_id
+       AND outer_wait.child_run_id = child.id
+       AND outer_wait.workspace_id = sqlc.arg(workspace_id)
+       AND outer_wait.child_parent_owned IS TRUE
+       AND outer_wait.condition_state = 'pending'
+       AND outer_wait.suspension_state = 'parked'
+)
+SELECT sqlc.embed(handoff),
+       sqlc.embed(parent),
+       sqlc.embed(attempt),
+       ancestors.depth
+  FROM ancestors
+  JOIN run_waits AS handoff
+    ON handoff.id = ancestors.id
+  JOIN runs AS parent
+    ON parent.id = handoff.run_id
+   AND parent.environment_id = handoff.environment_id
+   AND parent.workspace_id = handoff.workspace_id
+   AND parent.status = 'waiting'
+   AND parent.current_run_lease_id IS NULL
+  JOIN run_attempts AS attempt
+    ON attempt.run_id = parent.id
+   AND attempt.number = parent.current_attempt_number
+   AND attempt.workspace_id = parent.workspace_id
+   AND attempt.terminal_at IS NULL
+ ORDER BY ancestors.depth DESC
+ FOR UPDATE OF parent, attempt, handoff;
+
 -- name: CompleteHotChildRunWait :one
 WITH moved_run AS (
     UPDATE runs

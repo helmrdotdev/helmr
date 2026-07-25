@@ -25,8 +25,12 @@ const (
 )
 
 type QueueReconcilerStore interface {
-	RecoverExpiredRecreatedRunResumes(context.Context, int32) ([]db.RecoverExpiredRecreatedRunResumesRow, error)
+	RecoverExpiredRunResumes(context.Context, int32) ([]db.RecoverExpiredRunResumesRow, error)
 	ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error)
+}
+
+type RunResumeRecoverer interface {
+	RecoverExpiredRunResumes(context.Context, int32) ([]db.RecoverExpiredRunResumesRow, error)
 }
 
 type RunQueueEnqueuer interface {
@@ -48,6 +52,7 @@ type QueueReconcileLockGuard interface {
 
 type QueueReconciler struct {
 	store               QueueReconcilerStore
+	resumeRecoverer     RunResumeRecoverer
 	runEnqueuer         RunQueueEnqueuer
 	buildEnqueuer       BuildQueueEnqueuer
 	runLock             QueueReconcileLock
@@ -139,6 +144,12 @@ func WithBuildQueueReconcileLock(lock QueueReconcileLock) QueueReconcilerOption 
 func WithQueueReconcileScopeSelector(selector QueueScopeSelector) QueueReconcilerOption {
 	return func(reconciler *QueueReconciler) {
 		reconciler.selector = selector
+	}
+}
+
+func WithRunResumeRecoverer(recoverer RunResumeRecoverer) QueueReconcilerOption {
+	return func(reconciler *QueueReconciler) {
+		reconciler.resumeRecoverer = recoverer
 	}
 }
 
@@ -256,6 +267,7 @@ func (r *QueueReconciler) ReconcileOnce(ctx context.Context) error {
 func (r *QueueReconciler) ReconcileRunsOnce(ctx context.Context) error {
 	var guard QueueReconcileLockGuard
 	store := r.store
+	recoverer := r.resumeRecoverer
 	if r.runLock != nil {
 		var locked bool
 		var err error
@@ -270,11 +282,17 @@ func (r *QueueReconciler) ReconcileRunsOnce(ctx context.Context) error {
 			return nil
 		}
 		store = guard.Store(r.store)
+		if recoverer == nil {
+			recoverer = store
+		}
 		defer r.unlockQueueReconcile(ctx, "run", guard)
+	}
+	if recoverer == nil {
+		recoverer = store
 	}
 	var problems []error
 	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, r.runQueryTimeout)
-	_, recoveryErr := store.RecoverExpiredRecreatedRunResumes(recoveryCtx, r.runLimit)
+	_, recoveryErr := recoverer.RecoverExpiredRunResumes(recoveryCtx, r.runLimit)
 	recoveryCancel()
 	if recoveryErr != nil {
 		return recoveryErr

@@ -192,6 +192,106 @@ func TestTaskCompletionRejectsFinalizationKindMismatch(t *testing.T) {
 	}
 }
 
+func TestTaskCompletionRejectsForgedHandoffAuthority(t *testing.T) {
+	id := func() pgtype.UUID { return pgvalue.UUID(uuid.Must(uuid.NewV7())) }
+	parentID, childID, workspaceID, waitID, checkpointID := id(), id(), id(), id(), id()
+	baseID, operationID := id(), id()
+	authority := runLeaseClaimAuthority{
+		run: db.Run{
+			ID: childID, EntrypointKind: "task", ParentRunID: parentID,
+			ParentOwnsLifecycle: pgtype.Bool{Bool: true, Valid: true},
+			WorkspaceID:         workspaceID, BaseWorkspaceVersionID: baseID,
+		},
+		parentRun: db.Run{ID: parentID, WorkspaceID: workspaceID},
+		attempt: db.RunAttempt{
+			EntrypointKind: "task", EntrypointEnteredAt: pgvalue.Timestamptz(time.Now()),
+			BaseWorkspaceVersionID: baseID,
+		},
+		parentAttempt: db.RunAttempt{Number: 3},
+		runLease: db.RunLease{
+			State: db.RunLeaseStateFinalizing, FinalizationOperationID: operationID,
+			FinalizationKind:               pgvalue.Text(string(api.WorkerRunFinalizationCapture)),
+			FinalizationStartedAt:          pgvalue.Timestamptz(time.Now()),
+			FinalizationRequestFingerprint: pgvalue.Text("sha256:frozen"),
+		},
+		enclosingWait: db.RunWait{ID: waitID},
+		checkpoint: db.RunCheckpoint{
+			ID: checkpointID, RunID: parentID, AttemptNumber: 3, RunWaitID: waitID,
+			RestoreManifest: testCheckpointManifest(t, checkpointID, parentID, 3, waitID),
+		},
+	}
+	completion := parsedTaskCompletion{
+		kind: taskCompletionSucceeded,
+		capture: &parsedTaskWorkspaceCapture{receipt: workspace.FinalizationRequest{
+			OperationID: pgvalue.UUIDString(operationID),
+		}},
+		handoff: &parsedTaskHandoffCheckpoint{
+			checkpointID: uuid.Must(uuid.NewV7()), parentRunID: pgvalue.MustUUIDValue(parentID),
+			waitID: pgvalue.MustUUIDValue(waitID), attemptNumber: 3,
+		},
+	}
+	request := api.WorkerCompleteTaskRequest{Handoff: &api.WorkerTaskHandoffCheckpoint{
+		Manifest: api.WorkerCheckpointManifest{RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
+			CorrelationID: "correlation-1",
+		}},
+	}}
+	tests := []struct {
+		name   string
+		mutate func(*api.WorkerCompleteTaskRequest, *parsedTaskCompletion)
+	}{
+		{name: "parent run", mutate: func(_ *api.WorkerCompleteTaskRequest, completion *parsedTaskCompletion) {
+			completion.handoff.parentRunID = uuid.Must(uuid.NewV7())
+		}},
+		{name: "parent attempt", mutate: func(_ *api.WorkerCompleteTaskRequest, completion *parsedTaskCompletion) {
+			completion.handoff.attemptNumber++
+		}},
+		{name: "wait", mutate: func(_ *api.WorkerCompleteTaskRequest, completion *parsedTaskCompletion) {
+			completion.handoff.waitID = uuid.Must(uuid.NewV7())
+		}},
+		{name: "correlation", mutate: func(request *api.WorkerCompleteTaskRequest, _ *parsedTaskCompletion) {
+			request.Handoff.Manifest.RecoveryPoint.CorrelationID = "forged"
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			changedRequest := request
+			changedRequest.Handoff = &api.WorkerTaskHandoffCheckpoint{
+				Manifest: request.Handoff.Manifest,
+			}
+			changedCompletion := completion
+			changedHandoff := *completion.handoff
+			changedCompletion.handoff = &changedHandoff
+			test.mutate(&changedRequest, &changedCompletion)
+			if err := validateTaskCompletionAuthority(
+				context.Background(), nil, changedRequest, changedCompletion, authority,
+			); !errors.Is(err, errStaleTaskCompletion) {
+				t.Fatalf("error = %v, want stale completion", err)
+			}
+		})
+	}
+}
+
+func TestSameWorkspaceChildRejectsCheckpointReuse(t *testing.T) {
+	checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	err := finishSameWorkspaceChild(
+		context.Background(),
+		nil,
+		workerActor{},
+		runLeaseClaimAuthority{enclosingWait: db.RunWait{SuspendCheckpointID: checkpointID}},
+		parsedTaskCompletion{
+			kind: taskCompletionSucceeded,
+			handoff: &parsedTaskHandoffCheckpoint{
+				checkpointID: pgvalue.MustUUIDValue(checkpointID),
+			},
+		},
+		pgvalue.Timestamptz(time.Now()),
+		pgvalue.UUID(uuid.Must(uuid.NewV7())),
+	)
+	if !errors.Is(err, errStaleTaskCompletion) {
+		t.Fatalf("error = %v, want stale completion", err)
+	}
+}
+
 func TestTaskCompletionMountUpdateUsesLeaseFrontier(t *testing.T) {
 	runBase := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	leaseBase := pgvalue.UUID(uuid.Must(uuid.NewV7()))
@@ -212,6 +312,101 @@ func TestTaskCompletionMountUpdateUsesLeaseFrontier(t *testing.T) {
 	}
 	if store.params.BaseVersionID != leaseBase || store.params.NewVersionID != newVersion {
 		t.Fatalf("mount update = %+v", store.params)
+	}
+}
+
+func TestCascadeSameWorkspaceChildFailureUnwindsToAttachmentOwner(t *testing.T) {
+	id := func() pgtype.UUID { return pgvalue.UUID(uuid.Must(uuid.NewV7())) }
+	environmentID := id()
+	workspaceID := id()
+	runtimeID := id()
+	mountID := id()
+	now := pgvalue.Timestamptz(time.Now())
+	runA, runB, runC, runD := id(), id(), id(), id()
+	waitAB, waitBC, waitCD := id(), id(), id()
+	handoffWait := func(waitID, parentID, childID pgtype.UUID, attempt int32) db.RunWait {
+		return db.RunWait{
+			ID: waitID, EnvironmentID: environmentID, RunID: parentID,
+			WorkspaceID: workspaceID, Kind: db.WaitKindChild,
+			ConditionState: db.WaitStatePending, SuspensionState: db.RunWaitStateParked,
+			AttemptNumber: attempt, ChildRunID: childID,
+			ChildParentOwned: pgtype.Bool{Bool: true, Valid: true},
+			PriorRunLeaseID:  id(), SuspendCheckpointID: id(),
+			HandoffRuntimeInstanceID: runtimeID, HandoffWorkspaceMountID: mountID,
+			HandoffMountGeneration:  pgtype.Int8{Int64: 2, Valid: true},
+			OwnershipGeneration:     pgtype.Int8{Int64: 1, Valid: true},
+			ChildWriterGeneration:   pgtype.Int8{Int64: int64(attempt + 1), Valid: true},
+			ExpectedRunStateVersion: 7,
+		}
+	}
+	authority := runLeaseClaimAuthority{
+		workspace: db.Workspace{ID: workspaceID},
+		run:       db.Run{ID: runD},
+		parentRun: db.Run{
+			ID: runC, OrgID: id(), EnvironmentID: environmentID,
+			WorkspaceID: workspaceID, Status: db.RunStatusWaiting,
+			CurrentAttemptNumber: 3,
+		},
+		parentAttempt: db.RunAttempt{
+			RunID: runC, Number: 3, EntrypointKind: "task", WorkspaceID: workspaceID,
+		},
+		enclosingWait: handoffWait(waitCD, runC, runD, 3),
+		handoffAncestors: []db.LockSameWorkspaceHandoffAncestorsRow{
+			{
+				RunWait: handoffWait(waitAB, runA, runB, 1),
+				Run: db.Run{
+					ID: runA, OrgID: id(), EnvironmentID: environmentID,
+					WorkspaceID: workspaceID, Status: db.RunStatusWaiting,
+					CurrentAttemptNumber: 1,
+				},
+				RunAttempt: db.RunAttempt{
+					RunID: runA, Number: 1, EntrypointKind: "task", WorkspaceID: workspaceID,
+				},
+				Depth: 1,
+			},
+			{
+				RunWait: handoffWait(waitBC, runB, runC, 2),
+				Run: db.Run{
+					ID: runB, OrgID: id(), EnvironmentID: environmentID,
+					WorkspaceID: workspaceID, Status: db.RunStatusWaiting,
+					CurrentAttemptNumber: 2,
+				},
+				RunAttempt: db.RunAttempt{
+					RunID: runB, Number: 2, EntrypointKind: "task", WorkspaceID: workspaceID,
+				},
+				Depth: 0,
+			},
+		},
+	}
+	store := &sameWorkspaceFailureCascadeStore{
+		completed: authority.handoffAncestors[0].RunWait,
+	}
+
+	completed, err := cascadeSameWorkspaceChildFailure(
+		context.Background(),
+		store,
+		authority,
+		now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.ID != waitAB {
+		t.Fatalf("completed Wait = %s, want outer %s", pgvalue.UUIDString(completed.ID), pgvalue.UUIDString(waitAB))
+	}
+	want := []string{
+		"wait:" + pgvalue.UUIDString(waitCD),
+		"attempt:" + pgvalue.UUIDString(runC),
+		"run:" + pgvalue.UUIDString(runC),
+		"event:" + pgvalue.UUIDString(runC),
+		"wait:" + pgvalue.UUIDString(waitBC),
+		"attempt:" + pgvalue.UUIDString(runB),
+		"run:" + pgvalue.UUIDString(runB),
+		"event:" + pgvalue.UUIDString(runB),
+		"resume:" + pgvalue.UUIDString(waitAB),
+	}
+	if strings.Join(store.calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("cascade calls = %v, want %v", store.calls, want)
 	}
 }
 
@@ -335,6 +530,52 @@ type taskCompletionReplayFixture struct {
 	last        db.GetTaskCompletionReplayParams
 }
 
+type sameWorkspaceFailureCascadeStore struct {
+	db.Querier
+	completed db.RunWait
+	calls     []string
+}
+
+func (s *sameWorkspaceFailureCascadeStore) FailNestedSameWorkspaceWait(
+	_ context.Context,
+	params db.FailNestedSameWorkspaceWaitParams,
+) (db.RunWait, error) {
+	s.calls = append(s.calls, "wait:"+pgvalue.UUIDString(params.RunWaitID))
+	return db.RunWait{ID: params.RunWaitID}, nil
+}
+
+func (s *sameWorkspaceFailureCascadeStore) FailNestedSameWorkspaceAttempt(
+	_ context.Context,
+	params db.FailNestedSameWorkspaceAttemptParams,
+) (db.RunAttempt, error) {
+	s.calls = append(s.calls, "attempt:"+pgvalue.UUIDString(params.RunID))
+	return db.RunAttempt{RunID: params.RunID}, nil
+}
+
+func (s *sameWorkspaceFailureCascadeStore) FailNestedSameWorkspaceRun(
+	_ context.Context,
+	params db.FailNestedSameWorkspaceRunParams,
+) (db.Run, error) {
+	s.calls = append(s.calls, "run:"+pgvalue.UUIDString(params.RunID))
+	return db.Run{ID: params.RunID}, nil
+}
+
+func (s *sameWorkspaceFailureCascadeStore) AppendRunEvent(
+	_ context.Context,
+	params db.AppendRunEventParams,
+) (db.AppendRunEventRow, error) {
+	s.calls = append(s.calls, "event:"+pgvalue.UUIDString(params.RunID))
+	return db.AppendRunEventRow{}, nil
+}
+
+func (s *sameWorkspaceFailureCascadeStore) CompleteSameWorkspaceChildFailure(
+	_ context.Context,
+	params db.CompleteSameWorkspaceChildFailureParams,
+) (db.RunWait, error) {
+	s.calls = append(s.calls, "resume:"+pgvalue.UUIDString(params.RunWaitID))
+	return s.completed, nil
+}
+
 type taskWorkspaceMountFixture struct {
 	params db.UpdateTaskWorkspaceMountFrontierParams
 }
@@ -380,9 +621,9 @@ func (f *taskWorkspaceVersionFixture) UpdateTaskWorkspaceMountFrontier(
 	return db.WorkspaceMount{}, nil
 }
 
-func (f *taskWorkspaceRollbackFixture) GetWorkspaceVersion(
+func (f *taskWorkspaceRollbackFixture) GetTaskWorkspaceResetVersion(
 	_ context.Context,
-	_ db.GetWorkspaceVersionParams,
+	_ db.GetTaskWorkspaceResetVersionParams,
 ) (db.WorkspaceVersion, error) {
 	return f.version, nil
 }

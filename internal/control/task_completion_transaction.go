@@ -46,6 +46,19 @@ func (s *Server) completeTask(
 		}
 		completion.capture = &verified
 	}
+	if completion.handoff != nil {
+		var substrateArtifact *api.CASObject
+		if request.Handoff != nil && request.Handoff.Manifest.RuntimeState.RuntimeSubstrate != nil {
+			substrateArtifact = &request.Handoff.Manifest.RuntimeState.RuntimeSubstrate.Artifact
+		}
+		if err := s.verifyCheckpointRuntimeArtifacts(
+			ctx,
+			completion.handoff.artifacts,
+			substrateArtifact,
+		); err != nil {
+			return taskCompletionReplayAfterError(ctx, s.db, worker, request, completion, err)
+		}
+	}
 
 	err = s.inTx(ctx, func(work *txWork) error {
 		replayed, err := taskCompletionWasReplayed(ctx, work.q, worker, request, completion)
@@ -78,11 +91,7 @@ func (s *Server) completeTask(
 		if err != nil {
 			return staleTaskCompletion(err)
 		}
-		owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
-		if err != nil {
-			return staleTaskCompletion(err)
-		}
-		authority, err := lockLiveRunLeaseAuthority(
+		authority, err := lockLiveRunFinalizationAuthority(
 			ctx,
 			work.q,
 			worker,
@@ -93,12 +102,15 @@ func (s *Server) completeTask(
 		if err != nil {
 			return staleTaskCompletion(err)
 		}
-		authority.actor = owner.actor
-		authority.parentRun = owner.parent
 		if err := validateRunFinalizationOwner(authority, locators); err != nil {
 			return staleTaskCompletion(err)
 		}
-		if authority.run.ParentRunID.Valid && authority.run.ParentOwnsLifecycle.Valid &&
+		handoff, err := lockSameWorkspaceChildFinalization(ctx, work.q, &authority)
+		if err != nil {
+			return staleTaskCompletion(err)
+		}
+		if handoff == nil &&
+			authority.run.ParentRunID.Valid && authority.run.ParentOwnsLifecycle.Valid &&
 			authority.run.ParentOwnsLifecycle.Bool {
 			authority.enclosingWait, err = lockParentOwnedChildWaitIfActive(
 				ctx,
@@ -116,6 +128,29 @@ func (s *Server) completeTask(
 		}
 		if err := validateTaskCompletionAuthority(ctx, work.q, request, completion, authority); err != nil {
 			return err
+		}
+		if completion.handoff != nil {
+			identity, err := work.q.GetRuntimeIdentityForCheckpoint(ctx, authority.runtime.RuntimeIdentityID)
+			manifestIdentity := request.Handoff.Manifest.RecoveryPoint.Runtime
+			if err != nil ||
+				identity.ID != manifestIdentity.ID ||
+				identity.RuntimeArch != manifestIdentity.Arch ||
+				identity.RuntimeABI != manifestIdentity.ABI ||
+				identity.KernelDigest != manifestIdentity.KernelDigest ||
+				identity.InitramfsDigest != manifestIdentity.InitramfsDigest ||
+				identity.RootfsDigest != manifestIdentity.RootfsDigest {
+				return staleTaskCompletion(err)
+			}
+			if err := validateCheckpointSubstrateAuthority(
+				ctx,
+				work.q,
+				authority,
+				request.Handoff.Manifest,
+				completion.handoff.substrateID,
+				completion.handoff.hasSubstrate,
+			); err != nil {
+				return staleTaskCompletion(err)
+			}
 		}
 		if completion.rollback != nil {
 			if err := validateTaskWorkspaceRollback(ctx, work.q, authority, *completion.rollback); err != nil {
@@ -140,14 +175,25 @@ func (s *Server) completeTask(
 		}
 		var versionID pgtype.UUID
 		if completion.capture != nil {
-			versionID, err = recordTaskWorkspaceVersion(
-				ctx,
-				work.q,
-				worker,
-				authority,
-				*completion.capture,
-				completedAt,
-			)
+			if sameWorkspaceChildFinalization(authority) {
+				versionID, err = recordCheckpointWorkspaceVersion(
+					ctx, work.q, worker, authority, *completion.capture,
+				)
+				if err == nil {
+					err = updateTaskWorkspaceMountFrontier(
+						ctx, work.q, authority, versionID, completedAt,
+					)
+				}
+			} else {
+				versionID, err = recordTaskWorkspaceVersion(
+					ctx,
+					work.q,
+					worker,
+					authority,
+					*completion.capture,
+					completedAt,
+				)
+			}
 			if err != nil {
 				return err
 			}
@@ -183,7 +229,26 @@ func (s *Server) completeTask(
 			return staleTaskCompletion(err)
 		}
 		if retry {
+			if sameWorkspaceChildFinalization(authority) {
+				if _, err := work.q.ClearSameWorkspaceChildWriter(
+					ctx,
+					db.ClearSameWorkspaceChildWriterParams{
+						CompletedAt: completedAt, RunWaitID: authority.enclosingWait.ID,
+						EnvironmentID: authority.run.EnvironmentID,
+						ParentRunID:   authority.parentRun.ID, WorkspaceID: authority.workspace.ID,
+						ChildRunID:            authority.run.ID,
+						ChildWriterGeneration: authority.enclosingWait.ChildWriterGeneration,
+					},
+				); err != nil {
+					return staleTaskCompletion(err)
+				}
+			}
 			return scheduleTaskRetry(ctx, work.q, authority, secrets, completedAt, retryAt)
+		}
+		if sameWorkspaceChildFinalization(authority) {
+			return finishSameWorkspaceChild(
+				ctx, work.q, worker, authority, completion, completedAt, versionID,
+			)
 		}
 		return finishTask(ctx, work.q, authority, completion, completedAt, versionID)
 	})
@@ -255,19 +320,40 @@ func validateTaskCompletionAuthority(
 		!authority.runLease.FinalizationStartedAt.Valid ||
 		!authority.runLease.FinalizationRequestFingerprint.Valid ||
 		authority.attempt.BaseWorkspaceVersionID != authority.run.BaseWorkspaceVersionID ||
-		!authority.workspace.HeadVersionID.Valid ||
-		authority.workspace.HeadVersionID != authority.run.BaseWorkspaceVersionID ||
-		authority.workspace.OwnerRunID != authority.run.ID ||
-		authority.workspace.OwnerActorID.Valid ||
 		(authority.run.ParentRunID.Valid != authority.run.ParentOwnsLifecycle.Valid) {
 		return errStaleTaskCompletion
 	}
-	if authority.run.ParentRunID.Valid && authority.run.ParentOwnsLifecycle.Bool {
-		if authority.parentRun.ID != authority.run.ParentRunID ||
-			authority.parentRun.WorkspaceID == authority.run.WorkspaceID {
+	sameWorkspaceChild := sameWorkspaceChildFinalization(authority)
+	if sameWorkspaceChild {
+		if !authority.enclosingWait.ID.Valid ||
+			(completion.kind == taskCompletionSucceeded) != (completion.handoff != nil) {
 			return errStaleTaskCompletion
 		}
-		if authority.enclosingWait.ID.Valid {
+		if completion.handoff != nil {
+			if completion.handoff.parentRunID != pgvalue.MustUUIDValue(authority.parentRun.ID) ||
+				completion.handoff.attemptNumber != authority.parentAttempt.Number ||
+				completion.handoff.waitID != pgvalue.MustUUIDValue(authority.enclosingWait.ID) {
+				return errStaleTaskCompletion
+			}
+			correlationID, err := checkpointCorrelationID(authority.checkpoint, authority.enclosingWait)
+			if err != nil ||
+				request.Handoff == nil ||
+				request.Handoff.Manifest.RecoveryPoint.CorrelationID != correlationID {
+				return errStaleTaskCompletion
+			}
+		}
+	} else if !authority.workspace.HeadVersionID.Valid ||
+		authority.workspace.HeadVersionID != authority.run.BaseWorkspaceVersionID ||
+		authority.workspace.OwnerRunID != authority.run.ID ||
+		authority.workspace.OwnerActorID.Valid ||
+		completion.handoff != nil {
+		return errStaleTaskCompletion
+	}
+	if authority.run.ParentRunID.Valid && authority.run.ParentOwnsLifecycle.Bool {
+		if authority.parentRun.ID != authority.run.ParentRunID {
+			return errStaleTaskCompletion
+		}
+		if !sameWorkspaceChild && authority.enclosingWait.ID.Valid {
 			if authority.enclosingWait.RunID != authority.parentRun.ID ||
 				authority.enclosingWait.ChildRunID != authority.run.ID ||
 				!authority.enclosingWait.ChildParentOwned.Valid ||
@@ -322,13 +408,21 @@ func validateTaskCompletionAuthority(
 	return nil
 }
 
+func sameWorkspaceChildFinalization(authority runLeaseClaimAuthority) bool {
+	return authority.run.ParentRunID.Valid &&
+		authority.run.ParentOwnsLifecycle.Valid &&
+		authority.run.ParentOwnsLifecycle.Bool &&
+		authority.parentRun.ID == authority.run.ParentRunID &&
+		authority.parentRun.WorkspaceID == authority.run.WorkspaceID
+}
+
 func validateTaskWorkspaceRollback(
 	ctx context.Context,
 	store taskWorkspaceRollbackStore,
 	authority runLeaseClaimAuthority,
 	rollback parsedTaskWorkspaceRollback,
 ) error {
-	version, err := store.GetWorkspaceVersion(ctx, db.GetWorkspaceVersionParams{
+	version, err := store.GetTaskWorkspaceResetVersion(ctx, db.GetTaskWorkspaceResetVersionParams{
 		OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
 		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
 		ID: authority.run.BaseWorkspaceVersionID,
@@ -379,7 +473,7 @@ func validateTaskWorkspaceRollback(
 }
 
 type taskWorkspaceRollbackStore interface {
-	GetWorkspaceVersion(context.Context, db.GetWorkspaceVersionParams) (db.WorkspaceVersion, error)
+	GetTaskWorkspaceResetVersion(context.Context, db.GetTaskWorkspaceResetVersionParams) (db.WorkspaceVersion, error)
 	GetArtifact(context.Context, db.GetArtifactParams) (db.Artifact, error)
 }
 
@@ -642,6 +736,303 @@ func finishTask(
 		); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func finishSameWorkspaceChild(
+	ctx context.Context,
+	store db.Querier,
+	worker workerActor,
+	authority runLeaseClaimAuthority,
+	completion parsedTaskCompletion,
+	completedAt pgtype.Timestamptz,
+	versionID pgtype.UUID,
+) error {
+	wait := authority.enclosingWait
+	status := db.RunStatusFailed
+	reason := pgvalue.Text("task_failed")
+	var output, terminalError []byte
+	eventKind := api.RunEventKindFailed
+	switch completion.kind {
+	case taskCompletionSucceeded:
+		if completion.handoff == nil || !versionID.Valid ||
+			completion.handoff.checkpointID == pgvalue.MustUUIDValue(wait.SuspendCheckpointID) {
+			return errStaleTaskCompletion
+		}
+		status = db.RunStatusSucceeded
+		reason = pgtype.Text{}
+		output = completion.output
+		eventKind = api.RunEventKindCompleted
+	case taskCompletionFailed:
+		terminalError = completion.errorObject
+	case taskCompletionPayloadInvalid:
+		reason = pgvalue.Text("task_payload_invalid")
+		terminalError = completion.errorObject
+	default:
+		return errors.New("same-Workspace child outcome is unsupported")
+	}
+
+	if completion.handoff != nil {
+		checkpoint := completion.handoff
+		if _, err := store.CreateRunCheckpoint(ctx, db.CreateRunCheckpointParams{
+			ID: pgvalue.UUID(checkpoint.checkpointID), Kind: db.RunCheckpointKindHandoffResume,
+			RunID: authority.parentRun.ID, AttemptNumber: authority.parentAttempt.Number,
+			RunWaitID: wait.ID, SourceRunLeaseID: authority.checkpoint.SourceRunLeaseID,
+			SourceWorkspaceLeaseID:        authority.checkpoint.SourceWorkspaceLeaseID,
+			WorkspaceID:                   authority.workspace.ID,
+			BaseWorkspaceVersionID:        authority.parentAttempt.BaseWorkspaceVersionID,
+			PrivateWorkspaceVersionID:     versionID,
+			ActorSpeculativeInputSequence: authority.checkpoint.ActorSpeculativeInputSequence,
+			RestoreManifest:               checkpoint.manifest,
+		}); err != nil {
+			return staleTaskCompletion(err)
+		}
+		if err := recordCheckpointRuntimeArtifacts(
+			ctx, store, worker, authority, checkpoint.checkpointID, checkpoint.artifacts,
+		); err != nil {
+			return err
+		}
+		if _, err := store.MarkRunCheckpointReady(ctx, db.MarkRunCheckpointReadyParams{
+			PrivateWorkspaceVersionID: versionID, RestoreManifest: checkpoint.manifest,
+			ReadyRequestFingerprint: pgvalue.Text(completion.fingerprint),
+			RunID:                   authority.parentRun.ID, AttemptNumber: authority.parentAttempt.Number,
+			ID: pgvalue.UUID(checkpoint.checkpointID),
+		}); err != nil {
+			return staleTaskCompletion(err)
+		}
+	}
+
+	child, err := store.FinishTaskRun(ctx, db.FinishTaskRunParams{
+		Status: status, Output: output, ReasonCode: reason, Error: terminalError,
+		CompletedAt: completedAt, ID: authority.run.ID, WorkspaceID: authority.workspace.ID,
+		AttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
+	})
+	if err != nil {
+		return staleTaskCompletion(err)
+	}
+	payload, err := json.Marshal(struct {
+		Reason string `json:"reason,omitempty"`
+	}{Reason: reason.String})
+	if err != nil {
+		return err
+	}
+	if _, err := store.AppendRunEvent(ctx, db.AppendRunEventParams{
+		OrgID: authority.run.OrgID, RunID: authority.run.ID, Kind: eventKind, Payload: payload,
+	}); err != nil {
+		return fmt.Errorf("append same-Workspace child terminal event: %w", err)
+	}
+	if completion.kind == taskCompletionSucceeded &&
+		authority.parentEnclosingWait.ID.Valid {
+		outer := authority.parentEnclosingWait
+		if _, err := store.ClearSameWorkspaceChildWriter(
+			ctx,
+			db.ClearSameWorkspaceChildWriterParams{
+				CompletedAt: completedAt, RunWaitID: outer.ID,
+				EnvironmentID: authority.run.EnvironmentID,
+				ParentRunID:   outer.RunID, WorkspaceID: authority.workspace.ID,
+				ChildRunID:            authority.parentRun.ID,
+				ChildWriterGeneration: outer.ChildWriterGeneration,
+			},
+		); err != nil {
+			return staleTaskCompletion(err)
+		}
+	}
+
+	var completed db.RunWait
+	if completion.kind == taskCompletionSucceeded {
+		var result []byte
+		result, err = childTaskResult(child)
+		if err != nil {
+			return err
+		}
+		completed, err = store.CompleteSameWorkspaceChildSuccess(
+			ctx,
+			db.CompleteSameWorkspaceChildSuccessParams{
+				CompletedAt: completedAt, ConditionResult: result,
+				ChildResultVersionID:      versionID,
+				HandoffResumeCheckpointID: pgvalue.UUID(completion.handoff.checkpointID),
+				RunWaitID:                 wait.ID, EnvironmentID: wait.EnvironmentID,
+				ParentRunID: authority.parentRun.ID, WorkspaceID: authority.workspace.ID,
+				ParentAttemptNumber:        authority.parentAttempt.Number,
+				ChildRunID:                 authority.run.ID,
+				ExpectedParentStateVersion: wait.ExpectedRunStateVersion,
+				ParentRunLeaseID:           wait.PriorRunLeaseID,
+				SuspendCheckpointID:        wait.SuspendCheckpointID,
+				ChildWriterGeneration:      wait.ChildWriterGeneration,
+			},
+		)
+	} else {
+		if len(authority.handoffAncestors) != 0 {
+			completed, err = cascadeSameWorkspaceChildFailure(
+				ctx,
+				store,
+				authority,
+				completedAt,
+			)
+		} else {
+			completed, err = store.CompleteSameWorkspaceChildFailure(
+				ctx,
+				db.CompleteSameWorkspaceChildFailureParams{
+					CompletedAt: completedAt, ConditionState: db.WaitStateFailed,
+					ConditionError: terminalError, ReasonCode: reason,
+					RunWaitID: wait.ID, EnvironmentID: wait.EnvironmentID,
+					ParentRunID: authority.parentRun.ID, WorkspaceID: authority.workspace.ID,
+					ParentAttemptNumber:        authority.parentAttempt.Number,
+					ChildRunID:                 authority.run.ID,
+					ExpectedParentStateVersion: wait.ExpectedRunStateVersion,
+					ParentRunLeaseID:           wait.PriorRunLeaseID,
+					SuspendCheckpointID:        wait.SuspendCheckpointID,
+					ChildWriterGeneration:      wait.ChildWriterGeneration,
+				},
+			)
+		}
+		if err == nil {
+			_, err = store.RequestHandoffFailureRuntimeClose(
+				ctx,
+				db.RequestHandoffFailureRuntimeCloseParams{
+					FailedAt: completedAt, RuntimeInstanceID: authority.runtime.ID,
+					OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
+					EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
+					WorkerInstanceID:       authority.runtime.WorkerInstanceID,
+					WorkerEpoch:            authority.runtime.WorkerEpoch,
+					WorkspaceMountID:       authority.workspaceMount.ID,
+					MountFencingGeneration: authority.workspaceMount.FencingGeneration,
+				},
+			)
+		}
+	}
+	if err != nil {
+		return staleTaskCompletion(err)
+	}
+	return enqueueRunResume(ctx, store, authority.parentRun.WorkspaceID, completed, completedAt)
+}
+
+func cascadeSameWorkspaceChildFailure(
+	ctx context.Context,
+	store db.Querier,
+	authority runLeaseClaimAuthority,
+	failedAt pgtype.Timestamptz,
+) (db.RunWait, error) {
+	ancestors := authority.handoffAncestors
+	if len(ancestors) == 0 {
+		return db.RunWait{}, errStaleTaskCompletion
+	}
+	errorObject, err := json.Marshal(map[string]any{
+		"code":      "same_workspace_handoff_runtime_lost",
+		"message":   "nested same-Workspace handoff runtime was discarded after descendant failure",
+		"retryable": false,
+	})
+	if err != nil {
+		return db.RunWait{}, err
+	}
+	reason := pgvalue.Text("same_workspace_handoff_runtime_lost")
+	innerWait := authority.enclosingWait
+	innerParent := authority.parentRun
+	innerAttempt := authority.parentAttempt
+
+	failParent := func() error {
+		if _, err := store.FailNestedSameWorkspaceWait(
+			ctx,
+			db.FailNestedSameWorkspaceWaitParams{
+				Error: errorObject, FailedAt: failedAt, ReasonCode: reason,
+				RunWaitID: innerWait.ID, EnvironmentID: innerWait.EnvironmentID,
+				RunID: innerParent.ID, AttemptNumber: innerAttempt.Number,
+				WorkspaceID: authority.workspace.ID, ChildRunID: innerWait.ChildRunID,
+				HandoffRuntimeInstanceID: innerWait.HandoffRuntimeInstanceID,
+				HandoffWorkspaceMountID:  innerWait.HandoffWorkspaceMountID,
+				HandoffMountGeneration:   innerWait.HandoffMountGeneration,
+				OwnershipGeneration:      innerWait.OwnershipGeneration,
+			},
+		); err != nil {
+			return staleTaskCompletion(err)
+		}
+		if _, err := store.FailNestedSameWorkspaceAttempt(
+			ctx,
+			db.FailNestedSameWorkspaceAttemptParams{
+				Error: errorObject, FailedAt: failedAt, RunID: innerParent.ID,
+				AttemptNumber: innerAttempt.Number, WorkspaceID: authority.workspace.ID,
+			},
+		); err != nil {
+			return staleTaskCompletion(err)
+		}
+		if _, err := store.FailNestedSameWorkspaceRun(
+			ctx,
+			db.FailNestedSameWorkspaceRunParams{
+				Error: errorObject, FailedAt: failedAt, RunID: innerParent.ID,
+				EnvironmentID: innerParent.EnvironmentID, WorkspaceID: authority.workspace.ID,
+				AttemptNumber: innerAttempt.Number,
+			},
+		); err != nil {
+			return staleTaskCompletion(err)
+		}
+		payload, err := json.Marshal(struct {
+			Reason string `json:"reason"`
+		}{Reason: reason.String})
+		if err != nil {
+			return err
+		}
+		if _, err := store.AppendRunEvent(ctx, db.AppendRunEventParams{
+			OrgID: innerParent.OrgID, RunID: innerParent.ID,
+			Kind: api.RunEventKindFailed, Payload: payload,
+		}); err != nil {
+			return fmt.Errorf("append nested handoff failure event: %w", err)
+		}
+		return nil
+	}
+
+	if err := failParent(); err != nil {
+		return db.RunWait{}, err
+	}
+	for index := len(ancestors) - 1; index > 0; index-- {
+		row := ancestors[index]
+		innerWait = row.RunWait
+		innerParent = row.Run
+		innerAttempt = row.RunAttempt
+		if err := failParent(); err != nil {
+			return db.RunWait{}, err
+		}
+	}
+
+	root := ancestors[0]
+	return store.CompleteSameWorkspaceChildFailure(
+		ctx,
+		db.CompleteSameWorkspaceChildFailureParams{
+			CompletedAt: failedAt, ConditionState: db.WaitStateFailed,
+			ConditionError: errorObject, ReasonCode: reason,
+			RunWaitID: root.RunWait.ID, EnvironmentID: root.RunWait.EnvironmentID,
+			ParentRunID: root.Run.ID, WorkspaceID: authority.workspace.ID,
+			ParentAttemptNumber:        root.RunAttempt.Number,
+			ChildRunID:                 root.RunWait.ChildRunID,
+			ExpectedParentStateVersion: root.RunWait.ExpectedRunStateVersion,
+			ParentRunLeaseID:           root.RunWait.PriorRunLeaseID,
+			SuspendCheckpointID:        root.RunWait.SuspendCheckpointID,
+			ChildWriterGeneration:      root.RunWait.ChildWriterGeneration,
+		},
+	)
+}
+
+func enqueueRunResume(
+	ctx context.Context,
+	store db.Querier,
+	workspaceID pgtype.UUID,
+	wait db.RunWait,
+	availableAt pgtype.Timestamptz,
+) error {
+	payload, err := json.Marshal(map[string]any{
+		"environmentId":        pgvalue.UUIDString(wait.EnvironmentID),
+		"runId":                pgvalue.UUIDString(wait.RunID),
+		"runWaitId":            pgvalue.UUIDString(wait.ID),
+		"resumeRequestVersion": wait.ResumeRequestVersion,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := store.CreateOutboxMessage(ctx, db.CreateOutboxMessageParams{
+		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Lane: "control", Topic: "run.resume",
+		PartitionKey: pgvalue.UUIDString(workspaceID), Payload: payload, AvailableAt: availableAt,
+	}); err != nil {
+		return fmt.Errorf("enqueue Run resume: %w", err)
 	}
 	return nil
 }

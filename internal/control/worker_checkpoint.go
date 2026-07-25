@@ -775,17 +775,34 @@ func parseCheckpointReadyRequest(request api.WorkerCheckpointReadyRequest) (pars
 }
 
 func validateCheckpointReadyManifest(request api.WorkerCheckpointReadyRequest) ([]byte, []checkpointArtifactProof, uuid.UUID, bool, error) {
-	manifest := request.Manifest
+	return validateCheckpointManifest(
+		request.Manifest,
+		request.CheckpointID,
+		request.Lease.RunID,
+		request.Lease.AttemptNumber,
+		request.RunWaitID,
+		request.Lease.RuntimeIdentityID,
+	)
+}
+
+func validateCheckpointManifest(
+	manifest api.WorkerCheckpointManifest,
+	checkpointID string,
+	runID string,
+	attemptNumber int32,
+	runWaitID string,
+	runtimeIdentityID string,
+) ([]byte, []checkpointArtifactProof, uuid.UUID, bool, error) {
 	recovery := manifest.RecoveryPoint
-	if recovery.ID != request.CheckpointID || recovery.RunID != request.Lease.RunID ||
-		recovery.AttemptNumber != request.Lease.AttemptNumber || recovery.RunWaitID != request.RunWaitID ||
+	if recovery.ID != checkpointID || recovery.RunID != runID ||
+		recovery.AttemptNumber != attemptNumber || recovery.RunWaitID != runWaitID ||
 		strings.TrimSpace(recovery.CorrelationID) == "" {
 		return nil, nil, uuid.Nil, false, errors.New("manifest recovery_point does not match checkpoint request")
 	}
 	identity := recovery.Runtime
 	if identity.Backend != "firecracker" ||
 		deployment.ValidateRuntimeArchitecture(deployment.RuntimeArchitecture(identity.Arch)) != nil ||
-		identity.ID != request.Lease.RuntimeIdentityID || strings.TrimSpace(identity.ABI) == "" ||
+		identity.ID != runtimeIdentityID || strings.TrimSpace(identity.ABI) == "" ||
 		!taskWorkspaceDigestPattern.MatchString(identity.KernelDigest) ||
 		!taskWorkspaceDigestPattern.MatchString(identity.InitramfsDigest) ||
 		!taskWorkspaceDigestPattern.MatchString(identity.RootfsDigest) ||
@@ -1007,7 +1024,14 @@ func (s *Server) commitCheckpointReady(
 			identity.RootfsDigest != request.Manifest.RecoveryPoint.Runtime.RootfsDigest {
 			return staleRunLeaseClaim(err)
 		}
-		if err := validateCheckpointSubstrateAuthority(ctx, work.q, authority, request, ready); err != nil {
+		if err := validateCheckpointSubstrateAuthority(
+			ctx,
+			work.q,
+			authority,
+			request.Manifest,
+			ready.substrateID,
+			ready.hasSubstrate,
+		); err != nil {
 			return err
 		}
 		checkpointedAt, err := work.q.GetRunLeaseRenewalTime(ctx)
@@ -1336,21 +1360,22 @@ func validateCheckpointSubstrateAuthority(
 	ctx context.Context,
 	store db.Querier,
 	authority runLeaseClaimAuthority,
-	request api.WorkerCheckpointReadyRequest,
-	ready parsedCheckpointReady,
+	manifest api.WorkerCheckpointManifest,
+	substrateID uuid.UUID,
+	hasSubstrate bool,
 ) error {
 	if !authority.runtime.RuntimeSubstrateID.Valid {
-		if ready.hasSubstrate {
+		if hasSubstrate {
 			return errStaleRunLeaseClaim
 		}
 		return nil
 	}
-	if !ready.hasSubstrate || authority.runtime.RuntimeSubstrateID != pgvalue.UUID(ready.substrateID) {
+	if !hasSubstrate || authority.runtime.RuntimeSubstrateID != pgvalue.UUID(substrateID) {
 		return errStaleRunLeaseClaim
 	}
 	row, err := store.GetRuntimeSubstrateForCheckpoint(ctx, authority.runtime.RuntimeSubstrateID)
-	proof := request.Manifest.RuntimeState.RuntimeSubstrate
-	identity := request.Manifest.RecoveryPoint.Runtime.Substrate
+	proof := manifest.RuntimeState.RuntimeSubstrate
+	identity := manifest.RecoveryPoint.Runtime.Substrate
 	substrate := row.RuntimeSubstrate
 	if err != nil || proof == nil || identity == nil ||
 		substrate.ID != authority.runtime.RuntimeSubstrateID ||

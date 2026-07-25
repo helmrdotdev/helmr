@@ -53,6 +53,7 @@ type RunLeaseTask interface {
 	RenewRunLease(context.Context) (RunLeaseTaskRenewal, error)
 	BeginWorkspaceFinalization(context.Context, api.WorkerRunLeaseReceipt, api.WorkerRunLeaseReceipt, string, api.WorkerRunFinalizationKind) error
 	CaptureWorkspace(context.Context) (api.WorkerTaskWorkspaceCapture, error)
+	CreateHandoffCheckpoint(context.Context, api.WorkerRunFinalizationHandoff, string, api.WorkerTaskWorkspaceCapture) (api.WorkerCheckpointManifest, error)
 	ResetWorkspace(context.Context) (api.WorkerTaskWorkspaceRollback, error)
 }
 
@@ -599,6 +600,42 @@ func (task *guestRunLeaseTask) CaptureWorkspace(
 			EntryCount: int32(result.Artifact.EntryCount),
 		},
 	}, nil
+}
+
+func (task *guestRunLeaseTask) CreateHandoffCheckpoint(
+	ctx context.Context,
+	handoff api.WorkerRunFinalizationHandoff,
+	checkpointID string,
+	capture api.WorkerTaskWorkspaceCapture,
+) (api.WorkerCheckpointManifest, error) {
+	task.mu.Lock()
+	defer task.mu.Unlock()
+	if !task.finished || task.finalizingKind != api.WorkerRunFinalizationCapture {
+		return api.WorkerCheckpointManifest{}, errors.New("Run Lease Task has not captured its Workspace")
+	}
+	checkpointer, ok := task.checkpointer.(HandoffCheckpointer)
+	if !ok {
+		return api.WorkerCheckpointManifest{}, errors.New("Run Lease Task does not support handoff checkpoints")
+	}
+	return checkpointer.CreateHandoffCheckpoint(
+		ctx,
+		CheckpointRequest{
+			RunID:          handoff.ParentRunID,
+			AttemptNumber:  handoff.ParentAttemptNumber,
+			RunLeaseID:     task.lease.ID,
+			RunWaitID:      handoff.RunWaitID,
+			CorrelationID:  handoff.CorrelationID,
+			CheckpointID:   checkpointID,
+			ResumeAttachID: handoff.ResumeAttachID,
+		},
+		api.WorkerCheckpointWorkspaceBase{
+			ArtifactDigest:    capture.Artifact.Digest,
+			ArtifactSizeBytes: capture.Artifact.SizeBytes,
+			ArtifactMediaType: capture.Artifact.MediaType,
+			ArtifactEncoding:  capture.Artifact.Encoding,
+			MountPath:         task.waitWorkspace.MountPath,
+		},
+	)
 }
 
 func (task *guestRunLeaseTask) ResetWorkspace(

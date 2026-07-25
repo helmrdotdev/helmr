@@ -253,6 +253,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		dispatch.WithQueueReconcileLogger(log),
 		dispatch.WithQueueReconcileLock(queueReconcileLock),
 		dispatch.WithBuildQueueReconcileLock(buildQueueReconcileLock),
+		dispatch.WithRunResumeRecoverer(runDispatchAuthority),
 	)
 	if err != nil {
 		return fmt.Errorf("configure queue reconciler: %w", err)

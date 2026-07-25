@@ -25,6 +25,7 @@ type Authority struct {
 	toolchainCatalogDigest []byte
 	fencingKeys            workspace.FencingKeys
 	runPolicy              RunPlacementPolicy
+	nestedResumes          nestedResumeCursor
 }
 
 type ToolchainResolver func(string) error

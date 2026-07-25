@@ -993,6 +993,56 @@ func TestClaimSameWorkspaceParentResumeRunLeaseInTxUsesSuspendCheckpointAfterChi
 	if claimed.workspaceLease.BaseVersionID != claimed.runWait.BaseWorkspaceVersionID {
 		t.Fatal("failed child did not restore pre-child base")
 	}
+	if claimed.mode != runLeaseClaimRestore ||
+		claimed.restoreSource != runLeaseRestoreRecreated {
+		t.Fatalf("failure claim mode=%s source=%s", claimed.mode, claimed.restoreSource)
+	}
+}
+
+func TestClaimSameWorkspaceParentResumeRunLeaseInTxRestoresSuccessfulHandoffAfterRuntimeLoss(t *testing.T) {
+	worker, locators, authority := validSameWorkspaceParentResumeRunLeaseClaimFixture(false, true)
+	sourceRuntime := authority.runtime
+	sourceRunLease := authority.sourceRunLease
+	sourceWorkspaceLease := authority.sourceWorkspaceLease
+	recreatedRuntimeID := pgvalue.UUID(uuid.New())
+	recreatedMountID := pgvalue.UUID(uuid.New())
+	authority.runtime.ID = recreatedRuntimeID
+	authority.runtime.RestoreCheckpointID = authority.checkpoint.ID
+	authority.runLease.RuntimeInstanceID = recreatedRuntimeID
+	authority.networkSlot.RuntimeInstanceID = recreatedRuntimeID
+	authority.workspaceMount.ID = recreatedMountID
+	authority.workspaceMount.FencingGeneration++
+	authority.workspaceLease.WorkspaceMountID = recreatedMountID
+	authority.workspaceLease.MountFencingGeneration = authority.workspaceMount.FencingGeneration
+	authority.sourceRuntime = sourceRuntime
+	authority.sourceRunLease = sourceRunLease
+	authority.sourceWorkspaceLease = sourceWorkspaceLease
+	locators.RuntimeInstanceID = recreatedRuntimeID
+	locators.RuntimeRestoreCheckpointID = authority.checkpoint.ID
+	locators.WorkspaceMountID = recreatedMountID
+	store := &runLeaseClaimStore{authority: authority}
+
+	claimed, err := claimSameWorkspaceParentResumeRunLeaseInTx(
+		context.Background(),
+		store,
+		worker,
+		authority.runLease.ID,
+		authority.runLease.LeaseSequence,
+		locators,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.mode != runLeaseClaimRestore ||
+		claimed.restoreSource != runLeaseRestoreRecreated ||
+		claimed.checkpoint.Kind != db.RunCheckpointKindHandoffResume {
+		t.Fatalf(
+			"success recovery mode=%s source=%s checkpoint=%s",
+			claimed.mode,
+			claimed.restoreSource,
+			claimed.checkpoint.Kind,
+		)
+	}
 }
 
 func TestClaimCheckpointRestoreRunLeaseInTxPreservesEnclosingHandoff(t *testing.T) {
@@ -1091,25 +1141,26 @@ func TestClaimSameWorkspaceParentResumeRunLeaseInTxRejectsDifferentMount(t *test
 
 type runLeaseClaimStore struct {
 	db.Querier
-	authority          runLeaseClaimAuthority
-	locators           db.GetRunLeaseClaimLocatorsRow
-	secretLocators     *db.GetRunLeaseSecretDeliveryLocatorsRow
-	secretRows         []db.LockAttemptSecretDeliveryRow
-	secretVersion      db.SecretVersion
-	program            db.GetDeploymentProgramAuthorityRow
-	definition         db.DeploymentDefinition
-	resetTarget        db.GetWorkspaceResetTargetAuthorityRow
-	projectionErr      error
-	entrypoint         db.GetRunEntrypointLocatorsRow
-	enteredAt          pgtype.Timestamptz
-	entrypointMarks    int
-	renewal            db.GetLiveRunLeaseLocatorsRow
-	renewalTime        pgtype.Timestamptz
-	renewalWrites      int
-	finalizationTime   pgtype.Timestamptz
-	finalizationClear  pgtype.Bool
-	finalizationWrites int
-	calls              []string
+	authority           runLeaseClaimAuthority
+	locators            db.GetRunLeaseClaimLocatorsRow
+	secretLocators      *db.GetRunLeaseSecretDeliveryLocatorsRow
+	secretRows          []db.LockAttemptSecretDeliveryRow
+	secretVersion       db.SecretVersion
+	program             db.GetDeploymentProgramAuthorityRow
+	definition          db.DeploymentDefinition
+	resetTarget         db.GetWorkspaceResetTargetAuthorityRow
+	projectionErr       error
+	entrypoint          db.GetRunEntrypointLocatorsRow
+	enteredAt           pgtype.Timestamptz
+	entrypointMarks     int
+	renewal             db.GetLiveRunLeaseLocatorsRow
+	renewalTime         pgtype.Timestamptz
+	renewalWrites       int
+	finalizationTime    pgtype.Timestamptz
+	finalizationClear   pgtype.Bool
+	finalizationWrites  int
+	finalizationLineage []db.ListSameWorkspaceHandoffAncestorRunsRow
+	calls               []string
 }
 
 func (s *runLeaseClaimStore) BeginQuerier(context.Context) (db.Querier, controlTransaction, error) {
@@ -1213,6 +1264,15 @@ func (s *runLeaseClaimStore) LockRunLeaseClaimWorkspace(context.Context, db.Lock
 }
 
 func (s *runLeaseClaimStore) LockRunLeaseClaimAttempt(_ context.Context, params db.LockRunLeaseClaimAttemptParams) (db.RunAttempt, error) {
+	for _, row := range s.finalizationLineage {
+		if params.RunID == row.Run.ID {
+			s.calls = append(s.calls, "lineage_attempt:"+pgvalue.UUIDString(params.RunID))
+			return db.RunAttempt{
+				RunID: params.RunID, Number: params.Number, WorkspaceID: params.WorkspaceID,
+				EntrypointKind: row.Run.EntrypointKind,
+			}, nil
+		}
+	}
 	if s.authority.parentAttempt.RunID.Valid && params.RunID == s.authority.parentAttempt.RunID {
 		s.calls = append(s.calls, "parent_attempt")
 		return s.authority.parentAttempt, nil
@@ -1864,6 +1924,30 @@ func validSameWorkspaceParentResumeRunLeaseClaimFixture(
 		authority.runWait.HandoffResumeCheckpointID = authority.checkpoint.ID
 		locators.HandoffResumeCheckpointID = authority.checkpoint.ID
 	} else {
+		sourceRuntime := authority.runtime
+		sourceRunLease := authority.sourceRunLease
+		sourceWorkspaceLease := authority.sourceWorkspaceLease
+		sourceWorkspaceLease.WorkspaceMountID = authority.runWait.HandoffWorkspaceMountID
+		sourceWorkspaceLease.MountFencingGeneration = authority.runWait.HandoffMountGeneration.Int64
+		sourceWorkspaceLease.WriterGeneration = authority.runWait.ParentWriterGeneration.Int64
+
+		recreatedRuntimeID := pgvalue.UUID(uuid.New())
+		recreatedMountID := pgvalue.UUID(uuid.New())
+		authority.runtime.ID = recreatedRuntimeID
+		authority.runtime.RestoreCheckpointID = authority.checkpoint.ID
+		authority.runLease.RuntimeInstanceID = recreatedRuntimeID
+		authority.networkSlot.RuntimeInstanceID = recreatedRuntimeID
+		authority.workspaceMount.ID = recreatedMountID
+		authority.workspaceMount.FencingGeneration++
+		authority.workspaceLease.WorkspaceMountID = recreatedMountID
+		authority.workspaceLease.MountFencingGeneration = authority.workspaceMount.FencingGeneration
+		locators.RuntimeInstanceID = recreatedRuntimeID
+		locators.RuntimeRestoreCheckpointID = authority.checkpoint.ID
+		locators.WorkspaceMountID = recreatedMountID
+
+		authority.sourceRuntime = sourceRuntime
+		authority.sourceRunLease = sourceRunLease
+		authority.sourceWorkspaceLease = sourceWorkspaceLease
 		authority.childRun.Status = db.RunStatusFailed
 		authority.childAttempt.TerminalOutcome = pgtype.Text{String: "failed", Valid: true}
 		authority.runWait.ConditionState = db.WaitStateFailed

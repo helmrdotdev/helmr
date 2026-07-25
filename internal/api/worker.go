@@ -456,10 +456,20 @@ type WorkerBeginRunFinalizationRequest struct {
 }
 
 type WorkerBeginRunFinalizationResponse struct {
-	Lease       WorkerRunLeaseReceipt     `json:"lease"`
-	OperationID string                    `json:"operation_id"`
-	Kind        WorkerRunFinalizationKind `json:"kind"`
-	StartedAt   time.Time                 `json:"started_at"`
+	Lease       WorkerRunLeaseReceipt         `json:"lease"`
+	OperationID string                        `json:"operation_id"`
+	Kind        WorkerRunFinalizationKind     `json:"kind"`
+	StartedAt   time.Time                     `json:"started_at"`
+	Handoff     *WorkerRunFinalizationHandoff `json:"handoff,omitempty"`
+}
+
+type WorkerRunFinalizationHandoff struct {
+	ParentRunID         string `json:"parent_run_id"`
+	ParentAttemptNumber int32  `json:"parent_attempt_number"`
+	RunWaitID           string `json:"run_wait_id"`
+	SuspendCheckpointID string `json:"suspend_checkpoint_id"`
+	ResumeAttachID      string `json:"resume_attach_id"`
+	CorrelationID       string `json:"correlation_id"`
 }
 
 type WorkerRunEntrypointRequest struct {
@@ -469,9 +479,15 @@ type WorkerRunEntrypointRequest struct {
 }
 
 type WorkerCompleteTaskRequest struct {
-	Lease     WorkerRunLeaseReceipt    `json:"lease"`
-	Outcome   WorkerTaskOutcome        `json:"outcome"`
-	Workspace WorkerTaskWorkspaceProof `json:"workspace"`
+	Lease     WorkerRunLeaseReceipt        `json:"lease"`
+	Outcome   WorkerTaskOutcome            `json:"outcome"`
+	Workspace WorkerTaskWorkspaceProof     `json:"workspace"`
+	Handoff   *WorkerTaskHandoffCheckpoint `json:"handoff,omitempty"`
+}
+
+type WorkerTaskHandoffCheckpoint struct {
+	CheckpointID string                   `json:"checkpoint_id"`
+	Manifest     WorkerCheckpointManifest `json:"manifest"`
 }
 
 type WorkerCompleteActorRequest struct {

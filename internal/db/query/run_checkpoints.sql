@@ -402,6 +402,43 @@ UPDATE workspace_mounts
    AND workspace_mounts.state = 'mounted'
 RETURNING workspace_mounts.*;
 
+-- name: RequestHandoffFailureRuntimeClose :one
+WITH closing_runtime AS (
+    UPDATE runtime_instances
+       SET desired_state = 'closed',
+           desired_version = desired_version + 1,
+           desired_at = sqlc.arg(failed_at),
+           desired_reason = 'child_handoff_failed',
+           updated_at = sqlc.arg(failed_at)
+     WHERE runtime_instances.id = sqlc.arg(runtime_instance_id)
+       AND runtime_instances.org_id = sqlc.arg(org_id)
+       AND runtime_instances.project_id = sqlc.arg(project_id)
+       AND runtime_instances.environment_id = sqlc.arg(environment_id)
+       AND runtime_instances.workspace_id = sqlc.arg(workspace_id)
+       AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
+       AND runtime_instances.desired_state = 'ready'
+       AND runtime_instances.observed_state = 'ready'
+       AND runtime_instances.reclaimed_at IS NULL
+    RETURNING id
+)
+UPDATE workspace_mounts
+   SET state = 'unmounting',
+       stopped_at = COALESCE(stopped_at, sqlc.arg(failed_at)),
+       updated_at = sqlc.arg(failed_at)
+  FROM closing_runtime
+ WHERE workspace_mounts.id = sqlc.arg(workspace_mount_id)
+   AND workspace_mounts.org_id = sqlc.arg(org_id)
+   AND workspace_mounts.project_id = sqlc.arg(project_id)
+   AND workspace_mounts.environment_id = sqlc.arg(environment_id)
+   AND workspace_mounts.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_mounts.runtime_instance_id = closing_runtime.id
+   AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
+   AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
+   AND workspace_mounts.fencing_generation = sqlc.arg(mount_fencing_generation)
+   AND workspace_mounts.state = 'mounted'
+RETURNING workspace_mounts.*;
+
 -- name: InvalidateRunCheckpoint :one
 UPDATE run_checkpoints
    SET state = 'invalid',

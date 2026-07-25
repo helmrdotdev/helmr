@@ -64,8 +64,7 @@ func projectRunLeaseExecution(
 			Fresh: &api.WorkerRunLeaseFresh{ProgramStart: start},
 		}, nil
 	case runLeaseClaimRestore:
-		if authority.childRun.ID.Valid ||
-			!authority.runWait.ID.Valid ||
+		if !authority.runWait.ID.Valid ||
 			!authority.checkpoint.ID.Valid ||
 			!authority.attempt.EntrypointEnteredAt.Valid ||
 			authority.runWait.ResumeRequestVersion <= 0 {

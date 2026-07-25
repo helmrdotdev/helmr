@@ -36,19 +36,28 @@ func (d *Authority) grantFreshRun(
 	if err != nil {
 		return db.RunLease{}, classifyRunCandidateError(err)
 	}
-	if authority.handoffChildWaitID.Valid &&
+	retainedRuntimeID, hasRetainedHandoff := authority.retainedHandoffRuntimeID()
+	retainedHandoff := hasRetainedHandoff &&
+		expectedMount.runtimeID == retainedRuntimeID
+	if retainedHandoff && authority.handoffChildWaitID.Valid &&
+		!authority.sameWorkspaceResume &&
 		(expectedMount.runtimeID != authority.handoffRuntimeID ||
 			expectedMount.id != authority.handoffWorkspaceMountID ||
 			expectedMount.fencingGeneration != authority.handoffMountGeneration.Int64) {
 		return db.RunLease{}, ErrCapacityUnavailable
 	}
+	if retainedHandoff && authority.sameWorkspaceResume &&
+		(expectedMount.runtimeID != authority.resumeHandoffRuntimeID ||
+			expectedMount.id != authority.resumeHandoffMountID) {
+		return db.RunLease{}, ErrCapacityUnavailable
+	}
 	var runtime runRuntime
-	if authority.handoffChildWaitID.Valid {
+	if retainedHandoff {
 		runtime, err = discoverHandoffRunRuntime(
 			ctx,
 			tx,
 			authority.workspaceID,
-			authority.handoffRuntimeID,
+			retainedRuntimeID,
 		)
 	} else {
 		runtime, err = discoverRunRuntime(ctx, tx, authority.workspaceID)
@@ -88,11 +97,11 @@ func (d *Authority) grantFreshRun(
 	}
 	if mount.id != expectedMount.id ||
 		mount.state != db.WorkspaceMountStateMounted ||
-		(authority.handoffChildWaitID.Valid &&
+		(authority.handoffChildWaitID.Valid && !authority.sameWorkspaceResume &&
 			mount.fencingGeneration != authority.handoffMountGeneration.Int64) {
 		return db.RunLease{}, ErrCapacityUnavailable
 	}
-	if authority.handoffChildWaitID.Valid {
+	if authority.handoffChildWaitID.Valid && retainedHandoff {
 		if err := lockSameWorkspaceHandoffChain(
 			ctx,
 			tx,
@@ -327,7 +336,57 @@ RETURNING id`,
 	}
 	if authority.resumeRunWaitID.Valid {
 		var boundWaitID pgtype.UUID
-		err = tx.QueryRow(ctx, `
+		if authority.sameWorkspaceResume {
+			err = tx.QueryRow(ctx, `
+UPDATE run_waits
+   SET suspension_state = 'resuming',
+       current_run_lease_id = $1,
+       expected_run_state_version = $2,
+       resume_writer_generation = $3,
+       updated_at = transaction_timestamp()
+ WHERE id = $4
+   AND run_id = $5
+   AND attempt_number = $6
+   AND workspace_id = $7
+   AND suspension_state = 'resume_pending'
+   AND current_run_lease_id IS NULL
+   AND resume_request_version = $8
+   AND resume_workspace_version_id = $9
+   AND handoff_runtime_instance_id = $10
+   AND handoff_workspace_mount_id = $11
+   AND handoff_mount_generation = $12
+   AND ownership_generation = $13
+   AND parent_writer_generation = $14
+   AND child_writer_generation = $15
+   AND resume_writer_generation IS NULL
+   AND (
+       (condition_state = 'completed'
+        AND handoff_resume_checkpoint_id = $16)
+       OR
+       (condition_state IN ('failed', 'cancelled')
+        AND handoff_resume_checkpoint_id IS NULL
+        AND suspend_checkpoint_id = $16)
+   )
+RETURNING id`,
+				runLeaseID,
+				grantedRun.StateVersion,
+				writerGeneration,
+				authority.resumeRunWaitID,
+				authority.runID,
+				authority.attemptNumber,
+				authority.workspaceID,
+				authority.resumeRequestVersion,
+				authority.baseVersionID,
+				authority.resumeHandoffRuntimeID,
+				authority.resumeHandoffMountID,
+				authority.resumeHandoffMountGen.Int64,
+				authority.resumeHandoffOwnership.Int64,
+				authority.resumeHandoffParentWriter.Int64,
+				authority.resumeHandoffChildWriter.Int64,
+				authority.restoreCheckpointID,
+			).Scan(&boundWaitID)
+		} else {
+			err = tx.QueryRow(ctx, `
 UPDATE run_waits
    SET suspension_state = 'resuming',
        current_run_lease_id = $1,
@@ -345,15 +404,16 @@ UPDATE run_waits
    AND handoff_workspace_mount_id IS NULL
    AND handoff_resume_checkpoint_id IS NULL
 RETURNING id`,
-			runLeaseID,
-			grantedRun.StateVersion,
-			authority.resumeRunWaitID,
-			authority.runID,
-			authority.attemptNumber,
-			authority.workspaceID,
-			authority.restoreCheckpointID,
-			authority.resumeRequestVersion,
-		).Scan(&boundWaitID)
+				runLeaseID,
+				grantedRun.StateVersion,
+				authority.resumeRunWaitID,
+				authority.runID,
+				authority.attemptNumber,
+				authority.workspaceID,
+				authority.restoreCheckpointID,
+				authority.resumeRequestVersion,
+			).Scan(&boundWaitID)
+		}
 		if err != nil {
 			return db.RunLease{}, fmt.Errorf("bind resuming Run Wait: %w", err)
 		}
