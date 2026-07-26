@@ -22,6 +22,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -33,9 +34,19 @@ type workspaceOperationRegistry struct {
 	mu              sync.RWMutex
 	entries         map[string]*workspaceMountEntry
 	preparedRuntime *preparedWorkspaceRuntime
-	programActive   bool
-	programEntry    *workspaceMountEntry
-	programReleased chan struct{}
+	programClaims   []*managedProgramClaim
+	childAdmission  *managedProgramChildAdmission
+}
+
+type managedProgramClaim struct {
+	entry     *workspaceMountEntry
+	authority *workspacev0.WorkspaceRunAuthority
+	released  chan struct{}
+}
+
+type managedProgramChildAdmission struct {
+	entry  *workspaceMountEntry
+	parent *managedProgramClaim
 }
 
 type workspaceAuthorityState uint8
@@ -206,7 +217,7 @@ func (r *workspaceOperationRegistry) acquire(workspaceMountID string, workspaceI
 		entry.processesMu.Lock()
 		finalizing := entry.authorityState == workspaceAuthorityFinalizing || entry.recoveryRequired
 		entry.processesMu.Unlock()
-		if finalizing || r.programActive && r.programEntry == entry {
+		if finalizing || r.hasProgramClaimLocked(entry) {
 			r.mu.Unlock()
 			entry.finalizationMu.Unlock()
 			return nil, func() {}, false
@@ -351,11 +362,17 @@ func (r *workspaceOperationRegistry) admitProgram(entry *workspaceMountEntry, au
 	) {
 		return func() {}, errors.New("Program authority is not current for the Workspace Mount")
 	}
-	release, err := r.claimProgramLocked(entry)
+	release, parent, err := r.claimProgramLocked(entry, authority)
 	if err != nil {
 		return func() {}, err
 	}
-	if err := entry.installWorkspaceRunAuthorityLocked(authority, now); err != nil {
+	install := entry.installWorkspaceRunAuthorityLocked
+	if parent != nil {
+		install = func(candidate *workspacev0.WorkspaceRunAuthority, now time.Time) error {
+			return entry.installChildWorkspaceRunAuthorityLocked(parent.authority, candidate, now)
+		}
+	}
+	if err := install(authority, now); err != nil {
 		release()
 		return func() {}, err
 	}
@@ -377,45 +394,207 @@ func (r *workspaceOperationRegistry) admitMountedProgram(entry *workspaceMountEn
 	) {
 		return func() {}, errors.New("Workspace is unavailable for Program admission")
 	}
-	return r.claimProgramLocked(entry)
+	entry.authorityMu.Lock()
+	if entry.authority == nil {
+		entry.authorityMu.Unlock()
+		return func() {}, errors.New("Workspace Run authority is not installed")
+	}
+	authority := proto.Clone(entry.authority).(*workspacev0.WorkspaceRunAuthority)
+	entry.authorityMu.Unlock()
+	release, _, err := r.claimProgramLocked(entry, authority)
+	return release, err
 }
 
-func (r *workspaceOperationRegistry) claimProgramLocked(entry *workspaceMountEntry) (func(), error) {
-	r.mu.Lock()
-	if r.programActive {
-		r.mu.Unlock()
-		return func() {}, errors.New("Workspace already has an active managed Program")
+func (r *workspaceOperationRegistry) claimProgramLocked(
+	entry *workspaceMountEntry,
+	authority *workspacev0.WorkspaceRunAuthority,
+) (func(), *managedProgramClaim, error) {
+	if authority == nil || authority.GetFence() == nil {
+		return func() {}, nil, errors.New("managed Program authority is required")
 	}
-	r.programActive = true
-	r.programEntry = entry
-	r.programReleased = make(chan struct{})
-	released := r.programReleased
+	r.mu.Lock()
+	var parent *managedProgramClaim
+	if len(r.programClaims) != 0 {
+		admission := r.childAdmission
+		if admission == nil || admission.entry != entry ||
+			!r.containsProgramClaimLocked(admission.parent) ||
+			validateManagedProgramChildAuthority(admission.parent.authority, authority) != nil {
+			r.mu.Unlock()
+			return func() {}, nil, errors.New("Workspace already has an active managed Program")
+		}
+		parent = admission.parent
+		r.childAdmission = nil
+	}
+	for _, existing := range r.programClaims {
+		if existing.authority.GetFence().GetRunLeaseId() == authority.GetFence().GetRunLeaseId() {
+			if parent != nil {
+				r.childAdmission = &managedProgramChildAdmission{entry: entry, parent: parent}
+			}
+			r.mu.Unlock()
+			return func() {}, nil, errors.New("managed Program Run Lease is already active")
+		}
+	}
+	claim := &managedProgramClaim{
+		entry:     entry,
+		authority: proto.Clone(authority).(*workspacev0.WorkspaceRunAuthority),
+		released:  make(chan struct{}),
+	}
+	r.programClaims = append(r.programClaims, claim)
 	r.mu.Unlock()
 	return func() {
 		r.mu.Lock()
-		if r.programActive && r.programEntry == entry && r.programReleased == released {
-			r.programActive = false
-			r.programEntry = nil
-			close(released)
+		for index, current := range r.programClaims {
+			if current != claim {
+				continue
+			}
+			r.programClaims = append(r.programClaims[:index], r.programClaims[index+1:]...)
+			if r.childAdmission != nil && r.childAdmission.parent == claim {
+				r.childAdmission = nil
+			}
+			close(claim.released)
+			break
 		}
 		r.mu.Unlock()
-	}, nil
+	}, parent, nil
 }
 
-func (r *workspaceOperationRegistry) waitForProgramRelease(ctx context.Context, entry *workspaceMountEntry) error {
+func (r *workspaceOperationRegistry) authorizeChildProgram(
+	entry *workspaceMountEntry,
+	parentRunID string,
+	parentAttemptNumber uint32,
+) error {
 	r.mu.Lock()
-	if !r.programActive || r.programEntry != entry {
-		r.mu.Unlock()
+	defer r.mu.Unlock()
+	if r.childAdmission != nil {
+		if r.childAdmission.entry == entry {
+			fence := r.childAdmission.parent.authority.GetFence()
+			if fence.GetRunId() == parentRunID &&
+				fence.GetAttemptNumber() == parentAttemptNumber {
+				return nil
+			}
+		}
+		return errors.New("managed Program child admission is already pending")
+	}
+	for index := len(r.programClaims) - 1; index >= 0; index-- {
+		claim := r.programClaims[index]
+		fence := claim.authority.GetFence()
+		if claim.entry == entry &&
+			fence.GetRunId() == parentRunID &&
+			fence.GetAttemptNumber() == parentAttemptNumber {
+			r.childAdmission = &managedProgramChildAdmission{entry: entry, parent: claim}
+			return nil
+		}
+	}
+	return errors.New("frozen parent Program claim is not active")
+}
+
+func (r *workspaceOperationRegistry) hasProgramClaimLocked(entry *workspaceMountEntry) bool {
+	for _, claim := range r.programClaims {
+		if claim.entry == entry {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *workspaceOperationRegistry) containsProgramClaimLocked(target *managedProgramClaim) bool {
+	for _, claim := range r.programClaims {
+		if claim == target {
+			return true
+		}
+	}
+	return false
+}
+
+func validateManagedProgramChildAuthority(
+	parent *workspacev0.WorkspaceRunAuthority,
+	child *workspacev0.WorkspaceRunAuthority,
+) error {
+	if parent == nil || parent.GetFence() == nil || child == nil || child.GetFence() == nil {
+		return errors.New("managed Program parent and child authority are required")
+	}
+	parentFence := parent.GetFence()
+	childFence := child.GetFence()
+	if parentFence.GetWorkerInstanceId() != childFence.GetWorkerInstanceId() ||
+		parentFence.GetWorkerEpoch() != childFence.GetWorkerEpoch() ||
+		parentFence.GetRuntimeInstanceId() != childFence.GetRuntimeInstanceId() ||
+		parentFence.GetRuntimeIdentityId() != childFence.GetRuntimeIdentityId() ||
+		parentFence.GetWorkspaceId() != childFence.GetWorkspaceId() ||
+		parentFence.GetWorkspaceMountId() != childFence.GetWorkspaceMountId() ||
+		parentFence.GetOwnershipGeneration() != childFence.GetOwnershipGeneration() ||
+		parentFence.GetBaseWorkspaceVersionId() != childFence.GetBaseWorkspaceVersionId() ||
+		parentFence.GetRunLeaseId() == childFence.GetRunLeaseId() ||
+		childFence.GetWriterGeneration() <= parentFence.GetWriterGeneration() ||
+		childFence.GetMountFencingGeneration() <= parentFence.GetMountFencingGeneration() ||
+		subtle.ConstantTimeCompare([]byte(parent.GetChannelToken()), []byte(child.GetChannelToken())) != 1 {
+		return errors.New("managed Program child authority does not advance the frozen parent authority")
+	}
+	return nil
+}
+
+func (r *workspaceOperationRegistry) waitForProgramRelease(
+	ctx context.Context,
+	entry *workspaceMountEntry,
+	authority *workspacev0.WorkspaceRunAuthority,
+) error {
+	if authority == nil || authority.GetFence() == nil {
+		return errors.New("Workspace finalization Program authority is required")
+	}
+	runLeaseID := authority.GetFence().GetRunLeaseId()
+	r.mu.Lock()
+	var released <-chan struct{}
+	for _, claim := range r.programClaims {
+		if claim.entry == entry && claim.authority.GetFence().GetRunLeaseId() == runLeaseID {
+			released = claim.released
+			break
+		}
+	}
+	r.mu.Unlock()
+	if released == nil {
 		return nil
 	}
-	released := r.programReleased
-	r.mu.Unlock()
 	select {
 	case <-released:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (r *workspaceOperationRegistry) currentProgramEntry(
+	runID string,
+	attemptNumber uint32,
+) *workspaceMountEntry {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for index := len(r.programClaims) - 1; index >= 0; index-- {
+		claim := r.programClaims[index]
+		fence := claim.authority.GetFence()
+		if fence.GetRunId() == runID && fence.GetAttemptNumber() == attemptNumber {
+			return claim.entry
+		}
+	}
+	return nil
+}
+
+func (r *workspaceOperationRegistry) programClaimLocked(
+	entry *workspaceMountEntry,
+	authority *workspacev0.WorkspaceRunAuthority,
+) *managedProgramClaim {
+	if authority == nil || authority.GetFence() == nil {
+		return nil
+	}
+	fence := authority.GetFence()
+	for index := len(r.programClaims) - 1; index >= 0; index-- {
+		claim := r.programClaims[index]
+		current := claim.authority.GetFence()
+		if claim.entry == entry &&
+			current.GetRunId() == fence.GetRunId() &&
+			current.GetAttemptNumber() == fence.GetAttemptNumber() {
+			return claim
+		}
+	}
+	return nil
 }
 
 func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter, logger *slog.Logger, registry *workspaceOperationRegistry, waits *waitingRunRegistry) error {
@@ -513,9 +692,11 @@ func (r *workspaceOperationRegistry) rebindRestoredWorkspaceMount(
 		mountPath == string(filepath.Separator) || !filepath.IsAbs(mountPath) {
 		return nil, errors.New("restored Workspace rebind authority is incomplete")
 	}
-	r.mu.Lock()
-	entry := r.programEntry
-	r.mu.Unlock()
+	parentRunID, parentAttemptNumber, ok := waits.frozenProgramForCheckpoint(checkpointID)
+	if !ok {
+		return nil, errors.New("restored Workspace has no frozen Program identity")
+	}
+	entry := r.currentProgramEntry(parentRunID, parentAttemptNumber)
 	if entry == nil {
 		return nil, errors.New("restored Workspace has no active frozen Program")
 	}
@@ -526,7 +707,7 @@ func (r *workspaceOperationRegistry) rebindRestoredWorkspaceMount(
 	entry.processesMu.Lock()
 	unavailable := entry.authorityState == workspaceAuthorityFinalizing || entry.recoveryRequired
 	entry.processesMu.Unlock()
-	if !r.programActive || r.programEntry != entry || unavailable || entry.workspaceID != workspaceID ||
+	if !r.hasProgramClaimLocked(entry) || unavailable || entry.workspaceID != workspaceID ||
 		filepath.Clean(entry.workspaceMount) != mountPath {
 		return nil, errors.New("restored Workspace rebind did not match the frozen mounted runtime")
 	}

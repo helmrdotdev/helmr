@@ -132,18 +132,10 @@ func (s *Server) resolveActorInputAddress(
 	actorDeclaredID string,
 	request api.SendActorInputRequest,
 ) (db.Actor, error) {
-	if request.ActorID != "" {
-		return s.db.GetActorByPublicID(r.Context(), db.GetActorByPublicIDParams{
-			EnvironmentID:   environmentID,
-			ActorDeclaredID: actorDeclaredID,
-			PublicID:        request.ActorID,
-		})
-	}
-	return s.db.GetActorByKey(r.Context(), db.GetActorByKeyParams{
-		EnvironmentID:   environmentID,
-		ActorDeclaredID: actorDeclaredID,
-		Key:             pgvalue.Text(request.ActorKey),
-	})
+	return resolveActorAddress(
+		r.Context(), s.db, environmentID, actorDeclaredID,
+		actorReadAddress{publicID: request.ActorID, key: request.ActorKey},
+	)
 }
 
 func (s *Server) writeActorInputAppendError(w http.ResponseWriter, r *http.Request, actor db.Actor, err error) {

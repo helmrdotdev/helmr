@@ -159,7 +159,6 @@ func TestValidateBuildPolicyUpgrade(t *testing.T) {
 	)
 
 	second := first
-	second.Architecture = ArchitectureAArch64
 	second.Digest = "sha256:" + strings.Repeat("b", 64)
 	secondToolchain, secondToolchainDigest := testToolchainForRuntime(t, second)
 	nextDocument := buildPolicyForRuntime(second, secondToolchain, secondToolchainDigest)
@@ -249,7 +248,6 @@ func TestBuildPolicyRejectsInvalidDocuments(t *testing.T) {
 		},
 		"incompatible toolchain": func(value *buildPolicyDocument) {
 			incompatible := toolchain
-			incompatible.Architecture = ArchitectureAArch64
 			incompatible.ManagedRuntimeDigest = "sha256:" + strings.Repeat("e", 64)
 			digest, err := StandardToolchainDigest(incompatible)
 			if err != nil {

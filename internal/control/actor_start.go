@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -64,6 +63,8 @@ type actorStartRequest struct {
 	ManagedRetryPolicy    json.RawMessage
 	ManagedRunMetadata    json.RawMessage
 	ManagedRunTags        []string
+	Authorize             func(context.Context, db.Querier) error
+	DisallowedWorkspaceID uuid.UUID
 }
 
 type actorStartResult struct {
@@ -112,6 +113,11 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 
 	var result actorStartResult
 	err = s.inTx(ctx, func(work *txWork) error {
+		if normalized.Authorize != nil {
+			if err := normalized.Authorize(ctx, work.q); err != nil {
+				return err
+			}
+		}
 		var claim *db.IdempotencyClaim
 		if claimRequest != nil {
 			claims, err := s.claims.TransactionForQueries(work.q)
@@ -164,6 +170,10 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		}
 		if err != nil {
 			return fmt.Errorf("resolve Actor start Workspace: %w", err)
+		}
+		if normalized.DisallowedWorkspaceID != uuid.Nil &&
+			workspaceID == pgvalue.UUID(normalized.DisallowedWorkspaceID) {
+			return errActorStartWorkspaceConflict
 		}
 		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, workspaceID)
 		if err != nil {
@@ -295,11 +305,6 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 				ID: pgvalue.UUID(recordID), Data: normalized.Input, ClaimID: claimID,
 				EnvironmentID: pgvalue.UUID(normalized.EnvironmentID), ActorID: pgvalue.UUID(actorID),
 			}); err != nil {
-				var postgresError *pgconn.PgError
-				if errors.As(err, &postgresError) &&
-					postgresError.ConstraintName == "actor_records_data_size_check" {
-					return errActorInputTooLarge
-				}
 				return fmt.Errorf("create initial Actor input: %w", err)
 			}
 			initialRecordID = &recordID
@@ -510,13 +515,6 @@ func int8Ptr(value *int64) pgtype.Int8 {
 		return pgtype.Int8{}
 	}
 	return pgtype.Int8{Int64: *value, Valid: true}
-}
-
-func timePtrValue(value *time.Time) time.Time {
-	if value == nil {
-		return time.Time{}
-	}
-	return *value
 }
 
 func stringPtrValue(value *string) string {

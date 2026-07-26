@@ -1169,7 +1169,10 @@ func TestTokenWaitReconcilerTransitionsHotCheckpointingAndParkedWaits(t *testing
 	t.Run("checkpointing expiry records only terminal condition", func(t *testing.T) {
 		fixture := newRunLeaseClaimFixture(t, ctx)
 		setup := newTokenWaitReconcileSetup(t, ctx, fixture, RunWaitStateCheckpointing, time.Now().Add(-time.Minute))
-		expired, err := fixture.queries.ExpireDueTokens(ctx, 100)
+		expired, err := fixture.queries.ExpireDueTokens(ctx, ExpireDueTokensParams{
+			OutboxMessageIds: pgvalue.NewUUIDv7Batch(100),
+			LimitCount:       100,
+		})
 		if err != nil || len(expired) != 1 {
 			t.Fatalf("expire Token = rows %d error %v", len(expired), err)
 		}
@@ -1217,6 +1220,85 @@ func TestTokenWaitReconcilerTransitionsHotCheckpointingAndParkedWaits(t *testing
 		}
 		assertTokenWaitResumeIntents(t, ctx, fixture, setup, 1)
 	})
+}
+
+func TestTokenWaitReconcilerAppliesWaitTimeoutAcrossSuspensionStates(t *testing.T) {
+	ctx := context.Background()
+	for _, test := range []struct {
+		name              string
+		suspension        RunWaitState
+		runStatus         RunStatus
+		runVersion        int64
+		resultState       RunWaitState
+		currentLeaseID    func(tokenWaitReconcileSetup) pgtype.UUID
+		priorLeaseID      func(tokenWaitReconcileSetup) pgtype.UUID
+		resumeVersion     int64
+		resumeIntentCount int
+	}{
+		{
+			name: "hot", suspension: RunWaitStateHot,
+			runStatus: RunStatusRunning, runVersion: 3,
+			resultState: RunWaitStateReleased,
+			currentLeaseID: func(setup tokenWaitReconcileSetup) pgtype.UUID {
+				return pgvalue.UUID(setup.leaseID)
+			},
+			priorLeaseID: func(tokenWaitReconcileSetup) pgtype.UUID { return pgtype.UUID{} },
+		},
+		{
+			name: "checkpointing", suspension: RunWaitStateCheckpointing,
+			runStatus: RunStatusWaiting, runVersion: 2,
+			resultState: RunWaitStateCheckpointing,
+			currentLeaseID: func(setup tokenWaitReconcileSetup) pgtype.UUID {
+				return pgvalue.UUID(setup.leaseID)
+			},
+			priorLeaseID: func(tokenWaitReconcileSetup) pgtype.UUID { return pgtype.UUID{} },
+		},
+		{
+			name: "parked", suspension: RunWaitStateParked,
+			runStatus: RunStatusQueued, runVersion: 3,
+			resultState:    RunWaitStateResumePending,
+			currentLeaseID: func(tokenWaitReconcileSetup) pgtype.UUID { return pgtype.UUID{} },
+			priorLeaseID: func(setup tokenWaitReconcileSetup) pgtype.UUID {
+				return pgvalue.UUID(setup.leaseID)
+			},
+			resumeVersion: 1, resumeIntentCount: 1,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newRunLeaseClaimFixture(t, ctx)
+			setup := newTokenWaitReconcileSetup(
+				t, ctx, fixture, test.suspension, time.Now().Add(time.Hour),
+			)
+			mustRunLeaseExec(t, ctx, fixture.pool, `
+				UPDATE run_waits
+				   SET timeout_at = transaction_timestamp() - interval '1 millisecond'
+				 WHERE id = $1
+			`, setup.waitID)
+			reconciler, err := NewTokenWaitReconciler(fixture.pool)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolved, err := reconciler.ReconcileTimeouts(ctx, 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resolved != 1 {
+				t.Fatalf("resolved = %d", resolved)
+			}
+			assertTokenWaitReconcileState(t, ctx, fixture, setup, tokenWaitReconcileWant{
+				runStatus: test.runStatus, runVersion: test.runVersion,
+				conditionState: WaitStateFailed, suspensionState: test.resultState,
+				currentLeaseID: test.currentLeaseID(setup),
+				priorLeaseID:   test.priorLeaseID(setup),
+				reasonCode:     "wait_timeout", resumeVersion: test.resumeVersion,
+			})
+			assertTokenWaitResumeIntents(t, ctx, fixture, setup, test.resumeIntentCount)
+			resolved, err = reconciler.ReconcileTimeouts(ctx, 100)
+			if err != nil || resolved != 0 {
+				t.Fatalf("replay resolved = %d error=%v", resolved, err)
+			}
+		})
+	}
 }
 
 func TestTokenWaitReconcilerRollsBackParkedTransitionWhenResumeIntentFails(t *testing.T) {

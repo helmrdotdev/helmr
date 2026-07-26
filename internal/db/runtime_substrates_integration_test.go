@@ -29,7 +29,7 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 			id, environment_id, deployment_id, kind, declared_id,
 			manifest_version, manifest, manifest_digest, workspace_architecture, artifact_id
 		) VALUES ($1, $2, $3, 'workspace', 'substrate-test', 0, '{}'::jsonb,
-		          decode(repeat('01', 32), 'hex'), 'aarch64', $4)
+		          decode(repeat('01', 32), 'hex'), 'x86_64', $4)
 	`, definitionID, ids.environmentID, ids.deploymentID, ids.workspaceImageArtifactID)
 
 	artifactID := seedRuntimeSubstrateArtifact(t, ctx, pool, ids, "first", 4096)
@@ -310,7 +310,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 			manifest_version, manifest, manifest_digest, workspace_architecture, artifact_id
 		) VALUES (
 			$1, $2, $3, 'workspace', 'authority-workspace', 0, '{}'::jsonb,
-			decode(repeat('03', 32), 'hex'), 'aarch64', $4
+			decode(repeat('03', 32), 'hex'), 'x86_64', $4
 		)
 	`, definitionID, environmentID, deploymentID, imageArtifactID)
 
@@ -353,7 +353,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	mustAuthorityExec(t, ctx, pool, `
 		INSERT INTO runtime_identities (
 			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
-		) VALUES ($1, 'aarch64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+		) VALUES ($1, 'x86_64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
 	`, runtimeIdentityID)
 	workerID := uuid.Must(uuid.NewV7())
 	mustAuthorityExec(t, ctx, pool, `

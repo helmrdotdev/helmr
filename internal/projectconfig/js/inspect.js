@@ -52,6 +52,13 @@ var payloadSchemaValidationErrorBrand = Symbol.for("helmr.sdk.PayloadSchemaValid
 
 // sdk/typescript/src/internal/runtime.ts
 var runtimeOperationsSymbol = Symbol.for("helmr.sdk.v0.runtime_operations");
+function currentRuntimeOperations() {
+  const operations = globalThis[runtimeOperationsSymbol];
+  if (operations === undefined) {
+    throw new Error("runtime operation is unavailable without the Helmr managed runtime");
+  }
+  return operations;
+}
 
 // sdk/typescript/src/definitions.ts
 var privateDefinitionBrand = Symbol.for("helmr.sdk.v0.definition");
@@ -88,42 +95,54 @@ var source = Object.freeze({
 // sdk/typescript/src/workspace.ts
 var workspaceDefinitionBrand = Symbol.for("helmr.sdk.v0.workspace");
 function workspaceRef(address) {
-  if ((("id" in address) && typeof address.id === "string") === (("key" in address) && typeof address.key === "string")) {
-    throw new Error("workspace ref requires exactly one of id or key");
-  }
+  validateWorkspaceAddress(address);
   return createWorkspaceRef(address);
 }
 var workspaces = Object.freeze({
   ref: workspaceRef
 });
 function createWorkspaceRef(address) {
+  const immutableAddress = address.id !== undefined ? Object.freeze({ id: address.id }) : Object.freeze({ key: address.key });
   const files = Object.freeze({
-    read(_path, _options) {
-      return runtimeUnavailable("workspace.files.read");
+    read(path, options) {
+      return currentRuntimeOperations().workspaceFileRead(immutableAddress, path, options?.signal);
     },
-    stat(_path, _options) {
-      return runtimeUnavailable("workspace.files.stat");
+    stat(path, options) {
+      return currentRuntimeOperations().workspaceFileStat(immutableAddress, path, options?.signal);
     },
-    list(_path, _query, _options) {
-      return runtimeUnavailable("workspace.files.list");
+    list(path, query, options) {
+      return currentRuntimeOperations().workspaceFileList(immutableAddress, path, query, options?.signal);
     }
   });
   const operations = {
     files,
-    retrieve(_options) {
-      return runtimeUnavailable("workspace.retrieve");
+    retrieve(options) {
+      return currentRuntimeOperations().workspaceRetrieve(immutableAddress, options?.signal);
     },
-    exec(_options) {
-      return runtimeUnavailable("workspace.exec");
+    exec(request, options) {
+      return currentRuntimeOperations().workspaceExec(immutableAddress, request, options?.signal);
     },
-    delete(_options) {
-      return runtimeUnavailable("workspace.delete");
+    delete(request, options) {
+      return currentRuntimeOperations().workspaceDelete(immutableAddress, request, options?.signal);
     }
   };
-  return Object.freeze({ ...address, ...operations });
+  return Object.freeze({ ...immutableAddress, ...operations });
 }
-function runtimeUnavailable(operation) {
-  throw new Error(`${operation} is unavailable without the Helmr managed runtime or authenticated client`);
+function validateWorkspaceAddress(address) {
+  if ((("id" in address) && typeof address.id === "string") === (("key" in address) && typeof address.key === "string")) {
+    throw new Error("Workspace ref requires exactly one of id or key");
+  }
+  if ("id" in address && address.id !== undefined) {
+    workspacePublicID(address.id, "Workspace ID");
+  } else if (address.key.length === 0) {
+    throw new Error("Workspace key is required");
+  }
+}
+function workspacePublicID(value, label) {
+  if (typeof value !== "string" || !/^wsp_[a-z2-7]{26}$/.test(value)) {
+    throw new Error(`${label} must be a canonical Workspace public ID`);
+  }
+  return value;
 }
 // sdk/typescript/src/internal/jsoncanon.ts
 var textDecoder = new TextDecoder("utf-8", { fatal: true });

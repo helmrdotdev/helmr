@@ -3077,7 +3077,12 @@ func (q *Queries) MarkRunRunning(ctx context.Context, arg MarkRunRunningParams) 
 }
 
 const recoverExpiredRunResumes = `-- name: RecoverExpiredRunResumes :many
-WITH candidates AS MATERIALIZED (
+WITH provided_outbox_ids AS MATERIALIZED (
+    SELECT id, ordinality
+      FROM unnest($1::uuid[])
+           WITH ORDINALITY AS supplied(id, ordinality)
+),
+candidates AS MATERIALIZED (
     SELECT runs.id AS run_id,
            runs.entrypoint_kind,
            runs.actor_id,
@@ -3195,7 +3200,7 @@ WITH candidates AS MATERIALIZED (
             OR workspace_mounts.failed_at <= transaction_timestamp()
             OR worker_network_slots.lost_at <= transaction_timestamp())
      ORDER BY runs.id
-     LIMIT $1
+     LIMIT $2
 ), locked_actor_candidates AS MATERIALIZED (
     SELECT candidates.run_id, candidates.entrypoint_kind, candidates.actor_id, candidates.run_lease_id, candidates.worker_instance_id, candidates.worker_epoch, candidates.network_slot_id, candidates.network_slot_generation, candidates.runtime_instance_id, candidates.workspace_lease_id, candidates.workspace_mount_id, candidates.run_wait_id, candidates.restore_checkpoint_id, candidates.condition_state, candidates.same_workspace_resume, candidates.retained_resume,
            actors.run_generation AS actor_run_generation,
@@ -3536,6 +3541,8 @@ WITH candidates AS MATERIALIZED (
        AND source_run_leases.run_id = run_checkpoints.run_id
        AND source_run_leases.attempt_number = run_checkpoints.attempt_number
        AND source_run_leases.workspace_id = run_checkpoints.workspace_id
+     WHERE cardinality($1::uuid[])
+           >= (SELECT count(*) FROM candidates)
      ORDER BY run_checkpoints.id
      FOR UPDATE OF run_checkpoints, workspace_versions
 ), expired_run_leases AS (
@@ -3621,15 +3628,21 @@ WITH candidates AS MATERIALIZED (
        AND run_waits.suspension_state = 'resuming'
        AND run_waits.resume_request_version = locked_checkpoints.resume_request_version
     RETURNING run_waits.id, requeued_runs.org_id, requeued_runs.id AS run_id
+), ordered_requeued_waits AS MATERIALIZED (
+    SELECT requeued_waits.id,
+           row_number() OVER (ORDER BY requeued_waits.id) AS ordinality
+      FROM requeued_waits
 ), admission_outbox AS (
     INSERT INTO outbox_messages (
+        id,
         lane,
         topic,
         partition_key,
         payload,
         available_at
     )
-    SELECT 'control',
+    SELECT provided_outbox_ids.id,
+           'control',
            'run.admit',
            locked_checkpoints.workspace_id::text,
            jsonb_build_object(
@@ -3639,6 +3652,8 @@ WITH candidates AS MATERIALIZED (
            transaction_timestamp()
       FROM requeued_waits
       JOIN locked_checkpoints ON locked_checkpoints.run_wait_id = requeued_waits.id
+      JOIN ordered_requeued_waits USING (id)
+      JOIN provided_outbox_ids USING (ordinality)
     RETURNING payload
 ), failed_attempts AS (
     UPDATE run_attempts
@@ -3656,8 +3671,8 @@ WITH candidates AS MATERIALIZED (
 ), failed_runs AS (
     UPDATE runs
        SET status = CASE
-               WHEN locked_checkpoints.active_budget_exhausted THEN 'expired'::run_status
-               ELSE 'system_failed'::run_status
+               WHEN locked_checkpoints.active_budget_exhausted THEN 'expired'
+               ELSE 'system_failed'
            END,
            terminal_reason_code = locked_checkpoints.recovery_terminal_reason_code,
            current_run_lease_id = NULL,
@@ -3855,14 +3870,19 @@ SELECT requeued_waits.id, requeued_waits.org_id, requeued_waits.run_id
  ORDER BY requeued_waits.id
 `
 
+type RecoverExpiredRunResumesParams struct {
+	OutboxMessageIds []pgtype.UUID `json:"outbox_message_ids"`
+	LimitCount       int32         `json:"limit_count"`
+}
+
 type RecoverExpiredRunResumesRow struct {
 	ID    pgtype.UUID `json:"id"`
 	OrgID pgtype.UUID `json:"org_id"`
 	RunID pgtype.UUID `json:"run_id"`
 }
 
-func (q *Queries) RecoverExpiredRunResumes(ctx context.Context, limitCount int32) ([]RecoverExpiredRunResumesRow, error) {
-	rows, err := q.db.Query(ctx, recoverExpiredRunResumes, limitCount)
+func (q *Queries) RecoverExpiredRunResumes(ctx context.Context, arg RecoverExpiredRunResumesParams) ([]RecoverExpiredRunResumesRow, error) {
+	rows, err := q.db.Query(ctx, recoverExpiredRunResumes, arg.OutboxMessageIds, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}

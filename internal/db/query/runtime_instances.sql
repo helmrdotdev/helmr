@@ -54,8 +54,8 @@ SELECT runtime_instances.*,
    AND reserved_workspace_versions.workspace_id = runtime_instances.workspace_id
    AND reserved_workspace_versions.id = runtime_instances.reserved_workspace_version_id
    AND reserved_workspace_versions.state = CASE
-           WHEN runtime_instances.restore_checkpoint_id IS NULL THEN 'committed'::workspace_version_state
-           ELSE 'private'::workspace_version_state
+           WHEN runtime_instances.restore_checkpoint_id IS NULL THEN 'committed'
+           ELSE 'private'
        END
   LEFT JOIN artifacts AS reserved_workspace_artifacts
     ON reserved_workspace_artifacts.org_id = reserved_workspace_versions.org_id

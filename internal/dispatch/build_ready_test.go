@@ -17,7 +17,7 @@ func TestBuildQueueMessageFreezesCandidateFenceAndHostResourceVector(t *testing.
 		OrgID: pgvalue.UUID(uuid.Must(uuid.NewV7())), ProjectID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		EnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())), DeploymentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		BuildRegionID: "us-east-1", LeaseSequence: 3, QueueTimestamp: pgvalue.Timestamptz(now),
-		BuildArchitecture:       "aarch64",
+		BuildArchitecture:       "x86_64",
 		BuildRequestedCpuMillis: 3000, BuildRequestedMemoryBytes: 4 << 30,
 		BuildRequestedWorkloadDiskBytes: 0, BuildRequestedScratchBytes: 32 << 30, BuildRequestedExecutors: 1,
 	}
@@ -29,8 +29,8 @@ func TestBuildQueueMessageFreezesCandidateFenceAndHostResourceVector(t *testing.
 		!message.QueueOriginAt.Equal(now) || !message.QueueScoreAt.Equal(now) {
 		t.Fatalf("build message fence = %+v", message)
 	}
-	if message.BuildArchitecture != "aarch64" {
-		t.Fatalf("build architecture = %q, want aarch64", message.BuildArchitecture)
+	if message.BuildArchitecture != "x86_64" {
+		t.Fatalf("build architecture = %q, want x86_64", message.BuildArchitecture)
 	}
 	want := (BuildResourceVector{CPUMillis: 3000, MemoryBytes: 4 << 30,
 		WorkloadDiskBytes: 0, ScratchBytes: 32 << 30, Executors: 1})
@@ -39,17 +39,25 @@ func TestBuildQueueMessageFreezesCandidateFenceAndHostResourceVector(t *testing.
 	}
 }
 
-func TestBuildReadyMessageRejectsMalformedArchitecture(t *testing.T) {
-	message := Message{
-		WorkKind: WorkKindBuild, DeploymentID: uuid.NewString(), OrgID: uuid.NewString(),
-		ProjectID: uuid.NewString(), EnvironmentID: uuid.NewString(), RegionID: "us-east-1",
-		QueueName: "deployment-build", LeaseSequence: 1,
-		BuildArchitecture: "amd64",
-		BuildResources: BuildResourceVector{CPUMillis: 3000, MemoryBytes: 4 << 30,
-			ScratchBytes: 32 << 30, Executors: 1},
-	}
-	if err := message.Validate(); err == nil {
-		t.Fatal("Validate() accepted external architecture spelling amd64")
+func TestBuildReadyMessageRejectsUnsupportedArchitecture(t *testing.T) {
+	for _, architecture := range []string{"aarch64", "amd64"} {
+		t.Run(architecture, func(t *testing.T) {
+			now := time.Now().UTC()
+			message := Message{
+				WorkKind: WorkKindBuild, DeploymentID: uuid.NewString(), OrgID: uuid.NewString(),
+				ProjectID: uuid.NewString(), EnvironmentID: uuid.NewString(), RegionID: "us-east-1",
+				QueueName: "deployment-build", LeaseSequence: 1,
+				BuildArchitecture: architecture,
+				QueueOriginAt:     now,
+				QueueScoreAt:      now,
+				BuildResources: BuildResourceVector{CPUMillis: 3000, MemoryBytes: 4 << 30,
+					ScratchBytes: 32 << 30, Executors: 1},
+			}
+			err := message.Validate()
+			if err == nil || !strings.Contains(err.Error(), "architecture must be x86_64") {
+				t.Fatalf("Validate() error = %v", err)
+			}
+		})
 	}
 }
 

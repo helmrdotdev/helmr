@@ -157,7 +157,7 @@ func TestVerifiedRuntimeResultMatchesDescriptor(t *testing.T) {
 
 	for name, mutate := range map[string]func(*RuntimeDescriptor){
 		"architecture": func(value *RuntimeDescriptor) {
-			value.Architecture = ArchitectureAArch64
+			value.Architecture = RuntimeArchitecture("aarch64")
 		},
 		"runtime API": func(value *RuntimeDescriptor) {
 			value.RuntimeAPIVersion = "helmr.runtime.v1"

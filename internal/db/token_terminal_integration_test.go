@@ -99,14 +99,20 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 		`, publicAccessTokenID, runLeasePublicID(t, publicid.PublicAccessToken),
 			fixture.orgID, fixture.projectID, fixture.environmentID,
 			bytes.Repeat([]byte{2}, 32), expiredAt)
-		expired, err := fixture.queries.ExpireDueTokens(ctx, 100)
+		expired, err := fixture.queries.ExpireDueTokens(ctx, ExpireDueTokensParams{
+			OutboxMessageIds: pgvalue.NewUUIDv7Batch(100),
+			LimitCount:       100,
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(expired) != 1 || pgvalue.MustUUIDValue(expired[0].ID) != tokenID || expired[0].State != TokenStateExpired {
 			t.Fatalf("first expiry = %+v", expired)
 		}
-		expired, err = fixture.queries.ExpireDueTokens(ctx, 100)
+		expired, err = fixture.queries.ExpireDueTokens(ctx, ExpireDueTokensParams{
+			OutboxMessageIds: pgvalue.NewUUIDv7Batch(100),
+			LimitCount:       100,
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -211,6 +217,7 @@ func tokenCompletionParams(fixture runLeaseClaimFixture, tokenID uuid.UUID, fing
 		CompletionFingerprint: fingerprintBytes[:32], OrgID: pgvalue.UUID(fixture.orgID),
 		ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
 		ID: pgvalue.UUID(tokenID), Result: []byte(data),
+		OutboxMessageID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 	}
 }
 
@@ -218,6 +225,7 @@ func tokenCancellationParams(fixture runLeaseClaimFixture, tokenID uuid.UUID) Ca
 	return CancelTokenParams{
 		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ID: pgvalue.UUID(tokenID),
+		OutboxMessageID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 	}
 }
 

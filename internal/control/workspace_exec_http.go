@@ -97,7 +97,7 @@ func (s *Server) executeWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
 		ProjectID:      pgvalue.MustUUIDValue(projectID),
 		EnvironmentID:  pgvalue.MustUUIDValue(environmentID),
 		Workspace:      record,
-		Principal:      principal,
+		Creator:        workspaceExecCreatorFromActor(principal),
 		Command:        body.Command,
 		Cwd:            body.Cwd,
 		Env:            body.Env,

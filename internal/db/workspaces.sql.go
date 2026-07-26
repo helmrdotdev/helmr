@@ -85,7 +85,7 @@ WITH selected_definition AS (
            created_workspace.environment_id,
            created_workspace.id,
            'system'::workspace_version_kind,
-           'committed'::workspace_version_state,
+           'committed',
            'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
            0,
            0,
@@ -114,29 +114,29 @@ type CreateWorkspaceFromCurrentDeploymentParams struct {
 }
 
 type CreateWorkspaceFromCurrentDeploymentRow struct {
-	ID                     pgtype.UUID           `json:"id"`
-	PublicID               string                `json:"public_id"`
-	OrgID                  pgtype.UUID           `json:"org_id"`
-	ProjectID              pgtype.UUID           `json:"project_id"`
-	EnvironmentID          pgtype.UUID           `json:"environment_id"`
-	RegionID               string                `json:"region_id"`
-	DeclarationKind        pgtype.Text           `json:"declaration_kind"`
-	WorkspaceDeclaredID    pgtype.Text           `json:"workspace_declared_id"`
-	DeploymentDefinitionID pgtype.UUID           `json:"deployment_definition_id"`
-	Key                    pgtype.Text           `json:"key"`
-	StateVersion           int64                 `json:"state_version"`
-	OwnerActorID           pgtype.UUID           `json:"owner_actor_id"`
-	OwnerRunID             pgtype.UUID           `json:"owner_run_id"`
-	OwnershipGeneration    int64                 `json:"ownership_generation"`
-	WriterGeneration       int64                 `json:"writer_generation"`
-	HeadVersionID          pgtype.UUID           `json:"head_version_id"`
-	State                  WorkspaceState        `json:"state"`
-	DesiredState           WorkspaceDesiredState `json:"desired_state"`
-	DirtyState             WorkspaceDirtyState   `json:"dirty_state"`
-	LastActivityAt         pgtype.Timestamptz    `json:"last_activity_at"`
-	CreatedAt              pgtype.Timestamptz    `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz    `json:"updated_at"`
-	DeletedAt              pgtype.Timestamptz    `json:"deleted_at"`
+	ID                     pgtype.UUID        `json:"id"`
+	PublicID               string             `json:"public_id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	RegionID               string             `json:"region_id"`
+	DeclarationKind        pgtype.Text        `json:"declaration_kind"`
+	WorkspaceDeclaredID    pgtype.Text        `json:"workspace_declared_id"`
+	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
+	Key                    pgtype.Text        `json:"key"`
+	StateVersion           int64              `json:"state_version"`
+	OwnerActorID           pgtype.UUID        `json:"owner_actor_id"`
+	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
+	OwnershipGeneration    int64              `json:"ownership_generation"`
+	WriterGeneration       int64              `json:"writer_generation"`
+	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
+	State                  string             `json:"state"`
+	DesiredState           string             `json:"desired_state"`
+	DirtyState             string             `json:"dirty_state"`
+	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
 }
 
 func (q *Queries) CreateWorkspaceFromCurrentDeployment(ctx context.Context, arg CreateWorkspaceFromCurrentDeploymentParams) (CreateWorkspaceFromCurrentDeploymentRow, error) {
@@ -524,32 +524,32 @@ type LockWorkspaceAdmissionAuthorityParams struct {
 }
 
 type LockWorkspaceAdmissionAuthorityRow struct {
-	ID                     pgtype.UUID           `json:"id"`
-	PublicID               string                `json:"public_id"`
-	OrgID                  pgtype.UUID           `json:"org_id"`
-	ProjectID              pgtype.UUID           `json:"project_id"`
-	EnvironmentID          pgtype.UUID           `json:"environment_id"`
-	RegionID               string                `json:"region_id"`
-	DeclarationKind        pgtype.Text           `json:"declaration_kind"`
-	WorkspaceDeclaredID    pgtype.Text           `json:"workspace_declared_id"`
-	DeploymentDefinitionID pgtype.UUID           `json:"deployment_definition_id"`
-	Key                    pgtype.Text           `json:"key"`
-	StateVersion           int64                 `json:"state_version"`
-	OwnerActorID           pgtype.UUID           `json:"owner_actor_id"`
-	OwnerRunID             pgtype.UUID           `json:"owner_run_id"`
-	OwnershipGeneration    int64                 `json:"ownership_generation"`
-	WriterGeneration       int64                 `json:"writer_generation"`
-	HeadVersionID          pgtype.UUID           `json:"head_version_id"`
-	State                  WorkspaceState        `json:"state"`
-	DesiredState           WorkspaceDesiredState `json:"desired_state"`
-	DirtyState             WorkspaceDirtyState   `json:"dirty_state"`
-	LastActivityAt         pgtype.Timestamptz    `json:"last_activity_at"`
-	CreatedAt              pgtype.Timestamptz    `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz    `json:"updated_at"`
-	DeletedAt              pgtype.Timestamptz    `json:"deleted_at"`
-	WorkspaceArchitecture  pgtype.Text           `json:"workspace_architecture"`
-	HasActiveLease         bool                  `json:"has_active_lease"`
-	HasActiveProcess       bool                  `json:"has_active_process"`
+	ID                     pgtype.UUID        `json:"id"`
+	PublicID               string             `json:"public_id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	RegionID               string             `json:"region_id"`
+	DeclarationKind        pgtype.Text        `json:"declaration_kind"`
+	WorkspaceDeclaredID    pgtype.Text        `json:"workspace_declared_id"`
+	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
+	Key                    pgtype.Text        `json:"key"`
+	StateVersion           int64              `json:"state_version"`
+	OwnerActorID           pgtype.UUID        `json:"owner_actor_id"`
+	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
+	OwnershipGeneration    int64              `json:"ownership_generation"`
+	WriterGeneration       int64              `json:"writer_generation"`
+	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
+	State                  string             `json:"state"`
+	DesiredState           string             `json:"desired_state"`
+	DirtyState             string             `json:"dirty_state"`
+	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
+	WorkspaceArchitecture  pgtype.Text        `json:"workspace_architecture"`
+	HasActiveLease         bool               `json:"has_active_lease"`
+	HasActiveProcess       bool               `json:"has_active_process"`
 }
 
 func (q *Queries) LockWorkspaceAdmissionAuthority(ctx context.Context, arg LockWorkspaceAdmissionAuthorityParams) (LockWorkspaceAdmissionAuthorityRow, error) {
@@ -617,31 +617,31 @@ type LockWorkspaceForDeleteParams struct {
 }
 
 type LockWorkspaceForDeleteRow struct {
-	ID                     pgtype.UUID           `json:"id"`
-	PublicID               string                `json:"public_id"`
-	OrgID                  pgtype.UUID           `json:"org_id"`
-	ProjectID              pgtype.UUID           `json:"project_id"`
-	EnvironmentID          pgtype.UUID           `json:"environment_id"`
-	RegionID               string                `json:"region_id"`
-	DeclarationKind        pgtype.Text           `json:"declaration_kind"`
-	WorkspaceDeclaredID    pgtype.Text           `json:"workspace_declared_id"`
-	DeploymentDefinitionID pgtype.UUID           `json:"deployment_definition_id"`
-	Key                    pgtype.Text           `json:"key"`
-	StateVersion           int64                 `json:"state_version"`
-	OwnerActorID           pgtype.UUID           `json:"owner_actor_id"`
-	OwnerRunID             pgtype.UUID           `json:"owner_run_id"`
-	OwnershipGeneration    int64                 `json:"ownership_generation"`
-	WriterGeneration       int64                 `json:"writer_generation"`
-	HeadVersionID          pgtype.UUID           `json:"head_version_id"`
-	State                  WorkspaceState        `json:"state"`
-	DesiredState           WorkspaceDesiredState `json:"desired_state"`
-	DirtyState             WorkspaceDirtyState   `json:"dirty_state"`
-	LastActivityAt         pgtype.Timestamptz    `json:"last_activity_at"`
-	CreatedAt              pgtype.Timestamptz    `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz    `json:"updated_at"`
-	DeletedAt              pgtype.Timestamptz    `json:"deleted_at"`
-	HasActiveLease         bool                  `json:"has_active_lease"`
-	HasActiveProcess       bool                  `json:"has_active_process"`
+	ID                     pgtype.UUID        `json:"id"`
+	PublicID               string             `json:"public_id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	RegionID               string             `json:"region_id"`
+	DeclarationKind        pgtype.Text        `json:"declaration_kind"`
+	WorkspaceDeclaredID    pgtype.Text        `json:"workspace_declared_id"`
+	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
+	Key                    pgtype.Text        `json:"key"`
+	StateVersion           int64              `json:"state_version"`
+	OwnerActorID           pgtype.UUID        `json:"owner_actor_id"`
+	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
+	OwnershipGeneration    int64              `json:"ownership_generation"`
+	WriterGeneration       int64              `json:"writer_generation"`
+	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
+	State                  string             `json:"state"`
+	DesiredState           string             `json:"desired_state"`
+	DirtyState             string             `json:"dirty_state"`
+	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
+	HasActiveLease         bool               `json:"has_active_lease"`
+	HasActiveProcess       bool               `json:"has_active_process"`
 }
 
 func (q *Queries) LockWorkspaceForDelete(ctx context.Context, arg LockWorkspaceForDeleteParams) (LockWorkspaceForDeleteRow, error) {

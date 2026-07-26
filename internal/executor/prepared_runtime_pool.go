@@ -79,7 +79,6 @@ type PreparedRuntimePool struct {
 	Substrates            RuntimeSubstrateResolver
 	RuntimeSubstrates     RuntimeSubstrateRegistrar
 	CheckpointEncryptor   *checkpoint.Encryptor
-	Network               compute.NetworkPolicy
 	Size                  int
 	RuntimeInstances      PreparedRuntimeInstanceClient
 	Log                   *slog.Logger
@@ -244,7 +243,7 @@ func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount api.WorkerWork
 		reason := "runtime_ready_failed"
 		if readyFinished {
 			if p.forgetReadyEntry(key, entry) {
-				p.cleanupClaimedEntryAsync(key, entry, err)
+				p.cleanupClaimedEntryAsync(entry, err)
 			}
 		} else {
 			reason = "runtime_ready_wait_canceled"
@@ -254,7 +253,7 @@ func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount api.WorkerWork
 	}
 	if err, exited := entry.exit.finished(); exited {
 		if p.forgetReadyEntry(key, entry) {
-			p.cleanupClaimedEntryAsync(key, entry, preparedRuntimeExitCause(err))
+			p.cleanupClaimedEntryAsync(entry, preparedRuntimeExitCause(err))
 		}
 		p.logInfo("prepared runtime pool miss", "runtime_instance_id", runtimeInstanceID, "reason", "reserved_session_exited", "error", errorString(err))
 		return nil, key, false
@@ -277,7 +276,7 @@ func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount api.WorkerWork
 	if err, exited := entry.exit.finished(); exited {
 		p.removeReadyEntryAtLocked(key, entries, index)
 		p.mu.Unlock()
-		p.cleanupClaimedEntryAsync(key, entry, preparedRuntimeExitCause(err))
+		p.cleanupClaimedEntryAsync(entry, preparedRuntimeExitCause(err))
 		p.logInfo("prepared runtime pool miss", "runtime_instance_id", runtimeInstanceID, "reason", "reserved_session_exited", "error", errorString(err))
 		return nil, key, false
 	}
@@ -344,7 +343,7 @@ func (p *PreparedRuntimePool) ReclaimFailedRuntimeTarget(ctx context.Context, cl
 	if !ok {
 		return errors.New("runtime connector does not support exact failed-runtime cleanup")
 	}
-	_, entry, ready := p.claimReadyEntry(runtimeInstanceID, target.WorkerEpoch)
+	entry, ready := p.claimReadyEntry(runtimeInstanceID, target.WorkerEpoch)
 	var closeErr error
 	if ready && entry.session != nil {
 		closeCtx, cancel := preparedRuntimeControlContext(ctx)
@@ -379,7 +378,7 @@ func (p *PreparedRuntimePool) StopRuntimeTarget(ctx context.Context, client Prep
 	if target.WorkerEpoch <= 0 {
 		return errors.New("runtime stop target worker_epoch is required")
 	}
-	_, stoppedEntry, ok := p.claimReadyEntry(runtimeInstanceID, target.WorkerEpoch)
+	stoppedEntry, ok := p.claimReadyEntry(runtimeInstanceID, target.WorkerEpoch)
 	proofMethod := ""
 	if !ok {
 		if p.runtimeCheckedOut(runtimeInstanceID, target.WorkerEpoch) {
@@ -671,7 +670,6 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		ArtifactCacheDir:      p.ArtifactCacheDir,
 		ArtifactCacheMaxBytes: p.ArtifactCacheMaxBytes,
 		Substrates:            p.Substrates,
-		Network:               p.Network,
 		Log:                   p.Log,
 	}
 	tempDir := strings.TrimSpace(p.TempDir)
@@ -1207,24 +1205,24 @@ func (p *PreparedRuntimePool) removeReadyEntryAndFail(key string, entry prepared
 	return nil
 }
 
-func (p *PreparedRuntimePool) cleanupClaimedEntryAsync(key string, entry preparedRuntimeEntry, cause error) {
+func (p *PreparedRuntimePool) cleanupClaimedEntryAsync(entry preparedRuntimeEntry, cause error) {
 	if p == nil {
 		return
 	}
 	p.mu.Lock()
 	if !p.beginActivityLocked() {
 		p.mu.Unlock()
-		p.cleanupClaimedEntry(key, entry, cause)
+		p.cleanupClaimedEntry(entry, cause)
 		return
 	}
 	p.mu.Unlock()
 	go func() {
 		defer p.endActivity()
-		p.cleanupClaimedEntry(key, entry, cause)
+		p.cleanupClaimedEntry(entry, cause)
 	}()
 }
 
-func (p *PreparedRuntimePool) cleanupClaimedEntry(key string, entry preparedRuntimeEntry, cause error) {
+func (p *PreparedRuntimePool) cleanupClaimedEntry(entry preparedRuntimeEntry, cause error) {
 	if entry.session != nil {
 		if closeErr := p.closeSession(context.Background(), entry.session); closeErr == nil {
 			if releaseErr := p.releaseRuntimeCapacity(entry.runtimeInstanceID, entry.runtimeEpoch); releaseErr != nil {
@@ -1258,7 +1256,7 @@ func (p *PreparedRuntimePool) forgetReadyEntry(key string, entry preparedRuntime
 	return removed
 }
 
-func (p *PreparedRuntimePool) claimReadyEntry(runtimeInstanceID string, runtimeEpoch int64) (string, preparedRuntimeEntry, bool) {
+func (p *PreparedRuntimePool) claimReadyEntry(runtimeInstanceID string, runtimeEpoch int64) (preparedRuntimeEntry, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for key, entries := range p.entries {
@@ -1267,10 +1265,10 @@ func (p *PreparedRuntimePool) claimReadyEntry(runtimeInstanceID string, runtimeE
 				continue
 			}
 			p.removeReadyEntryAtLocked(key, entries, i)
-			return key, entry, true
+			return entry, true
 		}
 	}
-	return "", preparedRuntimeEntry{}, false
+	return preparedRuntimeEntry{}, false
 }
 
 func (p *PreparedRuntimePool) removeReadyEntryAtLocked(key string, entries []preparedRuntimeEntry, index int) {

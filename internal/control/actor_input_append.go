@@ -13,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -136,11 +135,6 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 					return errActorSequenceExhausted
 				}
 				return errActorInputUnavailable
-			}
-			var postgresError *pgconn.PgError
-			if errors.As(err, &postgresError) &&
-				postgresError.ConstraintName == "actor_records_data_size_check" {
-				return errActorInputTooLarge
 			}
 			return err
 		}

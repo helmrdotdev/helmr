@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -503,6 +504,154 @@ func TestRelayProgramRoutesActorInputSendDecisionWithoutConsumingWaitAuthority(t
 	}
 }
 
+func TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain(t *testing.T) {
+	blockedProcessInput, releaseProcess, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blockedProcessInput.Close()
+	defer releaseProcess.Close()
+	cmd := exec.Command("cat")
+	cmd.Stdin = blockedProcessInput
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	controlReader, controlWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	programDecisionReader, programDecisionWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer programDecisionReader.Close()
+	defer programDecisionWriter.Close()
+	cgroup := &testProgramCgroup{}
+	process := &programProcess{
+		cmd: cmd, stdin: programDecisionWriter, control: controlReader,
+		cgroup: cgroup, waitDone: make(chan struct{}),
+	}
+	defer process.close()
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	request := testProgramRunRequest(testProgramStartFrame(t))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		var outputDone sync.WaitGroup
+		result <- relayProgram(
+			ctx, guest, request,
+			&runv0.EntrypointIdentity{
+				Kind: &runv0.EntrypointIdentity_Task{Task: &runv0.TaskEntrypoint{}},
+			},
+			process, &programEventStream{conn: guest}, make(chan error, 2),
+			&outputDone, newWaitingRunRegistry(), &programOutputCoordinator{}, nil,
+		)
+	}()
+	writeRetrieve := func(correlationID string) {
+		t.Helper()
+		if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
+			Event: &runv0.RunEvent_WorkspaceRetrieveRequested{
+				WorkspaceRetrieveRequested: &runv0.WorkspaceRetrieveRequested{
+					CorrelationId: correlationID,
+					Workspace: &runv0.WorkspaceAddress{
+						Address: &runv0.WorkspaceAddress_WorkspaceKey{WorkspaceKey: "cache"},
+					},
+				},
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	readRetrieve := func(correlationID string) {
+		t.Helper()
+		var event runv0.RunEvent
+		if err := frameio.ReadProtoFrame(host, &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.GetWorkspaceRetrieveRequested().GetCorrelationId() != correlationID {
+			t.Fatalf("Workspace retrieve event = %#v", event.GetEvent())
+		}
+	}
+	writeRetrieve("00000000-0000-0000-0000-000000000201")
+	readRetrieve("00000000-0000-0000-0000-000000000201")
+	if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
+		Event: &runv0.RunEvent_RunWaitRequested{
+			RunWaitRequested: &runv0.RunWaitRequested{
+				CorrelationId: "wait-correlation", Kind: "timer", ParamsJson: `{}`,
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var waitEvent runv0.RunEvent
+	if err := frameio.ReadProtoFrame(host, &waitEvent); err != nil {
+		t.Fatal(err)
+	}
+	if waitEvent.GetRunWaitRequested() == nil {
+		t.Fatalf("Wait event = %#v", waitEvent.GetEvent())
+	}
+	pause := &runv0.CheckpointPauseRequest{
+		RunId: request.GetRunId(), AttemptNumber: request.GetAttemptNumber(),
+		RunLeaseId: request.GetRunLeaseId(), RunWaitId: "durable-wait",
+		CorrelationId: "wait-correlation", CheckpointId: "checkpoint-1",
+		ResumeAttachId: "attach-1", CheckpointRequestVersion: 1,
+	}
+	if err := wire.WriteCheckpointPauseRequest(host, pause); err != nil {
+		t.Fatal(err)
+	}
+	// A chained operation emitted after the pause request must still be relayed;
+	// freezing immediately would block here and checkpoint an incomplete chain.
+	writeRetrieve("00000000-0000-0000-0000-000000000202")
+	readRetrieve("00000000-0000-0000-0000-000000000202")
+	if cgroup.freezeCount() != 0 {
+		t.Fatalf("Program froze with runtime operations pending")
+	}
+	for _, correlationID := range []string{
+		"00000000-0000-0000-0000-000000000201",
+		"00000000-0000-0000-0000-000000000202",
+	} {
+		if err := wire.WriteResumeDecision(host, &runv0.ResumeDecision{
+			CorrelationId: correlationID, Kind: "completed", DataJson: `{}`,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var staged runv0.ResumeDecision
+		if err := frameio.ReadProtoFrame(programDecisionReader, &staged); err != nil {
+			t.Fatal(err)
+		}
+		if staged.GetCorrelationId() != correlationID {
+			t.Fatalf("staged decision = %+v", &staged)
+		}
+	}
+	reader := bufio.NewReader(host)
+	header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if header.Type != wire.StreamTypeCheckpointPauseReady {
+		t.Fatalf("pause proof frame = %+v", header)
+	}
+	if _, err := io.CopyN(io.Discard, reader, int64(bodyLen)); err != nil {
+		t.Fatal(err)
+	}
+	if cgroup.freezeCount() != 1 {
+		t.Fatalf("freeze count = %d", cgroup.freezeCount())
+	}
+	if err := releaseProcess.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := controlWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("relay error = %v", err)
+	}
+}
+
 func TestPauseAndResumeProgramUsesExactFrozenAuthority(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workspaceRoot, "state.txt"), []byte("durable"), 0o600); err != nil {
@@ -954,7 +1103,7 @@ func TestProgramAdmissionDoesNotClaimBeforeSecretSequence(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry.mu.RLock()
-	active := registry.programActive
+	active := len(registry.programClaims) != 0
 	registry.mu.RUnlock()
 	if active {
 		t.Fatal("partial Secret sequence claimed the Program slot")

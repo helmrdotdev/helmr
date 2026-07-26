@@ -1040,8 +1040,10 @@ worker_image_wait() {
           --arg package "${release_package_sha256}" \
           --arg version "${release_package_version_sha256}" \
           --arg san "${release_trust_san_sha256}" '
-          .Images | length == 1 and .[0].ImageId == $ami and
-          (.[0].Tags | map({key: .Key, value: .Value}) | from_entries) as $tags |
+          (.Images // []) as $images |
+          (($images[0].Tags // []) | map({key: .Key, value: .Value}) | from_entries) as $tags |
+          ($images | length) == 1 and
+          $images[0].ImageId == $ami and
           $tags.HelmrReleaseTrustMode == "development" and
           $tags.HelmrSourceCommit == $commit and
           $tags.HelmrDevReleaseProvenanceSHA256 == $provenance and

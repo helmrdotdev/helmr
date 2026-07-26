@@ -11,7 +11,6 @@ import (
 	"io"
 	"maps"
 	"os"
-	"runtime"
 	"strings"
 	"time"
 
@@ -75,27 +74,16 @@ func (r ProgramRunner) materializeEncryptedObject(ctx context.Context, digest st
 	return path, nil
 }
 
-func checkpointFileDigest(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return "", err
-	}
-	return sha256sum.DigestHash(hash), nil
-}
-
-func validateRestoreIdentity(checkpoint api.WorkerCheckpointManifest) error {
+func validateRestoreIdentity(
+	checkpoint api.WorkerCheckpointManifest,
+	workerArchitecture deployment.RuntimeArchitecture,
+) error {
 	runtimeInfo := checkpoint.RecoveryPoint.Runtime
 	if runtimeInfo.Backend != "firecracker" {
 		return fmt.Errorf("restore checkpoint recovery_point.runtime.backend %q is not supported", runtimeInfo.Backend)
 	}
-	workerArchitecture, err := deployment.RuntimeArchitectureFromGo(runtime.GOARCH)
-	if err != nil {
-		return err
+	if err := deployment.ValidateRuntimeArchitecture(workerArchitecture); err != nil {
+		return fmt.Errorf("validate worker runtime architecture: %w", err)
 	}
 	if runtimeInfo.Arch != string(workerArchitecture) {
 		return fmt.Errorf("restore checkpoint recovery_point.runtime.arch %q does not match worker arch %q", runtimeInfo.Arch, workerArchitecture)

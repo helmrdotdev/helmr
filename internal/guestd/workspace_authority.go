@@ -76,9 +76,8 @@ func handleProgramResumeGrantConnection(
 		return errors.New("Program resume grant authority is required")
 	}
 	fence := authority.GetFence()
-	entry, release, ok := mounts.acquireExact(
+	entry, release, ok := mounts.acquireAuthorityMount(
 		fence.GetWorkspaceMountId(), fence.GetWorkspaceId(), authority.GetChannelToken(),
-		uint64(fence.GetMountFencingGeneration()),
 	)
 	if !ok {
 		return errors.New("Program resume grant does not match the mounted runtime")
@@ -89,24 +88,8 @@ func handleProgramResumeGrantConnection(
 	}
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
-	if err := validateWorkspaceRunAuthority(entry, authority, clock()); err != nil {
+	if err := mounts.installResumedProgramAuthorityLocked(entry, authority, clock()); err != nil {
 		return err
-	}
-	entry.authorityMu.Lock()
-	missing := entry.authority == nil
-	current := workspaceRunAuthoritiesEqual(entry.authority, authority)
-	entry.authorityMu.Unlock()
-	entry.processesMu.Lock()
-	live := entry.authorityState == workspaceAuthorityLive && !entry.recoveryRequired
-	entry.processesMu.Unlock()
-	if missing && live {
-		if err := entry.installWorkspaceRunAuthorityLocked(authority, clock()); err != nil {
-			return fmt.Errorf("install restored Program authority: %w", err)
-		}
-		current = true
-	}
-	if !current || !live {
-		return errors.New("Program resume grant authority is not installed")
 	}
 	grant := &runv0.ResumeAttach{
 		RunId: fence.GetRunId(), AttemptNumber: fence.GetAttemptNumber(),
@@ -143,6 +126,46 @@ func handleProgramResumeGrantConnection(
 	})
 }
 
+func (r *workspaceOperationRegistry) installResumedProgramAuthorityLocked(
+	entry *workspaceMountEntry,
+	authority *workspacev0.WorkspaceRunAuthority,
+	now time.Time,
+) error {
+	if err := validateWorkspaceRunAuthority(entry, authority, now); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	claim := r.programClaimLocked(entry, authority)
+	if claim == nil {
+		return errors.New("resumed Program claim is not active")
+	}
+	entry.authorityMu.Lock()
+	missing := entry.authority == nil
+	current := workspaceRunAuthoritiesEqual(entry.authority, authority)
+	entry.authorityMu.Unlock()
+	entry.processesMu.Lock()
+	state := entry.authorityState
+	recoveryRequired := entry.recoveryRequired
+	entry.processesMu.Unlock()
+	if !current && !recoveryRequired &&
+		(missing && state == workspaceAuthorityLive ||
+			!missing && state == workspaceAuthorityFinalizing) {
+		if err := entry.installWorkspaceRunAuthorityLocked(authority, now); err != nil {
+			return fmt.Errorf("install restored Program authority: %w", err)
+		}
+		current = true
+	}
+	entry.processesMu.Lock()
+	live := entry.authorityState == workspaceAuthorityLive && !entry.recoveryRequired
+	entry.processesMu.Unlock()
+	if !current || !live {
+		return errors.New("Program resume grant authority is not installed")
+	}
+	claim.authority = proto.Clone(authority).(*workspacev0.WorkspaceRunAuthority)
+	return nil
+}
+
 func handleProgramRestoreVerifyConnection(
 	conn programConnection,
 	bodyLen uint64,
@@ -165,11 +188,15 @@ func handleProgramRestoreVerifyConnection(
 		strings.TrimSpace(request.GetCorrelationId()) == "" || waits == nil || mounts == nil {
 		return errors.New("Program restore verification identity is incomplete")
 	}
-	mounts.mu.Lock()
-	programActive := mounts.programActive && mounts.programEntry != nil
-	mounts.mu.Unlock()
-	if !programActive || !waits.verifyFrozenProgram(&request) {
+	if !waits.verifyFrozenProgram(&request) {
 		return errors.New("Program restore verification did not match a frozen Program")
+	}
+	entry := mounts.currentProgramEntry(request.GetRunId(), request.GetAttemptNumber())
+	if entry == nil {
+		return errors.New("Program restore verification did not match an active Program claim")
+	}
+	if err := mounts.authorizeChildProgram(entry, request.GetRunId(), request.GetAttemptNumber()); err != nil {
+		return fmt.Errorf("authorize child Program: %w", err)
 	}
 	if err := conn.SetWriteDeadline(time.Now().Add(resumeAttachTimeout)); err != nil {
 		return err
@@ -239,6 +266,31 @@ func (entry *workspaceMountEntry) installWorkspaceRunAuthorityLocked(authority *
 	}
 	entry.setFencingGeneration(mountGeneration)
 	entry.authority = proto.Clone(authority).(*workspacev0.WorkspaceRunAuthority)
+	entry.previousExpiry = 0
+	return nil
+}
+
+func (entry *workspaceMountEntry) installChildWorkspaceRunAuthorityLocked(
+	parent *workspacev0.WorkspaceRunAuthority,
+	child *workspacev0.WorkspaceRunAuthority,
+	now time.Time,
+) error {
+	if err := validateWorkspaceRunAuthority(entry, child, now); err != nil {
+		return err
+	}
+	if err := validateManagedProgramChildAuthority(parent, child); err != nil {
+		return err
+	}
+	entry.authorityMu.Lock()
+	defer entry.authorityMu.Unlock()
+	entry.processesMu.Lock()
+	live := entry.authorityState == workspaceAuthorityLive && !entry.recoveryRequired
+	entry.processesMu.Unlock()
+	if !live || !workspaceRunAuthoritiesEqual(entry.authority, parent) {
+		return errors.New("frozen parent Program authority is no longer current")
+	}
+	entry.setFencingGeneration(uint64(child.GetFence().GetMountFencingGeneration()))
+	entry.authority = proto.Clone(child).(*workspacev0.WorkspaceRunAuthority)
 	entry.previousExpiry = 0
 	return nil
 }
@@ -313,7 +365,7 @@ func (entry *workspaceMountEntry) renewWorkspaceRunAuthorityLocked(request *work
 	return proto.Clone(entry.authority.GetFence()).(*workspacev0.WorkspaceAuthorityFence), nil
 }
 
-func (registry *workspaceOperationRegistry) renewCurrentWorkspaceRunAuthority(entry *workspaceMountEntry, request *workspacev0.RenewWorkspaceAuthorityRequest, now time.Time) (*workspacev0.WorkspaceAuthorityFence, error) {
+func (r *workspaceOperationRegistry) renewCurrentWorkspaceRunAuthority(entry *workspaceMountEntry, request *workspacev0.RenewWorkspaceAuthorityRequest, now time.Time) (*workspacev0.WorkspaceAuthorityFence, error) {
 	if request == nil || request.GetPrevious() == nil || request.GetPrevious().GetFence() == nil {
 		return nil, errors.New("previous Workspace Run authority is required")
 	}
@@ -321,19 +373,39 @@ func (registry *workspaceOperationRegistry) renewCurrentWorkspaceRunAuthority(en
 	fence := previous.GetFence()
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
-	if !registry.currentExactLocked(
-		entry,
-		fence.GetWorkspaceMountId(),
-		fence.GetWorkspaceId(),
-		previous.GetChannelToken(),
-		uint64(fence.GetMountFencingGeneration()),
-	) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.entries[fence.GetWorkspaceMountId()] != entry ||
+		!workspaceEntryMatches(
+			entry,
+			fence.GetWorkspaceMountId(),
+			fence.GetWorkspaceId(),
+			previous.GetChannelToken(),
+		) ||
+		entry.currentFencingGeneration() != uint64(fence.GetMountFencingGeneration()) {
 		return nil, errors.New("Workspace Run authority is not current for the Workspace Mount")
 	}
-	return entry.renewWorkspaceRunAuthorityLocked(request, now)
+	candidate := proto.Clone(previous).(*workspacev0.WorkspaceRunAuthority)
+	candidate.Fence.ExpiresAtUnixNano = request.GetNewExpiresAtUnixNano()
+	claim := r.programClaimLocked(entry, previous)
+	if claim != nil &&
+		!workspaceRunAuthoritiesEqual(claim.authority, previous) &&
+		!workspaceRunAuthoritiesEqual(claim.authority, candidate) {
+		return nil, errors.New("active Program claim does not match the Workspace authority renewal")
+	}
+	renewed, err := entry.renewWorkspaceRunAuthorityLocked(request, now)
+	if err != nil {
+		return nil, err
+	}
+	if claim != nil {
+		renewedAuthority := proto.Clone(previous).(*workspacev0.WorkspaceRunAuthority)
+		renewedAuthority.Fence = proto.Clone(renewed).(*workspacev0.WorkspaceAuthorityFence)
+		claim.authority = renewedAuthority
+	}
+	return renewed, nil
 }
 
-func (registry *workspaceOperationRegistry) beginCurrentWorkspaceFinalization(
+func (r *workspaceOperationRegistry) beginCurrentWorkspaceFinalization(
 	entry *workspaceMountEntry,
 	request *workspacev0.BeginWorkspaceFinalizationRequest,
 	clock func() time.Time,
@@ -345,7 +417,7 @@ func (registry *workspaceOperationRegistry) beginCurrentWorkspaceFinalization(
 	fence := previous.GetFence()
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
-	if !registry.currentExactLocked(
+	if !r.currentExactLocked(
 		entry,
 		fence.GetWorkspaceMountId(),
 		fence.GetWorkspaceId(),
@@ -500,8 +572,8 @@ func handleWorkspaceAuthorityRenewConnection(_ context.Context, conn io.ReadWrit
 	return nil
 }
 
-func handleWorkspaceFinalizationBeginConnection(ctx context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
-	if err := handleWorkspaceFinalizationBegin(ctx, conn, registry, time.Now); err != nil {
+func handleWorkspaceFinalizationBeginConnection(conn io.ReadWriter, registry *workspaceOperationRegistry) error {
+	if err := handleWorkspaceFinalizationBegin(conn, registry, time.Now); err != nil {
 		if writeErr := frameio.WriteProtoFrame(conn, &workspacev0.BeginWorkspaceFinalizationResponse{Error: err.Error()}); writeErr != nil {
 			return errors.Join(err, fmt.Errorf("write Workspace finalization Begin failure: %w", writeErr))
 		}
@@ -510,7 +582,6 @@ func handleWorkspaceFinalizationBeginConnection(ctx context.Context, conn io.Rea
 }
 
 func handleWorkspaceFinalizationBegin(
-	ctx context.Context,
 	conn io.ReadWriter,
 	registry *workspaceOperationRegistry,
 	clock func() time.Time,

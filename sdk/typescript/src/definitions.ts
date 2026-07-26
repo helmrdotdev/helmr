@@ -7,15 +7,12 @@ import {
   type ActorOutputRef,
   type ActorRefBase,
   type ActorStartOptions,
-  type ActorStatus,
   type ActorOperationOptions,
-  type ActorOperationReceipt,
   type JsonValue,
   type NoPayloadTaskDefinition,
   type OutputReadOptions,
   type PayloadTaskDefinition,
   type QueueDefinition,
-  type RunHandle,
   type TaskCallOptions,
   type TaskConfigWithPayload,
   type TaskConfigWithoutPayload,
@@ -214,10 +211,15 @@ export function actor(config: ActorConfig): ActorDefinition {
   })
   const value = {
     id: internal.id,
-    start(_options: ActorStartOptions) {
-      return runtimeUnavailable<Promise<{ ref: ActorIdRef; run: RunHandle }>>(
-        "actor.start",
+    async start(options: ActorStartOptions) {
+      const started = await currentRuntimeOperations().actorStart(
+        internal.id,
+        options,
       )
+      return Object.freeze({
+        ref: createActorRef(internal.id, { id: started.actorId }) as ActorIdRef,
+        run: Object.freeze({ id: started.runId }),
+      })
     },
     ref(address: { readonly id: string } | { readonly key: string }) {
       return createActorRef(internal.id, address)
@@ -331,12 +333,17 @@ function createActorRef(
   const immutableAddress = validatedActorRefAddress(address)
   const base: ActorRefBase = {
     input: createActorInputRef(declaredId, immutableAddress),
-    output: createActorOutputRef(),
+    output: createActorOutputRef(declaredId, immutableAddress),
     status() {
-      return runtimeUnavailable<Promise<ActorStatus>>("actor.status")
+      return currentRuntimeOperations().actorStatus(
+        Object.freeze({ declaredId, address: immutableAddress }),
+      )
     },
-    close(_options?: ActorOperationOptions) {
-      return runtimeUnavailable<Promise<ActorOperationReceipt>>("actor.close")
+    close(options?: ActorOperationOptions) {
+      return currentRuntimeOperations().actorClose(
+        Object.freeze({ declaredId, address: immutableAddress }),
+        options,
+      )
     },
   }
   return Object.freeze({
@@ -395,17 +402,32 @@ function createActorInputRef(
   })
 }
 
-function createActorOutputRef(): ActorOutputRef {
+function createActorOutputRef(
+  declaredId: string,
+  address: { readonly id: string } | { readonly key: string },
+): ActorOutputRef {
+  const target = Object.freeze({ declaredId, address })
   return Object.freeze({
-    read(_options?: OutputReadOptions) {
-      return runtimeUnavailable<AsyncIterable<import("./contract").ActorOutputRecord>>(
-        "actor.output.read",
-      )
+    async *read(options?: OutputReadOptions) {
+      let after = options?.after
+      for (;;) {
+        if (options?.signal?.aborted) throw options.signal.reason
+        const page = await currentRuntimeOperations().actorOutputPage(target, {
+          ...(after === undefined ? {} : { after }),
+          ...(options?.limit === undefined ? {} : { limit: options.limit }),
+          ...(options?.signal === undefined ? {} : { signal: options.signal }),
+        })
+        for (const record of page.records) yield record
+        if (!page.hasMore) return
+        after = page.nextAfter
+      }
     },
-    list(_options?: OutputReadOptions) {
-      return runtimeUnavailable<
-        Promise<readonly import("./contract").ActorOutputRecord[]>
-      >("actor.output.list")
+    async list(options?: OutputReadOptions) {
+      const page = await currentRuntimeOperations().actorOutputPage(
+        target,
+        options,
+      )
+      return page.records
     },
   })
 }
@@ -456,12 +478,6 @@ function copyDefinitionDefaults(
     ...(config.ttl === undefined ? {} : { ttl: config.ttl }),
     ...(config.retry === undefined ? {} : { retry: config.retry }),
   }
-}
-
-function runtimeUnavailable<T>(operation: string): T {
-  throw new Error(
-    `${operation} is unavailable without the Helmr managed runtime or authenticated client`,
-  )
 }
 
 function taskWait<T extends JsonValue>(

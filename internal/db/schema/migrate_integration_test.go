@@ -1,12 +1,14 @@
 package schema
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -60,13 +62,6 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	var serverVersion int
-	if err := pool.QueryRow(dbctx, `SELECT current_setting('server_version_num')::int`).Scan(&serverVersion); err != nil {
-		t.Fatal(err)
-	}
-	if serverVersion < 180000 {
-		t.Skipf("Postgres %d does not provide uuidv7(); skipping migration test", serverVersion)
-	}
 	if err := Up(dbctx, dsn); err != nil {
 		t.Fatal(err)
 	}
@@ -88,8 +83,11 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertWorkspaceVersionAuthority(t, dbctx, pool)
 	assertArtifactCreatorAuthority(t, dbctx, pool)
 	assertIdempotencyClaimCollectionIndexes(t, dbctx, pool)
+	assertLookupHMACVersionIndexes(t, dbctx, pool)
 	assertExecutionAttachmentConstraints(t, dbctx, pool)
 	assertRunWaitHandoffAuthority(t, dbctx, pool)
+	assertPrimitiveLifecycleSchema(t, dbctx, pool)
+	assertNoBusinessDatabaseLogic(t, dbctx, pool)
 	if !verifyDown {
 		return
 	}
@@ -115,8 +113,299 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertWorkspaceVersionAuthority(t, dbctx, pool)
 	assertArtifactCreatorAuthority(t, dbctx, pool)
 	assertIdempotencyClaimCollectionIndexes(t, dbctx, pool)
+	assertLookupHMACVersionIndexes(t, dbctx, pool)
 	assertExecutionAttachmentConstraints(t, dbctx, pool)
 	assertRunWaitHandoffAuthority(t, dbctx, pool)
+	assertPrimitiveLifecycleSchema(t, dbctx, pool)
+	assertNoBusinessDatabaseLogic(t, dbctx, pool)
+}
+
+func assertPrimitiveLifecycleSchema(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+) {
+	t.Helper()
+	lifecycleTypes := []string{
+		"region_state",
+		"worker_group_state",
+		"telemetry_outbox_state",
+		"deletion_job_status",
+		"device_code_status",
+		"worker_instance_state",
+		"public_access_token_state",
+		"token_state",
+		"wait_state",
+		"run_wait_state",
+		"run_checkpoint_state",
+		"run_status",
+		"run_lease_state",
+		"runtime_desired_state",
+		"runtime_observed_state",
+		"worker_network_slot_state",
+		"deployment_build_lease_state",
+		"deployment_status",
+		"workspace_state",
+		"workspace_desired_state",
+		"workspace_dirty_state",
+		"workspace_version_state",
+		"workspace_mount_state",
+		"workspace_lease_state",
+		"workspace_process_state",
+	}
+	var enumTypeCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_type
+		 WHERE typname = ANY($1::text[])
+	`, lifecycleTypes).Scan(&enumTypeCount); err != nil {
+		t.Fatal(err)
+	}
+	if enumTypeCount != 0 {
+		t.Fatalf("Postgres lifecycle enum types = %d, want 0", enumTypeCount)
+	}
+
+	tableNames := []string{
+		"regions",
+		"worker_groups",
+		"telemetry_outbox",
+		"deletion_jobs",
+		"device_codes",
+		"worker_instances",
+		"public_access_tokens",
+		"tokens",
+		"run_waits",
+		"run_waits",
+		"run_checkpoints",
+		"runs",
+		"run_leases",
+		"runtime_instances",
+		"runtime_instances",
+		"worker_network_slots",
+		"deployment_build_leases",
+		"deployments",
+		"workspaces",
+		"workspaces",
+		"workspaces",
+		"workspace_versions",
+		"workspace_mounts",
+		"workspace_leases",
+		"workspace_processes",
+		"workspace_processes",
+	}
+	columnNames := []string{
+		"state",
+		"state",
+		"state",
+		"status",
+		"status",
+		"state",
+		"state",
+		"state",
+		"condition_state",
+		"suspension_state",
+		"state",
+		"status",
+		"state",
+		"desired_state",
+		"observed_state",
+		"state",
+		"state",
+		"status",
+		"state",
+		"desired_state",
+		"dirty_state",
+		"state",
+		"state",
+		"state",
+		"state",
+		"restore_desired_state",
+	}
+	var constrainedTextColumns int
+	if err := pool.QueryRow(ctx, `
+		WITH targets AS (
+		    SELECT table_name, column_name
+		      FROM unnest($1::text[], $2::text[]) AS target(table_name, column_name)
+		)
+		SELECT count(*)
+		  FROM targets
+		  JOIN information_schema.columns AS columns
+		    ON columns.table_schema = 'public'
+		   AND columns.table_name = targets.table_name
+		   AND columns.column_name = targets.column_name
+		   AND columns.data_type = 'text'
+		 WHERE EXISTS (
+		       SELECT 1
+		         FROM pg_constraint
+		         JOIN pg_class ON pg_class.oid = pg_constraint.conrelid
+		         JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
+		         JOIN pg_attribute
+		           ON pg_attribute.attrelid = pg_class.oid
+		          AND pg_attribute.attnum = ANY(pg_constraint.conkey)
+		        WHERE pg_namespace.nspname = 'public'
+		          AND pg_class.relname = targets.table_name
+		          AND pg_attribute.attname = targets.column_name
+		          AND pg_constraint.contype = 'c'
+		 )
+	`, tableNames, columnNames).Scan(&constrainedTextColumns); err != nil {
+		t.Fatal(err)
+	}
+	if constrainedTextColumns != len(tableNames) {
+		t.Fatalf(
+			"constrained lifecycle TEXT columns = %d, want %d",
+			constrainedTextColumns,
+			len(tableNames),
+		)
+	}
+
+	var uuidPrimaryKeyDefaults int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.columns
+		  JOIN information_schema.table_constraints
+		    ON table_constraints.table_schema = columns.table_schema
+		   AND table_constraints.table_name = columns.table_name
+		   AND table_constraints.constraint_type = 'PRIMARY KEY'
+		  JOIN information_schema.key_column_usage
+		    ON key_column_usage.constraint_schema = table_constraints.constraint_schema
+		   AND key_column_usage.constraint_name = table_constraints.constraint_name
+		   AND key_column_usage.table_schema = columns.table_schema
+		   AND key_column_usage.table_name = columns.table_name
+		   AND key_column_usage.column_name = columns.column_name
+		 WHERE columns.table_schema = 'public'
+		   AND columns.data_type = 'uuid'
+		   AND columns.column_default IS NOT NULL
+	`).Scan(&uuidPrimaryKeyDefaults); err != nil {
+		t.Fatal(err)
+	}
+	if uuidPrimaryKeyDefaults != 0 {
+		t.Fatalf("UUID primary-key defaults = %d, want 0", uuidPrimaryKeyDefaults)
+	}
+
+	var categoricalEnums int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_type
+		 WHERE typname = ANY(ARRAY[
+		     'region_visibility',
+		     'wait_kind',
+		     'run_checkpoint_kind',
+		     'artifact_kind',
+		     'workspace_version_kind'
+		 ])
+	`).Scan(&categoricalEnums); err != nil {
+		t.Fatal(err)
+	}
+	if categoricalEnums != 5 {
+		t.Fatalf("categorical enum sentinels = %d, want 5", categoricalEnums)
+	}
+
+	queryFiles, err := filepath.Glob("../query/*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, queryFile := range queryFiles {
+		body, err := os.ReadFile(queryFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(bytes.ToLower(body), []byte("uuidv7(")) {
+			t.Fatalf("query file %s calls uuidv7()", queryFile)
+		}
+	}
+}
+
+func assertNoBusinessDatabaseLogic(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+) {
+	t.Helper()
+	var triggerCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_trigger
+		  JOIN pg_class ON pg_class.oid = pg_trigger.tgrelid
+		  JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
+		 WHERE pg_namespace.nspname = 'public'
+		   AND NOT pg_trigger.tgisinternal
+	`).Scan(&triggerCount); err != nil {
+		t.Fatal(err)
+	}
+	if triggerCount != 0 {
+		t.Fatalf("application-owned PostgreSQL triggers = %d, want 0", triggerCount)
+	}
+
+	var functionCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_proc
+		  JOIN pg_namespace ON pg_namespace.oid = pg_proc.pronamespace
+		 WHERE pg_namespace.nspname = 'public'
+		   AND pg_proc.prokind IN ('f', 'p')
+		   AND NOT EXISTS (
+		       SELECT 1
+		         FROM pg_depend
+		        WHERE pg_depend.classid = 'pg_proc'::regclass
+		          AND pg_depend.objid = pg_proc.oid
+		          AND pg_depend.deptype = 'e'
+		   )
+	`).Scan(&functionCount); err != nil {
+		t.Fatal(err)
+	}
+	if functionCount != 0 {
+		t.Fatalf("application-owned PostgreSQL functions = %d, want 0", functionCount)
+	}
+
+	var viewCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_class
+		  JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
+		 WHERE pg_namespace.nspname = 'public'
+		   AND pg_class.relkind IN ('v', 'm')
+	`).Scan(&viewCount); err != nil {
+		t.Fatal(err)
+	}
+	if viewCount != 0 {
+		t.Fatalf("application-owned PostgreSQL views = %d, want 0", viewCount)
+	}
+
+	var ruleCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_rules
+		 WHERE schemaname = 'public'
+	`).Scan(&ruleCount); err != nil {
+		t.Fatal(err)
+	}
+	if ruleCount != 0 {
+		t.Fatalf("application-owned PostgreSQL rules = %d, want 0", ruleCount)
+	}
+
+	var generatedColumnCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND is_generated = 'ALWAYS'
+	`).Scan(&generatedColumnCount); err != nil {
+		t.Fatal(err)
+	}
+	if generatedColumnCount != 0 {
+		t.Fatalf("application-owned generated columns = %d, want 0", generatedColumnCount)
+	}
+
+	migration, err := os.ReadFile(filepath.Join("migrations", "000001_initial.up.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderedJSONSizeConstraint := regexp.MustCompile(
+		`(?s)octet_length\([^)]*::text\)`,
+	)
+	if renderedJSONSizeConstraint.Match(migration) {
+		t.Fatal("baseline migration sizes JSON through PostgreSQL text rendering")
+	}
 }
 
 func assertArtifactCreatorAuthority(
@@ -304,11 +593,12 @@ CREATE TEMP TABLE run_wait_handoff_shapes
     (LIKE run_waits INCLUDING DEFAULTS INCLUDING GENERATED INCLUDING CONSTRAINTS);
 
 INSERT INTO run_wait_handoff_shapes (
-    environment_id, run_id, workspace_id, kind, suspension_state,
+    id, environment_id, run_id, workspace_id, kind, suspension_state,
     expected_run_state_version, attempt_number, current_run_lease_id,
     resume_attach_id, child_parent_owned, child_target_declared_id,
     child_claim_id, child_request
 ) VALUES (
+    '00000000-0000-0000-0000-000000000101',
     '00000000-0000-0000-0000-000000000001',
     '00000000-0000-0000-0000-000000000002',
     '00000000-0000-0000-0000-000000000003',
@@ -319,7 +609,7 @@ INSERT INTO run_wait_handoff_shapes (
 );
 
 INSERT INTO run_wait_handoff_shapes (
-    environment_id, run_id, workspace_id, kind, suspension_state,
+    id, environment_id, run_id, workspace_id, kind, suspension_state,
     expected_run_state_version, attempt_number, prior_run_lease_id,
     suspend_checkpoint_id, resume_attach_id, child_run_id, child_parent_owned,
     child_target_declared_id, child_claim_id, child_request,
@@ -328,6 +618,7 @@ INSERT INTO run_wait_handoff_shapes (
     handoff_mount_generation, ownership_generation,
     parent_writer_generation
 ) VALUES (
+    '00000000-0000-0000-0000-000000000102',
     '00000000-0000-0000-0000-000000000001',
     '00000000-0000-0000-0000-000000000002',
     '00000000-0000-0000-0000-000000000003',
@@ -344,7 +635,7 @@ INSERT INTO run_wait_handoff_shapes (
 );
 
 INSERT INTO run_wait_handoff_shapes (
-    environment_id, run_id, workspace_id, kind, condition_state,
+    id, environment_id, run_id, workspace_id, kind, condition_state,
     condition_terminal_at, suspension_state, expected_run_state_version,
     attempt_number, prior_run_lease_id, suspend_checkpoint_id,
     resume_attach_id, child_run_id,
@@ -355,6 +646,7 @@ INSERT INTO run_wait_handoff_shapes (
     handoff_mount_generation, ownership_generation, parent_writer_generation,
     child_writer_generation, handoff_resume_checkpoint_id
 ) VALUES (
+    '00000000-0000-0000-0000-000000000103',
     '00000000-0000-0000-0000-000000000001',
     '00000000-0000-0000-0000-000000000002',
     '00000000-0000-0000-0000-000000000003',
@@ -374,7 +666,7 @@ INSERT INTO run_wait_handoff_shapes (
 );
 
 INSERT INTO run_wait_handoff_shapes (
-    environment_id, run_id, workspace_id, kind, condition_state,
+    id, environment_id, run_id, workspace_id, kind, condition_state,
     condition_terminal_at, condition_reason_code, suspension_state,
     expected_run_state_version, attempt_number, prior_run_lease_id,
     suspend_checkpoint_id, resume_attach_id, child_run_id, child_parent_owned,
@@ -384,6 +676,7 @@ INSERT INTO run_wait_handoff_shapes (
     handoff_workspace_mount_id, handoff_mount_generation,
     ownership_generation, parent_writer_generation
 ) VALUES (
+    '00000000-0000-0000-0000-000000000104',
     '00000000-0000-0000-0000-000000000001',
     '00000000-0000-0000-0000-000000000002',
     '00000000-0000-0000-0000-000000000003',
@@ -401,7 +694,7 @@ INSERT INTO run_wait_handoff_shapes (
 );
 
 INSERT INTO run_wait_handoff_shapes (
-    environment_id, run_id, workspace_id, kind, condition_state,
+    id, environment_id, run_id, workspace_id, kind, condition_state,
     condition_terminal_at, suspension_state, expected_run_state_version,
     attempt_number, current_run_lease_id, prior_run_lease_id,
     suspend_checkpoint_id, resume_attach_id, child_run_id, child_parent_owned,
@@ -413,6 +706,7 @@ INSERT INTO run_wait_handoff_shapes (
     child_writer_generation, resume_writer_generation,
     handoff_resume_checkpoint_id
 ) VALUES (
+    '00000000-0000-0000-0000-000000000105',
     '00000000-0000-0000-0000-000000000001',
     '00000000-0000-0000-0000-000000000002',
     '00000000-0000-0000-0000-000000000003',
@@ -466,7 +760,7 @@ UPDATE run_wait_handoff_shapes
 
 	if _, err := pool.Exec(ctx, `
 INSERT INTO run_wait_handoff_shapes (
-    environment_id, run_id, workspace_id, kind, suspension_state,
+    id, environment_id, run_id, workspace_id, kind, suspension_state,
     expected_run_state_version, attempt_number, prior_run_lease_id,
     suspend_checkpoint_id, resume_attach_id, child_run_id, child_parent_owned,
     child_target_declared_id, child_claim_id, child_request,
@@ -475,6 +769,7 @@ INSERT INTO run_wait_handoff_shapes (
     handoff_mount_generation, ownership_generation,
     parent_writer_generation, resume_writer_generation
 ) VALUES (
+    '00000000-0000-0000-0000-000000000106',
     '00000000-0000-0000-0000-000000000001',
     '00000000-0000-0000-0000-000000000002',
     '00000000-0000-0000-0000-000000000003',
@@ -520,20 +815,28 @@ func assertIdempotencyClaimCollectionIndexes(t *testing.T, ctx context.Context, 
 	}
 }
 
-func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+func assertLookupHMACVersionIndexes(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
-	var states []string
+	required := []string{
+		"idempotency_claims_hash_key_version_idx",
+		"secret_versions_authenticator_key_version_idx",
+	}
+	var count int
 	if err := pool.QueryRow(ctx, `
-		SELECT array_agg(enumlabel ORDER BY enumsortorder)
-		  FROM pg_enum
-		  JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
-		 WHERE pg_type.typname = 'workspace_version_state'
-	`).Scan(&states); err != nil {
+		SELECT count(*)
+		  FROM pg_indexes
+		 WHERE schemaname = 'public'
+		   AND indexname = ANY($1::text[])
+	`, required).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := strings.Join(states, ","), "private,committed,discarded"; got != want {
-		t.Fatalf("workspace version states = %q, want %q", got, want)
+	if count != len(required) {
+		t.Fatalf("lookup-HMAC reference indexes = %d, want %d", count, len(required))
 	}
+}
+
+func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
 	var authorityColumns int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
@@ -788,6 +1091,17 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 	}
 	if executionTableCount != len(requiredExecutionTables) {
 		t.Fatalf("greenfield execution tables = %d, want %d", executionTableCount, len(requiredExecutionTables))
+	}
+	var removedRunStreamTables int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM unnest(ARRAY['run_streams', 'run_stream_records']) AS table_name
+		 WHERE to_regclass('public.' || table_name) IS NOT NULL
+	`).Scan(&removedRunStreamTables); err != nil {
+		t.Fatal(err)
+	}
+	if removedRunStreamTables != 0 {
+		t.Fatalf("removed Run-stream tables = %d, want 0", removedRunStreamTables)
 	}
 	var exactPinColumns int
 	if err := pool.QueryRow(ctx, `
@@ -1105,46 +1419,6 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		       program_receipt = '{}'::jsonb
 		 WHERE id = '00000000-0000-0000-0000-000000005001'
 	`)
-	assertStatementRejected(t, ctx, tx, `
-		UPDATE deployments
-		   SET program_artifact_id = '00000000-0000-0000-0000-000000004003',
-		       program_runtime_digest = decode(repeat('01', 32), 'hex'),
-		       program_architecture = 'x86_64',
-		       program_receipt = '{}'::jsonb
-		 WHERE id = '00000000-0000-0000-0000-000000005001'
-	`)
-	assertStatementRejected(t, ctx, tx, `
-		UPDATE deployments
-		   SET program_artifact_id = '00000000-0000-0000-0000-000000004003',
-		       program_runtime_digest = decode(repeat('01', 32), 'hex'),
-		       program_architecture = 'x86_64',
-		       program_receipt = jsonb_set(
-		           $1::jsonb,
-		           '{manager,version}',
-		           to_jsonb('latest'::text)
-		       )
-		 WHERE id = '00000000-0000-0000-0000-000000005001'
-	`, validProgramReceipt)
-	assertStatementRejected(t, ctx, tx, `
-		UPDATE deployments
-		   SET program_artifact_id = '00000000-0000-0000-0000-000000004007',
-		       program_runtime_digest = decode(repeat('01', 32), 'hex'),
-		       program_architecture = 'x86_64',
-		       program_receipt = jsonb_set(
-		           jsonb_set(
-		               jsonb_set(
-		                   $1::jsonb,
-		                   '{program,artifactId}',
-		                   to_jsonb('00000000-0000-0000-0000-000000004007'::text)
-		               ),
-		               '{program,digest}',
-		               to_jsonb(('sha256:' || repeat('e', 64))::text)
-		           ),
-		           '{program,sizeBytes}',
-		           '13958643713'::jsonb
-		       )
-		 WHERE id = '00000000-0000-0000-0000-000000005001'
-	`, validProgramReceipt)
 	if _, err := tx.Exec(ctx, `
 		UPDATE deployments
 		   SET program_artifact_id = '00000000-0000-0000-0000-000000004003',
@@ -1155,38 +1429,6 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 	`, validProgramReceipt); err != nil {
 		t.Fatal(err)
 	}
-	assertStatementRejected(t, ctx, tx, `
-		UPDATE deployments
-		   SET program_receipt = jsonb_set(
-		       program_receipt,
-		       '{program,digest}',
-		       to_jsonb(('sha256:' || repeat('f', 64))::text)
-		   )
-		 WHERE id = '00000000-0000-0000-0000-000000005001'
-	`)
-	assertStatementRejected(t, ctx, tx, `
-		UPDATE deployments
-		   SET program_receipt = jsonb_set(
-		       program_receipt,
-		       '{manager,version}',
-		       to_jsonb('1.2.4'::text)
-		   )
-		 WHERE id = '00000000-0000-0000-0000-000000005001'
-	`)
-	assertStatementRejected(t, ctx, tx, `
-		UPDATE deployments
-		   SET program_receipt = jsonb_set(
-		       program_receipt,
-		       '{lockfile,digest}',
-		       to_jsonb(('sha256:' || repeat('4', 64))::text)
-		   )
-		 WHERE id = '00000000-0000-0000-0000-000000005001'
-	`)
-	assertStatementRejected(t, ctx, tx, `
-		UPDATE artifacts
-		   SET media_type = 'application/octet-stream'
-		 WHERE id = '00000000-0000-0000-0000-000000004003'
-	`)
 	assertStatementRejected(t, ctx, tx, `
 		UPDATE deployments
 		   SET program_architecture = 'amd64'
@@ -1208,30 +1450,30 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		t.Fatal(err)
 	}
 	assertStatementRejected(t, ctx, tx, `
-		INSERT INTO deployment_definitions (environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest)
-		VALUES ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'constructor', 0, '{}'::jsonb, decode(repeat('06', 32), 'hex'))
+		INSERT INTO deployment_definitions (id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest)
+		VALUES ('00000000-0000-0000-0000-000000006005', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'constructor', 0, '{}'::jsonb, decode(repeat('06', 32), 'hex'))
 	`)
 	for _, invalidID := range []string{" invalid", "invalid/name", "_invalid", "café", strings.Repeat("a", 129)} {
 		assertStatementRejected(t, ctx, tx, `
-			INSERT INTO deployment_definitions (environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest)
-			VALUES ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', $1, 0, '{}'::jsonb, decode(repeat('07', 32), 'hex'))
+			INSERT INTO deployment_definitions (id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest)
+			VALUES ('00000000-0000-0000-0000-000000006006', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', $1, 0, '{}'::jsonb, decode(repeat('07', 32), 'hex'))
 		`, invalidID)
 	}
 	assertStatementRejected(t, ctx, tx, `
-		INSERT INTO deployment_definitions (environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest, workspace_architecture, artifact_id)
-		VALUES ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'workspace', 'partial-workspace', 0, '{}'::jsonb, decode(repeat('08', 32), 'hex'), 'x86_64', NULL)
+		INSERT INTO deployment_definitions (id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest, workspace_architecture, artifact_id)
+		VALUES ('00000000-0000-0000-0000-000000006007', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'workspace', 'partial-workspace', 0, '{}'::jsonb, decode(repeat('08', 32), 'hex'), 'x86_64', NULL)
 	`)
 	assertStatementRejected(t, ctx, tx, `
-		INSERT INTO deployment_definitions (environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest, workspace_architecture, artifact_id)
-		VALUES ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'workspace', 'cross-environment', 0, '{}'::jsonb, decode(repeat('09', 32), 'hex'), 'x86_64', '00000000-0000-0000-0000-000000004005')
+		INSERT INTO deployment_definitions (id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest, workspace_architecture, artifact_id)
+		VALUES ('00000000-0000-0000-0000-000000006008', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'workspace', 'cross-environment', 0, '{}'::jsonb, decode(repeat('09', 32), 'hex'), 'x86_64', '00000000-0000-0000-0000-000000004005')
 	`)
 	assertStatementRejected(t, ctx, tx, `
-		INSERT INTO deployment_definitions (environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest)
-		VALUES ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'array-manifest', 0, '[]'::jsonb, decode(repeat('0a', 32), 'hex'))
+		INSERT INTO deployment_definitions (id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest)
+		VALUES ('00000000-0000-0000-0000-000000006009', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'array-manifest', 0, '[]'::jsonb, decode(repeat('0a', 32), 'hex'))
 	`)
 	assertStatementRejected(t, ctx, tx, `
-		INSERT INTO deployment_definitions (environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest)
-		VALUES ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'unsupported-manifest-version', 1, '{}'::jsonb, decode(repeat('0b', 32), 'hex'))
+		INSERT INTO deployment_definitions (id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest)
+		VALUES ('00000000-0000-0000-0000-00000000600a', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'unsupported-manifest-version', 1, '{}'::jsonb, decode(repeat('0b', 32), 'hex'))
 	`)
 
 	var workspaceOnlyProgramArtifactID *string
@@ -1406,39 +1648,50 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		t.Fatalf("obsolete placement columns = %d, want 0", obsoleteLeaseColumns)
 	}
 
-	var processStates []string
-	if err := pool.QueryRow(ctx, `
-		SELECT array_agg(enumlabel ORDER BY enumsortorder)
-		  FROM pg_enum
-		  JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
-		 WHERE pg_type.typname = 'workspace_process_state'
-	`).Scan(&processStates); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := strings.Join(processStates, ","), "pending,starting,running,exit_requested,exited,failed"; got != want {
-		t.Fatalf("workspace process states = %q, want %q", got, want)
-	}
-
-	var enumLabels int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*) FROM pg_enum JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
-		 WHERE (pg_type.typname, pg_enum.enumlabel) IN (
-		   ('worker_instance_state','registering'), ('worker_instance_state','lost'),
-		   ('run_lease_state','checkpointing'), ('run_lease_state','expired'),
-		   ('deployment_build_lease_state','succeeded'),
-		   ('runtime_desired_state','closed'), ('runtime_observed_state','lost'),
-		   ('worker_network_slot_state','quarantined'), ('run_wait_state','resuming')
-		 )
-	`).Scan(&enumLabels); err != nil {
-		t.Fatal(err)
-	}
-	if enumLabels != 9 {
-		t.Fatalf("managed-worker enum sentinel labels = %d, want 9", enumLabels)
-	}
 }
 
 func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
+	var redundantMeterSourceColumns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND table_name = 'meter_events'
+		   AND column_name = ANY(ARRAY['source_type', 'source_id'])
+	`).Scan(&redundantMeterSourceColumns); err != nil {
+		t.Fatal(err)
+	}
+	if redundantMeterSourceColumns != 0 {
+		t.Fatalf("redundant meter source columns = %d, want 0", redundantMeterSourceColumns)
+	}
+	var meterIdempotencyIndexes int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_indexes
+		 WHERE schemaname = 'public'
+		   AND tablename = 'meter_events'
+		   AND indexname = ANY(ARRAY[
+		       'meter_events_run_lease_idempotency_uidx',
+		       'meter_events_deployment_build_lease_idempotency_uidx'
+		   ])
+	`).Scan(&meterIdempotencyIndexes); err != nil {
+		t.Fatal(err)
+	}
+	if meterIdempotencyIndexes != 2 {
+		t.Fatalf("meter source idempotency indexes = %d, want 2", meterIdempotencyIndexes)
+	}
+	var legacyMeterIdempotencyIndex bool
+	if err := pool.QueryRow(
+		ctx,
+		`SELECT to_regclass('public.meter_events_idempotency_idx') IS NOT NULL`,
+	).Scan(&legacyMeterIdempotencyIndex); err != nil {
+		t.Fatal(err)
+	}
+	if legacyMeterIdempotencyIndex {
+		t.Fatal("legacy polymorphic meter idempotency index exists")
+	}
+
 	var legacyPayloadRelations int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)

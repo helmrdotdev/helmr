@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -51,7 +52,7 @@ func (s *Server) getActorStatusHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	scope, _, environmentID, err := s.actorReadScope(r, principal)
+	scope, environmentID, err := s.actorReadScope(r, principal)
 	if err != nil {
 		s.writeActorReadScopeError(w, err)
 		return
@@ -66,12 +67,9 @@ func (s *Server) getActorStatusHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeActorReadAuthorityError(w)
 		return
 	}
-	row, err := s.db.GetActorRead(r.Context(), db.GetActorReadParams{
-		EnvironmentID:   environmentID,
-		ActorDeclaredID: actorDeclaredID,
-		AddressPublicID: pgvalue.Text(address.publicID),
-		AddressKey:      pgvalue.Text(address.key),
-	})
+	status, err := getActorStatus(
+		r.Context(), s.db, environmentID, actorDeclaredID, address,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(codedError{code: "actor_not_found", message: "Actor not found"}))
 		return
@@ -80,12 +78,25 @@ func (s *Server) getActorStatusHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeActorReadAuthorityError(w)
 		return
 	}
-	status, err := projectActorStatus(actorReadRecordFromGet(row))
-	if err != nil {
-		s.writeActorReadAuthorityError(w)
-		return
-	}
 	writeJSON(w, http.StatusOK, status)
+}
+
+func getActorStatus(
+	ctx context.Context,
+	store db.Querier,
+	environmentID pgtype.UUID,
+	actorDeclaredID string,
+	address actorReadAddress,
+) (api.ActorStatus, error) {
+	row, err := store.GetActorRead(ctx, db.GetActorReadParams{
+		EnvironmentID: environmentID, ActorDeclaredID: actorDeclaredID,
+		AddressPublicID: pgvalue.Text(address.publicID),
+		AddressKey:      pgvalue.Text(address.key),
+	})
+	if err != nil {
+		return api.ActorStatus{}, err
+	}
+	return projectActorStatus(actorReadRecordFromGet(row))
 }
 
 func parseActorReadAddress(r *http.Request) (actorReadAddress, error) {
@@ -160,12 +171,13 @@ func authorizeActorReadBeforeLookup(principal auth.Actor) error {
 func (s *Server) actorReadScope(
 	r *http.Request,
 	principal auth.Actor,
-) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
+) (auth.Scope, pgtype.UUID, error) {
 	projectRef, environmentRef, err := environmentScopeRefsFromRequest(r, principal, "", "")
 	if err != nil {
-		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
+		return auth.Scope{}, pgtype.UUID{}, err
 	}
-	return s.requestEnvironmentScope(r.Context(), principal, projectRef, environmentRef)
+	scope, _, environmentID, err := s.requestEnvironmentScope(r.Context(), principal, projectRef, environmentRef)
+	return scope, environmentID, err
 }
 
 func (s *Server) writeActorReadScopeError(w http.ResponseWriter, err error) {

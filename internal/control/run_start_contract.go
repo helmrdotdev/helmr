@@ -77,21 +77,21 @@ func parseRunStartArm(request api.WorkerRunStartRequest) (runStartArm, error) {
 	}
 }
 
-func deriveRunStartMode(locators db.GetRunLeaseStartLocatorsRow) (runLeaseClaimMode, error) {
+func deriveRunStartMode(locators db.GetRunLeaseStartLocatorsRow) runLeaseClaimMode {
 	if locators.RunWaitID.Valid {
 		if locators.ResumeChildRunID.Valid &&
 			locators.ResumeChildParentOwned.Valid &&
 			locators.ResumeChildParentOwned.Bool {
 			if locators.RuntimeRestoreCheckpointID.Valid &&
 				locators.RuntimeRestoreCheckpointID == locators.RunWaitCheckpointID {
-				return runLeaseClaimRestore, nil
+				return runLeaseClaimRestore
 			}
-			return runLeaseClaimAttachParent, nil
+			return runLeaseClaimAttachParent
 		}
-		return runLeaseClaimRestore, nil
+		return runLeaseClaimRestore
 	}
 	if locators.EnclosingWaitID.Valid {
-		return runLeaseClaimAttachChild, nil
+		return runLeaseClaimAttachChild
 	}
-	return runLeaseClaimFresh, nil
+	return runLeaseClaimFresh
 }

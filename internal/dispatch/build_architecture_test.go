@@ -36,7 +36,7 @@ func TestBuildPostgresFallbackCarriesDeploymentArchitecture(t *testing.T) {
 	deploymentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	discovery := buildArchitectureDiscovery{row: db.ListQueuedDeploymentBuildCandidatesRow{
 		OrgID: orgID, DeploymentID: deploymentID, BuildRegionID: "us-east-1",
-		BuildArchitecture: "aarch64", LeaseSequence: 1,
+		BuildArchitecture: "x86_64", LeaseSequence: 1,
 		BuildRequestedCpuMillis: 3000, BuildRequestedMemoryBytes: 4 << 30,
 		BuildRequestedScratchBytes: 32 << 30, BuildRequestedExecutors: 1,
 	}}
@@ -53,8 +53,8 @@ func TestBuildPostgresFallbackCarriesDeploymentArchitecture(t *testing.T) {
 	if err := reconciler.ReconcileBuilds(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if authority.candidate.BuildArchitecture != "aarch64" {
-		t.Fatalf("fallback architecture = %q, want aarch64", authority.candidate.BuildArchitecture)
+	if authority.candidate.BuildArchitecture != "x86_64" {
+		t.Fatalf("fallback architecture = %q, want x86_64", authority.candidate.BuildArchitecture)
 	}
 	if authority.candidate.DeploymentID != deploymentID || authority.candidate.OrgID != orgID {
 		t.Fatalf("fallback candidate identity = %+v", authority.candidate)

@@ -183,7 +183,10 @@ func TestTaskStartWaitWaitsForRun(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "run-1"})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1":
 			getRunCalls++
-			_ = json.NewEncoder(w).Encode(api.RunResponse{ID: "run-1", TaskID: "deploy", Status: api.RunStatusSucceeded})
+			_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{
+				ID: "run-1", Status: api.RunStatusSucceeded,
+				Entrypoint: api.RunEntrypointResponse{Kind: "task", ID: "deploy"},
+			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
@@ -221,7 +224,10 @@ func TestTaskStartWaitPollsRunSnapshot(t *testing.T) {
 			if getRunCalls > 1 {
 				status = api.RunStatusSucceeded
 			}
-			_ = json.NewEncoder(w).Encode(api.RunResponse{ID: "run-1", TaskID: "deploy", Status: status})
+			_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{
+				ID: "run-1", Status: status,
+				Entrypoint: api.RunEntrypointResponse{Kind: "task", ID: "deploy"},
+			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
 		}
@@ -282,7 +288,7 @@ func TestTaskStartFollowTimeoutReturnsError(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1/logs":
 			_ = json.NewEncoder(w).Encode(api.RunLogPage{})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1":
-			_ = json.NewEncoder(w).Encode(api.RunResponse{
+			_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{
 				ID: "run-1", Status: api.RunStatusQueued,
 			})
 		default:

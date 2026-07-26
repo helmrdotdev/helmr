@@ -462,18 +462,18 @@ RETURNING id, org_id, project_id, environment_id, workspace_id, base_version_id,
 `
 
 type CreateWorkspaceExecParams struct {
-	ID                   pgtype.UUID           `json:"id"`
-	OrgID                pgtype.UUID           `json:"org_id"`
-	ProjectID            pgtype.UUID           `json:"project_id"`
-	EnvironmentID        pgtype.UUID           `json:"environment_id"`
-	WorkspaceID          pgtype.UUID           `json:"workspace_id"`
-	BaseVersionID        pgtype.UUID           `json:"base_version_id"`
-	RestoreDesiredState  WorkspaceDesiredState `json:"restore_desired_state"`
-	Request              []byte                `json:"request"`
-	Stdin                []byte                `json:"stdin"`
-	ClaimID              pgtype.UUID           `json:"claim_id"`
-	CreatedBySubjectType string                `json:"created_by_subject_type"`
-	CreatedBySubjectID   string                `json:"created_by_subject_id"`
+	ID                   pgtype.UUID `json:"id"`
+	OrgID                pgtype.UUID `json:"org_id"`
+	ProjectID            pgtype.UUID `json:"project_id"`
+	EnvironmentID        pgtype.UUID `json:"environment_id"`
+	WorkspaceID          pgtype.UUID `json:"workspace_id"`
+	BaseVersionID        pgtype.UUID `json:"base_version_id"`
+	RestoreDesiredState  string      `json:"restore_desired_state"`
+	Request              []byte      `json:"request"`
+	Stdin                []byte      `json:"stdin"`
+	ClaimID              pgtype.UUID `json:"claim_id"`
+	CreatedBySubjectType string      `json:"created_by_subject_type"`
+	CreatedBySubjectID   string      `json:"created_by_subject_id"`
 }
 
 func (q *Queries) CreateWorkspaceExec(ctx context.Context, arg CreateWorkspaceExecParams) (WorkspaceProcess, error) {
@@ -622,52 +622,52 @@ type CreateWorkspaceExecRuntimeReservationParams struct {
 }
 
 type CreateWorkspaceExecRuntimeReservationRow struct {
-	ID                         pgtype.UUID          `json:"id"`
-	OrgID                      pgtype.UUID          `json:"org_id"`
-	WorkerGroupID              string               `json:"worker_group_id"`
-	ProjectID                  pgtype.UUID          `json:"project_id"`
-	EnvironmentID              pgtype.UUID          `json:"environment_id"`
-	RegionID                   string               `json:"region_id"`
-	WorkerInstanceID           pgtype.UUID          `json:"worker_instance_id"`
-	RuntimeIdentityID          string               `json:"runtime_identity_id"`
-	DeploymentDefinitionID     pgtype.UUID          `json:"deployment_definition_id"`
-	RuntimeSubstrateID         pgtype.UUID          `json:"runtime_substrate_id"`
-	WorkerEpoch                int64                `json:"worker_epoch"`
-	NetworkPolicy              []byte               `json:"network_policy"`
-	ReservedCpuMillis          int64                `json:"reserved_cpu_millis"`
-	ReservedMemoryBytes        int64                `json:"reserved_memory_bytes"`
-	ReservedWorkloadDiskBytes  int64                `json:"reserved_workload_disk_bytes"`
-	ReservedScratchBytes       int64                `json:"reserved_scratch_bytes"`
-	ReservedExecutionSlots     int32                `json:"reserved_execution_slots"`
-	WorkspaceID                pgtype.UUID          `json:"workspace_id"`
-	ProgramDeploymentID        pgtype.UUID          `json:"program_deployment_id"`
-	RestoreCheckpointID        pgtype.UUID          `json:"restore_checkpoint_id"`
-	ReservedRunID              pgtype.UUID          `json:"reserved_run_id"`
-	ReservedAttemptNumber      pgtype.Int4          `json:"reserved_attempt_number"`
-	ReservedProcessID          pgtype.UUID          `json:"reserved_process_id"`
-	ReservedWorkspaceVersionID pgtype.UUID          `json:"reserved_workspace_version_id"`
-	ReservationExpiresAt       pgtype.Timestamptz   `json:"reservation_expires_at"`
-	DesiredState               RuntimeDesiredState  `json:"desired_state"`
-	DesiredVersion             int64                `json:"desired_version"`
-	DesiredAt                  pgtype.Timestamptz   `json:"desired_at"`
-	DesiredReason              string               `json:"desired_reason"`
-	ObservedState              RuntimeObservedState `json:"observed_state"`
-	ObservedVersion            int64                `json:"observed_version"`
-	ObservedDesiredVersion     int64                `json:"observed_desired_version"`
-	ObservedAt                 pgtype.Timestamptz   `json:"observed_at"`
-	AllocatedAt                pgtype.Timestamptz   `json:"allocated_at"`
-	PreparingAt                pgtype.Timestamptz   `json:"preparing_at"`
-	ReadyAt                    pgtype.Timestamptz   `json:"ready_at"`
-	ClosingAt                  pgtype.Timestamptz   `json:"closing_at"`
-	ClosedAt                   pgtype.Timestamptz   `json:"closed_at"`
-	LostAt                     pgtype.Timestamptz   `json:"lost_at"`
-	FailedAt                   pgtype.Timestamptz   `json:"failed_at"`
-	ReclaimedAt                pgtype.Timestamptz   `json:"reclaimed_at"`
-	TerminalAt                 pgtype.Timestamptz   `json:"terminal_at"`
-	TerminalReasonCode         pgtype.Text          `json:"terminal_reason_code"`
-	TerminalError              []byte               `json:"terminal_error"`
-	CreatedAt                  pgtype.Timestamptz   `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz   `json:"updated_at"`
+	ID                         pgtype.UUID        `json:"id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	WorkerGroupID              string             `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID        `json:"project_id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	RegionID                   string             `json:"region_id"`
+	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
+	RuntimeIdentityID          string             `json:"runtime_identity_id"`
+	DeploymentDefinitionID     pgtype.UUID        `json:"deployment_definition_id"`
+	RuntimeSubstrateID         pgtype.UUID        `json:"runtime_substrate_id"`
+	WorkerEpoch                int64              `json:"worker_epoch"`
+	NetworkPolicy              []byte             `json:"network_policy"`
+	ReservedCpuMillis          int64              `json:"reserved_cpu_millis"`
+	ReservedMemoryBytes        int64              `json:"reserved_memory_bytes"`
+	ReservedWorkloadDiskBytes  int64              `json:"reserved_workload_disk_bytes"`
+	ReservedScratchBytes       int64              `json:"reserved_scratch_bytes"`
+	ReservedExecutionSlots     int32              `json:"reserved_execution_slots"`
+	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
+	ProgramDeploymentID        pgtype.UUID        `json:"program_deployment_id"`
+	RestoreCheckpointID        pgtype.UUID        `json:"restore_checkpoint_id"`
+	ReservedRunID              pgtype.UUID        `json:"reserved_run_id"`
+	ReservedAttemptNumber      pgtype.Int4        `json:"reserved_attempt_number"`
+	ReservedProcessID          pgtype.UUID        `json:"reserved_process_id"`
+	ReservedWorkspaceVersionID pgtype.UUID        `json:"reserved_workspace_version_id"`
+	ReservationExpiresAt       pgtype.Timestamptz `json:"reservation_expires_at"`
+	DesiredState               string             `json:"desired_state"`
+	DesiredVersion             int64              `json:"desired_version"`
+	DesiredAt                  pgtype.Timestamptz `json:"desired_at"`
+	DesiredReason              string             `json:"desired_reason"`
+	ObservedState              string             `json:"observed_state"`
+	ObservedVersion            int64              `json:"observed_version"`
+	ObservedDesiredVersion     int64              `json:"observed_desired_version"`
+	ObservedAt                 pgtype.Timestamptz `json:"observed_at"`
+	AllocatedAt                pgtype.Timestamptz `json:"allocated_at"`
+	PreparingAt                pgtype.Timestamptz `json:"preparing_at"`
+	ReadyAt                    pgtype.Timestamptz `json:"ready_at"`
+	ClosingAt                  pgtype.Timestamptz `json:"closing_at"`
+	ClosedAt                   pgtype.Timestamptz `json:"closed_at"`
+	LostAt                     pgtype.Timestamptz `json:"lost_at"`
+	FailedAt                   pgtype.Timestamptz `json:"failed_at"`
+	ReclaimedAt                pgtype.Timestamptz `json:"reclaimed_at"`
+	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
+	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError              []byte             `json:"terminal_error"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) CreateWorkspaceExecRuntimeReservation(ctx context.Context, arg CreateWorkspaceExecRuntimeReservationParams) (CreateWorkspaceExecRuntimeReservationRow, error) {
@@ -955,12 +955,67 @@ func (q *Queries) FailWorkspaceExecProcess(ctx context.Context, arg FailWorkspac
 	return i, err
 }
 
+const fenceWorkspaceExecLeaseForSecretRevocation = `-- name: FenceWorkspaceExecLeaseForSecretRevocation :one
+UPDATE workspace_leases
+   SET state = 'fenced',
+       terminal_at = transaction_timestamp(),
+       terminal_reason_code = 'workspace_exec_secret_revoked',
+       terminal_error = '{"code":"workspace_exec_secret_revoked","retryable":false}'::jsonb,
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND owner_process_id = $2
+   AND state IN ('active', 'releasing')
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_key_fingerprint, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+`
+
+type FenceWorkspaceExecLeaseForSecretRevocationParams struct {
+	LeaseID   pgtype.UUID `json:"lease_id"`
+	ProcessID pgtype.UUID `json:"process_id"`
+}
+
+func (q *Queries) FenceWorkspaceExecLeaseForSecretRevocation(ctx context.Context, arg FenceWorkspaceExecLeaseForSecretRevocationParams) (WorkspaceLease, error) {
+	row := q.db.QueryRow(ctx, fenceWorkspaceExecLeaseForSecretRevocation, arg.LeaseID, arg.ProcessID)
+	var i WorkspaceLease
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
+		&i.WorkspaceID,
+		&i.WorkspaceMountID,
+		&i.State,
+		&i.OwnerRunLeaseID,
+		&i.OwnerProcessID,
+		&i.BaseVersionID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.MountFencingGeneration,
+		&i.FencingKeyFingerprint,
+		&i.FencingTokenHash,
+		&i.AcquiredAt,
+		&i.RenewedAt,
+		&i.ExpiresAt,
+		&i.ReleasedAt,
+		&i.LostAt,
+		&i.UpdatedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+	)
+	return i, err
+}
+
 const finalizeWorkspaceExecProcess = `-- name: FinalizeWorkspaceExecProcess :one
 UPDATE workspace_processes
    SET state = $1,
        state_version = state_version + 1,
        exited_at = CASE
-           WHEN $1::workspace_process_state = 'exited'
+           WHEN $1::text = 'exited'
            THEN transaction_timestamp()
            ELSE exited_at
        END,
@@ -975,11 +1030,11 @@ RETURNING id, org_id, project_id, environment_id, workspace_id, base_version_id,
 `
 
 type FinalizeWorkspaceExecProcessParams struct {
-	State            WorkspaceProcessState `json:"state"`
-	ReasonCode       pgtype.Text           `json:"reason_code"`
-	Error            []byte                `json:"error"`
-	ProcessID        pgtype.UUID           `json:"process_id"`
-	WorkspaceMountID pgtype.UUID           `json:"workspace_mount_id"`
+	State            string      `json:"state"`
+	ReasonCode       pgtype.Text `json:"reason_code"`
+	Error            []byte      `json:"error"`
+	ProcessID        pgtype.UUID `json:"process_id"`
+	WorkspaceMountID pgtype.UUID `json:"workspace_mount_id"`
 }
 
 func (q *Queries) FinalizeWorkspaceExecProcess(ctx context.Context, arg FinalizeWorkspaceExecProcessParams) (WorkspaceProcess, error) {
@@ -1041,12 +1096,12 @@ RETURNING id, public_id, org_id, project_id, environment_id, region_id, declarat
 `
 
 type FinalizeWorkspaceExecWorkspaceParams struct {
-	VersionID           pgtype.UUID           `json:"version_id"`
-	RestoreDesiredState WorkspaceDesiredState `json:"restore_desired_state"`
-	WorkspaceID         pgtype.UUID           `json:"workspace_id"`
-	BaseVersionID       pgtype.UUID           `json:"base_version_id"`
-	OwnershipGeneration int64                 `json:"ownership_generation"`
-	WriterGeneration    int64                 `json:"writer_generation"`
+	VersionID           pgtype.UUID `json:"version_id"`
+	RestoreDesiredState string      `json:"restore_desired_state"`
+	WorkspaceID         pgtype.UUID `json:"workspace_id"`
+	BaseVersionID       pgtype.UUID `json:"base_version_id"`
+	OwnershipGeneration int64       `json:"ownership_generation"`
+	WriterGeneration    int64       `json:"writer_generation"`
 }
 
 func (q *Queries) FinalizeWorkspaceExecWorkspace(ctx context.Context, arg FinalizeWorkspaceExecWorkspaceParams) (Workspace, error) {
@@ -1483,6 +1538,7 @@ SELECT workspace_processes.org_id,
  WHERE workspace_processes.state IN ('starting', 'running', 'exit_requested')
    AND (
        workspace_mounts.state = 'lost'
+       OR workspace_leases.state = 'fenced'
        OR (
            workspace_leases.state IN ('active', 'releasing')
            AND workspace_leases.expires_at <= transaction_timestamp()
@@ -1735,6 +1791,7 @@ SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.p
    AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
    AND (
        workspace_mounts.state = 'lost'
+       OR workspace_leases.state = 'fenced'
        OR (
            workspace_leases.state IN ('active', 'releasing')
            AND workspace_leases.expires_at <= transaction_timestamp()
@@ -1764,6 +1821,145 @@ func (q *Queries) LockWorkspaceExecRecoveryAuthority(ctx context.Context, arg Lo
 		arg.ExpectedStateVersion,
 	)
 	var i LockWorkspaceExecRecoveryAuthorityRow
+	err := row.Scan(
+		&i.WorkspaceProcess.ID,
+		&i.WorkspaceProcess.OrgID,
+		&i.WorkspaceProcess.ProjectID,
+		&i.WorkspaceProcess.EnvironmentID,
+		&i.WorkspaceProcess.WorkspaceID,
+		&i.WorkspaceProcess.BaseVersionID,
+		&i.WorkspaceProcess.RestoreDesiredState,
+		&i.WorkspaceProcess.RegionID,
+		&i.WorkspaceProcess.WorkerGroupID,
+		&i.WorkspaceProcess.WorkerInstanceID,
+		&i.WorkspaceProcess.WorkerEpoch,
+		&i.WorkspaceProcess.RuntimeInstanceID,
+		&i.WorkspaceProcess.WorkspaceMountID,
+		&i.WorkspaceProcess.State,
+		&i.WorkspaceProcess.StateVersion,
+		&i.WorkspaceProcess.Request,
+		&i.WorkspaceProcess.Stdin,
+		&i.WorkspaceProcess.Stdout,
+		&i.WorkspaceProcess.Stderr,
+		&i.WorkspaceProcess.ClaimID,
+		&i.WorkspaceProcess.ExitCode,
+		&i.WorkspaceProcess.CreatedBySubjectType,
+		&i.WorkspaceProcess.CreatedBySubjectID,
+		&i.WorkspaceProcess.CreatedAt,
+		&i.WorkspaceProcess.StartedAt,
+		&i.WorkspaceProcess.ExitedAt,
+		&i.WorkspaceProcess.TerminalAt,
+		&i.WorkspaceProcess.TerminalReasonCode,
+		&i.WorkspaceProcess.Error,
+		&i.WorkspaceProcess.UpdatedAt,
+		&i.WorkspaceMount.ID,
+		&i.WorkspaceMount.OrgID,
+		&i.WorkspaceMount.WorkerGroupID,
+		&i.WorkspaceMount.ProjectID,
+		&i.WorkspaceMount.EnvironmentID,
+		&i.WorkspaceMount.RegionID,
+		&i.WorkspaceMount.WorkerInstanceID,
+		&i.WorkspaceMount.WorkerEpoch,
+		&i.WorkspaceMount.WorkspaceID,
+		&i.WorkspaceMount.MaterializedVersionID,
+		&i.WorkspaceMount.RuntimeInstanceID,
+		&i.WorkspaceMount.ClaimAttempt,
+		&i.WorkspaceMount.GuestChannelTokenHash,
+		&i.WorkspaceMount.GuestChannelTokenExpiresAt,
+		&i.WorkspaceMount.State,
+		&i.WorkspaceMount.Request,
+		&i.WorkspaceMount.DirtyGeneration,
+		&i.WorkspaceMount.FencingGeneration,
+		&i.WorkspaceMount.FinalizationKind,
+		&i.WorkspaceMount.FinalizationReasonCode,
+		&i.WorkspaceMount.FinalizationError,
+		&i.WorkspaceMount.StagedVersionID,
+		&i.WorkspaceMount.RequestedAt,
+		&i.WorkspaceMount.MountedAt,
+		&i.WorkspaceMount.UnmountedAt,
+		&i.WorkspaceMount.StoppedAt,
+		&i.WorkspaceMount.LostAt,
+		&i.WorkspaceMount.FailedAt,
+		&i.WorkspaceMount.TerminalAt,
+		&i.WorkspaceMount.TerminalReasonCode,
+		&i.WorkspaceMount.TerminalError,
+		&i.WorkspaceMount.CreatedAt,
+		&i.WorkspaceMount.UpdatedAt,
+		&i.WorkspaceLease.ID,
+		&i.WorkspaceLease.OrgID,
+		&i.WorkspaceLease.WorkerGroupID,
+		&i.WorkspaceLease.ProjectID,
+		&i.WorkspaceLease.EnvironmentID,
+		&i.WorkspaceLease.RegionID,
+		&i.WorkspaceLease.WorkerInstanceID,
+		&i.WorkspaceLease.WorkerEpoch,
+		&i.WorkspaceLease.RuntimeInstanceID,
+		&i.WorkspaceLease.WorkspaceID,
+		&i.WorkspaceLease.WorkspaceMountID,
+		&i.WorkspaceLease.State,
+		&i.WorkspaceLease.OwnerRunLeaseID,
+		&i.WorkspaceLease.OwnerProcessID,
+		&i.WorkspaceLease.BaseVersionID,
+		&i.WorkspaceLease.OwnershipGeneration,
+		&i.WorkspaceLease.WriterGeneration,
+		&i.WorkspaceLease.MountFencingGeneration,
+		&i.WorkspaceLease.FencingKeyFingerprint,
+		&i.WorkspaceLease.FencingTokenHash,
+		&i.WorkspaceLease.AcquiredAt,
+		&i.WorkspaceLease.RenewedAt,
+		&i.WorkspaceLease.ExpiresAt,
+		&i.WorkspaceLease.ReleasedAt,
+		&i.WorkspaceLease.LostAt,
+		&i.WorkspaceLease.UpdatedAt,
+		&i.WorkspaceLease.TerminalAt,
+		&i.WorkspaceLease.TerminalReasonCode,
+		&i.WorkspaceLease.TerminalError,
+	)
+	return i, err
+}
+
+const lockWorkspaceExecSecretRevocationAuthority = `-- name: LockWorkspaceExecSecretRevocationAuthority :one
+SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.base_version_id, workspace_processes.restore_desired_state, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.state, workspace_processes.state_version, workspace_processes.request, workspace_processes.stdin, workspace_processes.stdout, workspace_processes.stderr, workspace_processes.claim_id, workspace_processes.exit_code, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.error, workspace_processes.updated_at,
+       workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at,
+       workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.state, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_key_fingerprint, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error
+  FROM workspace_processes
+  JOIN workspace_mounts
+    ON workspace_mounts.id = workspace_processes.workspace_mount_id
+   AND workspace_mounts.workspace_id = workspace_processes.workspace_id
+  JOIN workspace_leases
+    ON workspace_leases.workspace_mount_id = workspace_mounts.id
+   AND workspace_leases.owner_process_id = workspace_processes.id
+ WHERE workspace_processes.org_id = $1
+   AND workspace_processes.id = $2
+   AND workspace_processes.workspace_id = $3
+   AND workspace_processes.state_version = $4
+   AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
+   AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+   AND workspace_leases.state IN ('active', 'releasing')
+ FOR UPDATE OF workspace_processes, workspace_mounts, workspace_leases
+`
+
+type LockWorkspaceExecSecretRevocationAuthorityParams struct {
+	OrgID                pgtype.UUID `json:"org_id"`
+	ProcessID            pgtype.UUID `json:"process_id"`
+	WorkspaceID          pgtype.UUID `json:"workspace_id"`
+	ExpectedStateVersion int64       `json:"expected_state_version"`
+}
+
+type LockWorkspaceExecSecretRevocationAuthorityRow struct {
+	WorkspaceProcess WorkspaceProcess `json:"workspace_process"`
+	WorkspaceMount   WorkspaceMount   `json:"workspace_mount"`
+	WorkspaceLease   WorkspaceLease   `json:"workspace_lease"`
+}
+
+func (q *Queries) LockWorkspaceExecSecretRevocationAuthority(ctx context.Context, arg LockWorkspaceExecSecretRevocationAuthorityParams) (LockWorkspaceExecSecretRevocationAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, lockWorkspaceExecSecretRevocationAuthority,
+		arg.OrgID,
+		arg.ProcessID,
+		arg.WorkspaceID,
+		arg.ExpectedStateVersion,
+	)
+	var i LockWorkspaceExecSecretRevocationAuthorityRow
 	err := row.Scan(
 		&i.WorkspaceProcess.ID,
 		&i.WorkspaceProcess.OrgID,
@@ -2266,39 +2462,39 @@ type RequestWorkspaceExecMountFinalizationParams struct {
 }
 
 type RequestWorkspaceExecMountFinalizationRow struct {
-	ID                         pgtype.UUID         `json:"id"`
-	OrgID                      pgtype.UUID         `json:"org_id"`
-	WorkerGroupID              string              `json:"worker_group_id"`
-	ProjectID                  pgtype.UUID         `json:"project_id"`
-	EnvironmentID              pgtype.UUID         `json:"environment_id"`
-	RegionID                   string              `json:"region_id"`
-	WorkerInstanceID           pgtype.UUID         `json:"worker_instance_id"`
-	WorkerEpoch                int64               `json:"worker_epoch"`
-	WorkspaceID                pgtype.UUID         `json:"workspace_id"`
-	MaterializedVersionID      pgtype.UUID         `json:"materialized_version_id"`
-	RuntimeInstanceID          pgtype.UUID         `json:"runtime_instance_id"`
-	ClaimAttempt               int32               `json:"claim_attempt"`
-	GuestChannelTokenHash      string              `json:"guest_channel_token_hash"`
-	GuestChannelTokenExpiresAt pgtype.Timestamptz  `json:"guest_channel_token_expires_at"`
-	State                      WorkspaceMountState `json:"state"`
-	Request                    []byte              `json:"request"`
-	DirtyGeneration            int64               `json:"dirty_generation"`
-	FencingGeneration          int64               `json:"fencing_generation"`
-	FinalizationKind           pgtype.Text         `json:"finalization_kind"`
-	FinalizationReasonCode     pgtype.Text         `json:"finalization_reason_code"`
-	FinalizationError          []byte              `json:"finalization_error"`
-	StagedVersionID            pgtype.UUID         `json:"staged_version_id"`
-	RequestedAt                pgtype.Timestamptz  `json:"requested_at"`
-	MountedAt                  pgtype.Timestamptz  `json:"mounted_at"`
-	UnmountedAt                pgtype.Timestamptz  `json:"unmounted_at"`
-	StoppedAt                  pgtype.Timestamptz  `json:"stopped_at"`
-	LostAt                     pgtype.Timestamptz  `json:"lost_at"`
-	FailedAt                   pgtype.Timestamptz  `json:"failed_at"`
-	TerminalAt                 pgtype.Timestamptz  `json:"terminal_at"`
-	TerminalReasonCode         pgtype.Text         `json:"terminal_reason_code"`
-	TerminalError              []byte              `json:"terminal_error"`
-	CreatedAt                  pgtype.Timestamptz  `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz  `json:"updated_at"`
+	ID                         pgtype.UUID        `json:"id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	WorkerGroupID              string             `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID        `json:"project_id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	RegionID                   string             `json:"region_id"`
+	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                int64              `json:"worker_epoch"`
+	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
+	MaterializedVersionID      pgtype.UUID        `json:"materialized_version_id"`
+	RuntimeInstanceID          pgtype.UUID        `json:"runtime_instance_id"`
+	ClaimAttempt               int32              `json:"claim_attempt"`
+	GuestChannelTokenHash      string             `json:"guest_channel_token_hash"`
+	GuestChannelTokenExpiresAt pgtype.Timestamptz `json:"guest_channel_token_expires_at"`
+	State                      string             `json:"state"`
+	Request                    []byte             `json:"request"`
+	DirtyGeneration            int64              `json:"dirty_generation"`
+	FencingGeneration          int64              `json:"fencing_generation"`
+	FinalizationKind           pgtype.Text        `json:"finalization_kind"`
+	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
+	FinalizationError          []byte             `json:"finalization_error"`
+	StagedVersionID            pgtype.UUID        `json:"staged_version_id"`
+	RequestedAt                pgtype.Timestamptz `json:"requested_at"`
+	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
+	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
+	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
+	LostAt                     pgtype.Timestamptz `json:"lost_at"`
+	FailedAt                   pgtype.Timestamptz `json:"failed_at"`
+	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
+	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError              []byte             `json:"terminal_error"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) RequestWorkspaceExecMountFinalization(ctx context.Context, arg RequestWorkspaceExecMountFinalizationParams) (RequestWorkspaceExecMountFinalizationRow, error) {
@@ -2580,26 +2776,26 @@ type StageWorkspaceExecCaptureParams struct {
 }
 
 type StageWorkspaceExecCaptureRow struct {
-	ID                     pgtype.UUID           `json:"id"`
-	PublicID               string                `json:"public_id"`
-	OrgID                  pgtype.UUID           `json:"org_id"`
-	ProjectID              pgtype.UUID           `json:"project_id"`
-	EnvironmentID          pgtype.UUID           `json:"environment_id"`
-	WorkspaceID            pgtype.UUID           `json:"workspace_id"`
-	ParentVersionID        pgtype.UUID           `json:"parent_version_id"`
-	ArtifactID             pgtype.UUID           `json:"artifact_id"`
-	ArtifactKind           NullArtifactKind      `json:"artifact_kind"`
-	Kind                   WorkspaceVersionKind  `json:"kind"`
-	ContentDigest          string                `json:"content_digest"`
-	SizeBytes              int64                 `json:"size_bytes"`
-	EntryCount             int32                 `json:"entry_count"`
-	State                  WorkspaceVersionState `json:"state"`
-	SourceWorkspaceLeaseID pgtype.UUID           `json:"source_workspace_lease_id"`
-	OwnershipGeneration    int64                 `json:"ownership_generation"`
-	WriterGeneration       int64                 `json:"writer_generation"`
-	CreatedAt              pgtype.Timestamptz    `json:"created_at"`
-	PublishedAt            pgtype.Timestamptz    `json:"published_at"`
-	DiscardedAt            pgtype.Timestamptz    `json:"discarded_at"`
+	ID                     pgtype.UUID          `json:"id"`
+	PublicID               string               `json:"public_id"`
+	OrgID                  pgtype.UUID          `json:"org_id"`
+	ProjectID              pgtype.UUID          `json:"project_id"`
+	EnvironmentID          pgtype.UUID          `json:"environment_id"`
+	WorkspaceID            pgtype.UUID          `json:"workspace_id"`
+	ParentVersionID        pgtype.UUID          `json:"parent_version_id"`
+	ArtifactID             pgtype.UUID          `json:"artifact_id"`
+	ArtifactKind           NullArtifactKind     `json:"artifact_kind"`
+	Kind                   WorkspaceVersionKind `json:"kind"`
+	ContentDigest          string               `json:"content_digest"`
+	SizeBytes              int64                `json:"size_bytes"`
+	EntryCount             int32                `json:"entry_count"`
+	State                  string               `json:"state"`
+	SourceWorkspaceLeaseID pgtype.UUID          `json:"source_workspace_lease_id"`
+	OwnershipGeneration    int64                `json:"ownership_generation"`
+	WriterGeneration       int64                `json:"writer_generation"`
+	CreatedAt              pgtype.Timestamptz   `json:"created_at"`
+	PublishedAt            pgtype.Timestamptz   `json:"published_at"`
+	DiscardedAt            pgtype.Timestamptz   `json:"discarded_at"`
 }
 
 func (q *Queries) StageWorkspaceExecCapture(ctx context.Context, arg StageWorkspaceExecCaptureParams) (StageWorkspaceExecCaptureRow, error) {

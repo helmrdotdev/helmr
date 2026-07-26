@@ -465,7 +465,7 @@ func migrate(ctx context.Context, pool *pgxpool.Pool, reset bool) error {
 		return err
 	}
 	if serverVersion < 180000 {
-		return fmt.Errorf("PostgreSQL 18 or newer is required for uuidv7() defaults; server_version_num=%d", serverVersion)
+		return fmt.Errorf("PostgreSQL 18 or newer is required by the Helmr schema baseline; server_version_num=%d", serverVersion)
 	}
 	if reset {
 		if _, err := pool.Exec(ctx, `DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public`); err != nil {

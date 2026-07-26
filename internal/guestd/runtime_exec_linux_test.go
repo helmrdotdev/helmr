@@ -12,7 +12,11 @@ import (
 )
 
 func TestImageCommandUsesNamespaceInit(t *testing.T) {
-	cmd, err := imageCommand(context.Background(), "/usr/bin/node", []string{"/opt/helmr/program/helmr/entry.mjs"}, "/workspace", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, imageCommandOptions{ManagedProgram: true, CgroupNamespace: true, StartProof: true})
+	leaf, err := programCgroupLeafName("run-1", 1, "lease-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd, err := imageCommand(context.Background(), "/usr/bin/node", []string{"/opt/helmr/program/helmr/entry.mjs"}, "/workspace", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, imageCommandOptions{ManagedProgram: true, CgroupNamespace: true, CgroupLeaf: leaf, StartProof: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +26,7 @@ func TestImageCommandUsesNamespaceInit(t *testing.T) {
 	if len(cmd.Args) < 11 || cmd.Args[1] != imageRuntimeInitArg {
 		t.Fatalf("args = %#v", cmd.Args)
 	}
-	if cmd.Args[2] != "/image" || cmd.Args[3] != "/workspace" || cmd.Args[4] != "1001" || cmd.Args[5] != "1002" || cmd.Args[6] != "true" || cmd.Args[7] != "true" || cmd.Args[8] != "true" || cmd.Args[9] != "/usr/bin/node" {
+	if cmd.Args[2] != "/image" || cmd.Args[3] != "/workspace" || cmd.Args[4] != "1001" || cmd.Args[5] != "1002" || cmd.Args[6] != "true" || cmd.Args[7] != "true" || cmd.Args[8] != leaf || cmd.Args[9] != "true" || cmd.Args[10] != "/usr/bin/node" {
 		t.Fatalf("init args = %#v", cmd.Args)
 	}
 	if cmd.SysProcAttr == nil {
@@ -60,8 +64,11 @@ func TestImageCommandPtyUsesSessionWithoutSetpgid(t *testing.T) {
 	if cmd.Args[7] != "false" {
 		t.Fatalf("cgroup namespace flag = %q", cmd.Args[7])
 	}
-	if cmd.Args[8] != "false" {
-		t.Fatalf("start proof flag = %q", cmd.Args[8])
+	if cmd.Args[8] != "" {
+		t.Fatalf("cgroup leaf = %q", cmd.Args[8])
+	}
+	if cmd.Args[9] != "false" {
+		t.Fatalf("start proof flag = %q", cmd.Args[9])
 	}
 	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID)
 	if cmd.SysProcAttr.Cloneflags&want != want {

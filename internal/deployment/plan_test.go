@@ -224,7 +224,7 @@ func TestValidateBuildPlanDefinitions(t *testing.T) {
 			errMsg: "architecture",
 		},
 		{
-			name: "mixed Workspace architectures",
+			name: "unsupported Workspace architecture",
 			change: func(plan *BuildPlan) {
 				plan.Definitions = append(plan.Definitions, DefinitionInput{
 					Kind:       DefinitionKindWorkspace,
@@ -245,19 +245,19 @@ func TestValidateBuildPlanDefinitions(t *testing.T) {
 							}},
 						},
 						Resources: ResourcesManifest{
-							MilliCPU:  1000,
-							MemoryMiB: 1024,
-							DiskMiB:   8192,
+							MilliCPU:         1000,
+							MemoryMiB:        1024,
+							EphemeralDiskMiB: 8192,
 						},
 						Network: NetworkManifest{
 							Internet:  true,
 							DenyCIDRs: []string{},
 						},
-						Architecture: ArchitectureAArch64,
+						Architecture: RuntimeArchitecture("aarch64"),
 					},
 				})
 			},
-			errMsg: "Workspace architectures must match",
+			errMsg: "unsupported",
 		},
 		{
 			name: "image architecture",
@@ -611,9 +611,9 @@ func testBuildPlan() BuildPlan {
 						}},
 					},
 					Resources: ResourcesManifest{
-						MilliCPU:  2000,
-						MemoryMiB: 4096,
-						DiskMiB:   32768,
+						MilliCPU:         2000,
+						MemoryMiB:        4096,
+						EphemeralDiskMiB: 32768,
 					},
 					Network: NetworkManifest{
 						Internet:  true,

@@ -36,19 +36,12 @@ const (
 	Project           Prefix = "prj_"
 	Environment       Prefix = "env_"
 	Deployment        Prefix = "dep_"
-	Task              Prefix = "task_"
-	DeploymentTask    Prefix = "dtask_"
-	Sandbox           Prefix = "sbx_"
 	Schedule          Prefix = "sch_"
 	Actor             Prefix = "act_"
 	ActorRecord       Prefix = "arec_"
 	Workspace         Prefix = "wsp_"
 	WorkspaceVersion  Prefix = "wsv_"
-	Session           Prefix = "ses_"
-	SessionRun        Prefix = "srun_"
 	Run               Prefix = "run_"
-	RunOperation      Prefix = "rop_"
-	Wait              Prefix = "wait_"
 	Token             Prefix = "tok_"
 	PublicAccessToken Prefix = "pat_"
 )
@@ -61,19 +54,12 @@ var registeredPrefixes = []Prefix{
 	Project,
 	Environment,
 	Deployment,
-	Task,
-	DeploymentTask,
-	Sandbox,
 	Schedule,
 	Actor,
 	ActorRecord,
 	Workspace,
 	WorkspaceVersion,
-	Session,
-	SessionRun,
 	Run,
-	RunOperation,
-	Wait,
 	Token,
 	PublicAccessToken,
 }

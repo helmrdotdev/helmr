@@ -169,55 +169,55 @@ type CertifyWorkerInstanceParams struct {
 }
 
 type CertifyWorkerInstanceRow struct {
-	ID                          pgtype.UUID         `json:"id"`
-	ResourceID                  string              `json:"resource_id"`
-	WorkerGroupID               string              `json:"worker_group_id"`
-	AttestationFingerprint      string              `json:"attestation_fingerprint"`
-	State                       WorkerInstanceState `json:"state"`
-	ClaimVersion                int64               `json:"claim_version"`
-	CurrentEpoch                pgtype.Int8         `json:"current_epoch"`
-	CurrentServiceID            pgtype.UUID         `json:"current_service_id"`
-	ProtocolVersion             string              `json:"protocol_version"`
-	SupervisorVersion           string              `json:"supervisor_version"`
-	SupportsRun                 bool                `json:"supports_run"`
-	SupportsBuild               bool                `json:"supports_build"`
-	ToolchainCatalogDigest      []byte              `json:"toolchain_catalog_digest"`
-	RuntimeIdentityID           pgtype.Text         `json:"runtime_identity_id"`
-	SubstrateFormat             string              `json:"substrate_format"`
-	SubstrateBuilderAbi         string              `json:"substrate_builder_abi"`
-	SubstrateLayoutAbi          string              `json:"substrate_layout_abi"`
-	CertifiedCpuMillis          int64               `json:"certified_cpu_millis"`
-	CertifiedMemoryBytes        int64               `json:"certified_memory_bytes"`
-	CertifiedWorkloadDiskBytes  int64               `json:"certified_workload_disk_bytes"`
-	CertifiedScratchBytes       int64               `json:"certified_scratch_bytes"`
-	CertifiedBuildCacheBytes    int64               `json:"certified_build_cache_bytes"`
-	CertifiedArtifactCacheBytes int64               `json:"certified_artifact_cache_bytes"`
-	CertifiedHugepagesBytes     int64               `json:"certified_hugepages_bytes"`
-	CertifiedCheckpointBytes    int64               `json:"certified_checkpoint_bytes"`
-	PerVmCpuMillis              int64               `json:"per_vm_cpu_millis"`
-	PerVmMemoryBytes            int64               `json:"per_vm_memory_bytes"`
-	PerVmWorkloadDiskBytes      int64               `json:"per_vm_workload_disk_bytes"`
-	PerVmScratchBytes           int64               `json:"per_vm_scratch_bytes"`
-	MaxVmSlots                  int32               `json:"max_vm_slots"`
-	MaxRunConsumers             int32               `json:"max_run_consumers"`
-	MaxBuildExecutors           int32               `json:"max_build_executors"`
-	MaxRuntimeStarts            int32               `json:"max_runtime_starts"`
-	CertificationProfile        string              `json:"certification_profile"`
-	CertificationFingerprint    string              `json:"certification_fingerprint"`
-	EpochStartedAt              pgtype.Timestamptz  `json:"epoch_started_at"`
-	StartupInventoryEpoch       pgtype.Int8         `json:"startup_inventory_epoch"`
-	StartupInventoryEvidence    []byte              `json:"startup_inventory_evidence"`
-	DrainCleanupFingerprint     pgtype.Text         `json:"drain_cleanup_fingerprint"`
-	DrainCleanupEvidence        []byte              `json:"drain_cleanup_evidence"`
-	CertifiedAt                 pgtype.Timestamptz  `json:"certified_at"`
-	ActivatedAt                 pgtype.Timestamptz  `json:"activated_at"`
-	DrainingAt                  pgtype.Timestamptz  `json:"draining_at"`
-	DisabledAt                  pgtype.Timestamptz  `json:"disabled_at"`
-	LostAt                      pgtype.Timestamptz  `json:"lost_at"`
-	TerminationClaimedAt        pgtype.Timestamptz  `json:"termination_claimed_at"`
-	ProviderTerminatedAt        pgtype.Timestamptz  `json:"provider_terminated_at"`
-	CreatedAt                   pgtype.Timestamptz  `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz  `json:"updated_at"`
+	ID                          pgtype.UUID        `json:"id"`
+	ResourceID                  string             `json:"resource_id"`
+	WorkerGroupID               string             `json:"worker_group_id"`
+	AttestationFingerprint      string             `json:"attestation_fingerprint"`
+	State                       string             `json:"state"`
+	ClaimVersion                int64              `json:"claim_version"`
+	CurrentEpoch                pgtype.Int8        `json:"current_epoch"`
+	CurrentServiceID            pgtype.UUID        `json:"current_service_id"`
+	ProtocolVersion             string             `json:"protocol_version"`
+	SupervisorVersion           string             `json:"supervisor_version"`
+	SupportsRun                 bool               `json:"supports_run"`
+	SupportsBuild               bool               `json:"supports_build"`
+	ToolchainCatalogDigest      []byte             `json:"toolchain_catalog_digest"`
+	RuntimeIdentityID           pgtype.Text        `json:"runtime_identity_id"`
+	SubstrateFormat             string             `json:"substrate_format"`
+	SubstrateBuilderAbi         string             `json:"substrate_builder_abi"`
+	SubstrateLayoutAbi          string             `json:"substrate_layout_abi"`
+	CertifiedCpuMillis          int64              `json:"certified_cpu_millis"`
+	CertifiedMemoryBytes        int64              `json:"certified_memory_bytes"`
+	CertifiedWorkloadDiskBytes  int64              `json:"certified_workload_disk_bytes"`
+	CertifiedScratchBytes       int64              `json:"certified_scratch_bytes"`
+	CertifiedBuildCacheBytes    int64              `json:"certified_build_cache_bytes"`
+	CertifiedArtifactCacheBytes int64              `json:"certified_artifact_cache_bytes"`
+	CertifiedHugepagesBytes     int64              `json:"certified_hugepages_bytes"`
+	CertifiedCheckpointBytes    int64              `json:"certified_checkpoint_bytes"`
+	PerVmCpuMillis              int64              `json:"per_vm_cpu_millis"`
+	PerVmMemoryBytes            int64              `json:"per_vm_memory_bytes"`
+	PerVmWorkloadDiskBytes      int64              `json:"per_vm_workload_disk_bytes"`
+	PerVmScratchBytes           int64              `json:"per_vm_scratch_bytes"`
+	MaxVmSlots                  int32              `json:"max_vm_slots"`
+	MaxRunConsumers             int32              `json:"max_run_consumers"`
+	MaxBuildExecutors           int32              `json:"max_build_executors"`
+	MaxRuntimeStarts            int32              `json:"max_runtime_starts"`
+	CertificationProfile        string             `json:"certification_profile"`
+	CertificationFingerprint    string             `json:"certification_fingerprint"`
+	EpochStartedAt              pgtype.Timestamptz `json:"epoch_started_at"`
+	StartupInventoryEpoch       pgtype.Int8        `json:"startup_inventory_epoch"`
+	StartupInventoryEvidence    []byte             `json:"startup_inventory_evidence"`
+	DrainCleanupFingerprint     pgtype.Text        `json:"drain_cleanup_fingerprint"`
+	DrainCleanupEvidence        []byte             `json:"drain_cleanup_evidence"`
+	CertifiedAt                 pgtype.Timestamptz `json:"certified_at"`
+	ActivatedAt                 pgtype.Timestamptz `json:"activated_at"`
+	DrainingAt                  pgtype.Timestamptz `json:"draining_at"`
+	DisabledAt                  pgtype.Timestamptz `json:"disabled_at"`
+	LostAt                      pgtype.Timestamptz `json:"lost_at"`
+	TerminationClaimedAt        pgtype.Timestamptz `json:"termination_claimed_at"`
+	ProviderTerminatedAt        pgtype.Timestamptz `json:"provider_terminated_at"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) CertifyWorkerInstance(ctx context.Context, arg CertifyWorkerInstanceParams) (CertifyWorkerInstanceRow, error) {
@@ -336,7 +336,7 @@ WITH disabled_groups AS (
     RETURNING worker_instance_credentials.id
 ), lost_workers AS (
     UPDATE worker_instances
-       SET state = (CASE WHEN current_epoch IS NULL THEN 'disabled' ELSE 'lost' END)::worker_instance_state,
+       SET state = CASE WHEN current_epoch IS NULL THEN 'disabled' ELSE 'lost' END,
            claim_version = claim_version + 1,
            disabled_at = CASE WHEN current_epoch IS NULL THEN COALESCE(disabled_at, now()) ELSE disabled_at END,
            lost_at = CASE WHEN current_epoch IS NULL THEN lost_at ELSE COALESCE(lost_at, now()) END,
@@ -389,7 +389,7 @@ type DisableAbsentWorkerGroupsRow struct {
 	RegionID                       string             `json:"region_id"`
 	Name                           string             `json:"name"`
 	Description                    string             `json:"description"`
-	State                          WorkerGroupState   `json:"state"`
+	State                          string             `json:"state"`
 	EnrollmentPolicyFingerprint    string             `json:"enrollment_policy_fingerprint"`
 	AllowedAttestationFingerprints []string           `json:"allowed_attestation_fingerprints"`
 	LaunchAttestationFingerprint   pgtype.Text        `json:"launch_attestation_fingerprint"`
@@ -465,9 +465,9 @@ SELECT id AS worker_group_id,
 `
 
 type GetControlWorkerGroupReadinessRow struct {
-	WorkerGroupID string           `json:"worker_group_id"`
-	State         WorkerGroupState `json:"state"`
-	Routable      bool             `json:"routable"`
+	WorkerGroupID string `json:"worker_group_id"`
+	State         string `json:"state"`
+	Routable      bool   `json:"routable"`
 }
 
 func (q *Queries) GetControlWorkerGroupReadiness(ctx context.Context, workerGroupID string) (GetControlWorkerGroupReadinessRow, error) {
@@ -691,11 +691,12 @@ WITH desired_group AS (
            required_artifact_cache_bytes = EXCLUDED.required_artifact_cache_bytes,
            required_vm_slots = EXCLUDED.required_vm_slots,
            required_build_executors = EXCLUDED.required_build_executors,
-           protocol_version = EXCLUDED.protocol_version
+           protocol_version = EXCLUDED.protocol_version,
+           updated_at = now()
     RETURNING id, region_id, name, description, state, enrollment_policy_fingerprint, allowed_attestation_fingerprints, launch_attestation_fingerprint, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_workload_disk_bytes, required_scratch_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, last_scale_out_at, last_scale_in_at, protocol_version, created_at, updated_at
 ), lost_workers AS (
     UPDATE worker_instances
-       SET state = (CASE WHEN current_epoch IS NULL THEN 'disabled' ELSE 'lost' END)::worker_instance_state,
+       SET state = CASE WHEN current_epoch IS NULL THEN 'disabled' ELSE 'lost' END,
            claim_version = worker_instances.claim_version + 1,
            disabled_at = CASE WHEN current_epoch IS NULL THEN COALESCE(disabled_at, now()) ELSE disabled_at END,
            lost_at = CASE WHEN current_epoch IS NULL THEN lost_at ELSE COALESCE(lost_at, now()) END,
@@ -795,7 +796,7 @@ type ReconcileWorkerGroupRow struct {
 	RegionID                       string             `json:"region_id"`
 	Name                           string             `json:"name"`
 	Description                    string             `json:"description"`
-	State                          WorkerGroupState   `json:"state"`
+	State                          string             `json:"state"`
 	EnrollmentPolicyFingerprint    string             `json:"enrollment_policy_fingerprint"`
 	AllowedAttestationFingerprints []string           `json:"allowed_attestation_fingerprints"`
 	LaunchAttestationFingerprint   pgtype.Text        `json:"launch_attestation_fingerprint"`
@@ -1231,79 +1232,79 @@ type RenewWorkerCertificationParams struct {
 }
 
 type RenewWorkerCertificationRow struct {
-	ID                             string              `json:"id"`
-	RegionID                       string              `json:"region_id"`
-	Name                           string              `json:"name"`
-	Description                    string              `json:"description"`
-	State                          WorkerGroupState    `json:"state"`
-	EnrollmentPolicyFingerprint    string              `json:"enrollment_policy_fingerprint"`
-	AllowedAttestationFingerprints []string            `json:"allowed_attestation_fingerprints"`
-	LaunchAttestationFingerprint   pgtype.Text         `json:"launch_attestation_fingerprint"`
-	ClaimVersion                   int64               `json:"claim_version"`
-	AllowsRun                      bool                `json:"allows_run"`
-	AllowsBuild                    bool                `json:"allows_build"`
-	RequiredCpuMillis              int64               `json:"required_cpu_millis"`
-	RequiredMemoryBytes            int64               `json:"required_memory_bytes"`
-	RequiredWorkloadDiskBytes      int64               `json:"required_workload_disk_bytes"`
-	RequiredScratchBytes           int64               `json:"required_scratch_bytes"`
-	RequiredBuildCacheBytes        int64               `json:"required_build_cache_bytes"`
-	RequiredArtifactCacheBytes     int64               `json:"required_artifact_cache_bytes"`
-	RequiredVmSlots                int32               `json:"required_vm_slots"`
-	RequiredBuildExecutors         int32               `json:"required_build_executors"`
-	LastScaleOutAt                 pgtype.Timestamptz  `json:"last_scale_out_at"`
-	LastScaleInAt                  pgtype.Timestamptz  `json:"last_scale_in_at"`
-	ProtocolVersion                string              `json:"protocol_version"`
-	CreatedAt                      pgtype.Timestamptz  `json:"created_at"`
-	UpdatedAt                      pgtype.Timestamptz  `json:"updated_at"`
-	ID_2                           pgtype.UUID         `json:"id_2"`
-	ResourceID                     string              `json:"resource_id"`
-	WorkerGroupID                  string              `json:"worker_group_id"`
-	AttestationFingerprint         string              `json:"attestation_fingerprint"`
-	State_2                        WorkerInstanceState `json:"state_2"`
-	ClaimVersion_2                 int64               `json:"claim_version_2"`
-	CurrentEpoch                   pgtype.Int8         `json:"current_epoch"`
-	CurrentServiceID               pgtype.UUID         `json:"current_service_id"`
-	ProtocolVersion_2              string              `json:"protocol_version_2"`
-	SupervisorVersion              string              `json:"supervisor_version"`
-	SupportsRun                    bool                `json:"supports_run"`
-	SupportsBuild                  bool                `json:"supports_build"`
-	ToolchainCatalogDigest         []byte              `json:"toolchain_catalog_digest"`
-	RuntimeIdentityID              pgtype.Text         `json:"runtime_identity_id"`
-	SubstrateFormat                string              `json:"substrate_format"`
-	SubstrateBuilderAbi            string              `json:"substrate_builder_abi"`
-	SubstrateLayoutAbi             string              `json:"substrate_layout_abi"`
-	CertifiedCpuMillis             int64               `json:"certified_cpu_millis"`
-	CertifiedMemoryBytes           int64               `json:"certified_memory_bytes"`
-	CertifiedWorkloadDiskBytes     int64               `json:"certified_workload_disk_bytes"`
-	CertifiedScratchBytes          int64               `json:"certified_scratch_bytes"`
-	CertifiedBuildCacheBytes       int64               `json:"certified_build_cache_bytes"`
-	CertifiedArtifactCacheBytes    int64               `json:"certified_artifact_cache_bytes"`
-	CertifiedHugepagesBytes        int64               `json:"certified_hugepages_bytes"`
-	CertifiedCheckpointBytes       int64               `json:"certified_checkpoint_bytes"`
-	PerVmCpuMillis                 int64               `json:"per_vm_cpu_millis"`
-	PerVmMemoryBytes               int64               `json:"per_vm_memory_bytes"`
-	PerVmWorkloadDiskBytes         int64               `json:"per_vm_workload_disk_bytes"`
-	PerVmScratchBytes              int64               `json:"per_vm_scratch_bytes"`
-	MaxVmSlots                     int32               `json:"max_vm_slots"`
-	MaxRunConsumers                int32               `json:"max_run_consumers"`
-	MaxBuildExecutors              int32               `json:"max_build_executors"`
-	MaxRuntimeStarts               int32               `json:"max_runtime_starts"`
-	CertificationProfile           string              `json:"certification_profile"`
-	CertificationFingerprint       string              `json:"certification_fingerprint"`
-	EpochStartedAt                 pgtype.Timestamptz  `json:"epoch_started_at"`
-	StartupInventoryEpoch          pgtype.Int8         `json:"startup_inventory_epoch"`
-	StartupInventoryEvidence       []byte              `json:"startup_inventory_evidence"`
-	DrainCleanupFingerprint        pgtype.Text         `json:"drain_cleanup_fingerprint"`
-	DrainCleanupEvidence           []byte              `json:"drain_cleanup_evidence"`
-	CertifiedAt                    pgtype.Timestamptz  `json:"certified_at"`
-	ActivatedAt                    pgtype.Timestamptz  `json:"activated_at"`
-	DrainingAt                     pgtype.Timestamptz  `json:"draining_at"`
-	DisabledAt                     pgtype.Timestamptz  `json:"disabled_at"`
-	LostAt                         pgtype.Timestamptz  `json:"lost_at"`
-	TerminationClaimedAt           pgtype.Timestamptz  `json:"termination_claimed_at"`
-	ProviderTerminatedAt           pgtype.Timestamptz  `json:"provider_terminated_at"`
-	CreatedAt_2                    pgtype.Timestamptz  `json:"created_at_2"`
-	UpdatedAt_2                    pgtype.Timestamptz  `json:"updated_at_2"`
+	ID                             string             `json:"id"`
+	RegionID                       string             `json:"region_id"`
+	Name                           string             `json:"name"`
+	Description                    string             `json:"description"`
+	State                          string             `json:"state"`
+	EnrollmentPolicyFingerprint    string             `json:"enrollment_policy_fingerprint"`
+	AllowedAttestationFingerprints []string           `json:"allowed_attestation_fingerprints"`
+	LaunchAttestationFingerprint   pgtype.Text        `json:"launch_attestation_fingerprint"`
+	ClaimVersion                   int64              `json:"claim_version"`
+	AllowsRun                      bool               `json:"allows_run"`
+	AllowsBuild                    bool               `json:"allows_build"`
+	RequiredCpuMillis              int64              `json:"required_cpu_millis"`
+	RequiredMemoryBytes            int64              `json:"required_memory_bytes"`
+	RequiredWorkloadDiskBytes      int64              `json:"required_workload_disk_bytes"`
+	RequiredScratchBytes           int64              `json:"required_scratch_bytes"`
+	RequiredBuildCacheBytes        int64              `json:"required_build_cache_bytes"`
+	RequiredArtifactCacheBytes     int64              `json:"required_artifact_cache_bytes"`
+	RequiredVmSlots                int32              `json:"required_vm_slots"`
+	RequiredBuildExecutors         int32              `json:"required_build_executors"`
+	LastScaleOutAt                 pgtype.Timestamptz `json:"last_scale_out_at"`
+	LastScaleInAt                  pgtype.Timestamptz `json:"last_scale_in_at"`
+	ProtocolVersion                string             `json:"protocol_version"`
+	CreatedAt                      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                      pgtype.Timestamptz `json:"updated_at"`
+	ID_2                           pgtype.UUID        `json:"id_2"`
+	ResourceID                     string             `json:"resource_id"`
+	WorkerGroupID                  string             `json:"worker_group_id"`
+	AttestationFingerprint         string             `json:"attestation_fingerprint"`
+	State_2                        string             `json:"state_2"`
+	ClaimVersion_2                 int64              `json:"claim_version_2"`
+	CurrentEpoch                   pgtype.Int8        `json:"current_epoch"`
+	CurrentServiceID               pgtype.UUID        `json:"current_service_id"`
+	ProtocolVersion_2              string             `json:"protocol_version_2"`
+	SupervisorVersion              string             `json:"supervisor_version"`
+	SupportsRun                    bool               `json:"supports_run"`
+	SupportsBuild                  bool               `json:"supports_build"`
+	ToolchainCatalogDigest         []byte             `json:"toolchain_catalog_digest"`
+	RuntimeIdentityID              pgtype.Text        `json:"runtime_identity_id"`
+	SubstrateFormat                string             `json:"substrate_format"`
+	SubstrateBuilderAbi            string             `json:"substrate_builder_abi"`
+	SubstrateLayoutAbi             string             `json:"substrate_layout_abi"`
+	CertifiedCpuMillis             int64              `json:"certified_cpu_millis"`
+	CertifiedMemoryBytes           int64              `json:"certified_memory_bytes"`
+	CertifiedWorkloadDiskBytes     int64              `json:"certified_workload_disk_bytes"`
+	CertifiedScratchBytes          int64              `json:"certified_scratch_bytes"`
+	CertifiedBuildCacheBytes       int64              `json:"certified_build_cache_bytes"`
+	CertifiedArtifactCacheBytes    int64              `json:"certified_artifact_cache_bytes"`
+	CertifiedHugepagesBytes        int64              `json:"certified_hugepages_bytes"`
+	CertifiedCheckpointBytes       int64              `json:"certified_checkpoint_bytes"`
+	PerVmCpuMillis                 int64              `json:"per_vm_cpu_millis"`
+	PerVmMemoryBytes               int64              `json:"per_vm_memory_bytes"`
+	PerVmWorkloadDiskBytes         int64              `json:"per_vm_workload_disk_bytes"`
+	PerVmScratchBytes              int64              `json:"per_vm_scratch_bytes"`
+	MaxVmSlots                     int32              `json:"max_vm_slots"`
+	MaxRunConsumers                int32              `json:"max_run_consumers"`
+	MaxBuildExecutors              int32              `json:"max_build_executors"`
+	MaxRuntimeStarts               int32              `json:"max_runtime_starts"`
+	CertificationProfile           string             `json:"certification_profile"`
+	CertificationFingerprint       string             `json:"certification_fingerprint"`
+	EpochStartedAt                 pgtype.Timestamptz `json:"epoch_started_at"`
+	StartupInventoryEpoch          pgtype.Int8        `json:"startup_inventory_epoch"`
+	StartupInventoryEvidence       []byte             `json:"startup_inventory_evidence"`
+	DrainCleanupFingerprint        pgtype.Text        `json:"drain_cleanup_fingerprint"`
+	DrainCleanupEvidence           []byte             `json:"drain_cleanup_evidence"`
+	CertifiedAt                    pgtype.Timestamptz `json:"certified_at"`
+	ActivatedAt                    pgtype.Timestamptz `json:"activated_at"`
+	DrainingAt                     pgtype.Timestamptz `json:"draining_at"`
+	DisabledAt                     pgtype.Timestamptz `json:"disabled_at"`
+	LostAt                         pgtype.Timestamptz `json:"lost_at"`
+	TerminationClaimedAt           pgtype.Timestamptz `json:"termination_claimed_at"`
+	ProviderTerminatedAt           pgtype.Timestamptz `json:"provider_terminated_at"`
+	CreatedAt_2                    pgtype.Timestamptz `json:"created_at_2"`
+	UpdatedAt_2                    pgtype.Timestamptz `json:"updated_at_2"`
 }
 
 func (q *Queries) RenewWorkerCertification(ctx context.Context, arg RenewWorkerCertificationParams) (RenewWorkerCertificationRow, error) {

@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +17,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+var errActorOutputCursorExpired = errors.New("Actor output cursor is older than the retained output")
 
 const (
 	actorOutputReadDefaultLimit = int32(50)
@@ -65,7 +70,7 @@ func (s *Server) readActorOutputHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	scope, _, environmentID, err := s.actorReadScope(r, principal)
+	scope, environmentID, err := s.actorReadScope(r, principal)
 	if err != nil {
 		s.writeActorOutputReadScopeError(w, err)
 		return
@@ -81,27 +86,53 @@ func (s *Server) readActorOutputHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var afterSequence int64
-	afterPresent := request.after != nil
-	if afterPresent {
-		afterSequence = *request.after
-	}
-	rows, err := s.db.ReadPublicActorOutputPage(r.Context(), db.ReadPublicActorOutputPageParams{
-		LimitCount:      request.limit + 1,
-		AfterPresent:    afterPresent,
-		AfterSequence:   afterSequence,
-		EnvironmentID:   environmentID,
-		ActorDeclaredID: actorDeclaredID,
-		AddressPublicID: pgvalue.Text(request.address.publicID),
-		AddressKey:      pgvalue.Text(request.address.key),
-	})
+	response, err := readActorOutputPage(
+		r.Context(), s.db, environmentID, actorDeclaredID,
+		request.address, request.after, request.limit,
+	)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, notFound(codedError{code: "actor_not_found", message: "Actor not found"}))
+			return
+		}
+		if errors.Is(err, errActorOutputCursorExpired) {
+			writeError(w, gone(codedError{
+				code: "actor_output_cursor_expired", message: err.Error(),
+			}))
+			return
+		}
 		s.writeActorOutputReadAuthorityError(w)
 		return
 	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func readActorOutputPage(
+	ctx context.Context,
+	store db.Querier,
+	environmentID pgtype.UUID,
+	actorDeclaredID string,
+	address actorReadAddress,
+	after *int64,
+	limit int32,
+) (api.ActorOutputPage, error) {
+	var afterSequence int64
+	afterPresent := after != nil
+	if afterPresent {
+		afterSequence = *after
+	}
+	rows, err := store.ReadPublicActorOutputPage(ctx, db.ReadPublicActorOutputPageParams{
+		LimitCount: limit + 1, AfterPresent: afterPresent,
+		AfterSequence: afterSequence, EnvironmentID: environmentID,
+		ActorDeclaredID: actorDeclaredID,
+		AddressPublicID: pgvalue.Text(address.publicID),
+		AddressKey:      pgvalue.Text(address.key),
+	})
+	if err != nil {
+		return api.ActorOutputPage{}, err
+	}
 	if len(rows) == 0 {
-		writeError(w, notFound(codedError{code: "actor_not_found", message: "Actor not found"}))
-		return
+		return api.ActorOutputPage{}, pgx.ErrNoRows
 	}
 	first := rows[0]
 	if first.OutputRetentionFloor < 1 ||
@@ -110,19 +141,14 @@ func (s *Server) readActorOutputHTTP(w http.ResponseWriter, r *http.Request) {
 		first.NextOutputSequence > maxActorOutputFrontier ||
 		first.EffectiveAfter < 0 ||
 		first.EffectiveAfter > maxActorOutputSequence {
-		s.writeActorOutputReadAuthorityError(w)
-		return
+		return api.ActorOutputPage{}, errors.New("Actor output projection is invalid")
 	}
 	if afterPresent && afterSequence+1 < first.OutputRetentionFloor {
-		writeError(w, gone(codedError{
-			code:    "actor_output_cursor_expired",
-			message: "Actor output cursor is older than the retained output",
-		}))
-		return
+		return api.ActorOutputPage{}, errActorOutputCursorExpired
 	}
 
 	response := api.ActorOutputPage{
-		Records:   make([]api.ActorOutputRecord, 0, min(len(rows), int(request.limit))),
+		Records:   make([]api.ActorOutputRecord, 0, min(len(rows), int(limit))),
 		NextAfter: first.EffectiveAfter,
 	}
 	for _, row := range rows {
@@ -130,31 +156,28 @@ func (s *Server) readActorOutputHTTP(w http.ResponseWriter, r *http.Request) {
 			row.OutputRetentionFloor != first.OutputRetentionFloor ||
 			row.NextOutputSequence != first.NextOutputSequence ||
 			row.EffectiveAfter != first.EffectiveAfter {
-			s.writeActorOutputReadAuthorityError(w)
-			return
+			return api.ActorOutputPage{}, errors.New("Actor output projection is inconsistent")
 		}
 		if !row.RecordID.Valid {
 			if len(rows) != 1 {
-				s.writeActorOutputReadAuthorityError(w)
-				return
+				return api.ActorOutputPage{}, errors.New("Actor output empty projection is inconsistent")
 			}
 			break
 		}
 		record, err := projectActorOutputRecord(row)
 		if err != nil {
-			s.writeActorOutputReadAuthorityError(w)
-			return
+			return api.ActorOutputPage{}, err
 		}
 		response.Records = append(response.Records, record)
 	}
-	response.HasMore = len(response.Records) > int(request.limit)
+	response.HasMore = len(response.Records) > int(limit)
 	if response.HasMore {
-		response.Records = response.Records[:request.limit]
+		response.Records = response.Records[:limit]
 	}
 	if len(response.Records) > 0 {
 		response.NextAfter = response.Records[len(response.Records)-1].Sequence
 	}
-	writeJSON(w, http.StatusOK, response)
+	return response, nil
 }
 
 func parseActorOutputReadRequest(r *http.Request) (actorOutputReadRequest, error) {

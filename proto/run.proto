@@ -155,6 +155,17 @@ message RunEvent {
     ActorInputSendRequested actor_input_send_requested = 18;
     StructuredLogRequested structured_log_requested = 19;
     TaskChildInvokeRequested task_child_invoke_requested = 20;
+    ActorStartRequested actor_start_requested = 21;
+    ActorStatusRequested actor_status_requested = 22;
+    ActorCloseRequested actor_close_requested = 23;
+    ActorOutputPageRequested actor_output_page_requested = 24;
+    WorkspaceCreateRequested workspace_create_requested = 25;
+    WorkspaceRetrieveRequested workspace_retrieve_requested = 26;
+    WorkspaceFileReadRequested workspace_file_read_requested = 27;
+    WorkspaceFileStatRequested workspace_file_stat_requested = 28;
+    WorkspaceFileListRequested workspace_file_list_requested = 29;
+    WorkspaceExecRequested workspace_exec_requested = 30;
+    WorkspaceDeleteRequested workspace_delete_requested = 31;
   }
 }
 
@@ -240,6 +251,114 @@ message ActorInputSendRequested {
   }
   string data_json = 5;
   optional string idempotency_key = 6;
+}
+
+message ActorStartRequested {
+  string correlation_id = 1;
+  string declared_id = 2;
+  oneof workspace {
+    string workspace_id = 3;
+    string workspace_key = 4;
+  }
+  optional string key = 5;
+  optional string input_json = 6;
+  optional string idempotency_key = 7;
+  string run_options_json = 8;
+}
+
+message ActorStatusRequested {
+  string correlation_id = 1;
+  string declared_id = 2;
+  oneof address {
+    string actor_id = 3;
+    string actor_key = 4;
+  }
+}
+
+message ActorCloseRequested {
+  string correlation_id = 1;
+  string declared_id = 2;
+  oneof address {
+    string actor_id = 3;
+    string actor_key = 4;
+  }
+  optional string idempotency_key = 5;
+}
+
+message ActorOutputPageRequested {
+  string correlation_id = 1;
+  string declared_id = 2;
+  oneof address {
+    string actor_id = 3;
+    string actor_key = 4;
+  }
+  optional int64 after = 5;
+  uint32 limit = 6;
+}
+
+message WorkspaceAddress {
+  oneof address {
+    string workspace_id = 1;
+    string workspace_key = 2;
+  }
+}
+
+message WorkspaceSecretPlacement {
+  string name = 1;
+  oneof placement {
+    string env = 2;
+    string file = 3;
+  }
+}
+
+message WorkspaceCreateRequested {
+  string correlation_id = 1;
+  string declared_id = 2;
+  optional string key = 3;
+  repeated WorkspaceSecretPlacement secrets = 4;
+  optional string idempotency_key = 5;
+}
+
+message WorkspaceRetrieveRequested {
+  string correlation_id = 1;
+  WorkspaceAddress workspace = 2;
+}
+
+message WorkspaceFileReadRequested {
+  string correlation_id = 1;
+  WorkspaceAddress workspace = 2;
+  string path = 3;
+}
+
+message WorkspaceFileStatRequested {
+  string correlation_id = 1;
+  WorkspaceAddress workspace = 2;
+  string path = 3;
+}
+
+message WorkspaceFileListRequested {
+  string correlation_id = 1;
+  WorkspaceAddress workspace = 2;
+  string path = 3;
+  optional string cursor = 4;
+  uint32 limit = 5;
+}
+
+message WorkspaceExecRequested {
+  string correlation_id = 1;
+  WorkspaceAddress workspace = 2;
+  repeated string command = 3;
+  optional string cwd = 4;
+  map<string, string> env = 5;
+  bytes stdin = 6;
+  optional uint64 timeout_ms = 7;
+  string idempotency_key = 8;
+}
+
+message WorkspaceDeleteRequested {
+  string correlation_id = 1;
+  WorkspaceAddress workspace = 2;
+  optional string idempotency_key = 3;
 }
 
 message ProgramQuiesced {

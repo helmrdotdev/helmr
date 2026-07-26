@@ -205,15 +205,6 @@ func newIntegrationDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var serverVersion int
-	if err := admin.QueryRow(ctx, `SELECT current_setting('server_version_num')::int`).Scan(&serverVersion); err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
-	if serverVersion < 180000 {
-		admin.Close()
-		t.Skipf("Postgres %d does not provide uuidv7(); skipping integration test", serverVersion)
-	}
 	name := "helmr_db_" + strings.ReplaceAll(uuid.NewString(), "-", "_")
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()); err != nil {
 		admin.Close()

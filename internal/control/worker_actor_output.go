@@ -18,7 +18,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -272,11 +271,6 @@ func (s *Server) appendActorOutput(
 			return errActorOutputUnavailable
 		}
 		if err != nil {
-			var postgresError *pgconn.PgError
-			if errors.As(err, &postgresError) &&
-				postgresError.ConstraintName == "actor_records_data_size_check" {
-				return errActorOutputTooLarge
-			}
 			return err
 		}
 		if row.ClaimFingerprintMismatch {

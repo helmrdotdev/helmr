@@ -59,6 +59,7 @@ func init() {
 type imageCommandOptions struct {
 	ManagedProgram  bool
 	CgroupNamespace bool
+	CgroupLeaf      string
 	StartProof      bool
 	Pty             bool
 }
@@ -70,6 +71,13 @@ func imageCommand(ctx context.Context, runtimePath string, args []string, launch
 	if opts.CgroupNamespace && !opts.ManagedProgram {
 		return nil, errors.New("Program cgroup namespace requires managed Program mounts")
 	}
+	if opts.CgroupNamespace {
+		if err := validateProgramCgroupLeaf(opts.CgroupLeaf); err != nil {
+			return nil, err
+		}
+	} else if opts.CgroupLeaf != "" {
+		return nil, errors.New("Program cgroup leaf requires a cgroup namespace")
+	}
 	initArgs := []string{
 		imageRuntimeInitArg,
 		imageRoot,
@@ -78,6 +86,7 @@ func imageCommand(ctx context.Context, runtimePath string, args []string, launch
 		strconv.FormatUint(uint64(user.GID), 10),
 		strconv.FormatBool(opts.ManagedProgram),
 		strconv.FormatBool(opts.CgroupNamespace),
+		opts.CgroupLeaf,
 		strconv.FormatBool(opts.StartProof),
 		runtimePath,
 	}
@@ -93,7 +102,7 @@ func imageCommand(ctx context.Context, runtimePath string, args []string, launch
 }
 
 func runImageRuntimeInit(args []string, env []string) error {
-	if len(args) < 9 {
+	if len(args) < 10 {
 		return errors.New("missing image runtime init arguments")
 	}
 	imageRoot := args[0]
@@ -126,17 +135,25 @@ func runImageRuntimeInit(args []string, env []string) error {
 	if cgroupNamespace && !managedProgram {
 		return errors.New("Program cgroup namespace requires managed Program mounts")
 	}
-	switch args[6] {
+	cgroupLeaf := args[6]
+	if cgroupNamespace {
+		if err := validateProgramCgroupLeaf(cgroupLeaf); err != nil {
+			return err
+		}
+	} else if cgroupLeaf != "" {
+		return errors.New("Program cgroup leaf requires a cgroup namespace")
+	}
+	switch args[7] {
 	case "true":
 		startProof = true
 	case "false":
 	default:
-		return fmt.Errorf("invalid start proof flag %q", args[6])
+		return fmt.Errorf("invalid start proof flag %q", args[7])
 	}
-	runtimePath := args[7]
-	runtimeArgs := args[8:]
+	runtimePath := args[8]
+	runtimeArgs := args[9:]
 	if cgroupNamespace {
-		if err := enterProgramCgroupNamespace(); err != nil {
+		if err := enterProgramCgroupNamespace(cgroupLeaf); err != nil {
 			return err
 		}
 	}

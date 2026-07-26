@@ -21,7 +21,6 @@ import (
 )
 
 type deploymentStore interface {
-	AllocateDeploymentVersion(context.Context, db.AllocateDeploymentVersionParams) (string, error)
 	AppendDeploymentEvent(context.Context, db.AppendDeploymentEventParams) (db.AppendDeploymentEventRow, error)
 	CreateArtifact(context.Context, db.CreateArtifactParams) (db.Artifact, error)
 	CreateDeployment(context.Context, db.CreateDeploymentParams) (db.Deployment, error)
@@ -314,10 +313,6 @@ func createQueuedDeployment(
 	artifact api.DeploymentSourceArtifact,
 	metadata deploymentVersionMetadata,
 ) (db.Deployment, error) {
-	version, err := nextDeploymentVersion(ctx, store, orgID, projectID, environmentID)
-	if err != nil {
-		return db.Deployment{}, err
-	}
 	sourceArtifact, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(orgID),
@@ -347,7 +342,7 @@ func createQueuedDeployment(
 			BuildContractVersion:         target.BuildContractVersion,
 			ProjectID:                    projectID,
 			EnvironmentID:                environmentID,
-			Version:                      version,
+			Version:                      deploymentVersion(publicID, time.Now()),
 			ApiVersion:                   metadata.APIVersion,
 			SdkVersion:                   metadata.SDKVersion,
 			CliVersion:                   metadata.CLIVersion,
@@ -366,17 +361,9 @@ func createQueuedDeployment(
 	return deployment, nil
 }
 
-func nextDeploymentVersion(ctx context.Context, store deploymentStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID) (string, error) {
-	return store.AllocateDeploymentVersion(ctx, db.AllocateDeploymentVersionParams{
-		OrgID:         pgvalue.UUID(orgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		Prefix:        deploymentVersionPrefix(),
-	})
-}
-
-func deploymentVersionPrefix() string {
-	return time.Now().UTC().Format("20060102")
+func deploymentVersion(publicID string, createdAt time.Time) string {
+	return createdAt.UTC().Format("20060102") + "." +
+		strings.TrimPrefix(publicID, publicid.Deployment.String())
 }
 
 func firstNonEmptyString(values ...string) string {

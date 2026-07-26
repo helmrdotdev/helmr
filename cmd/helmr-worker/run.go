@@ -477,7 +477,6 @@ func run(log *slog.Logger) error {
 		preparedRuntimePool.Substrates = substrateResolver
 		preparedRuntimePool.RuntimeSubstrates = controlClient
 		preparedRuntimePool.CheckpointEncryptor = checkpointEncryptor
-		preparedRuntimePool.Network = compute.DefaultNetworkPolicy()
 		preparedRuntimePool.RuntimeInstances = controlClient
 		preparedRuntimePool.BackgroundGate = backgroundGate
 		preparedRuntimePool.Capacity = hostCapacity

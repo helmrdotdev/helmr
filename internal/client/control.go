@@ -403,18 +403,18 @@ type RunScopeOptions struct {
 	EnvironmentID string
 }
 
-func (c *Client) GetRun(ctx context.Context, id string, opts ...RunScopeOptions) (api.RunResponse, error) {
+func (c *Client) GetRun(ctx context.Context, id string, opts ...RunScopeOptions) (api.RunSnapshotResponse, error) {
 	path, err := c.runItemPath(id, "", opts...)
 	if err != nil {
-		return api.RunResponse{}, err
+		return api.RunSnapshotResponse{}, err
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.RunResponse{}, err
+		return api.RunSnapshotResponse{}, err
 	}
-	var response api.RunResponse
+	var response api.RunSnapshotResponse
 	if err := c.doJSON(req, &response); err != nil {
-		return api.RunResponse{}, err
+		return api.RunSnapshotResponse{}, err
 	}
 	return response, nil
 }
@@ -436,7 +436,8 @@ func (c *Client) CancelRun(ctx context.Context, id string, opts ...RunScopeOptio
 }
 
 type ListRunsOptions struct {
-	Status        string
+	Statuses      []string
+	Cursor        string
 	Limit         int32
 	ProjectID     string
 	EnvironmentID string
@@ -468,7 +469,7 @@ func (c *Client) runItemPath(id string, suffix string, opts ...RunScopeOptions) 
 	return environmentScopedResourcePath(basePath, id, suffix), nil
 }
 
-func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.ListRunsResponse, error) {
+func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.ListRunSnapshotsResponse, error) {
 	scope := RunScopeOptions{}
 	if len(opts) > 0 {
 		scope.ProjectID = opts[0].ProjectID
@@ -476,12 +477,17 @@ func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.Lis
 	}
 	path, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/runs")
 	if err != nil {
-		return api.ListRunsResponse{}, err
+		return api.ListRunSnapshotsResponse{}, err
 	}
 	if len(opts) > 0 {
 		values := url.Values{}
-		if opts[0].Status != "" {
-			values.Set("status", opts[0].Status)
+		for _, status := range opts[0].Statuses {
+			if status = strings.TrimSpace(status); status != "" {
+				values.Add("status", status)
+			}
+		}
+		if cursor := strings.TrimSpace(opts[0].Cursor); cursor != "" {
+			values.Set("cursor", cursor)
 		}
 		if opts[0].Limit > 0 {
 			values.Set("limit", strconv.FormatInt(int64(opts[0].Limit), 10))
@@ -492,11 +498,11 @@ func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.Lis
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.ListRunsResponse{}, err
+		return api.ListRunSnapshotsResponse{}, err
 	}
-	var response api.ListRunsResponse
+	var response api.ListRunSnapshotsResponse
 	if err := c.doJSON(req, &response); err != nil {
-		return api.ListRunsResponse{}, err
+		return api.ListRunSnapshotsResponse{}, err
 	}
 	return response, nil
 }

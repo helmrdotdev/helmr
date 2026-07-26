@@ -102,7 +102,7 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, 
 		}
 		return false, handleProgramRestoreVerifyConnection(programConn, start.bodyLen, workspaceRegistry, registry)
 	case wire.StreamTypeWorkspaceFinalizationBegin:
-		return false, handleWorkspaceFinalizationBeginConnection(ctx, conn, workspaceRegistry)
+		return false, handleWorkspaceFinalizationBeginConnection(conn, workspaceRegistry)
 	case wire.StreamTypeWorkspaceCapture:
 		return false, handleWorkspaceCaptureConnection(ctx, conn, workspaceRegistry)
 	case wire.StreamTypeWorkspaceReset:

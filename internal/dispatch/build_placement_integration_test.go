@@ -177,18 +177,24 @@ func (f *buildPlacementFixture) candidate(architecture string) ReadyBuildCandida
 	}
 }
 
-func TestPlaceReadyBuildExcludesMismatchedAndUncertifiedWorkers(t *testing.T) {
+func TestPlaceReadyBuildExcludesIneligibleWorkers(t *testing.T) {
 	for _, test := range []struct {
-		name       string
-		workerArch string
-		certified  bool
+		name                     string
+		certified                bool
+		insufficientCertifiedCPU bool
 	}{
-		{name: "mismatched architecture", workerArch: "aarch64", certified: true},
-		{name: "uncertified worker", workerArch: "x86_64", certified: false},
+		{name: "insufficient certified CPU", certified: true, insufficientCertifiedCPU: true},
+		{name: "uncertified worker", certified: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newBuildPlacementFixture(t, "x86_64")
-			fixture.addWorker(t, test.workerArch, test.certified)
+			workerID := fixture.addWorker(t, "x86_64", test.certified)
+			if test.insufficientCertifiedCPU {
+				mustDispatchExec(t, fixture.ctx, fixture.pool, `
+UPDATE worker_instances
+   SET certified_cpu_millis = 2999
+ WHERE id = $1`, workerID)
+			}
 			_, err := fixture.authority.PlaceReadyBuild(
 				fixture.ctx, fixture.candidate("x86_64"),
 				pgvalue.Timestamptz(time.Now().UTC().Add(-time.Minute)),
@@ -300,23 +306,19 @@ SELECT deployments.build_architecture
 	}
 }
 
-func TestPlaceBuildFinalLockRechecksRuntimeIdentityArchitecture(t *testing.T) {
+func TestPlaceBuildFinalLockRechecksToolchainCatalog(t *testing.T) {
 	fixture := newBuildPlacementFixture(t, "x86_64")
 	workerID := fixture.addWorker(t, "x86_64", true)
-	mismatchedRuntimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	mustDispatchExec(t, fixture.ctx, fixture.pool, `
-INSERT INTO runtime_identities (
-    id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
-) VALUES ($1, 'aarch64', 'helmr.runtime.v0', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0')`,
-		mismatchedRuntimeID)
-	mustDispatchExec(t, fixture.ctx, fixture.pool,
-		`UPDATE worker_instances SET runtime_identity_id = $1 WHERE id = $2`,
-		mismatchedRuntimeID, workerID)
+UPDATE worker_instances
+   SET toolchain_catalog_digest = decode(repeat('04', 32), 'hex')
+ WHERE id = $1`, workerID)
 
 	now := time.Now().UTC()
 	_, err := fixture.authority.placeBuild(fixture.ctx, placeBuildParams{
-		ObservationFreshAfter: pgvalue.Timestamptz(now.Add(-time.Minute)),
-		ExpectedLeaseSequence: 1,
+		ObservationFreshAfter:           pgvalue.Timestamptz(now.Add(-time.Minute)),
+		ExpectedLeaseSequence:           1,
+		ExpectedStandardToolchainDigest: bytes.Repeat([]byte{2}, 32),
 		Lease: db.LeaseQueuedDeploymentBuildParams{
 			OrgID: pgvalue.UUID(fixture.orgID), DeploymentID: pgvalue.UUID(fixture.deploymentID),
 			BuildRegionID: "us-east-1", BuildArchitecture: "x86_64",
@@ -330,8 +332,8 @@ INSERT INTO runtime_identities (
 			BuildLeaseExpiresAt: pgvalue.Timestamptz(now.Add(5 * time.Minute)),
 		},
 	})
-	if err == nil {
-		t.Fatal("placeBuild() accepted a worker whose locked runtime identity architecture changed")
+	if !errors.Is(err, pgx.ErrNoRows) || !strings.Contains(err.Error(), "lock eligible worker epoch") {
+		t.Fatalf("placeBuild() error = %v, want worker epoch fence rejection", err)
 	}
 	var leases int
 	if err := fixture.pool.QueryRow(fixture.ctx,
@@ -340,7 +342,7 @@ INSERT INTO runtime_identities (
 		t.Fatal(err)
 	}
 	if leases != 0 {
-		t.Fatalf("created %d build leases after the final architecture recheck failed", leases)
+		t.Fatalf("created %d build leases after the final toolchain catalog recheck failed", leases)
 	}
 }
 
@@ -353,15 +355,6 @@ func newDispatchIntegrationDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	admin, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
-	}
-	var serverVersion int
-	if err := admin.QueryRow(ctx, `SELECT current_setting('server_version_num')::int`).Scan(&serverVersion); err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
-	if serverVersion < 180000 {
-		admin.Close()
-		t.Skipf("Postgres %d does not provide uuidv7(); skipping integration test", serverVersion)
 	}
 	name := "helmr_dispatch_" + strings.ReplaceAll(uuid.NewString(), "-", "_")
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()); err != nil {

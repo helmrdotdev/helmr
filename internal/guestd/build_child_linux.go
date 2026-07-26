@@ -328,7 +328,7 @@ func applyBuildIdentity(uid, gid uint32) error {
 	if uid == 0 || gid == 0 {
 		return errors.New("build process identity must be unprivileged")
 	}
-	if err := buildAllThreadsPrctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
+	if err := buildAllThreadsPrctl(unix.PR_SET_NO_NEW_PRIVS, 1); err != nil {
 		return fmt.Errorf("set build process no_new_privs: %w", err)
 	}
 	secureBits := buildSecureNoRoot |
@@ -338,18 +338,12 @@ func applyBuildIdentity(uid, gid uint32) error {
 	if err := buildAllThreadsPrctl(
 		unix.PR_SET_SECUREBITS,
 		uintptr(secureBits),
-		0,
-		0,
-		0,
 	); err != nil {
 		return fmt.Errorf("lock build process securebits: %w", err)
 	}
 	if err := buildAllThreadsPrctl(
 		unix.PR_CAP_AMBIENT,
 		unix.PR_CAP_AMBIENT_CLEAR_ALL,
-		0,
-		0,
-		0,
 	); err != nil {
 		return fmt.Errorf("clear build process ambient capabilities: %w", err)
 	}
@@ -377,17 +371,14 @@ func applyBuildIdentity(uid, gid uint32) error {
 func buildAllThreadsPrctl(
 	option int,
 	argument2 uintptr,
-	argument3 uintptr,
-	argument4 uintptr,
-	argument5 uintptr,
 ) error {
 	_, _, errno := syscall.AllThreadsSyscall6(
 		syscall.SYS_PRCTL,
 		uintptr(option),
 		argument2,
-		argument3,
-		argument4,
-		argument5,
+		0,
+		0,
+		0,
 		0,
 	)
 	if errno != 0 {
@@ -402,9 +393,6 @@ func dropBuildBoundingCapabilities() (uintptr, error) {
 		err := buildAllThreadsPrctl(
 			unix.PR_CAPBSET_DROP,
 			capability,
-			0,
-			0,
-			0,
 		)
 		if errors.Is(err, syscall.EINVAL) {
 			if capability == 0 {

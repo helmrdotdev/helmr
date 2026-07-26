@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -18,6 +19,15 @@ import (
 )
 
 const workspaceCreateBodyLimit = int64(256 << 10)
+
+type workspaceReference struct {
+	OrgID         uuid.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	DeclaredID    string
+	PublicID      string
+	Key           *string
+}
 
 func (s *Server) createWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
 	declaredID := chi.URLParam(r, "workspaceDeclaredID")
@@ -57,6 +67,7 @@ func (s *Server) createWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
 		OrgID:          principal.OrgID,
 		ProjectID:      pgvalue.MustUUIDValue(projectID),
 		EnvironmentID:  pgvalue.MustUUIDValue(environmentID),
+		Declaration:    workspaceDeclarationSelector{Kind: workspaceDeclarationPromoted},
 		DeclaredID:     declaredID,
 		Key:            request.Key,
 		Secrets:        request.Secrets,
@@ -150,41 +161,17 @@ func (s *Server) getWorkspaceByReferenceHTTP(w http.ResponseWriter, r *http.Requ
 		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
 		return
 	}
-	var record db.Workspace
-	if byKey {
-		declaredID := chi.URLParam(r, "workspaceDeclaredID")
-		key := r.URL.Query().Get("key")
-		if err := api.ValidateWorkspaceDeclaredID(declaredID); err != nil {
-			writeError(w, badRequest(codedError{code: "invalid_workspace_reference", message: err.Error()}))
-			return
-		}
-		if err := validateWorkspaceKey(&key); err != nil {
-			writeError(w, badRequest(codedError{code: "invalid_workspace_reference", message: err.Error()}))
-			return
-		}
-		record, err = s.db.GetWorkspaceByDeclaredIDAndKey(r.Context(), db.GetWorkspaceByDeclaredIDAndKeyParams{
-			OrgID:               pgvalue.UUID(principal.OrgID),
-			ProjectID:           projectID,
-			EnvironmentID:       environmentID,
-			WorkspaceDeclaredID: pgvalue.Text(declaredID),
-			Key:                 pgtype.Text{String: key, Valid: true},
-		})
-	} else {
-		workspaceID := chi.URLParam(r, "workspaceID")
-		if publicid.ValidateFor(publicid.Workspace, workspaceID) != nil {
-			writeError(w, badRequest(codedError{
-				code:    "invalid_workspace_reference",
-				message: "Workspace ID is invalid",
-			}))
-			return
-		}
-		record, err = s.db.GetWorkspaceByPublicID(r.Context(), db.GetWorkspaceByPublicIDParams{
-			OrgID:         pgvalue.UUID(principal.OrgID),
-			ProjectID:     projectID,
-			EnvironmentID: environmentID,
-			PublicID:      workspaceID,
-		})
+	reference := workspaceReference{
+		OrgID: principal.OrgID, ProjectID: projectID, EnvironmentID: environmentID,
 	}
+	if byKey {
+		key := r.URL.Query().Get("key")
+		reference.DeclaredID = chi.URLParam(r, "workspaceDeclaredID")
+		reference.Key = &key
+	} else {
+		reference.PublicID = chi.URLParam(r, "workspaceID")
+	}
+	record, err := s.resolveWorkspaceReference(r.Context(), reference)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(codedError{code: "workspace_not_found", message: "Workspace was not found"}))
 		return
@@ -197,7 +184,7 @@ func (s *Server) getWorkspaceByReferenceHTTP(w http.ResponseWriter, r *http.Requ
 		}))
 		return
 	}
-	snapshot, err := s.workspaceSnapshot(r.Context(), record)
+	snapshot, err := s.workspaceSnapshot(r.Context(), s.db, record)
 	if err != nil {
 		writeError(w, unavailable(codedError{
 			code:      "workspace_authority_unavailable",
@@ -209,8 +196,47 @@ func (s *Server) getWorkspaceByReferenceHTTP(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, snapshot)
 }
 
-func (s *Server) workspaceSnapshot(ctx context.Context, record db.Workspace) (api.WorkspaceSnapshot, error) {
-	bindings, err := s.db.ListWorkspaceSecrets(ctx, record.ID)
+func (s *Server) resolveWorkspaceReference(
+	ctx context.Context,
+	reference workspaceReference,
+) (db.Workspace, error) {
+	hasPublicID := reference.PublicID != ""
+	hasKey := reference.Key != nil
+	if hasPublicID == hasKey {
+		return db.Workspace{}, errors.New("Workspace reference requires exactly one of ID or key")
+	}
+	if hasPublicID {
+		if publicid.ValidateFor(publicid.Workspace, reference.PublicID) != nil {
+			return db.Workspace{}, errors.New("Workspace ID is invalid")
+		}
+		return s.db.GetWorkspaceByPublicID(ctx, db.GetWorkspaceByPublicIDParams{
+			OrgID:         pgvalue.UUID(reference.OrgID),
+			ProjectID:     reference.ProjectID,
+			EnvironmentID: reference.EnvironmentID,
+			PublicID:      reference.PublicID,
+		})
+	}
+	if err := api.ValidateWorkspaceDeclaredID(reference.DeclaredID); err != nil {
+		return db.Workspace{}, err
+	}
+	if err := validateWorkspaceKey(reference.Key); err != nil {
+		return db.Workspace{}, err
+	}
+	return s.db.GetWorkspaceByDeclaredIDAndKey(ctx, db.GetWorkspaceByDeclaredIDAndKeyParams{
+		OrgID:               pgvalue.UUID(reference.OrgID),
+		ProjectID:           reference.ProjectID,
+		EnvironmentID:       reference.EnvironmentID,
+		WorkspaceDeclaredID: pgvalue.Text(reference.DeclaredID),
+		Key:                 pgtype.Text{String: *reference.Key, Valid: true},
+	})
+}
+
+func (s *Server) workspaceSnapshot(
+	ctx context.Context,
+	q db.Querier,
+	record db.Workspace,
+) (api.WorkspaceSnapshot, error) {
+	bindings, err := q.ListWorkspaceSecrets(ctx, record.ID)
 	if err != nil {
 		return api.WorkspaceSnapshot{}, err
 	}

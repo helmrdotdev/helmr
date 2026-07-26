@@ -45,9 +45,17 @@ func updateRunMetadata(
 		return err
 	}
 	defer cancel()
-	if err := retryRunLeaseRequest(requestCtx, func(retryCtx context.Context) error {
-		return control.UpdateRunMetadata(retryCtx, request)
-	}); err != nil {
+	return retryRunLeaseRequest(requestCtx, func(retryCtx context.Context) error {
+		return sendRunMetadataRequest(retryCtx, control, request)
+	})
+}
+
+func sendRunMetadataRequest(
+	ctx context.Context,
+	control runObservabilityControl,
+	request api.WorkerUpdateRunMetadataRequest,
+) error {
+	if err := control.UpdateRunMetadata(ctx, request); err != nil {
 		return fmt.Errorf("update Run metadata: %w", err)
 	}
 	return nil
@@ -70,9 +78,17 @@ func appendStructuredRunLog(
 		return err
 	}
 	defer cancel()
-	if err := retryRunLeaseRequest(requestCtx, func(retryCtx context.Context) error {
-		return control.AppendStructuredRunLog(retryCtx, request)
-	}); err != nil {
+	return retryRunLeaseRequest(requestCtx, func(retryCtx context.Context) error {
+		return sendStructuredRunLogRequest(retryCtx, control, request)
+	})
+}
+
+func sendStructuredRunLogRequest(
+	ctx context.Context,
+	control runObservabilityControl,
+	request api.WorkerStructuredLogRequest,
+) error {
+	if err := control.AppendStructuredRunLog(ctx, request); err != nil {
 		return fmt.Errorf("append structured Run log: %w", err)
 	}
 	return nil

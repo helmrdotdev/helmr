@@ -12,7 +12,7 @@ func TestRuntimeCatalogRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"formatVersion":0,"runtimes":[{"architecture":"x86_64","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","formatVersion":0,"mediaType":"application/vnd.helmr.runtime.v0+squashfs","runtimeApiVersion":"helmr.runtime.v0","sizeBytes":4096},{"architecture":"aarch64","digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","formatVersion":0,"mediaType":"application/vnd.helmr.runtime.v0+squashfs","runtimeApiVersion":"helmr.runtime.v0","sizeBytes":4096}]}`
+	const want = `{"formatVersion":0,"runtimes":[{"architecture":"x86_64","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","formatVersion":0,"mediaType":"application/vnd.helmr.runtime.v0+squashfs","runtimeApiVersion":"helmr.runtime.v0","sizeBytes":4096},{"architecture":"x86_64","digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","formatVersion":0,"mediaType":"application/vnd.helmr.runtime.v0+squashfs","runtimeApiVersion":"helmr.runtime.v0","sizeBytes":4096}]}`
 	if string(raw) != want {
 		t.Fatalf("canonical runtime catalog = %q, want %q", raw, want)
 	}
@@ -87,7 +87,6 @@ func TestRuntimeCatalogRequiresClosedCanonicalShape(t *testing.T) {
 func testRuntimeCatalogDescriptors() (RuntimeDescriptor, RuntimeDescriptor) {
 	first := testRuntimeDescriptor()
 	second := testRuntimeDescriptor()
-	second.Architecture = ArchitectureAArch64
 	second.Digest = "sha256:" + strings.Repeat("b", 64)
 	return first, second
 }

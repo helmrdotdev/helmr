@@ -361,8 +361,14 @@ SELECT updated.id AS outbox_id,
        meter_events.org_id,
        meter_events.project_id,
        meter_events.environment_id,
-       meter_events.source_type,
-       meter_events.source_id,
+       CASE
+           WHEN meter_events.run_lease_id IS NOT NULL THEN 'run_lease'::text
+           ELSE 'deployment_build_lease'::text
+       END AS source_type,
+       COALESCE(
+           meter_events.run_lease_id,
+           meter_events.deployment_build_lease_id
+       ) AS source_id,
        meter_events.run_id,
        meter_events.deployment_id,
        meter_events.attempt_number,

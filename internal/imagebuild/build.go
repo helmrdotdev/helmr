@@ -450,5 +450,5 @@ func validImageString(value string, maxBytes int) bool {
 }
 
 func validImageArchitecture(value string) bool {
-	return value == "aarch64" || value == "x86_64"
+	return value == "x86_64"
 }

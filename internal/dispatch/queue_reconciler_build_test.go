@@ -14,7 +14,7 @@ import (
 
 type buildReconcileStoreFake struct{}
 
-func (buildReconcileStoreFake) RecoverExpiredRunResumes(context.Context, int32) ([]db.RecoverExpiredRunResumesRow, error) {
+func (buildReconcileStoreFake) RecoverExpiredRunResumes(context.Context, db.RecoverExpiredRunResumesParams) ([]db.RecoverExpiredRunResumesRow, error) {
 	return nil, nil
 }
 
@@ -79,7 +79,7 @@ func TestQueueReconcilerUsesConfiguredRunResumeRecovery(t *testing.T) {
 
 type isolatedQueueStoreFake struct{}
 
-func (isolatedQueueStoreFake) RecoverExpiredRunResumes(context.Context, int32) ([]db.RecoverExpiredRunResumesRow, error) {
+func (isolatedQueueStoreFake) RecoverExpiredRunResumes(context.Context, db.RecoverExpiredRunResumesParams) ([]db.RecoverExpiredRunResumesRow, error) {
 	return nil, nil
 }
 

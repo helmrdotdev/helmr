@@ -11,6 +11,7 @@ import {
 } from "./image"
 import type { RequestOptions } from "./request"
 import { validateTaskId } from "./schema/task"
+import { currentRuntimeOperations } from "./internal/runtime"
 
 const workspaceDefinitionBrand = Symbol.for("helmr.sdk.v0.workspace")
 
@@ -278,9 +279,12 @@ class Definition implements WorkspaceDefinition {
   }
 
   create(
-    _options?: RuntimeWorkspaceCreateOptions,
+    options?: RuntimeWorkspaceCreateOptions,
   ): Promise<WorkspaceIdRef> {
-    return runtimeUnavailable("workspace.create")
+    return currentRuntimeOperations().workspaceCreate(this.id, options)
+      .then(({ workspaceId }) =>
+        createWorkspaceRef({ id: workspaceId }) as WorkspaceIdRef
+      )
   }
 }
 
@@ -301,12 +305,7 @@ function workspaceRef(
     | { readonly id: string; readonly key?: never }
     | { readonly key: string; readonly id?: never },
 ): WorkspaceIdRef | WorkspaceKeyRef {
-  if (
-    ("id" in address && typeof address.id === "string") ===
-    ("key" in address && typeof address.key === "string")
-  ) {
-    throw new Error("workspace ref requires exactly one of id or key")
-  }
+  validateWorkspaceAddress(address)
   return createWorkspaceRef(address)
 }
 
@@ -406,40 +405,56 @@ function createWorkspaceRef(
     | { readonly id: string; readonly key?: never }
     | { readonly key: string; readonly id?: never },
 ): WorkspaceIdRef | WorkspaceKeyRef {
+  const immutableAddress: Readonly<{ id: string } | { key: string }> =
+    address.id !== undefined
+      ? Object.freeze({ id: address.id })
+      : Object.freeze({ key: address.key })
   const files: WorkspaceFiles = Object.freeze({
     read(
-      _path: string,
-      _options?: RequestOptions,
+      path: string,
+      options?: RequestOptions,
     ): Promise<Uint8Array> {
-      return runtimeUnavailable("workspace.files.read")
+      return currentRuntimeOperations().workspaceFileRead(
+        immutableAddress, path, options?.signal,
+      )
     },
     stat(
-      _path: string,
-      _options?: RequestOptions,
+      path: string,
+      options?: RequestOptions,
     ): Promise<WorkspaceFileEntry> {
-      return runtimeUnavailable("workspace.files.stat")
+      return currentRuntimeOperations().workspaceFileStat(
+        immutableAddress, path, options?.signal,
+      )
     },
     list(
-      _path: string,
-      _query?: WorkspaceFileListQuery,
-      _options?: RequestOptions,
+      path: string,
+      query?: WorkspaceFileListQuery,
+      options?: RequestOptions,
     ): Promise<CursorPage<WorkspaceFileEntry>> {
-      return runtimeUnavailable("workspace.files.list")
+      return currentRuntimeOperations().workspaceFileList(
+        immutableAddress, path, query, options?.signal,
+      )
     },
   })
   const operations: WorkspaceRefBase = {
     files,
-    retrieve(_options) {
-      return runtimeUnavailable("workspace.retrieve")
+    retrieve(options) {
+      return currentRuntimeOperations().workspaceRetrieve(
+        immutableAddress, options?.signal,
+      )
     },
-    exec(_options) {
-      return runtimeUnavailable("workspace.exec")
+    exec(request, options) {
+      return currentRuntimeOperations().workspaceExec(
+        immutableAddress, request, options?.signal,
+      )
     },
-    delete(_options) {
-      return runtimeUnavailable("workspace.delete")
+    delete(request, options) {
+      return currentRuntimeOperations().workspaceDelete(
+        immutableAddress, request, options?.signal,
+      )
     },
   }
-  return Object.freeze({ ...address, ...operations }) as
+  return Object.freeze({ ...immutableAddress, ...operations }) as
     | WorkspaceIdRef
     | WorkspaceKeyRef
 }
@@ -481,7 +496,7 @@ function createAuthenticatedWorkspaceRef(
       options: RequestOptions = {},
     ): Promise<Uint8Array> {
       const id = await resolveID(options.signal)
-      const response = workspaceObject(
+      return parseWorkspaceFileContent(
         await transport.request(
           "GET",
           `/api/workspaces/${encodeURIComponent(id)}/files/content?${
@@ -489,11 +504,6 @@ function createAuthenticatedWorkspaceRef(
           }`,
           options.signal === undefined ? {} : { signal: options.signal },
         ),
-        "Workspace file response",
-      )
-      return decodeWorkspaceBase64(
-        response["data_base64"],
-        "Workspace file response.data_base64",
       )
     },
     async stat(
@@ -520,25 +530,13 @@ function createAuthenticatedWorkspaceRef(
       const query = new URLSearchParams({ path })
       if (queryInput.cursor !== undefined) query.set("cursor", queryInput.cursor)
       if (queryInput.limit !== undefined) query.set("limit", String(queryInput.limit))
-      const response = workspaceObject(
+      return parseWorkspaceFilePage(
         await transport.request(
           "GET",
           `/api/workspaces/${encodeURIComponent(id)}/files?${query.toString()}`,
           options.signal === undefined ? {} : { signal: options.signal },
         ),
-        "Workspace file list response",
       )
-      if (!Array.isArray(response["items"])) {
-        throw new Error("Workspace file list response.items must be an array")
-      }
-      const nextCursor = response["next_cursor"]
-      if (nextCursor !== undefined && typeof nextCursor !== "string") {
-        throw new Error("Workspace file list response.next_cursor must be a string")
-      }
-      return Object.freeze({
-        items: Object.freeze(response["items"].map(parseWorkspaceFileEntry)),
-        ...(nextCursor === undefined ? {} : { nextCursor }),
-      })
     },
   })
   return Object.freeze({
@@ -550,7 +548,7 @@ function createAuthenticatedWorkspaceRef(
       options: RequestOptions = {},
     ): Promise<WorkspaceExecResult> {
       const id = await resolveID(options.signal)
-      const response = workspaceObject(
+      return parseWorkspaceExecResult(
         await transport.request(
           "POST",
           `/api/workspaces/${encodeURIComponent(id)}/exec`,
@@ -570,30 +568,14 @@ function createAuthenticatedWorkspaceRef(
             ...(options.signal === undefined ? {} : { signal: options.signal }),
           },
         ),
-        "Workspace exec response",
       )
-      const exitCode = response["exit_code"]
-      if (!Number.isSafeInteger(exitCode)) {
-        throw new Error("Workspace exec response.exit_code must be an integer")
-      }
-      return Object.freeze({
-        exitCode: exitCode as number,
-        stdout: decodeWorkspaceBase64(
-          response["stdout_base64"],
-          "Workspace exec response.stdout_base64",
-        ),
-        stderr: decodeWorkspaceBase64(
-          response["stderr_base64"],
-          "Workspace exec response.stderr_base64",
-        ),
-      })
     },
     async delete(
       request: WorkspaceDeleteRequest = {},
       options: RequestOptions = {},
     ): Promise<WorkspaceDeleteReceipt> {
       const id = await resolveID(options.signal)
-      const response = workspaceObject(
+      return parseWorkspaceDeleteReceipt(
         await transport.request(
           "POST",
           `/api/workspaces/${encodeURIComponent(id)}/delete`,
@@ -604,14 +586,7 @@ function createAuthenticatedWorkspaceRef(
             ...(options.signal === undefined ? {} : { signal: options.signal }),
           },
         ),
-        "Workspace delete response",
       )
-      return Object.freeze({
-        workspaceId: workspacePublicID(
-          response["workspace_id"],
-          "Workspace delete response.workspace_id",
-        ),
-      })
     },
   }) as WorkspaceIdRef | WorkspaceKeyRef
 }
@@ -634,7 +609,7 @@ function validateWorkspaceAddress(
   }
 }
 
-function parseWorkspaceSnapshot(value: unknown): WorkspaceSnapshot {
+export function parseWorkspaceSnapshot(value: unknown): WorkspaceSnapshot {
   const input = workspaceObject(value, "Workspace response")
   const key = input["key"]
   if (key !== undefined && typeof key !== "string") {
@@ -684,7 +659,7 @@ function parseWorkspaceSecret(value: unknown): WorkspaceSecret {
   })
 }
 
-function parseWorkspaceFileEntry(value: unknown): WorkspaceFileEntry {
+export function parseWorkspaceFileEntry(value: unknown): WorkspaceFileEntry {
   const input = workspaceObject(value, "Workspace file entry")
   if (
     typeof input["path"] !== "string" ||
@@ -723,6 +698,64 @@ function parseWorkspaceFileEntry(value: unknown): WorkspaceFileEntry {
     default:
       throw new Error("Workspace file entry.kind is invalid")
   }
+}
+
+export function parseWorkspaceFileContent(value: unknown): Uint8Array {
+  const response = workspaceObject(value, "Workspace file response")
+  return decodeWorkspaceBase64(
+    response["data_base64"],
+    "Workspace file response.data_base64",
+  )
+}
+
+export function parseWorkspaceFilePage(
+  value: unknown,
+): CursorPage<WorkspaceFileEntry> {
+  const response = workspaceObject(value, "Workspace file list response")
+  if (!Array.isArray(response["items"])) {
+    throw new Error("Workspace file list response.items must be an array")
+  }
+  const nextCursor = response["next_cursor"]
+  if (nextCursor !== undefined && typeof nextCursor !== "string") {
+    throw new Error("Workspace file list response.next_cursor must be a string")
+  }
+  return Object.freeze({
+    items: Object.freeze(response["items"].map(parseWorkspaceFileEntry)),
+    ...(nextCursor === undefined ? {} : { nextCursor }),
+  })
+}
+
+export function parseWorkspaceExecResult(
+  value: unknown,
+): WorkspaceExecResult {
+  const response = workspaceObject(value, "Workspace exec response")
+  const exitCode = response["exit_code"]
+  if (!Number.isSafeInteger(exitCode)) {
+    throw new Error("Workspace exec response.exit_code must be an integer")
+  }
+  return Object.freeze({
+    exitCode: exitCode as number,
+    stdout: decodeWorkspaceBase64(
+      response["stdout_base64"],
+      "Workspace exec response.stdout_base64",
+    ),
+    stderr: decodeWorkspaceBase64(
+      response["stderr_base64"],
+      "Workspace exec response.stderr_base64",
+    ),
+  })
+}
+
+export function parseWorkspaceDeleteReceipt(
+  value: unknown,
+): WorkspaceDeleteReceipt {
+  const response = workspaceObject(value, "Workspace delete response")
+  return Object.freeze({
+    workspaceId: workspacePublicID(
+      response["workspace_id"],
+      "Workspace delete response.workspace_id",
+    ),
+  })
 }
 
 function workspaceObject(
@@ -800,10 +833,4 @@ function assertResourceMembers(value: WorkspaceResources): void {
   ) {
     throw new Error("workspace resources support only cpu and memory")
   }
-}
-
-function runtimeUnavailable<T>(operation: string): T {
-  throw new Error(
-    `${operation} is unavailable without the Helmr managed runtime or authenticated client`,
-  )
 }

@@ -13,6 +13,10 @@ import (
 
 const maxIdempotencyKeyLength = 512
 
+type workerMessagePayload struct {
+	Message string `json:"message"`
+}
+
 func normalizedJSONObject(raw json.RawMessage, label string) ([]byte, error) {
 	if len(raw) == 0 {
 		return []byte(`{}`), nil
@@ -62,7 +66,3 @@ func parseOptionalWorkspaceUUID(field, raw string) (pgtype.UUID, error) {
 func parseWorkspaceUUID(field, raw string) (pgtype.UUID, error) {
 	return parseRequiredWorkspaceUUID(field, raw)
 }
-
-func (e terminalPayloadError) Error() string { return e.err.Error() }
-
-func (e terminalPayloadError) Unwrap() error { return e.err }

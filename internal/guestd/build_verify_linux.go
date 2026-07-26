@@ -67,7 +67,7 @@ func handleBuildVerification(
 		return err
 	}
 	result, err := runBuildVerifier(ctx, buildProcessConfig{
-		Aliases: buildInstallAliases(request.Runtime.Architecture),
+		Aliases: buildInstallAliases(),
 		Command: buildCommand{
 			Argv: []string{
 				"/opt/helmr/runtime/bin/node",
@@ -150,7 +150,7 @@ func runBuildVerifier(
 		if !cgroupClosed {
 			returnErr = errors.Join(
 				returnErr,
-				cleanupBuildCgroup(cgroupPath, cgroup, true),
+				cleanupBuildCgroup(cgroupPath, cgroup),
 			)
 		}
 	}()
@@ -160,7 +160,7 @@ func runBuildVerifier(
 	if err != nil {
 		return buildCommandResult{}, err
 	}
-	if err := cleanupBuildCgroup(cgroupPath, cgroup, true); err != nil {
+	if err := cleanupBuildCgroup(cgroupPath, cgroup); err != nil {
 		return buildCommandResult{}, err
 	}
 	cgroupClosed = true
@@ -174,14 +174,4 @@ func runBuildVerifier(
 		)
 	}
 	return result, nil
-}
-
-func programBuildArtifact(
-	descriptor deployment.ProgramDescriptor,
-) deployment.ArtifactDescriptor {
-	return deployment.ArtifactDescriptor{
-		Digest:    descriptor.Digest,
-		MediaType: descriptor.MediaType,
-		SizeBytes: descriptor.SizeBytes,
-	}
 }

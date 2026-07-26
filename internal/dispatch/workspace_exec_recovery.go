@@ -78,15 +78,20 @@ func (d *Authority) RecoverWorkspaceExec(
 	reasonCode := "workspace_exec_lease_expired"
 	if authority.WorkspaceMount.State == db.WorkspaceMountStateLost {
 		reasonCode = "workspace_exec_worker_lost"
-	} else if _, err := q.LoseWorkspaceExecMount(
-		ctx,
-		db.LoseWorkspaceExecMountParams{
-			ReasonCode:       pgvalue.Text(reasonCode),
-			WorkspaceMountID: authority.WorkspaceMount.ID,
-			WorkspaceID:      authority.WorkspaceProcess.WorkspaceID,
-		},
-	); err != nil {
-		return classifyWorkspaceExecRecoveryError(err)
+	} else {
+		if authority.WorkspaceLease.State == db.WorkspaceLeaseStateFenced {
+			reasonCode = "workspace_exec_secret_revoked"
+		}
+		if _, err := q.LoseWorkspaceExecMount(
+			ctx,
+			db.LoseWorkspaceExecMountParams{
+				ReasonCode:       pgvalue.Text(reasonCode),
+				WorkspaceMountID: authority.WorkspaceMount.ID,
+				WorkspaceID:      authority.WorkspaceProcess.WorkspaceID,
+			},
+		); err != nil {
+			return classifyWorkspaceExecRecoveryError(err)
+		}
 	}
 	if affected, err := q.CloseWorkspaceExecRuntime(
 		ctx,
@@ -275,7 +280,7 @@ func finalizeRecoveredWorkspaceExec(
 		); err != nil {
 			return classifyWorkspaceExecRecoveryError(err)
 		}
-	case db.WorkspaceLeaseStateExpired:
+	case db.WorkspaceLeaseStateExpired, db.WorkspaceLeaseStateFenced:
 	default:
 		return ErrCandidateChanged
 	}
@@ -386,7 +391,7 @@ func failUncertainWorkspaceExec(
 		); err != nil {
 			return classifyWorkspaceExecRecoveryError(err)
 		}
-	case db.WorkspaceLeaseStateExpired:
+	case db.WorkspaceLeaseStateExpired, db.WorkspaceLeaseStateFenced:
 	default:
 		return ErrCandidateChanged
 	}

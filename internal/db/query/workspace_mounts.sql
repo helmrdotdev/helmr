@@ -20,8 +20,8 @@ SELECT sqlc.arg(id), runtime_instances.org_id, runtime_instances.project_id,
   JOIN workspace_versions ON workspace_versions.workspace_id = runtime_instances.workspace_id
                          AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
                          AND workspace_versions.state = CASE
-                                 WHEN runtime_instances.restore_checkpoint_id IS NULL THEN 'committed'::workspace_version_state
-                                 ELSE 'private'::workspace_version_state
+                                 WHEN runtime_instances.restore_checkpoint_id IS NULL THEN 'committed'
+                                 ELSE 'private'
                              END
  WHERE runtime_instances.org_id = sqlc.arg(org_id)
    AND runtime_instances.workspace_id = sqlc.arg(workspace_id)

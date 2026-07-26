@@ -69,6 +69,9 @@ def package(
     contents = {
         "catalog.json": b"catalog",
         "catalog.sigstore.json": b"bundle",
+        "manager-release/catalog.json": b"manager catalog",
+        "manager-release/catalog.sigstore.json": b"manager bundle",
+        "manager-release/trusted-root.json": b"root",
         "trusted-root.json": b"root",
         "toolchain-release/catalog.json": json.dumps(
             catalog,
@@ -112,7 +115,7 @@ def checksum(header):
 class RuntimeReleaseTest(unittest.TestCase):
     def extract(self, archive):
         destination = Path(self.directory.name) / "out"
-        runtime_release.extract(str(archive), str(destination), "x86_64")
+        runtime_release.extract(str(archive), str(destination))
         return destination
 
     def setUp(self):
@@ -196,13 +199,12 @@ class RuntimeReleaseTest(unittest.TestCase):
         archive = self.root / "arm.tar"
         package(archive, architecture="aarch64")
 
-        with self.assertRaisesRegex(ValueError, "no x86_64 closure"):
+        with self.assertRaisesRegex(ValueError, "not a closed v0 toolchain"):
             self.extract(archive)
 
-    def test_extracts_all_predecessor_closures_for_architecture(self):
+    def test_extracts_all_predecessor_closures(self):
         archive = self.root / "release.tar"
         toolchains = [
-            ("aarch64", b"arm"),
             ("x86_64", b"current"),
             ("x86_64", b"predecessor"),
         ]

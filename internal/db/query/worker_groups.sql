@@ -46,11 +46,12 @@ WITH desired_group AS (
            required_artifact_cache_bytes = EXCLUDED.required_artifact_cache_bytes,
            required_vm_slots = EXCLUDED.required_vm_slots,
            required_build_executors = EXCLUDED.required_build_executors,
-           protocol_version = EXCLUDED.protocol_version
+           protocol_version = EXCLUDED.protocol_version,
+           updated_at = now()
     RETURNING *
 ), lost_workers AS (
     UPDATE worker_instances
-       SET state = (CASE WHEN current_epoch IS NULL THEN 'disabled' ELSE 'lost' END)::worker_instance_state,
+       SET state = CASE WHEN current_epoch IS NULL THEN 'disabled' ELSE 'lost' END,
            claim_version = worker_instances.claim_version + 1,
            disabled_at = CASE WHEN current_epoch IS NULL THEN COALESCE(disabled_at, now()) ELSE disabled_at END,
            lost_at = CASE WHEN current_epoch IS NULL THEN lost_at ELSE COALESCE(lost_at, now()) END,
@@ -162,7 +163,7 @@ WITH disabled_groups AS (
     RETURNING worker_instance_credentials.id
 ), lost_workers AS (
     UPDATE worker_instances
-       SET state = (CASE WHEN current_epoch IS NULL THEN 'disabled' ELSE 'lost' END)::worker_instance_state,
+       SET state = CASE WHEN current_epoch IS NULL THEN 'disabled' ELSE 'lost' END,
            claim_version = claim_version + 1,
            disabled_at = CASE WHEN current_epoch IS NULL THEN COALESCE(disabled_at, now()) ELSE disabled_at END,
            lost_at = CASE WHEN current_epoch IS NULL THEN lost_at ELSE COALESCE(lost_at, now()) END,

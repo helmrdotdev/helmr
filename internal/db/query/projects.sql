@@ -59,7 +59,8 @@ SELECT *
 -- name: UpdateProjectDetails :one
 UPDATE projects
    SET slug = sqlc.arg(slug),
-       name = sqlc.arg(name)
+       name = sqlc.arg(name),
+       updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id)
 RETURNING *;
@@ -72,13 +73,15 @@ RETURNING *;
 
 -- name: ClearDefaultProject :execrows
 UPDATE projects
-   SET is_default = false
+   SET is_default = false,
+       updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND is_default;
 
 -- name: SetDefaultProject :execrows
 UPDATE projects
-   SET is_default = true
+   SET is_default = true,
+       updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id);
 
@@ -113,7 +116,8 @@ RETURNING *;
 UPDATE environments
    SET slug = sqlc.arg(slug),
        name = sqlc.arg(name),
-       color_hex = sqlc.arg(color_hex)
+       color_hex = sqlc.arg(color_hex),
+       updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND id = sqlc.arg(id)

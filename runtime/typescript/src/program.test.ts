@@ -1,6 +1,16 @@
 import { create, fromBinary, toBinary, type GenMessage } from "@bufbuild/protobuf"
 import { runProto } from "@helmr/proto"
-import { actor, logger, metadata, task, timers, tokens, workspaces } from "@helmr/sdk"
+import {
+  actor,
+  image,
+  logger,
+  metadata,
+  task,
+  timers,
+  tokens,
+  workspace,
+  workspaces,
+} from "@helmr/sdk"
 import { describe, expect, test } from "bun:test"
 
 import { runProgram, type ProgramIO } from "./program"
@@ -707,6 +717,147 @@ describe("runProgram", () => {
     if (outcome.case === "taskOutcome" && outcome.value.outcome.case === "succeeded") {
       expect(outcome.value.outcome.value.outputJson).toBe(
         '{"id":"run_aaaaaaaaaaaaaaaaaaaaaaaaaa"}',
+      )
+    }
+  })
+
+  test("preserves omitted Actor start input separately from JSON null", async () => {
+    const mailbox = actor({ id: "mailbox", run() {} })
+    const observed: Array<string | undefined> = []
+    const definition = task({
+      id: "deploy",
+      async run() {
+        await mailbox.start({
+          workspace: workspaces.ref({ key: "actor-workspace" }),
+        })
+        await mailbox.start({
+          workspace: workspaces.ref({ key: "actor-workspace" }),
+          input: null,
+        })
+        return null
+      },
+    })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+    const requestWritten = [deferred<void>(), deferred<void>()]
+    async function* input(): AsyncIterable<Uint8Array> {
+      yield frameMessage(runProto.ProgramStartSchema, start)
+      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      for (let index = 0; index < 2; index++) {
+        await requestWritten[index]!.promise
+        const event = readEvent(output[index + 1]!).event
+        if (event.case !== "actorStartRequested") return
+        observed.push(event.value.inputJson)
+        yield actorDecision(
+          event.value.correlationId,
+          "completed",
+          '{"actor_id":"act_aaaaaaaaaaaaaaaaaaaaaaaaaa","run_id":"run_aaaaaaaaaaaaaaaaaaaaaaaaaa"}',
+        )
+      }
+    }
+    await runProgram(locatorURL, programIO({
+      input: input(),
+      definition,
+      output,
+      onWrite: () => {
+        if (output.length === 2) requestWritten[0]!.resolve()
+        if (output.length === 3) requestWritten[1]!.resolve()
+      },
+    }))
+    expect(observed).toEqual([undefined, "null"])
+    expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
+      "entrypointReady",
+      "actorStartRequested",
+      "actorStartRequested",
+      "taskOutcome",
+    ])
+  })
+
+  test("bridges every Workspace runtime operation through typed events", async () => {
+    const cache = workspace("cache")
+      .image(image("root").from("debian:bookworm-slim"))
+      .resources({ cpu: 1, memory: "1GiB" })
+    const observed: string[] = []
+    const definition = task({
+      id: "deploy",
+      async run() {
+        const created = await cache.create({
+          key: "build-cache",
+          secrets: [{ name: "TOKEN", env: "TOKEN" }],
+          idempotencyKey: "create:cache",
+        })
+        const snapshot = await created.retrieve()
+        const content = await created.files.read("result.txt")
+        const entry = await created.files.stat("result.txt")
+        const page = await created.files.list(".", { limit: 10 })
+        const executed = await created.exec({
+          command: ["sh", "-c", "printf ok"],
+          stdin: new Uint8Array([1, 2, 3]),
+          timeout: "1s",
+          idempotencyKey: "exec:cache",
+        })
+        const deleted = await created.delete({ idempotencyKey: "delete:cache" })
+        return {
+          id: snapshot.id,
+          content: new TextDecoder().decode(content),
+          kind: entry.kind,
+          count: page.items.length,
+          exitCode: executed.exitCode,
+          stdout: new TextDecoder().decode(executed.stdout),
+          deleted: deleted.workspaceId,
+        }
+      },
+    })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+    const requested = Array.from({ length: 7 }, () => deferred<void>())
+    async function* input(): AsyncIterable<Uint8Array> {
+      yield frameMessage(runProto.ProgramStartSchema, start)
+      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      const responses = [
+        '{"workspace_id":"wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa"}',
+        '{"id":"wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa","key":"build-cache","declared_id":"cache","status":"available","secrets":[{"name":"TOKEN","env":"TOKEN"}],"last_activity_at":"2026-07-26T00:00:00Z","created_at":"2026-07-26T00:00:00Z","updated_at":"2026-07-26T00:00:00Z"}',
+        '{"data_base64":"b2s="}',
+        '{"path":"result.txt","kind":"file","mode":420,"size_bytes":2}',
+        '{"items":[{"path":"result.txt","kind":"file","mode":420,"size_bytes":2}]}',
+        '{"exit_code":0,"stdout_base64":"b2s=","stderr_base64":""}',
+        '{"workspace_id":"wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa"}',
+      ]
+      for (let index = 0; index < responses.length; index++) {
+        await requested[index]!.promise
+        const event = readEvent(output[index + 1]!).event
+        if (event.case === undefined) return
+        observed.push(event.case)
+        const correlationId = "correlationId" in event.value
+          ? event.value.correlationId as string
+          : ""
+        yield actorDecision(correlationId, "completed", responses[index]!)
+      }
+    }
+    await runProgram(locatorURL, programIO({
+      input: input(),
+      definition,
+      output,
+      onWrite: () => {
+        const index = output.length - 2
+        if (index >= 0 && index < requested.length) requested[index]!.resolve()
+      },
+    }))
+    expect(observed).toEqual([
+      "workspaceCreateRequested",
+      "workspaceRetrieveRequested",
+      "workspaceFileReadRequested",
+      "workspaceFileStatRequested",
+      "workspaceFileListRequested",
+      "workspaceExecRequested",
+      "workspaceDeleteRequested",
+    ])
+    const outcome = readEvent(output.at(-1)!).event
+    expect(outcome.case).toBe("taskOutcome")
+    if (outcome.case === "taskOutcome" &&
+      outcome.value.outcome.case === "succeeded") {
+      expect(outcome.value.outcome.value.outputJson).toBe(
+        '{"content":"ok","count":1,"deleted":"wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa","exitCode":0,"id":"wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa","kind":"file","stdout":"ok"}',
       )
     }
   })

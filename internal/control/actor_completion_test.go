@@ -30,7 +30,6 @@ func TestParseActorCompletionRequestBindsCursorAndWorkspaceProof(t *testing.T) {
 }
 
 func TestDecideActorRunTerminal(t *testing.T) {
-	now := time.Date(2026, time.July, 22, 1, 2, 3, 0, time.UTC)
 	tests := []struct {
 		name       string
 		authority  runLeaseClaimAuthority
@@ -72,7 +71,7 @@ func TestDecideActorRunTerminal(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := decideActorRunTerminal(test.authority, test.completion, now)
+			got := decideActorRunTerminal(test.authority, test.completion)
 			if got != test.want {
 				t.Fatalf("decision = %#v, want %#v", got, test.want)
 			}
@@ -88,7 +87,6 @@ func TestActorCompletionRetryUsesPinnedPolicy(t *testing.T) {
 	retryAt, retry, err := actorCompletionRetryAt(
 		run,
 		db.RunAttempt{Number: 1},
-		db.Actor{State: "open"},
 		parsedActorCompletion{kind: actorCompletionFailed},
 		now,
 	)

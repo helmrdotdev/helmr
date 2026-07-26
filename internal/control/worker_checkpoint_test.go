@@ -149,7 +149,7 @@ func validCheckpointReadyRequest() api.WorkerCheckpointReadyRequest {
 				ID: checkpointID, RunID: runID, AttemptNumber: 1, RunWaitID: waitID,
 				CorrelationID: uuid.Must(uuid.NewV7()).String(),
 				Runtime: api.WorkerCheckpointRuntime{
-					Backend: "firecracker", ID: runtimeIdentity, Arch: string(deployment.ArchitectureAArch64),
+					Backend: "firecracker", ID: runtimeIdentity, Arch: string(deployment.ArchitectureX8664),
 					ABI: "helmr.firecracker.snapshot.v0", KernelDigest: digestWith("4"),
 					InitramfsDigest: digestWith("5"), RootfsDigest: digestWith("6"), ConfigDigest: digestWith("7"),
 				},

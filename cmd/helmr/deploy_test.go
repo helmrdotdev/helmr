@@ -302,6 +302,9 @@ func TestDeployCommandDetachReturnsQueuedDeploymentID(t *testing.T) {
 }
 
 func TestFailingBuildFixtureReachesDeploymentCreation(t *testing.T) {
+	if os.Getenv("HELMR_TEST_PREPARED_FAILING_BUILD_FIXTURE") != "1" {
+		t.Skip("pre-AWS fixture contract is exercised by check-pre-aws.sh")
+	}
 	root, err := filepath.Abs("../../dev/workflows-failing-build")
 	if err != nil {
 		t.Fatal(err)

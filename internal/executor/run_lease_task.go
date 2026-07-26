@@ -19,7 +19,12 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-var errRunLeaseAuthorityLapsed = errors.New("Run Lease authority lapsed")
+var (
+	errRunLeaseAuthorityLapsed       = errors.New("Run Lease authority lapsed")
+	errRunSourceOperationUnavailable = errors.New(
+		"Run Lease Task cannot perform run-sourced operation",
+	)
+)
 
 type RunLeaseControl interface {
 	ClaimRunLease(context.Context, api.WorkerRunLeaseWork) (api.WorkerRunLeaseClaimResponse, error)
@@ -34,6 +39,24 @@ type RunLeaseControl interface {
 	AppendActorOutput(context.Context, api.WorkerAppendActorOutputRequest) (api.WorkerAppendActorOutputResponse, error)
 	CreateRuntimeToken(context.Context, api.WorkerCreateTokenRequest) (api.TokenResponse, error)
 	AppendRunLog(context.Context, api.WorkerRunLeaseReceipt, api.WorkerLogStream, uint64, []byte) error
+}
+
+type ActorRuntimeControl interface {
+	StartRunActor(context.Context, api.WorkerStartActorRequest) (api.WorkerStartActorResponse, error)
+	GetRunActorStatus(context.Context, api.WorkerActorReferenceRequest) (api.WorkerActorStatusResponse, error)
+	CloseRunActor(context.Context, api.WorkerCloseActorRequest) (api.WorkerCloseActorResponse, error)
+	ReadRunActorOutputPage(context.Context, api.WorkerReadActorOutputPageRequest) (api.WorkerReadActorOutputPageResponse, error)
+}
+
+type WorkspaceRuntimeControl interface {
+	CreateRunWorkspace(context.Context, api.WorkerCreateWorkspaceRequest) (api.WorkerCreateWorkspaceResponse, error)
+	RetrieveRunWorkspace(context.Context, api.WorkerRetrieveWorkspaceRequest) (api.WorkerRetrieveWorkspaceResponse, error)
+	ReadRunWorkspaceFile(context.Context, api.WorkerReadWorkspaceFileRequest) (api.WorkerReadWorkspaceFileResponse, error)
+	StatRunWorkspaceFile(context.Context, api.WorkerReadWorkspaceFileRequest) (api.WorkerStatWorkspaceFileResponse, error)
+	ListRunWorkspaceFiles(context.Context, api.WorkerListWorkspaceFilesRequest) (api.WorkerListWorkspaceFilesResponse, error)
+	ExecuteRunWorkspace(context.Context, api.WorkerExecuteWorkspaceRequest) (api.WorkerExecuteWorkspaceResponse, error)
+	PollRunWorkspaceExec(context.Context, api.WorkerPollWorkspaceExecRequest) (api.WorkerExecuteWorkspaceResponse, error)
+	DeleteRunWorkspace(context.Context, api.WorkerDeleteWorkspaceRequest) (api.WorkerDeleteWorkspaceResponse, error)
 }
 
 type RunLeaseTaskResult struct {
@@ -84,6 +107,32 @@ type guestRunLeaseTask struct {
 	operationID    string
 	finalizingKind api.WorkerRunFinalizationKind
 	finished       bool
+}
+
+func (task *guestRunLeaseTask) callRunSourceRuntime(
+	ctx context.Context,
+	call func(context.Context, api.WorkerRunLeaseReceipt) error,
+) error {
+	return retryRunLeaseRequest(ctx, func(callCtx context.Context) error {
+		// A Control source fence compares the complete receipt. Hold renewal
+		// only across this bounded HTTP attempt so the receipt cannot change
+		// between attachment and validation. Retry delays stay unlocked.
+		task.mu.Lock()
+		defer task.mu.Unlock()
+		if task.finished || task.finalizingKind != "" {
+			return errRunSourceOperationUnavailable
+		}
+		lease := task.lease
+		if !lease.ExpiresAt.After(time.Now()) {
+			return errRunLeaseAuthorityLapsed
+		}
+		attemptCtx, cancel, err := runLeaseLogContext(callCtx, lease.ExpiresAt)
+		if err != nil {
+			return fmt.Errorf("prepare run-sourced operation: %w", err)
+		}
+		defer cancel()
+		return call(attemptCtx, lease)
+	})
 }
 
 func (r ProgramRunner) StartRunLeaseTask(
@@ -290,6 +339,19 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 		)
 	case *runv0.RunEvent_TaskChildInvokeRequested:
 		return task.handleChildTaskInvoke(ctx, value.TaskChildInvokeRequested)
+	case *runv0.RunEvent_ActorStartRequested,
+		*runv0.RunEvent_ActorStatusRequested,
+		*runv0.RunEvent_ActorCloseRequested,
+		*runv0.RunEvent_ActorOutputPageRequested:
+		return task.handleActorRuntime(ctx, event)
+	case *runv0.RunEvent_WorkspaceCreateRequested,
+		*runv0.RunEvent_WorkspaceRetrieveRequested,
+		*runv0.RunEvent_WorkspaceFileReadRequested,
+		*runv0.RunEvent_WorkspaceFileStatRequested,
+		*runv0.RunEvent_WorkspaceFileListRequested,
+		*runv0.RunEvent_WorkspaceExecRequested,
+		*runv0.RunEvent_WorkspaceDeleteRequested:
+		return task.handleWorkspaceRuntime(ctx, event)
 	default:
 		return errors.New("unsupported Program event while checkpoint pause is pending")
 	}
@@ -306,6 +368,7 @@ func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, er
 			task.handleActorOutputAppend,
 			task.handleTokenCreate,
 			task.handleChildTaskInvoke,
+			task.handleResourceRuntime,
 		)
 		if err != nil {
 			return RunLeaseTaskResult{}, err
@@ -326,6 +389,7 @@ func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, er
 		task.handleActorInputSend,
 		task.handleTokenCreate,
 		task.handleChildTaskInvoke,
+		task.handleResourceRuntime,
 	)
 	if err != nil {
 		return RunLeaseTaskResult{}, err
@@ -388,13 +452,21 @@ func (events taskControlEvents) ApplyRunMetadata(
 	_ api.WorkerRunLeaseReceipt,
 	request *runv0.MetadataUpdated,
 ) error {
-	events.task.mu.Lock()
-	defer events.task.mu.Unlock()
 	control, err := requireRunObservabilityControl(events.task.control)
 	if err != nil {
 		return err
 	}
-	return updateRunMetadata(ctx, control, events.task.lease, request)
+	controlRequest, err := workerRunMetadataRequest(request)
+	if err != nil {
+		return err
+	}
+	return events.task.callRunSourceRuntime(ctx, func(
+		callCtx context.Context,
+		lease api.WorkerRunLeaseReceipt,
+	) error {
+		controlRequest.Lease = lease
+		return sendRunMetadataRequest(callCtx, control, controlRequest)
+	})
 }
 
 func (events taskControlEvents) RecordStructuredRunLog(
@@ -403,13 +475,21 @@ func (events taskControlEvents) RecordStructuredRunLog(
 	sequence uint64,
 	request *runv0.StructuredLogRequested,
 ) error {
-	events.task.mu.Lock()
-	defer events.task.mu.Unlock()
 	control, err := requireRunObservabilityControl(events.task.control)
 	if err != nil {
 		return err
 	}
-	return appendStructuredRunLog(ctx, control, events.task.lease, sequence, request)
+	controlRequest, err := workerStructuredLogRequest(request, sequence)
+	if err != nil {
+		return err
+	}
+	return events.task.callRunSourceRuntime(ctx, func(
+		callCtx context.Context,
+		lease api.WorkerRunLeaseReceipt,
+	) error {
+		controlRequest.Lease = lease
+		return sendStructuredRunLogRequest(callCtx, control, controlRequest)
+	})
 }
 
 func (task *guestRunLeaseTask) RenewRunLease(

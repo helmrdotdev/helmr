@@ -62,13 +62,16 @@ func TestWorkerEnrollmentConsumesNonceAndRotatesCredentialAtomically(t *testing.
 		}
 	}
 
+	var suppliedReplacementServiceID pgtype.UUID
 	createCredential := func(nonceHash []byte, resourceID string, secretHash []byte) db.EnrollWorkerInstanceRow {
 		t.Helper()
+		suppliedReplacementServiceID = pgvalue.NewUUIDv7()
 		row, err := queries.EnrollWorkerInstance(ctx, db.EnrollWorkerInstanceParams{
 			NonceHash: nonceHash, WorkerGroupID: dbtest.DefaultWorkerGroupID,
 			AllowsRun: true, AllowsBuild: true, ProtocolVersion: auth.WorkerProtocolVersion,
 			WorkerInstanceID: pgvalue.UUID(uuid.Must(uuid.NewV7())), ResourceID: resourceID,
-			CredentialID: pgvalue.UUID(uuid.Must(uuid.NewV7())), KeyPrefix: uuid.NewString(),
+			CurrentServiceID: suppliedReplacementServiceID,
+			CredentialID:     pgvalue.UUID(uuid.Must(uuid.NewV7())), KeyPrefix: uuid.NewString(),
 			SecretHash: secretHash, EnrollmentPolicyFingerprint: "sha256:test-worker-group",
 			AttestationFingerprint: "sha256:test-attestation",
 		})
@@ -92,6 +95,16 @@ func TestWorkerEnrollmentConsumesNonceAndRotatesCredentialAtomically(t *testing.
 	createNonce(firstNonce)
 	firstSecret := []byte("first-secret")
 	first := createCredential(firstNonce, "i-stable", firstSecret)
+	var initialServiceID pgtype.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT current_service_id FROM worker_instances WHERE id = $1`,
+		first.WorkerInstanceID,
+	).Scan(&initialServiceID); err != nil {
+		t.Fatal(err)
+	}
+	if initialServiceID.Valid {
+		t.Fatalf("initial enrollment service fence = %v, want null", initialServiceID)
+	}
 	firstService := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	firstAuth, err := queries.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 		SupportsRun: true, SupportsBuild: true, WorkerInstanceID: first.WorkerInstanceID,
@@ -105,7 +118,8 @@ func TestWorkerEnrollmentConsumesNonceAndRotatesCredentialAtomically(t *testing.
 		NonceHash: firstNonce, WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		AllowsRun: true, AllowsBuild: true, ProtocolVersion: auth.WorkerProtocolVersion,
 		WorkerInstanceID: pgvalue.UUID(uuid.Must(uuid.NewV7())), ResourceID: "i-other",
-		CredentialID: pgvalue.UUID(uuid.Must(uuid.NewV7())), KeyPrefix: uuid.NewString(), SecretHash: []byte("replay"),
+		CurrentServiceID: pgvalue.NewUUIDv7(),
+		CredentialID:     pgvalue.UUID(uuid.Must(uuid.NewV7())), KeyPrefix: uuid.NewString(), SecretHash: []byte("replay"),
 		EnrollmentPolicyFingerprint: "sha256:test-worker-group", AttestationFingerprint: "sha256:test-attestation",
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("replayed enrollment error = %v, want pgx.ErrNoRows", err)
@@ -126,8 +140,15 @@ func TestWorkerEnrollmentConsumesNonceAndRotatesCredentialAtomically(t *testing.
 	if err := pool.QueryRow(ctx, `SELECT current_epoch, current_service_id FROM worker_instances WHERE id = $1`, second.WorkerInstanceID).Scan(&enrolledEpoch, &enrollmentFence); err != nil {
 		t.Fatal(err)
 	}
-	if enrolledEpoch != firstAuth.CurrentEpoch || enrollmentFence == firstService {
-		t.Fatalf("re-enrollment epoch=%v service=%v, want preserved epoch and a forced service fence", enrolledEpoch, enrollmentFence)
+	if enrolledEpoch != firstAuth.CurrentEpoch ||
+		enrollmentFence != suppliedReplacementServiceID ||
+		enrollmentFence == firstService {
+		t.Fatalf(
+			"re-enrollment epoch=%v service=%v, want preserved epoch and supplied service fence %v",
+			enrolledEpoch,
+			enrollmentFence,
+			suppliedReplacementServiceID,
+		)
 	}
 	secondAuth, err := queries.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 		SupportsRun: true, SupportsBuild: true, WorkerInstanceID: second.WorkerInstanceID,
@@ -181,7 +202,8 @@ func TestWorkerEnrollmentConsumesNonceAndRotatesCredentialAtomically(t *testing.
 		NonceHash: thirdNonce, WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		AllowsRun: true, AllowsBuild: true, ProtocolVersion: auth.WorkerProtocolVersion,
 		WorkerInstanceID: pgvalue.UUID(uuid.Must(uuid.NewV7())), ResourceID: "i-stable",
-		CredentialID: pgvalue.UUID(uuid.Must(uuid.NewV7())), KeyPrefix: uuid.NewString(),
+		CurrentServiceID: pgvalue.NewUUIDv7(),
+		CredentialID:     pgvalue.UUID(uuid.Must(uuid.NewV7())), KeyPrefix: uuid.NewString(),
 		SecretHash: []byte("third-secret"), EnrollmentPolicyFingerprint: "sha256:test-worker-group",
 		AttestationFingerprint: "sha256:test-attestation",
 	}); !errors.Is(err, pgx.ErrNoRows) {
@@ -229,7 +251,8 @@ func TestWorkerGroupPolicyChangeRevokesExistingEnrollment(t *testing.T) {
 		NonceHash: nonceHash, WorkerGroupID: groupID, AllowsRun: true,
 		ProtocolVersion:  auth.WorkerProtocolVersion,
 		WorkerInstanceID: pgvalue.UUID(uuid.Must(uuid.NewV7())), ResourceID: "i-policy-test",
-		CredentialID: pgvalue.UUID(uuid.Must(uuid.NewV7())), KeyPrefix: uuid.NewString(), SecretHash: []byte("secret"),
+		CurrentServiceID: pgvalue.NewUUIDv7(),
+		CredentialID:     pgvalue.UUID(uuid.Must(uuid.NewV7())), KeyPrefix: uuid.NewString(), SecretHash: []byte("secret"),
 		EnrollmentPolicyFingerprint: "sha256:policy-one", AttestationFingerprint: "sha256:policy-one-attestation",
 	})
 	if err != nil {
@@ -283,7 +306,8 @@ func TestWorkerGroupPolicyChangeRevokesExistingEnrollment(t *testing.T) {
 				NonceHash: staleNonce, WorkerGroupID: groupID, AllowsRun: true,
 				ProtocolVersion: auth.WorkerProtocolVersion, EnrollmentPolicyFingerprint: stale.policy,
 				WorkerInstanceID: pgvalue.UUID(uuid.Must(uuid.NewV7())), ResourceID: "i-stale-" + stale.name,
-				CredentialID: pgvalue.UUID(uuid.Must(uuid.NewV7())), KeyPrefix: uuid.NewString(), SecretHash: []byte("stale-secret"),
+				CurrentServiceID: pgvalue.NewUUIDv7(),
+				CredentialID:     pgvalue.UUID(uuid.Must(uuid.NewV7())), KeyPrefix: uuid.NewString(), SecretHash: []byte("stale-secret"),
 				AttestationFingerprint: stale.attestation,
 			}); !errors.Is(err, pgx.ErrNoRows) {
 				t.Fatalf("stale %s enrollment error = %v, want pgx.ErrNoRows", stale.name, err)
@@ -394,7 +418,8 @@ func TestWorkerGroupPolicyReconciliationSerializesAfterConcurrentEnrollment(t *t
 		NonceHash: nonce, WorkerGroupID: groupID, AllowsRun: true,
 		ProtocolVersion: auth.WorkerProtocolVersion, EnrollmentPolicyFingerprint: "sha256:policy-old",
 		WorkerInstanceID: pgvalue.UUID(uuid.Must(uuid.NewV7())), ResourceID: "i-policy-race",
-		CredentialID: pgvalue.UUID(uuid.Must(uuid.NewV7())), KeyPrefix: uuid.NewString(), SecretHash: []byte("policy-race-secret"),
+		CurrentServiceID: pgvalue.NewUUIDv7(),
+		CredentialID:     pgvalue.UUID(uuid.Must(uuid.NewV7())), KeyPrefix: uuid.NewString(), SecretHash: []byte("policy-race-secret"),
 		AttestationFingerprint: "sha256:attestation-old",
 	})
 	if err != nil {
@@ -444,7 +469,8 @@ func TestTerminalWorkerCannotReuseItsDurableCredential(t *testing.T) {
 		NonceHash: nonceHash, WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		AllowsRun: true, AllowsBuild: true, ProtocolVersion: auth.WorkerProtocolVersion,
 		WorkerInstanceID: pgvalue.UUID(uuid.Must(uuid.NewV7())), ResourceID: "i-terminal-test",
-		CredentialID: pgvalue.UUID(uuid.Must(uuid.NewV7())), KeyPrefix: uuid.NewString(), SecretHash: secretHash,
+		CurrentServiceID: pgvalue.NewUUIDv7(),
+		CredentialID:     pgvalue.UUID(uuid.Must(uuid.NewV7())), KeyPrefix: uuid.NewString(), SecretHash: secretHash,
 		EnrollmentPolicyFingerprint: "sha256:test-worker-group", AttestationFingerprint: "sha256:test-attestation",
 	})
 	if err != nil {
@@ -640,7 +666,8 @@ func TestAbsentWorkerGroupRemovalSerializesWithEnrollment(t *testing.T) {
 			NonceHash: nonce, WorkerGroupID: groupID, AllowsRun: true,
 			ProtocolVersion:  auth.WorkerProtocolVersion,
 			WorkerInstanceID: pgvalue.UUID(uuid.Must(uuid.NewV7())), ResourceID: "i-" + groupID,
-			CredentialID: pgvalue.UUID(uuid.Must(uuid.NewV7())), KeyPrefix: uuid.NewString(),
+			CurrentServiceID: pgvalue.NewUUIDv7(),
+			CredentialID:     pgvalue.UUID(uuid.Must(uuid.NewV7())), KeyPrefix: uuid.NewString(),
 			SecretHash: []byte("secret-" + groupID), EnrollmentPolicyFingerprint: "sha256:" + strings.Split(groupID, "-")[2],
 			AttestationFingerprint: "sha256:" + strings.Split(groupID, "-")[2],
 		})
@@ -759,8 +786,9 @@ func TestWorkerGroupRoleNarrowingFencesExistingCapabilities(t *testing.T) {
 	enrolled, err := q.EnrollWorkerInstance(ctx, db.EnrollWorkerInstanceParams{
 		NonceHash: nonce, WorkerGroupID: groupID, AllowsRun: true, AllowsBuild: true,
 		ProtocolVersion: auth.WorkerProtocolVersion, WorkerInstanceID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		ResourceID: "role-narrow-worker", CredentialID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		KeyPrefix: uuid.NewString(), SecretHash: []byte("role-narrow-secret"),
+		ResourceID: "role-narrow-worker", CurrentServiceID: pgvalue.NewUUIDv7(),
+		CredentialID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		KeyPrefix:    uuid.NewString(), SecretHash: []byte("role-narrow-secret"),
 		EnrollmentPolicyFingerprint: "sha256:roles-both", AttestationFingerprint: attestation,
 	})
 	if err != nil {
@@ -816,7 +844,8 @@ func TestBuildOnlyWorkerCertificationRetainsRuntimeContract(t *testing.T) {
 		NonceHash: nonceHash, WorkerGroupID: workerGroupID,
 		AllowsRun: false, AllowsBuild: true, ProtocolVersion: auth.WorkerProtocolVersion,
 		WorkerInstanceID: pgvalue.UUID(uuid.Must(uuid.NewV7())), ResourceID: "i-build-only",
-		CredentialID: pgvalue.UUID(uuid.Must(uuid.NewV7())), KeyPrefix: uuid.NewString(), SecretHash: secretHash,
+		CurrentServiceID: pgvalue.NewUUIDv7(),
+		CredentialID:     pgvalue.UUID(uuid.Must(uuid.NewV7())), KeyPrefix: uuid.NewString(), SecretHash: secretHash,
 		EnrollmentPolicyFingerprint: "sha256:test-build-policy", AttestationFingerprint: "sha256:test-build-attestation",
 	})
 	if err != nil {

@@ -87,7 +87,7 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 		if err := validateTaskCompletionDeadline(authority, completedAt.Time); err != nil {
 			return staleActorCompletion(err)
 		}
-		retryAt, retry, err := actorCompletionRetryAt(authority.run, authority.attempt, authority.actor, completion, completedAt.Time)
+		retryAt, retry, err := actorCompletionRetryAt(authority.run, authority.attempt, completion, completedAt.Time)
 		if err != nil {
 			return err
 		}
@@ -215,7 +215,7 @@ func validateActorCompletionAuthority(ctx context.Context, store db.Querier, req
 	return nil
 }
 
-func actorCompletionRetryAt(run db.Run, attempt db.RunAttempt, actor db.Actor, completion parsedActorCompletion, completedAt time.Time) (time.Time, bool, error) {
+func actorCompletionRetryAt(run db.Run, attempt db.RunAttempt, completion parsedActorCompletion, completedAt time.Time) (time.Time, bool, error) {
 	if completion.kind != actorCompletionFailed {
 		return time.Time{}, false, nil
 	}
@@ -268,7 +268,7 @@ type actorRunTerminalDecision struct {
 	commitCursor bool
 }
 
-func decideActorRunTerminal(authority runLeaseClaimAuthority, completion parsedActorCompletion, completedAt time.Time) actorRunTerminalDecision {
+func decideActorRunTerminal(authority runLeaseClaimAuthority, completion parsedActorCompletion) actorRunTerminalDecision {
 	decision := actorRunTerminalDecision{
 		runStatus:    db.RunStatusSucceeded,
 		actorState:   authority.actor.State,
@@ -318,7 +318,7 @@ func scheduleActorRetry(ctx context.Context, store db.Querier, authority runLeas
 }
 
 func finishActorRun(ctx context.Context, store db.Querier, authority runLeaseClaimAuthority, secrets []secret.DeliveryEnvelope, completion parsedActorCompletion, completedAt pgtype.Timestamptz) error {
-	decision := decideActorRunTerminal(authority, completion, completedAt.Time)
+	decision := decideActorRunTerminal(authority, completion)
 	var terminalError []byte
 	var failureRunID pgtype.UUID
 	if completion.kind == actorCompletionFailed {

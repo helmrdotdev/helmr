@@ -17,8 +17,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const programCgroupLeaf = "run"
-
 const programCgroupTransitionPoll = 10 * time.Millisecond
 
 type linuxProgramCgroup struct {
@@ -26,13 +24,16 @@ type linuxProgramCgroup struct {
 	file *os.File
 }
 
-func enterProgramCgroupNamespace() error {
+func enterProgramCgroupNamespace(leaf string) error {
+	if err := validateProgramCgroupLeaf(leaf); err != nil {
+		return err
+	}
 	raw, err := os.ReadFile("/proc/self/cgroup")
 	if err != nil {
 		return fmt.Errorf("read Program cgroup identity: %w", err)
 	}
 	expected := "0::" + strings.TrimPrefix(
-		filepath.Join(buildCgroupRoot, programCgroupLeaf),
+		filepath.Join(buildCgroupRoot, leaf),
 		"/sys/fs/cgroup",
 	)
 	if strings.TrimSpace(string(raw)) != expected {
@@ -47,7 +48,10 @@ func enterProgramCgroupNamespace() error {
 	return nil
 }
 
-func createProgramCgroup() (programCgroup, error) {
+func createProgramCgroup(leaf string) (programCgroup, error) {
+	if err := validateProgramCgroupLeaf(leaf); err != nil {
+		return nil, err
+	}
 	rootFD, err := unix.Open(
 		buildCgroupRoot,
 		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW,
@@ -64,26 +68,26 @@ func createProgramCgroup() (programCgroup, error) {
 	if len(bytes.TrimSpace(processes)) != 0 {
 		return nil, errors.New("Program cgroup root is not process-free")
 	}
-	path := filepath.Join(buildCgroupRoot, programCgroupLeaf)
-	if err := unix.Mkdirat(rootFD, programCgroupLeaf, 0o755); err != nil {
+	path := filepath.Join(buildCgroupRoot, leaf)
+	if err := unix.Mkdirat(rootFD, leaf, 0o755); err != nil {
 		if !errors.Is(err, unix.EEXIST) {
 			return nil, fmt.Errorf("create Program cgroup: %w", err)
 		}
 		if cleanupErr := cleanupStaleProgramCgroup(path); cleanupErr != nil {
 			return nil, cleanupErr
 		}
-		if err := unix.Mkdirat(rootFD, programCgroupLeaf, 0o755); err != nil {
+		if err := unix.Mkdirat(rootFD, leaf, 0o755); err != nil {
 			return nil, fmt.Errorf("recreate Program cgroup: %w", err)
 		}
 	}
 	cgroupFD, err := unix.Openat(
 		rootFD,
-		programCgroupLeaf,
+		leaf,
 		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW,
 		0,
 	)
 	if err != nil {
-		_ = unix.Unlinkat(rootFD, programCgroupLeaf, unix.AT_REMOVEDIR)
+		_ = unix.Unlinkat(rootFD, leaf, unix.AT_REMOVEDIR)
 		return nil, fmt.Errorf("open Program cgroup: %w", err)
 	}
 	return &linuxProgramCgroup{

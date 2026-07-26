@@ -48,7 +48,7 @@ func TestManagerCatalogRejectsUncertifiedAndNoncanonicalEntries(t *testing.T) {
 		!strings.Contains(err.Error(), "order") {
 		t.Fatalf("out-of-order error = %v", err)
 	}
-	bun.Architecture = ArchitectureAArch64
+	bun.Architecture = RuntimeArchitecture("aarch64")
 	if _, err := CanonicalManagerCatalog([]Manager{bun}); err == nil ||
 		!strings.Contains(err.Error(), "x86_64") {
 		t.Fatalf("architecture error = %v", err)

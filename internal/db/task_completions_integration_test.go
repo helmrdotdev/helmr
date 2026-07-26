@@ -283,7 +283,10 @@ func TestReadyRunRetriesAdmitsOnceUnderConcurrency(t *testing.T) {
 		go func() {
 			defer wait.Done()
 			<-start
-			rows, err := fixture.queries.ReadyRunRetries(ctx, 1)
+			rows, err := fixture.queries.ReadyRunRetries(ctx, ReadyRunRetriesParams{
+				OutboxMessageIds: pgvalue.NewUUIDv7Batch(1),
+				RowLimit:         1,
+			})
 			results <- result{rows: rows, err: err}
 		}()
 	}
@@ -300,7 +303,10 @@ func TestReadyRunRetriesAdmitsOnceUnderConcurrency(t *testing.T) {
 	if admissions != 1 {
 		t.Fatalf("concurrent admissions = %d, want 1", admissions)
 	}
-	if rows, err := fixture.queries.ReadyRunRetries(ctx, 1); err != nil || len(rows) != 0 {
+	if rows, err := fixture.queries.ReadyRunRetries(ctx, ReadyRunRetriesParams{
+		OutboxMessageIds: pgvalue.NewUUIDv7Batch(1),
+		RowLimit:         1,
+	}); err != nil || len(rows) != 0 {
 		t.Fatalf("replayed readiness = %d rows, %v, want no rows", len(rows), err)
 	}
 

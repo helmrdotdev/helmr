@@ -16,7 +16,8 @@ UPDATE deletion_jobs
    SET status = 'completed',
        completed_at = now(),
        failure = '',
-       deleted_counts = $1
+       deleted_counts = $1,
+       updated_at = now()
  WHERE org_id = $2
    AND id = $3
 RETURNING id, org_id, target_type, target_id, target_project_id, target_slug, target_name, requested_by_principal, status, failure, deleted_counts, requested_at, started_at, completed_at, updated_at
@@ -120,7 +121,8 @@ func (q *Queries) CreateDeletionJob(ctx context.Context, arg CreateDeletionJobPa
 const failDeletionJob = `-- name: FailDeletionJob :one
 UPDATE deletion_jobs
    SET status = 'failed',
-       failure = $1
+       failure = $1,
+       updated_at = now()
  WHERE org_id = $2
    AND id = $3
 RETURNING id, org_id, target_type, target_id, target_project_id, target_slug, target_name, requested_by_principal, status, failure, deleted_counts, requested_at, started_at, completed_at, updated_at
@@ -159,7 +161,8 @@ const markDeletionJobRunning = `-- name: MarkDeletionJobRunning :one
 UPDATE deletion_jobs
    SET status = 'running',
        started_at = COALESCE(started_at, now()),
-       failure = ''
+       failure = '',
+       updated_at = now()
  WHERE org_id = $1
    AND id = $2
 RETURNING id, org_id, target_type, target_id, target_project_id, target_slug, target_name, requested_by_principal, status, failure, deleted_counts, requested_at, started_at, completed_at, updated_at

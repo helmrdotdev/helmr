@@ -27,48 +27,28 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 	if err != nil {
 		return err
 	}
-	response, err := func() (api.WorkerInvokeChildTaskResponse, error) {
-		task.mu.Lock()
-		defer task.mu.Unlock()
-		if task.finished || task.finalizingKind != "" {
-			return api.WorkerInvokeChildTaskResponse{}, errors.New(
-				"Run Lease Task cannot invoke a child Task",
-			)
-		}
-		request.Lease = task.lease
-		control, ok := task.control.(childTaskInvokeControl)
-		if !ok {
-			return api.WorkerInvokeChildTaskResponse{}, errors.New(
-				"Run Lease Task child Task invocation control is required",
-			)
-		}
-		var response api.WorkerInvokeChildTaskResponse
-		requestCtx, cancel, err := runLeaseLogContext(ctx, task.lease.ExpiresAt)
-		if err != nil {
-			return api.WorkerInvokeChildTaskResponse{}, err
-		}
-		defer cancel()
-		if err := retryRunLeaseRequest(requestCtx, func(callCtx context.Context) error {
-			var callErr error
-			response, callErr = control.InvokeChildTask(callCtx, request)
-			return callErr
-		}); err != nil {
-			if failure, ok := childTaskInvokeFailure(err); ok {
-				response = api.WorkerInvokeChildTaskResponse{
-					CorrelationID: request.CorrelationID,
-					Failed:        &failure,
-				}
-			} else {
-				return api.WorkerInvokeChildTaskResponse{}, fmt.Errorf(
-					"invoke child Task: %w",
-					err,
-				)
+	control, ok := task.control.(childTaskInvokeControl)
+	if !ok {
+		return errors.New("Run Lease Task child Task invocation control is required")
+	}
+	var response api.WorkerInvokeChildTaskResponse
+	if err := task.callRunSourceRuntime(ctx, func(
+		callCtx context.Context,
+		lease api.WorkerRunLeaseReceipt,
+	) error {
+		request.Lease = lease
+		var callErr error
+		response, callErr = control.InvokeChildTask(callCtx, request)
+		return callErr
+	}); err != nil {
+		if failure, ok := childTaskInvokeFailure(err); ok {
+			response = api.WorkerInvokeChildTaskResponse{
+				CorrelationID: request.CorrelationID,
+				Failed:        &failure,
 			}
+		} else {
+			return fmt.Errorf("invoke child Task: %w", err)
 		}
-		return response, nil
-	}()
-	if err != nil {
-		return err
 	}
 	if response.CorrelationID != request.CorrelationID {
 		return errors.New("child Task invocation response correlation ID did not match")

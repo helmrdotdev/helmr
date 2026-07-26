@@ -52,12 +52,12 @@ type ListStaleWorkerFenceCandidatesParams struct {
 }
 
 type ListStaleWorkerFenceCandidatesRow struct {
-	ID            pgtype.UUID         `json:"id"`
-	WorkerGroupID string              `json:"worker_group_id"`
-	CurrentEpoch  pgtype.Int8         `json:"current_epoch"`
-	State         WorkerInstanceState `json:"state"`
-	FreshnessAt   pgtype.Timestamptz  `json:"freshness_at"`
-	Reason        string              `json:"reason"`
+	ID            pgtype.UUID        `json:"id"`
+	WorkerGroupID string             `json:"worker_group_id"`
+	CurrentEpoch  pgtype.Int8        `json:"current_epoch"`
+	State         string             `json:"state"`
+	FreshnessAt   pgtype.Timestamptz `json:"freshness_at"`
+	Reason        string             `json:"reason"`
 }
 
 func (q *Queries) ListStaleWorkerFenceCandidates(ctx context.Context, arg ListStaleWorkerFenceCandidatesParams) ([]ListStaleWorkerFenceCandidatesRow, error) {
@@ -96,8 +96,8 @@ const recheckAndFenceStaleWorkerInstance = `-- name: RecheckAndFenceStaleWorkerI
 WITH target AS (
     UPDATE worker_instances AS workers
        SET state = CASE
-               WHEN workers.current_epoch IS NULL THEN 'disabled'::worker_instance_state
-               ELSE 'lost'::worker_instance_state
+               WHEN workers.current_epoch IS NULL THEN 'disabled'
+               ELSE 'lost'
            END,
            claim_version = workers.claim_version + 1,
            disabled_at = CASE
@@ -193,10 +193,10 @@ type RecheckAndFenceStaleWorkerInstanceParams struct {
 }
 
 type RecheckAndFenceStaleWorkerInstanceRow struct {
-	ID            pgtype.UUID         `json:"id"`
-	WorkerGroupID string              `json:"worker_group_id"`
-	CurrentEpoch  pgtype.Int8         `json:"current_epoch"`
-	State         WorkerInstanceState `json:"state"`
+	ID            pgtype.UUID `json:"id"`
+	WorkerGroupID string      `json:"worker_group_id"`
+	CurrentEpoch  pgtype.Int8 `json:"current_epoch"`
+	State         string      `json:"state"`
 }
 
 // Immediate fencing revokes credentials and terminalizes mount/runtime/slot

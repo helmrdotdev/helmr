@@ -105,7 +105,7 @@ func TestLoadToolchainCorpusVerifiesAndReopensClosure(t *testing.T) {
 		context.Background(),
 		fixture.root,
 		fixture.catalog,
-		ArchitectureAArch64,
+		ArchitectureX8664,
 		fixture.owner,
 	)
 	if err != nil {
@@ -146,7 +146,7 @@ func TestLoadToolchainCorpusRejectsExtraAndWrongArchitecture(t *testing.T) {
 		context.Background(),
 		fixture.root,
 		fixture.catalog,
-		ArchitectureAArch64,
+		ArchitectureX8664,
 		fixture.owner,
 	); err == nil {
 		t.Fatal("loadToolchainCorpus accepted an extra object")
@@ -155,7 +155,7 @@ func TestLoadToolchainCorpusRejectsExtraAndWrongArchitecture(t *testing.T) {
 		context.Background(),
 		fixture.root,
 		fixture.catalog,
-		ArchitectureX8664,
+		RuntimeArchitecture("aarch64"),
 		fixture.owner,
 	); err == nil {
 		t.Fatal("loadToolchainCorpus accepted an absent architecture")
@@ -180,7 +180,7 @@ func TestLoadToolchainCorpusRejectsHardlink(t *testing.T) {
 		context.Background(),
 		fixture.root,
 		fixture.catalog,
-		ArchitectureAArch64,
+		ArchitectureX8664,
 		fixture.owner,
 	); err == nil {
 		t.Fatal("loadToolchainCorpus accepted a hard-linked object")
@@ -193,7 +193,7 @@ func TestOpenToolchainRejectsPostReadinessMutation(t *testing.T) {
 		context.Background(),
 		fixture.root,
 		fixture.catalog,
-		ArchitectureAArch64,
+		ArchitectureX8664,
 		fixture.owner,
 	)
 	if err != nil {

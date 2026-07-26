@@ -13,7 +13,8 @@ import (
 
 const clearDefaultProject = `-- name: ClearDefaultProject :execrows
 UPDATE projects
-   SET is_default = false
+   SET is_default = false,
+       updated_at = now()
  WHERE org_id = $1
    AND is_default
 `
@@ -560,7 +561,8 @@ func (q *Queries) ListProjectsForUpdate(ctx context.Context, orgID pgtype.UUID) 
 
 const setDefaultProject = `-- name: SetDefaultProject :execrows
 UPDATE projects
-   SET is_default = true
+   SET is_default = true,
+       updated_at = now()
  WHERE org_id = $1
    AND id = $2
 `
@@ -582,7 +584,8 @@ const updateEnvironmentDetails = `-- name: UpdateEnvironmentDetails :one
 UPDATE environments
    SET slug = $1,
        name = $2,
-       color_hex = $3
+       color_hex = $3,
+       updated_at = now()
  WHERE org_id = $4
    AND project_id = $5
    AND id = $6
@@ -627,7 +630,8 @@ func (q *Queries) UpdateEnvironmentDetails(ctx context.Context, arg UpdateEnviro
 const updateProjectDetails = `-- name: UpdateProjectDetails :one
 UPDATE projects
    SET slug = $1,
-       name = $2
+       name = $2,
+       updated_at = now()
  WHERE org_id = $3
    AND id = $4
 RETURNING id, public_id, org_id, default_region_id, slug, name, is_default, created_at, updated_at

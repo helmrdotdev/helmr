@@ -46,7 +46,7 @@ run_check campaign-fault-producers \
   bash tests/validation_case_contract_test.sh
 run_check failing-build-source \
   'sync local packages and prove the failing fixture reaches deployment creation' \
-  bash -c "dev/workflows/scripts/sync-local-sdk.sh && go test ./cmd/helmr -run TestFailingBuildFixtureReachesDeploymentCreation -count=1"
+  bash -c "dev/workflows/scripts/sync-local-sdk.sh && HELMR_TEST_PREPARED_FAILING_BUILD_FIXTURE=1 go test ./cmd/helmr -run TestFailingBuildFixtureReachesDeploymentCreation -count=1"
 run_check campaign-exact-release-profile \
   'exact ordered release profile and producer contract' \
   bash tests/validation_case_contract_test.sh
@@ -54,8 +54,8 @@ run_check network-deny-evidence-producer \
   'named nft deny counter tests plus bounded evidence-producer contract' \
   bash -c "go test ./internal/firecracker -run 'TestRunNetworkPolicyContract|TestRunNetworkCounterContract' -count=1 && bash tests/validation_case_contract_test.sh"
 run_check same-workspace-call \
-  'same-Workspace child handoff tests plus release smoke selector contract' \
-  bash -c "go test ./internal/control ./internal/executor ./internal/dispatch -run 'SameWorkspace|Same.Workspace' -count=1 && bash tests/release_smoke_selector_test.sh"
+  'same-Workspace control, executor, dispatch, and guest Program handoff contracts plus release smoke selector' \
+  bash -c "go test ./internal/control ./internal/executor ./internal/dispatch -run 'SameWorkspace|Same.Workspace' -count=1 && go test ./internal/guestd -run 'ManagedProgramChildAdmission|ProgramCgroupLeaf|WorkspaceProgramAdmission|RestoredWorkspaceRebind' -count=1 && bash tests/release_smoke_selector_test.sh"
 run_check actor-console \
   'Actor detail route data contract and Console typecheck' \
   bash -c "bun test packages/console/src/lib/actors.test.ts && bun run --cwd packages/console typecheck"
@@ -65,6 +65,12 @@ run_check external-token-wait-registration \
 run_check identity-fencing-contract \
   'deterministic stale Lease and prior worker epoch rejection tests' \
   bash -c "go test ./internal/control -run TestRenewRunLeaseRejectsPriorWorkerEpoch -count=1 && go test ./internal/dispatch -run TestStaleWorkerFencerOldEpochCannotFenceNewEpoch -count=1"
+run_check postgres-primitive-schema \
+  'PostgreSQL 18 migration/down-migration contract with no application-owned functions, triggers, views, rules, generated business columns, Run-stream tables, or workspace_process_records' \
+  nix develop -c go test ./internal/db/schema -run TestUpWithPostgres -count=1
+run_check surface-attestation-contract \
+  'typed Deployment declaration and worker/runtime evidence query contract' \
+  bash tests/surface_attestation_test.sh
 run_check public-run-path-report \
   'bash tests/run_path_report_local_test.sh && bash tests/path_report_wrapper_test.sh' \
   bash -c 'bash tests/run_path_report_local_test.sh && bash tests/path_report_wrapper_test.sh'
@@ -77,6 +83,12 @@ run_check cli-resource-boundary \
 run_check actor-cli \
   'go test ./cmd/helmr ./internal/client -run Actor -count=1' \
   go test ./cmd/helmr ./internal/client -run Actor -count=1
+run_check actor-runtime-contract \
+  'typed Actor proto-to-executor worker bridge, semantic failure, and full stale Run source receipt fence' \
+  bash -c "go test ./internal/executor -run 'TestActorRuntimeVerticalContract|TestWorkerActor' -count=1 && go test ./internal/control -run TestAuthorizeWorkerRunSourceRequiresWorkerAndFullReceipt -count=1"
+run_check workspace-runtime-contract \
+  'typed SDK/proto Workspace surface, drained checkpoint pause, executor worker bridge, renewed receipt retry, run-pinned create fence, and error classification' \
+  bash -c "bun test runtime/typescript/src/program.test.ts && go test ./internal/guestd -run TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain -count=1 && go test ./internal/executor -run 'TestWorkspaceRuntimeVerticalContract|TestWorkerWorkspaceRequests|TestWorkspaceRuntimeRetryUsesRenewedReceipt' -count=1 && nix develop -c go test ./internal/control -run 'TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim|TestRunSourcedWorkspaceSelfExecAndDeleteAreBusyWithoutSideEffects|TestWorkerWorkspaceExecFailureDoesNotClassifyUnknownInfrastructureError' -count=1"
 run_check schedule-cli \
   'go test ./cmd/helmr ./internal/client -run Schedule -count=1' \
   go test ./cmd/helmr ./internal/client -run Schedule -count=1

@@ -157,7 +157,11 @@ POST /api/worker/fence
 POST /api/worker/leases/actor-inputs/send
 POST /api/worker/leases/actor-outputs
 POST /api/worker/leases/actor-turns/commit
+POST /api/worker/leases/actors/close
 POST /api/worker/leases/actors/complete
+POST /api/worker/leases/actors/output-page
+POST /api/worker/leases/actors/start
+POST /api/worker/leases/actors/status
 POST /api/worker/leases/checkpoints/failed
 POST /api/worker/leases/checkpoints/ready
 POST /api/worker/leases/claim
@@ -176,6 +180,14 @@ POST /api/worker/leases/structured-logs
 POST /api/worker/leases/task-children/invoke
 POST /api/worker/leases/tasks/complete
 POST /api/worker/leases/tokens
+POST /api/worker/leases/workspaces/create
+POST /api/worker/leases/workspaces/delete
+POST /api/worker/leases/workspaces/exec
+POST /api/worker/leases/workspaces/exec/poll
+POST /api/worker/leases/workspaces/files/list
+POST /api/worker/leases/workspaces/files/read
+POST /api/worker/leases/workspaces/files/stat
+POST /api/worker/leases/workspaces/retrieve
 POST /api/worker/observe
 POST /api/worker/runtime-instances/closed
 POST /api/worker/runtime-instances/failed

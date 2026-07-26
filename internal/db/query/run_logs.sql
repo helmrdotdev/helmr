@@ -281,7 +281,8 @@ event AS (
 meter_event AS (
     INSERT INTO meter_events (
         org_id, project_id, environment_id, run_id, run_lease_id,
-        attempt_number, trace_id, span_id, meter, quantity, unit, details,
+        attempt_number, trace_id, span_id, meter,
+        quantity, unit, details,
         idempotency_key, idempotency_fingerprint
     )
     SELECT current_run_lease.org_id,
@@ -307,7 +308,8 @@ meter_event AS (
                             AND current_run_lease.id = selected_chunk.run_id
      WHERE selected_chunk.is_new
        AND selected_chunk.size_bytes > 0
-    ON CONFLICT (org_id, source_type, source_id, meter, idempotency_key)
+    ON CONFLICT (org_id, run_lease_id, meter, idempotency_key)
+        WHERE run_lease_id IS NOT NULL
     DO UPDATE SET idempotency_fingerprint = meter_events.idempotency_fingerprint
      WHERE meter_events.idempotency_fingerprint = excluded.idempotency_fingerprint
     RETURNING *
@@ -320,8 +322,8 @@ meter_event_outbox AS (
     )
     SELECT meter_event.org_id,
            'meter_event',
-           meter_event.source_type,
-           meter_event.source_id,
+           'run_lease',
+           meter_event.run_lease_id,
            meter_event.project_id,
            meter_event.environment_id,
            meter_event.run_id,

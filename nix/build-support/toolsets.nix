@@ -87,8 +87,8 @@ rec {
   ]
   ++ lib.optionals stdenv.isLinux [ pkgs.kmod ];
 
-  smokeLinux = lib.optionals stdenv.isLinux [
-    (helmrPackages.firecrackerRuntime or pkgs.firecracker)
+  smokeLinux = lib.optionals (stdenv.isLinux && stdenv.isx86_64) [
+    helmrPackages.firecrackerRuntime
     cniPlugins
     pkgs.buildkit
     pkgs.rootlesskit

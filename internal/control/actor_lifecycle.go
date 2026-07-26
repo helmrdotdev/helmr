@@ -28,6 +28,7 @@ type actorCloseRequest struct {
 	ActorPublicID  string
 	WorkspaceID    uuid.UUID
 	IdempotencyKey string
+	Authorize      func(context.Context, db.Querier) error
 }
 
 func (s *Server) closeActor(
@@ -49,6 +50,11 @@ func (s *Server) closeActor(
 
 	var receipt api.ActorOperationReceipt
 	err = s.inTx(ctx, func(work *txWork) error {
+		if request.Authorize != nil {
+			if err := request.Authorize(ctx, work.q); err != nil {
+				return err
+			}
+		}
 		var claim *db.IdempotencyClaim
 		if claimRequest != nil {
 			claims, err := s.claims.TransactionForQueries(work.q)

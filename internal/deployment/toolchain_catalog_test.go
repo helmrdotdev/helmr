@@ -12,7 +12,7 @@ import (
 func testToolchain(t *testing.T) Toolchain {
 	t.Helper()
 	return Toolchain{
-		Architecture:         ArchitectureAArch64,
+		Architecture:         ArchitectureX8664,
 		FormatVersion:        ToolchainFormatVersion,
 		ManagedRuntimeDigest: toolDigestForTest("managed runtime"),
 		ToolchainClosure: ArtifactDescriptor{
@@ -130,14 +130,10 @@ func TestToolchainCatalogRejectsInvalidDocuments(t *testing.T) {
 
 func TestToolchainCatalogDerivesDeduplicatedArchitectureObjects(t *testing.T) {
 	first, _ := testToolchainForRuntime(t, testRuntimeDescriptor())
-	first.Architecture = ArchitectureAArch64
-	foreign := first
-	foreign.Architecture = ArchitectureX8664
-	foreign.ManagedRuntimeDigest = toolDigestForTest("x86 runtime")
 	second := first
 	second.ManagedRuntimeDigest = toolDigestForTest("second runtime")
 	second.ToolchainClosure.Digest = toolDigestForTest("second closure")
-	toolchains := []Toolchain{first, foreign, second}
+	toolchains := []Toolchain{first, second}
 	sort.Slice(toolchains, func(left, right int) bool {
 		leftDigest, _ := StandardToolchainDigest(toolchains[left])
 		rightDigest, _ := StandardToolchainDigest(toolchains[right])
@@ -151,18 +147,18 @@ func TestToolchainCatalogDerivesDeduplicatedArchitectureObjects(t *testing.T) {
 	if len(all) != 2 {
 		t.Fatalf("deduplicated object count = %d, want 2", len(all))
 	}
-	aarch64, err := toolchainClosureObjects(
+	x86, err := toolchainClosureObjects(
 		catalog,
-		ArchitectureAArch64,
+		ArchitectureX8664,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(aarch64) != 2 {
-		t.Fatalf("aarch64 object count = %d, want 2", len(aarch64))
+	if len(x86) != 2 {
+		t.Fatalf("x86_64 object count = %d, want 2", len(x86))
 	}
 
-	divergent := foreign
+	divergent := first
 	divergent.ToolchainClosure.SizeBytes++
 	toolchains = []Toolchain{first, divergent}
 	sort.Slice(toolchains, func(left, right int) bool {

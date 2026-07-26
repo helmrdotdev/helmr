@@ -34,8 +34,8 @@ SELECT workers.id,
 WITH target AS (
     UPDATE worker_instances AS workers
        SET state = CASE
-               WHEN workers.current_epoch IS NULL THEN 'disabled'::worker_instance_state
-               ELSE 'lost'::worker_instance_state
+               WHEN workers.current_epoch IS NULL THEN 'disabled'
+               ELSE 'lost'
            END,
            claim_version = workers.claim_version + 1,
            disabled_at = CASE

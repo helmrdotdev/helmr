@@ -16,7 +16,7 @@ const manifestDigestDomain = "helmr.deployment-definition-manifest.v0\0"
 const maxProgramFileSizeBytes = 16777216
 const maxPackageManagerVersionBytes = 64
 
-export type RuntimeArchitecture = "aarch64" | "x86_64"
+export type RuntimeArchitecture = "x86_64"
 export type ProgramDeclaration =
   | Readonly<{
       kind: "task"
@@ -294,7 +294,7 @@ function requireKeys(value: JsonObject, expected: readonly string[], label: stri
 }
 
 function requireArchitecture(value: JsonValue | undefined): RuntimeArchitecture {
-  if (value !== "aarch64" && value !== "x86_64") {
+  if (value !== "x86_64") {
     throw new Error(`unsupported runtime architecture ${JSON.stringify(value)}`)
   }
   return value

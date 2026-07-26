@@ -440,3 +440,21 @@ func (c *Connector) readBuildNetworkStatus(
 	}
 	return parseBuildNetworkStatus(raw)
 }
+
+func parseBuildNetworkStatus(raw []byte) (vm.BuildNetworkStatus, error) {
+	counters, err := parseNetworkCounters(raw, "build")
+	if err != nil {
+		return vm.BuildNetworkStatus{}, err
+	}
+	denied, foundDenied := counters[buildNetworkDeniedCounterName]
+	limit, foundLimit := counters[buildNetworkLimitCounterName]
+	if !foundDenied || !foundLimit {
+		return vm.BuildNetworkStatus{}, errors.New(
+			"build network counters are incomplete",
+		)
+	}
+	return vm.BuildNetworkStatus{
+		DeniedPackets: denied,
+		LimitPackets:  limit,
+	}, nil
+}

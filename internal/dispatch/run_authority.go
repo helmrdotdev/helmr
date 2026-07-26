@@ -1321,15 +1321,15 @@ func normalizeRunResources(
 ) (runResources, error) {
 	if resources.MilliCPU <= 0 ||
 		resources.MemoryMiB <= 0 ||
-		resources.DiskMiB <= 0 ||
+		resources.EphemeralDiskMiB <= 0 ||
 		resources.MemoryMiB > math.MaxInt64/mebibyte ||
-		resources.DiskMiB > math.MaxInt64/mebibyte {
+		resources.EphemeralDiskMiB > math.MaxInt64/mebibyte {
 		return runResources{}, errors.New("Workspace resources are outside the Run placement domain")
 	}
 	return runResources{
 		cpuMillis:      resources.MilliCPU,
 		memoryBytes:    resources.MemoryMiB * mebibyte,
-		workloadDisk:   resources.DiskMiB * mebibyte,
+		workloadDisk:   resources.EphemeralDiskMiB * mebibyte,
 		scratchBytes:   0,
 		executionSlots: 1,
 	}, nil

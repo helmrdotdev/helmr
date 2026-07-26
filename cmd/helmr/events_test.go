@@ -28,7 +28,7 @@ func TestWaitCommandPollsUntilTerminal(t *testing.T) {
 			if requests > 1 {
 				status = "succeeded"
 			}
-			_ = json.NewEncoder(w).Encode(api.RunResponse{ID: "run-1", Status: status})
+			_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{ID: "run-1", Status: status})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
@@ -155,7 +155,7 @@ func TestLogsCommandFollowsRunLogs(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1/logs" && r.URL.Query().Get("cursor") == "rt1.new":
 			_ = json.NewEncoder(w).Encode(api.RunLogPage{})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1":
-			_ = json.NewEncoder(w).Encode(api.RunResponse{ID: "run-1", Status: api.RunStatusSucceeded})
+			_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{ID: "run-1", Status: api.RunStatusSucceeded})
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.RequestURI())
 		}

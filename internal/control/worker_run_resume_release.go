@@ -110,8 +110,8 @@ func (s *Server) acknowledgeRunResumeRelease(
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		mode, err := deriveRunStartMode(locators)
-		if err != nil || (mode != runLeaseClaimRestore && mode != runLeaseClaimAttachParent) {
+		mode := deriveRunStartMode(locators)
+		if mode != runLeaseClaimRestore && mode != runLeaseClaimAttachParent {
 			return errStaleRunLeaseClaim
 		}
 		authority, err := lockRunStartAuthority(

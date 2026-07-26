@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -393,16 +394,20 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 		paths = append(paths, r.URL.RequestURI())
 		switch r.URL.Path {
 		case "/api/runs":
-			if r.URL.Query().Get("status") != "all" || r.URL.Query().Get("limit") != "25" {
+			if got := r.URL.Query()["status"]; !slices.Equal(got, []string{"running", "waiting"}) ||
+				r.URL.Query().Get("cursor") != "cursor-1" ||
+				r.URL.Query().Get("limit") != "25" {
 				t.Fatalf("query = %s", r.URL.RawQuery)
 			}
-			_ = json.NewEncoder(w).Encode(api.ListRunsResponse{Runs: []api.RunResponse{{
-				ID:        "run-1",
-				TaskID:    "deploy",
-				Status:    "succeeded",
-				CreatedAt: now,
-				UpdatedAt: now,
-			}}})
+			_ = json.NewEncoder(w).Encode(api.ListRunSnapshotsResponse{
+				Runs: []api.RunSnapshotResponse{{
+					ID:         "run-1",
+					Status:     "succeeded",
+					Entrypoint: api.RunEntrypointResponse{Kind: "task", ID: "deploy"},
+					CreatedAt:  now,
+				}},
+				NextCursor: "cursor-2",
+			})
 		case "/api/runs/run-1/logs":
 			_ = json.NewEncoder(w).Encode(api.RunLogPage{
 				Logs: []api.RunLogRecord{{
@@ -422,11 +427,16 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runs, err := client.ListRuns(context.Background(), ListRunsOptions{Status: "all", Limit: 25})
+	runs, err := client.ListRuns(context.Background(), ListRunsOptions{
+		Statuses: []string{"running", "waiting"},
+		Cursor:   "cursor-1",
+		Limit:    25,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runs.Runs) != 1 || runs.Runs[0].ID != "run-1" {
+	if len(runs.Runs) != 1 || runs.Runs[0].ID != "run-1" ||
+		runs.Runs[0].Entrypoint.ID != "deploy" || runs.NextCursor != "cursor-2" {
 		t.Fatalf("runs = %+v", runs)
 	}
 	logs, err := client.ListRunLogs(context.Background(), "run-1")
@@ -438,7 +448,7 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 		logs.NextCursor != "rt1.next" {
 		t.Fatalf("logs = %+v", logs)
 	}
-	if got := strings.Join(paths, ","); got != "/api/runs?limit=25&status=all,/api/runs/run-1/logs" {
+	if got := strings.Join(paths, ","); got != "/api/runs?cursor=cursor-1&limit=25&status=running&status=waiting,/api/runs/run-1/logs" {
 		t.Fatalf("paths = %s", got)
 	}
 }

@@ -809,7 +809,8 @@ func (s *Server) completeTokenRecord(
 			CompletionFingerprint: fingerprint[:],
 			OrgID:                 tokenRow.OrgID, ProjectID: tokenRow.ProjectID,
 			EnvironmentID: tokenRow.EnvironmentID, ID: tokenRow.ID,
-			Result: canonical,
+			Result:          canonical,
+			OutboxMessageID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		})
 		if err != nil {
 			return err
@@ -916,6 +917,7 @@ func (s *Server) cancelTokenRecord(
 		row, err := work.q.CancelToken(ctx, db.CancelTokenParams{
 			OrgID: tokenRow.OrgID, ProjectID: tokenRow.ProjectID,
 			EnvironmentID: tokenRow.EnvironmentID, ID: tokenRow.ID,
+			OutboxMessageID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		})
 		if err != nil {
 			return err

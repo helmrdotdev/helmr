@@ -78,8 +78,8 @@ func (s *Server) startRun(
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		mode, err := deriveRunStartMode(locators)
-		if err != nil || mode != requested.mode {
+		mode := deriveRunStartMode(locators)
+		if mode != requested.mode {
 			return errStaleRunLeaseClaim
 		}
 		authority, err := lockRunStartAuthority(ctx, work.q, worker, leaseID, expected.LeaseSequence, locators, mode)

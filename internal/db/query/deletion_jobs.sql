@@ -24,7 +24,8 @@ RETURNING *;
 UPDATE deletion_jobs
    SET status = 'running',
        started_at = COALESCE(started_at, now()),
-       failure = ''
+       failure = '',
+       updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id)
 RETURNING *;
@@ -34,7 +35,8 @@ UPDATE deletion_jobs
    SET status = 'completed',
        completed_at = now(),
        failure = '',
-       deleted_counts = sqlc.arg(deleted_counts)
+       deleted_counts = sqlc.arg(deleted_counts),
+       updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id)
 RETURNING *;
@@ -42,7 +44,8 @@ RETURNING *;
 -- name: FailDeletionJob :one
 UPDATE deletion_jobs
    SET status = 'failed',
-       failure = sqlc.arg(failure)
+       failure = sqlc.arg(failure),
+       updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id)
 RETURNING *;

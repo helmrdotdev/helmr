@@ -18,11 +18,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	runFollowPollInterval            = time.Second
-	runTerminalSnapshotRetryDelay    = 100 * time.Millisecond
-	runTerminalSnapshotConvergeLimit = 5 * time.Second
-)
+var runFollowPollInterval = time.Second
 
 func runCancelCommand() *cobra.Command {
 	var projectID string
@@ -63,6 +59,9 @@ func runListCommand() *cobra.Command {
 	var jsonLines bool
 	var projectID string
 	var environmentID string
+	var statuses []string
+	var cursor string
+	var limit int32
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List runs.",
@@ -72,7 +71,9 @@ func runListCommand() *cobra.Command {
 				return err
 			}
 			response, err := control.ListRuns(cmd.Context(), client.ListRunsOptions{
-				Status:        "all",
+				Statuses:      statuses,
+				Cursor:        cursor,
+				Limit:         limit,
 				ProjectID:     strings.TrimSpace(projectID),
 				EnvironmentID: strings.TrimSpace(environmentID),
 			})
@@ -86,11 +87,17 @@ func runListCommand() *cobra.Command {
 				return format.JSONLines(cmd.OutOrStdout(), response.Runs)
 			}
 			ui.RunTable(cmd.OutOrStdout(), response.Runs)
+			if response.NextCursor != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "\nNext cursor: %s\n", response.NextCursor)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	cmd.Flags().BoolVar(&jsonLines, "jsonl", false, "Emit one JSON run per line.")
+	cmd.Flags().StringSliceVar(&statuses, "status", nil, "Filter by Run status; repeat or comma-separate values.")
+	cmd.Flags().StringVar(&cursor, "cursor", "", "Continue listing from this cursor.")
+	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum Runs to return.")
 	addScopeFlags(cmd, &projectID, &environmentID)
 	return cmd
 }
@@ -330,7 +337,7 @@ func workspaceScopeForClient(control *client.Client, projectID string, environme
 	return client.WorkspaceScopeOptions(environmentScope), err
 }
 
-func writeRunLifecycleResult(cmd *cobra.Command, run api.RunResponse) {
+func writeRunLifecycleResult(cmd *cobra.Command, run api.RunSnapshotResponse) {
 	fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", run.ID)
 	fmt.Fprintf(cmd.OutOrStdout(), "run_status: %s\n", run.Status)
 }
@@ -543,10 +550,10 @@ func followRunLogs(ctx context.Context, cmd *cobra.Command, control *client.Clie
 	}
 }
 
-func waitForRun(ctx context.Context, control *client.Client, runID string, scope client.RunScopeOptions) (api.RunResponse, error) {
+func waitForRun(ctx context.Context, control *client.Client, runID string, scope client.RunScopeOptions) (api.RunSnapshotResponse, error) {
 	run, err := control.GetRun(ctx, runID, scope)
 	if err != nil {
-		return api.RunResponse{}, err
+		return api.RunSnapshotResponse{}, err
 	}
 	if api.RunStatusIsTerminal(run.Status) {
 		return run, nil
@@ -554,7 +561,7 @@ func waitForRun(ctx context.Context, control *client.Client, runID string, scope
 	for {
 		run, err = control.GetRun(ctx, runID, scope)
 		if err != nil {
-			return api.RunResponse{}, err
+			return api.RunSnapshotResponse{}, err
 		}
 		if api.RunStatusIsTerminal(run.Status) {
 			return run, nil
@@ -563,31 +570,7 @@ func waitForRun(ctx context.Context, control *client.Client, runID string, scope
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return api.RunResponse{}, ctx.Err()
-		case <-timer.C:
-		}
-	}
-}
-
-func waitForTerminalRunSnapshot(ctx context.Context, control *client.Client, runID string, scope client.RunScopeOptions) (api.RunResponse, error) {
-	convergeCtx, cancel := context.WithTimeout(ctx, runTerminalSnapshotConvergeLimit)
-	defer cancel()
-	var lastErr error
-	for {
-		run, err := control.GetRun(convergeCtx, runID, scope)
-		if err != nil {
-			lastErr = err
-		} else if api.RunStatusIsTerminal(run.Status) {
-			return run, nil
-		}
-		timer := time.NewTimer(runTerminalSnapshotRetryDelay)
-		select {
-		case <-convergeCtx.Done():
-			timer.Stop()
-			if lastErr != nil {
-				return api.RunResponse{}, fmt.Errorf("run %s reached a terminal event but the terminal snapshot did not converge: %w: last error: %v", runID, convergeCtx.Err(), lastErr)
-			}
-			return api.RunResponse{}, fmt.Errorf("run %s reached a terminal event but the terminal snapshot did not converge: %w", runID, convergeCtx.Err())
+			return api.RunSnapshotResponse{}, ctx.Err()
 		case <-timer.C:
 		}
 	}

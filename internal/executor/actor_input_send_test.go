@@ -9,14 +9,18 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/client"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
 
 type actorInputSendControl struct {
 	*testRunLeaseControl
-	request  api.WorkerSendActorInputRequest
-	response api.WorkerSendActorInputResponse
+	request      api.WorkerSendActorInputRequest
+	requests     []api.WorkerSendActorInputRequest
+	response     api.WorkerSendActorInputResponse
+	errors       []error
+	firstAttempt chan struct{}
 }
 
 func (control *actorInputSendControl) SendRunActorInput(
@@ -24,6 +28,16 @@ func (control *actorInputSendControl) SendRunActorInput(
 	request api.WorkerSendActorInputRequest,
 ) (api.WorkerSendActorInputResponse, error) {
 	control.request = request
+	control.requests = append(control.requests, request)
+	if len(control.errors) != 0 {
+		err := control.errors[0]
+		control.errors = control.errors[1:]
+		if control.firstAttempt != nil {
+			close(control.firstAttempt)
+			control.firstAttempt = nil
+		}
+		return api.WorkerSendActorInputResponse{}, err
+	}
 	return control.response, nil
 }
 
@@ -87,6 +101,83 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 		control.request.ActorKey != "primary" ||
 		control.request.IdempotencyKey != "send-1" {
 		t.Fatalf("request = %+v", control.request)
+	}
+}
+
+func TestHandleActorInputSendRetryUsesRenewedReceipt(t *testing.T) {
+	lease := testFreshProgramClaim(t).Lease
+	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
+	correlationID := "00000000-0000-0000-0000-000000000113"
+	firstAttempt := make(chan struct{})
+	control := &actorInputSendControl{
+		testRunLeaseControl: &testRunLeaseControl{},
+		response: api.WorkerSendActorInputResponse{
+			CorrelationID: correlationID,
+			Completed:     &api.SendActorInputResponse{Sequence: 8},
+		},
+		errors: []error{&client.HTTPError{
+			StatusCode: 503,
+			Status:     "503 Service Unavailable",
+			Message:    "temporary control failure",
+		}},
+		firstAttempt: firstAttempt,
+	}
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	task := &guestRunLeaseTask{
+		program: freshProgram{session: fakeGuestSession{stream: guest}},
+		control: control,
+		lease:   lease,
+	}
+	go renewRunSourceReceiptAfterAttempt(task, firstAttempt)
+	result := make(chan error, 1)
+	go func() {
+		result <- task.handleActorInputSend(t.Context(), &runv0.ActorInputSendRequested{
+			CorrelationId: correlationID,
+			DeclaredId:    "mailbox",
+			Address: &runv0.ActorInputSendRequested_ActorKey{
+				ActorKey: "primary",
+			},
+			DataJson: `{"hello":"again"}`,
+		})
+	}()
+	reader := bufio.NewReader(host)
+	header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wire.ReadResumeDecision(header, reader, bodyLen); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if len(control.requests) != 2 {
+		t.Fatalf("requests = %+v", control.requests)
+	}
+	assertRetriedWithRenewedReceipt(t, control.requests[0].Lease, control.requests[1].Lease, len(control.requests))
+}
+
+func renewRunSourceReceiptAfterAttempt(task *guestRunLeaseTask, attempted <-chan struct{}) {
+	<-attempted
+	task.mu.Lock()
+	task.lease.LeaseSequence++
+	task.lease.ExpiresAt = task.lease.ExpiresAt.Add(time.Minute)
+	task.mu.Unlock()
+}
+
+func assertRetriedWithRenewedReceipt(
+	t *testing.T,
+	first api.WorkerRunLeaseReceipt,
+	second api.WorkerRunLeaseReceipt,
+	count int,
+) {
+	t.Helper()
+	if count != 2 ||
+		second.LeaseSequence != first.LeaseSequence+1 ||
+		!second.ExpiresAt.After(first.ExpiresAt) {
+		t.Fatalf("request count = %d first lease = %+v second lease = %+v", count, first, second)
 	}
 }
 

@@ -209,16 +209,10 @@ func (s *Server) resolveActorLifecycleAddress(
 	actorDeclaredID string,
 	request api.ActorOperationRequest,
 ) (db.Actor, error) {
-	if request.ActorID != "" {
-		return s.db.GetActorByPublicID(r.Context(), db.GetActorByPublicIDParams{
-			EnvironmentID: environmentID, ActorDeclaredID: actorDeclaredID,
-			PublicID: request.ActorID,
-		})
-	}
-	return s.db.GetActorByKey(r.Context(), db.GetActorByKeyParams{
-		EnvironmentID: environmentID, ActorDeclaredID: actorDeclaredID,
-		Key: pgvalue.Text(request.ActorKey),
-	})
+	return resolveActorAddress(
+		r.Context(), s.db, environmentID, actorDeclaredID,
+		actorReadAddress{publicID: request.ActorID, key: request.ActorKey},
+	)
 }
 
 func (s *Server) writeActorCloseError(w http.ResponseWriter, err error) {

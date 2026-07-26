@@ -49,13 +49,19 @@ type workspaceExecRequest struct {
 	ProjectID      uuid.UUID
 	EnvironmentID  uuid.UUID
 	Workspace      db.Workspace
-	Principal      auth.Actor
+	Creator        workspaceExecCreator
 	Command        []string
 	Cwd            string
 	Env            map[string]string
 	Stdin          []byte
 	Timeout        time.Duration
 	IdempotencyKey string
+	Authorize      func(context.Context, db.Querier) error
+}
+
+type workspaceExecCreator struct {
+	SubjectType string
+	SubjectID   string
 }
 
 type normalizedWorkspaceExec struct {
@@ -178,6 +184,15 @@ func nonNilWorkspaceExecBytes(value []byte) []byte {
 }
 
 func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRequest) (workspaceExecAdmission, error) {
+	switch request.Creator.SubjectType {
+	case string(auth.ActorKindAPIKey), string(auth.ActorKindSession), "run":
+	default:
+		return workspaceExecAdmission{}, fmt.Errorf("%w: creator type is invalid", errWorkspaceExecInvalid)
+	}
+	creatorID, err := uuid.Parse(request.Creator.SubjectID)
+	if err != nil || creatorID == uuid.Nil || creatorID.String() != request.Creator.SubjectID {
+		return workspaceExecAdmission{}, fmt.Errorf("%w: creator ID is invalid", errWorkspaceExecInvalid)
+	}
 	normalized, err := normalizeWorkspaceExec(request)
 	if err != nil {
 		return workspaceExecAdmission{}, err
@@ -201,6 +216,11 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 
 	var admission workspaceExecAdmission
 	err = s.inTx(ctx, func(work *txWork) error {
+		if request.Authorize != nil {
+			if err := request.Authorize(ctx, work.q); err != nil {
+				return err
+			}
+		}
 		claims, err := s.claims.TransactionForQueries(work.q)
 		if err != nil {
 			return err
@@ -289,8 +309,8 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 			Request:              normalized.requestJSON,
 			Stdin:                normalized.stdin,
 			ClaimID:              acquired.Claim.ID,
-			CreatedBySubjectType: string(request.Principal.Kind),
-			CreatedBySubjectID:   workspaceExecSubjectID(request.Principal),
+			CreatedBySubjectType: request.Creator.SubjectType,
+			CreatedBySubjectID:   request.Creator.SubjectID,
 		})
 		if err != nil {
 			return fmt.Errorf("create Workspace exec: %w", err)
@@ -315,21 +335,21 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 	return admission, err
 }
 
-func workspaceExecSubjectID(principal auth.Actor) string {
+func workspaceExecCreatorFromActor(principal auth.Actor) workspaceExecCreator {
+	creator := workspaceExecCreator{SubjectType: string(principal.Kind)}
 	switch principal.Kind {
 	case auth.ActorKindAPIKey:
 		if principal.APIKeyID != uuid.Nil {
-			return principal.APIKeyID.String()
+			creator.SubjectID = principal.APIKeyID.String()
+			return creator
 		}
 	case auth.ActorKindSession:
 		if principal.SessionID != uuid.Nil {
-			return principal.SessionID.String()
+			creator.SubjectID = principal.SessionID.String()
+			return creator
 		}
 	}
-	if principal.UserID != uuid.Nil {
-		return principal.UserID.String()
-	}
-	return ""
+	return creator
 }
 
 func workspaceExecTerminal(state db.WorkspaceProcessState) bool {
@@ -363,6 +383,13 @@ func (s *Server) waitWorkspaceExec(ctx context.Context, admitted workspaceExecAd
 		if err != nil {
 			return api.ExecuteWorkspaceResult{}, err
 		}
+	}
+	return workspaceExecResult(process)
+}
+
+func workspaceExecResult(process db.WorkspaceProcess) (api.ExecuteWorkspaceResult, error) {
+	if !workspaceExecTerminal(process.State) {
+		return api.ExecuteWorkspaceResult{}, errors.New("Workspace exec is not terminal")
 	}
 	if process.State != db.WorkspaceProcessStateExited || !process.ExitCode.Valid {
 		code := process.TerminalReasonCode.String

@@ -73,7 +73,7 @@ func TestPrepareRuntimeReleaseIsCanonicalAndRetainsCapturedBytes(t *testing.T) {
 func TestToolchainReleaseStatementDeduplicatesSharedClosures(t *testing.T) {
 	first := testToolchain(t)
 	second := first
-	second.Architecture = ArchitectureX8664
+	second.ManagedRuntimeDigest = toolDigestForTest("second managed runtime")
 	firstDigest, err := StandardToolchainDigest(first)
 	if err != nil {
 		t.Fatal(err)
@@ -84,6 +84,9 @@ func TestToolchainReleaseStatementDeduplicatesSharedClosures(t *testing.T) {
 	}
 	if firstDigest == secondDigest {
 		t.Fatal("fixture toolchains have identical semantic identities")
+	}
+	if firstDigest > secondDigest {
+		first, second = second, first
 	}
 	raw, err := CanonicalToolchainCatalog([]Toolchain{first, second})
 	if err != nil {
@@ -507,57 +510,16 @@ func TestRuntimeWorkerPackageIsDeterministicAndUsesCapturedValidFixture(t *testi
 	}
 }
 
-func TestRuntimeReleaseToolchainIterationSelectsExactArchitecture(t *testing.T) {
+func TestRuntimeReleaseToolchainIterationRejectsUnsupportedArchitecture(t *testing.T) {
 	release := prepareRuntimeReleaseForTest(t, []byte("runtime"), nil)
 	defer release.Close()
-	catalog, err := ParseToolchainCatalog(release.toolchainCatalog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	foreign := catalog.toolchains[0]
-	foreign.Architecture = ArchitectureAArch64
-	foreign.ManagedRuntimeDigest = toolDigestForTest("aarch64 runtime")
-	foreignRaw := []byte("aarch64 standard toolchain")
-	foreign.ToolchainClosure = ArtifactDescriptor{
-		Digest:    runtimeReleaseDigest(foreignRaw),
-		MediaType: ToolchainMediaType,
-		SizeBytes: int64(len(foreignRaw)),
-	}
-	toolchains := append(catalog.toolchains, foreign)
-	sort.Slice(toolchains, func(left, right int) bool {
-		leftDigest, _ := StandardToolchainDigest(toolchains[left])
-		rightDigest, _ := StandardToolchainDigest(toolchains[right])
-		return leftDigest < rightDigest
-	})
-	release.toolchainCatalog, err = CanonicalToolchainCatalog(toolchains)
-	if err != nil {
-		t.Fatal(err)
-	}
-	foreignSnapshot, err := toolchainReleaseSnapshotForTest(
+	err := release.ForEachToolchain(
 		context.Background(),
-		t.TempDir(),
-		foreign.ToolchainClosure,
-		bytes.NewReader(foreignRaw),
+		RuntimeArchitecture("aarch64"),
+		func(ToolObject, io.Reader) error { return nil },
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	release.toolchainObjects[foreign.ToolchainClosure.Digest] = foreignSnapshot
-
-	var visited []ToolObject
-	if err := release.ForEachToolchain(
-		context.Background(),
-		ArchitectureX8664,
-		func(descriptor ToolObject, _ io.Reader) error {
-			visited = append(visited, descriptor)
-			return nil
-		},
-	); err != nil {
-		t.Fatal(err)
-	}
-	if len(visited) != 1 ||
-		visited[0].Digest == foreign.ToolchainClosure.Digest {
-		t.Fatalf("x86_64 toolchain iteration = %#v", visited)
+	if err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("unsupported architecture error = %v", err)
 	}
 }
 

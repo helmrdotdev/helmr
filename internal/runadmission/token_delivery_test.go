@@ -165,8 +165,8 @@ type tokenDeliveryStore struct {
 	credentialExpireLimit int32
 }
 
-func (s *tokenDeliveryStore) ExpireDueTokens(_ context.Context, limit int32) ([]db.ExpireDueTokensRow, error) {
-	s.expireLimit = limit
+func (s *tokenDeliveryStore) ExpireDueTokens(_ context.Context, params db.ExpireDueTokensParams) ([]db.ExpireDueTokensRow, error) {
+	s.expireLimit = params.LimitCount
 	return nil, nil
 }
 

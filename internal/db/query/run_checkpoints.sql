@@ -336,7 +336,7 @@ RETURNING *;
 -- name: FailCheckpointRunWait :one
 UPDATE run_waits
    SET condition_state = CASE
-           WHEN condition_state = 'pending' THEN 'cancelled'::wait_state
+           WHEN condition_state = 'pending' THEN 'cancelled'
            ELSE condition_state
        END,
        condition_terminal_at = CASE

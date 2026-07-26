@@ -1,11 +1,8 @@
 package client
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -556,54 +553,4 @@ func (c *Client) CancelToken(ctx context.Context, tokenID string, input api.Canc
 		return api.TokenResponse{}, err
 	}
 	return response, nil
-}
-
-func readSSE(reader io.Reader, handle func(eventName string, eventID string, data []byte) error) error {
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	eventName := ""
-	eventID := ""
-	var data bytes.Buffer
-	flush := func() error {
-		if data.Len() == 0 {
-			eventName = ""
-			eventID = ""
-			return nil
-		}
-		payload := bytes.TrimSuffix(data.Bytes(), []byte{'\n'})
-		if err := handle(eventName, eventID, payload); err != nil {
-			return err
-		}
-		eventName = ""
-		eventID = ""
-		data.Reset()
-		return nil
-	}
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			if err := flush(); err != nil {
-				return err
-			}
-			continue
-		}
-		if value, ok := strings.CutPrefix(line, "event:"); ok {
-			eventName = strings.TrimSpace(value)
-			continue
-		}
-		if value, ok := strings.CutPrefix(line, "id:"); ok {
-			eventID = strings.TrimSpace(value)
-			continue
-		}
-		if value, ok := strings.CutPrefix(line, "data:"); ok {
-			if data.Len() > 0 {
-				data.WriteByte('\n')
-			}
-			data.WriteString(strings.TrimPrefix(value, " "))
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-	return flush()
 }

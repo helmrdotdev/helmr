@@ -19,5 +19,4 @@ contents:
 entrypoint:
   command: /init
 archs:
-  - aarch64
   - x86_64

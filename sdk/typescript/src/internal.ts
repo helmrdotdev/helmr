@@ -17,6 +17,12 @@ export {
 } from "./image"
 export {
   inspectWorkspaceDefinition,
+  parseWorkspaceDeleteReceipt,
+  parseWorkspaceExecResult,
+  parseWorkspaceFileContent,
+  parseWorkspaceFileEntry,
+  parseWorkspaceFilePage,
+  parseWorkspaceSnapshot,
   type WorkspaceNetwork,
   type WorkspaceResources,
   type InternalWorkspaceDefinition,

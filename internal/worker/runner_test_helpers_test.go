@@ -27,7 +27,7 @@ func testCapacity(t interface {
 func testCapabilities() api.WorkerCapabilities {
 	return api.WorkerCapabilities{
 		ProtocolVersion: api.CurrentWorkerProtocolVersion, RuntimeID: "sha256:runtime",
-		RuntimeArch: "aarch64", RuntimeABI: "helmr.firecracker.snapshot.v0",
+		RuntimeArch: "x86_64", RuntimeABI: "helmr.firecracker.snapshot.v0",
 		KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", CNIProfile: "helmr/v0",
 		MaxVCPUs: 3, MaxMemoryMiB: 4096, MaxDiskMiB: 20480, VMMaxDiskMiB: 20480, ExecutionSlotsAvailable: 1,
 		VMMilliCPU: 2000, VMMemoryMiB: 2048,

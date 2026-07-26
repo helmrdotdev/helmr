@@ -174,6 +174,7 @@ func (program *freshProgram) awaitTaskCompletion(
 	sendActorInput func(context.Context, *runv0.ActorInputSendRequested) error,
 	createToken func(context.Context, *runv0.TokenCreateRequested) error,
 	invokeChildTask func(context.Context, *runv0.TaskChildInvokeRequested) error,
+	resourceRuntime ...func(context.Context, *runv0.RunEvent) error,
 ) (*runv0.TaskOutcome, *runv0.ProgramQuiesced, error) {
 	if program == nil || program.session == nil {
 		return nil, nil, errors.New("fresh Program session is required")
@@ -294,6 +295,26 @@ func (program *freshProgram) awaitTaskCompletion(
 			if err := invokeChildTask(ctx, value.TaskChildInvokeRequested); err != nil {
 				return nil, nil, err
 			}
+		case *runv0.RunEvent_ActorStartRequested,
+			*runv0.RunEvent_ActorStatusRequested,
+			*runv0.RunEvent_ActorCloseRequested,
+			*runv0.RunEvent_ActorOutputPageRequested,
+			*runv0.RunEvent_WorkspaceCreateRequested,
+			*runv0.RunEvent_WorkspaceRetrieveRequested,
+			*runv0.RunEvent_WorkspaceFileReadRequested,
+			*runv0.RunEvent_WorkspaceFileStatRequested,
+			*runv0.RunEvent_WorkspaceFileListRequested,
+			*runv0.RunEvent_WorkspaceExecRequested,
+			*runv0.RunEvent_WorkspaceDeleteRequested:
+			if outcome != nil {
+				return nil, nil, errors.New("Program emitted an Actor operation after Task outcome")
+			}
+			if len(resourceRuntime) != 1 || resourceRuntime[0] == nil {
+				return nil, nil, errors.New("fresh Program resource runtime support is required")
+			}
+			if err := resourceRuntime[0](ctx, &event); err != nil {
+				return nil, nil, err
+			}
 		case *runv0.RunEvent_ProgramQuiesced:
 			if outcome == nil {
 				return nil, nil, errors.New("Program quiesced before emitting a Task outcome")
@@ -321,6 +342,7 @@ func (program *freshProgram) awaitActorCompletion(
 	appendActorOutput func(context.Context, *runv0.ActorOutputAppendRequested) error,
 	createToken func(context.Context, *runv0.TokenCreateRequested) error,
 	invokeChildTask func(context.Context, *runv0.TaskChildInvokeRequested) error,
+	resourceRuntime ...func(context.Context, *runv0.RunEvent) error,
 ) (*runv0.ActorOutcome, *runv0.ProgramQuiesced, error) {
 	if program == nil || program.session == nil {
 		return nil, nil, errors.New("fresh Program session is required")
@@ -441,6 +463,26 @@ func (program *freshProgram) awaitActorCompletion(
 				return nil, nil, errors.New("fresh Program child Task invocation support is required")
 			}
 			if err := invokeChildTask(ctx, value.TaskChildInvokeRequested); err != nil {
+				return nil, nil, err
+			}
+		case *runv0.RunEvent_ActorStartRequested,
+			*runv0.RunEvent_ActorStatusRequested,
+			*runv0.RunEvent_ActorCloseRequested,
+			*runv0.RunEvent_ActorOutputPageRequested,
+			*runv0.RunEvent_WorkspaceCreateRequested,
+			*runv0.RunEvent_WorkspaceRetrieveRequested,
+			*runv0.RunEvent_WorkspaceFileReadRequested,
+			*runv0.RunEvent_WorkspaceFileStatRequested,
+			*runv0.RunEvent_WorkspaceFileListRequested,
+			*runv0.RunEvent_WorkspaceExecRequested,
+			*runv0.RunEvent_WorkspaceDeleteRequested:
+			if outcome != nil {
+				return nil, nil, errors.New("Program emitted an Actor operation after Actor outcome")
+			}
+			if len(resourceRuntime) != 1 || resourceRuntime[0] == nil {
+				return nil, nil, errors.New("fresh Program resource runtime support is required")
+			}
+			if err := resourceRuntime[0](ctx, &event); err != nil {
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_ProgramQuiesced:

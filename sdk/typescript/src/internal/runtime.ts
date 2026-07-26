@@ -1,4 +1,9 @@
 import type {
+  ActorOperationOptions,
+  ActorOperationReceipt,
+  ActorOutputRecord,
+  ActorStartOptions,
+  ActorStatus,
   Duration,
   JsonValue,
   Metadata,
@@ -14,6 +19,17 @@ import type {
   TokenCreateResult,
   TokenWaitOptions,
 } from "../tokens"
+import type {
+  RuntimeWorkspaceCreateOptions,
+  WorkspaceDeleteRequest,
+  WorkspaceDeleteReceipt,
+  WorkspaceExecRequest,
+  WorkspaceExecResult,
+  WorkspaceFileEntry,
+  WorkspaceFileListQuery,
+  WorkspaceSnapshot,
+} from "../workspace"
+import type { CursorPage } from "../contract"
 
 const runtimeOperationsSymbol = Symbol.for("helmr.sdk.v0.runtime_operations")
 
@@ -38,6 +54,68 @@ export interface RuntimeOperations {
     input: JsonValue,
     options?: SendOptions,
   ) => Promise<{ sequence: number }>
+  readonly actorStart: (
+    declaredId: string,
+    options: ActorStartOptions,
+  ) => Promise<Readonly<{ actorId: string; runId: string }>>
+  readonly actorStatus: (
+    target: Readonly<{
+      declaredId: string
+      address: { readonly id: string } | { readonly key: string }
+    }>,
+  ) => Promise<ActorStatus>
+  readonly actorClose: (
+    target: Readonly<{
+      declaredId: string
+      address: { readonly id: string } | { readonly key: string }
+    }>,
+    options?: ActorOperationOptions,
+  ) => Promise<ActorOperationReceipt>
+  readonly actorOutputPage: (
+    target: Readonly<{
+      declaredId: string
+      address: { readonly id: string } | { readonly key: string }
+    }>,
+    options?: Readonly<{ after?: number; limit?: number; signal?: AbortSignal }>,
+  ) => Promise<Readonly<{
+    records: readonly ActorOutputRecord[]
+    nextAfter: number
+    hasMore: boolean
+  }>>
+  readonly workspaceCreate: (
+    declaredId: string,
+    options?: RuntimeWorkspaceCreateOptions,
+  ) => Promise<Readonly<{ workspaceId: string }>>
+  readonly workspaceRetrieve: (
+    address: Readonly<{ id: string } | { key: string }>,
+    signal?: AbortSignal,
+  ) => Promise<WorkspaceSnapshot>
+  readonly workspaceFileRead: (
+    address: Readonly<{ id: string } | { key: string }>,
+    path: string,
+    signal?: AbortSignal,
+  ) => Promise<Uint8Array>
+  readonly workspaceFileStat: (
+    address: Readonly<{ id: string } | { key: string }>,
+    path: string,
+    signal?: AbortSignal,
+  ) => Promise<WorkspaceFileEntry>
+  readonly workspaceFileList: (
+    address: Readonly<{ id: string } | { key: string }>,
+    path: string,
+    query?: WorkspaceFileListQuery,
+    signal?: AbortSignal,
+  ) => Promise<CursorPage<WorkspaceFileEntry>>
+  readonly workspaceExec: (
+    address: Readonly<{ id: string } | { key: string }>,
+    request: WorkspaceExecRequest,
+    signal?: AbortSignal,
+  ) => Promise<WorkspaceExecResult>
+  readonly workspaceDelete: (
+    address: Readonly<{ id: string } | { key: string }>,
+    request?: WorkspaceDeleteRequest,
+    signal?: AbortSignal,
+  ) => Promise<WorkspaceDeleteReceipt>
   readonly tokenCreate: (
     options: TokenCreateOptions,
   ) => Promise<Omit<TokenCreateResult, "wait">>

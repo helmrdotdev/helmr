@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"golang.org/x/sync/errgroup"
@@ -25,7 +26,7 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 	if restore == nil {
 		return nil, errors.New("prepared runtime restore authority is required")
 	}
-	checkpoint, err := validatePreparedRuntimeRestore(target)
+	checkpoint, err := validatePreparedRuntimeRestore(target, p.RuntimeArchitecture)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +100,10 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 	return session, nil
 }
 
-func validatePreparedRuntimeRestore(target api.WorkerRuntimeReconcileTarget) (api.WorkerCheckpointManifest, error) {
+func validatePreparedRuntimeRestore(
+	target api.WorkerRuntimeReconcileTarget,
+	workerArchitecture deployment.RuntimeArchitecture,
+) (api.WorkerCheckpointManifest, error) {
 	restore := target.Source.Restore
 	if restore == nil || restore.Kind != "suspend" || strings.TrimSpace(restore.CheckpointID) == "" ||
 		strings.TrimSpace(restore.RunID) == "" || restore.AttemptNumber <= 0 ||
@@ -110,7 +114,7 @@ func validatePreparedRuntimeRestore(target api.WorkerRuntimeReconcileTarget) (ap
 	if err := json.Unmarshal(restore.Manifest, &checkpoint); err != nil {
 		return api.WorkerCheckpointManifest{}, fmt.Errorf("decode prepared runtime restore manifest: %w", err)
 	}
-	if err := validateRestoreIdentity(checkpoint); err != nil {
+	if err := validateRestoreIdentity(checkpoint, workerArchitecture); err != nil {
 		return api.WorkerCheckpointManifest{}, err
 	}
 	if checkpoint.RecoveryPoint.ID != restore.CheckpointID || checkpoint.RecoveryPoint.RunID != restore.RunID ||

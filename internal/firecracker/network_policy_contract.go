@@ -65,24 +65,6 @@ func parseRunNetworkStatus(raw []byte) (vm.RunNetworkStatus, error) {
 	return vm.RunNetworkStatus{DeniedPackets: packets}, nil
 }
 
-func parseBuildNetworkStatus(raw []byte) (vm.BuildNetworkStatus, error) {
-	counters, err := parseNetworkCounters(raw, "build")
-	if err != nil {
-		return vm.BuildNetworkStatus{}, err
-	}
-	denied, foundDenied := counters[buildNetworkDeniedCounterName]
-	limit, foundLimit := counters[buildNetworkLimitCounterName]
-	if !foundDenied || !foundLimit {
-		return vm.BuildNetworkStatus{}, errors.New(
-			"build network counters are incomplete",
-		)
-	}
-	return vm.BuildNetworkStatus{
-		DeniedPackets: denied,
-		LimitPackets:  limit,
-	}, nil
-}
-
 func parseNetworkCounters(raw []byte, label string) (map[string]uint64, error) {
 	var document struct {
 		Objects []struct {

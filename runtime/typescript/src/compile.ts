@@ -75,7 +75,7 @@ export type BuildPlanDefinition =
         resources: Readonly<{
           milliCpu: number
           memoryMiB: number
-          diskMiB: number
+          ephemeralDiskMiB: number
         }>
         network: Readonly<{
           internet: boolean
@@ -189,10 +189,7 @@ interface LocatedDefinition {
 }
 
 export function analyze(options: AnalyzeOptions): AnalysisResult {
-  if (
-    options.architecture !== "aarch64" &&
-    options.architecture !== "x86_64"
-  ) {
+  if (options.architecture !== "x86_64") {
     throw new Error(`unsupported architecture ${JSON.stringify(options.architecture)}`)
   }
   const located = discoverDefinitions(options.exports)
@@ -245,12 +242,12 @@ export function normalizeWorkspaceResources(
 ): Readonly<{
   milliCpu: number
   memoryMiB: number
-  diskMiB: number
+  ephemeralDiskMiB: number
 }> {
   return Object.freeze({
     milliCpu: normalizeCpu(resources.cpu),
     memoryMiB: normalizeIecMiB(resources.memory, "memory"),
-    diskMiB: 32768,
+    ephemeralDiskMiB: 32768,
   })
 }
 

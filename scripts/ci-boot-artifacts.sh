@@ -3,8 +3,13 @@ set -euo pipefail
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 role=${ROLE:-guest}
-arch=${ARCH:-aarch64}
+arch=${ARCH:-x86_64}
 prefix=${PREFIX:-$role}
+
+if [ "$arch" != "x86_64" ]; then
+	echo "unsupported ARCH: $arch" >&2
+	exit 1
+fi
 
 cd "$repo_root"
 

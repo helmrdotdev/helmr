@@ -153,7 +153,7 @@ in
   '';
   squashfs-tools = helmrPackages.squashfsTools;
 }
-// lib.optionalAttrs pkgs.stdenv.isLinux {
+// lib.optionalAttrs (system == "x86_64-linux") {
   firecracker-host-module = firecrackerHostModuleCheck;
   program-archive-contract =
     pkgs.runCommand "program-archive-contract-check"
@@ -305,20 +305,9 @@ in
           "$runtime" \
           "$program/pkg"
         unsquashfs -no-progress -d "$runtime" "$TMPDIR/verify/runtime.squashfs"
-        case "$(jq -r '.architecture' "$TMPDIR/verify/runtime.descriptor.json")" in
-          x86_64)
-            managed_runtime_loader=ld-linux-x86-64.so.2
-            managed_runtime_loader_source=${lib.getLib pkgs.glibc}/lib/ld-linux-x86-64.so.2
-            ;;
-          aarch64)
-            managed_runtime_loader=ld-linux-aarch64.so.1
-            managed_runtime_loader_source=${lib.getLib pkgs.glibc}/lib/ld-linux-aarch64.so.1
-            ;;
-          *)
-            echo "runtime descriptor has unsupported architecture" >&2
-            exit 1
-            ;;
-        esac
+        test "$(jq -r '.architecture' "$TMPDIR/verify/runtime.descriptor.json")" = x86_64
+        managed_runtime_loader=ld-linux-x86-64.so.2
+        managed_runtime_loader_source=${lib.getLib pkgs.glibc}/lib/ld-linux-x86-64.so.2
 
         manifest_line() {
           path="$1"

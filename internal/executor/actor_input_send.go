@@ -23,21 +23,14 @@ func (task *guestRunLeaseTask) handleActorInputSend(
 	if err != nil {
 		return err
 	}
-	task.mu.Lock()
-	defer task.mu.Unlock()
-	if task.finished || task.finalizingKind != "" {
-		return errors.New("Run Lease Task cannot send Actor input")
-	}
-	request.Lease = task.lease
 	var response api.WorkerSendActorInputResponse
-	sendCtx, cancel, err := runLeaseLogContext(ctx, task.lease.ExpiresAt)
-	if err != nil {
-		return err
-	}
-	defer cancel()
-	if err := retryRunLeaseRequest(sendCtx, func(requestCtx context.Context) error {
+	if err := task.callRunSourceRuntime(ctx, func(
+		callCtx context.Context,
+		lease api.WorkerRunLeaseReceipt,
+	) error {
+		request.Lease = lease
 		var requestErr error
-		response, requestErr = task.control.SendRunActorInput(requestCtx, request)
+		response, requestErr = task.control.SendRunActorInput(callCtx, request)
 		return requestErr
 	}); err != nil {
 		return fmt.Errorf("send Actor input: %w", err)

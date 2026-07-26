@@ -690,8 +690,8 @@ SELECT runs.*,
    AND runs.project_id = sqlc.arg(project_id)
    AND runs.environment_id = sqlc.arg(environment_id)
    AND (
-       coalesce(cardinality(sqlc.arg(statuses)::run_status[]), 0) = 0
-       OR runs.status = ANY(sqlc.arg(statuses)::run_status[])
+       coalesce(cardinality(sqlc.arg(statuses)::text[]), 0) = 0
+       OR runs.status = ANY(sqlc.arg(statuses)::text[])
    )
    AND (
        sqlc.narg(after_created_at)::timestamptz IS NULL

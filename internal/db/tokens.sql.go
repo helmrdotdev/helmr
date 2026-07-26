@@ -60,13 +60,15 @@ changed AS (
 ),
 reconciliation_intent AS (
     INSERT INTO outbox_messages (
+        id,
         lane,
         topic,
         partition_key,
         payload,
         available_at
     )
-    SELECT 'control',
+    SELECT $5::uuid,
+           'control',
            'token.reconcile',
            changed.id::text,
            jsonb_build_object(
@@ -89,10 +91,11 @@ SELECT selected_token.id, selected_token.public_id, selected_token.org_id, selec
 `
 
 type CancelTokenParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ID            pgtype.UUID `json:"id"`
+	OrgID           pgtype.UUID `json:"org_id"`
+	ProjectID       pgtype.UUID `json:"project_id"`
+	EnvironmentID   pgtype.UUID `json:"environment_id"`
+	ID              pgtype.UUID `json:"id"`
+	OutboxMessageID pgtype.UUID `json:"outbox_message_id"`
 }
 
 type CancelTokenRow struct {
@@ -101,7 +104,7 @@ type CancelTokenRow struct {
 	OrgID                     pgtype.UUID        `json:"org_id"`
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
-	State                     TokenState         `json:"state"`
+	State                     string             `json:"state"`
 	ExpiresAt                 pgtype.Timestamptz `json:"expires_at"`
 	CallbackKeyID             string             `json:"callback_key_id"`
 	CallbackSecretFingerprint []byte             `json:"callback_secret_fingerprint"`
@@ -127,6 +130,7 @@ func (q *Queries) CancelToken(ctx context.Context, arg CancelTokenParams) (Cance
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
+		arg.OutboxMessageID,
 	)
 	var i CancelTokenRow
 	err := row.Scan(
@@ -209,13 +213,15 @@ changed AS (
 ),
 reconciliation_intent AS (
     INSERT INTO outbox_messages (
+        id,
         lane,
         topic,
         partition_key,
         payload,
         available_at
     )
-    SELECT 'control',
+    SELECT $7::uuid,
+           'control',
            'token.reconcile',
            changed.id::text,
            jsonb_build_object(
@@ -250,6 +256,7 @@ type CompleteTokenParams struct {
 	EnvironmentID         pgtype.UUID `json:"environment_id"`
 	ID                    pgtype.UUID `json:"id"`
 	Result                []byte      `json:"result"`
+	OutboxMessageID       pgtype.UUID `json:"outbox_message_id"`
 }
 
 type CompleteTokenRow struct {
@@ -258,7 +265,7 @@ type CompleteTokenRow struct {
 	OrgID                     pgtype.UUID        `json:"org_id"`
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
-	State                     TokenState         `json:"state"`
+	State                     string             `json:"state"`
 	ExpiresAt                 pgtype.Timestamptz `json:"expires_at"`
 	CallbackKeyID             string             `json:"callback_key_id"`
 	CallbackSecretFingerprint []byte             `json:"callback_secret_fingerprint"`
@@ -287,6 +294,7 @@ func (q *Queries) CompleteToken(ctx context.Context, arg CompleteTokenParams) (C
 		arg.EnvironmentID,
 		arg.ID,
 		arg.Result,
+		arg.OutboxMessageID,
 	)
 	var i CompleteTokenRow
 	err := row.Scan(
@@ -398,14 +406,19 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (Token
 }
 
 const expireDueTokens = `-- name: ExpireDueTokens :many
-WITH candidates AS MATERIALIZED (
+WITH provided_outbox_ids AS MATERIALIZED (
+    SELECT id, ordinality
+      FROM unnest($1::uuid[])
+           WITH ORDINALITY AS supplied(id, ordinality)
+),
+candidates AS MATERIALIZED (
     SELECT id
      FROM tokens
      WHERE state = 'pending'
        AND expires_at <= transaction_timestamp()
      ORDER BY expires_at, id
      FOR UPDATE SKIP LOCKED
-     LIMIT $1
+     LIMIT $2
 ),
 expired AS (
     UPDATE tokens
@@ -415,17 +428,26 @@ expired AS (
      FROM candidates
      WHERE tokens.id = candidates.id
        AND tokens.state = 'pending'
+       AND cardinality($1::uuid[])
+           >= (SELECT count(*) FROM candidates)
     RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
+),
+ordered_expired AS MATERIALIZED (
+    SELECT expired.id,
+           row_number() OVER (ORDER BY expired.expires_at, expired.id) AS ordinality
+      FROM expired
 ),
 reconciliation_intents AS (
     INSERT INTO outbox_messages (
+        id,
         lane,
         topic,
         partition_key,
         payload,
         available_at
     )
-    SELECT 'control',
+    SELECT provided_outbox_ids.id,
+           'control',
            'token.reconcile',
            expired.id::text,
            jsonb_build_object(
@@ -434,6 +456,8 @@ reconciliation_intents AS (
            ),
            transaction_timestamp()
       FROM expired
+      JOIN ordered_expired USING (id)
+      JOIN provided_outbox_ids USING (ordinality)
     RETURNING partition_key
 )
 SELECT expired.id, expired.public_id, expired.org_id, expired.project_id, expired.environment_id, expired.state, expired.expires_at, expired.callback_key_id, expired.callback_secret_fingerprint, expired.completion_fingerprint, expired.result, expired.error, expired.metadata, expired.tags, expired.created_at, expired.updated_at, expired.completed_at, expired.expired_at, expired.cancelled_at
@@ -443,13 +467,18 @@ SELECT expired.id, expired.public_id, expired.org_id, expired.project_id, expire
  ORDER BY expired.expires_at, expired.id
 `
 
+type ExpireDueTokensParams struct {
+	OutboxMessageIds []pgtype.UUID `json:"outbox_message_ids"`
+	LimitCount       int32         `json:"limit_count"`
+}
+
 type ExpireDueTokensRow struct {
 	ID                        pgtype.UUID        `json:"id"`
 	PublicID                  string             `json:"public_id"`
 	OrgID                     pgtype.UUID        `json:"org_id"`
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
-	State                     TokenState         `json:"state"`
+	State                     string             `json:"state"`
 	ExpiresAt                 pgtype.Timestamptz `json:"expires_at"`
 	CallbackKeyID             string             `json:"callback_key_id"`
 	CallbackSecretFingerprint []byte             `json:"callback_secret_fingerprint"`
@@ -465,8 +494,8 @@ type ExpireDueTokensRow struct {
 	CancelledAt               pgtype.Timestamptz `json:"cancelled_at"`
 }
 
-func (q *Queries) ExpireDueTokens(ctx context.Context, limitCount int32) ([]ExpireDueTokensRow, error) {
-	rows, err := q.db.Query(ctx, expireDueTokens, limitCount)
+func (q *Queries) ExpireDueTokens(ctx context.Context, arg ExpireDueTokensParams) ([]ExpireDueTokensRow, error) {
+	rows, err := q.db.Query(ctx, expireDueTokens, arg.OutboxMessageIds, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}
@@ -686,7 +715,7 @@ SELECT id, public_id, org_id, project_id, environment_id, state, expires_at, cal
    AND tokens.environment_id = $3
    AND (
        $4::text IS NULL
-       OR tokens.state = $4::token_state
+       OR tokens.state = $4::text
    )
    AND (
        $5::uuid IS NULL

@@ -68,6 +68,7 @@ SELECT workspace_processes.org_id,
  WHERE workspace_processes.state IN ('starting', 'running', 'exit_requested')
    AND (
        workspace_mounts.state = 'lost'
+       OR workspace_leases.state = 'fenced'
        OR (
            workspace_leases.state IN ('active', 'releasing')
            AND workspace_leases.expires_at <= transaction_timestamp()
@@ -446,12 +447,45 @@ SELECT sqlc.embed(workspace_processes),
    AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
    AND (
        workspace_mounts.state = 'lost'
+       OR workspace_leases.state = 'fenced'
        OR (
            workspace_leases.state IN ('active', 'releasing')
            AND workspace_leases.expires_at <= transaction_timestamp()
        )
    )
  FOR UPDATE OF workspace_processes, workspace_mounts, workspace_leases;
+
+-- name: LockWorkspaceExecSecretRevocationAuthority :one
+SELECT sqlc.embed(workspace_processes),
+       sqlc.embed(workspace_mounts),
+       sqlc.embed(workspace_leases)
+  FROM workspace_processes
+  JOIN workspace_mounts
+    ON workspace_mounts.id = workspace_processes.workspace_mount_id
+   AND workspace_mounts.workspace_id = workspace_processes.workspace_id
+  JOIN workspace_leases
+    ON workspace_leases.workspace_mount_id = workspace_mounts.id
+   AND workspace_leases.owner_process_id = workspace_processes.id
+ WHERE workspace_processes.org_id = sqlc.arg(org_id)
+   AND workspace_processes.id = sqlc.arg(process_id)
+   AND workspace_processes.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_processes.state_version = sqlc.arg(expected_state_version)
+   AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
+   AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+   AND workspace_leases.state IN ('active', 'releasing')
+ FOR UPDATE OF workspace_processes, workspace_mounts, workspace_leases;
+
+-- name: FenceWorkspaceExecLeaseForSecretRevocation :one
+UPDATE workspace_leases
+   SET state = 'fenced',
+       terminal_at = transaction_timestamp(),
+       terminal_reason_code = 'workspace_exec_secret_revoked',
+       terminal_error = '{"code":"workspace_exec_secret_revoked","retryable":false}'::jsonb,
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(lease_id)
+   AND owner_process_id = sqlc.arg(process_id)
+   AND state IN ('active', 'releasing')
+RETURNING *;
 
 -- name: LoseWorkspaceExecMount :one
 UPDATE workspace_mounts
@@ -662,7 +696,7 @@ UPDATE workspace_processes
    SET state = sqlc.arg(state),
        state_version = state_version + 1,
        exited_at = CASE
-           WHEN sqlc.arg(state)::workspace_process_state = 'exited'
+           WHEN sqlc.arg(state)::text = 'exited'
            THEN transaction_timestamp()
            ELSE exited_at
        END,

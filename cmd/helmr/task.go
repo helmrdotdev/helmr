@@ -125,9 +125,12 @@ func taskStartCommand() *cobra.Command {
 						waitCtx, cancel = context.WithDeadline(waitCtx, deadline)
 						defer cancel()
 					}
-					run, err := waitForRun(waitCtx, control, started.RunID, client.RunScopeOptions{
-						ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
-					})
+					run, err := waitForRun(
+						waitCtx,
+						control,
+						started.RunID,
+						client.RunScopeOptions(scope),
+					)
 					if err != nil {
 						return err
 					}
@@ -146,9 +149,14 @@ func taskStartCommand() *cobra.Command {
 					followCtx, cancel = context.WithDeadline(followCtx, deadline)
 					defer cancel()
 				}
-				if err := followRunLogs(followCtx, cmd, control, started.RunID, "", client.RunScopeOptions{
-					ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
-				}); err != nil {
+				if err := followRunLogs(
+					followCtx,
+					cmd,
+					control,
+					started.RunID,
+					"",
+					client.RunScopeOptions(scope),
+				); err != nil {
 					return err
 				}
 				wait = true
@@ -160,9 +168,12 @@ func taskStartCommand() *cobra.Command {
 					waitCtx, cancel = context.WithDeadline(waitCtx, deadline)
 					defer cancel()
 				}
-				run, err := waitForRun(waitCtx, control, started.RunID, client.RunScopeOptions{
-					ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
-				})
+				run, err := waitForRun(
+					waitCtx,
+					control,
+					started.RunID,
+					client.RunScopeOptions(scope),
+				)
 				if err != nil {
 					return err
 				}

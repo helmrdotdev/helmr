@@ -71,7 +71,7 @@ describe("declaration discovery", () => {
 
     const result = await analyzeProject({
       root,
-      architecture: "aarch64",
+      architecture: "x86_64",
     })
     expect(result.modules).toEqual(["tasks/nested/task.ts"])
     expect(result.buildPlan.definitions).toHaveLength(1)

@@ -352,32 +352,6 @@ UPDATE run_waits
    AND run_waits.suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id)
 RETURNING run_waits.*;
 
--- name: CompleteRunWaitCondition :one
-UPDATE run_waits
-   SET condition_state = 'completed',
-       condition_result = sqlc.narg(condition_result),
-       completed_actor_record_id = sqlc.narg(completed_actor_record_id),
-       condition_terminal_at = now(),
-       updated_at = now()
- WHERE run_id = sqlc.arg(run_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND id = sqlc.arg(id)
-   AND condition_state = 'pending'
-RETURNING *;
-
--- name: FailRunWaitCondition :one
-UPDATE run_waits
-   SET condition_state = 'failed',
-       condition_reason_code = sqlc.arg(condition_reason_code),
-       condition_error = sqlc.narg(condition_error),
-       condition_terminal_at = now(),
-       updated_at = now()
- WHERE run_id = sqlc.arg(run_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND id = sqlc.arg(id)
-   AND condition_state = 'pending'
-RETURNING *;
-
 -- name: RequestRunWaitCheckpoint :one
 UPDATE run_waits
    SET suspension_state = 'checkpointing',
@@ -424,18 +398,6 @@ UPDATE run_waits
    AND checkpoint_request_version = sqlc.arg(checkpoint_ack_version)
 RETURNING *;
 
--- name: MarkRunWaitResumePending :one
-UPDATE run_waits
-   SET suspension_state = 'resume_pending',
-       resume_request_version = resume_request_version + 1,
-       updated_at = now()
- WHERE run_id = sqlc.arg(run_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND id = sqlc.arg(id)
-   AND condition_state <> 'pending'
-   AND suspension_state = 'parked'
-RETURNING *;
-
 -- name: ReleaseRunResumeWait :one
 UPDATE run_waits
    SET suspension_state = 'released',
@@ -460,15 +422,65 @@ UPDATE run_waits
    AND resume_ack_version < resume_request_version
 RETURNING *;
 
--- name: ListPendingRunWaitTimeouts :many
+-- name: RegisterTimerRunWait :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'waiting',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = sqlc.arg(run_id)
+       AND runs.environment_id = sqlc.arg(environment_id)
+       AND runs.status = 'running'
+       AND runs.state_version = sqlc.arg(expected_running_state_version)
+       AND runs.current_attempt_number = sqlc.arg(attempt_number)
+       AND runs.current_run_lease_id = sqlc.arg(current_run_lease_id)
+       AND runs.active_started_at IS NOT NULL
+       AND transaction_timestamp() < runs.active_started_at
+             + ((runs.max_active_duration_ms - runs.active_elapsed_ms) * interval '1 millisecond')
+    RETURNING *
+)
+INSERT INTO run_waits (
+    id, environment_id, run_id, workspace_id, kind, due_at,
+    idle_timeout_ms, registration_request_fingerprint,
+    expected_run_state_version, attempt_number,
+    actor_speculative_input_sequence, current_run_lease_id,
+    checkpoint_due_at, resume_attach_id, metadata, tags
+)
+SELECT sqlc.arg(id), moved_run.environment_id, moved_run.id, moved_run.workspace_id,
+       'timer', sqlc.arg(due_at), sqlc.arg(idle_timeout_ms),
+       sqlc.arg(registration_request_fingerprint), moved_run.state_version,
+       sqlc.arg(attempt_number), sqlc.narg(actor_speculative_input_sequence),
+       sqlc.arg(current_run_lease_id), sqlc.arg(checkpoint_due_at),
+       sqlc.arg(resume_attach_id), sqlc.arg(metadata), sqlc.arg(tags)
+  FROM moved_run
+RETURNING *;
+
+-- name: GetTimerRunWaitRegistrationReplay :one
 SELECT *
   FROM run_waits
- WHERE condition_state = 'pending'
-   AND timeout_at IS NOT NULL
-   AND timeout_at <= now()
- ORDER BY timeout_at, id
- LIMIT sqlc.arg(limit_count)
- FOR UPDATE SKIP LOCKED;
+ WHERE id = sqlc.arg(id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND run_id = sqlc.arg(run_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND kind = 'timer'
+   AND attempt_number = sqlc.arg(attempt_number)
+   AND actor_speculative_input_sequence IS NOT DISTINCT FROM sqlc.narg(actor_speculative_input_sequence)
+   AND resume_attach_id = sqlc.arg(resume_attach_id)
+   AND registration_request_fingerprint = sqlc.arg(registration_request_fingerprint)
+   AND metadata = sqlc.arg(metadata)
+   AND tags = sqlc.arg(tags)
+   AND (current_run_lease_id = sqlc.arg(run_lease_id)
+        OR prior_run_lease_id = sqlc.arg(run_lease_id));
+
+-- name: ListDueTimerRunWaits :many
+SELECT *
+  FROM run_waits
+ WHERE kind = 'timer'
+   AND condition_state = 'pending'
+   AND due_at <= transaction_timestamp()
+   AND suspension_state IN ('hot', 'checkpointing', 'parked')
+ ORDER BY due_at, id
+ LIMIT sqlc.arg(limit_count);
 
 -- name: RegisterActorInputRunWait :one
 WITH moved_run AS (
@@ -539,7 +551,7 @@ SELECT *
  LIMIT 1
  FOR UPDATE;
 
--- name: CompleteHotActorInputRunWait :one
+-- name: CompleteHotRunWait :one
 WITH moved_run AS (
     UPDATE runs
        SET status = 'running',
@@ -556,6 +568,10 @@ UPDATE run_waits
    SET condition_state = 'completed',
        condition_result = sqlc.arg(condition_result),
        completed_actor_record_id = sqlc.arg(completed_actor_record_id),
+       completed_actor_record_direction = CASE
+           WHEN sqlc.arg(completed_actor_record_id)::uuid IS NULL THEN NULL
+           ELSE 'input'
+       END,
        condition_terminal_at = transaction_timestamp(),
        suspension_state = 'released',
        expected_run_state_version = moved_run.state_version,
@@ -570,11 +586,15 @@ UPDATE run_waits
    AND run_waits.current_run_lease_id = sqlc.arg(current_run_lease_id)
 RETURNING run_waits.*;
 
--- name: CompleteCheckpointingActorInputRunWait :one
+-- name: CompleteCheckpointingRunWait :one
 UPDATE run_waits
    SET condition_state = 'completed',
        condition_result = sqlc.arg(condition_result),
        completed_actor_record_id = sqlc.arg(completed_actor_record_id),
+       completed_actor_record_direction = CASE
+           WHEN sqlc.arg(completed_actor_record_id)::uuid IS NULL THEN NULL
+           ELSE 'input'
+       END,
        condition_terminal_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
  WHERE id = sqlc.arg(id)
@@ -585,7 +605,7 @@ UPDATE run_waits
    AND current_run_lease_id = sqlc.arg(current_run_lease_id)
 RETURNING *;
 
--- name: CompleteParkedActorInputRunWait :one
+-- name: CompleteParkedRunWait :one
 WITH moved_run AS (
     UPDATE runs
        SET status = 'queued',
@@ -602,6 +622,10 @@ UPDATE run_waits
    SET condition_state = 'completed',
        condition_result = sqlc.arg(condition_result),
        completed_actor_record_id = sqlc.arg(completed_actor_record_id),
+       completed_actor_record_direction = CASE
+           WHEN sqlc.arg(completed_actor_record_id)::uuid IS NULL THEN NULL
+           ELSE 'input'
+       END,
        condition_terminal_at = transaction_timestamp(),
        suspension_state = 'resume_pending',
        resume_request_version = run_waits.resume_request_version + 1,

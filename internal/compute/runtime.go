@@ -20,14 +20,10 @@ type RuntimeSelector struct {
 const RuntimeIdentitySchema = "helmr.runtime.identity.v0"
 
 func RuntimeArchitectureFromGo(value string) (string, error) {
-	switch value {
-	case "arm64":
-		return "aarch64", nil
-	case "amd64":
+	if value == "amd64" {
 		return "x86_64", nil
-	default:
-		return "", fmt.Errorf("unsupported Go architecture %q", value)
 	}
+	return "", fmt.Errorf("unsupported Go architecture %q", value)
 }
 
 func RuntimeIdentityDigest(runtime RuntimeSelector) (string, error) {

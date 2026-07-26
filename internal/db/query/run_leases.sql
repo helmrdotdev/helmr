@@ -856,7 +856,12 @@ UPDATE run_attempts
    AND terminal_at IS NULL
 RETURNING *;
 -- name: RecoverExpiredRunResumes :many
-WITH candidates AS MATERIALIZED (
+WITH provided_outbox_ids AS MATERIALIZED (
+    SELECT id, ordinality
+      FROM unnest(sqlc.arg(outbox_message_ids)::uuid[])
+           WITH ORDINALITY AS supplied(id, ordinality)
+),
+candidates AS MATERIALIZED (
     SELECT runs.id AS run_id,
            runs.entrypoint_kind,
            runs.actor_id,
@@ -1315,6 +1320,8 @@ WITH candidates AS MATERIALIZED (
        AND source_run_leases.run_id = run_checkpoints.run_id
        AND source_run_leases.attempt_number = run_checkpoints.attempt_number
        AND source_run_leases.workspace_id = run_checkpoints.workspace_id
+     WHERE cardinality(sqlc.arg(outbox_message_ids)::uuid[])
+           >= (SELECT count(*) FROM candidates)
      ORDER BY run_checkpoints.id
      FOR UPDATE OF run_checkpoints, workspace_versions
 ), expired_run_leases AS (
@@ -1400,15 +1407,21 @@ WITH candidates AS MATERIALIZED (
        AND run_waits.suspension_state = 'resuming'
        AND run_waits.resume_request_version = locked_checkpoints.resume_request_version
     RETURNING run_waits.id, requeued_runs.org_id, requeued_runs.id AS run_id
+), ordered_requeued_waits AS MATERIALIZED (
+    SELECT requeued_waits.id,
+           row_number() OVER (ORDER BY requeued_waits.id) AS ordinality
+      FROM requeued_waits
 ), admission_outbox AS (
     INSERT INTO outbox_messages (
+        id,
         lane,
         topic,
         partition_key,
         payload,
         available_at
     )
-    SELECT 'control',
+    SELECT provided_outbox_ids.id,
+           'control',
            'run.admit',
            locked_checkpoints.workspace_id::text,
            jsonb_build_object(
@@ -1418,6 +1431,8 @@ WITH candidates AS MATERIALIZED (
            transaction_timestamp()
       FROM requeued_waits
       JOIN locked_checkpoints ON locked_checkpoints.run_wait_id = requeued_waits.id
+      JOIN ordered_requeued_waits USING (id)
+      JOIN provided_outbox_ids USING (ordinality)
     RETURNING payload
 ), failed_attempts AS (
     UPDATE run_attempts
@@ -1435,8 +1450,8 @@ WITH candidates AS MATERIALIZED (
 ), failed_runs AS (
     UPDATE runs
        SET status = CASE
-               WHEN locked_checkpoints.active_budget_exhausted THEN 'expired'::run_status
-               ELSE 'system_failed'::run_status
+               WHEN locked_checkpoints.active_budget_exhausted THEN 'expired'
+               ELSE 'system_failed'
            END,
            terminal_reason_code = locked_checkpoints.recovery_terminal_reason_code,
            current_run_lease_id = NULL,

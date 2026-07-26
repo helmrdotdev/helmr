@@ -16,9 +16,12 @@ import (
 
 type tokenCreateControl struct {
 	*testRunLeaseControl
-	request  api.WorkerCreateTokenRequest
-	response api.TokenResponse
-	err      error
+	request      api.WorkerCreateTokenRequest
+	requests     []api.WorkerCreateTokenRequest
+	response     api.TokenResponse
+	err          error
+	errors       []error
+	firstAttempt chan struct{}
 }
 
 func (control *tokenCreateControl) CreateRuntimeToken(
@@ -26,6 +29,16 @@ func (control *tokenCreateControl) CreateRuntimeToken(
 	request api.WorkerCreateTokenRequest,
 ) (api.TokenResponse, error) {
 	control.request = request
+	control.requests = append(control.requests, request)
+	if len(control.errors) != 0 {
+		err := control.errors[0]
+		control.errors = control.errors[1:]
+		if control.firstAttempt != nil {
+			close(control.firstAttempt)
+			control.firstAttempt = nil
+		}
+		return api.TokenResponse{}, err
+	}
 	return control.response, control.err
 }
 
@@ -73,6 +86,60 @@ func TestHandleTokenCreateReturnsSemanticFailureToRuntime(t *testing.T) {
 		decision.GetDataJson() != `{"code":"invalid_token_timeout","message":"Token timeout is invalid","retryable":false}` {
 		t.Fatalf("decision = %+v", decision)
 	}
+}
+
+func TestHandleTokenCreateRetryUsesRenewedReceipt(t *testing.T) {
+	lease := testFreshProgramClaim(t).Lease
+	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
+	correlationID := "00000000-0000-0000-0000-000000000115"
+	firstAttempt := make(chan struct{})
+	control := &tokenCreateControl{
+		testRunLeaseControl: &testRunLeaseControl{},
+		response: api.TokenResponse{
+			ID: "tok_aaaaaaaaaaaaaaaaaaaaaaaaab", Status: "pending",
+			CallbackURL:       "https://api.example.test/api/token-callbacks/tok/callback",
+			PublicAccessToken: "hlmr_pat_secret",
+			Metadata:          json.RawMessage(`{}`),
+			CreatedAt:         time.Now().UTC(),
+			UpdatedAt:         time.Now().UTC(),
+		},
+		errors: []error{&client.HTTPError{
+			StatusCode: 503,
+			Status:     "503 Service Unavailable",
+			Message:    "temporary control failure",
+		}},
+		firstAttempt: firstAttempt,
+	}
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	task := &guestRunLeaseTask{
+		program: freshProgram{session: fakeGuestSession{stream: guest}},
+		control: control,
+		lease:   lease,
+	}
+	go renewRunSourceReceiptAfterAttempt(task, firstAttempt)
+	result := make(chan error, 1)
+	go func() {
+		result <- task.handleTokenCreate(t.Context(), &runv0.TokenCreateRequested{
+			CorrelationId: correlationID,
+		})
+	}()
+	reader := bufio.NewReader(host)
+	header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wire.ReadResumeDecision(header, reader, bodyLen); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if len(control.requests) != 2 {
+		t.Fatalf("requests = %+v", control.requests)
+	}
+	assertRetriedWithRenewedReceipt(t, control.requests[0].Lease, control.requests[1].Lease, len(control.requests))
 }
 
 func TestHandleTokenCreateWritesCorrelatedDecision(t *testing.T) {

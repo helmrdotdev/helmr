@@ -1,27 +1,12 @@
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 
 CREATE TABLE organizations (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^org_[a-z2-7]{26}$'),
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     slug TEXT NOT NULL UNIQUE CHECK (btrim(slug) <> ''),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE FUNCTION set_updated_at() RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    NEW.updated_at = now();
-    RETURN NEW;
-END;
-$$;
-
-CREATE TYPE region_state AS ENUM (
-    'available',
-    'draining',
-    'disabled'
 );
 
 CREATE TYPE region_visibility AS ENUM (
@@ -30,25 +15,11 @@ CREATE TYPE region_visibility AS ENUM (
     'hidden'
 );
 
-CREATE TYPE worker_group_state AS ENUM (
-    'active',
-    'draining',
-    'disabled'
-);
-
 CREATE TYPE telemetry_stream_kind AS ENUM (
     'run_log',
     'event',
     'terminal_output',
     'meter_event'
-);
-
-CREATE TYPE telemetry_outbox_state AS ENUM (
-    'pending',
-    'claimed',
-    'written',
-    'failed',
-    'dead_lettered'
 );
 
 CREATE TABLE regions (
@@ -61,7 +32,8 @@ CREATE TABLE regions (
     provider TEXT NOT NULL CHECK (btrim(provider) <> ''),
     provider_region TEXT NOT NULL CHECK (btrim(provider_region) <> ''),
     display_name TEXT NOT NULL CHECK (btrim(display_name) <> ''),
-    state region_state NOT NULL DEFAULT 'available',
+    state TEXT NOT NULL DEFAULT 'available'
+        CHECK (state IN ('available', 'draining', 'disabled')),
     visibility region_visibility NOT NULL DEFAULT 'public',
     location TEXT NOT NULL DEFAULT '',
     static_ips TEXT[] NOT NULL DEFAULT '{}'::text[],
@@ -71,7 +43,7 @@ CREATE TABLE regions (
 );
 
 CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^usr_[a-z2-7]{26}$'),
     display_name TEXT NOT NULL CHECK (btrim(display_name) <> ''),
     profile_image_url TEXT CHECK (profile_image_url IS NULL OR btrim(profile_image_url) <> ''),
@@ -86,7 +58,7 @@ CREATE UNIQUE INDEX users_primary_email_lower_idx
     WHERE primary_email IS NOT NULL AND disabled_at IS NULL;
 
 CREATE TABLE auth_identities (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     provider TEXT NOT NULL CHECK (btrim(provider) <> ''),
     subject TEXT NOT NULL CHECK (btrim(subject) <> ''),
@@ -116,20 +88,13 @@ CREATE TABLE org_members (
     PRIMARY KEY (org_id, user_id)
 );
 
-CREATE TYPE deletion_job_status AS ENUM (
-    'queued',
-    'running',
-    'completed',
-    'failed'
-);
-
 CREATE TYPE deletion_job_target_type AS ENUM (
     'project',
     'environment'
 );
 
 CREATE TABLE deletion_jobs (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     target_type deletion_job_target_type NOT NULL,
     target_id UUID NOT NULL,
@@ -137,7 +102,8 @@ CREATE TABLE deletion_jobs (
     target_slug TEXT NOT NULL DEFAULT '',
     target_name TEXT NOT NULL DEFAULT '',
     requested_by_principal TEXT NOT NULL DEFAULT '',
-    status deletion_job_status NOT NULL DEFAULT 'queued',
+    status TEXT NOT NULL DEFAULT 'queued'
+        CHECK (status IN ('queued', 'running', 'completed', 'failed')),
     failure TEXT NOT NULL DEFAULT '',
     deleted_counts JSONB NOT NULL DEFAULT '{}'::jsonb,
     requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -147,7 +113,7 @@ CREATE TABLE deletion_jobs (
 );
 
 CREATE TABLE projects (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^prj_[a-z2-7]{26}$'),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     default_region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
@@ -160,7 +126,7 @@ CREATE TABLE projects (
 );
 
 CREATE TABLE environments (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^env_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
@@ -177,7 +143,7 @@ CREATE TABLE environments (
 );
 
 CREATE TABLE auth_sessions (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     org_id UUID REFERENCES organizations(id) ON DELETE SET NULL,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token_hash BYTEA NOT NULL UNIQUE,
@@ -188,7 +154,7 @@ CREATE TABLE auth_sessions (
 );
 
 CREATE TABLE invitations (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^inv_[a-z2-7]{26}$'),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     invitee_email TEXT NOT NULL,
@@ -219,7 +185,7 @@ CREATE TYPE magic_link_purpose AS ENUM (
 );
 
 CREATE TABLE magic_links (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     purpose magic_link_purpose NOT NULL,
     token_hash BYTEA NOT NULL UNIQUE,
     email TEXT NOT NULL,
@@ -236,7 +202,7 @@ CREATE TABLE magic_links (
 );
 
 CREATE TABLE api_keys (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^apk_[a-z2-7]{26}$'),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     project_id UUID NOT NULL,
@@ -263,7 +229,7 @@ CREATE TABLE api_keys (
 );
 
 CREATE TABLE api_key_grants (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
     api_key_id UUID NOT NULL,
     permission TEXT NOT NULL CHECK (btrim(permission) <> ''),
@@ -277,20 +243,14 @@ CREATE TABLE api_key_grants (
         ON DELETE SET NULL (created_by_user_id)
 );
 
-CREATE TYPE device_code_status AS ENUM (
-    'pending',
-    'approved',
-    'denied',
-    'consumed'
-);
-
 CREATE TABLE device_codes (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     org_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
     user_code_hash BYTEA NOT NULL UNIQUE,
     device_code_hash BYTEA NOT NULL UNIQUE,
     decided_by_user_id UUID,
-    status device_code_status NOT NULL DEFAULT 'pending',
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'approved', 'denied', 'consumed')),
     expires_at TIMESTAMPTZ NOT NULL,
     poll_interval_seconds INTEGER NOT NULL CHECK (poll_interval_seconds > 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -316,7 +276,7 @@ CREATE UNIQUE INDEX lookup_hmac_versions_current_uidx
     WHERE is_current;
 
 CREATE TABLE secrets (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'revoked', 'deleted')),
@@ -340,7 +300,7 @@ CREATE TABLE secrets (
 );
 
 CREATE TABLE secret_versions (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     secret_id UUID NOT NULL,
     version BIGINT NOT NULL CHECK (version > 0),
     key_id TEXT NOT NULL CHECK (btrim(key_id) <> '' AND octet_length(key_id) <= 256),
@@ -357,6 +317,9 @@ CREATE TABLE secret_versions (
         REFERENCES lookup_hmac_versions(version)
         ON DELETE RESTRICT
 );
+
+CREATE INDEX secret_versions_authenticator_key_version_idx
+    ON secret_versions (authenticator_key_version);
 
 ALTER TABLE secrets
     ADD CONSTRAINT secrets_current_version_fk
@@ -386,20 +349,13 @@ CREATE TYPE artifact_kind AS ENUM (
     'workspace_version'
 );
 
-CREATE TYPE worker_instance_state AS ENUM (
-    'registering',
-    'active',
-    'draining',
-    'disabled',
-    'lost'
-);
-
 CREATE TABLE worker_groups (
     id TEXT PRIMARY KEY CHECK (btrim(id) <> ''),
     region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     description TEXT NOT NULL DEFAULT '',
-    state worker_group_state NOT NULL DEFAULT 'active',
+    state TEXT NOT NULL DEFAULT 'active'
+        CHECK (state IN ('active', 'draining', 'disabled')),
     enrollment_policy_fingerprint TEXT NOT NULL CHECK (btrim(enrollment_policy_fingerprint) <> ''),
     allowed_attestation_fingerprints TEXT[] NOT NULL CHECK (cardinality(allowed_attestation_fingerprints) > 0),
     launch_attestation_fingerprint TEXT CHECK (launch_attestation_fingerprint IS NULL OR btrim(launch_attestation_fingerprint) <> ''),
@@ -431,13 +387,9 @@ CREATE INDEX worker_groups_active_placement_idx
     ON worker_groups (region_id, id)
     WHERE state = 'active';
 
-CREATE TRIGGER worker_groups_set_updated_at
-    BEFORE UPDATE ON worker_groups
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
 CREATE TABLE runtime_identities (
     id TEXT PRIMARY KEY CHECK (btrim(id) <> ''),
-    runtime_arch TEXT NOT NULL CHECK (runtime_arch IN ('aarch64', 'x86_64')),
+    runtime_arch TEXT NOT NULL CHECK (runtime_arch = 'x86_64'),
     runtime_abi TEXT NOT NULL CHECK (btrim(runtime_abi) <> ''),
     kernel_digest TEXT NOT NULL CHECK (btrim(kernel_digest) <> ''),
     initramfs_digest TEXT NOT NULL CHECK (btrim(initramfs_digest) <> ''),
@@ -448,11 +400,12 @@ CREATE TABLE runtime_identities (
 );
 
 CREATE TABLE worker_instances (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     resource_id TEXT NOT NULL CHECK (btrim(resource_id) <> ''),
     worker_group_id TEXT NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
     attestation_fingerprint TEXT NOT NULL CHECK (btrim(attestation_fingerprint) <> ''),
-    state worker_instance_state NOT NULL DEFAULT 'registering',
+    state TEXT NOT NULL DEFAULT 'registering'
+        CHECK (state IN ('registering', 'active', 'draining', 'disabled', 'lost')),
     claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
     current_epoch BIGINT CHECK (current_epoch IS NULL OR current_epoch > 0),
     current_service_id UUID,
@@ -506,10 +459,10 @@ CREATE TABLE worker_instances (
     CHECK (state NOT IN ('active', 'draining', 'lost') OR current_epoch IS NOT NULL),
     CHECK ((startup_inventory_epoch IS NULL) = (startup_inventory_evidence IS NULL)),
     CHECK (startup_inventory_epoch IS NULL OR startup_inventory_epoch = current_epoch),
-    CHECK (startup_inventory_evidence IS NULL OR (jsonb_typeof(startup_inventory_evidence) = 'object' AND octet_length(startup_inventory_evidence::text) <= 16384)),
+    CHECK (startup_inventory_evidence IS NULL OR jsonb_typeof(startup_inventory_evidence) = 'object'),
     CHECK ((drain_cleanup_fingerprint IS NULL) = (drain_cleanup_evidence IS NULL)),
     CHECK (drain_cleanup_fingerprint IS NULL OR drain_cleanup_fingerprint ~ '^[0-9a-f]{64}$'),
-    CHECK (drain_cleanup_evidence IS NULL OR (jsonb_typeof(drain_cleanup_evidence) = 'object' AND octet_length(drain_cleanup_evidence::text) <= 16384)),
+    CHECK (drain_cleanup_evidence IS NULL OR jsonb_typeof(drain_cleanup_evidence) = 'object'),
     CHECK (drain_cleanup_evidence IS NULL OR state = 'disabled'),
     CONSTRAINT worker_instances_certification_shape_check CHECK (
         state NOT IN ('active', 'draining')
@@ -605,7 +558,7 @@ CREATE INDEX worker_instances_current_epoch_idx
     WHERE current_epoch IS NOT NULL;
 
 CREATE TABLE worker_enrollment_nonces (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     nonce_hash BYTEA NOT NULL UNIQUE CHECK (octet_length(nonce_hash) > 0),
     worker_group_id TEXT NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
     expires_at TIMESTAMPTZ NOT NULL,
@@ -627,7 +580,7 @@ CREATE INDEX worker_enrollment_nonces_active_idx
     WHERE consumed_at IS NULL;
 
 CREATE TABLE worker_instance_credentials (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     worker_group_id TEXT NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
     worker_instance_id UUID NOT NULL,
     key_prefix TEXT NOT NULL UNIQUE CHECK (btrim(key_prefix) <> ''),
@@ -673,15 +626,14 @@ CREATE TABLE worker_observations (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (worker_instance_id, worker_epoch),
     FOREIGN KEY (worker_instance_id) REFERENCES worker_instances(id) ON DELETE CASCADE,
-    CHECK (jsonb_typeof(health_details) = 'object'),
-    CHECK (octet_length(health_details::text) <= 16384)
+    CHECK (jsonb_typeof(health_details) = 'object')
 );
 
 CREATE INDEX worker_observations_freshness_idx
     ON worker_observations (observed_at, worker_instance_id, worker_epoch);
 
 CREATE TABLE artifacts (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
@@ -708,34 +660,6 @@ CREATE TABLE artifacts (
         ON DELETE CASCADE
 );
 
-CREATE FUNCTION reject_artifact_update()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    RAISE EXCEPTION 'Artifact rows are immutable'
-        USING ERRCODE = '23514';
-END
-$$;
-
-CREATE TRIGGER artifacts_immutable
-BEFORE UPDATE ON artifacts
-FOR EACH ROW
-EXECUTE FUNCTION reject_artifact_update();
-
-CREATE TYPE token_state AS ENUM (
-    'pending',
-    'completed',
-    'expired',
-    'cancelled'
-);
-
-CREATE TYPE public_access_token_state AS ENUM (
-    'active',
-    'revoked',
-    'expired'
-);
-
 CREATE TYPE public_access_token_scope_type AS ENUM (
     'token.complete'
 );
@@ -747,125 +671,9 @@ CREATE TYPE wait_kind AS ENUM (
     'actor_input'
 );
 
-CREATE TYPE wait_state AS ENUM (
-    'pending',
-    'completed',
-    'failed',
-    'cancelled'
-);
-
-CREATE TYPE run_wait_state AS ENUM (
-    'hot',
-    'checkpointing',
-    'parked',
-    'resume_pending',
-    'resuming',
-    'released',
-    'cancelled',
-    'failed'
-);
-
 CREATE TYPE run_checkpoint_kind AS ENUM (
     'suspend',
     'handoff_resume'
-);
-
-CREATE TYPE run_checkpoint_state AS ENUM (
-    'creating',
-    'ready',
-    'invalid',
-    'deleted'
-);
-
-CREATE TYPE runtime_desired_state AS ENUM (
-    'ready',
-    'closed'
-);
-
-CREATE TYPE runtime_observed_state AS ENUM (
-    'allocated',
-    'preparing',
-    'ready',
-    'closing',
-    'closed',
-    'failed',
-    'lost'
-);
-
-CREATE TYPE worker_network_slot_state AS ENUM (
-    'available',
-    'assigned',
-    'bound',
-    'reclaiming',
-    'quarantined',
-    'lost'
-);
-
-CREATE TYPE run_status AS ENUM (
-    'queued',
-    'running',
-    'waiting',
-    'retry_delayed',
-    'cancel_requested',
-    'succeeded',
-    'failed',
-    'cancelled',
-    'expired',
-    'system_failed'
-);
-
-CREATE TYPE run_lease_state AS ENUM (
-    'assigned',
-    'starting',
-    'running',
-    'checkpointing',
-    'finalizing',
-    'checkpointed',
-    'completed',
-    'failed',
-    'cancelled',
-    'lost',
-    'rejected',
-    'expired'
-);
-
-CREATE TYPE deployment_build_lease_state AS ENUM (
-    'assigned',
-    'starting',
-    'running',
-    'succeeded',
-    'failed',
-    'cancelled',
-    'lost',
-    'rejected',
-    'expired'
-);
-
-CREATE TYPE workspace_state AS ENUM (
-    'active',
-    'deleting',
-    'recovery_required',
-    'deleted'
-);
-
-CREATE TYPE workspace_desired_state AS ENUM (
-    'active',
-    'stopped',
-    'deleted'
-);
-
-CREATE TYPE workspace_dirty_state AS ENUM (
-    'clean',
-    'dirty',
-    'capturing',
-    'capture_failed',
-    'dirty_state_lost'
-);
-
-CREATE TYPE workspace_version_state AS ENUM (
-    'private',
-    'committed',
-    'discarded'
 );
 
 CREATE TYPE workspace_version_kind AS ENUM (
@@ -873,46 +681,12 @@ CREATE TYPE workspace_version_kind AS ENUM (
     'system'
 );
 
-CREATE TYPE workspace_mount_state AS ENUM (
-    'mounting',
-    'mounted',
-    'unmounting',
-    'unmounted',
-    'lost',
-    'failed'
-);
-
-CREATE TYPE workspace_lease_state AS ENUM (
-    'active',
-    'releasing',
-    'released',
-    'expired',
-    'fenced',
-    'lost'
-);
-
 CREATE TYPE workspace_filesystem_mode AS ENUM (
     'write'
 );
 
-CREATE TYPE workspace_process_state AS ENUM (
-    'pending',
-    'starting',
-    'running',
-    'exit_requested',
-    'exited',
-    'failed'
-);
-
-CREATE TYPE deployment_status AS ENUM (
-    'queued',
-    'building',
-    'deployed',
-    'failed'
-);
-
 CREATE TABLE deployments (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^dep_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
@@ -949,7 +723,8 @@ CREATE TABLE deployments (
     program_architecture TEXT,
     program_receipt JSONB,
     queue_config JSONB,
-    status deployment_status NOT NULL DEFAULT 'queued',
+    status TEXT NOT NULL DEFAULT 'queued'
+        CHECK (status IN ('queued', 'building', 'deployed', 'failed')),
     failure JSONB NOT NULL DEFAULT '{}'::jsonb,
     current_build_lease_id UUID,
     build_requested_cpu_millis BIGINT NOT NULL DEFAULT 3000 CHECK (build_requested_cpu_millis = 3000),
@@ -991,7 +766,7 @@ CREATE TABLE deployments (
          AND program_runtime_digest IS NOT NULL
          AND octet_length(program_runtime_digest) = 32
          AND program_architecture IS NOT NULL
-         AND program_architecture IN ('aarch64', 'x86_64')
+         AND program_architecture = 'x86_64'
          AND program_architecture = build_architecture
          AND program_runtime_digest = build_runtime_digest
          AND jsonb_typeof(program_receipt) = 'object')
@@ -1003,174 +778,11 @@ CREATE TABLE deployments (
     )
 );
 
-CREATE FUNCTION enforce_deployment_program_receipt()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    program_artifact artifacts%ROWTYPE;
-    source_artifact artifacts%ROWTYPE;
-    receipt jsonb := NEW.program_receipt;
-    program_size numeric;
-    source_size numeric;
-BEGIN
-    IF TG_OP = 'UPDATE' AND OLD.program_receipt IS NOT NULL THEN
-        IF NEW.program_receipt IS DISTINCT FROM OLD.program_receipt
-           OR NEW.program_artifact_id IS DISTINCT FROM OLD.program_artifact_id
-           OR NEW.program_runtime_digest IS DISTINCT FROM OLD.program_runtime_digest
-           OR NEW.program_architecture IS DISTINCT FROM OLD.program_architecture
-           OR NEW.deployment_source_artifact_id IS DISTINCT FROM OLD.deployment_source_artifact_id
-           OR NEW.build_architecture IS DISTINCT FROM OLD.build_architecture
-           OR NEW.build_runtime_digest IS DISTINCT FROM OLD.build_runtime_digest
-           OR NEW.build_standard_toolchain_digest IS DISTINCT FROM OLD.build_standard_toolchain_digest
-           OR NEW.build_manager_name IS DISTINCT FROM OLD.build_manager_name
-           OR NEW.build_manager_version IS DISTINCT FROM OLD.build_manager_version
-           OR NEW.build_manager_digest IS DISTINCT FROM OLD.build_manager_digest
-           OR NEW.build_contract_version IS DISTINCT FROM OLD.build_contract_version THEN
-            RAISE EXCEPTION 'published deployment Program authority is immutable'
-                USING ERRCODE = '23514';
-        END IF;
-    END IF;
-
-    IF receipt IS NULL THEN
-        RETURN NEW;
-    END IF;
-
-    IF (
-        jsonb_typeof(receipt) = 'object'
-        AND receipt - ARRAY[
-            'architecture', 'buildContractVersion', 'formatVersion', 'lockfile',
-            'manager', 'program', 'runtime', 'source', 'standardToolchainDigest'
-        ]::text[] = '{}'::jsonb
-        AND jsonb_typeof(receipt->'architecture') = 'string'
-        AND jsonb_typeof(receipt->'buildContractVersion') = 'string'
-        AND receipt->'formatVersion' = '0'::jsonb
-        AND jsonb_typeof(receipt->'lockfile') = 'object'
-        AND (receipt->'lockfile') - ARRAY['digest', 'path']::text[] = '{}'::jsonb
-        AND jsonb_typeof(receipt#>'{lockfile,digest}') = 'string'
-        AND jsonb_typeof(receipt#>'{lockfile,path}') = 'string'
-        AND jsonb_typeof(receipt->'manager') = 'object'
-        AND (receipt->'manager') - ARRAY['digest', 'name', 'version']::text[] = '{}'::jsonb
-        AND jsonb_typeof(receipt#>'{manager,digest}') = 'string'
-        AND jsonb_typeof(receipt#>'{manager,name}') = 'string'
-        AND jsonb_typeof(receipt#>'{manager,version}') = 'string'
-        AND jsonb_typeof(receipt->'program') = 'object'
-        AND (receipt->'program') - ARRAY[
-            'artifactId', 'digest', 'indexDigest', 'mediaType', 'sizeBytes'
-        ]::text[] = '{}'::jsonb
-        AND jsonb_typeof(receipt#>'{program,artifactId}') = 'string'
-        AND jsonb_typeof(receipt#>'{program,digest}') = 'string'
-        AND jsonb_typeof(receipt#>'{program,indexDigest}') = 'string'
-        AND jsonb_typeof(receipt#>'{program,mediaType}') = 'string'
-        AND jsonb_typeof(receipt#>'{program,sizeBytes}') = 'number'
-        AND jsonb_typeof(receipt->'runtime') = 'object'
-        AND (receipt->'runtime') - ARRAY['apiVersion', 'digest']::text[] = '{}'::jsonb
-        AND jsonb_typeof(receipt#>'{runtime,apiVersion}') = 'string'
-        AND jsonb_typeof(receipt#>'{runtime,digest}') = 'string'
-        AND jsonb_typeof(receipt->'source') = 'object'
-        AND (receipt->'source') - ARRAY[
-            'artifactId', 'digest', 'mediaType', 'sizeBytes'
-        ]::text[] = '{}'::jsonb
-        AND jsonb_typeof(receipt#>'{source,artifactId}') = 'string'
-        AND jsonb_typeof(receipt#>'{source,digest}') = 'string'
-        AND jsonb_typeof(receipt#>'{source,mediaType}') = 'string'
-        AND jsonb_typeof(receipt#>'{source,sizeBytes}') = 'number'
-        AND jsonb_typeof(receipt->'standardToolchainDigest') = 'string'
-    ) IS DISTINCT FROM TRUE THEN
-        RAISE EXCEPTION 'deployment Program receipt has an invalid closed shape'
-            USING ERRCODE = '23514';
-    END IF;
-
-    program_size := (receipt#>>'{program,sizeBytes}')::numeric;
-    source_size := (receipt#>>'{source,sizeBytes}')::numeric;
-    IF (
-        receipt->>'architecture' = NEW.program_architecture
-        AND receipt->>'buildContractVersion' = NEW.build_contract_version
-        AND receipt#>>'{runtime,apiVersion}' = 'helmr.runtime.v0'
-        AND receipt#>>'{runtime,digest}' =
-            'sha256:' || encode(NEW.build_runtime_digest, 'hex')
-        AND receipt->>'standardToolchainDigest' =
-            'sha256:' || encode(NEW.build_standard_toolchain_digest, 'hex')
-        AND receipt#>>'{manager,name}' = NEW.build_manager_name
-        AND receipt#>>'{manager,version}' = NEW.build_manager_version
-        AND receipt#>>'{manager,digest}' =
-            'sha256:' || encode(NEW.build_manager_digest, 'hex')
-        AND receipt#>>'{program,artifactId}' = NEW.program_artifact_id::text
-        AND receipt#>>'{source,artifactId}' = NEW.deployment_source_artifact_id::text
-        AND receipt#>>'{program,mediaType}' =
-            'application/vnd.helmr.deployment-program.v0+squashfs'
-        AND receipt#>>'{source,mediaType}' =
-            'application/vnd.helmr.deployment-source.v0+tar'
-        AND receipt#>>'{program,digest}' ~ '^sha256:[0-9a-f]{64}$'
-        AND receipt#>>'{program,indexDigest}' ~ '^sha256:[0-9a-f]{64}$'
-        AND receipt#>>'{source,digest}' ~ '^sha256:[0-9a-f]{64}$'
-        AND receipt#>>'{runtime,digest}' ~ '^sha256:[0-9a-f]{64}$'
-        AND receipt->>'standardToolchainDigest' ~ '^sha256:[0-9a-f]{64}$'
-        AND receipt#>>'{lockfile,digest}' ~ '^sha256:[0-9a-f]{64}$'
-        AND receipt#>>'{manager,digest}' ~ '^sha256:[0-9a-f]{64}$'
-        AND receipt#>>'{manager,name}' IN ('npm', 'bun')
-        AND (
-            (receipt#>>'{manager,name}' = 'npm'
-             AND receipt#>>'{lockfile,path}' = 'package-lock.json')
-            OR
-            (receipt#>>'{manager,name}' = 'bun'
-             AND receipt#>>'{lockfile,path}' IN ('bun.lock', 'bun.lockb'))
-        )
-        AND octet_length(receipt#>>'{manager,version}') BETWEEN 1 AND 64
-        AND receipt#>>'{manager,version}' ~
-            '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
-        AND program_size = trunc(program_size)
-        AND program_size BETWEEN 1 AND 13958643712
-        AND source_size = trunc(source_size)
-        AND source_size BETWEEN 1 AND 9007199254740991
-    ) IS DISTINCT FROM TRUE THEN
-        RAISE EXCEPTION 'deployment Program receipt contradicts immutable build authority'
-            USING ERRCODE = '23514';
-    END IF;
-
-    SELECT *
-      INTO program_artifact
-      FROM artifacts
-     WHERE environment_id = NEW.environment_id
-       AND id = NEW.program_artifact_id;
-    IF NOT FOUND
-       OR program_artifact.kind <> 'deployment_program'
-       OR program_artifact.digest IS DISTINCT FROM receipt#>>'{program,digest}'
-       OR program_artifact.size_bytes::numeric IS DISTINCT FROM program_size
-       OR program_artifact.media_type IS DISTINCT FROM receipt#>>'{program,mediaType}' THEN
-        RAISE EXCEPTION 'deployment Program receipt does not match its Program Artifact'
-            USING ERRCODE = '23514';
-    END IF;
-
-    SELECT *
-      INTO source_artifact
-      FROM artifacts
-     WHERE environment_id = NEW.environment_id
-       AND id = NEW.deployment_source_artifact_id;
-    IF NOT FOUND
-       OR source_artifact.kind <> 'deployment_source'
-       OR source_artifact.digest IS DISTINCT FROM receipt#>>'{source,digest}'
-       OR source_artifact.size_bytes::numeric IS DISTINCT FROM source_size
-       OR source_artifact.media_type IS DISTINCT FROM receipt#>>'{source,mediaType}' THEN
-        RAISE EXCEPTION 'deployment Program receipt does not match its source Artifact'
-            USING ERRCODE = '23514';
-    END IF;
-
-    RETURN NEW;
-END
-$$;
-
-CREATE CONSTRAINT TRIGGER deployments_program_receipt_authority
-AFTER INSERT OR UPDATE ON deployments
-DEFERRABLE INITIALLY IMMEDIATE
-FOR EACH ROW
-EXECUTE FUNCTION enforce_deployment_program_receipt();
-
 CREATE INDEX deployments_program_artifact_idx
     ON deployments (environment_id, program_artifact_id);
 
 CREATE TABLE deployment_definitions (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
     kind TEXT NOT NULL CHECK (kind IN ('task', 'actor', 'workspace')),
@@ -1204,7 +816,7 @@ CREATE TABLE deployment_definitions (
         (
             kind = 'workspace'
             AND workspace_architecture IS NOT NULL
-            AND workspace_architecture IN ('aarch64', 'x86_64')
+            AND workspace_architecture = 'x86_64'
             AND artifact_id IS NOT NULL
         )
         OR
@@ -1220,7 +832,7 @@ CREATE INDEX deployment_definitions_artifact_idx
     ON deployment_definitions (environment_id, artifact_id);
 
 CREATE TABLE deployment_build_leases (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
@@ -1241,7 +853,18 @@ CREATE TABLE deployment_build_leases (
     span_id TEXT,
     parent_span_id TEXT,
     traceparent TEXT,
-    state deployment_build_lease_state NOT NULL DEFAULT 'assigned',
+    state TEXT NOT NULL DEFAULT 'assigned'
+        CHECK (state IN (
+            'assigned',
+            'starting',
+            'running',
+            'succeeded',
+            'failed',
+            'cancelled',
+            'lost',
+            'rejected',
+            'expired'
+        )),
     assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     start_deadline_at TIMESTAMPTZ NOT NULL,
     claimed_at TIMESTAMPTZ,
@@ -1267,7 +890,6 @@ CREATE TABLE deployment_build_leases (
         REFERENCES worker_instances(id, worker_group_id)
         ON DELETE RESTRICT,
     CHECK (jsonb_typeof(build_snapshot) = 'object'),
-    CHECK (octet_length(build_snapshot::text) <= 16384),
     CHECK (expires_at > assigned_at),
     CHECK (start_deadline_at <= expires_at),
     CHECK (claimed_at IS NULL OR claimed_at >= assigned_at),
@@ -1293,7 +915,7 @@ CREATE TABLE deployment_build_leases (
             AND octet_length(terminal_reason_code) <= 128
         )
     ),
-    CHECK (terminal_error IS NULL OR (jsonb_typeof(terminal_error) = 'object' AND octet_length(terminal_error::text) <= 16384)),
+    CHECK (terminal_error IS NULL OR jsonb_typeof(terminal_error) = 'object'),
     CHECK (terminal_request_fingerprint IS NULL OR (
         btrim(terminal_request_fingerprint) <> '' AND octet_length(terminal_request_fingerprint) <= 128
     )),
@@ -1336,22 +958,8 @@ ALTER TABLE deployments
 ALTER TABLE environments
     ADD COLUMN current_deployment_id UUID;
 
-CREATE TABLE deployment_version_counters (
-    org_id UUID NOT NULL,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    prefix TEXT NOT NULL CHECK (btrim(prefix) <> ''),
-    next_ordinal INTEGER NOT NULL DEFAULT 2 CHECK (next_ordinal >= 2),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (org_id, project_id, environment_id, prefix),
-    FOREIGN KEY (org_id, project_id, environment_id)
-        REFERENCES environments(org_id, project_id, id)
-        ON DELETE CASCADE
-);
-
 CREATE TABLE deployment_promotions (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
@@ -1378,7 +986,7 @@ ALTER TABLE environments
     ON DELETE SET NULL (current_deployment_id);
 
 CREATE TABLE runtime_substrates (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
@@ -1409,15 +1017,11 @@ CREATE TABLE runtime_substrates (
         ON DELETE RESTRICT
 );
 
-CREATE TRIGGER runtime_substrates_set_updated_at
-    BEFORE UPDATE ON runtime_substrates
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
 CREATE INDEX runtime_substrates_deployment_definition_idx
     ON runtime_substrates (environment_id, deployment_definition_id);
 
 CREATE TABLE idempotency_claims (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
     operation TEXT NOT NULL CHECK (btrim(operation) <> '' AND octet_length(operation) <= 128),
     scope_hash BYTEA NOT NULL CHECK (octet_length(scope_hash) = 32),
@@ -1455,6 +1059,9 @@ CREATE UNIQUE INDEX idempotency_claims_live_slot_uidx
     ON idempotency_claims (environment_id, operation, scope_hash, key_hash)
     WHERE retired_at IS NULL;
 
+CREATE INDEX idempotency_claims_hash_key_version_idx
+    ON idempotency_claims (hash_key_version);
+
 CREATE INDEX idempotency_claims_live_expiry_idx
     ON idempotency_claims (expires_at, id)
     WHERE retired_at IS NULL AND expires_at IS NOT NULL;
@@ -1464,7 +1071,7 @@ CREATE INDEX idempotency_claims_retired_idx
     WHERE retired_at IS NOT NULL;
 
 CREATE TABLE schedules (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^sch_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
@@ -1592,7 +1199,7 @@ CREATE INDEX schedules_definition_idx
     WHERE state <> 'archived';
 
 CREATE TABLE workspaces (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^wsp_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
@@ -1621,9 +1228,12 @@ CREATE TABLE workspaces (
     ownership_generation BIGINT NOT NULL DEFAULT 0 CHECK (ownership_generation >= 0),
     writer_generation BIGINT NOT NULL DEFAULT 0 CHECK (writer_generation >= 0),
     head_version_id UUID,
-    state workspace_state NOT NULL DEFAULT 'active',
-    desired_state workspace_desired_state NOT NULL DEFAULT 'active',
-    dirty_state workspace_dirty_state NOT NULL DEFAULT 'clean',
+    state TEXT NOT NULL DEFAULT 'active'
+        CHECK (state IN ('active', 'deleting', 'recovery_required', 'deleted')),
+    desired_state TEXT NOT NULL DEFAULT 'active'
+        CHECK (desired_state IN ('active', 'stopped', 'deleted')),
+    dirty_state TEXT NOT NULL DEFAULT 'clean'
+        CHECK (dirty_state IN ('clean', 'dirty', 'capturing', 'capture_failed', 'dirty_state_lost')),
     last_activity_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1716,7 +1326,7 @@ CREATE INDEX workspace_secrets_secret_idx
     ON workspace_secrets (secret_id, workspace_id);
 
 CREATE TABLE actors (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^act_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
@@ -1813,7 +1423,7 @@ CREATE INDEX actors_deployment_definition_idx
     );
 
 CREATE TABLE runs (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^run_[a-z2-7]{26}$'),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     project_id UUID NOT NULL,
@@ -1844,7 +1454,19 @@ CREATE TABLE runs (
     output JSONB,
     terminal_reason_code TEXT,
     error JSONB,
-    status run_status NOT NULL DEFAULT 'queued',
+    status TEXT NOT NULL DEFAULT 'queued'
+        CHECK (status IN (
+            'queued',
+            'running',
+            'waiting',
+            'retry_delayed',
+            'cancel_requested',
+            'succeeded',
+            'failed',
+            'cancelled',
+            'expired',
+            'system_failed'
+        )),
     state_version BIGINT NOT NULL DEFAULT 1 CHECK (state_version > 0),
     current_attempt_number INTEGER NOT NULL DEFAULT 1 CHECK (current_attempt_number > 0),
     current_run_lease_id UUID,
@@ -2072,7 +1694,7 @@ CREATE TABLE run_attempts (
 );
 
 CREATE TABLE actor_records (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
     actor_id UUID NOT NULL,
     direction TEXT NOT NULL CHECK (direction IN ('input', 'output')),
@@ -2088,8 +1710,7 @@ CREATE TABLE actor_records (
     claim_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (actor_id, direction, sequence),
-    UNIQUE (actor_id, id),
-    UNIQUE (id, actor_id, direction),
+    UNIQUE (actor_id, id, direction),
     FOREIGN KEY (environment_id, actor_id)
         REFERENCES actors(environment_id, id)
         ON DELETE RESTRICT,
@@ -2105,8 +1726,6 @@ CREATE TABLE actor_records (
     FOREIGN KEY (environment_id, claim_id)
         REFERENCES idempotency_claims(environment_id, id)
         ON DELETE RESTRICT,
-    CONSTRAINT actor_records_data_size_check
-        CHECK (octet_length(data::text) <= 1048576),
     CHECK (
         (direction = 'input'
          AND source_kind IN ('external', 'run')
@@ -2200,7 +1819,7 @@ CREATE INDEX runs_retry_ready_idx
     WHERE status = 'retry_delayed';
 
 CREATE TABLE workspace_mounts (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
     worker_group_id TEXT NOT NULL,
     project_id UUID NOT NULL,
@@ -2214,7 +1833,8 @@ CREATE TABLE workspace_mounts (
     claim_attempt INTEGER NOT NULL DEFAULT 0 CHECK (claim_attempt >= 0),
     guest_channel_token_hash TEXT NOT NULL DEFAULT '',
     guest_channel_token_expires_at TIMESTAMPTZ,
-    state workspace_mount_state NOT NULL DEFAULT 'mounting',
+    state TEXT NOT NULL DEFAULT 'mounting'
+        CHECK (state IN ('mounting', 'mounted', 'unmounting', 'unmounted', 'lost', 'failed')),
     request JSONB NOT NULL DEFAULT '{}'::jsonb,
     dirty_generation BIGINT NOT NULL DEFAULT 0 CHECK (dirty_generation >= 0),
     fencing_generation BIGINT NOT NULL DEFAULT 1 CHECK (fencing_generation > 0),
@@ -2248,7 +1868,7 @@ CREATE TABLE workspace_mounts (
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
         REFERENCES workspaces(org_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    CHECK (jsonb_typeof(request) = 'object' AND octet_length(request::text) <= 16384),
+    CHECK (jsonb_typeof(request) = 'object'),
     CHECK (
         (state IN ('mounting', 'mounted', 'unmounting') AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL)
         OR (
@@ -2281,8 +1901,8 @@ CREATE TABLE workspace_mounts (
          AND state IN ('unmounting', 'unmounted', 'failed', 'lost'))
     ),
     CHECK (staged_version_id IS NULL OR finalization_kind = 'capture'),
-    CHECK (finalization_error IS NULL OR (jsonb_typeof(finalization_error) = 'object' AND octet_length(finalization_error::text) <= 16384)),
-    CHECK (terminal_error IS NULL OR (jsonb_typeof(terminal_error) = 'object' AND octet_length(terminal_error::text) <= 16384))
+    CHECK (finalization_error IS NULL OR jsonb_typeof(finalization_error) = 'object'),
+    CHECK (terminal_error IS NULL OR jsonb_typeof(terminal_error) = 'object')
 );
 
 CREATE UNIQUE INDEX workspace_mounts_workspace_active_uidx
@@ -2302,7 +1922,7 @@ CREATE INDEX workspace_mounts_sweep_idx
     WHERE state IN ('mounting', 'unmounting');
 
 CREATE TABLE workspace_leases (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
     worker_group_id TEXT NOT NULL,
     project_id UUID NOT NULL,
@@ -2313,7 +1933,8 @@ CREATE TABLE workspace_leases (
     runtime_instance_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
     workspace_mount_id UUID NOT NULL,
-    state workspace_lease_state NOT NULL DEFAULT 'active',
+    state TEXT NOT NULL DEFAULT 'active'
+        CHECK (state IN ('active', 'releasing', 'released', 'expired', 'fenced', 'lost')),
     owner_run_lease_id UUID,
     owner_process_id UUID,
     base_version_id UUID NOT NULL,
@@ -2372,24 +1993,26 @@ CREATE TABLE workspace_leases (
     ),
     CHECK (state <> 'released' OR released_at IS NOT NULL),
     CHECK (state <> 'lost' OR lost_at IS NOT NULL),
-    CHECK (terminal_error IS NULL OR (jsonb_typeof(terminal_error) = 'object' AND octet_length(terminal_error::text) <= 16384))
+    CHECK (terminal_error IS NULL OR jsonb_typeof(terminal_error) = 'object')
 );
 
 CREATE TABLE workspace_processes (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
     base_version_id UUID NOT NULL,
-    restore_desired_state workspace_desired_state NOT NULL,
+    restore_desired_state TEXT NOT NULL
+        CHECK (restore_desired_state IN ('active', 'stopped', 'deleted')),
     region_id TEXT,
     worker_group_id TEXT,
     worker_instance_id UUID,
     worker_epoch BIGINT CHECK (worker_epoch IS NULL OR worker_epoch > 0),
     runtime_instance_id UUID,
     workspace_mount_id UUID,
-    state workspace_process_state NOT NULL DEFAULT 'pending',
+    state TEXT NOT NULL DEFAULT 'pending'
+        CHECK (state IN ('pending', 'starting', 'running', 'exit_requested', 'exited', 'failed')),
     state_version BIGINT NOT NULL DEFAULT 1 CHECK (state_version > 0),
     request JSONB NOT NULL,
     stdin BYTEA NOT NULL DEFAULT ''::bytea,
@@ -2406,7 +2029,7 @@ CREATE TABLE workspace_processes (
     terminal_reason_code TEXT,
     error JSONB,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CHECK (jsonb_typeof(request) = 'object' AND octet_length(request::text) <= 393216),
+    CHECK (jsonb_typeof(request) = 'object'),
     CHECK (octet_length(stdin) <= 1048576),
     CHECK (stdout IS NULL OR octet_length(stdout) <= 4194304),
     CHECK (stderr IS NULL OR octet_length(stderr) <= 4194304),
@@ -2422,8 +2045,9 @@ CREATE TABLE workspace_processes (
     ),
     CHECK (
         (state = 'pending' AND region_id IS NULL)
+        OR state = 'failed'
         OR
-        (state IN ('starting', 'running', 'exit_requested', 'exited', 'failed')
+        (state IN ('starting', 'running', 'exit_requested', 'exited')
          AND region_id IS NOT NULL)
     ),
     CHECK (
@@ -2441,7 +2065,7 @@ CREATE TABLE workspace_processes (
     ),
     CHECK (state NOT IN ('exit_requested', 'exited') OR (stdout IS NOT NULL AND stderr IS NOT NULL)),
     CHECK (state <> 'exited' OR exited_at IS NOT NULL),
-    CHECK (error IS NULL OR (jsonb_typeof(error) = 'object' AND octet_length(error::text) <= 16384)),
+    CHECK (error IS NULL OR jsonb_typeof(error) = 'object'),
     UNIQUE (org_id, id),
     UNIQUE (workspace_id, id),
     UNIQUE (id, workspace_id, runtime_instance_id),
@@ -2503,7 +2127,7 @@ CREATE INDEX workspace_leases_worker_replay_idx
     WHERE state IN ('active', 'releasing');
 
 CREATE TABLE workspace_versions (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^wsv_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
@@ -2516,7 +2140,8 @@ CREATE TABLE workspace_versions (
     content_digest TEXT NOT NULL CHECK (content_digest ~ '^sha256:[0-9a-f]{64}$'),
     size_bytes BIGINT NOT NULL DEFAULT 0 CHECK (size_bytes >= 0),
     entry_count INTEGER NOT NULL DEFAULT 0 CHECK (entry_count >= 0),
-    state workspace_version_state NOT NULL DEFAULT 'private',
+    state TEXT NOT NULL DEFAULT 'private'
+        CHECK (state IN ('private', 'committed', 'discarded')),
     source_workspace_lease_id UUID,
     ownership_generation BIGINT NOT NULL CHECK (ownership_generation >= 0),
     writer_generation BIGINT NOT NULL CHECK (writer_generation >= 0),
@@ -2630,7 +2255,7 @@ ALTER TABLE run_attempts
     ON DELETE RESTRICT;
 
 CREATE TABLE secret_resolutions (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     workspace_id UUID NOT NULL,
     run_id UUID,
     attempt_number INTEGER,
@@ -2672,12 +2297,13 @@ CREATE UNIQUE INDEX secret_resolutions_process_target_uidx
     WHERE process_id IS NOT NULL;
 
 CREATE TABLE tokens (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^tok_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
-    state token_state NOT NULL DEFAULT 'pending',
+    state TEXT NOT NULL DEFAULT 'pending'
+        CHECK (state IN ('pending', 'completed', 'expired', 'cancelled')),
     expires_at TIMESTAMPTZ NOT NULL,
     callback_key_id TEXT NOT NULL DEFAULT '',
     callback_secret_fingerprint BYTEA NOT NULL
@@ -2705,14 +2331,15 @@ CREATE TABLE tokens (
 );
 
 CREATE TABLE public_access_tokens (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^pat_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     token_hash BYTEA NOT NULL UNIQUE CHECK (octet_length(token_hash) = 32),
     credential_key_id TEXT NOT NULL,
-    state public_access_token_state NOT NULL DEFAULT 'active',
+    state TEXT NOT NULL DEFAULT 'active'
+        CHECK (state IN ('active', 'revoked', 'expired')),
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_by JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -2733,7 +2360,7 @@ CREATE TABLE public_access_tokens (
 );
 
 CREATE TABLE public_access_token_scopes (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
@@ -2755,13 +2382,12 @@ CREATE TABLE public_access_token_scopes (
 );
 
 CREATE TABLE outbox_messages (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     lane TEXT NOT NULL CHECK (btrim(lane) <> '' AND octet_length(lane) <= 128),
     topic TEXT NOT NULL CHECK (btrim(topic) <> '' AND octet_length(topic) <= 128),
     partition_key TEXT NOT NULL CHECK (btrim(partition_key) <> '' AND octet_length(partition_key) <= 512),
     payload JSONB NOT NULL CHECK (
         jsonb_typeof(payload) = 'object'
-        AND octet_length(payload::text) <= 1048576
     ),
     state TEXT NOT NULL DEFAULT 'pending'
         CHECK (state IN ('pending', 'claimed', 'delivered', 'dead_lettered')),
@@ -2784,7 +2410,7 @@ CREATE TABLE outbox_messages (
     ),
     CHECK (
         last_error IS NULL
-        OR (jsonb_typeof(last_error) = 'object' AND octet_length(last_error::text) <= 16384)
+        OR jsonb_typeof(last_error) = 'object'
     )
 );
 
@@ -2828,7 +2454,8 @@ CREATE TABLE telemetry_outbox (
     redaction_class TEXT NOT NULL DEFAULT 'internal',
     retention_class TEXT NOT NULL DEFAULT 'standard',
     snapshot_version BIGINT CHECK (snapshot_version IS NULL OR snapshot_version > 0),
-    state telemetry_outbox_state NOT NULL DEFAULT 'pending',
+    state TEXT NOT NULL DEFAULT 'pending'
+        CHECK (state IN ('pending', 'claimed', 'written', 'failed', 'dead_lettered')),
     retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
     next_retry_at TIMESTAMPTZ,
     written_at TIMESTAMPTZ,
@@ -2928,7 +2555,7 @@ CREATE INDEX telemetry_outbox_written_gc_idx
     WHERE written_at IS NOT NULL;
 
 CREATE TABLE run_leases (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
@@ -2954,7 +2581,21 @@ CREATE TABLE run_leases (
     span_id TEXT,
     parent_span_id TEXT,
     traceparent TEXT,
-    state run_lease_state NOT NULL DEFAULT 'assigned',
+    state TEXT NOT NULL DEFAULT 'assigned'
+        CHECK (state IN (
+            'assigned',
+            'starting',
+            'running',
+            'checkpointing',
+            'finalizing',
+            'checkpointed',
+            'completed',
+            'failed',
+            'cancelled',
+            'lost',
+            'rejected',
+            'expired'
+        )),
     assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     start_deadline_at TIMESTAMPTZ NOT NULL,
     claimed_at TIMESTAMPTZ,
@@ -3054,7 +2695,7 @@ CREATE TABLE run_leases (
             AND octet_length(terminal_reason_code) <= 128
         )
     ),
-    CHECK (terminal_error IS NULL OR (jsonb_typeof(terminal_error) = 'object' AND octet_length(terminal_error::text) <= 16384)),
+    CHECK (terminal_error IS NULL OR jsonb_typeof(terminal_error) = 'object'),
     CHECK (terminal_request_fingerprint IS NULL OR (
         btrim(terminal_request_fingerprint) <> '' AND octet_length(terminal_request_fingerprint) <= 128
     ))
@@ -3107,7 +2748,7 @@ ALTER TABLE runs
     ON DELETE RESTRICT;
 
 CREATE TABLE run_checkpoints (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     kind run_checkpoint_kind NOT NULL,
     run_id UUID NOT NULL,
     attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
@@ -3121,7 +2762,8 @@ CREATE TABLE run_checkpoints (
         actor_speculative_input_sequence IS NULL
         OR actor_speculative_input_sequence >= 0
     ),
-    state run_checkpoint_state NOT NULL DEFAULT 'creating',
+    state TEXT NOT NULL DEFAULT 'creating'
+        CHECK (state IN ('creating', 'ready', 'invalid', 'deleted')),
     restore_manifest JSONB NOT NULL DEFAULT '{}'::jsonb,
     ready_request_fingerprint TEXT,
     failed_request_fingerprint TEXT,
@@ -3152,7 +2794,6 @@ CREATE TABLE run_checkpoints (
         ON DELETE RESTRICT,
     CHECK (
         jsonb_typeof(restore_manifest) = 'object'
-        AND octet_length(restore_manifest::text) <= 65536
     ),
     CHECK (
         ready_request_fingerprint IS NULL
@@ -3243,15 +2884,6 @@ CREATE TABLE meter_events (
     deployment_id UUID,
     deployment_build_lease_id UUID,
     attempt_number INTEGER CHECK (attempt_number IS NULL OR attempt_number > 0),
-    source_type TEXT GENERATED ALWAYS AS (
-        CASE WHEN run_lease_id IS NOT NULL
-             THEN 'run_lease'::text
-             ELSE 'deployment_build_lease'::text
-        END
-    ) STORED NOT NULL,
-    source_id UUID GENERATED ALWAYS AS (
-        COALESCE(run_lease_id, deployment_build_lease_id)
-    ) STORED NOT NULL,
     trace_id TEXT CHECK (trace_id IS NULL OR (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000')),
     span_id TEXT CHECK (span_id IS NULL OR (span_id ~ '^[0-9a-f]{16}$' AND span_id <> '0000000000000000')),
     meter TEXT NOT NULL CHECK (btrim(meter) <> ''),
@@ -3285,7 +2917,7 @@ CREATE TABLE meter_events (
         OR
         (measured_from IS NOT NULL AND measured_to IS NOT NULL AND measured_from < measured_to)
     ),
-    CHECK (jsonb_typeof(details) = 'object' AND octet_length(details::text) <= 16384)
+    CHECK (jsonb_typeof(details) = 'object')
 );
 
 ALTER TABLE telemetry_outbox
@@ -3294,8 +2926,13 @@ ALTER TABLE telemetry_outbox
     REFERENCES meter_events(id)
     ON DELETE RESTRICT;
 
-CREATE UNIQUE INDEX meter_events_idempotency_idx
-    ON meter_events (org_id, source_type, source_id, meter, idempotency_key);
+CREATE UNIQUE INDEX meter_events_run_lease_idempotency_uidx
+    ON meter_events (org_id, run_lease_id, meter, idempotency_key)
+    WHERE run_lease_id IS NOT NULL;
+
+CREATE UNIQUE INDEX meter_events_deployment_build_lease_idempotency_uidx
+    ON meter_events (org_id, deployment_build_lease_id, meter, idempotency_key)
+    WHERE deployment_build_lease_id IS NOT NULL;
 
 CREATE INDEX meter_events_scope_meter_time_idx
     ON meter_events (org_id, project_id, environment_id, meter, occurred_at DESC, id DESC);
@@ -3319,12 +2956,13 @@ CREATE UNIQUE INDEX telemetry_outbox_meter_event_uidx
     WHERE meter_event_id IS NOT NULL;
 
 CREATE TABLE run_waits (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
     run_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
     kind wait_kind NOT NULL,
-    condition_state wait_state NOT NULL DEFAULT 'pending',
+    condition_state TEXT NOT NULL DEFAULT 'pending'
+        CHECK (condition_state IN ('pending', 'completed', 'failed', 'cancelled')),
     due_at TIMESTAMPTZ,
     timeout_at TIMESTAMPTZ,
     idle_timeout_ms BIGINT CHECK (idle_timeout_ms IS NULL OR idle_timeout_ms > 0),
@@ -3341,8 +2979,21 @@ CREATE TABLE run_waits (
     condition_terminal_at TIMESTAMPTZ,
     condition_reason_code TEXT,
     completed_actor_record_id UUID,
-    completed_actor_record_direction TEXT GENERATED ALWAYS AS ('input'::text) STORED,
-    suspension_state run_wait_state NOT NULL DEFAULT 'hot',
+    completed_actor_record_direction TEXT CHECK (
+        completed_actor_record_direction IS NULL
+        OR completed_actor_record_direction = 'input'
+    ),
+    suspension_state TEXT NOT NULL DEFAULT 'hot'
+        CHECK (suspension_state IN (
+            'hot',
+            'checkpointing',
+            'parked',
+            'resume_pending',
+            'resuming',
+            'released',
+            'cancelled',
+            'failed'
+        )),
     token_registration_run_state_version BIGINT CHECK (token_registration_run_state_version IS NULL OR token_registration_run_state_version >= 0),
     registration_request_fingerprint TEXT CHECK (
         registration_request_fingerprint IS NULL
@@ -3411,8 +3062,12 @@ CREATE TABLE run_waits (
     FOREIGN KEY (actor_id, workspace_id, run_id)
         REFERENCES runs(actor_id, workspace_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (completed_actor_record_id, actor_id, completed_actor_record_direction)
-        REFERENCES actor_records(id, actor_id, direction)
+    FOREIGN KEY (
+        actor_id,
+        completed_actor_record_id,
+        completed_actor_record_direction
+    )
+        REFERENCES actor_records(actor_id, id, direction)
         ON DELETE RESTRICT,
     FOREIGN KEY (workspace_id, base_workspace_version_id)
         REFERENCES workspace_versions(workspace_id, id)
@@ -3427,6 +3082,17 @@ CREATE TABLE run_waits (
     CHECK (cardinality(tags) <= 32),
     CHECK (condition_error IS NULL OR jsonb_typeof(condition_error) = 'object'),
     CHECK (suspension_error IS NULL OR jsonb_typeof(suspension_error) = 'object'),
+    CHECK (
+        (completed_actor_record_id IS NULL
+         AND completed_actor_record_direction IS NULL
+         AND (kind <> 'actor_input' OR condition_state <> 'completed'))
+        OR
+        (kind = 'actor_input'
+         AND condition_state = 'completed'
+         AND actor_id IS NOT NULL
+         AND completed_actor_record_id IS NOT NULL
+         AND completed_actor_record_direction = 'input')
+    ),
     CHECK (
         (kind = 'timer'
          AND due_at IS NOT NULL
@@ -3623,6 +3289,10 @@ CREATE INDEX run_waits_condition_timeout_idx
     ON run_waits (timeout_at, id)
     WHERE condition_state = 'pending' AND timeout_at IS NOT NULL;
 
+CREATE INDEX run_waits_timer_due_idx
+    ON run_waits (due_at, id)
+    WHERE kind = 'timer' AND condition_state = 'pending';
+
 CREATE INDEX run_waits_token_condition_idx
     ON run_waits (token_id, condition_state, id)
     WHERE token_id IS NOT NULL;
@@ -3664,7 +3334,7 @@ ALTER TABLE run_waits
     ON DELETE RESTRICT;
 
 CREATE TABLE runtime_instances (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
     worker_group_id TEXT NOT NULL,
     project_id UUID NOT NULL,
@@ -3689,11 +3359,13 @@ CREATE TABLE runtime_instances (
     reserved_process_id UUID,
     reserved_workspace_version_id UUID,
     reservation_expires_at TIMESTAMPTZ,
-    desired_state runtime_desired_state NOT NULL DEFAULT 'ready',
+    desired_state TEXT NOT NULL DEFAULT 'ready'
+        CHECK (desired_state IN ('ready', 'closed')),
     desired_version BIGINT NOT NULL DEFAULT 1 CHECK (desired_version > 0),
     desired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     desired_reason TEXT NOT NULL CHECK (btrim(desired_reason) <> ''),
-    observed_state runtime_observed_state NOT NULL DEFAULT 'allocated',
+    observed_state TEXT NOT NULL DEFAULT 'allocated'
+        CHECK (observed_state IN ('allocated', 'preparing', 'ready', 'closing', 'closed', 'failed', 'lost')),
     observed_version BIGINT NOT NULL DEFAULT 0 CHECK (observed_version >= 0),
     observed_desired_version BIGINT NOT NULL DEFAULT 0 CHECK (observed_desired_version >= 0 AND observed_desired_version <= desired_version),
     observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -3774,7 +3446,7 @@ CREATE TABLE runtime_instances (
          AND reserved_workspace_version_id IS NOT NULL
          AND reservation_expires_at IS NOT NULL)
     ),
-    CHECK (jsonb_typeof(network_policy) = 'object' AND octet_length(network_policy::text) <= 16384),
+    CHECK (jsonb_typeof(network_policy) = 'object'),
     CHECK (reserved_workspace_version_id IS NULL OR observed_state IN ('allocated', 'preparing', 'ready')),
     CHECK (restore_checkpoint_id IS NULL OR reserved_process_id IS NULL),
     CHECK (desired_state <> 'closed' OR desired_version > 1),
@@ -3797,17 +3469,18 @@ CREATE TABLE runtime_instances (
         OR (observed_state = 'lost' AND lost_at IS NOT NULL AND closed_at IS NULL AND failed_at IS NULL AND terminal_at IS NOT NULL AND terminal_reason_code IS NOT NULL)
     ),
     CHECK (terminal_reason_code IS NULL OR (btrim(terminal_reason_code) <> '' AND octet_length(terminal_reason_code) <= 128)),
-    CHECK (terminal_error IS NULL OR (jsonb_typeof(terminal_error) = 'object' AND octet_length(terminal_error::text) <= 16384))
+    CHECK (terminal_error IS NULL OR jsonb_typeof(terminal_error) = 'object')
 );
 
 CREATE TABLE worker_network_slots (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    id UUID PRIMARY KEY,
     worker_group_id TEXT NOT NULL,
     worker_instance_id UUID NOT NULL,
     worker_epoch BIGINT NOT NULL CHECK (worker_epoch > 0),
     slot_name TEXT NOT NULL CHECK (btrim(slot_name) <> ''),
     generation BIGINT NOT NULL CHECK (generation > 0),
-    state worker_network_slot_state NOT NULL DEFAULT 'available',
+    state TEXT NOT NULL DEFAULT 'available'
+        CHECK (state IN ('available', 'assigned', 'bound', 'reclaiming', 'quarantined', 'lost')),
     runtime_instance_id UUID,
     host_interface_name TEXT,
     guest_address INET,
@@ -3836,8 +3509,8 @@ CREATE TABLE worker_network_slots (
     FOREIGN KEY (worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id)
         REFERENCES runtime_instances(worker_group_id, worker_instance_id, worker_epoch, id)
         ON DELETE RESTRICT,
-    CHECK (reclaim_evidence IS NULL OR (jsonb_typeof(reclaim_evidence) = 'object' AND octet_length(reclaim_evidence::text) <= 16384)),
-    CHECK (state_error IS NULL OR (jsonb_typeof(state_error) = 'object' AND octet_length(state_error::text) <= 16384)),
+    CHECK (reclaim_evidence IS NULL OR jsonb_typeof(reclaim_evidence) = 'object'),
+    CHECK (state_error IS NULL OR jsonb_typeof(state_error) = 'object'),
     CHECK (state_reason_code IS NULL OR (btrim(state_reason_code) <> '' AND octet_length(state_reason_code) <= 128)),
     CHECK (host_interface_name IS NULL OR btrim(host_interface_name) <> ''),
     CHECK (tap_name IS NULL OR btrim(tap_name) <> ''),
@@ -4008,68 +3681,3 @@ CREATE INDEX public_access_tokens_expiry_active_idx ON public_access_tokens(expi
     WHERE state = 'active';
 CREATE INDEX public_access_token_scopes_token_idx ON public_access_token_scopes(org_id, project_id, environment_id, token_id, scope_type)
     WHERE token_id IS NOT NULL;
-
-CREATE TRIGGER organizations_set_updated_at
-    BEFORE UPDATE ON organizations
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER users_set_updated_at
-    BEFORE UPDATE ON users
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER auth_identities_set_updated_at
-    BEFORE UPDATE ON auth_identities
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER org_members_set_updated_at
-    BEFORE UPDATE ON org_members
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER deletion_jobs_set_updated_at
-    BEFORE UPDATE ON deletion_jobs
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER projects_set_updated_at
-    BEFORE UPDATE ON projects
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER environments_set_updated_at
-    BEFORE UPDATE ON environments
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER secrets_set_updated_at
-    BEFORE UPDATE ON secrets
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER deployments_set_updated_at
-    BEFORE UPDATE ON deployments
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER runs_set_updated_at
-    BEFORE UPDATE ON runs
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER tokens_set_updated_at
-    BEFORE UPDATE ON tokens
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER public_access_tokens_set_updated_at
-    BEFORE UPDATE ON public_access_tokens
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER run_waits_set_updated_at
-    BEFORE UPDATE ON run_waits
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();

@@ -337,6 +337,10 @@ DEV_TFVARS="$tfvars" \
   DEV_PUBLIC_URL=https://replacement.example.com \
   DEV_GITHUB_OAUTH_CLIENT_ID=Iv1.example \
   DEV_BOOTSTRAP_OWNER_EMAIL=owner@example.com \
+  RUNTIME_STORE_URI=s3://runtime-store/runtime \
+  RUNTIME_STORE_BUCKET_ARN=arn:aws:s3:::runtime-store \
+  RUNTIME_STORE_KMS_KEY_ARN=arn:aws:kms:us-west-2:123456789012:key/runtime \
+  DEV_BUILD_POLICY_DIGEST=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   DEV_CLICKHOUSE_URL=https://example.clickhouse.cloud:8443 \
   DEV_CLICKHOUSE_PASSWORD_SECRET_ARN=arn:aws:secretsmanager:us-west-2:123456789012:secret:clickhouse \
   "$script" dev-control-tfvars >"$stdout" 2>"$stderr"
@@ -361,6 +365,12 @@ if DEV_TFVARS="$tfvars" \
   DEV_CONTROL_IMAGE=123456789012.dkr.ecr.us-west-2.amazonaws.com/helmr-control:test \
   DEV_PUBLIC_URL=https://replacement.example.com \
   DEV_GITHUB_OAUTH_CLIENT_ID=Iv1.example \
+  RUNTIME_STORE_URI=s3://runtime-store/runtime \
+  RUNTIME_STORE_BUCKET_ARN=arn:aws:s3:::runtime-store \
+  RUNTIME_STORE_KMS_KEY_ARN=arn:aws:kms:us-west-2:123456789012:key/runtime \
+  DEV_BUILD_POLICY_DIGEST=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  DEV_CLICKHOUSE_URL=https://example.clickhouse.cloud:8443 \
+  DEV_CLICKHOUSE_PASSWORD_SECRET_ARN=arn:aws:secretsmanager:us-west-2:123456789012:secret:clickhouse \
   "$script" dev-control-tfvars >"$stdout" 2>"$stderr"; then
   fail "dev-control-tfvars should reject removing active worker fleets"
 fi

@@ -206,7 +206,7 @@ func handleProgramRunConnection(
 	if err := programConn.SetReadDeadline(deadline); err != nil {
 		return err
 	}
-	process, cleanup, err := newProgramProcess(ctx, entry, secrets)
+	process, cleanup, err := newProgramProcess(ctx, entry, &request, secrets)
 	if err != nil {
 		return err
 	}
@@ -453,8 +453,20 @@ func validateProgramSecretFilePath(value string) error {
 func newProgramProcess(
 	ctx context.Context,
 	entry *workspaceMountEntry,
+	request *runv0.ProgramRunRequest,
 	secrets []*runv0.ProgramSecret,
 ) (*programProcess, func(), error) {
+	if request == nil {
+		return nil, func() {}, errors.New("Program run request is required")
+	}
+	cgroupLeaf, err := programCgroupLeafName(
+		request.GetRunId(),
+		request.GetAttemptNumber(),
+		request.GetRunLeaseId(),
+	)
+	if err != nil {
+		return nil, func() {}, err
+	}
 	if entry.runtimeUser == nil {
 		return nil, func() {}, errors.New("Workspace runtime user is not resolved")
 	}
@@ -505,6 +517,7 @@ func newProgramProcess(
 		imageCommandOptions{
 			ManagedProgram:  true,
 			CgroupNamespace: true,
+			CgroupLeaf:      cgroupLeaf,
 			StartProof:      true,
 		},
 	)
@@ -553,7 +566,7 @@ func newProgramProcess(
 		secretCleanup()
 		return nil, func() {}, err
 	}
-	cgroup, err := createProgramCgroup()
+	cgroup, err := createProgramCgroup(cgroupLeaf)
 	if err != nil {
 		closeProgramFiles(stdin, stdout, stderr, controlReader, controlWriter, proofReader, proofWriter)
 		cleanupRuntime()
@@ -956,6 +969,7 @@ func relayProgram(
 	quiesced := false
 	var pendingWait *runv0.RunWaitRequested
 	var pendingTurnCommit *runv0.ActorTurnCommitRequested
+	var pendingPause *runv0.CheckpointPauseRequest
 	pendingRuntimeOperations := make(map[string]string)
 	for !processExited || !controlClosed {
 		select {
@@ -999,6 +1013,25 @@ func relayProgram(
 					return err
 				}
 				pendingTurnCommit = turnCommit
+				continue
+			}
+			if correlationID, label, ok := runtimeResourceOperationIdentity(event); ok {
+				if outcomeSeen {
+					return fmt.Errorf("Program emitted an %s after outcome", label)
+				}
+				if correlationID == "" {
+					return fmt.Errorf("%s identity is incomplete", label)
+				}
+				if _, exists := pendingRuntimeOperations[correlationID]; exists {
+					return fmt.Errorf("Program emitted a duplicate %s correlation", label)
+				}
+				if len(pendingRuntimeOperations) >= 128 {
+					return errors.New("Program exceeded the pending runtime operation limit")
+				}
+				if err := stream.write(event); err != nil {
+					return err
+				}
+				pendingRuntimeOperations[correlationID] = label
 				continue
 			}
 			if send := event.GetActorInputSendRequested(); send != nil {
@@ -1136,9 +1169,26 @@ func relayProgram(
 						return fmt.Errorf("write %s decision: %w", operation, err)
 					}
 					delete(pendingRuntimeOperations, correlationID)
+					if pendingPause != nil && len(pendingRuntimeOperations) == 0 {
+						resumed, err := pauseAndResumeProgram(
+							ctx, request, pendingWait, pendingPause, process, stream,
+							registry, outputs, events, controlErrors,
+						)
+						if err != nil {
+							return err
+						}
+						conn = resumed
+						pendingPause = nil
+						pendingWait = nil
+						hostControls = readProgramHostControl(resumed)
+						continue
+					}
 					hostControls = readProgramHostControl(conn)
 					continue
 				}
+			}
+			if pendingPause != nil {
+				return errors.New("Program host sent non-runtime control while checkpoint pause was deferred")
 			}
 			if pendingTurnCommit != nil {
 				if control.turnCommit == nil {
@@ -1165,6 +1215,14 @@ func relayProgram(
 				pendingWait = nil
 				hostControls = readProgramHostControl(conn)
 			case control.pause != nil:
+				if pendingPause != nil {
+					return errors.New("Program host sent more than one checkpoint pause request")
+				}
+				if len(pendingRuntimeOperations) != 0 {
+					pendingPause = control.pause
+					hostControls = readProgramHostControl(conn)
+					continue
+				}
 				resumed, err := pauseAndResumeProgram(ctx, request, pendingWait, control.pause, process, stream, registry, outputs, events, controlErrors)
 				if err != nil {
 					return err
@@ -1232,6 +1290,35 @@ func relayProgram(
 			},
 		},
 	})
+}
+
+func runtimeResourceOperationIdentity(event *runv0.RunEvent) (string, string, bool) {
+	switch value := event.GetEvent().(type) {
+	case *runv0.RunEvent_ActorStartRequested:
+		return strings.TrimSpace(value.ActorStartRequested.GetCorrelationId()), "Actor start", true
+	case *runv0.RunEvent_ActorStatusRequested:
+		return strings.TrimSpace(value.ActorStatusRequested.GetCorrelationId()), "Actor status read", true
+	case *runv0.RunEvent_ActorCloseRequested:
+		return strings.TrimSpace(value.ActorCloseRequested.GetCorrelationId()), "Actor close", true
+	case *runv0.RunEvent_ActorOutputPageRequested:
+		return strings.TrimSpace(value.ActorOutputPageRequested.GetCorrelationId()), "Actor output page read", true
+	case *runv0.RunEvent_WorkspaceCreateRequested:
+		return strings.TrimSpace(value.WorkspaceCreateRequested.GetCorrelationId()), "Workspace create", true
+	case *runv0.RunEvent_WorkspaceRetrieveRequested:
+		return strings.TrimSpace(value.WorkspaceRetrieveRequested.GetCorrelationId()), "Workspace retrieve", true
+	case *runv0.RunEvent_WorkspaceFileReadRequested:
+		return strings.TrimSpace(value.WorkspaceFileReadRequested.GetCorrelationId()), "Workspace file read", true
+	case *runv0.RunEvent_WorkspaceFileStatRequested:
+		return strings.TrimSpace(value.WorkspaceFileStatRequested.GetCorrelationId()), "Workspace file stat", true
+	case *runv0.RunEvent_WorkspaceFileListRequested:
+		return strings.TrimSpace(value.WorkspaceFileListRequested.GetCorrelationId()), "Workspace file list", true
+	case *runv0.RunEvent_WorkspaceExecRequested:
+		return strings.TrimSpace(value.WorkspaceExecRequested.GetCorrelationId()), "Workspace exec", true
+	case *runv0.RunEvent_WorkspaceDeleteRequested:
+		return strings.TrimSpace(value.WorkspaceDeleteRequested.GetCorrelationId()), "Workspace delete", true
+	default:
+		return "", "", false
+	}
 }
 
 func readProgramHostControl(conn programConnection) <-chan programHostControl {
@@ -1633,7 +1720,7 @@ func awaitProgramResumeConsumed(
 func (stream *programEventStream) writeResumeAck(ack *runv0.ResumeAck) error {
 	stream.mu.Lock()
 	defer stream.mu.Unlock()
-	return stream.writeLocked(programAdmissionTimeout, func(conn programConnection) error {
+	return stream.writeLocked(func(conn programConnection) error {
 		return frameio.WriteProtoFrame(conn, ack)
 	})
 }
@@ -1981,7 +2068,7 @@ func (stream *programEventStream) replaceConnWithResumeAck(conn programConnectio
 	}
 	previous := stream.conn
 	stream.conn = conn
-	err := stream.writeLocked(programAdmissionTimeout, func(current programConnection) error {
+	err := stream.writeLocked(func(current programConnection) error {
 		return frameio.WriteProtoFrame(current, ack)
 	})
 	if err != nil {
@@ -1998,11 +2085,11 @@ func (stream *programEventStream) replaceConnWithResumeAck(conn programConnectio
 	return previous, nil
 }
 
-func (stream *programEventStream) writeLocked(timeout time.Duration, write func(programConnection) error) error {
+func (stream *programEventStream) writeLocked(write func(programConnection) error) error {
 	if stream.closed || stream.conn == nil {
 		return errors.New("Program event stream is closed")
 	}
-	if err := stream.conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+	if err := stream.conn.SetWriteDeadline(time.Now().Add(programAdmissionTimeout)); err != nil {
 		return err
 	}
 	err := write(stream.conn)
@@ -2153,7 +2240,7 @@ func workspaceSecretExcludes(
 func (stream *programEventStream) writeCheckpointPauseReady(ready *runv0.CheckpointPauseReady) error {
 	stream.mu.Lock()
 	defer stream.mu.Unlock()
-	return stream.writeLocked(programAdmissionTimeout, func(conn programConnection) error {
+	return stream.writeLocked(func(conn programConnection) error {
 		return wire.WriteCheckpointPauseReady(conn, ready)
 	})
 }
@@ -2161,7 +2248,7 @@ func (stream *programEventStream) writeCheckpointPauseReady(ready *runv0.Checkpo
 func (stream *programEventStream) writeActorTurnCommitPauseReady(ready *runv0.ActorTurnCommitPauseReady) error {
 	stream.mu.Lock()
 	defer stream.mu.Unlock()
-	return stream.writeLocked(programAdmissionTimeout, func(conn programConnection) error {
+	return stream.writeLocked(func(conn programConnection) error {
 		return wire.WriteActorTurnCommitPauseReady(conn, ready)
 	})
 }
@@ -2187,7 +2274,7 @@ func (stream *programEventStream) writeWorkspaceArtifactFile(runID string, artif
 	entryCount := artifact.EntryCount
 	stream.mu.Lock()
 	defer stream.mu.Unlock()
-	return stream.writeLocked(programAdmissionTimeout, func(conn programConnection) error {
+	return stream.writeLocked(func(conn programConnection) error {
 		return wire.WriteFileFrameWithMetadata(conn, wire.StreamHeader{
 			Type:       wire.StreamTypeWorkspaceArtifact,
 			RunID:      runID,

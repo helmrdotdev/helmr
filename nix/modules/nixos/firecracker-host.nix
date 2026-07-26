@@ -8,43 +8,30 @@
 let
   cfg = config.services.helmr.firecrackerHost;
   firecrackerReleaseVersion = "1.13.2";
-  firecrackerRelease =
-    {
-      x86_64-linux = {
-        arch = "x86_64";
+  firecrackerPackage =
+    assert lib.assertMsg pkgs.stdenv.hostPlatform.isx86_64
+      "Helmr Firecracker hosts support only x86_64-linux";
+    pkgs.stdenvNoCC.mkDerivation {
+      pname = "firecracker-runtime";
+      version = firecrackerReleaseVersion;
+
+      src = pkgs.fetchurl {
+        url = "https://github.com/firecracker-microvm/firecracker/releases/download/v${firecrackerReleaseVersion}/firecracker-v${firecrackerReleaseVersion}-x86_64.tgz";
         hash = "sha256-pts7RR9QDf2CmJRH/r9Utci7iSnk7nx/hKlpXxMNpUc=";
       };
-      aarch64-linux = {
-        arch = "aarch64";
-        hash = "sha256-pkwLkTspuOpLWZDsuUqSy3y064UAFbaaoWgNJdnLQb8=";
-      };
-    }
-    .${pkgs.stdenv.hostPlatform.system} or null;
-  firecrackerPackage =
-    if firecrackerRelease == null then
-      pkgs.firecracker
-    else
-      pkgs.stdenvNoCC.mkDerivation {
-        pname = "firecracker-runtime";
-        version = firecrackerReleaseVersion;
 
-        src = pkgs.fetchurl {
-          url = "https://github.com/firecracker-microvm/firecracker/releases/download/v${firecrackerReleaseVersion}/firecracker-v${firecrackerReleaseVersion}-${firecrackerRelease.arch}.tgz";
-          hash = firecrackerRelease.hash;
-        };
+      installPhase = ''
+        runHook preInstall
 
-        installPhase = ''
-          runHook preInstall
+        release_dir=.
+        install -d "$out/bin" "$out/share/firecracker"
+        install -m 0755 "$release_dir/firecracker-v${firecrackerReleaseVersion}-x86_64" "$out/bin/firecracker"
+        install -m 0755 "$release_dir/jailer-v${firecrackerReleaseVersion}-x86_64" "$out/bin/jailer"
+        install -m 0644 "$release_dir/LICENSE" "$release_dir/NOTICE" "$release_dir/THIRD-PARTY" "$out/share/firecracker/"
 
-          release_dir=.
-          install -d "$out/bin" "$out/share/firecracker"
-          install -m 0755 "$release_dir/firecracker-v${firecrackerReleaseVersion}-${firecrackerRelease.arch}" "$out/bin/firecracker"
-          install -m 0755 "$release_dir/jailer-v${firecrackerReleaseVersion}-${firecrackerRelease.arch}" "$out/bin/jailer"
-          install -m 0644 "$release_dir/LICENSE" "$release_dir/NOTICE" "$release_dir/THIRD-PARTY" "$out/share/firecracker/"
-
-          runHook postInstall
-        '';
-      };
+        runHook postInstall
+      '';
+    };
   direnvPackage = pkgs.direnv.overrideAttrs (_: {
     doCheck = false;
   });
@@ -314,6 +301,10 @@ in
         boot.kernelModules = [ "kvm" ];
         networking.firewall.checkReversePath = lib.mkDefault false;
         assertions = [
+          {
+            assertion = pkgs.stdenv.hostPlatform.isx86_64;
+            message = "services.helmr.firecrackerHost supports only x86_64-linux.";
+          }
           {
             assertion = lib.all validIPv4CIDR cfg.networkBlockedIPv4CIDRs;
             message = "services.helmr.firecrackerHost.networkBlockedIPv4CIDRs must contain valid IPv4 CIDR prefixes.";

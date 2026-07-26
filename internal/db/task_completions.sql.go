@@ -156,7 +156,7 @@ RETURNING run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.wo
 `
 
 type CompleteSameWorkspaceChildFailureParams struct {
-	ConditionState             WaitState          `json:"condition_state"`
+	ConditionState             string             `json:"condition_state"`
 	ConditionError             []byte             `json:"condition_error"`
 	CompletedAt                pgtype.Timestamptz `json:"completed_at"`
 	ReasonCode                 pgtype.Text        `json:"reason_code"`
@@ -472,7 +472,7 @@ RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_i
 `
 
 type CompleteTaskRunLeaseParams struct {
-	State                      RunLeaseState      `json:"state"`
+	State                      string             `json:"state"`
 	CompletedAt                pgtype.Timestamptz `json:"completed_at"`
 	ReasonCode                 pgtype.Text        `json:"reason_code"`
 	Error                      []byte             `json:"error"`
@@ -1156,7 +1156,7 @@ RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, depl
 `
 
 type FinishCheckpointFailedTaskRunParams struct {
-	Status        RunStatus          `json:"status"`
+	Status        string             `json:"status"`
 	ReasonCode    pgtype.Text        `json:"reason_code"`
 	Error         []byte             `json:"error"`
 	FailedAt      pgtype.Timestamptz `json:"failed_at"`
@@ -1258,7 +1258,7 @@ RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, depl
 `
 
 type FinishTaskRunParams struct {
-	Status        RunStatus          `json:"status"`
+	Status        string             `json:"status"`
 	Output        []byte             `json:"output"`
 	ReasonCode    pgtype.Text        `json:"reason_code"`
 	Error         []byte             `json:"error"`
@@ -1565,7 +1565,12 @@ func (q *Queries) PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTa
 }
 
 const readyRunRetries = `-- name: ReadyRunRetries :many
-WITH candidates AS (
+WITH provided_outbox_ids AS MATERIALIZED (
+    SELECT id, ordinality
+      FROM unnest($1::uuid[])
+           WITH ORDINALITY AS supplied(id, ordinality)
+),
+candidates AS (
     SELECT runs.id,
            runs.environment_id,
            runs.workspace_id,
@@ -1590,7 +1595,7 @@ WITH candidates AS (
                AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
        )
      ORDER BY runs.retry_at, runs.id
-     LIMIT $1
+     LIMIT $2
      FOR UPDATE OF runs, run_attempts SKIP LOCKED
 ), readied AS (
     UPDATE runs
@@ -1606,20 +1611,28 @@ WITH candidates AS (
        AND runs.state_version = candidates.state_version
        AND runs.status = 'retry_delayed'
        AND runs.current_run_lease_id IS NULL
+       AND cardinality($1::uuid[])
+           >= (SELECT count(*) FROM candidates)
     RETURNING runs.id,
               runs.environment_id,
               runs.workspace_id,
               runs.current_attempt_number,
               runs.state_version
+), ordered_readied AS MATERIALIZED (
+    SELECT readied.id,
+           row_number() OVER (ORDER BY readied.id) AS ordinality
+      FROM readied
 ), admission_outbox AS (
     INSERT INTO outbox_messages (
+        id,
         lane,
         topic,
         partition_key,
         payload,
         available_at
     )
-    SELECT 'control',
+    SELECT provided_outbox_ids.id,
+           'control',
            'run.admit',
            readied.workspace_id::text,
            jsonb_build_object(
@@ -1628,6 +1641,8 @@ WITH candidates AS (
            ),
            now()
       FROM readied
+      JOIN ordered_readied USING (id)
+      JOIN provided_outbox_ids USING (ordinality)
     RETURNING id
 )
 SELECT readied.id,
@@ -1639,6 +1654,11 @@ SELECT readied.id,
  WHERE EXISTS (SELECT 1 FROM admission_outbox)
 `
 
+type ReadyRunRetriesParams struct {
+	OutboxMessageIds []pgtype.UUID `json:"outbox_message_ids"`
+	RowLimit         int32         `json:"row_limit"`
+}
+
 type ReadyRunRetriesRow struct {
 	ID                   pgtype.UUID `json:"id"`
 	EnvironmentID        pgtype.UUID `json:"environment_id"`
@@ -1647,8 +1667,8 @@ type ReadyRunRetriesRow struct {
 	StateVersion         int64       `json:"state_version"`
 }
 
-func (q *Queries) ReadyRunRetries(ctx context.Context, rowLimit int32) ([]ReadyRunRetriesRow, error) {
-	rows, err := q.db.Query(ctx, readyRunRetries, rowLimit)
+func (q *Queries) ReadyRunRetries(ctx context.Context, arg ReadyRunRetriesParams) ([]ReadyRunRetriesRow, error) {
+	rows, err := q.db.Query(ctx, readyRunRetries, arg.OutboxMessageIds, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}

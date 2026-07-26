@@ -121,7 +121,7 @@ func acquireWorkspaceFinalization(ctx context.Context, registry *workspaceOperat
 		entry.finalizationMu.Unlock()
 		releaseEntry()
 	}
-	if err := registry.waitForProgramRelease(ctx, entry); err != nil {
+	if err := registry.waitForProgramRelease(ctx, entry, authority); err != nil {
 		release()
 		return nil, func() {}, fmt.Errorf("wait for Program release: %w", err)
 	}

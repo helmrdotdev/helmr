@@ -22,7 +22,7 @@ install -o root -g root -m 0444 /dev/null "$release_validator"
 cat >"$release_validator" <<'PY'
 ${release_validator}
 PY
-python3 "$release_validator" "$release_archive" "$release_extract" x86_64
+python3 "$release_validator" "$release_archive" "$release_extract"
 
 release_dir=/usr/lib/helmr/runtime-release
 toolchain_release_dir=/usr/lib/helmr/toolchain-release

@@ -371,8 +371,10 @@ verify_deployed_artifact_provenance() {
     --arg provenance "${dev_provenance_sha}" \
     --arg san "${san_hash}" \
     --arg version "${package_version_hash}" '
-    .Images | length == 1 and .[0].ImageId == $ami and
-    (.[0].Tags | map({key: .Key, value: .Value}) | from_entries) as $tags |
+    (.Images // []) as $images |
+    (($images[0].Tags // []) | map({key: .Key, value: .Value}) | from_entries) as $tags |
+    ($images | length) == 1 and
+    $images[0].ImageId == $ami and
     $tags.HelmrReleaseTrustMode == "development" and
     $tags.HelmrSourceCommit == $commit and
     $tags.HelmrDevReleaseProvenanceSHA256 == $provenance and

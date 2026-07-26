@@ -123,7 +123,7 @@ func TestRuntimeVerifierCorpusRequiresExactVerifierOutcomes(t *testing.T) {
 			*RuntimeArtifactSnapshot,
 		) (RuntimeIndex, error) {
 			return RuntimeIndex{
-				Architecture:      ArchitectureAArch64,
+				Architecture:      RuntimeArchitecture("aarch64"),
 				FormatVersion:     RuntimeIndexFormatVersion,
 				RuntimeAPIVersion: RuntimeAPIVersion,
 			}, nil
@@ -230,10 +230,10 @@ func TestRuntimeVerifierCorpusRejectsDescriptorDrift(t *testing.T) {
 	_, catalog, architecture, document := writeRuntimeVerifierCorpus(t)
 	tests := map[string]func(*runtimeVerifierCorpusManifest){
 		"valid architecture": func(value *runtimeVerifierCorpusManifest) {
-			value.Valid.Descriptor.Architecture = ArchitectureAArch64
+			value.Valid.Descriptor.Architecture = RuntimeArchitecture("aarch64")
 		},
 		"index architecture": func(value *runtimeVerifierCorpusManifest) {
-			value.Valid.ExpectedIndex.Architecture = ArchitectureAArch64
+			value.Valid.ExpectedIndex.Architecture = RuntimeArchitecture("aarch64")
 		},
 		"valid catalog member": func(value *runtimeVerifierCorpusManifest) {
 			value.Valid.Descriptor.SizeBytes++

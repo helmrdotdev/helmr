@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -83,6 +84,97 @@ SELECT runtime_instances.desired_state, workspace_mounts.state
 	}
 	if replay.Changed || replay.CancelledRuns != 0 || replay.RunID != parent.runID {
 		t.Fatalf("cancellation replay = %+v", replay)
+	}
+}
+
+func TestOwnedRunFinalizationGraphFailsSecretRevokedRun(t *testing.T) {
+	ctx := context.Background()
+	fixture := newRunLeaseClaimFixture(t, ctx)
+	work := fixture.addWork(t, ctx, "assigned", time.Now().Add(-time.Minute))
+	tx, err := fixture.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	graph, err := LockOwnedRunFinalizationGraphInTransaction(
+		ctx,
+		tx,
+		OwnedRunFinalizationGraphRequest{
+			OrgID:         fixture.orgID,
+			ProjectID:     fixture.projectID,
+			EnvironmentID: fixture.environmentID,
+			RunID:         work.runID,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminalized, err := graph.FailCurrentForSecretRevocation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if terminalized != 1 {
+		t.Fatalf("terminalized Runs = %d, want 1", terminalized)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var runStatus RunStatus
+	var runReason string
+	var runError []byte
+	var attemptOutcome, attemptReason string
+	var runLeaseState, workspaceLeaseState string
+	if err := fixture.pool.QueryRow(ctx, `
+SELECT runs.status,
+       runs.terminal_reason_code,
+       runs.error,
+       run_attempts.terminal_outcome,
+       run_attempts.terminal_reason_code,
+       run_leases.state,
+       workspace_leases.state
+  FROM runs
+  JOIN run_attempts
+    ON run_attempts.run_id = runs.id
+   AND run_attempts.number = runs.current_attempt_number
+  JOIN run_leases
+    ON run_leases.run_id = runs.id
+   AND run_leases.id = $2
+  JOIN workspace_leases
+    ON workspace_leases.owner_run_lease_id = run_leases.id
+ WHERE runs.id = $1`,
+		work.runID,
+		work.leaseID,
+	).Scan(
+		&runStatus,
+		&runReason,
+		&runError,
+		&attemptOutcome,
+		&attemptReason,
+		&runLeaseState,
+		&workspaceLeaseState,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if runStatus != RunStatusFailed || runReason != "secret_revoked" ||
+		attemptOutcome != "failed" || attemptReason != "secret_revoked" ||
+		runLeaseState != "rejected" || workspaceLeaseState != "fenced" {
+		t.Fatalf(
+			"Secret-revoked authority = run:%s/%s attempt:%s/%s leases:%s/%s",
+			runStatus,
+			runReason,
+			attemptOutcome,
+			attemptReason,
+			runLeaseState,
+			workspaceLeaseState,
+		)
+	}
+	var errorPayload map[string]any
+	if err := json.Unmarshal(runError, &errorPayload); err != nil {
+		t.Fatal(err)
+	}
+	if errorPayload["code"] != "secret_revoked" ||
+		errorPayload["retryable"] != false {
+		t.Fatalf("Run error = %#v", errorPayload)
 	}
 }
 
@@ -252,8 +344,10 @@ SELECT outer_run.status,
   JOIN run_waits AS outer_wait
     ON outer_wait.run_id = outer_run.id
    AND outer_wait.child_run_id = parent_run.id
- WHERE outer_run.id = $1`,
+ WHERE outer_run.id = $1
+   AND outer_wait.id = $2`,
 		chain.outerRunID,
+		chain.outerWaitID,
 	).Scan(
 		&outerStatus,
 		&parentStatus,

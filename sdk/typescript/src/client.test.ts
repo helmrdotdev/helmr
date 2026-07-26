@@ -333,7 +333,7 @@ describe("HelmrClient Tokens", () => {
           error: `request failed with ${status}`,
           code: `token_error_${status}`,
           retryable: status === 409,
-          request_id: `request-${status}`,
+          requestId: `request-${status}`,
         }, { status })) as typeof fetch,
       })
 

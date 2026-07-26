@@ -164,6 +164,10 @@ in
           echo "Use nix run .#doctor on macOS, and run this app on a Linux host." >&2
           exit 1
         fi
+        if [ "$(uname -m)" != "x86_64" ]; then
+          echo "smoke-linux requires an x86_64 Linux host." >&2
+          exit 1
+        fi
 
         export ARCH=''${ARCH:-x86_64}
         export HELMR_WORKER_IMAGES_DIR=''${HELMR_WORKER_IMAGES_DIR:-$PWD/images}

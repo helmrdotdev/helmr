@@ -390,6 +390,24 @@ func actorStartRequestFromAPI(
 	idempotencyKey string,
 	request api.StartActorRequest,
 ) (actorStartRequest, error) {
+	return actorStartRequestFromScope(
+		principal.OrgID,
+		projectID,
+		environmentID,
+		actorDeclaredID,
+		idempotencyKey,
+		request,
+	)
+}
+
+func actorStartRequestFromScope(
+	orgID uuid.UUID,
+	projectID uuid.UUID,
+	environmentID uuid.UUID,
+	actorDeclaredID string,
+	idempotencyKey string,
+	request api.StartActorRequest,
+) (actorStartRequest, error) {
 	run := api.StartActorRunOptions{}
 	if request.Run != nil {
 		run = *request.Run
@@ -417,7 +435,7 @@ func actorStartRequestFromAPI(
 		}
 	}
 	return actorStartRequest{
-		OrgID:                 principal.OrgID,
+		OrgID:                 orgID,
 		ProjectID:             projectID,
 		EnvironmentID:         environmentID,
 		ActorDeclaredID:       actorDeclaredID,

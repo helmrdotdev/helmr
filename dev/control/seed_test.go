@@ -50,7 +50,7 @@ func TestDevSeedWithFreshPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	if serverVersion < 180000 {
-		t.Skipf("Postgres %d does not provide uuidv7(); skipping dev seed integration test", serverVersion)
+		t.Skipf("Postgres %d is older than the Helmr PostgreSQL 18 schema baseline; skipping dev seed integration test", serverVersion)
 	}
 	if err := migrate(ctx, pool, false); err != nil {
 		t.Fatalf("migrate fresh database: %v", err)

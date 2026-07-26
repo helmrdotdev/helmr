@@ -11,12 +11,8 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
-	"github.com/helmrdotdev/helmr/internal/frameio"
-	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
-	"github.com/helmrdotdev/helmr/internal/wire"
-	"google.golang.org/protobuf/proto"
 )
 
 type fakeGuestSession struct {
@@ -58,41 +54,6 @@ func testVMStream(stream io.ReadWriteCloser) vm.Stream {
 type scriptedGuestStream struct {
 	read    *bytes.Reader
 	written bytes.Buffer
-}
-
-func newScriptedGuestStream(
-	t *testing.T,
-	messages ...proto.Message,
-) *scriptedGuestStream {
-	t.Helper()
-	var read bytes.Buffer
-	for _, message := range messages {
-		if ready, ok := message.(*runv0.CheckpointPauseReady); ok {
-			if err := wire.WriteStreamFrameHeader(&read, wire.StreamHeader{
-				Type:         wire.StreamTypeCheckpointPauseReady,
-				RunWaitID:    ready.RunWaitId,
-				CheckpointID: ready.CheckpointId,
-			}, 0); err != nil {
-				t.Fatal(err)
-			}
-			continue
-		}
-		body, err := proto.Marshal(message)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := frameio.WriteMessageFrame(&read, body); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return &scriptedGuestStream{read: bytes.NewReader(read.Bytes())}
-}
-
-func newScriptedCheckpointGuestStream(
-	t *testing.T,
-	messages ...proto.Message,
-) *scriptedGuestStream {
-	return newScriptedGuestStream(t, messages...)
 }
 
 func (s *scriptedGuestStream) Read(p []byte) (int, error) {

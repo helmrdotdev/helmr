@@ -24,21 +24,14 @@ func (task *guestRunLeaseTask) handleTokenCreate(
 	if err != nil {
 		return err
 	}
-	task.mu.Lock()
-	defer task.mu.Unlock()
-	if task.finished || task.finalizingKind != "" {
-		return errors.New("Run Lease Task cannot create a Token")
-	}
-	request.Lease = task.lease
 	var response api.TokenResponse
-	createCtx, cancel, err := runLeaseLogContext(ctx, task.lease.ExpiresAt)
-	if err != nil {
-		return err
-	}
-	defer cancel()
-	if err := retryRunLeaseRequest(createCtx, func(requestCtx context.Context) error {
+	if err := task.callRunSourceRuntime(ctx, func(
+		callCtx context.Context,
+		lease api.WorkerRunLeaseReceipt,
+	) error {
+		request.Lease = lease
 		var requestErr error
-		response, requestErr = task.control.CreateRuntimeToken(requestCtx, request)
+		response, requestErr = task.control.CreateRuntimeToken(callCtx, request)
 		return requestErr
 	}); err != nil {
 		if failure, ok := tokenCreateFailure(err); ok {

@@ -40,13 +40,12 @@ install_buildkit() {
 	fi
 
 	version=$(cd "$repo_root" && go list -m -f '{{.Version}}' github.com/moby/buildkit)
-	case "$(uname -m)" in
-		x86_64) arch=amd64 ;;
-		aarch64 | arm64) arch=arm64 ;;
-		*) echo "unsupported runner architecture: $(uname -m)" >&2; exit 1 ;;
-	esac
+	if [ "$(uname -m)" != "x86_64" ]; then
+		echo "unsupported runner architecture: $(uname -m)" >&2
+		exit 1
+	fi
 
-	archive="buildkit-${version}.linux-${arch}.tar.gz"
+	archive="buildkit-${version}.linux-amd64.tar.gz"
 	url="https://github.com/moby/buildkit/releases/download/${version}/${archive}"
 	curl -fsSL -o "$workdir/$archive" "$url"
 	tar -C "$workdir" -xzf "$workdir/$archive"

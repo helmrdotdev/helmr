@@ -71,14 +71,10 @@ func RuntimeArchitectureFromGo(value string) (RuntimeArchitecture, error) {
 }
 
 func RuntimeArchitectureGo(value RuntimeArchitecture) (string, error) {
-	switch value {
-	case ArchitectureAArch64:
-		return "arm64", nil
-	case ArchitectureX8664:
+	if value == ArchitectureX8664 {
 		return "amd64", nil
-	default:
-		return "", fmt.Errorf("runtime architecture %q is unsupported", value)
 	}
+	return "", fmt.Errorf("runtime architecture %q is unsupported", value)
 }
 
 func ValidateRuntimeArchitecture(value RuntimeArchitecture) error {

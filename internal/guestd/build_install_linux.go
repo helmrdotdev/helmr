@@ -73,7 +73,7 @@ func handleBuildInstall(
 	}()
 
 	plan := buildProcessPlan{
-		Aliases:  buildInstallAliases(request.Runtime.Architecture),
+		Aliases:  buildInstallAliases(),
 		Identity: buildIdentity{UID: buildInstallUID, GID: buildInstallGID},
 	}
 	root, err := prepareBuildProcessRoot(plan)
@@ -145,7 +145,7 @@ func handleBuildInstall(
 		if !cgroupClosed {
 			returnErr = errors.Join(
 				returnErr,
-				cleanupBuildCgroup(cgroupPath, cgroup, true),
+				cleanupBuildCgroup(cgroupPath, cgroup),
 			)
 		}
 	}()
@@ -155,7 +155,7 @@ func handleBuildInstall(
 	if err != nil {
 		return err
 	}
-	if err := cleanupBuildCgroup(cgroupPath, cgroup, true); err != nil {
+	if err := cleanupBuildCgroup(cgroupPath, cgroup); err != nil {
 		return err
 	}
 	cgroupClosed = true
@@ -218,22 +218,13 @@ func handleBuildInstall(
 	return errors.Join(copyErr, closeErr)
 }
 
-func buildInstallAliases(
-	architecture deployment.RuntimeArchitecture,
-) []buildAlias {
-	loader := buildAlias{
-		Path:   "/lib64/ld-linux-x86-64.so.2",
-		Target: "/nix/helmr/manager/lib/ld-linux-x86-64.so.2",
-	}
-	if architecture == deployment.ArchitectureAArch64 {
-		loader = buildAlias{
-			Path:   "/lib/ld-linux-aarch64.so.1",
-			Target: "/nix/helmr/manager/lib/ld-linux-aarch64.so.1",
-		}
-	}
+func buildInstallAliases() []buildAlias {
 	return []buildAlias{
 		{Path: "/bin/sh", Target: "/nix/bin/sh"},
-		loader,
+		{
+			Path:   "/lib64/ld-linux-x86-64.so.2",
+			Target: "/nix/helmr/manager/lib/ld-linux-x86-64.so.2",
+		},
 		{Path: "/usr/bin/env", Target: "/nix/bin/env"},
 	}
 }

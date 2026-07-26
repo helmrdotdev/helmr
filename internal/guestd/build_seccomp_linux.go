@@ -158,17 +158,13 @@ func buildSeccompFilter() ([]unix.SockFilter, error) {
 }
 
 func buildAuditArchitecture() (uint32, error) {
-	switch runtime.GOARCH {
-	case "amd64":
+	if runtime.GOARCH == "amd64" {
 		return uint32(unix.AUDIT_ARCH_X86_64), nil
-	case "arm64":
-		return uint32(unix.AUDIT_ARCH_AARCH64), nil
-	default:
-		return 0, fmt.Errorf(
-			"build process architecture %q has no seccomp contract",
-			runtime.GOARCH,
-		)
 	}
+	return 0, fmt.Errorf(
+		"build process architecture %q has no seccomp contract",
+		runtime.GOARCH,
+	)
 }
 
 func buildBPFStatement(code uint16, value uint32) unix.SockFilter {

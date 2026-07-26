@@ -27,12 +27,12 @@ OFFSET sqlc.arg(row_offset);
 
 -- name: SetWorkerInstanceState :one
 UPDATE worker_instances
-   SET state = sqlc.arg(state)::worker_instance_state,
-       draining_at = CASE WHEN sqlc.arg(state)::worker_instance_state = 'draining'
+   SET state = sqlc.arg(state)::text,
+       draining_at = CASE WHEN sqlc.arg(state)::text = 'draining'
                           THEN COALESCE(draining_at, now()) ELSE draining_at END,
-       disabled_at = CASE WHEN sqlc.arg(state)::worker_instance_state = 'disabled'
+       disabled_at = CASE WHEN sqlc.arg(state)::text = 'disabled'
                           THEN COALESCE(disabled_at, now()) ELSE disabled_at END,
-       lost_at = CASE WHEN sqlc.arg(state)::worker_instance_state = 'lost'
+       lost_at = CASE WHEN sqlc.arg(state)::text = 'lost'
                       THEN COALESCE(lost_at, now()) ELSE lost_at END,
        updated_at = now()
  WHERE id = sqlc.arg(id)

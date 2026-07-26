@@ -15,6 +15,22 @@ var ErrTokenWaitReconcileAuthority = errors.New("Token Wait reconciliation autho
 
 const maxTokenWaitReconcileBatch = int32(1000)
 
+const discoverTokenWaitReconcileCandidates = `
+SELECT id, run_id
+  FROM run_waits
+ WHERE environment_id = $1
+   AND token_id = $2
+   AND (condition_state = 'pending' OR suspension_state = 'checkpointing')
+ ORDER BY token_id,
+          CASE condition_state
+              WHEN 'pending' THEN 0
+              WHEN 'completed' THEN 1
+              WHEN 'failed' THEN 2
+              WHEN 'cancelled' THEN 3
+          END,
+          id
+ LIMIT $3`
+
 type TokenWaitReconcileDB interface {
 	Begin(context.Context) (pgx.Tx, error)
 	Query(context.Context, string, ...any) (pgx.Rows, error)
@@ -479,14 +495,13 @@ func (r *TokenWaitReconciler) ReconcileBatch(
 		)
 	}
 
-	rows, err := r.db.Query(ctx, `
-SELECT id, run_id
-  FROM run_waits
- WHERE environment_id = $1
-   AND token_id = $2
-   AND (condition_state = 'pending' OR suspension_state = 'checkpointing')
- ORDER BY token_id, condition_state, id
- LIMIT $3`, environmentID, tokenID, limit)
+	rows, err := r.db.Query(
+		ctx,
+		discoverTokenWaitReconcileCandidates,
+		environmentID,
+		tokenID,
+		limit,
+	)
 	if err != nil {
 		return TokenWaitReconcileBatch{}, fmt.Errorf("discover pending Token Waits: %w", err)
 	}
@@ -507,7 +522,7 @@ SELECT id, run_id
 
 	batch := TokenWaitReconcileBatch{Examined: len(candidates)}
 	for _, candidate := range candidates {
-		resolved, deferred, err := r.reconcileOne(ctx, environmentID, tokenID, candidate)
+		resolved, deferred, err := r.reconcileOne(ctx, environmentID, tokenID, candidate, false)
 		if err != nil {
 			return batch, err
 		}
@@ -519,6 +534,74 @@ SELECT id, run_id
 		}
 	}
 	return batch, nil
+}
+
+func (r *TokenWaitReconciler) ReconcileTimeouts(
+	ctx context.Context,
+	limit int32,
+) (int, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	if limit > maxTokenWaitReconcileBatch {
+		return 0, fmt.Errorf(
+			"Token Wait timeout reconciliation limit must not exceed %d",
+			maxTokenWaitReconcileBatch,
+		)
+	}
+	rows, err := r.db.Query(ctx, `
+SELECT id, run_id, environment_id, token_id
+  FROM run_waits
+ WHERE kind = 'token'
+   AND condition_state = 'pending'
+   AND timeout_at IS NOT NULL
+   AND timeout_at <= transaction_timestamp()
+ ORDER BY timeout_at, id
+ LIMIT $1`, limit)
+	if err != nil {
+		return 0, fmt.Errorf("discover timed out Token Waits: %w", err)
+	}
+	type timeoutCandidate struct {
+		wait          tokenWaitReconcileCandidate
+		environmentID uuid.UUID
+		tokenID       uuid.UUID
+	}
+	candidates := make([]timeoutCandidate, 0, limit)
+	for rows.Next() {
+		var candidate timeoutCandidate
+		if err := rows.Scan(
+			&candidate.wait.waitID,
+			&candidate.wait.runID,
+			&candidate.environmentID,
+			&candidate.tokenID,
+		); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("scan timed out Token Wait: %w", err)
+		}
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, fmt.Errorf("iterate timed out Token Waits: %w", err)
+	}
+	rows.Close()
+	resolved := 0
+	for _, candidate := range candidates {
+		didResolve, _, err := r.reconcileOne(
+			ctx,
+			candidate.environmentID,
+			candidate.tokenID,
+			candidate.wait,
+			true,
+		)
+		if err != nil {
+			return resolved, err
+		}
+		if didResolve {
+			resolved++
+		}
+	}
+	return resolved, nil
 }
 
 type tokenWaitLocator struct {
@@ -657,6 +740,7 @@ type tokenWaitLockedWait struct {
 	priorRunLeaseID         pgtype.UUID
 	suspendCheckpointID     pgtype.UUID
 	resumeRequestVersion    int64
+	timeoutAt               pgtype.Timestamptz
 }
 
 type tokenWaitResolution struct {
@@ -671,6 +755,7 @@ func (r *TokenWaitReconciler) reconcileOne(
 	environmentID uuid.UUID,
 	tokenID uuid.UUID,
 	candidate tokenWaitReconcileCandidate,
+	timeout bool,
 ) (resolved bool, deferred bool, returnErr error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -776,20 +861,40 @@ SELECT terminal_at
 		return false, true, nil
 	}
 
-	var tokenState TokenState
-	var completionData []byte
-	err = tx.QueryRow(ctx, `
+	var resolution tokenWaitResolution
+	if timeout {
+		var now pgtype.Timestamptz
+		if err := tx.QueryRow(ctx, `SELECT transaction_timestamp()`).Scan(&now); err != nil {
+			return false, false, tokenWaitAuthorityError("load Token Wait timeout time", err)
+		}
+		if !wait.timeoutAt.Valid || !now.Valid || now.Time.Before(wait.timeoutAt.Time) {
+			if err := tx.Commit(ctx); err != nil {
+				return false, false, fmt.Errorf("commit early Token Wait timeout reconciliation: %w", err)
+			}
+			return false, false, nil
+		}
+		reason := "wait_timeout"
+		resolution = tokenWaitResolution{
+			conditionState: WaitStateFailed,
+			reasonCode:     &reason,
+			conditionError: json.RawMessage(`{"code":"wait_timeout","retryable":false}`),
+		}
+	} else {
+		var tokenState TokenState
+		var completionData []byte
+		err = tx.QueryRow(ctx, `
 SELECT state, result
   FROM tokens
  WHERE environment_id = $1
    AND id = $2
  FOR UPDATE`, environmentID, tokenID).Scan(&tokenState, &completionData)
-	if err != nil {
-		return false, false, tokenWaitAuthorityError("lock terminal Token", err)
-	}
-	resolution, err := tokenWaitTerminalResolution(tokenState, completionData)
-	if err != nil {
-		return false, false, err
+		if err != nil {
+			return false, false, tokenWaitAuthorityError("lock terminal Token", err)
+		}
+		resolution, err = tokenWaitTerminalResolution(tokenState, completionData)
+		if err != nil {
+			return false, false, err
+		}
 	}
 
 	switch wait.suspensionState {
@@ -996,7 +1101,8 @@ SELECT id,
        current_run_lease_id,
        prior_run_lease_id,
        suspend_checkpoint_id,
-       resume_request_version
+       resume_request_version,
+       timeout_at
   FROM run_waits
  WHERE id = $1
    AND environment_id = $2
@@ -1028,6 +1134,7 @@ SELECT id,
 		&wait.priorRunLeaseID,
 		&wait.suspendCheckpointID,
 		&wait.resumeRequestVersion,
+		&wait.timeoutAt,
 	)
 	if err != nil {
 		return tokenWaitLockedWait{}, err
@@ -1248,23 +1355,25 @@ UPDATE run_waits
 	}
 	command, err = tx.Exec(ctx, `
 INSERT INTO outbox_messages (
+    id,
     lane,
     topic,
     partition_key,
     payload,
     available_at
 ) VALUES (
+    $1,
     'control',
     'run.resume',
-    $1::uuid::text,
+    $2::uuid::text,
     jsonb_build_object(
-        'environmentId', $2::uuid::text,
-        'runId', $3::uuid::text,
-        'runWaitId', $4::uuid::text,
-        'resumeRequestVersion', $5::bigint
+        'environmentId', $3::uuid::text,
+        'runId', $4::uuid::text,
+        'runWaitId', $5::uuid::text,
+        'resumeRequestVersion', $6::bigint
     ),
     transaction_timestamp()
-)`, wait.workspaceID, wait.environmentID, wait.runID, wait.id, nextResumeVersion)
+)`, uuid.Must(uuid.NewV7()), wait.workspaceID, wait.environmentID, wait.runID, wait.id, nextResumeVersion)
 	if err != nil || command.RowsAffected() != 1 {
 		return tokenWaitAuthorityError("publish parked Token Wait resume intent", err)
 	}

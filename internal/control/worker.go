@@ -165,6 +165,7 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		ProtocolVersion:             verified.ProtocolVersion,
 		EnrollmentPolicyFingerprint: verified.EnrollmentPolicyFingerprint,
 		WorkerInstanceID:            pgvalue.UUID(workerInstanceID),
+		CurrentServiceID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		ResourceID:                  verified.ResourceID,
 		CredentialID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		KeyPrefix:                   generated.KeyPrefix,

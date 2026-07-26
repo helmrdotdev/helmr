@@ -532,6 +532,159 @@ type WorkerSendActorInputResponse struct {
 	Failed        *WorkerRuntimeOperationFailure `json:"failed,omitempty"`
 }
 
+type WorkerStartActorRequest struct {
+	Lease           WorkerRunLeaseReceipt `json:"lease"`
+	CorrelationID   string                `json:"correlation_id"`
+	ActorDeclaredID string                `json:"actor_declared_id"`
+	Key             *string               `json:"key,omitempty"`
+	InputPresent    bool                  `json:"input_present"`
+	Input           json.RawMessage       `json:"input,omitempty"`
+	IdempotencyKey  string                `json:"idempotency_key,omitempty"`
+	Workspace       WorkspaceTarget       `json:"workspace"`
+	Run             *StartActorRunOptions `json:"run,omitempty"`
+}
+
+type WorkerStartActorResponse struct {
+	CorrelationID string                         `json:"correlation_id"`
+	Completed     *StartActorResponse            `json:"completed,omitempty"`
+	Failed        *WorkerRuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type WorkerActorReferenceRequest struct {
+	Lease           WorkerRunLeaseReceipt `json:"lease"`
+	CorrelationID   string                `json:"correlation_id"`
+	ActorDeclaredID string                `json:"actor_declared_id"`
+	ActorID         string                `json:"actor_id,omitempty"`
+	ActorKey        string                `json:"actor_key,omitempty"`
+}
+
+type WorkerActorStatusResponse struct {
+	CorrelationID string                         `json:"correlation_id"`
+	Completed     *ActorStatus                   `json:"completed,omitempty"`
+	Failed        *WorkerRuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type WorkerCloseActorRequest struct {
+	WorkerActorReferenceRequest
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type WorkerCloseActorResponse struct {
+	CorrelationID string                         `json:"correlation_id"`
+	Completed     *ActorOperationReceipt         `json:"completed,omitempty"`
+	Failed        *WorkerRuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type WorkerReadActorOutputPageRequest struct {
+	WorkerActorReferenceRequest
+	After *int64 `json:"after,omitempty"`
+	Limit int32  `json:"limit"`
+}
+
+type WorkerReadActorOutputPageResponse struct {
+	CorrelationID string                         `json:"correlation_id"`
+	Completed     *ActorOutputPage               `json:"completed,omitempty"`
+	Failed        *WorkerRuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type WorkerWorkspaceAddress struct {
+	WorkspaceID  string `json:"workspace_id,omitempty"`
+	WorkspaceKey string `json:"workspace_key,omitempty"`
+}
+
+type WorkerCreateWorkspaceRequest struct {
+	Lease               WorkerRunLeaseReceipt `json:"lease"`
+	CorrelationID       string                `json:"correlation_id"`
+	WorkspaceDeclaredID string                `json:"workspace_declared_id"`
+	Key                 *string               `json:"key,omitempty"`
+	Secrets             []WorkspaceSecret     `json:"secrets,omitempty"`
+	IdempotencyKey      string                `json:"idempotency_key,omitempty"`
+}
+
+type WorkerCreateWorkspaceResponse struct {
+	CorrelationID string                         `json:"correlation_id"`
+	Completed     *CreateWorkspaceResponse       `json:"completed,omitempty"`
+	Failed        *WorkerRuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type WorkerRetrieveWorkspaceRequest struct {
+	Lease         WorkerRunLeaseReceipt  `json:"lease"`
+	CorrelationID string                 `json:"correlation_id"`
+	Workspace     WorkerWorkspaceAddress `json:"workspace"`
+}
+
+type WorkerRetrieveWorkspaceResponse struct {
+	CorrelationID string                         `json:"correlation_id"`
+	Completed     *WorkspaceSnapshot             `json:"completed,omitempty"`
+	Failed        *WorkerRuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type WorkerReadWorkspaceFileRequest struct {
+	WorkerRetrieveWorkspaceRequest
+	Path string `json:"path"`
+}
+
+type WorkerReadWorkspaceFileResponse struct {
+	CorrelationID string                         `json:"correlation_id"`
+	Completed     *WorkspaceFileContent          `json:"completed,omitempty"`
+	Failed        *WorkerRuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type WorkerStatWorkspaceFileResponse struct {
+	CorrelationID string                         `json:"correlation_id"`
+	Completed     *WorkspaceFileEntry            `json:"completed,omitempty"`
+	Failed        *WorkerRuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type WorkerListWorkspaceFilesRequest struct {
+	WorkerReadWorkspaceFileRequest
+	Cursor string `json:"cursor,omitempty"`
+	Limit  int32  `json:"limit"`
+}
+
+type WorkerListWorkspaceFilesResponse struct {
+	CorrelationID string                         `json:"correlation_id"`
+	Completed     *WorkspaceFilePage             `json:"completed,omitempty"`
+	Failed        *WorkerRuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type WorkerExecuteWorkspaceRequest struct {
+	WorkerRetrieveWorkspaceRequest
+	Command        []string          `json:"command"`
+	Cwd            string            `json:"cwd,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	Stdin          []byte            `json:"stdin,omitempty"`
+	TimeoutMS      *int64            `json:"timeout_ms,omitempty"`
+	IdempotencyKey string            `json:"idempotency_key"`
+}
+
+type WorkerWorkspaceExecPending struct {
+	ProcessID string `json:"process_id"`
+}
+
+type WorkerExecuteWorkspaceResponse struct {
+	CorrelationID string                         `json:"correlation_id"`
+	Completed     *ExecuteWorkspaceResult        `json:"completed,omitempty"`
+	Pending       *WorkerWorkspaceExecPending    `json:"pending,omitempty"`
+	Failed        *WorkerRuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type WorkerPollWorkspaceExecRequest struct {
+	WorkerRetrieveWorkspaceRequest
+	ProcessID string `json:"process_id"`
+}
+
+type WorkerDeleteWorkspaceRequest struct {
+	WorkerRetrieveWorkspaceRequest
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type WorkerDeleteWorkspaceResponse struct {
+	CorrelationID string                         `json:"correlation_id"`
+	Completed     *DeleteWorkspaceReceipt        `json:"completed,omitempty"`
+	Failed        *WorkerRuntimeOperationFailure `json:"failed,omitempty"`
+}
+
 type WorkerInvokeChildTaskRequest struct {
 	Lease                         WorkerRunLeaseReceipt `json:"lease"`
 	CorrelationID                 string                `json:"correlation_id"`

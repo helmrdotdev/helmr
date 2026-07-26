@@ -72,18 +72,6 @@ let
     bun = pkgsBun.bun;
   };
   firecrackerReleaseVersion = "1.13.2";
-  firecrackerRelease =
-    {
-      x86_64-linux = {
-        arch = "x86_64";
-        hash = "sha256-pts7RR9QDf2CmJRH/r9Utci7iSnk7nx/hKlpXxMNpUc=";
-      };
-      aarch64-linux = {
-        arch = "aarch64";
-        hash = "sha256-pkwLkTspuOpLWZDsuUqSy3y064UAFbaaoWgNJdnLQb8=";
-      };
-    }
-    .${system} or null;
 in
 {
   inherit helmr;
@@ -95,52 +83,43 @@ in
   bun = pkgsBun.bun;
   apko = if pkgsUnstable ? apko then pkgsUnstable.apko else pkgs.apko;
 }
-//
-  lib.optionalAttrs
-    (
-      pkgs.stdenv.isLinux
-      && builtins.elem system [
-        "x86_64-linux"
-        "aarch64-linux"
-      ]
-    )
-    {
-      inherit managedRuntime;
-      standardToolchain =
-        let
-          releaseTool = buildGo126Module {
-            pname = "helmr-tool-candidate";
-            version = "0";
-            src = lib.fileset.toSource {
-              root = ../..;
-              fileset = lib.fileset.unions [
-                ../../go.mod
-                ../../go.sum
-                ../../internal
-              ];
-            };
-            vendorHash = "sha256-nm9r7z+b+TRvWgMDXo0eUwVKNkEuQIsF3sFGCDiJQ5g=";
-            subPackages = [ "internal/cmd/tool-release" ];
-          };
-        in
-        pkgs.callPackage ./toolchain.nix {
-          inherit managedRuntime;
-          inherit releaseTool squashfsTools;
+// lib.optionalAttrs (system == "x86_64-linux") {
+  inherit managedRuntime;
+  standardToolchain =
+    let
+      releaseTool = buildGo126Module {
+        pname = "helmr-tool-candidate";
+        version = "0";
+        src = lib.fileset.toSource {
+          root = ../..;
+          fileset = lib.fileset.unions [
+            ../../go.mod
+            ../../go.sum
+            ../../internal
+          ];
         };
-    }
+        vendorHash = "sha256-nm9r7z+b+TRvWgMDXo0eUwVKNkEuQIsF3sFGCDiJQ5g=";
+        subPackages = [ "internal/cmd/tool-release" ];
+      };
+    in
+    pkgs.callPackage ./toolchain.nix {
+      inherit managedRuntime;
+      inherit releaseTool squashfsTools;
+    };
+}
 // lib.optionalAttrs (system == "x86_64-linux") {
   managerRelease = pkgs.callPackage ./managers.nix {
     inherit squashfsTools;
   };
 }
-// lib.optionalAttrs (firecrackerRelease != null) {
+// lib.optionalAttrs (system == "x86_64-linux") {
   firecrackerRuntime = pkgs.stdenvNoCC.mkDerivation {
     pname = "firecracker-runtime";
     version = firecrackerReleaseVersion;
 
     src = pkgs.fetchurl {
-      url = "https://github.com/firecracker-microvm/firecracker/releases/download/v${firecrackerReleaseVersion}/firecracker-v${firecrackerReleaseVersion}-${firecrackerRelease.arch}.tgz";
-      hash = firecrackerRelease.hash;
+      url = "https://github.com/firecracker-microvm/firecracker/releases/download/v${firecrackerReleaseVersion}/firecracker-v${firecrackerReleaseVersion}-x86_64.tgz";
+      hash = "sha256-pts7RR9QDf2CmJRH/r9Utci7iSnk7nx/hKlpXxMNpUc=";
     };
 
     installPhase = ''
@@ -148,8 +127,8 @@ in
 
       release_dir=.
       install -d "$out/bin" "$out/share/firecracker"
-      install -m 0755 "$release_dir/firecracker-v${firecrackerReleaseVersion}-${firecrackerRelease.arch}" "$out/bin/firecracker"
-      install -m 0755 "$release_dir/jailer-v${firecrackerReleaseVersion}-${firecrackerRelease.arch}" "$out/bin/jailer"
+      install -m 0755 "$release_dir/firecracker-v${firecrackerReleaseVersion}-x86_64" "$out/bin/firecracker"
+      install -m 0755 "$release_dir/jailer-v${firecrackerReleaseVersion}-x86_64" "$out/bin/jailer"
       install -m 0644 "$release_dir/LICENSE" "$release_dir/NOTICE" "$release_dir/THIRD-PARTY" "$out/share/firecracker/"
 
       runHook postInstall

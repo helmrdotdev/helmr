@@ -126,9 +126,9 @@ type WorkspaceTarget struct {
 }
 
 type ResourcesManifest struct {
-	MilliCPU  int64 `json:"milliCpu"`
-	MemoryMiB int64 `json:"memoryMiB"`
-	DiskMiB   int64 `json:"diskMiB"`
+	MilliCPU         int64 `json:"milliCpu"`
+	MemoryMiB        int64 `json:"memoryMiB"`
+	EphemeralDiskMiB int64 `json:"ephemeralDiskMiB"`
 }
 
 type NetworkManifest struct {
@@ -600,8 +600,8 @@ func validateResourcesManifest(resources ResourcesManifest) error {
 	if !positiveSafeInteger(resources.MemoryMiB) {
 		return errors.New("memoryMiB must be a positive JavaScript-safe integer")
 	}
-	if !positiveSafeInteger(resources.DiskMiB) {
-		return errors.New("diskMiB must be a positive JavaScript-safe integer")
+	if !positiveSafeInteger(resources.EphemeralDiskMiB) {
+		return errors.New("ephemeralDiskMiB must be a positive JavaScript-safe integer")
 	}
 	return nil
 }

@@ -194,28 +194,12 @@ func authorizeActorInputSendSource(
 	parsed parsedWorkerActorInputSend,
 	environmentID pgtype.UUID,
 ) error {
-	locators, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
-		ID: pgvalue.UUID(parsed.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
-		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
-	})
-	if err != nil || locators.EnvironmentID != environmentID {
-		return errStaleActorInputSend
-	}
-	authority, err := lockLiveRunLeaseAuthority(
-		ctx, q, worker, pgvalue.UUID(parsed.lease.leaseID), request.Lease.LeaseSequence, locators,
-	)
-	if err != nil || authority.run.ID != pgvalue.UUID(parsed.lease.runID) ||
-		authority.run.Status != db.RunStatusRunning ||
-		authority.runLease.State != db.RunLeaseStateRunning ||
-		!authority.run.ActiveStartedAt.Valid ||
-		!authority.attempt.EntrypointEnteredAt.Valid ||
-		authority.attempt.TerminalAt.Valid ||
-		authority.runLease.FinalizationOperationID.Valid {
-		return errStaleActorInputSend
-	}
-	current, err := projectActorTurnLease(authority)
-	if err != nil || !equalRunLeaseReceipt(current, request.Lease) {
+	authority, err := authorizeWorkerRunSource(ctx, q, worker, request.Lease)
+	if err != nil || authority.EnvironmentID != environmentID ||
+		authority.RunID != pgvalue.UUID(parsed.lease.runID) {
+		if err != nil {
+			return fmt.Errorf("%w: %v", errStaleActorInputSend, err)
+		}
 		return errStaleActorInputSend
 	}
 	return nil

@@ -98,13 +98,13 @@ type ClaimFleetWorkerTerminationParams struct {
 }
 
 type ClaimFleetWorkerTerminationRow struct {
-	ID                   pgtype.UUID         `json:"id"`
-	ResourceID           string              `json:"resource_id"`
-	State                WorkerInstanceState `json:"state"`
-	CurrentEpoch         pgtype.Int8         `json:"current_epoch"`
-	AuthorityCount       int64               `json:"authority_count"`
-	LocalCleanupComplete bool                `json:"local_cleanup_complete"`
-	FencedForTermination bool                `json:"fenced_for_termination"`
+	ID                   pgtype.UUID `json:"id"`
+	ResourceID           string      `json:"resource_id"`
+	State                string      `json:"state"`
+	CurrentEpoch         pgtype.Int8 `json:"current_epoch"`
+	AuthorityCount       int64       `json:"authority_count"`
+	LocalCleanupComplete bool        `json:"local_cleanup_complete"`
+	FencedForTermination bool        `json:"fenced_for_termination"`
 }
 
 func (q *Queries) ClaimFleetWorkerTermination(ctx context.Context, arg ClaimFleetWorkerTerminationParams) (ClaimFleetWorkerTerminationRow, error) {
@@ -290,13 +290,13 @@ type GetFleetTerminationProofParams struct {
 }
 
 type GetFleetTerminationProofRow struct {
-	ID                   pgtype.UUID         `json:"id"`
-	ResourceID           string              `json:"resource_id"`
-	State                WorkerInstanceState `json:"state"`
-	CurrentEpoch         pgtype.Int8         `json:"current_epoch"`
-	AuthorityCount       int64               `json:"authority_count"`
-	LocalCleanupComplete bool                `json:"local_cleanup_complete"`
-	FencedForTermination bool                `json:"fenced_for_termination"`
+	ID                   pgtype.UUID `json:"id"`
+	ResourceID           string      `json:"resource_id"`
+	State                string      `json:"state"`
+	CurrentEpoch         pgtype.Int8 `json:"current_epoch"`
+	AuthorityCount       int64       `json:"authority_count"`
+	LocalCleanupComplete bool        `json:"local_cleanup_complete"`
+	FencedForTermination bool        `json:"fenced_for_termination"`
 }
 
 func (q *Queries) GetFleetTerminationProof(ctx context.Context, arg GetFleetTerminationProofParams) (GetFleetTerminationProofRow, error) {
@@ -501,20 +501,20 @@ SELECT id, resource_id, state, current_epoch, activated_at, draining_at,
 `
 
 type ListFleetWorkersRow struct {
-	ID                          pgtype.UUID         `json:"id"`
-	ResourceID                  string              `json:"resource_id"`
-	State                       WorkerInstanceState `json:"state"`
-	CurrentEpoch                pgtype.Int8         `json:"current_epoch"`
-	ActivatedAt                 pgtype.Timestamptz  `json:"activated_at"`
-	DrainingAt                  pgtype.Timestamptz  `json:"draining_at"`
-	CertifiedCpuMillis          int64               `json:"certified_cpu_millis"`
-	CertifiedMemoryBytes        int64               `json:"certified_memory_bytes"`
-	CertifiedWorkloadDiskBytes  int64               `json:"certified_workload_disk_bytes"`
-	CertifiedScratchBytes       int64               `json:"certified_scratch_bytes"`
-	CertifiedBuildCacheBytes    int64               `json:"certified_build_cache_bytes"`
-	CertifiedArtifactCacheBytes int64               `json:"certified_artifact_cache_bytes"`
-	MaxVmSlots                  int32               `json:"max_vm_slots"`
-	MaxBuildExecutors           int32               `json:"max_build_executors"`
+	ID                          pgtype.UUID        `json:"id"`
+	ResourceID                  string             `json:"resource_id"`
+	State                       string             `json:"state"`
+	CurrentEpoch                pgtype.Int8        `json:"current_epoch"`
+	ActivatedAt                 pgtype.Timestamptz `json:"activated_at"`
+	DrainingAt                  pgtype.Timestamptz `json:"draining_at"`
+	CertifiedCpuMillis          int64              `json:"certified_cpu_millis"`
+	CertifiedMemoryBytes        int64              `json:"certified_memory_bytes"`
+	CertifiedWorkloadDiskBytes  int64              `json:"certified_workload_disk_bytes"`
+	CertifiedScratchBytes       int64              `json:"certified_scratch_bytes"`
+	CertifiedBuildCacheBytes    int64              `json:"certified_build_cache_bytes"`
+	CertifiedArtifactCacheBytes int64              `json:"certified_artifact_cache_bytes"`
+	MaxVmSlots                  int32              `json:"max_vm_slots"`
+	MaxBuildExecutors           int32              `json:"max_build_executors"`
 }
 
 func (q *Queries) ListFleetWorkers(ctx context.Context, workerGroupID string) ([]ListFleetWorkersRow, error) {
@@ -618,7 +618,8 @@ func (q *Queries) MarkFleetWorkerDraining(ctx context.Context, arg MarkFleetWork
 
 const recordFleetScaleIn = `-- name: RecordFleetScaleIn :one
 UPDATE worker_groups
-   SET last_scale_in_at = GREATEST(last_scale_in_at, $1)
+   SET last_scale_in_at = GREATEST(last_scale_in_at, $1),
+       updated_at = now()
  WHERE id = $2
 RETURNING id
 `
@@ -637,7 +638,8 @@ func (q *Queries) RecordFleetScaleIn(ctx context.Context, arg RecordFleetScaleIn
 
 const recordFleetScaleOut = `-- name: RecordFleetScaleOut :one
 UPDATE worker_groups
-   SET last_scale_out_at = GREATEST(last_scale_out_at, $1)
+   SET last_scale_out_at = GREATEST(last_scale_out_at, $1),
+       updated_at = now()
  WHERE id = $2
 RETURNING id
 `

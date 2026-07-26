@@ -25,7 +25,7 @@ const (
 )
 
 type TokenDeliveryStore interface {
-	ExpireDueTokens(context.Context, int32) ([]db.ExpireDueTokensRow, error)
+	ExpireDueTokens(context.Context, db.ExpireDueTokensParams) ([]db.ExpireDueTokensRow, error)
 	ExpireDuePublicAccessTokens(context.Context, int32) ([]db.PublicAccessToken, error)
 	ClaimOutboxMessages(context.Context, db.ClaimOutboxMessagesParams) ([]db.OutboxMessage, error)
 	DeliverOutboxMessage(context.Context, db.DeliverOutboxMessageParams) (db.OutboxMessage, error)
@@ -86,7 +86,10 @@ func (w *TokenDeliveryWorker) Run(ctx context.Context) error {
 }
 
 func (w *TokenDeliveryWorker) tick(ctx context.Context) error {
-	if _, err := w.store.ExpireDueTokens(ctx, w.batchSize); err != nil {
+	if _, err := w.store.ExpireDueTokens(ctx, db.ExpireDueTokensParams{
+		OutboxMessageIds: pgvalue.NewUUIDv7Batch(w.batchSize),
+		LimitCount:       w.batchSize,
+	}); err != nil {
 		return fmt.Errorf("expire due Tokens: %w", err)
 	}
 	if _, err := w.store.ExpireDuePublicAccessTokens(ctx, w.batchSize); err != nil {

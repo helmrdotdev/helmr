@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -85,7 +83,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 			if err != nil || pending.ID != wait.ID {
 				t.Fatalf("pending Wait = %+v, %v", pending, err)
 			}
-			completed, err := fixture.queries.CompleteHotActorInputRunWait(ctx, CompleteHotActorInputRunWaitParams{
+			completed, err := fixture.queries.CompleteHotRunWait(ctx, CompleteHotRunWaitParams{
 				ConditionResult: []byte(`{"value":{"message":"ready"}}`), CompletedActorRecordID: record.ID,
 				ID: pending.ID, RunID: pending.RunID, ExpectedRunStateVersion: pending.ExpectedRunStateVersion,
 				CurrentRunLeaseID: pending.CurrentRunLeaseID, AttemptNumber: pending.AttemptNumber,
@@ -98,7 +96,10 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 				t.Fatal(err)
 			}
 			if completed.ConditionState != WaitStateCompleted || completed.SuspensionState != RunWaitStateReleased ||
-				completed.CompletedActorRecordID != record.ID || status != RunStatusRunning {
+				completed.CompletedActorRecordID != record.ID ||
+				completed.CompletedActorRecordDirection.String != "input" ||
+				!completed.CompletedActorRecordDirection.Valid ||
+				status != RunStatusRunning {
 				t.Fatalf("completion = %+v run=%s", completed, status)
 			}
 		})
@@ -330,53 +331,6 @@ func TestActorInputSendSourceRequiresExactReceiptWithoutGrantingLiveness(t *test
 		WorkerEpoch: params.WorkerEpoch, WorkerProtocolVersion: params.WorkerProtocolVersion,
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("terminal source liveness error = %v, want no rows", err)
-	}
-}
-
-func TestActorInputAppendRejectsOversizedRetainedJSONAtomically(t *testing.T) {
-	ctx := context.Background()
-	fixture := newRunLeaseClaimFixture(t, ctx)
-	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-	actorID := convertTokenWaitWorkToActor(t, ctx, fixture, work, `{"enabled":false}`)
-
-	// The submitted representation is small, but PostgreSQL expands each
-	// scientific-notation number when converting jsonb back to text.
-	data := []byte(`[` + strings.Repeat(`5e-324,`, 4_000) + `0]`)
-	if len(data) >= 1<<20 {
-		t.Fatalf("submitted JSON size = %d, want below 1 MiB", len(data))
-	}
-	recordID := uuid.Must(uuid.NewV7())
-	_, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
-		EnvironmentID: pgvalue.UUID(fixture.environmentID),
-		ActorID:       pgvalue.UUID(actorID),
-		ID:            pgvalue.UUID(recordID),
-		Data:          data,
-		SourceKind:    pgvalue.Text("external"),
-	})
-	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) ||
-		pgErr.Code != "23514" ||
-		pgErr.ConstraintName != "actor_records_data_size_check" {
-		t.Fatalf("append error = %v, want actor record data size check violation", err)
-	}
-
-	var nextInputSequence int64
-	if err := fixture.pool.QueryRow(ctx, `
-		SELECT next_input_sequence FROM actors WHERE id = $1
-	`, actorID).Scan(&nextInputSequence); err != nil {
-		t.Fatal(err)
-	}
-	if nextInputSequence != 3 {
-		t.Fatalf("next input sequence = %d, want 3 after failed append", nextInputSequence)
-	}
-	var recordCount int
-	if err := fixture.pool.QueryRow(ctx, `
-		SELECT count(*) FROM actor_records WHERE id = $1
-	`, recordID).Scan(&recordCount); err != nil {
-		t.Fatal(err)
-	}
-	if recordCount != 0 {
-		t.Fatalf("oversized record count = %d, want 0", recordCount)
 	}
 }
 

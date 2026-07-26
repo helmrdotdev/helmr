@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
@@ -16,7 +17,101 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
+	"google.golang.org/protobuf/proto"
 )
+
+func TestManagedProgramChildAdmissionPreservesParentClaim(t *testing.T) {
+	entry, registry, parent := testWorkspaceFinalizationMountUnadmitted(t)
+	releaseParent, err := registry.admitProgram(entry, parent, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseParent()
+	if err := registry.authorizeChildProgram(
+		entry,
+		parent.GetFence().GetRunId(),
+		parent.GetFence().GetAttemptNumber(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	child := proto.Clone(parent).(*workspacev0.WorkspaceRunAuthority)
+	child.GetFence().RunId = "run-child"
+	child.GetFence().RunLeaseId = "run-lease-child"
+	child.GetFence().WorkspaceLeaseId = "workspace-lease-child"
+	child.GetFence().WriterGeneration++
+	child.GetFence().MountFencingGeneration++
+	child.WriteCapability = "child-write-capability"
+	releaseChild, err := registry.admitProgram(entry, child, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry.mu.Lock()
+	if len(registry.programClaims) != 2 ||
+		!workspaceRunAuthoritiesEqual(registry.programClaims[0].authority, parent) ||
+		!workspaceRunAuthoritiesEqual(registry.programClaims[1].authority, child) {
+		t.Fatalf("Program claims = %+v", registry.programClaims)
+	}
+	registry.mu.Unlock()
+	entry.authorityMu.Lock()
+	current := proto.Clone(entry.authority).(*workspacev0.WorkspaceRunAuthority)
+	entry.authorityMu.Unlock()
+	if !workspaceRunAuthoritiesEqual(current, child) {
+		t.Fatal("child admission did not advance current Workspace authority")
+	}
+	waited := make(chan error, 1)
+	go func() {
+		waited <- registry.waitForProgramRelease(context.Background(), entry, child)
+	}()
+	select {
+	case err := <-waited:
+		t.Fatalf("child finalization did not wait for child release: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	releaseChild()
+	select {
+	case err := <-waited:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("child finalization remained blocked by frozen parent")
+	}
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	if len(registry.programClaims) != 1 ||
+		!workspaceRunAuthoritiesEqual(registry.programClaims[0].authority, parent) {
+		t.Fatal("child release discarded the frozen parent claim")
+	}
+}
+
+func TestManagedProgramChildAdmissionRejectsUnverifiedOrDifferentRuntime(t *testing.T) {
+	entry, registry, parent := testWorkspaceFinalizationMountUnadmitted(t)
+	releaseParent, err := registry.admitProgram(entry, parent, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseParent()
+	child := proto.Clone(parent).(*workspacev0.WorkspaceRunAuthority)
+	child.GetFence().RunId = "run-child"
+	child.GetFence().RunLeaseId = "run-lease-child"
+	child.GetFence().WorkspaceLeaseId = "workspace-lease-child"
+	child.GetFence().WriterGeneration++
+	child.GetFence().MountFencingGeneration++
+	if _, err := registry.admitProgram(entry, child, time.Now()); err == nil {
+		t.Fatal("unverified child Program was admitted")
+	}
+	if err := registry.authorizeChildProgram(
+		entry,
+		parent.GetFence().GetRunId(),
+		parent.GetFence().GetAttemptNumber(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	child.GetFence().RuntimeInstanceId = "different-runtime"
+	if _, err := registry.admitProgram(entry, child, time.Now()); err == nil {
+		t.Fatal("child Program on a different runtime was admitted")
+	}
+}
 
 func TestRestoredWorkspaceRebindPreservesFrozenProgramAndReplacesMountAuthority(t *testing.T) {
 	registry := newWorkspaceOperationRegistry()
@@ -28,8 +123,13 @@ func TestRestoredWorkspaceRebindPreservesFrozenProgramAndReplacesMountAuthority(
 	}
 	entry.setFencingGeneration(3)
 	registry.entries["old-mount"] = entry
-	registry.programActive = true
-	registry.programEntry = entry
+	registry.programClaims = []*managedProgramClaim{{
+		entry: entry,
+		authority: &workspacev0.WorkspaceRunAuthority{Fence: &workspacev0.WorkspaceAuthorityFence{
+			RunId: "run-1", AttemptNumber: 1, RunLeaseId: "old-lease",
+		}},
+		released: make(chan struct{}),
+	}}
 	waits := newWaitingRunRegistry()
 	if _, err := waits.registerProgram(&runv0.CheckpointPauseRequest{
 		RunId: "run-1", AttemptNumber: 1, RunWaitId: "wait-1", CorrelationId: "correlation-1",
@@ -50,7 +150,7 @@ func TestRestoredWorkspaceRebindPreservesFrozenProgramAndReplacesMountAuthority(
 		t.Fatal(err)
 	}
 	if len(phases) != 1 || registry.entries["old-mount"] != nil || registry.entries["new-mount"] != entry ||
-		registry.programEntry != entry || !registry.programActive || entry.authority != nil ||
+		len(registry.programClaims) != 1 || registry.programClaims[0].entry != entry || entry.authority != nil ||
 		entry.workspaceMountID != "new-mount" || entry.channelToken != "new-channel" ||
 		entry.runtimeInstanceID != "new-runtime" || entry.baseVersionID != "private-version" ||
 		entry.currentFencingGeneration() != 4 {

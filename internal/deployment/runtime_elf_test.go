@@ -11,7 +11,6 @@ import (
 func TestRuntimeELFFixturesAcceptSupportedArchitectures(t *testing.T) {
 	for _, architecture := range []RuntimeArchitecture{
 		ArchitectureX8664,
-		ArchitectureAArch64,
 	} {
 		t.Run(string(architecture), func(t *testing.T) {
 			artifact := newValidRuntimeELFArtifact(t, architecture)
@@ -268,7 +267,7 @@ func TestRuntimeELFRequiresLoaderBootstrapShape(t *testing.T) {
 
 func TestRuntimeELFRequiresExactLibcIdentity(t *testing.T) {
 	machine, loader := testRuntimeELFTarget(t, ArchitectureX8664)
-	_, otherLoader := testRuntimeELFTarget(t, ArchitectureAArch64)
+	otherLoader := runtimeMountPath + "/lib/ld-linux-aarch64.so.1"
 	tests := map[string]testELF64Spec{
 		"missing interpreter": {
 			machine:  machine,

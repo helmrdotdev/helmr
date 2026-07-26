@@ -47,11 +47,25 @@ type workspaceCreateRequest struct {
 	OrgID          uuid.UUID
 	ProjectID      uuid.UUID
 	EnvironmentID  uuid.UUID
+	Declaration    workspaceDeclarationSelector
 	DeclaredID     string
 	Key            *string
 	Secrets        []api.WorkspaceSecret
 	IdempotencyKey string
+	Authorize      func(context.Context, db.Querier) error
 }
+
+type workspaceDeclarationSelector struct {
+	Kind  workspaceDeclarationSelectorKind
+	RunID uuid.UUID
+}
+
+type workspaceDeclarationSelectorKind string
+
+const (
+	workspaceDeclarationPromoted  workspaceDeclarationSelectorKind = "promoted"
+	workspaceDeclarationRunPinned workspaceDeclarationSelectorKind = "run_pinned"
+)
 
 type workspaceCreateResult struct {
 	WorkspaceID       uuid.UUID
@@ -71,6 +85,18 @@ type workspaceSecretPlacement struct {
 }
 
 func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateRequest) (workspaceCreateResult, error) {
+	switch request.Declaration.Kind {
+	case workspaceDeclarationPromoted:
+		if request.Declaration.RunID != uuid.Nil || request.Authorize != nil {
+			return workspaceCreateResult{}, errWorkspaceCreateInvalid
+		}
+	case workspaceDeclarationRunPinned:
+		if request.Declaration.RunID == uuid.Nil || request.Authorize == nil {
+			return workspaceCreateResult{}, errWorkspaceCreateInvalid
+		}
+	default:
+		return workspaceCreateResult{}, errWorkspaceCreateInvalid
+	}
 	placements, err := normalizeWorkspaceSecretPlacements(request.Secrets)
 	if err != nil {
 		return workspaceCreateResult{}, fmt.Errorf("%w: %v", errWorkspaceCreateInvalid, err)
@@ -97,6 +123,11 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 
 	var result workspaceCreateResult
 	err = s.inTx(ctx, func(work *txWork) error {
+		if request.Authorize != nil {
+			if err := request.Authorize(ctx, work.q); err != nil {
+				return err
+			}
+		}
 		var claim *db.IdempotencyClaim
 		if claimRequest != nil {
 			claims, err := s.claims.TransactionForQueries(work.q)
@@ -122,13 +153,26 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 			claim = &acquired.Claim
 		}
 
-		definition, err := work.q.ResolveCurrentWorkspaceDefinitionForCreate(
-			ctx,
-			db.ResolveCurrentWorkspaceDefinitionForCreateParams{
-				EnvironmentID:       pgvalue.UUID(request.EnvironmentID),
-				WorkspaceDeclaredID: request.DeclaredID,
-			},
-		)
+		var definition db.DeploymentDefinition
+		switch request.Declaration.Kind {
+		case workspaceDeclarationPromoted:
+			definition, err = work.q.ResolveCurrentWorkspaceDefinitionForCreate(
+				ctx,
+				db.ResolveCurrentWorkspaceDefinitionForCreateParams{
+					EnvironmentID:       pgvalue.UUID(request.EnvironmentID),
+					WorkspaceDeclaredID: request.DeclaredID,
+				},
+			)
+		case workspaceDeclarationRunPinned:
+			definition, err = work.q.ResolveRunPinnedWorkspaceDefinitionForCreate(
+				ctx,
+				db.ResolveRunPinnedWorkspaceDefinitionForCreateParams{
+					EnvironmentID:       pgvalue.UUID(request.EnvironmentID),
+					RunID:               pgvalue.UUID(request.Declaration.RunID),
+					WorkspaceDeclaredID: request.DeclaredID,
+				},
+			)
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errWorkspaceNotDeployed
 		}
@@ -176,21 +220,43 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 		if request.Key != nil {
 			key = pgtype.Text{String: *request.Key, Valid: true}
 		}
-		created, err := work.q.CreateWorkspaceFromCurrentDeployment(
-			ctx,
-			db.CreateWorkspaceFromCurrentDeploymentParams{
-				ProjectID:              pgvalue.UUID(request.ProjectID),
-				OrgID:                  pgvalue.UUID(request.OrgID),
-				EnvironmentID:          pgvalue.UUID(request.EnvironmentID),
-				DeploymentDefinitionID: definition.ID,
-				WorkspaceDeclaredID:    request.DeclaredID,
-				ID:                     pgvalue.UUID(workspaceID),
-				PublicID:               workspacePublicID,
-				InitialVersionID:       pgvalue.UUID(versionID),
-				Key:                    key,
-				InitialVersionPublicID: versionPublicID,
-			},
-		)
+		var createdWorkspaceID pgtype.UUID
+		switch request.Declaration.Kind {
+		case workspaceDeclarationPromoted:
+			created, createErr := work.q.CreateWorkspaceFromCurrentDeployment(
+				ctx,
+				db.CreateWorkspaceFromCurrentDeploymentParams{
+					ProjectID:              pgvalue.UUID(request.ProjectID),
+					OrgID:                  pgvalue.UUID(request.OrgID),
+					EnvironmentID:          pgvalue.UUID(request.EnvironmentID),
+					DeploymentDefinitionID: definition.ID,
+					WorkspaceDeclaredID:    request.DeclaredID,
+					ID:                     pgvalue.UUID(workspaceID),
+					PublicID:               workspacePublicID,
+					InitialVersionID:       pgvalue.UUID(versionID),
+					Key:                    key,
+					InitialVersionPublicID: versionPublicID,
+				},
+			)
+			err = createErr
+			createdWorkspaceID = created.ID
+		case workspaceDeclarationRunPinned:
+			created, createErr := work.q.CreateWorkspaceFromRunDeployment(
+				ctx,
+				db.CreateWorkspaceFromRunDeploymentParams{
+					EnvironmentID:          pgvalue.UUID(request.EnvironmentID),
+					RunID:                  pgvalue.UUID(request.Declaration.RunID),
+					WorkspaceDeclaredID:    request.DeclaredID,
+					ID:                     pgvalue.UUID(workspaceID),
+					PublicID:               workspacePublicID,
+					InitialVersionID:       pgvalue.UUID(versionID),
+					Key:                    key,
+					InitialVersionPublicID: versionPublicID,
+				},
+			)
+			err = createErr
+			createdWorkspaceID = created.ID
+		}
 		if err != nil {
 			var postgresError *pgconn.PgError
 			if errors.As(err, &postgresError) &&
@@ -205,8 +271,8 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 		}
 		for _, placement := range placements {
 			if _, err := work.q.CreateWorkspaceSecret(ctx, db.CreateWorkspaceSecretParams{
-				WorkspaceID:     created.ID,
-				EnvironmentID:   created.EnvironmentID,
+				WorkspaceID:     createdWorkspaceID,
+				EnvironmentID:   pgvalue.UUID(request.EnvironmentID),
 				PlacementKind:   placement.Kind,
 				PlacementTarget: placement.Target,
 				SecretID:        secretIDs[placement.Name],

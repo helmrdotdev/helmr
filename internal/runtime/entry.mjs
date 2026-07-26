@@ -3261,6 +3261,15 @@ function writeTypeOfScalar(type) {
 var exports_run_pb = {};
 __export(exports_run_pb, {
   file_run: () => file_run,
+  WorkspaceSecretPlacementSchema: () => WorkspaceSecretPlacementSchema,
+  WorkspaceRetrieveRequestedSchema: () => WorkspaceRetrieveRequestedSchema,
+  WorkspaceFileStatRequestedSchema: () => WorkspaceFileStatRequestedSchema,
+  WorkspaceFileReadRequestedSchema: () => WorkspaceFileReadRequestedSchema,
+  WorkspaceFileListRequestedSchema: () => WorkspaceFileListRequestedSchema,
+  WorkspaceExecRequestedSchema: () => WorkspaceExecRequestedSchema,
+  WorkspaceDeleteRequestedSchema: () => WorkspaceDeleteRequestedSchema,
+  WorkspaceCreateRequestedSchema: () => WorkspaceCreateRequestedSchema,
+  WorkspaceAddressSchema: () => WorkspaceAddressSchema,
   TokenCreateRequestedSchema: () => TokenCreateRequestedSchema,
   TaskSucceededSchema: () => TaskSucceededSchema,
   TaskStartSchema: () => TaskStartSchema,
@@ -3301,15 +3310,19 @@ __export(exports_run_pb, {
   ActorTurnCommitPauseRequestSchema: () => ActorTurnCommitPauseRequestSchema,
   ActorTurnCommitPauseReadySchema: () => ActorTurnCommitPauseReadySchema,
   ActorSucceededSchema: () => ActorSucceededSchema,
+  ActorStatusRequestedSchema: () => ActorStatusRequestedSchema,
   ActorStartSchema: () => ActorStartSchema,
+  ActorStartRequestedSchema: () => ActorStartRequestedSchema,
   ActorStartCauseSchema: () => ActorStartCauseSchema,
+  ActorOutputPageRequestedSchema: () => ActorOutputPageRequestedSchema,
   ActorOutputAppendRequestedSchema: () => ActorOutputAppendRequestedSchema,
   ActorOutcomeSchema: () => ActorOutcomeSchema,
   ActorInputSendRequestedSchema: () => ActorInputSendRequestedSchema,
   ActorFailedSchema: () => ActorFailedSchema,
-  ActorEntrypointSchema: () => ActorEntrypointSchema
+  ActorEntrypointSchema: () => ActorEntrypointSchema,
+  ActorCloseRequestedSchema: () => ActorCloseRequestedSchema
 });
-var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCLLAgoMUHJvZ3JhbVN0YXJ0Eh4KFmVudHJ5cG9pbnRfZGVjbGFyZWRfaWQYASABKAkSDgoGcnVuX2lkGAIgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAMgASgNEiUKBWNhdXNlGAQgASgLMhYuaGVsbXIucnVuLnYwLlJ1bkNhdXNlEhUKDWRlcGxveW1lbnRfaWQYBSABKAkSGgoSZGVwbG95bWVudF92ZXJzaW9uGAYgASgJEhQKDHdvcmtzcGFjZV9pZBgHIAEoCRIhChliYXNlX3dvcmtzcGFjZV92ZXJzaW9uX2lkGAggASgJEicKBHRhc2sYCSABKAsyFy5oZWxtci5ydW4udjAuVGFza1N0YXJ0SAASKQoFYWN0b3IYCiABKAsyGC5oZWxtci5ydW4udjAuQWN0b3JTdGFydEgAQgwKCmVudHJ5cG9pbnQiXQoJVGFza1N0YXJ0Ei0KCm5vX3BheWxvYWQYASABKAsyFy5oZWxtci5ydW4udjAuTm9QYXlsb2FkSAASFgoMcGF5bG9hZF9qc29uGAIgASgMSABCCQoHcGF5bG9hZCILCglOb1BheWxvYWQidAoKQWN0b3JTdGFydBIQCghhY3Rvcl9pZBgBIAEoCRIQCgNrZXkYAiABKAlIAIgBARIcChRzdGFydF9pbnB1dF9zZXF1ZW5jZRgDIAEoAxIcChRpbnB1dF9oaWdoX3dhdGVybWFyaxgEIAEoA0IGCgRfa2V5IrECCghSdW5DYXVzZRIlCgNhcGkYASABKAsyFi5oZWxtci5ydW4udjAuQXBpQ2F1c2VIABIrCgZtYW51YWwYAiABKAsyGS5oZWxtci5ydW4udjAuTWFudWFsQ2F1c2VIABIpCgVjaGlsZBgDIAEoCzIYLmhlbG1yLnJ1bi52MC5DaGlsZENhdXNlSAASLwoIc2NoZWR1bGUYBCABKAsyGy5oZWxtci5ydW4udjAuU2NoZWR1bGVDYXVzZUgAEjQKC2FjdG9yX3N0YXJ0GAUgASgLMh0uaGVsbXIucnVuLnYwLkFjdG9yU3RhcnRDYXVzZUgAEjcKDGNvbnRpbnVhdGlvbhgGIAEoCzIfLmhlbG1yLnJ1bi52MC5Db250aW51YXRpb25DYXVzZUgAQgYKBGtpbmQiCgoIQXBpQ2F1c2UiDQoLTWFudWFsQ2F1c2UiIwoKQ2hpbGRDYXVzZRIVCg1wYXJlbnRfcnVuX2lkGAEgASgJIqIBCg1TY2hlZHVsZUNhdXNlEhMKC3NjaGVkdWxlX2lkGAEgASgJEhwKFHNjaGVkdWxlZF9hdF91bml4X21zGAIgASgDEioKHXByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zGAMgASgDSACIAQESEAoIdGltZXpvbmUYBCABKAlCIAoeX3ByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zIhEKD0FjdG9yU3RhcnRDYXVzZSITChFDb250aW51YXRpb25DYXVzZSKkAQoRUHJvZ3JhbVJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCRIbChNwcm9ncmFtX3N0YXJ0X2ZyYW1lGAQgASgMEhQKDHNlY3JldF9jb3VudBgFIAEoDRIeChZzdGFydF9kZWFkbGluZV91bml4X21zGAYgASgDIkoKDVByb2dyYW1TZWNyZXQSDQoDZW52GAEgASgJSAASDgoEZmlsZRgCIAEoCUgAEg0KBXZhbHVlGAMgASgMQgsKCXBsYWNlbWVudCJsChZQcm9ncmFtU2VjcmV0c0NvbXBsZXRlEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRIUCgxydW5fbGVhc2VfaWQYAyABKAkSFAoMc2VjcmV0X2NvdW50GAQgASgNIpoCChhQcm9ncmFtU3VwZXJ2aXNvckNvbW1hbmQSNgoPc2VjcmV0X2RlbGl2ZXJ5GAEgASgLMhsuaGVsbXIucnVuLnYwLlByb2dyYW1TZWNyZXRIABJAChBzZWNyZXRzX2NvbXBsZXRlGAIgASgLMiQuaGVsbXIucnVuLnYwLlByb2dyYW1TZWNyZXRzQ29tcGxldGVIABI6Cg1zdGFydF9yZWxlYXNlGAMgASgLMiEuaGVsbXIucnVuLnYwLlByb2dyYW1TdGFydFJlbGVhc2VIABI9ChJlbnRyeXBvaW50X3JlbGVhc2UYBCABKAsyHy5oZWxtci5ydW4udjAuRW50cnlwb2ludFJlbGVhc2VIAEIJCgdjb21tYW5kIlUKFVByb2dyYW1Qcm9jZXNzU3RhcnRlZBIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SFAoMcnVuX2xlYXNlX2lkGAMgASgJIlMKE1Byb2dyYW1TdGFydFJlbGVhc2USDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCSKPAQoSRW50cnlwb2ludElkZW50aXR5EhMKC2RlY2xhcmVkX2lkGAEgASgJEiwKBHRhc2sYAiABKAsyHC5oZWxtci5ydW4udjAuVGFza0VudHJ5cG9pbnRIABIuCgVhY3RvchgDIAEoCzIdLmhlbG1yLnJ1bi52MC5BY3RvckVudHJ5cG9pbnRIAEIGCgRraW5kIhAKDlRhc2tFbnRyeXBvaW50IhEKD0FjdG9yRW50cnlwb2ludCJvCg9FbnRyeXBvaW50UmVhZHkSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEjQKCmVudHJ5cG9pbnQYAyABKAsyIC5oZWxtci5ydW4udjAuRW50cnlwb2ludElkZW50aXR5InEKEUVudHJ5cG9pbnRSZWxlYXNlEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRI0CgplbnRyeXBvaW50GAMgASgLMiAuaGVsbXIucnVuLnYwLkVudHJ5cG9pbnRJZGVudGl0eSL7BwoIUnVuRXZlbnQSFgoMc3Rkb3V0X2NodW5rGAEgASgMSAASFgoMc3RkZXJyX2NodW5rGAIgASgMSAASPAoScnVuX3dhaXRfcmVxdWVzdGVkGAUgASgLMh4uaGVsbXIucnVuLnYwLlJ1bldhaXRSZXF1ZXN0ZWRIABI5ChBtZXRhZGF0YV91cGRhdGVkGAcgASgLMh0uaGVsbXIucnVuLnYwLk1ldGFkYXRhVXBkYXRlZEgAEkQKFnRva2VuX2NyZWF0ZV9yZXF1ZXN0ZWQYCCABKAsyIi5oZWxtci5ydW4udjAuVG9rZW5DcmVhdGVSZXF1ZXN0ZWRIABI3Cg9yZXN1bWVfY29uc3VtZWQYBiABKAsyHC5oZWxtci5ydW4udjAuUmVzdW1lQ29uc3VtZWRIABJGChdwcm9ncmFtX3Byb2Nlc3Nfc3RhcnRlZBgLIAEoCzIjLmhlbG1yLnJ1bi52MC5Qcm9ncmFtUHJvY2Vzc1N0YXJ0ZWRIABI5ChBlbnRyeXBvaW50X3JlYWR5GAwgASgLMh0uaGVsbXIucnVuLnYwLkVudHJ5cG9pbnRSZWFkeUgAEjEKDHRhc2tfb3V0Y29tZRgNIAEoCzIZLmhlbG1yLnJ1bi52MC5UYXNrT3V0Y29tZUgAEjkKEHByb2dyYW1fcXVpZXNjZWQYDiABKAsyHS5oZWxtci5ydW4udjAuUHJvZ3JhbVF1aWVzY2VkSAASMwoNYWN0b3Jfb3V0Y29tZRgPIAEoCzIaLmhlbG1yLnJ1bi52MC5BY3Rvck91dGNvbWVIABJNChthY3Rvcl90dXJuX2NvbW1pdF9yZXF1ZXN0ZWQYECABKAsyJi5oZWxtci5ydW4udjAuQWN0b3JUdXJuQ29tbWl0UmVxdWVzdGVkSAASUQodYWN0b3Jfb3V0cHV0X2FwcGVuZF9yZXF1ZXN0ZWQYESABKAsyKC5oZWxtci5ydW4udjAuQWN0b3JPdXRwdXRBcHBlbmRSZXF1ZXN0ZWRIABJLChphY3Rvcl9pbnB1dF9zZW5kX3JlcXVlc3RlZBgSIAEoCzIlLmhlbG1yLnJ1bi52MC5BY3RvcklucHV0U2VuZFJlcXVlc3RlZEgAEkgKGHN0cnVjdHVyZWRfbG9nX3JlcXVlc3RlZBgTIAEoCzIkLmhlbG1yLnJ1bi52MC5TdHJ1Y3R1cmVkTG9nUmVxdWVzdGVkSAASTQobdGFza19jaGlsZF9pbnZva2VfcmVxdWVzdGVkGBQgASgLMiYuaGVsbXIucnVuLnYwLlRhc2tDaGlsZEludm9rZVJlcXVlc3RlZEgAQgcKBWV2ZW50SgQIAxAESgQICRAKSgQIChALIrMBCgtUYXNrT3V0Y29tZRIwCglzdWNjZWVkZWQYASABKAsyGy5oZWxtci5ydW4udjAuVGFza1N1Y2NlZWRlZEgAEioKBmZhaWxlZBgCIAEoCzIYLmhlbG1yLnJ1bi52MC5UYXNrRmFpbGVkSAASOwoPcGF5bG9hZF9pbnZhbGlkGAMgASgLMiAuaGVsbXIucnVuLnYwLlRhc2tQYXlsb2FkSW52YWxpZEgAQgkKB291dGNvbWUiJAoNVGFza1N1Y2NlZWRlZBITCgtvdXRwdXRfanNvbhgBIAEoCSJJCgpUYXNrRmFpbGVkEg8KB21lc3NhZ2UYASABKAkSGQoMZGV0YWlsc19qc29uGAIgASgJSACIAQFCDwoNX2RldGFpbHNfanNvbiJRChJUYXNrUGF5bG9hZEludmFsaWQSDwoHbWVzc2FnZRgBIAEoCRIZCgxkZXRhaWxzX2pzb24YAiABKAlIAIgBAUIPCg1fZGV0YWlsc19qc29uIrsBCgxBY3Rvck91dGNvbWUSJAoXdGVybWluYWxfaW5wdXRfc2VxdWVuY2UYASABKANIAYgBARIxCglzdWNjZWVkZWQYAiABKAsyHC5oZWxtci5ydW4udjAuQWN0b3JTdWNjZWVkZWRIABIrCgZmYWlsZWQYAyABKAsyGS5oZWxtci5ydW4udjAuQWN0b3JGYWlsZWRIAEIJCgdvdXRjb21lQhoKGF90ZXJtaW5hbF9pbnB1dF9zZXF1ZW5jZSIQCg5BY3RvclN1Y2NlZWRlZCJKCgtBY3RvckZhaWxlZBIPCgdtZXNzYWdlGAEgASgJEhkKDGRldGFpbHNfanNvbhgCIAEoCUgAiAEBQg8KDV9kZXRhaWxzX2pzb24iUQoYQWN0b3JUdXJuQ29tbWl0UmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEh0KFXRhcmdldF9pbnB1dF9zZXF1ZW5jZRgCIAEoAyKhAgobQWN0b3JUdXJuQ29tbWl0UGF1c2VSZXF1ZXN0EhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEh0KFXRhcmdldF9pbnB1dF9zZXF1ZW5jZRgCIAEoAxIOCgZydW5faWQYAyABKAkSFgoOYXR0ZW1wdF9udW1iZXIYBCABKA0SFAoMcnVuX2xlYXNlX2lkGAUgASgJEhwKFGV4cGVjdGVkX3RyZWVfZGlnZXN0GAYgASgJEiAKGGV4cGVjdGVkX3RyZWVfc2l6ZV9ieXRlcxgHIAEoAxIhChlleHBlY3RlZF90cmVlX2VudHJ5X2NvdW50GAggASgNEioKImV4cGVjdGVkX2Jhc2Vfd29ya3NwYWNlX3ZlcnNpb25faWQYCSABKAki8wEKGUFjdG9yVHVybkNvbW1pdFBhdXNlUmVhZHkSFgoOY29ycmVsYXRpb25faWQYASABKAkSHQoVdGFyZ2V0X2lucHV0X3NlcXVlbmNlGAIgASgDEg4KBnJ1bl9pZBgDIAEoCRIWCg5hdHRlbXB0X251bWJlchgEIAEoDRIUCgxydW5fbGVhc2VfaWQYBSABKAkSEwoLdHJlZV9kaWdlc3QYBiABKAkSFwoPdHJlZV9zaXplX2J5dGVzGAcgASgDEhgKEHRyZWVfZW50cnlfY291bnQYCCABKA0SGQoRd29ya3NwYWNlX2NoYW5nZWQYCSABKAgijwEKGkFjdG9yT3V0cHV0QXBwZW5kUmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEhEKCWRhdGFfanNvbhgCIAEoCRIUCgxjb250ZW50X3R5cGUYAyABKAkSHAoPaWRlbXBvdGVuY3lfa2V5GAQgASgJSACIAQFCEgoQX2lkZW1wb3RlbmN5X2tleSK/AQoXQWN0b3JJbnB1dFNlbmRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSEwoLZGVjbGFyZWRfaWQYAiABKAkSEgoIYWN0b3JfaWQYAyABKAlIABITCglhY3Rvcl9rZXkYBCABKAlIABIRCglkYXRhX2pzb24YBSABKAkSHAoPaWRlbXBvdGVuY3lfa2V5GAYgASgJSAGIAQFCCQoHYWRkcmVzc0ISChBfaWRlbXBvdGVuY3lfa2V5Ik8KD1Byb2dyYW1RdWllc2NlZBIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SFAoMcnVuX2xlYXNlX2lkGAMgASgJIsMCChBSdW5XYWl0UmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEgwKBGtpbmQYAiABKAkSEwoLcGFyYW1zX2pzb24YAyABKAkSGgoNbWV0YWRhdGFfanNvbhgEIAEoCUgAiAEBEhcKCnRpbWVvdXRfbXMYBSABKARIAYgBARIMCgR0YWdzGAYgAygJEhwKD2lkbGVfdGltZW91dF9tcxgJIAEoBEgCiAEBEi0KIGFjdG9yX3NwZWN1bGF0aXZlX2lucHV0X3NlcXVlbmNlGAogASgDSAOIAQFCEAoOX21ldGFkYXRhX2pzb25CDQoLX3RpbWVvdXRfbXNCEgoQX2lkbGVfdGltZW91dF9tc0IjCiFfYWN0b3Jfc3BlY3VsYXRpdmVfaW5wdXRfc2VxdWVuY2VKBAgHEAhKBAgIEAkixAEKFFRva2VuQ3JlYXRlUmVxdWVzdGVkEhcKCnRpbWVvdXRfbXMYASABKARIAIgBARIWCg5jb3JyZWxhdGlvbl9pZBgCIAEoCRIcCg9pZGVtcG90ZW5jeV9rZXkYAyABKAlIAYgBARIMCgR0YWdzGAQgAygJEhoKDW1ldGFkYXRhX2pzb24YBSABKAlIAogBAUINCgtfdGltZW91dF9tc0ISChBfaWRlbXBvdGVuY3lfa2V5QhAKDl9tZXRhZGF0YV9qc29uItACChhUYXNrQ2hpbGRJbnZva2VSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSEwoLZGVjbGFyZWRfaWQYAiABKAkSDgoGbWV0aG9kGAMgASgJEhcKD3BheWxvYWRfcHJlc2VudBgEIAEoCBIZCgxwYXlsb2FkX2pzb24YBSABKAlIAIgBARIWCg53b3Jrc3BhY2VfanNvbhgGIAEoCRIUCgxvcHRpb25zX2pzb24YByABKAkSHAoPaWRlbXBvdGVuY3lfa2V5GAggASgJSAGIAQESLQogYWN0b3Jfc3BlY3VsYXRpdmVfaW5wdXRfc2VxdWVuY2UYCSABKANIAogBAUIPCg1fcGF5bG9hZF9qc29uQhIKEF9pZGVtcG90ZW5jeV9rZXlCIwohX2FjdG9yX3NwZWN1bGF0aXZlX2lucHV0X3NlcXVlbmNlIvMBChZDaGVja3BvaW50UGF1c2VSZXF1ZXN0EhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSGQoRY2FwdHVyZV93b3Jrc3BhY2UYAyABKAgSDgoGcnVuX2lkGAQgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAUgASgNEhQKDHJ1bl9sZWFzZV9pZBgGIAEoCRIYChByZXN1bWVfYXR0YWNoX2lkGAcgASgJEiIKGmNoZWNrcG9pbnRfcmVxdWVzdF92ZXJzaW9uGAggASgDEhYKDmNvcnJlbGF0aW9uX2lkGAkgASgJItYBChRDaGVja3BvaW50UGF1c2VSZWFkeRITCgtydW5fd2FpdF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJEg4KBnJ1bl9pZBgDIAEoCRIWCg5hdHRlbXB0X251bWJlchgEIAEoDRIUCgxydW5fbGVhc2VfaWQYBSABKAkSGAoQcmVzdW1lX2F0dGFjaF9pZBgGIAEoCRIiChpjaGVja3BvaW50X3JlcXVlc3RfdmVyc2lvbhgHIAEoAxIWCg5jb3JyZWxhdGlvbl9pZBgIIAEoCSLKAQoMUmVzdW1lQXR0YWNoEhUKDWNoZWNrcG9pbnRfaWQYASABKAkSEwoLcnVuX3dhaXRfaWQYAiABKAkSFAoMcnVuX2xlYXNlX2lkGAMgASgJEg4KBnJ1bl9pZBgEIAEoCRIWCg5hdHRlbXB0X251bWJlchgFIAEoDRIYChByZXN1bWVfYXR0YWNoX2lkGAYgASgJEh4KFnJlc3VtZV9yZXF1ZXN0X3ZlcnNpb24YByABKAMSFgoOY29ycmVsYXRpb25faWQYCCABKAki9gEKDlJlc3VtZURlY2lzaW9uEhMKC3J1bl93YWl0X2lkGAEgASgJEgwKBGtpbmQYAiABKAkSEQoJZGF0YV9qc29uGAMgASgJEhwKFHJlcXVpcmVfY29uc3VtZWRfYWNrGAQgASgIEhUKDWNoZWNrcG9pbnRfaWQYBSABKAkSGAoQcmVzdW1lX2F0dGFjaF9pZBgGIAEoCRIeChZyZXN1bWVfcmVxdWVzdF92ZXJzaW9uGAcgASgDEhQKDHJ1bl9sZWFzZV9pZBgIIAEoCRIWCg5jb3JyZWxhdGlvbl9pZBgJIAEoCRIRCglub19yZXN1bHQYCiABKAginwEKCVJlc3VtZUFjaxITCgtydW5fd2FpdF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJEhgKEHJlc3VtZV9hdHRhY2hfaWQYAyABKAkSHgoWcmVzdW1lX3JlcXVlc3RfdmVyc2lvbhgEIAEoAxIUCgxydW5fbGVhc2VfaWQYBSABKAkSFgoOY29ycmVsYXRpb25faWQYBiABKAkipAEKDlJlc3VtZUNvbnN1bWVkEhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSGAoQcmVzdW1lX2F0dGFjaF9pZBgDIAEoCRIeChZyZXN1bWVfcmVxdWVzdF92ZXJzaW9uGAQgASgDEhQKDHJ1bl9sZWFzZV9pZBgFIAEoCRIWCg5jb3JyZWxhdGlvbl9pZBgGIAEoCSLGAQoPTWV0YWRhdGFVcGRhdGVkEhEKCW9wZXJhdGlvbhgBIAEoCRIQCgNrZXkYAiABKAlIAIgBARIXCgp2YWx1ZV9qc29uGAMgASgJSAGIAQESFwoKcGF0Y2hfanNvbhgEIAEoCUgCiAEBEhMKBmFtb3VudBgFIAEoAUgDiAEBEhYKDmNvcnJlbGF0aW9uX2lkGAYgASgJQgYKBF9rZXlCDQoLX3ZhbHVlX2pzb25CDQoLX3BhdGNoX2pzb25CCQoHX2Ftb3VudCJpChZTdHJ1Y3R1cmVkTG9nUmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEg0KBWxldmVsGAIgASgJEg8KB21lc3NhZ2UYAyABKAkSFwoPYXR0cmlidXRlc19qc29uGAQgASgJQjpaOGdpdGh1Yi5jb20vaGVsbXJkb3RkZXYvaGVsbXIvaW50ZXJuYWwvcHJvdG8vcnVuL3YwO3J1bnYwYgZwcm90bzM");
+var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCLLAgoMUHJvZ3JhbVN0YXJ0Eh4KFmVudHJ5cG9pbnRfZGVjbGFyZWRfaWQYASABKAkSDgoGcnVuX2lkGAIgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAMgASgNEiUKBWNhdXNlGAQgASgLMhYuaGVsbXIucnVuLnYwLlJ1bkNhdXNlEhUKDWRlcGxveW1lbnRfaWQYBSABKAkSGgoSZGVwbG95bWVudF92ZXJzaW9uGAYgASgJEhQKDHdvcmtzcGFjZV9pZBgHIAEoCRIhChliYXNlX3dvcmtzcGFjZV92ZXJzaW9uX2lkGAggASgJEicKBHRhc2sYCSABKAsyFy5oZWxtci5ydW4udjAuVGFza1N0YXJ0SAASKQoFYWN0b3IYCiABKAsyGC5oZWxtci5ydW4udjAuQWN0b3JTdGFydEgAQgwKCmVudHJ5cG9pbnQiXQoJVGFza1N0YXJ0Ei0KCm5vX3BheWxvYWQYASABKAsyFy5oZWxtci5ydW4udjAuTm9QYXlsb2FkSAASFgoMcGF5bG9hZF9qc29uGAIgASgMSABCCQoHcGF5bG9hZCILCglOb1BheWxvYWQidAoKQWN0b3JTdGFydBIQCghhY3Rvcl9pZBgBIAEoCRIQCgNrZXkYAiABKAlIAIgBARIcChRzdGFydF9pbnB1dF9zZXF1ZW5jZRgDIAEoAxIcChRpbnB1dF9oaWdoX3dhdGVybWFyaxgEIAEoA0IGCgRfa2V5IrECCghSdW5DYXVzZRIlCgNhcGkYASABKAsyFi5oZWxtci5ydW4udjAuQXBpQ2F1c2VIABIrCgZtYW51YWwYAiABKAsyGS5oZWxtci5ydW4udjAuTWFudWFsQ2F1c2VIABIpCgVjaGlsZBgDIAEoCzIYLmhlbG1yLnJ1bi52MC5DaGlsZENhdXNlSAASLwoIc2NoZWR1bGUYBCABKAsyGy5oZWxtci5ydW4udjAuU2NoZWR1bGVDYXVzZUgAEjQKC2FjdG9yX3N0YXJ0GAUgASgLMh0uaGVsbXIucnVuLnYwLkFjdG9yU3RhcnRDYXVzZUgAEjcKDGNvbnRpbnVhdGlvbhgGIAEoCzIfLmhlbG1yLnJ1bi52MC5Db250aW51YXRpb25DYXVzZUgAQgYKBGtpbmQiCgoIQXBpQ2F1c2UiDQoLTWFudWFsQ2F1c2UiIwoKQ2hpbGRDYXVzZRIVCg1wYXJlbnRfcnVuX2lkGAEgASgJIqIBCg1TY2hlZHVsZUNhdXNlEhMKC3NjaGVkdWxlX2lkGAEgASgJEhwKFHNjaGVkdWxlZF9hdF91bml4X21zGAIgASgDEioKHXByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zGAMgASgDSACIAQESEAoIdGltZXpvbmUYBCABKAlCIAoeX3ByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zIhEKD0FjdG9yU3RhcnRDYXVzZSITChFDb250aW51YXRpb25DYXVzZSKkAQoRUHJvZ3JhbVJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCRIbChNwcm9ncmFtX3N0YXJ0X2ZyYW1lGAQgASgMEhQKDHNlY3JldF9jb3VudBgFIAEoDRIeChZzdGFydF9kZWFkbGluZV91bml4X21zGAYgASgDIkoKDVByb2dyYW1TZWNyZXQSDQoDZW52GAEgASgJSAASDgoEZmlsZRgCIAEoCUgAEg0KBXZhbHVlGAMgASgMQgsKCXBsYWNlbWVudCJsChZQcm9ncmFtU2VjcmV0c0NvbXBsZXRlEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRIUCgxydW5fbGVhc2VfaWQYAyABKAkSFAoMc2VjcmV0X2NvdW50GAQgASgNIpoCChhQcm9ncmFtU3VwZXJ2aXNvckNvbW1hbmQSNgoPc2VjcmV0X2RlbGl2ZXJ5GAEgASgLMhsuaGVsbXIucnVuLnYwLlByb2dyYW1TZWNyZXRIABJAChBzZWNyZXRzX2NvbXBsZXRlGAIgASgLMiQuaGVsbXIucnVuLnYwLlByb2dyYW1TZWNyZXRzQ29tcGxldGVIABI6Cg1zdGFydF9yZWxlYXNlGAMgASgLMiEuaGVsbXIucnVuLnYwLlByb2dyYW1TdGFydFJlbGVhc2VIABI9ChJlbnRyeXBvaW50X3JlbGVhc2UYBCABKAsyHy5oZWxtci5ydW4udjAuRW50cnlwb2ludFJlbGVhc2VIAEIJCgdjb21tYW5kIlUKFVByb2dyYW1Qcm9jZXNzU3RhcnRlZBIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SFAoMcnVuX2xlYXNlX2lkGAMgASgJIlMKE1Byb2dyYW1TdGFydFJlbGVhc2USDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCSKPAQoSRW50cnlwb2ludElkZW50aXR5EhMKC2RlY2xhcmVkX2lkGAEgASgJEiwKBHRhc2sYAiABKAsyHC5oZWxtci5ydW4udjAuVGFza0VudHJ5cG9pbnRIABIuCgVhY3RvchgDIAEoCzIdLmhlbG1yLnJ1bi52MC5BY3RvckVudHJ5cG9pbnRIAEIGCgRraW5kIhAKDlRhc2tFbnRyeXBvaW50IhEKD0FjdG9yRW50cnlwb2ludCJvCg9FbnRyeXBvaW50UmVhZHkSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEjQKCmVudHJ5cG9pbnQYAyABKAsyIC5oZWxtci5ydW4udjAuRW50cnlwb2ludElkZW50aXR5InEKEUVudHJ5cG9pbnRSZWxlYXNlEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRI0CgplbnRyeXBvaW50GAMgASgLMiAuaGVsbXIucnVuLnYwLkVudHJ5cG9pbnRJZGVudGl0eSLJDgoIUnVuRXZlbnQSFgoMc3Rkb3V0X2NodW5rGAEgASgMSAASFgoMc3RkZXJyX2NodW5rGAIgASgMSAASPAoScnVuX3dhaXRfcmVxdWVzdGVkGAUgASgLMh4uaGVsbXIucnVuLnYwLlJ1bldhaXRSZXF1ZXN0ZWRIABI5ChBtZXRhZGF0YV91cGRhdGVkGAcgASgLMh0uaGVsbXIucnVuLnYwLk1ldGFkYXRhVXBkYXRlZEgAEkQKFnRva2VuX2NyZWF0ZV9yZXF1ZXN0ZWQYCCABKAsyIi5oZWxtci5ydW4udjAuVG9rZW5DcmVhdGVSZXF1ZXN0ZWRIABI3Cg9yZXN1bWVfY29uc3VtZWQYBiABKAsyHC5oZWxtci5ydW4udjAuUmVzdW1lQ29uc3VtZWRIABJGChdwcm9ncmFtX3Byb2Nlc3Nfc3RhcnRlZBgLIAEoCzIjLmhlbG1yLnJ1bi52MC5Qcm9ncmFtUHJvY2Vzc1N0YXJ0ZWRIABI5ChBlbnRyeXBvaW50X3JlYWR5GAwgASgLMh0uaGVsbXIucnVuLnYwLkVudHJ5cG9pbnRSZWFkeUgAEjEKDHRhc2tfb3V0Y29tZRgNIAEoCzIZLmhlbG1yLnJ1bi52MC5UYXNrT3V0Y29tZUgAEjkKEHByb2dyYW1fcXVpZXNjZWQYDiABKAsyHS5oZWxtci5ydW4udjAuUHJvZ3JhbVF1aWVzY2VkSAASMwoNYWN0b3Jfb3V0Y29tZRgPIAEoCzIaLmhlbG1yLnJ1bi52MC5BY3Rvck91dGNvbWVIABJNChthY3Rvcl90dXJuX2NvbW1pdF9yZXF1ZXN0ZWQYECABKAsyJi5oZWxtci5ydW4udjAuQWN0b3JUdXJuQ29tbWl0UmVxdWVzdGVkSAASUQodYWN0b3Jfb3V0cHV0X2FwcGVuZF9yZXF1ZXN0ZWQYESABKAsyKC5oZWxtci5ydW4udjAuQWN0b3JPdXRwdXRBcHBlbmRSZXF1ZXN0ZWRIABJLChphY3Rvcl9pbnB1dF9zZW5kX3JlcXVlc3RlZBgSIAEoCzIlLmhlbG1yLnJ1bi52MC5BY3RvcklucHV0U2VuZFJlcXVlc3RlZEgAEkgKGHN0cnVjdHVyZWRfbG9nX3JlcXVlc3RlZBgTIAEoCzIkLmhlbG1yLnJ1bi52MC5TdHJ1Y3R1cmVkTG9nUmVxdWVzdGVkSAASTQobdGFza19jaGlsZF9pbnZva2VfcmVxdWVzdGVkGBQgASgLMiYuaGVsbXIucnVuLnYwLlRhc2tDaGlsZEludm9rZVJlcXVlc3RlZEgAEkIKFWFjdG9yX3N0YXJ0X3JlcXVlc3RlZBgVIAEoCzIhLmhlbG1yLnJ1bi52MC5BY3RvclN0YXJ0UmVxdWVzdGVkSAASRAoWYWN0b3Jfc3RhdHVzX3JlcXVlc3RlZBgWIAEoCzIiLmhlbG1yLnJ1bi52MC5BY3RvclN0YXR1c1JlcXVlc3RlZEgAEkIKFWFjdG9yX2Nsb3NlX3JlcXVlc3RlZBgXIAEoCzIhLmhlbG1yLnJ1bi52MC5BY3RvckNsb3NlUmVxdWVzdGVkSAASTQobYWN0b3Jfb3V0cHV0X3BhZ2VfcmVxdWVzdGVkGBggASgLMiYuaGVsbXIucnVuLnYwLkFjdG9yT3V0cHV0UGFnZVJlcXVlc3RlZEgAEkwKGndvcmtzcGFjZV9jcmVhdGVfcmVxdWVzdGVkGBkgASgLMiYuaGVsbXIucnVuLnYwLldvcmtzcGFjZUNyZWF0ZVJlcXVlc3RlZEgAElAKHHdvcmtzcGFjZV9yZXRyaWV2ZV9yZXF1ZXN0ZWQYGiABKAsyKC5oZWxtci5ydW4udjAuV29ya3NwYWNlUmV0cmlldmVSZXF1ZXN0ZWRIABJRCh13b3Jrc3BhY2VfZmlsZV9yZWFkX3JlcXVlc3RlZBgbIAEoCzIoLmhlbG1yLnJ1bi52MC5Xb3Jrc3BhY2VGaWxlUmVhZFJlcXVlc3RlZEgAElEKHXdvcmtzcGFjZV9maWxlX3N0YXRfcmVxdWVzdGVkGBwgASgLMiguaGVsbXIucnVuLnYwLldvcmtzcGFjZUZpbGVTdGF0UmVxdWVzdGVkSAASUQodd29ya3NwYWNlX2ZpbGVfbGlzdF9yZXF1ZXN0ZWQYHSABKAsyKC5oZWxtci5ydW4udjAuV29ya3NwYWNlRmlsZUxpc3RSZXF1ZXN0ZWRIABJIChh3b3Jrc3BhY2VfZXhlY19yZXF1ZXN0ZWQYHiABKAsyJC5oZWxtci5ydW4udjAuV29ya3NwYWNlRXhlY1JlcXVlc3RlZEgAEkwKGndvcmtzcGFjZV9kZWxldGVfcmVxdWVzdGVkGB8gASgLMiYuaGVsbXIucnVuLnYwLldvcmtzcGFjZURlbGV0ZVJlcXVlc3RlZEgAQgcKBWV2ZW50SgQIAxAESgQICRAKSgQIChALIrMBCgtUYXNrT3V0Y29tZRIwCglzdWNjZWVkZWQYASABKAsyGy5oZWxtci5ydW4udjAuVGFza1N1Y2NlZWRlZEgAEioKBmZhaWxlZBgCIAEoCzIYLmhlbG1yLnJ1bi52MC5UYXNrRmFpbGVkSAASOwoPcGF5bG9hZF9pbnZhbGlkGAMgASgLMiAuaGVsbXIucnVuLnYwLlRhc2tQYXlsb2FkSW52YWxpZEgAQgkKB291dGNvbWUiJAoNVGFza1N1Y2NlZWRlZBITCgtvdXRwdXRfanNvbhgBIAEoCSJJCgpUYXNrRmFpbGVkEg8KB21lc3NhZ2UYASABKAkSGQoMZGV0YWlsc19qc29uGAIgASgJSACIAQFCDwoNX2RldGFpbHNfanNvbiJRChJUYXNrUGF5bG9hZEludmFsaWQSDwoHbWVzc2FnZRgBIAEoCRIZCgxkZXRhaWxzX2pzb24YAiABKAlIAIgBAUIPCg1fZGV0YWlsc19qc29uIrsBCgxBY3Rvck91dGNvbWUSJAoXdGVybWluYWxfaW5wdXRfc2VxdWVuY2UYASABKANIAYgBARIxCglzdWNjZWVkZWQYAiABKAsyHC5oZWxtci5ydW4udjAuQWN0b3JTdWNjZWVkZWRIABIrCgZmYWlsZWQYAyABKAsyGS5oZWxtci5ydW4udjAuQWN0b3JGYWlsZWRIAEIJCgdvdXRjb21lQhoKGF90ZXJtaW5hbF9pbnB1dF9zZXF1ZW5jZSIQCg5BY3RvclN1Y2NlZWRlZCJKCgtBY3RvckZhaWxlZBIPCgdtZXNzYWdlGAEgASgJEhkKDGRldGFpbHNfanNvbhgCIAEoCUgAiAEBQg8KDV9kZXRhaWxzX2pzb24iUQoYQWN0b3JUdXJuQ29tbWl0UmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEh0KFXRhcmdldF9pbnB1dF9zZXF1ZW5jZRgCIAEoAyKhAgobQWN0b3JUdXJuQ29tbWl0UGF1c2VSZXF1ZXN0EhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEh0KFXRhcmdldF9pbnB1dF9zZXF1ZW5jZRgCIAEoAxIOCgZydW5faWQYAyABKAkSFgoOYXR0ZW1wdF9udW1iZXIYBCABKA0SFAoMcnVuX2xlYXNlX2lkGAUgASgJEhwKFGV4cGVjdGVkX3RyZWVfZGlnZXN0GAYgASgJEiAKGGV4cGVjdGVkX3RyZWVfc2l6ZV9ieXRlcxgHIAEoAxIhChlleHBlY3RlZF90cmVlX2VudHJ5X2NvdW50GAggASgNEioKImV4cGVjdGVkX2Jhc2Vfd29ya3NwYWNlX3ZlcnNpb25faWQYCSABKAki8wEKGUFjdG9yVHVybkNvbW1pdFBhdXNlUmVhZHkSFgoOY29ycmVsYXRpb25faWQYASABKAkSHQoVdGFyZ2V0X2lucHV0X3NlcXVlbmNlGAIgASgDEg4KBnJ1bl9pZBgDIAEoCRIWCg5hdHRlbXB0X251bWJlchgEIAEoDRIUCgxydW5fbGVhc2VfaWQYBSABKAkSEwoLdHJlZV9kaWdlc3QYBiABKAkSFwoPdHJlZV9zaXplX2J5dGVzGAcgASgDEhgKEHRyZWVfZW50cnlfY291bnQYCCABKA0SGQoRd29ya3NwYWNlX2NoYW5nZWQYCSABKAgijwEKGkFjdG9yT3V0cHV0QXBwZW5kUmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEhEKCWRhdGFfanNvbhgCIAEoCRIUCgxjb250ZW50X3R5cGUYAyABKAkSHAoPaWRlbXBvdGVuY3lfa2V5GAQgASgJSACIAQFCEgoQX2lkZW1wb3RlbmN5X2tleSK/AQoXQWN0b3JJbnB1dFNlbmRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSEwoLZGVjbGFyZWRfaWQYAiABKAkSEgoIYWN0b3JfaWQYAyABKAlIABITCglhY3Rvcl9rZXkYBCABKAlIABIRCglkYXRhX2pzb24YBSABKAkSHAoPaWRlbXBvdGVuY3lfa2V5GAYgASgJSAGIAQFCCQoHYWRkcmVzc0ISChBfaWRlbXBvdGVuY3lfa2V5Io4CChNBY3RvclN0YXJ0UmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEhMKC2RlY2xhcmVkX2lkGAIgASgJEhYKDHdvcmtzcGFjZV9pZBgDIAEoCUgAEhcKDXdvcmtzcGFjZV9rZXkYBCABKAlIABIQCgNrZXkYBSABKAlIAYgBARIXCgppbnB1dF9qc29uGAYgASgJSAKIAQESHAoPaWRlbXBvdGVuY3lfa2V5GAcgASgJSAOIAQESGAoQcnVuX29wdGlvbnNfanNvbhgIIAEoCUILCgl3b3Jrc3BhY2VCBgoEX2tleUINCgtfaW5wdXRfanNvbkISChBfaWRlbXBvdGVuY3lfa2V5IncKFEFjdG9yU3RhdHVzUmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEhMKC2RlY2xhcmVkX2lkGAIgASgJEhIKCGFjdG9yX2lkGAMgASgJSAASEwoJYWN0b3Jfa2V5GAQgASgJSABCCQoHYWRkcmVzcyKoAQoTQWN0b3JDbG9zZVJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRITCgtkZWNsYXJlZF9pZBgCIAEoCRISCghhY3Rvcl9pZBgDIAEoCUgAEhMKCWFjdG9yX2tleRgEIAEoCUgAEhwKD2lkZW1wb3RlbmN5X2tleRgFIAEoCUgBiAEBQgkKB2FkZHJlc3NCEgoQX2lkZW1wb3RlbmN5X2tleSKoAQoYQWN0b3JPdXRwdXRQYWdlUmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEhMKC2RlY2xhcmVkX2lkGAIgASgJEhIKCGFjdG9yX2lkGAMgASgJSAASEwoJYWN0b3Jfa2V5GAQgASgJSAASEgoFYWZ0ZXIYBSABKANIAYgBARINCgVsaW1pdBgGIAEoDUIJCgdhZGRyZXNzQggKBl9hZnRlciJOChBXb3Jrc3BhY2VBZGRyZXNzEhYKDHdvcmtzcGFjZV9pZBgBIAEoCUgAEhcKDXdvcmtzcGFjZV9rZXkYAiABKAlIAEIJCgdhZGRyZXNzIlQKGFdvcmtzcGFjZVNlY3JldFBsYWNlbWVudBIMCgRuYW1lGAEgASgJEg0KA2VudhgCIAEoCUgAEg4KBGZpbGUYAyABKAlIAEILCglwbGFjZW1lbnQizAEKGFdvcmtzcGFjZUNyZWF0ZVJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRITCgtkZWNsYXJlZF9pZBgCIAEoCRIQCgNrZXkYAyABKAlIAIgBARI3CgdzZWNyZXRzGAQgAygLMiYuaGVsbXIucnVuLnYwLldvcmtzcGFjZVNlY3JldFBsYWNlbWVudBIcCg9pZGVtcG90ZW5jeV9rZXkYBSABKAlIAYgBAUIGCgRfa2V5QhIKEF9pZGVtcG90ZW5jeV9rZXkiZwoaV29ya3NwYWNlUmV0cmlldmVSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSMQoJd29ya3NwYWNlGAIgASgLMh4uaGVsbXIucnVuLnYwLldvcmtzcGFjZUFkZHJlc3MidQoaV29ya3NwYWNlRmlsZVJlYWRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSMQoJd29ya3NwYWNlGAIgASgLMh4uaGVsbXIucnVuLnYwLldvcmtzcGFjZUFkZHJlc3MSDAoEcGF0aBgDIAEoCSJ1ChpXb3Jrc3BhY2VGaWxlU3RhdFJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIxCgl3b3Jrc3BhY2UYAiABKAsyHi5oZWxtci5ydW4udjAuV29ya3NwYWNlQWRkcmVzcxIMCgRwYXRoGAMgASgJIqQBChpXb3Jrc3BhY2VGaWxlTGlzdFJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIxCgl3b3Jrc3BhY2UYAiABKAsyHi5oZWxtci5ydW4udjAuV29ya3NwYWNlQWRkcmVzcxIMCgRwYXRoGAMgASgJEhMKBmN1cnNvchgEIAEoCUgAiAEBEg0KBWxpbWl0GAUgASgNQgkKB19jdXJzb3IixgIKFldvcmtzcGFjZUV4ZWNSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSMQoJd29ya3NwYWNlGAIgASgLMh4uaGVsbXIucnVuLnYwLldvcmtzcGFjZUFkZHJlc3MSDwoHY29tbWFuZBgDIAMoCRIQCgNjd2QYBCABKAlIAIgBARI6CgNlbnYYBSADKAsyLS5oZWxtci5ydW4udjAuV29ya3NwYWNlRXhlY1JlcXVlc3RlZC5FbnZFbnRyeRINCgVzdGRpbhgGIAEoDBIXCgp0aW1lb3V0X21zGAcgASgESAGIAQESFwoPaWRlbXBvdGVuY3lfa2V5GAggASgJGioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCBgoEX2N3ZEINCgtfdGltZW91dF9tcyKXAQoYV29ya3NwYWNlRGVsZXRlUmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEjEKCXdvcmtzcGFjZRgCIAEoCzIeLmhlbG1yLnJ1bi52MC5Xb3Jrc3BhY2VBZGRyZXNzEhwKD2lkZW1wb3RlbmN5X2tleRgDIAEoCUgAiAEBQhIKEF9pZGVtcG90ZW5jeV9rZXkiTwoPUHJvZ3JhbVF1aWVzY2VkEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRIUCgxydW5fbGVhc2VfaWQYAyABKAkiwwIKEFJ1bldhaXRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSDAoEa2luZBgCIAEoCRITCgtwYXJhbXNfanNvbhgDIAEoCRIaCg1tZXRhZGF0YV9qc29uGAQgASgJSACIAQESFwoKdGltZW91dF9tcxgFIAEoBEgBiAEBEgwKBHRhZ3MYBiADKAkSHAoPaWRsZV90aW1lb3V0X21zGAkgASgESAKIAQESLQogYWN0b3Jfc3BlY3VsYXRpdmVfaW5wdXRfc2VxdWVuY2UYCiABKANIA4gBAUIQCg5fbWV0YWRhdGFfanNvbkINCgtfdGltZW91dF9tc0ISChBfaWRsZV90aW1lb3V0X21zQiMKIV9hY3Rvcl9zcGVjdWxhdGl2ZV9pbnB1dF9zZXF1ZW5jZUoECAcQCEoECAgQCSLEAQoUVG9rZW5DcmVhdGVSZXF1ZXN0ZWQSFwoKdGltZW91dF9tcxgBIAEoBEgAiAEBEhYKDmNvcnJlbGF0aW9uX2lkGAIgASgJEhwKD2lkZW1wb3RlbmN5X2tleRgDIAEoCUgBiAEBEgwKBHRhZ3MYBCADKAkSGgoNbWV0YWRhdGFfanNvbhgFIAEoCUgCiAEBQg0KC190aW1lb3V0X21zQhIKEF9pZGVtcG90ZW5jeV9rZXlCEAoOX21ldGFkYXRhX2pzb24i0AIKGFRhc2tDaGlsZEludm9rZVJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRITCgtkZWNsYXJlZF9pZBgCIAEoCRIOCgZtZXRob2QYAyABKAkSFwoPcGF5bG9hZF9wcmVzZW50GAQgASgIEhkKDHBheWxvYWRfanNvbhgFIAEoCUgAiAEBEhYKDndvcmtzcGFjZV9qc29uGAYgASgJEhQKDG9wdGlvbnNfanNvbhgHIAEoCRIcCg9pZGVtcG90ZW5jeV9rZXkYCCABKAlIAYgBARItCiBhY3Rvcl9zcGVjdWxhdGl2ZV9pbnB1dF9zZXF1ZW5jZRgJIAEoA0gCiAEBQg8KDV9wYXlsb2FkX2pzb25CEgoQX2lkZW1wb3RlbmN5X2tleUIjCiFfYWN0b3Jfc3BlY3VsYXRpdmVfaW5wdXRfc2VxdWVuY2Ui8wEKFkNoZWNrcG9pbnRQYXVzZVJlcXVlc3QSEwoLcnVuX3dhaXRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCRIZChFjYXB0dXJlX3dvcmtzcGFjZRgDIAEoCBIOCgZydW5faWQYBCABKAkSFgoOYXR0ZW1wdF9udW1iZXIYBSABKA0SFAoMcnVuX2xlYXNlX2lkGAYgASgJEhgKEHJlc3VtZV9hdHRhY2hfaWQYByABKAkSIgoaY2hlY2twb2ludF9yZXF1ZXN0X3ZlcnNpb24YCCABKAMSFgoOY29ycmVsYXRpb25faWQYCSABKAki1gEKFENoZWNrcG9pbnRQYXVzZVJlYWR5EhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSDgoGcnVuX2lkGAMgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAQgASgNEhQKDHJ1bl9sZWFzZV9pZBgFIAEoCRIYChByZXN1bWVfYXR0YWNoX2lkGAYgASgJEiIKGmNoZWNrcG9pbnRfcmVxdWVzdF92ZXJzaW9uGAcgASgDEhYKDmNvcnJlbGF0aW9uX2lkGAggASgJIsoBCgxSZXN1bWVBdHRhY2gSFQoNY2hlY2twb2ludF9pZBgBIAEoCRITCgtydW5fd2FpdF9pZBgCIAEoCRIUCgxydW5fbGVhc2VfaWQYAyABKAkSDgoGcnVuX2lkGAQgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAUgASgNEhgKEHJlc3VtZV9hdHRhY2hfaWQYBiABKAkSHgoWcmVzdW1lX3JlcXVlc3RfdmVyc2lvbhgHIAEoAxIWCg5jb3JyZWxhdGlvbl9pZBgIIAEoCSL2AQoOUmVzdW1lRGVjaXNpb24SEwoLcnVuX3dhaXRfaWQYASABKAkSDAoEa2luZBgCIAEoCRIRCglkYXRhX2pzb24YAyABKAkSHAoUcmVxdWlyZV9jb25zdW1lZF9hY2sYBCABKAgSFQoNY2hlY2twb2ludF9pZBgFIAEoCRIYChByZXN1bWVfYXR0YWNoX2lkGAYgASgJEh4KFnJlc3VtZV9yZXF1ZXN0X3ZlcnNpb24YByABKAMSFAoMcnVuX2xlYXNlX2lkGAggASgJEhYKDmNvcnJlbGF0aW9uX2lkGAkgASgJEhEKCW5vX3Jlc3VsdBgKIAEoCCKfAQoJUmVzdW1lQWNrEhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSGAoQcmVzdW1lX2F0dGFjaF9pZBgDIAEoCRIeChZyZXN1bWVfcmVxdWVzdF92ZXJzaW9uGAQgASgDEhQKDHJ1bl9sZWFzZV9pZBgFIAEoCRIWCg5jb3JyZWxhdGlvbl9pZBgGIAEoCSKkAQoOUmVzdW1lQ29uc3VtZWQSEwoLcnVuX3dhaXRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCRIYChByZXN1bWVfYXR0YWNoX2lkGAMgASgJEh4KFnJlc3VtZV9yZXF1ZXN0X3ZlcnNpb24YBCABKAMSFAoMcnVuX2xlYXNlX2lkGAUgASgJEhYKDmNvcnJlbGF0aW9uX2lkGAYgASgJIsYBCg9NZXRhZGF0YVVwZGF0ZWQSEQoJb3BlcmF0aW9uGAEgASgJEhAKA2tleRgCIAEoCUgAiAEBEhcKCnZhbHVlX2pzb24YAyABKAlIAYgBARIXCgpwYXRjaF9qc29uGAQgASgJSAKIAQESEwoGYW1vdW50GAUgASgBSAOIAQESFgoOY29ycmVsYXRpb25faWQYBiABKAlCBgoEX2tleUINCgtfdmFsdWVfanNvbkINCgtfcGF0Y2hfanNvbkIJCgdfYW1vdW50ImkKFlN0cnVjdHVyZWRMb2dSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSDQoFbGV2ZWwYAiABKAkSDwoHbWVzc2FnZRgDIAEoCRIXCg9hdHRyaWJ1dGVzX2pzb24YBCABKAlCOlo4Z2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by9ydW4vdjA7cnVudjBiBnByb3RvMw");
 var ProgramStartSchema = /* @__PURE__ */ messageDesc(file_run, 0);
 var TaskStartSchema = /* @__PURE__ */ messageDesc(file_run, 1);
 var NoPayloadSchema = /* @__PURE__ */ messageDesc(file_run, 2);
@@ -3345,18 +3358,31 @@ var ActorTurnCommitPauseRequestSchema = /* @__PURE__ */ messageDesc(file_run, 31
 var ActorTurnCommitPauseReadySchema = /* @__PURE__ */ messageDesc(file_run, 32);
 var ActorOutputAppendRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 33);
 var ActorInputSendRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 34);
-var ProgramQuiescedSchema = /* @__PURE__ */ messageDesc(file_run, 35);
-var RunWaitRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 36);
-var TokenCreateRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 37);
-var TaskChildInvokeRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 38);
-var CheckpointPauseRequestSchema = /* @__PURE__ */ messageDesc(file_run, 39);
-var CheckpointPauseReadySchema = /* @__PURE__ */ messageDesc(file_run, 40);
-var ResumeAttachSchema = /* @__PURE__ */ messageDesc(file_run, 41);
-var ResumeDecisionSchema = /* @__PURE__ */ messageDesc(file_run, 42);
-var ResumeAckSchema = /* @__PURE__ */ messageDesc(file_run, 43);
-var ResumeConsumedSchema = /* @__PURE__ */ messageDesc(file_run, 44);
-var MetadataUpdatedSchema = /* @__PURE__ */ messageDesc(file_run, 45);
-var StructuredLogRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 46);
+var ActorStartRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 35);
+var ActorStatusRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 36);
+var ActorCloseRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 37);
+var ActorOutputPageRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 38);
+var WorkspaceAddressSchema = /* @__PURE__ */ messageDesc(file_run, 39);
+var WorkspaceSecretPlacementSchema = /* @__PURE__ */ messageDesc(file_run, 40);
+var WorkspaceCreateRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 41);
+var WorkspaceRetrieveRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 42);
+var WorkspaceFileReadRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 43);
+var WorkspaceFileStatRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 44);
+var WorkspaceFileListRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 45);
+var WorkspaceExecRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 46);
+var WorkspaceDeleteRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 47);
+var ProgramQuiescedSchema = /* @__PURE__ */ messageDesc(file_run, 48);
+var RunWaitRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 49);
+var TokenCreateRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 50);
+var TaskChildInvokeRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 51);
+var CheckpointPauseRequestSchema = /* @__PURE__ */ messageDesc(file_run, 52);
+var CheckpointPauseReadySchema = /* @__PURE__ */ messageDesc(file_run, 53);
+var ResumeAttachSchema = /* @__PURE__ */ messageDesc(file_run, 54);
+var ResumeDecisionSchema = /* @__PURE__ */ messageDesc(file_run, 55);
+var ResumeAckSchema = /* @__PURE__ */ messageDesc(file_run, 56);
+var ResumeConsumedSchema = /* @__PURE__ */ messageDesc(file_run, 57);
+var MetadataUpdatedSchema = /* @__PURE__ */ messageDesc(file_run, 58);
+var StructuredLogRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 59);
 // sdk/typescript/src/config.ts
 var configBrand = Symbol.for("helmr.sdk.v0.config");
 function inspectConfig(value) {
@@ -3579,6 +3605,13 @@ function installRuntimeOperations(operations) {
     }
   };
 }
+function currentRuntimeOperations() {
+  const operations = globalThis[runtimeOperationsSymbol];
+  if (operations === undefined) {
+    throw new Error("runtime operation is unavailable without the Helmr managed runtime");
+  }
+  return operations;
+}
 
 // sdk/typescript/src/internal/strings.ts
 var goSpaceEdges = /^[\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/gu;
@@ -3680,9 +3713,7 @@ function inspectImage(value) {
 // sdk/typescript/src/workspace.ts
 var workspaceDefinitionBrand = Symbol.for("helmr.sdk.v0.workspace");
 function workspaceRef(address) {
-  if ((("id" in address) && typeof address.id === "string") === (("key" in address) && typeof address.key === "string")) {
-    throw new Error("workspace ref requires exactly one of id or key");
-  }
+  validateWorkspaceAddress(address);
   return createWorkspaceRef(address);
 }
 var workspaces = Object.freeze({
@@ -3704,33 +3735,198 @@ function inspectWorkspaceDefinition(value) {
   return internal;
 }
 function createWorkspaceRef(address) {
+  const immutableAddress = address.id !== undefined ? Object.freeze({ id: address.id }) : Object.freeze({ key: address.key });
   const files = Object.freeze({
-    read(_path, _options) {
-      return runtimeUnavailable("workspace.files.read");
+    read(path, options) {
+      return currentRuntimeOperations().workspaceFileRead(immutableAddress, path, options?.signal);
     },
-    stat(_path, _options) {
-      return runtimeUnavailable("workspace.files.stat");
+    stat(path, options) {
+      return currentRuntimeOperations().workspaceFileStat(immutableAddress, path, options?.signal);
     },
-    list(_path, _query, _options) {
-      return runtimeUnavailable("workspace.files.list");
+    list(path, query, options) {
+      return currentRuntimeOperations().workspaceFileList(immutableAddress, path, query, options?.signal);
     }
   });
   const operations = {
     files,
-    retrieve(_options) {
-      return runtimeUnavailable("workspace.retrieve");
+    retrieve(options) {
+      return currentRuntimeOperations().workspaceRetrieve(immutableAddress, options?.signal);
     },
-    exec(_options) {
-      return runtimeUnavailable("workspace.exec");
+    exec(request, options) {
+      return currentRuntimeOperations().workspaceExec(immutableAddress, request, options?.signal);
     },
-    delete(_options) {
-      return runtimeUnavailable("workspace.delete");
+    delete(request, options) {
+      return currentRuntimeOperations().workspaceDelete(immutableAddress, request, options?.signal);
     }
   };
-  return Object.freeze({ ...address, ...operations });
+  return Object.freeze({ ...immutableAddress, ...operations });
 }
-function runtimeUnavailable(operation) {
-  throw new Error(`${operation} is unavailable without the Helmr managed runtime or authenticated client`);
+function validateWorkspaceAddress(address) {
+  if ((("id" in address) && typeof address.id === "string") === (("key" in address) && typeof address.key === "string")) {
+    throw new Error("Workspace ref requires exactly one of id or key");
+  }
+  if ("id" in address && address.id !== undefined) {
+    workspacePublicID(address.id, "Workspace ID");
+  } else if (address.key.length === 0) {
+    throw new Error("Workspace key is required");
+  }
+}
+function parseWorkspaceSnapshot(value) {
+  const input = workspaceObject(value, "Workspace response");
+  const key = input["key"];
+  if (key !== undefined && typeof key !== "string") {
+    throw new Error("Workspace response.key must be a string");
+  }
+  const declaredId = input["declared_id"];
+  if (typeof declaredId !== "string") {
+    throw new Error("Workspace response.declared_id must be a string");
+  }
+  validateTaskId(declaredId);
+  const status = input["status"];
+  if (status !== "available" && status !== "recovery-required" && status !== "deleting") {
+    throw new Error("Workspace response.status is invalid");
+  }
+  if (!Array.isArray(input["secrets"])) {
+    throw new Error("Workspace response.secrets must be an array");
+  }
+  return Object.freeze({
+    id: workspacePublicID(input["id"], "Workspace response.id"),
+    ...key === undefined ? {} : { key },
+    declaredId,
+    status,
+    secrets: Object.freeze(input["secrets"].map(parseWorkspaceSecret)),
+    lastActivityAt: workspaceDate(input["last_activity_at"], "last_activity_at"),
+    createdAt: workspaceDate(input["created_at"], "created_at"),
+    updatedAt: workspaceDate(input["updated_at"], "updated_at")
+  });
+}
+function parseWorkspaceSecret(value) {
+  const input = workspaceObject(value, "Workspace Secret");
+  if (typeof input["name"] !== "string") {
+    throw new Error("Workspace Secret.name must be a string");
+  }
+  const hasEnv = typeof input["env"] === "string";
+  const hasFile = typeof input["file"] === "string";
+  if (hasEnv === hasFile) {
+    throw new Error("Workspace Secret must contain exactly one placement");
+  }
+  return Object.freeze({
+    name: input["name"],
+    ...hasEnv ? { env: input["env"] } : { file: input["file"] }
+  });
+}
+function parseWorkspaceFileEntry(value) {
+  const input = workspaceObject(value, "Workspace file entry");
+  if (typeof input["path"] !== "string" || typeof input["mode"] !== "number" || !Number.isInteger(input["mode"])) {
+    throw new Error("Workspace file entry identity is invalid");
+  }
+  switch (input["kind"]) {
+    case "file":
+      if (typeof input["size_bytes"] !== "number" || !Number.isSafeInteger(input["size_bytes"])) {
+        throw new Error("Workspace file entry.size_bytes must be an integer");
+      }
+      return Object.freeze({
+        path: input["path"],
+        kind: "file",
+        mode: input["mode"],
+        sizeBytes: input["size_bytes"]
+      });
+    case "directory":
+      return Object.freeze({
+        path: input["path"],
+        kind: "directory",
+        mode: input["mode"]
+      });
+    case "symlink":
+      if (typeof input["link_target"] !== "string") {
+        throw new Error("Workspace symlink entry.link_target must be a string");
+      }
+      return Object.freeze({
+        path: input["path"],
+        kind: "symlink",
+        mode: input["mode"],
+        linkTarget: input["link_target"]
+      });
+    default:
+      throw new Error("Workspace file entry.kind is invalid");
+  }
+}
+function parseWorkspaceFileContent(value) {
+  const response = workspaceObject(value, "Workspace file response");
+  return decodeWorkspaceBase64(response["data_base64"], "Workspace file response.data_base64");
+}
+function parseWorkspaceFilePage(value) {
+  const response = workspaceObject(value, "Workspace file list response");
+  if (!Array.isArray(response["items"])) {
+    throw new Error("Workspace file list response.items must be an array");
+  }
+  const nextCursor = response["next_cursor"];
+  if (nextCursor !== undefined && typeof nextCursor !== "string") {
+    throw new Error("Workspace file list response.next_cursor must be a string");
+  }
+  return Object.freeze({
+    items: Object.freeze(response["items"].map(parseWorkspaceFileEntry)),
+    ...nextCursor === undefined ? {} : { nextCursor }
+  });
+}
+function parseWorkspaceExecResult(value) {
+  const response = workspaceObject(value, "Workspace exec response");
+  const exitCode = response["exit_code"];
+  if (!Number.isSafeInteger(exitCode)) {
+    throw new Error("Workspace exec response.exit_code must be an integer");
+  }
+  return Object.freeze({
+    exitCode,
+    stdout: decodeWorkspaceBase64(response["stdout_base64"], "Workspace exec response.stdout_base64"),
+    stderr: decodeWorkspaceBase64(response["stderr_base64"], "Workspace exec response.stderr_base64")
+  });
+}
+function parseWorkspaceDeleteReceipt(value) {
+  const response = workspaceObject(value, "Workspace delete response");
+  return Object.freeze({
+    workspaceId: workspacePublicID(response["workspace_id"], "Workspace delete response.workspace_id")
+  });
+}
+function workspaceObject(value, label) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  return value;
+}
+function workspacePublicID(value, label) {
+  if (typeof value !== "string" || !/^wsp_[a-z2-7]{26}$/.test(value)) {
+    throw new Error(`${label} must be a canonical Workspace public ID`);
+  }
+  return value;
+}
+function workspaceDate(value, field) {
+  if (typeof value !== "string") {
+    throw new Error(`Workspace response.${field} must be an RFC 3339 timestamp`);
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) {
+    throw new Error(`Workspace response.${field} must be an RFC 3339 timestamp`);
+  }
+  return date;
+}
+function decodeWorkspaceBase64(value, label) {
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be canonical padded base64`);
+  }
+  let binary;
+  try {
+    binary = atob(value);
+  } catch {
+    throw new Error(`${label} must be canonical padded base64`);
+  }
+  if (btoa(binary) !== value) {
+    throw new Error(`${label} must be canonical padded base64`);
+  }
+  const output = new Uint8Array(binary.length);
+  for (let index = 0;index < binary.length; index++) {
+    output[index] = binary.charCodeAt(index);
+  }
+  return output;
 }
 // sdk/typescript/src/internal/jsoncanon.ts
 var textDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -3826,7 +4022,7 @@ var PROGRAM_ENTRYPOINT = `import { runProgram } from "file:///opt/helmr/runtime/
 await runProgram(new URL("./declarations.json", import.meta.url));
 `;
 function analyze(options) {
-  if (options.architecture !== "aarch64" && options.architecture !== "x86_64") {
+  if (options.architecture !== "x86_64") {
     throw new Error(`unsupported architecture ${JSON.stringify(options.architecture)}`);
   }
   const located = discoverDefinitions(options.exports);
@@ -3863,7 +4059,7 @@ function normalizeWorkspaceResources(resources) {
   return Object.freeze({
     milliCpu: normalizeCpu(resources.cpu),
     memoryMiB: normalizeIecMiB(resources.memory, "memory"),
-    diskMiB: 32768
+    ephemeralDiskMiB: 32768
   });
 }
 function normalizeWorkspaceNetwork(network) {
@@ -5199,6 +5395,320 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
     });
     return await abortableRuntimeOperation(operation, options?.signal);
   };
+  const actorAddress = (address) => ("id" in address) ? { case: "actorId", value: address.id } : { case: "actorKey", value: address.key };
+  const performActorStart = async (declaredId, options) => {
+    if (options.signal?.aborted)
+      throw abortSignalReason(options.signal);
+    const correlationId = randomUUID();
+    const run = options.run;
+    const runOptions = {
+      ...run?.queue === undefined ? {} : { queue: run.queue },
+      ...run?.concurrencyKey === undefined ? {} : { concurrency_key: run.concurrencyKey },
+      ...run?.priority === undefined ? {} : { priority: run.priority },
+      ...run?.ttl === undefined ? {} : { ttl: run.ttl },
+      ...run?.retry === undefined ? {} : { retry: taskRetryRequest(run.retry) },
+      ...run?.metadata === undefined ? {} : { metadata: run.metadata },
+      ...run?.tags === undefined ? {} : { tags: [...run.tags] }
+    };
+    const inputPresent = Object.hasOwn(options, "input");
+    const operation = runOperations.trackDrainable(async () => {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "actorStartRequested",
+        value: create(exports_run_pb.ActorStartRequestedSchema, {
+          correlationId,
+          declaredId,
+          workspace: "id" in options.workspace ? { case: "workspaceId", value: options.workspace.id } : { case: "workspaceKey", value: options.workspace.key },
+          ...options.key === undefined ? {} : { key: options.key },
+          ...inputPresent ? {
+            inputJson: new TextDecoder().decode(canonicalizeJsonValue(options.input))
+          } : {},
+          ...options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey },
+          runOptionsJson: new TextDecoder().decode(canonicalizeJsonValue(runOptions))
+        })
+      });
+      requireRuntimeOperationDecision(decision, correlationId, "Actor start");
+      if (decision.kind === "failed") {
+        throw runtimeOperationFailure("Actor start", decision.dataJson);
+      }
+      return parseRuntimeProtocolValue("Actor start result", () => {
+        const value = parseObjectJSON(decision.dataJson, "Actor start result");
+        requireExactKeys(value, ["actor_id", "run_id"], "Actor start result");
+        const actorId = stringField(value, "actor_id", "Actor start result");
+        const runId = stringField(value, "run_id", "Actor start result");
+        if (!/^act_[a-z2-7]{26}$/.test(actorId) || !/^run_[a-z2-7]{26}$/.test(runId)) {
+          throw new Error("Actor start result has invalid public IDs");
+        }
+        return Object.freeze({ actorId, runId });
+      });
+    });
+    return abortableRuntimeOperation(operation, options.signal);
+  };
+  const performActorStatus = async (target) => {
+    const correlationId = randomUUID();
+    const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+      case: "actorStatusRequested",
+      value: create(exports_run_pb.ActorStatusRequestedSchema, {
+        correlationId,
+        declaredId: target.declaredId,
+        address: actorAddress(target.address)
+      })
+    });
+    requireRuntimeOperationDecision(decision, correlationId, "Actor status");
+    if (decision.kind === "failed") {
+      throw runtimeOperationFailure("Actor status", decision.dataJson);
+    }
+    return parseRuntimeProtocolValue("Actor status result", () => parseActorStatus(decision.dataJson));
+  };
+  const performActorClose = async (target, options) => {
+    if (options?.signal?.aborted)
+      throw abortSignalReason(options.signal);
+    const correlationId = randomUUID();
+    const operation = runOperations.trackDrainable(async () => {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "actorCloseRequested",
+        value: create(exports_run_pb.ActorCloseRequestedSchema, {
+          correlationId,
+          declaredId: target.declaredId,
+          address: actorAddress(target.address),
+          ...options?.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }
+        })
+      });
+      requireRuntimeOperationDecision(decision, correlationId, "Actor close");
+      if (decision.kind === "failed") {
+        throw runtimeOperationFailure("Actor close", decision.dataJson);
+      }
+      return parseRuntimeProtocolValue("Actor close result", () => {
+        const value = parseObjectJSON(decision.dataJson, "Actor close result");
+        requireExactKeys(value, ["accepted_at", "actor_id"], "Actor close result");
+        const actorId = stringField(value, "actor_id", "Actor close result");
+        const acceptedAt = new Date(stringField(value, "accepted_at", "Actor close result"));
+        if (!/^act_[a-z2-7]{26}$/.test(actorId) || Number.isNaN(acceptedAt.getTime())) {
+          throw new Error("Actor close result is invalid");
+        }
+        return Object.freeze({ actorId, acceptedAt });
+      });
+    });
+    return abortableRuntimeOperation(operation, options?.signal);
+  };
+  const performActorOutputPage = async (target, options) => {
+    if (options?.signal?.aborted)
+      throw abortSignalReason(options.signal);
+    const correlationId = randomUUID();
+    const operation = runOperations.trackDrainable(async () => {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "actorOutputPageRequested",
+        value: create(exports_run_pb.ActorOutputPageRequestedSchema, {
+          correlationId,
+          declaredId: target.declaredId,
+          address: actorAddress(target.address),
+          ...options?.after === undefined ? {} : { after: BigInt(options.after) },
+          limit: options?.limit ?? 50
+        })
+      });
+      requireRuntimeOperationDecision(decision, correlationId, "Actor output page");
+      if (decision.kind === "failed") {
+        throw runtimeOperationFailure("Actor output page", decision.dataJson);
+      }
+      return parseRuntimeProtocolValue("Actor output page result", () => {
+        const value = parseObjectJSON(decision.dataJson, "Actor output page result");
+        requireExactKeys(value, ["has_more", "next_after", "records"], "Actor output page result");
+        const records = value["records"];
+        if (!Array.isArray(records)) {
+          throw new Error("Actor output page result.records must be an array");
+        }
+        const hasMore = value["has_more"];
+        if (typeof hasMore !== "boolean") {
+          throw new Error("Actor output page result.has_more must be a boolean");
+        }
+        const nextAfter = safeJSONSequence(value["next_after"], "Actor output page result.next_after");
+        return Object.freeze({
+          records: Object.freeze(records.map((record) => parseActorOutputRecord(JSON.stringify(record)))),
+          nextAfter,
+          hasMore
+        });
+      });
+    });
+    return abortableRuntimeOperation(operation, options?.signal);
+  };
+  const workspaceAddress = (address) => ("id" in address) ? create(exports_run_pb.WorkspaceAddressSchema, {
+    address: { case: "workspaceId", value: address.id }
+  }) : create(exports_run_pb.WorkspaceAddressSchema, {
+    address: { case: "workspaceKey", value: address.key }
+  });
+  const performWorkspaceCreate = async (declaredId, options = {}) => {
+    if (options.signal?.aborted)
+      throw abortSignalReason(options.signal);
+    const correlationId = randomUUID();
+    const operation = runOperations.trackDrainable(async () => {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "workspaceCreateRequested",
+        value: create(exports_run_pb.WorkspaceCreateRequestedSchema, {
+          correlationId,
+          declaredId,
+          ...options.key === undefined ? {} : { key: options.key },
+          secrets: options.secrets?.map((secret) => create(exports_run_pb.WorkspaceSecretPlacementSchema, {
+            name: secret.name,
+            placement: "env" in secret ? { case: "env", value: secret.env } : { case: "file", value: secret.file }
+          })) ?? [],
+          ...options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }
+        })
+      });
+      requireRuntimeOperationDecision(decision, correlationId, "Workspace create");
+      if (decision.kind === "failed") {
+        throw runtimeOperationFailure("Workspace create", decision.dataJson);
+      }
+      return parseRuntimeProtocolValue("Workspace create result", () => {
+        const value = parseObjectJSON(decision.dataJson, "Workspace create result");
+        requireExactKeys(value, ["workspace_id"], "Workspace create result");
+        const workspaceId = stringField(value, "workspace_id", "Workspace create result");
+        if (!/^wsp_[a-z2-7]{26}$/.test(workspaceId)) {
+          throw new Error("Workspace create result.workspace_id is invalid");
+        }
+        return Object.freeze({ workspaceId });
+      });
+    });
+    return abortableRuntimeOperation(operation, options.signal);
+  };
+  const performWorkspaceRetrieve = async (address, signal) => {
+    if (signal?.aborted)
+      throw abortSignalReason(signal);
+    const correlationId = randomUUID();
+    const operation = runOperations.trackDrainable(async () => {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "workspaceRetrieveRequested",
+        value: create(exports_run_pb.WorkspaceRetrieveRequestedSchema, {
+          correlationId,
+          workspace: workspaceAddress(address)
+        })
+      });
+      requireRuntimeOperationDecision(decision, correlationId, "Workspace retrieve");
+      if (decision.kind === "failed") {
+        throw runtimeOperationFailure("Workspace retrieve", decision.dataJson);
+      }
+      return parseRuntimeProtocolValue("Workspace retrieve result", () => parseWorkspaceSnapshot(JSON.parse(decision.dataJson)));
+    });
+    return abortableRuntimeOperation(operation, signal);
+  };
+  const performWorkspaceFileRead = async (address, filePath, signal) => {
+    if (signal?.aborted)
+      throw abortSignalReason(signal);
+    const correlationId = randomUUID();
+    const operation = runOperations.trackDrainable(async () => {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "workspaceFileReadRequested",
+        value: create(exports_run_pb.WorkspaceFileReadRequestedSchema, {
+          correlationId,
+          workspace: workspaceAddress(address),
+          path: filePath
+        })
+      });
+      requireRuntimeOperationDecision(decision, correlationId, "Workspace file read");
+      if (decision.kind === "failed") {
+        throw runtimeOperationFailure("Workspace file read", decision.dataJson);
+      }
+      return parseRuntimeProtocolValue("Workspace file read result", () => parseWorkspaceFileContent(JSON.parse(decision.dataJson)));
+    });
+    return abortableRuntimeOperation(operation, signal);
+  };
+  const performWorkspaceFileStat = async (address, filePath, signal) => {
+    if (signal?.aborted)
+      throw abortSignalReason(signal);
+    const correlationId = randomUUID();
+    const operation = runOperations.trackDrainable(async () => {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "workspaceFileStatRequested",
+        value: create(exports_run_pb.WorkspaceFileStatRequestedSchema, {
+          correlationId,
+          workspace: workspaceAddress(address),
+          path: filePath
+        })
+      });
+      requireRuntimeOperationDecision(decision, correlationId, "Workspace file stat");
+      if (decision.kind === "failed") {
+        throw runtimeOperationFailure("Workspace file stat", decision.dataJson);
+      }
+      return parseRuntimeProtocolValue("Workspace file stat result", () => parseWorkspaceFileEntry(JSON.parse(decision.dataJson)));
+    });
+    return abortableRuntimeOperation(operation, signal);
+  };
+  const performWorkspaceFileList = async (address, filePath, query = {}, signal) => {
+    if (signal?.aborted)
+      throw abortSignalReason(signal);
+    const limit = query.limit ?? 50;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error("Workspace file list limit must be an integer between 1 and 100");
+    }
+    const correlationId = randomUUID();
+    const operation = runOperations.trackDrainable(async () => {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "workspaceFileListRequested",
+        value: create(exports_run_pb.WorkspaceFileListRequestedSchema, {
+          correlationId,
+          workspace: workspaceAddress(address),
+          path: filePath,
+          ...query.cursor === undefined ? {} : { cursor: query.cursor },
+          limit
+        })
+      });
+      requireRuntimeOperationDecision(decision, correlationId, "Workspace file list");
+      if (decision.kind === "failed") {
+        throw runtimeOperationFailure("Workspace file list", decision.dataJson);
+      }
+      return parseRuntimeProtocolValue("Workspace file list result", () => parseWorkspaceFilePage(JSON.parse(decision.dataJson)));
+    });
+    return abortableRuntimeOperation(operation, signal);
+  };
+  const performWorkspaceExec = async (address, request, signal) => {
+    if (signal?.aborted)
+      throw abortSignalReason(signal);
+    const timeoutMs = request.timeout === undefined ? undefined : durationMilliseconds(request.timeout, "Workspace exec timeout");
+    if (timeoutMs !== undefined && timeoutMs > 900000) {
+      throw new Error("Workspace exec timeout must not exceed 15m");
+    }
+    const correlationId = randomUUID();
+    const operation = runOperations.trackDrainable(async () => {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "workspaceExecRequested",
+        value: create(exports_run_pb.WorkspaceExecRequestedSchema, {
+          correlationId,
+          workspace: workspaceAddress(address),
+          command: [...request.command],
+          ...request.cwd === undefined ? {} : { cwd: request.cwd },
+          env: request.env === undefined ? {} : { ...request.env },
+          stdin: request.stdin === undefined ? new Uint8Array : new Uint8Array(request.stdin),
+          ...timeoutMs === undefined ? {} : { timeoutMs: BigInt(timeoutMs) },
+          idempotencyKey: request.idempotencyKey
+        })
+      });
+      requireRuntimeOperationDecision(decision, correlationId, "Workspace exec");
+      if (decision.kind === "failed") {
+        throw runtimeOperationFailure("Workspace exec", decision.dataJson);
+      }
+      return parseRuntimeProtocolValue("Workspace exec result", () => parseWorkspaceExecResult(JSON.parse(decision.dataJson)));
+    });
+    return abortableRuntimeOperation(operation, signal);
+  };
+  const performWorkspaceDelete = async (address, request = {}, signal) => {
+    if (signal?.aborted)
+      throw abortSignalReason(signal);
+    const correlationId = randomUUID();
+    const operation = runOperations.trackDrainable(async () => {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "workspaceDeleteRequested",
+        value: create(exports_run_pb.WorkspaceDeleteRequestedSchema, {
+          correlationId,
+          workspace: workspaceAddress(address),
+          ...request.idempotencyKey === undefined ? {} : { idempotencyKey: request.idempotencyKey }
+        })
+      });
+      requireRuntimeOperationDecision(decision, correlationId, "Workspace delete");
+      if (decision.kind === "failed") {
+        throw runtimeOperationFailure("Workspace delete", decision.dataJson);
+      }
+      return parseRuntimeProtocolValue("Workspace delete result", () => parseWorkspaceDeleteReceipt(JSON.parse(decision.dataJson)));
+    });
+    return abortableRuntimeOperation(operation, signal);
+  };
   const performTokenCreate = async (options) => {
     const correlationId = randomUUID();
     const timeoutMs = options.timeout === undefined ? undefined : durationMilliseconds(options.timeout, "Token timeout");
@@ -5342,6 +5852,39 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
     },
     actorInputSend(target, input, options) {
       return performActorInputSend(target, input, options);
+    },
+    actorStart(declaredId, options) {
+      return performActorStart(declaredId, options);
+    },
+    actorStatus(target) {
+      return runOperations.trackDrainable(() => performActorStatus(target));
+    },
+    actorClose(target, options) {
+      return performActorClose(target, options);
+    },
+    actorOutputPage(target, options) {
+      return performActorOutputPage(target, options);
+    },
+    workspaceCreate(declaredId, options) {
+      return performWorkspaceCreate(declaredId, options);
+    },
+    workspaceRetrieve(address, signal) {
+      return performWorkspaceRetrieve(address, signal);
+    },
+    workspaceFileRead(address, path2, signal) {
+      return performWorkspaceFileRead(address, path2, signal);
+    },
+    workspaceFileStat(address, path2, signal) {
+      return performWorkspaceFileStat(address, path2, signal);
+    },
+    workspaceFileList(address, path2, query, signal) {
+      return performWorkspaceFileList(address, path2, query, signal);
+    },
+    workspaceExec(address, request, signal) {
+      return performWorkspaceExec(address, request, signal);
+    },
+    workspaceDelete(address, request, signal) {
+      return performWorkspaceDelete(address, request, signal);
     },
     tokenCreate(options) {
       return performTokenCreate(options);
@@ -5858,6 +6401,53 @@ function parseActorOutputRecord(dataJson) {
       attemptNumber: safeJSONSequence(provenance["attempt_number"], "Actor output attempt number"),
       deploymentId: stringField(provenance, "deployment_id", "Actor output provenance")
     })
+  });
+}
+function parseActorStatus(dataJson) {
+  const value = parseObjectJSON(dataJson, "Actor status result");
+  const optional = ["current_run_id", "failure", "key"];
+  const required = ["created_at", "id", "status", "updated_at"];
+  const actual = Object.keys(value).sort();
+  const allowed = new Set([...required, ...optional]);
+  if (required.some((key) => !Object.hasOwn(value, key)) || actual.some((key) => !allowed.has(key))) {
+    throw new Error("Actor status result has unknown or missing fields");
+  }
+  const id = stringField(value, "id", "Actor status result");
+  if (!/^act_[a-z2-7]{26}$/.test(id)) {
+    throw new Error("Actor status result.id is invalid");
+  }
+  const status = stringField(value, "status", "Actor status result");
+  if (status !== "open" && status !== "closed" && status !== "cancelled" && status !== "failed") {
+    throw new Error("Actor status result.status is invalid");
+  }
+  const createdAt = new Date(stringField(value, "created_at", "Actor status result"));
+  const updatedAt = new Date(stringField(value, "updated_at", "Actor status result"));
+  if (Number.isNaN(createdAt.getTime()) || Number.isNaN(updatedAt.getTime())) {
+    throw new Error("Actor status result timestamps are invalid");
+  }
+  let failure;
+  if (Object.hasOwn(value, "failure")) {
+    const raw = objectField(value, "failure", "Actor status result");
+    requireExactKeys(raw, ["code", "run_id"], "Actor status failure");
+    const code = stringField(raw, "code", "Actor status failure");
+    if (code !== "no-progress" && code !== "run-failed" && code !== "run-expired" && code !== "platform-failure") {
+      throw new Error("Actor status failure.code is invalid");
+    }
+    failure = Object.freeze({
+      code,
+      runId: stringField(raw, "run_id", "Actor status failure")
+    });
+  }
+  return Object.freeze({
+    id,
+    status,
+    createdAt,
+    updatedAt,
+    ...Object.hasOwn(value, "key") ? { key: stringField(value, "key", "Actor status result") } : {},
+    ...Object.hasOwn(value, "current_run_id") ? {
+      currentRunId: stringField(value, "current_run_id", "Actor status result")
+    } : {},
+    ...failure === undefined ? {} : { failure }
   });
 }
 function parseObjectJSON(value, label) {

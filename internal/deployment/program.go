@@ -29,7 +29,6 @@ const (
 	maxProgramFileSizeBytes         int64 = 16777216
 	maxProgramReceiptSizeBytes            = 16 << 10
 	maxProgramVerificationSizeBytes       = 17891328
-	ArchitectureAArch64                   = RuntimeArchitecture("aarch64")
 	ArchitectureX8664                     = RuntimeArchitecture("x86_64")
 	DeclarationKindTask                   = DeclarationKind("task")
 	DeclarationKindActor                  = DeclarationKind("actor")
@@ -598,7 +597,7 @@ func CanonicalManifestAndDigest(raw []byte) ([]byte, [sha256.Size]byte, error) {
 }
 
 func validArchitecture(architecture RuntimeArchitecture) bool {
-	return architecture == ArchitectureAArch64 || architecture == ArchitectureX8664
+	return architecture == ArchitectureX8664
 }
 
 func hasNodeModulesComponent(value string) bool {

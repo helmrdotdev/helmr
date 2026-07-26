@@ -557,14 +557,10 @@ func resolveRuntimeDependency(
 }
 
 func runtimeELFTarget(architecture RuntimeArchitecture) (elf.Machine, string, error) {
-	switch architecture {
-	case ArchitectureX8664:
+	if architecture == ArchitectureX8664 {
 		return elf.EM_X86_64, runtimeMountPath + "/lib/ld-linux-x86-64.so.2", nil
-	case ArchitectureAArch64:
-		return elf.EM_AARCH64, runtimeMountPath + "/lib/ld-linux-aarch64.so.1", nil
-	default:
-		return elf.EM_NONE, "", fmt.Errorf("runtime architecture %q is unsupported", architecture)
 	}
+	return elf.EM_NONE, "", fmt.Errorf("runtime architecture %q is unsupported", architecture)
 }
 
 func runtimeELFInterpreter(file *elf.File) (string, bool, error) {

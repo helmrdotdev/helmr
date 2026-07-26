@@ -70,7 +70,7 @@ WITH selected_definition AS (
            created_workspace.environment_id,
            created_workspace.id,
            'system'::workspace_version_kind,
-           'committed'::workspace_version_state,
+           'committed',
            'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
            0,
            0,

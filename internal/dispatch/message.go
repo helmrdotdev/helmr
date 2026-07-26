@@ -25,8 +25,7 @@ type BuildResourceVector struct {
 }
 
 const (
-	buildArchitectureAArch64 = "aarch64"
-	buildArchitectureX8664   = "x86_64"
+	buildArchitectureX8664 = "x86_64"
 )
 
 type Message struct {
@@ -98,7 +97,7 @@ func (m Message) Validate() error {
 	if m.WorkKind == WorkKindBuild {
 		envelope := compute.BuildEnvelopeResources()
 		if !validBuildArchitecture(m.BuildArchitecture) {
-			problems = append(problems, errors.New("build architecture must be aarch64 or x86_64"))
+			problems = append(problems, errors.New("build architecture must be x86_64"))
 		}
 		if m.LeaseSequence < 1 || m.LeaseSequence > 3 ||
 			m.BuildResources.CPUMillis != envelope.MilliCPU ||
@@ -113,5 +112,5 @@ func (m Message) Validate() error {
 }
 
 func validBuildArchitecture(architecture string) bool {
-	return architecture == buildArchitectureAArch64 || architecture == buildArchitectureX8664
+	return architecture == buildArchitectureX8664
 }

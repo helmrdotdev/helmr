@@ -11,6 +11,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
@@ -226,11 +227,11 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 			},
 		},
 	}}
-	if _, err := validatePreparedRuntimeRestore(target); err != nil {
+	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err != nil {
 		t.Fatal(err)
 	}
 	target.Source.Restore.Artifacts[2].Role = "vm_state"
-	if _, err := validatePreparedRuntimeRestore(target); err == nil {
+	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err == nil {
 		t.Fatal("mismatched Checkpoint Artifact membership was accepted")
 	}
 }

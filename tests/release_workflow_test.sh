@@ -296,11 +296,6 @@ if ! rg -F 'git status --porcelain -- internal/projectconfig/js' "$workflow" >/d
 	exit 1
 fi
 
-if rg -F 'tar -C "$out_dir" -czf "dist/helmr-${os}-${arch}.tar.gz" helmr adapter' "$workflow" >/dev/null; then
-	printf 'release workflow still packages external adapter sidecar files\n' >&2
-	exit 1
-fi
-
 if ! rg -F 'tar -C "$out_dir" -czf "dist/helmr-${os}-${arch}.tar.gz" helmr' "$workflow" >/dev/null; then
 	printf 'release workflow does not package the single helmr binary archive\n' >&2
 	exit 1

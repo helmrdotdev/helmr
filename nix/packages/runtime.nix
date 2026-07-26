@@ -15,21 +15,13 @@
 }:
 
 let
-  target =
-    {
-      x86_64-linux = {
-        architecture = "x86_64";
-        loader = "ld-linux-x86-64.so.2";
-      };
-      aarch64-linux = {
-        architecture = "aarch64";
-        loader = "ld-linux-aarch64.so.1";
-      };
-    }
-    .${stdenv.hostPlatform.system}
-      or (throw "managed runtime is unsupported on ${stdenv.hostPlatform.system}");
+  target = {
+    architecture = "x86_64";
+    loader = "ld-linux-x86-64.so.2";
+  };
 
 in
+assert lib.assertMsg stdenv.hostPlatform.isx86_64 "managed runtime supports only x86_64-linux";
 assert lib.assertMsg (
   nodejs_24.version == "24.16.0"
 ) "managed runtime requires nodejs_24 24.16.0, got ${nodejs_24.version}";
@@ -260,9 +252,6 @@ stdenvNoCC.mkDerivation {
 
   meta = {
     description = "Helmr managed Node runtime SquashFS";
-    platforms = [
-      "x86_64-linux"
-      "aarch64-linux"
-    ];
+    platforms = [ "x86_64-linux" ];
   };
 }

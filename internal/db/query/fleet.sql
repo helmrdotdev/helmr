@@ -75,13 +75,15 @@ SELECT last_scale_out_at, last_scale_in_at
 
 -- name: RecordFleetScaleOut :one
 UPDATE worker_groups
-   SET last_scale_out_at = GREATEST(last_scale_out_at, sqlc.arg(action_at))
+   SET last_scale_out_at = GREATEST(last_scale_out_at, sqlc.arg(action_at)),
+       updated_at = now()
  WHERE id = sqlc.arg(worker_group_id)
 RETURNING id;
 
 -- name: RecordFleetScaleIn :one
 UPDATE worker_groups
-   SET last_scale_in_at = GREATEST(last_scale_in_at, sqlc.arg(action_at))
+   SET last_scale_in_at = GREATEST(last_scale_in_at, sqlc.arg(action_at)),
+       updated_at = now()
  WHERE id = sqlc.arg(worker_group_id)
 RETURNING id;
 

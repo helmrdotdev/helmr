@@ -369,6 +369,10 @@ func retryRunLeaseRequest(
 }
 
 func permanentRunLeaseRequestError(err error) bool {
+	if errors.Is(err, errRunLeaseAuthorityLapsed) ||
+		errors.Is(err, errRunSourceOperationUnavailable) {
+		return true
+	}
 	for _, status := range []int{
 		http.StatusBadRequest,
 		http.StatusUnauthorized,

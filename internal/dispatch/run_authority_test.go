@@ -9,9 +9,9 @@ import (
 
 func TestNormalizeRunResourcesCopiesWorkspaceAuthority(t *testing.T) {
 	resources, err := normalizeRunResources(deployment.ResourcesManifest{
-		MilliCPU:  1500,
-		MemoryMiB: 2048,
-		DiskMiB:   4096,
+		MilliCPU:         1500,
+		MemoryMiB:        2048,
+		EphemeralDiskMiB: 4096,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -27,11 +27,11 @@ func TestNormalizeRunResourcesCopiesWorkspaceAuthority(t *testing.T) {
 
 func TestNormalizeRunResourcesRejectsInvalidWorkspaceAuthority(t *testing.T) {
 	for _, resources := range []deployment.ResourcesManifest{
-		{MilliCPU: 0, MemoryMiB: 1, DiskMiB: 1},
-		{MilliCPU: 1, MemoryMiB: 0, DiskMiB: 1},
-		{MilliCPU: 1, MemoryMiB: 1, DiskMiB: 0},
-		{MilliCPU: 1, MemoryMiB: math.MaxInt64, DiskMiB: 1},
-		{MilliCPU: 1, MemoryMiB: 1, DiskMiB: math.MaxInt64},
+		{MilliCPU: 0, MemoryMiB: 1, EphemeralDiskMiB: 1},
+		{MilliCPU: 1, MemoryMiB: 0, EphemeralDiskMiB: 1},
+		{MilliCPU: 1, MemoryMiB: 1, EphemeralDiskMiB: 0},
+		{MilliCPU: 1, MemoryMiB: math.MaxInt64, EphemeralDiskMiB: 1},
+		{MilliCPU: 1, MemoryMiB: 1, EphemeralDiskMiB: math.MaxInt64},
 	} {
 		if normalized, err := normalizeRunResources(resources); err == nil {
 			t.Fatalf("normalizeRunResources(%+v) = %+v, want error", resources, normalized)

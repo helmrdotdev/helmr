@@ -646,9 +646,7 @@ function clientRequestError(response: Response, value: unknown): Error {
   const retryable = typeof body["retryable"] === "boolean"
     ? body["retryable"]
     : response.status === 429 || response.status >= 500
-  const requestId = typeof body["request_id"] === "string" && body["request_id"] !== ""
-    ? body["request_id"]
-    : typeof body["requestId"] === "string" && body["requestId"] !== ""
+  const requestId = typeof body["requestId"] === "string" && body["requestId"] !== ""
     ? body["requestId"]
     : undefined
   const error = new Error(message) as Error & {

@@ -21,21 +21,14 @@ func (task *guestRunLeaseTask) handleActorOutputAppend(
 	if err != nil {
 		return err
 	}
-	task.mu.Lock()
-	defer task.mu.Unlock()
-	if task.finished || task.finalizingKind != "" {
-		return errors.New("run lease task cannot append actor output")
-	}
-	request.Lease = task.lease
 	var response api.WorkerAppendActorOutputResponse
-	requestCtx, cancel, err := runLeaseLogContext(ctx, task.lease.ExpiresAt)
-	if err != nil {
-		return err
-	}
-	defer cancel()
-	if err := retryRunLeaseRequest(requestCtx, func(retryCtx context.Context) error {
+	if err := task.callRunSourceRuntime(ctx, func(
+		callCtx context.Context,
+		lease api.WorkerRunLeaseReceipt,
+	) error {
+		request.Lease = lease
 		var requestErr error
-		response, requestErr = task.control.AppendActorOutput(retryCtx, request)
+		response, requestErr = task.control.AppendActorOutput(callCtx, request)
 		return requestErr
 	}); err != nil {
 		return fmt.Errorf("append Actor output: %w", err)

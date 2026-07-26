@@ -190,23 +190,23 @@ type AuthenticateWorkerInstanceCredentialParams struct {
 }
 
 type AuthenticateWorkerInstanceCredentialRow struct {
-	ID                    pgtype.UUID         `json:"id"`
-	WorkerGroupID         string              `json:"worker_group_id"`
-	WorkerInstanceID      pgtype.UUID         `json:"worker_instance_id"`
-	KeyPrefix             string              `json:"key_prefix"`
-	ClaimVersion          int64               `json:"claim_version"`
-	ProtocolVersion       string              `json:"protocol_version"`
-	GroupClaimVersion     int64               `json:"group_claim_version"`
-	CredentialAllowsRun   bool                `json:"credential_allows_run"`
-	CredentialAllowsBuild bool                `json:"credential_allows_build"`
-	GroupAllowsRun        bool                `json:"group_allows_run"`
-	GroupAllowsBuild      bool                `json:"group_allows_build"`
-	EffectiveAllowsRun    pgtype.Bool         `json:"effective_allows_run"`
-	EffectiveAllowsBuild  pgtype.Bool         `json:"effective_allows_build"`
-	CurrentEpoch          pgtype.Int8         `json:"current_epoch"`
-	CurrentServiceID      pgtype.UUID         `json:"current_service_id"`
-	State                 WorkerInstanceState `json:"state"`
-	ResourceID            string              `json:"resource_id"`
+	ID                    pgtype.UUID `json:"id"`
+	WorkerGroupID         string      `json:"worker_group_id"`
+	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
+	KeyPrefix             string      `json:"key_prefix"`
+	ClaimVersion          int64       `json:"claim_version"`
+	ProtocolVersion       string      `json:"protocol_version"`
+	GroupClaimVersion     int64       `json:"group_claim_version"`
+	CredentialAllowsRun   bool        `json:"credential_allows_run"`
+	CredentialAllowsBuild bool        `json:"credential_allows_build"`
+	GroupAllowsRun        bool        `json:"group_allows_run"`
+	GroupAllowsBuild      bool        `json:"group_allows_build"`
+	EffectiveAllowsRun    pgtype.Bool `json:"effective_allows_run"`
+	EffectiveAllowsBuild  pgtype.Bool `json:"effective_allows_build"`
+	CurrentEpoch          pgtype.Int8 `json:"current_epoch"`
+	CurrentServiceID      pgtype.UUID `json:"current_service_id"`
+	State                 string      `json:"state"`
+	ResourceID            string      `json:"resource_id"`
 }
 
 func (q *Queries) AuthenticateWorkerInstanceCredential(ctx context.Context, arg AuthenticateWorkerInstanceCredentialParams) (AuthenticateWorkerInstanceCredentialRow, error) {
@@ -282,25 +282,25 @@ type AuthorizeRecoveringWorkerInstanceCredentialParams struct {
 }
 
 type AuthorizeRecoveringWorkerInstanceCredentialRow struct {
-	ID               pgtype.UUID         `json:"id"`
-	WorkerGroupID    string              `json:"worker_group_id"`
-	WorkerInstanceID pgtype.UUID         `json:"worker_instance_id"`
-	KeyPrefix        string              `json:"key_prefix"`
-	ClaimVersion     int64               `json:"claim_version"`
-	AllowsRun        bool                `json:"allows_run"`
-	AllowsBuild      bool                `json:"allows_build"`
-	ProtocolVersion  string              `json:"protocol_version"`
-	ExpiresAt        pgtype.Timestamptz  `json:"expires_at"`
-	SecretHash       []byte              `json:"secret_hash"`
-	CreatedAt        pgtype.Timestamptz  `json:"created_at"`
-	LastUsedAt       pgtype.Timestamptz  `json:"last_used_at"`
-	RevokedAt        pgtype.Timestamptz  `json:"revoked_at"`
-	ResourceID       string              `json:"resource_id"`
-	CurrentEpoch     pgtype.Int8         `json:"current_epoch"`
-	WorkerState      WorkerInstanceState `json:"worker_state"`
-	SupportsRun      bool                `json:"supports_run"`
-	SupportsBuild    bool                `json:"supports_build"`
-	EpochStartedAt   pgtype.Timestamptz  `json:"epoch_started_at"`
+	ID               pgtype.UUID        `json:"id"`
+	WorkerGroupID    string             `json:"worker_group_id"`
+	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
+	KeyPrefix        string             `json:"key_prefix"`
+	ClaimVersion     int64              `json:"claim_version"`
+	AllowsRun        bool               `json:"allows_run"`
+	AllowsBuild      bool               `json:"allows_build"`
+	ProtocolVersion  string             `json:"protocol_version"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	SecretHash       []byte             `json:"secret_hash"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt       pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
+	ResourceID       string             `json:"resource_id"`
+	CurrentEpoch     pgtype.Int8        `json:"current_epoch"`
+	WorkerState      string             `json:"worker_state"`
+	SupportsRun      bool               `json:"supports_run"`
+	SupportsBuild    bool               `json:"supports_build"`
+	EpochStartedAt   pgtype.Timestamptz `json:"epoch_started_at"`
 }
 
 func (q *Queries) AuthorizeRecoveringWorkerInstanceCredential(ctx context.Context, arg AuthorizeRecoveringWorkerInstanceCredentialParams) (AuthorizeRecoveringWorkerInstanceCredentialRow, error) {
@@ -369,25 +369,25 @@ type AuthorizeRegisteringWorkerInstanceCredentialParams struct {
 }
 
 type AuthorizeRegisteringWorkerInstanceCredentialRow struct {
-	ID               pgtype.UUID         `json:"id"`
-	WorkerGroupID    string              `json:"worker_group_id"`
-	WorkerInstanceID pgtype.UUID         `json:"worker_instance_id"`
-	KeyPrefix        string              `json:"key_prefix"`
-	ClaimVersion     int64               `json:"claim_version"`
-	AllowsRun        bool                `json:"allows_run"`
-	AllowsBuild      bool                `json:"allows_build"`
-	ProtocolVersion  string              `json:"protocol_version"`
-	ExpiresAt        pgtype.Timestamptz  `json:"expires_at"`
-	SecretHash       []byte              `json:"secret_hash"`
-	CreatedAt        pgtype.Timestamptz  `json:"created_at"`
-	LastUsedAt       pgtype.Timestamptz  `json:"last_used_at"`
-	RevokedAt        pgtype.Timestamptz  `json:"revoked_at"`
-	ResourceID       string              `json:"resource_id"`
-	CurrentEpoch     pgtype.Int8         `json:"current_epoch"`
-	WorkerState      WorkerInstanceState `json:"worker_state"`
-	SupportsRun      bool                `json:"supports_run"`
-	SupportsBuild    bool                `json:"supports_build"`
-	EpochStartedAt   pgtype.Timestamptz  `json:"epoch_started_at"`
+	ID               pgtype.UUID        `json:"id"`
+	WorkerGroupID    string             `json:"worker_group_id"`
+	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
+	KeyPrefix        string             `json:"key_prefix"`
+	ClaimVersion     int64              `json:"claim_version"`
+	AllowsRun        bool               `json:"allows_run"`
+	AllowsBuild      bool               `json:"allows_build"`
+	ProtocolVersion  string             `json:"protocol_version"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	SecretHash       []byte             `json:"secret_hash"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt       pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
+	ResourceID       string             `json:"resource_id"`
+	CurrentEpoch     pgtype.Int8        `json:"current_epoch"`
+	WorkerState      string             `json:"worker_state"`
+	SupportsRun      bool               `json:"supports_run"`
+	SupportsBuild    bool               `json:"supports_build"`
+	EpochStartedAt   pgtype.Timestamptz `json:"epoch_started_at"`
 }
 
 func (q *Queries) AuthorizeRegisteringWorkerInstanceCredential(ctx context.Context, arg AuthorizeRegisteringWorkerInstanceCredentialParams) (AuthorizeRegisteringWorkerInstanceCredentialRow, error) {
@@ -456,25 +456,25 @@ type AuthorizeTerminalWorkerInstanceCredentialParams struct {
 }
 
 type AuthorizeTerminalWorkerInstanceCredentialRow struct {
-	ID               pgtype.UUID         `json:"id"`
-	WorkerGroupID    string              `json:"worker_group_id"`
-	WorkerInstanceID pgtype.UUID         `json:"worker_instance_id"`
-	KeyPrefix        string              `json:"key_prefix"`
-	ClaimVersion     int64               `json:"claim_version"`
-	AllowsRun        bool                `json:"allows_run"`
-	AllowsBuild      bool                `json:"allows_build"`
-	ProtocolVersion  string              `json:"protocol_version"`
-	ExpiresAt        pgtype.Timestamptz  `json:"expires_at"`
-	SecretHash       []byte              `json:"secret_hash"`
-	CreatedAt        pgtype.Timestamptz  `json:"created_at"`
-	LastUsedAt       pgtype.Timestamptz  `json:"last_used_at"`
-	RevokedAt        pgtype.Timestamptz  `json:"revoked_at"`
-	ResourceID       string              `json:"resource_id"`
-	CurrentEpoch     pgtype.Int8         `json:"current_epoch"`
-	WorkerState      WorkerInstanceState `json:"worker_state"`
-	SupportsRun      bool                `json:"supports_run"`
-	SupportsBuild    bool                `json:"supports_build"`
-	EpochStartedAt   pgtype.Timestamptz  `json:"epoch_started_at"`
+	ID               pgtype.UUID        `json:"id"`
+	WorkerGroupID    string             `json:"worker_group_id"`
+	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
+	KeyPrefix        string             `json:"key_prefix"`
+	ClaimVersion     int64              `json:"claim_version"`
+	AllowsRun        bool               `json:"allows_run"`
+	AllowsBuild      bool               `json:"allows_build"`
+	ProtocolVersion  string             `json:"protocol_version"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	SecretHash       []byte             `json:"secret_hash"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt       pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
+	ResourceID       string             `json:"resource_id"`
+	CurrentEpoch     pgtype.Int8        `json:"current_epoch"`
+	WorkerState      string             `json:"worker_state"`
+	SupportsRun      bool               `json:"supports_run"`
+	SupportsBuild    bool               `json:"supports_build"`
+	EpochStartedAt   pgtype.Timestamptz `json:"epoch_started_at"`
 }
 
 func (q *Queries) AuthorizeTerminalWorkerInstanceCredential(ctx context.Context, arg AuthorizeTerminalWorkerInstanceCredentialParams) (AuthorizeTerminalWorkerInstanceCredentialRow, error) {
@@ -544,25 +544,25 @@ type AuthorizeWorkerInstanceCredentialParams struct {
 }
 
 type AuthorizeWorkerInstanceCredentialRow struct {
-	ID               pgtype.UUID         `json:"id"`
-	WorkerGroupID    string              `json:"worker_group_id"`
-	WorkerInstanceID pgtype.UUID         `json:"worker_instance_id"`
-	KeyPrefix        string              `json:"key_prefix"`
-	ClaimVersion     int64               `json:"claim_version"`
-	AllowsRun        bool                `json:"allows_run"`
-	AllowsBuild      bool                `json:"allows_build"`
-	ProtocolVersion  string              `json:"protocol_version"`
-	ExpiresAt        pgtype.Timestamptz  `json:"expires_at"`
-	SecretHash       []byte              `json:"secret_hash"`
-	CreatedAt        pgtype.Timestamptz  `json:"created_at"`
-	LastUsedAt       pgtype.Timestamptz  `json:"last_used_at"`
-	RevokedAt        pgtype.Timestamptz  `json:"revoked_at"`
-	ResourceID       string              `json:"resource_id"`
-	CurrentEpoch     pgtype.Int8         `json:"current_epoch"`
-	WorkerState      WorkerInstanceState `json:"worker_state"`
-	SupportsRun      bool                `json:"supports_run"`
-	SupportsBuild    bool                `json:"supports_build"`
-	EpochStartedAt   pgtype.Timestamptz  `json:"epoch_started_at"`
+	ID               pgtype.UUID        `json:"id"`
+	WorkerGroupID    string             `json:"worker_group_id"`
+	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
+	KeyPrefix        string             `json:"key_prefix"`
+	ClaimVersion     int64              `json:"claim_version"`
+	AllowsRun        bool               `json:"allows_run"`
+	AllowsBuild      bool               `json:"allows_build"`
+	ProtocolVersion  string             `json:"protocol_version"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	SecretHash       []byte             `json:"secret_hash"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt       pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
+	ResourceID       string             `json:"resource_id"`
+	CurrentEpoch     pgtype.Int8        `json:"current_epoch"`
+	WorkerState      string             `json:"worker_state"`
+	SupportsRun      bool               `json:"supports_run"`
+	SupportsBuild    bool               `json:"supports_build"`
+	EpochStartedAt   pgtype.Timestamptz `json:"epoch_started_at"`
 }
 
 func (q *Queries) AuthorizeWorkerInstanceCredential(ctx context.Context, arg AuthorizeWorkerInstanceCredentialParams) (AuthorizeWorkerInstanceCredentialRow, error) {
@@ -683,7 +683,10 @@ WITH nonce AS (
            max_vm_slots = 0, max_run_consumers = 0,
            max_build_executors = 0, max_runtime_starts = 0,
            attestation_fingerprint = EXCLUDED.attestation_fingerprint,
-           current_service_id = CASE WHEN worker_instances.current_epoch IS NULL THEN NULL ELSE uuidv7() END,
+           current_service_id = CASE
+               WHEN worker_instances.current_epoch IS NULL THEN NULL
+               ELSE $10::uuid
+           END,
            epoch_started_at = CASE WHEN worker_instances.current_epoch IS NULL THEN NULL ELSE now() END,
            startup_inventory_epoch = NULL, startup_inventory_evidence = NULL,
            drain_cleanup_fingerprint = NULL, drain_cleanup_evidence = NULL,
@@ -702,10 +705,10 @@ WITH nonce AS (
         id, worker_group_id, worker_instance_id, key_prefix, secret_hash,
         claim_version, allows_run, allows_build, protocol_version, expires_at
     )
-    SELECT $10, worker.worker_group_id, worker.id,
-           $11, $12, worker.claim_version,
+    SELECT $11, worker.worker_group_id, worker.id,
+           $12, $13, worker.claim_version,
            $3, $4, worker.protocol_version,
-           $13
+           $14
       FROM worker WHERE (SELECT count(*) FROM revoked) >= 0
     RETURNING id, worker_group_id, worker_instance_id, key_prefix, claim_version, allows_run, allows_build, protocol_version, expires_at, secret_hash, created_at, last_used_at, revoked_at
 ), consumed AS (
@@ -728,6 +731,7 @@ type EnrollWorkerInstanceParams struct {
 	AttestationFingerprint      string             `json:"attestation_fingerprint"`
 	WorkerInstanceID            pgtype.UUID        `json:"worker_instance_id"`
 	ResourceID                  string             `json:"resource_id"`
+	CurrentServiceID            pgtype.UUID        `json:"current_service_id"`
 	CredentialID                pgtype.UUID        `json:"credential_id"`
 	KeyPrefix                   string             `json:"key_prefix"`
 	SecretHash                  []byte             `json:"secret_hash"`
@@ -761,6 +765,7 @@ func (q *Queries) EnrollWorkerInstance(ctx context.Context, arg EnrollWorkerInst
 		arg.AttestationFingerprint,
 		arg.WorkerInstanceID,
 		arg.ResourceID,
+		arg.CurrentServiceID,
 		arg.CredentialID,
 		arg.KeyPrefix,
 		arg.SecretHash,

@@ -318,23 +318,5 @@ func normalizeWorkspaceExecOutcome(
 }
 
 func workspaceMountFromFinalization(row db.RequestWorkspaceExecMountFinalizationRow) db.WorkspaceMount {
-	return db.WorkspaceMount{
-		ID: row.ID, OrgID: row.OrgID, WorkerGroupID: row.WorkerGroupID,
-		ProjectID: row.ProjectID, EnvironmentID: row.EnvironmentID,
-		RegionID: row.RegionID, WorkerInstanceID: row.WorkerInstanceID,
-		WorkerEpoch: row.WorkerEpoch, WorkspaceID: row.WorkspaceID,
-		MaterializedVersionID: row.MaterializedVersionID,
-		RuntimeInstanceID:     row.RuntimeInstanceID, ClaimAttempt: row.ClaimAttempt,
-		GuestChannelTokenHash:      row.GuestChannelTokenHash,
-		GuestChannelTokenExpiresAt: row.GuestChannelTokenExpiresAt,
-		State:                      row.State, Request: row.Request, DirtyGeneration: row.DirtyGeneration,
-		FencingGeneration: row.FencingGeneration, FinalizationKind: row.FinalizationKind,
-		FinalizationReasonCode: row.FinalizationReasonCode,
-		FinalizationError:      row.FinalizationError, StagedVersionID: row.StagedVersionID,
-		RequestedAt: row.RequestedAt, MountedAt: row.MountedAt,
-		UnmountedAt: row.UnmountedAt, StoppedAt: row.StoppedAt,
-		LostAt: row.LostAt, FailedAt: row.FailedAt, TerminalAt: row.TerminalAt,
-		TerminalReasonCode: row.TerminalReasonCode, TerminalError: row.TerminalError,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
-	}
+	return db.WorkspaceMount(row)
 }

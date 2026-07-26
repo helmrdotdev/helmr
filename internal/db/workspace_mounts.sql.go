@@ -90,59 +90,59 @@ type ClaimWorkspaceMountParams struct {
 }
 
 type ClaimWorkspaceMountRow struct {
-	ID                         pgtype.UUID         `json:"id"`
-	OrgID                      pgtype.UUID         `json:"org_id"`
-	WorkerGroupID              string              `json:"worker_group_id"`
-	ProjectID                  pgtype.UUID         `json:"project_id"`
-	EnvironmentID              pgtype.UUID         `json:"environment_id"`
-	RegionID                   string              `json:"region_id"`
-	WorkerInstanceID           pgtype.UUID         `json:"worker_instance_id"`
-	WorkerEpoch                int64               `json:"worker_epoch"`
-	WorkspaceID                pgtype.UUID         `json:"workspace_id"`
-	MaterializedVersionID      pgtype.UUID         `json:"materialized_version_id"`
-	RuntimeInstanceID          pgtype.UUID         `json:"runtime_instance_id"`
-	ClaimAttempt               int32               `json:"claim_attempt"`
-	GuestChannelTokenHash      string              `json:"guest_channel_token_hash"`
-	GuestChannelTokenExpiresAt pgtype.Timestamptz  `json:"guest_channel_token_expires_at"`
-	State                      WorkspaceMountState `json:"state"`
-	Request                    []byte              `json:"request"`
-	DirtyGeneration            int64               `json:"dirty_generation"`
-	FencingGeneration          int64               `json:"fencing_generation"`
-	FinalizationKind           pgtype.Text         `json:"finalization_kind"`
-	FinalizationReasonCode     pgtype.Text         `json:"finalization_reason_code"`
-	FinalizationError          []byte              `json:"finalization_error"`
-	StagedVersionID            pgtype.UUID         `json:"staged_version_id"`
-	RequestedAt                pgtype.Timestamptz  `json:"requested_at"`
-	MountedAt                  pgtype.Timestamptz  `json:"mounted_at"`
-	UnmountedAt                pgtype.Timestamptz  `json:"unmounted_at"`
-	StoppedAt                  pgtype.Timestamptz  `json:"stopped_at"`
-	LostAt                     pgtype.Timestamptz  `json:"lost_at"`
-	FailedAt                   pgtype.Timestamptz  `json:"failed_at"`
-	TerminalAt                 pgtype.Timestamptz  `json:"terminal_at"`
-	TerminalReasonCode         pgtype.Text         `json:"terminal_reason_code"`
-	TerminalError              []byte              `json:"terminal_error"`
-	CreatedAt                  pgtype.Timestamptz  `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz  `json:"updated_at"`
-	RuntimeID                  string              `json:"runtime_id"`
-	DeploymentDefinitionID     pgtype.UUID         `json:"deployment_definition_id"`
-	RootfsDigest               string              `json:"rootfs_digest"`
-	RuntimeABI                 string              `json:"runtime_abi"`
-	NetworkSlotID              pgtype.UUID         `json:"network_slot_id"`
-	NetworkSlotGeneration      int64               `json:"network_slot_generation"`
-	ReservedCpuMillis          int64               `json:"reserved_cpu_millis"`
-	ReservedMemoryBytes        int64               `json:"reserved_memory_bytes"`
-	ReservedWorkloadDiskBytes  int64               `json:"reserved_workload_disk_bytes"`
-	ReservedExecutionSlots     int32               `json:"reserved_execution_slots"`
-	NetworkPolicy              []byte              `json:"network_policy"`
-	ImageArtifactID            pgtype.UUID         `json:"image_artifact_id"`
-	ImageArtifactDigest        string              `json:"image_artifact_digest"`
-	ImageArtifactSizeBytes     int64               `json:"image_artifact_size_bytes"`
-	ImageArtifactMediaType     string              `json:"image_artifact_media_type"`
-	WorkspaceArtifactID        pgtype.UUID         `json:"workspace_artifact_id"`
-	WorkspaceArtifactDigest    string              `json:"workspace_artifact_digest"`
-	WorkspaceArtifactSizeBytes int64               `json:"workspace_artifact_size_bytes"`
-	WorkspaceArtifactMediaType string              `json:"workspace_artifact_media_type"`
-	WorkspaceEntryCount        int32               `json:"workspace_entry_count"`
+	ID                         pgtype.UUID        `json:"id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	WorkerGroupID              string             `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID        `json:"project_id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	RegionID                   string             `json:"region_id"`
+	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                int64              `json:"worker_epoch"`
+	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
+	MaterializedVersionID      pgtype.UUID        `json:"materialized_version_id"`
+	RuntimeInstanceID          pgtype.UUID        `json:"runtime_instance_id"`
+	ClaimAttempt               int32              `json:"claim_attempt"`
+	GuestChannelTokenHash      string             `json:"guest_channel_token_hash"`
+	GuestChannelTokenExpiresAt pgtype.Timestamptz `json:"guest_channel_token_expires_at"`
+	State                      string             `json:"state"`
+	Request                    []byte             `json:"request"`
+	DirtyGeneration            int64              `json:"dirty_generation"`
+	FencingGeneration          int64              `json:"fencing_generation"`
+	FinalizationKind           pgtype.Text        `json:"finalization_kind"`
+	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
+	FinalizationError          []byte             `json:"finalization_error"`
+	StagedVersionID            pgtype.UUID        `json:"staged_version_id"`
+	RequestedAt                pgtype.Timestamptz `json:"requested_at"`
+	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
+	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
+	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
+	LostAt                     pgtype.Timestamptz `json:"lost_at"`
+	FailedAt                   pgtype.Timestamptz `json:"failed_at"`
+	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
+	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError              []byte             `json:"terminal_error"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	RuntimeID                  string             `json:"runtime_id"`
+	DeploymentDefinitionID     pgtype.UUID        `json:"deployment_definition_id"`
+	RootfsDigest               string             `json:"rootfs_digest"`
+	RuntimeABI                 string             `json:"runtime_abi"`
+	NetworkSlotID              pgtype.UUID        `json:"network_slot_id"`
+	NetworkSlotGeneration      int64              `json:"network_slot_generation"`
+	ReservedCpuMillis          int64              `json:"reserved_cpu_millis"`
+	ReservedMemoryBytes        int64              `json:"reserved_memory_bytes"`
+	ReservedWorkloadDiskBytes  int64              `json:"reserved_workload_disk_bytes"`
+	ReservedExecutionSlots     int32              `json:"reserved_execution_slots"`
+	NetworkPolicy              []byte             `json:"network_policy"`
+	ImageArtifactID            pgtype.UUID        `json:"image_artifact_id"`
+	ImageArtifactDigest        string             `json:"image_artifact_digest"`
+	ImageArtifactSizeBytes     int64              `json:"image_artifact_size_bytes"`
+	ImageArtifactMediaType     string             `json:"image_artifact_media_type"`
+	WorkspaceArtifactID        pgtype.UUID        `json:"workspace_artifact_id"`
+	WorkspaceArtifactDigest    string             `json:"workspace_artifact_digest"`
+	WorkspaceArtifactSizeBytes int64              `json:"workspace_artifact_size_bytes"`
+	WorkspaceArtifactMediaType string             `json:"workspace_artifact_media_type"`
+	WorkspaceEntryCount        int32              `json:"workspace_entry_count"`
 }
 
 func (q *Queries) ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMountParams) (ClaimWorkspaceMountRow, error) {
@@ -227,11 +227,11 @@ type ClassifyRunWorkspaceReuseParams struct {
 }
 
 type ClassifyRunWorkspaceReuseRow struct {
-	WorkspaceID       pgtype.UUID             `json:"workspace_id"`
-	WorkspaceMountID  pgtype.UUID             `json:"workspace_mount_id"`
-	RuntimeInstanceID pgtype.UUID             `json:"runtime_instance_id"`
-	State             NullWorkspaceMountState `json:"state"`
-	FencingGeneration pgtype.Int8             `json:"fencing_generation"`
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	WorkspaceMountID  pgtype.UUID `json:"workspace_mount_id"`
+	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
+	State             pgtype.Text `json:"state"`
+	FencingGeneration pgtype.Int8 `json:"fencing_generation"`
 }
 
 func (q *Queries) ClassifyRunWorkspaceReuse(ctx context.Context, arg ClassifyRunWorkspaceReuseParams) (ClassifyRunWorkspaceReuseRow, error) {
@@ -295,41 +295,41 @@ type EnsureProcessWorkspaceMountRequestedParams struct {
 }
 
 type EnsureProcessWorkspaceMountRequestedRow struct {
-	ID                         pgtype.UUID         `json:"id"`
-	OrgID                      pgtype.UUID         `json:"org_id"`
-	WorkerGroupID              string              `json:"worker_group_id"`
-	ProjectID                  pgtype.UUID         `json:"project_id"`
-	EnvironmentID              pgtype.UUID         `json:"environment_id"`
-	RegionID                   string              `json:"region_id"`
-	WorkerInstanceID           pgtype.UUID         `json:"worker_instance_id"`
-	WorkerEpoch                int64               `json:"worker_epoch"`
-	WorkspaceID                pgtype.UUID         `json:"workspace_id"`
-	MaterializedVersionID      pgtype.UUID         `json:"materialized_version_id"`
-	RuntimeInstanceID          pgtype.UUID         `json:"runtime_instance_id"`
-	ClaimAttempt               int32               `json:"claim_attempt"`
-	GuestChannelTokenHash      string              `json:"guest_channel_token_hash"`
-	GuestChannelTokenExpiresAt pgtype.Timestamptz  `json:"guest_channel_token_expires_at"`
-	State                      WorkspaceMountState `json:"state"`
-	Request                    []byte              `json:"request"`
-	DirtyGeneration            int64               `json:"dirty_generation"`
-	FencingGeneration          int64               `json:"fencing_generation"`
-	FinalizationKind           pgtype.Text         `json:"finalization_kind"`
-	FinalizationReasonCode     pgtype.Text         `json:"finalization_reason_code"`
-	FinalizationError          []byte              `json:"finalization_error"`
-	StagedVersionID            pgtype.UUID         `json:"staged_version_id"`
-	RequestedAt                pgtype.Timestamptz  `json:"requested_at"`
-	MountedAt                  pgtype.Timestamptz  `json:"mounted_at"`
-	UnmountedAt                pgtype.Timestamptz  `json:"unmounted_at"`
-	StoppedAt                  pgtype.Timestamptz  `json:"stopped_at"`
-	LostAt                     pgtype.Timestamptz  `json:"lost_at"`
-	FailedAt                   pgtype.Timestamptz  `json:"failed_at"`
-	TerminalAt                 pgtype.Timestamptz  `json:"terminal_at"`
-	TerminalReasonCode         pgtype.Text         `json:"terminal_reason_code"`
-	TerminalError              []byte              `json:"terminal_error"`
-	CreatedAt                  pgtype.Timestamptz  `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz  `json:"updated_at"`
-	Inserted                   bool                `json:"inserted"`
-	Decision                   string              `json:"decision"`
+	ID                         pgtype.UUID        `json:"id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	WorkerGroupID              string             `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID        `json:"project_id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	RegionID                   string             `json:"region_id"`
+	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                int64              `json:"worker_epoch"`
+	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
+	MaterializedVersionID      pgtype.UUID        `json:"materialized_version_id"`
+	RuntimeInstanceID          pgtype.UUID        `json:"runtime_instance_id"`
+	ClaimAttempt               int32              `json:"claim_attempt"`
+	GuestChannelTokenHash      string             `json:"guest_channel_token_hash"`
+	GuestChannelTokenExpiresAt pgtype.Timestamptz `json:"guest_channel_token_expires_at"`
+	State                      string             `json:"state"`
+	Request                    []byte             `json:"request"`
+	DirtyGeneration            int64              `json:"dirty_generation"`
+	FencingGeneration          int64              `json:"fencing_generation"`
+	FinalizationKind           pgtype.Text        `json:"finalization_kind"`
+	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
+	FinalizationError          []byte             `json:"finalization_error"`
+	StagedVersionID            pgtype.UUID        `json:"staged_version_id"`
+	RequestedAt                pgtype.Timestamptz `json:"requested_at"`
+	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
+	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
+	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
+	LostAt                     pgtype.Timestamptz `json:"lost_at"`
+	FailedAt                   pgtype.Timestamptz `json:"failed_at"`
+	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
+	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError              []byte             `json:"terminal_error"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	Inserted                   bool               `json:"inserted"`
+	Decision                   string             `json:"decision"`
 }
 
 func (q *Queries) EnsureProcessWorkspaceMountRequested(ctx context.Context, arg EnsureProcessWorkspaceMountRequestedParams) (EnsureProcessWorkspaceMountRequestedRow, error) {
@@ -405,8 +405,8 @@ SELECT $1, runtime_instances.org_id, runtime_instances.project_id,
   JOIN workspace_versions ON workspace_versions.workspace_id = runtime_instances.workspace_id
                          AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
                          AND workspace_versions.state = CASE
-                                 WHEN runtime_instances.restore_checkpoint_id IS NULL THEN 'committed'::workspace_version_state
-                                 ELSE 'private'::workspace_version_state
+                                 WHEN runtime_instances.restore_checkpoint_id IS NULL THEN 'committed'
+                                 ELSE 'private'
                              END
  WHERE runtime_instances.org_id = $3
    AND runtime_instances.workspace_id = $4
@@ -437,41 +437,41 @@ type EnsureRunWorkspaceMountRequestedParams struct {
 }
 
 type EnsureRunWorkspaceMountRequestedRow struct {
-	ID                         pgtype.UUID         `json:"id"`
-	OrgID                      pgtype.UUID         `json:"org_id"`
-	WorkerGroupID              string              `json:"worker_group_id"`
-	ProjectID                  pgtype.UUID         `json:"project_id"`
-	EnvironmentID              pgtype.UUID         `json:"environment_id"`
-	RegionID                   string              `json:"region_id"`
-	WorkerInstanceID           pgtype.UUID         `json:"worker_instance_id"`
-	WorkerEpoch                int64               `json:"worker_epoch"`
-	WorkspaceID                pgtype.UUID         `json:"workspace_id"`
-	MaterializedVersionID      pgtype.UUID         `json:"materialized_version_id"`
-	RuntimeInstanceID          pgtype.UUID         `json:"runtime_instance_id"`
-	ClaimAttempt               int32               `json:"claim_attempt"`
-	GuestChannelTokenHash      string              `json:"guest_channel_token_hash"`
-	GuestChannelTokenExpiresAt pgtype.Timestamptz  `json:"guest_channel_token_expires_at"`
-	State                      WorkspaceMountState `json:"state"`
-	Request                    []byte              `json:"request"`
-	DirtyGeneration            int64               `json:"dirty_generation"`
-	FencingGeneration          int64               `json:"fencing_generation"`
-	FinalizationKind           pgtype.Text         `json:"finalization_kind"`
-	FinalizationReasonCode     pgtype.Text         `json:"finalization_reason_code"`
-	FinalizationError          []byte              `json:"finalization_error"`
-	StagedVersionID            pgtype.UUID         `json:"staged_version_id"`
-	RequestedAt                pgtype.Timestamptz  `json:"requested_at"`
-	MountedAt                  pgtype.Timestamptz  `json:"mounted_at"`
-	UnmountedAt                pgtype.Timestamptz  `json:"unmounted_at"`
-	StoppedAt                  pgtype.Timestamptz  `json:"stopped_at"`
-	LostAt                     pgtype.Timestamptz  `json:"lost_at"`
-	FailedAt                   pgtype.Timestamptz  `json:"failed_at"`
-	TerminalAt                 pgtype.Timestamptz  `json:"terminal_at"`
-	TerminalReasonCode         pgtype.Text         `json:"terminal_reason_code"`
-	TerminalError              []byte              `json:"terminal_error"`
-	CreatedAt                  pgtype.Timestamptz  `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz  `json:"updated_at"`
-	Inserted                   bool                `json:"inserted"`
-	Decision                   string              `json:"decision"`
+	ID                         pgtype.UUID        `json:"id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	WorkerGroupID              string             `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID        `json:"project_id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	RegionID                   string             `json:"region_id"`
+	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                int64              `json:"worker_epoch"`
+	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
+	MaterializedVersionID      pgtype.UUID        `json:"materialized_version_id"`
+	RuntimeInstanceID          pgtype.UUID        `json:"runtime_instance_id"`
+	ClaimAttempt               int32              `json:"claim_attempt"`
+	GuestChannelTokenHash      string             `json:"guest_channel_token_hash"`
+	GuestChannelTokenExpiresAt pgtype.Timestamptz `json:"guest_channel_token_expires_at"`
+	State                      string             `json:"state"`
+	Request                    []byte             `json:"request"`
+	DirtyGeneration            int64              `json:"dirty_generation"`
+	FencingGeneration          int64              `json:"fencing_generation"`
+	FinalizationKind           pgtype.Text        `json:"finalization_kind"`
+	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
+	FinalizationError          []byte             `json:"finalization_error"`
+	StagedVersionID            pgtype.UUID        `json:"staged_version_id"`
+	RequestedAt                pgtype.Timestamptz `json:"requested_at"`
+	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
+	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
+	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
+	LostAt                     pgtype.Timestamptz `json:"lost_at"`
+	FailedAt                   pgtype.Timestamptz `json:"failed_at"`
+	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
+	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError              []byte             `json:"terminal_error"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	Inserted                   bool               `json:"inserted"`
+	Decision                   string             `json:"decision"`
 }
 
 func (q *Queries) EnsureRunWorkspaceMountRequested(ctx context.Context, arg EnsureRunWorkspaceMountRequestedParams) (EnsureRunWorkspaceMountRequestedRow, error) {
@@ -869,17 +869,17 @@ type GetWorkspaceMountPrerequisitesParams struct {
 }
 
 type GetWorkspaceMountPrerequisitesRow struct {
-	WorkspaceID                  pgtype.UUID               `json:"workspace_id"`
-	HeadVersionID                pgtype.UUID               `json:"head_version_id"`
-	CurrentWorkspaceVersionID    pgtype.UUID               `json:"current_workspace_version_id"`
-	CurrentWorkspaceVersionState NullWorkspaceVersionState `json:"current_workspace_version_state"`
-	CurrentWorkspaceArtifactID   pgtype.UUID               `json:"current_workspace_artifact_id"`
-	WorkspaceArtifactID          pgtype.UUID               `json:"workspace_artifact_id"`
-	WorkspaceArtifactMediaType   pgtype.Text               `json:"workspace_artifact_media_type"`
-	WorkspaceImageArtifactID     pgtype.UUID               `json:"workspace_image_artifact_id"`
-	ImageArtifactID              pgtype.UUID               `json:"image_artifact_id"`
-	ImageArtifactMediaType       pgtype.Text               `json:"image_artifact_media_type"`
-	ActiveMountState             NullWorkspaceMountState   `json:"active_mount_state"`
+	WorkspaceID                  pgtype.UUID `json:"workspace_id"`
+	HeadVersionID                pgtype.UUID `json:"head_version_id"`
+	CurrentWorkspaceVersionID    pgtype.UUID `json:"current_workspace_version_id"`
+	CurrentWorkspaceVersionState pgtype.Text `json:"current_workspace_version_state"`
+	CurrentWorkspaceArtifactID   pgtype.UUID `json:"current_workspace_artifact_id"`
+	WorkspaceArtifactID          pgtype.UUID `json:"workspace_artifact_id"`
+	WorkspaceArtifactMediaType   pgtype.Text `json:"workspace_artifact_media_type"`
+	WorkspaceImageArtifactID     pgtype.UUID `json:"workspace_image_artifact_id"`
+	ImageArtifactID              pgtype.UUID `json:"image_artifact_id"`
+	ImageArtifactMediaType       pgtype.Text `json:"image_artifact_media_type"`
+	ActiveMountState             pgtype.Text `json:"active_mount_state"`
 }
 
 func (q *Queries) GetWorkspaceMountPrerequisites(ctx context.Context, arg GetWorkspaceMountPrerequisitesParams) (GetWorkspaceMountPrerequisitesRow, error) {
@@ -1058,26 +1058,26 @@ type PromoteWorkspaceMountStopCaptureParams struct {
 }
 
 type PromoteWorkspaceMountStopCaptureRow struct {
-	ID                     pgtype.UUID           `json:"id"`
-	PublicID               string                `json:"public_id"`
-	OrgID                  pgtype.UUID           `json:"org_id"`
-	ProjectID              pgtype.UUID           `json:"project_id"`
-	EnvironmentID          pgtype.UUID           `json:"environment_id"`
-	WorkspaceID            pgtype.UUID           `json:"workspace_id"`
-	ParentVersionID        pgtype.UUID           `json:"parent_version_id"`
-	ArtifactID             pgtype.UUID           `json:"artifact_id"`
-	ArtifactKind           NullArtifactKind      `json:"artifact_kind"`
-	Kind                   WorkspaceVersionKind  `json:"kind"`
-	ContentDigest          string                `json:"content_digest"`
-	SizeBytes              int64                 `json:"size_bytes"`
-	EntryCount             int32                 `json:"entry_count"`
-	State                  WorkspaceVersionState `json:"state"`
-	SourceWorkspaceLeaseID pgtype.UUID           `json:"source_workspace_lease_id"`
-	OwnershipGeneration    int64                 `json:"ownership_generation"`
-	WriterGeneration       int64                 `json:"writer_generation"`
-	CreatedAt              pgtype.Timestamptz    `json:"created_at"`
-	PublishedAt            pgtype.Timestamptz    `json:"published_at"`
-	DiscardedAt            pgtype.Timestamptz    `json:"discarded_at"`
+	ID                     pgtype.UUID          `json:"id"`
+	PublicID               string               `json:"public_id"`
+	OrgID                  pgtype.UUID          `json:"org_id"`
+	ProjectID              pgtype.UUID          `json:"project_id"`
+	EnvironmentID          pgtype.UUID          `json:"environment_id"`
+	WorkspaceID            pgtype.UUID          `json:"workspace_id"`
+	ParentVersionID        pgtype.UUID          `json:"parent_version_id"`
+	ArtifactID             pgtype.UUID          `json:"artifact_id"`
+	ArtifactKind           NullArtifactKind     `json:"artifact_kind"`
+	Kind                   WorkspaceVersionKind `json:"kind"`
+	ContentDigest          string               `json:"content_digest"`
+	SizeBytes              int64                `json:"size_bytes"`
+	EntryCount             int32                `json:"entry_count"`
+	State                  string               `json:"state"`
+	SourceWorkspaceLeaseID pgtype.UUID          `json:"source_workspace_lease_id"`
+	OwnershipGeneration    int64                `json:"ownership_generation"`
+	WriterGeneration       int64                `json:"writer_generation"`
+	CreatedAt              pgtype.Timestamptz   `json:"created_at"`
+	PublishedAt            pgtype.Timestamptz   `json:"published_at"`
+	DiscardedAt            pgtype.Timestamptz   `json:"discarded_at"`
 }
 
 func (q *Queries) PromoteWorkspaceMountStopCapture(ctx context.Context, arg PromoteWorkspaceMountStopCaptureParams) (PromoteWorkspaceMountStopCaptureRow, error) {
@@ -1294,39 +1294,39 @@ type RequestWorkspaceMountStopParams struct {
 }
 
 type RequestWorkspaceMountStopRow struct {
-	ID                         pgtype.UUID         `json:"id"`
-	OrgID                      pgtype.UUID         `json:"org_id"`
-	WorkerGroupID              string              `json:"worker_group_id"`
-	ProjectID                  pgtype.UUID         `json:"project_id"`
-	EnvironmentID              pgtype.UUID         `json:"environment_id"`
-	RegionID                   string              `json:"region_id"`
-	WorkerInstanceID           pgtype.UUID         `json:"worker_instance_id"`
-	WorkerEpoch                int64               `json:"worker_epoch"`
-	WorkspaceID                pgtype.UUID         `json:"workspace_id"`
-	MaterializedVersionID      pgtype.UUID         `json:"materialized_version_id"`
-	RuntimeInstanceID          pgtype.UUID         `json:"runtime_instance_id"`
-	ClaimAttempt               int32               `json:"claim_attempt"`
-	GuestChannelTokenHash      string              `json:"guest_channel_token_hash"`
-	GuestChannelTokenExpiresAt pgtype.Timestamptz  `json:"guest_channel_token_expires_at"`
-	State                      WorkspaceMountState `json:"state"`
-	Request                    []byte              `json:"request"`
-	DirtyGeneration            int64               `json:"dirty_generation"`
-	FencingGeneration          int64               `json:"fencing_generation"`
-	FinalizationKind           pgtype.Text         `json:"finalization_kind"`
-	FinalizationReasonCode     pgtype.Text         `json:"finalization_reason_code"`
-	FinalizationError          []byte              `json:"finalization_error"`
-	StagedVersionID            pgtype.UUID         `json:"staged_version_id"`
-	RequestedAt                pgtype.Timestamptz  `json:"requested_at"`
-	MountedAt                  pgtype.Timestamptz  `json:"mounted_at"`
-	UnmountedAt                pgtype.Timestamptz  `json:"unmounted_at"`
-	StoppedAt                  pgtype.Timestamptz  `json:"stopped_at"`
-	LostAt                     pgtype.Timestamptz  `json:"lost_at"`
-	FailedAt                   pgtype.Timestamptz  `json:"failed_at"`
-	TerminalAt                 pgtype.Timestamptz  `json:"terminal_at"`
-	TerminalReasonCode         pgtype.Text         `json:"terminal_reason_code"`
-	TerminalError              []byte              `json:"terminal_error"`
-	CreatedAt                  pgtype.Timestamptz  `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz  `json:"updated_at"`
+	ID                         pgtype.UUID        `json:"id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	WorkerGroupID              string             `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID        `json:"project_id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	RegionID                   string             `json:"region_id"`
+	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                int64              `json:"worker_epoch"`
+	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
+	MaterializedVersionID      pgtype.UUID        `json:"materialized_version_id"`
+	RuntimeInstanceID          pgtype.UUID        `json:"runtime_instance_id"`
+	ClaimAttempt               int32              `json:"claim_attempt"`
+	GuestChannelTokenHash      string             `json:"guest_channel_token_hash"`
+	GuestChannelTokenExpiresAt pgtype.Timestamptz `json:"guest_channel_token_expires_at"`
+	State                      string             `json:"state"`
+	Request                    []byte             `json:"request"`
+	DirtyGeneration            int64              `json:"dirty_generation"`
+	FencingGeneration          int64              `json:"fencing_generation"`
+	FinalizationKind           pgtype.Text        `json:"finalization_kind"`
+	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
+	FinalizationError          []byte             `json:"finalization_error"`
+	StagedVersionID            pgtype.UUID        `json:"staged_version_id"`
+	RequestedAt                pgtype.Timestamptz `json:"requested_at"`
+	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
+	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
+	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
+	LostAt                     pgtype.Timestamptz `json:"lost_at"`
+	FailedAt                   pgtype.Timestamptz `json:"failed_at"`
+	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
+	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError              []byte             `json:"terminal_error"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) RequestWorkspaceMountStop(ctx context.Context, arg RequestWorkspaceMountStopParams) (RequestWorkspaceMountStopRow, error) {
@@ -1444,39 +1444,39 @@ type StopWorkspaceMountParams struct {
 }
 
 type StopWorkspaceMountRow struct {
-	ID                         pgtype.UUID         `json:"id"`
-	OrgID                      pgtype.UUID         `json:"org_id"`
-	WorkerGroupID              string              `json:"worker_group_id"`
-	ProjectID                  pgtype.UUID         `json:"project_id"`
-	EnvironmentID              pgtype.UUID         `json:"environment_id"`
-	RegionID                   string              `json:"region_id"`
-	WorkerInstanceID           pgtype.UUID         `json:"worker_instance_id"`
-	WorkerEpoch                int64               `json:"worker_epoch"`
-	WorkspaceID                pgtype.UUID         `json:"workspace_id"`
-	MaterializedVersionID      pgtype.UUID         `json:"materialized_version_id"`
-	RuntimeInstanceID          pgtype.UUID         `json:"runtime_instance_id"`
-	ClaimAttempt               int32               `json:"claim_attempt"`
-	GuestChannelTokenHash      string              `json:"guest_channel_token_hash"`
-	GuestChannelTokenExpiresAt pgtype.Timestamptz  `json:"guest_channel_token_expires_at"`
-	State                      WorkspaceMountState `json:"state"`
-	Request                    []byte              `json:"request"`
-	DirtyGeneration            int64               `json:"dirty_generation"`
-	FencingGeneration          int64               `json:"fencing_generation"`
-	FinalizationKind           pgtype.Text         `json:"finalization_kind"`
-	FinalizationReasonCode     pgtype.Text         `json:"finalization_reason_code"`
-	FinalizationError          []byte              `json:"finalization_error"`
-	StagedVersionID            pgtype.UUID         `json:"staged_version_id"`
-	RequestedAt                pgtype.Timestamptz  `json:"requested_at"`
-	MountedAt                  pgtype.Timestamptz  `json:"mounted_at"`
-	UnmountedAt                pgtype.Timestamptz  `json:"unmounted_at"`
-	StoppedAt                  pgtype.Timestamptz  `json:"stopped_at"`
-	LostAt                     pgtype.Timestamptz  `json:"lost_at"`
-	FailedAt                   pgtype.Timestamptz  `json:"failed_at"`
-	TerminalAt                 pgtype.Timestamptz  `json:"terminal_at"`
-	TerminalReasonCode         pgtype.Text         `json:"terminal_reason_code"`
-	TerminalError              []byte              `json:"terminal_error"`
-	CreatedAt                  pgtype.Timestamptz  `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz  `json:"updated_at"`
+	ID                         pgtype.UUID        `json:"id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	WorkerGroupID              string             `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID        `json:"project_id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	RegionID                   string             `json:"region_id"`
+	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                int64              `json:"worker_epoch"`
+	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
+	MaterializedVersionID      pgtype.UUID        `json:"materialized_version_id"`
+	RuntimeInstanceID          pgtype.UUID        `json:"runtime_instance_id"`
+	ClaimAttempt               int32              `json:"claim_attempt"`
+	GuestChannelTokenHash      string             `json:"guest_channel_token_hash"`
+	GuestChannelTokenExpiresAt pgtype.Timestamptz `json:"guest_channel_token_expires_at"`
+	State                      string             `json:"state"`
+	Request                    []byte             `json:"request"`
+	DirtyGeneration            int64              `json:"dirty_generation"`
+	FencingGeneration          int64              `json:"fencing_generation"`
+	FinalizationKind           pgtype.Text        `json:"finalization_kind"`
+	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
+	FinalizationError          []byte             `json:"finalization_error"`
+	StagedVersionID            pgtype.UUID        `json:"staged_version_id"`
+	RequestedAt                pgtype.Timestamptz `json:"requested_at"`
+	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
+	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
+	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
+	LostAt                     pgtype.Timestamptz `json:"lost_at"`
+	FailedAt                   pgtype.Timestamptz `json:"failed_at"`
+	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
+	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError              []byte             `json:"terminal_error"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) StopWorkspaceMount(ctx context.Context, arg StopWorkspaceMountParams) (StopWorkspaceMountRow, error) {

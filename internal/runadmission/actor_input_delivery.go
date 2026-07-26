@@ -19,14 +19,11 @@ import (
 
 type ActorInputReconcile func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error)
 type ActorLifecycleReconcile func(context.Context, uuid.UUID, uuid.UUID) (bool, error)
-type ActorInputTimeoutReconcile func(context.Context, int32) (int, error)
-
 type ActorInputDeliveryWorker struct {
 	log       *slog.Logger
 	store     TokenDeliveryStore
 	reconcile ActorInputReconcile
 	lifecycle ActorLifecycleReconcile
-	timeouts  ActorInputTimeoutReconcile
 	workerID  string
 	interval  time.Duration
 	claimFor  time.Duration
@@ -39,7 +36,6 @@ func NewActorInputDeliveryWorker(
 	store TokenDeliveryStore,
 	reconcile ActorInputReconcile,
 	lifecycle ActorLifecycleReconcile,
-	timeouts ActorInputTimeoutReconcile,
 ) (*ActorInputDeliveryWorker, error) {
 	if store == nil {
 		return nil, errors.New("Actor input delivery store is required")
@@ -50,14 +46,11 @@ func NewActorInputDeliveryWorker(
 	if lifecycle == nil {
 		return nil, errors.New("Actor lifecycle reconciler is required")
 	}
-	if timeouts == nil {
-		return nil, errors.New("Actor input timeout reconciler is required")
-	}
 	if log == nil {
 		log = slog.Default()
 	}
 	return &ActorInputDeliveryWorker{
-		log: log, store: store, reconcile: reconcile, lifecycle: lifecycle, timeouts: timeouts,
+		log: log, store: store, reconcile: reconcile, lifecycle: lifecycle,
 		workerID: uuid.Must(uuid.NewV7()).String(), interval: tokenDeliveryPollInterval,
 		claimFor: tokenDeliveryClaimLease, claimSize: tokenDeliveryClaimLimit,
 		now: func() time.Time { return time.Now().UTC() },
@@ -81,9 +74,6 @@ func (w *ActorInputDeliveryWorker) Run(ctx context.Context) error {
 
 func (w *ActorInputDeliveryWorker) tick(ctx context.Context) error {
 	now := w.now().UTC()
-	if _, err := w.timeouts(ctx, w.claimSize); err != nil {
-		return err
-	}
 	messages, err := w.store.ClaimOutboxMessages(ctx, db.ClaimOutboxMessagesParams{
 		ClaimedBy:      pgtype.Text{String: w.workerID, Valid: true},
 		ClaimExpiresAt: pgvalue.TimestamptzUTCZeroInvalid(now.Add(w.claimFor)),

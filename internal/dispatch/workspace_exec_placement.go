@@ -94,7 +94,7 @@ func (d *Authority) PlaceWorkspaceExec(
 	defer rollback(ctx, tx)
 
 	if err := lockWorkspaceExecSecrets(ctx, tx, candidate); err != nil {
-		return d.finishRejectedWorkspaceExec(ctx, tx, candidate, err)
+		return WorkspaceExecPlacement{}, d.finishRejectedWorkspaceExec(ctx, tx, candidate, err)
 	}
 	authority, err := lockWorkspaceExecAuthority(ctx, tx, candidate)
 	if err != nil {
@@ -104,7 +104,7 @@ func (d *Authority) PlaceWorkspaceExec(
 				err:  errors.New("Workspace exec authority changed after admission"),
 			}
 		}
-		return d.finishRejectedWorkspaceExec(ctx, tx, candidate, err)
+		return WorkspaceExecPlacement{}, d.finishRejectedWorkspaceExec(ctx, tx, candidate, err)
 	}
 	runtime, err := discoverRunRuntime(ctx, tx, authority.workspaceID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -708,17 +708,17 @@ func (d *Authority) finishRejectedWorkspaceExec(
 	tx pgx.Tx,
 	candidate ReadyWorkspaceExecCandidate,
 	cause error,
-) (WorkspaceExecPlacement, error) {
+) error {
 	var permanent workspaceExecPermanentError
 	if !errors.As(cause, &permanent) {
-		return WorkspaceExecPlacement{}, classifyWorkspaceExecCandidateError(cause)
+		return classifyWorkspaceExecCandidateError(cause)
 	}
 	errorJSON, err := json.Marshal(map[string]string{
 		"code":    permanent.code,
 		"message": permanent.Error(),
 	})
 	if err != nil {
-		return WorkspaceExecPlacement{}, fmt.Errorf("encode Workspace exec rejection: %w", err)
+		return fmt.Errorf("encode Workspace exec rejection: %w", err)
 	}
 	if err := failPendingWorkspaceExec(
 		ctx,
@@ -727,12 +727,12 @@ func (d *Authority) finishRejectedWorkspaceExec(
 		permanent.code,
 		errorJSON,
 	); err != nil {
-		return WorkspaceExecPlacement{}, err
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return WorkspaceExecPlacement{}, fmt.Errorf("commit rejected Workspace exec: %w", err)
+		return fmt.Errorf("commit rejected Workspace exec: %w", err)
 	}
-	return WorkspaceExecPlacement{}, nil
+	return nil
 }
 
 func (d *Authority) FailPendingWorkspaceExec(

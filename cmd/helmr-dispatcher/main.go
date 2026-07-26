@@ -24,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/fleet"
 	"github.com/helmrdotdev/helmr/internal/runadmission"
 	"github.com/helmrdotdev/helmr/internal/schedule"
+	"github.com/helmrdotdev/helmr/internal/secretrevocation"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -311,6 +312,26 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Token reconciliation delivery: %w", err)
 	}
+	secretRevocationReconciler, err := secretrevocation.NewReconciler(
+		runDispatchPool,
+		runDispatchAuthority,
+	)
+	if err != nil {
+		return fmt.Errorf("configure Secret revocation reconciler: %w", err)
+	}
+	secretRevocationDelivery, err :=
+		runadmission.NewSecretRevocationDeliveryWorker(
+			log,
+			queries,
+			secretRevocationReconciler.ReconcileBatch,
+		)
+	if err != nil {
+		return fmt.Errorf("configure Secret revocation delivery: %w", err)
+	}
+	timerWaitReconciler, err := runadmission.NewTimerWaitReconciler(pool)
+	if err != nil {
+		return fmt.Errorf("configure timer Wait reconciler: %w", err)
+	}
 	actorInputReconciler, err := runadmission.NewActorInputReconciler(pool)
 	if err != nil {
 		return fmt.Errorf("configure Actor input reconciler: %w", err)
@@ -320,10 +341,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 		queries,
 		actorInputReconciler.Reconcile,
 		actorInputReconciler.ReconcileLifecycle,
-		actorInputReconciler.ReconcileTimeouts,
 	)
 	if err != nil {
 		return fmt.Errorf("configure Actor input reconciliation delivery: %w", err)
+	}
+	runWaitDeadlineDelivery, err := runadmission.NewRunWaitDeadlineDeliveryWorker(
+		log,
+		timerWaitReconciler.ReconcileDue,
+		tokenWaitReconciler.ReconcileTimeouts,
+		actorInputReconciler.ReconcileTimeouts,
+	)
+	if err != nil {
+		return fmt.Errorf("configure Run Wait deadline reconciliation delivery: %w", err)
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -336,6 +365,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		func() error { return scheduleWorker.Run(runCtx) },
 		func() error { return runAdmissionDelivery.Run(runCtx) },
 		func() error { return tokenReconcileDelivery.Run(runCtx) },
+		func() error { return secretRevocationDelivery.Run(runCtx) },
+		func() error { return runWaitDeadlineDelivery.Run(runCtx) },
 		func() error { return actorInputDelivery.Run(runCtx) },
 		func() error { return telemetryIngestor.Run(runCtx) },
 	}

@@ -20,11 +20,11 @@ import (
 )
 
 const (
-	rootTokenWaitHotWindow      = 2 * time.Minute
-	defaultTokenWaitIdleTimeout = 30 * time.Second
-	maxTokenWaitIdleTimeout     = time.Hour
-	maxTokenWaitTimeout         = 365 * 24 * time.Hour
-	shortWaitGrace              = time.Second
+	rootRunWaitHotWindow      = 2 * time.Minute
+	defaultRunWaitIdleTimeout = 30 * time.Second
+	maxRunWaitIdleTimeout     = time.Hour
+	maxRunWaitDuration        = 365 * 24 * time.Hour
+	shortWaitGrace            = time.Second
 )
 
 type workerTokenWaitParams struct {
@@ -40,6 +40,8 @@ func (s *Server) workerCreateRunWait(w http.ResponseWriter, r *http.Request) {
 	switch request.Kind {
 	case api.WorkerRunWaitKindToken:
 		s.workerCreateTokenRunWait(w, r, request)
+	case api.WorkerRunWaitKindTimer:
+		s.workerCreateTimerRunWait(w, r, request)
 	case api.WorkerRunWaitKindActorInput:
 		s.workerCreateActorInputRunWait(w, r, request)
 	default:
@@ -67,7 +69,7 @@ func (s *Server) workerCreateTokenRunWait(w http.ResponseWriter, r *http.Request
 		writeError(w, badRequest(err))
 		return
 	}
-	timeoutAt, idleTimeout, checkpointDueAt, checkpointDelay, err := runWaitDeadlines(request, defaultTokenWaitIdleTimeout)
+	timeoutAt, idleTimeout, checkpointDueAt, checkpointDelay, err := runWaitDeadlines(request, defaultRunWaitIdleTimeout)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -186,7 +188,7 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("load worker Run Wait"))
 		return
 	}
-	if (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindActorInput &&
+	if (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindTimer && wait.Kind != db.WaitKindActorInput &&
 		wait.Kind != db.WaitKindChild) ||
 		wait.AttemptNumber != request.Lease.AttemptNumber ||
 		wait.WorkspaceID != locators.WorkspaceID ||
@@ -200,6 +202,8 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		response.Status = api.WorkerRunWaitPollStatusResumeRequested
 		if wait.Kind == db.WaitKindActorInput {
 			response.ResumeKind, response.ResumePayload, err = actorInputWaitDecision(wait)
+		} else if wait.Kind == db.WaitKindTimer {
+			response.ResumeKind, response.ResumePayload, err = timerWaitDecision(wait)
 		} else if wait.Kind == db.WaitKindChild {
 			response.ResumeKind, response.ResumePayload, err = childRunWaitDecision(wait)
 		} else {
@@ -448,12 +452,12 @@ func derivedRunWaitID(runID uuid.UUID, attemptNumber int32, correlationID uuid.U
 
 func runWaitDeadlines(request api.WorkerCreateRunWaitRequest, defaultIdleTimeout time.Duration) (pgtype.Timestamptz, pgtype.Int8, pgtype.Timestamptz, time.Duration, error) {
 	now := time.Now().UTC()
-	checkpointDelay := rootTokenWaitHotWindow
+	checkpointDelay := rootRunWaitHotWindow
 	var timeoutAt pgtype.Timestamptz
 	if request.TimeoutMS != nil {
-		if *request.TimeoutMS <= 0 || *request.TimeoutMS > maxTokenWaitTimeout.Milliseconds() {
+		if *request.TimeoutMS <= 0 || *request.TimeoutMS > maxRunWaitDuration.Milliseconds() {
 			return pgtype.Timestamptz{}, pgtype.Int8{}, pgtype.Timestamptz{}, 0,
-				fmt.Errorf("timeout_ms must be between 1 and %d", maxTokenWaitTimeout.Milliseconds())
+				fmt.Errorf("timeout_ms must be between 1 and %d", maxRunWaitDuration.Milliseconds())
 		}
 		duration := time.Duration(*request.TimeoutMS) * time.Millisecond
 		timeoutAt = pgvalue.Timestamptz(now.Add(duration))
@@ -463,9 +467,9 @@ func runWaitDeadlines(request api.WorkerCreateRunWaitRequest, defaultIdleTimeout
 	}
 	idleDuration := defaultIdleTimeout
 	if request.IdleTimeoutMS != nil {
-		if *request.IdleTimeoutMS <= 0 || *request.IdleTimeoutMS > maxTokenWaitIdleTimeout.Milliseconds() {
+		if *request.IdleTimeoutMS <= 0 || *request.IdleTimeoutMS > maxRunWaitIdleTimeout.Milliseconds() {
 			return pgtype.Timestamptz{}, pgtype.Int8{}, pgtype.Timestamptz{}, 0,
-				fmt.Errorf("idle_timeout_ms must be between 1 and %d", maxTokenWaitIdleTimeout.Milliseconds())
+				fmt.Errorf("idle_timeout_ms must be between 1 and %d", maxRunWaitIdleTimeout.Milliseconds())
 		}
 		idleDuration = time.Duration(*request.IdleTimeoutMS) * time.Millisecond
 	}

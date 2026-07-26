@@ -201,7 +201,10 @@ func (d *Authority) RecoverExpiredRunResumes(
 	if remaining <= 0 {
 		return recovered, nil
 	}
-	roots, err := db.New(d.pool).RecoverExpiredRunResumes(ctx, remaining)
+	roots, err := db.New(d.pool).RecoverExpiredRunResumes(ctx, db.RecoverExpiredRunResumesParams{
+		OutboxMessageIds: pgvalue.NewUUIDv7Batch(remaining),
+		LimitCount:       remaining,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -718,7 +721,6 @@ SELECT source_run_lease_id,
 	if err := expireNestedResumeLeases(
 		ctx,
 		tx,
-		current,
 		physical,
 		reason,
 	); err != nil {
@@ -1351,7 +1353,6 @@ func atOrBefore(value pgtype.Timestamptz, now time.Time) bool {
 func expireNestedResumeLeases(
 	ctx context.Context,
 	tx pgx.Tx,
-	run nestedResumeRun,
 	physical nestedResumePhysical,
 	reason string,
 ) error {

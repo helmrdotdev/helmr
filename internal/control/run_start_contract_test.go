@@ -57,36 +57,32 @@ func TestDeriveRunStartModeFromDurableLocators(t *testing.T) {
 		name     string
 		locators db.GetRunLeaseStartLocatorsRow
 		mode     runLeaseClaimMode
-		ok       bool
 	}{
-		{name: "fresh", mode: runLeaseClaimFresh, ok: true},
-		{name: "restore", locators: db.GetRunLeaseStartLocatorsRow{RunWaitID: valid}, mode: runLeaseClaimRestore, ok: true},
-		{name: "child", locators: db.GetRunLeaseStartLocatorsRow{ParentRunID: valid, EnclosingWaitID: valid}, mode: runLeaseClaimAttachChild, ok: true},
+		{name: "fresh", mode: runLeaseClaimFresh},
+		{name: "restore", locators: db.GetRunLeaseStartLocatorsRow{RunWaitID: valid}, mode: runLeaseClaimRestore},
+		{name: "child", locators: db.GetRunLeaseStartLocatorsRow{ParentRunID: valid, EnclosingWaitID: valid}, mode: runLeaseClaimAttachChild},
 		{name: "parent", locators: db.GetRunLeaseStartLocatorsRow{
 			RunWaitID: valid, ResumeChildRunID: valid,
 			ResumeChildParentOwned: pgtype.Bool{Bool: true, Valid: true},
-		}, mode: runLeaseClaimAttachParent, ok: true},
+		}, mode: runLeaseClaimAttachParent},
 		{name: "recreated parent", locators: db.GetRunLeaseStartLocatorsRow{
 			RunWaitID: valid, RunWaitCheckpointID: valid,
 			RuntimeRestoreCheckpointID: valid, ResumeChildRunID: valid,
 			ResumeChildParentOwned: pgtype.Bool{Bool: true, Valid: true},
-		}, mode: runLeaseClaimRestore, ok: true},
+		}, mode: runLeaseClaimRestore},
 		{name: "nested restore", locators: db.GetRunLeaseStartLocatorsRow{
 			RunWaitID: valid, EnclosingWaitID: valid,
-		}, mode: runLeaseClaimRestore, ok: true},
+		}, mode: runLeaseClaimRestore},
 		{name: "different Workspace child resume", locators: db.GetRunLeaseStartLocatorsRow{
 			RunWaitID: valid, ResumeChildRunID: valid,
 			ResumeChildParentOwned: pgtype.Bool{Bool: false, Valid: true},
-		}, mode: runLeaseClaimRestore, ok: true},
-		{name: "detached child", locators: db.GetRunLeaseStartLocatorsRow{ParentRunID: valid}, mode: runLeaseClaimFresh, ok: true},
+		}, mode: runLeaseClaimRestore},
+		{name: "detached child", locators: db.GetRunLeaseStartLocatorsRow{ParentRunID: valid}, mode: runLeaseClaimFresh},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			mode, err := deriveRunStartMode(test.locators)
-			if (err == nil) != test.ok {
-				t.Fatalf("error = %v", err)
-			}
-			if test.ok && mode != test.mode {
+			mode := deriveRunStartMode(test.locators)
+			if mode != test.mode {
 				t.Fatalf("mode = %q, want %q", mode, test.mode)
 			}
 		})

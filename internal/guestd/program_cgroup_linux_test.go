@@ -30,7 +30,11 @@ func TestProgramCgroupContainsAndKillsCompleteTree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cgroup, err := createProgramCgroup()
+	leaf, err := programCgroupLeafName("run-1", 1, "lease-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cgroup, err := createProgramCgroup(leaf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +45,11 @@ func TestProgramCgroupContainsAndKillsCompleteTree(t *testing.T) {
 	}()
 
 	cmd := exec.Command(os.Args[0], "-test.run=TestProgramCgroupNamespaceHelper")
-	cmd.Env = append(os.Environ(), "HELMR_PROGRAM_CGROUP_HELPER=1")
+	cmd.Env = append(
+		os.Environ(),
+		"HELMR_PROGRAM_CGROUP_HELPER=1",
+		"HELMR_PROGRAM_CGROUP_LEAF="+leaf,
+	)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
 	}
@@ -76,7 +84,7 @@ func TestProgramCgroupContainsAndKillsCompleteTree(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		raw, err := os.ReadFile(filepath.Join(buildCgroupRoot, programCgroupLeaf, "cgroup.procs"))
+		raw, err := os.ReadFile(filepath.Join(buildCgroupRoot, leaf, "cgroup.procs"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -206,11 +214,73 @@ func TestProgramCgroupTransitionRejectsEmptyFrozenCgroup(t *testing.T) {
 	}
 }
 
+func TestProgramCgroupStaleCleanupIsIsolatedByProgram(t *testing.T) {
+	if os.Getenv("HELMR_PRIVILEGED_PROGRAM_TEST") != "1" {
+		t.Skip("set HELMR_PRIVILEGED_PROGRAM_TEST=1 in a disposable privileged Linux guest")
+	}
+	if os.Geteuid() != 0 {
+		t.Fatal("privileged Program cgroup test requires root")
+	}
+	if _, err := os.Stat(buildCgroupRoot); errors.Is(err, os.ErrNotExist) {
+		prepareBuildTestCgroup(t)
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	firstLeaf, err := programCgroupLeafName("run-1", 1, "lease-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondLeaf, err := programCgroupLeafName("run-2", 1, "lease-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := createProgramCgroup(firstLeaf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := createProgramCgroup(secondLeaf)
+	if err != nil {
+		_ = first.close()
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = first.kill()
+		_ = first.waitEmpty()
+		_ = first.close()
+		_ = second.kill()
+		_ = second.waitEmpty()
+		_ = second.close()
+	}()
+	firstProcess := exec.Command("/bin/sleep", "30")
+	firstProcess.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := first.attach(firstProcess); err != nil {
+		t.Fatal(err)
+	}
+	if err := firstProcess.Start(); err != nil {
+		t.Fatal(err)
+	}
+	secondProcess := exec.Command("/bin/sleep", "30")
+	secondProcess.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := second.attach(secondProcess); err != nil {
+		t.Fatal(err)
+	}
+	if err := secondProcess.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanupStaleProgramCgroup(filepath.Join(buildCgroupRoot, firstLeaf)); err != nil {
+		t.Fatal(err)
+	}
+	_ = firstProcess.Wait()
+	if err := secondProcess.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("cleanup of %s affected %s: %v", firstLeaf, secondLeaf, err)
+	}
+}
+
 func TestProgramCgroupNamespaceHelper(t *testing.T) {
 	if os.Getenv("HELMR_PROGRAM_CGROUP_HELPER") != "1" {
 		return
 	}
-	if err := enterProgramCgroupNamespace(); err != nil {
+	if err := enterProgramCgroupNamespace(os.Getenv("HELMR_PROGRAM_CGROUP_LEAF")); err != nil {
 		t.Fatal(err)
 	}
 	child := exec.Command("/bin/sleep", "30")

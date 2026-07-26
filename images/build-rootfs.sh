@@ -9,17 +9,14 @@ rootfs=$5
 guestd=$6
 apko_image=${APKO_IMAGE:-cgr.dev/chainguard/apko@sha256:44ee5c39a8e42006372bd66625ac9be0eef78082777d1fcad57013fa84fe53ed}
 tools_image=${ROOTFS_TOOLS_IMAGE:-alpine:3.22.2}
-arch=${ARCH:-aarch64}
+arch=${ARCH:-x86_64}
 apko_arch=${APKO_ARCH:-$arch}
 apko_lock=${APKO_LOCK:-apko.$apko_arch.lock.json}
 
-case "$arch" in
-	aarch64|x86_64) ;;
-	*)
-		echo "unsupported ARCH: $arch" >&2
-		exit 1
-		;;
-esac
+if [ "$arch" != "x86_64" ]; then
+	echo "unsupported ARCH: $arch" >&2
+	exit 1
+fi
 
 archive="$out/apko.tar"
 bundle="$out/bundle"

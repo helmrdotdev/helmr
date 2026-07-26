@@ -40,7 +40,6 @@ type WorkspaceMaterializer struct {
 	PollEvery             time.Duration
 	ClaimErrorBackoff     time.Duration
 	CompleteErrorBackoff  time.Duration
-	Network               compute.NetworkPolicy
 	Log                   *slog.Logger
 	ArtifactCacheDir      string
 	ArtifactCacheMaxBytes int64
@@ -1419,13 +1418,6 @@ func (m WorkspaceMaterializer) stopWorkspaceGuest(ctx context.Context, session v
 		SizeBytes:  object.SizeBytes,
 		EntryCount: int(captured.GetEntryCount()),
 	}, nil
-}
-
-func (m WorkspaceMaterializer) networkPolicy() compute.NetworkPolicy {
-	if m.Network.Internet || len(m.Network.Allow) > 0 || len(m.Network.Deny) > 0 {
-		return m.Network
-	}
-	return compute.DefaultNetworkPolicy()
 }
 
 func (m WorkspaceMaterializer) startupTimeout() time.Duration {

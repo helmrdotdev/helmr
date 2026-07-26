@@ -14,7 +14,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -142,34 +141,26 @@ func TestAppendActorInputRollsBackProvisionalRunSourceWhenAuthorityIsStale(t *te
 	}
 }
 
-func TestAppendActorInputMapsPostgresStorageBoundAndRollsBack(t *testing.T) {
+func TestAppendActorInputRejectsOversizedCanonicalInputBeforeTransaction(t *testing.T) {
 	environmentID := uuid.New()
 	actorID := uuid.New()
 	store, manager := newActorInputClaimStore(t)
-	store.locator = db.Actor{
-		ID:                pgvalue.UUID(actorID),
-		EnvironmentID:     pgvalue.UUID(environmentID),
-		WorkspaceID:       pgvalue.UUID(uuid.New()),
-		NextInputSequence: 1,
-	}
-	store.appendErr = &pgconn.PgError{
-		Code:           "23514",
-		ConstraintName: "actor_records_data_size_check",
-	}
 	server := &Server{db: store, claims: manager}
+	data := append([]byte{'"'}, bytes.Repeat([]byte{'x'}, maxActorInputBytes)...)
+	data = append(data, '"')
 
 	_, err := server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID:  environmentID,
 		ActorID:        actorID,
 		RecordID:       uuid.New(),
-		Data:           []byte(`{"message":"queued"}`),
+		Data:           data,
 		SourceKind:     "external",
 		IdempotencyKey: "message:3",
 	})
 	if !errors.Is(err, errActorInputTooLarge) {
 		t.Fatalf("error = %v, want Actor input too large", err)
 	}
-	if store.commits != 0 || store.rollbacks != 1 {
+	if store.commits != 0 || store.rollbacks != 0 || len(store.calls) != 0 {
 		t.Fatalf("transactions: commits=%d rollbacks=%d", store.commits, store.rollbacks)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 const (
@@ -25,12 +26,30 @@ const (
 )
 
 type QueueReconcilerStore interface {
-	RecoverExpiredRunResumes(context.Context, int32) ([]db.RecoverExpiredRunResumesRow, error)
+	runResumeRecoveryStore
 	ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error)
 }
 
 type RunResumeRecoverer interface {
 	RecoverExpiredRunResumes(context.Context, int32) ([]db.RecoverExpiredRunResumesRow, error)
+}
+
+type runResumeRecoveryStore interface {
+	RecoverExpiredRunResumes(context.Context, db.RecoverExpiredRunResumesParams) ([]db.RecoverExpiredRunResumesRow, error)
+}
+
+type queryRunResumeRecoverer struct {
+	store runResumeRecoveryStore
+}
+
+func (r queryRunResumeRecoverer) RecoverExpiredRunResumes(
+	ctx context.Context,
+	limit int32,
+) ([]db.RecoverExpiredRunResumesRow, error) {
+	return r.store.RecoverExpiredRunResumes(ctx, db.RecoverExpiredRunResumesParams{
+		OutboxMessageIds: pgvalue.NewUUIDv7Batch(limit),
+		LimitCount:       limit,
+	})
 }
 
 type RunQueueEnqueuer interface {
@@ -283,12 +302,12 @@ func (r *QueueReconciler) ReconcileRunsOnce(ctx context.Context) error {
 		}
 		store = guard.Store(r.store)
 		if recoverer == nil {
-			recoverer = store
+			recoverer = queryRunResumeRecoverer{store: store}
 		}
 		defer r.unlockQueueReconcile(ctx, "run", guard)
 	}
 	if recoverer == nil {
-		recoverer = store
+		recoverer = queryRunResumeRecoverer{store: store}
 	}
 	var problems []error
 	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, r.runQueryTimeout)

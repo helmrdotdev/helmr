@@ -81,17 +81,6 @@ func newWaitingRunRegistry() *waitingRunRegistry {
 	return &waitingRunRegistry{slots: map[string]*waitingRunSlot{}}
 }
 
-func (r *waitingRunRegistry) register(runWaitID string, checkpointID string) waitingRunRegistration {
-	slot := &waitingRunSlot{
-		checkpointID: checkpointID,
-		attached:     make(chan waitingRunAttachment, 1),
-	}
-	r.mu.Lock()
-	r.slots[runWaitID] = slot
-	r.mu.Unlock()
-	return waitingRunRegistration{registry: r, runWaitID: runWaitID, slot: slot}
-}
-
 func (r *waitingRunRegistry) hasFrozenProgramCheckpoint(checkpointID string) bool {
 	checkpointID = strings.TrimSpace(checkpointID)
 	if checkpointID == "" {
@@ -108,6 +97,27 @@ func (r *waitingRunRegistry) hasFrozenProgramCheckpoint(checkpointID string) boo
 	return false
 }
 
+func (r *waitingRunRegistry) frozenProgramForCheckpoint(
+	checkpointID string,
+) (string, uint32, bool) {
+	checkpointID = strings.TrimSpace(checkpointID)
+	if checkpointID == "" {
+		return "", 0, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, slot := range r.slots {
+		if slot != nil && slot.resumeAttachID != "" &&
+			slot.checkpointID == checkpointID &&
+			slot.accepted == nil &&
+			slot.appliedDecision == nil &&
+			slot.appliedAck == nil {
+			return slot.runID, slot.attemptNumber, true
+		}
+	}
+	return "", 0, false
+}
+
 func (r *waitingRunRegistry) verifyFrozenProgram(request *workspacev0.VerifyProgramRestoreRequest) bool {
 	if request == nil {
 		return false
@@ -119,12 +129,6 @@ func (r *waitingRunRegistry) verifyFrozenProgram(request *workspacev0.VerifyProg
 		slot.attemptNumber == request.GetAttemptNumber() && slot.checkpointID == request.GetCheckpointId() &&
 		slot.correlationID == request.GetCorrelationId() && slot.accepted == nil &&
 		slot.appliedDecision == nil && slot.appliedAck == nil
-}
-
-func (r *waitingRunRegistry) attach(runWaitID string, checkpointID string, stream io.ReadWriter) error {
-	return r.attachResume(&runv0.ResumeAttach{
-		RunWaitId: runWaitID, CheckpointId: checkpointID,
-	}, stream)
 }
 
 func (r *waitingRunRegistry) attachResume(attach *runv0.ResumeAttach, stream io.ReadWriter) error {

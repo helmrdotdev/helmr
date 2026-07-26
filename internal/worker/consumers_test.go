@@ -20,7 +20,7 @@ func testWorkerDeploymentBuild() api.WorkerDeploymentBuild {
 		BuildContractVersion:    deployment.ProgramBuildContractVersion,
 		StandardToolchainDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		Runtime: api.WorkerRuntimeDescriptor{
-			Architecture:      "aarch64",
+			Architecture:      "x86_64",
 			Digest:            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			FormatVersion:     0,
 			MediaType:         "application/vnd.helmr.runtime.v0+squashfs",
@@ -45,7 +45,7 @@ func (consumerBuildPolicy) Resolve(
 	}
 	return deployment.BuildTarget{
 		Runtime: deployment.RuntimeDescriptor{
-			Architecture:      deployment.ArchitectureAArch64,
+			Architecture:      deployment.ArchitectureX8664,
 			Digest:            build.Runtime.Digest,
 			FormatVersion:     build.Runtime.FormatVersion,
 			MediaType:         build.Runtime.MediaType,
@@ -318,7 +318,7 @@ func TestBuildPreStartRejectionsReturnSuccessfulNilWork(t *testing.T) {
 		{
 			name: "runtime architecture mismatch", reason: "requirements_unsupported", withBuilder: true,
 			mutate: func(_ *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease, deployment *api.WorkerDeploymentBuild) {
-				deployment.Runtime.Architecture = "x86_64"
+				deployment.Runtime.Architecture = "aarch64"
 			},
 		},
 		{

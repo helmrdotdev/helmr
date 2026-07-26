@@ -583,13 +583,7 @@ func validateWorkspaceImagePlatform(
 	platform *oci.Platform,
 	architecture RuntimeArchitecture,
 ) error {
-	expected := ""
-	switch architecture {
-	case ArchitectureX8664:
-		expected = "amd64"
-	case ArchitectureAArch64:
-		expected = "arm64"
-	default:
+	if architecture != ArchitectureX8664 {
 		return fmt.Errorf(
 			"Workspace image architecture %q is unsupported",
 			architecture,
@@ -597,10 +591,9 @@ func validateWorkspaceImagePlatform(
 	}
 	if platform == nil ||
 		platform.OS != "linux" ||
-		platform.Architecture != expected {
+		platform.Architecture != "amd64" {
 		return fmt.Errorf(
-			"Workspace image platform does not match linux/%s",
-			expected,
+			"Workspace image platform does not match linux/amd64",
 		)
 	}
 	return nil

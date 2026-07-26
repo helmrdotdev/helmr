@@ -12,6 +12,7 @@ import (
 type imageCommandOptions struct {
 	ManagedProgram  bool
 	CgroupNamespace bool
+	CgroupLeaf      string
 	StartProof      bool
 	Pty             bool
 }

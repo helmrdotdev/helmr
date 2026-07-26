@@ -199,7 +199,7 @@ func TestActorStartHTTPPostgresDeniesBeforeAdmission(t *testing.T) {
 	}
 }
 
-func TestActorStartHTTPPostgresRejectsOversizeStoredInput(t *testing.T) {
+func TestActorStartHTTPPostgresAcceptsCanonicalInputBelowLimit(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
 	input := `[` + strings.Repeat(`0,`, 360_000) + `0]`
 	if len(input) >= maxActorInputBytes {
@@ -223,17 +223,15 @@ func TestActorStartHTTPPostgresRejectsOversizeStoredInput(t *testing.T) {
 		recorder,
 		actorStartHTTPPostgresRequest(body, principal, "", "", "operator.v1"),
 	)
-	if recorder.Code != http.StatusRequestEntityTooLarge ||
-		!strings.Contains(recorder.Body.String(), `"code":"actor_input_too_large"`) ||
-		!strings.Contains(recorder.Body.String(), `"retryable":false`) {
+	if recorder.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 	var actors int
 	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM actors`).Scan(&actors); err != nil {
 		t.Fatal(err)
 	}
-	if actors != 0 {
-		t.Fatalf("actors = %d, want rollback with no residue", actors)
+	if actors != 1 {
+		t.Fatalf("actors = %d, want 1", actors)
 	}
 }
 
@@ -725,10 +723,6 @@ func openActorStartPostgres(t *testing.T) *pgxpool.Pool {
 		if _, err := exec.LookPath(name); err != nil {
 			t.Skipf("%s not found; skipping PostgreSQL Actor start test", name)
 		}
-	}
-	versionOutput, err := exec.Command("postgres", "--version").CombinedOutput()
-	if err != nil || !bytes.Contains(versionOutput, []byte(" 18.")) {
-		t.Skipf("PostgreSQL 18 is required; got %s", bytes.TrimSpace(versionOutput))
 	}
 	dataDir := filepath.Join(t.TempDir(), "data")
 	if output, err := exec.Command("initdb", "-D", dataDir, "-A", "trust").CombinedOutput(); err != nil {

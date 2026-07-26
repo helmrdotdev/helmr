@@ -21,47 +21,22 @@
 }:
 
 let
-  target =
-    {
-      x86_64-linux = "x86_64";
-      aarch64-linux = "aarch64";
-    }
-    .${stdenv.hostPlatform.system}
-      or (throw "standard toolchain is unsupported on ${stdenv.hostPlatform.system}");
+  target = "x86_64";
   node = managedRuntime.nodejs_24;
   libc = stdenv.cc.libc;
   libcLib = lib.getLib libc;
   bunVersion = "1.3.10";
-  bun =
-    {
-      x86_64-linux = {
-        asset = "bun-linux-x64-baseline.zip";
-        hash = "sha256-QSAajF7nSp3Lsc4loRBPH5KYOLV6hFqnjZg3mwznzeI=";
-        root = "bun-linux-x64-baseline";
-      };
-      aarch64-linux = {
-        asset = "bun-linux-aarch64.zip";
-        hash = "sha256-+l7LJcr6jo9ch6D4M3GdRt0K8KhseDfYBlMSEtVWNtM=";
-        root = "bun-linux-aarch64";
-      };
-    }
-    .${stdenv.hostPlatform.system};
+  bun = {
+    asset = "bun-linux-x64-baseline.zip";
+    hash = "sha256-QSAajF7nSp3Lsc4loRBPH5KYOLV6hFqnjZg3mwznzeI=";
+    root = "bun-linux-x64-baseline";
+  };
   bunArchive = fetchurl {
     url = "https://github.com/oven-sh/bun/releases/download/bun-v${bunVersion}/${bun.asset}";
     inherit (bun) hash;
   };
-  loader =
-    {
-      x86_64-linux = "ld-linux-x86-64.so.2";
-      aarch64-linux = "ld-linux-aarch64.so.1";
-    }
-    .${stdenv.hostPlatform.system};
-  interpreter =
-    {
-      x86_64-linux = "/lib64/${loader}";
-      aarch64-linux = "/lib/${loader}";
-    }
-    .${stdenv.hostPlatform.system};
+  loader = "ld-linux-x86-64.so.2";
+  interpreter = "/lib64/${loader}";
   managerLibraries = [
     loader
     "libc.so.6"
@@ -91,6 +66,7 @@ let
     ];
   };
 in
+assert lib.assertMsg stdenv.hostPlatform.isx86_64 "standard toolchain supports only x86_64-linux";
 assert lib.assertMsg (
   node.version == "24.16.0"
 ) "standard toolchain requires Managed Node 24.16.0, got ${node.version}";
@@ -349,9 +325,6 @@ stdenvNoCC.mkDerivation {
 
   meta = {
     description = "Helmr standard-toolchain release candidate";
-    platforms = [
-      "x86_64-linux"
-      "aarch64-linux"
-    ];
+    platforms = [ "x86_64-linux" ];
   };
 }

@@ -98,11 +98,11 @@ type CompleteWorkerDrainParams struct {
 }
 
 type CompleteWorkerDrainRow struct {
-	ID                      pgtype.UUID         `json:"id"`
-	WorkerGroupID           string              `json:"worker_group_id"`
-	State                   WorkerInstanceState `json:"state"`
-	DrainCleanupFingerprint pgtype.Text         `json:"drain_cleanup_fingerprint"`
-	DrainCleanupEvidence    []byte              `json:"drain_cleanup_evidence"`
+	ID                      pgtype.UUID `json:"id"`
+	WorkerGroupID           string      `json:"worker_group_id"`
+	State                   string      `json:"state"`
+	DrainCleanupFingerprint pgtype.Text `json:"drain_cleanup_fingerprint"`
+	DrainCleanupEvidence    []byte      `json:"drain_cleanup_evidence"`
 }
 
 func (q *Queries) CompleteWorkerDrain(ctx context.Context, arg CompleteWorkerDrainParams) (CompleteWorkerDrainRow, error) {

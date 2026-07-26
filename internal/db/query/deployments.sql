@@ -42,7 +42,7 @@ SELECT sqlc.arg(id),
        sqlc.arg(worker_protocol_version),
        sqlc.arg(content_hash),
        sqlc.arg(deployment_source_artifact_id),
-       sqlc.arg(status)::deployment_status
+       sqlc.arg(status)::text
  WHERE EXISTS (
        SELECT 1
          FROM projects
@@ -56,35 +56,12 @@ SELECT sqlc.arg(id),
 	 )
 RETURNING *;
 
--- name: AllocateDeploymentVersion :one
-WITH allocated AS (
-    INSERT INTO deployment_version_counters (
-        org_id,
-        project_id,
-        environment_id,
-        prefix,
-        next_ordinal
-    ) VALUES (
-        sqlc.arg(org_id),
-        sqlc.arg(project_id),
-        sqlc.arg(environment_id),
-        sqlc.arg(prefix),
-        2
-    )
-    ON CONFLICT (org_id, project_id, environment_id, prefix)
-    DO UPDATE
-       SET next_ordinal = deployment_version_counters.next_ordinal + 1,
-           updated_at = now()
-    RETURNING prefix, next_ordinal
-)
-SELECT concat(prefix, '.', next_ordinal - 1)::text AS version
-  FROM allocated;
-
 -- name: MarkDeploymentFailed :one
 UPDATE deployments
    SET status = 'failed',
        failure = sqlc.arg(failure),
-       failed_at = now()
+       failed_at = now(),
+       updated_at = now()
  WHERE deployments.org_id = sqlc.arg(org_id)
    AND deployments.project_id = sqlc.arg(project_id)
    AND deployments.environment_id = sqlc.arg(environment_id)
@@ -203,7 +180,8 @@ WITH locked_deployments AS MATERIALIZED (
 ), meter_event AS (
     INSERT INTO meter_events (
         org_id, project_id, environment_id, deployment_id,
-        deployment_build_lease_id, attempt_number, trace_id, span_id, meter,
+        deployment_build_lease_id, attempt_number,
+        trace_id, span_id, meter,
         quantity, unit, measured_from, measured_to, details,
         idempotency_key, idempotency_fingerprint
     )
@@ -228,7 +206,8 @@ WITH locked_deployments AS MATERIALIZED (
                'build_executors',expired.requested_build_executors)::text
       FROM expired
      WHERE expired.started_at IS NOT NULL AND expired.started_at < expired.expires_at
-    ON CONFLICT (org_id, source_type, source_id, meter, idempotency_key)
+    ON CONFLICT (org_id, deployment_build_lease_id, meter, idempotency_key)
+        WHERE deployment_build_lease_id IS NOT NULL
     DO UPDATE SET idempotency_fingerprint = meter_events.idempotency_fingerprint
      WHERE meter_events.idempotency_fingerprint = excluded.idempotency_fingerprint
     RETURNING *
@@ -238,7 +217,8 @@ WITH locked_deployments AS MATERIALIZED (
         deployment_id, meter_event_id, attempt_number, trace_id, span_id,
         kind, payload, idempotency_key, observed_at
     )
-    SELECT org_id, 'meter_event', source_type, source_id, project_id, environment_id,
+    SELECT org_id, 'meter_event', 'deployment_build_lease', deployment_build_lease_id,
+           project_id, environment_id,
            deployment_id, id, attempt_number, trace_id, span_id,
            meter, details, idempotency_key, occurred_at
       FROM meter_event
@@ -251,8 +231,8 @@ UPDATE deployments
            ELSE deployments.current_build_lease_id
        END,
        status = CASE
-           WHEN expired.lease_sequence < 3 THEN 'building'::deployment_status
-           ELSE 'failed'::deployment_status
+           WHEN expired.lease_sequence < 3 THEN 'building'
+           ELSE 'failed'
        END,
        failure = CASE
            WHEN expired.lease_sequence < 3 THEN deployments.failure
@@ -467,8 +447,8 @@ WITH target_deployment AS MATERIALIZED (
                ELSE deployments.current_build_lease_id
            END,
            status = CASE
-               WHEN rejected.lease_sequence < 3 THEN 'building'::deployment_status
-               ELSE 'failed'::deployment_status
+               WHEN rejected.lease_sequence < 3 THEN 'building'
+               ELSE 'failed'
            END,
            failure = CASE
                WHEN rejected.lease_sequence < 3 THEN deployments.failure
@@ -531,7 +511,8 @@ RETURNING deployments.*
 ), meter_event AS (
     INSERT INTO meter_events (
         org_id, project_id, environment_id, deployment_id,
-        deployment_build_lease_id, attempt_number, trace_id, span_id, meter,
+        deployment_build_lease_id, attempt_number,
+        trace_id, span_id, meter,
         quantity, unit, measured_from, measured_to, details,
         idempotency_key, idempotency_fingerprint
     )
@@ -560,7 +541,8 @@ RETURNING deployments.*
            )::text
       FROM completed
      WHERE completed.started_at < completed.terminal_at
-    ON CONFLICT (org_id, source_type, source_id, meter, idempotency_key)
+    ON CONFLICT (org_id, deployment_build_lease_id, meter, idempotency_key)
+        WHERE deployment_build_lease_id IS NOT NULL
     DO UPDATE SET idempotency_fingerprint = meter_events.idempotency_fingerprint
      WHERE meter_events.idempotency_fingerprint = excluded.idempotency_fingerprint
     RETURNING *
@@ -570,7 +552,8 @@ RETURNING deployments.*
         deployment_id, meter_event_id, attempt_number, trace_id, span_id,
         kind, payload, idempotency_key, observed_at
     )
-    SELECT org_id, 'meter_event', source_type, source_id, project_id,
+    SELECT org_id, 'meter_event', 'deployment_build_lease', deployment_build_lease_id,
+           project_id,
            environment_id, deployment_id, id, attempt_number, trace_id, span_id,
            meter, details, idempotency_key, occurred_at
       FROM meter_event
@@ -691,7 +674,8 @@ RETURNING deployments.*
 ), meter_event AS (
     INSERT INTO meter_events (
         org_id, project_id, environment_id, deployment_id,
-        deployment_build_lease_id, attempt_number, trace_id, span_id, meter,
+        deployment_build_lease_id, attempt_number,
+        trace_id, span_id, meter,
         quantity, unit, measured_from, measured_to, details,
         idempotency_key, idempotency_fingerprint
     )
@@ -722,7 +706,8 @@ RETURNING deployments.*
            )::text
       FROM failed
      WHERE failed.started_at < failed.terminal_at
-    ON CONFLICT (org_id, source_type, source_id, meter, idempotency_key)
+    ON CONFLICT (org_id, deployment_build_lease_id, meter, idempotency_key)
+        WHERE deployment_build_lease_id IS NOT NULL
     DO UPDATE SET idempotency_fingerprint = meter_events.idempotency_fingerprint
      WHERE meter_events.idempotency_fingerprint = excluded.idempotency_fingerprint
     RETURNING *
@@ -732,7 +717,8 @@ RETURNING deployments.*
         deployment_id, meter_event_id, attempt_number, trace_id, span_id,
         kind, payload, idempotency_key, observed_at
     )
-    SELECT org_id, 'meter_event', source_type, source_id, project_id,
+    SELECT org_id, 'meter_event', 'deployment_build_lease', deployment_build_lease_id,
+           project_id,
            environment_id, deployment_id, id, attempt_number, trace_id, span_id,
            meter, details, idempotency_key, occurred_at
       FROM meter_event
@@ -795,7 +781,8 @@ WITH locked_deployment AS MATERIALIZED (
 ), meter_event AS (
     INSERT INTO meter_events (
         org_id, project_id, environment_id, deployment_id,
-        deployment_build_lease_id, attempt_number, trace_id, span_id, meter,
+        deployment_build_lease_id, attempt_number,
+        trace_id, span_id, meter,
         quantity, unit, measured_from, measured_to, details,
         idempotency_key, idempotency_fingerprint
     )
@@ -828,7 +815,8 @@ WITH locked_deployment AS MATERIALIZED (
                'build_executors', lost.requested_build_executors
            )::text
       FROM lost
-    ON CONFLICT (org_id, source_type, source_id, meter, idempotency_key)
+    ON CONFLICT (org_id, deployment_build_lease_id, meter, idempotency_key)
+        WHERE deployment_build_lease_id IS NOT NULL
     DO UPDATE SET idempotency_fingerprint = meter_events.idempotency_fingerprint
      WHERE meter_events.idempotency_fingerprint = excluded.idempotency_fingerprint
     RETURNING *
@@ -838,7 +826,8 @@ WITH locked_deployment AS MATERIALIZED (
         deployment_id, meter_event_id, attempt_number, trace_id, span_id,
         kind, payload, idempotency_key, observed_at
     )
-    SELECT org_id, 'meter_event', source_type, source_id, project_id,
+    SELECT org_id, 'meter_event', 'deployment_build_lease', deployment_build_lease_id,
+           project_id,
            environment_id, deployment_id, id, NULL::int, trace_id, span_id,
            meter, details, idempotency_key, occurred_at
       FROM meter_event
@@ -851,8 +840,8 @@ WITH locked_deployment AS MATERIALIZED (
                ELSE deployments.current_build_lease_id
            END,
            status = CASE
-               WHEN lost.lease_sequence < 3 THEN 'building'::deployment_status
-               ELSE 'failed'::deployment_status
+               WHEN lost.lease_sequence < 3 THEN 'building'
+               ELSE 'failed'
            END,
            failure = CASE
                WHEN lost.lease_sequence < 3 THEN deployments.failure
@@ -901,7 +890,7 @@ SELECT outcome.state,
        CASE WHEN outcome.replayed
            THEN locked_deployment.status
            ELSE transitioned_deployment.status
-       END::deployment_status AS deployment_status,
+       END::text AS deployment_status,
        outcome.replayed
   FROM outcome
  CROSS JOIN locked_deployment

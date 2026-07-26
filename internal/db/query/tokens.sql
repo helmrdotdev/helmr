@@ -62,7 +62,7 @@ SELECT *
    AND tokens.environment_id = sqlc.arg(environment_id)
    AND (
        sqlc.narg(state)::text IS NULL
-       OR tokens.state = sqlc.narg(state)::token_state
+       OR tokens.state = sqlc.narg(state)::text
    )
    AND (
        sqlc.narg(after_id)::uuid IS NULL
@@ -130,13 +130,15 @@ changed AS (
 ),
 reconciliation_intent AS (
     INSERT INTO outbox_messages (
+        id,
         lane,
         topic,
         partition_key,
         payload,
         available_at
     )
-    SELECT 'control',
+    SELECT sqlc.arg(outbox_message_id)::uuid,
+           'control',
            'token.reconcile',
            changed.id::text,
            jsonb_build_object(
@@ -212,13 +214,15 @@ changed AS (
 ),
 reconciliation_intent AS (
     INSERT INTO outbox_messages (
+        id,
         lane,
         topic,
         partition_key,
         payload,
         available_at
     )
-    SELECT 'control',
+    SELECT sqlc.arg(outbox_message_id)::uuid,
+           'control',
            'token.reconcile',
            changed.id::text,
            jsonb_build_object(
@@ -240,7 +244,12 @@ SELECT selected_token.*,
   FROM selected_token;
 
 -- name: ExpireDueTokens :many
-WITH candidates AS MATERIALIZED (
+WITH provided_outbox_ids AS MATERIALIZED (
+    SELECT id, ordinality
+      FROM unnest(sqlc.arg(outbox_message_ids)::uuid[])
+           WITH ORDINALITY AS supplied(id, ordinality)
+),
+candidates AS MATERIALIZED (
     SELECT id
      FROM tokens
      WHERE state = 'pending'
@@ -257,17 +266,26 @@ expired AS (
      FROM candidates
      WHERE tokens.id = candidates.id
        AND tokens.state = 'pending'
+       AND cardinality(sqlc.arg(outbox_message_ids)::uuid[])
+           >= (SELECT count(*) FROM candidates)
     RETURNING tokens.*
+),
+ordered_expired AS MATERIALIZED (
+    SELECT expired.id,
+           row_number() OVER (ORDER BY expired.expires_at, expired.id) AS ordinality
+      FROM expired
 ),
 reconciliation_intents AS (
     INSERT INTO outbox_messages (
+        id,
         lane,
         topic,
         partition_key,
         payload,
         available_at
     )
-    SELECT 'control',
+    SELECT provided_outbox_ids.id,
+           'control',
            'token.reconcile',
            expired.id::text,
            jsonb_build_object(
@@ -276,6 +294,8 @@ reconciliation_intents AS (
            ),
            transaction_timestamp()
       FROM expired
+      JOIN ordered_expired USING (id)
+      JOIN provided_outbox_ids USING (ordinality)
     RETURNING partition_key
 )
 SELECT expired.*

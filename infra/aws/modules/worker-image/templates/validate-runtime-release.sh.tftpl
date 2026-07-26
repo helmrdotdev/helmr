@@ -36,7 +36,7 @@ test -f "$release_validator"
 test ! -L "$release_validator"
 test "$(stat -c '%u:%g' "$release_validator")" = "0:0"
 test "$(stat -c '%a' "$release_validator")" = "444"
-python3 "$release_validator" "$release_archive" "$release_extract" x86_64
+python3 "$release_validator" "$release_archive" "$release_extract"
 
 test -d "$release_dir"
 test ! -L "$release_dir"

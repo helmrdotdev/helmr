@@ -161,10 +161,6 @@ done
 INSTALL_DIR="${HELMR_INSTALL_DIR:-${XDG_BIN_DIR:-$HOME/.helmr/bin}}"
 mkdir -p "$INSTALL_DIR"
 
-remove_legacy_adapter_sidecar() {
-  rm -rf "$INSTALL_DIR/adapter"
-}
-
 if [ -n "$binary_path" ]; then
   if [ ! -f "$binary_path" ]; then
     print_message error "Error: binary not found at $binary_path."
@@ -238,7 +234,6 @@ else
     target_path="$(canonical_path "$INSTALL_DIR/$APP" 2>/dev/null || true)"
     installed_path="$(canonical_path "$installed_path" 2>/dev/null || printf "%s\n" "$installed_path")"
     if [ "$installed_version" = "$specific_version" ] && [ "$installed_path" = "$target_path" ]; then
-      remove_legacy_adapter_sidecar
       print_message info "${MUTED}Helmr $specific_version is already installed.${NC}"
       exit 0
     fi
@@ -283,8 +278,6 @@ else
   cp "$tmp_dir/$APP" "$INSTALL_DIR/$APP"
   chmod 755 "$INSTALL_DIR/$APP"
 fi
-
-remove_legacy_adapter_sidecar
 
 add_to_path() {
   local config_file="$1"

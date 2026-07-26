@@ -160,12 +160,12 @@ func TestValidateBuildSucceeded(t *testing.T) {
 			errMsg: "declarations do not match",
 		},
 		{
-			name: "program Workspace architecture",
+			name: "unsupported program architecture",
 			change: func(result *BuildResult) {
-				result.Succeeded.Program.Index.Architecture = ArchitectureAArch64
-				result.Succeeded.Provenance.Architecture = ArchitectureAArch64
+				result.Succeeded.Program.Index.Architecture = RuntimeArchitecture("aarch64")
+				result.Succeeded.Provenance.Architecture = RuntimeArchitecture("aarch64")
 			},
-			errMsg: "architecture does not match provenance",
+			errMsg: "unsupported",
 		},
 		{
 			name: "program provenance",
@@ -219,7 +219,7 @@ func TestValidateBuildSucceeded(t *testing.T) {
 		{
 			name: "workspace architecture",
 			change: func(result *BuildResult) {
-				result.Succeeded.WorkspaceImages[0].Artifact.Architecture = ArchitectureAArch64
+				result.Succeeded.WorkspaceImages[0].Artifact.Architecture = RuntimeArchitecture("aarch64")
 			},
 			errMsg: "architecture",
 		},
@@ -274,8 +274,8 @@ func TestValidateBuildResultTarget(t *testing.T) {
 		{
 			name:          "architecture",
 			runtimeDigest: runtimeDigest,
-			architecture:  ArchitectureAArch64,
-			errMsg:        "provenance architecture does not match",
+			architecture:  RuntimeArchitecture("aarch64"),
+			errMsg:        "unsupported",
 		},
 		{
 			name:          "invalid runtime",
@@ -303,16 +303,16 @@ func TestValidateBuildResultTarget(t *testing.T) {
 	workspaceOnly.Succeeded.Plan.Definitions = workspaceOnly.Succeeded.Plan.Definitions[2:]
 	workspaceOnly.Succeeded.Plan.Queues = []QueueInput{}
 	workspaceOnly.Succeeded.Program = nil
-	workspaceOnly.Succeeded.Provenance.Architecture = ArchitectureAArch64
-	workspaceOnly.Succeeded.Plan.Definitions[0].Workspace.Architecture = ArchitectureAArch64
+	workspaceOnly.Succeeded.Provenance.Architecture = RuntimeArchitecture("aarch64")
+	workspaceOnly.Succeeded.Plan.Definitions[0].Workspace.Architecture = RuntimeArchitecture("aarch64")
 	workspaceOnly.Succeeded.Plan.Definitions[0].Workspace.ImageBuild.Images[0].Platform.Architecture = "aarch64"
-	workspaceOnly.Succeeded.WorkspaceImages[0].Artifact.Architecture = ArchitectureAArch64
+	workspaceOnly.Succeeded.WorkspaceImages[0].Artifact.Architecture = RuntimeArchitecture("aarch64")
 	err := ValidateBuildResultTarget(
 		workspaceOnly,
 		runtimeDigest,
 		ArchitectureX8664,
 	)
-	if err == nil || !strings.Contains(err.Error(), "provenance architecture does not match") {
+	if err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("workspace target error = %v", err)
 	}
 }
@@ -347,9 +347,9 @@ func TestValidateBuildResultAppliesPlanSizeBound(t *testing.T) {
 					}},
 				},
 				Resources: ResourcesManifest{
-					MilliCPU:  1000,
-					MemoryMiB: 1024,
-					DiskMiB:   8192,
+					MilliCPU:         1000,
+					MemoryMiB:        1024,
+					EphemeralDiskMiB: 8192,
 				},
 				Network: NetworkManifest{
 					Internet:  true,

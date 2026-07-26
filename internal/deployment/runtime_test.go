@@ -72,7 +72,6 @@ func TestRuntimeDescriptorWireRoundTrip(t *testing.T) {
 
 func TestRuntimeArchitectureGoBoundary(t *testing.T) {
 	tests := map[string]RuntimeArchitecture{
-		"arm64": ArchitectureAArch64,
 		"amd64": ArchitectureX8664,
 	}
 	for goArchitecture, architecture := range tests {
@@ -95,6 +94,9 @@ func TestRuntimeArchitectureGoBoundary(t *testing.T) {
 	}
 	if _, err := RuntimeArchitectureFromGo("x86_64"); err == nil {
 		t.Fatal("RuntimeArchitectureFromGo accepted a Helmr architecture")
+	}
+	if _, err := RuntimeArchitectureFromGo("arm64"); err == nil {
+		t.Fatal("RuntimeArchitectureFromGo accepted unsupported arm64")
 	}
 	if _, err := RuntimeArchitectureGo("amd64"); err == nil {
 		t.Fatal("RuntimeArchitectureGo accepted a Go architecture")

@@ -34,8 +34,6 @@ const (
 	eventSubjectTypeDeployment = "deployment"
 )
 
-var errLiveTelemetryFollowComplete = errors.New("live telemetry follow complete")
-
 type EventStream struct {
 	log             *slog.Logger
 	db              db.Querier

@@ -228,7 +228,7 @@ func actorInputWaitIdleTimeout(raw json.RawMessage) (time.Duration, error) {
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return 0, err
 	}
-	if manifest.IdleTimeoutMS <= 0 || manifest.IdleTimeoutMS > maxTokenWaitIdleTimeout.Milliseconds() {
+	if manifest.IdleTimeoutMS <= 0 || manifest.IdleTimeoutMS > maxRunWaitIdleTimeout.Milliseconds() {
 		return 0, errors.New("Actor idle timeout is outside the supported range")
 	}
 	return time.Duration(manifest.IdleTimeoutMS) * time.Millisecond, nil

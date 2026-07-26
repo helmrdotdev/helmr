@@ -50,8 +50,8 @@ func TestRegisteredPrefixesAreValidAndUnambiguous(t *testing.T) {
 			t.Fatalf("prefix %q must include trailing underscore", prefix)
 		}
 	}
-	if len(seen) != 22 {
-		t.Fatalf("registered prefix count = %d, want 22", len(seen))
+	if len(seen) != 15 {
+		t.Fatalf("registered prefix count = %d, want 15", len(seen))
 	}
 	if _, ok := seen[Actor]; !ok {
 		t.Fatal("Actor prefix is not registered")
@@ -86,8 +86,8 @@ func TestParseRejectsInvalidIDs(t *testing.T) {
 
 func TestValidateForRejectsWrongPrefix(t *testing.T) {
 	id := "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"
-	if err := ValidateFor(Session, id); err == nil {
-		t.Fatalf("ValidateFor(Session, %q) succeeded, want error", id)
+	if err := ValidateFor(Workspace, id); err == nil {
+		t.Fatalf("ValidateFor(Workspace, %q) succeeded, want error", id)
 	}
 }
 

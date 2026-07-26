@@ -31,7 +31,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
@@ -110,11 +109,6 @@ const (
 
 type TxBeginner interface {
 	Begin(context.Context) (pgx.Tx, error)
-}
-
-type dbTXBeginner interface {
-	db.DBTX
-	TxBeginner
 }
 
 type ServerConfig struct {
@@ -687,6 +681,18 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actor-turns/commit", s.workerCommitActorTurn)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actor-outputs", s.workerAppendActorOutput)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actor-inputs/send", s.workerSendActorInput)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/start", s.workerStartActor)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/status", s.workerGetActorStatus)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/close", s.workerCloseActor)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/output-page", s.workerReadActorOutputPage)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/create", s.workerCreateWorkspace)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/retrieve", s.workerRetrieveWorkspace)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/files/read", s.workerReadWorkspaceFile)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/files/stat", s.workerStatWorkspaceFile)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/files/list", s.workerListWorkspaceFiles)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/exec", s.workerExecuteWorkspace)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/exec/poll", s.workerPollWorkspaceExec)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/delete", s.workerDeleteWorkspace)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/task-children/invoke", s.workerInvokeChildTask)
 				r.With(limitRequestBody(tokenRequestBodyLimit)).Post("/leases/tokens", s.workerCreateToken)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/tasks/complete", s.workerCompleteTask)
@@ -880,14 +886,6 @@ func decodeOptionalJSON(r io.Reader, out any) error {
 	return nil
 }
 
-func optionalText(value string) pgtype.Text {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return pgtype.Text{}
-	}
-	return pgtype.Text{String: value, Valid: true}
-}
-
 func optionalLimitQuery(r *http.Request, defaultLimit int32) (int32, error) {
 	limit := defaultLimit
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
@@ -898,13 +896,6 @@ func optionalLimitQuery(r *http.Request, defaultLimit int32) (int32, error) {
 		limit = int32(parsed)
 	}
 	return limit, nil
-}
-
-func optionalUUIDString(value pgtype.UUID) string {
-	if !value.Valid {
-		return ""
-	}
-	return uuid.UUID(value.Bytes).String()
 }
 
 func limitRequestBody(limit int64) func(http.Handler) http.Handler {

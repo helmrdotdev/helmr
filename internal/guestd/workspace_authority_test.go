@@ -42,7 +42,12 @@ func TestWorkspaceRunAuthorityRenewalAndReplay(t *testing.T) {
 }
 
 func TestProgramResumeGrantRequiresInstalledWorkspaceAuthority(t *testing.T) {
-	entry, mounts, authority := testWorkspaceFinalizationMount(t)
+	entry, mounts, authority := testWorkspaceFinalizationMountUnadmitted(t)
+	releaseProgram, err := mounts.admitProgram(entry, authority, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseProgram()
 	waits := newWaitingRunRegistry()
 	pause := &runv0.CheckpointPauseRequest{
 		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "source-lease",
@@ -96,12 +101,66 @@ func TestProgramResumeGrantRequiresInstalledWorkspaceAuthority(t *testing.T) {
 	if err := handleProgramResumeGrantConnection(stream, 0, mounts, waits, time.Now); err == nil {
 		t.Fatal("uninstalled restore authority was accepted")
 	}
+	stale := proto.Clone(authority).(*workspacev0.WorkspaceRunAuthority)
+	stale.Fence.MountFencingGeneration--
+	requestBytes.Reset()
+	request.Authority = stale
+	if err := frameio.WriteProtoFrame(&requestBytes, request); err != nil {
+		t.Fatal(err)
+	}
+	stream = &scriptedNetConn{reader: bytes.NewReader(requestBytes.Bytes())}
+	if err := handleProgramResumeGrantConnection(stream, 0, mounts, waits, time.Now); err == nil {
+		t.Fatal("stale Workspace Mount generation was accepted")
+	}
+}
+
+func TestProgramResumeGrantWithoutActiveClaimDoesNotAdvanceFinalizedMount(t *testing.T) {
+	entry, mounts, authority := testWorkspaceFinalizationMount(t)
+	runWorkspaceCapture(t, mounts, testWorkspaceCaptureRequest(
+		t,
+		authority,
+		"11111111-1111-4111-8111-111111111111",
+	))
+	entry.authorityMu.Lock()
+	before := proto.Clone(entry.authority).(*workspacev0.WorkspaceRunAuthority)
+	entry.authorityMu.Unlock()
+	next := proto.Clone(before).(*workspacev0.WorkspaceRunAuthority)
+	next.Fence.WriterGeneration++
+	next.Fence.MountFencingGeneration++
+	next.Fence.BaseWorkspaceVersionId = "version-2"
+	var requestBytes bytes.Buffer
+	if err := frameio.WriteProtoFrame(&requestBytes, &workspacev0.GrantProgramResumeRequest{
+		Authority: next,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stream := &scriptedNetConn{reader: bytes.NewReader(requestBytes.Bytes())}
+	if err := handleProgramResumeGrantConnection(stream, 0, mounts, newWaitingRunRegistry(), time.Now); err == nil {
+		t.Fatal("Program resume without an active claim succeeded")
+	}
+	entry.authorityMu.Lock()
+	after := proto.Clone(entry.authority).(*workspacev0.WorkspaceRunAuthority)
+	entry.authorityMu.Unlock()
+	entry.processesMu.Lock()
+	state := entry.authorityState
+	entry.processesMu.Unlock()
+	if !proto.Equal(after, before) ||
+		entry.currentFencingGeneration() != uint64(before.GetFence().GetMountFencingGeneration()) ||
+		state != workspaceAuthorityFinalizing {
+		t.Fatalf("failed resume mutated finalized mount: authority=%+v generation=%d state=%d", after, entry.currentFencingGeneration(), state)
+	}
 }
 
 func TestProgramRestoreVerificationRequiresExactFrozenRegistration(t *testing.T) {
 	mounts := newWorkspaceOperationRegistry()
-	mounts.programActive = true
-	mounts.programEntry = &workspaceMountEntry{}
+	entry := &workspaceMountEntry{}
+	mounts.programClaims = []*managedProgramClaim{{
+		entry: entry,
+		authority: &workspacev0.WorkspaceRunAuthority{Fence: &workspacev0.WorkspaceAuthorityFence{
+			RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-1",
+		}},
+		released: make(chan struct{}),
+	}}
 	waits := newWaitingRunRegistry()
 	if _, err := waits.registerProgram(&runv0.CheckpointPauseRequest{
 		RunId: "run-1", AttemptNumber: 2, RunWaitId: "wait-1", CorrelationId: "correlation-1",
@@ -127,6 +186,9 @@ func TestProgramRestoreVerificationRequiresExactFrozenRegistration(t *testing.T)
 	}
 	if response.GetCheckpointId() != request.GetCheckpointId() || response.GetCorrelationId() != request.GetCorrelationId() {
 		t.Fatalf("verification response = %+v", &response)
+	}
+	if mounts.childAdmission == nil || mounts.childAdmission.entry != entry {
+		t.Fatal("verified frozen Program did not authorize one child admission")
 	}
 	request.CorrelationId = "different"
 	body.Reset()
@@ -202,6 +264,64 @@ func TestWorkspaceAuthorityRenewalSamplesTimeAfterReadingRequest(t *testing.T) {
 	}
 	if !clockCalledAfterRead {
 		t.Fatal("renewal sampled time before consuming the request")
+	}
+}
+
+func TestWorkspaceAuthorityRenewalRebindsActiveProgramClaim(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	entry := testWorkspaceAuthorityEntry()
+	authority := testWorkspaceRunAuthority(now.Add(time.Minute))
+	registry := newWorkspaceOperationRegistry()
+	registry.register("mount-1", entry)
+	releaseProgram, err := registry.admitProgram(entry, authority, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseProgram()
+	var stream bytes.Buffer
+	newExpiry := now.Add(2 * time.Minute)
+	if err := frameio.WriteProtoFrame(&stream, &workspacev0.RenewWorkspaceAuthorityRequest{
+		Previous:             proto.Clone(authority).(*workspacev0.WorkspaceRunAuthority),
+		NewExpiresAtUnixNano: newExpiry.UnixNano(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := handleWorkspaceAuthorityRenew(&stream, registry, func() time.Time { return now }); err != nil {
+		t.Fatal(err)
+	}
+	registry.mu.Lock()
+	claimExpiry := registry.programClaims[0].authority.GetFence().GetExpiresAtUnixNano()
+	registry.mu.Unlock()
+	if claimExpiry != newExpiry.UnixNano() {
+		t.Fatalf("active Program claim expiry = %d, want %d", claimExpiry, newExpiry.UnixNano())
+	}
+}
+
+func TestWorkspaceAuthorityRenewalRejectsMismatchedActiveProgramClaimWithoutMutation(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	entry := testWorkspaceAuthorityEntry()
+	authority := testWorkspaceRunAuthority(now.Add(time.Minute))
+	registry := newWorkspaceOperationRegistry()
+	registry.register("mount-1", entry)
+	releaseProgram, err := registry.admitProgram(entry, authority, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseProgram()
+	registry.mu.Lock()
+	registry.programClaims[0].authority.GetFence().RunLeaseId = "newer-run-lease"
+	registry.mu.Unlock()
+	if _, err := registry.renewCurrentWorkspaceRunAuthority(entry, &workspacev0.RenewWorkspaceAuthorityRequest{
+		Previous:             proto.Clone(authority).(*workspacev0.WorkspaceRunAuthority),
+		NewExpiresAtUnixNano: now.Add(2 * time.Minute).UnixNano(),
+	}, now); err == nil {
+		t.Fatal("renewal accepted a mismatched active Program claim")
+	}
+	entry.authorityMu.Lock()
+	expiry := entry.authority.GetFence().GetExpiresAtUnixNano()
+	entry.authorityMu.Unlock()
+	if expiry != authority.GetFence().GetExpiresAtUnixNano() {
+		t.Fatalf("failed renewal mutated Workspace authority expiry = %d", expiry)
 	}
 }
 
@@ -286,7 +406,7 @@ func TestWorkspaceFinalizationBeginSamplesTimeAfterReadingRequest(t *testing.T) 
 		t.Fatal(err)
 	}
 	clockCalledAfterRead := false
-	if err := handleWorkspaceFinalizationBegin(context.Background(), &stream, registry, func() time.Time {
+	if err := handleWorkspaceFinalizationBegin(&stream, registry, func() time.Time {
 		clockCalledAfterRead = stream.Len() == 0
 		return now
 	}); err != nil {

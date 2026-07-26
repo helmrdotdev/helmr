@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -76,6 +77,49 @@ type cancellationWait struct {
 	baseWorkspaceVersionID   pgtype.UUID
 }
 
+type runTermination struct {
+	reasonCode        string
+	errorCode         string
+	errorMessage      string
+	runStatus         RunStatus
+	runLeaseState     RunLeaseState
+	attemptOutcome    string
+	waitCondition     WaitState
+	waitSuspension    RunWaitState
+	eventKind         string
+	eventMessage      string
+	actorFailureCode  string
+	actorCancellation bool
+}
+
+var cancelledRunTermination = runTermination{
+	reasonCode:        "run_cancelled",
+	errorCode:         "run_cancelled",
+	errorMessage:      "Run was cancelled",
+	runStatus:         RunStatusCancelled,
+	runLeaseState:     RunLeaseStateCancelled,
+	attemptOutcome:    "cancelled",
+	waitCondition:     WaitStateCancelled,
+	waitSuspension:    RunWaitStateCancelled,
+	eventKind:         "run.cancelled",
+	eventMessage:      "Run cancelled",
+	actorCancellation: true,
+}
+
+var secretRevokedRunTermination = runTermination{
+	reasonCode:       "secret_revoked",
+	errorCode:        "secret_revoked",
+	errorMessage:     "A Workspace Secret used by this Run was revoked",
+	runStatus:        RunStatusFailed,
+	runLeaseState:    RunLeaseStateFailed,
+	attemptOutcome:   "failed",
+	waitCondition:    WaitStateFailed,
+	waitSuspension:   RunWaitStateFailed,
+	eventKind:        "run.failed",
+	eventMessage:     "Run failed",
+	actorFailureCode: "run-failed",
+}
+
 func NewRunCanceller(database RunCancellationDB) (*RunCanceller, error) {
 	if database == nil {
 		return nil, errors.New("run cancellation database is required")
@@ -91,9 +135,11 @@ type OwnedRunFinalizationGraphRequest struct {
 }
 
 type OwnedRunFinalizationGraph struct {
-	tx          pgx.Tx
-	currentRun  uuid.UUID
-	descendants []cancellationRun
+	tx           pgx.Tx
+	currentRun   uuid.UUID
+	descendants  []cancellationRun
+	locked       map[uuid.UUID]cancellationRun
+	waitsByChild map[uuid.UUID]cancellationWait
 }
 
 // LockOwnedRunFinalizationGraphInTransaction acquires the global cancellation
@@ -168,13 +214,15 @@ func LockOwnedRunFinalizationGraphInTransaction(
 		run.depth = depth
 		descendants = append(descendants, run)
 	}
-	if _, err := lockCancellationResources(
+	waitsByChild, err := lockCancellationResources(
 		ctx, tx, lockOrder, descendants,
-	); err != nil {
+	)
+	if err != nil {
 		return OwnedRunFinalizationGraph{}, err
 	}
 	return OwnedRunFinalizationGraph{
 		tx: tx, currentRun: request.RunID, descendants: descendants,
+		locked: locked, waitsByChild: waitsByChild,
 	}, nil
 }
 
@@ -206,6 +254,76 @@ func (g OwnedRunFinalizationGraph) CancelDescendants(ctx context.Context) (int, 
 		cancelled++
 	}
 	return cancelled, nil
+}
+
+// FailCurrentForSecretRevocation terminalizes the graph root with an explicit
+// Secret revocation error after cancelling its owned descendants. The caller
+// must lock and validate the Workspace's complete Secret set before acquiring
+// this graph.
+func (g OwnedRunFinalizationGraph) FailCurrentForSecretRevocation(
+	ctx context.Context,
+) (int, error) {
+	cancelled, err := g.CancelDescendants(ctx)
+	if err != nil {
+		return 0, err
+	}
+	target := g.descendants[0]
+	if runStatusTerminal(target.status) {
+		return cancelled, nil
+	}
+	if err := terminateLockedRun(
+		ctx,
+		g.tx,
+		target,
+		pgtype.UUID{},
+		pgtype.UUID{},
+		secretRevokedRunTermination,
+	); err != nil {
+		return 0, err
+	}
+	if target.parentRunID.Valid && target.parentOwnsLifecycle.Valid &&
+		target.parentOwnsLifecycle.Bool {
+		parentID := uuid.UUID(target.parentRunID.Bytes)
+		parent, found := g.locked[parentID]
+		if found && !runStatusTerminal(parent.status) {
+			if parent.workspaceID == target.workspaceID {
+				return 0, cancellationAuthority(
+					"Secret-revoked Run retained an active same-Workspace parent",
+					nil,
+				)
+			}
+			wait, found := g.waitsByChild[target.id]
+			if !found || wait.handoffRuntimeInstanceID.Valid ||
+				wait.handoffWorkspaceMountID.Valid {
+				return 0, cancellationAuthority(
+					"Secret-revoked child Wait boundary is inconsistent",
+					nil,
+				)
+			}
+			result, err := json.Marshal(map[string]any{
+				"ok": false,
+				"error": map[string]any{
+					"code":      "secret_revoked",
+					"message":   "A Workspace Secret used by the child Run was revoked",
+					"retryable": false,
+				},
+				"run": map[string]any{"id": target.publicID},
+			})
+			if err != nil {
+				return 0, err
+			}
+			if err := resolveDifferentWorkspaceChildWait(
+				ctx,
+				g.tx,
+				parent,
+				wait,
+				result,
+			); err != nil {
+				return 0, err
+			}
+		}
+	}
+	return cancelled + 1, nil
 }
 
 func (c *RunCanceller) Cancel(
@@ -930,17 +1048,39 @@ func cancelLockedRun(
 	preservedRuntimeID pgtype.UUID,
 	preservedMountID pgtype.UUID,
 ) error {
+	return terminateLockedRun(
+		ctx,
+		tx,
+		run,
+		preservedRuntimeID,
+		preservedMountID,
+		cancelledRunTermination,
+	)
+}
+
+func terminateLockedRun(
+	ctx context.Context,
+	tx pgx.Tx,
+	run cancellationRun,
+	preservedRuntimeID pgtype.UUID,
+	preservedMountID pgtype.UUID,
+	termination runTermination,
+) error {
 	if runStatusTerminal(run.status) {
 		return nil
 	}
 	errorPayload, err := json.Marshal(map[string]any{
-		"code": "run_cancelled", "message": "Run was cancelled", "retryable": false,
+		"code":      termination.errorCode,
+		"message":   termination.errorMessage,
+		"retryable": false,
 	})
 	if err != nil {
 		return err
 	}
 	if run.actorID.Valid {
-		command, err := tx.Exec(ctx, `
+		var command pgconn.CommandTag
+		if termination.actorCancellation {
+			command, err = tx.Exec(ctx, `
 UPDATE actors
    SET current_run_id = NULL,
        run_generation = run_generation + 1,
@@ -951,18 +1091,40 @@ UPDATE actors
    AND workspace_id = $2
    AND current_run_id = $3
    AND state IN ('open', 'closing')`,
-			uuid.UUID(run.actorID.Bytes),
-			run.workspaceID,
-			run.id,
-		)
+				uuid.UUID(run.actorID.Bytes),
+				run.workspaceID,
+				run.id,
+			)
+		} else {
+			command, err = tx.Exec(ctx, `
+UPDATE actors
+   SET state = 'failed',
+       current_run_id = NULL,
+       run_generation = run_generation + 1,
+       state_version = state_version + 1,
+       manual_run_cancelled = false,
+       failure_code = $4,
+       failure_run_id = $3,
+       failed_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND workspace_id = $2
+   AND current_run_id = $3
+   AND state IN ('open', 'closing')`,
+				uuid.UUID(run.actorID.Bytes),
+				run.workspaceID,
+				run.id,
+				termination.actorFailureCode,
+			)
+		}
 		if err != nil || command.RowsAffected() != 1 {
-			return cancellationAuthority("install Actor Run cancellation hold", err)
+			return cancellationAuthority("terminalize owning Actor", err)
 		}
 	}
 	if _, err := tx.Exec(ctx, `
 UPDATE run_waits
    SET condition_state = CASE
-           WHEN condition_state = 'pending' THEN 'cancelled'::wait_state
+           WHEN condition_state = 'pending' THEN $3::text
            ELSE condition_state
        END,
        condition_result = CASE
@@ -978,29 +1140,32 @@ UPDATE run_waits
            ELSE condition_terminal_at
        END,
        condition_reason_code = CASE
-           WHEN condition_state = 'pending' THEN 'run_cancelled'
+           WHEN condition_state = 'pending' THEN $4
            ELSE condition_reason_code
        END,
-       suspension_state = 'cancelled',
+       suspension_state = $5::text,
        current_run_lease_id = NULL,
        suspension_terminal_at = transaction_timestamp(),
-       suspension_reason_code = 'run_cancelled',
+       suspension_reason_code = $4,
        suspension_error = $2::jsonb,
        updated_at = transaction_timestamp()
  WHERE run_id = $1
    AND suspension_state IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming')`,
 		run.id,
 		errorPayload,
+		termination.waitCondition,
+		termination.reasonCode,
+		termination.waitSuspension,
 	); err != nil {
-		return cancellationAuthority("cancel Run suspension", err)
+		return cancellationAuthority("terminalize Run suspension", err)
 	}
 	if _, err := tx.Exec(ctx, `
 UPDATE run_checkpoints
    SET state = 'invalid',
        invalidated_at = transaction_timestamp(),
-       invalidation_reason_code = 'run_cancelled'
+       invalidation_reason_code = $2
  WHERE run_id = $1
-   AND state IN ('creating', 'ready')`, run.id); err != nil {
+   AND state IN ('creating', 'ready')`, run.id, termination.reasonCode); err != nil {
 		return cancellationAuthority("invalidate Run checkpoints", err)
 	}
 	if run.currentRunLeaseID.Valid {
@@ -1008,13 +1173,14 @@ UPDATE run_checkpoints
 UPDATE workspace_leases
    SET state = 'fenced',
        terminal_at = transaction_timestamp(),
-       terminal_reason_code = 'run_cancelled',
+       terminal_reason_code = $3,
        terminal_error = $2::jsonb,
        updated_at = transaction_timestamp()
  WHERE owner_run_lease_id = $1
    AND state IN ('active', 'releasing')`,
 			uuid.UUID(run.currentRunLeaseID.Bytes),
 			errorPayload,
+			termination.reasonCode,
 		)
 		if err != nil {
 			return cancellationAuthority("fence Run Workspace Lease", err)
@@ -1024,9 +1190,13 @@ UPDATE workspace_leases
 		}
 		command, err = tx.Exec(ctx, `
 UPDATE run_leases
-   SET state = 'cancelled',
+   SET state = CASE
+           WHEN $4::text = 'failed' AND started_at IS NULL
+           THEN 'rejected'
+           ELSE $4::text
+       END,
        terminal_at = transaction_timestamp(),
-       terminal_reason_code = 'run_cancelled',
+       terminal_reason_code = $5,
        terminal_error = $2::jsonb,
        updated_at = transaction_timestamp()
  WHERE id = $1
@@ -1035,9 +1205,11 @@ UPDATE run_leases
 			uuid.UUID(run.currentRunLeaseID.Bytes),
 			errorPayload,
 			run.id,
+			termination.runLeaseState,
+			termination.reasonCode,
 		)
 		if err != nil || command.RowsAffected() != 1 {
-			return cancellationAuthority("cancel current Run Lease", err)
+			return cancellationAuthority("terminalize current Run Lease", err)
 		}
 	}
 	var retainedRuntime, retainedMount any
@@ -1074,7 +1246,7 @@ WITH candidate_runtimes AS (
                ELSE desired_version + 1
            END,
            desired_at = transaction_timestamp(),
-           desired_reason = 'run_cancelled',
+           desired_reason = $5,
            updated_at = transaction_timestamp()
      WHERE id IN (SELECT id FROM target_runtimes)
        AND observed_state IN ('allocated', 'preparing', 'ready', 'closing')
@@ -1095,13 +1267,14 @@ UPDATE workspace_mounts
 		run.currentRunLeaseID,
 		retainedRuntime,
 		retainedMount,
+		termination.reasonCode,
 	); err != nil {
-		return cancellationAuthority("request cancelled Run runtime cleanup", err)
+		return cancellationAuthority("request terminal Run runtime cleanup", err)
 	}
 	command, err := tx.Exec(ctx, `
 UPDATE run_attempts
-   SET terminal_outcome = 'cancelled',
-       terminal_reason_code = 'run_cancelled',
+   SET terminal_outcome = $4,
+       terminal_reason_code = $5,
        terminal_error = $3::jsonb,
        terminal_at = transaction_timestamp()
  WHERE run_id = $1
@@ -1110,14 +1283,16 @@ UPDATE run_attempts
 		run.id,
 		run.currentAttemptNumber,
 		errorPayload,
+		termination.attemptOutcome,
+		termination.reasonCode,
 	)
 	if err != nil || command.RowsAffected() != 1 {
-		return cancellationAuthority("cancel current Run Attempt", err)
+		return cancellationAuthority("terminalize current Run Attempt", err)
 	}
 	command, err = tx.Exec(ctx, `
 UPDATE runs
-   SET status = 'cancelled',
-       terminal_reason_code = 'run_cancelled',
+   SET status = $4::text,
+       terminal_reason_code = $5,
        error = $2::jsonb,
        state_version = state_version + 1,
        current_run_lease_id = NULL,
@@ -1143,9 +1318,11 @@ UPDATE runs
 		run.id,
 		errorPayload,
 		run.stateVersion,
+		termination.runStatus,
+		termination.reasonCode,
 	)
 	if err != nil || command.RowsAffected() != 1 {
-		return cancellationAuthority("terminalize cancelled Run", err)
+		return cancellationAuthority("terminalize Run", err)
 	}
 	if !run.actorID.Valid {
 		if _, err := tx.Exec(ctx, `
@@ -1161,7 +1338,23 @@ UPDATE workspaces
 			run.workspaceID,
 			run.id,
 		); err != nil {
-			return cancellationAuthority("release cancelled Task Workspace", err)
+			return cancellationAuthority("release terminal Task Workspace", err)
+		}
+	} else if !termination.actorCancellation {
+		if _, err := tx.Exec(ctx, `
+UPDATE workspaces
+   SET owner_actor_id = NULL,
+       ownership_generation = ownership_generation + 1,
+       state_version = state_version + 1,
+       last_activity_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND owner_actor_id = $2
+   AND owner_run_id IS NULL`,
+			run.workspaceID,
+			uuid.UUID(run.actorID.Bytes),
+		); err != nil {
+			return cancellationAuthority("release terminal Actor Workspace", err)
 		}
 	}
 	if _, err := tx.Exec(ctx, `
@@ -1201,9 +1394,9 @@ SELECT org_id,
        'lifecycle',
        'info',
        'control',
-       'run.cancelled',
-       'Run cancelled',
-       jsonb_build_object('reasonCode', 'run_cancelled'),
+       $3,
+       $4,
+       jsonb_build_object('reasonCode', $5::text),
        'internal',
        state_version,
        transaction_timestamp()
@@ -1211,8 +1404,11 @@ SELECT org_id,
  WHERE id = $1`,
 		run.id,
 		run.currentRunLeaseID,
+		termination.eventKind,
+		termination.eventMessage,
+		termination.reasonCode,
 	); err != nil {
-		return cancellationAuthority("record Run cancellation event", err)
+		return cancellationAuthority("record Run terminal event", err)
 	}
 	return nil
 }
@@ -1361,23 +1557,26 @@ UPDATE run_waits
 		}
 		command, err = tx.Exec(ctx, `
 INSERT INTO outbox_messages (
+    id,
     lane,
     topic,
     partition_key,
     payload,
     available_at
 ) VALUES (
+    $1,
     'control',
     'run.resume',
-    $1::uuid::text,
+    $2::uuid::text,
     jsonb_build_object(
-        'environmentId', $2::uuid::text,
-        'runId', $3::uuid::text,
-        'runWaitId', $4::uuid::text,
-        'resumeRequestVersion', $5::bigint
+        'environmentId', $3::uuid::text,
+        'runId', $4::uuid::text,
+        'runWaitId', $5::uuid::text,
+        'resumeRequestVersion', $6::bigint
     ),
     transaction_timestamp()
 )`,
+			uuid.Must(uuid.NewV7()),
 			wait.workspaceID,
 			parent.environmentID,
 			parent.id,
@@ -1505,17 +1704,18 @@ UPDATE run_waits
 		}
 		command, err = tx.Exec(ctx, `
 INSERT INTO outbox_messages (
-    lane, topic, partition_key, payload, available_at
+    id, lane, topic, partition_key, payload, available_at
 ) VALUES (
-    'control', 'run.resume', $1,
+    $1, 'control', 'run.resume', $2,
     jsonb_build_object(
-        'environmentId', $2::text,
-        'runId', $3::text,
-        'runWaitId', $4::text,
-        'resumeRequestVersion', $5::bigint
+        'environmentId', $3::text,
+        'runId', $4::text,
+        'runWaitId', $5::text,
+        'resumeRequestVersion', $6::bigint
     ),
     transaction_timestamp()
 )`,
+			uuid.Must(uuid.NewV7()),
 			parent.workspaceID.String(), parent.environmentID.String(),
 			parent.id.String(), wait.id.String(), nextResumeVersion,
 		)

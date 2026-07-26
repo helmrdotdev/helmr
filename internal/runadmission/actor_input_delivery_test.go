@@ -2,7 +2,6 @@ package runadmission
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -11,24 +10,19 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
-func TestActorInputDeliveryReconcilesTimeoutsAndIntent(t *testing.T) {
+func TestActorInputDeliveryReconcilesIntent(t *testing.T) {
 	environmentID := uuid.Must(uuid.NewV7())
 	actorID := uuid.Must(uuid.NewV7())
 	recordID := uuid.Must(uuid.NewV7())
 	message := actorInputReconcileMessage(environmentID, actorID, recordID)
 	store := &tokenDeliveryStore{messages: []db.OutboxMessage{message}}
 	var gotEnvironmentID, gotActorID, gotRecordID uuid.UUID
-	var timeoutLimit int32
 	worker, err := NewActorInputDeliveryWorker(nil, store,
 		func(_ context.Context, environmentID, actorID, recordID uuid.UUID) (bool, error) {
 			gotEnvironmentID, gotActorID, gotRecordID = environmentID, actorID, recordID
 			return false, nil
 		},
 		func(context.Context, uuid.UUID, uuid.UUID) (bool, error) { return false, nil },
-		func(_ context.Context, limit int32) (int, error) {
-			timeoutLimit = limit
-			return 1, nil
-		},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -36,11 +30,11 @@ func TestActorInputDeliveryReconcilesTimeoutsAndIntent(t *testing.T) {
 	if err := worker.tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if timeoutLimit != tokenDeliveryClaimLimit || store.claim.Lane != "control" ||
+	if store.claim.Lane != "control" ||
 		len(store.claim.Topics) != 2 ||
 		store.claim.Topics[0] != "actor.input.reconcile" ||
 		store.claim.Topics[1] != "actor.lifecycle.reconcile" {
-		t.Fatalf("claim = %+v timeout limit = %d", store.claim, timeoutLimit)
+		t.Fatalf("claim = %+v", store.claim)
 	}
 	if gotEnvironmentID != environmentID || gotActorID != actorID || gotRecordID != recordID {
 		t.Fatalf("reconcile IDs = %s/%s/%s", gotEnvironmentID, gotActorID, gotRecordID)
@@ -56,7 +50,6 @@ func TestActorInputDeliveryRetriesDeferredContinuation(t *testing.T) {
 	worker, err := NewActorInputDeliveryWorker(nil, store,
 		func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error) { return true, nil },
 		func(context.Context, uuid.UUID, uuid.UUID) (bool, error) { return false, nil },
-		func(context.Context, int32) (int, error) { return 0, nil },
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +79,6 @@ func TestActorInputDeliveryReconcilesLifecycleIntent(t *testing.T) {
 			gotEnvironmentID, gotActorID = environmentID, actorID
 			return false, nil
 		},
-		func(context.Context, int32) (int, error) { return 0, nil },
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +104,6 @@ func TestActorInputDeliveryRetriesDeferredLifecycle(t *testing.T) {
 	worker, err := NewActorInputDeliveryWorker(nil, store,
 		func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error) { return false, nil },
 		func(context.Context, uuid.UUID, uuid.UUID) (bool, error) { return true, nil },
-		func(context.Context, int32) (int, error) { return 0, nil },
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -141,7 +132,6 @@ func TestActorInputDeliveryDeadLettersInvalidIntent(t *testing.T) {
 			return false, nil
 		},
 		func(context.Context, uuid.UUID, uuid.UUID) (bool, error) { return false, nil },
-		func(context.Context, int32) (int, error) { return 0, nil },
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -151,24 +141,6 @@ func TestActorInputDeliveryDeadLettersInvalidIntent(t *testing.T) {
 	}
 	if !store.deadLettered || store.retried || store.delivered != 0 {
 		t.Fatalf("invalid delivery = dead-lettered %v retried %v delivered %d", store.deadLettered, store.retried, store.delivered)
-	}
-}
-
-func TestActorInputDeliveryStopsBeforeClaimWhenTimeoutRepairFails(t *testing.T) {
-	store := &tokenDeliveryStore{}
-	worker, err := NewActorInputDeliveryWorker(nil, store,
-		func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error) { return false, nil },
-		func(context.Context, uuid.UUID, uuid.UUID) (bool, error) { return false, nil },
-		func(context.Context, int32) (int, error) { return 0, errors.New("database unavailable") },
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := worker.tick(context.Background()); err == nil {
-		t.Fatal("timeout reconciliation failure was ignored")
-	}
-	if store.claim.Lane != "" {
-		t.Fatalf("outbox claimed after timeout failure: %+v", store.claim)
 	}
 }
 

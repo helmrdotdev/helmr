@@ -338,7 +338,7 @@ type CreateActorContinuationRunRow struct {
 	Output                       []byte             `json:"output"`
 	TerminalReasonCode           pgtype.Text        `json:"terminal_reason_code"`
 	Error                        []byte             `json:"error"`
-	Status                       RunStatus          `json:"status"`
+	Status                       string             `json:"status"`
 	StateVersion                 int64              `json:"state_version"`
 	CurrentAttemptNumber         int32              `json:"current_attempt_number"`
 	CurrentRunLeaseID            pgtype.UUID        `json:"current_run_lease_id"`
@@ -726,7 +726,7 @@ RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, depl
 `
 
 type FinishActorRunParams struct {
-	Status        RunStatus          `json:"status"`
+	Status        string             `json:"status"`
 	ReasonCode    pgtype.Text        `json:"reason_code"`
 	Error         []byte             `json:"error"`
 	CompletedAt   pgtype.Timestamptz `json:"completed_at"`
@@ -830,7 +830,7 @@ RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, depl
 `
 
 type FinishCheckpointFailedActorRunParams struct {
-	Status        RunStatus          `json:"status"`
+	Status        string             `json:"status"`
 	ReasonCode    pgtype.Text        `json:"reason_code"`
 	Error         []byte             `json:"error"`
 	FailedAt      pgtype.Timestamptz `json:"failed_at"`

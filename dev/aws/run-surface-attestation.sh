@@ -6,8 +6,8 @@ usage() {
 usage: dev/aws/run-surface-attestation.sh [LABEL]
 
 Print sanitized AWS dev and DB evidence describing the surface being measured:
-control/dispatcher ECS revisions, current deployments, deployment sandbox
-runtime ABI/digests, observed runtime identities, and active worker heartbeat.
+control/dispatcher ECS revisions, current Deployments and typed declarations,
+observed runtime identities, and active worker heartbeat.
 
 This script is read-only for Helmr product data. For AWS dev it uses
 dev/aws/db-query.sh, which creates one-off ECS task/log records. Set

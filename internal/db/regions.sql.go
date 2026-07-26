@@ -16,7 +16,7 @@ VALUES (
     $2,
     $3,
     $4,
-    $5::region_state,
+    $5::text,
     $6::region_visibility,
     $7::text,
     $8::text[]
@@ -24,7 +24,8 @@ VALUES (
 ON CONFLICT (id) DO UPDATE
    SET provider = EXCLUDED.provider,
        provider_region = EXCLUDED.provider_region,
-       display_name = EXCLUDED.display_name
+       display_name = EXCLUDED.display_name,
+       updated_at = now()
 RETURNING id, provider, provider_region, display_name, state, visibility, location, static_ips, created_at, updated_at
 `
 
@@ -33,7 +34,7 @@ type EnsureRegionParams struct {
 	Provider       string           `json:"provider"`
 	ProviderRegion string           `json:"provider_region"`
 	DisplayName    string           `json:"display_name"`
-	State          RegionState      `json:"state"`
+	State          string           `json:"state"`
 	Visibility     RegionVisibility `json:"visibility"`
 	Location       string           `json:"location"`
 	StaticIps      []string         `json:"static_ips"`

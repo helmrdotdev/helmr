@@ -356,7 +356,7 @@ func TestPreparedRuntimeRejectsWorkspaceArchitectureOutsideWorkerCertification(t
 		context.Background(),
 		t.TempDir(),
 		api.WorkerRuntimeReconcileTarget{Source: api.WorkerRuntimeSource{
-			WorkspaceArchitecture: string(deployment.ArchitectureAArch64),
+			WorkspaceArchitecture: "aarch64",
 		}},
 	)
 	if closeErr := closeProgram(); closeErr != nil {

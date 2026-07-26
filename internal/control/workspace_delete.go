@@ -25,6 +25,7 @@ type workspaceDeleteRequest struct {
 	EnvironmentID  uuid.UUID
 	WorkspaceID    string
 	IdempotencyKey string
+	Authorize      func(context.Context, db.Querier) error
 }
 
 type workspaceDeleteResult struct {
@@ -39,6 +40,11 @@ type workspaceDeleteReceipt struct {
 func (s *Server) deleteWorkspace(ctx context.Context, request workspaceDeleteRequest) (workspaceDeleteResult, error) {
 	var result workspaceDeleteResult
 	err := s.inTx(ctx, func(work *txWork) error {
+		if request.Authorize != nil {
+			if err := request.Authorize(ctx, work.q); err != nil {
+				return err
+			}
+		}
 		authority, err := work.q.LockWorkspaceForDelete(ctx, db.LockWorkspaceForDeleteParams{
 			OrgID:         pgvalue.UUID(request.OrgID),
 			ProjectID:     pgvalue.UUID(request.ProjectID),

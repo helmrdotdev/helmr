@@ -334,7 +334,10 @@ WITH nonce AS (
            max_vm_slots = 0, max_run_consumers = 0,
            max_build_executors = 0, max_runtime_starts = 0,
            attestation_fingerprint = EXCLUDED.attestation_fingerprint,
-           current_service_id = CASE WHEN worker_instances.current_epoch IS NULL THEN NULL ELSE uuidv7() END,
+           current_service_id = CASE
+               WHEN worker_instances.current_epoch IS NULL THEN NULL
+               ELSE sqlc.arg(current_service_id)::uuid
+           END,
            epoch_started_at = CASE WHEN worker_instances.current_epoch IS NULL THEN NULL ELSE now() END,
            startup_inventory_epoch = NULL, startup_inventory_evidence = NULL,
            drain_cleanup_fingerprint = NULL, drain_cleanup_evidence = NULL,

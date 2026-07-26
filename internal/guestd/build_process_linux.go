@@ -221,7 +221,7 @@ func runBuildCommand(
 	defer func() {
 		returnErr = errors.Join(
 			returnErr,
-			cleanupBuildCgroup(path, processCgroup, true),
+			cleanupBuildCgroup(path, processCgroup),
 		)
 	}()
 	return runBuildCommandInCgroup(ctx, config, path, processCgroup)
@@ -763,11 +763,9 @@ func parseCgroupPopulated(raw []byte) (bool, error) {
 	return populated, nil
 }
 
-func cleanupBuildCgroup(path string, cgroup *os.File, kill bool) error {
+func cleanupBuildCgroup(path string, cgroup *os.File) error {
 	var cleanupErr error
-	if kill {
-		cleanupErr = errors.Join(cleanupErr, killCgroup(path))
-	}
+	cleanupErr = errors.Join(cleanupErr, killCgroup(path))
 	cleanupErr = errors.Join(cleanupErr, waitCgroupEmpty(path))
 	if cgroup != nil {
 		if err := cgroup.Close(); err != nil && !errors.Is(err, os.ErrInvalid) {

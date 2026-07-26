@@ -1065,19 +1065,7 @@ func versionIDs(environment pgtype.UUID, secret pgtype.UUID, version pgtype.UUID
 }
 
 func secretFromCreate(row db.CreateSecretRow) db.Secret {
-	return db.Secret{
-		ID:                   row.ID,
-		EnvironmentID:        row.EnvironmentID,
-		Name:                 row.Name,
-		State:                row.State,
-		StateVersion:         row.StateVersion,
-		CurrentVersionID:     row.CurrentVersionID,
-		RevocationGeneration: row.RevocationGeneration,
-		CreatedAt:            row.CreatedAt,
-		UpdatedAt:            row.UpdatedAt,
-		RevokedAt:            row.RevokedAt,
-		DeletedAt:            row.DeletedAt,
-	}
+	return db.Secret(row)
 }
 
 func (s *Store) defaultScope(ctx context.Context, orgID uuid.UUID) (uuid.UUID, uuid.UUID, error) {

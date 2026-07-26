@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  ARCH: aarch64
+  ARCH: x86_64
   ROLE: guest
   PREFIX: guest
 

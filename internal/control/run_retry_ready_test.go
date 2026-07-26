@@ -33,8 +33,8 @@ type runRetryReadyFixture struct {
 	err   error
 }
 
-func (f *runRetryReadyFixture) ReadyRunRetries(_ context.Context, limit int32) ([]db.ReadyRunRetriesRow, error) {
+func (f *runRetryReadyFixture) ReadyRunRetries(_ context.Context, params db.ReadyRunRetriesParams) ([]db.ReadyRunRetriesRow, error) {
 	f.calls++
-	f.limit = limit
+	f.limit = params.RowLimit
 	return nil, f.err
 }

@@ -22,6 +22,7 @@ func TestAttemptSecretDeliveryLocksCompleteWorkspacePlacementSet(t *testing.T) {
 	secretID := uuid.Must(uuid.NewV7())
 	oldVersionID := uuid.Must(uuid.NewV7())
 	currentVersionID := uuid.Must(uuid.NewV7())
+	resolutionID := uuid.Must(uuid.NewV7())
 
 	tx, err := fixture.pool.Begin(ctx)
 	if err != nil {
@@ -59,11 +60,11 @@ func TestAttemptSecretDeliveryLocksCompleteWorkspacePlacementSet(t *testing.T) {
 	`, workspaceID, fixture.environmentID, secretID)
 	mustRunLeaseExec(t, ctx, tx, `
 		INSERT INTO secret_resolutions (
-			workspace_id, run_id, attempt_number, placement_kind, placement_target,
+			id, workspace_id, run_id, attempt_number, placement_kind, placement_target,
 			secret_id, secret_version_id, revocation_generation
 		)
-		VALUES ($1, $2, 1, 'env', 'TOKEN', $3, $4, 4)
-	`, workspaceID, work.runID, secretID, oldVersionID)
+		VALUES ($1, $2, $3, 1, 'env', 'TOKEN', $4, $5, 4)
+	`, resolutionID, workspaceID, work.runID, secretID, oldVersionID)
 
 	rows, err := New(tx).LockAttemptSecretDelivery(ctx, LockAttemptSecretDeliveryParams{
 		RunID:         pgvalue.UUID(work.runID),
@@ -77,6 +78,7 @@ func TestAttemptSecretDeliveryLocksCompleteWorkspacePlacementSet(t *testing.T) {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}
 	if rows[0].WorkspaceSecret.PlacementKind != "env" ||
+		rows[0].ResolutionID != pgvalue.UUID(resolutionID) ||
 		rows[0].ResolutionSecretVersionID != pgvalue.UUID(oldVersionID) ||
 		rows[0].Secret.CurrentVersionID != pgvalue.UUID(currentVersionID) {
 		t.Fatalf("resolved row = %+v", rows[0])

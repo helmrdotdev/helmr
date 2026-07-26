@@ -22,7 +22,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 	}
 
 	expected := map[string][]string{
-		"actorinput":          {"db", "pgvalue", "publicid", "tracing"},
+		"actorinput":          {"db", "pgvalue", "publicid", "runwait", "tracing"},
 		"actorlifecycle":      {"actorinput", "db"},
 		"api":                 {"archive", "compute", "jsoncanon", "publicid"},
 		"archive":             {"safepath", "sha256sum"},
@@ -70,10 +70,12 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"proto/workspace/v0":  {},
 		"publicid":            {},
 		"region":              {"db"},
-		"runadmission":        {"actorinput", "actorlifecycle", "db", "pgvalue"},
+		"runadmission":        {"actorinput", "actorlifecycle", "db", "pgvalue", "runwait"},
+		"runwait":             {"db", "pgvalue"},
 		"safepath":            {},
 		"schedule":            {"db", "pgvalue", "publicid", "runadmission", "tracing"},
 		"secret":              {"api", "db", "idempotency", "keyedhash", "pgvalue"},
+		"secretrevocation":    {"db", "dispatch", "pgvalue"},
 		"sha256sum":           {},
 		"substrate":           {"localcache", "oci", "sha256sum"},
 		"telemetry":           {"api", "clickhouse", "db", "pgvalue"},

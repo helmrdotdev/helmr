@@ -264,7 +264,7 @@ type CreateActorStartRunRow struct {
 	Output                       []byte             `json:"output"`
 	TerminalReasonCode           pgtype.Text        `json:"terminal_reason_code"`
 	Error                        []byte             `json:"error"`
-	Status                       RunStatus          `json:"status"`
+	Status                       string             `json:"status"`
 	StateVersion                 int64              `json:"state_version"`
 	CurrentAttemptNumber         int32              `json:"current_attempt_number"`
 	CurrentRunLeaseID            pgtype.UUID        `json:"current_run_lease_id"`
@@ -517,7 +517,7 @@ type CreateAdmittedRootTaskRunRow struct {
 	Output                       []byte             `json:"output"`
 	TerminalReasonCode           pgtype.Text        `json:"terminal_reason_code"`
 	Error                        []byte             `json:"error"`
-	Status                       RunStatus          `json:"status"`
+	Status                       string             `json:"status"`
 	StateVersion                 int64              `json:"state_version"`
 	CurrentAttemptNumber         int32              `json:"current_attempt_number"`
 	CurrentRunLeaseID            pgtype.UUID        `json:"current_run_lease_id"`
@@ -811,7 +811,7 @@ type CreateChildRunFromParentDeploymentRow struct {
 	Output                       []byte             `json:"output"`
 	TerminalReasonCode           pgtype.Text        `json:"terminal_reason_code"`
 	Error                        []byte             `json:"error"`
-	Status                       RunStatus          `json:"status"`
+	Status                       string             `json:"status"`
 	StateVersion                 int64              `json:"state_version"`
 	CurrentAttemptNumber         int32              `json:"current_attempt_number"`
 	CurrentRunLeaseID            pgtype.UUID        `json:"current_run_lease_id"`
@@ -1102,7 +1102,7 @@ type CreateRootRunFromCurrentDeploymentRow struct {
 	Output                       []byte             `json:"output"`
 	TerminalReasonCode           pgtype.Text        `json:"terminal_reason_code"`
 	Error                        []byte             `json:"error"`
-	Status                       RunStatus          `json:"status"`
+	Status                       string             `json:"status"`
 	StateVersion                 int64              `json:"state_version"`
 	CurrentAttemptNumber         int32              `json:"current_attempt_number"`
 	CurrentRunLeaseID            pgtype.UUID        `json:"current_run_lease_id"`
@@ -1411,7 +1411,7 @@ type CreateSameWorkspaceChildRunFromParentDeploymentRow struct {
 	Output                       []byte             `json:"output"`
 	TerminalReasonCode           pgtype.Text        `json:"terminal_reason_code"`
 	Error                        []byte             `json:"error"`
-	Status                       RunStatus          `json:"status"`
+	Status                       string             `json:"status"`
 	StateVersion                 int64              `json:"state_version"`
 	CurrentAttemptNumber         int32              `json:"current_attempt_number"`
 	CurrentRunLeaseID            pgtype.UUID        `json:"current_run_lease_id"`
@@ -1672,7 +1672,7 @@ type GetRunSnapshotRow struct {
 	Output                       []byte             `json:"output"`
 	TerminalReasonCode           pgtype.Text        `json:"terminal_reason_code"`
 	Error                        []byte             `json:"error"`
-	Status                       RunStatus          `json:"status"`
+	Status                       string             `json:"status"`
 	StateVersion                 int64              `json:"state_version"`
 	CurrentAttemptNumber         int32              `json:"current_attempt_number"`
 	CurrentRunLeaseID            pgtype.UUID        `json:"current_run_lease_id"`
@@ -1956,8 +1956,8 @@ SELECT runs.id, runs.public_id, runs.org_id, runs.project_id, runs.environment_i
    AND runs.project_id = $2
    AND runs.environment_id = $3
    AND (
-       coalesce(cardinality($4::run_status[]), 0) = 0
-       OR runs.status = ANY($4::run_status[])
+       coalesce(cardinality($4::text[]), 0) = 0
+       OR runs.status = ANY($4::text[])
    )
    AND (
        $5::timestamptz IS NULL
@@ -1974,7 +1974,7 @@ type ListRunSnapshotsParams struct {
 	OrgID          pgtype.UUID        `json:"org_id"`
 	ProjectID      pgtype.UUID        `json:"project_id"`
 	EnvironmentID  pgtype.UUID        `json:"environment_id"`
-	Statuses       []RunStatus        `json:"statuses"`
+	Statuses       []string           `json:"statuses"`
 	AfterCreatedAt pgtype.Timestamptz `json:"after_created_at"`
 	AfterPublicID  string             `json:"after_public_id"`
 	LimitCount     int32              `json:"limit_count"`
@@ -2007,7 +2007,7 @@ type ListRunSnapshotsRow struct {
 	Output                       []byte             `json:"output"`
 	TerminalReasonCode           pgtype.Text        `json:"terminal_reason_code"`
 	Error                        []byte             `json:"error"`
-	Status                       RunStatus          `json:"status"`
+	Status                       string             `json:"status"`
 	StateVersion                 int64              `json:"state_version"`
 	CurrentAttemptNumber         int32              `json:"current_attempt_number"`
 	CurrentRunLeaseID            pgtype.UUID        `json:"current_run_lease_id"`

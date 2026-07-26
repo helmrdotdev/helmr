@@ -23,6 +23,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func recoverExpiredRunResumesParams(limit int32) db.RecoverExpiredRunResumesParams {
+	return db.RecoverExpiredRunResumesParams{
+		OutboxMessageIds: pgvalue.NewUUIDv7Batch(limit),
+		LimitCount:       limit,
+	}
+}
+
 type runPlacementFixture struct {
 	ctx           context.Context
 	pool          *pgxpool.Pool
@@ -717,7 +724,7 @@ UPDATE workspace_leases
    SET expires_at = expired.expires_at
   FROM expired
  WHERE workspace_leases.owner_run_lease_id = expired.id`, parentResume.Lease.ID)
-	recovered, err := db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, 10)
+	recovered, err := db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, recoverExpiredRunResumesParams(10))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -841,7 +848,7 @@ UPDATE workspace_leases
    SET expires_at = expired.expires_at
   FROM expired
  WHERE workspace_leases.owner_run_lease_id = expired.id`, regranted.Lease.ID)
-	recovered, err = db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, 10)
+	recovered, err = db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, recoverExpiredRunResumesParams(10))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -957,7 +964,7 @@ SELECT restore_checkpoint_id
 			pgvalue.UUIDString(successRestoreCheckpoint), handoffCheckpointID)
 	}
 	expireResumeLease(successRestore.Lease.ID)
-	recovered, err = db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, 10)
+	recovered, err = db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, recoverExpiredRunResumesParams(10))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -995,7 +1002,7 @@ SELECT restore_checkpoint_id
 			pgvalue.UUIDString(failureRestoreCheckpoint), checkpointID)
 	}
 	expireResumeLease(failureRestore.Lease.ID)
-	recovered, err = db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, 10)
+	recovered, err = db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, recoverExpiredRunResumesParams(10))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1492,7 +1499,7 @@ INSERT INTO runs (
     $9, $10, '{}'::jsonb, 'default',
     now(), now(), 300000, '{"enabled":false}'::jsonb,
     '55555555555555555555555555555555', '6666666666666666',
-    $11, $12::run_status, 2,
+    $11, $12::text, 2,
     CASE WHEN $12::text = 'succeeded' THEN now() ELSE NULL END
 )`,
 			run.id,
@@ -2070,7 +2077,7 @@ UPDATE workspace_leases
    SET expires_at = expired.expires_at
   FROM expired
  WHERE workspace_leases.owner_run_lease_id = expired.id`, restoreGrant.Lease.ID)
-	recovered, err := db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, 10)
+	recovered, err := db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, recoverExpiredRunResumesParams(10))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2190,7 +2197,7 @@ UPDATE run_leases
 	}
 	recoveryDone := make(chan recoveryResult, 1)
 	go func() {
-		rows, recoverErr := db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, 10)
+		rows, recoverErr := db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, recoverExpiredRunResumesParams(10))
 		recoveryDone <- recoveryResult{rows: rows, err: recoverErr}
 	}()
 	time.Sleep(100 * time.Millisecond)
@@ -2344,7 +2351,7 @@ UPDATE worker_network_slots
    SET state = 'lost', generation = generation + 1,
        lost_at = transaction_timestamp(), state_reason_code = 'test_worker_lost'
  WHERE runtime_instance_id = $1`, secondRestored.RuntimeInstanceID)
-	recovered, err = db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, 10)
+	recovered, err = db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, recoverExpiredRunResumesParams(10))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2559,7 +2566,7 @@ UPDATE workspace_leases
    SET expires_at = expired.expires_at
   FROM expired
  WHERE owner_run_lease_id = expired.id`, grant.Lease.ID)
-			recovered, err := db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, 10)
+			recovered, err := db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, recoverExpiredRunResumesParams(10))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -2742,11 +2749,12 @@ func markRunPlacementRuntimeReadyQuery(t *testing.T, fixture runPlacementFixture
 	var workerID, slotID, runtimeSubstrateID pgtype.UUID
 	err := fixture.pool.QueryRow(fixture.ctx, `
 INSERT INTO runtime_substrates (
-    org_id, project_id, environment_id, deployment_definition_id, artifact_id,
+    id, org_id, project_id, environment_id, deployment_definition_id, artifact_id,
     substrate_digest, substrate_format, builder_abi, layout_abi,
     substrate_size_bytes, source, created_by_worker_instance_id
 )
-SELECT runtime_instances.org_id,
+SELECT $2,
+       runtime_instances.org_id,
        runtime_instances.project_id,
        runtime_instances.environment_id,
        runtime_instances.deployment_definition_id,
@@ -2762,7 +2770,7 @@ ON CONFLICT (
     org_id, project_id, environment_id, deployment_definition_id,
     substrate_format, builder_abi, layout_abi
 ) DO UPDATE SET last_referenced_at = transaction_timestamp()
-RETURNING id`, runtimeID).Scan(&runtimeSubstrateID)
+RETURNING id`, runtimeID, pgvalue.NewUUIDv7()).Scan(&runtimeSubstrateID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3028,7 +3036,7 @@ INSERT INTO deployments (
 		programReceipt,
 	)
 	workspaceManifest := fmt.Sprintf(
-		`{"image":{"artifactDigest":%q,"mediaType":"application/octet-stream"},"resources":{"milliCpu":1000,"memoryMiB":1024,"diskMiB":2048},"network":{"internet":true,"denyCidrs":[]},"architecture":"x86_64"}`,
+		`{"image":{"artifactDigest":%q,"mediaType":"application/octet-stream"},"resources":{"milliCpu":1000,"memoryMiB":1024,"ephemeralDiskMiB":2048},"network":{"internet":true,"denyCidrs":[]},"architecture":"x86_64"}`,
 		imageDigest,
 	)
 	mustRunPlacementExec(t, ctx, pool, `

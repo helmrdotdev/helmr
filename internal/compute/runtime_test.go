@@ -50,7 +50,6 @@ func TestRuntimeIdentityDigestMatchesCASDigest(t *testing.T) {
 func TestRuntimeArchitectureFromGo(t *testing.T) {
 	for goArchitecture, want := range map[string]string{
 		"amd64": "x86_64",
-		"arm64": "aarch64",
 	} {
 		got, err := RuntimeArchitectureFromGo(goArchitecture)
 		if err != nil || got != want {
@@ -59,5 +58,8 @@ func TestRuntimeArchitectureFromGo(t *testing.T) {
 	}
 	if _, err := RuntimeArchitectureFromGo("x86_64"); err == nil {
 		t.Fatal("canonical architecture was accepted as a Go architecture")
+	}
+	if _, err := RuntimeArchitectureFromGo("arm64"); err == nil {
+		t.Fatal("unsupported arm64 was accepted")
 	}
 }

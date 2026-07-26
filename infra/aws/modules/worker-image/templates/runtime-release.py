@@ -22,7 +22,7 @@ FIXED = {
 OBJECT_PREFIX = "toolchain-release/objects/sha256/"
 SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
 TOOLCHAIN_MEDIA_TYPE = "application/vnd.helmr.standard-toolchain.v0+squashfs"
-ARCHITECTURES = {"x86_64", "aarch64"}
+ARCHITECTURE = "x86_64"
 MAX_TOOLCHAINS = 1024
 MAX_TOOLCHAIN_BYTES = 4 << 30
 MAX_TOOLCHAIN_CORPUS_BYTES = 16 << 30
@@ -82,7 +82,7 @@ def load_document(source):
     )
 
 
-def toolchain_objects(catalog, architecture):
+def toolchain_objects(catalog):
     if (
         set(catalog) != {"formatVersion", "toolchains"}
         or type(catalog["formatVersion"]) is not int
@@ -104,7 +104,7 @@ def toolchain_objects(catalog, architecture):
                 "managedRuntimeDigest",
                 "toolchainClosure",
             }
-            or toolchain["architecture"] not in ARCHITECTURES
+            or toolchain["architecture"] != ARCHITECTURE
             or type(toolchain["formatVersion"]) is not int
             or toolchain["formatVersion"] != 0
             or type(toolchain["managedRuntimeDigest"]) is not str
@@ -126,8 +126,6 @@ def toolchain_objects(catalog, architecture):
             raise ValueError(
                 f"standard-toolchain catalog member {position} has an invalid closure"
             )
-        if toolchain["architecture"] != architecture:
-            continue
         name = OBJECT_PREFIX + closure["digest"].removeprefix("sha256:")
         descriptor = (closure["digest"], closure["sizeBytes"])
         if name in objects:
@@ -144,13 +142,11 @@ def toolchain_objects(catalog, architecture):
         total += closure["sizeBytes"]
 
     if not objects:
-        raise ValueError(
-            f"standard-toolchain catalog contains no {architecture} closure"
-        )
+        raise ValueError("standard-toolchain catalog contains no x86_64 closure")
     return objects
 
 
-def extract(archive, destination, architecture):
+def extract(archive, destination):
     names = raw_members(archive)
     with tarfile.open(archive, mode="r:") as package:
         if package.pax_headers:
@@ -167,7 +163,7 @@ def extract(archive, destination, architecture):
         if catalog_source is None:
             raise ValueError("standard-toolchain catalog has no content")
         with catalog_source:
-            objects = toolchain_objects(load_document(catalog_source), architecture)
+            objects = toolchain_objects(load_document(catalog_source))
         expected = FIXED | set(objects)
         if set(names) != expected or len(names) != len(expected):
             raise ValueError(
@@ -215,11 +211,11 @@ def extract(archive, destination, architecture):
         or corpus["formatVersion"] != 0
         or set(corpus["valid"]) != {"descriptor", "expectedIndex"}
         or set(corpus["invalid"]) != {"descriptor"}
-        or corpus["valid"]["descriptor"].get("architecture") != architecture
-        or corpus["valid"]["expectedIndex"].get("architecture") != architecture
-        or corpus["invalid"]["descriptor"].get("architecture") != architecture
+        or corpus["valid"]["descriptor"].get("architecture") != ARCHITECTURE
+        or corpus["valid"]["expectedIndex"].get("architecture") != ARCHITECTURE
+        or corpus["invalid"]["descriptor"].get("architecture") != ARCHITECTURE
     ):
-        raise ValueError(f"runtime verifier corpus is not the closed {architecture} v0 package")
+        raise ValueError("runtime verifier corpus is not the closed x86_64 v0 package")
 
 
 if __name__ == "__main__":

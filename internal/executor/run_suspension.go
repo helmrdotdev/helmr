@@ -294,13 +294,6 @@ func checkpointReadyRetryable(err error) bool {
 	return true
 }
 
-func (request WaitRequest) currentLease() api.WorkerRunLease {
-	if request.Leases != nil {
-		return request.Leases.CurrentWorkerRunLease()
-	}
-	return request.Lease
-}
-
 func sleepWithContext(ctx context.Context, duration time.Duration) error {
 	timer := time.NewTimer(duration)
 	defer timer.Stop()

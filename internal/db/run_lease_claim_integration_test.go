@@ -1010,7 +1010,7 @@ func (fixture runLeaseClaimFixture) addWork(
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, 1, 1, $8, $9, 1, $10, $11, 1,
 			$12, $13, 1000, 1073741824, 2147483648, 2147483648, 1,
-			$14::run_lease_state, $15, now() + interval '5 minutes', $16,
+			$14::text, $15, now() + interval '5 minutes', $16,
 			now() + interval '10 minutes'
 		)
 	`, leaseID, fixture.orgID, fixture.projectID, fixture.environmentID, runID,
@@ -1052,17 +1052,6 @@ func newRunLeaseClaimDatabase(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	admin, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
-	}
-	var serverVersion int
-	if err := admin.QueryRow(ctx,
-		`SELECT current_setting('server_version_num')::int`,
-	).Scan(&serverVersion); err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
-	if serverVersion < 180000 {
-		admin.Close()
-		t.Skipf("Postgres %d does not provide uuidv7()", serverVersion)
 	}
 	name := "helmr_run_lease_" + strings.ReplaceAll(uuid.NewString(), "-", "_")
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()); err != nil {

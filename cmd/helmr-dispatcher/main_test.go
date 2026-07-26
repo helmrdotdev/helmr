@@ -157,7 +157,7 @@ func newSmokeDatabase(t *testing.T, ctx context.Context) string {
 	}
 	pool.Close()
 	if serverVersion < 180000 {
-		t.Skipf("Postgres %d does not provide uuidv7(); skipping dispatcher smoke test", serverVersion)
+		t.Skipf("Postgres %d is older than the Helmr PostgreSQL 18 schema baseline; skipping dispatcher smoke test", serverVersion)
 	}
 	if err := schema.Up(ctx, databaseURL); err != nil {
 		t.Fatal(err)

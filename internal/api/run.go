@@ -14,29 +14,6 @@ import (
 var taskIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 var queueNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$`)
 
-type CreateRunRequest struct {
-	ProjectID     string           `json:"project_id,omitempty"`
-	EnvironmentID string           `json:"environment_id,omitempty"`
-	TaskID        string           `json:"task_id"`
-	Payload       json.RawMessage  `json:"payload"`
-	Options       CreateRunOptions `json:"options"`
-}
-
-type CreateRunOptions struct {
-	Queue              *RunQueueOption `json:"queue,omitempty"`
-	ConcurrencyKey     string          `json:"concurrency_key,omitempty"`
-	Priority           int32           `json:"priority,omitempty"`
-	TTL                string          `json:"ttl,omitempty"`
-	MaxDurationSeconds int32           `json:"max_duration_seconds,omitempty"`
-	Retry              json.RawMessage `json:"retry,omitempty"`
-	Metadata           json.RawMessage `json:"metadata,omitempty"`
-	Tags               []string        `json:"tags,omitempty"`
-}
-
-type RunQueueOption struct {
-	Name string `json:"name,omitempty"`
-}
-
 func ValidateTaskID(id string) error {
 	if !taskIDPattern.MatchString(id) {
 		return fmt.Errorf("task_id %q must match %s", id, taskIDPattern.String())
@@ -116,28 +93,6 @@ type ListSecretsResponse struct {
 	NextCursor string           `json:"next_cursor,omitempty"`
 }
 
-type RunResponse struct {
-	ID                string          `json:"id"`
-	ProjectID         string          `json:"project_id"`
-	EnvironmentID     string          `json:"environment_id"`
-	DeploymentID      string          `json:"deployment_id"`
-	DeploymentTaskID  string          `json:"deployment_task_id"`
-	Version           string          `json:"version"`
-	DeploymentVersion string          `json:"deployment_version"`
-	APIVersion        string          `json:"api_version"`
-	SDKVersion        string          `json:"sdk_version,omitempty"`
-	CLIVersion        string          `json:"cli_version,omitempty"`
-	TaskID            string          `json:"task_id"`
-	Status            string          `json:"status"`
-	Metadata          json.RawMessage `json:"metadata,omitempty"`
-	AttemptNumber     *int32          `json:"attempt_number,omitempty"`
-	ExitCode          *int32          `json:"exit_code"`
-	Output            json.RawMessage `json:"output,omitempty"`
-	CreatedAt         time.Time       `json:"created_at"`
-	UpdatedAt         time.Time       `json:"updated_at"`
-	PendingWait       *PendingWait    `json:"pending_wait,omitempty"`
-}
-
 const (
 	RunStatusQueued          = "queued"
 	RunStatusRunning         = "running"
@@ -172,31 +127,6 @@ func RunEventKindIsTerminal(kind string) bool {
 	default:
 		return false
 	}
-}
-
-type PendingWait struct {
-	ID        string          `json:"id"`
-	Kind      string          `json:"kind,omitempty"`
-	Status    string          `json:"status,omitempty"`
-	Params    json.RawMessage `json:"params,omitempty"`
-	Metadata  json.RawMessage `json:"metadata,omitempty"`
-	Tags      []string        `json:"tags,omitempty"`
-	Timeout   *int32          `json:"timeout,omitempty"`
-	CreatedAt time.Time       `json:"created_at"`
-}
-
-type ListRunsResponse struct {
-	Runs []RunResponse `json:"runs"`
-}
-
-type RunCountsResponse struct {
-	Queued    int64 `json:"queued"`
-	Running   int64 `json:"running"`
-	Waiting   int64 `json:"waiting"`
-	Succeeded int64 `json:"succeeded"`
-	Failed    int64 `json:"failed"`
-	Cancelled int64 `json:"cancelled"`
-	Expired   int64 `json:"expired"`
 }
 
 type RunLogChunk struct {
