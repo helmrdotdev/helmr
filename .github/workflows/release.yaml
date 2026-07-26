@@ -299,6 +299,7 @@ jobs:
       group: authenticated-dev-runtime-${{ github.sha }}
       queue: max
       cancel-in-progress: false
+    timeout-minutes: 180
     permissions:
       contents: read
       id-token: write # Needed only for keyless dev artifact signing. security-check: allow-id-token
@@ -310,11 +311,8 @@ jobs:
 
       - uses: ./.github/actions/setup-nix
 
-      - name: Compose authenticated dev runtime
+      - name: Prepare authenticated dev runtime
         run: |
-          nix develop .#images --command bash -seu <<'EOF'
-          set -o pipefail
-
           printf '%s\n' "$GITHUB_SHA" | grep -Eq '^[0-9a-f]{40}$' || {
             echo "GITHUB_SHA must be an exact lowercase commit" >&2
             exit 1
@@ -326,60 +324,137 @@ jobs:
 
           release_tag="v0.0.0-dev.g${GITHUB_SHA:0:12}"
           certificate_san="https://github.com/helmrdotdev/helmr/.github/workflows/release.yaml@${GITHUB_REF}"
-          trust_ldflags="-X github.com/helmrdotdev/helmr/internal/deployment.devReleaseCertificateSAN=${certificate_san} -X github.com/helmrdotdev/helmr/internal/deployment.devReleaseSourceRepositoryDigest=${GITHUB_SHA}"
           work="$RUNNER_TEMP/dev-runtime-release"
-          releases="$work/releases"
-          release_dir="$work/release"
-          scratch="$work/scratch"
-          verified="$work/verified"
           dist="$GITHUB_WORKSPACE/dist/dev-release"
-          manager_dist="$dist/manager-release"
-          lineage="$work/runtime-release.json"
-          tool="$work/runtime-release"
-          manager_tool="$work/manager-release"
           rm -rf "$work" "$dist"
-          mkdir -p "$releases" "$release_dir" "$scratch" "$dist" "$manager_dist"
+          mkdir -p \
+            "$work/releases" \
+            "$work/release" \
+            "$work/scratch" \
+            "$work/verified" \
+            "$dist/manager-release"
+          {
+            printf 'DEV_RELEASE_TAG=%s\n' "$release_tag"
+            printf 'DEV_RELEASE_CERTIFICATE_SAN=%s\n' "$certificate_san"
+            printf 'DEV_RELEASE_WORK=%s\n' "$work"
+            printf 'DEV_RELEASE_DIST=%s\n' "$dist"
+          } >>"$GITHUB_ENV"
+          printf '::notice title=authenticated-dev-runtime::%s prepared exact source %s\n' \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+            "$GITHUB_SHA"
 
+      - name: Build development trust verifiers
+        timeout-minutes: 30
+        run: |
+          printf '::notice title=authenticated-dev-runtime::%s building development trust verifiers\n' \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          nix develop -L .#images --command bash -seu <<'EOF'
+          set -o pipefail
+          trust_ldflags="-X github.com/helmrdotdev/helmr/internal/deployment.devReleaseCertificateSAN=${DEV_RELEASE_CERTIFICATE_SAN} -X github.com/helmrdotdev/helmr/internal/deployment.devReleaseSourceRepositoryDigest=${GITHUB_SHA}"
           GOFLAGS= CGO_ENABLED=0 go build \
             -tags helmrdevtrust \
             -trimpath \
             -ldflags="$trust_ldflags" \
-            -o "$tool" \
+            -o "$DEV_RELEASE_WORK/runtime-release" \
             ./internal/cmd/runtime-release
           GOFLAGS= CGO_ENABLED=0 go build \
             -tags helmrdevtrust \
             -trimpath \
             -ldflags="$trust_ldflags" \
-            -o "$manager_tool" \
+            -o "$DEV_RELEASE_WORK/manager-release" \
             ./internal/cmd/manager-release
-          "$tool" trust-policy |
+          "$DEV_RELEASE_WORK/runtime-release" trust-policy |
             jq -e \
               --arg issuer "https://token.actions.githubusercontent.com" \
-              --arg san "$certificate_san" \
+              --arg san "$DEV_RELEASE_CERTIFICATE_SAN" \
               --arg digest "$GITHUB_SHA" \
               'keys == ["issuer", "mode", "san", "sourceRepositoryDigest"] and
                .mode == "development" and .issuer == $issuer and
                .san == $san and .sourceRepositoryDigest == $digest' >/dev/null
-          "$manager_tool" trust-policy |
+          "$DEV_RELEASE_WORK/manager-release" trust-policy |
             jq -e \
-              --arg san "$certificate_san" \
+              --arg san "$DEV_RELEASE_CERTIFICATE_SAN" \
               --arg digest "$GITHUB_SHA" \
               '.mode == "development" and .san == $san and
                .sourceRepositoryDigest == $digest' >/dev/null
+          printf '::notice title=authenticated-dev-runtime::%s development trust verifiers ready\n' \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          EOF
 
+      - name: Build managed runtime
+        timeout-minutes: 120
+        run: |
+          printf '::notice title=authenticated-dev-runtime::%s building managed runtime\n' \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          nix develop -L .#images --command bash -seu <<'EOF'
+          nix build \
+            -L \
+            --no-link \
+            --print-out-paths \
+            .#managedRuntime >"$DEV_RELEASE_WORK/managed-runtime-path"
+          printf '::notice title=authenticated-dev-runtime::%s managed runtime ready\n' \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          EOF
+
+      - name: Build standard toolchain
+        timeout-minutes: 120
+        run: |
+          printf '::notice title=authenticated-dev-runtime::%s building standard toolchain\n' \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          nix develop -L .#images --command bash -seu <<'EOF'
+          nix build \
+            -L \
+            --no-link \
+            --print-out-paths \
+            .#standardToolchain >"$DEV_RELEASE_WORK/standard-toolchain-path"
+          printf '::notice title=authenticated-dev-runtime::%s standard toolchain ready\n' \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          EOF
+
+      - name: Build release trust inputs
+        timeout-minutes: 60
+        run: |
+          printf '::notice title=authenticated-dev-runtime::%s building release trust inputs\n' \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          nix develop -L .#images --command bash -seu <<'EOF'
+          nix build \
+            -L \
+            --no-link \
+            --print-out-paths \
+            .#runtimeTrustedRoot >"$DEV_RELEASE_WORK/runtime-trusted-root-path"
+          nix build \
+            -L \
+            --no-link \
+            --print-out-paths \
+            .#managerRelease >"$DEV_RELEASE_WORK/manager-release-path"
+          printf '::notice title=authenticated-dev-runtime::%s release trust inputs ready\n' \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          EOF
+
+      - name: Compose authenticated runtime archive
+        timeout-minutes: 45
+        run: |
+          printf '::notice title=authenticated-dev-runtime::%s composing runtime archive\n' \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          nix develop -L .#images --command bash -seu <<'EOF'
+          set -o pipefail
+          releases="$DEV_RELEASE_WORK/releases"
+          release_dir="$DEV_RELEASE_WORK/release"
+          scratch="$DEV_RELEASE_WORK/scratch"
+          lineage="$DEV_RELEASE_WORK/runtime-release.json"
+          tool="$DEV_RELEASE_WORK/runtime-release"
+          runtime="$(cat "$DEV_RELEASE_WORK/managed-runtime-path")"
+          standard_toolchain="$(cat "$DEV_RELEASE_WORK/standard-toolchain-path")"
           jq -cn \
-            --arg release "$release_tag" \
+            --arg release "$DEV_RELEASE_TAG" \
             '{formatVersion: 0, predecessor: null, release: $release}' >"$lineage"
-          trusted_root="$(nix build --no-link --print-out-paths .#runtimeTrustedRoot)"
-          runtime="$(nix build --no-link --print-out-paths .#managedRuntime)"
-          standard_toolchain="$(nix build --no-link --print-out-paths .#standardToolchain)"
 
           run_release() {
             sudo "$GITHUB_WORKSPACE/scripts/run-runtime-release.sh" "$tool" "$@"
           }
 
           run_release compose \
-            --tag "$release_tag" \
+            --tag "$DEV_RELEASE_TAG" \
             --lineage "$lineage" \
             --releases "$releases" \
             --runtime "$runtime/runtime.squashfs" \
@@ -389,6 +464,31 @@ jobs:
             --scratch "$scratch" \
             --output "$release_dir" >/dev/null
           sudo chown -R "$(id -u):$(id -g)" "$release_dir"
+          printf '::notice title=authenticated-dev-runtime::%s runtime archive composed\n' \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          EOF
+
+      - name: Sign and verify authenticated dev release
+        timeout-minutes: 30
+        run: |
+          printf '::notice title=authenticated-dev-runtime::%s signing authenticated dev release\n' \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          nix develop -L .#images --command bash -seu <<'EOF'
+          set -o pipefail
+          release_dir="$DEV_RELEASE_WORK/release"
+          scratch="$DEV_RELEASE_WORK/scratch"
+          verified="$DEV_RELEASE_WORK/verified"
+          dist="$DEV_RELEASE_DIST"
+          manager_dist="$dist/manager-release"
+          tool="$DEV_RELEASE_WORK/runtime-release"
+          manager_tool="$DEV_RELEASE_WORK/manager-release"
+          trusted_root="$(cat "$DEV_RELEASE_WORK/runtime-trusted-root-path")"
+          manager="$(cat "$DEV_RELEASE_WORK/manager-release-path")"
+
+          run_release() {
+            sudo "$GITHUB_WORKSPACE/scripts/run-runtime-release.sh" "$tool" "$@"
+          }
+
           install -m 0444 "$trusted_root" "$release_dir/trusted-root.json"
           install -m 0444 \
             "$trusted_root" \
@@ -404,18 +504,17 @@ jobs:
             --bundle "$release_dir/toolchain-release/catalog.sigstore.json" \
             --statement "$release_dir/toolchain-release/attestation.json"
           run_release archive \
-            --tag "$release_tag" \
+            --tag "$DEV_RELEASE_TAG" \
             --input "$release_dir" \
             --scratch "$scratch" \
             --output "$dist/runtime-release.tar" >"$dist/runtime-release-result.json"
           run_release verify-archive \
-            --tag "$release_tag" \
+            --tag "$DEV_RELEASE_TAG" \
             --input "$dist/runtime-release.tar" \
             --trusted-root "$trusted_root" \
             --scratch "$scratch" \
             --output "$verified" >/dev/null
 
-          manager="$(nix build --no-link --print-out-paths .#managerRelease)"
           install -m 0444 "$manager/catalog.json" "$manager_dist/catalog.json"
           install -m 0444 "$trusted_root" "$manager_dist/trusted-root.json"
           cosign attest-blob \
@@ -431,9 +530,9 @@ jobs:
           jq -cn \
             --arg commit "$GITHUB_SHA" \
             --arg ref "$GITHUB_REF" \
-            --arg release "$release_tag" \
+            --arg release "$DEV_RELEASE_TAG" \
             --arg runId "$GITHUB_RUN_ID" \
-            --arg workflowIdentity "$certificate_san" \
+            --arg workflowIdentity "$DEV_RELEASE_CERTIFICATE_SAN" \
             --arg runtimeSHA256 "$(sha256sum "$dist/runtime-release.tar" | awk '{print $1}')" \
             --argjson runtimeSizeBytes "$(stat -c '%s' "$dist/runtime-release.tar")" \
             '{
@@ -455,6 +554,8 @@ jobs:
             "$manager_dist/catalog.json" \
             "$manager_dist/catalog.sigstore.json" \
             "$manager_dist/trusted-root.json"
+          printf '::notice title=authenticated-dev-runtime::%s authenticated dev release verified\n' \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
           EOF
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

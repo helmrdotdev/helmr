@@ -32,6 +32,27 @@ reject_text() {
 	fi
 }
 
+require_step_text() {
+	step="$1"
+	text="$2"
+	message="$3"
+	if ! awk -v step="$step" '
+		$0 == "      - name: " step {
+			in_step = 1
+			next
+		}
+		in_step && /^      - (name:|uses:)/ {
+			exit
+		}
+		in_step {
+			print
+		}
+	' "$workflow" | rg -F -- "$text" >/dev/null; then
+		printf '%s\n' "$message" >&2
+		exit 1
+	fi
+}
+
 if ! cmp -s "$descriptor" <(printf '%s' "$(jq -cS . "$descriptor")"); then
 	printf 'runtime release descriptor is not canonical JSON\n' >&2
 	exit 1
@@ -123,6 +144,31 @@ require_text "-tags helmrdevtrust" "$dev_job" \
 	"development runtime verifier does not compile the separate trust domain"
 require_text "devReleaseSourceRepositoryDigest=\${GITHUB_SHA}" "$dev_job" \
 	"development runtime verifier is not exact-bound to the source commit"
+require_text "timeout-minutes: 180" "$dev_job" \
+	"development runtime producer has no bounded job timeout"
+while IFS='|' read -r phase timeout start_notice end_notice; do
+	require_text "name: ${phase}" "$dev_job" \
+		"development runtime producer does not expose phase: ${phase}"
+	require_step_text "$phase" "timeout-minutes: ${timeout}" \
+		"development runtime phase has no expected timeout: ${phase}"
+	require_step_text "$phase" "nix develop -L .#images" \
+		"development runtime phase does not stream Nix environment build logs: ${phase}"
+	require_step_text "$phase" "::notice title=authenticated-dev-runtime::%s" \
+		"development runtime phase does not emit GitHub notice annotations: ${phase}"
+	require_step_text "$phase" "\$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+		"development runtime phase notices are not timestamped in UTC: ${phase}"
+	require_step_text "$phase" "$start_notice" \
+		"development runtime phase has no timestamped start notice: ${phase}"
+	require_step_text "$phase" "$end_notice" \
+		"development runtime phase has no timestamped completion notice: ${phase}"
+done <<'EOF'
+Build development trust verifiers|30|building development trust verifiers|development trust verifiers ready
+Build managed runtime|120|building managed runtime|managed runtime ready
+Build standard toolchain|120|building standard toolchain|standard toolchain ready
+Build release trust inputs|60|building release trust inputs|release trust inputs ready
+Compose authenticated runtime archive|45|composing runtime archive|runtime archive composed
+Sign and verify authenticated dev release|30|signing authenticated dev release|authenticated dev release verified
+EOF
 require_text "--lineage \"\$lineage\"" "$dev_job" \
 	"development runtime composition can consume the production lineage descriptor"
 require_text "predecessor: null" "$dev_job" \
