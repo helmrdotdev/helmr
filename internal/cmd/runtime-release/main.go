@@ -35,6 +35,8 @@ func run(ctx context.Context, args []string) error {
 		return errors.New("runtime release command is required")
 	}
 	switch args[0] {
+	case "trust-policy":
+		return runTrustPolicy(args[1:])
 	case "compose":
 		return runCompose(ctx, args[1:])
 	case "archive":
@@ -50,9 +52,27 @@ func run(ctx context.Context, args []string) error {
 	}
 }
 
+func runTrustPolicy(args []string) error {
+	if len(args) != 0 {
+		return errors.New("trust-policy accepts no arguments")
+	}
+	policy, err := deployment.CompiledReleaseTrustPolicy()
+	if err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetEscapeHTML(false)
+	return encoder.Encode(policy)
+}
+
 func runCompose(ctx context.Context, args []string) (returnErr error) {
 	flags := flag.NewFlagSet("compose", flag.ContinueOnError)
 	tag := flags.String("tag", "", "exact platform release tag")
+	lineagePath := flags.String(
+		"lineage",
+		".github/runtime-release.json",
+		"reviewed runtime release lineage descriptor",
+	)
 	releasesDirectory := flags.String("releases", "", "downloaded release root")
 	runtimePath := flags.String("runtime", "", "captured managed runtime")
 	invalidPath := flags.String("invalid", "", "managed runtime invalid verifier fixture")
@@ -81,7 +101,7 @@ func runCompose(ctx context.Context, args []string) (returnErr error) {
 		)
 	}
 	lineageFile, err := deployment.OpenRuntimeReleaseFile(
-		".github/runtime-release.json",
+		*lineagePath,
 		4096,
 	)
 	if err != nil {

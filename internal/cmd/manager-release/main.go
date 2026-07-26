@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,8 +18,23 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) == 0 || args[0] != "verify" {
-		return errors.New("manager release command must be verify")
+	if len(args) == 0 {
+		return errors.New("manager release command is required")
+	}
+	if args[0] == "trust-policy" {
+		if len(args) != 1 {
+			return errors.New("trust-policy accepts no arguments")
+		}
+		policy, err := deployment.CompiledReleaseTrustPolicy()
+		if err != nil {
+			return err
+		}
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetEscapeHTML(false)
+		return encoder.Encode(policy)
+	}
+	if args[0] != "verify" {
+		return fmt.Errorf("unknown manager release command %q", args[0])
 	}
 	flags := flag.NewFlagSet("verify", flag.ContinueOnError)
 	catalogPath := flags.String("catalog", "", "Manager catalog")

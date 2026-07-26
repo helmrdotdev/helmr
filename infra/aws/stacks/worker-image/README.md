@@ -29,6 +29,14 @@ tofu apply \
   -var="release_package_sha256=<lowercase-sha256>"
 ```
 
+Development builds additionally require `release_trust_mode=development`, the exact
+`release.yaml@refs/heads/<branch>` SAN, and the full source commit as both `source_ref` and
+`release_trust_source_digest`. Use `scripts/aws-dev-smoke.sh worker-image-apply` after
+`dev-release-fetch`; it derives and validates those values plus `release_provenance_sha256` from
+authenticated provenance. `worker-image-wait` then records and verifies the exact Image Builder
+execution, recipe, and immutable AMI provenance tags.
+Production builds leave the trust variables at their defaults.
+
 Start the build:
 
 ```sh

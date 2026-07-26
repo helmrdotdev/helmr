@@ -5,6 +5,8 @@ Release workflows are treated as privileged code because they can publish files,
 ## Required repository settings
 
 - Create a GitHub Actions environment named `release-production`.
+- Create a separate GitHub Actions environment named `dev-runtime`. It contains no
+  secrets or AWS role and exists only to identify the bounded pre-merge signer job.
 - Restrict deployments to release tags or `main` workflow dispatch runs.
 - For a single-maintainer project, leave required reviewers disabled so the maintainer can publish releases.
 - When more than one maintainer can approve releases, require reviewer approval for `release-production` and disable self-approval.
@@ -36,7 +38,36 @@ Release workflows are treated as privileged code because they can publish files,
   publication as one operation.
 - Other publish jobs should download artifacts, check out only the exact release tag, and avoid
   building repository code.
-- `id-token: write` is only allowed when the line is marked with `security-check: allow-id-token` and the job is protected by the `release-production` environment.
+- `id-token: write` is only allowed when the line is marked with
+  `security-check: allow-id-token`. The job must use `release-production`, except for the
+  single `release.yaml` `runtime-release-dev` job protected by `dev-runtime`.
+
+## Development runtime attestation
+
+Pre-merge AWS validation uses the `release.yaml` `dev-runtime` dispatch mode. It signs runtime,
+standard-toolchain, and Manager catalogs with GitHub OIDC, uploads only a seven-day workflow
+artifact, and has `contents: read`. It must not create a tag, GitHub Release, release asset, or
+AWS session. The locally authenticated operator downloads the exact successful run, verifies the
+run commit and branch, requires one unexpired artifact by immutable Actions artifact ID, verifies
+the raw artifact archive against GitHub's SHA-256 digest and closed member set, verifies every
+Sigstore bundle, and only then passes a deterministic Worker package to the existing create-only,
+versioned dev S3 staging path.
+
+Local verifier and image builds require a clean checkout at the exact authenticated commit.
+Control images embed the commit, Actions artifact digest, and verified provenance digest as OCI
+labels; the pushed digest is pulled and inspected before a closed receipt is written. Worker AMIs
+carry the corresponding source, trust-identity, provenance, and versioned-package tags, which are
+checked against the exact Image Builder execution and recipe. The formal AWS campaign revalidates
+both immutable artifacts against ECR and EC2 before initialization.
+
+Development verifier binaries are compiled with `helmrdevtrust`. That build accepts only the exact
+`release.yaml@refs/heads/<branch>` certificate identity injected for the run and requires the
+Fulcio source repository digest extension to equal the full source commit. It does not also accept
+the production tag identity. Production builds exclude the development policy source file, clear
+`GOFLAGS`, positively inspect their compiled policy, and reject binaries containing a development
+workflow identity. Development lineage is an ephemeral
+`v0.0.0-dev.g<12-character-commit>` descriptor with `predecessor: null`;
+`.github/runtime-release.json` is neither read nor changed by this path.
 
 ## Managed runtime release rules
 

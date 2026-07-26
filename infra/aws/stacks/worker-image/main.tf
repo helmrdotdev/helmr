@@ -15,6 +15,10 @@ module "worker_image" {
   source_bundle_s3_uri        = var.source_bundle_s3_uri
   source_bundle_object_arn    = var.source_bundle_object_arn
   source_bundle_kms_key_arn   = var.source_bundle_kms_key_arn
+  release_trust_mode          = var.release_trust_mode
+  release_trust_san           = var.release_trust_san
+  release_trust_source_digest = var.release_trust_source_digest
+  release_provenance_sha256   = var.release_provenance_sha256
   release_package_s3_uri      = var.release_package_s3_uri
   release_package_object_arn  = var.release_package_object_arn
   release_package_kms_key_arn = var.release_package_kms_key_arn

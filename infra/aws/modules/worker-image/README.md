@@ -27,6 +27,11 @@ the optional Git source bundle. When `instance_profile_name` selects a
 caller-owned profile, its role must carry the equivalent version-constrained
 `s3:GetObjectVersion` and optional `kms:Decrypt` permissions.
 
+Development images also require the SHA-256 of the locally verified release provenance. The output
+AMI is tagged with the exact source commit, release-provenance digest, release-package digest,
+hashed S3 version ID, and hashed workflow identity. The AWS smoke harness verifies those tags
+against the Image Builder execution before the AMI can enter a validation campaign.
+
 Run the emitted `image_pipeline_arn` with EC2 Image Builder, then pass the produced AMI ID to the
 worker module as `worker_ami_id`.
 

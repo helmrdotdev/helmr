@@ -68,12 +68,7 @@ func verifyReleasePayload(
 	if trustedMaterial == nil {
 		return nil, errors.New("release trusted root is required")
 	}
-	identity, err := verify.NewShortCertificateIdentity(
-		releaseAttestationIssuer,
-		"",
-		"",
-		sanPattern,
-	)
+	identity, err := compiledReleaseCertificateIdentity(sanPattern)
 	if err != nil {
 		return nil, fmt.Errorf("configure release attestation identity: %w", err)
 	}

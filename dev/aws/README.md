@@ -6,9 +6,16 @@ AWS dev scripts. It does not replace `scripts/aws-dev-smoke.sh`,
 inputs, records structured stage results, and publishes an encrypted evidence
 bundle before the ephemeral stack is destroyed.
 
-The committed campaign manifest is owned by the ops repository. Its strict
-schema binds the Helmr commit, the `dev/workflows` Git tree, the harness hash,
-the account-independent control repository/digest, worker AMI and instance
+The committed campaign manifest is owned by the ops repository. The v2 schema is a fail-closed
+cutover from the earlier unbound image metadata. Its strict schema binds the Helmr commit, the
+`dev/workflows` Git tree, the harness hash,
+the authenticated dev release run and provenance hash, the exact versioned
+Worker release package digest/version, the account-independent control
+repository/digest and its pulled-config provenance receipt, and the Worker AMI,
+Image Builder execution, and immutable AMI-tag provenance receipt. Campaign
+initialization rechecks the Control digest in ECR and proves that the AMI is an
+available output of the recorded recipe and execution with the exact source,
+trust identity, release provenance, and package tags. It also binds the worker instance
 type, byte-exact control and worker tfvars, exact case payloads, committed
 producer paths and hashes,
 retry policy, the 1 run + 1 build worker ceiling, one NAT gateway ceiling, and

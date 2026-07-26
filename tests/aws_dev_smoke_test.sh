@@ -372,18 +372,69 @@ cat >"$tmp/bin/aws" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-cat "$MOCK_IMAGE_JSON"
+case "${1:-}:${2:-}" in
+  imagebuilder:get-image) cat "$MOCK_IMAGE_JSON" ;;
+  ec2:describe-images) cat "$MOCK_AMI_JSON" ;;
+  *) exit 1 ;;
+esac
+EOF
+cat >"$tmp/bin/tofu" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  *"output -raw image_recipe_arn"*)
+    printf '%s\n' 'arn:aws:imagebuilder:us-west-2:123456789012:image-recipe/example/1.0.0'
+    ;;
+  *) exit 1 ;;
+esac
 EOF
 chmod +x "$tmp/bin/aws"
+chmod +x "$tmp/bin/tofu"
 
 state_dir="$tmp/state"
 mkdir -p "$state_dir"
+source_commit="$(git -C "$repo_root" rev-parse HEAD)"
+workflow_identity="https://github.com/helmrdotdev/helmr/.github/workflows/release.yaml@refs/heads/test"
+jq -cn \
+  --arg commit "$source_commit" \
+  --arg identity "$workflow_identity" \
+  '{commit:$commit,workflowIdentity:$identity}' \
+  >"$state_dir/authenticated-dev-release-provenance.json"
+printf '%064d\n' 0 >"$state_dir/worker-release-package-sha256"
+printf '%s\n' version-1 >"$state_dir/worker-release-package-version-id"
+provenance_sha="$(sha256_stdin <"$state_dir/authenticated-dev-release-provenance.json")"
+version_sha="$(printf '%s' version-1 | sha256_stdin)"
+san_sha="$(printf '%s' "$workflow_identity" | sha256_stdin)"
+MOCK_AMI_JSON="$tmp/worker-ami.json"
+jq -cn \
+  --arg ami "ami-0bbbbbbbbbbbbbbbb" \
+  --arg commit "$source_commit" \
+  --arg package "$(cat "$state_dir/worker-release-package-sha256")" \
+  --arg provenance "$provenance_sha" \
+  --arg san "$san_sha" \
+  --arg version "$version_sha" '
+  {
+    Images:[{
+      ImageId:$ami,
+      Tags:[
+        {Key:"HelmrReleaseTrustMode",Value:"development"},
+        {Key:"HelmrSourceCommit",Value:$commit},
+        {Key:"HelmrDevReleaseProvenanceSHA256",Value:$provenance},
+        {Key:"HelmrReleasePackageSHA256",Value:$package},
+        {Key:"HelmrReleasePackageVersionSHA256",Value:$version},
+        {Key:"HelmrReleaseTrustSANHash",Value:$san}
+      ]
+    }]
+  }' >"$MOCK_AMI_JSON"
 MOCK_IMAGE_JSON="$tmp/image-missing-region.json"
 cat >"$MOCK_IMAGE_JSON" <<'JSON'
 {
   "image": {
     "state": {
       "status": "AVAILABLE"
+    },
+    "imageRecipe": {
+      "arn": "arn:aws:imagebuilder:us-west-2:123456789012:image-recipe/example/1.0.0"
     },
     "outputResources": {
       "amis": [
@@ -397,7 +448,7 @@ cat >"$MOCK_IMAGE_JSON" <<'JSON'
 }
 JSON
 
-if AWS_REGION=us-west-2 STATE_DIR="$state_dir" MOCK_IMAGE_JSON="$MOCK_IMAGE_JSON" PATH="$tmp/bin:$PATH" "$script" worker-image-wait arn:aws:imagebuilder:us-west-2:123456789012:image/example/1.0.0/1 >"$stdout" 2>"$stderr"; then
+if AWS_REGION=us-west-2 STATE_DIR="$state_dir" MOCK_IMAGE_JSON="$MOCK_IMAGE_JSON" MOCK_AMI_JSON="$MOCK_AMI_JSON" TF_BIN="$tmp/bin/tofu" PATH="$tmp/bin:$PATH" "$script" worker-image-wait arn:aws:imagebuilder:us-west-2:123456789012:image/example/1.0.0/1 >"$stdout" 2>"$stderr"; then
   fail "worker-image-wait should fail when AWS_REGION is absent from Image Builder AMIs"
 fi
 assert_contains "$stderr" "does not include an AMI for AWS_REGION=us-west-2" "missing AMI region guard"
@@ -408,6 +459,9 @@ cat >"$MOCK_IMAGE_JSON" <<'JSON'
   "image": {
     "state": {
       "status": "AVAILABLE"
+    },
+    "imageRecipe": {
+      "arn": "arn:aws:imagebuilder:us-west-2:123456789012:image-recipe/example/1.0.0"
     },
     "outputResources": {
       "amis": [
@@ -425,9 +479,10 @@ cat >"$MOCK_IMAGE_JSON" <<'JSON'
 }
 JSON
 
-AWS_REGION=us-west-2 STATE_DIR="$state_dir" MOCK_IMAGE_JSON="$MOCK_IMAGE_JSON" PATH="$tmp/bin:$PATH" "$script" worker-image-wait arn:aws:imagebuilder:us-west-2:123456789012:image/example/1.0.0/1 >"$stdout" 2>"$stderr"
+AWS_REGION=us-west-2 STATE_DIR="$state_dir" MOCK_IMAGE_JSON="$MOCK_IMAGE_JSON" MOCK_AMI_JSON="$MOCK_AMI_JSON" TF_BIN="$tmp/bin/tofu" PATH="$tmp/bin:$PATH" "$script" worker-image-wait arn:aws:imagebuilder:us-west-2:123456789012:image/example/1.0.0/1 >"$stdout" 2>"$stderr"
 assert_equal "ami-0bbbbbbbbbbbbbbbb" "$(cat "$stdout")" "worker-image-wait current region AMI"
 assert_equal "ami-0bbbbbbbbbbbbbbbb" "$(cat "$state_dir/worker-ami-id")" "recorded worker AMI"
+[ -s "$state_dir/worker-image-provenance.json" ] || fail "worker-image-wait provenance receipt"
 
 destroy_bin="$tmp/destroy-bin"
 destroy_log="$tmp/destroy.log"

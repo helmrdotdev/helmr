@@ -14,7 +14,9 @@ trap 'rm -rf "${tmp}"' EXIT
 product="${tmp}/helmr"
 ops="${tmp}/ops"
 state_root="${tmp}/state"
+smoke_state_root="${tmp}/aws-smoke"
 mkdir -p "${product}/dev/workflows/tasks/smoke" "${product}/dev/aws/validation-cases" "${ops}/docs/validation"
+mkdir -p "${smoke_state_root}"
 
 for repo in "${product}" "${ops}"; do
   git -C "${repo}" init -q
@@ -69,6 +71,65 @@ git -C "${product}" add .
 git -C "${product}" commit -qm fixture
 source_commit="$(git -C "${product}" rev-parse HEAD)"
 fixture_tree="$(git -C "${product}" rev-parse HEAD:dev/workflows)"
+dev_release_run_id=123456789
+dev_release_artifact_digest="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+dev_release_workflow_identity="https://github.com/helmrdotdev/helmr/.github/workflows/release.yaml@refs/heads/test"
+jq -cn \
+  --arg artifact_digest "${dev_release_artifact_digest}" \
+  --arg commit "${source_commit}" \
+  --arg run_id "${dev_release_run_id}" \
+  --arg workflow_identity "${dev_release_workflow_identity}" \
+  '{artifact:{digest:$artifact_digest,id:1},commit:$commit,formatVersion:0,runId:$run_id,workflowIdentity:$workflow_identity}' \
+  >"${smoke_state_root}/authenticated-dev-release-provenance.json"
+printf '%s\n' "${dev_release_run_id}" >"${smoke_state_root}/authenticated-dev-release-run-id"
+printf '%064d\n' 0 >"${smoke_state_root}/worker-release-package-sha256"
+printf '%s\n' version-1 >"${smoke_state_root}/worker-release-package-version-id"
+if command -v sha256sum >/dev/null 2>&1; then
+  dev_release_provenance_sha="$(sha256sum "${smoke_state_root}/authenticated-dev-release-provenance.json" | awk '{print $1}')"
+else
+  dev_release_provenance_sha="$(shasum -a 256 "${smoke_state_root}/authenticated-dev-release-provenance.json" | awk '{print $1}')"
+fi
+worker_image_build_version_arn="arn:aws:imagebuilder:us-east-1:000000000000:image/helmr-test-worker/0.1.2/1"
+worker_image_recipe_arn="arn:aws:imagebuilder:us-east-1:000000000000:image-recipe/helmr-test-worker/0.1.2"
+if command -v sha256sum >/dev/null 2>&1; then
+  release_trust_san_hash="$(printf '%s' "${dev_release_workflow_identity}" | sha256sum | awk '{print $1}')"
+else
+  release_trust_san_hash="$(printf '%s' "${dev_release_workflow_identity}" | shasum -a 256 | awk '{print $1}')"
+fi
+jq -cn \
+  --arg artifact "${dev_release_artifact_digest}" \
+  --arg commit "${source_commit}" \
+  --arg provenance "${dev_release_provenance_sha}" \
+  '{
+    artifactDigest:$artifact,
+    devReleaseProvenanceSHA256:$provenance,
+    image:{digest:"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",repository:"helmr/control"},
+    schema:"helmrdotdev.control-image-provenance.v1",
+    sourceCommit:$commit
+  }' >"${smoke_state_root}/control-image-provenance.json"
+jq -cn \
+  --arg build_arn "${worker_image_build_version_arn}" \
+  --arg commit "${source_commit}" \
+  --arg provenance "${dev_release_provenance_sha}" \
+  --arg recipe_arn "${worker_image_recipe_arn}" \
+  --arg san_hash "${release_trust_san_hash}" \
+  '{
+    ami:{id:"ami-0123456789abcdef0",region:"us-east-1"},
+    devReleaseProvenanceSHA256:$provenance,
+    imageBuildVersionARN:$build_arn,
+    imageRecipeARN:$recipe_arn,
+    releasePackage:{sha256:"0000000000000000000000000000000000000000000000000000000000000000",versionId:"version-1"},
+    releaseTrustSANHash:$san_hash,
+    schema:"helmrdotdev.worker-image-provenance.v1",
+    sourceCommit:$commit
+  }' >"${smoke_state_root}/worker-image-provenance.json"
+if command -v sha256sum >/dev/null 2>&1; then
+  control_image_provenance_sha="$(sha256sum "${smoke_state_root}/control-image-provenance.json" | awk '{print $1}')"
+  worker_image_provenance_sha="$(sha256sum "${smoke_state_root}/worker-image-provenance.json" | awk '{print $1}')"
+else
+  control_image_provenance_sha="$(shasum -a 256 "${smoke_state_root}/control-image-provenance.json" | awk '{print $1}')"
+  worker_image_provenance_sha="$(shasum -a 256 "${smoke_state_root}/worker-image-provenance.json" | awk '{print $1}')"
+fi
 if command -v sha256sum >/dev/null 2>&1; then
   harness_sha="$(sha256sum "${script}" | awk '{print $1}')"
 else
@@ -130,14 +191,19 @@ jq -n \
   --arg build_payload_sha "${build_payload_sha}" \
   --arg run_payload_sha "${run_payload_sha}" \
   --arg control_tfvars_sha "${control_tfvars_sha}" \
+  --arg control_image_provenance_sha "${control_image_provenance_sha}" \
   --arg worker_tfvars_sha "${worker_tfvars_sha}" \
+  --arg worker_image_build_version_arn "${worker_image_build_version_arn}" \
+  --arg worker_image_provenance_sha "${worker_image_provenance_sha}" \
+  --arg dev_release_run_id "${dev_release_run_id}" \
+  --arg dev_release_provenance_sha "${dev_release_provenance_sha}" \
   --arg producer_sha "${producer_sha}" '
   {
-    schema:"helmrdotdev.aws-validation-campaign.v1",
+    schema:"helmrdotdev.aws-validation-campaign.v2",
     governance:{repo:"ops"},
     source:{repo:"helmr",commit:$source_commit},
     harness:{version:1,sha256:$harness_sha},
-    artifacts:{control_image_repository:"helmr/control",control_image_digest:"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",control_tfvars_sha256:$control_tfvars_sha,worker_tfvars_sha256:$worker_tfvars_sha,worker_ami_id:"ami-0123456789abcdef0",worker_instance_type:"c8i.xlarge",build_worker_instance_type:"c8i.xlarge",worker_price_fixture_sha256:"8b4b97a437b6f9a5f23d87e38538c2e86367eb7c6bec54770adac0b7512b2400",worker_microusd_per_hour:200571},
+    artifacts:{control_image_repository:"helmr/control",control_image_digest:"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",control_image_provenance_sha256:$control_image_provenance_sha,control_tfvars_sha256:$control_tfvars_sha,worker_tfvars_sha256:$worker_tfvars_sha,worker_ami_id:"ami-0123456789abcdef0",worker_image_build_version_arn:$worker_image_build_version_arn,worker_image_provenance_sha256:$worker_image_provenance_sha,worker_instance_type:"c8i.xlarge",build_worker_instance_type:"c8i.xlarge",dev_release_run_id:$dev_release_run_id,dev_release_provenance_sha256:$dev_release_provenance_sha,worker_release_package_sha256:"0000000000000000000000000000000000000000000000000000000000000000",worker_release_package_version_id:"version-1"},
     environment:{provider:"aws",region:"us-east-1",dev_name:"managed-worker",state_key:"dev/managed-worker.tfstate",account_id_env:"AWS_ACCOUNT_ID"},
     workload:{
       fixtures_root:"dev/workflows",fixture_tree:$fixture_tree,project:"helmr",environments:["staging","production"],
@@ -161,11 +227,34 @@ jq -n \
 git -C "${ops}" add .
 git -C "${ops}" commit -qm manifest
 
+mkdir -p "${tmp}/early-bin"
+cat >"${tmp}/early-bin/aws" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  *"ecr describe-images"*)
+    printf '{"imageDetails":[{"imageDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}\n'
+    ;;
+  *"imagebuilder get-image"*)
+    printf '{"image":{"state":{"status":"AVAILABLE"},"imageRecipe":{"arn":"arn:aws:imagebuilder:us-east-1:000000000000:image-recipe/helmr-test-worker/0.1.2"},"outputResources":{"amis":[{"image":"ami-0123456789abcdef0","region":"us-east-1"}]}}}\n'
+    ;;
+  *"ec2 describe-images"*)
+    printf '{"Images":[{"ImageId":"ami-0123456789abcdef0","Tags":[{"Key":"HelmrReleaseTrustMode","Value":"development"},{"Key":"HelmrSourceCommit","Value":"%s"},{"Key":"HelmrDevReleaseProvenanceSHA256","Value":"%s"},{"Key":"HelmrReleasePackageSHA256","Value":"0000000000000000000000000000000000000000000000000000000000000000"},{"Key":"HelmrReleasePackageVersionSHA256","Value":"12ddae32c9fd0c6969e03269ae104247c6a2a7efb4d4b37586aac8a6c76ec625"},{"Key":"HelmrReleaseTrustSANHash","Value":"30bb97f5e9fad96dd7b01483b494d88ab59450ee21f3734ce625f31ff22be0fc"}]}]}\n' "${MOCK_SOURCE_COMMIT}" "${MOCK_DEV_RELEASE_PROVENANCE_SHA256}"
+    ;;
+  *) exit 2 ;;
+esac
+EOF
+chmod +x "${tmp}/early-bin/aws"
+
 campaign() {
+  PATH="${tmp}/early-bin:${PATH}" \
+  MOCK_SOURCE_COMMIT="${source_commit}" \
+  MOCK_DEV_RELEASE_PROVENANCE_SHA256="${dev_release_provenance_sha}" \
   DEV_NAME="managed-worker" \
   STATE_KEY="dev/managed-worker.tfstate" \
   HELMR_VALIDATION_PRODUCT_ROOT="${product}" \
   HELMR_VALIDATION_STATE_ROOT="${state_root}" \
+  HELMR_AWS_SMOKE_STATE_ROOT="${smoke_state_root}" \
     "${script}" "$@"
 }
 
@@ -292,6 +381,9 @@ cat >"${tmp}/bin/aws" <<'EOF'
 set -euo pipefail
 command_line="$*"
 case "${command_line}" in
+  *"ecr describe-images"*) printf '{"imageDetails":[{"imageDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}\n' ;;
+  *"imagebuilder get-image"*) printf '{"image":{"state":{"status":"AVAILABLE"},"imageRecipe":{"arn":"arn:aws:imagebuilder:us-east-1:000000000000:image-recipe/helmr-test-worker/0.1.2"},"outputResources":{"amis":[{"image":"ami-0123456789abcdef0","region":"us-east-1"}]}}}\n' ;;
+  *"ec2 describe-images"*) printf '{"Images":[{"ImageId":"ami-0123456789abcdef0","Tags":[{"Key":"HelmrReleaseTrustMode","Value":"development"},{"Key":"HelmrSourceCommit","Value":"%s"},{"Key":"HelmrDevReleaseProvenanceSHA256","Value":"%s"},{"Key":"HelmrReleasePackageSHA256","Value":"0000000000000000000000000000000000000000000000000000000000000000"},{"Key":"HelmrReleasePackageVersionSHA256","Value":"12ddae32c9fd0c6969e03269ae104247c6a2a7efb4d4b37586aac8a6c76ec625"},{"Key":"HelmrReleaseTrustSANHash","Value":"30bb97f5e9fad96dd7b01483b494d88ab59450ee21f3734ce625f31ff22be0fc"}]}]}\n' "${MOCK_SOURCE_COMMIT}" "${MOCK_DEV_RELEASE_PROVENANCE_SHA256}" ;;
   *"get-bucket-versioning"*) printf '{"Status":"Enabled"}\n' ;;
   *"sts get-caller-identity"*) printf '000000000000\n' ;;
   *"get-public-access-block"*) printf '{"PublicAccessBlockConfiguration":{"BlockPublicAcls":true,"IgnorePublicAcls":true,"BlockPublicPolicy":true,"RestrictPublicBuckets":true}}\n' ;;
@@ -384,6 +476,8 @@ cp "${control_tfvars_fixture}" "${tfvars}"
 
 campaign_b() {
   PATH="${tmp}/bin:${PATH}" \
+  MOCK_SOURCE_COMMIT="${source_commit}" \
+  MOCK_DEV_RELEASE_PROVENANCE_SHA256="${dev_release_provenance_sha}" \
   MOCK_S3_DIR="${tmp}/s3" \
   MOCK_DESTROYED_FILE="${tmp}/destroyed" \
   MOCK_UNHEALTHY_CONTROL_FILE="${tmp}/unhealthy-control" \
@@ -403,6 +497,7 @@ campaign_b() {
   STATE_KEY="dev/managed-worker.tfstate" \
   HELMR_VALIDATION_PRODUCT_ROOT="${product}" \
   HELMR_VALIDATION_STATE_ROOT="${state_root}" \
+  HELMR_AWS_SMOKE_STATE_ROOT="${smoke_state_root}" \
     "${script}" "$@"
 }
 
@@ -434,12 +529,17 @@ grep -Fq 'product checkout is dirty' "${tmp}/stderr" || fail "drift rejection re
 git -C "${product}" checkout -q -- .
 
 alternate_state="${tmp}/alternate-state"
+PATH="${tmp}/early-bin:${PATH}" \
+MOCK_SOURCE_COMMIT="${source_commit}" \
+MOCK_DEV_RELEASE_PROVENANCE_SHA256="${dev_release_provenance_sha}" \
 HELMR_VALIDATION_PRODUCT_ROOT="${product}" \
 HELMR_VALIDATION_STATE_ROOT="${alternate_state}" \
+HELMR_AWS_SMOKE_STATE_ROOT="${smoke_state_root}" \
   "${script}" init "${manifest_b}" >/dev/null
 if PATH="${tmp}/bin:${PATH}" MOCK_S3_DIR="${tmp}/s3" BOOTSTRAP_STACK="${tmp}/bootstrap" \
   AWS_ACCOUNT_ID="000000000000" DEV_NAME="managed-worker" STATE_KEY="dev/managed-worker.tfstate" \
   HELMR_VALIDATION_PRODUCT_ROOT="${product}" HELMR_VALIDATION_STATE_ROOT="${alternate_state}" \
+  HELMR_AWS_SMOKE_STATE_ROOT="${smoke_state_root}" \
   "${script}" claim "${manifest_b}" >/dev/null 2>&1; then
   fail "S3 namespace claim must be atomic across local state roots"
 fi

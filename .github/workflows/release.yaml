@@ -7,9 +7,17 @@ on:
       - "sdk/typescript/v*"
   workflow_dispatch:
     inputs:
+      mode:
+        description: Release operation
+        required: true
+        default: repair
+        type: choice
+        options:
+          - repair
+          - dev-runtime
       tag:
         description: Existing platform release tag to consume for image repair
-        required: true
+        required: false
 
 permissions:
   contents: read
@@ -71,8 +79,9 @@ jobs:
           manager_tool="$work/manager-release"
           rm -rf "$work" "$dist" "$manager_dist" "$manager_asset"
           mkdir -p "$downloads" "$release_dir" "$scratch" "$dist" "$manager_dist"
-          CGO_ENABLED=0 go build -trimpath -o "$tool" ./internal/cmd/runtime-release
-          CGO_ENABLED=0 go build -trimpath -o "$manager_tool" ./internal/cmd/manager-release
+          GOFLAGS= CGO_ENABLED=0 go build -trimpath -o "$tool" ./internal/cmd/runtime-release
+          GOFLAGS= CGO_ENABLED=0 go build -trimpath -o "$manager_tool" ./internal/cmd/manager-release
+          scripts/assert-production-release-trust.sh "$tool" "$manager_tool"
           trusted_root="$(nix build --no-link --print-out-paths .#runtimeTrustedRoot)"
 
           run_release() {
@@ -276,9 +285,191 @@ jobs:
             dist/manager-release/catalog.sigstore.json
             dist/manager-release/trusted-root.json
 
+  runtime-release-dev:
+    name: authenticated dev runtime
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.mode == 'dev-runtime' &&
+      startsWith(github.ref, 'refs/heads/') &&
+      github.ref != 'refs/heads/main' &&
+      github.repository == 'helmrdotdev/helmr'
+    runs-on: ubuntu-24.04
+    environment: dev-runtime
+    concurrency:
+      group: authenticated-dev-runtime-${{ github.sha }}
+      queue: max
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write # Needed only for keyless dev artifact signing. security-check: allow-id-token
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-nix
+
+      - name: Compose authenticated dev runtime
+        run: |
+          nix develop .#images --command bash -seu <<'EOF'
+          set -o pipefail
+
+          printf '%s\n' "$GITHUB_SHA" | grep -Eq '^[0-9a-f]{40}$' || {
+            echo "GITHUB_SHA must be an exact lowercase commit" >&2
+            exit 1
+          }
+          case "$GITHUB_REF" in
+            refs/heads/*) ;;
+            *) echo "development runtime signing requires a branch ref" >&2; exit 1 ;;
+          esac
+
+          release_tag="v0.0.0-dev.g${GITHUB_SHA:0:12}"
+          certificate_san="https://github.com/helmrdotdev/helmr/.github/workflows/release.yaml@${GITHUB_REF}"
+          trust_ldflags="-X github.com/helmrdotdev/helmr/internal/deployment.devReleaseCertificateSAN=${certificate_san} -X github.com/helmrdotdev/helmr/internal/deployment.devReleaseSourceRepositoryDigest=${GITHUB_SHA}"
+          work="$RUNNER_TEMP/dev-runtime-release"
+          releases="$work/releases"
+          release_dir="$work/release"
+          scratch="$work/scratch"
+          verified="$work/verified"
+          dist="$GITHUB_WORKSPACE/dist/dev-release"
+          manager_dist="$dist/manager-release"
+          lineage="$work/runtime-release.json"
+          tool="$work/runtime-release"
+          manager_tool="$work/manager-release"
+          rm -rf "$work" "$dist"
+          mkdir -p "$releases" "$release_dir" "$scratch" "$dist" "$manager_dist"
+
+          GOFLAGS= CGO_ENABLED=0 go build \
+            -tags helmrdevtrust \
+            -trimpath \
+            -ldflags="$trust_ldflags" \
+            -o "$tool" \
+            ./internal/cmd/runtime-release
+          GOFLAGS= CGO_ENABLED=0 go build \
+            -tags helmrdevtrust \
+            -trimpath \
+            -ldflags="$trust_ldflags" \
+            -o "$manager_tool" \
+            ./internal/cmd/manager-release
+          "$tool" trust-policy |
+            jq -e \
+              --arg issuer "https://token.actions.githubusercontent.com" \
+              --arg san "$certificate_san" \
+              --arg digest "$GITHUB_SHA" \
+              'keys == ["issuer", "mode", "san", "sourceRepositoryDigest"] and
+               .mode == "development" and .issuer == $issuer and
+               .san == $san and .sourceRepositoryDigest == $digest' >/dev/null
+          "$manager_tool" trust-policy |
+            jq -e \
+              --arg san "$certificate_san" \
+              --arg digest "$GITHUB_SHA" \
+              '.mode == "development" and .san == $san and
+               .sourceRepositoryDigest == $digest' >/dev/null
+
+          jq -cn \
+            --arg release "$release_tag" \
+            '{formatVersion: 0, predecessor: null, release: $release}' >"$lineage"
+          trusted_root="$(nix build --no-link --print-out-paths .#runtimeTrustedRoot)"
+          runtime="$(nix build --no-link --print-out-paths .#managedRuntime)"
+          standard_toolchain="$(nix build --no-link --print-out-paths .#standardToolchain)"
+
+          run_release() {
+            sudo "$GITHUB_WORKSPACE/scripts/run-runtime-release.sh" "$tool" "$@"
+          }
+
+          run_release compose \
+            --tag "$release_tag" \
+            --lineage "$lineage" \
+            --releases "$releases" \
+            --runtime "$runtime/runtime.squashfs" \
+            --descriptor "$runtime/runtime.descriptor.json" \
+            --invalid "$runtime/verifier-invalid.squashfs" \
+            --toolchain-source "$standard_toolchain" \
+            --scratch "$scratch" \
+            --output "$release_dir" >/dev/null
+          sudo chown -R "$(id -u):$(id -g)" "$release_dir"
+          install -m 0444 "$trusted_root" "$release_dir/trusted-root.json"
+          install -m 0444 \
+            "$trusted_root" \
+            "$release_dir/toolchain-release/trusted-root.json"
+          cosign attest-blob \
+            --yes \
+            --new-bundle-format=true \
+            --bundle "$release_dir/catalog.sigstore.json" \
+            --statement "$release_dir/attestation.json"
+          cosign attest-blob \
+            --yes \
+            --new-bundle-format=true \
+            --bundle "$release_dir/toolchain-release/catalog.sigstore.json" \
+            --statement "$release_dir/toolchain-release/attestation.json"
+          run_release archive \
+            --tag "$release_tag" \
+            --input "$release_dir" \
+            --scratch "$scratch" \
+            --output "$dist/runtime-release.tar" >"$dist/runtime-release-result.json"
+          run_release verify-archive \
+            --tag "$release_tag" \
+            --input "$dist/runtime-release.tar" \
+            --trusted-root "$trusted_root" \
+            --scratch "$scratch" \
+            --output "$verified" >/dev/null
+
+          manager="$(nix build --no-link --print-out-paths .#managerRelease)"
+          install -m 0444 "$manager/catalog.json" "$manager_dist/catalog.json"
+          install -m 0444 "$trusted_root" "$manager_dist/trusted-root.json"
+          cosign attest-blob \
+            --yes \
+            --new-bundle-format=true \
+            --bundle "$manager_dist/catalog.sigstore.json" \
+            --statement "$manager/attestation.json"
+          "$manager_tool" verify \
+            --catalog "$manager_dist/catalog.json" \
+            --bundle "$manager_dist/catalog.sigstore.json" \
+            --trusted-root "$trusted_root" >/dev/null
+
+          jq -cn \
+            --arg commit "$GITHUB_SHA" \
+            --arg ref "$GITHUB_REF" \
+            --arg release "$release_tag" \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg workflowIdentity "$certificate_san" \
+            --arg runtimeSHA256 "$(sha256sum "$dist/runtime-release.tar" | awk '{print $1}')" \
+            --argjson runtimeSizeBytes "$(stat -c '%s' "$dist/runtime-release.tar")" \
+            '{
+              commit: $commit,
+              formatVersion: 0,
+              ref: $ref,
+              release: $release,
+              runId: $runId,
+              runtime: {
+                sha256: $runtimeSHA256,
+                sizeBytes: $runtimeSizeBytes
+              },
+              workflowIdentity: $workflowIdentity
+            }' >"$dist/provenance.json"
+          chmod 0444 \
+            "$dist/runtime-release.tar" \
+            "$dist/runtime-release-result.json" \
+            "$dist/provenance.json" \
+            "$manager_dist/catalog.json" \
+            "$manager_dist/catalog.sigstore.json" \
+            "$manager_dist/trusted-root.json"
+          EOF
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: authenticated-dev-release
+          if-no-files-found: error
+          retention-days: 7
+          path: dist/dev-release
+
   runtime-release-dispatch:
     name: consume runtime release
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.mode == 'repair' &&
+      github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -308,8 +499,9 @@ jobs:
           manager_tool="$work/manager-release"
           rm -rf "$work" "$dist" "$manager_dist" "$manager_asset"
           mkdir -p "$scratch" "$dist" "$manager_dist"
-          CGO_ENABLED=0 go build -trimpath -o "$tool" ./internal/cmd/runtime-release
-          CGO_ENABLED=0 go build -trimpath -o "$manager_tool" ./internal/cmd/manager-release
+          GOFLAGS= CGO_ENABLED=0 go build -trimpath -o "$tool" ./internal/cmd/runtime-release
+          GOFLAGS= CGO_ENABLED=0 go build -trimpath -o "$manager_tool" ./internal/cmd/manager-release
+          scripts/assert-production-release-trust.sh "$tool" "$manager_tool"
           trusted_root="$(nix build --no-link --print-out-paths .#runtimeTrustedRoot)"
           jq -e \
             --arg release "$RELEASE_TAG" \
@@ -377,7 +569,11 @@ jobs:
 
   cli:
     name: cli
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.mode == 'repair' &&
+       github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -495,7 +691,8 @@ jobs:
           scratch="$RUNNER_TEMP/control-runtime-scratch"
           verified="$RUNNER_TEMP/control-runtime-release"
           mkdir -p "$scratch"
-          CGO_ENABLED=0 go build -trimpath -o "$tool" ./internal/cmd/runtime-release
+          GOFLAGS= CGO_ENABLED=0 go build -trimpath -o "$tool" ./internal/cmd/runtime-release
+          scripts/assert-production-release-trust.sh "$tool"
           trusted_root="$(nix build --no-link --print-out-paths .#runtimeTrustedRoot)"
           sudo scripts/run-runtime-release.sh "$tool" verify-archive \
             --tag "$RELEASE_TAG" \
@@ -766,7 +963,8 @@ jobs:
             result="$RUNNER_TEMP/worker-runtime-result.json"
             trusted_root="$(nix build --no-link --print-out-paths .#runtimeTrustedRoot)"
             mkdir -p "$scratch"
-            CGO_ENABLED=0 go build -trimpath -o "$tool" ./internal/cmd/runtime-release
+            GOFLAGS= CGO_ENABLED=0 go build -trimpath -o "$tool" ./internal/cmd/runtime-release
+            scripts/assert-production-release-trust.sh "$tool"
             sudo scripts/run-runtime-release.sh "$tool" verify-worker \
               --tag "$RELEASE_TAG" \
               --input "$GITHUB_WORKSPACE/dist/runtime-release/runtime-release-x86_64.tar" \
@@ -858,7 +1056,11 @@ jobs:
 
   publish:
     name: publish
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.mode == 'repair' &&
+       github.ref == 'refs/heads/main')
     needs:
       - cli
       - control-image

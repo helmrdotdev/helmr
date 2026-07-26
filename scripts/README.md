@@ -57,6 +57,35 @@ AWS_PROFILE=helmr-dev nix develop .#infra -c scripts/dev-secrets.sh aws-dev-smok
 `.helmr-aws-dev-smoke` is a scratch directory for logs, build outputs, and smoke artifacts. Do not
 use it as the source of truth for API keys or long-lived provider credentials.
 
+Before a feature-branch AWS worker smoke, dispatch `release.yaml` in `dev-runtime` mode for the
+exact pushed branch commit. The job has no repository write or AWS permission. After it succeeds,
+download and cryptographically verify its runtime, standard-toolchain, and Manager catalogs:
+
+```sh
+export DEV_RELEASE_RUN_ID=<successful-workflow-run-id>
+scripts/aws-dev-smoke.sh dev-release-fetch
+
+export WORKER_IMAGE_RELEASE_PACKAGE=.helmr-aws-dev-smoke/authenticated-dev-worker-release.tar
+export WORKER_IMAGE_RELEASE_PACKAGE_SHA256="$(
+  sha256sum "$WORKER_IMAGE_RELEASE_PACKAGE" | awk '{print $1}'
+)"
+export WORKER_IMAGE_RELEASE_PACKAGE_SIZE_BYTES="$(
+  wc -c <"$WORKER_IMAGE_RELEASE_PACKAGE" | tr -d '[:space:]'
+)"
+scripts/aws-dev-smoke.sh worker-release-stage
+```
+
+`dev-release-fetch` rejects any run whose branch or full commit differs from local `HEAD`, requires
+one unexpired artifact by immutable Actions artifact ID, verifies the raw archive against GitHub's
+SHA-256 digest and an exact member list, then uses a dev-only verifier compiled for the exact
+workflow SAN and Fulcio source repository digest. The verified local provenance records the
+artifact ID and digest and is required by both `worker-image-apply` and `control-image-build`.
+Production release binaries exclude this dev trust policy and continue to accept only signed
+platform tags. These commands require a clean checkout at that exact commit. Control push verifies
+the digest-pinned image's embedded release labels, and Worker image completion verifies the exact
+Image Builder recipe plus immutable AMI provenance tags; both write closed receipts consumed by the
+formal validation campaign.
+
 When setting `DEV_ENABLE_CLOUDFRONT=true`, also set `DEV_CLOUDFRONT_ORIGIN_DOMAIN_NAME` to a
 separate HTTPS ALB origin DNS name covered by `DEV_CERTIFICATE_ARN`.
 
@@ -129,8 +158,9 @@ Set `STATE_KEY` for release AMI pipelines so they do not share the dev worker-im
 The official release workflow does not accept AMI IDs as input; it always builds AMIs from the
 verified package so the image result and package transport remain one provenance-bound artifact.
 
-`worker-release-stage` accepts the read-only snapshot emitted by `runtime-release verify-worker`
-and the verifier's SHA-256 and byte length. It exact-checks those values before conditionally
+`worker-release-stage` accepts the deterministic package assembled from a read-only
+`runtime-release verify-worker` snapshot and an authenticated Manager release. It requires the
+caller's independently calculated SHA-256 and byte length, exact-checks them before conditionally
 creating the package in a versioned private S3 bucket, then retrieves that exact version and checks
 the bytes again. It records the exact URI, object version, SHA-256, and KMS key for
 `worker-image-apply`; the release workflow carries the same identity into `aws-artifacts.json`.

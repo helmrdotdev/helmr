@@ -53,13 +53,15 @@ jq -e '
 ' "$descriptor" >/dev/null
 
 tag_job="$(mktemp)"
+dev_job="$(mktemp)"
 dispatch_job="$(mktemp)"
 control_job="$(mktemp)"
 worker_job="$(mktemp)"
 publish_job="$(mktemp)"
 workflow_header="$(mktemp)"
-trap 'rm -f "$tag_job" "$dispatch_job" "$control_job" "$worker_job" "$publish_job" "$workflow_header"' EXIT
-section runtime-release-tag runtime-release-dispatch >"$tag_job"
+trap 'rm -f "$tag_job" "$dev_job" "$dispatch_job" "$control_job" "$worker_job" "$publish_job" "$workflow_header"' EXIT
+section runtime-release-tag runtime-release-dev >"$tag_job"
+section runtime-release-dev runtime-release-dispatch >"$dev_job"
 section runtime-release-dispatch cli >"$dispatch_job"
 section control-image typescript-sdk-packages >"$control_job"
 section worker-ami publish >"$worker_job"
@@ -102,6 +104,31 @@ require_text "gh release upload \"\$RELEASE_TAG\" \"\$dist/runtime-release.tar\"
 	"complete runtime release is not published as its fixed asset"
 reject_text "--clobber" "$workflow" \
 	"release workflow permits replacement of create-only runtime assets"
+require_text "scripts/assert-production-release-trust.sh" "$tag_job" \
+	"production runtime producer does not assert its compiled trust policy"
+
+require_text "environment: dev-runtime" "$dev_job" \
+	"development runtime producer does not use its separate environment"
+require_text "id-token: write" "$dev_job" \
+	"development runtime producer lacks keyless signing authority"
+require_text "contents: read" "$dev_job" \
+	"development runtime producer has no closed repository permission"
+reject_text "contents: write" "$dev_job" \
+	"development runtime producer can mutate repository releases"
+reject_text "gh release" "$dev_job" \
+	"development runtime producer can publish a GitHub Release"
+reject_text "aws " "$dev_job" \
+	"development runtime producer can write directly to AWS"
+require_text "-tags helmrdevtrust" "$dev_job" \
+	"development runtime verifier does not compile the separate trust domain"
+require_text "devReleaseSourceRepositoryDigest=\${GITHUB_SHA}" "$dev_job" \
+	"development runtime verifier is not exact-bound to the source commit"
+require_text "--lineage \"\$lineage\"" "$dev_job" \
+	"development runtime composition can consume the production lineage descriptor"
+require_text "predecessor: null" "$dev_job" \
+	"development runtime composition does not use an isolated lineage"
+require_text "name: authenticated-dev-release" "$dev_job" \
+	"development runtime producer does not retain its authenticated artifact"
 
 require_text "permissions:" "$dispatch_job" \
 	"manual runtime consumption has no explicit permission boundary"
@@ -123,12 +150,12 @@ require_text "--trusted-root \"\$trusted_root\"" "$tag_job" \
 	"tag rerun can trust the archive embedded root"
 require_text "--trusted-root \"\$trusted_root\"" "$dispatch_job" \
 	"manual dispatch can trust the archive embedded root"
-if [ "$(rg -F -- '--trusted-root "$trusted_root"' "$workflow" | wc -l | tr -d ' ')" -lt 6 ]; then
+if [ "$(rg -F -- '--trusted-root "$trusted_root"' "$workflow" | wc -l | tr -d ' ')" -lt 7 ]; then
 	printf 'Manager verification does not use the checkout-pinned trust root in both release paths\n' >&2
 	exit 1
 fi
-if [ "$(rg -F -- 'cmp -s "$manager_dist/trusted-root.json" "$trusted_root"' "$workflow" | wc -l | tr -d ' ')" -ne 2 ]; then
-	printf 'Manager archives are not exact-checked against the pinned trust root in both release paths\n' >&2
+if [ "$(rg -F -- 'cmp -s "$manager_dist/trusted-root.json" "$trusted_root"' "$tag_job" "$dispatch_job" | wc -l | tr -d ' ')" -ne 2 ]; then
+	printf 'production Manager archives are not exact-checked against the pinned trust root in both release paths\n' >&2
 	exit 1
 fi
 
@@ -197,6 +224,16 @@ require_text "COPY --chown=0:0 --chmod=0444 manager-release/catalog.sigstore.jso
 	"control image Manager bundle is not installed root-owned and read-only"
 require_text "COPY --chown=0:0 --chmod=0444 manager-release/trusted-root.json" "$control_builder" \
 	"control image Manager trusted root is not installed root-owned and read-only"
+# The literals below intentionally assert unexpanded Dockerfile build arguments.
+# shellcheck disable=SC2016
+require_text 'LABEL dev.helmr.source-commit="${HELMR_SOURCE_COMMIT}"' "$control_builder" \
+	"control image does not bind its exact development source commit"
+# shellcheck disable=SC2016
+require_text 'LABEL dev.helmr.dev-release-provenance-sha256="${HELMR_DEV_RELEASE_PROVENANCE_SHA256}"' "$control_builder" \
+	"control image does not bind its verified development release provenance"
+# shellcheck disable=SC2016
+require_text 'LABEL dev.helmr.dev-release-artifact-digest="${HELMR_DEV_RELEASE_ARTIFACT_DIGEST}"' "$control_builder" \
+	"control image does not bind its authenticated GitHub artifact"
 
 if ! rg -F "scripts/build-config-inspector.sh" "$workflow" >/dev/null; then
 	printf 'release workflow does not refresh the config inspector before CLI builds\n' >&2

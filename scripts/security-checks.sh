@@ -29,14 +29,20 @@ check_id_token_permissions() {
 			return 0
 		}
 
-		function finalize_job(i) {
-			if (current_job != "" && id_token_count > 0 && !job_environment_release) {
+		function finalize_job(i, allowed) {
+			allowed = job_environment_release ||
+				(current_file == ".github/workflows/release.yaml" &&
+				 current_job == "runtime-release-dev" &&
+				 job_environment_dev)
+			if (current_job != "" && id_token_count > 0 && !allowed) {
 				for (i = 1; i <= id_token_count; i++) {
-					fail_at(id_token_file[i], id_token_line[i], id_token_grant[i] " in job \"" current_job "\" must be protected by environment: release-production")
+					fail_at(id_token_file[i], id_token_line[i], id_token_grant[i] " in job \"" current_job "\" is outside the closed release identity allowlist")
 				}
 			}
 			current_job = ""
+			current_file = ""
 			job_environment_release = 0
+			job_environment_dev = 0
 			id_token_count = 0
 			in_environment_block = 0
 		}
@@ -47,7 +53,9 @@ check_id_token_permissions() {
 			}
 			in_jobs = 0
 			current_job = ""
+			current_file = ""
 			job_environment_release = 0
+			job_environment_dev = 0
 			id_token_count = 0
 			in_environment_block = 0
 		}
@@ -74,16 +82,22 @@ check_id_token_permissions() {
 				sub(/^["\047]/, "", current_job)
 				sub(/:.*/, "", current_job)
 				sub(/["\047][[:space:]]*$/, "", current_job)
+				current_file = FILENAME
 			}
 
 			if (current_job != "") {
 				if (line ~ /^    ["\047]?environment["\047]?[[:space:]]*:[[:space:]]*["\047]?release-production["\047]?([[:space:]#]|$)/) {
 					job_environment_release = 1
 					in_environment_block = 0
+				} else if (line ~ /^    ["\047]?environment["\047]?[[:space:]]*:[[:space:]]*["\047]?dev-runtime["\047]?([[:space:]#]|$)/) {
+					job_environment_dev = 1
+					in_environment_block = 0
 				} else if (line ~ /^    ["\047]?environment["\047]?[[:space:]]*:[[:space:]]*(#.*)?$/) {
 					in_environment_block = 1
 				} else if (in_environment_block && line ~ /^      ["\047]?name["\047]?[[:space:]]*:[[:space:]]*["\047]?release-production["\047]?([[:space:]#]|$)/) {
 					job_environment_release = 1
+				} else if (in_environment_block && line ~ /^      ["\047]?name["\047]?[[:space:]]*:[[:space:]]*["\047]?dev-runtime["\047]?([[:space:]#]|$)/) {
+					job_environment_dev = 1
 				} else if (in_environment_block && line !~ /^      / && line !~ /^[[:space:]]*$/) {
 					in_environment_block = 0
 				}
@@ -94,7 +108,7 @@ check_id_token_permissions() {
 					fail_at(FILENAME, FNR, detected_grant " must be explicitly marked with security-check: allow-id-token")
 				}
 				if (current_job == "") {
-					fail_at(FILENAME, FNR, detected_grant " must be inside a workflow job protected by environment: release-production")
+					fail_at(FILENAME, FNR, detected_grant " must be inside an allowlisted release workflow job")
 				} else {
 					id_token_count++
 					id_token_file[id_token_count] = FILENAME
@@ -140,7 +154,7 @@ fi
 
 mapfile -t github_yaml_files < <(rg --files .github/workflows .github/actions -g '*.yaml' -g '*.yml')
 if ((${#github_yaml_files[@]} > 0)) && ! check_id_token_permissions "${github_yaml_files[@]}"; then
-	echo "id-token: write must be explicitly marked and protected by release-production" >&2
+	echo "id-token: write must be explicitly marked and inside the closed release identity allowlist" >&2
 	fail=1
 fi
 

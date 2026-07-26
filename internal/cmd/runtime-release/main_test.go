@@ -37,3 +37,9 @@ func TestRuntimeReleaseCommandRequiresClosedArguments(t *testing.T) {
 		}
 	}
 }
+
+func TestRuntimeReleaseTrustPolicy(t *testing.T) {
+	if err := run(context.Background(), []string{"trust-policy"}); err != nil {
+		t.Fatal(err)
+	}
+}

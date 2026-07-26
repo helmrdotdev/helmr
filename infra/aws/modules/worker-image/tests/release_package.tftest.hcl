@@ -105,6 +105,30 @@ run "release_package_transport_is_version_pinned" {
   }
 }
 
+run "development_ami_tags_bind_authenticated_inputs" {
+  command = plan
+
+  variables {
+    source_ref                  = "0123456789abcdef0123456789abcdef01234567"
+    release_trust_mode          = "development"
+    release_trust_san           = "https://github.com/helmrdotdev/helmr/.github/workflows/release.yaml@refs/heads/feature"
+    release_trust_source_digest = "0123456789abcdef0123456789abcdef01234567"
+    release_provenance_sha256   = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+
+  assert {
+    condition = (
+      one(aws_imagebuilder_distribution_configuration.worker.distribution).ami_distribution_configuration[0].ami_tags.HelmrReleaseTrustMode == "development" &&
+      one(aws_imagebuilder_distribution_configuration.worker.distribution).ami_distribution_configuration[0].ami_tags.HelmrSourceCommit == var.source_ref &&
+      one(aws_imagebuilder_distribution_configuration.worker.distribution).ami_distribution_configuration[0].ami_tags.HelmrDevReleaseProvenanceSHA256 == var.release_provenance_sha256 &&
+      one(aws_imagebuilder_distribution_configuration.worker.distribution).ami_distribution_configuration[0].ami_tags.HelmrReleasePackageSHA256 == var.release_package_sha256 &&
+      one(aws_imagebuilder_distribution_configuration.worker.distribution).ami_distribution_configuration[0].ami_tags.HelmrReleasePackageVersionSHA256 == sha256(var.release_package_version_id) &&
+      one(aws_imagebuilder_distribution_configuration.worker.distribution).ami_distribution_configuration[0].ami_tags.HelmrReleaseTrustSANHash == sha256(var.release_trust_san)
+    )
+    error_message = "Development AMIs must carry immutable tags for the exact source, verified release provenance, trust identity, and package."
+  }
+}
+
 run "release_package_object_identity_must_match_uri" {
   command = plan
 

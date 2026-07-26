@@ -36,6 +36,56 @@ variable "source_bundle_kms_key_arn" {
   nullable    = true
 }
 
+variable "release_trust_mode" {
+  description = "Compiled release attestation trust domain for Helmr binaries."
+  type        = string
+  default     = "production"
+
+  validation {
+    condition     = contains(["production", "development"], var.release_trust_mode)
+    error_message = "release_trust_mode must be production or development."
+  }
+}
+
+variable "release_trust_san" {
+  description = "Exact GitHub Actions workflow identity compiled into development binaries."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = var.release_trust_san == null || can(regex(
+      "^https://github[.]com/helmrdotdev/helmr/[.]github/workflows/release[.]yaml@refs/heads/[0-9A-Za-z][0-9A-Za-z._/-]*$",
+      var.release_trust_san,
+    ))
+    error_message = "release_trust_san must be null or an exact Helmr release workflow branch identity."
+  }
+}
+
+variable "release_trust_source_digest" {
+  description = "Exact source commit compiled into development release verification."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.release_trust_source_digest == null || can(regex("^[0-9a-f]{40}$", var.release_trust_source_digest))
+    error_message = "release_trust_source_digest must be null or a 40-character lowercase commit."
+  }
+}
+
+variable "release_provenance_sha256" {
+  description = "SHA-256 of the locally verified development release provenance bound into the output AMI."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.release_provenance_sha256 == null || can(regex("^[0-9a-f]{64}$", var.release_provenance_sha256))
+    error_message = "release_provenance_sha256 must be null or exactly 64 lowercase hexadecimal characters."
+  }
+}
+
 variable "release_package_s3_uri" {
   description = "Exact S3 URI for the versioned Worker runtime release package."
   type        = string

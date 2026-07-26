@@ -29,10 +29,13 @@ locals {
   release_package_key     = local.release_package_parts[1]
   release_package_arn     = "arn:${data.aws_partition.current.partition}:s3:::${local.release_package_bucket}/${local.release_package_key}"
   build_script = templatefile("${path.module}/templates/build-worker-image.sh.tftpl", {
-    source_repository_url = var.source_repository_url
-    source_ref            = var.source_ref
-    source_bundle_s3_uri  = var.source_bundle_s3_uri == null ? "" : var.source_bundle_s3_uri
-    buildkit_slirp_cidr   = var.buildkit_slirp_cidr
+    source_repository_url       = var.source_repository_url
+    source_ref                  = var.source_ref
+    source_bundle_s3_uri        = var.source_bundle_s3_uri == null ? "" : var.source_bundle_s3_uri
+    buildkit_slirp_cidr         = var.buildkit_slirp_cidr
+    release_trust_mode          = var.release_trust_mode
+    release_trust_san           = var.release_trust_san == null ? "" : var.release_trust_san
+    release_trust_source_digest = var.release_trust_source_digest == null ? "" : var.release_trust_source_digest
   })
   install_release_script = templatefile("${path.module}/templates/install-runtime-release.sh.tftpl", {
     release_package_bucket     = local.release_package_bucket
@@ -47,6 +50,24 @@ locals {
     release_package_version_id = var.release_package_version_id
     release_package_sha256     = var.release_package_sha256
   })
+}
+
+check "closed_release_trust" {
+  assert {
+    condition = (
+      var.release_trust_mode == "production" &&
+      var.release_trust_san == null &&
+      var.release_trust_source_digest == null &&
+      var.release_provenance_sha256 == null
+      ) || (
+      var.release_trust_mode == "development" &&
+      var.release_trust_san != null &&
+      var.release_trust_source_digest != null &&
+      var.release_provenance_sha256 != null &&
+      var.source_ref == var.release_trust_source_digest
+    )
+    error_message = "production trust forbids dev provenance inputs; development trust requires exact SAN/source/provenance inputs and source_ref equality."
+  }
 }
 
 resource "aws_iam_role" "image_builder" {
@@ -339,10 +360,23 @@ resource "aws_imagebuilder_distribution_configuration" "worker" {
 
       ami_distribution_configuration {
         name = "${local.name}-worker-{{ imagebuilder:buildDate }}"
-        ami_tags = merge(var.tags, {
-          Name                 = "${local.name}-worker"
-          HelmrWorkerImageName = local.name
-        })
+        ami_tags = merge(
+          var.tags,
+          {
+            Name                             = "${local.name}-worker"
+            HelmrWorkerImageName             = local.name
+            HelmrReleasePackageSHA256        = var.release_package_sha256
+            HelmrReleasePackageVersionSHA256 = sha256(var.release_package_version_id)
+            HelmrReleaseTrustMode            = var.release_trust_mode
+            HelmrSourceCommit                = var.source_ref
+          },
+          var.release_provenance_sha256 == null ? {} : {
+            HelmrDevReleaseProvenanceSHA256 = var.release_provenance_sha256
+          },
+          var.release_trust_san == null ? {} : {
+            HelmrReleaseTrustSANHash = sha256(var.release_trust_san)
+          },
+        )
 
         dynamic "launch_permission" {
           for_each = var.ami_public ? [1] : []

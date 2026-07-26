@@ -41,6 +41,33 @@ variable "source_bundle_kms_key_arn" {
   nullable    = true
 }
 
+variable "release_trust_mode" {
+  description = "Compiled release attestation trust domain for Helmr binaries."
+  type        = string
+  default     = "production"
+}
+
+variable "release_trust_san" {
+  description = "Exact GitHub Actions workflow identity compiled into development binaries."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "release_trust_source_digest" {
+  description = "Exact source commit compiled into development release verification."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "release_provenance_sha256" {
+  description = "SHA-256 of the locally verified development release provenance bound into the output AMI."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "release_package_s3_uri" {
   description = "Exact S3 URI for the versioned Worker runtime release package."
   type        = string
