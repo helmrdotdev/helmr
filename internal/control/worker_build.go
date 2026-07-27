@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -25,6 +26,45 @@ const deploymentBuildLeaseDuration = 30 * time.Minute
 
 type workerMessagePayload struct {
 	Message string `json:"message"`
+}
+
+type deploymentBuildCompletionAuthority struct {
+	buildArchitecture            string
+	buildRuntimeDigest           []byte
+	buildStandardToolchainDigest []byte
+	buildManagerName             string
+	buildManagerVersion          string
+	buildManagerDigest           []byte
+	buildContractVersion         string
+	sourceArtifactID             pgtype.UUID
+	sourceDigest                 string
+	sourceSizeBytes              int64
+	sourceMediaType              string
+}
+
+type normalizedDeploymentDefinition struct {
+	input          deployment.DefinitionInput
+	manifest       []byte
+	manifestDigest [sha256.Size]byte
+}
+
+type preparedDeploymentBuild struct {
+	succeeded       deployment.BuildSucceeded
+	objects         []deploymentBuildObject
+	definitions     []normalizedDeploymentDefinition
+	queueConfigJSON []byte
+}
+
+type invalidDeploymentBuildOutput struct {
+	err error
+}
+
+func (err invalidDeploymentBuildOutput) Error() string {
+	return err.err.Error()
+}
+
+func (err invalidDeploymentBuildOutput) Unwrap() error {
+	return err.err
 }
 
 func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Request) {
@@ -426,6 +466,226 @@ func (s *Server) workerDeploymentBuildDeliveryFailed(w http.ResponseWriter, r *h
 	})
 }
 
+func deploymentBuildAuthority(
+	row db.GetDeploymentBuildCompletionAuthorityRow,
+) deploymentBuildCompletionAuthority {
+	return deploymentBuildCompletionAuthority{
+		buildArchitecture:            row.BuildArchitecture,
+		buildRuntimeDigest:           append([]byte(nil), row.BuildRuntimeDigest...),
+		buildStandardToolchainDigest: append([]byte(nil), row.BuildStandardToolchainDigest...),
+		buildManagerName:             row.BuildManagerName,
+		buildManagerVersion:          row.BuildManagerVersion,
+		buildManagerDigest:           append([]byte(nil), row.BuildManagerDigest...),
+		buildContractVersion:         row.BuildContractVersion,
+		sourceArtifactID:             row.DeploymentSourceArtifactID,
+		sourceDigest:                 row.DeploymentSourceDigest,
+		sourceSizeBytes:              row.DeploymentSourceSizeBytes,
+		sourceMediaType:              row.DeploymentSourceMediaType,
+	}
+}
+
+func lockedDeploymentBuildAuthority(
+	row db.LockDeploymentBuildTerminalFenceRow,
+) deploymentBuildCompletionAuthority {
+	return deploymentBuildCompletionAuthority{
+		buildArchitecture:            row.BuildArchitecture,
+		buildRuntimeDigest:           row.BuildRuntimeDigest,
+		buildStandardToolchainDigest: row.BuildStandardToolchainDigest,
+		buildManagerName:             row.BuildManagerName,
+		buildManagerVersion:          row.BuildManagerVersion,
+		buildManagerDigest:           row.BuildManagerDigest,
+		buildContractVersion:         row.BuildContractVersion,
+		sourceArtifactID:             row.DeploymentSourceArtifactID,
+		sourceDigest:                 row.DeploymentSourceDigest,
+		sourceSizeBytes:              row.DeploymentSourceSizeBytes,
+		sourceMediaType:              row.DeploymentSourceMediaType,
+	}
+}
+
+func (authority deploymentBuildCompletionAuthority) equal(
+	other deploymentBuildCompletionAuthority,
+) bool {
+	return authority.buildArchitecture == other.buildArchitecture &&
+		bytes.Equal(authority.buildRuntimeDigest, other.buildRuntimeDigest) &&
+		bytes.Equal(
+			authority.buildStandardToolchainDigest,
+			other.buildStandardToolchainDigest,
+		) &&
+		authority.buildManagerName == other.buildManagerName &&
+		authority.buildManagerVersion == other.buildManagerVersion &&
+		bytes.Equal(authority.buildManagerDigest, other.buildManagerDigest) &&
+		authority.buildContractVersion == other.buildContractVersion &&
+		authority.sourceArtifactID == other.sourceArtifactID &&
+		authority.sourceDigest == other.sourceDigest &&
+		authority.sourceSizeBytes == other.sourceSizeBytes &&
+		authority.sourceMediaType == other.sourceMediaType
+}
+
+func liveDeploymentBuildLease(
+	state string,
+	deploymentStatus string,
+	currentBuildLeaseID pgtype.UUID,
+	buildLeaseID pgtype.UUID,
+	expiresAt pgtype.Timestamptz,
+	now time.Time,
+) bool {
+	return state == db.DeploymentBuildLeaseStateRunning &&
+		deploymentStatus == db.DeploymentStatusBuilding &&
+		currentBuildLeaseID.Valid &&
+		currentBuildLeaseID == buildLeaseID &&
+		expiresAt.Valid &&
+		expiresAt.Time.After(now)
+}
+
+func (s *Server) prepareDeploymentBuild(
+	ctx context.Context,
+	result deployment.BuildResult,
+	authority deploymentBuildCompletionAuthority,
+) (preparedDeploymentBuild, error) {
+	if s.cas == nil {
+		return preparedDeploymentBuild{}, errors.New("deployment build CAS is not configured")
+	}
+	if s.buildPolicy == nil {
+		return preparedDeploymentBuild{}, errors.New("build policy is not configured")
+	}
+	runtimeDigest, err := deployment.RuntimeDigestString(authority.buildRuntimeDigest)
+	if err != nil {
+		return preparedDeploymentBuild{}, errors.New("deployment build runtime digest is invalid")
+	}
+	toolchainDigest, err := deployment.SHA256DigestString(
+		authority.buildStandardToolchainDigest,
+	)
+	if err != nil {
+		return preparedDeploymentBuild{}, errors.New(
+			"deployment build standard toolchain digest is invalid",
+		)
+	}
+	target, err := s.buildPolicy.Resolve(
+		runtimeDigest,
+		toolchainDigest,
+		authority.buildContractVersion,
+	)
+	if err != nil || string(target.Runtime.Architecture) != authority.buildArchitecture {
+		return preparedDeploymentBuild{}, errors.New(
+			"deployment build target is not registered",
+		)
+	}
+	if err := deployment.ValidateBuildResultTarget(
+		result,
+		target.Runtime.Digest,
+		target.Runtime.Architecture,
+	); err != nil {
+		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{err: err}
+	}
+
+	succeeded := *result.Succeeded
+	source, err := s.cas.Get(ctx, authority.sourceDigest)
+	if err != nil {
+		return preparedDeploymentBuild{}, fmt.Errorf(
+			"read deployment source authority: %w",
+			err,
+		)
+	}
+	selection, inspectErr := deployment.InspectSource(source)
+	closeErr := source.Close()
+	if inspectErr != nil {
+		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{err: inspectErr}
+	}
+	if closeErr != nil {
+		return preparedDeploymentBuild{}, fmt.Errorf(
+			"close deployment source authority: %w",
+			closeErr,
+		)
+	}
+	managerDigest, err := deployment.SHA256DigestString(authority.buildManagerDigest)
+	if err != nil {
+		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{
+			err: errors.New("deployment build Manager digest is invalid"),
+		}
+	}
+	if succeeded.Provenance.Architecture != target.Runtime.Architecture ||
+		succeeded.Provenance.BuildContractVersion != target.BuildContractVersion ||
+		succeeded.Provenance.RuntimeDigest != target.Runtime.Digest ||
+		succeeded.Provenance.StandardToolchainDigest != target.StandardToolchainDigest ||
+		succeeded.Provenance.Submitted.SourceDigest != authority.sourceDigest ||
+		succeeded.Provenance.Submitted.LockfileName != selection.LockfileName ||
+		succeeded.Provenance.Submitted.LockfileDigest != selection.LockfileDigest ||
+		succeeded.Provenance.Manager.Name != deployment.PackageManagerName(authority.buildManagerName) ||
+		succeeded.Provenance.Manager.Version != authority.buildManagerVersion ||
+		succeeded.Provenance.Manager.Name != selection.Manager.Name ||
+		succeeded.Provenance.Manager.Version != selection.Manager.Version ||
+		succeeded.Provenance.Manager.Digest != managerDigest {
+		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{
+			err: errManagerAuthorityMismatch,
+		}
+	}
+	objects, err := deploymentBuildObjects(succeeded)
+	if err != nil {
+		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{err: err}
+	}
+	if err := s.verifyDeploymentBuildArtifacts(ctx, objects); err != nil {
+		var mismatch *deploymentBuildArtifactMismatch
+		if errors.As(err, &mismatch) {
+			return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{err: err}
+		}
+		return preparedDeploymentBuild{}, fmt.Errorf(
+			"verify deployment build artifacts: %w",
+			err,
+		)
+	}
+
+	workspaceImages := make(map[string]deployment.WorkspaceImageArtifact)
+	for _, image := range succeeded.WorkspaceImages {
+		workspaceImages[image.DeclaredID] = image.Artifact
+	}
+	definitions := make(
+		[]normalizedDeploymentDefinition,
+		0,
+		len(succeeded.Plan.Definitions),
+	)
+	for _, definition := range succeeded.Plan.Definitions {
+		var workspaceImage *deployment.WorkspaceImageArtifact
+		if definition.Workspace != nil {
+			image, ok := workspaceImages[definition.DeclaredID]
+			if !ok {
+				return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{
+					err: fmt.Errorf(
+						"Workspace %q has no image Artifact",
+						definition.DeclaredID,
+					),
+				}
+			}
+			workspaceImage = &image
+		}
+		manifest, manifestDigest, err := deploymentDefinitionManifest(
+			definition,
+			workspaceImage,
+		)
+		if err != nil {
+			return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{err: err}
+		}
+		definitions = append(definitions, normalizedDeploymentDefinition{
+			input:          definition,
+			manifest:       manifest,
+			manifestDigest: manifestDigest,
+		})
+	}
+	queueConfig, err := deployment.QueueConfigFromPlan(succeeded.Plan)
+	if err != nil {
+		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{err: err}
+	}
+	queueConfigJSON, err := deployment.CanonicalQueueConfig(queueConfig)
+	if err != nil {
+		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{err: err}
+	}
+	return preparedDeploymentBuild{
+		succeeded:       succeeded,
+		objects:         objects,
+		definitions:     definitions,
+		queueConfigJSON: queueConfigJSON,
+	}, nil
+}
+
 func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
 	if s.db == nil {
@@ -490,6 +750,57 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		return
 	}
 	buildWorkerInstanceID := pgvalue.UUID(worker.WorkerInstanceID)
+	var authority *deploymentBuildCompletionAuthority
+	var prepared *preparedDeploymentBuild
+	var preparationErr error
+	if resultErr == nil && result.Outcome == deployment.BuildOutcomeSucceeded {
+		row, err := s.db.GetDeploymentBuildCompletionAuthority(
+			r.Context(),
+			db.GetDeploymentBuildCompletionAuthorityParams{
+				OrgID:                 orgID,
+				ProjectID:             projectID,
+				EnvironmentID:         environmentID,
+				DeploymentID:          deploymentID,
+				BuildLeaseID:          pgvalue.UUID(buildLeaseUUID),
+				LeaseSequence:         request.Lease.LeaseSequence,
+				WorkerGroupID:         worker.WorkerGroupID,
+				WorkerInstanceID:      buildWorkerInstanceID,
+				WorkerEpoch:           worker.WorkerEpoch,
+				WorkerProtocolVersion: worker.ProtocolVersion,
+			},
+		)
+		if isNoRows(err) {
+			writeError(w, conflict(errors.New("deployment build lease is stale")))
+			return
+		}
+		if err != nil {
+			writeError(w, errors.New("get deployment build completion authority"))
+			return
+		}
+		terminal := row.State == db.DeploymentBuildLeaseStateSucceeded ||
+			row.State == db.DeploymentBuildLeaseStateFailed ||
+			row.State == db.DeploymentBuildLeaseStateRejected
+		if !terminal {
+			if !liveDeploymentBuildLease(
+				row.State,
+				row.DeploymentStatus,
+				row.CurrentBuildLeaseID,
+				pgvalue.UUID(buildLeaseUUID),
+				row.ExpiresAt,
+				time.Now(),
+			) {
+				writeError(w, conflict(errors.New("deployment build lease is stale")))
+				return
+			}
+			value := deploymentBuildAuthority(row)
+			authority = &value
+			valuePrepared, err := s.prepareDeploymentBuild(r.Context(), result, value)
+			if err == nil {
+				prepared = &valuePrepared
+			}
+			preparationErr = err
+		}
+	}
 	var response api.WorkerDeploymentBuildResponse
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		workerState, err := work.q.LockDeploymentBuildWorkerCertification(
@@ -540,12 +851,14 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 				return conflict(errors.New("deployment build lease was terminated by another operation"))
 			}
 		}
-		if locked.State != db.DeploymentBuildLeaseStateRunning ||
-			locked.DeploymentStatus != db.DeploymentStatusBuilding ||
-			!locked.CurrentBuildLeaseID.Valid ||
-			locked.CurrentBuildLeaseID != pgvalue.UUID(buildLeaseUUID) ||
-			!locked.ExpiresAt.Valid ||
-			!locked.ExpiresAt.Time.After(time.Now()) {
+		if !liveDeploymentBuildLease(
+			locked.State,
+			locked.DeploymentStatus,
+			locked.CurrentBuildLeaseID,
+			pgvalue.UUID(buildLeaseUUID),
+			locked.ExpiresAt,
+			time.Now(),
+		) {
 			return conflict(errors.New("deployment build lease is stale"))
 		}
 		failBuildWithReason := func(reasonCode, fallback, message string) error {
@@ -609,131 +922,30 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 				result.Failed.Error.Message,
 			)
 		}
-		if s.cas == nil {
-			return errors.New("deployment build CAS is not configured")
+		if authority == nil {
+			return errors.New("deployment build completion authority is missing")
 		}
-		if s.buildPolicy == nil {
-			return errors.New("build policy is not configured")
-		}
-		runtimeDigest, err := deployment.RuntimeDigestString(locked.BuildRuntimeDigest)
-		if err != nil {
-			return errors.New("deployment build runtime digest is invalid")
-		}
-		toolchainDigest, err := deployment.SHA256DigestString(
-			locked.BuildStandardToolchainDigest,
-		)
-		if err != nil {
-			return errors.New("deployment build standard toolchain digest is invalid")
-		}
-		target, err := s.buildPolicy.Resolve(
-			runtimeDigest,
-			toolchainDigest,
-			locked.BuildContractVersion,
-		)
-		if err != nil || string(target.Runtime.Architecture) != locked.BuildArchitecture {
-			return errors.New("deployment build target is not registered")
-		}
-		if err := deployment.ValidateBuildResultTarget(
-			result,
-			target.Runtime.Digest,
-			target.Runtime.Architecture,
-		); err != nil {
-			return failInvalid(err.Error())
-		}
-		succeeded := *result.Succeeded
-		source, err := s.cas.Get(r.Context(), locked.DeploymentSourceDigest)
-		if err != nil {
-			return fmt.Errorf("read deployment source authority: %w", err)
-		}
-		selection, inspectErr := deployment.InspectSource(source)
-		closeErr := source.Close()
-		if inspectErr != nil {
-			return failInvalid(inspectErr.Error())
-		}
-		if closeErr != nil {
-			return fmt.Errorf("close deployment source authority: %w", closeErr)
-		}
-		managerDigest, err := deployment.SHA256DigestString(
-			locked.BuildManagerDigest,
-		)
-		if err != nil {
-			return failInvalid("deployment build Manager digest is invalid")
-		}
-		if succeeded.Provenance.Architecture != target.Runtime.Architecture ||
-			succeeded.Provenance.BuildContractVersion != target.BuildContractVersion ||
-			succeeded.Provenance.RuntimeDigest != target.Runtime.Digest ||
-			succeeded.Provenance.StandardToolchainDigest != target.StandardToolchainDigest ||
-			succeeded.Provenance.Submitted.SourceDigest != locked.DeploymentSourceDigest ||
-			succeeded.Provenance.Submitted.LockfileName != selection.LockfileName ||
-			succeeded.Provenance.Submitted.LockfileDigest != selection.LockfileDigest ||
-			succeeded.Provenance.Manager.Name != deployment.PackageManagerName(locked.BuildManagerName) ||
-			succeeded.Provenance.Manager.Version != locked.BuildManagerVersion ||
-			succeeded.Provenance.Manager.Name != selection.Manager.Name ||
-			succeeded.Provenance.Manager.Version != selection.Manager.Version ||
-			succeeded.Provenance.Manager.Digest != managerDigest {
-			return failInvalid(errManagerAuthorityMismatch.Error())
-		}
-		objects, err := deploymentBuildObjects(succeeded)
-		if err != nil {
-			return failInvalid(err.Error())
-		}
-		if err := s.verifyDeploymentBuildArtifacts(r.Context(), objects); err != nil {
-			var mismatch *deploymentBuildArtifactMismatch
-			if errors.As(err, &mismatch) {
-				return failInvalid(err.Error())
-			}
-			return fmt.Errorf("verify deployment build artifacts: %w", err)
+		if !authority.equal(lockedDeploymentBuildAuthority(locked)) {
+			return conflict(errors.New("deployment build authority changed"))
 		}
 		if !workerState.RuntimeArch.Valid ||
 			workerState.RuntimeArch.String != locked.BuildArchitecture {
 			return conflict(errors.New("deployment build worker certification was withdrawn"))
 		}
-
-		workspaceImages := make(map[string]deployment.WorkspaceImageArtifact)
-		for _, image := range succeeded.WorkspaceImages {
-			workspaceImages[image.DeclaredID] = image.Artifact
+		var invalid invalidDeploymentBuildOutput
+		if errors.As(preparationErr, &invalid) {
+			return failInvalid(preparationErr.Error())
 		}
-		type normalizedDefinition struct {
-			input          deployment.DefinitionInput
-			manifest       []byte
-			manifestDigest [sha256.Size]byte
+		if preparationErr != nil {
+			return preparationErr
 		}
-		definitions := make([]normalizedDefinition, 0, len(succeeded.Plan.Definitions))
-		for _, definition := range succeeded.Plan.Definitions {
-			var workspaceImage *deployment.WorkspaceImageArtifact
-			if definition.Workspace != nil {
-				image, ok := workspaceImages[definition.DeclaredID]
-				if !ok {
-					return failInvalid(
-						fmt.Sprintf(
-							"Workspace %q has no image Artifact",
-							definition.DeclaredID,
-						),
-					)
-				}
-				workspaceImage = &image
-			}
-			manifest, manifestDigest, err := deploymentDefinitionManifest(
-				definition,
-				workspaceImage,
-			)
-			if err != nil {
-				return failInvalid(err.Error())
-			}
-			definitions = append(definitions, normalizedDefinition{
-				input:          definition,
-				manifest:       manifest,
-				manifestDigest: manifestDigest,
-			})
+		if prepared == nil {
+			return errors.New("prepared deployment build is missing")
 		}
-		queueConfig, err := deployment.QueueConfigFromPlan(succeeded.Plan)
-		if err != nil {
-			return failInvalid(err.Error())
-		}
-		queueConfigJSON, err := deployment.CanonicalQueueConfig(queueConfig)
-		if err != nil {
-			return failInvalid(err.Error())
-		}
+		succeeded := prepared.succeeded
+		objects := prepared.objects
+		definitions := prepared.definitions
+		queueConfigJSON := prepared.queueConfigJSON
 
 		for _, object := range objects {
 			if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{

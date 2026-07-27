@@ -1176,6 +1176,111 @@ func (q *Queries) GetDeployment(ctx context.Context, arg GetDeploymentParams) (D
 	return i, err
 }
 
+const getDeploymentBuildCompletionAuthority = `-- name: GetDeploymentBuildCompletionAuthority :one
+SELECT deployment_build_leases.state,
+       deployment_build_leases.expires_at,
+       deployments.status AS deployment_status,
+       deployments.current_build_lease_id,
+       deployments.build_architecture,
+       deployments.build_runtime_digest,
+       deployments.build_standard_toolchain_digest,
+       deployments.build_manager_name,
+       deployments.build_manager_version,
+       deployments.build_manager_digest,
+       deployments.build_contract_version,
+       deployments.deployment_source_artifact_id,
+       source_artifacts.digest AS deployment_source_digest,
+       source_artifacts.size_bytes AS deployment_source_size_bytes,
+       source_artifacts.media_type AS deployment_source_media_type
+  FROM deployment_build_leases
+  JOIN deployments
+    ON deployments.org_id = deployment_build_leases.org_id
+   AND deployments.project_id = deployment_build_leases.project_id
+   AND deployments.environment_id = deployment_build_leases.environment_id
+   AND deployments.id = deployment_build_leases.deployment_id
+  JOIN artifacts AS source_artifacts
+    ON source_artifacts.org_id = deployments.org_id
+   AND source_artifacts.project_id = deployments.project_id
+   AND source_artifacts.environment_id = deployments.environment_id
+   AND source_artifacts.id = deployments.deployment_source_artifact_id
+   AND source_artifacts.kind = 'deployment_source'
+ WHERE deployment_build_leases.org_id = $1
+   AND deployment_build_leases.project_id = $2
+   AND deployment_build_leases.environment_id = $3
+   AND deployment_build_leases.deployment_id = $4
+   AND deployment_build_leases.id = $5
+   AND deployment_build_leases.lease_sequence = $6
+   AND deployment_build_leases.worker_group_id = $7
+   AND deployment_build_leases.worker_instance_id = $8
+   AND deployment_build_leases.worker_epoch = $9
+   AND deployment_build_leases.worker_protocol_version = $10
+`
+
+type GetDeploymentBuildCompletionAuthorityParams struct {
+	OrgID                 pgtype.UUID `json:"org_id"`
+	ProjectID             pgtype.UUID `json:"project_id"`
+	EnvironmentID         pgtype.UUID `json:"environment_id"`
+	DeploymentID          pgtype.UUID `json:"deployment_id"`
+	BuildLeaseID          pgtype.UUID `json:"build_lease_id"`
+	LeaseSequence         int64       `json:"lease_sequence"`
+	WorkerGroupID         string      `json:"worker_group_id"`
+	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch           int64       `json:"worker_epoch"`
+	WorkerProtocolVersion string      `json:"worker_protocol_version"`
+}
+
+type GetDeploymentBuildCompletionAuthorityRow struct {
+	State                        string             `json:"state"`
+	ExpiresAt                    pgtype.Timestamptz `json:"expires_at"`
+	DeploymentStatus             string             `json:"deployment_status"`
+	CurrentBuildLeaseID          pgtype.UUID        `json:"current_build_lease_id"`
+	BuildArchitecture            string             `json:"build_architecture"`
+	BuildRuntimeDigest           []byte             `json:"build_runtime_digest"`
+	BuildStandardToolchainDigest []byte             `json:"build_standard_toolchain_digest"`
+	BuildManagerName             string             `json:"build_manager_name"`
+	BuildManagerVersion          string             `json:"build_manager_version"`
+	BuildManagerDigest           []byte             `json:"build_manager_digest"`
+	BuildContractVersion         string             `json:"build_contract_version"`
+	DeploymentSourceArtifactID   pgtype.UUID        `json:"deployment_source_artifact_id"`
+	DeploymentSourceDigest       string             `json:"deployment_source_digest"`
+	DeploymentSourceSizeBytes    int64              `json:"deployment_source_size_bytes"`
+	DeploymentSourceMediaType    string             `json:"deployment_source_media_type"`
+}
+
+func (q *Queries) GetDeploymentBuildCompletionAuthority(ctx context.Context, arg GetDeploymentBuildCompletionAuthorityParams) (GetDeploymentBuildCompletionAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, getDeploymentBuildCompletionAuthority,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.DeploymentID,
+		arg.BuildLeaseID,
+		arg.LeaseSequence,
+		arg.WorkerGroupID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.WorkerProtocolVersion,
+	)
+	var i GetDeploymentBuildCompletionAuthorityRow
+	err := row.Scan(
+		&i.State,
+		&i.ExpiresAt,
+		&i.DeploymentStatus,
+		&i.CurrentBuildLeaseID,
+		&i.BuildArchitecture,
+		&i.BuildRuntimeDigest,
+		&i.BuildStandardToolchainDigest,
+		&i.BuildManagerName,
+		&i.BuildManagerVersion,
+		&i.BuildManagerDigest,
+		&i.BuildContractVersion,
+		&i.DeploymentSourceArtifactID,
+		&i.DeploymentSourceDigest,
+		&i.DeploymentSourceSizeBytes,
+		&i.DeploymentSourceMediaType,
+	)
+	return i, err
+}
+
 const getDeploymentBuildTerminalResult = `-- name: GetDeploymentBuildTerminalResult :one
 SELECT state, terminal_request_fingerprint
   FROM deployment_build_leases

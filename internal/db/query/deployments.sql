@@ -613,6 +613,45 @@ SELECT locked_lease.*,
    AND source_artifacts.id = locked_deployment.deployment_source_artifact_id
    AND source_artifacts.kind = 'deployment_source';
 
+-- name: GetDeploymentBuildCompletionAuthority :one
+SELECT deployment_build_leases.state,
+       deployment_build_leases.expires_at,
+       deployments.status AS deployment_status,
+       deployments.current_build_lease_id,
+       deployments.build_architecture,
+       deployments.build_runtime_digest,
+       deployments.build_standard_toolchain_digest,
+       deployments.build_manager_name,
+       deployments.build_manager_version,
+       deployments.build_manager_digest,
+       deployments.build_contract_version,
+       deployments.deployment_source_artifact_id,
+       source_artifacts.digest AS deployment_source_digest,
+       source_artifacts.size_bytes AS deployment_source_size_bytes,
+       source_artifacts.media_type AS deployment_source_media_type
+  FROM deployment_build_leases
+  JOIN deployments
+    ON deployments.org_id = deployment_build_leases.org_id
+   AND deployments.project_id = deployment_build_leases.project_id
+   AND deployments.environment_id = deployment_build_leases.environment_id
+   AND deployments.id = deployment_build_leases.deployment_id
+  JOIN artifacts AS source_artifacts
+    ON source_artifacts.org_id = deployments.org_id
+   AND source_artifacts.project_id = deployments.project_id
+   AND source_artifacts.environment_id = deployments.environment_id
+   AND source_artifacts.id = deployments.deployment_source_artifact_id
+   AND source_artifacts.kind = 'deployment_source'
+ WHERE deployment_build_leases.org_id = sqlc.arg(org_id)
+   AND deployment_build_leases.project_id = sqlc.arg(project_id)
+   AND deployment_build_leases.environment_id = sqlc.arg(environment_id)
+   AND deployment_build_leases.deployment_id = sqlc.arg(deployment_id)
+   AND deployment_build_leases.id = sqlc.arg(build_lease_id)
+   AND deployment_build_leases.lease_sequence = sqlc.arg(lease_sequence)
+   AND deployment_build_leases.worker_group_id = sqlc.arg(worker_group_id)
+   AND deployment_build_leases.worker_instance_id = sqlc.arg(worker_instance_id)
+   AND deployment_build_leases.worker_epoch = sqlc.arg(worker_epoch)
+   AND deployment_build_leases.worker_protocol_version = sqlc.arg(worker_protocol_version);
+
 -- name: LockDeploymentBuildWorkerCertification :one
 WITH locked_group AS MATERIALIZED (
     SELECT worker_groups.id

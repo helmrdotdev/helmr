@@ -224,6 +224,7 @@ type Querier interface {
 	GetDefaultEnvironment(ctx context.Context, arg GetDefaultEnvironmentParams) (Environment, error)
 	GetDefaultProjectEnvironment(ctx context.Context, orgID pgtype.UUID) (GetDefaultProjectEnvironmentRow, error)
 	GetDeployment(ctx context.Context, arg GetDeploymentParams) (Deployment, error)
+	GetDeploymentBuildCompletionAuthority(ctx context.Context, arg GetDeploymentBuildCompletionAuthorityParams) (GetDeploymentBuildCompletionAuthorityRow, error)
 	GetDeploymentBuildTerminalResult(ctx context.Context, arg GetDeploymentBuildTerminalResultParams) (GetDeploymentBuildTerminalResultRow, error)
 	GetDeploymentByVersion(ctx context.Context, arg GetDeploymentByVersionParams) (Deployment, error)
 	GetDeploymentDefinition(ctx context.Context, arg GetDeploymentDefinitionParams) (DeploymentDefinition, error)
