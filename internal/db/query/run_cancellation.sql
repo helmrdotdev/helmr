@@ -212,3 +212,246 @@ SELECT id
    AND state IN ('creating', 'ready')
  ORDER BY array_position(sqlc.arg(run_ids)::uuid[], run_id), id
  FOR UPDATE;
+
+-- name: DetachActorFromCancelledRun :execrows
+UPDATE actors
+   SET current_run_id = NULL,
+       run_generation = run_generation + 1,
+       state_version = state_version + 1,
+       manual_run_cancelled = true,
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(actor_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND current_run_id = sqlc.arg(run_id)
+   AND state IN ('open', 'closing');
+
+-- name: FailActorForRunTermination :execrows
+UPDATE actors
+   SET state = 'failed',
+       current_run_id = NULL,
+       run_generation = run_generation + 1,
+       state_version = state_version + 1,
+       manual_run_cancelled = false,
+       failure_code = sqlc.arg(failure_code)::text,
+       failure_run_id = sqlc.arg(run_id),
+       failed_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(actor_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND current_run_id = sqlc.arg(run_id)
+   AND state IN ('open', 'closing');
+
+-- name: TerminalizeRunSuspensions :exec
+UPDATE run_waits
+   SET condition_state = CASE
+           WHEN condition_state = 'pending' THEN sqlc.arg(condition_state)::text
+           ELSE condition_state
+       END,
+       condition_result = CASE
+           WHEN condition_state = 'pending' THEN NULL
+           ELSE condition_result
+       END,
+       condition_error = CASE
+           WHEN condition_state = 'pending' THEN sqlc.arg(error_payload)::jsonb
+           ELSE condition_error
+       END,
+       condition_terminal_at = CASE
+           WHEN condition_state = 'pending' THEN transaction_timestamp()
+           ELSE condition_terminal_at
+       END,
+       condition_reason_code = CASE
+           WHEN condition_state = 'pending' THEN sqlc.arg(reason_code)::text
+           ELSE condition_reason_code
+       END,
+       suspension_state = sqlc.arg(suspension_state)::text,
+       current_run_lease_id = NULL,
+       suspension_terminal_at = transaction_timestamp(),
+       suspension_reason_code = sqlc.arg(reason_code)::text,
+       suspension_error = sqlc.arg(error_payload)::jsonb,
+       updated_at = transaction_timestamp()
+ WHERE run_id = sqlc.arg(run_id)
+   AND suspension_state IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming');
+
+-- name: InvalidateRunCheckpoints :exec
+UPDATE run_checkpoints
+   SET state = 'invalid',
+       invalidated_at = transaction_timestamp(),
+       invalidation_reason_code = sqlc.arg(reason_code)::text
+ WHERE run_id = sqlc.arg(run_id)
+   AND state IN ('creating', 'ready');
+
+-- name: FenceRunWorkspaceLease :execrows
+UPDATE workspace_leases
+   SET state = 'fenced',
+       terminal_at = transaction_timestamp(),
+       terminal_reason_code = sqlc.arg(reason_code)::text,
+       terminal_error = sqlc.arg(error_payload)::jsonb,
+       updated_at = transaction_timestamp()
+ WHERE owner_run_lease_id = sqlc.arg(run_lease_id)
+   AND state IN ('active', 'releasing');
+
+-- name: TerminalizeRunLease :execrows
+UPDATE run_leases
+   SET state = CASE
+           WHEN sqlc.arg(state)::text = 'failed' AND started_at IS NULL
+           THEN 'rejected'
+           ELSE sqlc.arg(state)::text
+       END,
+       terminal_at = transaction_timestamp(),
+       terminal_reason_code = sqlc.arg(reason_code)::text,
+       terminal_error = sqlc.arg(error_payload)::jsonb,
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(id)
+   AND run_id = sqlc.arg(run_id)
+   AND state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing');
+
+-- name: CloseRunRuntimes :exec
+WITH candidate_runtimes AS (
+    SELECT run_leases.runtime_instance_id
+      FROM run_leases
+     WHERE run_leases.id = sqlc.narg(run_lease_id)
+       AND run_leases.run_id = sqlc.arg(run_id)
+       AND run_leases.runtime_instance_id IS DISTINCT FROM sqlc.narg(retained_runtime_id)
+    UNION
+    SELECT runtime_instances.id AS runtime_instance_id
+      FROM runtime_instances
+     WHERE runtime_instances.reserved_run_id = sqlc.arg(run_id)
+       AND runtime_instances.id IS DISTINCT FROM sqlc.narg(retained_runtime_id)
+    UNION
+    SELECT run_waits.handoff_runtime_instance_id AS runtime_instance_id
+      FROM run_waits
+     WHERE run_waits.run_id = sqlc.arg(run_id)
+       AND run_waits.handoff_runtime_instance_id IS NOT NULL
+       AND run_waits.handoff_runtime_instance_id IS DISTINCT FROM sqlc.narg(retained_runtime_id)
+), closing_runtimes AS (
+    UPDATE runtime_instances
+       SET desired_state = 'closed',
+           desired_version = CASE
+               WHEN desired_state = 'closed' THEN desired_version
+               ELSE desired_version + 1
+           END,
+           desired_at = transaction_timestamp(),
+           desired_reason = sqlc.arg(reason_code),
+           updated_at = transaction_timestamp()
+     WHERE runtime_instances.id IN (
+           SELECT runtime_instance_id FROM candidate_runtimes
+       )
+       AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
+    RETURNING runtime_instances.id
+)
+UPDATE workspace_mounts
+   SET state = 'unmounting',
+       stopped_at = COALESCE(stopped_at, transaction_timestamp()),
+       updated_at = transaction_timestamp()
+ WHERE runtime_instance_id IN (
+       SELECT runtime_instance_id FROM candidate_runtimes
+       UNION
+       SELECT id FROM closing_runtimes
+   )
+   AND workspace_mounts.id IS DISTINCT FROM sqlc.narg(retained_mount_id)
+   AND state IN ('mounting', 'mounted');
+
+-- name: TerminalizeRunAttempt :execrows
+UPDATE run_attempts
+   SET terminal_outcome = sqlc.arg(outcome)::text,
+       terminal_reason_code = sqlc.arg(reason_code)::text,
+       terminal_error = sqlc.arg(error_payload)::jsonb,
+       terminal_at = transaction_timestamp()
+ WHERE run_id = sqlc.arg(run_id)
+   AND number = sqlc.arg(attempt_number)
+   AND terminal_at IS NULL;
+
+-- name: TerminalizeRun :execrows
+UPDATE runs
+   SET status = sqlc.arg(status)::text,
+       terminal_reason_code = sqlc.arg(reason_code)::text,
+       error = sqlc.arg(error_payload)::jsonb,
+       state_version = state_version + 1,
+       current_run_lease_id = NULL,
+       retry_at = NULL,
+       active_elapsed_ms = LEAST(
+           max_active_duration_ms,
+           active_elapsed_ms + CASE
+               WHEN active_started_at IS NULL THEN 0
+               ELSE GREATEST(
+                   floor(extract(epoch FROM (
+                       transaction_timestamp() - active_started_at
+                   )) * 1000)::bigint,
+                   0
+               )
+           END
+       ),
+       active_started_at = NULL,
+       terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(id)
+   AND state_version = sqlc.arg(expected_state_version)
+   AND status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested');
+
+-- name: ReleaseTaskWorkspace :exec
+UPDATE workspaces
+   SET owner_run_id = NULL,
+       ownership_generation = ownership_generation + 1,
+       state_version = state_version + 1,
+       last_activity_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(workspace_id)
+   AND owner_run_id = sqlc.arg(run_id)
+   AND owner_actor_id IS NULL;
+
+-- name: ReleaseActorWorkspace :exec
+UPDATE workspaces
+   SET owner_actor_id = NULL,
+       ownership_generation = ownership_generation + 1,
+       state_version = state_version + 1,
+       last_activity_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(workspace_id)
+   AND owner_actor_id = sqlc.arg(actor_id)
+   AND owner_run_id IS NULL;
+
+-- name: RecordRunTerminalEvent :exec
+INSERT INTO telemetry_outbox (
+    org_id,
+    stream_kind,
+    source_kind,
+    source_id,
+    project_id,
+    environment_id,
+    run_id,
+    run_lease_id,
+    attempt_number,
+    trace_id,
+    span_id,
+    category,
+    severity,
+    source,
+    kind,
+    message,
+    payload,
+    redaction_class,
+    snapshot_version,
+    observed_at
+)
+SELECT org_id,
+       'event',
+       'run',
+       id,
+       project_id,
+       environment_id,
+       id,
+       sqlc.narg(run_lease_id),
+       current_attempt_number,
+       trace_id,
+       root_span_id,
+       'lifecycle',
+       'info',
+       'control',
+       sqlc.arg(kind),
+       sqlc.arg(message),
+       jsonb_build_object('reasonCode', sqlc.arg(reason_code)::text),
+       'internal',
+       state_version,
+       transaction_timestamp()
+  FROM runs
+ WHERE runs.id = sqlc.arg(run_id);

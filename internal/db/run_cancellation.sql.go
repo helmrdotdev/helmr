@@ -11,6 +11,161 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const closeRunRuntimes = `-- name: CloseRunRuntimes :exec
+WITH candidate_runtimes AS (
+    SELECT run_leases.runtime_instance_id
+      FROM run_leases
+     WHERE run_leases.id = $2
+       AND run_leases.run_id = $3
+       AND run_leases.runtime_instance_id IS DISTINCT FROM $4
+    UNION
+    SELECT runtime_instances.id AS runtime_instance_id
+      FROM runtime_instances
+     WHERE runtime_instances.reserved_run_id = $3
+       AND runtime_instances.id IS DISTINCT FROM $4
+    UNION
+    SELECT run_waits.handoff_runtime_instance_id AS runtime_instance_id
+      FROM run_waits
+     WHERE run_waits.run_id = $3
+       AND run_waits.handoff_runtime_instance_id IS NOT NULL
+       AND run_waits.handoff_runtime_instance_id IS DISTINCT FROM $4
+), closing_runtimes AS (
+    UPDATE runtime_instances
+       SET desired_state = 'closed',
+           desired_version = CASE
+               WHEN desired_state = 'closed' THEN desired_version
+               ELSE desired_version + 1
+           END,
+           desired_at = transaction_timestamp(),
+           desired_reason = $5,
+           updated_at = transaction_timestamp()
+     WHERE runtime_instances.id IN (
+           SELECT runtime_instance_id FROM candidate_runtimes
+       )
+       AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
+    RETURNING runtime_instances.id
+)
+UPDATE workspace_mounts
+   SET state = 'unmounting',
+       stopped_at = COALESCE(stopped_at, transaction_timestamp()),
+       updated_at = transaction_timestamp()
+ WHERE runtime_instance_id IN (
+       SELECT runtime_instance_id FROM candidate_runtimes
+       UNION
+       SELECT id FROM closing_runtimes
+   )
+   AND workspace_mounts.id IS DISTINCT FROM $1
+   AND state IN ('mounting', 'mounted')
+`
+
+type CloseRunRuntimesParams struct {
+	RetainedMountID   pgtype.UUID `json:"retained_mount_id"`
+	RunLeaseID        pgtype.UUID `json:"run_lease_id"`
+	RunID             pgtype.UUID `json:"run_id"`
+	RetainedRuntimeID pgtype.UUID `json:"retained_runtime_id"`
+	ReasonCode        string      `json:"reason_code"`
+}
+
+func (q *Queries) CloseRunRuntimes(ctx context.Context, arg CloseRunRuntimesParams) error {
+	_, err := q.db.Exec(ctx, closeRunRuntimes,
+		arg.RetainedMountID,
+		arg.RunLeaseID,
+		arg.RunID,
+		arg.RetainedRuntimeID,
+		arg.ReasonCode,
+	)
+	return err
+}
+
+const detachActorFromCancelledRun = `-- name: DetachActorFromCancelledRun :execrows
+UPDATE actors
+   SET current_run_id = NULL,
+       run_generation = run_generation + 1,
+       state_version = state_version + 1,
+       manual_run_cancelled = true,
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND workspace_id = $2
+   AND current_run_id = $3
+   AND state IN ('open', 'closing')
+`
+
+type DetachActorFromCancelledRunParams struct {
+	ActorID     pgtype.UUID `json:"actor_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RunID       pgtype.UUID `json:"run_id"`
+}
+
+func (q *Queries) DetachActorFromCancelledRun(ctx context.Context, arg DetachActorFromCancelledRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, detachActorFromCancelledRun, arg.ActorID, arg.WorkspaceID, arg.RunID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const failActorForRunTermination = `-- name: FailActorForRunTermination :execrows
+UPDATE actors
+   SET state = 'failed',
+       current_run_id = NULL,
+       run_generation = run_generation + 1,
+       state_version = state_version + 1,
+       manual_run_cancelled = false,
+       failure_code = $1::text,
+       failure_run_id = $2,
+       failed_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = $3
+   AND workspace_id = $4
+   AND current_run_id = $2
+   AND state IN ('open', 'closing')
+`
+
+type FailActorForRunTerminationParams struct {
+	FailureCode string      `json:"failure_code"`
+	RunID       pgtype.UUID `json:"run_id"`
+	ActorID     pgtype.UUID `json:"actor_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) FailActorForRunTermination(ctx context.Context, arg FailActorForRunTerminationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, failActorForRunTermination,
+		arg.FailureCode,
+		arg.RunID,
+		arg.ActorID,
+		arg.WorkspaceID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const fenceRunWorkspaceLease = `-- name: FenceRunWorkspaceLease :execrows
+UPDATE workspace_leases
+   SET state = 'fenced',
+       terminal_at = transaction_timestamp(),
+       terminal_reason_code = $1::text,
+       terminal_error = $2::jsonb,
+       updated_at = transaction_timestamp()
+ WHERE owner_run_lease_id = $3
+   AND state IN ('active', 'releasing')
+`
+
+type FenceRunWorkspaceLeaseParams struct {
+	ReasonCode   string      `json:"reason_code"`
+	ErrorPayload []byte      `json:"error_payload"`
+	RunLeaseID   pgtype.UUID `json:"run_lease_id"`
+}
+
+func (q *Queries) FenceRunWorkspaceLease(ctx context.Context, arg FenceRunWorkspaceLeaseParams) (int64, error) {
+	result, err := q.db.Exec(ctx, fenceRunWorkspaceLease, arg.ReasonCode, arg.ErrorPayload, arg.RunLeaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const findCancellationTarget = `-- name: FindCancellationTarget :one
 SELECT id
   FROM runs
@@ -37,6 +192,25 @@ func (q *Queries) FindCancellationTarget(ctx context.Context, arg FindCancellati
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const invalidateRunCheckpoints = `-- name: InvalidateRunCheckpoints :exec
+UPDATE run_checkpoints
+   SET state = 'invalid',
+       invalidated_at = transaction_timestamp(),
+       invalidation_reason_code = $1::text
+ WHERE run_id = $2
+   AND state IN ('creating', 'ready')
+`
+
+type InvalidateRunCheckpointsParams struct {
+	ReasonCode string      `json:"reason_code"`
+	RunID      pgtype.UUID `json:"run_id"`
+}
+
+func (q *Queries) InvalidateRunCheckpoints(ctx context.Context, arg InvalidateRunCheckpointsParams) error {
+	_, err := q.db.Exec(ctx, invalidateRunCheckpoints, arg.ReasonCode, arg.RunID)
+	return err
 }
 
 const listCancellationLineage = `-- name: ListCancellationLineage :many
@@ -610,4 +784,286 @@ func (q *Queries) LockCancellationWorkspaces(ctx context.Context, runIds []pgtyp
 		return nil, err
 	}
 	return items, nil
+}
+
+const recordRunTerminalEvent = `-- name: RecordRunTerminalEvent :exec
+INSERT INTO telemetry_outbox (
+    org_id,
+    stream_kind,
+    source_kind,
+    source_id,
+    project_id,
+    environment_id,
+    run_id,
+    run_lease_id,
+    attempt_number,
+    trace_id,
+    span_id,
+    category,
+    severity,
+    source,
+    kind,
+    message,
+    payload,
+    redaction_class,
+    snapshot_version,
+    observed_at
+)
+SELECT org_id,
+       'event',
+       'run',
+       id,
+       project_id,
+       environment_id,
+       id,
+       $1,
+       current_attempt_number,
+       trace_id,
+       root_span_id,
+       'lifecycle',
+       'info',
+       'control',
+       $2,
+       $3,
+       jsonb_build_object('reasonCode', $4::text),
+       'internal',
+       state_version,
+       transaction_timestamp()
+  FROM runs
+ WHERE runs.id = $5
+`
+
+type RecordRunTerminalEventParams struct {
+	RunLeaseID pgtype.UUID `json:"run_lease_id"`
+	Kind       string      `json:"kind"`
+	Message    string      `json:"message"`
+	ReasonCode string      `json:"reason_code"`
+	RunID      pgtype.UUID `json:"run_id"`
+}
+
+func (q *Queries) RecordRunTerminalEvent(ctx context.Context, arg RecordRunTerminalEventParams) error {
+	_, err := q.db.Exec(ctx, recordRunTerminalEvent,
+		arg.RunLeaseID,
+		arg.Kind,
+		arg.Message,
+		arg.ReasonCode,
+		arg.RunID,
+	)
+	return err
+}
+
+const releaseActorWorkspace = `-- name: ReleaseActorWorkspace :exec
+UPDATE workspaces
+   SET owner_actor_id = NULL,
+       ownership_generation = ownership_generation + 1,
+       state_version = state_version + 1,
+       last_activity_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND owner_actor_id = $2
+   AND owner_run_id IS NULL
+`
+
+type ReleaseActorWorkspaceParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	ActorID     pgtype.UUID `json:"actor_id"`
+}
+
+func (q *Queries) ReleaseActorWorkspace(ctx context.Context, arg ReleaseActorWorkspaceParams) error {
+	_, err := q.db.Exec(ctx, releaseActorWorkspace, arg.WorkspaceID, arg.ActorID)
+	return err
+}
+
+const releaseTaskWorkspace = `-- name: ReleaseTaskWorkspace :exec
+UPDATE workspaces
+   SET owner_run_id = NULL,
+       ownership_generation = ownership_generation + 1,
+       state_version = state_version + 1,
+       last_activity_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND owner_run_id = $2
+   AND owner_actor_id IS NULL
+`
+
+type ReleaseTaskWorkspaceParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RunID       pgtype.UUID `json:"run_id"`
+}
+
+func (q *Queries) ReleaseTaskWorkspace(ctx context.Context, arg ReleaseTaskWorkspaceParams) error {
+	_, err := q.db.Exec(ctx, releaseTaskWorkspace, arg.WorkspaceID, arg.RunID)
+	return err
+}
+
+const terminalizeRun = `-- name: TerminalizeRun :execrows
+UPDATE runs
+   SET status = $1::text,
+       terminal_reason_code = $2::text,
+       error = $3::jsonb,
+       state_version = state_version + 1,
+       current_run_lease_id = NULL,
+       retry_at = NULL,
+       active_elapsed_ms = LEAST(
+           max_active_duration_ms,
+           active_elapsed_ms + CASE
+               WHEN active_started_at IS NULL THEN 0
+               ELSE GREATEST(
+                   floor(extract(epoch FROM (
+                       transaction_timestamp() - active_started_at
+                   )) * 1000)::bigint,
+                   0
+               )
+           END
+       ),
+       active_started_at = NULL,
+       terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = $4
+   AND state_version = $5
+   AND status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested')
+`
+
+type TerminalizeRunParams struct {
+	Status               string      `json:"status"`
+	ReasonCode           string      `json:"reason_code"`
+	ErrorPayload         []byte      `json:"error_payload"`
+	ID                   pgtype.UUID `json:"id"`
+	ExpectedStateVersion int64       `json:"expected_state_version"`
+}
+
+func (q *Queries) TerminalizeRun(ctx context.Context, arg TerminalizeRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, terminalizeRun,
+		arg.Status,
+		arg.ReasonCode,
+		arg.ErrorPayload,
+		arg.ID,
+		arg.ExpectedStateVersion,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const terminalizeRunAttempt = `-- name: TerminalizeRunAttempt :execrows
+UPDATE run_attempts
+   SET terminal_outcome = $1::text,
+       terminal_reason_code = $2::text,
+       terminal_error = $3::jsonb,
+       terminal_at = transaction_timestamp()
+ WHERE run_id = $4
+   AND number = $5
+   AND terminal_at IS NULL
+`
+
+type TerminalizeRunAttemptParams struct {
+	Outcome       string      `json:"outcome"`
+	ReasonCode    string      `json:"reason_code"`
+	ErrorPayload  []byte      `json:"error_payload"`
+	RunID         pgtype.UUID `json:"run_id"`
+	AttemptNumber int32       `json:"attempt_number"`
+}
+
+func (q *Queries) TerminalizeRunAttempt(ctx context.Context, arg TerminalizeRunAttemptParams) (int64, error) {
+	result, err := q.db.Exec(ctx, terminalizeRunAttempt,
+		arg.Outcome,
+		arg.ReasonCode,
+		arg.ErrorPayload,
+		arg.RunID,
+		arg.AttemptNumber,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const terminalizeRunLease = `-- name: TerminalizeRunLease :execrows
+UPDATE run_leases
+   SET state = CASE
+           WHEN $1::text = 'failed' AND started_at IS NULL
+           THEN 'rejected'
+           ELSE $1::text
+       END,
+       terminal_at = transaction_timestamp(),
+       terminal_reason_code = $2::text,
+       terminal_error = $3::jsonb,
+       updated_at = transaction_timestamp()
+ WHERE id = $4
+   AND run_id = $5
+   AND state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+`
+
+type TerminalizeRunLeaseParams struct {
+	State        string      `json:"state"`
+	ReasonCode   string      `json:"reason_code"`
+	ErrorPayload []byte      `json:"error_payload"`
+	ID           pgtype.UUID `json:"id"`
+	RunID        pgtype.UUID `json:"run_id"`
+}
+
+func (q *Queries) TerminalizeRunLease(ctx context.Context, arg TerminalizeRunLeaseParams) (int64, error) {
+	result, err := q.db.Exec(ctx, terminalizeRunLease,
+		arg.State,
+		arg.ReasonCode,
+		arg.ErrorPayload,
+		arg.ID,
+		arg.RunID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const terminalizeRunSuspensions = `-- name: TerminalizeRunSuspensions :exec
+UPDATE run_waits
+   SET condition_state = CASE
+           WHEN condition_state = 'pending' THEN $1::text
+           ELSE condition_state
+       END,
+       condition_result = CASE
+           WHEN condition_state = 'pending' THEN NULL
+           ELSE condition_result
+       END,
+       condition_error = CASE
+           WHEN condition_state = 'pending' THEN $2::jsonb
+           ELSE condition_error
+       END,
+       condition_terminal_at = CASE
+           WHEN condition_state = 'pending' THEN transaction_timestamp()
+           ELSE condition_terminal_at
+       END,
+       condition_reason_code = CASE
+           WHEN condition_state = 'pending' THEN $3::text
+           ELSE condition_reason_code
+       END,
+       suspension_state = $4::text,
+       current_run_lease_id = NULL,
+       suspension_terminal_at = transaction_timestamp(),
+       suspension_reason_code = $3::text,
+       suspension_error = $2::jsonb,
+       updated_at = transaction_timestamp()
+ WHERE run_id = $5
+   AND suspension_state IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming')
+`
+
+type TerminalizeRunSuspensionsParams struct {
+	ConditionState  string      `json:"condition_state"`
+	ErrorPayload    []byte      `json:"error_payload"`
+	ReasonCode      string      `json:"reason_code"`
+	SuspensionState string      `json:"suspension_state"`
+	RunID           pgtype.UUID `json:"run_id"`
+}
+
+func (q *Queries) TerminalizeRunSuspensions(ctx context.Context, arg TerminalizeRunSuspensionsParams) error {
+	_, err := q.db.Exec(ctx, terminalizeRunSuspensions,
+		arg.ConditionState,
+		arg.ErrorPayload,
+		arg.ReasonCode,
+		arg.SuspensionState,
+		arg.RunID,
+	)
+	return err
 }

@@ -12,7 +12,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -877,336 +876,151 @@ func terminateLockedRun(
 	if err != nil {
 		return err
 	}
+	queries := db.New(tx)
 	if run.actorID.Valid {
-		var command pgconn.CommandTag
+		var affected int64
 		if termination.actorCancellation {
-			command, err = tx.Exec(ctx, `
-UPDATE actors
-   SET current_run_id = NULL,
-       run_generation = run_generation + 1,
-       state_version = state_version + 1,
-       manual_run_cancelled = true,
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND workspace_id = $2
-   AND current_run_id = $3
-   AND state IN ('open', 'closing')`,
-				uuid.UUID(run.actorID.Bytes),
-				run.workspaceID,
-				run.id,
+			affected, err = queries.DetachActorFromCancelledRun(
+				ctx,
+				db.DetachActorFromCancelledRunParams{
+					ActorID:     run.actorID,
+					WorkspaceID: pgvalue.UUID(run.workspaceID),
+					RunID:       pgvalue.UUID(run.id),
+				},
 			)
 		} else {
-			command, err = tx.Exec(ctx, `
-UPDATE actors
-   SET state = 'failed',
-       current_run_id = NULL,
-       run_generation = run_generation + 1,
-       state_version = state_version + 1,
-       manual_run_cancelled = false,
-       failure_code = $4,
-       failure_run_id = $3,
-       failed_at = transaction_timestamp(),
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND workspace_id = $2
-   AND current_run_id = $3
-   AND state IN ('open', 'closing')`,
-				uuid.UUID(run.actorID.Bytes),
-				run.workspaceID,
-				run.id,
-				termination.actorFailureCode,
+			affected, err = queries.FailActorForRunTermination(
+				ctx,
+				db.FailActorForRunTerminationParams{
+					FailureCode: termination.actorFailureCode,
+					RunID:       pgvalue.UUID(run.id),
+					ActorID:     run.actorID,
+					WorkspaceID: pgvalue.UUID(run.workspaceID),
+				},
 			)
 		}
-		if err != nil || command.RowsAffected() != 1 {
+		if err != nil || affected != 1 {
 			return cancellationAuthority("terminalize owning Actor", err)
 		}
 	}
-	if _, err := tx.Exec(ctx, `
-UPDATE run_waits
-   SET condition_state = CASE
-           WHEN condition_state = 'pending' THEN $3::text
-           ELSE condition_state
-       END,
-       condition_result = CASE
-           WHEN condition_state = 'pending' THEN NULL
-           ELSE condition_result
-       END,
-       condition_error = CASE
-           WHEN condition_state = 'pending' THEN $2::jsonb
-           ELSE condition_error
-       END,
-       condition_terminal_at = CASE
-           WHEN condition_state = 'pending' THEN transaction_timestamp()
-           ELSE condition_terminal_at
-       END,
-       condition_reason_code = CASE
-           WHEN condition_state = 'pending' THEN $4
-           ELSE condition_reason_code
-       END,
-       suspension_state = $5::text,
-       current_run_lease_id = NULL,
-       suspension_terminal_at = transaction_timestamp(),
-       suspension_reason_code = $4,
-       suspension_error = $2::jsonb,
-       updated_at = transaction_timestamp()
- WHERE run_id = $1
-   AND suspension_state IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming')`,
-		run.id,
-		errorPayload,
-		termination.waitCondition,
-		termination.reasonCode,
-		termination.waitSuspension,
+	if err := queries.TerminalizeRunSuspensions(
+		ctx,
+		db.TerminalizeRunSuspensionsParams{
+			ConditionState:  termination.waitCondition,
+			ErrorPayload:    errorPayload,
+			ReasonCode:      termination.reasonCode,
+			SuspensionState: termination.waitSuspension,
+			RunID:           pgvalue.UUID(run.id),
+		},
 	); err != nil {
 		return cancellationAuthority("terminalize Run suspension", err)
 	}
-	if _, err := tx.Exec(ctx, `
-UPDATE run_checkpoints
-   SET state = 'invalid',
-       invalidated_at = transaction_timestamp(),
-       invalidation_reason_code = $2
- WHERE run_id = $1
-   AND state IN ('creating', 'ready')`, run.id, termination.reasonCode); err != nil {
+	if err := queries.InvalidateRunCheckpoints(
+		ctx,
+		db.InvalidateRunCheckpointsParams{
+			ReasonCode: termination.reasonCode,
+			RunID:      pgvalue.UUID(run.id),
+		},
+	); err != nil {
 		return cancellationAuthority("invalidate Run checkpoints", err)
 	}
 	if run.currentRunLeaseID.Valid {
-		command, err := tx.Exec(ctx, `
-UPDATE workspace_leases
-   SET state = 'fenced',
-       terminal_at = transaction_timestamp(),
-       terminal_reason_code = $3,
-       terminal_error = $2::jsonb,
-       updated_at = transaction_timestamp()
- WHERE owner_run_lease_id = $1
-   AND state IN ('active', 'releasing')`,
-			uuid.UUID(run.currentRunLeaseID.Bytes),
-			errorPayload,
-			termination.reasonCode,
+		affected, err := queries.FenceRunWorkspaceLease(
+			ctx,
+			db.FenceRunWorkspaceLeaseParams{
+				ReasonCode:   termination.reasonCode,
+				ErrorPayload: errorPayload,
+				RunLeaseID:   run.currentRunLeaseID,
+			},
 		)
 		if err != nil {
 			return cancellationAuthority("fence Run Workspace Lease", err)
 		}
-		if command.RowsAffected() > 1 {
+		if affected > 1 {
 			return cancellationAuthority("multiple Run Workspace Leases were active", nil)
 		}
-		command, err = tx.Exec(ctx, `
-UPDATE run_leases
-   SET state = CASE
-           WHEN $4::text = 'failed' AND started_at IS NULL
-           THEN 'rejected'
-           ELSE $4::text
-       END,
-       terminal_at = transaction_timestamp(),
-       terminal_reason_code = $5,
-       terminal_error = $2::jsonb,
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND run_id = $3
-   AND state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')`,
-			uuid.UUID(run.currentRunLeaseID.Bytes),
-			errorPayload,
-			run.id,
-			termination.runLeaseState,
-			termination.reasonCode,
+		affected, err = queries.TerminalizeRunLease(
+			ctx,
+			db.TerminalizeRunLeaseParams{
+				State:        termination.runLeaseState,
+				ReasonCode:   termination.reasonCode,
+				ErrorPayload: errorPayload,
+				ID:           run.currentRunLeaseID,
+				RunID:        pgvalue.UUID(run.id),
+			},
 		)
-		if err != nil || command.RowsAffected() != 1 {
+		if err != nil || affected != 1 {
 			return cancellationAuthority("terminalize current Run Lease", err)
 		}
 	}
-	var retainedRuntime, retainedMount any
-	if preservedRuntimeID.Valid {
-		retainedRuntime = uuid.UUID(preservedRuntimeID.Bytes)
-	}
-	if preservedMountID.Valid {
-		retainedMount = uuid.UUID(preservedMountID.Bytes)
-	}
-	if _, err := tx.Exec(ctx, `
-WITH candidate_runtimes AS (
-    SELECT runtime_instance_id AS id
-      FROM run_leases
-     WHERE id = $2::uuid
-       AND run_id = $1
-    UNION
-    SELECT id
-      FROM runtime_instances
-     WHERE reserved_run_id = $1
-    UNION
-    SELECT handoff_runtime_instance_id
-      FROM run_waits
-     WHERE run_id = $1
-       AND handoff_runtime_instance_id IS NOT NULL
-), target_runtimes AS (
-    SELECT id
-      FROM candidate_runtimes
-     WHERE id IS DISTINCT FROM $3::uuid
-), closing_runtimes AS (
-    UPDATE runtime_instances
-       SET desired_state = 'closed',
-           desired_version = CASE
-               WHEN desired_state = 'closed' THEN desired_version
-               ELSE desired_version + 1
-           END,
-           desired_at = transaction_timestamp(),
-           desired_reason = $5,
-           updated_at = transaction_timestamp()
-     WHERE id IN (SELECT id FROM target_runtimes)
-       AND observed_state IN ('allocated', 'preparing', 'ready', 'closing')
-    RETURNING id
-)
-UPDATE workspace_mounts
-   SET state = 'unmounting',
-       stopped_at = COALESCE(stopped_at, transaction_timestamp()),
-       updated_at = transaction_timestamp()
- WHERE runtime_instance_id IN (
-       SELECT id FROM target_runtimes
-       UNION
-       SELECT id FROM closing_runtimes
-   )
-   AND id IS DISTINCT FROM $4::uuid
-   AND state IN ('mounting', 'mounted')`,
-		run.id,
-		run.currentRunLeaseID,
-		retainedRuntime,
-		retainedMount,
-		termination.reasonCode,
+	if err := queries.CloseRunRuntimes(
+		ctx,
+		db.CloseRunRuntimesParams{
+			RetainedMountID:   preservedMountID,
+			RunLeaseID:        run.currentRunLeaseID,
+			RunID:             pgvalue.UUID(run.id),
+			RetainedRuntimeID: preservedRuntimeID,
+			ReasonCode:        termination.reasonCode,
+		},
 	); err != nil {
 		return cancellationAuthority("request terminal Run runtime cleanup", err)
 	}
-	command, err := tx.Exec(ctx, `
-UPDATE run_attempts
-   SET terminal_outcome = $4,
-       terminal_reason_code = $5,
-       terminal_error = $3::jsonb,
-       terminal_at = transaction_timestamp()
- WHERE run_id = $1
-   AND number = $2
-   AND terminal_at IS NULL`,
-		run.id,
-		run.currentAttemptNumber,
-		errorPayload,
-		termination.attemptOutcome,
-		termination.reasonCode,
+	affected, err := queries.TerminalizeRunAttempt(
+		ctx,
+		db.TerminalizeRunAttemptParams{
+			Outcome:       termination.attemptOutcome,
+			ReasonCode:    termination.reasonCode,
+			ErrorPayload:  errorPayload,
+			RunID:         pgvalue.UUID(run.id),
+			AttemptNumber: run.currentAttemptNumber,
+		},
 	)
-	if err != nil || command.RowsAffected() != 1 {
+	if err != nil || affected != 1 {
 		return cancellationAuthority("terminalize current Run Attempt", err)
 	}
-	command, err = tx.Exec(ctx, `
-UPDATE runs
-   SET status = $4::text,
-       terminal_reason_code = $5,
-       error = $2::jsonb,
-       state_version = state_version + 1,
-       current_run_lease_id = NULL,
-       retry_at = NULL,
-       active_elapsed_ms = LEAST(
-           max_active_duration_ms,
-           active_elapsed_ms + CASE
-               WHEN active_started_at IS NULL THEN 0
-               ELSE GREATEST(
-                   floor(extract(epoch FROM (
-                       transaction_timestamp() - active_started_at
-                   )) * 1000)::bigint,
-                   0
-               )
-           END
-       ),
-       active_started_at = NULL,
-       terminal_at = transaction_timestamp(),
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND state_version = $3
-   AND status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested')`,
-		run.id,
-		errorPayload,
-		run.stateVersion,
-		termination.runStatus,
-		termination.reasonCode,
+	affected, err = queries.TerminalizeRun(
+		ctx,
+		db.TerminalizeRunParams{
+			Status:               termination.runStatus,
+			ReasonCode:           termination.reasonCode,
+			ErrorPayload:         errorPayload,
+			ID:                   pgvalue.UUID(run.id),
+			ExpectedStateVersion: run.stateVersion,
+		},
 	)
-	if err != nil || command.RowsAffected() != 1 {
+	if err != nil || affected != 1 {
 		return cancellationAuthority("terminalize Run", err)
 	}
 	if !run.actorID.Valid {
-		if _, err := tx.Exec(ctx, `
-UPDATE workspaces
-   SET owner_run_id = NULL,
-       ownership_generation = ownership_generation + 1,
-       state_version = state_version + 1,
-       last_activity_at = transaction_timestamp(),
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND owner_run_id = $2
-   AND owner_actor_id IS NULL`,
-			run.workspaceID,
-			run.id,
+		if err := queries.ReleaseTaskWorkspace(
+			ctx,
+			db.ReleaseTaskWorkspaceParams{
+				WorkspaceID: pgvalue.UUID(run.workspaceID),
+				RunID:       pgvalue.UUID(run.id),
+			},
 		); err != nil {
 			return cancellationAuthority("release terminal Task Workspace", err)
 		}
 	} else if !termination.actorCancellation {
-		if _, err := tx.Exec(ctx, `
-UPDATE workspaces
-   SET owner_actor_id = NULL,
-       ownership_generation = ownership_generation + 1,
-       state_version = state_version + 1,
-       last_activity_at = transaction_timestamp(),
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND owner_actor_id = $2
-   AND owner_run_id IS NULL`,
-			run.workspaceID,
-			uuid.UUID(run.actorID.Bytes),
+		if err := queries.ReleaseActorWorkspace(
+			ctx,
+			db.ReleaseActorWorkspaceParams{
+				WorkspaceID: pgvalue.UUID(run.workspaceID),
+				ActorID:     run.actorID,
+			},
 		); err != nil {
 			return cancellationAuthority("release terminal Actor Workspace", err)
 		}
 	}
-	if _, err := tx.Exec(ctx, `
-INSERT INTO telemetry_outbox (
-    org_id,
-    stream_kind,
-    source_kind,
-    source_id,
-    project_id,
-    environment_id,
-    run_id,
-    run_lease_id,
-    attempt_number,
-    trace_id,
-    span_id,
-    category,
-    severity,
-    source,
-    kind,
-    message,
-    payload,
-    redaction_class,
-    snapshot_version,
-    observed_at
-)
-SELECT org_id,
-       'event',
-       'run',
-       id,
-       project_id,
-       environment_id,
-       id,
-       $2::uuid,
-       current_attempt_number,
-       trace_id,
-       root_span_id,
-       'lifecycle',
-       'info',
-       'control',
-       $3,
-       $4,
-       jsonb_build_object('reasonCode', $5::text),
-       'internal',
-       state_version,
-       transaction_timestamp()
-  FROM runs
- WHERE id = $1`,
-		run.id,
-		run.currentRunLeaseID,
-		termination.eventKind,
-		termination.eventMessage,
-		termination.reasonCode,
+	if err := queries.RecordRunTerminalEvent(
+		ctx,
+		db.RecordRunTerminalEventParams{
+			RunLeaseID: run.currentRunLeaseID,
+			Kind:       termination.eventKind,
+			Message:    termination.eventMessage,
+			ReasonCode: termination.reasonCode,
+			RunID:      pgvalue.UUID(run.id),
+		},
 	); err != nil {
 		return cancellationAuthority("record Run terminal event", err)
 	}

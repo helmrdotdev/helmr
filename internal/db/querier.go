@@ -62,6 +62,7 @@ type Querier interface {
 	CloseRunActiveIntervalForCheckpoint(ctx context.Context, arg CloseRunActiveIntervalForCheckpointParams) (int64, error)
 	CloseRunActiveIntervalForCheckpointFailure(ctx context.Context, arg CloseRunActiveIntervalForCheckpointFailureParams) (int64, error)
 	CloseRunActiveIntervalForFinalization(ctx context.Context, arg CloseRunActiveIntervalForFinalizationParams) (Run, error)
+	CloseRunRuntimes(ctx context.Context, arg CloseRunRuntimesParams) error
 	CloseWorkspaceExecRuntime(ctx context.Context, arg CloseWorkspaceExecRuntimeParams) (int64, error)
 	CollectRetiredIdempotencyClaims(ctx context.Context, rowLimit int32) ([]IdempotencyClaim, error)
 	CommitActorInputCursor(ctx context.Context, arg CommitActorInputCursorParams) (Actor, error)
@@ -154,6 +155,7 @@ type Querier interface {
 	DeleteProject(ctx context.Context, arg DeleteProjectParams) (Project, error)
 	DeliverOutboxMessage(ctx context.Context, arg DeliverOutboxMessageParams) (OutboxMessage, error)
 	DenyDeviceCode(ctx context.Context, arg DenyDeviceCodeParams) (DeviceCode, error)
+	DetachActorFromCancelledRun(ctx context.Context, arg DetachActorFromCancelledRunParams) (int64, error)
 	DisableAbsentWorkerGroups(ctx context.Context, arg DisableAbsentWorkerGroupsParams) ([]DisableAbsentWorkerGroupsRow, error)
 	DisableOrgMember(ctx context.Context, arg DisableOrgMemberParams) (OrgMember, error)
 	DisableOrgMemberAndRevokeOrgSessions(ctx context.Context, arg DisableOrgMemberAndRevokeOrgSessionsParams) (DisableOrgMemberAndRevokeOrgSessionsRow, error)
@@ -170,6 +172,7 @@ type Querier interface {
 	ExpireQueuedRun(ctx context.Context, arg ExpireQueuedRunParams) (int64, error)
 	ExpireQueuedRunAttempt(ctx context.Context, arg ExpireQueuedRunAttemptParams) (int64, error)
 	ExpireWorkspaceExecLease(ctx context.Context, arg ExpireWorkspaceExecLeaseParams) (WorkspaceLease, error)
+	FailActorForRunTermination(ctx context.Context, arg FailActorForRunTerminationParams) (int64, error)
 	FailCheckpointRunLease(ctx context.Context, arg FailCheckpointRunLeaseParams) (RunLease, error)
 	FailCheckpointRunWait(ctx context.Context, arg FailCheckpointRunWaitParams) (RunWait, error)
 	FailCheckpointingRunWait(ctx context.Context, arg FailCheckpointingRunWaitParams) (RunWait, error)
@@ -185,6 +188,7 @@ type Querier interface {
 	FailPendingWorkspaceExecProcess(ctx context.Context, arg FailPendingWorkspaceExecProcessParams) (WorkspaceProcess, error)
 	FailWorkspaceExecProcess(ctx context.Context, arg FailWorkspaceExecProcessParams) (WorkspaceProcess, error)
 	FailWorkspaceMount(ctx context.Context, arg FailWorkspaceMountParams) (WorkspaceMount, error)
+	FenceRunWorkspaceLease(ctx context.Context, arg FenceRunWorkspaceLeaseParams) (int64, error)
 	FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstanceParams) (FenceWorkerInstanceRow, error)
 	FenceWorkspaceExecLeaseForSecretRevocation(ctx context.Context, arg FenceWorkspaceExecLeaseForSecretRevocationParams) (WorkspaceLease, error)
 	FinalizeWorkspaceExecProcess(ctx context.Context, arg FinalizeWorkspaceExecProcessParams) (WorkspaceProcess, error)
@@ -334,6 +338,7 @@ type Querier interface {
 	InvalidateFailedRunCheckpoint(ctx context.Context, arg InvalidateFailedRunCheckpointParams) (RunCheckpoint, error)
 	InvalidateRestoredActorCheckpoint(ctx context.Context, arg InvalidateRestoredActorCheckpointParams) (RunCheckpoint, error)
 	InvalidateRunCheckpoint(ctx context.Context, arg InvalidateRunCheckpointParams) (RunCheckpoint, error)
+	InvalidateRunCheckpoints(ctx context.Context, arg InvalidateRunCheckpointsParams) error
 	IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKey, error)
 	LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueuedDeploymentBuildParams) (LeaseQueuedDeploymentBuildRow, error)
 	ListAPIKeyGrants(ctx context.Context, arg ListAPIKeyGrantsParams) ([]ApiKeyGrant, error)
@@ -514,6 +519,7 @@ type Querier interface {
 	ReconcileWorkerGroup(ctx context.Context, arg ReconcileWorkerGroupParams) (ReconcileWorkerGroupRow, error)
 	RecordFleetScaleIn(ctx context.Context, arg RecordFleetScaleInParams) (string, error)
 	RecordFleetScaleOut(ctx context.Context, arg RecordFleetScaleOutParams) (string, error)
+	RecordRunTerminalEvent(ctx context.Context, arg RecordRunTerminalEventParams) error
 	RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (WorkerObservation, error)
 	RecordWorkerStartupRecovery(ctx context.Context, arg RecordWorkerStartupRecoveryParams) (WorkerInstance, error)
 	RecoverExpiredRunResumes(ctx context.Context, arg RecoverExpiredRunResumesParams) ([]RecoverExpiredRunResumesRow, error)
@@ -525,10 +531,12 @@ type Querier interface {
 	RegisterTimerRunWait(ctx context.Context, arg RegisterTimerRunWaitParams) (RunWait, error)
 	RegisterTokenWait(ctx context.Context, arg RegisterTokenWaitParams) (RunWait, error)
 	RejectDeploymentBuildLease(ctx context.Context, arg RejectDeploymentBuildLeaseParams) (RejectDeploymentBuildLeaseRow, error)
+	ReleaseActorWorkspace(ctx context.Context, arg ReleaseActorWorkspaceParams) error
 	ReleaseActorWorkspaceOwner(ctx context.Context, arg ReleaseActorWorkspaceOwnerParams) (Workspace, error)
 	ReleaseCheckpointWorkspaceLease(ctx context.Context, arg ReleaseCheckpointWorkspaceLeaseParams) (WorkspaceLease, error)
 	ReleaseQueuedRunWorkspace(ctx context.Context, arg ReleaseQueuedRunWorkspaceParams) (int64, error)
 	ReleaseRunResumeWait(ctx context.Context, arg ReleaseRunResumeWaitParams) (RunWait, error)
+	ReleaseTaskWorkspace(ctx context.Context, arg ReleaseTaskWorkspaceParams) error
 	ReleaseTaskWorkspaceLease(ctx context.Context, arg ReleaseTaskWorkspaceLeaseParams) (WorkspaceLease, error)
 	ReleaseTaskWorkspaceOwner(ctx context.Context, arg ReleaseTaskWorkspaceOwnerParams) (ReleaseTaskWorkspaceOwnerRow, error)
 	ReleaseWorkspaceExecLease(ctx context.Context, arg ReleaseWorkspaceExecLeaseParams) (WorkspaceLease, error)
@@ -580,6 +588,10 @@ type Querier interface {
 	StartDeploymentBuildLease(ctx context.Context, arg StartDeploymentBuildLeaseParams) (DeploymentBuildLease, error)
 	StartWorkspaceExec(ctx context.Context, arg StartWorkspaceExecParams) (WorkspaceProcess, error)
 	StopWorkspaceMount(ctx context.Context, arg StopWorkspaceMountParams) (StopWorkspaceMountRow, error)
+	TerminalizeRun(ctx context.Context, arg TerminalizeRunParams) (int64, error)
+	TerminalizeRunAttempt(ctx context.Context, arg TerminalizeRunAttemptParams) (int64, error)
+	TerminalizeRunLease(ctx context.Context, arg TerminalizeRunLeaseParams) (int64, error)
+	TerminalizeRunSuspensions(ctx context.Context, arg TerminalizeRunSuspensionsParams) error
 	TokenWaitExists(ctx context.Context, waitID pgtype.UUID) (bool, error)
 	TouchActiveAPIKeyByTokenHash(ctx context.Context, tokenHash []byte) (TouchActiveAPIKeyByTokenHashRow, error)
 	TouchRunWorkspaceActivity(ctx context.Context, arg TouchRunWorkspaceActivityParams) (Workspace, error)
