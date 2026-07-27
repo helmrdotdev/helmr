@@ -305,6 +305,69 @@ WHERE id = sqlc.arg(version_id)
         AND retired_at IS NULL
   );
 
+-- name: ListSecretRevocationRuns :many
+WITH RECURSIVE affected_runs AS MATERIALIZED (
+    SELECT DISTINCT runs.org_id,
+           runs.project_id,
+           runs.environment_id,
+           runs.workspace_id,
+           runs.id,
+           runs.parent_run_id,
+           runs.created_at
+      FROM secret_resolutions
+      JOIN runs
+        ON runs.id = secret_resolutions.run_id
+       AND runs.workspace_id = secret_resolutions.workspace_id
+       AND runs.current_attempt_number = secret_resolutions.attempt_number
+     WHERE secret_resolutions.secret_id = sqlc.arg(secret_id)
+       AND secret_resolutions.revocation_generation < sqlc.arg(revocation_generation)
+       AND runs.environment_id = sqlc.arg(environment_id)
+       AND runs.status IN (
+           'queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested'
+       )
+), ancestor_walk AS (
+    SELECT affected_runs.id AS candidate_id,
+           affected_runs.parent_run_id,
+           0 AS depth
+      FROM affected_runs
+    UNION ALL
+    SELECT ancestor_walk.candidate_id,
+           parent.parent_run_id,
+           ancestor_walk.depth + 1
+      FROM ancestor_walk
+      JOIN runs AS parent ON parent.id = ancestor_walk.parent_run_id
+), candidate_depths AS (
+    SELECT candidate_id, max(depth) AS depth
+      FROM ancestor_walk
+     GROUP BY candidate_id
+)
+SELECT affected_runs.org_id,
+       affected_runs.project_id,
+       affected_runs.environment_id,
+       affected_runs.workspace_id,
+       affected_runs.id
+  FROM affected_runs
+  JOIN candidate_depths ON candidate_depths.candidate_id = affected_runs.id
+ ORDER BY candidate_depths.depth, affected_runs.created_at, affected_runs.id
+ LIMIT sqlc.arg(row_limit);
+
+-- name: ListSecretRevocationProcesses :many
+SELECT DISTINCT workspace_processes.org_id,
+       workspace_processes.workspace_id,
+       workspace_processes.id,
+       workspace_processes.state_version,
+       workspace_processes.created_at
+  FROM secret_resolutions
+  JOIN workspace_processes
+    ON workspace_processes.id = secret_resolutions.process_id
+   AND workspace_processes.workspace_id = secret_resolutions.workspace_id
+ WHERE secret_resolutions.secret_id = sqlc.arg(secret_id)
+   AND secret_resolutions.revocation_generation < sqlc.arg(revocation_generation)
+   AND workspace_processes.environment_id = sqlc.arg(environment_id)
+   AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
+ ORDER BY workspace_processes.created_at, workspace_processes.id
+ LIMIT sqlc.arg(row_limit);
+
 -- name: ListWorkspaceSecrets :many
 SELECT
     workspace_secrets.*,

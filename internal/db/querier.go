@@ -370,6 +370,8 @@ type Querier interface {
 	ListScopedDeployments(ctx context.Context, arg ListScopedDeploymentsParams) ([]Deployment, error)
 	ListSecretAuthenticatorKeyUsage(ctx context.Context) ([]ListSecretAuthenticatorKeyUsageRow, error)
 	ListSecretEncryptionKeyUsage(ctx context.Context) ([]ListSecretEncryptionKeyUsageRow, error)
+	ListSecretRevocationProcesses(ctx context.Context, arg ListSecretRevocationProcessesParams) ([]ListSecretRevocationProcessesRow, error)
+	ListSecretRevocationRuns(ctx context.Context, arg ListSecretRevocationRunsParams) ([]ListSecretRevocationRunsRow, error)
 	ListSecretVersionsByAuthenticatorKeyVersion(ctx context.Context, arg ListSecretVersionsByAuthenticatorKeyVersionParams) ([]ListSecretVersionsByAuthenticatorKeyVersionRow, error)
 	ListSecretVersionsByKeyID(ctx context.Context, arg ListSecretVersionsByKeyIDParams) ([]ListSecretVersionsByKeyIDRow, error)
 	ListSecrets(ctx context.Context, arg ListSecretsParams) ([]ListSecretsRow, error)

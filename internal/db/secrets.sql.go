@@ -570,6 +570,163 @@ func (q *Queries) ListSecretEncryptionKeyUsage(ctx context.Context) ([]ListSecre
 	return items, nil
 }
 
+const listSecretRevocationProcesses = `-- name: ListSecretRevocationProcesses :many
+SELECT DISTINCT workspace_processes.org_id,
+       workspace_processes.workspace_id,
+       workspace_processes.id,
+       workspace_processes.state_version,
+       workspace_processes.created_at
+  FROM secret_resolutions
+  JOIN workspace_processes
+    ON workspace_processes.id = secret_resolutions.process_id
+   AND workspace_processes.workspace_id = secret_resolutions.workspace_id
+ WHERE secret_resolutions.secret_id = $1
+   AND secret_resolutions.revocation_generation < $2
+   AND workspace_processes.environment_id = $3
+   AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
+ ORDER BY workspace_processes.created_at, workspace_processes.id
+ LIMIT $4
+`
+
+type ListSecretRevocationProcessesParams struct {
+	SecretID             pgtype.UUID `json:"secret_id"`
+	RevocationGeneration int64       `json:"revocation_generation"`
+	EnvironmentID        pgtype.UUID `json:"environment_id"`
+	RowLimit             int32       `json:"row_limit"`
+}
+
+type ListSecretRevocationProcessesRow struct {
+	OrgID        pgtype.UUID        `json:"org_id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	ID           pgtype.UUID        `json:"id"`
+	StateVersion int64              `json:"state_version"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListSecretRevocationProcesses(ctx context.Context, arg ListSecretRevocationProcessesParams) ([]ListSecretRevocationProcessesRow, error) {
+	rows, err := q.db.Query(ctx, listSecretRevocationProcesses,
+		arg.SecretID,
+		arg.RevocationGeneration,
+		arg.EnvironmentID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSecretRevocationProcessesRow
+	for rows.Next() {
+		var i ListSecretRevocationProcessesRow
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.WorkspaceID,
+			&i.ID,
+			&i.StateVersion,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSecretRevocationRuns = `-- name: ListSecretRevocationRuns :many
+WITH RECURSIVE affected_runs AS MATERIALIZED (
+    SELECT DISTINCT runs.org_id,
+           runs.project_id,
+           runs.environment_id,
+           runs.workspace_id,
+           runs.id,
+           runs.parent_run_id,
+           runs.created_at
+      FROM secret_resolutions
+      JOIN runs
+        ON runs.id = secret_resolutions.run_id
+       AND runs.workspace_id = secret_resolutions.workspace_id
+       AND runs.current_attempt_number = secret_resolutions.attempt_number
+     WHERE secret_resolutions.secret_id = $2
+       AND secret_resolutions.revocation_generation < $3
+       AND runs.environment_id = $4
+       AND runs.status IN (
+           'queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested'
+       )
+), ancestor_walk AS (
+    SELECT affected_runs.id AS candidate_id,
+           affected_runs.parent_run_id,
+           0 AS depth
+      FROM affected_runs
+    UNION ALL
+    SELECT ancestor_walk.candidate_id,
+           parent.parent_run_id,
+           ancestor_walk.depth + 1
+      FROM ancestor_walk
+      JOIN runs AS parent ON parent.id = ancestor_walk.parent_run_id
+), candidate_depths AS (
+    SELECT candidate_id, max(depth) AS depth
+      FROM ancestor_walk
+     GROUP BY candidate_id
+)
+SELECT affected_runs.org_id,
+       affected_runs.project_id,
+       affected_runs.environment_id,
+       affected_runs.workspace_id,
+       affected_runs.id
+  FROM affected_runs
+  JOIN candidate_depths ON candidate_depths.candidate_id = affected_runs.id
+ ORDER BY candidate_depths.depth, affected_runs.created_at, affected_runs.id
+ LIMIT $1
+`
+
+type ListSecretRevocationRunsParams struct {
+	RowLimit             int32       `json:"row_limit"`
+	SecretID             pgtype.UUID `json:"secret_id"`
+	RevocationGeneration int64       `json:"revocation_generation"`
+	EnvironmentID        pgtype.UUID `json:"environment_id"`
+}
+
+type ListSecretRevocationRunsRow struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) ListSecretRevocationRuns(ctx context.Context, arg ListSecretRevocationRunsParams) ([]ListSecretRevocationRunsRow, error) {
+	rows, err := q.db.Query(ctx, listSecretRevocationRuns,
+		arg.RowLimit,
+		arg.SecretID,
+		arg.RevocationGeneration,
+		arg.EnvironmentID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSecretRevocationRunsRow
+	for rows.Next() {
+		var i ListSecretRevocationRunsRow
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.WorkspaceID,
+			&i.ID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSecretVersionsByAuthenticatorKeyVersion = `-- name: ListSecretVersionsByAuthenticatorKeyVersion :many
 SELECT
     secrets.id AS secret_id,

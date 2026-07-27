@@ -13,8 +13,8 @@ import (
 )
 
 type database interface {
+	db.DBTX
 	Begin(context.Context) (pgx.Tx, error)
-	Query(context.Context, string, ...any) (pgx.Rows, error)
 }
 
 type WorkspaceExecCandidate struct {
@@ -37,23 +37,9 @@ type RunFinalizer func(context.Context, pgx.Tx, RunFinalization) error
 
 type RevocationReconciler struct {
 	db            database
+	queries       *db.Queries
 	execRecoverer WorkspaceExecRecoverer
 	runFinalizer  RunFinalizer
-}
-
-type runCandidate struct {
-	orgID         uuid.UUID
-	projectID     uuid.UUID
-	environmentID uuid.UUID
-	workspaceID   uuid.UUID
-	runID         uuid.UUID
-}
-
-type processCandidate struct {
-	orgID        uuid.UUID
-	workspaceID  uuid.UUID
-	processID    uuid.UUID
-	stateVersion int64
 }
 
 func NewRevocationReconciler(
@@ -72,6 +58,7 @@ func NewRevocationReconciler(
 	}
 	return &RevocationReconciler{
 		db:            database,
+		queries:       db.New(database),
 		execRecoverer: execRecoverer,
 		runFinalizer:  runFinalizer,
 	}, nil
@@ -93,15 +80,17 @@ func (r *RevocationReconciler) ReconcileBatch(
 	if limit <= 0 {
 		return 0, errors.New("Secret revocation batch limit must be positive")
 	}
-	runs, err := r.listRunCandidates(
+	runs, err := r.queries.ListSecretRevocationRuns(
 		ctx,
-		environmentID,
-		secretID,
-		revocationGeneration,
-		limit,
+		db.ListSecretRevocationRunsParams{
+			SecretID:             pgvalue.UUID(secretID),
+			RevocationGeneration: revocationGeneration,
+			EnvironmentID:        pgvalue.UUID(environmentID),
+			RowLimit:             limit,
+		},
 	)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("list Secret-revoked Run candidates: %w", err)
 	}
 	examined := 0
 	for _, candidate := range runs {
@@ -118,15 +107,20 @@ func (r *RevocationReconciler) ReconcileBatch(
 	if examined >= int(limit) {
 		return examined, nil
 	}
-	processes, err := r.listProcessCandidates(
+	processes, err := r.queries.ListSecretRevocationProcesses(
 		ctx,
-		environmentID,
-		secretID,
-		revocationGeneration,
-		limit-int32(examined),
+		db.ListSecretRevocationProcessesParams{
+			SecretID:             pgvalue.UUID(secretID),
+			RevocationGeneration: revocationGeneration,
+			EnvironmentID:        pgvalue.UUID(environmentID),
+			RowLimit:             limit - int32(examined),
+		},
 	)
 	if err != nil {
-		return examined, err
+		return examined, fmt.Errorf(
+			"list Secret-revoked process candidates: %w",
+			err,
+		)
 	}
 	for _, candidate := range processes {
 		if err := r.fenceProcess(
@@ -142,146 +136,9 @@ func (r *RevocationReconciler) ReconcileBatch(
 	return examined, nil
 }
 
-func (r *RevocationReconciler) listRunCandidates(
-	ctx context.Context,
-	environmentID uuid.UUID,
-	secretID uuid.UUID,
-	revocationGeneration int64,
-	limit int32,
-) ([]runCandidate, error) {
-	rows, err := r.db.Query(ctx, `
-WITH RECURSIVE affected_runs AS MATERIALIZED (
-    SELECT DISTINCT runs.org_id,
-           runs.project_id,
-           runs.environment_id,
-           runs.workspace_id,
-           runs.id,
-           runs.parent_run_id,
-           runs.created_at
-      FROM secret_resolutions
-      JOIN runs
-        ON runs.id = secret_resolutions.run_id
-       AND runs.workspace_id = secret_resolutions.workspace_id
-       AND runs.current_attempt_number = secret_resolutions.attempt_number
-     WHERE secret_resolutions.secret_id = $1
-       AND secret_resolutions.revocation_generation < $2
-       AND runs.environment_id = $3
-       AND runs.status IN (
-           'queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested'
-       )
-), ancestor_walk AS (
-    SELECT affected_runs.id AS candidate_id,
-           affected_runs.parent_run_id,
-           0 AS depth
-      FROM affected_runs
-    UNION ALL
-    SELECT ancestor_walk.candidate_id,
-           parent.parent_run_id,
-           ancestor_walk.depth + 1
-      FROM ancestor_walk
-      JOIN runs AS parent ON parent.id = ancestor_walk.parent_run_id
-), candidate_depths AS (
-    SELECT candidate_id, max(depth) AS depth
-      FROM ancestor_walk
-     GROUP BY candidate_id
-)
-SELECT affected_runs.org_id,
-       affected_runs.project_id,
-       affected_runs.environment_id,
-       affected_runs.workspace_id,
-       affected_runs.id,
-       affected_runs.created_at
-  FROM affected_runs
-  JOIN candidate_depths ON candidate_depths.candidate_id = affected_runs.id
- ORDER BY candidate_depths.depth, affected_runs.created_at, affected_runs.id
- LIMIT $4`,
-		secretID,
-		revocationGeneration,
-		environmentID,
-		limit,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("list Secret-revoked Run candidates: %w", err)
-	}
-	defer rows.Close()
-	candidates := make([]runCandidate, 0, limit)
-	for rows.Next() {
-		var candidate runCandidate
-		var createdAt pgtype.Timestamptz
-		if err := rows.Scan(
-			&candidate.orgID,
-			&candidate.projectID,
-			&candidate.environmentID,
-			&candidate.workspaceID,
-			&candidate.runID,
-			&createdAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan Secret-revoked Run candidate: %w", err)
-		}
-		candidates = append(candidates, candidate)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read Secret-revoked Run candidates: %w", err)
-	}
-	return candidates, nil
-}
-
-func (r *RevocationReconciler) listProcessCandidates(
-	ctx context.Context,
-	environmentID uuid.UUID,
-	secretID uuid.UUID,
-	revocationGeneration int64,
-	limit int32,
-) ([]processCandidate, error) {
-	rows, err := r.db.Query(ctx, `
-SELECT DISTINCT workspace_processes.org_id,
-       workspace_processes.workspace_id,
-       workspace_processes.id,
-       workspace_processes.state_version,
-       workspace_processes.created_at
-  FROM secret_resolutions
-  JOIN workspace_processes
-    ON workspace_processes.id = secret_resolutions.process_id
-   AND workspace_processes.workspace_id = secret_resolutions.workspace_id
- WHERE secret_resolutions.secret_id = $1
-   AND secret_resolutions.revocation_generation < $2
-   AND workspace_processes.environment_id = $3
-   AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
- ORDER BY workspace_processes.created_at, workspace_processes.id
- LIMIT $4`,
-		secretID,
-		revocationGeneration,
-		environmentID,
-		limit,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("list Secret-revoked process candidates: %w", err)
-	}
-	defer rows.Close()
-	candidates := make([]processCandidate, 0, limit)
-	for rows.Next() {
-		var candidate processCandidate
-		var createdAt pgtype.Timestamptz
-		if err := rows.Scan(
-			&candidate.orgID,
-			&candidate.workspaceID,
-			&candidate.processID,
-			&candidate.stateVersion,
-			&createdAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan Secret-revoked process candidate: %w", err)
-		}
-		candidates = append(candidates, candidate)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read Secret-revoked process candidates: %w", err)
-	}
-	return candidates, nil
-}
-
 func (r *RevocationReconciler) failRun(
 	ctx context.Context,
-	candidate runCandidate,
+	candidate db.ListSecretRevocationRunsRow,
 	secretID uuid.UUID,
 	revocationGeneration int64,
 ) error {
@@ -294,7 +151,7 @@ func (r *RevocationReconciler) failRun(
 	valid, err := lockAndValidateRevocation(
 		ctx,
 		q,
-		candidate.workspaceID,
+		pgvalue.MustUUIDValue(candidate.WorkspaceID),
 		secretID,
 		revocationGeneration,
 	)
@@ -308,10 +165,10 @@ func (r *RevocationReconciler) failRun(
 		ctx,
 		tx,
 		RunFinalization{
-			OrgID:         candidate.orgID,
-			ProjectID:     candidate.projectID,
-			EnvironmentID: candidate.environmentID,
-			RunID:         candidate.runID,
+			OrgID:         pgvalue.MustUUIDValue(candidate.OrgID),
+			ProjectID:     pgvalue.MustUUIDValue(candidate.ProjectID),
+			EnvironmentID: pgvalue.MustUUIDValue(candidate.EnvironmentID),
+			RunID:         pgvalue.MustUUIDValue(candidate.ID),
 		},
 	)
 	if err != nil {
@@ -325,7 +182,7 @@ func (r *RevocationReconciler) failRun(
 
 func (r *RevocationReconciler) fenceProcess(
 	ctx context.Context,
-	candidate processCandidate,
+	candidate db.ListSecretRevocationProcessesRow,
 	secretID uuid.UUID,
 	revocationGeneration int64,
 ) error {
@@ -338,7 +195,7 @@ func (r *RevocationReconciler) fenceProcess(
 	valid, err := lockAndValidateRevocation(
 		ctx,
 		q,
-		candidate.workspaceID,
+		pgvalue.MustUUIDValue(candidate.WorkspaceID),
 		secretID,
 		revocationGeneration,
 	)
@@ -351,8 +208,8 @@ func (r *RevocationReconciler) fenceProcess(
 	if _, err := q.LockWorkspaceExecFailureWorkspace(
 		ctx,
 		db.LockWorkspaceExecFailureWorkspaceParams{
-			OrgID:       pgvalue.UUID(candidate.orgID),
-			WorkspaceID: pgvalue.UUID(candidate.workspaceID),
+			OrgID:       candidate.OrgID,
+			WorkspaceID: candidate.WorkspaceID,
 		},
 	); errors.Is(err, pgx.ErrNoRows) {
 		return tx.Commit(ctx)
@@ -362,10 +219,10 @@ func (r *RevocationReconciler) fenceProcess(
 	authority, err := q.LockWorkspaceExecSecretRevocationAuthority(
 		ctx,
 		db.LockWorkspaceExecSecretRevocationAuthorityParams{
-			OrgID:                pgvalue.UUID(candidate.orgID),
-			ProcessID:            pgvalue.UUID(candidate.processID),
-			WorkspaceID:          pgvalue.UUID(candidate.workspaceID),
-			ExpectedStateVersion: candidate.stateVersion,
+			OrgID:                candidate.OrgID,
+			ProcessID:            candidate.ID,
+			WorkspaceID:          candidate.WorkspaceID,
+			ExpectedStateVersion: candidate.StateVersion,
 		},
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -393,15 +250,15 @@ func (r *RevocationReconciler) fenceProcess(
 
 func (r *RevocationReconciler) recoverProcess(
 	ctx context.Context,
-	candidate processCandidate,
+	candidate db.ListSecretRevocationProcessesRow,
 ) error {
 	err := r.execRecoverer(
 		ctx,
 		WorkspaceExecCandidate{
-			OrgID:                pgvalue.UUID(candidate.orgID),
-			ProcessID:            pgvalue.UUID(candidate.processID),
-			WorkspaceID:          pgvalue.UUID(candidate.workspaceID),
-			ExpectedStateVersion: candidate.stateVersion,
+			OrgID:                candidate.OrgID,
+			ProcessID:            candidate.ID,
+			WorkspaceID:          candidate.WorkspaceID,
+			ExpectedStateVersion: candidate.StateVersion,
 		},
 	)
 	if err != nil {
