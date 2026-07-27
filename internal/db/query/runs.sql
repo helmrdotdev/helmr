@@ -732,6 +732,97 @@ SELECT child.id,
  ORDER BY child.queued_expires_at, child.id
  LIMIT sqlc.arg(limit_count);
 
+-- name: LockQueuedRunExpiry :one
+SELECT first_lease_at,
+       queued_expires_at,
+       coalesce(
+           queued_expires_at <= transaction_timestamp(),
+           false
+       )::bool AS expired
+  FROM runs
+ WHERE id = sqlc.arg(id)
+ FOR UPDATE;
+
+-- name: RequestQueuedRunRuntimeCleanup :exec
+WITH closing_runtimes AS (
+    UPDATE runtime_instances
+       SET desired_state = 'closed',
+           desired_version = CASE
+               WHEN desired_state = 'closed' THEN desired_version
+               ELSE desired_version + 1
+           END,
+           desired_at = transaction_timestamp(),
+           desired_reason = 'queued_ttl_expired',
+           updated_at = transaction_timestamp()
+     WHERE reserved_run_id = sqlc.arg(run_id)
+       AND observed_state IN ('allocated', 'preparing', 'ready', 'closing')
+    RETURNING id
+)
+UPDATE workspace_mounts
+   SET state = 'unmounting',
+       stopped_at = coalesce(stopped_at, transaction_timestamp()),
+       updated_at = transaction_timestamp()
+ WHERE runtime_instance_id IN (SELECT id FROM closing_runtimes)
+   AND state IN ('mounting', 'mounted');
+
+-- name: ExpireQueuedRunAttempt :execrows
+UPDATE run_attempts
+   SET terminal_outcome = 'cancelled',
+       terminal_reason_code = 'queued_ttl_expired',
+       terminal_error = sqlc.arg(error_payload)::jsonb,
+       terminal_at = transaction_timestamp()
+ WHERE run_id = sqlc.arg(run_id)
+   AND number = sqlc.arg(attempt_number)
+   AND terminal_at IS NULL;
+
+-- name: ExpireQueuedRun :execrows
+UPDATE runs
+   SET status = 'expired',
+       terminal_reason_code = 'queued_ttl_expired',
+       error = sqlc.arg(error_payload)::jsonb,
+       state_version = state_version + 1,
+       retry_at = NULL,
+       terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(id)
+   AND state_version = sqlc.arg(expected_state_version)
+   AND status = 'queued'
+   AND current_run_lease_id IS NULL
+   AND first_lease_at IS NULL
+   AND queued_expires_at IS NOT NULL
+   AND queued_expires_at <= transaction_timestamp();
+
+-- name: ReleaseQueuedRunWorkspace :execrows
+UPDATE workspaces
+   SET owner_run_id = NULL,
+       ownership_generation = ownership_generation + 1,
+       state_version = state_version + 1,
+       last_activity_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE workspaces.id = sqlc.arg(workspace_id)
+   AND workspaces.owner_run_id = sqlc.arg(run_id)
+   AND workspaces.owner_actor_id IS NULL
+   AND NOT EXISTS (
+       SELECT 1
+         FROM workspace_leases
+        WHERE workspace_leases.workspace_id = workspaces.id
+          AND workspace_leases.state IN ('active', 'releasing')
+   );
+
+-- name: CreateQueuedRunExpiryEvent :exec
+INSERT INTO telemetry_outbox (
+    org_id, stream_kind, source_kind, source_id, project_id, environment_id,
+    run_id, attempt_number, trace_id, span_id, category, severity, source,
+    kind, message, payload, redaction_class, snapshot_version, observed_at
+)
+SELECT runs.org_id, 'event', 'run', runs.id, runs.project_id, runs.environment_id,
+       runs.id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, 'lifecycle', 'info',
+       'control', 'run.expired', 'Run expired',
+       jsonb_build_object('reasonCode', 'queued_ttl_expired'),
+       'internal', runs.state_version, transaction_timestamp()
+  FROM runs
+ WHERE runs.id = sqlc.arg(run_id);
+
 -- name: CloseRunActiveIntervalForCheckpoint :one
 UPDATE runs
    SET active_elapsed_ms = active_elapsed_ms

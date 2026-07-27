@@ -7,8 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type ChildExpiryRequest struct {
@@ -69,27 +69,14 @@ func ExpireParentOwnedChild(
 	if child.status != db.RunStatusQueued || child.currentRunLeaseID.Valid {
 		return false, nil
 	}
-	var firstLeaseAt, queuedExpiresAt pgtype.Timestamptz
-	if err := tx.QueryRow(ctx, `
-SELECT first_lease_at, queued_expires_at
-  FROM runs
- WHERE id = $1
- FOR UPDATE`,
-		child.id,
-	).Scan(&firstLeaseAt, &queuedExpiresAt); err != nil {
+	expiry, err := db.New(tx).LockQueuedRunExpiry(ctx, pgvalue.UUID(child.id))
+	if err != nil {
 		return false, cancellationAuthority("lock queued child expiry deadline", err)
 	}
-	if firstLeaseAt.Valid || !queuedExpiresAt.Valid {
+	if expiry.FirstLeaseAt.Valid || !expiry.QueuedExpiresAt.Valid {
 		return false, nil
 	}
-	var expired bool
-	if err := tx.QueryRow(ctx,
-		`SELECT queued_expires_at <= transaction_timestamp() FROM runs WHERE id = $1`,
-		child.id,
-	).Scan(&expired); err != nil {
-		return false, cancellationAuthority("read queued child expiry deadline", err)
-	}
-	if !expired {
+	if !expiry.Expired {
 		return false, nil
 	}
 	waits, err := lockCancellationResources(
@@ -152,107 +139,35 @@ func expireLockedParentOwnedChild(
 	errorPayload := json.RawMessage(
 		`{"code":"queued_ttl_expired","message":"Child Run queued TTL expired","retryable":false}`,
 	)
-	if _, err := tx.Exec(ctx, `
-WITH closing_runtimes AS (
-    UPDATE runtime_instances
-       SET desired_state = 'closed',
-           desired_version = CASE
-               WHEN desired_state = 'closed' THEN desired_version
-               ELSE desired_version + 1
-           END,
-           desired_at = transaction_timestamp(),
-           desired_reason = 'queued_ttl_expired',
-           updated_at = transaction_timestamp()
-     WHERE reserved_run_id = $1
-       AND observed_state IN ('allocated', 'preparing', 'ready', 'closing')
-    RETURNING id
-)
-UPDATE workspace_mounts
-   SET state = 'unmounting',
-       stopped_at = COALESCE(stopped_at, transaction_timestamp()),
-       updated_at = transaction_timestamp()
- WHERE runtime_instance_id IN (SELECT id FROM closing_runtimes)
-   AND state IN ('mounting', 'mounted')`,
-		child.id,
-	); err != nil {
+	q := db.New(tx)
+	childID := pgvalue.UUID(child.id)
+	if err := q.RequestQueuedRunRuntimeCleanup(ctx, childID); err != nil {
 		return cancellationAuthority("request expired queued child runtime cleanup", err)
 	}
-	command, err := tx.Exec(ctx, `
-UPDATE run_attempts
-   SET terminal_outcome = 'cancelled',
-       terminal_reason_code = 'queued_ttl_expired',
-       terminal_error = $3::jsonb,
-       terminal_at = transaction_timestamp()
- WHERE run_id = $1
-   AND number = $2
-   AND terminal_at IS NULL`,
-		child.id,
-		child.currentAttemptNumber,
-		errorPayload,
-	)
-	if err != nil || command.RowsAffected() != 1 {
+	rows, err := q.ExpireQueuedRunAttempt(ctx, db.ExpireQueuedRunAttemptParams{
+		ErrorPayload:  errorPayload,
+		RunID:         childID,
+		AttemptNumber: child.currentAttemptNumber,
+	})
+	if err != nil || rows != 1 {
 		return cancellationAuthority("expire queued child Attempt", err)
 	}
-	command, err = tx.Exec(ctx, `
-UPDATE runs
-   SET status = 'expired',
-       terminal_reason_code = 'queued_ttl_expired',
-       error = $2::jsonb,
-       state_version = state_version + 1,
-       retry_at = NULL,
-       terminal_at = transaction_timestamp(),
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND state_version = $3
-   AND status = 'queued'
-   AND current_run_lease_id IS NULL
-   AND first_lease_at IS NULL
-   AND queued_expires_at IS NOT NULL
-   AND queued_expires_at <= transaction_timestamp()`,
-		child.id,
-		errorPayload,
-		child.stateVersion,
-	)
-	if err != nil || command.RowsAffected() != 1 {
+	rows, err = q.ExpireQueuedRun(ctx, db.ExpireQueuedRunParams{
+		ErrorPayload:         errorPayload,
+		ID:                   childID,
+		ExpectedStateVersion: child.stateVersion,
+	})
+	if err != nil || rows != 1 {
 		return cancellationAuthority("expire queued child Run", err)
 	}
-	command, err = tx.Exec(ctx, `
-UPDATE workspaces
-   SET owner_run_id = NULL,
-       ownership_generation = ownership_generation + 1,
-       state_version = state_version + 1,
-       last_activity_at = transaction_timestamp(),
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND owner_run_id = $2
-   AND owner_actor_id IS NULL
-   AND NOT EXISTS (
-       SELECT 1
-         FROM workspace_leases
-        WHERE workspace_leases.workspace_id = workspaces.id
-          AND workspace_leases.state IN ('active', 'releasing')
-   )`,
-		child.workspaceID,
-		child.id,
-	)
-	if err != nil || command.RowsAffected() != 1 {
+	rows, err = q.ReleaseQueuedRunWorkspace(ctx, db.ReleaseQueuedRunWorkspaceParams{
+		WorkspaceID: pgvalue.UUID(child.workspaceID),
+		RunID:       childID,
+	})
+	if err != nil || rows != 1 {
 		return cancellationAuthority("release expired queued child Workspace", err)
 	}
-	if _, err := tx.Exec(ctx, `
-INSERT INTO telemetry_outbox (
-    org_id, stream_kind, source_kind, source_id, project_id, environment_id,
-    run_id, attempt_number, trace_id, span_id, category, severity, source,
-    kind, message, payload, redaction_class, snapshot_version, observed_at
-)
-SELECT org_id, 'event', 'run', id, project_id, environment_id,
-       id, current_attempt_number, trace_id, root_span_id, 'lifecycle', 'info',
-       'control', 'run.expired', 'Run expired',
-       jsonb_build_object('reasonCode', 'queued_ttl_expired'),
-       'internal', state_version, transaction_timestamp()
-  FROM runs
- WHERE id = $1`,
-		child.id,
-	); err != nil {
+	if err := q.CreateQueuedRunExpiryEvent(ctx, childID); err != nil {
 		return cancellationAuthority("record queued child expiry event", err)
 	}
 	return nil

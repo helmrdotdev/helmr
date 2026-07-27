@@ -924,6 +924,26 @@ func (q *Queries) CreateChildRunFromParentDeployment(ctx context.Context, arg Cr
 	return i, err
 }
 
+const createQueuedRunExpiryEvent = `-- name: CreateQueuedRunExpiryEvent :exec
+INSERT INTO telemetry_outbox (
+    org_id, stream_kind, source_kind, source_id, project_id, environment_id,
+    run_id, attempt_number, trace_id, span_id, category, severity, source,
+    kind, message, payload, redaction_class, snapshot_version, observed_at
+)
+SELECT runs.org_id, 'event', 'run', runs.id, runs.project_id, runs.environment_id,
+       runs.id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, 'lifecycle', 'info',
+       'control', 'run.expired', 'Run expired',
+       jsonb_build_object('reasonCode', 'queued_ttl_expired'),
+       'internal', runs.state_version, transaction_timestamp()
+  FROM runs
+ WHERE runs.id = $1
+`
+
+func (q *Queries) CreateQueuedRunExpiryEvent(ctx context.Context, runID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, createQueuedRunExpiryEvent, runID)
+	return err
+}
+
 const createRootRunFromCurrentDeployment = `-- name: CreateRootRunFromCurrentDeployment :one
 WITH selected_target AS MATERIALIZED (
     SELECT definitions.environment_id,
@@ -1522,6 +1542,63 @@ func (q *Queries) CreateSameWorkspaceChildRunFromParentDeployment(ctx context.Co
 		&i.TerminalAt,
 	)
 	return i, err
+}
+
+const expireQueuedRun = `-- name: ExpireQueuedRun :execrows
+UPDATE runs
+   SET status = 'expired',
+       terminal_reason_code = 'queued_ttl_expired',
+       error = $1::jsonb,
+       state_version = state_version + 1,
+       retry_at = NULL,
+       terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = $2
+   AND state_version = $3
+   AND status = 'queued'
+   AND current_run_lease_id IS NULL
+   AND first_lease_at IS NULL
+   AND queued_expires_at IS NOT NULL
+   AND queued_expires_at <= transaction_timestamp()
+`
+
+type ExpireQueuedRunParams struct {
+	ErrorPayload         []byte      `json:"error_payload"`
+	ID                   pgtype.UUID `json:"id"`
+	ExpectedStateVersion int64       `json:"expected_state_version"`
+}
+
+func (q *Queries) ExpireQueuedRun(ctx context.Context, arg ExpireQueuedRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, expireQueuedRun, arg.ErrorPayload, arg.ID, arg.ExpectedStateVersion)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const expireQueuedRunAttempt = `-- name: ExpireQueuedRunAttempt :execrows
+UPDATE run_attempts
+   SET terminal_outcome = 'cancelled',
+       terminal_reason_code = 'queued_ttl_expired',
+       terminal_error = $1::jsonb,
+       terminal_at = transaction_timestamp()
+ WHERE run_id = $2
+   AND number = $3
+   AND terminal_at IS NULL
+`
+
+type ExpireQueuedRunAttemptParams struct {
+	ErrorPayload  []byte      `json:"error_payload"`
+	RunID         pgtype.UUID `json:"run_id"`
+	AttemptNumber int32       `json:"attempt_number"`
+}
+
+func (q *Queries) ExpireQueuedRunAttempt(ctx context.Context, arg ExpireQueuedRunAttemptParams) (int64, error) {
+	result, err := q.db.Exec(ctx, expireQueuedRunAttempt, arg.ErrorPayload, arg.RunID, arg.AttemptNumber)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getRun = `-- name: GetRun :one
@@ -2127,6 +2204,31 @@ func (q *Queries) ListRunSnapshots(ctx context.Context, arg ListRunSnapshotsPara
 	return items, nil
 }
 
+const lockQueuedRunExpiry = `-- name: LockQueuedRunExpiry :one
+SELECT first_lease_at,
+       queued_expires_at,
+       coalesce(
+           queued_expires_at <= transaction_timestamp(),
+           false
+       )::bool AS expired
+  FROM runs
+ WHERE id = $1
+ FOR UPDATE
+`
+
+type LockQueuedRunExpiryRow struct {
+	FirstLeaseAt    pgtype.Timestamptz `json:"first_lease_at"`
+	QueuedExpiresAt pgtype.Timestamptz `json:"queued_expires_at"`
+	Expired         bool               `json:"expired"`
+}
+
+func (q *Queries) LockQueuedRunExpiry(ctx context.Context, id pgtype.UUID) (LockQueuedRunExpiryRow, error) {
+	row := q.db.QueryRow(ctx, lockQueuedRunExpiry, id)
+	var i LockQueuedRunExpiryRow
+	err := row.Scan(&i.FirstLeaseAt, &i.QueuedExpiresAt, &i.Expired)
+	return i, err
+}
+
 const lockTaskStartDeploymentAuthority = `-- name: LockTaskStartDeploymentAuthority :one
 SELECT task_definition.id AS task_definition_id,
        task_definition.deployment_id,
@@ -2193,4 +2295,63 @@ func (q *Queries) LockTaskStartDeploymentAuthority(ctx context.Context, arg Lock
 		&i.ProgramArchitecture,
 	)
 	return i, err
+}
+
+const releaseQueuedRunWorkspace = `-- name: ReleaseQueuedRunWorkspace :execrows
+UPDATE workspaces
+   SET owner_run_id = NULL,
+       ownership_generation = ownership_generation + 1,
+       state_version = state_version + 1,
+       last_activity_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE workspaces.id = $1
+   AND workspaces.owner_run_id = $2
+   AND workspaces.owner_actor_id IS NULL
+   AND NOT EXISTS (
+       SELECT 1
+         FROM workspace_leases
+        WHERE workspace_leases.workspace_id = workspaces.id
+          AND workspace_leases.state IN ('active', 'releasing')
+   )
+`
+
+type ReleaseQueuedRunWorkspaceParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RunID       pgtype.UUID `json:"run_id"`
+}
+
+func (q *Queries) ReleaseQueuedRunWorkspace(ctx context.Context, arg ReleaseQueuedRunWorkspaceParams) (int64, error) {
+	result, err := q.db.Exec(ctx, releaseQueuedRunWorkspace, arg.WorkspaceID, arg.RunID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const requestQueuedRunRuntimeCleanup = `-- name: RequestQueuedRunRuntimeCleanup :exec
+WITH closing_runtimes AS (
+    UPDATE runtime_instances
+       SET desired_state = 'closed',
+           desired_version = CASE
+               WHEN desired_state = 'closed' THEN desired_version
+               ELSE desired_version + 1
+           END,
+           desired_at = transaction_timestamp(),
+           desired_reason = 'queued_ttl_expired',
+           updated_at = transaction_timestamp()
+     WHERE reserved_run_id = $1
+       AND observed_state IN ('allocated', 'preparing', 'ready', 'closing')
+    RETURNING id
+)
+UPDATE workspace_mounts
+   SET state = 'unmounting',
+       stopped_at = coalesce(stopped_at, transaction_timestamp()),
+       updated_at = transaction_timestamp()
+ WHERE runtime_instance_id IN (SELECT id FROM closing_runtimes)
+   AND state IN ('mounting', 'mounted')
+`
+
+func (q *Queries) RequestQueuedRunRuntimeCleanup(ctx context.Context, runID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, requestQueuedRunRuntimeCleanup, runID)
+	return err
 }
