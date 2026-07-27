@@ -39,11 +39,13 @@ rec {
   repoChecks = [
     pkgs.bash
     pkgs.coreutils
+    pkgs.diffutils
     pkgs.findutils
     pkgs.gawk
     pkgs.gnugrep
     pkgs.gnused
     pkgs.ripgrep
+    pkgs.rsync
     pkgs.stdenv.cc
     goPackage
     pkgsUnstable.gopls

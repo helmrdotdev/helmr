@@ -19,6 +19,8 @@ set -euo pipefail
 case "$*" in
   *"output -raw bucket_name"*) printf 'state-bucket\n' ;;
   *"output -raw source_artifact_bucket_name"*) printf 'artifact-bucket\n' ;;
+  *"output -raw runtime_store_bucket_arn"*) printf 'arn:aws:s3:::runtime-bucket\n' ;;
+  *"output -raw retained_cas_bucket_arn"*) printf 'arn:aws:s3:::retained-bucket\n' ;;
   *) exit 2 ;;
 esac
 EOF
@@ -31,6 +33,7 @@ case "$*" in
     printf '{"Versions":[{"Key":"helmr/validation-claims/campaign/claim.json","VersionId":"v1"}],"DeleteMarkers":[]}'
     ;;
   *"list-object-versions"*) printf '{"Versions":[],"DeleteMarkers":[]}' ;;
+  *"delete-bucket-policy"*) printf '{}\n' ;;
   *"delete-objects"*) printf '{}\n' ;;
   *) exit 2 ;;
 esac
@@ -42,7 +45,7 @@ if PATH="${tmp}/bin:${PATH}" TF_BIN=tofu "${script}" bootstrap-destroy-prepare >
 fi
 grep -Fq 'contains retained validation claims or evidence' "${tmp}/stderr" || fail "guard failure reason"
 
-PATH="${tmp}/bin:${PATH}" TF_BIN=tofu ALLOW_VALIDATION_EVIDENCE_DELETE=1 \
+PATH="${tmp}/bin:${PATH}" TF_BIN=tofu ALLOW_VALIDATION_EVIDENCE_DELETE=1 ALLOW_RETAINED_STORE_DELETE=1 \
   "${script}" bootstrap-destroy-prepare >"${tmp}/stdout" 2>"${tmp}/stderr"
 
 printf 'ok - validation evidence guard tests\n'
