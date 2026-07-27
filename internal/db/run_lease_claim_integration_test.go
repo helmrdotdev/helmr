@@ -6,8 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -1045,39 +1043,11 @@ func (fixture runLeaseClaimFixture) addWork(
 
 func newRunLeaseClaimDatabase(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	t.Helper()
-	dsn := strings.TrimSpace(os.Getenv("HELMR_TEST_DATABASE_URL"))
-	if dsn == "" {
-		t.Skip("HELMR_TEST_DATABASE_URL is not set")
-	}
-	admin, err := pgxpool.New(ctx, dsn)
-	if err != nil {
+	database := dbtest.Open(t)
+	if err := schema.Up(ctx, database.DSN); err != nil {
 		t.Fatal(err)
 	}
-	name := "helmr_run_lease_" + strings.ReplaceAll(uuid.NewString(), "-", "_")
-	if _, err := admin.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()); err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = admin.Exec(context.Background(),
-			"DROP DATABASE IF EXISTS "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)")
-		admin.Close()
-	})
-	parsed, err := url.Parse(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed.Path = "/" + name
-	testDSN := parsed.String()
-	if err := schema.Up(ctx, testDSN); err != nil {
-		t.Fatal(err)
-	}
-	pool, err := pgxpool.New(ctx, testDSN)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
+	return database.Pool
 }
 
 func mustRunLeaseExec(t *testing.T, ctx context.Context, db interface {

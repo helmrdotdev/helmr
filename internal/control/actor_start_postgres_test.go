@@ -6,12 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -719,47 +715,11 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 
 func openActorStartPostgres(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	for _, name := range []string{"initdb", "pg_ctl", "postgres"} {
-		if _, err := exec.LookPath(name); err != nil {
-			t.Skipf("%s not found; skipping PostgreSQL Actor start test", name)
-		}
-	}
-	dataDir := filepath.Join(t.TempDir(), "data")
-	if output, err := exec.Command("initdb", "-D", dataDir, "-A", "trust").CombinedOutput(); err != nil {
-		t.Fatalf("initdb: %v\n%s", err, output)
-	}
-	port := freeActorStartPostgresPort(t)
-	logPath := filepath.Join(filepath.Dir(dataDir), "postgres.log")
-	command := exec.Command(
-		"pg_ctl", "-D", dataDir, "-l", logPath,
-		"-o", fmt.Sprintf("-p %d -c listen_addresses=127.0.0.1", port), "-w", "start",
-	)
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("pg_ctl start: %v\n%s", err, output)
-	}
-	t.Cleanup(func() {
-		_ = exec.Command("pg_ctl", "-D", dataDir, "-m", "fast", "-w", "stop").Run()
-	})
-	dsn := fmt.Sprintf("postgres://%s@127.0.0.1:%d/postgres?sslmode=disable", os.Getenv("USER"), port)
-	if err := schema.Up(t.Context(), dsn); err != nil {
+	database := dbtest.Open(t)
+	if err := schema.Up(t.Context(), database.DSN); err != nil {
 		t.Fatal(err)
 	}
-	pool, err := pgxpool.New(t.Context(), dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
-}
-
-func freeActorStartPostgresPort(t *testing.T) int {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	return listener.Addr().(*net.TCPAddr).Port
+	return database.Pool
 }
 
 func mustActorStartExec(t *testing.T, executor interface {

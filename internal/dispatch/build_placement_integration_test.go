@@ -4,14 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -348,38 +347,11 @@ UPDATE worker_instances
 
 func newDispatchIntegrationDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	t.Helper()
-	dsn := strings.TrimSpace(os.Getenv("HELMR_TEST_DATABASE_URL"))
-	if dsn == "" {
-		t.Skip("HELMR_TEST_DATABASE_URL is not set")
-	}
-	admin, err := pgxpool.New(ctx, dsn)
-	if err != nil {
+	database := dbtest.Open(t)
+	if err := schema.Up(ctx, database.DSN); err != nil {
 		t.Fatal(err)
 	}
-	name := "helmr_dispatch_" + strings.ReplaceAll(uuid.NewString(), "-", "_")
-	if _, err := admin.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()); err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = admin.Exec(context.Background(), "DROP DATABASE IF EXISTS "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)")
-		admin.Close()
-	})
-	parsed, err := url.Parse(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed.Path = "/" + name
-	testDSN := parsed.String()
-	if err := schema.Up(ctx, testDSN); err != nil {
-		t.Fatal(err)
-	}
-	pool, err := pgxpool.New(ctx, testDSN)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
+	return database.Pool
 }
 
 func dispatchPublicID(t *testing.T, prefix publicid.Prefix) string {

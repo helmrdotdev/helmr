@@ -4,8 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"net/url"
-	"os"
 	"strings"
 	"testing"
 
@@ -17,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/region"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -197,35 +194,11 @@ func testDigest(seed string) string {
 
 func newIntegrationDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	t.Helper()
-	dsn := strings.TrimSpace(os.Getenv("HELMR_TEST_DATABASE_URL"))
-	if dsn == "" {
-		t.Skip("HELMR_TEST_DATABASE_URL is not set")
-	}
-	admin, err := pgxpool.New(ctx, dsn)
-	if err != nil {
+	database := dbtest.Open(t)
+	if err := schema.Up(ctx, database.DSN); err != nil {
 		t.Fatal(err)
 	}
-	name := "helmr_db_" + strings.ReplaceAll(uuid.NewString(), "-", "_")
-	if _, err := admin.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()); err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = admin.Exec(
-			context.Background(),
-			"DROP DATABASE IF EXISTS "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)",
-		)
-		admin.Close()
-	})
-	testDSN := databaseDSN(t, dsn, name)
-	if err := schema.Up(ctx, testDSN); err != nil {
-		t.Fatal(err)
-	}
-	pool, err := pgxpool.New(ctx, testDSN)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
+	pool := database.Pool
 	queries := db.New(pool)
 	if err := region.Ensure(ctx, queries, region.BootstrapConfig{
 		RegionID:          dbtest.DefaultRegionID,
@@ -257,14 +230,4 @@ func newIntegrationDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	return pool
-}
-
-func databaseDSN(t *testing.T, dsn string, database string) string {
-	t.Helper()
-	parsed, err := url.Parse(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed.Path = "/" + database
-	return parsed.String()
 }

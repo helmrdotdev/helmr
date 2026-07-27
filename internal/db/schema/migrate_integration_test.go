@@ -5,15 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -21,38 +20,8 @@ import (
 )
 
 func TestUpWithPostgres(t *testing.T) {
-	ctx := context.Background()
-	if dsn := strings.TrimSpace(os.Getenv("HELMR_TEST_DATABASE_URL")); dsn != "" {
-		testUpWithPostgres(t, ctx, dsn, false)
-		return
-	}
-	for _, name := range []string{"initdb", "pg_ctl", "postgres"} {
-		if _, err := exec.LookPath(name); err != nil {
-			t.Skipf("%s not found; skipping Postgres migration test", name)
-		}
-	}
-	tmp, err := os.MkdirTemp("", "helmr-schema-pg-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = os.RemoveAll(tmp)
-	})
-	dataDir := filepath.Join(tmp, "data")
-	if output, err := exec.Command("initdb", "-D", dataDir, "-A", "trust").CombinedOutput(); err != nil {
-		t.Fatalf("initdb: %v\n%s", err, output)
-	}
-	port := freePostgresPort(t)
-	logPath := filepath.Join(tmp, "postgres.log")
-	start := exec.Command("pg_ctl", "-D", dataDir, "-l", logPath, "-o", fmt.Sprintf("-p %d -c listen_addresses=127.0.0.1", port), "-w", "start")
-	if output, err := start.CombinedOutput(); err != nil {
-		t.Fatalf("pg_ctl start: %v\n%s", err, output)
-	}
-	t.Cleanup(func() {
-		_ = exec.Command("pg_ctl", "-D", dataDir, "-m", "fast", "-w", "stop").Run()
-	})
-	dsn := fmt.Sprintf("postgres://%s@127.0.0.1:%d/postgres?sslmode=disable", os.Getenv("USER"), port)
-	testUpWithPostgres(t, ctx, dsn, true)
+	database := dbtest.Open(t)
+	testUpWithPostgres(t, t.Context(), database.DSN, true)
 }
 
 func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDown bool) {
@@ -1863,14 +1832,4 @@ func assertWorkspaceExecSchema(
 	if legacyTable {
 		t.Fatal("legacy workspace_process_records table exists")
 	}
-}
-
-func freePostgresPort(t *testing.T) int {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	return listener.Addr().(*net.TCPAddr).Port
 }
