@@ -1,4 +1,4 @@
-package db
+package token
 
 import (
 	"errors"
@@ -16,11 +16,11 @@ func TestTokenWaitReconcileCandidateOrderIsLifecycleExplicit(t *testing.T) {
 		"WHEN 'failed' THEN 2",
 		"WHEN 'cancelled' THEN 3",
 	} {
-		if !strings.Contains(discoverTokenWaitReconcileCandidates, clause) {
+		if !strings.Contains(discoverWaitCandidates, clause) {
 			t.Fatalf("candidate query does not pin lifecycle order with %q", clause)
 		}
 	}
-	if strings.Contains(discoverTokenWaitReconcileCandidates, "ORDER BY token_id, condition_state") {
+	if strings.Contains(discoverWaitCandidates, "ORDER BY token_id, condition_state") {
 		t.Fatal("candidate query depends on database type ordering")
 	}
 }
@@ -46,7 +46,7 @@ func TestValidateTokenWaitActorCursor(t *testing.T) {
 			cursor, actorID, pgtype.UUID{Bytes: runID, Valid: true}, 4, 6,
 			run, "actor", pgtype.Int8{Int64: 3, Valid: true},
 		)
-		if !errors.Is(err, ErrTokenWaitReconcileAuthority) {
+		if !errors.Is(err, ErrWaitAuthority) {
 			t.Fatalf("cursor %+v error = %v, want authority error", cursor, err)
 		}
 	}
@@ -62,7 +62,7 @@ func TestValidateTokenWaitTaskRejectsActorCursor(t *testing.T) {
 	if err := validateTokenWaitActorCursor(
 		pgtype.Int8{Int64: 0, Valid: true}, pgtype.UUID{}, pgtype.UUID{}, 0, 0,
 		run, "task", pgtype.Int8{},
-	); !errors.Is(err, ErrTokenWaitReconcileAuthority) {
+	); !errors.Is(err, ErrWaitAuthority) {
 		t.Fatalf("Task Actor cursor error = %v, want authority error", err)
 	}
 }

@@ -302,7 +302,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Run admission delivery: %w", err)
 	}
-	tokenWaitReconciler, err := db.NewTokenWaitReconciler(pool)
+	tokenWaitReconciler, err := token.NewWaitReconciler(pool)
 	if err != nil {
 		return fmt.Errorf("configure Token Wait reconciler: %w", err)
 	}

@@ -33,6 +33,7 @@ type runLeaseClaimFixture struct {
 	workspaceDefinitionID uuid.UUID
 	workerID              uuid.UUID
 	runtimeIdentityID     string
+	base                  runtest.Fixture
 }
 
 type runLeaseWork struct {
@@ -431,6 +432,7 @@ func newRunLeaseClaimFixture(t *testing.T, _ context.Context) runLeaseClaimFixtu
 		workspaceDefinitionID: base.WorkspaceDefinitionID,
 		workerID:              base.WorkerID,
 		runtimeIdentityID:     base.RuntimeIdentityID,
+		base:                  base,
 	}
 }
 
@@ -774,19 +776,23 @@ func (fixture runLeaseClaimFixture) addWork(
 	assignedAt time.Time,
 ) runLeaseWork {
 	t.Helper()
-	base := runtest.Fixture{
-		Pool:                  fixture.pool,
-		OrgID:                 fixture.orgID,
-		ProjectID:             fixture.projectID,
-		EnvironmentID:         fixture.environmentID,
-		DeploymentID:          fixture.deploymentID,
-		TaskDefinitionID:      fixture.taskDefinitionID,
-		WorkspaceDefinitionID: fixture.workspaceDefinitionID,
-		WorkerID:              fixture.workerID,
-		RuntimeIdentityID:     fixture.runtimeIdentityID,
-	}
-	work := base.AddRunLease(t, state, assignedAt)
+	work := fixture.base.AddRunLease(t, state, assignedAt)
 	return runLeaseWork{leaseID: work.LeaseID, runID: work.RunID}
+}
+
+func (fixture runLeaseClaimFixture) convertToActor(
+	t *testing.T,
+	ctx context.Context,
+	work runLeaseWork,
+	retryPolicy string,
+) uuid.UUID {
+	t.Helper()
+	return fixture.base.ConvertToActor(
+		t,
+		ctx,
+		runtest.RunLease{LeaseID: work.leaseID, RunID: work.runID},
+		retryPolicy,
+	)
 }
 
 func mustRunLeaseExec(t *testing.T, ctx context.Context, db interface {

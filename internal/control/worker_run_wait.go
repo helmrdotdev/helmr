@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -102,12 +103,12 @@ func (s *Server) workerCreateTokenRunWait(w http.ResponseWriter, r *http.Request
 	}
 	waitID := derivedRunWaitID(parsed.runID, request.Lease.AttemptNumber, correlationID, "wait")
 	resumeAttachID := derivedRunWaitID(parsed.runID, request.Lease.AttemptNumber, correlationID, "resume-attach")
-	reconcileDB, ok := s.tx.(db.TokenWaitReconcileDB)
+	reconcileDB, ok := s.tx.(token.WaitDB)
 	if !ok {
 		writeError(w, unavailable(errors.New("durable Token Wait storage is not configured")))
 		return
 	}
-	reconciler, err := db.NewTokenWaitReconciler(reconcileDB)
+	reconciler, err := token.NewWaitReconciler(reconcileDB)
 	if err != nil {
 		writeError(w, unavailable(err))
 		return
@@ -116,7 +117,7 @@ func (s *Server) workerCreateTokenRunWait(w http.ResponseWriter, r *http.Request
 	if request.ActorSpeculativeInputSequence != nil {
 		actorCursor = pgtype.Int8{Int64: *request.ActorSpeculativeInputSequence, Valid: true}
 	}
-	registered, err := reconciler.RegisterWait(r.Context(), db.TokenWaitRegistration{
+	registered, err := reconciler.RegisterWait(r.Context(), token.WaitRegistration{
 		EnvironmentID: uuid.UUID(locators.EnvironmentID.Bytes), RunID: parsed.runID,
 		TokenID: tokenID, WaitID: waitID, ResumeAttachID: resumeAttachID,
 		ExpectedRunStateVersion: run.StateVersion, AttemptNumber: request.Lease.AttemptNumber,
@@ -134,7 +135,7 @@ func (s *Server) workerCreateTokenRunWait(w http.ResponseWriter, r *http.Request
 		TimeoutAt:                     timeoutAt, IdleTimeoutMS: idleTimeout, CheckpointDueAt: checkpointDueAt,
 		Metadata: metadata, Tags: tags,
 	})
-	if errors.Is(err, db.ErrTokenWaitReconcileAuthority) {
+	if errors.Is(err, token.ErrWaitAuthority) {
 		writeError(w, conflict(errors.New("worker Run Wait receipt is stale")))
 		return
 	}

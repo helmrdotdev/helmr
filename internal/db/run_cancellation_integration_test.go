@@ -292,13 +292,13 @@ func TestOwnedActorRunFinalizationGraphCancelsOnlyDescendants(t *testing.T) {
 	).Scan(&outerLeaseID); err != nil {
 		t.Fatal(err)
 	}
-	convertTokenWaitWorkToActor(
+
+	fixture.convertToActor(
 		t,
 		ctx,
-		fixture,
+
 		runLeaseWork{leaseID: outerLeaseID, runID: chain.outerRunID},
-		`{"enabled":false}`,
-	)
+		`{"enabled":false}`)
 
 	tx, err := fixture.pool.Begin(ctx)
 	if err != nil {

@@ -1,4 +1,4 @@
-package db
+package token
 
 import (
 	"context"
@@ -10,9 +10,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestTokenWaitRegistrationImmediatelyMatchesTerminalTokenAfterEmptyReconcile(t *testing.T) {
@@ -26,7 +30,7 @@ func TestTokenWaitRegistrationImmediatelyMatchesTerminalTokenAfterEmptyReconcile
 	)); err != nil {
 		t.Fatal(err)
 	}
-	reconciler, err := NewTokenWaitReconciler(fixture.pool)
+	reconciler, err := NewWaitReconciler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +48,7 @@ func TestTokenWaitRegistrationImmediatelyMatchesTerminalTokenAfterEmptyReconcile
 	if err != nil {
 		t.Fatal(err)
 	}
-	if registered.ConditionState != WaitStateCompleted || registered.SuspensionState != RunWaitStateReleased ||
+	if registered.ConditionState != db.WaitStateCompleted || registered.SuspensionState != db.RunWaitStateReleased ||
 		registered.RunStateVersion != expectedRunVersion+2 || string(registered.Result) != `{"approved": true}` {
 		t.Fatalf("registration = %+v", registered)
 	}
@@ -53,10 +57,10 @@ func TestTokenWaitRegistrationImmediatelyMatchesTerminalTokenAfterEmptyReconcile
 		replayed.SuspensionState != registered.SuspensionState || string(replayed.Result) != string(registered.Result) {
 		t.Fatalf("registration replay = %+v, %v; first = %+v", replayed, err, registered)
 	}
-	var runStatus RunStatus
+	var runStatus db.RunStatus
 	var runVersion int64
-	var condition WaitState
-	var suspension RunWaitState
+	var condition db.WaitState
+	var suspension db.RunWaitState
 	if err := fixture.pool.QueryRow(ctx, `
 		SELECT runs.status, runs.state_version, run_waits.condition_state, run_waits.suspension_state
 		  FROM runs JOIN run_waits ON run_waits.run_id = runs.id
@@ -64,7 +68,7 @@ func TestTokenWaitRegistrationImmediatelyMatchesTerminalTokenAfterEmptyReconcile
 	`, work.runID, waitID).Scan(&runStatus, &runVersion, &condition, &suspension); err != nil {
 		t.Fatal(err)
 	}
-	if runStatus != RunStatusRunning || runVersion != expectedRunVersion+2 || condition != WaitStateCompleted || suspension != RunWaitStateReleased {
+	if runStatus != db.RunStatusRunning || runVersion != expectedRunVersion+2 || condition != db.WaitStateCompleted || suspension != db.RunWaitStateReleased {
 		t.Fatalf("durable registration = run %s/%d condition %s suspension %s workspace %s", runStatus, runVersion, condition, suspension, authority.workspaceID)
 	}
 }
@@ -79,7 +83,7 @@ func TestTokenWaitRegistrationBeforeCompletionIsReconciled(t *testing.T) {
 	if err := fixture.pool.QueryRow(ctx, `SELECT state_version FROM runs WHERE id = $1`, work.runID).Scan(&runVersion); err != nil {
 		t.Fatal(err)
 	}
-	reconciler, err := NewTokenWaitReconciler(fixture.pool)
+	reconciler, err := NewWaitReconciler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +93,7 @@ func TestTokenWaitRegistrationBeforeCompletionIsReconciled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if registered.ConditionState != WaitStatePending || registered.SuspensionState != RunWaitStateHot ||
+	if registered.ConditionState != db.WaitStatePending || registered.SuspensionState != db.RunWaitStateHot ||
 		registered.RunStateVersion != runVersion+1 {
 		t.Fatalf("pending registration = %+v", registered)
 	}
@@ -102,9 +106,9 @@ func TestTokenWaitRegistrationBeforeCompletionIsReconciled(t *testing.T) {
 	if err != nil || batch.Examined != 1 || batch.Resolved != 1 {
 		t.Fatalf("registration-first reconcile = %+v, %v", batch, err)
 	}
-	var status RunStatus
-	var condition WaitState
-	var suspension RunWaitState
+	var status db.RunStatus
+	var condition db.WaitState
+	var suspension db.RunWaitState
 	if err := fixture.pool.QueryRow(ctx, `
 		SELECT runs.status, run_waits.condition_state, run_waits.suspension_state
 		  FROM runs JOIN run_waits ON run_waits.run_id = runs.id
@@ -112,7 +116,7 @@ func TestTokenWaitRegistrationBeforeCompletionIsReconciled(t *testing.T) {
 	`, work.runID, waitID).Scan(&status, &condition, &suspension); err != nil {
 		t.Fatal(err)
 	}
-	if status != RunStatusRunning || condition != WaitStateCompleted || suspension != RunWaitStateReleased {
+	if status != db.RunStatusRunning || condition != db.WaitStateCompleted || suspension != db.RunWaitStateReleased {
 		t.Fatalf("registration-first state = run %s condition %s suspension %s", status, condition, suspension)
 	}
 }
@@ -125,7 +129,7 @@ func TestTokenCompletionReconcilesEveryWaitingRunInBoundedBatches(t *testing.T) 
 	startTaskCompletionWork(t, ctx, fixture, first)
 	startTaskCompletionWork(t, ctx, fixture, second)
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
-	reconciler, err := NewTokenWaitReconciler(fixture.pool)
+	reconciler, err := NewWaitReconciler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,8 +146,8 @@ func TestTokenCompletionReconcilesEveryWaitingRunInBoundedBatches(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		if registered.ConditionState != WaitStatePending ||
-			registered.SuspensionState != RunWaitStateHot {
+		if registered.ConditionState != db.WaitStatePending ||
+			registered.SuspensionState != db.RunWaitStateHot {
 			t.Fatalf("pending registration = %+v", registered)
 		}
 	}
@@ -204,7 +208,7 @@ func TestTokenWaitSchemaRejectsCrossEnvironmentReference(t *testing.T) {
 	`, otherEnvironmentID, runLeasePublicID(t, publicid.Environment),
 		fixture.orgID, fixture.projectID, "other-"+shortRunLeaseID(otherEnvironmentID))
 	otherTokenID := uuid.Must(uuid.NewV7())
-	if _, err := fixture.queries.CreateToken(ctx, CreateTokenParams{
+	if _, err := fixture.queries.CreateToken(ctx, db.CreateTokenParams{
 		ID: pgvalue.UUID(otherTokenID), PublicID: runLeasePublicID(t, publicid.Token),
 		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 		EnvironmentID: pgvalue.UUID(otherEnvironmentID),
@@ -271,11 +275,16 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 		if mode.retry {
 			retryPolicy = `{"enabled":true,"maxAttempts":3,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}`
 		}
-		actorID = convertTokenWaitWorkToActor(t, ctx, fixture, work, retryPolicy)
+		actorID = fixture.base.ConvertToActor(
+			t,
+			ctx,
+			runtest.RunLease{LeaseID: work.leaseID, RunID: work.runID},
+			retryPolicy,
+		)
 	}
 	authority := startTaskCompletionWork(t, ctx, fixture, work)
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
-	reconciler, err := NewTokenWaitReconciler(fixture.pool)
+	reconciler, err := NewWaitReconciler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,8 +304,8 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 		t.Fatal(err)
 	}
 	checkpointID := uuid.Must(uuid.NewV7())
-	if _, err := fixture.queries.CreateRunCheckpoint(ctx, CreateRunCheckpointParams{
-		ID: pgvalue.UUID(checkpointID), Kind: RunCheckpointKindSuspend,
+	if _, err := fixture.queries.CreateRunCheckpoint(ctx, db.CreateRunCheckpointParams{
+		ID: pgvalue.UUID(checkpointID), Kind: db.RunCheckpointKindSuspend,
 		RunID: pgvalue.UUID(registration.RunID), AttemptNumber: registration.AttemptNumber,
 		RunWaitID: pgvalue.UUID(registered.WaitID), SourceRunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
 		SourceWorkspaceLeaseID: pgvalue.UUID(registration.WorkspaceLeaseID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
@@ -305,14 +314,14 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.queries.BeginRunLeaseCheckpoint(ctx, BeginRunLeaseCheckpointParams{
+	if _, err := fixture.queries.BeginRunLeaseCheckpoint(ctx, db.BeginRunLeaseCheckpointParams{
 		ID: pgvalue.UUID(registration.CurrentRunLeaseID), RunID: pgvalue.UUID(registration.RunID),
 		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: registration.AttemptNumber,
 		LeaseSequence: registration.LeaseSequence,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	wait, err := fixture.queries.RequestRunWaitCheckpoint(ctx, RequestRunWaitCheckpointParams{
+	wait, err := fixture.queries.RequestRunWaitCheckpoint(ctx, db.RequestRunWaitCheckpointParams{
 		SuspendCheckpointID: pgvalue.UUID(checkpointID), RunID: pgvalue.UUID(registration.RunID),
 		AttemptNumber: registration.AttemptNumber, ID: pgvalue.UUID(registered.WaitID),
 		CurrentRunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
@@ -326,7 +335,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.queries.CloseRunActiveIntervalForCheckpointFailure(ctx, CloseRunActiveIntervalForCheckpointFailureParams{
+	if _, err := fixture.queries.CloseRunActiveIntervalForCheckpointFailure(ctx, db.CloseRunActiveIntervalForCheckpointFailureParams{
 		FailedAt: failedAt, ID: pgvalue.UUID(registration.RunID), OrgID: pgvalue.UUID(fixture.orgID),
 		ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
 		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: registration.AttemptNumber,
@@ -334,7 +343,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.queries.InvalidateFailedRunCheckpoint(ctx, InvalidateFailedRunCheckpointParams{
+	if _, err := fixture.queries.InvalidateFailedRunCheckpoint(ctx, db.InvalidateFailedRunCheckpointParams{
 		FailedAt: failedAt, FailedRequestFingerprint: pgvalue.Text(failureFingerprint),
 		CheckpointID: pgvalue.UUID(checkpointID), RunID: pgvalue.UUID(registration.RunID),
 		AttemptNumber: registration.AttemptNumber, RunWaitID: pgvalue.UUID(registered.WaitID),
@@ -342,7 +351,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.queries.FailCheckpointRunLease(ctx, FailCheckpointRunLeaseParams{
+	if _, err := fixture.queries.FailCheckpointRunLease(ctx, db.FailCheckpointRunLeaseParams{
 		FailedAt: failedAt, Error: failureError, FailedRequestFingerprint: pgvalue.Text(failureFingerprint),
 		RunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID), RunID: pgvalue.UUID(registration.RunID),
 		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: registration.AttemptNumber,
@@ -351,7 +360,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 		t.Fatal(err)
 	}
 	if mode.actor {
-		if _, err := fixture.queries.CompleteActorAttempt(ctx, CompleteActorAttemptParams{
+		if _, err := fixture.queries.CompleteActorAttempt(ctx, db.CompleteActorAttemptParams{
 			TerminalActorInputSequence: pgtype.Int8{}, TerminalOutcome: pgvalue.Text("failed"),
 			ReasonCode: pgvalue.Text("checkpoint_failed"), Error: failureError,
 			CompletedAt: failedAt, RunID: pgvalue.UUID(registration.RunID), Number: registration.AttemptNumber,
@@ -360,7 +369,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 			t.Fatal(err)
 		}
 	} else {
-		if _, err := fixture.queries.CompleteTaskAttempt(ctx, CompleteTaskAttemptParams{
+		if _, err := fixture.queries.CompleteTaskAttempt(ctx, db.CompleteTaskAttemptParams{
 			TerminalOutcome: pgvalue.Text("failed"), ReasonCode: pgvalue.Text("checkpoint_failed"), Error: failureError,
 			CompletedAt: failedAt, RunID: pgvalue.UUID(registration.RunID), Number: registration.AttemptNumber,
 			WorkspaceID: pgvalue.UUID(authority.workspaceID),
@@ -368,7 +377,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 			t.Fatal(err)
 		}
 	}
-	if _, err := fixture.queries.FailCheckpointRunWait(ctx, FailCheckpointRunWaitParams{
+	if _, err := fixture.queries.FailCheckpointRunWait(ctx, db.FailCheckpointRunWaitParams{
 		CheckpointRequestVersion: wait.CheckpointRequestVersion, FailedAt: failedAt, Error: failureError,
 		RunWaitID: pgvalue.UUID(registered.WaitID), RunID: pgvalue.UUID(registration.RunID),
 		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: registration.AttemptNumber,
@@ -376,7 +385,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.queries.ReleaseTaskWorkspaceLease(ctx, ReleaseTaskWorkspaceLeaseParams{
+	if _, err := fixture.queries.ReleaseTaskWorkspaceLease(ctx, db.ReleaseTaskWorkspaceLeaseParams{
 		CompletedAt: failedAt, ID: pgvalue.UUID(authority.workspaceLeaseID),
 		WorkspaceID: pgvalue.UUID(authority.workspaceID), WorkspaceMountID: pgvalue.UUID(authority.mountID),
 		RuntimeInstanceID: pgvalue.UUID(authority.runtimeID), OwnerRunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
@@ -385,7 +394,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.queries.RequestCheckpointFailureRuntimeClose(ctx, RequestCheckpointFailureRuntimeCloseParams{
+	if _, err := fixture.queries.RequestCheckpointFailureRuntimeClose(ctx, db.RequestCheckpointFailureRuntimeCloseParams{
 		FailedAt: failedAt, WorkspaceMountID: pgvalue.UUID(authority.mountID), OrgID: pgvalue.UUID(fixture.orgID),
 		ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
 		WorkspaceID: pgvalue.UUID(authority.workspaceID), WorkerInstanceID: pgvalue.UUID(fixture.workerID),
@@ -396,14 +405,14 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	}
 	if mode.retry {
 		if mode.actor {
-			if _, err := fixture.queries.CreateActorCheckpointFailureRetryAttempt(ctx, CreateActorCheckpointFailureRetryAttemptParams{
+			if _, err := fixture.queries.CreateActorCheckpointFailureRetryAttempt(ctx, db.CreateActorCheckpointFailureRetryAttemptParams{
 				Number: registration.AttemptNumber + 1, ExpectedRunGeneration: 1,
 				RunID: pgvalue.UUID(registration.RunID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 				PreviousAttemptNumber: registration.AttemptNumber, RunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := fixture.queries.DelayActorCheckpointFailureRetry(ctx, DelayActorCheckpointFailureRetryParams{
+			if _, err := fixture.queries.DelayActorCheckpointFailureRetry(ctx, db.DelayActorCheckpointFailureRetryParams{
 				NextAttemptNumber: registration.AttemptNumber + 1,
 				RetryAt:           pgvalue.Timestamptz(failedAt.Time.Add(time.Second)), FailedAt: failedAt,
 				ID: pgvalue.UUID(registration.RunID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
@@ -413,14 +422,14 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 				t.Fatal(err)
 			}
 		} else {
-			if _, err := fixture.queries.CreateCheckpointFailureRetryAttempt(ctx, CreateCheckpointFailureRetryAttemptParams{
+			if _, err := fixture.queries.CreateCheckpointFailureRetryAttempt(ctx, db.CreateCheckpointFailureRetryAttemptParams{
 				Number: registration.AttemptNumber + 1, RunID: pgvalue.UUID(registration.RunID),
 				WorkspaceID: pgvalue.UUID(authority.workspaceID), PreviousAttemptNumber: registration.AttemptNumber,
 				RunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := fixture.queries.DelayCheckpointFailureRetry(ctx, DelayCheckpointFailureRetryParams{
+			if _, err := fixture.queries.DelayCheckpointFailureRetry(ctx, db.DelayCheckpointFailureRetryParams{
 				NextAttemptNumber: registration.AttemptNumber + 1,
 				RetryAt:           pgvalue.Timestamptz(failedAt.Time.Add(time.Second)), FailedAt: failedAt,
 				ID: pgvalue.UUID(registration.RunID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
@@ -431,17 +440,17 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 		}
 	} else {
 		if mode.actor {
-			runStatus := RunStatusSystemFailed
+			runStatus := db.RunStatusSystemFailed
 			reason := "checkpoint_failed"
 			actorState := "failed"
 			failureCode := pgvalue.Text("platform_failure")
 			failureRunID := pgvalue.UUID(registration.RunID)
 			if mode.maxDuration {
-				runStatus = RunStatusExpired
+				runStatus = db.RunStatusExpired
 				reason = "max_active_duration_exceeded"
 				failureCode = pgvalue.Text("run_expired")
 			}
-			if _, err := fixture.queries.FinishCheckpointFailedActorRun(ctx, FinishCheckpointFailedActorRunParams{
+			if _, err := fixture.queries.FinishCheckpointFailedActorRun(ctx, db.FinishCheckpointFailedActorRunParams{
 				Status: runStatus, ReasonCode: pgvalue.Text(reason), Error: failureError, FailedAt: failedAt,
 				ID: pgvalue.UUID(registration.RunID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 				ActorID: pgvalue.UUID(actorID), AttemptNumber: registration.AttemptNumber,
@@ -449,7 +458,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := fixture.queries.ReconcileActorTerminalRun(ctx, ReconcileActorTerminalRunParams{
+			if _, err := fixture.queries.ReconcileActorTerminalRun(ctx, db.ReconcileActorTerminalRunParams{
 				State: actorState, FailureCode: failureCode, FailureRunID: failureRunID, CompletedAt: failedAt,
 				EnvironmentID: pgvalue.UUID(fixture.environmentID), ID: pgvalue.UUID(actorID),
 				WorkspaceID: pgvalue.UUID(authority.workspaceID), RunID: pgvalue.UUID(registration.RunID),
@@ -457,7 +466,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := fixture.queries.ReleaseActorWorkspaceOwner(ctx, ReleaseActorWorkspaceOwnerParams{
+			if _, err := fixture.queries.ReleaseActorWorkspaceOwner(ctx, db.ReleaseActorWorkspaceOwnerParams{
 				CompletedAt: failedAt, ID: pgvalue.UUID(authority.workspaceID),
 				EnvironmentID: pgvalue.UUID(fixture.environmentID),
 				ActorID:       pgvalue.UUID(actorID), OwnershipGeneration: 1, WriterGeneration: 1,
@@ -465,7 +474,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 				t.Fatal(err)
 			}
 		} else {
-			if _, err := fixture.queries.ReleaseTaskWorkspaceOwner(ctx, ReleaseTaskWorkspaceOwnerParams{
+			if _, err := fixture.queries.ReleaseTaskWorkspaceOwner(ctx, db.ReleaseTaskWorkspaceOwnerParams{
 				CompletedAt: failedAt, ID: pgvalue.UUID(authority.workspaceID), OrgID: pgvalue.UUID(fixture.orgID),
 				ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
 				RunID: pgvalue.UUID(registration.RunID), OwnershipGeneration: 1, WriterGeneration: 1,
@@ -473,8 +482,8 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := fixture.queries.FinishCheckpointFailedTaskRun(ctx, FinishCheckpointFailedTaskRunParams{
-				Status: RunStatusSystemFailed, ReasonCode: pgvalue.Text("checkpoint_failed"), Error: failureError,
+			if _, err := fixture.queries.FinishCheckpointFailedTaskRun(ctx, db.FinishCheckpointFailedTaskRunParams{
+				Status: db.RunStatusSystemFailed, ReasonCode: pgvalue.Text("checkpoint_failed"), Error: failureError,
 				FailedAt: failedAt, ID: pgvalue.UUID(registration.RunID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 				AttemptNumber: registration.AttemptNumber, RunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
 			}); err != nil {
@@ -491,15 +500,15 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 		!replay.FailedRequestFingerprint.Valid || replay.FailedRequestFingerprint.String != failureFingerprint {
 		t.Fatalf("failed checkpoint replay = %+v", replay)
 	}
-	var runStatus RunStatus
-	var leaseState RunLeaseState
-	var condition WaitState
-	var suspension RunWaitState
-	var checkpointState RunCheckpointState
+	var runStatus db.RunStatus
+	var leaseState db.RunLeaseState
+	var condition db.WaitState
+	var suspension db.RunWaitState
+	var checkpointState db.RunCheckpointState
 	var attemptOutcome pgtype.Text
-	var workspaceLeaseState WorkspaceLeaseState
-	var runtimeDesired RuntimeDesiredState
-	var mountState WorkspaceMountState
+	var workspaceLeaseState db.WorkspaceLeaseState
+	var runtimeDesired db.RuntimeDesiredState
+	var mountState db.WorkspaceMountState
 	var ownerRunID pgtype.UUID
 	var currentLeaseID pgtype.UUID
 	var activeStartedAt pgtype.Timestamptz
@@ -528,16 +537,16 @@ SELECT runs.status, run_leases.state, run_waits.condition_state, run_waits.suspe
 		&currentAttemptNumber, &retryAt, &nextAttemptCount); err != nil {
 		t.Fatal(err)
 	}
-	expectedStatus := RunStatusSystemFailed
+	expectedStatus := db.RunStatusSystemFailed
 	if mode.retry {
-		expectedStatus = RunStatusRetryDelayed
+		expectedStatus = db.RunStatusRetryDelayed
 	} else if mode.maxDuration {
-		expectedStatus = RunStatusExpired
+		expectedStatus = db.RunStatusExpired
 	}
-	if runStatus != expectedStatus || leaseState != RunLeaseStateFailed || condition != WaitStateCancelled ||
-		suspension != RunWaitStateFailed || checkpointState != RunCheckpointStateInvalid ||
-		!attemptOutcome.Valid || attemptOutcome.String != "failed" || workspaceLeaseState != WorkspaceLeaseStateReleased ||
-		runtimeDesired != RuntimeDesiredStateClosed || mountState != WorkspaceMountStateUnmounting ||
+	if runStatus != expectedStatus || leaseState != db.RunLeaseStateFailed || condition != db.WaitStateCancelled ||
+		suspension != db.RunWaitStateFailed || checkpointState != db.RunCheckpointStateInvalid ||
+		!attemptOutcome.Valid || attemptOutcome.String != "failed" || workspaceLeaseState != db.WorkspaceLeaseStateReleased ||
+		runtimeDesired != db.RuntimeDesiredStateClosed || mountState != db.WorkspaceMountStateUnmounting ||
 		currentLeaseID.Valid || activeStartedAt.Valid ||
 		(mode.retry && (currentAttemptNumber != 2 || !retryAt.Valid || nextAttemptCount != 1)) ||
 		(!mode.retry && (currentAttemptNumber != 1 || retryAt.Valid || nextAttemptCount != 0)) ||
@@ -608,11 +617,16 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	if actor {
-		convertTokenWaitWorkToActor(t, ctx, fixture, work, `{"enabled":false}`)
+		fixture.base.ConvertToActor(
+			t,
+			ctx,
+			runtest.RunLease{LeaseID: work.leaseID, RunID: work.runID},
+			`{"enabled":false}`,
+		)
 	}
 	authority := startTaskCompletionWork(t, ctx, fixture, work)
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
-	reconciler, err := NewTokenWaitReconciler(fixture.pool)
+	reconciler, err := NewWaitReconciler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -637,9 +651,9 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	queries := New(tx)
-	if _, err := queries.CreateRunCheckpoint(ctx, CreateRunCheckpointParams{
-		ID: pgvalue.UUID(checkpointID), Kind: RunCheckpointKindSuspend,
+	queries := db.New(tx)
+	if _, err := queries.CreateRunCheckpoint(ctx, db.CreateRunCheckpointParams{
+		ID: pgvalue.UUID(checkpointID), Kind: db.RunCheckpointKindSuspend,
 		RunID: pgvalue.UUID(registration.RunID), AttemptNumber: registration.AttemptNumber,
 		RunWaitID: pgvalue.UUID(registered.WaitID), SourceRunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
 		SourceWorkspaceLeaseID: pgvalue.UUID(registration.WorkspaceLeaseID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
@@ -648,14 +662,14 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.BeginRunLeaseCheckpoint(ctx, BeginRunLeaseCheckpointParams{
+	if _, err := queries.BeginRunLeaseCheckpoint(ctx, db.BeginRunLeaseCheckpointParams{
 		ID: pgvalue.UUID(registration.CurrentRunLeaseID), RunID: pgvalue.UUID(registration.RunID),
 		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: registration.AttemptNumber,
 		LeaseSequence: registration.LeaseSequence,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	wait, err := queries.RequestRunWaitCheckpoint(ctx, RequestRunWaitCheckpointParams{
+	wait, err := queries.RequestRunWaitCheckpoint(ctx, db.RequestRunWaitCheckpointParams{
 		SuspendCheckpointID: pgvalue.UUID(checkpointID), RunID: pgvalue.UUID(registration.RunID),
 		AttemptNumber: registration.AttemptNumber, ID: pgvalue.UUID(registered.WaitID),
 		CurrentRunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
@@ -663,21 +677,21 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.UpsertCasObject(ctx, UpsertCasObjectParams{
+	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		OrgID: pgvalue.UUID(fixture.orgID), Digest: workspaceDigest, SizeBytes: 10,
 		MediaType: "application/vnd.helmr.workspace.v0.tar",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.CreateArtifact(ctx, CreateArtifactParams{
+	if _, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID: pgvalue.UUID(workspaceArtifactID), OrgID: pgvalue.UUID(fixture.orgID),
 		ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
-		Digest: workspaceDigest, Kind: ArtifactKindWorkspaceVersion, SizeBytes: 10,
+		Digest: workspaceDigest, Kind: db.ArtifactKindWorkspaceVersion, SizeBytes: 10,
 		MediaType: "application/vnd.helmr.workspace.v0.tar",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.CreatePrivateCheckpointWorkspaceVersion(ctx, CreatePrivateCheckpointWorkspaceVersionParams{
+	if _, err := queries.CreatePrivateCheckpointWorkspaceVersion(ctx, db.CreatePrivateCheckpointWorkspaceVersionParams{
 		ID: pgvalue.UUID(privateVersionID), PublicID: tokenWaitTestPublicID(t, publicid.WorkspaceVersion),
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 		ParentVersionID: pgvalue.UUID(authority.physicalVersionID), ArtifactID: pgvalue.UUID(workspaceArtifactID),
@@ -686,7 +700,7 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.MarkRunCheckpointReady(ctx, MarkRunCheckpointReadyParams{
+	if _, err := queries.MarkRunCheckpointReady(ctx, db.MarkRunCheckpointReadyParams{
 		PrivateWorkspaceVersionID: pgvalue.UUID(privateVersionID),
 		RestoreManifest:           []byte(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
 		ReadyRequestFingerprint:   pgvalue.Text(tokenWaitTestDigest("checkpoint-ready-" + checkpointID.String())),
@@ -694,7 +708,7 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.CloseRunActiveIntervalForCheckpoint(ctx, CloseRunActiveIntervalForCheckpointParams{
+	if _, err := queries.CloseRunActiveIntervalForCheckpoint(ctx, db.CloseRunActiveIntervalForCheckpointParams{
 		ID: pgvalue.UUID(registration.RunID), OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 		AttemptNumber: registration.AttemptNumber, RunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
@@ -702,7 +716,7 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 		t.Fatal(err)
 	}
 	checkpointedAt := pgvalue.Timestamptz(time.Now().UTC())
-	if _, err := queries.UpdateTaskWorkspaceMountFrontier(ctx, UpdateTaskWorkspaceMountFrontierParams{
+	if _, err := queries.UpdateTaskWorkspaceMountFrontier(ctx, db.UpdateTaskWorkspaceMountFrontierParams{
 		NewVersionID: pgvalue.UUID(privateVersionID), CompletedAt: checkpointedAt,
 		ID: pgvalue.UUID(authority.mountID), OrgID: pgvalue.UUID(fixture.orgID),
 		ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
@@ -711,14 +725,14 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.CheckpointRunLease(ctx, CheckpointRunLeaseParams{
+	if _, err := queries.CheckpointRunLease(ctx, db.CheckpointRunLeaseParams{
 		CheckpointedAt: checkpointedAt, ID: pgvalue.UUID(registration.CurrentRunLeaseID),
 		RunID: pgvalue.UUID(registration.RunID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 		AttemptNumber: registration.AttemptNumber, LeaseSequence: registration.LeaseSequence,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.ReleaseCheckpointWorkspaceLease(ctx, ReleaseCheckpointWorkspaceLeaseParams{
+	if _, err := queries.ReleaseCheckpointWorkspaceLease(ctx, db.ReleaseCheckpointWorkspaceLeaseParams{
 		CheckpointedAt: checkpointedAt, ID: pgvalue.UUID(authority.workspaceLeaseID),
 		WorkspaceID: pgvalue.UUID(authority.workspaceID), WorkspaceMountID: pgvalue.UUID(authority.mountID),
 		RuntimeInstanceID: pgvalue.UUID(authority.runtimeID), OwnerRunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
@@ -727,7 +741,7 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.CommitPendingCheckpointReady(ctx, CommitPendingCheckpointReadyParams{
+	if _, err := queries.CommitPendingCheckpointReady(ctx, db.CommitPendingCheckpointReadyParams{
 		CheckpointedAt: checkpointedAt, RunID: pgvalue.UUID(registration.RunID),
 		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: registration.AttemptNumber,
 		RunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID), ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
@@ -739,13 +753,13 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var runStatus RunStatus
+	var runStatus db.RunStatus
 	var currentLease pgtype.UUID
-	var leaseState RunLeaseState
-	var workspaceLeaseState WorkspaceLeaseState
-	var suspension RunWaitState
+	var leaseState db.RunLeaseState
+	var workspaceLeaseState db.WorkspaceLeaseState
+	var suspension db.RunWaitState
 	var priorLease pgtype.UUID
-	var checkpointState RunCheckpointState
+	var checkpointState db.RunCheckpointState
 	var mountVersion uuid.UUID
 	if err := fixture.pool.QueryRow(ctx, `
 SELECT runs.status, runs.current_run_lease_id, run_leases.state, workspace_leases.state,
@@ -762,16 +776,16 @@ SELECT runs.status, runs.current_run_lease_id, run_leases.state, workspace_lease
 	).Scan(&runStatus, &currentLease, &leaseState, &workspaceLeaseState, &suspension, &priorLease, &checkpointState, &mountVersion); err != nil {
 		t.Fatal(err)
 	}
-	if runStatus != RunStatusWaiting || currentLease.Valid || leaseState != RunLeaseStateCheckpointed ||
-		workspaceLeaseState != WorkspaceLeaseStateReleased || suspension != RunWaitStateParked ||
+	if runStatus != db.RunStatusWaiting || currentLease.Valid || leaseState != db.RunLeaseStateCheckpointed ||
+		workspaceLeaseState != db.WorkspaceLeaseStateReleased || suspension != db.RunWaitStateParked ||
 		!priorLease.Valid || uuid.UUID(priorLease.Bytes) != registration.CurrentRunLeaseID ||
-		checkpointState != RunCheckpointStateReady || mountVersion != privateVersionID {
+		checkpointState != db.RunCheckpointStateReady || mountVersion != privateVersionID {
 		t.Fatalf("ready checkpoint state = run=%s/%v lease=%s workspace_lease=%s wait=%s/%v checkpoint=%s mount=%s",
 			runStatus, currentLease, leaseState, workspaceLeaseState, suspension, priorLease, checkpointState, mountVersion)
 	}
 	if actor {
 		committedAt := pgvalue.Timestamptz(time.Now().UTC())
-		if _, err := fixture.queries.InvalidateRestoredActorCheckpoint(ctx, InvalidateRestoredActorCheckpointParams{
+		if _, err := fixture.queries.InvalidateRestoredActorCheckpoint(ctx, db.InvalidateRestoredActorCheckpointParams{
 			CommittedAt: committedAt, RestoreCheckpointID: pgvalue.UUID(checkpointID),
 			RunID: pgvalue.UUID(registration.RunID), AttemptNumber: registration.AttemptNumber,
 			WorkspaceID: pgvalue.UUID(authority.workspaceID), PrivateWorkspaceVersionID: pgvalue.UUID(privateVersionID),
@@ -780,7 +794,7 @@ SELECT runs.status, runs.current_run_lease_id, run_leases.state, workspace_lease
 			t.Fatal(err)
 		}
 		if _, err := fixture.queries.PublishRestoredActorCheckpointWorkspaceVersion(
-			ctx, PublishRestoredActorCheckpointWorkspaceVersionParams{
+			ctx, db.PublishRestoredActorCheckpointWorkspaceVersionParams{
 				CommittedAt: committedAt, VersionID: pgvalue.UUID(privateVersionID),
 				WorkspaceID: pgvalue.UUID(authority.workspaceID), ExpectedParentVersionID: pgvalue.UUID(authority.physicalVersionID),
 				OwnershipGeneration: 1, WriterGeneration: 1, RestoreCheckpointID: pgvalue.UUID(checkpointID),
@@ -789,8 +803,8 @@ SELECT runs.status, runs.current_run_lease_id, run_leases.state, workspace_lease
 		); err != nil {
 			t.Fatal(err)
 		}
-		var consumedState RunCheckpointState
-		var versionState WorkspaceVersionState
+		var consumedState db.RunCheckpointState
+		var versionState db.WorkspaceVersionState
 		if err := fixture.pool.QueryRow(ctx, `
 SELECT run_checkpoints.state, workspace_versions.state
   FROM run_checkpoints
@@ -798,7 +812,7 @@ SELECT run_checkpoints.state, workspace_versions.state
  WHERE run_checkpoints.id = $1`, checkpointID).Scan(&consumedState, &versionState); err != nil {
 			t.Fatal(err)
 		}
-		if consumedState != RunCheckpointStateInvalid || versionState != WorkspaceVersionStateCommitted {
+		if consumedState != db.RunCheckpointStateInvalid || versionState != db.WorkspaceVersionStateCommitted {
 			t.Fatalf("consumed restored checkpoint = checkpoint %s version %s", consumedState, versionState)
 		}
 	}
@@ -811,12 +825,12 @@ func TestTokenWaitRegistrationConcurrentReplayConverges(t *testing.T) {
 	startTaskCompletionWork(t, ctx, fixture, work)
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
 	request := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.Must(uuid.NewV7()))
-	reconciler, err := NewTokenWaitReconciler(fixture.pool)
+	reconciler, err := NewWaitReconciler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
 	type registrationOutcome struct {
-		result TokenWaitRegistrationResult
+		result WaitRegistrationResult
 		err    error
 	}
 	start := make(chan struct{})
@@ -836,8 +850,8 @@ func TestTokenWaitRegistrationConcurrentReplayConverges(t *testing.T) {
 	close(outcomes)
 	for outcome := range outcomes {
 		if outcome.err != nil || outcome.result.WaitID != request.WaitID ||
-			outcome.result.ConditionState != WaitStatePending ||
-			outcome.result.SuspensionState != RunWaitStateHot {
+			outcome.result.ConditionState != db.WaitStatePending ||
+			outcome.result.SuspensionState != db.RunWaitStateHot {
 			t.Fatalf("concurrent registration = %+v, %v", outcome.result, outcome.err)
 		}
 	}
@@ -857,7 +871,7 @@ func TestTokenWaitRegistrationReplaySurvivesParkedCompletion(t *testing.T) {
 	startTaskCompletionWork(t, ctx, fixture, work)
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
 	request := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.Must(uuid.NewV7()))
-	reconciler, err := NewTokenWaitReconciler(fixture.pool)
+	reconciler, err := NewWaitReconciler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -914,8 +928,8 @@ func TestTokenWaitRegistrationReplaySurvivesParkedCompletion(t *testing.T) {
 		t.Fatalf("parked completion = %+v, %v", batch, err)
 	}
 	replayed, err := reconciler.RegisterWait(ctx, request)
-	if err != nil || replayed.WaitID != request.WaitID || replayed.ConditionState != WaitStateCancelled ||
-		replayed.SuspensionState != RunWaitStateResumePending ||
+	if err != nil || replayed.WaitID != request.WaitID || replayed.ConditionState != db.WaitStateCancelled ||
+		replayed.SuspensionState != db.RunWaitStateResumePending ||
 		replayed.RunStateVersion != registered.RunStateVersion+1 {
 		t.Fatalf("parked registration replay = %+v, %v; first = %+v", replayed, err, registered)
 	}
@@ -927,7 +941,7 @@ func TestTokenWaitRegistrationReplaySurvivesParkedCompletion(t *testing.T) {
 	}
 	changed := request
 	changed.RequestFingerprint = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	if _, err := reconciler.RegisterWait(ctx, changed); !errors.Is(err, ErrTokenWaitReconcileAuthority) {
+	if _, err := reconciler.RegisterWait(ctx, changed); !errors.Is(err, ErrWaitAuthority) {
 		t.Fatalf("changed registration replay error = %v", err)
 	}
 }
@@ -943,12 +957,12 @@ func TestTokenWaitRegistrationAllowsDrainingInFlightWorker(t *testing.T) {
 	mustRunLeaseExec(t, ctx, fixture.pool, `
 		UPDATE worker_instances SET state = 'draining', draining_at = transaction_timestamp() WHERE id = $1
 	`, request.WorkerInstanceID)
-	reconciler, err := NewTokenWaitReconciler(fixture.pool)
+	reconciler, err := NewWaitReconciler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
 	registered, err := reconciler.RegisterWait(ctx, request)
-	if err != nil || registered.WaitID != request.WaitID || registered.ConditionState != WaitStatePending {
+	if err != nil || registered.WaitID != request.WaitID || registered.ConditionState != db.WaitStatePending {
 		t.Fatalf("draining worker registration = %+v, %v", registered, err)
 	}
 }
@@ -967,14 +981,14 @@ func TestTokenWaitRegistrationRejectsExpiredPhysicalAuthority(t *testing.T) {
 		       expires_at = transaction_timestamp() - interval '1 second'
 		 WHERE id = $1
 	`, work.leaseID)
-	reconciler, err := NewTokenWaitReconciler(fixture.pool)
+	reconciler, err := NewWaitReconciler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reconciler.RegisterWait(ctx, request); !errors.Is(err, ErrTokenWaitReconcileAuthority) {
+	if _, err := reconciler.RegisterWait(ctx, request); !errors.Is(err, ErrWaitAuthority) {
 		t.Fatalf("expired registration error = %v", err)
 	}
-	var status RunStatus
+	var status db.RunStatus
 	var waitCount int
 	if err := fixture.pool.QueryRow(ctx, `
 		SELECT status, (SELECT count(*) FROM run_waits WHERE id = $2)
@@ -982,7 +996,7 @@ func TestTokenWaitRegistrationRejectsExpiredPhysicalAuthority(t *testing.T) {
 	`, work.runID, waitID).Scan(&status, &waitCount); err != nil {
 		t.Fatal(err)
 	}
-	if status != RunStatusRunning || waitCount != 0 {
+	if status != db.RunStatusRunning || waitCount != 0 {
 		t.Fatalf("expired authority mutated run=%s waits=%d", status, waitCount)
 	}
 }
@@ -1001,7 +1015,7 @@ func TestTokenWaitRegistrationAcceptsChildRun(t *testing.T) {
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
 	waitID := uuid.Must(uuid.NewV7())
 	request := tokenWaitRegistrationRequest(t, ctx, fixture, child, tokenID, waitID)
-	reconciler, err := NewTokenWaitReconciler(fixture.pool)
+	reconciler, err := NewWaitReconciler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1013,7 +1027,7 @@ func TestTokenWaitRegistrationAcceptsChildRun(t *testing.T) {
 	if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM run_waits WHERE id = $1`, waitID).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if registered.WaitID != waitID || registered.ConditionState != WaitStatePending || count != 1 {
+	if registered.WaitID != waitID || registered.ConditionState != db.WaitStatePending || count != 1 {
 		t.Fatalf("child registration = %+v, waits=%d", registered, count)
 	}
 }
@@ -1025,9 +1039,9 @@ func tokenWaitRegistrationRequest(
 	work runLeaseWork,
 	tokenID uuid.UUID,
 	waitID uuid.UUID,
-) TokenWaitRegistration {
+) WaitRegistration {
 	t.Helper()
-	request := TokenWaitRegistration{
+	request := WaitRegistration{
 		EnvironmentID: fixture.environmentID, RunID: work.runID, TokenID: tokenID,
 		WaitID: waitID, ResumeAttachID: uuid.Must(uuid.NewV7()), AttemptNumber: 1,
 		CurrentRunLeaseID:  work.leaseID,
@@ -1063,81 +1077,12 @@ func tokenWaitRegistrationRequest(
 	return request
 }
 
-func convertTokenWaitWorkToActor(
-	t *testing.T,
-	ctx context.Context,
-	fixture runLeaseClaimFixture,
-	work runLeaseWork,
-	retryPolicy string,
-) uuid.UUID {
-	t.Helper()
-	actorDefinitionID := uuid.Must(uuid.NewV7())
-	actorID := uuid.Must(uuid.NewV7())
-	mustRunLeaseExec(t, ctx, fixture.pool, `
-ALTER TABLE run_attempts
-ALTER CONSTRAINT run_attempts_run_id_entrypoint_kind_workspace_id_fkey
-DEFERRABLE INITIALLY DEFERRED`)
-	tx, err := fixture.pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(context.Background())
-	if _, err := tx.Exec(ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
-		t.Fatal(err)
-	}
-	var workspaceID uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT workspace_id FROM runs WHERE id = $1`, work.runID).Scan(&workspaceID); err != nil {
-		t.Fatal(err)
-	}
-	mustRunLeaseExec(t, ctx, tx, `
-INSERT INTO deployment_definitions (
-    id, environment_id, deployment_id, kind, declared_id,
-    manifest_version, manifest, manifest_digest
-) VALUES (
-    $1, $2, $3, 'actor', 'test-actor', 0, '{}'::jsonb,
-    decode(repeat('05', 32), 'hex')
-)`, actorDefinitionID, fixture.environmentID, fixture.deploymentID)
-	mustRunLeaseExec(t, ctx, tx, `
-INSERT INTO actors (
-    id, public_id, environment_id,
-    actor_declared_id, deployment_definition_id, workspace_id, current_run_id,
-    next_input_sequence, committed_input_sequence,
-    run_queue_name, run_max_active_duration_ms, run_retry_policy
-) VALUES (
-    $1, $2, $3,
-    'test-actor', $4, $5, $6,
-    3, 1, 'default', 300000, $7::jsonb
-)`, actorID, "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
-		fixture.environmentID, actorDefinitionID, workspaceID, work.runID, retryPolicy)
-	mustRunLeaseExec(t, ctx, tx, `
-UPDATE workspaces
-   SET owner_actor_id = $1, owner_run_id = NULL
- WHERE id = $2`, actorID, workspaceID)
-	mustRunLeaseExec(t, ctx, tx, `
-UPDATE runs
-   SET deployment_definition_id = $1,
-       entrypoint_kind = 'actor', entrypoint_declared_id = 'test-actor',
-       actor_id = $2, cause_kind = 'actor_start',
-       actor_start_input_sequence = 1, actor_start_input_high_watermark = 2,
-       payload = NULL, retry_policy = $3::jsonb
- WHERE id = $4`, actorDefinitionID, actorID, retryPolicy, work.runID)
-	mustRunLeaseExec(t, ctx, tx, `
-UPDATE run_attempts
-   SET entrypoint_kind = 'actor',
-       actor_start_input_sequence = 1
- WHERE run_id = $1 AND number = 1`, work.runID)
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	return actorID
-}
-
 func TestTokenWaitReconcilerTransitionsHotCheckpointingAndParkedWaits(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("hot completion releases without Lease churn", func(t *testing.T) {
 		fixture := newRunLeaseClaimFixture(t, ctx)
-		setup := newTokenWaitReconcileSetup(t, ctx, fixture, RunWaitStateHot, time.Now().Add(time.Hour))
+		setup := newTokenWaitReconcileSetup(t, ctx, fixture, db.RunWaitStateHot, time.Now().Add(time.Hour))
 		if _, err := fixture.queries.CompleteToken(ctx, tokenCompletionParams(
 			fixture,
 			setup.tokenID,
@@ -1152,8 +1097,8 @@ func TestTokenWaitReconcilerTransitionsHotCheckpointingAndParkedWaits(t *testing
 			t.Fatalf("batch = %+v", batch)
 		}
 		assertTokenWaitReconcileState(t, ctx, fixture, setup, tokenWaitReconcileWant{
-			runStatus: RunStatusRunning, runVersion: 3,
-			conditionState: WaitStateCompleted, suspensionState: RunWaitStateReleased,
+			runStatus: db.RunStatusRunning, runVersion: 3,
+			conditionState: db.WaitStateCompleted, suspensionState: db.RunWaitStateReleased,
 			currentLeaseID: pgvalue.UUID(setup.leaseID), priorLeaseID: pgtype.UUID{},
 			result: `{"approved": true}`, reasonCode: "", resumeVersion: 0,
 		})
@@ -1167,8 +1112,8 @@ func TestTokenWaitReconcilerTransitionsHotCheckpointingAndParkedWaits(t *testing
 
 	t.Run("checkpointing expiry records only terminal condition", func(t *testing.T) {
 		fixture := newRunLeaseClaimFixture(t, ctx)
-		setup := newTokenWaitReconcileSetup(t, ctx, fixture, RunWaitStateCheckpointing, time.Now().Add(-time.Minute))
-		expired, err := fixture.queries.ExpireDueTokens(ctx, ExpireDueTokensParams{
+		setup := newTokenWaitReconcileSetup(t, ctx, fixture, db.RunWaitStateCheckpointing, time.Now().Add(-time.Minute))
+		expired, err := fixture.queries.ExpireDueTokens(ctx, db.ExpireDueTokensParams{
 			OutboxMessageIds: pgvalue.NewUUIDv7Batch(100),
 			LimitCount:       100,
 		})
@@ -1181,8 +1126,8 @@ func TestTokenWaitReconcilerTransitionsHotCheckpointingAndParkedWaits(t *testing
 			t.Fatalf("batch = %+v", batch)
 		}
 		assertTokenWaitReconcileState(t, ctx, fixture, setup, tokenWaitReconcileWant{
-			runStatus: RunStatusWaiting, runVersion: 2,
-			conditionState: WaitStateFailed, suspensionState: RunWaitStateCheckpointing,
+			runStatus: db.RunStatusWaiting, runVersion: 2,
+			conditionState: db.WaitStateFailed, suspensionState: db.RunWaitStateCheckpointing,
 			currentLeaseID: pgvalue.UUID(setup.leaseID), priorLeaseID: pgtype.UUID{},
 			reasonCode: "token_expired", resumeVersion: 0,
 		})
@@ -1196,7 +1141,7 @@ func TestTokenWaitReconcilerTransitionsHotCheckpointingAndParkedWaits(t *testing
 
 	t.Run("parked cancellation queues exactly one resume", func(t *testing.T) {
 		fixture := newRunLeaseClaimFixture(t, ctx)
-		setup := newTokenWaitReconcileSetup(t, ctx, fixture, RunWaitStateParked, time.Now().Add(time.Hour))
+		setup := newTokenWaitReconcileSetup(t, ctx, fixture, db.RunWaitStateParked, time.Now().Add(time.Hour))
 		if _, err := fixture.queries.CancelToken(ctx, tokenCancellationParams(fixture, setup.tokenID)); err != nil {
 			t.Fatal(err)
 		}
@@ -1206,8 +1151,8 @@ func TestTokenWaitReconcilerTransitionsHotCheckpointingAndParkedWaits(t *testing
 			t.Fatalf("batch = %+v", batch)
 		}
 		assertTokenWaitReconcileState(t, ctx, fixture, setup, tokenWaitReconcileWant{
-			runStatus: RunStatusQueued, runVersion: 3,
-			conditionState: WaitStateCancelled, suspensionState: RunWaitStateResumePending,
+			runStatus: db.RunStatusQueued, runVersion: 3,
+			conditionState: db.WaitStateCancelled, suspensionState: db.RunWaitStateResumePending,
 			currentLeaseID: pgtype.UUID{}, priorLeaseID: pgvalue.UUID(setup.leaseID),
 			reasonCode: "token_cancelled", resumeVersion: 1,
 		})
@@ -1225,37 +1170,37 @@ func TestTokenWaitReconcilerAppliesWaitTimeoutAcrossSuspensionStates(t *testing.
 	ctx := context.Background()
 	for _, test := range []struct {
 		name              string
-		suspension        RunWaitState
-		runStatus         RunStatus
+		suspension        db.RunWaitState
+		runStatus         db.RunStatus
 		runVersion        int64
-		resultState       RunWaitState
+		resultState       db.RunWaitState
 		currentLeaseID    func(tokenWaitReconcileSetup) pgtype.UUID
 		priorLeaseID      func(tokenWaitReconcileSetup) pgtype.UUID
 		resumeVersion     int64
 		resumeIntentCount int
 	}{
 		{
-			name: "hot", suspension: RunWaitStateHot,
-			runStatus: RunStatusRunning, runVersion: 3,
-			resultState: RunWaitStateReleased,
+			name: "hot", suspension: db.RunWaitStateHot,
+			runStatus: db.RunStatusRunning, runVersion: 3,
+			resultState: db.RunWaitStateReleased,
 			currentLeaseID: func(setup tokenWaitReconcileSetup) pgtype.UUID {
 				return pgvalue.UUID(setup.leaseID)
 			},
 			priorLeaseID: func(tokenWaitReconcileSetup) pgtype.UUID { return pgtype.UUID{} },
 		},
 		{
-			name: "checkpointing", suspension: RunWaitStateCheckpointing,
-			runStatus: RunStatusWaiting, runVersion: 2,
-			resultState: RunWaitStateCheckpointing,
+			name: "checkpointing", suspension: db.RunWaitStateCheckpointing,
+			runStatus: db.RunStatusWaiting, runVersion: 2,
+			resultState: db.RunWaitStateCheckpointing,
 			currentLeaseID: func(setup tokenWaitReconcileSetup) pgtype.UUID {
 				return pgvalue.UUID(setup.leaseID)
 			},
 			priorLeaseID: func(tokenWaitReconcileSetup) pgtype.UUID { return pgtype.UUID{} },
 		},
 		{
-			name: "parked", suspension: RunWaitStateParked,
-			runStatus: RunStatusQueued, runVersion: 3,
-			resultState:    RunWaitStateResumePending,
+			name: "parked", suspension: db.RunWaitStateParked,
+			runStatus: db.RunStatusQueued, runVersion: 3,
+			resultState:    db.RunWaitStateResumePending,
 			currentLeaseID: func(tokenWaitReconcileSetup) pgtype.UUID { return pgtype.UUID{} },
 			priorLeaseID: func(setup tokenWaitReconcileSetup) pgtype.UUID {
 				return pgvalue.UUID(setup.leaseID)
@@ -1273,7 +1218,7 @@ func TestTokenWaitReconcilerAppliesWaitTimeoutAcrossSuspensionStates(t *testing.
 				   SET timeout_at = transaction_timestamp() - interval '1 millisecond'
 				 WHERE id = $1
 			`, setup.waitID)
-			reconciler, err := NewTokenWaitReconciler(fixture.pool)
+			reconciler, err := NewWaitReconciler(fixture.pool)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1286,7 +1231,7 @@ func TestTokenWaitReconcilerAppliesWaitTimeoutAcrossSuspensionStates(t *testing.
 			}
 			assertTokenWaitReconcileState(t, ctx, fixture, setup, tokenWaitReconcileWant{
 				runStatus: test.runStatus, runVersion: test.runVersion,
-				conditionState: WaitStateFailed, suspensionState: test.resultState,
+				conditionState: db.WaitStateFailed, suspensionState: test.resultState,
 				currentLeaseID: test.currentLeaseID(setup),
 				priorLeaseID:   test.priorLeaseID(setup),
 				reasonCode:     "wait_timeout", resumeVersion: test.resumeVersion,
@@ -1303,7 +1248,7 @@ func TestTokenWaitReconcilerAppliesWaitTimeoutAcrossSuspensionStates(t *testing.
 func TestTokenWaitReconcilerRollsBackParkedTransitionWhenResumeIntentFails(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
-	setup := newTokenWaitReconcileSetup(t, ctx, fixture, RunWaitStateParked, time.Now().Add(time.Hour))
+	setup := newTokenWaitReconcileSetup(t, ctx, fixture, db.RunWaitStateParked, time.Now().Add(time.Hour))
 	if _, err := fixture.queries.CompleteToken(ctx, tokenCompletionParams(
 		fixture,
 		setup.tokenID,
@@ -1329,7 +1274,7 @@ func TestTokenWaitReconcilerRollsBackParkedTransitionWhenResumeIntentFails(t *te
 		FOR EACH ROW EXECUTE FUNCTION reject_run_resume_intent()
 	`)
 
-	reconciler, err := NewTokenWaitReconciler(fixture.pool)
+	reconciler, err := NewWaitReconciler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1337,8 +1282,8 @@ func TestTokenWaitReconcilerRollsBackParkedTransitionWhenResumeIntentFails(t *te
 		t.Fatal("parked reconciliation succeeded despite injected outbox failure")
 	}
 	assertTokenWaitReconcileState(t, ctx, fixture, setup, tokenWaitReconcileWant{
-		runStatus: RunStatusWaiting, runVersion: 2,
-		conditionState: WaitStatePending, suspensionState: RunWaitStateParked,
+		runStatus: db.RunStatusWaiting, runVersion: 2,
+		conditionState: db.WaitStatePending, suspensionState: db.RunWaitStateParked,
 		currentLeaseID: pgtype.UUID{}, priorLeaseID: pgvalue.UUID(setup.leaseID),
 		resumeVersion: 0,
 	})
@@ -1358,7 +1303,7 @@ func newTokenWaitReconcileSetup(
 	t *testing.T,
 	ctx context.Context,
 	fixture runLeaseClaimFixture,
-	suspension RunWaitState,
+	suspension db.RunWaitState,
 	tokenTimeout time.Time,
 ) tokenWaitReconcileSetup {
 	t.Helper()
@@ -1387,15 +1332,15 @@ func newTokenWaitReconcileSetup(
 	insertTokenWaitFixture(t, ctx, fixture, setup.waitID, setup.runID, setup.workspaceID, setup.tokenID, setup.leaseID, 2)
 
 	switch suspension {
-	case RunWaitStateHot:
-	case RunWaitStateCheckpointing:
+	case db.RunWaitStateHot:
+	case db.RunWaitStateCheckpointing:
 		mustRunLeaseExec(t, ctx, fixture.pool, `
 			UPDATE run_waits
 			   SET suspension_state = 'checkpointing',
 			       checkpoint_request_version = 1
 			 WHERE id = $1
 		`, setup.waitID)
-	case RunWaitStateParked:
+	case db.RunWaitStateParked:
 		var workspaceLeaseID, baseVersionID uuid.UUID
 		if err := fixture.pool.QueryRow(ctx, `
 			SELECT workspace_leases.id, runs.base_workspace_version_id
@@ -1480,9 +1425,9 @@ func reconcileTokenWaitBatch(
 	ctx context.Context,
 	fixture runLeaseClaimFixture,
 	tokenID uuid.UUID,
-) TokenWaitReconcileBatch {
+) WaitBatch {
 	t.Helper()
-	reconciler, err := NewTokenWaitReconciler(fixture.pool)
+	reconciler, err := NewWaitReconciler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1494,10 +1439,10 @@ func reconcileTokenWaitBatch(
 }
 
 type tokenWaitReconcileWant struct {
-	runStatus       RunStatus
+	runStatus       db.RunStatus
 	runVersion      int64
-	conditionState  WaitState
-	suspensionState RunWaitState
+	conditionState  db.WaitState
+	suspensionState db.RunWaitState
 	currentLeaseID  pgtype.UUID
 	priorLeaseID    pgtype.UUID
 	result          string
@@ -1513,7 +1458,7 @@ func assertTokenWaitReconcileState(
 	want tokenWaitReconcileWant,
 ) {
 	t.Helper()
-	var runStatus RunStatus
+	var runStatus db.RunStatus
 	var runVersion int64
 	var runLeaseID pgtype.UUID
 	if err := fixture.pool.QueryRow(ctx, `
@@ -1523,8 +1468,8 @@ func assertTokenWaitReconcileState(
 	`, setup.runID).Scan(&runStatus, &runVersion, &runLeaseID); err != nil {
 		t.Fatal(err)
 	}
-	var conditionState WaitState
-	var suspensionState RunWaitState
+	var conditionState db.WaitState
+	var suspensionState db.RunWaitState
 	var currentLeaseID, priorLeaseID pgtype.UUID
 	var result []byte
 	var reasonCode pgtype.Text
@@ -1592,20 +1537,20 @@ func assertTokenWaitResumeIntents(
 func TestTokenWaitReconcilerRejectsPendingTokenAuthority(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
-	setup := newTokenWaitReconcileSetup(t, ctx, fixture, RunWaitStateHot, time.Now().Add(time.Hour))
-	reconciler, err := NewTokenWaitReconciler(fixture.pool)
+	setup := newTokenWaitReconcileSetup(t, ctx, fixture, db.RunWaitStateHot, time.Now().Add(time.Hour))
+	reconciler, err := NewWaitReconciler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = reconciler.ReconcileBatch(ctx, fixture.environmentID, setup.tokenID, 100)
-	if !errors.Is(err, ErrTokenWaitReconcileAuthority) {
+	if !errors.Is(err, ErrWaitAuthority) {
 		t.Fatalf("pending Token authority error = %v", err)
 	}
-	var condition WaitState
+	var condition db.WaitState
 	if scanErr := fixture.pool.QueryRow(ctx, `SELECT condition_state FROM run_waits WHERE id = $1`, setup.waitID).Scan(&condition); scanErr != nil {
 		t.Fatal(scanErr)
 	}
-	if condition != WaitStatePending {
+	if condition != db.WaitStatePending {
 		t.Fatalf("pending Token changed Wait to %s", condition)
 	}
 }
@@ -1622,4 +1567,117 @@ func tokenWaitTestPublicID(t *testing.T, prefix publicid.Prefix) string {
 		t.Fatal(err)
 	}
 	return value
+}
+
+type runLeaseClaimFixture struct {
+	pool          *pgxpool.Pool
+	queries       *db.Queries
+	orgID         uuid.UUID
+	projectID     uuid.UUID
+	environmentID uuid.UUID
+	deploymentID  uuid.UUID
+	workerID      uuid.UUID
+	base          runtest.Fixture
+}
+
+type runLeaseWork struct {
+	leaseID uuid.UUID
+	runID   uuid.UUID
+}
+
+type taskCompletionWork struct {
+	workspaceID       uuid.UUID
+	baseVersionID     uuid.UUID
+	physicalVersionID uuid.UUID
+	runtimeID         uuid.UUID
+	mountID           uuid.UUID
+	workspaceLeaseID  uuid.UUID
+}
+
+func newRunLeaseClaimFixture(t *testing.T, _ context.Context) runLeaseClaimFixture {
+	t.Helper()
+	base := runtest.New(t)
+	return runLeaseClaimFixture{
+		pool:          base.Pool,
+		queries:       db.New(base.Pool),
+		orgID:         base.OrgID,
+		projectID:     base.ProjectID,
+		environmentID: base.EnvironmentID,
+		deploymentID:  base.DeploymentID,
+		workerID:      base.WorkerID,
+		base:          base,
+	}
+}
+
+func (fixture runLeaseClaimFixture) addWork(
+	t *testing.T,
+	_ context.Context,
+	state string,
+	assignedAt time.Time,
+) runLeaseWork {
+	t.Helper()
+	work := fixture.base.AddRunLease(t, state, assignedAt)
+	return runLeaseWork{leaseID: work.LeaseID, runID: work.RunID}
+}
+
+func startTaskCompletionWork(
+	t *testing.T,
+	ctx context.Context,
+	fixture runLeaseClaimFixture,
+	work runLeaseWork,
+) taskCompletionWork {
+	t.Helper()
+	mustRunLeaseExec(t, ctx, fixture.pool, `
+		UPDATE run_leases
+		   SET state = 'running', started_at = claimed_at
+		 WHERE id = $1 AND state = 'starting'
+	`, work.leaseID)
+	mustRunLeaseExec(t, ctx, fixture.pool, `
+		UPDATE runs
+		   SET status = 'running', state_version = state_version + 1,
+		       started_at = (SELECT started_at FROM run_leases WHERE id = $1),
+		       active_started_at = (SELECT started_at FROM run_leases WHERE id = $1)
+		 WHERE id = $2 AND status = 'queued' AND current_run_lease_id = $1
+	`, work.leaseID, work.runID)
+	mustRunLeaseExec(t, ctx, fixture.pool, `
+		UPDATE run_attempts
+		   SET entrypoint_entered_at = (SELECT started_at FROM run_leases WHERE id = $1)
+		 WHERE run_id = $2 AND number = 1 AND entrypoint_entered_at IS NULL
+	`, work.leaseID, work.runID)
+	var authority taskCompletionWork
+	if err := fixture.pool.QueryRow(ctx, `
+		SELECT runs.workspace_id, runs.base_workspace_version_id,
+		       run_leases.runtime_instance_id, workspace_leases.workspace_mount_id,
+		       workspace_leases.id, workspace_leases.base_version_id
+		  FROM runs
+		  JOIN run_leases ON run_leases.id = runs.current_run_lease_id
+		  JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
+		 WHERE runs.id = $1
+	`, work.runID).Scan(
+		&authority.workspaceID,
+		&authority.baseVersionID,
+		&authority.runtimeID,
+		&authority.mountID,
+		&authority.workspaceLeaseID,
+		&authority.physicalVersionID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	return authority
+}
+
+func mustRunLeaseExec(t *testing.T, ctx context.Context, executor interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}, query string, args ...any) {
+	t.Helper()
+	runtest.MustExec(t, ctx, executor, query, args...)
+}
+
+func runLeasePublicID(t *testing.T, prefix publicid.Prefix) string {
+	t.Helper()
+	return runtest.PublicID(t, prefix)
+}
+
+func shortRunLeaseID(id uuid.UUID) string {
+	return runtest.ShortID(id)
 }

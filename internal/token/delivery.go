@@ -34,7 +34,7 @@ type DeliveryStore interface {
 	DeadLetterOutboxMessage(context.Context, db.DeadLetterOutboxMessageParams) (db.OutboxMessage, error)
 }
 
-type ReconcileBatch func(context.Context, uuid.UUID, uuid.UUID, int32) (db.TokenWaitReconcileBatch, error)
+type ReconcileBatch func(context.Context, uuid.UUID, uuid.UUID, int32) (WaitBatch, error)
 
 type DeliveryWorker struct {
 	log       *slog.Logger

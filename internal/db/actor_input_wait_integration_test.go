@@ -26,7 +26,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 			ctx := context.Background()
 			fixture := newRunLeaseClaimFixture(t, ctx)
 			work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-			actorID := convertTokenWaitWorkToActor(t, ctx, fixture, work, `{"enabled":false}`)
+			actorID := fixture.convertToActor(t, ctx, work, `{"enabled":false}`)
 			startTaskCompletionWork(t, ctx, fixture, work)
 
 			var runVersion int64
@@ -110,7 +110,7 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-	actorID := convertTokenWaitWorkToActor(t, ctx, fixture, work, `{"enabled":false}`)
+	actorID := fixture.convertToActor(t, ctx, work, `{"enabled":false}`)
 
 	rows := make(chan AppendActorInputRecordRow, 2)
 	errs := make(chan error, 2)
@@ -211,7 +211,7 @@ func TestActorInputRunSourceTransactionRollbackLeavesNoResidue(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-	actorID := convertTokenWaitWorkToActor(t, ctx, fixture, work, `{"enabled":false}`)
+	actorID := fixture.convertToActor(t, ctx, work, `{"enabled":false}`)
 
 	recordID := uuid.Must(uuid.NewV7())
 	reconcileID := uuid.Must(uuid.NewV7())
@@ -338,7 +338,7 @@ func TestActorInputSequenceSafeIntegerBoundaryPreservesCompletedReplay(t *testin
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-	actorID := convertTokenWaitWorkToActor(t, ctx, fixture, work, `{"enabled":false}`)
+	actorID := fixture.convertToActor(t, ctx, work, `{"enabled":false}`)
 
 	const maxSafeSequence int64 = 9_007_199_254_740_991
 	const exhaustedSentinel int64 = maxSafeSequence + 1
@@ -423,7 +423,7 @@ func TestActorInputWaitTimeoutReleasesHotRun(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-	actorID := convertTokenWaitWorkToActor(t, ctx, fixture, work, `{"enabled":false}`)
+	actorID := fixture.convertToActor(t, ctx, work, `{"enabled":false}`)
 	startTaskCompletionWork(t, ctx, fixture, work)
 	var runVersion int64
 	if err := fixture.pool.QueryRow(ctx, `SELECT state_version FROM runs WHERE id = $1`, work.runID).Scan(&runVersion); err != nil {
@@ -469,7 +469,7 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-	actorID := convertTokenWaitWorkToActor(t, ctx, fixture, work, `{"enabled":false}`)
+	actorID := fixture.convertToActor(t, ctx, work, `{"enabled":false}`)
 	var workspaceID uuid.UUID
 	if err := fixture.pool.QueryRow(ctx, `SELECT workspace_id FROM actors WHERE id = $1`, actorID).Scan(&workspaceID); err != nil {
 		t.Fatal(err)

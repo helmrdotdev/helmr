@@ -23,9 +23,9 @@ func TestDeliveryWorkerReconcilesAndDeliversTokenIntent(t *testing.T) {
 		environmentID uuid.UUID,
 		tokenID uuid.UUID,
 		limit int32,
-	) (db.TokenWaitReconcileBatch, error) {
+	) (WaitBatch, error) {
 		gotEnvironmentID, gotTokenID, gotLimit = environmentID, tokenID, limit
-		return db.TokenWaitReconcileBatch{Examined: 1, Resolved: 1}, nil
+		return WaitBatch{Examined: 1, Resolved: 1}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -61,8 +61,8 @@ func TestDeliveryWorkerContinuesFullBoundedBatch(t *testing.T) {
 		uuid.UUID,
 		uuid.UUID,
 		int32,
-	) (db.TokenWaitReconcileBatch, error) {
-		return db.TokenWaitReconcileBatch{Examined: int(tokenReconcileBatchLimit), Resolved: int(tokenReconcileBatchLimit)}, nil
+	) (WaitBatch, error) {
+		return WaitBatch{Examined: int(tokenReconcileBatchLimit), Resolved: int(tokenReconcileBatchLimit)}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -88,8 +88,8 @@ func TestDeliveryWorkerRetriesReconciliationFailure(t *testing.T) {
 		uuid.UUID,
 		uuid.UUID,
 		int32,
-	) (db.TokenWaitReconcileBatch, error) {
-		return db.TokenWaitReconcileBatch{}, errors.New("database unavailable")
+	) (WaitBatch, error) {
+		return WaitBatch{}, errors.New("database unavailable")
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -114,8 +114,8 @@ func TestDeliveryWorkerRetainsIntentWhileCheckpointReadinessIsPending(t *testing
 		uuid.UUID,
 		uuid.UUID,
 		int32,
-	) (db.TokenWaitReconcileBatch, error) {
-		return db.TokenWaitReconcileBatch{Examined: 1, Deferred: 1}, nil
+	) (WaitBatch, error) {
+		return WaitBatch{Examined: 1, Deferred: 1}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -139,9 +139,9 @@ func TestDeliveryWorkerDeadLettersInvalidTokenIntent(t *testing.T) {
 		uuid.UUID,
 		uuid.UUID,
 		int32,
-	) (db.TokenWaitReconcileBatch, error) {
+	) (WaitBatch, error) {
 		t.Fatal("invalid payload reached reconciler")
-		return db.TokenWaitReconcileBatch{}, nil
+		return WaitBatch{}, nil
 	})
 	if err != nil {
 		t.Fatal(err)

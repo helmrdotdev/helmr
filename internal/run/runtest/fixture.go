@@ -335,6 +335,74 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 	return RunLease{LeaseID: leaseID, RunID: runID}
 }
 
+func (fixture Fixture) ConvertToActor(
+	t *testing.T,
+	ctx context.Context,
+	work RunLease,
+	retryPolicy string,
+) uuid.UUID {
+	t.Helper()
+	actorDefinitionID := uuid.Must(uuid.NewV7())
+	actorID := uuid.Must(uuid.NewV7())
+	MustExec(t, ctx, fixture.Pool, `
+ALTER TABLE run_attempts
+ALTER CONSTRAINT run_attempts_run_id_entrypoint_kind_workspace_id_fkey
+DEFERRABLE INITIALLY DEFERRED`)
+	tx, err := fixture.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
+		t.Fatal(err)
+	}
+	var workspaceID uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT workspace_id FROM runs WHERE id = $1`, work.RunID).Scan(&workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	MustExec(t, ctx, tx, `
+INSERT INTO deployment_definitions (
+    id, environment_id, deployment_id, kind, declared_id,
+    manifest_version, manifest, manifest_digest
+) VALUES (
+    $1, $2, $3, 'actor', 'test-actor', 0, '{}'::jsonb,
+    decode(repeat('05', 32), 'hex')
+)`, actorDefinitionID, fixture.EnvironmentID, fixture.DeploymentID)
+	MustExec(t, ctx, tx, `
+INSERT INTO actors (
+    id, public_id, environment_id,
+    actor_declared_id, deployment_definition_id, workspace_id, current_run_id,
+    next_input_sequence, committed_input_sequence,
+    run_queue_name, run_max_active_duration_ms, run_retry_policy
+) VALUES (
+    $1, $2, $3,
+    'test-actor', $4, $5, $6,
+    3, 1, 'default', 300000, $7::jsonb
+)`, actorID, "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		fixture.EnvironmentID, actorDefinitionID, workspaceID, work.RunID, retryPolicy)
+	MustExec(t, ctx, tx, `
+UPDATE workspaces
+   SET owner_actor_id = $1, owner_run_id = NULL
+ WHERE id = $2`, actorID, workspaceID)
+	MustExec(t, ctx, tx, `
+UPDATE runs
+   SET deployment_definition_id = $1,
+       entrypoint_kind = 'actor', entrypoint_declared_id = 'test-actor',
+       actor_id = $2, cause_kind = 'actor_start',
+       actor_start_input_sequence = 1, actor_start_input_high_watermark = 2,
+       payload = NULL, retry_policy = $3::jsonb
+ WHERE id = $4`, actorDefinitionID, actorID, retryPolicy, work.RunID)
+	MustExec(t, ctx, tx, `
+UPDATE run_attempts
+   SET entrypoint_kind = 'actor',
+       actor_start_input_sequence = 1
+ WHERE run_id = $1 AND number = 1`, work.RunID)
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return actorID
+}
+
 func MustExec(t *testing.T, ctx context.Context, db interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 }, query string, args ...any) {

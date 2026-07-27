@@ -1,4 +1,4 @@
-package db
+package token
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 )
@@ -31,16 +32,16 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if completed.State != TokenStateCompleted || !completed.ReconciliationEnqueued ||
+		if completed.State != db.TokenStateCompleted || !completed.ReconciliationEnqueued ||
 			completed.AlreadyCompleted || completed.CompletionConflict {
 			t.Fatalf("first completion = %+v", completed)
 		}
 		assertTokenReconciliationIntent(t, ctx, fixture, tokenID, 1)
-		var condition WaitState
+		var condition db.WaitState
 		if err := fixture.pool.QueryRow(ctx, `SELECT condition_state FROM run_waits WHERE id = $1`, waitID).Scan(&condition); err != nil {
 			t.Fatal(err)
 		}
-		if condition != WaitStatePending {
+		if condition != db.WaitStatePending {
 			t.Fatalf("Token transaction changed Run Wait condition to %s", condition)
 		}
 
@@ -68,7 +69,7 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if cancelled.State != TokenStateCancelled || !cancelled.ReconciliationEnqueued {
+		if cancelled.State != db.TokenStateCancelled || !cancelled.ReconciliationEnqueued {
 			t.Fatalf("first cancellation = %+v", cancelled)
 		}
 		replay, err := fixture.queries.CancelToken(ctx, tokenCancellationParams(fixture, tokenID))
@@ -97,17 +98,17 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 			)
 		`, publicAccessTokenID, runLeasePublicID(t, publicid.PublicAccessToken),
 			tokenID, bytes.Repeat([]byte{2}, 32), expiredAt)
-		expired, err := fixture.queries.ExpireDueTokens(ctx, ExpireDueTokensParams{
+		expired, err := fixture.queries.ExpireDueTokens(ctx, db.ExpireDueTokensParams{
 			OutboxMessageIds: pgvalue.NewUUIDv7Batch(100),
 			LimitCount:       100,
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(expired) != 1 || pgvalue.MustUUIDValue(expired[0].ID) != tokenID || expired[0].State != TokenStateExpired {
+		if len(expired) != 1 || pgvalue.MustUUIDValue(expired[0].ID) != tokenID || expired[0].State != db.TokenStateExpired {
 			t.Fatalf("first expiry = %+v", expired)
 		}
-		expired, err = fixture.queries.ExpireDueTokens(ctx, ExpireDueTokensParams{
+		expired, err = fixture.queries.ExpireDueTokens(ctx, db.ExpireDueTokensParams{
 			OutboxMessageIds: pgvalue.NewUUIDv7Batch(100),
 			LimitCount:       100,
 		})
@@ -123,7 +124,7 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 		}
 		if len(expiredCredentials) != 1 ||
 			pgvalue.MustUUIDValue(expiredCredentials[0].ID) != publicAccessTokenID ||
-			expiredCredentials[0].State != PublicAccessTokenStateExpired {
+			expiredCredentials[0].State != db.PublicAccessTokenStateExpired {
 			t.Fatalf("first credential expiry = %+v", expiredCredentials)
 		}
 		expiredCredentials, err = fixture.queries.ExpireDuePublicAccessTokens(ctx, 100)
@@ -161,14 +162,14 @@ func TestTokenCompletionRollsBackWhenReconciliationIntentFails(t *testing.T) {
 	if _, err := fixture.queries.CompleteToken(ctx, tokenCompletionParams(fixture, tokenID, "sha256:rollback", `null`)); err == nil {
 		t.Fatal("completion succeeded despite injected outbox failure")
 	}
-	var state TokenState
+	var state db.TokenState
 	var completionFingerprint []byte
 	if err := fixture.pool.QueryRow(ctx, `
 		SELECT state, completion_fingerprint FROM tokens WHERE id = $1
 	`, tokenID).Scan(&state, &completionFingerprint); err != nil {
 		t.Fatal(err)
 	}
-	if state != TokenStatePending || len(completionFingerprint) != 0 {
+	if state != db.TokenStatePending || len(completionFingerprint) != 0 {
 		t.Fatalf("rolled back Token = state %s fingerprint %x", state, completionFingerprint)
 	}
 	assertTokenReconciliationIntent(t, ctx, fixture, tokenID, 0)
@@ -181,7 +182,7 @@ func createTokenTerminalTestToken(t *testing.T, ctx context.Context, fixture run
 	if !insertExpiry.After(time.Now()) {
 		insertExpiry = time.Now().Add(time.Hour)
 	}
-	row, err := fixture.queries.CreateToken(ctx, CreateTokenParams{
+	row, err := fixture.queries.CreateToken(ctx, db.CreateTokenParams{
 		ID: pgvalue.UUID(id), PublicID: runLeasePublicID(t, publicid.Token),
 		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ExpiresAt: pgvalue.Timestamptz(insertExpiry),
@@ -206,12 +207,12 @@ func createTokenTerminalTestToken(t *testing.T, ctx context.Context, fixture run
 	return id
 }
 
-func tokenCompletionParams(fixture runLeaseClaimFixture, tokenID uuid.UUID, fingerprint string, data string) CompleteTokenParams {
+func tokenCompletionParams(fixture runLeaseClaimFixture, tokenID uuid.UUID, fingerprint string, data string) db.CompleteTokenParams {
 	fingerprintBytes := []byte(strings.TrimPrefix(fingerprint, "sha256:"))
 	if len(fingerprintBytes) < 32 {
 		fingerprintBytes = append(fingerprintBytes, make([]byte, 32-len(fingerprintBytes))...)
 	}
-	return CompleteTokenParams{
+	return db.CompleteTokenParams{
 		CompletionFingerprint: fingerprintBytes[:32], OrgID: pgvalue.UUID(fixture.orgID),
 		ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
 		ID: pgvalue.UUID(tokenID), Result: []byte(data),
@@ -219,8 +220,8 @@ func tokenCompletionParams(fixture runLeaseClaimFixture, tokenID uuid.UUID, fing
 	}
 }
 
-func tokenCancellationParams(fixture runLeaseClaimFixture, tokenID uuid.UUID) CancelTokenParams {
-	return CancelTokenParams{
+func tokenCancellationParams(fixture runLeaseClaimFixture, tokenID uuid.UUID) db.CancelTokenParams {
+	return db.CancelTokenParams{
 		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ID: pgvalue.UUID(tokenID),
 		OutboxMessageID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
