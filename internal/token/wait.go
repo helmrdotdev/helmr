@@ -160,7 +160,7 @@ func (r *WaitReconciler) RegisterWait(
 		lockedActorNextInputSequence = actor.NextInputSequence
 	}
 
-	lineage, run, err := lockTokenWaitLineage(ctx, tx, request.EnvironmentID, request.RunID)
+	lineage, run, err := lockTokenWaitLineage(ctx, q, request.EnvironmentID, request.RunID)
 	if err != nil {
 		return WaitRegistrationResult{}, err
 	}
@@ -282,7 +282,7 @@ func (r *WaitReconciler) RegisterWait(
 		workspaceLease.MountFencingGeneration != request.MountFencingGeneration {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current unexpired Workspace Lease", err)
 	}
-	if err := lockOuterTokenWait(ctx, tx, request.RunID); err != nil {
+	if err := lockOuterTokenWait(ctx, q, request.RunID); err != nil {
 		return WaitRegistrationResult{}, err
 	}
 
@@ -508,14 +508,6 @@ func (r *WaitReconciler) ReconcileTimeouts(
 	return resolved, nil
 }
 
-type tokenWaitLocator struct {
-	waitID       uuid.UUID
-	runID        uuid.UUID
-	workspaceID  uuid.UUID
-	attempt      int32
-	ownerActorID pgtype.UUID
-}
-
 func validateAndLockTokenWaitWorkspace(
 	ctx context.Context,
 	q *db.Queries,
@@ -610,6 +602,7 @@ type tokenWaitLockedWait struct {
 	suspendCheckpointID     pgtype.UUID
 	resumeRequestVersion    int64
 	timeoutAt               pgtype.Timestamptz
+	timedOut                bool
 }
 
 type tokenWaitResolution struct {
@@ -632,14 +625,16 @@ func (r *WaitReconciler) reconcileOne(
 		return false, false, fmt.Errorf("begin Token Wait reconciliation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	q := db.New(tx)
 
-	locator, err := loadTokenWaitLocator(
+	locator, err := q.GetTokenWaitLocator(
 		ctx,
-		tx,
-		environmentID,
-		tokenID,
-		waitID,
-		runID,
+		db.GetTokenWaitLocatorParams{
+			WaitID:        pgvalue.UUID(waitID),
+			EnvironmentID: pgvalue.UUID(environmentID),
+			RunID:         pgvalue.UUID(runID),
+			TokenID:       pgvalue.UUID(tokenID),
+		},
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := tx.Commit(ctx); err != nil {
@@ -652,73 +647,60 @@ func (r *WaitReconciler) reconcileOne(
 	}
 
 	var lockedActorCurrentRunID pgtype.UUID
-	if locator.ownerActorID.Valid {
-		var actorState string
-		err = tx.QueryRow(ctx, `
-SELECT state, current_run_id
-  FROM actors
- WHERE id = $1
- FOR UPDATE`, locator.ownerActorID).Scan(&actorState, &lockedActorCurrentRunID)
+	if locator.OwnerActorID.Valid {
+		actor, err := q.LockTokenWaitActor(ctx, locator.OwnerActorID)
 		if err != nil {
 			return false, false, tokenWaitAuthorityError("lock owning Actor", err)
 		}
-		if actorState != "open" && actorState != "closing" {
+		if actor.State != "open" && actor.State != "closing" {
 			return false, false, tokenWaitAuthorityError("owning Actor is not active", nil)
 		}
+		lockedActorCurrentRunID = actor.CurrentRunID
 	}
 
-	lineage, addressedRun, err := lockTokenWaitLineage(ctx, tx, environmentID, locator.runID)
+	lineage, addressedRun, err := lockTokenWaitLineage(ctx, q, environmentID, runID)
 	if err != nil {
 		return false, false, err
 	}
-	if addressedRun.workspaceID != locator.workspaceID || addressedRun.currentAttempt != locator.attempt {
+	workspaceID := pgvalue.MustUUIDValue(locator.WorkspaceID)
+	if addressedRun.workspaceID != workspaceID ||
+		addressedRun.currentAttempt != locator.AttemptNumber {
 		return false, false, tokenWaitAuthorityError("Run locator changed", nil)
 	}
-	var ownerActorID, ownerRunID pgtype.UUID
-	var workspaceState db.WorkspaceState
-	var desiredState db.WorkspaceDesiredState
-	err = tx.QueryRow(ctx, `
-SELECT owner_actor_id, owner_run_id, state, desired_state
-  FROM workspaces
- WHERE id = $1
-   AND environment_id = $2
- FOR UPDATE`, locator.workspaceID, environmentID).Scan(
-		&ownerActorID,
-		&ownerRunID,
-		&workspaceState,
-		&desiredState,
-	)
+	workspace, err := q.LockTokenWaitWorkspace(ctx, db.LockTokenWaitWorkspaceParams{
+		WorkspaceID:   locator.WorkspaceID,
+		EnvironmentID: pgvalue.UUID(environmentID),
+	})
 	if err != nil {
 		return false, false, tokenWaitAuthorityError("lock Run Workspace", err)
 	}
-	if workspaceState != db.WorkspaceStateActive || desiredState != db.WorkspaceDesiredStateActive ||
-		ownerActorID != locator.ownerActorID {
+	if db.WorkspaceState(workspace.State) != db.WorkspaceStateActive ||
+		db.WorkspaceDesiredState(workspace.DesiredState) != db.WorkspaceDesiredStateActive ||
+		workspace.OwnerActorID != locator.OwnerActorID {
 		return false, false, tokenWaitAuthorityError("Workspace ownership changed", nil)
 	}
-	if ownerActorID.Valid {
+	if workspace.OwnerActorID.Valid {
 		if !lockedActorCurrentRunID.Valid || !tokenWaitLineageContains(lineage, lockedActorCurrentRunID) {
 			return false, false, tokenWaitAuthorityError("Actor current Run is outside the locked lineage", nil)
 		}
-	} else if !ownerRunID.Valid || !tokenWaitLineageContains(lineage, ownerRunID) {
+	} else if !workspace.OwnerRunID.Valid ||
+		!tokenWaitLineageContains(lineage, workspace.OwnerRunID) {
 		return false, false, tokenWaitAuthorityError("Workspace owner Run is outside the locked lineage", nil)
 	}
 
-	var attemptTerminalAt pgtype.Timestamptz
-	err = tx.QueryRow(ctx, `
-SELECT terminal_at
-  FROM run_attempts
- WHERE run_id = $1
-   AND number = $2
-   AND workspace_id = $3
- FOR UPDATE`, locator.runID, locator.attempt, locator.workspaceID).Scan(&attemptTerminalAt)
-	if err != nil || attemptTerminalAt.Valid {
+	attempt, err := q.LockTokenWaitAttempt(ctx, db.LockTokenWaitAttemptParams{
+		RunID:         locator.RunID,
+		AttemptNumber: locator.AttemptNumber,
+		WorkspaceID:   locator.WorkspaceID,
+	})
+	if err != nil || attempt.TerminalAt.Valid {
 		return false, false, tokenWaitAuthorityError("lock current Run Attempt", err)
 	}
 
-	if err := lockOuterTokenWait(ctx, tx, locator.runID); err != nil {
+	if err := lockOuterTokenWait(ctx, q, runID); err != nil {
 		return false, false, err
 	}
-	wait, err := lockCurrentTokenWait(ctx, tx, environmentID, tokenID, locator)
+	wait, err := lockCurrentTokenWait(ctx, q, environmentID, tokenID, locator)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := tx.Commit(ctx); err != nil {
 			return false, false, fmt.Errorf("commit converged Token Wait reconciliation: %w", err)
@@ -740,11 +722,7 @@ SELECT terminal_at
 
 	var resolution tokenWaitResolution
 	if timeout {
-		var now pgtype.Timestamptz
-		if err := tx.QueryRow(ctx, `SELECT transaction_timestamp()`).Scan(&now); err != nil {
-			return false, false, tokenWaitAuthorityError("load Token Wait timeout time", err)
-		}
-		if !wait.timeoutAt.Valid || !now.Valid || now.Time.Before(wait.timeoutAt.Time) {
+		if !wait.timeoutAt.Valid || !wait.timedOut {
 			if err := tx.Commit(ctx); err != nil {
 				return false, false, fmt.Errorf("commit early Token Wait timeout reconciliation: %w", err)
 			}
@@ -757,18 +735,17 @@ SELECT terminal_at
 			conditionError: json.RawMessage(`{"code":"wait_timeout","retryable":false}`),
 		}
 	} else {
-		var tokenState db.TokenState
-		var completionData []byte
-		err = tx.QueryRow(ctx, `
-SELECT state, result
-  FROM tokens
- WHERE environment_id = $1
-   AND id = $2
- FOR UPDATE`, environmentID, tokenID).Scan(&tokenState, &completionData)
+		condition, err := q.LockTokenWaitCondition(ctx, db.LockTokenWaitConditionParams{
+			EnvironmentID: pgvalue.UUID(environmentID),
+			TokenID:       pgvalue.UUID(tokenID),
+		})
 		if err != nil {
 			return false, false, tokenWaitAuthorityError("lock terminal Token", err)
 		}
-		resolution, err = tokenWaitTerminalResolution(tokenState, completionData)
+		resolution, err = tokenWaitTerminalResolution(
+			db.TokenState(condition.State),
+			condition.Result,
+		)
 		if err != nil {
 			return false, false, err
 		}
@@ -793,115 +770,39 @@ SELECT state, result
 	return true, wait.suspensionState == db.RunWaitStateCheckpointing, nil
 }
 
-func loadTokenWaitLocator(
-	ctx context.Context,
-	tx pgx.Tx,
-	environmentID uuid.UUID,
-	tokenID uuid.UUID,
-	waitID uuid.UUID,
-	runID uuid.UUID,
-) (tokenWaitLocator, error) {
-	var locator tokenWaitLocator
-	err := tx.QueryRow(ctx, `
-SELECT run_waits.id,
-       run_waits.run_id,
-       run_waits.workspace_id,
-       run_waits.attempt_number,
-       workspaces.owner_actor_id
-  FROM run_waits
-  JOIN runs
-    ON runs.environment_id = run_waits.environment_id
-   AND runs.id = run_waits.run_id
-  JOIN workspaces
-    ON workspaces.id = run_waits.workspace_id
- WHERE run_waits.id = $1
-   AND run_waits.environment_id = $2
-   AND run_waits.run_id = $3
-   AND run_waits.token_id = $4
-   AND run_waits.kind = 'token'
-   AND (run_waits.condition_state = 'pending'
-        OR run_waits.suspension_state = 'checkpointing')`,
-		waitID,
-		environmentID,
-		runID,
-		tokenID,
-	).Scan(
-		&locator.waitID,
-		&locator.runID,
-		&locator.workspaceID,
-		&locator.attempt,
-		&locator.ownerActorID,
-	)
-	if err != nil {
-		return tokenWaitLocator{}, err
-	}
-	return locator, nil
-}
-
 func lockTokenWaitLineage(
 	ctx context.Context,
-	tx pgx.Tx,
+	q *db.Queries,
 	environmentID uuid.UUID,
 	runID uuid.UUID,
 ) ([]tokenWaitLockedRun, tokenWaitLockedRun, error) {
-	rows, err := tx.Query(ctx, `
-WITH RECURSIVE lineage AS (
-    SELECT id, parent_run_id, 0::integer AS depth, ARRAY[id] AS path, false AS cycle
-      FROM runs
-     WHERE environment_id = $1
-       AND id = $2
-    UNION ALL
-    SELECT parent.id,
-           parent.parent_run_id,
-           child.depth + 1,
-           child.path || parent.id,
-           parent.id = ANY(child.path)
-      FROM lineage AS child
-      JOIN runs AS parent
-        ON parent.environment_id = $1
-       AND parent.id = child.parent_run_id
-     WHERE NOT child.cycle
-)
-SELECT runs.id,
-       runs.parent_run_id,
-       runs.workspace_id,
-       runs.actor_id,
-	   runs.entrypoint_kind,
-       runs.status,
-       runs.state_version,
-	       runs.current_attempt_number,
-	       runs.current_run_lease_id,
-	       runs.active_started_at,
-	       lineage.depth,
-       lineage.cycle
-  FROM lineage
-  JOIN runs ON runs.id = lineage.id
- ORDER BY lineage.depth DESC, runs.id
- FOR UPDATE OF runs`, environmentID, runID)
+	rows, err := q.LockTokenWaitRunLineage(
+		ctx,
+		db.LockTokenWaitRunLineageParams{
+			EnvironmentID: pgvalue.UUID(environmentID),
+			RunID:         pgvalue.UUID(runID),
+		},
+	)
 	if err != nil {
 		return nil, tokenWaitLockedRun{}, tokenWaitAuthorityError("lock Run lineage", err)
 	}
-	defer rows.Close()
-	var lineage []tokenWaitLockedRun
+	lineage := make([]tokenWaitLockedRun, 0, len(rows))
 	var addressed tokenWaitLockedRun
 	foundAddressed := false
-	for rows.Next() {
-		var row tokenWaitLockedRun
-		if err := rows.Scan(
-			&row.id,
-			&row.parentRunID,
-			&row.workspaceID,
-			&row.actorID,
-			&row.entrypointKind,
-			&row.status,
-			&row.stateVersion,
-			&row.currentAttempt,
-			&row.currentRunLeaseID,
-			&row.activeStartedAt,
-			&row.depth,
-			&row.cycle,
-		); err != nil {
-			return nil, tokenWaitLockedRun{}, tokenWaitAuthorityError("scan locked Run lineage", err)
+	for _, locked := range rows {
+		row := tokenWaitLockedRun{
+			id:                pgvalue.MustUUIDValue(locked.ID),
+			parentRunID:       locked.ParentRunID,
+			workspaceID:       pgvalue.MustUUIDValue(locked.WorkspaceID),
+			actorID:           locked.ActorID,
+			entrypointKind:    locked.EntrypointKind,
+			status:            db.RunStatus(locked.Status),
+			stateVersion:      locked.StateVersion,
+			currentAttempt:    locked.CurrentAttemptNumber,
+			currentRunLeaseID: locked.CurrentRunLeaseID,
+			activeStartedAt:   locked.ActiveStartedAt,
+			depth:             locked.Depth,
+			cycle:             locked.Cycle,
 		}
 		if row.cycle {
 			return nil, tokenWaitLockedRun{}, tokenWaitAuthorityError("Run lineage contains a cycle", nil)
@@ -911,9 +812,6 @@ SELECT runs.id,
 			addressed = row
 			foundAddressed = true
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, tokenWaitLockedRun{}, tokenWaitAuthorityError("iterate locked Run lineage", err)
 	}
 	if !foundAddressed {
 		return nil, tokenWaitLockedRun{}, tokenWaitAuthorityError("addressed Run does not exist", nil)
@@ -933,91 +831,50 @@ func tokenWaitLineageContains(lineage []tokenWaitLockedRun, id pgtype.UUID) bool
 	return false
 }
 
-func lockOuterTokenWait(ctx context.Context, tx pgx.Tx, runID uuid.UUID) error {
-	rows, err := tx.Query(ctx, `
-SELECT id
-  FROM run_waits
- WHERE child_run_id = $1
-   AND suspension_state IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming')
- ORDER BY id
- FOR UPDATE`, runID)
+func lockOuterTokenWait(ctx context.Context, q *db.Queries, runID uuid.UUID) error {
+	_, err := q.LockEnclosingRunWaits(ctx, pgvalue.UUID(runID))
 	if err != nil {
 		return tokenWaitAuthorityError("lock enclosing Run Wait", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return tokenWaitAuthorityError("scan enclosing Run Wait", err)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return tokenWaitAuthorityError("iterate enclosing Run Wait", err)
 	}
 	return nil
 }
 
 func lockCurrentTokenWait(
 	ctx context.Context,
-	tx pgx.Tx,
+	q *db.Queries,
 	environmentID uuid.UUID,
 	tokenID uuid.UUID,
-	locator tokenWaitLocator,
+	locator db.GetTokenWaitLocatorRow,
 ) (tokenWaitLockedWait, error) {
-	var wait tokenWaitLockedWait
-	err := tx.QueryRow(ctx, `
-SELECT id,
-       environment_id,
-       run_id,
-       workspace_id,
-       token_id,
-       kind,
-       condition_state,
-       suspension_state,
-       expected_run_state_version,
-       attempt_number,
-       current_run_lease_id,
-       prior_run_lease_id,
-       suspend_checkpoint_id,
-       resume_request_version,
-       timeout_at
-  FROM run_waits
- WHERE id = $1
-   AND environment_id = $2
-   AND run_id = $3
-   AND workspace_id = $4
-   AND attempt_number = $5
-   AND token_id = $6
-   AND kind = 'token'
-   AND (condition_state = 'pending' OR suspension_state = 'checkpointing')
- FOR UPDATE`,
-		locator.waitID,
-		environmentID,
-		locator.runID,
-		locator.workspaceID,
-		locator.attempt,
-		tokenID,
-	).Scan(
-		&wait.id,
-		&wait.environmentID,
-		&wait.runID,
-		&wait.workspaceID,
-		&wait.tokenID,
-		&wait.kind,
-		&wait.conditionState,
-		&wait.suspensionState,
-		&wait.expectedRunStateVersion,
-		&wait.attemptNumber,
-		&wait.currentRunLeaseID,
-		&wait.priorRunLeaseID,
-		&wait.suspendCheckpointID,
-		&wait.resumeRequestVersion,
-		&wait.timeoutAt,
-	)
+	locked, err := q.LockTokenWait(ctx, db.LockTokenWaitParams{
+		WaitID:        locator.WaitID,
+		EnvironmentID: pgvalue.UUID(environmentID),
+		RunID:         locator.RunID,
+		WorkspaceID:   locator.WorkspaceID,
+		AttemptNumber: locator.AttemptNumber,
+		TokenID:       pgvalue.UUID(tokenID),
+	})
 	if err != nil {
 		return tokenWaitLockedWait{}, err
 	}
-	return wait, nil
+	return tokenWaitLockedWait{
+		id:                      pgvalue.MustUUIDValue(locked.ID),
+		environmentID:           pgvalue.MustUUIDValue(locked.EnvironmentID),
+		runID:                   pgvalue.MustUUIDValue(locked.RunID),
+		workspaceID:             pgvalue.MustUUIDValue(locked.WorkspaceID),
+		tokenID:                 pgvalue.MustUUIDValue(locked.TokenID),
+		kind:                    locked.Kind,
+		conditionState:          db.WaitState(locked.ConditionState),
+		suspensionState:         db.RunWaitState(locked.SuspensionState),
+		expectedRunStateVersion: locked.ExpectedRunStateVersion,
+		attemptNumber:           locked.AttemptNumber,
+		currentRunLeaseID:       locked.CurrentRunLeaseID,
+		priorRunLeaseID:         locked.PriorRunLeaseID,
+		suspendCheckpointID:     locked.SuspendCheckpointID,
+		resumeRequestVersion:    locked.ResumeRequestVersion,
+		timeoutAt:               locked.TimeoutAt,
+		timedOut:                locked.TimedOut,
+	}, nil
 }
 
 func validateLockedTokenWait(run tokenWaitLockedRun, wait tokenWaitLockedWait) error {

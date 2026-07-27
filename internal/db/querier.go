@@ -301,6 +301,7 @@ type Querier interface {
 	GetTokenByPublicID(ctx context.Context, publicID string) (Token, error)
 	GetTokenCreateTime(ctx context.Context) (pgtype.Timestamptz, error)
 	GetTokenForCallbackCompletion(ctx context.Context, arg GetTokenForCallbackCompletionParams) (Token, error)
+	GetTokenWaitLocator(ctx context.Context, arg GetTokenWaitLocatorParams) (GetTokenWaitLocatorRow, error)
 	GetTokenWaitRegistrationLocator(ctx context.Context, arg GetTokenWaitRegistrationLocatorParams) (GetTokenWaitRegistrationLocatorRow, error)
 	GetTokenWaitRegistrationReplay(ctx context.Context, arg GetTokenWaitRegistrationReplayParams) (GetTokenWaitRegistrationReplayRow, error)
 	GetUserOnboardingState(ctx context.Context, userID pgtype.UUID) (GetUserOnboardingStateRow, error)
@@ -406,6 +407,7 @@ type Querier interface {
 	LockDeploymentBuildTerminalFence(ctx context.Context, arg LockDeploymentBuildTerminalFenceParams) (LockDeploymentBuildTerminalFenceRow, error)
 	LockDeploymentBuildWorkerCertification(ctx context.Context, arg LockDeploymentBuildWorkerCertificationParams) (LockDeploymentBuildWorkerCertificationRow, error)
 	LockDeploymentPromotionTarget(ctx context.Context, arg LockDeploymentPromotionTargetParams) (Deployment, error)
+	LockEnclosingRunWaits(ctx context.Context, runID pgtype.UUID) ([]pgtype.UUID, error)
 	LockIdempotencySlot(ctx context.Context, lockKey int64) error
 	LockLiveRunLease(ctx context.Context, arg LockLiveRunLeaseParams) (RunLease, error)
 	LockLookupHMACMaintenance(ctx context.Context) error
@@ -438,11 +440,13 @@ type Querier interface {
 	LockSameWorkspaceHandoffAncestors(ctx context.Context, arg LockSameWorkspaceHandoffAncestorsParams) ([]LockSameWorkspaceHandoffAncestorsRow, error)
 	LockSameWorkspaceHandoffWait(ctx context.Context, arg LockSameWorkspaceHandoffWaitParams) (RunWait, error)
 	LockTaskStartDeploymentAuthority(ctx context.Context, arg LockTaskStartDeploymentAuthorityParams) (LockTaskStartDeploymentAuthorityRow, error)
+	LockTokenWait(ctx context.Context, arg LockTokenWaitParams) (LockTokenWaitRow, error)
 	LockTokenWaitActor(ctx context.Context, actorID pgtype.UUID) (LockTokenWaitActorRow, error)
 	LockTokenWaitAttempt(ctx context.Context, arg LockTokenWaitAttemptParams) (LockTokenWaitAttemptRow, error)
 	LockTokenWaitCondition(ctx context.Context, arg LockTokenWaitConditionParams) (LockTokenWaitConditionRow, error)
 	LockTokenWaitRegistration(ctx context.Context, waitID pgtype.UUID) error
 	LockTokenWaitRunLease(ctx context.Context, arg LockTokenWaitRunLeaseParams) (string, error)
+	LockTokenWaitRunLineage(ctx context.Context, arg LockTokenWaitRunLineageParams) ([]LockTokenWaitRunLineageRow, error)
 	LockTokenWaitWorkspace(ctx context.Context, arg LockTokenWaitWorkspaceParams) (LockTokenWaitWorkspaceRow, error)
 	LockWorkerDrainCompletion(ctx context.Context, arg LockWorkerDrainCompletionParams) (pgtype.UUID, error)
 	LockWorkerGroupsForReconciliation(ctx context.Context, arg LockWorkerGroupsForReconciliationParams) ([]string, error)

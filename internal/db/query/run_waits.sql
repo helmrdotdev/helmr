@@ -187,6 +187,112 @@ SELECT state, result
    AND id = sqlc.arg(token_id)
  FOR UPDATE;
 
+-- name: GetTokenWaitLocator :one
+SELECT run_waits.id AS wait_id,
+       run_waits.run_id,
+       run_waits.workspace_id,
+       run_waits.attempt_number,
+       workspaces.owner_actor_id
+  FROM run_waits
+  JOIN runs
+    ON runs.environment_id = run_waits.environment_id
+   AND runs.id = run_waits.run_id
+  JOIN workspaces
+    ON workspaces.id = run_waits.workspace_id
+ WHERE run_waits.id = sqlc.arg(wait_id)
+   AND run_waits.environment_id = sqlc.arg(environment_id)
+   AND run_waits.run_id = sqlc.arg(run_id)
+   AND run_waits.token_id = sqlc.arg(token_id)
+   AND run_waits.kind = 'token'
+   AND (
+       run_waits.condition_state = 'pending'
+       OR run_waits.suspension_state = 'checkpointing'
+   );
+
+-- name: LockTokenWaitRunLineage :many
+WITH RECURSIVE lineage AS (
+    SELECT id,
+           parent_run_id,
+           0::integer AS depth,
+           ARRAY[id] AS path,
+           false AS cycle
+      FROM runs
+     WHERE runs.environment_id = sqlc.arg(environment_id)
+       AND runs.id = sqlc.arg(run_id)
+    UNION ALL
+    SELECT parent.id,
+           parent.parent_run_id,
+           child.depth + 1,
+           child.path || parent.id,
+           parent.id = ANY(child.path)
+      FROM lineage AS child
+      JOIN runs AS parent
+        ON parent.environment_id = sqlc.arg(environment_id)
+       AND parent.id = child.parent_run_id
+     WHERE NOT child.cycle
+)
+SELECT runs.id,
+       runs.parent_run_id,
+       runs.workspace_id,
+       runs.actor_id,
+       runs.entrypoint_kind,
+       runs.status,
+       runs.state_version,
+       runs.current_attempt_number,
+       runs.current_run_lease_id,
+       runs.active_started_at,
+       lineage.depth,
+       lineage.cycle
+  FROM lineage
+  JOIN runs ON runs.id = lineage.id
+ ORDER BY lineage.depth DESC, runs.id
+ FOR UPDATE OF runs;
+
+-- name: LockEnclosingRunWaits :many
+SELECT id
+  FROM run_waits
+ WHERE child_run_id = sqlc.arg(run_id)
+   AND suspension_state IN (
+       'hot',
+       'checkpointing',
+       'parked',
+       'resume_pending',
+       'resuming'
+   )
+ ORDER BY id
+ FOR UPDATE;
+
+-- name: LockTokenWait :one
+SELECT id,
+       environment_id,
+       run_id,
+       workspace_id,
+       token_id,
+       kind,
+       condition_state,
+       suspension_state,
+       expected_run_state_version,
+       attempt_number,
+       current_run_lease_id,
+       prior_run_lease_id,
+       suspend_checkpoint_id,
+       resume_request_version,
+       timeout_at,
+       coalesce(
+           timeout_at <= transaction_timestamp(),
+           false
+       )::bool AS timed_out
+  FROM run_waits
+ WHERE id = sqlc.arg(wait_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND run_id = sqlc.arg(run_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND attempt_number = sqlc.arg(attempt_number)
+   AND token_id = sqlc.arg(token_id)
+   AND kind = 'token'
+   AND (condition_state = 'pending' OR suspension_state = 'checkpointing')
+ FOR UPDATE;
+
 -- name: ListTokenWaitCandidates :many
 SELECT id AS wait_id, run_id
   FROM run_waits

@@ -1801,6 +1801,62 @@ func (q *Queries) GetTimerRunWaitRegistrationReplay(ctx context.Context, arg Get
 	return i, err
 }
 
+const getTokenWaitLocator = `-- name: GetTokenWaitLocator :one
+SELECT run_waits.id AS wait_id,
+       run_waits.run_id,
+       run_waits.workspace_id,
+       run_waits.attempt_number,
+       workspaces.owner_actor_id
+  FROM run_waits
+  JOIN runs
+    ON runs.environment_id = run_waits.environment_id
+   AND runs.id = run_waits.run_id
+  JOIN workspaces
+    ON workspaces.id = run_waits.workspace_id
+ WHERE run_waits.id = $1
+   AND run_waits.environment_id = $2
+   AND run_waits.run_id = $3
+   AND run_waits.token_id = $4
+   AND run_waits.kind = 'token'
+   AND (
+       run_waits.condition_state = 'pending'
+       OR run_waits.suspension_state = 'checkpointing'
+   )
+`
+
+type GetTokenWaitLocatorParams struct {
+	WaitID        pgtype.UUID `json:"wait_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+	TokenID       pgtype.UUID `json:"token_id"`
+}
+
+type GetTokenWaitLocatorRow struct {
+	WaitID        pgtype.UUID `json:"wait_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	AttemptNumber int32       `json:"attempt_number"`
+	OwnerActorID  pgtype.UUID `json:"owner_actor_id"`
+}
+
+func (q *Queries) GetTokenWaitLocator(ctx context.Context, arg GetTokenWaitLocatorParams) (GetTokenWaitLocatorRow, error) {
+	row := q.db.QueryRow(ctx, getTokenWaitLocator,
+		arg.WaitID,
+		arg.EnvironmentID,
+		arg.RunID,
+		arg.TokenID,
+	)
+	var i GetTokenWaitLocatorRow
+	err := row.Scan(
+		&i.WaitID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.AttemptNumber,
+		&i.OwnerActorID,
+	)
+	return i, err
+}
+
 const getTokenWaitRegistrationLocator = `-- name: GetTokenWaitRegistrationLocator :one
 SELECT runs.workspace_id,
        workspaces.owner_actor_id,
@@ -2366,6 +2422,41 @@ func (q *Queries) ListTokenWaitCandidates(ctx context.Context, arg ListTokenWait
 	return items, nil
 }
 
+const lockEnclosingRunWaits = `-- name: LockEnclosingRunWaits :many
+SELECT id
+  FROM run_waits
+ WHERE child_run_id = $1
+   AND suspension_state IN (
+       'hot',
+       'checkpointing',
+       'parked',
+       'resume_pending',
+       'resuming'
+   )
+ ORDER BY id
+ FOR UPDATE
+`
+
+func (q *Queries) LockEnclosingRunWaits(ctx context.Context, runID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, lockEnclosingRunWaits, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockParentOwnedChildWait = `-- name: LockParentOwnedChildWait :one
 SELECT run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.kind, run_waits.condition_state, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_parent_owned, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.actor_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_actor_record_id, run_waits.completed_actor_record_direction, run_waits.suspension_state, run_waits.token_registration_run_state_version, run_waits.registration_request_fingerprint, run_waits.expected_run_state_version, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.handoff_resume_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.child_result_version_id, run_waits.resume_workspace_version_id, run_waits.handoff_runtime_instance_id, run_waits.handoff_workspace_mount_id, run_waits.handoff_mount_generation, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at
   FROM runs AS parent
@@ -2666,6 +2757,97 @@ func (q *Queries) LockSameWorkspaceHandoffAncestors(ctx context.Context, arg Loc
 	return items, nil
 }
 
+const lockTokenWait = `-- name: LockTokenWait :one
+SELECT id,
+       environment_id,
+       run_id,
+       workspace_id,
+       token_id,
+       kind,
+       condition_state,
+       suspension_state,
+       expected_run_state_version,
+       attempt_number,
+       current_run_lease_id,
+       prior_run_lease_id,
+       suspend_checkpoint_id,
+       resume_request_version,
+       timeout_at,
+       coalesce(
+           timeout_at <= transaction_timestamp(),
+           false
+       )::bool AS timed_out
+  FROM run_waits
+ WHERE id = $1
+   AND environment_id = $2
+   AND run_id = $3
+   AND workspace_id = $4
+   AND attempt_number = $5
+   AND token_id = $6
+   AND kind = 'token'
+   AND (condition_state = 'pending' OR suspension_state = 'checkpointing')
+ FOR UPDATE
+`
+
+type LockTokenWaitParams struct {
+	WaitID        pgtype.UUID `json:"wait_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	AttemptNumber int32       `json:"attempt_number"`
+	TokenID       pgtype.UUID `json:"token_id"`
+}
+
+type LockTokenWaitRow struct {
+	ID                      pgtype.UUID        `json:"id"`
+	EnvironmentID           pgtype.UUID        `json:"environment_id"`
+	RunID                   pgtype.UUID        `json:"run_id"`
+	WorkspaceID             pgtype.UUID        `json:"workspace_id"`
+	TokenID                 pgtype.UUID        `json:"token_id"`
+	Kind                    WaitKind           `json:"kind"`
+	ConditionState          string             `json:"condition_state"`
+	SuspensionState         string             `json:"suspension_state"`
+	ExpectedRunStateVersion int64              `json:"expected_run_state_version"`
+	AttemptNumber           int32              `json:"attempt_number"`
+	CurrentRunLeaseID       pgtype.UUID        `json:"current_run_lease_id"`
+	PriorRunLeaseID         pgtype.UUID        `json:"prior_run_lease_id"`
+	SuspendCheckpointID     pgtype.UUID        `json:"suspend_checkpoint_id"`
+	ResumeRequestVersion    int64              `json:"resume_request_version"`
+	TimeoutAt               pgtype.Timestamptz `json:"timeout_at"`
+	TimedOut                bool               `json:"timed_out"`
+}
+
+func (q *Queries) LockTokenWait(ctx context.Context, arg LockTokenWaitParams) (LockTokenWaitRow, error) {
+	row := q.db.QueryRow(ctx, lockTokenWait,
+		arg.WaitID,
+		arg.EnvironmentID,
+		arg.RunID,
+		arg.WorkspaceID,
+		arg.AttemptNumber,
+		arg.TokenID,
+	)
+	var i LockTokenWaitRow
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.TokenID,
+		&i.Kind,
+		&i.ConditionState,
+		&i.SuspensionState,
+		&i.ExpectedRunStateVersion,
+		&i.AttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.PriorRunLeaseID,
+		&i.SuspendCheckpointID,
+		&i.ResumeRequestVersion,
+		&i.TimeoutAt,
+		&i.TimedOut,
+	)
+	return i, err
+}
+
 const lockTokenWaitActor = `-- name: LockTokenWaitActor :one
 SELECT state,
        current_run_id,
@@ -2825,6 +3007,99 @@ func (q *Queries) LockTokenWaitRunLease(ctx context.Context, arg LockTokenWaitRu
 	var state string
 	err := row.Scan(&state)
 	return state, err
+}
+
+const lockTokenWaitRunLineage = `-- name: LockTokenWaitRunLineage :many
+WITH RECURSIVE lineage AS (
+    SELECT id,
+           parent_run_id,
+           0::integer AS depth,
+           ARRAY[id] AS path,
+           false AS cycle
+      FROM runs
+     WHERE runs.environment_id = $1
+       AND runs.id = $2
+    UNION ALL
+    SELECT parent.id,
+           parent.parent_run_id,
+           child.depth + 1,
+           child.path || parent.id,
+           parent.id = ANY(child.path)
+      FROM lineage AS child
+      JOIN runs AS parent
+        ON parent.environment_id = $1
+       AND parent.id = child.parent_run_id
+     WHERE NOT child.cycle
+)
+SELECT runs.id,
+       runs.parent_run_id,
+       runs.workspace_id,
+       runs.actor_id,
+       runs.entrypoint_kind,
+       runs.status,
+       runs.state_version,
+       runs.current_attempt_number,
+       runs.current_run_lease_id,
+       runs.active_started_at,
+       lineage.depth,
+       lineage.cycle
+  FROM lineage
+  JOIN runs ON runs.id = lineage.id
+ ORDER BY lineage.depth DESC, runs.id
+ FOR UPDATE OF runs
+`
+
+type LockTokenWaitRunLineageParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+}
+
+type LockTokenWaitRunLineageRow struct {
+	ID                   pgtype.UUID        `json:"id"`
+	ParentRunID          pgtype.UUID        `json:"parent_run_id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	ActorID              pgtype.UUID        `json:"actor_id"`
+	EntrypointKind       string             `json:"entrypoint_kind"`
+	Status               string             `json:"status"`
+	StateVersion         int64              `json:"state_version"`
+	CurrentAttemptNumber int32              `json:"current_attempt_number"`
+	CurrentRunLeaseID    pgtype.UUID        `json:"current_run_lease_id"`
+	ActiveStartedAt      pgtype.Timestamptz `json:"active_started_at"`
+	Depth                int32              `json:"depth"`
+	Cycle                bool               `json:"cycle"`
+}
+
+func (q *Queries) LockTokenWaitRunLineage(ctx context.Context, arg LockTokenWaitRunLineageParams) ([]LockTokenWaitRunLineageRow, error) {
+	rows, err := q.db.Query(ctx, lockTokenWaitRunLineage, arg.EnvironmentID, arg.RunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LockTokenWaitRunLineageRow
+	for rows.Next() {
+		var i LockTokenWaitRunLineageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ParentRunID,
+			&i.WorkspaceID,
+			&i.ActorID,
+			&i.EntrypointKind,
+			&i.Status,
+			&i.StateVersion,
+			&i.CurrentAttemptNumber,
+			&i.CurrentRunLeaseID,
+			&i.ActiveStartedAt,
+			&i.Depth,
+			&i.Cycle,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockTokenWaitWorkspace = `-- name: LockTokenWaitWorkspace :one
