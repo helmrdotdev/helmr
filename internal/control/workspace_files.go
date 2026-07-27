@@ -43,6 +43,12 @@ type workspaceFileCursor struct {
 	ExpiresAt   int64  `json:"expiresAt"`
 }
 
+type workspaceFileSource struct {
+	version db.WorkspaceVersion
+	digest  string
+	empty   bool
+}
+
 func (s *Server) readWorkspaceFileHTTP(w http.ResponseWriter, r *http.Request) {
 	record, ok := s.loadPublicWorkspace(w, r, auth.PermissionWorkspaceFilesRead)
 	if !ok {
@@ -118,20 +124,19 @@ func (s *Server) readWorkspaceFile(
 	record db.Workspace,
 	target string,
 ) (api.WorkspaceFileContent, error) {
-	return s.readWorkspaceFileWithQueries(ctx, s.db, record, target)
-}
-
-func (s *Server) readWorkspaceFileWithQueries(
-	ctx context.Context,
-	q db.Querier,
-	record db.Workspace,
-	target string,
-) (api.WorkspaceFileContent, error) {
-	version, err := s.currentWorkspaceVersion(ctx, q, record)
+	source, err := s.resolveCurrentWorkspaceFileSource(ctx, s.db, record)
 	if err != nil {
 		return api.WorkspaceFileContent{}, err
 	}
-	body, empty, err := s.openWorkspaceVersion(ctx, q, version)
+	return s.readWorkspaceFileSource(ctx, source, target)
+}
+
+func (s *Server) readWorkspaceFileSource(
+	ctx context.Context,
+	source workspaceFileSource,
+	target string,
+) (api.WorkspaceFileContent, error) {
+	body, empty, err := s.openWorkspaceFileSource(ctx, source)
 	if err != nil {
 		return api.WorkspaceFileContent{}, err
 	}
@@ -163,26 +168,25 @@ func (s *Server) statWorkspaceFile(
 	record db.Workspace,
 	target string,
 ) (api.WorkspaceFileEntry, error) {
-	return s.statWorkspaceFileWithQueries(ctx, s.db, record, target)
-}
-
-func (s *Server) statWorkspaceFileWithQueries(
-	ctx context.Context,
-	q db.Querier,
-	record db.Workspace,
-	target string,
-) (api.WorkspaceFileEntry, error) {
-	version, err := s.currentWorkspaceVersion(ctx, q, record)
+	source, err := s.resolveCurrentWorkspaceFileSource(ctx, s.db, record)
 	if err != nil {
 		return api.WorkspaceFileEntry{}, err
 	}
-	if target == "." && !version.ArtifactID.Valid {
+	return s.statWorkspaceFileSource(ctx, source, target)
+}
+
+func (s *Server) statWorkspaceFileSource(
+	ctx context.Context,
+	source workspaceFileSource,
+	target string,
+) (api.WorkspaceFileEntry, error) {
+	if target == "." && source.empty {
 		return workspaceFileEntry(archive.TarEntry{
 			Path: ".",
 			Kind: archive.TarEntryKindDir,
 		}), nil
 	}
-	body, empty, err := s.openWorkspaceVersion(ctx, q, version)
+	body, empty, err := s.openWorkspaceFileSource(ctx, source)
 	if err != nil {
 		return api.WorkspaceFileEntry{}, err
 	}
@@ -207,25 +211,30 @@ func (s *Server) listWorkspaceFiles(
 	limit int32,
 	now time.Time,
 ) (api.WorkspaceFilePage, error) {
-	return s.listWorkspaceFilesWithQueries(ctx, s.db, record, target, rawCursor, limit, now)
+	source, after, err := s.resolveWorkspaceFileListSource(
+		ctx, s.db, record, target, rawCursor, now,
+	)
+	if err != nil {
+		return api.WorkspaceFilePage{}, err
+	}
+	return s.listWorkspaceFileSource(ctx, record.PublicID, source, target, after, limit, now)
 }
 
-func (s *Server) listWorkspaceFilesWithQueries(
+func (s *Server) resolveWorkspaceFileListSource(
 	ctx context.Context,
 	q db.Querier,
 	record db.Workspace,
 	target string,
 	rawCursor string,
-	limit int32,
 	now time.Time,
-) (api.WorkspaceFilePage, error) {
+) (workspaceFileSource, string, error) {
 	var version db.WorkspaceVersion
 	var after string
 	var err error
 	if rawCursor != "" {
 		cursor, parseErr := s.parseWorkspaceFileCursor(rawCursor, record.PublicID, target, now)
 		if parseErr != nil {
-			return api.WorkspaceFilePage{}, parseErr
+			return workspaceFileSource{}, "", parseErr
 		}
 		version, err = q.GetWorkspaceVersionByPublicID(ctx, db.GetWorkspaceVersionByPublicIDParams{
 			EnvironmentID: record.EnvironmentID,
@@ -237,12 +246,28 @@ func (s *Server) listWorkspaceFilesWithQueries(
 		version, err = s.currentWorkspaceVersion(ctx, q, record)
 	}
 	if err != nil {
-		return api.WorkspaceFilePage{}, err
+		return workspaceFileSource{}, "", err
 	}
+	source, err := resolveWorkspaceFileSource(ctx, q, version)
+	if err != nil {
+		return workspaceFileSource{}, "", err
+	}
+	return source, after, nil
+}
 
+func (s *Server) listWorkspaceFileSource(
+	ctx context.Context,
+	workspacePublicID string,
+	source workspaceFileSource,
+	target string,
+	after string,
+	limit int32,
+	now time.Time,
+) (api.WorkspaceFilePage, error) {
 	var entries []archive.TarEntry
-	if version.ArtifactID.Valid {
-		body, _, openErr := s.openWorkspaceVersion(ctx, q, version)
+	var err error
+	if !source.empty {
+		body, _, openErr := s.openWorkspaceFileSource(ctx, source)
 		if openErr != nil {
 			return api.WorkspaceFilePage{}, openErr
 		}
@@ -265,8 +290,8 @@ func (s *Server) listWorkspaceFilesWithQueries(
 		}
 		if len(items) == int(limit) {
 			nextCursor, err = s.signWorkspaceFileCursor(workspaceFileCursor{
-				WorkspaceID: record.PublicID,
-				VersionID:   version.PublicID,
+				WorkspaceID: workspacePublicID,
+				VersionID:   source.version.PublicID,
 				Path:        target,
 				After:       items[len(items)-1].Path,
 				ExpiresAt:   now.Add(workspaceFileCursorTTL).Unix(),
@@ -341,31 +366,53 @@ func (s *Server) currentWorkspaceVersion(
 	})
 }
 
-func (s *Server) openWorkspaceVersion(
+func (s *Server) resolveCurrentWorkspaceFileSource(
+	ctx context.Context,
+	q db.Querier,
+	record db.Workspace,
+) (workspaceFileSource, error) {
+	version, err := s.currentWorkspaceVersion(ctx, q, record)
+	if err != nil {
+		return workspaceFileSource{}, err
+	}
+	return resolveWorkspaceFileSource(ctx, q, version)
+}
+
+func resolveWorkspaceFileSource(
 	ctx context.Context,
 	q db.Querier,
 	version db.WorkspaceVersion,
-) (io.ReadCloser, bool, error) {
+) (workspaceFileSource, error) {
 	if !version.ArtifactID.Valid {
 		if version.ParentVersionID.Valid || version.SizeBytes != 0 || version.EntryCount != 0 {
-			return nil, false, errors.New("Workspace version Artifact is missing")
+			return workspaceFileSource{}, errors.New("Workspace version Artifact is missing")
 		}
-		return nil, true, nil
-	}
-	if s.cas == nil {
-		return nil, false, errors.New("Workspace Artifact store is unavailable")
+		return workspaceFileSource{version: version, empty: true}, nil
 	}
 	artifact, err := q.GetWorkspaceVersionArtifact(ctx, db.GetWorkspaceVersionArtifactParams{
 		EnvironmentID: version.EnvironmentID,
 		ID:            version.ArtifactID,
 	})
 	if err != nil {
-		return nil, false, err
+		return workspaceFileSource{}, err
 	}
 	if artifact.Kind != db.ArtifactKindWorkspaceVersion || artifact.MediaType != workspace.ArtifactMediaType {
-		return nil, false, errors.New("Workspace version Artifact is unsupported")
+		return workspaceFileSource{}, errors.New("Workspace version Artifact is unsupported")
 	}
-	body, err := s.cas.Get(ctx, artifact.Digest)
+	return workspaceFileSource{version: version, digest: artifact.Digest}, nil
+}
+
+func (s *Server) openWorkspaceFileSource(
+	ctx context.Context,
+	source workspaceFileSource,
+) (io.ReadCloser, bool, error) {
+	if source.empty {
+		return nil, true, nil
+	}
+	if s.cas == nil {
+		return nil, false, errors.New("Workspace Artifact store is unavailable")
+	}
+	body, err := s.cas.Get(ctx, source.digest)
 	return body, false, err
 }
 

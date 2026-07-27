@@ -125,18 +125,22 @@ func (s *Server) workerReadWorkspaceFile(w http.ResponseWriter, r *http.Request)
 	}
 	worker := workerFromContext(r.Context())
 	var content api.WorkspaceFileContent
+	var source workspaceFileSource
 	err := s.inTx(r.Context(), func(work *txWork) error {
-		source, err := authorizeWorkerRunSource(r.Context(), work.q, worker, request.Lease)
+		runSource, err := authorizeWorkerRunSource(r.Context(), work.q, worker, request.Lease)
 		if err != nil {
 			return err
 		}
-		record, err := resolveWorkerWorkspace(r.Context(), work.q, source, request.Workspace)
+		record, err := resolveWorkerWorkspace(r.Context(), work.q, runSource, request.Workspace)
 		if err != nil {
 			return err
 		}
-		content, err = s.readWorkspaceFileWithQueries(r.Context(), work.q, record, request.Path)
+		source, err = s.resolveCurrentWorkspaceFileSource(r.Context(), work.q, record)
 		return err
 	})
+	if err == nil {
+		content, err = s.readWorkspaceFileSource(r.Context(), source, request.Path)
+	}
 	if failure, handled := s.workerWorkspaceFileFailure(w, request.Lease.RunID, "read", err); handled {
 		if failure != nil {
 			writeJSON(w, http.StatusOK, api.WorkerReadWorkspaceFileResponse{
@@ -157,18 +161,22 @@ func (s *Server) workerStatWorkspaceFile(w http.ResponseWriter, r *http.Request)
 	}
 	worker := workerFromContext(r.Context())
 	var entry api.WorkspaceFileEntry
+	var source workspaceFileSource
 	err := s.inTx(r.Context(), func(work *txWork) error {
-		source, err := authorizeWorkerRunSource(r.Context(), work.q, worker, request.Lease)
+		runSource, err := authorizeWorkerRunSource(r.Context(), work.q, worker, request.Lease)
 		if err != nil {
 			return err
 		}
-		record, err := resolveWorkerWorkspace(r.Context(), work.q, source, request.Workspace)
+		record, err := resolveWorkerWorkspace(r.Context(), work.q, runSource, request.Workspace)
 		if err != nil {
 			return err
 		}
-		entry, err = s.statWorkspaceFileWithQueries(r.Context(), work.q, record, request.Path)
+		source, err = s.resolveCurrentWorkspaceFileSource(r.Context(), work.q, record)
 		return err
 	})
+	if err == nil {
+		entry, err = s.statWorkspaceFileSource(r.Context(), source, request.Path)
+	}
 	if failure, handled := s.workerWorkspaceFileFailure(w, request.Lease.RunID, "stat", err); handled {
 		if failure != nil {
 			writeJSON(w, http.StatusOK, api.WorkerStatWorkspaceFileResponse{
@@ -204,20 +212,30 @@ func (s *Server) workerListWorkspaceFiles(w http.ResponseWriter, r *http.Request
 	request.Path = target
 	worker := workerFromContext(r.Context())
 	var page api.WorkspaceFilePage
+	var record db.Workspace
+	var source workspaceFileSource
+	var after string
+	var now time.Time
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		source, err := authorizeWorkerRunSource(r.Context(), work.q, worker, request.Lease)
+		runSource, err := authorizeWorkerRunSource(r.Context(), work.q, worker, request.Lease)
 		if err != nil {
 			return err
 		}
-		record, err := resolveWorkerWorkspace(r.Context(), work.q, source, request.Workspace)
+		record, err = resolveWorkerWorkspace(r.Context(), work.q, runSource, request.Workspace)
 		if err != nil {
 			return err
 		}
-		page, err = s.listWorkspaceFilesWithQueries(
-			r.Context(), work.q, record, request.Path, request.Cursor, request.Limit, time.Now(),
+		now = time.Now()
+		source, after, err = s.resolveWorkspaceFileListSource(
+			r.Context(), work.q, record, request.Path, request.Cursor, now,
 		)
 		return err
 	})
+	if err == nil {
+		page, err = s.listWorkspaceFileSource(
+			r.Context(), record.PublicID, source, request.Path, after, request.Limit, now,
+		)
+	}
 	if failure, handled := s.workerWorkspaceFileFailure(w, request.Lease.RunID, "list", err); handled {
 		if failure != nil {
 			writeJSON(w, http.StatusOK, api.WorkerListWorkspaceFilesResponse{
