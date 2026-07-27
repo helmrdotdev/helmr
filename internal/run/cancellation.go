@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -493,20 +494,13 @@ func findCancellationTarget(
 	tx pgx.Tx,
 	request CancellationRequest,
 ) (uuid.UUID, error) {
-	var id uuid.UUID
-	err := tx.QueryRow(ctx, `
-SELECT id
-  FROM runs
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND public_id = $4`,
-		request.OrgID,
-		request.ProjectID,
-		request.EnvironmentID,
-		request.RunPublicID,
-	).Scan(&id)
-	return id, err
+	id, err := db.New(tx).FindCancellationTarget(ctx, db.FindCancellationTargetParams{
+		OrgID:         pgvalue.UUID(request.OrgID),
+		ProjectID:     pgvalue.UUID(request.ProjectID),
+		EnvironmentID: pgvalue.UUID(request.EnvironmentID),
+		PublicID:      request.RunPublicID,
+	})
+	return uuid.UUID(id.Bytes), err
 }
 
 func cancellationLineage(
@@ -514,55 +508,22 @@ func cancellationLineage(
 	tx pgx.Tx,
 	targetID uuid.UUID,
 ) ([]uuid.UUID, error) {
-	rows, err := tx.Query(ctx, `
-WITH RECURSIVE lineage AS (
-    SELECT id,
-           parent_run_id,
-           parent_owns_lifecycle,
-           0 AS depth,
-           ARRAY[id] AS path,
-           false AS cycle
-      FROM runs
-     WHERE id = $1
-    UNION ALL
-    SELECT parent.id,
-           parent.parent_run_id,
-           parent.parent_owns_lifecycle,
-           lineage.depth + 1,
-           lineage.path || parent.id,
-           parent.id = ANY(lineage.path)
-      FROM lineage
-      JOIN runs AS parent
-        ON parent.id = lineage.parent_run_id
-     WHERE lineage.parent_owns_lifecycle IS TRUE
-       AND NOT lineage.cycle
-       AND lineage.depth < $2
-)
-SELECT id, depth, cycle
-  FROM lineage
- ORDER BY depth DESC`, targetID, maxCancellationGraphSize)
+	rows, err := db.New(tx).ListCancellationLineage(ctx, db.ListCancellationLineageParams{
+		TargetID: pgvalue.UUID(targetID),
+		MaxDepth: maxCancellationGraphSize,
+	})
 	if err != nil {
 		return nil, cancellationAuthority("load Run lineage", err)
 	}
-	defer rows.Close()
 	var ids []uuid.UUID
-	for rows.Next() {
-		var id uuid.UUID
-		var depth int
-		var cycle bool
-		if err := rows.Scan(&id, &depth, &cycle); err != nil {
-			return nil, cancellationAuthority("scan Run lineage", err)
-		}
-		if cycle {
+	for _, row := range rows {
+		if row.Cycle {
 			return nil, cancellationAuthority("run lineage contains a cycle", nil)
 		}
-		ids = append(ids, id)
+		ids = append(ids, uuid.UUID(row.ID.Bytes))
 		if len(ids) > maxCancellationGraphSize {
 			return nil, cancellationAuthority("run lineage exceeds the transaction bound", nil)
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, cancellationAuthority("read Run lineage", err)
 	}
 	if len(ids) == 0 || ids[len(ids)-1] != targetID {
 		return nil, cancellationAuthority("run lineage is incomplete", nil)
@@ -660,63 +621,23 @@ func discoverOwnedCancellationRuns(
 	request CancellationRequest,
 	targetID uuid.UUID,
 ) ([]uuid.UUID, error) {
-	rows, err := tx.Query(ctx, `
-WITH RECURSIVE owned AS (
-    SELECT id,
-           0 AS depth,
-           ARRAY[id] AS path,
-           false AS cycle
-      FROM runs
-     WHERE id = $1
-       AND org_id = $2
-       AND project_id = $3
-       AND environment_id = $4
-    UNION ALL
-    SELECT child.id,
-           owned.depth + 1,
-           owned.path || child.id,
-           child.id = ANY(owned.path)
-      FROM owned
-      JOIN runs AS child
-        ON child.parent_run_id = owned.id
-       AND child.parent_owns_lifecycle IS TRUE
-       AND child.org_id = $2
-       AND child.project_id = $3
-       AND child.environment_id = $4
-       AND child.status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested')
-     WHERE NOT owned.cycle
-       AND owned.depth < $5
-)
-SELECT id, depth, cycle
-  FROM owned
- ORDER BY depth, id
- LIMIT $6`,
-		targetID,
-		request.OrgID,
-		request.ProjectID,
-		request.EnvironmentID,
-		maxCancellationGraphSize+1,
-		maxCancellationGraphSize+1,
-	)
+	rows, err := db.New(tx).ListOwnedCancellationRuns(ctx, db.ListOwnedCancellationRunsParams{
+		TargetID:      pgvalue.UUID(targetID),
+		OrgID:         pgvalue.UUID(request.OrgID),
+		ProjectID:     pgvalue.UUID(request.ProjectID),
+		EnvironmentID: pgvalue.UUID(request.EnvironmentID),
+		MaxDepth:      maxCancellationGraphSize + 1,
+		LimitCount:    maxCancellationGraphSize + 1,
+	})
 	if err != nil {
 		return nil, cancellationAuthority("discover parent-owned Runs", err)
 	}
-	defer rows.Close()
 	var ids []uuid.UUID
-	for rows.Next() {
-		var id uuid.UUID
-		var depth int
-		var cycle bool
-		if err := rows.Scan(&id, &depth, &cycle); err != nil {
-			return nil, cancellationAuthority("scan parent-owned Run", err)
-		}
-		if cycle {
+	for _, row := range rows {
+		if row.Cycle {
 			return nil, cancellationAuthority("parent-owned Run graph contains a cycle", nil)
 		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, cancellationAuthority("read parent-owned Runs", err)
+		ids = append(ids, uuid.UUID(row.ID.Bytes))
 	}
 	if len(ids) == 0 || ids[0] != targetID {
 		return nil, cancellationAuthority("parent-owned Run graph is incomplete", nil)

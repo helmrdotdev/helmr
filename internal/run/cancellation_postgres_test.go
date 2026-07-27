@@ -88,6 +88,45 @@ SELECT runtime_instances.desired_state, workspace_mounts.state
 	}
 }
 
+func TestCancelerRejectsTargetOutsideScope(t *testing.T) {
+	ctx := context.Background()
+	fixture := newPostgresFixture(t)
+	work := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
+	canceler, err := NewCanceler(fixture.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runPublicID := fixture.runPublicID(t, work.runID)
+	requests := []CancellationRequest{
+		{
+			OrgID: uuid.New(), ProjectID: fixture.projectID,
+			EnvironmentID: fixture.environmentID, RunPublicID: runPublicID,
+		},
+		{
+			OrgID: fixture.orgID, ProjectID: uuid.New(),
+			EnvironmentID: fixture.environmentID, RunPublicID: runPublicID,
+		},
+		{
+			OrgID: fixture.orgID, ProjectID: fixture.projectID,
+			EnvironmentID: uuid.New(), RunPublicID: runPublicID,
+		},
+	}
+	for _, request := range requests {
+		if _, err := canceler.Cancel(ctx, request); !errors.Is(err, ErrCancellationNotFound) {
+			t.Fatalf("out-of-scope cancellation error = %v", err)
+		}
+	}
+	var status db.RunStatus
+	if err := fixture.pool.QueryRow(ctx,
+		`SELECT status FROM runs WHERE id = $1`, work.runID,
+	).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != db.RunStatusQueued {
+		t.Fatalf("out-of-scope cancellation changed Run status to %s", status)
+	}
+}
+
 func TestOwnedFinalizationFailsSecretRevokedRun(t *testing.T) {
 	ctx := context.Background()
 	fixture := newPostgresFixture(t)
