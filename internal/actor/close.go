@@ -24,7 +24,7 @@ func ReconcileClose(
 	if actor.CurrentRunID.Valid {
 		return reconcileCurrentRunClose(ctx, store, actor)
 	}
-	workspace, err := store.LockActorLifecycleWorkspace(ctx, db.LockActorLifecycleWorkspaceParams{
+	workspace, err := store.LockActorCloseWorkspace(ctx, db.LockActorCloseWorkspaceParams{
 		EnvironmentID: actor.EnvironmentID,
 		WorkspaceID:   actor.WorkspaceID,
 		ActorID:       actor.ID,
@@ -35,7 +35,7 @@ func ReconcileClose(
 	if err != nil {
 		return db.Actor{}, false, err
 	}
-	activity, err := store.GetActorLifecycleWorkspaceActivity(ctx, workspace.ID)
+	activity, err := store.GetActorCloseWorkspaceActivity(ctx, workspace.ID)
 	if err != nil {
 		return db.Actor{}, false, err
 	}
@@ -112,7 +112,7 @@ func reconcileCurrentRunClose(
 	if err != nil {
 		return db.Actor{}, false, err
 	}
-	workspace, err := store.LockActorLifecycleWorkspace(ctx, db.LockActorLifecycleWorkspaceParams{
+	workspace, err := store.LockActorCloseWorkspace(ctx, db.LockActorCloseWorkspaceParams{
 		EnvironmentID: actor.EnvironmentID,
 		WorkspaceID:   actor.WorkspaceID,
 		ActorID:       actor.ID,
@@ -158,7 +158,7 @@ func reconcileCurrentRunClose(
 
 func workspaceCanAdmit(
 	workspace db.Workspace,
-	activity db.GetActorLifecycleWorkspaceActivityRow,
+	activity db.GetActorCloseWorkspaceActivityRow,
 ) bool {
 	return workspace.State == db.WorkspaceStateActive &&
 		workspace.DesiredState == db.WorkspaceDesiredStateActive &&

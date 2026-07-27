@@ -33,7 +33,7 @@ func TestActorInputDeliveryReconcilesIntent(t *testing.T) {
 	if store.claim.Lane != "control" ||
 		len(store.claim.Topics) != 2 ||
 		store.claim.Topics[0] != "actor.input.reconcile" ||
-		store.claim.Topics[1] != "actor.lifecycle.reconcile" {
+		store.claim.Topics[1] != "actor.close.reconcile" {
 		t.Fatalf("claim = %+v", store.claim)
 	}
 	if gotEnvironmentID != environmentID || gotActorID != actorID || gotRecordID != recordID {
@@ -64,15 +64,15 @@ func TestActorInputDeliveryRetriesDeferredContinuation(t *testing.T) {
 	}
 }
 
-func TestActorInputDeliveryReconcilesLifecycleIntent(t *testing.T) {
+func TestActorInputDeliveryReconcilesCloseIntent(t *testing.T) {
 	environmentID := uuid.Must(uuid.NewV7())
 	actorID := uuid.Must(uuid.NewV7())
-	message := actorLifecycleReconcileMessage(environmentID, actorID)
+	message := actorCloseReconcileMessage(environmentID, actorID)
 	store := &actorDeliveryStore{messages: []db.OutboxMessage{message}}
 	var gotEnvironmentID, gotActorID uuid.UUID
 	worker, err := NewDeliveryWorker(nil, store,
 		func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error) {
-			t.Fatal("lifecycle intent reached input reconciler")
+			t.Fatal("close intent reached input reconciler")
 			return false, nil
 		},
 		func(_ context.Context, environmentID, actorID uuid.UUID) (bool, error) {
@@ -89,14 +89,14 @@ func TestActorInputDeliveryReconcilesLifecycleIntent(t *testing.T) {
 	if gotEnvironmentID != environmentID || gotActorID != actorID ||
 		store.delivered != message.Attempts || store.retried || store.deadLettered {
 		t.Fatalf(
-			"lifecycle IDs=%s/%s delivery=%d retry=%v dead-letter=%v",
+			"close IDs=%s/%s delivery=%d retry=%v dead-letter=%v",
 			gotEnvironmentID, gotActorID, store.delivered, store.retried, store.deadLettered,
 		)
 	}
 }
 
-func TestActorInputDeliveryRetriesDeferredLifecycle(t *testing.T) {
-	message := actorLifecycleReconcileMessage(
+func TestActorInputDeliveryRetriesDeferredClose(t *testing.T) {
+	message := actorCloseReconcileMessage(
 		uuid.Must(uuid.NewV7()),
 		uuid.Must(uuid.NewV7()),
 	)
@@ -111,7 +111,7 @@ func TestActorInputDeliveryRetriesDeferredLifecycle(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	worker.now = func() time.Time { return now }
 	if err := worker.tick(context.Background()); err == nil {
-		t.Fatal("deferred lifecycle should report a retry cause")
+		t.Fatal("deferred close should report a retry cause")
 	}
 	if !store.retried || !store.retryAt.Equal(now.Add(time.Second)) ||
 		store.delivered != 0 || store.deadLettered {
@@ -153,9 +153,9 @@ func actorInputReconcileMessage(environmentID, actorID, recordID uuid.UUID) db.O
 	}
 }
 
-func actorLifecycleReconcileMessage(environmentID, actorID uuid.UUID) db.OutboxMessage {
+func actorCloseReconcileMessage(environmentID, actorID uuid.UUID) db.OutboxMessage {
 	return db.OutboxMessage{
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Lane: "control", Topic: "actor.lifecycle.reconcile",
+		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Lane: "control", Topic: "actor.close.reconcile",
 		Payload: []byte(`{"environmentId":"` + environmentID.String() + `","actorId":"` + actorID.String() + `"}`),
 		State:   "claimed", Attempts: 1, ClaimedBy: pgvalue.Text("worker"),
 		ClaimExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),

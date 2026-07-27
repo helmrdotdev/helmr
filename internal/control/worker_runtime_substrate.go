@@ -29,14 +29,14 @@ func (s *Server) workerRegisterRuntimeSubstrate(w http.ResponseWriter, r *http.R
 		writeError(w, errors.New("runtime substrate CAS is not configured"))
 		return
 	}
-	workspaceDefinitionID, err := parseWorkspaceUUID("deployment_definition_id", request.DeploymentDefinitionID)
+	workspaceDefinitionID, err := parseRequiredUUID("deployment_definition_id", request.DeploymentDefinitionID)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
 	runtimeSubstrateID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if strings.TrimSpace(request.ID) != "" {
-		runtimeSubstrateID, err = parseWorkspaceUUID("id", request.ID)
+		runtimeSubstrateID, err = parseRequiredUUID("id", request.ID)
 		if err != nil {
 			writeError(w, badRequest(err))
 			return
@@ -156,7 +156,7 @@ func (s *Server) workerLookupRuntimeSubstrate(w http.ResponseWriter, r *http.Req
 		writeError(w, badRequest(err))
 		return
 	}
-	workspaceDefinitionID, err := parseWorkspaceUUID("deployment_definition_id", request.DeploymentDefinitionID)
+	workspaceDefinitionID, err := parseRequiredUUID("deployment_definition_id", request.DeploymentDefinitionID)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return

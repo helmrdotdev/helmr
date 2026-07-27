@@ -18,8 +18,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type InputReconcile func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error)
-type LifecycleReconcile func(context.Context, uuid.UUID, uuid.UUID) (bool, error)
+type InputReconciler func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error)
+type CloseReconciler func(context.Context, uuid.UUID, uuid.UUID) (bool, error)
 
 const (
 	actorDeliveryPollInterval = 250 * time.Millisecond
@@ -37,8 +37,8 @@ type DeliveryStore interface {
 type DeliveryWorker struct {
 	log       *slog.Logger
 	store     DeliveryStore
-	reconcile InputReconcile
-	lifecycle LifecycleReconcile
+	reconcile InputReconciler
+	close     CloseReconciler
 	workerID  string
 	interval  time.Duration
 	claimFor  time.Duration
@@ -49,8 +49,8 @@ type DeliveryWorker struct {
 func NewDeliveryWorker(
 	log *slog.Logger,
 	store DeliveryStore,
-	reconcile InputReconcile,
-	lifecycle LifecycleReconcile,
+	reconcile InputReconciler,
+	close CloseReconciler,
 ) (*DeliveryWorker, error) {
 	if store == nil {
 		return nil, errors.New("Actor input delivery store is required")
@@ -58,14 +58,14 @@ func NewDeliveryWorker(
 	if reconcile == nil {
 		return nil, errors.New("Actor input reconciler is required")
 	}
-	if lifecycle == nil {
-		return nil, errors.New("Actor lifecycle reconciler is required")
+	if close == nil {
+		return nil, errors.New("Actor close reconciler is required")
 	}
 	if log == nil {
 		log = slog.Default()
 	}
 	return &DeliveryWorker{
-		log: log, store: store, reconcile: reconcile, lifecycle: lifecycle,
+		log: log, store: store, reconcile: reconcile, close: close,
 		workerID: uuid.Must(uuid.NewV7()).String(), interval: actorDeliveryPollInterval,
 		claimFor: actorDeliveryClaimLease, claimSize: actorDeliveryClaimLimit,
 		now: func() time.Time { return time.Now().UTC() },
@@ -94,7 +94,7 @@ func (w *DeliveryWorker) tick(ctx context.Context) error {
 		ClaimExpiresAt: pgvalue.TimestamptzUTCZeroInvalid(now.Add(w.claimFor)),
 		Lane:           "control", Topics: []string{
 			"actor.input.reconcile",
-			"actor.lifecycle.reconcile",
+			"actor.close.reconcile",
 		}, RowLimit: w.claimSize,
 	})
 	if err != nil {
@@ -110,8 +110,8 @@ func (w *DeliveryWorker) tick(ctx context.Context) error {
 }
 
 func (w *DeliveryWorker) process(ctx context.Context, message db.OutboxMessage) error {
-	if message.Topic == "actor.lifecycle.reconcile" {
-		return w.processLifecycle(ctx, message)
+	if message.Topic == "actor.close.reconcile" {
+		return w.processClose(ctx, message)
 	}
 	if message.Topic != "actor.input.reconcile" {
 		return w.deadLetter(ctx, message, errors.New("unsupported Actor reconciliation topic"))
@@ -136,15 +136,15 @@ func (w *DeliveryWorker) process(ctx context.Context, message db.OutboxMessage) 
 	return err
 }
 
-func (w *DeliveryWorker) processLifecycle(
+func (w *DeliveryWorker) processClose(
 	ctx context.Context,
 	message db.OutboxMessage,
 ) error {
-	payload, err := decodeActorLifecycleReconcilePayload(message.Payload)
+	payload, err := decodeActorCloseReconcilePayload(message.Payload)
 	if err != nil {
 		return w.deadLetter(ctx, message, err)
 	}
-	deferred, err := w.lifecycle(ctx, payload.environmentID, payload.actorID)
+	deferred, err := w.close(ctx, payload.environmentID, payload.actorID)
 	if err != nil {
 		return w.retry(ctx, message, err, outbox.RetryAfter(message.Attempts))
 	}
@@ -152,7 +152,7 @@ func (w *DeliveryWorker) processLifecycle(
 		return w.retry(
 			ctx,
 			message,
-			errors.New("Actor close is waiting for lifecycle authority"),
+			errors.New("Actor close is waiting for close authority"),
 			outbox.RetryAfter(message.Attempts),
 		)
 	}
@@ -197,7 +197,7 @@ type actorInputReconcilePayload struct {
 	recordID      uuid.UUID
 }
 
-type actorLifecycleReconcilePayload struct {
+type actorCloseReconcilePayload struct {
 	EnvironmentID string `json:"environmentId"`
 	ActorID       string `json:"actorId"`
 	environmentID uuid.UUID
@@ -231,36 +231,36 @@ func decodeActorInputReconcilePayload(raw []byte) (actorInputReconcilePayload, e
 	return value, nil
 }
 
-func decodeActorLifecycleReconcilePayload(
+func decodeActorCloseReconcilePayload(
 	raw []byte,
-) (actorLifecycleReconcilePayload, error) {
+) (actorCloseReconcilePayload, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	var value actorLifecycleReconcilePayload
+	var value actorCloseReconcilePayload
 	if err := decoder.Decode(&value); err != nil {
-		return actorLifecycleReconcilePayload{}, fmt.Errorf(
-			"decode Actor lifecycle reconciliation payload: %w",
+		return actorCloseReconcilePayload{}, fmt.Errorf(
+			"decode Actor close reconciliation payload: %w",
 			err,
 		)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		if err != nil {
-			return actorLifecycleReconcilePayload{}, err
+			return actorCloseReconcilePayload{}, err
 		}
-		return actorLifecycleReconcilePayload{}, errors.New(
-			"Actor lifecycle reconciliation payload contains a trailing JSON value",
+		return actorCloseReconcilePayload{}, errors.New(
+			"Actor close reconciliation payload contains a trailing JSON value",
 		)
 	}
 	var err error
 	if value.environmentID, err = uuid.Parse(value.EnvironmentID); err != nil {
-		return actorLifecycleReconcilePayload{}, errors.New(
-			"Actor lifecycle reconciliation environmentId is invalid",
+		return actorCloseReconcilePayload{}, errors.New(
+			"Actor close reconciliation environmentId is invalid",
 		)
 	}
 	if value.actorID, err = uuid.Parse(value.ActorID); err != nil {
-		return actorLifecycleReconcilePayload{}, errors.New(
-			"Actor lifecycle reconciliation actorId is invalid",
+		return actorCloseReconcilePayload{}, errors.New(
+			"Actor close reconciliation actorId is invalid",
 		)
 	}
 	return value, nil

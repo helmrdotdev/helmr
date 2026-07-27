@@ -1,4 +1,4 @@
--- name: LockActorLifecycle :one
+-- name: LockActorClose :one
 SELECT *
   FROM actors
  WHERE environment_id = sqlc.arg(environment_id)
@@ -26,7 +26,7 @@ UPDATE actors
    AND state IN ('open', 'closing')
 RETURNING *;
 
--- name: LockActorLifecycleWorkspace :one
+-- name: LockActorCloseWorkspace :one
 SELECT *
   FROM workspaces
  WHERE environment_id = sqlc.arg(environment_id)
@@ -35,7 +35,7 @@ SELECT *
    AND owner_run_id IS NULL
  FOR UPDATE;
 
--- name: GetActorLifecycleWorkspaceActivity :one
+-- name: GetActorCloseWorkspaceActivity :one
 SELECT EXISTS (
            SELECT 1
              FROM workspace_leases
@@ -77,12 +77,12 @@ UPDATE actors
    AND committed_input_sequence >= close_sequence
 RETURNING *;
 
--- name: CreateActorLifecycleReconcileOutbox :exec
+-- name: CreateActorCloseReconcileOutbox :exec
 INSERT INTO outbox_messages (id, lane, topic, partition_key, payload, available_at)
 VALUES (
     sqlc.arg(id),
     'control',
-    'actor.lifecycle.reconcile',
+    'actor.close.reconcile',
     sqlc.arg(actor_id)::uuid::text,
     jsonb_build_object(
         'environmentId', sqlc.arg(environment_id)::uuid::text,

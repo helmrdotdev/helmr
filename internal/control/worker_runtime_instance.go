@@ -198,12 +198,12 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 		writeError(w, badRequest(fmt.Errorf("invalid worker runtime instance %s request JSON: %w", state, err)))
 		return
 	}
-	id, err := parseWorkspaceUUID("id", request.ID)
+	id, err := parseRequiredUUID("id", request.ID)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	slotID, err := parseWorkspaceUUID("network_slot_id", request.NetworkSlotID)
+	slotID, err := parseRequiredUUID("network_slot_id", request.NetworkSlotID)
 	if err != nil || request.WorkerEpoch <= 0 || request.NetworkSlotGeneration <= 0 || request.DesiredVersion <= 0 || request.ExpectedObservedVersion < 0 {
 		writeError(w, badRequest(errors.New("runtime epoch, slot generation, desired version, and observed version fences are required")))
 		return
@@ -220,7 +220,7 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 			writeError(w, badRequest(errors.New("network_facts are required when marking a runtime ready")))
 			return
 		}
-		runtimeSubstrateID, substrateErr := parseWorkspaceUUID("runtime_substrate_id", request.RuntimeSubstrateID)
+		runtimeSubstrateID, substrateErr := parseRequiredUUID("runtime_substrate_id", request.RuntimeSubstrateID)
 		if substrateErr != nil {
 			writeError(w, badRequest(substrateErr))
 			return

@@ -351,15 +351,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure timer Wait reconciler: %w", err)
 	}
-	actorInputReconciler, err := actor.NewInputReconciler(pool)
+	actorReconciler, err := actor.NewReconciler(pool)
 	if err != nil {
 		return fmt.Errorf("configure Actor input reconciler: %w", err)
 	}
 	actorInputDelivery, err := actor.NewDeliveryWorker(
 		log,
 		queries,
-		actorInputReconciler.Reconcile,
-		actorInputReconciler.ReconcileLifecycle,
+		actorReconciler.ReconcileInput,
+		actorReconciler.ReconcileClose,
 	)
 	if err != nil {
 		return fmt.Errorf("configure Actor input reconciliation delivery: %w", err)
@@ -368,7 +368,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		log,
 		timerWaitReconciler.ReconcileDue,
 		tokenWaitReconciler.ReconcileTimeouts,
-		actorInputReconciler.ReconcileTimeouts,
+		actorReconciler.ReconcileTimeouts,
 	)
 	if err != nil {
 		return fmt.Errorf("configure Run Wait deadline reconciliation delivery: %w", err)

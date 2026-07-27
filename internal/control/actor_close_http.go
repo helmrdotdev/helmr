@@ -75,7 +75,7 @@ func (s *Server) closeActorHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeActorCloseScopeError(w, err)
 		return
 	}
-	actor, err := s.resolveActorLifecycleAddress(
+	actor, err := s.resolveActorCloseAddress(
 		r,
 		environmentID,
 		actorDeclaredID,
@@ -189,11 +189,11 @@ func authorizeActorCloseBeforeLookup(principal auth.Actor) error {
 				retryable: true,
 			})
 		}
-		if principal.HasPermission(auth.PermissionActorsLifecycleManage, scope) {
+		if principal.HasPermission(auth.PermissionActorsCloseManage, scope) {
 			return nil
 		}
 	case auth.ActorKindSession:
-		if auth.RoleAllows(principal.Role, auth.PermissionActorsLifecycleManage) {
+		if auth.RoleAllows(principal.Role, auth.PermissionActorsCloseManage) {
 			return nil
 		}
 	}
@@ -203,7 +203,7 @@ func authorizeActorCloseBeforeLookup(principal auth.Actor) error {
 	})
 }
 
-func (s *Server) resolveActorLifecycleAddress(
+func (s *Server) resolveActorCloseAddress(
 	r *http.Request,
 	environmentID pgtype.UUID,
 	actorDeclaredID string,
@@ -219,7 +219,7 @@ func (s *Server) writeActorCloseError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, errActorCloseConflict):
 		writeError(w, conflict(codedError{
-			code:    "actor_lifecycle_conflict",
+			code:    "actor_close_conflict",
 			message: errActorCloseConflict.Error(),
 		}))
 	default:

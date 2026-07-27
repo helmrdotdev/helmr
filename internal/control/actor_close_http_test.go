@@ -14,16 +14,16 @@ import (
 )
 
 func TestActorCloseAPIKeyScopeRoundTripsPermission(t *testing.T) {
-	normalized, ok := normalizeAPIKeyScope(api.APIKeyScopeActorsLifecycleManage)
-	if !ok || normalized != api.APIKeyScopeActorsLifecycleManage {
+	normalized, ok := normalizeAPIKeyScope(api.APIKeyScopeActorsCloseManage)
+	if !ok || normalized != api.APIKeyScopeActorsCloseManage {
 		t.Fatalf("normalized scope = %q, %t", normalized, ok)
 	}
 	permission, ok := apiKeyScopePermission(normalized)
-	if !ok || permission != auth.PermissionActorsLifecycleManage {
+	if !ok || permission != auth.PermissionActorsCloseManage {
 		t.Fatalf("permission = %q, %t", permission, ok)
 	}
 	scope, ok := apiKeyPermissionScope(string(permission))
-	if !ok || scope != api.APIKeyScopeActorsLifecycleManage {
+	if !ok || scope != api.APIKeyScopeActorsCloseManage {
 		t.Fatalf("scope = %q, %t", scope, ok)
 	}
 }
@@ -65,7 +65,7 @@ func TestAuthorizeActorCloseRequiresExactPermission(t *testing.T) {
 	apiKey := auth.Actor{
 		Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper,
 		ProjectID: projectID, EnvironmentID: environmentID,
-		Permissions: []auth.Permission{auth.PermissionActorsLifecycleManage},
+		Permissions: []auth.Permission{auth.PermissionActorsCloseManage},
 	}
 	if err := authorizeActorCloseBeforeLookup(apiKey); err != nil {
 		t.Fatal(err)
@@ -121,7 +121,7 @@ func TestWriteActorCloseErrorUsesStableCodes(t *testing.T) {
 		code      string
 		retryable bool
 	}{
-		{err: errActorCloseConflict, status: http.StatusConflict, code: "actor_lifecycle_conflict"},
+		{err: errActorCloseConflict, status: http.StatusConflict, code: "actor_close_conflict"},
 		{
 			err: errActorCloseAuthority, status: http.StatusServiceUnavailable,
 			code: "actor_close_authority_unavailable", retryable: true,

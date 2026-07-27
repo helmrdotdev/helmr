@@ -17,18 +17,18 @@ type actorInputReconcileDB interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
 
-type InputReconciler struct {
+type Reconciler struct {
 	db actorInputReconcileDB
 }
 
-func NewInputReconciler(database actorInputReconcileDB) (*InputReconciler, error) {
+func NewReconciler(database actorInputReconcileDB) (*Reconciler, error) {
 	if database == nil {
-		return nil, errors.New("Actor input reconciliation database is required")
+		return nil, errors.New("Actor reconciliation database is required")
 	}
-	return &InputReconciler{db: database}, nil
+	return &Reconciler{db: database}, nil
 }
 
-func (r *InputReconciler) ReconcileLifecycle(
+func (r *Reconciler) ReconcileClose(
 	ctx context.Context,
 	environmentID uuid.UUID,
 	actorID uuid.UUID,
@@ -48,7 +48,7 @@ func (r *InputReconciler) ReconcileLifecycle(
 	}
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return false, fmt.Errorf("begin Actor lifecycle reconciliation: %w", err)
+		return false, fmt.Errorf("begin Actor close reconciliation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	q := db.New(tx)
@@ -56,7 +56,7 @@ func (r *InputReconciler) ReconcileLifecycle(
 	if err != nil {
 		return false, err
 	}
-	actor, err := q.LockActorLifecycle(ctx, db.LockActorLifecycleParams{
+	actor, err := q.LockActorClose(ctx, db.LockActorCloseParams{
 		EnvironmentID: pgvalue.UUID(environmentID),
 		ActorID:       pgvalue.UUID(actorID),
 	})
@@ -79,10 +79,10 @@ func (r *InputReconciler) ReconcileLifecycle(
 	return deferred, nil
 }
 
-// Reconcile repairs append delivery after the append transaction. It is safe to
+// ReconcileInput repairs append delivery after the append transaction. It is safe to
 // run after an in-transaction match or continuation because every transition is
 // guarded by the Actor current-Run CAS and the pending Wait CAS.
-func (r *InputReconciler) Reconcile(
+func (r *Reconciler) ReconcileInput(
 	ctx context.Context,
 	environmentID uuid.UUID,
 	actorID uuid.UUID,
@@ -176,7 +176,7 @@ func (r *InputReconciler) Reconcile(
 	return false, nil
 }
 
-func (r *InputReconciler) ReconcileTimeouts(ctx context.Context, limit int32) (int, error) {
+func (r *Reconciler) ReconcileTimeouts(ctx context.Context, limit int32) (int, error) {
 	if limit <= 0 {
 		return 0, nil
 	}

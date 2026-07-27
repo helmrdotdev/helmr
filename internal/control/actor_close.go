@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	errActorCloseConflict  = errors.New("Actor lifecycle conflicts with close")
+	errActorCloseConflict  = errors.New("Actor cannot be closed in its current state")
 	errActorCloseAuthority = errors.New("Actor close authority is unavailable")
 	errActorCloseReceipt   = errors.New("Actor close receipt is invalid")
 )
@@ -89,7 +89,7 @@ func (s *Server) closeActor(
 		if err != nil {
 			return fmt.Errorf("lock Actor close Workspace Secrets: %w", err)
 		}
-		actor, err := work.q.LockActorLifecycle(ctx, db.LockActorLifecycleParams{
+		actor, err := work.q.LockActorClose(ctx, db.LockActorCloseParams{
 			EnvironmentID: pgvalue.UUID(request.EnvironmentID),
 			ActorID:       pgvalue.UUID(request.ActorID),
 		})
@@ -122,7 +122,7 @@ func (s *Server) closeActor(
 				return err
 			}
 			if deferred || actor.State == "closing" {
-				if err := createActorLifecycleReconcileIntent(ctx, work.q, actor); err != nil {
+				if err := createActorCloseReconcileIntent(ctx, work.q, actor); err != nil {
 					return err
 				}
 			}
@@ -190,7 +190,7 @@ func actorCloseReceipt(raw []byte) (api.ActorOperationReceipt, error) {
 	return receipt, nil
 }
 
-func createActorLifecycleReconcileIntent(
+func createActorCloseReconcileIntent(
 	ctx context.Context,
 	store db.Querier,
 	actor db.Actor,
@@ -201,20 +201,20 @@ func createActorLifecycleReconcileIntent(
 	intentID := uuid.NewSHA1(
 		uuid.NameSpaceOID,
 		[]byte(fmt.Sprintf(
-			"helmr.actor-lifecycle-reconcile.v0:%s:%d",
+			"helmr.actor-close-reconcile.v0:%s:%d",
 			pgvalue.UUIDString(actor.ID),
 			actor.CloseSequence.Int64,
 		)),
 	)
-	if err := store.CreateActorLifecycleReconcileOutbox(
+	if err := store.CreateActorCloseReconcileOutbox(
 		ctx,
-		db.CreateActorLifecycleReconcileOutboxParams{
+		db.CreateActorCloseReconcileOutboxParams{
 			ID:            pgvalue.UUID(intentID),
 			ActorID:       actor.ID,
 			EnvironmentID: actor.EnvironmentID,
 		},
 	); err != nil {
-		return fmt.Errorf("enqueue Actor lifecycle reconciliation: %w", err)
+		return fmt.Errorf("enqueue Actor close reconciliation: %w", err)
 	}
 	return nil
 }

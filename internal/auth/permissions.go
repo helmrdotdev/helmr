@@ -10,27 +10,27 @@ import (
 type Permission string
 
 const (
-	PermissionAPIKeysManage         Permission = "api_keys.manage"
-	PermissionMembersManage         Permission = "members.manage"
-	PermissionProjectsManage        Permission = "projects.manage"
-	PermissionRunsCreate            Permission = "runs.create"
-	PermissionRunsRead              Permission = "runs.read"
-	PermissionRunsManage            Permission = "runs.manage"
-	PermissionActorsRead            Permission = "actors.read"
-	PermissionActorsStart           Permission = "actors.start"
-	PermissionActorsInputSend       Permission = "actors.input.send"
-	PermissionActorsLifecycleManage Permission = "actors.lifecycle.manage"
-	PermissionTokensCreate          Permission = "tokens.create"
-	PermissionTokensRead            Permission = "tokens.read"
-	PermissionTokensComplete        Permission = "tokens.complete"
-	PermissionTokensCancel          Permission = "tokens.cancel"
-	PermissionWorkspacesCreate      Permission = "workspaces.create"
-	PermissionWorkspacesRead        Permission = "workspaces.read"
-	PermissionWorkspacesDelete      Permission = "workspaces.delete"
-	PermissionWorkspaceFilesRead    Permission = "workspace.files.read"
-	PermissionWorkspaceExecCreate   Permission = "workspace.exec.create"
-	PermissionSecretsWrite          Permission = "secrets.write"
-	PermissionTasksDeploy           Permission = "tasks.deploy"
+	PermissionAPIKeysManage       Permission = "api_keys.manage"
+	PermissionMembersManage       Permission = "members.manage"
+	PermissionProjectsManage      Permission = "projects.manage"
+	PermissionRunsCreate          Permission = "runs.create"
+	PermissionRunsRead            Permission = "runs.read"
+	PermissionRunsManage          Permission = "runs.manage"
+	PermissionActorsRead          Permission = "actors.read"
+	PermissionActorsStart         Permission = "actors.start"
+	PermissionActorsInputSend     Permission = "actors.input.send"
+	PermissionActorsCloseManage   Permission = "actors.close"
+	PermissionTokensCreate        Permission = "tokens.create"
+	PermissionTokensRead          Permission = "tokens.read"
+	PermissionTokensComplete      Permission = "tokens.complete"
+	PermissionTokensCancel        Permission = "tokens.cancel"
+	PermissionWorkspacesCreate    Permission = "workspaces.create"
+	PermissionWorkspacesRead      Permission = "workspaces.read"
+	PermissionWorkspacesDelete    Permission = "workspaces.delete"
+	PermissionWorkspaceFilesRead  Permission = "workspace.files.read"
+	PermissionWorkspaceExecCreate Permission = "workspace.exec.create"
+	PermissionSecretsWrite        Permission = "secrets.write"
+	PermissionTasksDeploy         Permission = "tasks.deploy"
 )
 
 type Scope struct {
@@ -69,7 +69,7 @@ func RoleAllows(role Role, permission Permission) bool {
 			PermissionActorsRead,
 			PermissionActorsStart,
 			PermissionActorsInputSend,
-			PermissionActorsLifecycleManage,
+			PermissionActorsCloseManage,
 			PermissionTokensCreate,
 			PermissionTokensRead,
 			PermissionTokensComplete,

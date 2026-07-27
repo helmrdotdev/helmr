@@ -250,8 +250,8 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeActorsStart, true
 	case string(api.APIKeyScopeActorsInputSend):
 		return api.APIKeyScopeActorsInputSend, true
-	case string(api.APIKeyScopeActorsLifecycleManage):
-		return api.APIKeyScopeActorsLifecycleManage, true
+	case string(api.APIKeyScopeActorsCloseManage):
+		return api.APIKeyScopeActorsCloseManage, true
 	case string(api.APIKeyScopeTokensCreate):
 		return api.APIKeyScopeTokensCreate, true
 	case string(api.APIKeyScopeTokensRead):
@@ -293,8 +293,8 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionActorsStart, true
 	case api.APIKeyScopeActorsInputSend:
 		return auth.PermissionActorsInputSend, true
-	case api.APIKeyScopeActorsLifecycleManage:
-		return auth.PermissionActorsLifecycleManage, true
+	case api.APIKeyScopeActorsCloseManage:
+		return auth.PermissionActorsCloseManage, true
 	case api.APIKeyScopeTokensCreate:
 		return auth.PermissionTokensCreate, true
 	case api.APIKeyScopeTokensRead:
@@ -336,8 +336,8 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeActorsStart, true
 	case string(auth.PermissionActorsInputSend):
 		return api.APIKeyScopeActorsInputSend, true
-	case string(auth.PermissionActorsLifecycleManage):
-		return api.APIKeyScopeActorsLifecycleManage, true
+	case string(auth.PermissionActorsCloseManage):
+		return api.APIKeyScopeActorsCloseManage, true
 	case string(auth.PermissionTokensCreate):
 		return api.APIKeyScopeTokensCreate, true
 	case string(auth.PermissionTokensRead):

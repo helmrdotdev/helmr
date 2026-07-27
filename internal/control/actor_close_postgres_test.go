@@ -237,11 +237,11 @@ func TestActorClosePostgresReconcilesAfterWorkspaceAuthorityRecovers(t *testing.
 	`, fixture.workspaceIDs[0]); err != nil {
 		t.Fatal(err)
 	}
-	reconciler, err := actor.NewInputReconciler(fixture.pool)
+	reconciler, err := actor.NewReconciler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	deferred, err := reconciler.ReconcileLifecycle(
+	deferred, err := reconciler.ReconcileClose(
 		t.Context(),
 		fixture.environmentID,
 		started.ActorID,
@@ -301,7 +301,7 @@ func TestActorCloseHTTPPostgresAuthorizesBeforeLookupAndCloses(t *testing.T) {
 	if deniedState != "open" || deniedClaims != 0 {
 		t.Fatalf("denied residue state=%s claims=%d", deniedState, deniedClaims)
 	}
-	principal.Permissions = []auth.Permission{auth.PermissionActorsLifecycleManage}
+	principal.Permissions = []auth.Permission{auth.PermissionActorsCloseManage}
 	recorder = httptest.NewRecorder()
 	fixture.server.closeActorHTTP(
 		recorder,
@@ -428,29 +428,29 @@ func assertActorCloseContinuation(
 	`, actorID).Scan(&state, &closeSequence, &manualRunCancelled, &currentRunID); err != nil {
 		t.Fatal(err)
 	}
-	var continuations, admissionIntents, lifecycleIntents int
+	var continuations, admissionIntents, closeIntents int
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT
 		    (SELECT count(*) FROM runs WHERE actor_id = $1 AND cause_kind = 'continuation'),
 		    (SELECT count(*) FROM outbox_messages
 		      WHERE topic = 'run.admit' AND payload->>'runId' = $2::text),
 		    (SELECT count(*) FROM outbox_messages
-		      WHERE topic = 'actor.lifecycle.reconcile'
+		      WHERE topic = 'actor.close.reconcile'
 		        AND payload->>'actorId' = $1::text)
 	`, actorID, currentRunID).Scan(
 		&continuations,
 		&admissionIntents,
-		&lifecycleIntents,
+		&closeIntents,
 	); err != nil {
 		t.Fatal(err)
 	}
 	if state != "closing" || closeSequence != 1 || manualRunCancelled ||
 		currentRunID == uuid.Nil || continuations != 1 ||
-		admissionIntents != 1 || lifecycleIntents != 1 {
+		admissionIntents != 1 || closeIntents != 1 {
 		t.Fatalf(
-			"closing state=%s boundary=%d manual=%v current=%s continuations=%d admission=%d lifecycle=%d",
+			"closing state=%s boundary=%d manual=%v current=%s continuations=%d admission=%d close=%d",
 			state, closeSequence, manualRunCancelled, currentRunID,
-			continuations, admissionIntents, lifecycleIntents,
+			continuations, admissionIntents, closeIntents,
 		)
 	}
 }

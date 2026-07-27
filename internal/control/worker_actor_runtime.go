@@ -389,7 +389,7 @@ func workerActorCloseFailure(err error) (api.WorkerRuntimeOperationFailure, bool
 	case errors.As(err, &claimConflict):
 		return runtimeActorFailure("idempotency_conflict", "idempotency key conflicts with an earlier Actor close", false), true
 	case errors.Is(err, errActorCloseConflict):
-		return runtimeActorFailure("actor_lifecycle_conflict", err.Error(), false), true
+		return runtimeActorFailure("actor_close_conflict", err.Error(), false), true
 	case errors.Is(err, errActorCloseAuthority):
 		return runtimeActorFailure("actor_not_found", "Actor was not found", false), true
 	default:

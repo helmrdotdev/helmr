@@ -23,6 +23,10 @@ import (
 
 const deploymentBuildLeaseDuration = 30 * time.Minute
 
+type workerMessagePayload struct {
+	Message string `json:"message"`
+}
+
 func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
 	if s.db == nil {
