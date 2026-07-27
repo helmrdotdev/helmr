@@ -76,14 +76,60 @@ func TestAppendDeploymentBuildLogsPreservesRawStreamsInBoundedEvents(t *testing.
 	}
 }
 
+func TestAppendDeploymentBuildLogsAcceptsMaximumSplitAcrossStreams(t *testing.T) {
+	const totalBytes = 16 << 20
+	stdout := bytes.Repeat([]byte("x"), (8<<20)+1)
+	stderr := bytes.Repeat([]byte("y"), totalBytes-len(stdout))
+	store := &deploymentBuildLogCountStore{}
+	err := appendDeploymentBuildLogs(
+		context.Background(),
+		store,
+		db.AppendDeploymentEventParams{}.OrgID,
+		db.AppendDeploymentEventParams{}.ProjectID,
+		db.AppendDeploymentEventParams{}.EnvironmentID,
+		db.AppendDeploymentEventParams{}.DeploymentID,
+		deployment.BuildLogs{
+			StdoutBase64: base64.StdEncoding.EncodeToString(stdout),
+			StderrBase64: base64.StdEncoding.EncodeToString(stderr),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.count != 66 {
+		t.Fatalf("events = %d, want exit plus 65 log chunks", store.count)
+	}
+}
+
 type deploymentBuildLogStore struct {
 	events []db.AppendDeploymentEventParams
 }
 
-func (store *deploymentBuildLogStore) AppendDeploymentEvent(
+func (store *deploymentBuildLogStore) AppendDeploymentEvents(
 	_ context.Context,
-	event db.AppendDeploymentEventParams,
-) (db.AppendDeploymentEventRow, error) {
-	store.events = append(store.events, event)
-	return db.AppendDeploymentEventRow{}, nil
+	batch db.AppendDeploymentEventsParams,
+) (int64, error) {
+	for index := range batch.Kinds {
+		store.events = append(store.events, db.AppendDeploymentEventParams{
+			OrgID: batch.OrgID, ProjectID: batch.ProjectID,
+			EnvironmentID: batch.EnvironmentID, DeploymentID: batch.DeploymentID,
+			Category: batch.Categories[index], Severity: batch.Severities[index],
+			Source: batch.Sources[index], Kind: batch.Kinds[index],
+			Message: batch.Messages[index], Payload: json.RawMessage(batch.Payloads[index]),
+			RedactionClass: batch.RedactionClasses[index],
+		})
+	}
+	return int64(len(batch.Kinds)), nil
+}
+
+type deploymentBuildLogCountStore struct {
+	count int
+}
+
+func (store *deploymentBuildLogCountStore) AppendDeploymentEvents(
+	_ context.Context,
+	batch db.AppendDeploymentEventsParams,
+) (int64, error) {
+	store.count = len(batch.Kinds)
+	return int64(store.count), nil
 }

@@ -47,21 +47,6 @@ var buildBlockedIPv4CIDRs = []string{
 	"240.0.0.0/4",
 }
 
-var buildBlockedIPv6CIDRs = []string{
-	"::/128",
-	"::1/128",
-	"::ffff:0:0/96",
-	"64:ff9b::/96",
-	"64:ff9b:1::/48",
-	"100::/64",
-	"2001::/23",
-	"2002::/16",
-	"3fff::/20",
-	"fc00::/7",
-	"fe80::/10",
-	"ff00::/8",
-}
-
 func (c *Connector) withNetworkPolicy(netns string, policy compute.NetworkPolicy) firecracker.Opt {
 	return func(machine *firecracker.Machine) {
 		machine.Handlers.FcInit = machine.Handlers.FcInit.AppendAfter(firecracker.SetupNetworkHandlerName, firecracker.Handler{
@@ -93,10 +78,9 @@ func (c *Connector) applyBuildNetworkPolicy(
 	tap string,
 	resolvers []string,
 ) error {
-	blockedIPv4CIDRs, blockedIPv6CIDRs, err := effectiveBuildBlockedCIDRs(
+	blockedIPv4CIDRs, err := effectiveBuildBlockedCIDRs(
 		policy,
 		c.cfg.NetworkBlockedIPv4CIDRs,
-		c.cfg.NetworkBlockedIPv6CIDRs,
 	)
 	if err != nil {
 		return err
@@ -105,7 +89,6 @@ func (c *Connector) applyBuildNetworkPolicy(
 		tap,
 		resolvers,
 		blockedIPv4CIDRs,
-		blockedIPv6CIDRs,
 	)
 	if err != nil {
 		return err
@@ -146,17 +129,16 @@ func (c *Connector) applyNetworkPolicyScript(
 }
 
 func (c *Connector) applyNetworkPolicy(ctx context.Context, netns string, policy compute.NetworkPolicy) error {
-	blockedIPv4CIDRs, blockedIPv6CIDRs, err := effectiveBlockedCIDRs(policy, c.cfg.NetworkBlockedIPv4CIDRs, c.cfg.NetworkBlockedIPv6CIDRs)
+	blockedIPv4CIDRs, err := effectiveBlockedCIDRs(policy, c.cfg.NetworkBlockedIPv4CIDRs)
 	if err != nil {
 		return err
 	}
 	return c.applyNetworkPolicyScript(
 		ctx,
 		netns,
-		nftNetworkPolicyScript(
+		renderRunNetworkPolicy(
 			policy,
 			blockedIPv4CIDRs,
-			blockedIPv6CIDRs,
 		),
 	)
 }
@@ -185,38 +167,34 @@ func isMissingNetworkPolicyNamespaceOrTable(detail string) bool {
 		strings.Contains(detail, "no such process")
 }
 
-func effectiveBlockedCIDRs(policy compute.NetworkPolicy, configuredIPv4CIDRs []string, configuredIPv6CIDRs []string) ([]string, []string, error) {
+func effectiveBlockedCIDRs(policy compute.NetworkPolicy, configuredIPv4CIDRs []string) ([]string, error) {
 	if err := policy.Validate(); err != nil {
-		return nil, nil, fmt.Errorf("firecracker network policy: %w", err)
+		return nil, fmt.Errorf("firecracker network policy: %w", err)
 	}
 	blockedIPv4CIDRs := append([]string(nil), configuredIPv4CIDRs...)
-	blockedIPv6CIDRs := append([]string(nil), configuredIPv6CIDRs...)
 	for _, entry := range policy.Deny {
 		prefix, err := netip.ParsePrefix(strings.TrimSpace(entry))
 		if err != nil {
-			return nil, nil, fmt.Errorf("firecracker network policy deny %q: %w", entry, err)
+			return nil, fmt.Errorf("firecracker network policy deny %q: %w", entry, err)
 		}
 		if prefix.Addr().Is4() {
 			blockedIPv4CIDRs = append(blockedIPv4CIDRs, prefix.String())
-			continue
 		}
-		blockedIPv6CIDRs = append(blockedIPv6CIDRs, prefix.String())
 	}
-	return blockedIPv4CIDRs, blockedIPv6CIDRs, nil
+	return blockedIPv4CIDRs, nil
 }
 
 func effectiveBuildBlockedCIDRs(
 	policy compute.NetworkPolicy,
 	configuredIPv4CIDRs []string,
-	configuredIPv6CIDRs []string,
-) ([]string, []string, error) {
+) ([]string, error) {
 	if err := policy.Validate(); err != nil {
-		return nil, nil, fmt.Errorf("build network policy: %w", err)
+		return nil, fmt.Errorf("build network policy: %w", err)
 	}
 	if !policy.Internet ||
 		len(policy.Allow) != 0 ||
 		len(policy.Deny) != 0 {
-		return nil, nil, errors.New(
+		return nil, errors.New(
 			"build network policy must use the fixed public-egress contract",
 		)
 	}
@@ -228,19 +206,9 @@ func effectiveBuildBlockedCIDRs(
 		true,
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("build blocked IPv4 prefixes: %w", err)
+		return nil, fmt.Errorf("build blocked IPv4 prefixes: %w", err)
 	}
-	ipv6, err := canonicalPrefixSet(
-		append(
-			append([]string(nil), buildBlockedIPv6CIDRs...),
-			configuredIPv6CIDRs...,
-		),
-		false,
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf("build blocked IPv6 prefixes: %w", err)
-	}
-	return ipv4, ipv6, nil
+	return ipv4, nil
 }
 
 func canonicalPrefixSet(entries []string, ipv4 bool) ([]string, error) {
@@ -311,7 +279,6 @@ func nftBuildNetworkPolicyScript(
 	tap string,
 	resolvers []string,
 	blockedIPv4CIDRs []string,
-	blockedIPv6CIDRs []string,
 ) (string, error) {
 	if strings.TrimSpace(tap) == "" ||
 		strings.ContainsAny(tap, "\x00\r\n") {
@@ -321,7 +288,6 @@ func nftBuildNetworkPolicyScript(
 		return "", errors.New("build resolver set is empty")
 	}
 	ipv4Resolvers := make([]string, 0, len(resolvers))
-	ipv6Resolvers := make([]string, 0, len(resolvers))
 	for _, raw := range resolvers {
 		address, err := netip.ParseAddr(raw)
 		if err != nil {
@@ -329,9 +295,10 @@ func nftBuildNetworkPolicyScript(
 		}
 		if address.Is4() {
 			ipv4Resolvers = append(ipv4Resolvers, address.String())
-		} else {
-			ipv6Resolvers = append(ipv6Resolvers, address.String())
 		}
+	}
+	if len(ipv4Resolvers) == 0 {
+		return "", errors.New("build IPv4 resolver set is empty")
 	}
 	tap = strconv.Quote(tap)
 	return fmt.Sprintf(strings.TrimSpace(`
@@ -341,20 +308,18 @@ add counter inet %[1]s %[3]s
 add quota inet %[1]s %[4]s { over %[5]d mbytes }
 add quota inet %[1]s %[6]s { over %[7]d mbytes }
 add set inet %[1]s blocked_ipv4 { type ipv4_addr; flags interval; elements = { %[8]s } }
-add set inet %[1]s blocked_ipv6 { type ipv6_addr; flags interval; elements = { %[9]s } }
-add set inet %[1]s resolver_ipv4 { type ipv4_addr; elements = { %[10]s } }
-add set inet %[1]s resolver_ipv6 { type ipv6_addr; elements = { %[11]s } }
+add set inet %[1]s resolver_ipv4 { type ipv4_addr; elements = { %[9]s } }
 add chain inet %[1]s forward { type filter hook forward priority 0; policy drop; }
 add chain inet %[1]s egress
 add rule inet %[1]s forward meta nfproto ipv6 counter name %[2]s drop
-add rule inet %[1]s forward oifname %[12]s quota name %[4]s counter name %[3]s drop
-add rule inet %[1]s forward oifname %[12]s ct state established,related accept
-add rule inet %[1]s forward iifname %[12]s ip daddr @resolver_ipv4 udp dport 53 jump egress
-add rule inet %[1]s forward iifname %[12]s ip daddr @resolver_ipv4 tcp dport 53 jump egress
-add rule inet %[1]s forward iifname %[12]s ip daddr @blocked_ipv4 counter name %[2]s drop
-add rule inet %[1]s forward iifname %[12]s tcp jump egress
+add rule inet %[1]s forward oifname %[10]s quota name %[4]s counter name %[3]s drop
+add rule inet %[1]s forward oifname %[10]s ct state established,related accept
+add rule inet %[1]s forward iifname %[10]s ip daddr @resolver_ipv4 udp dport 53 jump egress
+add rule inet %[1]s forward iifname %[10]s ip daddr @resolver_ipv4 tcp dport 53 jump egress
+add rule inet %[1]s forward iifname %[10]s ip daddr @blocked_ipv4 counter name %[2]s drop
+add rule inet %[1]s forward iifname %[10]s tcp jump egress
 add rule inet %[1]s forward counter name %[2]s drop
-add rule inet %[1]s egress ct state new ct count over %[13]d counter name %[3]s drop
+add rule inet %[1]s egress ct state new ct count over %[11]d counter name %[3]s drop
 add rule inet %[1]s egress quota name %[6]s counter name %[3]s drop
 add rule inet %[1]s egress accept
 	`)+"\n",
@@ -366,16 +331,10 @@ add rule inet %[1]s egress accept
 		buildNetworkSentQuotaName,
 		buildNetworkSentLimitMiB,
 		strings.Join(blockedIPv4CIDRs, ", "),
-		strings.Join(blockedIPv6CIDRs, ", "),
 		strings.Join(ipv4Resolvers, ", "),
-		strings.Join(ipv6Resolvers, ", "),
 		tap,
 		buildNetworkConnectionLimit,
 	), nil
-}
-
-func nftNetworkPolicyScript(policy compute.NetworkPolicy, blockedIPv4CIDRs []string, blockedIPv6CIDRs []string) string {
-	return renderRunNetworkPolicy(policy, blockedIPv4CIDRs, blockedIPv6CIDRs)
 }
 
 func (c *Connector) readNetworkCounters(

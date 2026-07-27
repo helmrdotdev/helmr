@@ -110,8 +110,10 @@ UPDATE workspaces
        state_version = state_version + 1,
        last_activity_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
- WHERE workspaces.org_id = $3
-   AND workspaces.project_id = $4
+  FROM environments
+ WHERE environments.id = workspaces.environment_id
+   AND environments.org_id = $3
+   AND environments.project_id = $4
    AND workspaces.environment_id = $5
    AND workspaces.id = $6
    AND workspaces.head_version_id = $7
@@ -128,7 +130,7 @@ UPDATE workspaces
         WHERE workspace_leases.workspace_id = workspaces.id
           AND workspace_leases.state IN ('active', 'releasing')
    )
-RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+RETURNING environments.id, environments.public_id, org_id, project_id, slug, name, color_hex, is_default, environments.created_at, environments.updated_at, current_deployment_id, workspaces.id, workspaces.public_id, environment_id, region_id, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, workspaces.created_at, workspaces.updated_at, deleted_at
 `
 
 type AdvanceWorkspaceExecWriterParams struct {
@@ -143,7 +145,41 @@ type AdvanceWorkspaceExecWriterParams struct {
 	ExpectedWriterGeneration    int64       `json:"expected_writer_generation"`
 }
 
-func (q *Queries) AdvanceWorkspaceExecWriter(ctx context.Context, arg AdvanceWorkspaceExecWriterParams) (Workspace, error) {
+type AdvanceWorkspaceExecWriterRow struct {
+	ID                     pgtype.UUID        `json:"id"`
+	PublicID               string             `json:"public_id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	Slug                   string             `json:"slug"`
+	Name                   string             `json:"name"`
+	ColorHex               string             `json:"color_hex"`
+	IsDefault              bool               `json:"is_default"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	CurrentDeploymentID    pgtype.UUID        `json:"current_deployment_id"`
+	ID_2                   pgtype.UUID        `json:"id_2"`
+	PublicID_2             string             `json:"public_id_2"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	RegionID               string             `json:"region_id"`
+	WorkspaceDeclaredID    pgtype.Text        `json:"workspace_declared_id"`
+	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
+	Key                    pgtype.Text        `json:"key"`
+	StateVersion           int64              `json:"state_version"`
+	OwnerActorID           pgtype.UUID        `json:"owner_actor_id"`
+	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
+	OwnershipGeneration    int64              `json:"ownership_generation"`
+	WriterGeneration       int64              `json:"writer_generation"`
+	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
+	State                  string             `json:"state"`
+	DesiredState           string             `json:"desired_state"`
+	DirtyState             string             `json:"dirty_state"`
+	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt_2            pgtype.Timestamptz `json:"created_at_2"`
+	UpdatedAt_2            pgtype.Timestamptz `json:"updated_at_2"`
+	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
+}
+
+func (q *Queries) AdvanceWorkspaceExecWriter(ctx context.Context, arg AdvanceWorkspaceExecWriterParams) (AdvanceWorkspaceExecWriterRow, error) {
 	row := q.db.QueryRow(ctx, advanceWorkspaceExecWriter,
 		arg.OwnershipGeneration,
 		arg.WriterGeneration,
@@ -155,15 +191,23 @@ func (q *Queries) AdvanceWorkspaceExecWriter(ctx context.Context, arg AdvanceWor
 		arg.ExpectedOwnershipGeneration,
 		arg.ExpectedWriterGeneration,
 	)
-	var i Workspace
+	var i AdvanceWorkspaceExecWriterRow
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
 		&i.ProjectID,
+		&i.Slug,
+		&i.Name,
+		&i.ColorHex,
+		&i.IsDefault,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CurrentDeploymentID,
+		&i.ID_2,
+		&i.PublicID_2,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.DeclarationKind,
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
@@ -177,8 +221,8 @@ func (q *Queries) AdvanceWorkspaceExecWriter(ctx context.Context, arg AdvanceWor
 		&i.DesiredState,
 		&i.DirtyState,
 		&i.LastActivityAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
+		&i.CreatedAt_2,
+		&i.UpdatedAt_2,
 		&i.DeletedAt,
 	)
 	return i, err
@@ -359,7 +403,7 @@ UPDATE workspace_versions
  WHERE id = $1
    AND workspace_id = $2
    AND state = 'private'
-RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+RETURNING id, public_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
 `
 
 type CommitStagedWorkspaceExecVersionParams struct {
@@ -373,8 +417,6 @@ func (q *Queries) CommitStagedWorkspaceExecVersion(ctx context.Context, arg Comm
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
 		&i.ParentVersionID,
@@ -1092,7 +1134,7 @@ UPDATE workspaces
    AND head_version_id = $4
    AND ownership_generation = $5
    AND writer_generation = $6
-RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+RETURNING id, public_id, environment_id, region_id, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
 `
 
 type FinalizeWorkspaceExecWorkspaceParams struct {
@@ -1117,11 +1159,8 @@ func (q *Queries) FinalizeWorkspaceExecWorkspace(ctx context.Context, arg Finali
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.DeclarationKind,
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
@@ -1143,7 +1182,7 @@ func (q *Queries) FinalizeWorkspaceExecWorkspace(ctx context.Context, arg Finali
 }
 
 const getStagedWorkspaceExecCapture = `-- name: GetStagedWorkspaceExecCapture :one
-SELECT workspace_versions.id, workspace_versions.public_id, workspace_versions.org_id, workspace_versions.project_id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.artifact_id, workspace_versions.artifact_kind, workspace_versions.kind, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.entry_count, workspace_versions.state, workspace_versions.source_workspace_lease_id, workspace_versions.ownership_generation, workspace_versions.writer_generation, workspace_versions.created_at, workspace_versions.published_at, workspace_versions.discarded_at
+SELECT workspace_versions.id, workspace_versions.public_id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.artifact_id, workspace_versions.artifact_kind, workspace_versions.kind, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.entry_count, workspace_versions.state, workspace_versions.source_workspace_lease_id, workspace_versions.ownership_generation, workspace_versions.writer_generation, workspace_versions.created_at, workspace_versions.published_at, workspace_versions.discarded_at
   FROM workspace_mounts
   JOIN workspace_versions
     ON workspace_versions.workspace_id = workspace_mounts.workspace_id
@@ -1167,8 +1206,6 @@ func (q *Queries) GetStagedWorkspaceExecCapture(ctx context.Context, arg GetStag
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
 		&i.ParentVersionID,
@@ -1730,10 +1767,11 @@ func (q *Queries) LockWorkspaceExecFailureAuthority(ctx context.Context, arg Loc
 }
 
 const lockWorkspaceExecFailureWorkspace = `-- name: LockWorkspaceExecFailureWorkspace :one
-SELECT id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+SELECT workspaces.id, workspaces.public_id, workspaces.environment_id, workspaces.region_id, workspaces.workspace_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_actor_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
   FROM workspaces
- WHERE org_id = $1
-   AND id = $2
+  JOIN environments ON environments.id = workspaces.environment_id
+ WHERE environments.org_id = $1
+   AND workspaces.id = $2
  FOR UPDATE
 `
 
@@ -1748,11 +1786,8 @@ func (q *Queries) LockWorkspaceExecFailureWorkspace(ctx context.Context, arg Loc
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.DeclarationKind,
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
@@ -2291,7 +2326,7 @@ UPDATE workspaces
    AND head_version_id = $2
    AND ownership_generation = $3
    AND writer_generation = $4
-RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+RETURNING id, public_id, environment_id, region_id, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
 `
 
 type MarkWorkspaceExecRecoveryRequiredParams struct {
@@ -2312,11 +2347,8 @@ func (q *Queries) MarkWorkspaceExecRecoveryRequired(ctx context.Context, arg Mar
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.DeclarationKind,
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
@@ -2736,20 +2768,19 @@ WITH authority AS (
      FOR UPDATE OF workspace_mounts, workspace_processes, workspace_leases
 ), created AS (
     INSERT INTO workspace_versions (
-        id, public_id, org_id, project_id, environment_id, workspace_id,
+        id, public_id, environment_id, workspace_id,
         parent_version_id, artifact_id, artifact_kind, kind, content_digest,
         size_bytes, entry_count, state, source_workspace_lease_id,
         ownership_generation, writer_generation
     )
     SELECT $4, $5,
-           authority.org_id, authority.project_id, authority.environment_id,
-           authority.workspace_id, authority.base_version_id,
+           authority.environment_id, authority.workspace_id, authority.base_version_id,
            $6, 'workspace_version', 'system',
            $7, $8, $9,
            'private', authority.source_workspace_lease_id,
            authority.ownership_generation, authority.writer_generation
       FROM authority
-    RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+    RETURNING id, public_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
 ), staged AS (
     UPDATE workspace_mounts
        SET staged_version_id = created.id,
@@ -2758,7 +2789,7 @@ WITH authority AS (
      WHERE workspace_mounts.id = $1
     RETURNING workspace_mounts.id
 )
-SELECT created.id, created.public_id, created.org_id, created.project_id, created.environment_id, created.workspace_id, created.parent_version_id, created.artifact_id, created.artifact_kind, created.kind, created.content_digest, created.size_bytes, created.entry_count, created.state, created.source_workspace_lease_id, created.ownership_generation, created.writer_generation, created.created_at, created.published_at, created.discarded_at
+SELECT created.id, created.public_id, created.environment_id, created.workspace_id, created.parent_version_id, created.artifact_id, created.artifact_kind, created.kind, created.content_digest, created.size_bytes, created.entry_count, created.state, created.source_workspace_lease_id, created.ownership_generation, created.writer_generation, created.created_at, created.published_at, created.discarded_at
   FROM created
   JOIN staged ON true
 `
@@ -2778,8 +2809,6 @@ type StageWorkspaceExecCaptureParams struct {
 type StageWorkspaceExecCaptureRow struct {
 	ID                     pgtype.UUID          `json:"id"`
 	PublicID               string               `json:"public_id"`
-	OrgID                  pgtype.UUID          `json:"org_id"`
-	ProjectID              pgtype.UUID          `json:"project_id"`
 	EnvironmentID          pgtype.UUID          `json:"environment_id"`
 	WorkspaceID            pgtype.UUID          `json:"workspace_id"`
 	ParentVersionID        pgtype.UUID          `json:"parent_version_id"`
@@ -2814,8 +2843,6 @@ func (q *Queries) StageWorkspaceExecCapture(ctx context.Context, arg StageWorksp
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
 		&i.ParentVersionID,

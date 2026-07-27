@@ -220,8 +220,10 @@ UPDATE workspaces
        state_version = state_version + 1,
        last_activity_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
- WHERE workspaces.org_id = sqlc.arg(org_id)
-   AND workspaces.project_id = sqlc.arg(project_id)
+  FROM environments
+ WHERE environments.id = workspaces.environment_id
+   AND environments.org_id = sqlc.arg(org_id)
+   AND environments.project_id = sqlc.arg(project_id)
    AND workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.id = sqlc.arg(workspace_id)
    AND workspaces.head_version_id = sqlc.arg(base_workspace_version_id)
@@ -423,10 +425,11 @@ SELECT sqlc.embed(workspace_processes),
  FOR UPDATE OF workspace_processes, workspace_mounts, workspace_leases;
 
 -- name: LockWorkspaceExecFailureWorkspace :one
-SELECT *
+SELECT workspaces.*
   FROM workspaces
- WHERE org_id = sqlc.arg(org_id)
-   AND id = sqlc.arg(workspace_id)
+  JOIN environments ON environments.id = workspaces.environment_id
+ WHERE environments.org_id = sqlc.arg(org_id)
+   AND workspaces.id = sqlc.arg(workspace_id)
  FOR UPDATE;
 
 -- name: LockWorkspaceExecRecoveryAuthority :one
@@ -618,14 +621,13 @@ WITH authority AS (
      FOR UPDATE OF workspace_mounts, workspace_processes, workspace_leases
 ), created AS (
     INSERT INTO workspace_versions (
-        id, public_id, org_id, project_id, environment_id, workspace_id,
+        id, public_id, environment_id, workspace_id,
         parent_version_id, artifact_id, artifact_kind, kind, content_digest,
         size_bytes, entry_count, state, source_workspace_lease_id,
         ownership_generation, writer_generation
     )
     SELECT sqlc.arg(workspace_version_id), sqlc.arg(workspace_version_public_id),
-           authority.org_id, authority.project_id, authority.environment_id,
-           authority.workspace_id, authority.base_version_id,
+           authority.environment_id, authority.workspace_id, authority.base_version_id,
            sqlc.arg(artifact_id), 'workspace_version', 'system',
            sqlc.arg(content_digest), sqlc.arg(size_bytes), sqlc.arg(entry_count),
            'private', authority.source_workspace_lease_id,

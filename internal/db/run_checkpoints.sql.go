@@ -560,26 +560,24 @@ func (q *Queries) CommitTerminalCheckpointReady(ctx context.Context, arg CommitT
 
 const createPrivateCheckpointWorkspaceVersion = `-- name: CreatePrivateCheckpointWorkspaceVersion :one
 INSERT INTO workspace_versions (
-    id, public_id, org_id, project_id, environment_id, workspace_id,
+    id, public_id, environment_id, workspace_id,
     parent_version_id, artifact_id, artifact_kind, kind, content_digest,
     size_bytes, entry_count, state, source_workspace_lease_id,
     ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4,
-    $5, $6, $7,
-    $8, 'workspace_version', 'user', $9,
-    $10, $11, 'private',
-    $12, $13,
-    $14
+    $1, $2, $3,
+    $4, $5,
+    $6, 'workspace_version', 'user', $7,
+    $8, $9, 'private',
+    $10, $11,
+    $12
 )
-RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+RETURNING id, public_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
 `
 
 type CreatePrivateCheckpointWorkspaceVersionParams struct {
 	ID                     pgtype.UUID `json:"id"`
 	PublicID               string      `json:"public_id"`
-	OrgID                  pgtype.UUID `json:"org_id"`
-	ProjectID              pgtype.UUID `json:"project_id"`
 	EnvironmentID          pgtype.UUID `json:"environment_id"`
 	WorkspaceID            pgtype.UUID `json:"workspace_id"`
 	ParentVersionID        pgtype.UUID `json:"parent_version_id"`
@@ -596,8 +594,6 @@ func (q *Queries) CreatePrivateCheckpointWorkspaceVersion(ctx context.Context, a
 	row := q.db.QueryRow(ctx, createPrivateCheckpointWorkspaceVersion,
 		arg.ID,
 		arg.PublicID,
-		arg.OrgID,
-		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
 		arg.ParentVersionID,
@@ -613,8 +609,6 @@ func (q *Queries) CreatePrivateCheckpointWorkspaceVersion(ctx context.Context, a
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
 		&i.ParentVersionID,
@@ -1251,7 +1245,7 @@ func (q *Queries) GetRuntimeIdentityForCheckpoint(ctx context.Context, id string
 }
 
 const getRuntimeSubstrateForCheckpoint = `-- name: GetRuntimeSubstrateForCheckpoint :one
-SELECT runtime_substrates.id, runtime_substrates.org_id, runtime_substrates.project_id, runtime_substrates.environment_id, runtime_substrates.deployment_definition_id, runtime_substrates.artifact_id, runtime_substrates.substrate_digest, runtime_substrates.substrate_format, runtime_substrates.builder_abi, runtime_substrates.layout_abi, runtime_substrates.substrate_size_bytes, runtime_substrates.source, runtime_substrates.created_by_worker_instance_id, runtime_substrates.created_at, runtime_substrates.updated_at, runtime_substrates.retired_at, runtime_substrates.last_referenced_at,
+SELECT runtime_substrates.id, runtime_substrates.org_id, runtime_substrates.project_id, runtime_substrates.environment_id, runtime_substrates.deployment_definition_id, runtime_substrates.artifact_id, runtime_substrates.substrate_digest, runtime_substrates.substrate_format, runtime_substrates.builder_abi, runtime_substrates.layout_abi, runtime_substrates.substrate_size_bytes, runtime_substrates.source, runtime_substrates.created_by_worker_instance_id, runtime_substrates.created_at, runtime_substrates.updated_at,
        artifacts.digest AS artifact_digest,
        artifacts.size_bytes AS artifact_size_bytes,
        artifacts.media_type AS artifact_media_type
@@ -1290,8 +1284,6 @@ func (q *Queries) GetRuntimeSubstrateForCheckpoint(ctx context.Context, id pgtyp
 		&i.RuntimeSubstrate.CreatedByWorkerInstanceID,
 		&i.RuntimeSubstrate.CreatedAt,
 		&i.RuntimeSubstrate.UpdatedAt,
-		&i.RuntimeSubstrate.RetiredAt,
-		&i.RuntimeSubstrate.LastReferencedAt,
 		&i.ArtifactDigest,
 		&i.ArtifactSizeBytes,
 		&i.ArtifactMediaType,

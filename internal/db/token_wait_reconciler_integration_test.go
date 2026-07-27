@@ -434,12 +434,12 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 			runStatus := RunStatusSystemFailed
 			reason := "checkpoint_failed"
 			actorState := "failed"
-			failureCode := pgvalue.Text("platform-failure")
+			failureCode := pgvalue.Text("platform_failure")
 			failureRunID := pgvalue.UUID(registration.RunID)
 			if mode.maxDuration {
 				runStatus = RunStatusExpired
 				reason = "max_active_duration_exceeded"
-				failureCode = pgvalue.Text("run-expired")
+				failureCode = pgvalue.Text("run_expired")
 			}
 			if _, err := fixture.queries.FinishCheckpointFailedActorRun(ctx, FinishCheckpointFailedActorRunParams{
 				Status: runStatus, ReasonCode: pgvalue.Text(reason), Error: failureError, FailedAt: failedAt,
@@ -458,9 +458,9 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 				t.Fatal(err)
 			}
 			if _, err := fixture.queries.ReleaseActorWorkspaceOwner(ctx, ReleaseActorWorkspaceOwnerParams{
-				CompletedAt: failedAt, ID: pgvalue.UUID(authority.workspaceID), OrgID: pgvalue.UUID(fixture.orgID),
-				ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
-				ActorID: pgvalue.UUID(actorID), OwnershipGeneration: 1, WriterGeneration: 1,
+				CompletedAt: failedAt, ID: pgvalue.UUID(authority.workspaceID),
+				EnvironmentID: pgvalue.UUID(fixture.environmentID),
+				ActorID:       pgvalue.UUID(actorID), OwnershipGeneration: 1, WriterGeneration: 1,
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -580,9 +580,9 @@ SELECT actors.state, actors.current_run_id, actors.run_generation,
 			}
 		} else {
 			wantState := "failed"
-			wantFailure := "platform-failure"
+			wantFailure := "platform_failure"
 			if mode.maxDuration {
-				wantFailure = "run-expired"
+				wantFailure = "run_expired"
 			}
 			if actorState != wantState || actorCurrentRunID.Valid || runGeneration != 2 || ownerActorID.Valid ||
 				failureCode.String != wantFailure || failureCode.Valid != (wantFailure != "") ||
@@ -679,7 +679,6 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	}
 	if _, err := queries.CreatePrivateCheckpointWorkspaceVersion(ctx, CreatePrivateCheckpointWorkspaceVersionParams{
 		ID: pgvalue.UUID(privateVersionID), PublicID: tokenWaitTestPublicID(t, publicid.WorkspaceVersion),
-		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 		ParentVersionID: pgvalue.UUID(authority.physicalVersionID), ArtifactID: pgvalue.UUID(workspaceArtifactID),
 		ContentDigest: workspaceTreeDigest, SizeBytes: 10, EntryCount: 1,
@@ -1100,15 +1099,15 @@ INSERT INTO deployment_definitions (
 )`, actorDefinitionID, fixture.environmentID, fixture.deploymentID)
 	mustRunLeaseExec(t, ctx, tx, `
 INSERT INTO actors (
-    id, public_id, org_id, project_id, environment_id,
+    id, public_id, environment_id,
     actor_declared_id, deployment_definition_id, workspace_id, current_run_id,
     next_input_sequence, committed_input_sequence,
-    managed_queue_name, managed_max_active_duration_ms, managed_retry_policy
+    run_queue_name, run_max_active_duration_ms, run_retry_policy
 ) VALUES (
-    $1, $2, $3, $4, $5,
-    'test-actor', $6, $7, $8,
-    3, 1, 'default', 300000, $9::jsonb
-)`, actorID, "act_aaaaaaaaaaaaaaaaaaaaaaaaaa", fixture.orgID, fixture.projectID,
+    $1, $2, $3,
+    'test-actor', $4, $5, $6,
+    3, 1, 'default', 300000, $7::jsonb
+)`, actorID, "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
 		fixture.environmentID, actorDefinitionID, workspaceID, work.runID, retryPolicy)
 	mustRunLeaseExec(t, ctx, tx, `
 UPDATE workspaces

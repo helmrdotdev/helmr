@@ -240,8 +240,6 @@ func reconcileSchedule(
 	if err := store.ReconcileSchedule(ctx, db.ReconcileScheduleParams{
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		PublicID:               publicID,
-		OrgID:                  target.OrgID,
-		ProjectID:              target.ProjectID,
 		EnvironmentID:          target.EnvironmentID,
 		TaskDeclaredID:         definition.DeclaredID,
 		DeploymentDefinitionID: definition.ID,

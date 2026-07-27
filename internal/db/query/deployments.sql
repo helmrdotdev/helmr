@@ -931,8 +931,6 @@ updated_environment AS (
 promotion AS (
     INSERT INTO deployment_promotions (
         id,
-        org_id,
-        project_id,
         environment_id,
         deployment_id,
         previous_deployment_id,
@@ -940,8 +938,6 @@ promotion AS (
         reason
     )
     SELECT sqlc.arg(id),
-           target.org_id,
-           target.project_id,
            target.environment_id,
            target.id,
            previous.current_deployment_id,

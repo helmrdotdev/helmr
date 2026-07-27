@@ -107,22 +107,26 @@ UPDATE workspaces
    SET writer_generation = $1,
        last_activity_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
- WHERE org_id = $2
-   AND project_id = $3
-   AND environment_id = $4
-   AND id = $5
-   AND ownership_generation = $6
-   AND writer_generation = $7
-   AND state = 'active'
-   AND desired_state = 'active'
-RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+ WHERE workspaces.environment_id = $2
+   AND EXISTS (
+       SELECT 1 FROM environments
+        WHERE environments.id = workspaces.environment_id
+          AND environments.org_id = $3
+          AND environments.project_id = $4
+   )
+   AND workspaces.id = $5
+   AND workspaces.ownership_generation = $6
+   AND workspaces.writer_generation = $7
+   AND workspaces.state = 'active'
+   AND workspaces.desired_state = 'active'
+RETURNING id, public_id, environment_id, region_id, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
 `
 
 type AdvanceRunWorkspaceWriterParams struct {
 	WriterGeneration         int64       `json:"writer_generation"`
+	EnvironmentID            pgtype.UUID `json:"environment_id"`
 	OrgID                    pgtype.UUID `json:"org_id"`
 	ProjectID                pgtype.UUID `json:"project_id"`
-	EnvironmentID            pgtype.UUID `json:"environment_id"`
 	WorkspaceID              pgtype.UUID `json:"workspace_id"`
 	OwnershipGeneration      int64       `json:"ownership_generation"`
 	ExpectedWriterGeneration int64       `json:"expected_writer_generation"`
@@ -131,9 +135,9 @@ type AdvanceRunWorkspaceWriterParams struct {
 func (q *Queries) AdvanceRunWorkspaceWriter(ctx context.Context, arg AdvanceRunWorkspaceWriterParams) (Workspace, error) {
 	row := q.db.QueryRow(ctx, advanceRunWorkspaceWriter,
 		arg.WriterGeneration,
+		arg.EnvironmentID,
 		arg.OrgID,
 		arg.ProjectID,
-		arg.EnvironmentID,
 		arg.WorkspaceID,
 		arg.OwnershipGeneration,
 		arg.ExpectedWriterGeneration,
@@ -142,11 +146,8 @@ func (q *Queries) AdvanceRunWorkspaceWriter(ctx context.Context, arg AdvanceRunW
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.DeclarationKind,
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,

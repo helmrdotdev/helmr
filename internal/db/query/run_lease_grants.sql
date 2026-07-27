@@ -139,14 +139,18 @@ UPDATE workspaces
    SET writer_generation = sqlc.arg(writer_generation),
        last_activity_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND id = sqlc.arg(workspace_id)
-   AND ownership_generation = sqlc.arg(ownership_generation)
-   AND writer_generation = sqlc.arg(expected_writer_generation)
-   AND state = 'active'
-   AND desired_state = 'active'
+ WHERE workspaces.environment_id = sqlc.arg(environment_id)
+   AND EXISTS (
+       SELECT 1 FROM environments
+        WHERE environments.id = workspaces.environment_id
+          AND environments.org_id = sqlc.arg(org_id)
+          AND environments.project_id = sqlc.arg(project_id)
+   )
+   AND workspaces.id = sqlc.arg(workspace_id)
+   AND workspaces.ownership_generation = sqlc.arg(ownership_generation)
+   AND workspaces.writer_generation = sqlc.arg(expected_writer_generation)
+   AND workspaces.state = 'active'
+   AND workspaces.desired_state = 'active'
 RETURNING *;
 
 -- name: AdvanceRunWorkspaceMountFence :one

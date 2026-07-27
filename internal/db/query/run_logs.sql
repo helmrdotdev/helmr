@@ -31,8 +31,6 @@ current_run_lease AS (
       JOIN worker_instances ON worker_instances.id = run_leases.worker_instance_id
                            AND worker_instances.worker_group_id = run_leases.worker_group_id
       JOIN workspaces ON workspaces.id = run_leases.workspace_id
-                     AND workspaces.org_id = run_leases.org_id
-                     AND workspaces.project_id = run_leases.project_id
                      AND workspaces.environment_id = run_leases.environment_id
                      AND workspaces.region_id = run_leases.region_id
       JOIN runtime_instances ON runtime_instances.id = run_leases.runtime_instance_id

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/actorlifecycle"
+	actordomain "github.com/helmrdotdev/helmr/internal/actor"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -117,7 +117,7 @@ func (s *Server) closeActor(
 				return fmt.Errorf("begin Actor close: %w", err)
 			}
 			var deferred bool
-			actor, deferred, err = actorlifecycle.ReconcileClose(ctx, work.q, actor, bindings)
+			actor, deferred, err = actordomain.ReconcileClose(ctx, work.q, actor, bindings)
 			if err != nil {
 				return err
 			}

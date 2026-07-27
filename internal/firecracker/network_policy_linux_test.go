@@ -12,10 +12,9 @@ import (
 )
 
 func TestNFTBuildNetworkPolicyScriptClosesProgramBuildEgress(t *testing.T) {
-	ipv4, ipv6, err := effectiveBuildBlockedCIDRs(
+	ipv4, err := effectiveBuildBlockedCIDRs(
 		compute.DefaultNetworkPolicy(),
 		[]string{"54.240.0.0/16"},
-		[]string{"2600:1f00::/24"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -24,7 +23,6 @@ func TestNFTBuildNetworkPolicyScriptClosesProgramBuildEgress(t *testing.T) {
 		"tap0",
 		[]string{"1.1.1.1", "2606:4700:4700::1111"},
 		ipv4,
-		ipv6,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -42,10 +40,7 @@ func TestNFTBuildNetworkPolicyScriptClosesProgramBuildEgress(t *testing.T) {
 		"counter name build_denied drop",
 		"198.18.0.0/15",
 		"203.0.113.0/24",
-		"2001::/23",
-		"3fff::/20",
 		"54.240.0.0/16",
-		"2600:1f00::/24",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("build policy script missing %q:\n%s", want, script)
@@ -54,18 +49,19 @@ func TestNFTBuildNetworkPolicyScriptClosesProgramBuildEgress(t *testing.T) {
 	if strings.Contains(script, "udp accept") {
 		t.Fatalf("build policy contains a broad UDP allowance:\n%s", script)
 	}
-	if strings.Contains(script, "ip6 daddr @resolver_ipv6") {
-		t.Fatalf("build policy permits IPv6 resolver traffic:\n%s", script)
+	for _, unreachable := range []string{"blocked_ipv6", "resolver_ipv6"} {
+		if strings.Contains(script, unreachable) {
+			t.Fatalf("build policy contains unreachable %q state:\n%s", unreachable, script)
+		}
 	}
 }
 
 func TestEffectiveBuildBlockedCIDRsRejectsCallerPolicy(t *testing.T) {
-	_, _, err := effectiveBuildBlockedCIDRs(
+	_, err := effectiveBuildBlockedCIDRs(
 		compute.NetworkPolicy{
 			Internet: true,
 			Deny:     []string{"203.0.113.0/24"},
 		},
-		nil,
 		nil,
 	)
 	if err == nil {
@@ -97,10 +93,9 @@ func TestParseBuildNetworkStatusRequiresBothCounters(t *testing.T) {
 }
 
 func TestNFTNetworkPolicyScriptBlocksConfiguredCIDRs(t *testing.T) {
-	script := nftNetworkPolicyScript(
+	script := renderRunNetworkPolicy(
 		compute.DefaultNetworkPolicy(),
 		[]string{"10.0.0.0/8", "100.64.0.0/10", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16"},
-		[]string{"fc00::/7", "fe80::/10"},
 	)
 	for _, want := range []string{
 		"add table inet helmr_network_policy",
@@ -112,14 +107,14 @@ func TestNFTNetworkPolicyScriptBlocksConfiguredCIDRs(t *testing.T) {
 		"192.168.0.0/16",
 		"169.254.0.0/16",
 		"100.64.0.0/10",
-		"fc00::/7",
-		"fe80::/10",
 		"ip daddr @blocked_ipv4 counter name run_denied drop",
-		"ip6 daddr @blocked_ipv6 counter name run_denied drop",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)
 		}
+	}
+	if strings.Contains(script, "blocked_ipv6") {
+		t.Fatalf("script contains an unreachable IPv6 set:\n%s", script)
 	}
 	for _, unexpected := range []string{
 		"udp dport 53 accept",
@@ -132,13 +127,13 @@ func TestNFTNetworkPolicyScriptBlocksConfiguredCIDRs(t *testing.T) {
 }
 
 func TestNFTNetworkPolicyScriptUsesConfiguredCIDRs(t *testing.T) {
-	script := nftNetworkPolicyScript(compute.DefaultNetworkPolicy(), []string{"198.18.0.0/15"}, []string{"2001:db8::/32"})
-	for _, want := range []string{"198.18.0.0/15", "2001:db8::/32"} {
+	script := renderRunNetworkPolicy(compute.DefaultNetworkPolicy(), []string{"198.18.0.0/15"})
+	for _, want := range []string{"198.18.0.0/15"} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing configured CIDR %q:\n%s", want, script)
 		}
 	}
-	for _, blockedDefault := range []string{"10.0.0.0/8", "fc00::/7"} {
+	for _, blockedDefault := range []string{"10.0.0.0/8"} {
 		if strings.Contains(script, blockedDefault) {
 			t.Fatalf("script unexpectedly contains default CIDR %q:\n%s", blockedDefault, script)
 		}
@@ -146,7 +141,7 @@ func TestNFTNetworkPolicyScriptUsesConfiguredCIDRs(t *testing.T) {
 }
 
 func TestNFTNetworkPolicyScriptDropsWhenInternetDisabled(t *testing.T) {
-	script := nftNetworkPolicyScript(compute.NetworkPolicy{Internet: false}, nil, nil)
+	script := renderRunNetworkPolicy(compute.NetworkPolicy{Internet: false}, nil)
 	if !strings.Contains(script, "type filter hook forward priority 0; policy drop;") {
 		t.Fatalf("script does not default-drop outbound traffic:\n%s", script)
 	}
@@ -159,7 +154,7 @@ func TestNFTNetworkPolicyScriptDropsWhenInternetDisabled(t *testing.T) {
 }
 
 func TestNFTNetworkPolicyScriptDropsIPv6BeforeEstablishedTraffic(t *testing.T) {
-	script := nftNetworkPolicyScript(compute.DefaultNetworkPolicy(), nil, nil)
+	script := renderRunNetworkPolicy(compute.DefaultNetworkPolicy(), nil)
 	ipv6Drop := strings.Index(script, "meta nfproto ipv6 counter name run_denied drop")
 	established := strings.Index(script, "ct state established,related accept")
 	if ipv6Drop < 0 || established < 0 || ipv6Drop > established {
@@ -194,10 +189,9 @@ func TestParseRunNetworkStatusRequiresOneDeniedCounter(t *testing.T) {
 }
 
 func TestEffectiveBlockedCIDRsIncludesRunDenyCIDRs(t *testing.T) {
-	ipv4, ipv6, err := effectiveBlockedCIDRs(
+	ipv4, err := effectiveBlockedCIDRs(
 		compute.NetworkPolicy{Internet: true, Deny: []string{"198.18.0.0/15", "2001:db8::/32"}},
 		[]string{"10.0.0.0/8"},
-		[]string{"fc00::/7"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -205,11 +199,6 @@ func TestEffectiveBlockedCIDRsIncludesRunDenyCIDRs(t *testing.T) {
 	for _, want := range []string{"10.0.0.0/8", "198.18.0.0/15"} {
 		if !containsString(ipv4, want) {
 			t.Fatalf("ipv4 deny set missing %q: %+v", want, ipv4)
-		}
-	}
-	for _, want := range []string{"fc00::/7", "2001:db8::/32"} {
-		if !containsString(ipv6, want) {
-			t.Fatalf("ipv6 deny set missing %q: %+v", want, ipv6)
 		}
 	}
 }

@@ -61,8 +61,8 @@ in
       ''
         bun install --frozen-lockfile --ignore-scripts
         scripts/build-config-inspector.sh
-        git diff --exit-code -- internal/projectconfig/js
-        test -z "$(git status --porcelain -- internal/projectconfig/js)"
+        git diff --exit-code -- internal/project/js
+        test -z "$(git status --porcelain -- internal/project/js)"
         scripts/build-runtime-entry.sh --check
         make generate
         make fmt
@@ -181,7 +181,6 @@ in
         export HELMR_WORKER_CNI_CONF_DIR=''${HELMR_WORKER_CNI_CONF_DIR:-$PWD/.helmr-smoke/cni/conf.d}
         export HELMR_WORKER_CNI_BIN_DIR=''${HELMR_WORKER_CNI_BIN_DIR:-$PWD/.helmr-smoke/cni/bin}
         export HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS=''${HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS:-0.0.0.0/8,10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.168.0.0/16,224.0.0.0/4,240.0.0.0/4}
-        export HELMR_WORKER_NETWORK_BLOCKED_IPV6_CIDRS=''${HELMR_WORKER_NETWORK_BLOCKED_IPV6_CIDRS:-::/128,::1/128,fc00::/7,fe80::/10,ff00::/8}
         export HELMR_WORKER_BUILDKIT_ADDR=''${HELMR_WORKER_BUILDKIT_ADDR:-unix:///run/helmr/buildkit/buildkitd.sock}
         export HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE=''${HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE:-helmr-smoke}
         export HELMR_VM_E2E=''${HELMR_VM_E2E:-1}

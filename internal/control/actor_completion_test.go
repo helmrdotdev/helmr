@@ -50,7 +50,7 @@ func TestDecideActorRunTerminal(t *testing.T) {
 				return a
 			}(),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded, terminalInputSequence: 2},
-			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorState: "failed", failureCode: pgvalue.Text("no-progress"), commitCursor: true},
+			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorState: "failed", failureCode: pgvalue.Text("no_progress"), commitCursor: true},
 		},
 		{
 			name: "closing at committed boundary closes",
@@ -66,7 +66,7 @@ func TestDecideActorRunTerminal(t *testing.T) {
 			name:       "runtime failure rolls cursor back",
 			authority:  actorTerminalAuthority("open", 2, 4),
 			completion: parsedActorCompletion{kind: actorCompletionFailed, terminalInputSequence: 3},
-			want:       actorRunTerminalDecision{runStatus: db.RunStatusFailed, runReason: pgvalue.Text("actor_failed"), actorState: "failed", failureCode: pgvalue.Text("run-failed")},
+			want:       actorRunTerminalDecision{runStatus: db.RunStatusFailed, runReason: pgvalue.Text("actor_failed"), actorState: "failed", failureCode: pgvalue.Text("run_failed")},
 		},
 	}
 	for _, test := range tests {

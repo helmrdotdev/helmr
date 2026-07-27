@@ -1,7 +1,6 @@
 ALTER TABLE run_checkpoints DROP CONSTRAINT IF EXISTS run_checkpoints_run_wait_id_fkey;
 DROP TABLE IF EXISTS run_waits;
 DROP TABLE IF EXISTS outbox_messages;
-DROP TABLE IF EXISTS public_access_token_scopes;
 DROP TABLE IF EXISTS public_access_tokens;
 DROP TABLE IF EXISTS tokens;
 ALTER TABLE telemetry_outbox DROP CONSTRAINT IF EXISTS telemetry_outbox_meter_event_id_fkey;
@@ -65,10 +64,8 @@ DROP TABLE IF EXISTS secret_versions;
 DROP TABLE IF EXISTS secrets;
 DROP TABLE IF EXISTS lookup_hmac_versions;
 DROP TYPE IF EXISTS telemetry_stream_kind;
-DROP TYPE IF EXISTS public_access_token_scope_type;
 DROP TYPE IF EXISTS run_checkpoint_kind;
 DROP TYPE IF EXISTS wait_kind;
-DROP TYPE IF EXISTS workspace_filesystem_mode;
 DROP TYPE IF EXISTS workspace_version_kind;
 DROP TYPE IF EXISTS artifact_kind;
 DROP TABLE IF EXISTS cas_objects;

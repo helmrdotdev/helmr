@@ -117,7 +117,7 @@ var secretRevokedRunTermination = runTermination{
 	waitSuspension:   RunWaitStateFailed,
 	eventKind:        "run.failed",
 	eventMessage:     "Run failed",
-	actorFailureCode: "run-failed",
+	actorFailureCode: "run_failed",
 }
 
 func NewRunCanceller(database RunCancellationDB) (*RunCanceller, error) {

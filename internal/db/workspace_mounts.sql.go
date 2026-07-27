@@ -216,9 +216,10 @@ SELECT workspaces.id AS workspace_id, workspace_mounts.id AS workspace_mount_id,
        workspace_mounts.runtime_instance_id, workspace_mounts.state,
        workspace_mounts.fencing_generation
   FROM workspaces
+  JOIN environments ON environments.id = workspaces.environment_id
   LEFT JOIN workspace_mounts ON workspace_mounts.workspace_id = workspaces.id
                             AND workspace_mounts.state IN ('mounting','mounted','unmounting')
- WHERE workspaces.org_id = $1 AND workspaces.id = $2
+ WHERE environments.org_id = $1 AND workspaces.id = $2
 `
 
 type ClassifyRunWorkspaceReuseParams struct {
@@ -840,10 +841,10 @@ SELECT workspaces.id AS workspace_id, workspaces.head_version_id,
        image_artifacts.media_type AS image_artifact_media_type,
        active_mount.state AS active_mount_state
   FROM workspaces
-  LEFT JOIN workspace_versions ON workspace_versions.org_id = workspaces.org_id
+  LEFT JOIN workspace_versions ON workspace_versions.environment_id = workspaces.environment_id
                               AND workspace_versions.workspace_id = workspaces.id
                               AND workspace_versions.id = workspaces.head_version_id
-  LEFT JOIN artifacts AS workspace_artifacts ON workspace_artifacts.org_id = workspace_versions.org_id
+  LEFT JOIN artifacts AS workspace_artifacts ON workspace_artifacts.environment_id = workspace_versions.environment_id
                                              AND workspace_artifacts.id = workspace_versions.artifact_id
   LEFT JOIN deployment_definitions
     ON deployment_definitions.environment_id = workspaces.environment_id
@@ -852,11 +853,11 @@ SELECT workspaces.id AS workspace_id, workspaces.head_version_id,
   LEFT JOIN artifacts AS image_artifacts
     ON image_artifacts.environment_id = deployment_definitions.environment_id
    AND image_artifacts.id = deployment_definitions.artifact_id
-  LEFT JOIN workspace_mounts AS active_mount ON active_mount.org_id = workspaces.org_id
-                                             AND active_mount.workspace_id = workspaces.id
+  JOIN environments ON environments.id = workspaces.environment_id
+  LEFT JOIN workspace_mounts AS active_mount ON active_mount.workspace_id = workspaces.id
                                              AND active_mount.state IN ('mounting','mounted','unmounting')
- WHERE workspaces.org_id = $1
-   AND workspaces.project_id = $2
+ WHERE environments.org_id = $1
+   AND environments.project_id = $2
    AND workspaces.environment_id = $3
    AND workspaces.id = $4
 `
@@ -979,9 +980,7 @@ WITH target AS (
            workspaces.ownership_generation, workspaces.writer_generation,
            workspace_leases.id AS source_workspace_lease_id
       FROM workspace_mounts
-      JOIN workspaces ON workspaces.org_id = workspace_mounts.org_id
-                     AND workspaces.project_id = workspace_mounts.project_id
-                     AND workspaces.environment_id = workspace_mounts.environment_id
+      JOIN workspaces ON workspaces.environment_id = workspace_mounts.environment_id
                      AND workspaces.id = workspace_mounts.workspace_id
       JOIN workspace_leases
         ON workspace_leases.workspace_id = workspace_mounts.workspace_id
@@ -1006,35 +1005,36 @@ WITH target AS (
      FOR UPDATE OF workspace_mounts, workspaces
 ), created AS (
     INSERT INTO workspace_versions (
-        id, public_id, org_id, project_id, environment_id, workspace_id,
+        id, public_id, environment_id, workspace_id,
         parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes,
         entry_count, state, source_workspace_lease_id, ownership_generation,
         writer_generation, published_at
     )
     SELECT $12, $13,
-           target.org_id, target.project_id, target.environment_id, target.workspace_id,
+           target.environment_id, target.workspace_id,
            target.head_version_id, $14, 'workspace_version', 'system',
            $15, $16,
            $17, 'committed', target.source_workspace_lease_id,
            target.ownership_generation, target.writer_generation, now()
       FROM target
-    RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+    RETURNING id, public_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
 ), updated_workspace AS (
     UPDATE workspaces
        SET head_version_id = created.id, dirty_state = 'clean', updated_at = now()
       FROM created
-     WHERE workspaces.org_id = created.org_id AND workspaces.id = created.workspace_id
+     WHERE workspaces.environment_id = created.environment_id
+       AND workspaces.id = created.workspace_id
     RETURNING workspaces.id
 ), updated_mount AS (
     UPDATE workspace_mounts
        SET materialized_version_id = created.id, dirty_generation = dirty_generation + 1,
            updated_at = now()
       FROM created, updated_workspace, target
-     WHERE workspace_mounts.org_id = created.org_id
+     WHERE workspace_mounts.environment_id = created.environment_id
        AND workspace_mounts.id = target.id
     RETURNING workspace_mounts.id
 )
-SELECT created.id, created.public_id, created.org_id, created.project_id, created.environment_id, created.workspace_id, created.parent_version_id, created.artifact_id, created.artifact_kind, created.kind, created.content_digest, created.size_bytes, created.entry_count, created.state, created.source_workspace_lease_id, created.ownership_generation, created.writer_generation, created.created_at, created.published_at, created.discarded_at FROM created JOIN updated_mount ON true
+SELECT created.id, created.public_id, created.environment_id, created.workspace_id, created.parent_version_id, created.artifact_id, created.artifact_kind, created.kind, created.content_digest, created.size_bytes, created.entry_count, created.state, created.source_workspace_lease_id, created.ownership_generation, created.writer_generation, created.created_at, created.published_at, created.discarded_at FROM created JOIN updated_mount ON true
 `
 
 type PromoteWorkspaceMountStopCaptureParams struct {
@@ -1060,8 +1060,6 @@ type PromoteWorkspaceMountStopCaptureParams struct {
 type PromoteWorkspaceMountStopCaptureRow struct {
 	ID                     pgtype.UUID          `json:"id"`
 	PublicID               string               `json:"public_id"`
-	OrgID                  pgtype.UUID          `json:"org_id"`
-	ProjectID              pgtype.UUID          `json:"project_id"`
 	EnvironmentID          pgtype.UUID          `json:"environment_id"`
 	WorkspaceID            pgtype.UUID          `json:"workspace_id"`
 	ParentVersionID        pgtype.UUID          `json:"parent_version_id"`
@@ -1104,8 +1102,6 @@ func (q *Queries) PromoteWorkspaceMountStopCapture(ctx context.Context, arg Prom
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
 		&i.ParentVersionID,

@@ -42,7 +42,6 @@ func LoadWorker() (Worker, error) {
 		IPPath:                       env("HELMR_WORKER_IP_PATH", "ip"),
 		NFTPath:                      env("HELMR_WORKER_NFT_PATH", "nft"),
 		NetworkBlockedIPv4CIDRs:      envList("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS"),
-		NetworkBlockedIPv6CIDRs:      envList("HELMR_WORKER_NETWORK_BLOCKED_IPV6_CIDRS"),
 		VMVCPUCount:                  2,
 		VMMemoryMiB:                  2048,
 		VMScratchDiskMiB:             8192,

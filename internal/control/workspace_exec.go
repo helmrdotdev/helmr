@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -315,19 +316,10 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 		if err != nil {
 			return fmt.Errorf("create Workspace exec: %w", err)
 		}
-		for _, binding := range bindings {
-			if _, err := work.q.CreateSecretResolution(ctx, db.CreateSecretResolutionParams{
-				ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				WorkspaceID:          authority.ID,
-				ProcessID:            process.ID,
-				PlacementKind:        binding.PlacementKind,
-				PlacementTarget:      binding.PlacementTarget,
-				SecretID:             binding.SecretID,
-				SecretVersionID:      binding.CurrentVersionID,
-				RevocationGeneration: binding.RevocationGeneration,
-			}); err != nil {
-				return fmt.Errorf("record Workspace exec Secret resolution: %w", err)
-			}
+		if err := secret.CreateProcessResolutions(
+			ctx, work.q, authority.ID, process.ID, workspaceSecretResolutions(bindings),
+		); err != nil {
+			return fmt.Errorf("record Workspace exec Secret resolutions: %w", err)
 		}
 		admission = workspaceExecAdmission{Process: process}
 		return nil

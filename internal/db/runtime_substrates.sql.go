@@ -12,7 +12,7 @@ import (
 )
 
 const getRuntimeSubstrateForWorkspaceDefinition = `-- name: GetRuntimeSubstrateForWorkspaceDefinition :one
-SELECT runtime_substrates.id, runtime_substrates.org_id, runtime_substrates.project_id, runtime_substrates.environment_id, runtime_substrates.deployment_definition_id, runtime_substrates.artifact_id, runtime_substrates.substrate_digest, runtime_substrates.substrate_format, runtime_substrates.builder_abi, runtime_substrates.layout_abi, runtime_substrates.substrate_size_bytes, runtime_substrates.source, runtime_substrates.created_by_worker_instance_id, runtime_substrates.created_at, runtime_substrates.updated_at, runtime_substrates.retired_at, runtime_substrates.last_referenced_at,
+SELECT runtime_substrates.id, runtime_substrates.org_id, runtime_substrates.project_id, runtime_substrates.environment_id, runtime_substrates.deployment_definition_id, runtime_substrates.artifact_id, runtime_substrates.substrate_digest, runtime_substrates.substrate_format, runtime_substrates.builder_abi, runtime_substrates.layout_abi, runtime_substrates.substrate_size_bytes, runtime_substrates.source, runtime_substrates.created_by_worker_instance_id, runtime_substrates.created_at, runtime_substrates.updated_at,
        artifacts.digest AS artifact_digest,
        artifacts.size_bytes AS artifact_size_bytes,
        artifacts.media_type AS artifact_media_type
@@ -37,7 +37,6 @@ SELECT runtime_substrates.id, runtime_substrates.org_id, runtime_substrates.proj
    AND runtime_substrates.substrate_format = $6
    AND runtime_substrates.builder_abi = $7
    AND runtime_substrates.layout_abi = $8
-   AND runtime_substrates.retired_at IS NULL
  LIMIT 1
 `
 
@@ -68,8 +67,6 @@ type GetRuntimeSubstrateForWorkspaceDefinitionRow struct {
 	CreatedByWorkerInstanceID pgtype.UUID        `json:"created_by_worker_instance_id"`
 	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
-	RetiredAt                 pgtype.Timestamptz `json:"retired_at"`
-	LastReferencedAt          pgtype.Timestamptz `json:"last_referenced_at"`
 	ArtifactDigest            string             `json:"artifact_digest"`
 	ArtifactSizeBytes         int64              `json:"artifact_size_bytes"`
 	ArtifactMediaType         string             `json:"artifact_media_type"`
@@ -103,8 +100,6 @@ func (q *Queries) GetRuntimeSubstrateForWorkspaceDefinition(ctx context.Context,
 		&i.CreatedByWorkerInstanceID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.RetiredAt,
-		&i.LastReferencedAt,
 		&i.ArtifactDigest,
 		&i.ArtifactSizeBytes,
 		&i.ArtifactMediaType,
@@ -113,7 +108,7 @@ func (q *Queries) GetRuntimeSubstrateForWorkspaceDefinition(ctx context.Context,
 }
 
 const getRuntimeSubstrateRegistration = `-- name: GetRuntimeSubstrateRegistration :one
-SELECT id, org_id, project_id, environment_id, deployment_definition_id, artifact_id, substrate_digest, substrate_format, builder_abi, layout_abi, substrate_size_bytes, source, created_by_worker_instance_id, created_at, updated_at, retired_at, last_referenced_at
+SELECT id, org_id, project_id, environment_id, deployment_definition_id, artifact_id, substrate_digest, substrate_format, builder_abi, layout_abi, substrate_size_bytes, source, created_by_worker_instance_id, created_at, updated_at
   FROM runtime_substrates
  WHERE org_id = $1
    AND project_id = $2
@@ -171,8 +166,6 @@ func (q *Queries) GetRuntimeSubstrateRegistration(ctx context.Context, arg GetRu
 		&i.CreatedByWorkerInstanceID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.RetiredAt,
-		&i.LastReferencedAt,
 	)
 	return i, err
 }
@@ -191,8 +184,7 @@ INSERT INTO runtime_substrates (
     layout_abi,
     substrate_size_bytes,
     source,
-    created_by_worker_instance_id,
-    last_referenced_at
+    created_by_worker_instance_id
 ) VALUES (
     $1,
     $2,
@@ -206,8 +198,7 @@ INSERT INTO runtime_substrates (
     $10,
     $11,
     COALESCE($12::jsonb, '{}'::jsonb),
-    $13,
-    now()
+    $13
 )
 ON CONFLICT ON CONSTRAINT runtime_substrates_input_key DO NOTHING
 `

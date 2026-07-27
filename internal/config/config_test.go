@@ -572,7 +572,6 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("HELMR_WORKER_IP_PATH", " /usr/sbin/ip ")
 	t.Setenv("HELMR_WORKER_NFT_PATH", " /usr/sbin/nft ")
 	t.Setenv("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS", "10.0.0.0/8,169.254.0.0/16")
-	t.Setenv("HELMR_WORKER_NETWORK_BLOCKED_IPV6_CIDRS", "fc00::/7 fe80::/10")
 	t.Setenv("HELMR_VM_VCPUS", " 4 ")
 	t.Setenv("HELMR_VM_MEMORY_MIB", " 4096 ")
 	t.Setenv("HELMR_VM_SCRATCH_DISK_MIB", " 12288 ")
@@ -601,7 +600,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if cfg.JailerPath != "/usr/bin/jailer" || cfg.JailerUID != 1001 || cfg.JailerGID != 1002 || cfg.JailerNumaNode != 1 || cfg.JailerChrootDir != "/var/lib/helmr/scratch/jailer" || cfg.CgroupVersion != "2" || cfg.CNIProfile != "helmr-ci/v2" || cfg.IPPath != "/usr/sbin/ip" || cfg.NFTPath != "/usr/sbin/nft" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if !stringSlicesEqual(cfg.NetworkBlockedIPv4CIDRs, []string{"10.0.0.0/8", "169.254.0.0/16"}) || !stringSlicesEqual(cfg.NetworkBlockedIPv6CIDRs, []string{"fc00::/7", "fe80::/10"}) {
+	if !stringSlicesEqual(cfg.NetworkBlockedIPv4CIDRs, []string{"10.0.0.0/8", "169.254.0.0/16"}) {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.WorkerGroupID != "run-workers" {
@@ -629,13 +628,12 @@ func TestLoadWorkerAllowsEmptyNetworkBlockedCIDRs(t *testing.T) {
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
 	t.Setenv("HELMR_WORKER_ROLES", "build,run")
 	t.Setenv("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS", "none")
-	t.Setenv("HELMR_WORKER_NETWORK_BLOCKED_IPV6_CIDRS", "none")
 
 	cfg, err := LoadWorker()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.NetworkBlockedIPv4CIDRs == nil || len(cfg.NetworkBlockedIPv4CIDRs) != 0 || cfg.NetworkBlockedIPv6CIDRs == nil || len(cfg.NetworkBlockedIPv6CIDRs) != 0 {
+	if cfg.NetworkBlockedIPv4CIDRs == nil || len(cfg.NetworkBlockedIPv4CIDRs) != 0 {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -703,7 +701,6 @@ func TestLoadWorkerRejectsMultipleBuildExecutors(t *testing.T) {
 		"HELMR_WORKER_SUBSTRATE_CACHE_MAX_MIB":    "4096",
 		"HELMR_WORKER_ARTIFACT_CACHE_MAX_MIB":     "2048",
 		"HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS": "none",
-		"HELMR_WORKER_NETWORK_BLOCKED_IPV6_CIDRS": "none",
 	} {
 		t.Setenv(key, value)
 	}

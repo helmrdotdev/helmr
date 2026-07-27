@@ -12,7 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
-	"github.com/helmrdotdev/helmr/internal/substrate"
+	"github.com/helmrdotdev/helmr/internal/runtime/substrate"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -76,19 +76,6 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 	}
 	if _, err := queries.GetRuntimeSubstrateRegistration(ctx, registrationLookup(conflicting)); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("conflicting output lookup error=%v, want no rows", err)
-	}
-
-	mustExec(t, ctx, pool, `UPDATE runtime_substrates SET retired_at = now() WHERE id = $1`, first.ID)
-	retired := getRuntimeSubstrateRegistration(t, ctx, queries, params)
-	rows, err = queries.InsertRuntimeSubstrate(ctx, replay)
-	if err != nil || rows != 0 {
-		t.Fatalf("retired replay rows=%d error=%v", rows, err)
-	}
-	retiredReplay := getRuntimeSubstrateRegistration(t, ctx, queries, replay)
-	if !retiredReplay.RetiredAt.Valid || retiredReplay.ID != retired.ID ||
-		!retiredReplay.UpdatedAt.Time.Equal(retired.UpdatedAt.Time) ||
-		!retiredReplay.RetiredAt.Time.Equal(retired.RetiredAt.Time) {
-		t.Fatalf("retired replay changed authority: retired=%+v replay=%+v", retired, retiredReplay)
 	}
 
 	concurrent := params
@@ -326,23 +313,23 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO workspaces (
-			id, public_id, org_id, project_id, environment_id, region_id,
-			declaration_kind, workspace_declared_id, deployment_definition_id, head_version_id
-		) VALUES ($1, $2, $3, $4, $5, $6, 'workspace', 'authority-workspace', $7, $8)
-	`, workspaceID, testWorkspacePublicID(t), orgID, projectID, environmentID,
+			id, public_id, environment_id, region_id,
+			workspace_declared_id, deployment_definition_id, head_version_id
+		) VALUES ($1, $2, $3, $4, 'authority-workspace', $5, $6)
+	`, workspaceID, testWorkspacePublicID(t), environmentID,
 		dbtest.DefaultRegionID, definitionID, rootVersionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, public_id, org_id, project_id, environment_id, workspace_id,
+			id, public_id, environment_id, workspace_id,
 			kind, content_digest, state, ownership_generation, writer_generation, published_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, 'system',
+			$1, $2, $3, $4, 'system',
 			'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
 			'committed', 0, 0, now()
 		)
-	`, rootVersionID, testWorkspaceVersionPublicID(t), orgID, projectID, environmentID, workspaceID); err != nil {
+	`, rootVersionID, testWorkspaceVersionPublicID(t), environmentID, workspaceID); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {

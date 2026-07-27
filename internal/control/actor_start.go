@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -275,13 +276,13 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		_, err = work.q.CreateActor(ctx, db.CreateActorParams{
 			ID: pgvalue.UUID(actorID), PublicID: actorPublicID,
 			OrgID: pgvalue.UUID(normalized.OrgID), ProjectID: pgvalue.UUID(normalized.ProjectID),
-			Key: pgvalue.TextPtr(normalized.Key), ManagedQueueName: runAuthority.QueueName,
-			ManagedConcurrencyKey:        pgvalue.TextPtr(normalized.ManagedConcurrencyKey),
-			ManagedQueueConcurrencyLimit: int8Ptr(runAuthority.QueueConcurrencyLimit),
-			ManagedPriority:              normalized.ManagedPriority, ManagedQueuedTtlMs: int8Ptr(managedQueuedTTL),
-			ManagedMaxActiveDurationMs: runAuthority.MaxActiveDurationMS,
-			ManagedRetryPolicy:         managedRetryPolicy,
-			ManagedRunMetadata:         normalized.ManagedRunMetadata, ManagedRunTags: normalized.ManagedRunTags,
+			Key: pgvalue.TextPtr(normalized.Key), RunQueueName: runAuthority.QueueName,
+			RunConcurrencyKey:        pgvalue.TextPtr(normalized.ManagedConcurrencyKey),
+			RunQueueConcurrencyLimit: int8Ptr(runAuthority.QueueConcurrencyLimit),
+			RunPriority:              normalized.ManagedPriority, RunQueueTtlMs: int8Ptr(managedQueuedTTL),
+			RunMaxActiveDurationMs: runAuthority.MaxActiveDurationMS,
+			RunRetryPolicy:         managedRetryPolicy,
+			RunMetadata:            normalized.ManagedRunMetadata, RunTags: normalized.ManagedRunTags,
 			WorkspaceID: authority.ID, EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
 			DeploymentDefinitionID: deploymentAuthority.ActorDefinitionID, ActorDeclaredID: normalized.ActorDeclaredID,
 		})
@@ -337,16 +338,10 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			}
 			return fmt.Errorf("reserve Workspace for Actor: %w", err)
 		}
-		for _, binding := range bindings {
-			if _, err := work.q.CreateSecretResolution(ctx, db.CreateSecretResolutionParams{
-				ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: authority.ID,
-				RunID: run.ID, AttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
-				PlacementKind: binding.PlacementKind, PlacementTarget: binding.PlacementTarget,
-				SecretID: binding.SecretID, SecretVersionID: binding.CurrentVersionID,
-				RevocationGeneration: binding.RevocationGeneration,
-			}); err != nil {
-				return fmt.Errorf("record Actor boot Run Secret resolution: %w", err)
-			}
+		if err := secret.CreateAttemptResolutions(
+			ctx, work.q, authority.ID, run.ID, 1, workspaceSecretResolutions(bindings),
+		); err != nil {
+			return fmt.Errorf("record Actor boot Run Secret resolutions: %w", err)
 		}
 		if _, err := work.q.CreateRunAdmissionOutbox(ctx, db.CreateRunAdmissionOutboxParams{
 			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: authority.ID,

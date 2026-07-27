@@ -11,7 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
-	"github.com/helmrdotdev/helmr/internal/runadmission"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -87,18 +87,19 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 	if err != nil {
 		return err
 	}
-	admission, err := BuildAdmissionAt(locked, a.now())
+	lockedSchedule := locked.Schedule
+	admission, err := BuildAdmissionAt(lockedSchedule, a.now())
 	if err != nil {
 		return err
 	}
-	if !locked.DeploymentID.Valid || !locked.DeploymentDefinitionID.Valid {
+	if !lockedSchedule.DeploymentID.Valid || !lockedSchedule.DeploymentDefinitionID.Valid {
 		return taskAuthorityError("Schedule has no pinned Task authority")
 	}
 	task, err := queries.GetDeploymentDefinition(ctx, db.GetDeploymentDefinitionParams{
-		EnvironmentID: locked.EnvironmentID,
-		DeploymentID:  locked.DeploymentID,
+		EnvironmentID: lockedSchedule.EnvironmentID,
+		DeploymentID:  lockedSchedule.DeploymentID,
 		Kind:          "task",
-		DeclaredID:    locked.TaskDeclaredID,
+		DeclaredID:    lockedSchedule.TaskDeclaredID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return taskAuthorityError("scheduled Task is absent from the accepted Deployment")
@@ -106,12 +107,12 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 	if err != nil {
 		return err
 	}
-	if task.ID != locked.DeploymentDefinitionID {
+	if task.ID != lockedSchedule.DeploymentDefinitionID {
 		return taskAuthorityError("Schedule Task authority does not match its generation")
 	}
 	program, err := queries.GetDeploymentProgramAuthority(ctx, db.GetDeploymentProgramAuthorityParams{
-		EnvironmentID: locked.EnvironmentID,
-		DeploymentID:  locked.DeploymentID,
+		EnvironmentID: lockedSchedule.EnvironmentID,
+		DeploymentID:  lockedSchedule.DeploymentID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return taskAuthorityError("scheduled Task Program authority is unavailable")
@@ -131,8 +132,8 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 	}
 
 	workspace, err := queries.LockWorkspaceAdmissionAuthority(ctx, db.LockWorkspaceAdmissionAuthorityParams{
-		EnvironmentID: locked.EnvironmentID,
-		ID:            locked.WorkspaceID,
+		EnvironmentID: lockedSchedule.EnvironmentID,
+		ID:            lockedSchedule.WorkspaceID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return workspaceError("Schedule Workspace is unavailable")
@@ -147,11 +148,11 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		return workspaceError("Schedule Workspace cannot accept execution")
 	}
 	if workspace.DirtyState != db.WorkspaceDirtyStateClean {
-		return runadmission.ErrWorkspaceReservationConflict
+		return run.ErrWorkspaceReservationConflict
 	}
 	if workspace.OwnerActorID.Valid || workspace.OwnerRunID.Valid ||
 		workspace.HasActiveLease || workspace.HasActiveProcess {
-		return runadmission.ErrWorkspaceReservationConflict
+		return run.ErrWorkspaceReservationConflict
 	}
 	if !program.ProgramArchitecture.Valid ||
 		!workspace.WorkspaceArchitecture.Valid ||
@@ -175,23 +176,23 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 	if err != nil {
 		return err
 	}
-	if _, err := runadmission.CreateTask(ctx, queries, runadmission.TaskRequest{
+	if _, err := run.CreateTask(ctx, queries, run.TaskRequest{
 		Run: db.CreateAdmittedRootTaskRunParams{
 			ID:                     pgvalue.UUID(runID),
 			PublicID:               runPublicID,
 			OrgID:                  locked.OrgID,
 			ProjectID:              locked.ProjectID,
-			EnvironmentID:          locked.EnvironmentID,
-			DeploymentID:           locked.DeploymentID,
+			EnvironmentID:          lockedSchedule.EnvironmentID,
+			DeploymentID:           lockedSchedule.DeploymentID,
 			DeploymentDefinitionID: task.ID,
-			EntrypointDeclaredID:   locked.TaskDeclaredID,
+			EntrypointDeclaredID:   lockedSchedule.TaskDeclaredID,
 			CauseKind:              "schedule",
-			ScheduleID:             locked.ID,
-			ScheduleGeneration:     pgtype.Int8{Int64: locked.Generation, Valid: true},
-			ScheduledAt:            locked.NextFireAt,
-			PreviousScheduledAt:    locked.LastFireAt,
-			ScheduleTimezone:       pgtype.Text{String: locked.Timezone, Valid: true},
-			WorkspaceID:            locked.WorkspaceID,
+			ScheduleID:             lockedSchedule.ID,
+			ScheduleGeneration:     pgtype.Int8{Int64: lockedSchedule.Generation, Valid: true},
+			ScheduledAt:            lockedSchedule.NextFireAt,
+			PreviousScheduledAt:    lockedSchedule.LastFireAt,
+			ScheduleTimezone:       pgtype.Text{String: lockedSchedule.Timezone, Valid: true},
+			WorkspaceID:            lockedSchedule.WorkspaceID,
 			BaseWorkspaceVersionID: workspace.HeadVersionID,
 			Payload:                admission.Payload,
 			Metadata:               []byte(`{}`),
@@ -206,19 +207,19 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		},
 		WorkspaceStateVersion: workspace.StateVersion,
 	}); err != nil {
-		if errors.Is(err, runadmission.ErrSecretUnavailable) {
+		if errors.Is(err, run.ErrSecretUnavailable) {
 			return workspaceError("Schedule Workspace Secret is unavailable")
 		}
 		return err
 	}
 
 	if _, err := queries.AdvanceScheduleCursor(ctx, db.AdvanceScheduleCursorParams{
-		ExpectedScheduledAt: locked.NextFireAt,
+		ExpectedScheduledAt: lockedSchedule.NextFireAt,
 		NextFireAt:          pgvalue.TimestamptzUTCZeroInvalid(admission.NextFireAt),
-		EnvironmentID:       locked.EnvironmentID,
-		ID:                  locked.ID,
-		ExpectedGeneration:  locked.Generation,
-		ClaimedBy:           locked.ClaimedBy,
+		EnvironmentID:       lockedSchedule.EnvironmentID,
+		ID:                  lockedSchedule.ID,
+		ExpectedGeneration:  lockedSchedule.Generation,
+		ClaimedBy:           lockedSchedule.ClaimedBy,
 	}); errors.Is(err, pgx.ErrNoRows) {
 		return ErrClaimSuperseded
 	} else if err != nil {

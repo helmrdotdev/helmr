@@ -51,18 +51,22 @@ UPDATE workspaces
        state_version = state_version + 1,
        last_activity_at = sqlc.arg(completed_at),
        updated_at = sqlc.arg(completed_at)
- WHERE id = sqlc.arg(id)
-   AND org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND owner_actor_id = sqlc.arg(actor_id)
-   AND owner_run_id IS NULL
-   AND ownership_generation = sqlc.arg(ownership_generation)
-   AND writer_generation = sqlc.arg(writer_generation)
-   AND head_version_id = sqlc.arg(expected_head_version_id)
-   AND state = 'active'
-   AND desired_state = 'active'
-   AND dirty_state = 'clean'
+ WHERE workspaces.id = sqlc.arg(id)
+   AND workspaces.environment_id = sqlc.arg(environment_id)
+   AND EXISTS (
+       SELECT 1 FROM environments
+        WHERE environments.id = workspaces.environment_id
+          AND environments.org_id = sqlc.arg(org_id)
+          AND environments.project_id = sqlc.arg(project_id)
+   )
+   AND workspaces.owner_actor_id = sqlc.arg(actor_id)
+   AND workspaces.owner_run_id IS NULL
+   AND workspaces.ownership_generation = sqlc.arg(ownership_generation)
+   AND workspaces.writer_generation = sqlc.arg(writer_generation)
+   AND workspaces.head_version_id = sqlc.arg(expected_head_version_id)
+   AND workspaces.state = 'active'
+   AND workspaces.desired_state = 'active'
+   AND workspaces.dirty_state = 'clean'
 RETURNING *;
 
 -- name: CreateActorRetryAttempt :one
@@ -234,8 +238,6 @@ UPDATE workspaces
        last_activity_at = sqlc.arg(completed_at),
        updated_at = sqlc.arg(completed_at)
  WHERE workspaces.id = sqlc.arg(id)
-   AND workspaces.org_id = sqlc.arg(org_id)
-   AND workspaces.project_id = sqlc.arg(project_id)
    AND workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.owner_actor_id = sqlc.arg(actor_id)
    AND workspaces.owner_run_id IS NULL
@@ -268,21 +270,22 @@ WITH created_run AS (
         queue_origin_at, queue_score_at, queued_expires_at,
         max_active_duration_ms, retry_policy, trace_id, root_span_id
     )
-    SELECT sqlc.arg(run_id), sqlc.arg(public_id), actors.org_id, actors.project_id, actors.environment_id,
+    SELECT sqlc.arg(run_id), sqlc.arg(public_id), environments.org_id, environments.project_id, actors.environment_id,
            definitions.deployment_id, actors.deployment_definition_id, 'actor',
            actors.actor_declared_id, 'continuation', actors.id,
            actors.committed_input_sequence, actors.next_input_sequence - 1,
            actors.workspace_id, workspaces.head_version_id,
-           actors.managed_run_metadata, actors.managed_run_tags,
-           actors.managed_queue_name, actors.managed_concurrency_key,
-           actors.managed_queue_concurrency_limit, actors.managed_priority,
+           actors.run_metadata, actors.run_tags,
+           actors.run_queue_name, actors.run_concurrency_key,
+           actors.run_queue_concurrency_limit, actors.run_priority,
            sqlc.arg(queue_origin_at)::timestamptz,
-           sqlc.arg(queue_origin_at)::timestamptz - (actors.managed_priority::double precision * interval '1 second'),
-           CASE WHEN actors.managed_queued_ttl_ms IS NULL THEN NULL
-                ELSE sqlc.arg(queue_origin_at)::timestamptz + (actors.managed_queued_ttl_ms::double precision * interval '1 millisecond') END,
-           actors.managed_max_active_duration_ms, actors.managed_retry_policy,
+           sqlc.arg(queue_origin_at)::timestamptz - (actors.run_priority::double precision * interval '1 second'),
+           CASE WHEN actors.run_queue_ttl_ms IS NULL THEN NULL
+                ELSE sqlc.arg(queue_origin_at)::timestamptz + (actors.run_queue_ttl_ms::double precision * interval '1 millisecond') END,
+           actors.run_max_active_duration_ms, actors.run_retry_policy,
            sqlc.narg(trace_id), sqlc.arg(root_span_id)
       FROM actors
+      JOIN environments ON environments.id = actors.environment_id
       JOIN deployment_definitions AS definitions
         ON definitions.environment_id = actors.environment_id
        AND definitions.id = actors.deployment_definition_id

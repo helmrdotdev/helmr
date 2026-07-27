@@ -109,13 +109,16 @@ func (q *Queries) CloseRunActiveIntervalForCheckpointFailure(ctx context.Context
 
 const createActorStartRun = `-- name: CreateActorStartRun :one
 WITH selected_actor AS MATERIALIZED (
-    SELECT actors.id, actors.public_id, actors.org_id, actors.project_id, actors.environment_id, actors.declaration_kind, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.managed_queue_name, actors.managed_concurrency_key, actors.managed_queue_concurrency_limit, actors.managed_priority, actors.managed_queued_ttl_ms, actors.managed_max_active_duration_ms, actors.managed_retry_policy_version, actors.managed_retry_policy, actors.managed_run_metadata, actors.managed_run_tags, actors.state, actors.close_sequence, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at,
+    SELECT actors.id, actors.public_id, actors.environment_id, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.run_queue_name, actors.run_concurrency_key, actors.run_queue_concurrency_limit, actors.run_priority, actors.run_queue_ttl_ms, actors.run_max_active_duration_ms, actors.run_retry_policy, actors.run_metadata, actors.run_tags, actors.state, actors.close_sequence, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at,
+           environments.org_id,
+           environments.project_id,
            deployment_definitions.deployment_id
       FROM actors
+      JOIN environments ON environments.id = actors.environment_id
       JOIN deployment_definitions
         ON deployment_definitions.environment_id = actors.environment_id
        AND deployment_definitions.id = actors.deployment_definition_id
-       AND deployment_definitions.kind = actors.declaration_kind
+       AND deployment_definitions.kind = 'actor'
        AND deployment_definitions.declared_id = actors.actor_declared_id
      WHERE actors.environment_id = $1
        AND actors.id = $2
@@ -182,20 +185,20 @@ WITH selected_actor AS MATERIALIZED (
            $7,
            0,
            $8,
-           selected_actor.managed_run_metadata,
-           selected_actor.managed_run_tags,
-           selected_actor.managed_queue_name,
-           selected_actor.managed_concurrency_key,
-           selected_actor.managed_queue_concurrency_limit,
-           selected_actor.managed_priority,
+           selected_actor.run_metadata,
+           selected_actor.run_tags,
+           selected_actor.run_queue_name,
+           selected_actor.run_concurrency_key,
+           selected_actor.run_queue_concurrency_limit,
+           selected_actor.run_priority,
            now(),
-           now() - (selected_actor.managed_priority::double precision * interval '1 second'),
+           now() - (selected_actor.run_priority::double precision * interval '1 second'),
            CASE
-               WHEN selected_actor.managed_queued_ttl_ms IS NULL THEN NULL
-               ELSE now() + (selected_actor.managed_queued_ttl_ms::double precision * interval '1 millisecond')
+               WHEN selected_actor.run_queue_ttl_ms IS NULL THEN NULL
+               ELSE now() + (selected_actor.run_queue_ttl_ms::double precision * interval '1 millisecond')
            END,
-           selected_actor.managed_max_active_duration_ms,
-           selected_actor.managed_retry_policy,
+           selected_actor.run_max_active_duration_ms,
+           selected_actor.run_retry_policy,
            $9,
            $10,
            $4
@@ -654,8 +657,6 @@ WITH selected_target AS MATERIALIZED (
       JOIN workspaces
         ON workspaces.environment_id = parent.environment_id
        AND workspaces.id = $2
-       AND workspaces.org_id = parent.org_id
-       AND workspaces.project_id = parent.project_id
       JOIN workspace_versions
         ON workspace_versions.workspace_id = workspaces.id
        AND workspace_versions.id = $3
@@ -929,8 +930,8 @@ WITH selected_target AS MATERIALIZED (
            definitions.deployment_id,
            definitions.id AS deployment_definition_id,
            definitions.declared_id AS entrypoint_declared_id,
-           workspaces.org_id,
-           workspaces.project_id,
+           environments.org_id,
+           environments.project_id,
            workspaces.id AS workspace_id
       FROM environments
       JOIN deployment_definitions AS definitions
@@ -945,15 +946,13 @@ WITH selected_target AS MATERIALIZED (
       JOIN workspaces
         ON workspaces.environment_id = environments.id
        AND workspaces.id = $2
-       AND workspaces.org_id = $3
-       AND workspaces.project_id = $4
       JOIN workspace_versions
         ON workspace_versions.workspace_id = workspaces.id
-       AND workspace_versions.id = $5
+       AND workspace_versions.id = $3
        AND workspace_versions.state = 'committed'
-     WHERE environments.id = $6
-       AND environments.org_id = $3
-       AND environments.project_id = $4
+     WHERE environments.id = $4
+       AND environments.org_id = $5
+       AND environments.project_id = $6
        AND environments.current_deployment_id IS NOT NULL
        AND (
            $7::uuid IS NULL
@@ -1009,7 +1008,7 @@ WITH selected_target AS MATERIALIZED (
            selected_target.entrypoint_declared_id,
            $10,
            selected_target.workspace_id,
-           $5,
+           $3,
            $11,
            coalesce($12::jsonb, '{}'::jsonb),
            coalesce($13::text[], '{}'::text[]),
@@ -1051,10 +1050,10 @@ SELECT created_run.id, created_run.public_id, created_run.org_id, created_run.pr
 type CreateRootRunFromCurrentDeploymentParams struct {
 	EntrypointDeclaredID   string             `json:"entrypoint_declared_id"`
 	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
-	ProjectID              pgtype.UUID        `json:"project_id"`
 	BaseWorkspaceVersionID pgtype.UUID        `json:"base_workspace_version_id"`
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
 	ClaimID                pgtype.UUID        `json:"claim_id"`
 	ID                     pgtype.UUID        `json:"id"`
 	PublicID               string             `json:"public_id"`
@@ -1134,10 +1133,10 @@ func (q *Queries) CreateRootRunFromCurrentDeployment(ctx context.Context, arg Cr
 	row := q.db.QueryRow(ctx, createRootRunFromCurrentDeployment,
 		arg.EntrypointDeclaredID,
 		arg.WorkspaceID,
-		arg.OrgID,
-		arg.ProjectID,
 		arg.BaseWorkspaceVersionID,
 		arg.EnvironmentID,
+		arg.OrgID,
+		arg.ProjectID,
 		arg.ClaimID,
 		arg.ID,
 		arg.PublicID,

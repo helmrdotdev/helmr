@@ -2,7 +2,6 @@ package control
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -197,7 +196,8 @@ func TestScheduleResponseProjectsOnlyPublicAuthority(t *testing.T) {
 		State:                "errored",
 		EffectiveFrom:        pgvalue.Timestamptz(now),
 		NextFireAt:           pgvalue.Timestamptz(now.Add(time.Hour)),
-		LastError:            json.RawMessage(`{"code":"workspace-unavailable","message":"Workspace is unavailable"}`),
+		LastErrorCode:        pgvalue.Text("workspace-unavailable"),
+		LastErrorMessage:     pgvalue.Text("Workspace is unavailable"),
 		CreatedAt:            pgvalue.Timestamptz(now.Add(-time.Hour)),
 		UpdatedAt:            pgvalue.Timestamptz(now),
 	}

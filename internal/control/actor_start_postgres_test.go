@@ -464,8 +464,8 @@ func assertActorStartTupleWithQueue(
 	var resolutionCount, outboxCount int
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT current_run_id, next_input_sequence, committed_input_sequence,
-		       managed_queue_name, managed_queue_concurrency_limit,
-		       managed_max_active_duration_ms, managed_retry_policy
+		       run_queue_name, run_queue_concurrency_limit,
+		       run_max_active_duration_ms, run_retry_policy
 		  FROM actors
 		 WHERE id = $1
 	`, result.ActorID).Scan(
@@ -688,22 +688,22 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		fixture.workspaceKeys[index] = fmt.Sprintf("workspace:%d", index)
 		mustActorStartExec(t, tx, `
 			INSERT INTO workspaces (
-			    id, public_id, org_id, project_id, environment_id, region_id,
-			    declaration_kind, workspace_declared_id, deployment_definition_id, head_version_id, key
-			) VALUES ($1, $2, $3, $4, $5, 'us-east-1', 'workspace', 'workspace.v1', $6, $7, $8)
-		`, workspaceID, fixture.workspaceRefs[index], fixture.orgID,
-			fixture.projectID, fixture.environmentID, workspaceDefinitionID, versionID,
+			    id, public_id, environment_id, region_id,
+			    workspace_declared_id, deployment_definition_id, head_version_id, key
+			) VALUES ($1, $2, $3, 'us-east-1', 'workspace.v1', $4, $5, $6)
+		`, workspaceID, fixture.workspaceRefs[index],
+			fixture.environmentID, workspaceDefinitionID, versionID,
 			fixture.workspaceKeys[index])
 		mustActorStartExec(t, tx, `
 			INSERT INTO workspace_versions (
-			    id, public_id, org_id, project_id, environment_id, workspace_id,
+			    id, public_id, environment_id, workspace_id,
 			    kind, state, content_digest, size_bytes, entry_count,
 			    ownership_generation, writer_generation, published_at
-			) VALUES ($1, $2, $3, $4, $5, $6, 'system', 'committed',
+			) VALUES ($1, $2, $3, $4, 'system', 'committed',
 			          'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
 			          0, 0, 0, 0, now())
-		`, versionID, actorStartPublicID(t, publicid.WorkspaceVersion), fixture.orgID,
-			fixture.projectID, fixture.environmentID, workspaceID)
+		`, versionID, actorStartPublicID(t, publicid.WorkspaceVersion),
+			fixture.environmentID, workspaceID)
 		mustActorStartExec(t, tx, `
 			INSERT INTO workspace_secrets (
 			    workspace_id, environment_id, placement_kind, placement_target, secret_id

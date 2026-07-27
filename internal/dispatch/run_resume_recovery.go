@@ -480,17 +480,24 @@ SELECT id
 	var workspaceDesired db.WorkspaceDesiredState
 	var workspaceDirty db.WorkspaceDirtyState
 	var ownerRunID, ownerActorID pgtype.UUID
+	root := lineage[0]
 	err = tx.QueryRow(ctx, `
-SELECT ownership_generation, writer_generation, state, desired_state,
-       dirty_state, owner_run_id, owner_actor_id
+SELECT workspaces.ownership_generation, workspaces.writer_generation,
+       workspaces.state, workspaces.desired_state, workspaces.dirty_state,
+       workspaces.owner_run_id, workspaces.owner_actor_id
   FROM workspaces
- WHERE id = $1
-   AND org_id = $2
-   AND state = 'active'
-   AND desired_state = 'active'
- FOR UPDATE`,
+  JOIN environments ON environments.id = workspaces.environment_id
+ WHERE workspaces.id = $1
+   AND workspaces.environment_id = $2
+   AND environments.org_id = $3
+   AND environments.project_id = $4
+   AND workspaces.state = 'active'
+   AND workspaces.desired_state = 'active'
+ FOR UPDATE OF workspaces`,
 		candidate.workspaceID,
+		root.environmentID,
 		candidate.orgID,
+		root.projectID,
 	).Scan(
 		&workspaceOwnership,
 		&workspaceWriter,
@@ -506,7 +513,6 @@ SELECT ownership_generation, writer_generation, state, desired_state,
 	if workspaceDirty != db.WorkspaceDirtyStateClean {
 		return db.RecoverExpiredRunResumesRow{}, false, nil
 	}
-	root := lineage[0]
 	if (root.entrypointKind == "task" &&
 		(ownerRunID != root.id || ownerActorID.Valid)) ||
 		(root.entrypointKind == "actor" &&

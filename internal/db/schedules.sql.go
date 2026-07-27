@@ -33,7 +33,7 @@ UPDATE schedules
           AND workspaces.state = 'active'
           AND workspaces.deleted_at IS NULL
    )
-RETURNING id, public_id, org_id, project_id, environment_id, target_kind, task_declared_id, deployment_definition_id, deployment_id, workspace_ref_id, workspace_ref_key, workspace_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_error, created_at, updated_at
+RETURNING id, public_id, environment_id, target_kind, task_declared_id, deployment_definition_id, deployment_id, workspace_ref_id, workspace_ref_key, workspace_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_error_code, last_error_message, created_at, updated_at
 `
 
 type ActivatePendingScheduleParams struct {
@@ -58,8 +58,6 @@ func (q *Queries) ActivatePendingSchedule(ctx context.Context, arg ActivatePendi
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TargetKind,
 		&i.TaskDeclaredID,
@@ -81,7 +79,8 @@ func (q *Queries) ActivatePendingSchedule(ctx context.Context, arg ActivatePendi
 		&i.ClaimExpiresAt,
 		&i.RetryStep,
 		&i.RetryAfter,
-		&i.LastError,
+		&i.LastErrorCode,
+		&i.LastErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -96,7 +95,8 @@ UPDATE schedules
        claim_expires_at = NULL,
        retry_step = NULL,
        retry_after = NULL,
-       last_error = NULL,
+       last_error_code = NULL,
+       last_error_message = NULL,
        state_version = state_version + 1,
        updated_at = now()
  WHERE environment_id = $3
@@ -106,7 +106,7 @@ UPDATE schedules
    AND next_fire_at = $1
    AND claimed_by = $6
    AND claim_expires_at > now()
-RETURNING id, public_id, org_id, project_id, environment_id, target_kind, task_declared_id, deployment_definition_id, deployment_id, workspace_ref_id, workspace_ref_key, workspace_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_error, created_at, updated_at
+RETURNING id, public_id, environment_id, target_kind, task_declared_id, deployment_definition_id, deployment_id, workspace_ref_id, workspace_ref_key, workspace_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_error_code, last_error_message, created_at, updated_at
 `
 
 type AdvanceScheduleCursorParams struct {
@@ -131,8 +131,6 @@ func (q *Queries) AdvanceScheduleCursor(ctx context.Context, arg AdvanceSchedule
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TargetKind,
 		&i.TaskDeclaredID,
@@ -154,7 +152,8 @@ func (q *Queries) AdvanceScheduleCursor(ctx context.Context, arg AdvanceSchedule
 		&i.ClaimExpiresAt,
 		&i.RetryStep,
 		&i.RetryAfter,
-		&i.LastError,
+		&i.LastErrorCode,
+		&i.LastErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -174,7 +173,8 @@ UPDATE schedules
        claim_expires_at = NULL,
        retry_step = NULL,
        retry_after = NULL,
-       last_error = NULL,
+       last_error_code = NULL,
+       last_error_message = NULL,
        updated_at = now()
  WHERE environment_id = $2
    AND state <> 'archived'
@@ -211,7 +211,7 @@ UPDATE schedules
        updated_at = now()
   FROM candidates
  WHERE schedules.id = candidates.id
-RETURNING schedules.id, schedules.public_id, schedules.org_id, schedules.project_id, schedules.environment_id, schedules.target_kind, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.workspace_ref_id, schedules.workspace_ref_key, schedules.workspace_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.state, schedules.state_version, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_error, schedules.created_at, schedules.updated_at
+RETURNING schedules.id, schedules.public_id, schedules.environment_id, schedules.target_kind, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.workspace_ref_id, schedules.workspace_ref_key, schedules.workspace_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.state, schedules.state_version, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_error_code, schedules.last_error_message, schedules.created_at, schedules.updated_at
 `
 
 type ClaimDueSchedulesParams struct {
@@ -232,8 +232,6 @@ func (q *Queries) ClaimDueSchedules(ctx context.Context, arg ClaimDueSchedulesPa
 		if err := rows.Scan(
 			&i.ID,
 			&i.PublicID,
-			&i.OrgID,
-			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.TargetKind,
 			&i.TaskDeclaredID,
@@ -255,7 +253,8 @@ func (q *Queries) ClaimDueSchedules(ctx context.Context, arg ClaimDueSchedulesPa
 			&i.ClaimExpiresAt,
 			&i.RetryStep,
 			&i.RetryAfter,
-			&i.LastError,
+			&i.LastErrorCode,
+			&i.LastErrorMessage,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -270,7 +269,7 @@ func (q *Queries) ClaimDueSchedules(ctx context.Context, arg ClaimDueSchedulesPa
 }
 
 const getSchedule = `-- name: GetSchedule :one
-SELECT id, public_id, org_id, project_id, environment_id, target_kind, task_declared_id, deployment_definition_id, deployment_id, workspace_ref_id, workspace_ref_key, workspace_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_error, created_at, updated_at
+SELECT id, public_id, environment_id, target_kind, task_declared_id, deployment_definition_id, deployment_id, workspace_ref_id, workspace_ref_key, workspace_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_error_code, last_error_message, created_at, updated_at
   FROM schedules
  WHERE environment_id = $1
    AND id = $2
@@ -287,8 +286,6 @@ func (q *Queries) GetSchedule(ctx context.Context, arg GetScheduleParams) (Sched
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TargetKind,
 		&i.TaskDeclaredID,
@@ -310,7 +307,8 @@ func (q *Queries) GetSchedule(ctx context.Context, arg GetScheduleParams) (Sched
 		&i.ClaimExpiresAt,
 		&i.RetryStep,
 		&i.RetryAfter,
-		&i.LastError,
+		&i.LastErrorCode,
+		&i.LastErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -318,14 +316,16 @@ func (q *Queries) GetSchedule(ctx context.Context, arg GetScheduleParams) (Sched
 }
 
 const getScheduleByPublicID = `-- name: GetScheduleByPublicID :one
-SELECT schedules.id, schedules.public_id, schedules.org_id, schedules.project_id, schedules.environment_id, schedules.target_kind, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.workspace_ref_id, schedules.workspace_ref_key, schedules.workspace_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.state, schedules.state_version, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_error, schedules.created_at, schedules.updated_at,
+SELECT schedules.id, schedules.public_id, schedules.environment_id, schedules.target_kind, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.workspace_ref_id, schedules.workspace_ref_key, schedules.workspace_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.state, schedules.state_version, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_error_code, schedules.last_error_message, schedules.created_at, schedules.updated_at,
        workspaces.public_id AS workspace_ref_public_id
   FROM schedules
+  JOIN environments
+    ON environments.id = schedules.environment_id
   LEFT JOIN workspaces
     ON workspaces.environment_id = schedules.environment_id
    AND workspaces.id = schedules.workspace_ref_id
- WHERE schedules.org_id = $1
-   AND schedules.project_id = $2
+ WHERE environments.org_id = $1
+   AND environments.project_id = $2
    AND schedules.environment_id = $3
    AND schedules.public_id = $4
 `
@@ -353,8 +353,6 @@ func (q *Queries) GetScheduleByPublicID(ctx context.Context, arg GetScheduleByPu
 	err := row.Scan(
 		&i.Schedule.ID,
 		&i.Schedule.PublicID,
-		&i.Schedule.OrgID,
-		&i.Schedule.ProjectID,
 		&i.Schedule.EnvironmentID,
 		&i.Schedule.TargetKind,
 		&i.Schedule.TaskDeclaredID,
@@ -376,7 +374,8 @@ func (q *Queries) GetScheduleByPublicID(ctx context.Context, arg GetScheduleByPu
 		&i.Schedule.ClaimExpiresAt,
 		&i.Schedule.RetryStep,
 		&i.Schedule.RetryAfter,
-		&i.Schedule.LastError,
+		&i.Schedule.LastErrorCode,
+		&i.Schedule.LastErrorMessage,
 		&i.Schedule.CreatedAt,
 		&i.Schedule.UpdatedAt,
 		&i.WorkspaceRefPublicID,
@@ -460,13 +459,11 @@ func (q *Queries) GetScheduledRunReceipt(ctx context.Context, arg GetScheduledRu
 }
 
 const listPendingScheduleBindings = `-- name: ListPendingScheduleBindings :many
-SELECT schedules.id, schedules.public_id, schedules.org_id, schedules.project_id, schedules.environment_id, schedules.target_kind, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.workspace_ref_id, schedules.workspace_ref_key, schedules.workspace_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.state, schedules.state_version, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_error, schedules.created_at, schedules.updated_at,
+SELECT schedules.id, schedules.public_id, schedules.environment_id, schedules.target_kind, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.workspace_ref_id, schedules.workspace_ref_key, schedules.workspace_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.state, schedules.state_version, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_error_code, schedules.last_error_message, schedules.created_at, schedules.updated_at,
        workspaces.id AS resolved_workspace_id
   FROM schedules
   JOIN workspaces
-    ON workspaces.org_id = schedules.org_id
-   AND workspaces.project_id = schedules.project_id
-   AND workspaces.environment_id = schedules.environment_id
+    ON workspaces.environment_id = schedules.environment_id
    AND workspaces.key = schedules.workspace_ref_key
    AND workspaces.state = 'active'
    AND workspaces.deleted_at IS NULL
@@ -478,8 +475,6 @@ SELECT schedules.id, schedules.public_id, schedules.org_id, schedules.project_id
 type ListPendingScheduleBindingsRow struct {
 	ID                     pgtype.UUID        `json:"id"`
 	PublicID               string             `json:"public_id"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
-	ProjectID              pgtype.UUID        `json:"project_id"`
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
 	TargetKind             string             `json:"target_kind"`
 	TaskDeclaredID         string             `json:"task_declared_id"`
@@ -501,7 +496,8 @@ type ListPendingScheduleBindingsRow struct {
 	ClaimExpiresAt         pgtype.Timestamptz `json:"claim_expires_at"`
 	RetryStep              pgtype.Int2        `json:"retry_step"`
 	RetryAfter             pgtype.Timestamptz `json:"retry_after"`
-	LastError              []byte             `json:"last_error"`
+	LastErrorCode          pgtype.Text        `json:"last_error_code"`
+	LastErrorMessage       pgtype.Text        `json:"last_error_message"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 	ResolvedWorkspaceID    pgtype.UUID        `json:"resolved_workspace_id"`
@@ -519,8 +515,6 @@ func (q *Queries) ListPendingScheduleBindings(ctx context.Context, limitCount in
 		if err := rows.Scan(
 			&i.ID,
 			&i.PublicID,
-			&i.OrgID,
-			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.TargetKind,
 			&i.TaskDeclaredID,
@@ -542,7 +536,8 @@ func (q *Queries) ListPendingScheduleBindings(ctx context.Context, limitCount in
 			&i.ClaimExpiresAt,
 			&i.RetryStep,
 			&i.RetryAfter,
-			&i.LastError,
+			&i.LastErrorCode,
+			&i.LastErrorMessage,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ResolvedWorkspaceID,
@@ -558,14 +553,16 @@ func (q *Queries) ListPendingScheduleBindings(ctx context.Context, limitCount in
 }
 
 const listSchedules = `-- name: ListSchedules :many
-SELECT schedules.id, schedules.public_id, schedules.org_id, schedules.project_id, schedules.environment_id, schedules.target_kind, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.workspace_ref_id, schedules.workspace_ref_key, schedules.workspace_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.state, schedules.state_version, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_error, schedules.created_at, schedules.updated_at,
+SELECT schedules.id, schedules.public_id, schedules.environment_id, schedules.target_kind, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.workspace_ref_id, schedules.workspace_ref_key, schedules.workspace_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.state, schedules.state_version, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_error_code, schedules.last_error_message, schedules.created_at, schedules.updated_at,
        workspaces.public_id AS workspace_ref_public_id
   FROM schedules
+  JOIN environments
+    ON environments.id = schedules.environment_id
   LEFT JOIN workspaces
     ON workspaces.environment_id = schedules.environment_id
    AND workspaces.id = schedules.workspace_ref_id
- WHERE schedules.org_id = $1
-   AND schedules.project_id = $2
+ WHERE environments.org_id = $1
+   AND environments.project_id = $2
    AND schedules.environment_id = $3
    AND (
        $4::text IS NULL
@@ -609,8 +606,6 @@ func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([
 		if err := rows.Scan(
 			&i.Schedule.ID,
 			&i.Schedule.PublicID,
-			&i.Schedule.OrgID,
-			&i.Schedule.ProjectID,
 			&i.Schedule.EnvironmentID,
 			&i.Schedule.TargetKind,
 			&i.Schedule.TaskDeclaredID,
@@ -632,7 +627,8 @@ func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([
 			&i.Schedule.ClaimExpiresAt,
 			&i.Schedule.RetryStep,
 			&i.Schedule.RetryAfter,
-			&i.Schedule.LastError,
+			&i.Schedule.LastErrorCode,
+			&i.Schedule.LastErrorMessage,
 			&i.Schedule.CreatedAt,
 			&i.Schedule.UpdatedAt,
 			&i.WorkspaceRefPublicID,
@@ -648,15 +644,19 @@ func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([
 }
 
 const lockClaimedSchedule = `-- name: LockClaimedSchedule :one
-SELECT id, public_id, org_id, project_id, environment_id, target_kind, task_declared_id, deployment_definition_id, deployment_id, workspace_ref_id, workspace_ref_key, workspace_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_error, created_at, updated_at
+SELECT schedules.id, schedules.public_id, schedules.environment_id, schedules.target_kind, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.workspace_ref_id, schedules.workspace_ref_key, schedules.workspace_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.state, schedules.state_version, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_error_code, schedules.last_error_message, schedules.created_at, schedules.updated_at,
+       environments.org_id,
+       environments.project_id
   FROM schedules
- WHERE environment_id = $1
-   AND id = $2
-   AND state = 'active'
-   AND generation = $3
-   AND next_fire_at = $4
-   AND claimed_by = $5
-   AND claim_expires_at > now()
+  JOIN environments
+    ON environments.id = schedules.environment_id
+ WHERE schedules.environment_id = $1
+   AND schedules.id = $2
+   AND schedules.state = 'active'
+   AND schedules.generation = $3
+   AND schedules.next_fire_at = $4
+   AND schedules.claimed_by = $5
+   AND schedules.claim_expires_at > now()
  FOR UPDATE
 `
 
@@ -668,7 +668,13 @@ type LockClaimedScheduleParams struct {
 	ClaimedBy           pgtype.Text        `json:"claimed_by"`
 }
 
-func (q *Queries) LockClaimedSchedule(ctx context.Context, arg LockClaimedScheduleParams) (Schedule, error) {
+type LockClaimedScheduleRow struct {
+	Schedule  Schedule    `json:"schedule"`
+	OrgID     pgtype.UUID `json:"org_id"`
+	ProjectID pgtype.UUID `json:"project_id"`
+}
+
+func (q *Queries) LockClaimedSchedule(ctx context.Context, arg LockClaimedScheduleParams) (LockClaimedScheduleRow, error) {
 	row := q.db.QueryRow(ctx, lockClaimedSchedule,
 		arg.EnvironmentID,
 		arg.ID,
@@ -676,36 +682,37 @@ func (q *Queries) LockClaimedSchedule(ctx context.Context, arg LockClaimedSchedu
 		arg.ExpectedScheduledAt,
 		arg.ClaimedBy,
 	)
-	var i Schedule
+	var i LockClaimedScheduleRow
 	err := row.Scan(
-		&i.ID,
-		&i.PublicID,
+		&i.Schedule.ID,
+		&i.Schedule.PublicID,
+		&i.Schedule.EnvironmentID,
+		&i.Schedule.TargetKind,
+		&i.Schedule.TaskDeclaredID,
+		&i.Schedule.DeploymentDefinitionID,
+		&i.Schedule.DeploymentID,
+		&i.Schedule.WorkspaceRefID,
+		&i.Schedule.WorkspaceRefKey,
+		&i.Schedule.WorkspaceID,
+		&i.Schedule.CronPattern,
+		&i.Schedule.Timezone,
+		&i.Schedule.CronSemanticsVersion,
+		&i.Schedule.Generation,
+		&i.Schedule.State,
+		&i.Schedule.StateVersion,
+		&i.Schedule.EffectiveFrom,
+		&i.Schedule.NextFireAt,
+		&i.Schedule.LastFireAt,
+		&i.Schedule.ClaimedBy,
+		&i.Schedule.ClaimExpiresAt,
+		&i.Schedule.RetryStep,
+		&i.Schedule.RetryAfter,
+		&i.Schedule.LastErrorCode,
+		&i.Schedule.LastErrorMessage,
+		&i.Schedule.CreatedAt,
+		&i.Schedule.UpdatedAt,
 		&i.OrgID,
 		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.TargetKind,
-		&i.TaskDeclaredID,
-		&i.DeploymentDefinitionID,
-		&i.DeploymentID,
-		&i.WorkspaceRefID,
-		&i.WorkspaceRefKey,
-		&i.WorkspaceID,
-		&i.CronPattern,
-		&i.Timezone,
-		&i.CronSemanticsVersion,
-		&i.Generation,
-		&i.State,
-		&i.StateVersion,
-		&i.EffectiveFrom,
-		&i.NextFireAt,
-		&i.LastFireAt,
-		&i.ClaimedBy,
-		&i.ClaimExpiresAt,
-		&i.RetryStep,
-		&i.RetryAfter,
-		&i.LastError,
-		&i.CreatedAt,
-		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -716,22 +723,24 @@ UPDATE schedules
        state_version = state_version + 1,
        retry_step = NULL,
        retry_after = NULL,
-       last_error = $1,
+       last_error_code = $1,
+       last_error_message = $2,
        claimed_by = NULL,
        claim_expires_at = NULL,
        updated_at = now()
- WHERE environment_id = $2
-   AND id = $3
+ WHERE environment_id = $3
+   AND id = $4
    AND state = 'active'
-   AND generation = $4
-   AND next_fire_at = $5
-   AND claimed_by = $6
+   AND generation = $5
+   AND next_fire_at = $6
+   AND claimed_by = $7
    AND claim_expires_at > now()
-RETURNING id, public_id, org_id, project_id, environment_id, target_kind, task_declared_id, deployment_definition_id, deployment_id, workspace_ref_id, workspace_ref_key, workspace_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_error, created_at, updated_at
+RETURNING id, public_id, environment_id, target_kind, task_declared_id, deployment_definition_id, deployment_id, workspace_ref_id, workspace_ref_key, workspace_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_error_code, last_error_message, created_at, updated_at
 `
 
 type MarkScheduleAdmissionErroredParams struct {
-	LastError           []byte             `json:"last_error"`
+	LastErrorCode       pgtype.Text        `json:"last_error_code"`
+	LastErrorMessage    pgtype.Text        `json:"last_error_message"`
 	EnvironmentID       pgtype.UUID        `json:"environment_id"`
 	ID                  pgtype.UUID        `json:"id"`
 	ExpectedGeneration  int64              `json:"expected_generation"`
@@ -741,7 +750,8 @@ type MarkScheduleAdmissionErroredParams struct {
 
 func (q *Queries) MarkScheduleAdmissionErrored(ctx context.Context, arg MarkScheduleAdmissionErroredParams) (Schedule, error) {
 	row := q.db.QueryRow(ctx, markScheduleAdmissionErrored,
-		arg.LastError,
+		arg.LastErrorCode,
+		arg.LastErrorMessage,
 		arg.EnvironmentID,
 		arg.ID,
 		arg.ExpectedGeneration,
@@ -752,8 +762,6 @@ func (q *Queries) MarkScheduleAdmissionErrored(ctx context.Context, arg MarkSche
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TargetKind,
 		&i.TaskDeclaredID,
@@ -775,7 +783,8 @@ func (q *Queries) MarkScheduleAdmissionErrored(ctx context.Context, arg MarkSche
 		&i.ClaimExpiresAt,
 		&i.RetryStep,
 		&i.RetryAfter,
-		&i.LastError,
+		&i.LastErrorCode,
+		&i.LastErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -797,7 +806,7 @@ UPDATE schedules
    AND retry_step IS NOT DISTINCT FROM $7
    AND claimed_by = $8
    AND claim_expires_at > now()
-RETURNING id, public_id, org_id, project_id, environment_id, target_kind, task_declared_id, deployment_definition_id, deployment_id, workspace_ref_id, workspace_ref_key, workspace_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_error, created_at, updated_at
+RETURNING id, public_id, environment_id, target_kind, task_declared_id, deployment_definition_id, deployment_id, workspace_ref_id, workspace_ref_key, workspace_id, cron_pattern, timezone, cron_semantics_version, generation, state, state_version, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_error_code, last_error_message, created_at, updated_at
 `
 
 type MarkScheduleAdmissionRetryableParams struct {
@@ -826,8 +835,6 @@ func (q *Queries) MarkScheduleAdmissionRetryable(ctx context.Context, arg MarkSc
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TargetKind,
 		&i.TaskDeclaredID,
@@ -849,7 +856,8 @@ func (q *Queries) MarkScheduleAdmissionRetryable(ctx context.Context, arg MarkSc
 		&i.ClaimExpiresAt,
 		&i.RetryStep,
 		&i.RetryAfter,
-		&i.LastError,
+		&i.LastErrorCode,
+		&i.LastErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -860,8 +868,6 @@ const reconcileSchedule = `-- name: ReconcileSchedule :exec
 INSERT INTO schedules (
     id,
     public_id,
-    org_id,
-    project_id,
     environment_id,
     task_declared_id,
     deployment_definition_id,
@@ -891,9 +897,7 @@ VALUES (
     $12,
     $13,
     $14,
-    $15,
-    $16,
-    $17
+    $15
 )
 ON CONFLICT (environment_id, task_declared_id)
 DO UPDATE
@@ -915,7 +919,8 @@ DO UPDATE
        claim_expires_at = NULL,
        retry_step = NULL,
        retry_after = NULL,
-       last_error = NULL,
+       last_error_code = NULL,
+       last_error_message = NULL,
        updated_at = now()
  WHERE schedules.deployment_definition_id IS DISTINCT FROM excluded.deployment_definition_id
     OR schedules.deployment_id IS DISTINCT FROM excluded.deployment_id
@@ -930,8 +935,6 @@ DO UPDATE
 type ReconcileScheduleParams struct {
 	ID                     pgtype.UUID        `json:"id"`
 	PublicID               string             `json:"public_id"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
-	ProjectID              pgtype.UUID        `json:"project_id"`
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
 	TaskDeclaredID         string             `json:"task_declared_id"`
 	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
@@ -951,8 +954,6 @@ func (q *Queries) ReconcileSchedule(ctx context.Context, arg ReconcileSchedulePa
 	_, err := q.db.Exec(ctx, reconcileSchedule,
 		arg.ID,
 		arg.PublicID,
-		arg.OrgID,
-		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.TaskDeclaredID,
 		arg.DeploymentDefinitionID,

@@ -423,7 +423,6 @@ func validateTaskWorkspaceRollback(
 	rollback parsedTaskWorkspaceRollback,
 ) error {
 	version, err := store.GetTaskWorkspaceResetVersion(ctx, db.GetTaskWorkspaceResetVersionParams{
-		OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
 		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
 		ID: authority.run.BaseWorkspaceVersionID,
 	})
@@ -452,7 +451,7 @@ func validateTaskWorkspaceRollback(
 			return errStaleTaskCompletion
 		}
 		artifact, err := store.GetArtifact(ctx, db.GetArtifactParams{
-			OrgID: version.OrgID, ProjectID: version.ProjectID,
+			OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
 			EnvironmentID: version.EnvironmentID, ID: version.ArtifactID,
 		})
 		if err != nil {
@@ -541,7 +540,6 @@ func recordTaskWorkspaceVersion(
 	}
 	version, err := store.PublishTaskWorkspaceVersion(ctx, db.PublishTaskWorkspaceVersionParams{
 		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), PublicID: publicID,
-		OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
 		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
 		ParentVersionID: authority.workspaceLease.BaseVersionID, ArtifactID: artifactRow.ID,
 		ContentDigest: capture.tree.Digest, SizeBytes: capture.tree.SizeBytes, EntryCount: int32(capture.tree.EntryCount),
@@ -646,19 +644,14 @@ func scheduleTaskRetry(
 	}); err != nil {
 		return staleTaskCompletion(err)
 	}
-	for _, binding := range secrets {
-		if !binding.Secret.CurrentVersionID.Valid || binding.Secret.State != "active" {
-			return secret.ErrDeliveryUnavailable
-		}
-		if _, err := store.CreateSecretResolution(ctx, db.CreateSecretResolutionParams{
-			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: authority.workspace.ID,
-			RunID: authority.run.ID, AttemptNumber: pgtype.Int4{Int32: nextAttempt, Valid: true},
-			PlacementKind: binding.PlacementKind, PlacementTarget: binding.PlacementTarget,
-			SecretID: binding.Secret.ID, SecretVersionID: binding.Secret.CurrentVersionID,
-			RevocationGeneration: binding.Secret.RevocationGeneration,
-		}); err != nil {
-			return fmt.Errorf("record retry Secret resolution: %w", err)
-		}
+	resolutions, err := activeSecretResolutions(secrets)
+	if err != nil {
+		return err
+	}
+	if err := secret.CreateAttemptResolutions(
+		ctx, store, authority.workspace.ID, authority.run.ID, nextAttempt, resolutions,
+	); err != nil {
+		return fmt.Errorf("record retry Secret resolutions: %w", err)
 	}
 	if _, err := store.DelayTaskRunRetry(ctx, db.DelayTaskRunRetryParams{
 		NextAttemptNumber: nextAttempt, CompletedAt: completedAt, RetryAt: pgvalue.Timestamptz(retryAt),

@@ -131,7 +131,7 @@ func (s *Server) startRun(
 				return staleRunLeaseClaim(err)
 			}
 			authority.workspace, err = work.q.TouchRunWorkspaceActivity(ctx, db.TouchRunWorkspaceActivityParams{
-				ID: authority.workspace.ID, OrgID: authority.workspace.OrgID, ProjectID: authority.workspace.ProjectID,
+				ID: authority.workspace.ID, OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
 				EnvironmentID:       authority.workspace.EnvironmentID,
 				OwnershipGeneration: authority.workspaceLease.OwnershipGeneration,
 				WriterGeneration:    authority.workspaceLease.WriterGeneration,

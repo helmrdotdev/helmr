@@ -3,8 +3,6 @@ WITH selected_definition AS (
     SELECT deployment_definitions.environment_id,
            deployment_definitions.id AS deployment_definition_id,
            deployment_definitions.declared_id AS workspace_declared_id,
-           projects.org_id,
-           projects.id AS project_id,
            projects.default_region_id
       FROM deployment_definitions
       JOIN environments
@@ -15,8 +13,9 @@ WITH selected_definition AS (
        AND deployments.id = deployment_definitions.deployment_id
        AND deployments.status = 'deployed'
       JOIN projects
-        ON projects.id = sqlc.arg(project_id)
-       AND projects.org_id = sqlc.arg(org_id)
+        ON projects.id = environments.project_id
+       AND projects.id = sqlc.arg(project_id)
+       AND environments.org_id = sqlc.arg(org_id)
      WHERE deployment_definitions.environment_id = sqlc.arg(environment_id)
        AND deployment_definitions.id = sqlc.arg(deployment_definition_id)
        AND deployment_definitions.kind = 'workspace'
@@ -25,11 +24,8 @@ WITH selected_definition AS (
     INSERT INTO workspaces (
         id,
         public_id,
-        org_id,
-        project_id,
         environment_id,
         region_id,
-        declaration_kind,
         workspace_declared_id,
         deployment_definition_id,
         head_version_id,
@@ -37,11 +33,8 @@ WITH selected_definition AS (
     )
     SELECT sqlc.arg(id),
            sqlc.arg(public_id),
-           selected_definition.org_id,
-           selected_definition.project_id,
            selected_definition.environment_id,
            selected_definition.default_region_id,
-           'workspace',
            selected_definition.workspace_declared_id,
            selected_definition.deployment_definition_id,
            sqlc.arg(initial_version_id),
@@ -52,8 +45,6 @@ WITH selected_definition AS (
     INSERT INTO workspace_versions (
         id,
         public_id,
-        org_id,
-        project_id,
         environment_id,
         workspace_id,
         kind,
@@ -67,8 +58,6 @@ WITH selected_definition AS (
     )
     SELECT sqlc.arg(initial_version_id),
            sqlc.arg(initial_version_public_id),
-           created_workspace.org_id,
-           created_workspace.project_id,
            created_workspace.environment_id,
            created_workspace.id,
            'system'::workspace_version_kind,
@@ -115,32 +104,35 @@ SELECT deployment_definitions.*
  LIMIT 1;
 
 -- name: GetWorkspace :one
-SELECT *
+SELECT workspaces.*
   FROM workspaces
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND id = sqlc.arg(id)
-   AND deleted_at IS NULL;
+  JOIN environments ON environments.id = workspaces.environment_id
+ WHERE environments.org_id = sqlc.arg(org_id)
+   AND environments.project_id = sqlc.arg(project_id)
+   AND workspaces.environment_id = sqlc.arg(environment_id)
+   AND workspaces.id = sqlc.arg(id)
+   AND workspaces.deleted_at IS NULL;
 
 -- name: GetWorkspaceByPublicID :one
-SELECT *
+SELECT workspaces.*
   FROM workspaces
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND public_id = sqlc.arg(public_id)
-   AND deleted_at IS NULL;
+  JOIN environments ON environments.id = workspaces.environment_id
+ WHERE environments.org_id = sqlc.arg(org_id)
+   AND environments.project_id = sqlc.arg(project_id)
+   AND workspaces.environment_id = sqlc.arg(environment_id)
+   AND workspaces.public_id = sqlc.arg(public_id)
+   AND workspaces.deleted_at IS NULL;
 
 -- name: GetWorkspaceByDeclaredIDAndKey :one
-SELECT *
+SELECT workspaces.*
   FROM workspaces
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND workspace_declared_id = sqlc.arg(workspace_declared_id)
-   AND key = sqlc.arg(key)
-   AND deleted_at IS NULL;
+  JOIN environments ON environments.id = workspaces.environment_id
+ WHERE environments.org_id = sqlc.arg(org_id)
+   AND environments.project_id = sqlc.arg(project_id)
+   AND workspaces.environment_id = sqlc.arg(environment_id)
+   AND workspaces.workspace_declared_id = sqlc.arg(workspace_declared_id)
+   AND workspaces.key = sqlc.arg(key)
+   AND workspaces.deleted_at IS NULL;
 
 -- name: CreateWorkspaceSecret :one
 INSERT INTO workspace_secrets (
@@ -159,31 +151,35 @@ INSERT INTO workspace_secrets (
 RETURNING *;
 
 -- name: ResolveWorkspaceTarget :one
-SELECT id
+SELECT workspaces.id
   FROM workspaces
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND deleted_at IS NULL
+  JOIN environments ON environments.id = workspaces.environment_id
+ WHERE environments.org_id = sqlc.arg(org_id)
+   AND environments.project_id = sqlc.arg(project_id)
+   AND workspaces.environment_id = sqlc.arg(environment_id)
+   AND workspaces.deleted_at IS NULL
    AND (
        (sqlc.narg(public_id)::text IS NOT NULL
         AND sqlc.narg(key)::text IS NULL
-        AND public_id = sqlc.narg(public_id)::text)
+        AND workspaces.public_id = sqlc.narg(public_id)::text)
        OR
        (sqlc.narg(public_id)::text IS NULL
         AND sqlc.narg(key)::text IS NOT NULL
-        AND key = sqlc.narg(key)::text)
+        AND workspaces.key = sqlc.narg(key)::text)
    );
 
 -- name: GetWorkspaceByOrgAndID :one
-SELECT *
+SELECT workspaces.*
   FROM workspaces
- WHERE org_id = sqlc.arg(org_id)
-   AND id = sqlc.arg(id)
-   AND deleted_at IS NULL;
+  JOIN environments ON environments.id = workspaces.environment_id
+ WHERE environments.org_id = sqlc.arg(org_id)
+   AND workspaces.id = sqlc.arg(id)
+   AND workspaces.deleted_at IS NULL;
 
 -- name: LockWorkspaceAdmissionAuthority :one
 SELECT workspaces.*,
+       environments.org_id,
+       environments.project_id,
        definitions.workspace_architecture,
        EXISTS (
            SELECT 1
@@ -198,6 +194,8 @@ SELECT workspaces.*,
               AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
        ) AS has_active_process
   FROM workspaces
+  JOIN environments
+    ON environments.id = workspaces.environment_id
   JOIN deployment_definitions AS definitions
     ON definitions.environment_id = workspaces.environment_id
    AND definitions.id = workspaces.deployment_definition_id
@@ -226,8 +224,9 @@ SELECT workspaces.*,
               AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
        ) AS has_active_process
   FROM workspaces
- WHERE workspaces.org_id = sqlc.arg(org_id)
-   AND workspaces.project_id = sqlc.arg(project_id)
+  JOIN environments ON environments.id = workspaces.environment_id
+ WHERE environments.org_id = sqlc.arg(org_id)
+   AND environments.project_id = sqlc.arg(project_id)
    AND workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.public_id = sqlc.arg(public_id)
    AND workspaces.state <> 'deleted'

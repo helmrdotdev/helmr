@@ -328,10 +328,12 @@ SELECT workspace_processes.id,
        definitions.workspace_architecture
   FROM workspace_processes
   JOIN workspaces
-    ON workspaces.org_id = workspace_processes.org_id
-   AND workspaces.project_id = workspace_processes.project_id
-   AND workspaces.environment_id = workspace_processes.environment_id
+    ON workspaces.environment_id = workspace_processes.environment_id
    AND workspaces.id = workspace_processes.workspace_id
+  JOIN environments
+    ON environments.id = workspaces.environment_id
+   AND environments.org_id = workspace_processes.org_id
+   AND environments.project_id = workspace_processes.project_id
   JOIN deployment_definitions AS definitions
     ON definitions.environment_id = workspaces.environment_id
    AND definitions.id = workspaces.deployment_definition_id

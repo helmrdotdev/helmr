@@ -262,7 +262,6 @@ func runtimeSubstrateResponse(row db.RuntimeSubstrate, artifact api.CASObject) a
 		BuilderABI:             row.BuilderAbi,
 		LayoutABI:              row.LayoutAbi,
 		SizeBytes:              row.SubstrateSizeBytes,
-		Retired:                row.RetiredAt.Valid,
 	}
 }
 

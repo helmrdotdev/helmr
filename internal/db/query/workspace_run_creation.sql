@@ -3,8 +3,6 @@ WITH selected_definition AS (
     SELECT deployment_definitions.environment_id,
            deployment_definitions.id AS deployment_definition_id,
            deployment_definitions.declared_id AS workspace_declared_id,
-           runs.org_id,
-           runs.project_id,
            projects.default_region_id
       FROM runs
       JOIN deployment_definitions
@@ -12,9 +10,10 @@ WITH selected_definition AS (
        AND deployment_definitions.deployment_id = runs.deployment_id
        AND deployment_definitions.kind = 'workspace'
        AND deployment_definitions.declared_id = sqlc.arg(workspace_declared_id)
+      JOIN environments
+        ON environments.id = runs.environment_id
       JOIN projects
-        ON projects.id = runs.project_id
-       AND projects.org_id = runs.org_id
+        ON projects.id = environments.project_id
      WHERE runs.environment_id = sqlc.arg(environment_id)
        AND runs.id = sqlc.arg(run_id)
        AND runs.status IN ('queued', 'running', 'waiting', 'retry_delayed')
@@ -23,11 +22,8 @@ WITH selected_definition AS (
     INSERT INTO workspaces (
         id,
         public_id,
-        org_id,
-        project_id,
         environment_id,
         region_id,
-        declaration_kind,
         workspace_declared_id,
         deployment_definition_id,
         head_version_id,
@@ -35,11 +31,8 @@ WITH selected_definition AS (
     )
     SELECT sqlc.arg(id),
            sqlc.arg(public_id),
-           selected_definition.org_id,
-           selected_definition.project_id,
            selected_definition.environment_id,
            selected_definition.default_region_id,
-           'workspace',
            selected_definition.workspace_declared_id,
            selected_definition.deployment_definition_id,
            sqlc.arg(initial_version_id),
@@ -50,8 +43,6 @@ WITH selected_definition AS (
     INSERT INTO workspace_versions (
         id,
         public_id,
-        org_id,
-        project_id,
         environment_id,
         workspace_id,
         kind,
@@ -65,8 +56,6 @@ WITH selected_definition AS (
     )
     SELECT sqlc.arg(initial_version_id),
            sqlc.arg(initial_version_public_id),
-           created_workspace.org_id,
-           created_workspace.project_id,
            created_workspace.environment_id,
            created_workspace.id,
            'system'::workspace_version_kind,

@@ -43,8 +43,7 @@ INSERT INTO runtime_substrates (
     layout_abi,
     substrate_size_bytes,
     source,
-    created_by_worker_instance_id,
-    last_referenced_at
+    created_by_worker_instance_id
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
@@ -58,8 +57,7 @@ INSERT INTO runtime_substrates (
     sqlc.arg(layout_abi),
     sqlc.arg(substrate_size_bytes),
     COALESCE(sqlc.arg(source)::jsonb, '{}'::jsonb),
-    sqlc.narg(created_by_worker_instance_id),
-    now()
+    sqlc.narg(created_by_worker_instance_id)
 )
 ON CONFLICT ON CONSTRAINT runtime_substrates_input_key DO NOTHING;
 
@@ -104,5 +102,4 @@ SELECT runtime_substrates.*,
    AND runtime_substrates.substrate_format = sqlc.arg(substrate_format)
    AND runtime_substrates.builder_abi = sqlc.arg(builder_abi)
    AND runtime_substrates.layout_abi = sqlc.arg(layout_abi)
-   AND runtime_substrates.retired_at IS NULL
  LIMIT 1;

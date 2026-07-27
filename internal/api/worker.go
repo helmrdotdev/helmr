@@ -1049,7 +1049,6 @@ type WorkerRuntimeSubstrate struct {
 	BuilderABI             string    `json:"builder_abi"`
 	LayoutABI              string    `json:"layout_abi"`
 	SizeBytes              int64     `json:"size_bytes"`
-	Retired                bool      `json:"retired"`
 }
 
 type WorkerRuntimeSubstrateRegisterRequest struct {

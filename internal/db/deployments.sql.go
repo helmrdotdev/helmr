@@ -2487,8 +2487,6 @@ updated_environment AS (
 promotion AS (
     INSERT INTO deployment_promotions (
         id,
-        org_id,
-        project_id,
         environment_id,
         deployment_id,
         previous_deployment_id,
@@ -2496,8 +2494,6 @@ promotion AS (
         reason
     )
     SELECT $5,
-           target.org_id,
-           target.project_id,
            target.environment_id,
            target.id,
            previous.current_deployment_id,
@@ -2506,9 +2502,9 @@ promotion AS (
       FROM target
       JOIN previous ON true
       JOIN updated_environment ON true
-    RETURNING id, org_id, project_id, environment_id, deployment_id, previous_deployment_id, promoted_by_principal, reason, created_at
+    RETURNING id, environment_id, deployment_id, previous_deployment_id, promoted_by_principal, reason, created_at
 )
-SELECT id, org_id, project_id, environment_id, deployment_id, previous_deployment_id, promoted_by_principal, reason, created_at FROM promotion
+SELECT id, environment_id, deployment_id, previous_deployment_id, promoted_by_principal, reason, created_at FROM promotion
 `
 
 type PromoteDeploymentParams struct {
@@ -2523,8 +2519,6 @@ type PromoteDeploymentParams struct {
 
 type PromoteDeploymentRow struct {
 	ID                   pgtype.UUID        `json:"id"`
-	OrgID                pgtype.UUID        `json:"org_id"`
-	ProjectID            pgtype.UUID        `json:"project_id"`
 	EnvironmentID        pgtype.UUID        `json:"environment_id"`
 	DeploymentID         pgtype.UUID        `json:"deployment_id"`
 	PreviousDeploymentID pgtype.UUID        `json:"previous_deployment_id"`
@@ -2546,8 +2540,6 @@ func (q *Queries) PromoteDeployment(ctx context.Context, arg PromoteDeploymentPa
 	var i PromoteDeploymentRow
 	err := row.Scan(
 		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
 		&i.PreviousDeploymentID,

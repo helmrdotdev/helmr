@@ -2,8 +2,6 @@
 INSERT INTO schedules (
     id,
     public_id,
-    org_id,
-    project_id,
     environment_id,
     task_declared_id,
     deployment_definition_id,
@@ -21,8 +19,6 @@ INSERT INTO schedules (
 VALUES (
     sqlc.arg(id),
     sqlc.arg(public_id),
-    sqlc.arg(org_id),
-    sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(task_declared_id),
     sqlc.arg(deployment_definition_id),
@@ -57,7 +53,8 @@ DO UPDATE
        claim_expires_at = NULL,
        retry_step = NULL,
        retry_after = NULL,
-       last_error = NULL,
+       last_error_code = NULL,
+       last_error_message = NULL,
        updated_at = now()
  WHERE schedules.deployment_definition_id IS DISTINCT FROM excluded.deployment_definition_id
     OR schedules.deployment_id IS DISTINCT FROM excluded.deployment_id
@@ -81,7 +78,8 @@ UPDATE schedules
        claim_expires_at = NULL,
        retry_step = NULL,
        retry_after = NULL,
-       last_error = NULL,
+       last_error_code = NULL,
+       last_error_message = NULL,
        updated_at = now()
  WHERE environment_id = sqlc.arg(environment_id)
    AND state <> 'archived'
@@ -97,11 +95,13 @@ SELECT *
 SELECT sqlc.embed(schedules),
        workspaces.public_id AS workspace_ref_public_id
   FROM schedules
+  JOIN environments
+    ON environments.id = schedules.environment_id
   LEFT JOIN workspaces
     ON workspaces.environment_id = schedules.environment_id
    AND workspaces.id = schedules.workspace_ref_id
- WHERE schedules.org_id = sqlc.arg(org_id)
-   AND schedules.project_id = sqlc.arg(project_id)
+ WHERE environments.org_id = sqlc.arg(org_id)
+   AND environments.project_id = sqlc.arg(project_id)
    AND schedules.environment_id = sqlc.arg(environment_id)
    AND schedules.public_id = sqlc.arg(public_id);
 
@@ -109,11 +109,13 @@ SELECT sqlc.embed(schedules),
 SELECT sqlc.embed(schedules),
        workspaces.public_id AS workspace_ref_public_id
   FROM schedules
+  JOIN environments
+    ON environments.id = schedules.environment_id
   LEFT JOIN workspaces
     ON workspaces.environment_id = schedules.environment_id
    AND workspaces.id = schedules.workspace_ref_id
- WHERE schedules.org_id = sqlc.arg(org_id)
-   AND schedules.project_id = sqlc.arg(project_id)
+ WHERE environments.org_id = sqlc.arg(org_id)
+   AND environments.project_id = sqlc.arg(project_id)
    AND schedules.environment_id = sqlc.arg(environment_id)
    AND (
        sqlc.narg(after_task_declared_id)::text IS NULL
@@ -128,9 +130,7 @@ SELECT schedules.*,
        workspaces.id AS resolved_workspace_id
   FROM schedules
   JOIN workspaces
-    ON workspaces.org_id = schedules.org_id
-   AND workspaces.project_id = schedules.project_id
-   AND workspaces.environment_id = schedules.environment_id
+    ON workspaces.environment_id = schedules.environment_id
    AND workspaces.key = schedules.workspace_ref_key
    AND workspaces.state = 'active'
    AND workspaces.deleted_at IS NULL
@@ -184,15 +184,19 @@ UPDATE schedules
 RETURNING schedules.*;
 
 -- name: LockClaimedSchedule :one
-SELECT *
+SELECT sqlc.embed(schedules),
+       environments.org_id,
+       environments.project_id
   FROM schedules
- WHERE environment_id = sqlc.arg(environment_id)
-   AND id = sqlc.arg(id)
-   AND state = 'active'
-   AND generation = sqlc.arg(expected_generation)
-   AND next_fire_at = sqlc.arg(expected_scheduled_at)
-   AND claimed_by = sqlc.arg(claimed_by)
-   AND claim_expires_at > now()
+  JOIN environments
+    ON environments.id = schedules.environment_id
+ WHERE schedules.environment_id = sqlc.arg(environment_id)
+   AND schedules.id = sqlc.arg(id)
+   AND schedules.state = 'active'
+   AND schedules.generation = sqlc.arg(expected_generation)
+   AND schedules.next_fire_at = sqlc.arg(expected_scheduled_at)
+   AND schedules.claimed_by = sqlc.arg(claimed_by)
+   AND schedules.claim_expires_at > now()
  FOR UPDATE;
 
 -- name: GetScheduledRunReceipt :one
@@ -211,7 +215,8 @@ UPDATE schedules
        claim_expires_at = NULL,
        retry_step = NULL,
        retry_after = NULL,
-       last_error = NULL,
+       last_error_code = NULL,
+       last_error_message = NULL,
        state_version = state_version + 1,
        updated_at = now()
  WHERE environment_id = sqlc.arg(environment_id)
@@ -246,7 +251,8 @@ UPDATE schedules
        state_version = state_version + 1,
        retry_step = NULL,
        retry_after = NULL,
-       last_error = sqlc.arg(last_error),
+       last_error_code = sqlc.arg(last_error_code),
+       last_error_message = sqlc.arg(last_error_message),
        claimed_by = NULL,
        claim_expires_at = NULL,
        updated_at = now()

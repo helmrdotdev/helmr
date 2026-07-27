@@ -1406,38 +1406,26 @@ func (q *Queries) GetTaskCompletionTime(ctx context.Context) (pgtype.Timestamptz
 }
 
 const getTaskWorkspaceResetVersion = `-- name: GetTaskWorkspaceResetVersion :one
-SELECT id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+SELECT id, public_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
   FROM workspace_versions
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND workspace_id = $4
-   AND id = $5
+ WHERE environment_id = $1
+   AND workspace_id = $2
+   AND id = $3
    AND state IN ('committed', 'private')
 `
 
 type GetTaskWorkspaceResetVersionParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	WorkspaceID   pgtype.UUID `json:"workspace_id"`
 	ID            pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) GetTaskWorkspaceResetVersion(ctx context.Context, arg GetTaskWorkspaceResetVersionParams) (WorkspaceVersion, error) {
-	row := q.db.QueryRow(ctx, getTaskWorkspaceResetVersion,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.WorkspaceID,
-		arg.ID,
-	)
+	row := q.db.QueryRow(ctx, getTaskWorkspaceResetVersion, arg.EnvironmentID, arg.WorkspaceID, arg.ID)
 	var i WorkspaceVersion
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
 		&i.ParentVersionID,
@@ -1462,8 +1450,6 @@ const publishTaskWorkspaceVersion = `-- name: PublishTaskWorkspaceVersion :one
 INSERT INTO workspace_versions (
     id,
     public_id,
-    org_id,
-    project_id,
     environment_id,
     workspace_id,
     parent_version_id,
@@ -1486,27 +1472,23 @@ VALUES (
     $4,
     $5,
     $6,
-    $7,
-    $8,
     'workspace_version',
     'user',
+    $7,
+    $8,
     $9,
+    'committed',
     $10,
     $11,
-    'committed',
     $12,
-    $13,
-    $14,
-    $15
+    $13
 )
-RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+RETURNING id, public_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
 `
 
 type PublishTaskWorkspaceVersionParams struct {
 	ID                     pgtype.UUID        `json:"id"`
 	PublicID               string             `json:"public_id"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
-	ProjectID              pgtype.UUID        `json:"project_id"`
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
 	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
 	ParentVersionID        pgtype.UUID        `json:"parent_version_id"`
@@ -1524,8 +1506,6 @@ func (q *Queries) PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTa
 	row := q.db.QueryRow(ctx, publishTaskWorkspaceVersion,
 		arg.ID,
 		arg.PublicID,
-		arg.OrgID,
-		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
 		arg.ParentVersionID,
@@ -1542,8 +1522,6 @@ func (q *Queries) PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTa
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
 		&i.ParentVersionID,
@@ -1783,9 +1761,11 @@ UPDATE workspaces
        state_version = workspaces.state_version + 1,
        last_activity_at = $2,
        updated_at = $2
+  FROM environments
  WHERE workspaces.id = $3
-   AND workspaces.org_id = $4
-   AND workspaces.project_id = $5
+   AND environments.id = workspaces.environment_id
+   AND environments.org_id = $4
+   AND environments.project_id = $5
    AND workspaces.environment_id = $6
    AND workspaces.owner_run_id = $7
    AND workspaces.owner_actor_id IS NULL
@@ -1807,7 +1787,7 @@ UPDATE workspaces
         WHERE workspace_processes.workspace_id = workspaces.id
           AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
    )
-RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+RETURNING environments.id, environments.public_id, org_id, project_id, slug, name, color_hex, is_default, environments.created_at, environments.updated_at, current_deployment_id, workspaces.id, workspaces.public_id, environment_id, region_id, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, workspaces.created_at, workspaces.updated_at, deleted_at
 `
 
 type ReleaseTaskWorkspaceOwnerParams struct {
@@ -1823,7 +1803,41 @@ type ReleaseTaskWorkspaceOwnerParams struct {
 	ExpectedHeadVersionID pgtype.UUID        `json:"expected_head_version_id"`
 }
 
-func (q *Queries) ReleaseTaskWorkspaceOwner(ctx context.Context, arg ReleaseTaskWorkspaceOwnerParams) (Workspace, error) {
+type ReleaseTaskWorkspaceOwnerRow struct {
+	ID                     pgtype.UUID        `json:"id"`
+	PublicID               string             `json:"public_id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	Slug                   string             `json:"slug"`
+	Name                   string             `json:"name"`
+	ColorHex               string             `json:"color_hex"`
+	IsDefault              bool               `json:"is_default"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	CurrentDeploymentID    pgtype.UUID        `json:"current_deployment_id"`
+	ID_2                   pgtype.UUID        `json:"id_2"`
+	PublicID_2             string             `json:"public_id_2"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	RegionID               string             `json:"region_id"`
+	WorkspaceDeclaredID    pgtype.Text        `json:"workspace_declared_id"`
+	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
+	Key                    pgtype.Text        `json:"key"`
+	StateVersion           int64              `json:"state_version"`
+	OwnerActorID           pgtype.UUID        `json:"owner_actor_id"`
+	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
+	OwnershipGeneration    int64              `json:"ownership_generation"`
+	WriterGeneration       int64              `json:"writer_generation"`
+	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
+	State                  string             `json:"state"`
+	DesiredState           string             `json:"desired_state"`
+	DirtyState             string             `json:"dirty_state"`
+	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt_2            pgtype.Timestamptz `json:"created_at_2"`
+	UpdatedAt_2            pgtype.Timestamptz `json:"updated_at_2"`
+	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
+}
+
+func (q *Queries) ReleaseTaskWorkspaceOwner(ctx context.Context, arg ReleaseTaskWorkspaceOwnerParams) (ReleaseTaskWorkspaceOwnerRow, error) {
 	row := q.db.QueryRow(ctx, releaseTaskWorkspaceOwner,
 		arg.NewHeadVersionID,
 		arg.CompletedAt,
@@ -1836,15 +1850,23 @@ func (q *Queries) ReleaseTaskWorkspaceOwner(ctx context.Context, arg ReleaseTask
 		arg.WriterGeneration,
 		arg.ExpectedHeadVersionID,
 	)
-	var i Workspace
+	var i ReleaseTaskWorkspaceOwnerRow
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
 		&i.ProjectID,
+		&i.Slug,
+		&i.Name,
+		&i.ColorHex,
+		&i.IsDefault,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CurrentDeploymentID,
+		&i.ID_2,
+		&i.PublicID_2,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.DeclarationKind,
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
@@ -1858,8 +1880,8 @@ func (q *Queries) ReleaseTaskWorkspaceOwner(ctx context.Context, arg ReleaseTask
 		&i.DesiredState,
 		&i.DirtyState,
 		&i.LastActivityAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
+		&i.CreatedAt_2,
+		&i.UpdatedAt_2,
 		&i.DeletedAt,
 	)
 	return i, err

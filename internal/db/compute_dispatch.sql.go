@@ -361,9 +361,7 @@ SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
        runs.queue_origin_at, runs.queue_score_at, workspaces.region_id
   FROM runs
   JOIN workspaces
-    ON workspaces.org_id = runs.org_id
-   AND workspaces.project_id = runs.project_id
-   AND workspaces.environment_id = runs.environment_id
+    ON workspaces.environment_id = runs.environment_id
    AND workspaces.id = runs.workspace_id
  WHERE runs.org_id = $1
    AND runs.id = $2
@@ -553,9 +551,7 @@ SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
        runs.queue_origin_at, runs.queue_score_at, workspaces.region_id
   FROM runs
   JOIN workspaces
-    ON workspaces.org_id = runs.org_id
-   AND workspaces.project_id = runs.project_id
-   AND workspaces.environment_id = runs.environment_id
+    ON workspaces.environment_id = runs.environment_id
    AND workspaces.id = runs.workspace_id
   JOIN run_waits
     ON run_waits.environment_id = runs.environment_id
@@ -1018,76 +1014,6 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, arg GetWorkerInsta
 	return i, err
 }
 
-const listQueueScopes = `-- name: ListQueueScopes :many
-SELECT runs.org_id,
-       runs.project_id,
-       runs.environment_id,
-       workspaces.region_id,
-       runs.concurrency_key,
-       runs.queue_name
-  FROM runs
-  JOIN workspaces
-    ON workspaces.org_id = runs.org_id
-   AND workspaces.project_id = runs.project_id
-   AND workspaces.environment_id = runs.environment_id
-   AND workspaces.id = runs.workspace_id
-  JOIN regions ON regions.id = workspaces.region_id AND regions.state = 'available'
- WHERE runs.status = 'queued'
-   AND runs.current_run_lease_id IS NULL
-   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
- GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-          runs.concurrency_key, runs.queue_name
- ORDER BY md5(runs.org_id::text || ':' || runs.project_id::text || ':' ||
-              runs.environment_id::text || ':' || workspaces.region_id || ':' ||
-              coalesce(runs.concurrency_key, '') || ':' || runs.queue_name || ':' || $1::text),
-          runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-          runs.concurrency_key, runs.queue_name
- LIMIT $3
-OFFSET $2
-`
-
-type ListQueueScopesParams struct {
-	ScanSeed  string `json:"scan_seed"`
-	RowOffset int32  `json:"row_offset"`
-	RowLimit  int32  `json:"row_limit"`
-}
-
-type ListQueueScopesRow struct {
-	OrgID          pgtype.UUID `json:"org_id"`
-	ProjectID      pgtype.UUID `json:"project_id"`
-	EnvironmentID  pgtype.UUID `json:"environment_id"`
-	RegionID       string      `json:"region_id"`
-	ConcurrencyKey pgtype.Text `json:"concurrency_key"`
-	QueueName      string      `json:"queue_name"`
-}
-
-func (q *Queries) ListQueueScopes(ctx context.Context, arg ListQueueScopesParams) ([]ListQueueScopesRow, error) {
-	rows, err := q.db.Query(ctx, listQueueScopes, arg.ScanSeed, arg.RowOffset, arg.RowLimit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListQueueScopesRow
-	for rows.Next() {
-		var i ListQueueScopesRow
-		if err := rows.Scan(
-			&i.OrgID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.RegionID,
-			&i.ConcurrencyKey,
-			&i.QueueName,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listQueuedRunCandidateScopes = `-- name: ListQueuedRunCandidateScopes :many
 WITH candidate_scopes AS (
     SELECT runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
@@ -1096,9 +1022,7 @@ WITH candidate_scopes AS (
                runs.environment_id::text || ':' || workspaces.region_id || ':' ||
                coalesce(runs.concurrency_key, '') || ':' || runs.queue_name || ':' || $9::text) AS sort_key
       FROM runs
-      JOIN workspaces ON workspaces.org_id = runs.org_id
-                     AND workspaces.project_id = runs.project_id
-                     AND workspaces.environment_id = runs.environment_id
+      JOIN workspaces ON workspaces.environment_id = runs.environment_id
                      AND workspaces.id = runs.workspace_id
      WHERE runs.status = 'queued'
        AND runs.current_run_lease_id IS NULL
@@ -1309,9 +1233,7 @@ func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueu
 const listQueuedRunDispatchCandidatesForScope = `-- name: ListQueuedRunDispatchCandidatesForScope :many
 SELECT runs.org_id, runs.id AS run_id, runs.state_version
   FROM runs
-  JOIN workspaces ON workspaces.org_id = runs.org_id
-                 AND workspaces.project_id = runs.project_id
-                 AND workspaces.environment_id = runs.environment_id
+  JOIN workspaces ON workspaces.environment_id = runs.environment_id
                  AND workspaces.id = runs.workspace_id
  WHERE runs.org_id = $1
    AND runs.project_id = $2

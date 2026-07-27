@@ -17,10 +17,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	runtimeidentity "github.com/helmrdotdev/helmr/internal/runtime/identity"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -805,7 +805,7 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 	if capabilities.CNIProfile == "" {
 		return api.WorkerCapabilities{}, errors.New("worker cni_profile is required")
 	}
-	expectedRuntimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
+	expectedRuntimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{
 		Arch:            capabilities.RuntimeArch,
 		ABI:             capabilities.RuntimeABI,
 		KernelDigest:    capabilities.KernelDigest,

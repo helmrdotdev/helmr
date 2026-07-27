@@ -549,11 +549,11 @@ func finishCheckpointFailedActor(
 	status := db.RunStatusSystemFailed
 	eventKind := api.RunEventKindFailed
 	actorState := "failed"
-	failureCode := "platform-failure"
+	failureCode := "platform_failure"
 	if reason == "max_active_duration_exceeded" {
 		status = db.RunStatusExpired
 		eventKind = api.RunEventKindExpired
-		failureCode = "run-expired"
+		failureCode = "run_expired"
 	}
 	failureRunID := authority.run.ID
 	actorFailureCode := pgvalue.Text(failureCode)
@@ -575,9 +575,9 @@ func finishCheckpointFailedActor(
 		return staleRunLeaseClaim(err)
 	}
 	if _, err := store.ReleaseActorWorkspaceOwner(ctx, db.ReleaseActorWorkspaceOwnerParams{
-		CompletedAt: failedAt, ID: authority.workspace.ID, OrgID: authority.run.OrgID,
-		ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
-		ActorID: actor.ID, OwnershipGeneration: authority.workspace.OwnershipGeneration,
+		CompletedAt: failedAt, ID: authority.workspace.ID,
+		EnvironmentID: authority.run.EnvironmentID,
+		ActorID:       actor.ID, OwnershipGeneration: authority.workspace.OwnershipGeneration,
 		WriterGeneration: authority.workspace.WriterGeneration,
 	}); err != nil {
 		return staleRunLeaseClaim(err)
@@ -611,19 +611,14 @@ func scheduleCheckpointFailureRetry(
 	}); err != nil {
 		return staleRunLeaseClaim(err)
 	}
-	for _, binding := range secrets {
-		if !binding.Secret.CurrentVersionID.Valid || binding.Secret.State != "active" {
-			return secret.ErrDeliveryUnavailable
-		}
-		if _, err := store.CreateSecretResolution(ctx, db.CreateSecretResolutionParams{
-			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: authority.workspace.ID,
-			RunID: authority.run.ID, AttemptNumber: pgtype.Int4{Int32: nextAttempt, Valid: true},
-			PlacementKind: binding.PlacementKind, PlacementTarget: binding.PlacementTarget,
-			SecretID: binding.Secret.ID, SecretVersionID: binding.Secret.CurrentVersionID,
-			RevocationGeneration: binding.Secret.RevocationGeneration,
-		}); err != nil {
-			return fmt.Errorf("record checkpoint retry Secret resolution: %w", err)
-		}
+	resolutions, err := activeSecretResolutions(secrets)
+	if err != nil {
+		return err
+	}
+	if err := secret.CreateAttemptResolutions(
+		ctx, store, authority.workspace.ID, authority.run.ID, nextAttempt, resolutions,
+	); err != nil {
+		return fmt.Errorf("record checkpoint retry Secret resolutions: %w", err)
 	}
 	if _, err := store.DelayCheckpointFailureRetry(ctx, db.DelayCheckpointFailureRetryParams{
 		NextAttemptNumber: nextAttempt, RetryAt: pgvalue.Timestamptz(retryAtTime),
@@ -1265,26 +1260,13 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 	if err != nil {
 		return staleRunLeaseClaim(err)
 	}
-	for _, binding := range bindings {
-		if _, err := store.CreateSecretResolution(
-			ctx,
-			db.CreateSecretResolutionParams{
-				ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				WorkspaceID:          authority.workspace.ID,
-				RunID:                child.ID,
-				AttemptNumber:        pgtype.Int4{Int32: 1, Valid: true},
-				PlacementKind:        binding.PlacementKind,
-				PlacementTarget:      binding.PlacementTarget,
-				SecretID:             binding.SecretID,
-				SecretVersionID:      binding.CurrentVersionID,
-				RevocationGeneration: binding.RevocationGeneration,
-			},
-		); err != nil {
-			return fmt.Errorf(
-				"record same-Workspace child Task Secret resolution: %w",
-				err,
-			)
-		}
+	if err := secret.CreateAttemptResolutions(
+		ctx, store, authority.workspace.ID, child.ID, 1, workspaceSecretResolutions(bindings),
+	); err != nil {
+		return fmt.Errorf(
+			"record same-Workspace child Task Secret resolutions: %w",
+			err,
+		)
 	}
 	if _, err := store.CommitSameWorkspaceChildCheckpointReady(
 		ctx,
@@ -1423,9 +1405,9 @@ func recordCheckpointWorkspaceVersion(
 		return pgtype.UUID{}, err
 	}
 	version, err := store.CreatePrivateCheckpointWorkspaceVersion(ctx, db.CreatePrivateCheckpointWorkspaceVersionParams{
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), PublicID: publicID, OrgID: authority.run.OrgID,
-		ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
-		WorkspaceID: authority.workspace.ID, ParentVersionID: authority.workspaceLease.BaseVersionID,
+		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), PublicID: publicID,
+		EnvironmentID: authority.run.EnvironmentID,
+		WorkspaceID:   authority.workspace.ID, ParentVersionID: authority.workspaceLease.BaseVersionID,
 		ArtifactID: artifactRow.ID, ContentDigest: capture.tree.Digest,
 		SizeBytes: capture.tree.SizeBytes, EntryCount: int32(capture.tree.EntryCount),
 		SourceWorkspaceLeaseID: authority.workspaceLease.ID,

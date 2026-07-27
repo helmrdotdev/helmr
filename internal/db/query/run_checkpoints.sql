@@ -114,13 +114,13 @@ SELECT sqlc.embed(runtime_substrates),
 
 -- name: CreatePrivateCheckpointWorkspaceVersion :one
 INSERT INTO workspace_versions (
-    id, public_id, org_id, project_id, environment_id, workspace_id,
+    id, public_id, environment_id, workspace_id,
     parent_version_id, artifact_id, artifact_kind, kind, content_digest,
     size_bytes, entry_count, state, source_workspace_lease_id,
     ownership_generation, writer_generation
 ) VALUES (
-    sqlc.arg(id), sqlc.arg(public_id), sqlc.arg(org_id), sqlc.arg(project_id),
-    sqlc.arg(environment_id), sqlc.arg(workspace_id), sqlc.arg(parent_version_id),
+    sqlc.arg(id), sqlc.arg(public_id), sqlc.arg(environment_id),
+    sqlc.arg(workspace_id), sqlc.arg(parent_version_id),
     sqlc.arg(artifact_id), 'workspace_version', 'user', sqlc.arg(content_digest),
     sqlc.arg(size_bytes), sqlc.arg(entry_count), 'private',
     sqlc.arg(source_workspace_lease_id), sqlc.arg(ownership_generation),

@@ -2,7 +2,6 @@ package schedule
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -124,14 +123,12 @@ func TestWorkerPersistsBoundedPermanentError(t *testing.T) {
 	if len(store.errored) != 1 {
 		t.Fatalf("error transitions = %d, want 1", len(store.errored))
 	}
-	var lastError struct {
-		Message string `json:"message"`
+	lastError := store.errored[0]
+	if lastError.LastErrorCode.String != string(ErrorWorkspaceUnavailable) {
+		t.Fatalf("last error code = %q", lastError.LastErrorCode.String)
 	}
-	if err := json.Unmarshal(store.errored[0].LastError, &lastError); err != nil {
-		t.Fatal(err)
-	}
-	if len(lastError.Message) > 1024 {
-		t.Fatalf("last error was not bounded: %d bytes", len(lastError.Message))
+	if len(lastError.LastErrorMessage.String) > 1024 {
+		t.Fatalf("last error was not bounded: %d bytes", len(lastError.LastErrorMessage.String))
 	}
 }
 

@@ -1642,7 +1642,7 @@ func (q *Queries) LockRunFinalizationParentRun(ctx context.Context, arg LockRunF
 }
 
 const lockRunLeaseClaimActor = `-- name: LockRunLeaseClaimActor :one
-SELECT id, public_id, org_id, project_id, environment_id, declaration_kind, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, managed_queue_name, managed_concurrency_key, managed_queue_concurrency_limit, managed_priority, managed_queued_ttl_ms, managed_max_active_duration_ms, managed_retry_policy_version, managed_retry_policy, managed_run_metadata, managed_run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+SELECT id, public_id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
   FROM actors
  WHERE id = $1
    AND workspace_id = $2
@@ -1660,10 +1660,7 @@ func (q *Queries) LockRunLeaseClaimActor(ctx context.Context, arg LockRunLeaseCl
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.DeclarationKind,
 		&i.ActorDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.WorkspaceID,
@@ -1679,16 +1676,15 @@ func (q *Queries) LockRunLeaseClaimActor(ctx context.Context, arg LockRunLeaseCl
 		&i.NextOutputSequence,
 		&i.InputRetentionFloor,
 		&i.OutputRetentionFloor,
-		&i.ManagedQueueName,
-		&i.ManagedConcurrencyKey,
-		&i.ManagedQueueConcurrencyLimit,
-		&i.ManagedPriority,
-		&i.ManagedQueuedTtlMs,
-		&i.ManagedMaxActiveDurationMs,
-		&i.ManagedRetryPolicyVersion,
-		&i.ManagedRetryPolicy,
-		&i.ManagedRunMetadata,
-		&i.ManagedRunTags,
+		&i.RunQueueName,
+		&i.RunConcurrencyKey,
+		&i.RunQueueConcurrencyLimit,
+		&i.RunPriority,
+		&i.RunQueueTtlMs,
+		&i.RunMaxActiveDurationMs,
+		&i.RunRetryPolicy,
+		&i.RunMetadata,
+		&i.RunTags,
 		&i.State,
 		&i.CloseSequence,
 		&i.CreatedAt,
@@ -2344,13 +2340,14 @@ func (q *Queries) LockRunLeaseClaimWorkerGroup(ctx context.Context, arg LockRunL
 }
 
 const lockRunLeaseClaimWorkspace = `-- name: LockRunLeaseClaimWorkspace :one
-SELECT id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+SELECT workspaces.id, workspaces.public_id, workspaces.environment_id, workspaces.region_id, workspaces.workspace_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_actor_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
   FROM workspaces
- WHERE id = $1
-   AND org_id = $2
-   AND project_id = $3
-   AND environment_id = $4
-   AND region_id = $5
+  JOIN environments ON environments.id = workspaces.environment_id
+ WHERE workspaces.id = $1
+   AND environments.org_id = $2
+   AND environments.project_id = $3
+   AND workspaces.environment_id = $4
+   AND workspaces.region_id = $5
  FOR UPDATE
 `
 
@@ -2374,11 +2371,8 @@ func (q *Queries) LockRunLeaseClaimWorkspace(ctx context.Context, arg LockRunLea
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.DeclarationKind,
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
@@ -3276,9 +3270,7 @@ candidates AS MATERIALIZED (
            workspaces.writer_generation
       FROM locked_runs
       JOIN workspaces ON workspaces.id = locked_runs.workspace_id
-     WHERE workspaces.org_id = locked_runs.org_id
-       AND workspaces.project_id = locked_runs.project_id
-       AND workspaces.environment_id = locked_runs.environment_id
+     WHERE workspaces.environment_id = locked_runs.environment_id
        AND ((locked_runs.entrypoint_kind = 'task'
              AND workspaces.owner_run_id = locked_runs.run_id
              AND workspaces.owner_actor_id IS NULL)
@@ -3733,8 +3725,8 @@ candidates AS MATERIALIZED (
            state_version = actors.state_version + 1,
            manual_run_cancelled = false,
            failure_code = CASE
-               WHEN locked_checkpoints.active_budget_exhausted THEN 'run-expired'
-               ELSE 'platform-failure'
+               WHEN locked_checkpoints.active_budget_exhausted THEN 'run_expired'
+               ELSE 'platform_failure'
            END,
            failure_run_id = failed_runs.id,
            failed_at = transaction_timestamp(),
@@ -4105,22 +4097,26 @@ const touchRunWorkspaceActivity = `-- name: TouchRunWorkspaceActivity :one
 UPDATE workspaces
    SET last_activity_at = greatest(last_activity_at, transaction_timestamp()),
        updated_at = transaction_timestamp()
- WHERE id = $1
-   AND org_id = $2
-   AND project_id = $3
-   AND environment_id = $4
-   AND ownership_generation = $5
-   AND writer_generation = $6
-   AND state = 'active'
-   AND desired_state = 'active'
-RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+ WHERE workspaces.id = $1
+   AND workspaces.environment_id = $2
+   AND EXISTS (
+       SELECT 1 FROM environments
+        WHERE environments.id = workspaces.environment_id
+          AND environments.org_id = $3
+          AND environments.project_id = $4
+   )
+   AND workspaces.ownership_generation = $5
+   AND workspaces.writer_generation = $6
+   AND workspaces.state = 'active'
+   AND workspaces.desired_state = 'active'
+RETURNING id, public_id, environment_id, region_id, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
 `
 
 type TouchRunWorkspaceActivityParams struct {
 	ID                  pgtype.UUID `json:"id"`
+	EnvironmentID       pgtype.UUID `json:"environment_id"`
 	OrgID               pgtype.UUID `json:"org_id"`
 	ProjectID           pgtype.UUID `json:"project_id"`
-	EnvironmentID       pgtype.UUID `json:"environment_id"`
 	OwnershipGeneration int64       `json:"ownership_generation"`
 	WriterGeneration    int64       `json:"writer_generation"`
 }
@@ -4128,9 +4124,9 @@ type TouchRunWorkspaceActivityParams struct {
 func (q *Queries) TouchRunWorkspaceActivity(ctx context.Context, arg TouchRunWorkspaceActivityParams) (Workspace, error) {
 	row := q.db.QueryRow(ctx, touchRunWorkspaceActivity,
 		arg.ID,
+		arg.EnvironmentID,
 		arg.OrgID,
 		arg.ProjectID,
-		arg.EnvironmentID,
 		arg.OwnershipGeneration,
 		arg.WriterGeneration,
 	)
@@ -4138,11 +4134,8 @@ func (q *Queries) TouchRunWorkspaceActivity(ctx context.Context, arg TouchRunWor
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.DeclarationKind,
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,

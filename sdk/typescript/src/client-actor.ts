@@ -369,10 +369,10 @@ function parseActorFailure(value: unknown): ActorFailure {
   const input = actorObject(value, "Actor failure")
   const code = requiredString(input, "code", "Actor failure")
   if (
-    code !== "no-progress" &&
-    code !== "run-failed" &&
-    code !== "run-expired" &&
-    code !== "platform-failure"
+    code !== "no_progress" &&
+    code !== "run_failed" &&
+    code !== "run_expired" &&
+    code !== "platform_failure"
   ) {
     throw new Error("Actor failure.code is invalid")
   }

@@ -16,8 +16,6 @@ WITH selected_definition AS (
     SELECT deployment_definitions.environment_id,
            deployment_definitions.id AS deployment_definition_id,
            deployment_definitions.declared_id AS workspace_declared_id,
-           runs.org_id,
-           runs.project_id,
            projects.default_region_id
       FROM runs
       JOIN deployment_definitions
@@ -25,9 +23,10 @@ WITH selected_definition AS (
        AND deployment_definitions.deployment_id = runs.deployment_id
        AND deployment_definitions.kind = 'workspace'
        AND deployment_definitions.declared_id = $1
+      JOIN environments
+        ON environments.id = runs.environment_id
       JOIN projects
-        ON projects.id = runs.project_id
-       AND projects.org_id = runs.org_id
+        ON projects.id = environments.project_id
      WHERE runs.environment_id = $2
        AND runs.id = $3
        AND runs.status IN ('queued', 'running', 'waiting', 'retry_delayed')
@@ -36,11 +35,8 @@ WITH selected_definition AS (
     INSERT INTO workspaces (
         id,
         public_id,
-        org_id,
-        project_id,
         environment_id,
         region_id,
-        declaration_kind,
         workspace_declared_id,
         deployment_definition_id,
         head_version_id,
@@ -48,23 +44,18 @@ WITH selected_definition AS (
     )
     SELECT $4,
            $5,
-           selected_definition.org_id,
-           selected_definition.project_id,
            selected_definition.environment_id,
            selected_definition.default_region_id,
-           'workspace',
            selected_definition.workspace_declared_id,
            selected_definition.deployment_definition_id,
            $6,
            $7
       FROM selected_definition
-    RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+    RETURNING id, public_id, environment_id, region_id, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
 ), created_version AS (
     INSERT INTO workspace_versions (
         id,
         public_id,
-        org_id,
-        project_id,
         environment_id,
         workspace_id,
         kind,
@@ -78,8 +69,6 @@ WITH selected_definition AS (
     )
     SELECT $6,
            $8,
-           created_workspace.org_id,
-           created_workspace.project_id,
            created_workspace.environment_id,
            created_workspace.id,
            'system'::workspace_version_kind,
@@ -93,7 +82,7 @@ WITH selected_definition AS (
       FROM created_workspace
     RETURNING workspace_id
 )
-SELECT created_workspace.id, created_workspace.public_id, created_workspace.org_id, created_workspace.project_id, created_workspace.environment_id, created_workspace.region_id, created_workspace.declaration_kind, created_workspace.workspace_declared_id, created_workspace.deployment_definition_id, created_workspace.key, created_workspace.state_version, created_workspace.owner_actor_id, created_workspace.owner_run_id, created_workspace.ownership_generation, created_workspace.writer_generation, created_workspace.head_version_id, created_workspace.state, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.deleted_at
+SELECT created_workspace.id, created_workspace.public_id, created_workspace.environment_id, created_workspace.region_id, created_workspace.workspace_declared_id, created_workspace.deployment_definition_id, created_workspace.key, created_workspace.state_version, created_workspace.owner_actor_id, created_workspace.owner_run_id, created_workspace.ownership_generation, created_workspace.writer_generation, created_workspace.head_version_id, created_workspace.state, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.deleted_at
   FROM created_workspace
   JOIN created_version ON created_version.workspace_id = created_workspace.id
 `
@@ -112,11 +101,8 @@ type CreateWorkspaceFromRunDeploymentParams struct {
 type CreateWorkspaceFromRunDeploymentRow struct {
 	ID                     pgtype.UUID        `json:"id"`
 	PublicID               string             `json:"public_id"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
-	ProjectID              pgtype.UUID        `json:"project_id"`
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
 	RegionID               string             `json:"region_id"`
-	DeclarationKind        pgtype.Text        `json:"declaration_kind"`
 	WorkspaceDeclaredID    pgtype.Text        `json:"workspace_declared_id"`
 	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
 	Key                    pgtype.Text        `json:"key"`
@@ -150,11 +136,8 @@ func (q *Queries) CreateWorkspaceFromRunDeployment(ctx context.Context, arg Crea
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.DeclarationKind,
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,

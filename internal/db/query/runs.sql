@@ -37,8 +37,8 @@ WITH selected_target AS MATERIALIZED (
            definitions.deployment_id,
            definitions.id AS deployment_definition_id,
            definitions.declared_id AS entrypoint_declared_id,
-           workspaces.org_id,
-           workspaces.project_id,
+           environments.org_id,
+           environments.project_id,
            workspaces.id AS workspace_id
       FROM environments
       JOIN deployment_definitions AS definitions
@@ -53,8 +53,6 @@ WITH selected_target AS MATERIALIZED (
       JOIN workspaces
         ON workspaces.environment_id = environments.id
        AND workspaces.id = sqlc.arg(workspace_id)
-       AND workspaces.org_id = sqlc.arg(org_id)
-       AND workspaces.project_id = sqlc.arg(project_id)
       JOIN workspace_versions
         ON workspace_versions.workspace_id = workspaces.id
        AND workspace_versions.id = sqlc.arg(base_workspace_version_id)
@@ -252,12 +250,15 @@ SELECT created_run.*
 -- name: CreateActorStartRun :one
 WITH selected_actor AS MATERIALIZED (
     SELECT actors.*,
+           environments.org_id,
+           environments.project_id,
            deployment_definitions.deployment_id
       FROM actors
+      JOIN environments ON environments.id = actors.environment_id
       JOIN deployment_definitions
         ON deployment_definitions.environment_id = actors.environment_id
        AND deployment_definitions.id = actors.deployment_definition_id
-       AND deployment_definitions.kind = actors.declaration_kind
+       AND deployment_definitions.kind = 'actor'
        AND deployment_definitions.declared_id = actors.actor_declared_id
      WHERE actors.environment_id = sqlc.arg(environment_id)
        AND actors.id = sqlc.arg(actor_id)
@@ -324,20 +325,20 @@ WITH selected_actor AS MATERIALIZED (
            sqlc.arg(base_workspace_version_id),
            0,
            sqlc.arg(input_high_watermark),
-           selected_actor.managed_run_metadata,
-           selected_actor.managed_run_tags,
-           selected_actor.managed_queue_name,
-           selected_actor.managed_concurrency_key,
-           selected_actor.managed_queue_concurrency_limit,
-           selected_actor.managed_priority,
+           selected_actor.run_metadata,
+           selected_actor.run_tags,
+           selected_actor.run_queue_name,
+           selected_actor.run_concurrency_key,
+           selected_actor.run_queue_concurrency_limit,
+           selected_actor.run_priority,
            now(),
-           now() - (selected_actor.managed_priority::double precision * interval '1 second'),
+           now() - (selected_actor.run_priority::double precision * interval '1 second'),
            CASE
-               WHEN selected_actor.managed_queued_ttl_ms IS NULL THEN NULL
-               ELSE now() + (selected_actor.managed_queued_ttl_ms::double precision * interval '1 millisecond')
+               WHEN selected_actor.run_queue_ttl_ms IS NULL THEN NULL
+               ELSE now() + (selected_actor.run_queue_ttl_ms::double precision * interval '1 millisecond')
            END,
-           selected_actor.managed_max_active_duration_ms,
-           selected_actor.managed_retry_policy,
+           selected_actor.run_max_active_duration_ms,
+           selected_actor.run_retry_policy,
            sqlc.narg(trace_id),
            sqlc.arg(root_span_id),
            sqlc.narg(claim_id)
@@ -384,8 +385,6 @@ WITH selected_target AS MATERIALIZED (
       JOIN workspaces
         ON workspaces.environment_id = parent.environment_id
        AND workspaces.id = sqlc.arg(workspace_id)
-       AND workspaces.org_id = parent.org_id
-       AND workspaces.project_id = parent.project_id
       JOIN workspace_versions
         ON workspace_versions.workspace_id = workspaces.id
        AND workspace_versions.id = sqlc.arg(base_workspace_version_id)

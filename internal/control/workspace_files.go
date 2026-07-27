@@ -228,8 +228,6 @@ func (s *Server) listWorkspaceFilesWithQueries(
 			return api.WorkspaceFilePage{}, parseErr
 		}
 		version, err = q.GetWorkspaceVersionByPublicID(ctx, db.GetWorkspaceVersionByPublicIDParams{
-			OrgID:         record.OrgID,
-			ProjectID:     record.ProjectID,
 			EnvironmentID: record.EnvironmentID,
 			WorkspaceID:   record.ID,
 			PublicID:      cursor.VersionID,
@@ -337,8 +335,6 @@ func (s *Server) currentWorkspaceVersion(
 		return db.WorkspaceVersion{}, errors.New("Workspace committed head is missing")
 	}
 	return q.GetWorkspaceVersion(ctx, db.GetWorkspaceVersionParams{
-		OrgID:         record.OrgID,
-		ProjectID:     record.ProjectID,
 		EnvironmentID: record.EnvironmentID,
 		WorkspaceID:   record.ID,
 		ID:            record.HeadVersionID,
@@ -359,9 +355,7 @@ func (s *Server) openWorkspaceVersion(
 	if s.cas == nil {
 		return nil, false, errors.New("Workspace Artifact store is unavailable")
 	}
-	artifact, err := q.GetArtifact(ctx, db.GetArtifactParams{
-		OrgID:         version.OrgID,
-		ProjectID:     version.ProjectID,
+	artifact, err := q.GetWorkspaceVersionArtifact(ctx, db.GetWorkspaceVersionArtifactParams{
 		EnvironmentID: version.EnvironmentID,
 		ID:            version.ArtifactID,
 	})

@@ -3,6 +3,7 @@ package schema
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -1110,11 +1112,11 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		 WHERE table_schema = 'public'
 		   AND (
 		       (table_name = 'workspaces' AND column_name = ANY(ARRAY[
-		           'deployment_definition_id', 'declaration_kind', 'workspace_declared_id'
+		           'deployment_definition_id', 'workspace_declared_id'
 		       ]))
 		       OR
 		       (table_name = 'actors' AND column_name = ANY(ARRAY[
-		           'deployment_definition_id', 'declaration_kind', 'actor_declared_id'
+		           'deployment_definition_id', 'actor_declared_id'
 		       ]))
 		       OR
 		       (table_name = 'runs' AND column_name = ANY(ARRAY[
@@ -1124,8 +1126,8 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 	`).Scan(&exactPinColumns); err != nil {
 		t.Fatal(err)
 	}
-	if exactPinColumns != 9 {
-		t.Fatalf("exact deployed-declaration pin columns = %d, want 9", exactPinColumns)
+	if exactPinColumns != 7 {
+		t.Fatalf("exact deployed-declaration pin columns = %d, want 7", exactPinColumns)
 	}
 	var exactPinIndexes int
 	if err := pool.QueryRow(ctx, `
@@ -1152,7 +1154,7 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		   AND (
 		       (table_name = 'runs' AND column_name = 'queue_concurrency_limit')
 		       OR
-		       (table_name = 'actors' AND column_name = 'managed_queue_concurrency_limit')
+		       (table_name = 'actors' AND column_name = 'run_queue_concurrency_limit')
 		   )
 	`).Scan(&safeIntegerColumns); err != nil {
 		t.Fatal(err)
@@ -1167,12 +1169,53 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		 WHERE conrelid IN ('runs'::regclass, 'actors'::regclass)
 		   AND contype = 'c'
 		   AND pg_get_constraintdef(oid) LIKE '%9007199254740991%'
-		   AND pg_get_constraintdef(oid) ~ '(managed_)?queue_concurrency_limit'
+		   AND pg_get_constraintdef(oid) ~ '(run_)?queue_concurrency_limit'
 	`).Scan(&safeIntegerConstraints); err != nil {
 		t.Fatal(err)
 	}
 	if safeIntegerConstraints != 2 {
 		t.Fatalf("safe-integer queue limit constraints = %d, want 2", safeIntegerConstraints)
+	}
+	for _, test := range []struct {
+		name       string
+		retry      string
+		metadata   string
+		constraint string
+	}{
+		{
+			name: "retry policy", retry: `"disabled"`, metadata: `{}`,
+			constraint: "actors_run_retry_policy_object",
+		},
+		{
+			name: "metadata", retry: `{"enabled":false}`, metadata: `[]`,
+			constraint: "actors_run_metadata_object",
+		},
+	} {
+		_, err := pool.Exec(ctx, `
+			INSERT INTO actors (
+				id, public_id, environment_id, actor_declared_id,
+				deployment_definition_id, workspace_id, run_queue_name,
+				run_max_active_duration_ms, run_retry_policy, run_metadata
+			)
+			VALUES (
+				'10000000-0000-7000-8000-000000000001',
+				'act_aaaaaaaaaaaaaaaaaaaaaaaaaa',
+				'10000000-0000-7000-8000-000000000002',
+				'actor',
+				'10000000-0000-7000-8000-000000000003',
+				'10000000-0000-7000-8000-000000000004',
+				'default',
+				1000,
+				$1::jsonb,
+				$2::jsonb
+			)
+		`, test.retry, test.metadata)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) ||
+			pgErr.Code != "23514" ||
+			pgErr.ConstraintName != test.constraint {
+			t.Fatalf("%s scalar JSON error = %v, want %s check violation", test.name, err, test.constraint)
+		}
 	}
 	var leaseQueuePolicyColumns int
 	if err := pool.QueryRow(ctx, `

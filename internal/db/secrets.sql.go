@@ -11,6 +11,156 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createAttemptSecretResolutions = `-- name: CreateAttemptSecretResolutions :execrows
+INSERT INTO secret_resolutions (
+    id,
+    workspace_id,
+    run_id,
+    attempt_number,
+    placement_kind,
+    placement_target,
+    secret_id,
+    secret_version_id,
+    revocation_generation
+)
+SELECT
+    input_ids.id,
+    $1,
+    $2,
+    $3,
+    input_kinds.placement_kind,
+    input_targets.placement_target,
+    input_secrets.secret_id,
+    input_versions.secret_version_id,
+    input_generations.revocation_generation
+FROM unnest($4::uuid[])
+     WITH ORDINALITY AS input_ids(id, position)
+JOIN unnest($5::text[])
+     WITH ORDINALITY AS input_kinds(placement_kind, position)
+  ON input_kinds.position = input_ids.position
+JOIN unnest($6::text[])
+     WITH ORDINALITY AS input_targets(placement_target, position)
+  ON input_targets.position = input_ids.position
+JOIN unnest($7::uuid[])
+     WITH ORDINALITY AS input_secrets(secret_id, position)
+  ON input_secrets.position = input_ids.position
+JOIN unnest($8::uuid[])
+     WITH ORDINALITY AS input_versions(secret_version_id, position)
+  ON input_versions.position = input_ids.position
+JOIN unnest($9::bigint[])
+     WITH ORDINALITY AS input_generations(revocation_generation, position)
+  ON input_generations.position = input_ids.position
+WHERE cardinality($4::uuid[]) BETWEEN 1 AND 64
+  AND cardinality($5::text[]) = cardinality($4::uuid[])
+  AND cardinality($6::text[]) = cardinality($4::uuid[])
+  AND cardinality($7::uuid[]) = cardinality($4::uuid[])
+  AND cardinality($8::uuid[]) = cardinality($4::uuid[])
+  AND cardinality($9::bigint[]) = cardinality($4::uuid[])
+`
+
+type CreateAttemptSecretResolutionsParams struct {
+	WorkspaceID           pgtype.UUID   `json:"workspace_id"`
+	RunID                 pgtype.UUID   `json:"run_id"`
+	AttemptNumber         pgtype.Int4   `json:"attempt_number"`
+	Ids                   []pgtype.UUID `json:"ids"`
+	PlacementKinds        []string      `json:"placement_kinds"`
+	PlacementTargets      []string      `json:"placement_targets"`
+	SecretIds             []pgtype.UUID `json:"secret_ids"`
+	SecretVersionIds      []pgtype.UUID `json:"secret_version_ids"`
+	RevocationGenerations []int64       `json:"revocation_generations"`
+}
+
+func (q *Queries) CreateAttemptSecretResolutions(ctx context.Context, arg CreateAttemptSecretResolutionsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, createAttemptSecretResolutions,
+		arg.WorkspaceID,
+		arg.RunID,
+		arg.AttemptNumber,
+		arg.Ids,
+		arg.PlacementKinds,
+		arg.PlacementTargets,
+		arg.SecretIds,
+		arg.SecretVersionIds,
+		arg.RevocationGenerations,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const createProcessSecretResolutions = `-- name: CreateProcessSecretResolutions :execrows
+INSERT INTO secret_resolutions (
+    id,
+    workspace_id,
+    process_id,
+    placement_kind,
+    placement_target,
+    secret_id,
+    secret_version_id,
+    revocation_generation
+)
+SELECT
+    input_ids.id,
+    $1,
+    $2,
+    input_kinds.placement_kind,
+    input_targets.placement_target,
+    input_secrets.secret_id,
+    input_versions.secret_version_id,
+    input_generations.revocation_generation
+FROM unnest($3::uuid[])
+     WITH ORDINALITY AS input_ids(id, position)
+JOIN unnest($4::text[])
+     WITH ORDINALITY AS input_kinds(placement_kind, position)
+  ON input_kinds.position = input_ids.position
+JOIN unnest($5::text[])
+     WITH ORDINALITY AS input_targets(placement_target, position)
+  ON input_targets.position = input_ids.position
+JOIN unnest($6::uuid[])
+     WITH ORDINALITY AS input_secrets(secret_id, position)
+  ON input_secrets.position = input_ids.position
+JOIN unnest($7::uuid[])
+     WITH ORDINALITY AS input_versions(secret_version_id, position)
+  ON input_versions.position = input_ids.position
+JOIN unnest($8::bigint[])
+     WITH ORDINALITY AS input_generations(revocation_generation, position)
+  ON input_generations.position = input_ids.position
+WHERE cardinality($3::uuid[]) BETWEEN 1 AND 64
+  AND cardinality($4::text[]) = cardinality($3::uuid[])
+  AND cardinality($5::text[]) = cardinality($3::uuid[])
+  AND cardinality($6::uuid[]) = cardinality($3::uuid[])
+  AND cardinality($7::uuid[]) = cardinality($3::uuid[])
+  AND cardinality($8::bigint[]) = cardinality($3::uuid[])
+`
+
+type CreateProcessSecretResolutionsParams struct {
+	WorkspaceID           pgtype.UUID   `json:"workspace_id"`
+	ProcessID             pgtype.UUID   `json:"process_id"`
+	Ids                   []pgtype.UUID `json:"ids"`
+	PlacementKinds        []string      `json:"placement_kinds"`
+	PlacementTargets      []string      `json:"placement_targets"`
+	SecretIds             []pgtype.UUID `json:"secret_ids"`
+	SecretVersionIds      []pgtype.UUID `json:"secret_version_ids"`
+	RevocationGenerations []int64       `json:"revocation_generations"`
+}
+
+func (q *Queries) CreateProcessSecretResolutions(ctx context.Context, arg CreateProcessSecretResolutionsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, createProcessSecretResolutions,
+		arg.WorkspaceID,
+		arg.ProcessID,
+		arg.Ids,
+		arg.PlacementKinds,
+		arg.PlacementTargets,
+		arg.SecretIds,
+		arg.SecretVersionIds,
+		arg.RevocationGenerations,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createSecret = `-- name: CreateSecret :one
 WITH authority AS (
     SELECT lookup_hmac_versions.version
@@ -113,77 +263,6 @@ func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) (Cre
 		&i.UpdatedAt,
 		&i.RevokedAt,
 		&i.DeletedAt,
-	)
-	return i, err
-}
-
-const createSecretResolution = `-- name: CreateSecretResolution :one
-INSERT INTO secret_resolutions (
-    id,
-    workspace_id,
-    run_id,
-    attempt_number,
-    process_id,
-    placement_kind,
-    placement_target,
-    secret_id,
-    secret_version_id,
-    revocation_generation
-)
-VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    $9,
-    $10
-)
-RETURNING id, workspace_id, run_id, attempt_number, process_id, placement_kind, placement_target, secret_id, secret_version_id, revocation_generation, created_at
-`
-
-type CreateSecretResolutionParams struct {
-	ID                   pgtype.UUID `json:"id"`
-	WorkspaceID          pgtype.UUID `json:"workspace_id"`
-	RunID                pgtype.UUID `json:"run_id"`
-	AttemptNumber        pgtype.Int4 `json:"attempt_number"`
-	ProcessID            pgtype.UUID `json:"process_id"`
-	PlacementKind        string      `json:"placement_kind"`
-	PlacementTarget      string      `json:"placement_target"`
-	SecretID             pgtype.UUID `json:"secret_id"`
-	SecretVersionID      pgtype.UUID `json:"secret_version_id"`
-	RevocationGeneration int64       `json:"revocation_generation"`
-}
-
-func (q *Queries) CreateSecretResolution(ctx context.Context, arg CreateSecretResolutionParams) (SecretResolution, error) {
-	row := q.db.QueryRow(ctx, createSecretResolution,
-		arg.ID,
-		arg.WorkspaceID,
-		arg.RunID,
-		arg.AttemptNumber,
-		arg.ProcessID,
-		arg.PlacementKind,
-		arg.PlacementTarget,
-		arg.SecretID,
-		arg.SecretVersionID,
-		arg.RevocationGeneration,
-	)
-	var i SecretResolution
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.RunID,
-		&i.AttemptNumber,
-		&i.ProcessID,
-		&i.PlacementKind,
-		&i.PlacementTarget,
-		&i.SecretID,
-		&i.SecretVersionID,
-		&i.RevocationGeneration,
-		&i.CreatedAt,
 	)
 	return i, err
 }

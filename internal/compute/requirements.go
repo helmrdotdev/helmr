@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	runtimeidentity "github.com/helmrdotdev/helmr/internal/runtime/identity"
 )
 
 type Placement struct {
@@ -19,7 +21,7 @@ type Placement struct {
 
 type RunRuntimeRequirements struct {
 	Resources ResourceVector
-	Runtime   RuntimeSelector
+	Runtime   runtimeidentity.Selector
 	Network   NetworkPolicy
 	Placement Placement
 }
@@ -75,7 +77,7 @@ func RunRuntimeRequirementsFromFields(fields RunRuntimeRequirementFields) (RunRu
 			DiskMiB:   fields.RequestedDiskMiB,
 			Slots:     fields.RequestedExecutionSlots,
 		},
-		Runtime: RuntimeSelector{
+		Runtime: runtimeidentity.Selector{
 			ID:              fields.RuntimeID,
 			Arch:            fields.RuntimeArch,
 			ABI:             fields.RuntimeABI,

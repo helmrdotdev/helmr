@@ -16,7 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/cli/format"
-	"github.com/helmrdotdev/helmr/internal/projectconfig"
+	"github.com/helmrdotdev/helmr/internal/project"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/spf13/cobra"
 )
@@ -742,7 +742,7 @@ func resolveConfigInspector() (configInspectorFiles, error) {
 		}
 		return configInspectorFiles{ScriptPath: explicitScript, RegisterPath: explicitRegister}, nil
 	}
-	resolved, err := projectconfig.Ensure()
+	resolved, err := project.EnsureInspector()
 	if err != nil {
 		return configInspectorFiles{}, err
 	}

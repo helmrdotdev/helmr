@@ -286,12 +286,12 @@ if ! rg -F "scripts/build-config-inspector.sh" "$workflow" >/dev/null; then
 	exit 1
 fi
 
-if ! rg -F "git diff --exit-code -- internal/projectconfig/js" "$workflow" >/dev/null; then
+if ! rg -F "git diff --exit-code -- internal/project/js" "$workflow" >/dev/null; then
 	printf 'release workflow does not verify config inspector artifacts are current\n' >&2
 	exit 1
 fi
 
-if ! rg -F 'git status --porcelain -- internal/projectconfig/js' "$workflow" >/dev/null; then
+if ! rg -F 'git status --porcelain -- internal/project/js' "$workflow" >/dev/null; then
 	printf 'release workflow does not reject untracked config inspector artifacts\n' >&2
 	exit 1
 fi

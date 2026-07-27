@@ -17,28 +17,32 @@ UPDATE workspaces
        state_version = state_version + 1,
        last_activity_at = $2,
        updated_at = $2
- WHERE id = $3
-   AND org_id = $4
-   AND project_id = $5
-   AND environment_id = $6
-   AND owner_actor_id = $7
-   AND owner_run_id IS NULL
-   AND ownership_generation = $8
-   AND writer_generation = $9
-   AND head_version_id = $10
-   AND state = 'active'
-   AND desired_state = 'active'
-   AND dirty_state = 'clean'
-RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+ WHERE workspaces.id = $3
+   AND workspaces.environment_id = $4
+   AND EXISTS (
+       SELECT 1 FROM environments
+        WHERE environments.id = workspaces.environment_id
+          AND environments.org_id = $5
+          AND environments.project_id = $6
+   )
+   AND workspaces.owner_actor_id = $7
+   AND workspaces.owner_run_id IS NULL
+   AND workspaces.ownership_generation = $8
+   AND workspaces.writer_generation = $9
+   AND workspaces.head_version_id = $10
+   AND workspaces.state = 'active'
+   AND workspaces.desired_state = 'active'
+   AND workspaces.dirty_state = 'clean'
+RETURNING id, public_id, environment_id, region_id, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
 `
 
 type AdvanceActorWorkspaceHeadParams struct {
 	NewHeadVersionID      pgtype.UUID        `json:"new_head_version_id"`
 	CompletedAt           pgtype.Timestamptz `json:"completed_at"`
 	ID                    pgtype.UUID        `json:"id"`
+	EnvironmentID         pgtype.UUID        `json:"environment_id"`
 	OrgID                 pgtype.UUID        `json:"org_id"`
 	ProjectID             pgtype.UUID        `json:"project_id"`
-	EnvironmentID         pgtype.UUID        `json:"environment_id"`
 	ActorID               pgtype.UUID        `json:"actor_id"`
 	OwnershipGeneration   int64              `json:"ownership_generation"`
 	WriterGeneration      int64              `json:"writer_generation"`
@@ -50,9 +54,9 @@ func (q *Queries) AdvanceActorWorkspaceHead(ctx context.Context, arg AdvanceActo
 		arg.NewHeadVersionID,
 		arg.CompletedAt,
 		arg.ID,
+		arg.EnvironmentID,
 		arg.OrgID,
 		arg.ProjectID,
-		arg.EnvironmentID,
 		arg.ActorID,
 		arg.OwnershipGeneration,
 		arg.WriterGeneration,
@@ -62,11 +66,8 @@ func (q *Queries) AdvanceActorWorkspaceHead(ctx context.Context, arg AdvanceActo
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.DeclarationKind,
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
@@ -227,21 +228,22 @@ WITH created_run AS (
         queue_origin_at, queue_score_at, queued_expires_at,
         max_active_duration_ms, retry_policy, trace_id, root_span_id
     )
-    SELECT $1, $2, actors.org_id, actors.project_id, actors.environment_id,
+    SELECT $1, $2, environments.org_id, environments.project_id, actors.environment_id,
            definitions.deployment_id, actors.deployment_definition_id, 'actor',
            actors.actor_declared_id, 'continuation', actors.id,
            actors.committed_input_sequence, actors.next_input_sequence - 1,
            actors.workspace_id, workspaces.head_version_id,
-           actors.managed_run_metadata, actors.managed_run_tags,
-           actors.managed_queue_name, actors.managed_concurrency_key,
-           actors.managed_queue_concurrency_limit, actors.managed_priority,
+           actors.run_metadata, actors.run_tags,
+           actors.run_queue_name, actors.run_concurrency_key,
+           actors.run_queue_concurrency_limit, actors.run_priority,
            $3::timestamptz,
-           $3::timestamptz - (actors.managed_priority::double precision * interval '1 second'),
-           CASE WHEN actors.managed_queued_ttl_ms IS NULL THEN NULL
-                ELSE $3::timestamptz + (actors.managed_queued_ttl_ms::double precision * interval '1 millisecond') END,
-           actors.managed_max_active_duration_ms, actors.managed_retry_policy,
+           $3::timestamptz - (actors.run_priority::double precision * interval '1 second'),
+           CASE WHEN actors.run_queue_ttl_ms IS NULL THEN NULL
+                ELSE $3::timestamptz + (actors.run_queue_ttl_ms::double precision * interval '1 millisecond') END,
+           actors.run_max_active_duration_ms, actors.run_retry_policy,
            $4, $5
       FROM actors
+      JOIN environments ON environments.id = actors.environment_id
       JOIN deployment_definitions AS definitions
         ON definitions.environment_id = actors.environment_id
        AND definitions.id = actors.deployment_definition_id
@@ -986,7 +988,7 @@ UPDATE actors
    AND current_run_id = $9
    AND run_generation = $10
    AND state IN ('open', 'closing')
-RETURNING id, public_id, org_id, project_id, environment_id, declaration_kind, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, managed_queue_name, managed_concurrency_key, managed_queue_concurrency_limit, managed_priority, managed_queued_ttl_ms, managed_max_active_duration_ms, managed_retry_policy_version, managed_retry_policy, managed_run_metadata, managed_run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+RETURNING id, public_id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
 `
 
 type ReconcileActorTerminalRunParams struct {
@@ -1019,10 +1021,7 @@ func (q *Queries) ReconcileActorTerminalRun(ctx context.Context, arg ReconcileAc
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.DeclarationKind,
 		&i.ActorDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.WorkspaceID,
@@ -1038,16 +1037,15 @@ func (q *Queries) ReconcileActorTerminalRun(ctx context.Context, arg ReconcileAc
 		&i.NextOutputSequence,
 		&i.InputRetentionFloor,
 		&i.OutputRetentionFloor,
-		&i.ManagedQueueName,
-		&i.ManagedConcurrencyKey,
-		&i.ManagedQueueConcurrencyLimit,
-		&i.ManagedPriority,
-		&i.ManagedQueuedTtlMs,
-		&i.ManagedMaxActiveDurationMs,
-		&i.ManagedRetryPolicyVersion,
-		&i.ManagedRetryPolicy,
-		&i.ManagedRunMetadata,
-		&i.ManagedRunTags,
+		&i.RunQueueName,
+		&i.RunConcurrencyKey,
+		&i.RunQueueConcurrencyLimit,
+		&i.RunPriority,
+		&i.RunQueueTtlMs,
+		&i.RunMaxActiveDurationMs,
+		&i.RunRetryPolicy,
+		&i.RunMetadata,
+		&i.RunTags,
 		&i.State,
 		&i.CloseSequence,
 		&i.CreatedAt,
@@ -1067,13 +1065,11 @@ UPDATE workspaces
        last_activity_at = $1,
        updated_at = $1
  WHERE workspaces.id = $2
-   AND workspaces.org_id = $3
-   AND workspaces.project_id = $4
-   AND workspaces.environment_id = $5
-   AND workspaces.owner_actor_id = $6
+   AND workspaces.environment_id = $3
+   AND workspaces.owner_actor_id = $4
    AND workspaces.owner_run_id IS NULL
-   AND workspaces.ownership_generation = $7
-   AND workspaces.writer_generation = $8
+   AND workspaces.ownership_generation = $5
+   AND workspaces.writer_generation = $6
    AND workspaces.state = 'active'
    AND workspaces.desired_state = 'active'
    AND workspaces.dirty_state = 'clean'
@@ -1087,14 +1083,12 @@ UPDATE workspaces
         WHERE workspace_processes.workspace_id = workspaces.id
           AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
    )
-RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+RETURNING id, public_id, environment_id, region_id, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
 `
 
 type ReleaseActorWorkspaceOwnerParams struct {
 	CompletedAt         pgtype.Timestamptz `json:"completed_at"`
 	ID                  pgtype.UUID        `json:"id"`
-	OrgID               pgtype.UUID        `json:"org_id"`
-	ProjectID           pgtype.UUID        `json:"project_id"`
 	EnvironmentID       pgtype.UUID        `json:"environment_id"`
 	ActorID             pgtype.UUID        `json:"actor_id"`
 	OwnershipGeneration int64              `json:"ownership_generation"`
@@ -1105,8 +1099,6 @@ func (q *Queries) ReleaseActorWorkspaceOwner(ctx context.Context, arg ReleaseAct
 	row := q.db.QueryRow(ctx, releaseActorWorkspaceOwner,
 		arg.CompletedAt,
 		arg.ID,
-		arg.OrgID,
-		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ActorID,
 		arg.OwnershipGeneration,
@@ -1116,11 +1108,8 @@ func (q *Queries) ReleaseActorWorkspaceOwner(ctx context.Context, arg ReleaseAct
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.DeclarationKind,
 		&i.WorkspaceDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,

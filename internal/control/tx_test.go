@@ -10,28 +10,21 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-func TestInTxCommitsAndRunsAfterCommit(t *testing.T) {
+func TestInTxCommits(t *testing.T) {
 	tx := &testControlTx{}
 	server := &Server{tx: testTxBeginner{tx: tx}}
 	var called bool
-	var order []string
 	if err := server.inTx(context.Background(), func(work *txWork) error {
 		if work.q == nil {
 			t.Fatal("tx work query store is nil")
 		}
 		called = true
-		work.AfterCommit(func(context.Context) {
-			order = append(order, "first")
-		})
-		work.AfterCommit(func(context.Context) {
-			order = append(order, "second")
-		})
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !called || len(order) != 2 || order[0] != "first" || order[1] != "second" {
-		t.Fatalf("called=%v order=%v", called, order)
+	if !called {
+		t.Fatal("transaction body was not called")
 	}
 	if !tx.committed || tx.rolledBack {
 		t.Fatalf("committed=%v rolledBack=%v", tx.committed, tx.rolledBack)
@@ -68,25 +61,6 @@ func TestInTxRollsBackOnError(t *testing.T) {
 	}
 }
 
-func TestInTxDoesNotRunAfterCommitAfterRollback(t *testing.T) {
-	tx := &testControlTx{}
-	server := &Server{tx: testTxBeginner{tx: tx}}
-	want := errors.New("work failed")
-	var afterCommit bool
-	err := server.inTx(context.Background(), func(work *txWork) error {
-		work.AfterCommit(func(context.Context) {
-			afterCommit = true
-		})
-		return want
-	})
-	if !errors.Is(err, want) {
-		t.Fatalf("err = %v, want %v", err, want)
-	}
-	if afterCommit {
-		t.Fatal("afterCommit ran after rollback")
-	}
-}
-
 func TestInTxJoinsRollbackError(t *testing.T) {
 	workErr := errors.New("work failed")
 	rollbackErr := errors.New("rollback failed")
@@ -117,25 +91,6 @@ func TestInTxRollsBackOnCommitError(t *testing.T) {
 		t.Fatalf("err string leaked commit detail: %q", err.Error())
 	}
 	if !tx.committed || !tx.rolledBack {
-		t.Fatalf("committed=%v rolledBack=%v", tx.committed, tx.rolledBack)
-	}
-}
-
-func TestInTxDoesNotRollbackAfterPostCommit(t *testing.T) {
-	tx := &testControlTx{}
-	server := &Server{tx: testTxBeginner{tx: tx}}
-	var afterCommit bool
-	err := server.inTx(context.Background(), func(work *txWork) error {
-		work.AfterCommit(func(context.Context) { afterCommit = true })
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("err = %v, want nil", err)
-	}
-	if !afterCommit {
-		t.Fatal("after commit effect was not called")
-	}
-	if !tx.committed || tx.rolledBack {
 		t.Fatalf("committed=%v rolledBack=%v", tx.committed, tx.rolledBack)
 	}
 }

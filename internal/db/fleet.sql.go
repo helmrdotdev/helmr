@@ -214,9 +214,7 @@ func (q *Queries) GetFleetOldestBuildQueueTime(ctx context.Context, workerGroupI
 const getFleetOldestRunQueueTime = `-- name: GetFleetOldestRunQueueTime :one
 SELECT min(runs.queue_origin_at)::timestamptz
   FROM runs
-  JOIN workspaces ON workspaces.org_id = runs.org_id
-                 AND workspaces.project_id = runs.project_id
-                 AND workspaces.environment_id = runs.environment_id
+  JOIN workspaces ON workspaces.environment_id = runs.environment_id
                  AND workspaces.id = runs.workspace_id
   JOIN worker_groups ON worker_groups.id = $1
                     AND worker_groups.region_id = workspaces.region_id
@@ -415,9 +413,7 @@ WITH target_group AS (
            target_group.required_vm_slots::bigint AS vm_slots,
            count(*)::bigint AS demand_count
       FROM runs
-      JOIN workspaces ON workspaces.org_id = runs.org_id
-                     AND workspaces.project_id = runs.project_id
-                     AND workspaces.environment_id = runs.environment_id
+      JOIN workspaces ON workspaces.environment_id = runs.environment_id
                      AND workspaces.id = runs.workspace_id
       JOIN target_group ON target_group.region_id = workspaces.region_id
      WHERE runs.status = 'queued' AND runs.current_run_lease_id IS NULL

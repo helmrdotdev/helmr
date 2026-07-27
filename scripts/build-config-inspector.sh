@@ -2,11 +2,11 @@
 set -euo pipefail
 
 # Regenerate the checked-in project config inspector from the pinned toolchain.
-# Release CI re-runs this script and fails if internal/projectconfig/js is stale
+# Release CI re-runs this script and fails if internal/project/js is stale
 # or contains untracked output.
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-out_dir="$repo_root/internal/projectconfig/js"
+out_dir="$repo_root/internal/project/js"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/helmr-config-inspector.XXXXXX")"
 
 cleanup() {

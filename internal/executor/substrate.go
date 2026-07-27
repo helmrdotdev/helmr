@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/substrate"
+	"github.com/helmrdotdev/helmr/internal/runtime/substrate"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 

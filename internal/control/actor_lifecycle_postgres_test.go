@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/actor"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/runadmission"
 )
 
 func TestActorClosePostgresClosesIdleActorAndReplaysBoundedReceipt(t *testing.T) {
@@ -168,7 +168,7 @@ func TestActorClosePostgresRejectsFailedActorWithoutClaimResidue(t *testing.T) {
 	if _, err := fixture.pool.Exec(t.Context(), `
 		UPDATE actors
 		   SET state = 'failed',
-		       failure_code = 'run-failed',
+		       failure_code = 'run_failed',
 		       failure_run_id = $2,
 		       failed_at = now()
 		 WHERE id = $1
@@ -237,7 +237,7 @@ func TestActorClosePostgresReconcilesAfterWorkspaceAuthorityRecovers(t *testing.
 	`, fixture.workspaceIDs[0]); err != nil {
 		t.Fatal(err)
 	}
-	reconciler, err := runadmission.NewActorInputReconciler(fixture.pool)
+	reconciler, err := actor.NewInputReconciler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}

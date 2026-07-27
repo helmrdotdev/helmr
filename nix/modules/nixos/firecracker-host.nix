@@ -265,11 +265,6 @@ in
               "none"
             else
               lib.concatStringsSep "," cfg.networkBlockedIPv4CIDRs;
-          HELMR_WORKER_NETWORK_BLOCKED_IPV6_CIDRS =
-            if cfg.networkBlockedIPv6CIDRs == [ ] then
-              "none"
-            else
-              lib.concatStringsSep "," cfg.networkBlockedIPv6CIDRs;
           HELMR_VM_E2E = "1";
         }
         // lib.optionalAttrs cfg.enableBuildKit {

@@ -8,7 +8,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/actorinput"
+	actordomain "github.com/helmrdotdev/helmr/internal/actor"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -190,21 +190,21 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 			AfterInputSequence: pgtype.Int8{Int64: result.Sequence - 1, Valid: true},
 		})
 		if waitErr == nil {
-			if _, err := actorinput.CompleteWait(ctx, work.q, wait, result); err != nil {
+			if _, err := actordomain.CompleteWait(ctx, work.q, wait, result); err != nil {
 				return err
 			}
 		} else if !errors.Is(waitErr, pgx.ErrNoRows) {
 			return waitErr
 		}
 
-		if actorinput.CanStartContinuation(actor) {
+		if actordomain.CanStartContinuation(actor) {
 			workspace, err := work.q.LockActorInputWorkspace(ctx, db.LockActorInputWorkspaceParams{
 				EnvironmentID: result.EnvironmentID, ID: actor.WorkspaceID, ActorID: result.ActorID,
 			})
 			if err != nil {
 				return errActorInputAppendConflict
 			}
-			if _, err := actorinput.CreateContinuation(ctx, work.q, actor, workspace, bindings); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			if _, err := actordomain.CreateContinuation(ctx, work.q, actor, workspace, bindings); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return err
 			}
 		}

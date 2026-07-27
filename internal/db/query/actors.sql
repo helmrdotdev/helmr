@@ -2,45 +2,37 @@
 INSERT INTO actors (
     id,
     public_id,
-    org_id,
-    project_id,
     environment_id,
-    declaration_kind,
     actor_declared_id,
     deployment_definition_id,
     workspace_id,
     key,
-    managed_queue_name,
-    managed_concurrency_key,
-    managed_queue_concurrency_limit,
-    managed_priority,
-    managed_queued_ttl_ms,
-    managed_max_active_duration_ms,
-    managed_retry_policy_version,
-    managed_retry_policy,
-    managed_run_metadata,
-    managed_run_tags
+    run_queue_name,
+    run_concurrency_key,
+    run_queue_concurrency_limit,
+    run_priority,
+    run_queue_ttl_ms,
+    run_max_active_duration_ms,
+    run_retry_policy,
+    run_metadata,
+    run_tags
 )
 SELECT sqlc.arg(id),
        sqlc.arg(public_id),
-       sqlc.arg(org_id),
-       sqlc.arg(project_id),
        actor_definition.environment_id,
-       actor_definition.kind,
        actor_definition.declared_id,
        actor_definition.id,
        workspaces.id,
        sqlc.narg(key),
-       sqlc.arg(managed_queue_name),
-       sqlc.narg(managed_concurrency_key),
-       sqlc.narg(managed_queue_concurrency_limit),
-       sqlc.arg(managed_priority),
-       sqlc.narg(managed_queued_ttl_ms),
-       sqlc.arg(managed_max_active_duration_ms),
-       0,
-       sqlc.arg(managed_retry_policy),
-       coalesce(sqlc.narg(managed_run_metadata)::jsonb, '{}'::jsonb),
-       coalesce(sqlc.narg(managed_run_tags)::text[], '{}'::text[])
+       sqlc.arg(run_queue_name),
+       sqlc.narg(run_concurrency_key),
+       sqlc.narg(run_queue_concurrency_limit),
+       sqlc.arg(run_priority),
+       sqlc.narg(run_queue_ttl_ms),
+       sqlc.arg(run_max_active_duration_ms),
+       sqlc.arg(run_retry_policy),
+       coalesce(sqlc.narg(run_metadata)::jsonb, '{}'::jsonb),
+       coalesce(sqlc.narg(run_tags)::text[], '{}'::text[])
   FROM deployment_definitions AS actor_definition
   JOIN environments
     ON environments.id = actor_definition.environment_id
@@ -55,14 +47,16 @@ SELECT sqlc.arg(id),
    AND deployments.program_architecture = deployments.build_architecture
    AND deployments.program_runtime_digest = deployments.build_runtime_digest
   JOIN workspaces
-    ON workspaces.org_id = sqlc.arg(org_id)
-   AND workspaces.project_id = sqlc.arg(project_id)
-   AND workspaces.environment_id = actor_definition.environment_id
+    ON workspaces.environment_id = actor_definition.environment_id
    AND workspaces.id = sqlc.arg(workspace_id)
+  JOIN environments AS actor_environment
+    ON actor_environment.id = workspaces.environment_id
+   AND actor_environment.org_id = sqlc.arg(org_id)
+   AND actor_environment.project_id = sqlc.arg(project_id)
   JOIN deployment_definitions AS workspace_definition
     ON workspace_definition.environment_id = workspaces.environment_id
    AND workspace_definition.id = workspaces.deployment_definition_id
-   AND workspace_definition.kind = workspaces.declaration_kind
+   AND workspace_definition.kind = 'workspace'
    AND workspace_definition.declared_id = workspaces.workspace_declared_id
    AND workspace_definition.workspace_architecture = deployments.program_architecture
  WHERE actor_definition.environment_id = sqlc.arg(environment_id)

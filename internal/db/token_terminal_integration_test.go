@@ -87,18 +87,16 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 		publicAccessTokenID := uuid.Must(uuid.NewV7())
 		mustRunLeaseExec(t, ctx, fixture.pool, `
 			INSERT INTO public_access_tokens (
-			    id, public_id, org_id, project_id, environment_id,
-			    token_hash, credential_key_id, created_at, updated_at, expires_at
+			    id, public_id, token_id, token_hash, credential_key_id,
+			    created_at, updated_at, expires_at
 			) VALUES (
-			    $1, $2, $3, $4, $5,
-			    $6, 'test-key',
-			    $7::timestamptz - interval '1 hour',
-			    $7::timestamptz - interval '1 hour',
-			    $7::timestamptz
+			    $1, $2, $3, $4, 'test-key',
+			    $5::timestamptz - interval '1 hour',
+			    $5::timestamptz - interval '1 hour',
+			    $5::timestamptz
 			)
 		`, publicAccessTokenID, runLeasePublicID(t, publicid.PublicAccessToken),
-			fixture.orgID, fixture.projectID, fixture.environmentID,
-			bytes.Repeat([]byte{2}, 32), expiredAt)
+			tokenID, bytes.Repeat([]byte{2}, 32), expiredAt)
 		expired, err := fixture.queries.ExpireDueTokens(ctx, ExpireDueTokensParams{
 			OutboxMessageIds: pgvalue.NewUUIDv7Batch(100),
 			LimitCount:       100,

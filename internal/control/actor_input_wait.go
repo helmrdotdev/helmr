@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/actorinput"
+	actordomain "github.com/helmrdotdev/helmr/internal/actor"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -188,7 +188,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		if errors.Is(err, pgx.ErrNoRows) {
 			if authority.actor.State == "closing" && authority.actor.CloseSequence.Valid &&
 				params.AfterInputSequence >= authority.actor.CloseSequence.Int64 {
-				registered, err = actorinput.FailWait(r.Context(), work.q, registered, "actor_closed")
+				registered, err = actordomain.FailWait(r.Context(), work.q, registered, "actor_closed")
 				return err
 			}
 			return nil
@@ -196,7 +196,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		if err != nil {
 			return err
 		}
-		registered, err = actorinput.CompleteWait(r.Context(), work.q, registered, record)
+		registered, err = actordomain.CompleteWait(r.Context(), work.q, registered, record)
 		return err
 	})
 	if errors.Is(err, errStaleRunLeaseClaim) {

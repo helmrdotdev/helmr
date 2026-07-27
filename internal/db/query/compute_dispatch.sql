@@ -1,30 +1,3 @@
--- name: ListQueueScopes :many
-SELECT runs.org_id,
-       runs.project_id,
-       runs.environment_id,
-       workspaces.region_id,
-       runs.concurrency_key,
-       runs.queue_name
-  FROM runs
-  JOIN workspaces
-    ON workspaces.org_id = runs.org_id
-   AND workspaces.project_id = runs.project_id
-   AND workspaces.environment_id = runs.environment_id
-   AND workspaces.id = runs.workspace_id
-  JOIN regions ON regions.id = workspaces.region_id AND regions.state = 'available'
- WHERE runs.status = 'queued'
-   AND runs.current_run_lease_id IS NULL
-   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
- GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-          runs.concurrency_key, runs.queue_name
- ORDER BY md5(runs.org_id::text || ':' || runs.project_id::text || ':' ||
-              runs.environment_id::text || ':' || workspaces.region_id || ':' ||
-              coalesce(runs.concurrency_key, '') || ':' || runs.queue_name || ':' || sqlc.arg(scan_seed)::text),
-          runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-          runs.concurrency_key, runs.queue_name
- LIMIT sqlc.arg(row_limit)
-OFFSET sqlc.arg(row_offset);
-
 -- name: SetWorkerInstanceState :one
 UPDATE worker_instances
    SET state = sqlc.arg(state)::text,
@@ -310,9 +283,7 @@ SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
        runs.queue_origin_at, runs.queue_score_at, workspaces.region_id
   FROM runs
   JOIN workspaces
-    ON workspaces.org_id = runs.org_id
-   AND workspaces.project_id = runs.project_id
-   AND workspaces.environment_id = runs.environment_id
+    ON workspaces.environment_id = runs.environment_id
    AND workspaces.id = runs.workspace_id
  WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.id = sqlc.arg(run_id)
@@ -463,9 +434,7 @@ SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
        runs.queue_origin_at, runs.queue_score_at, workspaces.region_id
   FROM runs
   JOIN workspaces
-    ON workspaces.org_id = runs.org_id
-   AND workspaces.project_id = runs.project_id
-   AND workspaces.environment_id = runs.environment_id
+    ON workspaces.environment_id = runs.environment_id
    AND workspaces.id = runs.workspace_id
   JOIN run_waits
     ON run_waits.environment_id = runs.environment_id
@@ -521,9 +490,7 @@ WITH candidate_scopes AS (
                runs.environment_id::text || ':' || workspaces.region_id || ':' ||
                coalesce(runs.concurrency_key, '') || ':' || runs.queue_name || ':' || sqlc.arg(scan_seed)::text) AS sort_key
       FROM runs
-      JOIN workspaces ON workspaces.org_id = runs.org_id
-                     AND workspaces.project_id = runs.project_id
-                     AND workspaces.environment_id = runs.environment_id
+      JOIN workspaces ON workspaces.environment_id = runs.environment_id
                      AND workspaces.id = runs.workspace_id
      WHERE runs.status = 'queued'
        AND runs.current_run_lease_id IS NULL
@@ -673,9 +640,7 @@ SELECT * FROM candidate_scopes
 -- name: ListQueuedRunDispatchCandidatesForScope :many
 SELECT runs.org_id, runs.id AS run_id, runs.state_version
   FROM runs
-  JOIN workspaces ON workspaces.org_id = runs.org_id
-                 AND workspaces.project_id = runs.project_id
-                 AND workspaces.environment_id = runs.environment_id
+  JOIN workspaces ON workspaces.environment_id = runs.environment_id
                  AND workspaces.id = runs.workspace_id
  WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.project_id = sqlc.arg(project_id)

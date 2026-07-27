@@ -2468,8 +2468,8 @@ function parseActorStatus(dataJson: string): ActorStatus {
     requireExactKeys(raw, ["code", "run_id"], "Actor status failure")
     const code = stringField(raw, "code", "Actor status failure")
     if (
-      code !== "no-progress" && code !== "run-failed" &&
-      code !== "run-expired" && code !== "platform-failure"
+      code !== "no_progress" && code !== "run_failed" &&
+      code !== "run_expired" && code !== "platform_failure"
     ) {
       throw new Error("Actor status failure.code is invalid")
     }

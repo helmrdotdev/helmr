@@ -362,10 +362,9 @@ func (s *Server) createTokenInTransaction(
 	if err != nil {
 		return api.TokenResponse{}, nil, err
 	}
-	publicAccess, err := q.CreatePublicAccessToken(ctx, db.CreatePublicAccessTokenParams{
+	_, err = q.CreatePublicAccessToken(ctx, db.CreatePublicAccessTokenParams{
 		ID: pgvalue.UUID(publicAccessID), PublicID: publicAccessPublicID,
-		OrgID: input.OrgID, ProjectID: input.ProjectID,
-		EnvironmentID:   input.EnvironmentID,
+		TokenID:         tokenRow.ID,
 		TokenHash:       credentials.PublicAccessHash,
 		CredentialKeyID: credentials.KeyID.String(),
 		ExpiresAt:       expiresAt, Metadata: []byte(`{}`),
@@ -373,15 +372,6 @@ func (s *Server) createTokenInTransaction(
 	})
 	if err != nil {
 		return api.TokenResponse{}, nil, fmt.Errorf("create Token public access credential: %w", err)
-	}
-	if _, err := q.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
-		ID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID: input.OrgID, ProjectID: input.ProjectID,
-		EnvironmentID:       input.EnvironmentID,
-		PublicAccessTokenID: publicAccess.ID,
-		TokenID:             tokenRow.ID,
-	}); err != nil {
-		return api.TokenResponse{}, nil, fmt.Errorf("scope Token public access credential: %w", err)
 	}
 	receipt, err := json.Marshal(tokenCreateReceipt{
 		TokenID:         tokenID.String(),
@@ -703,11 +693,7 @@ func (s *Server) completeTokenWithBearer(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			return db.Token{}, nil, errTokenScopeDenied
 		}
-		if _, err := q.GetPublicAccessTokenTokenScope(ctx, db.GetPublicAccessTokenTokenScopeParams{
-			OrgID: tokenRow.OrgID, ProjectID: tokenRow.ProjectID,
-			EnvironmentID:       tokenRow.EnvironmentID,
-			PublicAccessTokenID: publicAccess.ID, TokenID: tokenRow.ID,
-		}); err != nil {
+		if publicAccess.TokenID != tokenRow.ID {
 			return db.Token{}, nil, errTokenScopeDenied
 		}
 		keyID, err := tokencredential.ParseCredentialKeyID(publicAccess.CredentialKeyID)
@@ -839,9 +825,7 @@ func (s *Server) completeTokenRecord(
 		}
 		completed = tokenFromCompleteRow(row)
 		if publicAccess != nil && row.ReconciliationEnqueued {
-			if _, err := work.q.MarkPublicAccessTokenUsed(ctx, db.MarkPublicAccessTokenUsedParams{
-				OrgID: publicAccess.OrgID, ID: publicAccess.ID,
-			}); err != nil {
+			if _, err := work.q.MarkPublicAccessTokenUsed(ctx, publicAccess.ID); err != nil {
 				return errTokenScopeDenied
 			}
 		}

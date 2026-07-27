@@ -909,27 +909,27 @@ func (fixture runLeaseClaimFixture) addWork(
 	}
 	mustRunLeaseExec(t, ctx, tx, `
 		INSERT INTO workspaces (
-			id, public_id, org_id, project_id, environment_id, region_id,
-			declaration_kind, workspace_declared_id, deployment_definition_id,
+			id, public_id, environment_id, region_id,
+			workspace_declared_id, deployment_definition_id,
 			owner_run_id, ownership_generation, writer_generation, head_version_id
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, 'workspace', 'test-workspace', $7,
-			$8, 1, 1, $9
+			$1, $2, $3, $4, 'test-workspace', $5,
+			$6, 1, 1, $7
 		)
-	`, workspaceID, runLeasePublicID(t, publicid.Workspace), fixture.orgID,
-		fixture.projectID, fixture.environmentID, runLeaseTestRegion,
+	`, workspaceID, runLeasePublicID(t, publicid.Workspace),
+		fixture.environmentID, runLeaseTestRegion,
 		fixture.workspaceDefinitionID, runID, versionID)
 	mustRunLeaseExec(t, ctx, tx, `
 		INSERT INTO workspace_versions (
-			id, public_id, org_id, project_id, environment_id, workspace_id,
+			id, public_id, environment_id, workspace_id,
 			kind, content_digest, state, ownership_generation, writer_generation, published_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, 'system',
+			$1, $2, $3, $4, 'system',
 			'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
 			'committed', 0, 0, now()
 		)
-	`, versionID, runLeasePublicID(t, publicid.WorkspaceVersion), fixture.orgID,
-		fixture.projectID, fixture.environmentID, workspaceID)
+	`, versionID, runLeasePublicID(t, publicid.WorkspaceVersion),
+		fixture.environmentID, workspaceID)
 	mustRunLeaseExec(t, ctx, tx, `
 		INSERT INTO runs (
 			id, public_id, org_id, project_id, environment_id, deployment_id,

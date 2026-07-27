@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -222,18 +221,9 @@ func (w *Worker) markErrored(ctx context.Context, value db.Schedule, admissionEr
 	if !validErrorCode(admissionErr.Code) {
 		return fmt.Errorf("invalid Schedule error code %q", admissionErr.Code)
 	}
-	lastError, err := json.Marshal(struct {
-		Code    ErrorCode `json:"code"`
-		Message string    `json:"message"`
-	}{
-		Code:    admissionErr.Code,
-		Message: truncateUTF8(admissionErr.Message, 1024),
-	})
-	if err != nil {
-		return err
-	}
-	_, err = w.store.MarkScheduleAdmissionErrored(ctx, db.MarkScheduleAdmissionErroredParams{
-		LastError:           lastError,
+	_, err := w.store.MarkScheduleAdmissionErrored(ctx, db.MarkScheduleAdmissionErroredParams{
+		LastErrorCode:       pgvalue.Text(string(admissionErr.Code)),
+		LastErrorMessage:    pgvalue.Text(truncateUTF8(admissionErr.Message, 1024)),
 		EnvironmentID:       value.EnvironmentID,
 		ID:                  value.ID,
 		ExpectedGeneration:  value.Generation,

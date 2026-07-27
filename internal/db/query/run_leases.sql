@@ -448,13 +448,14 @@ SELECT *
  FOR UPDATE;
 
 -- name: LockRunLeaseClaimWorkspace :one
-SELECT *
+SELECT workspaces.*
   FROM workspaces
- WHERE id = sqlc.arg(id)
-   AND org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND region_id = sqlc.arg(region_id)
+  JOIN environments ON environments.id = workspaces.environment_id
+ WHERE workspaces.id = sqlc.arg(id)
+   AND environments.org_id = sqlc.arg(org_id)
+   AND environments.project_id = sqlc.arg(project_id)
+   AND workspaces.environment_id = sqlc.arg(environment_id)
+   AND workspaces.region_id = sqlc.arg(region_id)
  FOR UPDATE;
 
 -- name: LockRunLeaseClaimAttempt :one
@@ -836,14 +837,18 @@ RETURNING *;
 UPDATE workspaces
    SET last_activity_at = greatest(last_activity_at, transaction_timestamp()),
        updated_at = transaction_timestamp()
- WHERE id = sqlc.arg(id)
-   AND org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND ownership_generation = sqlc.arg(ownership_generation)
-   AND writer_generation = sqlc.arg(writer_generation)
-   AND state = 'active'
-   AND desired_state = 'active'
+ WHERE workspaces.id = sqlc.arg(id)
+   AND workspaces.environment_id = sqlc.arg(environment_id)
+   AND EXISTS (
+       SELECT 1 FROM environments
+        WHERE environments.id = workspaces.environment_id
+          AND environments.org_id = sqlc.arg(org_id)
+          AND environments.project_id = sqlc.arg(project_id)
+   )
+   AND workspaces.ownership_generation = sqlc.arg(ownership_generation)
+   AND workspaces.writer_generation = sqlc.arg(writer_generation)
+   AND workspaces.state = 'active'
+   AND workspaces.desired_state = 'active'
 RETURNING *;
 
 -- name: MarkRunEntrypointEntered :one
@@ -1055,9 +1060,7 @@ candidates AS MATERIALIZED (
            workspaces.writer_generation
       FROM locked_runs
       JOIN workspaces ON workspaces.id = locked_runs.workspace_id
-     WHERE workspaces.org_id = locked_runs.org_id
-       AND workspaces.project_id = locked_runs.project_id
-       AND workspaces.environment_id = locked_runs.environment_id
+     WHERE workspaces.environment_id = locked_runs.environment_id
        AND ((locked_runs.entrypoint_kind = 'task'
              AND workspaces.owner_run_id = locked_runs.run_id
              AND workspaces.owner_actor_id IS NULL)
@@ -1512,8 +1515,8 @@ candidates AS MATERIALIZED (
            state_version = actors.state_version + 1,
            manual_run_cancelled = false,
            failure_code = CASE
-               WHEN locked_checkpoints.active_budget_exhausted THEN 'run-expired'
-               ELSE 'platform-failure'
+               WHEN locked_checkpoints.active_budget_exhausted THEN 'run_expired'
+               ELSE 'platform_failure'
            END,
            failure_run_id = failed_runs.id,
            failed_at = transaction_timestamp(),

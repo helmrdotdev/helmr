@@ -33,9 +33,7 @@ SELECT clock_timestamp()::timestamptz;
 -- name: GetTaskWorkspaceResetVersion :one
 SELECT *
   FROM workspace_versions
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
+ WHERE environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND id = sqlc.arg(id)
    AND state IN ('committed', 'private');
@@ -44,8 +42,6 @@ SELECT *
 INSERT INTO workspace_versions (
     id,
     public_id,
-    org_id,
-    project_id,
     environment_id,
     workspace_id,
     parent_version_id,
@@ -64,8 +60,6 @@ INSERT INTO workspace_versions (
 VALUES (
     sqlc.arg(id),
     sqlc.arg(public_id),
-    sqlc.arg(org_id),
-    sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(workspace_id),
     sqlc.arg(parent_version_id),
@@ -454,9 +448,11 @@ UPDATE workspaces
        state_version = workspaces.state_version + 1,
        last_activity_at = sqlc.arg(completed_at),
        updated_at = sqlc.arg(completed_at)
+  FROM environments
  WHERE workspaces.id = sqlc.arg(id)
-   AND workspaces.org_id = sqlc.arg(org_id)
-   AND workspaces.project_id = sqlc.arg(project_id)
+   AND environments.id = workspaces.environment_id
+   AND environments.org_id = sqlc.arg(org_id)
+   AND environments.project_id = sqlc.arg(project_id)
    AND workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.owner_run_id = sqlc.arg(run_id)
    AND workspaces.owner_actor_id IS NULL

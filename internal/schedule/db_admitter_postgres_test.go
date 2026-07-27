@@ -155,16 +155,16 @@ func TestPendingScheduleBindsMatchingWorkspaceWithGenerationFence(t *testing.T) 
 func TestReconcileScheduleDoesNotReviveErroredAuthority(t *testing.T) {
 	pool := openSchedulePostgres(t)
 	value, _ := seedScheduleAdmission(t, pool)
-	lastError := json.RawMessage(`{"code":"task-authority-invalid","message":"Task authority is invalid"}`)
 	mustScheduleExec(t, pool, `
 		UPDATE schedules
 		   SET state = 'errored',
 		       state_version = state_version + 1,
 		       claimed_by = NULL,
 		       claim_expires_at = NULL,
-		       last_error = $2
+		       last_error_code = 'task-authority-invalid',
+		       last_error_message = 'Task authority is invalid'
 		 WHERE id = $1
-	`, value.ID, lastError)
+	`, value.ID)
 
 	queries := db.New(pool)
 	before, err := queries.GetSchedule(t.Context(), db.GetScheduleParams{
@@ -177,8 +177,6 @@ func TestReconcileScheduleDoesNotReviveErroredAuthority(t *testing.T) {
 	if err := queries.ReconcileSchedule(t.Context(), db.ReconcileScheduleParams{
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		PublicID:               schedulePublicID(t, publicid.Schedule),
-		OrgID:                  before.OrgID,
-		ProjectID:              before.ProjectID,
 		EnvironmentID:          before.EnvironmentID,
 		TaskDeclaredID:         before.TaskDeclaredID,
 		DeploymentDefinitionID: before.DeploymentDefinitionID,
@@ -206,17 +204,20 @@ func TestReconcileScheduleDoesNotReviveErroredAuthority(t *testing.T) {
 	if after.State != "errored" ||
 		after.Generation != before.Generation ||
 		after.StateVersion != before.StateVersion ||
-		string(after.LastError) != string(before.LastError) {
+		after.LastErrorCode != before.LastErrorCode ||
+		after.LastErrorMessage != before.LastErrorMessage {
 		t.Fatalf(
-			"reconciled errored Schedule = state %q, generation %d, state version %d, error %s; want %q, %d, %d, %s",
+			"reconciled errored Schedule = state %q, generation %d, state version %d, error %q/%q; want %q, %d, %d, %q/%q",
 			after.State,
 			after.Generation,
 			after.StateVersion,
-			after.LastError,
+			after.LastErrorCode.String,
+			after.LastErrorMessage.String,
 			before.State,
 			before.Generation,
 			before.StateVersion,
-			before.LastError,
+			before.LastErrorCode.String,
+			before.LastErrorMessage.String,
 		)
 	}
 }
@@ -327,26 +328,26 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	}
 	if _, err := tx.Exec(t.Context(), `
 		INSERT INTO workspaces (
-			id, public_id, org_id, project_id, environment_id, region_id,
-			declaration_kind, workspace_declared_id, deployment_definition_id,
+			id, public_id, environment_id, region_id,
+			workspace_declared_id, deployment_definition_id,
 			head_version_id, key
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'workspace', 'scheduler', $7, $8, 'scheduler')
-	`, workspaceID, schedulePublicID(t, publicid.Workspace), orgID, projectID,
+		VALUES ($1, $2, $3, $4, 'scheduler', $5, $6, 'scheduler')
+	`, workspaceID, schedulePublicID(t, publicid.Workspace),
 		environmentID, regionID, workspaceDefinitionID, workspaceVersionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(t.Context(), `
 		INSERT INTO workspace_versions (
-			id, public_id, org_id, project_id, environment_id, workspace_id,
+			id, public_id, environment_id, workspace_id,
 			kind, state, content_digest, size_bytes, entry_count,
 			ownership_generation, writer_generation, published_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'system', 'committed',
+		VALUES ($1, $2, $3, $4, 'system', 'committed',
 		        'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
 		        0, 0, 0, 0, now())
-	`, workspaceVersionID, schedulePublicID(t, publicid.WorkspaceVersion), orgID,
-		projectID, environmentID, workspaceID); err != nil {
+	`, workspaceVersionID, schedulePublicID(t, publicid.WorkspaceVersion),
+		environmentID, workspaceID); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(t.Context()); err != nil {
@@ -395,20 +396,20 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	claimExpiresAt := time.Now().UTC().Add(5 * time.Minute)
 	mustScheduleExec(t, pool, `
 		INSERT INTO schedules (
-			id, public_id, org_id, project_id, environment_id,
+			id, public_id, environment_id,
 			task_declared_id, deployment_definition_id, deployment_id,
 			workspace_ref_key, workspace_id, cron_pattern, timezone,
 			state, effective_from,
 			next_fire_at, claimed_by, claim_expires_at
 		)
 		VALUES (
-			$1, $2, $3, $4, $5,
-			'daily-report', $6, $7,
-			'scheduler', $8, '0 9 * * *', 'UTC',
+			$1, $2, $3,
+			'daily-report', $4, $5,
+			'scheduler', $6, '0 9 * * *', 'UTC',
 			'active', now() - interval '1 hour',
-			$9, 'scheduler-test', $10
+			$7, 'scheduler-test', $8
 		)
-	`, scheduleID, schedulePublicID(t, publicid.Schedule), orgID, projectID,
+	`, scheduleID, schedulePublicID(t, publicid.Schedule),
 		environmentID, taskDefinitionID, deploymentID, workspaceID,
 		scheduledAt, claimExpiresAt)
 	value, err := db.New(pool).GetSchedule(t.Context(), db.GetScheduleParams{

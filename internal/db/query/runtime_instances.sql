@@ -48,9 +48,7 @@ SELECT runtime_instances.*,
   JOIN artifacts ON artifacts.environment_id = deployment_definitions.environment_id
                 AND artifacts.id = deployment_definitions.artifact_id
   LEFT JOIN workspace_versions AS reserved_workspace_versions
-    ON reserved_workspace_versions.org_id = runtime_instances.org_id
-   AND reserved_workspace_versions.project_id = runtime_instances.project_id
-   AND reserved_workspace_versions.environment_id = runtime_instances.environment_id
+    ON reserved_workspace_versions.environment_id = runtime_instances.environment_id
    AND reserved_workspace_versions.workspace_id = runtime_instances.workspace_id
    AND reserved_workspace_versions.id = runtime_instances.reserved_workspace_version_id
    AND reserved_workspace_versions.state = CASE
@@ -58,9 +56,7 @@ SELECT runtime_instances.*,
            ELSE 'private'
        END
   LEFT JOIN artifacts AS reserved_workspace_artifacts
-    ON reserved_workspace_artifacts.org_id = reserved_workspace_versions.org_id
-   AND reserved_workspace_artifacts.project_id = reserved_workspace_versions.project_id
-   AND reserved_workspace_artifacts.environment_id = reserved_workspace_versions.environment_id
+    ON reserved_workspace_artifacts.environment_id = reserved_workspace_versions.environment_id
    AND reserved_workspace_artifacts.id = reserved_workspace_versions.artifact_id
   LEFT JOIN deployments AS program_deployments
     ON program_deployments.environment_id = runtime_instances.environment_id
@@ -220,8 +216,6 @@ WITH restore_secret_authority AS MATERIALIZED (
         ON runtime_instances.id = restore_run_authority.runtime_instance_id
       JOIN workspaces
         ON workspaces.id = runtime_instances.workspace_id
-       AND workspaces.org_id = runtime_instances.org_id
-       AND workspaces.project_id = runtime_instances.project_id
        AND workspaces.environment_id = runtime_instances.environment_id
        AND ((restore_run_authority.entrypoint_kind = 'task'
              AND workspaces.owner_run_id = runtime_instances.reserved_run_id
@@ -270,7 +264,6 @@ WITH restore_secret_authority AS MATERIALIZED (
        AND runtime_substrates.project_id = runtime_instances.project_id
        AND runtime_substrates.environment_id = runtime_instances.environment_id
        AND runtime_substrates.deployment_definition_id = runtime_instances.deployment_definition_id
-       AND runtime_substrates.retired_at IS NULL
        AND runtime_substrates.substrate_format = worker_instances.substrate_format
        AND runtime_substrates.builder_abi = worker_instances.substrate_builder_abi
        AND runtime_substrates.layout_abi = worker_instances.substrate_layout_abi

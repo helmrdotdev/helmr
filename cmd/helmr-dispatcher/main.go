@@ -14,6 +14,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
+	"github.com/helmrdotdev/helmr/internal/actor"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -22,10 +23,11 @@ import (
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
 
 	"github.com/helmrdotdev/helmr/internal/fleet"
-	"github.com/helmrdotdev/helmr/internal/runadmission"
+	rundomain "github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/schedule"
-	"github.com/helmrdotdev/helmr/internal/secretrevocation"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -279,7 +281,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure schedule worker: %w", err)
 	}
-	runAdmissionDelivery, err := runadmission.NewDeliveryWorker(
+	runAdmissionDelivery, err := rundomain.NewDeliveryWorker(
 		log,
 		queries,
 		func(ctx context.Context, orgID, runID pgtype.UUID) error {
@@ -304,7 +306,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Token Wait reconciler: %w", err)
 	}
-	tokenReconcileDelivery, err := runadmission.NewTokenDeliveryWorker(
+	tokenReconcileDelivery, err := token.NewDeliveryWorker(
 		log,
 		queries,
 		tokenWaitReconciler.ReconcileBatch,
@@ -312,15 +314,32 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Token reconciliation delivery: %w", err)
 	}
-	secretRevocationReconciler, err := secretrevocation.NewReconciler(
+	secretRevocationReconciler, err := secret.NewRevocationReconciler(
 		runDispatchPool,
-		runDispatchAuthority,
+		secret.WorkspaceExecRecoverer(func(
+			ctx context.Context,
+			candidate secret.WorkspaceExecCandidate,
+		) error {
+			err := runDispatchAuthority.RecoverWorkspaceExec(
+				ctx,
+				dispatch.RecoverableWorkspaceExecCandidate{
+					OrgID:                candidate.OrgID,
+					ProcessID:            candidate.ProcessID,
+					WorkspaceID:          candidate.WorkspaceID,
+					ExpectedStateVersion: candidate.ExpectedStateVersion,
+				},
+			)
+			if errors.Is(err, dispatch.ErrCandidateChanged) {
+				return nil
+			}
+			return err
+		}),
 	)
 	if err != nil {
 		return fmt.Errorf("configure Secret revocation reconciler: %w", err)
 	}
 	secretRevocationDelivery, err :=
-		runadmission.NewSecretRevocationDeliveryWorker(
+		secret.NewRevocationDeliveryWorker(
 			log,
 			queries,
 			secretRevocationReconciler.ReconcileBatch,
@@ -328,15 +347,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Secret revocation delivery: %w", err)
 	}
-	timerWaitReconciler, err := runadmission.NewTimerWaitReconciler(pool)
+	timerWaitReconciler, err := rundomain.NewTimerWaitReconciler(pool)
 	if err != nil {
 		return fmt.Errorf("configure timer Wait reconciler: %w", err)
 	}
-	actorInputReconciler, err := runadmission.NewActorInputReconciler(pool)
+	actorInputReconciler, err := actor.NewInputReconciler(pool)
 	if err != nil {
 		return fmt.Errorf("configure Actor input reconciler: %w", err)
 	}
-	actorInputDelivery, err := runadmission.NewActorInputDeliveryWorker(
+	actorInputDelivery, err := actor.NewDeliveryWorker(
 		log,
 		queries,
 		actorInputReconciler.Reconcile,
@@ -345,7 +364,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Actor input reconciliation delivery: %w", err)
 	}
-	runWaitDeadlineDelivery, err := runadmission.NewRunWaitDeadlineDeliveryWorker(
+	runWaitDeadlineDelivery, err := rundomain.NewDeadlineWorker(
 		log,
 		timerWaitReconciler.ReconcileDue,
 		tokenWaitReconciler.ReconcileTimeouts,

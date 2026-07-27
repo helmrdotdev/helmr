@@ -310,18 +310,16 @@ INSERT INTO artifacts (
 	)
 	mustRunPlacementExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
-    id, public_id, org_id, project_id, environment_id, workspace_id,
+    id, public_id, environment_id, workspace_id,
     parent_version_id, artifact_id, artifact_kind, kind, content_digest,
     size_bytes, entry_count, state, source_workspace_lease_id,
     ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, 'workspace_version',
-    'user', $9, 1, 1, 'private', $10, 1, 1
+    $1, $2, $3, $4, $5, $6, 'workspace_version',
+    'user', $7, 1, 1, 'private', $8, 1, 1
 )`,
 		privateVersionID,
 		dispatchPublicID(t, publicid.WorkspaceVersion),
-		fixture.orgID,
-		fixture.projectID,
 		fixture.environmentID,
 		fixture.workspaceID,
 		originalVersionID,
@@ -613,16 +611,16 @@ INSERT INTO artifacts (
 	)
 	mustRunPlacementExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
-    id, public_id, org_id, project_id, environment_id, workspace_id,
+    id, public_id, environment_id, workspace_id,
     parent_version_id, artifact_id, artifact_kind, kind, content_digest,
     size_bytes, entry_count, state, source_workspace_lease_id,
     ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, 'workspace_version',
-    'user', $9, 2, 2, 'private', $10, 1, 2
+    $1, $2, $3, $4, $5, $6, 'workspace_version',
+    'user', $7, 2, 2, 'private', $8, 1, 2
 )`,
 		resultVersionID, dispatchPublicID(t, publicid.WorkspaceVersion),
-		fixture.orgID, fixture.projectID, fixture.environmentID,
+		fixture.environmentID,
 		fixture.workspaceID, privateVersionID, resultArtifactID, resultDigest,
 		childWorkspaceLeaseID,
 	)
@@ -1200,13 +1198,13 @@ INSERT INTO artifacts (
 				)
 				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO workspace_versions (
-    id, public_id, org_id, project_id, environment_id, workspace_id,
+    id, public_id, environment_id, workspace_id,
     parent_version_id, artifact_id, artifact_kind, kind,
     content_digest, size_bytes, entry_count, state,
     source_workspace_lease_id, ownership_generation, writer_generation
 )
-SELECT $1, $2, source.org_id, source.project_id, source.environment_id,
-       source.workspace_id, source.base_version_id, $3, 'workspace_version',
+SELECT $1, $2, source.environment_id, source.workspace_id,
+       source.base_version_id, $3, 'workspace_version',
        'user', $4, 1, 1, 'private', source.id,
        source.ownership_generation, source.writer_generation
   FROM workspace_leases AS source
@@ -1302,17 +1300,15 @@ INSERT INTO deployment_definitions (
 	)
 	mustRunPlacementExec(t, fixture.ctx, tx, `
 INSERT INTO actors (
-    id, public_id, org_id, project_id, environment_id,
+    id, public_id, environment_id,
     actor_declared_id, deployment_definition_id, workspace_id,
     current_run_id, next_input_sequence, committed_input_sequence,
-    managed_queue_name, managed_max_active_duration_ms
+    run_queue_name, run_max_active_duration_ms
 ) VALUES (
-    $1, 'act_aaaaaaaaaaaaaaaaaaaaaaaaaa', $2, $3, $4,
-    'test-actor', $5, $6, $7, 2, 1, 'default', 300000
+    $1, 'act_aaaaaaaaaaaaaaaaaaaaaaaaaa', $2,
+    'test-actor', $3, $4, $5, 2, 1, 'default', 300000
 )`,
 		actorID,
-		fixture.orgID,
-		fixture.projectID,
 		fixture.environmentID,
 		definitionID,
 		fixture.workspaceID,
@@ -1873,16 +1869,16 @@ INSERT INTO artifacts (
 	)
 	mustRunPlacementExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
-    id, public_id, org_id, project_id, environment_id, workspace_id,
+    id, public_id, environment_id, workspace_id,
     parent_version_id, kind, content_digest, state, source_workspace_lease_id,
     ownership_generation, writer_generation, artifact_id, artifact_kind,
     entry_count, size_bytes
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, 'user', $8, 'private', $9,
-    1, 1, $10, 'workspace_version', 1, 1
+    $1, $2, $3, $4, $5, 'user', $6, 'private', $7,
+    1, 1, $8, 'workspace_version', 1, 1
 )`,
-		privateVersionID, dispatchPublicID(t, publicid.WorkspaceVersion), fixture.orgID,
-		fixture.projectID, fixture.environmentID, fixture.workspaceID, baseVersionID,
+		privateVersionID, dispatchPublicID(t, publicid.WorkspaceVersion),
+		fixture.environmentID, fixture.workspaceID, baseVersionID,
 		privateDigest, sourceWorkspaceLeaseID, privateArtifactID,
 	)
 	mustRunPlacementExec(t, fixture.ctx, tx, `
@@ -1979,17 +1975,6 @@ SELECT restore_checkpoint_id, reserved_workspace_version_id
 	if restoreCheckpointID != pgvalue.UUID(checkpointID) || reservedVersionID != pgvalue.UUID(privateVersionID) {
 		t.Fatalf("restore reservation checkpoint=%s version=%s", pgvalue.UUIDString(restoreCheckpointID), pgvalue.UUIDString(reservedVersionID))
 	}
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
-UPDATE runtime_substrates
-   SET retired_at = transaction_timestamp()
- WHERE id = (SELECT runtime_substrate_id FROM runtime_instances WHERE id = $1)`, reserved.RuntimeInstanceID)
-	if err := markRunPlacementRuntimeReadyQuery(t, fixture, restored.RuntimeInstanceID); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("mark ready with retired substrate error = %v, want pgx.ErrNoRows", err)
-	}
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
-UPDATE runtime_substrates
-   SET retired_at = NULL
- WHERE id = (SELECT runtime_substrate_id FROM runtime_instances WHERE id = $1)`, reserved.RuntimeInstanceID)
 	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_checkpoints
    SET state = 'invalid', ready_at = NULL, invalidated_at = now(),
@@ -2454,8 +2439,8 @@ func TestActorCurrentRunRecreatedRestoreAndRecovery(t *testing.T) {
 		wantRunStatus   string
 	}{
 		{name: "recoverable checkpoint", wantRecovered: 1, wantActorState: "open", wantRunStatus: "queued"},
-		{name: "unavailable checkpoint", invalidate: true, wantActorState: "failed", wantActorReason: pgtype.Text{String: "platform-failure", Valid: true}, wantRunStatus: "system_failed"},
-		{name: "maximum active duration", maxDuration: true, wantActorState: "failed", wantActorReason: pgtype.Text{String: "run-expired", Valid: true}, wantRunStatus: "expired"},
+		{name: "unavailable checkpoint", invalidate: true, wantActorState: "failed", wantActorReason: pgtype.Text{String: "platform_failure", Valid: true}, wantRunStatus: "system_failed"},
+		{name: "maximum active duration", maxDuration: true, wantActorState: "failed", wantActorReason: pgtype.Text{String: "run_expired", Valid: true}, wantRunStatus: "expired"},
 		{name: "speculative cursor outside Actor bounds", invalidCursor: true, wantActorState: "open", wantRunStatus: "queued"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2665,12 +2650,12 @@ INSERT INTO deployment_definitions (
 		actorDefinitionID, fixture.environmentID, fixture.deploymentID)
 	mustRunPlacementExec(t, fixture.ctx, tx, `
 INSERT INTO actors (
-    id, public_id, org_id, project_id, environment_id, actor_declared_id,
+    id, public_id, environment_id, actor_declared_id,
     deployment_definition_id, workspace_id, current_run_id,
-    next_input_sequence, committed_input_sequence, managed_queue_name,
-    managed_max_active_duration_ms
-) VALUES ($1, $2, $3, $4, $5, 'test-actor', $6, $7, $8, 2, 1, 'default', 300000)`,
-		actorID, "act_aaaaaaaaaaaaaaaaaaaaaaaaaa", fixture.orgID, fixture.projectID,
+    next_input_sequence, committed_input_sequence, run_queue_name,
+    run_max_active_duration_ms
+) VALUES ($1, $2, $3, 'test-actor', $4, $5, $6, 2, 1, 'default', 300000)`,
+		actorID, "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
 		fixture.environmentID, actorDefinitionID, fixture.workspaceID, fixture.runID)
 	mustRunPlacementExec(t, fixture.ctx, tx, `
 UPDATE runs
@@ -2694,12 +2679,13 @@ VALUES ($1, $2, $3, $4, $5, 'workspace_version', 1, $6)`, privateArtifactID, fix
 		fixture.projectID, fixture.environmentID, privateDigest, workspace.ArtifactMediaType)
 	mustRunPlacementExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
-    id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id,
+    id, public_id, environment_id, workspace_id, parent_version_id,
     kind, content_digest, state, source_workspace_lease_id, ownership_generation,
     writer_generation, artifact_id, artifact_kind, entry_count, size_bytes
-) VALUES ($1, $2, $3, $4, $5, $6, $7, 'user', $8, 'private', $9, 1, 1, $10, 'workspace_version', 1, 1)`,
-		privateVersionID, dispatchPublicID(t, publicid.WorkspaceVersion), fixture.orgID, fixture.projectID,
-		fixture.environmentID, fixture.workspaceID, baseVersionID, privateDigest, sourceWorkspaceLeaseID, privateArtifactID)
+) VALUES ($1, $2, $3, $4, $5, 'user', $6, 'private', $7, 1, 1, $8, 'workspace_version', 1, 1)`,
+		privateVersionID, dispatchPublicID(t, publicid.WorkspaceVersion),
+		fixture.environmentID, fixture.workspaceID, baseVersionID, privateDigest,
+		sourceWorkspaceLeaseID, privateArtifactID)
 	mustRunPlacementExec(t, fixture.ctx, tx, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind, due_at, condition_state,
@@ -2769,7 +2755,7 @@ SELECT $2,
 ON CONFLICT (
     org_id, project_id, environment_id, deployment_definition_id,
     substrate_format, builder_abi, layout_abi
-) DO UPDATE SET last_referenced_at = transaction_timestamp()
+) DO UPDATE SET updated_at = runtime_substrates.updated_at
 RETURNING id`, runtimeID, pgvalue.NewUUIDv7()).Scan(&runtimeSubstrateID)
 	if err != nil {
 		t.Fatal(err)
@@ -3121,17 +3107,15 @@ INSERT INTO worker_network_slots (
 	}
 	mustRunPlacementExec(t, ctx, tx, `
 INSERT INTO workspaces (
-    id, public_id, org_id, project_id, environment_id, region_id,
-    declaration_kind, workspace_declared_id, deployment_definition_id,
+    id, public_id, environment_id, region_id,
+    workspace_declared_id, deployment_definition_id,
     owner_run_id, ownership_generation, writer_generation, head_version_id
 ) VALUES (
-    $1, $2, $3, $4, $5, 'us-east-1', 'workspace', 'test-workspace',
-    $6, $7, 1, 0, $8
+    $1, $2, $3, 'us-east-1', 'test-workspace',
+    $4, $5, 1, 0, $6
 )`,
 		fixture.workspaceID,
 		dispatchPublicID(t, publicid.Workspace),
-		fixture.orgID,
-		fixture.projectID,
 		fixture.environmentID,
 		workspaceDefinitionID,
 		fixture.runID,
@@ -3139,17 +3123,15 @@ INSERT INTO workspaces (
 	)
 	mustRunPlacementExec(t, ctx, tx, `
 INSERT INTO workspace_versions (
-    id, public_id, org_id, project_id, environment_id, workspace_id,
+    id, public_id, environment_id, workspace_id,
     kind, content_digest, state, ownership_generation, writer_generation, published_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, 'system',
+    $1, $2, $3, $4, 'system',
     'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
     'committed', 0, 0, now()
 )`,
 		versionID,
 		dispatchPublicID(t, publicid.WorkspaceVersion),
-		fixture.orgID,
-		fixture.projectID,
 		fixture.environmentID,
 		fixture.workspaceID,
 	)

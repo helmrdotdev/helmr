@@ -104,6 +104,54 @@ func newDeploymentBuildFixture(t *testing.T) (*deploymentBuildFixture, *pgxpool.
 	}, pool
 }
 
+func TestAppendDeploymentEventsPreservesInputOrder(t *testing.T) {
+	f, _ := newDeploymentBuildFixture(t)
+	inserted, err := f.queries.AppendDeploymentEvents(f.ctx, db.AppendDeploymentEventsParams{
+		Categories:       []string{"build", "build", "build"},
+		Severities:       []string{"info", "info", "info"},
+		Sources:          []string{"worker", "worker", "worker"},
+		Kinds:            []string{"deployment.build.exit", "deployment.build.log", "deployment.build.log"},
+		Messages:         []string{"exit", "stdout", "stderr"},
+		Payloads:         []string{`{"position":0}`, `{"position":1}`, `{"position":2}`},
+		RedactionClasses: []string{"sensitive", "sensitive", "sensitive"},
+		OrgID:            pgvalue.UUID(f.orgID),
+		ProjectID:        pgvalue.UUID(f.projectID),
+		EnvironmentID:    pgvalue.UUID(f.environmentID),
+		DeploymentID:     pgvalue.UUID(f.deploymentID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inserted != 3 {
+		t.Fatalf("inserted events = %d, want 3", inserted)
+	}
+	rows, err := f.pool.Query(f.ctx, `
+		SELECT message
+		  FROM telemetry_outbox
+		 WHERE deployment_id = $1
+		   AND kind IN ('deployment.build.exit', 'deployment.build.log')
+		 ORDER BY id
+	`, f.deploymentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var messages []string
+	for rows.Next() {
+		var message string
+		if err := rows.Scan(&message); err != nil {
+			t.Fatal(err)
+		}
+		messages = append(messages, message)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"exit", "stdout", "stderr"}; !reflect.DeepEqual(messages, want) {
+		t.Fatalf("event order = %v, want %v", messages, want)
+	}
+}
+
 func (f *deploymentBuildFixture) lease(t *testing.T, sequence int64) db.LeaseQueuedDeploymentBuildRow {
 	t.Helper()
 	now := time.Now().UTC()

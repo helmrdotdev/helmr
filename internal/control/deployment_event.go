@@ -23,6 +23,10 @@ type deploymentEventAppender interface {
 	AppendDeploymentEvent(context.Context, db.AppendDeploymentEventParams) (db.AppendDeploymentEventRow, error)
 }
 
+type deploymentEventBatchAppender interface {
+	AppendDeploymentEvents(context.Context, db.AppendDeploymentEventsParams) (int64, error)
+}
+
 func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, unavailable(errors.New("project storage is not configured")))
@@ -178,7 +182,7 @@ func appendDeploymentLifecycleEvent(ctx context.Context, store deploymentEventAp
 
 func appendDeploymentBuildLogs(
 	ctx context.Context,
-	store deploymentEventAppender,
+	store deploymentEventBatchAppender,
 	orgID pgtype.UUID,
 	projectID pgtype.UUID,
 	environmentID pgtype.UUID,
@@ -186,6 +190,12 @@ func appendDeploymentBuildLogs(
 	logs deployment.BuildLogs,
 ) error {
 	const chunkBytes = 256 << 10
+	type buildEvent struct {
+		kind    string
+		message string
+		payload string
+	}
+	events := make([]buildEvent, 0, 65)
 	metadata, err := json.Marshal(struct {
 		ExitStatus int32 `json:"exitStatus"`
 		Truncated  bool  `json:"truncated"`
@@ -196,21 +206,9 @@ func appendDeploymentBuildLogs(
 	if err != nil {
 		return err
 	}
-	if _, err := store.AppendDeploymentEvent(ctx, db.AppendDeploymentEventParams{
-		OrgID:          orgID,
-		ProjectID:      projectID,
-		EnvironmentID:  environmentID,
-		DeploymentID:   deploymentID,
-		Category:       "build",
-		Severity:       "info",
-		Source:         "worker",
-		Kind:           "deployment.build.exit",
-		Message:        "Package manager exited",
-		Payload:        metadata,
-		RedactionClass: "sensitive",
-	}); err != nil {
-		return err
-	}
+	events = append(events, buildEvent{
+		kind: "deployment.build.exit", message: "Package manager exited", payload: string(metadata),
+	})
 	for _, stream := range []struct {
 		name    string
 		encoded string
@@ -236,22 +234,40 @@ func appendDeploymentBuildLogs(
 			if err != nil {
 				return err
 			}
-			if _, err := store.AppendDeploymentEvent(ctx, db.AppendDeploymentEventParams{
-				OrgID:          orgID,
-				ProjectID:      projectID,
-				EnvironmentID:  environmentID,
-				DeploymentID:   deploymentID,
-				Category:       "build",
-				Severity:       "info",
-				Source:         "worker",
-				Kind:           "deployment.build.log",
-				Message:        stream.name,
-				Payload:        payload,
-				RedactionClass: "sensitive",
-			}); err != nil {
-				return err
-			}
+			events = append(events, buildEvent{
+				kind: "deployment.build.log", message: stream.name, payload: string(payload),
+			})
 		}
+	}
+	count := len(events)
+	categories := make([]string, count)
+	severities := make([]string, count)
+	sources := make([]string, count)
+	kinds := make([]string, count)
+	messages := make([]string, count)
+	payloads := make([]string, count)
+	redactionClasses := make([]string, count)
+	for index, event := range events {
+		categories[index] = "build"
+		severities[index] = "info"
+		sources[index] = "worker"
+		kinds[index] = event.kind
+		messages[index] = event.message
+		payloads[index] = event.payload
+		redactionClasses[index] = "sensitive"
+	}
+	inserted, err := store.AppendDeploymentEvents(ctx, db.AppendDeploymentEventsParams{
+		Categories: categories, Severities: severities, Sources: sources,
+		Kinds: kinds, Messages: messages, Payloads: payloads,
+		RedactionClasses: redactionClasses,
+		OrgID:            orgID, ProjectID: projectID, EnvironmentID: environmentID,
+		DeploymentID: deploymentID,
+	})
+	if err != nil {
+		return err
+	}
+	if inserted != int64(count) {
+		return errors.New("deployment build event batch was rejected")
 	}
 	return nil
 }

@@ -167,7 +167,6 @@ type Worker struct {
 	IPPath                       string
 	NFTPath                      string
 	NetworkBlockedIPv4CIDRs      []string
-	NetworkBlockedIPv6CIDRs      []string
 	VMVCPUCount                  int64
 	VMMemoryMiB                  int64
 	VMScratchDiskMiB             int64

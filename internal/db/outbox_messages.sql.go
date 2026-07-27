@@ -212,7 +212,7 @@ RETURNING id, lane, topic, partition_key, payload, state, attempts, available_at
 `
 
 type DeadLetterOutboxMessageParams struct {
-	LastError    []byte      `json:"last_error"`
+	LastError    pgtype.Text `json:"last_error"`
 	ID           pgtype.UUID `json:"id"`
 	ClaimedBy    pgtype.Text `json:"claimed_by"`
 	ClaimAttempt int32       `json:"claim_attempt"`
@@ -303,7 +303,7 @@ RETURNING id, lane, topic, partition_key, payload, state, attempts, available_at
 
 type RetryOutboxMessageParams struct {
 	AvailableAt  pgtype.Timestamptz `json:"available_at"`
-	LastError    []byte             `json:"last_error"`
+	LastError    pgtype.Text        `json:"last_error"`
 	ID           pgtype.UUID        `json:"id"`
 	ClaimedBy    pgtype.Text        `json:"claimed_by"`
 	ClaimAttempt int32              `json:"claim_attempt"`

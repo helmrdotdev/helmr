@@ -279,13 +279,13 @@ func decideActorRunTerminal(authority runLeaseClaimAuthority, completion parsedA
 		decision.runReason = pgvalue.Text("actor_failed")
 		decision.commitCursor = false
 		decision.actorState = "failed"
-		decision.failureCode = pgvalue.Text("run-failed")
+		decision.failureCode = pgvalue.Text("run_failed")
 		return decision
 	}
 	if authority.run.ActorStartInputHighWatermark.Int64 > authority.run.ActorStartInputSequence.Int64 &&
 		completion.terminalInputSequence <= authority.run.ActorStartInputSequence.Int64 {
 		decision.actorState = "failed"
-		decision.failureCode = pgvalue.Text("no-progress")
+		decision.failureCode = pgvalue.Text("no_progress")
 		return decision
 	}
 	if authority.actor.State == "closing" && authority.actor.CloseSequence.Valid &&
@@ -346,8 +346,8 @@ func finishActorRun(ctx context.Context, store db.Querier, authority runLeaseCla
 	terminalActor := actor.State == "failed" || actor.State == "closed"
 	if terminalActor {
 		if _, err := store.ReleaseActorWorkspaceOwner(ctx, db.ReleaseActorWorkspaceOwnerParams{
-			CompletedAt: completedAt, ID: authority.workspace.ID, OrgID: authority.run.OrgID,
-			ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID, ActorID: actor.ID,
+			CompletedAt: completedAt, ID: authority.workspace.ID,
+			EnvironmentID: authority.run.EnvironmentID, ActorID: actor.ID,
 			OwnershipGeneration: authority.workspace.OwnershipGeneration, WriterGeneration: authority.workspace.WriterGeneration,
 		}); err != nil {
 			return staleActorCompletion(err)
@@ -412,18 +412,12 @@ func createActorContinuation(ctx context.Context, store db.Querier, actor db.Act
 }
 
 func createActorAttemptSecretResolutions(ctx context.Context, store db.Querier, workspaceID, runID pgtype.UUID, attempt int32, bindings []secret.DeliveryEnvelope) error {
-	for _, binding := range bindings {
-		if !binding.Secret.CurrentVersionID.Valid || binding.Secret.State != "active" {
-			return secret.ErrDeliveryUnavailable
-		}
-		if _, err := store.CreateSecretResolution(ctx, db.CreateSecretResolutionParams{
-			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: workspaceID, RunID: runID,
-			AttemptNumber: pgtype.Int4{Int32: attempt, Valid: true}, PlacementKind: binding.PlacementKind,
-			PlacementTarget: binding.PlacementTarget, SecretID: binding.Secret.ID,
-			SecretVersionID: binding.Secret.CurrentVersionID, RevocationGeneration: binding.Secret.RevocationGeneration,
-		}); err != nil {
-			return fmt.Errorf("record Actor Attempt Secret resolution: %w", err)
-		}
+	resolutions, err := activeSecretResolutions(bindings)
+	if err != nil {
+		return err
+	}
+	if err := secret.CreateAttemptResolutions(ctx, store, workspaceID, runID, attempt, resolutions); err != nil {
+		return fmt.Errorf("record Actor Attempt Secret resolutions: %w", err)
 	}
 	return nil
 }

@@ -57,7 +57,6 @@ type Config struct {
 	NFTPath                 string
 	MkfsExt4Path            string
 	NetworkBlockedIPv4CIDRs []string
-	NetworkBlockedIPv6CIDRs []string
 	KVMPath                 string
 	VCPUCount               int64
 	MemoryMiB               int64
@@ -230,13 +229,7 @@ func (cfg Config) Validate() error {
 	if len(cfg.NetworkBlockedIPv4CIDRs) == 0 {
 		problems = append(problems, errors.New("firecracker network blocked IPv4 CIDRs are required"))
 	}
-	if len(cfg.NetworkBlockedIPv6CIDRs) == 0 {
-		problems = append(problems, errors.New("firecracker network blocked IPv6 CIDRs are required"))
-	}
 	if err := validateNetworkPolicyCIDRs("firecracker network blocked IPv4 CIDR", cfg.NetworkBlockedIPv4CIDRs, true); err != nil {
-		problems = append(problems, err)
-	}
-	if err := validateNetworkPolicyCIDRs("firecracker network blocked IPv6 CIDR", cfg.NetworkBlockedIPv6CIDRs, false); err != nil {
 		problems = append(problems, err)
 	}
 	if cfg.HealthTimeout <= 0 {

@@ -645,9 +645,6 @@ func (c runtimeCheckpointer) ensureRuntimeSubstrate(ctx context.Context, substra
 		return nil, err
 	}
 	artifact := response.RuntimeSubstrate
-	if artifact.Retired {
-		return nil, errors.New("runtime substrate registration is retired")
-	}
 	return &artifact, nil
 }
 

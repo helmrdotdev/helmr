@@ -20,7 +20,6 @@ const (
 func renderRunNetworkPolicy(
 	policy compute.NetworkPolicy,
 	blockedIPv4CIDRs []string,
-	blockedIPv6CIDRs []string,
 ) string {
 	chainPolicy := "accept"
 	terminalDeny := ""
@@ -39,16 +38,13 @@ add chain inet %[1]s forward { type filter hook forward priority 0; policy %[3]s
 add rule inet %[1]s forward meta nfproto ipv6 counter name %[2]s drop
 add rule inet %[1]s forward ct state established,related accept
 %[4]s
-%[5]s
 add rule inet %[1]s forward ip daddr @blocked_ipv4 counter name %[2]s drop
-add rule inet %[1]s forward ip6 daddr @blocked_ipv6 counter name %[2]s drop
-%[6]s
+%[5]s
 	`)+"\n",
 		networkPolicyTableName,
 		runNetworkDeniedCounterName,
 		chainPolicy,
 		runNetworkPolicySet("blocked_ipv4", "ipv4_addr", blockedIPv4CIDRs),
-		runNetworkPolicySet("blocked_ipv6", "ipv6_addr", blockedIPv6CIDRs),
 		terminalDeny,
 	)
 }

@@ -421,10 +421,10 @@ export type ActorPublicStatus = "open" | "closed" | "cancelled" | "failed"
 
 export interface ActorFailure {
   readonly code:
-    | "no-progress"
-    | "run-failed"
-    | "run-expired"
-    | "platform-failure"
+    | "no_progress"
+    | "run_failed"
+    | "run_expired"
+    | "platform_failure"
   readonly runId: string
 }
 

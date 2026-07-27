@@ -28,12 +28,14 @@ SELECT workspace_versions.id AS version_id,
        artifacts.size_bytes AS artifact_size_bytes,
        artifacts.media_type AS artifact_media_type
   FROM workspace_versions
-  LEFT JOIN artifacts ON artifacts.org_id = workspace_versions.org_id
-                     AND artifacts.project_id = workspace_versions.project_id
-                     AND artifacts.environment_id = workspace_versions.environment_id
+  JOIN workspaces
+    ON workspaces.environment_id = workspace_versions.environment_id
+   AND workspaces.id = workspace_versions.workspace_id
+  JOIN environments ON environments.id = workspaces.environment_id
+  LEFT JOIN artifacts ON artifacts.environment_id = workspace_versions.environment_id
                      AND artifacts.id = workspace_versions.artifact_id
- WHERE workspace_versions.org_id = $1
-   AND workspace_versions.project_id = $2
+ WHERE environments.org_id = $1
+   AND environments.project_id = $2
    AND workspace_versions.environment_id = $3
    AND workspace_versions.workspace_id = $4
    AND workspace_versions.id = $5
@@ -96,38 +98,29 @@ func (q *Queries) GetWorkspaceResetTargetAuthority(ctx context.Context, arg GetW
 }
 
 const getWorkspaceVersion = `-- name: GetWorkspaceVersion :one
-SELECT id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+SELECT workspace_versions.id, workspace_versions.public_id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.artifact_id, workspace_versions.artifact_kind, workspace_versions.kind, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.entry_count, workspace_versions.state, workspace_versions.source_workspace_lease_id, workspace_versions.ownership_generation, workspace_versions.writer_generation, workspace_versions.created_at, workspace_versions.published_at, workspace_versions.discarded_at
   FROM workspace_versions
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND workspace_id = $4
-   AND id = $5
-   AND state = 'committed'
+  JOIN workspaces
+    ON workspaces.environment_id = workspace_versions.environment_id
+   AND workspaces.id = workspace_versions.workspace_id
+ WHERE workspace_versions.environment_id = $1
+   AND workspace_versions.workspace_id = $2
+   AND workspace_versions.id = $3
+   AND workspace_versions.state = 'committed'
 `
 
 type GetWorkspaceVersionParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	WorkspaceID   pgtype.UUID `json:"workspace_id"`
 	ID            pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) GetWorkspaceVersion(ctx context.Context, arg GetWorkspaceVersionParams) (WorkspaceVersion, error) {
-	row := q.db.QueryRow(ctx, getWorkspaceVersion,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.WorkspaceID,
-		arg.ID,
-	)
+	row := q.db.QueryRow(ctx, getWorkspaceVersion, arg.EnvironmentID, arg.WorkspaceID, arg.ID)
 	var i WorkspaceVersion
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
 		&i.ParentVersionID,
@@ -149,38 +142,29 @@ func (q *Queries) GetWorkspaceVersion(ctx context.Context, arg GetWorkspaceVersi
 }
 
 const getWorkspaceVersionByPublicID = `-- name: GetWorkspaceVersionByPublicID :one
-SELECT id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+SELECT workspace_versions.id, workspace_versions.public_id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.artifact_id, workspace_versions.artifact_kind, workspace_versions.kind, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.entry_count, workspace_versions.state, workspace_versions.source_workspace_lease_id, workspace_versions.ownership_generation, workspace_versions.writer_generation, workspace_versions.created_at, workspace_versions.published_at, workspace_versions.discarded_at
   FROM workspace_versions
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND workspace_id = $4
-   AND public_id = $5
-   AND state = 'committed'
+  JOIN workspaces
+    ON workspaces.environment_id = workspace_versions.environment_id
+   AND workspaces.id = workspace_versions.workspace_id
+ WHERE workspace_versions.environment_id = $1
+   AND workspace_versions.workspace_id = $2
+   AND workspace_versions.public_id = $3
+   AND workspace_versions.state = 'committed'
 `
 
 type GetWorkspaceVersionByPublicIDParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	WorkspaceID   pgtype.UUID `json:"workspace_id"`
 	PublicID      string      `json:"public_id"`
 }
 
 func (q *Queries) GetWorkspaceVersionByPublicID(ctx context.Context, arg GetWorkspaceVersionByPublicIDParams) (WorkspaceVersion, error) {
-	row := q.db.QueryRow(ctx, getWorkspaceVersionByPublicID,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.WorkspaceID,
-		arg.PublicID,
-	)
+	row := q.db.QueryRow(ctx, getWorkspaceVersionByPublicID, arg.EnvironmentID, arg.WorkspaceID, arg.PublicID)
 	var i WorkspaceVersion
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
 		&i.ParentVersionID,
@@ -202,15 +186,19 @@ func (q *Queries) GetWorkspaceVersionByPublicID(ctx context.Context, arg GetWork
 }
 
 const listWorkspaceVersions = `-- name: ListWorkspaceVersions :many
-SELECT id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+SELECT workspace_versions.id, workspace_versions.public_id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.artifact_id, workspace_versions.artifact_kind, workspace_versions.kind, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.entry_count, workspace_versions.state, workspace_versions.source_workspace_lease_id, workspace_versions.ownership_generation, workspace_versions.writer_generation, workspace_versions.created_at, workspace_versions.published_at, workspace_versions.discarded_at
   FROM workspace_versions
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND workspace_id = $4
-   AND state = 'committed'
-   AND ($5::workspace_version_kind IS NULL OR kind = $5::workspace_version_kind)
- ORDER BY created_at DESC, id DESC
+  JOIN workspaces
+    ON workspaces.environment_id = workspace_versions.environment_id
+   AND workspaces.id = workspace_versions.workspace_id
+  JOIN environments ON environments.id = workspaces.environment_id
+ WHERE environments.org_id = $1
+   AND environments.project_id = $2
+   AND workspace_versions.environment_id = $3
+   AND workspace_versions.workspace_id = $4
+   AND workspace_versions.state = 'committed'
+   AND ($5::workspace_version_kind IS NULL OR workspace_versions.kind = $5::workspace_version_kind)
+ ORDER BY workspace_versions.created_at DESC, workspace_versions.id DESC
  LIMIT $6
 `
 
@@ -242,8 +230,6 @@ func (q *Queries) ListWorkspaceVersions(ctx context.Context, arg ListWorkspaceVe
 		if err := rows.Scan(
 			&i.ID,
 			&i.PublicID,
-			&i.OrgID,
-			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.WorkspaceID,
 			&i.ParentVersionID,

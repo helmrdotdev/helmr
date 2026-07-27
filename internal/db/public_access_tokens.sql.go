@@ -15,9 +15,7 @@ const createPublicAccessToken = `-- name: CreatePublicAccessToken :one
 INSERT INTO public_access_tokens (
     id,
     public_id,
-    org_id,
-    project_id,
-    environment_id,
+    token_id,
     token_hash,
     credential_key_id,
     expires_at,
@@ -31,22 +29,18 @@ VALUES (
     $3,
     $4,
     $5,
-    $6,
-    $7,
-    $8::timestamptz,
-    $9::integer,
-    COALESCE($10::jsonb, '{}'::jsonb),
-    COALESCE($11::jsonb, '{}'::jsonb)
+    $6::timestamptz,
+    $7::integer,
+    COALESCE($8::jsonb, '{}'::jsonb),
+    COALESCE($9::jsonb, '{}'::jsonb)
 )
-RETURNING id, public_id, org_id, project_id, environment_id, token_hash, credential_key_id, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
+RETURNING id, public_id, token_id, token_hash, credential_key_id, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
 `
 
 type CreatePublicAccessTokenParams struct {
 	ID              pgtype.UUID        `json:"id"`
 	PublicID        string             `json:"public_id"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	TokenID         pgtype.UUID        `json:"token_id"`
 	TokenHash       []byte             `json:"token_hash"`
 	CredentialKeyID string             `json:"credential_key_id"`
 	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
@@ -59,9 +53,7 @@ func (q *Queries) CreatePublicAccessToken(ctx context.Context, arg CreatePublicA
 	row := q.db.QueryRow(ctx, createPublicAccessToken,
 		arg.ID,
 		arg.PublicID,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
+		arg.TokenID,
 		arg.TokenHash,
 		arg.CredentialKeyID,
 		arg.ExpiresAt,
@@ -73,9 +65,7 @@ func (q *Queries) CreatePublicAccessToken(ctx context.Context, arg CreatePublicA
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
+		&i.TokenID,
 		&i.TokenHash,
 		&i.CredentialKeyID,
 		&i.State,
@@ -89,68 +79,6 @@ func (q *Queries) CreatePublicAccessToken(ctx context.Context, arg CreatePublicA
 		&i.ExpiredAt,
 		&i.MaxUses,
 		&i.UsedCount,
-	)
-	return i, err
-}
-
-const createPublicAccessTokenScope = `-- name: CreatePublicAccessTokenScope :one
-INSERT INTO public_access_token_scopes (
-    id,
-    org_id,
-    project_id,
-    environment_id,
-    public_access_token_id,
-    scope_type,
-    token_id
-)
-SELECT $1,
-       $2,
-       $3,
-       $4,
-       public_access_tokens.id,
-       'token.complete',
-       tokens.id
- FROM public_access_tokens
- JOIN tokens
-   ON tokens.org_id = public_access_tokens.org_id
-  AND tokens.project_id = public_access_tokens.project_id
-  AND tokens.environment_id = public_access_tokens.environment_id
-  AND tokens.id = $5
- WHERE public_access_tokens.org_id = $2
-   AND public_access_tokens.project_id = $3
-   AND public_access_tokens.environment_id = $4
-   AND public_access_tokens.id = $6
-RETURNING id, org_id, project_id, environment_id, public_access_token_id, scope_type, token_id, created_at
-`
-
-type CreatePublicAccessTokenScopeParams struct {
-	ID                  pgtype.UUID `json:"id"`
-	OrgID               pgtype.UUID `json:"org_id"`
-	ProjectID           pgtype.UUID `json:"project_id"`
-	EnvironmentID       pgtype.UUID `json:"environment_id"`
-	TokenID             pgtype.UUID `json:"token_id"`
-	PublicAccessTokenID pgtype.UUID `json:"public_access_token_id"`
-}
-
-func (q *Queries) CreatePublicAccessTokenScope(ctx context.Context, arg CreatePublicAccessTokenScopeParams) (PublicAccessTokenScope, error) {
-	row := q.db.QueryRow(ctx, createPublicAccessTokenScope,
-		arg.ID,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.TokenID,
-		arg.PublicAccessTokenID,
-	)
-	var i PublicAccessTokenScope
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.PublicAccessTokenID,
-		&i.ScopeType,
-		&i.TokenID,
-		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -172,7 +100,7 @@ UPDATE public_access_tokens
   FROM candidates
  WHERE public_access_tokens.id = candidates.id
    AND public_access_tokens.state = 'active'
-RETURNING public_access_tokens.id, public_access_tokens.public_id, public_access_tokens.org_id, public_access_tokens.project_id, public_access_tokens.environment_id, public_access_tokens.token_hash, public_access_tokens.credential_key_id, public_access_tokens.state, public_access_tokens.metadata, public_access_tokens.created_by, public_access_tokens.created_at, public_access_tokens.updated_at, public_access_tokens.last_used_at, public_access_tokens.expires_at, public_access_tokens.revoked_at, public_access_tokens.expired_at, public_access_tokens.max_uses, public_access_tokens.used_count
+RETURNING public_access_tokens.id, public_access_tokens.public_id, public_access_tokens.token_id, public_access_tokens.token_hash, public_access_tokens.credential_key_id, public_access_tokens.state, public_access_tokens.metadata, public_access_tokens.created_by, public_access_tokens.created_at, public_access_tokens.updated_at, public_access_tokens.last_used_at, public_access_tokens.expires_at, public_access_tokens.revoked_at, public_access_tokens.expired_at, public_access_tokens.max_uses, public_access_tokens.used_count
 `
 
 func (q *Queries) ExpireDuePublicAccessTokens(ctx context.Context, limitCount int32) ([]PublicAccessToken, error) {
@@ -187,9 +115,7 @@ func (q *Queries) ExpireDuePublicAccessTokens(ctx context.Context, limitCount in
 		if err := rows.Scan(
 			&i.ID,
 			&i.PublicID,
-			&i.OrgID,
-			&i.ProjectID,
-			&i.EnvironmentID,
+			&i.TokenID,
 			&i.TokenHash,
 			&i.CredentialKeyID,
 			&i.State,
@@ -214,54 +140,10 @@ func (q *Queries) ExpireDuePublicAccessTokens(ctx context.Context, limitCount in
 	return items, nil
 }
 
-const getPublicAccessToken = `-- name: GetPublicAccessToken :one
-SELECT id, public_id, org_id, project_id, environment_id, token_hash, credential_key_id, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
- FROM public_access_tokens
- WHERE org_id = $1
-   AND id = $2
-`
-
-type GetPublicAccessTokenParams struct {
-	OrgID pgtype.UUID `json:"org_id"`
-	ID    pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) GetPublicAccessToken(ctx context.Context, arg GetPublicAccessTokenParams) (PublicAccessToken, error) {
-	row := q.db.QueryRow(ctx, getPublicAccessToken, arg.OrgID, arg.ID)
-	var i PublicAccessToken
-	err := row.Scan(
-		&i.ID,
-		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.TokenHash,
-		&i.CredentialKeyID,
-		&i.State,
-		&i.Metadata,
-		&i.CreatedBy,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.LastUsedAt,
-		&i.ExpiresAt,
-		&i.RevokedAt,
-		&i.ExpiredAt,
-		&i.MaxUses,
-		&i.UsedCount,
-	)
-	return i, err
-}
-
 const getPublicAccessTokenForToken = `-- name: GetPublicAccessTokenForToken :one
-SELECT public_access_tokens.id, public_access_tokens.public_id, public_access_tokens.org_id, public_access_tokens.project_id, public_access_tokens.environment_id, public_access_tokens.token_hash, public_access_tokens.credential_key_id, public_access_tokens.state, public_access_tokens.metadata, public_access_tokens.created_by, public_access_tokens.created_at, public_access_tokens.updated_at, public_access_tokens.last_used_at, public_access_tokens.expires_at, public_access_tokens.revoked_at, public_access_tokens.expired_at, public_access_tokens.max_uses, public_access_tokens.used_count
+SELECT public_access_tokens.id, public_access_tokens.public_id, public_access_tokens.token_id, public_access_tokens.token_hash, public_access_tokens.credential_key_id, public_access_tokens.state, public_access_tokens.metadata, public_access_tokens.created_by, public_access_tokens.created_at, public_access_tokens.updated_at, public_access_tokens.last_used_at, public_access_tokens.expires_at, public_access_tokens.revoked_at, public_access_tokens.expired_at, public_access_tokens.max_uses, public_access_tokens.used_count
   FROM public_access_tokens
-  JOIN public_access_token_scopes
-    ON public_access_token_scopes.public_access_token_id = public_access_tokens.id
-   AND public_access_token_scopes.org_id = public_access_tokens.org_id
-   AND public_access_token_scopes.project_id = public_access_tokens.project_id
-   AND public_access_token_scopes.environment_id = public_access_tokens.environment_id
- WHERE public_access_token_scopes.token_id = $1
-   AND public_access_token_scopes.scope_type = 'token.complete'
+ WHERE public_access_tokens.token_id = $1
 `
 
 func (q *Queries) GetPublicAccessTokenForToken(ctx context.Context, tokenID pgtype.UUID) (PublicAccessToken, error) {
@@ -270,9 +152,7 @@ func (q *Queries) GetPublicAccessTokenForToken(ctx context.Context, tokenID pgty
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
+		&i.TokenID,
 		&i.TokenHash,
 		&i.CredentialKeyID,
 		&i.State,
@@ -290,107 +170,8 @@ func (q *Queries) GetPublicAccessTokenForToken(ctx context.Context, tokenID pgty
 	return i, err
 }
 
-const getPublicAccessTokenTokenScope = `-- name: GetPublicAccessTokenTokenScope :one
-SELECT public_access_token_scopes.id, public_access_token_scopes.org_id, public_access_token_scopes.project_id, public_access_token_scopes.environment_id, public_access_token_scopes.public_access_token_id, public_access_token_scopes.scope_type, public_access_token_scopes.token_id, public_access_token_scopes.created_at
-  FROM public_access_token_scopes
-  JOIN public_access_tokens
-    ON public_access_tokens.org_id = public_access_token_scopes.org_id
-   AND public_access_tokens.project_id = public_access_token_scopes.project_id
-   AND public_access_tokens.environment_id = public_access_token_scopes.environment_id
-   AND public_access_tokens.id = public_access_token_scopes.public_access_token_id
- WHERE public_access_token_scopes.org_id = $1
-   AND public_access_token_scopes.project_id = $2
-   AND public_access_token_scopes.environment_id = $3
-   AND public_access_token_scopes.public_access_token_id = $4
-   AND public_access_token_scopes.scope_type = 'token.complete'
-   AND public_access_token_scopes.token_id = $5
-   AND public_access_tokens.state = 'active'
-   AND public_access_tokens.expires_at > now()
-`
-
-type GetPublicAccessTokenTokenScopeParams struct {
-	OrgID               pgtype.UUID `json:"org_id"`
-	ProjectID           pgtype.UUID `json:"project_id"`
-	EnvironmentID       pgtype.UUID `json:"environment_id"`
-	PublicAccessTokenID pgtype.UUID `json:"public_access_token_id"`
-	TokenID             pgtype.UUID `json:"token_id"`
-}
-
-func (q *Queries) GetPublicAccessTokenTokenScope(ctx context.Context, arg GetPublicAccessTokenTokenScopeParams) (PublicAccessTokenScope, error) {
-	row := q.db.QueryRow(ctx, getPublicAccessTokenTokenScope,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.PublicAccessTokenID,
-		arg.TokenID,
-	)
-	var i PublicAccessTokenScope
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.PublicAccessTokenID,
-		&i.ScopeType,
-		&i.TokenID,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const listPublicAccessTokenScopes = `-- name: ListPublicAccessTokenScopes :many
-SELECT id, org_id, project_id, environment_id, public_access_token_id, scope_type, token_id, created_at
- FROM public_access_token_scopes
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND public_access_token_id = $4
- ORDER BY created_at ASC, id ASC
-`
-
-type ListPublicAccessTokenScopesParams struct {
-	OrgID               pgtype.UUID `json:"org_id"`
-	ProjectID           pgtype.UUID `json:"project_id"`
-	EnvironmentID       pgtype.UUID `json:"environment_id"`
-	PublicAccessTokenID pgtype.UUID `json:"public_access_token_id"`
-}
-
-func (q *Queries) ListPublicAccessTokenScopes(ctx context.Context, arg ListPublicAccessTokenScopesParams) ([]PublicAccessTokenScope, error) {
-	rows, err := q.db.Query(ctx, listPublicAccessTokenScopes,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.PublicAccessTokenID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []PublicAccessTokenScope
-	for rows.Next() {
-		var i PublicAccessTokenScope
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.PublicAccessTokenID,
-			&i.ScopeType,
-			&i.TokenID,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const lockPublicAccessTokenByHash = `-- name: LockPublicAccessTokenByHash :one
-SELECT id, public_id, org_id, project_id, environment_id, token_hash, credential_key_id, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
+SELECT id, public_id, token_id, token_hash, credential_key_id, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
   FROM public_access_tokens
  WHERE token_hash = $1
    AND state = 'active'
@@ -404,9 +185,7 @@ func (q *Queries) LockPublicAccessTokenByHash(ctx context.Context, tokenHash []b
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
+		&i.TokenID,
 		&i.TokenHash,
 		&i.CredentialKeyID,
 		&i.State,
@@ -429,70 +208,20 @@ UPDATE public_access_tokens
    SET used_count = used_count + 1,
        last_used_at = now(),
        updated_at = now()
- WHERE org_id = $1
-   AND id = $2
+ WHERE id = $1
    AND state = 'active'
    AND expires_at > now()
    AND (max_uses IS NULL OR used_count < max_uses)
-RETURNING id, public_id, org_id, project_id, environment_id, token_hash, credential_key_id, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
+RETURNING id, public_id, token_id, token_hash, credential_key_id, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
 `
 
-type MarkPublicAccessTokenUsedParams struct {
-	OrgID pgtype.UUID `json:"org_id"`
-	ID    pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) MarkPublicAccessTokenUsed(ctx context.Context, arg MarkPublicAccessTokenUsedParams) (PublicAccessToken, error) {
-	row := q.db.QueryRow(ctx, markPublicAccessTokenUsed, arg.OrgID, arg.ID)
+func (q *Queries) MarkPublicAccessTokenUsed(ctx context.Context, id pgtype.UUID) (PublicAccessToken, error) {
+	row := q.db.QueryRow(ctx, markPublicAccessTokenUsed, id)
 	var i PublicAccessToken
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.TokenHash,
-		&i.CredentialKeyID,
-		&i.State,
-		&i.Metadata,
-		&i.CreatedBy,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.LastUsedAt,
-		&i.ExpiresAt,
-		&i.RevokedAt,
-		&i.ExpiredAt,
-		&i.MaxUses,
-		&i.UsedCount,
-	)
-	return i, err
-}
-
-const revokePublicAccessToken = `-- name: RevokePublicAccessToken :one
-UPDATE public_access_tokens
-   SET state = 'revoked',
-       revoked_at = now(),
-       updated_at = now()
- WHERE org_id = $1
-   AND id = $2
-   AND state = 'active'
-RETURNING id, public_id, org_id, project_id, environment_id, token_hash, credential_key_id, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
-`
-
-type RevokePublicAccessTokenParams struct {
-	OrgID pgtype.UUID `json:"org_id"`
-	ID    pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) RevokePublicAccessToken(ctx context.Context, arg RevokePublicAccessTokenParams) (PublicAccessToken, error) {
-	row := q.db.QueryRow(ctx, revokePublicAccessToken, arg.OrgID, arg.ID)
-	var i PublicAccessToken
-	err := row.Scan(
-		&i.ID,
-		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
+		&i.TokenID,
 		&i.TokenHash,
 		&i.CredentialKeyID,
 		&i.State,

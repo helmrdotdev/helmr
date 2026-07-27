@@ -379,12 +379,56 @@ ORDER BY secrets.id, workspace_secrets.placement_kind, workspace_secrets.placeme
 LIMIT 65
 FOR UPDATE OF secrets;
 
--- name: CreateSecretResolution :one
+-- name: CreateAttemptSecretResolutions :execrows
 INSERT INTO secret_resolutions (
     id,
     workspace_id,
     run_id,
     attempt_number,
+    placement_kind,
+    placement_target,
+    secret_id,
+    secret_version_id,
+    revocation_generation
+)
+SELECT
+    input_ids.id,
+    sqlc.arg(workspace_id),
+    sqlc.arg(run_id),
+    sqlc.arg(attempt_number),
+    input_kinds.placement_kind,
+    input_targets.placement_target,
+    input_secrets.secret_id,
+    input_versions.secret_version_id,
+    input_generations.revocation_generation
+FROM unnest(sqlc.arg(ids)::uuid[])
+     WITH ORDINALITY AS input_ids(id, position)
+JOIN unnest(sqlc.arg(placement_kinds)::text[])
+     WITH ORDINALITY AS input_kinds(placement_kind, position)
+  ON input_kinds.position = input_ids.position
+JOIN unnest(sqlc.arg(placement_targets)::text[])
+     WITH ORDINALITY AS input_targets(placement_target, position)
+  ON input_targets.position = input_ids.position
+JOIN unnest(sqlc.arg(secret_ids)::uuid[])
+     WITH ORDINALITY AS input_secrets(secret_id, position)
+  ON input_secrets.position = input_ids.position
+JOIN unnest(sqlc.arg(secret_version_ids)::uuid[])
+     WITH ORDINALITY AS input_versions(secret_version_id, position)
+  ON input_versions.position = input_ids.position
+JOIN unnest(sqlc.arg(revocation_generations)::bigint[])
+     WITH ORDINALITY AS input_generations(revocation_generation, position)
+  ON input_generations.position = input_ids.position
+WHERE cardinality(sqlc.arg(ids)::uuid[]) BETWEEN 1 AND 64
+  AND cardinality(sqlc.arg(placement_kinds)::text[]) = cardinality(sqlc.arg(ids)::uuid[])
+  AND cardinality(sqlc.arg(placement_targets)::text[]) = cardinality(sqlc.arg(ids)::uuid[])
+  AND cardinality(sqlc.arg(secret_ids)::uuid[]) = cardinality(sqlc.arg(ids)::uuid[])
+  AND cardinality(sqlc.arg(secret_version_ids)::uuid[]) = cardinality(sqlc.arg(ids)::uuid[])
+  AND cardinality(sqlc.arg(revocation_generations)::bigint[]) = cardinality(sqlc.arg(ids)::uuid[]);
+
+-- name: CreateProcessSecretResolutions :execrows
+INSERT INTO secret_resolutions (
+    id,
+    workspace_id,
     process_id,
     placement_kind,
     placement_target,
@@ -392,16 +436,35 @@ INSERT INTO secret_resolutions (
     secret_version_id,
     revocation_generation
 )
-VALUES (
-    sqlc.arg(id),
+SELECT
+    input_ids.id,
     sqlc.arg(workspace_id),
-    sqlc.narg(run_id),
-    sqlc.narg(attempt_number),
-    sqlc.narg(process_id),
-    sqlc.arg(placement_kind),
-    sqlc.arg(placement_target),
-    sqlc.arg(secret_id),
-    sqlc.arg(secret_version_id),
-    sqlc.arg(revocation_generation)
-)
-RETURNING *;
+    sqlc.arg(process_id),
+    input_kinds.placement_kind,
+    input_targets.placement_target,
+    input_secrets.secret_id,
+    input_versions.secret_version_id,
+    input_generations.revocation_generation
+FROM unnest(sqlc.arg(ids)::uuid[])
+     WITH ORDINALITY AS input_ids(id, position)
+JOIN unnest(sqlc.arg(placement_kinds)::text[])
+     WITH ORDINALITY AS input_kinds(placement_kind, position)
+  ON input_kinds.position = input_ids.position
+JOIN unnest(sqlc.arg(placement_targets)::text[])
+     WITH ORDINALITY AS input_targets(placement_target, position)
+  ON input_targets.position = input_ids.position
+JOIN unnest(sqlc.arg(secret_ids)::uuid[])
+     WITH ORDINALITY AS input_secrets(secret_id, position)
+  ON input_secrets.position = input_ids.position
+JOIN unnest(sqlc.arg(secret_version_ids)::uuid[])
+     WITH ORDINALITY AS input_versions(secret_version_id, position)
+  ON input_versions.position = input_ids.position
+JOIN unnest(sqlc.arg(revocation_generations)::bigint[])
+     WITH ORDINALITY AS input_generations(revocation_generation, position)
+  ON input_generations.position = input_ids.position
+WHERE cardinality(sqlc.arg(ids)::uuid[]) BETWEEN 1 AND 64
+  AND cardinality(sqlc.arg(placement_kinds)::text[]) = cardinality(sqlc.arg(ids)::uuid[])
+  AND cardinality(sqlc.arg(placement_targets)::text[]) = cardinality(sqlc.arg(ids)::uuid[])
+  AND cardinality(sqlc.arg(secret_ids)::uuid[]) = cardinality(sqlc.arg(ids)::uuid[])
+  AND cardinality(sqlc.arg(secret_version_ids)::uuid[]) = cardinality(sqlc.arg(ids)::uuid[])
+  AND cardinality(sqlc.arg(revocation_generations)::bigint[]) = cardinality(sqlc.arg(ids)::uuid[]);

@@ -449,13 +449,15 @@ SELECT workspaces.deployment_definition_id,
        workspace_definitions.manifest,
        workspace_definitions.workspace_architecture
   FROM workspaces
+  JOIN environments AS workspace_environment
+    ON workspace_environment.id = workspaces.environment_id
   JOIN deployment_definitions AS workspace_definitions
     ON workspace_definitions.environment_id = workspaces.environment_id
    AND workspace_definitions.id = workspaces.deployment_definition_id
    AND workspace_definitions.kind = 'workspace'
    AND workspace_definitions.declared_id = workspaces.workspace_declared_id
- WHERE workspaces.org_id = $1
-   AND workspaces.project_id = $2
+ WHERE workspace_environment.org_id = $1
+   AND workspace_environment.project_id = $2
    AND workspaces.environment_id = $3
    AND workspaces.id = $4
    AND workspaces.state = 'active'
@@ -631,7 +633,6 @@ SELECT source_runtime.id,
    AND runtime_substrates.project_id = source_runtime.project_id
    AND runtime_substrates.environment_id = source_runtime.environment_id
    AND runtime_substrates.deployment_definition_id = source_runtime.deployment_definition_id
-   AND runtime_substrates.retired_at IS NULL
  WHERE run_waits.id = $1
    AND run_waits.run_id = $2
    AND run_waits.attempt_number = $3

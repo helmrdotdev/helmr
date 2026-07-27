@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -257,16 +258,10 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			}
 			return fmt.Errorf("reserve Task Workspace: %w", err)
 		}
-		for _, binding := range bindings {
-			if _, err := work.q.CreateSecretResolution(ctx, db.CreateSecretResolutionParams{
-				ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: workspace.ID,
-				RunID: run.ID, AttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
-				PlacementKind: binding.PlacementKind, PlacementTarget: binding.PlacementTarget,
-				SecretID: binding.SecretID, SecretVersionID: binding.CurrentVersionID,
-				RevocationGeneration: binding.RevocationGeneration,
-			}); err != nil {
-				return fmt.Errorf("record Task Run Secret resolution: %w", err)
-			}
+		if err := secret.CreateAttemptResolutions(
+			ctx, work.q, workspace.ID, run.ID, 1, workspaceSecretResolutions(bindings),
+		); err != nil {
+			return fmt.Errorf("record Task Run Secret resolutions: %w", err)
 		}
 		if _, err := work.q.CreateRunAdmissionOutbox(ctx, db.CreateRunAdmissionOutboxParams{
 			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: workspace.ID,

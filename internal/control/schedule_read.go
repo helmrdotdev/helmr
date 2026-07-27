@@ -254,15 +254,14 @@ func scheduleResponse(row db.Schedule, workspaceRefPublicID pgtype.Text) (api.Sc
 	default:
 		return api.ScheduleResponse{}, errors.New("schedule Workspace address is absent")
 	}
-	if len(row.LastError) != 0 {
-		var lastError api.ScheduleError
-		if err := json.Unmarshal(row.LastError, &lastError); err != nil {
-			return api.ScheduleResponse{}, fmt.Errorf("decode Schedule error: %w", err)
-		}
-		if lastError.Code == "" || lastError.Message == "" {
+	if row.LastErrorCode.Valid || row.LastErrorMessage.Valid {
+		if !row.LastErrorCode.Valid || !row.LastErrorMessage.Valid {
 			return api.ScheduleResponse{}, errors.New("schedule error is incomplete")
 		}
-		response.LastError = &lastError
+		response.LastError = &api.ScheduleError{
+			Code:    row.LastErrorCode.String,
+			Message: row.LastErrorMessage.String,
+		}
 	}
 	return response, nil
 }

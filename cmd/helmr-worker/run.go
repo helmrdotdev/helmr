@@ -25,7 +25,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
-	"github.com/helmrdotdev/helmr/internal/substrate"
+	runtimeidentity "github.com/helmrdotdev/helmr/internal/runtime/identity"
+	"github.com/helmrdotdev/helmr/internal/runtime/substrate"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	workerdaemon "github.com/helmrdotdev/helmr/internal/worker"
@@ -167,7 +168,6 @@ func run(log *slog.Logger) error {
 		IPPath:                  cfg.IPPath,
 		NFTPath:                 cfg.NFTPath,
 		NetworkBlockedIPv4CIDRs: cfg.NetworkBlockedIPv4CIDRs,
-		NetworkBlockedIPv6CIDRs: cfg.NetworkBlockedIPv6CIDRs,
 		VCPUCount:               cfg.VMVCPUCount,
 		MemoryMiB:               cfg.VMMemoryMiB,
 		ScratchDiskMiB:          cfg.VMScratchDiskMiB,
@@ -188,7 +188,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("normalize firecracker runtime architecture: %w", err)
 	}
-	runtimeIdentity := compute.RuntimeSelector{
+	runtimeIdentity := runtimeidentity.Selector{
 		Arch:            string(runtimeArchitecture),
 		ABI:             runtimeCapabilities.ABI,
 		KernelDigest:    runtimeCapabilities.KernelDigest,
@@ -196,7 +196,7 @@ func run(log *slog.Logger) error {
 		RootfsDigest:    runtimeCapabilities.RootfsDigest,
 		CNIProfile:      runtimeCapabilities.CNIProfile,
 	}
-	runtimeIdentity.ID, err = compute.RuntimeIdentityDigest(runtimeIdentity)
+	runtimeIdentity.ID, err = runtimeidentity.Digest(runtimeIdentity)
 	if err != nil {
 		return fmt.Errorf("derive normalized firecracker runtime identity: %w", err)
 	}

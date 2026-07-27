@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	runtimeidentity "github.com/helmrdotdev/helmr/internal/runtime/identity"
 )
 
 const (
@@ -66,7 +66,7 @@ func RuntimeDescriptorWire(descriptor RuntimeDescriptor) (api.WorkerRuntimeDescr
 }
 
 func RuntimeArchitectureFromGo(value string) (RuntimeArchitecture, error) {
-	architecture, err := compute.RuntimeArchitectureFromGo(value)
+	architecture, err := runtimeidentity.ArchitectureFromGo(value)
 	return RuntimeArchitecture(architecture), err
 }
 
