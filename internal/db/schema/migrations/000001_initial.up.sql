@@ -1150,11 +1150,11 @@ CREATE TABLE schedules (
         (state = 'errored'
          AND last_error_code IS NOT NULL
          AND last_error_code IN (
-             'task-authority-invalid',
-             'workspace-unavailable',
-             'architecture-incompatible',
-             'generation-invalid',
-             'input-invalid'
+             'task_authority_invalid',
+             'workspace_unavailable',
+             'architecture_incompatible',
+             'generation_invalid',
+             'input_invalid'
          )
          AND last_error_message IS NOT NULL
          AND btrim(last_error_message) <> ''

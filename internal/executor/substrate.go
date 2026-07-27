@@ -4,16 +4,16 @@ import (
 	"context"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/runtime/substrate"
+	"github.com/helmrdotdev/helmr/internal/runtime"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
 type RuntimeSubstrateResolver interface {
-	Resolve(context.Context, string, substrate.Source) (substrate.Result, error)
+	Resolve(context.Context, string, runtime.Source) (runtime.Result, error)
 }
 
 type RuntimeSubstrateDigestLookup interface {
-	LookupDigest(context.Context, string) (substrate.Result, error)
+	LookupDigest(context.Context, string) (runtime.Result, error)
 }
 
 type RuntimeSubstrateRegistrar interface {
@@ -50,7 +50,7 @@ func runtimeSubstrateTopologyFromSource(ctx context.Context, resolver RuntimeSub
 	if resolver == nil {
 		return vm.RuntimeTopology{}, nil
 	}
-	result, err := resolver.Resolve(ctx, imagePath, substrate.Source{
+	result, err := resolver.Resolve(ctx, imagePath, runtime.Source{
 		WorkspaceImageDigest:    source.WorkspaceImage.Digest,
 		WorkspaceImageMediaType: source.WorkspaceImage.MediaType,
 	})

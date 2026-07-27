@@ -31,11 +31,11 @@ var ErrClaimSuperseded = errors.New("schedule claim was superseded")
 type ErrorCode string
 
 const (
-	ErrorTaskAuthorityInvalid     ErrorCode = "task-authority-invalid"
-	ErrorWorkspaceUnavailable     ErrorCode = "workspace-unavailable"
-	ErrorArchitectureIncompatible ErrorCode = "architecture-incompatible"
-	ErrorGenerationInvalid        ErrorCode = "generation-invalid"
-	ErrorInputInvalid             ErrorCode = "input-invalid"
+	ErrorTaskAuthorityInvalid     ErrorCode = "task_authority_invalid"
+	ErrorWorkspaceUnavailable     ErrorCode = "workspace_unavailable"
+	ErrorArchitectureIncompatible ErrorCode = "architecture_incompatible"
+	ErrorGenerationInvalid        ErrorCode = "generation_invalid"
+	ErrorInputInvalid             ErrorCode = "input_invalid"
 )
 
 type AdmissionError struct {

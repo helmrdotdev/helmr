@@ -202,7 +202,7 @@ func TestWorkspaceResetMarksAmbiguousPreparedStateForRecovery(t *testing.T) {
 	}
 	next := proto.Clone(authority).(*workspacev0.WorkspaceRunAuthority)
 	if _, err := registry.admitProgram(entry, next, time.Now()); err == nil {
-		t.Fatal("Program was admitted to a recovery-required Mount")
+		t.Fatal("Program was admitted to a recovery_required Mount")
 	}
 }
 

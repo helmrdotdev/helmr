@@ -12,7 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/runtime/substrate"
+	"github.com/helmrdotdev/helmr/internal/runtime"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -33,7 +33,7 @@ func activateWorkspaceWorker(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		       certification_profile = 'test', certification_fingerprint = 'test-fingerprint',
 		       certified_at = now(), activated_at = now()
 		 WHERE id = $1
-	`, workerID, substrate.Format, substrate.BuilderABI, substrate.LayoutABI)
+	`, workerID, runtime.Format, runtime.BuilderABI, runtime.LayoutABI)
 }
 
 func TestWorkerEnrollmentConsumesNonceAndRotatesCredentialAtomically(t *testing.T) {

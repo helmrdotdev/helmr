@@ -25,8 +25,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
+	"github.com/helmrdotdev/helmr/internal/runtime"
 	runtimeidentity "github.com/helmrdotdev/helmr/internal/runtime/identity"
-	"github.com/helmrdotdev/helmr/internal/runtime/substrate"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	workerdaemon "github.com/helmrdotdev/helmr/internal/worker"
@@ -433,9 +433,9 @@ func run(log *slog.Logger) error {
 		},
 	}
 	if supportsRun {
-		workerCapabilities.SubstrateFormat = substrate.Format
-		workerCapabilities.SubstrateBuilderABI = substrate.BuilderABI
-		workerCapabilities.SubstrateLayoutABI = substrate.LayoutABI
+		workerCapabilities.SubstrateFormat = runtime.Format
+		workerCapabilities.SubstrateBuilderABI = runtime.BuilderABI
+		workerCapabilities.SubstrateLayoutABI = runtime.LayoutABI
 	}
 	hostCapacity, err := capacity.New(capacity.Vector{
 		CPUMillis:         workerCapabilities.MaxVCPUs * 1000,
@@ -448,7 +448,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker capacity: %w", err)
 	}
-	substrateResolver := &substrate.Resolver{
+	substrateResolver := &runtime.Resolver{
 		CacheDir:      substrateCacheDir,
 		MkfsExt4Path:  "mkfs.ext4",
 		MaxCacheBytes: substrateCacheMaxBytes,

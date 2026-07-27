@@ -66,8 +66,7 @@ func (entry *workspaceMountEntry) acquireActorTurnCommit(
 	return release, expiresAt, nil
 }
 
-// advanceActorTurnWorkspaceFrontierLocked advances the mounted and installed
-// authority frontier while finalizationMu is held by the turn-commit barrier.
+// finalizationMu must be held by the turn-commit barrier.
 func (entry *workspaceMountEntry) advanceActorTurnWorkspaceFrontierLocked(expected, next string) error {
 	if strings.TrimSpace(expected) == "" || strings.TrimSpace(next) == "" {
 		return errors.New("Actor turn commit Workspace frontier is incomplete")

@@ -6,11 +6,11 @@ import type { RequestOptions } from "./request"
 
 export interface ScheduleError {
   readonly code:
-    | "task-authority-invalid"
-    | "workspace-unavailable"
-    | "architecture-incompatible"
-    | "generation-invalid"
-    | "input-invalid"
+    | "task_authority_invalid"
+    | "workspace_unavailable"
+    | "architecture_incompatible"
+    | "generation_invalid"
+    | "input_invalid"
   readonly message: string
 }
 
@@ -148,11 +148,11 @@ function parseScheduleError(value: unknown): ScheduleError {
   const input = scheduleObject(value, "Schedule error")
   const code = requiredString(input, "code", "Schedule error")
   if (
-    code !== "task-authority-invalid" &&
-    code !== "workspace-unavailable" &&
-    code !== "architecture-incompatible" &&
-    code !== "generation-invalid" &&
-    code !== "input-invalid"
+    code !== "task_authority_invalid" &&
+    code !== "workspace_unavailable" &&
+    code !== "architecture_incompatible" &&
+    code !== "generation_invalid" &&
+    code !== "input_invalid"
   ) {
     throw new Error("Schedule error.code is invalid")
   }

@@ -1,4 +1,3 @@
-// Package outbox contains delivery mechanics shared by domain-specific outbox workers.
 package outbox
 
 import (

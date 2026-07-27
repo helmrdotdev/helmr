@@ -9,7 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/runtime/substrate"
+	"github.com/helmrdotdev/helmr/internal/runtime"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -45,7 +45,7 @@ func TestFleetRunAttestationCoverageTracksCurrentLaunchAMI(t *testing.T) {
 		) VALUES ($1, $2, $3, 'sha256:test-attestation', 'disabled', true, 'fleet-runtime',
 		          $4, $5, $6, now(), now())
 	`, oldWorkerID, "i-"+oldWorkerID.String(), dbtest.DefaultWorkerGroupID,
-		substrate.Format, substrate.BuilderABI, substrate.LayoutABI)
+		runtime.Format, runtime.BuilderABI, runtime.LayoutABI)
 	count, err = q.CountUncertifiedRunLaunchAttestations(ctx, dbtest.DefaultWorkerGroupID)
 	if err != nil || count != 0 {
 		t.Fatalf("certified coverage gaps = %d error=%v, want 0", count, err)
@@ -88,7 +88,7 @@ func TestFleetRunAttestationCoverageTracksCurrentLaunchAMI(t *testing.T) {
 		) VALUES ($1, $2, $3, 'sha256:new-ami', 'disabled', true, 'fleet-runtime',
 		          $4, $5, $6, now(), now())
 	`, runWorkerID, "i-"+runWorkerID.String(), dbtest.DefaultWorkerGroupID,
-		substrate.Format, substrate.BuilderABI, substrate.LayoutABI)
+		runtime.Format, runtime.BuilderABI, runtime.LayoutABI)
 	count, err = q.CountUncertifiedRunLaunchAttestations(ctx, dbtest.DefaultWorkerGroupID)
 	if err != nil || count != 0 {
 		t.Fatalf("launch AMI coverage gaps = %d error=%v, want 0", count, err)

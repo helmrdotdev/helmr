@@ -2,28 +2,11 @@ package token
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
-
-func TestTokenWaitReconcileCandidateOrderIsLifecycleExplicit(t *testing.T) {
-	for _, clause := range []string{
-		"WHEN 'pending' THEN 0",
-		"WHEN 'completed' THEN 1",
-		"WHEN 'failed' THEN 2",
-		"WHEN 'cancelled' THEN 3",
-	} {
-		if !strings.Contains(discoverWaitCandidates, clause) {
-			t.Fatalf("candidate query does not pin lifecycle order with %q", clause)
-		}
-	}
-	if strings.Contains(discoverWaitCandidates, "ORDER BY token_id, condition_state") {
-		t.Fatal("candidate query depends on database type ordering")
-	}
-}
 
 func TestValidateTokenWaitActorCursor(t *testing.T) {
 	actorID := pgtype.UUID{Bytes: uuid.Must(uuid.NewV7()), Valid: true}

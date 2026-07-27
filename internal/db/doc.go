@@ -1,3 +1,2 @@
-// Package db contains schema-derived persistence types and queries.
-// Workflow decisions belong to their domain packages.
+// Package db exposes schema-derived persistence; workflow decisions belong to domain packages.
 package db

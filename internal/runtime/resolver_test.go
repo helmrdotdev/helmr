@@ -1,4 +1,4 @@
-package substrate
+package runtime
 
 import (
 	"archive/tar"
