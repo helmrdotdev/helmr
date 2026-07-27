@@ -8,10 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -486,28 +484,4 @@ func (fixture runLeaseClaimFixture) convertToActor(
 		runtest.RunLease{LeaseID: work.leaseID, RunID: work.runID},
 		retryPolicy,
 	)
-}
-
-func mustRunLeaseExec(t *testing.T, ctx context.Context, db interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}, query string, args ...any) {
-	t.Helper()
-	runtest.MustExec(t, ctx, db, query, args...)
-}
-
-func runLeasePublicID(t *testing.T, prefix publicid.Prefix) string {
-	t.Helper()
-	return runtest.PublicID(t, prefix)
-}
-
-func runLeaseTestDigest(seed string) string {
-	return runtest.Digest(seed)
-}
-
-func runLeaseTestHash(seed string) []byte {
-	return runtest.Hash(seed)
-}
-
-func shortRunLeaseID(id uuid.UUID) string {
-	return runtest.ShortID(id)
 }

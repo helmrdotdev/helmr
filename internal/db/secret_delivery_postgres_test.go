@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -29,14 +30,14 @@ func TestAttemptSecretDeliveryLocksCompleteWorkspacePlacementSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	mustRunLeaseExec(t, ctx, tx, `
+	runtest.MustExec(t, ctx, tx, `
 		INSERT INTO secrets (
 			id, environment_id, name, current_version_id, revocation_generation
 		)
 		VALUES ($1, $2, 'delivery-secret', $3, 4)
 	`, secretID, fixture.environmentID, currentVersionID)
 	for version, versionID := range []uuid.UUID{oldVersionID, currentVersionID} {
-		mustRunLeaseExec(t, ctx, tx, `
+		runtest.MustExec(t, ctx, tx, `
 			INSERT INTO secret_versions (
 				id, secret_id, version, key_id, nonce, ciphertext,
 				value_authenticator, authenticator_key_version
@@ -50,7 +51,7 @@ func TestAttemptSecretDeliveryLocksCompleteWorkspacePlacementSet(t *testing.T) {
 			)
 		`, versionID, secretID, version+1)
 	}
-	mustRunLeaseExec(t, ctx, tx, `
+	runtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspace_secrets (
 			workspace_id, environment_id, placement_kind, placement_target, secret_id
 		)
@@ -58,7 +59,7 @@ func TestAttemptSecretDeliveryLocksCompleteWorkspacePlacementSet(t *testing.T) {
 			($1, $2, 'env', 'TOKEN', $3),
 			($1, $2, 'file', '/run/helmr/token', $3)
 	`, workspaceID, fixture.environmentID, secretID)
-	mustRunLeaseExec(t, ctx, tx, `
+	runtest.MustExec(t, ctx, tx, `
 		INSERT INTO secret_resolutions (
 			id, workspace_id, run_id, attempt_number, placement_kind, placement_target,
 			secret_id, secret_version_id, revocation_generation
@@ -89,7 +90,7 @@ func TestAttemptSecretDeliveryLocksCompleteWorkspacePlacementSet(t *testing.T) {
 		t.Fatalf("missing-resolution row = %+v", rows[1])
 	}
 
-	mustRunLeaseExec(t, ctx, tx, `
+	runtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspace_secrets (
 			workspace_id, environment_id, placement_kind, placement_target, secret_id
 		)

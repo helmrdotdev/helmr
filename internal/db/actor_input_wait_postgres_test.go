@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -40,7 +41,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 					ID: pgvalue.UUID(waitID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
 					IdleTimeoutMs: pgtype.Int8{Int64: 30_000, Valid: true}, ActorID: pgvalue.UUID(actorID),
 					AfterInputSequence:             pgtype.Int8{Int64: 2, Valid: true},
-					RegistrationRequestFingerprint: pgvalue.Text(runLeaseTestDigest("actor-input-wait")), AttemptNumber: 1,
+					RegistrationRequestFingerprint: pgvalue.Text(runtest.Digest("actor-input-wait")), AttemptNumber: 1,
 					ActorSpeculativeInputSequence: pgtype.Int8{Int64: 2, Valid: true},
 					CurrentRunLeaseID:             pgvalue.UUID(work.leaseID),
 					CheckpointDueAt:               pgvalue.Timestamptz(time.Now().Add(30 * time.Second)),
@@ -148,12 +149,12 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 
 	claimID := uuid.Must(uuid.NewV7())
 	fingerprint := bytes.Repeat([]byte{7}, 32)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	runtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO idempotency_claims (
 			id, environment_id, operation, scope_hash, key_hash,
 			hash_key_version, generation, request_fingerprint, accepted_at, expires_at
 		) VALUES ($1, $2, 'actor.input.send', $3, $4, 1, 1, $5, now(), now() + interval '30 days')
-	`, claimID, fixture.environmentID, runLeaseTestHash("actor-input-scope"), runLeaseTestHash("actor-input-key"), fingerprint)
+	`, claimID, fixture.environmentID, runtest.Hash("actor-input-scope"), runtest.Hash("actor-input-key"), fingerprint)
 	recordID := uuid.Must(uuid.NewV7())
 	first, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
@@ -176,7 +177,7 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 	if err := json.Unmarshal(claim.Receipt, &receipt); err != nil || receipt["recordId"] != recordID.String() || receipt["sequence"] != float64(first.Sequence) {
 		t.Fatalf("claim receipt = %s, %v", claim.Receipt, err)
 	}
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	runtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE actors SET manual_run_cancelled = true WHERE id = $1
 	`, actorID)
 	replay, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
@@ -222,13 +223,13 @@ func TestActorInputRunSourceTransactionRollbackLeavesNoResidue(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	mustRunLeaseExec(t, ctx, tx, `
+	runtest.MustExec(t, ctx, tx, `
 		INSERT INTO idempotency_claims (
 			id, environment_id, operation, scope_hash, key_hash,
 			hash_key_version, generation, request_fingerprint, accepted_at, expires_at
 		) VALUES ($1, $2, 'actor.input.send', $3, $4, 1, 1, $5, now(), now() + interval '30 days')
-	`, claimID, fixture.environmentID, runLeaseTestHash("run-source-rollback-scope"),
-		runLeaseTestHash("run-source-rollback-key"), fingerprint)
+	`, claimID, fixture.environmentID, runtest.Hash("run-source-rollback-scope"),
+		runtest.Hash("run-source-rollback-key"), fingerprint)
 	queries := New(tx)
 	appended, err := queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
@@ -313,7 +314,7 @@ func TestActorInputSendSourceRequiresExactReceiptWithoutGrantingLiveness(t *test
 
 	previous := params
 	params.ExpiresAt = pgvalue.Timestamptz(params.ExpiresAt.Time.Add(time.Minute))
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	runtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_leases
 		   SET state = 'cancelled', expires_at = $2, terminal_at = now(),
 		       terminal_reason_code = 'test_stale_actor_input_source'
@@ -342,18 +343,18 @@ func TestActorInputSequenceSafeIntegerBoundaryPreservesCompletedReplay(t *testin
 
 	const maxSafeSequence int64 = 9_007_199_254_740_991
 	const exhaustedSentinel int64 = maxSafeSequence + 1
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	runtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE actors SET next_input_sequence = $2 WHERE id = $1
 	`, actorID, maxSafeSequence)
 
 	claimID := uuid.Must(uuid.NewV7())
 	fingerprint := bytes.Repeat([]byte{9}, 32)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	runtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO idempotency_claims (
 			id, environment_id, operation, scope_hash, key_hash,
 			hash_key_version, generation, request_fingerprint, accepted_at, expires_at
 		) VALUES ($1, $2, 'actor.input.send', $3, $4, 1, 1, $5, now(), now() + interval '30 days')
-	`, claimID, fixture.environmentID, runLeaseTestHash("actor-input-max-scope"), runLeaseTestHash("actor-input-max-key"), fingerprint)
+	`, claimID, fixture.environmentID, runtest.Hash("actor-input-max-scope"), runtest.Hash("actor-input-max-key"), fingerprint)
 	recordID := uuid.Must(uuid.NewV7())
 	first, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID:              pgvalue.UUID(fixture.environmentID),
@@ -434,7 +435,7 @@ func TestActorInputWaitTimeoutReleasesHotRun(t *testing.T) {
 		TimeoutAt:     pgvalue.Timestamptz(time.Now().Add(-time.Millisecond)),
 		IdleTimeoutMs: pgtype.Int8{Int64: 30_000, Valid: true}, ActorID: pgvalue.UUID(actorID),
 		AfterInputSequence:             pgtype.Int8{Int64: 2, Valid: true},
-		RegistrationRequestFingerprint: pgvalue.Text(runLeaseTestDigest("actor-input-timeout")), AttemptNumber: 1,
+		RegistrationRequestFingerprint: pgvalue.Text(runtest.Digest("actor-input-timeout")), AttemptNumber: 1,
 		ActorSpeculativeInputSequence: pgtype.Int8{Int64: 2, Valid: true}, CurrentRunLeaseID: pgvalue.UUID(work.leaseID),
 		CheckpointDueAt: pgvalue.Timestamptz(time.Now().Add(30 * time.Second)),
 		ResumeAttachID:  pgvalue.UUID(uuid.Must(uuid.NewV7())), Metadata: []byte(`{}`), Tags: []string{},
@@ -474,23 +475,23 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 	if err := fixture.pool.QueryRow(ctx, `SELECT workspace_id FROM actors WHERE id = $1`, actorID).Scan(&workspaceID); err != nil {
 		t.Fatal(err)
 	}
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	runtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE workspace_leases
 		   SET state = 'released', released_at = now(), terminal_at = now()
 		 WHERE owner_run_lease_id = $1
 	`, work.leaseID)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	runtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_leases
 		   SET state = 'cancelled', terminal_at = now(), terminal_reason_code = 'test_idle'
 		 WHERE id = $1
 	`, work.leaseID)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	runtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE runs
 		   SET status = 'failed', current_run_lease_id = NULL,
 		       terminal_at = now(), terminal_reason_code = 'test_idle'
 		 WHERE id = $1
 	`, work.runID)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	runtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE actors
 		   SET current_run_id = NULL, committed_input_sequence = 2,
 		       manual_run_cancelled = true
@@ -510,7 +511,7 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 	if manualRunCancelled {
 		t.Fatal("new input did not clear the manual Run cancellation hold")
 	}
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	runtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE actors
 		   SET state = 'closing', close_sequence = 3
 		 WHERE id = $1

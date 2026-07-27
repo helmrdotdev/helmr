@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -30,7 +31,7 @@ func TestTimerWaitRegistrationAndHotCompletion(t *testing.T) {
 		EnvironmentID:                  pgvalue.UUID(fixture.environmentID),
 		DueAt:                          pgvalue.Timestamptz(dueAt),
 		IdleTimeoutMs:                  pgtype.Int8{Int64: 30_000, Valid: true},
-		RegistrationRequestFingerprint: pgvalue.Text(runLeaseTestDigest("timer-wait")),
+		RegistrationRequestFingerprint: pgvalue.Text(runtest.Digest("timer-wait")),
 		AttemptNumber:                  1,
 		CurrentRunLeaseID:              pgvalue.UUID(work.leaseID),
 		CheckpointDueAt:                pgvalue.Timestamptz(time.Now().Add(time.Second)),
