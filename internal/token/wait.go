@@ -122,13 +122,11 @@ func (r *WaitReconciler) RegisterWait(
 		return WaitRegistrationResult{}, fmt.Errorf("begin Token Wait registration: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	if _, err := tx.Exec(ctx, `
-SELECT pg_advisory_xact_lock(
-    hashtextextended(concat_ws(':', 'token_wait.register', $1::uuid::text), 0)
-)`, request.WaitID); err != nil {
+	q := db.New(tx)
+	if err := q.LockTokenWaitRegistration(ctx, pgvalue.UUID(request.WaitID)); err != nil {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("serialize Token Wait registration", err)
 	}
-	if replay, found, err := replayTokenWaitRegistration(ctx, tx, request, metadata, tags); err != nil {
+	if replay, found, err := replayTokenWaitRegistration(ctx, q, request, metadata, tags); err != nil {
 		return WaitRegistrationResult{}, err
 	} else if found {
 		if err := tx.Commit(ctx); err != nil {
@@ -137,64 +135,66 @@ SELECT pg_advisory_xact_lock(
 		return replay, nil
 	}
 
-	locator, err := loadTokenWaitRegistrationLocator(ctx, tx, request.EnvironmentID, request.RunID)
+	locator, err := q.GetTokenWaitRegistrationLocator(
+		ctx,
+		db.GetTokenWaitRegistrationLocatorParams{
+			EnvironmentID: pgvalue.UUID(request.EnvironmentID),
+			RunID:         pgvalue.UUID(request.RunID),
+		},
+	)
 	if err != nil {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("load Token Wait registration locator", err)
 	}
 	var lockedActorCurrentRunID pgtype.UUID
 	var lockedActorCommittedInputSequence, lockedActorNextInputSequence int64
-	if locator.ownerActorID.Valid {
-		var actorState string
-		if err := tx.QueryRow(ctx, `
-SELECT state, current_run_id, committed_input_sequence, next_input_sequence
-  FROM actors
- WHERE id = $1
- FOR UPDATE`, locator.ownerActorID).Scan(
-			&actorState, &lockedActorCurrentRunID,
-			&lockedActorCommittedInputSequence, &lockedActorNextInputSequence,
-		); err != nil {
+	if locator.OwnerActorID.Valid {
+		actor, err := q.LockTokenWaitActor(ctx, locator.OwnerActorID)
+		if err != nil {
 			return WaitRegistrationResult{}, tokenWaitAuthorityError("lock owning Actor", err)
 		}
-		if actorState != "open" && actorState != "closing" {
+		if actor.State != "open" && actor.State != "closing" {
 			return WaitRegistrationResult{}, tokenWaitAuthorityError("owning Actor is not active", nil)
 		}
+		lockedActorCurrentRunID = actor.CurrentRunID
+		lockedActorCommittedInputSequence = actor.CommittedInputSequence
+		lockedActorNextInputSequence = actor.NextInputSequence
 	}
 
 	lineage, run, err := lockTokenWaitLineage(ctx, tx, request.EnvironmentID, request.RunID)
 	if err != nil {
 		return WaitRegistrationResult{}, err
 	}
-	if run.workspaceID != locator.workspaceID || run.status != db.RunStatusRunning ||
+	if pgvalue.UUID(run.workspaceID) != locator.WorkspaceID || run.status != db.RunStatusRunning ||
 		run.stateVersion != request.ExpectedRunStateVersion || run.currentAttempt != request.AttemptNumber ||
 		!run.currentRunLeaseID.Valid || uuid.UUID(run.currentRunLeaseID.Bytes) != request.CurrentRunLeaseID ||
 		!run.activeStartedAt.Valid {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("Run registration fence does not match", nil)
 	}
-	if err := validateAndLockTokenWaitWorkspace(ctx, tx, request.EnvironmentID, locator, lineage, lockedActorCurrentRunID); err != nil {
-		return WaitRegistrationResult{}, err
-	}
-	var attemptEntrypointKind string
-	var attemptActorStartInputSequence pgtype.Int8
-	var attemptTerminalAt pgtype.Timestamptz
-	if err := tx.QueryRow(ctx, `
-SELECT entrypoint_kind, actor_start_input_sequence, terminal_at
-  FROM run_attempts
- WHERE run_id = $1
-   AND number = $2
-   AND workspace_id = $3
- FOR UPDATE`, request.RunID, request.AttemptNumber, locator.workspaceID).Scan(
-		&attemptEntrypointKind, &attemptActorStartInputSequence, &attemptTerminalAt,
-	); err != nil || attemptTerminalAt.Valid {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current Run Attempt", err)
-	}
-	if err := validateTokenWaitActorCursor(
-		request.ActorSpeculativeInputSequence, locator.ownerActorID, lockedActorCurrentRunID,
-		lockedActorCommittedInputSequence, lockedActorNextInputSequence,
-		run, attemptEntrypointKind, attemptActorStartInputSequence,
+	if err := validateAndLockTokenWaitWorkspace(
+		ctx,
+		q,
+		request.EnvironmentID,
+		locator,
+		lineage,
+		lockedActorCurrentRunID,
 	); err != nil {
 		return WaitRegistrationResult{}, err
 	}
-	q := db.New(tx)
+	attempt, err := q.LockTokenWaitAttempt(ctx, db.LockTokenWaitAttemptParams{
+		RunID:         pgvalue.UUID(request.RunID),
+		AttemptNumber: request.AttemptNumber,
+		WorkspaceID:   locator.WorkspaceID,
+	})
+	if err != nil || attempt.TerminalAt.Valid {
+		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current Run Attempt", err)
+	}
+	if err := validateTokenWaitActorCursor(
+		request.ActorSpeculativeInputSequence, locator.OwnerActorID, lockedActorCurrentRunID,
+		lockedActorCommittedInputSequence, lockedActorNextInputSequence,
+		run, attempt.EntrypointKind, attempt.ActorStartInputSequence,
+	); err != nil {
+		return WaitRegistrationResult{}, err
+	}
 	workerGroup, err := q.LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{
 		ID: request.WorkerGroupID, RegionID: request.RegionID,
 	})
@@ -225,52 +225,54 @@ SELECT entrypoint_kind, actor_start_input_sequence, terminal_at
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock bound worker network slot", err)
 	}
 	runtime, err := q.LockRunLeaseClaimRuntime(ctx, db.LockRunLeaseClaimRuntimeParams{
-		ID: pgtype.UUID{Bytes: request.RuntimeInstanceID, Valid: true}, OrgID: locator.orgID,
-		ProjectID: locator.projectID, EnvironmentID: pgtype.UUID{Bytes: request.EnvironmentID, Valid: true},
+		ID: pgvalue.UUID(request.RuntimeInstanceID), OrgID: locator.OrgID,
+		ProjectID: locator.ProjectID, EnvironmentID: pgvalue.UUID(request.EnvironmentID),
 		RegionID: request.RegionID, WorkerGroupID: request.WorkerGroupID,
 		WorkerInstanceID: pgtype.UUID{Bytes: request.WorkerInstanceID, Valid: true}, WorkerEpoch: request.WorkerEpoch,
-		WorkspaceID: pgtype.UUID{Bytes: locator.workspaceID, Valid: true},
+		WorkspaceID: locator.WorkspaceID,
 	})
 	if err != nil || runtime.RuntimeIdentityID != request.RuntimeIdentityID ||
 		runtime.DesiredState != db.RuntimeDesiredStateReady || runtime.ObservedState != db.RuntimeObservedStateReady ||
 		runtime.ObservedDesiredVersion != runtime.DesiredVersion || runtime.TerminalAt.Valid {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock ready runtime", err)
 	}
-	var leaseState db.RunLeaseState
-	if err := tx.QueryRow(ctx, `
-SELECT state
-  FROM run_leases
- WHERE id = $1 AND run_id = $2 AND attempt_number = $3 AND workspace_id = $4
-   AND lease_sequence = $5 AND worker_group_id = $6 AND worker_instance_id = $7
-   AND worker_epoch = $8 AND runtime_instance_id = $9 AND network_slot_id = $10
-   AND network_slot_generation = $11 AND runtime_identity_id = $12
-   AND worker_protocol_version = $13 AND region_id = $14
-   AND state = 'running' AND expires_at > transaction_timestamp()
- FOR UPDATE`, request.CurrentRunLeaseID, request.RunID, request.AttemptNumber, locator.workspaceID,
-		request.LeaseSequence, request.WorkerGroupID, request.WorkerInstanceID, request.WorkerEpoch,
-		request.RuntimeInstanceID, request.NetworkSlotID, request.NetworkSlotGeneration,
-		request.RuntimeIdentityID, request.WorkerProtocolVersion, request.RegionID,
-	).Scan(&leaseState); err != nil || leaseState != db.RunLeaseStateRunning {
+	leaseState, err := q.LockTokenWaitRunLease(ctx, db.LockTokenWaitRunLeaseParams{
+		ID:                    pgvalue.UUID(request.CurrentRunLeaseID),
+		RunID:                 pgvalue.UUID(request.RunID),
+		AttemptNumber:         request.AttemptNumber,
+		WorkspaceID:           locator.WorkspaceID,
+		LeaseSequence:         request.LeaseSequence,
+		WorkerGroupID:         request.WorkerGroupID,
+		WorkerInstanceID:      pgvalue.UUID(request.WorkerInstanceID),
+		WorkerEpoch:           request.WorkerEpoch,
+		RuntimeInstanceID:     pgvalue.UUID(request.RuntimeInstanceID),
+		NetworkSlotID:         pgvalue.UUID(request.NetworkSlotID),
+		NetworkSlotGeneration: request.NetworkSlotGeneration,
+		RuntimeIdentityID:     request.RuntimeIdentityID,
+		WorkerProtocolVersion: request.WorkerProtocolVersion,
+		RegionID:              request.RegionID,
+	})
+	if err != nil || db.RunLeaseState(leaseState) != db.RunLeaseStateRunning {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current unexpired Run Lease", err)
 	}
 	mount, err := q.LockRunLeaseClaimMount(ctx, db.LockRunLeaseClaimMountParams{
-		ID: pgtype.UUID{Bytes: request.WorkspaceMountID, Valid: true}, OrgID: locator.orgID,
-		ProjectID: locator.projectID, EnvironmentID: pgtype.UUID{Bytes: request.EnvironmentID, Valid: true},
+		ID: pgvalue.UUID(request.WorkspaceMountID), OrgID: locator.OrgID,
+		ProjectID: locator.ProjectID, EnvironmentID: pgvalue.UUID(request.EnvironmentID),
 		RegionID: request.RegionID, WorkerGroupID: request.WorkerGroupID,
 		WorkerInstanceID: pgtype.UUID{Bytes: request.WorkerInstanceID, Valid: true}, WorkerEpoch: request.WorkerEpoch,
 		RuntimeInstanceID: pgtype.UUID{Bytes: request.RuntimeInstanceID, Valid: true},
-		WorkspaceID:       pgtype.UUID{Bytes: locator.workspaceID, Valid: true},
+		WorkspaceID:       locator.WorkspaceID,
 	})
 	if err != nil || mount.State != db.WorkspaceMountStateMounted || mount.FencingGeneration != request.MountFencingGeneration {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock mounted Workspace", err)
 	}
 	workspaceLease, err := q.LockRunLeaseClaimWorkspaceLease(ctx, db.LockRunLeaseClaimWorkspaceLeaseParams{
-		ID: pgtype.UUID{Bytes: request.WorkspaceLeaseID, Valid: true}, OrgID: locator.orgID,
-		ProjectID: locator.projectID, EnvironmentID: pgtype.UUID{Bytes: request.EnvironmentID, Valid: true},
+		ID: pgvalue.UUID(request.WorkspaceLeaseID), OrgID: locator.OrgID,
+		ProjectID: locator.ProjectID, EnvironmentID: pgvalue.UUID(request.EnvironmentID),
 		RegionID: request.RegionID, WorkerGroupID: request.WorkerGroupID,
 		WorkerInstanceID: pgtype.UUID{Bytes: request.WorkerInstanceID, Valid: true}, WorkerEpoch: request.WorkerEpoch,
 		RuntimeInstanceID: pgtype.UUID{Bytes: request.RuntimeInstanceID, Valid: true},
-		WorkspaceID:       pgtype.UUID{Bytes: locator.workspaceID, Valid: true},
+		WorkspaceID:       locator.WorkspaceID,
 		WorkspaceMountID:  pgtype.UUID{Bytes: request.WorkspaceMountID, Valid: true},
 	})
 	if err != nil || !workspaceLease.OwnerRunLeaseID.Valid ||
@@ -284,68 +286,50 @@ SELECT state
 		return WaitRegistrationResult{}, err
 	}
 
-	var waitingVersion int64
-	if err := tx.QueryRow(ctx, `
-UPDATE runs
-   SET status = 'waiting',
-       state_version = state_version + 1,
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND status = 'running'
-   AND state_version = $2
-   AND current_attempt_number = $3
-   AND current_run_lease_id = $4
-   AND active_started_at IS NOT NULL
-   AND transaction_timestamp() < active_started_at
-         + ((max_active_duration_ms - active_elapsed_ms) * interval '1 millisecond')
-RETURNING state_version`, request.RunID, request.ExpectedRunStateVersion, request.AttemptNumber, request.CurrentRunLeaseID).Scan(&waitingVersion); err != nil {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("move Run to waiting", err)
-	}
-
-	command, err := tx.Exec(ctx, `
-INSERT INTO run_waits (
-    id, environment_id, run_id, workspace_id, kind, timeout_at,
-    idle_timeout_ms, token_id, token_registration_run_state_version,
-    registration_request_fingerprint, expected_run_state_version, attempt_number,
-    actor_speculative_input_sequence, current_run_lease_id,
-    checkpoint_due_at, resume_attach_id, metadata, tags
-) VALUES (
-    $1, $2, $3, $4, 'token', $5, $6, $7, $8, $9, $10, $11, $12, $13,
-    $14, $15, $16::jsonb, $17
-)`,
-		request.WaitID, request.EnvironmentID, request.RunID, locator.workspaceID,
-		request.TimeoutAt, request.IdleTimeoutMS, request.TokenID,
-		request.ExpectedRunStateVersion, request.RequestFingerprint, waitingVersion, request.AttemptNumber,
-		request.ActorSpeculativeInputSequence, request.CurrentRunLeaseID, request.CheckpointDueAt, request.ResumeAttachID,
-		metadata, tags,
-	)
-	if err != nil || command.RowsAffected() != 1 {
+	registered, err := q.RegisterTokenWait(ctx, db.RegisterTokenWaitParams{
+		WaitID:                        pgvalue.UUID(request.WaitID),
+		EnvironmentID:                 pgvalue.UUID(request.EnvironmentID),
+		TimeoutAt:                     request.TimeoutAt,
+		IdleTimeoutMs:                 request.IdleTimeoutMS,
+		TokenID:                       pgvalue.UUID(request.TokenID),
+		ExpectedRunningStateVersion:   request.ExpectedRunStateVersion,
+		RequestFingerprint:            request.RequestFingerprint,
+		AttemptNumber:                 request.AttemptNumber,
+		ActorSpeculativeInputSequence: request.ActorSpeculativeInputSequence,
+		CurrentRunLeaseID:             pgvalue.UUID(request.CurrentRunLeaseID),
+		CheckpointDueAt:               request.CheckpointDueAt,
+		ResumeAttachID:                pgvalue.UUID(request.ResumeAttachID),
+		Metadata:                      metadata,
+		Tags:                          tags,
+		RunID:                         pgvalue.UUID(request.RunID),
+	})
+	if err != nil {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("insert Token Wait", err)
 	}
+	waitingVersion := registered.ExpectedRunStateVersion
 
-	var tokenState db.TokenState
-	var completionData []byte
-	if err := tx.QueryRow(ctx, `
-SELECT state, result
-  FROM tokens
- WHERE environment_id = $1
-   AND id = $2
- FOR UPDATE`, request.EnvironmentID, request.TokenID).Scan(&tokenState, &completionData); err != nil {
+	condition, err := q.LockTokenWaitCondition(ctx, db.LockTokenWaitConditionParams{
+		EnvironmentID: pgvalue.UUID(request.EnvironmentID),
+		TokenID:       pgvalue.UUID(request.TokenID),
+	})
+	if err != nil {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock Token registration condition", err)
 	}
+	tokenState := db.TokenState(condition.State)
 
 	result := WaitRegistrationResult{
 		WaitID: request.WaitID, RunStateVersion: waitingVersion,
 		ConditionState: db.WaitStatePending, SuspensionState: db.RunWaitStateHot,
 	}
 	if tokenState != db.TokenStatePending {
-		resolution, err := tokenWaitTerminalResolution(tokenState, completionData)
+		resolution, err := tokenWaitTerminalResolution(tokenState, condition.Result)
 		if err != nil {
 			return WaitRegistrationResult{}, err
 		}
 		wait := tokenWaitLockedWait{
 			id: request.WaitID, environmentID: request.EnvironmentID, runID: request.RunID,
-			workspaceID: locator.workspaceID, tokenID: request.TokenID, kind: db.WaitKindToken,
+			workspaceID: pgvalue.MustUUIDValue(locator.WorkspaceID),
+			tokenID:     request.TokenID, kind: db.WaitKindToken,
 			conditionState: db.WaitStatePending, suspensionState: db.RunWaitStateHot,
 			expectedRunStateVersion: waitingVersion, attemptNumber: request.AttemptNumber,
 			currentRunLeaseID: pgtype.UUID{Bytes: request.CurrentRunLeaseID, Valid: true},
@@ -371,85 +355,60 @@ SELECT state, result
 
 func replayTokenWaitRegistration(
 	ctx context.Context,
-	tx pgx.Tx,
+	q *db.Queries,
 	request WaitRegistration,
 	metadata json.RawMessage,
 	tags []string,
 ) (WaitRegistrationResult, bool, error) {
-	var result WaitRegistrationResult
-	var rawResult []byte
-	var reason pgtype.Text
-	err := tx.QueryRow(ctx, `
-SELECT run_waits.id,
-       runs.state_version,
-       run_waits.condition_state,
-       run_waits.suspension_state,
-       run_waits.condition_result,
-       run_waits.condition_reason_code
-  FROM run_waits
-  JOIN runs
-    ON runs.environment_id = run_waits.environment_id
-   AND runs.id = run_waits.run_id
-  JOIN run_leases
-    ON run_leases.id = $7
-   AND run_leases.run_id = run_waits.run_id
-   AND run_leases.attempt_number = run_waits.attempt_number
-   AND run_leases.workspace_id = run_waits.workspace_id
-  JOIN workspace_leases
-    ON workspace_leases.id = $17
-   AND workspace_leases.owner_run_lease_id = run_leases.id
-   AND workspace_leases.workspace_id = run_waits.workspace_id
- WHERE run_waits.id = $1
-   AND run_waits.environment_id = $2
-   AND run_waits.run_id = $3
-   AND run_waits.token_id = $4
-   AND run_waits.kind = 'token'
-   AND run_waits.resume_attach_id = $5
-	AND run_waits.attempt_number = $6
-	AND run_waits.registration_request_fingerprint = $8
-	AND (run_waits.current_run_lease_id = $7 OR run_waits.prior_run_lease_id = $7)
-	AND run_waits.metadata = $9::jsonb
-	AND run_waits.tags = $10::text[]
-	AND run_leases.lease_sequence = $11
-	AND run_leases.worker_group_id = $12
-	AND run_leases.worker_instance_id = $13
-	AND run_leases.worker_epoch = $14
-	AND run_leases.worker_protocol_version = $15
-	AND run_leases.runtime_instance_id = $16
-	AND run_leases.runtime_identity_id = $18
-	AND workspace_leases.workspace_mount_id = $19
-	AND workspace_leases.ownership_generation = $20
-	AND workspace_leases.writer_generation = $21
-	AND workspace_leases.mount_fencing_generation = $22
-	AND run_leases.network_slot_id = $23
-	AND run_leases.network_slot_generation = $24
-	AND run_leases.region_id = $25
-	AND run_waits.actor_speculative_input_sequence IS NOT DISTINCT FROM $26`,
-		request.WaitID, request.EnvironmentID, request.RunID, request.TokenID,
-		request.ResumeAttachID, request.AttemptNumber, request.CurrentRunLeaseID, request.RequestFingerprint,
-		metadata, tags,
-		request.LeaseSequence, request.WorkerGroupID, request.WorkerInstanceID,
-		request.WorkerEpoch, request.WorkerProtocolVersion, request.RuntimeInstanceID,
-		request.WorkspaceLeaseID, request.RuntimeIdentityID, request.WorkspaceMountID,
-		request.OwnershipGeneration, request.WriterGeneration, request.MountFencingGeneration,
-		request.NetworkSlotID, request.NetworkSlotGeneration, request.RegionID,
-		request.ActorSpeculativeInputSequence,
-	).Scan(
-		&result.WaitID, &result.RunStateVersion, &result.ConditionState,
-		&result.SuspensionState, &rawResult, &reason,
+	replay, err := q.GetTokenWaitRegistrationReplay(
+		ctx,
+		db.GetTokenWaitRegistrationReplayParams{
+			CurrentRunLeaseID:             pgvalue.UUID(request.CurrentRunLeaseID),
+			WorkspaceLeaseID:              pgvalue.UUID(request.WorkspaceLeaseID),
+			WaitID:                        pgvalue.UUID(request.WaitID),
+			EnvironmentID:                 pgvalue.UUID(request.EnvironmentID),
+			RunID:                         pgvalue.UUID(request.RunID),
+			TokenID:                       pgvalue.UUID(request.TokenID),
+			ResumeAttachID:                pgvalue.UUID(request.ResumeAttachID),
+			AttemptNumber:                 request.AttemptNumber,
+			RequestFingerprint:            request.RequestFingerprint,
+			Metadata:                      metadata,
+			Tags:                          tags,
+			LeaseSequence:                 request.LeaseSequence,
+			WorkerGroupID:                 request.WorkerGroupID,
+			WorkerInstanceID:              pgvalue.UUID(request.WorkerInstanceID),
+			WorkerEpoch:                   request.WorkerEpoch,
+			WorkerProtocolVersion:         request.WorkerProtocolVersion,
+			RuntimeInstanceID:             pgvalue.UUID(request.RuntimeInstanceID),
+			RuntimeIdentityID:             request.RuntimeIdentityID,
+			WorkspaceMountID:              pgvalue.UUID(request.WorkspaceMountID),
+			OwnershipGeneration:           request.OwnershipGeneration,
+			WriterGeneration:              request.WriterGeneration,
+			MountFencingGeneration:        request.MountFencingGeneration,
+			NetworkSlotID:                 pgvalue.UUID(request.NetworkSlotID),
+			NetworkSlotGeneration:         request.NetworkSlotGeneration,
+			RegionID:                      request.RegionID,
+			ActorSpeculativeInputSequence: request.ActorSpeculativeInputSequence,
+		},
 	)
 	if err == nil {
-		result.Result = json.RawMessage(rawResult)
-		if reason.Valid {
-			result.ReasonCode = reason.String
+		result := WaitRegistrationResult{
+			WaitID:          pgvalue.MustUUIDValue(replay.WaitID),
+			RunStateVersion: replay.RunStateVersion,
+			ConditionState:  db.WaitState(replay.ConditionState),
+			SuspensionState: db.RunWaitState(replay.SuspensionState),
+			Result:          json.RawMessage(replay.ConditionResult),
+		}
+		if replay.ConditionReasonCode.Valid {
+			result.ReasonCode = replay.ConditionReasonCode.String
 		}
 		return result, true, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return WaitRegistrationResult{}, false, tokenWaitAuthorityError("load Token Wait registration replay", err)
 	}
-	var conflicting bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM run_waits WHERE id = $1)`, request.WaitID).Scan(&conflicting); err != nil {
+	conflicting, err := q.TokenWaitExists(ctx, pgvalue.UUID(request.WaitID))
+	if err != nil {
 		return WaitRegistrationResult{}, false, tokenWaitAuthorityError("check Token Wait registration replay conflict", err)
 	}
 	if conflicting {
@@ -557,67 +516,32 @@ type tokenWaitLocator struct {
 	ownerActorID pgtype.UUID
 }
 
-type tokenWaitRegistrationLocator struct {
-	workspaceID  uuid.UUID
-	ownerActorID pgtype.UUID
-	orgID        pgtype.UUID
-	projectID    pgtype.UUID
-}
-
-func loadTokenWaitRegistrationLocator(
-	ctx context.Context,
-	tx pgx.Tx,
-	environmentID uuid.UUID,
-	runID uuid.UUID,
-) (tokenWaitRegistrationLocator, error) {
-	var locator tokenWaitRegistrationLocator
-	err := tx.QueryRow(ctx, `
-SELECT runs.workspace_id, workspaces.owner_actor_id, runs.org_id, runs.project_id
-  FROM runs
-  JOIN workspaces
-    ON workspaces.environment_id = runs.environment_id
-   AND workspaces.id = runs.workspace_id
- WHERE runs.environment_id = $1
-   AND runs.id = $2`, environmentID, runID).Scan(
-		&locator.workspaceID, &locator.ownerActorID, &locator.orgID, &locator.projectID,
-	)
-	return locator, err
-}
-
 func validateAndLockTokenWaitWorkspace(
 	ctx context.Context,
-	tx pgx.Tx,
+	q *db.Queries,
 	environmentID uuid.UUID,
-	locator tokenWaitRegistrationLocator,
+	locator db.GetTokenWaitRegistrationLocatorRow,
 	lineage []tokenWaitLockedRun,
 	lockedActorCurrentRunID pgtype.UUID,
 ) error {
-	var ownerActorID, ownerRunID pgtype.UUID
-	var workspaceState db.WorkspaceState
-	var desiredState db.WorkspaceDesiredState
-	err := tx.QueryRow(ctx, `
-SELECT owner_actor_id, owner_run_id, state, desired_state
-  FROM workspaces
- WHERE id = $1
-   AND environment_id = $2
- FOR UPDATE`, locator.workspaceID, environmentID).Scan(
-		&ownerActorID,
-		&ownerRunID,
-		&workspaceState,
-		&desiredState,
-	)
+	workspace, err := q.LockTokenWaitWorkspace(ctx, db.LockTokenWaitWorkspaceParams{
+		WorkspaceID:   locator.WorkspaceID,
+		EnvironmentID: pgvalue.UUID(environmentID),
+	})
 	if err != nil {
 		return tokenWaitAuthorityError("lock Run Workspace", err)
 	}
-	if workspaceState != db.WorkspaceStateActive || desiredState != db.WorkspaceDesiredStateActive ||
-		ownerActorID != locator.ownerActorID {
+	if db.WorkspaceState(workspace.State) != db.WorkspaceStateActive ||
+		db.WorkspaceDesiredState(workspace.DesiredState) != db.WorkspaceDesiredStateActive ||
+		workspace.OwnerActorID != locator.OwnerActorID {
 		return tokenWaitAuthorityError("Workspace ownership changed", nil)
 	}
-	if ownerActorID.Valid {
+	if workspace.OwnerActorID.Valid {
 		if !lockedActorCurrentRunID.Valid || !tokenWaitLineageContains(lineage, lockedActorCurrentRunID) {
 			return tokenWaitAuthorityError("Actor current Run is outside the locked lineage", nil)
 		}
-	} else if !ownerRunID.Valid || !tokenWaitLineageContains(lineage, ownerRunID) {
+	} else if !workspace.OwnerRunID.Valid ||
+		!tokenWaitLineageContains(lineage, workspace.OwnerRunID) {
 		return tokenWaitAuthorityError("Workspace owner Run is outside the locked lineage", nil)
 	}
 	return nil

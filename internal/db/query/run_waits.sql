@@ -5,6 +5,214 @@ SELECT *
    AND attempt_number = sqlc.arg(attempt_number)
    AND id = sqlc.arg(id);
 
+-- name: LockTokenWaitRegistration :exec
+SELECT pg_advisory_xact_lock(
+    hashtextextended(
+        concat_ws(
+            ':',
+            'token_wait.register',
+            sqlc.arg(wait_id)::uuid::text
+        ),
+        0
+    )
+);
+
+-- name: GetTokenWaitRegistrationReplay :one
+SELECT run_waits.id AS wait_id,
+       runs.state_version AS run_state_version,
+       run_waits.condition_state,
+       run_waits.suspension_state,
+       run_waits.condition_result,
+       run_waits.condition_reason_code
+  FROM run_waits
+  JOIN runs
+    ON runs.environment_id = run_waits.environment_id
+   AND runs.id = run_waits.run_id
+  JOIN run_leases
+    ON run_leases.id = sqlc.arg(current_run_lease_id)
+   AND run_leases.run_id = run_waits.run_id
+   AND run_leases.attempt_number = run_waits.attempt_number
+   AND run_leases.workspace_id = run_waits.workspace_id
+  JOIN workspace_leases
+    ON workspace_leases.id = sqlc.arg(workspace_lease_id)
+   AND workspace_leases.owner_run_lease_id = run_leases.id
+   AND workspace_leases.workspace_id = run_waits.workspace_id
+ WHERE run_waits.id = sqlc.arg(wait_id)
+   AND run_waits.environment_id = sqlc.arg(environment_id)
+   AND run_waits.run_id = sqlc.arg(run_id)
+   AND run_waits.token_id = sqlc.arg(token_id)
+   AND run_waits.kind = 'token'
+   AND run_waits.resume_attach_id = sqlc.arg(resume_attach_id)
+   AND run_waits.attempt_number = sqlc.arg(attempt_number)
+   AND run_waits.registration_request_fingerprint
+       = sqlc.arg(request_fingerprint)::text
+   AND (
+       run_waits.current_run_lease_id = sqlc.arg(current_run_lease_id)
+       OR run_waits.prior_run_lease_id = sqlc.arg(current_run_lease_id)
+   )
+   AND run_waits.metadata = sqlc.arg(metadata)::jsonb
+   AND run_waits.tags = sqlc.arg(tags)::text[]
+   AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
+   AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
+   AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
+   AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
+   AND run_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
+   AND run_leases.runtime_instance_id = sqlc.arg(runtime_instance_id)
+   AND run_leases.runtime_identity_id = sqlc.arg(runtime_identity_id)
+   AND workspace_leases.workspace_mount_id = sqlc.arg(workspace_mount_id)
+   AND workspace_leases.ownership_generation = sqlc.arg(ownership_generation)
+   AND workspace_leases.writer_generation = sqlc.arg(writer_generation)
+   AND workspace_leases.mount_fencing_generation = sqlc.arg(mount_fencing_generation)
+   AND run_leases.network_slot_id = sqlc.arg(network_slot_id)
+   AND run_leases.network_slot_generation = sqlc.arg(network_slot_generation)
+   AND run_leases.region_id = sqlc.arg(region_id)
+   AND run_waits.actor_speculative_input_sequence
+       IS NOT DISTINCT FROM sqlc.narg(actor_speculative_input_sequence);
+
+-- name: TokenWaitExists :one
+SELECT EXISTS (
+    SELECT 1
+      FROM run_waits
+     WHERE id = sqlc.arg(wait_id)
+);
+
+-- name: GetTokenWaitRegistrationLocator :one
+SELECT runs.workspace_id,
+       workspaces.owner_actor_id,
+       runs.org_id,
+       runs.project_id
+  FROM runs
+  JOIN workspaces
+    ON workspaces.environment_id = runs.environment_id
+   AND workspaces.id = runs.workspace_id
+ WHERE runs.environment_id = sqlc.arg(environment_id)
+   AND runs.id = sqlc.arg(run_id);
+
+-- name: LockTokenWaitActor :one
+SELECT state,
+       current_run_id,
+       committed_input_sequence,
+       next_input_sequence
+  FROM actors
+ WHERE id = sqlc.arg(actor_id)
+ FOR UPDATE;
+
+-- name: LockTokenWaitWorkspace :one
+SELECT owner_actor_id, owner_run_id, state, desired_state
+  FROM workspaces
+ WHERE id = sqlc.arg(workspace_id)
+   AND environment_id = sqlc.arg(environment_id)
+ FOR UPDATE;
+
+-- name: LockTokenWaitAttempt :one
+SELECT entrypoint_kind, actor_start_input_sequence, terminal_at
+  FROM run_attempts
+ WHERE run_id = sqlc.arg(run_id)
+   AND number = sqlc.arg(attempt_number)
+   AND workspace_id = sqlc.arg(workspace_id)
+ FOR UPDATE;
+
+-- name: LockTokenWaitRunLease :one
+SELECT state
+  FROM run_leases
+ WHERE id = sqlc.arg(id)
+   AND run_id = sqlc.arg(run_id)
+   AND attempt_number = sqlc.arg(attempt_number)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND lease_sequence = sqlc.arg(lease_sequence)
+   AND worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_instance_id = sqlc.arg(worker_instance_id)
+   AND worker_epoch = sqlc.arg(worker_epoch)
+   AND runtime_instance_id = sqlc.arg(runtime_instance_id)
+   AND network_slot_id = sqlc.arg(network_slot_id)
+   AND network_slot_generation = sqlc.arg(network_slot_generation)
+   AND runtime_identity_id = sqlc.arg(runtime_identity_id)
+   AND worker_protocol_version = sqlc.arg(worker_protocol_version)
+   AND region_id = sqlc.arg(region_id)
+   AND state = 'running'
+   AND expires_at > transaction_timestamp()
+ FOR UPDATE;
+
+-- name: RegisterTokenWait :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'waiting',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = sqlc.arg(run_id)
+       AND runs.status = 'running'
+       AND runs.state_version = sqlc.arg(expected_running_state_version)::bigint
+       AND runs.current_attempt_number = sqlc.arg(attempt_number)
+       AND runs.current_run_lease_id = sqlc.arg(current_run_lease_id)
+       AND runs.active_started_at IS NOT NULL
+       AND transaction_timestamp() < runs.active_started_at
+             + (
+                 (runs.max_active_duration_ms - runs.active_elapsed_ms)
+                 * interval '1 millisecond'
+             )
+    RETURNING runs.*
+)
+INSERT INTO run_waits (
+    id, environment_id, run_id, workspace_id, kind, timeout_at,
+    idle_timeout_ms, token_id, token_registration_run_state_version,
+    registration_request_fingerprint, expected_run_state_version, attempt_number,
+    actor_speculative_input_sequence, current_run_lease_id,
+    checkpoint_due_at, resume_attach_id, metadata, tags
+)
+SELECT sqlc.arg(wait_id),
+       sqlc.arg(environment_id),
+       moved_run.id,
+       moved_run.workspace_id,
+       'token',
+       sqlc.narg(timeout_at),
+       sqlc.narg(idle_timeout_ms),
+       sqlc.arg(token_id),
+       sqlc.arg(expected_running_state_version)::bigint,
+       sqlc.arg(request_fingerprint)::text,
+       moved_run.state_version,
+       sqlc.arg(attempt_number),
+       sqlc.narg(actor_speculative_input_sequence),
+       sqlc.arg(current_run_lease_id),
+       sqlc.narg(checkpoint_due_at),
+       sqlc.arg(resume_attach_id),
+       sqlc.arg(metadata)::jsonb,
+       sqlc.arg(tags)::text[]
+  FROM moved_run
+RETURNING run_waits.*;
+
+-- name: LockTokenWaitCondition :one
+SELECT state, result
+  FROM tokens
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(token_id)
+ FOR UPDATE;
+
+-- name: ListTokenWaitCandidates :many
+SELECT id AS wait_id, run_id
+  FROM run_waits
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND token_id = sqlc.arg(token_id)
+   AND (condition_state = 'pending' OR suspension_state = 'checkpointing')
+ ORDER BY token_id,
+          CASE condition_state
+              WHEN 'pending' THEN 0
+              WHEN 'completed' THEN 1
+              WHEN 'failed' THEN 2
+              WHEN 'cancelled' THEN 3
+          END,
+          id
+ LIMIT sqlc.arg(row_limit);
+
+-- name: ListTimedOutTokenWaitCandidates :many
+SELECT id AS wait_id, run_id, environment_id, token_id
+  FROM run_waits
+ WHERE kind = 'token'
+   AND condition_state = 'pending'
+   AND timeout_at IS NOT NULL
+   AND timeout_at <= transaction_timestamp()
+ ORDER BY timeout_at, id
+ LIMIT sqlc.arg(row_limit);
+
 -- name: GetChildCallRunWaitReplay :one
 SELECT *
   FROM run_waits

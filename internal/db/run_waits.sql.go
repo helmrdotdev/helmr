@@ -1801,6 +1801,175 @@ func (q *Queries) GetTimerRunWaitRegistrationReplay(ctx context.Context, arg Get
 	return i, err
 }
 
+const getTokenWaitRegistrationLocator = `-- name: GetTokenWaitRegistrationLocator :one
+SELECT runs.workspace_id,
+       workspaces.owner_actor_id,
+       runs.org_id,
+       runs.project_id
+  FROM runs
+  JOIN workspaces
+    ON workspaces.environment_id = runs.environment_id
+   AND workspaces.id = runs.workspace_id
+ WHERE runs.environment_id = $1
+   AND runs.id = $2
+`
+
+type GetTokenWaitRegistrationLocatorParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+}
+
+type GetTokenWaitRegistrationLocatorRow struct {
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	OwnerActorID pgtype.UUID `json:"owner_actor_id"`
+	OrgID        pgtype.UUID `json:"org_id"`
+	ProjectID    pgtype.UUID `json:"project_id"`
+}
+
+func (q *Queries) GetTokenWaitRegistrationLocator(ctx context.Context, arg GetTokenWaitRegistrationLocatorParams) (GetTokenWaitRegistrationLocatorRow, error) {
+	row := q.db.QueryRow(ctx, getTokenWaitRegistrationLocator, arg.EnvironmentID, arg.RunID)
+	var i GetTokenWaitRegistrationLocatorRow
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.OwnerActorID,
+		&i.OrgID,
+		&i.ProjectID,
+	)
+	return i, err
+}
+
+const getTokenWaitRegistrationReplay = `-- name: GetTokenWaitRegistrationReplay :one
+SELECT run_waits.id AS wait_id,
+       runs.state_version AS run_state_version,
+       run_waits.condition_state,
+       run_waits.suspension_state,
+       run_waits.condition_result,
+       run_waits.condition_reason_code
+  FROM run_waits
+  JOIN runs
+    ON runs.environment_id = run_waits.environment_id
+   AND runs.id = run_waits.run_id
+  JOIN run_leases
+    ON run_leases.id = $1
+   AND run_leases.run_id = run_waits.run_id
+   AND run_leases.attempt_number = run_waits.attempt_number
+   AND run_leases.workspace_id = run_waits.workspace_id
+  JOIN workspace_leases
+    ON workspace_leases.id = $2
+   AND workspace_leases.owner_run_lease_id = run_leases.id
+   AND workspace_leases.workspace_id = run_waits.workspace_id
+ WHERE run_waits.id = $3
+   AND run_waits.environment_id = $4
+   AND run_waits.run_id = $5
+   AND run_waits.token_id = $6
+   AND run_waits.kind = 'token'
+   AND run_waits.resume_attach_id = $7
+   AND run_waits.attempt_number = $8
+   AND run_waits.registration_request_fingerprint
+       = $9::text
+   AND (
+       run_waits.current_run_lease_id = $1
+       OR run_waits.prior_run_lease_id = $1
+   )
+   AND run_waits.metadata = $10::jsonb
+   AND run_waits.tags = $11::text[]
+   AND run_leases.lease_sequence = $12
+   AND run_leases.worker_group_id = $13
+   AND run_leases.worker_instance_id = $14
+   AND run_leases.worker_epoch = $15
+   AND run_leases.worker_protocol_version = $16
+   AND run_leases.runtime_instance_id = $17
+   AND run_leases.runtime_identity_id = $18
+   AND workspace_leases.workspace_mount_id = $19
+   AND workspace_leases.ownership_generation = $20
+   AND workspace_leases.writer_generation = $21
+   AND workspace_leases.mount_fencing_generation = $22
+   AND run_leases.network_slot_id = $23
+   AND run_leases.network_slot_generation = $24
+   AND run_leases.region_id = $25
+   AND run_waits.actor_speculative_input_sequence
+       IS NOT DISTINCT FROM $26
+`
+
+type GetTokenWaitRegistrationReplayParams struct {
+	CurrentRunLeaseID             pgtype.UUID `json:"current_run_lease_id"`
+	WorkspaceLeaseID              pgtype.UUID `json:"workspace_lease_id"`
+	WaitID                        pgtype.UUID `json:"wait_id"`
+	EnvironmentID                 pgtype.UUID `json:"environment_id"`
+	RunID                         pgtype.UUID `json:"run_id"`
+	TokenID                       pgtype.UUID `json:"token_id"`
+	ResumeAttachID                pgtype.UUID `json:"resume_attach_id"`
+	AttemptNumber                 int32       `json:"attempt_number"`
+	RequestFingerprint            string      `json:"request_fingerprint"`
+	Metadata                      []byte      `json:"metadata"`
+	Tags                          []string    `json:"tags"`
+	LeaseSequence                 int64       `json:"lease_sequence"`
+	WorkerGroupID                 string      `json:"worker_group_id"`
+	WorkerInstanceID              pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch                   int64       `json:"worker_epoch"`
+	WorkerProtocolVersion         string      `json:"worker_protocol_version"`
+	RuntimeInstanceID             pgtype.UUID `json:"runtime_instance_id"`
+	RuntimeIdentityID             string      `json:"runtime_identity_id"`
+	WorkspaceMountID              pgtype.UUID `json:"workspace_mount_id"`
+	OwnershipGeneration           int64       `json:"ownership_generation"`
+	WriterGeneration              int64       `json:"writer_generation"`
+	MountFencingGeneration        int64       `json:"mount_fencing_generation"`
+	NetworkSlotID                 pgtype.UUID `json:"network_slot_id"`
+	NetworkSlotGeneration         int64       `json:"network_slot_generation"`
+	RegionID                      string      `json:"region_id"`
+	ActorSpeculativeInputSequence pgtype.Int8 `json:"actor_speculative_input_sequence"`
+}
+
+type GetTokenWaitRegistrationReplayRow struct {
+	WaitID              pgtype.UUID `json:"wait_id"`
+	RunStateVersion     int64       `json:"run_state_version"`
+	ConditionState      string      `json:"condition_state"`
+	SuspensionState     string      `json:"suspension_state"`
+	ConditionResult     []byte      `json:"condition_result"`
+	ConditionReasonCode pgtype.Text `json:"condition_reason_code"`
+}
+
+func (q *Queries) GetTokenWaitRegistrationReplay(ctx context.Context, arg GetTokenWaitRegistrationReplayParams) (GetTokenWaitRegistrationReplayRow, error) {
+	row := q.db.QueryRow(ctx, getTokenWaitRegistrationReplay,
+		arg.CurrentRunLeaseID,
+		arg.WorkspaceLeaseID,
+		arg.WaitID,
+		arg.EnvironmentID,
+		arg.RunID,
+		arg.TokenID,
+		arg.ResumeAttachID,
+		arg.AttemptNumber,
+		arg.RequestFingerprint,
+		arg.Metadata,
+		arg.Tags,
+		arg.LeaseSequence,
+		arg.WorkerGroupID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.WorkerProtocolVersion,
+		arg.RuntimeInstanceID,
+		arg.RuntimeIdentityID,
+		arg.WorkspaceMountID,
+		arg.OwnershipGeneration,
+		arg.WriterGeneration,
+		arg.MountFencingGeneration,
+		arg.NetworkSlotID,
+		arg.NetworkSlotGeneration,
+		arg.RegionID,
+		arg.ActorSpeculativeInputSequence,
+	)
+	var i GetTokenWaitRegistrationReplayRow
+	err := row.Scan(
+		&i.WaitID,
+		&i.RunStateVersion,
+		&i.ConditionState,
+		&i.SuspensionState,
+		&i.ConditionResult,
+		&i.ConditionReasonCode,
+	)
+	return i, err
+}
+
 const listDueTimerRunWaits = `-- name: ListDueTimerRunWaits :many
 SELECT id, environment_id, run_id, workspace_id, kind, condition_state, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_parent_owned, child_target_declared_id, child_claim_id, child_request, actor_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_actor_record_id, completed_actor_record_direction, suspension_state, token_registration_run_state_version, registration_request_fingerprint, expected_run_state_version, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, handoff_resume_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, child_result_version_id, resume_workspace_version_id, handoff_runtime_instance_id, handoff_workspace_mount_id, handoff_mount_generation, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
   FROM run_waits
@@ -2096,6 +2265,97 @@ func (q *Queries) ListSameWorkspaceHandoffAncestorRuns(ctx context.Context, arg 
 			&i.Run.TerminalAt,
 			&i.Depth,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTimedOutTokenWaitCandidates = `-- name: ListTimedOutTokenWaitCandidates :many
+SELECT id AS wait_id, run_id, environment_id, token_id
+  FROM run_waits
+ WHERE kind = 'token'
+   AND condition_state = 'pending'
+   AND timeout_at IS NOT NULL
+   AND timeout_at <= transaction_timestamp()
+ ORDER BY timeout_at, id
+ LIMIT $1
+`
+
+type ListTimedOutTokenWaitCandidatesRow struct {
+	WaitID        pgtype.UUID `json:"wait_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	TokenID       pgtype.UUID `json:"token_id"`
+}
+
+func (q *Queries) ListTimedOutTokenWaitCandidates(ctx context.Context, rowLimit int32) ([]ListTimedOutTokenWaitCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listTimedOutTokenWaitCandidates, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTimedOutTokenWaitCandidatesRow
+	for rows.Next() {
+		var i ListTimedOutTokenWaitCandidatesRow
+		if err := rows.Scan(
+			&i.WaitID,
+			&i.RunID,
+			&i.EnvironmentID,
+			&i.TokenID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTokenWaitCandidates = `-- name: ListTokenWaitCandidates :many
+SELECT id AS wait_id, run_id
+  FROM run_waits
+ WHERE environment_id = $1
+   AND token_id = $2
+   AND (condition_state = 'pending' OR suspension_state = 'checkpointing')
+ ORDER BY token_id,
+          CASE condition_state
+              WHEN 'pending' THEN 0
+              WHEN 'completed' THEN 1
+              WHEN 'failed' THEN 2
+              WHEN 'cancelled' THEN 3
+          END,
+          id
+ LIMIT $3
+`
+
+type ListTokenWaitCandidatesParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	TokenID       pgtype.UUID `json:"token_id"`
+	RowLimit      int32       `json:"row_limit"`
+}
+
+type ListTokenWaitCandidatesRow struct {
+	WaitID pgtype.UUID `json:"wait_id"`
+	RunID  pgtype.UUID `json:"run_id"`
+}
+
+func (q *Queries) ListTokenWaitCandidates(ctx context.Context, arg ListTokenWaitCandidatesParams) ([]ListTokenWaitCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listTokenWaitCandidates, arg.EnvironmentID, arg.TokenID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTokenWaitCandidatesRow
+	for rows.Next() {
+		var i ListTokenWaitCandidatesRow
+		if err := rows.Scan(&i.WaitID, &i.RunID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -2404,6 +2664,199 @@ func (q *Queries) LockSameWorkspaceHandoffAncestors(ctx context.Context, arg Loc
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockTokenWaitActor = `-- name: LockTokenWaitActor :one
+SELECT state,
+       current_run_id,
+       committed_input_sequence,
+       next_input_sequence
+  FROM actors
+ WHERE id = $1
+ FOR UPDATE
+`
+
+type LockTokenWaitActorRow struct {
+	State                  string      `json:"state"`
+	CurrentRunID           pgtype.UUID `json:"current_run_id"`
+	CommittedInputSequence int64       `json:"committed_input_sequence"`
+	NextInputSequence      int64       `json:"next_input_sequence"`
+}
+
+func (q *Queries) LockTokenWaitActor(ctx context.Context, actorID pgtype.UUID) (LockTokenWaitActorRow, error) {
+	row := q.db.QueryRow(ctx, lockTokenWaitActor, actorID)
+	var i LockTokenWaitActorRow
+	err := row.Scan(
+		&i.State,
+		&i.CurrentRunID,
+		&i.CommittedInputSequence,
+		&i.NextInputSequence,
+	)
+	return i, err
+}
+
+const lockTokenWaitAttempt = `-- name: LockTokenWaitAttempt :one
+SELECT entrypoint_kind, actor_start_input_sequence, terminal_at
+  FROM run_attempts
+ WHERE run_id = $1
+   AND number = $2
+   AND workspace_id = $3
+ FOR UPDATE
+`
+
+type LockTokenWaitAttemptParams struct {
+	RunID         pgtype.UUID `json:"run_id"`
+	AttemptNumber int32       `json:"attempt_number"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+type LockTokenWaitAttemptRow struct {
+	EntrypointKind          string             `json:"entrypoint_kind"`
+	ActorStartInputSequence pgtype.Int8        `json:"actor_start_input_sequence"`
+	TerminalAt              pgtype.Timestamptz `json:"terminal_at"`
+}
+
+func (q *Queries) LockTokenWaitAttempt(ctx context.Context, arg LockTokenWaitAttemptParams) (LockTokenWaitAttemptRow, error) {
+	row := q.db.QueryRow(ctx, lockTokenWaitAttempt, arg.RunID, arg.AttemptNumber, arg.WorkspaceID)
+	var i LockTokenWaitAttemptRow
+	err := row.Scan(&i.EntrypointKind, &i.ActorStartInputSequence, &i.TerminalAt)
+	return i, err
+}
+
+const lockTokenWaitCondition = `-- name: LockTokenWaitCondition :one
+SELECT state, result
+  FROM tokens
+ WHERE environment_id = $1
+   AND id = $2
+ FOR UPDATE
+`
+
+type LockTokenWaitConditionParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	TokenID       pgtype.UUID `json:"token_id"`
+}
+
+type LockTokenWaitConditionRow struct {
+	State  string `json:"state"`
+	Result []byte `json:"result"`
+}
+
+func (q *Queries) LockTokenWaitCondition(ctx context.Context, arg LockTokenWaitConditionParams) (LockTokenWaitConditionRow, error) {
+	row := q.db.QueryRow(ctx, lockTokenWaitCondition, arg.EnvironmentID, arg.TokenID)
+	var i LockTokenWaitConditionRow
+	err := row.Scan(&i.State, &i.Result)
+	return i, err
+}
+
+const lockTokenWaitRegistration = `-- name: LockTokenWaitRegistration :exec
+SELECT pg_advisory_xact_lock(
+    hashtextextended(
+        concat_ws(
+            ':',
+            'token_wait.register',
+            $1::uuid::text
+        ),
+        0
+    )
+)
+`
+
+func (q *Queries) LockTokenWaitRegistration(ctx context.Context, waitID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, lockTokenWaitRegistration, waitID)
+	return err
+}
+
+const lockTokenWaitRunLease = `-- name: LockTokenWaitRunLease :one
+SELECT state
+  FROM run_leases
+ WHERE id = $1
+   AND run_id = $2
+   AND attempt_number = $3
+   AND workspace_id = $4
+   AND lease_sequence = $5
+   AND worker_group_id = $6
+   AND worker_instance_id = $7
+   AND worker_epoch = $8
+   AND runtime_instance_id = $9
+   AND network_slot_id = $10
+   AND network_slot_generation = $11
+   AND runtime_identity_id = $12
+   AND worker_protocol_version = $13
+   AND region_id = $14
+   AND state = 'running'
+   AND expires_at > transaction_timestamp()
+ FOR UPDATE
+`
+
+type LockTokenWaitRunLeaseParams struct {
+	ID                    pgtype.UUID `json:"id"`
+	RunID                 pgtype.UUID `json:"run_id"`
+	AttemptNumber         int32       `json:"attempt_number"`
+	WorkspaceID           pgtype.UUID `json:"workspace_id"`
+	LeaseSequence         int64       `json:"lease_sequence"`
+	WorkerGroupID         string      `json:"worker_group_id"`
+	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch           int64       `json:"worker_epoch"`
+	RuntimeInstanceID     pgtype.UUID `json:"runtime_instance_id"`
+	NetworkSlotID         pgtype.UUID `json:"network_slot_id"`
+	NetworkSlotGeneration int64       `json:"network_slot_generation"`
+	RuntimeIdentityID     string      `json:"runtime_identity_id"`
+	WorkerProtocolVersion string      `json:"worker_protocol_version"`
+	RegionID              string      `json:"region_id"`
+}
+
+func (q *Queries) LockTokenWaitRunLease(ctx context.Context, arg LockTokenWaitRunLeaseParams) (string, error) {
+	row := q.db.QueryRow(ctx, lockTokenWaitRunLease,
+		arg.ID,
+		arg.RunID,
+		arg.AttemptNumber,
+		arg.WorkspaceID,
+		arg.LeaseSequence,
+		arg.WorkerGroupID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.RuntimeInstanceID,
+		arg.NetworkSlotID,
+		arg.NetworkSlotGeneration,
+		arg.RuntimeIdentityID,
+		arg.WorkerProtocolVersion,
+		arg.RegionID,
+	)
+	var state string
+	err := row.Scan(&state)
+	return state, err
+}
+
+const lockTokenWaitWorkspace = `-- name: LockTokenWaitWorkspace :one
+SELECT owner_actor_id, owner_run_id, state, desired_state
+  FROM workspaces
+ WHERE id = $1
+   AND environment_id = $2
+ FOR UPDATE
+`
+
+type LockTokenWaitWorkspaceParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+}
+
+type LockTokenWaitWorkspaceRow struct {
+	OwnerActorID pgtype.UUID `json:"owner_actor_id"`
+	OwnerRunID   pgtype.UUID `json:"owner_run_id"`
+	State        string      `json:"state"`
+	DesiredState string      `json:"desired_state"`
+}
+
+func (q *Queries) LockTokenWaitWorkspace(ctx context.Context, arg LockTokenWaitWorkspaceParams) (LockTokenWaitWorkspaceRow, error) {
+	row := q.db.QueryRow(ctx, lockTokenWaitWorkspace, arg.WorkspaceID, arg.EnvironmentID)
+	var i LockTokenWaitWorkspaceRow
+	err := row.Scan(
+		&i.OwnerActorID,
+		&i.OwnerRunID,
+		&i.State,
+		&i.DesiredState,
+	)
+	return i, err
 }
 
 const markRunWaitParked = `-- name: MarkRunWaitParked :one
@@ -3168,6 +3621,153 @@ func (q *Queries) RegisterTimerRunWait(ctx context.Context, arg RegisterTimerRun
 	return i, err
 }
 
+const registerTokenWait = `-- name: RegisterTokenWait :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'waiting',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = $15
+       AND runs.status = 'running'
+       AND runs.state_version = $6::bigint
+       AND runs.current_attempt_number = $8
+       AND runs.current_run_lease_id = $10
+       AND runs.active_started_at IS NOT NULL
+       AND transaction_timestamp() < runs.active_started_at
+             + (
+                 (runs.max_active_duration_ms - runs.active_elapsed_ms)
+                 * interval '1 millisecond'
+             )
+    RETURNING runs.id, runs.public_id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.actor_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.actor_start_input_sequence, runs.actor_start_input_high_watermark, runs.payload, runs.output, runs.terminal_reason_code, runs.error, runs.status, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.terminal_at
+)
+INSERT INTO run_waits (
+    id, environment_id, run_id, workspace_id, kind, timeout_at,
+    idle_timeout_ms, token_id, token_registration_run_state_version,
+    registration_request_fingerprint, expected_run_state_version, attempt_number,
+    actor_speculative_input_sequence, current_run_lease_id,
+    checkpoint_due_at, resume_attach_id, metadata, tags
+)
+SELECT $1,
+       $2,
+       moved_run.id,
+       moved_run.workspace_id,
+       'token',
+       $3,
+       $4,
+       $5,
+       $6::bigint,
+       $7::text,
+       moved_run.state_version,
+       $8,
+       $9,
+       $10,
+       $11,
+       $12,
+       $13::jsonb,
+       $14::text[]
+  FROM moved_run
+RETURNING run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.kind, run_waits.condition_state, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_parent_owned, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.actor_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_actor_record_id, run_waits.completed_actor_record_direction, run_waits.suspension_state, run_waits.token_registration_run_state_version, run_waits.registration_request_fingerprint, run_waits.expected_run_state_version, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.handoff_resume_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.child_result_version_id, run_waits.resume_workspace_version_id, run_waits.handoff_runtime_instance_id, run_waits.handoff_workspace_mount_id, run_waits.handoff_mount_generation, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at
+`
+
+type RegisterTokenWaitParams struct {
+	WaitID                        pgtype.UUID        `json:"wait_id"`
+	EnvironmentID                 pgtype.UUID        `json:"environment_id"`
+	TimeoutAt                     pgtype.Timestamptz `json:"timeout_at"`
+	IdleTimeoutMs                 pgtype.Int8        `json:"idle_timeout_ms"`
+	TokenID                       pgtype.UUID        `json:"token_id"`
+	ExpectedRunningStateVersion   int64              `json:"expected_running_state_version"`
+	RequestFingerprint            string             `json:"request_fingerprint"`
+	AttemptNumber                 int32              `json:"attempt_number"`
+	ActorSpeculativeInputSequence pgtype.Int8        `json:"actor_speculative_input_sequence"`
+	CurrentRunLeaseID             pgtype.UUID        `json:"current_run_lease_id"`
+	CheckpointDueAt               pgtype.Timestamptz `json:"checkpoint_due_at"`
+	ResumeAttachID                pgtype.UUID        `json:"resume_attach_id"`
+	Metadata                      []byte             `json:"metadata"`
+	Tags                          []string           `json:"tags"`
+	RunID                         pgtype.UUID        `json:"run_id"`
+}
+
+func (q *Queries) RegisterTokenWait(ctx context.Context, arg RegisterTokenWaitParams) (RunWait, error) {
+	row := q.db.QueryRow(ctx, registerTokenWait,
+		arg.WaitID,
+		arg.EnvironmentID,
+		arg.TimeoutAt,
+		arg.IdleTimeoutMs,
+		arg.TokenID,
+		arg.ExpectedRunningStateVersion,
+		arg.RequestFingerprint,
+		arg.AttemptNumber,
+		arg.ActorSpeculativeInputSequence,
+		arg.CurrentRunLeaseID,
+		arg.CheckpointDueAt,
+		arg.ResumeAttachID,
+		arg.Metadata,
+		arg.Tags,
+		arg.RunID,
+	)
+	var i RunWait
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.ConditionState,
+		&i.DueAt,
+		&i.TimeoutAt,
+		&i.IdleTimeoutMs,
+		&i.TokenID,
+		&i.ChildRunID,
+		&i.ChildParentOwned,
+		&i.ChildTargetDeclaredID,
+		&i.ChildClaimID,
+		&i.ChildRequest,
+		&i.ActorID,
+		&i.AfterInputSequence,
+		&i.ConditionResult,
+		&i.ConditionError,
+		&i.ConditionTerminalAt,
+		&i.ConditionReasonCode,
+		&i.CompletedActorRecordID,
+		&i.CompletedActorRecordDirection,
+		&i.SuspensionState,
+		&i.TokenRegistrationRunStateVersion,
+		&i.RegistrationRequestFingerprint,
+		&i.ExpectedRunStateVersion,
+		&i.AttemptNumber,
+		&i.ActorSpeculativeInputSequence,
+		&i.CurrentRunLeaseID,
+		&i.PriorRunLeaseID,
+		&i.CheckpointRequestVersion,
+		&i.CheckpointAckVersion,
+		&i.CheckpointDueAt,
+		&i.SuspendCheckpointID,
+		&i.HandoffResumeCheckpointID,
+		&i.ResumeAttachID,
+		&i.ResumeRequestVersion,
+		&i.ResumeAckVersion,
+		&i.BaseWorkspaceVersionID,
+		&i.BaseWorkspaceContentDigest,
+		&i.ChildResultVersionID,
+		&i.ResumeWorkspaceVersionID,
+		&i.HandoffRuntimeInstanceID,
+		&i.HandoffWorkspaceMountID,
+		&i.HandoffMountGeneration,
+		&i.OwnershipGeneration,
+		&i.ParentWriterGeneration,
+		&i.ChildWriterGeneration,
+		&i.ResumeWriterGeneration,
+		&i.Metadata,
+		&i.Tags,
+		&i.SuspensionTerminalAt,
+		&i.SuspensionReasonCode,
+		&i.SuspensionError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const releaseRunResumeWait = `-- name: ReleaseRunResumeWait :one
 UPDATE run_waits
    SET suspension_state = 'released',
@@ -3374,4 +3974,19 @@ func (q *Queries) RequestRunWaitCheckpoint(ctx context.Context, arg RequestRunWa
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const tokenWaitExists = `-- name: TokenWaitExists :one
+SELECT EXISTS (
+    SELECT 1
+      FROM run_waits
+     WHERE id = $1
+)
+`
+
+func (q *Queries) TokenWaitExists(ctx context.Context, waitID pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, tokenWaitExists, waitID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }

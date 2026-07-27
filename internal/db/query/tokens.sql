@@ -303,29 +303,3 @@ SELECT expired.*
   JOIN reconciliation_intents
     ON reconciliation_intents.partition_key = expired.id::text
  ORDER BY expired.expires_at, expired.id;
-
--- name: ListTokenWaitCandidates :many
-SELECT id AS wait_id, run_id
-  FROM run_waits
- WHERE environment_id = sqlc.arg(environment_id)
-   AND token_id = sqlc.arg(token_id)
-   AND (condition_state = 'pending' OR suspension_state = 'checkpointing')
- ORDER BY token_id,
-          CASE condition_state
-              WHEN 'pending' THEN 0
-              WHEN 'completed' THEN 1
-              WHEN 'failed' THEN 2
-              WHEN 'cancelled' THEN 3
-          END,
-          id
- LIMIT sqlc.arg(row_limit);
-
--- name: ListTimedOutTokenWaitCandidates :many
-SELECT id AS wait_id, run_id, environment_id, token_id
-  FROM run_waits
- WHERE kind = 'token'
-   AND condition_state = 'pending'
-   AND timeout_at IS NOT NULL
-   AND timeout_at <= transaction_timestamp()
- ORDER BY timeout_at, id
- LIMIT sqlc.arg(row_limit);
