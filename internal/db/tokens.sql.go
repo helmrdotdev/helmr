@@ -699,6 +699,97 @@ func (q *Queries) GetTokenForCallbackCompletion(ctx context.Context, arg GetToke
 	return i, err
 }
 
+const listTimedOutTokenWaitCandidates = `-- name: ListTimedOutTokenWaitCandidates :many
+SELECT id AS wait_id, run_id, environment_id, token_id
+  FROM run_waits
+ WHERE kind = 'token'
+   AND condition_state = 'pending'
+   AND timeout_at IS NOT NULL
+   AND timeout_at <= transaction_timestamp()
+ ORDER BY timeout_at, id
+ LIMIT $1
+`
+
+type ListTimedOutTokenWaitCandidatesRow struct {
+	WaitID        pgtype.UUID `json:"wait_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	TokenID       pgtype.UUID `json:"token_id"`
+}
+
+func (q *Queries) ListTimedOutTokenWaitCandidates(ctx context.Context, rowLimit int32) ([]ListTimedOutTokenWaitCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listTimedOutTokenWaitCandidates, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTimedOutTokenWaitCandidatesRow
+	for rows.Next() {
+		var i ListTimedOutTokenWaitCandidatesRow
+		if err := rows.Scan(
+			&i.WaitID,
+			&i.RunID,
+			&i.EnvironmentID,
+			&i.TokenID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTokenWaitCandidates = `-- name: ListTokenWaitCandidates :many
+SELECT id AS wait_id, run_id
+  FROM run_waits
+ WHERE environment_id = $1
+   AND token_id = $2
+   AND (condition_state = 'pending' OR suspension_state = 'checkpointing')
+ ORDER BY token_id,
+          CASE condition_state
+              WHEN 'pending' THEN 0
+              WHEN 'completed' THEN 1
+              WHEN 'failed' THEN 2
+              WHEN 'cancelled' THEN 3
+          END,
+          id
+ LIMIT $3
+`
+
+type ListTokenWaitCandidatesParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	TokenID       pgtype.UUID `json:"token_id"`
+	RowLimit      int32       `json:"row_limit"`
+}
+
+type ListTokenWaitCandidatesRow struct {
+	WaitID pgtype.UUID `json:"wait_id"`
+	RunID  pgtype.UUID `json:"run_id"`
+}
+
+func (q *Queries) ListTokenWaitCandidates(ctx context.Context, arg ListTokenWaitCandidatesParams) ([]ListTokenWaitCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listTokenWaitCandidates, arg.EnvironmentID, arg.TokenID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTokenWaitCandidatesRow
+	for rows.Next() {
+		var i ListTokenWaitCandidatesRow
+		if err := rows.Scan(&i.WaitID, &i.RunID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTokens = `-- name: ListTokens :many
 WITH cursor_token AS (
     SELECT created_at, id

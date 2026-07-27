@@ -379,6 +379,8 @@ type Querier interface {
 	ListSecretVersionsByKeyID(ctx context.Context, arg ListSecretVersionsByKeyIDParams) ([]ListSecretVersionsByKeyIDRow, error)
 	ListSecrets(ctx context.Context, arg ListSecretsParams) ([]ListSecretsRow, error)
 	ListStaleWorkerFenceCandidates(ctx context.Context, arg ListStaleWorkerFenceCandidatesParams) ([]ListStaleWorkerFenceCandidatesRow, error)
+	ListTimedOutTokenWaitCandidates(ctx context.Context, rowLimit int32) ([]ListTimedOutTokenWaitCandidatesRow, error)
+	ListTokenWaitCandidates(ctx context.Context, arg ListTokenWaitCandidatesParams) ([]ListTokenWaitCandidatesRow, error)
 	ListTokens(ctx context.Context, arg ListTokensParams) ([]Token, error)
 	ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsParams) ([]WorkerGroup, error)
 	ListWorkerInstances(ctx context.Context, arg ListWorkerInstancesParams) ([]WorkerInstance, error)

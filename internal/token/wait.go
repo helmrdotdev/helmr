@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -16,25 +17,9 @@ var ErrWaitAuthority = errors.New("Token Wait reconciliation authority is incons
 
 const maxWaitBatch = int32(1000)
 
-const discoverWaitCandidates = `
-SELECT id, run_id
-  FROM run_waits
- WHERE environment_id = $1
-   AND token_id = $2
-   AND (condition_state = 'pending' OR suspension_state = 'checkpointing')
- ORDER BY token_id,
-          CASE condition_state
-              WHEN 'pending' THEN 0
-              WHEN 'completed' THEN 1
-              WHEN 'failed' THEN 2
-              WHEN 'cancelled' THEN 3
-          END,
-          id
- LIMIT $3`
-
 type WaitDB interface {
+	db.DBTX
 	Begin(context.Context) (pgx.Tx, error)
-	Query(context.Context, string, ...any) (pgx.Rows, error)
 }
 
 type WaitBatch struct {
@@ -86,19 +71,15 @@ type WaitRegistrationResult struct {
 }
 
 type WaitReconciler struct {
-	db WaitDB
-}
-
-type waitCandidate struct {
-	waitID uuid.UUID
-	runID  uuid.UUID
+	db      WaitDB
+	queries *db.Queries
 }
 
 func NewWaitReconciler(database WaitDB) (*WaitReconciler, error) {
 	if database == nil {
 		return nil, errors.New("Token Wait reconciliation database is required")
 	}
-	return &WaitReconciler{db: database}, nil
+	return &WaitReconciler{db: database, queries: db.New(database)}, nil
 }
 
 // RegisterWait serializes the Run-to-Token race. The Wait is inserted before
@@ -496,34 +477,28 @@ func (r *WaitReconciler) ReconcileBatch(
 		)
 	}
 
-	rows, err := r.db.Query(
+	candidates, err := r.queries.ListTokenWaitCandidates(
 		ctx,
-		discoverWaitCandidates,
-		environmentID,
-		tokenID,
-		limit,
+		db.ListTokenWaitCandidatesParams{
+			EnvironmentID: pgvalue.UUID(environmentID),
+			TokenID:       pgvalue.UUID(tokenID),
+			RowLimit:      limit,
+		},
 	)
 	if err != nil {
 		return WaitBatch{}, fmt.Errorf("discover pending Token Waits: %w", err)
 	}
-	candidates := make([]waitCandidate, 0, limit)
-	for rows.Next() {
-		var candidate waitCandidate
-		if err := rows.Scan(&candidate.waitID, &candidate.runID); err != nil {
-			rows.Close()
-			return WaitBatch{}, fmt.Errorf("scan pending Token Wait: %w", err)
-		}
-		candidates = append(candidates, candidate)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return WaitBatch{}, fmt.Errorf("iterate pending Token Waits: %w", err)
-	}
-	rows.Close()
 
 	batch := WaitBatch{Examined: len(candidates)}
 	for _, candidate := range candidates {
-		resolved, deferred, err := r.reconcileOne(ctx, environmentID, tokenID, candidate, false)
+		resolved, deferred, err := r.reconcileOne(
+			ctx,
+			environmentID,
+			tokenID,
+			pgvalue.MustUUIDValue(candidate.WaitID),
+			pgvalue.MustUUIDValue(candidate.RunID),
+			false,
+		)
 		if err != nil {
 			return batch, err
 		}
@@ -550,49 +525,18 @@ func (r *WaitReconciler) ReconcileTimeouts(
 			maxWaitBatch,
 		)
 	}
-	rows, err := r.db.Query(ctx, `
-SELECT id, run_id, environment_id, token_id
-  FROM run_waits
- WHERE kind = 'token'
-   AND condition_state = 'pending'
-   AND timeout_at IS NOT NULL
-   AND timeout_at <= transaction_timestamp()
- ORDER BY timeout_at, id
- LIMIT $1`, limit)
+	candidates, err := r.queries.ListTimedOutTokenWaitCandidates(ctx, limit)
 	if err != nil {
 		return 0, fmt.Errorf("discover timed out Token Waits: %w", err)
 	}
-	type timeoutCandidate struct {
-		wait          waitCandidate
-		environmentID uuid.UUID
-		tokenID       uuid.UUID
-	}
-	candidates := make([]timeoutCandidate, 0, limit)
-	for rows.Next() {
-		var candidate timeoutCandidate
-		if err := rows.Scan(
-			&candidate.wait.waitID,
-			&candidate.wait.runID,
-			&candidate.environmentID,
-			&candidate.tokenID,
-		); err != nil {
-			rows.Close()
-			return 0, fmt.Errorf("scan timed out Token Wait: %w", err)
-		}
-		candidates = append(candidates, candidate)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return 0, fmt.Errorf("iterate timed out Token Waits: %w", err)
-	}
-	rows.Close()
 	resolved := 0
 	for _, candidate := range candidates {
 		didResolve, _, err := r.reconcileOne(
 			ctx,
-			candidate.environmentID,
-			candidate.tokenID,
-			candidate.wait,
+			pgvalue.MustUUIDValue(candidate.EnvironmentID),
+			pgvalue.MustUUIDValue(candidate.TokenID),
+			pgvalue.MustUUIDValue(candidate.WaitID),
+			pgvalue.MustUUIDValue(candidate.RunID),
 			true,
 		)
 		if err != nil {
@@ -755,7 +699,8 @@ func (r *WaitReconciler) reconcileOne(
 	ctx context.Context,
 	environmentID uuid.UUID,
 	tokenID uuid.UUID,
-	candidate waitCandidate,
+	waitID uuid.UUID,
+	runID uuid.UUID,
 	timeout bool,
 ) (resolved bool, deferred bool, returnErr error) {
 	tx, err := r.db.Begin(ctx)
@@ -764,7 +709,14 @@ func (r *WaitReconciler) reconcileOne(
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
-	locator, err := loadTokenWaitLocator(ctx, tx, environmentID, tokenID, candidate)
+	locator, err := loadTokenWaitLocator(
+		ctx,
+		tx,
+		environmentID,
+		tokenID,
+		waitID,
+		runID,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := tx.Commit(ctx); err != nil {
 			return false, false, fmt.Errorf("commit stale Token Wait reconciliation: %w", err)
@@ -922,7 +874,8 @@ func loadTokenWaitLocator(
 	tx pgx.Tx,
 	environmentID uuid.UUID,
 	tokenID uuid.UUID,
-	candidate waitCandidate,
+	waitID uuid.UUID,
+	runID uuid.UUID,
 ) (tokenWaitLocator, error) {
 	var locator tokenWaitLocator
 	err := tx.QueryRow(ctx, `
@@ -944,9 +897,9 @@ SELECT run_waits.id,
    AND run_waits.kind = 'token'
    AND (run_waits.condition_state = 'pending'
         OR run_waits.suspension_state = 'checkpointing')`,
-		candidate.waitID,
+		waitID,
 		environmentID,
-		candidate.runID,
+		runID,
 		tokenID,
 	).Scan(
 		&locator.waitID,
