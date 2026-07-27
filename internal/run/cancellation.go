@@ -1,4 +1,4 @@
-package db
+package run
 
 import (
 	"context"
@@ -9,39 +9,40 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var (
-	ErrRunCancellationNotFound  = errors.New("run not found")
-	ErrRunCancellationConflict  = errors.New("run has another terminal outcome")
-	ErrRunCancellationAuthority = errors.New("run cancellation authority is inconsistent")
+	ErrCancellationNotFound  = errors.New("run not found")
+	ErrCancellationConflict  = errors.New("run has another terminal outcome")
+	ErrCancellationAuthority = errors.New("run cancellation authority is inconsistent")
 )
 
-const maxRunCancellationGraphSize = 1000
+const maxCancellationGraphSize = 1000
 
-type RunCancellationDB interface {
+type CancellationDB interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
 
-type RunCancellationRequest struct {
+type CancellationRequest struct {
 	OrgID         uuid.UUID
 	ProjectID     uuid.UUID
 	EnvironmentID uuid.UUID
 	RunPublicID   string
 }
 
-type RunCancellationResult struct {
+type CancellationResult struct {
 	RunID         uuid.UUID
 	RunPublicID   string
 	Changed       bool
 	CancelledRuns int
 }
 
-type RunCanceller struct {
-	db RunCancellationDB
+type Canceler struct {
+	db CancellationDB
 }
 
 type cancellationRun struct {
@@ -52,7 +53,7 @@ type cancellationRun struct {
 	environmentID        uuid.UUID
 	workspaceID          uuid.UUID
 	actorID              pgtype.UUID
-	status               RunStatus
+	status               db.RunStatus
 	currentAttemptNumber int32
 	currentRunLeaseID    pgtype.UUID
 	stateVersion         int64
@@ -64,8 +65,8 @@ type cancellationWait struct {
 	runID                    uuid.UUID
 	workspaceID              uuid.UUID
 	childRunID               pgtype.UUID
-	conditionState           WaitState
-	suspensionState          RunWaitState
+	conditionState           db.WaitState
+	suspensionState          db.RunWaitState
 	expectedRunStateVersion  int64
 	attemptNumber            int32
 	currentRunLeaseID        pgtype.UUID
@@ -77,64 +78,64 @@ type cancellationWait struct {
 	baseWorkspaceVersionID   pgtype.UUID
 }
 
-type runTermination struct {
+type termination struct {
 	reasonCode        string
 	errorCode         string
 	errorMessage      string
-	runStatus         RunStatus
-	runLeaseState     RunLeaseState
+	runStatus         db.RunStatus
+	runLeaseState     db.RunLeaseState
 	attemptOutcome    string
-	waitCondition     WaitState
-	waitSuspension    RunWaitState
+	waitCondition     db.WaitState
+	waitSuspension    db.RunWaitState
 	eventKind         string
 	eventMessage      string
 	actorFailureCode  string
 	actorCancellation bool
 }
 
-var cancelledRunTermination = runTermination{
+var cancelledTermination = termination{
 	reasonCode:        "run_cancelled",
 	errorCode:         "run_cancelled",
 	errorMessage:      "Run was cancelled",
-	runStatus:         RunStatusCancelled,
-	runLeaseState:     RunLeaseStateCancelled,
+	runStatus:         db.RunStatusCancelled,
+	runLeaseState:     db.RunLeaseStateCancelled,
 	attemptOutcome:    "cancelled",
-	waitCondition:     WaitStateCancelled,
-	waitSuspension:    RunWaitStateCancelled,
+	waitCondition:     db.WaitStateCancelled,
+	waitSuspension:    db.RunWaitStateCancelled,
 	eventKind:         "run.cancelled",
 	eventMessage:      "Run cancelled",
 	actorCancellation: true,
 }
 
-var secretRevokedRunTermination = runTermination{
+var secretRevokedTermination = termination{
 	reasonCode:       "secret_revoked",
 	errorCode:        "secret_revoked",
 	errorMessage:     "A Workspace Secret used by this Run was revoked",
-	runStatus:        RunStatusFailed,
-	runLeaseState:    RunLeaseStateFailed,
+	runStatus:        db.RunStatusFailed,
+	runLeaseState:    db.RunLeaseStateFailed,
 	attemptOutcome:   "failed",
-	waitCondition:    WaitStateFailed,
-	waitSuspension:   RunWaitStateFailed,
+	waitCondition:    db.WaitStateFailed,
+	waitSuspension:   db.RunWaitStateFailed,
 	eventKind:        "run.failed",
 	eventMessage:     "Run failed",
 	actorFailureCode: "run_failed",
 }
 
-func NewRunCanceller(database RunCancellationDB) (*RunCanceller, error) {
+func NewCanceler(database CancellationDB) (*Canceler, error) {
 	if database == nil {
 		return nil, errors.New("run cancellation database is required")
 	}
-	return &RunCanceller{db: database}, nil
+	return &Canceler{db: database}, nil
 }
 
-type OwnedRunFinalizationGraphRequest struct {
+type OwnedFinalizationRequest struct {
 	OrgID         uuid.UUID
 	ProjectID     uuid.UUID
 	EnvironmentID uuid.UUID
 	RunID         uuid.UUID
 }
 
-type OwnedRunFinalizationGraph struct {
+type OwnedFinalization struct {
 	tx           pgx.Tx
 	currentRun   uuid.UUID
 	descendants  []cancellationRun
@@ -142,48 +143,48 @@ type OwnedRunFinalizationGraph struct {
 	waitsByChild map[uuid.UUID]cancellationWait
 }
 
-// LockOwnedRunFinalizationGraphInTransaction acquires the global cancellation
+// LockOwnedFinalization acquires the global cancellation
 // lock order before ordinary Run authority is locked. It lets terminal
 // finalization re-lock its exact authority without later reaching from a
 // Workspace lock back to an unlocked descendant Run.
-func LockOwnedRunFinalizationGraphInTransaction(
+func LockOwnedFinalization(
 	ctx context.Context,
 	tx pgx.Tx,
-	request OwnedRunFinalizationGraphRequest,
-) (OwnedRunFinalizationGraph, error) {
+	request OwnedFinalizationRequest,
+) (OwnedFinalization, error) {
 	if tx == nil || request.OrgID == uuid.Nil || request.ProjectID == uuid.Nil ||
 		request.EnvironmentID == uuid.Nil || request.RunID == uuid.Nil {
-		return OwnedRunFinalizationGraph{}, errors.New("owned Run finalization graph authority is required")
+		return OwnedFinalization{}, errors.New("owned Run finalization graph authority is required")
 	}
-	scope := RunCancellationRequest{
+	scope := CancellationRequest{
 		OrgID: request.OrgID, ProjectID: request.ProjectID,
 		EnvironmentID: request.EnvironmentID,
 	}
 	lineage, err := cancellationLineage(ctx, tx, request.RunID)
 	if err != nil {
-		return OwnedRunFinalizationGraph{}, err
+		return OwnedFinalization{}, err
 	}
 	descendantIDs, err := discoverOwnedCancellationRuns(
 		ctx, tx, scope, request.RunID,
 	)
 	if err != nil {
-		return OwnedRunFinalizationGraph{}, err
+		return OwnedFinalization{}, err
 	}
 	lockOrder := append(slices.Clone(lineage), descendantIDs[1:]...)
-	if len(lockOrder) > maxRunCancellationGraphSize {
-		return OwnedRunFinalizationGraph{}, cancellationAuthority(
+	if len(lockOrder) > maxCancellationGraphSize {
+		return OwnedFinalization{}, cancellationAuthority(
 			"owned Run finalization graph exceeds the transaction bound",
 			nil,
 		)
 	}
 	if err := lockCancellationActors(ctx, tx, scope, lockOrder); err != nil {
-		return OwnedRunFinalizationGraph{}, err
+		return OwnedFinalization{}, err
 	}
 	locked := make(map[uuid.UUID]cancellationRun, len(lockOrder))
 	for _, id := range lockOrder {
 		run, err := lockCancellationRun(ctx, tx, scope, id)
 		if err != nil {
-			return OwnedRunFinalizationGraph{}, cancellationAuthority(
+			return OwnedFinalization{}, cancellationAuthority(
 				"lock owned Run finalization graph",
 				err,
 			)
@@ -194,10 +195,10 @@ func LockOwnedRunFinalizationGraphInTransaction(
 		ctx, tx, scope, request.RunID,
 	)
 	if err != nil {
-		return OwnedRunFinalizationGraph{}, err
+		return OwnedFinalization{}, err
 	}
 	if !slices.Equal(descendantIDs, reloaded) {
-		return OwnedRunFinalizationGraph{}, cancellationAuthority(
+		return OwnedFinalization{}, cancellationAuthority(
 			"owned Run finalization graph changed during lock acquisition",
 			nil,
 		)
@@ -206,7 +207,7 @@ func LockOwnedRunFinalizationGraphInTransaction(
 	for depth, id := range descendantIDs {
 		run, found := locked[id]
 		if !found {
-			return OwnedRunFinalizationGraph{}, cancellationAuthority(
+			return OwnedFinalization{}, cancellationAuthority(
 				"owned Run finalization descendant was not locked",
 				nil,
 			)
@@ -218,9 +219,9 @@ func LockOwnedRunFinalizationGraphInTransaction(
 		ctx, tx, lockOrder, descendants,
 	)
 	if err != nil {
-		return OwnedRunFinalizationGraph{}, err
+		return OwnedFinalization{}, err
 	}
-	return OwnedRunFinalizationGraph{
+	return OwnedFinalization{
 		tx: tx, currentRun: request.RunID, descendants: descendants,
 		locked: locked, waitsByChild: waitsByChild,
 	}, nil
@@ -229,7 +230,7 @@ func LockOwnedRunFinalizationGraphInTransaction(
 // CancelDescendants terminalizes all still-active owned descendants without
 // resolving the current Run's boundary Wait. The current Run is terminalized
 // by the caller in the same transaction.
-func (g OwnedRunFinalizationGraph) CancelDescendants(ctx context.Context) (int, error) {
+func (g OwnedFinalization) CancelDescendants(ctx context.Context) (int, error) {
 	if g.tx == nil || g.currentRun == uuid.Nil || len(g.descendants) == 0 ||
 		g.descendants[0].id != g.currentRun {
 		return 0, errors.New("owned Run finalization graph is invalid")
@@ -260,7 +261,7 @@ func (g OwnedRunFinalizationGraph) CancelDescendants(ctx context.Context) (int, 
 // Secret revocation error after cancelling its owned descendants. The caller
 // must lock and validate the Workspace's complete Secret set before acquiring
 // this graph.
-func (g OwnedRunFinalizationGraph) FailCurrentForSecretRevocation(
+func (g OwnedFinalization) FailCurrentForSecretRevocation(
 	ctx context.Context,
 ) (int, error) {
 	cancelled, err := g.CancelDescendants(ctx)
@@ -277,7 +278,7 @@ func (g OwnedRunFinalizationGraph) FailCurrentForSecretRevocation(
 		target,
 		pgtype.UUID{},
 		pgtype.UUID{},
-		secretRevokedRunTermination,
+		secretRevokedTermination,
 	); err != nil {
 		return 0, err
 	}
@@ -326,75 +327,75 @@ func (g OwnedRunFinalizationGraph) FailCurrentForSecretRevocation(
 	return cancelled + 1, nil
 }
 
-func (c *RunCanceller) Cancel(
+func (c *Canceler) Cancel(
 	ctx context.Context,
-	request RunCancellationRequest,
-) (RunCancellationResult, error) {
+	request CancellationRequest,
+) (CancellationResult, error) {
 	if request.OrgID == uuid.Nil || request.ProjectID == uuid.Nil ||
 		request.EnvironmentID == uuid.Nil ||
 		strings.TrimSpace(request.RunPublicID) == "" {
-		return RunCancellationResult{}, errors.New("run cancellation scope and public ID are required")
+		return CancellationResult{}, errors.New("run cancellation scope and public ID are required")
 	}
 	tx, err := c.db.Begin(ctx)
 	if err != nil {
-		return RunCancellationResult{}, fmt.Errorf("begin Run cancellation: %w", err)
+		return CancellationResult{}, fmt.Errorf("begin Run cancellation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
 	targetID, err := findCancellationTarget(ctx, tx, request)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return RunCancellationResult{}, ErrRunCancellationNotFound
+		return CancellationResult{}, ErrCancellationNotFound
 	}
 	if err != nil {
-		return RunCancellationResult{}, cancellationAuthority("resolve target Run", err)
+		return CancellationResult{}, cancellationAuthority("resolve target Run", err)
 	}
 	lineage, err := cancellationLineage(ctx, tx, targetID)
 	if err != nil {
-		return RunCancellationResult{}, err
+		return CancellationResult{}, err
 	}
 	descendants, err := discoverOwnedCancellationRuns(ctx, tx, request, targetID)
 	if err != nil {
-		return RunCancellationResult{}, err
+		return CancellationResult{}, err
 	}
 	lockOrder := append(slices.Clone(lineage), descendants[1:]...)
-	if len(lockOrder) > maxRunCancellationGraphSize {
-		return RunCancellationResult{}, cancellationAuthority(
+	if len(lockOrder) > maxCancellationGraphSize {
+		return CancellationResult{}, cancellationAuthority(
 			"run cancellation graph exceeds the transaction bound",
 			nil,
 		)
 	}
 	if err := lockCancellationActors(ctx, tx, request, lockOrder); err != nil {
-		return RunCancellationResult{}, err
+		return CancellationResult{}, err
 	}
 	locked := make(map[uuid.UUID]cancellationRun, len(lockOrder))
 	for _, id := range lockOrder {
 		run, err := lockCancellationRun(ctx, tx, request, id)
 		if err != nil {
-			return RunCancellationResult{}, cancellationAuthority("lock Run graph", err)
+			return CancellationResult{}, cancellationAuthority("lock Run graph", err)
 		}
 		locked[id] = run
 	}
 	target, ok := locked[targetID]
 	if !ok {
-		return RunCancellationResult{}, cancellationAuthority("target Run was not locked", nil)
+		return CancellationResult{}, cancellationAuthority("target Run was not locked", nil)
 	}
-	result := RunCancellationResult{RunID: target.id, RunPublicID: target.publicID}
+	result := CancellationResult{RunID: target.id, RunPublicID: target.publicID}
 	if runStatusTerminal(target.status) {
-		if target.status != RunStatusCancelled {
-			return RunCancellationResult{}, ErrRunCancellationConflict
+		if target.status != db.RunStatusCancelled {
+			return CancellationResult{}, ErrCancellationConflict
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return RunCancellationResult{}, fmt.Errorf("commit Run cancellation replay: %w", err)
+			return CancellationResult{}, fmt.Errorf("commit Run cancellation replay: %w", err)
 		}
 		return result, nil
 	}
 
 	reloaded, err := discoverOwnedCancellationRuns(ctx, tx, request, targetID)
 	if err != nil {
-		return RunCancellationResult{}, err
+		return CancellationResult{}, err
 	}
 	if !slices.Equal(descendants, reloaded) {
-		return RunCancellationResult{}, cancellationAuthority(
+		return CancellationResult{}, cancellationAuthority(
 			"run cancellation graph changed during lock acquisition",
 			nil,
 		)
@@ -404,7 +405,7 @@ func (c *RunCanceller) Cancel(
 	for depth, id := range descendants {
 		run, found := locked[id]
 		if !found {
-			return RunCancellationResult{}, cancellationAuthority(
+			return CancellationResult{}, cancellationAuthority(
 				"parent-owned Run was not locked",
 				nil,
 			)
@@ -415,7 +416,7 @@ func (c *RunCanceller) Cancel(
 	}
 	waitsByChild, err := lockCancellationResources(ctx, tx, lockOrder, runs)
 	if err != nil {
-		return RunCancellationResult{}, err
+		return CancellationResult{}, err
 	}
 	var preservedRuntimeID, preservedMountID pgtype.UUID
 	var boundaryParent cancellationRun
@@ -428,14 +429,14 @@ func (c *RunCanceller) Cancel(
 			var found bool
 			boundaryParent, found = locked[parentID]
 			if !found {
-				return RunCancellationResult{}, cancellationAuthority(
+				return CancellationResult{}, cancellationAuthority(
 					"parent-owned Run parent was not locked",
 					nil,
 				)
 			}
 			boundaryWait, found = waitsByChild[target.id]
 			if !found {
-				return RunCancellationResult{}, cancellationAuthority(
+				return CancellationResult{}, cancellationAuthority(
 					"parent-owned Run Wait was not locked",
 					nil,
 				)
@@ -446,7 +447,7 @@ func (c *RunCanceller) Cancel(
 				boundaryWait,
 			)
 			if err != nil {
-				return RunCancellationResult{}, err
+				return CancellationResult{}, err
 			}
 			resolveBoundaryParent = true
 		}
@@ -465,7 +466,7 @@ func (c *RunCanceller) Cancel(
 			preservedRuntimeID,
 			preservedMountID,
 		); err != nil {
-			return RunCancellationResult{}, err
+			return CancellationResult{}, err
 		}
 		if resolveBoundaryParent && run.id == target.id {
 			if err := resolveCancelledChildWait(
@@ -475,12 +476,12 @@ func (c *RunCanceller) Cancel(
 				run,
 				boundaryWait,
 			); err != nil {
-				return RunCancellationResult{}, err
+				return CancellationResult{}, err
 			}
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return RunCancellationResult{}, fmt.Errorf("commit Run cancellation: %w", err)
+		return CancellationResult{}, fmt.Errorf("commit Run cancellation: %w", err)
 	}
 	result.Changed = true
 	result.CancelledRuns = len(runs)
@@ -490,7 +491,7 @@ func (c *RunCanceller) Cancel(
 func findCancellationTarget(
 	ctx context.Context,
 	tx pgx.Tx,
-	request RunCancellationRequest,
+	request CancellationRequest,
 ) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := tx.QueryRow(ctx, `
@@ -539,7 +540,7 @@ WITH RECURSIVE lineage AS (
 )
 SELECT id, depth, cycle
   FROM lineage
- ORDER BY depth DESC`, targetID, maxRunCancellationGraphSize)
+ ORDER BY depth DESC`, targetID, maxCancellationGraphSize)
 	if err != nil {
 		return nil, cancellationAuthority("load Run lineage", err)
 	}
@@ -556,7 +557,7 @@ SELECT id, depth, cycle
 			return nil, cancellationAuthority("run lineage contains a cycle", nil)
 		}
 		ids = append(ids, id)
-		if len(ids) > maxRunCancellationGraphSize {
+		if len(ids) > maxCancellationGraphSize {
 			return nil, cancellationAuthority("run lineage exceeds the transaction bound", nil)
 		}
 	}
@@ -572,7 +573,7 @@ SELECT id, depth, cycle
 func lockCancellationActors(
 	ctx context.Context,
 	tx pgx.Tx,
-	request RunCancellationRequest,
+	request CancellationRequest,
 	lineage []uuid.UUID,
 ) error {
 	rows, err := tx.Query(ctx, `
@@ -611,7 +612,7 @@ SELECT actors.id
 func lockCancellationRun(
 	ctx context.Context,
 	tx pgx.Tx,
-	request RunCancellationRequest,
+	request CancellationRequest,
 	id uuid.UUID,
 ) (cancellationRun, error) {
 	var run cancellationRun
@@ -656,7 +657,7 @@ SELECT id,
 func discoverOwnedCancellationRuns(
 	ctx context.Context,
 	tx pgx.Tx,
-	request RunCancellationRequest,
+	request CancellationRequest,
 	targetID uuid.UUID,
 ) ([]uuid.UUID, error) {
 	rows, err := tx.Query(ctx, `
@@ -694,8 +695,8 @@ SELECT id, depth, cycle
 		request.OrgID,
 		request.ProjectID,
 		request.EnvironmentID,
-		maxRunCancellationGraphSize+1,
-		maxRunCancellationGraphSize+1,
+		maxCancellationGraphSize+1,
+		maxCancellationGraphSize+1,
 	)
 	if err != nil {
 		return nil, cancellationAuthority("discover parent-owned Runs", err)
@@ -720,7 +721,7 @@ SELECT id, depth, cycle
 	if len(ids) == 0 || ids[0] != targetID {
 		return nil, cancellationAuthority("parent-owned Run graph is incomplete", nil)
 	}
-	if len(ids) > maxRunCancellationGraphSize {
+	if len(ids) > maxCancellationGraphSize {
 		return nil, cancellationAuthority("run cancellation graph exceeds the transaction bound", nil)
 	}
 	return ids, nil
@@ -1054,7 +1055,7 @@ func cancelLockedRun(
 		run,
 		preservedRuntimeID,
 		preservedMountID,
-		cancelledRunTermination,
+		cancelledTermination,
 	)
 }
 
@@ -1064,7 +1065,7 @@ func terminateLockedRun(
 	run cancellationRun,
 	preservedRuntimeID pgtype.UUID,
 	preservedMountID pgtype.UUID,
-	termination runTermination,
+	termination termination,
 ) error {
 	if runStatusTerminal(run.status) {
 		return nil
@@ -1420,8 +1421,8 @@ func resolveCancelledChildWait(
 	child cancellationRun,
 	wait cancellationWait,
 ) error {
-	if wait.conditionState != WaitStatePending ||
-		parent.status != RunStatusWaiting ||
+	if wait.conditionState != db.WaitStatePending ||
+		parent.status != db.RunStatusWaiting ||
 		parent.currentAttemptNumber != wait.attemptNumber ||
 		parent.stateVersion != wait.expectedRunStateVersion {
 		return cancellationAuthority("cancelled child Wait fence does not match", nil)
@@ -1438,7 +1439,7 @@ func resolveCancelledChildWait(
 		resumeWorkspaceVersion = uuid.UUID(wait.baseWorkspaceVersionID.Bytes)
 	}
 	switch wait.suspensionState {
-	case RunWaitStateHot:
+	case db.RunWaitStateHot:
 		if !wait.currentRunLeaseID.Valid ||
 			!parent.currentRunLeaseID.Valid ||
 			wait.currentRunLeaseID != parent.currentRunLeaseID {
@@ -1483,7 +1484,7 @@ UPDATE run_waits
 		if err != nil || command.RowsAffected() != 1 {
 			return cancellationAuthority("release hot cancelled child Wait", err)
 		}
-	case RunWaitStateCheckpointing:
+	case db.RunWaitStateCheckpointing:
 		command, err := tx.Exec(ctx, `
 UPDATE run_waits
    SET condition_state = 'cancelled',
@@ -1505,7 +1506,7 @@ UPDATE run_waits
 		if err != nil || command.RowsAffected() != 1 {
 			return cancellationAuthority("complete checkpointing cancelled child Wait", err)
 		}
-	case RunWaitStateParked:
+	case db.RunWaitStateParked:
 		if !wait.priorRunLeaseID.Valid || !wait.suspendCheckpointID.Valid ||
 			parent.currentRunLeaseID.Valid {
 			return cancellationAuthority("parked cancelled child Wait fence does not match", nil)
@@ -1621,7 +1622,7 @@ func resolveDifferentWorkspaceChildWait(
 	result json.RawMessage,
 ) error {
 	switch wait.suspensionState {
-	case RunWaitStateHot:
+	case db.RunWaitStateHot:
 		if !wait.currentRunLeaseID.Valid || !parent.currentRunLeaseID.Valid ||
 			wait.currentRunLeaseID != parent.currentRunLeaseID {
 			return cancellationAuthority("hot cancelled child Wait Lease does not match", nil)
@@ -1655,7 +1656,7 @@ UPDATE run_waits
 		if err != nil || command.RowsAffected() != 1 {
 			return cancellationAuthority("release hot cancelled child Wait", err)
 		}
-	case RunWaitStateCheckpointing:
+	case db.RunWaitStateCheckpointing:
 		command, err := tx.Exec(ctx, `
 UPDATE run_waits
    SET condition_state = 'completed', condition_result = $2::jsonb,
@@ -1667,7 +1668,7 @@ UPDATE run_waits
 		if err != nil || command.RowsAffected() != 1 {
 			return cancellationAuthority("complete checkpointing cancelled child Wait", err)
 		}
-	case RunWaitStateParked:
+	case db.RunWaitStateParked:
 		if !wait.priorRunLeaseID.Valid || !wait.suspendCheckpointID.Valid ||
 			parent.currentRunLeaseID.Valid {
 			return cancellationAuthority("parked cancelled child Wait fence does not match", nil)
@@ -1728,10 +1729,10 @@ INSERT INTO outbox_messages (
 	return nil
 }
 
-func runStatusTerminal(status RunStatus) bool {
+func runStatusTerminal(status db.RunStatus) bool {
 	switch status {
-	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled,
-		RunStatusExpired, RunStatusSystemFailed:
+	case db.RunStatusSucceeded, db.RunStatusFailed, db.RunStatusCancelled,
+		db.RunStatusExpired, db.RunStatusSystemFailed:
 		return true
 	default:
 		return false
@@ -1740,7 +1741,7 @@ func runStatusTerminal(status RunStatus) bool {
 
 func cancellationAuthority(operation string, cause error) error {
 	if cause == nil {
-		return fmt.Errorf("%w: %s", ErrRunCancellationAuthority, operation)
+		return fmt.Errorf("%w: %s", ErrCancellationAuthority, operation)
 	}
-	return fmt.Errorf("%w: %s: %w", ErrRunCancellationAuthority, operation, cause)
+	return fmt.Errorf("%w: %s: %w", ErrCancellationAuthority, operation, cause)
 }

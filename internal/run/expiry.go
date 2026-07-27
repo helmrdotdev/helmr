@@ -1,4 +1,4 @@
-package db
+package run
 
 import (
 	"context"
@@ -6,11 +6,12 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type ParentOwnedChildExpiryRequest struct {
+type ChildExpiryRequest struct {
 	OrgID         uuid.UUID
 	ProjectID     uuid.UUID
 	EnvironmentID uuid.UUID
@@ -18,21 +19,21 @@ type ParentOwnedChildExpiryRequest struct {
 	ChildRunID    uuid.UUID
 }
 
-// ExpireParentOwnedChildInTransaction terminalizes a different-Workspace child
+// ExpireParentOwnedChild terminalizes a different-Workspace child
 // that exhausted its initial queued TTL and resolves the current parent Wait
 // when one is active. A parent between Attempts has no active Wait; its next
 // idempotent call observes the recorded terminal child result.
-func ExpireParentOwnedChildInTransaction(
+func ExpireParentOwnedChild(
 	ctx context.Context,
 	tx pgx.Tx,
-	request ParentOwnedChildExpiryRequest,
+	request ChildExpiryRequest,
 ) (bool, error) {
 	if tx == nil || request.OrgID == uuid.Nil || request.ProjectID == uuid.Nil ||
 		request.EnvironmentID == uuid.Nil || request.ParentRunID == uuid.Nil ||
 		request.ChildRunID == uuid.Nil {
 		return false, errors.New("parent-owned child expiry authority is required")
 	}
-	scope := RunCancellationRequest{
+	scope := CancellationRequest{
 		OrgID: request.OrgID, ProjectID: request.ProjectID,
 		EnvironmentID: request.EnvironmentID,
 	}
@@ -43,7 +44,7 @@ func ExpireParentOwnedChildInTransaction(
 	if len(lineage) < 2 || lineage[len(lineage)-2] != request.ParentRunID {
 		return false, cancellationAuthority("queued child expiry lineage does not match", nil)
 	}
-	if len(lineage) > maxRunCancellationGraphSize {
+	if len(lineage) > maxCancellationGraphSize {
 		return false, cancellationAuthority("queued child expiry lineage exceeds the transaction bound", nil)
 	}
 	if err := lockCancellationActors(ctx, tx, scope, lineage); err != nil {
@@ -65,7 +66,7 @@ func ExpireParentOwnedChildInTransaction(
 		child.workspaceID == parent.workspaceID {
 		return false, cancellationAuthority("queued child expiry boundary does not match", nil)
 	}
-	if child.status != RunStatusQueued || child.currentRunLeaseID.Valid {
+	if child.status != db.RunStatusQueued || child.currentRunLeaseID.Valid {
 		return false, nil
 	}
 	var firstLeaseAt, queuedExpiresAt pgtype.Timestamptz
@@ -101,10 +102,10 @@ SELECT first_lease_at, queued_expires_at
 		return false, err
 	}
 	wait, hasWait := waits[child.id]
-	if !hasWait && parent.status != RunStatusQueued &&
-		parent.status != RunStatusRunning &&
-		parent.status != RunStatusWaiting &&
-		parent.status != RunStatusRetryDelayed {
+	if !hasWait && parent.status != db.RunStatusQueued &&
+		parent.status != db.RunStatusRunning &&
+		parent.status != db.RunStatusWaiting &&
+		parent.status != db.RunStatusRetryDelayed {
 		return false, cancellationAuthority(
 			"queued child expiry has no active parent Wait",
 			nil,

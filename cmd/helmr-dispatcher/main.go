@@ -29,6 +29,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workspace"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -332,6 +333,27 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if errors.Is(err, dispatch.ErrCandidateChanged) {
 				return nil
 			}
+			return err
+		}),
+		secret.RunFinalizer(func(
+			ctx context.Context,
+			tx pgx.Tx,
+			finalization secret.RunFinalization,
+		) error {
+			graph, err := rundomain.LockOwnedFinalization(
+				ctx,
+				tx,
+				rundomain.OwnedFinalizationRequest{
+					OrgID:         finalization.OrgID,
+					ProjectID:     finalization.ProjectID,
+					EnvironmentID: finalization.EnvironmentID,
+					RunID:         finalization.RunID,
+				},
+			)
+			if err != nil {
+				return err
+			}
+			_, err = graph.FailCurrentForSecretRevocation(ctx)
 			return err
 		}),
 	)

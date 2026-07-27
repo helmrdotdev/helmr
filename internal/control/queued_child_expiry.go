@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	rundomain "github.com/helmrdotdev/helmr/internal/run"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -49,10 +49,10 @@ func (w queuedChildExpiryWorkflow) expire(ctx context.Context, limit int32) erro
 			if !ok {
 				return errors.New("queued child expiry transaction does not expose PostgreSQL authority")
 			}
-			_, err := db.ExpireParentOwnedChildInTransaction(
+			_, err := rundomain.ExpireParentOwnedChild(
 				ctx,
 				tx,
-				db.ParentOwnedChildExpiryRequest{
+				rundomain.ChildExpiryRequest{
 					OrgID:         pgvalue.MustUUIDValue(candidate.OrgID),
 					ProjectID:     pgvalue.MustUUIDValue(candidate.ProjectID),
 					EnvironmentID: pgvalue.MustUUIDValue(candidate.EnvironmentID),

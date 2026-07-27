@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
+	rundomain "github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
@@ -158,10 +159,10 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 		if !ok {
 			return errors.New("checkpoint failure transaction does not expose PostgreSQL authority")
 		}
-		ownedGraph, err := db.LockOwnedRunFinalizationGraphInTransaction(
+		ownedGraph, err := rundomain.LockOwnedFinalization(
 			r.Context(),
 			tx,
-			db.OwnedRunFinalizationGraphRequest{
+			rundomain.OwnedFinalizationRequest{
 				OrgID:         pgvalue.MustUUIDValue(locators.OrgID),
 				ProjectID:     pgvalue.MustUUIDValue(locators.ProjectID),
 				EnvironmentID: pgvalue.MustUUIDValue(locators.EnvironmentID),
@@ -265,7 +266,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 func failCheckpointTaskAttempt(
 	ctx context.Context,
 	store db.Querier,
-	ownedGraph db.OwnedRunFinalizationGraph,
+	ownedGraph rundomain.OwnedFinalization,
 	worker workerActor,
 	authority runLeaseClaimAuthority,
 	wait db.RunWait,
@@ -376,7 +377,7 @@ func failCheckpointTaskAttempt(
 func failCheckpointActorAttempt(
 	ctx context.Context,
 	store db.Querier,
-	ownedGraph db.OwnedRunFinalizationGraph,
+	ownedGraph rundomain.OwnedFinalization,
 	worker workerActor,
 	authority runLeaseClaimAuthority,
 	wait db.RunWait,

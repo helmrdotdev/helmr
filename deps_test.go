@@ -43,7 +43,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"compute":             {"runtime/identity"},
 		"config":              {"api", "auth", "keyedhash", "region", "token", "workspace"},
 		"console":             {},
-		"control":             {"actor", "api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "email", "frameio", "idempotency", "jsoncanon", "pgvalue", "proto/run/v0", "publicid", "region", "runtime/identity", "schedule", "secret", "sha256sum", "telemetry", "token", "tracing", "workspace"},
+		"control":             {"actor", "api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "email", "frameio", "idempotency", "jsoncanon", "pgvalue", "proto/run/v0", "publicid", "region", "run", "runtime/identity", "schedule", "secret", "sha256sum", "telemetry", "token", "tracing", "workspace"},
 		"db":                  {},
 		"db/dbtest":           {},
 		"db/schema":           {},
@@ -71,6 +71,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"publicid":            {},
 		"region":              {"db"},
 		"run":                 {"db", "outbox", "pgvalue", "secret"},
+		"run/runtest":         {"db/dbtest", "db/schema", "publicid"},
 		"runtime/identity":    {"sha256sum"},
 		"runtime/substrate":   {"localcache", "oci", "sha256sum"},
 		"safepath":            {},
@@ -106,6 +107,7 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"guestd":    {"control", "db", "executor"},
 		"workspace": {"api", "control", "db", "executor", "guestd", "pgvalue", "wire"},
 		"control":   {"executor", "firecracker", "guestd"},
+		"secret":    {"run"},
 	} {
 		for _, target := range targets {
 			if slices.Contains(actual[source], target) {

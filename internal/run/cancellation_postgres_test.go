@@ -1,4 +1,4 @@
-package db
+package run
 
 import (
 	"context"
@@ -8,29 +8,30 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
-func TestRunCancellerTerminalizesAuthorityAndLeavesDetachedChildren(t *testing.T) {
+func TestCancelerTerminalizesAuthorityAndLeavesDetachedChildren(t *testing.T) {
 	ctx := context.Background()
-	fixture := newRunLeaseClaimFixture(t, ctx)
-	parent := fixture.addWork(t, ctx, "assigned", time.Now().Add(-time.Minute))
-	detached := fixture.addWork(t, ctx, "assigned", time.Now().Add(-time.Minute))
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	fixture := newPostgresFixture(t)
+	parent := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
+	detached := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
+	mustExec(t, ctx, fixture.pool, `
 UPDATE runs
    SET cause_kind = 'child',
        parent_run_id = $1,
        parent_owns_lifecycle = false
  WHERE id = $2`, parent.runID, detached.runID)
 
-	canceller, err := NewRunCanceller(fixture.pool)
+	canceler, err := NewCanceler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := canceller.Cancel(ctx, RunCancellationRequest{
+	result, err := canceler.Cancel(ctx, CancellationRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID,
 		EnvironmentID: fixture.environmentID,
-		RunPublicID:   runCancellationPublicID(t, fixture, parent.runID),
+		RunPublicID:   fixture.runPublicID(t, parent.runID),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -39,14 +40,14 @@ UPDATE runs
 		t.Fatalf("cancellation result = %+v", result)
 	}
 
-	assertRunCancellationState(t, fixture, parent, "cancelled", "cancelled", "fenced")
-	var detachedStatus RunStatus
+	assertCancellationState(t, fixture, parent, "cancelled", "cancelled", "fenced")
+	var detachedStatus db.RunStatus
 	if err := fixture.pool.QueryRow(ctx,
 		`SELECT status FROM runs WHERE id = $1`, detached.runID,
 	).Scan(&detachedStatus); err != nil {
 		t.Fatal(err)
 	}
-	if detachedStatus != RunStatusQueued {
+	if detachedStatus != db.RunStatusQueued {
 		t.Fatalf("detached child status = %s, want queued", detachedStatus)
 	}
 	var ownerRunID *uuid.UUID
@@ -74,7 +75,7 @@ SELECT runtime_instances.desired_state, workspace_mounts.state
 		t.Fatalf("cleanup state = runtime:%s mount:%s", desiredState, mountState)
 	}
 
-	replay, err := canceller.Cancel(ctx, RunCancellationRequest{
+	replay, err := canceler.Cancel(ctx, CancellationRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID,
 		EnvironmentID: fixture.environmentID,
 		RunPublicID:   result.RunPublicID,
@@ -87,19 +88,19 @@ SELECT runtime_instances.desired_state, workspace_mounts.state
 	}
 }
 
-func TestOwnedRunFinalizationGraphFailsSecretRevokedRun(t *testing.T) {
+func TestOwnedFinalizationFailsSecretRevokedRun(t *testing.T) {
 	ctx := context.Background()
-	fixture := newRunLeaseClaimFixture(t, ctx)
-	work := fixture.addWork(t, ctx, "assigned", time.Now().Add(-time.Minute))
+	fixture := newPostgresFixture(t)
+	work := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
 	tx, err := fixture.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	graph, err := LockOwnedRunFinalizationGraphInTransaction(
+	graph, err := LockOwnedFinalization(
 		ctx,
 		tx,
-		OwnedRunFinalizationGraphRequest{
+		OwnedFinalizationRequest{
 			OrgID:         fixture.orgID,
 			ProjectID:     fixture.projectID,
 			EnvironmentID: fixture.environmentID,
@@ -119,7 +120,7 @@ func TestOwnedRunFinalizationGraphFailsSecretRevokedRun(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var runStatus RunStatus
+	var runStatus db.RunStatus
 	var runReason string
 	var runError []byte
 	var attemptOutcome, attemptReason string
@@ -155,7 +156,7 @@ SELECT runs.status,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if runStatus != RunStatusFailed || runReason != "secret_revoked" ||
+	if runStatus != db.RunStatusFailed || runReason != "secret_revoked" ||
 		attemptOutcome != "failed" || attemptReason != "secret_revoked" ||
 		runLeaseState != "rejected" || workspaceLeaseState != "fenced" {
 		t.Fatalf(
@@ -178,61 +179,61 @@ SELECT runs.status,
 	}
 }
 
-func TestRunCancellerRejectsAnotherTerminalOutcome(t *testing.T) {
+func TestCancelerRejectsAnotherTerminalOutcome(t *testing.T) {
 	ctx := context.Background()
-	fixture := newRunLeaseClaimFixture(t, ctx)
-	work := fixture.addWork(t, ctx, "assigned", time.Now().Add(-time.Minute))
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	fixture := newPostgresFixture(t)
+	work := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
+	mustExec(t, ctx, fixture.pool, `
 UPDATE run_attempts
    SET terminal_outcome = 'succeeded',
        terminal_reason_code = 'task_succeeded',
        terminal_at = now()
  WHERE run_id = $1
    AND number = 1`, work.runID)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	mustExec(t, ctx, fixture.pool, `
 UPDATE runs
    SET status = 'succeeded',
        output = '{}'::jsonb,
        terminal_at = now()
  WHERE id = $1`, work.runID)
-	canceller, err := NewRunCanceller(fixture.pool)
+	canceler, err := NewCanceler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = canceller.Cancel(ctx, RunCancellationRequest{
+	_, err = canceler.Cancel(ctx, CancellationRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID,
 		EnvironmentID: fixture.environmentID,
-		RunPublicID:   runCancellationPublicID(t, fixture, work.runID),
+		RunPublicID:   fixture.runPublicID(t, work.runID),
 	})
-	if !errors.Is(err, ErrRunCancellationConflict) {
+	if !errors.Is(err, ErrCancellationConflict) {
 		t.Fatalf("cancel succeeded Run error = %v", err)
 	}
-	var status RunStatus
+	var status db.RunStatus
 	if err := fixture.pool.QueryRow(ctx,
 		`SELECT status FROM runs WHERE id = $1`, work.runID,
 	).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
-	if status != RunStatusSucceeded {
+	if status != db.RunStatusSucceeded {
 		t.Fatalf("succeeded Run changed to %s", status)
 	}
 }
 
-func TestRunCancellerCascadesOwnedHandoffGraph(t *testing.T) {
+func TestCancelerCascadesOwnedHandoffGraph(t *testing.T) {
 	ctx := context.Background()
-	fixture := newRunLeaseClaimFixture(t, ctx)
-	leaf := fixture.addWork(t, ctx, "assigned", time.Now().Add(-time.Minute))
-	chain := fixture.addNestedHandoffChain(t, ctx, leaf)
-	canceller, err := NewRunCanceller(fixture.pool)
+	fixture := newPostgresFixture(t)
+	leaf := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
+	chain := fixture.addHandoffChain(t, ctx, leaf)
+	canceler, err := NewCanceler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := canceller.Cancel(ctx, RunCancellationRequest{
+	result, err := canceler.Cancel(ctx, CancellationRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID,
 		EnvironmentID: fixture.environmentID,
-		RunPublicID:   runCancellationPublicID(t, fixture, chain.outerRunID),
+		RunPublicID:   fixture.runPublicID(t, chain.outerRunID),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -241,7 +242,7 @@ func TestRunCancellerCascadesOwnedHandoffGraph(t *testing.T) {
 		t.Fatalf("cancellation result = %+v", result)
 	}
 	for _, runID := range []uuid.UUID{chain.outerRunID, chain.parentRunID, leaf.runID} {
-		var status RunStatus
+		var status db.RunStatus
 		var attemptOutcome string
 		if err := fixture.pool.QueryRow(ctx, `
 SELECT runs.status, run_attempts.terminal_outcome
@@ -252,7 +253,7 @@ SELECT runs.status, run_attempts.terminal_outcome
  WHERE runs.id = $1`, runID).Scan(&status, &attemptOutcome); err != nil {
 			t.Fatal(err)
 		}
-		if status != RunStatusCancelled || attemptOutcome != "cancelled" {
+		if status != db.RunStatusCancelled || attemptOutcome != "cancelled" {
 			t.Fatalf("Run %s = status:%s attempt:%s", runID, status, attemptOutcome)
 		}
 	}
@@ -280,11 +281,11 @@ SELECT count(*)
 	}
 }
 
-func TestOwnedActorRunFinalizationGraphCancelsOnlyDescendants(t *testing.T) {
+func TestOwnedActorFinalizationCancelsOnlyDescendants(t *testing.T) {
 	ctx := context.Background()
-	fixture := newRunLeaseClaimFixture(t, ctx)
-	leaf := fixture.addWork(t, ctx, "assigned", time.Now().Add(-time.Minute))
-	chain := fixture.addNestedHandoffChain(t, ctx, leaf)
+	fixture := newPostgresFixture(t)
+	leaf := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
+	chain := fixture.addHandoffChain(t, ctx, leaf)
 	var outerLeaseID uuid.UUID
 	if err := fixture.pool.QueryRow(ctx,
 		`SELECT current_run_lease_id FROM runs WHERE id = $1`,
@@ -297,7 +298,7 @@ func TestOwnedActorRunFinalizationGraphCancelsOnlyDescendants(t *testing.T) {
 		t,
 		ctx,
 
-		runLeaseWork{leaseID: outerLeaseID, runID: chain.outerRunID},
+		leasedRun{leaseID: outerLeaseID, runID: chain.outerRunID},
 		`{"enabled":false}`)
 
 	tx, err := fixture.pool.Begin(ctx)
@@ -305,10 +306,10 @@ func TestOwnedActorRunFinalizationGraphCancelsOnlyDescendants(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	graph, err := LockOwnedRunFinalizationGraphInTransaction(
+	graph, err := LockOwnedFinalization(
 		ctx,
 		tx,
-		OwnedRunFinalizationGraphRequest{
+		OwnedFinalizationRequest{
 			OrgID:         fixture.orgID,
 			ProjectID:     fixture.projectID,
 			EnvironmentID: fixture.environmentID,
@@ -329,9 +330,9 @@ func TestOwnedActorRunFinalizationGraphCancelsOnlyDescendants(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var outerStatus, parentStatus, childStatus RunStatus
-	var outerCondition WaitState
-	var outerSuspension RunWaitState
+	var outerStatus, parentStatus, childStatus db.RunStatus
+	var outerCondition db.WaitState
+	var outerSuspension db.RunWaitState
 	if err := fixture.pool.QueryRow(ctx, `
 SELECT outer_run.status,
        parent_run.status,
@@ -357,11 +358,11 @@ SELECT outer_run.status,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if outerStatus != RunStatusWaiting ||
-		parentStatus != RunStatusCancelled ||
-		childStatus != RunStatusCancelled ||
-		outerCondition != WaitStatePending ||
-		outerSuspension != RunWaitStateParked {
+	if outerStatus != db.RunStatusWaiting ||
+		parentStatus != db.RunStatusCancelled ||
+		childStatus != db.RunStatusCancelled ||
+		outerCondition != db.WaitStatePending ||
+		outerSuspension != db.RunWaitStateParked {
 		t.Fatalf(
 			"finalization graph = outer:%s parent:%s child:%s wait:%s/%s",
 			outerStatus,
@@ -373,20 +374,20 @@ SELECT outer_run.status,
 	}
 }
 
-func TestRunCancellerUnwindsDirectOwnedChildCancellation(t *testing.T) {
+func TestCancelerUnwindsDirectOwnedChildCancellation(t *testing.T) {
 	ctx := context.Background()
-	fixture := newRunLeaseClaimFixture(t, ctx)
-	leaf := fixture.addWork(t, ctx, "assigned", time.Now().Add(-time.Minute))
-	chain := fixture.addNestedHandoffChain(t, ctx, leaf)
-	canceller, err := NewRunCanceller(fixture.pool)
+	fixture := newPostgresFixture(t)
+	leaf := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
+	chain := fixture.addHandoffChain(t, ctx, leaf)
+	canceler, err := NewCanceler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := canceller.Cancel(ctx, RunCancellationRequest{
+	result, err := canceler.Cancel(ctx, CancellationRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID,
 		EnvironmentID: fixture.environmentID,
-		RunPublicID:   runCancellationPublicID(t, fixture, leaf.runID),
+		RunPublicID:   fixture.runPublicID(t, leaf.runID),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -394,9 +395,9 @@ func TestRunCancellerUnwindsDirectOwnedChildCancellation(t *testing.T) {
 	if !result.Changed || result.CancelledRuns != 1 {
 		t.Fatalf("cancellation result = %+v", result)
 	}
-	var childStatus, parentStatus, outerStatus RunStatus
-	var condition WaitState
-	var suspension RunWaitState
+	var childStatus, parentStatus, outerStatus db.RunStatus
+	var condition db.WaitState
+	var suspension db.RunWaitState
 	var resumeVersion, baseVersion uuid.UUID
 	if err := fixture.pool.QueryRow(ctx, `
 SELECT child_run.status,
@@ -419,9 +420,9 @@ SELECT child_run.status,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if childStatus != RunStatusCancelled || parentStatus != RunStatusQueued ||
-		outerStatus != RunStatusWaiting ||
-		condition != WaitStateCancelled || suspension != RunWaitStateResumePending ||
+	if childStatus != db.RunStatusCancelled || parentStatus != db.RunStatusQueued ||
+		outerStatus != db.RunStatusWaiting ||
+		condition != db.WaitStateCancelled || suspension != db.RunWaitStateResumePending ||
 		resumeVersion != baseVersion {
 		t.Fatalf(
 			"unwind = child:%s parent:%s outer:%s condition:%s suspension:%s resume:%s base:%s",
@@ -498,13 +499,13 @@ SELECT count(*)
 	)
 	locators, err := fixture.queries.GetRunLeaseClaimLocators(
 		ctx,
-		GetRunLeaseClaimLocatorsParams{
+		db.GetRunLeaseClaimLocatorsParams{
 			ID:                    pgvalue.UUID(resumeLeaseID),
 			LeaseSequence:         2,
-			WorkerGroupID:         runLeaseTestWorkerGroup,
+			WorkerGroupID:         testWorkerGroup,
 			WorkerInstanceID:      pgvalue.UUID(fixture.workerID),
 			WorkerEpoch:           1,
-			WorkerProtocolVersion: runLeaseTestProtocol,
+			WorkerProtocolVersion: testWorkerProtocol,
 		},
 	)
 	if err != nil {
@@ -522,20 +523,20 @@ SELECT count(*)
 	}
 }
 
-func TestRunCancellerRetainsBoundaryHandoffAcrossNestedCascade(t *testing.T) {
+func TestCancelerRetainsBoundaryHandoffAcrossNestedCascade(t *testing.T) {
 	ctx := context.Background()
-	fixture := newRunLeaseClaimFixture(t, ctx)
-	leaf := fixture.addWork(t, ctx, "assigned", time.Now().Add(-time.Minute))
-	chain := fixture.addNestedHandoffChain(t, ctx, leaf)
-	canceller, err := NewRunCanceller(fixture.pool)
+	fixture := newPostgresFixture(t)
+	leaf := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
+	chain := fixture.addHandoffChain(t, ctx, leaf)
+	canceler, err := NewCanceler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := canceller.Cancel(ctx, RunCancellationRequest{
+	result, err := canceler.Cancel(ctx, CancellationRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID,
 		EnvironmentID: fixture.environmentID,
-		RunPublicID:   runCancellationPublicID(t, fixture, chain.parentRunID),
+		RunPublicID:   fixture.runPublicID(t, chain.parentRunID),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -543,9 +544,9 @@ func TestRunCancellerRetainsBoundaryHandoffAcrossNestedCascade(t *testing.T) {
 	if !result.Changed || result.CancelledRuns != 2 {
 		t.Fatalf("cancellation result = %+v", result)
 	}
-	var outerStatus, parentStatus, childStatus RunStatus
-	var outerCondition WaitState
-	var outerSuspension RunWaitState
+	var outerStatus, parentStatus, childStatus db.RunStatus
+	var outerCondition db.WaitState
+	var outerSuspension db.RunWaitState
 	var runtimeState, mountState string
 	if err := fixture.pool.QueryRow(ctx, `
 SELECT outer_run.status,
@@ -579,11 +580,11 @@ SELECT outer_run.status,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if outerStatus != RunStatusQueued ||
-		parentStatus != RunStatusCancelled ||
-		childStatus != RunStatusCancelled ||
-		outerCondition != WaitStateCancelled ||
-		outerSuspension != RunWaitStateResumePending ||
+	if outerStatus != db.RunStatusQueued ||
+		parentStatus != db.RunStatusCancelled ||
+		childStatus != db.RunStatusCancelled ||
+		outerCondition != db.WaitStateCancelled ||
+		outerSuspension != db.RunWaitStateResumePending ||
 		runtimeState != "ready" ||
 		mountState != "mounted" {
 		t.Fatalf(
@@ -610,13 +611,13 @@ SELECT outer_run.status,
 	)
 	locators, err := fixture.queries.GetRunLeaseClaimLocators(
 		ctx,
-		GetRunLeaseClaimLocatorsParams{
+		db.GetRunLeaseClaimLocatorsParams{
 			ID:                    pgvalue.UUID(resumeLeaseID),
 			LeaseSequence:         2,
-			WorkerGroupID:         runLeaseTestWorkerGroup,
+			WorkerGroupID:         testWorkerGroup,
 			WorkerInstanceID:      pgvalue.UUID(fixture.workerID),
 			WorkerEpoch:           1,
-			WorkerProtocolVersion: runLeaseTestProtocol,
+			WorkerProtocolVersion: testWorkerProtocol,
 		},
 	)
 	if err != nil {
@@ -637,7 +638,7 @@ SELECT outer_run.status,
 func grantCancelledChildParentResume(
 	t *testing.T,
 	ctx context.Context,
-	fixture runLeaseClaimFixture,
+	fixture postgresFixture,
 	parentRunID uuid.UUID,
 	waitID uuid.UUID,
 	childRunID uuid.UUID,
@@ -655,7 +656,7 @@ func grantCancelledChildParentResume(
 	if _, err := tx.Exec(ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
 		t.Fatal(err)
 	}
-	mustRunLeaseExec(t, ctx, tx, `
+	mustExec(t, ctx, tx, `
 INSERT INTO run_leases (
     id, org_id, project_id, environment_id, run_id, workspace_id, region_id,
     lease_sequence, attempt_number, worker_group_id, worker_instance_id,
@@ -677,7 +678,7 @@ SELECT $1, org_id, project_id, environment_id, $2, workspace_id, region_id,
 		parentRunID,
 		templateLeaseID,
 	)
-	mustRunLeaseExec(t, ctx, tx, `
+	mustExec(t, ctx, tx, `
 UPDATE workspaces
    SET writer_generation = 4,
        updated_at = transaction_timestamp()
@@ -685,7 +686,7 @@ UPDATE workspaces
    AND writer_generation = 3`,
 		parentRunID,
 	)
-	mustRunLeaseExec(t, ctx, tx, `
+	mustExec(t, ctx, tx, `
 INSERT INTO workspace_leases (
     id, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
@@ -706,7 +707,7 @@ SELECT $1, org_id, worker_group_id, project_id, environment_id, region_id,
 		"resume-"+runLeaseID.String(),
 		templateLeaseID,
 	)
-	mustRunLeaseExec(t, ctx, tx, `
+	mustExec(t, ctx, tx, `
 UPDATE runs
    SET current_run_lease_id = $1,
        state_version = state_version + 1,
@@ -717,7 +718,7 @@ UPDATE runs
 		runLeaseID,
 		parentRunID,
 	)
-	mustRunLeaseExec(t, ctx, tx, `
+	mustExec(t, ctx, tx, `
 UPDATE run_waits
    SET suspension_state = 'resuming',
        current_run_lease_id = $1,
@@ -737,10 +738,10 @@ UPDATE run_waits
 	return runLeaseID
 }
 
-func assertRunCancellationState(
+func assertCancellationState(
 	t *testing.T,
-	fixture runLeaseClaimFixture,
-	work runLeaseWork,
+	fixture postgresFixture,
+	work leasedRun,
 	wantRun string,
 	wantLease string,
 	wantWorkspaceLease string,
@@ -770,19 +771,4 @@ SELECT runs.status,
 			runStatus, attemptOutcome, leaseState, workspaceLeaseState,
 		)
 	}
-}
-
-func runCancellationPublicID(
-	t *testing.T,
-	fixture runLeaseClaimFixture,
-	runID uuid.UUID,
-) string {
-	t.Helper()
-	var publicID string
-	if err := fixture.pool.QueryRow(t.Context(),
-		`SELECT public_id FROM runs WHERE id = $1`, runID,
-	).Scan(&publicID); err != nil {
-		t.Fatal(err)
-	}
-	return publicID
 }

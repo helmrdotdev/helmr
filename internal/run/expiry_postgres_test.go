@@ -1,4 +1,4 @@
-package db
+package run
 
 import (
 	"context"
@@ -8,23 +8,25 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestParentOwnedQueuedChildExpiryResolvesEveryWaitState(t *testing.T) {
-	for _, suspension := range []RunWaitState{
-		RunWaitStateHot,
-		RunWaitStateCheckpointing,
-		RunWaitStateParked,
+	for _, suspension := range []db.RunWaitState{
+		db.RunWaitStateHot,
+		db.RunWaitStateCheckpointing,
+		db.RunWaitStateParked,
 	} {
 		t.Run(string(suspension), func(t *testing.T) {
 			ctx := context.Background()
-			fixture := newRunLeaseClaimFixture(t, ctx)
+			fixture := newPostgresFixture(t)
 			parent := newQueuedChildParent(t, ctx, fixture, suspension)
-			child := fixture.addWork(t, ctx, "assigned", time.Now().Add(-time.Minute))
+			child := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
 			claimID := uuid.Must(uuid.NewV7())
-			childPublicID := runCancellationPublicID(t, fixture, child.runID)
+			childPublicID := fixture.runPublicID(t, child.runID)
 
 			tx, err := fixture.pool.Begin(ctx)
 			if err != nil {
@@ -34,31 +36,31 @@ func TestParentOwnedQueuedChildExpiryResolvesEveryWaitState(t *testing.T) {
 			if _, err := tx.Exec(ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
 				t.Fatal(err)
 			}
-			mustRunLeaseExec(t, ctx, tx, `
+			mustExec(t, ctx, tx, `
 INSERT INTO idempotency_claims (
     id, environment_id, operation, scope_hash, key_hash,
     hash_key_version, generation, request_fingerprint, accepted_at
 ) VALUES ($1, $2, 'task.child.invoke', $3, $4, 1, 1, $5, now())`,
 				claimID,
 				fixture.environmentID,
-				runLeaseTestHash("queued-child-expiry-scope"),
-				runLeaseTestHash("queued-child-expiry-key"),
-				runLeaseTestHash("queued-child-expiry-request"),
+				runtest.Hash("queued-child-expiry-scope"),
+				runtest.Hash("queued-child-expiry-key"),
+				runtest.Hash("queued-child-expiry-request"),
 			)
-			mustRunLeaseExec(t, ctx, tx, `
+			mustExec(t, ctx, tx, `
 UPDATE workspace_leases
    SET state = 'released', released_at = now(), terminal_at = now()
  WHERE owner_run_lease_id = $1`,
 				child.leaseID,
 			)
-			mustRunLeaseExec(t, ctx, tx, `
+			mustExec(t, ctx, tx, `
 UPDATE run_leases
    SET state = 'cancelled', terminal_at = now(),
        terminal_reason_code = 'test_reset'
  WHERE id = $1`,
 				child.leaseID,
 			)
-			mustRunLeaseExec(t, ctx, tx, `
+			mustExec(t, ctx, tx, `
 UPDATE runs
    SET cause_kind = 'child',
        parent_run_id = $1,
@@ -72,7 +74,7 @@ UPDATE runs
 				claimID,
 				child.runID,
 			)
-			mustRunLeaseExec(t, ctx, tx, `
+			mustExec(t, ctx, tx, `
 UPDATE run_waits
    SET kind = 'child',
        token_id = NULL,
@@ -97,10 +99,10 @@ UPDATE run_waits
 				t.Fatal(err)
 			}
 			defer func() { _ = tx.Rollback(context.Background()) }()
-			changed, err := ExpireParentOwnedChildInTransaction(
+			changed, err := ExpireParentOwnedChild(
 				ctx,
 				tx,
-				ParentOwnedChildExpiryRequest{
+				ChildExpiryRequest{
 					OrgID: fixture.orgID, ProjectID: fixture.projectID,
 					EnvironmentID: fixture.environmentID,
 					ParentRunID:   parent.runID, ChildRunID: child.runID,
@@ -116,7 +118,7 @@ UPDATE run_waits
 				t.Fatal(err)
 			}
 
-			var childStatus RunStatus
+			var childStatus db.RunStatus
 			var reason string
 			var ownerRunID *uuid.UUID
 			if err := fixture.pool.QueryRow(ctx, `
@@ -128,7 +130,7 @@ SELECT runs.status, runs.terminal_reason_code, workspaces.owner_run_id
 			).Scan(&childStatus, &reason, &ownerRunID); err != nil {
 				t.Fatal(err)
 			}
-			if childStatus != RunStatusExpired || reason != "queued_ttl_expired" ||
+			if childStatus != db.RunStatusExpired || reason != "queued_ttl_expired" ||
 				ownerRunID != nil {
 				t.Fatalf(
 					"child expiry = status:%s reason:%s owner:%v",
@@ -136,8 +138,8 @@ SELECT runs.status, runs.terminal_reason_code, workspaces.owner_run_id
 				)
 			}
 			var result json.RawMessage
-			var waitState WaitState
-			var suspensionState RunWaitState
+			var waitState db.WaitState
+			var suspensionState db.RunWaitState
 			if err := fixture.pool.QueryRow(ctx, `
 SELECT condition_result, condition_state, suspension_state
   FROM run_waits
@@ -158,20 +160,20 @@ SELECT condition_result, condition_state, suspension_state
 			if !reflect.DeepEqual(gotValue, wantValue) {
 				t.Fatalf("condition result = %s", result)
 			}
-			if waitState != WaitStateCompleted {
+			if waitState != db.WaitStateCompleted {
 				t.Fatalf("condition state = %s", waitState)
 			}
 			switch suspension {
-			case RunWaitStateHot:
-				if suspensionState != RunWaitStateReleased {
+			case db.RunWaitStateHot:
+				if suspensionState != db.RunWaitStateReleased {
 					t.Fatalf("hot suspension = %s", suspensionState)
 				}
-			case RunWaitStateCheckpointing:
-				if suspensionState != RunWaitStateCheckpointing {
+			case db.RunWaitStateCheckpointing:
+				if suspensionState != db.RunWaitStateCheckpointing {
 					t.Fatalf("checkpointing suspension = %s", suspensionState)
 				}
-			case RunWaitStateParked:
-				if suspensionState != RunWaitStateResumePending {
+			case db.RunWaitStateParked:
+				if suspensionState != db.RunWaitStateResumePending {
 					t.Fatalf("parked suspension = %s", suspensionState)
 				}
 			}
@@ -190,11 +192,11 @@ type queuedChildParent struct {
 func newQueuedChildParent(
 	t *testing.T,
 	ctx context.Context,
-	fixture runLeaseClaimFixture,
-	suspension RunWaitState,
+	fixture postgresFixture,
+	suspension db.RunWaitState,
 ) queuedChildParent {
 	t.Helper()
-	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+	work := fixture.addRun(t, "starting", time.Now().Add(-time.Minute))
 	parent := queuedChildParent{
 		waitID:  uuid.Must(uuid.NewV7()),
 		runID:   work.runID,
@@ -207,13 +209,13 @@ func newQueuedChildParent(
 	).Scan(&parent.workspaceID); err != nil {
 		t.Fatal(err)
 	}
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	mustExec(t, ctx, fixture.pool, `
 		UPDATE run_leases
 		   SET state = 'running',
 		       started_at = claimed_at
 		 WHERE id = $1
 	`, parent.leaseID)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	mustExec(t, ctx, fixture.pool, `
 		UPDATE runs
 		   SET status = 'waiting',
 		       state_version = 2,
@@ -221,7 +223,7 @@ func newQueuedChildParent(
 		       active_started_at = transaction_timestamp()
 		 WHERE id = $1
 	`, parent.runID)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	mustExec(t, ctx, fixture.pool, `
 		INSERT INTO run_waits (
 			id, environment_id, run_id, workspace_id, kind, due_at,
 			expected_run_state_version, attempt_number, current_run_lease_id,
@@ -231,15 +233,15 @@ func newQueuedChildParent(
 		parent.leaseID, uuid.Must(uuid.NewV7()))
 
 	switch suspension {
-	case RunWaitStateHot:
-	case RunWaitStateCheckpointing:
-		mustRunLeaseExec(t, ctx, fixture.pool, `
+	case db.RunWaitStateHot:
+	case db.RunWaitStateCheckpointing:
+		mustExec(t, ctx, fixture.pool, `
 			UPDATE run_waits
 			   SET suspension_state = 'checkpointing',
 			       checkpoint_request_version = 1
 			 WHERE id = $1
 		`, parent.waitID)
-	case RunWaitStateParked:
+	case db.RunWaitStateParked:
 		var workspaceLeaseID, baseVersionID uuid.UUID
 		if err := fixture.pool.QueryRow(ctx, `
 			SELECT workspace_leases.id, runs.base_workspace_version_id
@@ -251,7 +253,7 @@ func newQueuedChildParent(
 		}
 		checkpointID := uuid.Must(uuid.NewV7())
 		parent.checkpointID = pgvalue.UUID(checkpointID)
-		mustRunLeaseExec(t, ctx, fixture.pool, `
+		mustExec(t, ctx, fixture.pool, `
 			INSERT INTO run_checkpoints (
 			    id, kind, run_id, attempt_number, run_wait_id,
 			    source_run_lease_id, source_workspace_lease_id, workspace_id,
@@ -263,7 +265,7 @@ func newQueuedChildParent(
 			)
 		`, checkpointID, parent.runID, parent.waitID, parent.leaseID,
 			workspaceLeaseID, parent.workspaceID, baseVersionID)
-		mustRunLeaseExec(t, ctx, fixture.pool, `
+		mustExec(t, ctx, fixture.pool, `
 			UPDATE run_leases
 			   SET state = 'checkpointed',
 			       checkpointed_at = transaction_timestamp(),
@@ -271,20 +273,20 @@ func newQueuedChildParent(
 			       terminal_reason_code = 'checkpointed'
 			 WHERE id = $1
 		`, parent.leaseID)
-		mustRunLeaseExec(t, ctx, fixture.pool, `
+		mustExec(t, ctx, fixture.pool, `
 			UPDATE workspace_leases
 			   SET state = 'released',
 			       released_at = transaction_timestamp(),
 			       terminal_at = transaction_timestamp()
 			 WHERE id = $1
 		`, workspaceLeaseID)
-		mustRunLeaseExec(t, ctx, fixture.pool, `
+		mustExec(t, ctx, fixture.pool, `
 			UPDATE runs
 			   SET current_run_lease_id = NULL,
 			       active_started_at = NULL
 			 WHERE id = $1
 		`, parent.runID)
-		mustRunLeaseExec(t, ctx, fixture.pool, `
+		mustExec(t, ctx, fixture.pool, `
 			UPDATE run_waits
 			   SET suspension_state = 'parked',
 			       current_run_lease_id = NULL,

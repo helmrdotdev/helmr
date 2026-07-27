@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/publicid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -401,6 +402,353 @@ UPDATE run_attempts
 		t.Fatal(err)
 	}
 	return actorID
+}
+
+type HandoffChain struct {
+	OuterRunID          uuid.UUID
+	ParentRunID         uuid.UUID
+	OuterWaitID         uuid.UUID
+	OuterCheckpoint     uuid.UUID
+	OuterResumeID       uuid.UUID
+	EnclosingWaitID     uuid.UUID
+	EnclosingCheckpoint uuid.UUID
+	EnclosingResumeID   uuid.UUID
+	RuntimeID           uuid.UUID
+	MountID             uuid.UUID
+	VersionID           uuid.UUID
+}
+
+func (fixture Fixture) AddHandoffChain(
+	t *testing.T,
+	ctx context.Context,
+	work RunLease,
+) HandoffChain {
+	t.Helper()
+	chain := HandoffChain{
+		OuterRunID:          uuid.Must(uuid.NewV7()),
+		ParentRunID:         uuid.Must(uuid.NewV7()),
+		OuterWaitID:         uuid.Must(uuid.NewV7()),
+		OuterCheckpoint:     uuid.Must(uuid.NewV7()),
+		OuterResumeID:       uuid.Must(uuid.NewV7()),
+		EnclosingWaitID:     uuid.Must(uuid.NewV7()),
+		EnclosingCheckpoint: uuid.Must(uuid.NewV7()),
+		EnclosingResumeID:   uuid.Must(uuid.NewV7()),
+	}
+	outerClaimID, enclosingClaimID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	outerLeaseID, parentLeaseID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	outerWorkspaceLeaseID, parentWorkspaceLeaseID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	historicalWaitID := uuid.Must(uuid.NewV7())
+
+	tx, err := fixture.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(ctx, `
+		SELECT run_leases.runtime_instance_id,
+		       workspace_leases.workspace_mount_id,
+		       workspace_leases.base_version_id
+		  FROM run_leases
+		  JOIN workspace_leases
+		    ON workspace_leases.owner_run_lease_id = run_leases.id
+		 WHERE run_leases.id = $1
+	`, work.LeaseID).Scan(&chain.RuntimeID, &chain.MountID, &chain.VersionID); err != nil {
+		t.Fatal(err)
+	}
+	MustExec(t, ctx, tx, `
+		UPDATE workspace_leases
+		   SET state = 'released',
+		       writer_generation = 3,
+		       released_at = now(),
+		       terminal_at = now()
+		 WHERE owner_run_lease_id = $1
+	`, work.LeaseID)
+	MustExec(t, ctx, tx, `
+		UPDATE run_leases
+		   SET state = 'checkpointed',
+		       claimed_at = assigned_at,
+		       started_at = assigned_at,
+		       checkpointed_at = now(),
+		       terminal_at = now(),
+		       terminal_reason_code = 'test_handoff'
+		 WHERE id = $1
+	`, work.LeaseID)
+	MustExec(t, ctx, tx, `
+		INSERT INTO idempotency_claims (
+			id, environment_id, operation, scope_hash, key_hash,
+			hash_key_version, generation, request_fingerprint, accepted_at
+		) VALUES
+			($1, $3, 'task.child.invoke', $4, $5, 1, 1, $6, now()),
+			($2, $3, 'task.child.invoke', $7, $8, 1, 1, $9, now())
+	`, outerClaimID, enclosingClaimID, fixture.EnvironmentID,
+		Hash("outer-scope"), Hash("outer-key"),
+		Hash("outer-request"), Hash("inner-scope"),
+		Hash("inner-key"), Hash("inner-request"))
+	MustExec(t, ctx, tx, `
+		INSERT INTO runs (
+			id, public_id, org_id, project_id, environment_id, deployment_id,
+			deployment_definition_id, entrypoint_kind, entrypoint_declared_id,
+			cause_kind, parent_run_id, parent_owns_lifecycle, workspace_id,
+			base_workspace_version_id, payload, queue_name, queue_origin_at,
+			queue_score_at, max_active_duration_ms, retry_policy, trace_id,
+			root_span_id, claim_id
+		) VALUES (
+			$1, $2, $5, $6, $7, $8, $9, 'task', 'test-task', 'api',
+			NULL, NULL, $10, $11, '{}'::jsonb, 'default', now(), now(),
+			300000, '{"enabled":false}'::jsonb,
+			'33333333333333333333333333333333', '4444444444444444', NULL
+		), (
+			$3, $4, $5, $6, $7, $8, $9, 'task', 'test-task', 'child',
+			$1, true, $10, $11, '{}'::jsonb, 'default', now(), now(),
+			300000, '{"enabled":false}'::jsonb,
+			'55555555555555555555555555555555', '6666666666666666', $12
+		)
+	`, chain.OuterRunID, PublicID(t, publicid.Run),
+		chain.ParentRunID, PublicID(t, publicid.Run),
+		fixture.OrgID, fixture.ProjectID, fixture.EnvironmentID,
+		fixture.DeploymentID, fixture.TaskDefinitionID, fixture.workspaceID(t, ctx, tx, work.RunID),
+		chain.VersionID, outerClaimID)
+	MustExec(t, ctx, tx, `
+		UPDATE runs
+		   SET cause_kind = 'child',
+		       parent_run_id = $1,
+		       parent_owns_lifecycle = true,
+		       claim_id = $2
+		 WHERE id = $3
+	`, chain.ParentRunID, enclosingClaimID, work.RunID)
+	MustExec(t, ctx, tx, `
+		INSERT INTO run_attempts (
+			run_id, number, entrypoint_kind, workspace_id,
+			entrypoint_entered_at, base_workspace_version_id
+		) VALUES
+			($1, 1, 'task', $3, now(), $4),
+			($2, 1, 'task', $3, now(), $4)
+	`, chain.OuterRunID, chain.ParentRunID, fixture.workspaceID(t, ctx, tx, work.RunID), chain.VersionID)
+	MustExec(t, ctx, tx, `
+		UPDATE workspaces
+		   SET owner_run_id = $1,
+		       writer_generation = 3
+		 WHERE id = (SELECT workspace_id FROM runs WHERE id = $2)
+	`, chain.OuterRunID, work.RunID)
+
+	fixture.parkHandoff(t, ctx, tx, handoffPark{
+		runID: chain.OuterRunID, childRunID: chain.ParentRunID,
+		claimID: outerClaimID, leaseID: outerLeaseID,
+		workspaceLeaseID: outerWorkspaceLeaseID, waitID: chain.OuterWaitID,
+		checkpointID: chain.OuterCheckpoint, writerGeneration: 1,
+		childWriterGeneration: 2, RuntimeID: chain.RuntimeID,
+		MountID: chain.MountID, VersionID: chain.VersionID,
+		resumeAttachID: chain.OuterResumeID,
+	})
+	fixture.parkHandoff(t, ctx, tx, handoffPark{
+		runID: chain.ParentRunID, childRunID: work.RunID,
+		claimID: enclosingClaimID, leaseID: parentLeaseID,
+		workspaceLeaseID: parentWorkspaceLeaseID, waitID: chain.EnclosingWaitID,
+		checkpointID: chain.EnclosingCheckpoint, writerGeneration: 2,
+		childWriterGeneration: 3, RuntimeID: chain.RuntimeID,
+		MountID: chain.MountID, VersionID: chain.VersionID,
+		resumeAttachID: chain.EnclosingResumeID,
+	})
+	MustExec(t, ctx, tx, `
+		INSERT INTO run_waits (
+			id, environment_id, run_id, workspace_id, kind, condition_state,
+			child_run_id, child_parent_owned, child_target_declared_id,
+			child_claim_id, child_request, suspension_state,
+			expected_run_state_version, attempt_number, resume_attach_id,
+			condition_error, condition_terminal_at, condition_reason_code,
+			suspension_terminal_at, suspension_reason_code, suspension_error
+		) VALUES (
+			$1, $2, $3, $4, 'child', 'failed',
+			$5, true, 'test-task', $6, '{}'::jsonb, 'failed',
+			1, 1, $7, '{}'::jsonb, now(), 'test_history',
+			now(), 'test_history', '{}'::jsonb
+		)
+	`, historicalWaitID, fixture.EnvironmentID, chain.OuterRunID,
+		fixture.workspaceID(t, ctx, tx, work.RunID), chain.ParentRunID,
+		outerClaimID, uuid.Must(uuid.NewV7()))
+	MustExec(t, ctx, tx, `
+		UPDATE run_leases
+		   SET state = 'assigned',
+		       claimed_at = NULL,
+		       started_at = NULL,
+		       checkpointed_at = NULL,
+		       terminal_at = NULL,
+		       terminal_reason_code = NULL
+		 WHERE id = $1
+	`, work.LeaseID)
+	MustExec(t, ctx, tx, `
+		UPDATE workspace_leases
+		   SET state = 'active',
+		       released_at = NULL,
+		       terminal_at = NULL
+		 WHERE owner_run_lease_id = $1
+	`, work.LeaseID)
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return chain
+}
+
+type handoffPark struct {
+	runID                 uuid.UUID
+	childRunID            uuid.UUID
+	claimID               uuid.UUID
+	leaseID               uuid.UUID
+	workspaceLeaseID      uuid.UUID
+	waitID                uuid.UUID
+	checkpointID          uuid.UUID
+	writerGeneration      int64
+	childWriterGeneration int64
+	RuntimeID             uuid.UUID
+	MountID               uuid.UUID
+	VersionID             uuid.UUID
+	resumeAttachID        uuid.UUID
+}
+
+func (fixture Fixture) parkHandoff(
+	t *testing.T,
+	ctx context.Context,
+	tx pgx.Tx,
+	park handoffPark,
+) {
+	t.Helper()
+	workspaceID := fixture.workspaceID(t, ctx, tx, park.runID)
+	MustExec(t, ctx, tx, `
+		INSERT INTO run_leases (
+			id, org_id, project_id, environment_id, run_id, workspace_id, region_id,
+			lease_sequence, attempt_number, worker_group_id, worker_instance_id,
+			worker_epoch, runtime_instance_id, network_slot_id, network_slot_generation,
+			runtime_identity_id, worker_protocol_version, requested_cpu_millis,
+			requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes,
+			requested_execution_slots, state, assigned_at, start_deadline_at,
+			claimed_at, started_at, expires_at
+		)
+		SELECT $1, org_id, project_id, environment_id, $2, workspace_id, region_id,
+		       1, 1, worker_group_id, worker_instance_id, worker_epoch,
+		       runtime_instance_id, network_slot_id, network_slot_generation,
+		       runtime_identity_id, worker_protocol_version, requested_cpu_millis,
+		       requested_memory_bytes, requested_workload_disk_bytes,
+		       requested_scratch_bytes, requested_execution_slots, 'running',
+		       now() - interval '1 minute', now() + interval '5 minutes',
+		       now() - interval '1 minute', now() - interval '1 minute',
+		       now() + interval '10 minutes'
+		  FROM run_leases
+		 WHERE runtime_instance_id = $3
+		 ORDER BY created_at
+		 LIMIT 1
+	`, park.leaseID, park.runID, park.RuntimeID)
+	MustExec(t, ctx, tx, `
+		INSERT INTO workspace_leases (
+			id, org_id, worker_group_id, project_id, environment_id, region_id,
+			worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
+			workspace_mount_id, owner_run_lease_id, base_version_id,
+			ownership_generation, writer_generation, mount_fencing_generation,
+			fencing_key_fingerprint, fencing_token_hash, expires_at
+		)
+		SELECT $1, org_id, worker_group_id, project_id, environment_id, region_id,
+		       worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
+		       workspace_mount_id, $2, base_version_id, ownership_generation, $3,
+		       mount_fencing_generation, fencing_key_fingerprint, fencing_token_hash,
+		       now() + interval '10 minutes'
+		  FROM workspace_leases
+		 WHERE workspace_id = $4
+		 ORDER BY acquired_at
+		 LIMIT 1
+	`, park.workspaceLeaseID, park.leaseID, park.writerGeneration, workspaceID)
+	MustExec(t, ctx, tx, `
+		UPDATE runs
+		   SET current_run_lease_id = $1,
+		       status = 'running',
+		       first_lease_at = now() - interval '1 minute',
+		       started_at = now() - interval '1 minute'
+		 WHERE id = $2
+	`, park.leaseID, park.runID)
+	MustExec(t, ctx, tx, `
+		INSERT INTO run_waits (
+			id, environment_id, run_id, workspace_id, kind, condition_state,
+			child_run_id, child_parent_owned, child_target_declared_id,
+			child_claim_id, child_request, suspension_state,
+			expected_run_state_version, attempt_number, current_run_lease_id,
+			checkpoint_request_version, checkpoint_ack_version, resume_attach_id
+		) VALUES (
+			$1, $2, $3, $4, 'child', 'pending',
+			$5, true, 'test-task', $6, '{}'::jsonb, 'hot',
+			1, 1, $7, 1, 0, $8
+		)
+	`, park.waitID, fixture.EnvironmentID, park.runID, workspaceID,
+		park.childRunID, park.claimID, park.leaseID, park.resumeAttachID)
+	MustExec(t, ctx, tx, `
+		UPDATE run_leases
+		   SET state = 'checkpointed',
+		       checkpointed_at = now(),
+		       terminal_at = now(),
+		       terminal_reason_code = 'test_handoff'
+		 WHERE id = $1
+	`, park.leaseID)
+	MustExec(t, ctx, tx, `
+		UPDATE workspace_leases
+		   SET state = 'released',
+		       released_at = now(),
+		       terminal_at = now()
+		 WHERE id = $1
+	`, park.workspaceLeaseID)
+	MustExec(t, ctx, tx, `
+		INSERT INTO run_checkpoints (
+			id, kind, run_id, attempt_number, run_wait_id,
+			source_run_lease_id, source_workspace_lease_id, workspace_id,
+			base_workspace_version_id, private_workspace_version_id,
+			state, restore_manifest, ready_request_fingerprint, ready_at
+		) VALUES (
+			$1, 'suspend', $2, 1, $3, $4, $5, $6,
+			$7, $7, 'ready', '{"test":true}'::jsonb, 'test-ready', now()
+		)
+	`, park.checkpointID, park.runID, park.waitID, park.leaseID,
+		park.workspaceLeaseID, workspaceID, park.VersionID)
+	MustExec(t, ctx, tx, `
+		UPDATE run_waits
+		   SET suspension_state = 'parked',
+		       current_run_lease_id = NULL,
+		       prior_run_lease_id = $1,
+		       checkpoint_ack_version = 1,
+		       suspend_checkpoint_id = $2,
+		       base_workspace_version_id = $3,
+		       base_workspace_content_digest = (
+		           SELECT content_digest
+		             FROM workspace_versions
+		            WHERE id = $3
+		       ),
+		       handoff_runtime_instance_id = $4,
+		       handoff_workspace_mount_id = $5,
+		       handoff_mount_generation = 2,
+		       ownership_generation = 1,
+		       parent_writer_generation = $6,
+		       child_writer_generation = $7
+		 WHERE id = $8
+	`, park.leaseID, park.checkpointID, park.VersionID, park.RuntimeID,
+		park.MountID, park.writerGeneration, park.childWriterGeneration, park.waitID)
+	MustExec(t, ctx, tx, `
+		UPDATE runs
+		   SET status = 'waiting',
+		       current_run_lease_id = NULL
+		 WHERE id = $1
+	`, park.runID)
+}
+
+func (fixture Fixture) workspaceID(
+	t *testing.T,
+	ctx context.Context,
+	tx pgx.Tx,
+	runID uuid.UUID,
+) uuid.UUID {
+	t.Helper()
+	var workspaceID uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT workspace_id FROM runs WHERE id = $1`, runID).Scan(&workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	return workspaceID
 }
 
 func MustExec(t *testing.T, ctx context.Context, db interface {

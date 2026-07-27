@@ -26,16 +26,19 @@ type WorkspaceExecCandidate struct {
 
 type WorkspaceExecRecoverer func(context.Context, WorkspaceExecCandidate) error
 
-func (recover WorkspaceExecRecoverer) RecoverWorkspaceExec(
-	ctx context.Context,
-	candidate WorkspaceExecCandidate,
-) error {
-	return recover(ctx, candidate)
+type RunFinalization struct {
+	OrgID         uuid.UUID
+	ProjectID     uuid.UUID
+	EnvironmentID uuid.UUID
+	RunID         uuid.UUID
 }
+
+type RunFinalizer func(context.Context, pgx.Tx, RunFinalization) error
 
 type RevocationReconciler struct {
 	db            database
 	execRecoverer WorkspaceExecRecoverer
+	runFinalizer  RunFinalizer
 }
 
 type runCandidate struct {
@@ -56,6 +59,7 @@ type processCandidate struct {
 func NewRevocationReconciler(
 	database database,
 	execRecoverer WorkspaceExecRecoverer,
+	runFinalizer RunFinalizer,
 ) (*RevocationReconciler, error) {
 	if database == nil {
 		return nil, errors.New("Secret revocation database is required")
@@ -63,7 +67,14 @@ func NewRevocationReconciler(
 	if execRecoverer == nil {
 		return nil, errors.New("Workspace exec recoverer is required")
 	}
-	return &RevocationReconciler{db: database, execRecoverer: execRecoverer}, nil
+	if runFinalizer == nil {
+		return nil, errors.New("Run finalizer is required")
+	}
+	return &RevocationReconciler{
+		db:            database,
+		execRecoverer: execRecoverer,
+		runFinalizer:  runFinalizer,
+	}, nil
 }
 
 // ReconcileBatch advances the execution fences affected by one committed
@@ -293,10 +304,10 @@ func (r *RevocationReconciler) failRun(
 	if !valid {
 		return tx.Commit(ctx)
 	}
-	graph, err := db.LockOwnedRunFinalizationGraphInTransaction(
+	err = r.runFinalizer(
 		ctx,
 		tx,
-		db.OwnedRunFinalizationGraphRequest{
+		RunFinalization{
 			OrgID:         candidate.orgID,
 			ProjectID:     candidate.projectID,
 			EnvironmentID: candidate.environmentID,
@@ -304,9 +315,6 @@ func (r *RevocationReconciler) failRun(
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("lock Secret-revoked Run graph: %w", err)
-	}
-	if _, err := graph.FailCurrentForSecretRevocation(ctx); err != nil {
 		return fmt.Errorf("fail Secret-revoked Run graph: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -387,7 +395,7 @@ func (r *RevocationReconciler) recoverProcess(
 	ctx context.Context,
 	candidate processCandidate,
 ) error {
-	err := r.execRecoverer.RecoverWorkspaceExec(
+	err := r.execRecoverer(
 		ctx,
 		WorkspaceExecCandidate{
 			OrgID:                pgvalue.UUID(candidate.orgID),
