@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
 )
 
 func TestCancelerTerminalizesAuthorityAndLeavesDetachedChildren(t *testing.T) {
@@ -317,6 +318,147 @@ SELECT count(*)
 	}
 	if resumeMessages != 0 {
 		t.Fatalf("parent cascade published %d resume messages", resumeMessages)
+	}
+}
+
+func TestCancelerResolvesDifferentWorkspaceChildWait(t *testing.T) {
+	for _, suspension := range []db.RunWaitState{
+		db.RunWaitStateHot,
+		db.RunWaitStateCheckpointing,
+	} {
+		t.Run(string(suspension), func(t *testing.T) {
+			ctx := t.Context()
+			fixture := newPostgresFixture(t)
+			parent := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
+			child := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
+			claimID := uuid.Must(uuid.NewV7())
+			waitID := uuid.Must(uuid.NewV7())
+			mustExec(t, ctx, fixture.pool, `
+INSERT INTO idempotency_claims (
+    id, environment_id, operation, scope_hash, key_hash,
+    hash_key_version, generation, request_fingerprint, accepted_at
+) VALUES (
+    $1, $2, 'task.child.invoke', $3, $4, 1, 1, $5, now()
+)`,
+				claimID,
+				fixture.environmentID,
+				runtest.Hash("cancel-child-scope"),
+				runtest.Hash("cancel-child-key"),
+				runtest.Hash("cancel-child-request"),
+			)
+			mustExec(t, ctx, fixture.pool, `
+UPDATE runs
+   SET cause_kind = 'child',
+       parent_run_id = $1,
+       parent_owns_lifecycle = true,
+       claim_id = $2
+ WHERE id = $3`,
+				parent.runID,
+				claimID,
+				child.runID,
+			)
+			mustExec(t, ctx, fixture.pool, `
+UPDATE runs
+   SET status = 'waiting'
+ WHERE id = $1`,
+				parent.runID,
+			)
+			mustExec(t, ctx, fixture.pool, `
+INSERT INTO run_waits (
+    id, environment_id, run_id, workspace_id, kind,
+    child_run_id, child_parent_owned, child_target_declared_id,
+    child_claim_id, child_request, suspension_state,
+    expected_run_state_version, attempt_number, current_run_lease_id,
+    resume_attach_id
+)
+SELECT $1, runs.environment_id, runs.id, runs.workspace_id, 'child',
+       $2, true, 'test-task', $3, '{}'::jsonb, $4,
+       runs.state_version, runs.current_attempt_number, runs.current_run_lease_id,
+       $5
+  FROM runs
+ WHERE runs.id = $6`,
+				waitID,
+				child.runID,
+				claimID,
+				suspension,
+				uuid.Must(uuid.NewV7()),
+				parent.runID,
+			)
+
+			canceler, err := NewCanceler(fixture.pool)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := canceler.Cancel(ctx, CancellationRequest{
+				OrgID:         fixture.orgID,
+				ProjectID:     fixture.projectID,
+				EnvironmentID: fixture.environmentID,
+				RunPublicID:   fixture.runPublicID(t, child.runID),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.Changed || result.CancelledRuns != 1 {
+				t.Fatalf("cancellation result = %+v", result)
+			}
+
+			var parentStatus db.RunStatus
+			var condition db.WaitState
+			var resolvedSuspension db.RunWaitState
+			var conditionResult []byte
+			if err := fixture.pool.QueryRow(ctx, `
+SELECT runs.status,
+       run_waits.condition_state,
+       run_waits.suspension_state,
+       run_waits.condition_result
+  FROM runs
+  JOIN run_waits ON run_waits.run_id = runs.id
+ WHERE runs.id = $1
+   AND run_waits.id = $2`,
+				parent.runID,
+				waitID,
+			).Scan(
+				&parentStatus,
+				&condition,
+				&resolvedSuspension,
+				&conditionResult,
+			); err != nil {
+				t.Fatal(err)
+			}
+			expectedStatus := db.RunStatusWaiting
+			expectedSuspension := db.RunWaitStateCheckpointing
+			if suspension == db.RunWaitStateHot {
+				expectedStatus = db.RunStatusRunning
+				expectedSuspension = db.RunWaitStateReleased
+			}
+			if parentStatus != expectedStatus ||
+				condition != db.WaitStateCompleted ||
+				resolvedSuspension != expectedSuspension {
+				t.Fatalf(
+					"parent Wait = run:%s condition:%s suspension:%s",
+					parentStatus,
+					condition,
+					resolvedSuspension,
+				)
+			}
+			var payload struct {
+				OK    bool `json:"ok"`
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+				Run struct {
+					ID string `json:"id"`
+				} `json:"run"`
+			}
+			if err := json.Unmarshal(conditionResult, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.OK ||
+				payload.Error.Code != "child_run_cancelled" ||
+				payload.Run.ID != result.RunPublicID {
+				t.Fatalf("child cancellation result = %+v", payload)
+			}
+		})
 	}
 }
 

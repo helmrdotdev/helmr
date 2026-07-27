@@ -650,7 +650,6 @@ SELECT id,
        current_run_lease_id,
        prior_run_lease_id,
        suspend_checkpoint_id,
-       resume_request_version,
        handoff_runtime_instance_id,
        handoff_workspace_mount_id,
        base_workspace_version_id
@@ -683,7 +682,6 @@ type LockCancellationWaitsRow struct {
 	CurrentRunLeaseID        pgtype.UUID `json:"current_run_lease_id"`
 	PriorRunLeaseID          pgtype.UUID `json:"prior_run_lease_id"`
 	SuspendCheckpointID      pgtype.UUID `json:"suspend_checkpoint_id"`
-	ResumeRequestVersion     int64       `json:"resume_request_version"`
 	HandoffRuntimeInstanceID pgtype.UUID `json:"handoff_runtime_instance_id"`
 	HandoffWorkspaceMountID  pgtype.UUID `json:"handoff_workspace_mount_id"`
 	BaseWorkspaceVersionID   pgtype.UUID `json:"base_workspace_version_id"`
@@ -710,7 +708,6 @@ func (q *Queries) LockCancellationWaits(ctx context.Context, arg LockCancellatio
 			&i.CurrentRunLeaseID,
 			&i.PriorRunLeaseID,
 			&i.SuspendCheckpointID,
-			&i.ResumeRequestVersion,
 			&i.HandoffRuntimeInstanceID,
 			&i.HandoffWorkspaceMountID,
 			&i.BaseWorkspaceVersionID,
@@ -784,6 +781,54 @@ func (q *Queries) LockCancellationWorkspaces(ctx context.Context, runIds []pgtyp
 		return nil, err
 	}
 	return items, nil
+}
+
+const publishTerminalChildResume = `-- name: PublishTerminalChildResume :execrows
+INSERT INTO outbox_messages (
+    id,
+    lane,
+    topic,
+    partition_key,
+    payload,
+    available_at
+)
+VALUES (
+    $1,
+    'control',
+    'run.resume',
+    $2::uuid::text,
+    jsonb_build_object(
+        'environmentId', $3::uuid::text,
+        'runId', $4::uuid::text,
+        'runWaitId', $5::uuid::text,
+        'resumeRequestVersion', $6::bigint
+    ),
+    transaction_timestamp()
+)
+`
+
+type PublishTerminalChildResumeParams struct {
+	OutboxMessageID      pgtype.UUID `json:"outbox_message_id"`
+	WorkspaceID          pgtype.UUID `json:"workspace_id"`
+	EnvironmentID        pgtype.UUID `json:"environment_id"`
+	RunID                pgtype.UUID `json:"run_id"`
+	WaitID               pgtype.UUID `json:"wait_id"`
+	ResumeRequestVersion int64       `json:"resume_request_version"`
+}
+
+func (q *Queries) PublishTerminalChildResume(ctx context.Context, arg PublishTerminalChildResumeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, publishTerminalChildResume,
+		arg.OutboxMessageID,
+		arg.WorkspaceID,
+		arg.EnvironmentID,
+		arg.RunID,
+		arg.WaitID,
+		arg.ResumeRequestVersion,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const recordRunTerminalEvent = `-- name: RecordRunTerminalEvent :exec
@@ -894,6 +939,186 @@ type ReleaseTaskWorkspaceParams struct {
 func (q *Queries) ReleaseTaskWorkspace(ctx context.Context, arg ReleaseTaskWorkspaceParams) error {
 	_, err := q.db.Exec(ctx, releaseTaskWorkspace, arg.WorkspaceID, arg.RunID)
 	return err
+}
+
+const resolveCheckpointingTerminalChildWait = `-- name: ResolveCheckpointingTerminalChildWait :one
+UPDATE run_waits
+   SET condition_state = $1::text,
+       condition_result = $2::jsonb,
+       condition_error = $3::jsonb,
+       condition_terminal_at = transaction_timestamp(),
+       condition_reason_code = $4::text,
+       updated_at = transaction_timestamp()
+ WHERE id = $5
+   AND run_id = $6
+   AND condition_state = 'pending'
+   AND suspension_state = 'checkpointing'
+RETURNING id
+`
+
+type ResolveCheckpointingTerminalChildWaitParams struct {
+	ConditionState  string      `json:"condition_state"`
+	ConditionResult []byte      `json:"condition_result"`
+	ConditionError  []byte      `json:"condition_error"`
+	ReasonCode      pgtype.Text `json:"reason_code"`
+	WaitID          pgtype.UUID `json:"wait_id"`
+	RunID           pgtype.UUID `json:"run_id"`
+}
+
+func (q *Queries) ResolveCheckpointingTerminalChildWait(ctx context.Context, arg ResolveCheckpointingTerminalChildWaitParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, resolveCheckpointingTerminalChildWait,
+		arg.ConditionState,
+		arg.ConditionResult,
+		arg.ConditionError,
+		arg.ReasonCode,
+		arg.WaitID,
+		arg.RunID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const resolveHotTerminalChildWait = `-- name: ResolveHotTerminalChildWait :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'running',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = $6
+       AND runs.status = 'waiting'
+       AND runs.state_version = $7
+       AND runs.current_attempt_number = $8
+       AND runs.current_run_lease_id = $9
+    RETURNING runs.state_version
+)
+UPDATE run_waits
+   SET condition_state = $1::text,
+       condition_result = $2::jsonb,
+       condition_error = $3::jsonb,
+       condition_terminal_at = transaction_timestamp(),
+       condition_reason_code = $4::text,
+       suspension_state = 'released',
+       expected_run_state_version = moved_run.state_version,
+       suspension_terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+  FROM moved_run
+ WHERE run_waits.id = $5
+   AND run_waits.run_id = $6
+   AND run_waits.condition_state = 'pending'
+   AND run_waits.suspension_state = 'hot'
+RETURNING run_waits.id
+`
+
+type ResolveHotTerminalChildWaitParams struct {
+	ConditionState          string      `json:"condition_state"`
+	ConditionResult         []byte      `json:"condition_result"`
+	ConditionError          []byte      `json:"condition_error"`
+	ReasonCode              pgtype.Text `json:"reason_code"`
+	WaitID                  pgtype.UUID `json:"wait_id"`
+	RunID                   pgtype.UUID `json:"run_id"`
+	ExpectedRunStateVersion int64       `json:"expected_run_state_version"`
+	AttemptNumber           int32       `json:"attempt_number"`
+	CurrentRunLeaseID       pgtype.UUID `json:"current_run_lease_id"`
+}
+
+func (q *Queries) ResolveHotTerminalChildWait(ctx context.Context, arg ResolveHotTerminalChildWaitParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, resolveHotTerminalChildWait,
+		arg.ConditionState,
+		arg.ConditionResult,
+		arg.ConditionError,
+		arg.ReasonCode,
+		arg.WaitID,
+		arg.RunID,
+		arg.ExpectedRunStateVersion,
+		arg.AttemptNumber,
+		arg.CurrentRunLeaseID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const resolveParkedTerminalChildWait = `-- name: ResolveParkedTerminalChildWait :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'queued',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = $7
+       AND runs.status = 'waiting'
+       AND runs.state_version = $8
+       AND runs.current_attempt_number = $9
+       AND runs.current_run_lease_id IS NULL
+    RETURNING runs.state_version
+)
+UPDATE run_waits
+   SET condition_state = $1::text,
+       condition_result = $2::jsonb,
+       condition_error = $3::jsonb,
+       condition_terminal_at = transaction_timestamp(),
+       condition_reason_code = $4::text,
+       suspension_state = 'resume_pending',
+       resume_request_version = run_waits.resume_request_version + 1,
+       expected_run_state_version = moved_run.state_version,
+       resume_workspace_version_id = COALESCE(
+           run_waits.resume_workspace_version_id,
+           $5
+       ),
+       updated_at = transaction_timestamp()
+  FROM moved_run
+ WHERE run_waits.id = $6
+   AND run_waits.run_id = $7
+   AND run_waits.condition_state = 'pending'
+   AND run_waits.suspension_state = 'parked'
+RETURNING run_waits.id,
+          run_waits.environment_id,
+          run_waits.run_id,
+          run_waits.workspace_id,
+          run_waits.resume_request_version
+`
+
+type ResolveParkedTerminalChildWaitParams struct {
+	ConditionState             string      `json:"condition_state"`
+	ConditionResult            []byte      `json:"condition_result"`
+	ConditionError             []byte      `json:"condition_error"`
+	ReasonCode                 pgtype.Text `json:"reason_code"`
+	ResolvedWorkspaceVersionID pgtype.UUID `json:"resolved_workspace_version_id"`
+	WaitID                     pgtype.UUID `json:"wait_id"`
+	RunID                      pgtype.UUID `json:"run_id"`
+	ExpectedRunStateVersion    int64       `json:"expected_run_state_version"`
+	AttemptNumber              int32       `json:"attempt_number"`
+}
+
+type ResolveParkedTerminalChildWaitRow struct {
+	ID                   pgtype.UUID `json:"id"`
+	EnvironmentID        pgtype.UUID `json:"environment_id"`
+	RunID                pgtype.UUID `json:"run_id"`
+	WorkspaceID          pgtype.UUID `json:"workspace_id"`
+	ResumeRequestVersion int64       `json:"resume_request_version"`
+}
+
+func (q *Queries) ResolveParkedTerminalChildWait(ctx context.Context, arg ResolveParkedTerminalChildWaitParams) (ResolveParkedTerminalChildWaitRow, error) {
+	row := q.db.QueryRow(ctx, resolveParkedTerminalChildWait,
+		arg.ConditionState,
+		arg.ConditionResult,
+		arg.ConditionError,
+		arg.ReasonCode,
+		arg.ResolvedWorkspaceVersionID,
+		arg.WaitID,
+		arg.RunID,
+		arg.ExpectedRunStateVersion,
+		arg.AttemptNumber,
+	)
+	var i ResolveParkedTerminalChildWaitRow
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.ResumeRequestVersion,
+	)
+	return i, err
 }
 
 const terminalizeRun = `-- name: TerminalizeRun :execrows

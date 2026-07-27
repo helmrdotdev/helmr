@@ -190,7 +190,6 @@ SELECT id,
        current_run_lease_id,
        prior_run_lease_id,
        suspend_checkpoint_id,
-       resume_request_version,
        handoff_runtime_instance_id,
        handoff_workspace_mount_id,
        base_workspace_version_id
@@ -212,6 +211,111 @@ SELECT id
    AND state IN ('creating', 'ready')
  ORDER BY array_position(sqlc.arg(run_ids)::uuid[], run_id), id
  FOR UPDATE;
+
+-- name: ResolveHotTerminalChildWait :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'running',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = sqlc.arg(run_id)
+       AND runs.status = 'waiting'
+       AND runs.state_version = sqlc.arg(expected_run_state_version)
+       AND runs.current_attempt_number = sqlc.arg(attempt_number)
+       AND runs.current_run_lease_id = sqlc.arg(current_run_lease_id)
+    RETURNING runs.state_version
+)
+UPDATE run_waits
+   SET condition_state = sqlc.arg(condition_state)::text,
+       condition_result = sqlc.arg(condition_result)::jsonb,
+       condition_error = sqlc.arg(condition_error)::jsonb,
+       condition_terminal_at = transaction_timestamp(),
+       condition_reason_code = sqlc.narg(reason_code)::text,
+       suspension_state = 'released',
+       expected_run_state_version = moved_run.state_version,
+       suspension_terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+  FROM moved_run
+ WHERE run_waits.id = sqlc.arg(wait_id)
+   AND run_waits.run_id = sqlc.arg(run_id)
+   AND run_waits.condition_state = 'pending'
+   AND run_waits.suspension_state = 'hot'
+RETURNING run_waits.id;
+
+-- name: ResolveCheckpointingTerminalChildWait :one
+UPDATE run_waits
+   SET condition_state = sqlc.arg(condition_state)::text,
+       condition_result = sqlc.arg(condition_result)::jsonb,
+       condition_error = sqlc.arg(condition_error)::jsonb,
+       condition_terminal_at = transaction_timestamp(),
+       condition_reason_code = sqlc.narg(reason_code)::text,
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(wait_id)
+   AND run_id = sqlc.arg(run_id)
+   AND condition_state = 'pending'
+   AND suspension_state = 'checkpointing'
+RETURNING id;
+
+-- name: ResolveParkedTerminalChildWait :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'queued',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = sqlc.arg(run_id)
+       AND runs.status = 'waiting'
+       AND runs.state_version = sqlc.arg(expected_run_state_version)
+       AND runs.current_attempt_number = sqlc.arg(attempt_number)
+       AND runs.current_run_lease_id IS NULL
+    RETURNING runs.state_version
+)
+UPDATE run_waits
+   SET condition_state = sqlc.arg(condition_state)::text,
+       condition_result = sqlc.arg(condition_result)::jsonb,
+       condition_error = sqlc.arg(condition_error)::jsonb,
+       condition_terminal_at = transaction_timestamp(),
+       condition_reason_code = sqlc.narg(reason_code)::text,
+       suspension_state = 'resume_pending',
+       resume_request_version = run_waits.resume_request_version + 1,
+       expected_run_state_version = moved_run.state_version,
+       resume_workspace_version_id = COALESCE(
+           run_waits.resume_workspace_version_id,
+           sqlc.narg(resolved_workspace_version_id)
+       ),
+       updated_at = transaction_timestamp()
+  FROM moved_run
+ WHERE run_waits.id = sqlc.arg(wait_id)
+   AND run_waits.run_id = sqlc.arg(run_id)
+   AND run_waits.condition_state = 'pending'
+   AND run_waits.suspension_state = 'parked'
+RETURNING run_waits.id,
+          run_waits.environment_id,
+          run_waits.run_id,
+          run_waits.workspace_id,
+          run_waits.resume_request_version;
+
+-- name: PublishTerminalChildResume :execrows
+INSERT INTO outbox_messages (
+    id,
+    lane,
+    topic,
+    partition_key,
+    payload,
+    available_at
+)
+VALUES (
+    sqlc.arg(outbox_message_id),
+    'control',
+    'run.resume',
+    sqlc.arg(workspace_id)::uuid::text,
+    jsonb_build_object(
+        'environmentId', sqlc.arg(environment_id)::uuid::text,
+        'runId', sqlc.arg(run_id)::uuid::text,
+        'runWaitId', sqlc.arg(wait_id)::uuid::text,
+        'resumeRequestVersion', sqlc.arg(resume_request_version)::bigint
+    ),
+    transaction_timestamp()
+);
 
 -- name: DetachActorFromCancelledRun :execrows
 UPDATE actors

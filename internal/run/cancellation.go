@@ -72,10 +72,17 @@ type cancellationWait struct {
 	currentRunLeaseID        pgtype.UUID
 	priorRunLeaseID          pgtype.UUID
 	suspendCheckpointID      pgtype.UUID
-	resumeRequestVersion     int64
 	handoffRuntimeInstanceID pgtype.UUID
 	handoffWorkspaceMountID  pgtype.UUID
 	baseWorkspaceVersionID   pgtype.UUID
+}
+
+type terminalChildWaitResolution struct {
+	conditionState           db.WaitState
+	result                   json.RawMessage
+	reasonCode               *string
+	conditionError           json.RawMessage
+	resumeWorkspaceVersionID pgtype.UUID
 }
 
 type termination struct {
@@ -760,7 +767,6 @@ func lockCancellationWaits(
 			currentRunLeaseID:        row.CurrentRunLeaseID,
 			priorRunLeaseID:          row.PriorRunLeaseID,
 			suspendCheckpointID:      row.SuspendCheckpointID,
-			resumeRequestVersion:     row.ResumeRequestVersion,
 			handoffRuntimeInstanceID: row.HandoffRuntimeInstanceID,
 			handoffWorkspaceMountID:  row.HandoffWorkspaceMountID,
 			baseWorkspaceVersionID:   row.BaseWorkspaceVersionID,
@@ -1043,167 +1049,22 @@ func resolveCancelledChildWait(
 	if !wait.handoffRuntimeInstanceID.Valid {
 		return resolveCancelledDifferentWorkspaceChildWait(ctx, tx, parent, child, wait)
 	}
-	errorPayload := json.RawMessage(`{"code":"child_run_cancelled","message":"Child Run was cancelled","retryable":false}`)
-	var resumeWorkspaceVersion any
-	if wait.handoffRuntimeInstanceID.Valid {
-		if !wait.baseWorkspaceVersionID.Valid {
-			return cancellationAuthority("cancelled handoff child has no base Workspace version", nil)
-		}
-		resumeWorkspaceVersion = uuid.UUID(wait.baseWorkspaceVersionID.Bytes)
+	if !wait.baseWorkspaceVersionID.Valid {
+		return cancellationAuthority("cancelled handoff child has no base Workspace version", nil)
 	}
-	switch wait.suspensionState {
-	case db.RunWaitStateHot:
-		if !wait.currentRunLeaseID.Valid ||
-			!parent.currentRunLeaseID.Valid ||
-			wait.currentRunLeaseID != parent.currentRunLeaseID {
-			return cancellationAuthority("hot cancelled child Wait Lease does not match", nil)
-		}
-		var nextVersion int64
-		if err := tx.QueryRow(ctx, `
-UPDATE runs
-   SET status = 'running',
-       state_version = state_version + 1,
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND status = 'waiting'
-   AND state_version = $2
-   AND current_attempt_number = $3
-   AND current_run_lease_id = $4
-RETURNING state_version`,
-			parent.id,
-			parent.stateVersion,
-			parent.currentAttemptNumber,
-			uuid.UUID(parent.currentRunLeaseID.Bytes),
-		).Scan(&nextVersion); err != nil {
-			return cancellationAuthority("resume hot cancelled child parent", err)
-		}
-		command, err := tx.Exec(ctx, `
-UPDATE run_waits
-   SET condition_state = 'cancelled',
-       condition_error = $2::jsonb,
-       condition_terminal_at = transaction_timestamp(),
-       condition_reason_code = 'child_run_cancelled',
-       suspension_state = 'released',
-       expected_run_state_version = $3,
-       suspension_terminal_at = transaction_timestamp(),
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND condition_state = 'pending'
-   AND suspension_state = 'hot'`,
-			wait.id,
-			errorPayload,
-			nextVersion,
-		)
-		if err != nil || command.RowsAffected() != 1 {
-			return cancellationAuthority("release hot cancelled child Wait", err)
-		}
-	case db.RunWaitStateCheckpointing:
-		command, err := tx.Exec(ctx, `
-UPDATE run_waits
-   SET condition_state = 'cancelled',
-       condition_error = $2::jsonb,
-       condition_terminal_at = transaction_timestamp(),
-       condition_reason_code = 'child_run_cancelled',
-       resume_workspace_version_id = COALESCE(
-           resume_workspace_version_id,
-           $3::uuid
-       ),
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND condition_state = 'pending'
-   AND suspension_state = 'checkpointing'`,
-			wait.id,
-			errorPayload,
-			resumeWorkspaceVersion,
-		)
-		if err != nil || command.RowsAffected() != 1 {
-			return cancellationAuthority("complete checkpointing cancelled child Wait", err)
-		}
-	case db.RunWaitStateParked:
-		if !wait.priorRunLeaseID.Valid || !wait.suspendCheckpointID.Valid ||
-			parent.currentRunLeaseID.Valid {
-			return cancellationAuthority("parked cancelled child Wait fence does not match", nil)
-		}
-		var nextVersion int64
-		if err := tx.QueryRow(ctx, `
-	UPDATE runs
-	   SET status = 'queued',
-	       state_version = state_version + 1,
-	       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND status = 'waiting'
-   AND state_version = $2
-   AND current_attempt_number = $3
-   AND current_run_lease_id IS NULL
-RETURNING state_version`,
-			parent.id,
-			parent.stateVersion,
-			parent.currentAttemptNumber,
-		).Scan(&nextVersion); err != nil {
-			return cancellationAuthority("queue parked cancelled child parent", err)
-		}
-		nextResumeVersion := wait.resumeRequestVersion + 1
-		command, err := tx.Exec(ctx, `
-UPDATE run_waits
-   SET condition_state = 'cancelled',
-       condition_error = $2::jsonb,
-       condition_terminal_at = transaction_timestamp(),
-       condition_reason_code = 'child_run_cancelled',
-       suspension_state = 'resume_pending',
-       resume_request_version = $3,
-       expected_run_state_version = $4,
-       resume_workspace_version_id = COALESCE(
-           resume_workspace_version_id,
-           $5::uuid
-       ),
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND condition_state = 'pending'
-   AND suspension_state = 'parked'`,
-			wait.id,
-			errorPayload,
-			nextResumeVersion,
-			nextVersion,
-			resumeWorkspaceVersion,
-		)
-		if err != nil || command.RowsAffected() != 1 {
-			return cancellationAuthority("resume parked cancelled child Wait", err)
-		}
-		command, err = tx.Exec(ctx, `
-INSERT INTO outbox_messages (
-    id,
-    lane,
-    topic,
-    partition_key,
-    payload,
-    available_at
-) VALUES (
-    $1,
-    'control',
-    'run.resume',
-    $2::uuid::text,
-    jsonb_build_object(
-        'environmentId', $3::uuid::text,
-        'runId', $4::uuid::text,
-        'runWaitId', $5::uuid::text,
-        'resumeRequestVersion', $6::bigint
-    ),
-    transaction_timestamp()
-)`,
-			uuid.Must(uuid.NewV7()),
-			wait.workspaceID,
-			parent.environmentID,
-			parent.id,
-			wait.id,
-			nextResumeVersion,
-		)
-		if err != nil || command.RowsAffected() != 1 {
-			return cancellationAuthority("publish cancelled child resume intent", err)
-		}
-	default:
-		return cancellationAuthority("cancelled child Wait is already resuming", nil)
-	}
-	return nil
+	reasonCode := "child_run_cancelled"
+	return resolveTerminalChildWait(
+		ctx,
+		tx,
+		parent,
+		wait,
+		terminalChildWaitResolution{
+			conditionState:           db.WaitStateCancelled,
+			reasonCode:               &reasonCode,
+			conditionError:           json.RawMessage(`{"code":"child_run_cancelled","message":"Child Run was cancelled","retryable":false}`),
+			resumeWorkspaceVersionID: wait.baseWorkspaceVersionID,
+		},
+	)
 }
 
 func resolveCancelledDifferentWorkspaceChildWait(
@@ -1234,110 +1095,105 @@ func resolveDifferentWorkspaceChildWait(
 	wait cancellationWait,
 	result json.RawMessage,
 ) error {
+	return resolveTerminalChildWait(
+		ctx,
+		tx,
+		parent,
+		wait,
+		terminalChildWaitResolution{
+			conditionState: db.WaitStateCompleted,
+			result:         result,
+		},
+	)
+}
+
+func resolveTerminalChildWait(
+	ctx context.Context,
+	tx pgx.Tx,
+	parent cancellationRun,
+	wait cancellationWait,
+	resolution terminalChildWaitResolution,
+) error {
+	if resolution.resumeWorkspaceVersionID.Valid &&
+		wait.suspensionState != db.RunWaitStateParked {
+		return cancellationAuthority("terminal child Workspace handoff is not parked", nil)
+	}
+	queries := db.New(tx)
 	switch wait.suspensionState {
 	case db.RunWaitStateHot:
-		if !wait.currentRunLeaseID.Valid || !parent.currentRunLeaseID.Valid ||
+		if !wait.currentRunLeaseID.Valid ||
+			!parent.currentRunLeaseID.Valid ||
 			wait.currentRunLeaseID != parent.currentRunLeaseID {
-			return cancellationAuthority("hot cancelled child Wait Lease does not match", nil)
+			return cancellationAuthority("hot terminal child Wait Lease does not match", nil)
 		}
-		var nextVersion int64
-		if err := tx.QueryRow(ctx, `
-UPDATE runs
-   SET status = 'running', state_version = state_version + 1,
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND status = 'waiting'
-   AND state_version = $2
-   AND current_attempt_number = $3
-   AND current_run_lease_id = $4
-RETURNING state_version`,
-			parent.id, parent.stateVersion, parent.currentAttemptNumber,
-			uuid.UUID(parent.currentRunLeaseID.Bytes),
-		).Scan(&nextVersion); err != nil {
-			return cancellationAuthority("resume hot cancelled child parent", err)
-		}
-		command, err := tx.Exec(ctx, `
-UPDATE run_waits
-   SET condition_state = 'completed', condition_result = $2::jsonb,
-       condition_terminal_at = transaction_timestamp(),
-       suspension_state = 'released', expected_run_state_version = $3,
-       suspension_terminal_at = transaction_timestamp(),
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND condition_state = 'pending'
-   AND suspension_state = 'hot'`, wait.id, result, nextVersion)
-		if err != nil || command.RowsAffected() != 1 {
-			return cancellationAuthority("release hot cancelled child Wait", err)
+		if _, err := queries.ResolveHotTerminalChildWait(
+			ctx,
+			db.ResolveHotTerminalChildWaitParams{
+				ConditionState:          string(resolution.conditionState),
+				ConditionResult:         resolution.result,
+				ConditionError:          resolution.conditionError,
+				ReasonCode:              pgvalue.TextPtr(resolution.reasonCode),
+				WaitID:                  pgvalue.UUID(wait.id),
+				RunID:                   pgvalue.UUID(parent.id),
+				ExpectedRunStateVersion: parent.stateVersion,
+				AttemptNumber:           parent.currentAttemptNumber,
+				CurrentRunLeaseID:       parent.currentRunLeaseID,
+			},
+		); err != nil {
+			return cancellationAuthority("resolve hot terminal child Wait", err)
 		}
 	case db.RunWaitStateCheckpointing:
-		command, err := tx.Exec(ctx, `
-UPDATE run_waits
-   SET condition_state = 'completed', condition_result = $2::jsonb,
-       condition_terminal_at = transaction_timestamp(),
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND condition_state = 'pending'
-   AND suspension_state = 'checkpointing'`, wait.id, result)
-		if err != nil || command.RowsAffected() != 1 {
-			return cancellationAuthority("complete checkpointing cancelled child Wait", err)
+		if _, err := queries.ResolveCheckpointingTerminalChildWait(
+			ctx,
+			db.ResolveCheckpointingTerminalChildWaitParams{
+				ConditionState:  string(resolution.conditionState),
+				ConditionResult: resolution.result,
+				ConditionError:  resolution.conditionError,
+				ReasonCode:      pgvalue.TextPtr(resolution.reasonCode),
+				WaitID:          pgvalue.UUID(wait.id),
+				RunID:           pgvalue.UUID(parent.id),
+			},
+		); err != nil {
+			return cancellationAuthority("resolve checkpointing terminal child Wait", err)
 		}
 	case db.RunWaitStateParked:
 		if !wait.priorRunLeaseID.Valid || !wait.suspendCheckpointID.Valid ||
 			parent.currentRunLeaseID.Valid {
-			return cancellationAuthority("parked cancelled child Wait fence does not match", nil)
+			return cancellationAuthority("parked terminal child Wait fence does not match", nil)
 		}
-		var nextVersion int64
-		if err := tx.QueryRow(ctx, `
-UPDATE runs
-   SET status = 'queued', state_version = state_version + 1,
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND status = 'waiting'
-   AND state_version = $2
-   AND current_attempt_number = $3
-   AND current_run_lease_id IS NULL
-RETURNING state_version`,
-			parent.id, parent.stateVersion, parent.currentAttemptNumber,
-		).Scan(&nextVersion); err != nil {
-			return cancellationAuthority("queue parked cancelled child parent", err)
-		}
-		nextResumeVersion := wait.resumeRequestVersion + 1
-		command, err := tx.Exec(ctx, `
-UPDATE run_waits
-   SET condition_state = 'completed', condition_result = $2::jsonb,
-       condition_terminal_at = transaction_timestamp(),
-       suspension_state = 'resume_pending', resume_request_version = $3,
-       expected_run_state_version = $4, updated_at = transaction_timestamp()
- WHERE id = $1
-   AND condition_state = 'pending'
-   AND suspension_state = 'parked'`,
-			wait.id, result, nextResumeVersion, nextVersion,
+		resolved, err := queries.ResolveParkedTerminalChildWait(
+			ctx,
+			db.ResolveParkedTerminalChildWaitParams{
+				ConditionState:             string(resolution.conditionState),
+				ConditionResult:            resolution.result,
+				ConditionError:             resolution.conditionError,
+				ReasonCode:                 pgvalue.TextPtr(resolution.reasonCode),
+				ResolvedWorkspaceVersionID: resolution.resumeWorkspaceVersionID,
+				WaitID:                     pgvalue.UUID(wait.id),
+				RunID:                      pgvalue.UUID(parent.id),
+				ExpectedRunStateVersion:    parent.stateVersion,
+				AttemptNumber:              parent.currentAttemptNumber,
+			},
 		)
-		if err != nil || command.RowsAffected() != 1 {
-			return cancellationAuthority("resume parked cancelled child Wait", err)
+		if err != nil {
+			return cancellationAuthority("resolve parked terminal child Wait", err)
 		}
-		command, err = tx.Exec(ctx, `
-INSERT INTO outbox_messages (
-    id, lane, topic, partition_key, payload, available_at
-) VALUES (
-    $1, 'control', 'run.resume', $2,
-    jsonb_build_object(
-        'environmentId', $3::text,
-        'runId', $4::text,
-        'runWaitId', $5::text,
-        'resumeRequestVersion', $6::bigint
-    ),
-    transaction_timestamp()
-)`,
-			uuid.Must(uuid.NewV7()),
-			parent.workspaceID.String(), parent.environmentID.String(),
-			parent.id.String(), wait.id.String(), nextResumeVersion,
+		affected, err := queries.PublishTerminalChildResume(
+			ctx,
+			db.PublishTerminalChildResumeParams{
+				OutboxMessageID:      pgvalue.NewUUIDv7(),
+				WorkspaceID:          resolved.WorkspaceID,
+				EnvironmentID:        resolved.EnvironmentID,
+				RunID:                resolved.RunID,
+				WaitID:               resolved.ID,
+				ResumeRequestVersion: resolved.ResumeRequestVersion,
+			},
 		)
-		if err != nil || command.RowsAffected() != 1 {
-			return cancellationAuthority("publish cancelled child resume", err)
+		if err != nil || affected != 1 {
+			return cancellationAuthority("publish terminal child resume", err)
 		}
 	default:
-		return cancellationAuthority("cancelled child Wait suspension is ineligible", nil)
+		return cancellationAuthority("terminal child Wait suspension is ineligible", nil)
 	}
 	return nil
 }
