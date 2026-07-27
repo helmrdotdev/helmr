@@ -404,6 +404,16 @@ type Querier interface {
 	LockActorStartDeploymentAuthority(ctx context.Context, arg LockActorStartDeploymentAuthorityParams) (LockActorStartDeploymentAuthorityRow, error)
 	LockActorStartKey(ctx context.Context, arg LockActorStartKeyParams) error
 	LockAttemptSecretDelivery(ctx context.Context, arg LockAttemptSecretDeliveryParams) ([]LockAttemptSecretDeliveryRow, error)
+	LockCancellationActors(ctx context.Context, arg LockCancellationActorsParams) ([]pgtype.UUID, error)
+	LockCancellationAttempts(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error)
+	LockCancellationCheckpoints(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error)
+	LockCancellationMounts(ctx context.Context, runtimeIds []pgtype.UUID) ([]pgtype.UUID, error)
+	LockCancellationRun(ctx context.Context, arg LockCancellationRunParams) (LockCancellationRunRow, error)
+	LockCancellationRunLeases(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error)
+	LockCancellationRuntimes(ctx context.Context, arg LockCancellationRuntimesParams) ([]pgtype.UUID, error)
+	LockCancellationWaits(ctx context.Context, arg LockCancellationWaitsParams) ([]LockCancellationWaitsRow, error)
+	LockCancellationWorkspaceLeases(ctx context.Context, runLeaseIds []pgtype.UUID) ([]pgtype.UUID, error)
+	LockCancellationWorkspaces(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error)
 	LockChildWorkspacePair(ctx context.Context, lockKey int64) error
 	LockClaimedSchedule(ctx context.Context, arg LockClaimedScheduleParams) (LockClaimedScheduleRow, error)
 	LockCreatingRunCheckpoint(ctx context.Context, arg LockCreatingRunCheckpointParams) (RunCheckpoint, error)

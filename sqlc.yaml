@@ -14,6 +14,10 @@ sql:
         rename:
           api_key: APIKey
           checkpoint_artifact_role_vm_state: CheckpointArtifactRoleVMState
+          cancel_ids: CancelIDs
+          run_ids: RunIDs
+          run_lease_ids: RunLeaseIDs
+          runtime_ids: RuntimeIDs
           runtime_abi: RuntimeABI
           source_sha: SourceSHA
           vm_state: VMState

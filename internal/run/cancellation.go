@@ -537,35 +537,14 @@ func lockCancellationActors(
 	request CancellationRequest,
 	lineage []uuid.UUID,
 ) error {
-	rows, err := tx.Query(ctx, `
-SELECT actors.id
-  FROM runs
-  JOIN actors
-    ON actors.id = runs.actor_id
-   AND actors.environment_id = runs.environment_id
- WHERE runs.id = ANY($1::uuid[])
-   AND runs.org_id = $2
-   AND runs.project_id = $3
-   AND runs.environment_id = $4
- ORDER BY actors.id
- FOR UPDATE OF actors`,
-		lineage,
-		request.OrgID,
-		request.ProjectID,
-		request.EnvironmentID,
-	)
+	_, err := db.New(tx).LockCancellationActors(ctx, db.LockCancellationActorsParams{
+		RunIDs:        pgUUIDs(lineage),
+		OrgID:         pgvalue.UUID(request.OrgID),
+		ProjectID:     pgvalue.UUID(request.ProjectID),
+		EnvironmentID: pgvalue.UUID(request.EnvironmentID),
+	})
 	if err != nil {
 		return cancellationAuthority("lock Run lineage Actors", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var actorID uuid.UUID
-		if err := rows.Scan(&actorID); err != nil {
-			return cancellationAuthority("scan Run lineage Actor", err)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return cancellationAuthority("read Run lineage Actors", err)
 	}
 	return nil
 }
@@ -576,43 +555,28 @@ func lockCancellationRun(
 	request CancellationRequest,
 	id uuid.UUID,
 ) (cancellationRun, error) {
-	var run cancellationRun
-	err := tx.QueryRow(ctx, `
-SELECT id,
-       public_id,
-       parent_run_id,
-       parent_owns_lifecycle,
-       environment_id,
-       workspace_id,
-       actor_id,
-       status,
-       current_attempt_number,
-       current_run_lease_id,
-       state_version
-  FROM runs
- WHERE id = $1
-   AND org_id = $2
-   AND project_id = $3
-   AND environment_id = $4
- FOR UPDATE`,
-		id,
-		request.OrgID,
-		request.ProjectID,
-		request.EnvironmentID,
-	).Scan(
-		&run.id,
-		&run.publicID,
-		&run.parentRunID,
-		&run.parentOwnsLifecycle,
-		&run.environmentID,
-		&run.workspaceID,
-		&run.actorID,
-		&run.status,
-		&run.currentAttemptNumber,
-		&run.currentRunLeaseID,
-		&run.stateVersion,
-	)
-	return run, err
+	row, err := db.New(tx).LockCancellationRun(ctx, db.LockCancellationRunParams{
+		ID:            pgvalue.UUID(id),
+		OrgID:         pgvalue.UUID(request.OrgID),
+		ProjectID:     pgvalue.UUID(request.ProjectID),
+		EnvironmentID: pgvalue.UUID(request.EnvironmentID),
+	})
+	if err != nil {
+		return cancellationRun{}, err
+	}
+	return cancellationRun{
+		id:                   uuid.UUID(row.ID.Bytes),
+		publicID:             row.PublicID,
+		parentRunID:          row.ParentRunID,
+		parentOwnsLifecycle:  row.ParentOwnsLifecycle,
+		environmentID:        uuid.UUID(row.EnvironmentID.Bytes),
+		workspaceID:          uuid.UUID(row.WorkspaceID.Bytes),
+		actorID:              row.ActorID,
+		status:               row.Status,
+		currentAttemptNumber: row.CurrentAttemptNumber,
+		currentRunLeaseID:    row.CurrentRunLeaseID,
+		stateVersion:         row.StateVersion,
+	}, nil
 }
 
 func discoverOwnedCancellationRuns(
@@ -693,17 +657,11 @@ func lockCancellationWorkspaces(
 	tx pgx.Tx,
 	runIDs []uuid.UUID,
 ) error {
-	rows, err := tx.Query(ctx, `
-SELECT id
-  FROM workspaces
- WHERE id IN (
-       SELECT workspace_id
-         FROM runs
-        WHERE id = ANY($1::uuid[])
- )
- ORDER BY id
- FOR UPDATE`, runIDs)
-	return drainCancellationIDs(rows, err, "lock cancellation Workspaces")
+	_, err := db.New(tx).LockCancellationWorkspaces(ctx, pgUUIDs(runIDs))
+	if err != nil {
+		return cancellationAuthority("lock cancellation Workspaces", err)
+	}
+	return nil
 }
 
 func lockCancellationAttempts(
@@ -711,17 +669,11 @@ func lockCancellationAttempts(
 	tx pgx.Tx,
 	runIDs []uuid.UUID,
 ) error {
-	rows, err := tx.Query(ctx, `
-SELECT run_attempts.run_id
-  FROM run_attempts
-  JOIN runs
-    ON runs.id = run_attempts.run_id
-   AND runs.current_attempt_number = run_attempts.number
-   AND runs.workspace_id = run_attempts.workspace_id
- WHERE runs.id = ANY($1::uuid[])
- ORDER BY array_position($1::uuid[], run_attempts.run_id), run_attempts.number
- FOR UPDATE OF run_attempts`, runIDs)
-	return drainCancellationIDs(rows, err, "lock cancellation Attempts")
+	_, err := db.New(tx).LockCancellationAttempts(ctx, pgUUIDs(runIDs))
+	if err != nil {
+		return cancellationAuthority("lock cancellation Attempts", err)
+	}
+	return nil
 }
 
 func lockCancellationRuntimes(
@@ -730,33 +682,14 @@ func lockCancellationRuntimes(
 	runIDs []uuid.UUID,
 	cancelIDs []uuid.UUID,
 ) ([]uuid.UUID, error) {
-	rows, err := tx.Query(ctx, `
-WITH target_runtimes AS (
-    SELECT run_leases.runtime_instance_id AS id
-      FROM runs
-      JOIN run_leases
-        ON run_leases.id = runs.current_run_lease_id
-       AND run_leases.run_id = runs.id
-     WHERE runs.id = ANY($2::uuid[])
-    UNION
-    SELECT runtime_instances.id
-      FROM runtime_instances
-     WHERE runtime_instances.reserved_run_id = ANY($2::uuid[])
-    UNION
-    SELECT run_waits.handoff_runtime_instance_id
-      FROM run_waits
-     WHERE run_waits.run_id = ANY($1::uuid[])
-       AND run_waits.handoff_runtime_instance_id IS NOT NULL
-       AND run_waits.suspension_state IN (
-           'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
-       )
-)
-SELECT runtime_instances.id
-  FROM runtime_instances
-  JOIN target_runtimes ON target_runtimes.id = runtime_instances.id
- ORDER BY runtime_instances.id
- FOR UPDATE OF runtime_instances`, runIDs, cancelIDs)
-	return collectCancellationIDs(rows, err, "lock cancellation Runtimes")
+	rows, err := db.New(tx).LockCancellationRuntimes(ctx, db.LockCancellationRuntimesParams{
+		RunIDs:    pgUUIDs(runIDs),
+		CancelIDs: pgUUIDs(cancelIDs),
+	})
+	if err != nil {
+		return nil, cancellationAuthority("lock cancellation Runtimes", err)
+	}
+	return cancellationIDs(rows), nil
 }
 
 func lockCancellationRunLeases(
@@ -764,16 +697,11 @@ func lockCancellationRunLeases(
 	tx pgx.Tx,
 	runIDs []uuid.UUID,
 ) ([]uuid.UUID, error) {
-	rows, err := tx.Query(ctx, `
-SELECT run_leases.id
-  FROM runs
-  JOIN run_leases
-    ON run_leases.id = runs.current_run_lease_id
-   AND run_leases.run_id = runs.id
- WHERE runs.id = ANY($1::uuid[])
- ORDER BY run_leases.id
- FOR UPDATE OF run_leases`, runIDs)
-	return collectCancellationIDs(rows, err, "lock cancellation Run Leases")
+	rows, err := db.New(tx).LockCancellationRunLeases(ctx, pgUUIDs(runIDs))
+	if err != nil {
+		return nil, cancellationAuthority("lock cancellation Run Leases", err)
+	}
+	return cancellationIDs(rows), nil
 }
 
 func lockCancellationMounts(
@@ -784,14 +712,11 @@ func lockCancellationMounts(
 	if len(runtimeIDs) == 0 {
 		return nil
 	}
-	rows, err := tx.Query(ctx, `
-SELECT id
-  FROM workspace_mounts
- WHERE runtime_instance_id = ANY($1::uuid[])
-   AND state IN ('mounting', 'mounted', 'unmounting')
- ORDER BY id
- FOR UPDATE`, runtimeIDs)
-	return drainCancellationIDs(rows, err, "lock cancellation Mounts")
+	_, err := db.New(tx).LockCancellationMounts(ctx, pgUUIDs(runtimeIDs))
+	if err != nil {
+		return cancellationAuthority("lock cancellation Mounts", err)
+	}
+	return nil
 }
 
 func lockCancellationWorkspaceLeases(
@@ -802,14 +727,11 @@ func lockCancellationWorkspaceLeases(
 	if len(runLeaseIDs) == 0 {
 		return nil
 	}
-	rows, err := tx.Query(ctx, `
-SELECT id
-  FROM workspace_leases
- WHERE owner_run_lease_id = ANY($1::uuid[])
-   AND state IN ('active', 'releasing')
- ORDER BY id
- FOR UPDATE`, runLeaseIDs)
-	return drainCancellationIDs(rows, err, "lock cancellation Workspace Leases")
+	_, err := db.New(tx).LockCancellationWorkspaceLeases(ctx, pgUUIDs(runLeaseIDs))
+	if err != nil {
+		return cancellationAuthority("lock cancellation Workspace Leases", err)
+	}
+	return nil
 }
 
 func lockCancellationWaits(
@@ -818,57 +740,31 @@ func lockCancellationWaits(
 	runIDs []uuid.UUID,
 	cancelIDs []uuid.UUID,
 ) (map[uuid.UUID]cancellationWait, error) {
-	rows, err := tx.Query(ctx, `
-SELECT id,
-       run_id,
-       workspace_id,
-       child_run_id,
-       condition_state,
-       suspension_state,
-       expected_run_state_version,
-       attempt_number,
-       current_run_lease_id,
-       prior_run_lease_id,
-       suspend_checkpoint_id,
-       resume_request_version,
-       handoff_runtime_instance_id,
-       handoff_workspace_mount_id,
-       base_workspace_version_id
-  FROM run_waits
- WHERE (
-       run_id = ANY($1::uuid[])
-       OR child_run_id = ANY($2::uuid[])
- )
-   AND suspension_state IN (
-       'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
-   )
- ORDER BY array_position($1::uuid[], run_id), id
- FOR UPDATE`, runIDs, cancelIDs)
+	rows, err := db.New(tx).LockCancellationWaits(ctx, db.LockCancellationWaitsParams{
+		RunIDs:    pgUUIDs(runIDs),
+		CancelIDs: pgUUIDs(cancelIDs),
+	})
 	if err != nil {
 		return nil, cancellationAuthority("lock cancellation Waits", err)
 	}
-	defer rows.Close()
 	waitsByChild := make(map[uuid.UUID]cancellationWait)
-	for rows.Next() {
-		var wait cancellationWait
-		if err := rows.Scan(
-			&wait.id,
-			&wait.runID,
-			&wait.workspaceID,
-			&wait.childRunID,
-			&wait.conditionState,
-			&wait.suspensionState,
-			&wait.expectedRunStateVersion,
-			&wait.attemptNumber,
-			&wait.currentRunLeaseID,
-			&wait.priorRunLeaseID,
-			&wait.suspendCheckpointID,
-			&wait.resumeRequestVersion,
-			&wait.handoffRuntimeInstanceID,
-			&wait.handoffWorkspaceMountID,
-			&wait.baseWorkspaceVersionID,
-		); err != nil {
-			return nil, cancellationAuthority("scan cancellation Wait", err)
+	for _, row := range rows {
+		wait := cancellationWait{
+			id:                       uuid.UUID(row.ID.Bytes),
+			runID:                    uuid.UUID(row.RunID.Bytes),
+			workspaceID:              uuid.UUID(row.WorkspaceID.Bytes),
+			childRunID:               row.ChildRunID,
+			conditionState:           row.ConditionState,
+			suspensionState:          row.SuspensionState,
+			expectedRunStateVersion:  row.ExpectedRunStateVersion,
+			attemptNumber:            row.AttemptNumber,
+			currentRunLeaseID:        row.CurrentRunLeaseID,
+			priorRunLeaseID:          row.PriorRunLeaseID,
+			suspendCheckpointID:      row.SuspendCheckpointID,
+			resumeRequestVersion:     row.ResumeRequestVersion,
+			handoffRuntimeInstanceID: row.HandoffRuntimeInstanceID,
+			handoffWorkspaceMountID:  row.HandoffWorkspaceMountID,
+			baseWorkspaceVersionID:   row.BaseWorkspaceVersionID,
 		}
 		if wait.childRunID.Valid {
 			childID := uuid.UUID(wait.childRunID.Bytes)
@@ -881,9 +777,6 @@ SELECT id,
 			waitsByChild[childID] = wait
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, cancellationAuthority("read cancellation Waits", err)
-	}
 	return waitsByChild, nil
 }
 
@@ -892,42 +785,27 @@ func lockCancellationCheckpoints(
 	tx pgx.Tx,
 	runIDs []uuid.UUID,
 ) error {
-	rows, err := tx.Query(ctx, `
-SELECT id
-  FROM run_checkpoints
- WHERE run_id = ANY($1::uuid[])
-   AND state IN ('creating', 'ready')
- ORDER BY array_position($1::uuid[], run_id), id
- FOR UPDATE`, runIDs)
-	return drainCancellationIDs(rows, err, "lock cancellation Checkpoints")
-}
-
-func collectCancellationIDs(
-	rows pgx.Rows,
-	err error,
-	operation string,
-) ([]uuid.UUID, error) {
+	_, err := db.New(tx).LockCancellationCheckpoints(ctx, pgUUIDs(runIDs))
 	if err != nil {
-		return nil, cancellationAuthority(operation, err)
+		return cancellationAuthority("lock cancellation Checkpoints", err)
 	}
-	defer rows.Close()
-	var ids []uuid.UUID
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, cancellationAuthority(operation, err)
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, cancellationAuthority(operation, err)
-	}
-	return ids, nil
+	return nil
 }
 
-func drainCancellationIDs(rows pgx.Rows, err error, operation string) error {
-	_, err = collectCancellationIDs(rows, err, operation)
-	return err
+func pgUUIDs(ids []uuid.UUID) []pgtype.UUID {
+	values := make([]pgtype.UUID, len(ids))
+	for index, id := range ids {
+		values[index] = pgvalue.UUID(id)
+	}
+	return values
+}
+
+func cancellationIDs(values []pgtype.UUID) []uuid.UUID {
+	ids := make([]uuid.UUID, len(values))
+	for index, value := range values {
+		ids[index] = uuid.UUID(value.Bytes)
+	}
+	return ids
 }
 
 func retainedCancellationHandoff(

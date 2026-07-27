@@ -177,3 +177,437 @@ func (q *Queries) ListOwnedCancellationRuns(ctx context.Context, arg ListOwnedCa
 	}
 	return items, nil
 }
+
+const lockCancellationActors = `-- name: LockCancellationActors :many
+SELECT actors.id
+  FROM runs
+  JOIN actors
+    ON actors.id = runs.actor_id
+   AND actors.environment_id = runs.environment_id
+ WHERE runs.id = ANY($1::uuid[])
+   AND runs.org_id = $2
+   AND runs.project_id = $3
+   AND runs.environment_id = $4
+ ORDER BY actors.id
+ FOR UPDATE OF actors
+`
+
+type LockCancellationActorsParams struct {
+	RunIDs        []pgtype.UUID `json:"run_ids"`
+	OrgID         pgtype.UUID   `json:"org_id"`
+	ProjectID     pgtype.UUID   `json:"project_id"`
+	EnvironmentID pgtype.UUID   `json:"environment_id"`
+}
+
+func (q *Queries) LockCancellationActors(ctx context.Context, arg LockCancellationActorsParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, lockCancellationActors,
+		arg.RunIDs,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockCancellationAttempts = `-- name: LockCancellationAttempts :many
+SELECT run_attempts.run_id
+  FROM run_attempts
+  JOIN runs
+    ON runs.id = run_attempts.run_id
+   AND runs.current_attempt_number = run_attempts.number
+   AND runs.workspace_id = run_attempts.workspace_id
+ WHERE runs.id = ANY($1::uuid[])
+ ORDER BY array_position($1::uuid[], run_attempts.run_id),
+          run_attempts.number
+ FOR UPDATE OF run_attempts
+`
+
+func (q *Queries) LockCancellationAttempts(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, lockCancellationAttempts, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var run_id pgtype.UUID
+		if err := rows.Scan(&run_id); err != nil {
+			return nil, err
+		}
+		items = append(items, run_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockCancellationCheckpoints = `-- name: LockCancellationCheckpoints :many
+SELECT id
+  FROM run_checkpoints
+ WHERE run_id = ANY($1::uuid[])
+   AND state IN ('creating', 'ready')
+ ORDER BY array_position($1::uuid[], run_id), id
+ FOR UPDATE
+`
+
+func (q *Queries) LockCancellationCheckpoints(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, lockCancellationCheckpoints, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockCancellationMounts = `-- name: LockCancellationMounts :many
+SELECT id
+  FROM workspace_mounts
+ WHERE runtime_instance_id = ANY($1::uuid[])
+   AND state IN ('mounting', 'mounted', 'unmounting')
+ ORDER BY id
+ FOR UPDATE
+`
+
+func (q *Queries) LockCancellationMounts(ctx context.Context, runtimeIds []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, lockCancellationMounts, runtimeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockCancellationRun = `-- name: LockCancellationRun :one
+SELECT id,
+       public_id,
+       parent_run_id,
+       parent_owns_lifecycle,
+       environment_id,
+       workspace_id,
+       actor_id,
+       status,
+       current_attempt_number,
+       current_run_lease_id,
+       state_version
+  FROM runs
+ WHERE id = $1
+   AND org_id = $2
+   AND project_id = $3
+   AND environment_id = $4
+ FOR UPDATE
+`
+
+type LockCancellationRunParams struct {
+	ID            pgtype.UUID `json:"id"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+}
+
+type LockCancellationRunRow struct {
+	ID                   pgtype.UUID `json:"id"`
+	PublicID             string      `json:"public_id"`
+	ParentRunID          pgtype.UUID `json:"parent_run_id"`
+	ParentOwnsLifecycle  pgtype.Bool `json:"parent_owns_lifecycle"`
+	EnvironmentID        pgtype.UUID `json:"environment_id"`
+	WorkspaceID          pgtype.UUID `json:"workspace_id"`
+	ActorID              pgtype.UUID `json:"actor_id"`
+	Status               string      `json:"status"`
+	CurrentAttemptNumber int32       `json:"current_attempt_number"`
+	CurrentRunLeaseID    pgtype.UUID `json:"current_run_lease_id"`
+	StateVersion         int64       `json:"state_version"`
+}
+
+func (q *Queries) LockCancellationRun(ctx context.Context, arg LockCancellationRunParams) (LockCancellationRunRow, error) {
+	row := q.db.QueryRow(ctx, lockCancellationRun,
+		arg.ID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+	)
+	var i LockCancellationRunRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.ParentRunID,
+		&i.ParentOwnsLifecycle,
+		&i.EnvironmentID,
+		&i.WorkspaceID,
+		&i.ActorID,
+		&i.Status,
+		&i.CurrentAttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.StateVersion,
+	)
+	return i, err
+}
+
+const lockCancellationRunLeases = `-- name: LockCancellationRunLeases :many
+SELECT run_leases.id
+  FROM runs
+  JOIN run_leases
+    ON run_leases.id = runs.current_run_lease_id
+   AND run_leases.run_id = runs.id
+ WHERE runs.id = ANY($1::uuid[])
+ ORDER BY run_leases.id
+ FOR UPDATE OF run_leases
+`
+
+func (q *Queries) LockCancellationRunLeases(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, lockCancellationRunLeases, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockCancellationRuntimes = `-- name: LockCancellationRuntimes :many
+WITH target_runtimes AS (
+    SELECT run_leases.runtime_instance_id AS id
+      FROM runs
+      JOIN run_leases
+        ON run_leases.id = runs.current_run_lease_id
+       AND run_leases.run_id = runs.id
+     WHERE runs.id = ANY($1::uuid[])
+    UNION
+    SELECT runtime_instances.id
+      FROM runtime_instances
+     WHERE runtime_instances.reserved_run_id = ANY($1::uuid[])
+    UNION
+    SELECT run_waits.handoff_runtime_instance_id
+      FROM run_waits
+     WHERE run_waits.run_id = ANY($2::uuid[])
+       AND run_waits.handoff_runtime_instance_id IS NOT NULL
+       AND run_waits.suspension_state IN (
+           'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
+       )
+)
+SELECT runtime_instances.id
+  FROM runtime_instances
+  JOIN target_runtimes ON target_runtimes.id = runtime_instances.id
+ ORDER BY runtime_instances.id
+ FOR UPDATE OF runtime_instances
+`
+
+type LockCancellationRuntimesParams struct {
+	CancelIDs []pgtype.UUID `json:"cancel_ids"`
+	RunIDs    []pgtype.UUID `json:"run_ids"`
+}
+
+func (q *Queries) LockCancellationRuntimes(ctx context.Context, arg LockCancellationRuntimesParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, lockCancellationRuntimes, arg.CancelIDs, arg.RunIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockCancellationWaits = `-- name: LockCancellationWaits :many
+SELECT id,
+       run_id,
+       workspace_id,
+       child_run_id,
+       condition_state,
+       suspension_state,
+       expected_run_state_version,
+       attempt_number,
+       current_run_lease_id,
+       prior_run_lease_id,
+       suspend_checkpoint_id,
+       resume_request_version,
+       handoff_runtime_instance_id,
+       handoff_workspace_mount_id,
+       base_workspace_version_id
+  FROM run_waits
+ WHERE (
+       run_id = ANY($1::uuid[])
+       OR child_run_id = ANY($2::uuid[])
+ )
+   AND suspension_state IN (
+       'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
+   )
+ ORDER BY array_position($1::uuid[], run_id), id
+ FOR UPDATE
+`
+
+type LockCancellationWaitsParams struct {
+	RunIDs    []pgtype.UUID `json:"run_ids"`
+	CancelIDs []pgtype.UUID `json:"cancel_ids"`
+}
+
+type LockCancellationWaitsRow struct {
+	ID                       pgtype.UUID `json:"id"`
+	RunID                    pgtype.UUID `json:"run_id"`
+	WorkspaceID              pgtype.UUID `json:"workspace_id"`
+	ChildRunID               pgtype.UUID `json:"child_run_id"`
+	ConditionState           string      `json:"condition_state"`
+	SuspensionState          string      `json:"suspension_state"`
+	ExpectedRunStateVersion  int64       `json:"expected_run_state_version"`
+	AttemptNumber            int32       `json:"attempt_number"`
+	CurrentRunLeaseID        pgtype.UUID `json:"current_run_lease_id"`
+	PriorRunLeaseID          pgtype.UUID `json:"prior_run_lease_id"`
+	SuspendCheckpointID      pgtype.UUID `json:"suspend_checkpoint_id"`
+	ResumeRequestVersion     int64       `json:"resume_request_version"`
+	HandoffRuntimeInstanceID pgtype.UUID `json:"handoff_runtime_instance_id"`
+	HandoffWorkspaceMountID  pgtype.UUID `json:"handoff_workspace_mount_id"`
+	BaseWorkspaceVersionID   pgtype.UUID `json:"base_workspace_version_id"`
+}
+
+func (q *Queries) LockCancellationWaits(ctx context.Context, arg LockCancellationWaitsParams) ([]LockCancellationWaitsRow, error) {
+	rows, err := q.db.Query(ctx, lockCancellationWaits, arg.RunIDs, arg.CancelIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LockCancellationWaitsRow
+	for rows.Next() {
+		var i LockCancellationWaitsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.WorkspaceID,
+			&i.ChildRunID,
+			&i.ConditionState,
+			&i.SuspensionState,
+			&i.ExpectedRunStateVersion,
+			&i.AttemptNumber,
+			&i.CurrentRunLeaseID,
+			&i.PriorRunLeaseID,
+			&i.SuspendCheckpointID,
+			&i.ResumeRequestVersion,
+			&i.HandoffRuntimeInstanceID,
+			&i.HandoffWorkspaceMountID,
+			&i.BaseWorkspaceVersionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockCancellationWorkspaceLeases = `-- name: LockCancellationWorkspaceLeases :many
+SELECT id
+  FROM workspace_leases
+ WHERE owner_run_lease_id = ANY($1::uuid[])
+   AND state IN ('active', 'releasing')
+ ORDER BY id
+ FOR UPDATE
+`
+
+func (q *Queries) LockCancellationWorkspaceLeases(ctx context.Context, runLeaseIds []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, lockCancellationWorkspaceLeases, runLeaseIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockCancellationWorkspaces = `-- name: LockCancellationWorkspaces :many
+SELECT id
+  FROM workspaces
+ WHERE id IN (
+       SELECT workspace_id
+         FROM runs
+        WHERE id = ANY($1::uuid[])
+ )
+ ORDER BY id
+ FOR UPDATE
+`
+
+func (q *Queries) LockCancellationWorkspaces(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, lockCancellationWorkspaces, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
