@@ -2759,10 +2759,8 @@ func (q *Queries) LockSameWorkspaceHandoffAncestors(ctx context.Context, arg Loc
 
 const lockTokenWait = `-- name: LockTokenWait :one
 SELECT id,
-       environment_id,
        run_id,
        workspace_id,
-       token_id,
        kind,
        condition_state,
        suspension_state,
@@ -2771,7 +2769,6 @@ SELECT id,
        current_run_lease_id,
        prior_run_lease_id,
        suspend_checkpoint_id,
-       resume_request_version,
        timeout_at,
        coalesce(
            timeout_at <= transaction_timestamp(),
@@ -2800,10 +2797,8 @@ type LockTokenWaitParams struct {
 
 type LockTokenWaitRow struct {
 	ID                      pgtype.UUID        `json:"id"`
-	EnvironmentID           pgtype.UUID        `json:"environment_id"`
 	RunID                   pgtype.UUID        `json:"run_id"`
 	WorkspaceID             pgtype.UUID        `json:"workspace_id"`
-	TokenID                 pgtype.UUID        `json:"token_id"`
 	Kind                    WaitKind           `json:"kind"`
 	ConditionState          string             `json:"condition_state"`
 	SuspensionState         string             `json:"suspension_state"`
@@ -2812,7 +2807,6 @@ type LockTokenWaitRow struct {
 	CurrentRunLeaseID       pgtype.UUID        `json:"current_run_lease_id"`
 	PriorRunLeaseID         pgtype.UUID        `json:"prior_run_lease_id"`
 	SuspendCheckpointID     pgtype.UUID        `json:"suspend_checkpoint_id"`
-	ResumeRequestVersion    int64              `json:"resume_request_version"`
 	TimeoutAt               pgtype.Timestamptz `json:"timeout_at"`
 	TimedOut                bool               `json:"timed_out"`
 }
@@ -2829,10 +2823,8 @@ func (q *Queries) LockTokenWait(ctx context.Context, arg LockTokenWaitParams) (L
 	var i LockTokenWaitRow
 	err := row.Scan(
 		&i.ID,
-		&i.EnvironmentID,
 		&i.RunID,
 		&i.WorkspaceID,
-		&i.TokenID,
 		&i.Kind,
 		&i.ConditionState,
 		&i.SuspensionState,
@@ -2841,7 +2833,6 @@ func (q *Queries) LockTokenWait(ctx context.Context, arg LockTokenWaitParams) (L
 		&i.CurrentRunLeaseID,
 		&i.PriorRunLeaseID,
 		&i.SuspendCheckpointID,
-		&i.ResumeRequestVersion,
 		&i.TimeoutAt,
 		&i.TimedOut,
 	)
@@ -4249,6 +4240,209 @@ func (q *Queries) RequestRunWaitCheckpoint(ctx context.Context, arg RequestRunWa
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const resolveCheckpointingTokenWait = `-- name: ResolveCheckpointingTokenWait :one
+UPDATE run_waits
+   SET condition_state = $1::text,
+       condition_result = $2::jsonb,
+       condition_reason_code = $3::text,
+       condition_error = $4::jsonb,
+       condition_terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = $5
+   AND run_id = $6
+   AND condition_state = 'pending'
+   AND suspension_state = 'checkpointing'
+   AND expected_run_state_version = $7
+   AND current_run_lease_id = $8
+RETURNING id
+`
+
+type ResolveCheckpointingTokenWaitParams struct {
+	ConditionState          string      `json:"condition_state"`
+	ConditionResult         []byte      `json:"condition_result"`
+	ReasonCode              pgtype.Text `json:"reason_code"`
+	ConditionError          []byte      `json:"condition_error"`
+	WaitID                  pgtype.UUID `json:"wait_id"`
+	RunID                   pgtype.UUID `json:"run_id"`
+	ExpectedRunStateVersion int64       `json:"expected_run_state_version"`
+	CurrentRunLeaseID       pgtype.UUID `json:"current_run_lease_id"`
+}
+
+func (q *Queries) ResolveCheckpointingTokenWait(ctx context.Context, arg ResolveCheckpointingTokenWaitParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, resolveCheckpointingTokenWait,
+		arg.ConditionState,
+		arg.ConditionResult,
+		arg.ReasonCode,
+		arg.ConditionError,
+		arg.WaitID,
+		arg.RunID,
+		arg.ExpectedRunStateVersion,
+		arg.CurrentRunLeaseID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const resolveHotTokenWait = `-- name: ResolveHotTokenWait :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'running',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = $6
+       AND runs.status = 'waiting'
+       AND runs.state_version = $7
+       AND runs.current_attempt_number = $9
+       AND runs.current_run_lease_id = $8
+    RETURNING runs.state_version
+)
+UPDATE run_waits
+   SET condition_state = $1::text,
+       condition_result = $2::jsonb,
+       condition_reason_code = $3::text,
+       condition_error = $4::jsonb,
+       condition_terminal_at = transaction_timestamp(),
+       suspension_state = 'released',
+       expected_run_state_version = moved_run.state_version,
+       suspension_terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+  FROM moved_run
+ WHERE run_waits.id = $5
+   AND run_waits.run_id = $6
+   AND run_waits.condition_state = 'pending'
+   AND run_waits.suspension_state = 'hot'
+   AND run_waits.expected_run_state_version
+       = $7
+   AND run_waits.current_run_lease_id = $8
+RETURNING run_waits.id
+`
+
+type ResolveHotTokenWaitParams struct {
+	ConditionState          string      `json:"condition_state"`
+	ConditionResult         []byte      `json:"condition_result"`
+	ReasonCode              pgtype.Text `json:"reason_code"`
+	ConditionError          []byte      `json:"condition_error"`
+	WaitID                  pgtype.UUID `json:"wait_id"`
+	RunID                   pgtype.UUID `json:"run_id"`
+	ExpectedRunStateVersion int64       `json:"expected_run_state_version"`
+	CurrentRunLeaseID       pgtype.UUID `json:"current_run_lease_id"`
+	AttemptNumber           int32       `json:"attempt_number"`
+}
+
+func (q *Queries) ResolveHotTokenWait(ctx context.Context, arg ResolveHotTokenWaitParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, resolveHotTokenWait,
+		arg.ConditionState,
+		arg.ConditionResult,
+		arg.ReasonCode,
+		arg.ConditionError,
+		arg.WaitID,
+		arg.RunID,
+		arg.ExpectedRunStateVersion,
+		arg.CurrentRunLeaseID,
+		arg.AttemptNumber,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const resolveParkedTokenWait = `-- name: ResolveParkedTokenWait :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'queued',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = $2
+       AND runs.status = 'waiting'
+       AND runs.state_version = $3
+       AND runs.current_attempt_number = $4
+       AND runs.current_run_lease_id IS NULL
+    RETURNING runs.state_version
+),
+resolved_wait AS (
+    UPDATE run_waits
+       SET condition_state = $5::text,
+           condition_result = $6::jsonb,
+           condition_reason_code = $7::text,
+           condition_error = $8::jsonb,
+           condition_terminal_at = transaction_timestamp(),
+           suspension_state = 'resume_pending',
+           resume_request_version = run_waits.resume_request_version + 1,
+           expected_run_state_version = moved_run.state_version,
+           updated_at = transaction_timestamp()
+      FROM moved_run
+     WHERE run_waits.id = $9
+       AND run_waits.run_id = $2
+       AND run_waits.condition_state = 'pending'
+       AND run_waits.suspension_state = 'parked'
+       AND run_waits.expected_run_state_version
+           = $3
+       AND run_waits.current_run_lease_id IS NULL
+       AND run_waits.prior_run_lease_id = $10
+       AND run_waits.suspend_checkpoint_id = $11
+    RETURNING run_waits.id,
+              run_waits.environment_id,
+              run_waits.run_id,
+              run_waits.workspace_id,
+              run_waits.resume_request_version
+)
+INSERT INTO outbox_messages (
+    id,
+    lane,
+    topic,
+    partition_key,
+    payload,
+    available_at
+)
+SELECT $1,
+       'control',
+       'run.resume',
+       resolved_wait.workspace_id::text,
+       jsonb_build_object(
+           'environmentId', resolved_wait.environment_id::text,
+           'runId', resolved_wait.run_id::text,
+           'runWaitId', resolved_wait.id::text,
+           'resumeRequestVersion', resolved_wait.resume_request_version
+       ),
+       transaction_timestamp()
+  FROM resolved_wait
+RETURNING id
+`
+
+type ResolveParkedTokenWaitParams struct {
+	OutboxMessageID         pgtype.UUID `json:"outbox_message_id"`
+	RunID                   pgtype.UUID `json:"run_id"`
+	ExpectedRunStateVersion int64       `json:"expected_run_state_version"`
+	AttemptNumber           int32       `json:"attempt_number"`
+	ConditionState          string      `json:"condition_state"`
+	ConditionResult         []byte      `json:"condition_result"`
+	ReasonCode              pgtype.Text `json:"reason_code"`
+	ConditionError          []byte      `json:"condition_error"`
+	WaitID                  pgtype.UUID `json:"wait_id"`
+	PriorRunLeaseID         pgtype.UUID `json:"prior_run_lease_id"`
+	SuspendCheckpointID     pgtype.UUID `json:"suspend_checkpoint_id"`
+}
+
+func (q *Queries) ResolveParkedTokenWait(ctx context.Context, arg ResolveParkedTokenWaitParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, resolveParkedTokenWait,
+		arg.OutboxMessageID,
+		arg.RunID,
+		arg.ExpectedRunStateVersion,
+		arg.AttemptNumber,
+		arg.ConditionState,
+		arg.ConditionResult,
+		arg.ReasonCode,
+		arg.ConditionError,
+		arg.WaitID,
+		arg.PriorRunLeaseID,
+		arg.SuspendCheckpointID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const tokenWaitExists = `-- name: TokenWaitExists :one

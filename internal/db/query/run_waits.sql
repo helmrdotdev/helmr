@@ -264,10 +264,8 @@ SELECT id
 
 -- name: LockTokenWait :one
 SELECT id,
-       environment_id,
        run_id,
        workspace_id,
-       token_id,
        kind,
        condition_state,
        suspension_state,
@@ -276,7 +274,6 @@ SELECT id,
        current_run_lease_id,
        prior_run_lease_id,
        suspend_checkpoint_id,
-       resume_request_version,
        timeout_at,
        coalesce(
            timeout_at <= transaction_timestamp(),
@@ -292,6 +289,117 @@ SELECT id,
    AND kind = 'token'
    AND (condition_state = 'pending' OR suspension_state = 'checkpointing')
  FOR UPDATE;
+
+-- name: ResolveHotTokenWait :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'running',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = sqlc.arg(run_id)
+       AND runs.status = 'waiting'
+       AND runs.state_version = sqlc.arg(expected_run_state_version)
+       AND runs.current_attempt_number = sqlc.arg(attempt_number)
+       AND runs.current_run_lease_id = sqlc.arg(current_run_lease_id)
+    RETURNING runs.state_version
+)
+UPDATE run_waits
+   SET condition_state = sqlc.arg(condition_state)::text,
+       condition_result = sqlc.arg(condition_result)::jsonb,
+       condition_reason_code = sqlc.narg(reason_code)::text,
+       condition_error = sqlc.arg(condition_error)::jsonb,
+       condition_terminal_at = transaction_timestamp(),
+       suspension_state = 'released',
+       expected_run_state_version = moved_run.state_version,
+       suspension_terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+  FROM moved_run
+ WHERE run_waits.id = sqlc.arg(wait_id)
+   AND run_waits.run_id = sqlc.arg(run_id)
+   AND run_waits.condition_state = 'pending'
+   AND run_waits.suspension_state = 'hot'
+   AND run_waits.expected_run_state_version
+       = sqlc.arg(expected_run_state_version)
+   AND run_waits.current_run_lease_id = sqlc.arg(current_run_lease_id)
+RETURNING run_waits.id;
+
+-- name: ResolveCheckpointingTokenWait :one
+UPDATE run_waits
+   SET condition_state = sqlc.arg(condition_state)::text,
+       condition_result = sqlc.arg(condition_result)::jsonb,
+       condition_reason_code = sqlc.narg(reason_code)::text,
+       condition_error = sqlc.arg(condition_error)::jsonb,
+       condition_terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(wait_id)
+   AND run_id = sqlc.arg(run_id)
+   AND condition_state = 'pending'
+   AND suspension_state = 'checkpointing'
+   AND expected_run_state_version = sqlc.arg(expected_run_state_version)
+   AND current_run_lease_id = sqlc.arg(current_run_lease_id)
+RETURNING id;
+
+-- name: ResolveParkedTokenWait :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'queued',
+           state_version = state_version + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = sqlc.arg(run_id)
+       AND runs.status = 'waiting'
+       AND runs.state_version = sqlc.arg(expected_run_state_version)
+       AND runs.current_attempt_number = sqlc.arg(attempt_number)
+       AND runs.current_run_lease_id IS NULL
+    RETURNING runs.state_version
+),
+resolved_wait AS (
+    UPDATE run_waits
+       SET condition_state = sqlc.arg(condition_state)::text,
+           condition_result = sqlc.arg(condition_result)::jsonb,
+           condition_reason_code = sqlc.narg(reason_code)::text,
+           condition_error = sqlc.arg(condition_error)::jsonb,
+           condition_terminal_at = transaction_timestamp(),
+           suspension_state = 'resume_pending',
+           resume_request_version = run_waits.resume_request_version + 1,
+           expected_run_state_version = moved_run.state_version,
+           updated_at = transaction_timestamp()
+      FROM moved_run
+     WHERE run_waits.id = sqlc.arg(wait_id)
+       AND run_waits.run_id = sqlc.arg(run_id)
+       AND run_waits.condition_state = 'pending'
+       AND run_waits.suspension_state = 'parked'
+       AND run_waits.expected_run_state_version
+           = sqlc.arg(expected_run_state_version)
+       AND run_waits.current_run_lease_id IS NULL
+       AND run_waits.prior_run_lease_id = sqlc.arg(prior_run_lease_id)
+       AND run_waits.suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id)
+    RETURNING run_waits.id,
+              run_waits.environment_id,
+              run_waits.run_id,
+              run_waits.workspace_id,
+              run_waits.resume_request_version
+)
+INSERT INTO outbox_messages (
+    id,
+    lane,
+    topic,
+    partition_key,
+    payload,
+    available_at
+)
+SELECT sqlc.arg(outbox_message_id),
+       'control',
+       'run.resume',
+       resolved_wait.workspace_id::text,
+       jsonb_build_object(
+           'environmentId', resolved_wait.environment_id::text,
+           'runId', resolved_wait.run_id::text,
+           'runWaitId', resolved_wait.id::text,
+           'resumeRequestVersion', resolved_wait.resume_request_version
+       ),
+       transaction_timestamp()
+  FROM resolved_wait
+RETURNING id;
 
 -- name: ListTokenWaitCandidates :many
 SELECT id AS wait_id, run_id

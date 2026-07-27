@@ -327,16 +327,15 @@ func (r *WaitReconciler) RegisterWait(
 			return WaitRegistrationResult{}, err
 		}
 		wait := tokenWaitLockedWait{
-			id: request.WaitID, environmentID: request.EnvironmentID, runID: request.RunID,
-			workspaceID: pgvalue.MustUUIDValue(locator.WorkspaceID),
-			tokenID:     request.TokenID, kind: db.WaitKindToken,
+			id: request.WaitID, runID: request.RunID,
+			workspaceID: pgvalue.MustUUIDValue(locator.WorkspaceID), kind: db.WaitKindToken,
 			conditionState: db.WaitStatePending, suspensionState: db.RunWaitStateHot,
 			expectedRunStateVersion: waitingVersion, attemptNumber: request.AttemptNumber,
 			currentRunLeaseID: pgtype.UUID{Bytes: request.CurrentRunLeaseID, Valid: true},
 		}
 		run.stateVersion = waitingVersion
 		run.status = db.RunStatusWaiting
-		if err := reconcileHotTokenWait(ctx, tx, run, wait, resolution); err != nil {
+		if err := reconcileHotTokenWait(ctx, q, run, wait, resolution); err != nil {
 			return WaitRegistrationResult{}, err
 		}
 		result.RunStateVersion = waitingVersion + 1
@@ -588,10 +587,8 @@ type tokenWaitLockedRun struct {
 
 type tokenWaitLockedWait struct {
 	id                      uuid.UUID
-	environmentID           uuid.UUID
 	runID                   uuid.UUID
 	workspaceID             uuid.UUID
-	tokenID                 uuid.UUID
 	kind                    db.WaitKind
 	conditionState          db.WaitState
 	suspensionState         db.RunWaitState
@@ -600,7 +597,6 @@ type tokenWaitLockedWait struct {
 	currentRunLeaseID       pgtype.UUID
 	priorRunLeaseID         pgtype.UUID
 	suspendCheckpointID     pgtype.UUID
-	resumeRequestVersion    int64
 	timeoutAt               pgtype.Timestamptz
 	timedOut                bool
 }
@@ -753,11 +749,11 @@ func (r *WaitReconciler) reconcileOne(
 
 	switch wait.suspensionState {
 	case db.RunWaitStateHot:
-		err = reconcileHotTokenWait(ctx, tx, addressedRun, wait, resolution)
+		err = reconcileHotTokenWait(ctx, q, addressedRun, wait, resolution)
 	case db.RunWaitStateCheckpointing:
-		err = reconcileCheckpointingTokenWait(ctx, tx, wait, resolution)
+		err = reconcileCheckpointingTokenWait(ctx, q, wait, resolution)
 	case db.RunWaitStateParked:
-		err = reconcileParkedTokenWait(ctx, tx, addressedRun, wait, resolution)
+		err = reconcileParkedTokenWait(ctx, q, addressedRun, wait, resolution)
 	default:
 		err = tokenWaitAuthorityError("pending Token Wait has an ineligible suspension state", nil)
 	}
@@ -859,10 +855,8 @@ func lockCurrentTokenWait(
 	}
 	return tokenWaitLockedWait{
 		id:                      pgvalue.MustUUIDValue(locked.ID),
-		environmentID:           pgvalue.MustUUIDValue(locked.EnvironmentID),
 		runID:                   pgvalue.MustUUIDValue(locked.RunID),
 		workspaceID:             pgvalue.MustUUIDValue(locked.WorkspaceID),
-		tokenID:                 pgvalue.MustUUIDValue(locked.TokenID),
 		kind:                    locked.Kind,
 		conditionState:          db.WaitState(locked.ConditionState),
 		suspensionState:         db.RunWaitState(locked.SuspensionState),
@@ -871,7 +865,6 @@ func lockCurrentTokenWait(
 		currentRunLeaseID:       locked.CurrentRunLeaseID,
 		priorRunLeaseID:         locked.PriorRunLeaseID,
 		suspendCheckpointID:     locked.SuspendCheckpointID,
-		resumeRequestVersion:    locked.ResumeRequestVersion,
 		timeoutAt:               locked.TimeoutAt,
 		timedOut:                locked.TimedOut,
 	}, nil
@@ -938,94 +931,48 @@ func tokenWaitTerminalResolution(state db.TokenState, completionData []byte) (to
 
 func reconcileHotTokenWait(
 	ctx context.Context,
-	tx pgx.Tx,
+	q *db.Queries,
 	run tokenWaitLockedRun,
 	wait tokenWaitLockedWait,
 	resolution tokenWaitResolution,
 ) error {
-	var nextVersion int64
-	err := tx.QueryRow(ctx, `
-UPDATE runs
-   SET status = 'running',
-       state_version = state_version + 1,
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND status = 'waiting'
-   AND state_version = $2
-   AND current_attempt_number = $3
-   AND current_run_lease_id = $4
-RETURNING state_version`,
-		run.id,
-		run.stateVersion,
-		run.currentAttempt,
-		run.currentRunLeaseID,
-	).Scan(&nextVersion)
+	_, err := q.ResolveHotTokenWait(ctx, db.ResolveHotTokenWaitParams{
+		ConditionState:          string(resolution.conditionState),
+		ConditionResult:         resolution.result,
+		ReasonCode:              pgvalue.TextPtr(resolution.reasonCode),
+		ConditionError:          resolution.conditionError,
+		WaitID:                  pgvalue.UUID(wait.id),
+		RunID:                   pgvalue.UUID(run.id),
+		ExpectedRunStateVersion: run.stateVersion,
+		CurrentRunLeaseID:       run.currentRunLeaseID,
+		AttemptNumber:           run.currentAttempt,
+	})
 	if err != nil {
-		return tokenWaitAuthorityError("resume hot Token Wait Run", err)
-	}
-	command, err := tx.Exec(ctx, `
-UPDATE run_waits
-   SET condition_state = $1,
-       condition_result = $2::jsonb,
-       condition_reason_code = $3,
-       condition_error = $4::jsonb,
-       condition_terminal_at = transaction_timestamp(),
-       suspension_state = 'released',
-       expected_run_state_version = $5,
-       suspension_terminal_at = transaction_timestamp(),
-       updated_at = transaction_timestamp()
- WHERE id = $6
-   AND run_id = $7
-   AND condition_state = 'pending'
-   AND suspension_state = 'hot'
-   AND expected_run_state_version = $8
-   AND current_run_lease_id = $9`,
-		resolution.conditionState,
-		resolution.result,
-		resolution.reasonCode,
-		resolution.conditionError,
-		nextVersion,
-		wait.id,
-		wait.runID,
-		wait.expectedRunStateVersion,
-		wait.currentRunLeaseID,
-	)
-	if err != nil || command.RowsAffected() != 1 {
-		return tokenWaitAuthorityError("release hot Token Wait", err)
+		return tokenWaitAuthorityError("resolve hot Token Wait", err)
 	}
 	return nil
 }
 
 func reconcileCheckpointingTokenWait(
 	ctx context.Context,
-	tx pgx.Tx,
+	q *db.Queries,
 	wait tokenWaitLockedWait,
 	resolution tokenWaitResolution,
 ) error {
-	command, err := tx.Exec(ctx, `
-UPDATE run_waits
-   SET condition_state = $1,
-       condition_result = $2::jsonb,
-       condition_reason_code = $3,
-       condition_error = $4::jsonb,
-       condition_terminal_at = transaction_timestamp(),
-       updated_at = transaction_timestamp()
- WHERE id = $5
-   AND run_id = $6
-   AND condition_state = 'pending'
-   AND suspension_state = 'checkpointing'
-   AND expected_run_state_version = $7
-   AND current_run_lease_id = $8`,
-		resolution.conditionState,
-		resolution.result,
-		resolution.reasonCode,
-		resolution.conditionError,
-		wait.id,
-		wait.runID,
-		wait.expectedRunStateVersion,
-		wait.currentRunLeaseID,
+	_, err := q.ResolveCheckpointingTokenWait(
+		ctx,
+		db.ResolveCheckpointingTokenWaitParams{
+			ConditionState:          string(resolution.conditionState),
+			ConditionResult:         resolution.result,
+			ReasonCode:              pgvalue.TextPtr(resolution.reasonCode),
+			ConditionError:          resolution.conditionError,
+			WaitID:                  pgvalue.UUID(wait.id),
+			RunID:                   pgvalue.UUID(wait.runID),
+			ExpectedRunStateVersion: wait.expectedRunStateVersion,
+			CurrentRunLeaseID:       wait.currentRunLeaseID,
+		},
 	)
-	if err != nil || command.RowsAffected() != 1 {
+	if err != nil {
 		return tokenWaitAuthorityError("complete checkpointing Token Wait", err)
 	}
 	return nil
@@ -1033,84 +980,26 @@ UPDATE run_waits
 
 func reconcileParkedTokenWait(
 	ctx context.Context,
-	tx pgx.Tx,
+	q *db.Queries,
 	run tokenWaitLockedRun,
 	wait tokenWaitLockedWait,
 	resolution tokenWaitResolution,
 ) error {
-	nextResumeVersion := wait.resumeRequestVersion + 1
-	var nextVersion int64
-	err := tx.QueryRow(ctx, `
-UPDATE runs
-   SET status = 'queued',
-       state_version = state_version + 1,
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND status = 'waiting'
-   AND state_version = $2
-   AND current_attempt_number = $3
-   AND current_run_lease_id IS NULL
-RETURNING state_version`, run.id, run.stateVersion, run.currentAttempt).Scan(&nextVersion)
+	_, err := q.ResolveParkedTokenWait(ctx, db.ResolveParkedTokenWaitParams{
+		OutboxMessageID:         pgvalue.NewUUIDv7(),
+		RunID:                   pgvalue.UUID(run.id),
+		ExpectedRunStateVersion: run.stateVersion,
+		AttemptNumber:           run.currentAttempt,
+		ConditionState:          string(resolution.conditionState),
+		ConditionResult:         resolution.result,
+		ReasonCode:              pgvalue.TextPtr(resolution.reasonCode),
+		ConditionError:          resolution.conditionError,
+		WaitID:                  pgvalue.UUID(wait.id),
+		PriorRunLeaseID:         wait.priorRunLeaseID,
+		SuspendCheckpointID:     wait.suspendCheckpointID,
+	})
 	if err != nil {
-		return tokenWaitAuthorityError("queue parked Token Wait Run", err)
-	}
-	command, err := tx.Exec(ctx, `
-UPDATE run_waits
-   SET condition_state = $1,
-       condition_result = $2::jsonb,
-       condition_reason_code = $3,
-       condition_error = $4::jsonb,
-       condition_terminal_at = transaction_timestamp(),
-       suspension_state = 'resume_pending',
-       resume_request_version = $5,
-       expected_run_state_version = $6,
-       updated_at = transaction_timestamp()
- WHERE id = $7
-   AND run_id = $8
-   AND condition_state = 'pending'
-   AND suspension_state = 'parked'
-   AND expected_run_state_version = $9
-   AND current_run_lease_id IS NULL
-   AND prior_run_lease_id = $10
-   AND suspend_checkpoint_id = $11`,
-		resolution.conditionState,
-		resolution.result,
-		resolution.reasonCode,
-		resolution.conditionError,
-		nextResumeVersion,
-		nextVersion,
-		wait.id,
-		wait.runID,
-		wait.expectedRunStateVersion,
-		wait.priorRunLeaseID,
-		wait.suspendCheckpointID,
-	)
-	if err != nil || command.RowsAffected() != 1 {
-		return tokenWaitAuthorityError("resume parked Token Wait", err)
-	}
-	command, err = tx.Exec(ctx, `
-INSERT INTO outbox_messages (
-    id,
-    lane,
-    topic,
-    partition_key,
-    payload,
-    available_at
-) VALUES (
-    $1,
-    'control',
-    'run.resume',
-    $2::uuid::text,
-    jsonb_build_object(
-        'environmentId', $3::uuid::text,
-        'runId', $4::uuid::text,
-        'runWaitId', $5::uuid::text,
-        'resumeRequestVersion', $6::bigint
-    ),
-    transaction_timestamp()
-)`, uuid.Must(uuid.NewV7()), wait.workspaceID, wait.environmentID, wait.runID, wait.id, nextResumeVersion)
-	if err != nil || command.RowsAffected() != 1 {
-		return tokenWaitAuthorityError("publish parked Token Wait resume intent", err)
+		return tokenWaitAuthorityError("resolve parked Token Wait", err)
 	}
 	return nil
 }
