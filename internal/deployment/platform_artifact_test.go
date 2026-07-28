@@ -21,13 +21,36 @@ func TestManagerConformanceNamesAreFamilySpecific(t *testing.T) {
 			t.Fatalf("%s conformance = %v, want %v", name, actual, common)
 		}
 	}
-	pnpm := append(
-		slices.Clone(common),
+	pnpm := []string{
+		"entrypoint",
 		"pnpm-manager-replacement-denied",
 		"pnpm-runtime-replacement-denied",
-	)
+		"reported-version",
+		"required-options",
+	}
 	if actual := managerConformanceNames(PackageManagerPNPM); !slices.Equal(actual, pnpm) {
 		t.Fatalf("pnpm conformance = %v, want %v", actual, pnpm)
+	}
+	conformance := PlatformConformance{
+		Results: []PlatformConformanceResult{
+			{Name: "required-options", Outcome: "passed"},
+			{Name: "pnpm-runtime-replacement-denied", Outcome: "passed"},
+			{Name: "reported-version", Outcome: "passed"},
+			{Name: "entrypoint", Outcome: "passed"},
+			{Name: "pnpm-manager-replacement-denied", Outcome: "passed"},
+		},
+	}
+	if err := normalizeConformance(
+		&conformance,
+		PlatformConformanceSet,
+		nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+	for index, result := range conformance.Results {
+		if result.Name != pnpm[index] {
+			t.Fatalf("normalized pnpm conformance = %v, want %v", conformance.Results, pnpm)
+		}
 	}
 }
 

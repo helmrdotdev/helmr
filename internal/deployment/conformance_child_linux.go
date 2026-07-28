@@ -521,6 +521,30 @@ func pnpmManagerReplacementConformance(
 		arguments...,
 	); err == nil {
 		return errors.New("pnpm launched or accepted a replacement Manager")
+	} else {
+		var exitErr *exec.ExitError
+		diagnostic := err.Error()
+		if !errors.As(err, &exitErr) ||
+			exitErr.ExitCode() != 1 ||
+			!strings.Contains(
+				diagnostic,
+				"configured to use 0.0.1 of pnpm",
+			) ||
+			!strings.Contains(
+				diagnostic,
+				"current pnpm is v"+descriptor.PackageManager.Version,
+			) {
+			return errors.New(
+				"pnpm did not report a local Manager version rejection",
+			)
+		}
+	}
+	entries, err := os.ReadDir("/work/pnpm-home")
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if len(entries) != 0 {
+		return errors.New("pnpm created a replacement Manager artifact")
 	}
 	return nil
 }
@@ -730,12 +754,16 @@ func compilerConformance(
 
 func managerEnvironment(descriptor ManagerArtifactDescriptor) []string {
 	path := "/opt/helmr/runtime/bin:/opt/helmr/manager/bin"
-	return []string{
+	environment := []string{
 		"HOME=/work",
 		"PATH=" + path,
 		"TMPDIR=/work/tmp",
 		"npm_config_update_notifier=false",
 	}
+	if descriptor.PackageManager.Name == PackageManagerPNPM {
+		environment = append(environment, "PNPM_HOME=/work/pnpm-home")
+	}
+	return environment
 }
 
 func managerHelpArguments(descriptor ManagerArtifactDescriptor) []string {

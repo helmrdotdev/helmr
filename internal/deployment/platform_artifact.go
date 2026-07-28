@@ -217,23 +217,24 @@ func runtimeConformanceNames() []string {
 }
 
 func managerConformanceNames(name PackageManagerName) []string {
-	names := []string{
-		"entrypoint",
-		"reported-version",
-		"required-options",
-	}
 	switch name {
 	case PackageManagerNPM, PackageManagerBun:
+		return []string{
+			"entrypoint",
+			"reported-version",
+			"required-options",
+		}
 	case PackageManagerPNPM:
-		names = append(
-			names,
+		return []string{
+			"entrypoint",
 			"pnpm-manager-replacement-denied",
 			"pnpm-runtime-replacement-denied",
-		)
+			"reported-version",
+			"required-options",
+		}
 	default:
 		panic("validated Manager family is unsupported")
 	}
-	return names
 }
 
 func toolchainConformanceNames() []string {
