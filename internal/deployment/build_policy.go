@@ -21,7 +21,7 @@ const (
 
 	NodeRuntimeAdapterVersion      = "helmr.runtime.v0"
 	ToolchainAdapterVersion        = "helmr.standard-toolchain.v0"
-	PlatformFixtureSet             = "helmr.platform.fixtures.v0"
+	PlatformConformanceSet         = "helmr.platform.conformance.v0"
 	PlatformDescriptorSchemaV0     = 0
 	NodeReleaseOrigin              = "https://nodejs.org/dist/"
 	NPMReleaseOrigin               = "https://registry.npmjs.org/npm/"
@@ -114,7 +114,7 @@ type buildPolicyDocument struct {
 	Architecture            RuntimeArchitecture `json:"architecture"`
 	Denies                  BuildPolicyDenies   `json:"denies"`
 	DescriptorSchemaVersion int                 `json:"descriptorSchemaVersion"`
-	FixtureSet              string              `json:"fixtureSet"`
+	ConformanceSet          string              `json:"conformanceSet"`
 	FormatVersion           int                 `json:"formatVersion"`
 	Managers                []ManagerPolicy     `json:"managers"`
 	Node                    NodePolicy          `json:"node"`
@@ -130,7 +130,7 @@ type BuildPolicy struct {
 
 type PlatformAcquisitionPolicy struct {
 	DescriptorSchemaVersion int
-	FixtureSet              string
+	ConformanceSet          string
 	Manager                 ManagerPolicy
 	Node                    NodePolicy
 	NodeFlags               []string
@@ -211,7 +211,7 @@ func ComposeBuildPolicy(
 		Architecture:            ArchitectureX8664,
 		Denies:                  BuildPolicyDenies{Digests: []string{}, Selectors: []string{}},
 		DescriptorSchemaVersion: PlatformDescriptorSchemaV0,
-		FixtureSet:              PlatformFixtureSet,
+		ConformanceSet:          PlatformConformanceSet,
 		FormatVersion:           BuildPolicyFormatVersion,
 		Managers: []ManagerPolicy{
 			{
@@ -352,7 +352,7 @@ func (p *BuildPolicy) Acquisition(
 	}
 	return PlatformAcquisitionPolicy{
 		DescriptorSchemaVersion: p.document.DescriptorSchemaVersion,
-		FixtureSet:              p.document.FixtureSet,
+		ConformanceSet:          p.document.ConformanceSet,
 		Manager:                 managerPolicy,
 		Node:                    p.document.Node,
 		NodeFlags:               flags,
@@ -387,8 +387,12 @@ func validateBuildPolicyDocument(document buildPolicyDocument) error {
 			PlatformDescriptorSchemaV0,
 		)
 	}
-	if document.FixtureSet != PlatformFixtureSet {
-		return fmt.Errorf("build policy fixtureSet = %q, want %q", document.FixtureSet, PlatformFixtureSet)
+	if document.ConformanceSet != PlatformConformanceSet {
+		return fmt.Errorf(
+			"build policy conformanceSet = %q, want %q",
+			document.ConformanceSet,
+			PlatformConformanceSet,
+		)
 	}
 	if err := validateNodePolicy(document.Node); err != nil {
 		return err

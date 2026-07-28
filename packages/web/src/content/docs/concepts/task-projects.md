@@ -14,9 +14,10 @@ package-managed JavaScript or TypeScript source, an exact lockfile,
 `.helmrignore` explicitly removes paths from submitted source.
 
 `package.json` selects exact Node and Manager releases. Helmr compiles project
-and workspace-local source with its pinned esbuild toolchain. Registry
-dependencies remain external and are loaded from the Manager-produced
-`node_modules` tree. The Managed Runtime executes only generated JavaScript.
+and workspace-local source with its pinned esbuild toolchain. Non-local
+packages remain external and are loaded from the Manager-produced
+`node_modules` tree with standard Node resolution. The Managed Runtime
+executes only generated JavaScript.
 
 ```ts
 import { defineConfig } from "@helmr/sdk"
@@ -41,11 +42,13 @@ archive, uploads it with its content hash, and follows the remote build. It
 does not install dependencies, execute config, read `node_modules`, or mutate
 the local project or lockfile.
 
-The remote build fetches dependencies without lifecycle scripts, removes
-network authority, performs the frozen install and ordinary lifecycle scripts,
-evaluates config once for that build attempt, compiles and discovers
-declarations, and publishes the complete installed project tree with generated
-modules as one immutable Program.
+The remote build runs the exact Manager's standard frozen install with ordinary
+lifecycle scripts, evaluates config once for that build attempt, compiles and
+discovers declarations, and publishes the complete installed project tree with
+generated modules as one immutable Program. These steps run in one fresh,
+resource-bounded Build VM with bounded public egress. The VM receives no
+Platform, Control, or runtime secrets and is destroyed after the result is
+ingested.
 
 `.helmrignore` alone selects submitted source. Discovery-specific
 `ignorePatterns` never remove source or runtime bytes. Login/session deploys

@@ -301,10 +301,10 @@ func verifyPlatformConformance(
 		return nil, fmt.Errorf("conformance job = %q", job)
 	}
 	return CanonicalPlatformDocument(PlatformConformance{
-		FixtureSet:    "pending",
-		FormatVersion: PlatformArtifactDocumentFormatVersion,
-		Inputs:        []PlatformEvidenceFile{},
-		Results:       results,
+		ConformanceSet: "pending",
+		FormatVersion:  PlatformArtifactDocumentFormatVersion,
+		Inputs:         []PlatformEvidenceFile{},
+		Results:        results,
 	})
 }
 
@@ -422,15 +422,13 @@ func managerConformance(
 		return nil, err
 	}
 	return passedConformanceResults(
-		"cache-miss-fails",
 		"entrypoint",
-		"executable-config-suppression",
-		"network-denied",
+		"frozen-install",
+		"lifecycle",
 		"protected-input-preservation",
 		"reported-version",
 		"required-options",
 		"runtime-download-suppression",
-		"scriptless-fetch",
 	), nil
 }
 
@@ -462,15 +460,6 @@ func managerAdapterFixtures(
 	if err := os.WriteFile(lockPath, []byte(lock), 0600); err != nil {
 		return err
 	}
-	if descriptor.PackageManager.Name == PackageManagerPNPM {
-		if err := os.WriteFile(
-			filepath.Join(project, ".pnpmfile.cjs"),
-			[]byte(`throw new Error("pnpmfile executed")`),
-			0600,
-		); err != nil {
-			return err
-		}
-	}
 	beforePackage, err := digestFile(ctx, filepath.Join(project, "package.json"))
 	if err != nil {
 		return err
@@ -479,7 +468,7 @@ func managerAdapterFixtures(
 	if err != nil {
 		return err
 	}
-	arguments := managerFixtureFetchArguments(descriptor)
+	arguments := managerFixtureInstallArguments(descriptor)
 	if descriptor.Entrypoint.Kind == ManagerEntrypointNode {
 		arguments = append([]string{descriptor.Entrypoint.Path}, arguments...)
 	}
@@ -490,81 +479,48 @@ func managerAdapterFixtures(
 		executable,
 		arguments...,
 	); err != nil {
-		return fmt.Errorf("Manager scriptless Fetch fixture failed: %w", err)
+		return fmt.Errorf("Manager frozen install fixture failed: %w", err)
 	}
-	if _, err := os.Stat("/work/lifecycle-ran"); !os.IsNotExist(err) {
-		return errors.New("Manager scriptless Fetch executed a lifecycle script")
+	if marker, err := os.ReadFile("/work/lifecycle-ran"); err != nil ||
+		string(marker) != "1" {
+		return errors.New("Manager frozen install did not execute ordinary lifecycle")
 	}
 	if after, err := digestFile(ctx, filepath.Join(project, "package.json")); err != nil ||
 		after != beforePackage {
-		return errors.New("Manager Fetch changed package.json")
+		return errors.New("Manager frozen install changed package.json")
 	}
 	if after, err := digestFile(ctx, lockPath); err != nil || after != beforeLock {
-		return errors.New("Manager Fetch changed its lockfile")
+		return errors.New("Manager frozen install changed its lockfile")
 	}
-	if _, err := os.Stat("/work/pnpmfile-ran"); !os.IsNotExist(err) {
-		return errors.New("Manager Fetch executed package-manager configuration")
+	if err := rejectDownloadedRuntime(project); err != nil {
+		return err
 	}
-	install := managerFixtureInstallArguments(descriptor)
-	if descriptor.Entrypoint.Kind == ManagerEntrypointNode {
-		install = append([]string{descriptor.Entrypoint.Path}, install...)
+	vendor := filepath.Join(project, "vendor/fixture")
+	if err := os.MkdirAll(vendor, 0700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(
+		filepath.Join(vendor, "package.json"),
+		[]byte(`{"name":"fixture","version":"1.0.0"}`),
+		0600,
+	); err != nil {
+		return err
+	}
+	if err := os.WriteFile(
+		filepath.Join(project, "package.json"),
+		[]byte(`{"dependencies":{"fixture":"file:./vendor/fixture"},"name":"helmr-manager-fixture","private":true,"version":"1.0.0"}`),
+		0600,
+	); err != nil {
+		return err
 	}
 	if _, err := runConformanceCommandIn(
 		ctx,
 		managerEnvironment(descriptor),
 		project,
 		executable,
-		install...,
-	); err != nil {
-		return fmt.Errorf("Manager offline install fixture failed: %w", err)
-	}
-	if err := rejectDownloadedRuntime(project); err != nil {
-		return err
-	}
-	missing := "/work/cache-miss"
-	if err := os.Mkdir(missing, 0700); err != nil {
-		return err
-	}
-	if err := os.WriteFile(
-		filepath.Join(missing, "package.json"),
-		[]byte(`{"dependencies":{"helmr-cache-miss-fixture":"1.0.0"},"name":"cache-miss","private":true,"version":"1.0.0"}`),
-		0600,
-	); err != nil {
-		return err
-	}
-	if descriptor.PackageManager.Name == PackageManagerBun {
-		negative := managerFixtureNetworkArguments(descriptor)
-		if _, err := runConformanceCommandIn(
-			ctx,
-			managerEnvironment(descriptor),
-			missing,
-			executable,
-			negative...,
-		); err == nil {
-			return errors.New("Bun network-attempt fixture unexpectedly succeeded")
-		}
-	} else {
-		missingLockName, missingLock := managerFixtureMissingLock(descriptor.PackageManager.Name)
-		if err := os.WriteFile(
-			filepath.Join(missing, missingLockName),
-			[]byte(missingLock),
-			0600,
-		); err != nil {
-			return err
-		}
-		negative := managerFixtureInstallArguments(descriptor)
-		if descriptor.Entrypoint.Kind == ManagerEntrypointNode {
-			negative = append([]string{descriptor.Entrypoint.Path}, negative...)
-		}
-		if _, err := runConformanceCommandIn(
-			ctx,
-			managerEnvironment(descriptor),
-			missing,
-			executable,
-			negative...,
-		); err == nil {
-			return errors.New("Manager offline cache-miss fixture unexpectedly succeeded")
-		}
+		arguments...,
+	); err == nil {
+		return errors.New("Manager frozen install accepted a manifest/lockfile mismatch")
 	}
 	return nil
 }
@@ -582,64 +538,22 @@ func managerFixtureLock(name PackageManagerName) (string, string) {
 	}
 }
 
-func managerFixtureMissingLock(name PackageManagerName) (string, string) {
-	switch name {
-	case PackageManagerNPM:
-		return "package-lock.json", `{"lockfileVersion":3,"name":"cache-miss","packages":{"":{"dependencies":{"helmr-cache-miss-fixture":"1.0.0"},"name":"cache-miss","version":"1.0.0"},"node_modules/helmr-cache-miss-fixture":{"integrity":"sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==","resolved":"https://registry.npmjs.org/helmr-cache-miss-fixture/-/helmr-cache-miss-fixture-1.0.0.tgz","version":"1.0.0"}},"requires":true,"version":"1.0.0"}`
-	case PackageManagerPNPM:
-		return "pnpm-lock.yaml", "lockfileVersion: '9.0'\n\nimporters:\n  .:\n    dependencies:\n      helmr-cache-miss-fixture:\n        specifier: 1.0.0\n        version: 1.0.0\n\npackages:\n  helmr-cache-miss-fixture@1.0.0:\n    resolution: {integrity: sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==}\n\nsnapshots:\n  helmr-cache-miss-fixture@1.0.0: {}\n"
-	default:
-		return "", ""
-	}
-}
-
-func managerFixtureFetchArguments(descriptor ManagerArtifactDescriptor) []string {
-	switch descriptor.PackageManager.Name {
-	case PackageManagerNPM:
-		return []string{"ci", "--cache", "/work/cache", "--ignore-scripts", "--no-audit", "--no-fund"}
-	case PackageManagerPNPM:
-		return []string{
-			"fetch",
-			"--frozen-lockfile",
-			"--ignore-pnpmfile",
-			"--ignore-scripts",
-			"--no-runtime",
-			"--pm-on-fail=error",
-			"--store-dir",
-			"/work/cache",
-		}
-	case PackageManagerBun:
-		return []string{"install", "--cache-dir", "/work/cache", "--frozen-lockfile", "--ignore-scripts"}
-	default:
-		return []string{"unsupported"}
-	}
-}
-
 func managerFixtureInstallArguments(descriptor ManagerArtifactDescriptor) []string {
 	switch descriptor.PackageManager.Name {
 	case PackageManagerNPM:
-		return []string{"ci", "--cache", "/work/cache", "--ignore-scripts", "--no-audit", "--no-fund", "--offline"}
+		return []string{"ci", "--no-audit", "--no-fund"}
 	case PackageManagerPNPM:
 		return []string{
 			"install",
 			"--frozen-lockfile",
 			"--no-runtime",
-			"--offline",
-			"--store-dir",
-			"/work/cache",
+			"--pm-on-fail=error",
 		}
 	case PackageManagerBun:
-		return []string{"install", "--cache-dir", "/work/cache", "--frozen-lockfile", "--ignore-scripts"}
+		return []string{"install", "--frozen-lockfile"}
 	default:
 		return []string{"unsupported"}
 	}
-}
-
-func managerFixtureNetworkArguments(descriptor ManagerArtifactDescriptor) []string {
-	if descriptor.Entrypoint.Kind == ManagerEntrypointNode {
-		return []string{descriptor.Entrypoint.Path, "install", "--no-audit", "--no-fund"}
-	}
-	return []string{"install"}
 }
 
 func rejectDownloadedRuntime(root string) error {
@@ -862,7 +776,11 @@ func managerEnvironment(descriptor ManagerArtifactDescriptor) []string {
 
 func managerHelpArguments(descriptor ManagerArtifactDescriptor) []string {
 	if descriptor.Entrypoint.Kind == ManagerEntrypointNode {
-		return []string{descriptor.Entrypoint.Path, "install", "--help"}
+		command := "install"
+		if descriptor.PackageManager.Name == PackageManagerNPM {
+			command = "ci"
+		}
+		return []string{descriptor.Entrypoint.Path, command, "--help"}
 	}
 	return []string{"install", "--help"}
 }
@@ -870,11 +788,11 @@ func managerHelpArguments(descriptor ManagerArtifactDescriptor) []string {
 func managerRequiredOptions(name PackageManagerName) []string {
 	switch name {
 	case PackageManagerNPM:
-		return []string{"--ignore-scripts", "--offline"}
+		return []string{"--no-audit", "--no-fund"}
 	case PackageManagerPNPM:
-		return []string{"--frozen-lockfile", "--offline"}
+		return []string{"--frozen-lockfile", "--no-runtime", "--pm-on-fail"}
 	case PackageManagerBun:
-		return []string{"--frozen-lockfile", "--ignore-scripts"}
+		return []string{"--frozen-lockfile"}
 	default:
 		return []string{"unsupported"}
 	}

@@ -57,11 +57,11 @@ func TestBuildPolicyRequiresCompleteCanonicalShape(t *testing.T) {
 	}
 	if _, err := ParseBuildPolicy(bytes.Replace(
 		raw,
-		[]byte(`"fixtureSet":"helmr.platform.fixtures.v0"`),
-		[]byte(`"fixtureSet":"other"`),
+		[]byte(`"conformanceSet":"helmr.platform.conformance.v0"`),
+		[]byte(`"conformanceSet":"other"`),
 		1,
 	)); err == nil {
-		t.Fatal("unknown fixture set was admitted")
+		t.Fatal("unknown conformance set was admitted")
 	}
 	if _, err := ParseBuildPolicy(bytes.Replace(
 		raw,
@@ -123,7 +123,7 @@ func testBuildPolicy(t *testing.T) []byte {
 		Architecture:            ArchitectureX8664,
 		Denies:                  BuildPolicyDenies{Digests: []string{}, Selectors: []string{}},
 		DescriptorSchemaVersion: PlatformDescriptorSchemaV0,
-		FixtureSet:              PlatformFixtureSet,
+		ConformanceSet:          PlatformConformanceSet,
 		FormatVersion:           BuildPolicyFormatVersion,
 		Managers: []ManagerPolicy{
 			{

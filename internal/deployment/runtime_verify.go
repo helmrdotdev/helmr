@@ -182,7 +182,7 @@ func verifyRuntimeTopology(
 		PlatformArtifactExpectation{
 			AllowedRedirectHosts:    allowedRedirectHosts,
 			DescriptorSchemaVersion: descriptor.DescriptorSchemaVersion,
-			FixtureSet:              conformance.FixtureSet,
+			ConformanceSet:          conformance.ConformanceSet,
 			IntegrityIdentities:     []string{integrity.Identity},
 			IntegrityKind:           integrity.IntegrityKind,
 			NodeVersion:             descriptor.NodeVersion,

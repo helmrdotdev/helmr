@@ -108,7 +108,11 @@ func (acquirer PlatformAcquirer) runtimeTree(
 	if validationErr != nil || closeErr != nil {
 		return nil, conformanceFailure(validationErr, closeErr)
 	}
-	if err := normalizeConformance(&conformance, policy.FixtureSet, platformEvidence(evidence)); err != nil {
+	if err := normalizeConformance(
+		&conformance,
+		policy.ConformanceSet,
+		platformEvidence(evidence),
+	); err != nil {
 		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionConformanceFailed, err)
 	}
 	conformanceRaw, err := CanonicalPlatformDocument(conformance)
@@ -223,7 +227,11 @@ func (acquirer PlatformAcquirer) managerTree(
 	if validationErr != nil || closeErr != nil {
 		return nil, conformanceFailure(validationErr, closeErr)
 	}
-	if err := normalizeConformance(&conformance, policy.FixtureSet, platformEvidence(evidence)); err != nil {
+	if err := normalizeConformance(
+		&conformance,
+		policy.ConformanceSet,
+		platformEvidence(evidence),
+	); err != nil {
 		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionConformanceFailed, err)
 	}
 	conformanceRaw, err := CanonicalPlatformDocument(conformance)
@@ -348,7 +356,11 @@ func (acquirer PlatformAcquirer) toolchainTree(
 	if validationErr != nil || closeErr != nil {
 		return nil, conformanceFailure(validationErr, closeErr)
 	}
-	if err := normalizeConformance(&conformance, policy.FixtureSet, platformEvidence(evidence)); err != nil {
+	if err := normalizeConformance(
+		&conformance,
+		policy.ConformanceSet,
+		platformEvidence(evidence),
+	); err != nil {
 		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionConformanceFailed, err)
 	}
 	conformanceRaw, err := CanonicalPlatformDocument(conformance)
@@ -478,14 +490,14 @@ func cloneEvidence(source map[string][]byte) map[string][]byte {
 
 func normalizeConformance(
 	value *PlatformConformance,
-	fixtureSet string,
+	conformanceSet string,
 	inputs []PlatformEvidenceFile,
 ) error {
 	if value == nil {
 		return errors.New("Platform conformance result is missing")
 	}
 	value.FormatVersion = PlatformArtifactDocumentFormatVersion
-	value.FixtureSet = fixtureSet
+	value.ConformanceSet = conformanceSet
 	value.Inputs = append([]PlatformEvidenceFile(nil), inputs...)
 	sort.Slice(value.Results, func(left, right int) bool {
 		return value.Results[left].Name < value.Results[right].Name

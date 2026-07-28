@@ -51,12 +51,16 @@ rejected. Retained `.env` and `.env.*` basenames are rejected except exact
 `.example`, `.sample`, and `.template` suffixes. `ignorePatterns` affects only
 remote declaration discovery.
 
-The remote build uses the selected Manager for dependency fetch and a
-networkless frozen install with ordinary lifecycle semantics. It evaluates
-`helmr.config.ts` once for that build attempt, compiles project and
-workspace-local declaration source with the pinned Platform esbuild, and keeps
-registry dependencies external in the complete installed project tree. The CLI
-never executes config or declaration modules.
+The remote build uses the exact selected Manager's standard frozen install with
+ordinary lifecycle semantics. In the same fresh, resource-bounded Build VM it
+evaluates `helmr.config.ts` once for that build attempt and compiles project and
+workspace-local declaration source with the pinned Platform esbuild. Non-local
+packages stay external in the complete installed project tree and use standard
+Node resolution. Install, lifecycle, config, and compilation have bounded
+public egress; private, link-local, metadata, and Control-plane destinations are
+blocked. The Build VM receives no Platform, Control, or runtime secrets and is
+destroyed after artifact ingestion. The CLI never executes config or
+declaration modules.
 
 For automation, use JSON lines:
 

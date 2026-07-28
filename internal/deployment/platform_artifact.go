@@ -109,16 +109,16 @@ type PlatformConformanceResult struct {
 }
 
 type PlatformConformance struct {
-	FixtureSet    string                      `json:"fixtureSet"`
-	FormatVersion int                         `json:"formatVersion"`
-	Inputs        []PlatformEvidenceFile      `json:"inputs"`
-	Results       []PlatformConformanceResult `json:"results"`
+	ConformanceSet string                      `json:"conformanceSet"`
+	FormatVersion  int                         `json:"formatVersion"`
+	Inputs         []PlatformEvidenceFile      `json:"inputs"`
+	Results        []PlatformConformanceResult `json:"results"`
 }
 
 type PlatformArtifactExpectation struct {
 	AllowedRedirectHosts    []string
 	DescriptorSchemaVersion int
-	FixtureSet              string
+	ConformanceSet          string
 	IntegrityIdentities     []string
 	IntegrityKind           string
 	Manager                 *PackageManager
@@ -169,7 +169,7 @@ func (p *BuildPolicy) PlatformArtifactExpectations(
 		Runtime: PlatformArtifactExpectation{
 			AllowedRedirectHosts:    policy.Node.AllowedRedirectHosts,
 			DescriptorSchemaVersion: policy.DescriptorSchemaVersion,
-			FixtureSet:              policy.FixtureSet,
+			ConformanceSet:          policy.ConformanceSet,
 			IntegrityIdentities:     slices.Clone(policy.Node.ReleaseKeyFingerprints),
 			IntegrityKind:           "openpgp-sha256",
 			NodeVersion:             nodeVersion,
@@ -183,7 +183,7 @@ func (p *BuildPolicy) PlatformArtifactExpectations(
 		Manager: PlatformArtifactExpectation{
 			AllowedRedirectHosts:    policy.Manager.AllowedRedirectHosts,
 			DescriptorSchemaVersion: policy.DescriptorSchemaVersion,
-			FixtureSet:              policy.FixtureSet,
+			ConformanceSet:          policy.ConformanceSet,
 			IntegrityIdentities:     []string{managerIdentity},
 			IntegrityKind:           managerIntegrity,
 			Manager:                 &manager,
@@ -193,7 +193,7 @@ func (p *BuildPolicy) PlatformArtifactExpectations(
 		Toolchain: PlatformArtifactExpectation{
 			Compiler:                policy.Toolchain.Compiler,
 			DescriptorSchemaVersion: policy.DescriptorSchemaVersion,
-			FixtureSet:              policy.FixtureSet,
+			ConformanceSet:          policy.ConformanceSet,
 			IntegrityIdentities:     []string{"helmr-platform"},
 			IntegrityKind:           "composed-sha256",
 			NodeVersion:             nodeVersion,
@@ -218,15 +218,13 @@ func runtimeConformanceNames() []string {
 
 func managerConformanceNames() []string {
 	return []string{
-		"cache-miss-fails",
 		"entrypoint",
-		"executable-config-suppression",
-		"network-denied",
+		"frozen-install",
+		"lifecycle",
 		"protected-input-preservation",
 		"reported-version",
 		"required-options",
 		"runtime-download-suppression",
-		"scriptless-fetch",
 	}
 }
 
@@ -324,8 +322,10 @@ func inspectPlatformArtifact(
 	if err != nil {
 		return InspectedPlatformArtifact{}, err
 	}
-	if conformance.FixtureSet != expectation.FixtureSet {
-		return InspectedPlatformArtifact{}, errors.New("Platform conformance fixture set does not match policy")
+	if conformance.ConformanceSet != expectation.ConformanceSet {
+		return InspectedPlatformArtifact{}, errors.New(
+			"Platform conformance check set does not match policy",
+		)
 	}
 	if len(conformance.Results) != len(expectation.RequiredConformance) {
 		return InspectedPlatformArtifact{}, errors.New("Platform conformance result set does not match policy")
@@ -451,7 +451,7 @@ func readPlatformConformance(
 		return PlatformConformance{}, nil, err
 	}
 	if value.FormatVersion != PlatformArtifactDocumentFormatVersion ||
-		value.FixtureSet == "" ||
+		value.ConformanceSet == "" ||
 		len(value.Results) == 0 ||
 		len(value.Results) > maxPlatformConformanceResults {
 		return PlatformConformance{}, nil, errors.New("Platform conformance document is invalid")

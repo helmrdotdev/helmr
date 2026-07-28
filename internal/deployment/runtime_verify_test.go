@@ -206,10 +206,10 @@ func newRuntimeTopology(t *testing.T) (RuntimeDescriptor, *memoryArtifact) {
 		results[index] = PlatformConformanceResult{Name: name, Outcome: "passed"}
 	}
 	conformance := PlatformConformance{
-		FixtureSet:    PlatformFixtureSet,
-		FormatVersion: PlatformArtifactDocumentFormatVersion,
-		Inputs:        evidence,
-		Results:       results,
+		ConformanceSet: PlatformConformanceSet,
+		FormatVersion:  PlatformArtifactDocumentFormatVersion,
+		Inputs:         evidence,
+		Results:        results,
 	}
 	conformanceRaw, err := CanonicalPlatformDocument(conformance)
 	if err != nil {
