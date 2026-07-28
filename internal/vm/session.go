@@ -69,15 +69,6 @@ type BuildNetworkSession interface {
 	BuildNetworkStatus(context.Context) (BuildNetworkStatus, error)
 }
 
-type BuildNetworkTransition struct {
-	Before BuildNetworkStatus
-}
-
-type BuildNetworkTransitionSession interface {
-	Session
-	CutoffBuildNetwork(context.Context) (BuildNetworkTransition, error)
-}
-
 type RunNetworkStatus struct {
 	DeniedPackets uint64
 }

@@ -31,20 +31,18 @@ const (
 )
 
 type buildProcessConfig struct {
-	Aliases       []buildAlias       `json:"aliases"`
-	Command       buildCommand       `json:"command"`
-	Environment   []buildEnvironment `json:"environment"`
-	Identity      buildIdentity      `json:"identity"`
-	Manager       string             `json:"manager"`
-	Network       bool               `json:"network"`
-	Output        string             `json:"output"`
-	OutputLimit   int                `json:"outputLimit"`
-	ProcessRoot   string             `json:"processRoot"`
-	Project       string             `json:"project"`
-	ReadOnlyCache bool               `json:"readOnlyCache"`
-	Runtime       string             `json:"runtime"`
-	Supervisor    bool               `json:"supervisor"`
-	Toolchain     string             `json:"toolchain"`
+	Aliases     []buildAlias       `json:"aliases"`
+	Command     buildCommand       `json:"command"`
+	Environment []buildEnvironment `json:"environment"`
+	Identity    buildIdentity      `json:"identity"`
+	Manager     string             `json:"manager"`
+	Output      string             `json:"output"`
+	OutputLimit int                `json:"outputLimit"`
+	ProcessRoot string             `json:"processRoot"`
+	Project     string             `json:"project"`
+	Runtime     string             `json:"runtime"`
+	Supervisor  bool               `json:"supervisor"`
+	Toolchain   string             `json:"toolchain"`
 }
 
 type buildAlias struct {
@@ -128,7 +126,6 @@ func prepareBuildProcessRoot(plan buildProcessPlan) (string, error) {
 		{0o755, "opt/helmr/runtime"},
 		{0o755, "nix"},
 		{0o700, "work"},
-		{0o700, "work/cache"},
 		{0o700, "work/home"},
 		{0o700, "work/output"},
 		{0o700, "work/project"},
@@ -167,7 +164,6 @@ func prepareBuildProcessRoot(plan buildProcessPlan) (string, error) {
 	}
 	for _, relative := range []string{
 		"work",
-		"work/cache",
 		"work/home",
 		"work/output",
 		"work/project",
@@ -314,9 +310,6 @@ func runBuildCommandInCgroup(
 		syscall.CLONE_NEWPID |
 			syscall.CLONE_NEWIPC,
 	)
-	if !config.Network {
-		cloneFlags |= syscall.CLONE_NEWNET
-	}
 	command.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags:   cloneFlags,
 		Unshareflags: syscall.CLONE_NEWNS,

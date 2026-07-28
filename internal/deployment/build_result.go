@@ -20,13 +20,9 @@ const (
 
 	BuildFailureInvalidSource        = BuildFailureReason("invalid_source")
 	BuildFailureManagerNotFound      = BuildFailureReason("manager_not_found")
-	BuildFailureManagerUnsupported   = BuildFailureReason("unsupported_manager_protocol")
-	BuildFailureLockfileUnsupported  = BuildFailureReason("unsupported_lockfile_format")
 	BuildFailureUnsupportedToolchain = BuildFailureReason("unsupported_toolchain")
-	BuildFailureDependencyFetch      = BuildFailureReason("dependency_fetch_failed")
-	BuildFailureInstallLifecycle     = BuildFailureReason("offline_install_lifecycle_failed")
+	BuildFailureInstallLifecycle     = BuildFailureReason("install_lifecycle_failed")
 	BuildFailureProtectedInput       = BuildFailureReason("protected_input_changed")
-	BuildFailureNetworkDenied        = BuildFailureReason("build_network_denied")
 	BuildFailureNetworkLimit         = BuildFailureReason("build_network_limit")
 	BuildFailureConfigEvaluation     = BuildFailureReason("config_evaluation_failed")
 	BuildFailureDeclarationAnalysis  = BuildFailureReason("declaration_analysis_failed")
@@ -391,13 +387,9 @@ func validateBuildFailed(failed BuildFailed) error {
 	switch failed.Error.ReasonCode {
 	case BuildFailureInvalidSource,
 		BuildFailureManagerNotFound,
-		BuildFailureManagerUnsupported,
-		BuildFailureLockfileUnsupported,
 		BuildFailureUnsupportedToolchain,
-		BuildFailureDependencyFetch,
 		BuildFailureInstallLifecycle,
 		BuildFailureProtectedInput,
-		BuildFailureNetworkDenied,
 		BuildFailureNetworkLimit,
 		BuildFailureConfigEvaluation,
 		BuildFailureDeclarationAnalysis,

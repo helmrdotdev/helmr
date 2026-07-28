@@ -23,9 +23,8 @@ const (
 	BuildGuestSucceeded = BuildGuestOutcome("succeeded")
 	BuildGuestFailed    = BuildGuestOutcome("failed")
 
-	maxBuildGuestResultBytes  = 80 << 20
-	buildGuestCloseTimeout    = 30 * time.Second
-	buildNetworkCutoffTimeout = 10 * time.Second
+	maxBuildGuestResultBytes = 80 << 20
+	buildGuestCloseTimeout   = 30 * time.Second
 )
 
 type BuildGuestOutcome string
@@ -38,17 +37,6 @@ type BuildGuestRequest struct {
 	LockfileName    string         `json:"lockfileName"`
 	SourceDigest    string         `json:"sourceDigest"`
 	SourceSizeBytes int64          `json:"sourceSizeBytes"`
-}
-
-type BuildFetchResult struct {
-	FormatVersion int               `json:"formatVersion"`
-	Outcome       BuildGuestOutcome `json:"outcome"`
-	Error         *BuildError       `json:"error,omitempty"`
-	Logs          *BuildLogs        `json:"logs,omitempty"`
-}
-
-type BuildContinue struct {
-	FormatVersion int `json:"formatVersion"`
 }
 
 type BuildGuestResult struct {
@@ -131,10 +119,10 @@ func (guest BuildGuest) Execute(
 	defer func() {
 		returnErr = errors.Join(returnErr, closeBuildGuest(session))
 	}()
-	transition, ok := session.(vm.BuildNetworkTransitionSession)
+	network, ok := session.(vm.BuildNetworkSession)
 	if !ok {
 		return nil, errors.New(
-			"staged build session does not expose network authority transition",
+			"build session does not expose network status",
 		)
 	}
 	stream := session.Stream()
@@ -153,57 +141,26 @@ func (guest BuildGuest) Execute(
 	if err != nil || written != request.SourceSizeBytes {
 		return nil, vm.NewGuestError(fmt.Errorf("write submitted source: %w", err))
 	}
-	fetchRaw, err := frameio.ReadMessageFrameBounded(
-		stream,
-		maxBuildGuestResultBytes,
-	)
-	if err != nil {
-		return nil, vm.NewGuestError(fmt.Errorf("read Fetch result: %w", err))
-	}
-	fetch, err := ParseBuildFetchResult(fetchRaw)
-	if err != nil {
-		return nil, vm.NewGuestError(err)
-	}
-	if fetch.Outcome == BuildGuestFailed {
-		return nil, BuildFailure{
-			Reason:  fetch.Error.ReasonCode,
-			Message: fetch.Error.Message,
-			Logs:    fetch.Logs,
-		}
-	}
-
-	cutoffCtx, cancel := context.WithTimeout(ctx, buildNetworkCutoffTimeout)
-	cutoff, err := transition.CutoffBuildNetwork(cutoffCtx)
-	cancel()
-	if err != nil {
-		return nil, &buildAuthorityTransitionError{cause: err}
-	}
-	if failure := buildNetworkFailure(cutoff.Before, fetch.Logs); failure != nil {
-		return nil, *failure
-	}
-	continued, err := canonicalBuildGuestDocument(
-		BuildContinue{FormatVersion: BuildGuestFormatVersion},
-		validateBuildContinue,
-	)
-	if err != nil {
-		return nil, err
-	}
-	if err := frameio.WriteMessageFrame(stream, continued); err != nil {
-		return nil, vm.NewGuestError(fmt.Errorf("continue networkless build: %w", err))
-	}
 	if err := stream.CloseWrite(); err != nil {
-		return nil, vm.NewGuestError(fmt.Errorf("half-close staged build request: %w", err))
+		return nil, vm.NewGuestError(fmt.Errorf("half-close build request: %w", err))
 	}
 	resultRaw, err := frameio.ReadMessageFrameBounded(
 		stream,
 		maxBuildGuestResultBytes,
 	)
 	if err != nil {
-		return nil, vm.NewGuestError(fmt.Errorf("read staged build result: %w", err))
+		return nil, vm.NewGuestError(fmt.Errorf("read build result: %w", err))
 	}
 	result, err := ParseBuildGuestResult(resultRaw)
 	if err != nil {
 		return nil, vm.NewGuestError(err)
+	}
+	status, err := network.BuildNetworkStatus(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read build network status: %w", err)
+	}
+	if failure := buildNetworkFailure(status, result.Logs); failure != nil {
+		return nil, *failure
 	}
 	if result.Outcome == BuildGuestFailed {
 		return nil, BuildFailure{
@@ -228,11 +185,11 @@ func (guest BuildGuest) Execute(
 		_ = tree.Close()
 		if err == nil {
 			return nil, vm.NewGuestError(
-				errors.New("staged build response contains trailing data"),
+				errors.New("build response contains trailing data"),
 			)
 		}
 		return nil, vm.NewGuestError(
-			fmt.Errorf("read staged build response tail: %w", err),
+			fmt.Errorf("read build response tail: %w", err),
 		)
 	}
 	return &BuildExecution{
@@ -251,34 +208,12 @@ func buildNetworkFailure(
 	case status.LimitPackets != 0:
 		return &BuildFailure{
 			Reason:  BuildFailureNetworkLimit,
-			Message: "dependency Fetch public-egress limit was exceeded",
-			Logs:    logs,
-		}
-	case status.DeniedPackets != 0:
-		return &BuildFailure{
-			Reason:  BuildFailureNetworkDenied,
-			Message: "dependency Fetch attempted a denied destination or protocol",
+			Message: "build public-egress limit was exceeded",
 			Logs:    logs,
 		}
 	default:
 		return nil
 	}
-}
-
-type buildAuthorityTransitionError struct {
-	cause error
-}
-
-func (err *buildAuthorityTransitionError) Error() string {
-	return fmt.Sprintf("remove build network authority: %v", err.cause)
-}
-
-func (err *buildAuthorityTransitionError) Unwrap() error {
-	return err.cause
-}
-
-func (*buildAuthorityTransitionError) FatalWorker() bool {
-	return true
 }
 
 func ParseBuildGuestRequest(raw []byte) (BuildGuestRequest, error) {
@@ -289,32 +224,12 @@ func ParseBuildGuestRequest(raw []byte) (BuildGuestRequest, error) {
 	return request, nil
 }
 
-func ParseBuildFetchResult(raw []byte) (BuildFetchResult, error) {
-	var result BuildFetchResult
-	if err := parseBuildGuestDocument(raw, &result, validateBuildFetchResult); err != nil {
-		return BuildFetchResult{}, err
-	}
-	return result, nil
-}
-
-func ParseBuildContinue(raw []byte) (BuildContinue, error) {
-	var continued BuildContinue
-	if err := parseBuildGuestDocument(raw, &continued, validateBuildContinue); err != nil {
-		return BuildContinue{}, err
-	}
-	return continued, nil
-}
-
 func ParseBuildGuestResult(raw []byte) (BuildGuestResult, error) {
 	var result BuildGuestResult
 	if err := parseBuildGuestDocument(raw, &result, validateBuildGuestResult); err != nil {
 		return BuildGuestResult{}, err
 	}
 	return result, nil
-}
-
-func CanonicalBuildFetchResult(result BuildFetchResult) ([]byte, error) {
-	return canonicalBuildGuestDocument(result, validateBuildFetchResult)
 }
 
 func CanonicalBuildGuestResult(result BuildGuestResult) ([]byte, error) {
@@ -362,49 +277,6 @@ func validateBuildGuestRequest(request BuildGuestRequest) error {
 	if request.SourceSizeBytes < 1 ||
 		request.SourceSizeBytes > archive.MaxSourceArtifactBytes {
 		return errors.New("build source size is invalid")
-	}
-	return nil
-}
-
-func validateBuildFetchResult(result BuildFetchResult) error {
-	if result.FormatVersion != BuildGuestFormatVersion {
-		return fmt.Errorf(
-			"Fetch result formatVersion = %d, want %d",
-			result.FormatVersion,
-			BuildGuestFormatVersion,
-		)
-	}
-	switch result.Outcome {
-	case BuildGuestSucceeded:
-		if result.Error != nil {
-			return errors.New("successful Fetch result forbids error")
-		}
-		if result.Logs == nil {
-			return errors.New("successful Fetch result requires logs")
-		}
-	case BuildGuestFailed:
-		if result.Error == nil {
-			return errors.New("failed Fetch result requires error")
-		}
-		if err := validateBuildFailed(BuildFailed{Error: *result.Error}); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("Fetch result outcome %q is unsupported", result.Outcome)
-	}
-	if result.Logs != nil {
-		return validateBuildLogs(*result.Logs)
-	}
-	return nil
-}
-
-func validateBuildContinue(continued BuildContinue) error {
-	if continued.FormatVersion != BuildGuestFormatVersion {
-		return fmt.Errorf(
-			"build continuation formatVersion = %d, want %d",
-			continued.FormatVersion,
-			BuildGuestFormatVersion,
-		)
 	}
 	return nil
 }

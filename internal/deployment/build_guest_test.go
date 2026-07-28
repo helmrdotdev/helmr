@@ -18,37 +18,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
 
-func TestBuildGuestUsesOneStagedVMAndCutsOffNetworkBeforeContinue(
-	t *testing.T,
-) {
+func TestBuildGuestUsesOneNetworkedVM(t *testing.T) {
 	request, source := buildGuestRequestForTest(t)
-	fetch, err := CanonicalBuildFetchResult(BuildFetchResult{
-		FormatVersion: BuildGuestFormatVersion,
-		Outcome:       BuildGuestSucceeded,
-		Logs:          &BuildLogs{ExitStatus: 0},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	failed, err := CanonicalBuildGuestResult(BuildGuestResult{
-		FormatVersion: BuildGuestFormatVersion,
-		Outcome:       BuildGuestFailed,
-		Logs: &BuildLogs{
-			ExitStatus: 23,
-			StderrBase64: base64.StdEncoding.EncodeToString(
-				[]byte("build stderr"),
-			),
-		},
-		Error: &BuildError{
-			ReasonCode: BuildFailureDeclarationAnalysis,
-			Message:    "declaration analysis failed",
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var connector *buildGuestTestConnector
-	connector = &buildGuestTestConnector{
+	failed := buildGuestFailureForTest(t, BuildFailureDeclarationAnalysis)
+	connector := &buildGuestTestConnector{
 		handle: func(stream io.ReadWriter, bodyLen uint64) error {
 			body := &io.LimitedReader{R: stream, N: int64(bodyLen)}
 			requestRaw, err := frameio.ReadMessageFrameBounded(body, 64<<10)
@@ -69,23 +42,10 @@ func TestBuildGuestUsesOneStagedVMAndCutsOffNetworkBeforeContinue(
 			if string(actualSource) != string(source) {
 				return errors.New("submitted source changed")
 			}
-			if err := frameio.WriteMessageFrame(stream, fetch); err != nil {
-				return err
-			}
-			continueRaw, err := frameio.ReadMessageFrameBounded(stream, 64<<10)
-			if err != nil {
-				return err
-			}
-			if _, err := ParseBuildContinue(continueRaw); err != nil {
-				return err
-			}
-			if !connector.cutoffObserved() {
-				return errors.New("build continued before host network cutoff")
-			}
 			return frameio.WriteMessageFrame(stream, failed)
 		},
 	}
-	_, err = (BuildGuest{Connector: connector}).Execute(
+	_, err := (BuildGuest{Connector: connector}).Execute(
 		context.Background(),
 		"run",
 		request,
@@ -106,8 +66,12 @@ func TestBuildGuestUsesOneStagedVMAndCutsOffNetworkBeforeContinue(
 		) {
 		t.Fatalf("build failure logs = %+v", failure.Logs)
 	}
-	if connector.cutoffCount != 1 {
-		t.Fatalf("network cutoff count = %d, want 1", connector.cutoffCount)
+	if connector.statusCount != 1 || connector.closeWriteCount != 1 {
+		t.Fatalf(
+			"network status count = %d, close-write count = %d",
+			connector.statusCount,
+			connector.closeWriteCount,
+		)
 	}
 	vmRequest := connector.request
 	if vmRequest.Networkless ||
@@ -116,7 +80,7 @@ func TestBuildGuestUsesOneStagedVMAndCutsOffNetworkBeforeContinue(
 		len(vmRequest.Network.Deny) != 0 ||
 		vmRequest.Resources != compute.BuildGuestResources() ||
 		vmRequest.PIDsMax != compute.BuildGuestPIDsMax {
-		t.Fatalf("staged build VM request = %+v", vmRequest)
+		t.Fatalf("build VM request = %+v", vmRequest)
 	}
 	wantDrives := []string{
 		vm.ManagerDrive,
@@ -124,38 +88,27 @@ func TestBuildGuestUsesOneStagedVMAndCutsOffNetworkBeforeContinue(
 		vm.ToolchainDrive,
 	}
 	if len(vmRequest.ReadOnlyDrives) != len(wantDrives) {
-		t.Fatalf("staged build drives = %+v", vmRequest.ReadOnlyDrives)
+		t.Fatalf("build drives = %+v", vmRequest.ReadOnlyDrives)
 	}
 	for index, drive := range vmRequest.ReadOnlyDrives {
 		if drive.ID != wantDrives[index] {
-			t.Fatalf("staged build drives = %+v", vmRequest.ReadOnlyDrives)
+			t.Fatalf("build drives = %+v", vmRequest.ReadOnlyDrives)
 		}
 	}
 }
 
-func TestBuildGuestFetchFailureDoesNotInvokeNetworkCutoff(t *testing.T) {
+func TestBuildGuestNetworkLimitOverridesGuestResult(t *testing.T) {
 	request, source := buildGuestRequestForTest(t)
-	fetch, err := CanonicalBuildFetchResult(BuildFetchResult{
-		FormatVersion: BuildGuestFormatVersion,
-		Outcome:       BuildGuestFailed,
-		Logs:          &BuildLogs{ExitStatus: 17},
-		Error: &BuildError{
-			ReasonCode: BuildFailureDependencyFetch,
-			Message:    "dependency Fetch failed",
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	connector := &buildGuestTestConnector{
-		handle: func(stream io.ReadWriter, bodyLen uint64) error {
-			if _, err := io.CopyN(io.Discard, stream, int64(bodyLen)); err != nil {
-				return err
-			}
-			return frameio.WriteMessageFrame(stream, fetch)
+		network: vm.BuildNetworkStatus{
+			DeniedPackets: 4,
+			LimitPackets:  1,
 		},
+		handle: writeBuildGuestResultForTest(
+			buildGuestFailureForTest(t, BuildFailureInstallLifecycle),
+		),
 	}
-	_, err = (BuildGuest{Connector: connector}).Execute(
+	_, err := (BuildGuest{Connector: connector}).Execute(
 		context.Background(),
 		"run",
 		request,
@@ -166,42 +119,20 @@ func TestBuildGuestFetchFailureDoesNotInvokeNetworkCutoff(t *testing.T) {
 	)
 	var failure BuildFailure
 	if !errors.As(err, &failure) ||
-		failure.Reason != BuildFailureDependencyFetch {
+		failure.Reason != BuildFailureNetworkLimit {
 		t.Fatalf("build error = %v", err)
-	}
-	if connector.cutoffCount != 0 {
-		t.Fatalf("network cutoff count = %d, want 0", connector.cutoffCount)
 	}
 }
 
-func TestBuildGuestFetchNetworkViolationPreventsContinuation(t *testing.T) {
+func TestBuildGuestDeniedPacketsDoNotOverrideGuestResult(t *testing.T) {
 	request, source := buildGuestRequestForTest(t)
-	fetch, err := CanonicalBuildFetchResult(BuildFetchResult{
-		FormatVersion: BuildGuestFormatVersion,
-		Outcome:       BuildGuestSucceeded,
-		Logs:          &BuildLogs{ExitStatus: 0},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	connector := &buildGuestTestConnector{
 		network: vm.BuildNetworkStatus{DeniedPackets: 1},
-		handle: func(stream io.ReadWriter, bodyLen uint64) error {
-			if _, err := io.CopyN(io.Discard, stream, int64(bodyLen)); err != nil {
-				return err
-			}
-			if err := frameio.WriteMessageFrame(stream, fetch); err != nil {
-				return err
-			}
-			var trailing [1]byte
-			_, err := stream.Read(trailing[:])
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			return err
-		},
+		handle: writeBuildGuestResultForTest(
+			buildGuestFailureForTest(t, BuildFailureDeclarationAnalysis),
+		),
 	}
-	_, err = (BuildGuest{Connector: connector}).Execute(
+	_, err := (BuildGuest{Connector: connector}).Execute(
 		context.Background(),
 		"run",
 		request,
@@ -212,35 +143,21 @@ func TestBuildGuestFetchNetworkViolationPreventsContinuation(t *testing.T) {
 	)
 	var failure BuildFailure
 	if !errors.As(err, &failure) ||
-		failure.Reason != BuildFailureNetworkDenied {
+		failure.Reason != BuildFailureDeclarationAnalysis {
 		t.Fatalf("build error = %v", err)
-	}
-	if connector.cutoffCount != 1 {
-		t.Fatalf("network cutoff count = %d, want 1", connector.cutoffCount)
 	}
 }
 
-func TestBuildGuestCutoffFailureIsFatalWorkerError(t *testing.T) {
+func TestBuildGuestNetworkStatusFailureIsInfrastructureError(t *testing.T) {
 	request, source := buildGuestRequestForTest(t)
-	fetch, err := CanonicalBuildFetchResult(BuildFetchResult{
-		FormatVersion: BuildGuestFormatVersion,
-		Outcome:       BuildGuestSucceeded,
-		Logs:          &BuildLogs{ExitStatus: 0},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	cutoffErr := errors.New("tap remains up")
+	statusErr := errors.New("read counters")
 	connector := &buildGuestTestConnector{
-		cutoffErr: cutoffErr,
-		handle: func(stream io.ReadWriter, bodyLen uint64) error {
-			if _, err := io.CopyN(io.Discard, stream, int64(bodyLen)); err != nil {
-				return err
-			}
-			return frameio.WriteMessageFrame(stream, fetch)
-		},
+		statusErr: statusErr,
+		handle: writeBuildGuestResultForTest(
+			buildGuestFailureForTest(t, BuildFailureDeclarationAnalysis),
+		),
 	}
-	_, err = (BuildGuest{Connector: connector}).Execute(
+	_, err := (BuildGuest{Connector: connector}).Execute(
 		context.Background(),
 		"run",
 		request,
@@ -250,10 +167,8 @@ func TestBuildGuestCutoffFailureIsFatalWorkerError(t *testing.T) {
 		&ArtifactSnapshot{content: &artifactSnapshot{}},
 	)
 	var fatal interface{ FatalWorker() bool }
-	if !errors.Is(err, cutoffErr) ||
-		!errors.As(err, &fatal) ||
-		!fatal.FatalWorker() {
-		t.Fatalf("cutoff error = %v", err)
+	if !errors.Is(err, statusErr) || errors.As(err, &fatal) {
+		t.Fatalf("network status error = %v", err)
 	}
 }
 
@@ -264,13 +179,11 @@ func TestBuildNetworkFailure(t *testing.T) {
 		reason BuildFailureReason
 	}{
 		{name: "clean"},
+		{name: "denied packets are observational", status: vm.BuildNetworkStatus{
+			DeniedPackets: 1,
+		}},
 		{
-			name:   "denied",
-			status: vm.BuildNetworkStatus{DeniedPackets: 1},
-			reason: BuildFailureNetworkDenied,
-		},
-		{
-			name: "limit takes precedence",
+			name: "limit",
 			status: vm.BuildNetworkStatus{
 				DeniedPackets: 4,
 				LimitPackets:  1,
@@ -298,19 +211,56 @@ func TestBuildNetworkFailure(t *testing.T) {
 				)
 			}
 			if failure.Logs == nil || failure.Logs.ExitStatus != 7 {
-				t.Fatalf("network failure lost Fetch logs: %+v", failure)
+				t.Fatalf("network failure lost build logs: %+v", failure)
 			}
 		})
 	}
 }
 
+func buildGuestFailureForTest(
+	t *testing.T,
+	reason BuildFailureReason,
+) []byte {
+	t.Helper()
+	raw, err := CanonicalBuildGuestResult(BuildGuestResult{
+		FormatVersion: BuildGuestFormatVersion,
+		Outcome:       BuildGuestFailed,
+		Logs: &BuildLogs{
+			ExitStatus: 23,
+			StderrBase64: base64.StdEncoding.EncodeToString(
+				[]byte("build stderr"),
+			),
+		},
+		Error: &BuildError{
+			ReasonCode: reason,
+			Message:    "build failed",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func writeBuildGuestResultForTest(
+	result []byte,
+) func(io.ReadWriter, uint64) error {
+	return func(stream io.ReadWriter, bodyLen uint64) error {
+		if _, err := io.CopyN(io.Discard, stream, int64(bodyLen)); err != nil {
+			return err
+		}
+		return frameio.WriteMessageFrame(stream, result)
+	}
+}
+
 type buildGuestTestConnector struct {
-	mu          sync.Mutex
-	request     vm.ConnectRequest
-	handle      func(io.ReadWriter, uint64) error
-	network     vm.BuildNetworkStatus
-	cutoffErr   error
-	cutoffCount int
+	mu              sync.Mutex
+	request         vm.ConnectRequest
+	handle          func(io.ReadWriter, uint64) error
+	network         vm.BuildNetworkStatus
+	statusErr       error
+	statusCount     int
+	closeWriteCount int
 }
 
 func (connector *buildGuestTestConnector) Connect(
@@ -340,12 +290,6 @@ func (connector *buildGuestTestConnector) Connect(
 	return session, nil
 }
 
-func (connector *buildGuestTestConnector) cutoffObserved() bool {
-	connector.mu.Lock()
-	defer connector.mu.Unlock()
-	return connector.cutoffCount != 0
-}
-
 type buildGuestTestProtocolSession struct {
 	connector *buildGuestTestConnector
 	host      net.Conn
@@ -355,7 +299,14 @@ type buildGuestTestProtocolSession struct {
 }
 
 func (session *buildGuestTestProtocolSession) Stream() vm.Stream {
-	return buildGuestTestStream{Conn: session.host}
+	return buildGuestTestStream{
+		Conn: session.host,
+		closeWrite: func() {
+			session.connector.mu.Lock()
+			defer session.connector.mu.Unlock()
+			session.connector.closeWriteCount++
+		},
+	}
 }
 
 func (*buildGuestTestProtocolSession) OpenStream(
@@ -375,22 +326,22 @@ func (session *buildGuestTestProtocolSession) Close(context.Context) error {
 	return session.closeErr
 }
 
-func (session *buildGuestTestProtocolSession) CutoffBuildNetwork(
+func (session *buildGuestTestProtocolSession) BuildNetworkStatus(
 	context.Context,
-) (vm.BuildNetworkTransition, error) {
+) (vm.BuildNetworkStatus, error) {
 	session.connector.mu.Lock()
 	defer session.connector.mu.Unlock()
-	session.connector.cutoffCount++
-	return vm.BuildNetworkTransition{
-		Before: session.connector.network,
-	}, session.connector.cutoffErr
+	session.connector.statusCount++
+	return session.connector.network, session.connector.statusErr
 }
 
 type buildGuestTestStream struct {
 	net.Conn
+	closeWrite func()
 }
 
-func (buildGuestTestStream) CloseWrite() error {
+func (stream buildGuestTestStream) CloseWrite() error {
+	stream.closeWrite()
 	return nil
 }
 

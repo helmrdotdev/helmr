@@ -1642,7 +1642,6 @@ type guestSession struct {
 	owner          vm.Owner
 	cleaner        vm.Cleaner
 	buildNetwork   bool
-	buildCutoff    bool
 	paused         atomic.Bool
 	once           sync.Once
 	err            error
@@ -1727,7 +1726,7 @@ func (s *guestSession) BuildNetworkStatus(
 ) (vm.BuildNetworkStatus, error) {
 	if !s.buildNetwork {
 		return vm.BuildNetworkStatus{}, errors.New(
-			"firecracker session is not a build install guest",
+			"firecracker session is not a build guest",
 		)
 	}
 	return (&Connector{cfg: s.cfg}).readBuildNetworkStatus(
@@ -1736,42 +1735,12 @@ func (s *guestSession) BuildNetworkStatus(
 	)
 }
 
-func (s *guestSession) CutoffBuildNetwork(
-	ctx context.Context,
-) (vm.BuildNetworkTransition, error) {
-	s.mu.Lock()
-	if !s.buildNetwork {
-		s.mu.Unlock()
-		return vm.BuildNetworkTransition{}, errors.New(
-			"firecracker session is not a staged build guest",
-		)
-	}
-	if s.buildCutoff {
-		s.mu.Unlock()
-		return vm.BuildNetworkTransition{}, errors.New(
-			"build network authority was already removed",
-		)
-	}
-	s.buildCutoff = true
-	s.mu.Unlock()
-
-	transition, err := (&Connector{cfg: s.cfg}).cutoffBuildNetwork(
-		ctx,
-		s.owner.ID,
-		s.machine,
-	)
-	if err != nil {
-		return vm.BuildNetworkTransition{}, err
-	}
-	return transition, nil
-}
-
 func (s *guestSession) RunNetworkStatus(
 	ctx context.Context,
 ) (vm.RunNetworkStatus, error) {
 	if s.buildNetwork {
 		return vm.RunNetworkStatus{}, errors.New(
-			"firecracker session is a build install guest",
+			"firecracker session is a build guest",
 		)
 	}
 	return (&Connector{cfg: s.cfg}).readRunNetworkStatus(

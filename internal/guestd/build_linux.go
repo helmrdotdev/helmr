@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -108,7 +107,7 @@ func handleBuild(
 	hasher := sha256.New()
 	source := io.TeeReader(body, hasher)
 	if err := archive.ExtractTar(source, project); err != nil {
-		return writeBuildFetchFailure(
+		return writeBuildFailure(
 			conn,
 			deployment.BuildFailureInvalidSource,
 			fmt.Sprintf("extract submitted source: %s", err),
@@ -117,6 +116,9 @@ func handleBuild(
 	}
 	if body.N != 0 {
 		return errors.New("submitted source stream is truncated")
+	}
+	if err := requireBuildRequestEOF(conn); err != nil {
+		return err
 	}
 	actualSourceDigest := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
 	if actualSourceDigest != request.SourceDigest {
@@ -127,7 +129,7 @@ func handleBuild(
 	}
 	protected, err := snapshotBuildInputs(project, request.LockfileName)
 	if err != nil {
-		return writeBuildFetchFailure(
+		return writeBuildFailure(
 			conn,
 			deployment.BuildFailureInvalidSource,
 			err.Error(),
@@ -135,101 +137,16 @@ func handleBuild(
 		)
 	}
 
-	fetchConfig := buildProcessConfig{
+	installConfig := buildProcessConfig{
 		Aliases:     plan.Aliases,
-		Command:     buildFetchCommand(request.Manager),
-		Environment: buildProcessEnvironment(request.Manager.PackageManager.Name),
+		Command:     buildInstallCommand(request.Manager),
+		Environment: buildProcessEnvironment(),
 		Identity:    plan.Identity,
 		Manager:     manager,
-		Network:     true,
 		OutputLimit: stagedBuildOutputLimit,
 		ProcessRoot: root,
 		Runtime:     runtimePath,
 		Toolchain:   toolchain,
-	}
-	fetch, interrupted, err := runBuildPhase(
-		ctx,
-		fetchConfig,
-		30*time.Minute,
-	)
-	if err != nil {
-		return err
-	}
-	fetchLogs := commandLogs(fetch)
-	if interrupted {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return writeBuildFetchFailure(
-			conn,
-			deployment.BuildFailureDependencyFetch,
-			"dependency Fetch exceeded the 30-minute deadline",
-			fetchLogs,
-		)
-	}
-	if fetch.waitErr != nil {
-		return writeBuildFetchFailure(
-			conn,
-			deployment.BuildFailureDependencyFetch,
-			fmt.Sprintf(
-				"dependency Fetch exited with status %d",
-				fetchLogs.ExitStatus,
-			),
-			fetchLogs,
-		)
-	}
-	if err := compareBuildInputs(
-		project,
-		request.LockfileName,
-		protected,
-	); err != nil {
-		return writeBuildFetchFailure(
-			conn,
-			deployment.BuildFailureProtectedInput,
-			err.Error(),
-			fetchLogs,
-		)
-	}
-	if err := os.RemoveAll(filepath.Join(project, "node_modules")); err != nil {
-		return fmt.Errorf("remove Fetch node_modules: %w", err)
-	}
-	if err := resetBuildPrivateState(root); err != nil {
-		return err
-	}
-	cache := filepath.Join(root, "work/cache")
-	if err := sealBuildCache(cache); err != nil {
-		return err
-	}
-	cacheDigest, err := digestBuildCache(cache)
-	if err != nil {
-		return err
-	}
-	if err := writeBuildFetchSuccess(conn, fetchLogs); err != nil {
-		return err
-	}
-	continuedRaw, err := frameio.ReadMessageFrameBounded(conn, 64<<10)
-	if err != nil {
-		return fmt.Errorf("read build continuation: %w", err)
-	}
-	if _, err := deployment.ParseBuildContinue(continuedRaw); err != nil {
-		return err
-	}
-	if err := requireReaderEOF(conn); err != nil {
-		return err
-	}
-
-	installConfig := buildProcessConfig{
-		Aliases:       plan.Aliases,
-		Command:       buildInstallCommand(request.Manager),
-		Environment:   buildProcessEnvironment(request.Manager.PackageManager.Name),
-		Identity:      plan.Identity,
-		Manager:       manager,
-		Network:       false,
-		OutputLimit:   stagedBuildOutputLimit,
-		ProcessRoot:   root,
-		ReadOnlyCache: true,
-		Runtime:       runtimePath,
-		Toolchain:     toolchain,
 	}
 	install, interrupted, err := runBuildPhase(
 		ctx,
@@ -239,7 +156,8 @@ func handleBuild(
 	if err != nil {
 		return err
 	}
-	results := []buildCommandResult{fetch, install}
+	results := []buildCommandResult{install}
+	installLogs := commandLogs(install)
 	if interrupted {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -247,20 +165,19 @@ func handleBuild(
 		return writeBuildFailure(
 			conn,
 			deployment.BuildFailureInstallLifecycle,
-			"offline install/lifecycle exceeded the 30-minute deadline",
-			combinedCommandLogs(results),
+			"install/lifecycle exceeded the 30-minute deadline",
+			installLogs,
 		)
 	}
 	if install.waitErr != nil {
-		logs := combinedCommandLogs(results)
 		return writeBuildFailure(
 			conn,
 			deployment.BuildFailureInstallLifecycle,
 			fmt.Sprintf(
-				"offline install/lifecycle exited with status %d",
-				commandLogs(install).ExitStatus,
+				"install/lifecycle exited with status %d",
+				installLogs.ExitStatus,
 			),
-			logs,
+			installLogs,
 		)
 	}
 	if err := compareBuildInputs(
@@ -272,18 +189,8 @@ func handleBuild(
 			conn,
 			deployment.BuildFailureProtectedInput,
 			err.Error(),
-			combinedCommandLogs(results),
+			installLogs,
 		)
-	}
-	currentCacheDigest, err := digestBuildCache(cache)
-	if err != nil {
-		return err
-	}
-	if currentCacheDigest != cacheDigest {
-		return errors.New("sealed dependency cache changed after Fetch")
-	}
-	if err := resetBuildPrivateState(root); err != nil {
-		return err
 	}
 	nodeFlags, err := deployment.NodeProgramFlags(request.Runtime.NodeVersion)
 	if err != nil {
@@ -311,7 +218,6 @@ func handleBuild(
 			{Name: "TMPDIR", Value: "/tmp"},
 		},
 		Identity:    buildIdentity{UID: buildUID, GID: buildGID},
-		Network:     false,
 		Output:      output,
 		OutputLimit: stagedBuildOutputLimit,
 		Project:     project,
@@ -634,53 +540,12 @@ func managerCommand(
 	return buildCommand{Argv: argv, CWD: "/work/project"}
 }
 
-func buildFetchCommand(manager deployment.BuildManager) buildCommand {
-	switch manager.PackageManager.Name {
-	case deployment.PackageManagerNPM:
-		return managerCommand(
-			manager,
-			"ci",
-			"--ignore-scripts",
-			"--cache",
-			"/work/cache",
-			"--no-audit",
-			"--no-fund",
-		)
-	case deployment.PackageManagerPNPM:
-		return managerCommand(
-			manager,
-			"fetch",
-			"--frozen-lockfile",
-			"--no-runtime",
-			"--ignore-scripts",
-			"--ignore-pnpmfile",
-			"--pm-on-fail=error",
-			"--store-dir",
-			"/work/cache",
-		)
-	case deployment.PackageManagerBun:
-		return managerCommand(
-			manager,
-			"install",
-			"--frozen-lockfile",
-			"--ignore-scripts",
-			"--cache-dir",
-			"/work/cache",
-		)
-	default:
-		panic("validated Manager family is unsupported")
-	}
-}
-
 func buildInstallCommand(manager deployment.BuildManager) buildCommand {
 	switch manager.PackageManager.Name {
 	case deployment.PackageManagerNPM:
 		return managerCommand(
 			manager,
 			"ci",
-			"--offline",
-			"--cache",
-			"/work/cache",
 			"--no-audit",
 			"--no-fund",
 		)
@@ -688,30 +553,23 @@ func buildInstallCommand(manager deployment.BuildManager) buildCommand {
 		return managerCommand(
 			manager,
 			"install",
-			"--offline",
 			"--frozen-lockfile",
 			"--no-runtime",
 			"--pm-on-fail=error",
-			"--store-dir",
-			"/work/cache",
 		)
 	case deployment.PackageManagerBun:
 		return managerCommand(
 			manager,
 			"install",
 			"--frozen-lockfile",
-			"--cache-dir",
-			"/work/cache",
 		)
 	default:
 		panic("validated Manager family is unsupported")
 	}
 }
 
-func buildProcessEnvironment(
-	manager deployment.PackageManagerName,
-) []buildEnvironment {
-	environment := []buildEnvironment{
+func buildProcessEnvironment() []buildEnvironment {
+	return []buildEnvironment{
 		{Name: "HOME", Value: "/work/home"},
 		{
 			Name:  "PATH",
@@ -720,23 +578,6 @@ func buildProcessEnvironment(
 		{Name: "TMPDIR", Value: "/tmp"},
 		{Name: "XDG_CACHE_HOME", Value: "/work/home/cache"},
 	}
-	if manager == deployment.PackageManagerNPM {
-		environment = append(
-			environment,
-			buildEnvironment{Name: "npm_config_audit", Value: "false"},
-			buildEnvironment{Name: "npm_config_fund", Value: "false"},
-			buildEnvironment{Name: "npm_config_progress", Value: "false"},
-			buildEnvironment{
-				Name:  "npm_config_update_notifier",
-				Value: "false",
-			},
-			buildEnvironment{
-				Name:  "npm_config_logs_dir",
-				Value: "/work/home/logs",
-			},
-		)
-	}
-	return environment
 }
 
 func runBuildPhase(
@@ -894,136 +735,6 @@ func digestBuildInput(path string) ([sha256.Size]byte, error) {
 	return digest, nil
 }
 
-func resetBuildPrivateState(root string) error {
-	for _, entry := range []struct {
-		mode os.FileMode
-		path string
-	}{
-		{mode: 0o700, path: filepath.Join(root, "work/home")},
-		{mode: 0o1777, path: filepath.Join(root, "tmp")},
-	} {
-		if err := os.RemoveAll(entry.path); err != nil {
-			return fmt.Errorf("remove build private state: %w", err)
-		}
-		if err := os.Mkdir(entry.path, entry.mode); err != nil {
-			return fmt.Errorf("recreate build private state: %w", err)
-		}
-		if err := os.Chown(entry.path, buildUID, buildGID); err != nil {
-			return fmt.Errorf("own build private state: %w", err)
-		}
-	}
-	return nil
-}
-
-func sealBuildCache(root string) error {
-	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		switch {
-		case info.IsDir():
-			return os.Chmod(path, 0o555)
-		case info.Mode().IsRegular():
-			return os.Chmod(path, 0o444)
-		default:
-			return fmt.Errorf(
-				"dependency cache path %q has unsupported type",
-				path,
-			)
-		}
-	})
-}
-
-func digestBuildCache(root string) ([sha256.Size]byte, error) {
-	hasher := sha256.New()
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		relative, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		relative = filepath.ToSlash(relative)
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if err := writeBuildManifestString(hasher, relative); err != nil {
-			return err
-		}
-		switch {
-		case info.IsDir():
-			if _, err := hasher.Write([]byte{'d'}); err != nil {
-				return err
-			}
-		case info.Mode().IsRegular():
-			if _, err := hasher.Write([]byte{'f'}); err != nil {
-				return err
-			}
-			if err := writeBuildManifestFile(hasher, path, info.Size()); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf(
-				"dependency cache path %q has unsupported type",
-				relative,
-			)
-		}
-		return nil
-	})
-	if err != nil {
-		return [sha256.Size]byte{}, err
-	}
-	var digest [sha256.Size]byte
-	copy(digest[:], hasher.Sum(nil))
-	return digest, nil
-}
-
-func writeBuildManifestString(writer io.Writer, value string) error {
-	if len(value) > int(^uint32(0)) {
-		return errors.New("dependency cache path is too long")
-	}
-	var size [4]byte
-	binary.BigEndian.PutUint32(size[:], uint32(len(value)))
-	if _, err := writer.Write(size[:]); err != nil {
-		return err
-	}
-	_, err := io.WriteString(writer, value)
-	return err
-}
-
-func writeBuildManifestFile(
-	writer io.Writer,
-	path string,
-	size int64,
-) error {
-	var encoded [8]byte
-	binary.BigEndian.PutUint64(encoded[:], uint64(size))
-	if _, err := writer.Write(encoded[:]); err != nil {
-		return err
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	hasher := sha256.New()
-	written, copyErr := io.Copy(hasher, file)
-	closeErr := file.Close()
-	if copyErr != nil || closeErr != nil {
-		return errors.Join(copyErr, closeErr)
-	}
-	if written != size {
-		return errors.New("dependency cache file changed while hashing")
-	}
-	_, err = writer.Write(hasher.Sum(nil))
-	return err
-}
-
 func commandLogs(result buildCommandResult) *deployment.BuildLogs {
 	exitStatus := int32(0)
 	if result.waitErr != nil {
@@ -1091,46 +802,6 @@ func appendBuildOutput(
 	_, _ = output.Write(raw)
 }
 
-func writeBuildFetchSuccess(
-	conn io.Writer,
-	logs *deployment.BuildLogs,
-) error {
-	raw, err := deployment.CanonicalBuildFetchResult(
-		deployment.BuildFetchResult{
-			FormatVersion: deployment.BuildGuestFormatVersion,
-			Outcome:       deployment.BuildGuestSucceeded,
-			Logs:          logs,
-		},
-	)
-	if err != nil {
-		return err
-	}
-	return frameio.WriteMessageFrame(conn, raw)
-}
-
-func writeBuildFetchFailure(
-	conn io.Writer,
-	reason deployment.BuildFailureReason,
-	message string,
-	logs *deployment.BuildLogs,
-) error {
-	raw, err := deployment.CanonicalBuildFetchResult(
-		deployment.BuildFetchResult{
-			FormatVersion: deployment.BuildGuestFormatVersion,
-			Outcome:       deployment.BuildGuestFailed,
-			Error: &deployment.BuildError{
-				ReasonCode: reason,
-				Message:    message,
-			},
-			Logs: logs,
-		},
-	)
-	if err != nil {
-		return err
-	}
-	return frameio.WriteMessageFrame(conn, raw)
-}
-
 func writeBuildFailure(
 	conn io.Writer,
 	reason deployment.BuildFailureReason,
@@ -1154,11 +825,11 @@ func writeBuildFailure(
 	return frameio.WriteMessageFrame(conn, raw)
 }
 
-func requireReaderEOF(reader io.Reader) error {
+func requireBuildRequestEOF(reader io.Reader) error {
 	var trailing [1]byte
 	count, err := reader.Read(trailing[:])
 	if count != 0 || !errors.Is(err, io.EOF) {
-		return errors.New("build continuation contains trailing data")
+		return errors.New("build request contains trailing data")
 	}
 	return nil
 }

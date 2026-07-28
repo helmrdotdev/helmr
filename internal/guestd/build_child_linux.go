@@ -158,11 +158,6 @@ func setupBuildProcessRoot(config buildProcessConfig) error {
 	if err := mountBuildWritable(config.ProcessRoot, "work"); err != nil {
 		return err
 	}
-	if config.ReadOnlyCache {
-		if err := mountBuildReadOnly(config.ProcessRoot, "work/cache"); err != nil {
-			return err
-		}
-	}
 	if err := mountBuildWritable(config.ProcessRoot, "tmp"); err != nil {
 		return err
 	}
@@ -242,24 +237,6 @@ func setupBuildProcessRoot(config buildProcessConfig) error {
 	}
 	if !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
 		return errors.New("build process executable is not executable")
-	}
-	return nil
-}
-
-func mountBuildReadOnly(root string, relative string) error {
-	path := filepath.Join(root, relative)
-	if err := unix.Mount(path, path, "", unix.MS_BIND, ""); err != nil {
-		return fmt.Errorf("bind build read-only path %q: %w", relative, err)
-	}
-	if err := unix.Mount(
-		"",
-		path,
-		"",
-		unix.MS_REMOUNT|unix.MS_BIND|unix.MS_RDONLY|
-			unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC,
-		"",
-	); err != nil {
-		return fmt.Errorf("remount build read-only path %q: %w", relative, err)
 	}
 	return nil
 }
