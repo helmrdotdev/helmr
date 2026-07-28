@@ -23,7 +23,7 @@ stdenvNoCC.mkDerivation {
 
     install -d "$out"
     install -m0444 gpg-only-active-keys/pubring.kbx "$out/pubring.kbx"
-    GNUPGHOME="$TMPDIR/gnupg"
+    export GNUPGHOME="$TMPDIR/gnupg"
     install -d -m0700 "$GNUPGHOME"
     gpg \
       --batch \

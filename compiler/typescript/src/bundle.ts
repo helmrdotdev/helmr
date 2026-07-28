@@ -23,7 +23,10 @@ import {
 } from "node:fs/promises"
 import { dirname, relative, resolve, sep } from "node:path"
 import { pathToFileURL } from "node:url"
-import { parse as parseJSONC, type ParseError } from "jsonc-parser"
+import {
+  parse as parseJSONC,
+  type ParseError,
+} from "jsonc-parser/lib/esm/main.js"
 
 import { discoverModules } from "./analysis"
 import {

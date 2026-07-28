@@ -32,152 +32,6 @@ var __toESM = (mod, isNodeMode, target) => {
 var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
-// node_modules/.bun/jsonc-parser@3.3.1/node_modules/jsonc-parser/lib/umd/main.js
-var require_main = __commonJS((exports, module) => {
-  (function(factory) {
-    if (typeof module === "object" && typeof module.exports === "object") {
-      var v = factory(__require, exports);
-      if (v !== undefined)
-        module.exports = v;
-    } else if (typeof define === "function" && define.amd) {
-      define(["require", "exports", "./impl/format", "./impl/edit", "./impl/scanner", "./impl/parser"], factory);
-    }
-  })(function(require2, exports2) {
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.applyEdits = exports2.modify = exports2.format = exports2.printParseErrorCode = exports2.ParseErrorCode = exports2.stripComments = exports2.visit = exports2.getNodeValue = exports2.getNodePath = exports2.findNodeAtOffset = exports2.findNodeAtLocation = exports2.parseTree = exports2.parse = exports2.getLocation = exports2.SyntaxKind = exports2.ScanError = exports2.createScanner = undefined;
-    const formatter = require2("./impl/format");
-    const edit = require2("./impl/edit");
-    const scanner = require2("./impl/scanner");
-    const parser = require2("./impl/parser");
-    exports2.createScanner = scanner.createScanner;
-    var ScanError;
-    (function(ScanError2) {
-      ScanError2[ScanError2["None"] = 0] = "None";
-      ScanError2[ScanError2["UnexpectedEndOfComment"] = 1] = "UnexpectedEndOfComment";
-      ScanError2[ScanError2["UnexpectedEndOfString"] = 2] = "UnexpectedEndOfString";
-      ScanError2[ScanError2["UnexpectedEndOfNumber"] = 3] = "UnexpectedEndOfNumber";
-      ScanError2[ScanError2["InvalidUnicode"] = 4] = "InvalidUnicode";
-      ScanError2[ScanError2["InvalidEscapeCharacter"] = 5] = "InvalidEscapeCharacter";
-      ScanError2[ScanError2["InvalidCharacter"] = 6] = "InvalidCharacter";
-    })(ScanError || (exports2.ScanError = ScanError = {}));
-    var SyntaxKind;
-    (function(SyntaxKind2) {
-      SyntaxKind2[SyntaxKind2["OpenBraceToken"] = 1] = "OpenBraceToken";
-      SyntaxKind2[SyntaxKind2["CloseBraceToken"] = 2] = "CloseBraceToken";
-      SyntaxKind2[SyntaxKind2["OpenBracketToken"] = 3] = "OpenBracketToken";
-      SyntaxKind2[SyntaxKind2["CloseBracketToken"] = 4] = "CloseBracketToken";
-      SyntaxKind2[SyntaxKind2["CommaToken"] = 5] = "CommaToken";
-      SyntaxKind2[SyntaxKind2["ColonToken"] = 6] = "ColonToken";
-      SyntaxKind2[SyntaxKind2["NullKeyword"] = 7] = "NullKeyword";
-      SyntaxKind2[SyntaxKind2["TrueKeyword"] = 8] = "TrueKeyword";
-      SyntaxKind2[SyntaxKind2["FalseKeyword"] = 9] = "FalseKeyword";
-      SyntaxKind2[SyntaxKind2["StringLiteral"] = 10] = "StringLiteral";
-      SyntaxKind2[SyntaxKind2["NumericLiteral"] = 11] = "NumericLiteral";
-      SyntaxKind2[SyntaxKind2["LineCommentTrivia"] = 12] = "LineCommentTrivia";
-      SyntaxKind2[SyntaxKind2["BlockCommentTrivia"] = 13] = "BlockCommentTrivia";
-      SyntaxKind2[SyntaxKind2["LineBreakTrivia"] = 14] = "LineBreakTrivia";
-      SyntaxKind2[SyntaxKind2["Trivia"] = 15] = "Trivia";
-      SyntaxKind2[SyntaxKind2["Unknown"] = 16] = "Unknown";
-      SyntaxKind2[SyntaxKind2["EOF"] = 17] = "EOF";
-    })(SyntaxKind || (exports2.SyntaxKind = SyntaxKind = {}));
-    exports2.getLocation = parser.getLocation;
-    exports2.parse = parser.parse;
-    exports2.parseTree = parser.parseTree;
-    exports2.findNodeAtLocation = parser.findNodeAtLocation;
-    exports2.findNodeAtOffset = parser.findNodeAtOffset;
-    exports2.getNodePath = parser.getNodePath;
-    exports2.getNodeValue = parser.getNodeValue;
-    exports2.visit = parser.visit;
-    exports2.stripComments = parser.stripComments;
-    var ParseErrorCode;
-    (function(ParseErrorCode2) {
-      ParseErrorCode2[ParseErrorCode2["InvalidSymbol"] = 1] = "InvalidSymbol";
-      ParseErrorCode2[ParseErrorCode2["InvalidNumberFormat"] = 2] = "InvalidNumberFormat";
-      ParseErrorCode2[ParseErrorCode2["PropertyNameExpected"] = 3] = "PropertyNameExpected";
-      ParseErrorCode2[ParseErrorCode2["ValueExpected"] = 4] = "ValueExpected";
-      ParseErrorCode2[ParseErrorCode2["ColonExpected"] = 5] = "ColonExpected";
-      ParseErrorCode2[ParseErrorCode2["CommaExpected"] = 6] = "CommaExpected";
-      ParseErrorCode2[ParseErrorCode2["CloseBraceExpected"] = 7] = "CloseBraceExpected";
-      ParseErrorCode2[ParseErrorCode2["CloseBracketExpected"] = 8] = "CloseBracketExpected";
-      ParseErrorCode2[ParseErrorCode2["EndOfFileExpected"] = 9] = "EndOfFileExpected";
-      ParseErrorCode2[ParseErrorCode2["InvalidCommentToken"] = 10] = "InvalidCommentToken";
-      ParseErrorCode2[ParseErrorCode2["UnexpectedEndOfComment"] = 11] = "UnexpectedEndOfComment";
-      ParseErrorCode2[ParseErrorCode2["UnexpectedEndOfString"] = 12] = "UnexpectedEndOfString";
-      ParseErrorCode2[ParseErrorCode2["UnexpectedEndOfNumber"] = 13] = "UnexpectedEndOfNumber";
-      ParseErrorCode2[ParseErrorCode2["InvalidUnicode"] = 14] = "InvalidUnicode";
-      ParseErrorCode2[ParseErrorCode2["InvalidEscapeCharacter"] = 15] = "InvalidEscapeCharacter";
-      ParseErrorCode2[ParseErrorCode2["InvalidCharacter"] = 16] = "InvalidCharacter";
-    })(ParseErrorCode || (exports2.ParseErrorCode = ParseErrorCode = {}));
-    function printParseErrorCode(code) {
-      switch (code) {
-        case 1:
-          return "InvalidSymbol";
-        case 2:
-          return "InvalidNumberFormat";
-        case 3:
-          return "PropertyNameExpected";
-        case 4:
-          return "ValueExpected";
-        case 5:
-          return "ColonExpected";
-        case 6:
-          return "CommaExpected";
-        case 7:
-          return "CloseBraceExpected";
-        case 8:
-          return "CloseBracketExpected";
-        case 9:
-          return "EndOfFileExpected";
-        case 10:
-          return "InvalidCommentToken";
-        case 11:
-          return "UnexpectedEndOfComment";
-        case 12:
-          return "UnexpectedEndOfString";
-        case 13:
-          return "UnexpectedEndOfNumber";
-        case 14:
-          return "InvalidUnicode";
-        case 15:
-          return "InvalidEscapeCharacter";
-        case 16:
-          return "InvalidCharacter";
-      }
-      return "<unknown ParseErrorCode>";
-    }
-    exports2.printParseErrorCode = printParseErrorCode;
-    function format(documentText, range, options) {
-      return formatter.format(documentText, range, options);
-    }
-    exports2.format = format;
-    function modify(text, path, value, options) {
-      return edit.setProperty(text, path, value, options);
-    }
-    exports2.modify = modify;
-    function applyEdits(text, edits) {
-      let sortedEdits = edits.slice(0).sort((a, b) => {
-        const diff = a.offset - b.offset;
-        if (diff === 0) {
-          return a.length - b.length;
-        }
-        return diff;
-      });
-      let lastModifiedOffset = text.length;
-      for (let i = sortedEdits.length - 1;i >= 0; i--) {
-        let e = sortedEdits[i];
-        if (e.offset + e.length <= lastModifiedOffset) {
-          text = edit.applyEdit(text, e);
-        } else {
-          throw new Error("Overlapping edit");
-        }
-        lastModifiedOffset = e.offset;
-      }
-      return text;
-    }
-    exports2.applyEdits = applyEdits;
-  });
-});
-
 // node_modules/.bun/picomatch@4.0.4/node_modules/picomatch/lib/constants.js
 var require_constants = __commonJS((exports, module) => {
   var WIN_SLASH = "\\\\/";
@@ -935,7 +789,7 @@ var require_parse = __commonJS((exports, module) => {
     }
     return { risky: false };
   };
-  var parse = (input, options) => {
+  var parse2 = (input, options) => {
     if (typeof input !== "string") {
       throw new TypeError("Expected a string");
     }
@@ -1106,7 +960,7 @@ var require_parse = __commonJS((exports, module) => {
           output = token.close = `)$))${extglobStar}`;
         }
         if (token.inner.includes("*") && (rest = remaining()) && /^\.[^\\/.]+$/.test(rest)) {
-          const expression = parse(rest, { ...options, fastpaths: false }).output;
+          const expression = parse2(rest, { ...options, fastpaths: false }).output;
           output = token.close = `)${expression})${extglobStar})`;
         }
         if (token.prev.type === "bos") {
@@ -1632,7 +1486,7 @@ var require_parse = __commonJS((exports, module) => {
     }
     return state;
   };
-  parse.fastpaths = (input, options) => {
+  parse2.fastpaths = (input, options) => {
     const opts = { ...options };
     const max = typeof opts.maxLength === "number" ? Math.min(MAX_LENGTH, opts.maxLength) : MAX_LENGTH;
     const len = input.length;
@@ -1700,13 +1554,13 @@ var require_parse = __commonJS((exports, module) => {
     }
     return source2;
   };
-  module.exports = parse;
+  module.exports = parse2;
 });
 
 // node_modules/.bun/picomatch@4.0.4/node_modules/picomatch/lib/picomatch.js
 var require_picomatch = __commonJS((exports, module) => {
   var scan = require_scan();
-  var parse = require_parse();
+  var parse2 = require_parse();
   var utils = require_utils();
   var constants = require_constants();
   var isObject = (val) => val && typeof val === "object" && !Array.isArray(val);
@@ -1772,11 +1626,11 @@ var require_picomatch = __commonJS((exports, module) => {
       return { isMatch: false, output: "" };
     }
     const opts = options || {};
-    const format = opts.format || (posix ? utils.toPosixSlashes : null);
+    const format2 = opts.format || (posix ? utils.toPosixSlashes : null);
     let match = input === glob;
-    let output = match && format ? format(input) : input;
+    let output = match && format2 ? format2(input) : input;
     if (match === false) {
-      output = format ? format(input) : input;
+      output = format2 ? format2(input) : input;
       match = output === glob;
     }
     if (match === false || opts.capture === true) {
@@ -1796,7 +1650,7 @@ var require_picomatch = __commonJS((exports, module) => {
   picomatch.parse = (pattern, options) => {
     if (Array.isArray(pattern))
       return pattern.map((p) => picomatch.parse(p, options));
-    return parse(pattern, { ...options, fastpaths: false });
+    return parse2(pattern, { ...options, fastpaths: false });
   };
   picomatch.scan = (input, options) => scan(input, options);
   picomatch.compileRe = (state, options, returnOutput = false, returnState = false) => {
@@ -1822,10 +1676,10 @@ var require_picomatch = __commonJS((exports, module) => {
     }
     let parsed = { negated: false, fastpaths: true };
     if (options.fastpaths !== false && (input[0] === "." || input[0] === "*")) {
-      parsed.output = parse.fastpaths(input, options);
+      parsed.output = parse2.fastpaths(input, options);
     }
     if (!parsed.output) {
-      parsed = parse(input, options);
+      parsed = parse2(input, options);
     }
     return picomatch.compileRe(parsed, options, returnOutput, returnState);
   };
@@ -1917,7 +1771,7 @@ var require_visit = __commonJS((exports) => {
   var BREAK = Symbol("break visit");
   var SKIP = Symbol("skip children");
   var REMOVE = Symbol("remove node");
-  function visit(node, visitor) {
+  function visit2(node, visitor) {
     const visitor_ = initVisitor(visitor);
     if (identity.isDocument(node)) {
       const cd = visit_(null, node.contents, visitor_, Object.freeze([node]));
@@ -1926,9 +1780,9 @@ var require_visit = __commonJS((exports) => {
     } else
       visit_(null, node, visitor_, Object.freeze([]));
   }
-  visit.BREAK = BREAK;
-  visit.SKIP = SKIP;
-  visit.REMOVE = REMOVE;
+  visit2.BREAK = BREAK;
+  visit2.SKIP = SKIP;
+  visit2.REMOVE = REMOVE;
   function visit_(key, node, visitor, path) {
     const ctrl = callVisitor(key, node, visitor, path);
     if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
@@ -2062,14 +1916,14 @@ var require_visit = __commonJS((exports) => {
       throw new Error(`Cannot replace node with ${pt} parent`);
     }
   }
-  exports.visit = visit;
+  exports.visit = visit2;
   exports.visitAsync = visitAsync;
 });
 
 // node_modules/.bun/yaml@2.9.0/node_modules/yaml/dist/doc/directives.js
 var require_directives = __commonJS((exports) => {
   var identity = require_identity();
-  var visit = require_visit();
+  var visit2 = require_visit();
   var escapeChars = {
     "!": "%21",
     ",": "%2C",
@@ -2196,7 +2050,7 @@ var require_directives = __commonJS((exports) => {
       let tagNames;
       if (doc && tagEntries.length > 0 && identity.isNode(doc.contents)) {
         const tags = {};
-        visit.visit(doc.contents, (_key, node) => {
+        visit2.visit(doc.contents, (_key, node) => {
           if (identity.isNode(node) && node.tag)
             tags[node.tag] = true;
         });
@@ -2221,7 +2075,7 @@ var require_directives = __commonJS((exports) => {
 // node_modules/.bun/yaml@2.9.0/node_modules/yaml/dist/doc/anchors.js
 var require_anchors = __commonJS((exports) => {
   var identity = require_identity();
-  var visit = require_visit();
+  var visit2 = require_visit();
   function anchorIsValid(anchor) {
     if (/[\x00-\x19\s,[\]{}]/.test(anchor)) {
       const sa = JSON.stringify(anchor);
@@ -2232,7 +2086,7 @@ var require_anchors = __commonJS((exports) => {
   }
   function anchorNames(root) {
     const anchors = new Set;
-    visit.visit(root, {
+    visit2.visit(root, {
       Value(_key, node) {
         if (node.anchor)
           anchors.add(node.anchor);
@@ -2394,7 +2248,7 @@ var require_Node = __commonJS((exports) => {
 // node_modules/.bun/yaml@2.9.0/node_modules/yaml/dist/nodes/Alias.js
 var require_Alias = __commonJS((exports) => {
   var anchors = require_anchors();
-  var visit = require_visit();
+  var visit2 = require_visit();
   var identity = require_identity();
   var Node = require_Node();
   var toJS = require_toJS();
@@ -2417,7 +2271,7 @@ var require_Alias = __commonJS((exports) => {
         nodes = ctx.aliasResolveCache;
       } else {
         nodes = [];
-        visit.visit(doc, {
+        visit2.visit(doc, {
           Node: (_key, node) => {
             if (identity.isAlias(node) || identity.hasAnchor(node))
               nodes.push(node);
@@ -4064,14 +3918,14 @@ var require_bool = __commonJS((exports) => {
 
 // node_modules/.bun/yaml@2.9.0/node_modules/yaml/dist/stringify/stringifyNumber.js
 var require_stringifyNumber = __commonJS((exports) => {
-  function stringifyNumber({ format, minFractionDigits, tag, value }) {
+  function stringifyNumber({ format: format2, minFractionDigits, tag, value }) {
     if (typeof value === "bigint")
       return String(value);
     const num = typeof value === "number" ? value : Number(value);
     if (!isFinite(num))
       return isNaN(num) ? ".nan" : num < 0 ? "-.inf" : ".inf";
     let n = Object.is(value, -0) ? "-0" : JSON.stringify(value);
-    if (!format && minFractionDigits && (!tag || tag === "tag:yaml.org,2002:float") && /^-?\d/.test(n) && !n.includes("e")) {
+    if (!format2 && minFractionDigits && (!tag || tag === "tag:yaml.org,2002:float") && /^-?\d/.test(n) && !n.includes("e")) {
       let i = n.indexOf(".");
       if (i < 0) {
         i = n.length;
@@ -7068,15 +6922,15 @@ var require_cst_visit = __commonJS((exports) => {
   var BREAK = Symbol("break visit");
   var SKIP = Symbol("skip children");
   var REMOVE = Symbol("remove item");
-  function visit(cst, visitor) {
+  function visit2(cst, visitor) {
     if ("type" in cst && cst.type === "document")
       cst = { start: cst.start, value: cst.value };
     _visit(Object.freeze([]), cst, visitor);
   }
-  visit.BREAK = BREAK;
-  visit.SKIP = SKIP;
-  visit.REMOVE = REMOVE;
-  visit.itemAtPath = (cst, path) => {
+  visit2.BREAK = BREAK;
+  visit2.SKIP = SKIP;
+  visit2.REMOVE = REMOVE;
+  visit2.itemAtPath = (cst, path) => {
     let item = cst;
     for (const [field, index] of path) {
       const tok = item?.[field];
@@ -7087,8 +6941,8 @@ var require_cst_visit = __commonJS((exports) => {
     }
     return item;
   };
-  visit.parentCollection = (cst, path) => {
-    const parent = visit.itemAtPath(cst, path.slice(0, -1));
+  visit2.parentCollection = (cst, path) => {
+    const parent = visit2.itemAtPath(cst, path.slice(0, -1));
     const field = path[path.length - 1][0];
     const coll = parent?.[field];
     if (coll && "items" in coll)
@@ -7119,7 +6973,7 @@ var require_cst_visit = __commonJS((exports) => {
     }
     return typeof ctrl === "function" ? ctrl(item, path) : ctrl;
   }
-  exports.visit = visit;
+  exports.visit = visit2;
 });
 
 // node_modules/.bun/yaml@2.9.0/node_modules/yaml/dist/parse/cst.js
@@ -8751,7 +8605,7 @@ var require_public_api = __commonJS((exports) => {
     }
     return doc;
   }
-  function parse(src, reviver, options) {
+  function parse2(src, reviver, options) {
     let _reviver = undefined;
     if (typeof reviver === "function") {
       _reviver = reviver;
@@ -8792,7 +8646,7 @@ var require_public_api = __commonJS((exports) => {
       return value.toString(options);
     return new Document.Document(value, _replacer, options).toString(options);
   }
-  exports.parse = parse;
+  exports.parse = parse2;
   exports.parseAllDocuments = parseAllDocuments;
   exports.parseDocument = parseDocument;
   exports.stringify = stringify;
@@ -9166,7 +9020,184 @@ import {
   writeFile
 } from "node:fs/promises";
 import { dirname as dirname3, relative as relative3, resolve as resolve4, sep as sep3 } from "node:path";
-var import_jsonc_parser = __toESM(require_main(), 1);
+
+// node_modules/.bun/jsonc-parser@3.3.1/node_modules/jsonc-parser/lib/esm/impl/scanner.js
+var CharacterCodes;
+(function(CharacterCodes2) {
+  CharacterCodes2[CharacterCodes2["lineFeed"] = 10] = "lineFeed";
+  CharacterCodes2[CharacterCodes2["carriageReturn"] = 13] = "carriageReturn";
+  CharacterCodes2[CharacterCodes2["space"] = 32] = "space";
+  CharacterCodes2[CharacterCodes2["_0"] = 48] = "_0";
+  CharacterCodes2[CharacterCodes2["_1"] = 49] = "_1";
+  CharacterCodes2[CharacterCodes2["_2"] = 50] = "_2";
+  CharacterCodes2[CharacterCodes2["_3"] = 51] = "_3";
+  CharacterCodes2[CharacterCodes2["_4"] = 52] = "_4";
+  CharacterCodes2[CharacterCodes2["_5"] = 53] = "_5";
+  CharacterCodes2[CharacterCodes2["_6"] = 54] = "_6";
+  CharacterCodes2[CharacterCodes2["_7"] = 55] = "_7";
+  CharacterCodes2[CharacterCodes2["_8"] = 56] = "_8";
+  CharacterCodes2[CharacterCodes2["_9"] = 57] = "_9";
+  CharacterCodes2[CharacterCodes2["a"] = 97] = "a";
+  CharacterCodes2[CharacterCodes2["b"] = 98] = "b";
+  CharacterCodes2[CharacterCodes2["c"] = 99] = "c";
+  CharacterCodes2[CharacterCodes2["d"] = 100] = "d";
+  CharacterCodes2[CharacterCodes2["e"] = 101] = "e";
+  CharacterCodes2[CharacterCodes2["f"] = 102] = "f";
+  CharacterCodes2[CharacterCodes2["g"] = 103] = "g";
+  CharacterCodes2[CharacterCodes2["h"] = 104] = "h";
+  CharacterCodes2[CharacterCodes2["i"] = 105] = "i";
+  CharacterCodes2[CharacterCodes2["j"] = 106] = "j";
+  CharacterCodes2[CharacterCodes2["k"] = 107] = "k";
+  CharacterCodes2[CharacterCodes2["l"] = 108] = "l";
+  CharacterCodes2[CharacterCodes2["m"] = 109] = "m";
+  CharacterCodes2[CharacterCodes2["n"] = 110] = "n";
+  CharacterCodes2[CharacterCodes2["o"] = 111] = "o";
+  CharacterCodes2[CharacterCodes2["p"] = 112] = "p";
+  CharacterCodes2[CharacterCodes2["q"] = 113] = "q";
+  CharacterCodes2[CharacterCodes2["r"] = 114] = "r";
+  CharacterCodes2[CharacterCodes2["s"] = 115] = "s";
+  CharacterCodes2[CharacterCodes2["t"] = 116] = "t";
+  CharacterCodes2[CharacterCodes2["u"] = 117] = "u";
+  CharacterCodes2[CharacterCodes2["v"] = 118] = "v";
+  CharacterCodes2[CharacterCodes2["w"] = 119] = "w";
+  CharacterCodes2[CharacterCodes2["x"] = 120] = "x";
+  CharacterCodes2[CharacterCodes2["y"] = 121] = "y";
+  CharacterCodes2[CharacterCodes2["z"] = 122] = "z";
+  CharacterCodes2[CharacterCodes2["A"] = 65] = "A";
+  CharacterCodes2[CharacterCodes2["B"] = 66] = "B";
+  CharacterCodes2[CharacterCodes2["C"] = 67] = "C";
+  CharacterCodes2[CharacterCodes2["D"] = 68] = "D";
+  CharacterCodes2[CharacterCodes2["E"] = 69] = "E";
+  CharacterCodes2[CharacterCodes2["F"] = 70] = "F";
+  CharacterCodes2[CharacterCodes2["G"] = 71] = "G";
+  CharacterCodes2[CharacterCodes2["H"] = 72] = "H";
+  CharacterCodes2[CharacterCodes2["I"] = 73] = "I";
+  CharacterCodes2[CharacterCodes2["J"] = 74] = "J";
+  CharacterCodes2[CharacterCodes2["K"] = 75] = "K";
+  CharacterCodes2[CharacterCodes2["L"] = 76] = "L";
+  CharacterCodes2[CharacterCodes2["M"] = 77] = "M";
+  CharacterCodes2[CharacterCodes2["N"] = 78] = "N";
+  CharacterCodes2[CharacterCodes2["O"] = 79] = "O";
+  CharacterCodes2[CharacterCodes2["P"] = 80] = "P";
+  CharacterCodes2[CharacterCodes2["Q"] = 81] = "Q";
+  CharacterCodes2[CharacterCodes2["R"] = 82] = "R";
+  CharacterCodes2[CharacterCodes2["S"] = 83] = "S";
+  CharacterCodes2[CharacterCodes2["T"] = 84] = "T";
+  CharacterCodes2[CharacterCodes2["U"] = 85] = "U";
+  CharacterCodes2[CharacterCodes2["V"] = 86] = "V";
+  CharacterCodes2[CharacterCodes2["W"] = 87] = "W";
+  CharacterCodes2[CharacterCodes2["X"] = 88] = "X";
+  CharacterCodes2[CharacterCodes2["Y"] = 89] = "Y";
+  CharacterCodes2[CharacterCodes2["Z"] = 90] = "Z";
+  CharacterCodes2[CharacterCodes2["asterisk"] = 42] = "asterisk";
+  CharacterCodes2[CharacterCodes2["backslash"] = 92] = "backslash";
+  CharacterCodes2[CharacterCodes2["closeBrace"] = 125] = "closeBrace";
+  CharacterCodes2[CharacterCodes2["closeBracket"] = 93] = "closeBracket";
+  CharacterCodes2[CharacterCodes2["colon"] = 58] = "colon";
+  CharacterCodes2[CharacterCodes2["comma"] = 44] = "comma";
+  CharacterCodes2[CharacterCodes2["dot"] = 46] = "dot";
+  CharacterCodes2[CharacterCodes2["doubleQuote"] = 34] = "doubleQuote";
+  CharacterCodes2[CharacterCodes2["minus"] = 45] = "minus";
+  CharacterCodes2[CharacterCodes2["openBrace"] = 123] = "openBrace";
+  CharacterCodes2[CharacterCodes2["openBracket"] = 91] = "openBracket";
+  CharacterCodes2[CharacterCodes2["plus"] = 43] = "plus";
+  CharacterCodes2[CharacterCodes2["slash"] = 47] = "slash";
+  CharacterCodes2[CharacterCodes2["formFeed"] = 12] = "formFeed";
+  CharacterCodes2[CharacterCodes2["tab"] = 9] = "tab";
+})(CharacterCodes || (CharacterCodes = {}));
+
+// node_modules/.bun/jsonc-parser@3.3.1/node_modules/jsonc-parser/lib/esm/impl/string-intern.js
+var cachedSpaces = new Array(20).fill(0).map((_, index) => {
+  return " ".repeat(index);
+});
+var maxCachedValues = 200;
+var cachedBreakLinesWithSpaces = {
+  " ": {
+    "\n": new Array(maxCachedValues).fill(0).map((_, index) => {
+      return `
+` + " ".repeat(index);
+    }),
+    "\r": new Array(maxCachedValues).fill(0).map((_, index) => {
+      return "\r" + " ".repeat(index);
+    }),
+    "\r\n": new Array(maxCachedValues).fill(0).map((_, index) => {
+      return `\r
+` + " ".repeat(index);
+    })
+  },
+  "\t": {
+    "\n": new Array(maxCachedValues).fill(0).map((_, index) => {
+      return `
+` + "\t".repeat(index);
+    }),
+    "\r": new Array(maxCachedValues).fill(0).map((_, index) => {
+      return "\r" + "\t".repeat(index);
+    }),
+    "\r\n": new Array(maxCachedValues).fill(0).map((_, index) => {
+      return `\r
+` + "\t".repeat(index);
+    })
+  }
+};
+
+// node_modules/.bun/jsonc-parser@3.3.1/node_modules/jsonc-parser/lib/esm/impl/parser.js
+var ParseOptions;
+(function(ParseOptions2) {
+  ParseOptions2.DEFAULT = {
+    allowTrailingComma: false
+  };
+})(ParseOptions || (ParseOptions = {}));
+
+// node_modules/.bun/jsonc-parser@3.3.1/node_modules/jsonc-parser/lib/esm/main.js
+var ScanError;
+(function(ScanError2) {
+  ScanError2[ScanError2["None"] = 0] = "None";
+  ScanError2[ScanError2["UnexpectedEndOfComment"] = 1] = "UnexpectedEndOfComment";
+  ScanError2[ScanError2["UnexpectedEndOfString"] = 2] = "UnexpectedEndOfString";
+  ScanError2[ScanError2["UnexpectedEndOfNumber"] = 3] = "UnexpectedEndOfNumber";
+  ScanError2[ScanError2["InvalidUnicode"] = 4] = "InvalidUnicode";
+  ScanError2[ScanError2["InvalidEscapeCharacter"] = 5] = "InvalidEscapeCharacter";
+  ScanError2[ScanError2["InvalidCharacter"] = 6] = "InvalidCharacter";
+})(ScanError || (ScanError = {}));
+var SyntaxKind;
+(function(SyntaxKind2) {
+  SyntaxKind2[SyntaxKind2["OpenBraceToken"] = 1] = "OpenBraceToken";
+  SyntaxKind2[SyntaxKind2["CloseBraceToken"] = 2] = "CloseBraceToken";
+  SyntaxKind2[SyntaxKind2["OpenBracketToken"] = 3] = "OpenBracketToken";
+  SyntaxKind2[SyntaxKind2["CloseBracketToken"] = 4] = "CloseBracketToken";
+  SyntaxKind2[SyntaxKind2["CommaToken"] = 5] = "CommaToken";
+  SyntaxKind2[SyntaxKind2["ColonToken"] = 6] = "ColonToken";
+  SyntaxKind2[SyntaxKind2["NullKeyword"] = 7] = "NullKeyword";
+  SyntaxKind2[SyntaxKind2["TrueKeyword"] = 8] = "TrueKeyword";
+  SyntaxKind2[SyntaxKind2["FalseKeyword"] = 9] = "FalseKeyword";
+  SyntaxKind2[SyntaxKind2["StringLiteral"] = 10] = "StringLiteral";
+  SyntaxKind2[SyntaxKind2["NumericLiteral"] = 11] = "NumericLiteral";
+  SyntaxKind2[SyntaxKind2["LineCommentTrivia"] = 12] = "LineCommentTrivia";
+  SyntaxKind2[SyntaxKind2["BlockCommentTrivia"] = 13] = "BlockCommentTrivia";
+  SyntaxKind2[SyntaxKind2["LineBreakTrivia"] = 14] = "LineBreakTrivia";
+  SyntaxKind2[SyntaxKind2["Trivia"] = 15] = "Trivia";
+  SyntaxKind2[SyntaxKind2["Unknown"] = 16] = "Unknown";
+  SyntaxKind2[SyntaxKind2["EOF"] = 17] = "EOF";
+})(SyntaxKind || (SyntaxKind = {}));
+var ParseErrorCode;
+(function(ParseErrorCode2) {
+  ParseErrorCode2[ParseErrorCode2["InvalidSymbol"] = 1] = "InvalidSymbol";
+  ParseErrorCode2[ParseErrorCode2["InvalidNumberFormat"] = 2] = "InvalidNumberFormat";
+  ParseErrorCode2[ParseErrorCode2["PropertyNameExpected"] = 3] = "PropertyNameExpected";
+  ParseErrorCode2[ParseErrorCode2["ValueExpected"] = 4] = "ValueExpected";
+  ParseErrorCode2[ParseErrorCode2["ColonExpected"] = 5] = "ColonExpected";
+  ParseErrorCode2[ParseErrorCode2["CommaExpected"] = 6] = "CommaExpected";
+  ParseErrorCode2[ParseErrorCode2["CloseBraceExpected"] = 7] = "CloseBraceExpected";
+  ParseErrorCode2[ParseErrorCode2["CloseBracketExpected"] = 8] = "CloseBracketExpected";
+  ParseErrorCode2[ParseErrorCode2["EndOfFileExpected"] = 9] = "EndOfFileExpected";
+  ParseErrorCode2[ParseErrorCode2["InvalidCommentToken"] = 10] = "InvalidCommentToken";
+  ParseErrorCode2[ParseErrorCode2["UnexpectedEndOfComment"] = 11] = "UnexpectedEndOfComment";
+  ParseErrorCode2[ParseErrorCode2["UnexpectedEndOfString"] = 12] = "UnexpectedEndOfString";
+  ParseErrorCode2[ParseErrorCode2["UnexpectedEndOfNumber"] = 13] = "UnexpectedEndOfNumber";
+  ParseErrorCode2[ParseErrorCode2["InvalidUnicode"] = 14] = "InvalidUnicode";
+  ParseErrorCode2[ParseErrorCode2["InvalidEscapeCharacter"] = 15] = "InvalidEscapeCharacter";
+  ParseErrorCode2[ParseErrorCode2["InvalidCharacter"] = 16] = "InvalidCharacter";
+})(ParseErrorCode || (ParseErrorCode = {}));
 
 // compiler/typescript/src/analysis.ts
 var textDecoder2 = new TextDecoder("utf-8", { fatal: true });
@@ -9912,8 +9943,8 @@ function buildCrawler(options, patterns) {
   const matcher = import_picomatch.default(processed.match, matchOptions);
   const ignore = import_picomatch.default(processed.ignore, matchOptions);
   const partialMatcher = getPartialMatcher(processed.match, matchOptions);
-  const format = buildFormat(cwd, root, absolute);
-  const excludeFormatter = absolute ? format : buildFormat(cwd, root, true);
+  const format2 = buildFormat(cwd, root, absolute);
+  const excludeFormatter = absolute ? format2 : buildFormat(cwd, root, true);
   const excludePredicate = (_, p) => {
     const relativePath = excludeFormatter(p, true);
     return relativePath !== "." && !partialMatcher(relativePath) || ignore(relativePath);
@@ -9923,13 +9954,13 @@ function buildCrawler(options, patterns) {
     maxDepth = Math.round(options.deep - props.depthOffset);
   const crawler = new Builder({
     filters: [debug ? (p, isDirectory) => {
-      const path = format(p, isDirectory);
+      const path = format2(p, isDirectory);
       const matches = matcher(path) && !ignore(path);
       if (matches)
         log(`matched ${path}`);
       return matches;
     } : (p, isDirectory) => {
-      const path = format(p, isDirectory);
+      const path = format2(p, isDirectory);
       return matcher(path) && !ignore(path);
     }],
     exclude: debug ? (_, p) => {
@@ -10018,7 +10049,7 @@ var lexer = require_lexer();
 var lineCounter = require_line_counter();
 var parser = require_parser();
 var publicApi = require_public_api();
-var visit = require_visit();
+var visit2 = require_visit();
 var $Composer = composer.Composer;
 var $Document = Document.Document;
 var $Schema = Schema.Schema;
@@ -10045,8 +10076,8 @@ var $parse = publicApi.parse;
 var $parseAllDocuments = publicApi.parseAllDocuments;
 var $parseDocument = publicApi.parseDocument;
 var $stringify = publicApi.stringify;
-var $visit = visit.visit;
-var $visitAsync = visit.visitAsync;
+var $visit = visit2.visit;
+var $visitAsync = visit2.visitAsync;
 
 // compiler/typescript/src/local-packages.ts
 async function deriveLocalPackages(root, manager) {

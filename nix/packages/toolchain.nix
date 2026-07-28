@@ -80,7 +80,7 @@ stdenvNoCC.mkDerivation {
       .
     digest="$(sha256sum "$out/base.tar" | cut -d' ' -f1)"
     size="$(stat -c %s "$out/base.tar")"
-    jq -cS \
+    jq -cS -n \
       --arg digest "sha256:$digest" \
       --arg mediaType "application/vnd.helmr.platform-tree.v0+tar" \
       --argjson sizeBytes "$size" \
