@@ -47,15 +47,20 @@ Use that URL to create a local owner session and inspect seeded runs.
 helmr init
 ```
 
-This creates `package.json`, `helmr.config.ts`, and `tasks/hello.ts`. A task project must have a default-exported `defineConfig({ project, dirs: [...] })`; files in those directories are indexed for exported `task(...)` definitions.
+This creates `.helmrignore`, `package.json`, `tsconfig.json`,
+`helmr.config.ts`, and `tasks/hello.ts`. Install the declared dependencies once
+to create the exact lockfile. The starter's build generates JavaScript under
+`dist/tasks`, which `helmr.config.ts` selects for declaration discovery.
 
 ## Deploy Tasks
 
 ```sh
-helmr deploy .
+helmr deploy . --project PROJECT --env ENVIRONMENT
 ```
 
-Deployment indexes the configured task files, uploads a content-hashed deployment-source archive, and records the current deployment for the configured project and selected environment.
+Deployment uploads a content-hashed source archive, builds and discovers the
+project remotely, and records the immutable Program for the explicit project
+and environment.
 
 ## Start A Task
 

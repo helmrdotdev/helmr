@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -48,42 +47,16 @@ func writeDeploymentEventSSE(t *testing.T, w http.ResponseWriter, r *http.Reques
 	_, _ = fmt.Fprintf(w, "id: 1\nevent: deployment_event\ndata: {\"id\":\"1\",\"deployment_id\":\"deployment-1\",\"kind\":%q,\"message\":\"Deployment lifecycle changed\"}\n\n", kind)
 }
 
-func requireNodeForConfigInspector(t *testing.T) string {
-	t.Helper()
-	nodePath, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node is not available")
-	}
-	cmd := exec.Command(nodePath, "-e", `const [major = 0, minor = 0] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 18) ? 0 : 42)`)
-	if err := cmd.Run(); err != nil {
-		t.Skip("node >=22.18 is not available")
-	}
-	return nodePath
-}
-
-func linkLocalWorkspacePackage(t *testing.T, projectRoot string, name string, packagePath string) {
-	t.Helper()
-	repoRoot, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	target := filepath.Join(repoRoot, packagePath)
-	link := filepath.Join(projectRoot, "node_modules", filepath.FromSlash(name))
-	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func deployCommandFixture(t *testing.T) (string, func()) {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "helmr.config.ts"), []byte(`export default { project: "agents", dirs: ["./tasks"] }`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "helmr.config.ts"), []byte(`export default { dirs: ["./tasks"] }`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"packageManager":"bun@1.3.10","dependencies":{"@helmr/sdk":"latest"}}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"type":"module","packageManager":"bun@1.3.10","devEngines":{"runtime":{"name":"node","version":"24.16.0","onFail":"error"}},"dependencies":{"@helmr/sdk":"latest"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "bun.lock"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(root, "node_modules", "@helmr", "sdk"), 0o755); err != nil {
@@ -101,36 +74,9 @@ func deployCommandFixture(t *testing.T) (string, func()) {
 	if err := os.WriteFile(filepath.Join(root, "tasks", "deploy.ts"), []byte(`export const deploy = task("deploy", async () => {})`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	configRuntime := filepath.Join(t.TempDir(), "config-runtime")
-	configRuntimeScript := `#!/bin/sh
-if [ "$1" = "-e" ]; then
-	exit 0
-fi
-if [ "$1" = "--import" ]; then
-	shift 2
-fi
-printf '%s\n' '{"project":"agents"}'
-`
-	if err := os.WriteFile(configRuntime, []byte(configRuntimeScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	oldConfigRuntime := deployConfigRuntimePath
 	oldTemp := deployArchiveTempDir
-	deployConfigRuntimePath = configRuntime
 	deployArchiveTempDir = t.TempDir()
-	inspectorDir := t.TempDir()
-	inspectorPath := filepath.Join(inspectorDir, "inspect.js")
-	registerPath := filepath.Join(inspectorDir, "register.mjs")
-	if err := os.WriteFile(inspectorPath, []byte(""), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(registerPath, []byte(""), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HELMR_CONFIG_INSPECTOR_PATH", inspectorPath)
-	t.Setenv("HELMR_CONFIG_REGISTER_PATH", registerPath)
 	cleanup := func() {
-		deployConfigRuntimePath = oldConfigRuntime
 		deployArchiveTempDir = oldTemp
 	}
 	t.Cleanup(cleanup)

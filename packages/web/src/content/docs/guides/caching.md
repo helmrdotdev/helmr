@@ -30,4 +30,7 @@ Keep dependency inputs explicit. Copy lockfiles and package manifests before the
 
 A single image `run` step cannot combine persistent cache mounts and build secret mounts. Split those operations into separate `run` steps when you need both.
 
-Deploy archives exclude `node_modules` by default. Remote deployment builds install project dependencies in a product-managed build environment, but task execution does not use deployment build dependencies. Install runtime dependencies inside the image build.
+Exclude root `node_modules` explicitly in `.helmrignore`; retaining it makes
+source admission fail. The remote Program build installs project dependencies.
+Workspace-image dependencies remain separate and must be installed by the image
+plan when Workspace tools need them.

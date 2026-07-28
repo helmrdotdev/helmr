@@ -26,7 +26,8 @@ import {
 } from "@helmr/sdk"
 ```
 
-`defineConfig({ project, dirs, ignorePatterns? })` declares the source roots.
+`defineConfig({ dirs, ignorePatterns? })` declares post-build JavaScript
+discovery roots.
 Deploy analyzes exported declarations and produces one immutable Program
 Artifact.
 

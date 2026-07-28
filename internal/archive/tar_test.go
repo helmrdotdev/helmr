@@ -141,7 +141,7 @@ func TestCreateTarWithOptionsExcludesGlobPatterns(t *testing.T) {
 
 func TestCanonicalSourceUsesOnlyHelmrIgnoreAndRootGitRule(t *testing.T) {
 	root := t.TempDir()
-	writeTestFile(t, filepath.Join(root, ".helmrignore"), "node_modules/\nignored/**\n!ignored/keep.ts\n")
+	writeTestFile(t, filepath.Join(root, ".helmrignore"), "node_modules/\nignored/**\n!ignored/keep.ts\n.env\n")
 	writeTestFile(t, filepath.Join(root, ".git", "config"), "git")
 	writeTestFile(t, filepath.Join(root, "node_modules", "pkg", "index.js"), "dependency")
 	writeTestFile(t, filepath.Join(root, "ignored", "drop.ts"), "drop")
@@ -162,9 +162,59 @@ func TestCanonicalSourceUsesOnlyHelmrIgnoreAndRootGitRule(t *testing.T) {
 			t.Fatalf("canonical source contains excluded %q: %+v", name, names)
 		}
 	}
-	for _, name := range []string{".helmrignore", "ignored/keep.ts", "tasks/task.test.ts", ".env"} {
+	for _, name := range []string{".helmrignore", "ignored/keep.ts", "tasks/task.test.ts"} {
 		if !names[name] {
 			t.Fatalf("canonical source omits %q: %+v", name, names)
+		}
+	}
+}
+
+func TestCanonicalSourceRejectsRetainedEnvironmentSecrets(t *testing.T) {
+	for _, name := range []string{".env", ".env.local", "packages/api/.env.production"} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTestFile(t, filepath.Join(root, filepath.FromSlash(name)), "TOKEN=secret")
+			if _, _, err := CreateTarWithOptions(root, t.TempDir(), TarOptions{
+				CanonicalSource: true,
+			}); err == nil || !strings.Contains(err.Error(), "likely secret") {
+				t.Fatalf("canonical source error = %v", err)
+			}
+		})
+	}
+}
+
+func TestCanonicalSourceAcceptsEnvironmentExamples(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, ".helmrignore"), `.env
+.env.*
+!.env*.example
+!.env*.sample
+!.env*.template
+`)
+	for _, name := range []string{
+		".env.example",
+		".env.production.example",
+		".env.production.sample",
+		"packages/api/.env.template",
+	} {
+		writeTestFile(t, filepath.Join(root, filepath.FromSlash(name)), "TOKEN=")
+	}
+	result, cleanup, err := CreateTarWithOptions(root, t.TempDir(), TarOptions{
+		CanonicalSource: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	names := readTarNames(t, result.Path)
+	for _, name := range []string{
+		".env.example",
+		".env.production.example",
+		".env.production.sample",
+		"packages/api/.env.template",
+	} {
+		if !names[name] {
+			t.Fatalf("canonical source omits environment example %q", name)
 		}
 	}
 }

@@ -3384,28 +3384,34 @@ var ResumeConsumedSchema = /* @__PURE__ */ messageDesc(file_run, 57);
 var MetadataUpdatedSchema = /* @__PURE__ */ messageDesc(file_run, 58);
 var StructuredLogRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 59);
 // sdk/typescript/src/config.ts
-var configBrand = Symbol.for("helmr.sdk.v0.config");
+var arrayIsArray = Array.isArray;
+var arrayPrototype = Array.prototype;
+var defineProperty = Object.defineProperty;
+var objectPrototype = Object.prototype;
+var getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+var getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+var getPrototypeOf = Object.getPrototypeOf;
+var hasOwn = Object.hasOwn;
+var freeze = Object.freeze;
+var ownKeys = Reflect.ownKeys;
+var startsWith = String.prototype.startsWith.call.bind(String.prototype.startsWith);
+var endsWith = String.prototype.endsWith.call.bind(String.prototype.endsWith);
+var includes = String.prototype.includes.call.bind(String.prototype.includes);
+var split = String.prototype.split.call.bind(String.prototype.split);
+var slice = String.prototype.slice.call.bind(String.prototype.slice);
+var charCodeAt = String.prototype.charCodeAt.call.bind(String.prototype.charCodeAt);
+var regexpTest = RegExp.prototype.test.call.bind(RegExp.prototype.test);
+var utf8Encoder = new TextEncoder;
+var encodeUTF8 = TextEncoder.prototype.encode.call.bind(TextEncoder.prototype.encode);
 function inspectConfig(value) {
-  if (typeof value !== "object" || value === null)
-    return;
-  if (!Object.hasOwn(value, configBrand))
-    return;
-  if (value[configBrand] !== true) {
-    throw new Error("invalid defineConfig() private record");
+  if (typeof value !== "object" || value === null) {
+    throw new Error("config must be an ordinary object");
   }
-  const config = value;
-  if (typeof config.project !== "string" || config.project.trim() === "" || hasControl(config.project) || !Array.isArray(config.dirs) || config.dirs.length === 0 || !Array.isArray(config.ignorePatterns)) {
-    throw new Error("invalid defineConfig() private record");
-  }
-  for (const directory of config.dirs)
-    validateDirectory(directory);
-  for (const pattern of config.ignorePatterns)
-    validateIgnorePattern(pattern);
-  return value;
+  return normalizeConfig(value);
 }
 function matchesIgnorePattern(pattern, path) {
-  const patternSegments = pattern.split("/");
-  const pathSegments = path.split("/");
+  const patternSegments = split(pattern, "/");
+  const pathSegments = split(path, "/");
   const matches = (patternIndex, pathIndex) => {
     if (patternIndex === patternSegments.length) {
       return pathIndex === pathSegments.length;
@@ -3426,26 +3432,40 @@ function matchesIgnorePattern(pattern, path) {
   return matches(0, 0);
 }
 function validateDirectory(value) {
-  if (typeof value !== "string" || !value.startsWith("./") || value.includes("\\") || value.includes("?") || value.includes("#") || hasControl(value)) {
-    throw new Error("defineConfig({ dirs }) entries must be project-relative POSIX directories beginning ./");
+  if (typeof value !== "string" || value === "" || hasUnpairedSurrogate(value) || startsWith(value, "/") || includes(value, "\\") || hasControl(value)) {
+    throw new Error("config dirs entries must be non-empty root-relative POSIX paths");
   }
-  if (value !== "./") {
-    const segments = value.slice(2).split("/");
-    if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
-      throw new Error("defineConfig({ dirs }) entries must be normalized project-relative paths");
+  const normalized = startsWith(value, "./") ? slice(value, 2) : value;
+  const segments = split(normalized, "/");
+  let invalidSegment = normalized === "";
+  for (let index = 0;index < segments.length; index++) {
+    const segment = segments[index];
+    if (segment === "" || segment === "." || segment === "..") {
+      invalidSegment = true;
+      break;
+    }
+  }
+  if (invalidSegment) {
+    throw new Error("config dirs entries must be normalized root-relative paths");
+  }
+  return normalized;
+}
+function validateIgnorePattern(value) {
+  if (typeof value !== "string" || value === "" || hasUnpairedSurrogate(value) || startsWith(value, "./") || startsWith(value, "/") || endsWith(value, "/") || includes(value, "//") || includes(value, "\\") || hasControl(value) || startsWith(value, "!") || regexpTest(/[[\]{}]/, value) || regexpTest(/[?*+@!]\(/, value)) {
+    throw new Error(`unsupported ignorePattern ${JSON.stringify(value)}`);
+  }
+  const segments = split(value, "/");
+  for (let index = 0;index < segments.length; index++) {
+    const segment = segments[index];
+    if (segment === ".." || includes(segment, "**") && segment !== "**") {
+      throw new Error(`unsupported ignorePattern ${JSON.stringify(value)}`);
     }
   }
   return value;
 }
-function validateIgnorePattern(value) {
-  if (typeof value !== "string" || value === "" || value.startsWith("./") || value.startsWith("/") || value.endsWith("/") || value.includes("//") || value.includes("\\") || value.split("/").includes("..") || hasControl(value) || value.startsWith("!") || /[[\]{}]/.test(value) || /[?*+@!]\(/.test(value) || value.split("/").some((segment) => segment.includes("**") && segment !== "**")) {
-    throw new Error(`unsupported ignorePattern ${JSON.stringify(value)}`);
-  }
-  return value;
-}
 function matchesSegment(pattern, value) {
-  const patternCharacters = Array.from(pattern);
-  const valueCharacters = Array.from(value);
+  const patternCharacters = codePoints(pattern);
+  const valueCharacters = codePoints(value);
   let patternIndex = 0;
   let valueIndex = 0;
   let star = -1;
@@ -3474,12 +3494,129 @@ function matchesSegment(pattern, value) {
   return patternIndex === patternCharacters.length;
 }
 function hasControl(value) {
-  for (const character of value) {
-    const code = character.codePointAt(0);
+  for (let index = 0;index < value.length; index++) {
+    const code = charCodeAt(value, index);
     if (code <= 31 || code >= 127 && code <= 159)
       return true;
   }
   return false;
+}
+function hasUnpairedSurrogate(value) {
+  for (let index = 0;index < value.length; index++) {
+    const code = charCodeAt(value, index);
+    if (code >= 56320 && code <= 57343)
+      return true;
+    if (code < 55296 || code > 56319)
+      continue;
+    index++;
+    if (index === value.length)
+      return true;
+    const low = charCodeAt(value, index);
+    if (low < 56320 || low > 57343)
+      return true;
+  }
+  return false;
+}
+function codePoints(value) {
+  const result = [];
+  for (let index = 0;index < value.length; ) {
+    const first = charCodeAt(value, index);
+    const width = first >= 55296 && first <= 56319 ? 2 : 1;
+    setArrayIndex(result, result.length, slice(value, index, index + width));
+    index += width;
+  }
+  return result;
+}
+function normalizeConfig(value) {
+  if (arrayIsArray(value) || getPrototypeOf(value) !== objectPrototype) {
+    throw new Error("config must be an ordinary object");
+  }
+  const descriptors2 = getOwnPropertyDescriptors(value);
+  const keys = ownKeys(value);
+  let invalidKey = !hasOwn(descriptors2, "dirs");
+  for (let index = 0;index < keys.length; index++) {
+    const key = keys[index];
+    if (typeof key !== "string" || key !== "dirs" && key !== "ignorePatterns") {
+      invalidKey = true;
+      break;
+    }
+  }
+  if (invalidKey) {
+    throw new Error("config requires exactly dirs and optional ignorePatterns");
+  }
+  for (let index = 0;index < keys.length; index++) {
+    const key = keys[index];
+    if (typeof key !== "string") {
+      throw new Error("config requires exactly dirs and optional ignorePatterns");
+    }
+    const descriptor = descriptors2[key];
+    if (descriptor === undefined || !descriptor.enumerable || !hasOwn(descriptor, "value")) {
+      throw new Error("config properties must be enumerable data properties");
+    }
+  }
+  const dirs = normalizeStringSet(descriptors2["dirs"]?.value, "config dirs", validateDirectory, true);
+  const ignorePatterns = normalizeStringSet(hasOwn(descriptors2, "ignorePatterns") ? descriptors2["ignorePatterns"]?.value : [], "config ignorePatterns", validateIgnorePattern, false);
+  return freeze({
+    dirs: freeze(dirs),
+    ignorePatterns: freeze(ignorePatterns)
+  });
+}
+function normalizeStringSet(value, name, normalize, nonempty) {
+  if (!arrayIsArray(value) || getPrototypeOf(value) !== arrayPrototype) {
+    throw new Error(`${name} must be an array`);
+  }
+  const keys = ownKeys(value);
+  const lengthDescriptor = getOwnPropertyDescriptor(value, "length");
+  const length = lengthDescriptor?.value;
+  if (typeof length !== "number" || keys.length !== length + 1 || keys[length] !== "length") {
+    throw new Error(`${name} must be a dense ordinary array`);
+  }
+  const normalized = [];
+  for (let index = 0;index < length; index++) {
+    const key = `${index}`;
+    if (keys[index] !== key) {
+      throw new Error(`${name} must be a dense ordinary array`);
+    }
+    const descriptor = getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined || !descriptor.enumerable || !hasOwn(descriptor, "value")) {
+      throw new Error(`${name} entries must be enumerable data properties`);
+    }
+    const current = normalize(descriptor.value);
+    let insertion = normalized.length;
+    while (insertion > 0 && compareUTF8(current, normalized[insertion - 1]) < 0) {
+      setArrayIndex(normalized, insertion, normalized[insertion - 1]);
+      insertion--;
+    }
+    setArrayIndex(normalized, insertion, current);
+  }
+  if (nonempty && length === 0) {
+    throw new Error(`${name} must be non-empty`);
+  }
+  for (let index = 1;index < normalized.length; index++) {
+    if (normalized[index] === normalized[index - 1]) {
+      throw new Error(`${name} contains a duplicate entry`);
+    }
+  }
+  return normalized;
+}
+function setArrayIndex(array, index, value) {
+  defineProperty(array, `${index}`, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true
+  });
+}
+function compareUTF8(left, right) {
+  const leftBytes = encodeUTF8(utf8Encoder, left);
+  const rightBytes = encodeUTF8(utf8Encoder, right);
+  const length = leftBytes.length < rightBytes.length ? leftBytes.length : rightBytes.length;
+  for (let index = 0;index < length; index++) {
+    const difference = leftBytes[index] - rightBytes[index];
+    if (difference !== 0)
+      return difference;
+  }
+  return leftBytes.length - rightBytes.length;
 }
 // sdk/typescript/src/schema/payload.ts
 var payloadSchemaValidationErrorBrand = Symbol.for("helmr.sdk.PayloadSchemaValidationError");
@@ -4580,11 +4717,13 @@ async function loadConfig(root) {
   } catch (error) {
     throw new Error("failed to evaluate helmr.config.ts", { cause: error });
   }
-  const config = inspectConfig(namespace["default"]);
-  if (config === undefined) {
-    throw new Error("helmr.config.ts must default-export defineConfig()");
+  try {
+    return inspectConfig(namespace["default"]);
+  } catch (error) {
+    throw new Error("helmr.config.ts must default-export a valid config object", {
+      cause: error
+    });
   }
-  return config;
 }
 
 // runtime/typescript/src/analysis.ts

@@ -10,7 +10,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cli/session"
 	"github.com/helmrdotdev/helmr/internal/client"
-	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -61,7 +60,7 @@ func controlClient(cmd *cobra.Command) (*client.Client, error) {
 	if bearer == "" {
 		return nil, fmt.Errorf("helmr API access requires %s or helmr login", helmrAPIKeyEnv)
 	}
-	opts := []client.Option{client.WithBearerToken(bearer), client.WithClientIdentity("cli", version.Version)}
+	opts := []client.Option{client.WithBearerToken(bearer)}
 	if sessionScopedRoutes {
 		opts = append(opts, client.WithSessionScopedRoutes())
 	}
@@ -96,7 +95,7 @@ func sessionControlClient(cmd *cobra.Command) (*client.Client, error) {
 		}
 		return nil, err
 	}
-	return client.New(baseURL, client.WithBearerToken(bearer), client.WithClientIdentity("cli", version.Version), client.WithSessionScopedRoutes())
+	return client.New(baseURL, client.WithBearerToken(bearer), client.WithSessionScopedRoutes())
 }
 
 func cliControlURL(cmd *cobra.Command) string {

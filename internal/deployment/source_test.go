@@ -210,6 +210,31 @@ func TestInspectSourceRevalidatesHelmrIgnore(t *testing.T) {
 	}
 }
 
+func TestInspectSourceRejectsEnvironmentSecretsAndAcceptsExamples(t *testing.T) {
+	for _, name := range []string{".env", ".env.local", "packages/api/.env.production"} {
+		t.Run("reject "+name, func(t *testing.T) {
+			if _, err := InspectSource(sourceTar(t, map[string]string{
+				name:                "TOKEN=secret",
+				"package.json":      npmSourcePackageJSON,
+				"package-lock.json": `{"lockfileVersion":3}`,
+			}, nil)); err == nil || !strings.Contains(err.Error(), "likely secret") {
+				t.Fatalf("InspectSource error = %v", err)
+			}
+		})
+	}
+	for _, name := range []string{".env.example", ".env.production.sample", "packages/api/.env.template"} {
+		t.Run("accept "+name, func(t *testing.T) {
+			if _, err := InspectSource(sourceTar(t, map[string]string{
+				name:                "TOKEN=",
+				"package.json":      npmSourcePackageJSON,
+				"package-lock.json": `{"lockfileVersion":3}`,
+			}, nil)); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestInspectSourceRejectsNonUSTARPath(t *testing.T) {
 	files := map[string]string{
 		"package.json":           npmSourcePackageJSON,

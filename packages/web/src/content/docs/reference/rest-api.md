@@ -20,16 +20,6 @@ Helmr-API-Version: 2026-06-06
 
 The date is a fixed build constant, not the request date. The control plane echoes the effective version in `Helmr-API-Version`. Requests with an unsupported non-empty version return `400 Bad Request`; omitted versions currently default to the current version during pre-release development. Header values are exact and are not trimmed.
 
-Client provenance headers are separate from the API contract:
-
-| Header | Meaning |
-| --- | --- |
-| `Helmr-Client-Version` | Generic client build version. |
-| `Helmr-CLI-Version` | CLI build version for CLI-originated requests. |
-| `Helmr-SDK-Version` | SDK package version for SDK-originated requests. |
-
-These provenance headers are recorded on deployments and runs where available. They are opaque diagnostic metadata rather than SemVer or compatibility gates. A value must be valid UTF-8, have no surrounding whitespace or control characters, and be at most 255 bytes. Empty means unknown; invalid values return `400 Bad Request`.
-
 Common user/API-key routes:
 
 | Method | Path |
@@ -118,4 +108,4 @@ promotion reconciles them atomically. Authenticated Schedule routes are
 read-only list/retrieve operations; timing or lifecycle changes require another
 source Deployment promotion.
 
-`POST /api/deployments` records the API version, CLI version, SDK version, bundle format version, and worker protocol version used to create the deployment. Deployment responses include those fields plus the immutable deployment `version`. Promotion is separate from creation; promoting a deployment moves the selected environment's current deployment pointer.
+`POST /api/deployments` records the API and worker-protocol versions used to create the deployment. Deployment responses include those fields plus the immutable deployment `version`. Promotion is separate from creation; promoting a deployment moves the selected environment's current deployment pointer.

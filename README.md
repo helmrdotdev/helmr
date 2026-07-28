@@ -74,7 +74,8 @@ Use that URL to create a local owner session and inspect seeded runs.
 
 ## Define a task
 
-A Task binds TypeScript run logic to an explicit Workspace. The code inside the
+A Task binds JavaScript run logic to an explicit Workspace. You may author it
+in TypeScript and compile it with the project's own build. The code inside the
 Task can call any agent SDK or tool; Helmr owns the adapter protocol around it.
 
 Create a task project with `helmr.config.ts` and one or more task modules:
@@ -137,8 +138,7 @@ export const reviewPr = task({
 import { defineConfig } from "@helmr/sdk"
 
 export default defineConfig({
-  project: "github-pr-review",
-  dirs: ["./tasks"],
+  dirs: ["./dist/tasks"],
 })
 ```
 
@@ -154,7 +154,7 @@ flows.
 Remote Runs execute a deployed Task in an existing writable Workspace:
 
 ```sh
-helmr deploy PATH/TO/TASK_PROJECT
+helmr deploy PATH/TO/TASK_PROJECT --project PROJECT --env ENVIRONMENT
 
 WORKSPACE_ID="$(helmr workspace create github-pr-review \
   --key review-pr-123 \

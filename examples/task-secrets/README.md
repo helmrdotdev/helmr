@@ -6,5 +6,5 @@ be passed through Task payload.
 
 ```bash
 helmr secret create API_TOKEN "secret-value"
-helmr deploy PATH/TO/task-secrets
+helmr deploy PATH/TO/task-secrets --project PROJECT --env ENVIRONMENT
 ```

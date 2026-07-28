@@ -40,7 +40,7 @@ as billing; it does not branch worker enrollment, scheduling, runtime, or storag
 3. A Task start, Actor continuation, or Schedule fire creates a Run and attaches an explicit Workspace.
 4. Helmr validates the explicitly supplied Workspace and its deployed declaration.
 5. A worker in the matching worker group leases the run and receives the resolved task source, workspace mount metadata, secrets, and duration limit.
-6. The worker starts an isolated Linux guest, materializes the workspace, injects task-declared secrets, and runs the TypeScript task.
+6. The worker starts an isolated Linux guest, materializes the immutable JavaScript Program and workspace, injects task-declared secrets, and runs the Task with its pinned Managed Node.
 7. Logs, events, Task result or Actor records, metadata updates, failures, and waits return to the control plane.
 8. Terminal runs finish as `succeeded`, `failed`, or `cancelled`. The attached workspace can outlive the run.
 

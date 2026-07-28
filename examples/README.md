@@ -3,10 +3,10 @@
 Runnable Helmr task projects live here. Each example is a small project that
 shows one customer-facing workflow.
 
-Most Workspace images here use Node as the TypeScript task runtime and install
-task project dependencies with the package manager declared in `package.json`.
-The examples install Bun explicitly as the package manager; task code itself
-runs on the image-provided `node` executable.
+Helmr installs and builds each project with the exact Manager and Managed Node
+selected by `package.json`. Task code runs with that Managed Node. Node inside a
+Workspace image is separate tool authority used only by commands launched
+through the Workspace environment.
 
 Deploy the task source first, then start runs. Each run receives an empty writable
 workspace. If a task needs external files or repository contents, pass identifiers

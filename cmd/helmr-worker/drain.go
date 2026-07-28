@@ -16,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/executor"
-	"github.com/helmrdotdev/helmr/internal/version"
 	workerdaemon "github.com/helmrdotdev/helmr/internal/worker"
 )
 
@@ -55,7 +54,7 @@ func runDrain(log *slog.Logger, args []string) error {
 		return err
 	}
 	supportsRun, supportsBuild := identityRoles(identity.Roles)
-	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), client.WithWorkerService(identity.ServiceID, api.CurrentWorkerProtocolVersion, supportsRun, supportsBuild), client.WithClientIdentity("worker", version.Version))
+	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), client.WithWorkerService(identity.ServiceID, api.CurrentWorkerProtocolVersion, supportsRun, supportsBuild))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
@@ -157,7 +156,7 @@ func workerControlClient() (*client.Client, error) {
 		return nil, err
 	}
 	supportsRun, supportsBuild := identityRoles(identity.Roles)
-	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), client.WithWorkerService(identity.ServiceID, api.CurrentWorkerProtocolVersion, supportsRun, supportsBuild), client.WithClientIdentity("worker", version.Version))
+	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), client.WithWorkerService(identity.ServiceID, api.CurrentWorkerProtocolVersion, supportsRun, supportsBuild))
 	if err != nil {
 		return nil, fmt.Errorf("configure control client: %w", err)
 	}

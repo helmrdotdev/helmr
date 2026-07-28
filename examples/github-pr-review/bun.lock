@@ -1,0 +1,27 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "github-pr-review",
+      "dependencies": {
+        "@helmr/sdk": "latest",
+        "zod": "^4.4.3",
+      },
+      "devDependencies": {
+        "typescript": "^5.9.3",
+      },
+    },
+  },
+  "packages": {
+    "@bufbuild/protobuf": ["@bufbuild/protobuf@2.13.0", "", {}, "sha512-acq7c49vxfm1ggJ95P70TX7ABDM0vxr1SYD3BB0o0jnBLB4OAqeHyKuN+cD3w80gXEDQ2zxHpR6CUeA+O/aU9g=="],
+
+    "@helmr/proto": ["@helmr/proto@0.1.0", "", { "dependencies": { "@bufbuild/protobuf": "^2.11.0" } }, "sha512-mllwxmJ79Gir57QNBHIXdb+71PtUv3SsG6sz1sI0vllwRyJQKfCnnHYGjCJD5FevsNCwiC/u5SHtalJXc1azqQ=="],
+
+    "@helmr/sdk": ["@helmr/sdk@0.1.0", "", { "dependencies": { "@bufbuild/protobuf": "^2.11.0", "@helmr/proto": "0.1.0" } }, "sha512-BeOi5kC5FNSqSMO4ucelO0gKP6kZ6gneA5JpgnqBWXv2EZkLkc5IZTQXWshOxySysR5CWlJpFS6QnqWO9a+Ltg=="],
+
+    "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
+
+    "zod": ["zod@4.4.3", "", {}, "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=="],
+  }
+}

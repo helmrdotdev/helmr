@@ -12,10 +12,10 @@ The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint wit
 
 | Command | Purpose |
 | --- | --- |
-| `helmr init [--dir DIR] [--force]` | Create `package.json`, `helmr.config.ts`, and `tasks/hello.ts`. |
+| `helmr init [--dir DIR] [--force]` | Create `.helmrignore`, `package.json`, `tsconfig.json`, `helmr.config.ts`, and `tasks/hello.ts`. |
 | `helmr login [URL] [--no-browser]` | Start device-code auth and save a session token. Defaults to `--api-url`, `HELMR_API_URL`, saved host, or `https://helmr.dev`. |
 | `helmr logout [URL]` | Revoke the current saved session token for a host. |
-| `helmr deploy [path] [-p PROJECT] [-e ENV] [--env-file FILE] [--timeout DURATION] [--json]` | Parse `helmr.config.ts`, archive source, stream deployment progress, and create a deployment. |
+| `helmr deploy [path] [-p PROJECT] [-e ENV] [--timeout DURATION] [--json]` | Validate and archive source without executing it, stream deployment progress, and create a deployment. |
 | `helmr task list [--json]` | List deployed task definitions. |
 | `helmr task get TASK [--json]` | Show a deployed task definition. |
 | `helmr task start TASK --workspace WORKSPACE [-p PROJECT] [-e ENV] [--wait] [--follow] [--json]` | Start a deployed Task in an existing Workspace and return its Run. |

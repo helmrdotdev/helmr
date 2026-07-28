@@ -5,5 +5,5 @@ This example installs `ripgrep` with APT and runs `rg` from the Workspace cwd
 before writing a report.
 
 ```bash
-helmr deploy PATH/TO/cli-tooling
+helmr deploy PATH/TO/cli-tooling --project PROJECT --env ENVIRONMENT
 ```

@@ -77,7 +77,7 @@ describe("declaration discovery", () => {
     expect(result.buildPlan.definitions).toHaveLength(1)
   })
 
-  test("fails reserved output, dependency dirs, and non-branded config", async () => {
+  test("fails reserved output, dependency dirs, and invalid config", async () => {
     const reserved = await project()
     await mkdir(resolve(reserved, "helmr"))
     await config(reserved, { dirs: ["./tasks"] })
@@ -93,15 +93,32 @@ describe("declaration discovery", () => {
       architecture: "x86_64",
     })).rejects.toThrow("dependency namespace")
 
-    const unbranded = await project()
+    const invalid = await project()
     await writeFile(
-      resolve(unbranded, "helmr.config.ts"),
-      'export default { project: "helmr", dirs: ["./tasks"] }\n',
+      resolve(invalid, "helmr.config.ts"),
+      'export default { dirs: ["./tasks"], extra: true }\n',
     )
     await expect(analyzeProject({
-      root: unbranded,
+      root: invalid,
       architecture: "x86_64",
-    })).rejects.toThrow("defineConfig")
+    })).rejects.toThrow("valid config object")
+  })
+
+  test("accepts a structural config without SDK runtime branding", async () => {
+    const root = await project()
+    await writeModule(root, "tasks/task.ts", task("plain"))
+    await writeFile(
+      resolve(root, "helmr.config.ts"),
+      'export default { dirs: ["./tasks"] }\n',
+    )
+
+    const result = await analyzeProject({
+      root,
+      architecture: "x86_64",
+    })
+    expect(result.buildPlan.definitions.map((item) => item.declaredId)).toEqual([
+      "plain",
+    ])
   })
 })
 
@@ -133,7 +150,6 @@ async function config(
     [
       'import { defineConfig } from "@helmr/sdk"',
       `export default defineConfig(${JSON.stringify({
-        project: "helmr",
         dirs: options.dirs,
         ...(options.ignorePatterns === undefined
           ? {}

@@ -24,8 +24,6 @@ import type {
 import {
   HELMR_API_VERSION,
   HELMR_API_VERSION_HEADER,
-  HELMR_SDK_VERSION,
-  HELMR_SDK_VERSION_HEADER,
 } from "./version"
 import {
   createClientWorkspaces,
@@ -617,7 +615,6 @@ class ClientTransport {
       headers: {
         Authorization: `Bearer ${this.#apiKey}`,
         [HELMR_API_VERSION_HEADER]: HELMR_API_VERSION,
-        [HELMR_SDK_VERSION_HEADER]: HELMR_SDK_VERSION,
         ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
       },
       ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),

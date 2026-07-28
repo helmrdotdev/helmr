@@ -92,14 +92,6 @@ type Server struct {
 	devicePollEvery       time.Duration
 }
 
-type requestVersionMetadataContextKey struct{}
-
-type requestVersionMetadata struct {
-	APIVersion string
-	SDKVersion string
-	CLIVersion string
-}
-
 const (
 	deploymentModeSelfHosted   = "self-hosted"
 	deploymentModeManagedCloud = "managed-cloud"
@@ -363,50 +355,8 @@ func (s *Server) requireRequestVersions(next http.Handler) http.Handler {
 			}))
 			return
 		}
-		sdkVersion := r.Header.Get(api.SDKVersionHeader)
-		if err := api.ValidateClientVersion(sdkVersion); err != nil {
-			writeError(w, badRequest(codedError{
-				code:    "invalid_sdk_version",
-				message: fmt.Sprintf("invalid %s: %v", api.SDKVersionHeader, err),
-			}))
-			return
-		}
-		cliVersion := r.Header.Get(api.CLIVersionHeader)
-		if err := api.ValidateClientVersion(cliVersion); err != nil {
-			writeError(w, badRequest(codedError{
-				code:    "invalid_cli_version",
-				message: fmt.Sprintf("invalid %s: %v", api.CLIVersionHeader, err),
-			}))
-			return
-		}
-		clientVersion := r.Header.Get(api.ClientVersionHeader)
-		if err := api.ValidateClientVersion(clientVersion); err != nil {
-			writeError(w, badRequest(codedError{
-				code:    "invalid_cli_version",
-				message: fmt.Sprintf("invalid %s: %v", api.ClientVersionHeader, err),
-			}))
-			return
-		}
-		cliVersion = firstPresentString(cliVersion, clientVersion)
-		ctx := context.WithValue(r.Context(), requestVersionMetadataContextKey{}, requestVersionMetadata{
-			APIVersion: api.CurrentAPIVersion,
-			SDKVersion: sdkVersion,
-			CLIVersion: cliVersion,
-		})
-		next.ServeHTTP(w, r.WithContext(ctx))
+		next.ServeHTTP(w, r)
 	})
-}
-
-func requestAPIVersion(r *http.Request) string {
-	return requestVersionMetadataFromContext(r.Context()).APIVersion
-}
-
-func requestVersionMetadataFromContext(ctx context.Context) requestVersionMetadata {
-	metadata, _ := ctx.Value(requestVersionMetadataContextKey{}).(requestVersionMetadata)
-	if metadata.APIVersion == "" {
-		metadata.APIVersion = api.CurrentAPIVersion
-	}
-	return metadata
 }
 
 func (s *Server) mountAuthRoutes(r chi.Router) {

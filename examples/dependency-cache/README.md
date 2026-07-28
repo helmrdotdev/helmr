@@ -7,5 +7,5 @@ Workspace. Code-only changes update the Workspace report without
 rebuilding dependency layers.
 
 ```bash
-helmr deploy PATH/TO/dependency-cache
+helmr deploy PATH/TO/dependency-cache --project PROJECT --env ENVIRONMENT
 ```

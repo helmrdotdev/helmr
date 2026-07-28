@@ -256,6 +256,13 @@ func (snapshot *sourceSnapshot) collectDirectory(
 				childName,
 			)
 		}
+		if (info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) &&
+			IsSourceSecretPath(childName) {
+			return fmt.Errorf(
+				"canonical source contains likely secret %q; exclude it with .helmrignore",
+				childName,
+			)
+		}
 		if err := validateSourceEntry(childName, info, linkname); err != nil {
 			return err
 		}

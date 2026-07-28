@@ -46,7 +46,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	metadata, err := deploymentMetadataFromRequest(r, request)
+	metadata, err := deploymentMetadataFromRequest(request)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -201,8 +201,8 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, response)
 }
 
-func deploymentMetadataFromRequest(r *http.Request, request api.CreateDeploymentRequest) (deploymentVersionMetadata, error) {
-	apiVersion := firstPresentString(request.APIVersion, requestAPIVersion(r))
+func deploymentMetadataFromRequest(request api.CreateDeploymentRequest) (deploymentVersionMetadata, error) {
+	apiVersion := firstPresentString(request.APIVersion, api.CurrentAPIVersion)
 	if apiVersion != api.CurrentAPIVersion {
 		return deploymentVersionMetadata{}, fmt.Errorf("unsupported deployment api_version %q; current version is %s", apiVersion, api.CurrentAPIVersion)
 	}

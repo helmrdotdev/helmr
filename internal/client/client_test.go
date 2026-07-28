@@ -72,49 +72,16 @@ func TestNewAllowsPlainHTTPLoopback(t *testing.T) {
 	}
 }
 
-func TestClientSendsPinnedVersionHeaders(t *testing.T) {
+func TestClientSendsAPIVersionHeader(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get(api.APIVersionHeader); got != api.CurrentAPIVersion {
 			t.Fatalf("%s = %q", api.APIVersionHeader, got)
 		}
-		if got := r.Header.Get(api.ClientVersionHeader); got != "0.2.3-test" {
-			t.Fatalf("%s = %q", api.ClientVersionHeader, got)
-		}
-		if got := r.Header.Get(api.CLIVersionHeader); got != "0.2.3-test" {
-			t.Fatalf("%s = %q", api.CLIVersionHeader, got)
-		}
-		if got := r.Header.Get(api.SDKVersionHeader); got != "" {
-			t.Fatalf("%s = %q", api.SDKVersionHeader, got)
-		}
 		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "run-1"})
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithClientIdentity("cli", "0.2.3-test"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.StartTask(context.Background(), "deploy", api.StartTaskRequest{}, EnvironmentScopeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestClientSendsSDKVersionHeaderForSDKIdentity(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get(api.ClientVersionHeader); got != "1.2.3-sdk" {
-			t.Fatalf("%s = %q", api.ClientVersionHeader, got)
-		}
-		if got := r.Header.Get(api.SDKVersionHeader); got != "1.2.3-sdk" {
-			t.Fatalf("%s = %q", api.SDKVersionHeader, got)
-		}
-		if got := r.Header.Get(api.CLIVersionHeader); got != "" {
-			t.Fatalf("%s = %q", api.CLIVersionHeader, got)
-		}
-		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "run-1"})
-	}))
-	defer server.Close()
-
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithClientIdentity("sdk", "1.2.3-sdk"))
+	client, err := New(server.URL, WithHTTPClient(server.Client()))
 	if err != nil {
 		t.Fatal(err)
 	}

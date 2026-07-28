@@ -37,9 +37,11 @@ export async function loadConfig(root: string): Promise<HelmrConfig> {
   } catch (error) {
     throw new Error("failed to evaluate helmr.config.ts", { cause: error })
   }
-  const config = inspectConfig(namespace["default"])
-  if (config === undefined) {
-    throw new Error("helmr.config.ts must default-export defineConfig()")
+  try {
+    return inspectConfig(namespace["default"])
+  } catch (error) {
+    throw new Error("helmr.config.ts must default-export a valid config object", {
+      cause: error,
+    })
   }
-  return config
 }

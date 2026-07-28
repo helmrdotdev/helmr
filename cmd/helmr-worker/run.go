@@ -334,7 +334,6 @@ func run(log *slog.Logger) error {
 		candidate, candidateErr := client.New(cfg.ControlURL,
 			client.WithWorkerAuth(credential.WorkerInstanceID, credential.WorkerInstanceSecret),
 			client.WithWorkerService(serviceID, api.CurrentWorkerProtocolVersion, supportsRun, supportsBuild),
-			client.WithClientIdentity("worker", version.Version),
 		)
 		if candidateErr != nil {
 			return candidateErr

@@ -281,21 +281,6 @@ require_text 'LABEL dev.helmr.dev-release-provenance-sha256="${HELMR_DEV_RELEASE
 require_text 'LABEL dev.helmr.dev-release-artifact-digest="${HELMR_DEV_RELEASE_ARTIFACT_DIGEST}"' "$control_builder" \
 	"control image does not bind its authenticated GitHub artifact"
 
-if ! rg -F "scripts/build-config-inspector.sh" "$workflow" >/dev/null; then
-	printf 'release workflow does not refresh the config inspector before CLI builds\n' >&2
-	exit 1
-fi
-
-if ! rg -F "git diff --exit-code -- internal/project/js" "$workflow" >/dev/null; then
-	printf 'release workflow does not verify config inspector artifacts are current\n' >&2
-	exit 1
-fi
-
-if ! rg -F 'git status --porcelain -- internal/project/js' "$workflow" >/dev/null; then
-	printf 'release workflow does not reject untracked config inspector artifacts\n' >&2
-	exit 1
-fi
-
 if ! rg -F 'tar -C "$out_dir" -czf "dist/helmr-${os}-${arch}.tar.gz" helmr' "$workflow" >/dev/null; then
 	printf 'release workflow does not package the single helmr binary archive\n' >&2
 	exit 1

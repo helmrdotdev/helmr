@@ -8,8 +8,10 @@ order: 130
 
 # Tasks
 
-A Task is a TypeScript unit of work exported from a project. It has an ID,
-optional Run defaults, an optional payload schema, and a `run` function.
+A Task is authored in JavaScript or TypeScript and exported from a project. A
+TypeScript project compiles it through its own build; the Managed Runtime loads
+only JavaScript. A Task has an ID, optional Run defaults, an optional payload
+schema, and a `run` function.
 
 ```ts
 import { logger, task } from "@helmr/sdk"

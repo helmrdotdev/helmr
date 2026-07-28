@@ -6,9 +6,6 @@ cd "$repo_root"
 
 bun install --frozen-lockfile --ignore-scripts
 scripts/check-dev-samples.sh
-scripts/build-config-inspector.sh
-git diff --exit-code -- internal/project/js
-test -z "$(git status --porcelain -- internal/project/js)"
 scripts/build-runtime-entry.sh --check
 bun audit
 actionlint

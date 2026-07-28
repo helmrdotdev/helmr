@@ -2,8 +2,8 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,7 +23,10 @@ func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "helmr.config.ts"), []byte(`export default { dirs: ["tasks"] }`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"packageManager":"bun@1.3.10","dependencies":{"@helmr/sdk":"latest"}}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"type":"module","packageManager":"bun@1.3.10","devEngines":{"runtime":{"name":"node","version":"24.16.0","onFail":"error"}},"dependencies":{"@helmr/sdk":"latest"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "bun.lock"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(root, "node_modules", "@helmr", "sdk"), 0o755); err != nil {
@@ -57,36 +60,9 @@ func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "tasks", "generated.ts"), []byte("generated"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	configRuntime := filepath.Join(t.TempDir(), "config-runtime")
-	configRuntimeScript := `#!/bin/sh
-if [ "$1" = "-e" ]; then
-	exit 0
-fi
-if [ "$1" = "--import" ]; then
-	shift 2
-fi
-printf '%s\n' '{"project":""}'
-`
-	if err := os.WriteFile(configRuntime, []byte(configRuntimeScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	oldConfigRuntime := deployConfigRuntimePath
 	oldTemp := deployArchiveTempDir
-	deployConfigRuntimePath = configRuntime
 	deployArchiveTempDir = t.TempDir()
-	inspectorDir := t.TempDir()
-	inspectorPath := filepath.Join(inspectorDir, "inspect.js")
-	registerPath := filepath.Join(inspectorDir, "register.mjs")
-	if err := os.WriteFile(inspectorPath, []byte(""), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(registerPath, []byte(""), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HELMR_CONFIG_INSPECTOR_PATH", inspectorPath)
-	t.Setenv("HELMR_CONFIG_REGISTER_PATH", registerPath)
 	t.Cleanup(func() {
-		deployConfigRuntimePath = oldConfigRuntime
 		deployArchiveTempDir = oldTemp
 	})
 
@@ -172,6 +148,58 @@ printf '%s\n' '{"project":""}'
 	}
 	if !uploadedEntries[".helmrignore"] || !uploadedEntries["tasks/generated.ts"] {
 		t.Fatalf("source selection reused declaration ignorePatterns: %+v", uploadedEntries)
+	}
+}
+
+func TestDeployCommandDoesNotExecuteOrMutateSource(t *testing.T) {
+	root, _ := deployCommandFixture(t)
+	if err := os.RemoveAll(filepath.Join(root, "node_modules")); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "helmr.config.ts")
+	config := []byte("throw new Error(\"must not execute locally\")\nexport default { dirs: [\"./tasks\"] }\n")
+	if err := os.WriteFile(configPath, config, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(root, "bun.lock")
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/deployments" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1", Status: "queued"})
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"deploy", root, "--detach"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "node_modules")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("node_modules was created: %v", err)
+	}
+	lockAfter, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(lockAfter, lockBefore) {
+		t.Fatal("lockfile was mutated")
+	}
+	configAfter, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(configAfter, config) {
+		t.Fatal("config was mutated")
 	}
 }
 
@@ -323,35 +351,9 @@ func TestFailingBuildFixtureReachesDeploymentCreation(t *testing.T) {
 		}
 	}
 
-	configRuntime := filepath.Join(t.TempDir(), "config-runtime")
-	if err := os.WriteFile(configRuntime, []byte(`#!/bin/sh
-if [ "$1" = "-e" ]; then
-	exit 0
-fi
-if [ "$1" = "--import" ]; then
-	shift 2
-fi
-printf '%s\n' '{"project":"helmr"}'
-`), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	oldConfigRuntime := deployConfigRuntimePath
 	oldTemp := deployArchiveTempDir
-	deployConfigRuntimePath = configRuntime
 	deployArchiveTempDir = t.TempDir()
-	inspectorDir := t.TempDir()
-	inspectorPath := filepath.Join(inspectorDir, "inspect.js")
-	registerPath := filepath.Join(inspectorDir, "register.mjs")
-	if err := os.WriteFile(inspectorPath, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(registerPath, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HELMR_CONFIG_INSPECTOR_PATH", inspectorPath)
-	t.Setenv("HELMR_CONFIG_REGISTER_PATH", registerPath)
 	t.Cleanup(func() {
-		deployConfigRuntimePath = oldConfigRuntime
 		deployArchiveTempDir = oldTemp
 	})
 
@@ -473,54 +475,6 @@ func TestDeployCommandJSONUsesProjectAndEnv(t *testing.T) {
 	}
 }
 
-func TestLoadEnvFileDoesNotOverrideExistingEnv(t *testing.T) {
-	t.Setenv("APP_EXISTING", "ambient")
-	path := filepath.Join(t.TempDir(), "deploy.env")
-	if err := os.WriteFile(path, []byte("APP_EXISTING=file\nexport\tAPP_SINGLE='quoted value'\nAPP_DOUBLE=\"line\\nnext\"\nAPP_COMMENT=value # comment\nAPP_HASH=\"value # not comment\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := loadEnvFile(path); err != nil {
-		t.Fatal(err)
-	}
-	if got := os.Getenv("APP_EXISTING"); got != "ambient" {
-		t.Fatalf("APP_EXISTING = %q", got)
-	}
-	if got := os.Getenv("APP_SINGLE"); got != "quoted value" {
-		t.Fatalf("APP_SINGLE = %q", got)
-	}
-	if got := os.Getenv("APP_DOUBLE"); got != "line\nnext" {
-		t.Fatalf("APP_DOUBLE = %q", got)
-	}
-	if got := os.Getenv("APP_COMMENT"); got != "value" {
-		t.Fatalf("APP_COMMENT = %q", got)
-	}
-	if got := os.Getenv("APP_HASH"); got != "value # not comment" {
-		t.Fatalf("APP_HASH = %q", got)
-	}
-}
-
-func TestLoadEnvFileRejectsReservedHelmrNamespace(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "deploy.env")
-	if err := os.WriteFile(path, []byte("HELMR_CONFIG_RUNTIME_PATH=/tmp/node\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	err := loadEnvFile(path)
-	if err == nil || !strings.Contains(err.Error(), "HELMR_CONFIG_RUNTIME_PATH uses the reserved HELMR_ namespace") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestLoadEnvFileRejectsUnterminatedQuotedValue(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "deploy.env")
-	if err := os.WriteFile(path, []byte("APP_VALUE=\"unterminated\\\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	err := loadEnvFile(path)
-	if err == nil || !strings.Contains(err.Error(), "quoted value is not terminated") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
 func TestDeployCommandSkipPromotionDoesNotPromote(t *testing.T) {
 	root, _ := deployCommandFixture(t)
 	requests := []string{}
@@ -621,9 +575,58 @@ func TestDeployCommandRequiresResolvedDeploymentScopeWithSession(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root, "--env", "prod"})
+	cmd.SetArgs([]string{"deploy", root, "--project", "agents", "--env", "prod"})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "deployment deployment-1 response did not include resolved project_id and environment_id") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDeployCommandRequiresExplicitSessionScope(t *testing.T) {
+	state, _ := installTestCLIConfig(t)
+	root, _ := deployCommandFixture(t)
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("deployment request must not be sent without explicit scope")
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	if err := state.SaveLogin(server.URL, "session-test"); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "project", args: []string{"deploy", root, "--env", "prod"}, want: "--project is required with helmr login"},
+		{name: "environment", args: []string{"deploy", root, "--project", "agents"}, want: "--env is required with helmr login"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cmd := newRootCommand()
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			cmd.SetArgs(test.args)
+			err := cmd.Execute()
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
+func TestDeployCommandRejectsScopeFlagsWithEnvironmentKey(t *testing.T) {
+	root, _ := deployCommandFixture(t)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+	t.Setenv(helmrAPIURLEnv, "http://localhost:8080")
+
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"deploy", root, "--project", "agents", "--env", "prod"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--project and --env require helmr login") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -636,169 +639,7 @@ func TestDeployCommandRequiresPackageJSON(t *testing.T) {
 	cmd.SetArgs([]string{"deploy", root})
 
 	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "package.json is required for Helmr task projects") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestDeployCommandRequiresHelmrSDKDependency(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"packageManager":"bun@1.3.10","dependencies":{"left-pad":"1.3.0"}}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cmd := newRootCommand()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root})
-
-	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "package.json must declare @helmr/sdk in dependencies") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestPrepareLocalDeploySourceInstallsFreshTaskProject(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"packageManager":"bun@1.3.10","dependencies":{"@helmr/sdk":"latest"}}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	binDir := filepath.Join(t.TempDir(), "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	bun := filepath.Join(binDir, "bun")
-	if err := os.WriteFile(bun, []byte(`#!/bin/sh
-if [ "$1" != "install" ]; then
-  echo "unexpected bun args: $*" >&2
-  exit 1
-fi
-mkdir -p node_modules/@helmr/sdk
-printf '{"name":"@helmr/sdk"}' > node_modules/@helmr/sdk/package.json
-printf '%s\n' "$*" > bun-invocation.txt
-`), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	if err := prepareLocalDeploySource(context.Background(), root); err != nil {
-		t.Fatal(err)
-	}
-	invocation, err := os.ReadFile(filepath.Join(root, "bun-invocation.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.TrimSpace(string(invocation)); got != "install" {
-		t.Fatalf("bun invocation = %q", got)
-	}
-}
-
-func TestResolveConfigInspectorExtractsEmbeddedFiles(t *testing.T) {
-	t.Setenv("HELMR_CONFIG_INSPECTOR_PATH", "")
-	t.Setenv("HELMR_CONFIG_REGISTER_PATH", "")
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
-
-	inspector, err := resolveConfigInspector()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, path := range []string{inspector.ScriptPath, inspector.RegisterPath} {
-		if !isFile(path) {
-			t.Fatalf("config inspector file was not extracted: %s", path)
-		}
-	}
-}
-
-func TestResolveConfigInspectorRequiresCompleteOverride(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "register.mjs")
-	t.Setenv("HELMR_CONFIG_INSPECTOR_PATH", "")
-	t.Setenv("HELMR_CONFIG_REGISTER_PATH", missing)
-
-	_, err := resolveConfigInspector()
-	if err == nil || !strings.Contains(err.Error(), "HELMR_CONFIG_INSPECTOR_PATH and HELMR_CONFIG_REGISTER_PATH must be set together") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestRunConfigInspectorUsesEmbeddedScript(t *testing.T) {
-	nodePath := requireNodeForConfigInspector(t)
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "helmr.config.ts"), []byte(`import { defineConfig } from "@helmr/sdk"
-export default defineConfig({ project: "agents", dirs: ["./tasks"] })
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "tasks"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"type":"module","dependencies":{"@helmr/sdk":"latest"}}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	linkLocalWorkspacePackage(t, root, "@helmr/sdk", filepath.Join("sdk", "typescript"))
-	linkLocalWorkspacePackage(t, root, "@helmr/proto", filepath.Join("proto", "typescript"))
-	oldRuntime := deployConfigRuntimePath
-	deployConfigRuntimePath = nodePath
-	t.Cleanup(func() {
-		deployConfigRuntimePath = oldRuntime
-	})
-	t.Setenv("HELMR_CONFIG_INSPECTOR_PATH", "")
-	t.Setenv("HELMR_CONFIG_REGISTER_PATH", "")
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
-
-	cmd := newRootCommand()
-	cmd.SetContext(context.Background())
-	stdout, err := runConfigInspector(cmd, root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var config deployConfig
-	if err := json.Unmarshal(stdout, &config); err != nil {
-		t.Fatal(err)
-	}
-	if config.Project != "agents" {
-		t.Fatalf("config = %+v", config)
-	}
-}
-
-func TestRunConfigInspectorReportsMissingRuntime(t *testing.T) {
-	oldRuntime := deployConfigRuntimePath
-	deployConfigRuntimePath = filepath.Join(t.TempDir(), "missing-node")
-	t.Cleanup(func() {
-		deployConfigRuntimePath = oldRuntime
-	})
-
-	cmd := newRootCommand()
-	cmd.SetContext(context.Background())
-	_, err := runConfigInspector(cmd, t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "install node >=22.18") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestRunConfigInspectorReportsOldRuntime(t *testing.T) {
-	runtime := filepath.Join(t.TempDir(), "node")
-	if err := os.WriteFile(runtime, []byte(`#!/bin/sh
-if [ "$1" = "-e" ]; then
-  echo "node >=22.18 is required for helmr deploy; found 20.0.0" >&2
-  exit 1
-fi
-exit 0
-`), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	oldRuntime := deployConfigRuntimePath
-	deployConfigRuntimePath = runtime
-	t.Cleanup(func() {
-		deployConfigRuntimePath = oldRuntime
-	})
-
-	cmd := newRootCommand()
-	cmd.SetContext(context.Background())
-	_, err := runConfigInspector(cmd, t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "node >=22.18 is required for helmr deploy; found 20.0.0") {
+	if err == nil || !strings.Contains(err.Error(), "submitted source package.json must be a regular file") {
 		t.Fatalf("err = %v", err)
 	}
 }

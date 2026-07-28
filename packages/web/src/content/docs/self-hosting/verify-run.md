@@ -19,7 +19,7 @@ helmr login "$CONTROL_URL"
 Deploy the task project from a local checkout:
 
 ```sh
-helmr deploy .
+helmr deploy . --project PROJECT --env ENVIRONMENT
 ```
 
 Create a Workspace, start a small Task Run, and watch it reach a terminal state:

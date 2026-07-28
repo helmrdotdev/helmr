@@ -92,8 +92,7 @@ function TasksOnboarding() {
           <code class={"block overflow-x-auto whitespace-pre border border-console-border bg-console-bg-panel px-3 py-2 font-mono text-[12px] leading-relaxed text-console-text"}>{`import { defineConfig } from "@helmr/sdk"
 
 export default defineConfig({
-  project: "my-helmr-tasks",
-  dirs: ["./tasks"],
+  dirs: ["./dist/tasks"],
 })`}</code>
         </section>
         <section class={"grid gap-2 px-4 py-3"}>
@@ -102,7 +101,7 @@ export default defineConfig({
             <h3 class={"m-0 text-[13px] font-medium text-console-text"}>Deploy task definitions</h3>
           </div>
           <code class={"block overflow-x-auto border border-console-border bg-console-bg-panel px-3 py-2 font-mono text-[12px] text-console-text"}>
-            helmr deploy ./my-helmr-tasks
+            helmr deploy ./my-helmr-tasks --project PROJECT --env ENVIRONMENT
           </code>
         </section>
       </div>

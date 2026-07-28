@@ -6,8 +6,6 @@ import { installRuntimeOperations } from "./internal"
 import {
   HELMR_API_VERSION,
   HELMR_API_VERSION_HEADER,
-  HELMR_SDK_VERSION,
-  HELMR_SDK_VERSION_HEADER,
 } from "./version"
 
 describe("HelmrClient Tasks", () => {
@@ -312,7 +310,6 @@ describe("HelmrClient Tokens", () => {
     expect(requests[0]!.init?.headers).toMatchObject({
       Authorization: "Bearer api-key",
       [HELMR_API_VERSION_HEADER]: HELMR_API_VERSION,
-      [HELMR_SDK_VERSION_HEADER]: HELMR_SDK_VERSION,
     })
     expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
       timeout: "10m",

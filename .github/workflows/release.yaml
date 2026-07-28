@@ -704,9 +704,6 @@ jobs:
           nix develop --command bash <<'EOF'
           set -euo pipefail
           bun install --frozen-lockfile --ignore-scripts
-          scripts/build-config-inspector.sh
-          git diff --exit-code -- internal/project/js
-          test -z "$(git status --porcelain -- internal/project/js)"
           scripts/build-runtime-entry.sh --check
           mkdir -p dist/cli
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do

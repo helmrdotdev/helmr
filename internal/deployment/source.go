@@ -106,6 +106,13 @@ func InspectSource(body io.Reader) (SourceSelection, error) {
 		if sourceRootReserved(name) {
 			return SourceSelection{}, fmt.Errorf("submitted source contains reserved path %q", name)
 		}
+		if (header.Typeflag == tar.TypeReg || header.Typeflag == tar.TypeSymlink) &&
+			archive.IsSourceSecretPath(name) {
+			return SourceSelection{}, fmt.Errorf(
+				"submitted source contains likely secret %q",
+				name,
+			)
+		}
 		var raw []byte
 		if header.Typeflag == tar.TypeReg &&
 			(sourceAuthorityPath(name) || name == ".helmrignore") {

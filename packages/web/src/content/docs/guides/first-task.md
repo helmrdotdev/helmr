@@ -17,7 +17,9 @@ helmr init --dir ./my-helmr-tasks
 `helmr init` creates:
 
 - `helmr.config.ts`, which tells Helmr where to find tasks.
-- `package.json`, which declares the Helmr SDK dependency.
+- `.helmrignore`, which explicitly selects submitted source.
+- `package.json`, which selects exact Node and Manager releases and declares the Helmr SDK.
+- `tsconfig.json`, which compiles task source to `dist`.
 - `tasks/hello.ts`, a starter task.
 
 The starter shape is:
