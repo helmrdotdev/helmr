@@ -116,12 +116,9 @@ func InspectSource(body io.Reader) (SourceSelection, error) {
 		}
 		var raw []byte
 		if header.Typeflag == tar.TypeReg &&
-			(sourceAuthorityPath(name) || sourceManagerConfigPath(name) ||
-				name == ".helmrignore") {
+			(sourceAuthorityPath(name) || name == ".helmrignore") {
 			limit := int64(maxSubmittedSourceIgnoreBytes)
-			if sourceManagerConfigPath(name) {
-				limit = maxSourceManagerConfigBytes
-			} else if sourceAuthorityPath(name) {
+			if sourceAuthorityPath(name) {
 				switch name {
 				case "package.json":
 					limit = int64(maxPackageManifestSizeBytes)
@@ -150,12 +147,6 @@ func InspectSource(body io.Reader) (SourceSelection, error) {
 					"submitted source .helmrignore must be a regular UTF-8 file no larger than 1 MiB",
 				)
 			}
-			if sourceManagerConfigPath(name) {
-				return SourceSelection{}, fmt.Errorf(
-					"submitted source %s must be a regular file no larger than 1 MiB",
-					name,
-				)
-			}
 		case tar.TypeReg:
 			if header.Size < 0 || logicalBytes > maxSubmittedSourceLogicalBytes-header.Size {
 				return SourceSelection{}, fmt.Errorf(
@@ -166,11 +157,6 @@ func InspectSource(body io.Reader) (SourceSelection, error) {
 			logicalBytes += header.Size
 			if sourceAuthorityPath(name) {
 				candidates[name] = sourceCandidate{kind: header.Typeflag, raw: raw}
-			}
-			if sourceManagerConfigPath(name) {
-				if err := validateSourceManagerConfig(name, raw); err != nil {
-					return SourceSelection{}, err
-				}
 			}
 			if name == ".helmrignore" {
 				hasIgnore = true
@@ -184,12 +170,6 @@ func InspectSource(body io.Reader) (SourceSelection, error) {
 			}
 			if err := validateSourceLink(name, header.Linkname); err != nil {
 				return SourceSelection{}, err
-			}
-			if sourceManagerConfigPath(name) {
-				return SourceSelection{}, fmt.Errorf(
-					"submitted source %s must be a regular file no larger than 1 MiB",
-					name,
-				)
 			}
 			if sourceAuthorityPath(name) {
 				candidates[name] = sourceCandidate{kind: header.Typeflag}
@@ -257,9 +237,6 @@ func InspectSource(body io.Reader) (SourceSelection, error) {
 	}
 	lockfile, err := selectSourceLockfile(manager.Name, candidates)
 	if err != nil {
-		return SourceSelection{}, err
-	}
-	if err := validateSourceDependencies(object, manager.Name, lockfile); err != nil {
 		return SourceSelection{}, err
 	}
 	lockfiles := 0

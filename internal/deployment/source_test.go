@@ -268,23 +268,22 @@ func TestInspectSourceRejectsEnvironmentSecretsAndAcceptsExamples(t *testing.T) 
 	}
 }
 
-func TestInspectSourceAcceptsSafeManagerConfiguration(t *testing.T) {
+func TestInspectSourceTreatsManagerConfigurationAsSource(t *testing.T) {
 	tests := map[string]map[string]string{
 		"npm": {
-			".npmrc":            "registry=https://registry.example.com/npm/\nlegacy-peer-deps=true\n",
+			".npmrc":            "//registry.example.com/:_authToken=${NPM_TOKEN}\nstrict-ssl=false\n",
 			"package.json":      npmSourcePackageJSON,
 			"package-lock.json": `{"lockfileVersion":3}`,
 		},
 		"pnpm": {
-			".npmrc":              "registry=https://registry.example.com/npm/\nalways-auth=false\n",
+			".npmrc":              "https-proxy=https://proxy.example.com/\n",
 			"package.json":        pnpmSourcePackageJSON,
 			"pnpm-lock.yaml":      "lockfileVersion: '9.0'\n",
-			"pnpm-workspace.yaml": "packages:\n  - packages/*\nregistries:\n  default: https://registry.example.com/npm/\nnamedRegistries:\n  public: https://packages.example.com/npm/\nstrictSsl: true\n",
+			"pnpm-workspace.yaml": "packages:\n  - packages/*\n",
 		},
 		"bun": {
-			".npmrc":       "@public:registry=https://registry.example.com/npm/\n",
 			"bun.lock":     bunSourceLock,
-			"bunfig.toml":  "[install]\nexact = true\nregistry = \"https://registry.example.com/npm/\"\n[install.scopes]\npublic = { url = \"https://packages.example.com/npm/\" }\n",
+			"bunfig.toml":  "[install]\nregistry = { url = \"https://registry.example.com/\", token = \"$NPM_TOKEN\" }\n",
 			"package.json": bunSourcePackageJSON,
 		},
 		"pnpm build hook": {
@@ -297,88 +296,6 @@ func TestInspectSourceAcceptsSafeManagerConfiguration(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if _, err := InspectSource(sourceTar(t, files, nil)); err != nil {
 				t.Fatal(err)
-			}
-		})
-	}
-}
-
-func TestInspectSourceRejectsManagerConfigurationAuthority(t *testing.T) {
-	tests := map[string]map[string]string{
-		"npm token": {
-			".npmrc":            "//registry.example.com/:_authToken=secret\n",
-			"package.json":      npmSourcePackageJSON,
-			"package-lock.json": `{"lockfileVersion":3}`,
-		},
-		"npm interpolated token": {
-			".npmrc":            "//registry.example.com/:_authToken=${NPM_TOKEN}\n",
-			"package.json":      npmSourcePackageJSON,
-			"package-lock.json": `{"lockfileVersion":3}`,
-		},
-		"npm registry userinfo": {
-			".npmrc":            "registry=https://user:password@registry.example.com/\n",
-			"package.json":      npmSourcePackageJSON,
-			"package-lock.json": `{"lockfileVersion":3}`,
-		},
-		"npm plain HTTP": {
-			".npmrc":            "registry=http://registry.example.com/\n",
-			"package.json":      npmSourcePackageJSON,
-			"package-lock.json": `{"lockfileVersion":3}`,
-		},
-		"npm proxy": {
-			".npmrc":            "https-proxy=https://proxy.example.com/\n",
-			"package.json":      npmSourcePackageJSON,
-			"package-lock.json": `{"lockfileVersion":3}`,
-		},
-		"npm custom trust": {
-			".npmrc":            "cafile=certificates/ca.pem\n",
-			"package.json":      npmSourcePackageJSON,
-			"package-lock.json": `{"lockfileVersion":3}`,
-		},
-		"npm TLS weakening": {
-			".npmrc":            "strict-ssl=false\n",
-			"package.json":      npmSourcePackageJSON,
-			"package-lock.json": `{"lockfileVersion":3}`,
-		},
-		"pnpm registry interpolation": {
-			"package.json":        pnpmSourcePackageJSON,
-			"pnpm-lock.yaml":      "lockfileVersion: '9.0'",
-			"pnpm-workspace.yaml": "registries:\n  default: https://${REGISTRY_HOST}/\n",
-		},
-		"pnpm proxy": {
-			"package.json":        pnpmSourcePackageJSON,
-			"pnpm-lock.yaml":      "lockfileVersion: '9.0'",
-			"pnpm-workspace.yaml": "httpsProxy: https://proxy.example.com/\n",
-		},
-		"pnpm TLS weakening": {
-			"package.json":        pnpmSourcePackageJSON,
-			"pnpm-lock.yaml":      "lockfileVersion: '9.0'",
-			"pnpm-workspace.yaml": "strictSsl: false\n",
-		},
-		"bun token": {
-			"bun.lock":     bunSourceLock,
-			"bunfig.toml":  "[install]\nregistry = { url = \"https://registry.example.com/\", token = \"$NPM_TOKEN\" }\n",
-			"package.json": bunSourcePackageJSON,
-		},
-		"bun scope credential": {
-			"bun.lock":     bunSourceLock,
-			"bunfig.toml":  "[install.scopes]\nprivate = { url = \"https://registry.example.com/\", username = \"user\", password = \"password\" }\n",
-			"package.json": bunSourcePackageJSON,
-		},
-		"bun custom trust": {
-			"bun.lock":     bunSourceLock,
-			"bunfig.toml":  "[install]\ncafile = \"certificates/ca.pem\"\n",
-			"package.json": bunSourcePackageJSON,
-		},
-		"bun Fetch scanner": {
-			"bun.lock":     bunSourceLock,
-			"bunfig.toml":  "[install.security]\nscanner = \"@example/scanner\"\n",
-			"package.json": bunSourcePackageJSON,
-		},
-	}
-	for name, files := range tests {
-		t.Run(name, func(t *testing.T) {
-			if _, err := InspectSource(sourceTar(t, files, nil)); err == nil {
-				t.Fatal("InspectSource accepted Manager configuration authority")
 			}
 		})
 	}
