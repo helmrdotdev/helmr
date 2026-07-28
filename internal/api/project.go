@@ -71,10 +71,9 @@ func NormalizeEnvironmentColorHex(colorHex string) (string, error) {
 type CreateDeploymentRequest struct {
 	ProjectID             string `json:"project_id"`
 	EnvironmentID         string `json:"environment_id,omitempty"`
+	IdempotencyKey        string `json:"idempotency_key"`
 	ContentHash           string `json:"content_hash"`
 	APIVersion            string `json:"api_version,omitempty"`
-	SDKVersion            string `json:"sdk_version,omitempty"`
-	CLIVersion            string `json:"cli_version,omitempty"`
 	WorkerProtocolVersion string `json:"worker_protocol_version,omitempty"`
 }
 
@@ -87,8 +86,6 @@ type DeploymentResponse struct {
 	ID                    string                   `json:"id"`
 	Version               string                   `json:"version"`
 	APIVersion            string                   `json:"api_version"`
-	SDKVersion            string                   `json:"sdk_version,omitempty"`
-	CLIVersion            string                   `json:"cli_version,omitempty"`
 	WorkerProtocolVersion string                   `json:"worker_protocol_version"`
 	ProjectID             string                   `json:"project_id"`
 	EnvironmentID         string                   `json:"environment_id"`

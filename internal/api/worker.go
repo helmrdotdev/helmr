@@ -995,13 +995,12 @@ type WorkerDeploymentBuild struct {
 	ID                      string                   `json:"id"`
 	Version                 string                   `json:"version"`
 	APIVersion              string                   `json:"api_version"`
-	SDKVersion              string                   `json:"sdk_version,omitempty"`
-	CLIVersion              string                   `json:"cli_version,omitempty"`
 	WorkerProtocolVersion   string                   `json:"worker_protocol_version"`
 	ProjectID               string                   `json:"project_id"`
 	EnvironmentID           string                   `json:"environment_id"`
 	DeploymentSource        DeploymentSourceArtifact `json:"deployment_source"`
 	Runtime                 WorkerRuntimeDescriptor  `json:"runtime"`
+	NodeVersion             string                   `json:"node_version"`
 	Manager                 WorkerManagerPin         `json:"manager"`
 	StandardToolchainDigest string                   `json:"standard_toolchain_digest"`
 	BuildContractVersion    string                   `json:"build_contract_version"`

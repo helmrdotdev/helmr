@@ -1315,7 +1315,7 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 	if err != nil {
 		return err
 	}
-	claims, err := s.claims.TransactionForQueries(store)
+	claims, err := idempotency.TransactionForQueries(store)
 	if err != nil {
 		return err
 	}

@@ -144,9 +144,12 @@ printf '%s\n' '{"project":""}'
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root})
+	cmd.SetArgs([]string{"deploy", root, "--idempotency-key", "deploy-1"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
+	}
+	if metadata.IdempotencyKey != "deploy-1" {
+		t.Fatalf("deployment idempotency key = %q", metadata.IdempotencyKey)
 	}
 	if strings.TrimSpace(out.String()) != "20260101.1" {
 		t.Fatalf("output = %q", out.String())

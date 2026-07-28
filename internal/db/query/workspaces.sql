@@ -180,7 +180,6 @@ SELECT workspaces.*
 SELECT workspaces.*,
        environments.org_id,
        environments.project_id,
-       definitions.workspace_architecture,
        EXISTS (
            SELECT 1
              FROM workspace_leases

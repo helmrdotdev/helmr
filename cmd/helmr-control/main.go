@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,9 +11,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"sort"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -31,8 +27,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
-	"github.com/helmrdotdev/helmr/internal/idempotency"
-	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -68,18 +62,6 @@ func main() {
 		case "migrate":
 			if err := runMigrate(log, os.Args[2:]); err != nil {
 				log.Error("migrate database", "error", err)
-				os.Exit(1)
-			}
-			return
-		case "secrets":
-			if err := runSecretsCommand(log, os.Args[2:]); err != nil {
-				log.Error("manage secrets", "error", err)
-				os.Exit(1)
-			}
-			return
-		case "lookup-hmac":
-			if err := runLookupHMACCommand(log, os.Args[2:]); err != nil {
-				log.Error("inspect lookup HMAC keys", "error", err)
 				os.Exit(1)
 			}
 			return
@@ -202,15 +184,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			cancelServer()
 		}
 	}()
-	keyring, err := secret.KeyringFromBase64(cfg.SecretEncryptionKey, cfg.SecretEncryptionKeyOld)
-	if err != nil {
-		return fmt.Errorf("load secret encryption key: %w", err)
-	}
-	hashes, err := keyedhash.FromBase64JSON(cfg.LookupHMACKeys)
-	if err != nil {
-		return fmt.Errorf("load lookup HMAC keys: %w", err)
-	}
-	secretStore, err := secret.New(ctx, queries, pool, keyring, hashes)
+	secretStore, err := secret.New(queries, pool, cfg.EncryptionKey)
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}
@@ -258,7 +232,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 		RuntimeStore:         runtimeStore,
 		ManagerCatalog:       managerCatalog,
 		Secrets:              secretStore,
-		Idempotency:          idempotency.New(hashes),
 		SecretDelivery:       secretStore,
 		WorkspaceFencingKeys: workspaceFencingKeys,
 		TokenCredentialKeys:  tokenCredentialKeys,
@@ -381,342 +354,4 @@ func runMigrate(log *slog.Logger, args []string) error {
 	}
 	log.Info("database migrations are up to date")
 	return nil
-}
-
-func runSecretsCommand(log *slog.Logger, args []string) error {
-	if len(args) == 0 {
-		return secretCommandUsage()
-	}
-	cfg, err := config.LoadDatabase()
-	if err != nil {
-		return fmt.Errorf("load database config: %w", err)
-	}
-	currentKey := strings.TrimSpace(os.Getenv("HELMR_SECRET_ENCRYPTION_KEY"))
-	if currentKey == "" {
-		return errors.New("HELMR_SECRET_ENCRYPTION_KEY is required")
-	}
-	oldKey := strings.TrimSpace(os.Getenv("HELMR_SECRET_ENCRYPTION_KEY_OLD"))
-	hashes, err := keyedhash.FromBase64JSON(os.Getenv("HELMR_LOOKUP_HMAC_KEYS"))
-	if err != nil {
-		return fmt.Errorf("load lookup HMAC keys: %w", err)
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	pool, err := pgxpool.New(ctx, cfg.URL)
-	if err != nil {
-		return fmt.Errorf("connect database: %w", err)
-	}
-	defer pool.Close()
-	queries := db.New(pool)
-	keyring, err := secret.KeyringFromBase64(currentKey, oldKey)
-	if err != nil {
-		return fmt.Errorf("load secret encryption key: %w", err)
-	}
-	store, err := secret.New(ctx, queries, pool, keyring, hashes)
-	if err != nil {
-		return fmt.Errorf("configure secret store: %w", err)
-	}
-	switch args[0] {
-	case "encryption-key-usage":
-		if len(args) != 1 {
-			return errors.New("usage: helmr-control secrets encryption-key-usage")
-		}
-		usage, err := store.KeyUsage(ctx)
-		if err != nil {
-			return err
-		}
-		for _, row := range usage {
-			log.Info("secret key usage", "key_id", row.KeyID, "secret_count", row.SecretCount, "current", row.Current, "old", row.Old)
-		}
-		return nil
-	case "reencrypt":
-		limit, err := parseBatchLimit(args[1:], "reencrypt")
-		if err != nil {
-			return err
-		}
-		oldKeyID, ok := keyring.OldKeyID()
-		if !ok {
-			return errors.New("HELMR_SECRET_ENCRYPTION_KEY_OLD is required for secret re-encryption")
-		}
-		result, err := store.ReencryptBatch(ctx, oldKeyID, limit)
-		if err != nil {
-			return err
-		}
-		remaining, err := store.CountByKeyID(ctx, oldKeyID)
-		if err != nil {
-			return err
-		}
-		log.Info("secret re-encryption batch complete", "scanned", result.Scanned, "reencrypted", result.Reencrypted, "skipped", result.Skipped, "failed", result.Failed, "remaining_old_key_count", remaining)
-		if result.Failed > 0 {
-			return fmt.Errorf("%d secrets could not be decrypted with HELMR_SECRET_ENCRYPTION_KEY_OLD", result.Failed)
-		}
-		return nil
-	case "reauthenticate":
-		fromVersion, limit, err := parseReauthenticateArgs(args[1:])
-		if err != nil {
-			return err
-		}
-		result, err := store.ReauthenticateBatch(ctx, fromVersion, limit)
-		if err != nil {
-			return err
-		}
-		remaining, err := store.CountByAuthenticatorKeyVersion(ctx, fromVersion)
-		if err != nil {
-			return err
-		}
-		log.Info("secret re-authentication batch complete", "scanned", result.Scanned, "reauthenticated", result.Reauthenticated, "skipped", result.Skipped, "failed", result.Failed, "remaining_old_key_count", remaining)
-		if result.Failed > 0 {
-			return fmt.Errorf("%d secret versions could not be authenticated", result.Failed)
-		}
-		return nil
-	default:
-		return secretCommandUsage()
-	}
-}
-
-func secretCommandUsage() error {
-	return errors.New("usage: helmr-control secrets encryption-key-usage|reencrypt [--limit N]|reauthenticate --from-version N [--limit N]")
-}
-
-type lookupHMACUsage struct {
-	claimCount         int64
-	secretVersionCount int64
-	current            bool
-	active             bool
-	configured         bool
-	fingerprintMatches bool
-}
-
-func runLookupHMACCommand(log *slog.Logger, args []string) error {
-	if len(args) == 0 {
-		return lookupHMACCommandUsage()
-	}
-	cfg, err := config.LoadDatabase()
-	if err != nil {
-		return fmt.Errorf("load database config: %w", err)
-	}
-	hashes, err := keyedhash.FromBase64JSON(os.Getenv("HELMR_LOOKUP_HMAC_KEYS"))
-	if err != nil {
-		return fmt.Errorf("load lookup HMAC keys: %w", err)
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	pool, err := pgxpool.New(ctx, cfg.URL)
-	if err != nil {
-		return fmt.Errorf("connect database: %w", err)
-	}
-	defer pool.Close()
-	queries := db.New(pool)
-	authority := keyedhash.NewAuthority(hashes)
-	switch args[0] {
-	case "activate":
-		version, err := parseLookupHMACVersion(args[1:], "activate")
-		if err != nil {
-			return err
-		}
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			return fmt.Errorf("begin lookup HMAC activation: %w", err)
-		}
-		defer tx.Rollback(ctx)
-		created, err := authority.Activate(ctx, tx, version)
-		if err != nil {
-			return err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit lookup HMAC activation: %w", err)
-		}
-		log.Info("lookup HMAC version activated", "version", created.Version)
-		return nil
-	case "retire":
-		version, err := parseLookupHMACVersion(args[1:], "retire")
-		if err != nil {
-			return err
-		}
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			return fmt.Errorf("begin lookup HMAC retirement: %w", err)
-		}
-		defer tx.Rollback(ctx)
-		retired, err := authority.Retire(ctx, tx, version)
-		if err != nil {
-			return err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit lookup HMAC retirement: %w", err)
-		}
-		log.Info("lookup HMAC version retired", "version", retired.Version)
-		return nil
-	case "collect-claims":
-		limit, err := parseLookupHMACClaimLimit(args[1:])
-		if err != nil {
-			return err
-		}
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			return fmt.Errorf("begin idempotency claim collection: %w", err)
-		}
-		defer tx.Rollback(ctx)
-		txQueries := db.New(tx)
-		retired, err := txQueries.RetireExpiredIdempotencyClaims(ctx, limit)
-		if err != nil {
-			return fmt.Errorf("retire expired idempotency claims: %w", err)
-		}
-		collected, err := txQueries.CollectRetiredIdempotencyClaims(ctx, limit)
-		if err != nil {
-			return fmt.Errorf("collect retired idempotency claims: %w", err)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit idempotency claim collection: %w", err)
-		}
-		log.Info("idempotency claim collection complete", "retired", len(retired), "collected", len(collected))
-		return nil
-	case "key-usage":
-		if len(args) != 1 {
-			return lookupHMACCommandUsage()
-		}
-	default:
-		return lookupHMACCommandUsage()
-	}
-	versions, err := queries.ListLookupHMACVersions(ctx)
-	if err != nil {
-		return err
-	}
-	claimUsage, err := queries.ListIdempotencyHashKeyUsage(ctx)
-	if err != nil {
-		return err
-	}
-	secretUsage, err := queries.ListSecretAuthenticatorKeyUsage(ctx)
-	if err != nil {
-		return err
-	}
-	usage := make(map[int32]lookupHMACUsage, len(versions))
-	for _, row := range versions {
-		value := lookupHMACUsage{
-			current:    row.IsCurrent,
-			active:     !row.RetiredAt.Valid,
-			configured: hashes.Has(row.Version),
-		}
-		if value.configured {
-			fingerprint, err := hashes.Fingerprint(row.Version)
-			if err != nil {
-				return err
-			}
-			value.fingerprintMatches = bytes.Equal(fingerprint[:], row.KeyFingerprint)
-		}
-		usage[row.Version] = value
-	}
-	for _, row := range claimUsage {
-		value := usage[row.HashKeyVersion]
-		value.claimCount = row.ClaimCount
-		usage[row.HashKeyVersion] = value
-	}
-	for _, row := range secretUsage {
-		value := usage[row.AuthenticatorKeyVersion]
-		value.secretVersionCount = row.SecretCount
-		usage[row.AuthenticatorKeyVersion] = value
-	}
-	ordered := make([]int, 0, len(usage))
-	for version := range usage {
-		ordered = append(ordered, int(version))
-	}
-	sort.Ints(ordered)
-	for _, version := range ordered {
-		value := usage[int32(version)]
-		log.Info("lookup HMAC key usage",
-			"version", version,
-			"claim_count", value.claimCount,
-			"secret_version_count", value.secretVersionCount,
-			"current", value.current,
-			"active", value.active,
-			"configured", value.configured,
-			"fingerprint_matches", value.fingerprintMatches,
-		)
-	}
-	return nil
-}
-
-func parseLookupHMACVersion(args []string, command string) (int32, error) {
-	if len(args) != 2 || args[0] != "--version" {
-		return 0, lookupHMACCommandUsage()
-	}
-	version, err := strconv.ParseInt(args[1], 10, 32)
-	if err != nil || version <= 0 {
-		return 0, fmt.Errorf("%s --version must be a positive integer", command)
-	}
-	return int32(version), nil
-}
-
-func lookupHMACCommandUsage() error {
-	return errors.New("usage: helmr-control lookup-hmac activate|retire --version N | collect-claims [--limit N] | key-usage")
-}
-
-func parseLookupHMACClaimLimit(args []string) (int32, error) {
-	limit := int64(500)
-	if len(args) == 0 {
-		return int32(limit), nil
-	}
-	if len(args) != 2 || args[0] != "--limit" {
-		return 0, lookupHMACCommandUsage()
-	}
-	parsed, err := strconv.ParseInt(args[1], 10, 32)
-	if err != nil || parsed <= 0 {
-		return 0, errors.New("collect-claims --limit must be a positive integer")
-	}
-	return int32(parsed), nil
-}
-
-func parseBatchLimit(args []string, command string) (int32, error) {
-	limit := int64(500)
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--limit":
-			if i+1 >= len(args) {
-				return 0, errors.New("--limit requires a value")
-			}
-			parsed, err := strconv.ParseInt(args[i+1], 10, 32)
-			if err != nil {
-				return 0, fmt.Errorf("--limit must be an integer: %w", err)
-			}
-			limit = parsed
-			i++
-		default:
-			return 0, fmt.Errorf("unknown secrets %s argument %q", command, args[i])
-		}
-	}
-	if limit <= 0 {
-		return 0, errors.New("--limit must be positive")
-	}
-	return int32(limit), nil
-}
-
-func parseReauthenticateArgs(args []string) (int32, int32, error) {
-	var fromVersion int64
-	limitArgs := make([]string, 0, len(args))
-	for i := 0; i < len(args); i++ {
-		if args[i] != "--from-version" {
-			limitArgs = append(limitArgs, args[i])
-			continue
-		}
-		if fromVersion != 0 {
-			return 0, 0, errors.New("--from-version may only be specified once")
-		}
-		if i+1 >= len(args) {
-			return 0, 0, errors.New("--from-version requires a value")
-		}
-		parsed, err := strconv.ParseInt(args[i+1], 10, 32)
-		if err != nil || parsed <= 0 {
-			return 0, 0, errors.New("--from-version must be a positive 32-bit integer")
-		}
-		fromVersion = parsed
-		i++
-	}
-	if fromVersion == 0 {
-		return 0, 0, errors.New("--from-version is required")
-	}
-	limit, err := parseBatchLimit(limitArgs, "reauthenticate")
-	if err != nil {
-		return 0, 0, err
-	}
-	return int32(fromVersion), limit, nil
 }

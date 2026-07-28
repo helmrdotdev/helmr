@@ -8,7 +8,6 @@ INSERT INTO deployment_definitions (
     manifest_version,
     manifest,
     manifest_digest,
-    workspace_architecture,
     artifact_id
 ) VALUES (
     sqlc.arg(id),
@@ -19,7 +18,6 @@ INSERT INTO deployment_definitions (
     sqlc.arg(manifest_version),
     sqlc.arg(manifest),
     sqlc.arg(manifest_digest),
-    sqlc.narg(workspace_architecture),
     sqlc.narg(artifact_id)
 )
 RETURNING *;
@@ -72,13 +70,9 @@ SELECT deployments.id AS deployment_id,
        program_artifact.digest AS program_artifact_digest,
        program_artifact.size_bytes AS program_artifact_size_bytes,
        program_artifact.media_type AS program_artifact_media_type,
-       deployments.program_runtime_digest,
-       deployments.program_architecture,
+       deployments.build_runtime_digest,
        deployments.build_contract_version,
-       COALESCE(
-           deployments.program_receipt #>> '{program,indexDigest}',
-           ''
-       )::text AS program_index_digest,
+       deployments.program_index_digest,
        deployments.queue_config
   FROM deployments
   JOIN artifacts AS program_artifact

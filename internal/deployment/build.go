@@ -281,6 +281,7 @@ func (builder Builder) build(
 		lease,
 		plan,
 		tree,
+		target.Runtime.Architecture,
 	)
 	if err != nil {
 		var fatal interface{ FatalWorker() bool }
@@ -447,6 +448,7 @@ func (builder Builder) buildWorkspaceImages(
 	lease api.WorkerDeploymentBuildLease,
 	plan BuildPlan,
 	tree *BuildTree,
+	architecture RuntimeArchitecture,
 ) (_ []WorkspaceImage, returnErr error) {
 	workspaces := make([]DefinitionInput, 0)
 	for _, definition := range plan.Definitions {
@@ -479,7 +481,7 @@ func (builder Builder) buildWorkspaceImages(
 		object, verifyErr := builder.storeWorkspaceImage(
 			ctx,
 			artifact,
-			definition.Workspace.Architecture,
+			architecture,
 		)
 		cleanupErr := cleanupImageArtifact(artifact)
 		if verifyErr != nil || cleanupErr != nil {
@@ -491,7 +493,7 @@ func (builder Builder) buildWorkspaceImages(
 				Digest:       object.Digest,
 				SizeBytes:    object.SizeBytes,
 				MediaType:    object.MediaType,
-				Architecture: definition.Workspace.Architecture,
+				Architecture: architecture,
 			},
 		})
 	}

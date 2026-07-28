@@ -25,7 +25,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
-	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/token"
@@ -70,7 +69,6 @@ type Server struct {
 	runtimeStore          cas.Reader
 	managerCatalog        *deployment.ManagerCatalog
 	secrets               SecretManager
-	claims                idempotency.Manager
 	secretDelivery        SecretDeliveryOpener
 	workspaceFencingKeys  workspace.FencingKeys
 	tokenCredentialKeys   token.CredentialKeys
@@ -128,7 +126,6 @@ type ServerConfig struct {
 	RuntimeStore         cas.Reader
 	ManagerCatalog       *deployment.ManagerCatalog
 	Secrets              SecretManager
-	Idempotency          idempotency.Manager
 	SecretDelivery       SecretDeliveryOpener
 	WorkspaceFencingKeys workspace.FencingKeys
 	TokenCredentialKeys  token.CredentialKeys
@@ -252,7 +249,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		runtimeStore:          cfg.RuntimeStore,
 		managerCatalog:        cfg.ManagerCatalog,
 		secrets:               cfg.Secrets,
-		claims:                cfg.Idempotency,
 		secretDelivery:        cfg.SecretDelivery,
 		workspaceFencingKeys:  cfg.WorkspaceFencingKeys,
 		tokenCredentialKeys:   cfg.TokenCredentialKeys,

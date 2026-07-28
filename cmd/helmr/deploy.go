@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/project"
-	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -38,6 +38,7 @@ func deployCommand() *cobra.Command {
 	var skipPromotion bool
 	var timeout time.Duration
 	var jsonOutput bool
+	var idempotencyKey string
 	cmd := &cobra.Command{
 		Use:   "deploy [path]",
 		Short: "Deploy tasks from a helmr.config.ts project.",
@@ -77,10 +78,6 @@ func deployCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			sdkVersion, err := installedTaskProjectPackageVersion(absRoot, "@helmr/sdk")
-			if err != nil {
-				return err
-			}
 			if err := reporter.Step("Creating archive"); err != nil {
 				return err
 			}
@@ -109,11 +106,13 @@ func deployCommand() *cobra.Command {
 				return err
 			}
 			deployRequest := api.CreateDeploymentRequest{
+				IdempotencyKey:        strings.TrimSpace(idempotencyKey),
 				ContentHash:           tarArchive.Digest,
 				APIVersion:            api.CurrentAPIVersion,
-				SDKVersion:            sdkVersion,
-				CLIVersion:            version.Version,
 				WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
+			}
+			if deployRequest.IdempotencyKey == "" {
+				deployRequest.IdempotencyKey = uuid.Must(uuid.NewV7()).String()
 			}
 			if control.UsesSessionScopedRoutes() {
 				deployRequest.ProjectID = project
@@ -162,6 +161,7 @@ func deployCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&skipPromotion, "skip-promotion", false, "Build the deployment without promoting it current.")
 	cmd.Flags().DurationVar(&timeout, "timeout", deployDefaultWaitTimeout, "Maximum time to wait for deployment completion.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit JSON lines for deployment progress.")
+	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for retrying deployment creation.")
 	return cmd
 }
 
@@ -392,10 +392,6 @@ type taskProjectPackageMetadata struct {
 	PackageManager string         `json:"packageManager"`
 }
 
-type nodePackageMetadata struct {
-	Version string `json:"version"`
-}
-
 func validateTaskProjectPackageJSON(cwd string) (taskProjectPackageMetadata, error) {
 	packagePath := filepath.Join(cwd, "package.json")
 	metadata, err := os.Stat(packagePath)
@@ -444,25 +440,6 @@ func taskProjectDependencyInstalled(cwd string, name string) bool {
 	return err == nil
 }
 
-func installedTaskProjectPackageVersion(cwd string, name string) (string, error) {
-	path, err := installedTaskProjectPackagePath(cwd, name)
-	if err != nil {
-		return "", err
-	}
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read %s package metadata: %w", name, err)
-	}
-	var metadata nodePackageMetadata
-	if err := json.Unmarshal(body, &metadata); err != nil {
-		return "", fmt.Errorf("decode %s package metadata: %w", name, err)
-	}
-	if strings.TrimSpace(metadata.Version) == "" {
-		return "", nil
-	}
-	return strings.TrimSpace(metadata.Version), nil
-}
-
 func installedTaskProjectPackagePath(cwd string, name string) (string, error) {
 	current := filepath.Clean(cwd)
 	for {
@@ -508,7 +485,7 @@ func taskProjectPackageInstallCommand(cwd string, packageManager string) (string
 	switch name {
 	case "bun":
 		args := []string{"install"}
-		if taskProjectFileExists(filepath.Join(cwd, "bun.lock")) || taskProjectFileExists(filepath.Join(cwd, "bun.lockb")) {
+		if taskProjectFileExists(filepath.Join(cwd, "bun.lock")) {
 			args = append(args, "--frozen-lockfile")
 		}
 		return "bun", args, nil

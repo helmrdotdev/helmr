@@ -170,7 +170,7 @@ func TestValidateBuildSucceeded(t *testing.T) {
 		{
 			name: "program provenance",
 			change: func(result *BuildResult) {
-				result.Succeeded.Program.Index.Manager.Version = "11.0.1"
+				result.Succeeded.Program.Index.Manager.Version = "1.3.11"
 			},
 			errMsg: "program provenance does not match",
 		},
@@ -304,8 +304,6 @@ func TestValidateBuildResultTarget(t *testing.T) {
 	workspaceOnly.Succeeded.Plan.Queues = []QueueInput{}
 	workspaceOnly.Succeeded.Program = nil
 	workspaceOnly.Succeeded.Provenance.Architecture = RuntimeArchitecture("aarch64")
-	workspaceOnly.Succeeded.Plan.Definitions[0].Workspace.Architecture = RuntimeArchitecture("aarch64")
-	workspaceOnly.Succeeded.Plan.Definitions[0].Workspace.ImageBuild.Images[0].Platform.Architecture = "aarch64"
 	workspaceOnly.Succeeded.WorkspaceImages[0].Artifact.Architecture = RuntimeArchitecture("aarch64")
 	err := ValidateBuildResultTarget(
 		workspaceOnly,
@@ -347,15 +345,13 @@ func TestValidateBuildResultAppliesPlanSizeBound(t *testing.T) {
 					}},
 				},
 				Resources: ResourcesManifest{
-					MilliCPU:         1000,
-					MemoryMiB:        1024,
-					EphemeralDiskMiB: 8192,
+					MilliCPU:  1000,
+					MemoryMiB: 1024,
 				},
 				Network: NetworkManifest{
 					Internet:  true,
 					DenyCIDRs: []string{},
 				},
-				Architecture: ArchitectureX8664,
 			},
 		}
 		images[index] = WorkspaceImage{

@@ -222,7 +222,7 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 				return err
 			}
 		}
-		claims, err := s.claims.TransactionForQueries(work.q)
+		claims, err := idempotency.TransactionForQueries(work.q)
 		if err != nil {
 			return err
 		}
@@ -285,13 +285,6 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 			default:
 				return errWorkspaceBusy
 			}
-		}
-		if !authority.WorkspaceArchitecture.Valid ||
-			authority.WorkspaceArchitecture.String != "x86_64" {
-			return conflict(codedError{
-				code:    "workspace_architecture_unsupported",
-				message: "Workspace exec requires x86_64 in v0",
-			})
 		}
 		if authority.OwnerActorID.Valid || authority.OwnerRunID.Valid ||
 			authority.HasActiveLease || authority.HasActiveProcess {

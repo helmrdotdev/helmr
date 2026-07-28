@@ -311,7 +311,6 @@ func lockWorkspaceExecAuthority(
 ) (workspaceExecAuthority, error) {
 	var authority workspaceExecAuthority
 	var manifest []byte
-	var architecture pgtype.Text
 	err := tx.QueryRow(ctx, `
 SELECT workspace_processes.id,
        workspace_processes.state_version,
@@ -324,8 +323,7 @@ SELECT workspace_processes.id,
        workspaces.region_id,
        workspaces.ownership_generation,
        workspaces.writer_generation,
-       definitions.manifest,
-       definitions.workspace_architecture
+       definitions.manifest
   FROM workspace_processes
   JOIN workspaces
     ON workspaces.environment_id = workspace_processes.environment_id
@@ -376,16 +374,9 @@ SELECT workspace_processes.id,
 		&authority.ownershipGeneration,
 		&authority.writerGeneration,
 		&manifest,
-		&architecture,
 	)
 	if err != nil {
 		return workspaceExecAuthority{}, err
-	}
-	if !architecture.Valid || architecture.String != "x86_64" {
-		return workspaceExecAuthority{}, workspaceExecPermanentError{
-			code: "workspace_exec_architecture_unsupported",
-			err:  errors.New("Workspace exec architecture is unsupported"),
-		}
 	}
 	var workspaceManifest deployment.WorkspaceManifest
 	decoder := json.NewDecoder(bytes.NewReader(manifest))
@@ -416,7 +407,7 @@ SELECT workspace_processes.id,
 	}
 	authority.resources = resources
 	authority.networkPolicy = network
-	authority.architecture = architecture.String
+	authority.architecture = platformArchitecture
 	return authority, nil
 }
 

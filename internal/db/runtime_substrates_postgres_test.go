@@ -27,9 +27,9 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 	mustExec(t, ctx, pool, `
 		INSERT INTO deployment_definitions (
 			id, environment_id, deployment_id, kind, declared_id,
-			manifest_version, manifest, manifest_digest, workspace_architecture, artifact_id
+			manifest_version, manifest, manifest_digest, artifact_id
 		) VALUES ($1, $2, $3, 'workspace', 'substrate-test', 0, '{}'::jsonb,
-		          decode(repeat('01', 32), 'hex'), 'x86_64', $4)
+		          decode(repeat('01', 32), 'hex'), $4)
 	`, definitionID, ids.environmentID, ids.deploymentID, ids.workspaceImageArtifactID)
 
 	artifactID := seedRuntimeSubstrateArtifact(t, ctx, pool, ids, "first", 4096)
@@ -278,14 +278,14 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	mustAuthorityExec(t, ctx, pool, `
 		INSERT INTO deployments (
 			id, public_id, org_id, build_region_id, project_id, environment_id,
-			build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+			build_node_version, build_runtime_digest, build_standard_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
 			build_contract_version, version, content_hash, deployment_source_artifact_id,
 			queue_config, status
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, 'x86_64',
+			$1, $2, $3, $4, $5, $6, '24.16.0',
 			decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
-			'bun', '1.2.3', decode(repeat('22', 32), 'hex'),
+			'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
 			'helmr.program-build.v0', 'authority', $7, $8, '{}'::jsonb, 'deployed'
 		)
 	`, deploymentID, testPublicID(t, publicid.Deployment), orgID, dbtest.DefaultRegionID,
@@ -294,10 +294,10 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	mustAuthorityExec(t, ctx, pool, `
 		INSERT INTO deployment_definitions (
 			id, environment_id, deployment_id, kind, declared_id,
-			manifest_version, manifest, manifest_digest, workspace_architecture, artifact_id
+			manifest_version, manifest, manifest_digest, artifact_id
 		) VALUES (
 			$1, $2, $3, 'workspace', 'authority-workspace', 0, '{}'::jsonb,
-			decode(repeat('03', 32), 'hex'), 'x86_64', $4
+			decode(repeat('03', 32), 'hex'), $4
 		)
 	`, definitionID, environmentID, deploymentID, imageArtifactID)
 

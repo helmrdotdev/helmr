@@ -202,14 +202,6 @@ func ValidateBuildResultTarget(
 			return errors.New("build result program architecture does not match target")
 		}
 	}
-	for _, workspace := range buildPlanWorkspaces(succeeded.Plan) {
-		if workspace.Architecture != architecture {
-			return fmt.Errorf(
-				"build result workspace %q architecture does not match target",
-				workspace.DeclaredID,
-			)
-		}
-	}
 	return nil
 }
 
@@ -360,14 +352,6 @@ func validateBuildSucceeded(succeeded BuildSucceeded) error {
 	}
 
 	workspaces := buildPlanWorkspaces(succeeded.Plan)
-	for _, workspace := range workspaces {
-		if workspace.Architecture != succeeded.Provenance.Architecture {
-			return fmt.Errorf(
-				"build result workspace %q architecture does not match provenance",
-				workspace.DeclaredID,
-			)
-		}
-	}
 	if len(succeeded.WorkspaceImages) != len(workspaces) {
 		return errors.New("build result workspaceImages do not match plan")
 	}
@@ -394,8 +378,11 @@ func validateBuildSucceeded(succeeded BuildSucceeded) error {
 				WorkspaceImageArtifactMediaType,
 			)
 		}
-		if image.Artifact.Architecture != workspace.Architecture {
-			return fmt.Errorf("build result workspaceImages[%d] architecture does not match plan", index)
+		if image.Artifact.Architecture != succeeded.Provenance.Architecture {
+			return fmt.Errorf(
+				"build result workspaceImages[%d] architecture does not match provenance",
+				index,
+			)
 		}
 	}
 	return nil
@@ -449,8 +436,7 @@ func validateBuildLogs(logs BuildLogs) error {
 }
 
 type buildPlanWorkspace struct {
-	DeclaredID   string
-	Architecture RuntimeArchitecture
+	DeclaredID string
 }
 
 func buildPlanWorkspaces(plan BuildPlan) []buildPlanWorkspace {
@@ -460,8 +446,7 @@ func buildPlanWorkspaces(plan BuildPlan) []buildPlanWorkspace {
 			continue
 		}
 		workspaces = append(workspaces, buildPlanWorkspace{
-			DeclaredID:   definition.DeclaredID,
-			Architecture: definition.Workspace.Architecture,
+			DeclaredID: definition.DeclaredID,
 		})
 	}
 	return workspaces

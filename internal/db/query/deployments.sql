@@ -6,17 +6,12 @@ INSERT INTO deployments (
     project_id,
     environment_id,
     build_region_id,
-    build_architecture,
-    build_runtime_digest,
-    build_standard_toolchain_digest,
+    build_node_version,
     build_manager_name,
     build_manager_version,
-    build_manager_digest,
     build_contract_version,
     version,
     api_version,
-    sdk_version,
-    cli_version,
     worker_protocol_version,
     content_hash,
     deployment_source_artifact_id,
@@ -28,17 +23,12 @@ SELECT sqlc.arg(id),
        sqlc.arg(project_id),
        sqlc.arg(environment_id),
        sqlc.arg(build_region_id),
-       sqlc.arg(build_architecture),
-       sqlc.arg(build_runtime_digest),
-       sqlc.arg(build_standard_toolchain_digest),
+       sqlc.arg(build_node_version),
        sqlc.arg(build_manager_name),
        sqlc.arg(build_manager_version),
-       sqlc.arg(build_manager_digest),
        sqlc.arg(build_contract_version),
        sqlc.arg(version),
        sqlc.arg(api_version),
-       sqlc.arg(sdk_version),
-       sqlc.arg(cli_version),
        sqlc.arg(worker_protocol_version),
        sqlc.arg(content_hash),
        sqlc.arg(deployment_source_artifact_id),
@@ -55,6 +45,42 @@ SELECT sqlc.arg(id),
 	      AND projects.default_region_id = sqlc.arg(build_region_id)
 	 )
 RETURNING *;
+
+-- name: PinDeploymentPlatformArtifacts :one
+WITH locked AS MATERIALIZED (
+    SELECT deployments.*
+      FROM deployments
+     WHERE deployments.org_id = sqlc.arg(org_id)
+       AND deployments.project_id = sqlc.arg(project_id)
+       AND deployments.environment_id = sqlc.arg(environment_id)
+       AND deployments.id = sqlc.arg(id)
+       AND deployments.status = 'queued'
+       AND deployments.current_build_lease_id IS NULL
+     FOR UPDATE
+),
+installed AS (
+    UPDATE deployments
+       SET build_runtime_digest = sqlc.arg(build_runtime_digest),
+           build_standard_toolchain_digest = sqlc.arg(build_standard_toolchain_digest),
+           build_manager_digest = sqlc.arg(build_manager_digest),
+           updated_at = now()
+      FROM locked
+     WHERE deployments.id = locked.id
+       AND locked.build_runtime_digest IS NULL
+       AND locked.build_standard_toolchain_digest IS NULL
+       AND locked.build_manager_digest IS NULL
+    RETURNING deployments.*
+)
+SELECT installed.*
+  FROM installed
+UNION ALL
+SELECT locked.*
+  FROM locked
+ WHERE locked.build_runtime_digest = sqlc.arg(build_runtime_digest)
+   AND locked.build_standard_toolchain_digest = sqlc.arg(build_standard_toolchain_digest)
+   AND locked.build_manager_digest = sqlc.arg(build_manager_digest)
+   AND NOT EXISTS (SELECT 1 FROM installed)
+LIMIT 1;
 
 -- name: MarkDeploymentFailed :one
 UPDATE deployments
@@ -77,12 +103,9 @@ WITH candidate AS MATERIALIZED (
        AND deployments.id = sqlc.arg(deployment_id)
        AND deployments.status IN ('queued', 'building')
        AND deployments.build_region_id = sqlc.arg(build_region_id)
-       AND deployments.build_architecture = sqlc.arg(build_architecture)
-       AND deployments.build_requested_cpu_millis = sqlc.arg(requested_cpu_millis)
-       AND deployments.build_requested_memory_bytes = sqlc.arg(requested_memory_bytes)
-       AND deployments.build_requested_workload_disk_bytes = sqlc.arg(requested_workload_disk_bytes)
-       AND deployments.build_requested_scratch_bytes = sqlc.arg(requested_scratch_bytes)
-       AND deployments.build_requested_executors = sqlc.arg(requested_build_executors)
+       AND deployments.build_runtime_digest IS NOT NULL
+       AND deployments.build_standard_toolchain_digest IS NOT NULL
+       AND deployments.build_manager_digest IS NOT NULL
        AND deployments.current_build_lease_id IS NULL
        AND sqlc.arg(lease_sequence)::bigint = (
            SELECT COALESCE(max(deployment_build_leases.lease_sequence), 0) + 1
@@ -132,10 +155,8 @@ advanced AS (
 SELECT inserted.*,
        advanced.version,
        advanced.api_version,
-       advanced.sdk_version,
-       advanced.cli_version,
        advanced.content_hash,
-       advanced.build_architecture,
+       advanced.build_node_version,
        advanced.build_runtime_digest,
        advanced.build_standard_toolchain_digest,
        advanced.build_contract_version,
@@ -260,12 +281,6 @@ SELECT deployments.org_id,
        deployments.environment_id,
        deployments.id AS deployment_id,
        deployments.build_region_id,
-       deployments.build_architecture,
-       deployments.build_requested_cpu_millis,
-       deployments.build_requested_memory_bytes,
-       deployments.build_requested_workload_disk_bytes,
-       deployments.build_requested_scratch_bytes,
-       deployments.build_requested_executors,
        (COALESCE((
            SELECT max(deployment_build_leases.lease_sequence)
              FROM deployment_build_leases
@@ -275,6 +290,9 @@ SELECT deployments.org_id,
   FROM deployments
  WHERE deployments.build_region_id = sqlc.arg(build_region_id)
    AND deployments.status IN ('queued', 'building')
+   AND deployments.build_runtime_digest IS NOT NULL
+   AND deployments.build_standard_toolchain_digest IS NOT NULL
+   AND deployments.build_manager_digest IS NOT NULL
    AND deployments.current_build_lease_id IS NULL
    AND COALESCE((
        SELECT max(deployment_build_leases.lease_sequence)
@@ -297,6 +315,9 @@ SELECT deployments.org_id,
 SELECT DISTINCT deployments.build_region_id
   FROM deployments
  WHERE deployments.status IN ('queued','building')
+   AND deployments.build_runtime_digest IS NOT NULL
+   AND deployments.build_standard_toolchain_digest IS NOT NULL
+   AND deployments.build_manager_digest IS NOT NULL
    AND deployments.current_build_lease_id IS NULL
    AND COALESCE((
        SELECT max(deployment_build_leases.lease_sequence)
@@ -328,7 +349,7 @@ WITH candidate AS (
        AND worker_instances.toolchain_catalog_digest IS NOT NULL
       JOIN runtime_identities
         ON runtime_identities.id = worker_instances.runtime_identity_id
-       AND runtime_identities.runtime_arch = deployments.build_architecture
+       AND runtime_identities.runtime_arch = 'x86_64'
      WHERE deployment_build_leases.worker_group_id = sqlc.arg(worker_group_id)
        AND deployment_build_leases.worker_instance_id = sqlc.arg(worker_instance_id)
        AND deployment_build_leases.worker_epoch = sqlc.arg(worker_epoch)
@@ -347,9 +368,9 @@ WITH candidate AS (
      WHERE deployment_build_leases.id = candidate.id
     RETURNING deployment_build_leases.*
 )
-SELECT claimed.*, deployments.version, deployments.api_version, deployments.sdk_version,
-       deployments.cli_version, deployments.content_hash,
-       deployments.build_architecture, deployments.build_runtime_digest,
+SELECT claimed.*, deployments.version, deployments.api_version,
+       deployments.content_hash,
+       deployments.build_node_version, deployments.build_runtime_digest,
        deployments.build_standard_toolchain_digest,
        deployments.build_manager_name, deployments.build_manager_version,
        deployments.build_manager_digest, deployments.build_contract_version,
@@ -486,9 +507,7 @@ WITH completed AS (
 UPDATE deployments
    SET status = 'deployed',
        program_artifact_id = sqlc.narg(program_artifact_id),
-       program_runtime_digest = sqlc.narg(program_runtime_digest),
-       program_architecture = sqlc.narg(program_architecture),
-       program_receipt = sqlc.narg(program_receipt),
+       program_index_digest = sqlc.narg(program_index_digest),
        queue_config = sqlc.arg(queue_config),
        built_at = COALESCE(built_at, now()), deployed_at = now(), updated_at = now()
   FROM completed
@@ -496,15 +515,11 @@ UPDATE deployments
    AND (
        (
            sqlc.narg(program_artifact_id)::uuid IS NULL
-           AND sqlc.narg(program_runtime_digest)::bytea IS NULL
-           AND sqlc.narg(program_architecture)::text IS NULL
-           AND sqlc.narg(program_receipt)::jsonb IS NULL
+           AND sqlc.narg(program_index_digest)::bytea IS NULL
        )
        OR (
            sqlc.narg(program_artifact_id)::uuid IS NOT NULL
-           AND sqlc.narg(program_runtime_digest)::bytea = deployments.build_runtime_digest
-           AND sqlc.narg(program_architecture)::text = deployments.build_architecture
-           AND jsonb_typeof(sqlc.narg(program_receipt)::jsonb) = 'object'
+           AND octet_length(sqlc.narg(program_index_digest)::bytea) = 32
        )
    )
 RETURNING deployments.*
@@ -591,7 +606,7 @@ WITH locked_deployment AS MATERIALIZED (
 SELECT locked_lease.*,
        locked_deployment.status AS deployment_status,
        locked_deployment.current_build_lease_id,
-       locked_deployment.build_architecture,
+       locked_deployment.build_node_version,
        locked_deployment.build_runtime_digest,
        locked_deployment.build_standard_toolchain_digest,
        locked_deployment.build_manager_name,
@@ -618,7 +633,7 @@ SELECT deployment_build_leases.state,
        deployment_build_leases.expires_at,
        deployments.status AS deployment_status,
        deployments.current_build_lease_id,
-       deployments.build_architecture,
+       deployments.build_node_version,
        deployments.build_runtime_digest,
        deployments.build_standard_toolchain_digest,
        deployments.build_manager_name,

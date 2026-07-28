@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -22,16 +23,10 @@ type placeBuildParams struct {
 }
 
 type ReadyBuildCandidate struct {
-	OrgID                      pgtype.UUID
-	DeploymentID               pgtype.UUID
-	BuildRegionID              string
-	BuildArchitecture          string
-	LeaseSequence              int64
-	RequestedCPUMillis         int64
-	RequestedMemoryBytes       int64
-	RequestedWorkloadDiskBytes int64
-	RequestedScratchBytes      int64
-	RequestedBuildExecutors    int32
+	OrgID         pgtype.UUID
+	DeploymentID  pgtype.UUID
+	BuildRegionID string
+	LeaseSequence int64
 }
 
 const (
@@ -48,9 +43,12 @@ func (d *Authority) PlaceReadyBuild(ctx context.Context, candidate ReadyBuildCan
 			"build authority standard-toolchain catalog is not configured",
 		)
 	}
-	if !validBuildArchitecture(candidate.BuildArchitecture) {
-		return db.LeaseQueuedDeploymentBuildRow{}, fmt.Errorf("build architecture is outside the closed internal domain")
-	}
+	envelope := compute.BuildEnvelopeResources()
+	requestedCPUMillis := envelope.MilliCPU
+	requestedMemoryBytes := envelope.MemoryMiB << 20
+	requestedWorkloadDiskBytes := int64(0)
+	requestedScratchBytes := envelope.DiskMiB << 20
+	requestedBuildExecutors := int32(1)
 	standardToolchainDigest, eligible, err := d.readyBuildCandidateToolchainDigest(ctx, candidate)
 	if err != nil {
 		return db.LeaseQueuedDeploymentBuildRow{}, err
@@ -77,7 +75,7 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
   JOIN worker_instances ON worker_instances.worker_group_id = worker_groups.id
   JOIN runtime_identities
     ON runtime_identities.id = worker_instances.runtime_identity_id
-   AND runtime_identities.runtime_arch = $11
+   AND runtime_identities.runtime_arch = 'x86_64'
   JOIN worker_observations
     ON worker_observations.worker_instance_id = worker_instances.id
    AND worker_observations.worker_epoch = worker_instances.current_epoch
@@ -88,7 +86,7 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
  WHERE worker_groups.region_id = $1 AND worker_groups.state = 'active'
    AND worker_groups.allows_build
    AND worker_instances.state = 'active' AND worker_instances.supports_build
-   AND worker_instances.toolchain_catalog_digest = $12
+   AND worker_instances.toolchain_catalog_digest = $11
    AND worker_instances.certified_at IS NOT NULL
    AND worker_instances.protocol_version = worker_groups.protocol_version
    AND worker_observations.observed_at >= $2
@@ -135,11 +133,11 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
                          AND (observed_state IN ('allocated','preparing','ready','closing')
                            OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))),0) >= $7
  ORDER BY worker_instances.id
-LIMIT 1`, candidate.BuildRegionID, observationFreshAfter, candidate.RequestedBuildExecutors,
-		candidate.RequestedCPUMillis, candidate.RequestedMemoryBytes,
-		candidate.RequestedWorkloadDiskBytes, candidate.RequestedScratchBytes,
+LIMIT 1`, candidate.BuildRegionID, observationFreshAfter, requestedBuildExecutors,
+		requestedCPUMillis, requestedMemoryBytes,
+		requestedWorkloadDiskBytes, requestedScratchBytes,
 		fixedBuildGuestCPUMillis, fixedBuildGuestMemoryBytes, fixedBuildGuestScratchBytes,
-		candidate.BuildArchitecture, d.toolchainCatalogDigest).Scan(
+		d.toolchainCatalogDigest).Scan(
 		&groupID, &workerID, &workerEpoch, &protocolVersion)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -162,15 +160,15 @@ LIMIT 1`, candidate.BuildRegionID, observationFreshAfter, candidate.RequestedBui
 		ExpectedStandardToolchainDigest: standardToolchainDigest,
 		Lease: db.LeaseQueuedDeploymentBuildParams{
 			OrgID: candidate.OrgID, DeploymentID: candidate.DeploymentID,
-			BuildRegionID: candidate.BuildRegionID, BuildArchitecture: candidate.BuildArchitecture,
-			BuildLeaseID: pgvalue.UUID(uuid.Must(uuid.NewV7())), LeaseSequence: candidate.LeaseSequence,
+			BuildRegionID: candidate.BuildRegionID,
+			BuildLeaseID:  pgvalue.UUID(uuid.Must(uuid.NewV7())), LeaseSequence: candidate.LeaseSequence,
 			WorkerGroupID: groupID, BuildWorkerInstanceID: workerID,
 			WorkerEpoch: workerEpoch, WorkerProtocolVersion: protocolVersion,
-			RequestedCpuMillis:         candidate.RequestedCPUMillis,
-			RequestedMemoryBytes:       candidate.RequestedMemoryBytes,
-			RequestedWorkloadDiskBytes: candidate.RequestedWorkloadDiskBytes,
-			RequestedScratchBytes:      candidate.RequestedScratchBytes,
-			RequestedBuildExecutors:    candidate.RequestedBuildExecutors, BuildSnapshot: snapshot,
+			RequestedCpuMillis:         requestedCPUMillis,
+			RequestedMemoryBytes:       requestedMemoryBytes,
+			RequestedWorkloadDiskBytes: requestedWorkloadDiskBytes,
+			RequestedScratchBytes:      requestedScratchBytes,
+			RequestedBuildExecutors:    requestedBuildExecutors, BuildSnapshot: snapshot,
 			StartDeadlineAt:     pgvalue.Timestamptz(now.Add(time.Minute)),
 			BuildLeaseExpiresAt: pgvalue.Timestamptz(now.Add(5 * time.Minute)),
 		},
@@ -202,21 +200,16 @@ SELECT build_standard_toolchain_digest
   FROM deployments
   WHERE org_id = $1 AND id = $2 AND build_region_id = $3
     AND status IN ('queued','building')
-    AND build_requested_cpu_millis = $4
-    AND build_requested_memory_bytes = $5
-    AND build_requested_workload_disk_bytes = $6
-    AND build_requested_scratch_bytes = $7
-    AND build_requested_executors = $8
+    AND build_runtime_digest IS NOT NULL
+    AND build_standard_toolchain_digest IS NOT NULL
+    AND build_manager_digest IS NOT NULL
     AND (COALESCE((SELECT max(lease_sequence) FROM deployment_build_leases
-                   WHERE deployment_id = deployments.id), 0) + 1) = $9
-    AND build_architecture = $10
-    AND $9 BETWEEN 1 AND 3
+                   WHERE deployment_id = deployments.id), 0) + 1) = $4
+    AND $4 BETWEEN 1 AND 3
     AND NOT EXISTS (SELECT 1 FROM deployment_build_leases
                      WHERE deployment_id = deployments.id AND state IN ('assigned','starting','running'))
 `, candidate.OrgID, candidate.DeploymentID, candidate.BuildRegionID,
-		candidate.RequestedCPUMillis, candidate.RequestedMemoryBytes, candidate.RequestedWorkloadDiskBytes,
-		candidate.RequestedScratchBytes, candidate.RequestedBuildExecutors, candidate.LeaseSequence,
-		candidate.BuildArchitecture).Scan(&digest)
+		candidate.LeaseSequence).Scan(&digest)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -240,15 +233,14 @@ SELECT deployments.id
  WHERE deployments.id = $2
    AND deployments.status IN ('queued', 'building')
    AND deployments.build_region_id = $1
-   AND deployments.build_architecture = $3
-   AND deployments.build_standard_toolchain_digest = $4
+   AND deployments.build_standard_toolchain_digest = $3
    AND NOT EXISTS (
        SELECT 1 FROM deployment_build_leases
         WHERE deployment_build_leases.deployment_id = deployments.id
           AND deployment_build_leases.state IN ('assigned', 'starting', 'running'))
  ORDER BY deployments.created_at, deployments.id
 LIMIT 1`, params.Lease.BuildRegionID, params.Lease.DeploymentID,
-		params.Lease.BuildArchitecture, params.ExpectedStandardToolchainDigest).Scan(&candidateID)
+		params.ExpectedStandardToolchainDigest).Scan(&candidateID)
 	if err != nil {
 		return db.LeaseQueuedDeploymentBuildRow{}, fmt.Errorf("discover build placement candidate: %w", err)
 	}
@@ -261,7 +253,6 @@ LIMIT 1`, params.Lease.BuildRegionID, params.Lease.DeploymentID,
 		WorkerInstanceID: params.Lease.BuildWorkerInstanceID, WorkerEpoch: params.Lease.WorkerEpoch,
 		WorkerProtocolVersion: params.Lease.WorkerProtocolVersion,
 		ObservationFreshAfter: params.ObservationFreshAfter, Role: "build",
-		BuildArchitecture:      params.Lease.BuildArchitecture,
 		ToolchainCatalogDigest: d.toolchainCatalogDigest,
 	}); err != nil {
 		return db.LeaseQueuedDeploymentBuildRow{}, err
@@ -272,11 +263,11 @@ SELECT (COALESCE((SELECT max(lease_sequence) FROM deployment_build_leases
                   WHERE deployment_id = deployments.id), 0) + 1) = $3
    AND $3 BETWEEN 1 AND 3
  FROM deployments
- WHERE id = $1 AND build_region_id = $2 AND build_architecture = $4
-   AND build_standard_toolchain_digest = $5
+ WHERE id = $1 AND build_region_id = $2
+   AND build_standard_toolchain_digest = $4
    AND status IN ('queued','building')
  FOR UPDATE`, candidateID, params.Lease.BuildRegionID,
-		params.ExpectedLeaseSequence, params.Lease.BuildArchitecture,
+		params.ExpectedLeaseSequence,
 		params.ExpectedStandardToolchainDigest).Scan(&deploymentFenceMatches); err != nil {
 		return db.LeaseQueuedDeploymentBuildRow{}, fmt.Errorf("lock build deployment: %w", err)
 	}

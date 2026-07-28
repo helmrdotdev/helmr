@@ -2235,8 +2235,7 @@ SELECT task_definition.id AS task_definition_id,
        task_definition.manifest_version AS task_manifest_version,
        task_definition.manifest AS task_manifest,
        task_definition.manifest_digest AS task_manifest_digest,
-       deployments.queue_config,
-       deployments.program_architecture
+       deployments.queue_config
   FROM environments
   JOIN deployment_definitions AS task_definition
     ON task_definition.environment_id = environments.id
@@ -2250,10 +2249,8 @@ SELECT task_definition.id AS task_definition_id,
    AND deployments.id = task_definition.deployment_id
    AND deployments.status = 'deployed'
    AND deployments.program_artifact_id IS NOT NULL
-   AND deployments.program_runtime_digest IS NOT NULL
-   AND deployments.program_architecture IS NOT NULL
-   AND deployments.program_architecture = deployments.build_architecture
-   AND deployments.program_runtime_digest = deployments.build_runtime_digest
+   AND deployments.program_index_digest IS NOT NULL
+   AND deployments.build_runtime_digest IS NOT NULL
  WHERE environments.org_id = $2
    AND environments.project_id = $3
    AND environments.id = $4
@@ -2274,7 +2271,6 @@ type LockTaskStartDeploymentAuthorityRow struct {
 	TaskManifest        []byte      `json:"task_manifest"`
 	TaskManifestDigest  []byte      `json:"task_manifest_digest"`
 	QueueConfig         []byte      `json:"queue_config"`
-	ProgramArchitecture pgtype.Text `json:"program_architecture"`
 }
 
 func (q *Queries) LockTaskStartDeploymentAuthority(ctx context.Context, arg LockTaskStartDeploymentAuthorityParams) (LockTaskStartDeploymentAuthorityRow, error) {
@@ -2292,7 +2288,6 @@ func (q *Queries) LockTaskStartDeploymentAuthority(ctx context.Context, arg Lock
 		&i.TaskManifest,
 		&i.TaskManifestDigest,
 		&i.QueueConfig,
-		&i.ProgramArchitecture,
 	)
 	return i, err
 }

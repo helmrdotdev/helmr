@@ -171,7 +171,7 @@ func (s *Server) appendActorOutput(
 		fingerprint := []byte(nil)
 		var acquiredClaim db.IdempotencyClaim
 		if parsed.idempotencyKey != "" {
-			claims, err := s.claims.TransactionForQueries(work.q)
+			claims, err := idempotency.TransactionForQueries(work.q)
 			if err != nil {
 				return err
 			}

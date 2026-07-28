@@ -217,49 +217,6 @@ func TestValidateBuildPlanDefinitions(t *testing.T) {
 			errMsg: "idleTimeoutMs",
 		},
 		{
-			name: "workspace architecture",
-			change: func(plan *BuildPlan) {
-				plan.Definitions[2].Workspace.Architecture = "amd64"
-			},
-			errMsg: "architecture",
-		},
-		{
-			name: "unsupported Workspace architecture",
-			change: func(plan *BuildPlan) {
-				plan.Definitions = append(plan.Definitions, DefinitionInput{
-					Kind:       DefinitionKindWorkspace,
-					DeclaredID: "repo-arm",
-					Workspace: &WorkspaceInputManifest{
-						ImageBuild: imagebuild.Build{
-							FormatVersion: imagebuild.FormatVersion,
-							Root:          "repo-arm",
-							Images: []imagebuild.Spec{{
-								Key: "repo-arm",
-								Platform: imagebuild.Platform{
-									OS:           "linux",
-									Architecture: "aarch64",
-								},
-								Steps: []imagebuild.Step{{
-									From: &imagebuild.From{Ref: "alpine:3.23"},
-								}},
-							}},
-						},
-						Resources: ResourcesManifest{
-							MilliCPU:         1000,
-							MemoryMiB:        1024,
-							EphemeralDiskMiB: 8192,
-						},
-						Network: NetworkManifest{
-							Internet:  true,
-							DenyCIDRs: []string{},
-						},
-						Architecture: RuntimeArchitecture("aarch64"),
-					},
-				})
-			},
-			errMsg: "unsupported",
-		},
-		{
 			name: "image architecture",
 			change: func(plan *BuildPlan) {
 				plan.Definitions[2].Workspace.ImageBuild.Images[0].Platform.Architecture = "aarch64"
@@ -611,15 +568,13 @@ func testBuildPlan() BuildPlan {
 						}},
 					},
 					Resources: ResourcesManifest{
-						MilliCPU:         2000,
-						MemoryMiB:        4096,
-						EphemeralDiskMiB: 32768,
+						MilliCPU:  2000,
+						MemoryMiB: 4096,
 					},
 					Network: NetworkManifest{
 						Internet:  true,
 						DenyCIDRs: []string{"10.0.0.0/8", "2001:db8::/32"},
 					},
-					Architecture: ArchitectureX8664,
 				},
 			},
 		},

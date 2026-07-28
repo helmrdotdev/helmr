@@ -28,7 +28,7 @@ WITH candidate AS (
        AND worker_instances.toolchain_catalog_digest IS NOT NULL
       JOIN runtime_identities
         ON runtime_identities.id = worker_instances.runtime_identity_id
-       AND runtime_identities.runtime_arch = deployments.build_architecture
+       AND runtime_identities.runtime_arch = 'x86_64'
      WHERE deployment_build_leases.worker_group_id = $1
        AND deployment_build_leases.worker_instance_id = $2
        AND deployment_build_leases.worker_epoch = $3
@@ -47,9 +47,9 @@ WITH candidate AS (
      WHERE deployment_build_leases.id = candidate.id
     RETURNING deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.worker_protocol_version, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_workload_disk_bytes, deployment_build_leases.requested_scratch_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at
 )
-SELECT claimed.id, claimed.org_id, claimed.project_id, claimed.environment_id, claimed.deployment_id, claimed.build_region_id, claimed.lease_sequence, claimed.worker_group_id, claimed.worker_instance_id, claimed.worker_epoch, claimed.worker_protocol_version, claimed.requested_cpu_millis, claimed.requested_memory_bytes, claimed.requested_workload_disk_bytes, claimed.requested_scratch_bytes, claimed.requested_build_executors, claimed.build_snapshot, claimed.trace_id, claimed.span_id, claimed.parent_span_id, claimed.traceparent, claimed.state, claimed.assigned_at, claimed.start_deadline_at, claimed.claimed_at, claimed.started_at, claimed.renewed_at, claimed.expires_at, claimed.terminal_at, claimed.terminal_reason_code, claimed.terminal_error, claimed.terminal_request_fingerprint, claimed.created_at, claimed.updated_at, deployments.version, deployments.api_version, deployments.sdk_version,
-       deployments.cli_version, deployments.content_hash,
-       deployments.build_architecture, deployments.build_runtime_digest,
+SELECT claimed.id, claimed.org_id, claimed.project_id, claimed.environment_id, claimed.deployment_id, claimed.build_region_id, claimed.lease_sequence, claimed.worker_group_id, claimed.worker_instance_id, claimed.worker_epoch, claimed.worker_protocol_version, claimed.requested_cpu_millis, claimed.requested_memory_bytes, claimed.requested_workload_disk_bytes, claimed.requested_scratch_bytes, claimed.requested_build_executors, claimed.build_snapshot, claimed.trace_id, claimed.span_id, claimed.parent_span_id, claimed.traceparent, claimed.state, claimed.assigned_at, claimed.start_deadline_at, claimed.claimed_at, claimed.started_at, claimed.renewed_at, claimed.expires_at, claimed.terminal_at, claimed.terminal_reason_code, claimed.terminal_error, claimed.terminal_request_fingerprint, claimed.created_at, claimed.updated_at, deployments.version, deployments.api_version,
+       deployments.content_hash,
+       deployments.build_node_version, deployments.build_runtime_digest,
        deployments.build_standard_toolchain_digest,
        deployments.build_manager_name, deployments.build_manager_version,
        deployments.build_manager_digest, deployments.build_contract_version,
@@ -113,10 +113,8 @@ type ClaimNextDeploymentBuildLeaseRow struct {
 	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
 	Version                      string             `json:"version"`
 	ApiVersion                   string             `json:"api_version"`
-	SdkVersion                   string             `json:"sdk_version"`
-	CliVersion                   string             `json:"cli_version"`
 	ContentHash                  string             `json:"content_hash"`
-	BuildArchitecture            string             `json:"build_architecture"`
+	BuildNodeVersion             string             `json:"build_node_version"`
 	BuildRuntimeDigest           []byte             `json:"build_runtime_digest"`
 	BuildStandardToolchainDigest []byte             `json:"build_standard_toolchain_digest"`
 	BuildManagerName             string             `json:"build_manager_name"`
@@ -175,10 +173,8 @@ func (q *Queries) ClaimNextDeploymentBuildLease(ctx context.Context, arg ClaimNe
 		&i.UpdatedAt,
 		&i.Version,
 		&i.ApiVersion,
-		&i.SdkVersion,
-		&i.CliVersion,
 		&i.ContentHash,
-		&i.BuildArchitecture,
+		&i.BuildNodeVersion,
 		&i.BuildRuntimeDigest,
 		&i.BuildStandardToolchainDigest,
 		&i.BuildManagerName,
@@ -210,10 +206,8 @@ WITH completed AS (
 UPDATE deployments
    SET status = 'deployed',
        program_artifact_id = $8,
-       program_runtime_digest = $9,
-       program_architecture = $10,
-       program_receipt = $11,
-       queue_config = $12,
+       program_index_digest = $9,
+       queue_config = $10,
        built_at = COALESCE(built_at, now()), deployed_at = now(), updated_at = now()
   FROM completed
  WHERE deployments.id = completed.deployment_id AND deployments.current_build_lease_id = completed.id
@@ -221,17 +215,13 @@ UPDATE deployments
        (
            $8::uuid IS NULL
            AND $9::bytea IS NULL
-           AND $10::text IS NULL
-           AND $11::jsonb IS NULL
        )
        OR (
            $8::uuid IS NOT NULL
-           AND $9::bytea = deployments.build_runtime_digest
-           AND $10::text = deployments.build_architecture
-           AND jsonb_typeof($11::jsonb) = 'object'
+           AND octet_length($9::bytea) = 32
        )
    )
-RETURNING deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_architecture, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_runtime_digest, deployments.program_architecture, deployments.program_receipt, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.build_requested_cpu_millis, deployments.build_requested_memory_bytes, deployments.build_requested_workload_disk_bytes, deployments.build_requested_scratch_bytes, deployments.build_requested_executors, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+RETURNING deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_node_version, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
 ), meter_event AS (
     INSERT INTO meter_events (
         org_id, project_id, environment_id, deployment_id,
@@ -284,7 +274,7 @@ RETURNING deployments.id, deployments.public_id, deployments.org_id, deployments
     ON CONFLICT DO NOTHING
     RETURNING meter_event_id
 )
-SELECT deployed.id, deployed.public_id, deployed.org_id, deployed.project_id, deployed.environment_id, deployed.build_region_id, deployed.build_architecture, deployed.build_runtime_digest, deployed.build_standard_toolchain_digest, deployed.build_manager_name, deployed.build_manager_version, deployed.build_manager_digest, deployed.build_contract_version, deployed.version, deployed.content_hash, deployed.api_version, deployed.sdk_version, deployed.cli_version, deployed.worker_protocol_version, deployed.deployment_source_artifact_id, deployed.program_artifact_id, deployed.program_artifact_kind, deployed.program_runtime_digest, deployed.program_architecture, deployed.program_receipt, deployed.queue_config, deployed.status, deployed.failure, deployed.current_build_lease_id, deployed.build_requested_cpu_millis, deployed.build_requested_memory_bytes, deployed.build_requested_workload_disk_bytes, deployed.build_requested_scratch_bytes, deployed.build_requested_executors, deployed.created_at, deployed.updated_at, deployed.building_at, deployed.built_at, deployed.deployed_at, deployed.failed_at FROM deployed, completed
+SELECT deployed.id, deployed.public_id, deployed.org_id, deployed.project_id, deployed.environment_id, deployed.build_region_id, deployed.build_node_version, deployed.build_runtime_digest, deployed.build_standard_toolchain_digest, deployed.build_manager_name, deployed.build_manager_version, deployed.build_manager_digest, deployed.build_contract_version, deployed.version, deployed.content_hash, deployed.api_version, deployed.worker_protocol_version, deployed.deployment_source_artifact_id, deployed.program_artifact_id, deployed.program_artifact_kind, deployed.program_index_digest, deployed.queue_config, deployed.status, deployed.failure, deployed.current_build_lease_id, deployed.created_at, deployed.updated_at, deployed.building_at, deployed.built_at, deployed.deployed_at, deployed.failed_at FROM deployed, completed
  WHERE completed.started_at IS NULL OR EXISTS (SELECT 1 FROM meter_outbox)
 `
 
@@ -297,53 +287,42 @@ type CompleteDeploymentBuildParams struct {
 	WorkerEpoch                int64       `json:"worker_epoch"`
 	LeaseSequence              int64       `json:"lease_sequence"`
 	ProgramArtifactID          pgtype.UUID `json:"program_artifact_id"`
-	ProgramRuntimeDigest       []byte      `json:"program_runtime_digest"`
-	ProgramArchitecture        pgtype.Text `json:"program_architecture"`
-	ProgramReceipt             []byte      `json:"program_receipt"`
+	ProgramIndexDigest         []byte      `json:"program_index_digest"`
 	QueueConfig                []byte      `json:"queue_config"`
 }
 
 type CompleteDeploymentBuildRow struct {
-	ID                              pgtype.UUID        `json:"id"`
-	PublicID                        string             `json:"public_id"`
-	OrgID                           pgtype.UUID        `json:"org_id"`
-	ProjectID                       pgtype.UUID        `json:"project_id"`
-	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
-	BuildRegionID                   string             `json:"build_region_id"`
-	BuildArchitecture               string             `json:"build_architecture"`
-	BuildRuntimeDigest              []byte             `json:"build_runtime_digest"`
-	BuildStandardToolchainDigest    []byte             `json:"build_standard_toolchain_digest"`
-	BuildManagerName                string             `json:"build_manager_name"`
-	BuildManagerVersion             string             `json:"build_manager_version"`
-	BuildManagerDigest              []byte             `json:"build_manager_digest"`
-	BuildContractVersion            string             `json:"build_contract_version"`
-	Version                         string             `json:"version"`
-	ContentHash                     string             `json:"content_hash"`
-	ApiVersion                      string             `json:"api_version"`
-	SdkVersion                      string             `json:"sdk_version"`
-	CliVersion                      string             `json:"cli_version"`
-	WorkerProtocolVersion           string             `json:"worker_protocol_version"`
-	DeploymentSourceArtifactID      pgtype.UUID        `json:"deployment_source_artifact_id"`
-	ProgramArtifactID               pgtype.UUID        `json:"program_artifact_id"`
-	ProgramArtifactKind             ArtifactKind       `json:"program_artifact_kind"`
-	ProgramRuntimeDigest            []byte             `json:"program_runtime_digest"`
-	ProgramArchitecture             pgtype.Text        `json:"program_architecture"`
-	ProgramReceipt                  []byte             `json:"program_receipt"`
-	QueueConfig                     []byte             `json:"queue_config"`
-	Status                          string             `json:"status"`
-	Failure                         []byte             `json:"failure"`
-	CurrentBuildLeaseID             pgtype.UUID        `json:"current_build_lease_id"`
-	BuildRequestedCpuMillis         int64              `json:"build_requested_cpu_millis"`
-	BuildRequestedMemoryBytes       int64              `json:"build_requested_memory_bytes"`
-	BuildRequestedWorkloadDiskBytes int64              `json:"build_requested_workload_disk_bytes"`
-	BuildRequestedScratchBytes      int64              `json:"build_requested_scratch_bytes"`
-	BuildRequestedExecutors         int32              `json:"build_requested_executors"`
-	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
-	BuildingAt                      pgtype.Timestamptz `json:"building_at"`
-	BuiltAt                         pgtype.Timestamptz `json:"built_at"`
-	DeployedAt                      pgtype.Timestamptz `json:"deployed_at"`
-	FailedAt                        pgtype.Timestamptz `json:"failed_at"`
+	ID                           pgtype.UUID        `json:"id"`
+	PublicID                     string             `json:"public_id"`
+	OrgID                        pgtype.UUID        `json:"org_id"`
+	ProjectID                    pgtype.UUID        `json:"project_id"`
+	EnvironmentID                pgtype.UUID        `json:"environment_id"`
+	BuildRegionID                string             `json:"build_region_id"`
+	BuildNodeVersion             string             `json:"build_node_version"`
+	BuildRuntimeDigest           []byte             `json:"build_runtime_digest"`
+	BuildStandardToolchainDigest []byte             `json:"build_standard_toolchain_digest"`
+	BuildManagerName             string             `json:"build_manager_name"`
+	BuildManagerVersion          string             `json:"build_manager_version"`
+	BuildManagerDigest           []byte             `json:"build_manager_digest"`
+	BuildContractVersion         string             `json:"build_contract_version"`
+	Version                      string             `json:"version"`
+	ContentHash                  string             `json:"content_hash"`
+	ApiVersion                   string             `json:"api_version"`
+	WorkerProtocolVersion        string             `json:"worker_protocol_version"`
+	DeploymentSourceArtifactID   pgtype.UUID        `json:"deployment_source_artifact_id"`
+	ProgramArtifactID            pgtype.UUID        `json:"program_artifact_id"`
+	ProgramArtifactKind          ArtifactKind       `json:"program_artifact_kind"`
+	ProgramIndexDigest           []byte             `json:"program_index_digest"`
+	QueueConfig                  []byte             `json:"queue_config"`
+	Status                       string             `json:"status"`
+	Failure                      []byte             `json:"failure"`
+	CurrentBuildLeaseID          pgtype.UUID        `json:"current_build_lease_id"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	BuildingAt                   pgtype.Timestamptz `json:"building_at"`
+	BuiltAt                      pgtype.Timestamptz `json:"built_at"`
+	DeployedAt                   pgtype.Timestamptz `json:"deployed_at"`
+	FailedAt                     pgtype.Timestamptz `json:"failed_at"`
 }
 
 func (q *Queries) CompleteDeploymentBuild(ctx context.Context, arg CompleteDeploymentBuildParams) (CompleteDeploymentBuildRow, error) {
@@ -356,9 +335,7 @@ func (q *Queries) CompleteDeploymentBuild(ctx context.Context, arg CompleteDeplo
 		arg.WorkerEpoch,
 		arg.LeaseSequence,
 		arg.ProgramArtifactID,
-		arg.ProgramRuntimeDigest,
-		arg.ProgramArchitecture,
-		arg.ProgramReceipt,
+		arg.ProgramIndexDigest,
 		arg.QueueConfig,
 	)
 	var i CompleteDeploymentBuildRow
@@ -369,7 +346,7 @@ func (q *Queries) CompleteDeploymentBuild(ctx context.Context, arg CompleteDeplo
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.BuildRegionID,
-		&i.BuildArchitecture,
+		&i.BuildNodeVersion,
 		&i.BuildRuntimeDigest,
 		&i.BuildStandardToolchainDigest,
 		&i.BuildManagerName,
@@ -379,24 +356,15 @@ func (q *Queries) CompleteDeploymentBuild(ctx context.Context, arg CompleteDeplo
 		&i.Version,
 		&i.ContentHash,
 		&i.ApiVersion,
-		&i.SdkVersion,
-		&i.CliVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
 		&i.ProgramArtifactKind,
-		&i.ProgramRuntimeDigest,
-		&i.ProgramArchitecture,
-		&i.ProgramReceipt,
+		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 		&i.Status,
 		&i.Failure,
 		&i.CurrentBuildLeaseID,
-		&i.BuildRequestedCpuMillis,
-		&i.BuildRequestedMemoryBytes,
-		&i.BuildRequestedWorkloadDiskBytes,
-		&i.BuildRequestedScratchBytes,
-		&i.BuildRequestedExecutors,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BuildingAt,
@@ -415,17 +383,12 @@ INSERT INTO deployments (
     project_id,
     environment_id,
     build_region_id,
-    build_architecture,
-    build_runtime_digest,
-    build_standard_toolchain_digest,
+    build_node_version,
     build_manager_name,
     build_manager_version,
-    build_manager_digest,
     build_contract_version,
     version,
     api_version,
-    sdk_version,
-    cli_version,
     worker_protocol_version,
     content_hash,
     deployment_source_artifact_id,
@@ -446,12 +409,7 @@ SELECT $1,
        $13,
        $14,
        $15,
-       $16,
-       $17,
-       $18,
-       $19,
-       $20,
-       $21::text
+       $16::text
  WHERE EXISTS (
        SELECT 1
          FROM projects
@@ -463,31 +421,26 @@ SELECT $1,
           AND environments.id = $5
 	      AND projects.default_region_id = $6
 	 )
-RETURNING id, public_id, org_id, project_id, environment_id, build_region_id, build_architecture, build_runtime_digest, build_standard_toolchain_digest, build_manager_name, build_manager_version, build_manager_digest, build_contract_version, version, content_hash, api_version, sdk_version, cli_version, worker_protocol_version, deployment_source_artifact_id, program_artifact_id, program_artifact_kind, program_runtime_digest, program_architecture, program_receipt, queue_config, status, failure, current_build_lease_id, build_requested_cpu_millis, build_requested_memory_bytes, build_requested_workload_disk_bytes, build_requested_scratch_bytes, build_requested_executors, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+RETURNING id, public_id, org_id, project_id, environment_id, build_region_id, build_node_version, build_runtime_digest, build_standard_toolchain_digest, build_manager_name, build_manager_version, build_manager_digest, build_contract_version, version, content_hash, api_version, worker_protocol_version, deployment_source_artifact_id, program_artifact_id, program_artifact_kind, program_index_digest, queue_config, status, failure, current_build_lease_id, created_at, updated_at, building_at, built_at, deployed_at, failed_at
 `
 
 type CreateDeploymentParams struct {
-	ID                           pgtype.UUID `json:"id"`
-	PublicID                     string      `json:"public_id"`
-	OrgID                        pgtype.UUID `json:"org_id"`
-	ProjectID                    pgtype.UUID `json:"project_id"`
-	EnvironmentID                pgtype.UUID `json:"environment_id"`
-	BuildRegionID                string      `json:"build_region_id"`
-	BuildArchitecture            string      `json:"build_architecture"`
-	BuildRuntimeDigest           []byte      `json:"build_runtime_digest"`
-	BuildStandardToolchainDigest []byte      `json:"build_standard_toolchain_digest"`
-	BuildManagerName             string      `json:"build_manager_name"`
-	BuildManagerVersion          string      `json:"build_manager_version"`
-	BuildManagerDigest           []byte      `json:"build_manager_digest"`
-	BuildContractVersion         string      `json:"build_contract_version"`
-	Version                      string      `json:"version"`
-	ApiVersion                   string      `json:"api_version"`
-	SdkVersion                   string      `json:"sdk_version"`
-	CliVersion                   string      `json:"cli_version"`
-	WorkerProtocolVersion        string      `json:"worker_protocol_version"`
-	ContentHash                  string      `json:"content_hash"`
-	DeploymentSourceArtifactID   pgtype.UUID `json:"deployment_source_artifact_id"`
-	Status                       string      `json:"status"`
+	ID                         pgtype.UUID `json:"id"`
+	PublicID                   string      `json:"public_id"`
+	OrgID                      pgtype.UUID `json:"org_id"`
+	ProjectID                  pgtype.UUID `json:"project_id"`
+	EnvironmentID              pgtype.UUID `json:"environment_id"`
+	BuildRegionID              string      `json:"build_region_id"`
+	BuildNodeVersion           string      `json:"build_node_version"`
+	BuildManagerName           string      `json:"build_manager_name"`
+	BuildManagerVersion        string      `json:"build_manager_version"`
+	BuildContractVersion       string      `json:"build_contract_version"`
+	Version                    string      `json:"version"`
+	ApiVersion                 string      `json:"api_version"`
+	WorkerProtocolVersion      string      `json:"worker_protocol_version"`
+	ContentHash                string      `json:"content_hash"`
+	DeploymentSourceArtifactID pgtype.UUID `json:"deployment_source_artifact_id"`
+	Status                     string      `json:"status"`
 }
 
 func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error) {
@@ -498,17 +451,12 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.BuildRegionID,
-		arg.BuildArchitecture,
-		arg.BuildRuntimeDigest,
-		arg.BuildStandardToolchainDigest,
+		arg.BuildNodeVersion,
 		arg.BuildManagerName,
 		arg.BuildManagerVersion,
-		arg.BuildManagerDigest,
 		arg.BuildContractVersion,
 		arg.Version,
 		arg.ApiVersion,
-		arg.SdkVersion,
-		arg.CliVersion,
 		arg.WorkerProtocolVersion,
 		arg.ContentHash,
 		arg.DeploymentSourceArtifactID,
@@ -522,7 +470,7 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.BuildRegionID,
-		&i.BuildArchitecture,
+		&i.BuildNodeVersion,
 		&i.BuildRuntimeDigest,
 		&i.BuildStandardToolchainDigest,
 		&i.BuildManagerName,
@@ -532,24 +480,15 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.Version,
 		&i.ContentHash,
 		&i.ApiVersion,
-		&i.SdkVersion,
-		&i.CliVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
 		&i.ProgramArtifactKind,
-		&i.ProgramRuntimeDigest,
-		&i.ProgramArchitecture,
-		&i.ProgramReceipt,
+		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 		&i.Status,
 		&i.Failure,
 		&i.CurrentBuildLeaseID,
-		&i.BuildRequestedCpuMillis,
-		&i.BuildRequestedMemoryBytes,
-		&i.BuildRequestedWorkloadDiskBytes,
-		&i.BuildRequestedScratchBytes,
-		&i.BuildRequestedExecutors,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BuildingAt,
@@ -578,7 +517,7 @@ UPDATE deployments
    SET status = 'failed', failure = $2, failed_at = now(), updated_at = now()
   FROM failed
  WHERE deployments.id = failed.deployment_id AND deployments.current_build_lease_id = failed.id
-RETURNING deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_architecture, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_runtime_digest, deployments.program_architecture, deployments.program_receipt, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.build_requested_cpu_millis, deployments.build_requested_memory_bytes, deployments.build_requested_workload_disk_bytes, deployments.build_requested_scratch_bytes, deployments.build_requested_executors, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+RETURNING deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_node_version, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
 ), meter_event AS (
     INSERT INTO meter_events (
         org_id, project_id, environment_id, deployment_id,
@@ -633,7 +572,7 @@ RETURNING deployments.id, deployments.public_id, deployments.org_id, deployments
     ON CONFLICT DO NOTHING
     RETURNING meter_event_id
 )
-SELECT failed_deployment.id, failed_deployment.public_id, failed_deployment.org_id, failed_deployment.project_id, failed_deployment.environment_id, failed_deployment.build_region_id, failed_deployment.build_architecture, failed_deployment.build_runtime_digest, failed_deployment.build_standard_toolchain_digest, failed_deployment.build_manager_name, failed_deployment.build_manager_version, failed_deployment.build_manager_digest, failed_deployment.build_contract_version, failed_deployment.version, failed_deployment.content_hash, failed_deployment.api_version, failed_deployment.sdk_version, failed_deployment.cli_version, failed_deployment.worker_protocol_version, failed_deployment.deployment_source_artifact_id, failed_deployment.program_artifact_id, failed_deployment.program_artifact_kind, failed_deployment.program_runtime_digest, failed_deployment.program_architecture, failed_deployment.program_receipt, failed_deployment.queue_config, failed_deployment.status, failed_deployment.failure, failed_deployment.current_build_lease_id, failed_deployment.build_requested_cpu_millis, failed_deployment.build_requested_memory_bytes, failed_deployment.build_requested_workload_disk_bytes, failed_deployment.build_requested_scratch_bytes, failed_deployment.build_requested_executors, failed_deployment.created_at, failed_deployment.updated_at, failed_deployment.building_at, failed_deployment.built_at, failed_deployment.deployed_at, failed_deployment.failed_at FROM failed_deployment, failed
+SELECT failed_deployment.id, failed_deployment.public_id, failed_deployment.org_id, failed_deployment.project_id, failed_deployment.environment_id, failed_deployment.build_region_id, failed_deployment.build_node_version, failed_deployment.build_runtime_digest, failed_deployment.build_standard_toolchain_digest, failed_deployment.build_manager_name, failed_deployment.build_manager_version, failed_deployment.build_manager_digest, failed_deployment.build_contract_version, failed_deployment.version, failed_deployment.content_hash, failed_deployment.api_version, failed_deployment.worker_protocol_version, failed_deployment.deployment_source_artifact_id, failed_deployment.program_artifact_id, failed_deployment.program_artifact_kind, failed_deployment.program_index_digest, failed_deployment.queue_config, failed_deployment.status, failed_deployment.failure, failed_deployment.current_build_lease_id, failed_deployment.created_at, failed_deployment.updated_at, failed_deployment.building_at, failed_deployment.built_at, failed_deployment.deployed_at, failed_deployment.failed_at FROM failed_deployment, failed
  WHERE failed.started_at IS NULL OR EXISTS (SELECT 1 FROM meter_outbox)
 `
 
@@ -650,46 +589,37 @@ type FailDeploymentBuildParams struct {
 }
 
 type FailDeploymentBuildRow struct {
-	ID                              pgtype.UUID        `json:"id"`
-	PublicID                        string             `json:"public_id"`
-	OrgID                           pgtype.UUID        `json:"org_id"`
-	ProjectID                       pgtype.UUID        `json:"project_id"`
-	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
-	BuildRegionID                   string             `json:"build_region_id"`
-	BuildArchitecture               string             `json:"build_architecture"`
-	BuildRuntimeDigest              []byte             `json:"build_runtime_digest"`
-	BuildStandardToolchainDigest    []byte             `json:"build_standard_toolchain_digest"`
-	BuildManagerName                string             `json:"build_manager_name"`
-	BuildManagerVersion             string             `json:"build_manager_version"`
-	BuildManagerDigest              []byte             `json:"build_manager_digest"`
-	BuildContractVersion            string             `json:"build_contract_version"`
-	Version                         string             `json:"version"`
-	ContentHash                     string             `json:"content_hash"`
-	ApiVersion                      string             `json:"api_version"`
-	SdkVersion                      string             `json:"sdk_version"`
-	CliVersion                      string             `json:"cli_version"`
-	WorkerProtocolVersion           string             `json:"worker_protocol_version"`
-	DeploymentSourceArtifactID      pgtype.UUID        `json:"deployment_source_artifact_id"`
-	ProgramArtifactID               pgtype.UUID        `json:"program_artifact_id"`
-	ProgramArtifactKind             ArtifactKind       `json:"program_artifact_kind"`
-	ProgramRuntimeDigest            []byte             `json:"program_runtime_digest"`
-	ProgramArchitecture             pgtype.Text        `json:"program_architecture"`
-	ProgramReceipt                  []byte             `json:"program_receipt"`
-	QueueConfig                     []byte             `json:"queue_config"`
-	Status                          string             `json:"status"`
-	Failure                         []byte             `json:"failure"`
-	CurrentBuildLeaseID             pgtype.UUID        `json:"current_build_lease_id"`
-	BuildRequestedCpuMillis         int64              `json:"build_requested_cpu_millis"`
-	BuildRequestedMemoryBytes       int64              `json:"build_requested_memory_bytes"`
-	BuildRequestedWorkloadDiskBytes int64              `json:"build_requested_workload_disk_bytes"`
-	BuildRequestedScratchBytes      int64              `json:"build_requested_scratch_bytes"`
-	BuildRequestedExecutors         int32              `json:"build_requested_executors"`
-	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
-	BuildingAt                      pgtype.Timestamptz `json:"building_at"`
-	BuiltAt                         pgtype.Timestamptz `json:"built_at"`
-	DeployedAt                      pgtype.Timestamptz `json:"deployed_at"`
-	FailedAt                        pgtype.Timestamptz `json:"failed_at"`
+	ID                           pgtype.UUID        `json:"id"`
+	PublicID                     string             `json:"public_id"`
+	OrgID                        pgtype.UUID        `json:"org_id"`
+	ProjectID                    pgtype.UUID        `json:"project_id"`
+	EnvironmentID                pgtype.UUID        `json:"environment_id"`
+	BuildRegionID                string             `json:"build_region_id"`
+	BuildNodeVersion             string             `json:"build_node_version"`
+	BuildRuntimeDigest           []byte             `json:"build_runtime_digest"`
+	BuildStandardToolchainDigest []byte             `json:"build_standard_toolchain_digest"`
+	BuildManagerName             string             `json:"build_manager_name"`
+	BuildManagerVersion          string             `json:"build_manager_version"`
+	BuildManagerDigest           []byte             `json:"build_manager_digest"`
+	BuildContractVersion         string             `json:"build_contract_version"`
+	Version                      string             `json:"version"`
+	ContentHash                  string             `json:"content_hash"`
+	ApiVersion                   string             `json:"api_version"`
+	WorkerProtocolVersion        string             `json:"worker_protocol_version"`
+	DeploymentSourceArtifactID   pgtype.UUID        `json:"deployment_source_artifact_id"`
+	ProgramArtifactID            pgtype.UUID        `json:"program_artifact_id"`
+	ProgramArtifactKind          ArtifactKind       `json:"program_artifact_kind"`
+	ProgramIndexDigest           []byte             `json:"program_index_digest"`
+	QueueConfig                  []byte             `json:"queue_config"`
+	Status                       string             `json:"status"`
+	Failure                      []byte             `json:"failure"`
+	CurrentBuildLeaseID          pgtype.UUID        `json:"current_build_lease_id"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	BuildingAt                   pgtype.Timestamptz `json:"building_at"`
+	BuiltAt                      pgtype.Timestamptz `json:"built_at"`
+	DeployedAt                   pgtype.Timestamptz `json:"deployed_at"`
+	FailedAt                     pgtype.Timestamptz `json:"failed_at"`
 }
 
 func (q *Queries) FailDeploymentBuild(ctx context.Context, arg FailDeploymentBuildParams) (FailDeploymentBuildRow, error) {
@@ -712,7 +642,7 @@ func (q *Queries) FailDeploymentBuild(ctx context.Context, arg FailDeploymentBui
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.BuildRegionID,
-		&i.BuildArchitecture,
+		&i.BuildNodeVersion,
 		&i.BuildRuntimeDigest,
 		&i.BuildStandardToolchainDigest,
 		&i.BuildManagerName,
@@ -722,24 +652,15 @@ func (q *Queries) FailDeploymentBuild(ctx context.Context, arg FailDeploymentBui
 		&i.Version,
 		&i.ContentHash,
 		&i.ApiVersion,
-		&i.SdkVersion,
-		&i.CliVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
 		&i.ProgramArtifactKind,
-		&i.ProgramRuntimeDigest,
-		&i.ProgramArchitecture,
-		&i.ProgramReceipt,
+		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 		&i.Status,
 		&i.Failure,
 		&i.CurrentBuildLeaseID,
-		&i.BuildRequestedCpuMillis,
-		&i.BuildRequestedMemoryBytes,
-		&i.BuildRequestedWorkloadDiskBytes,
-		&i.BuildRequestedScratchBytes,
-		&i.BuildRequestedExecutors,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BuildingAt,
@@ -752,7 +673,7 @@ func (q *Queries) FailDeploymentBuild(ctx context.Context, arg FailDeploymentBui
 
 const failDeploymentBuildDelivery = `-- name: FailDeploymentBuildDelivery :one
 WITH locked_deployment AS MATERIALIZED (
-    SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_architecture, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_runtime_digest, deployments.program_architecture, deployments.program_receipt, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.build_requested_cpu_millis, deployments.build_requested_memory_bytes, deployments.build_requested_workload_disk_bytes, deployments.build_requested_scratch_bytes, deployments.build_requested_executors, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+    SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_node_version, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
       FROM deployments
      WHERE deployments.org_id = $1
        AND deployments.project_id = $2
@@ -972,7 +893,7 @@ func (q *Queries) FailDeploymentBuildDelivery(ctx context.Context, arg FailDeplo
 }
 
 const getCurrentDeployment = `-- name: GetCurrentDeployment :one
-SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_architecture, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_runtime_digest, deployments.program_architecture, deployments.program_receipt, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.build_requested_cpu_millis, deployments.build_requested_memory_bytes, deployments.build_requested_workload_disk_bytes, deployments.build_requested_scratch_bytes, deployments.build_requested_executors, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_node_version, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
   FROM deployments
   JOIN environments ON environments.org_id = deployments.org_id
                    AND environments.project_id = deployments.project_id
@@ -1001,7 +922,7 @@ func (q *Queries) GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploy
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.BuildRegionID,
-		&i.BuildArchitecture,
+		&i.BuildNodeVersion,
 		&i.BuildRuntimeDigest,
 		&i.BuildStandardToolchainDigest,
 		&i.BuildManagerName,
@@ -1011,24 +932,15 @@ func (q *Queries) GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploy
 		&i.Version,
 		&i.ContentHash,
 		&i.ApiVersion,
-		&i.SdkVersion,
-		&i.CliVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
 		&i.ProgramArtifactKind,
-		&i.ProgramRuntimeDigest,
-		&i.ProgramArchitecture,
-		&i.ProgramReceipt,
+		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 		&i.Status,
 		&i.Failure,
 		&i.CurrentBuildLeaseID,
-		&i.BuildRequestedCpuMillis,
-		&i.BuildRequestedMemoryBytes,
-		&i.BuildRequestedWorkloadDiskBytes,
-		&i.BuildRequestedScratchBytes,
-		&i.BuildRequestedExecutors,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BuildingAt,
@@ -1040,7 +952,7 @@ func (q *Queries) GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploy
 }
 
 const getCurrentDeploymentForRoute = `-- name: GetCurrentDeploymentForRoute :one
-SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_architecture, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_runtime_digest, deployments.program_architecture, deployments.program_receipt, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.build_requested_cpu_millis, deployments.build_requested_memory_bytes, deployments.build_requested_workload_disk_bytes, deployments.build_requested_scratch_bytes, deployments.build_requested_executors, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_node_version, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
   FROM deployments
   JOIN environments ON environments.org_id = deployments.org_id
                    AND environments.project_id = deployments.project_id
@@ -1069,7 +981,7 @@ func (q *Queries) GetCurrentDeploymentForRoute(ctx context.Context, arg GetCurre
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.BuildRegionID,
-		&i.BuildArchitecture,
+		&i.BuildNodeVersion,
 		&i.BuildRuntimeDigest,
 		&i.BuildStandardToolchainDigest,
 		&i.BuildManagerName,
@@ -1079,24 +991,15 @@ func (q *Queries) GetCurrentDeploymentForRoute(ctx context.Context, arg GetCurre
 		&i.Version,
 		&i.ContentHash,
 		&i.ApiVersion,
-		&i.SdkVersion,
-		&i.CliVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
 		&i.ProgramArtifactKind,
-		&i.ProgramRuntimeDigest,
-		&i.ProgramArchitecture,
-		&i.ProgramReceipt,
+		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 		&i.Status,
 		&i.Failure,
 		&i.CurrentBuildLeaseID,
-		&i.BuildRequestedCpuMillis,
-		&i.BuildRequestedMemoryBytes,
-		&i.BuildRequestedWorkloadDiskBytes,
-		&i.BuildRequestedScratchBytes,
-		&i.BuildRequestedExecutors,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BuildingAt,
@@ -1108,7 +1011,7 @@ func (q *Queries) GetCurrentDeploymentForRoute(ctx context.Context, arg GetCurre
 }
 
 const getDeployment = `-- name: GetDeployment :one
-SELECT id, public_id, org_id, project_id, environment_id, build_region_id, build_architecture, build_runtime_digest, build_standard_toolchain_digest, build_manager_name, build_manager_version, build_manager_digest, build_contract_version, version, content_hash, api_version, sdk_version, cli_version, worker_protocol_version, deployment_source_artifact_id, program_artifact_id, program_artifact_kind, program_runtime_digest, program_architecture, program_receipt, queue_config, status, failure, current_build_lease_id, build_requested_cpu_millis, build_requested_memory_bytes, build_requested_workload_disk_bytes, build_requested_scratch_bytes, build_requested_executors, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, public_id, org_id, project_id, environment_id, build_region_id, build_node_version, build_runtime_digest, build_standard_toolchain_digest, build_manager_name, build_manager_version, build_manager_digest, build_contract_version, version, content_hash, api_version, worker_protocol_version, deployment_source_artifact_id, program_artifact_id, program_artifact_kind, program_index_digest, queue_config, status, failure, current_build_lease_id, created_at, updated_at, building_at, built_at, deployed_at, failed_at
   FROM deployments
  WHERE org_id = $1
    AND project_id = $2
@@ -1138,7 +1041,7 @@ func (q *Queries) GetDeployment(ctx context.Context, arg GetDeploymentParams) (D
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.BuildRegionID,
-		&i.BuildArchitecture,
+		&i.BuildNodeVersion,
 		&i.BuildRuntimeDigest,
 		&i.BuildStandardToolchainDigest,
 		&i.BuildManagerName,
@@ -1148,24 +1051,15 @@ func (q *Queries) GetDeployment(ctx context.Context, arg GetDeploymentParams) (D
 		&i.Version,
 		&i.ContentHash,
 		&i.ApiVersion,
-		&i.SdkVersion,
-		&i.CliVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
 		&i.ProgramArtifactKind,
-		&i.ProgramRuntimeDigest,
-		&i.ProgramArchitecture,
-		&i.ProgramReceipt,
+		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 		&i.Status,
 		&i.Failure,
 		&i.CurrentBuildLeaseID,
-		&i.BuildRequestedCpuMillis,
-		&i.BuildRequestedMemoryBytes,
-		&i.BuildRequestedWorkloadDiskBytes,
-		&i.BuildRequestedScratchBytes,
-		&i.BuildRequestedExecutors,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BuildingAt,
@@ -1181,7 +1075,7 @@ SELECT deployment_build_leases.state,
        deployment_build_leases.expires_at,
        deployments.status AS deployment_status,
        deployments.current_build_lease_id,
-       deployments.build_architecture,
+       deployments.build_node_version,
        deployments.build_runtime_digest,
        deployments.build_standard_toolchain_digest,
        deployments.build_manager_name,
@@ -1234,7 +1128,7 @@ type GetDeploymentBuildCompletionAuthorityRow struct {
 	ExpiresAt                    pgtype.Timestamptz `json:"expires_at"`
 	DeploymentStatus             string             `json:"deployment_status"`
 	CurrentBuildLeaseID          pgtype.UUID        `json:"current_build_lease_id"`
-	BuildArchitecture            string             `json:"build_architecture"`
+	BuildNodeVersion             string             `json:"build_node_version"`
 	BuildRuntimeDigest           []byte             `json:"build_runtime_digest"`
 	BuildStandardToolchainDigest []byte             `json:"build_standard_toolchain_digest"`
 	BuildManagerName             string             `json:"build_manager_name"`
@@ -1266,7 +1160,7 @@ func (q *Queries) GetDeploymentBuildCompletionAuthority(ctx context.Context, arg
 		&i.ExpiresAt,
 		&i.DeploymentStatus,
 		&i.CurrentBuildLeaseID,
-		&i.BuildArchitecture,
+		&i.BuildNodeVersion,
 		&i.BuildRuntimeDigest,
 		&i.BuildStandardToolchainDigest,
 		&i.BuildManagerName,
@@ -1327,7 +1221,7 @@ func (q *Queries) GetDeploymentBuildTerminalResult(ctx context.Context, arg GetD
 }
 
 const getDeploymentByVersion = `-- name: GetDeploymentByVersion :one
-SELECT id, public_id, org_id, project_id, environment_id, build_region_id, build_architecture, build_runtime_digest, build_standard_toolchain_digest, build_manager_name, build_manager_version, build_manager_digest, build_contract_version, version, content_hash, api_version, sdk_version, cli_version, worker_protocol_version, deployment_source_artifact_id, program_artifact_id, program_artifact_kind, program_runtime_digest, program_architecture, program_receipt, queue_config, status, failure, current_build_lease_id, build_requested_cpu_millis, build_requested_memory_bytes, build_requested_workload_disk_bytes, build_requested_scratch_bytes, build_requested_executors, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, public_id, org_id, project_id, environment_id, build_region_id, build_node_version, build_runtime_digest, build_standard_toolchain_digest, build_manager_name, build_manager_version, build_manager_digest, build_contract_version, version, content_hash, api_version, worker_protocol_version, deployment_source_artifact_id, program_artifact_id, program_artifact_kind, program_index_digest, queue_config, status, failure, current_build_lease_id, created_at, updated_at, building_at, built_at, deployed_at, failed_at
   FROM deployments
  WHERE org_id = $1
    AND project_id = $2
@@ -1357,7 +1251,7 @@ func (q *Queries) GetDeploymentByVersion(ctx context.Context, arg GetDeploymentB
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.BuildRegionID,
-		&i.BuildArchitecture,
+		&i.BuildNodeVersion,
 		&i.BuildRuntimeDigest,
 		&i.BuildStandardToolchainDigest,
 		&i.BuildManagerName,
@@ -1367,24 +1261,15 @@ func (q *Queries) GetDeploymentByVersion(ctx context.Context, arg GetDeploymentB
 		&i.Version,
 		&i.ContentHash,
 		&i.ApiVersion,
-		&i.SdkVersion,
-		&i.CliVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
 		&i.ProgramArtifactKind,
-		&i.ProgramRuntimeDigest,
-		&i.ProgramArchitecture,
-		&i.ProgramReceipt,
+		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 		&i.Status,
 		&i.Failure,
 		&i.CurrentBuildLeaseID,
-		&i.BuildRequestedCpuMillis,
-		&i.BuildRequestedMemoryBytes,
-		&i.BuildRequestedWorkloadDiskBytes,
-		&i.BuildRequestedScratchBytes,
-		&i.BuildRequestedExecutors,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BuildingAt,
@@ -1396,7 +1281,7 @@ func (q *Queries) GetDeploymentByVersion(ctx context.Context, arg GetDeploymentB
 }
 
 const getDeploymentForOrg = `-- name: GetDeploymentForOrg :one
-SELECT id, public_id, org_id, project_id, environment_id, build_region_id, build_architecture, build_runtime_digest, build_standard_toolchain_digest, build_manager_name, build_manager_version, build_manager_digest, build_contract_version, version, content_hash, api_version, sdk_version, cli_version, worker_protocol_version, deployment_source_artifact_id, program_artifact_id, program_artifact_kind, program_runtime_digest, program_architecture, program_receipt, queue_config, status, failure, current_build_lease_id, build_requested_cpu_millis, build_requested_memory_bytes, build_requested_workload_disk_bytes, build_requested_scratch_bytes, build_requested_executors, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, public_id, org_id, project_id, environment_id, build_region_id, build_node_version, build_runtime_digest, build_standard_toolchain_digest, build_manager_name, build_manager_version, build_manager_digest, build_contract_version, version, content_hash, api_version, worker_protocol_version, deployment_source_artifact_id, program_artifact_id, program_artifact_kind, program_index_digest, queue_config, status, failure, current_build_lease_id, created_at, updated_at, building_at, built_at, deployed_at, failed_at
   FROM deployments
  WHERE org_id = $1
    AND id = $2
@@ -1417,7 +1302,7 @@ func (q *Queries) GetDeploymentForOrg(ctx context.Context, arg GetDeploymentForO
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.BuildRegionID,
-		&i.BuildArchitecture,
+		&i.BuildNodeVersion,
 		&i.BuildRuntimeDigest,
 		&i.BuildStandardToolchainDigest,
 		&i.BuildManagerName,
@@ -1427,24 +1312,15 @@ func (q *Queries) GetDeploymentForOrg(ctx context.Context, arg GetDeploymentForO
 		&i.Version,
 		&i.ContentHash,
 		&i.ApiVersion,
-		&i.SdkVersion,
-		&i.CliVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
 		&i.ProgramArtifactKind,
-		&i.ProgramRuntimeDigest,
-		&i.ProgramArchitecture,
-		&i.ProgramReceipt,
+		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 		&i.Status,
 		&i.Failure,
 		&i.CurrentBuildLeaseID,
-		&i.BuildRequestedCpuMillis,
-		&i.BuildRequestedMemoryBytes,
-		&i.BuildRequestedWorkloadDiskBytes,
-		&i.BuildRequestedScratchBytes,
-		&i.BuildRequestedExecutors,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BuildingAt,
@@ -1547,25 +1423,22 @@ func (q *Queries) GetStartedDeploymentBuildLease(ctx context.Context, arg GetSta
 
 const leaseQueuedDeploymentBuild = `-- name: LeaseQueuedDeploymentBuild :one
 WITH candidate AS MATERIALIZED (
-    SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_architecture, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_runtime_digest, deployments.program_architecture, deployments.program_receipt, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.build_requested_cpu_millis, deployments.build_requested_memory_bytes, deployments.build_requested_workload_disk_bytes, deployments.build_requested_scratch_bytes, deployments.build_requested_executors, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+    SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_node_version, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
       FROM deployments
      WHERE deployments.org_id = $1
        AND deployments.id = $2
        AND deployments.status IN ('queued', 'building')
        AND deployments.build_region_id = $3
-       AND deployments.build_architecture = $4
-       AND deployments.build_requested_cpu_millis = $5
-       AND deployments.build_requested_memory_bytes = $6
-       AND deployments.build_requested_workload_disk_bytes = $7
-       AND deployments.build_requested_scratch_bytes = $8
-       AND deployments.build_requested_executors = $9
+       AND deployments.build_runtime_digest IS NOT NULL
+       AND deployments.build_standard_toolchain_digest IS NOT NULL
+       AND deployments.build_manager_digest IS NOT NULL
        AND deployments.current_build_lease_id IS NULL
-       AND $10::bigint = (
+       AND $4::bigint = (
            SELECT COALESCE(max(deployment_build_leases.lease_sequence), 0) + 1
              FROM deployment_build_leases
             WHERE deployment_build_leases.deployment_id = deployments.id
        )
-       AND $10::bigint BETWEEN 1 AND 3
+       AND $4::bigint BETWEEN 1 AND 3
        AND NOT EXISTS (
            SELECT 1 FROM deployment_build_leases
             WHERE deployment_build_leases.deployment_id = deployments.id
@@ -1582,16 +1455,16 @@ inserted AS (
         requested_build_executors, build_snapshot, trace_id, span_id,
         parent_span_id, traceparent, start_deadline_at, expires_at
     )
-    SELECT $11, candidate.org_id, candidate.project_id,
+    SELECT $5, candidate.org_id, candidate.project_id,
            candidate.environment_id, candidate.id, candidate.build_region_id,
-           $10, $12,
-           $13,
+           $4, $6,
+           $7,
+           $8, $9,
+           $10, $11,
+           $12, $13,
            $14, $15,
-           $5, $6,
-           $7, $8,
-           $9, $16,
-           $17, $18, $19,
-           $20, $21, $22
+           $16, $17, $18,
+           $19, $20, $21
       FROM candidate
     RETURNING id, org_id, project_id, environment_id, deployment_id, build_region_id, lease_sequence, worker_group_id, worker_instance_id, worker_epoch, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes, requested_build_executors, build_snapshot, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 ),
@@ -1603,15 +1476,13 @@ advanced AS (
            updated_at = now()
       FROM inserted
      WHERE deployments.id = inserted.deployment_id
-    RETURNING deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_architecture, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_runtime_digest, deployments.program_architecture, deployments.program_receipt, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.build_requested_cpu_millis, deployments.build_requested_memory_bytes, deployments.build_requested_workload_disk_bytes, deployments.build_requested_scratch_bytes, deployments.build_requested_executors, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+    RETURNING deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_node_version, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
 )
 SELECT inserted.id, inserted.org_id, inserted.project_id, inserted.environment_id, inserted.deployment_id, inserted.build_region_id, inserted.lease_sequence, inserted.worker_group_id, inserted.worker_instance_id, inserted.worker_epoch, inserted.worker_protocol_version, inserted.requested_cpu_millis, inserted.requested_memory_bytes, inserted.requested_workload_disk_bytes, inserted.requested_scratch_bytes, inserted.requested_build_executors, inserted.build_snapshot, inserted.trace_id, inserted.span_id, inserted.parent_span_id, inserted.traceparent, inserted.state, inserted.assigned_at, inserted.start_deadline_at, inserted.claimed_at, inserted.started_at, inserted.renewed_at, inserted.expires_at, inserted.terminal_at, inserted.terminal_reason_code, inserted.terminal_error, inserted.terminal_request_fingerprint, inserted.created_at, inserted.updated_at,
        advanced.version,
        advanced.api_version,
-       advanced.sdk_version,
-       advanced.cli_version,
        advanced.content_hash,
-       advanced.build_architecture,
+       advanced.build_node_version,
        advanced.build_runtime_digest,
        advanced.build_standard_toolchain_digest,
        advanced.build_contract_version,
@@ -1632,18 +1503,17 @@ type LeaseQueuedDeploymentBuildParams struct {
 	OrgID                      pgtype.UUID        `json:"org_id"`
 	DeploymentID               pgtype.UUID        `json:"deployment_id"`
 	BuildRegionID              string             `json:"build_region_id"`
-	BuildArchitecture          string             `json:"build_architecture"`
-	RequestedCpuMillis         int64              `json:"requested_cpu_millis"`
-	RequestedMemoryBytes       int64              `json:"requested_memory_bytes"`
-	RequestedWorkloadDiskBytes int64              `json:"requested_workload_disk_bytes"`
-	RequestedScratchBytes      int64              `json:"requested_scratch_bytes"`
-	RequestedBuildExecutors    int32              `json:"requested_build_executors"`
 	LeaseSequence              int64              `json:"lease_sequence"`
 	BuildLeaseID               pgtype.UUID        `json:"build_lease_id"`
 	WorkerGroupID              string             `json:"worker_group_id"`
 	BuildWorkerInstanceID      pgtype.UUID        `json:"build_worker_instance_id"`
 	WorkerEpoch                int64              `json:"worker_epoch"`
 	WorkerProtocolVersion      string             `json:"worker_protocol_version"`
+	RequestedCpuMillis         int64              `json:"requested_cpu_millis"`
+	RequestedMemoryBytes       int64              `json:"requested_memory_bytes"`
+	RequestedWorkloadDiskBytes int64              `json:"requested_workload_disk_bytes"`
+	RequestedScratchBytes      int64              `json:"requested_scratch_bytes"`
+	RequestedBuildExecutors    int32              `json:"requested_build_executors"`
 	BuildSnapshot              []byte             `json:"build_snapshot"`
 	TraceID                    pgtype.Text        `json:"trace_id"`
 	SpanID                     pgtype.Text        `json:"span_id"`
@@ -1690,10 +1560,8 @@ type LeaseQueuedDeploymentBuildRow struct {
 	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
 	Version                      string             `json:"version"`
 	ApiVersion                   string             `json:"api_version"`
-	SdkVersion                   string             `json:"sdk_version"`
-	CliVersion                   string             `json:"cli_version"`
 	ContentHash                  string             `json:"content_hash"`
-	BuildArchitecture            string             `json:"build_architecture"`
+	BuildNodeVersion             string             `json:"build_node_version"`
 	BuildRuntimeDigest           []byte             `json:"build_runtime_digest"`
 	BuildStandardToolchainDigest []byte             `json:"build_standard_toolchain_digest"`
 	BuildContractVersion         string             `json:"build_contract_version"`
@@ -1708,18 +1576,17 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 		arg.OrgID,
 		arg.DeploymentID,
 		arg.BuildRegionID,
-		arg.BuildArchitecture,
-		arg.RequestedCpuMillis,
-		arg.RequestedMemoryBytes,
-		arg.RequestedWorkloadDiskBytes,
-		arg.RequestedScratchBytes,
-		arg.RequestedBuildExecutors,
 		arg.LeaseSequence,
 		arg.BuildLeaseID,
 		arg.WorkerGroupID,
 		arg.BuildWorkerInstanceID,
 		arg.WorkerEpoch,
 		arg.WorkerProtocolVersion,
+		arg.RequestedCpuMillis,
+		arg.RequestedMemoryBytes,
+		arg.RequestedWorkloadDiskBytes,
+		arg.RequestedScratchBytes,
+		arg.RequestedBuildExecutors,
 		arg.BuildSnapshot,
 		arg.TraceID,
 		arg.SpanID,
@@ -1766,10 +1633,8 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 		&i.UpdatedAt,
 		&i.Version,
 		&i.ApiVersion,
-		&i.SdkVersion,
-		&i.CliVersion,
 		&i.ContentHash,
-		&i.BuildArchitecture,
+		&i.BuildNodeVersion,
 		&i.BuildRuntimeDigest,
 		&i.BuildStandardToolchainDigest,
 		&i.BuildContractVersion,
@@ -1782,7 +1647,7 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 }
 
 const listDeploymentsByVersionForOrg = `-- name: ListDeploymentsByVersionForOrg :many
-SELECT id, public_id, org_id, project_id, environment_id, build_region_id, build_architecture, build_runtime_digest, build_standard_toolchain_digest, build_manager_name, build_manager_version, build_manager_digest, build_contract_version, version, content_hash, api_version, sdk_version, cli_version, worker_protocol_version, deployment_source_artifact_id, program_artifact_id, program_artifact_kind, program_runtime_digest, program_architecture, program_receipt, queue_config, status, failure, current_build_lease_id, build_requested_cpu_millis, build_requested_memory_bytes, build_requested_workload_disk_bytes, build_requested_scratch_bytes, build_requested_executors, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+SELECT id, public_id, org_id, project_id, environment_id, build_region_id, build_node_version, build_runtime_digest, build_standard_toolchain_digest, build_manager_name, build_manager_version, build_manager_digest, build_contract_version, version, content_hash, api_version, worker_protocol_version, deployment_source_artifact_id, program_artifact_id, program_artifact_kind, program_index_digest, queue_config, status, failure, current_build_lease_id, created_at, updated_at, building_at, built_at, deployed_at, failed_at
   FROM deployments
  WHERE org_id = $1
    AND version = $2
@@ -1810,7 +1675,7 @@ func (q *Queries) ListDeploymentsByVersionForOrg(ctx context.Context, arg ListDe
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.BuildRegionID,
-			&i.BuildArchitecture,
+			&i.BuildNodeVersion,
 			&i.BuildRuntimeDigest,
 			&i.BuildStandardToolchainDigest,
 			&i.BuildManagerName,
@@ -1820,24 +1685,15 @@ func (q *Queries) ListDeploymentsByVersionForOrg(ctx context.Context, arg ListDe
 			&i.Version,
 			&i.ContentHash,
 			&i.ApiVersion,
-			&i.SdkVersion,
-			&i.CliVersion,
 			&i.WorkerProtocolVersion,
 			&i.DeploymentSourceArtifactID,
 			&i.ProgramArtifactID,
 			&i.ProgramArtifactKind,
-			&i.ProgramRuntimeDigest,
-			&i.ProgramArchitecture,
-			&i.ProgramReceipt,
+			&i.ProgramIndexDigest,
 			&i.QueueConfig,
 			&i.Status,
 			&i.Failure,
 			&i.CurrentBuildLeaseID,
-			&i.BuildRequestedCpuMillis,
-			&i.BuildRequestedMemoryBytes,
-			&i.BuildRequestedWorkloadDiskBytes,
-			&i.BuildRequestedScratchBytes,
-			&i.BuildRequestedExecutors,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.BuildingAt,
@@ -1861,12 +1717,6 @@ SELECT deployments.org_id,
        deployments.environment_id,
        deployments.id AS deployment_id,
        deployments.build_region_id,
-       deployments.build_architecture,
-       deployments.build_requested_cpu_millis,
-       deployments.build_requested_memory_bytes,
-       deployments.build_requested_workload_disk_bytes,
-       deployments.build_requested_scratch_bytes,
-       deployments.build_requested_executors,
        (COALESCE((
            SELECT max(deployment_build_leases.lease_sequence)
              FROM deployment_build_leases
@@ -1876,6 +1726,9 @@ SELECT deployments.org_id,
   FROM deployments
  WHERE deployments.build_region_id = $1
    AND deployments.status IN ('queued', 'building')
+   AND deployments.build_runtime_digest IS NOT NULL
+   AND deployments.build_standard_toolchain_digest IS NOT NULL
+   AND deployments.build_manager_digest IS NOT NULL
    AND deployments.current_build_lease_id IS NULL
    AND COALESCE((
        SELECT max(deployment_build_leases.lease_sequence)
@@ -1901,19 +1754,13 @@ type ListQueuedDeploymentBuildCandidatesParams struct {
 }
 
 type ListQueuedDeploymentBuildCandidatesRow struct {
-	OrgID                           pgtype.UUID        `json:"org_id"`
-	ProjectID                       pgtype.UUID        `json:"project_id"`
-	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
-	DeploymentID                    pgtype.UUID        `json:"deployment_id"`
-	BuildRegionID                   string             `json:"build_region_id"`
-	BuildArchitecture               string             `json:"build_architecture"`
-	BuildRequestedCpuMillis         int64              `json:"build_requested_cpu_millis"`
-	BuildRequestedMemoryBytes       int64              `json:"build_requested_memory_bytes"`
-	BuildRequestedWorkloadDiskBytes int64              `json:"build_requested_workload_disk_bytes"`
-	BuildRequestedScratchBytes      int64              `json:"build_requested_scratch_bytes"`
-	BuildRequestedExecutors         int32              `json:"build_requested_executors"`
-	LeaseSequence                   int64              `json:"lease_sequence"`
-	QueueTimestamp                  pgtype.Timestamptz `json:"queue_timestamp"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	DeploymentID   pgtype.UUID        `json:"deployment_id"`
+	BuildRegionID  string             `json:"build_region_id"`
+	LeaseSequence  int64              `json:"lease_sequence"`
+	QueueTimestamp pgtype.Timestamptz `json:"queue_timestamp"`
 }
 
 func (q *Queries) ListQueuedDeploymentBuildCandidates(ctx context.Context, arg ListQueuedDeploymentBuildCandidatesParams) ([]ListQueuedDeploymentBuildCandidatesRow, error) {
@@ -1931,12 +1778,6 @@ func (q *Queries) ListQueuedDeploymentBuildCandidates(ctx context.Context, arg L
 			&i.EnvironmentID,
 			&i.DeploymentID,
 			&i.BuildRegionID,
-			&i.BuildArchitecture,
-			&i.BuildRequestedCpuMillis,
-			&i.BuildRequestedMemoryBytes,
-			&i.BuildRequestedWorkloadDiskBytes,
-			&i.BuildRequestedScratchBytes,
-			&i.BuildRequestedExecutors,
 			&i.LeaseSequence,
 			&i.QueueTimestamp,
 		); err != nil {
@@ -1954,6 +1795,9 @@ const listQueuedDeploymentBuildRegions = `-- name: ListQueuedDeploymentBuildRegi
 SELECT DISTINCT deployments.build_region_id
   FROM deployments
  WHERE deployments.status IN ('queued','building')
+   AND deployments.build_runtime_digest IS NOT NULL
+   AND deployments.build_standard_toolchain_digest IS NOT NULL
+   AND deployments.build_manager_digest IS NOT NULL
    AND deployments.current_build_lease_id IS NULL
    AND COALESCE((
        SELECT max(deployment_build_leases.lease_sequence)
@@ -1990,7 +1834,7 @@ func (q *Queries) ListQueuedDeploymentBuildRegions(ctx context.Context, limitCou
 }
 
 const listScopedDeployments = `-- name: ListScopedDeployments :many
-SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_architecture, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_runtime_digest, deployments.program_architecture, deployments.program_receipt, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.build_requested_cpu_millis, deployments.build_requested_memory_bytes, deployments.build_requested_workload_disk_bytes, deployments.build_requested_scratch_bytes, deployments.build_requested_executors, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_node_version, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
   FROM deployments
  WHERE deployments.org_id = $1
    AND deployments.project_id = $2
@@ -2027,7 +1871,7 @@ func (q *Queries) ListScopedDeployments(ctx context.Context, arg ListScopedDeplo
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.BuildRegionID,
-			&i.BuildArchitecture,
+			&i.BuildNodeVersion,
 			&i.BuildRuntimeDigest,
 			&i.BuildStandardToolchainDigest,
 			&i.BuildManagerName,
@@ -2037,24 +1881,15 @@ func (q *Queries) ListScopedDeployments(ctx context.Context, arg ListScopedDeplo
 			&i.Version,
 			&i.ContentHash,
 			&i.ApiVersion,
-			&i.SdkVersion,
-			&i.CliVersion,
 			&i.WorkerProtocolVersion,
 			&i.DeploymentSourceArtifactID,
 			&i.ProgramArtifactID,
 			&i.ProgramArtifactKind,
-			&i.ProgramRuntimeDigest,
-			&i.ProgramArchitecture,
-			&i.ProgramReceipt,
+			&i.ProgramIndexDigest,
 			&i.QueueConfig,
 			&i.Status,
 			&i.Failure,
 			&i.CurrentBuildLeaseID,
-			&i.BuildRequestedCpuMillis,
-			&i.BuildRequestedMemoryBytes,
-			&i.BuildRequestedWorkloadDiskBytes,
-			&i.BuildRequestedScratchBytes,
-			&i.BuildRequestedExecutors,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.BuildingAt,
@@ -2074,7 +1909,7 @@ func (q *Queries) ListScopedDeployments(ctx context.Context, arg ListScopedDeplo
 
 const lockDeploymentBuildTerminalFence = `-- name: LockDeploymentBuildTerminalFence :one
 WITH locked_deployment AS MATERIALIZED (
-    SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_architecture, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_runtime_digest, deployments.program_architecture, deployments.program_receipt, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.build_requested_cpu_millis, deployments.build_requested_memory_bytes, deployments.build_requested_workload_disk_bytes, deployments.build_requested_scratch_bytes, deployments.build_requested_executors, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+    SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_node_version, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
       FROM deployments
      WHERE deployments.org_id = $1
        AND deployments.project_id = $2
@@ -2100,7 +1935,7 @@ WITH locked_deployment AS MATERIALIZED (
 SELECT locked_lease.id, locked_lease.org_id, locked_lease.project_id, locked_lease.environment_id, locked_lease.deployment_id, locked_lease.build_region_id, locked_lease.lease_sequence, locked_lease.worker_group_id, locked_lease.worker_instance_id, locked_lease.worker_epoch, locked_lease.worker_protocol_version, locked_lease.requested_cpu_millis, locked_lease.requested_memory_bytes, locked_lease.requested_workload_disk_bytes, locked_lease.requested_scratch_bytes, locked_lease.requested_build_executors, locked_lease.build_snapshot, locked_lease.trace_id, locked_lease.span_id, locked_lease.parent_span_id, locked_lease.traceparent, locked_lease.state, locked_lease.assigned_at, locked_lease.start_deadline_at, locked_lease.claimed_at, locked_lease.started_at, locked_lease.renewed_at, locked_lease.expires_at, locked_lease.terminal_at, locked_lease.terminal_reason_code, locked_lease.terminal_error, locked_lease.terminal_request_fingerprint, locked_lease.created_at, locked_lease.updated_at,
        locked_deployment.status AS deployment_status,
        locked_deployment.current_build_lease_id,
-       locked_deployment.build_architecture,
+       locked_deployment.build_node_version,
        locked_deployment.build_runtime_digest,
        locked_deployment.build_standard_toolchain_digest,
        locked_deployment.build_manager_name,
@@ -2173,7 +2008,7 @@ type LockDeploymentBuildTerminalFenceRow struct {
 	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
 	DeploymentStatus             string             `json:"deployment_status"`
 	CurrentBuildLeaseID          pgtype.UUID        `json:"current_build_lease_id"`
-	BuildArchitecture            string             `json:"build_architecture"`
+	BuildNodeVersion             string             `json:"build_node_version"`
 	BuildRuntimeDigest           []byte             `json:"build_runtime_digest"`
 	BuildStandardToolchainDigest []byte             `json:"build_standard_toolchain_digest"`
 	BuildManagerName             string             `json:"build_manager_name"`
@@ -2237,7 +2072,7 @@ func (q *Queries) LockDeploymentBuildTerminalFence(ctx context.Context, arg Lock
 		&i.UpdatedAt,
 		&i.DeploymentStatus,
 		&i.CurrentBuildLeaseID,
-		&i.BuildArchitecture,
+		&i.BuildNodeVersion,
 		&i.BuildRuntimeDigest,
 		&i.BuildStandardToolchainDigest,
 		&i.BuildManagerName,
@@ -2408,7 +2243,7 @@ func (q *Queries) LockDeploymentBuildWorkerCertification(ctx context.Context, ar
 }
 
 const lockDeploymentPromotionTarget = `-- name: LockDeploymentPromotionTarget :one
-SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_architecture, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.sdk_version, deployments.cli_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_runtime_digest, deployments.program_architecture, deployments.program_receipt, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.build_requested_cpu_millis, deployments.build_requested_memory_bytes, deployments.build_requested_workload_disk_bytes, deployments.build_requested_scratch_bytes, deployments.build_requested_executors, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_node_version, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
   FROM environments
   JOIN deployments
     ON deployments.org_id = environments.org_id
@@ -2444,7 +2279,7 @@ func (q *Queries) LockDeploymentPromotionTarget(ctx context.Context, arg LockDep
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.BuildRegionID,
-		&i.BuildArchitecture,
+		&i.BuildNodeVersion,
 		&i.BuildRuntimeDigest,
 		&i.BuildStandardToolchainDigest,
 		&i.BuildManagerName,
@@ -2454,24 +2289,15 @@ func (q *Queries) LockDeploymentPromotionTarget(ctx context.Context, arg LockDep
 		&i.Version,
 		&i.ContentHash,
 		&i.ApiVersion,
-		&i.SdkVersion,
-		&i.CliVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
 		&i.ProgramArtifactKind,
-		&i.ProgramRuntimeDigest,
-		&i.ProgramArchitecture,
-		&i.ProgramReceipt,
+		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 		&i.Status,
 		&i.Failure,
 		&i.CurrentBuildLeaseID,
-		&i.BuildRequestedCpuMillis,
-		&i.BuildRequestedMemoryBytes,
-		&i.BuildRequestedWorkloadDiskBytes,
-		&i.BuildRequestedScratchBytes,
-		&i.BuildRequestedExecutors,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BuildingAt,
@@ -2493,7 +2319,7 @@ UPDATE deployments
    AND deployments.environment_id = $4
    AND deployments.id = $5
    AND deployments.status IN ('queued', 'building')
-RETURNING id, public_id, org_id, project_id, environment_id, build_region_id, build_architecture, build_runtime_digest, build_standard_toolchain_digest, build_manager_name, build_manager_version, build_manager_digest, build_contract_version, version, content_hash, api_version, sdk_version, cli_version, worker_protocol_version, deployment_source_artifact_id, program_artifact_id, program_artifact_kind, program_runtime_digest, program_architecture, program_receipt, queue_config, status, failure, current_build_lease_id, build_requested_cpu_millis, build_requested_memory_bytes, build_requested_workload_disk_bytes, build_requested_scratch_bytes, build_requested_executors, created_at, updated_at, building_at, built_at, deployed_at, failed_at
+RETURNING id, public_id, org_id, project_id, environment_id, build_region_id, build_node_version, build_runtime_digest, build_standard_toolchain_digest, build_manager_name, build_manager_version, build_manager_digest, build_contract_version, version, content_hash, api_version, worker_protocol_version, deployment_source_artifact_id, program_artifact_id, program_artifact_kind, program_index_digest, queue_config, status, failure, current_build_lease_id, created_at, updated_at, building_at, built_at, deployed_at, failed_at
 `
 
 type MarkDeploymentFailedParams struct {
@@ -2520,7 +2346,7 @@ func (q *Queries) MarkDeploymentFailed(ctx context.Context, arg MarkDeploymentFa
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.BuildRegionID,
-		&i.BuildArchitecture,
+		&i.BuildNodeVersion,
 		&i.BuildRuntimeDigest,
 		&i.BuildStandardToolchainDigest,
 		&i.BuildManagerName,
@@ -2530,24 +2356,143 @@ func (q *Queries) MarkDeploymentFailed(ctx context.Context, arg MarkDeploymentFa
 		&i.Version,
 		&i.ContentHash,
 		&i.ApiVersion,
-		&i.SdkVersion,
-		&i.CliVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
 		&i.ProgramArtifactKind,
-		&i.ProgramRuntimeDigest,
-		&i.ProgramArchitecture,
-		&i.ProgramReceipt,
+		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 		&i.Status,
 		&i.Failure,
 		&i.CurrentBuildLeaseID,
-		&i.BuildRequestedCpuMillis,
-		&i.BuildRequestedMemoryBytes,
-		&i.BuildRequestedWorkloadDiskBytes,
-		&i.BuildRequestedScratchBytes,
-		&i.BuildRequestedExecutors,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.BuildingAt,
+		&i.BuiltAt,
+		&i.DeployedAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
+const pinDeploymentPlatformArtifacts = `-- name: PinDeploymentPlatformArtifacts :one
+WITH locked AS MATERIALIZED (
+    SELECT deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_node_version, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+      FROM deployments
+     WHERE deployments.org_id = $1
+       AND deployments.project_id = $2
+       AND deployments.environment_id = $3
+       AND deployments.id = $4
+       AND deployments.status = 'queued'
+       AND deployments.current_build_lease_id IS NULL
+     FOR UPDATE
+),
+installed AS (
+    UPDATE deployments
+       SET build_runtime_digest = $5,
+           build_standard_toolchain_digest = $6,
+           build_manager_digest = $7,
+           updated_at = now()
+      FROM locked
+     WHERE deployments.id = locked.id
+       AND locked.build_runtime_digest IS NULL
+       AND locked.build_standard_toolchain_digest IS NULL
+       AND locked.build_manager_digest IS NULL
+    RETURNING deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_node_version, deployments.build_runtime_digest, deployments.build_standard_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+)
+SELECT installed.id, installed.public_id, installed.org_id, installed.project_id, installed.environment_id, installed.build_region_id, installed.build_node_version, installed.build_runtime_digest, installed.build_standard_toolchain_digest, installed.build_manager_name, installed.build_manager_version, installed.build_manager_digest, installed.build_contract_version, installed.version, installed.content_hash, installed.api_version, installed.worker_protocol_version, installed.deployment_source_artifact_id, installed.program_artifact_id, installed.program_artifact_kind, installed.program_index_digest, installed.queue_config, installed.status, installed.failure, installed.current_build_lease_id, installed.created_at, installed.updated_at, installed.building_at, installed.built_at, installed.deployed_at, installed.failed_at
+  FROM installed
+UNION ALL
+SELECT locked.id, locked.public_id, locked.org_id, locked.project_id, locked.environment_id, locked.build_region_id, locked.build_node_version, locked.build_runtime_digest, locked.build_standard_toolchain_digest, locked.build_manager_name, locked.build_manager_version, locked.build_manager_digest, locked.build_contract_version, locked.version, locked.content_hash, locked.api_version, locked.worker_protocol_version, locked.deployment_source_artifact_id, locked.program_artifact_id, locked.program_artifact_kind, locked.program_index_digest, locked.queue_config, locked.status, locked.failure, locked.current_build_lease_id, locked.created_at, locked.updated_at, locked.building_at, locked.built_at, locked.deployed_at, locked.failed_at
+  FROM locked
+ WHERE locked.build_runtime_digest = $5
+   AND locked.build_standard_toolchain_digest = $6
+   AND locked.build_manager_digest = $7
+   AND NOT EXISTS (SELECT 1 FROM installed)
+LIMIT 1
+`
+
+type PinDeploymentPlatformArtifactsParams struct {
+	OrgID                        pgtype.UUID `json:"org_id"`
+	ProjectID                    pgtype.UUID `json:"project_id"`
+	EnvironmentID                pgtype.UUID `json:"environment_id"`
+	ID                           pgtype.UUID `json:"id"`
+	BuildRuntimeDigest           []byte      `json:"build_runtime_digest"`
+	BuildStandardToolchainDigest []byte      `json:"build_standard_toolchain_digest"`
+	BuildManagerDigest           []byte      `json:"build_manager_digest"`
+}
+
+type PinDeploymentPlatformArtifactsRow struct {
+	ID                           pgtype.UUID        `json:"id"`
+	PublicID                     string             `json:"public_id"`
+	OrgID                        pgtype.UUID        `json:"org_id"`
+	ProjectID                    pgtype.UUID        `json:"project_id"`
+	EnvironmentID                pgtype.UUID        `json:"environment_id"`
+	BuildRegionID                string             `json:"build_region_id"`
+	BuildNodeVersion             string             `json:"build_node_version"`
+	BuildRuntimeDigest           []byte             `json:"build_runtime_digest"`
+	BuildStandardToolchainDigest []byte             `json:"build_standard_toolchain_digest"`
+	BuildManagerName             string             `json:"build_manager_name"`
+	BuildManagerVersion          string             `json:"build_manager_version"`
+	BuildManagerDigest           []byte             `json:"build_manager_digest"`
+	BuildContractVersion         string             `json:"build_contract_version"`
+	Version                      string             `json:"version"`
+	ContentHash                  string             `json:"content_hash"`
+	ApiVersion                   string             `json:"api_version"`
+	WorkerProtocolVersion        string             `json:"worker_protocol_version"`
+	DeploymentSourceArtifactID   pgtype.UUID        `json:"deployment_source_artifact_id"`
+	ProgramArtifactID            pgtype.UUID        `json:"program_artifact_id"`
+	ProgramArtifactKind          ArtifactKind       `json:"program_artifact_kind"`
+	ProgramIndexDigest           []byte             `json:"program_index_digest"`
+	QueueConfig                  []byte             `json:"queue_config"`
+	Status                       string             `json:"status"`
+	Failure                      []byte             `json:"failure"`
+	CurrentBuildLeaseID          pgtype.UUID        `json:"current_build_lease_id"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	BuildingAt                   pgtype.Timestamptz `json:"building_at"`
+	BuiltAt                      pgtype.Timestamptz `json:"built_at"`
+	DeployedAt                   pgtype.Timestamptz `json:"deployed_at"`
+	FailedAt                     pgtype.Timestamptz `json:"failed_at"`
+}
+
+func (q *Queries) PinDeploymentPlatformArtifacts(ctx context.Context, arg PinDeploymentPlatformArtifactsParams) (PinDeploymentPlatformArtifactsRow, error) {
+	row := q.db.QueryRow(ctx, pinDeploymentPlatformArtifacts,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ID,
+		arg.BuildRuntimeDigest,
+		arg.BuildStandardToolchainDigest,
+		arg.BuildManagerDigest,
+	)
+	var i PinDeploymentPlatformArtifactsRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.BuildRegionID,
+		&i.BuildNodeVersion,
+		&i.BuildRuntimeDigest,
+		&i.BuildStandardToolchainDigest,
+		&i.BuildManagerName,
+		&i.BuildManagerVersion,
+		&i.BuildManagerDigest,
+		&i.BuildContractVersion,
+		&i.Version,
+		&i.ContentHash,
+		&i.ApiVersion,
+		&i.WorkerProtocolVersion,
+		&i.DeploymentSourceArtifactID,
+		&i.ProgramArtifactID,
+		&i.ProgramArtifactKind,
+		&i.ProgramIndexDigest,
+		&i.QueueConfig,
+		&i.Status,
+		&i.Failure,
+		&i.CurrentBuildLeaseID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BuildingAt,

@@ -16,17 +16,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type deploymentVersionMetadata struct {
 	APIVersion            string
-	SDKVersion            string
-	CLIVersion            string
 	WorkerProtocolVersion string
 }
 
@@ -51,6 +49,15 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 	metadata, err := deploymentMetadataFromRequest(r, request)
 	if err != nil {
 		writeError(w, badRequest(err))
+		return
+	}
+	idempotencyKey, err := normalizeIdempotencyKey(request.IdempotencyKey)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	if idempotencyKey == "" {
+		writeError(w, badRequest(errors.New("idempotency_key is required")))
 		return
 	}
 	actor := actorFromContext(r.Context())
@@ -78,11 +85,6 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if s.buildPolicy == nil || s.runtimeStore == nil ||
-		s.managerCatalog == nil {
-		writeError(w, unavailable(errors.New("managed runtime is not configured")))
-		return
-	}
 	project, err := s.db.GetProject(r.Context(), db.GetProjectParams{
 		OrgID: pgvalue.UUID(actor.OrgID),
 		ID:    projectID,
@@ -92,18 +94,19 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	buildRegionID := project.DefaultRegionID
-	buildTarget, err := s.buildPolicy.Current(buildRegionID)
-	if err != nil {
-		writeError(w, unavailable(fmt.Errorf("resolve build target: %w", err)))
-		return
-	}
-	if err := validateRuntimeObject(r.Context(), s.runtimeStore, buildTarget.Runtime); err != nil {
-		writeError(w, unavailable(err))
-		return
-	}
-	manager, err := s.managerCatalog.Resolve(
-		selection.Manager,
-		buildTarget.Runtime.Architecture,
+	claimRequest, err := idempotency.NewDeploymentCreateRequest(
+		pgvalue.MustUUIDValue(environmentID),
+		pgvalue.MustUUIDValue(projectID),
+		idempotencyKey,
+		idempotency.DeploymentCreateFingerprint{
+			SourceDigest:         strings.TrimSpace(request.ContentHash),
+			LockfileDigest:       selection.LockfileDigest,
+			LockfileName:         selection.LockfileName,
+			NodeVersion:          selection.NodeVersion,
+			ManagerName:          string(selection.Manager.Name),
+			ManagerVersion:       selection.Manager.Version,
+			BuildContractVersion: deployment.ProgramBuildContractVersion,
+		},
 	)
 	if err != nil {
 		writeError(w, badRequest(err))
@@ -133,6 +136,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		s.deleteUnreferencedDeploymentSourceArtifact(r.Context(), actor.OrgID, artifact.Digest)
 	}
 	var response api.DeploymentResponse
+	status := http.StatusCreated
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		store, ok := work.q.(deploymentStore)
 		if !ok {
@@ -144,6 +148,30 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
+		claims, err := idempotency.TransactionForQueries(work.q)
+		if err != nil {
+			return err
+		}
+		acquired, err := claims.Acquire(r.Context(), claimRequest)
+		if err != nil {
+			return err
+		}
+		if !acquired.New {
+			replayed, err := replayDeploymentCreation(
+				r.Context(),
+				work.q,
+				store,
+				acquired.Claim,
+				pgvalue.UUID(actor.OrgID),
+				projectID,
+			)
+			if err != nil {
+				return err
+			}
+			response = replayed
+			status = http.StatusOK
+			return nil
+		}
 		if project.DefaultRegionID != buildRegionID {
 			return conflict(errors.New("project default region changed; retry deployment creation"))
 		}
@@ -152,8 +180,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 			r.Context(),
 			store,
 			buildRegionID,
-			buildTarget,
-			manager,
+			selection,
 			actor.OrgID,
 			projectID,
 			environmentID,
@@ -161,27 +188,17 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 			artifact,
 			metadata,
 		)
-		return createErr
+		if createErr != nil {
+			return createErr
+		}
+		return completeDeploymentCreation(r.Context(), claims, acquired.Claim, response.ID)
 	})
 	if err != nil {
 		cleanupArtifact()
 		writeDeploymentError(w, s, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, response)
-}
-
-func validateRuntimeObject(ctx context.Context, store cas.Reader, descriptor deployment.RuntimeDescriptor) error {
-	object, err := store.Stat(ctx, descriptor.Digest)
-	if err != nil {
-		return fmt.Errorf("resolve managed runtime object: %w", err)
-	}
-	if object.Digest != descriptor.Digest ||
-		object.SizeBytes != descriptor.SizeBytes ||
-		object.MediaType != descriptor.MediaType {
-		return errors.New("managed runtime object does not match its descriptor")
-	}
-	return nil
+	writeJSON(w, status, response)
 }
 
 func deploymentMetadataFromRequest(r *http.Request, request api.CreateDeploymentRequest) (deploymentVersionMetadata, error) {
@@ -193,25 +210,8 @@ func deploymentMetadataFromRequest(r *http.Request, request api.CreateDeployment
 	if workerProtocolVersion != api.CurrentWorkerProtocolVersion {
 		return deploymentVersionMetadata{}, fmt.Errorf("unsupported worker_protocol_version %q; current version is %s", workerProtocolVersion, api.CurrentWorkerProtocolVersion)
 	}
-	versions := requestVersionMetadataFromContext(r.Context())
-	sdkVersion := firstPresentString(request.SDKVersion, versions.SDKVersion)
-	if err := api.ValidateClientVersion(sdkVersion); err != nil {
-		return deploymentVersionMetadata{}, codedError{
-			code:    "invalid_sdk_version",
-			message: fmt.Sprintf("invalid sdk_version: %v", err),
-		}
-	}
-	cliVersion := firstPresentString(request.CLIVersion, versions.CLIVersion)
-	if err := api.ValidateClientVersion(cliVersion); err != nil {
-		return deploymentVersionMetadata{}, codedError{
-			code:    "invalid_cli_version",
-			message: fmt.Sprintf("invalid cli_version: %v", err),
-		}
-	}
 	return deploymentVersionMetadata{
 		APIVersion:            apiVersion,
-		SDKVersion:            sdkVersion,
-		CLIVersion:            cliVersion,
 		WorkerProtocolVersion: workerProtocolVersion,
 	}, nil
 }

@@ -3,8 +3,6 @@ package schema
 import (
 	"bytes"
 	"context"
-	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -54,7 +51,6 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertWorkspaceVersionAuthority(t, dbctx, pool)
 	assertArtifactCreatorAuthority(t, dbctx, pool)
 	assertIdempotencyClaimCollectionIndexes(t, dbctx, pool)
-	assertLookupHMACVersionIndexes(t, dbctx, pool)
 	assertExecutionAttachmentConstraints(t, dbctx, pool)
 	assertRunWaitHandoffAuthority(t, dbctx, pool)
 	assertPrimitiveLifecycleSchema(t, dbctx, pool)
@@ -84,7 +80,6 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertWorkspaceVersionAuthority(t, dbctx, pool)
 	assertArtifactCreatorAuthority(t, dbctx, pool)
 	assertIdempotencyClaimCollectionIndexes(t, dbctx, pool)
-	assertLookupHMACVersionIndexes(t, dbctx, pool)
 	assertExecutionAttachmentConstraints(t, dbctx, pool)
 	assertRunWaitHandoffAuthority(t, dbctx, pool)
 	assertPrimitiveLifecycleSchema(t, dbctx, pool)
@@ -786,26 +781,6 @@ func assertIdempotencyClaimCollectionIndexes(t *testing.T, ctx context.Context, 
 	}
 }
 
-func assertLookupHMACVersionIndexes(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
-	t.Helper()
-	required := []string{
-		"idempotency_claims_hash_key_version_idx",
-		"secret_versions_authenticator_key_version_idx",
-	}
-	var count int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM pg_indexes
-		 WHERE schemaname = 'public'
-		   AND indexname = ANY($1::text[])
-	`, required).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != len(required) {
-		t.Fatalf("lookup-HMAC reference indexes = %d, want %d", count, len(required))
-	}
-}
-
 func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	var authorityColumns int
@@ -960,547 +935,124 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 
 func assertDeploymentBuildCapacitySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
-	var cpuDefault, memoryDefault, workloadDefault, scratchDefault, executorsDefault string
+	var deploymentProjections int
 	if err := pool.QueryRow(ctx, `
-		SELECT
-		    max(column_default) FILTER (WHERE column_name = 'build_requested_cpu_millis'),
-		    max(column_default) FILTER (WHERE column_name = 'build_requested_memory_bytes'),
-		    max(column_default) FILTER (WHERE column_name = 'build_requested_workload_disk_bytes'),
-		    max(column_default) FILTER (WHERE column_name = 'build_requested_scratch_bytes'),
-		    max(column_default) FILTER (WHERE column_name = 'build_requested_executors')
+		SELECT count(*)
 		  FROM information_schema.columns
 		 WHERE table_schema = 'public'
 		   AND table_name = 'deployments'
-	`).Scan(&cpuDefault, &memoryDefault, &workloadDefault, &scratchDefault, &executorsDefault); err != nil {
+		   AND column_name = ANY($1::text[])
+	`, []string{
+		"build_architecture",
+		"build_requested_cpu_millis",
+		"build_requested_memory_bytes",
+		"build_requested_workload_disk_bytes",
+		"build_requested_scratch_bytes",
+		"build_requested_executors",
+	}).Scan(&deploymentProjections); err != nil {
 		t.Fatal(err)
 	}
-	if cpuDefault != "3000" || memoryDefault != "'4294967296'::bigint" || workloadDefault != "0" ||
-		scratchDefault != "'34359738368'::bigint" || executorsDefault != "1" {
-		t.Fatalf(
-			"build defaults = cpu:%s memory:%s workload:%s scratch:%s executors:%s",
-			cpuDefault,
-			memoryDefault,
-			workloadDefault,
-			scratchDefault,
-			executorsDefault,
-		)
+	if deploymentProjections != 0 {
+		t.Fatalf("deployment build projections = %d, want 0", deploymentProjections)
 	}
-	var cacheColumns int
+	var leaseResources int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
 		  FROM information_schema.columns
 		 WHERE table_schema = 'public'
-		   AND table_name IN ('deployments', 'deployment_build_leases')
+		   AND table_name = 'deployment_build_leases'
 		   AND column_name = ANY($1::text[])
 	`, []string{
-		"build_requested_build_cache_bytes",
-		"build_requested_artifact_cache_bytes",
-		"requested_build_cache_bytes",
-		"requested_artifact_cache_bytes",
-	}).Scan(&cacheColumns); err != nil {
+		"requested_cpu_millis",
+		"requested_memory_bytes",
+		"requested_workload_disk_bytes",
+		"requested_scratch_bytes",
+		"requested_build_executors",
+	}).Scan(&leaseResources); err != nil {
 		t.Fatal(err)
 	}
-	if cacheColumns != 0 {
-		t.Fatalf("per-delivery cache columns = %d, want 0", cacheColumns)
-	}
-	var executorConstraints int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM pg_constraint
-		 WHERE conrelid IN ('deployments'::regclass, 'deployment_build_leases'::regclass)
-		   AND contype = 'c'
-		   AND pg_get_constraintdef(oid) ~ '(build_requested_executors|requested_build_executors) = 1'
-	`).Scan(&executorConstraints); err != nil {
-		t.Fatal(err)
-	}
-	if executorConstraints != 2 {
-		t.Fatalf("exact-one build executor constraints = %d, want 2", executorConstraints)
+	if leaseResources != 5 {
+		t.Fatalf("build lease resource facts = %d, want 5", leaseResources)
 	}
 }
 
 func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
-	var definitionTable bool
-	if err := pool.QueryRow(ctx, `SELECT to_regclass('public.deployment_definitions') IS NOT NULL`).Scan(&definitionTable); err != nil {
-		t.Fatal(err)
-	}
-	if !definitionTable {
-		t.Fatal("deployment_definitions table was not created")
-	}
-	requiredExecutionTables := []string{
-		"deployment_definitions",
-		"lookup_hmac_versions",
-		"idempotency_claims",
-		"workspaces",
-		"workspace_versions",
-		"workspace_mounts",
-		"workspace_leases",
-		"workspace_processes",
-		"secrets",
-		"secret_versions",
-		"workspace_secrets",
-		"secret_resolutions",
-		"actors",
-		"actor_records",
-		"runs",
-		"run_attempts",
-		"run_leases",
-		"run_waits",
-		"run_checkpoints",
-		"run_checkpoint_artifacts",
-		"tokens",
-		"schedules",
-		"outbox_messages",
-	}
-	var executionTableCount int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM unnest($1::text[]) AS table_name
-		 WHERE to_regclass('public.' || table_name) IS NOT NULL
-	`, requiredExecutionTables).Scan(&executionTableCount); err != nil {
-		t.Fatal(err)
-	}
-	if executionTableCount != len(requiredExecutionTables) {
-		t.Fatalf("greenfield execution tables = %d, want %d", executionTableCount, len(requiredExecutionTables))
-	}
-	var removedRunStreamTables int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM unnest(ARRAY['run_streams', 'run_stream_records']) AS table_name
-		 WHERE to_regclass('public.' || table_name) IS NOT NULL
-	`).Scan(&removedRunStreamTables); err != nil {
-		t.Fatal(err)
-	}
-	if removedRunStreamTables != 0 {
-		t.Fatalf("removed Run-stream tables = %d, want 0", removedRunStreamTables)
-	}
-	var exactPinColumns int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM information_schema.columns
-		 WHERE table_schema = 'public'
-		   AND (
-		       (table_name = 'workspaces' AND column_name = ANY(ARRAY[
-		           'deployment_definition_id', 'workspace_declared_id'
-		       ]))
-		       OR
-		       (table_name = 'actors' AND column_name = ANY(ARRAY[
-		           'deployment_definition_id', 'actor_declared_id'
-		       ]))
-		       OR
-		       (table_name = 'runs' AND column_name = ANY(ARRAY[
-		           'deployment_definition_id', 'entrypoint_kind', 'entrypoint_declared_id'
-		       ]))
-		   )
-	`).Scan(&exactPinColumns); err != nil {
-		t.Fatal(err)
-	}
-	if exactPinColumns != 7 {
-		t.Fatalf("exact deployed-declaration pin columns = %d, want 7", exactPinColumns)
-	}
-	var exactPinIndexes int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM pg_indexes
-		 WHERE schemaname = 'public'
-		   AND indexname = ANY($1::text[])
-	`, []string{
-		"workspaces_deployment_definition_idx",
-		"actors_deployment_definition_idx",
-		"runs_deployment_definition_idx",
-	}).Scan(&exactPinIndexes); err != nil {
-		t.Fatal(err)
-	}
-	if exactPinIndexes != 3 {
-		t.Fatalf("exact deployed-declaration pin indexes = %d, want 3", exactPinIndexes)
-	}
-	var safeIntegerColumns int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM information_schema.columns
-		 WHERE table_schema = 'public'
-		   AND data_type = 'bigint'
-		   AND (
-		       (table_name = 'runs' AND column_name = 'queue_concurrency_limit')
-		       OR
-		       (table_name = 'actors' AND column_name = 'run_queue_concurrency_limit')
-		   )
-	`).Scan(&safeIntegerColumns); err != nil {
-		t.Fatal(err)
-	}
-	if safeIntegerColumns != 2 {
-		t.Fatalf("safe-integer queue limit columns = %d, want 2", safeIntegerColumns)
-	}
-	var safeIntegerConstraints int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM pg_constraint
-		 WHERE conrelid IN ('runs'::regclass, 'actors'::regclass)
-		   AND contype = 'c'
-		   AND pg_get_constraintdef(oid) LIKE '%9007199254740991%'
-		   AND pg_get_constraintdef(oid) ~ '(run_)?queue_concurrency_limit'
-	`).Scan(&safeIntegerConstraints); err != nil {
-		t.Fatal(err)
-	}
-	if safeIntegerConstraints != 2 {
-		t.Fatalf("safe-integer queue limit constraints = %d, want 2", safeIntegerConstraints)
-	}
-	for _, test := range []struct {
-		name       string
-		retry      string
-		metadata   string
-		constraint string
-	}{
-		{
-			name: "retry policy", retry: `"disabled"`, metadata: `{}`,
-			constraint: "actors_run_retry_policy_object",
-		},
-		{
-			name: "metadata", retry: `{"enabled":false}`, metadata: `[]`,
-			constraint: "actors_run_metadata_object",
-		},
-	} {
-		_, err := pool.Exec(ctx, `
-			INSERT INTO actors (
-				id, public_id, environment_id, actor_declared_id,
-				deployment_definition_id, workspace_id, run_queue_name,
-				run_max_active_duration_ms, run_retry_policy, run_metadata
-			)
-			VALUES (
-				'10000000-0000-7000-8000-000000000001',
-				'act_aaaaaaaaaaaaaaaaaaaaaaaaaa',
-				'10000000-0000-7000-8000-000000000002',
-				'actor',
-				'10000000-0000-7000-8000-000000000003',
-				'10000000-0000-7000-8000-000000000004',
-				'default',
-				1000,
-				$1::jsonb,
-				$2::jsonb
-			)
-		`, test.retry, test.metadata)
-		var pgErr *pgconn.PgError
-		if !errors.As(err, &pgErr) ||
-			pgErr.Code != "23514" ||
-			pgErr.ConstraintName != test.constraint {
-			t.Fatalf("%s scalar JSON error = %v, want %s check violation", test.name, err, test.constraint)
-		}
-	}
-	var leaseQueuePolicyColumns int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM information_schema.columns
-		 WHERE table_schema = 'public'
-		   AND table_name = 'run_leases'
-		   AND column_name = ANY(ARRAY[
-		       'queue_name', 'queue_class', 'concurrency_key', 'queue_concurrency_limit'
-		   ])
-	`).Scan(&leaseQueuePolicyColumns); err != nil {
-		t.Fatal(err)
-	}
-	if leaseQueuePolicyColumns != 0 {
-		t.Fatalf("copied Run Lease queue policy columns = %d, want 0", leaseQueuePolicyColumns)
-	}
-	var programColumns int
+	var deploymentColumns int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
 		  FROM information_schema.columns
 		 WHERE table_schema = 'public'
 		   AND table_name = 'deployments'
 		   AND column_name = ANY($1::text[])
-	`, []string{"program_artifact_id", "program_runtime_digest", "program_architecture", "program_receipt"}).Scan(&programColumns); err != nil {
+	`, []string{
+		"build_node_version",
+		"build_runtime_digest",
+		"build_standard_toolchain_digest",
+		"build_manager_name",
+		"build_manager_version",
+		"build_manager_digest",
+		"build_contract_version",
+		"program_artifact_id",
+		"program_index_digest",
+	}).Scan(&deploymentColumns); err != nil {
 		t.Fatal(err)
 	}
-	if programColumns != 4 {
-		t.Fatalf("deployment program columns = %d, want 4", programColumns)
+	if deploymentColumns != 9 {
+		t.Fatalf("deployment authority columns = %d, want 9", deploymentColumns)
 	}
-	var obsoleteProgramColumns int
+	var removedColumns int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
 		  FROM information_schema.columns
 		 WHERE table_schema = 'public'
 		   AND table_name IN ('deployments', 'deployment_definitions')
 		   AND column_name = ANY($1::text[])
-	`, []string{"program_code_artifact_id", "program_dependency_artifact_id", "program_runtime_contract_digest", "program_supported_architectures", "runtime_contract_digest"}).Scan(&obsoleteProgramColumns); err != nil {
-		t.Fatal(err)
-	}
-	if obsoleteProgramColumns != 0 {
-		t.Fatalf("obsolete deployment program columns = %d, want 0", obsoleteProgramColumns)
-	}
-	var artifactKinds int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM pg_enum
-		  JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
-		 WHERE pg_type.typname = 'artifact_kind'
-		   AND pg_enum.enumlabel = ANY($1::text[])
 	`, []string{
-		"deployment_program",
-		"workspace_image",
-	}).Scan(&artifactKinds); err != nil {
+		"build_architecture",
+		"program_runtime_digest",
+		"program_architecture",
+		"program_receipt",
+		"workspace_architecture",
+		"sdk_version",
+		"cli_version",
+	}).Scan(&removedColumns); err != nil {
 		t.Fatal(err)
 	}
-	if artifactKinds != 2 {
-		t.Fatalf("artifact kind labels = %d, want 2", artifactKinds)
+	if removedColumns != 0 {
+		t.Fatalf("removed deployment projections = %d, want 0", removedColumns)
 	}
-	var obsoleteArtifactKind bool
-	if err := pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			  FROM pg_enum
-			  JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
-			 WHERE pg_type.typname = 'artifact_kind'
-			   AND pg_enum.enumlabel = ANY(ARRAY[
-			       'deployment_program_code', 'deployment_program_dependencies',
-			       'workspace_process_record'
-			   ])
-		)
-	`).Scan(&obsoleteArtifactKind); err != nil {
-		t.Fatal(err)
-	}
-	if obsoleteArtifactKind {
-		t.Fatal("obsolete split Program artifact kind exists")
-	}
-	var artifactReferenceIndexes int
+	var constraints int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
-		  FROM pg_indexes
-		 WHERE schemaname = 'public'
-		   AND indexname = ANY($1::text[])
-	`, []string{"deployments_program_artifact_idx", "deployment_definitions_artifact_idx"}).Scan(&artifactReferenceIndexes); err != nil {
+		  FROM pg_constraint
+		 WHERE conrelid = 'deployments'::regclass
+		   AND conname = ANY($1::text[])
+	`, []string{
+		"deployments_platform_pins_check",
+		"deployments_platform_pin_state_check",
+		"deployments_build_lease_pin_check",
+		"deployments_program_tuple_check",
+	}).Scan(&constraints); err != nil {
 		t.Fatal(err)
 	}
-	if artifactReferenceIndexes != 2 {
-		t.Fatalf("artifact reference indexes = %d, want 2", artifactReferenceIndexes)
+	if constraints != 4 {
+		t.Fatalf("deployment tuple constraints = %d, want 4", constraints)
 	}
-
-	tx, err := pool.Begin(ctx)
-	if err != nil {
+	var definitionKinds int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_constraint
+		 WHERE conrelid = 'deployment_definitions'::regclass
+		   AND contype = 'c'
+		   AND pg_get_constraintdef(oid) LIKE '%task%actor%workspace%'
+	`).Scan(&definitionKinds); err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO regions (id, provider, provider_region, display_name)
-		VALUES ('definition-region', 'test', 'definition-region', 'Definition Region');
-		INSERT INTO organizations (id, public_id, name, slug)
-		VALUES ('00000000-0000-0000-0000-000000001000', 'org_' || repeat('a', 26), 'Definition Org', 'definition-org');
-		INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name)
-		VALUES ('00000000-0000-0000-0000-000000002000', 'prj_' || repeat('b', 26), '00000000-0000-0000-0000-000000001000', 'definition-region', 'definition-project', 'Definition Project');
-		INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex) VALUES
-		('00000000-0000-0000-0000-000000003001', 'env_' || repeat('c', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', 'definition-one', 'Definition One', '#112233'),
-		('00000000-0000-0000-0000-000000003002', 'env_' || repeat('d', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', 'definition-two', 'Definition Two', '#445566');
-		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES
-		('00000000-0000-0000-0000-000000001000', 'sha256:' || repeat('a', 64), 1, 'application/vnd.helmr.deployment-source.v0+tar'),
-		('00000000-0000-0000-0000-000000001000', 'sha256:' || repeat('b', 64), 1, 'application/vnd.helmr.deployment-source.v0+tar'),
-		('00000000-0000-0000-0000-000000001000', 'sha256:' || repeat('c', 64), 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-		('00000000-0000-0000-0000-000000001000', 'sha256:' || repeat('d', 64), 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-		('00000000-0000-0000-0000-000000001000', 'sha256:' || repeat('e', 64), 13958643713, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-		('00000000-0000-0000-0000-000000001000', 'sha256:definition-workspace-one', 1, 'application/vnd.helmr.workspace-image.v0.oci-tar'),
-		('00000000-0000-0000-0000-000000001000', 'sha256:definition-workspace-two', 1, 'application/vnd.helmr.workspace-image.v0.oci-tar');
-		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type) VALUES
-		('00000000-0000-0000-0000-000000004001', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:' || repeat('a', 64), 'deployment_source', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
-		('00000000-0000-0000-0000-000000004002', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'sha256:' || repeat('b', 64), 'deployment_source', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
-		('00000000-0000-0000-0000-000000004003', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:' || repeat('c', 64), 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-		('00000000-0000-0000-0000-000000004004', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:definition-workspace-one', 'workspace_image', 1, 'application/vnd.helmr.workspace-image.v0.oci-tar'),
-		('00000000-0000-0000-0000-000000004005', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'sha256:definition-workspace-two', 'workspace_image', 1, 'application/vnd.helmr.workspace-image.v0.oci-tar'),
-		('00000000-0000-0000-0000-000000004006', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'sha256:' || repeat('d', 64), 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-		('00000000-0000-0000-0000-000000004007', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:' || repeat('e', 64), 'deployment_program', 13958643713, 'application/vnd.helmr.deployment-program.v0+squashfs');
-		INSERT INTO deployments (
-		    id, public_id, org_id, project_id, environment_id, build_region_id,
-		    build_architecture, build_runtime_digest, build_standard_toolchain_digest,
-		    build_manager_name, build_manager_version, build_manager_digest,
-		    build_contract_version, version, content_hash, deployment_source_artifact_id
-		) VALUES
-		('00000000-0000-0000-0000-000000005001', 'dep_' || repeat('e', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'definition-region', 'x86_64', decode(repeat('01', 32), 'hex'), decode(repeat('11', 32), 'hex'), 'bun', '1.2.3', decode(repeat('22', 32), 'hex'), 'helmr.program-build.v0', 'definition-one', 'sha256:' || repeat('1', 64), '00000000-0000-0000-0000-000000004001'),
-		('00000000-0000-0000-0000-000000005002', 'dep_' || repeat('f', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'definition-region', 'x86_64', decode(repeat('01', 32), 'hex'), decode(repeat('11', 32), 'hex'), 'bun', '1.2.3', decode(repeat('22', 32), 'hex'), 'helmr.program-build.v0', 'definition-two', 'sha256:' || repeat('2', 64), '00000000-0000-0000-0000-000000004002'),
-		('00000000-0000-0000-0000-000000005003', 'dep_' || repeat('a', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'definition-region', 'x86_64', decode(repeat('02', 32), 'hex'), decode(repeat('11', 32), 'hex'), 'bun', '1.2.3', decode(repeat('22', 32), 'hex'), 'helmr.program-build.v0', 'definition-one-runtime-two', 'sha256:' || repeat('1', 64), '00000000-0000-0000-0000-000000004001');
-	`); err != nil {
-		t.Fatal(err)
-	}
-
-	maxRegionID := strings.Repeat("r", 255)
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO regions (id, provider, provider_region, display_name)
-		VALUES ($1, 'test', 'max-width-region', 'Max Width Region')
-	`, maxRegionID); err != nil {
-		t.Fatalf("insert maximum-width region: %v", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO deployments (
-		    id, public_id, org_id, project_id, environment_id, build_region_id,
-		    build_architecture, build_runtime_digest, build_standard_toolchain_digest,
-		    build_manager_name, build_manager_version, build_manager_digest,
-		    build_contract_version, version, content_hash,
-		    api_version, sdk_version, cli_version, deployment_source_artifact_id
-		) VALUES (
-		    '00000000-0000-0000-0000-000000005005',
-		    'dep_' || repeat('c', 26),
-		    '00000000-0000-0000-0000-000000001000',
-		    '00000000-0000-0000-0000-000000002000',
-		    '00000000-0000-0000-0000-000000003001',
-		    $1,
-		    'x86_64',
-		    decode(repeat('03', 32), 'hex'),
-		    decode(repeat('13', 32), 'hex'),
-		    'bun',
-		    '1.2.3',
-		    decode(repeat('22', 32), 'hex'),
-		    'helmr.program-build.v0',
-		    'max-width-reuse-key',
-		    'sha256:' || repeat('3', 64),
-		    repeat('a', 255),
-		    repeat('b', 255),
-		    repeat('c', 255),
-		    '00000000-0000-0000-0000-000000004001'
-		)
-	`, maxRegionID); err != nil {
-		t.Fatalf("insert deployment with maximum-width build pins: %v", err)
-	}
-	for _, invalidRegionID := range []string{
-		strings.Repeat("r", 256),
-		" padded",
-		"\u00a0padded",
-		"control\x01region",
-		"control\u0085region",
-	} {
-		assertStatementRejected(t, ctx, tx, `
-			INSERT INTO regions (id, provider, provider_region, display_name)
-			VALUES ($1, 'test', $1, 'Invalid Region')
-		`, invalidRegionID)
-	}
-	for column, value := range map[string]string{
-		"api_version":  strings.Repeat("a", 256),
-		"sdk_version":  strings.Repeat("s", 256),
-		"cli_version":  strings.Repeat("c", 256),
-		"content_hash": "sha256:invalid",
-	} {
-		assertStatementRejected(t, ctx, tx, fmt.Sprintf(`
-			UPDATE deployments SET %s = $1
-			 WHERE id = '00000000-0000-0000-0000-000000005005'
-		`, column), value)
-	}
-
-	validProgramReceipt := fmt.Sprintf(`{
-		"architecture":"x86_64",
-		"buildContractVersion":"helmr.program-build.v0",
-		"formatVersion":0,
-		"lockfile":{"digest":"sha256:%s","path":"bun.lock"},
-		"manager":{"digest":"sha256:%s","name":"bun","version":"1.2.3"},
-		"program":{
-			"artifactId":"00000000-0000-0000-0000-000000004003",
-			"digest":"sha256:%s",
-			"indexDigest":"sha256:%s",
-			"mediaType":"application/vnd.helmr.deployment-program.v0+squashfs",
-			"sizeBytes":1
-		},
-		"runtime":{"apiVersion":"helmr.runtime.v0","digest":"sha256:%s"},
-		"source":{
-			"artifactId":"00000000-0000-0000-0000-000000004001",
-			"digest":"sha256:%s",
-			"mediaType":"application/vnd.helmr.deployment-source.v0+tar",
-			"sizeBytes":1
-		},
-		"standardToolchainDigest":"sha256:%s"
-	}`,
-		strings.Repeat("1", 64),
-		strings.Repeat("2", 64),
-		strings.Repeat("c", 64),
-		strings.Repeat("3", 64),
-		strings.Repeat("01", 32),
-		strings.Repeat("a", 64),
-		strings.Repeat("11", 32),
-	)
-	assertStatementRejected(t, ctx, tx, `
-		UPDATE deployments
-		   SET program_artifact_id = '00000000-0000-0000-0000-000000004003'
-		 WHERE id = '00000000-0000-0000-0000-000000005001'
-	`)
-	assertStatementRejected(t, ctx, tx, `
-		UPDATE deployments
-		   SET program_artifact_id = '00000000-0000-0000-0000-000000004004',
-		       program_runtime_digest = decode(repeat('01', 32), 'hex'),
-		       program_architecture = 'x86_64',
-		       program_receipt = '{}'::jsonb
-		 WHERE id = '00000000-0000-0000-0000-000000005001'
-	`)
-	assertStatementRejected(t, ctx, tx, `
-		UPDATE deployments
-		   SET program_artifact_id = '00000000-0000-0000-0000-000000004006',
-		       program_runtime_digest = decode(repeat('01', 32), 'hex'),
-		       program_architecture = 'x86_64',
-		       program_receipt = '{}'::jsonb
-		 WHERE id = '00000000-0000-0000-0000-000000005001'
-	`)
-	if _, err := tx.Exec(ctx, `
-		UPDATE deployments
-		   SET program_artifact_id = '00000000-0000-0000-0000-000000004003',
-		       program_runtime_digest = decode(repeat('01', 32), 'hex'),
-		       program_architecture = 'x86_64',
-		       program_receipt = $1::jsonb
-		 WHERE id = '00000000-0000-0000-0000-000000005001'
-	`, validProgramReceipt); err != nil {
-		t.Fatal(err)
-	}
-	assertStatementRejected(t, ctx, tx, `
-		UPDATE deployments
-		   SET program_architecture = 'amd64'
-		 WHERE id = '00000000-0000-0000-0000-000000005001'
-	`)
-	assertStatementRejected(t, ctx, tx, `
-		UPDATE deployments
-		   SET program_runtime_digest = decode(repeat('01', 31), 'hex')
-		 WHERE id = '00000000-0000-0000-0000-000000005001'
-	`)
-
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO deployment_definitions (id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest) VALUES
-		('00000000-0000-0000-0000-000000006001', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'constructor', 0, '{}'::jsonb, decode(repeat('02', 32), 'hex')),
-		('00000000-0000-0000-0000-000000006002', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'actor', 'constructor', 0, '{}'::jsonb, decode(repeat('03', 32), 'hex'));
-		INSERT INTO deployment_definitions (id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest, workspace_architecture, artifact_id)
-		VALUES ('00000000-0000-0000-0000-000000006004', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'workspace', 'Repository.Workspace', 0, '{}'::jsonb, decode(repeat('05', 32), 'hex'), 'x86_64', '00000000-0000-0000-0000-000000004004');
-	`); err != nil {
-		t.Fatal(err)
-	}
-	assertStatementRejected(t, ctx, tx, `
-		INSERT INTO deployment_definitions (id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest)
-		VALUES ('00000000-0000-0000-0000-000000006005', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'constructor', 0, '{}'::jsonb, decode(repeat('06', 32), 'hex'))
-	`)
-	for _, invalidID := range []string{" invalid", "invalid/name", "_invalid", "café", strings.Repeat("a", 129)} {
-		assertStatementRejected(t, ctx, tx, `
-			INSERT INTO deployment_definitions (id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest)
-			VALUES ('00000000-0000-0000-0000-000000006006', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', $1, 0, '{}'::jsonb, decode(repeat('07', 32), 'hex'))
-		`, invalidID)
-	}
-	assertStatementRejected(t, ctx, tx, `
-		INSERT INTO deployment_definitions (id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest, workspace_architecture, artifact_id)
-		VALUES ('00000000-0000-0000-0000-000000006007', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'workspace', 'partial-workspace', 0, '{}'::jsonb, decode(repeat('08', 32), 'hex'), 'x86_64', NULL)
-	`)
-	assertStatementRejected(t, ctx, tx, `
-		INSERT INTO deployment_definitions (id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest, workspace_architecture, artifact_id)
-		VALUES ('00000000-0000-0000-0000-000000006008', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'workspace', 'cross-environment', 0, '{}'::jsonb, decode(repeat('09', 32), 'hex'), 'x86_64', '00000000-0000-0000-0000-000000004005')
-	`)
-	assertStatementRejected(t, ctx, tx, `
-		INSERT INTO deployment_definitions (id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest)
-		VALUES ('00000000-0000-0000-0000-000000006009', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'array-manifest', 0, '[]'::jsonb, decode(repeat('0a', 32), 'hex'))
-	`)
-	assertStatementRejected(t, ctx, tx, `
-		INSERT INTO deployment_definitions (id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest)
-		VALUES ('00000000-0000-0000-0000-00000000600a', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'unsupported-manifest-version', 1, '{}'::jsonb, decode(repeat('0b', 32), 'hex'))
-	`)
-
-	var workspaceOnlyProgramArtifactID *string
-	if err := tx.QueryRow(ctx, `
-		SELECT program_artifact_id::text
-		  FROM deployments
-		 WHERE id = '00000000-0000-0000-0000-000000005002'
-	`).Scan(&workspaceOnlyProgramArtifactID); err != nil {
-		t.Fatal(err)
-	}
-	if workspaceOnlyProgramArtifactID != nil {
-		t.Fatalf("workspace-only deployment Program artifact = %q, want null", *workspaceOnlyProgramArtifactID)
+	if definitionKinds != 1 {
+		t.Fatalf("deployment definition kind constraint = %d, want 1", definitionKinds)
 	}
 }
-
 func assertStatementRejected(t *testing.T, ctx context.Context, tx pgx.Tx, query string, args ...any) {
 	t.Helper()
 	if _, err := tx.Exec(ctx, `SAVEPOINT expected_rejection`); err != nil {

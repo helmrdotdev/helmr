@@ -2104,8 +2104,7 @@ dev_generated_secrets() {
   dev_database_url
   put_secret_value_if_missing "$(dev_secret_arn worker_token_signing_key)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn auth_secret)" "$(random_base64)"
-  put_secret_value_if_missing "$(dev_secret_arn secret_encryption_key)" "$(random_base64)"
-  put_secret_value_if_missing "$(dev_secret_arn lookup_hmac_keys)" "{\"1\":\"$(random_base64)\"}"
+  put_secret_value_if_missing "$(dev_secret_arn encryption_key)" "$(random_base64)"
   dev_workspace_fencing_authority
   dev_token_credential_authority
   put_secret_value_if_missing "$(dev_secret_arn checkpoint_encryption_key)" "$(random_base64)"

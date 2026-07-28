@@ -129,11 +129,7 @@ func buildQueueMessage(row db.ListQueuedDeploymentBuildCandidatesRow) (Message, 
 	message := Message{WorkKind: WorkKindBuild, DeploymentID: deploymentID, OrgID: orgID,
 		ProjectID: projectID, EnvironmentID: environmentID, RegionID: row.BuildRegionID,
 		QueueName: "deployment-build", LeaseSequence: row.LeaseSequence,
-		QueueOriginAt: row.QueueTimestamp.Time, QueueScoreAt: row.QueueTimestamp.Time, EnqueuedAt: time.Now().UTC(),
-		BuildArchitecture: row.BuildArchitecture,
-		BuildResources: BuildResourceVector{CPUMillis: row.BuildRequestedCpuMillis, MemoryBytes: row.BuildRequestedMemoryBytes,
-			WorkloadDiskBytes: row.BuildRequestedWorkloadDiskBytes, ScratchBytes: row.BuildRequestedScratchBytes,
-			Executors: row.BuildRequestedExecutors}}
+		QueueOriginAt: row.QueueTimestamp.Time, QueueScoreAt: row.QueueTimestamp.Time, EnqueuedAt: time.Now().UTC()}
 	if err := message.Validate(); err != nil {
 		return Message{}, err
 	}

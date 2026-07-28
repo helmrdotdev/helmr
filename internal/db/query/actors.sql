@@ -42,10 +42,8 @@ SELECT sqlc.arg(id),
    AND deployments.id = actor_definition.deployment_id
    AND deployments.status = 'deployed'
    AND deployments.program_artifact_id IS NOT NULL
-   AND deployments.program_runtime_digest IS NOT NULL
-   AND deployments.program_architecture IS NOT NULL
-   AND deployments.program_architecture = deployments.build_architecture
-   AND deployments.program_runtime_digest = deployments.build_runtime_digest
+   AND deployments.program_index_digest IS NOT NULL
+   AND deployments.build_runtime_digest IS NOT NULL
   JOIN workspaces
     ON workspaces.environment_id = actor_definition.environment_id
    AND workspaces.id = sqlc.arg(workspace_id)
@@ -58,7 +56,6 @@ SELECT sqlc.arg(id),
    AND workspace_definition.id = workspaces.deployment_definition_id
    AND workspace_definition.kind = 'workspace'
    AND workspace_definition.declared_id = workspaces.workspace_declared_id
-   AND workspace_definition.workspace_architecture = deployments.program_architecture
  WHERE actor_definition.environment_id = sqlc.arg(environment_id)
    AND actor_definition.id = sqlc.arg(deployment_definition_id)
    AND actor_definition.kind = 'actor'
@@ -71,8 +68,7 @@ SELECT actor_definition.id AS actor_definition_id,
        actor_definition.manifest_version AS actor_manifest_version,
        actor_definition.manifest AS actor_manifest,
        actor_definition.manifest_digest AS actor_manifest_digest,
-       deployments.queue_config,
-       deployments.program_architecture
+       deployments.queue_config
   FROM environments
   JOIN deployment_definitions AS actor_definition
     ON actor_definition.environment_id = environments.id
@@ -86,10 +82,8 @@ SELECT actor_definition.id AS actor_definition_id,
    AND deployments.id = actor_definition.deployment_id
    AND deployments.status = 'deployed'
    AND deployments.program_artifact_id IS NOT NULL
-   AND deployments.program_runtime_digest IS NOT NULL
-   AND deployments.program_architecture IS NOT NULL
-   AND deployments.program_architecture = deployments.build_architecture
-   AND deployments.program_runtime_digest = deployments.build_runtime_digest
+   AND deployments.program_index_digest IS NOT NULL
+   AND deployments.build_runtime_digest IS NOT NULL
  WHERE environments.org_id = sqlc.arg(org_id)
    AND environments.project_id = sqlc.arg(project_id)
    AND environments.id = sqlc.arg(environment_id)

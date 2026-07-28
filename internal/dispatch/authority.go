@@ -19,6 +19,8 @@ var (
 	ErrCandidateChanged    = errors.New("dispatch: placement candidate changed while locking")
 )
 
+const platformArchitecture = "x86_64"
+
 type Authority struct {
 	pool                   *pgxpool.Pool
 	resolveBuildToolchain  ToolchainResolver
@@ -105,7 +107,6 @@ type workerFence struct {
 	ObservationFreshAfter  pgtype.Timestamptz
 	Role                   string
 	RunArchitecture        string
-	BuildArchitecture      string
 	ToolchainCatalogDigest []byte
 }
 
@@ -127,7 +128,7 @@ SELECT id
 
 	architecture := fence.RunArchitecture
 	if fence.Role == "build" {
-		architecture = fence.BuildArchitecture
+		architecture = platformArchitecture
 	}
 	var workerID pgtype.UUID
 	err = tx.QueryRow(ctx, `

@@ -21,7 +21,6 @@ INSERT INTO deployment_definitions (
     manifest_version,
     manifest,
     manifest_digest,
-    workspace_architecture,
     artifact_id
 ) VALUES (
     $1,
@@ -32,23 +31,21 @@ INSERT INTO deployment_definitions (
     $6,
     $7,
     $8,
-    $9,
-    $10
+    $9
 )
-RETURNING id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest, workspace_architecture, artifact_id, created_at
+RETURNING id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest, artifact_id, created_at
 `
 
 type CreateDeploymentDefinitionParams struct {
-	ID                    pgtype.UUID `json:"id"`
-	EnvironmentID         pgtype.UUID `json:"environment_id"`
-	DeploymentID          pgtype.UUID `json:"deployment_id"`
-	Kind                  string      `json:"kind"`
-	DeclaredID            string      `json:"declared_id"`
-	ManifestVersion       int32       `json:"manifest_version"`
-	Manifest              []byte      `json:"manifest"`
-	ManifestDigest        []byte      `json:"manifest_digest"`
-	WorkspaceArchitecture pgtype.Text `json:"workspace_architecture"`
-	ArtifactID            pgtype.UUID `json:"artifact_id"`
+	ID              pgtype.UUID `json:"id"`
+	EnvironmentID   pgtype.UUID `json:"environment_id"`
+	DeploymentID    pgtype.UUID `json:"deployment_id"`
+	Kind            string      `json:"kind"`
+	DeclaredID      string      `json:"declared_id"`
+	ManifestVersion int32       `json:"manifest_version"`
+	Manifest        []byte      `json:"manifest"`
+	ManifestDigest  []byte      `json:"manifest_digest"`
+	ArtifactID      pgtype.UUID `json:"artifact_id"`
 }
 
 func (q *Queries) CreateDeploymentDefinition(ctx context.Context, arg CreateDeploymentDefinitionParams) (DeploymentDefinition, error) {
@@ -61,7 +58,6 @@ func (q *Queries) CreateDeploymentDefinition(ctx context.Context, arg CreateDepl
 		arg.ManifestVersion,
 		arg.Manifest,
 		arg.ManifestDigest,
-		arg.WorkspaceArchitecture,
 		arg.ArtifactID,
 	)
 	var i DeploymentDefinition
@@ -74,7 +70,6 @@ func (q *Queries) CreateDeploymentDefinition(ctx context.Context, arg CreateDepl
 		&i.ManifestVersion,
 		&i.Manifest,
 		&i.ManifestDigest,
-		&i.WorkspaceArchitecture,
 		&i.ArtifactID,
 		&i.CreatedAt,
 	)
@@ -82,7 +77,7 @@ func (q *Queries) CreateDeploymentDefinition(ctx context.Context, arg CreateDepl
 }
 
 const getCurrentDeploymentDefinition = `-- name: GetCurrentDeploymentDefinition :one
-SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.workspace_architecture, deployment_definitions.artifact_id, deployment_definitions.created_at
+SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.artifact_id, deployment_definitions.created_at
   FROM deployment_definitions
   JOIN deployments
     ON deployments.environment_id = deployment_definitions.environment_id
@@ -115,7 +110,6 @@ func (q *Queries) GetCurrentDeploymentDefinition(ctx context.Context, arg GetCur
 		&i.ManifestVersion,
 		&i.Manifest,
 		&i.ManifestDigest,
-		&i.WorkspaceArchitecture,
 		&i.ArtifactID,
 		&i.CreatedAt,
 	)
@@ -123,7 +117,7 @@ func (q *Queries) GetCurrentDeploymentDefinition(ctx context.Context, arg GetCur
 }
 
 const getDeploymentDefinition = `-- name: GetDeploymentDefinition :one
-SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.workspace_architecture, deployment_definitions.artifact_id, deployment_definitions.created_at
+SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.artifact_id, deployment_definitions.created_at
   FROM deployment_definitions
   JOIN deployments
     ON deployments.environment_id = deployment_definitions.environment_id
@@ -160,7 +154,6 @@ func (q *Queries) GetDeploymentDefinition(ctx context.Context, arg GetDeployment
 		&i.ManifestVersion,
 		&i.Manifest,
 		&i.ManifestDigest,
-		&i.WorkspaceArchitecture,
 		&i.ArtifactID,
 		&i.CreatedAt,
 	)
@@ -175,13 +168,9 @@ SELECT deployments.id AS deployment_id,
        program_artifact.digest AS program_artifact_digest,
        program_artifact.size_bytes AS program_artifact_size_bytes,
        program_artifact.media_type AS program_artifact_media_type,
-       deployments.program_runtime_digest,
-       deployments.program_architecture,
+       deployments.build_runtime_digest,
        deployments.build_contract_version,
-       COALESCE(
-           deployments.program_receipt #>> '{program,indexDigest}',
-           ''
-       )::text AS program_index_digest,
+       deployments.program_index_digest,
        deployments.queue_config
   FROM deployments
   JOIN artifacts AS program_artifact
@@ -207,10 +196,9 @@ type GetDeploymentProgramAuthorityRow struct {
 	ProgramArtifactDigest    string      `json:"program_artifact_digest"`
 	ProgramArtifactSizeBytes int64       `json:"program_artifact_size_bytes"`
 	ProgramArtifactMediaType string      `json:"program_artifact_media_type"`
-	ProgramRuntimeDigest     []byte      `json:"program_runtime_digest"`
-	ProgramArchitecture      pgtype.Text `json:"program_architecture"`
+	BuildRuntimeDigest       []byte      `json:"build_runtime_digest"`
 	BuildContractVersion     string      `json:"build_contract_version"`
-	ProgramIndexDigest       string      `json:"program_index_digest"`
+	ProgramIndexDigest       []byte      `json:"program_index_digest"`
 	QueueConfig              []byte      `json:"queue_config"`
 }
 
@@ -225,8 +213,7 @@ func (q *Queries) GetDeploymentProgramAuthority(ctx context.Context, arg GetDepl
 		&i.ProgramArtifactDigest,
 		&i.ProgramArtifactSizeBytes,
 		&i.ProgramArtifactMediaType,
-		&i.ProgramRuntimeDigest,
-		&i.ProgramArchitecture,
+		&i.BuildRuntimeDigest,
 		&i.BuildContractVersion,
 		&i.ProgramIndexDigest,
 		&i.QueueConfig,
@@ -235,7 +222,7 @@ func (q *Queries) GetDeploymentProgramAuthority(ctx context.Context, arg GetDepl
 }
 
 const listDeploymentDefinitionsForDeployment = `-- name: ListDeploymentDefinitionsForDeployment :many
-SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.workspace_architecture, deployment_definitions.artifact_id, deployment_definitions.created_at
+SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.artifact_id, deployment_definitions.created_at
   FROM deployment_definitions
   JOIN deployments
     ON deployments.environment_id = deployment_definitions.environment_id
@@ -271,7 +258,6 @@ func (q *Queries) ListDeploymentDefinitionsForDeployment(ctx context.Context, ar
 			&i.ManifestVersion,
 			&i.Manifest,
 			&i.ManifestDigest,
-			&i.WorkspaceArchitecture,
 			&i.ArtifactID,
 			&i.CreatedAt,
 		); err != nil {

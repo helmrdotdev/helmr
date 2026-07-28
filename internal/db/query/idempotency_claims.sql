@@ -1,49 +1,12 @@
--- name: LockIdempotencySlot :exec
-SELECT pg_advisory_xact_lock(sqlc.arg(lock_key)::bigint);
-
--- name: FindLiveIdempotencyClaims :many
+-- name: LockLiveIdempotencyClaim :one
 SELECT idempotency_claims.*,
        coalesce(idempotency_claims.expires_at <= transaction_timestamp(), false)::boolean AS expired
   FROM idempotency_claims
-  JOIN unnest(sqlc.arg(hash_key_versions)::integer[])
-       WITH ORDINALITY AS versions(hash_key_version, position)
-    ON versions.hash_key_version = idempotency_claims.hash_key_version
-  JOIN unnest(sqlc.arg(scope_hashes)::bytea[])
-       WITH ORDINALITY AS scopes(scope_hash, position)
-    ON scopes.position = versions.position
-   AND scopes.scope_hash = idempotency_claims.scope_hash
-  JOIN unnest(sqlc.arg(key_hashes)::bytea[])
-       WITH ORDINALITY AS keys(key_hash, position)
-    ON keys.position = versions.position
-   AND keys.key_hash = idempotency_claims.key_hash
  WHERE idempotency_claims.environment_id = sqlc.arg(environment_id)
    AND idempotency_claims.operation = sqlc.arg(operation)
+   AND idempotency_claims.slot_hash = sqlc.arg(slot_hash)
    AND idempotency_claims.retired_at IS NULL
- ORDER BY idempotency_claims.generation DESC, idempotency_claims.id
- LIMIT 2;
-
--- name: GetLatestIdempotencyClaimGeneration :one
-SELECT coalesce(max(idempotency_claims.generation), 0)::bigint
-  FROM idempotency_claims
-  JOIN unnest(sqlc.arg(hash_key_versions)::integer[])
-       WITH ORDINALITY AS versions(hash_key_version, position)
-    ON versions.hash_key_version = idempotency_claims.hash_key_version
-  JOIN unnest(sqlc.arg(scope_hashes)::bytea[])
-       WITH ORDINALITY AS scopes(scope_hash, position)
-    ON scopes.position = versions.position
-   AND scopes.scope_hash = idempotency_claims.scope_hash
-  JOIN unnest(sqlc.arg(key_hashes)::bytea[])
-       WITH ORDINALITY AS keys(key_hash, position)
-    ON keys.position = versions.position
-   AND keys.key_hash = idempotency_claims.key_hash
- WHERE idempotency_claims.environment_id = sqlc.arg(environment_id)
-   AND idempotency_claims.operation = sqlc.arg(operation);
-
--- name: ListIdempotencyHashKeyUsage :many
-SELECT hash_key_version, count(*)::bigint AS claim_count
-  FROM idempotency_claims
- GROUP BY hash_key_version
- ORDER BY hash_key_version;
+ FOR UPDATE;
 
 -- name: RetireExpiredIdempotencyClaims :many
 WITH candidates AS (
@@ -100,32 +63,26 @@ INSERT INTO idempotency_claims (
     id,
     environment_id,
     operation,
-    scope_hash,
-    key_hash,
-    hash_key_version,
-    generation,
+    slot_hash,
     request_fingerprint,
     accepted_at,
     expires_at
 )
-SELECT
+VALUES (
     sqlc.arg(id),
     sqlc.arg(environment_id),
     sqlc.arg(operation),
-    sqlc.arg(scope_hash),
-    sqlc.arg(key_hash),
-    sqlc.arg(hash_key_version),
-    sqlc.arg(generation),
+    sqlc.arg(slot_hash),
     sqlc.arg(request_fingerprint),
     statement_timestamp(),
     CASE
         WHEN sqlc.arg(operation)::text = 'task.child.invoke' THEN NULL
         ELSE statement_timestamp() + interval '30 days'
     END
-  FROM lookup_hmac_versions
- WHERE version = sqlc.arg(hash_key_version)
-   AND is_current
-   AND retired_at IS NULL
+)
+ON CONFLICT (environment_id, operation, slot_hash)
+    WHERE retired_at IS NULL
+DO NOTHING
 RETURNING *;
 
 -- name: GetIdempotencyClaim :one

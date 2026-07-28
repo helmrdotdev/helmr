@@ -32,7 +32,7 @@ export interface ProgramIndex {
   readonly formatVersion: 0
   readonly manager: Readonly<{
     digest: string
-    name: "bun" | "npm"
+    name: "bun" | "npm" | "pnpm"
     version: string
   }>
   readonly runtimeApiVersion: typeof RUNTIME_API_VERSION
@@ -40,7 +40,11 @@ export interface ProgramIndex {
   readonly standardToolchainDigest: string
   readonly submitted: Readonly<{
     lockfileDigest: string
-    lockfileName: "bun.lock" | "bun.lockb" | "package-lock.json"
+    lockfileName:
+      | "bun.lock"
+      | "npm-shrinkwrap.json"
+      | "package-lock.json"
+      | "pnpm-lock.yaml"
     sourceDigest: string
   }>
 }
@@ -130,7 +134,7 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
   const managerValue = requireObject(root["manager"], "program index manager")
   requireKeys(managerValue, ["digest", "name", "version"], "program index manager")
   const managerName = requireString(managerValue["name"], "program index manager.name")
-  if (managerName !== "npm" && managerName !== "bun") {
+  if (managerName !== "npm" && managerName !== "pnpm" && managerName !== "bun") {
     throw new Error(`program index manager.name ${JSON.stringify(managerName)} is unsupported`)
   }
   const managerVersion = requireString(managerValue["version"], "program index manager.version")
@@ -162,9 +166,10 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
     "program index submitted.lockfileName",
   )
   const validLockfile =
-    managerName === "npm"
-      ? lockfileName === "package-lock.json"
-      : lockfileName === "bun.lock" || lockfileName === "bun.lockb"
+    (managerName === "npm" &&
+      (lockfileName === "package-lock.json" || lockfileName === "npm-shrinkwrap.json")) ||
+    (managerName === "pnpm" && lockfileName === "pnpm-lock.yaml") ||
+    (managerName === "bun" && lockfileName === "bun.lock")
   if (!validLockfile) {
     throw new Error(
       `program index submitted.lockfileName ${JSON.stringify(lockfileName)} is unsupported for ${managerName}`,
@@ -175,7 +180,11 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
       submittedValue["lockfileDigest"],
       "program index submitted.lockfileDigest",
     ),
-    lockfileName: lockfileName as "bun.lock" | "bun.lockb" | "package-lock.json",
+    lockfileName: lockfileName as
+      | "bun.lock"
+      | "npm-shrinkwrap.json"
+      | "package-lock.json"
+      | "pnpm-lock.yaml",
     sourceDigest: requireDigest(
       submittedValue["sourceDigest"],
       "program index submitted.sourceDigest",

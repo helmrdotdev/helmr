@@ -308,7 +308,7 @@ func TestBuildReadyIndexUsesSameFairnessAndPreservesFrozenResources(t *testing.T
 	counts := map[string]int{}
 	for _, message := range selected {
 		counts[message.OrgID]++
-		if message.WorkKind != dispatch.WorkKindBuild || message.BuildResources.Executors != 1 {
+		if message.WorkKind != dispatch.WorkKindBuild || message.LeaseSequence != 1 {
 			t.Fatalf("frozen build message changed: %+v", message)
 		}
 	}
@@ -350,10 +350,7 @@ func testBuildMessage(deploymentID, orgID, environmentID string, queuedAt time.T
 	return dispatch.Message{WorkKind: dispatch.WorkKindBuild, DeploymentID: deploymentID, OrgID: orgID,
 		RegionID: "us-east-1", ProjectID: "project-1", EnvironmentID: environmentID,
 		QueueName: "deployment-build", LeaseSequence: 1,
-		BuildArchitecture: "x86_64",
-		QueueOriginAt:     queuedAt, QueueScoreAt: queuedAt, EnqueuedAt: queuedAt,
-		BuildResources: dispatch.BuildResourceVector{CPUMillis: 3000, MemoryBytes: 4 << 30,
-			WorkloadDiskBytes: 0, ScratchBytes: 32 << 30, Executors: 1}}
+		QueueOriginAt: queuedAt, QueueScoreAt: queuedAt, EnqueuedAt: queuedAt}
 }
 
 func containsAny(value string, needles ...string) bool {

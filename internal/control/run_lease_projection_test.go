@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -428,4 +429,13 @@ func validDigest(fill byte) string {
 		value[index] = fill
 	}
 	return "sha256:" + string(value)
+}
+
+func validDigestBytes(t *testing.T, fill byte) []byte {
+	t.Helper()
+	value, err := deployment.RuntimeDigestBytes(validDigest(fill))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
 }

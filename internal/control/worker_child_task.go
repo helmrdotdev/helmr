@@ -182,7 +182,7 @@ func (s *Server) invokeChildTask(
 		var replay *childTaskReceipt
 		var invocationFingerprint idempotency.TaskChildInvokeFingerprint
 		if input.Normalized.IdempotencyKey != "" {
-			claims, err := s.claims.TransactionForQueries(work.q)
+			claims, err := idempotency.TransactionForQueries(work.q)
 			if err != nil {
 				return err
 			}
@@ -367,9 +367,7 @@ func (s *Server) invokeChildTask(
 				workspace.DesiredState != db.WorkspaceDesiredStateStopped) ||
 			workspace.DirtyState != db.WorkspaceDirtyStateClean || !workspace.HeadVersionID.Valid ||
 			workspace.OwnerActorID.Valid || workspace.OwnerRunID.Valid ||
-			workspace.HasActiveLease || workspace.HasActiveProcess ||
-			!program.ProgramArchitecture.Valid || !workspace.WorkspaceArchitecture.Valid ||
-			program.ProgramArchitecture.String != workspace.WorkspaceArchitecture.String {
+			workspace.HasActiveLease || workspace.HasActiveProcess {
 			return errTaskWorkspaceUnavailable
 		}
 		nowValue, err := work.q.GetRunAdmissionTime(ctx)
@@ -463,7 +461,7 @@ func (s *Server) invokeChildTask(
 			if err != nil {
 				return err
 			}
-			claims, err := s.claims.TransactionForQueries(work.q)
+			claims, err := idempotency.TransactionForQueries(work.q)
 			if err != nil {
 				return err
 			}

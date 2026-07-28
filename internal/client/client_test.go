@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -314,18 +315,78 @@ func TestCreateDeploymentSendsContentHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := client.CreateDeployment(context.Background(), api.CreateDeploymentRequest{}, sourcePath)
+	response, err := client.CreateDeployment(
+		context.Background(),
+		api.CreateDeploymentRequest{IdempotencyKey: "deploy-1"},
+		sourcePath,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if response.ID != "deployment-1" {
 		t.Fatalf("response = %+v", response)
 	}
-	if metadata.ProjectID != "" || metadata.EnvironmentID != "" || metadata.ContentHash != sha256sum.DigestBytes(source) {
+	if metadata.ProjectID != "" || metadata.EnvironmentID != "" ||
+		metadata.IdempotencyKey != "deploy-1" ||
+		metadata.ContentHash != sha256sum.DigestBytes(source) {
 		t.Fatalf("metadata = %+v", metadata)
 	}
 	if !bytes.Equal(uploaded, source) {
 		t.Fatalf("uploaded = %q", uploaded)
+	}
+}
+
+func TestCreateDeploymentRetriesLostResponseWithSameKey(t *testing.T) {
+	source := []byte("deployment archive")
+	sourcePath := filepath.Join(t.TempDir(), "deployment-source.tar")
+	if err := os.WriteFile(sourcePath, source, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var mutex sync.Mutex
+	var keys []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatal(err)
+		}
+		var metadata api.CreateDeploymentRequest
+		if err := json.Unmarshal([]byte(r.FormValue("metadata")), &metadata); err != nil {
+			t.Fatal(err)
+		}
+		mutex.Lock()
+		keys = append(keys, metadata.IdempotencyKey)
+		attempt := len(keys)
+		mutex.Unlock()
+		if attempt == 1 {
+			connection, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = connection.Close()
+			return
+		}
+		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1"})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.CreateDeployment(
+		context.Background(),
+		api.CreateDeploymentRequest{IdempotencyKey: "deploy-retry"},
+		sourcePath,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.ID != "deployment-1" {
+		t.Fatalf("response = %+v", response)
+	}
+	mutex.Lock()
+	defer mutex.Unlock()
+	if !slices.Equal(keys, []string{"deploy-retry", "deploy-retry"}) {
+		t.Fatalf("idempotency keys = %v", keys)
 	}
 }
 
@@ -501,7 +562,11 @@ func TestSessionScopedClientRequiresEnvironmentScope(t *testing.T) {
 	if err := os.WriteFile(sourcePath, []byte("deployment source"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.CreateDeployment(context.Background(), api.CreateDeploymentRequest{}, sourcePath); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
+	if _, err := client.CreateDeployment(
+		context.Background(),
+		api.CreateDeploymentRequest{IdempotencyKey: "deploy-1"},
+		sourcePath,
+	); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
 		t.Fatalf("CreateDeployment err = %v", err)
 	}
 }

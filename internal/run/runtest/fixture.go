@@ -64,25 +64,10 @@ func New(t *testing.T) Fixture {
 	sourceDigest := Digest("source")
 	programDigest := Digest("program")
 	imageDigest := Digest("image")
-	programReceipt := dbtest.ProgramReceipt(dbtest.ProgramReceiptAuthority{
-		Architecture:            "x86_64",
-		ProgramArtifactID:       programID,
-		ProgramDigest:           programDigest,
-		ProgramSizeBytes:        1,
-		RuntimeDigest:           "sha256:" + strings.Repeat("01", 32),
-		SourceArtifactID:        sourceID,
-		SourceDigest:            sourceDigest,
-		SourceSizeBytes:         1,
-		StandardToolchainDigest: "sha256:" + strings.Repeat("02", 32),
-	})
 	MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO regions (id, provider, provider_region, display_name)
 		VALUES ($1, 'aws', $1, 'Run Lease Test')
 	`, Region)
-	MustExec(t, t.Context(), fixture.Pool, `
-		INSERT INTO lookup_hmac_versions (version, key_fingerprint, is_current)
-		VALUES (1, $1, true)
-	`, Hash("lookup-hmac"))
 	MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO worker_groups (
 			id, region_id, name, enrollment_policy_fingerprint,
@@ -122,32 +107,30 @@ func New(t *testing.T) Fixture {
 	MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO deployments (
 			id, public_id, org_id, project_id, environment_id, build_region_id,
-			build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+			build_node_version, build_runtime_digest, build_standard_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
 			build_contract_version, version, content_hash, deployment_source_artifact_id,
-			program_artifact_id, program_runtime_digest, program_architecture,
-			program_receipt, queue_config, status
+			program_artifact_id, program_index_digest, queue_config, status
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, 'x86_64',
+			$1, $2, $3, $4, $5, $6, '24.16.0',
 			decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
-			'bun', '1.2.3', decode(repeat('22', 32), 'hex'),
+			'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
 			'helmr.program-build.v0', 'run-lease-test', $7, $8, $9,
-			decode(repeat('01', 32), 'hex'), 'x86_64', $10::jsonb, '{}'::jsonb, 'deployed'
+			decode(repeat('03', 32), 'hex'), '{}'::jsonb, 'deployed'
 		)
 	`, fixture.DeploymentID, PublicID(t, publicid.Deployment), fixture.OrgID,
 		fixture.ProjectID, fixture.EnvironmentID, Region, sourceDigest,
-		sourceID, programID, programReceipt)
+		sourceID, programID)
 	MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO deployment_definitions (
 			id, environment_id, deployment_id, kind, declared_id,
-			manifest_version, manifest, manifest_digest,
-			workspace_architecture, artifact_id
+			manifest_version, manifest, manifest_digest, artifact_id
 		) VALUES (
 			$1, $3, $4, 'task', 'test-task', 0, '{}'::jsonb,
-			decode(repeat('03', 32), 'hex'), NULL, NULL
+			decode(repeat('03', 32), 'hex'), NULL
 		), (
 			$2, $3, $4, 'workspace', 'test-workspace', 0, '{}'::jsonb,
-			decode(repeat('04', 32), 'hex'), 'x86_64', $5
+			decode(repeat('04', 32), 'hex'), $5
 		)
 	`, fixture.TaskDefinitionID, fixture.WorkspaceDefinitionID,
 		fixture.EnvironmentID, fixture.DeploymentID, imageID)
@@ -478,15 +461,14 @@ func (fixture Fixture) AddHandoffChain(
 	`, work.LeaseID)
 	MustExec(t, ctx, tx, `
 		INSERT INTO idempotency_claims (
-			id, environment_id, operation, scope_hash, key_hash,
-			hash_key_version, generation, request_fingerprint, accepted_at
+			id, environment_id, operation, slot_hash,
+			request_fingerprint, accepted_at
 		) VALUES
-			($1, $3, 'task.child.invoke', $4, $5, 1, 1, $6, now()),
-			($2, $3, 'task.child.invoke', $7, $8, 1, 1, $9, now())
+			($1, $3, 'task.child.invoke', $4, $5, now()),
+			($2, $3, 'task.child.invoke', $6, $7, now())
 	`, outerClaimID, enclosingClaimID, fixture.EnvironmentID,
-		Hash("outer-scope"), Hash("outer-key"),
-		Hash("outer-request"), Hash("inner-scope"),
-		Hash("inner-key"), Hash("inner-request"))
+		Hash("outer-slot"), Hash("outer-request"),
+		Hash("inner-slot"), Hash("inner-request"))
 	MustExec(t, ctx, tx, `
 		INSERT INTO runs (
 			id, public_id, org_id, project_id, environment_id, deployment_id,

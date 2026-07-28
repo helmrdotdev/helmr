@@ -91,7 +91,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 	err = s.inTx(ctx, func(work *txWork) error {
 		var claim *db.IdempotencyClaim
 		if claimRequest != nil {
-			claims, err := s.claims.TransactionForQueries(work.q)
+			claims, err := idempotency.TransactionForQueries(work.q)
 			if err != nil {
 				return err
 			}
@@ -192,12 +192,6 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			workspace.HasActiveLease || workspace.HasActiveProcess {
 			return errTaskWorkspaceUnavailable
 		}
-		if !program.ProgramArchitecture.Valid ||
-			!workspace.WorkspaceArchitecture.Valid ||
-			program.ProgramArchitecture.String != workspace.WorkspaceArchitecture.String {
-			return errTaskWorkspaceUnavailable
-		}
-
 		runID := uuid.Must(uuid.NewV7())
 		runPublicID, err := publicid.New(publicid.Run)
 		if err != nil {
@@ -277,7 +271,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			if err != nil {
 				return err
 			}
-			claims, err := s.claims.TransactionForQueries(work.q)
+			claims, err := idempotency.TransactionForQueries(work.q)
 			if err != nil {
 				return err
 			}

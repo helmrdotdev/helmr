@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
-	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -21,11 +20,10 @@ func TestAppendActorInputCompletedClaimBypassesCurrentActorState(t *testing.T) {
 	environmentID := uuid.New()
 	actorID := uuid.New()
 	recordID := uuid.New()
-	store, manager := newActorInputClaimStore(t)
+	store := newActorInputClaimStore()
 	completeActorInputClaim(
 		t,
 		store,
-		manager,
 		environmentID,
 		actorID,
 		"message:1",
@@ -35,7 +33,7 @@ func TestAppendActorInputCompletedClaimBypassesCurrentActorState(t *testing.T) {
 	)
 	store.calls = nil
 
-	server := &Server{db: store, claims: manager}
+	server := &Server{db: store}
 	authorized := false
 	record, err := server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID:  environmentID,
@@ -64,7 +62,7 @@ func TestAppendActorInputCompletedClaimBypassesCurrentActorState(t *testing.T) {
 	if store.commits != 1 || store.rollbacks != 0 {
 		t.Fatalf("transactions: commits=%d rollbacks=%d", store.commits, store.rollbacks)
 	}
-	if !slices.Equal(store.calls, []string{"claim_lock", "hmac_lock", "claim_find", "commit"}) {
+	if !slices.Equal(store.calls, []string{"claim_lock", "commit"}) {
 		t.Fatalf("calls = %v", store.calls)
 	}
 }
@@ -72,8 +70,8 @@ func TestAppendActorInputCompletedClaimBypassesCurrentActorState(t *testing.T) {
 func TestAppendActorInputRollsBackNewClaimWhenActorIsUnavailable(t *testing.T) {
 	environmentID := uuid.New()
 	actorID := uuid.New()
-	store, manager := newActorInputClaimStore(t)
-	server := &Server{db: store, claims: manager}
+	store := newActorInputClaimStore()
+	server := &Server{db: store}
 
 	_, err := server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID:  environmentID,
@@ -91,9 +89,6 @@ func TestAppendActorInputRollsBackNewClaimWhenActorIsUnavailable(t *testing.T) {
 	}
 	if !slices.Equal(store.calls, []string{
 		"claim_lock",
-		"hmac_lock",
-		"claim_find",
-		"claim_generation",
 		"claim_create",
 		"actor_get",
 		"rollback",
@@ -106,7 +101,7 @@ func TestAppendActorInputRollsBackProvisionalRunSourceWhenAuthorityIsStale(t *te
 	environmentID := uuid.New()
 	actorID := uuid.New()
 	sourceRunID := uuid.New()
-	store, manager := newActorInputClaimStore(t)
+	store := newActorInputClaimStore()
 	store.locator = db.Actor{
 		ID:                pgvalue.UUID(actorID),
 		EnvironmentID:     pgvalue.UUID(environmentID),
@@ -114,7 +109,7 @@ func TestAppendActorInputRollsBackProvisionalRunSourceWhenAuthorityIsStale(t *te
 		State:             "open",
 		NextInputSequence: 3,
 	}
-	server := &Server{db: store, claims: manager}
+	server := &Server{db: store}
 	authorized := false
 
 	_, err := server.appendActorInput(t.Context(), appendActorInputRequest{
@@ -144,8 +139,8 @@ func TestAppendActorInputRollsBackProvisionalRunSourceWhenAuthorityIsStale(t *te
 func TestAppendActorInputRejectsOversizedCanonicalInputBeforeTransaction(t *testing.T) {
 	environmentID := uuid.New()
 	actorID := uuid.New()
-	store, manager := newActorInputClaimStore(t)
-	server := &Server{db: store, claims: manager}
+	store := newActorInputClaimStore()
+	server := &Server{db: store}
 	data := append([]byte{'"'}, bytes.Repeat([]byte{'x'}, maxActorInputBytes)...)
 	data = append(data, '"')
 
@@ -168,7 +163,7 @@ func TestAppendActorInputRejectsOversizedCanonicalInputBeforeTransaction(t *test
 func TestAppendActorInputClassifiesLockedSequenceExhaustion(t *testing.T) {
 	environmentID := uuid.New()
 	actorID := uuid.New()
-	store, manager := newActorInputClaimStore(t)
+	store := newActorInputClaimStore()
 	store.locator = db.Actor{
 		ID:                pgvalue.UUID(actorID),
 		EnvironmentID:     pgvalue.UUID(environmentID),
@@ -184,7 +179,7 @@ func TestAppendActorInputClassifiesLockedSequenceExhaustion(t *testing.T) {
 		NextInputSequence: maxActorSequence + 1,
 	}
 	store.appendErr = pgx.ErrNoRows
-	server := &Server{db: store, claims: manager}
+	server := &Server{db: store}
 
 	_, err := server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID: environmentID,
@@ -200,7 +195,6 @@ func TestAppendActorInputClassifiesLockedSequenceExhaustion(t *testing.T) {
 
 type actorInputClaimStore struct {
 	db.Querier
-	hmacVersion        db.LookupHmacVersion
 	claim              db.IdempotencyClaim
 	addressed          db.Actor
 	locator            db.Actor
@@ -215,31 +209,13 @@ type actorInputClaimStore struct {
 	rollbacks          int
 }
 
-func newActorInputClaimStore(t *testing.T) (*actorInputClaimStore, idempotency.Manager) {
-	t.Helper()
-	hashes, err := keyedhash.New(map[int32][]byte{
-		1: bytes.Repeat([]byte{1}, keyedhash.KeySize),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	fingerprint, err := hashes.Fingerprint(1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &actorInputClaimStore{
-		hmacVersion: db.LookupHmacVersion{
-			Version:        1,
-			KeyFingerprint: fingerprint[:],
-			IsCurrent:      true,
-		},
-	}, idempotency.New(hashes)
+func newActorInputClaimStore() *actorInputClaimStore {
+	return &actorInputClaimStore{}
 }
 
 func completeActorInputClaim(
 	t *testing.T,
 	store *actorInputClaimStore,
-	manager idempotency.Manager,
 	environmentID uuid.UUID,
 	actorID uuid.UUID,
 	key string,
@@ -257,7 +233,7 @@ func completeActorInputClaim(
 	if err != nil {
 		t.Fatal(err)
 	}
-	claims, err := manager.TransactionForQueries(store)
+	claims, err := idempotency.TransactionForQueries(store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,32 +253,19 @@ func (s *actorInputClaimStore) BeginQuerier(context.Context) (db.Querier, contro
 	return s, actorInputClaimTransaction{store: s}, nil
 }
 
-func (s *actorInputClaimStore) LockIdempotencySlot(context.Context, int64) error {
-	s.calls = append(s.calls, "claim_lock")
-	return nil
-}
-
-func (s *actorInputClaimStore) LockActiveLookupHMACVersions(context.Context) ([]db.LookupHmacVersion, error) {
-	s.calls = append(s.calls, "hmac_lock")
-	return []db.LookupHmacVersion{s.hmacVersion}, nil
-}
-
-func (s *actorInputClaimStore) FindLiveIdempotencyClaims(
+func (s *actorInputClaimStore) LockLiveIdempotencyClaim(
 	context.Context,
-	db.FindLiveIdempotencyClaimsParams,
-) ([]db.FindLiveIdempotencyClaimsRow, error) {
-	s.calls = append(s.calls, "claim_find")
+	db.LockLiveIdempotencyClaimParams,
+) (db.LockLiveIdempotencyClaimRow, error) {
+	s.calls = append(s.calls, "claim_lock")
 	if !s.claim.ID.Valid {
-		return nil, nil
+		return db.LockLiveIdempotencyClaimRow{}, pgx.ErrNoRows
 	}
-	return []db.FindLiveIdempotencyClaimsRow{{
+	return db.LockLiveIdempotencyClaimRow{
 		ID:                 s.claim.ID,
 		EnvironmentID:      s.claim.EnvironmentID,
 		Operation:          s.claim.Operation,
-		ScopeHash:          s.claim.ScopeHash,
-		KeyHash:            s.claim.KeyHash,
-		HashKeyVersion:     s.claim.HashKeyVersion,
-		Generation:         s.claim.Generation,
+		SlotHash:           s.claim.SlotHash,
 		RequestFingerprint: s.claim.RequestFingerprint,
 		State:              s.claim.State,
 		Receipt:            s.claim.Receipt,
@@ -310,15 +273,7 @@ func (s *actorInputClaimStore) FindLiveIdempotencyClaims(
 		ExpiresAt:          s.claim.ExpiresAt,
 		RetiredAt:          s.claim.RetiredAt,
 		CompletedAt:        s.claim.CompletedAt,
-	}}, nil
-}
-
-func (s *actorInputClaimStore) GetLatestIdempotencyClaimGeneration(
-	context.Context,
-	db.GetLatestIdempotencyClaimGenerationParams,
-) (int64, error) {
-	s.calls = append(s.calls, "claim_generation")
-	return 0, nil
+	}, nil
 }
 
 func (s *actorInputClaimStore) CreateIdempotencyClaim(
@@ -330,10 +285,7 @@ func (s *actorInputClaimStore) CreateIdempotencyClaim(
 		ID:                 params.ID,
 		EnvironmentID:      params.EnvironmentID,
 		Operation:          params.Operation,
-		ScopeHash:          params.ScopeHash,
-		KeyHash:            params.KeyHash,
-		HashKeyVersion:     params.HashKeyVersion,
-		Generation:         params.Generation,
+		SlotHash:           params.SlotHash,
 		RequestFingerprint: params.RequestFingerprint,
 		State:              "pending",
 	}

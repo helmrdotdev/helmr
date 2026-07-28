@@ -46,7 +46,7 @@ func (buildPlacementCatalog) Resolve(digest string) (deployment.Toolchain, error
 	return deployment.Toolchain{}, errors.New("standard toolchain is not registered")
 }
 
-func newBuildPlacementFixture(t *testing.T, architecture string) *buildPlacementFixture {
+func newBuildPlacementFixture(t *testing.T) *buildPlacementFixture {
 	t.Helper()
 	ctx := context.Background()
 	pool := newDispatchIntegrationDB(t, ctx)
@@ -97,19 +97,19 @@ VALUES ($1, $2, $3, $4, $5, 'deployment_source', 1, 'application/vnd.helmr.deplo
 	mustDispatchExec(t, ctx, pool, `
 INSERT INTO deployments (
     id, public_id, org_id, project_id, environment_id, build_region_id,
-    build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+    build_node_version, build_runtime_digest, build_standard_toolchain_digest,
     build_manager_name, build_manager_version, build_manager_digest,
     build_contract_version, version, content_hash,
     deployment_source_artifact_id, status
 ) VALUES (
-    $1, $2, $3, $4, $5, 'us-east-1', $6, $7,
+    $1, $2, $3, $4, $5, 'us-east-1', '24.16.0', $6,
     decode(repeat('02', 32), 'hex'),
-    'bun', '1.2.3', decode(repeat('22', 32), 'hex'),
+    'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
     'helmr.program-build.v0',
-    'v1', $8, $9, 'queued'
+    'v1', $7, $8, 'queued'
 )`,
 		fixture.deploymentID, dispatchPublicID(t, publicid.Deployment), fixture.orgID,
-		fixture.projectID, fixture.environmentID, architecture, bytes.Repeat([]byte{1}, 32),
+		fixture.projectID, fixture.environmentID, bytes.Repeat([]byte{1}, 32),
 		"sha256:"+strings.Repeat("2", 64), sourceArtifactID)
 	mustDispatchExec(t, ctx, pool, `
 INSERT INTO worker_groups (
@@ -119,7 +119,7 @@ INSERT INTO worker_groups (
 	return fixture
 }
 
-func (f *buildPlacementFixture) addWorker(t *testing.T, architecture string, certified bool) uuid.UUID {
+func (f *buildPlacementFixture) addWorker(t *testing.T, certified bool) uuid.UUID {
 	t.Helper()
 	workerID := uuid.Must(uuid.NewV7())
 	serviceID := uuid.Must(uuid.NewV7())
@@ -128,7 +128,7 @@ func (f *buildPlacementFixture) addWorker(t *testing.T, architecture string, cer
 INSERT INTO runtime_identities (
     id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 ) VALUES ($1, $2, 'helmr.runtime.v0', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0')`,
-		runtimeID, architecture)
+		runtimeID, platformArchitecture)
 	if certified {
 		mustDispatchExec(t, f.ctx, f.pool, `
 		INSERT INTO worker_instances (
@@ -167,12 +167,10 @@ INSERT INTO worker_observations (
 	return workerID
 }
 
-func (f *buildPlacementFixture) candidate(architecture string) ReadyBuildCandidate {
+func (f *buildPlacementFixture) candidate() ReadyBuildCandidate {
 	return ReadyBuildCandidate{
 		OrgID: pgvalue.UUID(f.orgID), DeploymentID: pgvalue.UUID(f.deploymentID),
-		BuildRegionID: "us-east-1", BuildArchitecture: architecture, LeaseSequence: 1,
-		RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
-		RequestedScratchBytes: 32 << 30, RequestedBuildExecutors: 1,
+		BuildRegionID: "us-east-1", LeaseSequence: 1,
 	}
 }
 
@@ -186,8 +184,8 @@ func TestPlaceReadyBuildExcludesIneligibleWorkers(t *testing.T) {
 		{name: "uncertified worker", certified: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			fixture := newBuildPlacementFixture(t, "x86_64")
-			workerID := fixture.addWorker(t, "x86_64", test.certified)
+			fixture := newBuildPlacementFixture(t)
+			workerID := fixture.addWorker(t, test.certified)
 			if test.insufficientCertifiedCPU {
 				mustDispatchExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances
@@ -195,7 +193,7 @@ UPDATE worker_instances
  WHERE id = $1`, workerID)
 			}
 			_, err := fixture.authority.PlaceReadyBuild(
-				fixture.ctx, fixture.candidate("x86_64"),
+				fixture.ctx, fixture.candidate(),
 				pgvalue.Timestamptz(time.Now().UTC().Add(-time.Minute)),
 			)
 			if !errors.Is(err, ErrCapacityUnavailable) {
@@ -215,15 +213,15 @@ UPDATE worker_instances
 }
 
 func TestPlaceReadyBuildExcludesWorkerWithAnotherToolchainCatalog(t *testing.T) {
-	fixture := newBuildPlacementFixture(t, "x86_64")
-	workerID := fixture.addWorker(t, "x86_64", true)
+	fixture := newBuildPlacementFixture(t)
+	workerID := fixture.addWorker(t, true)
 	mustDispatchExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances
    SET toolchain_catalog_digest = decode(repeat('04', 32), 'hex')
  WHERE id = $1`, workerID)
 
 	_, err := fixture.authority.PlaceReadyBuild(
-		fixture.ctx, fixture.candidate("x86_64"),
+		fixture.ctx, fixture.candidate(),
 		pgvalue.Timestamptz(time.Now().UTC().Add(-time.Minute)),
 	)
 	if !errors.Is(err, ErrCapacityUnavailable) {
@@ -232,15 +230,15 @@ UPDATE worker_instances
 }
 
 func TestPlaceReadyBuildUsesCatalogMembershipInsteadOfPinEquality(t *testing.T) {
-	fixture := newBuildPlacementFixture(t, "x86_64")
-	workerID := fixture.addWorker(t, "x86_64", true)
+	fixture := newBuildPlacementFixture(t)
+	workerID := fixture.addWorker(t, true)
 	mustDispatchExec(t, fixture.ctx, fixture.pool, `
 UPDATE deployments
    SET build_standard_toolchain_digest = decode(repeat('04', 32), 'hex')
  WHERE id = $1`, fixture.deploymentID)
 
 	lease, err := fixture.authority.PlaceReadyBuild(
-		fixture.ctx, fixture.candidate("x86_64"),
+		fixture.ctx, fixture.candidate(),
 		pgvalue.Timestamptz(time.Now().UTC().Add(-time.Minute)),
 	)
 	if err != nil {
@@ -252,15 +250,15 @@ UPDATE deployments
 }
 
 func TestPlaceReadyBuildLeavesUnregisteredPinWaiting(t *testing.T) {
-	fixture := newBuildPlacementFixture(t, "x86_64")
-	fixture.addWorker(t, "x86_64", true)
+	fixture := newBuildPlacementFixture(t)
+	fixture.addWorker(t, true)
 	mustDispatchExec(t, fixture.ctx, fixture.pool, `
 UPDATE deployments
    SET build_standard_toolchain_digest = decode(repeat('05', 32), 'hex')
  WHERE id = $1`, fixture.deploymentID)
 
 	_, err := fixture.authority.PlaceReadyBuild(
-		fixture.ctx, fixture.candidate("x86_64"),
+		fixture.ctx, fixture.candidate(),
 		pgvalue.Timestamptz(time.Now().UTC().Add(-time.Minute)),
 	)
 	if !errors.Is(err, ErrCapacityUnavailable) {
@@ -279,11 +277,11 @@ UPDATE deployments
 	}
 }
 
-func TestPlaceReadyBuildUsesMatchingCertifiedWorkerArchitecture(t *testing.T) {
-	fixture := newBuildPlacementFixture(t, "x86_64")
-	workerID := fixture.addWorker(t, "x86_64", true)
+func TestPlaceReadyBuildRequiresV0WorkerRuntimeIdentity(t *testing.T) {
+	fixture := newBuildPlacementFixture(t)
+	workerID := fixture.addWorker(t, true)
 	lease, err := fixture.authority.PlaceReadyBuild(
-		fixture.ctx, fixture.candidate("x86_64"),
+		fixture.ctx, fixture.candidate(),
 		pgvalue.Timestamptz(time.Now().UTC().Add(-time.Minute)),
 	)
 	if err != nil {
@@ -294,20 +292,21 @@ func TestPlaceReadyBuildUsesMatchingCertifiedWorkerArchitecture(t *testing.T) {
 	}
 	var architecture string
 	if err := fixture.pool.QueryRow(fixture.ctx, `
-SELECT deployments.build_architecture
+SELECT runtime_identities.runtime_arch
   FROM deployment_build_leases
-  JOIN deployments ON deployments.id = deployment_build_leases.deployment_id
+  JOIN worker_instances ON worker_instances.id = deployment_build_leases.worker_instance_id
+  JOIN runtime_identities ON runtime_identities.id = worker_instances.runtime_identity_id
  WHERE deployment_build_leases.id = $1`, lease.ID).Scan(&architecture); err != nil {
 		t.Fatal(err)
 	}
-	if architecture != "x86_64" {
-		t.Fatalf("leased deployment architecture = %q, want x86_64", architecture)
+	if architecture != platformArchitecture {
+		t.Fatalf("leased worker architecture = %q, want %s", architecture, platformArchitecture)
 	}
 }
 
 func TestPlaceBuildFinalLockRechecksToolchainCatalog(t *testing.T) {
-	fixture := newBuildPlacementFixture(t, "x86_64")
-	workerID := fixture.addWorker(t, "x86_64", true)
+	fixture := newBuildPlacementFixture(t)
+	workerID := fixture.addWorker(t, true)
 	mustDispatchExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances
    SET toolchain_catalog_digest = decode(repeat('04', 32), 'hex')
@@ -320,7 +319,7 @@ UPDATE worker_instances
 		ExpectedStandardToolchainDigest: bytes.Repeat([]byte{2}, 32),
 		Lease: db.LeaseQueuedDeploymentBuildParams{
 			OrgID: pgvalue.UUID(fixture.orgID), DeploymentID: pgvalue.UUID(fixture.deploymentID),
-			BuildRegionID: "us-east-1", BuildArchitecture: "x86_64",
+			BuildRegionID:      "us-east-1",
 			RequestedCpuMillis: 3000, RequestedMemoryBytes: 4 << 30,
 			RequestedScratchBytes: 32 << 30, RequestedBuildExecutors: 1,
 			LeaseSequence: 1, BuildLeaseID: pgvalue.UUID(uuid.Must(uuid.NewV7())),

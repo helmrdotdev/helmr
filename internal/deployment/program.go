@@ -545,17 +545,10 @@ func validateBuildProvenance(prefix string, provenance BuildProvenance) error {
 	if !sha256DigestPattern.MatchString(provenance.Manager.Digest) {
 		return fmt.Errorf("%s manager.digest is not a lowercase SHA-256 digest", prefix)
 	}
-	if provenance.Manager.Name != PackageManagerNPM && provenance.Manager.Name != PackageManagerBun {
-		return fmt.Errorf("%s manager.name %q is unsupported", prefix, provenance.Manager.Name)
-	}
-	if len(provenance.Manager.Version) == 0 ||
-		len(provenance.Manager.Version) > maxPackageManagerVersionBytes ||
-		!packageManagerVersionPattern.MatchString(provenance.Manager.Version) {
-		return fmt.Errorf(
-			"%s manager.version %q is not an admitted SemVer",
-			prefix,
-			provenance.Manager.Version,
-		)
+	if err := validateManagerPackage(PackageManager{
+		Name: provenance.Manager.Name, Version: provenance.Manager.Version,
+	}); err != nil {
+		return fmt.Errorf("%s manager: %w", prefix, err)
 	}
 	if !validProgramLockfile(provenance.Manager.Name, provenance.Submitted.LockfileName) {
 		return fmt.Errorf(
@@ -577,9 +570,11 @@ func validateBuildProvenance(prefix string, provenance BuildProvenance) error {
 func validProgramLockfile(manager PackageManagerName, lockfile string) bool {
 	switch manager {
 	case PackageManagerNPM:
-		return lockfile == "package-lock.json"
+		return lockfile == "package-lock.json" || lockfile == "npm-shrinkwrap.json"
+	case PackageManagerPNPM:
+		return lockfile == "pnpm-lock.yaml"
 	case PackageManagerBun:
-		return lockfile == "bun.lock" || lockfile == "bun.lockb"
+		return lockfile == "bun.lock"
 	default:
 		return false
 	}

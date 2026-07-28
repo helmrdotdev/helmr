@@ -61,10 +61,6 @@ if [ -z "${HELMR_DATABASE_URL:-}" ]; then
   export HELMR_DEV_RESET_DATABASE="${HELMR_DEV_RESET_DATABASE:-1}"
 fi
 
-if [ "${HELMR_DEV_RESET_DATABASE:-0}" = "1" ]; then
-  export HELMR_DEV_LOOKUP_HMAC_BOOTSTRAP_VERSION="${HELMR_DEV_LOOKUP_HMAC_BOOTSTRAP_VERSION:-1}"
-fi
-
 cleanup() {
   if [ -n "${control_pid:-}" ]; then kill "${control_pid}" >/dev/null 2>&1 || true; fi
   if [ -n "${console_pid:-}" ]; then kill "${console_pid}" >/dev/null 2>&1 || true; fi

@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/safepath"
 )
@@ -22,6 +23,7 @@ const (
 )
 
 type SourceSelection struct {
+	NodeVersion    string
 	Manager        PackageManager
 	LockfileName   string
 	LockfileDigest string
@@ -109,8 +111,12 @@ func InspectSource(body io.Reader) (SourceSelection, error) {
 			(sourceAuthorityPath(name) || name == ".helmrignore") {
 			limit := int64(maxSubmittedSourceIgnoreBytes)
 			if sourceAuthorityPath(name) {
-				limit = int64(maxPackageManifestSizeBytes)
-				if name != "package.json" {
+				switch name {
+				case "package.json":
+					limit = int64(maxPackageManifestSizeBytes)
+				case "helmr.config.ts":
+					limit = int64(maxSubmittedSourceIgnoreBytes)
+				default:
 					limit = maxLockfileBytes
 				}
 			}
@@ -211,11 +217,38 @@ func InspectSource(body io.Reader) (SourceSelection, error) {
 	if err != nil {
 		return SourceSelection{}, err
 	}
+	nodeVersion, err := parseSourceNode(object)
+	if err != nil {
+		return SourceSelection{}, err
+	}
+	config, ok := candidates["helmr.config.ts"]
+	if !ok || config.kind != tar.TypeReg || !utf8.Valid(config.raw) {
+		return SourceSelection{}, errors.New(
+			"submitted source helmr.config.ts must be a regular UTF-8 file no larger than 1 MiB",
+		)
+	}
 	lockfile, err := selectSourceLockfile(manager.Name, candidates)
 	if err != nil {
 		return SourceSelection{}, err
 	}
+	lockfiles := 0
+	for _, name := range []string{
+		"package-lock.json",
+		"npm-shrinkwrap.json",
+		"pnpm-lock.yaml",
+		"bun.lock",
+	} {
+		if _, exists := candidates[name]; exists {
+			lockfiles++
+		}
+	}
+	if lockfiles != 1 {
+		return SourceSelection{}, errors.New(
+			"submitted source must contain exactly one supported root lockfile",
+		)
+	}
 	return SourceSelection{
+		NodeVersion:    nodeVersion,
 		Manager:        manager,
 		LockfileName:   lockfile.name,
 		LockfileDigest: digestBytes(lockfile.raw),
@@ -439,7 +472,8 @@ func sourceRootReserved(name string) bool {
 
 func sourceAuthorityPath(name string) bool {
 	switch name {
-	case "package.json", "package-lock.json", "bun.lock", "bun.lockb":
+	case "package.json", "package-lock.json", "npm-shrinkwrap.json",
+		"pnpm-lock.yaml", "bun.lock", "helmr.config.ts":
 		return true
 	default:
 		return false
@@ -464,7 +498,7 @@ func parseSourceManager(value string) (PackageManager, error) {
 	name, version, found := strings.Cut(value, "@")
 	if !found || name == "" || version == "" {
 		return PackageManager{}, errors.New(
-			"submitted source packageManager must be npm@<version> or bun@<version>",
+			"submitted source packageManager must be npm@<version>, pnpm@<version>, or bun@<version>",
 		)
 	}
 	manager := PackageManager{Name: PackageManagerName(name), Version: version}
@@ -495,30 +529,99 @@ func selectSourceLockfile(
 	}
 	switch manager {
 	case PackageManagerNPM:
-		return require("package-lock.json")
-	case PackageManagerBun:
-		text, hasText := candidates["bun.lock"]
-		binary, hasBinary := candidates["bun.lockb"]
-		if hasText == hasBinary {
+		lock, hasLock := candidates["package-lock.json"]
+		shrinkwrap, hasShrinkwrap := candidates["npm-shrinkwrap.json"]
+		if hasLock == hasShrinkwrap {
 			return selectedSourceLockfile{}, errors.New(
-				"submitted Bun source must contain exactly one of bun.lock or bun.lockb",
+				"submitted npm source must contain exactly one of package-lock.json or npm-shrinkwrap.json",
 			)
 		}
-		if hasText {
-			if text.kind != tar.TypeReg {
+		if hasLock {
+			if lock.kind != tar.TypeReg {
 				return selectedSourceLockfile{}, errors.New(
-					"submitted source bun.lock must be a regular file",
+					"submitted source package-lock.json must be a regular file",
 				)
 			}
-			return selectedSourceLockfile{name: "bun.lock", raw: text.raw}, nil
+			return selectedSourceLockfile{name: "package-lock.json", raw: lock.raw}, nil
 		}
-		if binary.kind != tar.TypeReg {
+		if shrinkwrap.kind != tar.TypeReg {
 			return selectedSourceLockfile{}, errors.New(
-				"submitted source bun.lockb must be a regular file",
+				"submitted source npm-shrinkwrap.json must be a regular file",
 			)
 		}
-		return selectedSourceLockfile{name: "bun.lockb", raw: binary.raw}, nil
+		return selectedSourceLockfile{name: "npm-shrinkwrap.json", raw: shrinkwrap.raw}, nil
+	case PackageManagerPNPM:
+		return require("pnpm-lock.yaml")
+	case PackageManagerBun:
+		return require("bun.lock")
 	default:
 		return selectedSourceLockfile{}, fmt.Errorf("submitted source manager %q is unsupported", manager)
 	}
+}
+
+func parseSourceNode(manifest map[string]any) (string, error) {
+	if manifest["type"] != "module" {
+		return "", errors.New(`submitted source package.json type must be "module"`)
+	}
+	devEngines, ok := manifest["devEngines"].(map[string]any)
+	if !ok {
+		return "", errors.New("submitted source package.json devEngines must be an object")
+	}
+	runtime, ok := devEngines["runtime"].(map[string]any)
+	if !ok {
+		return "", errors.New("submitted source package.json devEngines.runtime must be one object")
+	}
+	if runtime["name"] != "node" {
+		return "", errors.New(`submitted source package.json devEngines.runtime.name must be "node"`)
+	}
+	version, ok := runtime["version"].(string)
+	if !ok {
+		return "", errors.New("submitted source package.json devEngines.runtime.version must be a string")
+	}
+	major, minor, patch, release := parseReleaseVersion(version)
+	if !release ||
+		major != 22 && major != 24 ||
+		major == 22 && (minor < 18 || minor == 18 && patch < 0) ||
+		major == 24 && minor < 3 {
+		return "", fmt.Errorf(
+			"submitted source Node version %q is outside >=22.18.0 <23 or >=24.3.0 <25",
+			version,
+		)
+	}
+	if onFail, exists := runtime["onFail"]; exists && onFail != "error" {
+		return "", errors.New(`submitted source package.json devEngines.runtime.onFail must be "error" when present`)
+	}
+	for key := range runtime {
+		if key != "name" && key != "version" && key != "onFail" {
+			return "", fmt.Errorf(
+				"submitted source package.json devEngines.runtime contains unknown member %q",
+				key,
+			)
+		}
+	}
+	if engines, exists := manifest["engines"]; exists {
+		engineObject, ok := engines.(map[string]any)
+		if !ok {
+			return "", errors.New("submitted source package.json engines must be an object")
+		}
+		if node, exists := engineObject["node"]; exists {
+			constraintText, ok := node.(string)
+			if !ok {
+				return "", errors.New("submitted source package.json engines.node must be a string")
+			}
+			constraint, err := semver.NewConstraint(constraintText)
+			if err != nil {
+				return "", fmt.Errorf("submitted source package.json engines.node: %w", err)
+			}
+			selected, err := semver.NewVersion(version)
+			if err != nil || !constraint.Check(selected) {
+				return "", fmt.Errorf(
+					"submitted source Node version %s does not satisfy engines.node %q",
+					version,
+					constraintText,
+				)
+			}
+		}
+	}
+	return version, nil
 }

@@ -13,7 +13,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -272,16 +271,11 @@ SELECT workspace_leases.id,
 		t.Fatal(err)
 	}
 	mustRunPlacementExec(t, fixture.ctx, tx, `
-INSERT INTO lookup_hmac_versions (
-    version, key_fingerprint, is_current
-) VALUES (1, decode(repeat('11', 32), 'hex'), true)`)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
 INSERT INTO idempotency_claims (
-    id, environment_id, operation, scope_hash, key_hash,
-    hash_key_version, generation, request_fingerprint, accepted_at
+    id, environment_id, operation, slot_hash,
+    request_fingerprint, accepted_at
 ) VALUES (
     $1, $2, 'task.child.invoke', decode(repeat('12', 32), 'hex'),
-    decode(repeat('13', 32), 'hex'), 1, 1,
     decode(repeat('14', 32), 'hex'), now()
 )`,
 		claimID,
@@ -1445,25 +1439,19 @@ SELECT workspace_leases.id, workspace_leases.base_version_id,
 	if _, err := tx.Exec(fixture.ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
 		t.Fatal(err)
 	}
-	mustRunPlacementExec(t, fixture.ctx, tx, `
-INSERT INTO lookup_hmac_versions (
-    version, key_fingerprint, is_current
-) VALUES (1, decode(repeat('21', 32), 'hex'), true)`)
 	for index, claimID := range []uuid.UUID{currentClaimID, childClaimID} {
 		mustRunPlacementExec(t, fixture.ctx, tx, `
 INSERT INTO idempotency_claims (
-    id, environment_id, operation, scope_hash, key_hash,
-    hash_key_version, generation, request_fingerprint, accepted_at
+    id, environment_id, operation, slot_hash,
+    request_fingerprint, accepted_at
 ) VALUES (
     $1, $2, 'task.child.invoke',
     decode(repeat($3::text, 32), 'hex'),
-    decode(repeat($4::text, 32), 'hex'),
-    1, 1, decode(repeat($5::text, 32), 'hex'), now()
+    decode(repeat($4::text, 32), 'hex'), now()
 )`,
 			claimID,
 			fixture.environmentID,
 			fmt.Sprintf("%02x", 31+index),
-			fmt.Sprintf("%02x", 41+index),
 			fmt.Sprintf("%02x", 51+index),
 		)
 	}
@@ -2929,17 +2917,6 @@ func newRunPlacementFixture(t *testing.T) runPlacementFixture {
 	sourceDigest := "sha256:" + strings.Repeat("1", 64)
 	programDigest := "sha256:" + strings.Repeat("2", 64)
 	imageDigest := "sha256:" + strings.Repeat("4", 64)
-	programReceipt := dbtest.ProgramReceipt(dbtest.ProgramReceiptAuthority{
-		Architecture:            "x86_64",
-		ProgramArtifactID:       programID,
-		ProgramDigest:           programDigest,
-		ProgramSizeBytes:        1,
-		RuntimeDigest:           "sha256:" + strings.Repeat("01", 32),
-		SourceArtifactID:        sourceID,
-		SourceDigest:            sourceDigest,
-		SourceSizeBytes:         1,
-		StandardToolchainDigest: "sha256:" + strings.Repeat("02", 32),
-	})
 
 	mustRunPlacementExec(t, ctx, pool, `
 INSERT INTO regions (id, provider, provider_region, display_name)
@@ -2999,17 +2976,16 @@ INSERT INTO artifacts (
 	mustRunPlacementExec(t, ctx, pool, `
 INSERT INTO deployments (
     id, public_id, org_id, project_id, environment_id, build_region_id,
-    build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+    build_node_version, build_runtime_digest, build_standard_toolchain_digest,
     build_manager_name, build_manager_version, build_manager_digest,
     build_contract_version, version, content_hash, deployment_source_artifact_id,
-    program_artifact_id, program_runtime_digest, program_architecture,
-    program_receipt, queue_config, status
+    program_artifact_id, program_index_digest, queue_config, status
 ) VALUES (
-    $1, $2, $3, $4, $5, 'us-east-1', 'x86_64',
+    $1, $2, $3, $4, $5, 'us-east-1', '24.16.0',
     decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
-    'bun', '1.2.3', decode(repeat('22', 32), 'hex'),
+    'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
     'helmr.program-build.v0', 'v1', $6, $7, $8,
-    decode(repeat('01', 32), 'hex'), 'x86_64', $9::jsonb, '{}'::jsonb, 'deployed'
+    decode(repeat('03', 32), 'hex'), '{}'::jsonb, 'deployed'
 )`,
 		deploymentID,
 		dispatchPublicID(t, publicid.Deployment),
@@ -3019,21 +2995,20 @@ INSERT INTO deployments (
 		sourceDigest,
 		sourceID,
 		programID,
-		programReceipt,
 	)
 	workspaceManifest := fmt.Sprintf(
-		`{"image":{"artifactDigest":%q,"mediaType":"application/octet-stream"},"resources":{"milliCpu":1000,"memoryMiB":1024,"ephemeralDiskMiB":2048},"network":{"internet":true,"denyCidrs":[]},"architecture":"x86_64"}`,
+		`{"image":{"artifactDigest":%q,"mediaType":"application/octet-stream"},"resources":{"milliCpu":1000,"memoryMiB":1024},"network":{"internet":true,"denyCidrs":[]}}`,
 		imageDigest,
 	)
 	mustRunPlacementExec(t, ctx, pool, `
 INSERT INTO deployment_definitions (
     id, environment_id, deployment_id, kind, declared_id, manifest_version,
-    manifest, manifest_digest, workspace_architecture, artifact_id
+    manifest, manifest_digest, artifact_id
 ) VALUES
     ($1, $3, $4, 'task', 'test-task', 0, '{}'::jsonb,
-     decode(repeat('03', 32), 'hex'), NULL, NULL),
+     decode(repeat('03', 32), 'hex'), NULL),
     ($2, $3, $4, 'workspace', 'test-workspace', 0, $5::jsonb,
-     decode(repeat('04', 32), 'hex'), 'x86_64', $6)`,
+     decode(repeat('04', 32), 'hex'), $6)`,
 		taskDefinitionID,
 		workspaceDefinitionID,
 		fixture.environmentID,
@@ -3069,8 +3044,8 @@ INSERT INTO worker_instances (
 ) VALUES (
     $1, $2, $3, 'test-attestation', 'active', 1, $4, 'helmr.worker.v0',
     'test-worker', true, $5, 'squashfs', 'builder-v0', 'layout-v0',
-    8000, 8589934592, 17179869184, 17179869184,
-    1000, 1073741824, 2147483648, 2147483648,
+    8000, 8589934592, 274877906944, 17179869184,
+    1000, 1073741824, 34359738368, 2147483648,
     8, 8, 8, 'run-v0', 'test-cert', now(), now(), now()
 )`,
 		fixture.workerID,

@@ -23,7 +23,7 @@ Populate these secrets after the first apply:
 | `database_url` | PostgreSQL connection string for the Helmr database. |
 | `worker_token_signing_key` | High-entropy signing key. |
 | `auth_secret` | High-entropy auth secret. |
-| `secret_encryption_key` | Base64-encoded 32-byte key. |
+| `encryption_key` | Base64-encoded 32-byte key used for Secret values. |
 | `checkpoint_encryption_key` | Base64-encoded 32-byte key. |
 | `setup_token` | High-entropy token for first organization setup. |
 | `github_oauth_client_secret` | GitHub OAuth client secret. |

@@ -255,39 +255,25 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	runtimeBytes := strings.Repeat("01", 32)
 	runtimeDigest := "sha256:" + runtimeBytes
 	queueConfig := `{"formatVersion":0,"queues":[{"name":"default"}]}`
-	sourceSum := sha256.Sum256([]byte("source"))
-	programSum := sha256.Sum256([]byte("program"))
-	programReceipt := dbtest.ProgramReceipt(dbtest.ProgramReceiptAuthority{
-		Architecture:            "x86_64",
-		ProgramArtifactID:       programArtifactID,
-		ProgramDigest:           "sha256:" + hex.EncodeToString(programSum[:]),
-		ProgramSizeBytes:        1,
-		RuntimeDigest:           runtimeDigest,
-		SourceArtifactID:        sourceArtifactID,
-		SourceDigest:            "sha256:" + hex.EncodeToString(sourceSum[:]),
-		SourceSizeBytes:         1,
-		StandardToolchainDigest: "sha256:" + strings.Repeat("02", 32),
-	})
 	mustScheduleExec(t, pool, `
 		INSERT INTO deployments (
 			id, public_id, org_id, project_id, environment_id, build_region_id,
-			build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+			build_node_version, build_runtime_digest, build_standard_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
 			build_contract_version, version, content_hash, deployment_source_artifact_id,
-			program_artifact_id, program_runtime_digest, program_architecture,
-			program_receipt, queue_config, status
+			program_artifact_id, program_index_digest, queue_config, status
 		)
 		VALUES (
 			$1, $2, $3, $4, $5, $6,
-			'x86_64', decode($7, 'hex'), decode(repeat('02', 32), 'hex'),
-			'bun', '1.2.3', decode(repeat('22', 32), 'hex'),
+			'24.16.0', decode($7, 'hex'), decode(repeat('02', 32), 'hex'),
+			'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
 			'helmr.program-build.v0', 'v0', $8, $9,
-			$10, decode($7, 'hex'), 'x86_64', $11::jsonb, $12, 'deployed'
+			$10, decode(repeat('03', 32), 'hex'), $11, 'deployed'
 		)
 	`, deploymentID, schedulePublicID(t, publicid.Deployment), orgID, projectID,
 		environmentID, regionID, runtimeBytes,
 		"sha256:"+strings.Repeat("03", 32), sourceArtifactID, programArtifactID,
-		programReceipt, queueConfig)
+		queueConfig)
 	taskManifest := []byte(
 		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"key":"scheduler"}}}`,
 	)
@@ -304,10 +290,10 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	mustScheduleExec(t, pool, `
 		INSERT INTO deployment_definitions (
 			id, environment_id, deployment_id, kind, declared_id,
-			manifest_version, manifest, manifest_digest, workspace_architecture, artifact_id
+			manifest_version, manifest, manifest_digest, artifact_id
 		)
 		VALUES ($1, $2, $3, 'workspace', 'scheduler', 0, '{}',
-		        decode(repeat('05', 32), 'hex'), 'x86_64', $4)
+		        decode(repeat('05', 32), 'hex'), $4)
 	`, workspaceDefinitionID, environmentID, deploymentID, imageArtifactID)
 	mustScheduleExec(t, pool, `
 		UPDATE environments SET current_deployment_id = $1 WHERE id = $2
@@ -349,10 +335,6 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 		t.Fatal(err)
 	}
 
-	mustScheduleExec(t, pool, `
-		INSERT INTO lookup_hmac_versions (version, key_fingerprint, is_current)
-		VALUES (1, decode(repeat('06', 32), 'hex'), true)
-	`)
 	tx, err = pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -369,11 +351,10 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	}
 	if _, err := tx.Exec(t.Context(), `
 		INSERT INTO secret_versions (
-			id, secret_id, version, key_id, nonce, ciphertext,
-			value_authenticator, authenticator_key_version
+			id, secret_id, version, nonce, ciphertext
 		)
-		VALUES ($1, $2, 1, 'key', decode(repeat('07', 12), 'hex'),
-		        decode(repeat('08', 16), 'hex'), decode(repeat('09', 32), 'hex'), 1)
+		VALUES ($1, $2, 1, decode(repeat('07', 12), 'hex'),
+		        decode(repeat('08', 16), 'hex'))
 	`, secretVersionID, secretID); err != nil {
 		t.Fatal(err)
 	}

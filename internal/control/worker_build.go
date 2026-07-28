@@ -29,7 +29,7 @@ type workerMessagePayload struct {
 }
 
 type deploymentBuildCompletionAuthority struct {
-	buildArchitecture            string
+	buildNodeVersion             string
 	buildRuntimeDigest           []byte
 	buildStandardToolchainDigest []byte
 	buildManagerName             string
@@ -79,7 +79,7 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	leaseExpiresAt := time.Now().Add(deploymentBuildLeaseDuration)
-	if s.buildPolicy == nil || s.managerCatalog == nil {
+	if s.buildPolicy == nil {
 		writeError(w, unavailable(errors.New("deployment build authority is not configured")))
 		return
 	}
@@ -120,11 +120,7 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return fmt.Errorf("resolve deployment build target: %w", err)
 		}
-		runtimeTarget := target.Runtime
-		if string(runtimeTarget.Architecture) != row.BuildArchitecture {
-			return errors.New("deployment build runtime descriptor does not match persisted architecture")
-		}
-		runtimeWire, err := deployment.RuntimeDescriptorWire(runtimeTarget)
+		runtimeWire, err := deployment.RuntimeDescriptorWire(target.Runtime)
 		if err != nil {
 			return fmt.Errorf("encode deployment build runtime descriptor: %w", err)
 		}
@@ -151,8 +147,6 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 			ID:                    deploymentID,
 			Version:               row.Version,
 			APIVersion:            row.ApiVersion,
-			SDKVersion:            row.SdkVersion,
-			CLIVersion:            row.CliVersion,
 			WorkerProtocolVersion: row.WorkerProtocolVersion,
 			ProjectID:             pgvalue.MustUUIDValue(row.ProjectID).String(),
 			EnvironmentID:         pgvalue.MustUUIDValue(row.EnvironmentID).String(),
@@ -161,7 +155,8 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 				SizeBytes: row.SourceSizeBytes,
 				MediaType: row.SourceMediaType,
 			},
-			Runtime: runtimeWire,
+			Runtime:     runtimeWire,
+			NodeVersion: row.BuildNodeVersion,
 			Manager: api.WorkerManagerPin{
 				Digest:  managerDigest,
 				Name:    row.BuildManagerName,
@@ -470,7 +465,7 @@ func deploymentBuildAuthority(
 	row db.GetDeploymentBuildCompletionAuthorityRow,
 ) deploymentBuildCompletionAuthority {
 	return deploymentBuildCompletionAuthority{
-		buildArchitecture:            row.BuildArchitecture,
+		buildNodeVersion:             row.BuildNodeVersion,
 		buildRuntimeDigest:           append([]byte(nil), row.BuildRuntimeDigest...),
 		buildStandardToolchainDigest: append([]byte(nil), row.BuildStandardToolchainDigest...),
 		buildManagerName:             row.BuildManagerName,
@@ -488,7 +483,7 @@ func lockedDeploymentBuildAuthority(
 	row db.LockDeploymentBuildTerminalFenceRow,
 ) deploymentBuildCompletionAuthority {
 	return deploymentBuildCompletionAuthority{
-		buildArchitecture:            row.BuildArchitecture,
+		buildNodeVersion:             row.BuildNodeVersion,
 		buildRuntimeDigest:           row.BuildRuntimeDigest,
 		buildStandardToolchainDigest: row.BuildStandardToolchainDigest,
 		buildManagerName:             row.BuildManagerName,
@@ -505,7 +500,7 @@ func lockedDeploymentBuildAuthority(
 func (authority deploymentBuildCompletionAuthority) equal(
 	other deploymentBuildCompletionAuthority,
 ) bool {
-	return authority.buildArchitecture == other.buildArchitecture &&
+	return authority.buildNodeVersion == other.buildNodeVersion &&
 		bytes.Equal(authority.buildRuntimeDigest, other.buildRuntimeDigest) &&
 		bytes.Equal(
 			authority.buildStandardToolchainDigest,
@@ -565,7 +560,7 @@ func (s *Server) prepareDeploymentBuild(
 		toolchainDigest,
 		authority.buildContractVersion,
 	)
-	if err != nil || string(target.Runtime.Architecture) != authority.buildArchitecture {
+	if err != nil {
 		return preparedDeploymentBuild{}, errors.New(
 			"deployment build target is not registered",
 		)
@@ -617,6 +612,11 @@ func (s *Server) prepareDeploymentBuild(
 		succeeded.Provenance.Manager.Digest != managerDigest {
 		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{
 			err: errManagerAuthorityMismatch,
+		}
+	}
+	if selection.NodeVersion != authority.buildNodeVersion {
+		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{
+			err: errors.New("deployment build Node selector does not match submitted source"),
 		}
 	}
 	objects, err := deploymentBuildObjects(succeeded)
@@ -929,7 +929,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			return conflict(errors.New("deployment build authority changed"))
 		}
 		if !workerState.RuntimeArch.Valid ||
-			workerState.RuntimeArch.String != locked.BuildArchitecture {
+			workerState.RuntimeArch.String != string(deployment.ArchitectureX8664) {
 			return conflict(errors.New("deployment build worker certification was withdrawn"))
 		}
 		var invalid invalidDeploymentBuildOutput
@@ -985,9 +985,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		}
 
 		var programArtifactID pgtype.UUID
-		var programRuntimeDigest []byte
-		var programArchitecture pgtype.Text
-		var programReceipt []byte
+		var programIndexDigest []byte
 		if succeeded.Program != nil {
 			artifact, err := createArtifact(
 				db.ArtifactKindDeploymentProgram,
@@ -997,28 +995,12 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 				return fmt.Errorf("record deployment Program: %w", err)
 			}
 			programArtifactID = artifact.ID
-			programRuntimeDigest = append([]byte(nil), locked.BuildRuntimeDigest...)
-			programArchitecture = pgtype.Text{
-				String: locked.BuildArchitecture,
-				Valid:  true,
-			}
-			receipt, err := deployment.NewProgramReceipt(
-				*succeeded.Program,
-				pgvalue.MustUUIDValue(artifact.ID).String(),
-				deployment.ProgramReceiptSource{
-					ArtifactID: pgvalue.MustUUIDValue(locked.DeploymentSourceArtifactID).String(),
-					Digest:     locked.DeploymentSourceDigest,
-					MediaType:  locked.DeploymentSourceMediaType,
-					SizeBytes:  locked.DeploymentSourceSizeBytes,
-				},
-			)
+			index, err := deployment.CanonicalProgramIndex(succeeded.Program.Index)
 			if err != nil {
 				return failInvalid(err.Error())
 			}
-			programReceipt, err = deployment.CanonicalProgramReceipt(receipt)
-			if err != nil {
-				return failInvalid(err.Error())
-			}
+			indexDigest := sha256.Sum256(index)
+			programIndexDigest = indexDigest[:]
 		}
 
 		workspaceArtifacts := make(map[string]db.Artifact)
@@ -1038,7 +1020,6 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		}
 
 		for _, definition := range definitions {
-			var workspaceArchitecture pgtype.Text
 			var artifactID pgtype.UUID
 			if definition.input.Workspace != nil {
 				artifact, ok := workspaceArtifacts[definition.input.DeclaredID]
@@ -1048,25 +1029,20 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 						definition.input.DeclaredID,
 					)
 				}
-				workspaceArchitecture = pgtype.Text{
-					String: string(definition.input.Workspace.Architecture),
-					Valid:  true,
-				}
 				artifactID = artifact.ID
 			}
 			if _, err := work.q.CreateDeploymentDefinition(
 				r.Context(),
 				db.CreateDeploymentDefinitionParams{
-					ID:                    pgvalue.UUID(uuid.Must(uuid.NewV7())),
-					EnvironmentID:         environmentID,
-					DeploymentID:          deploymentID,
-					Kind:                  string(definition.input.Kind),
-					DeclaredID:            definition.input.DeclaredID,
-					ManifestVersion:       deployment.BuildPlanFormatVersion,
-					Manifest:              definition.manifest,
-					ManifestDigest:        definition.manifestDigest[:],
-					WorkspaceArchitecture: workspaceArchitecture,
-					ArtifactID:            artifactID,
+					ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+					EnvironmentID:   environmentID,
+					DeploymentID:    deploymentID,
+					Kind:            string(definition.input.Kind),
+					DeclaredID:      definition.input.DeclaredID,
+					ManifestVersion: deployment.BuildPlanFormatVersion,
+					Manifest:        definition.manifest,
+					ManifestDigest:  definition.manifestDigest[:],
+					ArtifactID:      artifactID,
 				},
 			); err != nil {
 				return fmt.Errorf(
@@ -1092,9 +1068,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		}
 		row, err := work.q.CompleteDeploymentBuild(r.Context(), db.CompleteDeploymentBuildParams{
 			ProgramArtifactID:          programArtifactID,
-			ProgramRuntimeDigest:       programRuntimeDigest,
-			ProgramArchitecture:        programArchitecture,
-			ProgramReceipt:             programReceipt,
+			ProgramIndexDigest:         programIndexDigest,
 			QueueConfig:                queueConfigJSON,
 			OrgID:                      orgID,
 			ID:                         deploymentID,
@@ -1275,9 +1249,8 @@ func deploymentDefinitionManifest(
 				ArtifactDigest: workspaceImage.Digest,
 				MediaType:      workspaceImage.MediaType,
 			},
-			Resources:    definition.Workspace.Resources,
-			Network:      definition.Workspace.Network,
-			Architecture: definition.Workspace.Architecture,
+			Resources: definition.Workspace.Resources,
+			Network:   definition.Workspace.Network,
 		}
 	default:
 		return nil, [sha256.Size]byte{}, fmt.Errorf(

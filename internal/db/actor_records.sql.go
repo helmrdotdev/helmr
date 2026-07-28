@@ -389,7 +389,7 @@ UPDATE idempotency_claims
    AND actor_records.id = $5
    AND actor_records.direction = 'input'
    AND actor_records.claim_id = idempotency_claims.id
-RETURNING idempotency_claims.id, idempotency_claims.environment_id, idempotency_claims.operation, idempotency_claims.scope_hash, idempotency_claims.key_hash, idempotency_claims.hash_key_version, idempotency_claims.generation, idempotency_claims.request_fingerprint, idempotency_claims.state, idempotency_claims.receipt, idempotency_claims.accepted_at, idempotency_claims.expires_at, idempotency_claims.retired_at, idempotency_claims.completed_at
+RETURNING idempotency_claims.id, idempotency_claims.environment_id, idempotency_claims.operation, idempotency_claims.slot_hash, idempotency_claims.request_fingerprint, idempotency_claims.state, idempotency_claims.receipt, idempotency_claims.accepted_at, idempotency_claims.expires_at, idempotency_claims.retired_at, idempotency_claims.completed_at
 `
 
 type CompleteActorInputClaimParams struct {
@@ -413,10 +413,7 @@ func (q *Queries) CompleteActorInputClaim(ctx context.Context, arg CompleteActor
 		&i.ID,
 		&i.EnvironmentID,
 		&i.Operation,
-		&i.ScopeHash,
-		&i.KeyHash,
-		&i.HashKeyVersion,
-		&i.Generation,
+		&i.SlotHash,
 		&i.RequestFingerprint,
 		&i.State,
 		&i.Receipt,
@@ -448,7 +445,7 @@ UPDATE idempotency_claims
    AND actor_records.id = $5
    AND actor_records.direction = 'output'
    AND actor_records.claim_id = idempotency_claims.id
-RETURNING idempotency_claims.id, idempotency_claims.environment_id, idempotency_claims.operation, idempotency_claims.scope_hash, idempotency_claims.key_hash, idempotency_claims.hash_key_version, idempotency_claims.generation, idempotency_claims.request_fingerprint, idempotency_claims.state, idempotency_claims.receipt, idempotency_claims.accepted_at, idempotency_claims.expires_at, idempotency_claims.retired_at, idempotency_claims.completed_at
+RETURNING idempotency_claims.id, idempotency_claims.environment_id, idempotency_claims.operation, idempotency_claims.slot_hash, idempotency_claims.request_fingerprint, idempotency_claims.state, idempotency_claims.receipt, idempotency_claims.accepted_at, idempotency_claims.expires_at, idempotency_claims.retired_at, idempotency_claims.completed_at
 `
 
 type CompleteActorOutputClaimParams struct {
@@ -472,10 +469,7 @@ func (q *Queries) CompleteActorOutputClaim(ctx context.Context, arg CompleteActo
 		&i.ID,
 		&i.EnvironmentID,
 		&i.Operation,
-		&i.ScopeHash,
-		&i.KeyHash,
-		&i.HashKeyVersion,
-		&i.Generation,
+		&i.SlotHash,
 		&i.RequestFingerprint,
 		&i.State,
 		&i.Receipt,
@@ -990,7 +984,7 @@ func (q *Queries) LockActorForInputReconcile(ctx context.Context, arg LockActorF
 }
 
 const lockActorInputClaim = `-- name: LockActorInputClaim :one
-SELECT id, environment_id, operation, scope_hash, key_hash, hash_key_version, generation, request_fingerprint, state, receipt, accepted_at, expires_at, retired_at, completed_at
+SELECT id, environment_id, operation, slot_hash, request_fingerprint, state, receipt, accepted_at, expires_at, retired_at, completed_at
   FROM idempotency_claims
  WHERE environment_id = $1
    AND id = $2
@@ -1011,10 +1005,7 @@ func (q *Queries) LockActorInputClaim(ctx context.Context, arg LockActorInputCla
 		&i.ID,
 		&i.EnvironmentID,
 		&i.Operation,
-		&i.ScopeHash,
-		&i.KeyHash,
-		&i.HashKeyVersion,
-		&i.Generation,
+		&i.SlotHash,
 		&i.RequestFingerprint,
 		&i.State,
 		&i.Receipt,

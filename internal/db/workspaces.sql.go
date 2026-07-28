@@ -464,7 +464,6 @@ const lockWorkspaceAdmissionAuthority = `-- name: LockWorkspaceAdmissionAuthorit
 SELECT workspaces.id, workspaces.public_id, workspaces.environment_id, workspaces.region_id, workspaces.workspace_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_actor_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at,
        environments.org_id,
        environments.project_id,
-       definitions.workspace_architecture,
        EXISTS (
            SELECT 1
              FROM workspace_leases
@@ -522,7 +521,6 @@ type LockWorkspaceAdmissionAuthorityRow struct {
 	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
 	OrgID                  pgtype.UUID        `json:"org_id"`
 	ProjectID              pgtype.UUID        `json:"project_id"`
-	WorkspaceArchitecture  pgtype.Text        `json:"workspace_architecture"`
 	HasActiveLease         bool               `json:"has_active_lease"`
 	HasActiveProcess       bool               `json:"has_active_process"`
 }
@@ -553,7 +551,6 @@ func (q *Queries) LockWorkspaceAdmissionAuthority(ctx context.Context, arg LockW
 		&i.DeletedAt,
 		&i.OrgID,
 		&i.ProjectID,
-		&i.WorkspaceArchitecture,
 		&i.HasActiveLease,
 		&i.HasActiveProcess,
 	)
@@ -849,7 +846,7 @@ func (q *Queries) ReserveWorkspaceForRun(ctx context.Context, arg ReserveWorkspa
 }
 
 const resolveCurrentWorkspaceDefinitionForCreate = `-- name: ResolveCurrentWorkspaceDefinitionForCreate :one
-SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.workspace_architecture, deployment_definitions.artifact_id, deployment_definitions.created_at
+SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.artifact_id, deployment_definitions.created_at
   FROM deployment_definitions
   JOIN deployments
     ON deployments.environment_id = deployment_definitions.environment_id
@@ -881,7 +878,6 @@ func (q *Queries) ResolveCurrentWorkspaceDefinitionForCreate(ctx context.Context
 		&i.ManifestVersion,
 		&i.Manifest,
 		&i.ManifestDigest,
-		&i.WorkspaceArchitecture,
 		&i.ArtifactID,
 		&i.CreatedAt,
 	)
@@ -889,7 +885,7 @@ func (q *Queries) ResolveCurrentWorkspaceDefinitionForCreate(ctx context.Context
 }
 
 const resolveRunPinnedWorkspaceDefinitionForCreate = `-- name: ResolveRunPinnedWorkspaceDefinitionForCreate :one
-SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.workspace_architecture, deployment_definitions.artifact_id, deployment_definitions.created_at
+SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.artifact_id, deployment_definitions.created_at
   FROM runs
   JOIN deployment_definitions
     ON deployment_definitions.environment_id = runs.environment_id
@@ -920,7 +916,6 @@ func (q *Queries) ResolveRunPinnedWorkspaceDefinitionForCreate(ctx context.Conte
 		&i.ManifestVersion,
 		&i.Manifest,
 		&i.ManifestDigest,
-		&i.WorkspaceArchitecture,
 		&i.ArtifactID,
 		&i.CreatedAt,
 	)

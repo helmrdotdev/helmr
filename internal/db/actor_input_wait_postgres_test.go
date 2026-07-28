@@ -151,10 +151,10 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 	fingerprint := bytes.Repeat([]byte{7}, 32)
 	runtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO idempotency_claims (
-			id, environment_id, operation, scope_hash, key_hash,
-			hash_key_version, generation, request_fingerprint, accepted_at, expires_at
-		) VALUES ($1, $2, 'actor.input.send', $3, $4, 1, 1, $5, now(), now() + interval '30 days')
-	`, claimID, fixture.environmentID, runtest.Hash("actor-input-scope"), runtest.Hash("actor-input-key"), fingerprint)
+			id, environment_id, operation, slot_hash,
+			request_fingerprint, accepted_at, expires_at
+		) VALUES ($1, $2, 'actor.input.send', $3, $4, now(), now() + interval '30 days')
+	`, claimID, fixture.environmentID, runtest.Hash("actor-input-slot"), fingerprint)
 	recordID := uuid.Must(uuid.NewV7())
 	first, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
@@ -225,11 +225,11 @@ func TestActorInputRunSourceTransactionRollbackLeavesNoResidue(t *testing.T) {
 	defer tx.Rollback(context.Background())
 	runtest.MustExec(t, ctx, tx, `
 		INSERT INTO idempotency_claims (
-			id, environment_id, operation, scope_hash, key_hash,
-			hash_key_version, generation, request_fingerprint, accepted_at, expires_at
-		) VALUES ($1, $2, 'actor.input.send', $3, $4, 1, 1, $5, now(), now() + interval '30 days')
+			id, environment_id, operation, slot_hash,
+			request_fingerprint, accepted_at, expires_at
+		) VALUES ($1, $2, 'actor.input.send', $3, $4, now(), now() + interval '30 days')
 	`, claimID, fixture.environmentID, runtest.Hash("run-source-rollback-scope"),
-		runtest.Hash("run-source-rollback-key"), fingerprint)
+		fingerprint)
 	queries := New(tx)
 	appended, err := queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
@@ -351,10 +351,10 @@ func TestActorInputSequenceSafeIntegerBoundaryPreservesCompletedReplay(t *testin
 	fingerprint := bytes.Repeat([]byte{9}, 32)
 	runtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO idempotency_claims (
-			id, environment_id, operation, scope_hash, key_hash,
-			hash_key_version, generation, request_fingerprint, accepted_at, expires_at
-		) VALUES ($1, $2, 'actor.input.send', $3, $4, 1, 1, $5, now(), now() + interval '30 days')
-	`, claimID, fixture.environmentID, runtest.Hash("actor-input-max-scope"), runtest.Hash("actor-input-max-key"), fingerprint)
+			id, environment_id, operation, slot_hash,
+			request_fingerprint, accepted_at, expires_at
+		) VALUES ($1, $2, 'actor.input.send', $3, $4, now(), now() + interval '30 days')
+	`, claimID, fixture.environmentID, runtest.Hash("actor-input-max-slot"), fingerprint)
 	recordID := uuid.Must(uuid.NewV7())
 	first, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID:              pgvalue.UUID(fixture.environmentID),

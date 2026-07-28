@@ -2,6 +2,7 @@ package secret
 
 import (
 	"encoding/base32"
+	"errors"
 	"strings"
 	"testing"
 
@@ -9,225 +10,114 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/keyedhash"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestStoreRevokeCommitsOneAuthorityTuple(t *testing.T) {
-	pool := openSecretPostgres(t)
-	_, _, environmentID := seedSecretEnvironment(t, pool)
-	hashes := seedSecretHashAuthority(t, pool)
-	encryption, err := NewKeyring(makeKey(1), nil)
+func TestSecretMutationReplayComparesExactEncryptedVersion(t *testing.T) {
+	database := dbtest.Open(t)
+	if err := schema.Up(t.Context(), database.DSN); err != nil {
+		t.Fatal(err)
+	}
+	environmentID := seedSecretEnvironment(t, database.Pool)
+	store, err := New(db.New(database.Pool), database.Pool, make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := New(t.Context(), db.New(pool), pool, encryption, hashes)
-	if err != nil {
-		t.Fatal(err)
-	}
+
 	created, err := store.Create(
 		t.Context(),
 		environmentID,
 		"API_TOKEN",
-		[]byte("first"),
+		[]byte("first-value"),
 		"create-1",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayedCreate, err := store.Create(
+	replayed, err := store.Create(
 		t.Context(),
 		environmentID,
 		"API_TOKEN",
-		[]byte("first"),
+		[]byte("first-value"),
 		"create-1",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replayedCreate.ID != created.ID {
-		t.Fatalf("create replay changed Secret: first=%+v replay=%+v", created, replayedCreate)
+	createdVersionID := currentSecretVersion(t, database.Pool, environmentID, created.ID)
+	replayedVersionID := currentSecretVersion(t, database.Pool, environmentID, replayed.ID)
+	if replayed.ID != created.ID || replayedVersionID != createdVersionID {
+		t.Fatalf("create replay changed authority: first=%+v replay=%+v", created, replayed)
 	}
+	_, err = store.Create(
+		t.Context(),
+		environmentID,
+		"API_TOKEN",
+		[]byte("different-value"),
+		"create-1",
+	)
+	var conflict idempotency.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("different replay error = %v", err)
+	}
+
 	secretID := pgvalue.MustUUIDValue(created.ID)
 	rotated, err := store.Rotate(
 		t.Context(),
 		environmentID,
 		secretID,
-		[]byte("second"),
+		[]byte("second-value"),
 		"rotate-1",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayedRotate, err := store.Rotate(
+	replayedRotation, err := store.Rotate(
 		t.Context(),
 		environmentID,
 		secretID,
-		[]byte("second"),
+		[]byte("second-value"),
 		"rotate-1",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !rotated.RotatedAt.Valid || replayedRotate.RotatedAt != rotated.RotatedAt {
-		t.Fatalf("rotate replay changed Secret: first=%+v replay=%+v", rotated, replayedRotate)
-	}
-	first, err := store.Revoke(t.Context(), environmentID, secretID, "revoke-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	replayed, err := store.Revoke(t.Context(), environmentID, secretID, "revoke-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.State != "revoked" || !first.RotatedAt.Valid || !first.RevokedAt.Valid {
-		t.Fatalf("first snapshot = %+v", first)
-	}
-	if first.ID != replayed.ID || first.RotatedAt != replayed.RotatedAt || first.RevokedAt != replayed.RevokedAt {
-		t.Fatalf("replay changed snapshot: first=%+v replay=%+v", first, replayed)
-	}
-	var state string
-	var stateVersion int64
-	var revocationGeneration int64
-	if err := pool.QueryRow(t.Context(), `
-		SELECT state, state_version, revocation_generation
-		  FROM secrets
-		 WHERE environment_id = $1
-		   AND id = $2
-	`, environmentID, secretID).Scan(&state, &stateVersion, &revocationGeneration); err != nil {
-		t.Fatal(err)
-	}
-	if state != "revoked" || stateVersion != 3 || revocationGeneration != 1 {
-		t.Fatalf("secret authority = %s/%d/%d", state, stateVersion, revocationGeneration)
-	}
-	assertSecretRevokeCounts(t, pool, environmentID, 1, 1)
-	assertSecretMutationClaimCount(t, pool, environmentID, "secret.create", 1)
-	assertSecretMutationClaimCount(t, pool, environmentID, "secret.rotate", 1)
-
-	rollbackSecret, err := store.Create(
-		t.Context(),
+	rotatedVersionID := currentSecretVersion(t, database.Pool, environmentID, rotated.ID)
+	replayedRotationVersionID := currentSecretVersion(
+		t,
+		database.Pool,
 		environmentID,
-		"ROLLBACK_TOKEN",
-		[]byte("value"),
-		"",
+		replayedRotation.ID,
 	)
-	if err != nil {
-		t.Fatal(err)
+	if replayedRotationVersionID != rotatedVersionID {
+		t.Fatalf("rotation replay changed version: first=%+v replay=%+v", rotated, replayedRotation)
 	}
-	if _, err := pool.Exec(t.Context(), `
-		CREATE FUNCTION reject_secret_revoke_outbox() RETURNS trigger
-		LANGUAGE plpgsql
-		AS $$
-		BEGIN
-			IF NEW.topic = 'secret.revoked' THEN
-				RAISE EXCEPTION 'reject secret revoke outbox';
-			END IF;
-			RETURN NEW;
-		END;
-		$$;
-	`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(t.Context(), `
-		CREATE TRIGGER reject_secret_revoke_outbox
-		BEFORE INSERT ON outbox_messages
-		FOR EACH ROW EXECUTE FUNCTION reject_secret_revoke_outbox();
-	`); err != nil {
-		t.Fatal(err)
-	}
-	rollbackID := pgvalue.MustUUIDValue(rollbackSecret.ID)
-	if _, err := store.Revoke(t.Context(), environmentID, rollbackID, "revoke-rollback"); err == nil {
-		t.Fatal("expected revocation to roll back")
-	}
-	var rollbackState string
-	var rollbackGeneration int64
-	if err := pool.QueryRow(t.Context(), `
-		SELECT state, revocation_generation
-		  FROM secrets
-		 WHERE environment_id = $1
-		   AND id = $2
-	`, environmentID, rollbackID).Scan(&rollbackState, &rollbackGeneration); err != nil {
-		t.Fatal(err)
-	}
-	if rollbackState != "active" || rollbackGeneration != 0 {
-		t.Fatalf("rolled-back secret = %s/%d", rollbackState, rollbackGeneration)
-	}
-	assertSecretRevokeCounts(t, pool, environmentID, 1, 1)
-}
 
-func assertSecretMutationClaimCount(
-	t *testing.T,
-	pool *pgxpool.Pool,
-	environmentID uuid.UUID,
-	operation string,
-	want int,
-) {
-	t.Helper()
-	var count int
-	if err := pool.QueryRow(t.Context(), `
-		SELECT count(*)
+	var receipt string
+	if err := database.Pool.QueryRow(t.Context(), `
+		SELECT receipt::text
 		  FROM idempotency_claims
 		 WHERE environment_id = $1
-		   AND operation = $2
-		   AND state = 'completed'
-	`, environmentID, operation).Scan(&count); err != nil {
+		   AND operation = 'secret.rotate'
+	`, environmentID).Scan(&receipt); err != nil {
 		t.Fatal(err)
 	}
-	if count != want {
-		t.Fatalf("%s claim count = %d, want %d", operation, count, want)
+	if !strings.Contains(receipt, pgvalue.MustUUIDValue(rotatedVersionID).String()) {
+		t.Fatalf("receipt does not pin the Secret version: %s", receipt)
+	}
+	if strings.Contains(receipt, "second-value") {
+		t.Fatalf("receipt contains Secret plaintext: %s", receipt)
 	}
 }
 
-func assertSecretRevokeCounts(t *testing.T, pool *pgxpool.Pool, environmentID uuid.UUID, claims int, outbox int) {
+func seedSecretEnvironment(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 	t.Helper()
-	var claimCount int
-	if err := pool.QueryRow(t.Context(), `
-		SELECT count(*)
-		  FROM idempotency_claims
-		 WHERE environment_id = $1
-		   AND operation = 'secret.revoke'
-		   AND state = 'completed'
-	`, environmentID).Scan(&claimCount); err != nil {
-		t.Fatal(err)
-	}
-	var outboxCount int
-	if err := pool.QueryRow(t.Context(), `
-		SELECT count(*)
-		  FROM outbox_messages
-		 WHERE topic = 'secret.revoked'
-	`).Scan(&outboxCount); err != nil {
-		t.Fatal(err)
-	}
-	if claimCount != claims || outboxCount != outbox {
-		t.Fatalf("claims/outbox = %d/%d, want %d/%d", claimCount, outboxCount, claims, outbox)
-	}
-}
-
-func seedSecretHashAuthority(t *testing.T, pool *pgxpool.Pool) keyedhash.Keyring {
-	t.Helper()
-	hashes, err := keyedhash.New(map[int32][]byte{1: makeKey(10)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	fingerprint, err := hashes.Fingerprint(1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(t.Context(), `
-		INSERT INTO lookup_hmac_versions (version, key_fingerprint, is_current)
-		VALUES (1, $1, true)
-	`, fingerprint[:]); err != nil {
-		t.Fatal(err)
-	}
-	return hashes
-}
-
-func seedSecretEnvironment(t *testing.T, pool *pgxpool.Pool) (uuid.UUID, uuid.UUID, uuid.UUID) {
-	t.Helper()
-	orgID := uuid.Must(uuid.NewV7())
-	projectID := uuid.Must(uuid.NewV7())
-	environmentID := uuid.Must(uuid.NewV7())
+	orgID := uuid.New()
+	projectID := uuid.New()
+	environmentID := uuid.New()
 	regionID := "secret-" + environmentID.String()
 	if _, err := pool.Exec(t.Context(), `
 		INSERT INTO organizations (id, public_id, name, slug)
@@ -244,7 +134,13 @@ func seedSecretEnvironment(t *testing.T, pool *pgxpool.Pool) (uuid.UUID, uuid.UU
 	if _, err := pool.Exec(t.Context(), `
 		INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name)
 		VALUES ($1, $2, $3, $4, $5, 'Secrets')
-	`, projectID, secretPublicID("prj_", projectID), orgID, regionID, "secrets-"+projectID.String()); err != nil {
+	`,
+		projectID,
+		secretPublicID("prj_", projectID),
+		orgID,
+		regionID,
+		"secrets-"+projectID.String(),
+	); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(t.Context(), `
@@ -253,18 +149,30 @@ func seedSecretEnvironment(t *testing.T, pool *pgxpool.Pool) (uuid.UUID, uuid.UU
 	`, environmentID, secretPublicID("env_", environmentID), orgID, projectID); err != nil {
 		t.Fatal(err)
 	}
-	return orgID, projectID, environmentID
+	return environmentID
+}
+
+func currentSecretVersion(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	environmentID uuid.UUID,
+	secretID pgtype.UUID,
+) pgtype.UUID {
+	t.Helper()
+	var versionID pgtype.UUID
+	if err := pool.QueryRow(t.Context(), `
+		SELECT current_version_id
+		  FROM secrets
+		 WHERE environment_id = $1
+		   AND id = $2
+	`, environmentID, secretID).Scan(&versionID); err != nil {
+		t.Fatal(err)
+	}
+	return versionID
 }
 
 func secretPublicID(prefix string, id uuid.UUID) string {
-	return prefix + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(id[:]))
-}
-
-func openSecretPostgres(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	database := dbtest.Open(t)
-	if err := schema.Up(t.Context(), database.DSN); err != nil {
-		t.Fatal(err)
-	}
-	return database.Pool
+	return prefix + strings.ToLower(
+		base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(id[:]),
+	)
 }

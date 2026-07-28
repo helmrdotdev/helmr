@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 
+	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/jackc/pgx/v5"
@@ -427,7 +428,6 @@ SELECT runs.id,
 		return runPlacementAuthority{}, pgx.ErrNoRows
 	}
 	var manifest []byte
-	var workspaceArchitecture pgtype.Text
 	workspaceOwnerPredicate := "workspaces.owner_run_id = $5 AND workspaces.owner_actor_id IS NULL"
 	workspaceOwnerID := authority.runID
 	if authority.handoffChildWaitID.Valid {
@@ -446,8 +446,7 @@ SELECT workspaces.deployment_definition_id,
        workspaces.region_id,
        workspaces.ownership_generation,
        workspaces.writer_generation,
-       workspace_definitions.manifest,
-       workspace_definitions.workspace_architecture
+       workspace_definitions.manifest
   FROM workspaces
   JOIN environments AS workspace_environment
     ON workspace_environment.id = workspaces.environment_id
@@ -476,7 +475,6 @@ SELECT workspaces.deployment_definition_id,
 		&authority.ownershipGeneration,
 		&authority.writerGeneration,
 		&manifest,
-		&workspaceArchitecture,
 	)
 	if err != nil {
 		return runPlacementAuthority{}, err
@@ -690,9 +688,9 @@ SELECT source_runtime.id,
 		}
 	}
 
-	var programArchitecture pgtype.Text
+	var deploymentID pgtype.UUID
 	err = tx.QueryRow(ctx, `
-SELECT deployments.program_architecture
+SELECT deployments.id
   FROM deployments
   JOIN deployment_definitions AS entrypoint_definitions
     ON entrypoint_definitions.environment_id = deployments.environment_id
@@ -703,22 +701,15 @@ SELECT deployments.program_architecture
    AND deployments.id = $2
    AND deployments.status = 'deployed'
    AND deployments.program_artifact_id IS NOT NULL
-   AND deployments.program_runtime_digest IS NOT NULL
-   AND deployments.program_architecture IS NOT NULL`,
+   AND deployments.build_runtime_digest IS NOT NULL
+   AND deployments.program_index_digest IS NOT NULL`,
 		authority.environmentID,
 		authority.deploymentID,
 		entrypointDefinitionID,
 		authority.entrypointKind,
-	).Scan(&programArchitecture)
+	).Scan(&deploymentID)
 	if err != nil {
 		return runPlacementAuthority{}, err
-	}
-	if !workspaceArchitecture.Valid ||
-		!programArchitecture.Valid ||
-		workspaceArchitecture.String != programArchitecture.String {
-		return runPlacementAuthority{}, errors.New(
-			"Run Program and Workspace architectures do not match",
-		)
 	}
 	var workspaceManifest deployment.WorkspaceManifest
 	decoder := json.NewDecoder(bytes.NewReader(manifest))
@@ -743,7 +734,7 @@ SELECT deployments.program_architecture
 	}
 	authority.resources = resources
 	authority.networkPolicy = network
-	authority.architecture = workspaceArchitecture.String
+	authority.architecture = platformArchitecture
 	return authority, nil
 }
 
@@ -1322,15 +1313,13 @@ func normalizeRunResources(
 ) (runResources, error) {
 	if resources.MilliCPU <= 0 ||
 		resources.MemoryMiB <= 0 ||
-		resources.EphemeralDiskMiB <= 0 ||
-		resources.MemoryMiB > math.MaxInt64/mebibyte ||
-		resources.EphemeralDiskMiB > math.MaxInt64/mebibyte {
+		resources.MemoryMiB > math.MaxInt64/mebibyte {
 		return runResources{}, errors.New("Workspace resources are outside the Run placement domain")
 	}
 	return runResources{
 		cpuMillis:      resources.MilliCPU,
 		memoryBytes:    resources.MemoryMiB * mebibyte,
-		workloadDisk:   resources.EphemeralDiskMiB * mebibyte,
+		workloadDisk:   compute.WorkspaceWorkloadDiskMiB * mebibyte,
 		scratchBytes:   0,
 		executionSlots: 1,
 	}, nil

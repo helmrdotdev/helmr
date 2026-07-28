@@ -18,12 +18,19 @@ func TestValidateDeploymentSourceArtifactArchiveRequiresCanonicalSource(t *testi
 	root := t.TempDir()
 	if err := os.WriteFile(
 		filepath.Join(root, "package.json"),
-		[]byte(`{"name":"test","packageManager":"bun@1.3.10"}`),
+		[]byte(`{"devEngines":{"runtime":{"name":"node","version":"24.16.0"}},"name":"test","packageManager":"bun@1.3.10","type":"module"}`),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "bun.lock"), []byte("lockfileVersion = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(root, "helmr.config.ts"),
+		[]byte(`export default { dirs: ["dist"] }`),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 	canonical, cleanup, err := archive.CreateTarWithOptions(
@@ -41,7 +48,7 @@ func TestValidateDeploymentSourceArtifactArchiveRequiresCanonicalSource(t *testi
 
 	var body bytes.Buffer
 	writer := tar.NewWriter(&body)
-	payload := []byte(`{"name":"test","packageManager":"bun@1.3.10"}`)
+	payload := []byte(`{"devEngines":{"runtime":{"name":"node","version":"24.16.0"}},"name":"test","packageManager":"bun@1.3.10","type":"module"}`)
 	if err := writer.WriteHeader(&tar.Header{
 		Name:    "package.json",
 		Mode:    0o644,

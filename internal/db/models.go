@@ -591,46 +591,37 @@ type DeletionJob struct {
 }
 
 type Deployment struct {
-	ID                              pgtype.UUID        `json:"id"`
-	PublicID                        string             `json:"public_id"`
-	OrgID                           pgtype.UUID        `json:"org_id"`
-	ProjectID                       pgtype.UUID        `json:"project_id"`
-	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
-	BuildRegionID                   string             `json:"build_region_id"`
-	BuildArchitecture               string             `json:"build_architecture"`
-	BuildRuntimeDigest              []byte             `json:"build_runtime_digest"`
-	BuildStandardToolchainDigest    []byte             `json:"build_standard_toolchain_digest"`
-	BuildManagerName                string             `json:"build_manager_name"`
-	BuildManagerVersion             string             `json:"build_manager_version"`
-	BuildManagerDigest              []byte             `json:"build_manager_digest"`
-	BuildContractVersion            string             `json:"build_contract_version"`
-	Version                         string             `json:"version"`
-	ContentHash                     string             `json:"content_hash"`
-	ApiVersion                      string             `json:"api_version"`
-	SdkVersion                      string             `json:"sdk_version"`
-	CliVersion                      string             `json:"cli_version"`
-	WorkerProtocolVersion           string             `json:"worker_protocol_version"`
-	DeploymentSourceArtifactID      pgtype.UUID        `json:"deployment_source_artifact_id"`
-	ProgramArtifactID               pgtype.UUID        `json:"program_artifact_id"`
-	ProgramArtifactKind             ArtifactKind       `json:"program_artifact_kind"`
-	ProgramRuntimeDigest            []byte             `json:"program_runtime_digest"`
-	ProgramArchitecture             pgtype.Text        `json:"program_architecture"`
-	ProgramReceipt                  []byte             `json:"program_receipt"`
-	QueueConfig                     []byte             `json:"queue_config"`
-	Status                          string             `json:"status"`
-	Failure                         []byte             `json:"failure"`
-	CurrentBuildLeaseID             pgtype.UUID        `json:"current_build_lease_id"`
-	BuildRequestedCpuMillis         int64              `json:"build_requested_cpu_millis"`
-	BuildRequestedMemoryBytes       int64              `json:"build_requested_memory_bytes"`
-	BuildRequestedWorkloadDiskBytes int64              `json:"build_requested_workload_disk_bytes"`
-	BuildRequestedScratchBytes      int64              `json:"build_requested_scratch_bytes"`
-	BuildRequestedExecutors         int32              `json:"build_requested_executors"`
-	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
-	BuildingAt                      pgtype.Timestamptz `json:"building_at"`
-	BuiltAt                         pgtype.Timestamptz `json:"built_at"`
-	DeployedAt                      pgtype.Timestamptz `json:"deployed_at"`
-	FailedAt                        pgtype.Timestamptz `json:"failed_at"`
+	ID                           pgtype.UUID        `json:"id"`
+	PublicID                     string             `json:"public_id"`
+	OrgID                        pgtype.UUID        `json:"org_id"`
+	ProjectID                    pgtype.UUID        `json:"project_id"`
+	EnvironmentID                pgtype.UUID        `json:"environment_id"`
+	BuildRegionID                string             `json:"build_region_id"`
+	BuildNodeVersion             string             `json:"build_node_version"`
+	BuildRuntimeDigest           []byte             `json:"build_runtime_digest"`
+	BuildStandardToolchainDigest []byte             `json:"build_standard_toolchain_digest"`
+	BuildManagerName             string             `json:"build_manager_name"`
+	BuildManagerVersion          string             `json:"build_manager_version"`
+	BuildManagerDigest           []byte             `json:"build_manager_digest"`
+	BuildContractVersion         string             `json:"build_contract_version"`
+	Version                      string             `json:"version"`
+	ContentHash                  string             `json:"content_hash"`
+	ApiVersion                   string             `json:"api_version"`
+	WorkerProtocolVersion        string             `json:"worker_protocol_version"`
+	DeploymentSourceArtifactID   pgtype.UUID        `json:"deployment_source_artifact_id"`
+	ProgramArtifactID            pgtype.UUID        `json:"program_artifact_id"`
+	ProgramArtifactKind          ArtifactKind       `json:"program_artifact_kind"`
+	ProgramIndexDigest           []byte             `json:"program_index_digest"`
+	QueueConfig                  []byte             `json:"queue_config"`
+	Status                       string             `json:"status"`
+	Failure                      []byte             `json:"failure"`
+	CurrentBuildLeaseID          pgtype.UUID        `json:"current_build_lease_id"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	BuildingAt                   pgtype.Timestamptz `json:"building_at"`
+	BuiltAt                      pgtype.Timestamptz `json:"built_at"`
+	DeployedAt                   pgtype.Timestamptz `json:"deployed_at"`
+	FailedAt                     pgtype.Timestamptz `json:"failed_at"`
 }
 
 type DeploymentBuildLease struct {
@@ -671,17 +662,16 @@ type DeploymentBuildLease struct {
 }
 
 type DeploymentDefinition struct {
-	ID                    pgtype.UUID        `json:"id"`
-	EnvironmentID         pgtype.UUID        `json:"environment_id"`
-	DeploymentID          pgtype.UUID        `json:"deployment_id"`
-	Kind                  string             `json:"kind"`
-	DeclaredID            string             `json:"declared_id"`
-	ManifestVersion       int32              `json:"manifest_version"`
-	Manifest              []byte             `json:"manifest"`
-	ManifestDigest        []byte             `json:"manifest_digest"`
-	WorkspaceArchitecture pgtype.Text        `json:"workspace_architecture"`
-	ArtifactID            pgtype.UUID        `json:"artifact_id"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	ID              pgtype.UUID        `json:"id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	DeploymentID    pgtype.UUID        `json:"deployment_id"`
+	Kind            string             `json:"kind"`
+	DeclaredID      string             `json:"declared_id"`
+	ManifestVersion int32              `json:"manifest_version"`
+	Manifest        []byte             `json:"manifest"`
+	ManifestDigest  []byte             `json:"manifest_digest"`
+	ArtifactID      pgtype.UUID        `json:"artifact_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 type DeploymentPromotion struct {
@@ -726,10 +716,7 @@ type IdempotencyClaim struct {
 	ID                 pgtype.UUID        `json:"id"`
 	EnvironmentID      pgtype.UUID        `json:"environment_id"`
 	Operation          string             `json:"operation"`
-	ScopeHash          []byte             `json:"scope_hash"`
-	KeyHash            []byte             `json:"key_hash"`
-	HashKeyVersion     int32              `json:"hash_key_version"`
-	Generation         int64              `json:"generation"`
+	SlotHash           []byte             `json:"slot_hash"`
 	RequestFingerprint []byte             `json:"request_fingerprint"`
 	State              string             `json:"state"`
 	Receipt            []byte             `json:"receipt"`
@@ -753,14 +740,6 @@ type Invitation struct {
 	AcceptedByUserID pgtype.UUID        `json:"accepted_by_user_id"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 	RevokedByUserID  pgtype.UUID        `json:"revoked_by_user_id"`
-}
-
-type LookupHmacVersion struct {
-	Version        int32              `json:"version"`
-	KeyFingerprint []byte             `json:"key_fingerprint"`
-	IsCurrent      bool               `json:"is_current"`
-	ActivatedAt    pgtype.Timestamptz `json:"activated_at"`
-	RetiredAt      pgtype.Timestamptz `json:"retired_at"`
 }
 
 type MagicLink struct {
@@ -1231,15 +1210,12 @@ type SecretResolution struct {
 }
 
 type SecretVersion struct {
-	ID                      pgtype.UUID        `json:"id"`
-	SecretID                pgtype.UUID        `json:"secret_id"`
-	Version                 int64              `json:"version"`
-	KeyID                   string             `json:"key_id"`
-	Nonce                   []byte             `json:"nonce"`
-	Ciphertext              []byte             `json:"ciphertext"`
-	ValueAuthenticator      []byte             `json:"value_authenticator"`
-	AuthenticatorKeyVersion int32              `json:"authenticator_key_version"`
-	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	ID         pgtype.UUID        `json:"id"`
+	SecretID   pgtype.UUID        `json:"secret_id"`
+	Version    int64              `json:"version"`
+	Nonce      []byte             `json:"nonce"`
+	Ciphertext []byte             `json:"ciphertext"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
 type TelemetryOutbox struct {

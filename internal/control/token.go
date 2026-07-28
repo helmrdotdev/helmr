@@ -163,7 +163,7 @@ func (s *Server) createExternalToken(
 			if err != nil {
 				return err
 			}
-			claims, err = s.claims.TransactionForQueries(work.q)
+			claims, err = idempotency.TransactionForQueries(work.q)
 			if err != nil {
 				return err
 			}
@@ -284,7 +284,7 @@ func (s *Server) createRuntimeToken(
 		if err != nil {
 			return err
 		}
-		claims, err := s.claims.TransactionForQueries(work.q)
+		claims, err := idempotency.TransactionForQueries(work.q)
 		if err != nil {
 			return err
 		}
@@ -761,7 +761,7 @@ func (s *Server) completeTokenRecord(
 			if err != nil {
 				return err
 			}
-			claims, err = s.claims.TransactionForQueries(work.q)
+			claims, err = idempotency.TransactionForQueries(work.q)
 			if err != nil {
 				return err
 			}
@@ -868,7 +868,7 @@ func (s *Server) cancelTokenRecord(
 			if err != nil {
 				return err
 			}
-			claims, err = s.claims.TransactionForQueries(work.q)
+			claims, err = idempotency.TransactionForQueries(work.q)
 			if err != nil {
 				return err
 			}

@@ -3,6 +3,8 @@ package secret
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"errors"
 	"testing"
 
@@ -140,11 +142,7 @@ func TestOpenDeliveriesUsesRecordedVersionAfterRotation(t *testing.T) {
 	secretID := uuid.New()
 	oldVersionID := uuid.New()
 	currentVersionID := uuid.New()
-	keyring, err := NewKeyring(make([]byte, 32), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := &Store{encryption: keyring, rand: bytes.NewReader(make([]byte, 12))}
+	store := &Store{encryption: testCipher(t), rand: bytes.NewReader(make([]byte, 12))}
 	encrypted, err := store.encrypt(environmentID, secretID, oldVersionID, 1, []byte("old-value"))
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +157,6 @@ func TestOpenDeliveriesUsesRecordedVersionAfterRotation(t *testing.T) {
 		ID:         pgvalue.UUID(oldVersionID),
 		SecretID:   pgvalue.UUID(secretID),
 		Version:    1,
-		KeyID:      encrypted.keyID,
 		Nonce:      encrypted.nonce,
 		Ciphertext: encrypted.ciphertext,
 	}
@@ -178,6 +175,19 @@ func TestOpenDeliveriesUsesRecordedVersionAfterRotation(t *testing.T) {
 		string(materials[0].Value) != "old-value" {
 		t.Fatalf("materials = %+v", materials)
 	}
+}
+
+func testCipher(t *testing.T) cipher.AEAD {
+	t.Helper()
+	block, err := aes.NewCipher(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryption, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encryption
 }
 
 func TestOpenDeliveriesRejectsAuthorityMismatch(t *testing.T) {

@@ -38,13 +38,12 @@ func TestParentOwnedQueuedChildExpiryResolvesEveryWaitState(t *testing.T) {
 			}
 			mustExec(t, ctx, tx, `
 INSERT INTO idempotency_claims (
-    id, environment_id, operation, scope_hash, key_hash,
-    hash_key_version, generation, request_fingerprint, accepted_at
-) VALUES ($1, $2, 'task.child.invoke', $3, $4, 1, 1, $5, now())`,
+    id, environment_id, operation, slot_hash,
+    request_fingerprint, accepted_at
+) VALUES ($1, $2, 'task.child.invoke', $3, $4, now())`,
 				claimID,
 				fixture.environmentID,
-				runtest.Hash("queued-child-expiry-scope"),
-				runtest.Hash("queued-child-expiry-key"),
+				runtest.Hash("queued-child-expiry-slot"),
 				runtest.Hash("queued-child-expiry-request"),
 			)
 			mustExec(t, ctx, tx, `

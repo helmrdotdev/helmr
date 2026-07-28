@@ -43,9 +43,7 @@ type Control struct {
 	WorkerGroupsJSON               string
 	SetupToken                     string
 	AuthSecret                     string
-	SecretEncryptionKey            string
-	SecretEncryptionKeyOld         string
-	LookupHMACKeys                 string
+	EncryptionKey                  []byte
 	WorkspaceFencingKeyFingerprint string
 	WorkspaceFencingKeys           string
 	TokenCredentialKeyID           string

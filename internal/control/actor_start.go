@@ -121,7 +121,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		}
 		var claim *db.IdempotencyClaim
 		if claimRequest != nil {
-			claims, err := s.claims.TransactionForQueries(work.q)
+			claims, err := idempotency.TransactionForQueries(work.q)
 			if err != nil {
 				return err
 			}
@@ -229,11 +229,6 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			!authority.HeadVersionID.Valid ||
 			authority.OwnerActorID.Valid || authority.OwnerRunID.Valid ||
 			authority.HasActiveLease || authority.HasActiveProcess {
-			return errActorStartWorkspaceConflict
-		}
-		if !deploymentAuthority.ProgramArchitecture.Valid ||
-			!authority.WorkspaceArchitecture.Valid ||
-			deploymentAuthority.ProgramArchitecture.String != authority.WorkspaceArchitecture.String {
 			return errActorStartWorkspaceConflict
 		}
 		runAuthority, err := deployment.ResolveActorRunAdmission(
@@ -358,7 +353,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			if err != nil {
 				return err
 			}
-			claims, err := s.claims.TransactionForQueries(work.q)
+			claims, err := idempotency.TransactionForQueries(work.q)
 			if err != nil {
 				return err
 			}

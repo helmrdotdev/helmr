@@ -140,15 +140,31 @@ func TestProgramIndexParserRequiresCanonicalBytes(t *testing.T) {
 	}
 }
 
-func TestProgramIndexAcceptsBunBinaryLockfile(t *testing.T) {
+func TestProgramIndexAcceptsSupportedManagerLockfiles(t *testing.T) {
 	fixture := loadContractFixture(t)
-	index, err := ParseProgramIndex([]byte(fixture.ProgramIndex.Canonical))
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name     PackageManagerName
+		version  string
+		lockfile string
+	}{
+		{name: PackageManagerNPM, version: "11.4.2", lockfile: "package-lock.json"},
+		{name: PackageManagerNPM, version: "11.4.2", lockfile: "npm-shrinkwrap.json"},
+		{name: PackageManagerPNPM, version: "11.1.0", lockfile: "pnpm-lock.yaml"},
+		{name: PackageManagerBun, version: "1.3.10", lockfile: "bun.lock"},
 	}
-	index.Submitted.LockfileName = "bun.lockb"
-	if err := ValidateProgramIndex(index); err != nil {
-		t.Fatal(err)
+	for _, test := range tests {
+		t.Run(string(test.name)+"/"+test.lockfile, func(t *testing.T) {
+			index, err := ParseProgramIndex([]byte(fixture.ProgramIndex.Canonical))
+			if err != nil {
+				t.Fatal(err)
+			}
+			index.Manager.Name = test.name
+			index.Manager.Version = test.version
+			index.Submitted.LockfileName = test.lockfile
+			if err := ValidateProgramIndex(index); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

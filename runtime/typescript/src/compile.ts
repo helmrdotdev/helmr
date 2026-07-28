@@ -75,13 +75,11 @@ export type BuildPlanDefinition =
         resources: Readonly<{
           milliCpu: number
           memoryMiB: number
-          ephemeralDiskMiB: number
         }>
         network: Readonly<{
           internet: boolean
           denyCidrs: readonly string[]
         }>
-        architecture: RuntimeArchitecture
       }>
     }>
 
@@ -242,12 +240,10 @@ export function normalizeWorkspaceResources(
 ): Readonly<{
   milliCpu: number
   memoryMiB: number
-  ephemeralDiskMiB: number
 }> {
   return Object.freeze({
     milliCpu: normalizeCpu(resources.cpu),
     memoryMiB: normalizeIecMiB(resources.memory, "memory"),
-    ephemeralDiskMiB: 32768,
   })
 }
 
@@ -366,7 +362,6 @@ function compileDefinition(
           imageBuild: compileImageBuild(definition.image, options),
           resources: normalizeWorkspaceResources(definition.resources),
           network: normalizeWorkspaceNetwork(definition.network),
-          architecture: options.architecture,
         },
       }
   }

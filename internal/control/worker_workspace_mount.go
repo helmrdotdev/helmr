@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -419,7 +420,7 @@ func (s *Server) finalizeWorkspaceExec(
 	if err != nil {
 		return err
 	}
-	claims, err := s.claims.TransactionForQueries(work.q)
+	claims, err := idempotency.TransactionForQueries(work.q)
 	if err != nil {
 		return err
 	}
@@ -632,7 +633,7 @@ func (s *Server) failWorkspaceExec(
 	if err != nil {
 		return err
 	}
-	claims, err := s.claims.TransactionForQueries(work.q)
+	claims, err := idempotency.TransactionForQueries(work.q)
 	if err != nil {
 		return err
 	}

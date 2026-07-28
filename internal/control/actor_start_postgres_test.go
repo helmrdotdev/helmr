@@ -1,7 +1,6 @@
 package control
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,7 +19,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
-	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -538,15 +536,6 @@ func assertActorStartTupleWithQueue(
 func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPostgresFixture {
 	t.Helper()
 	pool := openActorStartPostgres(t)
-	hashBytes := bytes.Repeat([]byte{7}, keyedhash.KeySize)
-	hashes, err := keyedhash.New(map[int32][]byte{1: hashBytes})
-	if err != nil {
-		t.Fatal(err)
-	}
-	fingerprint, err := hashes.Fingerprint(1)
-	if err != nil {
-		t.Fatal(err)
-	}
 	fixture := actorStartPostgresFixture{
 		pool: pool, orgID: uuid.Must(uuid.NewV7()), projectID: uuid.Must(uuid.NewV7()),
 		environmentID: uuid.Must(uuid.NewV7()), workspaceIDs: make([]uuid.UUID, workspaceCount),
@@ -563,10 +552,6 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		INSERT INTO regions (id, provider, provider_region, display_name)
 		VALUES ('us-east-1', 'aws', 'us-east-1', 'Actor Start Test')
 	`)
-	mustActorStartExec(t, pool, `
-		INSERT INTO lookup_hmac_versions (version, key_fingerprint, is_current)
-		VALUES (1, $1, true)
-	`, fingerprint[:])
 	mustActorStartExec(t, pool, `
 		INSERT INTO organizations (id, public_id, name, slug)
 		VALUES ($1, $2, 'Actor Start Test', $3)
@@ -603,17 +588,6 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	queueConfig := []byte(
 		`{"formatVersion":0,"queues":[{"concurrencyLimit":2,"name":"default"},{"name":"priority"}]}`,
 	)
-	programReceipt := dbtest.ProgramReceipt(dbtest.ProgramReceiptAuthority{
-		Architecture:            "x86_64",
-		ProgramArtifactID:       programID,
-		ProgramDigest:           digests[1],
-		ProgramSizeBytes:        1,
-		RuntimeDigest:           "sha256:" + strings.Repeat("01", 32),
-		SourceArtifactID:        sourceID,
-		SourceDigest:            digests[0],
-		SourceSizeBytes:         1,
-		StandardToolchainDigest: "sha256:" + strings.Repeat("02", 32),
-	})
 	mustActorStartExec(t, pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, 'application/vnd.helmr.deployment-source.v0+tar'),
@@ -630,28 +604,27 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	mustActorStartExec(t, pool, `
 		INSERT INTO deployments (
 		    id, public_id, org_id, project_id, environment_id, build_region_id,
-		    build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+		    build_node_version, build_runtime_digest, build_standard_toolchain_digest,
 		    build_manager_name, build_manager_version, build_manager_digest,
 		    build_contract_version, version, content_hash, deployment_source_artifact_id,
-		    program_artifact_id, program_runtime_digest, program_architecture,
-		    program_receipt, queue_config, status
+		    program_artifact_id, program_index_digest, queue_config, status
 		) VALUES (
-		    $1, $2, $3, $4, $5, 'us-east-1', 'x86_64',
+		    $1, $2, $3, $4, $5, 'us-east-1', '24.16.0',
 		    decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
-		    'bun', '1.2.3', decode(repeat('22', 32), 'hex'),
+		    'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
 		    'helmr.program-build.v0', 'actor-start-test', $6, $7, $8,
-		    decode(repeat('01', 32), 'hex'), 'x86_64', $9::jsonb, $10::jsonb, 'deployed'
+		    decode(repeat('03', 32), 'hex'), $9::jsonb, 'deployed'
 		)
 	`, deploymentID, actorStartPublicID(t, publicid.Deployment), fixture.orgID, fixture.projectID,
-		fixture.environmentID, digests[0], sourceID, programID, programReceipt, queueConfig)
+		fixture.environmentID, digests[0], sourceID, programID, queueConfig)
 	mustActorStartExec(t, pool, `
 		INSERT INTO deployment_definitions (
 		    id, environment_id, deployment_id, kind, declared_id,
-		    manifest_version, manifest, manifest_digest, workspace_architecture, artifact_id
+		    manifest_version, manifest, manifest_digest, artifact_id
 		) VALUES
-		    ($1, $4, $5, 'actor', 'operator.v1', 0, $7::jsonb, $8, NULL, NULL),
-		    ($2, $4, $5, 'task', 'resize-image', 0, $9::jsonb, $10, NULL, NULL),
-		    ($3, $4, $5, 'workspace', 'workspace.v1', 0, '{}'::jsonb, decode(repeat('04', 32), 'hex'), 'x86_64', $6)
+		    ($1, $4, $5, 'actor', 'operator.v1', 0, $7::jsonb, $8, NULL),
+		    ($2, $4, $5, 'task', 'resize-image', 0, $9::jsonb, $10, NULL),
+		    ($3, $4, $5, 'workspace', 'workspace.v1', 0, '{}'::jsonb, decode(repeat('04', 32), 'hex'), $6)
 	`, actorDefinitionID, taskDefinitionID, workspaceDefinitionID,
 		fixture.environmentID, deploymentID, imageID,
 		actorManifest, actorManifestDigest[:], taskManifest, taskManifestDigest[:])
@@ -672,10 +645,9 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	`, secretID, fixture.environmentID, secretVersionID)
 	mustActorStartExec(t, tx, `
 		INSERT INTO secret_versions (
-		    id, secret_id, version, key_id, nonce, ciphertext,
-		    value_authenticator, authenticator_key_version
-		) VALUES ($1, $2, 1, 'test-key', decode(repeat('01', 12), 'hex'),
-		          decode(repeat('02', 16), 'hex'), decode(repeat('03', 32), 'hex'), 1)
+		    id, secret_id, version, nonce, ciphertext
+		) VALUES ($1, $2, 1, decode(repeat('01', 12), 'hex'),
+		          decode(repeat('02', 16), 'hex'))
 	`, secretVersionID, secretID)
 	for index := range workspaceCount {
 		workspaceID, versionID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
@@ -709,7 +681,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	fixture.server = &Server{db: db.New(pool), tx: pool, claims: idempotency.New(hashes)}
+	fixture.server = &Server{db: db.New(pool), tx: pool}
 	return fixture
 }
 

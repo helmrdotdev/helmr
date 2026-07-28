@@ -93,7 +93,7 @@ Required secret value formats:
 - `database_url`: `postgres://helmr:<password>@<postgres_endpoint>/helmr?sslmode=require`
 - `worker_token_signing_key`, `auth_secret`, `setup_token`: high-entropy strings
 - `setup_token`: read it from Secrets Manager for first organization setup
-- `secret_encryption_key`, `checkpoint_encryption_key`: base64-encoded 32-byte keys
+- `encryption_key`, `checkpoint_encryption_key`: base64-encoded 32-byte keys
 - `workspace_fencing_keys`: JSON object mapping each content fingerprint to its base64-encoded 32-byte key
 - `token_credential_keys`: JSON object mapping each content-derived key ID to its base64-encoded 32-byte key
 - `github_oauth_client_secret`: GitHub OAuth client secret

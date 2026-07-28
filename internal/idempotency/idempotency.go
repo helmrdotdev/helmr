@@ -12,21 +12,19 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
 
 const (
-	scopeDomain       = "helmr.idempotency-scope.v0"
-	keyDomain         = "helmr.idempotency-key.v0"
-	lockDomain        = "helmr.idempotency-lock.v0"
+	slotDomain        = "helmr.idempotency-slot.v0"
 	fingerprintDomain = "helmr.idempotency-fingerprint.v0"
 )
 
 type operation string
 
 const (
+	operationDeploymentCreate  operation = "deployment.create"
 	operationSecretCreate      operation = "secret.create"
 	operationSecretRotate      operation = "secret.rotate"
 	operationSecretRevoke      operation = "secret.revoke"
@@ -45,13 +43,7 @@ const (
 	operationWorkspaceDelete   operation = "workspace.delete"
 )
 
-type Manager struct {
-	hashes    keyedhash.Keyring
-	authority keyedhash.Authority
-}
-
 type Transaction struct {
-	manager Manager
 	store   claimStore
 	queries *db.Queries
 }
@@ -65,7 +57,7 @@ type request struct {
 	operation     operation
 	scope         []byte
 	key           string
-	fingerprint   func(hashKeyVersion int32) ([sha256.Size]byte, error)
+	fingerprint   func() ([sha256.Size]byte, error)
 }
 
 type sealedRequest struct {
@@ -93,6 +85,16 @@ type ActorStartFingerprint struct {
 	ManagedRetryPolicy    json.RawMessage
 	ManagedRunMetadata    json.RawMessage
 	ManagedRunTags        []string
+}
+
+type DeploymentCreateFingerprint struct {
+	SourceDigest         string `json:"sourceDigest"`
+	LockfileDigest       string `json:"lockfileDigest"`
+	LockfileName         string `json:"lockfileName"`
+	NodeVersion          string `json:"nodeVersion"`
+	ManagerName          string `json:"managerName"`
+	ManagerVersion       string `json:"managerVersion"`
+	BuildContractVersion string `json:"buildContractVersion"`
 }
 
 type TokenCreateFingerprint struct {
@@ -149,22 +151,49 @@ func (e ConflictError) Error() string {
 	return fmt.Sprintf("idempotency key conflicts with claim %s", e.ClaimID)
 }
 
-func New(hashes keyedhash.Keyring) Manager {
-	return Manager{hashes: hashes, authority: keyedhash.NewAuthority(hashes)}
+func NewDeploymentCreateRequest(
+	environmentID uuid.UUID,
+	projectID uuid.UUID,
+	key string,
+	fingerprint DeploymentCreateFingerprint,
+) (Request, error) {
+	if environmentID == uuid.Nil {
+		return nil, errors.New("idempotency environment is required")
+	}
+	if projectID == uuid.Nil {
+		return nil, errors.New("project ID is required")
+	}
+	encoded, err := json.Marshal(fingerprint)
+	if err != nil {
+		return nil, fmt.Errorf("encode Deployment creation fingerprint: %w", err)
+	}
+	canonical, err := jsoncanon.Transform(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize Deployment creation fingerprint: %w", err)
+	}
+	return sealedRequest{value: request{
+		environmentID: environmentID,
+		operation:     operationDeploymentCreate,
+		scope:         bytes.Clone(projectID[:]),
+		key:           key,
+		fingerprint: func() ([sha256.Size]byte, error) {
+			return operationFingerprint(operationDeploymentCreate, canonical), nil
+		},
+	}}, nil
 }
 
-func NewSecretCreateRequest(environmentID uuid.UUID, name string, key string, authenticator func(int32) ([sha256.Size]byte, error)) (Request, error) {
+func NewSecretCreateRequest(environmentID uuid.UUID, name string, key string) (Request, error) {
 	if name == "" {
 		return nil, errors.New("secret name is required")
 	}
-	return newSecretValueRequest(environmentID, operationSecretCreate, secretNameScope(name), key, []byte(name), authenticator)
+	return newSecretValueRequest(environmentID, operationSecretCreate, secretNameScope(name), key, []byte(name))
 }
 
-func NewSecretRotateRequest(environmentID uuid.UUID, secretID uuid.UUID, key string, authenticator func(int32) ([sha256.Size]byte, error)) (Request, error) {
+func NewSecretRotateRequest(environmentID uuid.UUID, secretID uuid.UUID, key string) (Request, error) {
 	if secretID == uuid.Nil {
 		return nil, errors.New("secret ID is required")
 	}
-	return newSecretValueRequest(environmentID, operationSecretRotate, secretID[:], key, nil, authenticator)
+	return newSecretValueRequest(environmentID, operationSecretRotate, secretID[:], key, nil)
 }
 
 func NewSecretRevokeRequest(environmentID uuid.UUID, secretID uuid.UUID, key string) (Request, error) {
@@ -179,8 +208,8 @@ func NewSecretRevokeRequest(environmentID uuid.UUID, secretID uuid.UUID, key str
 		operation:     operationSecretRevoke,
 		scope:         bytes.Clone(secretID[:]),
 		key:           key,
-		fingerprint: func(int32) ([sha256.Size]byte, error) {
-			return operationFingerprint(operationSecretRevoke, nil, 0, nil), nil
+		fingerprint: func() ([sha256.Size]byte, error) {
+			return operationFingerprint(operationSecretRevoke, nil), nil
 		},
 	}}, nil
 }
@@ -233,8 +262,8 @@ func NewRunMetadataRequest(
 		operation:     operationRunMetadata,
 		scope:         scope,
 		key:           operationID,
-		fingerprint: func(int32) ([sha256.Size]byte, error) {
-			return operationFingerprint(operationRunMetadata, canonical, 0, nil), nil
+		fingerprint: func() ([sha256.Size]byte, error) {
+			return operationFingerprint(operationRunMetadata, canonical), nil
 		},
 	}}, nil
 }
@@ -256,8 +285,8 @@ func NewActorInputSendRequest(environmentID uuid.UUID, actorID uuid.UUID, key st
 		operation:     operationActorInputSend,
 		scope:         bytes.Clone(actorID[:]),
 		key:           key,
-		fingerprint: func(int32) ([sha256.Size]byte, error) {
-			return operationFingerprint(operationActorInputSend, input, 0, nil), nil
+		fingerprint: func() ([sha256.Size]byte, error) {
+			return operationFingerprint(operationActorInputSend, input), nil
 		},
 	}}, nil
 }
@@ -298,8 +327,8 @@ func NewActorOutputAppendRequest(
 		operation:     operationActorOutputAppend,
 		scope:         bytes.Clone(actorID[:]),
 		key:           key,
-		fingerprint: func(int32) ([sha256.Size]byte, error) {
-			return operationFingerprint(operationActorOutputAppend, canonical, 0, nil), nil
+		fingerprint: func() ([sha256.Size]byte, error) {
+			return operationFingerprint(operationActorOutputAppend, canonical), nil
 		},
 	}}, nil
 }
@@ -316,8 +345,8 @@ func NewActorCloseRequest(environmentID uuid.UUID, actorID uuid.UUID, key string
 		operation:     operationActorClose,
 		scope:         bytes.Clone(actorID[:]),
 		key:           key,
-		fingerprint: func(int32) ([sha256.Size]byte, error) {
-			return operationFingerprint(operationActorClose, nil, 0, nil), nil
+		fingerprint: func() ([sha256.Size]byte, error) {
+			return operationFingerprint(operationActorClose, nil), nil
 		},
 	}}, nil
 }
@@ -377,8 +406,8 @@ func newTokenCreateRequest(
 		operation:     operationTokenCreate,
 		scope:         bytes.Clone(scope),
 		key:           key,
-		fingerprint: func(int32) ([sha256.Size]byte, error) {
-			return operationFingerprint(operationTokenCreate, canonical, 0, nil), nil
+		fingerprint: func() ([sha256.Size]byte, error) {
+			return operationFingerprint(operationTokenCreate, canonical), nil
 		},
 	}}, nil
 }
@@ -404,8 +433,8 @@ func NewTokenCompleteRequest(
 		operation:     operationTokenComplete,
 		scope:         bytes.Clone(tokenID[:]),
 		key:           key,
-		fingerprint: func(int32) ([sha256.Size]byte, error) {
-			return operationFingerprint(operationTokenComplete, canonical, 0, nil), nil
+		fingerprint: func() ([sha256.Size]byte, error) {
+			return operationFingerprint(operationTokenComplete, canonical), nil
 		},
 	}}, nil
 }
@@ -422,8 +451,8 @@ func NewTokenCancelRequest(environmentID uuid.UUID, tokenID uuid.UUID, key strin
 		operation:     operationTokenCancel,
 		scope:         bytes.Clone(tokenID[:]),
 		key:           key,
-		fingerprint: func(int32) ([sha256.Size]byte, error) {
-			return operationFingerprint(operationTokenCancel, nil, 0, nil), nil
+		fingerprint: func() ([sha256.Size]byte, error) {
+			return operationFingerprint(operationTokenCancel, nil), nil
 		},
 	}}, nil
 }
@@ -496,8 +525,8 @@ func NewActorStartRequest(
 		operation:     operationActorStart,
 		scope:         []byte(actorDeclaredID),
 		key:           key,
-		fingerprint: func(int32) ([sha256.Size]byte, error) {
-			return operationFingerprint(operationActorStart, canonicalFields, 0, nil), nil
+		fingerprint: func() ([sha256.Size]byte, error) {
+			return operationFingerprint(operationActorStart, canonicalFields), nil
 		},
 	}}, nil
 }
@@ -539,8 +568,8 @@ func NewWorkspaceCreateRequest(
 		operation:     operationWorkspaceCreate,
 		scope:         []byte(workspaceDeclaredID),
 		key:           key,
-		fingerprint: func(int32) ([sha256.Size]byte, error) {
-			return operationFingerprint(operationWorkspaceCreate, canonicalFields, 0, nil), nil
+		fingerprint: func() ([sha256.Size]byte, error) {
+			return operationFingerprint(operationWorkspaceCreate, canonicalFields), nil
 		},
 	}}, nil
 }
@@ -557,8 +586,8 @@ func NewWorkspaceDeleteRequest(environmentID uuid.UUID, workspaceID uuid.UUID, k
 		operation:     operationWorkspaceDelete,
 		scope:         bytes.Clone(workspaceID[:]),
 		key:           key,
-		fingerprint: func(int32) ([sha256.Size]byte, error) {
-			return operationFingerprint(operationWorkspaceDelete, nil, 0, nil), nil
+		fingerprint: func() ([sha256.Size]byte, error) {
+			return operationFingerprint(operationWorkspaceDelete, nil), nil
 		},
 	}}, nil
 }
@@ -604,8 +633,8 @@ func NewWorkspaceExecRequest(
 		operation:     operationWorkspaceExec,
 		scope:         bytes.Clone(workspaceID[:]),
 		key:           key,
-		fingerprint: func(int32) ([sha256.Size]byte, error) {
-			return operationFingerprint(operationWorkspaceExec, canonical, 0, nil), nil
+		fingerprint: func() ([sha256.Size]byte, error) {
+			return operationFingerprint(operationWorkspaceExec, canonical), nil
 		},
 	}}, nil
 }
@@ -677,8 +706,8 @@ func NewTaskStartRequest(
 		operation:     operationTaskStart,
 		scope:         []byte(taskDeclaredID),
 		key:           key,
-		fingerprint: func(int32) ([sha256.Size]byte, error) {
-			return operationFingerprint(operationTaskStart, canonical, 0, nil), nil
+		fingerprint: func() ([sha256.Size]byte, error) {
+			return operationFingerprint(operationTaskStart, canonical), nil
 		},
 	}}, nil
 }
@@ -721,7 +750,7 @@ func NewTaskChildInvokeRequest(
 		return nil, err
 	}
 	base := taskRequest.idempotencyRequest()
-	fingerprint, err := base.fingerprint(0)
+	fingerprint, err := base.fingerprint()
 	if err != nil {
 		return nil, err
 	}
@@ -744,8 +773,8 @@ func NewTaskChildInvokeRequest(
 		operation:     operationTaskChildInvoke,
 		scope:         scope,
 		key:           key,
-		fingerprint: func(int32) ([sha256.Size]byte, error) {
-			return operationFingerprint(operationTaskChildInvoke, fields, 0, nil), nil
+		fingerprint: func() ([sha256.Size]byte, error) {
+			return operationFingerprint(operationTaskChildInvoke, fields), nil
 		},
 	}}, nil
 }
@@ -757,41 +786,34 @@ func canonicalJSONOr(value json.RawMessage, fallback string) ([]byte, error) {
 	return jsoncanon.Transform(value)
 }
 
-func newSecretValueRequest(environmentID uuid.UUID, operation operation, scope []byte, key string, fields []byte, authenticator func(int32) ([sha256.Size]byte, error)) (Request, error) {
+func newSecretValueRequest(environmentID uuid.UUID, operation operation, scope []byte, key string, fields []byte) (Request, error) {
 	if environmentID == uuid.Nil {
 		return nil, errors.New("idempotency environment is required")
-	}
-	if authenticator == nil {
-		return nil, errors.New("secret value authenticator is required")
 	}
 	return sealedRequest{value: request{
 		environmentID: environmentID,
 		operation:     operation,
 		scope:         bytes.Clone(scope),
 		key:           key,
-		fingerprint: func(version int32) ([sha256.Size]byte, error) {
-			valueAuthenticator, err := authenticator(version)
-			if err != nil {
-				return [sha256.Size]byte{}, err
-			}
-			return operationFingerprint(operation, fields, version, valueAuthenticator[:]), nil
+		fingerprint: func() ([sha256.Size]byte, error) {
+			return operationFingerprint(operation, fields), nil
 		},
 	}}, nil
 }
 
-func (m Manager) Transaction(tx pgx.Tx) (*Transaction, error) {
+func TransactionFor(tx pgx.Tx) (*Transaction, error) {
 	if tx == nil {
 		return nil, errors.New("idempotency transaction is required")
 	}
 	queries := db.New(tx)
-	return &Transaction{manager: m, store: queries, queries: queries}, nil
+	return &Transaction{store: queries, queries: queries}, nil
 }
 
-func (m Manager) TransactionForQueries(queries db.Querier) (*Transaction, error) {
+func TransactionForQueries(queries db.Querier) (*Transaction, error) {
 	if queries == nil {
 		return nil, errors.New("idempotency query transaction is required")
 	}
-	return &Transaction{manager: m, store: queries}, nil
+	return &Transaction{store: queries}, nil
 }
 
 func (t *Transaction) Queries() *db.Queries {
@@ -816,69 +838,52 @@ func (t *Transaction) Acquire(ctx context.Context, input Request) (Result, error
 		return Result{}, errors.New("idempotency fingerprint function is required")
 	}
 
-	if err := t.store.LockIdempotencySlot(ctx, lockKey(request)); err != nil {
-		return Result{}, fmt.Errorf("lock idempotency slot: %w", err)
-	}
-	selection, err := t.manager.authority.Lock(ctx, t.store)
-	if err != nil {
-		return Result{}, err
-	}
-	candidates, err := t.candidates(request, selection.Versions)
-	if err != nil {
-		return Result{}, err
-	}
-	claims, err := t.store.FindLiveIdempotencyClaims(ctx, db.FindLiveIdempotencyClaimsParams{
-		HashKeyVersions: candidates.versions,
-		ScopeHashes:     candidates.scopeHashes,
-		KeyHashes:       candidates.keyHashes,
-		EnvironmentID:   pgvalue.UUID(request.environmentID),
-		Operation:       string(request.operation),
-	})
-	if err != nil {
-		return Result{}, fmt.Errorf("find idempotency claim: %w", err)
-	}
-	if len(claims) > 1 {
-		return Result{}, errors.New("multiple live idempotency claims matched one raw key")
-	}
-	if len(claims) == 0 {
-		generation, err := t.store.GetLatestIdempotencyClaimGeneration(ctx, db.GetLatestIdempotencyClaimGenerationParams{
-			HashKeyVersions: candidates.versions,
-			ScopeHashes:     candidates.scopeHashes,
-			KeyHashes:       candidates.keyHashes,
-			EnvironmentID:   pgvalue.UUID(request.environmentID),
-			Operation:       string(request.operation),
-		})
-		if err != nil {
-			return Result{}, fmt.Errorf("read idempotency generation: %w", err)
-		}
-		return t.create(ctx, request, generation+1, selection.Current)
-	}
-
-	matched := claims[0]
-	claim := claimFromRow(matched)
-	if matched.Expired {
-		if _, err := t.store.RetireExpiredIdempotencyClaim(ctx, db.RetireExpiredIdempotencyClaimParams{
-			EnvironmentID: pgvalue.UUID(request.environmentID),
-			ID:            claim.ID,
-		}); err != nil {
-			return Result{}, fmt.Errorf("retire idempotency claim: %w", err)
-		}
-		return t.create(ctx, request, claim.Generation+1, selection.Current)
-	}
-	fingerprint, err := request.fingerprint(claim.HashKeyVersion)
+	slotHash := idempotencySlotHash(request)
+	fingerprint, err := request.fingerprint()
 	if err != nil {
 		return Result{}, fmt.Errorf("fingerprint idempotency request: %w", err)
 	}
-	if !bytes.Equal(claim.RequestFingerprint, fingerprint[:]) {
-		claimID, _ := pgvalue.UUIDValue(claim.ID)
-		return Result{}, ConflictError{ClaimID: claimID}
+
+	for {
+		locked, err := t.store.LockLiveIdempotencyClaim(ctx, db.LockLiveIdempotencyClaimParams{
+			EnvironmentID: pgvalue.UUID(request.environmentID),
+			Operation:     string(request.operation),
+			SlotHash:      slotHash[:],
+		})
+		switch {
+		case err == nil:
+			claim := claimFromRow(locked)
+			if locked.Expired {
+				if _, err := t.store.RetireExpiredIdempotencyClaim(ctx, db.RetireExpiredIdempotencyClaimParams{
+					EnvironmentID: pgvalue.UUID(request.environmentID),
+					ID:            claim.ID,
+				}); err != nil {
+					return Result{}, fmt.Errorf("retire idempotency claim: %w", err)
+				}
+				continue
+			}
+			if !bytes.Equal(claim.RequestFingerprint, fingerprint[:]) {
+				claimID, _ := pgvalue.UUIDValue(claim.ID)
+				return Result{}, ConflictError{ClaimID: claimID}
+			}
+			return Result{Claim: claim}, nil
+		case !errors.Is(err, pgx.ErrNoRows):
+			return Result{}, fmt.Errorf("lock live idempotency claim: %w", err)
+		}
+
+		created, err := t.create(ctx, request, slotHash, fingerprint)
+		if err == nil {
+			return created, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return Result{}, err
+		}
 	}
-	return Result{Claim: claim}, nil
 }
 
 func supportedOperation(value operation) bool {
 	switch value {
-	case operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationRunMetadata,
+	case operationDeploymentCreate, operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationRunMetadata,
 		operationActorStart, operationActorInputSend, operationActorOutputAppend, operationActorClose,
 		operationTaskStart, operationTaskChildInvoke, operationTokenCreate, operationTokenComplete, operationTokenCancel,
 		operationWorkspaceCreate, operationWorkspaceExec, operationWorkspaceDelete:
@@ -920,23 +925,17 @@ func (t *Transaction) Fail(ctx context.Context, claim db.IdempotencyClaim, recei
 	return failed, nil
 }
 
-func (t *Transaction) create(ctx context.Context, request request, generation int64, version int32) (Result, error) {
-	fingerprint, err := request.fingerprint(version)
-	if err != nil {
-		return Result{}, fmt.Errorf("fingerprint idempotency request: %w", err)
-	}
-	scopeHash, keyHash, err := t.hashes(request, version)
-	if err != nil {
-		return Result{}, err
-	}
+func (t *Transaction) create(
+	ctx context.Context,
+	request request,
+	slotHash [sha256.Size]byte,
+	fingerprint [sha256.Size]byte,
+) (Result, error) {
 	claim, err := t.store.CreateIdempotencyClaim(ctx, db.CreateIdempotencyClaimParams{
 		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		EnvironmentID:      pgvalue.UUID(request.environmentID),
 		Operation:          string(request.operation),
-		ScopeHash:          scopeHash,
-		KeyHash:            keyHash,
-		HashKeyVersion:     version,
-		Generation:         generation,
+		SlotHash:           slotHash[:],
 		RequestFingerprint: fingerprint[:],
 	})
 	if err != nil {
@@ -945,57 +944,9 @@ func (t *Transaction) create(ctx context.Context, request request, generation in
 	return Result{Claim: claim, New: true}, nil
 }
 
-type hashCandidates struct {
-	versions    []int32
-	scopeHashes [][]byte
-	keyHashes   [][]byte
-}
-
-func (t *Transaction) candidates(request request, versions []int32) (hashCandidates, error) {
-	result := hashCandidates{
-		versions:    make([]int32, 0, len(versions)),
-		scopeHashes: make([][]byte, 0, len(versions)),
-		keyHashes:   make([][]byte, 0, len(versions)),
-	}
-	for _, version := range versions {
-		scopeHash, keyHash, err := t.hashes(request, version)
-		if err != nil {
-			return hashCandidates{}, err
-		}
-		result.versions = append(result.versions, version)
-		result.scopeHashes = append(result.scopeHashes, scopeHash)
-		result.keyHashes = append(result.keyHashes, keyHash)
-	}
-	return result, nil
-}
-
-func (t *Transaction) hashes(request request, version int32) ([]byte, []byte, error) {
-	scope, err := t.manager.hashes.Sum(version, lookupFrame(scopeDomain, request, request.scope))
-	if err != nil {
-		return nil, nil, fmt.Errorf("hash idempotency scope: %w", err)
-	}
-	key, err := t.manager.hashes.Sum(version, lookupFrame(keyDomain, request, []byte(request.key)))
-	if err != nil {
-		return nil, nil, fmt.Errorf("hash idempotency key: %w", err)
-	}
-	return bytes.Clone(scope.Value[:]), bytes.Clone(key.Value[:]), nil
-}
-
-func lookupFrame(domain string, request request, value []byte) []byte {
-	frame := make([]byte, 0, len(domain)+1+16+8+len(request.operation)+8+len(value))
-	frame = append(frame, domain...)
-	frame = append(frame, 0)
-	frame = append(frame, request.environmentID[:]...)
-	frame = binary.BigEndian.AppendUint64(frame, uint64(len(request.operation)))
-	frame = append(frame, request.operation...)
-	frame = binary.BigEndian.AppendUint64(frame, uint64(len(value)))
-	frame = append(frame, value...)
-	return frame
-}
-
-func lockKey(request request) int64 {
-	frame := make([]byte, 0, len(lockDomain)+1+16+8+len(request.operation)+8+len(request.scope)+8+len(request.key))
-	frame = append(frame, lockDomain...)
+func idempotencySlotHash(request request) [sha256.Size]byte {
+	frame := make([]byte, 0, len(slotDomain)+1+16+8+len(request.operation)+8+len(request.scope)+8+len(request.key))
+	frame = append(frame, slotDomain...)
 	frame = append(frame, 0)
 	frame = append(frame, request.environmentID[:]...)
 	frame = binary.BigEndian.AppendUint64(frame, uint64(len(request.operation)))
@@ -1004,8 +955,7 @@ func lockKey(request request) int64 {
 	frame = append(frame, request.scope...)
 	frame = binary.BigEndian.AppendUint64(frame, uint64(len(request.key)))
 	frame = append(frame, request.key...)
-	sum := sha256.Sum256(frame)
-	return int64(binary.BigEndian.Uint64(sum[:8]))
+	return sha256.Sum256(frame)
 }
 
 func secretNameScope(name string) []byte {
@@ -1014,29 +964,23 @@ func secretNameScope(name string) []byte {
 	return append(scope, name...)
 }
 
-func operationFingerprint(operation operation, fields []byte, hashKeyVersion int32, authenticator []byte) [sha256.Size]byte {
-	frame := make([]byte, 0, len(fingerprintDomain)+1+8+len(operation)+8+len(fields)+4+8+len(authenticator))
+func operationFingerprint(operation operation, fields []byte) [sha256.Size]byte {
+	frame := make([]byte, 0, len(fingerprintDomain)+1+8+len(operation)+8+len(fields))
 	frame = append(frame, fingerprintDomain...)
 	frame = append(frame, 0)
 	frame = binary.BigEndian.AppendUint64(frame, uint64(len(operation)))
 	frame = append(frame, operation...)
 	frame = binary.BigEndian.AppendUint64(frame, uint64(len(fields)))
 	frame = append(frame, fields...)
-	frame = binary.BigEndian.AppendUint32(frame, uint32(hashKeyVersion))
-	frame = binary.BigEndian.AppendUint64(frame, uint64(len(authenticator)))
-	frame = append(frame, authenticator...)
 	return sha256.Sum256(frame)
 }
 
-func claimFromRow(row db.FindLiveIdempotencyClaimsRow) db.IdempotencyClaim {
+func claimFromRow(row db.LockLiveIdempotencyClaimRow) db.IdempotencyClaim {
 	return db.IdempotencyClaim{
 		ID:                 row.ID,
 		EnvironmentID:      row.EnvironmentID,
 		Operation:          row.Operation,
-		ScopeHash:          row.ScopeHash,
-		KeyHash:            row.KeyHash,
-		HashKeyVersion:     row.HashKeyVersion,
-		Generation:         row.Generation,
+		SlotHash:           row.SlotHash,
 		RequestFingerprint: row.RequestFingerprint,
 		State:              row.State,
 		Receipt:            row.Receipt,
@@ -1059,10 +1003,7 @@ func validateReceipt(receipt []byte) error {
 }
 
 type claimStore interface {
-	LockIdempotencySlot(context.Context, int64) error
-	LockActiveLookupHMACVersions(context.Context) ([]db.LookupHmacVersion, error)
-	FindLiveIdempotencyClaims(context.Context, db.FindLiveIdempotencyClaimsParams) ([]db.FindLiveIdempotencyClaimsRow, error)
-	GetLatestIdempotencyClaimGeneration(context.Context, db.GetLatestIdempotencyClaimGenerationParams) (int64, error)
+	LockLiveIdempotencyClaim(context.Context, db.LockLiveIdempotencyClaimParams) (db.LockLiveIdempotencyClaimRow, error)
 	CreateIdempotencyClaim(context.Context, db.CreateIdempotencyClaimParams) (db.IdempotencyClaim, error)
 	RetireExpiredIdempotencyClaim(context.Context, db.RetireExpiredIdempotencyClaimParams) (db.IdempotencyClaim, error)
 	CompleteIdempotencyClaim(context.Context, db.CompleteIdempotencyClaimParams) (db.IdempotencyClaim, error)

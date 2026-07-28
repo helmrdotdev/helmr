@@ -156,8 +156,8 @@ func TestSendActorInputEnforcesAPIKeyPermissionAndEnvironmentScope(t *testing.T)
 	body := `{"actor_key":"thread:1","input":{"type":"continue"},"idempotency_key":"message:1"}`
 
 	t.Run("missing permission", func(t *testing.T) {
-		store, manager := newActorInputClaimStore(t)
-		server := &Server{db: store, claims: manager}
+		store := newActorInputClaimStore()
+		server := &Server{db: store}
 		request := actorInputHandlerRequest(t, body, auth.Actor{
 			OrgID:         orgID,
 			Kind:          auth.ActorKindAPIKey,
@@ -173,14 +173,14 @@ func TestSendActorInputEnforcesAPIKeyPermissionAndEnvironmentScope(t *testing.T)
 	})
 
 	t.Run("different environment", func(t *testing.T) {
-		store, manager := newActorInputClaimStore(t)
+		store := newActorInputClaimStore()
 		store.addressed = db.Actor{
 			ID:              pgvalue.UUID(actorID),
 			EnvironmentID:   pgvalue.UUID(otherEnvironmentID),
 			ActorDeclaredID: "operator",
 			Key:             pgvalue.Text("thread:1"),
 		}
-		server := &Server{db: store, claims: manager}
+		server := &Server{db: store}
 		request := actorInputHandlerRequest(t, body, auth.Actor{
 			OrgID:         orgID,
 			Kind:          auth.ActorKindAPIKey,
@@ -197,7 +197,7 @@ func TestSendActorInputEnforcesAPIKeyPermissionAndEnvironmentScope(t *testing.T)
 	})
 
 	t.Run("allowed replay", func(t *testing.T) {
-		store, manager := newActorInputClaimStore(t)
+		store := newActorInputClaimStore()
 		store.addressed = db.Actor{
 			ID:              pgvalue.UUID(actorID),
 			EnvironmentID:   pgvalue.UUID(environmentID),
@@ -207,7 +207,6 @@ func TestSendActorInputEnforcesAPIKeyPermissionAndEnvironmentScope(t *testing.T)
 		completeActorInputClaim(
 			t,
 			store,
-			manager,
 			environmentID,
 			actorID,
 			"message:1",
@@ -216,7 +215,7 @@ func TestSendActorInputEnforcesAPIKeyPermissionAndEnvironmentScope(t *testing.T)
 			9,
 		)
 		store.calls = nil
-		server := &Server{db: store, claims: manager}
+		server := &Server{db: store}
 		request := actorInputHandlerRequest(t, body, auth.Actor{
 			OrgID:         orgID,
 			Kind:          auth.ActorKindAPIKey,
@@ -238,7 +237,7 @@ func TestSendActorInputDeniesViewerSessionBeforeActorLookup(t *testing.T) {
 	orgID := uuid.New()
 	projectID := uuid.New()
 	environmentID := uuid.New()
-	store, manager := newActorInputClaimStore(t)
+	store := newActorInputClaimStore()
 	store.project = db.Project{
 		ID:    pgvalue.UUID(projectID),
 		OrgID: pgvalue.UUID(orgID),
@@ -248,7 +247,7 @@ func TestSendActorInputDeniesViewerSessionBeforeActorLookup(t *testing.T) {
 		OrgID:     pgvalue.UUID(orgID),
 		ProjectID: pgvalue.UUID(projectID),
 	}
-	server := &Server{db: store, claims: manager}
+	server := &Server{db: store}
 	request := actorInputHandlerRequest(
 		t,
 		`{"actor_key":"thread:1","input":null}`,

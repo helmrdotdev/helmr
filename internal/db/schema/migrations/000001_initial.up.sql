@@ -261,20 +261,6 @@ CREATE TABLE device_codes (
         ON DELETE SET NULL (decided_by_user_id)
 );
 
-CREATE TABLE lookup_hmac_versions (
-    version INTEGER PRIMARY KEY CHECK (version > 0),
-    key_fingerprint BYTEA NOT NULL UNIQUE CHECK (octet_length(key_fingerprint) = 32),
-    is_current BOOLEAN NOT NULL,
-    activated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    retired_at TIMESTAMPTZ,
-    CHECK (NOT is_current OR retired_at IS NULL),
-    CHECK (retired_at IS NULL OR retired_at >= activated_at)
-);
-
-CREATE UNIQUE INDEX lookup_hmac_versions_current_uidx
-    ON lookup_hmac_versions ((1))
-    WHERE is_current;
-
 CREATE TABLE secrets (
     id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
@@ -303,23 +289,13 @@ CREATE TABLE secret_versions (
     id UUID PRIMARY KEY,
     secret_id UUID NOT NULL,
     version BIGINT NOT NULL CHECK (version > 0),
-    key_id TEXT NOT NULL CHECK (btrim(key_id) <> '' AND octet_length(key_id) <= 256),
     nonce BYTEA NOT NULL CHECK (octet_length(nonce) = 12),
     ciphertext BYTEA NOT NULL CHECK (octet_length(ciphertext) >= 16),
-    value_authenticator BYTEA NOT NULL CHECK (octet_length(value_authenticator) = 32),
-    authenticator_key_version INTEGER NOT NULL CHECK (authenticator_key_version > 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (secret_id, id),
     UNIQUE (secret_id, version),
-    UNIQUE (key_id, nonce),
-    FOREIGN KEY (secret_id) REFERENCES secrets(id) ON DELETE RESTRICT,
-    FOREIGN KEY (authenticator_key_version)
-        REFERENCES lookup_hmac_versions(version)
-        ON DELETE RESTRICT
+    FOREIGN KEY (secret_id) REFERENCES secrets(id) ON DELETE RESTRICT
 );
-
-CREATE INDEX secret_versions_authenticator_key_version_idx
-    ON secret_versions (authenticator_key_version);
 
 ALTER TABLE secrets
     ADD CONSTRAINT secrets_current_version_fk
@@ -684,46 +660,44 @@ CREATE TABLE deployments (
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     build_region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
-    build_architecture TEXT NOT NULL CHECK (build_architecture = 'x86_64'),
-    build_runtime_digest BYTEA NOT NULL CHECK (octet_length(build_runtime_digest) = 32),
-    build_standard_toolchain_digest BYTEA NOT NULL CHECK (octet_length(build_standard_toolchain_digest) = 32),
-    build_manager_name TEXT NOT NULL CHECK (build_manager_name IN ('npm', 'bun')),
-    build_manager_version TEXT NOT NULL CHECK (
-        octet_length(build_manager_version) BETWEEN 1 AND 64
-        AND build_manager_version ~
-            '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
+    build_node_version TEXT NOT NULL CHECK (
+        build_node_version = btrim(build_node_version)
+        AND octet_length(build_node_version) BETWEEN 1 AND 64
     ),
-    build_manager_digest BYTEA NOT NULL CHECK (octet_length(build_manager_digest) = 32),
+    build_runtime_digest BYTEA CHECK (
+        build_runtime_digest IS NULL OR octet_length(build_runtime_digest) = 32
+    ),
+    build_standard_toolchain_digest BYTEA CHECK (
+        build_standard_toolchain_digest IS NULL
+        OR octet_length(build_standard_toolchain_digest) = 32
+    ),
+    build_manager_name TEXT NOT NULL CHECK (build_manager_name IN ('npm', 'pnpm', 'bun')),
+    build_manager_version TEXT NOT NULL CHECK (
+        build_manager_version = btrim(build_manager_version)
+        AND octet_length(build_manager_version) BETWEEN 1 AND 64
+    ),
+    build_manager_digest BYTEA CHECK (
+        build_manager_digest IS NULL OR octet_length(build_manager_digest) = 32
+    ),
     build_contract_version TEXT NOT NULL CHECK (build_contract_version = 'helmr.program-build.v0'),
     version TEXT NOT NULL CHECK (btrim(version) <> ''),
     content_hash TEXT NOT NULL CHECK (content_hash ~ '^sha256:[0-9a-f]{64}$'),
     api_version TEXT NOT NULL DEFAULT '2026-06-06' CHECK (
         btrim(api_version) <> '' AND octet_length(api_version) <= 255
     ),
-    sdk_version TEXT NOT NULL DEFAULT '' CHECK (
-        sdk_version = btrim(sdk_version) AND octet_length(sdk_version) <= 255
-    ),
-    cli_version TEXT NOT NULL DEFAULT '' CHECK (
-        cli_version = btrim(cli_version) AND octet_length(cli_version) <= 255
-    ),
     worker_protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (worker_protocol_version = 'helmr.worker.v0'),
     deployment_source_artifact_id UUID NOT NULL,
     program_artifact_id UUID,
     program_artifact_kind artifact_kind NOT NULL DEFAULT 'deployment_program'
         CHECK (program_artifact_kind = 'deployment_program'),
-    program_runtime_digest BYTEA,
-    program_architecture TEXT,
-    program_receipt JSONB,
+    program_index_digest BYTEA CHECK (
+        program_index_digest IS NULL OR octet_length(program_index_digest) = 32
+    ),
     queue_config JSONB,
     status TEXT NOT NULL DEFAULT 'queued'
         CHECK (status IN ('queued', 'building', 'deployed', 'failed')),
     failure JSONB NOT NULL DEFAULT '{}'::jsonb,
     current_build_lease_id UUID,
-    build_requested_cpu_millis BIGINT NOT NULL DEFAULT 3000 CHECK (build_requested_cpu_millis = 3000),
-    build_requested_memory_bytes BIGINT NOT NULL DEFAULT 4294967296 CHECK (build_requested_memory_bytes = 4294967296),
-    build_requested_workload_disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (build_requested_workload_disk_bytes = 0),
-    build_requested_scratch_bytes BIGINT NOT NULL DEFAULT 34359738368 CHECK (build_requested_scratch_bytes = 34359738368),
-    build_requested_executors INTEGER NOT NULL DEFAULT 1 CHECK (build_requested_executors = 1),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     building_at TIMESTAMPTZ,
@@ -750,18 +724,46 @@ CREATE TABLE deployments (
         ON DELETE RESTRICT,
     CONSTRAINT deployments_program_tuple_check CHECK (
         (program_artifact_id IS NULL
-         AND program_runtime_digest IS NULL
-         AND program_architecture IS NULL
-         AND program_receipt IS NULL)
+         AND program_index_digest IS NULL)
         OR
         (program_artifact_id IS NOT NULL
-         AND program_runtime_digest IS NOT NULL
-         AND octet_length(program_runtime_digest) = 32
-         AND program_architecture IS NOT NULL
-         AND program_architecture = 'x86_64'
-         AND program_architecture = build_architecture
-         AND program_runtime_digest = build_runtime_digest
-         AND jsonb_typeof(program_receipt) = 'object')
+         AND program_index_digest IS NOT NULL)
+    ),
+    CONSTRAINT deployments_platform_pins_check CHECK (
+        (
+            build_runtime_digest IS NULL
+            AND build_standard_toolchain_digest IS NULL
+            AND build_manager_digest IS NULL
+        )
+        OR
+        (
+            build_runtime_digest IS NOT NULL
+            AND build_standard_toolchain_digest IS NOT NULL
+            AND build_manager_digest IS NOT NULL
+        )
+    ),
+    CONSTRAINT deployments_platform_pin_state_check CHECK (
+        (
+            status = 'queued'
+            AND current_build_lease_id IS NULL
+        )
+        OR
+        (
+            status IN ('building', 'deployed')
+            AND build_runtime_digest IS NOT NULL
+            AND build_standard_toolchain_digest IS NOT NULL
+            AND build_manager_digest IS NOT NULL
+        )
+        OR
+        status = 'failed'
+    ),
+    CONSTRAINT deployments_build_lease_pin_check CHECK (
+        current_build_lease_id IS NULL
+        OR (
+            build_runtime_digest IS NOT NULL
+            AND build_standard_toolchain_digest IS NOT NULL
+            AND build_manager_digest IS NOT NULL
+        )
     ),
     CONSTRAINT deployments_queue_config_check CHECK (
         (status = 'deployed' AND jsonb_typeof(queue_config) = 'object')
@@ -785,7 +787,6 @@ CREATE TABLE deployment_definitions (
     manifest_version INTEGER NOT NULL CHECK (manifest_version = 0),
     manifest JSONB NOT NULL CHECK (jsonb_typeof(manifest) = 'object'),
     manifest_digest BYTEA NOT NULL CHECK (octet_length(manifest_digest) = 32),
-    workspace_architecture TEXT,
     artifact_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT deployment_definitions_environment_id_id_key
@@ -807,14 +808,11 @@ CREATE TABLE deployment_definitions (
     CONSTRAINT deployment_definitions_projection_check CHECK (
         (
             kind = 'workspace'
-            AND workspace_architecture IS NOT NULL
-            AND workspace_architecture = 'x86_64'
             AND artifact_id IS NOT NULL
         )
         OR
         (
             kind IN ('task', 'actor')
-            AND workspace_architecture IS NULL
             AND artifact_id IS NULL
         )
     )
@@ -966,14 +964,14 @@ CREATE TABLE deployment_promotions (
         ON DELETE CASCADE,
     FOREIGN KEY (environment_id, previous_deployment_id)
         REFERENCES deployments(environment_id, id)
-        ON DELETE SET NULL (previous_deployment_id)
+        ON DELETE RESTRICT
 );
 
 ALTER TABLE environments
     ADD CONSTRAINT environments_current_deployment_fk
-    FOREIGN KEY (org_id, project_id, id, current_deployment_id)
-    REFERENCES deployments(org_id, project_id, environment_id, id)
-    ON DELETE SET NULL (current_deployment_id);
+    FOREIGN KEY (id, current_deployment_id)
+    REFERENCES deployments(environment_id, id)
+    ON DELETE RESTRICT;
 
 CREATE TABLE runtime_substrates (
     id UUID PRIMARY KEY,
@@ -1012,10 +1010,7 @@ CREATE TABLE idempotency_claims (
     id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
     operation TEXT NOT NULL CHECK (btrim(operation) <> '' AND octet_length(operation) <= 128),
-    scope_hash BYTEA NOT NULL CHECK (octet_length(scope_hash) = 32),
-    key_hash BYTEA NOT NULL CHECK (octet_length(key_hash) = 32),
-    hash_key_version INTEGER NOT NULL CHECK (hash_key_version > 0),
-    generation BIGINT NOT NULL CHECK (generation > 0),
+    slot_hash BYTEA NOT NULL CHECK (octet_length(slot_hash) = 32),
     request_fingerprint BYTEA NOT NULL CHECK (octet_length(request_fingerprint) = 32),
     state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'completed', 'failed')),
     receipt JSONB,
@@ -1024,11 +1019,7 @@ CREATE TABLE idempotency_claims (
     retired_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
     UNIQUE (environment_id, id),
-    UNIQUE (environment_id, operation, scope_hash, key_hash, generation),
     FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE CASCADE,
-    FOREIGN KEY (hash_key_version)
-        REFERENCES lookup_hmac_versions(version)
-        ON DELETE RESTRICT,
     CHECK (
         (state = 'pending' AND receipt IS NULL AND completed_at IS NULL)
         OR
@@ -1044,11 +1035,8 @@ CREATE TABLE idempotency_claims (
 );
 
 CREATE UNIQUE INDEX idempotency_claims_live_slot_uidx
-    ON idempotency_claims (environment_id, operation, scope_hash, key_hash)
+    ON idempotency_claims (environment_id, operation, slot_hash)
     WHERE retired_at IS NULL;
-
-CREATE INDEX idempotency_claims_hash_key_version_idx
-    ON idempotency_claims (hash_key_version);
 
 CREATE INDEX idempotency_claims_live_expiry_idx
     ON idempotency_claims (expires_at, id)

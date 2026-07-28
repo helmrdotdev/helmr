@@ -25,7 +25,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
-	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	tokencredential "github.com/helmrdotdev/helmr/internal/token"
@@ -132,7 +131,6 @@ func controltestTokenCredentialKeys() tokencredential.CredentialKeys {
 func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := newSmokeDatabase(t, ctx)
-	activateSmokeLookupHMAC(t, ctx, databaseURL)
 	redisServer := miniredis.RunT(t)
 	addr := freeSmokeAddr(t)
 
@@ -175,8 +173,7 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("HELMR_WORKER_GROUPS", `[{"id":"us-east-1-worker-group-1","name":"run","region":"us-east-1","account_id":"123456789012","autoscaling_group":"test-run","instance_profile_arn":"arn:aws:iam::123456789012:instance-profile/test-run","launch_ami_id":"ami-test","ami_ids":["ami-test"],"allows_run":true,"allows_build":false,"instance_capacity":{"milli_cpu":1000,"memory_bytes":1024,"workload_disk_bytes":1024,"scratch_bytes":1024,"vm_slots":1}}]`)
 	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
-	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("HELMR_LOOKUP_HMAC_KEYS", `{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`)
+	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv(
 		"HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT",
 		"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26",
@@ -304,30 +301,6 @@ func newSmokeDatabase(t *testing.T, ctx context.Context) string {
 		t.Fatal(err)
 	}
 	return databaseURL
-}
-
-func activateSmokeLookupHMAC(t *testing.T, ctx context.Context, databaseURL string) {
-	t.Helper()
-	hashes, err := keyedhash.FromBase64JSON(`{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pool, err := pgxpool.New(ctx, databaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(ctx)
-	if _, err := keyedhash.NewAuthority(hashes).Activate(ctx, tx, 1); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func smokeBuildPolicy(t *testing.T) string {

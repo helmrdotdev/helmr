@@ -39,15 +39,12 @@ func TestAttemptSecretDeliveryLocksCompleteWorkspacePlacementSet(t *testing.T) {
 	for version, versionID := range []uuid.UUID{oldVersionID, currentVersionID} {
 		runtest.MustExec(t, ctx, tx, `
 			INSERT INTO secret_versions (
-				id, secret_id, version, key_id, nonce, ciphertext,
-				value_authenticator, authenticator_key_version
+				id, secret_id, version, nonce, ciphertext
 			)
 			VALUES (
-				$1, $2, $3::bigint, 'test-key',
+				$1, $2, $3::bigint,
 				decode(lpad(($3::bigint)::text, 24, '0'), 'hex'),
-				decode(repeat('02', 16), 'hex'),
-				decode(repeat('03', 32), 'hex'),
-				1
+				decode(repeat('02', 16), 'hex')
 			)
 		`, versionID, secretID, version+1)
 	}

@@ -35,7 +35,7 @@ func TestActorOutputAppendPostgresSequencesAndReplays(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	claims, err := fixture.server.claims.Transaction(tx)
+	claims, err := idempotency.TransactionFor(tx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestActorOutputAppendPostgresSequencesAndReplays(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer replay.Rollback(context.Background())
-	replayClaims, err := fixture.server.claims.Transaction(replay)
+	replayClaims, err := idempotency.TransactionFor(replay)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestActorOutputAppendPostgresSequencesAndReplays(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conflictTX.Rollback(context.Background())
-	conflictClaims, err := fixture.server.claims.Transaction(conflictTX)
+	conflictClaims, err := idempotency.TransactionFor(conflictTX)
 	if err != nil {
 		t.Fatal(err)
 	}

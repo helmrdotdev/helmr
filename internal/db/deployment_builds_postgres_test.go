@@ -1,11 +1,11 @@
 package db_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -56,24 +56,20 @@ func newDeploymentBuildFixture(t *testing.T) (*deploymentBuildFixture, *pgxpool.
 	mustExec(t, ctx, pool, `
 		INSERT INTO deployments (
 			id, public_id, org_id, project_id, environment_id, build_region_id,
-			build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+			build_node_version, build_runtime_digest, build_standard_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
 			build_contract_version,
-			build_requested_cpu_millis, build_requested_memory_bytes,
-			build_requested_scratch_bytes,
 			version, content_hash, deployment_source_artifact_id, status
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
-			'x86_64', decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
-			'bun', '1.2.3', decode(repeat('22', 32), 'hex'),
+			'24.16.0', decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
+			'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
 			'helmr.program-build.v0',
-			$10, $11, $12,
 			$7, $8, $9, 'queued'
 		)
 	`, deploymentID, testPublicID(t, publicid.Deployment), ids.orgID, ids.projectID,
 		ids.environmentID, dbtest.DefaultRegionID, "build-"+shortUUID(deploymentID),
-		testDigest("deployment-build-"+deploymentID.String()), sourceArtifactID,
-		buildCPU, buildMemory, buildScratch)
+		testDigest("deployment-build-"+deploymentID.String()), sourceArtifactID)
 
 	groupID := "build-" + shortUUID(deploymentID)
 	workerID := uuid.Must(uuid.NewV7())
@@ -152,21 +148,186 @@ func TestAppendDeploymentEventsPreservesInputOrder(t *testing.T) {
 	}
 }
 
+func TestPinDeploymentPlatformArtifactsReplaysExactTuple(t *testing.T) {
+	f, _ := newDeploymentBuildFixture(t)
+	mustExec(t, f.ctx, f.pool, `
+		UPDATE deployments
+		   SET build_runtime_digest = NULL,
+		       build_standard_toolchain_digest = NULL,
+		       build_manager_digest = NULL
+		 WHERE id = $1
+	`, f.deploymentID)
+	pins := db.PinDeploymentPlatformArtifactsParams{
+		BuildRuntimeDigest:           bytes.Repeat([]byte{1}, 32),
+		BuildStandardToolchainDigest: bytes.Repeat([]byte{2}, 32),
+		BuildManagerDigest:           bytes.Repeat([]byte{3}, 32),
+		OrgID:                        pgvalue.UUID(f.orgID),
+		ProjectID:                    pgvalue.UUID(f.projectID),
+		EnvironmentID:                pgvalue.UUID(f.environmentID),
+		ID:                           pgvalue.UUID(f.deploymentID),
+	}
+	first, err := f.queries.PinDeploymentPlatformArtifacts(f.ctx, pins)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var firstTupleID, firstTransactionID string
+	if err := f.pool.QueryRow(f.ctx, `
+		SELECT ctid::text, xmin::text
+		  FROM deployments
+		 WHERE id = $1
+	`, f.deploymentID).Scan(&firstTupleID, &firstTransactionID); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := f.queries.PinDeploymentPlatformArtifacts(f.ctx, pins)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replayed.UpdatedAt.Time.Equal(first.UpdatedAt.Time) {
+		t.Fatalf("replay changed updated_at from %s to %s", first.UpdatedAt.Time, replayed.UpdatedAt.Time)
+	}
+	var replayedTupleID, replayedTransactionID string
+	if err := f.pool.QueryRow(f.ctx, `
+		SELECT ctid::text, xmin::text
+		  FROM deployments
+		 WHERE id = $1
+	`, f.deploymentID).Scan(&replayedTupleID, &replayedTransactionID); err != nil {
+		t.Fatal(err)
+	}
+	if replayedTupleID != firstTupleID || replayedTransactionID != firstTransactionID {
+		t.Fatalf(
+			"replay rewrote tuple from %s/%s to %s/%s",
+			firstTupleID,
+			firstTransactionID,
+			replayedTupleID,
+			replayedTransactionID,
+		)
+	}
+	pins.BuildManagerDigest = bytes.Repeat([]byte{4}, 32)
+	if _, err := f.queries.PinDeploymentPlatformArtifacts(f.ctx, pins); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("different pin tuple error = %v", err)
+	}
+}
+
+func TestFleetBuildDemandExcludesUnpinnedDeployments(t *testing.T) {
+	f, _ := newDeploymentBuildFixture(t)
+	mustExec(t, f.ctx, f.pool, `
+		UPDATE deployments
+		   SET build_runtime_digest = NULL,
+		       build_standard_toolchain_digest = NULL,
+		       build_manager_digest = NULL
+		 WHERE id = $1
+	`, f.deploymentID)
+	demand, err := f.queries.ListFleetBuildDemand(f.ctx, f.groupID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(demand) != 0 {
+		t.Fatalf("unpinned build demand = %+v", demand)
+	}
+	oldest, err := f.queries.GetFleetOldestBuildQueueTime(f.ctx, f.groupID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oldest.Valid {
+		t.Fatalf("unpinned oldest build queue time = %s", oldest.Time)
+	}
+}
+
+func TestDeploymentLeaseRejectsUntilPinCommits(t *testing.T) {
+	f, _ := newDeploymentBuildFixture(t)
+	mustExec(t, f.ctx, f.pool, `
+		UPDATE deployments
+		   SET build_runtime_digest = NULL,
+		       build_standard_toolchain_digest = NULL,
+		       build_manager_digest = NULL
+		 WHERE id = $1
+	`, f.deploymentID)
+	pinTx, err := f.pool.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pinTx.Rollback(f.ctx)
+	pins := db.PinDeploymentPlatformArtifactsParams{
+		BuildRuntimeDigest:           bytes.Repeat([]byte{1}, 32),
+		BuildStandardToolchainDigest: bytes.Repeat([]byte{2}, 32),
+		BuildManagerDigest:           bytes.Repeat([]byte{3}, 32),
+		OrgID:                        pgvalue.UUID(f.orgID),
+		ProjectID:                    pgvalue.UUID(f.projectID),
+		EnvironmentID:                pgvalue.UUID(f.environmentID),
+		ID:                           pgvalue.UUID(f.deploymentID),
+	}
+	if _, err := db.New(pinTx).PinDeploymentPlatformArtifacts(f.ctx, pins); err != nil {
+		t.Fatal(err)
+	}
+
+	type leaseResult struct {
+		row db.LeaseQueuedDeploymentBuildRow
+		err error
+	}
+	result := make(chan leaseResult, 1)
+	go func() {
+		row, err := f.queries.LeaseQueuedDeploymentBuild(f.ctx, f.leaseParams(1))
+		result <- leaseResult{row: row, err: err}
+	}()
+	select {
+	case early := <-result:
+		if !errors.Is(early.err, pgx.ErrNoRows) {
+			t.Fatalf("lease before pin commit = %+v, %v", early.row, early.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent lease did not resolve against the unpinned row")
+	}
+	var visiblePins int
+	if err := f.pool.QueryRow(f.ctx, `
+		SELECT count(*)
+		  FROM deployments
+		 WHERE id = $1
+		   AND build_runtime_digest IS NOT NULL
+		   AND build_standard_toolchain_digest IS NOT NULL
+		   AND build_manager_digest IS NOT NULL
+	`, f.deploymentID).Scan(&visiblePins); err != nil {
+		t.Fatal(err)
+	}
+	if visiblePins != 0 {
+		t.Fatal("uncommitted Platform pins became visible")
+	}
+	if err := pinTx.Commit(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	leased, err := f.queries.LeaseQueuedDeploymentBuild(f.ctx, f.leaseParams(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(leased.BuildRuntimeDigest, pins.BuildRuntimeDigest) ||
+		!bytes.Equal(
+			leased.BuildStandardToolchainDigest,
+			pins.BuildStandardToolchainDigest,
+		) {
+		t.Fatalf("lease used incomplete Platform pins: %+v", leased)
+	}
+}
+
 func (f *deploymentBuildFixture) lease(t *testing.T, sequence int64) db.LeaseQueuedDeploymentBuildRow {
 	t.Helper()
+	row, err := f.queries.LeaseQueuedDeploymentBuild(f.ctx, f.leaseParams(sequence))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return row
+}
+
+func (f *deploymentBuildFixture) leaseParams(sequence int64) db.LeaseQueuedDeploymentBuildParams {
 	now := time.Now().UTC()
-	leaseID := uuid.Must(uuid.NewV7())
-	row, err := f.queries.LeaseQueuedDeploymentBuild(f.ctx, db.LeaseQueuedDeploymentBuildParams{
+	return db.LeaseQueuedDeploymentBuildParams{
 		OrgID:                      pgvalue.UUID(f.orgID),
 		DeploymentID:               pgvalue.UUID(f.deploymentID),
 		BuildRegionID:              dbtest.DefaultRegionID,
-		BuildArchitecture:          "x86_64",
 		RequestedCpuMillis:         buildCPU,
 		RequestedMemoryBytes:       buildMemory,
 		RequestedWorkloadDiskBytes: 0,
 		RequestedScratchBytes:      buildScratch,
 		RequestedBuildExecutors:    1,
-		BuildLeaseID:               pgvalue.UUID(leaseID),
+		BuildLeaseID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		LeaseSequence:              sequence,
 		WorkerGroupID:              f.groupID,
 		BuildWorkerInstanceID:      pgvalue.UUID(f.workerID),
@@ -175,11 +336,7 @@ func (f *deploymentBuildFixture) lease(t *testing.T, sequence int64) db.LeaseQue
 		BuildSnapshot:              []byte(`{"source":"test"}`),
 		StartDeadlineAt:            pgvalue.Timestamptz(now.Add(time.Minute)),
 		BuildLeaseExpiresAt:        pgvalue.Timestamptz(now.Add(5 * time.Minute)),
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
-	return row
 }
 
 func (f *deploymentBuildFixture) start(t *testing.T, leaseID uuid.UUID, sequence int64) db.DeploymentBuildLease {
@@ -259,20 +416,6 @@ func (f *deploymentBuildFixture) complete(t *testing.T, leaseID uuid.UUID, seque
 
 func TestDeploymentBuildDeliveryRedrivesAndExhausts(t *testing.T) {
 	f, pool := newDeploymentBuildFixture(t)
-
-	var cpu, memory, scratch int64
-	if err := pool.QueryRow(f.ctx, `
-		SELECT build_requested_cpu_millis,
-		       build_requested_memory_bytes,
-		       build_requested_scratch_bytes
-		  FROM deployments
-		 WHERE id = $1
-	`, f.deploymentID).Scan(&cpu, &memory, &scratch); err != nil {
-		t.Fatal(err)
-	}
-	if cpu != buildCPU || memory != buildMemory || scratch != buildScratch {
-		t.Fatalf("stored build reserve = (%d,%d,%d)", cpu, memory, scratch)
-	}
 
 	first := f.lease(t, 1)
 	firstID := pgvalue.MustUUIDValue(first.ID)
@@ -419,34 +562,10 @@ func TestDeploymentBuildCompletionPublishesSingleProgramAuthority(t *testing.T) 
 		) VALUES ($1, $2, $3, $4, $5, 'deployment_program', 123, $6, $7)
 	`, artifactID, f.orgID, f.projectID, f.environmentID, digest, mediaType, f.workerID)
 
-	runtimeDigest := make([]byte, 32)
-	for position := range runtimeDigest {
-		runtimeDigest[position] = 1
+	programIndexDigest := make([]byte, 32)
+	for position := range programIndexDigest {
+		programIndexDigest[position] = 3
 	}
-	var sourceArtifactID pgtype.UUID
-	var sourceDigest string
-	var sourceSizeBytes int64
-	if err := pool.QueryRow(f.ctx, `
-		SELECT source.id, source.digest, source.size_bytes
-		  FROM deployments
-		  JOIN artifacts AS source
-		    ON source.environment_id = deployments.environment_id
-		   AND source.id = deployments.deployment_source_artifact_id
-		 WHERE deployments.id = $1
-	`, f.deploymentID).Scan(&sourceArtifactID, &sourceDigest, &sourceSizeBytes); err != nil {
-		t.Fatal(err)
-	}
-	receipt := dbtest.ProgramReceipt(dbtest.ProgramReceiptAuthority{
-		Architecture:            "x86_64",
-		ProgramArtifactID:       artifactID,
-		ProgramDigest:           digest,
-		ProgramSizeBytes:        123,
-		RuntimeDigest:           "sha256:" + strings.Repeat("01", 32),
-		SourceArtifactID:        pgvalue.MustUUIDValue(sourceArtifactID),
-		SourceDigest:            sourceDigest,
-		SourceSizeBytes:         sourceSizeBytes,
-		StandardToolchainDigest: "sha256:" + strings.Repeat("02", 32),
-	})
 	completed, err := f.queries.CompleteDeploymentBuild(
 		f.ctx,
 		db.CompleteDeploymentBuildParams{
@@ -458,9 +577,7 @@ func TestDeploymentBuildCompletionPublishesSingleProgramAuthority(t *testing.T) 
 			WorkerEpoch:                1,
 			LeaseSequence:              1,
 			ProgramArtifactID:          pgvalue.UUID(artifactID),
-			ProgramRuntimeDigest:       runtimeDigest,
-			ProgramArchitecture:        pgtype.Text{String: "x86_64", Valid: true},
-			ProgramReceipt:             receipt,
+			ProgramIndexDigest:         programIndexDigest,
 			QueueConfig:                []byte(`{"formatVersion":0,"queues":[]}`),
 		},
 	)
@@ -470,19 +587,8 @@ func TestDeploymentBuildCompletionPublishesSingleProgramAuthority(t *testing.T) 
 	if completed.Status != db.DeploymentStatusDeployed ||
 		pgvalue.MustUUIDValue(completed.ProgramArtifactID) != artifactID ||
 		completed.ProgramArtifactKind != db.ArtifactKindDeploymentProgram ||
-		!completed.ProgramArchitecture.Valid ||
-		completed.ProgramArchitecture.String != "x86_64" {
+		!bytes.Equal(completed.ProgramIndexDigest, programIndexDigest) {
 		t.Fatalf("completed Program authority = %+v", completed)
-	}
-	var completedReceipt, expectedReceipt any
-	if err := json.Unmarshal(completed.ProgramReceipt, &completedReceipt); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(receipt, &expectedReceipt); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(completedReceipt, expectedReceipt) {
-		t.Fatalf("completed Program receipt = %s, want %s", completed.ProgramReceipt, receipt)
 	}
 
 	var programArtifactCount int

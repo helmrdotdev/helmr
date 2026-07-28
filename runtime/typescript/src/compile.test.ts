@@ -120,7 +120,6 @@ describe("declaration analysis", () => {
     expect(workspaceDefinition.manifest.resources).toEqual({
       milliCpu: 125,
       memoryMiB: 1024,
-      ephemeralDiskMiB: 32768,
     })
     expect(workspaceDefinition.manifest.network).toEqual({
       internet: true,
@@ -261,7 +260,6 @@ describe("declaration analysis", () => {
     ).toEqual({
       milliCpu: 1,
       memoryMiB: 1024,
-      ephemeralDiskMiB: 32768,
     })
 
     for (const cpu of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 0.0001]) {

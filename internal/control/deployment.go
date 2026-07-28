@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -26,6 +28,10 @@ type deploymentStore interface {
 	CreateDeployment(context.Context, db.CreateDeploymentParams) (db.Deployment, error)
 	ListArtifactsByIDs(context.Context, db.ListArtifactsByIDsParams) ([]db.Artifact, error)
 	UpsertCasObject(context.Context, db.UpsertCasObjectParams) (db.CasObject, error)
+}
+
+type deploymentCreationReceipt struct {
+	DeploymentID string `json:"deploymentId"`
 }
 
 type currentDeploymentStore interface {
@@ -240,8 +246,7 @@ func createDeploymentRecords(
 	ctx context.Context,
 	store deploymentStore,
 	buildRegionID string,
-	target deployment.BuildTarget,
-	manager deployment.Manager,
+	selection deployment.SourceSelection,
 	orgID uuid.UUID,
 	projectID pgtype.UUID,
 	environmentID pgtype.UUID,
@@ -249,20 +254,6 @@ func createDeploymentRecords(
 	artifact api.DeploymentSourceArtifact,
 	metadata deploymentVersionMetadata,
 ) (api.DeploymentResponse, error) {
-	runtimeDigest, err := deployment.RuntimeDigestBytes(target.Runtime.Digest)
-	if err != nil {
-		return api.DeploymentResponse{}, err
-	}
-	managerDigest, err := deployment.SHA256DigestBytes(manager.Tree.Digest)
-	if err != nil {
-		return api.DeploymentResponse{}, err
-	}
-	toolchainDigest, err := deployment.SHA256DigestBytes(
-		target.StandardToolchainDigest,
-	)
-	if err != nil {
-		return api.DeploymentResponse{}, err
-	}
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		OrgID:     pgvalue.UUID(orgID),
 		Digest:    artifact.Digest,
@@ -275,11 +266,7 @@ func createDeploymentRecords(
 		ctx,
 		store,
 		buildRegionID,
-		target,
-		manager,
-		runtimeDigest,
-		toolchainDigest,
-		managerDigest,
+		selection,
 		orgID,
 		projectID,
 		environmentID,
@@ -297,15 +284,63 @@ func createDeploymentRecords(
 	return response, nil
 }
 
+func completeDeploymentCreation(
+	ctx context.Context,
+	claims *idempotency.Transaction,
+	claim db.IdempotencyClaim,
+	deploymentID string,
+) error {
+	receipt, err := json.Marshal(deploymentCreationReceipt{DeploymentID: deploymentID})
+	if err != nil {
+		return fmt.Errorf("encode Deployment creation receipt: %w", err)
+	}
+	if _, err := claims.Complete(ctx, claim, receipt); err != nil {
+		return fmt.Errorf("complete Deployment creation claim: %w", err)
+	}
+	return nil
+}
+
+func replayDeploymentCreation(
+	ctx context.Context,
+	queries db.Querier,
+	store deploymentStore,
+	claim db.IdempotencyClaim,
+	orgID pgtype.UUID,
+	projectID pgtype.UUID,
+) (api.DeploymentResponse, error) {
+	if claim.State != "completed" {
+		return api.DeploymentResponse{}, conflict(errors.New("deployment creation is in progress"))
+	}
+	var receipt deploymentCreationReceipt
+	decoder := json.NewDecoder(strings.NewReader(string(claim.Receipt)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&receipt); err != nil {
+		return api.DeploymentResponse{}, errors.New("deployment creation receipt is invalid")
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return api.DeploymentResponse{}, errors.New("deployment creation receipt is invalid")
+	}
+	deploymentID, err := uuid.Parse(receipt.DeploymentID)
+	if err != nil || deploymentID == uuid.Nil || deploymentID.String() != receipt.DeploymentID {
+		return api.DeploymentResponse{}, errors.New("deployment creation receipt is invalid")
+	}
+	record, err := queries.GetDeployment(ctx, db.GetDeploymentParams{
+		OrgID:         orgID,
+		ProjectID:     projectID,
+		EnvironmentID: claim.EnvironmentID,
+		ID:            pgvalue.UUID(deploymentID),
+	})
+	if err != nil {
+		return api.DeploymentResponse{}, fmt.Errorf("resolve replayed Deployment: %w", err)
+	}
+	return deploymentResponseWithArtifacts(ctx, store, record)
+}
+
 func createQueuedDeployment(
 	ctx context.Context,
 	store deploymentStore,
 	buildRegionID string,
-	target deployment.BuildTarget,
-	manager deployment.Manager,
-	runtimeDigest,
-	toolchainDigest,
-	managerDigest []byte,
+	selection deployment.SourceSelection,
 	orgID uuid.UUID,
 	projectID pgtype.UUID,
 	environmentID pgtype.UUID,
@@ -329,27 +364,22 @@ func createQueuedDeployment(
 	var publicID string
 	deployment, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Deployment, value: &publicID}}, func() (db.Deployment, error) {
 		return store.CreateDeployment(ctx, db.CreateDeploymentParams{
-			ID:                           pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			PublicID:                     publicID,
-			OrgID:                        pgvalue.UUID(orgID),
-			BuildRegionID:                buildRegionID,
-			BuildArchitecture:            string(target.Runtime.Architecture),
-			BuildRuntimeDigest:           runtimeDigest,
-			BuildStandardToolchainDigest: toolchainDigest,
-			BuildManagerName:             string(manager.PackageManager.Name),
-			BuildManagerVersion:          manager.PackageManager.Version,
-			BuildManagerDigest:           managerDigest,
-			BuildContractVersion:         target.BuildContractVersion,
-			ProjectID:                    projectID,
-			EnvironmentID:                environmentID,
-			Version:                      deploymentVersion(publicID, time.Now()),
-			ApiVersion:                   metadata.APIVersion,
-			SdkVersion:                   metadata.SDKVersion,
-			CliVersion:                   metadata.CLIVersion,
-			WorkerProtocolVersion:        metadata.WorkerProtocolVersion,
-			ContentHash:                  contentHash,
-			DeploymentSourceArtifactID:   sourceArtifact.ID,
-			Status:                       db.DeploymentStatusQueued,
+			ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			PublicID:                   publicID,
+			OrgID:                      pgvalue.UUID(orgID),
+			BuildRegionID:              buildRegionID,
+			BuildNodeVersion:           selection.NodeVersion,
+			BuildManagerName:           string(selection.Manager.Name),
+			BuildManagerVersion:        selection.Manager.Version,
+			BuildContractVersion:       deployment.ProgramBuildContractVersion,
+			ProjectID:                  projectID,
+			EnvironmentID:              environmentID,
+			Version:                    deploymentVersion(publicID, time.Now()),
+			ApiVersion:                 metadata.APIVersion,
+			WorkerProtocolVersion:      metadata.WorkerProtocolVersion,
+			ContentHash:                contentHash,
+			DeploymentSourceArtifactID: sourceArtifact.ID,
+			Status:                     db.DeploymentStatusQueued,
 		})
 	})
 	if err != nil {
@@ -389,8 +419,6 @@ func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceA
 		ID:                    pgvalue.MustUUIDValue(deployment.ID).String(),
 		Version:               deployment.Version,
 		APIVersion:            deployment.ApiVersion,
-		SDKVersion:            deployment.SdkVersion,
-		CLIVersion:            deployment.CliVersion,
 		WorkerProtocolVersion: deployment.WorkerProtocolVersion,
 		ProjectID:             pgvalue.MustUUIDValue(deployment.ProjectID).String(),
 		EnvironmentID:         pgvalue.MustUUIDValue(deployment.EnvironmentID).String(),
@@ -472,6 +500,11 @@ func deploymentErrorResponse(raw []byte) *api.DeploymentErrorResponse {
 }
 
 func writeDeploymentError(w http.ResponseWriter, s *Server, err error) {
+	var idempotencyConflict idempotency.ConflictError
+	if errors.As(err, &idempotencyConflict) {
+		writeError(w, conflict(errors.New("idempotency key conflicts with an existing deployment request")))
+		return
+	}
 	if isUniqueViolation(err) {
 		writeError(w, badRequest(errors.New("deployment conflicts with existing task metadata")))
 		return

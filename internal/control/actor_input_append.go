@@ -65,7 +65,7 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 		claimID := pgtype.UUID{}
 		fingerprint := []byte(nil)
 		if request.IdempotencyKey != "" {
-			claims, err := s.claims.TransactionForQueries(work.q)
+			claims, err := idempotency.TransactionForQueries(work.q)
 			if err != nil {
 				return err
 			}

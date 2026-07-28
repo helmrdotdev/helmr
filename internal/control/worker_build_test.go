@@ -108,8 +108,11 @@ func newDeploymentBuildCompletionFixture(
 	root := t.TempDir()
 	lockfile := []byte("lockfileVersion = 1")
 	for name, body := range map[string][]byte{
-		"package.json": []byte(`{"packageManager":"bun@1.3.11"}`),
-		"bun.lock":     lockfile,
+		"helmr.config.ts": []byte(`export default { dirs: ["dist"] }`),
+		"package.json": []byte(
+			`{"devEngines":{"runtime":{"name":"node","version":"24.16.0"}},"packageManager":"bun@1.3.11","type":"module"}`,
+		),
+		"bun.lock": lockfile,
 	} {
 		if err := os.WriteFile(filepath.Join(root, name), body, 0o600); err != nil {
 			t.Fatal(err)
@@ -157,15 +160,13 @@ func newDeploymentBuildCompletionFixture(
 							}},
 						},
 						Resources: deployment.ResourcesManifest{
-							MilliCPU:         1,
-							MemoryMiB:        1,
-							EphemeralDiskMiB: 1,
+							MilliCPU:  1,
+							MemoryMiB: 1,
 						},
 						Network: deployment.NetworkManifest{
 							Internet:  false,
 							DenyCIDRs: []string{},
 						},
-						Architecture: deployment.ArchitectureX8664,
 					},
 				}},
 				Queues: []deployment.QueueInput{},
@@ -213,7 +214,7 @@ func newDeploymentBuildCompletionFixture(
 		ExpiresAt:                    pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 		DeploymentStatus:             db.DeploymentStatusBuilding,
 		CurrentBuildLeaseID:          buildLeaseID,
-		BuildArchitecture:            string(deployment.ArchitectureX8664),
+		BuildNodeVersion:             "24.16.0",
 		BuildRuntimeDigest:           runtimeDigest,
 		BuildStandardToolchainDigest: toolchainDigest,
 		BuildManagerName:             string(deployment.PackageManagerBun),
@@ -236,7 +237,7 @@ func newDeploymentBuildCompletionFixture(
 			ExpiresAt:                    authority.ExpiresAt,
 			DeploymentStatus:             authority.DeploymentStatus,
 			CurrentBuildLeaseID:          authority.CurrentBuildLeaseID,
-			BuildArchitecture:            authority.BuildArchitecture,
+			BuildNodeVersion:             authority.BuildNodeVersion,
 			BuildRuntimeDigest:           authority.BuildRuntimeDigest,
 			BuildStandardToolchainDigest: authority.BuildStandardToolchainDigest,
 			BuildManagerName:             authority.BuildManagerName,
@@ -343,7 +344,7 @@ func (store *deploymentBuildCompletionStore) LockDeploymentBuildWorkerCertificat
 ) (db.LockDeploymentBuildWorkerCertificationRow, error) {
 	return db.LockDeploymentBuildWorkerCertificationRow{
 		RuntimeArch: pgtype.Text{
-			String: store.authority.BuildArchitecture,
+			String: string(deployment.ArchitectureX8664),
 			Valid:  true,
 		},
 	}, nil

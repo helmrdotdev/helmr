@@ -1,13 +1,13 @@
 package config
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
@@ -19,26 +19,23 @@ func LoadControl() (Control, error) {
 		return Control{}, err
 	}
 	cfg := Control{
-		Addr:                   env("HELMR_CONTROL_ADDR", ":8080"),
-		DeploymentMode:         env("HELMR_DEPLOYMENT_MODE", DeploymentModeSelfHosted),
-		WorkerGroupID:          envString("HELMR_WORKER_GROUP_ID"),
-		RegionID:               envString("HELMR_REGION_ID"),
-		DefaultRegionID:        envString("HELMR_DEFAULT_REGION_ID"),
-		DatabaseURL:            envString("HELMR_DATABASE_URL"),
-		RedisURL:               env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
-		ClickHouseURL:          envString("HELMR_CLICKHOUSE_URL"),
-		ClickHouseUser:         envString("HELMR_CLICKHOUSE_USER"),
-		ClickHousePassword:     envString("HELMR_CLICKHOUSE_PASSWORD"),
-		CASURI:                 envString("HELMR_CAS_URI"),
-		BuildPolicyPath:        envString("HELMR_BUILD_POLICY_PATH"),
-		RuntimeStoreURI:        envString("HELMR_RUNTIME_STORE_URI"),
-		WorkerTokenSigningKey:  envString("HELMR_WORKER_TOKEN_SIGNING_KEY"),
-		WorkerGroupsJSON:       envString("HELMR_WORKER_GROUPS"),
-		SetupToken:             envString("HELMR_SETUP_TOKEN"),
-		AuthSecret:             envString("HELMR_AUTH_SECRET"),
-		SecretEncryptionKey:    envString("HELMR_SECRET_ENCRYPTION_KEY"),
-		SecretEncryptionKeyOld: envString("HELMR_SECRET_ENCRYPTION_KEY_OLD"),
-		LookupHMACKeys:         envString("HELMR_LOOKUP_HMAC_KEYS"),
+		Addr:                  env("HELMR_CONTROL_ADDR", ":8080"),
+		DeploymentMode:        env("HELMR_DEPLOYMENT_MODE", DeploymentModeSelfHosted),
+		WorkerGroupID:         envString("HELMR_WORKER_GROUP_ID"),
+		RegionID:              envString("HELMR_REGION_ID"),
+		DefaultRegionID:       envString("HELMR_DEFAULT_REGION_ID"),
+		DatabaseURL:           envString("HELMR_DATABASE_URL"),
+		RedisURL:              env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
+		ClickHouseURL:         envString("HELMR_CLICKHOUSE_URL"),
+		ClickHouseUser:        envString("HELMR_CLICKHOUSE_USER"),
+		ClickHousePassword:    envString("HELMR_CLICKHOUSE_PASSWORD"),
+		CASURI:                envString("HELMR_CAS_URI"),
+		BuildPolicyPath:       envString("HELMR_BUILD_POLICY_PATH"),
+		RuntimeStoreURI:       envString("HELMR_RUNTIME_STORE_URI"),
+		WorkerTokenSigningKey: envString("HELMR_WORKER_TOKEN_SIGNING_KEY"),
+		WorkerGroupsJSON:      envString("HELMR_WORKER_GROUPS"),
+		SetupToken:            envString("HELMR_SETUP_TOKEN"),
+		AuthSecret:            envString("HELMR_AUTH_SECRET"),
 		WorkspaceFencingKeyFingerprint: envString(
 			"HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT",
 		),
@@ -123,14 +120,19 @@ func LoadControl() (Control, error) {
 	if err := auth.ValidateTokenSecret([]byte(cfg.AuthSecret)); err != nil {
 		return cfg, fmt.Errorf("HELMR_AUTH_SECRET: %w", err)
 	}
-	if cfg.SecretEncryptionKey == "" {
-		return cfg, errors.New("HELMR_SECRET_ENCRYPTION_KEY is required")
+	encodedEncryptionKey := envString("ENCRYPTION_KEY")
+	if encodedEncryptionKey == "" {
+		return cfg, errors.New("ENCRYPTION_KEY is required")
 	}
-	if cfg.LookupHMACKeys == "" {
-		return cfg, errors.New("HELMR_LOOKUP_HMAC_KEYS is required")
+	cfg.EncryptionKey, err = base64.StdEncoding.DecodeString(encodedEncryptionKey)
+	if err != nil {
+		return cfg, fmt.Errorf("ENCRYPTION_KEY must be base64: %w", err)
 	}
-	if _, err := keyedhash.FromBase64JSON(cfg.LookupHMACKeys); err != nil {
-		return cfg, fmt.Errorf("HELMR_LOOKUP_HMAC_KEYS: %w", err)
+	if len(cfg.EncryptionKey) != 32 {
+		return cfg, fmt.Errorf(
+			"ENCRYPTION_KEY must decode to exactly 32 bytes, got %d",
+			len(cfg.EncryptionKey),
+		)
 	}
 	if cfg.WorkspaceFencingKeyFingerprint == "" {
 		return cfg, errors.New(

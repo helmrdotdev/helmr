@@ -14,6 +14,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/archive"
 )
 
+const (
+	npmSourcePackageJSON  = `{"devEngines":{"runtime":{"name":"node","version":"24.16.0"}},"packageManager":"npm@11.4.2","type":"module"}`
+	pnpmSourcePackageJSON = `{"devEngines":{"runtime":{"name":"node","version":"24.16.0"}},"packageManager":"pnpm@11.1.0","type":"module"}`
+	bunSourcePackageJSON  = `{"devEngines":{"runtime":{"name":"node","version":"24.16.0"}},"packageManager":"bun@1.3.11","type":"module"}`
+)
+
 func TestInspectSourcePinsExactManagerAndLockfile(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -24,30 +30,38 @@ func TestInspectSourcePinsExactManagerAndLockfile(t *testing.T) {
 		{
 			name: "npm",
 			files: map[string]string{
-				"package.json":      `{"packageManager":"npm@11.4.2"}`,
+				"package.json":      npmSourcePackageJSON,
 				"package-lock.json": `{"lockfileVersion":3}`,
-				"bun.lock":          "ordinary source",
 			},
 			manager:  PackageManager{Name: PackageManagerNPM, Version: "11.4.2"},
 			lockfile: "package-lock.json",
 		},
 		{
-			name: "bun text",
+			name: "npm shrinkwrap",
 			files: map[string]string{
-				"package.json": `{"packageManager":"bun@1.3.11"}`,
+				"package.json":        npmSourcePackageJSON,
+				"npm-shrinkwrap.json": `{"lockfileVersion":3}`,
+			},
+			manager:  PackageManager{Name: PackageManagerNPM, Version: "11.4.2"},
+			lockfile: "npm-shrinkwrap.json",
+		},
+		{
+			name: "pnpm",
+			files: map[string]string{
+				"package.json":   pnpmSourcePackageJSON,
+				"pnpm-lock.yaml": "lockfileVersion: '9.0'",
+			},
+			manager:  PackageManager{Name: PackageManagerPNPM, Version: "11.1.0"},
+			lockfile: "pnpm-lock.yaml",
+		},
+		{
+			name: "bun",
+			files: map[string]string{
+				"package.json": bunSourcePackageJSON,
 				"bun.lock":     "lockfileVersion = 1",
 			},
 			manager:  PackageManager{Name: PackageManagerBun, Version: "1.3.11"},
 			lockfile: "bun.lock",
-		},
-		{
-			name: "bun binary",
-			files: map[string]string{
-				"package.json": `{"packageManager":"bun@1.3.11"}`,
-				"bun.lockb":    "\x00binary",
-			},
-			manager:  PackageManager{Name: PackageManagerBun, Version: "1.3.11"},
-			lockfile: "bun.lockb",
 		},
 	}
 	for _, test := range tests {
@@ -70,8 +84,9 @@ func TestInspectSourceAcceptsCanonicalCLIArtifact(t *testing.T) {
 	root := t.TempDir()
 	for name, body := range map[string]string{
 		".helmrignore":      "*.secret\n",
+		"helmr.config.ts":   `export default { dirs: ["dist"] }`,
 		"ignored.secret":    "not submitted",
-		"package.json":      `{"packageManager":"npm@11.4.2"}`,
+		"package.json":      npmSourcePackageJSON,
 		"package-lock.json": `{"lockfileVersion":3}`,
 		"src/task.ts":       "export {}",
 	} {
@@ -111,20 +126,15 @@ func TestInspectSourceRejectsAmbiguousOrInvalidAuthority(t *testing.T) {
 			"bun.lock":     "lock",
 		},
 		"manager range": {
-			"package.json": `{"packageManager":"bun@^1.3.11"}`,
+			"package.json": `{"devEngines":{"runtime":{"name":"node","version":"24.16.0"}},"packageManager":"bun@^1.3.11","type":"module"}`,
 			"bun.lock":     "lock",
 		},
 		"missing selected lockfile": {
-			"package.json": `{"packageManager":"npm@11.4.2"}`,
+			"package.json": npmSourcePackageJSON,
 			"bun.lock":     "lock",
 		},
-		"two Bun lockfiles": {
-			"package.json": `{"packageManager":"bun@1.3.11"}`,
-			"bun.lock":     "text",
-			"bun.lockb":    "binary",
-		},
 		"reserved output": {
-			"package.json": `{"packageManager":"bun@1.3.11"}`,
+			"package.json": bunSourcePackageJSON,
 			"bun.lock":     "lock",
 			"helmr/output": "reserved",
 		},
@@ -140,7 +150,7 @@ func TestInspectSourceRejectsAmbiguousOrInvalidAuthority(t *testing.T) {
 
 func TestInspectSourceAllowsNestedReservedNames(t *testing.T) {
 	files := map[string]string{
-		"package.json":                 `{"packageManager":"bun@1.3.11"}`,
+		"package.json":                 bunSourcePackageJSON,
 		"bun.lock":                     "lock",
 		"packages/tool/helmr/value.ts": "export {}",
 		"packages/tool/node_modules/x": "x",
@@ -152,7 +162,7 @@ func TestInspectSourceAllowsNestedReservedNames(t *testing.T) {
 
 func TestInspectSourceRejectsDuplicatePathsAndEscapingLinks(t *testing.T) {
 	duplicate := sourceTar(t, map[string]string{
-		"package.json": `{"packageManager":"bun@1.3.11"}`,
+		"package.json": bunSourcePackageJSON,
 		"bun.lock":     "lock",
 	}, []tar.Header{{Name: "bun.lock", Typeflag: tar.TypeReg, Size: 4, Mode: 0o644}})
 	if _, err := InspectSource(duplicate); err == nil {
@@ -160,7 +170,7 @@ func TestInspectSourceRejectsDuplicatePathsAndEscapingLinks(t *testing.T) {
 	}
 
 	escaping := sourceTar(t, map[string]string{
-		"package.json": `{"packageManager":"bun@1.3.11"}`,
+		"package.json": bunSourcePackageJSON,
 		"bun.lock":     "lock",
 	}, []tar.Header{{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "../../outside"}})
 	if _, err := InspectSource(escaping); err == nil {
@@ -180,7 +190,7 @@ func TestInspectSourceRejectsMissingParentAndRootGit(t *testing.T) {
 	for name, extra := range tests {
 		t.Run(name, func(t *testing.T) {
 			if _, err := InspectSource(sourceTar(t, map[string]string{
-				"package.json":      `{"packageManager":"npm@11.4.2"}`,
+				"package.json":      npmSourcePackageJSON,
 				"package-lock.json": `{"lockfileVersion":3}`,
 			}, extra)); err == nil {
 				t.Fatal("InspectSource accepted a noncanonical source tree")
@@ -193,7 +203,7 @@ func TestInspectSourceRevalidatesHelmrIgnore(t *testing.T) {
 	if _, err := InspectSource(sourceTar(t, map[string]string{
 		".helmrignore":       "*.secret\n",
 		"credentials.secret": "included",
-		"package.json":       `{"packageManager":"npm@11.4.2"}`,
+		"package.json":       npmSourcePackageJSON,
 		"package-lock.json":  `{"lockfileVersion":3}`,
 	}, nil)); err == nil {
 		t.Fatal("InspectSource accepted bytes excluded by .helmrignore")
@@ -202,7 +212,7 @@ func TestInspectSourceRevalidatesHelmrIgnore(t *testing.T) {
 
 func TestInspectSourceRejectsNonUSTARPath(t *testing.T) {
 	files := map[string]string{
-		"package.json":           `{"packageManager":"npm@11.4.2"}`,
+		"package.json":           npmSourcePackageJSON,
 		"package-lock.json":      `{"lockfileVersion":3}`,
 		strings.Repeat("x", 101): "pax",
 	}
@@ -214,7 +224,7 @@ func TestInspectSourceRejectsNonUSTARPath(t *testing.T) {
 func TestInspectSourceRejectsNoncanonicalUSTARBytes(t *testing.T) {
 	valid := sourceTar(t, map[string]string{
 		"package-lock.json": `{"lockfileVersion":3}`,
-		"package.json":      `{"packageManager":"npm@11.4.2"}`,
+		"package.json":      npmSourcePackageJSON,
 	}, nil)
 	validBytes, err := io.ReadAll(valid)
 	if err != nil {
@@ -224,7 +234,7 @@ func TestInspectSourceRejectsNoncanonicalUSTARBytes(t *testing.T) {
 		"trailing bytes": append(append([]byte(nil), validBytes...), 1),
 		"nonzero padding": func() []byte {
 			raw := append([]byte(nil), validBytes...)
-			firstSize := len(`{"lockfileVersion":3}`)
+			firstSize := len(`export default { dirs: ["dist"] }`)
 			raw[tarBlockSize+firstSize] = 1
 			return raw
 		}(),
@@ -323,6 +333,14 @@ func TestUSTARPathRepresentable(t *testing.T) {
 
 func sourceTar(t *testing.T, files map[string]string, extra []tar.Header) *bytes.Reader {
 	t.Helper()
+	if _, exists := files["helmr.config.ts"]; !exists {
+		copied := make(map[string]string, len(files)+1)
+		for name, body := range files {
+			copied[name] = body
+		}
+		copied["helmr.config.ts"] = `export default { dirs: ["dist"] }`
+		files = copied
+	}
 	var body bytes.Buffer
 	writer := tar.NewWriter(&body)
 	directories := make(map[string]struct{})

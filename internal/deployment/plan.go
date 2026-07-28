@@ -72,17 +72,15 @@ type ActorManifest struct {
 }
 
 type WorkspaceInputManifest struct {
-	ImageBuild   imagebuild.Build    `json:"imageBuild"`
-	Resources    ResourcesManifest   `json:"resources"`
-	Network      NetworkManifest     `json:"network"`
-	Architecture RuntimeArchitecture `json:"architecture"`
+	ImageBuild imagebuild.Build  `json:"imageBuild"`
+	Resources  ResourcesManifest `json:"resources"`
+	Network    NetworkManifest   `json:"network"`
 }
 
 type WorkspaceManifest struct {
-	Image        WorkspaceArtifactManifest `json:"image"`
-	Resources    ResourcesManifest         `json:"resources"`
-	Network      NetworkManifest           `json:"network"`
-	Architecture RuntimeArchitecture       `json:"architecture"`
+	Image     WorkspaceArtifactManifest `json:"image"`
+	Resources ResourcesManifest         `json:"resources"`
+	Network   NetworkManifest           `json:"network"`
 }
 
 type WorkspaceArtifactManifest struct {
@@ -126,9 +124,8 @@ type WorkspaceTarget struct {
 }
 
 type ResourcesManifest struct {
-	MilliCPU         int64 `json:"milliCpu"`
-	MemoryMiB        int64 `json:"memoryMiB"`
-	EphemeralDiskMiB int64 `json:"ephemeralDiskMiB"`
+	MilliCPU  int64 `json:"milliCpu"`
+	MemoryMiB int64 `json:"memoryMiB"`
 }
 
 type NetworkManifest struct {
@@ -278,7 +275,6 @@ func ValidateBuildPlan(plan BuildPlan) error {
 	}
 
 	imageSteps := 0
-	var workspaceArchitecture RuntimeArchitecture
 	for index, definition := range plan.Definitions {
 		if err := validateDefinitionInput(definition, queues); err != nil {
 			return fmt.Errorf("build plan definition %d: %w", index, err)
@@ -287,11 +283,6 @@ func ValidateBuildPlan(plan BuildPlan) error {
 			return fmt.Errorf("build plan definitions are not in canonical order at position %d", index)
 		}
 		if definition.Workspace != nil {
-			if workspaceArchitecture == "" {
-				workspaceArchitecture = definition.Workspace.Architecture
-			} else if definition.Workspace.Architecture != workspaceArchitecture {
-				return errors.New("build plan Workspace architectures must match")
-			}
 			imageSteps += imagebuild.StepCount(definition.Workspace.ImageBuild)
 			if imageSteps > maxBuildImageSteps {
 				return fmt.Errorf("build plan contains more than %d image steps", maxBuildImageSteps)
@@ -450,12 +441,9 @@ func validateDefinitionInput(input DefinitionInput, queues map[string]struct{}) 
 		if input.Workspace == nil {
 			return errors.New("workspace definition requires a workspace manifest")
 		}
-		if !validArchitecture(input.Workspace.Architecture) {
-			return fmt.Errorf("workspace architecture %q is unsupported", input.Workspace.Architecture)
-		}
 		if err := imagebuild.Validate(
 			input.Workspace.ImageBuild,
-			string(input.Workspace.Architecture),
+			string(ArchitectureX8664),
 		); err != nil {
 			return fmt.Errorf("workspace imageBuild: %w", err)
 		}
@@ -599,9 +587,6 @@ func validateResourcesManifest(resources ResourcesManifest) error {
 	}
 	if !positiveSafeInteger(resources.MemoryMiB) {
 		return errors.New("memoryMiB must be a positive JavaScript-safe integer")
-	}
-	if !positiveSafeInteger(resources.EphemeralDiskMiB) {
-		return errors.New("ephemeralDiskMiB must be a positive JavaScript-safe integer")
 	}
 	return nil
 }

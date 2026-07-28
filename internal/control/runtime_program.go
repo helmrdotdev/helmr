@@ -19,14 +19,10 @@ func projectDeploymentProgram(
 	if _, err := requiredClaimUUIDString("Program environment ID", row.EnvironmentID); err != nil {
 		return api.WorkerRuntimeProgram{}, err
 	}
-	if !row.ProgramArchitecture.Valid {
-		return api.WorkerRuntimeProgram{}, errors.New("Deployment Program authority is incomplete")
-	}
 	return projectRuntimeProgram(
 		runtimeProgramAuthorityFromDeployment(
 			row.DeploymentID,
-			row.ProgramRuntimeDigest,
-			row.ProgramArchitecture.String,
+			row.BuildRuntimeDigest,
 			row.ProgramArtifactDigest,
 			row.ProgramArtifactSizeBytes,
 			row.ProgramArtifactMediaType,
@@ -41,12 +37,11 @@ func projectDeploymentProgram(
 type runtimeProgramAuthority struct {
 	deploymentID         pgtype.UUID
 	runtimeDigest        []byte
-	architecture         string
 	artifactDigest       string
 	artifactSizeBytes    int64
 	artifactMediaType    string
 	buildContractVersion string
-	indexDigest          string
+	indexDigest          []byte
 }
 
 func projectRuntimeProgram(
@@ -69,10 +64,8 @@ func projectRuntimeProgram(
 	if err != nil {
 		return api.WorkerRuntimeProgram{}, fmt.Errorf("resolve Program Managed Runtime: %w", err)
 	}
-	if string(runtimeDescriptor.Architecture) != authority.architecture {
-		return api.WorkerRuntimeProgram{}, errors.New("Program architecture does not match Managed Runtime")
-	}
-	if expectedArchitecture != "" && authority.architecture != expectedArchitecture {
+	if expectedArchitecture != "" &&
+		string(runtimeDescriptor.Architecture) != expectedArchitecture {
 		return api.WorkerRuntimeProgram{}, errors.New("Program architecture does not match Workspace")
 	}
 	runtimeWire, err := deployment.RuntimeDescriptorWire(runtimeDescriptor)
@@ -91,7 +84,14 @@ func projectRuntimeProgram(
 	if strings.TrimSpace(authority.buildContractVersion) == "" {
 		return api.WorkerRuntimeProgram{}, errors.New("Program build contract version is required")
 	}
-	if _, err := cas.ObjectKey("", authority.indexDigest); err != nil {
+	indexDigest, err := deployment.RuntimeDigestString(authority.indexDigest)
+	if err != nil {
+		return api.WorkerRuntimeProgram{}, fmt.Errorf(
+			"Program index digest is invalid: %w",
+			err,
+		)
+	}
+	if _, err := cas.ObjectKey("", indexDigest); err != nil {
 		return api.WorkerRuntimeProgram{}, fmt.Errorf(
 			"Program index digest is invalid: %w",
 			err,
@@ -102,7 +102,7 @@ func projectRuntimeProgram(
 		Runtime:              runtimeWire,
 		Artifact:             artifact,
 		BuildContractVersion: authority.buildContractVersion,
-		IndexDigest:          authority.indexDigest,
+		IndexDigest:          indexDigest,
 	}, nil
 }
 
@@ -124,17 +124,15 @@ func projectCASObject(digest string, sizeBytes int64, mediaType string, name str
 func runtimeProgramAuthorityFromDeployment(
 	deploymentID pgtype.UUID,
 	runtimeDigest []byte,
-	architecture string,
 	artifactDigest string,
 	artifactSizeBytes int64,
 	artifactMediaType string,
 	buildContractVersion string,
-	indexDigest string,
+	indexDigest []byte,
 ) runtimeProgramAuthority {
 	return runtimeProgramAuthority{
 		deploymentID:         deploymentID,
 		runtimeDigest:        runtimeDigest,
-		architecture:         architecture,
 		artifactDigest:       artifactDigest,
 		artifactSizeBytes:    artifactSizeBytes,
 		artifactMediaType:    artifactMediaType,

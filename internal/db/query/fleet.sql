@@ -98,27 +98,37 @@ SELECT min(runs.queue_origin_at)::timestamptz
 
 -- name: ListFleetBuildDemand :many
 WITH target_group AS (
-    SELECT worker_groups.id, worker_groups.region_id FROM worker_groups
+    SELECT worker_groups.id,
+           worker_groups.region_id,
+           worker_groups.required_cpu_millis,
+           worker_groups.required_memory_bytes,
+           worker_groups.required_workload_disk_bytes,
+           worker_groups.required_scratch_bytes,
+           worker_groups.required_build_executors
+      FROM worker_groups
      WHERE worker_groups.id = sqlc.arg(worker_group_id) AND worker_groups.allows_build
 ), demand AS (
     SELECT 'queued'::text AS demand_state,
-           deployments.build_requested_cpu_millis AS milli_cpu,
-           deployments.build_requested_memory_bytes AS memory_bytes,
-           deployments.build_requested_workload_disk_bytes AS workload_disk_bytes,
-           deployments.build_requested_scratch_bytes AS scratch_bytes,
-           deployments.build_requested_executors::bigint AS build_executors,
+           target_group.required_cpu_millis AS milli_cpu,
+           target_group.required_memory_bytes AS memory_bytes,
+           target_group.required_workload_disk_bytes AS workload_disk_bytes,
+           target_group.required_scratch_bytes AS scratch_bytes,
+           target_group.required_build_executors::bigint AS build_executors,
            count(*)::bigint AS demand_count
       FROM deployments
       JOIN target_group ON target_group.region_id = deployments.build_region_id
      WHERE deployments.status IN ('queued', 'building')
+       AND deployments.build_runtime_digest IS NOT NULL
+       AND deployments.build_standard_toolchain_digest IS NOT NULL
+       AND deployments.build_manager_digest IS NOT NULL
        AND NOT EXISTS (
            SELECT 1 FROM deployment_build_leases active_lease
             WHERE active_lease.deployment_id = deployments.id
               AND active_lease.state IN ('assigned', 'starting', 'running')
        )
-     GROUP BY deployments.build_requested_cpu_millis, deployments.build_requested_memory_bytes,
-              deployments.build_requested_workload_disk_bytes, deployments.build_requested_scratch_bytes,
-              deployments.build_requested_executors
+     GROUP BY target_group.required_cpu_millis, target_group.required_memory_bytes,
+              target_group.required_workload_disk_bytes, target_group.required_scratch_bytes,
+              target_group.required_build_executors
     UNION ALL
     SELECT 'active'::text,
            deployment_build_leases.requested_cpu_millis,
@@ -144,6 +154,9 @@ SELECT min(deployments.created_at)::timestamptz
                     AND worker_groups.region_id = deployments.build_region_id
                     AND worker_groups.allows_build
  WHERE deployments.status IN ('queued', 'building')
+   AND deployments.build_runtime_digest IS NOT NULL
+   AND deployments.build_standard_toolchain_digest IS NOT NULL
+   AND deployments.build_manager_digest IS NOT NULL
    AND NOT EXISTS (
        SELECT 1 FROM deployment_build_leases active_lease
         WHERE active_lease.deployment_id = deployments.id

@@ -108,7 +108,7 @@ describe("canonical deployment contract", async () => {
           index.standardToolchainDigest = "sha256:invalid"
           break
         case "manager_name":
-          index.manager.name = "pnpm"
+          index.manager.name = "yarn"
           break
         case "manager_version":
           index.manager.version = "^1.3.10"
@@ -145,11 +145,17 @@ describe("canonical deployment contract", async () => {
     expect(() => parseProgramIndex(` ${fixture.programIndex.canonical}`)).toThrow(/canonical/)
   })
 
-  test("accepts Bun's binary lockfile", () => {
+  test.each([
+    ["npm", "package-lock.json"],
+    ["npm", "npm-shrinkwrap.json"],
+    ["pnpm", "pnpm-lock.yaml"],
+    ["bun", "bun.lock"],
+  ] as const)("accepts %s with %s", (manager, lockfile) => {
     const index = structuredClone(
       parseProgramIndex(fixture.programIndex.canonical),
     ) as MutableProgramIndex
-    index.submitted.lockfileName = "bun.lockb"
+    index.manager.name = manager
+    index.submitted.lockfileName = lockfile
     expect(() => validateProgramIndex(index as ProgramIndex)).not.toThrow()
   })
 

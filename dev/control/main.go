@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +14,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -29,8 +29,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
-	"github.com/helmrdotdev/helmr/internal/idempotency"
-	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -51,7 +49,6 @@ const (
 	defaultSetupToken          = "dev-setup-token"
 	defaultWorkerTokenSecret   = "helmr-dev-worker-token-secret-32"
 	defaultSecretEncryptionKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-	defaultLookupHMACKeys      = `{"1":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="}`
 	defaultUserID              = "00000000-0000-0000-0000-000000000101"
 )
 
@@ -94,27 +91,6 @@ func main() {
 	if err := migrate(ctx, pool, cfg.resetDatabase); err != nil {
 		log.Error("migrate database", "error", err)
 		os.Exit(1)
-	}
-	hashes, err := keyedhash.FromBase64JSON(cfg.lookupHMACKeys)
-	if err != nil {
-		log.Error("load lookup HMAC keys", "error", err)
-		os.Exit(1)
-	}
-	if cfg.lookupHMACBootstrapVersion > 0 {
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			log.Error("begin lookup HMAC bootstrap", "error", err)
-			os.Exit(1)
-		}
-		if _, err := keyedhash.NewAuthority(hashes).Activate(ctx, tx, cfg.lookupHMACBootstrapVersion); err != nil {
-			_ = tx.Rollback(ctx)
-			log.Error("bootstrap lookup HMAC authority", "error", err)
-			os.Exit(1)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			log.Error("commit lookup HMAC bootstrap", "error", err)
-			os.Exit(1)
-		}
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -220,12 +196,7 @@ func main() {
 			log.Error("telemetry ingester stopped", "error", err)
 		}
 	}()
-	keyring, err := secret.KeyringFromBase64(cfg.secretEncryptionKey, cfg.secretEncryptionKeyOld)
-	if err != nil {
-		log.Error("load secret encryption key", "error", err)
-		os.Exit(1)
-	}
-	secretStore, err := secret.New(ctx, queries, pool, keyring, hashes)
+	secretStore, err := secret.New(queries, pool, cfg.encryptionKey)
 	if err != nil {
 		log.Error("configure secret store", "error", err)
 		os.Exit(1)
@@ -253,7 +224,6 @@ func main() {
 		CAS:                  casStore,
 		BuildPolicy:          buildPolicy,
 		Secrets:              secretStore,
-		Idempotency:          idempotency.New(hashes),
 		SecretDelivery:       secretStore,
 		WorkspaceFencingKeys: workspaceFencingKeys,
 		WorkerTokenSecret:    []byte(cfg.workerTokenSecret),
@@ -320,12 +290,9 @@ type devConfig struct {
 	authSecret                     string
 	setupToken                     string
 	workerTokenSecret              string
-	secretEncryptionKey            string
-	secretEncryptionKeyOld         string
-	lookupHMACKeys                 string
+	encryptionKey                  []byte
 	workspaceFencingKeyFingerprint string
 	workspaceFencingKeys           string
-	lookupHMACBootstrapVersion     int32
 	resetDatabase                  bool
 	seedData                       bool
 }
@@ -348,28 +315,25 @@ func (v devWorkerEnrollmentVerifier) VerifyWorkerEnrollment(ctx context.Context,
 
 func loadConfig() (devConfig, error) {
 	cfg := devConfig{
-		addr:                   env("HELMR_CONTROL_ADDR", defaultAddr),
-		deploymentMode:         env("HELMR_DEPLOYMENT_MODE", "self-hosted"),
-		databaseURL:            os.Getenv("HELMR_DATABASE_URL"),
-		regionID:               strings.TrimSpace(os.Getenv("HELMR_REGION_ID")),
-		defaultRegionID:        strings.TrimSpace(os.Getenv("HELMR_DEFAULT_REGION_ID")),
-		provider:               strings.TrimSpace(os.Getenv("HELMR_PROVIDER")),
-		providerRegion:         strings.TrimSpace(os.Getenv("HELMR_PROVIDER_REGION")),
-		regionDisplayName:      strings.TrimSpace(os.Getenv("HELMR_REGION_DISPLAY_NAME")),
-		workerGroupID:          strings.TrimSpace(os.Getenv("HELMR_WORKER_GROUP_ID")),
-		clickHouseURL:          strings.TrimSpace(os.Getenv("HELMR_CLICKHOUSE_URL")),
-		clickHouseUser:         strings.TrimSpace(os.Getenv("HELMR_CLICKHOUSE_USER")),
-		clickHousePassword:     os.Getenv("HELMR_CLICKHOUSE_PASSWORD"),
-		redisURL:               env("HELMR_REDIS_URL", defaultRedisURL),
-		casDir:                 env("HELMR_DEV_CAS_DIR", filepath.Join(os.TempDir(), "helmr-dev-cas")),
-		buildPolicyPath:        strings.TrimSpace(os.Getenv("HELMR_BUILD_POLICY_PATH")),
-		publicURL:              env("HELMR_PUBLIC_URL", defaultPublicURL),
-		authSecret:             env("HELMR_AUTH_SECRET", defaultAuthSecret),
-		setupToken:             env("HELMR_SETUP_TOKEN", defaultSetupToken),
-		workerTokenSecret:      env("HELMR_WORKER_TOKEN_SIGNING_KEY", defaultWorkerTokenSecret),
-		secretEncryptionKey:    env("HELMR_SECRET_ENCRYPTION_KEY", defaultSecretEncryptionKey),
-		secretEncryptionKeyOld: strings.TrimSpace(os.Getenv("HELMR_SECRET_ENCRYPTION_KEY_OLD")),
-		lookupHMACKeys:         env("HELMR_LOOKUP_HMAC_KEYS", defaultLookupHMACKeys),
+		addr:               env("HELMR_CONTROL_ADDR", defaultAddr),
+		deploymentMode:     env("HELMR_DEPLOYMENT_MODE", "self-hosted"),
+		databaseURL:        os.Getenv("HELMR_DATABASE_URL"),
+		regionID:           strings.TrimSpace(os.Getenv("HELMR_REGION_ID")),
+		defaultRegionID:    strings.TrimSpace(os.Getenv("HELMR_DEFAULT_REGION_ID")),
+		provider:           strings.TrimSpace(os.Getenv("HELMR_PROVIDER")),
+		providerRegion:     strings.TrimSpace(os.Getenv("HELMR_PROVIDER_REGION")),
+		regionDisplayName:  strings.TrimSpace(os.Getenv("HELMR_REGION_DISPLAY_NAME")),
+		workerGroupID:      strings.TrimSpace(os.Getenv("HELMR_WORKER_GROUP_ID")),
+		clickHouseURL:      strings.TrimSpace(os.Getenv("HELMR_CLICKHOUSE_URL")),
+		clickHouseUser:     strings.TrimSpace(os.Getenv("HELMR_CLICKHOUSE_USER")),
+		clickHousePassword: os.Getenv("HELMR_CLICKHOUSE_PASSWORD"),
+		redisURL:           env("HELMR_REDIS_URL", defaultRedisURL),
+		casDir:             env("HELMR_DEV_CAS_DIR", filepath.Join(os.TempDir(), "helmr-dev-cas")),
+		buildPolicyPath:    strings.TrimSpace(os.Getenv("HELMR_BUILD_POLICY_PATH")),
+		publicURL:          env("HELMR_PUBLIC_URL", defaultPublicURL),
+		authSecret:         env("HELMR_AUTH_SECRET", defaultAuthSecret),
+		setupToken:         env("HELMR_SETUP_TOKEN", defaultSetupToken),
+		workerTokenSecret:  env("HELMR_WORKER_TOKEN_SIGNING_KEY", defaultWorkerTokenSecret),
 		workspaceFencingKeyFingerprint: env(
 			"HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT",
 			"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26",
@@ -381,13 +345,18 @@ func loadConfig() (devConfig, error) {
 		resetDatabase: envBool("HELMR_DEV_RESET_DATABASE"),
 		seedData:      envBoolDefault("HELMR_DEV_SEED_DATA", true),
 	}
-	if value := strings.TrimSpace(os.Getenv("HELMR_DEV_LOOKUP_HMAC_BOOTSTRAP_VERSION")); value != "" {
-		version, err := strconv.ParseInt(value, 10, 32)
-		if err != nil || version <= 0 {
-			return cfg, errors.New("HELMR_DEV_LOOKUP_HMAC_BOOTSTRAP_VERSION must be a positive integer")
-		}
-		cfg.lookupHMACBootstrapVersion = int32(version)
+	encodedEncryptionKey := env("ENCRYPTION_KEY", defaultSecretEncryptionKey)
+	encryptionKey, err := base64.StdEncoding.DecodeString(encodedEncryptionKey)
+	if err != nil {
+		return cfg, fmt.Errorf("ENCRYPTION_KEY must be base64: %w", err)
 	}
+	if len(encryptionKey) != 32 {
+		return cfg, fmt.Errorf(
+			"ENCRYPTION_KEY must decode to exactly 32 bytes, got %d",
+			len(encryptionKey),
+		)
+	}
+	cfg.encryptionKey = encryptionKey
 	if cfg.databaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")
 	}

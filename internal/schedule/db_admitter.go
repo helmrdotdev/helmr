@@ -154,15 +154,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		workspace.HasActiveLease || workspace.HasActiveProcess {
 		return run.ErrWorkspaceReservationConflict
 	}
-	if !program.ProgramArchitecture.Valid ||
-		!workspace.WorkspaceArchitecture.Valid ||
-		program.ProgramArchitecture.String != workspace.WorkspaceArchitecture.String {
-		return &AdmissionError{
-			Code:    ErrorArchitectureIncompatible,
-			Message: "Task Program and Workspace architectures are incompatible",
-		}
-	}
-	runtimeDigest := "sha256:" + hex.EncodeToString(program.ProgramRuntimeDigest)
+	runtimeDigest := "sha256:" + hex.EncodeToString(program.BuildRuntimeDigest)
 	if err := a.authority.ResolveRuntime(runtimeDigest); err != nil {
 		return taskAuthorityError("scheduled Task Managed Runtime is unavailable")
 	}

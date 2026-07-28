@@ -22,7 +22,6 @@ locals {
   }
   secret_kms_key_arns = distinct(concat(
     [aws_kms_key.helmr.arn],
-    var.secret_encryption_key_old_kms_key_arns,
     var.clickhouse_password_kms_key_arns
   ))
   dispatcher_secret_kms_key_arns = distinct(concat(
@@ -102,15 +101,11 @@ locals {
     HELMR_WORKER_TOKEN_SIGNING_KEY   = aws_secretsmanager_secret.worker_token_signing_key.arn
     HELMR_SETUP_TOKEN                = aws_secretsmanager_secret.setup_token.arn
     HELMR_AUTH_SECRET                = aws_secretsmanager_secret.auth_secret.arn
-    HELMR_SECRET_ENCRYPTION_KEY      = aws_secretsmanager_secret.secret_encryption_key.arn
-    HELMR_LOOKUP_HMAC_KEYS           = aws_secretsmanager_secret.lookup_hmac_keys.arn
+    ENCRYPTION_KEY                   = aws_secretsmanager_secret.encryption_key.arn
     HELMR_WORKSPACE_FENCING_KEYS     = aws_secretsmanager_secret.workspace_fencing_keys.arn
     HELMR_TOKEN_CREDENTIAL_KEYS      = aws_secretsmanager_secret.token_credential_keys.arn
     HELMR_GITHUB_OAUTH_CLIENT_SECRET = aws_secretsmanager_secret.github_oauth_client_secret.arn
     },
-    var.secret_encryption_key_old_arn != null ? {
-      HELMR_SECRET_ENCRYPTION_KEY_OLD = var.secret_encryption_key_old_arn
-    } : {},
     local.telemetry_secrets,
     local.email_secrets
   )
@@ -134,8 +129,7 @@ locals {
   ])
   reserved_control_environment_keys = toset(keys(local.control_environment_defaults))
   reserved_control_secret_keys      = toset(keys(local.control_secret_defaults))
-  reserved_secret_rotation_keys     = toset(["HELMR_SECRET_ENCRYPTION_KEY_OLD"])
-  reserved_control_keys             = setunion(local.reserved_control_environment_keys, local.reserved_control_secret_keys, local.reserved_email_keys, local.reserved_secret_rotation_keys)
+  reserved_control_keys             = setunion(local.reserved_control_environment_keys, local.reserved_control_secret_keys, local.reserved_email_keys)
   reserved_dispatcher_keys = setunion(toset(keys(local.dispatcher_environment_defaults)), toset(keys(local.dispatcher_secrets)), toset([
     "HELMR_CLICKHOUSE_PASSWORD",
     "HELMR_WORKER_FLEETS",
@@ -1526,15 +1520,8 @@ resource "aws_secretsmanager_secret" "setup_token" {
   tags                    = var.tags
 }
 
-resource "aws_secretsmanager_secret" "secret_encryption_key" {
-  name                    = "${local.name}/control/secret-encryption-key"
-  kms_key_id              = aws_kms_key.helmr.arn
-  recovery_window_in_days = var.secret_recovery_window_in_days
-  tags                    = var.tags
-}
-
-resource "aws_secretsmanager_secret" "lookup_hmac_keys" {
-  name                    = "${local.name}/control/lookup-hmac-keys"
+resource "aws_secretsmanager_secret" "encryption_key" {
+  name                    = "${local.name}/control/encryption-key"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags

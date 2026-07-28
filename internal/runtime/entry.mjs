@@ -4058,8 +4058,7 @@ function analyze(options) {
 function normalizeWorkspaceResources(resources) {
   return Object.freeze({
     milliCpu: normalizeCpu(resources.cpu),
-    memoryMiB: normalizeIecMiB(resources.memory, "memory"),
-    ephemeralDiskMiB: 32768
+    memoryMiB: normalizeIecMiB(resources.memory, "memory")
   });
 }
 function normalizeWorkspaceNetwork(network) {
@@ -4148,8 +4147,7 @@ function compileDefinition(definition, options, queues) {
         manifest: {
           imageBuild: compileImageBuild(definition.image, options),
           resources: normalizeWorkspaceResources(definition.resources),
-          network: normalizeWorkspaceNetwork(definition.network),
-          architecture: options.architecture
+          network: normalizeWorkspaceNetwork(definition.network)
         }
       };
   }

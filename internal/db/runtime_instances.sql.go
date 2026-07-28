@@ -20,21 +20,17 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
        artifacts.digest AS workspace_image_digest,
        artifacts.size_bytes AS workspace_image_size_bytes,
        artifacts.media_type AS workspace_image_media_type,
-       deployment_definitions.workspace_architecture,
        '/workspace'::text AS workspace_mount_path,
        reserved_workspace_versions.id AS base_workspace_version_id,
        reserved_workspace_versions.entry_count AS workspace_entry_count,
        COALESCE(reserved_workspace_artifacts.digest, '') AS workspace_artifact_digest,
        COALESCE(reserved_workspace_artifacts.size_bytes, 0) AS workspace_artifact_size_bytes,
        COALESCE(reserved_workspace_artifacts.media_type, '') AS workspace_artifact_media_type,
+       runtime_identities.runtime_arch AS workspace_architecture,
        program_deployments.id AS program_deployment_authority_id,
-       program_deployments.program_runtime_digest,
-       program_deployments.program_architecture,
+       program_deployments.build_runtime_digest AS program_runtime_digest,
        program_deployments.build_contract_version AS program_build_contract_version,
-       COALESCE(
-           program_deployments.program_receipt #>> '{program,indexDigest}',
-           ''
-       )::text AS program_index_digest,
+       program_deployments.program_index_digest,
        COALESCE(program_artifact.digest, '') AS program_artifact_digest,
        COALESCE(program_artifact.size_bytes, 0) AS program_artifact_size_bytes,
        COALESCE(program_artifact.media_type, '') AS program_artifact_media_type,
@@ -177,18 +173,17 @@ type GetNextRuntimeReconcileTargetRow struct {
 	WorkspaceImageDigest          string             `json:"workspace_image_digest"`
 	WorkspaceImageSizeBytes       int64              `json:"workspace_image_size_bytes"`
 	WorkspaceImageMediaType       string             `json:"workspace_image_media_type"`
-	WorkspaceArchitecture         pgtype.Text        `json:"workspace_architecture"`
 	WorkspaceMountPath            string             `json:"workspace_mount_path"`
 	BaseWorkspaceVersionID        pgtype.UUID        `json:"base_workspace_version_id"`
 	WorkspaceEntryCount           pgtype.Int4        `json:"workspace_entry_count"`
 	WorkspaceArtifactDigest       string             `json:"workspace_artifact_digest"`
 	WorkspaceArtifactSizeBytes    int64              `json:"workspace_artifact_size_bytes"`
 	WorkspaceArtifactMediaType    string             `json:"workspace_artifact_media_type"`
+	WorkspaceArchitecture         string             `json:"workspace_architecture"`
 	ProgramDeploymentAuthorityID  pgtype.UUID        `json:"program_deployment_authority_id"`
 	ProgramRuntimeDigest          []byte             `json:"program_runtime_digest"`
-	ProgramArchitecture           pgtype.Text        `json:"program_architecture"`
 	ProgramBuildContractVersion   pgtype.Text        `json:"program_build_contract_version"`
-	ProgramIndexDigest            string             `json:"program_index_digest"`
+	ProgramIndexDigest            []byte             `json:"program_index_digest"`
 	ProgramArtifactDigest         string             `json:"program_artifact_digest"`
 	ProgramArtifactSizeBytes      int64              `json:"program_artifact_size_bytes"`
 	ProgramArtifactMediaType      string             `json:"program_artifact_media_type"`
@@ -259,16 +254,15 @@ func (q *Queries) GetNextRuntimeReconcileTarget(ctx context.Context, arg GetNext
 		&i.WorkspaceImageDigest,
 		&i.WorkspaceImageSizeBytes,
 		&i.WorkspaceImageMediaType,
-		&i.WorkspaceArchitecture,
 		&i.WorkspaceMountPath,
 		&i.BaseWorkspaceVersionID,
 		&i.WorkspaceEntryCount,
 		&i.WorkspaceArtifactDigest,
 		&i.WorkspaceArtifactSizeBytes,
 		&i.WorkspaceArtifactMediaType,
+		&i.WorkspaceArchitecture,
 		&i.ProgramDeploymentAuthorityID,
 		&i.ProgramRuntimeDigest,
-		&i.ProgramArchitecture,
 		&i.ProgramBuildContractVersion,
 		&i.ProgramIndexDigest,
 		&i.ProgramArtifactDigest,

@@ -60,7 +60,7 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		WorkspaceID:            pgvalue.UUIDString(row.WorkspaceID),
 		RuntimeID:              row.RuntimeIdentityID,
 		WorkspaceImage:         api.CASObject{Digest: row.WorkspaceImageDigest, SizeBytes: row.WorkspaceImageSizeBytes, MediaType: row.WorkspaceImageMediaType},
-		WorkspaceArchitecture:  row.WorkspaceArchitecture.String,
+		WorkspaceArchitecture:  row.WorkspaceArchitecture,
 		RootfsDigest:           row.RootfsDigest,
 		ReservedCpuMillis:      int32(row.ReservedCpuMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
 		ReservedDiskMiB: row.ReservedWorkloadDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
@@ -99,7 +99,7 @@ func populateRuntimePrepareSource(
 	if !row.BaseWorkspaceVersionID.Valid || !row.WorkspaceEntryCount.Valid {
 		return errors.New("runtime reservation has no exact Workspace version")
 	}
-	if !row.WorkspaceArchitecture.Valid {
+	if row.WorkspaceArchitecture == "" {
 		return errors.New("runtime reservation has no Workspace architecture")
 	}
 	source.BaseVersionID = pgvalue.UUIDString(row.BaseWorkspaceVersionID)
@@ -131,7 +131,6 @@ func populateRuntimePrepareSource(
 	}
 	if !row.ProgramDeploymentAuthorityID.Valid ||
 		row.ProgramDeploymentAuthorityID != row.ProgramDeploymentID ||
-		!row.ProgramArchitecture.Valid ||
 		!row.ProgramBuildContractVersion.Valid {
 		return errors.New("runtime reservation Program authority is incomplete")
 	}
@@ -139,14 +138,13 @@ func populateRuntimePrepareSource(
 		runtimeProgramAuthorityFromDeployment(
 			row.ProgramDeploymentID,
 			row.ProgramRuntimeDigest,
-			row.ProgramArchitecture.String,
 			row.ProgramArtifactDigest,
 			row.ProgramArtifactSizeBytes,
 			row.ProgramArtifactMediaType,
 			row.ProgramBuildContractVersion.String,
 			row.ProgramIndexDigest,
 		),
-		row.WorkspaceArchitecture.String,
+		row.WorkspaceArchitecture,
 		policy,
 	)
 	if err != nil {

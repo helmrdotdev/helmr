@@ -130,6 +130,10 @@ func environmentScopedResourcePath(base string, id string, suffix string) string
 }
 
 func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymentRequest, sourceTarPath string) (api.DeploymentResponse, error) {
+	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
+	if input.IdempotencyKey == "" {
+		return api.DeploymentResponse{}, errors.New("deployment idempotency key is required")
+	}
 	file, err := os.Open(sourceTarPath)
 	if err != nil {
 		return api.DeploymentResponse{}, fmt.Errorf("open deployment source archive: %w", err)
@@ -144,9 +148,6 @@ func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymen
 	} else if input.ContentHash != digest {
 		return api.DeploymentResponse{}, fmt.Errorf("deployment source archive digest %s does not match metadata content_hash %s", digest, input.ContentHash)
 	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return api.DeploymentResponse{}, fmt.Errorf("rewind deployment source archive: %w", err)
-	}
 	path, scoped, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/deployments")
 	if err != nil {
 		return api.DeploymentResponse{}, err
@@ -155,20 +156,53 @@ func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymen
 		input.ProjectID = ""
 		input.EnvironmentID = ""
 	}
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return api.DeploymentResponse{}, fmt.Errorf("rewind deployment source archive: %w", err)
+		}
+		response, err := c.createDeploymentAttempt(ctx, path, input, file)
+		if err == nil {
+			return response, nil
+		}
+		lastErr = err
+		var httpErr *HTTPError
+		if errors.As(err, &httpErr) || ctx.Err() != nil {
+			return api.DeploymentResponse{}, err
+		}
+	}
+	return api.DeploymentResponse{}, lastErr
+}
+
+func (c *Client) createDeploymentAttempt(
+	ctx context.Context,
+	path string,
+	input api.CreateDeploymentRequest,
+	source io.Reader,
+) (api.DeploymentResponse, error) {
 	reader, pipeWriter := io.Pipe()
 	multipartWriter := multipart.NewWriter(pipeWriter)
+	writeDone := make(chan error, 1)
 	go func() {
-		err := writeDeploymentMultipart(multipartWriter, input, file)
-		_ = pipeWriter.CloseWithError(err)
+		writeErr := writeDeploymentMultipart(multipartWriter, input, source)
+		_ = pipeWriter.CloseWithError(writeErr)
+		writeDone <- writeErr
 	}()
 	req, err := c.newRequestWithBearer(ctx, http.MethodPost, path, reader, c.bearer)
 	if err != nil {
 		_ = reader.Close()
+		<-writeDone
 		return api.DeploymentResponse{}, err
 	}
 	req.Header.Set("content-type", multipartWriter.FormDataContentType())
 	var response api.DeploymentResponse
 	if err := c.doJSON(req, &response); err != nil {
+		_ = reader.Close()
+		<-writeDone
+		return api.DeploymentResponse{}, err
+	}
+	_ = reader.Close()
+	if err := <-writeDone; err != nil {
 		return api.DeploymentResponse{}, err
 	}
 	return response, nil
