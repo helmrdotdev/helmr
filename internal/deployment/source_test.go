@@ -84,7 +84,7 @@ func TestInspectSourceAcceptsCanonicalCLIArtifact(t *testing.T) {
 	root := t.TempDir()
 	for name, body := range map[string]string{
 		".helmrignore":      "*.secret\n",
-		"helmr.config.ts":   `export default { dirs: ["dist"] }`,
+		"helmr.config.ts":   `export default { dirs: ["tasks"] }`,
 		"ignored.secret":    "not submitted",
 		"package.json":      npmSourcePackageJSON,
 		"package-lock.json": `{"lockfileVersion":3}`,
@@ -164,6 +164,11 @@ func TestInspectSourceRejectsAmbiguousOrInvalidAuthority(t *testing.T) {
 			"package.json": bunSourcePackageJSON,
 			"bun.lock":     "lock",
 			"helmr/output": "reserved",
+		},
+		"nested reserved output": {
+			"package.json":              bunSourcePackageJSON,
+			"bun.lock":                  "lock",
+			"packages/tool/.helmr/file": "reserved",
 		},
 	}
 	for name, files := range tests {
@@ -286,7 +291,7 @@ func TestInspectSourceRejectsNoncanonicalUSTARBytes(t *testing.T) {
 		"trailing bytes": append(append([]byte(nil), validBytes...), 1),
 		"nonzero padding": func() []byte {
 			raw := append([]byte(nil), validBytes...)
-			firstSize := len(`export default { dirs: ["dist"] }`)
+			firstSize := len(`export default { dirs: ["tasks"] }`)
 			raw[tarBlockSize+firstSize] = 1
 			return raw
 		}(),
@@ -390,7 +395,7 @@ func sourceTar(t *testing.T, files map[string]string, extra []tar.Header) *bytes
 		for name, body := range files {
 			copied[name] = body
 		}
-		copied["helmr.config.ts"] = `export default { dirs: ["dist"] }`
+		copied["helmr.config.ts"] = `export default { dirs: ["tasks"] }`
 		files = copied
 	}
 	var body bytes.Buffer

@@ -2,6 +2,8 @@ package deployment
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path"
 	"strings"
@@ -11,7 +13,8 @@ type programVerifier struct {
 	ctx      context.Context
 	artifact *inspectedArtifact
 	index    ProgramIndex
-	locator  DeclarationLocator
+	manifest ProgramBuildManifest
+	receipt  ProgramReceipt
 }
 
 func (verifier *programVerifier) verify() error {
@@ -24,34 +27,67 @@ func (verifier *programVerifier) verify() error {
 	if err := verifier.verifyDeclarations(); err != nil {
 		return err
 	}
+	if err := verifyProgramBuildFiles(
+		verifier.ctx,
+		verifier.artifact,
+		compilerResultFromManifest(verifier.manifest),
+	); err != nil {
+		return err
+	}
 	return verifier.verifyLinks()
 }
 
 func (verifier *programVerifier) readDocuments() error {
-	programRaw, err := verifier.artifact.read(
-		verifier.ctx,
-		"helmr/program.json",
-		maxProgramFileSizeBytes,
-	)
-	if err != nil {
-		return fmt.Errorf("program index: %w", err)
-	}
-	verifier.index, err = ParseProgramIndex(programRaw)
-	if err != nil {
-		return fmt.Errorf("program index: %w", err)
-	}
-
-	declarationsRaw, err := verifier.artifact.read(
+	indexRaw, err := verifier.artifact.read(
 		verifier.ctx,
 		"helmr/declarations.json",
 		maxProgramFileSizeBytes,
 	)
 	if err != nil {
-		return fmt.Errorf("declaration locator: %w", err)
+		return fmt.Errorf("program index: %w", err)
 	}
-	verifier.locator, err = ParseDeclarationLocator(declarationsRaw)
+	manifestRaw, err := verifier.artifact.read(
+		verifier.ctx,
+		"helmr/build-manifest.json",
+		maxProgramFileSizeBytes,
+	)
 	if err != nil {
-		return fmt.Errorf("declaration locator: %w", err)
+		return fmt.Errorf("Program build manifest: %w", err)
+	}
+	receiptRaw, err := verifier.artifact.read(
+		verifier.ctx,
+		"helmr/receipt.json",
+		maxProgramReceiptSizeBytes,
+	)
+	if err != nil {
+		return fmt.Errorf("Program receipt: %w", err)
+	}
+	verifier.manifest, err = ParseProgramBuildManifest(manifestRaw)
+	if err != nil {
+		return fmt.Errorf("Program build manifest: %w", err)
+	}
+	verifier.index, err = ParseProgramIndex(indexRaw)
+	if err != nil {
+		return fmt.Errorf("program index: %w", err)
+	}
+	if verifier.manifest.Config.Digest != verifier.index.ConfigResultDigest {
+		return fmt.Errorf(
+			"Program build manifest config digest does not match Program index",
+		)
+	}
+	indexHash := sha256.Sum256(indexRaw)
+	if verifier.manifest.ProgramIndexDigest !=
+		"sha256:"+hex.EncodeToString(indexHash[:]) {
+		return fmt.Errorf(
+			"Program build manifest index digest does not match Program index",
+		)
+	}
+	verifier.receipt, err = ParseProgramReceipt(receiptRaw)
+	if err != nil {
+		return fmt.Errorf("Program receipt: %w", err)
+	}
+	if err := verifier.verifyReceipt(indexRaw, manifestRaw); err != nil {
+		return err
 	}
 
 	entryRaw, err := verifier.artifact.read(
@@ -69,15 +105,26 @@ func (verifier *programVerifier) readDocuments() error {
 }
 
 func (verifier *programVerifier) verifyLayout() error {
+	generated := make(map[string]struct{}, len(verifier.manifest.Outputs)*2)
+	generatedDirectories := make(map[string]struct{}, len(verifier.manifest.Outputs)*2)
+	for _, output := range verifier.manifest.Outputs {
+		generated[output.ModulePath] = struct{}{}
+		generated[output.SourceMapPath] = struct{}{}
+		moduleDirectory := path.Dir(output.ModulePath)
+		generatedDirectories[moduleDirectory] = struct{}{}
+		generatedDirectories[path.Dir(moduleDirectory)] = struct{}{}
+	}
 	for _, required := range []string{".", "helmr", "node_modules"} {
 		if _, err := verifier.artifact.require(required, artifactEntryDirectory); err != nil {
 			return fmt.Errorf("Program layout: %w", err)
 		}
 	}
 	for _, required := range []string{
+		"helmr/build-manifest.json",
+		"helmr/config.json",
 		"helmr/declarations.json",
 		"helmr/entry.mjs",
-		"helmr/program.json",
+		"helmr/receipt.json",
 	} {
 		if _, err := verifier.artifact.require(required, artifactEntryRegular); err != nil {
 			return fmt.Errorf("Program layout: %w", err)
@@ -86,40 +133,107 @@ func (verifier *programVerifier) verifyLayout() error {
 	for _, entry := range verifier.artifact.ordered {
 		if strings.HasPrefix(entry.Path, "helmr/") {
 			switch entry.Path {
-			case "helmr/declarations.json", "helmr/entry.mjs", "helmr/program.json":
+			case "helmr/build-manifest.json", "helmr/config.json",
+				"helmr/declarations.json", "helmr/entry.mjs",
+				"helmr/receipt.json":
 			default:
 				return fmt.Errorf(
 					"Program Artifact contains unknown Platform-owned path %q",
 					entry.Path,
 				)
 			}
+			continue
 		}
+		if !hasReservedOutputSegment(entry.Path) {
+			continue
+		}
+		if _, exists := generated[entry.Path]; exists &&
+			entry.Kind == artifactEntryRegular {
+			continue
+		}
+		if _, exists := generatedDirectories[entry.Path]; exists &&
+			entry.Kind == artifactEntryDirectory {
+			continue
+		}
+		return fmt.Errorf(
+			"Program Artifact contains orphan generated path %q",
+			entry.Path,
+		)
+	}
+	return nil
+}
+
+func (verifier *programVerifier) verifyReceipt(indexRaw, manifestRaw []byte) error {
+	indexHash := sha256.Sum256(indexRaw)
+	manifestHash := sha256.Sum256(manifestRaw)
+	if verifier.receipt.Architecture != verifier.index.Architecture ||
+		verifier.receipt.Config.EvaluatorAPIVersion != ConfigEvaluatorAPIVersion ||
+		verifier.receipt.Config.ResultDigest != verifier.index.ConfigResultDigest ||
+		verifier.receipt.Compiler.APIVersion != verifier.manifest.Compiler.APIVersion ||
+		verifier.receipt.Compiler.Version != verifier.manifest.Compiler.EsbuildVersion ||
+		verifier.receipt.Compiler.OptionsDigest != verifier.manifest.Execution.OptionsDigest ||
+		verifier.receipt.Program.IndexDigest !=
+			"sha256:"+hex.EncodeToString(indexHash[:]) ||
+		verifier.receipt.Program.ManifestDigest !=
+			"sha256:"+hex.EncodeToString(manifestHash[:]) ||
+		verifier.receipt.Runtime.APIVersion != verifier.index.RuntimeAPIVersion ||
+		verifier.receipt.Runtime.NodeVersion != verifier.manifest.Execution.NodeVersion {
+		return fmt.Errorf("Program receipt does not match embedded Program authority")
+	}
+	if err := verifyProgramBuildFile(
+		verifier.ctx,
+		verifier.artifact,
+		ProgramBuildFile{
+			Digest: verifier.receipt.Config.SourceDigest,
+			Path:   "helmr.config.ts",
+		},
+	); err != nil {
+		return err
+	}
+	if err := verifyProgramBuildFile(
+		verifier.ctx,
+		verifier.artifact,
+		ProgramBuildFile{
+			Digest: verifier.receipt.Lockfile.Digest,
+			Path:   verifier.receipt.Lockfile.Path,
+		},
+	); err != nil {
+		return err
 	}
 	return nil
 }
 
 func (verifier *programVerifier) verifyDeclarations() error {
-	if len(verifier.locator.Declarations) != len(verifier.index.Declarations) {
-		return fmt.Errorf(
-			"declaration locator count %d does not match program index count %d",
-			len(verifier.locator.Declarations),
-			len(verifier.index.Declarations),
-		)
+	locator := DeclarationLocator{
+		FormatVersion: DeclarationLocatorFormatVersion,
+		Declarations:  make([]LocatedDeclaration, 0),
 	}
-	for index, located := range verifier.locator.Declarations {
-		projection := verifier.index.Declarations[index]
-		if located.Kind != projection.Kind ||
-			located.DeclaredID != projection.DeclaredID {
+	for _, declaration := range verifier.index.Declarations {
+		if declaration.Locator == nil {
+			continue
+		}
+		if _, err := verifier.artifact.require(
+			declaration.Locator.ModulePath,
+			artifactEntryRegular,
+		); err != nil {
 			return fmt.Errorf(
-				"declaration locator identity at position %d does not match program index",
-				index,
+				"declaration module %q: %w",
+				declaration.Locator.ModulePath,
+				err,
 			)
 		}
-		if _, err := verifier.artifact.require(located.ModulePath, artifactEntryRegular); err != nil {
-			return fmt.Errorf("declaration locator module %q: %w", located.ModulePath, err)
-		}
+		locator.Declarations = append(locator.Declarations, LocatedDeclaration{
+			DeclaredID: declaration.DeclaredID,
+			ExportName: declaration.Locator.ExportName,
+			Kind:       DeclarationKind(declaration.Kind),
+			ModulePath: declaration.Locator.ModulePath,
+			Slot:       declaration.Locator.Slot,
+		})
 	}
-	return nil
+	return validateProgramBuildLocators(
+		compilerResultFromManifest(verifier.manifest),
+		locator,
+	)
 }
 
 func (verifier *programVerifier) verifyLinks() error {

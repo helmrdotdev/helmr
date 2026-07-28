@@ -100,18 +100,21 @@ describe("declaration analysis", () => {
         exportName: "constructor",
         kind: "task",
         modulePath: "src/tasks.ts",
+        slot: "handler",
       },
       {
         declaredId: "toString",
         exportName: "toString",
         kind: "task",
         modulePath: "src/tasks.ts",
+        slot: "handler",
       },
       {
         declaredId: "service",
         exportName: "service",
         kind: "actor",
         modulePath: "src/actor.ts",
+        slot: "handler",
       },
     ])
     const workspaceDefinition = result.buildPlan.definitions[3]
@@ -226,6 +229,7 @@ describe("declaration analysis", () => {
         exportName: "renamed",
         kind: "task",
         modulePath: "src/a-direct.ts",
+        slot: "handler",
       },
     ])
     expect(result.programDeclarations[0]?.slots).toEqual([
@@ -451,7 +455,7 @@ describe("declaration analysis", () => {
           content: new TextDecoder().decode(program.buildPlanBytes),
         },
         {
-          path: "helmr/declarations.json",
+          path: "helmr/analysis-locators.json",
           content: new TextDecoder().decode(program.declarationLocatorBytes),
         },
         {

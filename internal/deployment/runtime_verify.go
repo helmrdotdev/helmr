@@ -15,11 +15,10 @@ import (
 )
 
 const (
-	runtimeNodePath            = "bin/node"
-	runtimeEntryPath           = "helmr/entry.mjs"
-	runtimeConfigEvaluatorPath = "helmr/config-evaluator.mjs"
-	runtimeLibcPath            = "lib/libc.so.6"
-	runtimeLicensePath         = "share/licenses/node/LICENSE"
+	runtimeNodePath    = "bin/node"
+	runtimeEntryPath   = "helmr/entry.mjs"
+	runtimeLibcPath    = "lib/libc.so.6"
+	runtimeLicensePath = "share/licenses/node/LICENSE"
 )
 
 func VerifyRuntimeArtifact(
@@ -114,14 +113,13 @@ func verifyRuntimeTopology(
 		}
 	}
 	requiredFiles := map[string]uint32{
-		runtimeNodePath:            0755,
-		runtimeEntryPath:           0644,
-		runtimeConfigEvaluatorPath: 0644,
-		PlatformDescriptorPath:     0644,
-		PlatformIntegrityPath:      0644,
-		PlatformConformancePath:    0644,
-		runtimeLibcPath:            0644,
-		runtimeLicensePath:         0644,
+		runtimeNodePath:         0755,
+		runtimeEntryPath:        0644,
+		PlatformDescriptorPath:  0644,
+		PlatformIntegrityPath:   0644,
+		PlatformConformancePath: 0644,
+		runtimeLibcPath:         0644,
+		runtimeLicensePath:      0644,
 	}
 	for required, mode := range requiredFiles {
 		entry, err := artifact.require(required, artifactEntryRegular)
@@ -183,7 +181,6 @@ func verifyRuntimeTopology(
 		object,
 		PlatformArtifactExpectation{
 			AllowedRedirectHosts:    allowedRedirectHosts,
-			ConfigEvaluatorDigest:   descriptor.ConfigEvaluatorDigest,
 			DescriptorSchemaVersion: descriptor.DescriptorSchemaVersion,
 			FixtureSet:              conformance.FixtureSet,
 			IntegrityIdentities:     []string{integrity.Identity},

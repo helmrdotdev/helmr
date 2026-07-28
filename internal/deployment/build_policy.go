@@ -59,12 +59,50 @@ type ManagerPolicy struct {
 }
 
 type RuntimeInputs struct {
-	ConfigEvaluatorDigest string             `json:"configEvaluatorDigest"`
-	Harness               ArtifactDescriptor `json:"harness"`
+	Harness ArtifactDescriptor `json:"harness"`
 }
 
 type ToolchainInputs struct {
-	Base ArtifactDescriptor `json:"base"`
+	Base     ArtifactDescriptor `json:"base"`
+	Compiler CompilerInputs     `json:"compiler"`
+}
+
+type CompilerEntrypoint struct {
+	APIVersion string `json:"apiVersion"`
+	Digest     string `json:"digest"`
+	Entrypoint string `json:"entrypoint"`
+}
+
+type EsbuildInputs struct {
+	APIPackageDigest string `json:"apiPackageDigest"`
+	BinaryDigest     string `json:"binaryDigest"`
+	BinaryPath       string `json:"binaryPath"`
+	PackagePath      string `json:"packagePath"`
+	Version          string `json:"version"`
+}
+
+type CompilerOutputContract struct {
+	Aggregate    string `json:"aggregate"`
+	FinalModules string `json:"finalModules"`
+	SharedChunks bool   `json:"sharedChunks"`
+	SourceMaps   string `json:"sourceMaps"`
+}
+
+type CompilerSourceContract struct {
+	DeclarationExtensions []string `json:"declarationExtensions"`
+	PackageDependencies   string   `json:"packageDependencies"`
+	Semantics             string   `json:"semantics"`
+	WorkspaceDependencies string   `json:"workspaceDependencies"`
+}
+
+type CompilerInputs struct {
+	APIVersion            string                 `json:"apiVersion"`
+	ConfigEvaluator       CompilerEntrypoint     `json:"configEvaluator"`
+	Esbuild               EsbuildInputs          `json:"esbuild"`
+	OptionsContractDigest string                 `json:"optionsContractDigest"`
+	Output                CompilerOutputContract `json:"output"`
+	ProgramCompiler       CompilerEntrypoint     `json:"programCompiler"`
+	Source                CompilerSourceContract `json:"source"`
 }
 
 type BuildPolicyDenies struct {
@@ -95,7 +133,7 @@ type PlatformAcquisitionPolicy struct {
 	FixtureSet              string
 	Manager                 ManagerPolicy
 	Node                    NodePolicy
-	NodeFlag                string
+	NodeFlags               []string
 	Runtime                 RuntimeInputs
 	Toolchain               ToolchainInputs
 }
@@ -228,13 +266,13 @@ func (p *BuildPolicy) PlatformInputs() (RuntimeInputs, ToolchainInputs, error) {
 	return p.document.Runtime, p.document.Toolchain, nil
 }
 
-func (p *BuildPolicy) Node(version string) (VersionDomain, string, error) {
+func (p *BuildPolicy) Node(version string) (VersionDomain, []string, error) {
 	if p == nil {
-		return VersionDomain{}, "", errors.New("build policy is required")
+		return VersionDomain{}, nil, errors.New("build policy is required")
 	}
 	major, minor, patch, ok := parseReleaseVersion(version)
 	if !ok {
-		return VersionDomain{}, "", fmt.Errorf("Node version %q is not an exact release", version)
+		return VersionDomain{}, nil, fmt.Errorf("Node version %q is not an exact release", version)
 	}
 	for _, domain := range p.document.Node.Domains {
 		if major != domain.Major {
@@ -243,13 +281,31 @@ func (p *BuildPolicy) Node(version string) (VersionDomain, string, error) {
 		if compareReleaseVersion(major, minor, patch, domain.Minimum) < 0 {
 			break
 		}
-		flag := NodeNoExperimentalStripTypes
-		if major > 24 || major == 24 && compareReleaseVersion(major, minor, patch, "24.12.0") >= 0 {
-			flag = NodeNoStripTypes
+		flags, err := NodeProgramFlags(version)
+		if err != nil {
+			return VersionDomain{}, nil, err
 		}
-		return domain, flag, nil
+		return domain, flags, nil
 	}
-	return VersionDomain{}, "", fmt.Errorf("Node version %q is outside the build policy domains", version)
+	return VersionDomain{}, nil, fmt.Errorf("Node version %q is outside the build policy domains", version)
+}
+
+func NodeProgramFlags(version string) ([]string, error) {
+	major, minor, patch, ok := parseReleaseVersion(version)
+	if !ok {
+		return nil, fmt.Errorf("Node version %q is not an exact release", version)
+	}
+	if major == 24 &&
+		compareReleaseVersion(major, minor, patch, "24.12.0") >= 0 {
+		return []string{NodeNoStripTypes, "--enable-source-maps"}, nil
+	}
+	if major == 22 || major == 24 {
+		return []string{
+			NodeNoExperimentalStripTypes,
+			"--enable-source-maps",
+		}, nil
+	}
+	return nil, fmt.Errorf("Node version %q has no Program launch contract", version)
 }
 
 func (p *BuildPolicy) Manager(manager PackageManager) (ManagerPolicy, error) {
@@ -286,7 +342,7 @@ func (p *BuildPolicy) Acquisition(
 		p.DeniesSelector(string(manager.Name)+"@"+manager.Version) {
 		return PlatformAcquisitionPolicy{}, errors.New("Platform selector is denied")
 	}
-	_, flag, err := p.Node(nodeVersion)
+	_, flags, err := p.Node(nodeVersion)
 	if err != nil {
 		return PlatformAcquisitionPolicy{}, err
 	}
@@ -299,7 +355,7 @@ func (p *BuildPolicy) Acquisition(
 		FixtureSet:              p.document.FixtureSet,
 		Manager:                 managerPolicy,
 		Node:                    p.document.Node,
-		NodeFlag:                flag,
+		NodeFlags:               flags,
 		Runtime:                 p.document.Runtime,
 		Toolchain:               p.document.Toolchain,
 	}, nil
@@ -340,17 +396,53 @@ func validateBuildPolicyDocument(document buildPolicyDocument) error {
 	if err := validateManagerPolicies(document.Managers); err != nil {
 		return err
 	}
-	if !sha256DigestPattern.MatchString(document.Runtime.ConfigEvaluatorDigest) {
-		return errors.New("build policy Runtime input digest is invalid")
-	}
 	if err := validatePlatformTreeInput(document.Runtime.Harness, "Runtime harness"); err != nil {
 		return err
 	}
 	if err := validatePlatformTreeInput(document.Toolchain.Base, "toolchain base"); err != nil {
 		return err
 	}
+	if err := validateCompilerInputs(document.Toolchain.Compiler); err != nil {
+		return err
+	}
 	if err := validateBuildPolicyDenies(document.Denies); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateCompilerInputs(input CompilerInputs) error {
+	if input.APIVersion != "helmr.compiler.v0" ||
+		input.ConfigEvaluator.APIVersion != ConfigEvaluatorAPIVersion ||
+		input.ConfigEvaluator.Entrypoint != "/nix/helmr/config-evaluator.mjs" ||
+		input.ProgramCompiler.APIVersion != "helmr.compiler.v0" ||
+		input.ProgramCompiler.Entrypoint != "/nix/helmr/program-compiler.mjs" ||
+		input.Esbuild.Version != "0.28.1" ||
+		input.Esbuild.BinaryPath != "/nix/helmr/esbuild" ||
+		input.Esbuild.PackagePath != "/nix/node_modules/esbuild" ||
+		input.Output.Aggregate != "analysis-only" ||
+		input.Output.FinalModules != "independent" ||
+		input.Output.SharedChunks ||
+		input.Output.SourceMaps != "external" ||
+		input.Source.PackageDependencies != "external" ||
+		input.Source.Semantics != "pinned-esbuild" ||
+		input.Source.WorkspaceDependencies != "bundled" ||
+		!slices.Equal(
+			input.Source.DeclarationExtensions,
+			[]string{".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"},
+		) {
+		return errors.New("Compiler inputs do not match the v0 contract")
+	}
+	for label, digest := range map[string]string{
+		"Config Evaluator":          input.ConfigEvaluator.Digest,
+		"esbuild API package":       input.Esbuild.APIPackageDigest,
+		"esbuild binary":            input.Esbuild.BinaryDigest,
+		"Compiler options contract": input.OptionsContractDigest,
+		"Program Compiler":          input.ProgramCompiler.Digest,
+	} {
+		if !sha256DigestPattern.MatchString(digest) {
+			return fmt.Errorf("%s digest is invalid", label)
+		}
 	}
 	return nil
 }

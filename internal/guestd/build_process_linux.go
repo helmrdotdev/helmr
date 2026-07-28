@@ -31,18 +31,20 @@ const (
 )
 
 type buildProcessConfig struct {
-	Aliases     []buildAlias       `json:"aliases"`
-	Command     buildCommand       `json:"command"`
-	Environment []buildEnvironment `json:"environment"`
-	Identity    buildIdentity      `json:"identity"`
-	Manager     string             `json:"manager"`
-	Network     bool               `json:"network"`
-	OutputLimit int                `json:"outputLimit"`
-	ProcessRoot string             `json:"processRoot"`
-	Project     string             `json:"project"`
-	Runtime     string             `json:"runtime"`
-	Supervisor  bool               `json:"supervisor"`
-	Toolchain   string             `json:"toolchain"`
+	Aliases       []buildAlias       `json:"aliases"`
+	Command       buildCommand       `json:"command"`
+	Environment   []buildEnvironment `json:"environment"`
+	Identity      buildIdentity      `json:"identity"`
+	Manager       string             `json:"manager"`
+	Network       bool               `json:"network"`
+	Output        string             `json:"output"`
+	OutputLimit   int                `json:"outputLimit"`
+	ProcessRoot   string             `json:"processRoot"`
+	Project       string             `json:"project"`
+	ReadOnlyCache bool               `json:"readOnlyCache"`
+	Runtime       string             `json:"runtime"`
+	Supervisor    bool               `json:"supervisor"`
+	Toolchain     string             `json:"toolchain"`
 }
 
 type buildAlias struct {
@@ -121,12 +123,14 @@ func prepareBuildProcessRoot(plan buildProcessPlan) (string, error) {
 		{0o755, "dev"},
 		{0o755, "etc"},
 		{0o755, "opt/helmr/manager"},
+		{0o755, "opt/helmr/output"},
 		{0o755, "opt/helmr/program"},
 		{0o755, "opt/helmr/runtime"},
 		{0o755, "nix"},
 		{0o700, "work"},
 		{0o700, "work/cache"},
 		{0o700, "work/home"},
+		{0o700, "work/output"},
 		{0o700, "work/project"},
 		{0o1777, "tmp"},
 	}
@@ -161,7 +165,13 @@ func prepareBuildProcessRoot(plan buildProcessPlan) (string, error) {
 			return "", fmt.Errorf("close build process file %q: %w", relative, err)
 		}
 	}
-	for _, relative := range []string{"work", "work/cache", "work/home", "work/project"} {
+	for _, relative := range []string{
+		"work",
+		"work/cache",
+		"work/home",
+		"work/output",
+		"work/project",
+	} {
 		if err := os.Chown(
 			filepath.Join(root, relative),
 			int(plan.Identity.UID),

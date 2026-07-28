@@ -18,52 +18,48 @@ import (
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
 
-func TestBuildGuestInstallUsesOneNetworkedManagerVM(t *testing.T) {
-	runtime := testRuntimeDescriptor()
-	toolchain, _ := testToolchainForRuntime(t, runtime)
-	manager := testManager(PackageManagerNPM, runtime.Architecture)
-	digest := manager.Tree.Digest
-	source := []byte("x")
-	sourceHash := sha256.Sum256(source)
-	request := BuildInstallRequest{
-		FormatVersion:   BuildGuestFormatVersion,
-		Manager:         buildManagerForTest(manager),
-		Runtime:         buildRuntimeForTest(runtime),
-		Toolchain:       buildToolchainForTest(toolchain),
-		SourceDigest:    "sha256:" + hex.EncodeToString(sourceHash[:]),
-		SourceSizeBytes: int64(len(source)),
-	}
-	response, err := CanonicalBuildInstallResult(BuildInstallResult{
+func TestBuildGuestUsesOneStagedVMAndCutsOffNetworkBeforeContinue(
+	t *testing.T,
+) {
+	request, source := buildGuestRequestForTest(t)
+	fetch, err := CanonicalBuildFetchResult(BuildFetchResult{
 		FormatVersion: BuildGuestFormatVersion,
-		Outcome:       BuildInstallFailed,
+		Outcome:       BuildGuestSucceeded,
+		Logs:          &BuildLogs{ExitStatus: 0},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed, err := CanonicalBuildGuestResult(BuildGuestResult{
+		FormatVersion: BuildGuestFormatVersion,
+		Outcome:       BuildGuestFailed,
 		Logs: &BuildLogs{
-			ExitStatus:   23,
-			StderrBase64: base64.StdEncoding.EncodeToString([]byte("manager stderr")),
-			StdoutBase64: base64.StdEncoding.EncodeToString([]byte("manager stdout")),
+			ExitStatus: 23,
+			StderrBase64: base64.StdEncoding.EncodeToString(
+				[]byte("build stderr"),
+			),
 		},
 		Error: &BuildError{
-			ReasonCode: BuildFailureManagerFailed,
-			Message:    "manager exited unsuccessfully",
+			ReasonCode: BuildFailureDeclarationAnalysis,
+			Message:    "declaration analysis failed",
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	connector := &buildGuestTestConnector{
+	var connector *buildGuestTestConnector
+	connector = &buildGuestTestConnector{
 		handle: func(stream io.ReadWriter, bodyLen uint64) error {
 			body := &io.LimitedReader{R: stream, N: int64(bodyLen)}
-			requestRaw, err := frameio.ReadMessageFrameBounded(
-				body,
-				maxBuildGuestRequestBytes,
-			)
+			requestRaw, err := frameio.ReadMessageFrameBounded(body, 64<<10)
 			if err != nil {
 				return err
 			}
-			actual, err := ParseBuildInstallRequest(requestRaw)
+			actual, err := ParseBuildGuestRequest(requestRaw)
 			if err != nil {
 				return err
 			}
-			if actual.Manager.Artifact.Digest != digest {
+			if actual.Manager.Artifact.Digest != request.Manager.Artifact.Digest {
 				return errors.New("Manager changed")
 			}
 			actualSource, err := io.ReadAll(body)
@@ -73,10 +69,23 @@ func TestBuildGuestInstallUsesOneNetworkedManagerVM(t *testing.T) {
 			if string(actualSource) != string(source) {
 				return errors.New("submitted source changed")
 			}
-			return frameio.WriteMessageFrame(stream, response)
+			if err := frameio.WriteMessageFrame(stream, fetch); err != nil {
+				return err
+			}
+			continueRaw, err := frameio.ReadMessageFrameBounded(stream, 64<<10)
+			if err != nil {
+				return err
+			}
+			if _, err := ParseBuildContinue(continueRaw); err != nil {
+				return err
+			}
+			if !connector.cutoffObserved() {
+				return errors.New("build continued before host network cutoff")
+			}
+			return frameio.WriteMessageFrame(stream, failed)
 		},
 	}
-	_, err = (BuildGuest{Connector: connector}).Install(
+	_, err = (BuildGuest{Connector: connector}).Execute(
 		context.Background(),
 		"run",
 		request,
@@ -87,14 +96,18 @@ func TestBuildGuestInstallUsesOneNetworkedManagerVM(t *testing.T) {
 	)
 	var failure BuildFailure
 	if !errors.As(err, &failure) ||
-		failure.Reason != BuildFailureManagerFailed {
-		t.Fatalf("build install error = %v", err)
+		failure.Reason != BuildFailureDeclarationAnalysis {
+		t.Fatalf("build error = %v", err)
 	}
 	if failure.Logs == nil ||
 		failure.Logs.ExitStatus != 23 ||
-		failure.Logs.StdoutBase64 != base64.StdEncoding.EncodeToString([]byte("manager stdout")) ||
-		failure.Logs.StderrBase64 != base64.StdEncoding.EncodeToString([]byte("manager stderr")) {
-		t.Fatalf("build install failure logs = %+v", failure.Logs)
+		failure.Logs.StderrBase64 != base64.StdEncoding.EncodeToString(
+			[]byte("build stderr"),
+		) {
+		t.Fatalf("build failure logs = %+v", failure.Logs)
+	}
+	if connector.cutoffCount != 1 {
+		t.Fatalf("network cutoff count = %d, want 1", connector.cutoffCount)
 	}
 	vmRequest := connector.request
 	if vmRequest.Networkless ||
@@ -103,7 +116,7 @@ func TestBuildGuestInstallUsesOneNetworkedManagerVM(t *testing.T) {
 		len(vmRequest.Network.Deny) != 0 ||
 		vmRequest.Resources != compute.BuildGuestResources() ||
 		vmRequest.PIDsMax != compute.BuildGuestPIDsMax {
-		t.Fatalf("build install VM request = %+v", vmRequest)
+		t.Fatalf("staged build VM request = %+v", vmRequest)
 	}
 	wantDrives := []string{
 		vm.ManagerDrive,
@@ -111,29 +124,62 @@ func TestBuildGuestInstallUsesOneNetworkedManagerVM(t *testing.T) {
 		vm.ToolchainDrive,
 	}
 	if len(vmRequest.ReadOnlyDrives) != len(wantDrives) {
-		t.Fatalf("build install drives = %+v", vmRequest.ReadOnlyDrives)
+		t.Fatalf("staged build drives = %+v", vmRequest.ReadOnlyDrives)
 	}
 	for index, drive := range vmRequest.ReadOnlyDrives {
 		if drive.ID != wantDrives[index] {
-			t.Fatalf("build install drives = %+v", vmRequest.ReadOnlyDrives)
+			t.Fatalf("staged build drives = %+v", vmRequest.ReadOnlyDrives)
 		}
 	}
 }
 
-func TestBuildGuestInstallNetworkPolicyOverridesManagerFailure(t *testing.T) {
-	runtime := testRuntimeDescriptor()
-	toolchain, _ := testToolchainForRuntime(t, runtime)
-	manager := testManager(PackageManagerNPM, runtime.Architecture)
-	source := []byte("x")
-	sourceHash := sha256.Sum256(source)
-	response, err := CanonicalBuildInstallResult(BuildInstallResult{
+func TestBuildGuestFetchFailureDoesNotInvokeNetworkCutoff(t *testing.T) {
+	request, source := buildGuestRequestForTest(t)
+	fetch, err := CanonicalBuildFetchResult(BuildFetchResult{
 		FormatVersion: BuildGuestFormatVersion,
-		Outcome:       BuildInstallFailed,
-		Logs:          &BuildLogs{ExitStatus: 1},
+		Outcome:       BuildGuestFailed,
+		Logs:          &BuildLogs{ExitStatus: 17},
 		Error: &BuildError{
-			ReasonCode: BuildFailureManagerFailed,
-			Message:    "manager exited unsuccessfully",
+			ReasonCode: BuildFailureDependencyFetch,
+			Message:    "dependency Fetch failed",
 		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connector := &buildGuestTestConnector{
+		handle: func(stream io.ReadWriter, bodyLen uint64) error {
+			if _, err := io.CopyN(io.Discard, stream, int64(bodyLen)); err != nil {
+				return err
+			}
+			return frameio.WriteMessageFrame(stream, fetch)
+		},
+	}
+	_, err = (BuildGuest{Connector: connector}).Execute(
+		context.Background(),
+		"run",
+		request,
+		strings.NewReader(string(source)),
+		&ArtifactSnapshot{content: &artifactSnapshot{}},
+		&ArtifactSnapshot{content: &artifactSnapshot{}},
+		&ArtifactSnapshot{content: &artifactSnapshot{}},
+	)
+	var failure BuildFailure
+	if !errors.As(err, &failure) ||
+		failure.Reason != BuildFailureDependencyFetch {
+		t.Fatalf("build error = %v", err)
+	}
+	if connector.cutoffCount != 0 {
+		t.Fatalf("network cutoff count = %d, want 0", connector.cutoffCount)
+	}
+}
+
+func TestBuildGuestFetchNetworkViolationPreventsContinuation(t *testing.T) {
+	request, source := buildGuestRequestForTest(t)
+	fetch, err := CanonicalBuildFetchResult(BuildFetchResult{
+		FormatVersion: BuildGuestFormatVersion,
+		Outcome:       BuildGuestSucceeded,
+		Logs:          &BuildLogs{ExitStatus: 0},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -144,20 +190,21 @@ func TestBuildGuestInstallNetworkPolicyOverridesManagerFailure(t *testing.T) {
 			if _, err := io.CopyN(io.Discard, stream, int64(bodyLen)); err != nil {
 				return err
 			}
-			return frameio.WriteMessageFrame(stream, response)
+			if err := frameio.WriteMessageFrame(stream, fetch); err != nil {
+				return err
+			}
+			var trailing [1]byte
+			_, err := stream.Read(trailing[:])
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
 		},
 	}
-	_, err = (BuildGuest{Connector: connector}).Install(
+	_, err = (BuildGuest{Connector: connector}).Execute(
 		context.Background(),
 		"run",
-		BuildInstallRequest{
-			FormatVersion:   BuildGuestFormatVersion,
-			Manager:         buildManagerForTest(manager),
-			Runtime:         buildRuntimeForTest(runtime),
-			Toolchain:       buildToolchainForTest(toolchain),
-			SourceDigest:    "sha256:" + hex.EncodeToString(sourceHash[:]),
-			SourceSizeBytes: int64(len(source)),
-		},
+		request,
 		strings.NewReader(string(source)),
 		&ArtifactSnapshot{content: &artifactSnapshot{}},
 		&ArtifactSnapshot{content: &artifactSnapshot{}},
@@ -166,89 +213,51 @@ func TestBuildGuestInstallNetworkPolicyOverridesManagerFailure(t *testing.T) {
 	var failure BuildFailure
 	if !errors.As(err, &failure) ||
 		failure.Reason != BuildFailureNetworkDenied {
-		t.Fatalf("build install error = %v", err)
+		t.Fatalf("build error = %v", err)
+	}
+	if connector.cutoffCount != 1 {
+		t.Fatalf("network cutoff count = %d, want 1", connector.cutoffCount)
 	}
 }
 
-func TestBuildGuestVerifyUsesFreshIsolatedTree(t *testing.T) {
-	runtime := testRuntimeDescriptor()
-	toolchain, _ := testToolchainForRuntime(t, runtime)
-	treeDescriptor := BuildTreeDescriptor{
-		Digest:    "sha256:" + strings.Repeat("3", 64),
-		SizeBytes: squashFSPhysicalAlign,
-	}
-	want := testWorkspaceVerificationResult(t)
-	raw, err := CanonicalVerificationResult(want)
+func TestBuildGuestCutoffFailureIsFatalWorkerError(t *testing.T) {
+	request, source := buildGuestRequestForTest(t)
+	fetch, err := CanonicalBuildFetchResult(BuildFetchResult{
+		FormatVersion: BuildGuestFormatVersion,
+		Outcome:       BuildGuestSucceeded,
+		Logs:          &BuildLogs{ExitStatus: 0},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	cutoffErr := errors.New("tap remains up")
 	connector := &buildGuestTestConnector{
+		cutoffErr: cutoffErr,
 		handle: func(stream io.ReadWriter, bodyLen uint64) error {
-			body := &io.LimitedReader{R: stream, N: int64(bodyLen)}
-			requestRaw, err := frameio.ReadMessageFrameBounded(
-				body,
-				maxBuildGuestRequestBytes,
-			)
-			if err != nil {
+			if _, err := io.CopyN(io.Discard, stream, int64(bodyLen)); err != nil {
 				return err
 			}
-			if body.N != 0 {
-				return errors.New("verification request has trailing data")
-			}
-			request, err := ParseBuildVerificationRequest(requestRaw)
-			if err != nil {
-				return err
-			}
-			if request.Tree != treeDescriptor {
-				return errors.New("verification tree descriptor changed")
-			}
-			return frameio.WriteMessageFrame(stream, raw)
+			return frameio.WriteMessageFrame(stream, fetch)
 		},
 	}
-	result, err := (BuildGuest{Connector: connector}).Verify(
+	_, err = (BuildGuest{Connector: connector}).Execute(
 		context.Background(),
 		"run",
-		BuildVerificationRequest{
-			FormatVersion: BuildGuestFormatVersion,
-			Runtime:       buildRuntimeForTest(runtime),
-			Toolchain:     buildToolchainForTest(toolchain),
-			Tree:          treeDescriptor,
-		},
+		request,
+		strings.NewReader(string(source)),
 		&ArtifactSnapshot{content: &artifactSnapshot{}},
 		&ArtifactSnapshot{content: &artifactSnapshot{}},
-		&BuildTree{
-			content:   &artifactSnapshot{},
-			inspected: &inspectedArtifact{},
-		},
+		&ArtifactSnapshot{content: &artifactSnapshot{}},
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Outcome != VerificationOutcomeSucceeded {
-		t.Fatalf("verification outcome = %q", result.Outcome)
-	}
-	request := connector.request
-	if !request.Networkless ||
-		request.Resources != compute.BuildGuestResources() ||
-		request.PIDsMax != compute.BuildGuestPIDsMax {
-		t.Fatalf("verification VM request = %+v", request)
-	}
-	wantDrives := []string{
-		vm.ManagedRuntimeDrive,
-		vm.ToolchainDrive,
-		vm.BuildTreeDrive,
-	}
-	if len(request.ReadOnlyDrives) != len(wantDrives) {
-		t.Fatalf("verification drives = %+v", request.ReadOnlyDrives)
-	}
-	for index, drive := range request.ReadOnlyDrives {
-		if index >= len(wantDrives) || drive.ID != wantDrives[index] {
-			t.Fatalf("verification drives = %+v", request.ReadOnlyDrives)
-		}
+	var fatal interface{ FatalWorker() bool }
+	if !errors.Is(err, cutoffErr) ||
+		!errors.As(err, &fatal) ||
+		!fatal.FatalWorker() {
+		t.Fatalf("cutoff error = %v", err)
 	}
 }
 
-func TestReadBuildNetworkFailure(t *testing.T) {
+func TestBuildNetworkFailure(t *testing.T) {
 	tests := []struct {
 		name   string
 		status vm.BuildNetworkStatus
@@ -271,13 +280,10 @@ func TestReadBuildNetworkFailure(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			failure, err := readBuildNetworkFailure(
-				buildNetworkTestSession{status: test.status},
+			failure := buildNetworkFailure(
+				test.status,
 				&BuildLogs{ExitStatus: 7},
 			)
-			if err != nil {
-				t.Fatal(err)
-			}
 			if test.reason == "" {
 				if failure != nil {
 					t.Fatalf("unexpected network failure: %+v", failure)
@@ -292,17 +298,19 @@ func TestReadBuildNetworkFailure(t *testing.T) {
 				)
 			}
 			if failure.Logs == nil || failure.Logs.ExitStatus != 7 {
-				t.Fatalf("network failure lost Manager logs: %+v", failure)
+				t.Fatalf("network failure lost Fetch logs: %+v", failure)
 			}
 		})
 	}
 }
 
 type buildGuestTestConnector struct {
-	mu      sync.Mutex
-	request vm.ConnectRequest
-	handle  func(io.ReadWriter, uint64) error
-	network vm.BuildNetworkStatus
+	mu          sync.Mutex
+	request     vm.ConnectRequest
+	handle      func(io.ReadWriter, uint64) error
+	network     vm.BuildNetworkStatus
+	cutoffErr   error
+	cutoffCount int
 }
 
 func (connector *buildGuestTestConnector) Connect(
@@ -314,20 +322,15 @@ func (connector *buildGuestTestConnector) Connect(
 	connector.mu.Unlock()
 	host, guest := net.Pipe()
 	session := &buildGuestTestProtocolSession{
-		host:    host,
-		done:    make(chan error, 1),
-		network: connector.network,
+		connector: connector,
+		host:      host,
+		done:      make(chan error, 1),
 	}
 	go func() {
 		defer guest.Close()
 		header, bodyLen, err := wire.ReadStreamFrameHeader(guest)
-		if err == nil {
-			switch header.Type {
-			case wire.StreamTypeBuildInstall,
-				wire.StreamTypeBuildVerify:
-			default:
-				err = errors.New("unexpected build guest stream type")
-			}
+		if err == nil && header.Type != wire.StreamTypeBuild {
+			err = errors.New("unexpected build guest stream type")
 		}
 		if err == nil {
 			err = connector.handle(guest, bodyLen)
@@ -337,12 +340,18 @@ func (connector *buildGuestTestConnector) Connect(
 	return session, nil
 }
 
+func (connector *buildGuestTestConnector) cutoffObserved() bool {
+	connector.mu.Lock()
+	defer connector.mu.Unlock()
+	return connector.cutoffCount != 0
+}
+
 type buildGuestTestProtocolSession struct {
+	connector *buildGuestTestConnector
 	host      net.Conn
 	done      chan error
 	closeOnce sync.Once
 	closeErr  error
-	network   vm.BuildNetworkStatus
 }
 
 func (session *buildGuestTestProtocolSession) Stream() vm.Stream {
@@ -366,10 +375,15 @@ func (session *buildGuestTestProtocolSession) Close(context.Context) error {
 	return session.closeErr
 }
 
-func (session *buildGuestTestProtocolSession) BuildNetworkStatus(
+func (session *buildGuestTestProtocolSession) CutoffBuildNetwork(
 	context.Context,
-) (vm.BuildNetworkStatus, error) {
-	return session.network, nil
+) (vm.BuildNetworkTransition, error) {
+	session.connector.mu.Lock()
+	defer session.connector.mu.Unlock()
+	session.connector.cutoffCount++
+	return vm.BuildNetworkTransition{
+		Before: session.connector.network,
+	}, session.connector.cutoffErr
 }
 
 type buildGuestTestStream struct {
@@ -380,38 +394,34 @@ func (buildGuestTestStream) CloseWrite() error {
 	return nil
 }
 
-func TestReadBuildNetworkFailureRequiresAccounting(t *testing.T) {
-	if _, err := readBuildNetworkFailure(buildNetworklessTestSession{}, nil); err == nil {
-		t.Fatal("build session without network accounting was accepted")
-	}
-	want := errors.New("counter unavailable")
-	if _, err := readBuildNetworkFailure(
-		buildNetworkTestSession{err: want},
-		nil,
-	); !errors.Is(err, want) {
-		t.Fatalf("network accounting error = %v, want %v", err, want)
-	}
+func buildGuestRequestForTest(
+	t *testing.T,
+) (BuildGuestRequest, []byte) {
+	t.Helper()
+	runtime := testRuntimeDescriptor()
+	toolchain, _ := testToolchainForRuntime(t, runtime)
+	manager := testManager(PackageManagerNPM, runtime.Architecture)
+	source := []byte("x")
+	sourceHash := sha256.Sum256(source)
+	return BuildGuestRequest{
+		FormatVersion:   BuildGuestFormatVersion,
+		Manager:         buildManagerForTest(manager),
+		Runtime:         buildRuntimeForTest(runtime),
+		Toolchain:       buildToolchainForTest(toolchain),
+		LockfileName:    "package-lock.json",
+		SourceDigest:    "sha256:" + hex.EncodeToString(sourceHash[:]),
+		SourceSizeBytes: int64(len(source)),
+	}, source
 }
-
-type buildNetworkTestSession struct {
-	buildNetworklessTestSession
-	status vm.BuildNetworkStatus
-	err    error
-}
-
-func (session buildNetworkTestSession) BuildNetworkStatus(
-	context.Context,
-) (vm.BuildNetworkStatus, error) {
-	return session.status, session.err
-}
-
-type buildNetworklessTestSession struct{}
 
 func testManager(
 	name PackageManagerName,
 	architecture RuntimeArchitecture,
 ) Manager {
 	manager := PackageManager{Name: name, Version: "11.4.2"}
+	if name == PackageManagerPNPM {
+		manager.Version = "11.1.0"
+	}
 	if name == PackageManagerBun {
 		manager.Version = "1.3.10"
 	}
@@ -451,7 +461,9 @@ func buildManagerForTest(manager Manager) BuildManager {
 func buildRuntimeForTest(runtime RuntimeDescriptor) BuildRuntime {
 	return BuildRuntime{
 		Artifact: ArtifactDescriptor{
-			Digest: runtime.Digest, MediaType: runtime.MediaType, SizeBytes: runtime.SizeBytes,
+			Digest:    runtime.Digest,
+			MediaType: runtime.MediaType,
+			SizeBytes: runtime.SizeBytes,
 		},
 		NodeVersion: "24.16.0",
 	}
@@ -484,22 +496,4 @@ func testToolchainForRuntime(
 		t.Fatal(err)
 	}
 	return toolchain, digest
-}
-
-func (buildNetworklessTestSession) Stream() vm.Stream {
-	return nil
-}
-
-func (buildNetworklessTestSession) OpenStream(
-	context.Context,
-) (vm.Stream, error) {
-	return nil, errors.New("unsupported")
-}
-
-func (buildNetworklessTestSession) Wait(context.Context) error {
-	return nil
-}
-
-func (buildNetworklessTestSession) Close(context.Context) error {
-	return nil
 }

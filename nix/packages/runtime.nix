@@ -37,10 +37,6 @@ stdenvNoCC.mkDerivation {
     tree="$TMPDIR/tree"
     install -d -m0755 "$tree/helmr" "$tree/lib"
     install -m0644 ${../../internal/runtime/entry.mjs} "$tree/helmr/entry.mjs"
-    install -m0644 \
-      ${../../internal/runtime/config-evaluator.mjs} \
-      "$tree/helmr/config-evaluator.mjs"
-
     copy_library() {
       name="$1"
       shift
@@ -89,9 +85,8 @@ stdenvNoCC.mkDerivation {
       .
     harness_digest="$(sha256sum "$out/harness.tar" | cut -d' ' -f1)"
     harness_size="$(stat -c %s "$out/harness.tar")"
-    evaluator_digest="$(sha256sum "$tree/helmr/config-evaluator.mjs" | cut -d' ' -f1)"
     printf '%s' \
-      '{"configEvaluatorDigest":"sha256:'"$evaluator_digest"'","harness":{"digest":"sha256:'"$harness_digest"'","mediaType":"application/vnd.helmr.platform-tree.v0+tar","sizeBytes":'"$harness_size"'}}' \
+      '{"digest":"sha256:'"$harness_digest"'","mediaType":"application/vnd.helmr.platform-tree.v0+tar","sizeBytes":'"$harness_size"'}' \
       >"$out/harness.descriptor.json"
   '';
 

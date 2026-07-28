@@ -49,8 +49,8 @@ helmr init
 
 This creates `.helmrignore`, `package.json`, `tsconfig.json`,
 `helmr.config.ts`, and `tasks/hello.ts`. Install the declared dependencies once
-to create the exact lockfile. The starter's build generates JavaScript under
-`dist/tasks`, which `helmr.config.ts` selects for declaration discovery.
+to create the exact lockfile. `helmr.config.ts` selects `tasks` as the source
+declaration boundary; deploy compiles those modules remotely.
 
 ## Deploy Tasks
 

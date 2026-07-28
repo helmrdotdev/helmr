@@ -9,6 +9,9 @@ import (
 	"io"
 	"math"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
 func TestProgramArtifactAcceptsProgram(t *testing.T) {
@@ -24,13 +27,16 @@ func TestProgramArtifactAcceptsProgram(t *testing.T) {
 
 func TestProgramArtifactRejectsContractDivergence(t *testing.T) {
 	tests := map[string]func(*testProgram){
-		"declaration locator": func(program *testProgram) {
+		"Program index": func(program *testProgram) {
 			program.artifact.files["helmr/declarations.json"] = []byte(
 				`{"declarations":[],"formatVersion":0}`,
 			)
 		},
 		"program entry": func(program *testProgram) {
 			program.artifact.files["helmr/entry.mjs"] = []byte("process.exit(0)\n")
+		},
+		"Program receipt": func(program *testProgram) {
+			program.artifact.files["helmr/receipt.json"] = []byte("{}")
 		},
 		"unknown Platform-owned path": func(program *testProgram) {
 			program.artifact.addFile("helmr/modules.json", []byte("{}"), 0o644)
@@ -47,11 +53,11 @@ func TestProgramArtifactRejectsContractDivergence(t *testing.T) {
 	}
 }
 
-func TestProgramArtifactAcceptsLifecycleModifiedLockfile(t *testing.T) {
+func TestProgramArtifactRejectsLifecycleModifiedLockfile(t *testing.T) {
 	program := newTestProgram(t)
 	program.artifact.files["bun.lock"] = []byte("changed by lifecycle")
-	if _, err := verifyProgramArtifact(context.Background(), program.descriptor); err != nil {
-		t.Fatal(err)
+	if _, err := verifyProgramArtifact(context.Background(), program.descriptor); err == nil {
+		t.Fatal("verifyProgramArtifact accepted a changed protected lockfile")
 	}
 }
 
@@ -99,27 +105,6 @@ func TestProgramArtifactAcceptsUnrelatedTypeScriptWithoutSidecars(t *testing.T) 
 	}
 }
 
-func TestProgramArtifactAcceptsTypeScriptDeclarationLocator(t *testing.T) {
-	program := newTestProgram(t)
-	program.artifact.addFile("source.ts", []byte("export const build = {}\n"), 0644)
-	locatorRaw, err := CanonicalDeclarationLocator(DeclarationLocator{
-		FormatVersion: DeclarationLocatorFormatVersion,
-		Declarations: []LocatedDeclaration{{
-			Kind:       DeclarationKindTask,
-			DeclaredID: "build",
-			ModulePath: "source.ts",
-			ExportName: "build",
-		}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	program.artifact.setFile("helmr/declarations.json", locatorRaw)
-	if _, err := verifyProgramArtifact(context.Background(), program.descriptor); err != nil {
-		t.Fatal(err)
-	}
-}
-
 type testProgram struct {
 	descriptor artifactInput
 	artifact   *memoryArtifact
@@ -128,52 +113,219 @@ type testProgram struct {
 func newTestProgram(t *testing.T) *testProgram {
 	t.Helper()
 	lockfile := []byte("lockfileVersion = 1\n")
+	configSourceRaw := []byte(
+		`import { defineConfig } from "@helmr/sdk"; export default defineConfig({ dirs: ["tasks"] });`,
+	)
+	configRaw := []byte(
+		`{"dirs":["tasks"],"ignorePatterns":[]}`,
+	)
+	sourcePath := "tasks/build.ts"
+	sourceRaw := []byte("export const build = task({ id: \"build\" })\n")
+	modulePath := generatedDeclarationModulePath(sourcePath)
+	moduleRaw := []byte("export const build = {}\n")
+	sourceMapRaw, err := jsoncanon.Transform([]byte(
+		`{"mappings":"AAAA","names":[],"sources":["file:///opt/helmr/program/tasks/build.ts"],"version":3}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
 	programRaw, err := CanonicalProgramIndex(ProgramIndex{
-		Architecture:         ArchitectureX8664,
-		BuildContractVersion: ProgramBuildContractVersion,
-		Declarations: []ProgramDeclaration{{
-			Kind:       DeclarationKindTask,
+		Architecture:       ArchitectureX8664,
+		ConfigResultDigest: testDigest(string(configRaw)),
+		Declarations: []ProgramIndexDeclaration{{
+			Kind:       DefinitionKindTask,
 			DeclaredID: "build",
-			Slots:      []DeclarationSlot{DeclarationSlotHandler},
+			Task: &TaskManifest{
+				Payload: SchemaManifest{Kind: SchemaKindNone},
+				Run: RunManifest{
+					Queue:         "task/build",
+					MaxDurationMs: 900000,
+					Retry:         RetryManifest{Enabled: false},
+				},
+			},
+			Locator: &ProgramLocator{
+				ExportName: "build",
+				ModulePath: modulePath,
+				Slot:       DeclarationSlotHandler,
+			},
 		}},
 		FormatVersion: ProgramIndexFormatVersion,
-		Manager: ProgramManager{
-			Digest:  testDigest("Manager"),
-			Name:    PackageManagerBun,
-			Version: "1.3.10",
-		},
-		RuntimeAPIVersion: RuntimeAPIVersion,
-		RuntimeDigest:     testDigest("runtime"),
-		ToolchainDigest:   testDigest("toolchain"),
-		Submitted: ProgramSubmittedSource{
-			LockfileDigest: digestBytes(lockfile),
-			LockfileName:   "bun.lock",
-			SourceDigest:   testDigest("submitted source"),
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	locatorRaw, err := CanonicalDeclarationLocator(DeclarationLocator{
-		FormatVersion: DeclarationLocatorFormatVersion,
-		Declarations: []LocatedDeclaration{{
-			Kind:       DeclarationKindTask,
-			DeclaredID: "build",
-			ModulePath: "build.js",
-			ExportName: "build",
+		Queues: []QueueInput{{
+			Name: "task/build",
 		}},
+		RuntimeAPIVersion: RuntimeAPIVersion,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-
+	compiler := testCompilerInputs()
+	optionsDigest, err := compilerOptionsDigest(compiler, "24.16.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestRaw, err := canonicalProgramBuildManifest(ProgramBuildManifest{
+		AggregateResultDigest: testDigest("aggregate"),
+		Compiler: ProgramCompilerContract{
+			APIVersion:            compiler.APIVersion,
+			EsbuildVersion:        compiler.Esbuild.Version,
+			OptionsContractDigest: compiler.OptionsContractDigest,
+			Output:                compiler.Output,
+			Source:                compiler.Source,
+		},
+		Config: ProgramBuildFile{
+			Digest: testDigest(string(configRaw)),
+			Path:   "helmr/config.json",
+		},
+		DiscoveryCandidates: []string{sourcePath},
+		Execution: ProgramBuildExecution{
+			NodeVersion:   "24.16.0",
+			OptionsDigest: optionsDigest,
+		},
+		ExternalEdges: []ProgramBuildExternalEdge{},
+		Inputs: []ProgramBuildFile{{
+			Digest: testDigest(string(sourceRaw)),
+			Path:   sourcePath,
+		}},
+		LocalPackages: []ProgramBuildLocalPackage{},
+		Outputs: []ProgramBuildOutput{{
+			ModuleDigest:    testDigest(string(moduleRaw)),
+			ModulePath:      modulePath,
+			SourceMapDigest: testDigest(string(sourceMapRaw)),
+			SourceMapPath:   modulePath + ".map",
+			SourcePath:      sourcePath,
+		}},
+		ProgramIndexDigest: testDigest(string(programRaw)),
+		Selections: []ProgramBuildSelection{{
+			DeclaredID: "build",
+			ExportName: "build",
+			Kind:       DeclarationKindTask,
+			SourcePath: sourcePath,
+			Slot:       DeclarationSlotHandler,
+		}},
+		TSConfigs: []ProgramBuildFile{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestHash := sha256.Sum256(manifestRaw)
+	receipt, err := NewProgramReceipt(
+		ProgramIndex{
+			Architecture:       ArchitectureX8664,
+			ConfigResultDigest: testDigest(string(configRaw)),
+			Declarations: []ProgramIndexDeclaration{{
+				Kind:       DefinitionKindTask,
+				DeclaredID: "build",
+				Task: &TaskManifest{
+					Payload: SchemaManifest{Kind: SchemaKindNone},
+					Run: RunManifest{
+						Queue:         "task/build",
+						MaxDurationMs: 900000,
+						Retry:         RetryManifest{Enabled: false},
+					},
+				},
+				Locator: &ProgramLocator{
+					ExportName: "build",
+					ModulePath: modulePath,
+					Slot:       DeclarationSlotHandler,
+				},
+			}},
+			FormatVersion:     ProgramIndexFormatVersion,
+			Queues:            []QueueInput{{Name: "task/build"}},
+			RuntimeAPIVersion: RuntimeAPIVersion,
+		},
+		BuildProvenance{
+			Architecture:         ArchitectureX8664,
+			BuildContractVersion: ProgramBuildContractVersion,
+			Config: ProgramConfig{
+				EvaluatorAPIVersion: ConfigEvaluatorAPIVersion,
+				SourceDigest:        testDigest(string(configSourceRaw)),
+				ResultDigest:        testDigest(string(configRaw)),
+			},
+			Manager: ProgramManager{
+				Digest:  testDigest("Manager"),
+				Name:    PackageManagerBun,
+				Version: "1.3.10",
+			},
+			RuntimeDigest:   testDigest("Runtime"),
+			ToolchainDigest: testDigest("Toolchain"),
+			Submitted: ProgramSubmittedSource{
+				LockfileDigest: testDigest(string(lockfile)),
+				LockfileName:   "bun.lock",
+				SourceDigest:   testDigest("Source"),
+			},
+		},
+		compiler,
+		"24.16.0",
+		ProgramBuildManifest{
+			AggregateResultDigest: testDigest("aggregate"),
+			Compiler: ProgramCompilerContract{
+				APIVersion:            compiler.APIVersion,
+				EsbuildVersion:        compiler.Esbuild.Version,
+				OptionsContractDigest: compiler.OptionsContractDigest,
+				Output:                compiler.Output,
+				Source:                compiler.Source,
+			},
+			Config: ProgramBuildFile{
+				Digest: testDigest(string(configRaw)),
+				Path:   "helmr/config.json",
+			},
+			DiscoveryCandidates: []string{sourcePath},
+			Execution: ProgramBuildExecution{
+				NodeVersion:   "24.16.0",
+				OptionsDigest: optionsDigest,
+			},
+			ExternalEdges: []ProgramBuildExternalEdge{},
+			Inputs: []ProgramBuildFile{{
+				Digest: testDigest(string(sourceRaw)),
+				Path:   sourcePath,
+			}},
+			LocalPackages: []ProgramBuildLocalPackage{},
+			Outputs: []ProgramBuildOutput{{
+				ModuleDigest:    testDigest(string(moduleRaw)),
+				ModulePath:      modulePath,
+				SourceMapDigest: testDigest(string(sourceMapRaw)),
+				SourceMapPath:   modulePath + ".map",
+				SourcePath:      sourcePath,
+			}},
+			ProgramIndexDigest: testDigest(string(programRaw)),
+			Selections: []ProgramBuildSelection{{
+				DeclaredID: "build",
+				ExportName: "build",
+				Kind:       DeclarationKindTask,
+				SourcePath: sourcePath,
+				Slot:       DeclarationSlotHandler,
+			}},
+			TSConfigs: []ProgramBuildFile{},
+		},
+		"sha256:"+hex.EncodeToString(manifestHash[:]),
+		ProgramReceiptSource{
+			Digest:    testDigest("Source"),
+			MediaType: api.DeploymentSourceArtifactMediaType,
+			SizeBytes: 1,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptRaw, err := CanonicalProgramReceipt(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
 	artifact := newMemoryArtifact()
 	artifact.addDirectory("helmr")
 	artifact.addDirectory("node_modules")
-	artifact.addFile("helmr/program.json", programRaw, 0644)
-	artifact.addFile("helmr/declarations.json", locatorRaw, 0644)
+	artifact.addDirectory("tasks")
+	artifact.addDirectory("tasks/.helmr")
+	artifact.addDirectory("tasks/.helmr/modules")
+	artifact.addFile("helmr/build-manifest.json", manifestRaw, 0644)
+	artifact.addFile("helmr/config.json", configRaw, 0644)
+	artifact.addFile("helmr/declarations.json", programRaw, 0644)
 	artifact.addFile("helmr/entry.mjs", []byte(ProgramEntry), 0644)
-	artifact.addFile("build.js", []byte("export const build = {}\n"), 0644)
+	artifact.addFile("helmr/receipt.json", receiptRaw, 0644)
+	artifact.addFile(modulePath, moduleRaw, 0644)
+	artifact.addFile(modulePath+".map", sourceMapRaw, 0644)
+	artifact.addFile(sourcePath, sourceRaw, 0644)
+	artifact.addFile("helmr.config.ts", configSourceRaw, 0644)
 	artifact.addFile("package.json", []byte(`{"packageManager":"bun@1.3.10"}`), 0644)
 	artifact.addFile("bun.lock", lockfile, 0644)
 
@@ -292,13 +444,6 @@ func (artifact *memoryArtifact) addLink(path, target string) {
 		Inode:       inode,
 		InodeNumber: uint32(inode),
 		LinkCount:   1,
-	})
-}
-
-func (artifact *memoryArtifact) setFile(path string, raw []byte) {
-	artifact.files[path] = append([]byte(nil), raw...)
-	artifact.mutate(path, func(entry *artifactEntry) {
-		entry.SizeBytes = int64(len(raw))
 	})
 }
 

@@ -3,7 +3,6 @@ import {
   type HelmrConfig,
 } from "@helmr/sdk/internal"
 import { lstat } from "node:fs/promises"
-import { resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
 export class MissingConfigError extends Error {
@@ -13,8 +12,7 @@ export class MissingConfigError extends Error {
   }
 }
 
-export async function loadConfig(root: string): Promise<HelmrConfig> {
-  const path = resolve(root, "helmr.config.ts")
+export async function loadConfig(path: string): Promise<HelmrConfig> {
   let metadata
   try {
     metadata = await lstat(path)
@@ -44,4 +42,28 @@ export async function loadConfig(root: string): Promise<HelmrConfig> {
       cause: error,
     })
   }
+}
+
+export function inspectCanonicalConfig(value: unknown): HelmrConfig {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Object.prototype
+  ) {
+    throw new Error("canonical config must be an ordinary object")
+  }
+  const record = value as Record<string, unknown>
+  const keys = Object.keys(record).sort()
+  if (
+    keys.length !== 2 ||
+    keys[0] !== "dirs" ||
+    keys[1] !== "ignorePatterns"
+  ) {
+    throw new Error("canonical config does not match the build contract")
+  }
+  return inspectConfig({
+    dirs: record["dirs"],
+    ignorePatterns: record["ignorePatterns"],
+  })
 }

@@ -295,14 +295,16 @@ func testAnalysisDeclarationLocator() DeclarationLocator {
 			{
 				Kind:       DeclarationKindTask,
 				DeclaredID: "build",
-				ModulePath: "src/build.ts",
+				ModulePath: generatedTestModule("a"),
 				ExportName: "build",
+				Slot:       DeclarationSlotHandler,
 			},
 			{
 				Kind:       DeclarationKindActor,
 				DeclaredID: "chat",
-				ModulePath: "src/chat.ts",
+				ModulePath: generatedTestModule("b"),
 				ExportName: "chat",
+				Slot:       DeclarationSlotHandler,
 			},
 		},
 	}

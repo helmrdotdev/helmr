@@ -113,11 +113,11 @@ func platformReleaseFixture(t *testing.T) (string, platformReleaseManifest) {
 		SizeBytes: int64(len(toolchainBase)),
 	}
 	policy, err := ComposeBuildPolicy(
-		RuntimeInputs{
-			ConfigEvaluatorDigest: testDigest("config evaluator"),
-			Harness:               runtimeDescriptor,
+		RuntimeInputs{Harness: runtimeDescriptor},
+		ToolchainInputs{
+			Base:     toolchainDescriptor,
+			Compiler: testCompilerInputs(),
 		},
-		ToolchainInputs{Base: toolchainDescriptor},
 		[]byte("node release keyring"),
 		[]string{"00112233445566778899AABBCCDDEEFF00112233"},
 	)

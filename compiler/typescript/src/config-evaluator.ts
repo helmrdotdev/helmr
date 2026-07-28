@@ -1,16 +1,35 @@
 import { canonicalizeJsonValue, type JsonValue } from "@helmr/sdk/internal"
 import { createWriteStream } from "node:fs"
+import { compileConfig } from "./bundle"
 import { loadConfig } from "./config"
 
 const maxConfigBytes = 1 << 20
 
 async function main(): Promise<void> {
-  if (process.argv.length !== 3 || process.argv[2] === undefined) {
-    throw new Error("Config Evaluator requires exactly one Program root")
+  if (
+    process.argv.length !== 6 ||
+    process.argv[2] === undefined ||
+    process.argv[3] === undefined ||
+    process.argv[4] === undefined ||
+    !isManager(process.argv[5])
+  ) {
+    throw new Error(
+      "Config Evaluator requires a Program root, exact Node version, output root, and Manager family",
+    )
   }
-  const body = canonicalizeJsonValue(
-    await loadConfig(process.argv[2]) as unknown as JsonValue,
-  )
+  const compiled = await compileConfig({
+    manager: process.argv[5],
+    nodeVersion: process.argv[3],
+    outputRoot: process.argv[4],
+    root: process.argv[2],
+  })
+  let config
+  try {
+    config = await loadConfig(compiled.path)
+  } finally {
+    await compiled.cleanup()
+  }
+  const body = canonicalizeJsonValue(config as unknown as JsonValue)
   if (body.byteLength === 0 || body.byteLength > maxConfigBytes) {
     throw new Error("normalized config size is invalid")
   }
@@ -27,6 +46,10 @@ async function main(): Promise<void> {
     output.once("error", reject)
     output.end(frame, resolve)
   })
+}
+
+function isManager(value: unknown): value is "bun" | "npm" | "pnpm" {
+  return value === "bun" || value === "npm" || value === "pnpm"
 }
 
 await main()

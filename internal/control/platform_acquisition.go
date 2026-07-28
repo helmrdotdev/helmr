@@ -380,12 +380,13 @@ func (s *Server) validatePlatformCandidateObjects(
 		}
 		files = append(files, candidateFile{object: candidate, file: file})
 	}
-	if _, err := deployment.InspectPlatformArtifact(
+	runtime, err := deployment.InspectPlatformArtifact(
 		ctx,
 		files[0].file,
 		platformDescriptor(files[0].object),
 		expectations.Runtime,
-	); err != nil {
+	)
+	if err != nil {
 		return conflict(fmt.Errorf("validate Runtime candidate: %w", err))
 	}
 	if _, err := deployment.InspectPlatformArtifact(
@@ -396,13 +397,39 @@ func (s *Server) validatePlatformCandidateObjects(
 	); err != nil {
 		return conflict(fmt.Errorf("validate Manager candidate: %w", err))
 	}
-	if _, err := deployment.InspectPlatformArtifact(
+	toolchain, err := deployment.InspectPlatformArtifact(
 		ctx,
 		files[2].file,
 		platformDescriptor(files[2].object),
 		expectations.Toolchain,
-	); err != nil {
+	)
+	if err != nil {
 		return conflict(fmt.Errorf("validate toolchain candidate: %w", err))
+	}
+	if err := validatePlatformCandidateBinding(
+		runtime,
+		toolchain,
+		files[0].object.Digest,
+	); err != nil {
+		return conflict(err)
+	}
+	return nil
+}
+
+func validatePlatformCandidateBinding(
+	runtime deployment.InspectedPlatformArtifact,
+	toolchain deployment.InspectedPlatformArtifact,
+	runtimeDigest string,
+) error {
+	if runtime.Runtime == nil ||
+		toolchain.Toolchain == nil ||
+		toolchain.Toolchain.RuntimeDigest != runtimeDigest ||
+		toolchain.Toolchain.NodeVersion != runtime.Runtime.NodeVersion ||
+		toolchain.Toolchain.NodeModuleABI != runtime.Runtime.NodeModuleABI ||
+		toolchain.Toolchain.NodeSource != runtime.Runtime.Source {
+		return errors.New(
+			"Runtime and toolchain candidates do not share one Node authority",
+		)
 	}
 	return nil
 }

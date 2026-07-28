@@ -138,7 +138,7 @@ export const reviewPr = task({
 import { defineConfig } from "@helmr/sdk"
 
 export default defineConfig({
-  dirs: ["./dist/tasks"],
+  dirs: ["tasks"],
 })
 ```
 

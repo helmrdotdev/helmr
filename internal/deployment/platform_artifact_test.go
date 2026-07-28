@@ -119,3 +119,101 @@ func TestValidateRetainedSourceEvidenceBindsSourceDescriptor(t *testing.T) {
 		t.Fatal("mismatched retained source size was accepted")
 	}
 }
+
+func TestVerifyToolchainCompilerBindsExecutableInputs(t *testing.T) {
+	memory := newMemoryArtifact()
+	for _, path := range []string{
+		"helmr",
+		"include",
+		"include/node",
+		"node_modules",
+		"node_modules/@esbuild",
+		"node_modules/@esbuild/linux-x64",
+		"node_modules/@esbuild/linux-x64/bin",
+		"node_modules/esbuild",
+		"node_modules/esbuild/lib",
+	} {
+		memory.addDirectory(path)
+	}
+	config := []byte("config")
+	program := []byte("program")
+	binary := []byte("binary")
+	memory.addFile("helmr/config-evaluator.mjs", config, 0644)
+	memory.addFile("helmr/program-compiler.mjs", program, 0644)
+	memory.addLink(
+		"helmr/esbuild",
+		"../node_modules/@esbuild/linux-x64/bin/esbuild",
+	)
+	memory.addFile(
+		"node_modules/@esbuild/linux-x64/bin/esbuild",
+		binary,
+		0755,
+	)
+	memory.addFile("node_modules/esbuild/lib/main.js", []byte("api"), 0644)
+	memory.addFile("node_modules/esbuild/package.json", []byte("{}"), 0644)
+	memory.addFile("include/node/node.h", []byte("header"), 0644)
+	artifact, err := inspectArtifact(
+		context.Background(),
+		memory,
+		toolchainArtifact,
+		maxToolArtifactBytes,
+		squashFSPhysicalAlign,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler := testCompilerInputs()
+	compiler.ConfigEvaluator.Digest = digestBytes(config)
+	compiler.ProgramCompiler.Digest = digestBytes(program)
+	compiler.Esbuild.BinaryDigest = digestBytes(binary)
+	compiler.Esbuild.APIPackageDigest, err = compilerPackageDigest(
+		context.Background(),
+		artifact,
+		"node_modules/esbuild",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headersDigest, err := artifactDirectoryDigest(
+		context.Background(),
+		artifact,
+		"include/node",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor := ToolchainArtifactDescriptor{
+		Compiler:          compiler,
+		NodeHeadersDigest: headersDigest,
+	}
+	descriptorRaw, err := CanonicalPlatformDocument(descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	memory.addFile(PlatformDescriptorPath, descriptorRaw, 0644)
+	artifact, err = inspectArtifact(
+		context.Background(),
+		memory,
+		toolchainArtifact,
+		maxToolArtifactBytes,
+		squashFSPhysicalAlign,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyToolchainCompiler(
+		context.Background(),
+		artifact,
+		compiler,
+	); err != nil {
+		t.Fatal(err)
+	}
+	memory.files["helmr/program-compiler.mjs"] = []byte("tampered")
+	if err := verifyToolchainCompiler(
+		context.Background(),
+		artifact,
+		compiler,
+	); err == nil {
+		t.Fatal("tampered Program Compiler was accepted")
+	}
+}

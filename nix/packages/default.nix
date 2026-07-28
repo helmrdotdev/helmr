@@ -13,7 +13,8 @@ let
   pkgsBun = import nixpkgs-bun { inherit system; };
   squashfsTools = pkgs.callPackage ./squashfs-tools.nix { };
   runtimeHarness = pkgs.callPackage ./runtime.nix { };
-  toolchainBase = pkgs.callPackage ./toolchain.nix { };
+  compiler = pkgs.callPackage ./compiler.nix { };
+  toolchainBase = pkgs.callPackage ./toolchain.nix { inherit compiler; };
   nodeReleaseKeys = pkgs.callPackage ./node-keys.nix { };
   buildGo126Module = pkgs.callPackage "${nixpkgs}/pkgs/build-support/go/module.nix" {
     go = pkgs.go_1_26;
@@ -64,7 +65,7 @@ in
   apko = if pkgsUnstable ? apko then pkgsUnstable.apko else pkgs.apko;
 }
 // lib.optionalAttrs (system == "x86_64-linux") {
-  inherit runtimeHarness toolchainBase nodeReleaseKeys;
+  inherit compiler runtimeHarness toolchainBase nodeReleaseKeys;
   platformRelease =
     let
       policyTool = buildGo126Module {

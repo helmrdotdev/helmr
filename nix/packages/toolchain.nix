@@ -9,8 +9,10 @@
   gcc,
   gnumake,
   gnutar,
+  jq,
   pkg-config,
   python3,
+  compiler,
 }:
 
 let
@@ -45,6 +47,7 @@ stdenvNoCC.mkDerivation {
   nativeBuildInputs = [
     coreutils
     gnutar
+    jq
   ];
 
   buildCommand = ''
@@ -56,6 +59,7 @@ stdenvNoCC.mkDerivation {
       cp -a "$source" "$tree/store/$(basename "$source")"
     done <${closure}/store-paths
     ln -s "store/$(basename ${environment})/bin" "$tree/bin"
+    cp -a ${compiler}/tree/. "$tree/"
 
     find "$tree" -type d -exec touch -h -d '@0' {} +
     find "$tree" -type f -exec touch -h -d '@0' {} +
@@ -76,9 +80,19 @@ stdenvNoCC.mkDerivation {
       .
     digest="$(sha256sum "$out/base.tar" | cut -d' ' -f1)"
     size="$(stat -c %s "$out/base.tar")"
-    printf '%s' \
-      '{"digest":"sha256:'"$digest"'","mediaType":"application/vnd.helmr.platform-tree.v0+tar","sizeBytes":'"$size"'}' \
-      >"$out/base.descriptor.json"
+    jq -cS \
+      --arg digest "sha256:$digest" \
+      --arg mediaType "application/vnd.helmr.platform-tree.v0+tar" \
+      --argjson sizeBytes "$size" \
+      --slurpfile compiler ${compiler}/compiler.descriptor.json \
+      '{
+        base:{
+          digest:$digest,
+          mediaType:$mediaType,
+          sizeBytes:$sizeBytes
+        },
+        compiler:$compiler[0]
+      }' >"$out/base.descriptor.json"
   '';
 
   meta = {

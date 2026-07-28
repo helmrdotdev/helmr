@@ -73,8 +73,8 @@ func writeStarterProject(root string, force bool) error {
 const starterHelmrConfig = `import { defineConfig } from "@helmr/sdk"
 
 export default defineConfig({
-  dirs: ["./dist/tasks"],
-  ignorePatterns: ["**/*.test.js"],
+  dirs: ["tasks"],
+  ignorePatterns: ["**/*.test.ts"],
 })
 `
 
@@ -100,14 +100,8 @@ func starterPackageJSON() string {
       "onFail": "error"
     }
   },
-  "scripts": {
-    "build": "tsc -p tsconfig.json"
-  },
   "dependencies": {
     "@helmr/sdk": ` + strconv.Quote(starterSDKVersion()) + `
-  },
-  "devDependencies": {
-    "typescript": "5.9.3"
   }
 }
 `
@@ -148,11 +142,9 @@ const starterTSConfig = `{
     "target": "ES2024",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "rootDir": ".",
-    "outDir": "dist",
+    "noEmit": true,
     "strict": true,
     "skipLibCheck": true,
-    "sourceMap": true,
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true
   },

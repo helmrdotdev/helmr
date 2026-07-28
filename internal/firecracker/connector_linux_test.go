@@ -105,7 +105,7 @@ func TestScratchUsableFloorMatchesBuildProfiles(t *testing.T) {
 		kernelArgs string
 		want       uint64
 	}{
-		{name: "full source install", kernelArgs: buildInstallKernelArgs, want: 19 * 1024 * 1024 * 1024},
+		{name: "staged build", kernelArgs: buildKernelArgs, want: 19 * 1024 * 1024 * 1024},
 		{name: "runtime", kernelArgs: defaultKernelArgs},
 	}
 	for _, test := range tests {
@@ -1423,7 +1423,7 @@ func TestBuildGuestProfilesUseExactDriveSets(t *testing.T) {
 		kernelArgs  string
 		networkless bool
 	}{
-		"install": {
+		"build": {
 			request: vm.ConnectRequest{
 				Resources: compute.BuildGuestResources(),
 				PIDsMax:   compute.BuildGuestPIDsMax,
@@ -1434,21 +1434,7 @@ func TestBuildGuestProfilesUseExactDriveSets(t *testing.T) {
 					{ID: vm.ManagedRuntimeDrive, Source: source},
 				},
 			},
-			kernelArgs: buildInstallKernelArgs,
-		},
-		"verify": {
-			request: vm.ConnectRequest{
-				Resources:   compute.BuildGuestResources(),
-				PIDsMax:     compute.BuildGuestPIDsMax,
-				Networkless: true,
-				ReadOnlyDrives: []vm.ReadOnlyDrive{
-					{ID: vm.ToolchainDrive, Source: source},
-					{ID: vm.BuildTreeDrive, Source: source},
-					{ID: vm.ManagedRuntimeDrive, Source: source},
-				},
-			},
-			kernelArgs:  buildVerifyKernelArgs,
-			networkless: true,
+			kernelArgs: buildKernelArgs,
 		},
 	}
 	for name, test := range tests {

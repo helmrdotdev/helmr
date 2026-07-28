@@ -2,6 +2,7 @@ package deployment
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -16,7 +17,7 @@ func TestDeclarationLocatorCanonicalRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(parsed.Declarations) != 2 ||
-		parsed.Declarations[0].ModulePath != "src/build.ts" ||
+		parsed.Declarations[0].ModulePath != generatedTestModule("a") ||
 		parsed.Declarations[1].ExportName != "対話" {
 		t.Fatalf("parsed locator = %#v", parsed)
 	}
@@ -48,12 +49,12 @@ func TestDeclarationLocatorRejectsOpenOrDivergentShapes(t *testing.T) {
 			locator.Declarations[0].ModulePath = "node_modules/task.js"
 			return locator
 		},
-		"platform module": func(locator DeclarationLocator) DeclarationLocator {
+		"noncanonical platform module": func(locator DeclarationLocator) DeclarationLocator {
 			locator.Declarations[0].ModulePath = "helmr/task.js"
 			return locator
 		},
-		"declaration file": func(locator DeclarationLocator) DeclarationLocator {
-			locator.Declarations[0].ModulePath = "src/task.d.ts"
+		"uppercase digest": func(locator DeclarationLocator) DeclarationLocator {
+			locator.Declarations[0].ModulePath = generatedTestModule("A")
 			return locator
 		},
 		"control export": func(locator DeclarationLocator) DeclarationLocator {
@@ -94,15 +95,21 @@ func testDeclarationLocator() DeclarationLocator {
 			{
 				Kind:       DeclarationKindTask,
 				DeclaredID: "build",
-				ModulePath: "src/build.ts",
+				ModulePath: generatedTestModule("a"),
 				ExportName: "build",
+				Slot:       DeclarationSlotHandler,
 			},
 			{
 				Kind:       DeclarationKindActor,
 				DeclaredID: "chat",
-				ModulePath: "src/chat.mjs",
+				ModulePath: generatedTestModule("b"),
 				ExportName: "対話",
+				Slot:       DeclarationSlotHandler,
 			},
 		},
 	}
+}
+
+func generatedTestModule(digit string) string {
+	return "tasks/.helmr/modules/" + strings.Repeat(digit, 64) + ".mjs"
 }

@@ -8,10 +8,6 @@ import (
 	"io"
 )
 
-func handleBuildInstall(context.Context, io.ReadWriter, uint64) error {
-	return errors.New("build install guest requires Linux")
-}
-
-func handleBuildVerification(context.Context, io.ReadWriter, uint64) error {
-	return errors.New("build verification guest requires Linux")
+func handleBuild(context.Context, io.ReadWriter, uint64) error {
+	return errors.New("build guest requires Linux")
 }

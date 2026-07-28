@@ -5,6 +5,7 @@ package firecracker
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -52,7 +53,7 @@ func (c *Connector) withNetworkPolicy(netns string, policy compute.NetworkPolicy
 		machine.Handlers.FcInit = machine.Handlers.FcInit.AppendAfter(firecracker.SetupNetworkHandlerName, firecracker.Handler{
 			Name: "fcinit.ApplyHelmrNetworkPolicy",
 			Fn: func(ctx context.Context, machine *firecracker.Machine) error {
-				if c.kernelArgsValue() == buildInstallKernelArgs {
+				if c.kernelArgsValue() == buildKernelArgs {
 					tap, resolvers, err := buildNetworkInterface(machine)
 					if err != nil {
 						return err
@@ -69,6 +70,267 @@ func (c *Connector) withNetworkPolicy(netns string, policy compute.NetworkPolicy
 			},
 		})
 	}
+}
+
+func (c *Connector) cutoffBuildNetwork(
+	ctx context.Context,
+	netns string,
+	machine *firecracker.Machine,
+) (vm.BuildNetworkTransition, error) {
+	before, err := c.readBuildNetworkStatus(ctx, netns)
+	if err != nil {
+		return vm.BuildNetworkTransition{}, fmt.Errorf(
+			"snapshot build network counters: %w",
+			err,
+		)
+	}
+	tap, _, err := buildNetworkInterface(machine)
+	if err != nil {
+		return vm.BuildNetworkTransition{}, err
+	}
+	if err := c.applyNetworkPolicyScript(
+		ctx,
+		netns,
+		nftBuildNetworkCutoffScript(),
+	); err != nil {
+		return vm.BuildNetworkTransition{}, fmt.Errorf(
+			"install terminal build network policy: %w",
+			err,
+		)
+	}
+	if err := c.setBuildTapDown(ctx, netns, tap); err != nil {
+		return vm.BuildNetworkTransition{}, err
+	}
+	if err := c.verifyBuildNetworkCutoff(ctx, netns, tap); err != nil {
+		return vm.BuildNetworkTransition{}, err
+	}
+	return vm.BuildNetworkTransition{Before: before}, nil
+}
+
+func nftBuildNetworkCutoffScript() string {
+	return fmt.Sprintf(strings.TrimSpace(`
+flush table inet %[1]s
+delete table inet %[1]s
+add table inet %[1]s
+add chain inet %[1]s forward { type filter hook forward priority 0; policy drop; }
+	`)+"\n", networkPolicyTableName)
+}
+
+func (c *Connector) setBuildTapDown(
+	ctx context.Context,
+	netns string,
+	tap string,
+) error {
+	cmd := exec.CommandContext(
+		ctx,
+		c.cfg.IPPath,
+		"netns",
+		"exec",
+		netns,
+		c.cfg.IPPath,
+		"link",
+		"set",
+		"dev",
+		tap,
+		"down",
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail != "" {
+			return fmt.Errorf("disable build tap: %w: %s", err, detail)
+		}
+		return fmt.Errorf("disable build tap: %w", err)
+	}
+	return nil
+}
+
+func (c *Connector) verifyBuildNetworkCutoff(
+	ctx context.Context,
+	netns string,
+	tap string,
+) error {
+	policy, err := c.readBuildNetworkPolicy(ctx, netns)
+	if err != nil {
+		return err
+	}
+	if err := validateBuildNetworkCutoff(policy); err != nil {
+		return err
+	}
+	link, err := c.readBuildTap(ctx, netns, tap)
+	if err != nil {
+		return err
+	}
+	if err := validateBuildTapDown(link); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Connector) readBuildNetworkPolicy(
+	ctx context.Context,
+	netns string,
+) ([]byte, error) {
+	cmd := exec.CommandContext(
+		ctx,
+		c.cfg.IPPath,
+		"netns",
+		"exec",
+		netns,
+		c.cfg.NFTPath,
+		"-j",
+		"list",
+		"table",
+		"inet",
+		networkPolicyTableName,
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	raw, err := cmd.Output()
+	if err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail != "" {
+			return nil, fmt.Errorf(
+				"verify terminal build network policy: %w: %s",
+				err,
+				detail,
+			)
+		}
+		return nil, fmt.Errorf(
+			"verify terminal build network policy: %w",
+			err,
+		)
+	}
+	return raw, nil
+}
+
+func validateBuildNetworkCutoff(raw []byte) error {
+	var document struct {
+		Objects []map[string]json.RawMessage `json:"nftables"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return fmt.Errorf("decode terminal build network policy: %w", err)
+	}
+	foundTable := false
+	foundChain := false
+	for _, object := range document.Objects {
+		if _, ok := object["metainfo"]; ok {
+			if len(object) != 1 {
+				return errors.New(
+					"terminal build network metadata object is not closed",
+				)
+			}
+			continue
+		}
+		if encoded, ok := object["table"]; ok {
+			if len(object) != 1 {
+				return errors.New(
+					"terminal build network table object is not closed",
+				)
+			}
+			if foundTable {
+				return errors.New("terminal build network policy duplicates its table")
+			}
+			var table struct {
+				Family string `json:"family"`
+				Name   string `json:"name"`
+			}
+			if err := json.Unmarshal(encoded, &table); err != nil {
+				return fmt.Errorf("decode terminal build network table: %w", err)
+			}
+			if table.Family != "inet" || table.Name != networkPolicyTableName {
+				return errors.New("terminal build network table is invalid")
+			}
+			foundTable = true
+			continue
+		}
+		if encoded, ok := object["chain"]; ok {
+			if len(object) != 1 {
+				return errors.New(
+					"terminal build network chain object is not closed",
+				)
+			}
+			if foundChain {
+				return errors.New("terminal build network policy duplicates its chain")
+			}
+			var chain struct {
+				Family string `json:"family"`
+				Table  string `json:"table"`
+				Name   string `json:"name"`
+				Type   string `json:"type"`
+				Hook   string `json:"hook"`
+				Policy string `json:"policy"`
+				Prio   int    `json:"prio"`
+			}
+			if err := json.Unmarshal(encoded, &chain); err != nil {
+				return fmt.Errorf("decode terminal build network chain: %w", err)
+			}
+			if chain.Family != "inet" ||
+				chain.Table != networkPolicyTableName ||
+				chain.Name != "forward" ||
+				chain.Type != "filter" ||
+				chain.Hook != "forward" ||
+				chain.Policy != "drop" ||
+				chain.Prio != 0 {
+				return errors.New("terminal build network chain is invalid")
+			}
+			foundChain = true
+			continue
+		}
+		return errors.New("terminal build network policy contains an unexpected object")
+	}
+	if !foundTable || !foundChain {
+		return errors.New("terminal build network policy is incomplete")
+	}
+	return nil
+}
+
+func (c *Connector) readBuildTap(
+	ctx context.Context,
+	netns string,
+	tap string,
+) ([]byte, error) {
+	cmd := exec.CommandContext(
+		ctx,
+		c.cfg.IPPath,
+		"netns",
+		"exec",
+		netns,
+		c.cfg.IPPath,
+		"-j",
+		"link",
+		"show",
+		"dev",
+		tap,
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	raw, err := cmd.Output()
+	if err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail != "" {
+			return nil, fmt.Errorf("verify disabled build tap: %w: %s", err, detail)
+		}
+		return nil, fmt.Errorf("verify disabled build tap: %w", err)
+	}
+	return raw, nil
+}
+
+func validateBuildTapDown(raw []byte) error {
+	var links []struct {
+		Flags     []string `json:"flags"`
+		OperState string   `json:"operstate"`
+	}
+	if err := json.Unmarshal(raw, &links); err != nil {
+		return fmt.Errorf("decode build tap state: %w", err)
+	}
+	if len(links) != 1 ||
+		links[0].OperState != "DOWN" ||
+		slices.Contains(links[0].Flags, "UP") {
+		return errors.New("build tap remains enabled after authority transition")
+	}
+	return nil
 }
 
 func (c *Connector) applyBuildNetworkPolicy(

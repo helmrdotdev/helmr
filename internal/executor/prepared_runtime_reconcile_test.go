@@ -370,27 +370,30 @@ func TestPreparedRuntimeRejectsWorkspaceArchitectureOutsideWorkerCertification(t
 func TestPreparedRuntimeBindsProgramIndexToDeploymentReceipt(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	index := deployment.ProgramIndex{
-		Architecture:         deployment.ArchitectureX8664,
-		BuildContractVersion: deployment.ProgramBuildContractVersion,
-		Declarations: []deployment.ProgramDeclaration{{
-			Kind:       deployment.DeclarationKindTask,
+		Architecture:       deployment.ArchitectureX8664,
+		ConfigResultDigest: digest,
+		Declarations: []deployment.ProgramIndexDeclaration{{
+			Kind:       deployment.DefinitionKindTask,
 			DeclaredID: "task",
-			Slots:      []deployment.DeclarationSlot{deployment.DeclarationSlotHandler},
+			Task: &deployment.TaskManifest{
+				Payload: deployment.SchemaManifest{Kind: deployment.SchemaKindNone},
+				Run: deployment.RunManifest{
+					Queue:         "task/task",
+					MaxDurationMs: 900000,
+					Retry:         deployment.RetryManifest{Enabled: false},
+				},
+			},
+			Locator: &deployment.ProgramLocator{
+				ExportName: "task",
+				ModulePath: ".helmr/modules/" + strings.Repeat("1", 64) + ".mjs",
+				Slot:       deployment.DeclarationSlotHandler,
+			},
 		}},
 		FormatVersion: deployment.ProgramIndexFormatVersion,
-		Manager: deployment.ProgramManager{
-			Digest:  digest,
-			Name:    deployment.PackageManagerBun,
-			Version: "1.3.10",
-		},
+		Queues: []deployment.QueueInput{{
+			Name: "task/task",
+		}},
 		RuntimeAPIVersion: deployment.RuntimeAPIVersion,
-		RuntimeDigest:     digest,
-		ToolchainDigest:   digest,
-		Submitted: deployment.ProgramSubmittedSource{
-			LockfileDigest: digest,
-			LockfileName:   "bun.lock",
-			SourceDigest:   digest,
-		},
 	}
 	canonical, err := deployment.CanonicalProgramIndex(index)
 	if err != nil {

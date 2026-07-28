@@ -21,6 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
@@ -35,7 +36,7 @@ const (
 	managedProgramSecretRoot       = "/var/lib/helmr/run-secrets"
 	managedProgramNode             = "/opt/helmr/runtime/bin/node"
 	managedProgramEntry            = "/opt/helmr/program/helmr/entry.mjs"
-	managedProgramPreload          = "file:///opt/helmr/runtime/helmr/preload.mjs"
+	managedRuntimeDescriptor       = "/var/lib/helmr/program/runtime/helmr/descriptor.json"
 	maxProgramSecretPlacements     = 64
 	maxProgramSecretPlaintextBytes = 128 << 20
 	maxProgramSecretFrameBytes     = maxProgramSecretPlaintextBytes + 64<<10
@@ -488,6 +489,10 @@ func newProgramProcess(
 		entry.runtimeUser,
 		defaultRuntimeWorkdir,
 	)
+	nodeFlags, err := managedProgramNodeFlags()
+	if err != nil {
+		return nil, func() {}, err
+	}
 	secretCleanup, err := stageProgramSecrets(
 		entry.imageRoot,
 		secrets,
@@ -505,11 +510,9 @@ func newProgramProcess(
 	cmd, err := imageCommand(
 		ctx,
 		managedProgramNode,
-		[]string{
-			"--experimental-transform-types",
-			"--import=" + managedProgramPreload,
+		append(nodeFlags, []string{
 			managedProgramEntry,
-		},
+		}...),
 		defaultRuntimeWorkdir,
 		sanitizeManagedRuntimeEnv(env),
 		entry.imageRoot,
@@ -606,6 +609,26 @@ func newProgramProcess(
 		secretCleanup()
 	}
 	return process, cleanup, nil
+}
+
+func managedProgramNodeFlags() ([]string, error) {
+	file, err := os.Open(managedRuntimeDescriptor)
+	if err != nil {
+		return nil, fmt.Errorf("open Managed Runtime descriptor: %w", err)
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(
+		file,
+		(1<<20)+1,
+	))
+	closeErr := file.Close()
+	if readErr != nil || closeErr != nil {
+		return nil, errors.Join(readErr, closeErr)
+	}
+	descriptor, err := deployment.ParseRuntimeArtifactDescriptor(raw)
+	if err != nil {
+		return nil, fmt.Errorf("parse Managed Runtime descriptor: %w", err)
+	}
+	return append([]string(nil), descriptor.ProgramNodeFlags...), nil
 }
 
 func programWorkspaceSecretPaths(workspaceRoot string, secrets []*runv0.ProgramSecret) []string {

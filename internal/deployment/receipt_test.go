@@ -1,7 +1,6 @@
 package deployment
 
 import (
-	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -28,17 +27,14 @@ func TestProgramReceiptRejectsInvalidAuthority(t *testing.T) {
 		"format version": func(receipt *ProgramReceipt) {
 			receipt.FormatVersion = 1
 		},
-		"program digest": func(receipt *ProgramReceipt) {
-			receipt.Program.Digest = "sha256:" + strings.Repeat("A", 64)
+		"compiler binary digest": func(receipt *ProgramReceipt) {
+			receipt.Compiler.BinaryDigest = "sha256:" + strings.Repeat("A", 64)
 		},
-		"program size": func(receipt *ProgramReceipt) {
-			receipt.Program.SizeBytes = maxProgramPhysicalBytes + 1
+		"manifest digest": func(receipt *ProgramReceipt) {
+			receipt.Program.ManifestDigest = "sha256:invalid"
 		},
 		"program media type": func(receipt *ProgramReceipt) {
 			receipt.Program.MediaType = "application/octet-stream"
-		},
-		"program artifact ID": func(receipt *ProgramReceipt) {
-			receipt.Program.ArtifactID = "invalid"
 		},
 		"index digest": func(receipt *ProgramReceipt) {
 			receipt.Program.IndexDigest = "sha256:invalid"
@@ -47,7 +43,7 @@ func TestProgramReceiptRejectsInvalidAuthority(t *testing.T) {
 			receipt.Runtime.APIVersion = "helmr.runtime.v1"
 		},
 		"source": func(receipt *ProgramReceipt) {
-			receipt.Source.ArtifactID = "invalid"
+			receipt.Source.Digest = "invalid"
 		},
 		"source size": func(receipt *ProgramReceipt) {
 			receipt.Source.SizeBytes = maxJSONSafeInteger + 1
@@ -116,13 +112,16 @@ func TestProgramVerificationRoundTrip(t *testing.T) {
 func testProgramReceipt(t *testing.T) ProgramReceipt {
 	t.Helper()
 	receipt, err := NewProgramReceipt(
-		testProgramOutput(t),
-		"019b635d-a915-7dca-8b86-26acc1007001",
+		testProgramIndex(t),
+		testBuildProvenance(t),
+		testCompilerInputs(),
+		"24.16.0",
+		testProgramBuildManifest(t),
+		"sha256:"+strings.Repeat("8", 64),
 		ProgramReceiptSource{
-			ArtifactID: "019b635d-a915-7dca-8b86-26acc1007002",
-			Digest:     "sha256:" + strings.Repeat("a", 64),
-			MediaType:  "application/vnd.helmr.deployment-source.v0+tar",
-			SizeBytes:  1,
+			Digest:    "sha256:" + strings.Repeat("5", 64),
+			MediaType: "application/vnd.helmr.deployment-source.v0+tar",
+			SizeBytes: 1,
 		},
 	)
 	if err != nil {
@@ -131,18 +130,70 @@ func testProgramReceipt(t *testing.T) ProgramReceipt {
 	return receipt
 }
 
-func testProgramOutput(t *testing.T) ProgramOutput {
+func testProgramBuildManifest(t *testing.T) ProgramBuildManifest {
 	t.Helper()
-	var verified programVerification
-	if err := json.Unmarshal(canonicalVerifierProgramVerification(t), &verified); err != nil {
+	indexRaw, err := CanonicalProgramIndex(testProgramIndex(t))
+	if err != nil {
 		t.Fatal(err)
 	}
+	compiler := testCompilerInputs()
+	optionsDigest, err := compilerOptionsDigest(compiler, "24.16.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourcePath := "tasks/build.ts"
+	modulePath := generatedDeclarationModulePath(sourcePath)
+	return ProgramBuildManifest{
+		AggregateResultDigest: "sha256:" + strings.Repeat("a", 64),
+		Compiler: ProgramCompilerContract{
+			APIVersion:            compiler.APIVersion,
+			EsbuildVersion:        compiler.Esbuild.Version,
+			OptionsContractDigest: compiler.OptionsContractDigest,
+			Output:                compiler.Output,
+			Source:                compiler.Source,
+		},
+		Config: ProgramBuildFile{
+			Digest: "sha256:" + strings.Repeat("4", 64),
+			Path:   "helmr/config.json",
+		},
+		DiscoveryCandidates: []string{sourcePath},
+		Execution: ProgramBuildExecution{
+			NodeVersion:   "24.16.0",
+			OptionsDigest: optionsDigest,
+		},
+		ExternalEdges: []ProgramBuildExternalEdge{},
+		Inputs: []ProgramBuildFile{{
+			Digest: "sha256:" + strings.Repeat("9", 64),
+			Path:   sourcePath,
+		}},
+		LocalPackages: []ProgramBuildLocalPackage{},
+		Outputs: []ProgramBuildOutput{{
+			ModuleDigest:    "sha256:" + strings.Repeat("b", 64),
+			ModulePath:      modulePath,
+			SourceMapDigest: "sha256:" + strings.Repeat("c", 64),
+			SourceMapPath:   modulePath + ".map",
+			SourcePath:      sourcePath,
+		}},
+		ProgramIndexDigest: testDigest(string(indexRaw)),
+		Selections: []ProgramBuildSelection{{
+			DeclaredID: "build",
+			ExportName: "build",
+			Kind:       DeclarationKindTask,
+			SourcePath: sourcePath,
+			Slot:       DeclarationSlotHandler,
+		}},
+		TSConfigs: []ProgramBuildFile{},
+	}
+}
+
+func testProgramOutput(t *testing.T) ProgramOutput {
+	t.Helper()
 	return ProgramOutput{
 		Artifact: ProgramDescriptor{
 			Digest:    "sha256:" + strings.Repeat("c", 64),
 			SizeBytes: squashFSPhysicalAlign,
 			MediaType: ProgramArtifactMediaType,
 		},
-		Index: verified.Index,
+		Index: testProgramIndex(t),
 	}
 }

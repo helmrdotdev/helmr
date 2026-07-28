@@ -13,7 +13,9 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"os"
 	"path"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -40,22 +42,20 @@ type PlatformSource struct {
 }
 
 type RuntimeArtifactDescriptor struct {
-	AdapterVersion            string              `json:"adapterVersion"`
-	Architecture              RuntimeArchitecture `json:"architecture"`
-	ConfigEvaluatorDigest     string              `json:"configEvaluatorDigest"`
-	ConfigEvaluatorEntrypoint string              `json:"configEvaluatorEntrypoint"`
-	ConformanceDigest         string              `json:"conformanceDigest"`
-	DescriptorSchemaVersion   int                 `json:"descriptorSchemaVersion"`
-	Entrypoint                string              `json:"entrypoint"`
-	IntegrityDigest           string              `json:"integrityDigest"`
-	Kind                      string              `json:"kind"`
-	MediaType                 string              `json:"mediaType"`
-	NodeModuleABI             string              `json:"nodeModuleAbi"`
-	NodeVersion               string              `json:"nodeVersion"`
-	ProgramNodeFlag           string              `json:"programNodeFlag"`
-	RuntimeAPIVersion         string              `json:"runtimeApiVersion"`
-	RuntimeHarnessDigest      string              `json:"runtimeHarnessDigest"`
-	Source                    PlatformSource      `json:"source"`
+	AdapterVersion          string              `json:"adapterVersion"`
+	Architecture            RuntimeArchitecture `json:"architecture"`
+	ConformanceDigest       string              `json:"conformanceDigest"`
+	DescriptorSchemaVersion int                 `json:"descriptorSchemaVersion"`
+	Entrypoint              string              `json:"entrypoint"`
+	IntegrityDigest         string              `json:"integrityDigest"`
+	Kind                    string              `json:"kind"`
+	MediaType               string              `json:"mediaType"`
+	NodeModuleABI           string              `json:"nodeModuleAbi"`
+	NodeVersion             string              `json:"nodeVersion"`
+	ProgramNodeFlags        []string            `json:"programNodeFlags"`
+	RuntimeAPIVersion       string              `json:"runtimeApiVersion"`
+	RuntimeHarnessDigest    string              `json:"runtimeHarnessDigest"`
+	Source                  PlatformSource      `json:"source"`
 }
 
 type ManagerArtifactDescriptor struct {
@@ -75,6 +75,7 @@ type ToolchainArtifactDescriptor struct {
 	AdapterVersion          string              `json:"adapterVersion"`
 	Architecture            RuntimeArchitecture `json:"architecture"`
 	BaseDigest              string              `json:"baseDigest"`
+	Compiler                CompilerInputs      `json:"compiler"`
 	ConformanceDigest       string              `json:"conformanceDigest"`
 	DescriptorSchemaVersion int                 `json:"descriptorSchemaVersion"`
 	IntegrityDigest         string              `json:"integrityDigest"`
@@ -82,6 +83,7 @@ type ToolchainArtifactDescriptor struct {
 	MediaType               string              `json:"mediaType"`
 	NodeHeadersDigest       string              `json:"nodeHeadersDigest"`
 	NodeModuleABI           string              `json:"nodeModuleAbi"`
+	NodeSource              PlatformSource      `json:"nodeSource"`
 	NodeVersion             string              `json:"nodeVersion"`
 	RuntimeDigest           string              `json:"runtimeDigest"`
 }
@@ -125,7 +127,7 @@ type PlatformArtifactExpectation struct {
 	RuntimeDigest           string
 	RuntimeHarnessDigest    string
 	RequiredConformance     []string
-	ConfigEvaluatorDigest   string
+	Compiler                CompilerInputs
 	SourceOrigin            string
 	ToolchainBaseDigest     string
 }
@@ -166,7 +168,6 @@ func (p *BuildPolicy) PlatformArtifactExpectations(
 	return PlatformArtifactExpectations{
 		Runtime: PlatformArtifactExpectation{
 			AllowedRedirectHosts:    policy.Node.AllowedRedirectHosts,
-			ConfigEvaluatorDigest:   policy.Runtime.ConfigEvaluatorDigest,
 			DescriptorSchemaVersion: policy.DescriptorSchemaVersion,
 			FixtureSet:              policy.FixtureSet,
 			IntegrityIdentities:     slices.Clone(policy.Node.ReleaseKeyFingerprints),
@@ -190,6 +191,7 @@ func (p *BuildPolicy) PlatformArtifactExpectations(
 			SourceOrigin:            managerOrigin,
 		},
 		Toolchain: PlatformArtifactExpectation{
+			Compiler:                policy.Toolchain.Compiler,
 			DescriptorSchemaVersion: policy.DescriptorSchemaVersion,
 			FixtureSet:              policy.FixtureSet,
 			IntegrityIdentities:     []string{"helmr-platform"},
@@ -205,7 +207,6 @@ func (p *BuildPolicy) PlatformArtifactExpectations(
 
 func runtimeConformanceNames() []string {
 	return []string{
-		"config-native-typescript",
 		"network-denied",
 		"node-architecture",
 		"node-disable-types",
@@ -231,6 +232,12 @@ func managerConformanceNames() []string {
 
 func toolchainConformanceNames() []string {
 	return []string{
+		"compiler-aggregate",
+		"compiler-config",
+		"compiler-final-modules",
+		"compiler-options",
+		"esbuild-api",
+		"esbuild-binary",
 		"native-addon",
 		"network-denied",
 		"node-headers",
@@ -295,8 +302,12 @@ func inspectPlatformArtifact(
 		}
 		switch entry.Path {
 		case PlatformDescriptorPath, PlatformIntegrityPath, PlatformConformancePath, "helmr/upstream":
-		case runtimeEntryPath, runtimeConfigEvaluatorPath:
+		case runtimeEntryPath:
 			if object.MediaType != RuntimeArtifactMediaType {
+				return InspectedPlatformArtifact{}, fmt.Errorf("unknown Platform-owned path %q", entry.Path)
+			}
+		case "helmr/config-evaluator.mjs", "helmr/esbuild", "helmr/program-compiler.mjs":
+			if object.MediaType != ToolchainMediaType {
 				return InspectedPlatformArtifact{}, fmt.Errorf("unknown Platform-owned path %q", entry.Path)
 			}
 		default:
@@ -377,6 +388,9 @@ func inspectPlatformArtifact(
 			return InspectedPlatformArtifact{}, err
 		}
 		if err := validateToolchainArtifactDescriptor(value, expectation, integrityDigest, conformanceDigest); err != nil {
+			return InspectedPlatformArtifact{}, err
+		}
+		if err := verifyToolchainCompiler(ctx, artifact, value.Compiler); err != nil {
 			return InspectedPlatformArtifact{}, err
 		}
 		inspected.Toolchain = &value
@@ -856,6 +870,10 @@ func validateRuntimeArtifactDescriptor(
 	integrityDigest,
 	conformanceDigest string,
 ) error {
+	programNodeFlags, err := NodeProgramFlags(value.NodeVersion)
+	if err != nil {
+		return errors.New("Runtime descriptor Node version has no Program launch contract")
+	}
 	if value.Kind != "runtime" ||
 		value.DescriptorSchemaVersion != expectation.DescriptorSchemaVersion ||
 		value.AdapterVersion != NodeRuntimeAdapterVersion ||
@@ -863,18 +881,73 @@ func validateRuntimeArtifactDescriptor(
 		value.MediaType != RuntimeArtifactMediaType ||
 		value.RuntimeAPIVersion != RuntimeAPIVersion ||
 		value.Entrypoint != "/opt/helmr/runtime/helmr/entry.mjs" ||
-		value.ConfigEvaluatorEntrypoint != "/opt/helmr/runtime/helmr/config-evaluator.mjs" ||
 		value.NodeVersion != expectation.NodeVersion ||
 		value.RuntimeHarnessDigest != expectation.RuntimeHarnessDigest ||
-		value.ConfigEvaluatorDigest != expectation.ConfigEvaluatorDigest ||
 		value.IntegrityDigest != integrityDigest ||
 		value.ConformanceDigest != conformanceDigest ||
+		!sha256DigestPattern.MatchString(value.RuntimeHarnessDigest) ||
+		!sha256DigestPattern.MatchString(value.IntegrityDigest) ||
+		!sha256DigestPattern.MatchString(value.ConformanceDigest) ||
 		value.NodeModuleABI == "" ||
-		(value.ProgramNodeFlag != NodeNoStripTypes &&
-			value.ProgramNodeFlag != NodeNoExperimentalStripTypes) {
+		!slices.Equal(value.ProgramNodeFlags, programNodeFlags) {
 		return errors.New("Runtime descriptor does not match acquisition authority")
 	}
 	return validatePlatformSource(value.Source)
+}
+
+func ParseRuntimeArtifactDescriptor(raw []byte) (RuntimeArtifactDescriptor, error) {
+	if len(raw) == 0 || len(raw) > maxPlatformArtifactDocumentBytes {
+		return RuntimeArtifactDescriptor{}, fmt.Errorf(
+			"Runtime descriptor size is outside [1,%d]",
+			maxPlatformArtifactDocumentBytes,
+		)
+	}
+	canonical, err := jsoncanon.Transform(raw)
+	if err != nil {
+		return RuntimeArtifactDescriptor{}, fmt.Errorf(
+			"canonicalize Runtime descriptor: %w",
+			err,
+		)
+	}
+	if !bytes.Equal(raw, canonical) {
+		return RuntimeArtifactDescriptor{}, errors.New(
+			"Runtime descriptor is not RFC 8785 canonical JSON",
+		)
+	}
+	var descriptor RuntimeArtifactDescriptor
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&descriptor); err != nil {
+		return RuntimeArtifactDescriptor{}, fmt.Errorf(
+			"decode Runtime descriptor: %w",
+			err,
+		)
+	}
+	if err := ensureEOF(decoder, "Runtime descriptor"); err != nil {
+		return RuntimeArtifactDescriptor{}, err
+	}
+	if err := validateRuntimeArtifactDescriptor(
+		descriptor,
+		PlatformArtifactExpectation{
+			DescriptorSchemaVersion: PlatformDescriptorSchemaV0,
+			NodeVersion:             descriptor.NodeVersion,
+			RuntimeHarnessDigest:    descriptor.RuntimeHarnessDigest,
+		},
+		descriptor.IntegrityDigest,
+		descriptor.ConformanceDigest,
+	); err != nil {
+		return RuntimeArtifactDescriptor{}, err
+	}
+	complete, err := CanonicalPlatformDocument(descriptor)
+	if err != nil {
+		return RuntimeArtifactDescriptor{}, err
+	}
+	if !bytes.Equal(raw, complete) {
+		return RuntimeArtifactDescriptor{}, errors.New(
+			"Runtime descriptor does not match the complete canonical v0 shape",
+		)
+	}
+	return descriptor, nil
 }
 
 func validateManagerArtifactDescriptor(
@@ -915,13 +988,276 @@ func validateToolchainArtifactDescriptor(
 		value.NodeVersion != expectation.NodeVersion ||
 		value.RuntimeDigest != expectation.RuntimeDigest ||
 		value.BaseDigest != expectation.ToolchainBaseDigest ||
+		!reflect.DeepEqual(value.Compiler, expectation.Compiler) ||
 		value.IntegrityDigest != integrityDigest ||
 		value.ConformanceDigest != conformanceDigest ||
 		value.NodeHeadersDigest == "" ||
 		value.NodeModuleABI == "" {
 		return errors.New("toolchain descriptor does not match acquisition authority")
 	}
+	if err := validatePlatformSource(value.NodeSource); err != nil {
+		return fmt.Errorf("toolchain Node source: %w", err)
+	}
 	return nil
+}
+
+func ParseToolchainArtifactDescriptor(
+	raw []byte,
+) (ToolchainArtifactDescriptor, error) {
+	if len(raw) == 0 || len(raw) > maxPlatformArtifactDocumentBytes {
+		return ToolchainArtifactDescriptor{}, fmt.Errorf(
+			"Toolchain descriptor size is outside [1,%d]",
+			maxPlatformArtifactDocumentBytes,
+		)
+	}
+	canonical, err := jsoncanon.Transform(raw)
+	if err != nil {
+		return ToolchainArtifactDescriptor{}, fmt.Errorf(
+			"canonicalize Toolchain descriptor: %w",
+			err,
+		)
+	}
+	if !bytes.Equal(raw, canonical) {
+		return ToolchainArtifactDescriptor{}, errors.New(
+			"Toolchain descriptor is not RFC 8785 canonical JSON",
+		)
+	}
+	var descriptor ToolchainArtifactDescriptor
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&descriptor); err != nil {
+		return ToolchainArtifactDescriptor{}, fmt.Errorf(
+			"decode Toolchain descriptor: %w",
+			err,
+		)
+	}
+	if err := ensureEOF(decoder, "Toolchain descriptor"); err != nil {
+		return ToolchainArtifactDescriptor{}, err
+	}
+	if err := validateCompilerInputs(descriptor.Compiler); err != nil {
+		return ToolchainArtifactDescriptor{}, fmt.Errorf(
+			"Toolchain compiler: %w",
+			err,
+		)
+	}
+	if err := validateToolchainArtifactDescriptor(
+		descriptor,
+		PlatformArtifactExpectation{
+			Compiler:                descriptor.Compiler,
+			DescriptorSchemaVersion: descriptor.DescriptorSchemaVersion,
+			NodeVersion:             descriptor.NodeVersion,
+			RuntimeDigest:           descriptor.RuntimeDigest,
+			ToolchainBaseDigest:     descriptor.BaseDigest,
+		},
+		descriptor.IntegrityDigest,
+		descriptor.ConformanceDigest,
+	); err != nil {
+		return ToolchainArtifactDescriptor{}, err
+	}
+	complete, err := CanonicalPlatformDocument(descriptor)
+	if err != nil {
+		return ToolchainArtifactDescriptor{}, err
+	}
+	if !bytes.Equal(raw, complete) {
+		return ToolchainArtifactDescriptor{}, errors.New(
+			"Toolchain descriptor does not match the complete canonical v0 shape",
+		)
+	}
+	return descriptor, nil
+}
+
+func verifyToolchainCompiler(
+	ctx context.Context,
+	artifact *inspectedArtifact,
+	compiler CompilerInputs,
+) error {
+	binaryLink, err := artifact.require("helmr/esbuild", artifactEntrySymlink)
+	if err != nil {
+		return fmt.Errorf("Compiler layout: %w", err)
+	}
+	if binaryLink.LinkTarget != "../node_modules/@esbuild/linux-x64/bin/esbuild" {
+		return errors.New("Compiler esbuild binary link does not match policy")
+	}
+	for path, expectation := range map[string]struct {
+		digest string
+		mode   uint32
+	}{
+		"helmr/config-evaluator.mjs": {
+			digest: compiler.ConfigEvaluator.Digest,
+			mode:   0644,
+		},
+		"helmr/program-compiler.mjs": {
+			digest: compiler.ProgramCompiler.Digest,
+			mode:   0644,
+		},
+		"node_modules/@esbuild/linux-x64/bin/esbuild": {
+			digest: compiler.Esbuild.BinaryDigest,
+			mode:   0755,
+		},
+	} {
+		entry, err := artifact.require(path, artifactEntryRegular)
+		if err != nil {
+			return fmt.Errorf("Compiler layout: %w", err)
+		}
+		if entry.Mode != expectation.mode {
+			return fmt.Errorf(
+				"Compiler path %q mode = %#o, want %#o",
+				path,
+				entry.Mode,
+				expectation.mode,
+			)
+		}
+		raw, err := artifact.read(ctx, path, maxArtifactFileSize)
+		if err != nil {
+			return err
+		}
+		if digestBytes(raw) != expectation.digest {
+			return fmt.Errorf("Compiler path %q digest does not match policy", path)
+		}
+	}
+	apiDigest, err := compilerPackageDigest(
+		ctx,
+		artifact,
+		"node_modules/esbuild",
+	)
+	if err != nil {
+		return err
+	}
+	if apiDigest != compiler.Esbuild.APIPackageDigest {
+		return errors.New("esbuild API package digest does not match policy")
+	}
+	headersDigest, err := artifactDirectoryDigest(ctx, artifact, "include/node")
+	if err != nil {
+		return err
+	}
+	descriptorRaw, err := artifact.read(
+		ctx,
+		PlatformDescriptorPath,
+		maxPlatformArtifactDocumentBytes,
+	)
+	if err != nil {
+		return err
+	}
+	var descriptor ToolchainArtifactDescriptor
+	if err := parsePlatformDocument(
+		descriptorRaw,
+		"toolchain descriptor",
+		&descriptor,
+	); err != nil {
+		return err
+	}
+	if headersDigest != descriptor.NodeHeadersDigest {
+		return errors.New("toolchain Node headers digest does not match bytes")
+	}
+	return nil
+}
+
+type compilerPackageFile struct {
+	Digest    string `json:"digest"`
+	Mode      uint32 `json:"mode"`
+	Path      string `json:"path"`
+	SizeBytes int64  `json:"sizeBytes"`
+}
+
+func compilerPackageDigest(
+	ctx context.Context,
+	artifact *inspectedArtifact,
+	root string,
+) (string, error) {
+	if _, err := artifact.require(root, artifactEntryDirectory); err != nil {
+		return "", fmt.Errorf("Compiler layout: %w", err)
+	}
+	prefix := root + "/"
+	files := make([]compilerPackageFile, 0)
+	for _, entry := range artifact.ordered {
+		if !strings.HasPrefix(entry.Path, prefix) {
+			continue
+		}
+		if entry.Kind == artifactEntryDirectory {
+			continue
+		}
+		if entry.Kind != artifactEntryRegular {
+			return "", fmt.Errorf(
+				"esbuild API package contains unsupported path %q",
+				entry.Path,
+			)
+		}
+		raw, err := artifact.read(ctx, entry.Path, maxArtifactFileSize)
+		if err != nil {
+			return "", err
+		}
+		files = append(files, compilerPackageFile{
+			Digest:    digestBytes(raw),
+			Mode:      entry.Mode,
+			Path:      strings.TrimPrefix(entry.Path, prefix),
+			SizeBytes: entry.SizeBytes,
+		})
+	}
+	if len(files) == 0 {
+		return "", errors.New("esbuild API package is empty")
+	}
+	raw, err := CanonicalPlatformDocument(files)
+	if err != nil {
+		return "", err
+	}
+	return digestBytes(raw), nil
+}
+
+func artifactDirectoryDigest(
+	ctx context.Context,
+	artifact *inspectedArtifact,
+	root string,
+) (string, error) {
+	if _, err := artifact.require(root, artifactEntryDirectory); err != nil {
+		return "", err
+	}
+	hash := sha256.New()
+	prefix := root + "/"
+	for _, entry := range artifact.ordered {
+		if !strings.HasPrefix(entry.Path, prefix) {
+			continue
+		}
+		mode := os.FileMode(entry.Mode)
+		switch entry.Kind {
+		case artifactEntryRegular:
+		case artifactEntryDirectory:
+			mode |= os.ModeDir
+		case artifactEntrySymlink:
+			mode |= os.ModeSymlink
+		default:
+			return "", fmt.Errorf(
+				"directory %q contains unsupported path %q",
+				root,
+				entry.Path,
+			)
+		}
+		if _, err := fmt.Fprintf(
+			hash,
+			"%s\x00%#o\x00",
+			strings.TrimPrefix(entry.Path, prefix),
+			mode.Type()|mode.Perm(),
+		); err != nil {
+			return "", err
+		}
+		switch entry.Kind {
+		case artifactEntryRegular:
+			raw, err := artifact.read(ctx, entry.Path, maxArtifactFileSize)
+			if err != nil {
+				return "", err
+			}
+			if _, err := hash.Write(raw); err != nil {
+				return "", err
+			}
+		case artifactEntrySymlink:
+			if _, err := io.WriteString(hash, entry.LinkTarget); err != nil {
+				return "", err
+			}
+		}
+		if _, err := hash.Write([]byte{0}); err != nil {
+			return "", err
+		}
+	}
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func validatePlatformSource(source PlatformSource) error {

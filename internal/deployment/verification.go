@@ -22,7 +22,7 @@ const (
 	VerificationFailureReason = "verification_failed"
 
 	VerificationBuildPlanPath    = "helmr/build-plan.json"
-	VerificationDeclarationsPath = "helmr/declarations.json"
+	VerificationDeclarationsPath = "helmr/analysis-locators.json"
 	VerificationProgramEntryPath = "helmr/entry.mjs"
 
 	maxVerificationResultBytes = 70 << 20
@@ -408,7 +408,7 @@ func ValidateVerifiedProgram(
 	}
 	return validateVerifiedDeclarations(
 		result.Succeeded.Declarations,
-		index.Declarations,
+		programIndexExecutionDeclarations(index),
 	)
 }
 

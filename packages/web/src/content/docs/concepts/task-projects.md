@@ -13,21 +13,22 @@ package-managed JavaScript or TypeScript source, an exact lockfile,
 `helmr.config.ts`, and one or more declaration modules. An optional
 `.helmrignore` explicitly removes paths from submitted source.
 
-`package.json` selects exact Node and Manager releases. TypeScript projects use
-their own optional `scripts.build` to generate JavaScript before discovery.
-Helmr executes only the resulting JavaScript declarations and handlers.
+`package.json` selects exact Node and Manager releases. Helmr compiles project
+and workspace-local source with its pinned esbuild toolchain. Registry
+dependencies remain external and are loaded from the Manager-produced
+`node_modules` tree. The Managed Runtime executes only generated JavaScript.
 
 ```ts
 import { defineConfig } from "@helmr/sdk"
 
 export default defineConfig({
-  dirs: ["./dist/tasks"],
+  dirs: ["tasks"],
 })
 ```
 
 `dirs` is required and must contain at least one directory inside the
-post-build project tree. Helmr recursively discovers `.js`, `.mjs`, and `.cjs`
-files in deterministic path order.
+submitted project tree. Helmr recursively discovers supported JavaScript and
+TypeScript modules in deterministic path order.
 
 Task projects may export Tasks, Actors, Workspaces, and source-declared
 Schedules. Named Run or Session stream declarations are not part of v0;
@@ -41,9 +42,10 @@ does not install dependencies, execute config, read `node_modules`, or mutate
 the local project or lockfile.
 
 The remote build fetches dependencies without lifecycle scripts, removes
-network authority, performs the frozen install and optional project build,
-evaluates config, discovers JavaScript declarations, and publishes the complete
-post-build tree as one immutable Program.
+network authority, performs the frozen install and ordinary lifecycle scripts,
+evaluates config once for that build attempt, compiles and discovers
+declarations, and publishes the complete installed project tree with generated
+modules as one immutable Program.
 
 `.helmrignore` alone selects submitted source. Discovery-specific
 `ignorePatterns` never remove source or runtime bytes. Login/session deploys

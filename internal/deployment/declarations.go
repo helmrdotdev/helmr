@@ -29,6 +29,7 @@ type LocatedDeclaration struct {
 	ExportName string          `json:"exportName"`
 	Kind       DeclarationKind `json:"kind"`
 	ModulePath string          `json:"modulePath"`
+	Slot       DeclarationSlot `json:"slot"`
 }
 
 func ParseDeclarationLocator(raw []byte) (DeclarationLocator, error) {
@@ -130,6 +131,9 @@ func validateLocatedDeclaration(declaration LocatedDeclaration) error {
 	if err := validateDeclarationModulePath(declaration.ModulePath); err != nil {
 		return fmt.Errorf("modulePath: %w", err)
 	}
+	if declaration.Slot != DeclarationSlotHandler {
+		return errors.New("slot must be handler")
+	}
 	if len(declaration.ExportName) == 0 || len([]byte(declaration.ExportName)) > 256 ||
 		!utf8.ValidString(declaration.ExportName) {
 		return errors.New("exportName must contain 1 to 256 valid UTF-8 bytes")
@@ -143,34 +147,43 @@ func validateLocatedDeclaration(declaration LocatedDeclaration) error {
 }
 
 func validateDeclarationModulePath(value string) error {
-	if value == "" || !utf8.ValidString(value) || strings.ContainsRune(value, '\\') ||
-		strings.HasPrefix(value, "/") || path.Clean(value) != value ||
-		value == "." || strings.HasPrefix(value, "../") ||
-		strings.Contains(value, "/../") {
-		return errors.New("must be a normalized project-root-relative POSIX path")
+	const suffix = ".mjs"
+	if err := validateArtifactPath(value, programArtifact); err != nil {
+		return errors.New(
+			"must identify <source-directory>/.helmr/modules/<64 lowercase hex>.mjs",
+		)
 	}
-	if value == "helmr" || strings.HasPrefix(value, "helmr/") {
-		return errors.New("must not use the Platform-owned helmr root")
+	components := strings.Split(value, "/")
+	if len(components) < 3 ||
+		components[len(components)-3] != ".helmr" ||
+		components[len(components)-2] != "modules" ||
+		!strings.HasSuffix(components[len(components)-1], suffix) {
+		return errors.New(
+			"must identify <source-directory>/.helmr/modules/<64 lowercase hex>.mjs",
+		)
 	}
-	if hasNodeModulesComponent(value) {
-		return errors.New("must not contain a node_modules component")
+	for _, component := range components[:len(components)-3] {
+		if component == ".helmr" {
+			return errors.New(
+				"must identify <source-directory>/.helmr/modules/<64 lowercase hex>.mjs",
+			)
+		}
 	}
-	if strings.HasSuffix(value, ".d.ts") ||
-		strings.HasSuffix(value, ".d.mts") ||
-		strings.HasSuffix(value, ".d.cts") {
-		return errors.New("must identify executable source, not a declaration file")
+	name := strings.TrimSuffix(path.Base(value), suffix)
+	if len(name) != 64 {
+		return errors.New(
+			"must identify <source-directory>/.helmr/modules/<64 lowercase hex>.mjs",
+		)
 	}
-	switch {
-	case strings.HasSuffix(value, ".js"),
-		strings.HasSuffix(value, ".mjs"),
-		strings.HasSuffix(value, ".cjs"),
-		strings.HasSuffix(value, ".ts"),
-		strings.HasSuffix(value, ".mts"),
-		strings.HasSuffix(value, ".cts"):
-		return nil
-	default:
-		return errors.New("has an unsupported executable source suffix")
+	for _, value := range name {
+		if !('0' <= value && value <= '9') &&
+			!('a' <= value && value <= 'f') {
+			return errors.New(
+				"must identify <source-directory>/.helmr/modules/<64 lowercase hex>.mjs",
+			)
+		}
 	}
+	return nil
 }
 
 func locatedDeclarationProjection(declaration LocatedDeclaration) ProgramDeclaration {

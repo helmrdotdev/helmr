@@ -87,7 +87,7 @@ configure_process_limit() {
 	mkdir -p /sys/fs/cgroup
 	is_mounted /sys/fs/cgroup || mount -t cgroup2 cgroup2 /sys/fs/cgroup
 	case "$profile" in
-		build-install|build-verify)
+		build)
 			;;
 		*)
 		if ! grep -qw pids /sys/fs/cgroup/cgroup.controllers; then
@@ -311,7 +311,7 @@ guest_profile() {
 		return 1
 	fi
 	case "$profile" in
-		""|build-install|build-verify)
+		""|build)
 			echo "$profile"
 			;;
 		*)
@@ -418,19 +418,6 @@ require_network_ready() {
 	fi
 }
 
-configure_isolated_network() {
-	ip link set lo up
-	for net in /sys/class/net/*; do
-		[ -e "$net" ] || continue
-		iface=${net##*/}
-		[ "$iface" = "lo" ] && continue
-		ip addr flush dev "$iface"
-		ip link set "$iface" down
-	done
-	ip route flush table main
-	: > /run/resolv.conf
-}
-
 configure_runtime_identity() {
 	hostname helmr-sandbox || true
 }
@@ -449,10 +436,8 @@ if [ -z "$profile" ]; then
 	mount_substrate
 	mount_program
 	configure_network
-elif [ "$profile" = build-install ]; then
-	configure_network
 else
-	configure_isolated_network
+	configure_network
 fi
 configure_runtime_identity
 

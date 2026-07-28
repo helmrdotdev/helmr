@@ -10,13 +10,29 @@ bun run --cwd dev/client typecheck
 scripts/check-packed-sdk-consumer.sh
 # shellcheck disable=SC2016
 bun -e '
-  import { analyzeProject } from "./runtime/typescript/src/analysis.ts"
+  import { compileProgram } from "./compiler/typescript/src/bundle.ts"
+  import { mkdtemp, rm } from "node:fs/promises"
+  import { tmpdir } from "node:os"
+  import { resolve } from "node:path"
 
-  const result = await analyzeProject({
-    root: "./dev/workflows",
-    architecture: "x86_64",
-  })
-  console.log(
-    `analyzed ${result.modules.length} dev workflow modules and ${result.buildPlan.definitions.length} definitions`,
-  )
+  const outputRoot = await mkdtemp(resolve(tmpdir(), "helmr-dev-compiler-"))
+  try {
+    const result = await compileProgram({
+      root: ".",
+      runtimeRoot: process.cwd(),
+      architecture: "x86_64",
+      manager: "bun",
+      nodeVersion: "24.16.0",
+      outputRoot,
+      config: {
+        dirs: ["dev/workflows/tasks"],
+        ignorePatterns: [],
+      },
+    })
+    console.log(
+      `compiled ${result.modules.length} dev workflow modules and ${result.analysis.buildPlan.definitions.length} definitions`,
+    )
+  } finally {
+    await rm(outputRoot, { force: true, recursive: true })
+  }
 '

@@ -314,7 +314,50 @@ func smokeBuildPolicy(t *testing.T) string {
 	digest := func(character string) string {
 		return "sha256:" + strings.Repeat(character, 64)
 	}
-	return `{"architecture":"x86_64","denies":{"digests":[],"selectors":[]},"descriptorSchemaVersion":0,"fixtureSet":"helmr.platform.fixtures.v0","formatVersion":0,"managers":[{"adapterVersion":"helmr.manager.v0","allowedOrigin":"https://github.com/oven-sh/bun/releases/","allowedRedirectHosts":["api.github.com","github.com","objects.githubusercontent.com"],"domain":{"major":1,"minimum":"1.3.10"},"metadataOrigin":"https://api.github.com/repos/oven-sh/bun/releases/tags/","name":"bun"},{"adapterVersion":"helmr.manager.v0","allowedOrigin":"https://registry.npmjs.org/npm/","allowedRedirectHosts":["registry.npmjs.org"],"domain":{"major":11,"minimum":"11.4.2"},"metadataOrigin":"https://registry.npmjs.org/npm/","name":"npm"},{"adapterVersion":"helmr.manager.v0","allowedOrigin":"https://registry.npmjs.org/pnpm/","allowedRedirectHosts":["registry.npmjs.org"],"domain":{"major":11,"minimum":"11.1.0"},"metadataOrigin":"https://registry.npmjs.org/pnpm/","name":"pnpm"}],"node":{"adapterVersion":"helmr.runtime.v0","allowedOrigin":"https://nodejs.org/dist/","allowedRedirectHosts":["nodejs.org"],"domains":[{"major":22,"minimum":"22.18.0"},{"major":24,"minimum":"24.3.0"}],"releaseKeyFingerprints":["00112233445566778899AABBCCDDEEFF00112233"],"releaseKeyring":"AQ=="},"runtime":{"configEvaluatorDigest":"` + digest("1") + `","harness":{"digest":"` + digest("2") + `","mediaType":"application/vnd.helmr.platform-tree.v0+tar","sizeBytes":4096}},"toolchain":{"base":{"digest":"` + digest("3") + `","mediaType":"application/vnd.helmr.platform-tree.v0+tar","sizeBytes":4096}}}`
+	raw, err := deployment.ComposeBuildPolicy(
+		deployment.RuntimeInputs{
+			Harness: deployment.ArtifactDescriptor{
+				Digest: digest("1"), MediaType: deployment.PlatformTreeInputMediaType, SizeBytes: 4096,
+			},
+		},
+		deployment.ToolchainInputs{
+			Base: deployment.ArtifactDescriptor{
+				Digest: digest("2"), MediaType: deployment.PlatformTreeInputMediaType, SizeBytes: 4096,
+			},
+			Compiler: deployment.CompilerInputs{
+				APIVersion: "helmr.compiler.v0",
+				ConfigEvaluator: deployment.CompilerEntrypoint{
+					APIVersion: deployment.ConfigEvaluatorAPIVersion,
+					Digest:     digest("3"), Entrypoint: "/nix/helmr/config-evaluator.mjs",
+				},
+				Esbuild: deployment.EsbuildInputs{
+					APIPackageDigest: digest("4"), BinaryDigest: digest("5"),
+					BinaryPath: "/nix/helmr/esbuild", PackagePath: "/nix/node_modules/esbuild",
+					Version: "0.28.1",
+				},
+				OptionsContractDigest: digest("6"),
+				Output: deployment.CompilerOutputContract{
+					Aggregate: "analysis-only", FinalModules: "independent", SourceMaps: "external",
+				},
+				ProgramCompiler: deployment.CompilerEntrypoint{
+					APIVersion: "helmr.compiler.v0",
+					Digest:     digest("7"), Entrypoint: "/nix/helmr/program-compiler.mjs",
+				},
+				Source: deployment.CompilerSourceContract{
+					DeclarationExtensions: []string{".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"},
+					PackageDependencies:   "external",
+					Semantics:             "pinned-esbuild",
+					WorkspaceDependencies: "bundled",
+				},
+			},
+		},
+		[]byte("node release keyring"),
+		[]string{"00112233445566778899AABBCCDDEEFF00112233"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }
 
 func freeSmokeAddr(t *testing.T) string {

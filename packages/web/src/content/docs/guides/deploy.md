@@ -24,11 +24,11 @@ helmr deploy ./my-helmr-tasks \
 import { defineConfig } from "@helmr/sdk"
 
 export default defineConfig({
-  dirs: ["./dist/tasks"],
+  dirs: ["tasks"],
 })
 ```
 
-`dirs` selects post-build JavaScript declaration directories. Project and
+`dirs` selects source declaration directories. Project and
 environment are deployment authority, not config properties. A saved login
 requires both `--project` and `--env`; an environment API key derives both and
 rejects those flags.
@@ -52,9 +52,11 @@ rejected. Retained `.env` and `.env.*` basenames are rejected except exact
 remote declaration discovery.
 
 The remote build uses the selected Manager for dependency fetch and a
-networkless frozen install. If `scripts.build` exists it runs through that
-Manager after network and registry authority are gone. Config and JavaScript
-declarations are then analyzed remotely; the CLI never executes either.
+networkless frozen install with ordinary lifecycle semantics. It evaluates
+`helmr.config.ts` once for that build attempt, compiles project and
+workspace-local declaration source with the pinned Platform esbuild, and keeps
+registry dependencies external in the complete installed project tree. The CLI
+never executes config or declaration modules.
 
 For automation, use JSON lines:
 

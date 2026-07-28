@@ -93,18 +93,23 @@ func inspectBuildTree(
 	if err != nil {
 		return nil, fmt.Errorf("inspect build tree: %w", err)
 	}
-	if err := validateInspectedBuildTree(tree); err != nil {
+	if err := validateInspectedBuildTree(ctx, tree); err != nil {
 		return nil, err
 	}
 	return tree, nil
 }
 
-func validateInspectedBuildTree(tree *inspectedArtifact) error {
+func validateInspectedBuildTree(
+	ctx context.Context,
+	tree *inspectedArtifact,
+) error {
 	if tree == nil {
 		return errors.New("build tree inspection is nil")
 	}
 	if _, exists := tree.entries["helmr"]; exists {
-		return errors.New("build tree contains reserved root path \"helmr\"")
+		if err := validateCompilerBuildTree(ctx, tree); err != nil {
+			return err
+		}
 	}
 	if dependencies, exists := tree.entries["node_modules"]; exists &&
 		dependencies.Kind != artifactEntryDirectory {
@@ -116,6 +121,87 @@ func validateInspectedBuildTree(tree *inspectedArtifact) error {
 		return err
 	}
 	return nil
+}
+
+func validateCompilerBuildTree(
+	ctx context.Context,
+	tree *inspectedArtifact,
+) error {
+	for _, required := range []string{"helmr"} {
+		if _, err := tree.require(required, artifactEntryDirectory); err != nil {
+			return fmt.Errorf("compiler build tree: %w", err)
+		}
+	}
+	for _, required := range []string{
+		"helmr/compiler-result.json",
+		"helmr/config.json",
+	} {
+		if _, err := tree.require(required, artifactEntryRegular); err != nil {
+			return fmt.Errorf("compiler build tree: %w", err)
+		}
+	}
+	raw, err := tree.read(
+		ctx,
+		"helmr/compiler-result.json",
+		maxProgramFileSizeBytes,
+	)
+	if err != nil {
+		return fmt.Errorf("compiler build tree: %w", err)
+	}
+	result, err := ParseProgramCompilerResult(raw)
+	if err != nil {
+		return fmt.Errorf("compiler build tree: %w", err)
+	}
+	generated := make(map[string]struct{}, len(result.Outputs)*2)
+	generatedDirectories := make(map[string]struct{}, len(result.Outputs)*2)
+	for _, output := range result.Outputs {
+		generated[output.ModulePath] = struct{}{}
+		generated[output.SourceMapPath] = struct{}{}
+		moduleDirectory := path.Dir(output.ModulePath)
+		generatedDirectories[moduleDirectory] = struct{}{}
+		generatedDirectories[path.Dir(moduleDirectory)] = struct{}{}
+	}
+	for _, entry := range tree.ordered {
+		if entry.Path == "helmr" ||
+			entry.Path == "helmr/compiler-result.json" ||
+			entry.Path == "helmr/config.json" {
+			continue
+		}
+		if strings.HasPrefix(entry.Path, "helmr/") {
+			return fmt.Errorf(
+				"compiler build tree contains unknown path %q",
+				entry.Path,
+			)
+		}
+		if !hasReservedOutputSegment(entry.Path) {
+			continue
+		}
+		if _, ok := generated[entry.Path]; ok &&
+			entry.Kind == artifactEntryRegular {
+			continue
+		}
+		if _, ok := generatedDirectories[entry.Path]; ok &&
+			entry.Kind == artifactEntryDirectory {
+			continue
+		}
+		return fmt.Errorf(
+			"compiler build tree contains unknown path %q",
+			entry.Path,
+		)
+	}
+	if err := verifyProgramBuildFiles(ctx, tree, result); err != nil {
+		return fmt.Errorf("compiler build tree: %w", err)
+	}
+	return nil
+}
+
+func hasReservedOutputSegment(name string) bool {
+	for _, component := range strings.Split(name, "/") {
+		if component == ".helmr" {
+			return true
+		}
+	}
+	return false
 }
 
 func validateBuildTreeLinks(tree *inspectedArtifact) error {

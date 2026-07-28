@@ -118,6 +118,7 @@ func validateBuildProcessConfig(config buildProcessConfig) error {
 	}
 	for name, path := range map[string]string{
 		"manager":   config.Manager,
+		"output":    config.Output,
 		"project":   config.Project,
 		"toolchain": config.Toolchain,
 	} {
@@ -156,6 +157,11 @@ func setupBuildProcessRoot(config buildProcessConfig) error {
 	}
 	if err := mountBuildWritable(config.ProcessRoot, "work"); err != nil {
 		return err
+	}
+	if config.ReadOnlyCache {
+		if err := mountBuildReadOnly(config.ProcessRoot, "work/cache"); err != nil {
+			return err
+		}
 	}
 	if err := mountBuildWritable(config.ProcessRoot, "tmp"); err != nil {
 		return err
@@ -199,6 +205,15 @@ func setupBuildProcessRoot(config buildProcessConfig) error {
 			return err
 		}
 	}
+	if config.Output != "" {
+		if err := mountBuildWritableComponent(
+			config.ProcessRoot,
+			config.Output,
+			"/opt/helmr/output",
+		); err != nil {
+			return err
+		}
+	}
 	if err := pivotIntoImageRoot(config.ProcessRoot); err != nil {
 		return err
 	}
@@ -227,6 +242,24 @@ func setupBuildProcessRoot(config buildProcessConfig) error {
 	}
 	if !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
 		return errors.New("build process executable is not executable")
+	}
+	return nil
+}
+
+func mountBuildReadOnly(root string, relative string) error {
+	path := filepath.Join(root, relative)
+	if err := unix.Mount(path, path, "", unix.MS_BIND, ""); err != nil {
+		return fmt.Errorf("bind build read-only path %q: %w", relative, err)
+	}
+	if err := unix.Mount(
+		"",
+		path,
+		"",
+		unix.MS_REMOUNT|unix.MS_BIND|unix.MS_RDONLY|
+			unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC,
+		"",
+	); err != nil {
+		return fmt.Errorf("remount build read-only path %q: %w", relative, err)
 	}
 	return nil
 }
@@ -276,6 +309,37 @@ func mountBuildWritable(root string, relative string) error {
 		"",
 	); err != nil {
 		return fmt.Errorf("remount build writable path %q: %w", relative, err)
+	}
+	return nil
+}
+
+func mountBuildWritableComponent(
+	root string,
+	source string,
+	absoluteTarget string,
+) error {
+	sourceInfo, err := os.Stat(source)
+	if err != nil {
+		return fmt.Errorf("stat build writable component %q: %w", source, err)
+	}
+	if !sourceInfo.IsDir() {
+		return fmt.Errorf("build writable component %q is not a directory", source)
+	}
+	target := filepath.Join(root, strings.TrimPrefix(absoluteTarget, "/"))
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		return fmt.Errorf("create build writable target %q: %w", absoluteTarget, err)
+	}
+	if err := unix.Mount(source, target, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+		return fmt.Errorf("bind build writable component %q: %w", absoluteTarget, err)
+	}
+	if err := unix.Mount(
+		"",
+		target,
+		"",
+		unix.MS_REMOUNT|unix.MS_BIND|unix.MS_NOSUID|unix.MS_NODEV,
+		"",
+	); err != nil {
+		return fmt.Errorf("remount build writable component %q: %w", absoluteTarget, err)
 	}
 	return nil
 }

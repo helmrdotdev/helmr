@@ -3384,16 +3384,8 @@ var ResumeConsumedSchema = /* @__PURE__ */ messageDesc(file_run, 57);
 var MetadataUpdatedSchema = /* @__PURE__ */ messageDesc(file_run, 58);
 var StructuredLogRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 59);
 // sdk/typescript/src/config.ts
-var arrayIsArray = Array.isArray;
 var arrayPrototype = Array.prototype;
-var defineProperty = Object.defineProperty;
 var objectPrototype = Object.prototype;
-var getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-var getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
-var getPrototypeOf = Object.getPrototypeOf;
-var hasOwn = Object.hasOwn;
-var freeze = Object.freeze;
-var ownKeys = Reflect.ownKeys;
 var startsWith = String.prototype.startsWith.call.bind(String.prototype.startsWith);
 var endsWith = String.prototype.endsWith.call.bind(String.prototype.endsWith);
 var includes = String.prototype.includes.call.bind(String.prototype.includes);
@@ -3403,221 +3395,6 @@ var charCodeAt = String.prototype.charCodeAt.call.bind(String.prototype.charCode
 var regexpTest = RegExp.prototype.test.call.bind(RegExp.prototype.test);
 var utf8Encoder = new TextEncoder;
 var encodeUTF8 = TextEncoder.prototype.encode.call.bind(TextEncoder.prototype.encode);
-function inspectConfig(value) {
-  if (typeof value !== "object" || value === null) {
-    throw new Error("config must be an ordinary object");
-  }
-  return normalizeConfig(value);
-}
-function matchesIgnorePattern(pattern, path) {
-  const patternSegments = split(pattern, "/");
-  const pathSegments = split(path, "/");
-  const matches = (patternIndex, pathIndex) => {
-    if (patternIndex === patternSegments.length) {
-      return pathIndex === pathSegments.length;
-    }
-    const segment = patternSegments[patternIndex];
-    if (segment === "**") {
-      if (patternIndex === patternSegments.length - 1) {
-        return pathIndex < pathSegments.length;
-      }
-      for (let candidate = pathIndex;candidate <= pathSegments.length; candidate++) {
-        if (matches(patternIndex + 1, candidate))
-          return true;
-      }
-      return false;
-    }
-    return pathIndex < pathSegments.length && matchesSegment(segment, pathSegments[pathIndex]) && matches(patternIndex + 1, pathIndex + 1);
-  };
-  return matches(0, 0);
-}
-function validateDirectory(value) {
-  if (typeof value !== "string" || value === "" || hasUnpairedSurrogate(value) || startsWith(value, "/") || includes(value, "\\") || hasControl(value)) {
-    throw new Error("config dirs entries must be non-empty root-relative POSIX paths");
-  }
-  const normalized = startsWith(value, "./") ? slice(value, 2) : value;
-  const segments = split(normalized, "/");
-  let invalidSegment = normalized === "";
-  for (let index = 0;index < segments.length; index++) {
-    const segment = segments[index];
-    if (segment === "" || segment === "." || segment === "..") {
-      invalidSegment = true;
-      break;
-    }
-  }
-  if (invalidSegment) {
-    throw new Error("config dirs entries must be normalized root-relative paths");
-  }
-  return normalized;
-}
-function validateIgnorePattern(value) {
-  if (typeof value !== "string" || value === "" || hasUnpairedSurrogate(value) || startsWith(value, "./") || startsWith(value, "/") || endsWith(value, "/") || includes(value, "//") || includes(value, "\\") || hasControl(value) || startsWith(value, "!") || regexpTest(/[[\]{}]/, value) || regexpTest(/[?*+@!]\(/, value)) {
-    throw new Error(`unsupported ignorePattern ${JSON.stringify(value)}`);
-  }
-  const segments = split(value, "/");
-  for (let index = 0;index < segments.length; index++) {
-    const segment = segments[index];
-    if (segment === ".." || includes(segment, "**") && segment !== "**") {
-      throw new Error(`unsupported ignorePattern ${JSON.stringify(value)}`);
-    }
-  }
-  return value;
-}
-function matchesSegment(pattern, value) {
-  const patternCharacters = codePoints(pattern);
-  const valueCharacters = codePoints(value);
-  let patternIndex = 0;
-  let valueIndex = 0;
-  let star = -1;
-  let starValue = -1;
-  while (valueIndex < valueCharacters.length) {
-    const token = patternCharacters[patternIndex];
-    if (token === "?" || token === valueCharacters[valueIndex]) {
-      patternIndex++;
-      valueIndex++;
-      continue;
-    }
-    if (token === "*") {
-      star = patternIndex++;
-      starValue = valueIndex;
-      continue;
-    }
-    if (star !== -1) {
-      patternIndex = star + 1;
-      valueIndex = ++starValue;
-      continue;
-    }
-    return false;
-  }
-  while (patternCharacters[patternIndex] === "*")
-    patternIndex++;
-  return patternIndex === patternCharacters.length;
-}
-function hasControl(value) {
-  for (let index = 0;index < value.length; index++) {
-    const code = charCodeAt(value, index);
-    if (code <= 31 || code >= 127 && code <= 159)
-      return true;
-  }
-  return false;
-}
-function hasUnpairedSurrogate(value) {
-  for (let index = 0;index < value.length; index++) {
-    const code = charCodeAt(value, index);
-    if (code >= 56320 && code <= 57343)
-      return true;
-    if (code < 55296 || code > 56319)
-      continue;
-    index++;
-    if (index === value.length)
-      return true;
-    const low = charCodeAt(value, index);
-    if (low < 56320 || low > 57343)
-      return true;
-  }
-  return false;
-}
-function codePoints(value) {
-  const result = [];
-  for (let index = 0;index < value.length; ) {
-    const first = charCodeAt(value, index);
-    const width = first >= 55296 && first <= 56319 ? 2 : 1;
-    setArrayIndex(result, result.length, slice(value, index, index + width));
-    index += width;
-  }
-  return result;
-}
-function normalizeConfig(value) {
-  if (arrayIsArray(value) || getPrototypeOf(value) !== objectPrototype) {
-    throw new Error("config must be an ordinary object");
-  }
-  const descriptors2 = getOwnPropertyDescriptors(value);
-  const keys = ownKeys(value);
-  let invalidKey = !hasOwn(descriptors2, "dirs");
-  for (let index = 0;index < keys.length; index++) {
-    const key = keys[index];
-    if (typeof key !== "string" || key !== "dirs" && key !== "ignorePatterns") {
-      invalidKey = true;
-      break;
-    }
-  }
-  if (invalidKey) {
-    throw new Error("config requires exactly dirs and optional ignorePatterns");
-  }
-  for (let index = 0;index < keys.length; index++) {
-    const key = keys[index];
-    if (typeof key !== "string") {
-      throw new Error("config requires exactly dirs and optional ignorePatterns");
-    }
-    const descriptor = descriptors2[key];
-    if (descriptor === undefined || !descriptor.enumerable || !hasOwn(descriptor, "value")) {
-      throw new Error("config properties must be enumerable data properties");
-    }
-  }
-  const dirs = normalizeStringSet(descriptors2["dirs"]?.value, "config dirs", validateDirectory, true);
-  const ignorePatterns = normalizeStringSet(hasOwn(descriptors2, "ignorePatterns") ? descriptors2["ignorePatterns"]?.value : [], "config ignorePatterns", validateIgnorePattern, false);
-  return freeze({
-    dirs: freeze(dirs),
-    ignorePatterns: freeze(ignorePatterns)
-  });
-}
-function normalizeStringSet(value, name, normalize, nonempty) {
-  if (!arrayIsArray(value) || getPrototypeOf(value) !== arrayPrototype) {
-    throw new Error(`${name} must be an array`);
-  }
-  const keys = ownKeys(value);
-  const lengthDescriptor = getOwnPropertyDescriptor(value, "length");
-  const length = lengthDescriptor?.value;
-  if (typeof length !== "number" || keys.length !== length + 1 || keys[length] !== "length") {
-    throw new Error(`${name} must be a dense ordinary array`);
-  }
-  const normalized = [];
-  for (let index = 0;index < length; index++) {
-    const key = `${index}`;
-    if (keys[index] !== key) {
-      throw new Error(`${name} must be a dense ordinary array`);
-    }
-    const descriptor = getOwnPropertyDescriptor(value, key);
-    if (descriptor === undefined || !descriptor.enumerable || !hasOwn(descriptor, "value")) {
-      throw new Error(`${name} entries must be enumerable data properties`);
-    }
-    const current = normalize(descriptor.value);
-    let insertion = normalized.length;
-    while (insertion > 0 && compareUTF8(current, normalized[insertion - 1]) < 0) {
-      setArrayIndex(normalized, insertion, normalized[insertion - 1]);
-      insertion--;
-    }
-    setArrayIndex(normalized, insertion, current);
-  }
-  if (nonempty && length === 0) {
-    throw new Error(`${name} must be non-empty`);
-  }
-  for (let index = 1;index < normalized.length; index++) {
-    if (normalized[index] === normalized[index - 1]) {
-      throw new Error(`${name} contains a duplicate entry`);
-    }
-  }
-  return normalized;
-}
-function setArrayIndex(array, index, value) {
-  defineProperty(array, `${index}`, {
-    configurable: true,
-    enumerable: true,
-    value,
-    writable: true
-  });
-}
-function compareUTF8(left, right) {
-  const leftBytes = encodeUTF8(utf8Encoder, left);
-  const rightBytes = encodeUTF8(utf8Encoder, right);
-  const length = leftBytes.length < rightBytes.length ? leftBytes.length : rightBytes.length;
-  for (let index = 0;index < length; index++) {
-    const difference = leftBytes[index] - rightBytes[index];
-    if (difference !== 0)
-      return difference;
-  }
-  return leftBytes.length - rightBytes.length;
-}
 // sdk/typescript/src/schema/payload.ts
 var payloadSchemaValidationErrorBrand = Symbol.for("helmr.sdk.PayloadSchemaValidationError");
 function assertPayloadSchema(value, label = "payload") {
@@ -3643,9 +3420,6 @@ function assertStandardSchema(value, label = "schema") {
 // sdk/typescript/src/schema/task.ts
 var TASK_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$";
 var TASK_ID_MAX_LENGTH = 128;
-var QUEUE_NAME_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$";
-var QUEUE_NAME_MAX_LENGTH = 256;
-
 class TaskIdError extends Error {
   name = "TaskIdError";
   value;
@@ -3674,54 +3448,6 @@ function isValidTaskId(value) {
     }
   }
   return true;
-}
-
-class TaskQueueNameError extends Error {
-  name = "TaskQueueNameError";
-  value;
-  constructor(value) {
-    super(`queue name must match ${QUEUE_NAME_PATTERN}: ${JSON.stringify(value)}`);
-    this.value = value;
-  }
-}
-
-class TaskQueueConcurrencyLimitError extends Error {
-  name = "TaskQueueConcurrencyLimitError";
-  value;
-  constructor(value) {
-    super("queue concurrencyLimit must be a positive integer");
-    this.value = value;
-  }
-}
-function validateQueueName(value) {
-  if (!isValidQueueName(value)) {
-    throw new TaskQueueNameError(value);
-  }
-}
-function isValidQueueName(value) {
-  if (value.length === 0 || value.length > QUEUE_NAME_MAX_LENGTH) {
-    return false;
-  }
-  const first = value.charCodeAt(0);
-  if (!isAsciiAlnum(first)) {
-    return false;
-  }
-  for (let index = 1;index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (!(isAsciiAlnum(code) || code === 46 || code === 95 || code === 45 || code === 47)) {
-      return false;
-    }
-  }
-  return true;
-}
-function validateOptionalQueueConcurrencyLimit(value) {
-  if (value === undefined || value === null) {
-    return;
-  }
-  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
-    return;
-  }
-  throw new TaskQueueConcurrencyLimitError(value);
 }
 function isAsciiAlnum(code) {
   return code >= 48 && code <= 57 || code >= 65 && code <= 90 || code >= 97 && code <= 122;
@@ -3770,22 +3496,6 @@ function inspectDefinition(value) {
     throw new Error("invalid private definition record");
   }
   return definition;
-}
-function isQueueDefinition(value) {
-  if (typeof value !== "object" || value === null)
-    return false;
-  if (!Object.hasOwn(value, privateQueueBrand))
-    return false;
-  if (value[privateQueueBrand] !== true) {
-    throw new Error("invalid private queue record");
-  }
-  const queue = value;
-  if (typeof queue.id !== "string") {
-    throw new Error("invalid private queue record");
-  }
-  validateQueueName(queue.id);
-  validateOptionalQueueConcurrencyLimit(queue.concurrencyLimit);
-  return true;
 }
 function isInternalDefinition(value) {
   if (typeof value !== "object" || value === null)
@@ -3840,13 +3550,6 @@ var source = Object.freeze({
     return new SourceDirectory(path);
   }
 });
-function inspectImage(value) {
-  if (typeof value !== "object" || value === null || value[imageBrand] !== true) {
-    return;
-  }
-  const imageValue = value;
-  return { id: imageValue.id, steps: imageValue.steps };
-}
 // sdk/typescript/src/workspace.ts
 var workspaceDefinitionBrand = Symbol.for("helmr.sdk.v0.workspace");
 function workspaceRef(address) {
@@ -3856,21 +3559,6 @@ function workspaceRef(address) {
 var workspaces = Object.freeze({
   ref: workspaceRef
 });
-function inspectWorkspaceDefinition(value) {
-  if (typeof value !== "object" || value === null)
-    return;
-  if (!Object.hasOwn(value, workspaceDefinitionBrand))
-    return;
-  if (value[workspaceDefinitionBrand] !== true) {
-    throw new Error("invalid private workspace record");
-  }
-  const internal = value.internal;
-  if (typeof internal !== "object" || internal === null || internal.kind !== "workspace" || typeof internal.id !== "string" || typeof internal.image !== "object" || internal.image === null || typeof internal.resources !== "object" || internal.resources === null) {
-    throw new Error("invalid private workspace record");
-  }
-  validateTaskId(internal.id);
-  return internal;
-}
 function createWorkspaceRef(address) {
   const immutableAddress = address.id !== undefined ? Object.freeze({ id: address.id }) : Object.freeze({ key: address.key });
   const files = Object.freeze({
@@ -4150,769 +3838,7 @@ function assertUnicodeString(value) {
 import { createWriteStream, promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL as pathToFileURL3 } from "node:url";
-
-// runtime/typescript/src/compile.ts
-var BUILD_PLAN_FORMAT_VERSION = 0;
-var DECLARATION_LOCATOR_FORMAT_VERSION = 0;
-var PROGRAM_ENTRYPOINT = `import { runProgram } from "file:///opt/helmr/runtime/helmr/entry.mjs";
-await runProgram(new URL("./declarations.json", import.meta.url));
-`;
-function analyze(options) {
-  if (options.architecture !== "x86_64") {
-    throw new Error(`unsupported architecture ${JSON.stringify(options.architecture)}`);
-  }
-  const located = discoverDefinitions(options.exports);
-  if (located.length === 0) {
-    throw new Error("BuildPlan definitions must be non-empty");
-  }
-  if (located.length > 1e4) {
-    throw new Error("BuildPlan definitions exceed 10000");
-  }
-  located.sort(compareLocatedDefinitions);
-  const queues = compileQueues(located, options.exports);
-  const definitions = located.map(({ definition }) => compileDefinition(definition, options, queues));
-  const locatorEntries = located.flatMap((item) => item.definition.kind === "workspace" ? [] : [locatorEntry(item)]);
-  const programDeclarations = located.flatMap(({ definition }) => definition.kind === "workspace" ? [] : [programDeclaration(definition)]);
-  const buildPlan = Object.freeze({
-    formatVersion: BUILD_PLAN_FORMAT_VERSION,
-    definitions: Object.freeze(definitions),
-    queues: Object.freeze([...queues.values()].map((entry) => Object.freeze({ ...entry })).sort((left, right) => compareUtf8(left.name, right.name)))
-  });
-  const declarationLocator = Object.freeze({
-    declarations: Object.freeze(locatorEntries),
-    formatVersion: DECLARATION_LOCATOR_FORMAT_VERSION
-  });
-  return {
-    buildPlan,
-    buildPlanBytes: canonicalizeJsonValue(buildPlan),
-    declarationLocator,
-    declarationLocatorBytes: canonicalizeJsonValue(declarationLocator),
-    programDeclarations: Object.freeze(programDeclarations),
-    entrypointBytes: new TextEncoder().encode(PROGRAM_ENTRYPOINT)
-  };
-}
-function normalizeWorkspaceResources(resources) {
-  return Object.freeze({
-    milliCpu: normalizeCpu(resources.cpu),
-    memoryMiB: normalizeIecMiB(resources.memory, "memory")
-  });
-}
-function normalizeWorkspaceNetwork(network) {
-  if (network === undefined) {
-    return Object.freeze({ internet: true, denyCidrs: Object.freeze([]) });
-  }
-  if (network.internet === false) {
-    return Object.freeze({ internet: false, denyCidrs: Object.freeze([]) });
-  }
-  const denyCidrs = [...new Set((network.denyCidrs ?? []).map(canonicalCidr))];
-  denyCidrs.sort(compareUtf8);
-  return Object.freeze({
-    internet: true,
-    denyCidrs: Object.freeze(denyCidrs)
-  });
-}
-function discoverDefinitions(exports) {
-  const identities = new Map;
-  for (const item of exports) {
-    const definition = inspectDefinition(item.value) ?? inspectWorkspaceDefinition(item.value);
-    if (definition === undefined)
-      continue;
-    validateModulePath(item.modulePath);
-    validateExportName(item.exportName);
-    const key = `${definition.kind}\x00${definition.id}`;
-    const existing = identities.get(key);
-    if (existing !== undefined) {
-      if (existing.value === item.value) {
-        const candidate = {
-          definition,
-          modulePath: item.modulePath,
-          exportName: item.exportName
-        };
-        if (compareLocatorOccurrence(candidate, existing.located) < 0) {
-          existing.located = candidate;
-        }
-        continue;
-      }
-      throw new Error(`duplicate ${definition.kind} declaration ${JSON.stringify(definition.id)} at ${existing.located.modulePath}#${existing.located.exportName} and ${item.modulePath}#${item.exportName}`);
-    }
-    const located = {
-      definition,
-      modulePath: item.modulePath,
-      exportName: item.exportName
-    };
-    identities.set(key, {
-      value: item.value,
-      located
-    });
-  }
-  return [...identities.values()].map((item) => item.located);
-}
-function compileDefinition(definition, options, queues) {
-  switch (definition.kind) {
-    case "task":
-      return {
-        kind: "task",
-        declaredId: definition.id,
-        manifest: {
-          payload: {
-            kind: definition.hasPayload ? "standard_schema" : "none"
-          },
-          run: normalizeRun(definition, "task", queues),
-          ...definition.schedule === undefined ? {} : {
-            schedule: {
-              cron: definition.schedule.cron,
-              timezone: definition.schedule.timezone,
-              workspace: "id" in definition.schedule.workspace ? { id: definition.schedule.workspace.id } : { key: definition.schedule.workspace.key }
-            }
-          }
-        }
-      };
-    case "actor":
-      return {
-        kind: "actor",
-        declaredId: definition.id,
-        manifest: {
-          run: normalizeRun(definition, "actor", queues),
-          idleTimeoutMs: definition.idleTimeout === undefined ? 30000 : normalizeDuration(definition.idleTimeout, `actor ${JSON.stringify(definition.id)} idleTimeout`, 1, 3600000)
-        }
-      };
-    case "workspace":
-      return {
-        kind: "workspace",
-        declaredId: definition.id,
-        manifest: {
-          imageBuild: compileImageBuild(definition.image, options),
-          resources: normalizeWorkspaceResources(definition.resources),
-          network: normalizeWorkspaceNetwork(definition.network)
-        }
-      };
-  }
-}
-function compileQueues(located, exports) {
-  const queues = new Map;
-  for (const item of exports) {
-    if (isQueueDefinition(item.value)) {
-      addQueue(queues, item.value, item.value);
-    }
-  }
-  for (const { definition } of located) {
-    if (definition.kind !== "task" && definition.kind !== "actor")
-      continue;
-    if (typeof definition.queue === "object") {
-      addQueue(queues, definition.queue, definition.queue);
-    } else if (definition.queue === undefined) {
-      addQueue(queues, {
-        id: `${definition.kind}/${definition.id}`
-      }, definition);
-    }
-  }
-  for (const { definition } of located) {
-    if ((definition.kind === "task" || definition.kind === "actor") && typeof definition.queue === "string" && !queues.has(definition.queue)) {
-      throw new Error(`${definition.kind} ${JSON.stringify(definition.id)} references undefined queue ${JSON.stringify(definition.queue)}`);
-    }
-  }
-  if (queues.size > 1000)
-    throw new Error("BuildPlan queues exceed 1000");
-  return new Map([...queues].map(([name, entry]) => [name, entry.queue]));
-}
-function addQueue(queues, queue, owner) {
-  validateQueueName(queue.id);
-  const next = {
-    name: queue.id,
-    ...queue.concurrencyLimit === undefined || queue.concurrencyLimit === null ? {} : { concurrencyLimit: queue.concurrencyLimit }
-  };
-  const existing = queues.get(queue.id);
-  if (existing !== undefined) {
-    if (existing.owner === owner)
-      return;
-    throw new Error(`duplicate queue declaration ${JSON.stringify(queue.id)}`);
-  }
-  queues.set(queue.id, { owner, queue: next });
-}
-function normalizeRun(definition, kind, queues) {
-  const queue = definition.queue === undefined ? `${kind}/${definition.id}` : typeof definition.queue === "string" ? definition.queue : definition.queue.id;
-  if (!queues.has(queue)) {
-    throw new Error(`${kind} ${JSON.stringify(definition.id)} queue is undefined`);
-  }
-  const maxDurationMs = definition.maxDuration === undefined ? 900000 : normalizeDuration(definition.maxDuration, `${kind} ${JSON.stringify(definition.id)} maxDuration`, 5000, 86400000);
-  return {
-    queue,
-    maxDurationMs,
-    retry: normalizeRetry(definition.retry),
-    ...definition.ttl === undefined ? {} : {
-      ttlMs: normalizeDuration(definition.ttl, `${kind} ${JSON.stringify(definition.id)} ttl`, 1, 31536000000)
-    }
-  };
-}
-function normalizeRetry(retry) {
-  if (retry === undefined || retry.enabled === false) {
-    return { enabled: false };
-  }
-  if (!Number.isInteger(retry.maxAttempts) || retry.maxAttempts < 1 || retry.maxAttempts > 10) {
-    throw new Error("retry maxAttempts must be an integer in [1,10]");
-  }
-  const minMs = retry.backoff?.minDelay === undefined ? 1000 : normalizeDuration(retry.backoff.minDelay, "retry backoff minDelay", 1, 86400000);
-  const maxMs = retry.backoff?.maxDelay === undefined ? 30000 : normalizeDuration(retry.backoff.maxDelay, "retry backoff maxDelay", 1, 86400000);
-  const factor = retry.backoff?.factor ?? 2;
-  const jitter = retry.backoff?.jitter ?? "full";
-  if (minMs > maxMs) {
-    throw new Error("retry backoff minDelay must not exceed maxDelay");
-  }
-  if (!Number.isSafeInteger(factor) || factor < 1 || factor > 100) {
-    throw new Error("retry backoff factor must be an integer in [1,100]");
-  }
-  if (jitter !== "none" && jitter !== "full") {
-    throw new Error("retry backoff jitter must be none or full");
-  }
-  return {
-    enabled: true,
-    maxAttempts: retry.maxAttempts,
-    backoff: { minMs, maxMs, factor, jitter }
-  };
-}
-function compileImageBuild(root, options) {
-  const images = new Map;
-  const visiting = new Set;
-  const visit = (image) => {
-    if (visiting.has(image.id)) {
-      throw new Error(`image graph contains a cycle at ${JSON.stringify(image.id)}`);
-    }
-    const existing = images.get(image.id);
-    if (existing !== undefined) {
-      if (existing !== image) {
-        throw new Error(`image key ${JSON.stringify(image.id)} is not unique`);
-      }
-      return;
-    }
-    visiting.add(image.id);
-    images.set(image.id, image);
-    for (const step of image.steps) {
-      if (step.kind === "copy_from_image") {
-        const source2 = inspectImage(step.source);
-        if (source2 === undefined)
-          throw new Error("invalid copyFrom image");
-        visit(source2);
-      }
-    }
-    visiting.delete(image.id);
-  };
-  visit(root);
-  const specs = [...images.values()].sort((left, right) => compareUtf8(left.id, right.id)).map((image) => ({
-    key: image.id,
-    platform: {
-      os: "linux",
-      architecture: options.architecture
-    },
-    steps: image.steps.map((step) => compileImageStep(step, options))
-  }));
-  const stepCount = specs.reduce((total, image) => total + image.steps.length, 0);
-  if (stepCount > 1e4)
-    throw new Error("image build exceeds 10000 steps");
-  return {
-    formatVersion: 0,
-    root: root.id,
-    images: specs
-  };
-}
-function compileImageStep(step, options) {
-  switch (step.kind) {
-    case "from":
-      return { from: { ref: step.ref } };
-    case "run":
-      return {
-        run: {
-          argv: [...step.argv],
-          cacheMounts: step.cache.map((binding) => ({
-            dst: binding.mountPath,
-            cacheId: binding.cache.id,
-            sharing: "locked"
-          })),
-          secretMounts: step.secrets.map((binding) => ({
-            dst: binding.mountPath,
-            name: binding.secret
-          }))
-        }
-      };
-    case "copy_source_file":
-      return {
-        copySourceFile: {
-          dst: step.destination,
-          path: step.source.path
-        }
-      };
-    case "copy_source_directory":
-      return {
-        copySourceDir: {
-          dst: step.destination,
-          path: step.source.path
-        }
-      };
-    case "copy_from_image": {
-      const source2 = inspectImage(step.source);
-      if (source2 === undefined)
-        throw new Error("invalid copyFrom image");
-      return {
-        copyFromImage: {
-          dst: step.destination,
-          imageKey: source2.id,
-          srcPath: step.sourcePath
-        }
-      };
-    }
-    case "workdir":
-      return { workdir: { path: step.path } };
-    case "env":
-      return { env: { key: step.key, value: step.value } };
-    case "user":
-      return { user: { name: step.name } };
-  }
-}
-function locatorEntry(item) {
-  if (item.definition.kind === "workspace") {
-    throw new Error("workspace has no executable locator");
-  }
-  return {
-    declaredId: item.definition.id,
-    exportName: item.exportName,
-    kind: item.definition.kind,
-    modulePath: item.modulePath
-  };
-}
-function programDeclaration(definition) {
-  switch (definition.kind) {
-    case "task":
-      return {
-        kind: "task",
-        declaredId: definition.id,
-        slots: definition.hasPayload ? ["handler", "payloadSchema"] : ["handler"]
-      };
-    case "actor":
-      return {
-        kind: "actor",
-        declaredId: definition.id,
-        slots: ["handler"]
-      };
-  }
-}
-function normalizeCpu(cpu) {
-  if (!Number.isFinite(cpu) || cpu <= 0) {
-    throw new Error("workspace cpu must be a finite positive number");
-  }
-  const text = cpu.toString();
-  const match = /^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(text);
-  if (match === null)
-    throw new Error("workspace cpu cannot be normalized");
-  const integer = match[1];
-  const fraction = match[2] ?? "";
-  const exponent = Number(match[3] ?? "0");
-  const significand = BigInt(`${integer}${fraction}`);
-  const scale = exponent - fraction.length + 3;
-  let milliCpu;
-  if (scale >= 0) {
-    milliCpu = significand * 10n ** BigInt(scale);
-  } else {
-    const divisor = 10n ** BigInt(-scale);
-    if (significand % divisor !== 0n) {
-      throw new Error("workspace cpu must resolve to whole milliCPU");
-    }
-    milliCpu = significand / divisor;
-  }
-  return safePositiveNumber(milliCpu, "workspace milliCPU");
-}
-function normalizeIecMiB(value, label) {
-  const match = /^([1-9]\d*)(MiB|GiB)$/.exec(value);
-  if (match === null) {
-    throw new Error(`workspace ${label} must be a positive canonical integer suffixed by MiB or GiB`);
-  }
-  const result = BigInt(match[1]) * (match[2] === "GiB" ? 1024n : 1n);
-  return safePositiveNumber(result, `workspace ${label} MiB`);
-}
-function normalizeDuration(value, label, minimumMs, maximumMs) {
-  const match = /^([1-9][0-9]*)(ms|s|m|h|d)$/.exec(value);
-  if (match === null) {
-    throw new Error(`${label} must match ^[1-9][0-9]*(ms|s|m|h|d)$`);
-  }
-  const multipliers = {
-    ms: 1n,
-    s: 1000n,
-    m: 60000n,
-    h: 3600000n,
-    d: 86400000n
-  };
-  const milliseconds = BigInt(match[1]) * multipliers[match[2]];
-  if (milliseconds < BigInt(minimumMs) || milliseconds > BigInt(maximumMs)) {
-    throw new Error(`${label} must resolve to milliseconds in [${minimumMs},${maximumMs}]`);
-  }
-  return Number(milliseconds);
-}
-function safePositiveNumber(value, label) {
-  if (value <= 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new Error(`${label} must be a positive safe integer`);
-  }
-  return Number(value);
-}
-function canonicalCidr(value) {
-  const parts = value.split("/");
-  if (parts.length !== 2)
-    throw new Error(`invalid CIDR ${JSON.stringify(value)}`);
-  const address = parts[0];
-  const prefixText = parts[1];
-  if (!/^(0|[1-9]\d*)$/.test(prefixText)) {
-    throw new Error(`invalid CIDR prefix ${JSON.stringify(value)}`);
-  }
-  const ipv4 = parseIpv4(address);
-  if (ipv4 !== undefined) {
-    const prefix2 = Number(prefixText);
-    if (prefix2 > 32)
-      throw new Error(`invalid IPv4 CIDR prefix ${prefix2}`);
-    const mask = prefix2 === 0 ? 0 : 4294967295 << 32 - prefix2 >>> 0;
-    const network = (ipv4 & mask) >>> 0;
-    return `${[network >>> 24 & 255, network >>> 16 & 255, network >>> 8 & 255, network & 255].join(".")}/${prefix2}`;
-  }
-  const words = parseIpv6(address);
-  const prefix = Number(prefixText);
-  if (prefix > 128)
-    throw new Error(`invalid IPv6 CIDR prefix ${prefix}`);
-  for (let bit = prefix;bit < 128; bit += 1) {
-    const word = Math.floor(bit / 16);
-    const shift = 15 - bit % 16;
-    words[word] = words[word] & ~(1 << shift);
-  }
-  return `${formatIpv6(words)}/${prefix}`;
-}
-function parseIpv4(value) {
-  const parts = value.split(".");
-  if (parts.length !== 4 || parts.some((part) => !/^(0|[1-9]\d{0,2})$/.test(part))) {
-    return;
-  }
-  const values = parts.map(Number);
-  if (values.some((part) => part > 255))
-    return;
-  return (values[0] << 24 | values[1] << 16 | values[2] << 8 | values[3]) >>> 0;
-}
-function parseIpv6(value) {
-  if (value.includes("."))
-    throw new Error(`invalid IPv6 address ${JSON.stringify(value)}`);
-  const halves = value.split("::");
-  if (halves.length > 2)
-    throw new Error(`invalid IPv6 address ${JSON.stringify(value)}`);
-  const left = halves[0] === "" ? [] : halves[0].split(":");
-  const right = halves.length === 1 || halves[1] === "" ? [] : halves[1].split(":");
-  if ([...left, ...right].some((part) => !/^[0-9A-Fa-f]{1,4}$/.test(part)) || halves.length === 1 && left.length !== 8 || halves.length === 2 && left.length + right.length >= 8) {
-    throw new Error(`invalid IPv6 address ${JSON.stringify(value)}`);
-  }
-  const zeros = halves.length === 2 ? 8 - left.length - right.length : 0;
-  return [
-    ...left.map((part) => Number.parseInt(part, 16)),
-    ...Array.from({ length: zeros }, () => 0),
-    ...right.map((part) => Number.parseInt(part, 16))
-  ];
-}
-function formatIpv6(words) {
-  let bestStart = -1;
-  let bestLength = 0;
-  for (let index = 0;index < words.length; ) {
-    if (words[index] !== 0) {
-      index += 1;
-      continue;
-    }
-    let end = index;
-    while (end < words.length && words[end] === 0)
-      end += 1;
-    if (end - index > bestLength && end - index >= 2) {
-      bestStart = index;
-      bestLength = end - index;
-    }
-    index = end;
-  }
-  if (bestStart === -1)
-    return words.map((word) => word.toString(16)).join(":");
-  const left = words.slice(0, bestStart).map((word) => word.toString(16)).join(":");
-  const right = words.slice(bestStart + bestLength).map((word) => word.toString(16)).join(":");
-  return `${left}::${right}`;
-}
-function validateModulePath(path) {
-  const suffixes = [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"];
-  const components = path.split("/");
-  if (path.length === 0 || !hasOnlyUnicodeScalarValues(path) || path.startsWith("/") || path.includes("\\") || /[\p{Cc}]/u.test(path) || components.some((component) => component === "" || component === "." || component === "..") || components.includes("node_modules") || components[0] === "helmr" || path.endsWith(".d.ts") || path.endsWith(".d.mts") || path.endsWith(".d.cts") || !suffixes.some((suffix) => path.endsWith(suffix))) {
-    throw new Error(`modulePath ${JSON.stringify(path)} is not an admitted first-party module path`);
-  }
-}
-function validateExportName(name) {
-  const length = new TextEncoder().encode(name).length;
-  if (length < 1 || length > 256 || !hasOnlyUnicodeScalarValues(name) || /[\p{Cc}]/u.test(name)) {
-    throw new Error(`exportName ${JSON.stringify(name)} is invalid`);
-  }
-}
-function hasOnlyUnicodeScalarValues(value) {
-  for (let index = 0;index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code >= 55296 && code <= 56319) {
-      const next = value.charCodeAt(index + 1);
-      if (next < 56320 || next > 57343)
-        return false;
-      index += 1;
-    } else if (code >= 56320 && code <= 57343) {
-      return false;
-    }
-  }
-  return true;
-}
-function compareLocatedDefinitions(left, right) {
-  const order = {
-    task: 0,
-    actor: 1,
-    workspace: 2
-  };
-  return order[left.definition.kind] - order[right.definition.kind] || compareUtf8(left.definition.id, right.definition.id);
-}
-function compareLocatorOccurrence(left, right) {
-  return compareUtf8(left.modulePath, right.modulePath) || compareUtf8(left.exportName, right.exportName);
-}
-function compareUtf8(left, right) {
-  const encoder = new TextEncoder;
-  const a = encoder.encode(left);
-  const b = encoder.encode(right);
-  for (let index = 0;index < Math.min(a.length, b.length); index += 1) {
-    const difference = a[index] - b[index];
-    if (difference !== 0)
-      return difference;
-  }
-  return a.length - b.length;
-}
-
-// runtime/typescript/src/config.ts
-import { lstat } from "node:fs/promises";
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-
-class MissingConfigError extends Error {
-  constructor(path) {
-    super(`missing helmr.config.ts at ${path}`);
-    this.name = "MissingConfigError";
-  }
-}
-async function loadConfig(root) {
-  const path = resolve(root, "helmr.config.ts");
-  let metadata;
-  try {
-    metadata = await lstat(path);
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      throw new MissingConfigError(path);
-    }
-    throw error;
-  }
-  if (!metadata.isFile()) {
-    throw new Error("helmr.config.ts must be a regular file");
-  }
-  let namespace;
-  try {
-    const value = await import(pathToFileURL(path).href);
-    if (typeof value !== "object" || value === null) {
-      throw new Error("config did not evaluate to a module namespace");
-    }
-    namespace = value;
-  } catch (error) {
-    throw new Error("failed to evaluate helmr.config.ts", { cause: error });
-  }
-  try {
-    return inspectConfig(namespace["default"]);
-  } catch (error) {
-    throw new Error("helmr.config.ts must default-export a valid config object", {
-      cause: error
-    });
-  }
-}
-
-// runtime/typescript/src/analysis.ts
-import { lstat as lstat2, readdir, realpath } from "node:fs/promises";
-import { relative, resolve as resolve2, sep } from "node:path";
-import { pathToFileURL as pathToFileURL2 } from "node:url";
-var executableExtension = /\.(?:js|mjs|cjs|ts|mts|cts)$/;
-var declarationExtension = /\.d\.(?:ts|mts|cts)$/;
-var textDecoder2 = new TextDecoder("utf-8", { fatal: true });
-var maxVerificationFailureMessageBytes = 16 << 10;
-var VERIFICATION_RESULT_FORMAT_VERSION = 0;
-async function analyzeProject(options) {
-  const root = await realpath(options.root);
-  await rejectReservedRoot(root);
-  const config = await loadConfig(root);
-  const modules = await discoverModules(root, config);
-  const exports = await importModules(root, modules);
-  const result = analyze({
-    architecture: options.architecture,
-    exports
-  });
-  return Object.freeze({
-    ...result,
-    modules: Object.freeze(modules)
-  });
-}
-function successfulVerificationResult(analysis) {
-  const files = [{
-    path: "helmr/build-plan.json",
-    content: decodeGeneratedFile(analysis.buildPlanBytes)
-  }];
-  if (analysis.programDeclarations.length > 0) {
-    files.push({
-      path: "helmr/declarations.json",
-      content: decodeGeneratedFile(analysis.declarationLocatorBytes)
-    }, {
-      path: "helmr/entry.mjs",
-      content: decodeGeneratedFile(analysis.entrypointBytes)
-    });
-  }
-  return Object.freeze({
-    formatVersion: VERIFICATION_RESULT_FORMAT_VERSION,
-    outcome: "succeeded",
-    declarations: analysis.programDeclarations,
-    files: Object.freeze(files.map((file) => Object.freeze(file)))
-  });
-}
-function failedVerificationResult(message) {
-  const encoded = new TextEncoder().encode(message);
-  if (encoded.length === 0 || encoded.length > maxVerificationFailureMessageBytes || message.trim() === "") {
-    throw new Error(`verification failure message must be nonblank UTF-8 of at most ${maxVerificationFailureMessageBytes} bytes`);
-  }
-  return Object.freeze({
-    formatVersion: VERIFICATION_RESULT_FORMAT_VERSION,
-    outcome: "failed",
-    error: Object.freeze({
-      reason: "verification_failed",
-      message
-    })
-  });
-}
-function encodeVerificationResultFrame(result) {
-  const body = canonicalizeJsonValue(result);
-  const frame = new Uint8Array(4 + body.length);
-  new DataView(frame.buffer).setUint32(0, body.length, false);
-  frame.set(body, 4);
-  return frame;
-}
-async function discoverModules(root, config) {
-  const canonicalRoot = await realpath(root);
-  const candidates = new Set;
-  for (const configured of config.dirs) {
-    const directory = resolve2(canonicalRoot, configured);
-    if (!inside(canonicalRoot, directory)) {
-      throw new Error(`configured dir escapes the project root: ${configured}`);
-    }
-    const relativeDirectory = projectPath(canonicalRoot, directory);
-    if (hasComponent(relativeDirectory, "node_modules")) {
-      throw new Error(`configured dir enters the dependency namespace: ${configured}`);
-    }
-    await requireUnlinkedDirectory(canonicalRoot, directory, configured);
-    await appendCandidates(canonicalRoot, directory, candidates);
-  }
-  const modules = [...candidates].filter((path) => !config.ignorePatterns.some((pattern) => matchesIgnorePattern(pattern, path)));
-  modules.sort(compareUtf82);
-  return modules;
-}
-async function appendCandidates(root, directory, candidates) {
-  const entries = await readdir(directory, { withFileTypes: true });
-  entries.sort((left, right) => compareUtf82(left.name, right.name));
-  for (const entry of entries) {
-    const absolute = resolve2(directory, entry.name);
-    const path = projectPath(root, absolute);
-    if (hasComponent(path, "node_modules"))
-      continue;
-    const metadata = await lstat2(absolute);
-    if (metadata.isSymbolicLink())
-      continue;
-    if (metadata.isDirectory()) {
-      await appendCandidates(root, absolute, candidates);
-      continue;
-    }
-    if (metadata.isFile() && executableExtension.test(path) && !declarationExtension.test(path) && path !== "helmr.config.ts") {
-      candidates.add(path);
-      continue;
-    }
-    if (!metadata.isFile()) {
-      throw new Error(`unsupported declaration tree entry: ${path}`);
-    }
-  }
-}
-async function importModules(root, modules) {
-  const exports = [];
-  for (const modulePath of modules) {
-    let namespace;
-    try {
-      namespace = await importNamespace(resolve2(root, modulePath));
-    } catch (error) {
-      throw new Error(`failed to import declaration module ${modulePath}`, {
-        cause: error
-      });
-    }
-    const names = Object.getOwnPropertyNames(namespace).sort(compareUtf82);
-    for (const exportName of names) {
-      exports.push({
-        modulePath,
-        exportName,
-        value: namespace[exportName]
-      });
-    }
-  }
-  return exports;
-}
-async function importNamespace(path) {
-  const value = await import(pathToFileURL2(path).href);
-  if (typeof value !== "object" || value === null) {
-    throw new Error(`${path} did not evaluate to a module namespace`);
-  }
-  return value;
-}
-async function rejectReservedRoot(root) {
-  try {
-    await lstat2(resolve2(root, "helmr"));
-  } catch (error) {
-    if (error.code === "ENOENT")
-      return;
-    throw error;
-  }
-  throw new Error("project root helmr/ is reserved for Platform output");
-}
-async function requireUnlinkedDirectory(root, directory, configured) {
-  let metadata;
-  try {
-    metadata = await lstat2(directory);
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      throw new Error(`configured dir does not exist: ${configured}`);
-    }
-    throw error;
-  }
-  if (!metadata.isDirectory()) {
-    throw new Error(`configured dir is not a regular directory: ${configured}`);
-  }
-  if (await realpath(directory) !== directory || !inside(root, directory)) {
-    throw new Error(`configured dir traverses a symbolic link: ${configured}`);
-  }
-}
-function projectPath(root, value) {
-  return relative(root, value).split(sep).join("/");
-}
-function inside(root, value) {
-  const path = relative(root, value);
-  return path === "" || !path.startsWith(`..${sep}`) && path !== ".." && !path.startsWith("/");
-}
-function hasComponent(path, component) {
-  return path.split("/").includes(component);
-}
-function compareUtf82(left, right) {
-  return Buffer.compare(Buffer.from(left), Buffer.from(right));
-}
-function decodeGeneratedFile(value) {
-  try {
-    return textDecoder2.decode(value);
-  } catch {
-    throw new Error("generated analysis file is not valid UTF-8");
-  }
-}
-
-// runtime/typescript/src/program.ts
+import { fileURLToPath, pathToFileURL } from "node:url";
 var MAX_PROGRAM_FRAME_BYTES = 256 * 1024 * 1024;
 var MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024;
 var MAX_TASK_ERROR_BYTES = 16 * 1024;
@@ -4970,8 +3896,8 @@ class ResumeDecisionRouter {
     if (this.#pending.has(correlationId)) {
       return Promise.reject(new Error("duplicate runtime correlation id"));
     }
-    const result = new Promise((resolve3, reject) => {
-      this.#pending.set(correlationId, { resolve: resolve3, reject });
+    const result = new Promise((resolve, reject) => {
+      this.#pending.set(correlationId, { resolve, reject });
     });
     this.#pump();
     return result;
@@ -5136,21 +4062,22 @@ async function runProgram(locatorURL, io = defaultProgramIO()) {
   const reader = new FrameReader(io.input);
   const start = fromBinary(exports_run_pb.ProgramStartSchema, await reader.read());
   validateProgramStart(start);
-  const locator = await loadDeclarationLocator(locatorURL, io);
+  const index = await loadProgramIndex(locatorURL, io);
   const kind = start.entrypoint.case;
   if (kind !== "task" && kind !== "actor") {
     throw new Error("Program-start entrypoint is required");
   }
-  const located = locator.declarations.filter((declaration2) => declaration2.kind === kind && declaration2.declaredId === start.entrypointDeclaredId);
+  const located = index.declarations.filter((declaration2) => declaration2.kind === kind && declaration2.declaredId === start.entrypointDeclaredId && declaration2.locator !== undefined);
   if (located.length !== 1) {
     throw new Error(`Program declaration ${kind}:${JSON.stringify(start.entrypointDeclaredId)} was not found exactly once`);
   }
   const declaration = located[0];
-  const moduleURL = resolveModuleURL(locatorURL, declaration.modulePath);
+  const locator = declaration.locator;
+  const moduleURL = resolveModuleURL(locatorURL, locator.modulePath);
   const imported = io.importModule === undefined ? await import(moduleURL.href) : await io.importModule(moduleURL);
-  const definition = inspectDefinition(imported[declaration.exportName]);
+  const definition = inspectDefinition(imported[locator.exportName]);
   if (definition === undefined || definition.kind !== declaration.kind || definition.id !== declaration.declaredId || definition.kind !== "task" && definition.kind !== "actor") {
-    throw new Error(`Program export ${JSON.stringify(declaration.exportName)} does not match ${kind}:${JSON.stringify(start.entrypointDeclaredId)}`);
+    throw new Error(`Program export ${JSON.stringify(locator.exportName)} does not match ${kind}:${JSON.stringify(start.entrypointDeclaredId)}`);
   }
   validateEntrypointContract(start, definition);
   const identity = entrypointIdentity(kind, start.entrypointDeclaredId);
@@ -5171,76 +4098,70 @@ async function runProgram(locatorURL, io = defaultProgramIO()) {
   }
   await runActor(start, definition, io, decisions);
 }
-async function runVerification(root, architecture) {
-  try {
-    const result = await analyzeProject({ root, architecture });
-    await writeSupervisorBytes(encodeVerificationResultFrame(successfulVerificationResult(result)));
-  } catch (error) {
-    await writeSupervisorBytes(encodeVerificationResultFrame(failedVerificationResult(supervisorFailureMessage(error, "verification failed"))));
-  }
-}
-async function writeSupervisorBytes(value) {
-  const configured = process.env["HELMR_SUPERVISOR_FD"];
-  const fd = configured === undefined ? 3 : Number(configured);
-  if (!Number.isSafeInteger(fd) || fd < 3) {
-    throw new Error("supervisor result descriptor is invalid");
-  }
-  const output = createWriteStream("", { fd, autoClose: false });
-  await new Promise((resolve3, reject) => {
-    output.once("error", reject);
-    output.end(value, resolve3);
-  });
-}
-function supervisorFailureMessage(error, fallback) {
-  const message = error instanceof Error ? error.message : String(error);
-  const normalized = message.trim() || fallback;
-  const bytes = Buffer.from(normalized);
-  if (bytes.length <= 16384)
-    return normalized;
-  return bytes.subarray(0, 16384).toString("utf8").replace(/\uFFFD+$/u, "");
-}
-async function loadDeclarationLocator(url, io) {
+async function loadProgramIndex(url, io) {
   const raw = io.readLocator === undefined ? await fs.readFile(url, "utf8") : await io.readLocator(url);
   const value = JSON.parse(raw);
   if (typeof value !== "object" || value === null) {
-    throw new Error("declaration locator must be an object");
+    throw new Error("Program index must be an object");
   }
   const record = value;
-  if (record["formatVersion"] !== 0 || !Array.isArray(record["declarations"]) || record["declarations"].length === 0) {
-    throw new Error("declaration locator has an invalid v0 shape");
+  if (record["formatVersion"] !== 0 || record["architecture"] !== "x86_64" || record["runtimeApiVersion"] !== "helmr.runtime.v0" || typeof record["configResultDigest"] !== "string" || !Array.isArray(record["queues"]) || !Array.isArray(record["declarations"]) || record["declarations"].length === 0) {
+    throw new Error("Program index has an invalid v0 shape");
   }
-  const declarations = record["declarations"].map((entry, index) => parseLocatedDeclaration(entry, index));
+  const declarations = record["declarations"].map((entry, index) => parseProgramIndexDeclaration(entry, index));
   return { declarations, formatVersion: 0 };
 }
-function parseLocatedDeclaration(value, index) {
+function parseProgramIndexDeclaration(value, index) {
   if (typeof value !== "object" || value === null) {
-    throw new Error(`declaration locator entry ${index} must be an object`);
+    throw new Error(`Program index declaration ${index} must be an object`);
   }
   const record = value;
-  if (record["kind"] !== "task" && record["kind"] !== "actor" || typeof record["declaredId"] !== "string" || record["declaredId"] === "" || typeof record["exportName"] !== "string" || record["exportName"] === "" || typeof record["modulePath"] !== "string") {
-    throw new Error(`declaration locator entry ${index} is invalid`);
+  if (record["kind"] !== "task" && record["kind"] !== "actor" && record["kind"] !== "workspace" || typeof record["declaredId"] !== "string" || record["declaredId"] === "" || typeof record["manifest"] !== "object" || record["manifest"] === null) {
+    throw new Error(`Program index declaration ${index} is invalid`);
+  }
+  if (record["kind"] === "workspace") {
+    if (record["locator"] !== undefined) {
+      throw new Error(`Program index Workspace declaration ${index} has a locator`);
+    }
+    return {
+      kind: "workspace",
+      declaredId: record["declaredId"]
+    };
+  }
+  const locator = record["locator"];
+  if (typeof locator !== "object" || locator === null) {
+    throw new Error(`Program index declaration ${index} has no locator`);
+  }
+  const located = locator;
+  if (typeof located["exportName"] !== "string" || located["exportName"] === "" || typeof located["modulePath"] !== "string" || located["slot"] !== "handler") {
+    throw new Error(`Program index declaration ${index} locator is invalid`);
   }
   return {
     kind: record["kind"],
     declaredId: record["declaredId"],
-    exportName: record["exportName"],
-    modulePath: validateModulePath2(record["modulePath"])
+    locator: {
+      exportName: located["exportName"],
+      modulePath: validateModulePath(located["modulePath"]),
+      slot: "handler"
+    }
   };
 }
-function validateModulePath2(value) {
-  if (value === "" || value.startsWith("/") || value.includes("\\") || path.posix.normalize(value) !== value || value === "helmr" || value.startsWith("helmr/") || value.split("/").includes("node_modules")) {
-    throw new Error("declaration modulePath is outside first-party Program source");
+function validateModulePath(value) {
+  const components = value.split("/");
+  const prefix = components.slice(0, -3);
+  if (components.length < 3 || components.at(-3) !== ".helmr" || components.at(-2) !== "modules" || !/^[0-9a-f]{64}\.mjs$/.test(components.at(-1) ?? "") || prefix.some((component) => component === "" || component === "." || component === ".." || component === ".helmr" || component.includes("\\") || /[\u0000-\u001f\u007f]/.test(component))) {
+    throw new Error("declaration modulePath is not a generated Program module");
   }
   return value;
 }
 function resolveModuleURL(locatorURL, modulePath) {
   const root = path.dirname(path.dirname(fileURLToPath(locatorURL)));
   const resolved = path.resolve(root, modulePath);
-  const relative2 = path.relative(root, resolved);
-  if (relative2 === "" || relative2 === ".." || relative2.startsWith(`..${path.sep}`) || path.isAbsolute(relative2)) {
+  const relative = path.relative(root, resolved);
+  if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new Error("declaration modulePath escapes the Program root");
   }
-  return pathToFileURL3(resolved);
+  return pathToFileURL(resolved);
 }
 function validateProgramStart(start) {
   if (start.runId === "" || start.attemptNumber === 0 || start.entrypointDeclaredId === "" || start.deploymentId === "" || start.deploymentVersion === "" || start.workspaceId === "" || start.baseWorkspaceVersionId === "" || start.cause === undefined || start.cause.kind.case === undefined) {
@@ -6799,10 +5720,10 @@ function defaultProgramIO() {
   });
   return {
     input: process.stdin,
-    write: (value) => new Promise((resolve3, reject) => {
+    write: (value) => new Promise((resolve, reject) => {
       output.write(value, (error) => {
         if (error === null || error === undefined)
-          resolve3();
+          resolve();
         else
           reject(error);
       });
@@ -6813,6 +5734,5 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 export {
-  runVerification,
   runProgram
 };

@@ -153,6 +153,7 @@ export interface DeclarationLocatorEntry {
   readonly exportName: string
   readonly kind: "task" | "actor"
   readonly modulePath: string
+  readonly slot: "handler"
 }
 
 export interface DeclarationLocator {
@@ -628,6 +629,7 @@ function locatorEntry(item: LocatedDefinition): DeclarationLocatorEntry {
     exportName: item.exportName,
     kind: item.definition.kind,
     modulePath: item.modulePath,
+    slot: "handler",
   }
 }
 
@@ -822,7 +824,16 @@ function formatIpv6(words: readonly number[]): string {
 }
 
 function validateModulePath(path: string): void {
-  const suffixes = [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"]
+  const suffixes = [
+    ".cjs",
+    ".cts",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".mts",
+    ".ts",
+    ".tsx",
+  ]
   const components = path.split("/")
   if (
     path.length === 0 ||

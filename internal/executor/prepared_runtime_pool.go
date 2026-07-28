@@ -1000,10 +1000,9 @@ func (p *PreparedRuntimePool) prepareProgram(
 			closeSnapshots(),
 		)
 	}
-	if programIndex.RuntimeDigest != runtimeDescriptor.Digest ||
-		programIndex.RuntimeAPIVersion != runtimeDescriptor.RuntimeAPIVersion ||
+	if programIndex.RuntimeAPIVersion != runtimeDescriptor.RuntimeAPIVersion ||
 		programIndex.Architecture != runtimeDescriptor.Architecture ||
-		programIndex.BuildContractVersion != program.BuildContractVersion {
+		program.BuildContractVersion != deployment.ProgramBuildContractVersion {
 		return nil, func() error { return nil }, errors.Join(
 			errors.New("Program index does not match runtime reservation authority"),
 			closeSnapshots(),

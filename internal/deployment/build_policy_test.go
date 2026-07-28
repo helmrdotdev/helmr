@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -14,11 +15,13 @@ func TestBuildPolicyAdmitsDomainsWithoutReleaseCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, flag, err := policy.Node("24.11.1"); err != nil || flag != NodeNoExperimentalStripTypes {
-		t.Fatalf("Node 24.11.1 = %q, %v", flag, err)
+	if _, flags, err := policy.Node("24.11.1"); err != nil ||
+		!slices.Equal(flags, []string{NodeNoExperimentalStripTypes, "--enable-source-maps"}) {
+		t.Fatalf("Node 24.11.1 = %q, %v", flags, err)
 	}
-	if _, flag, err := policy.Node("24.12.0"); err != nil || flag != NodeNoStripTypes {
-		t.Fatalf("Node 24.12.0 = %q, %v", flag, err)
+	if _, flags, err := policy.Node("24.12.0"); err != nil ||
+		!slices.Equal(flags, []string{NodeNoStripTypes, "--enable-source-maps"}) {
+		t.Fatalf("Node 24.12.0 = %q, %v", flags, err)
 	}
 	if _, _, err := policy.Node("23.1.0"); err == nil {
 		t.Fatal("Node 23.1.0 was admitted")
@@ -83,14 +86,16 @@ func TestLoadBuildPolicyReadsCanonicalPolicy(t *testing.T) {
 func TestComposeBuildPolicyProducesClosedPolicy(t *testing.T) {
 	raw, err := ComposeBuildPolicy(
 		RuntimeInputs{
-			ConfigEvaluatorDigest: testDigest("config"),
 			Harness: ArtifactDescriptor{
 				Digest: testDigest("harness"), MediaType: PlatformTreeInputMediaType, SizeBytes: 4096,
 			},
 		},
-		ToolchainInputs{Base: ArtifactDescriptor{
-			Digest: testDigest("toolchain"), MediaType: PlatformTreeInputMediaType, SizeBytes: 8192,
-		}},
+		ToolchainInputs{
+			Base: ArtifactDescriptor{
+				Digest: testDigest("toolchain"), MediaType: PlatformTreeInputMediaType, SizeBytes: 8192,
+			},
+			Compiler: testCompilerInputs(),
+		},
 		[]byte("node release keyring"),
 		[]string{
 			"FFEEDDCCBBAA99887766554433221100FFEEDDCC",
@@ -148,21 +153,59 @@ func testBuildPolicy(t *testing.T) []byte {
 			ReleaseKeyring:         "AQ==",
 		},
 		Runtime: RuntimeInputs{
-			ConfigEvaluatorDigest: "sha256:" + strings.Repeat("1", 64),
 			Harness: ArtifactDescriptor{
 				Digest:    "sha256:" + strings.Repeat("2", 64),
 				MediaType: PlatformTreeInputMediaType,
 				SizeBytes: 4096,
 			},
 		},
-		Toolchain: ToolchainInputs{Base: ArtifactDescriptor{
-			Digest:    "sha256:" + strings.Repeat("3", 64),
-			MediaType: PlatformTreeInputMediaType,
-			SizeBytes: 4096,
-		}},
+		Toolchain: ToolchainInputs{
+			Base: ArtifactDescriptor{
+				Digest:    "sha256:" + strings.Repeat("3", 64),
+				MediaType: PlatformTreeInputMediaType,
+				SizeBytes: 4096,
+			},
+			Compiler: testCompilerInputs(),
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return raw
+}
+
+func testCompilerInputs() CompilerInputs {
+	return CompilerInputs{
+		APIVersion: "helmr.compiler.v0",
+		ConfigEvaluator: CompilerEntrypoint{
+			APIVersion: ConfigEvaluatorAPIVersion,
+			Digest:     testDigest("config evaluator"),
+			Entrypoint: "/nix/helmr/config-evaluator.mjs",
+		},
+		Esbuild: EsbuildInputs{
+			APIPackageDigest: testDigest("esbuild api"),
+			BinaryDigest:     testDigest("esbuild binary"),
+			BinaryPath:       "/nix/helmr/esbuild",
+			PackagePath:      "/nix/node_modules/esbuild",
+			Version:          "0.28.1",
+		},
+		OptionsContractDigest: testDigest("compiler options contract"),
+		Output: CompilerOutputContract{
+			Aggregate:    "analysis-only",
+			FinalModules: "independent",
+			SharedChunks: false,
+			SourceMaps:   "external",
+		},
+		ProgramCompiler: CompilerEntrypoint{
+			APIVersion: "helmr.compiler.v0",
+			Digest:     testDigest("program compiler"),
+			Entrypoint: "/nix/helmr/program-compiler.mjs",
+		},
+		Source: CompilerSourceContract{
+			DeclarationExtensions: []string{".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"},
+			PackageDependencies:   "external",
+			Semantics:             "pinned-esbuild",
+			WorkspaceDependencies: "bundled",
+		},
+	}
 }

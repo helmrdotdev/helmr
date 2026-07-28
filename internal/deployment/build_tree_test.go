@@ -87,7 +87,7 @@ func inspectMemoryBuildTree(
 	if err != nil {
 		return nil, err
 	}
-	if err := validateInspectedBuildTree(inspected); err != nil {
+	if err := validateInspectedBuildTree(context.Background(), inspected); err != nil {
 		return nil, err
 	}
 	return inspected, nil

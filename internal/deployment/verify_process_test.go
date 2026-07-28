@@ -217,27 +217,30 @@ func verifierRecordBytes(kind verifierRecordKind, payload []byte) []byte {
 func canonicalVerifierProgramIndex(t *testing.T) []byte {
 	t.Helper()
 	canonical, err := CanonicalProgramIndex(ProgramIndex{
-		Architecture:         ArchitectureX8664,
-		BuildContractVersion: ProgramBuildContractVersion,
-		Declarations: []ProgramDeclaration{{
-			Kind:       DeclarationKindTask,
+		Architecture:       ArchitectureX8664,
+		ConfigResultDigest: "sha256:" + strings.Repeat("8", 64),
+		Declarations: []ProgramIndexDeclaration{{
+			Kind:       DefinitionKindTask,
 			DeclaredID: "verify",
-			Slots:      []DeclarationSlot{DeclarationSlotHandler},
+			Task: &TaskManifest{
+				Payload: SchemaManifest{Kind: SchemaKindNone},
+				Run: RunManifest{
+					Queue:         "task/verify",
+					MaxDurationMs: 900000,
+					Retry:         RetryManifest{Enabled: false},
+				},
+			},
+			Locator: &ProgramLocator{
+				ExportName: "verify",
+				ModulePath: generatedTestModule("a"),
+				Slot:       DeclarationSlotHandler,
+			},
 		}},
 		FormatVersion: ProgramIndexFormatVersion,
-		Manager: ProgramManager{
-			Digest:  "sha256:" + strings.Repeat("2", 64),
-			Name:    PackageManagerBun,
-			Version: "1.3.10",
-		},
+		Queues: []QueueInput{{
+			Name: "task/verify",
+		}},
 		RuntimeAPIVersion: RuntimeAPIVersion,
-		RuntimeDigest:     "sha256:" + strings.Repeat("0", 64),
-		ToolchainDigest:   "sha256:" + strings.Repeat("4", 64),
-		Submitted: ProgramSubmittedSource{
-			LockfileDigest: "sha256:" + strings.Repeat("5", 64),
-			LockfileName:   "bun.lock",
-			SourceDigest:   "sha256:" + strings.Repeat("6", 64),
-		},
 	})
 	if err != nil {
 		t.Fatal(err)

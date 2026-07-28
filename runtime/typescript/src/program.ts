@@ -55,12 +55,6 @@ import { createWriteStream, promises as fs } from "node:fs"
 import { randomUUID } from "node:crypto"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import {
-  analyzeProject,
-  encodeVerificationResultFrame,
-  failedVerificationResult,
-  successfulVerificationResult,
-} from "./analysis"
 
 const MAX_PROGRAM_FRAME_BYTES = 256 * 1024 * 1024
 const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024
@@ -79,15 +73,20 @@ export interface ProgramIO {
   readonly importModule?: (url: URL) => Promise<Record<string, unknown>>
 }
 
-interface LocatedDeclaration {
-  readonly declaredId: string
+interface ProgramLocator {
   readonly exportName: string
-  readonly kind: "task" | "actor"
   readonly modulePath: string
+  readonly slot: "handler"
 }
 
-interface DeclarationLocator {
-  readonly declarations: readonly LocatedDeclaration[]
+interface ProgramIndexDeclaration {
+  readonly declaredId: string
+  readonly kind: "task" | "actor" | "workspace"
+  readonly locator?: ProgramLocator
+}
+
+interface ProgramIndex {
+  readonly declarations: readonly ProgramIndexDeclaration[]
   readonly formatVersion: 0
 }
 
@@ -349,15 +348,16 @@ export async function runProgram(
   const start = fromBinary(runProto.ProgramStartSchema, await reader.read())
   validateProgramStart(start)
 
-  const locator = await loadDeclarationLocator(locatorURL, io)
+  const index = await loadProgramIndex(locatorURL, io)
   const kind = start.entrypoint.case
   if (kind !== "task" && kind !== "actor") {
     throw new Error("Program-start entrypoint is required")
   }
-  const located = locator.declarations.filter(
+  const located = index.declarations.filter(
     (declaration) =>
       declaration.kind === kind &&
-      declaration.declaredId === start.entrypointDeclaredId,
+      declaration.declaredId === start.entrypointDeclaredId &&
+      declaration.locator !== undefined,
   )
   if (located.length !== 1) {
     throw new Error(
@@ -365,11 +365,12 @@ export async function runProgram(
     )
   }
   const declaration = located[0]!
-  const moduleURL = resolveModuleURL(locatorURL, declaration.modulePath)
+  const locator = declaration.locator!
+  const moduleURL = resolveModuleURL(locatorURL, locator.modulePath)
   const imported = io.importModule === undefined
     ? await import(moduleURL.href)
     : await io.importModule(moduleURL)
-  const definition = inspectDefinition(imported[declaration.exportName])
+  const definition = inspectDefinition(imported[locator.exportName])
   if (
     definition === undefined ||
     definition.kind !== declaration.kind ||
@@ -377,7 +378,7 @@ export async function runProgram(
     (definition.kind !== "task" && definition.kind !== "actor")
   ) {
     throw new Error(
-      `Program export ${JSON.stringify(declaration.exportName)} does not match ${kind}:${JSON.stringify(start.entrypointDeclaredId)}`,
+      `Program export ${JSON.stringify(locator.exportName)} does not match ${kind}:${JSON.stringify(start.entrypointDeclaredId)}`,
     )
   }
   validateEntrypointContract(start, definition)
@@ -406,107 +407,108 @@ export async function runProgram(
   await runActor(start, definition, io, decisions)
 }
 
-export async function runVerification(
-  root: string,
-  architecture: "x86_64",
-): Promise<void> {
-  try {
-    const result = await analyzeProject({ root, architecture })
-    await writeSupervisorBytes(
-      encodeVerificationResultFrame(successfulVerificationResult(result)),
-    )
-  } catch (error) {
-    await writeSupervisorBytes(encodeVerificationResultFrame(
-      failedVerificationResult(
-        supervisorFailureMessage(error, "verification failed"),
-      ),
-    ))
-  }
-}
 
-async function writeSupervisorBytes(value: Uint8Array): Promise<void> {
-  const configured = process.env["HELMR_SUPERVISOR_FD"]
-  const fd = configured === undefined ? 3 : Number(configured)
-  if (!Number.isSafeInteger(fd) || fd < 3) {
-    throw new Error("supervisor result descriptor is invalid")
-  }
-  const output = createWriteStream("", { fd, autoClose: false })
-  await new Promise<void>((resolve, reject) => {
-    output.once("error", reject)
-    output.end(value, resolve)
-  })
-}
-
-function supervisorFailureMessage(error: unknown, fallback: string): string {
-  const message = error instanceof Error ? error.message : String(error)
-  const normalized = message.trim() || fallback
-  const bytes = Buffer.from(normalized)
-  if (bytes.length <= 16 << 10) return normalized
-  return bytes.subarray(0, 16 << 10).toString("utf8").replace(/\uFFFD+$/u, "")
-}
-
-async function loadDeclarationLocator(
+async function loadProgramIndex(
   url: URL,
   io: ProgramIO,
-): Promise<DeclarationLocator> {
+): Promise<ProgramIndex> {
   const raw = io.readLocator === undefined
     ? await fs.readFile(url, "utf8")
     : await io.readLocator(url)
   const value: unknown = JSON.parse(raw)
   if (typeof value !== "object" || value === null) {
-    throw new Error("declaration locator must be an object")
+    throw new Error("Program index must be an object")
   }
   const record = value as Record<string, unknown>
   if (
     record["formatVersion"] !== 0 ||
+    record["architecture"] !== "x86_64" ||
+    record["runtimeApiVersion"] !== "helmr.runtime.v0" ||
+    typeof record["configResultDigest"] !== "string" ||
+    !Array.isArray(record["queues"]) ||
     !Array.isArray(record["declarations"]) ||
     record["declarations"].length === 0
   ) {
-    throw new Error("declaration locator has an invalid v0 shape")
+    throw new Error("Program index has an invalid v0 shape")
   }
   const declarations = record["declarations"].map((entry, index) =>
-    parseLocatedDeclaration(entry, index)
+    parseProgramIndexDeclaration(entry, index)
   )
   return { declarations, formatVersion: 0 }
 }
 
-function parseLocatedDeclaration(
+function parseProgramIndexDeclaration(
   value: unknown,
   index: number,
-): LocatedDeclaration {
+): ProgramIndexDeclaration {
   if (typeof value !== "object" || value === null) {
-    throw new Error(`declaration locator entry ${index} must be an object`)
+    throw new Error(`Program index declaration ${index} must be an object`)
   }
   const record = value as Record<string, unknown>
   if (
-    (record["kind"] !== "task" && record["kind"] !== "actor") ||
+    (
+      record["kind"] !== "task" &&
+      record["kind"] !== "actor" &&
+      record["kind"] !== "workspace"
+    ) ||
     typeof record["declaredId"] !== "string" ||
     record["declaredId"] === "" ||
-    typeof record["exportName"] !== "string" ||
-    record["exportName"] === "" ||
-    typeof record["modulePath"] !== "string"
+    typeof record["manifest"] !== "object" ||
+    record["manifest"] === null
   ) {
-    throw new Error(`declaration locator entry ${index} is invalid`)
+    throw new Error(`Program index declaration ${index} is invalid`)
+  }
+  if (record["kind"] === "workspace") {
+    if (record["locator"] !== undefined) {
+      throw new Error(`Program index Workspace declaration ${index} has a locator`)
+    }
+    return {
+      kind: "workspace",
+      declaredId: record["declaredId"],
+    }
+  }
+  const locator = record["locator"]
+  if (typeof locator !== "object" || locator === null) {
+    throw new Error(`Program index declaration ${index} has no locator`)
+  }
+  const located = locator as Record<string, unknown>
+  if (
+    typeof located["exportName"] !== "string" ||
+    located["exportName"] === "" ||
+    typeof located["modulePath"] !== "string" ||
+    located["slot"] !== "handler"
+  ) {
+    throw new Error(`Program index declaration ${index} locator is invalid`)
   }
   return {
     kind: record["kind"],
     declaredId: record["declaredId"],
-    exportName: record["exportName"],
-    modulePath: validateModulePath(record["modulePath"]),
+    locator: {
+      exportName: located["exportName"],
+      modulePath: validateModulePath(located["modulePath"]),
+      slot: "handler",
+    },
   }
 }
 
 function validateModulePath(value: string): string {
+  const components = value.split("/")
+  const prefix = components.slice(0, -3)
   if (
-    value === "" ||
-    value.startsWith("/") ||
-    value.includes("\\") ||
-    path.posix.normalize(value) !== value ||
-    value === "helmr" ||
-    value.startsWith("helmr/") ||
-    value.split("/").includes("node_modules")
+    components.length < 3 ||
+    components.at(-3) !== ".helmr" ||
+    components.at(-2) !== "modules" ||
+    !/^[0-9a-f]{64}\.mjs$/.test(components.at(-1) ?? "") ||
+    prefix.some((component) =>
+      component === "" ||
+      component === "." ||
+      component === ".." ||
+      component === ".helmr" ||
+      component.includes("\\") ||
+      /[\u0000-\u001f\u007f]/.test(component)
+    )
   ) {
-    throw new Error("declaration modulePath is outside first-party Program source")
+    throw new Error("declaration modulePath is not a generated Program module")
   }
   return value
 }

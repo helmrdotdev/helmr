@@ -92,6 +92,82 @@ func TestParseBuildNetworkStatusRequiresBothCounters(t *testing.T) {
 	}
 }
 
+func TestBuildNetworkCutoffHasOnlyTerminalDrop(t *testing.T) {
+	script := nftBuildNetworkCutoffScript()
+	for _, want := range []string{
+		"flush table inet helmr_network_policy",
+		"delete table inet helmr_network_policy",
+		"add table inet helmr_network_policy",
+		"type filter hook forward priority 0; policy drop;",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("cutoff script missing %q:\n%s", want, script)
+		}
+	}
+	for _, forbidden := range []string{
+		"accept",
+		"established",
+		"related",
+		"counter",
+		"quota",
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("cutoff script contains %q:\n%s", forbidden, script)
+		}
+	}
+	valid := []byte(`{
+		"nftables": [
+			{"metainfo": {"json_schema_version": 1}},
+			{"table": {"family": "inet", "name": "helmr_network_policy"}},
+			{"chain": {
+				"family": "inet",
+				"table": "helmr_network_policy",
+				"name": "forward",
+				"type": "filter",
+				"hook": "forward",
+				"prio": 0,
+				"policy": "drop"
+			}}
+		]
+	}`)
+	if err := validateBuildNetworkCutoff(valid); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range [][]byte{
+		[]byte(`{"nftables":[]}`),
+		[]byte(`{"nftables":[
+			{"table":{"family":"inet","name":"helmr_network_policy"}},
+			{"chain":{"family":"inet","table":"helmr_network_policy","name":"forward","type":"filter","hook":"forward","prio":0,"policy":"accept"}}
+		]}`),
+		[]byte(`{"nftables":[
+			{"table":{"family":"inet","name":"helmr_network_policy"}},
+			{"chain":{"family":"inet","table":"helmr_network_policy","name":"forward","type":"filter","hook":"forward","prio":0,"policy":"drop"}},
+			{"rule":{"family":"inet","table":"helmr_network_policy","chain":"forward","expr":[]}}
+		]}`),
+	} {
+		if err := validateBuildNetworkCutoff(invalid); err == nil {
+			t.Fatalf("invalid cutoff policy was accepted: %s", invalid)
+		}
+	}
+}
+
+func TestBuildTapMustBeDown(t *testing.T) {
+	if err := validateBuildTapDown(
+		[]byte(`[{"flags":["BROADCAST"],"operstate":"DOWN"}]`),
+	); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range [][]byte{
+		[]byte(`[]`),
+		[]byte(`[{"flags":["UP"],"operstate":"DOWN"}]`),
+		[]byte(`[{"flags":["BROADCAST"],"operstate":"UP"}]`),
+	} {
+		if err := validateBuildTapDown(invalid); err == nil {
+			t.Fatalf("enabled tap was accepted: %s", invalid)
+		}
+	}
+}
+
 func TestNFTNetworkPolicyScriptBlocksConfiguredCIDRs(t *testing.T) {
 	script := renderRunNetworkPolicy(
 		compute.DefaultNetworkPolicy(),

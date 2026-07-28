@@ -216,22 +216,20 @@ func newRuntimeTopology(t *testing.T) (RuntimeDescriptor, *memoryArtifact) {
 		t.Fatal(err)
 	}
 	runtimeDescriptor := RuntimeArtifactDescriptor{
-		AdapterVersion:            NodeRuntimeAdapterVersion,
-		Architecture:              ArchitectureX8664,
-		ConfigEvaluatorDigest:     testDigest("config"),
-		ConfigEvaluatorEntrypoint: "/opt/helmr/runtime/helmr/config-evaluator.mjs",
-		ConformanceDigest:         digestDocument(conformanceRaw),
-		DescriptorSchemaVersion:   PlatformDescriptorSchemaV0,
-		Entrypoint:                "/opt/helmr/runtime/helmr/entry.mjs",
-		IntegrityDigest:           digestDocument(integrityRaw),
-		Kind:                      "runtime",
-		MediaType:                 RuntimeArtifactMediaType,
-		NodeModuleABI:             "137",
-		NodeVersion:               "24.16.0",
-		ProgramNodeFlag:           NodeNoStripTypes,
-		RuntimeAPIVersion:         RuntimeAPIVersion,
-		RuntimeHarnessDigest:      testDigest("harness"),
-		Source:                    source,
+		AdapterVersion:          NodeRuntimeAdapterVersion,
+		Architecture:            ArchitectureX8664,
+		ConformanceDigest:       digestDocument(conformanceRaw),
+		DescriptorSchemaVersion: PlatformDescriptorSchemaV0,
+		Entrypoint:              "/opt/helmr/runtime/helmr/entry.mjs",
+		IntegrityDigest:         digestDocument(integrityRaw),
+		Kind:                    "runtime",
+		MediaType:               RuntimeArtifactMediaType,
+		NodeModuleABI:           "137",
+		NodeVersion:             "24.16.0",
+		ProgramNodeFlags:        []string{NodeNoStripTypes, "--enable-source-maps"},
+		RuntimeAPIVersion:       RuntimeAPIVersion,
+		RuntimeHarnessDigest:    testDigest("harness"),
+		Source:                  source,
 	}
 	runtimeDescriptorRaw, err := CanonicalPlatformDocument(runtimeDescriptor)
 	if err != nil {
@@ -247,7 +245,6 @@ func newRuntimeTopology(t *testing.T) (RuntimeDescriptor, *memoryArtifact) {
 	artifact.addDirectory("share/licenses/node")
 	artifact.addFile(runtimeNodePath, []byte("node"), 0755)
 	artifact.addFile(runtimeEntryPath, []byte("entry"), 0644)
-	artifact.addFile(runtimeConfigEvaluatorPath, []byte("config"), 0644)
 	artifact.addFile(PlatformDescriptorPath, runtimeDescriptorRaw, 0644)
 	artifact.addFile(PlatformIntegrityPath, integrityRaw, 0644)
 	artifact.addFile(PlatformConformancePath, conformanceRaw, 0644)

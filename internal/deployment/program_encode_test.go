@@ -27,7 +27,7 @@ func TestProgramTreeEntriesEncodeOneFrozenTree(t *testing.T) {
 	generated := map[string][]byte{
 		"helmr/declarations.json": []byte(`{"declarations":[]}`),
 		"helmr/entry.mjs":         []byte("entry\n"),
-		"helmr/program.json":      []byte(`{"formatVersion":0}`),
+		"helmr/receipt.json":      []byte(`{"formatVersion":0}`),
 	}
 
 	program := writeProgramTreeFixture(
@@ -46,7 +46,7 @@ func TestProgramTreeEntriesEncodeOneFrozenTree(t *testing.T) {
 		"helmr":                              "",
 		"helmr/declarations.json":            `{"declarations":[]}`,
 		"helmr/entry.mjs":                    "entry\n",
-		"helmr/program.json":                 `{"formatVersion":0}`,
+		"helmr/receipt.json":                 `{"formatVersion":0}`,
 		"node_modules":                       "",
 		"node_modules/tool":                  "",
 		"node_modules/tool/index.js":         "dependency\n",

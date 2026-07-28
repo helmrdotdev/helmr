@@ -28,7 +28,7 @@ func TestValidateDeploymentSourceArtifactArchiveRequiresCanonicalSource(t *testi
 	}
 	if err := os.WriteFile(
 		filepath.Join(root, "helmr.config.ts"),
-		[]byte(`export default { dirs: ["dist"] }`),
+		[]byte(`export default { dirs: ["tasks"] }`),
 		0o644,
 	); err != nil {
 		t.Fatal(err)

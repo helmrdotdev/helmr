@@ -39,8 +39,7 @@ import (
 )
 
 const defaultKernelArgs = "console=ttyS0 reboot=k panic=1 root=/dev/vda rootfstype=ext4 ro init=/init"
-const buildInstallKernelArgs = defaultKernelArgs + " helmr.profile=build-install helmr.pids_max=1024"
-const buildVerifyKernelArgs = defaultKernelArgs + " helmr.profile=build-verify helmr.network=none helmr.pids_max=1024"
+const buildKernelArgs = defaultKernelArgs + " helmr.profile=build helmr.pids_max=1024"
 const stopTimeout = 10 * time.Second
 const apiSocketName = "api.sock"
 const vsockSocketName = "vsock.sock"
@@ -172,9 +171,6 @@ func (c *Connector) connectorForRequest(
 }
 
 func buildGuestProfile(request vm.ConnectRequest) (string, bool, error) {
-	networkDisabled := !request.Network.Internet &&
-		len(request.Network.Allow) == 0 &&
-		len(request.Network.Deny) == 0
 	noSubstrate := request.Topology.Substrate == nil
 	switch {
 	case request.Resources == compute.BuildGuestResources() &&
@@ -183,14 +179,7 @@ func buildGuestProfile(request vm.ConnectRequest) (string, bool, error) {
 		request.Network.Internet &&
 		noSubstrate &&
 		isBuildInstallDriveSet(request.ReadOnlyDrives):
-		return buildInstallKernelArgs, false, nil
-	case request.Resources == compute.BuildGuestResources() &&
-		request.PIDsMax == compute.BuildGuestPIDsMax &&
-		request.Networkless &&
-		networkDisabled &&
-		noSubstrate &&
-		isBuildVerificationDriveSet(request.ReadOnlyDrives):
-		return buildVerifyKernelArgs, true, nil
+		return buildKernelArgs, false, nil
 	case request.Resources == compute.BuildGuestResources() &&
 		request.PIDsMax == 0 &&
 		!request.Networkless &&
@@ -208,15 +197,6 @@ func isBuildInstallDriveSet(drives []vm.ReadOnlyDrive) bool {
 		vm.ManagerDrive,
 		vm.ManagedRuntimeDrive,
 		vm.ToolchainDrive,
-	)
-}
-
-func isBuildVerificationDriveSet(drives []vm.ReadOnlyDrive) bool {
-	return exactDriveSet(
-		drives,
-		vm.ManagedRuntimeDrive,
-		vm.ToolchainDrive,
-		vm.BuildTreeDrive,
 	)
 }
 
@@ -1024,7 +1004,7 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 		readOnlyDrives: append([]vm.ReadOnlyDrive(nil), readOnlyDrives...),
 		owner:          owner,
 		cleaner:        c,
-		buildNetwork:   c.kernelArgsValue() == buildInstallKernelArgs,
+		buildNetwork:   c.kernelArgsValue() == buildKernelArgs,
 	}, nil
 }
 
@@ -1093,7 +1073,7 @@ func (c *Connector) createScratchDisk(ctx context.Context, scratchDiskPath strin
 
 func (c *Connector) scratchUsableFloor() uint64 {
 	switch c.kernelArgsValue() {
-	case buildInstallKernelArgs:
+	case buildKernelArgs:
 		return 19 * 1024 * 1024 * 1024
 	default:
 		return 0
@@ -1662,6 +1642,7 @@ type guestSession struct {
 	owner          vm.Owner
 	cleaner        vm.Cleaner
 	buildNetwork   bool
+	buildCutoff    bool
 	paused         atomic.Bool
 	once           sync.Once
 	err            error
@@ -1753,6 +1734,36 @@ func (s *guestSession) BuildNetworkStatus(
 		ctx,
 		s.owner.ID,
 	)
+}
+
+func (s *guestSession) CutoffBuildNetwork(
+	ctx context.Context,
+) (vm.BuildNetworkTransition, error) {
+	s.mu.Lock()
+	if !s.buildNetwork {
+		s.mu.Unlock()
+		return vm.BuildNetworkTransition{}, errors.New(
+			"firecracker session is not a staged build guest",
+		)
+	}
+	if s.buildCutoff {
+		s.mu.Unlock()
+		return vm.BuildNetworkTransition{}, errors.New(
+			"build network authority was already removed",
+		)
+	}
+	s.buildCutoff = true
+	s.mu.Unlock()
+
+	transition, err := (&Connector{cfg: s.cfg}).cutoffBuildNetwork(
+		ctx,
+		s.owner.ID,
+		s.machine,
+	)
+	if err != nil {
+		return vm.BuildNetworkTransition{}, err
+	}
+	return transition, nil
 }
 
 func (s *guestSession) RunNetworkStatus(

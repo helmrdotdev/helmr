@@ -27,18 +27,15 @@ type guestProfile uint8
 
 const (
 	ordinaryGuestProfile guestProfile = iota
-	buildInstallGuestProfile
-	buildVerifyGuestProfile
+	buildGuestProfile
 )
 
 func parseGuestProfile(value string) (guestProfile, error) {
 	switch value {
 	case "":
 		return ordinaryGuestProfile, nil
-	case "build-install":
-		return buildInstallGuestProfile, nil
-	case "build-verify":
-		return buildVerifyGuestProfile, nil
+	case "build":
+		return buildGuestProfile, nil
 	default:
 		return 0, fmt.Errorf("unsupported guest profile %q", value)
 	}
@@ -57,17 +54,14 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, 
 		if start.attach != nil {
 			return false, errors.New("build guest rejects resume attach")
 		}
-		switch profile {
-		case buildInstallGuestProfile:
-			if start.streamHeader.Type != wire.StreamTypeBuildInstall {
-				return false, fmt.Errorf("build install guest rejects input type %q", start.streamHeader.Type)
+		if profile == buildGuestProfile {
+			if start.streamHeader.Type != wire.StreamTypeBuild {
+				return false, fmt.Errorf(
+					"build guest rejects input type %q",
+					start.streamHeader.Type,
+				)
 			}
-			return false, handleBuildInstall(ctx, conn, start.bodyLen)
-		case buildVerifyGuestProfile:
-			if start.streamHeader.Type != wire.StreamTypeBuildVerify {
-				return false, fmt.Errorf("build verification guest rejects input type %q", start.streamHeader.Type)
-			}
-			return false, handleBuildVerification(ctx, conn, start.bodyLen)
+			return false, handleBuild(ctx, conn, start.bodyLen)
 		}
 	}
 	if start.attach != nil {

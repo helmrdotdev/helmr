@@ -4,6 +4,10 @@ package deployment
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +21,19 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+func digestFile(ctx context.Context, name string) (string, error) {
+	file, err := os.Open(name)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := copyExact(ctx, hash, file, maxArtifactFileSize); err != nil {
+		return "", err
+	}
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+}
 
 const (
 	conformanceRootSize = "size=3221225472,nr_inodes=300000,mode=0755"
@@ -323,8 +340,9 @@ func runtimeConformance(
 	if err != nil || strings.TrimSpace(abi) != descriptor.NodeModuleABI {
 		return nil, errors.New("Runtime Node reported the wrong module ABI")
 	}
-	if _, err := runConformanceCommand(ctx, nil, node, descriptor.ProgramNodeFlag, "-e", "0"); err != nil {
-		return nil, errors.New("Runtime Node does not accept its TypeScript-disable flag")
+	launch := append([]string(nil), descriptor.ProgramNodeFlags...)
+	if _, err := runConformanceCommand(ctx, nil, node, append(launch, "-e", "0")...); err != nil {
+		return nil, errors.New("Runtime Node does not accept its Program launch flags")
 	}
 	program := []byte(`const value: string = "helmr"; if (value !== "helmr") process.exit(1);`)
 	if err := os.WriteFile("/work/program.ts", program, 0600); err != nil {
@@ -334,30 +352,42 @@ func runtimeConformance(
 		ctx,
 		nil,
 		node,
-		descriptor.ProgramNodeFlag,
-		"/work/program.ts",
+		append(launch, "/work/program.ts")...,
 	); err == nil {
 		return nil, errors.New("Runtime Program mode accepted TypeScript")
+	}
+	if err := os.WriteFile(
+		"/work/source-map.mjs",
+		[]byte("throw new Error('source-map-fixture')\n//# sourceMappingURL=source-map.mjs.map\n"),
+		0600,
+	); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(
+		"/work/source-map.mjs.map",
+		[]byte(`{"file":"source-map.mjs","mappings":"AAAA","names":[],"sources":["file:///work/source-map.ts"],"version":3}`),
+		0600,
+	); err != nil {
+		return nil, err
+	}
+	if _, err := runConformanceCommand(
+		ctx,
+		nil,
+		node,
+		append(launch, "/work/source-map.mjs")...,
+	); err == nil || !strings.Contains(err.Error(), "source-map.ts:1") {
+		return nil, errors.New("Runtime Program mode did not apply source maps")
 	}
 	if _, err := runConformanceCommand(ctx, nil, node, "--check", descriptor.Entrypoint); err != nil {
 		return nil, errors.New("Runtime entrypoint is not valid JavaScript")
 	}
-	if _, err := runConformanceCommand(ctx, nil, node, "--check", descriptor.ConfigEvaluatorEntrypoint); err != nil {
-		return nil, errors.New("Config Evaluator is not valid JavaScript")
-	}
-	if err := os.WriteFile("/work/config.ts", program, 0600); err != nil {
-		return nil, err
-	}
-	if _, err := runConformanceCommand(ctx, nil, node, "/work/config.ts"); err != nil {
-		return nil, errors.New("Runtime Node native TypeScript mode failed")
-	}
 	return passedConformanceResults(
-		"config-native-typescript",
 		"network-denied",
 		"node-architecture",
 		"node-disable-types",
 		"node-module-abi",
 		"node-reported-version",
+		"node-source-maps",
 		"runtime-entrypoint",
 	), nil
 }
@@ -630,6 +660,9 @@ func toolchainConformance(
 	ctx context.Context,
 	descriptor ToolchainArtifactDescriptor,
 ) ([]PlatformConformanceResult, error) {
+	if err := compilerConformance(ctx, descriptor); err != nil {
+		return nil, err
+	}
 	source := `
 #include <node_api.h>
 static napi_value init(napi_env env, napi_value exports) {
@@ -669,11 +702,152 @@ NAPI_MODULE(NODE_GYP_MODULE_NAME, init)
 		return nil, errors.New("toolchain native addon ABI validation failed")
 	}
 	return passedConformanceResults(
+		"compiler-aggregate",
+		"compiler-config",
+		"compiler-final-modules",
+		"compiler-options",
+		"esbuild-api",
+		"esbuild-binary",
 		"native-addon",
 		"network-denied",
 		"node-headers",
 		"runtime-binding",
 	), nil
+}
+
+func compilerConformance(
+	ctx context.Context,
+	descriptor ToolchainArtifactDescriptor,
+) error {
+	version, err := runConformanceCommand(
+		ctx,
+		nil,
+		descriptor.Compiler.Esbuild.BinaryPath,
+		"--version",
+	)
+	if err != nil || strings.TrimSpace(version) != descriptor.Compiler.Esbuild.Version {
+		return errors.New("toolchain esbuild binary reported the wrong version")
+	}
+	node := "/opt/helmr/runtime/bin/node"
+	description, err := runConformanceCommand(
+		ctx,
+		nil,
+		node,
+		descriptor.Compiler.ProgramCompiler.Entrypoint,
+		"--describe",
+	)
+	if err != nil {
+		return errors.New("Program Compiler descriptor failed")
+	}
+	var contract struct {
+		APIVersion            string `json:"apiVersion"`
+		EsbuildVersion        string `json:"esbuildVersion"`
+		OptionsContractDigest string `json:"optionsContractDigest"`
+	}
+	if err := json.Unmarshal([]byte(description), &contract); err != nil ||
+		contract.APIVersion != descriptor.Compiler.APIVersion ||
+		contract.EsbuildVersion != descriptor.Compiler.Esbuild.Version ||
+		contract.OptionsContractDigest != descriptor.Compiler.OptionsContractDigest {
+		return errors.New("Program Compiler descriptor does not match authority")
+	}
+	project := "/opt/helmr/program"
+	for _, directory := range []string{
+		filepath.Join(project, "node_modules", "@helmr", "sdk"),
+		filepath.Join(project, "tasks"),
+	} {
+		if err := os.MkdirAll(directory, 0700); err != nil {
+			return err
+		}
+	}
+	files := map[string]string{
+		"helmr.config.ts":                      `import { defineConfig } from "@helmr/sdk"; export default defineConfig({ dirs: ["tasks"] });`,
+		"node_modules/@helmr/sdk/package.json": `{"exports":"./index.mjs","name":"@helmr/sdk","type":"module"}`,
+		"node_modules/@helmr/sdk/index.mjs":    `const brand=Symbol.for("helmr.sdk.v0.definition");export const defineConfig=(value)=>value;export const task=(value)=>({[brand]:{kind:"task",id:value.id,hasPayload:false,handler:value.run}});`,
+		"tasks/example.ts":                     `import { task } from "@helmr/sdk"; export const example=task({id:"example",run:()=>null});`,
+	}
+	for path, contents := range files {
+		if err := os.WriteFile(filepath.Join(project, path), []byte(contents), 0600); err != nil {
+			return err
+		}
+	}
+	output := "/work/compiler-output"
+	if err := os.Mkdir(output, 0700); err != nil {
+		return err
+	}
+	flags, err := NodeProgramFlags(descriptor.NodeVersion)
+	if err != nil {
+		return err
+	}
+	configCommand := fmt.Sprintf(
+		`%s %s %s %s %s %s npm 3>/work/config.frame`,
+		node,
+		strings.Join(flags, " "),
+		descriptor.Compiler.ConfigEvaluator.Entrypoint,
+		project,
+		descriptor.NodeVersion,
+		output,
+	)
+	if _, err := runConformanceCommand(
+		ctx,
+		[]string{"HOME=/work", "PATH=/nix/bin:/opt/helmr/runtime/bin", "TMPDIR=/work"},
+		"/nix/bin/bash",
+		"-c",
+		configCommand,
+	); err != nil {
+		return errors.New("Config Evaluator fixture failed")
+	}
+	frame, err := os.ReadFile("/work/config.frame")
+	if err != nil || len(frame) < 4 || int(binary.BigEndian.Uint32(frame[:4])) != len(frame)-4 {
+		return errors.New("Config Evaluator fixture returned an invalid frame")
+	}
+	if err := os.WriteFile("/work/config.json", frame[4:], 0600); err != nil {
+		return err
+	}
+	programCommand := fmt.Sprintf(
+		`%s %s %s %s /work/config.json %s %s npm 3>/work/program.frame`,
+		node,
+		strings.Join(flags, " "),
+		descriptor.Compiler.ProgramCompiler.Entrypoint,
+		project,
+		descriptor.NodeVersion,
+		output,
+	)
+	if _, err := runConformanceCommand(
+		ctx,
+		[]string{"HOME=/work", "PATH=/nix/bin:/opt/helmr/runtime/bin", "TMPDIR=/work"},
+		"/nix/bin/bash",
+		"-c",
+		programCommand,
+	); err != nil {
+		return errors.New("Program Compiler fixture failed")
+	}
+	programFrame, err := os.ReadFile("/work/program.frame")
+	if err != nil || len(programFrame) < 4 ||
+		int(binary.BigEndian.Uint32(programFrame[:4])) != len(programFrame)-4 {
+		return errors.New("Program Compiler fixture returned an invalid frame")
+	}
+	for _, path := range []string{
+		"helmr/compiler-result.json",
+		"helmr/config.json",
+	} {
+		if info, err := os.Stat(filepath.Join(output, path)); err != nil ||
+			!info.Mode().IsRegular() {
+			return fmt.Errorf("Program Compiler output %q is missing", path)
+		}
+	}
+	matches, err := filepath.Glob(
+		filepath.Join(output, "tasks", ".helmr", "modules", "*.mjs"),
+	)
+	if err != nil || len(matches) != 1 {
+		return errors.New("Program Compiler did not emit one independent final module")
+	}
+	chunks, err := filepath.Glob(
+		filepath.Join(output, "tasks", ".helmr", "modules", "*chunk*"),
+	)
+	if err != nil || len(chunks) != 0 {
+		return errors.New("Program Compiler emitted a shared chunk")
+	}
+	return nil
 }
 
 func managerEnvironment(descriptor ManagerArtifactDescriptor) []string {

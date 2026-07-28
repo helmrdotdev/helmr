@@ -44,14 +44,6 @@ func (acquirer PlatformAcquirer) runtimeTree(
 	); err != nil {
 		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionTopologyFailed, err)
 	}
-	configEvaluator := filepath.Join(root, "helmr", "config-evaluator.mjs")
-	if digest, err := digestFile(ctx, configEvaluator); err != nil ||
-		digest != policy.Runtime.ConfigEvaluatorDigest {
-		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionTopologyFailed,
-			errors.New("Runtime harness Config Evaluator does not match policy"),
-		)
-	}
 	loader := filepath.Join(root, "lib", "ld-linux-x86-64.so.2")
 	if info, err := os.Lstat(loader); err != nil || !info.Mode().IsRegular() {
 		return nil, deterministicAcquisitionFailure(
@@ -75,13 +67,7 @@ func (acquirer PlatformAcquirer) runtimeTree(
 		documents: cloneEvidence(node.evidence),
 		source:    node.distribution,
 	}
-	inputRaw, err := CanonicalPlatformDocument(struct {
-		ConfigEvaluatorDigest string             `json:"configEvaluatorDigest"`
-		Harness               ArtifactDescriptor `json:"harness"`
-	}{
-		ConfigEvaluatorDigest: policy.Runtime.ConfigEvaluatorDigest,
-		Harness:               policy.Runtime.Harness,
-	})
+	inputRaw, err := CanonicalPlatformDocument(policy.Runtime)
 	if err != nil {
 		return nil, err
 	}
@@ -99,21 +85,19 @@ func (acquirer PlatformAcquirer) runtimeTree(
 		return nil, err
 	}
 	descriptor := RuntimeArtifactDescriptor{
-		AdapterVersion:            NodeRuntimeAdapterVersion,
-		Architecture:              ArchitectureX8664,
-		ConfigEvaluatorDigest:     policy.Runtime.ConfigEvaluatorDigest,
-		ConfigEvaluatorEntrypoint: "/opt/helmr/runtime/helmr/config-evaluator.mjs",
-		DescriptorSchemaVersion:   policy.DescriptorSchemaVersion,
-		Entrypoint:                "/opt/helmr/runtime/helmr/entry.mjs",
-		IntegrityDigest:           digestDocument(integrityRaw),
-		Kind:                      "runtime",
-		MediaType:                 RuntimeArtifactMediaType,
-		NodeModuleABI:             node.moduleABI,
-		NodeVersion:               nodeVersion,
-		ProgramNodeFlag:           policy.NodeFlag,
-		RuntimeAPIVersion:         RuntimeAPIVersion,
-		RuntimeHarnessDigest:      policy.Runtime.Harness.Digest,
-		Source:                    node.distribution.source,
+		AdapterVersion:          NodeRuntimeAdapterVersion,
+		Architecture:            ArchitectureX8664,
+		DescriptorSchemaVersion: policy.DescriptorSchemaVersion,
+		Entrypoint:              "/opt/helmr/runtime/helmr/entry.mjs",
+		IntegrityDigest:         digestDocument(integrityRaw),
+		Kind:                    "runtime",
+		MediaType:               RuntimeArtifactMediaType,
+		NodeModuleABI:           node.moduleABI,
+		NodeVersion:             nodeVersion,
+		ProgramNodeFlags:        append([]string(nil), policy.NodeFlags...),
+		RuntimeAPIVersion:       RuntimeAPIVersion,
+		RuntimeHarnessDigest:    policy.Runtime.Harness.Digest,
+		Source:                  node.distribution.source,
 	}
 	pre, err := encodePlatformTree(ctx, acquirer.WorkDir, acquirer.Encoder, runtimeArtifact, root)
 	if err != nil {
@@ -304,9 +288,11 @@ func (acquirer PlatformAcquirer) toolchainTree(
 	}
 	inputRaw, err := CanonicalPlatformDocument(struct {
 		Base          ArtifactDescriptor `json:"base"`
+		Compiler      CompilerInputs     `json:"compiler"`
 		RuntimeDigest string             `json:"runtimeDigest"`
 	}{
 		Base:          policy.Toolchain.Base,
+		Compiler:      policy.Toolchain.Compiler,
 		RuntimeDigest: runtimeDigest,
 	})
 	if err != nil {
@@ -336,12 +322,14 @@ func (acquirer PlatformAcquirer) toolchainTree(
 		AdapterVersion:          ToolchainAdapterVersion,
 		Architecture:            ArchitectureX8664,
 		BaseDigest:              policy.Toolchain.Base.Digest,
+		Compiler:                policy.Toolchain.Compiler,
 		DescriptorSchemaVersion: policy.DescriptorSchemaVersion,
 		IntegrityDigest:         digestDocument(integrityRaw),
 		Kind:                    "toolchain",
 		MediaType:               ToolchainMediaType,
 		NodeHeadersDigest:       headersDigest,
 		NodeModuleABI:           node.moduleABI,
+		NodeSource:              node.distribution.source,
 		NodeVersion:             nodeVersion,
 		RuntimeDigest:           runtimeDigest,
 	}
@@ -585,19 +573,6 @@ func copyDirectory(source string, destination string) error {
 			return fmt.Errorf("source tree path %q has unsupported type", name)
 		}
 	})
-}
-
-func digestFile(ctx context.Context, name string) (string, error) {
-	file, err := os.Open(name)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	hash := sha256.New()
-	if _, err := copyExact(ctx, hash, file, maxArtifactFileSize); err != nil {
-		return "", err
-	}
-	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func digestDirectory(ctx context.Context, root string) (string, error) {

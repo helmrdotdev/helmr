@@ -47,8 +47,10 @@ func (consumerBuildPolicy) Digest() (string, error) {
 	return "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", nil
 }
 
-func (consumerBuildPolicy) Node(string) (deployment.VersionDomain, string, error) {
-	return deployment.VersionDomain{Major: 24, Minimum: "24.3.0"}, deployment.NodeNoStripTypes, nil
+func (consumerBuildPolicy) Node(string) (deployment.VersionDomain, []string, error) {
+	return deployment.VersionDomain{Major: 24, Minimum: "24.3.0"},
+		[]string{deployment.NodeNoStripTypes},
+		nil
 }
 
 func (consumerBuildPolicy) Manager(

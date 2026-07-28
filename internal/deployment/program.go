@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
@@ -22,6 +21,7 @@ const (
 	programVerificationVersion  = 0
 
 	RuntimeAPIVersion                     = "helmr.runtime.v0"
+	ConfigEvaluatorAPIVersion             = "helmr.config-evaluator.v0"
 	ProgramBuildContractVersion           = "helmr.program-build.v0"
 	ProgramArtifactMediaType              = "application/vnd.helmr.deployment-program.v0+squashfs"
 	manifestDigestDomain                  = "helmr.deployment-definition-manifest.v0\x00"
@@ -47,6 +47,21 @@ type ProgramDeclaration struct {
 	Kind       DeclarationKind   `json:"kind"`
 	DeclaredID string            `json:"declaredId"`
 	Slots      []DeclarationSlot `json:"slots"`
+}
+
+type ProgramLocator struct {
+	ExportName string          `json:"exportName"`
+	ModulePath string          `json:"modulePath"`
+	Slot       DeclarationSlot `json:"slot"`
+}
+
+type ProgramIndexDeclaration struct {
+	Kind       DefinitionKind `json:"-"`
+	DeclaredID string         `json:"-"`
+	Task       *TaskManifest
+	Actor      *ActorManifest
+	Workspace  *WorkspaceManifest
+	Locator    *ProgramLocator
 }
 
 type ProgramDescriptor struct {
@@ -75,22 +90,26 @@ type ProgramSubmittedSource struct {
 type BuildProvenance struct {
 	Architecture         RuntimeArchitecture    `json:"architecture"`
 	BuildContractVersion string                 `json:"buildContractVersion"`
+	Config               ProgramConfig          `json:"config"`
 	Manager              ProgramManager         `json:"manager"`
 	RuntimeDigest        string                 `json:"runtimeDigest"`
 	ToolchainDigest      string                 `json:"toolchainDigest"`
 	Submitted            ProgramSubmittedSource `json:"submitted"`
 }
 
+type ProgramConfig struct {
+	EvaluatorAPIVersion string `json:"evaluatorApiVersion"`
+	SourceDigest        string `json:"sourceDigest"`
+	ResultDigest        string `json:"resultDigest"`
+}
+
 type ProgramIndex struct {
-	Architecture         RuntimeArchitecture    `json:"architecture"`
-	BuildContractVersion string                 `json:"buildContractVersion"`
-	Declarations         []ProgramDeclaration   `json:"declarations"`
-	FormatVersion        int                    `json:"formatVersion"`
-	Manager              ProgramManager         `json:"manager"`
-	RuntimeAPIVersion    string                 `json:"runtimeApiVersion"`
-	RuntimeDigest        string                 `json:"runtimeDigest"`
-	ToolchainDigest      string                 `json:"toolchainDigest"`
-	Submitted            ProgramSubmittedSource `json:"submitted"`
+	Architecture       RuntimeArchitecture       `json:"architecture"`
+	ConfigResultDigest string                    `json:"configResultDigest"`
+	Declarations       []ProgramIndexDeclaration `json:"declarations"`
+	FormatVersion      int                       `json:"formatVersion"`
+	Queues             []QueueInput              `json:"queues"`
+	RuntimeAPIVersion  string                    `json:"runtimeApiVersion"`
 }
 
 // ProgramOutput is the build worker's verified Program publication result.
@@ -104,6 +123,8 @@ type ProgramOutput struct {
 type ProgramReceipt struct {
 	Architecture         RuntimeArchitecture    `json:"architecture"`
 	BuildContractVersion string                 `json:"buildContractVersion"`
+	Config               ProgramConfig          `json:"config"`
+	Compiler             ProgramReceiptCompiler `json:"compiler"`
 	FormatVersion        int                    `json:"formatVersion"`
 	Lockfile             ProgramReceiptLockfile `json:"lockfile"`
 	Manager              ProgramReceiptManager  `json:"manager"`
@@ -124,24 +145,30 @@ type ProgramReceiptManager struct {
 	Version string             `json:"version"`
 }
 
+type ProgramReceiptCompiler struct {
+	APIVersion    string `json:"apiVersion"`
+	BinaryDigest  string `json:"binaryDigest"`
+	Name          string `json:"name"`
+	OptionsDigest string `json:"optionsDigest"`
+	Version       string `json:"version"`
+}
+
 type ProgramReceiptArtifact struct {
-	ArtifactID  string `json:"artifactId"`
-	Digest      string `json:"digest"`
-	IndexDigest string `json:"indexDigest"`
-	MediaType   string `json:"mediaType"`
-	SizeBytes   int64  `json:"sizeBytes"`
+	IndexDigest    string `json:"indexDigest"`
+	ManifestDigest string `json:"manifestDigest"`
+	MediaType      string `json:"mediaType"`
 }
 
 type ProgramReceiptRuntime struct {
-	APIVersion string `json:"apiVersion"`
-	Digest     string `json:"digest"`
+	APIVersion  string `json:"apiVersion"`
+	Digest      string `json:"digest"`
+	NodeVersion string `json:"nodeVersion"`
 }
 
 type ProgramReceiptSource struct {
-	ArtifactID string `json:"artifactId"`
-	Digest     string `json:"digest"`
-	MediaType  string `json:"mediaType"`
-	SizeBytes  int64  `json:"sizeBytes"`
+	Digest    string `json:"digest"`
+	MediaType string `json:"mediaType"`
+	SizeBytes int64  `json:"sizeBytes"`
 }
 
 type programVerification struct {
@@ -223,6 +250,16 @@ func ValidateProgramReceipt(receipt ProgramReceipt) error {
 	if receipt.BuildContractVersion != ProgramBuildContractVersion {
 		return fmt.Errorf("program receipt buildContractVersion = %q, want %q", receipt.BuildContractVersion, ProgramBuildContractVersion)
 	}
+	if err := validateProgramConfig(receipt.Config); err != nil {
+		return fmt.Errorf("program receipt config: %w", err)
+	}
+	if receipt.Compiler.APIVersion != "helmr.compiler.v0" ||
+		!sha256DigestPattern.MatchString(receipt.Compiler.BinaryDigest) ||
+		receipt.Compiler.Name != "esbuild" ||
+		!sha256DigestPattern.MatchString(receipt.Compiler.OptionsDigest) ||
+		!exactReleaseVersion(receipt.Compiler.Version) {
+		return errors.New("program receipt compiler is invalid")
+	}
 	if !sha256DigestPattern.MatchString(receipt.Lockfile.Digest) ||
 		!validProgramLockfile(receipt.Manager.Name, receipt.Lockfile.Path) {
 		return errors.New("program receipt lockfile is invalid")
@@ -233,22 +270,17 @@ func ValidateProgramReceipt(receipt ProgramReceipt) error {
 		!packageManagerVersionPattern.MatchString(receipt.Manager.Version) {
 		return errors.New("program receipt manager is invalid")
 	}
-	if err := validateProgramDescriptor(ProgramDescriptor{
-		Digest: receipt.Program.Digest, SizeBytes: receipt.Program.SizeBytes,
-		MediaType: receipt.Program.MediaType,
-	}, "program", ProgramArtifactMediaType, maxProgramPhysicalBytes); err != nil {
-		return err
-	}
-	if !validArtifactID(receipt.Program.ArtifactID) ||
-		!sha256DigestPattern.MatchString(receipt.Program.IndexDigest) {
+	if !sha256DigestPattern.MatchString(receipt.Program.IndexDigest) ||
+		!sha256DigestPattern.MatchString(receipt.Program.ManifestDigest) ||
+		receipt.Program.MediaType != ProgramArtifactMediaType {
 		return errors.New("program receipt program identity is invalid")
 	}
 	if receipt.Runtime.APIVersion != RuntimeAPIVersion ||
-		!sha256DigestPattern.MatchString(receipt.Runtime.Digest) {
+		!sha256DigestPattern.MatchString(receipt.Runtime.Digest) ||
+		!exactReleaseVersion(receipt.Runtime.NodeVersion) {
 		return errors.New("program receipt runtime is invalid")
 	}
-	if !validArtifactID(receipt.Source.ArtifactID) ||
-		!sha256DigestPattern.MatchString(receipt.Source.Digest) ||
+	if !sha256DigestPattern.MatchString(receipt.Source.Digest) ||
 		receipt.Source.SizeBytes < 1 ||
 		receipt.Source.SizeBytes > maxJSONSafeInteger ||
 		receipt.Source.MediaType != api.DeploymentSourceArtifactMediaType {
@@ -306,44 +338,92 @@ func ValidateProgramOutput(output ProgramOutput) error {
 }
 
 func NewProgramReceipt(
-	output ProgramOutput,
-	programArtifactID string,
+	index ProgramIndex,
+	provenance BuildProvenance,
+	compiler CompilerInputs,
+	nodeVersion string,
+	manifest ProgramBuildManifest,
+	manifestDigest string,
 	source ProgramReceiptSource,
 ) (ProgramReceipt, error) {
-	if err := ValidateProgramOutput(output); err != nil {
+	if err := ValidateProgramIndex(index); err != nil {
 		return ProgramReceipt{}, err
 	}
-	index, err := CanonicalProgramIndex(output.Index)
+	if err := validateBuildProvenance("Program receipt provenance", provenance); err != nil {
+		return ProgramReceipt{}, err
+	}
+	if index.Architecture != provenance.Architecture ||
+		index.ConfigResultDigest != provenance.Config.ResultDigest {
+		return ProgramReceipt{}, errors.New(
+			"Program index does not match Program receipt provenance",
+		)
+	}
+	if source.Digest != provenance.Submitted.SourceDigest {
+		return ProgramReceipt{}, errors.New(
+			"Program receipt source does not match submitted source provenance",
+		)
+	}
+	if err := validateCompilerInputs(compiler); err != nil {
+		return ProgramReceipt{}, err
+	}
+	if err := validateProgramBuildManifest(manifest); err != nil {
+		return ProgramReceipt{}, err
+	}
+	if err := validateProgramBuildAuthority(
+		compilerResultFromManifest(manifest),
+		compiler,
+		nodeVersion,
+	); err != nil {
+		return ProgramReceipt{}, err
+	}
+	if !exactReleaseVersion(nodeVersion) ||
+		!sha256DigestPattern.MatchString(manifestDigest) {
+		return ProgramReceipt{}, errors.New("Program receipt build authority is invalid")
+	}
+	indexRaw, err := CanonicalProgramIndex(index)
 	if err != nil {
 		return ProgramReceipt{}, err
 	}
-	indexHash := sha256.Sum256(index)
+	indexHash := sha256.Sum256(indexRaw)
+	if manifest.ProgramIndexDigest !=
+		"sha256:"+fmt.Sprintf("%x", indexHash[:]) {
+		return ProgramReceipt{}, errors.New(
+			"Program build manifest does not bind the Program index",
+		)
+	}
 	receipt := ProgramReceipt{
-		Architecture:         output.Index.Architecture,
-		BuildContractVersion: output.Index.BuildContractVersion,
-		FormatVersion:        ProgramReceiptFormatVersion,
+		Architecture:         index.Architecture,
+		BuildContractVersion: provenance.BuildContractVersion,
+		Config:               provenance.Config,
+		Compiler: ProgramReceiptCompiler{
+			APIVersion:    compiler.APIVersion,
+			BinaryDigest:  compiler.Esbuild.BinaryDigest,
+			Name:          "esbuild",
+			OptionsDigest: manifest.Execution.OptionsDigest,
+			Version:       compiler.Esbuild.Version,
+		},
+		FormatVersion: ProgramReceiptFormatVersion,
 		Lockfile: ProgramReceiptLockfile{
-			Digest: output.Index.Submitted.LockfileDigest,
-			Path:   output.Index.Submitted.LockfileName,
+			Digest: provenance.Submitted.LockfileDigest,
+			Path:   provenance.Submitted.LockfileName,
 		},
 		Manager: ProgramReceiptManager{
-			Digest:  output.Index.Manager.Digest,
-			Name:    output.Index.Manager.Name,
-			Version: output.Index.Manager.Version,
+			Digest:  provenance.Manager.Digest,
+			Name:    provenance.Manager.Name,
+			Version: provenance.Manager.Version,
 		},
 		Program: ProgramReceiptArtifact{
-			ArtifactID:  programArtifactID,
-			Digest:      output.Artifact.Digest,
-			IndexDigest: "sha256:" + fmt.Sprintf("%x", indexHash[:]),
-			MediaType:   output.Artifact.MediaType,
-			SizeBytes:   output.Artifact.SizeBytes,
+			IndexDigest:    "sha256:" + fmt.Sprintf("%x", indexHash[:]),
+			ManifestDigest: manifestDigest,
+			MediaType:      ProgramArtifactMediaType,
 		},
 		Runtime: ProgramReceiptRuntime{
-			APIVersion: RuntimeAPIVersion,
-			Digest:     output.Index.RuntimeDigest,
+			APIVersion:  RuntimeAPIVersion,
+			Digest:      provenance.RuntimeDigest,
+			NodeVersion: nodeVersion,
 		},
 		Source:          source,
-		ToolchainDigest: output.Index.ToolchainDigest,
+		ToolchainDigest: provenance.ToolchainDigest,
 	}
 	if err := ValidateProgramReceipt(receipt); err != nil {
 		return ProgramReceipt{}, err
@@ -351,9 +431,9 @@ func NewProgramReceipt(
 	return receipt, nil
 }
 
-func validArtifactID(value string) bool {
-	id, err := uuid.Parse(value)
-	return err == nil && id.String() == value
+func exactReleaseVersion(value string) bool {
+	_, _, _, ok := parseReleaseVersion(value)
+	return ok
 }
 
 func parseProgramVerification(raw []byte) (programVerification, error) {
@@ -431,12 +511,18 @@ func validateProgramVerification(verified programVerification) error {
 }
 
 func cloneProgramIndex(index ProgramIndex) ProgramIndex {
-	index.Declarations = append([]ProgramDeclaration(nil), index.Declarations...)
+	index.Declarations = append([]ProgramIndexDeclaration(nil), index.Declarations...)
 	for position := range index.Declarations {
-		index.Declarations[position].Slots = append(
-			[]DeclarationSlot(nil),
-			index.Declarations[position].Slots...,
+		index.Declarations[position] = cloneProgramIndexDeclaration(
+			index.Declarations[position],
 		)
+	}
+	index.Queues = append([]QueueInput(nil), index.Queues...)
+	for position := range index.Queues {
+		if index.Queues[position].ConcurrencyLimit != nil {
+			value := *index.Queues[position].ConcurrencyLimit
+			index.Queues[position].ConcurrencyLimit = &value
+		}
 	}
 	return index
 }
@@ -472,7 +558,7 @@ func ParseProgramIndex(raw []byte) (ProgramIndex, error) {
 	if !bytes.Equal(raw, complete) {
 		return ProgramIndex{}, fmt.Errorf("program index does not match the complete canonical v0 shape")
 	}
-	return index, nil
+	return cloneProgramIndex(index), nil
 }
 
 func CanonicalProgramIndex(index ProgramIndex) ([]byte, error) {
@@ -500,24 +586,40 @@ func ValidateProgramIndex(index ProgramIndex) error {
 	if index.RuntimeAPIVersion != RuntimeAPIVersion {
 		return fmt.Errorf("program index runtimeApiVersion = %q, want %q", index.RuntimeAPIVersion, RuntimeAPIVersion)
 	}
-	if err := validateBuildProvenance("program index", BuildProvenance{
-		Architecture:         index.Architecture,
-		BuildContractVersion: index.BuildContractVersion,
-		Manager:              index.Manager,
-		RuntimeDigest:        index.RuntimeDigest,
-		ToolchainDigest:      index.ToolchainDigest,
-		Submitted:            index.Submitted,
-	}); err != nil {
-		return err
+	if !validArchitecture(index.Architecture) {
+		return fmt.Errorf("program index architecture %q is unsupported", index.Architecture)
+	}
+	if !sha256DigestPattern.MatchString(index.ConfigResultDigest) {
+		return errors.New("program index configResultDigest is not a lowercase SHA-256 digest")
+	}
+	if index.Queues == nil {
+		return errors.New("program index queues must be an array")
+	}
+	queues := make(map[string]struct{}, len(index.Queues))
+	for position, queue := range index.Queues {
+		if err := validateQueueInput(queue); err != nil {
+			return fmt.Errorf("program index queue %d: %w", position, err)
+		}
+		if position > 0 && bytes.Compare(
+			[]byte(index.Queues[position-1].Name),
+			[]byte(queue.Name),
+		) >= 0 {
+			return fmt.Errorf(
+				"program index queues are not in canonical order at position %d",
+				position,
+			)
+		}
+		queues[queue.Name] = struct{}{}
 	}
 	if len(index.Declarations) == 0 {
 		return fmt.Errorf("program index declarations must not be empty")
 	}
 	for position, declaration := range index.Declarations {
-		if err := validateDeclaration(declaration); err != nil {
+		if err := validateProgramIndexDeclaration(declaration, queues); err != nil {
 			return fmt.Errorf("program index declaration %d: %w", position, err)
 		}
-		if position > 0 && compareDeclarations(index.Declarations[position-1], declaration) >= 0 {
+		if position > 0 &&
+			compareProgramIndexDeclarations(index.Declarations[position-1], declaration) >= 0 {
 			return fmt.Errorf("program index declarations are not in canonical order at position %d", position)
 		}
 	}
@@ -535,6 +637,9 @@ func validateBuildProvenance(prefix string, provenance BuildProvenance) error {
 	}
 	if !sha256DigestPattern.MatchString(provenance.RuntimeDigest) {
 		return fmt.Errorf("%s runtimeDigest is not a lowercase SHA-256 digest", prefix)
+	}
+	if err := validateProgramConfig(provenance.Config); err != nil {
+		return fmt.Errorf("%s config: %w", prefix, err)
 	}
 	if !validArchitecture(provenance.Architecture) {
 		return fmt.Errorf("%s architecture %q is unsupported", prefix, provenance.Architecture)
@@ -563,6 +668,15 @@ func validateBuildProvenance(prefix string, provenance BuildProvenance) error {
 	}
 	if !sha256DigestPattern.MatchString(provenance.Submitted.SourceDigest) {
 		return fmt.Errorf("%s submitted.sourceDigest is not a lowercase SHA-256 digest", prefix)
+	}
+	return nil
+}
+
+func validateProgramConfig(config ProgramConfig) error {
+	if config.EvaluatorAPIVersion != ConfigEvaluatorAPIVersion ||
+		!sha256DigestPattern.MatchString(config.SourceDigest) ||
+		!sha256DigestPattern.MatchString(config.ResultDigest) {
+		return errors.New("config provenance is invalid")
 	}
 	return nil
 }

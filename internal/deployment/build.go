@@ -148,6 +148,20 @@ func (builder Builder) build(
 	defer func() {
 		returnErr = errors.Join(returnErr, toolchainSnapshot.Close())
 	}()
+	toolchainDescriptor, err := inspectPinnedToolchain(
+		ctx,
+		toolchainSnapshot,
+		toolchain.Artifact,
+	)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	if toolchainDescriptor.NodeVersion != runtime.NodeVersion ||
+		toolchainDescriptor.RuntimeDigest != runtime.Artifact.Digest {
+		return BuildResult{}, errors.New(
+			"Toolchain descriptor does not match the Deployment Runtime pin",
+		)
+	}
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
 		return BuildResult{}, fmt.Errorf("rewind submitted source: %w", err)
 	}
@@ -156,14 +170,15 @@ func (builder Builder) build(
 		WorkDir:   builder.WorkDir,
 		Encoder:   builder.Encoder,
 	}
-	install, err := guest.Install(
+	execution, err := guest.Execute(
 		ctx,
 		lease.ID,
-		BuildInstallRequest{
+		BuildGuestRequest{
 			FormatVersion:   BuildGuestFormatVersion,
 			Manager:         manager,
 			Runtime:         runtime,
 			Toolchain:       toolchain,
+			LockfileName:    selection.LockfileName,
 			SourceDigest:    work.DeploymentSource.Digest,
 			SourceSizeBytes: work.DeploymentSource.SizeBytes,
 		},
@@ -179,38 +194,19 @@ func (builder Builder) build(
 		}
 		return BuildResult{}, err
 	}
-	tree := install.Tree
+	tree := execution.Tree
 	fail := func(reason BuildFailureReason, cause error) BuildResult {
 		result := failedBuild(reason, cause)
-		result.Logs = &install.Logs
+		result.Logs = &execution.Logs
 		return result
 	}
 	defer func() {
 		returnErr = errors.Join(returnErr, tree.Close())
 	}()
-	treeDescriptor, err := tree.Descriptor()
-	if err != nil {
-		return BuildResult{}, err
-	}
-	verification, err := guest.Verify(
-		ctx,
-		lease.ID,
-		BuildVerificationRequest{
-			FormatVersion: BuildGuestFormatVersion,
-			Runtime:       runtime,
-			Toolchain:     toolchain,
-			Tree:          treeDescriptor,
-		},
-		runtimeSnapshot,
-		toolchainSnapshot,
-		tree,
-	)
-	if err != nil {
-		return BuildResult{}, err
-	}
+	verification := execution.Verification
 	if verification.Outcome == VerificationOutcomeFailed {
 		return fail(
-			BuildFailureVerificationFailed,
+			BuildFailureDeclarationAnalysis,
 			errors.New(verification.Failed.Error.Message),
 		), nil
 	}
@@ -218,9 +214,18 @@ func (builder Builder) build(
 	if err != nil {
 		return fail(BuildFailureInvalidPlan, err), nil
 	}
+	configResultDigest, err := BuildConfigDigest(execution.Config)
+	if err != nil {
+		return BuildResult{}, err
+	}
 	provenance := BuildProvenance{
 		Architecture:         ArchitectureX8664,
 		BuildContractVersion: work.BuildContractVersion,
+		Config: ProgramConfig{
+			EvaluatorAPIVersion: ConfigEvaluatorAPIVersion,
+			SourceDigest:        selection.ConfigDigest,
+			ResultDigest:        configResultDigest,
+		},
 		Manager: ProgramManager{
 			Digest:  manager.Artifact.Digest,
 			Name:    selection.Manager.Name,
@@ -235,6 +240,21 @@ func (builder Builder) build(
 		},
 	}
 
+	images, err := builder.buildWorkspaceImages(
+		ctx,
+		lease,
+		plan,
+		tree,
+		ArchitectureX8664,
+	)
+	if err != nil {
+		var fatal interface{ FatalWorker() bool }
+		if errors.As(err, &fatal) && fatal.FatalWorker() {
+			return BuildResult{}, err
+		}
+		return fail(BuildFailureWorkspaceImageFailed, err), nil
+	}
+
 	var programOutput *ProgramOutput
 	if len(buildPlanProgramDeclarations(plan)) != 0 {
 		program, err := EncodeProgram(
@@ -244,6 +264,14 @@ func (builder Builder) build(
 			tree,
 			verification,
 			provenance,
+			images,
+			toolchainDescriptor.Compiler,
+			runtime.NodeVersion,
+			ProgramReceiptSource{
+				Digest:    work.DeploymentSource.Digest,
+				MediaType: work.DeploymentSource.MediaType,
+				SizeBytes: work.DeploymentSource.SizeBytes,
+			},
 		)
 		if err != nil {
 			return fail(BuildFailureOutputInvalid, err), nil
@@ -263,25 +291,10 @@ func (builder Builder) build(
 		}
 		programOutput = &published
 	}
-
-	images, err := builder.buildWorkspaceImages(
-		ctx,
-		lease,
-		plan,
-		tree,
-		ArchitectureX8664,
-	)
-	if err != nil {
-		var fatal interface{ FatalWorker() bool }
-		if errors.As(err, &fatal) && fatal.FatalWorker() {
-			return BuildResult{}, err
-		}
-		return fail(BuildFailureWorkspaceImageFailed, err), nil
-	}
 	result := BuildResult{
 		FormatVersion: BuildResultFormatVersion,
 		Outcome:       BuildOutcomeSucceeded,
-		Logs:          &install.Logs,
+		Logs:          &execution.Logs,
 		Succeeded: &BuildSucceeded{
 			Plan:            plan,
 			Provenance:      provenance,
@@ -326,6 +339,46 @@ func platformArtifactDescriptor(object api.CASObject) ArtifactDescriptor {
 		SizeBytes: object.SizeBytes,
 		MediaType: object.MediaType,
 	}
+}
+
+func inspectPinnedToolchain(
+	ctx context.Context,
+	snapshot *ArtifactSnapshot,
+	descriptor ArtifactDescriptor,
+) (ToolchainArtifactDescriptor, error) {
+	file, err := snapshot.verifier()
+	if err != nil {
+		return ToolchainArtifactDescriptor{}, err
+	}
+	defer file.Close()
+	reader, err := newSquashFSArtifactReader(
+		ctx,
+		file,
+		descriptor.SizeBytes,
+		toolchainArtifact,
+	)
+	if err != nil {
+		return ToolchainArtifactDescriptor{}, err
+	}
+	artifact, err := inspectArtifact(
+		ctx,
+		reader,
+		toolchainArtifact,
+		maxToolArtifactBytes,
+		descriptor.SizeBytes,
+	)
+	if err != nil {
+		return ToolchainArtifactDescriptor{}, err
+	}
+	raw, err := artifact.read(
+		ctx,
+		PlatformDescriptorPath,
+		maxPlatformArtifactDocumentBytes,
+	)
+	if err != nil {
+		return ToolchainArtifactDescriptor{}, err
+	}
+	return ParseToolchainArtifactDescriptor(raw)
 }
 
 func (builder Builder) snapshotPlatformObject(

@@ -106,7 +106,7 @@ func newDeploymentBuildCompletionFixture(
 	root := t.TempDir()
 	lockfile := []byte("lockfileVersion = 1")
 	for name, body := range map[string][]byte{
-		"helmr.config.ts": []byte(`export default { dirs: ["dist"] }`),
+		"helmr.config.ts": []byte(`export default { dirs: ["tasks"] }`),
 		"package.json": []byte(
 			`{"devEngines":{"runtime":{"name":"node","version":"24.16.0"}},"packageManager":"bun@1.3.11","type":"module"}`,
 		),
@@ -172,6 +172,11 @@ func newDeploymentBuildCompletionFixture(
 			Provenance: deployment.BuildProvenance{
 				Architecture:         deployment.ArchitectureX8664,
 				BuildContractVersion: deployment.ProgramBuildContractVersion,
+				Config: deployment.ProgramConfig{
+					EvaluatorAPIVersion: deployment.ConfigEvaluatorAPIVersion,
+					SourceDigest:        controlDigest("config source"),
+					ResultDigest:        controlDigest("config result"),
+				},
 				Manager: deployment.ProgramManager{
 					Digest:  managerDigestString,
 					Name:    deployment.PackageManagerBun,

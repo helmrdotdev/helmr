@@ -153,11 +153,11 @@ func TestValidateBuildSucceeded(t *testing.T) {
 			errMsg: "build result program",
 		},
 		{
-			name: "program declarations",
+			name: "Program declarations",
 			change: func(result *BuildResult) {
 				result.Succeeded.Program.Index.Declarations[0].DeclaredID = "other"
 			},
-			errMsg: "declarations do not match",
+			errMsg: "Program index",
 		},
 		{
 			name: "unsupported program architecture",
@@ -168,11 +168,12 @@ func TestValidateBuildSucceeded(t *testing.T) {
 			errMsg: "unsupported",
 		},
 		{
-			name: "program provenance",
+			name: "Program config provenance",
 			change: func(result *BuildResult) {
-				result.Succeeded.Program.Index.Manager.Version = "1.3.11"
+				result.Succeeded.Program.Index.ConfigResultDigest =
+					"sha256:" + strings.Repeat("9", 64)
 			},
-			errMsg: "program provenance does not match",
+			errMsg: "Program index",
 		},
 		{
 			name: "workspace image array",
@@ -250,7 +251,7 @@ func TestValidateWorkspaceOnlyBuildResult(t *testing.T) {
 
 func TestValidateBuildResultTarget(t *testing.T) {
 	result := testSucceededBuildResult(t)
-	runtimeDigest := result.Succeeded.Program.Index.RuntimeDigest
+	runtimeDigest := result.Succeeded.Provenance.RuntimeDigest
 	if err := ValidateBuildResultTarget(
 		result,
 		runtimeDigest,
@@ -454,7 +455,25 @@ func testSucceededBuildResult(t *testing.T) BuildResult {
 	t.Helper()
 	plan := testBuildPlan()
 	program := testProgramOutput(t)
-	program.Index.Declarations = buildPlanProgramDeclarations(plan)
+	images := []WorkspaceImage{{
+		DeclaredID: "repo",
+		Artifact: WorkspaceImageArtifact{
+			Digest:       "sha256:" + strings.Repeat("d", 64),
+			SizeBytes:    4096,
+			MediaType:    WorkspaceImageArtifactMediaType,
+			Architecture: ArchitectureX8664,
+		},
+	}}
+	index, err := buildProgramIndex(
+		plan,
+		testAnalysisDeclarationLocator(),
+		images,
+		"sha256:"+strings.Repeat("4", 64),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	program.Index = index
 	return BuildResult{
 		FormatVersion: BuildResultFormatVersion,
 		Outcome:       BuildOutcomeSucceeded,
@@ -464,32 +483,36 @@ func testSucceededBuildResult(t *testing.T) BuildResult {
 			StderrBase64: "bWFuYWdlciBzdGRlcnI=",
 		},
 		Succeeded: &BuildSucceeded{
-			Plan:       plan,
-			Provenance: testBuildProvenance(t),
-			Program:    &program,
-			WorkspaceImages: []WorkspaceImage{{
-				DeclaredID: "repo",
-				Artifact: WorkspaceImageArtifact{
-					Digest:       "sha256:" + strings.Repeat("d", 64),
-					SizeBytes:    4096,
-					MediaType:    WorkspaceImageArtifactMediaType,
-					Architecture: ArchitectureX8664,
-				},
-			}},
+			Plan:            plan,
+			Provenance:      testBuildProvenance(t),
+			Program:         &program,
+			WorkspaceImages: images,
 		},
 	}
 }
 
 func testBuildProvenance(t *testing.T) BuildProvenance {
 	t.Helper()
-	index := testProgramOutput(t).Index
 	return BuildProvenance{
-		Architecture:         index.Architecture,
-		BuildContractVersion: index.BuildContractVersion,
-		Manager:              index.Manager,
-		RuntimeDigest:        index.RuntimeDigest,
-		ToolchainDigest:      index.ToolchainDigest,
-		Submitted:            index.Submitted,
+		Architecture:         ArchitectureX8664,
+		BuildContractVersion: ProgramBuildContractVersion,
+		Config: ProgramConfig{
+			EvaluatorAPIVersion: ConfigEvaluatorAPIVersion,
+			SourceDigest:        "sha256:" + strings.Repeat("3", 64),
+			ResultDigest:        "sha256:" + strings.Repeat("4", 64),
+		},
+		Manager: ProgramManager{
+			Digest:  "sha256:" + strings.Repeat("7", 64),
+			Name:    PackageManagerBun,
+			Version: "1.3.10",
+		},
+		RuntimeDigest:   "sha256:" + strings.Repeat("1", 64),
+		ToolchainDigest: "sha256:" + strings.Repeat("6", 64),
+		Submitted: ProgramSubmittedSource{
+			LockfileDigest: "sha256:" + strings.Repeat("2", 64),
+			LockfileName:   "bun.lock",
+			SourceDigest:   "sha256:" + strings.Repeat("5", 64),
+		},
 	}
 }
 

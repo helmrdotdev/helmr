@@ -1731,21 +1731,33 @@ function programIO(options: {
     input: options.input,
     readLocator: async () =>
       JSON.stringify({
+        architecture: "x86_64",
+        configResultDigest: `sha256:${"4".repeat(64)}`,
         declarations: [
           {
             declaredId: "deploy",
-            exportName: "definition",
             kind: "task",
-            modulePath: "tasks/deploy.ts",
+            locator: {
+              exportName: "definition",
+              modulePath: `.helmr/modules/${"1".repeat(64)}.mjs`,
+              slot: "handler",
+            },
+            manifest: {},
           },
           {
             declaredId: "worker",
-            exportName: "definition",
             kind: "actor",
-            modulePath: "actors/worker.ts",
+            locator: {
+              exportName: "definition",
+              modulePath: `tasks/.helmr/modules/${"2".repeat(64)}.mjs`,
+              slot: "handler",
+            },
+            manifest: {},
           },
         ],
         formatVersion: 0,
+        queues: [],
+        runtimeApiVersion: "helmr.runtime.v0",
       }),
     importModule: async () => ({ definition: options.definition }),
     write: async (value) => {

@@ -27,6 +27,7 @@ type SourceSelection struct {
 	Manager        PackageManager
 	LockfileName   string
 	LockfileDigest string
+	ConfigDigest   string
 }
 
 type sourceCandidate struct {
@@ -259,6 +260,7 @@ func InspectSource(body io.Reader) (SourceSelection, error) {
 		Manager:        manager,
 		LockfileName:   lockfile.name,
 		LockfileDigest: digestBytes(lockfile.raw),
+		ConfigDigest:   digestBytes(config.raw),
 	}, nil
 }
 
@@ -472,9 +474,17 @@ func ustarPathRepresentable(name string) bool {
 }
 
 func sourceRootReserved(name string) bool {
-	return name == ".git" || strings.HasPrefix(name, ".git/") ||
+	if name == ".git" || strings.HasPrefix(name, ".git/") ||
 		name == "helmr" || strings.HasPrefix(name, "helmr/") ||
-		name == "node_modules" || strings.HasPrefix(name, "node_modules/")
+		name == "node_modules" || strings.HasPrefix(name, "node_modules/") {
+		return true
+	}
+	for _, component := range strings.Split(name, "/") {
+		if component == ".helmr" {
+			return true
+		}
+	}
+	return false
 }
 
 func sourceAuthorityPath(name string) bool {

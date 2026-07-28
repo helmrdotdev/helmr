@@ -3,20 +3,12 @@ import {
   matchesIgnorePattern,
   type HelmrConfig,
   type JsonValue,
-  type RuntimeArchitecture,
 } from "@helmr/sdk/internal"
-import {
-  analyze,
-  type AnalysisExport,
-  type AnalysisResult,
-} from "./compile"
-import { loadConfig } from "./config"
+import type { AnalysisResult } from "./compile"
 import { lstat, readdir, realpath } from "node:fs/promises"
 import { relative, resolve, sep } from "node:path"
-import { pathToFileURL } from "node:url"
 
-const executableExtension = /\.(?:js|mjs|cjs|ts|mts|cts)$/
-const declarationExtension = /\.d\.(?:ts|mts|cts)$/
+const executableExtension = /\.(?:cjs|cts|js|jsx|mjs|mts|ts|tsx)$/
 const textDecoder = new TextDecoder("utf-8", { fatal: true })
 const maxVerificationFailureMessageBytes = 16 << 10
 
@@ -25,7 +17,7 @@ export const VERIFICATION_RESULT_FORMAT_VERSION = 0 as const
 export type VerificationGeneratedFile = Readonly<{
   path:
     | "helmr/build-plan.json"
-    | "helmr/declarations.json"
+    | "helmr/analysis-locators.json"
     | "helmr/entry.mjs"
   content: string
 }>
@@ -46,33 +38,6 @@ export type VerificationResultFrame =
       }>
     }>
 
-export interface AnalyzeProjectOptions {
-  readonly root: string
-  readonly architecture: RuntimeArchitecture
-}
-
-export interface ProjectAnalysis extends AnalysisResult {
-  readonly modules: readonly string[]
-}
-
-export async function analyzeProject(
-  options: AnalyzeProjectOptions,
-): Promise<ProjectAnalysis> {
-  const root = await realpath(options.root)
-  await rejectReservedRoot(root)
-  const config = await loadConfig(root)
-  const modules = await discoverModules(root, config)
-  const exports = await importModules(root, modules)
-  const result = analyze({
-    architecture: options.architecture,
-    exports,
-  })
-  return Object.freeze({
-    ...result,
-    modules: Object.freeze(modules),
-  })
-}
-
 export function successfulVerificationResult(
   analysis: AnalysisResult,
 ): VerificationResultFrame {
@@ -83,7 +48,7 @@ export function successfulVerificationResult(
   if (analysis.programDeclarations.length > 0) {
     files.push(
       {
-        path: "helmr/declarations.json",
+        path: "helmr/analysis-locators.json",
         content: decodeGeneratedFile(analysis.declarationLocatorBytes),
       },
       {
@@ -136,6 +101,7 @@ export async function discoverModules(
   config: HelmrConfig,
 ): Promise<string[]> {
   const canonicalRoot = await realpath(root)
+  await rejectReservedRoot(canonicalRoot)
   const candidates = new Set<string>()
   for (const configured of config.dirs) {
     const directory = resolve(canonicalRoot, configured)
@@ -145,6 +111,9 @@ export async function discoverModules(
     const relativeDirectory = projectPath(canonicalRoot, directory)
     if (hasComponent(relativeDirectory, "node_modules")) {
       throw new Error(`configured dir enters the dependency namespace: ${configured}`)
+    }
+    if (hasComponent(relativeDirectory, ".helmr")) {
+      throw new Error(`configured dir enters reserved Platform output: ${configured}`)
     }
     await requireUnlinkedDirectory(canonicalRoot, directory, configured)
     await appendCandidates(canonicalRoot, directory, candidates)
@@ -167,6 +136,9 @@ async function appendCandidates(
     const absolute = resolve(directory, entry.name)
     const path = projectPath(root, absolute)
     if (hasComponent(path, "node_modules")) continue
+    if (entry.name === ".helmr") {
+      throw new Error(`declaration tree contains reserved Platform output: ${path}`)
+    }
     const metadata = await lstat(absolute)
     if (metadata.isSymbolicLink()) continue
     if (metadata.isDirectory()) {
@@ -176,7 +148,7 @@ async function appendCandidates(
     if (
       metadata.isFile() &&
       executableExtension.test(path) &&
-      !declarationExtension.test(path) &&
+      !isDeclarationOnly(path) &&
       path !== "helmr.config.ts"
     ) {
       candidates.add(path)
@@ -188,38 +160,10 @@ async function appendCandidates(
   }
 }
 
-async function importModules(
-  root: string,
-  modules: readonly string[],
-): Promise<AnalysisExport[]> {
-  const exports: AnalysisExport[] = []
-  for (const modulePath of modules) {
-    let namespace: Record<string, unknown>
-    try {
-      namespace = await importNamespace(resolve(root, modulePath))
-    } catch (error) {
-      throw new Error(`failed to import declaration module ${modulePath}`, {
-        cause: error,
-      })
-    }
-    const names = Object.getOwnPropertyNames(namespace).sort(compareUtf8)
-    for (const exportName of names) {
-      exports.push({
-        modulePath,
-        exportName,
-        value: namespace[exportName],
-      })
-    }
-  }
-  return exports
-}
-
-async function importNamespace(path: string): Promise<Record<string, unknown>> {
-  const value: unknown = await import(pathToFileURL(path).href)
-  if (typeof value !== "object" || value === null) {
-    throw new Error(`${path} did not evaluate to a module namespace`)
-  }
-  return value as Record<string, unknown>
+function isDeclarationOnly(path: string): boolean {
+  return path.endsWith(".d.ts") ||
+    path.endsWith(".d.mts") ||
+    path.endsWith(".d.cts")
 }
 
 async function rejectReservedRoot(root: string): Promise<void> {

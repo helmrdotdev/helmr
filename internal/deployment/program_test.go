@@ -6,21 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
-
-	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
 type contractFixture struct {
-	ProgramIndex struct {
-		Canonical string `json:"canonical"`
-	} `json:"programIndex"`
-	ProgramRejections []struct {
-		Name     string `json:"name"`
-		Mutation string `json:"mutation"`
-	} `json:"programRejections"`
 	Manifest struct {
 		Input     string `json:"input"`
 		Canonical string `json:"canonical"`
@@ -28,104 +18,87 @@ type contractFixture struct {
 	} `json:"manifest"`
 }
 
-func TestProgramIndexMatchesSharedGoldenFixture(t *testing.T) {
-	fixture := loadContractFixture(t)
-	index, err := ParseProgramIndex([]byte(fixture.ProgramIndex.Canonical))
+func TestProgramIndexCanonicalRoundTrip(t *testing.T) {
+	index := testProgramIndex(t)
+	raw, err := CanonicalProgramIndex(index)
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonical, err := CanonicalProgramIndex(index)
+	parsed, err := ParseProgramIndex(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(canonical) != fixture.ProgramIndex.Canonical {
-		t.Fatalf("canonical program index = %q, want %q", canonical, fixture.ProgramIndex.Canonical)
+	reencoded, err := CanonicalProgramIndex(parsed)
+	if err != nil {
+		t.Fatal(err)
 	}
-	gotIDs := make([]string, 0, 6)
-	for _, declaration := range index.Declarations {
-		if declaration.Kind == DeclarationKindTask {
-			gotIDs = append(gotIDs, declaration.DeclaredID)
-		}
+	if string(reencoded) != string(raw) {
+		t.Fatalf("reencoded Program index differs:\n%s\n%s", reencoded, raw)
 	}
-	wantIDs := []string{"Build-", "Build.", "Build0", "BuildA", "Build_", "Builda"}
-	if !slices.Equal(gotIDs, wantIDs) {
-		t.Fatalf("task declaration order = %v, want %v", gotIDs, wantIDs)
+	if parsed.Declarations[0].Kind != DefinitionKindActor ||
+		parsed.Declarations[1].Kind != DefinitionKindTask ||
+		parsed.Declarations[2].Kind != DefinitionKindWorkspace {
+		t.Fatalf("Program index declarations are not in unsigned UTF-8 kind order")
 	}
 }
 
-func TestProgramIndexRejectsSharedMutations(t *testing.T) {
-	fixture := loadContractFixture(t)
-	base, err := ParseProgramIndex([]byte(fixture.ProgramIndex.Canonical))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, test := range fixture.ProgramRejections {
-		t.Run(test.Name, func(t *testing.T) {
-			index := cloneProgramIndex(base)
-			switch test.Mutation {
-			case "empty_declarations":
+func TestProgramIndexRejectsInvalidAuthority(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(*ProgramIndex)
+	}{
+		{
+			name: "empty declarations",
+			change: func(index *ProgramIndex) {
 				index.Declarations = nil
-			case "missing_format_version":
-				var value map[string]any
-				if err := json.Unmarshal([]byte(fixture.ProgramIndex.Canonical), &value); err != nil {
-					t.Fatal(err)
-				}
-				delete(value, "formatVersion")
-				raw, err := json.Marshal(value)
-				if err != nil {
-					t.Fatal(err)
-				}
-				canonical, err := canonicalProgramInput(raw)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err := ParseProgramIndex(canonical); err == nil {
-					t.Fatal("ParseProgramIndex returned nil error")
-				}
-				return
-			case "unknown_root_member":
-				raw := []byte(fixture.ProgramIndex.Canonical[:len(fixture.ProgramIndex.Canonical)-1] + `,"unknown":true}`)
-				canonical, err := canonicalProgramInput(raw)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err := ParseProgramIndex(canonical); err == nil {
-					t.Fatal("ParseProgramIndex returned nil error")
-				}
-				return
-			case "declaration_order":
-				index.Declarations[0], index.Declarations[1] = index.Declarations[1], index.Declarations[0]
-			case "task_slots":
-				index.Declarations[0].Slots = []DeclarationSlot{DeclarationSlotPayloadSchema, DeclarationSlotHandler}
-			case "duplicate_declaration":
-				index.Declarations[1] = index.Declarations[0]
-			case "build_contract":
-				index.BuildContractVersion = "helmr.program-build.v1"
-			case "runtime_api":
+			},
+		},
+		{
+			name: "declaration order",
+			change: func(index *ProgramIndex) {
+				index.Declarations[0], index.Declarations[1] =
+					index.Declarations[1], index.Declarations[0]
+			},
+		},
+		{
+			name: "duplicate queue",
+			change: func(index *ProgramIndex) {
+				index.Queues = append(index.Queues, index.Queues[0])
+			},
+		},
+		{
+			name: "invalid runtime API",
+			change: func(index *ProgramIndex) {
 				index.RuntimeAPIVersion = "helmr.runtime.v1"
-			case "runtime_digest":
-				index.RuntimeDigest = "sha256:" + strings.Repeat("A", 64)
-			case "toolchain_digest":
-				index.ToolchainDigest = "sha256:invalid"
-			case "manager_name":
-				index.Manager.Name = "pnpm"
-			case "manager_version":
-				index.Manager.Version = "^1.3.10"
-			case "manager_digest":
-				index.Manager.Digest = "sha256:invalid"
-			case "lockfile_name":
-				index.Submitted.LockfileName = "package-lock.json"
-			case "lockfile_digest":
-				index.Submitted.LockfileDigest = "sha256:invalid"
-			case "source_digest":
-				index.Submitted.SourceDigest = "sha256:invalid"
-			case "architecture":
-				index.Architecture = "amd64"
-			case "declared_id":
-				index.Declarations[0].DeclaredID = "invalid/id"
-			default:
-				t.Fatalf("unknown fixture mutation %q", test.Mutation)
-			}
+			},
+		},
+		{
+			name: "invalid config digest",
+			change: func(index *ProgramIndex) {
+				index.ConfigResultDigest = "sha256:invalid"
+			},
+		},
+		{
+			name: "invalid locator",
+			change: func(index *ProgramIndex) {
+				index.Declarations[0].Locator.ModulePath = "tasks/operator.ts"
+			},
+		},
+		{
+			name: "Workspace locator",
+			change: func(index *ProgramIndex) {
+				index.Declarations[2].Locator = &ProgramLocator{
+					ExportName: "repo",
+					ModulePath: ".helmr/modules/" + strings.Repeat("a", 64) + ".mjs",
+					Slot:       DeclarationSlotHandler,
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			index := cloneProgramIndex(testProgramIndex(t))
+			test.change(&index)
 			if err := ValidateProgramIndex(index); err == nil {
 				t.Fatal("ValidateProgramIndex returned nil error")
 			}
@@ -133,38 +106,25 @@ func TestProgramIndexRejectsSharedMutations(t *testing.T) {
 	}
 }
 
-func TestProgramIndexParserRequiresCanonicalBytes(t *testing.T) {
-	fixture := loadContractFixture(t)
-	if _, err := ParseProgramIndex([]byte(" " + fixture.ProgramIndex.Canonical)); err == nil {
-		t.Fatal("ParseProgramIndex returned nil error")
+func TestProgramIndexRejectsUnknownAndNoncanonicalJSON(t *testing.T) {
+	raw, err := CanonicalProgramIndex(testProgramIndex(t))
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestProgramIndexAcceptsSupportedManagerLockfiles(t *testing.T) {
-	fixture := loadContractFixture(t)
-	tests := []struct {
-		name     PackageManagerName
-		version  string
-		lockfile string
-	}{
-		{name: PackageManagerNPM, version: "11.4.2", lockfile: "package-lock.json"},
-		{name: PackageManagerNPM, version: "11.4.2", lockfile: "npm-shrinkwrap.json"},
-		{name: PackageManagerPNPM, version: "11.1.0", lockfile: "pnpm-lock.yaml"},
-		{name: PackageManagerBun, version: "1.3.10", lockfile: "bun.lock"},
+	var value map[string]any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		t.Fatal(err)
 	}
-	for _, test := range tests {
-		t.Run(string(test.name)+"/"+test.lockfile, func(t *testing.T) {
-			index, err := ParseProgramIndex([]byte(fixture.ProgramIndex.Canonical))
-			if err != nil {
-				t.Fatal(err)
-			}
-			index.Manager.Name = test.name
-			index.Manager.Version = test.version
-			index.Submitted.LockfileName = test.lockfile
-			if err := ValidateProgramIndex(index); err != nil {
-				t.Fatal(err)
-			}
-		})
+	value["unknown"] = true
+	unknown, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseProgramIndex(unknown); err == nil {
+		t.Fatal("ParseProgramIndex accepted an unknown root member")
+	}
+	if _, err := ParseProgramIndex(append([]byte(" "), raw...)); err == nil {
+		t.Fatal("ParseProgramIndex accepted noncanonical bytes")
 	}
 }
 
@@ -191,8 +151,26 @@ func TestManifestDigestMatchesSharedGoldenFixture(t *testing.T) {
 	}
 }
 
-func canonicalProgramInput(raw []byte) ([]byte, error) {
-	return jsoncanon.Transform(raw)
+func testProgramIndex(t *testing.T) ProgramIndex {
+	t.Helper()
+	index, err := buildProgramIndex(
+		testBuildPlan(),
+		testAnalysisDeclarationLocator(),
+		[]WorkspaceImage{{
+			DeclaredID: "repo",
+			Artifact: WorkspaceImageArtifact{
+				Digest:       "sha256:" + strings.Repeat("d", 64),
+				SizeBytes:    4096,
+				MediaType:    WorkspaceImageArtifactMediaType,
+				Architecture: ArchitectureX8664,
+			},
+		}},
+		"sha256:"+strings.Repeat("4", 64),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return index
 }
 
 func loadContractFixture(t *testing.T) contractFixture {
@@ -201,7 +179,15 @@ func loadContractFixture(t *testing.T) contractFixture {
 	if !ok {
 		t.Fatal("resolve test source path")
 	}
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(source), "..", "..", "fixtures", "contracts", "deployment-v0", "golden.json"))
+	raw, err := os.ReadFile(filepath.Join(
+		filepath.Dir(source),
+		"..",
+		"..",
+		"fixtures",
+		"contracts",
+		"deployment-v0",
+		"golden.json",
+	))
 	if err != nil {
 		t.Fatal(err)
 	}

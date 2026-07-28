@@ -23,11 +23,13 @@ const (
 	BuildFailureManagerUnsupported   = BuildFailureReason("unsupported_manager_protocol")
 	BuildFailureLockfileUnsupported  = BuildFailureReason("unsupported_lockfile_format")
 	BuildFailureUnsupportedToolchain = BuildFailureReason("unsupported_toolchain")
-	BuildFailureManagerFailed        = BuildFailureReason("manager_failed")
+	BuildFailureDependencyFetch      = BuildFailureReason("dependency_fetch_failed")
+	BuildFailureInstallLifecycle     = BuildFailureReason("offline_install_lifecycle_failed")
+	BuildFailureProtectedInput       = BuildFailureReason("protected_input_changed")
 	BuildFailureNetworkDenied        = BuildFailureReason("build_network_denied")
 	BuildFailureNetworkLimit         = BuildFailureReason("build_network_limit")
-	BuildFailureTransformFailed      = BuildFailureReason("transform_failed")
-	BuildFailureVerificationFailed   = BuildFailureReason("verification_failed")
+	BuildFailureConfigEvaluation     = BuildFailureReason("config_evaluation_failed")
+	BuildFailureDeclarationAnalysis  = BuildFailureReason("declaration_analysis_failed")
 	BuildFailureInvalidPlan          = BuildFailureReason("invalid_plan")
 	BuildFailureWorkspaceImageFailed = BuildFailureReason("workspace_image_failed")
 	BuildFailureOutputInvalid        = BuildFailureReason("output_invalid")
@@ -195,11 +197,12 @@ func ValidateBuildResultTarget(
 		return errors.New("build result provenance architecture does not match target")
 	}
 	if succeeded.Program != nil {
-		if succeeded.Program.Index.RuntimeDigest != runtimeDigest {
-			return errors.New("build result program runtime digest does not match target")
-		}
 		if succeeded.Program.Index.Architecture != architecture {
 			return errors.New("build result program architecture does not match target")
+		}
+		if succeeded.Program.Index.ConfigResultDigest !=
+			succeeded.Provenance.Config.ResultDigest {
+			return errors.New("build result Program config digest does not match target")
 		}
 	}
 	return nil
@@ -335,20 +338,6 @@ func validateBuildSucceeded(succeeded BuildSucceeded) error {
 		if err := ValidateProgramOutput(*succeeded.Program); err != nil {
 			return fmt.Errorf("build result program: %w", err)
 		}
-		if !equalProgramDeclarations(
-			succeeded.Program.Index.Declarations,
-			programDeclarations,
-		) {
-			return errors.New("build result program declarations do not match plan")
-		}
-		if succeeded.Program.Index.Architecture != succeeded.Provenance.Architecture ||
-			succeeded.Program.Index.BuildContractVersion != succeeded.Provenance.BuildContractVersion ||
-			succeeded.Program.Index.Manager != succeeded.Provenance.Manager ||
-			succeeded.Program.Index.RuntimeDigest != succeeded.Provenance.RuntimeDigest ||
-			succeeded.Program.Index.ToolchainDigest != succeeded.Provenance.ToolchainDigest ||
-			succeeded.Program.Index.Submitted != succeeded.Provenance.Submitted {
-			return errors.New("build result program provenance does not match")
-		}
 	}
 
 	workspaces := buildPlanWorkspaces(succeeded.Plan)
@@ -385,6 +374,16 @@ func validateBuildSucceeded(succeeded BuildSucceeded) error {
 			)
 		}
 	}
+	if succeeded.Program != nil {
+		if err := validateProgramIndexBuild(
+			succeeded.Program.Index,
+			succeeded.Plan,
+			succeeded.WorkspaceImages,
+			succeeded.Provenance.Config.ResultDigest,
+		); err != nil {
+			return fmt.Errorf("build result Program index: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -395,11 +394,13 @@ func validateBuildFailed(failed BuildFailed) error {
 		BuildFailureManagerUnsupported,
 		BuildFailureLockfileUnsupported,
 		BuildFailureUnsupportedToolchain,
-		BuildFailureManagerFailed,
+		BuildFailureDependencyFetch,
+		BuildFailureInstallLifecycle,
+		BuildFailureProtectedInput,
 		BuildFailureNetworkDenied,
 		BuildFailureNetworkLimit,
-		BuildFailureTransformFailed,
-		BuildFailureVerificationFailed,
+		BuildFailureConfigEvaluation,
+		BuildFailureDeclarationAnalysis,
 		BuildFailureInvalidPlan,
 		BuildFailureWorkspaceImageFailed,
 		BuildFailureOutputInvalid:
@@ -475,30 +476,4 @@ func buildPlanProgramDeclarations(plan BuildPlan) []ProgramDeclaration {
 		}
 	}
 	return declarations
-}
-
-func equalProgramDeclarations(left, right []ProgramDeclaration) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index].Kind != right[index].Kind ||
-			left[index].DeclaredID != right[index].DeclaredID ||
-			!equalDeclarationSlots(left[index].Slots, right[index].Slots) {
-			return false
-		}
-	}
-	return true
-}
-
-func equalDeclarationSlots(left, right []DeclarationSlot) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
 }

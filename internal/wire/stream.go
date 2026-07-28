@@ -11,8 +11,7 @@ import (
 type StreamType string
 
 const (
-	StreamTypeBuildInstall               StreamType = "build-install"
-	StreamTypeBuildVerify                StreamType = "build-verify"
+	StreamTypeBuild                      StreamType = "build"
 	StreamTypeRunImage                   StreamType = "run-image"
 	StreamTypeWorkspaceArtifact          StreamType = "workspace-artifact"
 	StreamTypeCheckpointPauseRequest     StreamType = "checkpoint-pause-request"

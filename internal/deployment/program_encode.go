@@ -3,6 +3,8 @@ package deployment
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"iter"
@@ -23,6 +25,10 @@ func EncodeProgram(
 	tree *BuildTree,
 	verification VerificationResult,
 	provenance BuildProvenance,
+	workspaceImages []WorkspaceImage,
+	compiler CompilerInputs,
+	nodeVersion string,
+	source ProgramReceiptSource,
 ) (_ *EncodedProgram, returnErr error) {
 	if ctx == nil {
 		return nil, errors.New("Program encoding context is nil")
@@ -45,30 +51,92 @@ func EncodeProgram(
 	if err != nil {
 		return nil, err
 	}
-	declarations := buildPlanProgramDeclarations(plan)
-	if len(declarations) == 0 {
+	if len(buildPlanProgramDeclarations(plan)) == 0 {
 		return nil, errors.New("Program encoding requires a Program-backed verification")
 	}
-
-	index := ProgramIndex{
-		Architecture:         provenance.Architecture,
-		BuildContractVersion: provenance.BuildContractVersion,
-		Declarations:         declarations,
-		FormatVersion:        ProgramIndexFormatVersion,
-		Manager:              provenance.Manager,
-		RuntimeAPIVersion:    RuntimeAPIVersion,
-		RuntimeDigest:        provenance.RuntimeDigest,
-		ToolchainDigest:      provenance.ToolchainDigest,
-		Submitted:            provenance.Submitted,
+	compilerResultRaw, err := tree.inspected.read(
+		ctx,
+		"helmr/compiler-result.json",
+		maxProgramFileSizeBytes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	compilerResult, err := ParseProgramCompilerResult(compilerResultRaw)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateProgramBuildAuthority(
+		compilerResult,
+		compiler,
+		nodeVersion,
+	); err != nil {
+		return nil, err
+	}
+	if err := validateProgramAggregateResult(compilerResult, plan); err != nil {
+		return nil, err
+	}
+	if compilerResult.Config.Digest != provenance.Config.ResultDigest {
+		return nil, errors.New(
+			"Program build manifest config digest does not match build provenance",
+		)
+	}
+	if err := verifyProgramBuildFiles(ctx, tree.inspected, compilerResult); err != nil {
+		return nil, err
+	}
+	locator, err := ParseDeclarationLocator(
+		[]byte(verification.Succeeded.Files[1].Content),
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateProgramBuildLocators(compilerResult, locator); err != nil {
+		return nil, err
+	}
+	index, err := buildProgramIndex(
+		plan,
+		locator,
+		workspaceImages,
+		provenance.Config.ResultDigest,
+	)
+	if err != nil {
+		return nil, err
 	}
 	indexRaw, err := CanonicalProgramIndex(index)
 	if err != nil {
 		return nil, err
 	}
+	indexHash := sha256.Sum256(indexRaw)
+	manifest := buildManifestFromCompilerResult(
+		compilerResult,
+		"sha256:"+hex.EncodeToString(indexHash[:]),
+	)
+	manifestRaw, err := canonicalProgramBuildManifest(manifest)
+	if err != nil {
+		return nil, err
+	}
+	manifestHash := sha256.Sum256(manifestRaw)
+	receipt, err := NewProgramReceipt(
+		index,
+		provenance,
+		compiler,
+		nodeVersion,
+		manifest,
+		"sha256:"+hex.EncodeToString(manifestHash[:]),
+		source,
+	)
+	if err != nil {
+		return nil, err
+	}
+	receiptRaw, err := CanonicalProgramReceipt(receipt)
+	if err != nil {
+		return nil, err
+	}
 	generated := map[string][]byte{
-		VerificationDeclarationsPath: []byte(verification.Succeeded.Files[1].Content),
-		VerificationProgramEntryPath: []byte(verification.Succeeded.Files[2].Content),
-		"helmr/program.json":         indexRaw,
+		"helmr/build-manifest.json": manifestRaw,
+		"helmr/declarations.json":   indexRaw,
+		"helmr/entry.mjs":           []byte(ProgramEntry),
+		"helmr/receipt.json":        receiptRaw,
 	}
 	artifact, err := encodeProgramTree(
 		ctx,
@@ -160,7 +228,10 @@ func programTreeEntries(
 ) iter.Seq2[treeEntry, error] {
 	sources := make([]programTreeSource, 0, len(tree.ordered)+len(generated)+2)
 	for _, entry := range tree.ordered {
-		if entry.Path == "." {
+		if entry.Path == "." || entry.Path == "helmr/compiler-result.json" {
+			continue
+		}
+		if _, replaced := generated[entry.Path]; replaced {
 			continue
 		}
 		sourcePath := entry.Path
@@ -169,11 +240,13 @@ func programTreeEntries(
 			sourcePath: sourcePath,
 		})
 	}
-	sources = append(sources, programTreeSource{entry: artifactEntry{
-		Path: "helmr",
-		Kind: artifactEntryDirectory,
-		Mode: 0755,
-	}})
+	if _, exists := tree.entries["helmr"]; !exists {
+		sources = append(sources, programTreeSource{entry: artifactEntry{
+			Path: "helmr",
+			Kind: artifactEntryDirectory,
+			Mode: 0755,
+		}})
+	}
 	if _, exists := tree.entries["node_modules"]; !exists {
 		sources = append(sources, programTreeSource{entry: artifactEntry{
 			Path: "node_modules",

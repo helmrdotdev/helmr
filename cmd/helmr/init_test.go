@@ -66,7 +66,7 @@ func TestInitCommandCreatesStarterProject(t *testing.T) {
 			t.Fatalf("output = %q", out.String())
 		}
 	}
-	if !strings.Contains(string(config), `dirs: ["./dist/tasks"]`) {
+	if !strings.Contains(string(config), `dirs: ["tasks"]`) {
 		t.Fatalf("output = %q", out.String())
 	}
 }

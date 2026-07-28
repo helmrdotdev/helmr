@@ -51,7 +51,7 @@ type PlatformAcquirer interface {
 
 type BuildPolicy interface {
 	Digest() (string, error)
-	Node(string) (deployment.VersionDomain, string, error)
+	Node(string) (deployment.VersionDomain, []string, error)
 	Manager(deployment.PackageManager) (deployment.ManagerPolicy, error)
 	DeniesDigest(string) bool
 	DeniesSelector(string) bool

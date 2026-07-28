@@ -108,15 +108,7 @@ type verifiedProgram struct {
 }
 
 func (program *verifiedProgram) Index() ProgramIndex {
-	index := program.index
-	index.Declarations = append([]ProgramDeclaration(nil), index.Declarations...)
-	for position := range index.Declarations {
-		index.Declarations[position].Slots = append(
-			[]DeclarationSlot(nil),
-			index.Declarations[position].Slots...,
-		)
-	}
-	return index
+	return cloneProgramIndex(program.index)
 }
 
 func verifyProgramArtifact(ctx context.Context, artifact artifactInput) (*verifiedProgram, error) {

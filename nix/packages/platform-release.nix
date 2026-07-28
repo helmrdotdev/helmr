@@ -49,15 +49,15 @@ stdenvNoCC.mkDerivation {
         '{digest:$digest,mediaType:$mediaType,sizeBytes:$sizeBytes}'
     }
 
-    jq -cS '.harness' \
-      ${runtimeHarness}/harness.descriptor.json \
-      >"$TMPDIR/runtime-harness-object.json"
     runtime_object="$(install_object \
       ${runtimeHarness}/harness.tar \
-      "$TMPDIR/runtime-harness-object.json")"
+      ${runtimeHarness}/harness.descriptor.json)"
+    jq -cS '.base' \
+      ${toolchainBase}/base.descriptor.json \
+      >"$TMPDIR/toolchain-base-object.json"
     toolchain_object="$(install_object \
       ${toolchainBase}/base.tar \
-      ${toolchainBase}/base.descriptor.json)"
+      "$TMPDIR/toolchain-base-object.json")"
 
     policy_digest="sha256:$(sha256sum "$TMPDIR/build-policy.json" | cut -d' ' -f1)"
     policy_size="$(stat -c %s "$TMPDIR/build-policy.json")"

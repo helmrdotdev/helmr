@@ -40,12 +40,12 @@ func run(args []string) error {
 		*outputPath == "" {
 		return errors.New("all Platform policy inputs and --output are required")
 	}
-	var runtime deployment.RuntimeInputs
-	if err := decodeFile(*runtimePath, &runtime); err != nil {
+	var runtimeHarness deployment.ArtifactDescriptor
+	if err := decodeFile(*runtimePath, &runtimeHarness); err != nil {
 		return fmt.Errorf("Runtime harness descriptor: %w", err)
 	}
-	var base deployment.ArtifactDescriptor
-	if err := decodeFile(*toolchainPath, &base); err != nil {
+	var toolchain deployment.ToolchainInputs
+	if err := decodeFile(*toolchainPath, &toolchain); err != nil {
 		return fmt.Errorf("toolchain base descriptor: %w", err)
 	}
 	keyring, err := os.ReadFile(*keyringPath)
@@ -58,8 +58,8 @@ func run(args []string) error {
 	}
 	fingerprints := strings.Fields(string(fingerprintsRaw))
 	policy, err := deployment.ComposeBuildPolicy(
-		runtime,
-		deployment.ToolchainInputs{Base: base},
+		deployment.RuntimeInputs{Harness: runtimeHarness},
+		toolchain,
 		keyring,
 		fingerprints,
 	)

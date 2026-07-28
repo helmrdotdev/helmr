@@ -9,13 +9,111 @@ import (
 
 func controlBuildPolicy(t *testing.T) *deployment.BuildPolicy {
 	t.Helper()
-	digest := func(character string) string {
-		return "sha256:" + strings.Repeat(character, 64)
+	raw, err := deployment.ComposeBuildPolicy(
+		deployment.RuntimeInputs{
+			Harness: platformInput("runtime", 4096),
+		},
+		deployment.ToolchainInputs{
+			Base:     platformInput("toolchain", 4096),
+			Compiler: controlCompilerInputs(),
+		},
+		[]byte("node release keyring"),
+		[]string{"00112233445566778899AABBCCDDEEFF00112233"},
+	)
+	if err != nil {
+		t.Fatal(err)
 	}
-	raw := `{"architecture":"x86_64","denies":{"digests":[],"selectors":[]},"descriptorSchemaVersion":0,"fixtureSet":"helmr.platform.fixtures.v0","formatVersion":0,"managers":[{"adapterVersion":"helmr.manager.v0","allowedOrigin":"https://github.com/oven-sh/bun/releases/","allowedRedirectHosts":["api.github.com","github.com","objects.githubusercontent.com"],"domain":{"major":1,"minimum":"1.3.10"},"metadataOrigin":"https://api.github.com/repos/oven-sh/bun/releases/tags/","name":"bun"},{"adapterVersion":"helmr.manager.v0","allowedOrigin":"https://registry.npmjs.org/npm/","allowedRedirectHosts":["registry.npmjs.org"],"domain":{"major":11,"minimum":"11.4.2"},"metadataOrigin":"https://registry.npmjs.org/npm/","name":"npm"},{"adapterVersion":"helmr.manager.v0","allowedOrigin":"https://registry.npmjs.org/pnpm/","allowedRedirectHosts":["registry.npmjs.org"],"domain":{"major":11,"minimum":"11.1.0"},"metadataOrigin":"https://registry.npmjs.org/pnpm/","name":"pnpm"}],"node":{"adapterVersion":"helmr.runtime.v0","allowedOrigin":"https://nodejs.org/dist/","allowedRedirectHosts":["nodejs.org"],"domains":[{"major":22,"minimum":"22.18.0"},{"major":24,"minimum":"24.3.0"}],"releaseKeyFingerprints":["00112233445566778899AABBCCDDEEFF00112233"],"releaseKeyring":"AQ=="},"runtime":{"configEvaluatorDigest":"` + digest("1") + `","harness":{"digest":"` + digest("2") + `","mediaType":"application/vnd.helmr.platform-tree.v0+tar","sizeBytes":4096}},"toolchain":{"base":{"digest":"` + digest("3") + `","mediaType":"application/vnd.helmr.platform-tree.v0+tar","sizeBytes":4096}}}`
-	policy, err := deployment.ParseBuildPolicy([]byte(raw))
+	policy, err := deployment.ParseBuildPolicy(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return policy
+}
+
+func platformInput(label string, size int64) deployment.ArtifactDescriptor {
+	return deployment.ArtifactDescriptor{
+		Digest:    controlDigest(label),
+		MediaType: deployment.PlatformTreeInputMediaType,
+		SizeBytes: size,
+	}
+}
+
+func controlCompilerInputs() deployment.CompilerInputs {
+	return deployment.CompilerInputs{
+		APIVersion: "helmr.compiler.v0",
+		ConfigEvaluator: deployment.CompilerEntrypoint{
+			APIVersion: deployment.ConfigEvaluatorAPIVersion,
+			Digest:     controlDigest("config evaluator"),
+			Entrypoint: "/nix/helmr/config-evaluator.mjs",
+		},
+		Esbuild: deployment.EsbuildInputs{
+			APIPackageDigest: controlDigest("esbuild api"),
+			BinaryDigest:     controlDigest("esbuild binary"),
+			BinaryPath:       "/nix/helmr/esbuild",
+			PackagePath:      "/nix/node_modules/esbuild",
+			Version:          "0.28.1",
+		},
+		OptionsContractDigest: controlDigest("compiler options contract"),
+		Output: deployment.CompilerOutputContract{
+			Aggregate:    "analysis-only",
+			FinalModules: "independent",
+			SourceMaps:   "external",
+		},
+		ProgramCompiler: deployment.CompilerEntrypoint{
+			APIVersion: "helmr.compiler.v0",
+			Digest:     controlDigest("program compiler"),
+			Entrypoint: "/nix/helmr/program-compiler.mjs",
+		},
+		Source: deployment.CompilerSourceContract{
+			DeclarationExtensions: []string{".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"},
+			PackageDependencies:   "external",
+			Semantics:             "pinned-esbuild",
+			WorkspaceDependencies: "bundled",
+		},
+	}
+}
+
+func controlDigest(label string) string {
+	character := "1"
+	if label != "" {
+		character = string("123456789abcdef"[len(label)%15])
+	}
+	return "sha256:" + strings.Repeat(character, 64)
+}
+
+func TestValidatePlatformCandidateBinding(t *testing.T) {
+	source := deployment.PlatformSource{
+		Digest: controlDigest("node source"), Origin: "https://nodejs.org/node",
+		SizeBytes: 1,
+	}
+	runtime := deployment.InspectedPlatformArtifact{
+		Runtime: &deployment.RuntimeArtifactDescriptor{
+			NodeModuleABI: "137",
+			NodeVersion:   "24.16.0",
+			Source:        source,
+		},
+	}
+	toolchain := deployment.InspectedPlatformArtifact{
+		Toolchain: &deployment.ToolchainArtifactDescriptor{
+			NodeModuleABI: "137",
+			NodeSource:    source,
+			NodeVersion:   "24.16.0",
+			RuntimeDigest: controlDigest("runtime"),
+		},
+	}
+	if err := validatePlatformCandidateBinding(
+		runtime,
+		toolchain,
+		controlDigest("runtime"),
+	); err != nil {
+		t.Fatal(err)
+	}
+	toolchain.Toolchain.NodeModuleABI = "138"
+	if err := validatePlatformCandidateBinding(
+		runtime,
+		toolchain,
+		controlDigest("runtime"),
+	); err == nil {
+		t.Fatal("mismatched Node ABI was accepted")
+	}
 }
