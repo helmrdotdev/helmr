@@ -19,7 +19,7 @@ set -euo pipefail
 case "$*" in
   *"output -raw bucket_name"*) printf 'state-bucket\n' ;;
   *"output -raw source_artifact_bucket_name"*) printf 'artifact-bucket\n' ;;
-  *"output -raw runtime_store_bucket_arn"*) printf 'arn:aws:s3:::runtime-bucket\n' ;;
+  *"output -raw platform_store_bucket_arn"*) printf 'arn:aws:s3:::runtime-bucket\n' ;;
   *"output -raw retained_cas_bucket_arn"*) printf 'arn:aws:s3:::retained-bucket\n' ;;
   *) exit 2 ;;
 esac

@@ -105,6 +105,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 			NodeVersion:          selection.NodeVersion,
 			ManagerName:          string(selection.Manager.Name),
 			ManagerVersion:       selection.Manager.Version,
+			ManagerIntegrity:     selection.Manager.Integrity,
 			BuildContractVersion: deployment.ProgramBuildContractVersion,
 		},
 	)

@@ -131,11 +131,12 @@ func TestPinnedProgramEncoder(t *testing.T) {
 	}
 
 	var archive bytes.Buffer
-	if err := writeProgramArchive(
+	if err := writeTreeArchive(
 		context.Background(),
 		&archive,
 		programArtifact,
 		treeEntrySequence(programArchiveFixture()),
+		false,
 	); err != nil {
 		t.Fatal(err)
 	}

@@ -150,7 +150,7 @@ func TestVerifierCgroupLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cgroup.Close()
-	if err := configureVerifierCgroup(int(cgroup.Fd())); err != nil {
+	if err := configureVerifierCgroup(int(cgroup.Fd()), programVerifierJob); err != nil {
 		t.Fatal(err)
 	}
 	for _, limit := range verifierCgroupLimits {

@@ -56,7 +56,7 @@ func newDeploymentBuildFixture(t *testing.T) (*deploymentBuildFixture, *pgxpool.
 	mustExec(t, ctx, pool, `
 		INSERT INTO deployments (
 			id, public_id, org_id, project_id, environment_id, build_region_id,
-			build_node_version, build_runtime_digest, build_standard_toolchain_digest,
+			build_node_version, build_runtime_digest, build_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
 			build_contract_version,
 			version, content_hash, deployment_source_artifact_id, status
@@ -153,18 +153,18 @@ func TestPinDeploymentPlatformArtifactsReplaysExactTuple(t *testing.T) {
 	mustExec(t, f.ctx, f.pool, `
 		UPDATE deployments
 		   SET build_runtime_digest = NULL,
-		       build_standard_toolchain_digest = NULL,
+		       build_toolchain_digest = NULL,
 		       build_manager_digest = NULL
 		 WHERE id = $1
 	`, f.deploymentID)
 	pins := db.PinDeploymentPlatformArtifactsParams{
-		BuildRuntimeDigest:           bytes.Repeat([]byte{1}, 32),
-		BuildStandardToolchainDigest: bytes.Repeat([]byte{2}, 32),
-		BuildManagerDigest:           bytes.Repeat([]byte{3}, 32),
-		OrgID:                        pgvalue.UUID(f.orgID),
-		ProjectID:                    pgvalue.UUID(f.projectID),
-		EnvironmentID:                pgvalue.UUID(f.environmentID),
-		ID:                           pgvalue.UUID(f.deploymentID),
+		BuildRuntimeDigest:   bytes.Repeat([]byte{1}, 32),
+		BuildToolchainDigest: bytes.Repeat([]byte{2}, 32),
+		BuildManagerDigest:   bytes.Repeat([]byte{3}, 32),
+		OrgID:                pgvalue.UUID(f.orgID),
+		ProjectID:            pgvalue.UUID(f.projectID),
+		EnvironmentID:        pgvalue.UUID(f.environmentID),
+		ID:                   pgvalue.UUID(f.deploymentID),
 	}
 	first, err := f.queries.PinDeploymentPlatformArtifacts(f.ctx, pins)
 	if err != nil {
@@ -208,12 +208,66 @@ func TestPinDeploymentPlatformArtifactsReplaysExactTuple(t *testing.T) {
 	}
 }
 
+func TestPlatformAcquisitionRequiresActiveBuildAuthority(t *testing.T) {
+	f, _ := newDeploymentBuildFixture(t)
+	mustExec(t, f.ctx, f.pool, `
+		UPDATE deployments
+		   SET build_runtime_digest = NULL,
+		       build_toolchain_digest = NULL,
+		       build_manager_digest = NULL
+		 WHERE id = $1
+	`, f.deploymentID)
+	mustExec(t, f.ctx, f.pool, `
+		UPDATE worker_instances
+		   SET state = 'active',
+		       supports_build = true,
+		       supervisor_version = 'test-worker',
+		       certified_cpu_millis = 3000,
+		       certified_memory_bytes = 4294967296,
+		       certified_workload_disk_bytes = 1073741824,
+		       certified_scratch_bytes = 34359738368,
+		       per_vm_cpu_millis = 3000,
+		       per_vm_memory_bytes = 4294967296,
+		       per_vm_workload_disk_bytes = 1073741824,
+		       per_vm_scratch_bytes = 34359738368,
+		       max_build_executors = 1,
+		       certification_profile = 'test',
+		       certification_fingerprint = 'sha256:test-certification',
+		       certified_at = now(),
+		       activated_at = now()
+		 WHERE id = $1
+	`, f.workerID)
+	params := db.GetDeploymentPlatformAcquisitionParams{
+		WorkerInstanceID:      pgvalue.UUID(f.workerID),
+		WorkerGroupID:         f.groupID,
+		WorkerEpoch:           pgtype.Int8{Int64: 1, Valid: true},
+		WorkerProtocolVersion: "helmr.worker.v0",
+		ID:                    pgvalue.UUID(f.deploymentID),
+	}
+	if _, err := f.queries.GetDeploymentPlatformAcquisition(f.ctx, params); err != nil {
+		t.Fatal(err)
+	}
+
+	mustExec(t, f.ctx, f.pool, `
+		UPDATE worker_groups
+		   SET state = 'disabled'
+		 WHERE id = $1
+	`, f.groupID)
+	if _, err := f.queries.GetDeploymentPlatformAcquisition(
+		f.ctx,
+		params,
+	); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("disabled worker group error = %v", err)
+	}
+
+}
+
 func TestFleetBuildDemandExcludesUnpinnedDeployments(t *testing.T) {
 	f, _ := newDeploymentBuildFixture(t)
 	mustExec(t, f.ctx, f.pool, `
 		UPDATE deployments
 		   SET build_runtime_digest = NULL,
-		       build_standard_toolchain_digest = NULL,
+		       build_toolchain_digest = NULL,
 		       build_manager_digest = NULL
 		 WHERE id = $1
 	`, f.deploymentID)
@@ -238,7 +292,7 @@ func TestDeploymentLeaseRejectsUntilPinCommits(t *testing.T) {
 	mustExec(t, f.ctx, f.pool, `
 		UPDATE deployments
 		   SET build_runtime_digest = NULL,
-		       build_standard_toolchain_digest = NULL,
+		       build_toolchain_digest = NULL,
 		       build_manager_digest = NULL
 		 WHERE id = $1
 	`, f.deploymentID)
@@ -248,13 +302,13 @@ func TestDeploymentLeaseRejectsUntilPinCommits(t *testing.T) {
 	}
 	defer pinTx.Rollback(f.ctx)
 	pins := db.PinDeploymentPlatformArtifactsParams{
-		BuildRuntimeDigest:           bytes.Repeat([]byte{1}, 32),
-		BuildStandardToolchainDigest: bytes.Repeat([]byte{2}, 32),
-		BuildManagerDigest:           bytes.Repeat([]byte{3}, 32),
-		OrgID:                        pgvalue.UUID(f.orgID),
-		ProjectID:                    pgvalue.UUID(f.projectID),
-		EnvironmentID:                pgvalue.UUID(f.environmentID),
-		ID:                           pgvalue.UUID(f.deploymentID),
+		BuildRuntimeDigest:   bytes.Repeat([]byte{1}, 32),
+		BuildToolchainDigest: bytes.Repeat([]byte{2}, 32),
+		BuildManagerDigest:   bytes.Repeat([]byte{3}, 32),
+		OrgID:                pgvalue.UUID(f.orgID),
+		ProjectID:            pgvalue.UUID(f.projectID),
+		EnvironmentID:        pgvalue.UUID(f.environmentID),
+		ID:                   pgvalue.UUID(f.deploymentID),
 	}
 	if _, err := db.New(pinTx).PinDeploymentPlatformArtifacts(f.ctx, pins); err != nil {
 		t.Fatal(err)
@@ -283,7 +337,7 @@ func TestDeploymentLeaseRejectsUntilPinCommits(t *testing.T) {
 		  FROM deployments
 		 WHERE id = $1
 		   AND build_runtime_digest IS NOT NULL
-		   AND build_standard_toolchain_digest IS NOT NULL
+		   AND build_toolchain_digest IS NOT NULL
 		   AND build_manager_digest IS NOT NULL
 	`, f.deploymentID).Scan(&visiblePins); err != nil {
 		t.Fatal(err)
@@ -300,8 +354,8 @@ func TestDeploymentLeaseRejectsUntilPinCommits(t *testing.T) {
 	}
 	if !bytes.Equal(leased.BuildRuntimeDigest, pins.BuildRuntimeDigest) ||
 		!bytes.Equal(
-			leased.BuildStandardToolchainDigest,
-			pins.BuildStandardToolchainDigest,
+			leased.BuildToolchainDigest,
+			pins.BuildToolchainDigest,
 		) {
 		t.Fatalf("lease used incomplete Platform pins: %+v", leased)
 	}

@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
@@ -67,7 +67,7 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		RuntimeABI: row.RuntimeABI, Network: network,
 	}
 	if action == api.WorkerRuntimeReconcilePrepare {
-		if err := populateRuntimePrepareSource(r.Context(), s.db, &source, row, s.buildPolicy); err != nil {
+		if err := populateRuntimePrepareSource(r.Context(), s.db, s.platformStore, &source, row); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -92,9 +92,9 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 func populateRuntimePrepareSource(
 	ctx context.Context,
 	store db.Querier,
+	platformStore cas.Reader,
 	source *api.WorkerRuntimeSource,
 	row db.GetNextRuntimeReconcileTargetRow,
-	policy *deployment.BuildPolicy,
 ) error {
 	if !row.BaseWorkspaceVersionID.Valid || !row.WorkspaceEntryCount.Valid {
 		return errors.New("runtime reservation has no exact Workspace version")
@@ -135,6 +135,7 @@ func populateRuntimePrepareSource(
 		return errors.New("runtime reservation Program authority is incomplete")
 	}
 	program, err := projectRuntimeProgram(
+		ctx,
 		runtimeProgramAuthorityFromDeployment(
 			row.ProgramDeploymentID,
 			row.ProgramRuntimeDigest,
@@ -145,7 +146,7 @@ func populateRuntimePrepareSource(
 			row.ProgramIndexDigest,
 		),
 		row.WorkspaceArchitecture,
-		policy,
+		platformStore,
 	)
 	if err != nil {
 		return fmt.Errorf("project runtime reservation Program: %w", err)

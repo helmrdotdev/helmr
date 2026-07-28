@@ -220,9 +220,9 @@ module "control" {
   additional_control_security_group_ids      = local.control_security_group_ids
   cloudfront_origin_domain_name              = var.cloudfront_origin_domain_name
   control_image                              = var.control_image
-  runtime_store_uri                          = var.runtime_store_uri
-  runtime_store_bucket_arn                   = var.runtime_store_bucket_arn
-  runtime_store_kms_key_arn                  = var.runtime_store_kms_key_arn
+  platform_store_uri                         = var.platform_store_uri
+  platform_store_bucket_arn                  = var.platform_store_bucket_arn
+  platform_store_kms_key_arn                 = var.platform_store_kms_key_arn
   build_policy_digest                        = var.build_policy_digest
   create_control_repository                  = true
   create_control_service                     = var.create_control_service
@@ -298,9 +298,9 @@ module "run_worker" {
   cas_uri                                    = module.control.cas_uri
   cas_bucket_arn                             = module.control.cas_bucket_arn
   kms_key_arn                                = module.control.kms_key_arn
-  runtime_store_uri                          = var.runtime_store_uri
-  runtime_store_bucket_arn                   = var.runtime_store_bucket_arn
-  runtime_store_kms_key_arn                  = var.runtime_store_kms_key_arn
+  platform_store_uri                         = var.platform_store_uri
+  platform_store_bucket_arn                  = var.platform_store_bucket_arn
+  platform_store_kms_key_arn                 = var.platform_store_kms_key_arn
   build_policy_digest                        = null
 
   secret_arns = {
@@ -349,9 +349,9 @@ module "build_worker" {
   cas_uri                                    = module.control.cas_uri
   cas_bucket_arn                             = module.control.cas_bucket_arn
   kms_key_arn                                = module.control.kms_key_arn
-  runtime_store_uri                          = var.runtime_store_uri
-  runtime_store_bucket_arn                   = var.runtime_store_bucket_arn
-  runtime_store_kms_key_arn                  = var.runtime_store_kms_key_arn
+  platform_store_uri                         = var.platform_store_uri
+  platform_store_bucket_arn                  = var.platform_store_bucket_arn
+  platform_store_kms_key_arn                 = var.platform_store_kms_key_arn
   build_policy_digest                        = var.build_policy_digest
 
   secret_arns = {

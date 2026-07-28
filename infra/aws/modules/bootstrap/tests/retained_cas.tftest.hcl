@@ -20,7 +20,7 @@ override_resource {
 }
 
 override_resource {
-  target = aws_kms_key.runtime_store
+  target = aws_kms_key.platform_store
   values = {
     arn = "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000002"
   }
@@ -35,11 +35,8 @@ override_resource {
 
 variables {
   name = "helmr-test"
-  runtime_provisioner_principal_arns = [
-    "arn:aws:iam::000000000000:role/runtime-provisioner"
-  ]
-  runtime_rollout_orchestrator_principal_arns = [
-    "arn:aws:iam::000000000000:role/runtime-rollout"
+  platform_publisher_principal_arns = [
+    "arn:aws:iam::000000000000:role/platform-publisher"
   ]
 }
 
@@ -48,9 +45,9 @@ run "retained_cas_has_a_dedicated_non_expiring_boundary" {
 
   assert {
     condition = (
-      aws_s3_bucket.retained_cas.bucket != aws_s3_bucket.runtime_store.bucket &&
+      aws_s3_bucket.retained_cas.bucket != aws_s3_bucket.platform_store.bucket &&
       aws_s3_bucket.retained_cas.bucket != aws_s3_bucket.source_artifacts.bucket &&
-      aws_kms_key.retained_cas.arn != aws_kms_key.runtime_store.arn &&
+      aws_kms_key.retained_cas.arn != aws_kms_key.platform_store.arn &&
       aws_kms_key.retained_cas.arn != aws_kms_key.source_artifacts.arn
     )
     error_message = "Retained deployment artifacts require a dedicated S3 and KMS boundary."
@@ -84,6 +81,14 @@ run "retained_cas_policy_is_create_only" {
       strcontains(aws_s3_bucket_policy.retained_cas.policy, "DenyObjectMutation") &&
       strcontains(aws_s3_bucket_policy.retained_cas.policy, "s3:if-none-match") &&
       strcontains(aws_s3_bucket_policy.retained_cas.policy, "s3:ObjectCreationOperation") &&
+      one([
+        for statement in jsondecode(aws_s3_bucket_policy.retained_cas.policy).Statement :
+        statement if statement.Sid == "DenyUnconditionalObjectWrites"
+      ]).Condition.Bool["s3:ObjectCreationOperation"] == "true" &&
+      one([
+        for statement in jsondecode(aws_s3_bucket_policy.retained_cas.policy).Statement :
+        statement if statement.Sid == "DenyObjectCopies"
+      ]).Condition.Bool["s3:ObjectCreationOperation"] == "true" &&
       strcontains(aws_s3_bucket_policy.retained_cas.policy, "${aws_s3_bucket.retained_cas.arn}/sha256/*") &&
       !strcontains(aws_s3_bucket_policy.retained_cas.policy, "s3:PutLifecycleConfiguration")
     )

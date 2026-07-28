@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
@@ -54,16 +55,8 @@ func run(log *slog.Logger) error {
 	supportsRun := slices.Contains(cfg.WorkerRoles, "run")
 	supportsBuild := slices.Contains(cfg.WorkerRoles, "build")
 	var buildPolicy *deployment.BuildPolicy
-	var toolchainCatalogDigest string
-	var toolCorpus *deployment.ToolchainCorpus
-	var runtimeStore cas.Reader
-	var managerCatalog *deployment.ManagerCatalog
-	var managerTrees *deployment.ManagerTrees
+	var platformStore cas.ImmutableStore
 	var squashfsEncoder string
-	runtimeCatalog, err := deployment.LoadRuntimeCatalog()
-	if err != nil {
-		return fmt.Errorf("authenticate managed runtime catalog: %w", err)
-	}
 	verifierCgroupRoot, err := workerdaemon.PrepareVerifierHost()
 	if err != nil {
 		return fmt.Errorf("prepare verifier host: %w", err)
@@ -200,112 +193,65 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("derive normalized firecracker runtime identity: %w", err)
 	}
-	corpusScratch := filepath.Join(workDir, "tmp", "runtime-verifier")
-	if err := os.MkdirAll(corpusScratch, 0o700); err != nil {
-		return fmt.Errorf("create runtime verifier scratch: %w", err)
-	}
-	if err := deployment.VerifyRuntimeVerifierCorpus(
-		ctx,
-		runtimeCatalog,
-		runtimeArchitecture,
-		verifierCgroupRoot,
-		corpusScratch,
-	); err != nil {
-		return fmt.Errorf("verify managed runtime corpus: %w", err)
+	runtimeScratch := filepath.Join(workDir, "tmp", "runtime")
+	if err := os.MkdirAll(runtimeScratch, 0o700); err != nil {
+		return fmt.Errorf("create Runtime scratch: %w", err)
 	}
 	if supportsRun || supportsBuild {
-		runtimeStore, err = cas.NewImmutableS3(
+		platformStore, err = cas.NewImmutableS3(
 			ctx,
-			cfg.RuntimeStoreURI,
-			cas.WithS3TempDir(corpusScratch),
+			cfg.PlatformStoreURI,
+			cas.WithS3TempDir(runtimeScratch),
 		)
 		if err != nil {
-			return fmt.Errorf("configure managed runtime store: %w", err)
+			return fmt.Errorf("configure Platform Artifact store: %w", err)
 		}
 	}
 	if supportsBuild {
 		if err := validateWorkerStores(cfg); err != nil {
 			return err
 		}
-		managerCatalog, err = deployment.LoadManagerCatalog()
-		if err != nil {
-			return fmt.Errorf("authenticate Manager catalog: %w", err)
-		}
-		managerTrees = &deployment.ManagerTrees{}
 		squashfsEncoder, err = deployment.FindEncoder()
 		if err != nil {
 			return fmt.Errorf("resolve SquashFS encoder: %w", err)
 		}
-		toolchainCatalog, err := deployment.LoadToolchainCatalog()
-		if err != nil {
-			return fmt.Errorf("authenticate standard toolchain catalog: %w", err)
-		}
-		toolCorpus, err = deployment.LoadToolchainCorpus(
-			ctx,
-			toolchainCatalog,
-			runtimeArchitecture,
-		)
-		if err != nil {
-			return fmt.Errorf("verify standard-toolchain corpus: %w", err)
-		}
-		defer toolCorpus.Close()
-		toolchainCatalogDigest, err = toolchainCatalog.Digest()
-		if err != nil {
-			return fmt.Errorf("read standard toolchain catalog digest: %w", err)
-		}
-		buildPolicy, err = deployment.LoadBuildPolicy(
-			cfg.BuildPolicyPath,
-			runtimeCatalog,
-			toolchainCatalog,
-		)
+		buildPolicy, err = deployment.LoadBuildPolicy(cfg.BuildPolicyPath)
 		if err != nil {
 			return fmt.Errorf("load build policy: %w", err)
 		}
-		currentTarget, err := buildPolicy.Current(cfg.RegionID)
+	}
+	var platformAcquirer workerdaemon.PlatformAcquirer
+	if supportsBuild {
+		acquisitionWorkDir := filepath.Join(workDir, "platform-acquisition")
+		if err := ensurePrivateDirectory(acquisitionWorkDir); err != nil {
+			return fmt.Errorf("prepare Platform acquisition work directory: %w", err)
+		}
+		gpgv, err := requireExecutable("gpgv")
 		if err != nil {
-			return fmt.Errorf("resolve regional build target: %w", err)
+			return fmt.Errorf("resolve GPG verifier: %w", err)
 		}
-		currentRuntime := currentTarget.Runtime
-		if currentRuntime.Architecture != runtimeArchitecture {
-			return fmt.Errorf(
-				"regional managed runtime architecture = %q, worker architecture is %q",
-				currentRuntime.Architecture,
-				runtimeArchitecture,
-			)
-		}
-		runtimeSnapshot, err := deployment.SnapshotRuntimeObject(
-			ctx,
-			runtimeStore,
-			corpusScratch,
-			currentRuntime,
-		)
+		xz, err := requireExecutable("xz")
 		if err != nil {
-			return fmt.Errorf("snapshot regional managed runtime: %w", err)
+			return fmt.Errorf("resolve XZ decoder: %w", err)
 		}
-		runtimeIndex, verifyErr := deployment.VerifyRuntimeArtifact(
-			ctx,
-			verifierCgroupRoot,
-			"startup-current",
-			runtimeSnapshot,
-		)
-		closeErr := runtimeSnapshot.Close()
-		if verifyErr != nil {
-			return fmt.Errorf("verify regional managed runtime: %w", verifyErr)
+		patchelf, err := requireExecutable("patchelf")
+		if err != nil {
+			return fmt.Errorf("resolve ELF patcher: %w", err)
 		}
-		if closeErr != nil {
-			return fmt.Errorf("close regional managed runtime snapshot: %w", closeErr)
+		workerExecutable, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("resolve Worker executable: %w", err)
 		}
-		expectedIndex := deployment.RuntimeIndex{
-			Architecture:      currentRuntime.Architecture,
-			FormatVersion:     deployment.RuntimeIndexFormatVersion,
-			RuntimeAPIVersion: currentRuntime.RuntimeAPIVersion,
-		}
-		if runtimeIndex != expectedIndex {
-			return fmt.Errorf(
-				"regional managed runtime index = %#v, want %#v",
-				runtimeIndex,
-				expectedIndex,
-			)
+		platformAcquirer = workerdaemon.PlatformAcquisitionProcess{
+			BuildPolicyPath:  cfg.BuildPolicyPath,
+			Encoder:          squashfsEncoder,
+			Executable:       workerExecutable,
+			GPGV:             gpgv,
+			Patchelf:         patchelf,
+			PlatformStoreURI: cfg.PlatformStoreURI,
+			UnitCgroupRoot:   verifierCgroupRoot,
+			WorkDir:          acquisitionWorkDir,
+			XZ:               xz,
 		}
 	}
 	var imageBuilder imagebuild.Engine
@@ -418,7 +364,6 @@ func run(log *slog.Logger) error {
 		ExecutionSlotsAvailable: cfg.WorkerExecutionSlots,
 		SupportsRun:             supportsRun,
 		SupportsBuild:           supportsBuild,
-		ToolchainCatalogDigest:  toolchainCatalogDigest,
 		MaxBuildExecutors:       cfg.WorkerBuildExecutors,
 		MaxRuntimeStarts:        int32(runtimeStartLimit),
 		ScratchBytes:            diskCapacity.HostScratchBytes,
@@ -480,8 +425,7 @@ func run(log *slog.Logger) error {
 		preparedRuntimePool.BackgroundGate = backgroundGate
 		preparedRuntimePool.Capacity = hostCapacity
 		preparedRuntimePool.RuntimeScratchBytes = workerCapabilities.VMMaxScratchBytes
-		preparedRuntimePool.RuntimeCatalog = runtimeCatalog
-		preparedRuntimePool.RuntimeStore = runtimeStore
+		preparedRuntimePool.PlatformStore = platformStore
 		preparedRuntimePool.RuntimeArchitecture = runtimeArchitecture
 		preparedRuntimePool.VerifierCgroupRoot = verifierCgroupRoot
 		log.Info("prepared runtime pool enabled", "pool_size", cfg.PreparedRuntimePoolSize)
@@ -504,17 +448,14 @@ func run(log *slog.Logger) error {
 		workerdaemon.WithPollEvery(cfg.PollEvery),
 		workerdaemon.WithLogger(log),
 		workerdaemon.WithBuildPolicy(buildPolicy),
+		workerdaemon.WithPlatformAcquirer(platformAcquirer),
 		workerdaemon.WithBuildExecutor(deployment.Builder{
-			WorkDir:        workDir,
-			CAS:            store,
-			RuntimeStore:   runtimeStore,
-			ManagerCatalog: managerCatalog,
-			ManagerTrees:   managerTrees,
-			Policy:         buildPolicy,
-			Toolchains:     toolCorpus,
-			Connector:      runtimeConnector,
-			Encoder:        squashfsEncoder,
-			Images:         imageBuilder,
+			WorkDir:       workDir,
+			CAS:           store,
+			PlatformStore: platformStore,
+			Connector:     runtimeConnector,
+			Encoder:       squashfsEncoder,
+			Images:        imageBuilder,
 		}),
 		workerdaemon.WithMaterializer(executor.WorkspaceMaterializer{
 			Connector:             workspaceMountConnector,
@@ -535,7 +476,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker: %w", err)
 	}
-	consumerSpecs := make([]workerdaemon.ConsumerSpec, 0, 3)
+	consumerSpecs := make([]workerdaemon.ConsumerSpec, 0, 4)
 	admission := map[string]int{}
 	if supportsRun {
 		admission["run"] = int(cfg.WorkerExecutionSlots)
@@ -547,7 +488,11 @@ func run(log *slog.Logger) error {
 	}
 	if supportsBuild {
 		admission["build"] = int(cfg.WorkerBuildExecutors)
-		consumerSpecs = append(consumerSpecs, workerdaemon.ConsumerSpec{Name: "build", Concurrency: int(cfg.WorkerBuildExecutors), Admission: "build", Consumer: workerdaemon.NewBuildConsumer(runner)})
+		consumerSpecs = append(
+			consumerSpecs,
+			workerdaemon.ConsumerSpec{Name: "platform-acquisition", Concurrency: int(cfg.WorkerBuildExecutors), Admission: "build", Consumer: workerdaemon.NewPlatformAcquisitionConsumer(runner)},
+			workerdaemon.ConsumerSpec{Name: "build", Concurrency: int(cfg.WorkerBuildExecutors), Admission: "build", Consumer: workerdaemon.NewBuildConsumer(runner)},
+		)
 	}
 	background := make([]workerdaemon.BackgroundSpec, 0, 1)
 	if supportsRun && preparedRuntimePool != nil {
@@ -639,6 +584,25 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
+func requireExecutable(name string) (string, error) {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return "", err
+	}
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return "", fmt.Errorf("%s is not an executable regular file", path)
+	}
+	return path, nil
+}
+
 func fitsBuildHostCompute(resources compute.ResourceVector) bool {
 	envelope := compute.BuildEnvelopeResources()
 	envelope.DiskMiB = 0
@@ -648,10 +612,10 @@ func fitsBuildHostCompute(resources compute.ResourceVector) bool {
 func validateWorkerStores(cfg config.Worker) error {
 	if err := cas.ValidateDistinctS3Stores(
 		cfg.CASURI,
-		cfg.RuntimeStoreURI,
+		cfg.PlatformStoreURI,
 	); err != nil {
 		return fmt.Errorf(
-			"validate ordinary CAS and managed runtime store: %w",
+			"validate ordinary CAS and Platform Artifact store: %w",
 			err,
 		)
 	}
@@ -669,6 +633,22 @@ func ensureBuildCacheDirectory(path string) error {
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("%q is not a cache directory", path)
+	}
+	return nil
+}
+
+func ensurePrivateDirectory(path string) error {
+	err := os.Mkdir(path, 0o700)
+	if err != nil && !os.IsExist(err) {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 ||
+		info.Mode().Perm() != 0o700 {
+		return fmt.Errorf("%q is not a private directory", path)
 	}
 	return nil
 }

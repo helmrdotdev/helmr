@@ -505,7 +505,6 @@ func TestTerminalWorkerCannotReuseItsDurableCredential(t *testing.T) {
 		       AND NOT supports_run
 		       AND NOT supports_build
 		       AND runtime_identity_id IS NULL
-		       AND toolchain_catalog_digest IS NULL
 		       AND substrate_format = ''
 		       AND substrate_builder_abi = ''
 		       AND substrate_layout_abi = ''
@@ -867,8 +866,7 @@ func TestBuildOnlyWorkerCertificationRetainsRuntimeContract(t *testing.T) {
 		CniProfile: "helmr/v0", WorkerInstanceID: enrollment.WorkerInstanceID,
 		WorkerGroupID: workerGroupID, WorkerEpoch: authenticated.CurrentEpoch,
 		SupportsRun: false, SupportsBuild: true, MaxVmSlots: 0,
-		ToolchainCatalogDigest: []byte(strings.Repeat("c", 32)),
-		ProtocolVersion:        auth.WorkerProtocolVersion, SupervisorVersion: "test",
+		ProtocolVersion: auth.WorkerProtocolVersion, SupervisorVersion: "test",
 		CertifiedCpuMillis: 4000, CertifiedMemoryBytes: 8 << 30,
 		CertifiedWorkloadDiskBytes: 64 << 30, CertifiedScratchBytes: 16 << 30,
 		CertifiedBuildCacheBytes: 8 << 30, CertifiedArtifactCacheBytes: 4 << 30,
@@ -895,7 +893,7 @@ func TestBuildOnlyWorkerCertificationRetainsRuntimeContract(t *testing.T) {
 		WorkerInstanceID: enrollment.WorkerInstanceID, WorkerGroupID: workerGroupID,
 		WorkerEpoch: authenticated.CurrentEpoch, SupportsRun: false,
 		RuntimeIdentityID: "sha256:build-worker-runtime", ProtocolVersion: auth.WorkerProtocolVersion,
-		SupportsBuild: true, ToolchainCatalogDigest: []byte(strings.Repeat("c", 32)),
+		SupportsBuild:      true,
 		CertifiedCpuMillis: 4000, CertifiedMemoryBytes: 8 << 30,
 		CertifiedWorkloadDiskBytes: 64 << 30, CertifiedScratchBytes: 16 << 30,
 		CertifiedBuildCacheBytes: 8 << 30, CertifiedArtifactCacheBytes: 4 << 30,

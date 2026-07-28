@@ -34,7 +34,7 @@ locals {
   worker_environment = merge({
     HELMR_CONTROL_URL                       = var.worker_control_url
     HELMR_CAS_URI                           = var.cas_uri
-    HELMR_RUNTIME_STORE_URI                 = var.runtime_store_uri
+    HELMR_PLATFORM_STORE_URI                = var.platform_store_uri
     HELMR_REGION_ID                         = var.region_id
     HELMR_WORKER_GROUP_ID                   = var.worker_group_id
     HELMR_WORKER_PROVIDER_REGION            = data.aws_region.current.region
@@ -66,7 +66,7 @@ locals {
   reserved_worker_environment_keys = toset(concat(keys(local.worker_environment), [
     "HELMR_CHECKPOINT_ENCRYPTION_KEY",
     "HELMR_BUILD_POLICY_PATH",
-    "HELMR_RUNTIME_STORE_URI",
+    "HELMR_PLATFORM_STORE_URI",
   ]))
   worker_environment_conflicts = setintersection(keys(var.worker_environment), local.reserved_worker_environment_keys)
   base_worker_environment      = merge(local.worker_environment, var.worker_environment)
@@ -186,22 +186,53 @@ resource "aws_iam_role_policy" "worker" {
       },
       ], [
       {
-        Sid      = "ReadManagedRuntimeObjects"
-        Effect   = "Allow"
-        Action   = ["s3:GetObject"]
-        Resource = "${var.runtime_store_bucket_arn}/objects/sha256/*"
+        Sid    = "ReadPlatformObjects"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject"
+        ]
+        Resource = "${var.platform_store_bucket_arn}/objects/sha256/*"
       },
       {
-        Sid      = "DecryptManagedRuntimeObjects"
-        Effect   = "Allow"
-        Action   = ["kms:Decrypt"]
-        Resource = var.runtime_store_kms_key_arn
+        Sid    = "DecryptPlatformObjects"
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt"
+        ]
+        Resource = var.platform_store_kms_key_arn
         Condition = {
           StringEquals = {
             "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
           }
         }
       },
+      ], [
+      for statement in [
+        {
+          Sid    = "CreatePlatformObjects"
+          Effect = "Allow"
+          Action = [
+            "s3:PutObject",
+            "s3:AbortMultipartUpload",
+            "s3:ListMultipartUploadParts"
+          ]
+          Resource = "${var.platform_store_bucket_arn}/objects/sha256/*"
+        },
+        {
+          Sid    = "EncryptPlatformObjects"
+          Effect = "Allow"
+          Action = [
+            "kms:Encrypt",
+            "kms:GenerateDataKey"
+          ]
+          Resource = var.platform_store_kms_key_arn
+          Condition = {
+            StringEquals = {
+              "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
+            }
+          }
+        },
+      ] : statement if contains(var.worker_roles, "build")
     ])
   })
 }
@@ -241,7 +272,7 @@ resource "aws_launch_template" "worker" {
     network_blocked_ipv4_cidrs           = var.network_blocked_ipv4_cidrs
     network_blocked_ipv6_cidrs           = var.network_blocked_ipv6_cidrs
     aws_region                           = data.aws_region.current.region
-    runtime_store_uri                    = var.runtime_store_uri
+    platform_store_uri                   = var.platform_store_uri
     build_policy_digest                  = var.build_policy_digest == null ? "" : var.build_policy_digest
     build_cache_mib                      = var.build_cache_mib == null ? 0 : var.build_cache_mib
     build_scratch_mib                    = var.build_scratch_mib == null ? 0 : var.build_scratch_mib
@@ -292,7 +323,7 @@ resource "terraform_data" "network_preconditions" {
     buildkit_slirp_cidr        = var.buildkit_slirp_cidr
     network_blocked_ipv4_cidrs = var.network_blocked_ipv4_cidrs
     reserved_env_conflicts     = local.worker_environment_conflicts
-    runtime_store_uri          = var.runtime_store_uri
+    platform_store_uri         = var.platform_store_uri
     build_policy_digest        = var.build_policy_digest
     build_cache_mib            = var.build_cache_mib
     build_scratch_mib          = var.build_scratch_mib
@@ -305,13 +336,13 @@ resource "terraform_data" "network_preconditions" {
     }
 
     precondition {
-      condition     = var.runtime_store_uri == "s3://${trimprefix(var.runtime_store_bucket_arn, "arn:${data.aws_partition.current.partition}:s3:::")}/objects"
-      error_message = "runtime_store_uri must identify the bucket supplied by runtime_store_bucket_arn and end in /objects."
+      condition     = var.platform_store_uri == "s3://${trimprefix(var.platform_store_bucket_arn, "arn:${data.aws_partition.current.partition}:s3:::")}/objects"
+      error_message = "platform_store_uri must identify the bucket supplied by platform_store_bucket_arn and end in /objects."
     }
 
     precondition {
-      condition     = var.runtime_store_bucket_arn != var.cas_bucket_arn
-      error_message = "runtime_store_bucket_arn must identify the dedicated bootstrap store, not the mutable Artifact CAS bucket."
+      condition     = var.platform_store_bucket_arn != var.cas_bucket_arn
+      error_message = "platform_store_bucket_arn must identify the dedicated bootstrap store, not the mutable Artifact CAS bucket."
     }
 
 

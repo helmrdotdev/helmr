@@ -119,7 +119,7 @@ WITH target_group AS (
       JOIN target_group ON target_group.region_id = deployments.build_region_id
      WHERE deployments.status IN ('queued', 'building')
        AND deployments.build_runtime_digest IS NOT NULL
-       AND deployments.build_standard_toolchain_digest IS NOT NULL
+       AND deployments.build_toolchain_digest IS NOT NULL
        AND deployments.build_manager_digest IS NOT NULL
        AND NOT EXISTS (
            SELECT 1 FROM deployment_build_leases active_lease
@@ -155,7 +155,7 @@ SELECT min(deployments.created_at)::timestamptz
                     AND worker_groups.allows_build
  WHERE deployments.status IN ('queued', 'building')
    AND deployments.build_runtime_digest IS NOT NULL
-   AND deployments.build_standard_toolchain_digest IS NOT NULL
+   AND deployments.build_toolchain_digest IS NOT NULL
    AND deployments.build_manager_digest IS NOT NULL
    AND NOT EXISTS (
        SELECT 1 FROM deployment_build_leases active_lease

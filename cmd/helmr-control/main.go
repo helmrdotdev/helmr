@@ -27,6 +27,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
+	"github.com/helmrdotdev/helmr/internal/platformlock"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -38,22 +39,12 @@ import (
 )
 
 var loadControlBuildPolicy = func(path string) (*deployment.BuildPolicy, error) {
-	catalog, err := deployment.LoadRuntimeCatalog()
-	if err != nil {
-		return nil, fmt.Errorf("authenticate managed runtime catalog: %w", err)
-	}
-	toolchains, err := deployment.LoadToolchainCatalog()
-	if err != nil {
-		return nil, fmt.Errorf("authenticate standard toolchain catalog: %w", err)
-	}
-	policy, err := deployment.LoadBuildPolicy(path, catalog, toolchains)
+	policy, err := deployment.LoadBuildPolicy(path)
 	if err != nil {
 		return nil, fmt.Errorf("load build policy: %w", err)
 	}
 	return policy, nil
 }
-
-var loadControlManagerCatalog = deployment.LoadManagerCatalog
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -90,10 +81,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	buildPolicy, err := loadControlBuildPolicy(cfg.BuildPolicyPath)
 	if err != nil {
 		return err
-	}
-	managerCatalog, err := loadControlManagerCatalog()
-	if err != nil {
-		return fmt.Errorf("authenticate Manager catalog: %w", err)
 	}
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -206,48 +193,52 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
-	if err := cas.ValidateDistinctS3Stores(cfg.CASURI, cfg.RuntimeStoreURI); err != nil {
-		return fmt.Errorf("validate managed runtime store: %w", err)
+	if err := cas.ValidateDistinctS3Stores(cfg.CASURI, cfg.PlatformStoreURI); err != nil {
+		return fmt.Errorf("validate Platform Artifact store: %w", err)
 	}
-	runtimeStore, err := cas.NewImmutableS3(ctx, cfg.RuntimeStoreURI)
+	platformStore, err := cas.NewImmutableS3(ctx, cfg.PlatformStoreURI)
 	if err != nil {
-		return fmt.Errorf("configure managed runtime store: %w", err)
+		return fmt.Errorf("configure Platform Artifact store: %w", err)
+	}
+	platformArtifactLocks, err := platformlock.New(pool)
+	if err != nil {
+		return fmt.Errorf("configure Platform Artifact locks: %w", err)
 	}
 	var authProvider control.AuthProvider
 	if cfg.GitHubOAuthClientID != "" && cfg.GitHubOAuthClientSecret != "" {
 		authProvider = control.NewGitHubOAuthProvider(cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, publicURL)
 	}
 	handler, err := control.NewServer(control.ServerConfig{
-		Log:                  log,
-		DeploymentMode:       cfg.DeploymentMode,
-		WorkerGroupID:        cfg.WorkerGroupID,
-		RegionID:             cfg.RegionID,
-		DefaultRegionID:      cfg.DefaultRegionID,
-		DB:                   queries,
-		TX:                   pool,
-		ReadinessDB:          pool,
-		Auth:                 auth.NewDBAuthenticator(queries),
-		CAS:                  casStore,
-		BuildPolicy:          buildPolicy,
-		RuntimeStore:         runtimeStore,
-		ManagerCatalog:       managerCatalog,
-		Secrets:              secretStore,
-		SecretDelivery:       secretStore,
-		WorkspaceFencingKeys: workspaceFencingKeys,
-		TokenCredentialKeys:  tokenCredentialKeys,
-		EventStream:          eventStream,
-		TelemetryReader:      telemetryReader,
-		Mailer:               mailer,
-		AuthProvider:         authProvider,
-		WorkerTokenSecret:    []byte(cfg.WorkerTokenSigningKey),
-		RunLeaseTTL:          cfg.RunLeaseTTL,
-		RunFinalizationTTL:   cfg.RunFinalizationTTL,
-		WorkerEnrollment:     workerEnrollment,
-		SetupToken:           cfg.SetupToken,
-		AuthSecret:           []byte(cfg.AuthSecret),
-		PublicURL:            publicURL,
-		MagicLinkDebugURLs:   cfg.MagicLinkDebugURLs,
-		BackgroundContext:    backgroundCtx,
+		Log:                   log,
+		DeploymentMode:        cfg.DeploymentMode,
+		WorkerGroupID:         cfg.WorkerGroupID,
+		RegionID:              cfg.RegionID,
+		DefaultRegionID:       cfg.DefaultRegionID,
+		DB:                    queries,
+		TX:                    pool,
+		ReadinessDB:           pool,
+		Auth:                  auth.NewDBAuthenticator(queries),
+		CAS:                   casStore,
+		BuildPolicy:           buildPolicy,
+		PlatformStore:         platformStore,
+		PlatformArtifactLocks: platformArtifactLocks,
+		Secrets:               secretStore,
+		SecretDelivery:        secretStore,
+		WorkspaceFencingKeys:  workspaceFencingKeys,
+		TokenCredentialKeys:   tokenCredentialKeys,
+		EventStream:           eventStream,
+		TelemetryReader:       telemetryReader,
+		Mailer:                mailer,
+		AuthProvider:          authProvider,
+		WorkerTokenSecret:     []byte(cfg.WorkerTokenSigningKey),
+		RunLeaseTTL:           cfg.RunLeaseTTL,
+		RunFinalizationTTL:    cfg.RunFinalizationTTL,
+		WorkerEnrollment:      workerEnrollment,
+		SetupToken:            cfg.SetupToken,
+		AuthSecret:            []byte(cfg.AuthSecret),
+		PublicURL:             publicURL,
+		MagicLinkDebugURLs:    cfg.MagicLinkDebugURLs,
+		BackgroundContext:     backgroundCtx,
 	})
 	if err != nil {
 		return fmt.Errorf("configure control server: %w", err)

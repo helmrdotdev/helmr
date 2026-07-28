@@ -10,27 +10,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/schedule"
 )
 
-type ScheduleAuthority struct {
-	runtimes interface {
-		Resolve(string) (RuntimeDescriptor, error)
-	}
-}
+type ScheduleAuthority struct{}
 
-func NewScheduleAuthority(runtimes interface {
-	Resolve(string) (RuntimeDescriptor, error)
-}) (*ScheduleAuthority, error) {
-	if runtimes == nil {
-		return nil, errors.New("managed runtime authority is required")
-	}
-	return &ScheduleAuthority{runtimes: runtimes}, nil
-}
-
-func (a *ScheduleAuthority) ResolveRuntime(digest string) error {
-	if a == nil || a.runtimes == nil {
-		return errors.New("managed runtime authority is required")
-	}
-	_, err := a.runtimes.Resolve(digest)
-	return err
+func NewScheduleAuthority() *ScheduleAuthority {
+	return &ScheduleAuthority{}
 }
 
 func (a *ScheduleAuthority) ValidateScheduledTask(

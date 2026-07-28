@@ -16,45 +16,57 @@ import (
 
 func testWorkerDeploymentBuild() api.WorkerDeploymentBuild {
 	return api.WorkerDeploymentBuild{
-		ID:                      "deployment-1",
-		BuildContractVersion:    deployment.ProgramBuildContractVersion,
-		StandardToolchainDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		Runtime: api.WorkerRuntimeDescriptor{
-			Architecture:      "x86_64",
-			Digest:            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			FormatVersion:     0,
-			MediaType:         "application/vnd.helmr.runtime.v0+squashfs",
-			RuntimeAPIVersion: "helmr.runtime.v0",
-			SizeBytes:         1,
+		ID:                   "deployment-1",
+		NodeVersion:          "24.16.0",
+		BuildContractVersion: deployment.ProgramBuildContractVersion,
+		Runtime: api.CASObject{
+			Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			MediaType: deployment.RuntimeArtifactMediaType,
+			SizeBytes: 1,
+		},
+		Manager: api.WorkerManagerPin{
+			Name:    "npm",
+			Version: "11.5.0",
+			Artifact: api.CASObject{
+				Digest:    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				MediaType: deployment.ManagerTreeMediaType,
+				SizeBytes: 1,
+			},
+		},
+		Toolchain: api.CASObject{
+			Digest:    "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+			MediaType: deployment.ToolchainMediaType,
+			SizeBytes: 1,
 		},
 	}
 }
 
 type consumerBuildPolicy struct{}
 
-func (consumerBuildPolicy) Resolve(
-	runtimeDigest,
-	standardToolchainDigest,
-	buildContractVersion string,
-) (deployment.BuildTarget, error) {
-	build := testWorkerDeploymentBuild()
-	if runtimeDigest != build.Runtime.Digest ||
-		standardToolchainDigest != build.StandardToolchainDigest ||
-		buildContractVersion != build.BuildContractVersion {
-		return deployment.BuildTarget{}, errors.New("build target is not registered")
-	}
-	return deployment.BuildTarget{
-		Runtime: deployment.RuntimeDescriptor{
-			Architecture:      deployment.ArchitectureX8664,
-			Digest:            build.Runtime.Digest,
-			FormatVersion:     build.Runtime.FormatVersion,
-			MediaType:         build.Runtime.MediaType,
-			RuntimeAPIVersion: build.Runtime.RuntimeAPIVersion,
-			SizeBytes:         build.Runtime.SizeBytes,
-		},
-		StandardToolchainDigest: standardToolchainDigest,
-		BuildContractVersion:    buildContractVersion,
-	}, nil
+func (consumerBuildPolicy) Digest() (string, error) {
+	return "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", nil
+}
+
+func (consumerBuildPolicy) Node(string) (deployment.VersionDomain, string, error) {
+	return deployment.VersionDomain{Major: 24, Minimum: "24.3.0"}, deployment.NodeNoStripTypes, nil
+}
+
+func (consumerBuildPolicy) Manager(
+	deployment.PackageManager,
+) (deployment.ManagerPolicy, error) {
+	return deployment.ManagerPolicy{}, nil
+}
+
+func (consumerBuildPolicy) DeniesDigest(string) bool   { return false }
+func (consumerBuildPolicy) DeniesSelector(string) bool { return false }
+
+type consumerPlatformAcquirer struct{}
+
+func (consumerPlatformAcquirer) Acquire(
+	context.Context,
+	api.WorkerPlatformAcquisition,
+) (api.WorkerPlatformAcquisitionCandidates, error) {
+	return api.WorkerPlatformAcquisitionCandidates{}, errors.New("unexpected Platform acquisition")
 }
 
 type consumerTestClient struct {
@@ -241,6 +253,7 @@ func TestBuildConsumerStartsLeaseInsideRegisteredWork(t *testing.T) {
 		capabilities,
 		WithCapacity(testCapacity(t, capabilities)),
 		WithBuildPolicy(consumerBuildPolicy{}),
+		WithPlatformAcquirer(consumerPlatformAcquirer{}),
 		WithBuildExecutor(builder),
 	)
 	if err != nil {
@@ -286,6 +299,7 @@ func TestDefaultBuildEnvelopeFitsDefaultBuildWorker(t *testing.T) {
 		capabilities,
 		WithCapacity(testCapacity(t, capabilities)),
 		WithBuildPolicy(consumerBuildPolicy{}),
+		WithPlatformAcquirer(consumerPlatformAcquirer{}),
 		WithBuildExecutor(&successfulTestBuilder{}),
 	)
 	if err != nil {
@@ -317,8 +331,8 @@ func TestBuildPreStartRejectionsReturnSuccessfulNilWork(t *testing.T) {
 		},
 		{
 			name: "runtime architecture mismatch", reason: "requirements_unsupported", withBuilder: true,
-			mutate: func(_ *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease, deployment *api.WorkerDeploymentBuild) {
-				deployment.Runtime.Architecture = "aarch64"
+			mutate: func(capabilities *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease, _ *api.WorkerDeploymentBuild) {
+				capabilities.RuntimeArch = "aarch64"
 			},
 		},
 		{
@@ -328,9 +342,9 @@ func TestBuildPreStartRejectionsReturnSuccessfulNilWork(t *testing.T) {
 			},
 		},
 		{
-			name: "unregistered standard toolchain", reason: "requirements_unsupported", withBuilder: true,
+			name: "unregistered toolchain", reason: "requirements_unsupported", withBuilder: true,
 			mutate: func(_ *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease, deployment *api.WorkerDeploymentBuild) {
-				deployment.StandardToolchainDigest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+				deployment.Toolchain.Digest = "invalid"
 			},
 		},
 		{name: "builder unavailable", reason: "builder_unavailable"},
@@ -358,6 +372,7 @@ func TestBuildPreStartRejectionsReturnSuccessfulNilWork(t *testing.T) {
 			options := []Option{
 				WithCapacity(testCapacity(t, capabilities)),
 				WithBuildPolicy(consumerBuildPolicy{}),
+				WithPlatformAcquirer(consumerPlatformAcquirer{}),
 			}
 			if tt.withBuilder {
 				options = append(options, WithBuildExecutor(&successfulTestBuilder{}))
@@ -412,6 +427,7 @@ func TestBuildAdmissionIncludesRuntimeOccupancy(t *testing.T) {
 		capabilities,
 		WithCapacity(resources),
 		WithBuildPolicy(consumerBuildPolicy{}),
+		WithPlatformAcquirer(consumerPlatformAcquirer{}),
 		WithBuildExecutor(&successfulTestBuilder{}),
 	)
 	if err != nil {
@@ -497,6 +513,7 @@ func TestBuildCleanupAmbiguityRetainsReservationAndTerminatesWorker(t *testing.T
 		capabilities,
 		WithCapacity(resources),
 		WithBuildPolicy(consumerBuildPolicy{}),
+		WithPlatformAcquirer(consumerPlatformAcquirer{}),
 		WithBuildExecutor(builder),
 	)
 	if err != nil {
@@ -543,6 +560,7 @@ func TestBuildServiceFailureRetainsReservationAndTerminatesWorker(t *testing.T) 
 		capabilities,
 		WithCapacity(resources),
 		WithBuildPolicy(consumerBuildPolicy{}),
+		WithPlatformAcquirer(consumerPlatformAcquirer{}),
 		WithBuildExecutor(&fatalBuildTestBuilder{}),
 	)
 	if err != nil {
@@ -586,6 +604,7 @@ func TestCanceledBuildReleasesReservation(t *testing.T) {
 		capabilities,
 		WithCapacity(resources),
 		WithBuildPolicy(consumerBuildPolicy{}),
+		WithPlatformAcquirer(consumerPlatformAcquirer{}),
 		WithBuildExecutor(&canceledBuildTestBuilder{}),
 	)
 	if err != nil {

@@ -345,7 +345,7 @@ func validateBuildSucceeded(succeeded BuildSucceeded) error {
 			succeeded.Program.Index.BuildContractVersion != succeeded.Provenance.BuildContractVersion ||
 			succeeded.Program.Index.Manager != succeeded.Provenance.Manager ||
 			succeeded.Program.Index.RuntimeDigest != succeeded.Provenance.RuntimeDigest ||
-			succeeded.Program.Index.StandardToolchainDigest != succeeded.Provenance.StandardToolchainDigest ||
+			succeeded.Program.Index.ToolchainDigest != succeeded.Provenance.ToolchainDigest ||
 			succeeded.Program.Index.Submitted != succeeded.Provenance.Submitted {
 			return errors.New("build result program provenance does not match")
 		}

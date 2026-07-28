@@ -26,15 +26,6 @@ type treeEntry struct {
 	Content    io.Reader
 }
 
-func writeProgramArchive(
-	ctx context.Context,
-	destination io.Writer,
-	role artifactRole,
-	entries iter.Seq2[treeEntry, error],
-) error {
-	return writeTreeArchive(ctx, destination, role, entries, false)
-}
-
 func writeTreeArchive(
 	ctx context.Context,
 	destination io.Writer,
@@ -66,6 +57,12 @@ func writeTreeArchive(
 		state.logicalLimit = maxProgramLogicalBytes
 	case buildTreeArtifact:
 		state.logicalLimit = maxBuildTreeLogicalBytes
+	case runtimeArtifact:
+		state.logicalLimit = maxRuntimeLogicalBytes
+	case managerArtifact:
+		state.logicalLimit = maxManagerTreeBytes
+	case toolchainArtifact:
+		state.logicalLimit = maxToolArtifactBytes
 	default:
 		return fmt.Errorf("program archive artifact role = %d", role)
 	}
@@ -256,7 +253,7 @@ func validateTreeEntry(entry treeEntry, role artifactRole) error {
 
 func programArchiveLimit(role artifactRole) (int64, error) {
 	switch role {
-	case programArtifact, buildTreeArtifact:
+	case programArtifact, buildTreeArtifact, runtimeArtifact, managerArtifact, toolchainArtifact:
 		return maxProgramArchiveBytes, nil
 	default:
 		return 0, fmt.Errorf("program archive artifact role = %d", role)

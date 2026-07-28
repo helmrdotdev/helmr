@@ -52,54 +52,6 @@ func TestSquashFSMetadataDecoderReadsBlocks(t *testing.T) {
 	}
 }
 
-func TestSquashFSMetadataCursorReadsAcrossBlocks(t *testing.T) {
-	first := squashFSTestMetadataBlock(t, []byte("abc"), false)
-	second := squashFSTestMetadataBlock(t, []byte("defgh"), true)
-	image := append(first, second...)
-	decoder := newSquashFSTestMetadataDecoder(t, image)
-	cursor, err := newSquashFSMetadataCursor(
-		context.Background(),
-		decoder,
-		squashFSRegion{end: uint64(len(image))},
-		0,
-		1,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var prefix [2]byte
-	if err := cursor.readFull(prefix[:]); err != nil {
-		t.Fatal(err)
-	}
-	if string(prefix[:]) != "bc" {
-		t.Fatalf("prefix = %q", prefix[:])
-	}
-	var remainder [5]byte
-	if err := cursor.readFull(remainder[:]); err != nil {
-		t.Fatal(err)
-	}
-	if string(remainder[:]) != "defgh" {
-		t.Fatalf("remainder = %q", remainder[:])
-	}
-}
-
-func TestSquashFSMetadataCursorRejectsPositionAtBlockEnd(t *testing.T) {
-	image := squashFSTestMetadataBlock(t, []byte("abc"), false)
-	decoder := newSquashFSTestMetadataDecoder(t, image)
-	_, err := newSquashFSMetadataCursor(
-		context.Background(),
-		decoder,
-		squashFSRegion{end: uint64(len(image))},
-		0,
-		3,
-	)
-	var contentError *artifactContentError
-	if !errors.As(err, &contentError) {
-		t.Fatalf("error = %T, want artifactContentError: %v", err, err)
-	}
-}
-
 func TestReadSquashFSIDTable(t *testing.T) {
 	tests := []struct {
 		name       string

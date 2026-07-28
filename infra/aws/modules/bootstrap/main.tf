@@ -104,23 +104,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "source_artifacts" {
   }
 
   rule {
-    id     = "expire-runtime-release-packages"
-    status = "Enabled"
-
-    filter {
-      prefix = "helmr/runtime-release-packages/"
-    }
-
-    expiration {
-      days = 30
-    }
-
-    noncurrent_version_expiration {
-      noncurrent_days = 7
-    }
-  }
-
-  rule {
     id     = "expire-validation-evidence"
     status = "Enabled"
 
@@ -146,63 +129,63 @@ resource "aws_s3_bucket_public_access_block" "source_artifacts" {
   restrict_public_buckets = true
 }
 
-resource "aws_kms_key" "runtime_store" {
+resource "aws_kms_key" "platform_store" {
   description             = "KMS key for the Helmr immutable release store"
   deletion_window_in_days = 30
   enable_key_rotation     = true
   tags                    = var.tags
 }
 
-resource "aws_kms_alias" "runtime_store" {
-  name          = "alias/${local.name}-runtime-store"
-  target_key_id = aws_kms_key.runtime_store.key_id
+resource "aws_kms_alias" "platform_store" {
+  name          = "alias/${local.name}-platform-store"
+  target_key_id = aws_kms_key.platform_store.key_id
 }
 
-resource "aws_s3_bucket" "runtime_store" {
-  bucket        = "${local.bucket_prefix}-runtime-store"
+resource "aws_s3_bucket" "platform_store" {
+  bucket        = "${local.bucket_prefix}-platform-store"
   force_destroy = true
   tags          = var.tags
 }
 
-resource "aws_s3_bucket_ownership_controls" "runtime_store" {
-  bucket = aws_s3_bucket.runtime_store.id
+resource "aws_s3_bucket_ownership_controls" "platform_store" {
+  bucket = aws_s3_bucket.platform_store.id
 
   rule {
     object_ownership = "BucketOwnerEnforced"
   }
 }
 
-resource "aws_s3_bucket_versioning" "runtime_store" {
-  bucket = aws_s3_bucket.runtime_store.id
+resource "aws_s3_bucket_versioning" "platform_store" {
+  bucket = aws_s3_bucket.platform_store.id
 
   versioning_configuration {
     status = "Enabled"
   }
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "runtime_store" {
-  bucket = aws_s3_bucket.runtime_store.id
+resource "aws_s3_bucket_server_side_encryption_configuration" "platform_store" {
+  bucket = aws_s3_bucket.platform_store.id
 
   rule {
     bucket_key_enabled = true
 
     apply_server_side_encryption_by_default {
-      kms_master_key_id = aws_kms_key.runtime_store.arn
+      kms_master_key_id = aws_kms_key.platform_store.arn
       sse_algorithm     = "aws:kms"
     }
   }
 }
 
-resource "aws_s3_bucket_public_access_block" "runtime_store" {
-  bucket                  = aws_s3_bucket.runtime_store.id
+resource "aws_s3_bucket_public_access_block" "platform_store" {
+  bucket                  = aws_s3_bucket.platform_store.id
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
 }
 
-resource "aws_iam_role" "runtime_provisioner" {
-  name = "${local.name}-runtime-provisioner"
+resource "aws_iam_role" "platform_publisher" {
+  name = "${local.name}-platform-publisher"
   tags = var.tags
 
   assume_role_policy = jsonencode({
@@ -210,25 +193,25 @@ resource "aws_iam_role" "runtime_provisioner" {
     Statement = [{
       Effect = "Allow"
       Principal = {
-        AWS = var.runtime_provisioner_principal_arns
+        AWS = var.platform_publisher_principal_arns
       }
       Action = "sts:AssumeRole"
     }]
   })
 }
 
-resource "aws_iam_role_policy" "runtime_provisioner" {
-  name = "${local.name}-runtime-provisioner"
-  role = aws_iam_role.runtime_provisioner.id
+resource "aws_iam_role_policy" "platform_publisher" {
+  name = "${local.name}-platform-publisher"
+  role = aws_iam_role.platform_publisher.id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "ListRuntimeObjects"
+        Sid      = "ListPlatformObjects"
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
-        Resource = aws_s3_bucket.runtime_store.arn
+        Resource = aws_s3_bucket.platform_store.arn
         Condition = {
           StringLike = {
             "s3:prefix" = [
@@ -239,7 +222,7 @@ resource "aws_iam_role_policy" "runtime_provisioner" {
         }
       },
       {
-        Sid    = "CreateAndVerifyRuntimeObjects"
+        Sid    = "CreateAndVerifyPlatformObjects"
         Effect = "Allow"
         Action = [
           "s3:GetObject",
@@ -248,17 +231,17 @@ resource "aws_iam_role_policy" "runtime_provisioner" {
           "s3:AbortMultipartUpload",
           "s3:ListMultipartUploadParts"
         ]
-        Resource = "${aws_s3_bucket.runtime_store.arn}/objects/sha256/*"
+        Resource = "${aws_s3_bucket.platform_store.arn}/objects/sha256/*"
       },
       {
-        Sid    = "EncryptRuntimeObjects"
+        Sid    = "EncryptPlatformObjects"
         Effect = "Allow"
         Action = [
           "kms:Decrypt",
           "kms:Encrypt",
           "kms:GenerateDataKey"
         ]
-        Resource = aws_kms_key.runtime_store.arn
+        Resource = aws_kms_key.platform_store.arn
         Condition = {
           StringEquals = {
             "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
@@ -269,74 +252,8 @@ resource "aws_iam_role_policy" "runtime_provisioner" {
   })
 }
 
-resource "aws_iam_role" "runtime_rollout_orchestrator" {
-  name = "${local.name}-runtime-rollout-orchestrator"
-  tags = var.tags
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        AWS = var.runtime_rollout_orchestrator_principal_arns
-      }
-      Action = "sts:AssumeRole"
-    }]
-  })
-}
-
-resource "aws_iam_role_policy" "runtime_rollout_orchestrator" {
-  name = "${local.name}-runtime-rollout-orchestrator"
-  role = aws_iam_role.runtime_rollout_orchestrator.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid      = "ListRuntimeRolloutRecords"
-        Effect   = "Allow"
-        Action   = ["s3:ListBucket"]
-        Resource = aws_s3_bucket.runtime_store.arn
-        Condition = {
-          StringLike = {
-            "s3:prefix" = [
-              "control/runtime",
-              "control/runtime/*"
-            ]
-          }
-        }
-      },
-      {
-        Sid    = "ReadAndAppendRuntimeRolloutRecords"
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:GetObjectVersion",
-          "s3:PutObject"
-        ]
-        Resource = "${aws_s3_bucket.runtime_store.arn}/control/runtime/*"
-      },
-      {
-        Sid    = "EncryptRuntimeRolloutRecords"
-        Effect = "Allow"
-        Action = [
-          "kms:Decrypt",
-          "kms:Encrypt",
-          "kms:GenerateDataKey"
-        ]
-        Resource = aws_kms_key.runtime_store.arn
-        Condition = {
-          StringEquals = {
-            "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
-          }
-        }
-      }
-    ]
-  })
-}
-
-resource "aws_s3_bucket_policy" "runtime_store" {
-  bucket = aws_s3_bucket.runtime_store.id
+resource "aws_s3_bucket_policy" "platform_store" {
+  bucket = aws_s3_bucket.platform_store.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -347,8 +264,8 @@ resource "aws_s3_bucket_policy" "runtime_store" {
         Principal = "*"
         Action    = "s3:*"
         Resource = [
-          aws_s3_bucket.runtime_store.arn,
-          "${aws_s3_bucket.runtime_store.arn}/*"
+          aws_s3_bucket.platform_store.arn,
+          "${aws_s3_bucket.platform_store.arn}/*"
         ]
         Condition = {
           Bool = {
@@ -357,52 +274,37 @@ resource "aws_s3_bucket_policy" "runtime_store" {
         }
       },
       {
-        Sid       = "DenyRuntimeWritesOutsideProvisioner"
-        Effect    = "Deny"
-        Principal = "*"
-        Action = [
-          "s3:PutObject",
-          "s3:AbortMultipartUpload"
-        ]
-        Resource = "${aws_s3_bucket.runtime_store.arn}/objects/sha256/*"
-        Condition = {
-          ArnNotEquals = {
-            "aws:PrincipalArn" = aws_iam_role.runtime_provisioner.arn
-          }
-        }
-      },
-      {
-        Sid       = "DenyUnconditionalRuntimeObjectWrites"
+        Sid       = "DenyUnconditionalPlatformObjectWrites"
         Effect    = "Deny"
         Principal = "*"
         Action    = "s3:PutObject"
-        Resource  = "${aws_s3_bucket.runtime_store.arn}/objects/sha256/*"
+        Resource  = "${aws_s3_bucket.platform_store.arn}/objects/sha256/*"
         Condition = {
           Null = {
             "s3:if-none-match" = "true"
           }
           Bool = {
-            "s3:ObjectCreationOperation" = "false"
+            "s3:ObjectCreationOperation" = "true"
           }
         }
       },
       {
-        Sid       = "DenyRuntimeObjectCopies"
+        Sid       = "DenyPlatformObjectCopies"
         Effect    = "Deny"
         Principal = "*"
         Action    = "s3:PutObject"
-        Resource  = "${aws_s3_bucket.runtime_store.arn}/objects/sha256/*"
+        Resource  = "${aws_s3_bucket.platform_store.arn}/objects/sha256/*"
         Condition = {
           Null = {
             "s3:x-amz-copy-source" = "false"
           }
           Bool = {
-            "s3:ObjectCreationOperation" = "false"
+            "s3:ObjectCreationOperation" = "true"
           }
         }
       },
       {
-        Sid       = "DenyRuntimeObjectMutation"
+        Sid       = "DenyPlatformObjectMutation"
         Effect    = "Deny"
         Principal = "*"
         Action = [
@@ -411,83 +313,12 @@ resource "aws_s3_bucket_policy" "runtime_store" {
           "s3:PutObjectTagging",
           "s3:DeleteObjectTagging"
         ]
-        Resource = "${aws_s3_bucket.runtime_store.arn}/objects/sha256/*"
-      },
-      {
-        Sid       = "DenyRolloutObjectAccessOutsideOrchestrator"
-        Effect    = "Deny"
-        Principal = "*"
-        Action = [
-          "s3:GetObject",
-          "s3:GetObjectVersion",
-          "s3:PutObject",
-          "s3:AbortMultipartUpload"
-        ]
-        Resource = "${aws_s3_bucket.runtime_store.arn}/control/runtime/*"
-        Condition = {
-          ArnNotEquals = {
-            "aws:PrincipalArn" = aws_iam_role.runtime_rollout_orchestrator.arn
-          }
-        }
-      },
-      {
-        Sid       = "DenyRolloutListOutsideOrchestrator"
-        Effect    = "Deny"
-        Principal = "*"
-        Action    = "s3:ListBucket"
-        Resource  = aws_s3_bucket.runtime_store.arn
-        Condition = {
-          StringLike = {
-            "s3:prefix" = [
-              "control/runtime",
-              "control/runtime/*"
-            ]
-          }
-          ArnNotEquals = {
-            "aws:PrincipalArn" = aws_iam_role.runtime_rollout_orchestrator.arn
-          }
-        }
-      },
-      {
-        Sid       = "DenyUnconditionalRolloutWrites"
-        Effect    = "Deny"
-        Principal = "*"
-        Action    = "s3:PutObject"
-        Resource  = "${aws_s3_bucket.runtime_store.arn}/control/runtime/*"
-        Condition = {
-          Null = {
-            "s3:if-none-match" = "true"
-          }
-        }
-      },
-      {
-        Sid       = "DenyRolloutCopies"
-        Effect    = "Deny"
-        Principal = "*"
-        Action    = "s3:PutObject"
-        Resource  = "${aws_s3_bucket.runtime_store.arn}/control/runtime/*"
-        Condition = {
-          Null = {
-            "s3:x-amz-copy-source" = "false"
-          }
-        }
-      },
-      {
-        Sid       = "DenyRolloutMutation"
-        Effect    = "Deny"
-        Principal = "*"
-        Action = [
-          "s3:DeleteObject",
-          "s3:DeleteObjectVersion",
-          "s3:PutObjectTagging",
-          "s3:DeleteObjectTagging"
-        ]
-        Resource = "${aws_s3_bucket.runtime_store.arn}/control/runtime/*"
+        Resource = "${aws_s3_bucket.platform_store.arn}/objects/sha256/*"
       }
     ]
   })
 
-  depends_on = [aws_s3_bucket_public_access_block.runtime_store]
+  depends_on = [aws_s3_bucket_public_access_block.platform_store]
 }
 
 resource "aws_kms_key" "retained_cas" {
@@ -602,7 +433,7 @@ resource "aws_s3_bucket_policy" "retained_cas" {
             "s3:if-none-match" = "true"
           }
           Bool = {
-            "s3:ObjectCreationOperation" = "false"
+            "s3:ObjectCreationOperation" = "true"
           }
         }
       },
@@ -617,7 +448,7 @@ resource "aws_s3_bucket_policy" "retained_cas" {
             "s3:x-amz-copy-source" = "false"
           }
           Bool = {
-            "s3:ObjectCreationOperation" = "false"
+            "s3:ObjectCreationOperation" = "true"
           }
         }
       },

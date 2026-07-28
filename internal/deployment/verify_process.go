@@ -158,13 +158,6 @@ func readVerifierTerminal(reader io.Reader, job verifierJob) (verifierProcessRes
 	return result, nil
 }
 
-func readVerifierResult(reader io.Reader, job verifierJob) (verifierProcessResult, error) {
-	if err := readVerifierReady(reader); err != nil {
-		return verifierProcessResult{}, err
-	}
-	return readVerifierTerminal(reader, job)
-}
-
 func readVerifierRecordHeader(reader io.Reader) (verifierRecordKind, uint32, error) {
 	var header [verifierHeaderBytes]byte
 	if _, err := io.ReadFull(reader, header[:]); err != nil {

@@ -86,7 +86,7 @@ locals {
     HELMR_DEPLOYMENT_MODE                   = var.deployment_mode
     HELMR_CAS_URI                           = "s3://${aws_s3_bucket.cas.bucket}"
     HELMR_BUILD_POLICY_PATH                 = "/release/build-policy.json"
-    HELMR_RUNTIME_STORE_URI                 = var.runtime_store_uri
+    HELMR_PLATFORM_STORE_URI                = var.platform_store_uri
     HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT = var.workspace_fencing_key_fingerprint
     HELMR_TOKEN_CREDENTIAL_KEY_ID           = var.token_credential_key_id
     HELMR_PUBLIC_URL                        = local.control_url
@@ -177,8 +177,8 @@ resource "terraform_data" "bootstrap_preconditions" {
     reserved_dispatcher_env_conflicts = local.dispatcher_environment_conflicts
     email_provider                    = var.email_provider
     worker_fleets                     = var.worker_fleets
-    runtime_store_uri                 = var.runtime_store_uri
-    runtime_store_bucket_arn          = var.runtime_store_bucket_arn
+    platform_store_uri                = var.platform_store_uri
+    platform_store_bucket_arn         = var.platform_store_bucket_arn
   }
 
   lifecycle {
@@ -193,13 +193,13 @@ resource "terraform_data" "bootstrap_preconditions" {
     }
 
     precondition {
-      condition     = var.runtime_store_uri == "s3://${trimprefix(var.runtime_store_bucket_arn, "arn:${data.aws_partition.current.partition}:s3:::")}/objects"
-      error_message = "runtime_store_uri must identify the bucket supplied by runtime_store_bucket_arn and end in /objects."
+      condition     = var.platform_store_uri == "s3://${trimprefix(var.platform_store_bucket_arn, "arn:${data.aws_partition.current.partition}:s3:::")}/objects"
+      error_message = "platform_store_uri must identify the bucket supplied by platform_store_bucket_arn and end in /objects."
     }
 
     precondition {
-      condition     = var.runtime_store_bucket_arn != aws_s3_bucket.cas.arn
-      error_message = "runtime_store_bucket_arn must identify the dedicated bootstrap store, not the mutable Control CAS bucket."
+      condition     = var.platform_store_bucket_arn != aws_s3_bucket.cas.arn
+      error_message = "platform_store_bucket_arn must identify the dedicated bootstrap store, not the mutable Control CAS bucket."
     }
 
 
@@ -1045,13 +1045,13 @@ resource "aws_iam_role_policy" "control_task" {
         Sid      = "ReadManagedRuntimeObjects"
         Effect   = "Allow"
         Action   = ["s3:GetObject"]
-        Resource = "${var.runtime_store_bucket_arn}/objects/sha256/*"
+        Resource = "${var.platform_store_bucket_arn}/objects/sha256/*"
       },
       {
         Sid      = "DecryptManagedRuntimeObjects"
         Effect   = "Allow"
         Action   = ["kms:Decrypt"]
-        Resource = var.runtime_store_kms_key_arn
+        Resource = var.platform_store_kms_key_arn
         Condition = {
           StringEquals = {
             "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
@@ -1255,7 +1255,7 @@ resource "aws_ecs_task_definition" "control" {
         "release",
         "install",
         "--store",
-        var.runtime_store_uri,
+        var.platform_store_uri,
         "--digest",
         var.build_policy_digest,
         "--output",

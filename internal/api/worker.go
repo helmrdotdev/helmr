@@ -165,7 +165,6 @@ type WorkerCapabilities struct {
 	ExecutionSlotsAvailable int32                     `json:"execution_slots_available"`
 	SupportsRun             bool                      `json:"supports_run"`
 	SupportsBuild           bool                      `json:"supports_build"`
-	ToolchainCatalogDigest  string                    `json:"toolchain_catalog_digest,omitempty"`
 	MaxBuildExecutors       int32                     `json:"max_build_executors"`
 	MaxRuntimeStarts        int32                     `json:"max_runtime_starts"`
 	ScratchBytes            int64                     `json:"scratch_bytes"`
@@ -193,6 +192,58 @@ type TraceContext struct {
 }
 
 type WorkerDeploymentBuildLeaseRequest struct{}
+
+type WorkerPlatformAcquisitionRequest struct{}
+
+type WorkerPlatformAcquisitionResponse struct {
+	Acquisition *WorkerPlatformAcquisition `json:"acquisition,omitempty"`
+}
+
+type WorkerPlatformAcquisition struct {
+	DeploymentID      string `json:"deployment_id"`
+	OrgID             string `json:"org_id"`
+	ProjectID         string `json:"project_id"`
+	EnvironmentID     string `json:"environment_id"`
+	NodeVersion       string `json:"node_version"`
+	ManagerName       string `json:"manager_name"`
+	ManagerVersion    string `json:"manager_version"`
+	ManagerIntegrity  string `json:"manager_integrity,omitempty"`
+	BuildContract     string `json:"build_contract"`
+	BuildPolicyDigest string `json:"build_policy_digest"`
+}
+
+type WorkerPlatformAcquisitionCandidates struct {
+	Runtime   CASObject `json:"runtime"`
+	Manager   CASObject `json:"manager"`
+	Toolchain CASObject `json:"toolchain"`
+}
+
+type WorkerPlatformAcquisitionCompleteRequest struct {
+	Acquisition WorkerPlatformAcquisition           `json:"acquisition"`
+	Candidates  WorkerPlatformAcquisitionCandidates `json:"candidates"`
+}
+
+type WorkerPlatformAcquisitionFailureReason string
+
+const (
+	WorkerPlatformAcquisitionUnsupportedSelector WorkerPlatformAcquisitionFailureReason = "unsupported_selector"
+	WorkerPlatformAcquisitionOriginRejected      WorkerPlatformAcquisitionFailureReason = "origin_rejected"
+	WorkerPlatformAcquisitionIntegrityFailed     WorkerPlatformAcquisitionFailureReason = "integrity_failed"
+	WorkerPlatformAcquisitionTopologyFailed      WorkerPlatformAcquisitionFailureReason = "topology_failed"
+	WorkerPlatformAcquisitionConformanceFailed   WorkerPlatformAcquisitionFailureReason = "conformance_failed"
+	WorkerPlatformAcquisitionDenied              WorkerPlatformAcquisitionFailureReason = "denied"
+)
+
+type WorkerPlatformAcquisitionFailRequest struct {
+	Acquisition WorkerPlatformAcquisition              `json:"acquisition"`
+	Reason      WorkerPlatformAcquisitionFailureReason `json:"reason"`
+	Error       json.RawMessage                        `json:"error"`
+}
+
+type WorkerPlatformAcquisitionResult struct {
+	DeploymentID string `json:"deployment_id"`
+	Status       string `json:"status"`
+}
 
 type WorkerDeploymentBuildLeaseResponse struct {
 	Lease      *WorkerDeploymentBuildLease `json:"lease,omitempty"`
@@ -301,11 +352,11 @@ type WorkerRuntimeRestore struct {
 }
 
 type WorkerRuntimeProgram struct {
-	DeploymentID         string                  `json:"deployment_id"`
-	Runtime              WorkerRuntimeDescriptor `json:"runtime"`
-	Artifact             CASObject               `json:"artifact"`
-	BuildContractVersion string                  `json:"build_contract_version"`
-	IndexDigest          string                  `json:"index_digest"`
+	DeploymentID         string    `json:"deployment_id"`
+	Runtime              CASObject `json:"runtime"`
+	Artifact             CASObject `json:"artifact"`
+	BuildContractVersion string    `json:"build_contract_version"`
+	IndexDigest          string    `json:"index_digest"`
 }
 
 type WorkerRuntimeInstanceStateRequest struct {
@@ -992,33 +1043,25 @@ type WorkerDeploymentBuildLease struct {
 }
 
 type WorkerDeploymentBuild struct {
-	ID                      string                   `json:"id"`
-	Version                 string                   `json:"version"`
-	APIVersion              string                   `json:"api_version"`
-	WorkerProtocolVersion   string                   `json:"worker_protocol_version"`
-	ProjectID               string                   `json:"project_id"`
-	EnvironmentID           string                   `json:"environment_id"`
-	DeploymentSource        DeploymentSourceArtifact `json:"deployment_source"`
-	Runtime                 WorkerRuntimeDescriptor  `json:"runtime"`
-	NodeVersion             string                   `json:"node_version"`
-	Manager                 WorkerManagerPin         `json:"manager"`
-	StandardToolchainDigest string                   `json:"standard_toolchain_digest"`
-	BuildContractVersion    string                   `json:"build_contract_version"`
+	ID                    string                   `json:"id"`
+	Version               string                   `json:"version"`
+	APIVersion            string                   `json:"api_version"`
+	WorkerProtocolVersion string                   `json:"worker_protocol_version"`
+	ProjectID             string                   `json:"project_id"`
+	EnvironmentID         string                   `json:"environment_id"`
+	DeploymentSource      DeploymentSourceArtifact `json:"deployment_source"`
+	Runtime               CASObject                `json:"runtime"`
+	NodeVersion           string                   `json:"node_version"`
+	Manager               WorkerManagerPin         `json:"manager"`
+	Toolchain             CASObject                `json:"toolchain"`
+	BuildContractVersion  string                   `json:"build_contract_version"`
 }
 
 type WorkerManagerPin struct {
-	Digest  string `json:"digest"`
-	Name    string `json:"name"`
-	Version string `json:"version"`
-}
-
-type WorkerRuntimeDescriptor struct {
-	Architecture      string `json:"architecture"`
-	Digest            string `json:"digest"`
-	FormatVersion     int    `json:"formatVersion"`
-	MediaType         string `json:"mediaType"`
-	RuntimeAPIVersion string `json:"runtimeApiVersion"`
-	SizeBytes         int64  `json:"sizeBytes"`
+	Artifact  CASObject `json:"artifact"`
+	Integrity string    `json:"integrity,omitempty"`
+	Name      string    `json:"name"`
+	Version   string    `json:"version"`
 }
 
 type WorkerWorkspace struct {

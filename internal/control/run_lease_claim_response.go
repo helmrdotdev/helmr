@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -93,10 +93,11 @@ func loadRunLeaseClaimProjection(
 }
 
 func projectRunLeaseClaimResponse(
+	ctx context.Context,
 	authority runLeaseClaimResponseAuthority,
 	envelopes []secret.DeliveryEnvelope,
 	projection runLeaseClaimProjection,
-	buildPolicy *deployment.BuildPolicy,
+	platformStore cas.Reader,
 	secretDelivery SecretDeliveryOpener,
 	fencingKeys workspace.FencingKeys,
 ) (api.WorkerRunLeaseClaimResponse, error) {
@@ -114,7 +115,7 @@ func projectRunLeaseClaimResponse(
 	if err != nil {
 		return api.WorkerRunLeaseClaimResponse{}, err
 	}
-	program, err := projectDeploymentProgram(projection.program, buildPolicy)
+	program, err := projectDeploymentProgram(ctx, projection.program, platformStore)
 	if err != nil {
 		return api.WorkerRunLeaseClaimResponse{}, err
 	}

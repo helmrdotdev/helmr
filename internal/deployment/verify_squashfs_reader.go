@@ -176,6 +176,10 @@ func artifactLogicalLimit(role artifactRole) (int64, error) {
 		return maxProgramLogicalBytes, nil
 	case runtimeArtifact:
 		return maxRuntimeLogicalBytes, nil
+	case managerArtifact:
+		return maxManagerTreeBytes, nil
+	case toolchainArtifact:
+		return maxToolArtifactBytes, nil
 	case buildTreeArtifact:
 		return maxBuildTreeLogicalBytes, nil
 	default:
@@ -191,6 +195,10 @@ func artifactPhysicalLimit(role artifactRole) (int64, error) {
 		return maxProgramPhysicalBytes, nil
 	case runtimeArtifact:
 		return maxRuntimePhysicalBytes, nil
+	case managerArtifact:
+		return maxManagerTreeBytes, nil
+	case toolchainArtifact:
+		return maxToolArtifactBytes, nil
 	case buildTreeArtifact:
 		return maxBuildTreePhysicalBytes, nil
 	default:

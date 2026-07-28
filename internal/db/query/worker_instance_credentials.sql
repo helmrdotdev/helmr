@@ -73,11 +73,6 @@ WITH credential AS (
                THEN worker_instances.substrate_layout_abi
                ELSE ''
            END,
-           toolchain_catalog_digest = CASE
-               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
-               THEN worker_instances.toolchain_catalog_digest
-               ELSE NULL
-           END,
            certified_cpu_millis = CASE
                WHEN worker_instances.current_service_id = sqlc.arg(service_id)
                THEN worker_instances.certified_cpu_millis ELSE 0
@@ -322,7 +317,6 @@ WITH nonce AS (
            state = 'registering', protocol_version = EXCLUDED.protocol_version,
            supervisor_version = '',
            supports_run = false, supports_build = false,
-           toolchain_catalog_digest = NULL,
            runtime_identity_id = NULL,
            substrate_format = '', substrate_builder_abi = '', substrate_layout_abi = '',
            certified_cpu_millis = 0, certified_memory_bytes = 0,

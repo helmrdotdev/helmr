@@ -105,7 +105,7 @@ describe("canonical deployment contract", async () => {
           index.runtimeDigest = `sha256:${"A".repeat(64)}`
           break
         case "toolchain_digest":
-          index.standardToolchainDigest = "sha256:invalid"
+          index.toolchainDigest = "sha256:invalid"
           break
         case "manager_name":
           index.manager.name = "yarn"
@@ -197,7 +197,7 @@ type MutableProgramIndex = {
   }
   runtimeApiVersion: string
   runtimeDigest: string
-  standardToolchainDigest: string
+  toolchainDigest: string
   submitted: {
     lockfileDigest: string
     lockfileName: string

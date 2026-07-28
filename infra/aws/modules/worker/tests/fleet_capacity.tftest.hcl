@@ -19,23 +19,23 @@ mock_provider "aws" {
 }
 
 variables {
-  name                      = "helmr-test-run"
-  worker_group_id           = "run-workers"
-  region_id                 = "helmr-us-east"
-  worker_roles              = ["run"]
-  vpc_id                    = "vpc-00000000000000000"
-  subnet_ids                = ["subnet-00000000000000000"]
-  ami_id                    = "ami-00000000000000000"
-  worker_control_url        = "https://control.example.test"
-  cas_uri                   = "s3://helmr-test-cas"
-  cas_bucket_arn            = "arn:aws:s3:::helmr-test-cas"
-  kms_key_arn               = "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000000"
-  runtime_store_uri         = "s3://helmr-test-runtime/objects"
-  runtime_store_bucket_arn  = "arn:aws:s3:::helmr-test-runtime"
-  runtime_store_kms_key_arn = "arn:aws:kms:us-east-1:111122223333:key/11111111-1111-1111-1111-111111111111"
-  build_policy_digest       = null
-  min_size                  = 0
-  max_size                  = 1
+  name                       = "helmr-test-run"
+  worker_group_id            = "run-workers"
+  region_id                  = "helmr-us-east"
+  worker_roles               = ["run"]
+  vpc_id                     = "vpc-00000000000000000"
+  subnet_ids                 = ["subnet-00000000000000000"]
+  ami_id                     = "ami-00000000000000000"
+  worker_control_url         = "https://control.example.test"
+  cas_uri                    = "s3://helmr-test-cas"
+  cas_bucket_arn             = "arn:aws:s3:::helmr-test-cas"
+  kms_key_arn                = "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000000"
+  platform_store_uri         = "s3://helmr-test-runtime/objects"
+  platform_store_bucket_arn  = "arn:aws:s3:::helmr-test-runtime"
+  platform_store_kms_key_arn = "arn:aws:kms:us-east-1:111122223333:key/11111111-1111-1111-1111-111111111111"
+  build_policy_digest        = null
+  min_size                   = 0
+  max_size                   = 1
   secret_arns = {
     checkpoint_encryption_key = "arn:aws:secretsmanager:us-east-1:111122223333:secret:checkpoint"
   }
@@ -61,11 +61,13 @@ run "controller_owns_protected_capacity" {
   assert {
     condition = (
       strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_REGION_ID=helmr-us-east") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_RUNTIME_STORE_URI=s3://helmr-test-runtime/objects") &&
-      strcontains(aws_iam_role_policy.worker.policy, "${var.runtime_store_bucket_arn}/objects/sha256/*") &&
-      strcontains(aws_iam_role_policy.worker.policy, var.runtime_store_kms_key_arn)
+      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_PLATFORM_STORE_URI=s3://helmr-test-runtime/objects") &&
+      strcontains(aws_iam_role_policy.worker.policy, "${var.platform_store_bucket_arn}/objects/sha256/*") &&
+      strcontains(aws_iam_role_policy.worker.policy, var.platform_store_kms_key_arn) &&
+      !strcontains(aws_iam_role_policy.worker.policy, "CreatePlatformObjects") &&
+      !strcontains(aws_iam_role_policy.worker.policy, "EncryptPlatformObjects")
     )
-    error_message = "run-only workers must receive exact Managed Runtime read authority without build-only Manager authority"
+    error_message = "run-only workers must receive read-only Platform Artifact authority"
   }
 
   assert {
@@ -115,8 +117,13 @@ run "build_worker_installs_exact_policy_before_service" {
   }
 
   assert {
-    condition     = strcontains(aws_iam_role_policy.worker.policy, "${var.runtime_store_bucket_arn}/objects/sha256/*") && !strcontains(aws_iam_role_policy.worker.policy, "${var.runtime_store_bucket_arn}/control/runtime")
-    error_message = "worker IAM must be read-only within the runtime object prefix and exclude rollout lineage"
+    condition = (
+      strcontains(aws_iam_role_policy.worker.policy, "${var.platform_store_bucket_arn}/objects/sha256/*") &&
+      strcontains(aws_iam_role_policy.worker.policy, "CreatePlatformObjects") &&
+      strcontains(aws_iam_role_policy.worker.policy, "EncryptPlatformObjects") &&
+      !strcontains(aws_iam_role_policy.worker.policy, "${var.platform_store_bucket_arn}/control/runtime")
+    )
+    error_message = "build worker IAM must publish immutable Platform candidates without rollout lineage authority"
   }
 
   assert {

@@ -101,6 +101,9 @@ rec {
     pkgs.iproute2
     pkgs.nftables
     pkgs.procps
+    pkgs.gnupg
+    pkgs.patchelf
+    pkgs.xz
   ];
 
   ciChecks =

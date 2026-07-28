@@ -73,24 +73,24 @@ type ProgramSubmittedSource struct {
 }
 
 type BuildProvenance struct {
-	Architecture            RuntimeArchitecture    `json:"architecture"`
-	BuildContractVersion    string                 `json:"buildContractVersion"`
-	Manager                 ProgramManager         `json:"manager"`
-	RuntimeDigest           string                 `json:"runtimeDigest"`
-	StandardToolchainDigest string                 `json:"standardToolchainDigest"`
-	Submitted               ProgramSubmittedSource `json:"submitted"`
+	Architecture         RuntimeArchitecture    `json:"architecture"`
+	BuildContractVersion string                 `json:"buildContractVersion"`
+	Manager              ProgramManager         `json:"manager"`
+	RuntimeDigest        string                 `json:"runtimeDigest"`
+	ToolchainDigest      string                 `json:"toolchainDigest"`
+	Submitted            ProgramSubmittedSource `json:"submitted"`
 }
 
 type ProgramIndex struct {
-	Architecture            RuntimeArchitecture    `json:"architecture"`
-	BuildContractVersion    string                 `json:"buildContractVersion"`
-	Declarations            []ProgramDeclaration   `json:"declarations"`
-	FormatVersion           int                    `json:"formatVersion"`
-	Manager                 ProgramManager         `json:"manager"`
-	RuntimeAPIVersion       string                 `json:"runtimeApiVersion"`
-	RuntimeDigest           string                 `json:"runtimeDigest"`
-	StandardToolchainDigest string                 `json:"standardToolchainDigest"`
-	Submitted               ProgramSubmittedSource `json:"submitted"`
+	Architecture         RuntimeArchitecture    `json:"architecture"`
+	BuildContractVersion string                 `json:"buildContractVersion"`
+	Declarations         []ProgramDeclaration   `json:"declarations"`
+	FormatVersion        int                    `json:"formatVersion"`
+	Manager              ProgramManager         `json:"manager"`
+	RuntimeAPIVersion    string                 `json:"runtimeApiVersion"`
+	RuntimeDigest        string                 `json:"runtimeDigest"`
+	ToolchainDigest      string                 `json:"toolchainDigest"`
+	Submitted            ProgramSubmittedSource `json:"submitted"`
 }
 
 // ProgramOutput is the build worker's verified Program publication result.
@@ -102,15 +102,15 @@ type ProgramOutput struct {
 }
 
 type ProgramReceipt struct {
-	Architecture            RuntimeArchitecture    `json:"architecture"`
-	BuildContractVersion    string                 `json:"buildContractVersion"`
-	FormatVersion           int                    `json:"formatVersion"`
-	Lockfile                ProgramReceiptLockfile `json:"lockfile"`
-	Manager                 ProgramReceiptManager  `json:"manager"`
-	Program                 ProgramReceiptArtifact `json:"program"`
-	Runtime                 ProgramReceiptRuntime  `json:"runtime"`
-	Source                  ProgramReceiptSource   `json:"source"`
-	StandardToolchainDigest string                 `json:"standardToolchainDigest"`
+	Architecture         RuntimeArchitecture    `json:"architecture"`
+	BuildContractVersion string                 `json:"buildContractVersion"`
+	FormatVersion        int                    `json:"formatVersion"`
+	Lockfile             ProgramReceiptLockfile `json:"lockfile"`
+	Manager              ProgramReceiptManager  `json:"manager"`
+	Program              ProgramReceiptArtifact `json:"program"`
+	Runtime              ProgramReceiptRuntime  `json:"runtime"`
+	Source               ProgramReceiptSource   `json:"source"`
+	ToolchainDigest      string                 `json:"toolchainDigest"`
 }
 
 type ProgramReceiptLockfile struct {
@@ -254,8 +254,8 @@ func ValidateProgramReceipt(receipt ProgramReceipt) error {
 		receipt.Source.MediaType != api.DeploymentSourceArtifactMediaType {
 		return errors.New("program receipt source is invalid")
 	}
-	if !sha256DigestPattern.MatchString(receipt.StandardToolchainDigest) {
-		return errors.New("program receipt standardToolchainDigest is invalid")
+	if !sha256DigestPattern.MatchString(receipt.ToolchainDigest) {
+		return errors.New("program receipt toolchainDigest is invalid")
 	}
 	return nil
 }
@@ -342,8 +342,8 @@ func NewProgramReceipt(
 			APIVersion: RuntimeAPIVersion,
 			Digest:     output.Index.RuntimeDigest,
 		},
-		Source:                  source,
-		StandardToolchainDigest: output.Index.StandardToolchainDigest,
+		Source:          source,
+		ToolchainDigest: output.Index.ToolchainDigest,
 	}
 	if err := ValidateProgramReceipt(receipt); err != nil {
 		return ProgramReceipt{}, err
@@ -501,12 +501,12 @@ func ValidateProgramIndex(index ProgramIndex) error {
 		return fmt.Errorf("program index runtimeApiVersion = %q, want %q", index.RuntimeAPIVersion, RuntimeAPIVersion)
 	}
 	if err := validateBuildProvenance("program index", BuildProvenance{
-		Architecture:            index.Architecture,
-		BuildContractVersion:    index.BuildContractVersion,
-		Manager:                 index.Manager,
-		RuntimeDigest:           index.RuntimeDigest,
-		StandardToolchainDigest: index.StandardToolchainDigest,
-		Submitted:               index.Submitted,
+		Architecture:         index.Architecture,
+		BuildContractVersion: index.BuildContractVersion,
+		Manager:              index.Manager,
+		RuntimeDigest:        index.RuntimeDigest,
+		ToolchainDigest:      index.ToolchainDigest,
+		Submitted:            index.Submitted,
 	}); err != nil {
 		return err
 	}
@@ -539,13 +539,13 @@ func validateBuildProvenance(prefix string, provenance BuildProvenance) error {
 	if !validArchitecture(provenance.Architecture) {
 		return fmt.Errorf("%s architecture %q is unsupported", prefix, provenance.Architecture)
 	}
-	if !sha256DigestPattern.MatchString(provenance.StandardToolchainDigest) {
-		return fmt.Errorf("%s standardToolchainDigest is not a lowercase SHA-256 digest", prefix)
+	if !sha256DigestPattern.MatchString(provenance.ToolchainDigest) {
+		return fmt.Errorf("%s toolchainDigest is not a lowercase SHA-256 digest", prefix)
 	}
 	if !sha256DigestPattern.MatchString(provenance.Manager.Digest) {
 		return fmt.Errorf("%s manager.digest is not a lowercase SHA-256 digest", prefix)
 	}
-	if err := validateManagerPackage(PackageManager{
+	if err := ValidatePackageManager(PackageManager{
 		Name: provenance.Manager.Name, Version: provenance.Manager.Version,
 	}); err != nil {
 		return fmt.Errorf("%s manager: %w", prefix, err)

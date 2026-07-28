@@ -45,23 +45,6 @@ const (
 
 var loadAWSConfig = awsconfig.LoadDefaultConfig
 
-type dispatcherToolchainCatalog interface {
-	Digest() (string, error)
-	Resolve(string) (deployment.Toolchain, error)
-}
-
-type dispatcherRuntimeCatalog interface {
-	Resolve(string) (deployment.RuntimeDescriptor, error)
-}
-
-var loadDispatcherToolchainCatalog = func() (dispatcherToolchainCatalog, error) {
-	return deployment.LoadToolchainCatalog()
-}
-
-var loadDispatcherRuntimeCatalog = func() (dispatcherRuntimeCatalog, error) {
-	return deployment.LoadRuntimeCatalog()
-}
-
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	if err := run(context.Background(), log); err != nil {
@@ -77,24 +60,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	toolchainCatalog, err := loadDispatcherToolchainCatalog()
-	if err != nil {
-		return fmt.Errorf("authenticate standard toolchain catalog: %w", err)
-	}
-	toolchainCatalogDigest, err := toolchainCatalog.Digest()
-	if err != nil {
-		return fmt.Errorf("read standard toolchain catalog digest: %w", err)
-	}
-	toolchainCatalogDigestBytes, err := deployment.SHA256DigestBytes(
-		toolchainCatalogDigest,
-	)
-	if err != nil {
-		return fmt.Errorf("decode standard toolchain catalog digest: %w", err)
-	}
-	runtimeCatalog, err := loadDispatcherRuntimeCatalog()
-	if err != nil {
-		return fmt.Errorf("authenticate managed runtime catalog: %w", err)
-	}
 	pool, err := newDispatchPool(ctx, cfg.DatabaseURL, baseMaxConns)
 	if err != nil {
 		return fmt.Errorf("connect database: %w", err)
@@ -150,14 +115,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure run dispatch authority: %w", err)
 	}
-	buildDispatchAuthority, err := dispatch.NewBuildAuthority(
-		buildDispatchPool,
-		toolchainCatalogDigestBytes,
-		func(digest string) error {
-			_, err := toolchainCatalog.Resolve(digest)
-			return err
-		},
-	)
+	buildDispatchAuthority, err := dispatch.NewBuildAuthority(buildDispatchPool)
 	if err != nil {
 		return fmt.Errorf("configure build dispatch authority: %w", err)
 	}
@@ -262,10 +220,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure queue reconciler: %w", err)
 	}
-	scheduleAuthority, err := deployment.NewScheduleAuthority(runtimeCatalog)
-	if err != nil {
-		return fmt.Errorf("configure schedule authority: %w", err)
-	}
+	scheduleAuthority := deployment.NewScheduleAuthority()
 	scheduleAdmitter, err := schedule.NewDBAdmitter(pool, scheduleAuthority)
 	if err != nil {
 		return fmt.Errorf("configure schedule admission: %w", err)

@@ -28,15 +28,7 @@ AMI_IDS_FILE="${STATE_DIR}/worker-ami-ids.json"
 SOURCE_BUNDLE_FILE="${STATE_DIR}/source.bundle"
 SOURCE_BUNDLE_URI_FILE="${STATE_DIR}/source-bundle-s3-uri"
 SOURCE_BUNDLE_REF_FILE="${STATE_DIR}/source-bundle-ref"
-RELEASE_PACKAGE_URI_FILE="${STATE_DIR}/worker-release-package-s3-uri"
-RELEASE_PACKAGE_VERSION_FILE="${STATE_DIR}/worker-release-package-version-id"
-RELEASE_PACKAGE_SHA256_FILE="${STATE_DIR}/worker-release-package-sha256"
-RELEASE_PACKAGE_KMS_KEY_FILE="${STATE_DIR}/worker-release-package-kms-key-arn"
-DEV_RELEASE_DIR="${STATE_DIR}/authenticated-dev-release"
-DEV_RELEASE_RUN_ID_FILE="${STATE_DIR}/authenticated-dev-release-run-id"
-DEV_RELEASE_PROVENANCE_FILE="${STATE_DIR}/authenticated-dev-release-provenance.json"
-DEV_RELEASE_VERIFIED_DIR="${STATE_DIR}/authenticated-dev-release-verified"
-DEV_RELEASE_WORKER_PACKAGE="${STATE_DIR}/authenticated-dev-worker-release.tar"
+BUILD_POLICY_DIGEST_FILE="${STATE_DIR}/build-policy-digest"
 WORKER_IMAGE_PROVENANCE_FILE="${STATE_DIR}/worker-image-provenance.json"
 CONTROL_IMAGE_PROVENANCE_FILE="${STATE_DIR}/control-image-provenance.json"
 CONTROL_IMAGE_URI_FILE="${STATE_DIR}/control-image-uri"
@@ -55,9 +47,9 @@ Commands:
   bootstrap-output      Print shell exports for the created state bucket.
   bootstrap-destroy-prepare
                        Empty versioned bootstrap buckets before destroying them.
+  platform-release-publish
+                        Build and publish the pinned Platform release to the Platform store.
   source-bundle         Upload the current Git HEAD as an S3 git bundle.
-  dev-release-fetch     Download and verify the exact-commit authenticated dev release.
-  worker-release-stage  Create the exact versioned Worker runtime-release package object.
   worker-image-source-check
                         Check that Image Builder can fetch the configured Git ref.
   worker-image-init     Initialize the worker-image stack backend.
@@ -108,17 +100,6 @@ Worker image optional environment:
   WORKER_IMAGE_SOURCE_REF  Git ref checked out by Image Builder. Defaults to the current branch.
   WORKER_IMAGE_SOURCE_BUNDLE_S3_URI
                            S3 git bundle URI. Defaults to the last source-bundle result.
-  DEV_RELEASE_RUN_ID       Successful authenticated dev runtime GitHub Actions run.
-  WORKER_IMAGE_RELEASE_PACKAGE
-                           Verified Worker runtime-release package snapshot to stage.
-  WORKER_IMAGE_RELEASE_PACKAGE_BUCKET
-                           Versioned private S3 bucket used for release-package staging.
-  WORKER_IMAGE_RELEASE_PACKAGE_KEY
-                           Optional immutable staging key. Defaults to a revision- and digest-qualified key.
-  WORKER_IMAGE_RELEASE_PACKAGE_SHA256
-                           Verifier-returned raw SHA-256 required by worker-release-stage.
-  WORKER_IMAGE_RELEASE_PACKAGE_SIZE_BYTES
-                           Verifier-returned byte length required by worker-release-stage.
   WORKER_IMAGE_VERSION     Optional Image Builder component/recipe version for immutable updates.
   WORKER_IMAGE_INSTANCE_PROFILE_NAME
                            Existing EC2 instance profile for Image Builder. Defaults to module-managed.
@@ -133,8 +114,6 @@ Control image environment:
   CONTROL_IMAGE_REPOSITORY  ECR repository URI. Defaults to the dev stack output.
   CONTROL_IMAGE_TAG         Image tag. Defaults to the current short Git revision.
   CONTROL_IMAGE_PLATFORM    Docker platform. Defaults to linux/amd64.
-  CONTROL_IMAGE_RUNTIME_RELEASE_DIR
-                           Verified runtime-release directory required by control-image-build.
   ROTATE_DEV_SECRETS        Set to 1 to replace generated dev secret values except immutable Workspace fencing authority.
 
 Dev optional environment:
@@ -317,23 +296,19 @@ bootstrap_principal_arn() {
       printf '%s\n' "${caller_arn}"
       ;;
     *)
-      die "bootstrap requires an IAM role or user principal; set the runtime principal JSON overrides when using ${caller_arn}"
+      die "bootstrap requires an IAM role or user principal; set the Platform publisher principal JSON override when using ${caller_arn}"
       ;;
   esac
 }
 
 bootstrap_apply() {
   principal_arn="$(bootstrap_principal_arn)"
-  provisioners="${RUNTIME_PROVISIONER_PRINCIPAL_ARNS_JSON:-$(jq -cn --arg arn "${principal_arn}" '[$arn]')}"
-  orchestrators="${RUNTIME_ROLLOUT_ORCHESTRATOR_PRINCIPAL_ARNS_JSON:-$(jq -cn --arg arn "${principal_arn}" '[$arn]')}"
-  printf '%s\n' "${provisioners}" | jq -e 'type == "array" and length > 0 and all(.[]; type == "string")' >/dev/null ||
-    die "RUNTIME_PROVISIONER_PRINCIPAL_ARNS_JSON must be a non-empty JSON string array"
-  printf '%s\n' "${orchestrators}" | jq -e 'type == "array" and length > 0 and all(.[]; type == "string")' >/dev/null ||
-    die "RUNTIME_ROLLOUT_ORCHESTRATOR_PRINCIPAL_ARNS_JSON must be a non-empty JSON string array"
+  publishers="${PLATFORM_PUBLISHER_PRINCIPAL_ARNS_JSON:-$(jq -cn --arg arn "${principal_arn}" '[$arn]')}"
+  printf '%s\n' "${publishers}" | jq -e 'type == "array" and length > 0 and all(.[]; type == "string")' >/dev/null ||
+    die "PLATFORM_PUBLISHER_PRINCIPAL_ARNS_JSON must be a non-empty JSON string array"
   tf_apply "${BOOTSTRAP_STACK}" \
     -var="name=${BOOTSTRAP_NAME}" \
-    -var="runtime_provisioner_principal_arns=${provisioners}" \
-    -var="runtime_rollout_orchestrator_principal_arns=${orchestrators}"
+    -var="platform_publisher_principal_arns=${publishers}"
 }
 
 bootstrap_output() {
@@ -343,9 +318,9 @@ bootstrap_output() {
   printf 'export STATE_REGION=%q\n' "${STATE_REGION}"
   printf 'export SOURCE_BUNDLE_BUCKET=%q\n' "${artifact_bucket}"
   for output_name in \
-    runtime_store_uri \
-    runtime_store_bucket_arn \
-    runtime_store_kms_key_arn \
+    platform_store_uri \
+    platform_store_bucket_arn \
+    platform_store_kms_key_arn \
     retained_cas_uri \
     retained_cas_bucket_arn \
     retained_cas_kms_key_arn; do
@@ -395,7 +370,7 @@ delete_all_s3_object_versions() {
 bootstrap_destroy_prepare() {
   state_bucket="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw bucket_name)"
   artifact_bucket="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw source_artifact_bucket_name)"
-  runtime_bucket_arn="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw runtime_store_bucket_arn)"
+  runtime_bucket_arn="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw platform_store_bucket_arn)"
   retained_bucket_arn="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw retained_cas_bucket_arn)"
   if [ "${ALLOW_VALIDATION_EVIDENCE_DELETE:-0}" != "1" ]; then
     for protected_prefix in helmr/validation-evidence/ helmr/validation-claims/; do
@@ -553,295 +528,17 @@ source_bundle() {
   printf '%s\n' "${s3_uri}"
 }
 
-dev_release_fetch() {
-  need_command gh
-  need_command jq
-  need_command unzip
+platform_release_publish() {
   require_clean_product_checkout
-  run_id="${DEV_RELEASE_RUN_ID:-}"
-  printf '%s\n' "${run_id}" | grep -Eq '^[1-9][0-9]*$' ||
-    die "DEV_RELEASE_RUN_ID must be a positive GitHub Actions run ID"
-
-  revision="$(git -C "${ROOT}" rev-parse HEAD)"
-  branch="$(git -C "${ROOT}" symbolic-ref --quiet --short HEAD)" ||
-    die "authenticated dev release requires a checked-out branch"
-  [ "${branch}" != "main" ] ||
-    die "authenticated dev release cannot use the main branch"
-  git check-ref-format "refs/heads/${branch}" >/dev/null ||
-    die "current branch is not a valid Git branch ref"
-  source_ref="refs/heads/${branch}"
-  certificate_san="https://github.com/helmrdotdev/helmr/.github/workflows/release.yaml@${source_ref}"
-
-  run_json="${STATE_DIR}/authenticated-dev-release-run.json"
-  mkdir -p "${STATE_DIR}"
-  gh api "repos/helmrdotdev/helmr/actions/runs/${run_id}" >"${run_json}"
-  jq -e \
-    --arg commit "${revision}" \
-    --arg branch "${branch}" \
-    '.event == "workflow_dispatch" and
-     .status == "completed" and .conclusion == "success" and
-     .head_sha == $commit and .head_branch == $branch and
-     .path == ".github/workflows/release.yaml"' \
-    "${run_json}" >/dev/null ||
-    die "GitHub Actions run is not the successful release workflow for the exact local branch commit"
-
-  artifacts_json="${STATE_DIR}/authenticated-dev-release-artifacts.json"
-  artifact_archive="${STATE_DIR}/authenticated-dev-release.zip"
-  gh api "repos/helmrdotdev/helmr/actions/runs/${run_id}/artifacts?per_page=100" >"${artifacts_json}"
-  jq -e '
-    [.artifacts[] |
-      select(.name == "authenticated-dev-release" and .expired == false)] |
-    length == 1
-  ' "${artifacts_json}" >/dev/null ||
-    die "GitHub Actions run must contain exactly one unexpired authenticated-dev-release artifact"
-  artifact_id="$(
-    jq -er '
-      [.artifacts[] |
-        select(.name == "authenticated-dev-release" and .expired == false)][0].id |
-      select(type == "number" and floor == . and . > 0)
-    ' "${artifacts_json}"
-  )" ||
-    die "authenticated dev release artifact has no immutable numeric ID"
-  artifact_digest="$(
-    jq -er '
-      [.artifacts[] |
-        select(.name == "authenticated-dev-release" and .expired == false)][0].digest |
-      select(type == "string" and test("^sha256:[0-9a-f]{64}$"))
-    ' "${artifacts_json}"
-  )" ||
-    die "authenticated dev release artifact has no GitHub SHA-256 digest"
-  gh api \
-    "repos/helmrdotdev/helmr/actions/artifacts/${artifact_id}/zip" \
-    >"${artifact_archive}"
-  [ "sha256:$(sha256_file "${artifact_archive}")" = "${artifact_digest}" ] ||
-    die "downloaded GitHub Actions artifact differs from its immutable SHA-256 digest"
-
-  expected_members="$(
-    cat <<'EOF'
-manager-release/catalog.json
-manager-release/catalog.sigstore.json
-manager-release/trusted-root.json
-provenance.json
-runtime-release-result.json
-runtime-release.tar
-EOF
-  )"
-  actual_members="$(unzip -Z1 "${artifact_archive}" | LC_ALL=C sort)"
-  [ "${actual_members}" = "${expected_members}" ] ||
-    die "authenticated dev release artifact has an unexpected member set"
-
-  rm -rf "${DEV_RELEASE_DIR}" "${DEV_RELEASE_VERIFIED_DIR}"
-  rm -f "${DEV_RELEASE_WORKER_PACKAGE}"
-  mkdir -p "${DEV_RELEASE_DIR}"
-  unzip -q "${artifact_archive}" -d "${DEV_RELEASE_DIR}"
-
-  provenance="${DEV_RELEASE_DIR}/provenance.json"
-  runtime_archive="${DEV_RELEASE_DIR}/runtime-release.tar"
-  manager_dir="${DEV_RELEASE_DIR}/manager-release"
-  [ -f "${provenance}" ] && [ ! -L "${provenance}" ] ||
-    die "authenticated dev release is missing provenance.json"
-  [ -f "${runtime_archive}" ] && [ ! -L "${runtime_archive}" ] ||
-    die "authenticated dev release is missing runtime-release.tar"
-  for name in catalog.json catalog.sigstore.json trusted-root.json; do
-    [ -f "${manager_dir}/${name}" ] && [ ! -L "${manager_dir}/${name}" ] ||
-      die "authenticated dev release is missing Manager file ${name}"
-  done
-
-  runtime_digest="$(sha256_file "${runtime_archive}")"
-  runtime_size="$(wc -c <"${runtime_archive}" | tr -d '[:space:]')"
-  release_tag="$(jq -er '.release' "${provenance}")"
-  expected_release_tag="v0.0.0-dev.g${revision:0:12}"
-  [ "${release_tag}" = "${expected_release_tag}" ] ||
-    die "authenticated dev release tag is not derived from the exact source commit"
-  jq -e \
-    --arg commit "${revision}" \
-    --arg ref "${source_ref}" \
-    --arg run_id "${run_id}" \
-    --arg san "${certificate_san}" \
-    --arg digest "${runtime_digest}" \
-    --argjson size "${runtime_size}" \
-    'keys == ["commit", "formatVersion", "ref", "release", "runId", "runtime", "workflowIdentity"] and
-     .formatVersion == 0 and .commit == $commit and .ref == $ref and
-     .runId == $run_id and .workflowIdentity == $san and
-     .runtime == {sha256: $digest, sizeBytes: $size} and
-     (.release | test("^v0[.]0[.]0-dev[.]g[0-9a-f]{12}$"))' \
-    "${provenance}" >/dev/null ||
-    die "authenticated dev release provenance is not closed over the exact run and bytes"
-
-  scratch="${STATE_DIR}/authenticated-dev-release-scratch"
-  runtime_tool="${STATE_DIR}/authenticated-dev-runtime-release"
-  manager_tool="${STATE_DIR}/authenticated-dev-manager-release"
-  runtime_snapshot="${STATE_DIR}/authenticated-dev-runtime-x86_64.tar"
-  runtime_result="${STATE_DIR}/authenticated-dev-runtime-result.json"
-  rm -rf "${scratch}"
-  rm -f "${runtime_snapshot}" "${runtime_result}"
-  mkdir -p "${scratch}"
-
-  # The single-quoted verifier program expands only inside the Nix child shell.
-  # shellcheck disable=SC2016
-  nix develop "${ROOT}#images" -c env \
-    HELMR_DEV_RELEASE_ROOT="${ROOT}" \
-    HELMR_DEV_RELEASE_SAN="${certificate_san}" \
-    HELMR_DEV_RELEASE_SOURCE_DIGEST="${revision}" \
-    HELMR_DEV_RELEASE_TAG="${release_tag}" \
-    HELMR_DEV_RELEASE_ARCHIVE="${runtime_archive}" \
-    HELMR_DEV_RELEASE_MANAGER_DIR="${manager_dir}" \
-    HELMR_DEV_RELEASE_VERIFIED_DIR="${DEV_RELEASE_VERIFIED_DIR}" \
-    HELMR_DEV_RELEASE_SCRATCH="${scratch}" \
-    HELMR_DEV_RELEASE_RUNTIME_TOOL="${runtime_tool}" \
-    HELMR_DEV_RELEASE_MANAGER_TOOL="${manager_tool}" \
-    HELMR_DEV_RELEASE_RUNTIME_SNAPSHOT="${runtime_snapshot}" \
-    HELMR_DEV_RELEASE_RUNTIME_RESULT="${runtime_result}" \
-    HELMR_DEV_RELEASE_WORKER_PACKAGE="${DEV_RELEASE_WORKER_PACKAGE}" \
-    bash -seu -o pipefail -c '
-      cd "$HELMR_DEV_RELEASE_ROOT"
-      trust_ldflags="-X github.com/helmrdotdev/helmr/internal/deployment.devReleaseCertificateSAN=${HELMR_DEV_RELEASE_SAN} -X github.com/helmrdotdev/helmr/internal/deployment.devReleaseSourceRepositoryDigest=${HELMR_DEV_RELEASE_SOURCE_DIGEST}"
-      GOFLAGS="" CGO_ENABLED=0 go build \
-        -tags helmrdevtrust \
-        -trimpath \
-        -ldflags="$trust_ldflags" \
-        -o "$HELMR_DEV_RELEASE_RUNTIME_TOOL" \
-        ./internal/cmd/runtime-release
-      GOFLAGS="" CGO_ENABLED=0 go build \
-        -tags helmrdevtrust \
-        -trimpath \
-        -ldflags="$trust_ldflags" \
-        -o "$HELMR_DEV_RELEASE_MANAGER_TOOL" \
-        ./internal/cmd/manager-release
-      "$HELMR_DEV_RELEASE_RUNTIME_TOOL" trust-policy |
-        jq -e \
-          --arg san "$HELMR_DEV_RELEASE_SAN" \
-          --arg digest "$HELMR_DEV_RELEASE_SOURCE_DIGEST" \
-          ".mode == \"development\" and .san == \$san and .sourceRepositoryDigest == \$digest" >/dev/null
-
-      trusted_root="$(nix build --no-link --print-out-paths .#runtimeTrustedRoot)"
-      sudo scripts/run-runtime-release.sh \
-        "$HELMR_DEV_RELEASE_RUNTIME_TOOL" verify-archive \
-        --tag "$HELMR_DEV_RELEASE_TAG" \
-        --input "$HELMR_DEV_RELEASE_ARCHIVE" \
-        --trusted-root "$trusted_root" \
-        --scratch "$HELMR_DEV_RELEASE_SCRATCH" \
-        --output "$HELMR_DEV_RELEASE_VERIFIED_DIR" >/dev/null
-      sudo scripts/run-runtime-release.sh \
-        "$HELMR_DEV_RELEASE_RUNTIME_TOOL" worker \
-        --tag "$HELMR_DEV_RELEASE_TAG" \
-        --input "$HELMR_DEV_RELEASE_VERIFIED_DIR" \
-        --architecture x86_64 \
-        --scratch "$HELMR_DEV_RELEASE_SCRATCH" \
-        --output "$HELMR_DEV_RELEASE_RUNTIME_SNAPSHOT" >/dev/null
-      sudo scripts/run-runtime-release.sh \
-        "$HELMR_DEV_RELEASE_RUNTIME_TOOL" verify-worker \
-        --tag "$HELMR_DEV_RELEASE_TAG" \
-        --input "$HELMR_DEV_RELEASE_RUNTIME_SNAPSHOT" \
-        --architecture x86_64 \
-        --trusted-root "$trusted_root" \
-        --scratch "$HELMR_DEV_RELEASE_SCRATCH" \
-        --snapshot "$HELMR_DEV_RELEASE_RUNTIME_SNAPSHOT.verified" \
-        >"$HELMR_DEV_RELEASE_RUNTIME_RESULT"
-      "$HELMR_DEV_RELEASE_MANAGER_TOOL" verify \
-        --catalog "$HELMR_DEV_RELEASE_MANAGER_DIR/catalog.json" \
-        --bundle "$HELMR_DEV_RELEASE_MANAGER_DIR/catalog.sigstore.json" \
-        --trusted-root "$trusted_root" >/dev/null
-      cmp -s "$HELMR_DEV_RELEASE_MANAGER_DIR/trusted-root.json" "$trusted_root"
-      sudo chown -R "$(id -u):$(id -g)" \
-        "$HELMR_DEV_RELEASE_VERIFIED_DIR" \
-        "$HELMR_DEV_RELEASE_RUNTIME_SNAPSHOT" \
-        "$HELMR_DEV_RELEASE_RUNTIME_SNAPSHOT.verified"
-      python3 scripts/package-worker-release.py \
-        "$HELMR_DEV_RELEASE_RUNTIME_SNAPSHOT.verified" \
-        "$HELMR_DEV_RELEASE_MANAGER_DIR" \
-        "$HELMR_DEV_RELEASE_WORKER_PACKAGE"
-    '
-
-  jq \
-    --arg digest "${artifact_digest}" \
-    --argjson id "${artifact_id}" \
-    '. + {artifact: {digest: $digest, id: $id}}' \
-    "${provenance}" >"${DEV_RELEASE_PROVENANCE_FILE}"
-  chmod 0600 "${DEV_RELEASE_PROVENANCE_FILE}"
-  printf '%s\n' "${run_id}" >"${DEV_RELEASE_RUN_ID_FILE}"
-  info "authenticated dev release verified for ${revision}"
-  printf '%s\n' "${DEV_RELEASE_WORKER_PACKAGE}"
-}
-
-worker_release_stage() {
-  package="${WORKER_IMAGE_RELEASE_PACKAGE:-}"
-  [ -f "${package}" ] || die "WORKER_IMAGE_RELEASE_PACKAGE must name the runtime release package tar"
-  expected_digest="${WORKER_IMAGE_RELEASE_PACKAGE_SHA256:-}"
-  printf '%s\n' "${expected_digest}" | grep -Eq '^[0-9a-f]{64}$' ||
-    die "WORKER_IMAGE_RELEASE_PACKAGE_SHA256 must be 64 lowercase hexadecimal characters"
-  expected_size="${WORKER_IMAGE_RELEASE_PACKAGE_SIZE_BYTES:-}"
-  printf '%s\n' "${expected_size}" | grep -Eq '^[1-9][0-9]*$' ||
-    die "WORKER_IMAGE_RELEASE_PACKAGE_SIZE_BYTES must be a positive integer"
-
-  bucket="${WORKER_IMAGE_RELEASE_PACKAGE_BUCKET:-}"
-  if [ -z "${bucket}" ]; then
-    bucket="$(source_bundle_bucket)"
-  fi
-  digest="$(sha256_file "${package}")"
-  [ "${digest}" = "${expected_digest}" ] ||
-    die "runtime release package SHA-256 differs from verifier output"
-  size="$(wc -c <"${package}" | tr -d '[:space:]')"
-  [ "${size}" = "${expected_size}" ] ||
-    die "runtime release package length differs from verifier output"
-  revision="$(git -C "${ROOT}" rev-parse HEAD)"
-  key="${WORKER_IMAGE_RELEASE_PACKAGE_KEY:-helmr/runtime-release-packages/${revision}/${digest}.tar}"
-  uri="s3://${bucket}/${key}"
-  put_response="${STATE_DIR}/worker-release-package-put.json"
-  response="${STATE_DIR}/worker-release-package-head.json"
-  mkdir -p "${STATE_DIR}"
-
-  if ! aws s3api put-object \
-    --region "${AWS_REGION}" \
-    --bucket "${bucket}" \
-    --key "${key}" \
-    --body "${package}" \
-    --if-none-match '*' \
-    --metadata "sha256=${digest}" \
-    --output json >"${put_response}"; then
-    aws s3api head-object \
-      --region "${AWS_REGION}" \
-      --bucket "${bucket}" \
-      --key "${key}" \
-      --output json >"${put_response}"
-  fi
-
-  version_id="$(jq -er '.VersionId | select(type == "string" and length > 0 and . != "null")' "${put_response}")" ||
-    die "release package staging bucket must have versioning enabled"
-  aws s3api head-object \
-    --region "${AWS_REGION}" \
-    --bucket "${bucket}" \
-    --key "${key}" \
-    --version-id "${version_id}" \
-    --output json >"${response}"
-  metadata_digest="$(jq -er '.Metadata.sha256 | select(type == "string")' "${response}")" ||
-    die "staged release package is missing its SHA-256 metadata"
-  [ "${metadata_digest}" = "${digest}" ] ||
-    die "staged release package metadata does not match the local package"
-  content_length="$(jq -er '.ContentLength | select(type == "number" and . > 0 and floor == .)' "${response}")" ||
-    die "staged release package is missing its content length"
-  [ "${content_length}" = "${expected_size}" ] ||
-    die "staged release package length does not match verifier output"
-
-  staged="${STATE_DIR}/worker-release-package-verify.tar"
-  aws s3api get-object \
-    --region "${AWS_REGION}" \
-    --bucket "${bucket}" \
-    --key "${key}" \
-    --version-id "${version_id}" \
-    "${staged}" >/dev/null
-  [ "$(sha256_file "${staged}")" = "${digest}" ] ||
-    die "staged release package bytes do not match the local package"
-  [ "$(wc -c <"${staged}" | tr -d '[:space:]')" = "${expected_size}" ] ||
-    die "downloaded release package length does not match verifier output"
-  rm -f "${staged}"
-
-  kms_key_arn="$(jq -r '.SSEKMSKeyId // empty' "${response}")"
-  printf '%s\n' "${uri}" >"${RELEASE_PACKAGE_URI_FILE}"
-  printf '%s\n' "${version_id}" >"${RELEASE_PACKAGE_VERSION_FILE}"
-  printf '%s\n' "${digest}" >"${RELEASE_PACKAGE_SHA256_FILE}"
-  printf '%s\n' "${kms_key_arn}" >"${RELEASE_PACKAGE_KMS_KEY_FILE}"
-  info "Worker runtime-release package staged: ${uri}?versionId=${version_id}"
+  platform_store_uri="$(bootstrap_contract_value PLATFORM_STORE_URI platform_store_uri)"
+  release="$(nix build -L --no-link --print-out-paths "${ROOT}#platformRelease")"
+  nix develop "${ROOT}" -c go run ./cmd/helmr-control release publish \
+    --store "${platform_store_uri}" \
+    --input "${release}"
+  build_policy_digest="$(cat "${release}/build-policy.digest")"
+  printf '%s\n' "${build_policy_digest}" >"${BUILD_POLICY_DIGEST_FILE}"
+  info "Platform release published: ${build_policy_digest}"
+  printf '%s\n' "${build_policy_digest}"
 }
 
 worker_image_source_check() {
@@ -853,53 +550,10 @@ worker_image_source_check() {
   resolve_remote_source_ref >/dev/null
 }
 
-worker_release_value() {
-  environment_name="$1"
-  state_file="$2"
-  value="${!environment_name:-}"
-  if [ -z "${value}" ] && [ -f "${state_file}" ]; then
-    value="$(cat "${state_file}")"
-  fi
-  [ -n "${value}" ] || die "${environment_name} is required; run worker-release-stage first"
-  printf '%s\n' "${value}"
-}
-
 worker_image_apply() {
   require_clean_product_checkout
   worker_image_source_check
-  [ -f "${DEV_RELEASE_PROVENANCE_FILE}" ] ||
-    die "authenticated dev release provenance is required; run dev-release-fetch first"
-  release_trust_san="$(jq -er '.workflowIdentity' "${DEV_RELEASE_PROVENANCE_FILE}")" ||
-    die "authenticated dev release provenance has no workflow identity"
-  release_trust_source_digest="$(jq -er '.commit' "${DEV_RELEASE_PROVENANCE_FILE}")" ||
-    die "authenticated dev release provenance has no source commit"
-  [ "${release_trust_source_digest}" = "$(git -C "${ROOT}" rev-parse HEAD)" ] ||
-    die "authenticated dev release provenance does not match the current source commit"
-  release_provenance_sha256="$(sha256_file "${DEV_RELEASE_PROVENANCE_FILE}")"
-  trust_args=(
-    -var="release_trust_mode=development"
-    -var="release_trust_san=${release_trust_san}"
-    -var="release_trust_source_digest=${release_trust_source_digest}"
-    -var="release_provenance_sha256=${release_provenance_sha256}"
-  )
   bundle_uri="$(source_bundle_uri)"
-  release_package_uri="$(worker_release_value WORKER_IMAGE_RELEASE_PACKAGE_S3_URI "${RELEASE_PACKAGE_URI_FILE}")"
-  release_package_version_id="$(worker_release_value WORKER_IMAGE_RELEASE_PACKAGE_VERSION_ID "${RELEASE_PACKAGE_VERSION_FILE}")"
-  release_package_sha256="$(worker_release_value WORKER_IMAGE_RELEASE_PACKAGE_SHA256 "${RELEASE_PACKAGE_SHA256_FILE}")"
-  release_package_object_arn="$(source_bundle_object_arn "${release_package_uri}")"
-  release_package_kms_key_arn="${WORKER_IMAGE_RELEASE_PACKAGE_KMS_KEY_ARN:-}"
-  if [ -z "${release_package_kms_key_arn}" ] && [ -f "${RELEASE_PACKAGE_KMS_KEY_FILE}" ]; then
-    release_package_kms_key_arn="$(cat "${RELEASE_PACKAGE_KMS_KEY_FILE}")"
-  fi
-  release_args=(
-    -var="release_package_s3_uri=${release_package_uri}"
-    -var="release_package_object_arn=${release_package_object_arn}"
-    -var="release_package_version_id=${release_package_version_id}"
-    -var="release_package_sha256=${release_package_sha256}"
-  )
-  if [ -n "${release_package_kms_key_arn}" ]; then
-    release_args+=(-var="release_package_kms_key_arn=${release_package_kms_key_arn}")
-  fi
   version_args=(-var="image_version=$(worker_image_version)")
   instance_profile_args=()
   if [ -n "${WORKER_IMAGE_INSTANCE_PROFILE_NAME}" ]; then
@@ -937,8 +591,6 @@ worker_image_apply() {
       -var="source_bundle_s3_uri=${bundle_uri}" \
       -var="source_bundle_object_arn=$(source_bundle_object_arn "${bundle_uri}")"
     )
-    apply_args+=("${release_args[@]}")
-    apply_args+=("${trust_args[@]}")
     if ((${#distribution_args[@]})); then apply_args+=("${distribution_args[@]}"); fi
     if ((${#instance_profile_args[@]})); then apply_args+=("${instance_profile_args[@]}"); fi
     if ((${#public_args[@]})); then apply_args+=("${public_args[@]}"); fi
@@ -954,8 +606,6 @@ worker_image_apply() {
       -var="source_repository_url=${WORKER_IMAGE_SOURCE_REPOSITORY_URL}" \
       -var="source_ref=${source_ref}"
     )
-    apply_args+=("${release_args[@]}")
-    apply_args+=("${trust_args[@]}")
     if ((${#distribution_args[@]})); then apply_args+=("${distribution_args[@]}"); fi
     if ((${#instance_profile_args[@]})); then apply_args+=("${instance_profile_args[@]}"); fi
     if ((${#public_args[@]})); then apply_args+=("${public_args[@]}"); fi
@@ -986,7 +636,6 @@ worker_image_start() {
 
 worker_image_wait() {
   mkdir -p "${STATE_DIR}"
-  require_clean_product_checkout
   image_arn="${1:-${WORKER_IMAGE_BUILD_VERSION_ARN:-}}"
   if [ -z "${image_arn}" ] && [ -f "${IMAGE_ARN_FILE}" ]; then
     image_arn="$(cat "${IMAGE_ARN_FILE}")"
@@ -1017,15 +666,7 @@ worker_image_wait() {
         recipe_arn="$("${TF_BIN}" -chdir="${WORKER_IMAGE_STACK}" output -raw image_recipe_arn)"
         [ "$(printf '%s\n' "${image_json}" | jq -er '.image.imageRecipe.arn')" = "${recipe_arn}" ] ||
           die "available Worker image was not built from the applied image recipe"
-        source_commit="$(jq -er '.commit' "${DEV_RELEASE_PROVENANCE_FILE}")" ||
-          die "authenticated dev release provenance has no source commit"
-        dev_release_provenance_sha256="$(sha256_file "${DEV_RELEASE_PROVENANCE_FILE}")"
-        release_package_sha256="$(worker_release_value WORKER_IMAGE_RELEASE_PACKAGE_SHA256 "${RELEASE_PACKAGE_SHA256_FILE}")"
-        release_package_version_id="$(worker_release_value WORKER_IMAGE_RELEASE_PACKAGE_VERSION_ID "${RELEASE_PACKAGE_VERSION_FILE}")"
-        release_package_version_sha256="$(printf '%s' "${release_package_version_id}" | sha256_stdin)"
-        release_trust_san="$(jq -er '.workflowIdentity' "${DEV_RELEASE_PROVENANCE_FILE}")" ||
-          die "authenticated dev release provenance has no workflow identity"
-        release_trust_san_sha256="$(printf '%s' "${release_trust_san}" | sha256_stdin)"
+        source_commit="$(git -C "${ROOT}" rev-parse HEAD)"
         ami_json="$(
           aws ec2 describe-images \
             --region "${AWS_REGION}" \
@@ -1035,41 +676,25 @@ worker_image_wait() {
         )"
         jq -e \
           --arg ami "${ami_id}" \
-          --arg commit "${source_commit}" \
-          --arg provenance "${dev_release_provenance_sha256}" \
-          --arg package "${release_package_sha256}" \
-          --arg version "${release_package_version_sha256}" \
-          --arg san "${release_trust_san_sha256}" '
+          --arg commit "${source_commit}" '
           (.Images // []) as $images |
           (($images[0].Tags // []) | map({key: .Key, value: .Value}) | from_entries) as $tags |
           ($images | length) == 1 and
           $images[0].ImageId == $ami and
-          $tags.HelmrReleaseTrustMode == "development" and
-          $tags.HelmrSourceCommit == $commit and
-          $tags.HelmrDevReleaseProvenanceSHA256 == $provenance and
-          $tags.HelmrReleasePackageSHA256 == $package and
-          $tags.HelmrReleasePackageVersionSHA256 == $version and
-          $tags.HelmrReleaseTrustSANHash == $san
+          $tags.HelmrSourceCommit == $commit
         ' <<<"${ami_json}" >/dev/null ||
-          die "available Worker AMI tags are not bound to the authenticated dev release and package"
+          die "available Worker AMI is not bound to the exact source commit"
         jq -cn \
           --arg ami "${ami_id}" \
           --arg build_arn "${image_arn}" \
-          --arg provenance "${dev_release_provenance_sha256}" \
-          --arg package "${release_package_sha256}" \
-          --arg version "${release_package_version_id}" \
           --arg recipe_arn "${recipe_arn}" \
           --arg region "${AWS_REGION}" \
-          --arg san_sha256 "${release_trust_san_sha256}" \
           --arg source_commit "${source_commit}" \
           '{
             ami: {id: $ami, region: $region},
-            devReleaseProvenanceSHA256: $provenance,
+            formatVersion: 0,
             imageBuildVersionARN: $build_arn,
             imageRecipeARN: $recipe_arn,
-            releasePackage: {sha256: $package, versionId: $version},
-            releaseTrustSANHash: $san_sha256,
-            schema: "helmrdotdev.worker-image-provenance.v1",
             sourceCommit: $source_commit
           }' >"${WORKER_IMAGE_PROVENANCE_FILE}"
         chmod 0600 "${WORKER_IMAGE_PROVENANCE_FILE}"
@@ -1140,34 +765,10 @@ control_image_build() {
   require_clean_product_checkout
   image_uri="$(control_image_uri)"
   context="$(control_image_context)"
-  runtime_release_dir="${CONTROL_IMAGE_RUNTIME_RELEASE_DIR:-}"
-  [ -d "${runtime_release_dir}" ] ||
-    die "CONTROL_IMAGE_RUNTIME_RELEASE_DIR must name a verified runtime-release directory"
-  [ -f "${DEV_RELEASE_PROVENANCE_FILE}" ] ||
-    die "authenticated dev release provenance is required; run dev-release-fetch first"
-  release_trust_san="$(jq -er '.workflowIdentity' "${DEV_RELEASE_PROVENANCE_FILE}")" ||
-    die "authenticated dev release provenance has no workflow identity"
-  release_trust_source_digest="$(jq -er '.commit' "${DEV_RELEASE_PROVENANCE_FILE}")" ||
-    die "authenticated dev release provenance has no source commit"
-  release_artifact_digest="$(jq -er '.artifact.digest' "${DEV_RELEASE_PROVENANCE_FILE}")" ||
-    die "authenticated dev release provenance has no GitHub artifact digest"
-  [ "${release_trust_source_digest}" = "$(git -C "${ROOT}" rev-parse HEAD)" ] ||
-    die "authenticated dev release provenance does not match the current source commit"
-  release_provenance_sha256="$(sha256_file "${DEV_RELEASE_PROVENANCE_FILE}")"
-  manager_release_dir="${CONTROL_IMAGE_MANAGER_RELEASE_DIR:-${DEV_RELEASE_DIR}/manager-release}"
-  [ -d "${manager_release_dir}" ] ||
-    die "CONTROL_IMAGE_MANAGER_RELEASE_DIR must name the verified Manager release directory"
 
   # shellcheck disable=SC2016
   nix develop "${ROOT}#images" -c env \
     CONTROL_IMAGE_CONTEXT="${context}" \
-    CONTROL_IMAGE_RUNTIME_RELEASE_DIR="${runtime_release_dir}" \
-    CONTROL_IMAGE_MANAGER_RELEASE_DIR="${manager_release_dir}" \
-    HELMR_RELEASE_TRUST_MODE=development \
-    HELMR_RELEASE_TRUST_SAN="${release_trust_san}" \
-    HELMR_RELEASE_TRUST_SOURCE_DIGEST="${release_trust_source_digest}" \
-    HELMR_DEV_RELEASE_PROVENANCE_SHA256="${release_provenance_sha256}" \
-    HELMR_DEV_RELEASE_ARTIFACT_DIGEST="${release_artifact_digest}" \
     IMAGE_URI="${image_uri}" \
     bash -ceu '
       cd "$1"
@@ -1192,40 +793,17 @@ control_image_push() {
   aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${registry}"
   docker push "${image_uri}"
   digest_image_uri="$(control_image_digest_uri "${image_uri}")"
-  docker pull --platform "${CONTROL_IMAGE_PLATFORM:-linux/amd64}" "${digest_image_uri}" >/dev/null
-  labels="$(
-    docker image inspect \
-      --format '{{json .Config.Labels}}' \
-      "${digest_image_uri}"
-  )"
-  source_commit="$(jq -er '.commit' "${DEV_RELEASE_PROVENANCE_FILE}")" ||
-    die "authenticated dev release provenance has no source commit"
-  dev_release_provenance_sha256="$(sha256_file "${DEV_RELEASE_PROVENANCE_FILE}")"
-  dev_release_artifact_digest="$(jq -er '.artifact.digest' "${DEV_RELEASE_PROVENANCE_FILE}")" ||
-    die "authenticated dev release provenance has no artifact digest"
-  jq -e \
-    --arg commit "${source_commit}" \
-    --arg provenance "${dev_release_provenance_sha256}" \
-    --arg artifact "${dev_release_artifact_digest}" \
-    '."dev.helmr.source-commit" == $commit and
-     ."dev.helmr.dev-release-provenance-sha256" == $provenance and
-     ."dev.helmr.dev-release-artifact-digest" == $artifact' \
-    <<<"${labels}" >/dev/null ||
-    die "pushed control image config is not bound to the authenticated dev release"
+  source_commit="$(git -C "${ROOT}" rev-parse HEAD)"
   repository="${digest_image_uri%@*}"
   repository_name="${repository#*/}"
   digest="${digest_image_uri#*@}"
   jq -cn \
-    --arg artifact_digest "${dev_release_artifact_digest}" \
-    --arg provenance_sha256 "${dev_release_provenance_sha256}" \
     --arg digest "${digest}" \
     --arg repository "${repository_name}" \
     --arg source_commit "${source_commit}" \
     '{
-      artifactDigest: $artifact_digest,
-      devReleaseProvenanceSHA256: $provenance_sha256,
+      formatVersion: 0,
       image: {digest: $digest, repository: $repository},
-      schema: "helmrdotdev.control-image-provenance.v1",
       sourceCommit: $source_commit
     }' >"${CONTROL_IMAGE_PROVENANCE_FILE}"
   chmod 0600 "${CONTROL_IMAGE_PROVENANCE_FILE}"
@@ -1266,16 +844,19 @@ dev_tfvars() {
 
 apply_bootstrap_contract_tfvars() {
   tfvars_file="$1"
-  runtime_store_uri="$(bootstrap_contract_value RUNTIME_STORE_URI runtime_store_uri)"
-  runtime_store_bucket_arn="$(bootstrap_contract_value RUNTIME_STORE_BUCKET_ARN runtime_store_bucket_arn)"
-  runtime_store_kms_key_arn="$(bootstrap_contract_value RUNTIME_STORE_KMS_KEY_ARN runtime_store_kms_key_arn)"
-  build_policy_digest="${DEV_BUILD_POLICY_DIGEST:-$(tfvar_value "${tfvars_file}" build_policy_digest 2>/dev/null || true)}"
+  platform_store_uri="$(bootstrap_contract_value PLATFORM_STORE_URI platform_store_uri)"
+  platform_store_bucket_arn="$(bootstrap_contract_value PLATFORM_STORE_BUCKET_ARN platform_store_bucket_arn)"
+  platform_store_kms_key_arn="$(bootstrap_contract_value PLATFORM_STORE_KMS_KEY_ARN platform_store_kms_key_arn)"
+  build_policy_digest="${DEV_BUILD_POLICY_DIGEST:-}"
+  if [ -z "${build_policy_digest}" ] && [ -f "${BUILD_POLICY_DIGEST_FILE}" ]; then
+    build_policy_digest="$(cat "${BUILD_POLICY_DIGEST_FILE}")"
+  fi
   printf '%s\n' "${build_policy_digest}" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
-    die "DEV_BUILD_POLICY_DIGEST must be sha256:<64 lowercase hexadecimal digits>"
+    die "publish the Platform release first or set DEV_BUILD_POLICY_DIGEST"
 
-  set_tfvar "${tfvars_file}" "runtime_store_uri" "$(tf_quote "${runtime_store_uri}")"
-  set_tfvar "${tfvars_file}" "runtime_store_bucket_arn" "$(tf_quote "${runtime_store_bucket_arn}")"
-  set_tfvar "${tfvars_file}" "runtime_store_kms_key_arn" "$(tf_quote "${runtime_store_kms_key_arn}")"
+  set_tfvar "${tfvars_file}" "platform_store_uri" "$(tf_quote "${platform_store_uri}")"
+  set_tfvar "${tfvars_file}" "platform_store_bucket_arn" "$(tf_quote "${platform_store_bucket_arn}")"
+  set_tfvar "${tfvars_file}" "platform_store_kms_key_arn" "$(tf_quote "${platform_store_kms_key_arn}")"
   set_tfvar "${tfvars_file}" "build_policy_digest" "$(tf_quote "${build_policy_digest}")"
 }
 
@@ -2510,9 +2091,8 @@ case "${command}" in
   bootstrap-apply) bootstrap_apply ;;
   bootstrap-output) bootstrap_output ;;
   bootstrap-destroy-prepare) bootstrap_destroy_prepare ;;
+  platform-release-publish) platform_release_publish ;;
   source-bundle) source_bundle ;;
-  dev-release-fetch) dev_release_fetch ;;
-  worker-release-stage) worker_release_stage ;;
   worker-image-source-check) worker_image_source_check ;;
   worker-image-init) tf_init "${WORKER_IMAGE_STACK}" ;;
   worker-image-apply) worker_image_apply ;;

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	runtimeidentity "github.com/helmrdotdev/helmr/internal/runtime/identity"
 )
@@ -34,35 +33,6 @@ type RuntimeDescriptor struct {
 	MediaType         string              `json:"mediaType"`
 	RuntimeAPIVersion string              `json:"runtimeApiVersion"`
 	SizeBytes         int64               `json:"sizeBytes"`
-}
-
-func RuntimeDescriptorFromWire(value api.WorkerRuntimeDescriptor) (RuntimeDescriptor, error) {
-	descriptor := RuntimeDescriptor{
-		Architecture:      RuntimeArchitecture(value.Architecture),
-		Digest:            value.Digest,
-		FormatVersion:     value.FormatVersion,
-		MediaType:         value.MediaType,
-		RuntimeAPIVersion: value.RuntimeAPIVersion,
-		SizeBytes:         value.SizeBytes,
-	}
-	if err := ValidateRuntimeDescriptor(descriptor); err != nil {
-		return RuntimeDescriptor{}, err
-	}
-	return descriptor, nil
-}
-
-func RuntimeDescriptorWire(descriptor RuntimeDescriptor) (api.WorkerRuntimeDescriptor, error) {
-	if err := ValidateRuntimeDescriptor(descriptor); err != nil {
-		return api.WorkerRuntimeDescriptor{}, err
-	}
-	return api.WorkerRuntimeDescriptor{
-		Architecture:      string(descriptor.Architecture),
-		Digest:            descriptor.Digest,
-		FormatVersion:     descriptor.FormatVersion,
-		MediaType:         descriptor.MediaType,
-		RuntimeAPIVersion: descriptor.RuntimeAPIVersion,
-		SizeBytes:         descriptor.SizeBytes,
-	}, nil
 }
 
 func RuntimeArchitectureFromGo(value string) (RuntimeArchitecture, error) {

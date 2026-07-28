@@ -41,22 +41,14 @@ WITH runtime AS (
        AND btrim($11::text) <> ''
        AND (NOT $12::boolean OR worker_groups.allows_run)
        AND (NOT $13::boolean OR worker_groups.allows_build)
-       AND (
-           (NOT $13::boolean
-            AND $14::bytea IS NULL)
-           OR (
-               $13::boolean
-               AND octet_length($14::bytea) = 32
-           )
-       )
-       AND $15::bigint >= worker_groups.required_cpu_millis
-       AND $16::bigint >= worker_groups.required_memory_bytes
-       AND $17::bigint >= worker_groups.required_workload_disk_bytes
-       AND $18::bigint >= worker_groups.required_scratch_bytes
-       AND $19::bigint >= worker_groups.required_build_cache_bytes
-       AND $20::bigint >= worker_groups.required_artifact_cache_bytes
-       AND $21::integer >= worker_groups.required_vm_slots
-       AND $22::integer >= worker_groups.required_build_executors
+       AND $14::bigint >= worker_groups.required_cpu_millis
+       AND $15::bigint >= worker_groups.required_memory_bytes
+       AND $16::bigint >= worker_groups.required_workload_disk_bytes
+       AND $17::bigint >= worker_groups.required_scratch_bytes
+       AND $18::bigint >= worker_groups.required_build_cache_bytes
+       AND $19::bigint >= worker_groups.required_artifact_cache_bytes
+       AND $20::integer >= worker_groups.required_vm_slots
+       AND $21::integer >= worker_groups.required_build_executors
        AND (NOT $12::boolean
             OR worker_instances.startup_inventory_epoch = worker_instances.current_epoch)
      FOR UPDATE
@@ -75,42 +67,41 @@ WITH runtime AS (
            activation.worker_group_id, activation.id, activation.current_epoch,
            'vm-' || lpad(slot.ordinal::text, 4, '0'), 1, 'available'
       FROM activation
-      CROSS JOIN LATERAL generate_series(1, $21::integer) AS slot(ordinal)
+      CROSS JOIN LATERAL generate_series(1, $20::integer) AS slot(ordinal)
      WHERE $12::boolean
     RETURNING worker_instance_id
 ), certified AS (
     UPDATE worker_instances
-       SET state = 'active', protocol_version = $23,
+       SET state = 'active', protocol_version = $22,
            supervisor_version = $11,
            supports_run = $12, supports_build = $13,
-           toolchain_catalog_digest = $14,
            runtime_identity_id = runtime.id,
-           substrate_format = $24,
-           substrate_builder_abi = $25,
-           substrate_layout_abi = $26,
-           certified_cpu_millis = $15,
-           certified_memory_bytes = $16,
-           certified_workload_disk_bytes = $17,
-           certified_scratch_bytes = $18,
-           certified_build_cache_bytes = $19,
-           certified_artifact_cache_bytes = $20,
-           certified_hugepages_bytes = $27,
-           certified_checkpoint_bytes = $28,
-           per_vm_cpu_millis = $29,
-           per_vm_memory_bytes = $30,
-           per_vm_workload_disk_bytes = $31,
-           per_vm_scratch_bytes = $32,
-           max_vm_slots = $21, max_run_consumers = $33,
-           max_build_executors = $22,
-           max_runtime_starts = $34,
-           certification_profile = $35,
-           certification_fingerprint = $36,
+           substrate_format = $23,
+           substrate_builder_abi = $24,
+           substrate_layout_abi = $25,
+           certified_cpu_millis = $14,
+           certified_memory_bytes = $15,
+           certified_workload_disk_bytes = $16,
+           certified_scratch_bytes = $17,
+           certified_build_cache_bytes = $18,
+           certified_artifact_cache_bytes = $19,
+           certified_hugepages_bytes = $26,
+           certified_checkpoint_bytes = $27,
+           per_vm_cpu_millis = $28,
+           per_vm_memory_bytes = $29,
+           per_vm_workload_disk_bytes = $30,
+           per_vm_scratch_bytes = $31,
+           max_vm_slots = $20, max_run_consumers = $32,
+           max_build_executors = $21,
+           max_runtime_starts = $33,
+           certification_profile = $34,
+           certification_fingerprint = $35,
            certified_at = now(), activated_at = now(), updated_at = now()
       FROM runtime, activation
      WHERE worker_instances.id = activation.id
        AND (NOT $12::boolean
-            OR (SELECT count(*) FROM slots) = $21::integer)
-    RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.toolchain_catalog_digest, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
+            OR (SELECT count(*) FROM slots) = $20::integer)
+    RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
 ), observation AS (
     INSERT INTO worker_observations (
         worker_instance_id, worker_epoch, cpu_pressure_bps, memory_pressure_bps,
@@ -124,7 +115,7 @@ WITH runtime AS (
     ON CONFLICT (worker_instance_id, worker_epoch) DO NOTHING
     RETURNING worker_instance_id
 )
-SELECT certified.id, certified.resource_id, certified.worker_group_id, certified.attestation_fingerprint, certified.state, certified.claim_version, certified.current_epoch, certified.current_service_id, certified.protocol_version, certified.supervisor_version, certified.supports_run, certified.supports_build, certified.toolchain_catalog_digest, certified.runtime_identity_id, certified.substrate_format, certified.substrate_builder_abi, certified.substrate_layout_abi, certified.certified_cpu_millis, certified.certified_memory_bytes, certified.certified_workload_disk_bytes, certified.certified_scratch_bytes, certified.certified_build_cache_bytes, certified.certified_artifact_cache_bytes, certified.certified_hugepages_bytes, certified.certified_checkpoint_bytes, certified.per_vm_cpu_millis, certified.per_vm_memory_bytes, certified.per_vm_workload_disk_bytes, certified.per_vm_scratch_bytes, certified.max_vm_slots, certified.max_run_consumers, certified.max_build_executors, certified.max_runtime_starts, certified.certification_profile, certified.certification_fingerprint, certified.epoch_started_at, certified.startup_inventory_epoch, certified.startup_inventory_evidence, certified.drain_cleanup_fingerprint, certified.drain_cleanup_evidence, certified.certified_at, certified.activated_at, certified.draining_at, certified.disabled_at, certified.lost_at, certified.termination_claimed_at, certified.provider_terminated_at, certified.created_at, certified.updated_at
+SELECT certified.id, certified.resource_id, certified.worker_group_id, certified.attestation_fingerprint, certified.state, certified.claim_version, certified.current_epoch, certified.current_service_id, certified.protocol_version, certified.supervisor_version, certified.supports_run, certified.supports_build, certified.runtime_identity_id, certified.substrate_format, certified.substrate_builder_abi, certified.substrate_layout_abi, certified.certified_cpu_millis, certified.certified_memory_bytes, certified.certified_workload_disk_bytes, certified.certified_scratch_bytes, certified.certified_build_cache_bytes, certified.certified_artifact_cache_bytes, certified.certified_hugepages_bytes, certified.certified_checkpoint_bytes, certified.per_vm_cpu_millis, certified.per_vm_memory_bytes, certified.per_vm_workload_disk_bytes, certified.per_vm_scratch_bytes, certified.max_vm_slots, certified.max_run_consumers, certified.max_build_executors, certified.max_runtime_starts, certified.certification_profile, certified.certification_fingerprint, certified.epoch_started_at, certified.startup_inventory_epoch, certified.startup_inventory_evidence, certified.drain_cleanup_fingerprint, certified.drain_cleanup_evidence, certified.certified_at, certified.activated_at, certified.draining_at, certified.disabled_at, certified.lost_at, certified.termination_claimed_at, certified.provider_terminated_at, certified.created_at, certified.updated_at
   FROM certified
   JOIN observation ON observation.worker_instance_id = certified.id
 `
@@ -143,7 +134,6 @@ type CertifyWorkerInstanceParams struct {
 	SupervisorVersion           string      `json:"supervisor_version"`
 	SupportsRun                 bool        `json:"supports_run"`
 	SupportsBuild               bool        `json:"supports_build"`
-	ToolchainCatalogDigest      []byte      `json:"toolchain_catalog_digest"`
 	CertifiedCpuMillis          int64       `json:"certified_cpu_millis"`
 	CertifiedMemoryBytes        int64       `json:"certified_memory_bytes"`
 	CertifiedWorkloadDiskBytes  int64       `json:"certified_workload_disk_bytes"`
@@ -181,7 +171,6 @@ type CertifyWorkerInstanceRow struct {
 	SupervisorVersion           string             `json:"supervisor_version"`
 	SupportsRun                 bool               `json:"supports_run"`
 	SupportsBuild               bool               `json:"supports_build"`
-	ToolchainCatalogDigest      []byte             `json:"toolchain_catalog_digest"`
 	RuntimeIdentityID           pgtype.Text        `json:"runtime_identity_id"`
 	SubstrateFormat             string             `json:"substrate_format"`
 	SubstrateBuilderAbi         string             `json:"substrate_builder_abi"`
@@ -235,7 +224,6 @@ func (q *Queries) CertifyWorkerInstance(ctx context.Context, arg CertifyWorkerIn
 		arg.SupervisorVersion,
 		arg.SupportsRun,
 		arg.SupportsBuild,
-		arg.ToolchainCatalogDigest,
 		arg.CertifiedCpuMillis,
 		arg.CertifiedMemoryBytes,
 		arg.CertifiedWorkloadDiskBytes,
@@ -273,7 +261,6 @@ func (q *Queries) CertifyWorkerInstance(ctx context.Context, arg CertifyWorkerIn
 		&i.SupervisorVersion,
 		&i.SupportsRun,
 		&i.SupportsBuild,
-		&i.ToolchainCatalogDigest,
 		&i.RuntimeIdentityID,
 		&i.SubstrateFormat,
 		&i.SubstrateBuilderAbi,
@@ -1085,7 +1072,7 @@ UPDATE worker_instances
    AND (SELECT count(*) FROM reclaimed_runtimes) >= 0
    AND (SELECT count(*) FROM quarantined_slots) >= 0
    AND (SELECT count(*) FROM reclaimed_slots) >= 0
-RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.toolchain_catalog_digest, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
+RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
 `
 
 type RecordWorkerStartupRecoveryParams struct {
@@ -1116,7 +1103,6 @@ func (q *Queries) RecordWorkerStartupRecovery(ctx context.Context, arg RecordWor
 		&i.SupervisorVersion,
 		&i.SupportsRun,
 		&i.SupportsBuild,
-		&i.ToolchainCatalogDigest,
 		&i.RuntimeIdentityID,
 		&i.SubstrateFormat,
 		&i.SubstrateBuilderAbi,
@@ -1173,23 +1159,22 @@ UPDATE worker_instances
 	AND worker_instances.substrate_format = $8
 	AND worker_instances.substrate_builder_abi = $9
 	AND worker_instances.substrate_layout_abi = $10
-	AND worker_instances.toolchain_catalog_digest IS NOT DISTINCT FROM $11::bytea
-	AND worker_instances.certified_cpu_millis = $12
-	AND worker_instances.certified_memory_bytes = $13
-	AND worker_instances.certified_workload_disk_bytes = $14
-	AND worker_instances.certified_scratch_bytes = $15
-	AND worker_instances.certified_build_cache_bytes = $16
-	AND worker_instances.certified_artifact_cache_bytes = $17
-	AND worker_instances.certified_hugepages_bytes = $18
-	AND worker_instances.certified_checkpoint_bytes = $19
-	AND worker_instances.per_vm_cpu_millis = $20
-	AND worker_instances.per_vm_memory_bytes = $21
-	AND worker_instances.per_vm_workload_disk_bytes = $22
-	AND worker_instances.per_vm_scratch_bytes = $23
-	AND worker_instances.max_vm_slots = $24
-	AND worker_instances.max_run_consumers = $25
-	AND worker_instances.max_build_executors = $26
-	AND worker_instances.max_runtime_starts = $27
+	AND worker_instances.certified_cpu_millis = $11
+	AND worker_instances.certified_memory_bytes = $12
+	AND worker_instances.certified_workload_disk_bytes = $13
+	AND worker_instances.certified_scratch_bytes = $14
+	AND worker_instances.certified_build_cache_bytes = $15
+	AND worker_instances.certified_artifact_cache_bytes = $16
+	AND worker_instances.certified_hugepages_bytes = $17
+	AND worker_instances.certified_checkpoint_bytes = $18
+	AND worker_instances.per_vm_cpu_millis = $19
+	AND worker_instances.per_vm_memory_bytes = $20
+	AND worker_instances.per_vm_workload_disk_bytes = $21
+	AND worker_instances.per_vm_scratch_bytes = $22
+	AND worker_instances.max_vm_slots = $23
+	AND worker_instances.max_run_consumers = $24
+	AND worker_instances.max_build_executors = $25
+	AND worker_instances.max_runtime_starts = $26
 	AND worker_instances.certified_cpu_millis >= worker_groups.required_cpu_millis
 	AND worker_instances.certified_memory_bytes >= worker_groups.required_memory_bytes
 	AND worker_instances.certified_workload_disk_bytes >= worker_groups.required_workload_disk_bytes
@@ -1198,7 +1183,7 @@ UPDATE worker_instances
 	AND worker_instances.certified_artifact_cache_bytes >= worker_groups.required_artifact_cache_bytes
 	AND worker_instances.max_vm_slots >= worker_groups.required_vm_slots
 	AND worker_instances.max_build_executors >= worker_groups.required_build_executors
-RETURNING worker_groups.id, region_id, name, description, worker_groups.state, enrollment_policy_fingerprint, allowed_attestation_fingerprints, launch_attestation_fingerprint, worker_groups.claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_workload_disk_bytes, required_scratch_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, last_scale_out_at, last_scale_in_at, worker_groups.protocol_version, worker_groups.created_at, worker_groups.updated_at, worker_instances.id, resource_id, worker_group_id, attestation_fingerprint, worker_instances.state, worker_instances.claim_version, current_epoch, current_service_id, worker_instances.protocol_version, supervisor_version, supports_run, supports_build, toolchain_catalog_digest, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
+RETURNING worker_groups.id, region_id, name, description, worker_groups.state, enrollment_policy_fingerprint, allowed_attestation_fingerprints, launch_attestation_fingerprint, worker_groups.claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_workload_disk_bytes, required_scratch_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, last_scale_out_at, last_scale_in_at, worker_groups.protocol_version, worker_groups.created_at, worker_groups.updated_at, worker_instances.id, resource_id, worker_group_id, attestation_fingerprint, worker_instances.state, worker_instances.claim_version, current_epoch, current_service_id, worker_instances.protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
 `
 
 type RenewWorkerCertificationParams struct {
@@ -1212,7 +1197,6 @@ type RenewWorkerCertificationParams struct {
 	SubstrateFormat             string      `json:"substrate_format"`
 	SubstrateBuilderAbi         string      `json:"substrate_builder_abi"`
 	SubstrateLayoutAbi          string      `json:"substrate_layout_abi"`
-	ToolchainCatalogDigest      []byte      `json:"toolchain_catalog_digest"`
 	CertifiedCpuMillis          int64       `json:"certified_cpu_millis"`
 	CertifiedMemoryBytes        int64       `json:"certified_memory_bytes"`
 	CertifiedWorkloadDiskBytes  int64       `json:"certified_workload_disk_bytes"`
@@ -1268,7 +1252,6 @@ type RenewWorkerCertificationRow struct {
 	SupervisorVersion              string             `json:"supervisor_version"`
 	SupportsRun                    bool               `json:"supports_run"`
 	SupportsBuild                  bool               `json:"supports_build"`
-	ToolchainCatalogDigest         []byte             `json:"toolchain_catalog_digest"`
 	RuntimeIdentityID              pgtype.Text        `json:"runtime_identity_id"`
 	SubstrateFormat                string             `json:"substrate_format"`
 	SubstrateBuilderAbi            string             `json:"substrate_builder_abi"`
@@ -1319,7 +1302,6 @@ func (q *Queries) RenewWorkerCertification(ctx context.Context, arg RenewWorkerC
 		arg.SubstrateFormat,
 		arg.SubstrateBuilderAbi,
 		arg.SubstrateLayoutAbi,
-		arg.ToolchainCatalogDigest,
 		arg.CertifiedCpuMillis,
 		arg.CertifiedMemoryBytes,
 		arg.CertifiedWorkloadDiskBytes,
@@ -1375,7 +1357,6 @@ func (q *Queries) RenewWorkerCertification(ctx context.Context, arg RenewWorkerC
 		&i.SupervisorVersion,
 		&i.SupportsRun,
 		&i.SupportsBuild,
-		&i.ToolchainCatalogDigest,
 		&i.RuntimeIdentityID,
 		&i.SubstrateFormat,
 		&i.SubstrateBuilderAbi,

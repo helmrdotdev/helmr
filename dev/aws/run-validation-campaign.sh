@@ -26,10 +26,7 @@ WORKLOAD_SAMPLER_PID=""
 WORKLOAD_SAMPLER_SENTINEL=""
 PRICE_FIXTURE="${PRICE_FIXTURE:-${ROOT}/dev/aws/worker-price-fixture.json}"
 AWS_SMOKE_STATE_ROOT="${HELMR_AWS_SMOKE_STATE_ROOT:-${ROOT}/.helmr-aws-dev-smoke}"
-DEV_RELEASE_PROVENANCE="${AWS_SMOKE_STATE_ROOT}/authenticated-dev-release-provenance.json"
-DEV_RELEASE_RUN_ID="${AWS_SMOKE_STATE_ROOT}/authenticated-dev-release-run-id"
-WORKER_RELEASE_PACKAGE_SHA256="${AWS_SMOKE_STATE_ROOT}/worker-release-package-sha256"
-WORKER_RELEASE_PACKAGE_VERSION="${AWS_SMOKE_STATE_ROOT}/worker-release-package-version-id"
+BUILD_POLICY_DIGEST="${AWS_SMOKE_STATE_ROOT}/build-policy-digest"
 WORKER_IMAGE_PROVENANCE="${AWS_SMOKE_STATE_ROOT}/worker-image-provenance.json"
 CONTROL_IMAGE_PROVENANCE="${AWS_SMOKE_STATE_ROOT}/control-image-provenance.json"
 
@@ -156,15 +153,12 @@ validate_manifest() {
     (.source | type == "object" and keys == ["commit","repo"] and .repo == "helmr" and (.commit | test("^[0-9a-f]{40}$"))) and
     (.harness | type == "object" and keys == ["sha256","version"] and .version == 1 and (.sha256 | test("^[0-9a-f]{64}$"))) and
     (.artifacts | type == "object" and
-      keys == ["build_worker_instance_type","control_image_digest","control_image_provenance_sha256","control_image_repository","control_tfvars_sha256","dev_release_provenance_sha256","dev_release_run_id","worker_ami_id","worker_image_build_version_arn","worker_image_provenance_sha256","worker_instance_type","worker_release_package_sha256","worker_release_package_version_id","worker_tfvars_sha256"] and
+      keys == ["build_policy_digest","build_worker_instance_type","control_image_digest","control_image_provenance_sha256","control_image_repository","control_tfvars_sha256","worker_ami_id","worker_image_build_version_arn","worker_image_provenance_sha256","worker_instance_type","worker_tfvars_sha256"] and
+      (.build_policy_digest | test("^sha256:[0-9a-f]{64}$")) and
       (.control_image_repository | test("^[a-z0-9._/-]+$")) and
       (.control_image_digest | test("^sha256:[0-9a-f]{64}$")) and
       (.control_image_provenance_sha256 | test("^[0-9a-f]{64}$")) and
       (.control_tfvars_sha256 | test("^[0-9a-f]{64}$")) and (.worker_tfvars_sha256 | test("^[0-9a-f]{64}$")) and
-      (.dev_release_provenance_sha256 | test("^[0-9a-f]{64}$")) and
-      (.dev_release_run_id | type == "string" and test("^[1-9][0-9]*$")) and
-      (.worker_release_package_sha256 | test("^[0-9a-f]{64}$")) and
-      (.worker_release_package_version_id | type == "string" and length >= 1 and length <= 1024 and test("^[A-Za-z0-9._~+=/-]+$")) and
       (.worker_ami_id | test("^ami-[0-9a-f]{8,17}$")) and
       (.worker_image_build_version_arn | test("^arn:aws:imagebuilder:us-east-1:[0-9]{12}:image/[a-z0-9-]+/[0-9]+[.][0-9]+[.][0-9]+/[0-9]+$")) and
       (.worker_image_provenance_sha256 | test("^[0-9a-f]{64}$")) and
@@ -219,37 +213,18 @@ validate_manifest() {
   [ "$(git -C "${ROOT}" rev-parse HEAD)" = "${source_commit}" ] || die "manifest source commit does not match product HEAD"
   [ "$(git -C "${ROOT}" rev-parse "HEAD:dev/workflows")" = "${fixture_tree}" ] || die "manifest fixture tree does not match dev/workflows"
   [ "$(sha256_file "${BASH_SOURCE[0]}")" = "${harness_sha}" ] || die "manifest harness hash does not match this script"
-  [ -f "${DEV_RELEASE_PROVENANCE}" ] ||
-    die "authenticated dev release provenance is missing"
-  [ -f "${DEV_RELEASE_RUN_ID}" ] ||
-    die "authenticated dev release run identity is missing"
-  [ -f "${WORKER_RELEASE_PACKAGE_SHA256}" ] ||
-    die "staged Worker release package digest is missing"
-  [ -f "${WORKER_RELEASE_PACKAGE_VERSION}" ] ||
-    die "staged Worker release package version is missing"
+  [ -f "${BUILD_POLICY_DIGEST}" ] ||
+    die "published build policy digest is missing"
   [ -f "${CONTROL_IMAGE_PROVENANCE}" ] ||
     die "Control image provenance is missing"
   [ -f "${WORKER_IMAGE_PROVENANCE}" ] ||
     die "Worker image provenance is missing"
-  [ "$(sha256_file "${DEV_RELEASE_PROVENANCE}")" = "$(jq -r '.artifacts.dev_release_provenance_sha256' "${manifest}")" ] ||
-    die "authenticated dev release provenance differs from the campaign manifest"
-  [ "$(cat "${DEV_RELEASE_RUN_ID}")" = "$(jq -r '.artifacts.dev_release_run_id' "${manifest}")" ] ||
-    die "authenticated dev release run differs from the campaign manifest"
-  [ "$(cat "${WORKER_RELEASE_PACKAGE_SHA256}")" = "$(jq -r '.artifacts.worker_release_package_sha256' "${manifest}")" ] ||
-    die "staged Worker release package digest differs from the campaign manifest"
-  [ "$(cat "${WORKER_RELEASE_PACKAGE_VERSION}")" = "$(jq -r '.artifacts.worker_release_package_version_id' "${manifest}")" ] ||
-    die "staged Worker release package version differs from the campaign manifest"
+  [ "$(cat "${BUILD_POLICY_DIGEST}")" = "$(jq -r '.artifacts.build_policy_digest' "${manifest}")" ] ||
+    die "published build policy digest differs from the campaign manifest"
   [ "$(sha256_file "${CONTROL_IMAGE_PROVENANCE}")" = "$(jq -r '.artifacts.control_image_provenance_sha256' "${manifest}")" ] ||
     die "Control image provenance differs from the campaign manifest"
   [ "$(sha256_file "${WORKER_IMAGE_PROVENANCE}")" = "$(jq -r '.artifacts.worker_image_provenance_sha256' "${manifest}")" ] ||
     die "Worker image provenance differs from the campaign manifest"
-  jq -e \
-    --arg commit "${source_commit}" \
-    --arg run_id "$(cat "${DEV_RELEASE_RUN_ID}")" \
-    '.formatVersion == 0 and .commit == $commit and .runId == $run_id' \
-    "${DEV_RELEASE_PROVENANCE}" >/dev/null ||
-    die "authenticated dev release provenance is not bound to the campaign source and run"
-
   while IFS= read -r task; do
     [ -z "${task}" ] && continue
     rg -l --glob '*.ts' "id:[[:space:]]*[\"']${task}[\"']" "${ROOT}/dev/workflows/tasks" >/dev/null ||
@@ -278,35 +253,25 @@ validate_manifest() {
 }
 
 verify_deployed_artifact_provenance() {
-  local manifest=$1 source_commit dev_provenance_sha artifact_digest san_hash workflow_identity
+  local manifest=$1 source_commit
   local control_repository control_digest control_json
-  local worker_ami worker_build_arn worker_json ami_json package_version_hash
+  local worker_ami worker_build_arn worker_json ami_json
   need_command aws
 
   source_commit="$(jq -r '.source.commit' "${manifest}")"
-  dev_provenance_sha="$(sha256_file "${DEV_RELEASE_PROVENANCE}")"
-  artifact_digest="$(jq -er '.artifact.digest' "${DEV_RELEASE_PROVENANCE}")" ||
-    die "authenticated dev release provenance has no GitHub artifact digest"
-  workflow_identity="$(jq -er '.workflowIdentity' "${DEV_RELEASE_PROVENANCE}")" ||
-    die "authenticated dev release provenance has no workflow identity"
-  san_hash="$(printf '%s' "${workflow_identity}" | sha256_stdin)"
 
   control_repository="$(jq -r '.artifacts.control_image_repository' "${manifest}")"
   control_digest="$(jq -r '.artifacts.control_image_digest' "${manifest}")"
   jq -e \
-    --arg artifact "${artifact_digest}" \
     --arg commit "${source_commit}" \
     --arg digest "${control_digest}" \
-    --arg provenance "${dev_provenance_sha}" \
     --arg repository "${control_repository}" '
     type == "object" and
-    keys == ["artifactDigest","devReleaseProvenanceSHA256","image","schema","sourceCommit"] and
-    .schema == "helmrdotdev.control-image-provenance.v1" and
-    .artifactDigest == $artifact and .sourceCommit == $commit and
-    .devReleaseProvenanceSHA256 == $provenance and
+    keys == ["formatVersion","image","sourceCommit"] and
+    .formatVersion == 0 and .sourceCommit == $commit and
     .image == {digest: $digest, repository: $repository}
   ' "${CONTROL_IMAGE_PROVENANCE}" >/dev/null ||
-    die "Control image provenance is not closed over the campaign release and image"
+    die "Control image provenance is not closed over the campaign source and image"
   control_json="$(
     aws ecr describe-images \
       --region "${AWS_REGION}" \
@@ -321,27 +286,19 @@ verify_deployed_artifact_provenance() {
 
   worker_ami="$(jq -r '.artifacts.worker_ami_id' "${manifest}")"
   worker_build_arn="$(jq -r '.artifacts.worker_image_build_version_arn' "${manifest}")"
-  package_version_hash="$(printf '%s' "$(cat "${WORKER_RELEASE_PACKAGE_VERSION}")" | sha256_stdin)"
   jq -e \
     --arg ami "${worker_ami}" \
     --arg build_arn "${worker_build_arn}" \
     --arg commit "${source_commit}" \
-    --arg package "$(cat "${WORKER_RELEASE_PACKAGE_SHA256}")" \
-    --arg provenance "${dev_provenance_sha}" \
-    --arg region "${AWS_REGION}" \
-    --arg san_hash "${san_hash}" \
-    --arg version "$(cat "${WORKER_RELEASE_PACKAGE_VERSION}")" '
+    --arg region "${AWS_REGION}" '
     type == "object" and
-    keys == ["ami","devReleaseProvenanceSHA256","imageBuildVersionARN","imageRecipeARN","releasePackage","releaseTrustSANHash","schema","sourceCommit"] and
-    .schema == "helmrdotdev.worker-image-provenance.v1" and
-    .sourceCommit == $commit and .devReleaseProvenanceSHA256 == $provenance and
+    keys == ["ami","formatVersion","imageBuildVersionARN","imageRecipeARN","sourceCommit"] and
+    .formatVersion == 0 and .sourceCommit == $commit and
     .imageBuildVersionARN == $build_arn and
     .ami == {id: $ami, region: $region} and
-    .releasePackage == {sha256: $package, versionId: $version} and
-    .releaseTrustSANHash == $san_hash and
     (.imageRecipeARN | test("^arn:aws:imagebuilder:us-east-1:[0-9]{12}:image-recipe/[a-z0-9-]+/[0-9]+[.][0-9]+[.][0-9]+$"))
   ' "${WORKER_IMAGE_PROVENANCE}" >/dev/null ||
-    die "Worker image provenance is not closed over the campaign release, package, build, and AMI"
+    die "Worker image provenance is not closed over the campaign source, build, and AMI"
   worker_json="$(
     aws imagebuilder get-image \
       --region "${AWS_REGION}" \
@@ -366,23 +323,14 @@ verify_deployed_artifact_provenance() {
   )"
   jq -e \
     --arg ami "${worker_ami}" \
-    --arg commit "${source_commit}" \
-    --arg package "$(cat "${WORKER_RELEASE_PACKAGE_SHA256}")" \
-    --arg provenance "${dev_provenance_sha}" \
-    --arg san "${san_hash}" \
-    --arg version "${package_version_hash}" '
+    --arg commit "${source_commit}" '
     (.Images // []) as $images |
     (($images[0].Tags // []) | map({key: .Key, value: .Value}) | from_entries) as $tags |
     ($images | length) == 1 and
     $images[0].ImageId == $ami and
-    $tags.HelmrReleaseTrustMode == "development" and
-    $tags.HelmrSourceCommit == $commit and
-    $tags.HelmrDevReleaseProvenanceSHA256 == $provenance and
-    $tags.HelmrReleasePackageSHA256 == $package and
-    $tags.HelmrReleasePackageVersionSHA256 == $version and
-    $tags.HelmrReleaseTrustSANHash == $san
+    $tags.HelmrSourceCommit == $commit
   ' <<<"${ami_json}" >/dev/null ||
-    die "live Worker AMI tags do not match the campaign's authenticated inputs"
+    die "live Worker AMI tags do not match the campaign source"
 }
 
 governance_context() {
@@ -423,18 +371,9 @@ verify_frozen() {
   [ -z "$(git -C "${governance_root}" status --porcelain)" ] || die "governance checkout is dirty"
   [ "$(git -C "${governance_root}" show "HEAD:${governance_path}" | sha256_stdin)" = "${original_sha}" ] ||
     die "governance manifest blob drifted"
-  [ -f "${DEV_RELEASE_PROVENANCE}" ] &&
-    [ "$(sha256_file "${DEV_RELEASE_PROVENANCE}")" = "$(jq -r '.artifacts.dev_release_provenance_sha256' "${original_path}")" ] ||
-    die "authenticated dev release provenance drifted"
-  [ -f "${DEV_RELEASE_RUN_ID}" ] &&
-    [ "$(cat "${DEV_RELEASE_RUN_ID}")" = "$(jq -r '.artifacts.dev_release_run_id' "${original_path}")" ] ||
-    die "authenticated dev release run drifted"
-  [ -f "${WORKER_RELEASE_PACKAGE_SHA256}" ] &&
-    [ "$(cat "${WORKER_RELEASE_PACKAGE_SHA256}")" = "$(jq -r '.artifacts.worker_release_package_sha256' "${original_path}")" ] ||
-    die "staged Worker release package digest drifted"
-  [ -f "${WORKER_RELEASE_PACKAGE_VERSION}" ] &&
-    [ "$(cat "${WORKER_RELEASE_PACKAGE_VERSION}")" = "$(jq -r '.artifacts.worker_release_package_version_id' "${original_path}")" ] ||
-    die "staged Worker release package version drifted"
+  [ -f "${BUILD_POLICY_DIGEST}" ] &&
+    [ "$(cat "${BUILD_POLICY_DIGEST}")" = "$(jq -r '.artifacts.build_policy_digest' "${original_path}")" ] ||
+    die "published build policy digest drifted"
   [ -f "${CONTROL_IMAGE_PROVENANCE}" ] &&
     [ "$(sha256_file "${CONTROL_IMAGE_PROVENANCE}")" = "$(jq -r '.artifacts.control_image_provenance_sha256' "${original_path}")" ] ||
     die "Control image provenance drifted"

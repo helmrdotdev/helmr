@@ -2,7 +2,6 @@ package schedule
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -22,7 +21,6 @@ type TxBeginner interface {
 }
 
 type Authority interface {
-	ResolveRuntime(string) error
 	ResolveScheduledTask(int32, string, []byte, []byte, []byte) (TaskRun, error)
 }
 
@@ -154,11 +152,6 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		workspace.HasActiveLease || workspace.HasActiveProcess {
 		return run.ErrWorkspaceReservationConflict
 	}
-	runtimeDigest := "sha256:" + hex.EncodeToString(program.BuildRuntimeDigest)
-	if err := a.authority.ResolveRuntime(runtimeDigest); err != nil {
-		return taskAuthorityError("scheduled Task Managed Runtime is unavailable")
-	}
-
 	runID := uuid.Must(uuid.NewV7())
 	runPublicID, err := publicid.New(publicid.Run)
 	if err != nil {

@@ -31,13 +31,12 @@ const (
 type BuildInstallOutcome string
 
 type BuildInstallRequest struct {
-	FormatVersion     int               `json:"formatVersion"`
-	Manager           Manager           `json:"manager"`
-	ManagerDigest     string            `json:"managerDigest"`
-	Runtime           RuntimeDescriptor `json:"runtime"`
-	StandardToolchain Toolchain         `json:"standardToolchain"`
-	SourceDigest      string            `json:"sourceDigest"`
-	SourceSizeBytes   int64             `json:"sourceSizeBytes"`
+	FormatVersion   int            `json:"formatVersion"`
+	Manager         BuildManager   `json:"manager"`
+	Runtime         BuildRuntime   `json:"runtime"`
+	Toolchain       BuildToolchain `json:"toolchain"`
+	SourceDigest    string         `json:"sourceDigest"`
+	SourceSizeBytes int64          `json:"sourceSizeBytes"`
 }
 
 type BuildInstallResult struct {
@@ -50,10 +49,26 @@ type BuildInstallResult struct {
 }
 
 type BuildVerificationRequest struct {
-	FormatVersion     int                 `json:"formatVersion"`
-	Runtime           RuntimeDescriptor   `json:"runtime"`
-	StandardToolchain Toolchain           `json:"standardToolchain"`
-	Tree              BuildTreeDescriptor `json:"tree"`
+	FormatVersion int                 `json:"formatVersion"`
+	Runtime       BuildRuntime        `json:"runtime"`
+	Toolchain     BuildToolchain      `json:"toolchain"`
+	Tree          BuildTreeDescriptor `json:"tree"`
+}
+
+type BuildManager struct {
+	Artifact       ArtifactDescriptor `json:"artifact"`
+	Entrypoint     ManagerEntrypoint  `json:"entrypoint"`
+	PackageManager PackageManager     `json:"packageManager"`
+}
+
+type BuildRuntime struct {
+	Artifact    ArtifactDescriptor `json:"artifact"`
+	NodeVersion string             `json:"nodeVersion"`
+}
+
+type BuildToolchain struct {
+	Artifact      ArtifactDescriptor `json:"artifact"`
+	RuntimeDigest string             `json:"runtimeDigest"`
 }
 
 type BuildGuest struct {
@@ -73,8 +88,8 @@ func (guest BuildGuest) Install(
 	request BuildInstallRequest,
 	source io.Reader,
 	manager *ArtifactSnapshot,
-	runtime *RuntimeArtifactSnapshot,
-	toolchain *toolchainSnapshot,
+	runtime *ArtifactSnapshot,
+	toolchain *ArtifactSnapshot,
 ) (_ *BuildInstall, returnErr error) {
 	if guest.Connector == nil {
 		return nil, errors.New("build guest connector is required")
@@ -211,8 +226,8 @@ func (guest BuildGuest) Verify(
 	ctx context.Context,
 	runID string,
 	request BuildVerificationRequest,
-	runtime *RuntimeArtifactSnapshot,
-	toolchain *toolchainSnapshot,
+	runtime *ArtifactSnapshot,
+	toolchain *ArtifactSnapshot,
 	tree *BuildTree,
 ) (_ VerificationResult, returnErr error) {
 	if guest.Connector == nil {
@@ -296,21 +311,17 @@ func validateBuildInstallRequest(request BuildInstallRequest) error {
 	if request.FormatVersion != BuildGuestFormatVersion {
 		return fmt.Errorf("build install formatVersion = %d, want %d", request.FormatVersion, BuildGuestFormatVersion)
 	}
-	if err := validateManager(request.Manager); err != nil {
+	if err := validateBuildManager(request.Manager); err != nil {
 		return err
 	}
-	if request.ManagerDigest != request.Manager.Tree.Digest {
-		return errors.New("build install Manager digest does not match")
-	}
-	if err := ValidateRuntimeDescriptor(request.Runtime); err != nil {
+	if err := validateBuildRuntime(request.Runtime); err != nil {
 		return err
 	}
-	if err := validateToolchain(request.StandardToolchain); err != nil {
+	if err := validateBuildToolchain(request.Toolchain); err != nil {
 		return err
 	}
-	if request.StandardToolchain.Architecture != request.Runtime.Architecture ||
-		request.StandardToolchain.ManagedRuntimeDigest != request.Runtime.Digest {
-		return errors.New("build install standard toolchain does not match Runtime")
+	if request.Toolchain.RuntimeDigest != request.Runtime.Artifact.Digest {
+		return errors.New("build install toolchain does not match Runtime")
 	}
 	if !sha256DigestPattern.MatchString(request.SourceDigest) {
 		return errors.New("build install source digest is invalid")
@@ -365,15 +376,14 @@ func validateBuildVerificationRequest(request BuildVerificationRequest) error {
 	if request.FormatVersion != BuildGuestFormatVersion {
 		return fmt.Errorf("build verification formatVersion = %d, want %d", request.FormatVersion, BuildGuestFormatVersion)
 	}
-	if err := ValidateRuntimeDescriptor(request.Runtime); err != nil {
+	if err := validateBuildRuntime(request.Runtime); err != nil {
 		return err
 	}
-	if err := validateToolchain(request.StandardToolchain); err != nil {
+	if err := validateBuildToolchain(request.Toolchain); err != nil {
 		return err
 	}
-	if request.StandardToolchain.Architecture != request.Runtime.Architecture ||
-		request.StandardToolchain.ManagedRuntimeDigest != request.Runtime.Digest {
-		return errors.New("build verification standard toolchain does not match Runtime")
+	if request.Toolchain.RuntimeDigest != request.Runtime.Artifact.Digest {
+		return errors.New("build verification toolchain does not match Runtime")
 	}
 	if !sha256DigestPattern.MatchString(request.Tree.Digest) ||
 		request.Tree.SizeBytes < 1 ||
@@ -381,6 +391,34 @@ func validateBuildVerificationRequest(request BuildVerificationRequest) error {
 		return errors.New("build verification tree descriptor is invalid")
 	}
 	return nil
+}
+
+func validateBuildManager(manager BuildManager) error {
+	if err := validatePackageManagerSyntax(manager.PackageManager); err != nil {
+		return err
+	}
+	expectedKind, expectedPath, _, err := managerDistribution(manager.PackageManager)
+	if err != nil {
+		return err
+	}
+	if manager.Entrypoint.Kind != expectedKind || manager.Entrypoint.Path != expectedPath {
+		return errors.New("build Manager entrypoint does not match its family")
+	}
+	return validateInputArtifact(manager.Artifact, ManagerTreeMediaType, maxManagerTreeBytes, "build Manager")
+}
+
+func validateBuildRuntime(runtime BuildRuntime) error {
+	if _, _, _, ok := parseReleaseVersion(runtime.NodeVersion); !ok {
+		return errors.New("build Runtime Node version is invalid")
+	}
+	return validateInputArtifact(runtime.Artifact, RuntimeArtifactMediaType, maxRuntimePhysicalBytes, "build Runtime")
+}
+
+func validateBuildToolchain(toolchain BuildToolchain) error {
+	if !sha256DigestPattern.MatchString(toolchain.RuntimeDigest) {
+		return errors.New("build toolchain Runtime digest is invalid")
+	}
+	return validateInputArtifact(toolchain.Artifact, ToolchainMediaType, maxToolArtifactBytes, "build toolchain")
 }
 
 func canonicalBuildGuestDocument[T any](value T, validate func(T) error) ([]byte, error) {

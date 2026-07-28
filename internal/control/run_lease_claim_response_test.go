@@ -1,12 +1,16 @@
 package control
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -23,10 +27,11 @@ func TestProjectRunLeaseClaimResponseOpensSecretsAfterVerifyingCapability(t *tes
 		}},
 	}
 	response, err := projectRunLeaseClaimResponse(
+		context.Background(),
 		authority,
 		[]secret.DeliveryEnvelope{{PlacementKind: "env", PlacementTarget: "TOKEN"}},
 		projection,
-		claimResponseBuildPolicy(),
+		claimResponsePlatformStore{},
 		opener,
 		keys,
 	)
@@ -45,10 +50,11 @@ func TestProjectRunLeaseClaimResponseOpensSecretsAfterVerifyingCapability(t *tes
 	authority.workspaceLease.FencingTokenHash = "sha256:" + strings.Repeat("0", 64)
 	opener.calls = 0
 	if _, err := projectRunLeaseClaimResponse(
+		context.Background(),
 		authority,
 		nil,
 		projection,
-		claimResponseBuildPolicy(),
+		claimResponsePlatformStore{},
 		opener,
 		keys,
 	); err == nil {
@@ -62,10 +68,11 @@ func TestProjectRunLeaseClaimResponseOpensSecretsAfterVerifyingCapability(t *tes
 func TestRunLeaseClaimResponseKeepsWorkspaceAuthorityInReceipt(t *testing.T) {
 	authority, projection, keys := validRunLeaseClaimResponse(t)
 	response, err := projectRunLeaseClaimResponse(
+		context.Background(),
 		authority,
 		nil,
 		projection,
-		claimResponseBuildPolicy(),
+		claimResponsePlatformStore{},
 		&recordingSecretDeliveryOpener{},
 		keys,
 	)
@@ -133,10 +140,11 @@ func TestRestoreRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
 		{Role: db.RunCheckpointArtifactRoleScratchDisk, Ordinal: 0, Digest: validDigest('d'), SizeBytes: 12, MediaType: "application/example"},
 	}
 	response, err := projectRunLeaseClaimResponse(
+		context.Background(),
 		authority,
 		[]secret.DeliveryEnvelope{{PlacementKind: "env", PlacementTarget: "TOKEN"}},
 		projection,
-		claimResponseBuildPolicy(),
+		claimResponsePlatformStore{},
 		nil,
 		keys,
 	)
@@ -170,10 +178,11 @@ func TestParentAttachRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
 	)
 	authority.childRun = db.Run{ID: pgvalue.UUID(uuid.New())}
 	response, err := projectRunLeaseClaimResponse(
+		context.Background(),
 		authority,
 		[]secret.DeliveryEnvelope{{PlacementKind: "env", PlacementTarget: "TOKEN"}},
 		projection,
-		claimResponseBuildPolicy(),
+		claimResponsePlatformStore{},
 		nil,
 		keys,
 	)
@@ -287,43 +296,26 @@ func claimResponseRuntimeDescriptor() deployment.RuntimeDescriptor {
 	}
 }
 
-func claimResponseBuildPolicy() *deployment.BuildPolicy {
-	runtimeDescriptor, err := deployment.CanonicalRuntimeDescriptor(
-		claimResponseRuntimeDescriptor(),
-	)
-	if err != nil {
-		panic(err)
+type claimResponsePlatformStore struct{}
+
+func (claimResponsePlatformStore) Stat(
+	_ context.Context,
+	digest string,
+) (cas.Object, error) {
+	runtime := claimResponseRuntimeDescriptor()
+	if digest != runtime.Digest {
+		return cas.Object{}, errors.New("object not found")
 	}
-	toolchain := deployment.Toolchain{
-		Architecture:         deployment.ArchitectureX8664,
-		FormatVersion:        deployment.ToolchainFormatVersion,
-		ManagedRuntimeDigest: claimResponseRuntimeDescriptor().Digest,
-		ToolchainClosure: deployment.ArtifactDescriptor{
-			Digest:    "sha256:" + strings.Repeat("7", 64),
-			MediaType: deployment.ToolchainMediaType,
-			SizeBytes: 1,
-		},
-	}
-	toolchainDescriptor, err := deployment.CanonicalToolchain(toolchain)
-	if err != nil {
-		panic(err)
-	}
-	toolchainDigest, err := deployment.StandardToolchainDigest(toolchain)
-	if err != nil {
-		panic(err)
-	}
-	raw := []byte(
-		`{"current":{"us-east-1":{"buildContractVersion":"helmr.program-build.v0","runtimeDigest":"` +
-			claimResponseRuntimeDescriptor().Digest +
-			`","standardToolchainDigest":"` + toolchainDigest +
-			`"}},"formatVersion":0,"runtimes":[` + string(runtimeDescriptor) +
-			`],"toolchains":[` + string(toolchainDescriptor) + `]}`,
-	)
-	policy, err := deployment.ParseBuildPolicy(raw)
-	if err != nil {
-		panic(err)
-	}
-	return policy
+	return cas.Object{
+		Digest: digest, SizeBytes: runtime.SizeBytes, MediaType: runtime.MediaType,
+	}, nil
+}
+
+func (claimResponsePlatformStore) Get(
+	context.Context,
+	string,
+) (io.ReadCloser, error) {
+	return nil, errors.New("unexpected object read")
 }
 
 type recordingSecretDeliveryOpener struct {

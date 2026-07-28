@@ -142,9 +142,9 @@ func newTestProgram(t *testing.T) *testProgram {
 			Name:    PackageManagerBun,
 			Version: "1.3.10",
 		},
-		RuntimeAPIVersion:       RuntimeAPIVersion,
-		RuntimeDigest:           testDigest("runtime"),
-		StandardToolchainDigest: testDigest("toolchain"),
+		RuntimeAPIVersion: RuntimeAPIVersion,
+		RuntimeDigest:     testDigest("runtime"),
+		ToolchainDigest:   testDigest("toolchain"),
 		Submitted: ProgramSubmittedSource{
 			LockfileDigest: digestBytes(lockfile),
 			LockfileName:   "bun.lock",

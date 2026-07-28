@@ -35,19 +35,11 @@ func RunReleaseInstall(ctx context.Context, args []string) error {
 	if os.Geteuid() != 0 {
 		return errors.New("release install must run as root")
 	}
-	catalog, err := LoadRuntimeCatalog()
-	if err != nil {
-		return fmt.Errorf("authenticate runtime catalog: %w", err)
-	}
-	toolchainCatalog, err := LoadToolchainCatalog()
-	if err != nil {
-		return fmt.Errorf("authenticate standard-toolchain catalog: %w", err)
-	}
 	store, err := cas.NewImmutableS3(ctx, storeURI)
 	if err != nil {
 		return fmt.Errorf("configure release store: %w", err)
 	}
-	return installBuildPolicy(ctx, store, digest, output, catalog, toolchainCatalog, 0, 0)
+	return installBuildPolicy(ctx, store, digest, output, 0, 0)
 }
 
 func installBuildPolicy(
@@ -55,8 +47,6 @@ func installBuildPolicy(
 	store cas.Reader,
 	digest,
 	output string,
-	runtimeCatalog *RuntimeCatalog,
-	toolchainCatalog *ToolchainCatalog,
 	ownerUID,
 	ownerGID int,
 ) error {
@@ -109,11 +99,7 @@ func installBuildPolicy(
 		int64(len(raw)) != object.SizeBytes {
 		return errors.New("build policy bytes do not match the pinned object")
 	}
-	policy, err := ParseBuildPolicy(raw)
-	if err != nil {
-		return err
-	}
-	if err := validateBuildPolicyCatalogs(policy, runtimeCatalog, toolchainCatalog); err != nil {
+	if _, err := ParseBuildPolicy(raw); err != nil {
 		return err
 	}
 	return installBuildPolicyFile(parent, output, raw, ownerUID, ownerGID)

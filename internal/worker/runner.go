@@ -18,6 +18,9 @@ const defaultDeploymentBuildCompletionGrace = 30 * time.Second
 
 type ControlClient interface {
 	DiscoverRunLeases(ctx context.Context) (api.WorkerRunLeaseDiscoveryResponse, error)
+	NextPlatformAcquisition(ctx context.Context) (api.WorkerPlatformAcquisitionResponse, error)
+	CompletePlatformAcquisition(ctx context.Context, request api.WorkerPlatformAcquisitionCompleteRequest) (api.WorkerPlatformAcquisitionResult, error)
+	FailPlatformAcquisition(ctx context.Context, request api.WorkerPlatformAcquisitionFailRequest) (api.WorkerPlatformAcquisitionResult, error)
 	LeaseDeploymentBuild(ctx context.Context) (api.WorkerDeploymentBuildLeaseResponse, error)
 	StartDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease) (api.WorkerDeploymentBuildStartResponse, error)
 	RenewDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease) (api.WorkerDeploymentBuildRenewResponse, error)
@@ -42,8 +45,16 @@ type BuildExecutor interface {
 	Build(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) (json.RawMessage, error)
 }
 
+type PlatformAcquirer interface {
+	Acquire(context.Context, api.WorkerPlatformAcquisition) (api.WorkerPlatformAcquisitionCandidates, error)
+}
+
 type BuildPolicy interface {
-	Resolve(string, string, string) (deployment.BuildTarget, error)
+	Digest() (string, error)
+	Node(string) (deployment.VersionDomain, string, error)
+	Manager(deployment.PackageManager) (deployment.ManagerPolicy, error)
+	DeniesDigest(string) bool
+	DeniesSelector(string) bool
 }
 
 type Materializer interface {
@@ -53,6 +64,7 @@ type Materializer interface {
 type Runner struct {
 	client                         ControlClient
 	runLeaseExecutor               RunLeaseExecutor
+	platformAcquirer               PlatformAcquirer
 	buildExecutor                  BuildExecutor
 	buildPolicy                    BuildPolicy
 	materializer                   Materializer
@@ -89,6 +101,12 @@ func WithLogger(log *slog.Logger) Option {
 func WithBuildExecutor(executor BuildExecutor) Option {
 	return func(runner *Runner) {
 		runner.buildExecutor = executor
+	}
+}
+
+func WithPlatformAcquirer(acquirer PlatformAcquirer) Option {
+	return func(runner *Runner) {
+		runner.platformAcquirer = acquirer
 	}
 }
 
@@ -154,6 +172,9 @@ func NewRunner(client ControlClient, executor RunLeaseExecutor, capabilities api
 	}
 	if capabilities.SupportsBuild && runner.buildPolicy == nil {
 		return nil, errors.New("build worker policy is required")
+	}
+	if capabilities.SupportsBuild && runner.platformAcquirer == nil {
+		return nil, errors.New("build worker Platform acquirer is required")
 	}
 	if runner.log == nil {
 		runner.log = slog.Default()

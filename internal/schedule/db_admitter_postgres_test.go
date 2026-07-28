@@ -258,7 +258,7 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	mustScheduleExec(t, pool, `
 		INSERT INTO deployments (
 			id, public_id, org_id, project_id, environment_id, build_region_id,
-			build_node_version, build_runtime_digest, build_standard_toolchain_digest,
+			build_node_version, build_runtime_digest, build_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
 			build_contract_version, version, content_hash, deployment_source_artifact_id,
 			program_artifact_id, program_index_digest, queue_config, status
@@ -551,13 +551,6 @@ func schedulePublicID(t *testing.T, prefix publicid.Prefix) string {
 
 type fixedAuthority struct {
 	digest string
-}
-
-func (r fixedAuthority) ResolveRuntime(value string) error {
-	if value != r.digest {
-		return errors.New("runtime is unavailable")
-	}
-	return nil
 }
 
 func (fixedAuthority) ResolveScheduledTask(

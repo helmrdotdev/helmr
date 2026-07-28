@@ -591,37 +591,38 @@ type DeletionJob struct {
 }
 
 type Deployment struct {
-	ID                           pgtype.UUID        `json:"id"`
-	PublicID                     string             `json:"public_id"`
-	OrgID                        pgtype.UUID        `json:"org_id"`
-	ProjectID                    pgtype.UUID        `json:"project_id"`
-	EnvironmentID                pgtype.UUID        `json:"environment_id"`
-	BuildRegionID                string             `json:"build_region_id"`
-	BuildNodeVersion             string             `json:"build_node_version"`
-	BuildRuntimeDigest           []byte             `json:"build_runtime_digest"`
-	BuildStandardToolchainDigest []byte             `json:"build_standard_toolchain_digest"`
-	BuildManagerName             string             `json:"build_manager_name"`
-	BuildManagerVersion          string             `json:"build_manager_version"`
-	BuildManagerDigest           []byte             `json:"build_manager_digest"`
-	BuildContractVersion         string             `json:"build_contract_version"`
-	Version                      string             `json:"version"`
-	ContentHash                  string             `json:"content_hash"`
-	ApiVersion                   string             `json:"api_version"`
-	WorkerProtocolVersion        string             `json:"worker_protocol_version"`
-	DeploymentSourceArtifactID   pgtype.UUID        `json:"deployment_source_artifact_id"`
-	ProgramArtifactID            pgtype.UUID        `json:"program_artifact_id"`
-	ProgramArtifactKind          ArtifactKind       `json:"program_artifact_kind"`
-	ProgramIndexDigest           []byte             `json:"program_index_digest"`
-	QueueConfig                  []byte             `json:"queue_config"`
-	Status                       string             `json:"status"`
-	Failure                      []byte             `json:"failure"`
-	CurrentBuildLeaseID          pgtype.UUID        `json:"current_build_lease_id"`
-	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
-	BuildingAt                   pgtype.Timestamptz `json:"building_at"`
-	BuiltAt                      pgtype.Timestamptz `json:"built_at"`
-	DeployedAt                   pgtype.Timestamptz `json:"deployed_at"`
-	FailedAt                     pgtype.Timestamptz `json:"failed_at"`
+	ID                         pgtype.UUID        `json:"id"`
+	PublicID                   string             `json:"public_id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	ProjectID                  pgtype.UUID        `json:"project_id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	BuildRegionID              string             `json:"build_region_id"`
+	BuildNodeVersion           string             `json:"build_node_version"`
+	BuildRuntimeDigest         []byte             `json:"build_runtime_digest"`
+	BuildToolchainDigest       []byte             `json:"build_toolchain_digest"`
+	BuildManagerName           string             `json:"build_manager_name"`
+	BuildManagerVersion        string             `json:"build_manager_version"`
+	BuildManagerIntegrity      pgtype.Text        `json:"build_manager_integrity"`
+	BuildManagerDigest         []byte             `json:"build_manager_digest"`
+	BuildContractVersion       string             `json:"build_contract_version"`
+	Version                    string             `json:"version"`
+	ContentHash                string             `json:"content_hash"`
+	ApiVersion                 string             `json:"api_version"`
+	WorkerProtocolVersion      string             `json:"worker_protocol_version"`
+	DeploymentSourceArtifactID pgtype.UUID        `json:"deployment_source_artifact_id"`
+	ProgramArtifactID          pgtype.UUID        `json:"program_artifact_id"`
+	ProgramArtifactKind        ArtifactKind       `json:"program_artifact_kind"`
+	ProgramIndexDigest         []byte             `json:"program_index_digest"`
+	QueueConfig                []byte             `json:"queue_config"`
+	Status                     string             `json:"status"`
+	Failure                    []byte             `json:"failure"`
+	CurrentBuildLeaseID        pgtype.UUID        `json:"current_build_lease_id"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	BuildingAt                 pgtype.Timestamptz `json:"building_at"`
+	BuiltAt                    pgtype.Timestamptz `json:"built_at"`
+	DeployedAt                 pgtype.Timestamptz `json:"deployed_at"`
+	FailedAt                   pgtype.Timestamptz `json:"failed_at"`
 }
 
 type DeploymentBuildLease struct {
@@ -1350,7 +1351,6 @@ type WorkerInstance struct {
 	SupervisorVersion           string             `json:"supervisor_version"`
 	SupportsRun                 bool               `json:"supports_run"`
 	SupportsBuild               bool               `json:"supports_build"`
-	ToolchainCatalogDigest      []byte             `json:"toolchain_catalog_digest"`
 	RuntimeIdentityID           pgtype.Text        `json:"runtime_identity_id"`
 	SubstrateFormat             string             `json:"substrate_format"`
 	SubstrateBuilderAbi         string             `json:"substrate_builder_abi"`

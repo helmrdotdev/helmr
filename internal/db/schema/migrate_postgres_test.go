@@ -988,7 +988,7 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 	`, []string{
 		"build_node_version",
 		"build_runtime_digest",
-		"build_standard_toolchain_digest",
+		"build_toolchain_digest",
 		"build_manager_name",
 		"build_manager_version",
 		"build_manager_digest",
@@ -1051,22 +1051,6 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 	}
 	if definitionKinds != 1 {
 		t.Fatalf("deployment definition kind constraint = %d, want 1", definitionKinds)
-	}
-}
-func assertStatementRejected(t *testing.T, ctx context.Context, tx pgx.Tx, query string, args ...any) {
-	t.Helper()
-	if _, err := tx.Exec(ctx, `SAVEPOINT expected_rejection`); err != nil {
-		t.Fatal(err)
-	}
-	_, statementErr := tx.Exec(ctx, query, args...)
-	if _, err := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT expected_rejection`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(ctx, `RELEASE SAVEPOINT expected_rejection`); err != nil {
-		t.Fatal(err)
-	}
-	if statementErr == nil {
-		t.Fatalf("statement unexpectedly satisfied authority constraints:\n%s", strings.TrimSpace(query))
 	}
 }
 

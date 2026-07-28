@@ -1,155 +1,47 @@
 # Release security
 
-Release workflows are treated as privileged code because they can publish files, container images, signed boot artifacts, and future AWS worker AMIs.
+Helmr releases three independent products:
 
-## Required repository settings
+- the Control container image;
+- the Worker AMI, which contains Helmr executables, guest images, and
+  acquisition tools but no Node, package-manager, or build-toolchain catalog;
+- the signed Platform release, which contains the immutable Runtime harness,
+  base toolchain, and closed build-policy input.
 
-- Create a GitHub Actions environment named `release-production`.
-- Create a separate GitHub Actions environment named `dev-runtime`. It contains no
-  secrets or AWS role and exists only to identify the bounded pre-merge signer job.
-- Restrict deployments to release tags or `main` workflow dispatch runs.
-- For a single-maintainer project, leave required reviewers disabled so the maintainer can publish releases.
-- When more than one maintainer can approve releases, require reviewer approval for `release-production` and disable self-approval.
-- Treat prerelease tags such as `vX.Y.Z-rc.N` as release jobs: they still publish public
-  artifacts, use the same protected environment, and must be marked as prereleases instead of
-  latest releases.
-- Add environment variables for official worker AMI releases:
-  - `RELEASE_AWS_ROLE_ARN`: IAM role assumed by GitHub OIDC.
-  - `RELEASE_AWS_STATE_BUCKET`: S3 backend bucket for the worker-image OpenTofu state.
-  - `RELEASE_AWS_STATE_KEY`: S3 backend key for the release worker-image stack,
-    initially `helmr/stacks/release-worker-image/terraform.tfstate`.
-  - `RELEASE_AWS_ARTIFACT_BUCKET`: versioned private S3 bucket used to stage the exact
-    authenticated Worker runtime-release package for EC2 Image Builder.
-  - `RELEASE_AWS_REGION`: primary Image Builder region, initially `us-east-1`.
-  - `RELEASE_AWS_STATE_REGION`: state bucket region, if different from `RELEASE_AWS_REGION`.
-  - `RELEASE_WORKER_AMI_REGIONS`: comma-separated public AMI regions, initially `us-east-1,us-west-2,ap-northeast-1`.
-  - `RELEASE_WORKER_AMI_KEEP`: public release AMIs to keep per region before building the next
-    release AMI, initially `4` so the default AWS public AMI quota has one free slot.
+The Platform release is built from one source commit by Nix. Its tar archive is
+deterministic, its provenance records the archive digest and build-policy
+digest, and `cosign sign-blob` binds those bytes to the release workflow.
+Production publication runs only for a Platform tag. The branch/manual
+`platform-release-dev` job produces the same archive shape for an exact commit
+without repository-write or AWS authority.
 
-## Workflow rules
+Control publishes only complete, closed Platform release objects. It validates
+the release manifest and every object before writing immutable
+content-addressed bytes to the Platform store. The build policy is published
+last, so a partial upload is never usable as a complete release. Object
+publication does not activate a GC root or mutate a Deployment.
 
-- Do not use `pull_request_target`.
-- Do not use GitHub Actions cache in release workflows.
-- Do not pass `CACHIX_AUTH_TOKEN` to release workflows.
-- Keep write credentials in the smallest possible job.
-- Build jobs should use `contents: read` and upload workflow artifacts.
-- The platform-tag runtime producer is the only job that both builds and publishes repository
-  output. It needs that boundary to serialize lineage validation, keyless signing, and create-only
-  publication as one operation.
-- Other publish jobs should download artifacts, check out only the exact release tag, and avoid
-  building repository code.
-- `id-token: write` is only allowed when the line is marked with
-  `security-check: allow-id-token`. The job must use `release-production`, except for the
-  single `release.yaml` `runtime-release-dev` job protected by `dev-runtime`.
+For a Deployment, Control submits an exact Node and package-manager selector to
+a trusted host-side acquisition executor on an existing build-capable Worker.
+That executor obtains official upstream artifacts, verifies upstream integrity,
+builds closed Runtime/Manager/toolchain trees, performs bounded mechanical
+conformance checks, and publishes candidates to the Platform store. Control
+then independently reads and validates the complete candidates and atomically
+pins all Deployment digests. Tenant Build VMs and ordinary build leases receive
+digests only and cannot resolve selectors.
 
-## Development runtime attestation
+The Platform store is versioned, private, KMS-encrypted, and public-access
+blocked. Control and Workers may create and read immutable objects but have no
+delete authority. Referenced Deployment pins and active GitOps build-policy
+manifests are GC roots. The post-smoke reaper will receive separate,
+exact-version deletion authority and must recheck roots under the shared
+platform-artifact lock before deletion.
 
-Pre-merge AWS validation uses the `release.yaml` `dev-runtime` dispatch mode. It signs runtime,
-standard-toolchain, and Manager catalogs with GitHub OIDC, uploads only a seven-day workflow
-artifact, and has `contents: read`. It must not create a tag, GitHub Release, release asset, or
-AWS session. The locally authenticated operator downloads the exact successful run, verifies the
-run commit and branch, requires one unexpired artifact by immutable Actions artifact ID, verifies
-the raw artifact archive against GitHub's SHA-256 digest and closed member set, verifies every
-Sigstore bundle, and only then passes a deterministic Worker package to the existing create-only,
-versioned dev S3 staging path.
+Control images and Worker AMIs are built directly from the same checked-out
+source. Their provenance binds the image digest or AMI/Image Builder result to
+the exact source commit. They do not embed, download, or validate a mutable
+Platform release during image construction.
 
-Local verifier and image builds require a clean checkout at the exact authenticated commit.
-Control images embed the commit, Actions artifact digest, and verified provenance digest as OCI
-labels; the pushed digest is pulled and inspected before a closed receipt is written. Worker AMIs
-carry the corresponding source, trust-identity, provenance, and versioned-package tags, which are
-checked against the exact Image Builder execution and recipe. The formal AWS campaign revalidates
-both immutable artifacts against ECR and EC2 before initialization.
-
-Development verifier binaries are compiled with `helmrdevtrust`. That build accepts only the exact
-`release.yaml@refs/heads/<branch>` certificate identity injected for the run and requires the
-Fulcio source repository digest extension to equal the full source commit. It does not also accept
-the production tag identity. Production builds exclude the development policy source file, clear
-`GOFLAGS`, positively inspect their compiled policy, and reject binaries containing a development
-workflow identity. Development lineage is an ephemeral
-`v0.0.0-dev.g<12-character-commit>` descriptor with `predecessor: null`;
-`.github/runtime-release.json` is neither read nor changed by this path.
-
-## Managed runtime release rules
-
-`.github/runtime-release.json` is the reviewed lineage decision. Its `release` must equal the
-platform tag. `predecessor` is `null` only for the first managed release; every successor names the
-immediately preceding complete `runtime-release.tar` by exact tag, SHA-256, and byte length.
-
-Platform-tag producers use the maximum GitHub Actions concurrency queue so up to 100 pending tags are
-retained, serialized across tags, and not replaced by a newer pending run. GitHub services that queue
-by the time each run begins waiting, not dispatch order. Overflow is cancelled before composition and
-publishes nothing; queue order never selects lineage. Before composition, the workflow refuses an
-initial release when any complete managed distribution already exists and refuses a successor whose
-checked-in predecessor is not the current published lineage head. The mutable GitHub observation can
-only deny the descriptor; it cannot select a predecessor.
-
-`runtime-release.tar`, `runtime-release-x86_64.tar`, and `manager-release.tar` are fixed
-create-only release assets. A tag
-rerun verifies and consumes an existing complete distribution and byte-compares any existing
-Worker package. It never creates a second keyless signature for the same tag. A
-`workflow_dispatch` run checks out the requested existing tag, downloads and verifies its complete
-distribution, and derives the deterministic Worker package for image repair. It has no OIDC signing
-permission and cannot compose or publish a managed runtime release. Every archive consumer obtains
-the trusted root from the exact release-tag checkout through the Nix `runtimeTrustedRoot` output.
-The verifier byte-compares that pinned root with the archive member before using the pinned bytes
-for signature verification; an archive cannot nominate its own trust root.
-
-The verified release feeds both deployment targets:
-
-- the Control image receives the runtime, standard-toolchain, and certified Manager
-  `catalog.json`, `catalog.sigstore.json`, and `trusted-root.json` files,
-  installed root-owned and read-only, but no physical runtime, toolchain, or Manager
-  objects;
-- the x86_64 Worker package contains the standard-toolchain closure objects derived from the
-  authenticated catalog for that architecture under
-  `toolchain-release/objects/sha256/<digest>`, plus the authenticated Manager release documents.
-  The Worker image builds the exact Manager trees from the release-tag Nix inputs and installs them
-  under `manager-release/objects/sha256/<digest>`; Worker startup rehashes the selected tree against
-  the signed catalog before use. The catalogs are the only serving-time manifests:
-  producer registries and composed toolsets are not shipped. The verifier creates
-  a read-only snapshot from the exact package bytes it authenticated. Staging exact-checks that
-  snapshot against the verifier's SHA-256 and byte length, conditionally creates it in the versioned
-  private bucket, downloads that exact version, and checks the bytes again before Image Builder can
-  consume it.
-
-Every complete distribution retains the exact deduplicated closure set named by its append-only
-standard-toolchain catalog, including predecessor closures. A Worker package contains the exact
-matching-architecture subset. Composition, package verification, installation, and Worker startup
-derive their expected object sets from the authenticated catalog and reject missing, extra,
-wrong-architecture, size-divergent, or digest-divergent objects. No second corpus manifest or
-historical download participates in this guarantee.
-
-## Worker AMI release rules
-
-The worker AMI release job assumes a narrowly scoped AWS role through GitHub OIDC and starts or
-monitors AWS Image Builder. The publish job assumes the same role to verify that every AMI recorded
-in `aws-artifacts.json` is visible in its declared region before publishing the manifest. Do not add
-long-lived AWS access keys to GitHub. The actual worker image build happens inside AWS Image
-Builder with a separate least-privilege instance profile. A manual repair always rebuilds the AMIs
-from the authenticated Worker package. The workflow does not accept bare AMI IDs because they do
-not prove which package was used; any future reuse path must consume a closed provenance-bound
-artifact rather than reconstructing one from identifiers.
-
-Scope the role trust policy to the repository and `release-production` environment, with
-`token.actions.githubusercontent.com:aud` equal to `sts.amazonaws.com` and
-`token.actions.githubusercontent.com:sub` equal to:
-
-```text
-repo:helmrdotdev/helmr:environment:release-production
-```
-
-Set the role maximum session duration to at least four hours so the workflow can poll long Image
-Builder runs. The role permissions should cover only the worker-image OpenTofu stack and release
-manifest verification: S3 state access, EC2 Image Builder pipeline/configuration resources, the
-image-builder instance profile and role, required EC2 describe/distribution calls including
-`ec2:DescribeImages`, public release AMI retention cleanup with `ec2:DeregisterImage` and
-`ec2:DeleteSnapshot`, and `iam:PassRole` for the image-builder instance profile role.
-
-The staging bucket must have versioning enabled. Scope the release role to create and read only
-`helmr/runtime-release-packages/*`, and scope the Image Builder instance role to
-`s3:GetObjectVersion` for the one object ARN injected into its immutable recipe. If the bucket uses
-SSE-KMS, grant only the corresponding encrypt/decrypt and data-key operations on that key. The
-workflow records the exact package URI, object version ID, SHA-256, and optional KMS key identity in
-a closed Worker artifact. The same object identity configures the immutable Image Builder recipe
-and is copied into `aws-artifacts.json` alongside the resulting AMIs. Neither role nor a later
-publish step may resolve a mutable `latest` object or reconstruct the package identity from a key.
+Release repair never rebuilds signed bytes. It downloads the existing archive,
+provenance, and Sigstore bundle and verifies the exact archive with
+`cosign verify-blob`.

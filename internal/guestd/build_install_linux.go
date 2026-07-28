@@ -49,17 +49,17 @@ func handleBuildInstall(
 	}
 	components := []buildComponent{
 		{
-			artifact: request.Manager.Tree,
+			artifact: request.Manager.Artifact,
 			device:   "/dev/vdc",
 			name:     "manager",
 		},
 		{
-			artifact: runtimeBuildArtifact(request.Runtime),
+			artifact: request.Runtime.Artifact,
 			device:   "/dev/vdd",
 			name:     "runtime",
 		},
 		{
-			artifact: request.StandardToolchain.ToolchainClosure,
+			artifact: request.Toolchain.Artifact,
 			device:   "/dev/vde",
 			name:     "toolchain",
 		},
@@ -230,7 +230,7 @@ func buildInstallAliases() []buildAlias {
 }
 
 func buildInstallCommand(
-	manager deployment.Manager,
+	manager deployment.BuildManager,
 ) buildCommand {
 	argv := []string{
 		"/opt/helmr/runtime/bin/node",
@@ -317,14 +317,4 @@ func writeBuildInstallFailure(
 		return err
 	}
 	return frameio.WriteMessageFrame(conn, raw)
-}
-
-func runtimeBuildArtifact(
-	runtime deployment.RuntimeDescriptor,
-) deployment.ArtifactDescriptor {
-	return deployment.ArtifactDescriptor{
-		Digest:    runtime.Digest,
-		MediaType: runtime.MediaType,
-		SizeBytes: runtime.SizeBytes,
-	}
 }

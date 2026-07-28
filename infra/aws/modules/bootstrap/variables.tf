@@ -10,35 +10,19 @@ variable "bucket_name_prefix" {
   nullable    = true
 }
 
-variable "runtime_provisioner_principal_arns" {
-  description = "AWS principal ARNs allowed to assume the create-only managed-runtime provisioner role."
+variable "platform_publisher_principal_arns" {
+  description = "AWS principal ARNs allowed to assume the create-only Platform Artifact publisher role."
   type        = list(string)
 
   validation {
     condition = (
-      length(var.runtime_provisioner_principal_arns) > 0 &&
+      length(var.platform_publisher_principal_arns) > 0 &&
       alltrue([
-        for arn in var.runtime_provisioner_principal_arns :
+        for arn in var.platform_publisher_principal_arns :
         can(regex("^arn:[^:]+:iam::[0-9]{12}:(role|user)/.+$", arn))
       ])
     )
-    error_message = "runtime_provisioner_principal_arns must contain at least one IAM role or user ARN."
-  }
-}
-
-variable "runtime_rollout_orchestrator_principal_arns" {
-  description = "AWS principal ARNs allowed to assume the append-only runtime rollout-orchestrator role."
-  type        = list(string)
-
-  validation {
-    condition = (
-      length(var.runtime_rollout_orchestrator_principal_arns) > 0 &&
-      alltrue([
-        for arn in var.runtime_rollout_orchestrator_principal_arns :
-        can(regex("^arn:[^:]+:iam::[0-9]{12}:(role|user)/.+$", arn))
-      ])
-    )
-    error_message = "runtime_rollout_orchestrator_principal_arns must contain at least one IAM role or user ARN."
+    error_message = "platform_publisher_principal_arns must contain at least one IAM role or user ARN."
   }
 }
 

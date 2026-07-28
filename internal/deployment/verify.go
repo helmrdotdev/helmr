@@ -179,6 +179,14 @@ func validateArtifactDescriptor(
 		label = "runtime"
 		mediaType = RuntimeArtifactMediaType
 		maxPhysicalBytes = maxRuntimePhysicalBytes
+	case managerArtifact:
+		label = "Manager"
+		mediaType = ManagerTreeMediaType
+		maxPhysicalBytes = maxManagerTreeBytes
+	case toolchainArtifact:
+		label = "toolchain"
+		mediaType = ToolchainMediaType
+		maxPhysicalBytes = maxToolArtifactBytes
 	default:
 		return fmt.Errorf("artifact role = %d", role)
 	}

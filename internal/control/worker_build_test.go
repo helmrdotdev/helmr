@@ -86,16 +86,14 @@ func newDeploymentBuildCompletionFixture(
 	t *testing.T,
 ) (*Server, *deploymentBuildCompletionStore, *http.Request, string) {
 	t.Helper()
-	policy := claimResponseBuildPolicy()
-	target, err := policy.Current("us-east-1")
+	policy := controlBuildPolicy(t)
+	runtimeDigestString := "sha256:" + strings.Repeat("9", sha256.Size*2)
+	toolchainDigestString := "sha256:" + strings.Repeat("7", sha256.Size*2)
+	runtimeDigest, err := deployment.RuntimeDigestBytes(runtimeDigestString)
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtimeDigest, err := deployment.RuntimeDigestBytes(target.Runtime.Digest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	toolchainDigest, err := deployment.SHA256DigestBytes(target.StandardToolchainDigest)
+	toolchainDigest, err := deployment.SHA256DigestBytes(toolchainDigestString)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,14 +171,14 @@ func newDeploymentBuildCompletionFixture(
 			},
 			Provenance: deployment.BuildProvenance{
 				Architecture:         deployment.ArchitectureX8664,
-				BuildContractVersion: target.BuildContractVersion,
+				BuildContractVersion: deployment.ProgramBuildContractVersion,
 				Manager: deployment.ProgramManager{
 					Digest:  managerDigestString,
 					Name:    deployment.PackageManagerBun,
 					Version: "1.3.11",
 				},
-				RuntimeDigest:           target.Runtime.Digest,
-				StandardToolchainDigest: target.StandardToolchainDigest,
+				RuntimeDigest:   runtimeDigestString,
+				ToolchainDigest: toolchainDigestString,
 				Submitted: deployment.ProgramSubmittedSource{
 					LockfileDigest: lockfileDigest,
 					LockfileName:   "bun.lock",
@@ -210,44 +208,44 @@ func newDeploymentBuildCompletionFixture(
 	buildLeaseID := pgvalue.UUID(uuid.New())
 	workerInstanceID := uuid.New()
 	authority := db.GetDeploymentBuildCompletionAuthorityRow{
-		State:                        db.DeploymentBuildLeaseStateRunning,
-		ExpiresAt:                    pgvalue.Timestamptz(time.Now().Add(time.Hour)),
-		DeploymentStatus:             db.DeploymentStatusBuilding,
-		CurrentBuildLeaseID:          buildLeaseID,
-		BuildNodeVersion:             "24.16.0",
-		BuildRuntimeDigest:           runtimeDigest,
-		BuildStandardToolchainDigest: toolchainDigest,
-		BuildManagerName:             string(deployment.PackageManagerBun),
-		BuildManagerVersion:          "1.3.11",
-		BuildManagerDigest:           managerDigest,
-		BuildContractVersion:         target.BuildContractVersion,
-		DeploymentSourceArtifactID:   pgvalue.UUID(uuid.New()),
-		DeploymentSourceDigest:       source.Digest,
-		DeploymentSourceSizeBytes:    source.SizeBytes,
-		DeploymentSourceMediaType:    archive.SourceMediaType,
+		State:                      db.DeploymentBuildLeaseStateRunning,
+		ExpiresAt:                  pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		DeploymentStatus:           db.DeploymentStatusBuilding,
+		CurrentBuildLeaseID:        buildLeaseID,
+		BuildNodeVersion:           "24.16.0",
+		BuildRuntimeDigest:         runtimeDigest,
+		BuildToolchainDigest:       toolchainDigest,
+		BuildManagerName:           string(deployment.PackageManagerBun),
+		BuildManagerVersion:        "1.3.11",
+		BuildManagerDigest:         managerDigest,
+		BuildContractVersion:       deployment.ProgramBuildContractVersion,
+		DeploymentSourceArtifactID: pgvalue.UUID(uuid.New()),
+		DeploymentSourceDigest:     source.Digest,
+		DeploymentSourceSizeBytes:  source.SizeBytes,
+		DeploymentSourceMediaType:  archive.SourceMediaType,
 	}
 	store := &deploymentBuildCompletionStore{
 		authority: authority,
 		locked: db.LockDeploymentBuildTerminalFenceRow{
-			OrgID:                        orgID,
-			ProjectID:                    projectID,
-			EnvironmentID:                environmentID,
-			DeploymentID:                 deploymentID,
-			State:                        authority.State,
-			ExpiresAt:                    authority.ExpiresAt,
-			DeploymentStatus:             authority.DeploymentStatus,
-			CurrentBuildLeaseID:          authority.CurrentBuildLeaseID,
-			BuildNodeVersion:             authority.BuildNodeVersion,
-			BuildRuntimeDigest:           authority.BuildRuntimeDigest,
-			BuildStandardToolchainDigest: authority.BuildStandardToolchainDigest,
-			BuildManagerName:             authority.BuildManagerName,
-			BuildManagerVersion:          authority.BuildManagerVersion,
-			BuildManagerDigest:           authority.BuildManagerDigest,
-			BuildContractVersion:         authority.BuildContractVersion,
-			DeploymentSourceArtifactID:   authority.DeploymentSourceArtifactID,
-			DeploymentSourceDigest:       authority.DeploymentSourceDigest,
-			DeploymentSourceSizeBytes:    authority.DeploymentSourceSizeBytes,
-			DeploymentSourceMediaType:    authority.DeploymentSourceMediaType,
+			OrgID:                      orgID,
+			ProjectID:                  projectID,
+			EnvironmentID:              environmentID,
+			DeploymentID:               deploymentID,
+			State:                      authority.State,
+			ExpiresAt:                  authority.ExpiresAt,
+			DeploymentStatus:           authority.DeploymentStatus,
+			CurrentBuildLeaseID:        authority.CurrentBuildLeaseID,
+			BuildNodeVersion:           authority.BuildNodeVersion,
+			BuildRuntimeDigest:         authority.BuildRuntimeDigest,
+			BuildToolchainDigest:       authority.BuildToolchainDigest,
+			BuildManagerName:           authority.BuildManagerName,
+			BuildManagerVersion:        authority.BuildManagerVersion,
+			BuildManagerDigest:         authority.BuildManagerDigest,
+			BuildContractVersion:       authority.BuildContractVersion,
+			DeploymentSourceArtifactID: authority.DeploymentSourceArtifactID,
+			DeploymentSourceDigest:     authority.DeploymentSourceDigest,
+			DeploymentSourceSizeBytes:  authority.DeploymentSourceSizeBytes,
+			DeploymentSourceMediaType:  authority.DeploymentSourceMediaType,
 		},
 		deploymentID: deploymentID,
 	}

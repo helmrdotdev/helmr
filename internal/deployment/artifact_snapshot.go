@@ -74,7 +74,7 @@ func artifactSnapshotSpecForRole(role artifactRole) (artifactSnapshotSpec, error
 		}, nil
 	case toolchainArtifact:
 		return artifactSnapshotSpec{
-			label:     "standard toolchain",
+			label:     "toolchain",
 			mediaType: ToolchainMediaType,
 			maxBytes:  maxToolArtifactBytes,
 		}, nil

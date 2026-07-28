@@ -105,6 +105,51 @@ func (c *Client) RejectRun(ctx context.Context, request api.WorkerRejectRunReque
 	return c.postWorkerJSON(ctx, "/api/worker/leases/reject", request, nil)
 }
 
+func (c *Client) NextPlatformAcquisition(ctx context.Context) (api.WorkerPlatformAcquisitionResponse, error) {
+	var response api.WorkerPlatformAcquisitionResponse
+	if err := c.postWorkerJSON(
+		ctx,
+		"/api/worker/platform-acquisitions/next",
+		api.WorkerPlatformAcquisitionRequest{},
+		&response,
+	); err != nil {
+		return api.WorkerPlatformAcquisitionResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CompletePlatformAcquisition(
+	ctx context.Context,
+	request api.WorkerPlatformAcquisitionCompleteRequest,
+) (api.WorkerPlatformAcquisitionResult, error) {
+	var response api.WorkerPlatformAcquisitionResult
+	if err := c.postWorkerJSON(
+		ctx,
+		"/api/worker/platform-acquisitions/complete",
+		request,
+		&response,
+	); err != nil {
+		return api.WorkerPlatformAcquisitionResult{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) FailPlatformAcquisition(
+	ctx context.Context,
+	request api.WorkerPlatformAcquisitionFailRequest,
+) (api.WorkerPlatformAcquisitionResult, error) {
+	var response api.WorkerPlatformAcquisitionResult
+	if err := c.postWorkerJSON(
+		ctx,
+		"/api/worker/platform-acquisitions/fail",
+		request,
+		&response,
+	); err != nil {
+		return api.WorkerPlatformAcquisitionResult{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) LeaseDeploymentBuild(ctx context.Context) (api.WorkerDeploymentBuildLeaseResponse, error) {
 	var response api.WorkerDeploymentBuildLeaseResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/deployments/lease", api.WorkerDeploymentBuildLeaseRequest{}, &response); err != nil {

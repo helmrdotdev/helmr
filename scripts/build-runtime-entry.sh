@@ -2,22 +2,29 @@
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-output="$repo_root/internal/runtime/entry.mjs"
-temporary="$(mktemp "${TMPDIR:-/tmp}/helmr-runtime-entry.XXXXXX")"
-trap 'rm -f "$temporary"' EXIT
+entry_output="$repo_root/internal/runtime/entry.mjs"
+config_output="$repo_root/internal/runtime/config-evaluator.mjs"
+temporary="$(mktemp -d "${TMPDIR:-/tmp}/helmr-runtime.XXXXXX")"
+trap 'rm -rf "$temporary"' EXIT
 
 cd "$repo_root"
 bun build runtime/typescript/src/program.ts \
   --target=node \
   --format=esm \
-  --outfile "$temporary"
+  --outfile "$temporary/entry.mjs"
+bun build runtime/typescript/src/config-evaluator.ts \
+  --target=node \
+  --format=esm \
+  --outfile "$temporary/config-evaluator.mjs"
 
 if [ "${1:-}" = "--check" ]; then
-  if ! cmp -s "$temporary" "$output"; then
-    printf '%s\n' "internal/runtime/entry.mjs is stale" >&2
+  if ! cmp -s "$temporary/entry.mjs" "$entry_output" ||
+    ! cmp -s "$temporary/config-evaluator.mjs" "$config_output"; then
+    printf '%s\n' "Managed Runtime harness entries are stale" >&2
     exit 1
   fi
   exit 0
 fi
 
-install -D -m0644 "$temporary" "$output"
+install -D -m0644 "$temporary/entry.mjs" "$entry_output"
+install -D -m0644 "$temporary/config-evaluator.mjs" "$config_output"

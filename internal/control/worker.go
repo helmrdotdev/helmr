@@ -470,9 +470,6 @@ func (s *Server) workerRenewCertification(w http.ResponseWriter, r *http.Request
 }
 
 func workerCertificationRenewParams(worker workerActor, c api.WorkerCapabilities) db.RenewWorkerCertificationParams {
-	toolchainCatalogDigest, _ := deployment.SHA256DigestBytes(
-		c.ToolchainCatalogDigest,
-	)
 	return db.RenewWorkerCertificationParams{
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID, WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
 		RuntimeIdentityID: c.RuntimeID, ProtocolVersion: c.ProtocolVersion, SupportsRun: c.SupportsRun, SupportsBuild: c.SupportsBuild,
@@ -484,7 +481,6 @@ func workerCertificationRenewParams(worker workerActor, c api.WorkerCapabilities
 		PerVmCpuMillis: c.VMMilliCPU, PerVmMemoryBytes: c.VMMemoryMiB * 1024 * 1024,
 		PerVmWorkloadDiskBytes: c.VMMaxDiskMiB * 1024 * 1024, PerVmScratchBytes: c.VMMaxScratchBytes,
 		MaxVmSlots: c.ExecutionSlotsAvailable, MaxBuildExecutors: c.MaxBuildExecutors, MaxRuntimeStarts: c.MaxRuntimeStarts,
-		ToolchainCatalogDigest: toolchainCatalogDigest,
 	}
 }
 
@@ -707,9 +703,6 @@ func workerCertificationParams(worker workerActor, request api.WorkerActivateReq
 	if supportsRun && maxRuntimeStarts == 0 {
 		maxRuntimeStarts = c.ExecutionSlotsAvailable
 	}
-	toolchainCatalogDigest, _ := deployment.SHA256DigestBytes(
-		c.ToolchainCatalogDigest,
-	)
 	return db.CertifyWorkerInstanceParams{
 		RuntimeIdentityID: c.RuntimeID, RuntimeArch: c.RuntimeArch, RuntimeABI: c.RuntimeABI,
 		KernelDigest: c.KernelDigest, InitramfsDigest: c.InitramfsDigest, RootfsDigest: c.RootfsDigest,
@@ -724,8 +717,7 @@ func workerCertificationParams(worker workerActor, request api.WorkerActivateReq
 		PerVmWorkloadDiskBytes: c.VMMaxDiskMiB * 1024 * 1024, PerVmScratchBytes: c.VMMaxScratchBytes,
 		MaxVmSlots: c.ExecutionSlotsAvailable, MaxRunConsumers: c.ExecutionSlotsAvailable,
 		MaxBuildExecutors: c.MaxBuildExecutors, MaxRuntimeStarts: maxRuntimeStarts,
-		ToolchainCatalogDigest: toolchainCatalogDigest,
-		CertificationProfile:   request.CertificationProfile, CertificationFingerprint: request.CertificationFingerprint,
+		CertificationProfile: request.CertificationProfile, CertificationFingerprint: request.CertificationFingerprint,
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
 		WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
 	}
@@ -755,7 +747,6 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 		ExecutionSlotsAvailable: input.ExecutionSlotsAvailable,
 		SupportsRun:             input.SupportsRun,
 		SupportsBuild:           input.SupportsBuild,
-		ToolchainCatalogDigest:  strings.TrimSpace(input.ToolchainCatalogDigest),
 		MaxBuildExecutors:       input.MaxBuildExecutors,
 		MaxRuntimeStarts:        input.MaxRuntimeStarts,
 		ScratchBytes:            input.ScratchBytes,
@@ -861,15 +852,6 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 	if !capabilities.SupportsBuild && capabilities.MaxBuildExecutors != 0 {
 		return api.WorkerCapabilities{}, errors.New("worker max_build_executors must be zero without build role")
 	}
-	if capabilities.SupportsBuild {
-		if _, err := deployment.SHA256DigestBytes(
-			capabilities.ToolchainCatalogDigest,
-		); err != nil {
-			return api.WorkerCapabilities{}, errors.New("build worker toolchain_catalog_digest is invalid")
-		}
-	} else if capabilities.ToolchainCatalogDigest != "" {
-		return api.WorkerCapabilities{}, errors.New("run-only worker must not report toolchain_catalog_digest")
-	}
 	if capabilities.SupportsRun && capabilities.MaxRuntimeStarts <= 0 {
 		return api.WorkerCapabilities{}, errors.New("worker max_runtime_starts must be positive for run role")
 	}
@@ -904,13 +886,6 @@ func (s *Server) validateWorkerBuildPolicy(capabilities api.WorkerCapabilities) 
 	}
 	if s.buildPolicy == nil {
 		return errors.New("build policy is not configured")
-	}
-	expected, err := s.buildPolicy.ToolchainCatalogDigest()
-	if err != nil {
-		return errors.New("build policy standard toolchain catalog is invalid")
-	}
-	if capabilities.ToolchainCatalogDigest != expected {
-		return errors.New("build worker standard toolchain catalog does not match the build policy")
 	}
 	return nil
 }

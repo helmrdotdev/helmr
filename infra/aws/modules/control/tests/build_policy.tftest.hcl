@@ -150,9 +150,9 @@ variables {
   region_id                    = "helmr-us-east"
   default_region_id            = "helmr-us-east"
   control_image                = "example.invalid/helmr@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  runtime_store_uri            = "s3://helmr-test-runtime/objects"
-  runtime_store_bucket_arn     = "arn:aws:s3:::helmr-test-runtime"
-  runtime_store_kms_key_arn    = "arn:aws:kms:us-east-1:000000000000:key/11111111-1111-1111-1111-111111111111"
+  platform_store_uri           = "s3://helmr-test-runtime/objects"
+  platform_store_bucket_arn    = "arn:aws:s3:::helmr-test-runtime"
+  platform_store_kms_key_arn   = "arn:aws:kms:us-east-1:000000000000:key/11111111-1111-1111-1111-111111111111"
   build_policy_digest          = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   clickhouse_url               = "https://clickhouse.example.invalid"
   github_oauth_client_id       = "test-client"
@@ -171,7 +171,7 @@ run "control_installs_exact_policy_before_start" {
         "release",
         "install",
         "--store",
-        var.runtime_store_uri,
+        var.platform_store_uri,
         "--digest",
         var.build_policy_digest,
         "--output",
@@ -199,28 +199,28 @@ run "control_installs_exact_policy_before_start" {
   assert {
     condition = (
       { for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_BUILD_POLICY_PATH == "/release/build-policy.json" &&
-      { for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_RUNTIME_STORE_URI == var.runtime_store_uri &&
+      { for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_PLATFORM_STORE_URI == var.platform_store_uri &&
       !contains([for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name], "HELMR_RETAINED_CAS_URI")
     )
-    error_message = "Only the main Control container must load the installed policy and immutable runtime store."
+    error_message = "Only the main Control container must load the installed policy and immutable Platform Artifact store."
   }
 
   assert {
     condition = (
       !contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name], "HELMR_BUILD_POLICY_PATH") &&
-      !contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name], "HELMR_RUNTIME_STORE_URI") &&
+      !contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name], "HELMR_PLATFORM_STORE_URI") &&
       !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "HELMR_BUILD_POLICY_PATH") &&
-      !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "HELMR_RUNTIME_STORE_URI")
+      !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "HELMR_PLATFORM_STORE_URI")
     )
     error_message = "Dispatcher and migration must not receive build policy configuration."
   }
 
   assert {
     condition = (
-      strcontains(aws_iam_role_policy.control_task.policy, "${var.runtime_store_bucket_arn}/objects/sha256/*") &&
+      strcontains(aws_iam_role_policy.control_task.policy, "${var.platform_store_bucket_arn}/objects/sha256/*") &&
       !strcontains(aws_iam_role_policy.control_task.policy, "PublishRetainedArtifacts") &&
       !strcontains(aws_iam_role_policy.control_task.policy, "ReadRetainedArtifacts") &&
-      !strcontains(aws_iam_role_policy.control_task.policy, "${var.runtime_store_bucket_arn}/control/runtime") &&
+      !strcontains(aws_iam_role_policy.control_task.policy, "${var.platform_store_bucket_arn}/control/runtime") &&
       aws_ecs_task_definition.migration.task_role_arn == aws_iam_role.migration_task.arn &&
       aws_iam_role.migration_task.name == "helmr-test-migration-task"
     )

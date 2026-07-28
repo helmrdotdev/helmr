@@ -69,10 +69,10 @@ override_resource {
 }
 
 variables {
-  runtime_store_uri         = "s3://helmr-test-runtime/objects"
-  runtime_store_bucket_arn  = "arn:aws:s3:::helmr-test-runtime"
-  runtime_store_kms_key_arn = "arn:aws:kms:us-east-1:000000000000:key/11111111-1111-1111-1111-111111111111"
-  build_policy_digest       = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  platform_store_uri         = "s3://helmr-test-runtime/objects"
+  platform_store_bucket_arn  = "arn:aws:s3:::helmr-test-runtime"
+  platform_store_kms_key_arn = "arn:aws:kms:us-east-1:000000000000:key/11111111-1111-1111-1111-111111111111"
+  build_policy_digest        = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 }
 
 run "worker_group_requires_a_role" {

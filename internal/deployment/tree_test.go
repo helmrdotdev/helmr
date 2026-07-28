@@ -17,22 +17,24 @@ func TestProgramArchiveMatchesGoldenStream(t *testing.T) {
 	t.Parallel()
 	entries := programArchiveFixture()
 	var first bytes.Buffer
-	if err := writeProgramArchive(
+	if err := writeTreeArchive(
 		context.Background(),
 		&first,
 		programArtifact,
 		treeEntrySequence(entries),
+		false,
 	); err != nil {
-		t.Fatalf("writeProgramArchive: %v", err)
+		t.Fatalf("writeTreeArchive: %v", err)
 	}
 	var second bytes.Buffer
-	if err := writeProgramArchive(
+	if err := writeTreeArchive(
 		context.Background(),
 		&second,
 		programArtifact,
 		treeEntrySequence(programArchiveFixture()),
+		false,
 	); err != nil {
-		t.Fatalf("writeProgramArchive second: %v", err)
+		t.Fatalf("writeTreeArchive second: %v", err)
 	}
 	if !bytes.Equal(first.Bytes(), second.Bytes()) {
 		t.Fatal("program archive changed across identical writes")
@@ -134,13 +136,14 @@ func TestProgramArchiveRejectsInvalidTrees(t *testing.T) {
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
 			var output bytes.Buffer
-			if err := writeProgramArchive(
+			if err := writeTreeArchive(
 				context.Background(),
 				&output,
 				programArtifact,
 				treeEntrySequence(mutate(valid())),
+				false,
 			); err == nil {
-				t.Fatal("writeProgramArchive returned nil error")
+				t.Fatal("writeTreeArchive returned nil error")
 			}
 		})
 	}
@@ -167,39 +170,32 @@ func TestProgramArchiveRejectsContentLengthMismatch(t *testing.T) {
 	for _, entry := range tests {
 		t.Run(entry.Path, func(t *testing.T) {
 			var output bytes.Buffer
-			if err := writeProgramArchive(
+			if err := writeTreeArchive(
 				context.Background(),
 				&output,
 				programArtifact,
 				treeEntrySequence([]treeEntry{entry}),
+				false,
 			); err == nil {
-				t.Fatal("writeProgramArchive returned nil error")
+				t.Fatal("writeTreeArchive returned nil error")
 			}
 		})
 	}
 }
 
-func TestProgramArchiveRejectsUnsupportedRoleAndCancellation(t *testing.T) {
+func TestProgramArchiveRejectsCancellation(t *testing.T) {
 	t.Parallel()
 	var output bytes.Buffer
-	if err := writeProgramArchive(
-		context.Background(),
-		&output,
-		runtimeArtifact,
-		treeEntrySequence(programArchiveFixture()),
-	); err == nil {
-		t.Fatal("writeProgramArchive accepted a runtime Artifact")
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := writeProgramArchive(
+	if err := writeTreeArchive(
 		ctx,
 		&output,
 		programArtifact,
 		treeEntrySequence(programArchiveFixture()),
+		false,
 	); err == nil {
-		t.Fatal("writeProgramArchive ignored cancellation")
+		t.Fatal("writeTreeArchive ignored cancellation")
 	}
 }
 
@@ -213,12 +209,12 @@ func TestProgramArchiveStreamsEntriesAndPropagatesSourceFailure(t *testing.T) {
 		yield(treeEntry{}, sourceErr)
 	}
 	var output bytes.Buffer
-	err := writeProgramArchive(context.Background(), &output, programArtifact, sequence)
+	err := writeTreeArchive(context.Background(), &output, programArtifact, sequence, false)
 	if !errors.Is(err, sourceErr) {
-		t.Fatalf("writeProgramArchive error = %v, want %v", err, sourceErr)
+		t.Fatalf("writeTreeArchive error = %v, want %v", err, sourceErr)
 	}
 	if output.Len() == 0 {
-		t.Fatal("writeProgramArchive did not stream the accepted entry")
+		t.Fatal("writeTreeArchive did not stream the accepted entry")
 	}
 }
 

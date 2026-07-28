@@ -108,7 +108,7 @@ const (
 	ProgramDrive        = "program"
 	ManagerDrive        = "manager"
 	ManagedRuntimeDrive = "managed_runtime"
-	ToolchainDrive      = "standard_toolchain"
+	ToolchainDrive      = "toolchain"
 	BuildTreeDrive      = "build_tree"
 )
 

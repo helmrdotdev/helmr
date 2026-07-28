@@ -106,7 +106,7 @@ func TestProgramIndexRejectsSharedMutations(t *testing.T) {
 			case "runtime_digest":
 				index.RuntimeDigest = "sha256:" + strings.Repeat("A", 64)
 			case "toolchain_digest":
-				index.StandardToolchainDigest = "sha256:invalid"
+				index.ToolchainDigest = "sha256:invalid"
 			case "manager_name":
 				index.Manager.Name = "pnpm"
 			case "manager_version":

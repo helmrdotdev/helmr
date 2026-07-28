@@ -364,13 +364,17 @@ func createQueuedDeployment(
 	var publicID string
 	deployment, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Deployment, value: &publicID}}, func() (db.Deployment, error) {
 		return store.CreateDeployment(ctx, db.CreateDeploymentParams{
-			ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			PublicID:                   publicID,
-			OrgID:                      pgvalue.UUID(orgID),
-			BuildRegionID:              buildRegionID,
-			BuildNodeVersion:           selection.NodeVersion,
-			BuildManagerName:           string(selection.Manager.Name),
-			BuildManagerVersion:        selection.Manager.Version,
+			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			PublicID:            publicID,
+			OrgID:               pgvalue.UUID(orgID),
+			BuildRegionID:       buildRegionID,
+			BuildNodeVersion:    selection.NodeVersion,
+			BuildManagerName:    string(selection.Manager.Name),
+			BuildManagerVersion: selection.Manager.Version,
+			BuildManagerIntegrity: pgtype.Text{
+				String: selection.Manager.Integrity,
+				Valid:  selection.Manager.Integrity != "",
+			},
 			BuildContractVersion:       deployment.ProgramBuildContractVersion,
 			ProjectID:                  projectID,
 			EnvironmentID:              environmentID,

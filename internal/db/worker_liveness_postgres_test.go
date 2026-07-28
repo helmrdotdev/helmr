@@ -264,7 +264,6 @@ func insertActiveWorkerWithObservation(t *testing.T, ctx context.Context, pool *
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, attestation_fingerprint, state,
 			current_epoch, current_service_id, supervisor_version, supports_build,
-			toolchain_catalog_digest,
 			certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes,
 			certified_scratch_bytes, per_vm_cpu_millis, per_vm_memory_bytes,
 			per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_build_executors,
@@ -272,7 +271,7 @@ func insertActiveWorkerWithObservation(t *testing.T, ctx context.Context, pool *
 			certified_at, activated_at
 		) VALUES (
 			$1, $2, $3, 'sha256:test-attestation', 'active',
-			1, $4, 'test-worker', true, decode(repeat('03', 32), 'hex'),
+			1, $4, 'test-worker', true,
 			1000, 1073741824, 1073741824,
 			1073741824, 1000, 1073741824,
 			1073741824, 1073741824, 1,

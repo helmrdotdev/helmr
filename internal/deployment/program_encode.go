@@ -51,15 +51,15 @@ func EncodeProgram(
 	}
 
 	index := ProgramIndex{
-		Architecture:            provenance.Architecture,
-		BuildContractVersion:    provenance.BuildContractVersion,
-		Declarations:            declarations,
-		FormatVersion:           ProgramIndexFormatVersion,
-		Manager:                 provenance.Manager,
-		RuntimeAPIVersion:       RuntimeAPIVersion,
-		RuntimeDigest:           provenance.RuntimeDigest,
-		StandardToolchainDigest: provenance.StandardToolchainDigest,
-		Submitted:               provenance.Submitted,
+		Architecture:         provenance.Architecture,
+		BuildContractVersion: provenance.BuildContractVersion,
+		Declarations:         declarations,
+		FormatVersion:        ProgramIndexFormatVersion,
+		Manager:              provenance.Manager,
+		RuntimeAPIVersion:    RuntimeAPIVersion,
+		RuntimeDigest:        provenance.RuntimeDigest,
+		ToolchainDigest:      provenance.ToolchainDigest,
+		Submitted:            provenance.Submitted,
 	}
 	indexRaw, err := CanonicalProgramIndex(index)
 	if err != nil {

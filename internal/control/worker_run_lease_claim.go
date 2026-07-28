@@ -77,10 +77,11 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response, err := projectRunLeaseClaimResponse(
+		r.Context(),
 		responseAuthority,
 		envelopes,
 		projection,
-		s.buildPolicy,
+		s.platformStore,
 		s.secretDelivery,
 		s.workspaceFencingKeys,
 	)

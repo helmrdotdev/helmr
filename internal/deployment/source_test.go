@@ -119,6 +119,25 @@ func TestInspectSourceAcceptsCanonicalCLIArtifact(t *testing.T) {
 	}
 }
 
+func TestInspectSourcePreservesCorepackManagerIntegrity(t *testing.T) {
+	integrity := "sha256." + strings.Repeat("a", 64)
+	files := map[string]string{
+		"package.json":   `{"devEngines":{"runtime":{"name":"node","version":"24.16.0"}},"packageManager":"pnpm@11.1.0+` + integrity + `","type":"module"}`,
+		"pnpm-lock.yaml": "lockfileVersion: '9.0'",
+	}
+	selection, err := InspectSource(sourceTar(t, files, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selection.Manager != (PackageManager{
+		Integrity: integrity,
+		Name:      PackageManagerPNPM,
+		Version:   "11.1.0",
+	}) {
+		t.Fatalf("selection manager = %#v", selection.Manager)
+	}
+}
+
 func TestInspectSourceRejectsAmbiguousOrInvalidAuthority(t *testing.T) {
 	tests := map[string]map[string]string{
 		"missing package manager": {
@@ -127,6 +146,14 @@ func TestInspectSourceRejectsAmbiguousOrInvalidAuthority(t *testing.T) {
 		},
 		"manager range": {
 			"package.json": `{"devEngines":{"runtime":{"name":"node","version":"24.16.0"}},"packageManager":"bun@^1.3.11","type":"module"}`,
+			"bun.lock":     "lock",
+		},
+		"invalid manager integrity": {
+			"package.json":      `{"devEngines":{"runtime":{"name":"node","version":"24.16.0"}},"packageManager":"npm@11.4.2+sha256.not-hex","type":"module"}`,
+			"package-lock.json": `{"lockfileVersion":3}`,
+		},
+		"bun integrity suffix": {
+			"package.json": `{"devEngines":{"runtime":{"name":"node","version":"24.16.0"}},"packageManager":"bun@1.3.11+sha256.` + strings.Repeat("a", 64) + `","type":"module"}`,
 			"bun.lock":     "lock",
 		},
 		"missing selected lockfile": {

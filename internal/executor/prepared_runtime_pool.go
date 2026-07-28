@@ -86,8 +86,7 @@ type PreparedRuntimePool struct {
 	AdmitRuntimeStart     func(context.Context) error
 	Capacity              *capacity.Ledger
 	RuntimeScratchBytes   int64
-	RuntimeCatalog        *deployment.RuntimeCatalog
-	RuntimeStore          cas.Reader
+	PlatformStore         cas.Reader
 	RuntimeArchitecture   deployment.RuntimeArchitecture
 	VerifierCgroupRoot    string
 
@@ -924,37 +923,27 @@ func (p *PreparedRuntimePool) prepareProgram(
 	if strings.TrimSpace(program.DeploymentID) == "" {
 		return nil, func() error { return nil }, errors.New("Program deployment id is required")
 	}
-	if p.RuntimeCatalog == nil || p.RuntimeStore == nil {
+	if p.PlatformStore == nil {
 		return nil, func() error { return nil }, errors.New("Managed Runtime delivery is not configured")
 	}
-	runtimeDescriptor, err := deployment.RuntimeDescriptorFromWire(program.Runtime)
-	if err != nil {
-		return nil, func() error { return nil }, fmt.Errorf("decode Managed Runtime descriptor: %w", err)
-	}
-	registeredRuntime, err := p.RuntimeCatalog.Resolve(runtimeDescriptor.Digest)
-	if err != nil {
-		return nil, func() error { return nil }, fmt.Errorf("resolve authenticated Managed Runtime: %w", err)
-	}
-	if registeredRuntime != runtimeDescriptor {
-		return nil, func() error { return nil }, errors.New("Managed Runtime descriptor does not match authenticated catalog")
-	}
-	if runtimeDescriptor.Architecture != p.RuntimeArchitecture {
-		return nil, func() error { return nil }, fmt.Errorf(
-			"Managed Runtime architecture %q does not match worker architecture %q",
-			runtimeDescriptor.Architecture,
-			p.RuntimeArchitecture,
-		)
-	}
-	if string(runtimeDescriptor.Architecture) != target.Source.WorkspaceArchitecture {
+	if string(p.RuntimeArchitecture) != target.Source.WorkspaceArchitecture {
 		return nil, func() error { return nil }, fmt.Errorf(
 			"Managed Runtime architecture %q does not match Workspace architecture %q",
-			runtimeDescriptor.Architecture,
+			p.RuntimeArchitecture,
 			target.Source.WorkspaceArchitecture,
 		)
 	}
+	runtimeDescriptor := deployment.RuntimeDescriptor{
+		Architecture:      p.RuntimeArchitecture,
+		Digest:            program.Runtime.Digest,
+		FormatVersion:     deployment.RuntimeDescriptorFormatVersion,
+		MediaType:         program.Runtime.MediaType,
+		RuntimeAPIVersion: deployment.RuntimeAPIVersion,
+		SizeBytes:         program.Runtime.SizeBytes,
+	}
 	runtimeSnapshot, err := deployment.SnapshotRuntimeObject(
 		ctx,
-		p.RuntimeStore,
+		p.PlatformStore,
 		tempDir,
 		runtimeDescriptor,
 	)

@@ -51,25 +51,6 @@ func TestRuntimeDescriptorRoundTrip(t *testing.T) {
 	}
 }
 
-func TestRuntimeDescriptorWireRoundTrip(t *testing.T) {
-	descriptor := testRuntimeDescriptor()
-	wire, err := RuntimeDescriptorWire(descriptor)
-	if err != nil {
-		t.Fatalf("RuntimeDescriptorWire: %v", err)
-	}
-	parsed, err := RuntimeDescriptorFromWire(wire)
-	if err != nil {
-		t.Fatalf("RuntimeDescriptorFromWire: %v", err)
-	}
-	if parsed != descriptor {
-		t.Fatalf("descriptor = %#v, want %#v", parsed, descriptor)
-	}
-	wire.MediaType = "application/octet-stream"
-	if _, err := RuntimeDescriptorFromWire(wire); err == nil {
-		t.Fatal("RuntimeDescriptorFromWire accepted an invalid descriptor")
-	}
-}
-
 func TestRuntimeArchitectureGoBoundary(t *testing.T) {
 	tests := map[string]RuntimeArchitecture{
 		"amd64": ArchitectureX8664,

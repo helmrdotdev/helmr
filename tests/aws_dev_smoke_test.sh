@@ -337,9 +337,9 @@ DEV_TFVARS="$tfvars" \
   DEV_PUBLIC_URL=https://replacement.example.com \
   DEV_GITHUB_OAUTH_CLIENT_ID=Iv1.example \
   DEV_BOOTSTRAP_OWNER_EMAIL=owner@example.com \
-  RUNTIME_STORE_URI=s3://runtime-store/runtime \
-  RUNTIME_STORE_BUCKET_ARN=arn:aws:s3:::runtime-store \
-  RUNTIME_STORE_KMS_KEY_ARN=arn:aws:kms:us-west-2:123456789012:key/runtime \
+  PLATFORM_STORE_URI=s3://platform-store/runtime \
+  PLATFORM_STORE_BUCKET_ARN=arn:aws:s3:::platform-store \
+  PLATFORM_STORE_KMS_KEY_ARN=arn:aws:kms:us-west-2:123456789012:key/runtime \
   DEV_BUILD_POLICY_DIGEST=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   DEV_CLICKHOUSE_URL=https://example.clickhouse.cloud:8443 \
   DEV_CLICKHOUSE_PASSWORD_SECRET_ARN=arn:aws:secretsmanager:us-west-2:123456789012:secret:clickhouse \
@@ -365,9 +365,9 @@ if DEV_TFVARS="$tfvars" \
   DEV_CONTROL_IMAGE=123456789012.dkr.ecr.us-west-2.amazonaws.com/helmr-control:test \
   DEV_PUBLIC_URL=https://replacement.example.com \
   DEV_GITHUB_OAUTH_CLIENT_ID=Iv1.example \
-  RUNTIME_STORE_URI=s3://runtime-store/runtime \
-  RUNTIME_STORE_BUCKET_ARN=arn:aws:s3:::runtime-store \
-  RUNTIME_STORE_KMS_KEY_ARN=arn:aws:kms:us-west-2:123456789012:key/runtime \
+  PLATFORM_STORE_URI=s3://platform-store/runtime \
+  PLATFORM_STORE_BUCKET_ARN=arn:aws:s3:::platform-store \
+  PLATFORM_STORE_KMS_KEY_ARN=arn:aws:kms:us-west-2:123456789012:key/runtime \
   DEV_BUILD_POLICY_DIGEST=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   DEV_CLICKHOUSE_URL=https://example.clickhouse.cloud:8443 \
   DEV_CLICKHOUSE_PASSWORD_SECRET_ARN=arn:aws:secretsmanager:us-west-2:123456789012:secret:clickhouse \
@@ -404,35 +404,15 @@ chmod +x "$tmp/bin/tofu"
 state_dir="$tmp/state"
 mkdir -p "$state_dir"
 source_commit="$(git -C "$repo_root" rev-parse HEAD)"
-workflow_identity="https://github.com/helmrdotdev/helmr/.github/workflows/release.yaml@refs/heads/test"
-jq -cn \
-  --arg commit "$source_commit" \
-  --arg identity "$workflow_identity" \
-  '{commit:$commit,workflowIdentity:$identity}' \
-  >"$state_dir/authenticated-dev-release-provenance.json"
-printf '%064d\n' 0 >"$state_dir/worker-release-package-sha256"
-printf '%s\n' version-1 >"$state_dir/worker-release-package-version-id"
-provenance_sha="$(sha256_stdin <"$state_dir/authenticated-dev-release-provenance.json")"
-version_sha="$(printf '%s' version-1 | sha256_stdin)"
-san_sha="$(printf '%s' "$workflow_identity" | sha256_stdin)"
 MOCK_AMI_JSON="$tmp/worker-ami.json"
 jq -cn \
   --arg ami "ami-0bbbbbbbbbbbbbbbb" \
-  --arg commit "$source_commit" \
-  --arg package "$(cat "$state_dir/worker-release-package-sha256")" \
-  --arg provenance "$provenance_sha" \
-  --arg san "$san_sha" \
-  --arg version "$version_sha" '
+  --arg commit "$source_commit" '
   {
     Images:[{
       ImageId:$ami,
       Tags:[
-        {Key:"HelmrReleaseTrustMode",Value:"development"},
-        {Key:"HelmrSourceCommit",Value:$commit},
-        {Key:"HelmrDevReleaseProvenanceSHA256",Value:$provenance},
-        {Key:"HelmrReleasePackageSHA256",Value:$package},
-        {Key:"HelmrReleasePackageVersionSHA256",Value:$version},
-        {Key:"HelmrReleaseTrustSANHash",Value:$san}
+        {Key:"HelmrSourceCommit",Value:$commit}
       ]
     }]
   }' >"$MOCK_AMI_JSON"

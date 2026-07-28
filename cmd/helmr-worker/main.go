@@ -15,6 +15,13 @@ func main() {
 		}
 		return
 	}
+	if handled, err := runPlatformAcquisitionChild(context.Background(), os.Args); handled {
+		if err != nil {
+			_, _ = os.Stderr.WriteString(err.Error() + "\n")
+			os.Exit(1)
+		}
+		return
+	}
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	if len(os.Args) > 1 {
 		switch os.Args[1] {

@@ -15,6 +15,8 @@ func runReleaseCommand(ctx context.Context, args []string) error {
 	switch args[0] {
 	case "install":
 		return deployment.RunReleaseInstall(ctx, args[1:])
+	case "publish":
+		return deployment.RunReleasePublish(ctx, args[1:])
 	default:
 		return fmt.Errorf("unknown release command %q", args[0])
 	}

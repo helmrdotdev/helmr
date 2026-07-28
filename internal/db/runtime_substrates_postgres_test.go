@@ -278,7 +278,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	mustAuthorityExec(t, ctx, pool, `
 		INSERT INTO deployments (
 			id, public_id, org_id, build_region_id, project_id, environment_id,
-			build_node_version, build_runtime_digest, build_standard_toolchain_digest,
+			build_node_version, build_runtime_digest, build_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
 			build_contract_version, version, content_hash, deployment_source_artifact_id,
 			queue_config, status

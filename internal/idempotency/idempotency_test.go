@@ -90,6 +90,7 @@ func TestDeploymentCreateFingerprintBindsBuildAuthority(t *testing.T) {
 		NodeVersion:          "24.16.0",
 		ManagerName:          "pnpm",
 		ManagerVersion:       "11.1.0",
+		ManagerIntegrity:     "sha256.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		BuildContractVersion: "helmr.program-build.v0",
 	}
 	first, err := NewDeploymentCreateRequest(environmentID, projectID, "deploy-1", fingerprint)
@@ -118,7 +119,7 @@ func TestDeploymentCreateFingerprintBindsBuildAuthority(t *testing.T) {
 	if replayed.New || replayed.Claim.ID != created.Claim.ID {
 		t.Fatalf("replayed claim = %+v", replayed)
 	}
-	fingerprint.ManagerVersion = "11.2.0"
+	fingerprint.ManagerIntegrity = "sha256.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	conflicting, err := NewDeploymentCreateRequest(environmentID, projectID, "deploy-1", fingerprint)
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +168,14 @@ func TestSlotHashFramesEveryAuthorityField(t *testing.T) {
 		scope:         []byte("ab"),
 		key:           "c",
 	}
-	if idempotencySlotHash(base) != idempotencySlotHash(base) {
+	first := idempotencySlotHash(base)
+	equivalent := request{
+		environmentID: environmentID,
+		operation:     operationActorInputSend,
+		scope:         []byte("ab"),
+		key:           "c",
+	}
+	if first != idempotencySlotHash(equivalent) {
 		t.Fatal("slot hash is not deterministic")
 	}
 	changes := []request{
@@ -176,7 +184,7 @@ func TestSlotHashFramesEveryAuthorityField(t *testing.T) {
 		{environmentID: environmentID, operation: base.operation, scope: []byte("a"), key: "bc"},
 	}
 	for _, changed := range changes {
-		if idempotencySlotHash(base) == idempotencySlotHash(changed) {
+		if first == idempotencySlotHash(changed) {
 			t.Fatalf("distinct authority tuple produced the same slot hash: %+v", changed)
 		}
 	}

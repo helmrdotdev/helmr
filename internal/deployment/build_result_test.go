@@ -484,12 +484,12 @@ func testBuildProvenance(t *testing.T) BuildProvenance {
 	t.Helper()
 	index := testProgramOutput(t).Index
 	return BuildProvenance{
-		Architecture:            index.Architecture,
-		BuildContractVersion:    index.BuildContractVersion,
-		Manager:                 index.Manager,
-		RuntimeDigest:           index.RuntimeDigest,
-		StandardToolchainDigest: index.StandardToolchainDigest,
-		Submitted:               index.Submitted,
+		Architecture:         index.Architecture,
+		BuildContractVersion: index.BuildContractVersion,
+		Manager:              index.Manager,
+		RuntimeDigest:        index.RuntimeDigest,
+		ToolchainDigest:      index.ToolchainDigest,
+		Submitted:            index.Submitted,
 	}
 }
 

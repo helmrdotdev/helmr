@@ -41,60 +41,6 @@ variable "source_bundle_kms_key_arn" {
   nullable    = true
 }
 
-variable "release_trust_mode" {
-  description = "Compiled release attestation trust domain for Helmr binaries."
-  type        = string
-  default     = "production"
-}
-
-variable "release_trust_san" {
-  description = "Exact GitHub Actions workflow identity compiled into development binaries."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "release_trust_source_digest" {
-  description = "Exact source commit compiled into development release verification."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "release_provenance_sha256" {
-  description = "SHA-256 of the locally verified development release provenance bound into the output AMI."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "release_package_s3_uri" {
-  description = "Exact S3 URI for the versioned Worker runtime release package."
-  type        = string
-}
-
-variable "release_package_object_arn" {
-  description = "Exact S3 object ARN for release_package_s3_uri."
-  type        = string
-}
-
-variable "release_package_kms_key_arn" {
-  description = "Optional KMS key ARN used to encrypt the Worker runtime release package."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "release_package_version_id" {
-  description = "Exact S3 object version containing the Worker runtime release package."
-  type        = string
-}
-
-variable "release_package_sha256" {
-  description = "Exact lowercase SHA-256 of the uncompressed Worker runtime release package tar."
-  type        = string
-}
-
 variable "parent_image" {
   description = "Optional parent AMI or Image Builder image ARN."
   type        = string

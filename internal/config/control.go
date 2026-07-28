@@ -31,7 +31,7 @@ func LoadControl() (Control, error) {
 		ClickHousePassword:    envString("HELMR_CLICKHOUSE_PASSWORD"),
 		CASURI:                envString("HELMR_CAS_URI"),
 		BuildPolicyPath:       envString("HELMR_BUILD_POLICY_PATH"),
-		RuntimeStoreURI:       envString("HELMR_RUNTIME_STORE_URI"),
+		PlatformStoreURI:      envString("HELMR_PLATFORM_STORE_URI"),
 		WorkerTokenSigningKey: envString("HELMR_WORKER_TOKEN_SIGNING_KEY"),
 		WorkerGroupsJSON:      envString("HELMR_WORKER_GROUPS"),
 		SetupToken:            envString("HELMR_SETUP_TOKEN"),
@@ -105,8 +105,8 @@ func LoadControl() (Control, error) {
 	if cfg.BuildPolicyPath == "" {
 		return cfg, errors.New("HELMR_BUILD_POLICY_PATH is required")
 	}
-	if cfg.RuntimeStoreURI == "" {
-		return cfg, errors.New("HELMR_RUNTIME_STORE_URI is required")
+	if cfg.PlatformStoreURI == "" {
+		return cfg, errors.New("HELMR_PLATFORM_STORE_URI is required")
 	}
 	if cfg.WorkerTokenSigningKey == "" {
 		return cfg, errors.New("HELMR_WORKER_TOKEN_SIGNING_KEY is required")

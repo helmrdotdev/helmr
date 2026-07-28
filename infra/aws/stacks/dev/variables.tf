@@ -51,18 +51,18 @@ variable "default_region_id" {
   nullable    = true
 }
 
-variable "runtime_store_uri" {
-  description = "Dedicated immutable managed-runtime store URI exported by the bootstrap module."
+variable "platform_store_uri" {
+  description = "Dedicated immutable Platform Artifact store URI exported by the bootstrap module."
   type        = string
 }
 
-variable "runtime_store_bucket_arn" {
-  description = "Managed-runtime store bucket ARN exported by the bootstrap module."
+variable "platform_store_bucket_arn" {
+  description = "Platform Artifact store bucket ARN exported by the bootstrap module."
   type        = string
 }
 
-variable "runtime_store_kms_key_arn" {
-  description = "Managed-runtime store KMS key ARN exported by the bootstrap module."
+variable "platform_store_kms_key_arn" {
+  description = "Platform Artifact store KMS key ARN exported by the bootstrap module."
   type        = string
 }
 

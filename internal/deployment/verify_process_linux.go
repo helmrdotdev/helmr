@@ -319,7 +319,7 @@ func createVerifierCgroup(
 		_ = unix.Unlinkat(rootFD, leaf, unix.AT_REMOVEDIR)
 		return "", nil, fmt.Errorf("open artifact verifier cgroup: %w", err)
 	}
-	if err := configureVerifierCgroup(cgroupFD); err != nil {
+	if err := configureVerifierCgroup(cgroupFD, job); err != nil {
 		unix.Close(cgroupFD)
 		_ = unix.Unlinkat(rootFD, leaf, unix.AT_REMOVEDIR)
 		return "", nil, err
@@ -347,8 +347,23 @@ func verifierCgroupLeaf(job verifierJob, leaseIdentity string) (string, error) {
 	return "verifier-" + string(job) + "-" + leaseIdentity, nil
 }
 
-func configureVerifierCgroup(cgroupFD int) error {
-	for _, limit := range verifierCgroupLimits {
+func configureVerifierCgroup(cgroupFD int, job verifierJob) error {
+	limits := verifierCgroupLimits
+	if job.conformance() {
+		limits = append([]struct {
+			file  string
+			value string
+		}(nil), verifierCgroupLimits...)
+		for index := range limits {
+			switch limits[index].file {
+			case "memory.max":
+				limits[index].value = "4294967296"
+			case "pids.max":
+				limits[index].value = "64"
+			}
+		}
+	}
+	for _, limit := range limits {
 		controlFD, err := unix.Openat(
 			cgroupFD,
 			limit.file,

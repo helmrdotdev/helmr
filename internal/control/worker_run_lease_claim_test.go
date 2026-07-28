@@ -178,7 +178,8 @@ func newWorkerRunLeaseClaimHTTPFixture(
 	server := &Server{
 		log:                  discardTestLogger(),
 		db:                   store,
-		buildPolicy:          claimResponseBuildPolicy(),
+		buildPolicy:          controlBuildPolicy(t),
+		platformStore:        claimResponsePlatformStore{},
 		secretDelivery:       &recordingSecretDeliveryOpener{},
 		workspaceFencingKeys: keys,
 	}

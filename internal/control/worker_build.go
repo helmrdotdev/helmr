@@ -29,17 +29,18 @@ type workerMessagePayload struct {
 }
 
 type deploymentBuildCompletionAuthority struct {
-	buildNodeVersion             string
-	buildRuntimeDigest           []byte
-	buildStandardToolchainDigest []byte
-	buildManagerName             string
-	buildManagerVersion          string
-	buildManagerDigest           []byte
-	buildContractVersion         string
-	sourceArtifactID             pgtype.UUID
-	sourceDigest                 string
-	sourceSizeBytes              int64
-	sourceMediaType              string
+	buildNodeVersion      string
+	buildRuntimeDigest    []byte
+	buildToolchainDigest  []byte
+	buildManagerName      string
+	buildManagerVersion   string
+	buildManagerIntegrity pgtype.Text
+	buildManagerDigest    []byte
+	buildContractVersion  string
+	sourceArtifactID      pgtype.UUID
+	sourceDigest          string
+	sourceSizeBytes       int64
+	sourceMediaType       string
 }
 
 type normalizedDeploymentDefinition struct {
@@ -79,11 +80,12 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	leaseExpiresAt := time.Now().Add(deploymentBuildLeaseDuration)
-	if s.buildPolicy == nil {
+	if s.buildPolicy == nil || s.platformStore == nil {
 		writeError(w, unavailable(errors.New("deployment build authority is not configured")))
 		return
 	}
-	var response api.WorkerDeploymentBuildLeaseResponse
+	var claimed db.ClaimNextDeploymentBuildLeaseRow
+	var found bool
 	err := s.inTx(r.Context(), func(work *txWork) error {
 		row, err := work.q.ClaimNextDeploymentBuildLease(r.Context(), db.ClaimNextDeploymentBuildLeaseParams{
 			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
@@ -96,76 +98,8 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return fmt.Errorf("claim assigned deployment build: %w", err)
 		}
-		runtimeDigest, err := deployment.RuntimeDigestString(row.BuildRuntimeDigest)
-		if err != nil {
-			return fmt.Errorf("read deployment build runtime digest: %w", err)
-		}
-		toolchainDigest, err := deployment.SHA256DigestString(
-			row.BuildStandardToolchainDigest,
-		)
-		if err != nil {
-			return fmt.Errorf("read deployment build standard toolchain digest: %w", err)
-		}
-		managerDigest, err := deployment.SHA256DigestString(
-			row.BuildManagerDigest,
-		)
-		if err != nil {
-			return fmt.Errorf("read deployment build Manager digest: %w", err)
-		}
-		target, err := s.buildPolicy.Resolve(
-			runtimeDigest,
-			toolchainDigest,
-			row.BuildContractVersion,
-		)
-		if err != nil {
-			return fmt.Errorf("resolve deployment build target: %w", err)
-		}
-		runtimeWire, err := deployment.RuntimeDescriptorWire(target.Runtime)
-		if err != nil {
-			return fmt.Errorf("encode deployment build runtime descriptor: %w", err)
-		}
-		deploymentID := pgvalue.MustUUIDValue(row.DeploymentID).String()
-		lease := api.WorkerDeploymentBuildLease{
-			ID:                         pgvalue.MustUUIDValue(row.ID).String(),
-			OrgID:                      pgvalue.MustUUIDValue(row.OrgID).String(),
-			ProjectID:                  pgvalue.MustUUIDValue(row.ProjectID).String(),
-			EnvironmentID:              pgvalue.MustUUIDValue(row.EnvironmentID).String(),
-			DeploymentID:               deploymentID,
-			WorkerGroupID:              row.WorkerGroupID,
-			WorkerInstanceID:           pgvalue.MustUUIDValue(row.WorkerInstanceID).String(),
-			WorkerEpoch:                row.WorkerEpoch,
-			LeaseSequence:              row.LeaseSequence,
-			WorkerProtocolVersion:      row.WorkerProtocolVersion,
-			ExpiresAt:                  leaseExpiresAt,
-			RequestedWorkloadDiskBytes: row.RequestedWorkloadDiskBytes,
-			RequestedScratchBytes:      row.RequestedScratchBytes,
-			RequestedCPUMillis:         row.RequestedCpuMillis,
-			RequestedMemoryBytes:       row.RequestedMemoryBytes,
-			RequestedBuildExecutors:    row.RequestedBuildExecutors,
-		}
-		build := api.WorkerDeploymentBuild{
-			ID:                    deploymentID,
-			Version:               row.Version,
-			APIVersion:            row.ApiVersion,
-			WorkerProtocolVersion: row.WorkerProtocolVersion,
-			ProjectID:             pgvalue.MustUUIDValue(row.ProjectID).String(),
-			EnvironmentID:         pgvalue.MustUUIDValue(row.EnvironmentID).String(),
-			DeploymentSource: api.DeploymentSourceArtifact{
-				Digest:    row.DeploymentSourceDigest,
-				SizeBytes: row.SourceSizeBytes,
-				MediaType: row.SourceMediaType,
-			},
-			Runtime:     runtimeWire,
-			NodeVersion: row.BuildNodeVersion,
-			Manager: api.WorkerManagerPin{
-				Digest:  managerDigest,
-				Name:    row.BuildManagerName,
-				Version: row.BuildManagerVersion,
-			},
-			StandardToolchainDigest: target.StandardToolchainDigest,
-			BuildContractVersion:    target.BuildContractVersion,
-		}
-		response = api.WorkerDeploymentBuildLeaseResponse{Lease: &lease, Deployment: &build}
+		claimed = row
+		found = true
 		return nil
 	})
 	if err != nil {
@@ -173,7 +107,110 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		writeError(w, errors.New("claim assigned deployment build"))
 		return
 	}
+	if !found {
+		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildLeaseResponse{})
+		return
+	}
+	response, err := s.deploymentBuildLeaseResponse(r.Context(), claimed, leaseExpiresAt)
+	if err != nil {
+		s.log.Error("project claimed deployment build failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
+		writeError(w, errors.New("project claimed deployment build"))
+		return
+	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) deploymentBuildLeaseResponse(
+	ctx context.Context,
+	row db.ClaimNextDeploymentBuildLeaseRow,
+	expiresAt time.Time,
+) (api.WorkerDeploymentBuildLeaseResponse, error) {
+	runtimeDigest, err := deployment.RuntimeDigestString(row.BuildRuntimeDigest)
+	if err != nil {
+		return api.WorkerDeploymentBuildLeaseResponse{}, fmt.Errorf("read deployment build runtime digest: %w", err)
+	}
+	toolchainDigest, err := deployment.SHA256DigestString(row.BuildToolchainDigest)
+	if err != nil {
+		return api.WorkerDeploymentBuildLeaseResponse{}, fmt.Errorf("read deployment build toolchain digest: %w", err)
+	}
+	managerDigest, err := deployment.SHA256DigestString(row.BuildManagerDigest)
+	if err != nil {
+		return api.WorkerDeploymentBuildLeaseResponse{}, fmt.Errorf("read deployment build Manager digest: %w", err)
+	}
+	runtimeObject, err := s.platformObject(ctx, runtimeDigest, deployment.RuntimeArtifactMediaType)
+	if err != nil {
+		return api.WorkerDeploymentBuildLeaseResponse{}, err
+	}
+	managerObject, err := s.platformObject(ctx, managerDigest, deployment.ManagerTreeMediaType)
+	if err != nil {
+		return api.WorkerDeploymentBuildLeaseResponse{}, err
+	}
+	toolchainObject, err := s.platformObject(ctx, toolchainDigest, deployment.ToolchainMediaType)
+	if err != nil {
+		return api.WorkerDeploymentBuildLeaseResponse{}, err
+	}
+	deploymentID := pgvalue.MustUUIDValue(row.DeploymentID).String()
+	lease := api.WorkerDeploymentBuildLease{
+		ID:                         pgvalue.MustUUIDValue(row.ID).String(),
+		OrgID:                      pgvalue.MustUUIDValue(row.OrgID).String(),
+		ProjectID:                  pgvalue.MustUUIDValue(row.ProjectID).String(),
+		EnvironmentID:              pgvalue.MustUUIDValue(row.EnvironmentID).String(),
+		DeploymentID:               deploymentID,
+		WorkerGroupID:              row.WorkerGroupID,
+		WorkerInstanceID:           pgvalue.MustUUIDValue(row.WorkerInstanceID).String(),
+		WorkerEpoch:                row.WorkerEpoch,
+		LeaseSequence:              row.LeaseSequence,
+		WorkerProtocolVersion:      row.WorkerProtocolVersion,
+		ExpiresAt:                  expiresAt,
+		RequestedWorkloadDiskBytes: row.RequestedWorkloadDiskBytes,
+		RequestedScratchBytes:      row.RequestedScratchBytes,
+		RequestedCPUMillis:         row.RequestedCpuMillis,
+		RequestedMemoryBytes:       row.RequestedMemoryBytes,
+		RequestedBuildExecutors:    row.RequestedBuildExecutors,
+	}
+	build := api.WorkerDeploymentBuild{
+		ID:                    deploymentID,
+		Version:               row.Version,
+		APIVersion:            row.ApiVersion,
+		WorkerProtocolVersion: row.WorkerProtocolVersion,
+		ProjectID:             pgvalue.MustUUIDValue(row.ProjectID).String(),
+		EnvironmentID:         pgvalue.MustUUIDValue(row.EnvironmentID).String(),
+		DeploymentSource: api.DeploymentSourceArtifact{
+			Digest:    row.DeploymentSourceDigest,
+			SizeBytes: row.SourceSizeBytes,
+			MediaType: row.SourceMediaType,
+		},
+		Runtime:     runtimeObject,
+		NodeVersion: row.BuildNodeVersion,
+		Manager: api.WorkerManagerPin{
+			Artifact:  managerObject,
+			Integrity: row.BuildManagerIntegrity.String,
+			Name:      row.BuildManagerName,
+			Version:   row.BuildManagerVersion,
+		},
+		Toolchain:            toolchainObject,
+		BuildContractVersion: row.BuildContractVersion,
+	}
+	return api.WorkerDeploymentBuildLeaseResponse{Lease: &lease, Deployment: &build}, nil
+}
+
+func (s *Server) platformObject(
+	ctx context.Context,
+	digest string,
+	mediaType string,
+) (api.CASObject, error) {
+	object, err := s.platformStore.Stat(ctx, digest)
+	if err != nil {
+		return api.CASObject{}, fmt.Errorf("stat Platform Artifact %s: %w", digest, err)
+	}
+	if object.Digest != digest || object.MediaType != mediaType || object.SizeBytes < 1 {
+		return api.CASObject{}, errors.New("Platform Artifact metadata does not match its Deployment pin")
+	}
+	return api.CASObject{
+		Digest:    object.Digest,
+		SizeBytes: object.SizeBytes,
+		MediaType: object.MediaType,
+	}, nil
 }
 
 func (s *Server) workerStartDeploymentBuild(w http.ResponseWriter, r *http.Request) {
@@ -465,17 +502,18 @@ func deploymentBuildAuthority(
 	row db.GetDeploymentBuildCompletionAuthorityRow,
 ) deploymentBuildCompletionAuthority {
 	return deploymentBuildCompletionAuthority{
-		buildNodeVersion:             row.BuildNodeVersion,
-		buildRuntimeDigest:           append([]byte(nil), row.BuildRuntimeDigest...),
-		buildStandardToolchainDigest: append([]byte(nil), row.BuildStandardToolchainDigest...),
-		buildManagerName:             row.BuildManagerName,
-		buildManagerVersion:          row.BuildManagerVersion,
-		buildManagerDigest:           append([]byte(nil), row.BuildManagerDigest...),
-		buildContractVersion:         row.BuildContractVersion,
-		sourceArtifactID:             row.DeploymentSourceArtifactID,
-		sourceDigest:                 row.DeploymentSourceDigest,
-		sourceSizeBytes:              row.DeploymentSourceSizeBytes,
-		sourceMediaType:              row.DeploymentSourceMediaType,
+		buildNodeVersion:      row.BuildNodeVersion,
+		buildRuntimeDigest:    append([]byte(nil), row.BuildRuntimeDigest...),
+		buildToolchainDigest:  append([]byte(nil), row.BuildToolchainDigest...),
+		buildManagerName:      row.BuildManagerName,
+		buildManagerVersion:   row.BuildManagerVersion,
+		buildManagerIntegrity: row.BuildManagerIntegrity,
+		buildManagerDigest:    append([]byte(nil), row.BuildManagerDigest...),
+		buildContractVersion:  row.BuildContractVersion,
+		sourceArtifactID:      row.DeploymentSourceArtifactID,
+		sourceDigest:          row.DeploymentSourceDigest,
+		sourceSizeBytes:       row.DeploymentSourceSizeBytes,
+		sourceMediaType:       row.DeploymentSourceMediaType,
 	}
 }
 
@@ -483,17 +521,18 @@ func lockedDeploymentBuildAuthority(
 	row db.LockDeploymentBuildTerminalFenceRow,
 ) deploymentBuildCompletionAuthority {
 	return deploymentBuildCompletionAuthority{
-		buildNodeVersion:             row.BuildNodeVersion,
-		buildRuntimeDigest:           row.BuildRuntimeDigest,
-		buildStandardToolchainDigest: row.BuildStandardToolchainDigest,
-		buildManagerName:             row.BuildManagerName,
-		buildManagerVersion:          row.BuildManagerVersion,
-		buildManagerDigest:           row.BuildManagerDigest,
-		buildContractVersion:         row.BuildContractVersion,
-		sourceArtifactID:             row.DeploymentSourceArtifactID,
-		sourceDigest:                 row.DeploymentSourceDigest,
-		sourceSizeBytes:              row.DeploymentSourceSizeBytes,
-		sourceMediaType:              row.DeploymentSourceMediaType,
+		buildNodeVersion:      row.BuildNodeVersion,
+		buildRuntimeDigest:    row.BuildRuntimeDigest,
+		buildToolchainDigest:  row.BuildToolchainDigest,
+		buildManagerName:      row.BuildManagerName,
+		buildManagerVersion:   row.BuildManagerVersion,
+		buildManagerIntegrity: row.BuildManagerIntegrity,
+		buildManagerDigest:    row.BuildManagerDigest,
+		buildContractVersion:  row.BuildContractVersion,
+		sourceArtifactID:      row.DeploymentSourceArtifactID,
+		sourceDigest:          row.DeploymentSourceDigest,
+		sourceSizeBytes:       row.DeploymentSourceSizeBytes,
+		sourceMediaType:       row.DeploymentSourceMediaType,
 	}
 }
 
@@ -503,11 +542,12 @@ func (authority deploymentBuildCompletionAuthority) equal(
 	return authority.buildNodeVersion == other.buildNodeVersion &&
 		bytes.Equal(authority.buildRuntimeDigest, other.buildRuntimeDigest) &&
 		bytes.Equal(
-			authority.buildStandardToolchainDigest,
-			other.buildStandardToolchainDigest,
+			authority.buildToolchainDigest,
+			other.buildToolchainDigest,
 		) &&
 		authority.buildManagerName == other.buildManagerName &&
 		authority.buildManagerVersion == other.buildManagerVersion &&
+		authority.buildManagerIntegrity == other.buildManagerIntegrity &&
 		bytes.Equal(authority.buildManagerDigest, other.buildManagerDigest) &&
 		authority.buildContractVersion == other.buildContractVersion &&
 		authority.sourceArtifactID == other.sourceArtifactID &&
@@ -540,35 +580,25 @@ func (s *Server) prepareDeploymentBuild(
 	if s.cas == nil {
 		return preparedDeploymentBuild{}, errors.New("deployment build CAS is not configured")
 	}
-	if s.buildPolicy == nil {
-		return preparedDeploymentBuild{}, errors.New("build policy is not configured")
-	}
 	runtimeDigest, err := deployment.RuntimeDigestString(authority.buildRuntimeDigest)
 	if err != nil {
 		return preparedDeploymentBuild{}, errors.New("deployment build runtime digest is invalid")
 	}
 	toolchainDigest, err := deployment.SHA256DigestString(
-		authority.buildStandardToolchainDigest,
+		authority.buildToolchainDigest,
 	)
 	if err != nil {
 		return preparedDeploymentBuild{}, errors.New(
-			"deployment build standard toolchain digest is invalid",
+			"deployment build toolchain digest is invalid",
 		)
 	}
-	target, err := s.buildPolicy.Resolve(
-		runtimeDigest,
-		toolchainDigest,
-		authority.buildContractVersion,
-	)
-	if err != nil {
-		return preparedDeploymentBuild{}, errors.New(
-			"deployment build target is not registered",
-		)
+	if authority.buildContractVersion != deployment.ProgramBuildContractVersion {
+		return preparedDeploymentBuild{}, errors.New("deployment build contract is unsupported")
 	}
 	if err := deployment.ValidateBuildResultTarget(
 		result,
-		target.Runtime.Digest,
-		target.Runtime.Architecture,
+		runtimeDigest,
+		deployment.ArchitectureX8664,
 	); err != nil {
 		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{err: err}
 	}
@@ -598,10 +628,10 @@ func (s *Server) prepareDeploymentBuild(
 			err: errors.New("deployment build Manager digest is invalid"),
 		}
 	}
-	if succeeded.Provenance.Architecture != target.Runtime.Architecture ||
-		succeeded.Provenance.BuildContractVersion != target.BuildContractVersion ||
-		succeeded.Provenance.RuntimeDigest != target.Runtime.Digest ||
-		succeeded.Provenance.StandardToolchainDigest != target.StandardToolchainDigest ||
+	if succeeded.Provenance.Architecture != deployment.ArchitectureX8664 ||
+		succeeded.Provenance.BuildContractVersion != authority.buildContractVersion ||
+		succeeded.Provenance.RuntimeDigest != runtimeDigest ||
+		succeeded.Provenance.ToolchainDigest != toolchainDigest ||
 		succeeded.Provenance.Submitted.SourceDigest != authority.sourceDigest ||
 		succeeded.Provenance.Submitted.LockfileName != selection.LockfileName ||
 		succeeded.Provenance.Submitted.LockfileDigest != selection.LockfileDigest ||
@@ -609,6 +639,7 @@ func (s *Server) prepareDeploymentBuild(
 		succeeded.Provenance.Manager.Version != authority.buildManagerVersion ||
 		succeeded.Provenance.Manager.Name != selection.Manager.Name ||
 		succeeded.Provenance.Manager.Version != selection.Manager.Version ||
+		selection.Manager.Integrity != authority.buildManagerIntegrity.String ||
 		succeeded.Provenance.Manager.Digest != managerDigest {
 		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{
 			err: errManagerAuthorityMismatch,

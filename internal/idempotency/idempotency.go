@@ -94,6 +94,7 @@ type DeploymentCreateFingerprint struct {
 	NodeVersion          string `json:"nodeVersion"`
 	ManagerName          string `json:"managerName"`
 	ManagerVersion       string `json:"managerVersion"`
+	ManagerIntegrity     string `json:"managerIntegrity,omitempty"`
 	BuildContractVersion string `json:"buildContractVersion"`
 }
 

@@ -502,14 +502,24 @@ func parseSourceManager(value string) (PackageManager, error) {
 	if value != strings.TrimSpace(value) {
 		return PackageManager{}, errors.New("submitted source packageManager is not exact")
 	}
-	name, version, found := strings.Cut(value, "@")
-	if !found || name == "" || version == "" {
+	name, reference, found := strings.Cut(value, "@")
+	if !found || name == "" || reference == "" {
 		return PackageManager{}, errors.New(
 			"submitted source packageManager must be npm@<version>, pnpm@<version>, or bun@<version>",
 		)
 	}
-	manager := PackageManager{Name: PackageManagerName(name), Version: version}
-	if err := validateManagerPackage(manager); err != nil {
+	version, integrity, hasIntegrity := strings.Cut(reference, "+")
+	if hasIntegrity && integrity == "" {
+		return PackageManager{}, errors.New(
+			"submitted source packageManager integrity is empty",
+		)
+	}
+	manager := PackageManager{
+		Integrity: integrity,
+		Name:      PackageManagerName(name),
+		Version:   version,
+	}
+	if err := ValidatePackageManager(manager); err != nil {
 		return PackageManager{}, fmt.Errorf("submitted source packageManager: %w", err)
 	}
 	return manager, nil

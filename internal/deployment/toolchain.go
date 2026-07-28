@@ -39,26 +39,26 @@ func CanonicalToolchain(value Toolchain) ([]byte, error) {
 func ParseToolchain(raw []byte) (Toolchain, error) {
 	if len(raw) == 0 || len(raw) > maxToolchainBytes {
 		return Toolchain{}, fmt.Errorf(
-			"standard toolchain size is outside [1,%d]",
+			"toolchain size is outside [1,%d]",
 			maxToolchainBytes,
 		)
 	}
 	canonical, err := jsoncanon.Transform(raw)
 	if err != nil {
-		return Toolchain{}, fmt.Errorf("canonicalize standard toolchain: %w", err)
+		return Toolchain{}, fmt.Errorf("canonicalize toolchain: %w", err)
 	}
 	if !bytes.Equal(raw, canonical) {
 		return Toolchain{}, errors.New(
-			"standard toolchain is not RFC 8785 canonical JSON",
+			"toolchain is not RFC 8785 canonical JSON",
 		)
 	}
 	var value Toolchain
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&value); err != nil {
-		return Toolchain{}, fmt.Errorf("decode standard toolchain: %w", err)
+		return Toolchain{}, fmt.Errorf("decode toolchain: %w", err)
 	}
-	if err := ensureEOF(decoder, "standard toolchain"); err != nil {
+	if err := ensureEOF(decoder, "toolchain"); err != nil {
 		return Toolchain{}, err
 	}
 	complete, err := CanonicalToolchain(value)
@@ -67,13 +67,13 @@ func ParseToolchain(raw []byte) (Toolchain, error) {
 	}
 	if !bytes.Equal(raw, complete) {
 		return Toolchain{}, errors.New(
-			"standard toolchain does not match the complete closed v0 shape",
+			"toolchain does not match the complete closed v0 shape",
 		)
 	}
 	return value, nil
 }
 
-func StandardToolchainDigest(value Toolchain) (string, error) {
+func ToolchainDigest(value Toolchain) (string, error) {
 	canonical, err := CanonicalToolchain(value)
 	if err != nil {
 		return "", err
@@ -107,17 +107,17 @@ func SHA256DigestString(value []byte) (string, error) {
 func validateToolchain(value Toolchain) error {
 	if value.FormatVersion != ToolchainFormatVersion {
 		return fmt.Errorf(
-			"standard toolchain formatVersion = %d, want %d",
+			"toolchain formatVersion = %d, want %d",
 			value.FormatVersion,
 			ToolchainFormatVersion,
 		)
 	}
 	if err := ValidateRuntimeArchitecture(value.Architecture); err != nil {
-		return fmt.Errorf("standard toolchain: %w", err)
+		return fmt.Errorf("toolchain: %w", err)
 	}
 	if !validToolDigest(value.ManagedRuntimeDigest) {
 		return errors.New(
-			"standard toolchain managedRuntimeDigest is not a lowercase SHA-256 digest",
+			"toolchain managedRuntimeDigest is not a lowercase SHA-256 digest",
 		)
 	}
 	return validateToolArtifact(
@@ -156,15 +156,15 @@ func validToolDigest(value string) bool {
 func canonicalToolchainDocument(value Toolchain) ([]byte, error) {
 	raw, err := json.Marshal(value)
 	if err != nil {
-		return nil, fmt.Errorf("encode standard toolchain: %w", err)
+		return nil, fmt.Errorf("encode toolchain: %w", err)
 	}
 	canonical, err := jsoncanon.Transform(raw)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize standard toolchain: %w", err)
+		return nil, fmt.Errorf("canonicalize toolchain: %w", err)
 	}
 	if len(canonical) == 0 || len(canonical) > maxToolchainBytes {
 		return nil, fmt.Errorf(
-			"standard toolchain size is outside [1,%d]",
+			"toolchain size is outside [1,%d]",
 			maxToolchainBytes,
 		)
 	}

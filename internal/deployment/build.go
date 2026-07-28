@@ -23,16 +23,12 @@ import (
 )
 
 type Builder struct {
-	WorkDir        string
-	CAS            cas.Store
-	RuntimeStore   cas.Reader
-	ManagerCatalog *ManagerCatalog
-	ManagerTrees   *ManagerTrees
-	Policy         *BuildPolicy
-	Toolchains     *ToolchainCorpus
-	Connector      vm.Connector
-	Encoder        string
-	Images         buildmodel.Engine
+	WorkDir       string
+	CAS           cas.Store
+	PlatformStore cas.Reader
+	Connector     vm.Connector
+	Encoder       string
+	Images        buildmodel.Engine
 }
 
 func (builder Builder) Build(
@@ -67,25 +63,41 @@ func (builder Builder) build(
 	if err := builder.validate(); err != nil {
 		return BuildResult{}, err
 	}
-	runtimeDescriptor, err := RuntimeDescriptorFromWire(work.Runtime)
+	if work.BuildContractVersion != ProgramBuildContractVersion {
+		return failedBuild(BuildFailureUnsupportedToolchain, errors.New("Deployment build contract is unsupported")), nil
+	}
+	managerPin := PackageManager{
+		Integrity: work.Manager.Integrity,
+		Name:      PackageManagerName(work.Manager.Name),
+		Version:   work.Manager.Version,
+	}
+	if err := ValidatePackageManager(managerPin); err != nil {
+		return failedBuild(BuildFailureUnsupportedToolchain, err), nil
+	}
+	runtime := BuildRuntime{
+		Artifact:    platformArtifactDescriptor(work.Runtime),
+		NodeVersion: work.NodeVersion,
+	}
+	managerKind, managerPath, _, err := managerDistribution(managerPin)
 	if err != nil {
 		return failedBuild(BuildFailureUnsupportedToolchain, err), nil
 	}
-	target, err := builder.Policy.Resolve(
-		runtimeDescriptor.Digest,
-		work.StandardToolchainDigest,
-		work.BuildContractVersion,
-	)
-	if err != nil || target.Runtime != runtimeDescriptor {
-		return failedBuild(
-			BuildFailureUnsupportedToolchain,
-			errors.New("Deployment build target is not admitted by Worker policy"),
-		), nil
+	manager := BuildManager{
+		Artifact:       platformArtifactDescriptor(work.Manager.Artifact),
+		Entrypoint:     ManagerEntrypoint{Kind: managerKind, Path: managerPath},
+		PackageManager: managerPin,
 	}
-	toolchain, err := builder.Policy.ResolveToolchain(
-		target.StandardToolchainDigest,
-	)
-	if err != nil {
+	toolchain := BuildToolchain{
+		Artifact:      platformArtifactDescriptor(work.Toolchain),
+		RuntimeDigest: work.Runtime.Digest,
+	}
+	if err := validateBuildRuntime(runtime); err != nil {
+		return failedBuild(BuildFailureUnsupportedToolchain, err), nil
+	}
+	if err := validateBuildManager(manager); err != nil {
+		return failedBuild(BuildFailureManagerNotFound, err), nil
+	}
+	if err := validateBuildToolchain(toolchain); err != nil {
 		return failedBuild(BuildFailureUnsupportedToolchain, err), nil
 	}
 
@@ -97,29 +109,16 @@ func (builder Builder) build(
 		returnErr = errors.Join(returnErr, source.Close())
 	}()
 
-	managerPin := PackageManager{
-		Name:    PackageManagerName(work.Manager.Name),
-		Version: work.Manager.Version,
-	}
 	if managerPin != selection.Manager {
 		return failedBuild(
 			BuildFailureInvalidSource,
 			errors.New("Deployment Manager pin does not match submitted source"),
 		), nil
 	}
-	manager, err := builder.ManagerCatalog.ResolvePinned(
-		managerPin,
-		target.Runtime.Architecture,
-		work.Manager.Digest,
-	)
-	if err != nil {
-		return failedBuild(BuildFailureManagerNotFound, err), nil
-	}
-
-	managerSnapshot, err := builder.ManagerTrees.Snapshot(
+	managerSnapshot, err := builder.snapshotPlatformObject(
 		ctx,
-		builder.WorkDir,
-		manager,
+		managerArtifact,
+		manager.Artifact,
 	)
 	if err != nil {
 		return BuildResult{}, err
@@ -127,11 +126,10 @@ func (builder Builder) build(
 	defer func() {
 		returnErr = errors.Join(returnErr, managerSnapshot.Close())
 	}()
-	runtimeSnapshot, err := SnapshotRuntimeObject(
+	runtimeSnapshot, err := builder.snapshotPlatformObject(
 		ctx,
-		builder.RuntimeStore,
-		builder.WorkDir,
-		target.Runtime,
+		runtimeArtifact,
+		runtime.Artifact,
 	)
 	if err != nil {
 		return BuildResult{}, err
@@ -139,18 +137,10 @@ func (builder Builder) build(
 	defer func() {
 		returnErr = errors.Join(returnErr, runtimeSnapshot.Close())
 	}()
-	toolchainFile, err := builder.Toolchains.OpenToolchain(ctx, toolchain)
-	if err != nil {
-		return BuildResult{}, err
-	}
-	defer func() {
-		returnErr = errors.Join(returnErr, toolchainFile.Close())
-	}()
-	toolchainSnapshot, err := snapshotToolchain(
+	toolchainSnapshot, err := builder.snapshotPlatformObject(
 		ctx,
-		builder.WorkDir,
-		toolchain.ToolchainClosure,
-		toolchainFile.File(),
+		toolchainArtifact,
+		toolchain.Artifact,
 	)
 	if err != nil {
 		return BuildResult{}, err
@@ -158,7 +148,6 @@ func (builder Builder) build(
 	defer func() {
 		returnErr = errors.Join(returnErr, toolchainSnapshot.Close())
 	}()
-
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
 		return BuildResult{}, fmt.Errorf("rewind submitted source: %w", err)
 	}
@@ -171,13 +160,12 @@ func (builder Builder) build(
 		ctx,
 		lease.ID,
 		BuildInstallRequest{
-			FormatVersion:     BuildGuestFormatVersion,
-			Manager:           manager,
-			ManagerDigest:     manager.Tree.Digest,
-			Runtime:           target.Runtime,
-			StandardToolchain: toolchain,
-			SourceDigest:      work.DeploymentSource.Digest,
-			SourceSizeBytes:   work.DeploymentSource.SizeBytes,
+			FormatVersion:   BuildGuestFormatVersion,
+			Manager:         manager,
+			Runtime:         runtime,
+			Toolchain:       toolchain,
+			SourceDigest:    work.DeploymentSource.Digest,
+			SourceSizeBytes: work.DeploymentSource.SizeBytes,
 		},
 		source,
 		managerSnapshot,
@@ -208,10 +196,10 @@ func (builder Builder) build(
 		ctx,
 		lease.ID,
 		BuildVerificationRequest{
-			FormatVersion:     BuildGuestFormatVersion,
-			Runtime:           target.Runtime,
-			StandardToolchain: toolchain,
-			Tree:              treeDescriptor,
+			FormatVersion: BuildGuestFormatVersion,
+			Runtime:       runtime,
+			Toolchain:     toolchain,
+			Tree:          treeDescriptor,
 		},
 		runtimeSnapshot,
 		toolchainSnapshot,
@@ -231,15 +219,15 @@ func (builder Builder) build(
 		return fail(BuildFailureInvalidPlan, err), nil
 	}
 	provenance := BuildProvenance{
-		Architecture:         target.Runtime.Architecture,
-		BuildContractVersion: target.BuildContractVersion,
+		Architecture:         ArchitectureX8664,
+		BuildContractVersion: work.BuildContractVersion,
 		Manager: ProgramManager{
-			Digest:  manager.Tree.Digest,
+			Digest:  manager.Artifact.Digest,
 			Name:    selection.Manager.Name,
 			Version: selection.Manager.Version,
 		},
-		RuntimeDigest:           target.Runtime.Digest,
-		StandardToolchainDigest: target.StandardToolchainDigest,
+		RuntimeDigest:   runtime.Artifact.Digest,
+		ToolchainDigest: toolchain.Artifact.Digest,
 		Submitted: ProgramSubmittedSource{
 			LockfileDigest: selection.LockfileDigest,
 			LockfileName:   selection.LockfileName,
@@ -281,7 +269,7 @@ func (builder Builder) build(
 		lease,
 		plan,
 		tree,
-		target.Runtime.Architecture,
+		ArchitectureX8664,
 	)
 	if err != nil {
 		var fatal interface{ FatalWorker() bool }
@@ -303,8 +291,8 @@ func (builder Builder) build(
 	}
 	if err := ValidateBuildResultTarget(
 		result,
-		target.Runtime.Digest,
-		target.Runtime.Architecture,
+		runtime.Artifact.Digest,
+		ArchitectureX8664,
 	); err != nil {
 		return BuildResult{}, err
 	}
@@ -319,16 +307,8 @@ func (builder Builder) validate() error {
 		return errors.New("deployment build work directory must be an absolute clean path")
 	case builder.CAS == nil:
 		return errors.New("deployment build CAS is required")
-	case builder.RuntimeStore == nil:
-		return errors.New("managed Runtime store is required")
-	case builder.ManagerCatalog == nil:
-		return errors.New("Manager catalog is required")
-	case builder.ManagerTrees == nil:
-		return errors.New("Manager trees are required")
-	case builder.Policy == nil:
-		return errors.New("build policy is required")
-	case builder.Toolchains == nil:
-		return errors.New("standard toolchain corpus is required")
+	case builder.PlatformStore == nil:
+		return errors.New("Platform Artifact store is required")
 	case builder.Connector == nil:
 		return errors.New("build guest connector is required")
 	case builder.Images == nil:
@@ -338,6 +318,63 @@ func (builder Builder) validate() error {
 		return err
 	}
 	return nil
+}
+
+func platformArtifactDescriptor(object api.CASObject) ArtifactDescriptor {
+	return ArtifactDescriptor{
+		Digest:    object.Digest,
+		SizeBytes: object.SizeBytes,
+		MediaType: object.MediaType,
+	}
+}
+
+func (builder Builder) snapshotPlatformObject(
+	ctx context.Context,
+	role artifactRole,
+	descriptor ArtifactDescriptor,
+) (*ArtifactSnapshot, error) {
+	spec, err := artifactSnapshotSpecForRole(role)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateArtifactSnapshotDescriptor(
+		spec,
+		artifactSnapshotDescriptor{
+			Digest: descriptor.Digest, MediaType: descriptor.MediaType, SizeBytes: descriptor.SizeBytes,
+		},
+	); err != nil {
+		return nil, err
+	}
+	object, err := builder.PlatformStore.Stat(ctx, descriptor.Digest)
+	if err != nil {
+		return nil, fmt.Errorf("stat %s Platform Artifact: %w", spec.label, err)
+	}
+	if object.Digest != descriptor.Digest ||
+		object.SizeBytes != descriptor.SizeBytes ||
+		object.MediaType != descriptor.MediaType {
+		return nil, fmt.Errorf("%s Platform Artifact metadata does not match its pin", spec.label)
+	}
+	body, err := builder.PlatformStore.Get(ctx, descriptor.Digest)
+	if err != nil {
+		return nil, fmt.Errorf("open %s Platform Artifact: %w", spec.label, err)
+	}
+	content, snapshotErr := snapshotArtifact(
+		ctx,
+		builder.WorkDir,
+		role,
+		artifactSnapshotDescriptor{
+			Digest: descriptor.Digest, MediaType: descriptor.MediaType, SizeBytes: descriptor.SizeBytes,
+		},
+		body,
+	)
+	closeErr := body.Close()
+	if snapshotErr != nil || closeErr != nil {
+		if content != nil {
+			_ = content.Close()
+		}
+		return nil, errors.Join(snapshotErr, closeErr)
+	}
+	return &ArtifactSnapshot{content: content}, nil
 }
 
 func failedBuild(reason BuildFailureReason, cause error) BuildResult {

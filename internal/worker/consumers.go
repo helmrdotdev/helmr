@@ -21,6 +21,7 @@ type runConsumer struct {
 	mu     sync.Mutex
 	active map[api.WorkerRunLeaseWork]struct{}
 }
+type platformAcquisitionConsumer struct{ runner *Runner }
 type buildConsumer struct{ runner *Runner }
 type workspaceConsumer struct{ runner *Runner }
 
@@ -51,6 +52,9 @@ func (s *buildLeaseState) set(lease api.WorkerDeploymentBuildLease) {
 
 func NewRunConsumer(runner *Runner) Consumer {
 	return &runConsumer{runner: runner, active: make(map[api.WorkerRunLeaseWork]struct{})}
+}
+func NewPlatformAcquisitionConsumer(runner *Runner) Consumer {
+	return platformAcquisitionConsumer{runner: runner}
 }
 func NewBuildConsumer(runner *Runner) Consumer { return buildConsumer{runner: runner} }
 func NewWorkspaceConsumer(runner *Runner) Consumer {
@@ -101,6 +105,63 @@ func (c *runConsumer) Claim(ctx context.Context) (Work, bool, error) {
 	}, true, nil
 }
 
+func (c platformAcquisitionConsumer) Claim(ctx context.Context) (Work, bool, error) {
+	r := c.runner
+	next, err := r.client.NextPlatformAcquisition(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("read Platform acquisition: %w", err)
+	}
+	if next.Acquisition == nil {
+		return nil, false, nil
+	}
+	acquisition := *next.Acquisition
+	policyDigest, err := r.buildPolicy.Digest()
+	if err != nil {
+		return nil, true, &fatalWorkerError{err: fmt.Errorf("read build policy digest: %w", err)}
+	}
+	if acquisition.BuildPolicyDigest != policyDigest {
+		return nil, true, &fatalWorkerError{err: errors.New("Control and Worker build policies differ")}
+	}
+	if r.platformAcquirer == nil {
+		return nil, true, &fatalWorkerError{err: errors.New("Platform acquirer is not configured")}
+	}
+	return func(workCtx context.Context) error {
+		candidates, err := r.platformAcquirer.Acquire(workCtx, acquisition)
+		if err != nil {
+			var deterministic interface {
+				PlatformAcquisitionFailureReason() api.WorkerPlatformAcquisitionFailureReason
+			}
+			if !errors.As(err, &deterministic) {
+				return fmt.Errorf("acquire Platform Artifacts for Deployment %s: %w", acquisition.DeploymentID, err)
+			}
+			raw, _ := json.Marshal(map[string]string{"message": err.Error()})
+			_, reportErr := r.client.FailPlatformAcquisition(
+				workCtx,
+				api.WorkerPlatformAcquisitionFailRequest{
+					Acquisition: acquisition,
+					Reason:      deterministic.PlatformAcquisitionFailureReason(),
+					Error:       raw,
+				},
+			)
+			if isStaleLease(reportErr) {
+				return nil
+			}
+			return reportErr
+		}
+		_, err = r.client.CompletePlatformAcquisition(
+			workCtx,
+			api.WorkerPlatformAcquisitionCompleteRequest{
+				Acquisition: acquisition,
+				Candidates:  candidates,
+			},
+		)
+		if isStaleLease(err) {
+			return nil
+		}
+		return err
+	}, true, nil
+}
+
 func (c buildConsumer) Claim(ctx context.Context) (Work, bool, error) {
 	r := c.runner
 	leased, err := r.client.LeaseDeploymentBuild(ctx)
@@ -111,7 +172,7 @@ func (c buildConsumer) Claim(ctx context.Context) (Work, bool, error) {
 		return nil, false, nil
 	}
 	lease, deployment := *leased.Lease, *leased.Deployment
-	if err := validateBuildEnvelope(r.capabilities, r.buildPolicy, deployment); err != nil {
+	if err := validateBuildEnvelope(r.capabilities, deployment); err != nil {
 		return nil, true, r.rejectBuild(ctx, lease, "requirements_unsupported", err)
 	}
 	if err := validateBuildLeaseShape(r.capabilities, lease); err != nil {
@@ -169,24 +230,10 @@ func (c buildConsumer) Claim(ctx context.Context) (Work, bool, error) {
 
 func validateBuildEnvelope(
 	capabilities api.WorkerCapabilities,
-	policy BuildPolicy,
 	build api.WorkerDeploymentBuild,
 ) error {
-	runtime, err := deployment.RuntimeDescriptorFromWire(build.Runtime)
-	if err != nil {
-		return fmt.Errorf("deployment runtime descriptor: %w", err)
-	}
-	if string(runtime.Architecture) != capabilities.RuntimeArch {
-		return fmt.Errorf(
-			"deployment runtime architecture %q does not match worker architecture %q",
-			runtime.Architecture,
-			capabilities.RuntimeArch,
-		)
-	}
-	if _, err := deployment.SHA256DigestBytes(
-		build.StandardToolchainDigest,
-	); err != nil {
-		return fmt.Errorf("deployment standard toolchain digest: %w", err)
+	if capabilities.RuntimeArch != string(deployment.ArchitectureX8664) {
+		return fmt.Errorf("build worker architecture %q is unsupported", capabilities.RuntimeArch)
 	}
 	if build.BuildContractVersion != deployment.ProgramBuildContractVersion {
 		return fmt.Errorf(
@@ -197,19 +244,30 @@ func validateBuildEnvelope(
 	if !capabilities.SupportsBuild {
 		return errors.New("worker is not certified for builds")
 	}
-	if policy == nil {
-		return errors.New("build worker policy is required")
+	manager := deployment.PackageManager{
+		Integrity: build.Manager.Integrity,
+		Name:      deployment.PackageManagerName(build.Manager.Name),
+		Version:   build.Manager.Version,
 	}
-	target, err := policy.Resolve(
-		runtime.Digest,
-		build.StandardToolchainDigest,
-		build.BuildContractVersion,
-	)
-	if err != nil {
-		return fmt.Errorf("deployment build target: %w", err)
+	if err := deployment.ValidatePackageManager(manager); err != nil {
+		return fmt.Errorf("deployment Manager selector: %w", err)
 	}
-	if target.Runtime != runtime {
-		return errors.New("deployment runtime descriptor does not exact-match worker policy")
+	for name, object := range map[string]api.CASObject{
+		"runtime":   build.Runtime,
+		"Manager":   build.Manager.Artifact,
+		"toolchain": build.Toolchain,
+	} {
+		if _, err := deployment.SHA256DigestBytes(object.Digest); err != nil {
+			return fmt.Errorf("deployment %s digest: %w", name, err)
+		}
+		if object.SizeBytes < 1 {
+			return fmt.Errorf("deployment %s size is invalid", name)
+		}
+	}
+	if build.Runtime.MediaType != deployment.RuntimeArtifactMediaType ||
+		build.Manager.Artifact.MediaType != deployment.ManagerTreeMediaType ||
+		build.Toolchain.MediaType != deployment.ToolchainMediaType {
+		return errors.New("deployment Platform Artifact media type is invalid")
 	}
 	return nil
 }

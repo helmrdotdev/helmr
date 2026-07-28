@@ -52,33 +52,6 @@ git clone '${source_repository_url}' "$repo"
 git -C "$repo" checkout '${source_ref}'
 
 cd "$repo"
-release_trust_mode='${release_trust_mode}'
-release_trust_san='${release_trust_san}'
-release_trust_source_digest='${release_trust_source_digest}'
-build_tags=embed_console
-release_trust_ldflags=
-case "$release_trust_mode" in
-  production)
-    test -z "$release_trust_san"
-    test -z "$release_trust_source_digest"
-    ;;
-  development)
-    test "$(git rev-parse HEAD)" = "$release_trust_source_digest"
-    case "$release_trust_san" in
-      https://github.com/helmrdotdev/helmr/.github/workflows/release.yaml@refs/heads/*) ;;
-      *) echo "invalid development release workflow identity" >&2; exit 1 ;;
-    esac
-    printf '%s\n' "$release_trust_source_digest" | grep -Eq '^[0-9a-f]{40}$'
-    build_tags=embed_console,helmrdevtrust
-    release_trust_ldflags="-X github.com/helmrdotdev/helmr/internal/deployment.devReleaseCertificateSAN=$release_trust_san -X github.com/helmrdotdev/helmr/internal/deployment.devReleaseSourceRepositoryDigest=$release_trust_source_digest"
-    ;;
-  *)
-    echo "invalid release trust mode" >&2
-    exit 1
-    ;;
-esac
-export HELMR_IMAGE_BUILD_TAGS="$build_tags"
-export HELMR_IMAGE_RELEASE_TRUST_LDFLAGS="$release_trust_ldflags"
 nix develop .#smoke-linux -c bash -euo pipefail <<'EOF'
 retry() {
   local attempts=$1
@@ -102,22 +75,11 @@ install -d -m 0755 /usr/local/bin /opt/cni/bin /etc/cni/conf.d
 bun install --frozen-lockfile --ignore-scripts
 make console-build
 retry 4 go mod download
-GOFLAGS='' CGO_ENABLED=0 go build -tags "$HELMR_IMAGE_BUILD_TAGS" -ldflags="$HELMR_IMAGE_RELEASE_TRUST_LDFLAGS" -o /usr/local/bin/helmr-worker ./cmd/helmr-worker
-GOFLAGS='' go build -tags "$HELMR_IMAGE_BUILD_TAGS" -ldflags="$HELMR_IMAGE_RELEASE_TRUST_LDFLAGS" -o /usr/local/bin/helmr ./cmd/helmr
-GOFLAGS='' go build -tags "$HELMR_IMAGE_BUILD_TAGS" -ldflags="$HELMR_IMAGE_RELEASE_TRUST_LDFLAGS" -o /usr/local/bin/helmr-control ./cmd/helmr-control
-GOFLAGS='' go build -tags "$HELMR_IMAGE_BUILD_TAGS" -ldflags="$HELMR_IMAGE_RELEASE_TRUST_LDFLAGS" -o /usr/local/bin/helmr-dispatcher ./cmd/helmr-dispatcher
+GOFLAGS='' CGO_ENABLED=0 go build -tags embed_console -o /usr/local/bin/helmr-worker ./cmd/helmr-worker
+GOFLAGS='' go build -tags embed_console -o /usr/local/bin/helmr ./cmd/helmr
+GOFLAGS='' go build -tags embed_console -o /usr/local/bin/helmr-control ./cmd/helmr-control
+GOFLAGS='' go build -tags embed_console -o /usr/local/bin/helmr-dispatcher ./cmd/helmr-dispatcher
 make images
-manager_release="$(nix build --no-link --print-out-paths .#managerRelease)"
-install -d -m 0755 /usr/lib/helmr/manager-release/objects/sha256
-while IFS= read -r object; do
-  install -m 0444 \
-    "$manager_release/objects/sha256/$object" \
-    "/usr/lib/helmr/manager-release/objects/sha256/$object"
-done < <(
-  find "$manager_release/objects/sha256" \
-    -mindepth 1 -maxdepth 1 -type f -printf '%f\n' |
-    LC_ALL=C sort
-)
 
 install -m 0755 "$(command -v firecracker)" /usr/local/bin/firecracker
 install -m 0755 "$(command -v jailer)" /usr/local/bin/jailer
@@ -127,29 +89,14 @@ install -m 0755 "$(command -v rootlesskit)" /usr/local/bin/rootlesskit
 install -m 0755 "$(command -v slirp4netns)" /usr/local/bin/slirp4netns
 install -m 0755 "$(command -v fuse-overlayfs)" /usr/local/bin/fuse-overlayfs
 install -m 0755 "$(command -v runc)" /usr/local/bin/runc
+install -m 0755 "$(command -v gpgv)" /usr/local/bin/gpgv
+install -m 0755 "$(command -v mksquashfs)" /usr/local/bin/mksquashfs
+install -m 0755 "$(command -v patchelf)" /usr/local/bin/patchelf
+install -m 0755 "$(command -v xz)" /usr/local/bin/xz
 for plugin in ptp host-local firewall tc-redirect-tap; do
   install -m 0755 "$(command -v "$plugin")" "/opt/cni/bin/$plugin"
 done
 EOF
-
-for binary in \
-  /usr/local/bin/helmr-worker \
-  /usr/local/bin/helmr \
-  /usr/local/bin/helmr-control \
-  /usr/local/bin/helmr-dispatcher; do
-  case "$release_trust_mode" in
-    production)
-      if strings "$binary" | grep -Fq 'release.yaml@refs/heads/'; then
-        echo "production binary contains the development release identity" >&2
-        exit 1
-      fi
-      ;;
-    development)
-      strings "$binary" | grep -Fqx "$release_trust_san"
-      strings "$binary" | grep -Fqx "$release_trust_source_digest"
-      ;;
-  esac
-done
 
 install -d -m 0755 /var/lib/helmr/images/guest
 rm -rf /var/lib/helmr/images/guest/out

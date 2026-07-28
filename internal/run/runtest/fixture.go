@@ -107,7 +107,7 @@ func New(t *testing.T) Fixture {
 	MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO deployments (
 			id, public_id, org_id, project_id, environment_id, build_region_id,
-			build_node_version, build_runtime_digest, build_standard_toolchain_digest,
+			build_node_version, build_runtime_digest, build_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
 			build_contract_version, version, content_hash, deployment_source_artifact_id,
 			program_artifact_id, program_index_digest, queue_config, status

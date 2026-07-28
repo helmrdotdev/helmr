@@ -33,7 +33,7 @@ func TestVerifierResultRoundTrip(t *testing.T) {
 			if err := writeVerifierVerified(&output, test.job, test.payload); err != nil {
 				t.Fatal(err)
 			}
-			result, err := readVerifierResult(bytes.NewReader(output.Bytes()), test.job)
+			result, err := readVerifierResultForTest(bytes.NewReader(output.Bytes()), test.job)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -74,7 +74,7 @@ func TestVerifierResultRoundTrip(t *testing.T) {
 			if err := test.write(&output); err != nil {
 				t.Fatal(err)
 			}
-			result, err := readVerifierResult(bytes.NewReader(output.Bytes()), programVerifierJob)
+			result, err := readVerifierResultForTest(bytes.NewReader(output.Bytes()), programVerifierJob)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -94,7 +94,7 @@ func TestVerifierFramingLeavesVerifiedPayloadOpaque(t *testing.T) {
 	if err := writeVerifierVerified(&output, runtimeVerifierJob, payload); err != nil {
 		t.Fatal(err)
 	}
-	result, err := readVerifierResult(bytes.NewReader(output.Bytes()), runtimeVerifierJob)
+	result, err := readVerifierResultForTest(bytes.NewReader(output.Bytes()), runtimeVerifierJob)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,11 +163,18 @@ func TestVerifierResultRejectsMalformedOutput(t *testing.T) {
 			if name == "runtime verified bound" {
 				job = runtimeVerifierJob
 			}
-			if _, err := readVerifierResult(bytes.NewReader(input), job); err == nil {
+			if _, err := readVerifierResultForTest(bytes.NewReader(input), job); err == nil {
 				t.Fatal("malformed result was accepted")
 			}
 		})
 	}
+}
+
+func readVerifierResultForTest(reader *bytes.Reader, job verifierJob) (verifierProcessResult, error) {
+	if err := readVerifierReady(reader); err != nil {
+		return verifierProcessResult{}, err
+	}
+	return readVerifierTerminal(reader, job)
 }
 
 func TestVerifierResultValidatesPayloadBoundsAndDiagnostics(t *testing.T) {
@@ -223,9 +230,9 @@ func canonicalVerifierProgramIndex(t *testing.T) []byte {
 			Name:    PackageManagerBun,
 			Version: "1.3.10",
 		},
-		RuntimeAPIVersion:       RuntimeAPIVersion,
-		RuntimeDigest:           "sha256:" + strings.Repeat("0", 64),
-		StandardToolchainDigest: "sha256:" + strings.Repeat("4", 64),
+		RuntimeAPIVersion: RuntimeAPIVersion,
+		RuntimeDigest:     "sha256:" + strings.Repeat("0", 64),
+		ToolchainDigest:   "sha256:" + strings.Repeat("4", 64),
 		Submitted: ProgramSubmittedSource{
 			LockfileDigest: "sha256:" + strings.Repeat("5", 64),
 			LockfileName:   "bun.lock",

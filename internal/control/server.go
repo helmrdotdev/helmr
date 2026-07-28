@@ -54,6 +54,10 @@ type SecretManager interface {
 	ResolveScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) (api.ResolvedSecrets, error)
 }
 
+type PlatformArtifactLocker interface {
+	With(context.Context, []string, func() error) error
+}
+
 type Server struct {
 	log                   *slog.Logger
 	deploymentMode        string
@@ -66,8 +70,8 @@ type Server struct {
 	auth                  auth.Authenticator
 	cas                   cas.Store
 	buildPolicy           *deployment.BuildPolicy
-	runtimeStore          cas.Reader
-	managerCatalog        *deployment.ManagerCatalog
+	platformStore         cas.Reader
+	platformArtifactLocks PlatformArtifactLocker
 	secrets               SecretManager
 	secretDelivery        SecretDeliveryOpener
 	workspaceFencingKeys  workspace.FencingKeys
@@ -112,19 +116,19 @@ type ServerConfig struct {
 	TX          TxBeginner
 	ReadinessDB db.DBTX
 
-	Auth                 auth.Authenticator
-	CAS                  cas.Store
-	BuildPolicy          *deployment.BuildPolicy
-	RuntimeStore         cas.Reader
-	ManagerCatalog       *deployment.ManagerCatalog
-	Secrets              SecretManager
-	SecretDelivery       SecretDeliveryOpener
-	WorkspaceFencingKeys workspace.FencingKeys
-	TokenCredentialKeys  token.CredentialKeys
-	EventStream          *EventStream
-	TelemetryReader      telemetry.Reader
-	Mailer               email.Sender
-	AuthProvider         AuthProvider
+	Auth                  auth.Authenticator
+	CAS                   cas.Store
+	BuildPolicy           *deployment.BuildPolicy
+	PlatformStore         cas.Reader
+	PlatformArtifactLocks PlatformArtifactLocker
+	Secrets               SecretManager
+	SecretDelivery        SecretDeliveryOpener
+	WorkspaceFencingKeys  workspace.FencingKeys
+	TokenCredentialKeys   token.CredentialKeys
+	EventStream           *EventStream
+	TelemetryReader       telemetry.Reader
+	Mailer                email.Sender
+	AuthProvider          AuthProvider
 
 	WorkerTokenSecret  []byte
 	WorkerTokenTTL     time.Duration
@@ -157,6 +161,9 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	if cfg.Auth == nil {
 		return nil, errors.New("control authenticator is required")
+	}
+	if cfg.PlatformArtifactLocks == nil {
+		return nil, errors.New("platform artifact locks are required")
 	}
 	deploymentMode := strings.TrimSpace(cfg.DeploymentMode)
 	if deploymentMode == "" {
@@ -238,8 +245,8 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		auth:                  cfg.Auth,
 		cas:                   cfg.CAS,
 		buildPolicy:           cfg.BuildPolicy,
-		runtimeStore:          cfg.RuntimeStore,
-		managerCatalog:        cfg.ManagerCatalog,
+		platformStore:         cfg.PlatformStore,
+		platformArtifactLocks: cfg.PlatformArtifactLocks,
 		secrets:               cfg.Secrets,
 		secretDelivery:        cfg.SecretDelivery,
 		workspaceFencingKeys:  cfg.WorkspaceFencingKeys,
@@ -588,6 +595,9 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 			r.Post("/fence", s.workerFence)
 			r.Group(func(r chi.Router) {
 				r.Use(func(next http.Handler) http.Handler { return requireWorkerRole(auth.WorkerRoleBuild, next) })
+				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleBuild, next) }).Post("/platform-acquisitions/next", s.workerNextPlatformAcquisition)
+				r.Post("/platform-acquisitions/complete", s.workerCompletePlatformAcquisition)
+				r.Post("/platform-acquisitions/fail", s.workerFailPlatformAcquisition)
 				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleBuild, next) }).Post("/deployments/lease", s.workerLeaseDeploymentBuild)
 				r.Post("/deployments/start", s.workerStartDeploymentBuild)
 				r.Post("/deployments/renew", s.workerRenewDeploymentBuild)

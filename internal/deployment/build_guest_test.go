@@ -26,13 +26,12 @@ func TestBuildGuestInstallUsesOneNetworkedManagerVM(t *testing.T) {
 	source := []byte("x")
 	sourceHash := sha256.Sum256(source)
 	request := BuildInstallRequest{
-		FormatVersion:     BuildGuestFormatVersion,
-		Manager:           manager,
-		ManagerDigest:     digest,
-		Runtime:           runtime,
-		StandardToolchain: toolchain,
-		SourceDigest:      "sha256:" + hex.EncodeToString(sourceHash[:]),
-		SourceSizeBytes:   int64(len(source)),
+		FormatVersion:   BuildGuestFormatVersion,
+		Manager:         buildManagerForTest(manager),
+		Runtime:         buildRuntimeForTest(runtime),
+		Toolchain:       buildToolchainForTest(toolchain),
+		SourceDigest:    "sha256:" + hex.EncodeToString(sourceHash[:]),
+		SourceSizeBytes: int64(len(source)),
 	}
 	response, err := CanonicalBuildInstallResult(BuildInstallResult{
 		FormatVersion: BuildGuestFormatVersion,
@@ -64,7 +63,7 @@ func TestBuildGuestInstallUsesOneNetworkedManagerVM(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if actual.ManagerDigest != digest {
+			if actual.Manager.Artifact.Digest != digest {
 				return errors.New("Manager changed")
 			}
 			actualSource, err := io.ReadAll(body)
@@ -83,8 +82,8 @@ func TestBuildGuestInstallUsesOneNetworkedManagerVM(t *testing.T) {
 		request,
 		strings.NewReader(string(source)),
 		&ArtifactSnapshot{content: &artifactSnapshot{}},
-		&RuntimeArtifactSnapshot{content: &artifactSnapshot{}},
-		&toolchainSnapshot{content: &artifactSnapshot{}},
+		&ArtifactSnapshot{content: &artifactSnapshot{}},
+		&ArtifactSnapshot{content: &artifactSnapshot{}},
 	)
 	var failure BuildFailure
 	if !errors.As(err, &failure) ||
@@ -125,7 +124,6 @@ func TestBuildGuestInstallNetworkPolicyOverridesManagerFailure(t *testing.T) {
 	runtime := testRuntimeDescriptor()
 	toolchain, _ := testToolchainForRuntime(t, runtime)
 	manager := testManager(PackageManagerNPM, runtime.Architecture)
-	digest := manager.Tree.Digest
 	source := []byte("x")
 	sourceHash := sha256.Sum256(source)
 	response, err := CanonicalBuildInstallResult(BuildInstallResult{
@@ -153,18 +151,17 @@ func TestBuildGuestInstallNetworkPolicyOverridesManagerFailure(t *testing.T) {
 		context.Background(),
 		"run",
 		BuildInstallRequest{
-			FormatVersion:     BuildGuestFormatVersion,
-			Manager:           manager,
-			ManagerDigest:     digest,
-			Runtime:           runtime,
-			StandardToolchain: toolchain,
-			SourceDigest:      "sha256:" + hex.EncodeToString(sourceHash[:]),
-			SourceSizeBytes:   int64(len(source)),
+			FormatVersion:   BuildGuestFormatVersion,
+			Manager:         buildManagerForTest(manager),
+			Runtime:         buildRuntimeForTest(runtime),
+			Toolchain:       buildToolchainForTest(toolchain),
+			SourceDigest:    "sha256:" + hex.EncodeToString(sourceHash[:]),
+			SourceSizeBytes: int64(len(source)),
 		},
 		strings.NewReader(string(source)),
 		&ArtifactSnapshot{content: &artifactSnapshot{}},
-		&RuntimeArtifactSnapshot{content: &artifactSnapshot{}},
-		&toolchainSnapshot{content: &artifactSnapshot{}},
+		&ArtifactSnapshot{content: &artifactSnapshot{}},
+		&ArtifactSnapshot{content: &artifactSnapshot{}},
 	)
 	var failure BuildFailure
 	if !errors.As(err, &failure) ||
@@ -212,13 +209,13 @@ func TestBuildGuestVerifyUsesFreshIsolatedTree(t *testing.T) {
 		context.Background(),
 		"run",
 		BuildVerificationRequest{
-			FormatVersion:     BuildGuestFormatVersion,
-			Runtime:           runtime,
-			StandardToolchain: toolchain,
-			Tree:              treeDescriptor,
+			FormatVersion: BuildGuestFormatVersion,
+			Runtime:       buildRuntimeForTest(runtime),
+			Toolchain:     buildToolchainForTest(toolchain),
+			Tree:          treeDescriptor,
 		},
-		&RuntimeArtifactSnapshot{content: &artifactSnapshot{}},
-		&toolchainSnapshot{content: &artifactSnapshot{}},
+		&ArtifactSnapshot{content: &artifactSnapshot{}},
+		&ArtifactSnapshot{content: &artifactSnapshot{}},
 		&BuildTree{
 			content:   &artifactSnapshot{},
 			inspected: &inspectedArtifact{},
@@ -441,6 +438,52 @@ func testManager(
 			SizeBytes: 1,
 		},
 	}
+}
+
+func buildManagerForTest(manager Manager) BuildManager {
+	return BuildManager{
+		Artifact:       manager.Tree,
+		Entrypoint:     manager.Entrypoint,
+		PackageManager: manager.PackageManager,
+	}
+}
+
+func buildRuntimeForTest(runtime RuntimeDescriptor) BuildRuntime {
+	return BuildRuntime{
+		Artifact: ArtifactDescriptor{
+			Digest: runtime.Digest, MediaType: runtime.MediaType, SizeBytes: runtime.SizeBytes,
+		},
+		NodeVersion: "24.16.0",
+	}
+}
+
+func buildToolchainForTest(toolchain Toolchain) BuildToolchain {
+	return BuildToolchain{
+		Artifact:      toolchain.ToolchainClosure,
+		RuntimeDigest: toolchain.ManagedRuntimeDigest,
+	}
+}
+
+func testToolchainForRuntime(
+	t *testing.T,
+	runtime RuntimeDescriptor,
+) (Toolchain, string) {
+	t.Helper()
+	toolchain := Toolchain{
+		Architecture:         runtime.Architecture,
+		FormatVersion:        ToolchainFormatVersion,
+		ManagedRuntimeDigest: runtime.Digest,
+		ToolchainClosure: ArtifactDescriptor{
+			Digest:    "sha256:" + strings.Repeat("3", 64),
+			MediaType: ToolchainMediaType,
+			SizeBytes: squashFSPhysicalAlign,
+		},
+	}
+	digest, err := ToolchainDigest(toolchain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return toolchain, digest
 }
 
 func (buildNetworklessTestSession) Stream() vm.Stream {

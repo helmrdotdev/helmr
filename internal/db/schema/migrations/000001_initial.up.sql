@@ -389,7 +389,6 @@ CREATE TABLE worker_instances (
     supervisor_version TEXT NOT NULL DEFAULT '',
     supports_run BOOLEAN NOT NULL DEFAULT false,
     supports_build BOOLEAN NOT NULL DEFAULT false,
-    toolchain_catalog_digest BYTEA,
     runtime_identity_id TEXT REFERENCES runtime_identities(id) ON DELETE RESTRICT,
     substrate_format TEXT NOT NULL DEFAULT '',
     substrate_builder_abi TEXT NOT NULL DEFAULT '',
@@ -461,7 +460,6 @@ CREATE TABLE worker_instances (
             AND supervisor_version = ''
             AND NOT supports_run
             AND NOT supports_build
-            AND toolchain_catalog_digest IS NULL
             AND runtime_identity_id IS NULL
             AND substrate_format = ''
             AND substrate_builder_abi = ''
@@ -509,13 +507,6 @@ CREATE TABLE worker_instances (
          AND substrate_format = ''
          AND substrate_builder_abi = ''
          AND substrate_layout_abi = '')
-    ),
-    CHECK (toolchain_catalog_digest IS NULL OR octet_length(toolchain_catalog_digest) = 32),
-    CHECK (supports_build OR toolchain_catalog_digest IS NULL),
-    CHECK (
-        state NOT IN ('active', 'draining')
-        OR NOT supports_build
-        OR toolchain_catalog_digest IS NOT NULL
     ),
     CHECK (state <> 'draining' OR draining_at IS NOT NULL),
     CHECK (state <> 'disabled' OR disabled_at IS NOT NULL),
@@ -667,15 +658,16 @@ CREATE TABLE deployments (
     build_runtime_digest BYTEA CHECK (
         build_runtime_digest IS NULL OR octet_length(build_runtime_digest) = 32
     ),
-    build_standard_toolchain_digest BYTEA CHECK (
-        build_standard_toolchain_digest IS NULL
-        OR octet_length(build_standard_toolchain_digest) = 32
+    build_toolchain_digest BYTEA CHECK (
+        build_toolchain_digest IS NULL
+        OR octet_length(build_toolchain_digest) = 32
     ),
     build_manager_name TEXT NOT NULL CHECK (build_manager_name IN ('npm', 'pnpm', 'bun')),
     build_manager_version TEXT NOT NULL CHECK (
         build_manager_version = btrim(build_manager_version)
         AND octet_length(build_manager_version) BETWEEN 1 AND 64
     ),
+    build_manager_integrity TEXT,
     build_manager_digest BYTEA CHECK (
         build_manager_digest IS NULL OR octet_length(build_manager_digest) = 32
     ),
@@ -732,13 +724,13 @@ CREATE TABLE deployments (
     CONSTRAINT deployments_platform_pins_check CHECK (
         (
             build_runtime_digest IS NULL
-            AND build_standard_toolchain_digest IS NULL
+            AND build_toolchain_digest IS NULL
             AND build_manager_digest IS NULL
         )
         OR
         (
             build_runtime_digest IS NOT NULL
-            AND build_standard_toolchain_digest IS NOT NULL
+            AND build_toolchain_digest IS NOT NULL
             AND build_manager_digest IS NOT NULL
         )
     ),
@@ -751,7 +743,7 @@ CREATE TABLE deployments (
         (
             status IN ('building', 'deployed')
             AND build_runtime_digest IS NOT NULL
-            AND build_standard_toolchain_digest IS NOT NULL
+            AND build_toolchain_digest IS NOT NULL
             AND build_manager_digest IS NOT NULL
         )
         OR
@@ -761,7 +753,7 @@ CREATE TABLE deployments (
         current_build_lease_id IS NULL
         OR (
             build_runtime_digest IS NOT NULL
-            AND build_standard_toolchain_digest IS NOT NULL
+            AND build_toolchain_digest IS NOT NULL
             AND build_manager_digest IS NOT NULL
         )
     ),

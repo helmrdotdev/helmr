@@ -31,22 +31,6 @@ func TestNewAuthorityRetainsConcretePool(t *testing.T) {
 	}
 }
 
-func TestNewBuildAuthorityRequiresAuthenticatedCatalogIdentity(t *testing.T) {
-	pool := &pgxpool.Pool{}
-	authority, err := NewBuildAuthority(pool, nil, func(string) error { return nil })
-	if authority != nil || err == nil {
-		t.Fatalf("NewBuildAuthority() = (%#v, %v), want error", authority, err)
-	}
-}
-
-func TestNewBuildAuthorityRequiresResolver(t *testing.T) {
-	pool := &pgxpool.Pool{}
-	authority, err := NewBuildAuthority(pool, make([]byte, 32), nil)
-	if authority != nil || err == nil {
-		t.Fatalf("NewBuildAuthority() = (%#v, %v), want error", authority, err)
-	}
-}
-
 func TestNewRunAuthorityRequiresFencingAuthorityAndValidPolicy(t *testing.T) {
 	pool := &pgxpool.Pool{}
 	key := bytes.Repeat([]byte{1}, workspace.FencingKeySize)

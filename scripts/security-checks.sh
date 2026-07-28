@@ -32,7 +32,7 @@ check_id_token_permissions() {
 		function finalize_job(i, allowed) {
 			allowed = job_environment_release ||
 				(current_file == ".github/workflows/release.yaml" &&
-				 current_job == "runtime-release-dev" &&
+				 current_job == "platform-release-dev" &&
 				 job_environment_dev)
 			if (current_job != "" && id_token_count > 0 && !allowed) {
 				for (i = 1; i <= id_token_count; i++) {

@@ -12,28 +12,9 @@ let
   pkgsUnstable = import nixpkgs-unstable { inherit system; };
   pkgsBun = import nixpkgs-bun { inherit system; };
   squashfsTools = pkgs.callPackage ./squashfs-tools.nix { };
-  runtimeTrustedRoot = pkgs.fetchurl {
-    url = "https://raw.githubusercontent.com/sigstore/root-signing/83a0a6eed690d1fa1443e62d3fd3c9a2f85d6147/targets/trusted_root.json";
-    hash = "sha256-ZJTiHqc/p+52n4X1fVo+aghyXq4eOMdV/DUXyea8C2Y=";
-  };
-  managedNode =
-    let
-      source = pkgs.nodejs-slim_24.override { enableNpm = false; };
-    in
-    assert lib.assertMsg (
-      source.version == "24.16.0"
-    ) "managed runtime requires pinned nodejs_24 24.16.0";
-    source.overrideAttrs (old: {
-      configureFlags = builtins.filter (flag: flag != "--openssl-use-def-ca-store") old.configureFlags;
-      postInstall = (old.postInstall or "") + ''
-        test "$("$out/bin/node" -p \
-          'String(Boolean(process.config.variables.node_use_openssl_ca))')" = false
-      '';
-    });
-  managedRuntime = pkgs.callPackage ./runtime.nix {
-    nodejs_24 = managedNode;
-    inherit squashfsTools;
-  };
+  runtimeHarness = pkgs.callPackage ./runtime.nix { };
+  toolchainBase = pkgs.callPackage ./toolchain.nix { };
+  nodeReleaseKeys = pkgs.callPackage ./node-keys.nix { };
   buildGo126Module = pkgs.callPackage "${nixpkgs}/pkgs/build-support/go/module.nix" {
     go = pkgs.go_1_26;
   };
@@ -78,17 +59,16 @@ in
   inherit staticcheck;
   inherit unparam;
   inherit squashfsTools;
-  inherit runtimeTrustedRoot;
   default = helmr;
   bun = pkgsBun.bun;
   apko = if pkgsUnstable ? apko then pkgsUnstable.apko else pkgs.apko;
 }
 // lib.optionalAttrs (system == "x86_64-linux") {
-  inherit managedRuntime;
-  standardToolchain =
+  inherit runtimeHarness toolchainBase nodeReleaseKeys;
+  platformRelease =
     let
-      releaseTool = buildGo126Module {
-        pname = "helmr-tool-candidate";
+      policyTool = buildGo126Module {
+        pname = "helmr-platform-policy";
         version = "0";
         src = lib.fileset.toSource {
           root = ../..;
@@ -98,19 +78,18 @@ in
             ../../internal
           ];
         };
-        vendorHash = "sha256-nm9r7z+b+TRvWgMDXo0eUwVKNkEuQIsF3sFGCDiJQ5g=";
-        subPackages = [ "internal/cmd/tool-release" ];
+        vendorHash = "sha256-MMJnK7ywvQa7SQkO0umfUuApthc4Cx63S3gK4Mz/20w=";
+        subPackages = [ "internal/cmd/platform-policy" ];
       };
     in
-    pkgs.callPackage ./toolchain.nix {
-      inherit managedRuntime;
-      inherit releaseTool squashfsTools;
+    pkgs.callPackage ./platform-release.nix {
+      inherit
+        nodeReleaseKeys
+        policyTool
+        runtimeHarness
+        toolchainBase
+        ;
     };
-}
-// lib.optionalAttrs (system == "x86_64-linux") {
-  managerRelease = pkgs.callPackage ./managers.nix {
-    inherit squashfsTools;
-  };
 }
 // lib.optionalAttrs (system == "x86_64-linux") {
   firecrackerRuntime = pkgs.stdenvNoCC.mkDerivation {

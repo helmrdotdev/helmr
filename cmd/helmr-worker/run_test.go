@@ -31,15 +31,15 @@ func TestFitsBuildHostComputeUsesDiskIndependentHostPool(t *testing.T) {
 
 func TestValidateWorkerStoresRequiresDisjointNamespaces(t *testing.T) {
 	base := config.Worker{
-		CASURI:          "s3://ordinary",
-		RuntimeStoreURI: "s3://runtime/objects",
+		CASURI:           "s3://ordinary",
+		PlatformStoreURI: "s3://runtime/objects",
 	}
 	if err := validateWorkerStores(base); err != nil {
 		t.Fatal(err)
 	}
 	tests := map[string]func(*config.Worker){
 		"ordinary runtime": func(cfg *config.Worker) {
-			cfg.RuntimeStoreURI = "s3://ordinary/runtime"
+			cfg.PlatformStoreURI = "s3://ordinary/runtime"
 		},
 	}
 	for name, mutate := range tests {
@@ -70,6 +70,37 @@ func TestEnsureBuildCacheDirectoryRejectsSymlink(t *testing.T) {
 	}
 	if err := ensureBuildCacheDirectory(link); err == nil {
 		t.Fatal("symlink cache directory was accepted")
+	}
+}
+
+func TestEnsurePrivateDirectoryEnforcesPrivateDirectory(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "acquisition")
+	if err := ensurePrivateDirectory(directory); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("mode = %o, want 700", info.Mode().Perm())
+	}
+
+	public := filepath.Join(root, "public")
+	if err := os.Mkdir(public, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensurePrivateDirectory(public); err == nil {
+		t.Fatal("public directory was accepted")
+	}
+
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(directory, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensurePrivateDirectory(link); err == nil {
+		t.Fatal("symlink was accepted")
 	}
 }
 

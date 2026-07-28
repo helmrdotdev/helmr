@@ -37,7 +37,7 @@ export interface ProgramIndex {
   }>
   readonly runtimeApiVersion: typeof RUNTIME_API_VERSION
   readonly runtimeDigest: string
-  readonly standardToolchainDigest: string
+  readonly toolchainDigest: string
   readonly submitted: Readonly<{
     lockfileDigest: string
     lockfileName:
@@ -100,8 +100,8 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
       "manager",
       "runtimeApiVersion",
       "runtimeDigest",
-      "standardToolchainDigest",
       "submitted",
+      "toolchainDigest",
     ],
     "program index",
   )
@@ -127,9 +127,9 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
   }
   const runtimeDigest = requireDigest(root["runtimeDigest"], "program index runtimeDigest")
   const architecture = requireArchitecture(root["architecture"])
-  const standardToolchainDigest = requireDigest(
-    root["standardToolchainDigest"],
-    "program index standardToolchainDigest",
+  const toolchainDigest = requireDigest(
+    root["toolchainDigest"],
+    "program index toolchainDigest",
   )
   const managerValue = requireObject(root["manager"], "program index manager")
   requireKeys(managerValue, ["digest", "name", "version"], "program index manager")
@@ -217,7 +217,7 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
     manager,
     runtimeApiVersion,
     runtimeDigest,
-    standardToolchainDigest,
+    toolchainDigest,
     submitted,
   }
 }

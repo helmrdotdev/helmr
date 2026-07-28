@@ -392,7 +392,7 @@ done
 install -d -m 0755 "$cache_mount/buildkit" "$scratch_mount/worker" "$scratch_mount/jailer"
 
 "$worker_binary" release install \
-  --store '${runtime_store_uri}' \
+  --store '${platform_store_uri}' \
   --digest '${build_policy_digest}' \
   --output /etc/helmr/build-policy.json
 systemctl enable --now helmr-buildkit.service

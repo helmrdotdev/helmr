@@ -23,29 +23,24 @@ output "source_artifact_kms_key_arn" {
   value       = aws_kms_key.source_artifacts.arn
 }
 
-output "runtime_store_uri" {
+output "platform_store_uri" {
   description = "Immutable Helmr release store URI ending at the objects prefix."
-  value       = "s3://${aws_s3_bucket.runtime_store.bucket}/objects"
+  value       = "s3://${aws_s3_bucket.platform_store.bucket}/objects"
 }
 
-output "runtime_store_bucket_arn" {
+output "platform_store_bucket_arn" {
   description = "S3 bucket ARN for the immutable Helmr release store."
-  value       = aws_s3_bucket.runtime_store.arn
+  value       = aws_s3_bucket.platform_store.arn
 }
 
-output "runtime_store_kms_key_arn" {
+output "platform_store_kms_key_arn" {
   description = "KMS key ARN for the immutable Helmr release store."
-  value       = aws_kms_key.runtime_store.arn
+  value       = aws_kms_key.platform_store.arn
 }
 
-output "runtime_provisioner_role_arn" {
-  description = "Create-only managed-runtime provisioner role ARN."
-  value       = aws_iam_role.runtime_provisioner.arn
-}
-
-output "runtime_rollout_orchestrator_role_arn" {
-  description = "Append-only runtime rollout-orchestrator role ARN."
-  value       = aws_iam_role.runtime_rollout_orchestrator.arn
+output "platform_publisher_role_arn" {
+  description = "Create-only Platform Artifact publisher role ARN."
+  value       = aws_iam_role.platform_publisher.arn
 }
 
 output "retained_cas_uri" {

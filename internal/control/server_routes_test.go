@@ -189,6 +189,9 @@ POST /api/worker/leases/workspaces/files/read
 POST /api/worker/leases/workspaces/files/stat
 POST /api/worker/leases/workspaces/retrieve
 POST /api/worker/observe
+POST /api/worker/platform-acquisitions/complete
+POST /api/worker/platform-acquisitions/fail
+POST /api/worker/platform-acquisitions/next
 POST /api/worker/runtime-instances/closed
 POST /api/worker/runtime-instances/failed
 POST /api/worker/runtime-instances/ready

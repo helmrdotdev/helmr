@@ -383,9 +383,9 @@ func TestPreparedRuntimeBindsProgramIndexToDeploymentReceipt(t *testing.T) {
 			Name:    deployment.PackageManagerBun,
 			Version: "1.3.10",
 		},
-		RuntimeAPIVersion:       deployment.RuntimeAPIVersion,
-		RuntimeDigest:           digest,
-		StandardToolchainDigest: digest,
+		RuntimeAPIVersion: deployment.RuntimeAPIVersion,
+		RuntimeDigest:     digest,
+		ToolchainDigest:   digest,
 		Submitted: deployment.ProgramSubmittedSource{
 			LockfileDigest: digest,
 			LockfileName:   "bun.lock",

@@ -262,14 +262,6 @@ WITH runtime AS (
        AND btrim(sqlc.arg(supervisor_version)::text) <> ''
        AND (NOT sqlc.arg(supports_run)::boolean OR worker_groups.allows_run)
        AND (NOT sqlc.arg(supports_build)::boolean OR worker_groups.allows_build)
-       AND (
-           (NOT sqlc.arg(supports_build)::boolean
-            AND sqlc.narg(toolchain_catalog_digest)::bytea IS NULL)
-           OR (
-               sqlc.arg(supports_build)::boolean
-               AND octet_length(sqlc.narg(toolchain_catalog_digest)::bytea) = 32
-           )
-       )
        AND sqlc.arg(certified_cpu_millis)::bigint >= worker_groups.required_cpu_millis
        AND sqlc.arg(certified_memory_bytes)::bigint >= worker_groups.required_memory_bytes
        AND sqlc.arg(certified_workload_disk_bytes)::bigint >= worker_groups.required_workload_disk_bytes
@@ -304,7 +296,6 @@ WITH runtime AS (
        SET state = 'active', protocol_version = sqlc.arg(protocol_version),
            supervisor_version = sqlc.arg(supervisor_version),
            supports_run = sqlc.arg(supports_run), supports_build = sqlc.arg(supports_build),
-           toolchain_catalog_digest = sqlc.narg(toolchain_catalog_digest),
            runtime_identity_id = runtime.id,
            substrate_format = sqlc.arg(substrate_format),
            substrate_builder_abi = sqlc.arg(substrate_builder_abi),
@@ -413,7 +404,6 @@ UPDATE worker_instances
 	AND worker_instances.substrate_format = sqlc.arg(substrate_format)
 	AND worker_instances.substrate_builder_abi = sqlc.arg(substrate_builder_abi)
 	AND worker_instances.substrate_layout_abi = sqlc.arg(substrate_layout_abi)
-	AND worker_instances.toolchain_catalog_digest IS NOT DISTINCT FROM sqlc.narg(toolchain_catalog_digest)::bytea
 	AND worker_instances.certified_cpu_millis = sqlc.arg(certified_cpu_millis)
 	AND worker_instances.certified_memory_bytes = sqlc.arg(certified_memory_bytes)
 	AND worker_instances.certified_workload_disk_bytes = sqlc.arg(certified_workload_disk_bytes)

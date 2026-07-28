@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -13,13 +14,15 @@ import (
 )
 
 func projectDeploymentProgram(
+	ctx context.Context,
 	row db.GetDeploymentProgramAuthorityRow,
-	policy *deployment.BuildPolicy,
+	platformStore cas.Reader,
 ) (api.WorkerRuntimeProgram, error) {
 	if _, err := requiredClaimUUIDString("Program environment ID", row.EnvironmentID); err != nil {
 		return api.WorkerRuntimeProgram{}, err
 	}
 	return projectRuntimeProgram(
+		ctx,
 		runtimeProgramAuthorityFromDeployment(
 			row.DeploymentID,
 			row.BuildRuntimeDigest,
@@ -30,7 +33,7 @@ func projectDeploymentProgram(
 			row.ProgramIndexDigest,
 		),
 		"",
-		policy,
+		platformStore,
 	)
 }
 
@@ -45,32 +48,33 @@ type runtimeProgramAuthority struct {
 }
 
 func projectRuntimeProgram(
+	ctx context.Context,
 	authority runtimeProgramAuthority,
 	expectedArchitecture string,
-	policy *deployment.BuildPolicy,
+	platformStore cas.Reader,
 ) (api.WorkerRuntimeProgram, error) {
 	deploymentID, err := requiredClaimUUIDString("Program Deployment ID", authority.deploymentID)
 	if err != nil {
 		return api.WorkerRuntimeProgram{}, err
 	}
+	if expectedArchitecture != "" && expectedArchitecture != string(deployment.ArchitectureX8664) {
+		return api.WorkerRuntimeProgram{}, errors.New("Program architecture does not match Workspace")
+	}
 	runtimeDigest, err := deployment.RuntimeDigestString(authority.runtimeDigest)
 	if err != nil {
 		return api.WorkerRuntimeProgram{}, fmt.Errorf("decode Program Managed Runtime digest: %w", err)
 	}
-	if policy == nil {
-		return api.WorkerRuntimeProgram{}, errors.New("runtime catalog policy is not configured")
+	if platformStore == nil {
+		return api.WorkerRuntimeProgram{}, errors.New("Platform Artifact store is not configured")
 	}
-	runtimeDescriptor, err := policy.ResolveRuntime(runtimeDigest)
+	runtimeObject, err := platformStore.Stat(ctx, runtimeDigest)
 	if err != nil {
-		return api.WorkerRuntimeProgram{}, fmt.Errorf("resolve Program Managed Runtime: %w", err)
+		return api.WorkerRuntimeProgram{}, fmt.Errorf("stat Program Managed Runtime: %w", err)
 	}
-	if expectedArchitecture != "" &&
-		string(runtimeDescriptor.Architecture) != expectedArchitecture {
-		return api.WorkerRuntimeProgram{}, errors.New("Program architecture does not match Workspace")
-	}
-	runtimeWire, err := deployment.RuntimeDescriptorWire(runtimeDescriptor)
-	if err != nil {
-		return api.WorkerRuntimeProgram{}, fmt.Errorf("encode Program Managed Runtime descriptor: %w", err)
+	if runtimeObject.Digest != runtimeDigest ||
+		runtimeObject.MediaType != deployment.RuntimeArtifactMediaType ||
+		runtimeObject.SizeBytes < 1 {
+		return api.WorkerRuntimeProgram{}, errors.New("Program Managed Runtime does not match its Deployment pin")
 	}
 	artifact, err := projectCASObject(
 		authority.artifactDigest,
@@ -86,20 +90,18 @@ func projectRuntimeProgram(
 	}
 	indexDigest, err := deployment.RuntimeDigestString(authority.indexDigest)
 	if err != nil {
-		return api.WorkerRuntimeProgram{}, fmt.Errorf(
-			"Program index digest is invalid: %w",
-			err,
-		)
+		return api.WorkerRuntimeProgram{}, fmt.Errorf("Program index digest is invalid: %w", err)
 	}
 	if _, err := cas.ObjectKey("", indexDigest); err != nil {
-		return api.WorkerRuntimeProgram{}, fmt.Errorf(
-			"Program index digest is invalid: %w",
-			err,
-		)
+		return api.WorkerRuntimeProgram{}, fmt.Errorf("Program index digest is invalid: %w", err)
 	}
 	return api.WorkerRuntimeProgram{
-		DeploymentID:         deploymentID,
-		Runtime:              runtimeWire,
+		DeploymentID: deploymentID,
+		Runtime: api.CASObject{
+			Digest:    runtimeObject.Digest,
+			SizeBytes: runtimeObject.SizeBytes,
+			MediaType: runtimeObject.MediaType,
+		},
 		Artifact:             artifact,
 		BuildContractVersion: authority.buildContractVersion,
 		IndexDigest:          indexDigest,
@@ -108,15 +110,15 @@ func projectRuntimeProgram(
 
 func projectCASObject(digest string, sizeBytes int64, mediaType string, name string) (api.CASObject, error) {
 	digest = strings.TrimSpace(digest)
+	mediaType = strings.TrimSpace(mediaType)
 	if _, err := cas.ObjectKey("", digest); err != nil {
 		return api.CASObject{}, fmt.Errorf("%s digest is invalid: %w", name, err)
 	}
-	mediaType = strings.TrimSpace(mediaType)
+	if sizeBytes < 1 {
+		return api.CASObject{}, fmt.Errorf("%s size is invalid", name)
+	}
 	if mediaType == "" {
 		return api.CASObject{}, fmt.Errorf("%s media type is required", name)
-	}
-	if sizeBytes < 0 {
-		return api.CASObject{}, fmt.Errorf("%s size is negative", name)
 	}
 	return api.CASObject{Digest: digest, SizeBytes: sizeBytes, MediaType: mediaType}, nil
 }

@@ -28,12 +28,12 @@ func handleBuildVerification(
 	}
 	components := []buildComponent{
 		{
-			artifact: runtimeBuildArtifact(request.Runtime),
+			artifact: request.Runtime.Artifact,
 			device:   "/dev/vdc",
 			name:     "runtime",
 		},
 		{
-			artifact: request.StandardToolchain.ToolchainClosure,
+			artifact: request.Toolchain.Artifact,
 			device:   "/dev/vdd",
 			name:     "toolchain",
 		},

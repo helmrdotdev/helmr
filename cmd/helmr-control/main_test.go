@@ -52,22 +52,23 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler, err := control.NewServer(control.ServerConfig{
-		Log:                  log,
-		DB:                   store,
-		TX:                   panicTxBeginner{},
-		Auth:                 auth.NewDBAuthenticator(store),
-		WorkerEnrollment:     controltestWorkerEnrollmentVerifier{},
-		SecretDelivery:       controltestSecretDeliveryOpener{},
-		WorkspaceFencingKeys: controltestWorkspaceFencingKeys(),
-		TokenCredentialKeys:  controltestTokenCredentialKeys(),
-		AuthSecret:           []byte("abcdefghijabcdefghijabcdefghij12"),
-		PublicURL:            publicURL,
-		WorkerGroupID:        "us-east-1-worker-group-1",
-		RegionID:             "us-east-1",
-		DefaultRegionID:      "us-east-1",
-		TelemetryReader:      controltestTelemetryReader{store: store},
-		MagicLinkDebugURLs:   true,
-		Mailer:               configuredEmailSender(log, config.Control{EmailProvider: config.EmailProviderNone}),
+		Log:                   log,
+		DB:                    store,
+		TX:                    panicTxBeginner{},
+		Auth:                  auth.NewDBAuthenticator(store),
+		WorkerEnrollment:      controltestWorkerEnrollmentVerifier{},
+		SecretDelivery:        controltestSecretDeliveryOpener{},
+		WorkspaceFencingKeys:  controltestWorkspaceFencingKeys(),
+		TokenCredentialKeys:   controltestTokenCredentialKeys(),
+		AuthSecret:            []byte("abcdefghijabcdefghijabcdefghij12"),
+		PublicURL:             publicURL,
+		WorkerGroupID:         "us-east-1-worker-group-1",
+		RegionID:              "us-east-1",
+		DefaultRegionID:       "us-east-1",
+		TelemetryReader:       controltestTelemetryReader{store: store},
+		PlatformArtifactLocks: controltestPlatformArtifactLocker{},
+		MagicLinkDebugURLs:    true,
+		Mailer:                configuredEmailSender(log, config.Control{EmailProvider: config.EmailProviderNone}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -83,6 +84,16 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "magic link mailer is not configured") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
+}
+
+type controltestPlatformArtifactLocker struct{}
+
+func (controltestPlatformArtifactLocker) With(
+	_ context.Context,
+	_ []string,
+	fn func() error,
+) error {
+	return fn()
 }
 
 type controltestSecretDeliveryOpener struct{}
@@ -145,17 +156,12 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("HELMR_BUILD_POLICY_PATH", buildPolicyPath)
-	t.Setenv("HELMR_RUNTIME_STORE_URI", "s3://helmr-smoke-runtime")
+	t.Setenv("HELMR_PLATFORM_STORE_URI", "s3://helmr-smoke-runtime")
 	originalBuildPolicyLoader := loadControlBuildPolicy
 	loadControlBuildPolicy = func(string) (*deployment.BuildPolicy, error) {
 		return deployment.ParseBuildPolicy([]byte(buildPolicy))
 	}
 	t.Cleanup(func() { loadControlBuildPolicy = originalBuildPolicyLoader })
-	originalManagerCatalogLoader := loadControlManagerCatalog
-	loadControlManagerCatalog = func() (*deployment.ManagerCatalog, error) {
-		return nil, nil
-	}
-	t.Cleanup(func() { loadControlManagerCatalog = originalManagerCatalogLoader })
 	t.Setenv("HELMR_WORKER_GROUP_ID", "us-east-1-worker-group-1")
 	t.Setenv("HELMR_REGION_ID", "us-east-1")
 	t.Setenv("HELMR_DEFAULT_REGION_ID", "us-east-1")
@@ -305,40 +311,10 @@ func newSmokeDatabase(t *testing.T, ctx context.Context) string {
 
 func smokeBuildPolicy(t *testing.T) string {
 	t.Helper()
-	runtime := deployment.RuntimeDescriptor{
-		Architecture:      deployment.ArchitectureX8664,
-		Digest:            "sha256:" + strings.Repeat("9", 64),
-		FormatVersion:     deployment.RuntimeDescriptorFormatVersion,
-		MediaType:         deployment.RuntimeArtifactMediaType,
-		RuntimeAPIVersion: deployment.RuntimeAPIVersion,
-		SizeBytes:         4096,
+	digest := func(character string) string {
+		return "sha256:" + strings.Repeat(character, 64)
 	}
-	runtimeRaw, err := deployment.CanonicalRuntimeDescriptor(runtime)
-	if err != nil {
-		t.Fatal(err)
-	}
-	toolchain := deployment.Toolchain{
-		Architecture:         runtime.Architecture,
-		FormatVersion:        deployment.ToolchainFormatVersion,
-		ManagedRuntimeDigest: runtime.Digest,
-		ToolchainClosure: deployment.ArtifactDescriptor{
-			Digest:    "sha256:" + strings.Repeat("7", 64),
-			MediaType: deployment.ToolchainMediaType,
-			SizeBytes: 1,
-		},
-	}
-	toolchainRaw, err := deployment.CanonicalToolchain(toolchain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	toolchainDigest, err := deployment.StandardToolchainDigest(toolchain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return `{"current":{"us-east-1":{"buildContractVersion":"helmr.program-build.v0","runtimeDigest":"` +
-		runtime.Digest + `","standardToolchainDigest":"` + toolchainDigest +
-		`"}},"formatVersion":0,"runtimes":[` + string(runtimeRaw) +
-		`],"toolchains":[` + string(toolchainRaw) + `]}`
+	return `{"architecture":"x86_64","denies":{"digests":[],"selectors":[]},"descriptorSchemaVersion":0,"fixtureSet":"helmr.platform.fixtures.v0","formatVersion":0,"managers":[{"adapterVersion":"helmr.manager.v0","allowedOrigin":"https://github.com/oven-sh/bun/releases/","allowedRedirectHosts":["api.github.com","github.com","objects.githubusercontent.com"],"domain":{"major":1,"minimum":"1.3.10"},"metadataOrigin":"https://api.github.com/repos/oven-sh/bun/releases/tags/","name":"bun"},{"adapterVersion":"helmr.manager.v0","allowedOrigin":"https://registry.npmjs.org/npm/","allowedRedirectHosts":["registry.npmjs.org"],"domain":{"major":11,"minimum":"11.4.2"},"metadataOrigin":"https://registry.npmjs.org/npm/","name":"npm"},{"adapterVersion":"helmr.manager.v0","allowedOrigin":"https://registry.npmjs.org/pnpm/","allowedRedirectHosts":["registry.npmjs.org"],"domain":{"major":11,"minimum":"11.1.0"},"metadataOrigin":"https://registry.npmjs.org/pnpm/","name":"pnpm"}],"node":{"adapterVersion":"helmr.runtime.v0","allowedOrigin":"https://nodejs.org/dist/","allowedRedirectHosts":["nodejs.org"],"domains":[{"major":22,"minimum":"22.18.0"},{"major":24,"minimum":"24.3.0"}],"releaseKeyFingerprints":["00112233445566778899AABBCCDDEEFF00112233"],"releaseKeyring":"AQ=="},"runtime":{"configEvaluatorDigest":"` + digest("1") + `","harness":{"digest":"` + digest("2") + `","mediaType":"application/vnd.helmr.platform-tree.v0+tar","sizeBytes":4096}},"toolchain":{"base":{"digest":"` + digest("3") + `","mediaType":"application/vnd.helmr.platform-tree.v0+tar","sizeBytes":4096}}}`
 }
 
 func freeSmokeAddr(t *testing.T) string {

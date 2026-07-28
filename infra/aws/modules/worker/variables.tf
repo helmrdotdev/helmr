@@ -326,33 +326,33 @@ variable "kms_key_arn" {
   type        = string
 }
 
-variable "runtime_store_uri" {
-  description = "Dedicated immutable managed-runtime store URI ending in /objects."
+variable "platform_store_uri" {
+  description = "Dedicated immutable Platform Artifact store URI ending in /objects."
   type        = string
 
   validation {
-    condition     = can(regex("^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/objects$", var.runtime_store_uri))
-    error_message = "runtime_store_uri must be an S3 bucket URI ending exactly in /objects."
+    condition     = can(regex("^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/objects$", var.platform_store_uri))
+    error_message = "platform_store_uri must be an S3 bucket URI ending exactly in /objects."
   }
 }
 
-variable "runtime_store_bucket_arn" {
-  description = "S3 bucket ARN backing runtime_store_uri."
+variable "platform_store_bucket_arn" {
+  description = "S3 bucket ARN backing platform_store_uri."
   type        = string
 
   validation {
-    condition     = can(regex("^arn:[^:]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.runtime_store_bucket_arn))
-    error_message = "runtime_store_bucket_arn must be an S3 bucket ARN."
+    condition     = can(regex("^arn:[^:]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.platform_store_bucket_arn))
+    error_message = "platform_store_bucket_arn must be an S3 bucket ARN."
   }
 }
 
-variable "runtime_store_kms_key_arn" {
-  description = "KMS key ARN used by the dedicated managed-runtime store."
+variable "platform_store_kms_key_arn" {
+  description = "KMS key ARN used by the dedicated Platform Artifact store."
   type        = string
 
   validation {
-    condition     = can(regex("^arn:[^:]+:kms:[^:]+:[0-9]{12}:key/[0-9a-fA-F-]+$", var.runtime_store_kms_key_arn))
-    error_message = "runtime_store_kms_key_arn must be a KMS key ARN."
+    condition     = can(regex("^arn:[^:]+:kms:[^:]+:[0-9]{12}:key/[0-9a-fA-F-]+$", var.platform_store_kms_key_arn))
+    error_message = "platform_store_kms_key_arn must be a KMS key ARN."
   }
 }
 
