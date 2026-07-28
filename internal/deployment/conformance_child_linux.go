@@ -4,9 +4,7 @@ package deployment
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,19 +19,6 @@ import (
 
 	"golang.org/x/sys/unix"
 )
-
-func digestFile(ctx context.Context, name string) (string, error) {
-	file, err := os.Open(name)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	hash := sha256.New()
-	if _, err := copyExact(ctx, hash, file, maxArtifactFileSize); err != nil {
-		return "", err
-	}
-	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
-}
 
 const (
 	conformanceRootSize = "size=3221225472,nr_inodes=300000,mode=0755"
@@ -418,57 +403,53 @@ func managerConformance(
 			return nil, fmt.Errorf("Manager required option %q is missing", option)
 		}
 	}
-	if err := managerAdapterFixtures(ctx, descriptor, executable); err != nil {
-		return nil, err
+	if descriptor.PackageManager.Name == PackageManagerPNPM {
+		if err := pnpmReplacementConformance(ctx, descriptor, executable); err != nil {
+			return nil, err
+		}
 	}
 	return passedConformanceResults(
-		"entrypoint",
-		"frozen-install",
-		"lifecycle",
-		"protected-input-preservation",
-		"reported-version",
-		"required-options",
-		"runtime-download-suppression",
+		managerConformanceNames(descriptor.PackageManager.Name)...,
 	), nil
 }
 
-func managerAdapterFixtures(
+func pnpmReplacementConformance(
 	ctx context.Context,
 	descriptor ManagerArtifactDescriptor,
 	executable string,
 ) error {
-	project := "/work/project"
+	if err := pnpmRuntimeReplacementConformance(ctx, descriptor, executable); err != nil {
+		return err
+	}
+	return pnpmManagerReplacementConformance(ctx, descriptor, executable)
+}
+
+func pnpmRuntimeReplacementConformance(
+	ctx context.Context,
+	descriptor ManagerArtifactDescriptor,
+	executable string,
+) error {
+	project := "/work/pnpm-runtime"
 	if err := os.Mkdir(project, 0700); err != nil {
 		return err
 	}
-	packageJSON := []byte(`{"name":"helmr-manager-fixture","private":true,"scripts":{"preinstall":"node lifecycle.js"},"version":"1.0.0"}`)
-	if err := os.WriteFile(filepath.Join(project, "package.json"), packageJSON, 0600); err != nil {
-		return err
-	}
+	packageJSON := `{"devEngines":{"runtime":{"name":"node","onFail":"download","version":"24.0.0"}},"name":"helmr-pnpm-runtime-conformance","private":true,"version":"1.0.0"}`
 	if err := os.WriteFile(
-		filepath.Join(project, "lifecycle.js"),
-		[]byte(`require("node:fs").writeFileSync("/work/lifecycle-ran","1")`),
+		filepath.Join(project, "package.json"),
+		[]byte(packageJSON),
 		0600,
 	); err != nil {
 		return err
 	}
-	lockName, lock := managerFixtureLock(descriptor.PackageManager.Name)
-	if lockName == "" {
-		return errors.New("Manager fixture family is unsupported")
-	}
-	lockPath := filepath.Join(project, lockName)
-	if err := os.WriteFile(lockPath, []byte(lock), 0600); err != nil {
+	lock := "lockfileVersion: '9.0'\n\nimporters:\n  .:\n    devDependencies:\n      node:\n        specifier: runtime:24.0.0\n        version: runtime:24.0.0\n"
+	if err := os.WriteFile(
+		filepath.Join(project, "pnpm-lock.yaml"),
+		[]byte(lock),
+		0600,
+	); err != nil {
 		return err
 	}
-	beforePackage, err := digestFile(ctx, filepath.Join(project, "package.json"))
-	if err != nil {
-		return err
-	}
-	beforeLock, err := digestFile(ctx, lockPath)
-	if err != nil {
-		return err
-	}
-	arguments := managerFixtureInstallArguments(descriptor)
+	arguments := pnpmInstallArguments("error")
 	if descriptor.Entrypoint.Kind == ManagerEntrypointNode {
 		arguments = append([]string{descriptor.Entrypoint.Path}, arguments...)
 	}
@@ -479,39 +460,58 @@ func managerAdapterFixtures(
 		executable,
 		arguments...,
 	); err != nil {
-		return fmt.Errorf("Manager frozen install fixture failed: %w", err)
+		return fmt.Errorf("pnpm runtime replacement fixture failed: %w", err)
 	}
-	if marker, err := os.ReadFile("/work/lifecycle-ran"); err != nil ||
-		string(marker) != "1" {
-		return errors.New("Manager frozen install did not execute ordinary lifecycle")
-	}
-	if after, err := digestFile(ctx, filepath.Join(project, "package.json")); err != nil ||
-		after != beforePackage {
-		return errors.New("Manager frozen install changed package.json")
-	}
-	if after, err := digestFile(ctx, lockPath); err != nil || after != beforeLock {
-		return errors.New("Manager frozen install changed its lockfile")
-	}
-	if err := rejectDownloadedRuntime(project); err != nil {
+	nodeBin := filepath.Join(project, "node_modules", ".bin", "node")
+	if _, err := os.Lstat(nodeBin); !errors.Is(err, os.ErrNotExist) {
+		if err == nil {
+			return errors.New("pnpm installed a replacement Node runtime")
+		}
 		return err
 	}
-	vendor := filepath.Join(project, "vendor/fixture")
-	if err := os.MkdirAll(vendor, 0700); err != nil {
+	return nil
+}
+
+func pnpmManagerReplacementConformance(
+	ctx context.Context,
+	descriptor ManagerArtifactDescriptor,
+	executable string,
+) error {
+	project := "/work/pnpm-manager"
+	if err := os.Mkdir(project, 0700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(
-		filepath.Join(vendor, "package.json"),
-		[]byte(`{"name":"fixture","version":"1.0.0"}`),
-		0600,
-	); err != nil {
-		return err
-	}
+	packageJSON := `{"devEngines":{"packageManager":{"name":"pnpm","onFail":"download","version":"0.0.1"}},"name":"helmr-pnpm-manager-conformance","private":true,"version":"1.0.0"}`
 	if err := os.WriteFile(
 		filepath.Join(project, "package.json"),
-		[]byte(`{"dependencies":{"fixture":"file:./vendor/fixture"},"name":"helmr-manager-fixture","private":true,"version":"1.0.0"}`),
+		[]byte(packageJSON),
 		0600,
 	); err != nil {
 		return err
+	}
+	if err := os.WriteFile(
+		filepath.Join(project, "pnpm-lock.yaml"),
+		[]byte("lockfileVersion: '9.0'\n\nimporters:\n  .: {}\n"),
+		0600,
+	); err != nil {
+		return err
+	}
+	arguments := pnpmInstallArguments("ignore")
+	if descriptor.Entrypoint.Kind == ManagerEntrypointNode {
+		arguments = append([]string{descriptor.Entrypoint.Path}, arguments...)
+	}
+	if _, err := runConformanceCommandIn(
+		ctx,
+		managerEnvironment(descriptor),
+		project,
+		executable,
+		arguments...,
+	); err != nil {
+		return fmt.Errorf("pnpm Manager replacement control fixture failed: %w", err)
+	}
+	arguments = pnpmInstallArguments("error")
+	if descriptor.Entrypoint.Kind == ManagerEntrypointNode {
+		arguments = append([]string{descriptor.Entrypoint.Path}, arguments...)
 	}
 	if _, err := runConformanceCommandIn(
 		ctx,
@@ -520,54 +520,18 @@ func managerAdapterFixtures(
 		executable,
 		arguments...,
 	); err == nil {
-		return errors.New("Manager frozen install accepted a manifest/lockfile mismatch")
+		return errors.New("pnpm launched or accepted a replacement Manager")
 	}
 	return nil
 }
 
-func managerFixtureLock(name PackageManagerName) (string, string) {
-	switch name {
-	case PackageManagerNPM:
-		return "package-lock.json", `{"lockfileVersion":3,"name":"helmr-manager-fixture","packages":{"":{"name":"helmr-manager-fixture","version":"1.0.0"}},"requires":true,"version":"1.0.0"}`
-	case PackageManagerPNPM:
-		return "pnpm-lock.yaml", "lockfileVersion: '9.0'\n\nimporters:\n  .: {}\n"
-	case PackageManagerBun:
-		return "bun.lock", `{"lockfileVersion":1,"packages":{},"workspaces":{"":{"name":"helmr-manager-fixture"}}}`
-	default:
-		return "", ""
+func pnpmInstallArguments(managerFailure string) []string {
+	return []string{
+		"install",
+		"--frozen-lockfile",
+		"--no-runtime",
+		"--pm-on-fail=" + managerFailure,
 	}
-}
-
-func managerFixtureInstallArguments(descriptor ManagerArtifactDescriptor) []string {
-	switch descriptor.PackageManager.Name {
-	case PackageManagerNPM:
-		return []string{"ci", "--no-audit", "--no-fund"}
-	case PackageManagerPNPM:
-		return []string{
-			"install",
-			"--frozen-lockfile",
-			"--no-runtime",
-			"--pm-on-fail=error",
-		}
-	case PackageManagerBun:
-		return []string{"install", "--frozen-lockfile"}
-	default:
-		return []string{"unsupported"}
-	}
-}
-
-func rejectDownloadedRuntime(root string) error {
-	return filepath.WalkDir(root, func(name string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		base := strings.ToLower(entry.Name())
-		if (base == "node" || strings.HasPrefix(base, "node-v")) &&
-			!strings.Contains(name, "node_modules") {
-			return fmt.Errorf("Manager fixture downloaded a Runtime at %q", name)
-		}
-		return nil
-	})
 }
 
 func toolchainConformance(

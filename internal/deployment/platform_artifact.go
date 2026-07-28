@@ -187,7 +187,7 @@ func (p *BuildPolicy) PlatformArtifactExpectations(
 			IntegrityIdentities:     []string{managerIdentity},
 			IntegrityKind:           managerIntegrity,
 			Manager:                 &manager,
-			RequiredConformance:     managerConformanceNames(),
+			RequiredConformance:     managerConformanceNames(manager.Name),
 			SourceOrigin:            managerOrigin,
 		},
 		Toolchain: PlatformArtifactExpectation{
@@ -216,16 +216,24 @@ func runtimeConformanceNames() []string {
 	}
 }
 
-func managerConformanceNames() []string {
-	return []string{
+func managerConformanceNames(name PackageManagerName) []string {
+	names := []string{
 		"entrypoint",
-		"frozen-install",
-		"lifecycle",
-		"protected-input-preservation",
 		"reported-version",
 		"required-options",
-		"runtime-download-suppression",
 	}
+	switch name {
+	case PackageManagerNPM, PackageManagerBun:
+	case PackageManagerPNPM:
+		names = append(
+			names,
+			"pnpm-manager-replacement-denied",
+			"pnpm-runtime-replacement-denied",
+		)
+	default:
+		panic("validated Manager family is unsupported")
+	}
+	return names
 }
 
 func toolchainConformanceNames() []string {

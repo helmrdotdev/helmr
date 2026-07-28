@@ -22,6 +22,7 @@ func TestBuildGuestUsesOneNetworkedVM(t *testing.T) {
 	request, source := buildGuestRequestForTest(t)
 	failed := buildGuestFailureForTest(t, BuildFailureDeclarationAnalysis)
 	connector := &buildGuestTestConnector{
+		requireEOFBeforeStatus: true,
 		handle: func(stream io.ReadWriter, bodyLen uint64) error {
 			body := &io.LimitedReader{R: stream, N: int64(bodyLen)}
 			requestRaw, err := frameio.ReadMessageFrameBounded(body, 64<<10)
@@ -254,13 +255,15 @@ func writeBuildGuestResultForTest(
 }
 
 type buildGuestTestConnector struct {
-	mu              sync.Mutex
-	request         vm.ConnectRequest
-	handle          func(io.ReadWriter, uint64) error
-	network         vm.BuildNetworkStatus
-	statusErr       error
-	statusCount     int
-	closeWriteCount int
+	mu                     sync.Mutex
+	request                vm.ConnectRequest
+	handle                 func(io.ReadWriter, uint64) error
+	network                vm.BuildNetworkStatus
+	statusErr              error
+	statusCount            int
+	closeWriteCount        int
+	eofRead                bool
+	requireEOFBeforeStatus bool
 }
 
 func (connector *buildGuestTestConnector) Connect(
@@ -300,7 +303,8 @@ type buildGuestTestProtocolSession struct {
 
 func (session *buildGuestTestProtocolSession) Stream() vm.Stream {
 	return buildGuestTestStream{
-		Conn: session.host,
+		Conn:      session.host,
+		connector: session.connector,
 		closeWrite: func() {
 			session.connector.mu.Lock()
 			defer session.connector.mu.Unlock()
@@ -332,17 +336,33 @@ func (session *buildGuestTestProtocolSession) BuildNetworkStatus(
 	session.connector.mu.Lock()
 	defer session.connector.mu.Unlock()
 	session.connector.statusCount++
+	if session.connector.requireEOFBeforeStatus && !session.connector.eofRead {
+		return vm.BuildNetworkStatus{}, errors.New(
+			"network status read before response EOF",
+		)
+	}
 	return session.connector.network, session.connector.statusErr
 }
 
 type buildGuestTestStream struct {
 	net.Conn
 	closeWrite func()
+	connector  *buildGuestTestConnector
 }
 
 func (stream buildGuestTestStream) CloseWrite() error {
 	stream.closeWrite()
 	return nil
+}
+
+func (stream buildGuestTestStream) Read(buffer []byte) (int, error) {
+	count, err := stream.Conn.Read(buffer)
+	if errors.Is(err, io.EOF) {
+		stream.connector.mu.Lock()
+		stream.connector.eofRead = true
+		stream.connector.mu.Unlock()
+	}
+	return count, err
 }
 
 func buildGuestRequestForTest(

@@ -155,34 +155,25 @@ func (guest BuildGuest) Execute(
 	if err != nil {
 		return nil, vm.NewGuestError(err)
 	}
-	status, err := network.BuildNetworkStatus(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read build network status: %w", err)
-	}
-	if failure := buildNetworkFailure(status, result.Logs); failure != nil {
-		return nil, *failure
-	}
-	if result.Outcome == BuildGuestFailed {
-		return nil, BuildFailure{
-			Reason:  result.Error.ReasonCode,
-			Message: result.Error.Message,
-			Logs:    result.Logs,
+	var tree *BuildTree
+	if result.Outcome == BuildGuestSucceeded {
+		tree, err = IngestBuildTreeArchive(
+			ctx,
+			guest.WorkDir,
+			guest.Encoder,
+			result.TreeDigest,
+			result.TreeSizeBytes,
+			stream,
+		)
+		if err != nil {
+			return nil, err
 		}
-	}
-	tree, err := IngestBuildTreeArchive(
-		ctx,
-		guest.WorkDir,
-		guest.Encoder,
-		result.TreeDigest,
-		result.TreeSizeBytes,
-		stream,
-	)
-	if err != nil {
-		return nil, err
 	}
 	var trailing [1]byte
 	if _, err := io.ReadFull(stream, trailing[:]); !errors.Is(err, io.EOF) {
-		_ = tree.Close()
+		if tree != nil {
+			_ = tree.Close()
+		}
 		if err == nil {
 			return nil, vm.NewGuestError(
 				errors.New("build response contains trailing data"),
@@ -191,6 +182,26 @@ func (guest BuildGuest) Execute(
 		return nil, vm.NewGuestError(
 			fmt.Errorf("read build response tail: %w", err),
 		)
+	}
+	status, err := network.BuildNetworkStatus(ctx)
+	if err != nil {
+		if tree != nil {
+			_ = tree.Close()
+		}
+		return nil, fmt.Errorf("read build network status: %w", err)
+	}
+	if failure := buildNetworkFailure(status, result.Logs); failure != nil {
+		if tree != nil {
+			_ = tree.Close()
+		}
+		return nil, *failure
+	}
+	if result.Outcome == BuildGuestFailed {
+		return nil, BuildFailure{
+			Reason:  result.Error.ReasonCode,
+			Message: result.Error.Message,
+			Logs:    result.Logs,
+		}
 	}
 	return &BuildExecution{
 		Tree:         tree,

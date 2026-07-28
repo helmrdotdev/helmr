@@ -6,12 +6,30 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/ProtonMail/go-crypto/openpgp/clearsign"
 )
+
+func TestManagerConformanceNamesAreFamilySpecific(t *testing.T) {
+	common := []string{"entrypoint", "reported-version", "required-options"}
+	for _, name := range []PackageManagerName{PackageManagerNPM, PackageManagerBun} {
+		if actual := managerConformanceNames(name); !slices.Equal(actual, common) {
+			t.Fatalf("%s conformance = %v, want %v", name, actual, common)
+		}
+	}
+	pnpm := append(
+		slices.Clone(common),
+		"pnpm-manager-replacement-denied",
+		"pnpm-runtime-replacement-denied",
+	)
+	if actual := managerConformanceNames(PackageManagerPNPM); !slices.Equal(actual, pnpm) {
+		t.Fatalf("pnpm conformance = %v, want %v", actual, pnpm)
+	}
+}
 
 func TestVerifyRetainedNodeSourceUsesPinnedReleaseKey(t *testing.T) {
 	source := []byte("node distribution")
