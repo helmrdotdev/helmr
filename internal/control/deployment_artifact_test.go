@@ -23,7 +23,11 @@ func TestValidateDeploymentSourceArtifactArchiveRequiresCanonicalSource(t *testi
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "bun.lock"), []byte("lockfileVersion = 1\n"), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(root, "bun.lock"),
+		[]byte(`{"configVersion":1,"lockfileVersion":1,"packages":{},"workspaces":{"":{"name":"test"}}}`),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(

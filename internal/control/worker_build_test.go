@@ -104,7 +104,9 @@ func newDeploymentBuildCompletionFixture(
 	}
 
 	root := t.TempDir()
-	lockfile := []byte("lockfileVersion = 1")
+	lockfile := []byte(
+		`{"configVersion":1,"lockfileVersion":1,"packages":{},"workspaces":{"":{"name":"test"}}}`,
+	)
 	for name, body := range map[string][]byte{
 		"helmr.config.ts": []byte(`export default { dirs: ["tasks"] }`),
 		"package.json": []byte(

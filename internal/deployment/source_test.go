@@ -18,6 +18,7 @@ const (
 	npmSourcePackageJSON  = `{"devEngines":{"runtime":{"name":"node","version":"24.16.0"}},"packageManager":"npm@11.4.2","type":"module"}`
 	pnpmSourcePackageJSON = `{"devEngines":{"runtime":{"name":"node","version":"24.16.0"}},"packageManager":"pnpm@11.1.0","type":"module"}`
 	bunSourcePackageJSON  = `{"devEngines":{"runtime":{"name":"node","version":"24.16.0"}},"packageManager":"bun@1.3.11","type":"module"}`
+	bunSourceLock         = `{"configVersion":1,"lockfileVersion":1,"packages":{},"workspaces":{"":{"name":"source-fixture"}}}`
 )
 
 func TestInspectSourcePinsExactManagerAndLockfile(t *testing.T) {
@@ -58,7 +59,7 @@ func TestInspectSourcePinsExactManagerAndLockfile(t *testing.T) {
 			name: "bun",
 			files: map[string]string{
 				"package.json": bunSourcePackageJSON,
-				"bun.lock":     "lockfileVersion = 1",
+				"bun.lock":     bunSourceLock,
 			},
 			manager:  PackageManager{Name: PackageManagerBun, Version: "1.3.11"},
 			lockfile: "bun.lock",
@@ -142,11 +143,11 @@ func TestInspectSourceRejectsAmbiguousOrInvalidAuthority(t *testing.T) {
 	tests := map[string]map[string]string{
 		"missing package manager": {
 			"package.json": `{}`,
-			"bun.lock":     "lock",
+			"bun.lock":     bunSourceLock,
 		},
 		"manager range": {
 			"package.json": `{"devEngines":{"runtime":{"name":"node","version":"24.16.0"}},"packageManager":"bun@^1.3.11","type":"module"}`,
-			"bun.lock":     "lock",
+			"bun.lock":     bunSourceLock,
 		},
 		"invalid manager integrity": {
 			"package.json":      `{"devEngines":{"runtime":{"name":"node","version":"24.16.0"}},"packageManager":"npm@11.4.2+sha256.not-hex","type":"module"}`,
@@ -154,20 +155,20 @@ func TestInspectSourceRejectsAmbiguousOrInvalidAuthority(t *testing.T) {
 		},
 		"bun integrity suffix": {
 			"package.json": `{"devEngines":{"runtime":{"name":"node","version":"24.16.0"}},"packageManager":"bun@1.3.11+sha256.` + strings.Repeat("a", 64) + `","type":"module"}`,
-			"bun.lock":     "lock",
+			"bun.lock":     bunSourceLock,
 		},
 		"missing selected lockfile": {
 			"package.json": npmSourcePackageJSON,
-			"bun.lock":     "lock",
+			"bun.lock":     bunSourceLock,
 		},
 		"reserved output": {
 			"package.json": bunSourcePackageJSON,
-			"bun.lock":     "lock",
+			"bun.lock":     bunSourceLock,
 			"helmr/output": "reserved",
 		},
 		"nested reserved output": {
 			"package.json":              bunSourcePackageJSON,
-			"bun.lock":                  "lock",
+			"bun.lock":                  bunSourceLock,
 			"packages/tool/.helmr/file": "reserved",
 		},
 	}
@@ -183,7 +184,7 @@ func TestInspectSourceRejectsAmbiguousOrInvalidAuthority(t *testing.T) {
 func TestInspectSourceAllowsNestedReservedNames(t *testing.T) {
 	files := map[string]string{
 		"package.json":                 bunSourcePackageJSON,
-		"bun.lock":                     "lock",
+		"bun.lock":                     bunSourceLock,
 		"packages/tool/helmr/value.ts": "export {}",
 		"packages/tool/node_modules/x": "x",
 	}
@@ -195,15 +196,15 @@ func TestInspectSourceAllowsNestedReservedNames(t *testing.T) {
 func TestInspectSourceRejectsDuplicatePathsAndEscapingLinks(t *testing.T) {
 	duplicate := sourceTar(t, map[string]string{
 		"package.json": bunSourcePackageJSON,
-		"bun.lock":     "lock",
-	}, []tar.Header{{Name: "bun.lock", Typeflag: tar.TypeReg, Size: 4, Mode: 0o644}})
+		"bun.lock":     bunSourceLock,
+	}, []tar.Header{{Name: "bun.lock", Typeflag: tar.TypeReg, Size: int64(len(bunSourceLock)), Mode: 0o644}})
 	if _, err := InspectSource(duplicate); err == nil {
 		t.Fatal("InspectSource accepted a duplicate path")
 	}
 
 	escaping := sourceTar(t, map[string]string{
 		"package.json": bunSourcePackageJSON,
-		"bun.lock":     "lock",
+		"bun.lock":     bunSourceLock,
 	}, []tar.Header{{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "../../outside"}})
 	if _, err := InspectSource(escaping); err == nil {
 		t.Fatal("InspectSource accepted an escaping link")
@@ -262,6 +263,122 @@ func TestInspectSourceRejectsEnvironmentSecretsAndAcceptsExamples(t *testing.T) 
 				"package-lock.json": `{"lockfileVersion":3}`,
 			}, nil)); err != nil {
 				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestInspectSourceAcceptsSafeManagerConfiguration(t *testing.T) {
+	tests := map[string]map[string]string{
+		"npm": {
+			".npmrc":            "registry=https://registry.example.com/npm/\nlegacy-peer-deps=true\n",
+			"package.json":      npmSourcePackageJSON,
+			"package-lock.json": `{"lockfileVersion":3}`,
+		},
+		"pnpm": {
+			".npmrc":              "registry=https://registry.example.com/npm/\nalways-auth=false\n",
+			"package.json":        pnpmSourcePackageJSON,
+			"pnpm-lock.yaml":      "lockfileVersion: '9.0'\n",
+			"pnpm-workspace.yaml": "packages:\n  - packages/*\nregistries:\n  default: https://registry.example.com/npm/\nnamedRegistries:\n  public: https://packages.example.com/npm/\nstrictSsl: true\n",
+		},
+		"bun": {
+			".npmrc":       "@public:registry=https://registry.example.com/npm/\n",
+			"bun.lock":     bunSourceLock,
+			"bunfig.toml":  "[install]\nexact = true\nregistry = \"https://registry.example.com/npm/\"\n[install.scopes]\npublic = { url = \"https://packages.example.com/npm/\" }\n",
+			"package.json": bunSourcePackageJSON,
+		},
+		"pnpm build hook": {
+			".pnpmfile.cjs":  "module.exports = { hooks: {} }",
+			"package.json":   pnpmSourcePackageJSON,
+			"pnpm-lock.yaml": "lockfileVersion: '9.0'",
+		},
+	}
+	for name, files := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := InspectSource(sourceTar(t, files, nil)); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestInspectSourceRejectsManagerConfigurationAuthority(t *testing.T) {
+	tests := map[string]map[string]string{
+		"npm token": {
+			".npmrc":            "//registry.example.com/:_authToken=secret\n",
+			"package.json":      npmSourcePackageJSON,
+			"package-lock.json": `{"lockfileVersion":3}`,
+		},
+		"npm interpolated token": {
+			".npmrc":            "//registry.example.com/:_authToken=${NPM_TOKEN}\n",
+			"package.json":      npmSourcePackageJSON,
+			"package-lock.json": `{"lockfileVersion":3}`,
+		},
+		"npm registry userinfo": {
+			".npmrc":            "registry=https://user:password@registry.example.com/\n",
+			"package.json":      npmSourcePackageJSON,
+			"package-lock.json": `{"lockfileVersion":3}`,
+		},
+		"npm plain HTTP": {
+			".npmrc":            "registry=http://registry.example.com/\n",
+			"package.json":      npmSourcePackageJSON,
+			"package-lock.json": `{"lockfileVersion":3}`,
+		},
+		"npm proxy": {
+			".npmrc":            "https-proxy=https://proxy.example.com/\n",
+			"package.json":      npmSourcePackageJSON,
+			"package-lock.json": `{"lockfileVersion":3}`,
+		},
+		"npm custom trust": {
+			".npmrc":            "cafile=certificates/ca.pem\n",
+			"package.json":      npmSourcePackageJSON,
+			"package-lock.json": `{"lockfileVersion":3}`,
+		},
+		"npm TLS weakening": {
+			".npmrc":            "strict-ssl=false\n",
+			"package.json":      npmSourcePackageJSON,
+			"package-lock.json": `{"lockfileVersion":3}`,
+		},
+		"pnpm registry interpolation": {
+			"package.json":        pnpmSourcePackageJSON,
+			"pnpm-lock.yaml":      "lockfileVersion: '9.0'",
+			"pnpm-workspace.yaml": "registries:\n  default: https://${REGISTRY_HOST}/\n",
+		},
+		"pnpm proxy": {
+			"package.json":        pnpmSourcePackageJSON,
+			"pnpm-lock.yaml":      "lockfileVersion: '9.0'",
+			"pnpm-workspace.yaml": "httpsProxy: https://proxy.example.com/\n",
+		},
+		"pnpm TLS weakening": {
+			"package.json":        pnpmSourcePackageJSON,
+			"pnpm-lock.yaml":      "lockfileVersion: '9.0'",
+			"pnpm-workspace.yaml": "strictSsl: false\n",
+		},
+		"bun token": {
+			"bun.lock":     bunSourceLock,
+			"bunfig.toml":  "[install]\nregistry = { url = \"https://registry.example.com/\", token = \"$NPM_TOKEN\" }\n",
+			"package.json": bunSourcePackageJSON,
+		},
+		"bun scope credential": {
+			"bun.lock":     bunSourceLock,
+			"bunfig.toml":  "[install.scopes]\nprivate = { url = \"https://registry.example.com/\", username = \"user\", password = \"password\" }\n",
+			"package.json": bunSourcePackageJSON,
+		},
+		"bun custom trust": {
+			"bun.lock":     bunSourceLock,
+			"bunfig.toml":  "[install]\ncafile = \"certificates/ca.pem\"\n",
+			"package.json": bunSourcePackageJSON,
+		},
+		"bun Fetch scanner": {
+			"bun.lock":     bunSourceLock,
+			"bunfig.toml":  "[install.security]\nscanner = \"@example/scanner\"\n",
+			"package.json": bunSourcePackageJSON,
+		},
+	}
+	for name, files := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := InspectSource(sourceTar(t, files, nil)); err == nil {
+				t.Fatal("InspectSource accepted Manager configuration authority")
 			}
 		})
 	}
