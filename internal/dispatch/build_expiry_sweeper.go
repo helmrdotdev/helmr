@@ -211,7 +211,7 @@ func (l *BuildExpirySweepAdvisoryLock) TryLock(ctx context.Context) (BuildExpiry
 }
 
 type buildExpirySweepAdvisoryLockGuard struct {
-	guard advisoryLockGuard
+	guard *advisoryLockGuard
 }
 
 func (g buildExpirySweepAdvisoryLockGuard) Store(BuildExpirySweepStore) BuildExpirySweepStore {

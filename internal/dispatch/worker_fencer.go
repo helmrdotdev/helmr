@@ -396,7 +396,7 @@ func (lock *StaleWorkerFenceAdvisoryLock) TryLock(ctx context.Context) (StaleWor
 }
 
 type staleWorkerFenceAdvisoryLockGuard struct {
-	guard advisoryLockGuard
+	guard *advisoryLockGuard
 }
 
 func (guard staleWorkerFenceAdvisoryLockGuard) Transactions(StaleWorkerFenceTransactions) StaleWorkerFenceTransactions {

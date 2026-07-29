@@ -66,21 +66,21 @@ func (l *QueueReconcileAdvisoryLock) TryLock(ctx context.Context) (QueueReconcil
 	return queueReconcileAdvisoryLockGuard{guard: guard}, true, nil
 }
 
-func (l *advisoryLock) tryLock(ctx context.Context) (advisoryLockGuard, bool, error) {
+func (l *advisoryLock) tryLock(ctx context.Context) (*advisoryLockGuard, bool, error) {
 	conn, err := l.pool.Acquire(ctx)
 	if err != nil {
-		return advisoryLockGuard{}, false, fmt.Errorf("acquire advisory lock connection: %w", err)
+		return nil, false, fmt.Errorf("acquire advisory lock connection: %w", err)
 	}
 	var locked bool
 	if err := conn.QueryRow(ctx, "select pg_try_advisory_lock($1)", l.key).Scan(&locked); err != nil {
-		conn.Release()
-		return advisoryLockGuard{}, false, fmt.Errorf("acquire advisory lock: %w", err)
+		discardAdvisoryLockConnection(conn)
+		return nil, false, fmt.Errorf("acquire advisory lock: %w", err)
 	}
 	if !locked {
 		conn.Release()
-		return advisoryLockGuard{}, false, nil
+		return nil, false, nil
 	}
-	return advisoryLockGuard{conn: conn, key: l.key}, true, nil
+	return &advisoryLockGuard{conn: conn, key: l.key}, true, nil
 }
 
 type advisoryLockGuard struct {
@@ -89,7 +89,7 @@ type advisoryLockGuard struct {
 }
 
 type queueReconcileAdvisoryLockGuard struct {
-	guard advisoryLockGuard
+	guard *advisoryLockGuard
 }
 
 func (g queueReconcileAdvisoryLockGuard) Store(QueueReconcilerStore) QueueReconcilerStore {
@@ -100,16 +100,28 @@ func (g queueReconcileAdvisoryLockGuard) Unlock(ctx context.Context) error {
 	return g.guard.Unlock(ctx)
 }
 
-func (g advisoryLockGuard) Unlock(ctx context.Context) error {
-	defer g.conn.Release()
+func (g *advisoryLockGuard) Unlock(ctx context.Context) error {
+	if g == nil || g.conn == nil {
+		return errors.New("advisory lock guard is already released")
+	}
+	conn := g.conn
+	g.conn = nil
 	var unlocked bool
-	if err := g.conn.QueryRow(ctx, "select pg_advisory_unlock($1)", g.key).Scan(&unlocked); err != nil {
+	if err := conn.QueryRow(ctx, "select pg_advisory_unlock($1)", g.key).Scan(&unlocked); err != nil {
+		discardAdvisoryLockConnection(conn)
 		return fmt.Errorf("release advisory lock: %w", err)
 	}
 	if !unlocked {
+		discardAdvisoryLockConnection(conn)
 		return fmt.Errorf("advisory lock was not held")
 	}
+	conn.Release()
 	return nil
+}
+
+func discardAdvisoryLockConnection(conn *pgxpool.Conn) {
+	raw := conn.Hijack()
+	_ = raw.Close(context.Background())
 }
 
 func advisoryLockKey(name string) int64 {

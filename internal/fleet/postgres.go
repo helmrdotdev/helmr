@@ -409,7 +409,8 @@ func (e *PGLeaderElector) TryAcquire(ctx context.Context, groupID string) (Leade
 	}
 	var acquired bool
 	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtextextended($1, 0))`, "helmr:fleet:"+groupID).Scan(&acquired); err != nil {
-		conn.Release()
+		raw := conn.Hijack()
+		_ = raw.Close(context.Background())
 		return nil, false, err
 	}
 	if !acquired {
@@ -432,16 +433,16 @@ func (l *pgLeaderLease) Release() error {
 	defer cancel()
 	var released bool
 	err := l.conn.QueryRow(ctx, `SELECT pg_advisory_unlock(hashtextextended($1, 0))`, l.key).Scan(&released)
-	if err != nil {
+	if err != nil || !released {
 		conn := l.conn.Hijack()
 		l.conn = nil
-		_ = conn.Close(ctx)
+		_ = conn.Close(context.Background())
+		if err == nil {
+			err = errors.New("fleet advisory lease was not held")
+		}
 		return err
 	}
 	l.conn.Release()
 	l.conn = nil
-	if !released {
-		return errors.New("fleet advisory lease was not held")
-	}
 	return nil
 }
