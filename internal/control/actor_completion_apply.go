@@ -30,9 +30,6 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 	if err != nil || replayed {
 		return err
 	}
-	if request.Lease.WorkerEpoch != worker.WorkerEpoch || request.Lease.WorkerProtocolVersion != worker.ProtocolVersion {
-		return errStaleActorCompletion
-	}
 	if completion.capture != nil {
 		verified, err := s.verifyTaskWorkspaceCapture(ctx, *completion.capture)
 		if err != nil {
@@ -45,10 +42,6 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 		if err != nil || replayed {
 			return err
 		}
-		secrets, err := secret.LockAttemptDelivery(ctx, work.q, pgvalue.UUID(completion.lease.runID), request.Lease.AttemptNumber, pgvalue.UUID(completion.lease.workspaceID))
-		if err != nil {
-			return fmt.Errorf("lock Actor completion Secret authority: %w", err)
-		}
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(completion.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
 			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
@@ -56,6 +49,10 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 		})
 		if err != nil {
 			return staleActorCompletion(err)
+		}
+		secrets, err := secret.LockAttemptDelivery(ctx, work.q, locators.RunID, locators.AttemptNumber, locators.WorkspaceID)
+		if err != nil {
+			return fmt.Errorf("lock Actor completion Secret authority: %w", err)
 		}
 		owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
 		if err != nil || !owner.actor.ID.Valid {
@@ -66,7 +63,7 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 			return staleActorCompletion(err)
 		}
 		authority.actor = owner.actor
-		if err := validateActorCompletionAuthority(ctx, work.q, request, completion, authority); err != nil {
+		if err := validateActorCompletionAuthority(ctx, work.q, completion, authority); err != nil {
 			return err
 		}
 		if completion.rollback != nil {
@@ -134,8 +131,7 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 
 func actorCompletionWasReplayed(ctx context.Context, store actorCompletionReplayStore, worker workerActor, request api.WorkerCompleteActorRequest, completion parsedActorCompletion) (bool, error) {
 	fingerprint, err := store.GetActorCompletionReplay(ctx, db.GetActorCompletionReplayParams{
-		RunLeaseID: pgvalue.UUID(completion.lease.leaseID), RunID: pgvalue.UUID(completion.lease.runID),
-		WorkspaceID: pgvalue.UUID(completion.lease.workspaceID), AttemptNumber: request.Lease.AttemptNumber,
+		RunLeaseID:    pgvalue.UUID(completion.lease.leaseID),
 		LeaseSequence: request.Lease.LeaseSequence, WorkerGroupID: worker.WorkerGroupID,
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 	})
@@ -165,7 +161,12 @@ func actorCompletionReplayAfterError(ctx context.Context, store actorCompletionR
 	return operationErr
 }
 
-func validateActorCompletionAuthority(ctx context.Context, store db.Querier, request api.WorkerCompleteActorRequest, completion parsedActorCompletion, authority runLeaseClaimAuthority) error {
+func validateActorCompletionAuthority(
+	ctx context.Context,
+	store db.Querier,
+	completion parsedActorCompletion,
+	authority runLeaseClaimAuthority,
+) error {
 	actor := authority.actor
 	if authority.run.EntrypointKind != "actor" || !authority.run.ActorID.Valid || authority.run.ActorID != actor.ID ||
 		authority.run.ParentRunID.Valid || authority.run.ParentOwnsLifecycle.Valid ||
@@ -194,14 +195,14 @@ func validateActorCompletionAuthority(ctx context.Context, store db.Querier, req
 	if err != nil || authority.runLease.FinalizationOperationID != pgvalue.UUID(operationID) || authority.runLease.FinalizationKind.String != wantKind {
 		return errStaleActorCompletion
 	}
-	receipt, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
+	assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
 		run: authority.run, attempt: authority.attempt, runtime: authority.runtime, networkSlot: authority.networkSlot,
 		runLease: authority.runLease, workspace: authority.workspace, workspaceMount: authority.workspaceMount, workspaceLease: authority.workspaceLease,
 	})
 	if err != nil {
 		return err
 	}
-	if !equalRunLeaseReceipt(receipt, request.Lease) {
+	if !finalizationFenceMatchesLease(finalization.Fence, assignment) {
 		return errStaleActorCompletion
 	}
 	clear, err := store.RunFinalizationScopeIsClear(ctx, db.RunFinalizationScopeIsClearParams{RunID: authority.run.ID, AttemptNumber: authority.attempt.Number, WorkspaceID: authority.workspace.ID})

@@ -11,9 +11,9 @@ import (
 )
 
 func TestParseWorkerActorInputSendRequiresExactAddress(t *testing.T) {
-	lease := validRunLeaseReceipt(uuid.Must(uuid.NewV7()))
+	lease := validRunLeaseAssignment(uuid.Must(uuid.NewV7()))
 	request := api.WorkerSendActorInputRequest{
-		Lease: lease, CorrelationID: uuid.Must(uuid.NewV7()).String(),
+		Lease: lease.Fence(), CorrelationID: uuid.Must(uuid.NewV7()).String(),
 		ActorDeclaredID: "mailbox", ActorKey: "primary",
 		Input: json.RawMessage(`{"hello":"world"}`), IdempotencyKey: "send-1",
 	}
@@ -21,7 +21,7 @@ func TestParseWorkerActorInputSendRequiresExactAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.lease.runID.String() != lease.RunID ||
+	if parsed.lease.leaseID.String() != lease.ID ||
 		parsed.correlationID.String() != request.CorrelationID ||
 		parsed.idempotencyKey != "send-1" {
 		t.Fatalf("parsed = %+v", parsed)
@@ -64,33 +64,26 @@ func TestActorInputSendFailurePreservesSemanticCodes(t *testing.T) {
 	}
 }
 
-func TestAuthorizeActorInputSendSourceRequiresExactLiveReceipt(t *testing.T) {
+func TestAuthorizeActorInputSendSourceRequiresExactLiveFence(t *testing.T) {
 	_, store, worker, turnRequest, _ := newActorTurnCommitFixture(t)
 	request := api.WorkerSendActorInputRequest{Lease: turnRequest.Lease}
-	parsedLease, err := parseRunLeaseReceipt(request.Lease)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed := parsedWorkerActorInputSend{lease: parsedLease}
 	if err := authorizeActorInputSendSource(
 		t.Context(),
 		store,
 		worker,
 		request,
-		parsed,
 		store.renewal.EnvironmentID,
 	); err != nil {
 		t.Fatal(err)
 	}
-	request.Lease.WriterGeneration++
+	request.Lease.LeaseSequence++
 	if err := authorizeActorInputSendSource(
 		t.Context(),
 		store,
 		worker,
 		request,
-		parsed,
 		store.renewal.EnvironmentID,
 	); !errors.Is(err, errStaleActorInputSend) {
-		t.Fatalf("altered receipt error = %v", err)
+		t.Fatalf("altered fence error = %v", err)
 	}
 }

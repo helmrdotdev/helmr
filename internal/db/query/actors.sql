@@ -85,7 +85,7 @@ SELECT actor_definition.id AS actor_definition_id,
  WHERE environments.org_id = sqlc.arg(org_id)
    AND environments.project_id = sqlc.arg(project_id)
    AND environments.id = sqlc.arg(environment_id)
- FOR UPDATE OF environments;
+ FOR NO KEY UPDATE OF environments;
 
 -- name: LockActorStartKey :exec
 SELECT pg_advisory_xact_lock(

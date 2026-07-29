@@ -1,8 +1,10 @@
 package control
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -100,6 +102,43 @@ func TestTaskStartPostgresCommitsAndReplaysOneAdmission(t *testing.T) {
 	}
 	if len(listed) != 1 || listed[0].ID != pgvalue.UUID(created.RunID) {
 		t.Fatalf("listed = %+v", listed)
+	}
+}
+
+func TestTaskStartPostgresConcurrentClaimsDoNotDeadlockDeploymentAuthority(t *testing.T) {
+	fixture := newActorStartPostgresFixture(t, 2)
+	type outcome struct {
+		result taskStartResult
+		err    error
+	}
+	start := make(chan struct{})
+	outcomes := make(chan outcome, 2)
+	for index := range 2 {
+		index := index
+		go func() {
+			<-start
+			workspaceID := fixture.workspaceRefs[index]
+			result, err := fixture.server.startTask(context.Background(), taskStartRequest{
+				OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
+				TaskDeclaredID: "resize-image", PayloadPresent: true,
+				Payload:        json.RawMessage(fmt.Sprintf(`{"imageId":"image-%d"}`, index)),
+				Workspace:      api.WorkspaceTarget{ID: &workspaceID},
+				IdempotencyKey: fmt.Sprintf("concurrent-%d", index),
+			})
+			outcomes <- outcome{result: result, err: err}
+		}()
+	}
+	close(start)
+	runIDs := make(map[uuid.UUID]struct{}, 2)
+	for range 2 {
+		value := <-outcomes
+		if value.err != nil {
+			t.Fatalf("concurrent Task start: %v", value.err)
+		}
+		runIDs[value.result.RunID] = struct{}{}
+	}
+	if len(runIDs) != 2 {
+		t.Fatalf("Run IDs = %v, want two distinct identities", runIDs)
 	}
 }
 

@@ -21,12 +21,13 @@ func TestAdvisoryLockDiscardsConnectionWhenUnlockIsNotConfirmed(t *testing.T) {
 	if !locked {
 		t.Fatal("expected advisory lock")
 	}
-	lockedBackend := backendPID(t, guard.conn)
+	conn := guard.guard.Conn()
+	lockedBackend := backendPID(t, conn)
 	var unlocked bool
-	if err := guard.conn.QueryRow(
+	if err := conn.QueryRow(
 		t.Context(),
 		"select pg_advisory_unlock($1)",
-		guard.key,
+		lock.key,
 	).Scan(&unlocked); err != nil {
 		t.Fatal(err)
 	}
@@ -36,12 +37,12 @@ func TestAdvisoryLockDiscardsConnectionWhenUnlockIsNotConfirmed(t *testing.T) {
 	if err := guard.Unlock(t.Context()); err == nil {
 		t.Fatal("expected unlock confirmation error")
 	}
-	conn, err := database.Pool.Acquire(t.Context())
+	replacement, err := database.Pool.Acquire(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Release()
-	if replacementBackend := backendPID(t, conn); replacementBackend == lockedBackend {
+	defer replacement.Release()
+	if replacementBackend := backendPID(t, replacement); replacementBackend == lockedBackend {
 		t.Fatalf("unconfirmed session reused backend %d", lockedBackend)
 	}
 }
@@ -59,10 +60,25 @@ func TestAdvisoryLockDiscardsConnectionWhenUnlockQueryFails(t *testing.T) {
 	if !locked {
 		t.Fatal("expected advisory lock")
 	}
-	lockedBackend := backendPID(t, guard.conn)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if err := guard.Unlock(ctx); err == nil {
+	lockedBackend := backendPID(t, guard.guard.Conn())
+	terminator, err := database.Pool.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var terminated bool
+	if err := terminator.QueryRow(
+		t.Context(),
+		"select pg_terminate_backend($1)",
+		lockedBackend,
+	).Scan(&terminated); err != nil {
+		terminator.Release()
+		t.Fatal(err)
+	}
+	terminator.Release()
+	if !terminated {
+		t.Fatal("expected backend termination")
+	}
+	if err := guard.Unlock(t.Context()); err == nil {
 		t.Fatal("expected unlock query error")
 	}
 	conn, err := database.Pool.Acquire(t.Context())

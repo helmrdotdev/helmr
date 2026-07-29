@@ -299,31 +299,31 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 		t.Fatal(err)
 	}
 	var baseVersionID uuid.UUID
-	if err := fixture.pool.QueryRow(ctx, `SELECT base_version_id FROM workspace_leases WHERE id = $1`, registration.WorkspaceLeaseID).Scan(&baseVersionID); err != nil {
+	if err := fixture.pool.QueryRow(ctx, `SELECT base_version_id FROM workspace_leases WHERE id = $1`, authority.workspaceLeaseID).Scan(&baseVersionID); err != nil {
 		t.Fatal(err)
 	}
 	checkpointID := uuid.Must(uuid.NewV7())
 	if _, err := fixture.queries.CreateRunCheckpoint(ctx, db.CreateRunCheckpointParams{
 		ID: pgvalue.UUID(checkpointID), Kind: db.RunCheckpointKindSuspend,
-		RunID: pgvalue.UUID(registration.RunID), AttemptNumber: registration.AttemptNumber,
-		RunWaitID: pgvalue.UUID(registered.WaitID), SourceRunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
-		SourceWorkspaceLeaseID: pgvalue.UUID(registration.WorkspaceLeaseID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
+		RunID: pgvalue.UUID(work.runID), AttemptNumber: int32(1),
+		RunWaitID: pgvalue.UUID(registered.WaitID), SourceRunLeaseID: pgvalue.UUID(work.leaseID),
+		SourceWorkspaceLeaseID: pgvalue.UUID(authority.workspaceLeaseID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 		BaseWorkspaceVersionID: pgvalue.UUID(baseVersionID), RestoreManifest: []byte(`{}`),
 		ActorSpeculativeInputSequence: registration.ActorSpeculativeInputSequence,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.queries.BeginRunLeaseCheckpoint(ctx, db.BeginRunLeaseCheckpointParams{
-		ID: pgvalue.UUID(registration.CurrentRunLeaseID), RunID: pgvalue.UUID(registration.RunID),
-		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: registration.AttemptNumber,
+		ID: pgvalue.UUID(work.leaseID), RunID: pgvalue.UUID(work.runID),
+		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: int32(1),
 		LeaseSequence: registration.LeaseSequence,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	wait, err := fixture.queries.RequestRunWaitCheckpoint(ctx, db.RequestRunWaitCheckpointParams{
-		SuspendCheckpointID: pgvalue.UUID(checkpointID), RunID: pgvalue.UUID(registration.RunID),
-		AttemptNumber: registration.AttemptNumber, ID: pgvalue.UUID(registered.WaitID),
-		CurrentRunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
+		SuspendCheckpointID: pgvalue.UUID(checkpointID), RunID: pgvalue.UUID(work.runID),
+		AttemptNumber: int32(1), ID: pgvalue.UUID(registered.WaitID),
+		CurrentRunLeaseID: pgvalue.UUID(work.leaseID),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -335,25 +335,25 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 		t.Fatal(err)
 	}
 	if _, err := fixture.queries.CloseRunActiveIntervalForCheckpointFailure(ctx, db.CloseRunActiveIntervalForCheckpointFailureParams{
-		FailedAt: failedAt, ID: pgvalue.UUID(registration.RunID), OrgID: pgvalue.UUID(fixture.orgID),
+		FailedAt: failedAt, ID: pgvalue.UUID(work.runID), OrgID: pgvalue.UUID(fixture.orgID),
 		ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
-		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: registration.AttemptNumber,
-		RunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
+		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: int32(1),
+		RunLeaseID: pgvalue.UUID(work.leaseID),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.queries.InvalidateFailedRunCheckpoint(ctx, db.InvalidateFailedRunCheckpointParams{
 		FailedAt: failedAt, FailedRequestFingerprint: pgvalue.Text(failureFingerprint),
-		CheckpointID: pgvalue.UUID(checkpointID), RunID: pgvalue.UUID(registration.RunID),
-		AttemptNumber: registration.AttemptNumber, RunWaitID: pgvalue.UUID(registered.WaitID),
-		RunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
+		CheckpointID: pgvalue.UUID(checkpointID), RunID: pgvalue.UUID(work.runID),
+		AttemptNumber: int32(1), RunWaitID: pgvalue.UUID(registered.WaitID),
+		RunLeaseID: pgvalue.UUID(work.leaseID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.queries.FailCheckpointRunLease(ctx, db.FailCheckpointRunLeaseParams{
 		FailedAt: failedAt, Error: failureError, FailedRequestFingerprint: pgvalue.Text(failureFingerprint),
-		RunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID), RunID: pgvalue.UUID(registration.RunID),
-		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: registration.AttemptNumber,
+		RunLeaseID: pgvalue.UUID(work.leaseID), RunID: pgvalue.UUID(work.runID),
+		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: int32(1),
 		LeaseSequence: registration.LeaseSequence,
 	}); err != nil {
 		t.Fatal(err)
@@ -362,7 +362,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 		if _, err := fixture.queries.CompleteActorAttempt(ctx, db.CompleteActorAttemptParams{
 			TerminalActorInputSequence: pgtype.Int8{}, TerminalOutcome: pgvalue.Text("failed"),
 			ReasonCode: pgvalue.Text("checkpoint_failed"), Error: failureError,
-			CompletedAt: failedAt, RunID: pgvalue.UUID(registration.RunID), Number: registration.AttemptNumber,
+			CompletedAt: failedAt, RunID: pgvalue.UUID(work.runID), Number: int32(1),
 			WorkspaceID: pgvalue.UUID(authority.workspaceID),
 		}); err != nil {
 			t.Fatal(err)
@@ -370,7 +370,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	} else {
 		if _, err := fixture.queries.CompleteTaskAttempt(ctx, db.CompleteTaskAttemptParams{
 			TerminalOutcome: pgvalue.Text("failed"), ReasonCode: pgvalue.Text("checkpoint_failed"), Error: failureError,
-			CompletedAt: failedAt, RunID: pgvalue.UUID(registration.RunID), Number: registration.AttemptNumber,
+			CompletedAt: failedAt, RunID: pgvalue.UUID(work.runID), Number: int32(1),
 			WorkspaceID: pgvalue.UUID(authority.workspaceID),
 		}); err != nil {
 			t.Fatal(err)
@@ -378,16 +378,16 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	}
 	if _, err := fixture.queries.FailCheckpointRunWait(ctx, db.FailCheckpointRunWaitParams{
 		CheckpointRequestVersion: wait.CheckpointRequestVersion, FailedAt: failedAt, Error: failureError,
-		RunWaitID: pgvalue.UUID(registered.WaitID), RunID: pgvalue.UUID(registration.RunID),
-		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: registration.AttemptNumber,
-		RunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID), CheckpointID: pgvalue.UUID(checkpointID),
+		RunWaitID: pgvalue.UUID(registered.WaitID), RunID: pgvalue.UUID(work.runID),
+		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: int32(1),
+		RunLeaseID: pgvalue.UUID(work.leaseID), CheckpointID: pgvalue.UUID(checkpointID),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.queries.ReleaseTaskWorkspaceLease(ctx, db.ReleaseTaskWorkspaceLeaseParams{
 		CompletedAt: failedAt, ID: pgvalue.UUID(authority.workspaceLeaseID),
 		WorkspaceID: pgvalue.UUID(authority.workspaceID), WorkspaceMountID: pgvalue.UUID(authority.mountID),
-		RuntimeInstanceID: pgvalue.UUID(authority.runtimeID), OwnerRunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
+		RuntimeInstanceID: pgvalue.UUID(authority.runtimeID), OwnerRunLeaseID: pgvalue.UUID(work.leaseID),
 		BaseVersionID: pgvalue.UUID(authority.physicalVersionID), OwnershipGeneration: 1,
 		WriterGeneration: 1, MountFencingGeneration: 2,
 	}); err != nil {
@@ -405,34 +405,34 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	if mode.retry {
 		if mode.actor {
 			if _, err := fixture.queries.CreateActorCheckpointFailureRetryAttempt(ctx, db.CreateActorCheckpointFailureRetryAttemptParams{
-				Number: registration.AttemptNumber + 1, ExpectedRunGeneration: 1,
-				RunID: pgvalue.UUID(registration.RunID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
-				PreviousAttemptNumber: registration.AttemptNumber, RunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
+				Number: int32(1) + 1, ExpectedRunGeneration: 1,
+				RunID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
+				PreviousAttemptNumber: int32(1), RunLeaseID: pgvalue.UUID(work.leaseID),
 			}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := fixture.queries.DelayActorCheckpointFailureRetry(ctx, db.DelayActorCheckpointFailureRetryParams{
-				NextAttemptNumber: registration.AttemptNumber + 1,
+				NextAttemptNumber: int32(1) + 1,
 				RetryAt:           pgvalue.Timestamptz(failedAt.Time.Add(time.Second)), FailedAt: failedAt,
-				ID: pgvalue.UUID(registration.RunID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
-				ActorID: pgvalue.UUID(actorID), PreviousAttemptNumber: registration.AttemptNumber,
-				RunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
+				ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
+				ActorID: pgvalue.UUID(actorID), PreviousAttemptNumber: int32(1),
+				RunLeaseID: pgvalue.UUID(work.leaseID),
 			}); err != nil {
 				t.Fatal(err)
 			}
 		} else {
 			if _, err := fixture.queries.CreateCheckpointFailureRetryAttempt(ctx, db.CreateCheckpointFailureRetryAttemptParams{
-				Number: registration.AttemptNumber + 1, RunID: pgvalue.UUID(registration.RunID),
-				WorkspaceID: pgvalue.UUID(authority.workspaceID), PreviousAttemptNumber: registration.AttemptNumber,
-				RunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
+				Number: int32(1) + 1, RunID: pgvalue.UUID(work.runID),
+				WorkspaceID: pgvalue.UUID(authority.workspaceID), PreviousAttemptNumber: int32(1),
+				RunLeaseID: pgvalue.UUID(work.leaseID),
 			}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := fixture.queries.DelayCheckpointFailureRetry(ctx, db.DelayCheckpointFailureRetryParams{
-				NextAttemptNumber: registration.AttemptNumber + 1,
+				NextAttemptNumber: int32(1) + 1,
 				RetryAt:           pgvalue.Timestamptz(failedAt.Time.Add(time.Second)), FailedAt: failedAt,
-				ID: pgvalue.UUID(registration.RunID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
-				PreviousAttemptNumber: registration.AttemptNumber, RunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
+				ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
+				PreviousAttemptNumber: int32(1), RunLeaseID: pgvalue.UUID(work.leaseID),
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -443,7 +443,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 			reason := "checkpoint_failed"
 			actorState := "failed"
 			failureCode := pgvalue.Text("platform_failure")
-			failureRunID := pgvalue.UUID(registration.RunID)
+			failureRunID := pgvalue.UUID(work.runID)
 			if mode.maxDuration {
 				runStatus = db.RunStatusExpired
 				reason = "max_active_duration_exceeded"
@@ -451,16 +451,16 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 			}
 			if _, err := fixture.queries.FinishCheckpointFailedActorRun(ctx, db.FinishCheckpointFailedActorRunParams{
 				Status: runStatus, ReasonCode: pgvalue.Text(reason), Error: failureError, FailedAt: failedAt,
-				ID: pgvalue.UUID(registration.RunID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
-				ActorID: pgvalue.UUID(actorID), AttemptNumber: registration.AttemptNumber,
-				RunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
+				ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
+				ActorID: pgvalue.UUID(actorID), AttemptNumber: int32(1),
+				RunLeaseID: pgvalue.UUID(work.leaseID),
 			}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := fixture.queries.ReconcileActorTerminalRun(ctx, db.ReconcileActorTerminalRunParams{
 				State: actorState, FailureCode: failureCode, FailureRunID: failureRunID, CompletedAt: failedAt,
 				EnvironmentID: pgvalue.UUID(fixture.environmentID), ID: pgvalue.UUID(actorID),
-				WorkspaceID: pgvalue.UUID(authority.workspaceID), RunID: pgvalue.UUID(registration.RunID),
+				WorkspaceID: pgvalue.UUID(authority.workspaceID), RunID: pgvalue.UUID(work.runID),
 				ExpectedRunGeneration: 1,
 			}); err != nil {
 				t.Fatal(err)
@@ -476,15 +476,15 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 			if _, err := fixture.queries.ReleaseTaskWorkspaceOwner(ctx, db.ReleaseTaskWorkspaceOwnerParams{
 				CompletedAt: failedAt, ID: pgvalue.UUID(authority.workspaceID), OrgID: pgvalue.UUID(fixture.orgID),
 				ProjectID: pgvalue.UUID(fixture.projectID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
-				RunID: pgvalue.UUID(registration.RunID), OwnershipGeneration: 1, WriterGeneration: 1,
+				RunID: pgvalue.UUID(work.runID), OwnershipGeneration: 1, WriterGeneration: 1,
 				ExpectedHeadVersionID: pgvalue.UUID(authority.baseVersionID),
 			}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := fixture.queries.FinishCheckpointFailedTaskRun(ctx, db.FinishCheckpointFailedTaskRunParams{
 				Status: db.RunStatusSystemFailed, ReasonCode: pgvalue.Text("checkpoint_failed"), Error: failureError,
-				FailedAt: failedAt, ID: pgvalue.UUID(registration.RunID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
-				AttemptNumber: registration.AttemptNumber, RunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
+				FailedAt: failedAt, ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
+				AttemptNumber: int32(1), RunLeaseID: pgvalue.UUID(work.leaseID),
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -494,8 +494,8 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replay.RunID != pgvalue.UUID(registration.RunID) || replay.RunWaitID != pgvalue.UUID(registered.WaitID) ||
-		replay.SourceRunLeaseID != pgvalue.UUID(registration.CurrentRunLeaseID) ||
+	if replay.RunID != pgvalue.UUID(work.runID) || replay.RunWaitID != pgvalue.UUID(registered.WaitID) ||
+		replay.SourceRunLeaseID != pgvalue.UUID(work.leaseID) ||
 		!replay.FailedRequestFingerprint.Valid || replay.FailedRequestFingerprint.String != failureFingerprint {
 		t.Fatalf("failed checkpoint replay = %+v", replay)
 	}
@@ -529,7 +529,7 @@ SELECT runs.status, run_leases.state, run_waits.condition_state, run_waits.suspe
   JOIN runtime_instances ON runtime_instances.id = $6
   JOIN workspace_mounts ON workspace_mounts.id = $7
   JOIN workspaces ON workspaces.id = runs.workspace_id
- WHERE runs.id = $1`, registration.RunID, registration.CurrentRunLeaseID, registered.WaitID, checkpointID,
+ WHERE runs.id = $1`, work.runID, work.leaseID, registered.WaitID, checkpointID,
 		authority.workspaceLeaseID, authority.runtimeID, authority.mountID,
 	).Scan(&runStatus, &leaseState, &condition, &suspension, &checkpointState, &attemptOutcome,
 		&workspaceLeaseState, &runtimeDesired, &mountState, &ownerRunID, &currentLeaseID, &activeStartedAt,
@@ -572,14 +572,14 @@ SELECT actors.state, actors.current_run_id, actors.run_generation,
   JOIN runs ON runs.id = $2 AND runs.actor_id = actors.id
   LEFT JOIN run_attempts AS next_attempt
     ON next_attempt.run_id = $2 AND next_attempt.number = 2
- WHERE actors.id = $1`, actorID, registration.RunID).Scan(
+ WHERE actors.id = $1`, actorID, work.runID).Scan(
 			&actorState, &actorCurrentRunID, &runGeneration, &failureCode, &failureRunID, &ownerActorID,
 			&nextStart, &nextHigh, &nextBase, &workspaceHead,
 		); err != nil {
 			t.Fatal(err)
 		}
 		if mode.retry {
-			if actorState != "open" || actorCurrentRunID != pgvalue.UUID(registration.RunID) || runGeneration != 1 ||
+			if actorState != "open" || actorCurrentRunID != pgvalue.UUID(work.runID) || runGeneration != 1 ||
 				failureCode.Valid || failureRunID.Valid || ownerActorID != pgvalue.UUID(actorID) ||
 				!nextStart.Valid || nextStart.Int64 != 1 || !nextHigh.Valid || nextHigh.Int64 != 2 || nextBase != workspaceHead {
 				t.Fatalf("Actor retry state = state=%s current=%v generation=%d failure=%v/%v owner=%v next=%v/%v base=%v head=%v",
@@ -653,25 +653,25 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	queries := db.New(tx)
 	if _, err := queries.CreateRunCheckpoint(ctx, db.CreateRunCheckpointParams{
 		ID: pgvalue.UUID(checkpointID), Kind: db.RunCheckpointKindSuspend,
-		RunID: pgvalue.UUID(registration.RunID), AttemptNumber: registration.AttemptNumber,
-		RunWaitID: pgvalue.UUID(registered.WaitID), SourceRunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
-		SourceWorkspaceLeaseID: pgvalue.UUID(registration.WorkspaceLeaseID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
+		RunID: pgvalue.UUID(work.runID), AttemptNumber: int32(1),
+		RunWaitID: pgvalue.UUID(registered.WaitID), SourceRunLeaseID: pgvalue.UUID(work.leaseID),
+		SourceWorkspaceLeaseID: pgvalue.UUID(authority.workspaceLeaseID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 		BaseWorkspaceVersionID: pgvalue.UUID(authority.physicalVersionID), RestoreManifest: []byte(`{}`),
 		ActorSpeculativeInputSequence: registration.ActorSpeculativeInputSequence,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.BeginRunLeaseCheckpoint(ctx, db.BeginRunLeaseCheckpointParams{
-		ID: pgvalue.UUID(registration.CurrentRunLeaseID), RunID: pgvalue.UUID(registration.RunID),
-		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: registration.AttemptNumber,
+		ID: pgvalue.UUID(work.leaseID), RunID: pgvalue.UUID(work.runID),
+		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: int32(1),
 		LeaseSequence: registration.LeaseSequence,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	wait, err := queries.RequestRunWaitCheckpoint(ctx, db.RequestRunWaitCheckpointParams{
-		SuspendCheckpointID: pgvalue.UUID(checkpointID), RunID: pgvalue.UUID(registration.RunID),
-		AttemptNumber: registration.AttemptNumber, ID: pgvalue.UUID(registered.WaitID),
-		CurrentRunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
+		SuspendCheckpointID: pgvalue.UUID(checkpointID), RunID: pgvalue.UUID(work.runID),
+		AttemptNumber: int32(1), ID: pgvalue.UUID(registered.WaitID),
+		CurrentRunLeaseID: pgvalue.UUID(work.leaseID),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -703,14 +703,14 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 		PrivateWorkspaceVersionID: pgvalue.UUID(privateVersionID),
 		RestoreManifest:           []byte(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
 		ReadyRequestFingerprint:   pgvalue.Text(tokenWaitTestDigest("checkpoint-ready-" + checkpointID.String())),
-		RunID:                     pgvalue.UUID(registration.RunID), AttemptNumber: registration.AttemptNumber, ID: pgvalue.UUID(checkpointID),
+		RunID:                     pgvalue.UUID(work.runID), AttemptNumber: int32(1), ID: pgvalue.UUID(checkpointID),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.CloseRunActiveIntervalForCheckpoint(ctx, db.CloseRunActiveIntervalForCheckpointParams{
-		ID: pgvalue.UUID(registration.RunID), OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
+		ID: pgvalue.UUID(work.runID), OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
-		AttemptNumber: registration.AttemptNumber, RunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
+		AttemptNumber: int32(1), RunLeaseID: pgvalue.UUID(work.leaseID),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -725,25 +725,25 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 		t.Fatal(err)
 	}
 	if _, err := queries.CheckpointRunLease(ctx, db.CheckpointRunLeaseParams{
-		CheckpointedAt: checkpointedAt, ID: pgvalue.UUID(registration.CurrentRunLeaseID),
-		RunID: pgvalue.UUID(registration.RunID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
-		AttemptNumber: registration.AttemptNumber, LeaseSequence: registration.LeaseSequence,
+		CheckpointedAt: checkpointedAt, ID: pgvalue.UUID(work.leaseID),
+		RunID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
+		AttemptNumber: int32(1), LeaseSequence: registration.LeaseSequence,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.ReleaseCheckpointWorkspaceLease(ctx, db.ReleaseCheckpointWorkspaceLeaseParams{
 		CheckpointedAt: checkpointedAt, ID: pgvalue.UUID(authority.workspaceLeaseID),
 		WorkspaceID: pgvalue.UUID(authority.workspaceID), WorkspaceMountID: pgvalue.UUID(authority.mountID),
-		RuntimeInstanceID: pgvalue.UUID(authority.runtimeID), OwnerRunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID),
+		RuntimeInstanceID: pgvalue.UUID(authority.runtimeID), OwnerRunLeaseID: pgvalue.UUID(work.leaseID),
 		BaseVersionID: pgvalue.UUID(authority.physicalVersionID), OwnershipGeneration: 1,
 		WriterGeneration: 1, MountFencingGeneration: 2,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.CommitPendingCheckpointReady(ctx, db.CommitPendingCheckpointReadyParams{
-		CheckpointedAt: checkpointedAt, RunID: pgvalue.UUID(registration.RunID),
-		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: registration.AttemptNumber,
-		RunLeaseID: pgvalue.UUID(registration.CurrentRunLeaseID), ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
+		CheckpointedAt: checkpointedAt, RunID: pgvalue.UUID(work.runID),
+		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: int32(1),
+		RunLeaseID: pgvalue.UUID(work.leaseID), ExpectedRunStateVersion: wait.ExpectedRunStateVersion,
 		CheckpointRequestVersion: wait.CheckpointRequestVersion, RunWaitID: pgvalue.UUID(registered.WaitID),
 		CheckpointID: pgvalue.UUID(checkpointID),
 	}); err != nil {
@@ -770,14 +770,14 @@ SELECT runs.status, runs.current_run_lease_id, run_leases.state, workspace_lease
   JOIN run_waits ON run_waits.id = $4
   JOIN run_checkpoints ON run_checkpoints.id = $5
   JOIN workspace_mounts ON workspace_mounts.id = $6
- WHERE runs.id = $1`, registration.RunID, registration.CurrentRunLeaseID, authority.workspaceLeaseID,
+ WHERE runs.id = $1`, work.runID, work.leaseID, authority.workspaceLeaseID,
 		registered.WaitID, checkpointID, authority.mountID,
 	).Scan(&runStatus, &currentLease, &leaseState, &workspaceLeaseState, &suspension, &priorLease, &checkpointState, &mountVersion); err != nil {
 		t.Fatal(err)
 	}
 	if runStatus != db.RunStatusWaiting || currentLease.Valid || leaseState != db.RunLeaseStateCheckpointed ||
 		workspaceLeaseState != db.WorkspaceLeaseStateReleased || suspension != db.RunWaitStateParked ||
-		!priorLease.Valid || uuid.UUID(priorLease.Bytes) != registration.CurrentRunLeaseID ||
+		!priorLease.Valid || uuid.UUID(priorLease.Bytes) != work.leaseID ||
 		checkpointState != db.RunCheckpointStateReady || mountVersion != privateVersionID {
 		t.Fatalf("ready checkpoint state = run=%s/%v lease=%s workspace_lease=%s wait=%s/%v checkpoint=%s mount=%s",
 			runStatus, currentLease, leaseState, workspaceLeaseState, suspension, priorLease, checkpointState, mountVersion)
@@ -786,7 +786,7 @@ SELECT runs.status, runs.current_run_lease_id, run_leases.state, workspace_lease
 		committedAt := pgvalue.Timestamptz(time.Now().UTC())
 		if _, err := fixture.queries.InvalidateRestoredActorCheckpoint(ctx, db.InvalidateRestoredActorCheckpointParams{
 			CommittedAt: committedAt, RestoreCheckpointID: pgvalue.UUID(checkpointID),
-			RunID: pgvalue.UUID(registration.RunID), AttemptNumber: registration.AttemptNumber,
+			RunID: pgvalue.UUID(work.runID), AttemptNumber: int32(1),
 			WorkspaceID: pgvalue.UUID(authority.workspaceID), PrivateWorkspaceVersionID: pgvalue.UUID(privateVersionID),
 			TargetInputSequence: 2,
 		}); err != nil {
@@ -797,7 +797,7 @@ SELECT runs.status, runs.current_run_lease_id, run_leases.state, workspace_lease
 				CommittedAt: committedAt, VersionID: pgvalue.UUID(privateVersionID),
 				WorkspaceID: pgvalue.UUID(authority.workspaceID), ExpectedParentVersionID: pgvalue.UUID(authority.physicalVersionID),
 				OwnershipGeneration: 1, WriterGeneration: 1, RestoreCheckpointID: pgvalue.UUID(checkpointID),
-				RunID: pgvalue.UUID(registration.RunID), AttemptNumber: registration.AttemptNumber,
+				RunID: pgvalue.UUID(work.runID), AttemptNumber: int32(1),
 			},
 		); err != nil {
 			t.Fatal(err)
@@ -1041,35 +1041,20 @@ func tokenWaitRegistrationRequest(
 ) WaitRegistration {
 	t.Helper()
 	request := WaitRegistration{
-		EnvironmentID: fixture.environmentID, RunID: work.runID, TokenID: tokenID,
-		WaitID: waitID, ResumeAttachID: uuid.Must(uuid.NewV7()), AttemptNumber: 1,
-		CurrentRunLeaseID:  work.leaseID,
+		TokenID: tokenID, WaitID: waitID, ResumeAttachID: uuid.Must(uuid.NewV7()),
+		RunLeaseID:         work.leaseID,
 		RequestFingerprint: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	}
 	if err := fixture.pool.QueryRow(ctx, `
-		SELECT runs.state_version,
-		       run_leases.lease_sequence, run_leases.worker_group_id,
+		SELECT run_leases.lease_sequence, run_leases.worker_group_id,
 		       run_leases.worker_instance_id, run_leases.worker_epoch,
-		       run_leases.worker_protocol_version, run_leases.runtime_instance_id,
-		       run_leases.runtime_identity_id, run_leases.region_id,
-		       run_leases.network_slot_id, run_leases.network_slot_generation,
-		       workspace_leases.workspace_mount_id, workspace_leases.id,
-		       workspace_leases.ownership_generation, workspace_leases.writer_generation,
-		       workspace_leases.mount_fencing_generation
-		  FROM runs
-		  JOIN run_leases ON run_leases.id = runs.current_run_lease_id
-		  JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
-		 WHERE runs.id = $1
-	`, work.runID).Scan(
-		&request.ExpectedRunStateVersion,
+		       run_leases.worker_protocol_version
+		  FROM run_leases
+		 WHERE run_leases.id = $1
+	`, work.leaseID).Scan(
 		&request.LeaseSequence, &request.WorkerGroupID,
 		&request.WorkerInstanceID, &request.WorkerEpoch,
-		&request.WorkerProtocolVersion, &request.RuntimeInstanceID,
-		&request.RuntimeIdentityID, &request.RegionID,
-		&request.NetworkSlotID, &request.NetworkSlotGeneration,
-		&request.WorkspaceMountID, &request.WorkspaceLeaseID,
-		&request.OwnershipGeneration, &request.WriterGeneration,
-		&request.MountFencingGeneration,
+		&request.WorkerProtocolVersion,
 	); err != nil {
 		t.Fatal(err)
 	}

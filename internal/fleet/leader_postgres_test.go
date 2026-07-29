@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/sessionlock"
 )
 
 func TestLeaderLeaseDiscardsConnectionWhenUnlockIsNotConfirmed(t *testing.T) {
@@ -21,14 +22,15 @@ func TestLeaderLeaseDiscardsConnectionWhenUnlockIsNotConfirmed(t *testing.T) {
 	}
 	postgresLease := lease.(*pgLeaderLease)
 	var lockedBackend int32
-	if err := postgresLease.conn.QueryRow(t.Context(), "select pg_backend_pid()").Scan(&lockedBackend); err != nil {
+	conn := postgresLease.guard.Conn()
+	if err := conn.QueryRow(t.Context(), "select pg_backend_pid()").Scan(&lockedBackend); err != nil {
 		t.Fatal(err)
 	}
 	var unlocked bool
-	if err := postgresLease.conn.QueryRow(
+	if err := conn.QueryRow(
 		t.Context(),
-		"select pg_advisory_unlock(hashtextextended($1, 0))",
-		postgresLease.key,
+		"select pg_advisory_unlock($1)",
+		sessionlock.Key("helmr:fleet:discard-unconfirmed"),
 	).Scan(&unlocked); err != nil {
 		t.Fatal(err)
 	}
@@ -38,13 +40,13 @@ func TestLeaderLeaseDiscardsConnectionWhenUnlockIsNotConfirmed(t *testing.T) {
 	if err := lease.Release(); err == nil {
 		t.Fatal("expected unlock confirmation error")
 	}
-	conn, err := database.Pool.Acquire(t.Context())
+	replacement, err := database.Pool.Acquire(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Release()
+	defer replacement.Release()
 	var replacementBackend int32
-	if err := conn.QueryRow(t.Context(), "select pg_backend_pid()").Scan(&replacementBackend); err != nil {
+	if err := replacement.QueryRow(t.Context(), "select pg_backend_pid()").Scan(&replacementBackend); err != nil {
 		t.Fatal(err)
 	}
 	if replacementBackend == lockedBackend {
@@ -67,7 +69,7 @@ func TestLeaderLeaseDiscardsConnectionWhenUnlockQueryFails(t *testing.T) {
 	}
 	postgresLease := lease.(*pgLeaderLease)
 	var lockedBackend int32
-	if err := postgresLease.conn.QueryRow(t.Context(), "select pg_backend_pid()").Scan(&lockedBackend); err != nil {
+	if err := postgresLease.guard.Conn().QueryRow(t.Context(), "select pg_backend_pid()").Scan(&lockedBackend); err != nil {
 		t.Fatal(err)
 	}
 	terminator, err := database.Pool.Acquire(t.Context())

@@ -112,19 +112,15 @@ SELECT run_leases.environment_id,
     ON runs.id = run_leases.run_id
    AND runs.environment_id = run_leases.environment_id
  WHERE run_leases.id = $1
-   AND run_leases.run_id = $2
-   AND run_leases.attempt_number = $3
-   AND run_leases.lease_sequence = $4
-   AND run_leases.worker_group_id = $5
-   AND run_leases.worker_instance_id = $6
-   AND run_leases.worker_epoch = $7
-   AND run_leases.worker_protocol_version = $8
+   AND run_leases.lease_sequence = $2
+   AND run_leases.worker_group_id = $3
+   AND run_leases.worker_instance_id = $4
+   AND run_leases.worker_epoch = $5
+   AND run_leases.worker_protocol_version = $6
 `
 
 type GetRunMetadataClaimScopeParams struct {
 	RunLeaseID            pgtype.UUID `json:"run_lease_id"`
-	RunID                 pgtype.UUID `json:"run_id"`
-	AttemptNumber         int32       `json:"attempt_number"`
 	LeaseSequence         int64       `json:"lease_sequence"`
 	WorkerGroupID         string      `json:"worker_group_id"`
 	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
@@ -141,8 +137,6 @@ type GetRunMetadataClaimScopeRow struct {
 func (q *Queries) GetRunMetadataClaimScope(ctx context.Context, arg GetRunMetadataClaimScopeParams) (GetRunMetadataClaimScopeRow, error) {
 	row := q.db.QueryRow(ctx, getRunMetadataClaimScope,
 		arg.RunLeaseID,
-		arg.RunID,
-		arg.AttemptNumber,
 		arg.LeaseSequence,
 		arg.WorkerGroupID,
 		arg.WorkerInstanceID,

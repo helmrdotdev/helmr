@@ -21,13 +21,13 @@ func TestParseCheckpointReadyRequestBindsFullAtomicProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	if parsed.waitID.String() != request.RunWaitID || parsed.checkpointID.String() != request.CheckpointID ||
-		parsed.requestVersion != request.RequestVersion || parsed.attemptNumber != request.Lease.AttemptNumber ||
+		parsed.requestVersion != request.RequestVersion ||
 		parsed.capture.tree.Digest != request.WorkspaceCapture.Tree.Digest || len(parsed.artifacts) != 4 ||
 		parsed.fingerprint == "" || len(parsed.manifest) == 0 {
 		t.Fatalf("parsed checkpoint-ready = %+v", parsed)
 	}
-	if !normalized.Lease.ExpiresAt.Equal(request.Lease.ExpiresAt) {
-		t.Fatalf("normalized expiry = %s", normalized.Lease.ExpiresAt)
+	if normalized.Lease != request.Lease {
+		t.Fatalf("normalized fence = %+v", normalized.Lease)
 	}
 
 	changed := request
@@ -60,7 +60,7 @@ func TestParseCheckpointFailedRequestBindsNormalizedFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	if parsed.waitID.String() != request.RunWaitID || parsed.checkpointID.String() != request.CheckpointID ||
-		parsed.requestVersion != request.RequestVersion || parsed.attemptNumber != request.Lease.AttemptNumber ||
+		parsed.requestVersion != request.RequestVersion ||
 		parsed.fingerprint == "" || normalized.Error != "snapshot failed" ||
 		!strings.Contains(string(parsed.errorPayload), `"message":"snapshot failed"`) {
 		t.Fatalf("parsed checkpoint failure = %+v, normalized=%+v", parsed, normalized)
@@ -122,7 +122,7 @@ func validCheckpointReadyRequest() api.WorkerCheckpointReadyRequest {
 	waitID := uuid.Must(uuid.NewV7()).String()
 	checkpointID := uuid.Must(uuid.NewV7()).String()
 	runtimeIdentity := digestWith("1")
-	lease := api.WorkerRunLeaseReceipt{
+	lease := api.WorkerRunLeaseAssignment{
 		ID: uuid.Must(uuid.NewV7()).String(), RunID: runID, AttemptNumber: 1, LeaseSequence: 1,
 		WorkerGroupID: "run-test", WorkerInstanceID: uuid.Must(uuid.NewV7()).String(), WorkerEpoch: 1,
 		WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
@@ -136,7 +136,7 @@ func validCheckpointReadyRequest() api.WorkerCheckpointReadyRequest {
 		ExpiresAt: time.Now().UTC().Add(time.Minute),
 	}
 	return api.WorkerCheckpointReadyRequest{
-		Lease: lease, RequestVersion: 1, RunWaitID: waitID, CheckpointID: checkpointID,
+		Lease: lease.Fence(), RequestVersion: 1, RunWaitID: waitID, CheckpointID: checkpointID,
 		WorkspaceCapture: api.WorkerCheckpointWorkspaceCapture{
 			Tree: api.WorkerWorkspaceTreeIdentity{Digest: digestWith("2"), SizeBytes: 10, EntryCount: 1},
 			Artifact: api.WorkerWorkspaceArtifact{

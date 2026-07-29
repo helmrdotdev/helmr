@@ -95,7 +95,7 @@ func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
 		decision.GetDataJson() != `{"run_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"}` {
 		t.Fatalf("decision = %+v", decision)
 	}
-	if control.request.Lease != lease ||
+	if control.request.Lease != lease.Fence() ||
 		control.request.TaskDeclaredID != "resize-image" ||
 		control.request.Method != "start" ||
 		!control.request.PayloadPresent ||
@@ -107,7 +107,7 @@ func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
 	}
 }
 
-func TestHandleChildTaskInvokeRetryUsesRenewedReceipt(t *testing.T) {
+func TestHandleChildTaskInvokeRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	correlationID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc24"
@@ -160,7 +160,7 @@ func TestHandleChildTaskInvokeRetryUsesRenewedReceipt(t *testing.T) {
 	if len(control.requests) != 2 {
 		t.Fatalf("requests = %+v", control.requests)
 	}
-	assertRetriedWithRenewedReceipt(t, control.requests[0].Lease, control.requests[1].Lease, len(control.requests))
+	assertRetriedWithStableFence(t, control.requests[0].Lease, control.requests[1].Lease, len(control.requests))
 }
 
 func TestHandleChildTaskCallContinuesOpenedWait(t *testing.T) {

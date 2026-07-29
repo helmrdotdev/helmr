@@ -2,8 +2,6 @@ package control
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,7 +49,7 @@ type childTaskReceipt struct {
 
 type childTaskInvokeInput struct {
 	Request           api.WorkerInvokeChildTaskRequest
-	Parsed            parsedRunLeaseReceipt
+	Parsed            parsedRunLeaseFence
 	Worker            workerActor
 	SourceWorkspaceID uuid.UUID
 	Normalized        normalizedTaskStart
@@ -74,7 +72,7 @@ func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_child_task_start", message: err.Error()}))
 		return
 	}
-	parsed, err := parseRunLeaseReceipt(request.Lease)
+	parsed, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -124,16 +122,6 @@ func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if request.Lease.WorkerGroupID != worker.WorkerGroupID ||
-		parsed.workerInstanceID != worker.WorkerInstanceID {
-		writeError(w, forbidden(errors.New("child Task invocation belongs to another worker")))
-		return
-	}
-	if request.Lease.WorkerEpoch != worker.WorkerEpoch ||
-		request.Lease.WorkerProtocolVersion != worker.ProtocolVersion {
-		writeError(w, conflict(errChildTaskInvokeStale))
-		return
-	}
 	locators, err := loadChildTaskInvokeLocators(r.Context(), s.db, worker, request.Lease, parsed)
 	if err != nil {
 		writeError(w, conflict(errChildTaskInvokeStale))
@@ -202,6 +190,12 @@ func (s *Server) invokeChildTask(
 ) (childTaskInvokeResult, error) {
 	var result childTaskInvokeResult
 	err := s.inTx(ctx, func(work *txWork) error {
+		locators, err := loadChildTaskInvokeLocators(
+			ctx, work.q, input.Worker, input.Request.Lease, input.Parsed,
+		)
+		if err != nil {
+			return err
+		}
 		environmentID := input.Normalized.EnvironmentID
 		var claim *db.IdempotencyClaim
 		var edgeClaim *db.IdempotencyClaim
@@ -222,7 +216,7 @@ func (s *Server) invokeChildTask(
 			}
 			request, err := idempotency.NewTaskChildInvokeRequest(
 				environmentID,
-				input.Parsed.runID,
+				pgvalue.MustUUIDValue(locators.RunID),
 				input.Normalized.TaskDeclaredID,
 				input.Normalized.IdempotencyKey,
 				invocationFingerprint,
@@ -279,24 +273,16 @@ func (s *Server) invokeChildTask(
 		if sameWorkspace && input.Request.Method != "call" {
 			return errChildTaskSameWorkspace
 		}
-		if !sameWorkspace {
-			if err := work.q.LockChildWorkspacePair(
-				ctx, childWorkspacePairLock(input.SourceWorkspaceID, targetWorkspaceID),
-			); err != nil {
-				return fmt.Errorf("lock child Task Workspace pair: %w", err)
-			}
-		}
-		authority, err := lockChildTaskInvokeAuthority(ctx, work.q, input)
-		if err != nil {
-			return err
-		}
-		if authority.run.OrgID != pgvalue.UUID(input.Normalized.OrgID) ||
-			authority.run.ProjectID != pgvalue.UUID(input.Normalized.ProjectID) ||
-			authority.run.EnvironmentID != pgvalue.UUID(input.Normalized.EnvironmentID) ||
-			authority.run.WorkspaceID != pgvalue.UUID(input.SourceWorkspaceID) {
-			return errChildTaskInvokeStale
-		}
 		if sameWorkspace {
+			authority, err := lockChildTaskInvokeRunAuthority(ctx, work.q, input, locators)
+			if err == nil {
+				err = completeChildTaskInvokeAuthority(
+					ctx, work.q, input, locators, &authority, false,
+				)
+			}
+			if err != nil || !childTaskInvokeScopeMatches(authority, input) {
+				return errChildTaskInvokeStale
+			}
 			if edgeClaim == nil {
 				return errors.New("same-Workspace child Task call claim is unavailable")
 			}
@@ -328,7 +314,17 @@ func (s *Server) invokeChildTask(
 			}
 			return nil
 		}
+
+		authority, err := lockChildTaskInvokeRunAuthority(ctx, work.q, input, locators)
+		if err != nil || !childTaskInvokeScopeMatches(authority, input) {
+			return errChildTaskInvokeStale
+		}
 		if replay != nil {
+			if err := completeChildTaskInvokeAuthority(
+				ctx, work.q, input, locators, &authority, false,
+			); err != nil {
+				return err
+			}
 			result.taskStartResult = taskStartResult{
 				RunID: uuid.MustParse(replay.RunID), Replayed: true,
 			}
@@ -387,6 +383,34 @@ func (s *Server) invokeChildTask(
 			if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
 				return errTaskSecretUnavailable
 			}
+		}
+		lockedWorkspaces, err := work.q.LockChildWorkspacePair(
+			ctx,
+			db.LockChildWorkspacePairParams{
+				EnvironmentID: pgvalue.UUID(environmentID),
+				WorkspaceIds: []pgtype.UUID{
+					pgvalue.UUID(input.SourceWorkspaceID),
+					pgvalue.UUID(targetWorkspaceID),
+				},
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("lock child Task Workspace pair: %w", err)
+		}
+		sourceWorkspace, err := sourceChildWorkspace(
+			lockedWorkspaces,
+			input.SourceWorkspaceID,
+			targetWorkspaceID,
+			locators,
+		)
+		if err != nil {
+			return err
+		}
+		authority.workspace = sourceWorkspace
+		if err := completeChildTaskInvokeAuthority(
+			ctx, work.q, input, locators, &authority, true,
+		); err != nil {
+			return err
 		}
 		workspace, err := work.q.LockWorkspaceAdmissionAuthority(ctx, db.LockWorkspaceAdmissionAuthorityParams{
 			EnvironmentID: authority.run.EnvironmentID, ID: pgvalue.UUID(targetWorkspaceID),
@@ -599,11 +623,11 @@ func registerSameWorkspaceChildCall(
 		)
 	}
 	response := api.WorkerCreateRunWaitResponse{
-		RunID:             input.Request.Lease.RunID,
+		RunID:             pgvalue.UUIDString(authority.run.ID),
 		RunWaitID:         waitID.String(),
 		ResumeAttachID:    resumeAttachID.String(),
-		RuntimeInstanceID: input.Request.Lease.RuntimeInstanceID,
-		RuntimeEpoch:      input.Request.Lease.WorkerEpoch,
+		RuntimeInstanceID: pgvalue.UUIDString(authority.runtime.ID),
+		RuntimeEpoch:      input.Worker.WorkerEpoch,
 		CheckpointDelayMs: 0,
 	}
 	replayed, err := store.GetSameWorkspaceChildCallReplay(
@@ -612,7 +636,7 @@ func registerSameWorkspaceChildCall(
 			EnvironmentID:                  authority.run.EnvironmentID,
 			RunID:                          authority.run.ID,
 			WorkspaceID:                    authority.run.WorkspaceID,
-			AttemptNumber:                  input.Request.Lease.AttemptNumber,
+			AttemptNumber:                  authority.attempt.Number,
 			ID:                             pgvalue.UUID(waitID),
 			ChildTargetDeclaredID:          pgvalue.Text(input.Normalized.TaskDeclaredID),
 			ChildClaimID:                   claim.ID,
@@ -659,7 +683,7 @@ func registerSameWorkspaceChildCall(
 			ChildClaimID:                   claim.ID,
 			ChildRequest:                   childRequest,
 			RegistrationRequestFingerprint: pgvalue.Text(requestFingerprint),
-			AttemptNumber:                  input.Request.Lease.AttemptNumber,
+			AttemptNumber:                  authority.attempt.Number,
 			ActorSpeculativeInputSequence:  actorCursor,
 			CurrentRunLeaseID:              authority.runLease.ID,
 			ResumeAttachID:                 pgvalue.UUID(resumeAttachID),
@@ -731,11 +755,11 @@ func replayBoundSameWorkspaceChildCall(
 		return api.WorkerCreateRunWaitResponse{}, errWorkspaceHandoffConflict
 	}
 	return api.WorkerCreateRunWaitResponse{
-		RunID:             input.Request.Lease.RunID,
+		RunID:             pgvalue.UUIDString(authority.run.ID),
 		RunWaitID:         waitID.String(),
 		ResumeAttachID:    resumeAttachID.String(),
-		RuntimeInstanceID: input.Request.Lease.RuntimeInstanceID,
-		RuntimeEpoch:      input.Request.Lease.WorkerEpoch,
+		RuntimeInstanceID: pgvalue.UUIDString(authority.runtime.ID),
+		RuntimeEpoch:      input.Worker.WorkerEpoch,
 		ResolutionKind:    "completed",
 		Resolution: append(
 			json.RawMessage(nil),
@@ -748,15 +772,15 @@ func loadChildTaskInvokeLocators(
 	ctx context.Context,
 	q db.Querier,
 	worker workerActor,
-	lease api.WorkerRunLeaseReceipt,
-	parsed parsedRunLeaseReceipt,
+	lease api.WorkerRunLeaseFence,
+	parsed parsedRunLeaseFence,
 ) (db.GetLiveRunLeaseLocatorsRow, error) {
 	locators, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 		ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence,
 		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
 	})
-	if err != nil || locators.RunID != pgvalue.UUID(parsed.runID) {
+	if err != nil {
 		return db.GetLiveRunLeaseLocatorsRow{}, errChildTaskInvokeStale
 	}
 	return locators, nil
@@ -780,15 +804,15 @@ func registerDifferentWorkspaceChildCall(
 		return api.WorkerCreateRunWaitResponse{}, fmt.Errorf("encode child Task call request: %w", err)
 	}
 	response := api.WorkerCreateRunWaitResponse{
-		RunID: input.Request.Lease.RunID, RunWaitID: waitID.String(),
+		RunID: pgvalue.UUIDString(authority.run.ID), RunWaitID: waitID.String(),
 		ResumeAttachID:    resumeAttachID.String(),
-		RuntimeInstanceID: input.Request.Lease.RuntimeInstanceID,
-		RuntimeEpoch:      input.Request.Lease.WorkerEpoch,
+		RuntimeInstanceID: pgvalue.UUIDString(authority.runtime.ID),
+		RuntimeEpoch:      input.Worker.WorkerEpoch,
 		CheckpointDelayMs: 0,
 	}
 	replayed, err := store.GetChildCallRunWaitReplay(ctx, db.GetChildCallRunWaitReplayParams{
 		EnvironmentID: authority.run.EnvironmentID, RunID: authority.run.ID,
-		AttemptNumber: input.Request.Lease.AttemptNumber, ID: pgvalue.UUID(waitID),
+		AttemptNumber: authority.attempt.Number, ID: pgvalue.UUID(waitID),
 		ChildRunID: pgvalue.UUID(child.RunID), ChildClaimID: claim.ID,
 		RegistrationRequestFingerprint: pgvalue.Text(requestFingerprint),
 		ResumeAttachID:                 pgvalue.UUID(resumeAttachID),
@@ -828,7 +852,7 @@ func registerDifferentWorkspaceChildCall(
 	params := db.RegisterDifferentWorkspaceChildCallParams{
 		RunID: authority.run.ID, EnvironmentID: authority.run.EnvironmentID,
 		ExpectedRunningStateVersion: authority.run.StateVersion,
-		AttemptNumber:               input.Request.Lease.AttemptNumber,
+		AttemptNumber:               authority.attempt.Number,
 		CurrentRunLeaseID:           authority.runLease.ID,
 		ChildWorkspaceID:            pgvalue.UUID(childWorkspaceID), ID: pgvalue.UUID(waitID),
 		ChildRunID: pgvalue.UUID(child.RunID), ChildTargetDeclaredID: pgvalue.Text(input.Normalized.TaskDeclaredID),
@@ -926,50 +950,122 @@ func staleChildTaskInvoke(err error) error {
 	return err
 }
 
-func lockChildTaskInvokeAuthority(
+func lockChildTaskInvokeRunAuthority(
 	ctx context.Context,
 	q db.Querier,
 	input childTaskInvokeInput,
+	locators db.GetLiveRunLeaseLocatorsRow,
 ) (runLeaseClaimAuthority, error) {
-	locators, err := loadChildTaskInvokeLocators(
-		ctx, q, input.Worker, input.Request.Lease, input.Parsed,
-	)
-	if err != nil {
-		return runLeaseClaimAuthority{}, err
-	}
 	owner, err := lockRunFinalizationOwner(ctx, q, locators)
 	if err != nil {
 		return runLeaseClaimAuthority{}, errChildTaskInvokeStale
 	}
-	var authority runLeaseClaimAuthority
-	if input.Request.Method == "call" {
-		authority, err = lockRenewableRunLeaseAuthority(
-			ctx, q, input.Worker, pgvalue.UUID(input.Parsed.leaseID),
-			input.Request.Lease.LeaseSequence, locators,
-		)
-	} else {
-		authority, err = lockLiveRunLeaseAuthority(
-			ctx, q, input.Worker, pgvalue.UUID(input.Parsed.leaseID),
-			input.Request.Lease.LeaseSequence, locators,
-		)
-	}
-	authority.actor = owner.actor
-	authority.parentRun = owner.parent
-	if err != nil ||
-		validateRunFinalizationOwner(authority, locators) != nil ||
-		authority.run.ID != pgvalue.UUID(input.Parsed.runID) ||
-		(authority.run.Status != db.RunStatusRunning &&
-			(input.Request.Method != "call" || authority.run.Status != db.RunStatusWaiting)) ||
-		authority.runLease.State != db.RunLeaseStateRunning ||
-		!authority.run.ActiveStartedAt.Valid || !authority.attempt.EntrypointEnteredAt.Valid ||
-		authority.attempt.TerminalAt.Valid || authority.runLease.FinalizationOperationID.Valid {
+	authority := runLeaseClaimAuthority{actor: owner.actor, parentRun: owner.parent}
+	authority.run, err = q.LockRunLeaseClaimRun(ctx, db.LockRunLeaseClaimRunParams{
+		ID: locators.RunID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
+		EnvironmentID: locators.EnvironmentID, WorkspaceID: locators.WorkspaceID,
+	})
+	if err != nil {
 		return runLeaseClaimAuthority{}, errChildTaskInvokeStale
 	}
-	current, err := projectActorTurnLease(authority)
-	if err != nil || !equalRunLeaseReceipt(current, input.Request.Lease) {
+	allowedStatuses := []db.RunStatus{db.RunStatusRunning}
+	if input.Request.Method == "call" {
+		allowedStatuses = append(allowedStatuses, db.RunStatusWaiting)
+	}
+	if validateLockedRunLeaseRun(
+		authority.run,
+		pgvalue.UUID(input.Parsed.leaseID),
+		locators,
+		allowedStatuses...,
+	) != nil ||
+		validateRunFinalizationOwner(authority, locators) != nil {
 		return runLeaseClaimAuthority{}, errChildTaskInvokeStale
 	}
 	return authority, nil
+}
+
+func completeChildTaskInvokeAuthority(
+	ctx context.Context,
+	q db.Querier,
+	input childTaskInvokeInput,
+	locators db.GetLiveRunLeaseLocatorsRow,
+	authority *runLeaseClaimAuthority,
+	workspaceLocked bool,
+) error {
+	if !workspaceLocked {
+		if err := lockRunLeaseWorkspace(ctx, q, authority, locators); err != nil {
+			return errChildTaskInvokeStale
+		}
+	} else if authority.workspace.ID != locators.WorkspaceID ||
+		authority.workspace.EnvironmentID != locators.EnvironmentID ||
+		authority.workspace.RegionID != locators.RegionID ||
+		authority.workspace.State != db.WorkspaceStateActive ||
+		authority.workspace.DesiredState != db.WorkspaceDesiredStateActive {
+		return errChildTaskInvokeStale
+	}
+	if err := lockRunLeaseAttempt(ctx, q, authority, locators); err != nil {
+		return errChildTaskInvokeStale
+	}
+	if err := lockRunLeasePhysicalAuthority(
+		ctx,
+		q,
+		input.Worker,
+		pgvalue.UUID(input.Parsed.leaseID),
+		input.Request.Lease.LeaseSequence,
+		locators,
+		authority,
+	); err != nil {
+		return errChildTaskInvokeStale
+	}
+	if (authority.run.Status != db.RunStatusRunning &&
+		(input.Request.Method != "call" || authority.run.Status != db.RunStatusWaiting)) ||
+		authority.runLease.State != db.RunLeaseStateRunning ||
+		!authority.run.ActiveStartedAt.Valid || !authority.attempt.EntrypointEnteredAt.Valid ||
+		authority.attempt.TerminalAt.Valid || authority.runLease.FinalizationOperationID.Valid {
+		return errChildTaskInvokeStale
+	}
+	return nil
+}
+
+func childTaskInvokeScopeMatches(
+	authority runLeaseClaimAuthority,
+	input childTaskInvokeInput,
+) bool {
+	return authority.run.OrgID == pgvalue.UUID(input.Normalized.OrgID) &&
+		authority.run.ProjectID == pgvalue.UUID(input.Normalized.ProjectID) &&
+		authority.run.EnvironmentID == pgvalue.UUID(input.Normalized.EnvironmentID) &&
+		authority.run.WorkspaceID == pgvalue.UUID(input.SourceWorkspaceID)
+}
+
+func sourceChildWorkspace(
+	workspaces []db.Workspace,
+	sourceID uuid.UUID,
+	targetID uuid.UUID,
+	locators db.GetLiveRunLeaseLocatorsRow,
+) (db.Workspace, error) {
+	var sourceFound, targetFound bool
+	var source db.Workspace
+	for _, workspace := range workspaces {
+		if workspace.EnvironmentID != locators.EnvironmentID {
+			return db.Workspace{}, errTaskWorkspaceUnavailable
+		}
+		switch pgvalue.MustUUIDValue(workspace.ID) {
+		case sourceID:
+			source = workspace
+			sourceFound = true
+		case targetID:
+			targetFound = true
+		default:
+			return db.Workspace{}, errTaskWorkspaceUnavailable
+		}
+	}
+	if !sourceFound {
+		return db.Workspace{}, errChildTaskInvokeStale
+	}
+	if !targetFound || len(workspaces) != 2 {
+		return db.Workspace{}, errTaskWorkspaceUnavailable
+	}
+	return source, nil
 }
 
 func decodeChildTaskReceipt(raw []byte) (childTaskReceipt, error) {
@@ -1000,17 +1096,6 @@ func decodeChildTaskReceipt(raw []byte) (childTaskReceipt, error) {
 		}
 	}
 	return receipt, nil
-}
-
-func childWorkspacePairLock(left, right uuid.UUID) int64 {
-	if string(left[:]) > string(right[:]) {
-		left, right = right, left
-	}
-	hash := sha256.New()
-	hash.Write([]byte("helmr.child-workspace-pair.v1\x00"))
-	hash.Write(left[:])
-	hash.Write(right[:])
-	return int64(binary.BigEndian.Uint64(hash.Sum(nil)[:8]))
 }
 
 func (s *Server) writeChildTaskInvokeError(

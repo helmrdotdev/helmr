@@ -11,11 +11,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestEnterRunEntrypointCommitsOnceAndReplaysTheSameFence(t *testing.T) {
-	worker, locators, authority, receipt := validRunEntrypointFixture(t)
+	worker, locators, authority, assignment := validRunEntrypointFixture(t)
 	store := &runLeaseClaimStore{
 		authority:  authority,
 		entrypoint: locators,
@@ -25,7 +26,7 @@ func TestEnterRunEntrypointCommitsOnceAndReplaysTheSameFence(t *testing.T) {
 		},
 	}
 	request := api.WorkerRunEntrypointRequest{
-		Lease:                receipt,
+		Lease:                assignment.Fence(),
 		EntrypointKind:       authority.run.EntrypointKind,
 		EntrypointDeclaredID: authority.run.EntrypointDeclaredID,
 	}
@@ -64,20 +65,20 @@ func TestEnterRunEntrypointCommitsOnceAndReplaysTheSameFence(t *testing.T) {
 	}
 }
 
-func TestEnterRunEntrypointRollsBackMismatchedReceiptAndIdentity(t *testing.T) {
+func TestEnterRunEntrypointRollsBackMismatchedFenceAndIdentity(t *testing.T) {
 	for name, change := range map[string]func(*api.WorkerRunEntrypointRequest){
-		"receipt": func(request *api.WorkerRunEntrypointRequest) {
-			request.Lease.WriterGeneration++
+		"fence": func(request *api.WorkerRunEntrypointRequest) {
+			request.Lease.LeaseSequence++
 		},
 		"identity": func(request *api.WorkerRunEntrypointRequest) {
 			request.EntrypointDeclaredID = "different"
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			worker, locators, authority, receipt := validRunEntrypointFixture(t)
+			worker, locators, authority, assignment := validRunEntrypointFixture(t)
 			store := &runLeaseClaimStore{authority: authority, entrypoint: locators}
 			request := api.WorkerRunEntrypointRequest{
-				Lease:                receipt,
+				Lease:                assignment.Fence(),
 				EntrypointKind:       authority.run.EntrypointKind,
 				EntrypointDeclaredID: authority.run.EntrypointDeclaredID,
 			}
@@ -97,14 +98,14 @@ func TestEnterRunEntrypointRollsBackMismatchedReceiptAndIdentity(t *testing.T) {
 }
 
 func TestEnterRunEntrypointRejectsMountedBaseOutsideAttempt(t *testing.T) {
-	worker, locators, authority, receipt := validRunEntrypointFixture(t)
+	worker, locators, authority, assignment := validRunEntrypointFixture(t)
 	differentBase := pgvalue.UUID(uuid.New())
 	authority.workspaceLease.BaseVersionID = differentBase
 	authority.workspaceMount.MaterializedVersionID = differentBase
 	store := &runLeaseClaimStore{authority: authority, entrypoint: locators}
 
 	err := enterRunEntrypoint(context.Background(), store, nil, worker, authority.runLease.ID, api.WorkerRunEntrypointRequest{
-		Lease:                receipt,
+		Lease:                assignment.Fence(),
 		EntrypointKind:       authority.run.EntrypointKind,
 		EntrypointDeclaredID: authority.run.EntrypointDeclaredID,
 	})
@@ -119,10 +120,14 @@ func TestEnterRunEntrypointRejectsMountedBaseOutsideAttempt(t *testing.T) {
 }
 
 func (s *runLeaseClaimStore) GetRunEntrypointLocators(
-	context.Context,
-	db.GetRunEntrypointLocatorsParams,
+	_ context.Context,
+	params db.GetRunEntrypointLocatorsParams,
 ) (db.GetRunEntrypointLocatorsRow, error) {
 	s.calls = append(s.calls, "entrypoint_locators")
+	if params.ID != s.authority.runLease.ID ||
+		params.LeaseSequence != s.authority.runLease.LeaseSequence {
+		return db.GetRunEntrypointLocatorsRow{}, pgx.ErrNoRows
+	}
 	return s.entrypoint, nil
 }
 
@@ -146,7 +151,7 @@ func (s *runLeaseClaimStore) MarkRunEntrypointEntered(
 
 func validRunEntrypointFixture(
 	t *testing.T,
-) (workerActor, db.GetRunEntrypointLocatorsRow, runLeaseClaimAuthority, api.WorkerRunLeaseReceipt) {
+) (workerActor, db.GetRunEntrypointLocatorsRow, runLeaseClaimAuthority, api.WorkerRunLeaseAssignment) {
 	t.Helper()
 	worker, claimLocators, authority := validRunLeaseClaimFixture()
 	now := time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC)
@@ -164,7 +169,7 @@ func validRunEntrypointFixture(
 	authority.workspaceLease.WorkspaceID = authority.workspace.ID
 	authority.workspaceLease.WorkspaceMountID = authority.workspaceMount.ID
 
-	receipt, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
+	assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
 		run:            authority.run,
 		attempt:        authority.attempt,
 		runtime:        authority.runtime,
@@ -190,5 +195,5 @@ func validRunEntrypointFixture(
 		NetworkSlotGeneration: claimLocators.NetworkSlotGeneration,
 		WorkspaceLeaseID:      claimLocators.WorkspaceLeaseID,
 		WorkspaceMountID:      claimLocators.WorkspaceMountID,
-	}, authority, receipt
+	}, authority, assignment
 }

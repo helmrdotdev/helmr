@@ -32,7 +32,7 @@ const (
 )
 
 type parsedTaskCompletion struct {
-	lease       parsedRunLeaseReceipt
+	lease       parsedRunLeaseFence
 	kind        taskCompletionKind
 	output      json.RawMessage
 	errorObject json.RawMessage
@@ -64,13 +64,11 @@ type parsedTaskWorkspaceRollback struct {
 }
 
 func parseTaskCompletionRequest(request api.WorkerCompleteTaskRequest) (parsedTaskCompletion, error) {
-	lease, err := parseRunLeaseReceipt(request.Lease)
+	lease, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
 		return parsedTaskCompletion{}, err
 	}
 	normalized := request
-	normalized.Lease.StartDeadlineAt = request.Lease.StartDeadlineAt.UTC()
-	normalized.Lease.ExpiresAt = request.Lease.ExpiresAt.UTC()
 
 	parsed := parsedTaskCompletion{lease: lease}
 	outcomes := 0
@@ -115,7 +113,7 @@ func parseTaskCompletionRequest(request api.WorkerCompleteTaskRequest) (parsedTa
 	proofs := 0
 	if request.Workspace.Captured != nil {
 		proofs++
-		capture, normalizedCapture, err := parseTaskWorkspaceCapture(request.Lease, *request.Workspace.Captured)
+		capture, normalizedCapture, err := parseTaskWorkspaceCapture(*request.Workspace.Captured)
 		if err != nil {
 			return parsedTaskCompletion{}, err
 		}
@@ -124,7 +122,7 @@ func parseTaskCompletionRequest(request api.WorkerCompleteTaskRequest) (parsedTa
 	}
 	if request.Workspace.RolledBack != nil {
 		proofs++
-		rollback, normalizedRollback, err := parseTaskWorkspaceRollback(request.Lease, *request.Workspace.RolledBack)
+		rollback, normalizedRollback, err := parseTaskWorkspaceRollback(*request.Workspace.RolledBack)
 		if err != nil {
 			return parsedTaskCompletion{}, err
 		}
@@ -165,7 +163,7 @@ func parseTaskCompletionRequest(request api.WorkerCompleteTaskRequest) (parsedTa
 			parentRunID.String(),
 			request.Handoff.Manifest.RecoveryPoint.AttemptNumber,
 			waitID.String(),
-			request.Lease.RuntimeIdentityID,
+			request.Handoff.Manifest.RecoveryPoint.Runtime.ID,
 		)
 		if err != nil {
 			return parsedTaskCompletion{}, fmt.Errorf("validate handoff checkpoint: %w", err)
@@ -196,7 +194,6 @@ func parseTaskCompletionRequest(request api.WorkerCompleteTaskRequest) (parsedTa
 }
 
 func parseTaskWorkspaceCapture(
-	lease api.WorkerRunLeaseReceipt,
 	capture api.WorkerTaskWorkspaceCapture,
 ) (parsedTaskWorkspaceCapture, api.WorkerTaskWorkspaceCapture, error) {
 	tree, err := parseTaskWorkspaceTree("workspace.captured.tree", capture.Tree)
@@ -218,15 +215,11 @@ func parseTaskWorkspaceCapture(
 	if err != nil {
 		return parsedTaskWorkspaceCapture{}, api.WorkerTaskWorkspaceCapture{}, err
 	}
-	if !finalizationFenceMatchesLease(receipt.Fence, lease) {
-		return parsedTaskWorkspaceCapture{}, api.WorkerTaskWorkspaceCapture{}, errors.New("workspace.captured receipt does not match the Run Lease")
-	}
 	capture.Receipt = normalizedReceipt
 	return parsedTaskWorkspaceCapture{receipt: receipt, tree: tree, artifact: capture.Artifact}, capture, nil
 }
 
 func parseTaskWorkspaceRollback(
-	lease api.WorkerRunLeaseReceipt,
 	rollback api.WorkerTaskWorkspaceRollback,
 ) (parsedTaskWorkspaceRollback, api.WorkerTaskWorkspaceRollback, error) {
 	tree, err := parseTaskWorkspaceTree("workspace.rolled_back.target.tree", rollback.Target.Tree)
@@ -270,9 +263,6 @@ func parseTaskWorkspaceRollback(
 	)
 	if err != nil {
 		return parsedTaskWorkspaceRollback{}, api.WorkerTaskWorkspaceRollback{}, err
-	}
-	if !finalizationFenceMatchesLease(receipt.Fence, lease) || target.BaseVersionID != lease.BaseWorkspaceVersionID {
-		return parsedTaskWorkspaceRollback{}, api.WorkerTaskWorkspaceRollback{}, errors.New("workspace.rolled_back proof does not match the Run Lease")
 	}
 	rollback.Receipt = normalizedReceipt
 	return parsedTaskWorkspaceRollback{receipt: receipt, target: target, baseID: baseID}, rollback, nil
@@ -344,7 +334,7 @@ func parseWorkspaceFinalizationReceipt(
 	return request, receipt, nil
 }
 
-func finalizationFenceMatchesLease(fence workspace.FinalizationFence, lease api.WorkerRunLeaseReceipt) bool {
+func finalizationFenceMatchesLease(fence workspace.FinalizationFence, lease api.WorkerRunLeaseAssignment) bool {
 	return fence.WorkerInstanceID == lease.WorkerInstanceID &&
 		fence.WorkerEpoch == lease.WorkerEpoch &&
 		fence.RuntimeInstanceID == lease.RuntimeInstanceID &&

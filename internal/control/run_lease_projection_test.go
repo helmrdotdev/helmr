@@ -294,24 +294,24 @@ func TestProjectRunLeaseCheckpointRequiresCanonicalArtifactAuthority(t *testing.
 	}
 }
 
-func TestProjectRunLeaseReceiptAndWorkspace(t *testing.T) {
+func TestProjectRunLeaseAssignmentAndWorkspace(t *testing.T) {
 	authority := validRunLeaseProjectionAuthority()
-	receipt, err := projectRunLeaseReceipt(authority)
+	assignment, err := projectRunLeaseAssignment(authority)
 	if err != nil {
-		t.Fatalf("projectRunLeaseReceipt: %v", err)
+		t.Fatalf("projectRunLeaseAssignment: %v", err)
 	}
-	if receipt.LeaseSequence != 2 ||
-		receipt.WorkspaceID != pgvalue.UUIDString(authority.workspace.ID) ||
-		receipt.WorkspaceLeaseID != pgvalue.UUIDString(authority.workspaceLease.ID) ||
-		receipt.BaseWorkspaceVersionID != pgvalue.UUIDString(authority.workspaceLease.BaseVersionID) ||
-		receipt.OwnershipGeneration != authority.workspaceLease.OwnershipGeneration ||
-		receipt.WriterGeneration != authority.workspaceLease.WriterGeneration ||
-		receipt.MountFencingGeneration != authority.workspaceLease.MountFencingGeneration ||
-		receipt.MaxActiveDurationMs != authority.run.MaxActiveDurationMs {
-		t.Fatalf("unexpected Run Lease receipt: %#v", receipt)
+	if assignment.LeaseSequence != 2 ||
+		assignment.WorkspaceID != pgvalue.UUIDString(authority.workspace.ID) ||
+		assignment.WorkspaceLeaseID != pgvalue.UUIDString(authority.workspaceLease.ID) ||
+		assignment.BaseWorkspaceVersionID != pgvalue.UUIDString(authority.workspaceLease.BaseVersionID) ||
+		assignment.OwnershipGeneration != authority.workspaceLease.OwnershipGeneration ||
+		assignment.WriterGeneration != authority.workspaceLease.WriterGeneration ||
+		assignment.MountFencingGeneration != authority.workspaceLease.MountFencingGeneration ||
+		assignment.MaxActiveDurationMs != authority.run.MaxActiveDurationMs {
+		t.Fatalf("unexpected Run Lease assignment: %#v", assignment)
 	}
 	authority.runLease.StartDeadlineAt = authority.runLease.ExpiresAt
-	if _, err := projectRunLeaseReceipt(authority); err != nil {
+	if _, err := projectRunLeaseAssignment(authority); err != nil {
 		t.Fatalf("equal Run Lease deadlines: %v", err)
 	}
 	resetAuthority := validWorkspaceResetTargetAuthority(authority)
@@ -320,7 +320,7 @@ func TestProjectRunLeaseReceiptAndWorkspace(t *testing.T) {
 		t.Fatalf("projectWorkspaceAttachment: %v", err)
 	}
 	if workspace.WriteCapability != "write-capability" || workspace.ResetTarget.Empty == nil ||
-		workspace.ResetTarget.BaseWorkspaceVersionID != receipt.BaseWorkspaceVersionID {
+		workspace.ResetTarget.BaseWorkspaceVersionID != assignment.BaseWorkspaceVersionID {
 		t.Fatalf("unexpected Workspace attachment: %#v", workspace)
 	}
 

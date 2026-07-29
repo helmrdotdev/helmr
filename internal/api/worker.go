@@ -412,7 +412,7 @@ type WorkerRunLeaseClaimRequest struct {
 }
 
 type WorkerRunLeaseClaimResponse struct {
-	Lease     WorkerRunLeaseReceipt     `json:"lease"`
+	Lease     WorkerRunLeaseAssignment  `json:"lease"`
 	Program   WorkerRuntimeProgram      `json:"program"`
 	Workspace WorkerWorkspaceAttachment `json:"workspace"`
 	Secrets   []WorkerSecretDelivery    `json:"secrets"`
@@ -420,7 +420,7 @@ type WorkerRunLeaseClaimResponse struct {
 }
 
 type WorkerRunStartRequest struct {
-	Lease   WorkerRunLeaseReceipt  `json:"lease"`
+	Lease   WorkerRunLeaseFence    `json:"lease"`
 	Fresh   *WorkerRunStartFresh   `json:"fresh,omitempty"`
 	Restore *WorkerRunStartRestore `json:"restore,omitempty"`
 	Attach  *WorkerRunStartAttach  `json:"attach,omitempty"`
@@ -454,32 +454,34 @@ type WorkerRunStartParentAttach struct {
 }
 
 type WorkerRunStartResponse struct {
-	Lease WorkerRunLeaseReceipt `json:"lease"`
+	Lease WorkerRunLeaseFence `json:"lease"`
 }
 
 type WorkerRunResumeReleaseRequest struct {
-	Lease                WorkerRunLeaseReceipt `json:"lease"`
-	RunWaitID            string                `json:"run_wait_id"`
-	CheckpointID         string                `json:"checkpoint_id"`
-	ResumeAttachID       string                `json:"resume_attach_id"`
-	ResumeRequestVersion int64                 `json:"resume_request_version"`
-	RunLeaseID           string                `json:"run_lease_id"`
+	Lease                WorkerRunLeaseFence `json:"lease"`
+	RunWaitID            string              `json:"run_wait_id"`
+	CheckpointID         string              `json:"checkpoint_id"`
+	ResumeAttachID       string              `json:"resume_attach_id"`
+	ResumeRequestVersion int64               `json:"resume_request_version"`
 }
 
 type WorkerRunResumeReleaseResponse struct {
-	Lease                WorkerRunLeaseReceipt `json:"lease"`
-	RunWaitID            string                `json:"run_wait_id"`
-	CheckpointID         string                `json:"checkpoint_id"`
-	ResumeAttachID       string                `json:"resume_attach_id"`
-	ResumeRequestVersion int64                 `json:"resume_request_version"`
+	Lease                WorkerRunLeaseFence `json:"lease"`
+	RunWaitID            string              `json:"run_wait_id"`
+	CheckpointID         string              `json:"checkpoint_id"`
+	ResumeAttachID       string              `json:"resume_attach_id"`
+	ResumeRequestVersion int64               `json:"resume_request_version"`
 }
 
 type WorkerRunLeaseRenewRequest struct {
-	Lease WorkerRunLeaseReceipt `json:"lease"`
+	Lease             WorkerRunLeaseFence `json:"lease"`
+	ExpectedExpiresAt time.Time           `json:"expected_expires_at"`
 }
 
 type WorkerRunLeaseRenewResponse struct {
-	Lease WorkerRunLeaseReceipt `json:"lease"`
+	Lease                  WorkerRunLeaseFence `json:"lease"`
+	ExpiresAt              time.Time           `json:"expires_at"`
+	BaseWorkspaceVersionID string              `json:"base_workspace_version_id"`
 }
 
 type WorkerRunFinalizationKind string
@@ -496,18 +498,20 @@ type WorkerRunQuiescenceProof struct {
 }
 
 type WorkerBeginRunFinalizationRequest struct {
-	Lease           WorkerRunLeaseReceipt     `json:"lease"`
+	Lease           WorkerRunLeaseFence       `json:"lease"`
 	ProgramQuiesced WorkerRunQuiescenceProof  `json:"program_quiesced"`
 	OperationID     string                    `json:"operation_id"`
 	Kind            WorkerRunFinalizationKind `json:"kind"`
 }
 
 type WorkerBeginRunFinalizationResponse struct {
-	Lease       WorkerRunLeaseReceipt         `json:"lease"`
-	OperationID string                        `json:"operation_id"`
-	Kind        WorkerRunFinalizationKind     `json:"kind"`
-	StartedAt   time.Time                     `json:"started_at"`
-	Handoff     *WorkerRunFinalizationHandoff `json:"handoff,omitempty"`
+	Lease                  WorkerRunLeaseFence           `json:"lease"`
+	BaseWorkspaceVersionID string                        `json:"base_workspace_version_id"`
+	ExpiresAt              time.Time                     `json:"expires_at"`
+	OperationID            string                        `json:"operation_id"`
+	Kind                   WorkerRunFinalizationKind     `json:"kind"`
+	StartedAt              time.Time                     `json:"started_at"`
+	Handoff                *WorkerRunFinalizationHandoff `json:"handoff,omitempty"`
 }
 
 type WorkerRunFinalizationHandoff struct {
@@ -520,13 +524,13 @@ type WorkerRunFinalizationHandoff struct {
 }
 
 type WorkerRunEntrypointRequest struct {
-	Lease                WorkerRunLeaseReceipt `json:"lease"`
-	EntrypointKind       string                `json:"entrypoint_kind"`
-	EntrypointDeclaredID string                `json:"entrypoint_declared_id"`
+	Lease                WorkerRunLeaseFence `json:"lease"`
+	EntrypointKind       string              `json:"entrypoint_kind"`
+	EntrypointDeclaredID string              `json:"entrypoint_declared_id"`
 }
 
 type WorkerCompleteTaskRequest struct {
-	Lease     WorkerRunLeaseReceipt        `json:"lease"`
+	Lease     WorkerRunLeaseFence          `json:"lease"`
 	Outcome   WorkerTaskOutcome            `json:"outcome"`
 	Workspace WorkerTaskWorkspaceProof     `json:"workspace"`
 	Handoff   *WorkerTaskHandoffCheckpoint `json:"handoff,omitempty"`
@@ -538,13 +542,13 @@ type WorkerTaskHandoffCheckpoint struct {
 }
 
 type WorkerCompleteActorRequest struct {
-	Lease     WorkerRunLeaseReceipt    `json:"lease"`
+	Lease     WorkerRunLeaseFence      `json:"lease"`
 	Outcome   WorkerActorOutcome       `json:"outcome"`
 	Workspace WorkerTaskWorkspaceProof `json:"workspace"`
 }
 
 type WorkerCommitActorTurnRequest struct {
-	Lease                  WorkerRunLeaseReceipt       `json:"lease"`
+	Lease                  WorkerRunLeaseFence         `json:"lease"`
 	CorrelationID          string                      `json:"correlation_id"`
 	TargetInputSequence    int64                       `json:"target_input_sequence"`
 	BaseWorkspaceVersionID string                      `json:"base_workspace_version_id"`
@@ -553,10 +557,7 @@ type WorkerCommitActorTurnRequest struct {
 }
 
 type WorkerCommitActorTurnResponse struct {
-	Lease                  WorkerRunLeaseReceipt       `json:"lease"`
-	RunID                  string                      `json:"run_id"`
-	AttemptNumber          int32                       `json:"attempt_number"`
-	RunLeaseID             string                      `json:"run_lease_id"`
+	Lease                  WorkerRunLeaseFence         `json:"lease"`
 	CorrelationID          string                      `json:"correlation_id"`
 	CommittedInputSequence int64                       `json:"committed_input_sequence"`
 	WorkspaceVersionID     string                      `json:"workspace_version_id"`
@@ -564,13 +565,13 @@ type WorkerCommitActorTurnResponse struct {
 }
 
 type WorkerSendActorInputRequest struct {
-	Lease           WorkerRunLeaseReceipt `json:"lease"`
-	CorrelationID   string                `json:"correlation_id"`
-	ActorDeclaredID string                `json:"actor_declared_id"`
-	ActorID         string                `json:"actor_id,omitempty"`
-	ActorKey        string                `json:"actor_key,omitempty"`
-	Input           json.RawMessage       `json:"input"`
-	IdempotencyKey  string                `json:"idempotency_key,omitempty"`
+	Lease           WorkerRunLeaseFence `json:"lease"`
+	CorrelationID   string              `json:"correlation_id"`
+	ActorDeclaredID string              `json:"actor_declared_id"`
+	ActorID         string              `json:"actor_id,omitempty"`
+	ActorKey        string              `json:"actor_key,omitempty"`
+	Input           json.RawMessage     `json:"input"`
+	IdempotencyKey  string              `json:"idempotency_key,omitempty"`
 }
 
 type WorkerSendActorInputResponse struct {
@@ -580,7 +581,7 @@ type WorkerSendActorInputResponse struct {
 }
 
 type WorkerStartActorRequest struct {
-	Lease           WorkerRunLeaseReceipt `json:"lease"`
+	Lease           WorkerRunLeaseFence   `json:"lease"`
 	CorrelationID   string                `json:"correlation_id"`
 	ActorDeclaredID string                `json:"actor_declared_id"`
 	Key             *string               `json:"key,omitempty"`
@@ -598,11 +599,11 @@ type WorkerStartActorResponse struct {
 }
 
 type WorkerActorReferenceRequest struct {
-	Lease           WorkerRunLeaseReceipt `json:"lease"`
-	CorrelationID   string                `json:"correlation_id"`
-	ActorDeclaredID string                `json:"actor_declared_id"`
-	ActorID         string                `json:"actor_id,omitempty"`
-	ActorKey        string                `json:"actor_key,omitempty"`
+	Lease           WorkerRunLeaseFence `json:"lease"`
+	CorrelationID   string              `json:"correlation_id"`
+	ActorDeclaredID string              `json:"actor_declared_id"`
+	ActorID         string              `json:"actor_id,omitempty"`
+	ActorKey        string              `json:"actor_key,omitempty"`
 }
 
 type WorkerActorStatusResponse struct {
@@ -640,12 +641,12 @@ type WorkerWorkspaceAddress struct {
 }
 
 type WorkerCreateWorkspaceRequest struct {
-	Lease               WorkerRunLeaseReceipt `json:"lease"`
-	CorrelationID       string                `json:"correlation_id"`
-	WorkspaceDeclaredID string                `json:"workspace_declared_id"`
-	Key                 *string               `json:"key,omitempty"`
-	Secrets             []WorkspaceSecret     `json:"secrets,omitempty"`
-	IdempotencyKey      string                `json:"idempotency_key,omitempty"`
+	Lease               WorkerRunLeaseFence `json:"lease"`
+	CorrelationID       string              `json:"correlation_id"`
+	WorkspaceDeclaredID string              `json:"workspace_declared_id"`
+	Key                 *string             `json:"key,omitempty"`
+	Secrets             []WorkspaceSecret   `json:"secrets,omitempty"`
+	IdempotencyKey      string              `json:"idempotency_key,omitempty"`
 }
 
 type WorkerCreateWorkspaceResponse struct {
@@ -655,7 +656,7 @@ type WorkerCreateWorkspaceResponse struct {
 }
 
 type WorkerRetrieveWorkspaceRequest struct {
-	Lease         WorkerRunLeaseReceipt  `json:"lease"`
+	Lease         WorkerRunLeaseFence    `json:"lease"`
 	CorrelationID string                 `json:"correlation_id"`
 	Workspace     WorkerWorkspaceAddress `json:"workspace"`
 }
@@ -733,18 +734,18 @@ type WorkerDeleteWorkspaceResponse struct {
 }
 
 type WorkerInvokeChildTaskRequest struct {
-	Lease                         WorkerRunLeaseReceipt `json:"lease"`
-	CorrelationID                 string                `json:"correlation_id"`
-	RunWaitID                     string                `json:"run_wait_id,omitempty"`
-	ResumeAttachID                string                `json:"resume_attach_id,omitempty"`
-	TaskDeclaredID                string                `json:"task_declared_id"`
-	Method                        string                `json:"method"`
-	PayloadPresent                bool                  `json:"payload_present"`
-	Payload                       json.RawMessage       `json:"payload,omitempty"`
-	Workspace                     json.RawMessage       `json:"workspace"`
-	Options                       json.RawMessage       `json:"options"`
-	IdempotencyKey                string                `json:"idempotency_key,omitempty"`
-	ActorSpeculativeInputSequence *int64                `json:"actor_speculative_input_sequence,omitempty"`
+	Lease                         WorkerRunLeaseFence `json:"lease"`
+	CorrelationID                 string              `json:"correlation_id"`
+	RunWaitID                     string              `json:"run_wait_id,omitempty"`
+	ResumeAttachID                string              `json:"resume_attach_id,omitempty"`
+	TaskDeclaredID                string              `json:"task_declared_id"`
+	Method                        string              `json:"method"`
+	PayloadPresent                bool                `json:"payload_present"`
+	Payload                       json.RawMessage     `json:"payload,omitempty"`
+	Workspace                     json.RawMessage     `json:"workspace"`
+	Options                       json.RawMessage     `json:"options"`
+	IdempotencyKey                string              `json:"idempotency_key,omitempty"`
+	ActorSpeculativeInputSequence *int64              `json:"actor_speculative_input_sequence,omitempty"`
 }
 
 type WorkerChildTaskStartResult struct {
@@ -759,11 +760,11 @@ type WorkerInvokeChildTaskResponse struct {
 }
 
 type WorkerAppendActorOutputRequest struct {
-	Lease          WorkerRunLeaseReceipt `json:"lease"`
-	CorrelationID  string                `json:"correlation_id"`
-	Data           json.RawMessage       `json:"data"`
-	ContentType    string                `json:"content_type"`
-	IdempotencyKey string                `json:"idempotency_key,omitempty"`
+	Lease          WorkerRunLeaseFence `json:"lease"`
+	CorrelationID  string              `json:"correlation_id"`
+	Data           json.RawMessage     `json:"data"`
+	ContentType    string              `json:"content_type"`
+	IdempotencyKey string              `json:"idempotency_key,omitempty"`
 }
 
 type WorkerAppendActorOutputResponse struct {
@@ -858,7 +859,12 @@ type WorkerWorkspaceResetTarget struct {
 type WorkerEmptyWorkspace struct {
 }
 
-type WorkerRunLeaseReceipt struct {
+type WorkerRunLeaseFence struct {
+	ID            string `json:"id"`
+	LeaseSequence int64  `json:"lease_sequence"`
+}
+
+type WorkerRunLeaseAssignment struct {
 	ID                               string       `json:"id"`
 	RunID                            string       `json:"run_id"`
 	AttemptNumber                    int32        `json:"attempt_number"`
@@ -887,6 +893,13 @@ type WorkerRunLeaseReceipt struct {
 	Trace                            TraceContext `json:"trace"`
 	StartDeadlineAt                  time.Time    `json:"start_deadline_at"`
 	ExpiresAt                        time.Time    `json:"expires_at"`
+}
+
+func (assignment WorkerRunLeaseAssignment) Fence() WorkerRunLeaseFence {
+	return WorkerRunLeaseFence{
+		ID:            assignment.ID,
+		LeaseSequence: assignment.LeaseSequence,
+	}
 }
 
 type WorkerWorkspaceAttachment struct {
@@ -1016,8 +1029,8 @@ type WorkerRunLeaseProvider interface {
 	CurrentWorkerRunLease() WorkerRunLease
 }
 
-type WorkerRunLeaseReceiptProvider interface {
-	CurrentWorkerRunLeaseReceipt() WorkerRunLeaseReceipt
+type WorkerRunLeaseAssignmentProvider interface {
+	CurrentWorkerRunLeaseAssignment() WorkerRunLeaseAssignment
 }
 
 type WorkerDeploymentBuildLease struct {
@@ -1207,37 +1220,37 @@ const (
 )
 
 type WorkerRunLogAppendRequest struct {
-	Lease         WorkerRunLeaseReceipt `json:"lease"`
-	Stream        WorkerLogStream       `json:"stream"`
-	ObservedSeq   uint64                `json:"observed_seq"`
-	ContentBase64 string                `json:"content_base64"`
+	Lease         WorkerRunLeaseFence `json:"lease"`
+	Stream        WorkerLogStream     `json:"stream"`
+	ObservedSeq   uint64              `json:"observed_seq"`
+	ContentBase64 string              `json:"content_base64"`
 }
 
 type WorkerUpdateRunMetadataRequest struct {
-	Lease       WorkerRunLeaseReceipt `json:"lease"`
-	OperationID string                `json:"operation_id"`
-	Operation   string                `json:"operation"`
-	Key         string                `json:"key,omitempty"`
-	Value       json.RawMessage       `json:"value,omitempty"`
-	Patch       json.RawMessage       `json:"patch,omitempty"`
-	Amount      *float64              `json:"amount,omitempty"`
+	Lease       WorkerRunLeaseFence `json:"lease"`
+	OperationID string              `json:"operation_id"`
+	Operation   string              `json:"operation"`
+	Key         string              `json:"key,omitempty"`
+	Value       json.RawMessage     `json:"value,omitempty"`
+	Patch       json.RawMessage     `json:"patch,omitempty"`
+	Amount      *float64            `json:"amount,omitempty"`
 }
 
 type WorkerStructuredLogRequest struct {
-	Lease       WorkerRunLeaseReceipt `json:"lease"`
-	ObservedSeq uint64                `json:"observed_seq"`
-	Level       string                `json:"level"`
-	Message     string                `json:"message"`
-	Attributes  json.RawMessage       `json:"attributes"`
+	Lease       WorkerRunLeaseFence `json:"lease"`
+	ObservedSeq uint64              `json:"observed_seq"`
+	Level       string              `json:"level"`
+	Message     string              `json:"message"`
+	Attributes  json.RawMessage     `json:"attributes"`
 }
 
 type WorkerCreateTokenRequest struct {
-	Lease          WorkerRunLeaseReceipt `json:"lease"`
-	CorrelationID  string                `json:"correlation_id"`
-	TimeoutMS      *int64                `json:"timeout_ms,omitempty"`
-	Tags           []string              `json:"tags,omitempty"`
-	Metadata       json.RawMessage       `json:"metadata,omitempty"`
-	IdempotencyKey string                `json:"idempotency_key,omitempty"`
+	Lease          WorkerRunLeaseFence `json:"lease"`
+	CorrelationID  string              `json:"correlation_id"`
+	TimeoutMS      *int64              `json:"timeout_ms,omitempty"`
+	Tags           []string            `json:"tags,omitempty"`
+	Metadata       json.RawMessage     `json:"metadata,omitempty"`
+	IdempotencyKey string              `json:"idempotency_key,omitempty"`
 }
 
 type WorkerRunWaitKind string
@@ -1250,17 +1263,17 @@ const (
 )
 
 type WorkerCreateRunWaitRequest struct {
-	Lease                         WorkerRunLeaseReceipt `json:"lease"`
-	CorrelationID                 string                `json:"correlation_id"`
-	RunWaitID                     string                `json:"run_wait_id"`
-	ResumeAttachID                string                `json:"resume_attach_id"`
-	Kind                          WorkerRunWaitKind     `json:"kind"`
-	Params                        json.RawMessage       `json:"params,omitempty"`
-	Metadata                      json.RawMessage       `json:"metadata,omitempty"`
-	Tags                          []string              `json:"tags,omitempty"`
-	TimeoutMS                     *int64                `json:"timeout_ms,omitempty"`
-	IdleTimeoutMS                 *int64                `json:"idle_timeout_ms,omitempty"`
-	ActorSpeculativeInputSequence *int64                `json:"actor_speculative_input_sequence,omitempty"`
+	Lease                         WorkerRunLeaseFence `json:"lease"`
+	CorrelationID                 string              `json:"correlation_id"`
+	RunWaitID                     string              `json:"run_wait_id"`
+	ResumeAttachID                string              `json:"resume_attach_id"`
+	Kind                          WorkerRunWaitKind   `json:"kind"`
+	Params                        json.RawMessage     `json:"params,omitempty"`
+	Metadata                      json.RawMessage     `json:"metadata,omitempty"`
+	Tags                          []string            `json:"tags,omitempty"`
+	TimeoutMS                     *int64              `json:"timeout_ms,omitempty"`
+	IdleTimeoutMS                 *int64              `json:"idle_timeout_ms,omitempty"`
+	ActorSpeculativeInputSequence *int64              `json:"actor_speculative_input_sequence,omitempty"`
 }
 
 type WorkerCreateRunWaitResponse struct {
@@ -1276,8 +1289,8 @@ type WorkerCreateRunWaitResponse struct {
 }
 
 type WorkerRunWaitPollRequest struct {
-	Lease     WorkerRunLeaseReceipt `json:"lease"`
-	RunWaitID string                `json:"run_wait_id"`
+	Lease     WorkerRunLeaseFence `json:"lease"`
+	RunWaitID string              `json:"run_wait_id"`
 }
 
 type WorkerRunWaitPollStatus string
@@ -1302,9 +1315,9 @@ type WorkerRunWaitPollResponse struct {
 }
 
 type WorkerRunWaitResumeAckRequest struct {
-	Lease                WorkerRunLeaseReceipt `json:"lease"`
-	RunWaitID            string                `json:"run_wait_id"`
-	ResumeRequestVersion int64                 `json:"resume_request_version"`
+	Lease                WorkerRunLeaseFence `json:"lease"`
+	RunWaitID            string              `json:"run_wait_id"`
+	ResumeRequestVersion int64               `json:"resume_request_version"`
 }
 
 type WorkerRunWaitResumeAckResponse struct {
@@ -1411,7 +1424,7 @@ type CASObject struct {
 }
 
 type WorkerCheckpointReadyRequest struct {
-	Lease            WorkerRunLeaseReceipt            `json:"lease"`
+	Lease            WorkerRunLeaseFence              `json:"lease"`
 	RequestVersion   int64                            `json:"request_version"`
 	RunWaitID        string                           `json:"run_wait_id"`
 	CheckpointID     string                           `json:"checkpoint_id"`
@@ -1425,9 +1438,9 @@ type WorkerCheckpointWorkspaceCapture struct {
 }
 
 type WorkerCheckpointFailedRequest struct {
-	Lease          WorkerRunLeaseReceipt `json:"lease"`
-	RequestVersion int64                 `json:"request_version"`
-	RunWaitID      string                `json:"run_wait_id"`
-	CheckpointID   string                `json:"checkpoint_id"`
-	Error          string                `json:"error"`
+	Lease          WorkerRunLeaseFence `json:"lease"`
+	RequestVersion int64               `json:"request_version"`
+	RunWaitID      string              `json:"run_wait_id"`
+	CheckpointID   string              `json:"checkpoint_id"`
+	Error          string              `json:"error"`
 }

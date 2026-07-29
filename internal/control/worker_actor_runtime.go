@@ -78,7 +78,7 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
 	source, err := s.workerRunSource(r.Context(), worker, request.Lease)
 	if err != nil {
-		s.writeWorkerActorSourceError(w, "start", request.Lease.RunID, err)
+		s.writeWorkerActorSourceError(w, "start", request.Lease.ID, err)
 		return
 	}
 	orgID, orgErr := pgvalue.UUIDValue(source.OrgID)
@@ -107,7 +107,7 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 	result, err := s.startActor(r.Context(), normalized)
 	if err != nil {
 		if errors.Is(err, errStaleWorkerRunSource) {
-			s.writeWorkerActorSourceError(w, "start", request.Lease.RunID, err)
+			s.writeWorkerActorSourceError(w, "start", request.Lease.ID, err)
 			return
 		}
 		if failure, ok := workerActorStartFailure(err); ok {
@@ -116,7 +116,7 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		s.log.Error("start run-sourced Actor", "run_id", request.Lease.RunID, "error", err)
+		s.log.Error("start run-sourced Actor", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("start run-sourced Actor"))
 		return
 	}
@@ -158,7 +158,7 @@ func (s *Server) workerGetActorStatus(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, errStaleWorkerRunSource) {
-			s.writeWorkerActorSourceError(w, "status", request.Lease.RunID, err)
+			s.writeWorkerActorSourceError(w, "status", request.Lease.ID, err)
 			return
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -211,7 +211,7 @@ func (s *Server) workerCloseActor(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, errStaleWorkerRunSource) {
-			s.writeWorkerActorSourceError(w, "close", request.Lease.RunID, err)
+			s.writeWorkerActorSourceError(w, "close", request.Lease.ID, err)
 			return
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -240,7 +240,7 @@ func (s *Server) workerCloseActor(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, errStaleWorkerRunSource) {
-			s.writeWorkerActorSourceError(w, "close", request.Lease.RunID, err)
+			s.writeWorkerActorSourceError(w, "close", request.Lease.ID, err)
 			return
 		}
 		if failure, ok := workerActorCloseFailure(err); ok {
@@ -288,7 +288,7 @@ func (s *Server) workerReadActorOutputPage(w http.ResponseWriter, r *http.Reques
 	})
 	if err != nil {
 		if errors.Is(err, errStaleWorkerRunSource) {
-			s.writeWorkerActorSourceError(w, "output-page", request.Lease.RunID, err)
+			s.writeWorkerActorSourceError(w, "output-page", request.Lease.ID, err)
 			return
 		}
 		code, message := "actor_output_unavailable", "Actor output is unavailable"
@@ -314,7 +314,7 @@ func (s *Server) workerReadActorOutputPage(w http.ResponseWriter, r *http.Reques
 func (s *Server) workerRunSource(
 	ctx context.Context,
 	worker workerActor,
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseFence,
 ) (workerRunSourceAuthority, error) {
 	var source workerRunSourceAuthority
 	err := s.inTx(ctx, func(work *txWork) error {

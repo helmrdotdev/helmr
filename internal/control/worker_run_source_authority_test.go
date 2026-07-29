@@ -7,7 +7,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-func TestAuthorizeWorkerRunSourceRequiresWorkerAndFullReceipt(t *testing.T) {
+func TestAuthorizeWorkerRunSourceRequiresWorkerAndLiveFence(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(*workerActor, *runLeaseClaimAuthorityFixture)
@@ -25,9 +25,9 @@ func TestAuthorizeWorkerRunSourceRequiresWorkerAndFullReceipt(t *testing.T) {
 			},
 		},
 		{
-			name: "altered full receipt",
+			name: "altered lease sequence",
 			mutate: func(_ *workerActor, fixture *runLeaseClaimAuthorityFixture) {
-				fixture.receipt.WriterGeneration++
+				fixture.fence.LeaseSequence++
 			},
 		},
 	}
@@ -35,11 +35,11 @@ func TestAuthorizeWorkerRunSourceRequiresWorkerAndFullReceipt(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			_, store, worker, turnRequest, _ := newActorTurnCommitFixture(t)
 			fixture := runLeaseClaimAuthorityFixture{
-				receipt: turnRequest.Lease,
+				fence: turnRequest.Lease,
 			}
 			test.mutate(&worker, &fixture)
 			_, err := authorizeWorkerRunSource(
-				t.Context(), store, worker, fixture.receipt,
+				t.Context(), store, worker, fixture.fence,
 			)
 			if !errors.Is(err, errStaleWorkerRunSource) {
 				t.Fatalf("error = %v", err)
@@ -49,5 +49,5 @@ func TestAuthorizeWorkerRunSourceRequiresWorkerAndFullReceipt(t *testing.T) {
 }
 
 type runLeaseClaimAuthorityFixture struct {
-	receipt api.WorkerRunLeaseReceipt
+	fence api.WorkerRunLeaseFence
 }

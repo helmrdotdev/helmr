@@ -3,6 +3,8 @@ package platformlock
 import (
 	"reflect"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
 func TestLockKeysAreOrderIndependentAndDeduplicated(t *testing.T) {
@@ -34,5 +36,29 @@ func TestLockKeysRejectNoncanonicalDigests(t *testing.T) {
 				t.Fatalf("lockKeys(%q) succeeded", value)
 			}
 		})
+	}
+}
+
+func TestWithReleasesLockWhenFunctionPanics(t *testing.T) {
+	database := dbtest.Open(t)
+	locker, err := New(database.Pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	var recovered any
+	func() {
+		defer func() {
+			recovered = recover()
+		}()
+		_ = locker.With(t.Context(), []string{digest}, func() error {
+			panic("test panic")
+		})
+	}()
+	if recovered != "test panic" {
+		t.Fatalf("recovered value = %#v", recovered)
+	}
+	if err := locker.With(t.Context(), []string{digest}, func() error { return nil }); err != nil {
+		t.Fatalf("lock remained held after panic: %v", err)
 	}
 }

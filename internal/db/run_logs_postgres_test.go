@@ -15,19 +15,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestAppendReceiptRunLogChunkRequiresExactCurrentReceipt(t *testing.T) {
+func TestAppendRunLogChunkRequiresExactCurrentReceipt(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	params := fixture.runningRunLogParams(t, ctx)
 
-	first, err := fixture.queries.AppendReceiptRunLogChunk(ctx, params)
+	first, err := fixture.queries.AppendRunLogChunk(ctx, params)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !first.ReplayMatches || string(first.Content) != "alpha" {
 		t.Fatalf("first append = %+v", first)
 	}
-	replay, err := fixture.queries.AppendReceiptRunLogChunk(ctx, params)
+	replay, err := fixture.queries.AppendRunLogChunk(ctx, params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,13 +35,8 @@ func TestAppendReceiptRunLogChunkRequiresExactCurrentReceipt(t *testing.T) {
 		t.Fatalf("replay = %+v, want seq %d", replay, first.Seq)
 	}
 	stored, err := fixture.queries.GetRunLogChunkReplay(ctx, GetRunLogChunkReplayParams{
-		RunID:      params.RunID,
 		RunLeaseID: params.RunLeaseID,
-		AttemptNumber: pgtype.Int4{
-			Int32: params.AttemptNumber,
-			Valid: true,
-		},
-		Stream: params.Stream,
+		Stream:     params.Stream,
 		ObservedSeq: pgtype.Int8{
 			Int64: params.ObservedSeq,
 			Valid: true,
@@ -59,13 +54,13 @@ func TestAppendReceiptRunLogChunkRequiresExactCurrentReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(storedPayload, requestPayload) ||
-		stored.ReceiptFingerprint != params.ReceiptFingerprint {
+		stored.LeaseFenceFingerprint != params.LeaseFenceFingerprint {
 		t.Fatalf("replay event payload = %s, want %s", stored.EventPayload, params.Payload)
 	}
 
 	changed := params
 	changed.Content = []byte("beta")
-	if _, err := fixture.queries.AppendReceiptRunLogChunk(ctx, changed); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := fixture.queries.AppendRunLogChunk(ctx, changed); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("changed replay error = %v, want no rows", err)
 	}
 	var chunks, events, meterOutbox, meters int
@@ -95,54 +90,28 @@ func TestAppendReceiptRunLogChunkRequiresExactCurrentReceipt(t *testing.T) {
 
 	mismatches := []struct {
 		name   string
-		mutate func(*AppendReceiptRunLogChunkParams)
+		mutate func(*AppendRunLogChunkParams)
 	}{
-		{"Workspace Mount", func(p *AppendReceiptRunLogChunkParams) { p.WorkspaceMountID = randomPGUUID() }},
-		{"Workspace Lease", func(p *AppendReceiptRunLogChunkParams) { p.WorkspaceLeaseID = randomPGUUID() }},
-		{"Run Lease", func(p *AppendReceiptRunLogChunkParams) { p.RunLeaseID = randomPGUUID() }},
-		{"Run", func(p *AppendReceiptRunLogChunkParams) { p.RunID = randomPGUUID() }},
-		{"attempt", func(p *AppendReceiptRunLogChunkParams) { p.AttemptNumber++ }},
-		{"lease sequence", func(p *AppendReceiptRunLogChunkParams) { p.LeaseSequence++ }},
-		{"worker group", func(p *AppendReceiptRunLogChunkParams) { p.WorkerGroupID += "-stale" }},
-		{"worker", func(p *AppendReceiptRunLogChunkParams) { p.WorkerInstanceID = randomPGUUID() }},
-		{"worker epoch", func(p *AppendReceiptRunLogChunkParams) { p.WorkerEpoch++ }},
-		{"worker protocol", func(p *AppendReceiptRunLogChunkParams) { p.WorkerProtocolVersion += "-stale" }},
-		{"Runtime", func(p *AppendReceiptRunLogChunkParams) { p.RuntimeInstanceID = randomPGUUID() }},
-		{"Runtime identity", func(p *AppendReceiptRunLogChunkParams) { p.RuntimeIdentityID += "-stale" }},
-		{"network slot", func(p *AppendReceiptRunLogChunkParams) { p.NetworkSlotID = randomPGUUID() }},
-		{"network generation", func(p *AppendReceiptRunLogChunkParams) { p.NetworkSlotGeneration++ }},
-		{"Workspace", func(p *AppendReceiptRunLogChunkParams) { p.WorkspaceID = randomPGUUID() }},
-		{"base Workspace version", func(p *AppendReceiptRunLogChunkParams) { p.BaseWorkspaceVersionID = randomPGUUID() }},
-		{"mount fence", func(p *AppendReceiptRunLogChunkParams) { p.MountFencingGeneration++ }},
-		{"ownership generation", func(p *AppendReceiptRunLogChunkParams) { p.OwnershipGeneration++ }},
-		{"writer generation", func(p *AppendReceiptRunLogChunkParams) { p.WriterGeneration++ }},
-		{"CPU", func(p *AppendReceiptRunLogChunkParams) { p.RequestedCpuMillis++ }},
-		{"memory", func(p *AppendReceiptRunLogChunkParams) { p.RequestedMemoryBytes++ }},
-		{"guest ephemeral disk", func(p *AppendReceiptRunLogChunkParams) { p.RequestedGuestEphemeralDiskBytes++ }},
-		{"execution slots", func(p *AppendReceiptRunLogChunkParams) { p.RequestedExecutionSlots++ }},
-		{"max active duration", func(p *AppendReceiptRunLogChunkParams) { p.MaxActiveDurationMs++ }},
-		{"active elapsed", func(p *AppendReceiptRunLogChunkParams) { p.ActiveElapsedMs++ }},
-		{"trace ID", func(p *AppendReceiptRunLogChunkParams) { p.TraceID.String += "stale" }},
-		{"span ID", func(p *AppendReceiptRunLogChunkParams) { p.SpanID.String += "stale" }},
-		{"traceparent", func(p *AppendReceiptRunLogChunkParams) { p.Traceparent.String += "stale" }},
-		{"start deadline", func(p *AppendReceiptRunLogChunkParams) {
-			p.StartDeadlineAt.Time = p.StartDeadlineAt.Time.Add(time.Second)
-		}},
-		{"expiry", func(p *AppendReceiptRunLogChunkParams) { p.ExpiresAt.Time = p.ExpiresAt.Time.Add(time.Second) }},
+		{"Run Lease", func(p *AppendRunLogChunkParams) { p.RunLeaseID = randomPGUUID() }},
+		{"lease sequence", func(p *AppendRunLogChunkParams) { p.LeaseSequence++ }},
+		{"worker group", func(p *AppendRunLogChunkParams) { p.WorkerGroupID += "-stale" }},
+		{"worker", func(p *AppendRunLogChunkParams) { p.WorkerInstanceID = randomPGUUID() }},
+		{"worker epoch", func(p *AppendRunLogChunkParams) { p.WorkerEpoch++ }},
+		{"worker protocol", func(p *AppendRunLogChunkParams) { p.WorkerProtocolVersion += "-stale" }},
 	}
 	for index, mismatch := range mismatches {
 		t.Run(mismatch.name, func(t *testing.T) {
 			stale := params
 			stale.ObservedSeq = int64(index + 2)
 			mismatch.mutate(&stale)
-			if _, err := fixture.queries.AppendReceiptRunLogChunk(ctx, stale); !errors.Is(err, pgx.ErrNoRows) {
-				t.Fatalf("AppendReceiptRunLogChunk() error = %v, want no rows", err)
+			if _, err := fixture.queries.AppendRunLogChunk(ctx, stale); !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("AppendRunLogChunk() error = %v, want no rows", err)
 			}
 		})
 	}
 }
 
-func TestAppendReceiptRunLogChunkRejectsSupersededAuthority(t *testing.T) {
+func TestAppendRunLogChunkRejectsSupersededAuthority(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	params := fixture.runningRunLogParams(t, ctx)
@@ -150,16 +119,11 @@ func TestAppendReceiptRunLogChunkRejectsSupersededAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	newExpiry := params.ExpiresAt.Time.Add(time.Minute)
-	if _, err := fixture.pool.Exec(ctx, `UPDATE run_leases SET expires_at = $2 WHERE id = $1`, params.RunLeaseID, newExpiry); err != nil {
+	if _, err := fixture.pool.Exec(ctx, `UPDATE run_leases SET expires_at = expires_at + interval '1 minute' WHERE id = $1`, params.RunLeaseID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.queries.AppendReceiptRunLogChunk(ctx, params); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("stale renewal receipt error = %v, want no rows", err)
-	}
-	params.ExpiresAt.Time = newExpiry
-	if _, err := fixture.queries.AppendReceiptRunLogChunk(ctx, params); err != nil {
-		t.Fatalf("renewed receipt error = %v", err)
+	if _, err := fixture.queries.AppendRunLogChunk(ctx, params); err != nil {
+		t.Fatalf("stable fence was invalidated by renewal: %v", err)
 	}
 
 	if _, err := fixture.pool.Exec(ctx, `
@@ -170,7 +134,7 @@ func TestAppendReceiptRunLogChunkRejectsSupersededAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	params.ObservedSeq++
-	if _, err := fixture.queries.AppendReceiptRunLogChunk(ctx, params); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := fixture.queries.AppendRunLogChunk(ctx, params); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("terminal lease error = %v, want no rows", err)
 	}
 }
@@ -180,10 +144,7 @@ func TestGetRunMetadataClaimScopeUsesStableAttemptAuthority(t *testing.T) {
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	logParams := fixture.runningRunLogParams(t, ctx)
 	params := GetRunMetadataClaimScopeParams{
-		RunLeaseID:            logParams.RunLeaseID,
-		RunID:                 logParams.RunID,
-		AttemptNumber:         logParams.AttemptNumber,
-		LeaseSequence:         logParams.LeaseSequence,
+		RunLeaseID: logParams.RunLeaseID, LeaseSequence: logParams.LeaseSequence,
 		WorkerGroupID:         logParams.WorkerGroupID,
 		WorkerInstanceID:      logParams.WorkerInstanceID,
 		WorkerEpoch:           logParams.WorkerEpoch,
@@ -194,14 +155,14 @@ func TestGetRunMetadataClaimScopeUsesStableAttemptAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scope.RunID != params.RunID || scope.AttemptNumber != params.AttemptNumber {
-		t.Fatalf("claim scope = %+v, want Run %v attempt %d", scope, params.RunID, params.AttemptNumber)
+	if !scope.RunID.Valid || scope.AttemptNumber <= 0 {
+		t.Fatalf("claim scope = %+v", scope)
 	}
 
 	if _, err := fixture.pool.Exec(
 		ctx,
 		`UPDATE runs SET active_elapsed_ms = active_elapsed_ms + 1 WHERE id = $1`,
-		params.RunID,
+		scope.RunID,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +177,7 @@ func TestGetRunMetadataClaimScopeUsesStableAttemptAuthority(t *testing.T) {
 	}
 }
 
-func TestAppendReceiptRunLogChunkConcurrentReplay(t *testing.T) {
+func TestAppendRunLogChunkConcurrentReplay(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	params := fixture.runningRunLogParams(t, ctx)
@@ -229,7 +190,7 @@ func TestAppendReceiptRunLogChunkConcurrentReplay(t *testing.T) {
 	for index := range writers {
 		go func() {
 			defer group.Done()
-			row, err := fixture.queries.AppendReceiptRunLogChunk(ctx, params)
+			row, err := fixture.queries.AppendRunLogChunk(ctx, params)
 			errorsByWriter[index] = err
 			sequences[index] = row.Seq
 		}()
@@ -261,7 +222,7 @@ func TestAppendReceiptRunLogChunkConcurrentReplay(t *testing.T) {
 func (fixture runLeaseClaimFixture) runningRunLogParams(
 	t *testing.T,
 	ctx context.Context,
-) AppendReceiptRunLogChunkParams {
+) AppendRunLogChunkParams {
 	t.Helper()
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	locators := fixture.freshRunStartLocators(t, ctx, work)
@@ -284,61 +245,15 @@ func (fixture runLeaseClaimFixture) runningRunLogParams(
 		t.Fatal(err)
 	}
 
-	params := AppendReceiptRunLogChunkParams{
+	params := AppendRunLogChunkParams{
 		Kind: "log.stdout", Payload: []byte(`{"stream":"stdout"}`),
-		ReceiptFingerprint: "fixture-receipt-fingerprint",
-		WorkspaceMountID:   locators.WorkspaceMountID, WorkspaceLeaseID: locators.WorkspaceLeaseID,
-		RunLeaseID: workUUID(work.leaseID), RunID: workUUID(work.runID), AttemptNumber: 1,
-		LeaseSequence: 1, WorkerGroupID: runLeaseTestWorkerGroup,
+		LeaseFenceFingerprint: "fixture-receipt-fingerprint",
+		RunLeaseID:            workUUID(work.leaseID),
+		LeaseSequence:         1, WorkerGroupID: runLeaseTestWorkerGroup,
 		WorkerInstanceID: workUUID(fixture.workerID), WorkerEpoch: 1,
-		WorkerProtocolVersion: runLeaseTestProtocol, RuntimeInstanceID: locators.RuntimeInstanceID,
-		RuntimeIdentityID: fixture.runtimeIdentityID, NetworkSlotID: locators.NetworkSlotID,
-		NetworkSlotGeneration: locators.NetworkSlotGeneration, WorkspaceID: locators.WorkspaceID,
-		Stream: "stdout", ObservedSeq: 1, Content: []byte("alpha"),
+		WorkerProtocolVersion: runLeaseTestProtocol,
+		Stream:                "stdout", ObservedSeq: 1, Content: []byte("alpha"),
 	}
-	var traceID, spanID, traceparent string
-	if err := fixture.pool.QueryRow(ctx, `
-		SELECT workspace_leases.base_version_id,
-		       workspace_leases.mount_fencing_generation,
-		       workspace_leases.ownership_generation,
-		       workspace_leases.writer_generation,
-		       run_leases.requested_cpu_millis,
-		       run_leases.requested_memory_bytes,
-		       run_leases.requested_guest_ephemeral_disk_bytes,
-		       run_leases.requested_execution_slots,
-		       runs.max_active_duration_ms,
-		       runs.active_elapsed_ms,
-		       COALESCE(run_leases.trace_id, ''),
-		       COALESCE(run_leases.span_id, ''),
-		       COALESCE(run_leases.traceparent, ''),
-		       run_leases.start_deadline_at,
-		       run_leases.expires_at
-		  FROM run_leases
-		  JOIN runs ON runs.id = run_leases.run_id
-		  JOIN workspace_leases ON workspace_leases.id = $2
-		 WHERE run_leases.id = $1
-	`, params.RunLeaseID, params.WorkspaceLeaseID).Scan(
-		&params.BaseWorkspaceVersionID,
-		&params.MountFencingGeneration,
-		&params.OwnershipGeneration,
-		&params.WriterGeneration,
-		&params.RequestedCpuMillis,
-		&params.RequestedMemoryBytes,
-		&params.RequestedGuestEphemeralDiskBytes,
-		&params.RequestedExecutionSlots,
-		&params.MaxActiveDurationMs,
-		&params.ActiveElapsedMs,
-		&traceID,
-		&spanID,
-		&traceparent,
-		&params.StartDeadlineAt,
-		&params.ExpiresAt,
-	); err != nil {
-		t.Fatal(err)
-	}
-	params.TraceID = pgtype.Text{String: traceID, Valid: true}
-	params.SpanID = pgtype.Text{String: spanID, Valid: true}
-	params.Traceparent = pgtype.Text{String: traceparent, Valid: true}
 	return params
 }
 

@@ -40,21 +40,7 @@ func enterRunEntrypoint(
 		if err != nil {
 			return err
 		}
-		receipt, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
-			run:            authority.run,
-			attempt:        authority.attempt,
-			runtime:        authority.runtime,
-			networkSlot:    authority.networkSlot,
-			runLease:       authority.runLease,
-			workspace:      authority.workspace,
-			workspaceMount: authority.workspaceMount,
-			workspaceLease: authority.workspaceLease,
-		})
-		if err != nil {
-			return err
-		}
-		if !equalRunLeaseReceipt(receipt, request.Lease) ||
-			authority.run.EntrypointKind != request.EntrypointKind ||
+		if authority.run.EntrypointKind != request.EntrypointKind ||
 			authority.run.EntrypointDeclaredID != request.EntrypointDeclaredID {
 			return errStaleRunLeaseClaim
 		}

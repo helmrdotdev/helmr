@@ -28,45 +28,28 @@ func TestParseRunFinalization(t *testing.T) {
 	}
 }
 
-func TestRunFinalizationFingerprintUsesUTCInstants(t *testing.T) {
+func TestRunFinalizationFingerprintIncludesLeaseFence(t *testing.T) {
 	first := validRunFinalizationRequest()
 	second := first
-	second.Lease.StartDeadlineAt = first.Lease.StartDeadlineAt.In(time.FixedZone("offset", 9*60*60))
-	second.Lease.ExpiresAt = first.Lease.ExpiresAt.In(time.FixedZone("offset", 9*60*60))
-
+	second.Lease.LeaseSequence++
 	left, err := parseRunFinalization(first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	right, err := parseRunFinalization(second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if left.fingerprint != right.fingerprint {
-		t.Fatalf("fingerprints differ: %q != %q", left.fingerprint, right.fingerprint)
-	}
-
-	second.Lease.ExpiresAt = second.Lease.ExpiresAt.Add(time.Nanosecond)
 	changed, err := parseRunFinalization(second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if left.fingerprint == changed.fingerprint {
-		t.Fatal("changed receipt expiry did not change fingerprint")
+		t.Fatal("changed Lease fence did not change fingerprint")
 	}
 }
 
 func TestParseRunFinalizationRejectsMismatchedQuiescenceProof(t *testing.T) {
 	request := validRunFinalizationRequest()
-	request.ProgramQuiesced.RunID = uuid.Must(uuid.NewV7()).String()
+	request.ProgramQuiesced.AttemptNumber = 0
 	if _, err := parseRunFinalization(request); err == nil {
-		t.Fatal("mismatched Run was accepted")
-	}
-
-	request = validRunFinalizationRequest()
-	request.ProgramQuiesced.AttemptNumber++
-	if _, err := parseRunFinalization(request); err == nil {
-		t.Fatal("mismatched Attempt was accepted")
+		t.Fatal("invalid Attempt was accepted")
 	}
 
 	request = validRunFinalizationRequest()
@@ -99,7 +82,7 @@ func TestBeginRunFinalizationFreezesAuthorityAndReplays(t *testing.T) {
 		t.Fatalf("finalization state = %+v, writes = %d", store.authority, store.finalizationWrites)
 	}
 	wantExpiry := store.finalizationTime.Time.Add(server.runFinalizationTTL)
-	if !first.Lease.ExpiresAt.Equal(wantExpiry) ||
+	if !first.ExpiresAt.Equal(wantExpiry) ||
 		!store.authority.workspaceLease.ExpiresAt.Time.Equal(wantExpiry) ||
 		first.OperationID != request.OperationID || first.Kind != request.Kind ||
 		!first.StartedAt.Equal(store.finalizationTime.Time) {
@@ -115,7 +98,8 @@ func TestBeginRunFinalizationFreezesAuthorityAndReplays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store.finalizationWrites != 3 || !equalRunLeaseReceipt(replayed.Lease, first.Lease) ||
+	if store.finalizationWrites != 3 || replayed.Lease != first.Lease ||
+		!replayed.ExpiresAt.Equal(first.ExpiresAt) ||
 		replayed.OperationID != first.OperationID || replayed.Kind != first.Kind ||
 		!replayed.StartedAt.Equal(first.StartedAt) {
 		t.Fatalf("replay = %+v, writes = %d", replayed, store.finalizationWrites)
@@ -188,7 +172,7 @@ func TestBeginRunFinalizationRejectsChangedReplay(t *testing.T) {
 	if _, err := server.beginRunFinalization(context.Background(), worker, request, parsed); err != nil {
 		t.Fatal(err)
 	}
-	request.Lease.RequestedCPUMillis++
+	request.OperationID = uuid.Must(uuid.NewV7()).String()
 	changed, err := parseRunFinalization(request)
 	if err != nil {
 		t.Fatal(err)
@@ -354,7 +338,7 @@ func validRunFinalizationFixture(
 	store.finalizationTime = pgvalue.Timestamptz(now)
 	store.finalizationClear = pgtype.Bool{Bool: true, Valid: true}
 	request := api.WorkerBeginRunFinalizationRequest{
-		Lease: receipt,
+		Lease: receipt.Fence(),
 		ProgramQuiesced: api.WorkerRunQuiescenceProof{
 			RunID: receipt.RunID, AttemptNumber: receipt.AttemptNumber, RunLeaseID: receipt.ID,
 		},
@@ -459,11 +443,11 @@ func (s *runLeaseClaimStore) BeginRunWorkspaceLeaseFinalization(
 }
 
 func validRunFinalizationRequest() api.WorkerBeginRunFinalizationRequest {
-	lease := validRunLeaseReceipt(uuid.Must(uuid.NewV7()))
+	lease := validRunLeaseAssignment(uuid.Must(uuid.NewV7()))
 	lease.StartDeadlineAt = time.Unix(1_800_000_000, 123_456_789).UTC()
 	lease.ExpiresAt = time.Unix(1_800_000_100, 987_654_321).UTC()
 	return api.WorkerBeginRunFinalizationRequest{
-		Lease: lease,
+		Lease: lease.Fence(),
 		ProgramQuiesced: api.WorkerRunQuiescenceProof{
 			RunID: lease.RunID, AttemptNumber: lease.AttemptNumber, RunLeaseID: lease.ID,
 		},

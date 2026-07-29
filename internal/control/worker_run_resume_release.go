@@ -30,13 +30,9 @@ func (s *Server) workerAcknowledgeRunResumeRelease(w http.ResponseWriter, r *htt
 		writeError(w, badRequest(fmt.Errorf("invalid worker Run resume release request JSON: %w", err)))
 		return
 	}
-	parsedLease, err := parseRunLeaseReceipt(request.Lease)
+	parsedLease, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
 		writeError(w, badRequest(err))
-		return
-	}
-	if request.RunLeaseID != request.Lease.ID {
-		writeError(w, conflict(errors.New("Run resume release proof does not match the lease receipt")))
 		return
 	}
 	proof, err := parseRunResumeReleaseProof(request)
@@ -96,10 +92,9 @@ func (s *Server) acknowledgeRunResumeRelease(
 	ctx context.Context,
 	worker workerActor,
 	leaseID pgtype.UUID,
-	expected api.WorkerRunLeaseReceipt,
+	expected api.WorkerRunLeaseFence,
 	proof runResumeReleaseProof,
-) (api.WorkerRunLeaseReceipt, error) {
-	var receipt api.WorkerRunLeaseReceipt
+) (api.WorkerRunLeaseFence, error) {
 	err := s.inTx(ctx, func(work *txWork) error {
 		locators, err := work.q.GetRunLeaseStartLocators(ctx, db.GetRunLeaseStartLocatorsParams{
 			ID: leaseID, LeaseSequence: expected.LeaseSequence, WorkerGroupID: worker.WorkerGroupID,
@@ -132,18 +127,6 @@ func (s *Server) acknowledgeRunResumeRelease(
 			workspaceMount: authority.workspaceMount, runWait: authority.runWait,
 		}); err != nil {
 			return err
-		}
-		receipt, err = projectRunLeaseReceipt(runLeaseProjectionAuthority{
-			run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
-			networkSlot: authority.networkSlot, runLease: authority.runLease,
-			workspace: authority.workspace, workspaceMount: authority.workspaceMount,
-			workspaceLease: authority.workspaceLease,
-		})
-		if err != nil {
-			return err
-		}
-		if !equalRunLeaseReceipt(receipt, expected) {
-			return errStaleRunLeaseClaim
 		}
 		wait := authority.runWait
 		if wait.ID != proof.runWaitID ||
@@ -192,7 +175,7 @@ func (s *Server) acknowledgeRunResumeRelease(
 		return nil
 	})
 	if err != nil {
-		return api.WorkerRunLeaseReceipt{}, err
+		return api.WorkerRunLeaseFence{}, err
 	}
-	return receipt, nil
+	return expected, nil
 }

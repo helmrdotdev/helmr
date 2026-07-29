@@ -22,7 +22,8 @@ type workerLogReplayStore struct {
 	db.Querier
 	replayMatches bool
 	called        *bool
-	params        *db.AppendReceiptRunLogChunkParams
+	workerID      pgtype.UUID
+	params        *db.AppendRunLogChunkParams
 	replay        *db.GetRunLogChunkReplayRow
 }
 
@@ -33,21 +34,24 @@ func (s workerLogReplayStore) GetRunLogChunkReplay(_ context.Context, _ db.GetRu
 	return *s.replay, nil
 }
 
-func (s workerLogReplayStore) AppendReceiptRunLogChunk(_ context.Context, params db.AppendReceiptRunLogChunkParams) (db.AppendReceiptRunLogChunkRow, error) {
+func (s workerLogReplayStore) AppendRunLogChunk(_ context.Context, params db.AppendRunLogChunkParams) (db.AppendRunLogChunkRow, error) {
 	if s.called != nil {
 		*s.called = true
 	}
 	if s.params != nil {
 		*s.params = params
 	}
-	return db.AppendReceiptRunLogChunkRow{ReplayMatches: s.replayMatches}, nil
+	if s.workerID.Valid && params.WorkerInstanceID != s.workerID {
+		return db.AppendRunLogChunkRow{}, pgx.ErrNoRows
+	}
+	return db.AppendRunLogChunkRow{ReplayMatches: s.replayMatches}, nil
 }
 
 func TestWorkerAppendLogsReturnsConflictForChangedReplay(t *testing.T) {
 	workerID := uuid.Must(uuid.NewV7())
-	lease := validRunLeaseReceipt(workerID)
+	lease := validRunLeaseAssignment(workerID)
 	body, err := json.Marshal(api.WorkerRunLogAppendRequest{
-		Lease: lease, Stream: api.WorkerLogStreamStdout, ObservedSeq: 1,
+		Lease: lease.Fence(), Stream: api.WorkerLogStreamStdout, ObservedSeq: 1,
 		ContentBase64: "YWxwaGE=",
 	})
 	if err != nil {
@@ -76,15 +80,15 @@ func TestWorkerAppendLogsReturnsConflictForChangedReplay(t *testing.T) {
 
 func TestWorkerAppendLogsAcceptsIdenticalReplay(t *testing.T) {
 	workerID := uuid.Must(uuid.NewV7())
-	lease := validRunLeaseReceipt(workerID)
+	lease := validRunLeaseAssignment(workerID)
 	body, err := json.Marshal(api.WorkerRunLogAppendRequest{
-		Lease: lease, Stream: api.WorkerLogStreamStdout, ObservedSeq: 1,
+		Lease: lease.Fence(), Stream: api.WorkerLogStreamStdout, ObservedSeq: 1,
 		ContentBase64: "YWxwaGE=",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var params db.AppendReceiptRunLogChunkParams
+	var params db.AppendRunLogChunkParams
 	server := &Server{
 		db:  workerLogReplayStore{replayMatches: true, params: &params},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -102,30 +106,26 @@ func TestWorkerAppendLogsAcceptsIdenticalReplay(t *testing.T) {
 		t.Fatalf("status=%d body=%s, want success", recorder.Code, recorder.Body.String())
 	}
 	if pgvalue.UUIDString(params.RunLeaseID) != lease.ID ||
-		pgvalue.UUIDString(params.RunID) != lease.RunID ||
-		pgvalue.UUIDString(params.WorkspaceMountID) != lease.WorkspaceMountID ||
-		pgvalue.UUIDString(params.WorkspaceLeaseID) != lease.WorkspaceLeaseID ||
-		pgvalue.UUIDString(params.BaseWorkspaceVersionID) != lease.BaseWorkspaceVersionID ||
-		params.WriterGeneration != lease.WriterGeneration ||
-		params.RequestedMemoryBytes != lease.RequestedMemoryBytes ||
-		params.TraceID.String != lease.Trace.TraceID ||
-		!params.StartDeadlineAt.Time.Equal(lease.StartDeadlineAt) ||
-		!params.ExpiresAt.Time.Equal(lease.ExpiresAt) {
+		params.LeaseSequence != lease.LeaseSequence ||
+		params.WorkerGroupID != lease.WorkerGroupID ||
+		pgvalue.UUIDString(params.WorkerInstanceID) != lease.WorkerInstanceID ||
+		params.WorkerEpoch != lease.WorkerEpoch ||
+		params.WorkerProtocolVersion != lease.WorkerProtocolVersion {
 		t.Fatalf("database receipt params = %+v", params)
 	}
 }
 
 func TestWorkerAppendLogsReplaysAfterLeaseIsNoLongerLive(t *testing.T) {
 	workerID := uuid.Must(uuid.NewV7())
-	lease := validRunLeaseReceipt(workerID)
+	lease := validRunLeaseAssignment(workerID)
 	body, err := json.Marshal(api.WorkerRunLogAppendRequest{
-		Lease: lease, Stream: api.WorkerLogStreamStdout, ObservedSeq: 1,
+		Lease: lease.Fence(), Stream: api.WorkerLogStreamStdout, ObservedSeq: 1,
 		ContentBase64: "YWxwaGE=",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	receiptFingerprint, err := runLeaseReceiptFingerprint(lease)
+	leaseFenceFingerprint, err := runLeaseFenceFingerprint(lease.Fence())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,15 +134,15 @@ func TestWorkerAppendLogsReplaysAfterLeaseIsNoLongerLive(t *testing.T) {
 		db: workerLogReplayStore{
 			called: &called,
 			replay: &db.GetRunLogChunkReplayRow{
-				RunID:              pgvalue.UUID(uuid.MustParse(lease.RunID)),
-				RunLeaseID:         pgvalue.UUID(uuid.MustParse(lease.ID)),
-				AttemptNumber:      pgtype.Int4{Int32: lease.AttemptNumber, Valid: true},
-				Stream:             string(api.WorkerLogStreamStdout),
-				ObservedSeq:        pgtype.Int8{Int64: 1, Valid: true},
-				Content:            []byte("alpha"),
-				SizeBytes:          pgtype.Int8{Int64: 5, Valid: true},
-				EventPayload:       `{"bytes":5,"observed_seq":1,"run_id":"` + lease.RunID + `","stream":"stdout"}`,
-				ReceiptFingerprint: receiptFingerprint,
+				RunID:                 pgvalue.UUID(uuid.MustParse(lease.RunID)),
+				RunLeaseID:            pgvalue.UUID(uuid.MustParse(lease.ID)),
+				AttemptNumber:         pgtype.Int4{Int32: lease.AttemptNumber, Valid: true},
+				Stream:                string(api.WorkerLogStreamStdout),
+				ObservedSeq:           pgtype.Int8{Int64: 1, Valid: true},
+				Content:               []byte("alpha"),
+				SizeBytes:             pgtype.Int8{Int64: 5, Valid: true},
+				EventPayload:          `{"bytes":5,"observed_seq":1,"stream":"stdout"}`,
+				LeaseFenceFingerprint: leaseFenceFingerprint,
 			},
 		},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -164,11 +164,11 @@ func TestWorkerAppendLogsReplaysAfterLeaseIsNoLongerLive(t *testing.T) {
 	}
 }
 
-func TestWorkerAppendLogsRejectsAnotherWorkersReceipt(t *testing.T) {
+func TestWorkerAppendLogsRejectsAnotherWorkersFence(t *testing.T) {
 	workerID := uuid.Must(uuid.NewV7())
-	lease := validRunLeaseReceipt(workerID)
+	lease := validRunLeaseAssignment(workerID)
 	body, err := json.Marshal(api.WorkerRunLogAppendRequest{
-		Lease: lease, Stream: api.WorkerLogStreamStdout, ObservedSeq: 1,
+		Lease: lease.Fence(), Stream: api.WorkerLogStreamStdout, ObservedSeq: 1,
 		ContentBase64: "YWxwaGE=",
 	})
 	if err != nil {
@@ -176,7 +176,10 @@ func TestWorkerAppendLogsRejectsAnotherWorkersReceipt(t *testing.T) {
 	}
 	called := false
 	server := &Server{
-		db:  workerLogReplayStore{replayMatches: true, called: &called},
+		db: workerLogReplayStore{
+			replayMatches: true, called: &called,
+			workerID: pgvalue.UUID(workerID),
+		},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	request := httptest.NewRequest(http.MethodPost, "/api/worker/leases/run-logs", bytes.NewReader(body))
@@ -190,11 +193,11 @@ func TestWorkerAppendLogsRejectsAnotherWorkersReceipt(t *testing.T) {
 
 	server.workerAppendRunLogs(recorder, request)
 
-	if recorder.Code != http.StatusForbidden {
-		t.Fatalf("status=%d body=%s, want forbidden", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s, want conflict", recorder.Code, recorder.Body.String())
 	}
-	if called {
-		t.Fatal("database was called for another worker's receipt")
+	if !called {
+		t.Fatal("database authority was not consulted for another worker's fence")
 	}
 }
 

@@ -11,9 +11,9 @@ import (
 )
 
 func TestParseWorkerActorOutputAppendNormalizesPayload(t *testing.T) {
-	lease := validRunLeaseReceipt(uuid.Must(uuid.NewV7()))
+	lease := validRunLeaseAssignment(uuid.Must(uuid.NewV7()))
 	request := api.WorkerAppendActorOutputRequest{
-		Lease: lease, CorrelationID: uuid.Must(uuid.NewV7()).String(),
+		Lease: lease.Fence(), CorrelationID: uuid.Must(uuid.NewV7()).String(),
 		Data: json.RawMessage(`{"b":2,"a":1}`), ContentType: " application/json ",
 		IdempotencyKey: "output-1",
 	}
@@ -21,7 +21,7 @@ func TestParseWorkerActorOutputAppendNormalizesPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.lease.runID.String() != lease.RunID ||
+	if parsed.lease.leaseID.String() != lease.ID ||
 		parsed.correlationID.String() != request.CorrelationID ||
 		string(parsed.data) != `{"a":1,"b":2}` ||
 		parsed.contentType != "application/json" ||

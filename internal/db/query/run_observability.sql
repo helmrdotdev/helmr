@@ -18,8 +18,6 @@ SELECT run_leases.environment_id,
     ON runs.id = run_leases.run_id
    AND runs.environment_id = run_leases.environment_id
  WHERE run_leases.id = sqlc.arg(run_lease_id)
-   AND run_leases.run_id = sqlc.arg(run_id)
-   AND run_leases.attempt_number = sqlc.arg(attempt_number)
    AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
    AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
    AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)

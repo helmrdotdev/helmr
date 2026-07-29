@@ -2455,7 +2455,7 @@ SELECT deployments.id, deployments.org_id, deployments.project_id, deployments.e
    AND environments.id = $3
    AND deployments.id = $4
    AND deployments.status = 'deployed'
- FOR UPDATE OF environments
+ FOR NO KEY UPDATE OF environments
 `
 
 type LockDeploymentPromotionTargetParams struct {
@@ -2723,7 +2723,7 @@ previous AS (
       JOIN target ON target.org_id = environments.org_id
                  AND target.project_id = environments.project_id
                  AND target.environment_id = environments.id
-     FOR UPDATE OF environments
+     FOR NO KEY UPDATE OF environments
 ),
 updated_environment AS (
     UPDATE environments

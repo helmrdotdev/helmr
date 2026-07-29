@@ -34,9 +34,9 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 	var response api.WorkerInvokeChildTaskResponse
 	if err := task.callRunSourceRuntime(ctx, func(
 		callCtx context.Context,
-		lease api.WorkerRunLeaseReceipt,
+		lease api.WorkerRunLeaseAssignment,
 	) error {
-		request.Lease = lease
+		request.Lease = lease.Fence()
 		var callErr error
 		response, callErr = control.InvokeChildTask(callCtx, request)
 		return callErr

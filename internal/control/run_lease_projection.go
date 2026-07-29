@@ -302,46 +302,46 @@ type runLeaseProjectionAuthority struct {
 	workspaceLease db.WorkspaceLease
 }
 
-func projectRunLeaseReceipt(authority runLeaseProjectionAuthority) (api.WorkerRunLeaseReceipt, error) {
+func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (api.WorkerRunLeaseAssignment, error) {
 	lease := authority.runLease
 	id, err := requiredClaimUUIDString("Run Lease ID", lease.ID)
 	if err != nil {
-		return api.WorkerRunLeaseReceipt{}, err
+		return api.WorkerRunLeaseAssignment{}, err
 	}
 	runID, err := requiredClaimUUIDString("Run ID", lease.RunID)
 	if err != nil {
-		return api.WorkerRunLeaseReceipt{}, err
+		return api.WorkerRunLeaseAssignment{}, err
 	}
 	workerID, err := requiredClaimUUIDString("worker instance ID", lease.WorkerInstanceID)
 	if err != nil {
-		return api.WorkerRunLeaseReceipt{}, err
+		return api.WorkerRunLeaseAssignment{}, err
 	}
 	runtimeID, err := requiredClaimUUIDString("runtime instance ID", lease.RuntimeInstanceID)
 	if err != nil {
-		return api.WorkerRunLeaseReceipt{}, err
+		return api.WorkerRunLeaseAssignment{}, err
 	}
 	networkSlotID, err := requiredClaimUUIDString("network slot ID", lease.NetworkSlotID)
 	if err != nil {
-		return api.WorkerRunLeaseReceipt{}, err
+		return api.WorkerRunLeaseAssignment{}, err
 	}
 	workspaceID, err := requiredClaimUUIDString("Workspace ID", authority.workspace.ID)
 	if err != nil {
-		return api.WorkerRunLeaseReceipt{}, err
+		return api.WorkerRunLeaseAssignment{}, err
 	}
 	mountID, err := requiredClaimUUIDString("Workspace Mount ID", authority.workspaceMount.ID)
 	if err != nil {
-		return api.WorkerRunLeaseReceipt{}, err
+		return api.WorkerRunLeaseAssignment{}, err
 	}
 	workspaceLeaseID, err := requiredClaimUUIDString("Workspace Lease ID", authority.workspaceLease.ID)
 	if err != nil {
-		return api.WorkerRunLeaseReceipt{}, err
+		return api.WorkerRunLeaseAssignment{}, err
 	}
 	baseWorkspaceVersionID, err := requiredClaimUUIDString(
 		"base Workspace version ID",
 		authority.workspaceLease.BaseVersionID,
 	)
 	if err != nil {
-		return api.WorkerRunLeaseReceipt{}, err
+		return api.WorkerRunLeaseAssignment{}, err
 	}
 	if lease.RunID != authority.run.ID ||
 		lease.AttemptNumber != authority.attempt.Number ||
@@ -354,7 +354,7 @@ func projectRunLeaseReceipt(authority runLeaseProjectionAuthority) (api.WorkerRu
 		authority.workspaceLease.WorkspaceMountID != authority.workspaceMount.ID ||
 		authority.workspaceLease.WorkspaceID != lease.WorkspaceID ||
 		authority.workspaceLease.BaseVersionID != authority.workspaceMount.MaterializedVersionID {
-		return api.WorkerRunLeaseReceipt{}, errors.New("Run Lease receipt authority is inconsistent")
+		return api.WorkerRunLeaseAssignment{}, errors.New("Run Lease assignment authority is inconsistent")
 	}
 	if lease.AttemptNumber <= 0 ||
 		lease.LeaseSequence <= 0 ||
@@ -372,7 +372,7 @@ func projectRunLeaseReceipt(authority runLeaseProjectionAuthority) (api.WorkerRu
 		!lease.StartDeadlineAt.Valid ||
 		!lease.ExpiresAt.Valid ||
 		lease.StartDeadlineAt.Time.After(lease.ExpiresAt.Time) {
-		return api.WorkerRunLeaseReceipt{}, errors.New("Run Lease receipt fields are invalid")
+		return api.WorkerRunLeaseAssignment{}, errors.New("Run Lease assignment fields are invalid")
 	}
 	for name, value := range map[string]string{
 		"worker group ID":         lease.WorkerGroupID,
@@ -380,10 +380,10 @@ func projectRunLeaseReceipt(authority runLeaseProjectionAuthority) (api.WorkerRu
 		"runtime identity ID":     lease.RuntimeIdentityID,
 	} {
 		if strings.TrimSpace(value) == "" {
-			return api.WorkerRunLeaseReceipt{}, fmt.Errorf("%s is required", name)
+			return api.WorkerRunLeaseAssignment{}, fmt.Errorf("%s is required", name)
 		}
 	}
-	return api.WorkerRunLeaseReceipt{
+	return api.WorkerRunLeaseAssignment{
 		ID:                               id,
 		RunID:                            runID,
 		AttemptNumber:                    lease.AttemptNumber,

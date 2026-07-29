@@ -36,20 +36,13 @@ func (s *Server) workerBeginRunFinalization(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if request.Lease.WorkerGroupID != worker.WorkerGroupID ||
-		parsed.lease.workerInstanceID != worker.WorkerInstanceID ||
-		request.Lease.WorkerEpoch != worker.WorkerEpoch ||
-		request.Lease.WorkerProtocolVersion != worker.ProtocolVersion {
-		writeError(w, forbidden(errors.New("Run finalization belongs to another worker")))
-		return
-	}
 	response, err := s.beginRunFinalization(r.Context(), worker, request, parsed)
 	if err != nil {
 		if errors.Is(err, errStaleRunFinalization) {
 			writeError(w, conflict(errStaleRunFinalization))
 			return
 		}
-		s.log.Error("begin Run finalization failed", "run_id", request.Lease.RunID, "error", err)
+		s.log.Error("begin Run finalization failed", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("begin Run finalization"))
 		return
 	}

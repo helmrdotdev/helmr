@@ -77,7 +77,7 @@ func (r ProgramRunner) startResumedProgram(
 	var startResponse api.WorkerRunStartResponse
 	if err := retryRunLeaseRequest(admissionCtx, func(requestCtx context.Context) error {
 		var requestErr error
-		resume.start.Lease = claim.Lease
+		resume.start.Lease = claim.Lease.Fence()
 		startResponse, requestErr = control.AcknowledgeRunStart(
 			requestCtx,
 			resume.start,
@@ -86,8 +86,8 @@ func (r ProgramRunner) startResumedProgram(
 	}); err != nil {
 		return freshProgram{}, fmt.Errorf("acknowledge resumed Run start: %w", err)
 	}
-	if !equalRunLeaseReceipt(startResponse.Lease, claim.Lease) {
-		return freshProgram{}, errors.New("resumed Run start acknowledgement changed the Run Lease receipt")
+	if startResponse.Lease != claim.Lease.Fence() {
+		return freshProgram{}, errors.New("resumed Run start acknowledgement changed the Run Lease fence")
 	}
 	attach := &runv0.ResumeAttach{
 		RunId: claim.Lease.RunID, AttemptNumber: uint32(claim.Lease.AttemptNumber),
@@ -163,7 +163,7 @@ func validateResumedProgramClaim(
 		!lease.StartDeadlineAt.After(time.Now()) ||
 		lease.ExpiresAt.IsZero() || !lease.ExpiresAt.After(time.Now()) ||
 		strings.TrimSpace(claim.Workspace.WriteCapability) == "" {
-		return resumedProgramAdmission{}, errors.New("resumed Program Run Lease receipt is incomplete")
+		return resumedProgramAdmission{}, errors.New("resumed Program Run Lease assignment is incomplete")
 	}
 	if len(claim.Secrets) != 0 {
 		return resumedProgramAdmission{}, errors.New("resumed Program cannot receive new Secrets")
@@ -270,7 +270,7 @@ func validateResumedProgramClaim(
 }
 
 func validateResumedProgramMount(
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseAssignment,
 	mount api.WorkerWorkspaceMount,
 	resume resumedProgramAdmission,
 ) error {

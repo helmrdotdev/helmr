@@ -51,9 +51,9 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 		var response api.WorkerStartActorResponse
 		err = task.callRunSourceRuntime(ctx, func(
 			callCtx context.Context,
-			lease api.WorkerRunLeaseReceipt,
+			lease api.WorkerRunLeaseAssignment,
 		) error {
-			request.Lease = lease
+			request.Lease = lease.Fence()
 			var callErr error
 			response, callErr = control.StartRunActor(callCtx, request)
 			return callErr
@@ -77,9 +77,9 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 		var response api.WorkerActorStatusResponse
 		err = task.callRunSourceRuntime(ctx, func(
 			callCtx context.Context,
-			lease api.WorkerRunLeaseReceipt,
+			lease api.WorkerRunLeaseAssignment,
 		) error {
-			request.Lease = lease
+			request.Lease = lease.Fence()
 			var callErr error
 			response, callErr = control.GetRunActorStatus(callCtx, request)
 			return callErr
@@ -107,9 +107,9 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 		var response api.WorkerCloseActorResponse
 		err = task.callRunSourceRuntime(ctx, func(
 			callCtx context.Context,
-			lease api.WorkerRunLeaseReceipt,
+			lease api.WorkerRunLeaseAssignment,
 		) error {
-			request.Lease = lease
+			request.Lease = lease.Fence()
 			var callErr error
 			response, callErr = control.CloseRunActor(callCtx, request)
 			return callErr
@@ -141,9 +141,9 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 		var response api.WorkerReadActorOutputPageResponse
 		err = task.callRunSourceRuntime(ctx, func(
 			callCtx context.Context,
-			lease api.WorkerRunLeaseReceipt,
+			lease api.WorkerRunLeaseAssignment,
 		) error {
-			request.Lease = lease
+			request.Lease = lease.Fence()
 			var callErr error
 			response, callErr = control.ReadRunActorOutputPage(callCtx, request)
 			return callErr

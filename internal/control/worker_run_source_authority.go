@@ -28,17 +28,11 @@ func authorizeWorkerRunSource(
 	ctx context.Context,
 	q db.Querier,
 	worker workerActor,
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseFence,
 ) (workerRunSourceAuthority, error) {
-	parsed, err := parseRunLeaseReceipt(lease)
+	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {
 		return workerRunSourceAuthority{}, fmt.Errorf("%w: invalid receipt", errStaleWorkerRunSource)
-	}
-	if lease.WorkerGroupID != worker.WorkerGroupID ||
-		parsed.workerInstanceID != worker.WorkerInstanceID ||
-		lease.WorkerEpoch != worker.WorkerEpoch ||
-		lease.WorkerProtocolVersion != worker.ProtocolVersion {
-		return workerRunSourceAuthority{}, fmt.Errorf("%w: worker identity mismatch", errStaleWorkerRunSource)
 	}
 	locators, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 		ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence,
@@ -53,7 +47,6 @@ func authorizeWorkerRunSource(
 		ctx, q, worker, pgvalue.UUID(parsed.leaseID), lease.LeaseSequence, locators,
 	)
 	if err != nil ||
-		authority.run.ID != pgvalue.UUID(parsed.runID) ||
 		authority.run.Status != db.RunStatusRunning ||
 		authority.runLease.State != db.RunLeaseStateRunning ||
 		!authority.run.ActiveStartedAt.Valid ||
@@ -61,10 +54,6 @@ func authorizeWorkerRunSource(
 		authority.attempt.TerminalAt.Valid ||
 		authority.runLease.FinalizationOperationID.Valid {
 		return workerRunSourceAuthority{}, fmt.Errorf("%w: live authority mismatch", errStaleWorkerRunSource)
-	}
-	current, err := projectActorTurnLease(authority)
-	if err != nil || !equalRunLeaseReceipt(current, lease) {
-		return workerRunSourceAuthority{}, fmt.Errorf("%w: receipt mismatch", errStaleWorkerRunSource)
 	}
 	return workerRunSourceAuthority{
 		OrgID: locators.OrgID, ProjectID: locators.ProjectID,

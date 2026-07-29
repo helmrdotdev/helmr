@@ -109,11 +109,9 @@ func (s *Server) workerCreateTokenRunWait(
 		return
 	}
 	normalized := request
-	normalized.Lease.StartDeadlineAt = request.Lease.StartDeadlineAt.UTC()
-	normalized.Lease.ExpiresAt = request.Lease.ExpiresAt.UTC()
 	normalized.Metadata = metadata
 	normalized.Tags = tags
-	parsed, worker, locators, run, err := s.loadRunWaitRegistrationAuthority(r.Context(), normalized.Lease)
+	parsed, worker, locators, _, err := s.loadRunWaitRegistrationAuthority(r.Context(), normalized.Lease)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -151,18 +149,10 @@ func (s *Server) workerCreateTokenRunWait(
 		actorCursor = pgtype.Int8{Int64: *request.ActorSpeculativeInputSequence, Valid: true}
 	}
 	registered, err := reconciler.RegisterWait(r.Context(), token.WaitRegistration{
-		EnvironmentID: uuid.UUID(locators.EnvironmentID.Bytes), RunID: parsed.runID,
 		TokenID: tokenID, WaitID: waitID, ResumeAttachID: resumeAttachID,
-		ExpectedRunStateVersion: run.StateVersion, AttemptNumber: request.Lease.AttemptNumber,
-		CurrentRunLeaseID: parsed.leaseID, LeaseSequence: request.Lease.LeaseSequence,
-		WorkerGroupID: request.Lease.WorkerGroupID, WorkerInstanceID: parsed.workerInstanceID,
-		WorkerEpoch: request.Lease.WorkerEpoch, WorkerProtocolVersion: request.Lease.WorkerProtocolVersion,
-		RuntimeInstanceID: parsed.runtimeInstanceID, RuntimeIdentityID: request.Lease.RuntimeIdentityID,
-		RegionID: locators.RegionID, NetworkSlotID: parsed.networkSlotID,
-		NetworkSlotGeneration: request.Lease.NetworkSlotGeneration,
-		WorkspaceMountID:      parsed.workspaceMountID, WorkspaceLeaseID: parsed.workspaceLeaseID,
-		OwnershipGeneration: request.Lease.OwnershipGeneration, WriterGeneration: request.Lease.WriterGeneration,
-		MountFencingGeneration:        request.Lease.MountFencingGeneration,
+		RunLeaseID: parsed.leaseID, LeaseSequence: request.Lease.LeaseSequence,
+		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: worker.WorkerInstanceID,
+		WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
 		RequestFingerprint:            fingerprint,
 		ActorSpeculativeInputSequence: actorCursor,
 		TimeoutAt:                     timeoutAt, IdleTimeoutMS: idleTimeout, CheckpointDueAt: checkpointDueAt,
@@ -173,14 +163,14 @@ func (s *Server) workerCreateTokenRunWait(
 		return
 	}
 	if err != nil {
-		s.log.Error("register worker Token Wait failed", "run_id", request.Lease.RunID, "error", err)
+		s.log.Error("register worker Token Wait failed", "run_id", pgvalue.UUIDString(locators.RunID), "error", err)
 		writeError(w, errors.New("register worker Token Wait"))
 		return
 	}
 	response := api.WorkerCreateRunWaitResponse{
-		RunID: request.Lease.RunID, RunWaitID: registered.WaitID.String(),
-		ResumeAttachID: resumeAttachID.String(), RuntimeInstanceID: request.Lease.RuntimeInstanceID,
-		RuntimeEpoch: request.Lease.WorkerEpoch, CheckpointDelayMs: checkpointDelay.Milliseconds(),
+		RunID: pgvalue.UUIDString(locators.RunID), RunWaitID: registered.WaitID.String(),
+		ResumeAttachID: resumeAttachID.String(), RuntimeInstanceID: pgvalue.UUIDString(locators.RuntimeInstanceID),
+		RuntimeEpoch: worker.WorkerEpoch, CheckpointDelayMs: checkpointDelay.Milliseconds(),
 	}
 	if registered.SuspensionState == db.RunWaitStateReleased {
 		response.ResolutionKind, response.Resolution, err = tokenWaitDecision(
@@ -212,7 +202,7 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wait, err := s.db.GetRunWait(r.Context(), db.GetRunWaitParams{
-		RunID: locators.RunID, AttemptNumber: request.Lease.AttemptNumber, ID: pgvalue.UUID(waitID),
+		RunID: locators.RunID, AttemptNumber: locators.AttemptNumber, ID: pgvalue.UUID(waitID),
 	})
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("worker Run Wait is stale")))
@@ -224,13 +214,13 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 	}
 	if (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindTimer && wait.Kind != db.WaitKindActorInput &&
 		wait.Kind != db.WaitKindChild) ||
-		wait.AttemptNumber != request.Lease.AttemptNumber ||
+		wait.AttemptNumber != locators.AttemptNumber ||
 		wait.WorkspaceID != locators.WorkspaceID ||
 		(wait.CurrentRunLeaseID != pgvalue.UUID(parsed.leaseID) && wait.PriorRunLeaseID != pgvalue.UUID(parsed.leaseID)) {
 		writeError(w, conflict(errors.New("worker Run Wait fence is stale")))
 		return
 	}
-	response := api.WorkerRunWaitPollResponse{RunID: request.Lease.RunID, RunWaitID: waitID.String()}
+	response := api.WorkerRunWaitPollResponse{RunID: pgvalue.UUIDString(locators.RunID), RunWaitID: waitID.String()}
 	switch wait.SuspensionState {
 	case db.RunWaitStateReleased:
 		response.Status = api.WorkerRunWaitPollStatusResumeRequested
@@ -305,15 +295,12 @@ func (s *Server) workerAcknowledgeRunWaitResume(w http.ResponseWriter, r *http.R
 func (s *Server) requestWorkerRunWaitCheckpoint(
 	ctx context.Context,
 	worker workerActor,
-	receipt api.WorkerRunLeaseReceipt,
-	parsed parsedRunLeaseReceipt,
+	receipt api.WorkerRunLeaseFence,
+	parsed parsedRunLeaseFence,
 	waitID uuid.UUID,
 ) (db.RunWait, error) {
 	var updated db.RunWait
 	err := s.inTx(ctx, func(work *txWork) error {
-		if _, err := secret.LockAttemptDelivery(ctx, work.q, pgvalue.UUID(parsed.runID), receipt.AttemptNumber, pgvalue.UUID(parsed.workspaceID)); err != nil {
-			return fmt.Errorf("lock Run Wait Secret authority: %w", err)
-		}
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: receipt.LeaseSequence,
 			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
@@ -321,6 +308,9 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 		})
 		if err != nil {
 			return staleRunLeaseClaim(err)
+		}
+		if _, err := secret.LockAttemptDelivery(ctx, work.q, locators.RunID, locators.AttemptNumber, locators.WorkspaceID); err != nil {
+			return fmt.Errorf("lock Run Wait Secret authority: %w", err)
 		}
 		owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
 		if err != nil {
@@ -335,14 +325,6 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 		authority.actor = owner.actor
 		if authority.run.Status != db.RunStatusWaiting ||
 			authority.runLease.State != db.RunLeaseStateRunning {
-			return errStaleRunLeaseClaim
-		}
-		current, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
-			run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
-			networkSlot: authority.networkSlot, runLease: authority.runLease, workspace: authority.workspace,
-			workspaceMount: authority.workspaceMount, workspaceLease: authority.workspaceLease,
-		})
-		if err != nil || !equalCurrentOrPreviousRunLeaseReceipt(current, receipt, authority.runLease.PreviousExpiresAt) {
 			return errStaleRunLeaseClaim
 		}
 		wait, err := work.q.LockRunLeaseClaimWait(ctx, db.LockRunLeaseClaimWaitParams{
@@ -394,11 +376,11 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 
 func (s *Server) loadRunWaitRegistrationAuthority(
 	ctx context.Context,
-	receipt api.WorkerRunLeaseReceipt,
-) (parsedRunLeaseReceipt, workerActor, db.GetLiveRunLeaseLocatorsRow, db.Run, error) {
+	receipt api.WorkerRunLeaseFence,
+) (parsedRunLeaseFence, workerActor, db.GetLiveRunLeaseLocatorsRow, db.Run, error) {
 	parsed, worker, locators, err := s.loadRunWaitLeaseAuthority(ctx, receipt)
 	if err != nil {
-		return parsedRunLeaseReceipt{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, db.Run{}, err
+		return parsedRunLeaseFence{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, db.Run{}, err
 	}
 	run, err := s.db.GetRun(ctx, db.GetRunParams{EnvironmentID: locators.EnvironmentID, ID: locators.RunID})
 	if err != nil || (run.Status != db.RunStatusRunning && run.Status != db.RunStatusWaiting) ||
@@ -407,7 +389,7 @@ func (s *Server) loadRunWaitRegistrationAuthority(
 		if err == nil {
 			err = errors.New("run is not an active Task or Actor")
 		}
-		return parsedRunLeaseReceipt{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, db.Run{}, conflict(err)
+		return parsedRunLeaseFence{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, db.Run{}, conflict(err)
 	}
 	return parsed, worker, locators, run, nil
 }
@@ -447,33 +429,23 @@ func childRunWaitDecision(wait db.RunWait) (string, json.RawMessage, error) {
 
 func (s *Server) loadRunWaitLeaseAuthority(
 	ctx context.Context,
-	receipt api.WorkerRunLeaseReceipt,
-) (parsedRunLeaseReceipt, workerActor, db.GetLiveRunLeaseLocatorsRow, error) {
-	parsed, err := parseRunLeaseReceipt(receipt)
+	receipt api.WorkerRunLeaseFence,
+) (parsedRunLeaseFence, workerActor, db.GetLiveRunLeaseLocatorsRow, error) {
+	parsed, err := parseRunLeaseFence(receipt)
 	if err != nil {
-		return parsedRunLeaseReceipt{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, badRequest(err)
+		return parsedRunLeaseFence{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, badRequest(err)
 	}
 	worker := workerFromContext(ctx)
-	if receipt.WorkerGroupID != worker.WorkerGroupID || parsed.workerInstanceID != worker.WorkerInstanceID ||
-		receipt.WorkerEpoch != worker.WorkerEpoch || receipt.WorkerProtocolVersion != worker.ProtocolVersion {
-		return parsedRunLeaseReceipt{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, forbidden(errors.New("worker Run Wait receipt belongs to another worker epoch"))
-	}
 	locators, err := s.db.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 		ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: receipt.LeaseSequence,
 		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
 	})
 	if isNoRows(err) {
-		return parsedRunLeaseReceipt{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, conflict(errors.New("worker Run Wait receipt is stale"))
+		return parsedRunLeaseFence{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, conflict(errors.New("worker Run Wait receipt is stale"))
 	}
 	if err != nil {
-		return parsedRunLeaseReceipt{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, errors.New("load worker Run Wait authority")
-	}
-	if locators.RunID != pgvalue.UUID(parsed.runID) || locators.WorkspaceID != pgvalue.UUID(parsed.workspaceID) ||
-		locators.AttemptNumber != receipt.AttemptNumber || locators.RuntimeInstanceID != pgvalue.UUID(parsed.runtimeInstanceID) ||
-		locators.NetworkSlotID != pgvalue.UUID(parsed.networkSlotID) || locators.NetworkSlotGeneration != receipt.NetworkSlotGeneration ||
-		locators.WorkspaceMountID != pgvalue.UUID(parsed.workspaceMountID) || locators.WorkspaceLeaseID != pgvalue.UUID(parsed.workspaceLeaseID) {
-		return parsedRunLeaseReceipt{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, conflict(errors.New("worker Run Wait receipt fence is stale"))
+		return parsedRunLeaseFence{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, errors.New("load worker Run Wait authority")
 	}
 	return parsed, worker, locators, nil
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/sessionlock"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -398,46 +399,24 @@ func NewPGLeaderElector(pool *pgxpool.Pool) (*PGLeaderElector, error) {
 }
 
 func (e *PGLeaderElector) TryAcquire(ctx context.Context, groupID string) (LeaderLease, bool, error) {
-	conn, err := e.pool.Acquire(ctx)
-	if err != nil {
-		return nil, false, err
+	guard, acquired, err := sessionlock.TryAcquire(
+		ctx, e.pool, sessionlock.Key("helmr:fleet:"+groupID),
+	)
+	if err != nil || !acquired {
+		return nil, acquired, err
 	}
-	var acquired bool
-	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtextextended($1, 0))`, "helmr:fleet:"+groupID).Scan(&acquired); err != nil {
-		raw := conn.Hijack()
-		_ = raw.Close(context.Background())
-		return nil, false, err
-	}
-	if !acquired {
-		conn.Release()
-		return nil, false, nil
-	}
-	return &pgLeaderLease{conn: conn, key: "helmr:fleet:" + groupID}, true, nil
+	return &pgLeaderLease{guard: guard}, true, nil
 }
 
 type pgLeaderLease struct {
-	conn *pgxpool.Conn
-	key  string
+	guard *sessionlock.Guard
 }
 
 func (l *pgLeaderLease) Release() error {
-	if l == nil || l.conn == nil {
+	if l == nil || l.guard == nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	var released bool
-	err := l.conn.QueryRow(ctx, `SELECT pg_advisory_unlock(hashtextextended($1, 0))`, l.key).Scan(&released)
-	if err != nil || !released {
-		conn := l.conn.Hijack()
-		l.conn = nil
-		_ = conn.Close(context.Background())
-		if err == nil {
-			err = errors.New("fleet advisory lease was not held")
-		}
-		return err
-	}
-	l.conn.Release()
-	l.conn = nil
-	return nil
+	guard := l.guard
+	l.guard = nil
+	return guard.Unlock()
 }

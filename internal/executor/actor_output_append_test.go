@@ -87,7 +87,7 @@ func TestHandleActorOutputAppendWritesCorrelatedDecision(t *testing.T) {
 	if decision.GetCorrelationId() != correlationID || decision.GetKind() != "completed" {
 		t.Fatalf("decision = %+v", decision)
 	}
-	if control.request.Lease != lease ||
+	if control.request.Lease != lease.Fence() ||
 		string(control.request.Data) != `{"status":"working"}` ||
 		control.request.ContentType != "application/json" ||
 		control.request.IdempotencyKey != "output-1" {
@@ -95,7 +95,7 @@ func TestHandleActorOutputAppendWritesCorrelatedDecision(t *testing.T) {
 	}
 }
 
-func TestHandleActorOutputAppendRetryUsesRenewedReceipt(t *testing.T) {
+func TestHandleActorOutputAppendRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000114"
@@ -147,5 +147,5 @@ func TestHandleActorOutputAppendRetryUsesRenewedReceipt(t *testing.T) {
 	if len(control.requests) != 2 {
 		t.Fatalf("requests = %+v", control.requests)
 	}
-	assertRetriedWithRenewedReceipt(t, control.requests[0].Lease, control.requests[1].Lease, len(control.requests))
+	assertRetriedWithStableFence(t, control.requests[0].Lease, control.requests[1].Lease, len(control.requests))
 }

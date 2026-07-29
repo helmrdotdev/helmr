@@ -32,7 +32,7 @@ var (
 )
 
 type parsedWorkerActorOutputAppend struct {
-	lease          parsedRunLeaseReceipt
+	lease          parsedRunLeaseFence
 	correlationID  uuid.UUID
 	data           json.RawMessage
 	contentType    string
@@ -65,16 +65,6 @@ func (s *Server) workerAppendActorOutput(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if request.Lease.WorkerGroupID != worker.WorkerGroupID ||
-		parsed.lease.workerInstanceID != worker.WorkerInstanceID {
-		writeError(w, forbidden(errors.New("actor output append belongs to another worker")))
-		return
-	}
-	if request.Lease.WorkerEpoch != worker.WorkerEpoch ||
-		request.Lease.WorkerProtocolVersion != worker.ProtocolVersion {
-		writeError(w, conflict(errStaleActorOutputAppend))
-		return
-	}
 
 	record, err := s.appendActorOutput(r.Context(), worker, request, parsed)
 	if err != nil {
@@ -89,7 +79,7 @@ func (s *Server) workerAppendActorOutput(w http.ResponseWriter, r *http.Request)
 			writeError(w, conflict(errStaleActorOutputAppend))
 			return
 		}
-		s.log.Error("append Actor output", "run_id", request.Lease.RunID, "error", err)
+		s.log.Error("append Actor output", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("append actor output"))
 		return
 	}
@@ -102,7 +92,7 @@ func (s *Server) workerAppendActorOutput(w http.ResponseWriter, r *http.Request)
 func parseWorkerActorOutputAppend(
 	request api.WorkerAppendActorOutputRequest,
 ) (parsedWorkerActorOutputAppend, error) {
-	lease, err := parseRunLeaseReceipt(request.Lease)
+	lease, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
 		return parsedWorkerActorOutputAppend{}, err
 	}
@@ -152,9 +142,7 @@ func (s *Server) appendActorOutput(
 		WorkerProtocolVersion: worker.ProtocolVersion,
 	}
 	discovered, err := s.db.GetLiveRunLeaseLocators(ctx, locatorParams)
-	if err != nil || !discovered.ActorID.Valid ||
-		discovered.RunID != pgvalue.UUID(parsed.lease.runID) ||
-		discovered.WorkspaceID != pgvalue.UUID(parsed.lease.workspaceID) {
+	if err != nil || !discovered.ActorID.Valid {
 		return api.ActorOutputRecord{}, staleActorOutputAppend(err)
 	}
 	environmentID, err := pgvalue.UUIDValue(discovered.EnvironmentID)
@@ -196,20 +184,16 @@ func (s *Server) appendActorOutput(
 			claimID = acquired.Claim.ID
 			fingerprint = bytes.Clone(acquired.Claim.RequestFingerprint)
 		}
-		if _, err := secret.LockAttemptDelivery(
-			ctx,
-			work.q,
-			pgvalue.UUID(parsed.lease.runID),
-			request.Lease.AttemptNumber,
-			pgvalue.UUID(parsed.lease.workspaceID),
-		); err != nil {
-			return fmt.Errorf("lock Actor output Secret authority: %w", err)
-		}
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, locatorParams)
 		if err != nil ||
 			locators.EnvironmentID != discovered.EnvironmentID ||
 			locators.ActorID != discovered.ActorID {
 			return staleActorOutputAppend(err)
+		}
+		if _, err := secret.LockAttemptDelivery(
+			ctx, work.q, locators.RunID, locators.AttemptNumber, locators.WorkspaceID,
+		); err != nil {
+			return fmt.Errorf("lock Actor output Secret authority: %w", err)
 		}
 		owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
 		if err != nil || !owner.actor.ID.Valid {
@@ -238,10 +222,6 @@ func (s *Server) appendActorOutput(
 			!authority.attempt.EntrypointEnteredAt.Valid ||
 			authority.attempt.TerminalAt.Valid ||
 			authority.runLease.FinalizationOperationID.Valid {
-			return errStaleActorOutputAppend
-		}
-		current, err := projectActorTurnLease(authority)
-		if err != nil || !equalRunLeaseReceipt(current, request.Lease) {
 			return errStaleActorOutputAppend
 		}
 		if acquiredClaim.State == "completed" {

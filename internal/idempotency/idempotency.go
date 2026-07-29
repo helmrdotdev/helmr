@@ -221,7 +221,7 @@ func NewRunMetadataRequest(
 	attemptNumber int32,
 	operationID string,
 	mutationJSON []byte,
-	receiptFingerprint string,
+	leaseFenceFingerprint string,
 ) (Request, error) {
 	if environmentID == uuid.Nil {
 		return nil, errors.New("idempotency environment is required")
@@ -232,18 +232,18 @@ func NewRunMetadataRequest(
 	if attemptNumber <= 0 {
 		return nil, errors.New("Run Attempt number must be positive")
 	}
-	if receiptFingerprint == "" {
-		return nil, errors.New("Run Lease receipt fingerprint is required")
+	if leaseFenceFingerprint == "" {
+		return nil, errors.New("Run Lease fence fingerprint is required")
 	}
 	mutation, err := jsoncanon.Transform(mutationJSON)
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize Run metadata mutation: %w", err)
 	}
 	fingerprintInput, err := json.Marshal(struct {
-		Mutation           json.RawMessage `json:"mutation"`
-		ReceiptFingerprint string          `json:"receiptFingerprint"`
+		Mutation              json.RawMessage `json:"mutation"`
+		LeaseFenceFingerprint string          `json:"leaseFenceFingerprint"`
 	}{
-		Mutation: mutation, ReceiptFingerprint: receiptFingerprint,
+		Mutation: mutation, LeaseFenceFingerprint: leaseFenceFingerprint,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encode Run metadata mutation fingerprint: %w", err)

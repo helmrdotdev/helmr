@@ -97,13 +97,13 @@ func TestAcknowledgeRunResumeReleaseCommitsOnceAndReplaysWithoutWrite(t *testing
 	server, store, worker, expected, proof := validRunResumeReleaseFixture(t)
 
 	receipt, err := server.acknowledgeRunResumeRelease(
-		context.Background(), worker, store.authority.runLease.ID, expected, proof,
+		context.Background(), worker, store.authority.runLease.ID, expected.Fence(), proof,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !equalRunLeaseReceipt(receipt, expected) {
-		t.Fatalf("receipt = %+v, want %+v", receipt, expected)
+	if receipt != expected.Fence() {
+		t.Fatalf("fence = %+v, want %+v", receipt, expected.Fence())
 	}
 	if store.releaseWrites != 1 ||
 		store.authority.runWait.SuspensionState != db.RunWaitStateReleased ||
@@ -113,7 +113,7 @@ func TestAcknowledgeRunResumeReleaseCommitsOnceAndReplaysWithoutWrite(t *testing
 	}
 
 	if _, err := server.acknowledgeRunResumeRelease(
-		context.Background(), worker, store.authority.runLease.ID, expected, proof,
+		context.Background(), worker, store.authority.runLease.ID, expected.Fence(), proof,
 	); err != nil {
 		t.Fatalf("exact replay failed: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestAcknowledgeRunResumeReleaseCommitsOnceAndReplaysWithoutWrite(t *testing
 func TestAcknowledgeRunResumeReleaseAcceptsParentAttachHandoffCheckpoint(t *testing.T) {
 	server, store, worker, expected, proof := validParentAttachRunResumeReleaseFixture(t)
 	if _, err := server.acknowledgeRunResumeRelease(
-		context.Background(), worker, store.authority.runLease.ID, expected, proof,
+		context.Background(), worker, store.authority.runLease.ID, expected.Fence(), proof,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestAcknowledgeRunResumeReleaseAllowsRunningLeaseWhileGroupDrains(t *testin
 	server, store, worker, expected, proof := validRunResumeReleaseFixture(t)
 	store.authority.workerGroup.State = db.WorkerGroupStateDraining
 	if _, err := server.acknowledgeRunResumeRelease(
-		context.Background(), worker, store.authority.runLease.ID, expected, proof,
+		context.Background(), worker, store.authority.runLease.ID, expected.Fence(), proof,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestAcknowledgeRunResumeReleaseRejectsMismatchedRestoreIdentity(t *testing.
 	proof.resumeAttachID = pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
 
 	_, err := server.acknowledgeRunResumeRelease(
-		context.Background(), worker, store.authority.runLease.ID, expected, proof,
+		context.Background(), worker, store.authority.runLease.ID, expected.Fence(), proof,
 	)
 	if !errors.Is(err, errStaleRunLeaseClaim) {
 		t.Fatalf("error = %v, want stale lease conflict", err)
@@ -197,7 +197,7 @@ func TestParseRunResumeReleaseProofRequiresCanonicalUUIDv7(t *testing.T) {
 
 func validRunResumeReleaseFixture(
 	t *testing.T,
-) (*Server, *runResumeReleaseStore, workerActor, api.WorkerRunLeaseReceipt, runResumeReleaseProof) {
+) (*Server, *runResumeReleaseStore, workerActor, api.WorkerRunLeaseAssignment, runResumeReleaseProof) {
 	t.Helper()
 	worker, claimLocators, authority := validCheckpointRestoreRunLeaseClaimFixture(false)
 	authority.run.Status = db.RunStatusRunning
@@ -225,7 +225,7 @@ func validRunResumeReleaseFixture(
 		runLeaseClaimStore: &runLeaseClaimStore{authority: authority},
 		locators:           locators,
 	}
-	expected, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
+	expected, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
 		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
 		networkSlot: authority.networkSlot, runLease: authority.runLease,
 		workspace: authority.workspace, workspaceMount: authority.workspaceMount,
@@ -244,7 +244,7 @@ func validRunResumeReleaseFixture(
 
 func validParentAttachRunResumeReleaseFixture(
 	t *testing.T,
-) (*Server, *runResumeReleaseStore, workerActor, api.WorkerRunLeaseReceipt, runResumeReleaseProof) {
+) (*Server, *runResumeReleaseStore, workerActor, api.WorkerRunLeaseAssignment, runResumeReleaseProof) {
 	t.Helper()
 	worker, claimLocators, authority := validSameWorkspaceParentResumeRunLeaseClaimFixture(false, true)
 	authority.run.Status = db.RunStatusRunning
@@ -275,7 +275,7 @@ func validParentAttachRunResumeReleaseFixture(
 		runLeaseClaimStore: &runLeaseClaimStore{authority: authority},
 		locators:           locators,
 	}
-	expected, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
+	expected, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
 		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
 		networkSlot: authority.networkSlot, runLease: authority.runLease,
 		workspace: authority.workspace, workspaceMount: authority.workspaceMount,

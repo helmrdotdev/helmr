@@ -395,7 +395,7 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 		{
 			name: "proof before outcome",
 			events: []*runv0.RunEvent{
-				testProgramQuiescedEvent(api.WorkerRunLeaseReceipt{
+				testProgramQuiescedEvent(api.WorkerRunLeaseAssignment{
 					ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 				}),
 			},
@@ -405,7 +405,7 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 			name: "mismatched proof",
 			events: []*runv0.RunEvent{
 				testTaskSucceededEvent(`null`),
-				testProgramQuiescedEvent(api.WorkerRunLeaseReceipt{
+				testProgramQuiescedEvent(api.WorkerRunLeaseAssignment{
 					ID: "other", RunID: "run-1", AttemptNumber: 2,
 				}),
 			},
@@ -440,7 +440,7 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 			}()
 			program := freshProgram{
 				session: fakeGuestSession{stream: host},
-				lease: api.WorkerRunLeaseReceipt{
+				lease: api.WorkerRunLeaseAssignment{
 					ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 				},
 				entrypoint: &runv0.EntrypointIdentity{
@@ -466,7 +466,7 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 }
 
 func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
-	lease := api.WorkerRunLeaseReceipt{
+	lease := api.WorkerRunLeaseAssignment{
 		ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 	}
 	send := &runv0.ActorInputSendRequested{
@@ -555,7 +555,7 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 }
 
 func TestFreshProgramDispatchesActorOutputAppend(t *testing.T) {
-	lease := api.WorkerRunLeaseReceipt{
+	lease := api.WorkerRunLeaseAssignment{
 		ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 	}
 	requested := &runv0.ActorOutputAppendRequested{
@@ -616,7 +616,7 @@ func TestFreshProgramDispatchesActorOutputAppend(t *testing.T) {
 
 func serveFreshProgramProtocol(
 	conn net.Conn,
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseAssignment,
 	control *testFreshProgramControl,
 ) error {
 	defer conn.Close()
@@ -729,7 +729,7 @@ func testTaskSucceededEvent(output string) *runv0.RunEvent {
 	}
 }
 
-func testProgramQuiescedEvent(lease api.WorkerRunLeaseReceipt) *runv0.RunEvent {
+func testProgramQuiescedEvent(lease api.WorkerRunLeaseAssignment) *runv0.RunEvent {
 	return &runv0.RunEvent{
 		Event: &runv0.RunEvent_ProgramQuiesced{
 			ProgramQuiesced: &runv0.ProgramQuiesced{
@@ -747,7 +747,7 @@ func int64Pointer(value int64) *int64 {
 
 func readFreshProgramAdmission(
 	conn net.Conn,
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseAssignment,
 ) error {
 	header, bodyLength, err := wire.ReadStreamFrameHeader(conn)
 	if err != nil {
@@ -852,7 +852,7 @@ func testFreshProgramClaim(
 		t.Fatal(err)
 	}
 	return api.WorkerRunLeaseClaimResponse{
-		Lease: api.WorkerRunLeaseReceipt{
+		Lease: api.WorkerRunLeaseAssignment{
 			ID:                     "lease-1",
 			RunID:                  "run-1",
 			AttemptNumber:          2,
@@ -917,7 +917,7 @@ func testChildAttachProgramClaim(
 }
 
 func testWorkspaceMount(
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseAssignment,
 ) api.WorkerWorkspaceMount {
 	return api.WorkerWorkspaceMount{
 		ID:                lease.WorkspaceMountID,
@@ -930,7 +930,7 @@ func testWorkspaceMount(
 
 type testFreshProgramControl struct {
 	mu                 sync.Mutex
-	lease              api.WorkerRunLeaseReceipt
+	lease              api.WorkerRunLeaseAssignment
 	calls              []string
 	startErr           error
 	entrypointErr      error
@@ -953,7 +953,7 @@ type testFreshProgramEventSink struct {
 
 func (s *testFreshProgramEventSink) AppendRunLog(
 	_ context.Context,
-	_ api.WorkerRunLeaseReceipt,
+	_ api.WorkerRunLeaseAssignment,
 	stream api.WorkerLogStream,
 	observedSeq uint64,
 	content []byte,
@@ -970,7 +970,7 @@ func (s *testFreshProgramEventSink) AppendRunLog(
 
 func (s *testFreshProgramEventSink) ApplyRunMetadata(
 	context.Context,
-	api.WorkerRunLeaseReceipt,
+	api.WorkerRunLeaseAssignment,
 	*runv0.MetadataUpdated,
 ) error {
 	return nil
@@ -978,7 +978,7 @@ func (s *testFreshProgramEventSink) ApplyRunMetadata(
 
 func (s *testFreshProgramEventSink) RecordStructuredRunLog(
 	context.Context,
-	api.WorkerRunLeaseReceipt,
+	api.WorkerRunLeaseAssignment,
 	uint64,
 	*runv0.StructuredLogRequested,
 ) error {
@@ -1011,7 +1011,7 @@ func (c *testFreshProgramControl) AcknowledgeRunStart(
 			request.Attach.Child.CheckpointID == "checkpoint-1" &&
 			request.Attach.Child.ResumeAttachID == "attach-1"
 	}
-	if !validArm || !equalRunLeaseReceipt(request.Lease, c.lease) {
+	if !validArm || request.Lease != c.lease.Fence() {
 		return api.WorkerRunStartResponse{}, errors.New(
 			"unexpected start receipt",
 		)
@@ -1023,7 +1023,7 @@ func (c *testFreshProgramControl) AcknowledgeRunStart(
 		c.startFailures--
 		return api.WorkerRunStartResponse{}, errors.New("transient start acknowledgement failure")
 	}
-	return api.WorkerRunStartResponse{Lease: c.lease}, nil
+	return api.WorkerRunStartResponse{Lease: c.lease.Fence()}, nil
 }
 
 func (c *testFreshProgramControl) AcknowledgeRunEntrypoint(
@@ -1033,7 +1033,7 @@ func (c *testFreshProgramControl) AcknowledgeRunEntrypoint(
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.calls = append(c.calls, "entrypoint")
-	if !equalRunLeaseReceipt(request.Lease, c.lease) ||
+	if request.Lease != c.lease.Fence() ||
 		request.EntrypointKind != "task" ||
 		request.EntrypointDeclaredID != "deploy" {
 		return errors.New("unexpected entrypoint acknowledgement")
@@ -1050,15 +1050,18 @@ func (c *testFreshProgramControl) AcknowledgeRunEntrypoint(
 
 func (c *testFreshProgramControl) RenewRunLease(
 	_ context.Context,
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseAssignment,
 ) (api.WorkerRunLeaseRenewResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.renewals++
-	if !equalRunLeaseReceipt(lease, c.lease) {
+	if !equalRunLeaseAssignment(lease, c.lease) {
 		return api.WorkerRunLeaseRenewResponse{}, errors.New("unexpected renewal receipt")
 	}
-	return api.WorkerRunLeaseRenewResponse{Lease: c.lease}, nil
+	return api.WorkerRunLeaseRenewResponse{
+		Lease: c.lease.Fence(), ExpiresAt: c.lease.ExpiresAt,
+		BaseWorkspaceVersionID: c.lease.BaseWorkspaceVersionID,
+	}, nil
 }
 
 func (c *testFreshProgramControl) renewalCount() int {

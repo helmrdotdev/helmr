@@ -54,8 +54,8 @@ type tokenOperationReceipt struct {
 }
 
 type runtimeTokenCreate struct {
-	Lease          api.WorkerRunLeaseReceipt
-	ParsedLease    parsedRunLeaseReceipt
+	Lease          api.WorkerRunLeaseFence
+	ParsedLease    parsedRunLeaseFence
 	Worker         workerActor
 	CorrelationID  uuid.UUID
 	TimeoutMS      *int64
@@ -200,7 +200,7 @@ func (s *Server) workerCreateToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid worker Token create JSON: %w", err)))
 		return
 	}
-	parsed, err := parseRunLeaseReceipt(request.Lease)
+	parsed, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -229,16 +229,6 @@ func (s *Server) workerCreateToken(w http.ResponseWriter, r *http.Request) {
 		idempotencyKey = "runtime:" + correlationID.String()
 	}
 	worker := workerFromContext(r.Context())
-	if request.Lease.WorkerGroupID != worker.WorkerGroupID ||
-		parsed.workerInstanceID != worker.WorkerInstanceID {
-		writeError(w, forbidden(errors.New("Token create belongs to another worker")))
-		return
-	}
-	if request.Lease.WorkerEpoch != worker.WorkerEpoch ||
-		request.Lease.WorkerProtocolVersion != worker.ProtocolVersion {
-		writeError(w, conflict(errTokenCreateAuthority))
-		return
-	}
 	response, replayed, err := s.createRuntimeToken(r.Context(), runtimeTokenCreate{
 		Lease: request.Lease, ParsedLease: parsed, Worker: worker,
 		CorrelationID: correlationID, TimeoutMS: timeoutMS,
@@ -271,7 +261,7 @@ func (s *Server) createRuntimeToken(
 		environmentUUID := pgvalue.MustUUIDValue(locators.EnvironmentID)
 		claimRequest, err := idempotency.NewRuntimeTokenCreateRequest(
 			environmentUUID,
-			request.ParsedLease.runID,
+			pgvalue.MustUUIDValue(locators.RunID),
 			request.IdempotencyKey,
 			idempotency.TokenCreateFingerprint{
 				TimeoutMS: request.TimeoutMS,
@@ -372,8 +362,8 @@ func loadTokenCreateLocators(
 	ctx context.Context,
 	q db.Querier,
 	worker workerActor,
-	lease api.WorkerRunLeaseReceipt,
-	parsed parsedRunLeaseReceipt,
+	lease api.WorkerRunLeaseFence,
+	parsed parsedRunLeaseFence,
 ) (db.GetLiveRunLeaseLocatorsRow, error) {
 	locators, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 		ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence,
@@ -381,7 +371,7 @@ func loadTokenCreateLocators(
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch:      worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
 	})
-	if err != nil || locators.RunID != pgvalue.UUID(parsed.runID) {
+	if err != nil {
 		return db.GetLiveRunLeaseLocatorsRow{}, errTokenCreateAuthority
 	}
 	return locators, nil
@@ -391,8 +381,8 @@ func lockTokenCreateAuthority(
 	ctx context.Context,
 	q db.Querier,
 	worker workerActor,
-	lease api.WorkerRunLeaseReceipt,
-	parsed parsedRunLeaseReceipt,
+	lease api.WorkerRunLeaseFence,
+	parsed parsedRunLeaseFence,
 ) (db.GetLiveRunLeaseLocatorsRow, runLeaseClaimAuthority, error) {
 	locators, err := loadTokenCreateLocators(ctx, q, worker, lease, parsed)
 	if err != nil {
@@ -402,17 +392,12 @@ func lockTokenCreateAuthority(
 		ctx, q, worker, pgvalue.UUID(parsed.leaseID), lease.LeaseSequence, locators,
 	)
 	if err != nil ||
-		authority.run.ID != pgvalue.UUID(parsed.runID) ||
 		authority.run.Status != db.RunStatusRunning ||
 		authority.runLease.State != db.RunLeaseStateRunning ||
 		!authority.run.ActiveStartedAt.Valid ||
 		!authority.attempt.EntrypointEnteredAt.Valid ||
 		authority.attempt.TerminalAt.Valid ||
 		authority.runLease.FinalizationOperationID.Valid {
-		return db.GetLiveRunLeaseLocatorsRow{}, runLeaseClaimAuthority{}, errTokenCreateAuthority
-	}
-	current, err := projectActorTurnLease(authority)
-	if err != nil || !equalRunLeaseReceipt(current, lease) {
 		return db.GetLiveRunLeaseLocatorsRow{}, runLeaseClaimAuthority{}, errTokenCreateAuthority
 	}
 	return locators, authority, nil

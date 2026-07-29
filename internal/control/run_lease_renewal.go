@@ -15,13 +15,14 @@ func (s *Server) renewRunLease(
 	ctx context.Context,
 	worker workerActor,
 	leaseID pgtype.UUID,
-	request api.WorkerRunLeaseReceipt,
-) (api.WorkerRunLeaseReceipt, error) {
-	var renewed api.WorkerRunLeaseReceipt
+	fence api.WorkerRunLeaseFence,
+	expectedExpiresAt time.Time,
+) (api.WorkerRunLeaseRenewResponse, error) {
+	var renewed api.WorkerRunLeaseRenewResponse
 	err := s.inTx(ctx, func(work *txWork) error {
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID:                    leaseID,
-			LeaseSequence:         request.LeaseSequence,
+			LeaseSequence:         fence.LeaseSequence,
 			WorkerGroupID:         worker.WorkerGroupID,
 			WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch:           worker.WorkerEpoch,
@@ -31,7 +32,7 @@ func (s *Server) renewRunLease(
 			return staleRunLeaseClaim(err)
 		}
 		authority, err := lockRenewableRunLeaseAuthority(
-			ctx, work.q, worker, leaseID, request.LeaseSequence, locators,
+			ctx, work.q, worker, leaseID, fence.LeaseSequence, locators,
 		)
 		if err != nil {
 			return err
@@ -41,26 +42,13 @@ func (s *Server) renewRunLease(
 			!authority.run.ActiveStartedAt.Valid {
 			return errStaleRunLeaseClaim
 		}
-		current, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
-			run:            authority.run,
-			attempt:        authority.attempt,
-			runtime:        authority.runtime,
-			networkSlot:    authority.networkSlot,
-			runLease:       authority.runLease,
-			workspace:      authority.workspace,
-			workspaceMount: authority.workspaceMount,
-			workspaceLease: authority.workspaceLease,
-		})
+		current, err := projectRunLeaseRenewal(fence, authority)
 		if err != nil {
 			return err
 		}
-		isCurrent := equalRunLeaseReceipt(current, request)
-		isPrevious := false
-		if authority.runLease.PreviousExpiresAt.Valid {
-			previous := current
-			previous.ExpiresAt = authority.runLease.PreviousExpiresAt.Time
-			isPrevious = equalRunLeaseReceipt(previous, request)
-		}
+		isCurrent := expectedExpiresAt.Equal(current.ExpiresAt)
+		isPrevious := authority.runLease.PreviousExpiresAt.Valid &&
+			expectedExpiresAt.Equal(authority.runLease.PreviousExpiresAt.Time)
 		if !isCurrent && !isPrevious {
 			return errStaleRunLeaseClaim
 		}
@@ -129,19 +117,33 @@ func (s *Server) renewRunLease(
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		renewed, err = projectRunLeaseReceipt(runLeaseProjectionAuthority{
-			run:            authority.run,
-			attempt:        authority.attempt,
-			runtime:        authority.runtime,
-			networkSlot:    authority.networkSlot,
-			runLease:       authority.runLease,
-			workspace:      authority.workspace,
-			workspaceMount: authority.workspaceMount,
-			workspaceLease: authority.workspaceLease,
-		})
+		renewed, err = projectRunLeaseRenewal(fence, authority)
 		return err
 	})
 	return renewed, err
+}
+
+func projectRunLeaseRenewal(
+	fence api.WorkerRunLeaseFence,
+	authority runLeaseClaimAuthority,
+) (api.WorkerRunLeaseRenewResponse, error) {
+	baseWorkspaceVersionID, err := requiredClaimUUIDString(
+		"base Workspace version ID",
+		authority.workspaceLease.BaseVersionID,
+	)
+	if err != nil {
+		return api.WorkerRunLeaseRenewResponse{}, err
+	}
+	if !authority.runLease.ExpiresAt.Valid ||
+		!authority.workspaceLease.ExpiresAt.Valid ||
+		!authority.runLease.ExpiresAt.Time.Equal(authority.workspaceLease.ExpiresAt.Time) {
+		return api.WorkerRunLeaseRenewResponse{}, errors.New("Run Lease renewal authority is inconsistent")
+	}
+	return api.WorkerRunLeaseRenewResponse{
+		Lease:                  fence,
+		ExpiresAt:              authority.runLease.ExpiresAt.Time.UTC(),
+		BaseWorkspaceVersionID: baseWorkspaceVersionID,
+	}, nil
 }
 
 func lockLiveRunLeaseAuthority(

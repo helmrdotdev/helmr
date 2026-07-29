@@ -15,11 +15,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestRenewRunLeaseReplaysOnlyTheImmediatelyPreviousReceipt(t *testing.T) {
+func TestRenewRunLeaseReplaysOnlyTheImmediatelyPreviousExpiry(t *testing.T) {
 	server, store, worker, first := validRunLeaseRenewalFixture(t)
 
 	second, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, first,
+		context.Background(), worker, store.authority.runLease.ID, first.Fence(), first.ExpiresAt,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -37,12 +37,12 @@ func TestRenewRunLeaseReplaysOnlyTheImmediatelyPreviousReceipt(t *testing.T) {
 	}
 	store.calls = nil
 	replayed, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, first,
+		context.Background(), worker, store.authority.runLease.ID, first.Fence(), first.ExpiresAt,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !equalRunLeaseReceipt(replayed, second) || store.renewalWrites != 2 {
+	if replayed != second || store.renewalWrites != 2 {
 		t.Fatalf("replay = %+v, writes = %d", replayed, store.renewalWrites)
 	}
 	if slices.Contains(store.calls, "renew_run_lease") || slices.Contains(store.calls, "renew_workspace_lease") {
@@ -51,7 +51,7 @@ func TestRenewRunLeaseReplaysOnlyTheImmediatelyPreviousReceipt(t *testing.T) {
 
 	store.renewalTime.Time = store.renewalTime.Time.Add(time.Minute)
 	third, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, second,
+		context.Background(), worker, store.authority.runLease.ID, second.Lease, second.ExpiresAt,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -60,17 +60,17 @@ func TestRenewRunLeaseReplaysOnlyTheImmediatelyPreviousReceipt(t *testing.T) {
 		t.Fatalf("second renewal = %+v, writes = %d", third, store.renewalWrites)
 	}
 	if _, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, first,
+		context.Background(), worker, store.authority.runLease.ID, first.Fence(), first.ExpiresAt,
 	); !errors.Is(err, errStaleRunLeaseClaim) {
-		t.Fatalf("two-generation-old receipt error = %v, want stale", err)
+		t.Fatalf("two-generation-old expiry error = %v, want stale", err)
 	}
 }
 
-func TestRenewRunLeaseRejectsAlteredReceipt(t *testing.T) {
-	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
-	receipt.WriterGeneration++
+func TestRenewRunLeaseRejectsUnexpectedExpiry(t *testing.T) {
+	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
+	expectedExpiry := assignment.ExpiresAt.Add(time.Second)
 	if _, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, receipt,
+		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), expectedExpiry,
 	); !errors.Is(err, errStaleRunLeaseClaim) {
 		t.Fatalf("error = %v, want stale", err)
 	}
@@ -80,32 +80,32 @@ func TestRenewRunLeaseRejectsAlteredReceipt(t *testing.T) {
 }
 
 func TestRenewRunLeaseRejectsStaleSequence(t *testing.T) {
-	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
-	receipt.LeaseSequence++
+	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
+	assignment.LeaseSequence++
 	if _, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, receipt,
+		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), assignment.ExpiresAt,
 	); !errors.Is(err, errStaleRunLeaseClaim) {
 		t.Fatalf("error = %v, want stale", err)
 	}
 }
 
 func TestRenewRunLeaseRejectsPriorWorkerEpoch(t *testing.T) {
-	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
+	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
 	worker.WorkerEpoch++
 	if _, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, receipt,
+		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), assignment.ExpiresAt,
 	); !errors.Is(err, errStaleRunLeaseClaim) {
 		t.Fatalf("error = %v, want stale", err)
 	}
 }
 
 func TestRenewRunLeaseAllowsDrainingOwner(t *testing.T) {
-	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
+	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
 	store.authority.workerGroup.State = db.WorkerGroupStateDraining
 	store.authority.worker.State = db.WorkerInstanceStateDraining
 
 	if _, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, receipt,
+		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), assignment.ExpiresAt,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestRenewRunLeaseUsesRestoredPhysicalFrontier(t *testing.T) {
 	}
 	store.authority.workspaceLease.BaseVersionID = restored
 	store.authority.workspaceMount.MaterializedVersionID = restored
-	receipt, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
+	assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
 		run: store.authority.run, attempt: store.authority.attempt, runtime: store.authority.runtime,
 		networkSlot: store.authority.networkSlot, runLease: store.authority.runLease,
 		workspace: store.authority.workspace, workspaceMount: store.authority.workspaceMount,
@@ -130,35 +130,39 @@ func TestRenewRunLeaseUsesRestoredPhysicalFrontier(t *testing.T) {
 	}
 
 	if _, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, receipt,
+		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), assignment.ExpiresAt,
 	); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestRenewRunLeaseReturnsCurrentReceiptWhenOperationalHorizonDoesNotAdvance(t *testing.T) {
-	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
+func TestRenewRunLeaseReturnsCurrentExpiryWhenOperationalHorizonDoesNotAdvance(t *testing.T) {
+	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
 	store.authority.runLease.ExpiresAt.Time = store.renewalTime.Time.Add(server.runLeaseTTL)
 	store.authority.workspaceLease.ExpiresAt = store.authority.runLease.ExpiresAt
-	receipt.ExpiresAt = store.authority.runLease.ExpiresAt.Time
+	assignment.ExpiresAt = store.authority.runLease.ExpiresAt.Time
 
 	renewed, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, receipt,
+		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), assignment.ExpiresAt,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !equalRunLeaseReceipt(renewed, receipt) || store.renewalWrites != 0 {
+	want := api.WorkerRunLeaseRenewResponse{
+		Lease: assignment.Fence(), ExpiresAt: assignment.ExpiresAt,
+		BaseWorkspaceVersionID: assignment.BaseWorkspaceVersionID,
+	}
+	if renewed != want || store.renewalWrites != 0 {
 		t.Fatalf("renewed = %+v, writes = %d", renewed, store.renewalWrites)
 	}
 }
 
 func TestRenewRunLeaseUsesConfiguredOperationalHorizon(t *testing.T) {
-	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
+	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
 	server.runLeaseTTL = 2 * time.Minute
 
 	renewed, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, receipt,
+		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), assignment.ExpiresAt,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -170,11 +174,11 @@ func TestRenewRunLeaseUsesConfiguredOperationalHorizon(t *testing.T) {
 }
 
 func TestRenewRunLeaseRejectsAuthorityThatExpiredWhileWaitingForLocks(t *testing.T) {
-	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
+	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
 	store.renewalTime.Time = store.authority.runLease.ExpiresAt.Time
 
 	if _, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, receipt,
+		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), assignment.ExpiresAt,
 	); !errors.Is(err, errStaleRunLeaseClaim) {
 		t.Fatalf("error = %v, want stale", err)
 	}
@@ -184,14 +188,12 @@ func TestRenewRunLeaseRejectsAuthorityThatExpiredWhileWaitingForLocks(t *testing
 }
 
 func TestRenewRunLeaseRejectsExhaustedActiveBudget(t *testing.T) {
-	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
+	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
 	store.authority.run.ActiveStartedAt.Time = store.renewalTime.Time.Add(-time.Hour)
 	store.authority.run.MaxActiveDurationMs = int64(time.Hour / time.Millisecond)
 	store.authority.run.ActiveElapsedMs = 0
-	receipt.MaxActiveDurationMs = store.authority.run.MaxActiveDurationMs
-
 	if _, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, receipt,
+		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), assignment.ExpiresAt,
 	); !errors.Is(err, errStaleRunLeaseClaim) {
 		t.Fatalf("error = %v, want stale", err)
 	}
@@ -202,7 +204,7 @@ func TestRenewRunLeaseRejectsExhaustedActiveBudget(t *testing.T) {
 
 func validRunLeaseRenewalFixture(
 	t *testing.T,
-) (*Server, *runLeaseClaimStore, workerActor, api.WorkerRunLeaseReceipt) {
+) (*Server, *runLeaseClaimStore, workerActor, api.WorkerRunLeaseAssignment) {
 	t.Helper()
 	worker, claimLocators, authority := validRunLeaseClaimFixture()
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -235,7 +237,7 @@ func validRunLeaseRenewalFixture(
 		},
 		renewalTime: pgvalue.Timestamptz(now),
 	}
-	receipt, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
+	assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
 		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
 		networkSlot: authority.networkSlot, runLease: authority.runLease,
 		workspace: authority.workspace, workspaceMount: authority.workspaceMount,
@@ -244,7 +246,7 @@ func validRunLeaseRenewalFixture(
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Server{db: store, runLeaseTTL: 5 * time.Minute}, store, worker, receipt
+	return &Server{db: store, runLeaseTTL: 5 * time.Minute}, store, worker, assignment
 }
 
 func (s *runLeaseClaimStore) GetLiveRunLeaseLocators(

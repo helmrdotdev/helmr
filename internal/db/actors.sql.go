@@ -412,7 +412,7 @@ SELECT actor_definition.id AS actor_definition_id,
  WHERE environments.org_id = $2
    AND environments.project_id = $3
    AND environments.id = $4
- FOR UPDATE OF environments
+ FOR NO KEY UPDATE OF environments
 `
 
 type LockActorStartDeploymentAuthorityParams struct {

@@ -64,7 +64,7 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 		return errors.New("Actor turn commit capture did not match its tree proof")
 	}
 	request := api.WorkerCommitActorTurnRequest{
-		Lease: task.lease, CorrelationID: requested.GetCorrelationId(),
+		Lease: task.lease.Fence(), CorrelationID: requested.GetCorrelationId(),
 		TargetInputSequence:    requested.GetTargetInputSequence(),
 		BaseWorkspaceVersionID: task.resetTarget.BaseVersionID,
 		Tree: api.WorkerWorkspaceTreeIdentity{
@@ -85,20 +85,12 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 	}); err != nil {
 		return fmt.Errorf("commit Actor turn: %w", err)
 	}
-	if response.RunID != task.lease.RunID || response.AttemptNumber != task.lease.AttemptNumber ||
-		response.RunLeaseID != task.lease.ID || response.CorrelationID != requested.GetCorrelationId() ||
+	if response.Lease != task.lease.Fence() ||
+		response.CorrelationID != requested.GetCorrelationId() ||
 		response.CommittedInputSequence != requested.GetTargetInputSequence() ||
 		strings.TrimSpace(response.WorkspaceVersionID) == "" ||
 		response.Tree != request.Tree {
 		return errors.New("Actor turn commit response did not match the request")
-	}
-	if response.Lease.BaseWorkspaceVersionID != response.WorkspaceVersionID {
-		return errors.New("Actor turn commit response Lease did not advance its Workspace frontier")
-	}
-	previousLease := task.lease
-	previousLease.BaseWorkspaceVersionID = response.WorkspaceVersionID
-	if !equalRunLeaseReceipt(previousLease, response.Lease) {
-		return errors.New("Actor turn commit response replaced unrelated Run Lease authority")
 	}
 	if task.authority == nil || task.authority.GetFence() == nil ||
 		task.authority.GetFence().GetBaseWorkspaceVersionId() != request.BaseWorkspaceVersionID {
@@ -134,7 +126,7 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 		}
 	}
 	task.waitWorkspace.BaseVersionID = response.WorkspaceVersionID
-	task.lease = response.Lease
+	task.lease.BaseWorkspaceVersionID = response.WorkspaceVersionID
 	task.authority.Fence.BaseWorkspaceVersionId = response.WorkspaceVersionID
 	decisionData, err := json.Marshal(struct {
 		WorkspaceVersionID string `json:"workspace_version_id"`

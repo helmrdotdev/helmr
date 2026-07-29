@@ -58,21 +58,13 @@ func (s *Server) workerAppendRunLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("observed_seq is too large")))
 		return
 	}
-	parsed, err := parseRunLeaseReceipt(request.Lease)
+	parsed, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if request.Lease.WorkerGroupID != worker.WorkerGroupID ||
-		parsed.workerInstanceID != worker.WorkerInstanceID ||
-		request.Lease.WorkerEpoch != worker.WorkerEpoch ||
-		request.Lease.WorkerProtocolVersion != worker.ProtocolVersion {
-		writeError(w, forbidden(errors.New("worker Run Lease receipt belongs to another worker epoch")))
-		return
-	}
 	payload, err := json.Marshal(workerLogChunkPayload{
-		RunID:       request.Lease.RunID,
 		Stream:      request.Stream,
 		ObservedSeq: request.ObservedSeq,
 		Bytes:       len(content),
@@ -81,7 +73,7 @@ func (s *Server) workerAppendRunLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("encode worker log event"))
 		return
 	}
-	row, err := s.appendReceiptRunLog(r.Context(), request.Lease, parsed, db.AppendReceiptRunLogChunkParams{
+	row, err := s.appendRunLog(r.Context(), worker, request.Lease, parsed, db.AppendRunLogChunkParams{
 		Kind:        kind,
 		Payload:     payload,
 		Severity:    "info",
@@ -94,7 +86,7 @@ func (s *Server) workerAppendRunLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.log.Error("append worker logs failed", "run_id", request.Lease.RunID, "error", err)
+		s.log.Error("append worker logs failed", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("append worker logs"))
 		return
 	}
@@ -105,24 +97,20 @@ func (s *Server) workerAppendRunLogs(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) appendReceiptRunLog(
+func (s *Server) appendRunLog(
 	ctx context.Context,
-	lease api.WorkerRunLeaseReceipt,
-	parsed parsedRunLeaseReceipt,
-	input db.AppendReceiptRunLogChunkParams,
-) (db.AppendReceiptRunLogChunkRow, error) {
-	receiptFingerprint, err := runLeaseReceiptFingerprint(lease)
+	worker workerActor,
+	lease api.WorkerRunLeaseFence,
+	parsed parsedRunLeaseFence,
+	input db.AppendRunLogChunkParams,
+) (db.AppendRunLogChunkRow, error) {
+	fenceFingerprint, err := runLeaseFenceFingerprint(lease)
 	if err != nil {
-		return db.AppendReceiptRunLogChunkRow{}, err
+		return db.AppendRunLogChunkRow{}, err
 	}
 	replay, err := s.db.GetRunLogChunkReplay(ctx, db.GetRunLogChunkReplayParams{
-		RunID:      pgvalue.UUID(parsed.runID),
 		RunLeaseID: pgvalue.UUID(parsed.leaseID),
-		AttemptNumber: pgtype.Int4{
-			Int32: lease.AttemptNumber,
-			Valid: true,
-		},
-		Stream: input.Stream,
+		Stream:     input.Stream,
 		ObservedSeq: pgtype.Int8{
 			Int64: input.ObservedSeq,
 			Valid: true,
@@ -135,72 +123,48 @@ func (s *Server) appendReceiptRunLog(
 			input.Payload,
 		)
 		if compareErr != nil {
-			return db.AppendReceiptRunLogChunkRow{}, compareErr
+			return db.AppendRunLogChunkRow{}, compareErr
 		}
-		return db.AppendReceiptRunLogChunkRow{
+		return db.AppendRunLogChunkRow{
 			OrgID: replay.OrgID, RunID: replay.RunID,
 			RunLeaseID: replay.RunLeaseID, AttemptNumber: replay.AttemptNumber,
 			Stream: replay.Stream, Seq: replay.Seq, ObservedSeq: replay.ObservedSeq,
 			Content: replay.Content, SizeBytes: replay.SizeBytes, CreatedAt: replay.CreatedAt,
 			ReplayMatches: bytes.Equal(replay.Content, input.Content) &&
 				payloadMatches &&
-				replay.ReceiptFingerprint == receiptFingerprint,
+				replay.LeaseFenceFingerprint == fenceFingerprint,
 		}, nil
 	case !errors.Is(err, pgx.ErrNoRows):
-		return db.AppendReceiptRunLogChunkRow{}, err
+		return db.AppendRunLogChunkRow{}, err
 	}
-	input.WorkspaceMountID = pgvalue.UUID(parsed.workspaceMountID)
-	input.WorkspaceLeaseID = pgvalue.UUID(parsed.workspaceLeaseID)
 	input.RunLeaseID = pgvalue.UUID(parsed.leaseID)
-	input.RunID = pgvalue.UUID(parsed.runID)
-	input.AttemptNumber = lease.AttemptNumber
 	input.LeaseSequence = lease.LeaseSequence
-	input.WorkerGroupID = lease.WorkerGroupID
-	input.WorkerInstanceID = pgvalue.UUID(parsed.workerInstanceID)
-	input.WorkerEpoch = lease.WorkerEpoch
-	input.WorkerProtocolVersion = lease.WorkerProtocolVersion
-	input.RuntimeInstanceID = pgvalue.UUID(parsed.runtimeInstanceID)
-	input.RuntimeIdentityID = lease.RuntimeIdentityID
-	input.NetworkSlotID = pgvalue.UUID(parsed.networkSlotID)
-	input.NetworkSlotGeneration = lease.NetworkSlotGeneration
-	input.WorkspaceID = pgvalue.UUID(parsed.workspaceID)
-	input.BaseWorkspaceVersionID = pgvalue.UUID(parsed.baseWorkspaceVersionID)
-	input.MountFencingGeneration = lease.MountFencingGeneration
-	input.OwnershipGeneration = lease.OwnershipGeneration
-	input.WriterGeneration = lease.WriterGeneration
-	input.RequestedCpuMillis = lease.RequestedCPUMillis
-	input.RequestedMemoryBytes = lease.RequestedMemoryBytes
-	input.RequestedGuestEphemeralDiskBytes = lease.RequestedGuestEphemeralDiskBytes
-	input.RequestedExecutionSlots = lease.RequestedExecutionSlots
-	input.MaxActiveDurationMs = lease.MaxActiveDurationMs
-	input.ActiveElapsedMs = lease.ActiveElapsedMs
-	input.TraceID = pgtype.Text{String: lease.Trace.TraceID, Valid: true}
-	input.SpanID = pgtype.Text{String: lease.Trace.SpanID, Valid: true}
-	input.Traceparent = pgtype.Text{String: lease.Trace.Traceparent, Valid: true}
-	input.StartDeadlineAt = pgtype.Timestamptz{Time: lease.StartDeadlineAt, Valid: true}
-	input.ExpiresAt = pgtype.Timestamptz{Time: lease.ExpiresAt, Valid: true}
-	input.ReceiptFingerprint = receiptFingerprint
-	return s.db.AppendReceiptRunLogChunk(ctx, input)
+	input.WorkerGroupID = worker.WorkerGroupID
+	input.WorkerInstanceID = pgvalue.UUID(worker.WorkerInstanceID)
+	input.WorkerEpoch = worker.WorkerEpoch
+	input.WorkerProtocolVersion = worker.ProtocolVersion
+	input.LeaseFenceFingerprint = fenceFingerprint
+	return s.db.AppendRunLogChunk(ctx, input)
 }
 
 func runMetadataClaimScopeParams(
-	lease api.WorkerRunLeaseReceipt,
-	parsed parsedRunLeaseReceipt,
+	lease api.WorkerRunLeaseFence,
+	parsed parsedRunLeaseFence,
+	worker workerActor,
 ) db.GetRunMetadataClaimScopeParams {
 	return db.GetRunMetadataClaimScopeParams{
-		RunLeaseID: pgvalue.UUID(parsed.leaseID), RunID: pgvalue.UUID(parsed.runID),
-		AttemptNumber: lease.AttemptNumber, LeaseSequence: lease.LeaseSequence,
-		WorkerGroupID:         lease.WorkerGroupID,
-		WorkerInstanceID:      pgvalue.UUID(parsed.workerInstanceID),
-		WorkerEpoch:           lease.WorkerEpoch,
-		WorkerProtocolVersion: lease.WorkerProtocolVersion,
+		RunLeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence,
+		WorkerGroupID:         worker.WorkerGroupID,
+		WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch:           worker.WorkerEpoch,
+		WorkerProtocolVersion: worker.ProtocolVersion,
 	}
 }
 
-func runLeaseReceiptFingerprint(lease api.WorkerRunLeaseReceipt) (string, error) {
+func runLeaseFenceFingerprint(lease api.WorkerRunLeaseFence) (string, error) {
 	canonical, err := jsoncanon.Transform(mustJSON(lease))
 	if err != nil {
-		return "", fmt.Errorf("canonicalize Run Lease receipt: %w", err)
+		return "", fmt.Errorf("canonicalize Run Lease fence: %w", err)
 	}
 	digest := sha256.Sum256(canonical)
 	return hex.EncodeToString(digest[:]), nil
@@ -221,6 +185,5 @@ func equalJSON(left, right []byte) (bool, error) {
 type workerLogChunkPayload struct {
 	Bytes       int                 `json:"bytes"`
 	ObservedSeq uint64              `json:"observed_seq"`
-	RunID       string              `json:"run_id"`
 	Stream      api.WorkerLogStream `json:"stream"`
 }

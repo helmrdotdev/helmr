@@ -32,14 +32,14 @@ func requireRunObservabilityControl(value any) (runObservabilityControl, error) 
 func updateRunMetadata(
 	ctx context.Context,
 	control runObservabilityControl,
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseAssignment,
 	requested *runv0.MetadataUpdated,
 ) error {
 	request, err := workerRunMetadataRequest(requested)
 	if err != nil {
 		return err
 	}
-	request.Lease = lease
+	request.Lease = lease.Fence()
 	requestCtx, cancel, err := runLeaseLogContext(ctx, lease.ExpiresAt)
 	if err != nil {
 		return err
@@ -64,7 +64,7 @@ func sendRunMetadataRequest(
 func appendStructuredRunLog(
 	ctx context.Context,
 	control runObservabilityControl,
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseAssignment,
 	sequence uint64,
 	requested *runv0.StructuredLogRequested,
 ) error {
@@ -72,7 +72,7 @@ func appendStructuredRunLog(
 	if err != nil {
 		return err
 	}
-	request.Lease = lease
+	request.Lease = lease.Fence()
 	requestCtx, cancel, err := runLeaseLogContext(ctx, lease.ExpiresAt)
 	if err != nil {
 		return err
@@ -152,7 +152,7 @@ func validateRuntimeCorrelationID(raw string) error {
 func processRunMetadataEvent(
 	ctx context.Context,
 	events freshProgramEventSink,
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseAssignment,
 	stream io.Writer,
 	requested *runv0.MetadataUpdated,
 ) error {
@@ -172,7 +172,7 @@ func processRunMetadataEvent(
 func processStructuredLogEvent(
 	ctx context.Context,
 	events freshProgramEventSink,
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseAssignment,
 	stream io.Writer,
 	sequence uint64,
 	requested *runv0.StructuredLogRequested,

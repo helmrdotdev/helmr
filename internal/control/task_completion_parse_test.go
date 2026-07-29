@@ -25,13 +25,10 @@ func TestParseTaskCompletionSuccess(t *testing.T) {
 	}
 }
 
-func TestTaskCompletionFingerprintUsesSemanticJSONAndUTCInstants(t *testing.T) {
+func TestTaskCompletionFingerprintUsesSemanticJSONAndLeaseFence(t *testing.T) {
 	first := validTaskCompletionRequest(t)
 	second := first
-	second.Lease.StartDeadlineAt = first.Lease.StartDeadlineAt.In(time.FixedZone("offset", 9*60*60))
-	second.Lease.ExpiresAt = first.Lease.ExpiresAt.In(time.FixedZone("offset", 9*60*60))
 	second.Workspace.Captured = cloneTaskWorkspaceCapture(first.Workspace.Captured)
-	second.Workspace.Captured.Receipt.Fence.ExpiresAt = second.Lease.ExpiresAt
 	second.Outcome.Succeeded = &api.WorkerTaskSucceeded{Output: json.RawMessage(`{"b":2,"a":1}`)}
 
 	left, err := parseTaskCompletionRequest(first)
@@ -46,15 +43,14 @@ func TestTaskCompletionFingerprintUsesSemanticJSONAndUTCInstants(t *testing.T) {
 		t.Fatalf("fingerprints differ: %q != %q", left.fingerprint, right.fingerprint)
 	}
 
-	second.Lease.ExpiresAt = second.Lease.ExpiresAt.Add(time.Nanosecond)
-	second.Workspace.Captured.Receipt.Fence.ExpiresAt = second.Lease.ExpiresAt
+	second.Lease.LeaseSequence++
 	setCaptureFingerprint(t, second.Workspace.Captured)
 	changed, err := parseTaskCompletionRequest(second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if left.fingerprint == changed.fingerprint {
-		t.Fatal("changed receipt expiry did not change fingerprint")
+		t.Fatal("changed lease fence did not change fingerprint")
 	}
 }
 
@@ -63,7 +59,7 @@ func TestParseTaskCompletionFailureRequiresRollback(t *testing.T) {
 	request.Outcome = api.WorkerTaskOutcome{
 		Failed: &api.WorkerTaskFailure{Message: "boom", Details: json.RawMessage(`{"z":2,"a":1}`)},
 	}
-	request.Workspace = api.WorkerTaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, request.Lease)}
+	request.Workspace = api.WorkerTaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, request.Workspace.Captured)}
 	parsed, err := parseTaskCompletionRequest(request)
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +77,7 @@ func TestParseTaskCompletionFailureRequiresRollback(t *testing.T) {
 func TestParseTaskCompletionAcceptsEmptyFailureMessage(t *testing.T) {
 	request := validTaskCompletionRequest(t)
 	request.Outcome = api.WorkerTaskOutcome{Failed: &api.WorkerTaskFailure{}}
-	request.Workspace = api.WorkerTaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, request.Lease)}
+	request.Workspace = api.WorkerTaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, request.Workspace.Captured)}
 	parsed, err := parseTaskCompletionRequest(request)
 	if err != nil {
 		t.Fatal(err)
@@ -105,17 +101,17 @@ func TestParseTaskCompletionRejectsOpenOrMismatchedShapes(t *testing.T) {
 			r.Outcome.Succeeded.Output = json.RawMessage(`{"a":1,"a":2}`)
 		}},
 		{name: "multiple proofs", mutate: func(r *api.WorkerCompleteTaskRequest) {
-			r.Workspace.RolledBack = validTaskWorkspaceRollback(t, r.Lease)
+			r.Workspace.RolledBack = validTaskWorkspaceRollback(t, r.Workspace.Captured)
 		}},
 		{name: "success rollback", mutate: func(r *api.WorkerCompleteTaskRequest) {
-			r.Workspace = api.WorkerTaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, r.Lease)}
+			r.Workspace = api.WorkerTaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, r.Workspace.Captured)}
 		}},
 		{name: "failure capture", mutate: func(r *api.WorkerCompleteTaskRequest) {
 			r.Outcome = api.WorkerTaskOutcome{Failed: &api.WorkerTaskFailure{Message: "failed"}}
 		}},
 		{name: "oversized message", mutate: func(r *api.WorkerCompleteTaskRequest) {
 			r.Outcome = api.WorkerTaskOutcome{PayloadInvalid: &api.WorkerTaskFailure{Message: strings.Repeat("x", maxTaskCompletionMessageBytes+1)}}
-			r.Workspace = api.WorkerTaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, r.Lease)}
+			r.Workspace = api.WorkerTaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, r.Workspace.Captured)}
 		}},
 		{name: "noncanonical digest", mutate: func(r *api.WorkerCompleteTaskRequest) {
 			r.Workspace.Captured.Artifact.Digest = "SHA256:" + strings.Repeat("a", 64)
@@ -134,11 +130,11 @@ func TestParseTaskCompletionRejectsOpenOrMismatchedShapes(t *testing.T) {
 
 func validTaskCompletionRequest(t *testing.T) api.WorkerCompleteTaskRequest {
 	t.Helper()
-	lease := validRunLeaseReceipt(uuid.Must(uuid.NewV7()))
+	lease := validRunLeaseAssignment(uuid.Must(uuid.NewV7()))
 	lease.StartDeadlineAt = time.Unix(1_800_000_000, 123_456_789).UTC()
 	lease.ExpiresAt = time.Unix(1_800_000_100, 987_654_321).UTC()
 	return api.WorkerCompleteTaskRequest{
-		Lease: lease,
+		Lease: lease.Fence(),
 		Outcome: api.WorkerTaskOutcome{Succeeded: &api.WorkerTaskSucceeded{
 			Output: json.RawMessage(`{"b":2,"a":1}`),
 		}},
@@ -146,7 +142,7 @@ func validTaskCompletionRequest(t *testing.T) api.WorkerCompleteTaskRequest {
 	}
 }
 
-func validTaskWorkspaceCapture(t *testing.T, lease api.WorkerRunLeaseReceipt) *api.WorkerTaskWorkspaceCapture {
+func validTaskWorkspaceCapture(t *testing.T, lease api.WorkerRunLeaseAssignment) *api.WorkerTaskWorkspaceCapture {
 	t.Helper()
 	capture := &api.WorkerTaskWorkspaceCapture{
 		Receipt: validWorkspaceFinalizationReceipt(lease),
@@ -162,16 +158,21 @@ func validTaskWorkspaceCapture(t *testing.T, lease api.WorkerRunLeaseReceipt) *a
 	return capture
 }
 
-func validTaskWorkspaceRollback(t *testing.T, lease api.WorkerRunLeaseReceipt) *api.WorkerTaskWorkspaceRollback {
+func validTaskWorkspaceRollback(
+	t *testing.T,
+	capture *api.WorkerTaskWorkspaceCapture,
+) *api.WorkerTaskWorkspaceRollback {
 	t.Helper()
+	receipt := capture.Receipt
+	baseWorkspaceVersionID := receipt.Fence.BaseWorkspaceVersionID
 	target := workspace.ResetTarget{
-		Kind: workspace.ResetTargetEmpty, BaseVersionID: lease.BaseWorkspaceVersionID,
+		Kind: workspace.ResetTargetEmpty, BaseVersionID: baseWorkspaceVersionID,
 		Tree: workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
 	}
 	rollback := &api.WorkerTaskWorkspaceRollback{
-		Receipt: validWorkspaceFinalizationReceipt(lease),
+		Receipt: receipt,
 		Target: api.WorkerWorkspaceResetTarget{
-			BaseWorkspaceVersionID: lease.BaseWorkspaceVersionID,
+			BaseWorkspaceVersionID: baseWorkspaceVersionID,
 			Tree:                   api.WorkerWorkspaceTreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
 			Empty:                  &api.WorkerEmptyWorkspace{},
 		},
@@ -186,7 +187,7 @@ func validTaskWorkspaceRollback(t *testing.T, lease api.WorkerRunLeaseReceipt) *
 	return rollback
 }
 
-func validWorkspaceFinalizationReceipt(lease api.WorkerRunLeaseReceipt) api.WorkerWorkspaceFinalizationReceipt {
+func validWorkspaceFinalizationReceipt(lease api.WorkerRunLeaseAssignment) api.WorkerWorkspaceFinalizationReceipt {
 	return api.WorkerWorkspaceFinalizationReceipt{
 		OperationID: uuid.Must(uuid.NewV7()).String(),
 		Fence: api.WorkerWorkspaceFinalizationFence{

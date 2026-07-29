@@ -26,9 +26,9 @@ type Querier interface {
 	AppendActorOutputRecord(ctx context.Context, arg AppendActorOutputRecordParams) (AppendActorOutputRecordRow, error)
 	AppendDeploymentEvent(ctx context.Context, arg AppendDeploymentEventParams) (AppendDeploymentEventRow, error)
 	AppendDeploymentEvents(ctx context.Context, arg AppendDeploymentEventsParams) (int64, error)
-	AppendReceiptRunLogChunk(ctx context.Context, arg AppendReceiptRunLogChunkParams) (AppendReceiptRunLogChunkRow, error)
 	AppendRunEvent(ctx context.Context, arg AppendRunEventParams) (AppendRunEventRow, error)
 	AppendRunEventForExecution(ctx context.Context, arg AppendRunEventForExecutionParams) (AppendRunEventForExecutionRow, error)
+	AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkParams) (AppendRunLogChunkRow, error)
 	ApproveDeviceCode(ctx context.Context, arg ApproveDeviceCodeParams) (DeviceCode, error)
 	ArchiveOmittedSchedules(ctx context.Context, arg ArchiveOmittedSchedulesParams) error
 	AuthenticateWorkerInstanceCredential(ctx context.Context, arg AuthenticateWorkerInstanceCredentialParams) (AuthenticateWorkerInstanceCredentialRow, error)
@@ -406,7 +406,7 @@ type Querier interface {
 	LockCancellationWaits(ctx context.Context, arg LockCancellationWaitsParams) ([]LockCancellationWaitsRow, error)
 	LockCancellationWorkspaceLeases(ctx context.Context, runLeaseIds []pgtype.UUID) ([]pgtype.UUID, error)
 	LockCancellationWorkspaces(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error)
-	LockChildWorkspacePair(ctx context.Context, lockKey int64) error
+	LockChildWorkspacePair(ctx context.Context, arg LockChildWorkspacePairParams) ([]Workspace, error)
 	LockClaimedSchedule(ctx context.Context, arg LockClaimedScheduleParams) (LockClaimedScheduleRow, error)
 	LockCreatingRunCheckpoint(ctx context.Context, arg LockCreatingRunCheckpointParams) (RunCheckpoint, error)
 	LockDeploymentBuildTerminalFence(ctx context.Context, arg LockDeploymentBuildTerminalFenceParams) (LockDeploymentBuildTerminalFenceRow, error)
@@ -448,7 +448,6 @@ type Querier interface {
 	LockTokenWaitActor(ctx context.Context, actorID pgtype.UUID) (LockTokenWaitActorRow, error)
 	LockTokenWaitAttempt(ctx context.Context, arg LockTokenWaitAttemptParams) (LockTokenWaitAttemptRow, error)
 	LockTokenWaitCondition(ctx context.Context, arg LockTokenWaitConditionParams) (LockTokenWaitConditionRow, error)
-	LockTokenWaitRegistration(ctx context.Context, waitID pgtype.UUID) error
 	LockTokenWaitRunLease(ctx context.Context, arg LockTokenWaitRunLeaseParams) (string, error)
 	LockTokenWaitRunLineage(ctx context.Context, arg LockTokenWaitRunLineageParams) ([]LockTokenWaitRunLineageRow, error)
 	LockTokenWaitWorkspace(ctx context.Context, arg LockTokenWaitWorkspaceParams) (LockTokenWaitWorkspaceRow, error)

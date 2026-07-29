@@ -16,7 +16,7 @@ const (
 )
 
 type parsedActorCompletion struct {
-	lease                 parsedRunLeaseReceipt
+	lease                 parsedRunLeaseFence
 	kind                  actorCompletionKind
 	terminalInputSequence int64
 	errorObject           json.RawMessage
@@ -26,7 +26,7 @@ type parsedActorCompletion struct {
 }
 
 func parseActorCompletionRequest(request api.WorkerCompleteActorRequest) (parsedActorCompletion, error) {
-	lease, err := parseRunLeaseReceipt(request.Lease)
+	lease, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
 		return parsedActorCompletion{}, err
 	}
@@ -34,8 +34,6 @@ func parseActorCompletionRequest(request api.WorkerCompleteActorRequest) (parsed
 		return parsedActorCompletion{}, errors.New("outcome.terminal_input_sequence must be non-negative")
 	}
 	normalized := request
-	normalized.Lease.StartDeadlineAt = request.Lease.StartDeadlineAt.UTC()
-	normalized.Lease.ExpiresAt = request.Lease.ExpiresAt.UTC()
 	parsed := parsedActorCompletion{
 		lease: lease, terminalInputSequence: request.Outcome.TerminalInputSequence,
 	}
@@ -60,7 +58,7 @@ func parseActorCompletionRequest(request api.WorkerCompleteActorRequest) (parsed
 	proofs := 0
 	if request.Workspace.Captured != nil {
 		proofs++
-		capture, normalizedCapture, parseErr := parseTaskWorkspaceCapture(request.Lease, *request.Workspace.Captured)
+		capture, normalizedCapture, parseErr := parseTaskWorkspaceCapture(*request.Workspace.Captured)
 		if parseErr != nil {
 			return parsedActorCompletion{}, parseErr
 		}
@@ -69,7 +67,7 @@ func parseActorCompletionRequest(request api.WorkerCompleteActorRequest) (parsed
 	}
 	if request.Workspace.RolledBack != nil {
 		proofs++
-		rollback, normalizedRollback, parseErr := parseTaskWorkspaceRollback(request.Lease, *request.Workspace.RolledBack)
+		rollback, normalizedRollback, parseErr := parseTaskWorkspaceRollback(*request.Workspace.RolledBack)
 		if parseErr != nil {
 			return parsedActorCompletion{}, parseErr
 		}

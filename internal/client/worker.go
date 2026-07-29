@@ -416,13 +416,16 @@ func (c *Client) RenewRun(ctx context.Context, lease api.WorkerRunLease) (api.Wo
 
 func (c *Client) RenewRunLease(
 	ctx context.Context,
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseAssignment,
 ) (api.WorkerRunLeaseRenewResponse, error) {
 	var response api.WorkerRunLeaseRenewResponse
 	if err := c.postWorkerJSON(
 		ctx,
 		"/api/worker/leases/run-renew",
-		api.WorkerRunLeaseRenewRequest{Lease: lease},
+		api.WorkerRunLeaseRenewRequest{
+			Lease:             lease.Fence(),
+			ExpectedExpiresAt: lease.ExpiresAt,
+		},
 		&response,
 	); err != nil {
 		return api.WorkerRunLeaseRenewResponse{}, err
@@ -648,13 +651,13 @@ func (c *Client) CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDe
 
 func (c *Client) AppendRunLog(
 	ctx context.Context,
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseAssignment,
 	stream api.WorkerLogStream,
 	observedSeq uint64,
 	content []byte,
 ) error {
 	return c.postWorkerJSON(ctx, "/api/worker/leases/run-logs", api.WorkerRunLogAppendRequest{
-		Lease:         lease,
+		Lease:         lease.Fence(),
 		Stream:        stream,
 		ObservedSeq:   observedSeq,
 		ContentBase64: base64.StdEncoding.EncodeToString(content),

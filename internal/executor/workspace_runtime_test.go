@@ -208,7 +208,7 @@ func TestWorkspaceRuntimeRetryUsesRenewedReceipt(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	task := &guestRunLeaseTask{lease: lease}
-	var receipts []api.WorkerRunLeaseReceipt
+	var receipts []api.WorkerRunLeaseAssignment
 	firstAttempt := make(chan struct{})
 	go func() {
 		<-firstAttempt
@@ -219,7 +219,7 @@ func TestWorkspaceRuntimeRetryUsesRenewedReceipt(t *testing.T) {
 	}()
 	err := task.callRunSourceRuntime(t.Context(), func(
 		_ context.Context,
-		current api.WorkerRunLeaseReceipt,
+		current api.WorkerRunLeaseAssignment,
 	) error {
 		receipts = append(receipts, current)
 		if len(receipts) == 1 {

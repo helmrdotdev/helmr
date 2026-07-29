@@ -111,7 +111,7 @@ func projectRunLeaseClaimResponse(
 		workspaceMount: authority.workspaceMount,
 		workspaceLease: authority.workspaceLease,
 	}
-	lease, err := projectRunLeaseReceipt(physical)
+	lease, err := projectRunLeaseAssignment(physical)
 	if err != nil {
 		return api.WorkerRunLeaseClaimResponse{}, err
 	}

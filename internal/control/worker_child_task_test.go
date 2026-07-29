@@ -65,14 +65,30 @@ func TestNormalizeWorkerChildTaskRequestUsesParentScopeAndCallerOptions(t *testi
 	}
 }
 
-func TestChildWorkspacePairLockIsOrderIndependent(t *testing.T) {
-	left := uuid.MustParse("00000000-0000-0000-0000-000000000101")
-	right := uuid.MustParse("00000000-0000-0000-0000-000000000102")
-	if childWorkspacePairLock(left, right) != childWorkspacePairLock(right, left) {
-		t.Fatal("Workspace pair lock depends on argument order")
+func TestSourceChildWorkspaceRequiresExactPair(t *testing.T) {
+	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	sourceID := uuid.Must(uuid.NewV7())
+	targetID := uuid.Must(uuid.NewV7())
+	source := db.Workspace{ID: pgvalue.UUID(sourceID), EnvironmentID: environmentID}
+	target := db.Workspace{ID: pgvalue.UUID(targetID), EnvironmentID: environmentID}
+	locators := db.GetLiveRunLeaseLocatorsRow{EnvironmentID: environmentID}
+
+	got, err := sourceChildWorkspace(
+		[]db.Workspace{target, source},
+		sourceID,
+		targetID,
+		locators,
+	)
+	if err != nil || got.ID != source.ID {
+		t.Fatalf("sourceChildWorkspace() = %+v, %v", got, err)
 	}
-	if childWorkspacePairLock(left, right) == childWorkspacePairLock(left, left) {
-		t.Fatal("distinct Workspace pairs produced the same lock key")
+	if _, err := sourceChildWorkspace(
+		[]db.Workspace{source},
+		sourceID,
+		targetID,
+		locators,
+	); !errors.Is(err, errTaskWorkspaceUnavailable) {
+		t.Fatalf("missing target error = %v", err)
 	}
 }
 
@@ -127,10 +143,8 @@ func TestReplayBoundSameWorkspaceChildCallUsesReceiptAuthority(t *testing.T) {
 		store,
 		childTaskInvokeInput{
 			Request: api.WorkerInvokeChildTaskRequest{
-				Lease: api.WorkerRunLeaseReceipt{
-					RunID:             "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-					RuntimeInstanceID: uuid.Must(uuid.NewV7()).String(),
-					WorkerEpoch:       3,
+				Lease: api.WorkerRunLeaseFence{
+					ID: uuid.Must(uuid.NewV7()).String(), LeaseSequence: 1,
 				},
 			},
 			Normalized: normalizedTaskStart{
@@ -177,7 +191,9 @@ func TestReplayBoundSameWorkspaceChildCallRejectsDifferentFrontier(t *testing.T)
 		&sameWorkspaceChildReplayStore{err: pgx.ErrNoRows},
 		childTaskInvokeInput{
 			Request: api.WorkerInvokeChildTaskRequest{
-				Lease: api.WorkerRunLeaseReceipt{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"},
+				Lease: api.WorkerRunLeaseFence{
+					ID: uuid.Must(uuid.NewV7()).String(), LeaseSequence: 1,
+				},
 			},
 			Normalized: normalizedTaskStart{
 				taskStartRequest: taskStartRequest{TaskDeclaredID: "child"},

@@ -36,17 +36,13 @@ func (s *Server) workerCommitActorTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if request.Lease.WorkerGroupID != worker.WorkerGroupID || commit.lease.workerInstanceID != worker.WorkerInstanceID {
-		writeError(w, forbidden(errors.New("Actor turn commit belongs to another worker")))
-		return
-	}
 	response, err := s.commitActorTurn(r.Context(), worker, request, commit)
 	if errors.Is(err, errStaleActorTurnCommit) {
 		writeError(w, conflict(errStaleActorTurnCommit))
 		return
 	}
 	if err != nil {
-		s.log.Error("commit Actor turn failed", "run_id", request.Lease.RunID, "error", err)
+		s.log.Error("commit Actor turn failed", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("commit Actor turn"))
 		return
 	}

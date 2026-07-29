@@ -386,13 +386,58 @@ func (q *Queries) LockActorInputWorkspace(ctx context.Context, arg LockActorInpu
 	return i, err
 }
 
-const lockChildWorkspacePair = `-- name: LockChildWorkspacePair :exec
-SELECT pg_advisory_xact_lock($1::bigint)
+const lockChildWorkspacePair = `-- name: LockChildWorkspacePair :many
+SELECT id, environment_id, region_id, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+  FROM workspaces
+ WHERE environment_id = $1
+   AND id = ANY($2::uuid[])
+ ORDER BY id
+ FOR UPDATE
 `
 
-func (q *Queries) LockChildWorkspacePair(ctx context.Context, lockKey int64) error {
-	_, err := q.db.Exec(ctx, lockChildWorkspacePair, lockKey)
-	return err
+type LockChildWorkspacePairParams struct {
+	EnvironmentID pgtype.UUID   `json:"environment_id"`
+	WorkspaceIds  []pgtype.UUID `json:"workspace_ids"`
+}
+
+func (q *Queries) LockChildWorkspacePair(ctx context.Context, arg LockChildWorkspacePairParams) ([]Workspace, error) {
+	rows, err := q.db.Query(ctx, lockChildWorkspacePair, arg.EnvironmentID, arg.WorkspaceIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Workspace
+	for rows.Next() {
+		var i Workspace
+		if err := rows.Scan(
+			&i.ID,
+			&i.EnvironmentID,
+			&i.RegionID,
+			&i.WorkspaceDeclaredID,
+			&i.DeploymentDefinitionID,
+			&i.Key,
+			&i.StateVersion,
+			&i.OwnerActorID,
+			&i.OwnerRunID,
+			&i.OwnershipGeneration,
+			&i.WriterGeneration,
+			&i.HeadVersionID,
+			&i.State,
+			&i.DesiredState,
+			&i.DirtyState,
+			&i.LastActivityAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockWorkspaceAdmissionAuthority = `-- name: LockWorkspaceAdmissionAuthority :one

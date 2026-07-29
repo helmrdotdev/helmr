@@ -34,10 +34,6 @@ func (s *Server) completeTask(
 	if err != nil || replayed {
 		return err
 	}
-	if request.Lease.WorkerEpoch != worker.WorkerEpoch ||
-		request.Lease.WorkerProtocolVersion != worker.ProtocolVersion {
-		return errStaleTaskCompletion
-	}
 	if completion.capture != nil {
 		verified, err := s.verifyTaskWorkspaceCapture(ctx, *completion.capture)
 		if err != nil {
@@ -59,21 +55,6 @@ func (s *Server) completeTask(
 		if err != nil || replayed {
 			return err
 		}
-		if request.Lease.WorkerEpoch != worker.WorkerEpoch ||
-			request.Lease.WorkerProtocolVersion != worker.ProtocolVersion {
-			return errStaleTaskCompletion
-		}
-
-		secrets, err := secret.LockAttemptDelivery(
-			ctx,
-			work.q,
-			pgvalue.UUID(completion.lease.runID),
-			request.Lease.AttemptNumber,
-			pgvalue.UUID(completion.lease.workspaceID),
-		)
-		if err != nil {
-			return fmt.Errorf("lock Task completion Secret authority: %w", err)
-		}
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID:                    pgvalue.UUID(completion.lease.leaseID),
 			LeaseSequence:         request.Lease.LeaseSequence,
@@ -84,6 +65,16 @@ func (s *Server) completeTask(
 		})
 		if err != nil {
 			return staleTaskCompletion(err)
+		}
+		secrets, err := secret.LockAttemptDelivery(
+			ctx,
+			work.q,
+			locators.RunID,
+			locators.AttemptNumber,
+			locators.WorkspaceID,
+		)
+		if err != nil {
+			return fmt.Errorf("lock Task completion Secret authority: %w", err)
 		}
 		authority, err := lockLiveRunFinalizationAuthority(
 			ctx,
@@ -258,8 +249,7 @@ func taskCompletionWasReplayed(
 	completion parsedTaskCompletion,
 ) (bool, error) {
 	fingerprint, err := store.GetTaskCompletionReplay(ctx, db.GetTaskCompletionReplayParams{
-		RunLeaseID: pgvalue.UUID(completion.lease.leaseID), RunID: pgvalue.UUID(completion.lease.runID),
-		WorkspaceID: pgvalue.UUID(completion.lease.workspaceID), AttemptNumber: request.Lease.AttemptNumber,
+		RunLeaseID:    pgvalue.UUID(completion.lease.leaseID),
 		LeaseSequence: request.Lease.LeaseSequence, WorkerGroupID: worker.WorkerGroupID,
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 	})
@@ -376,7 +366,7 @@ func validateTaskCompletionAuthority(
 		authority.runLease.FinalizationKind.String != wantKind {
 		return errStaleTaskCompletion
 	}
-	receipt, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
+	assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
 		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
 		networkSlot: authority.networkSlot, runLease: authority.runLease,
 		workspace: authority.workspace, workspaceMount: authority.workspaceMount,
@@ -385,7 +375,7 @@ func validateTaskCompletionAuthority(
 	if err != nil {
 		return err
 	}
-	if !equalRunLeaseReceipt(receipt, request.Lease) {
+	if !finalizationFenceMatchesLease(finalization.Fence, assignment) {
 		return errStaleTaskCompletion
 	}
 	clear, err := store.RunFinalizationScopeIsClear(ctx, db.RunFinalizationScopeIsClearParams{

@@ -1039,7 +1039,7 @@ previous AS (
       JOIN target ON target.org_id = environments.org_id
                  AND target.project_id = environments.project_id
                  AND target.environment_id = environments.id
-     FOR UPDATE OF environments
+     FOR NO KEY UPDATE OF environments
 ),
 updated_environment AS (
     UPDATE environments
@@ -1085,7 +1085,7 @@ SELECT deployments.*
    AND environments.id = sqlc.arg(environment_id)
    AND deployments.id = sqlc.arg(deployment_id)
    AND deployments.status = 'deployed'
- FOR UPDATE OF environments;
+ FOR NO KEY UPDATE OF environments;
 
 -- name: GetDeployment :one
 SELECT *

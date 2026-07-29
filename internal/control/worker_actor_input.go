@@ -21,7 +21,7 @@ import (
 var errStaleActorInputSend = errors.New("Actor input send source authority is stale")
 
 type parsedWorkerActorInputSend struct {
-	lease          parsedRunLeaseReceipt
+	lease          parsedRunLeaseFence
 	correlationID  uuid.UUID
 	idempotencyKey string
 }
@@ -52,24 +52,14 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if request.Lease.WorkerGroupID != worker.WorkerGroupID ||
-		parsed.lease.workerInstanceID != worker.WorkerInstanceID {
-		writeError(w, forbidden(errors.New("Actor input send belongs to another worker")))
-		return
-	}
-	if request.Lease.WorkerEpoch != worker.WorkerEpoch ||
-		request.Lease.WorkerProtocolVersion != worker.ProtocolVersion {
-		writeError(w, conflict(errStaleActorInputSend))
-		return
-	}
 
-	source, err := s.db.GetActorInputSendSource(r.Context(), actorInputSendSourceParams(request, parsed))
+	source, err := s.db.GetActorInputSendSource(r.Context(), actorInputSendSourceParams(request, parsed, worker))
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, conflict(errStaleActorInputSend))
 		return
 	}
 	if err != nil {
-		s.log.Error("load Actor input send source", "run_id", request.Lease.RunID, "error", err)
+		s.log.Error("load Actor input send source", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("load Actor input send source"))
 		return
 	}
@@ -81,14 +71,14 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := s.inTx(r.Context(), func(work *txWork) error {
 			return authorizeActorInputSendSource(
-				r.Context(), work.q, worker, request, parsed, source.EnvironmentID,
+				r.Context(), work.q, worker, request, source.EnvironmentID,
 			)
 		}); err != nil {
 			if errors.Is(err, errStaleActorInputSend) {
 				writeError(w, conflict(errStaleActorInputSend))
 				return
 			}
-			s.log.Error("authorize unresolved Actor input send", "run_id", request.Lease.RunID, "error", err)
+			s.log.Error("authorize unresolved Actor input send", "run_lease_id", request.Lease.ID, "error", err)
 			writeError(w, errors.New("authorize Actor input send"))
 			return
 		}
@@ -98,7 +88,7 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.log.Error("resolve Actor input send target", "run_id", request.Lease.RunID, "error", err)
+		s.log.Error("resolve Actor input send target", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("resolve Actor input send target"))
 		return
 	}
@@ -108,10 +98,10 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 		RecordID:       uuid.Must(uuid.NewV7()),
 		Data:           request.Input,
 		SourceKind:     "run",
-		SourceRunID:    parsed.lease.runID,
+		SourceRunID:    pgvalue.MustUUIDValue(source.RunID),
 		IdempotencyKey: parsed.idempotencyKey,
 		Authorize: func(ctx context.Context, q db.Querier) error {
-			return authorizeActorInputSendSource(ctx, q, worker, request, parsed, source.EnvironmentID)
+			return authorizeActorInputSendSource(ctx, q, worker, request, source.EnvironmentID)
 		},
 	})
 	if err != nil {
@@ -125,7 +115,7 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 			writeError(w, conflict(errStaleActorInputSend))
 			return
 		}
-		s.log.Error("append run-sourced Actor input", "run_id", request.Lease.RunID, "error", err)
+		s.log.Error("append run-sourced Actor input", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("append run-sourced Actor input"))
 		return
 	}
@@ -136,7 +126,7 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 }
 
 func parseWorkerActorInputSend(request api.WorkerSendActorInputRequest) (parsedWorkerActorInputSend, error) {
-	lease, err := parseRunLeaseReceipt(request.Lease)
+	lease, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
 		return parsedWorkerActorInputSend{}, err
 	}
@@ -165,23 +155,12 @@ func parseWorkerActorInputSend(request api.WorkerSendActorInputRequest) (parsedW
 func actorInputSendSourceParams(
 	request api.WorkerSendActorInputRequest,
 	parsed parsedWorkerActorInputSend,
+	worker workerActor,
 ) db.GetActorInputSendSourceParams {
 	return db.GetActorInputSendSourceParams{
-		ID: pgvalue.UUID(parsed.lease.leaseID), RunID: pgvalue.UUID(parsed.lease.runID),
-		WorkspaceID: pgvalue.UUID(parsed.lease.workspaceID), AttemptNumber: request.Lease.AttemptNumber,
-		LeaseSequence: request.Lease.LeaseSequence, WorkerGroupID: request.Lease.WorkerGroupID,
-		WorkerInstanceID: pgvalue.UUID(parsed.lease.workerInstanceID), WorkerEpoch: request.Lease.WorkerEpoch,
-		WorkerProtocolVersion:            request.Lease.WorkerProtocolVersion,
-		RuntimeInstanceID:                pgvalue.UUID(parsed.lease.runtimeInstanceID),
-		NetworkSlotID:                    pgvalue.UUID(parsed.lease.networkSlotID),
-		NetworkSlotGeneration:            request.Lease.NetworkSlotGeneration,
-		RuntimeIdentityID:                request.Lease.RuntimeIdentityID,
-		RequestedCpuMillis:               request.Lease.RequestedCPUMillis,
-		RequestedMemoryBytes:             request.Lease.RequestedMemoryBytes,
-		RequestedGuestEphemeralDiskBytes: request.Lease.RequestedGuestEphemeralDiskBytes,
-		RequestedExecutionSlots:          request.Lease.RequestedExecutionSlots,
-		StartDeadlineAt:                  pgtype.Timestamptz{Time: request.Lease.StartDeadlineAt, Valid: true},
-		ExpiresAt:                        pgtype.Timestamptz{Time: request.Lease.ExpiresAt, Valid: true},
+		ID: pgvalue.UUID(parsed.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
+		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
 	}
 }
 
@@ -190,12 +169,10 @@ func authorizeActorInputSendSource(
 	q db.Querier,
 	worker workerActor,
 	request api.WorkerSendActorInputRequest,
-	parsed parsedWorkerActorInputSend,
 	environmentID pgtype.UUID,
 ) error {
 	authority, err := authorizeWorkerRunSource(ctx, q, worker, request.Lease)
-	if err != nil || authority.EnvironmentID != environmentID ||
-		authority.RunID != pgvalue.UUID(parsed.lease.runID) {
+	if err != nil || authority.EnvironmentID != environmentID {
 		if err != nil {
 			return fmt.Errorf("%w: %v", errStaleActorInputSend, err)
 		}

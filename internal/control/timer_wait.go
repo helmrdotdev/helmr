@@ -40,14 +40,12 @@ func (s *Server) workerCreateTimerRunWait(
 		writeError(w, badRequest(err))
 		return
 	}
-	parsed, worker, _, _, err := s.loadRunWaitRegistrationAuthority(r.Context(), request.Lease)
+	parsed, worker, registrationLocators, _, err := s.loadRunWaitRegistrationAuthority(r.Context(), request.Lease)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	normalized := request
-	normalized.Lease.StartDeadlineAt = request.Lease.StartDeadlineAt.UTC()
-	normalized.Lease.ExpiresAt = request.Lease.ExpiresAt.UTC()
 	normalized.Params, err = json.Marshal(params)
 	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("normalize timer Wait params: %w", err)))
@@ -69,12 +67,6 @@ func (s *Server) workerCreateTimerRunWait(
 
 	var registered db.RunWait
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		if _, err := secret.LockAttemptDelivery(
-			r.Context(), work.q, pgvalue.UUID(parsed.runID), request.Lease.AttemptNumber,
-			pgvalue.UUID(parsed.workspaceID),
-		); err != nil {
-			return fmt.Errorf("lock timer Wait Secret authority: %w", err)
-		}
 		locators, err := work.q.GetLiveRunLeaseLocators(r.Context(), db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: request.Lease.LeaseSequence,
 			WorkerGroupID:         worker.WorkerGroupID,
@@ -84,6 +76,12 @@ func (s *Server) workerCreateTimerRunWait(
 		})
 		if err != nil {
 			return staleRunLeaseClaim(err)
+		}
+		if _, err := secret.LockAttemptDelivery(
+			r.Context(), work.q, locators.RunID, locators.AttemptNumber,
+			locators.WorkspaceID,
+		); err != nil {
+			return fmt.Errorf("lock timer Wait Secret authority: %w", err)
 		}
 		owner, err := lockRunFinalizationOwner(r.Context(), work.q, locators)
 		if err != nil {
@@ -98,16 +96,6 @@ func (s *Server) workerCreateTimerRunWait(
 		}
 		authority.actor = owner.actor
 		if authority.runLease.State != db.RunLeaseStateRunning {
-			return errStaleRunLeaseClaim
-		}
-		current, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
-			run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
-			networkSlot: authority.networkSlot, runLease: authority.runLease,
-			workspace: authority.workspace, workspaceMount: authority.workspaceMount,
-			workspaceLease: authority.workspaceLease,
-		})
-		if err != nil ||
-			!equalCurrentOrPreviousRunLeaseReceipt(current, request.Lease, authority.runLease.PreviousExpiresAt) {
 			return errStaleRunLeaseClaim
 		}
 		if err := validateRunWaitActorCursor(authority, db.RunWait{
@@ -165,15 +153,15 @@ func (s *Server) workerCreateTimerRunWait(
 		return
 	}
 	if err != nil {
-		s.log.Error("register worker timer Wait failed", "run_id", request.Lease.RunID, "error", err)
+		s.log.Error("register worker timer Wait failed", "run_id", pgvalue.UUIDString(registrationLocators.RunID), "error", err)
 		writeError(w, errors.New("register worker timer Wait"))
 		return
 	}
 	response := api.WorkerCreateRunWaitResponse{
-		RunID: request.Lease.RunID, RunWaitID: waitID.String(),
+		RunID: pgvalue.UUIDString(registrationLocators.RunID), RunWaitID: waitID.String(),
 		ResumeAttachID:    resumeAttachID.String(),
-		RuntimeInstanceID: request.Lease.RuntimeInstanceID,
-		RuntimeEpoch:      request.Lease.WorkerEpoch,
+		RuntimeInstanceID: pgvalue.UUIDString(registrationLocators.RuntimeInstanceID),
+		RuntimeEpoch:      worker.WorkerEpoch,
 		CheckpointDelayMs: checkpointDelay.Milliseconds(),
 	}
 	if registered.SuspensionState == db.RunWaitStateReleased {

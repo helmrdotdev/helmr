@@ -54,19 +54,15 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 		writeError(w, err)
 		return
 	}
-	receiptFingerprint, err := runLeaseReceiptFingerprint(request.Lease)
+	leaseFenceFingerprint, err := runLeaseFenceFingerprint(request.Lease)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		// Resolve only the stable attempt/worker claim scope before idempotency
-		// acquisition. Mutable lease and Run receipt fields are bound by the
-		// canonical receipt fingerprint in the claim request, while a new
-		// mutation still validates the complete live receipt under lock below.
 		replayContext, err := work.q.GetRunMetadataClaimScope(
 			r.Context(),
-			runMetadataClaimScopeParams(request.Lease, parsed),
+			runMetadataClaimScopeParams(request.Lease, parsed, worker),
 		)
 		if err != nil {
 			return staleRunLeaseClaim(err)
@@ -79,7 +75,7 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 			replayContext.AttemptNumber,
 			operationID.String(),
 			mutation.canonical,
-			receiptFingerprint,
+			leaseFenceFingerprint,
 		)
 		if err != nil {
 			return err
@@ -174,9 +170,9 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 		case errors.As(err, &conflictErr):
 			writeError(w, conflict(conflictErr))
 		case errors.Is(err, errStaleRunLeaseClaim), errors.Is(err, pgx.ErrNoRows):
-			writeError(w, conflict(errors.New("worker Run Lease receipt is stale")))
+			writeError(w, conflict(errors.New("worker Run Lease fence is stale")))
 		default:
-			s.log.Error("update Run metadata failed", "run_id", request.Lease.RunID, "error", err)
+			s.log.Error("update Run metadata failed", "run_lease_id", request.Lease.ID, "error", err)
 			writeError(w, apiError{kind: errUnprocessable, err: codedError{
 				code: "run_metadata_rejected", message: err.Error(),
 			}})
@@ -227,7 +223,7 @@ func (s *Server) workerAppendStructuredLog(w http.ResponseWriter, r *http.Reques
 		writeError(w, badRequest(err))
 		return
 	}
-	parsed, _, err := s.parseWorkerRunMutation(r, request.Lease)
+	parsed, worker, err := s.parseWorkerRunMutation(r, request.Lease)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -241,11 +237,12 @@ func (s *Server) workerAppendStructuredLog(w http.ResponseWriter, r *http.Reques
 		writeError(w, errors.New("encode structured log"))
 		return
 	}
-	row, err := s.appendReceiptRunLog(
+	row, err := s.appendRunLog(
 		r.Context(),
+		worker,
 		request.Lease,
 		parsed,
-		db.AppendReceiptRunLogChunkParams{
+		db.AppendRunLogChunkParams{
 			Kind: "log.structured", Payload: payload, Severity: request.Level,
 			Stream:      string(api.WorkerLogStreamStructured),
 			ObservedSeq: int64(request.ObservedSeq), Content: content,
@@ -258,7 +255,7 @@ func (s *Server) workerAppendStructuredLog(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err != nil {
-		s.log.Error("append structured Run log failed", "run_id", request.Lease.RunID, "error", err)
+		s.log.Error("append structured Run log failed", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("append structured Run log"))
 		return
 	}
@@ -273,21 +270,13 @@ func (s *Server) workerAppendStructuredLog(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) parseWorkerRunMutation(
 	r *http.Request,
-	lease api.WorkerRunLeaseReceipt,
-) (parsedRunLeaseReceipt, workerActor, error) {
-	parsed, err := parseRunLeaseReceipt(lease)
+	lease api.WorkerRunLeaseFence,
+) (parsedRunLeaseFence, workerActor, error) {
+	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {
-		return parsedRunLeaseReceipt{}, workerActor{}, badRequest(err)
+		return parsedRunLeaseFence{}, workerActor{}, badRequest(err)
 	}
 	worker := workerFromContext(r.Context())
-	if lease.WorkerGroupID != worker.WorkerGroupID ||
-		parsed.workerInstanceID != worker.WorkerInstanceID ||
-		lease.WorkerEpoch != worker.WorkerEpoch ||
-		lease.WorkerProtocolVersion != worker.ProtocolVersion {
-		return parsedRunLeaseReceipt{}, workerActor{}, forbidden(
-			errors.New("worker Run Lease receipt belongs to another worker epoch"),
-		)
-	}
 	return parsed, worker, nil
 }
 
@@ -295,8 +284,8 @@ func lockReceiptRunMutation(
 	ctx context.Context,
 	q db.Querier,
 	worker workerActor,
-	lease api.WorkerRunLeaseReceipt,
-	parsed parsedRunLeaseReceipt,
+	lease api.WorkerRunLeaseFence,
+	parsed parsedRunLeaseFence,
 ) (runLeaseClaimAuthority, error) {
 	locators, err := q.GetLiveRunLeaseLocators(
 		ctx,
@@ -320,18 +309,6 @@ func lockReceiptRunMutation(
 	)
 	if err != nil {
 		return runLeaseClaimAuthority{}, err
-	}
-	current, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
-		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
-		networkSlot: authority.networkSlot, runLease: authority.runLease,
-		workspace: authority.workspace, workspaceMount: authority.workspaceMount,
-		workspaceLease: authority.workspaceLease,
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, err
-	}
-	if !equalRunLeaseReceipt(current, lease) {
-		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 	return authority, nil
 }

@@ -245,12 +245,12 @@ func TestControlRunWaitsUsesCurrentLeaseForCheckpointCompletion(t *testing.T) {
 			RequestVersion: 1, CheckpointID: "checkpoint-1",
 		}},
 	}
-	leases := &mutableRunLeaseProvider{receipt: testWaitRunLeaseReceipt()}
+	leases := &mutableRunLeaseProvider{assignment: testWaitRunLeaseAssignment()}
 	checkpointer := &fakeCheckpointer{manifest: testRunCheckpointWaitManifest(), workspaceCapture: testCheckpointWorkspaceCapture(), onCreate: func() {
-		leases.receipt.ID = "lease-2"
+		leases.assignment.ID = "lease-2"
 	}}
 	request := testWaitRequest(api.WorkerRunWaitKindTimer)
-	request.LeaseReceipt = api.WorkerRunLeaseReceipt{}
+	request.LeaseAssignment = api.WorkerRunLeaseAssignment{}
 	request.Leases = leases
 	request.Checkpointer = checkpointer
 	err := ControlRunWaits{Client: client}.Wait(context.Background(), request)
@@ -264,15 +264,15 @@ func TestControlRunWaitsUsesCurrentLeaseForCheckpointCompletion(t *testing.T) {
 
 func TestControlRunWaitsReleasesOnlyExactGuestResumeProof(t *testing.T) {
 	client := &fakeRunWaitClient{}
-	receipt := api.WorkerRunLeaseReceipt{ID: "lease-2", RunID: "run-1", AttemptNumber: 2}
+	assignment := api.WorkerRunLeaseAssignment{ID: "lease-2", RunID: "run-1", AttemptNumber: 2}
 	err := (ControlRunWaits{Client: client}).AcknowledgeRestore(context.Background(), RestoreAcknowledgement{
-		Lease: receipt, RunWaitID: "wait-1", CheckpointID: "checkpoint-1",
+		Lease: assignment, RunWaitID: "wait-1", CheckpointID: "checkpoint-1",
 		ResumeAttachID: "attach-1", ResumeRequestVersion: 4,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.resumeRelease == nil || client.resumeRelease.RunLeaseID != "lease-2" ||
+	if client.resumeRelease == nil || client.resumeRelease.Lease != assignment.Fence() ||
 		client.resumeRelease.ResumeAttachID != "attach-1" || client.resumeRelease.ResumeRequestVersion != 4 {
 		t.Fatalf("resume release = %+v", client.resumeRelease)
 	}
@@ -309,7 +309,7 @@ func (c *fakeRunWaitClient) PollRunWait(_ context.Context, request api.WorkerRun
 func (c *fakeRunWaitClient) AcknowledgeRunWaitResume(_ context.Context, request api.WorkerRunWaitResumeAckRequest) (api.WorkerRunWaitResumeAckResponse, error) {
 	c.resumeAck = &request
 	return api.WorkerRunWaitResumeAckResponse{
-		RunID: request.Lease.RunID, RunWaitID: request.RunWaitID,
+		RunID: "run-1", RunWaitID: request.RunWaitID,
 		ResumeRequestVersion: request.ResumeRequestVersion,
 	}, nil
 }
@@ -320,15 +320,15 @@ func (c *fakeRunWaitClient) AcknowledgeRestore(_ context.Context, request api.Wo
 
 func (c *fakeRunWaitClient) AcknowledgeRunResumeRelease(_ context.Context, request api.WorkerRunResumeReleaseRequest) (api.WorkerRunResumeReleaseResponse, error) {
 	c.resumeRelease = &request
-	return api.WorkerRunResumeReleaseResponse{
-		Lease: request.Lease, RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID,
-		ResumeAttachID: request.ResumeAttachID, ResumeRequestVersion: request.ResumeRequestVersion,
-	}, nil
+	return api.WorkerRunResumeReleaseResponse(request), nil
 }
 
 func (c *fakeRunWaitClient) MarkCheckpointReady(_ context.Context, request api.WorkerCheckpointReadyRequest) (api.WorkerCheckpointResponse, error) {
 	c.ready = &request
-	return api.WorkerCheckpointResponse{RunID: request.Lease.RunID, RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID}, nil
+	return api.WorkerCheckpointResponse{
+		RunID:     request.Manifest.RecoveryPoint.RunID,
+		RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID,
+	}, nil
 }
 
 func (c *fakeRunWaitClient) MarkCheckpointFailed(_ context.Context, request api.WorkerCheckpointFailedRequest) (api.WorkerCheckpointResponse, error) {
@@ -341,7 +341,9 @@ func (c *fakeRunWaitClient) MarkCheckpointFailed(_ context.Context, request api.
 			return api.WorkerCheckpointResponse{}, err
 		}
 	}
-	return api.WorkerCheckpointResponse{RunID: request.Lease.RunID, RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID}, nil
+	return api.WorkerCheckpointResponse{
+		RunID: "run-1", RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID,
+	}, nil
 }
 
 type fakeCheckpointer struct {
@@ -363,13 +365,13 @@ func (c *fakeCheckpointer) CreateCheckpoint(_ context.Context, request Checkpoin
 	return CheckpointResult{Manifest: c.manifest, WorkspaceCapture: c.workspaceCapture}, nil
 }
 
-type mutableRunLeaseProvider struct{ receipt api.WorkerRunLeaseReceipt }
+type mutableRunLeaseProvider struct{ assignment api.WorkerRunLeaseAssignment }
 
 func (p *mutableRunLeaseProvider) CurrentWorkerRunLease() api.WorkerRunLease {
-	return workerRunLeaseFromReceipt("", p.receipt)
+	return workerRunLeaseFromAssignment("", p.assignment)
 }
-func (p *mutableRunLeaseProvider) CurrentWorkerRunLeaseReceipt() api.WorkerRunLeaseReceipt {
-	return p.receipt
+func (p *mutableRunLeaseProvider) CurrentWorkerRunLeaseAssignment() api.WorkerRunLeaseAssignment {
+	return p.assignment
 }
 
 func liveRunWaitResponse() api.WorkerCreateRunWaitResponse {
@@ -381,16 +383,16 @@ func liveRunWaitResponse() api.WorkerCreateRunWaitResponse {
 
 func testWaitRequest(kind api.WorkerRunWaitKind) WaitRequest {
 	return WaitRequest{
-		LeaseReceipt:   testWaitRunLeaseReceipt(),
-		CorrelationID:  "correlation-1",
-		RunWaitID:      "run-wait-id-1",
-		ResumeAttachID: "resume-attach-1",
-		Kind:           kind,
+		LeaseAssignment: testWaitRunLeaseAssignment(),
+		CorrelationID:   "correlation-1",
+		RunWaitID:       "run-wait-id-1",
+		ResumeAttachID:  "resume-attach-1",
+		Kind:            kind,
 	}
 }
 
-func testWaitRunLeaseReceipt() api.WorkerRunLeaseReceipt {
-	return api.WorkerRunLeaseReceipt{
+func testWaitRunLeaseAssignment() api.WorkerRunLeaseAssignment {
+	return api.WorkerRunLeaseAssignment{
 		ID: "lease-1", RunID: "run-1", AttemptNumber: 2, WorkerGroupID: "run-us-east-1",
 		WorkerInstanceID: "worker-1", WorkerEpoch: 42, LeaseSequence: 1,
 		RuntimeInstanceID: "runtime-instance-1", NetworkSlotID: "network-slot-1", NetworkSlotGeneration: 1,

@@ -26,9 +26,9 @@ func (task *guestRunLeaseTask) handleActorInputSend(
 	var response api.WorkerSendActorInputResponse
 	if err := task.callRunSourceRuntime(ctx, func(
 		callCtx context.Context,
-		lease api.WorkerRunLeaseReceipt,
+		lease api.WorkerRunLeaseAssignment,
 	) error {
-		request.Lease = lease
+		request.Lease = lease.Fence()
 		var requestErr error
 		response, requestErr = task.control.SendRunActorInput(callCtx, request)
 		return requestErr

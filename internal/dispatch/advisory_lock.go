@@ -6,11 +6,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"hash/fnv"
-	"math"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/sessionlock"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -67,25 +66,15 @@ func (l *QueueReconcileAdvisoryLock) TryLock(ctx context.Context) (QueueReconcil
 }
 
 func (l *advisoryLock) tryLock(ctx context.Context) (*advisoryLockGuard, bool, error) {
-	conn, err := l.pool.Acquire(ctx)
-	if err != nil {
-		return nil, false, fmt.Errorf("acquire advisory lock connection: %w", err)
+	guard, locked, err := sessionlock.TryAcquire(ctx, l.pool, l.key)
+	if err != nil || !locked {
+		return nil, locked, err
 	}
-	var locked bool
-	if err := conn.QueryRow(ctx, "select pg_try_advisory_lock($1)", l.key).Scan(&locked); err != nil {
-		discardAdvisoryLockConnection(conn)
-		return nil, false, fmt.Errorf("acquire advisory lock: %w", err)
-	}
-	if !locked {
-		conn.Release()
-		return nil, false, nil
-	}
-	return &advisoryLockGuard{conn: conn, key: l.key}, true, nil
+	return &advisoryLockGuard{guard: guard}, true, nil
 }
 
 type advisoryLockGuard struct {
-	conn *pgxpool.Conn
-	key  int64
+	guard *sessionlock.Guard
 }
 
 type queueReconcileAdvisoryLockGuard struct {
@@ -93,41 +82,24 @@ type queueReconcileAdvisoryLockGuard struct {
 }
 
 func (g queueReconcileAdvisoryLockGuard) Store(QueueReconcilerStore) QueueReconcilerStore {
-	return db.New(g.guard.conn)
+	return db.New(g.guard.guard.Conn())
 }
 
 func (g queueReconcileAdvisoryLockGuard) Unlock(ctx context.Context) error {
 	return g.guard.Unlock(ctx)
 }
 
-func (g *advisoryLockGuard) Unlock(ctx context.Context) error {
-	if g == nil || g.conn == nil {
+func (g *advisoryLockGuard) Unlock(context.Context) error {
+	if g == nil || g.guard == nil {
 		return errors.New("advisory lock guard is already released")
 	}
-	conn := g.conn
-	g.conn = nil
-	var unlocked bool
-	if err := conn.QueryRow(ctx, "select pg_advisory_unlock($1)", g.key).Scan(&unlocked); err != nil {
-		discardAdvisoryLockConnection(conn)
-		return fmt.Errorf("release advisory lock: %w", err)
-	}
-	if !unlocked {
-		discardAdvisoryLockConnection(conn)
-		return fmt.Errorf("advisory lock was not held")
-	}
-	conn.Release()
-	return nil
-}
-
-func discardAdvisoryLockConnection(conn *pgxpool.Conn) {
-	raw := conn.Hijack()
-	_ = raw.Close(context.Background())
+	guard := g.guard
+	g.guard = nil
+	return guard.Unlock()
 }
 
 func advisoryLockKey(name string) int64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(name))
-	return int64(h.Sum64() & math.MaxInt64)
+	return sessionlock.Key(name)
 }
 
 func queueScopeLockKey(environmentID pgtype.UUID, queueName string, concurrencyKey pgtype.Text) (int64, error) {

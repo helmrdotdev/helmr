@@ -301,5 +301,10 @@ UPDATE workspaces
           AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
    )
 RETURNING *;
--- name: LockChildWorkspacePair :exec
-SELECT pg_advisory_xact_lock(sqlc.arg(lock_key)::bigint);
+-- name: LockChildWorkspacePair :many
+SELECT *
+  FROM workspaces
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND id = ANY(sqlc.arg(workspace_ids)::uuid[])
+ ORDER BY id
+ FOR UPDATE;

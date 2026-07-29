@@ -24,9 +24,9 @@ func (task *guestRunLeaseTask) handleActorOutputAppend(
 	var response api.WorkerAppendActorOutputResponse
 	if err := task.callRunSourceRuntime(ctx, func(
 		callCtx context.Context,
-		lease api.WorkerRunLeaseReceipt,
+		lease api.WorkerRunLeaseAssignment,
 	) error {
-		request.Lease = lease
+		request.Lease = lease.Fence()
 		var requestErr error
 		response, requestErr = task.control.AppendActorOutput(callCtx, request)
 		return requestErr

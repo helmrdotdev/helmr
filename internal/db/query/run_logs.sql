@@ -1,9 +1,9 @@
--- name: AppendReceiptRunLogChunk :one
+-- name: AppendRunLogChunk :one
 WITH event_args AS (
     SELECT sqlc.arg(kind)::text AS event_kind,
            sqlc.arg(payload)::jsonb AS event_payload,
            sqlc.arg(severity)::text AS event_severity,
-           sqlc.arg(receipt_fingerprint)::text AS receipt_fingerprint
+           sqlc.arg(lease_fence_fingerprint)::text AS lease_fence_fingerprint
 ),
 current_run_lease AS (
     SELECT runs.org_id,
@@ -19,126 +19,16 @@ current_run_lease AS (
            run_leases.attempt_number AS attempt_number
       FROM run_leases
       JOIN runs ON runs.id = run_leases.run_id
-               AND runs.org_id = run_leases.org_id
-               AND runs.project_id = run_leases.project_id
-               AND runs.environment_id = run_leases.environment_id
                AND runs.workspace_id = run_leases.workspace_id
-      JOIN run_attempts ON run_attempts.run_id = run_leases.run_id
-                       AND run_attempts.number = run_leases.attempt_number
-                       AND run_attempts.workspace_id = run_leases.workspace_id
-      JOIN worker_groups ON worker_groups.id = run_leases.worker_group_id
-                        AND worker_groups.region_id = run_leases.region_id
-      JOIN worker_instances ON worker_instances.id = run_leases.worker_instance_id
-                           AND worker_instances.worker_group_id = run_leases.worker_group_id
-      JOIN workspaces ON workspaces.id = run_leases.workspace_id
-                     AND workspaces.environment_id = run_leases.environment_id
-                     AND workspaces.region_id = run_leases.region_id
-      JOIN runtime_instances ON runtime_instances.id = run_leases.runtime_instance_id
-                            AND runtime_instances.org_id = run_leases.org_id
-                            AND runtime_instances.project_id = run_leases.project_id
-                            AND runtime_instances.environment_id = run_leases.environment_id
-                            AND runtime_instances.region_id = run_leases.region_id
-                            AND runtime_instances.worker_group_id = run_leases.worker_group_id
-                            AND runtime_instances.worker_instance_id = run_leases.worker_instance_id
-                            AND runtime_instances.worker_epoch = run_leases.worker_epoch
-                            AND runtime_instances.workspace_id = run_leases.workspace_id
-      JOIN worker_network_slots ON worker_network_slots.id = run_leases.network_slot_id
-                               AND worker_network_slots.generation = run_leases.network_slot_generation
-                               AND worker_network_slots.worker_group_id = run_leases.worker_group_id
-                               AND worker_network_slots.worker_instance_id = run_leases.worker_instance_id
-                               AND worker_network_slots.worker_epoch = run_leases.worker_epoch
-                               AND worker_network_slots.runtime_instance_id = run_leases.runtime_instance_id
-      JOIN workspace_mounts ON workspace_mounts.id = sqlc.arg(workspace_mount_id)
-                           AND workspace_mounts.org_id = run_leases.org_id
-                           AND workspace_mounts.project_id = run_leases.project_id
-                           AND workspace_mounts.environment_id = run_leases.environment_id
-                           AND workspace_mounts.region_id = run_leases.region_id
-                           AND workspace_mounts.worker_group_id = run_leases.worker_group_id
-                           AND workspace_mounts.worker_instance_id = run_leases.worker_instance_id
-                           AND workspace_mounts.worker_epoch = run_leases.worker_epoch
-                           AND workspace_mounts.runtime_instance_id = run_leases.runtime_instance_id
-                           AND workspace_mounts.workspace_id = run_leases.workspace_id
-      JOIN workspace_leases ON workspace_leases.id = sqlc.arg(workspace_lease_id)
-                           AND workspace_leases.org_id = run_leases.org_id
-                           AND workspace_leases.project_id = run_leases.project_id
-                           AND workspace_leases.environment_id = run_leases.environment_id
-                           AND workspace_leases.region_id = run_leases.region_id
-                           AND workspace_leases.worker_group_id = run_leases.worker_group_id
-                           AND workspace_leases.worker_instance_id = run_leases.worker_instance_id
-                           AND workspace_leases.worker_epoch = run_leases.worker_epoch
-                           AND workspace_leases.runtime_instance_id = run_leases.runtime_instance_id
-                           AND workspace_leases.workspace_id = run_leases.workspace_id
-                           AND workspace_leases.workspace_mount_id = workspace_mounts.id
-                           AND workspace_leases.owner_run_lease_id = run_leases.id
      WHERE run_leases.id = sqlc.arg(run_lease_id)
-       AND run_leases.run_id = sqlc.arg(run_id)
-       AND run_leases.attempt_number = sqlc.arg(attempt_number)
        AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
        AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
        AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
        AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
        AND run_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
-       AND run_leases.runtime_instance_id = sqlc.arg(runtime_instance_id)
-       AND run_leases.runtime_identity_id = sqlc.arg(runtime_identity_id)
-       AND run_leases.network_slot_id = sqlc.arg(network_slot_id)
-       AND run_leases.network_slot_generation = sqlc.arg(network_slot_generation)
-       AND run_leases.workspace_id = sqlc.arg(workspace_id)
-       AND workspace_mounts.materialized_version_id = sqlc.arg(base_workspace_version_id)
-       AND workspace_mounts.fencing_generation = sqlc.arg(mount_fencing_generation)
-       AND workspace_leases.base_version_id = sqlc.arg(base_workspace_version_id)
-       AND workspace_leases.ownership_generation = sqlc.arg(ownership_generation)
-       AND workspace_leases.writer_generation = sqlc.arg(writer_generation)
-       AND workspace_leases.mount_fencing_generation = sqlc.arg(mount_fencing_generation)
-       AND run_leases.requested_cpu_millis = sqlc.arg(requested_cpu_millis)
-       AND run_leases.requested_memory_bytes = sqlc.arg(requested_memory_bytes)
-       AND run_leases.requested_guest_ephemeral_disk_bytes = sqlc.arg(requested_guest_ephemeral_disk_bytes)
-       AND run_leases.requested_execution_slots = sqlc.arg(requested_execution_slots)
-       AND runs.max_active_duration_ms = sqlc.arg(max_active_duration_ms)
-       AND runs.active_elapsed_ms = sqlc.arg(active_elapsed_ms)
-       AND COALESCE(run_leases.trace_id, '') = sqlc.arg(trace_id)
-       AND COALESCE(run_leases.span_id, '') = sqlc.arg(span_id)
-       AND COALESCE(run_leases.traceparent, '') = sqlc.arg(traceparent)
-       AND run_leases.start_deadline_at = sqlc.arg(start_deadline_at)
-       AND run_leases.expires_at = sqlc.arg(expires_at)
        AND runs.current_run_lease_id = run_leases.id
        AND runs.current_attempt_number = run_leases.attempt_number
        AND runs.status = 'running'
-       AND run_attempts.terminal_at IS NULL
-       AND worker_groups.state IN ('active', 'draining')
-       AND worker_groups.allows_run
-       AND worker_groups.protocol_version = run_leases.worker_protocol_version
-       AND worker_instances.current_epoch = run_leases.worker_epoch
-       AND worker_instances.state IN ('active', 'draining')
-       AND worker_instances.supports_run
-       AND worker_instances.protocol_version = run_leases.worker_protocol_version
-       AND worker_instances.runtime_identity_id = run_leases.runtime_identity_id
-       AND worker_instances.per_vm_cpu_millis = run_leases.requested_cpu_millis
-       AND worker_instances.per_vm_memory_bytes = run_leases.requested_memory_bytes
-       AND worker_instances.per_vm_guest_ephemeral_disk_bytes = run_leases.requested_guest_ephemeral_disk_bytes
-       AND workspaces.state = 'active'
-       AND workspaces.desired_state = 'active'
-       AND workspaces.ownership_generation = workspace_leases.ownership_generation
-       AND workspaces.writer_generation = workspace_leases.writer_generation
-       AND runtime_instances.runtime_identity_id = run_leases.runtime_identity_id
-       AND runtime_instances.program_deployment_id = runs.deployment_id
-       AND runtime_instances.deployment_definition_id = workspaces.deployment_definition_id
-       AND runtime_instances.desired_state = 'ready'
-       AND runtime_instances.observed_state = 'ready'
-       AND runtime_instances.observed_desired_version = runtime_instances.desired_version
-       AND runtime_instances.reclaimed_at IS NULL
-       AND runtime_instances.reserved_run_id IS NULL
-       AND runtime_instances.reserved_attempt_number IS NULL
-       AND runtime_instances.reserved_process_id IS NULL
-       AND runtime_instances.reserved_workspace_version_id IS NULL
-       AND runtime_instances.reservation_expires_at IS NULL
-       AND runtime_instances.reserved_cpu_millis = run_leases.requested_cpu_millis
-       AND runtime_instances.reserved_memory_bytes = run_leases.requested_memory_bytes
-       AND runtime_instances.reserved_guest_ephemeral_disk_bytes = run_leases.requested_guest_ephemeral_disk_bytes
-       AND runtime_instances.reserved_execution_slots = run_leases.requested_execution_slots
-       AND worker_network_slots.state = 'bound'
-       AND workspace_mounts.state = 'mounted'
-       AND workspace_leases.state = 'active'
-       AND workspace_leases.expires_at > now()
        AND run_leases.state = 'running'
        AND run_leases.expires_at > now()
 ),
@@ -150,7 +40,7 @@ candidate AS (
            octet_length(sqlc.arg(content)::bytea)::bigint AS size_bytes,
            event_args.event_kind,
            event_args.event_payload,
-           event_args.receipt_fingerprint,
+           event_args.lease_fence_fingerprint,
            'run_log:' || current_run_lease.attempt_number::text || ':' || sqlc.arg(stream)::text || ':' || (sqlc.arg(observed_seq)::bigint)::text AS idempotency_key
       FROM current_run_lease
       CROSS JOIN event_args
@@ -186,7 +76,7 @@ inserted_chunk AS (
                'bytes', candidate.size_bytes,
                'event_kind', candidate.event_kind,
                'event_payload', candidate.event_payload,
-               'receipt_fingerprint', candidate.receipt_fingerprint
+               'lease_fence_fingerprint', candidate.lease_fence_fingerprint
            ),
            candidate.content,
            candidate.size_bytes,
@@ -365,15 +255,12 @@ SELECT org_id,
        content,
        size_bytes,
        COALESCE(payload ->> 'event_payload', '')::text AS event_payload,
-       COALESCE(payload ->> 'receipt_fingerprint', '')::text AS receipt_fingerprint,
+       COALESCE(payload ->> 'lease_fence_fingerprint', '')::text AS lease_fence_fingerprint,
        created_at
   FROM telemetry_outbox
  WHERE stream_kind = 'run_log'
    AND source_kind = 'run'
-   AND source_id = sqlc.arg(run_id)
-   AND run_id = sqlc.arg(run_id)
    AND run_lease_id = sqlc.arg(run_lease_id)
-   AND attempt_number = sqlc.arg(attempt_number)
    AND stream_name = sqlc.arg(stream)
    AND observed_seq = sqlc.arg(observed_seq)
  ORDER BY id

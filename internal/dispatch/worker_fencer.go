@@ -400,7 +400,7 @@ type staleWorkerFenceAdvisoryLockGuard struct {
 }
 
 func (guard staleWorkerFenceAdvisoryLockGuard) Transactions(StaleWorkerFenceTransactions) StaleWorkerFenceTransactions {
-	return pgxStaleWorkerFenceTransactions{beginner: guard.guard.conn}
+	return pgxStaleWorkerFenceTransactions{beginner: guard.guard.guard.Conn()}
 }
 
 func (guard staleWorkerFenceAdvisoryLockGuard) Unlock(ctx context.Context) error {

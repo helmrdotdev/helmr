@@ -139,7 +139,7 @@ func TestHandleTokenCreateRetryUsesRenewedReceipt(t *testing.T) {
 	if len(control.requests) != 2 {
 		t.Fatalf("requests = %+v", control.requests)
 	}
-	assertRetriedWithRenewedReceipt(t, control.requests[0].Lease, control.requests[1].Lease, len(control.requests))
+	assertRetriedWithStableFence(t, control.requests[0].Lease, control.requests[1].Lease, len(control.requests))
 }
 
 func TestHandleTokenCreateWritesCorrelatedDecision(t *testing.T) {
@@ -195,7 +195,7 @@ func TestHandleTokenCreateWritesCorrelatedDecision(t *testing.T) {
 		!json.Valid([]byte(decision.GetDataJson())) {
 		t.Fatalf("decision = %+v", decision)
 	}
-	if control.request.Lease != lease ||
+	if control.request.Lease != lease.Fence() ||
 		control.request.TimeoutMS == nil ||
 		*control.request.TimeoutMS != int64(timeoutMS) ||
 		control.request.IdempotencyKey != "approval-1" ||

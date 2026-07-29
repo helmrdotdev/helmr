@@ -36,9 +36,9 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 		var response api.WorkerCreateWorkspaceResponse
 		if err := task.callRunSourceRuntime(ctx, func(
 			callCtx context.Context,
-			lease api.WorkerRunLeaseReceipt,
+			lease api.WorkerRunLeaseAssignment,
 		) error {
-			request.Lease = lease
+			request.Lease = lease.Fence()
 			var callErr error
 			response, callErr = control.CreateRunWorkspace(callCtx, request)
 			return callErr
@@ -64,9 +64,9 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 		var response api.WorkerRetrieveWorkspaceResponse
 		if err := task.callRunSourceRuntime(ctx, func(
 			callCtx context.Context,
-			lease api.WorkerRunLeaseReceipt,
+			lease api.WorkerRunLeaseAssignment,
 		) error {
-			request.Lease = lease
+			request.Lease = lease.Fence()
 			var callErr error
 			response, callErr = control.RetrieveRunWorkspace(callCtx, request)
 			return callErr
@@ -96,9 +96,9 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 		var response api.WorkerReadWorkspaceFileResponse
 		if err := task.callRunSourceRuntime(ctx, func(
 			callCtx context.Context,
-			lease api.WorkerRunLeaseReceipt,
+			lease api.WorkerRunLeaseAssignment,
 		) error {
-			request.Lease = lease
+			request.Lease = lease.Fence()
 			var callErr error
 			response, callErr = control.ReadRunWorkspaceFile(callCtx, request)
 			return callErr
@@ -128,9 +128,9 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 		var response api.WorkerStatWorkspaceFileResponse
 		if err := task.callRunSourceRuntime(ctx, func(
 			callCtx context.Context,
-			lease api.WorkerRunLeaseReceipt,
+			lease api.WorkerRunLeaseAssignment,
 		) error {
-			request.Lease = lease
+			request.Lease = lease.Fence()
 			var callErr error
 			response, callErr = control.StatRunWorkspaceFile(callCtx, request)
 			return callErr
@@ -167,9 +167,9 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 		var response api.WorkerListWorkspaceFilesResponse
 		if err := task.callRunSourceRuntime(ctx, func(
 			callCtx context.Context,
-			lease api.WorkerRunLeaseReceipt,
+			lease api.WorkerRunLeaseAssignment,
 		) error {
-			request.Lease = lease
+			request.Lease = lease.Fence()
 			var callErr error
 			response, callErr = control.ListRunWorkspaceFiles(callCtx, request)
 			return callErr
@@ -213,9 +213,9 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 		var response api.WorkerDeleteWorkspaceResponse
 		if err := task.callRunSourceRuntime(ctx, func(
 			callCtx context.Context,
-			lease api.WorkerRunLeaseReceipt,
+			lease api.WorkerRunLeaseAssignment,
 		) error {
-			request.Lease = lease
+			request.Lease = lease.Fence()
 			var callErr error
 			response, callErr = control.DeleteRunWorkspace(callCtx, request)
 			return callErr
@@ -262,9 +262,9 @@ func (task *guestRunLeaseTask) executeWorkspaceRuntime(
 	var response api.WorkerExecuteWorkspaceResponse
 	if err := task.callRunSourceRuntime(ctx, func(
 		callCtx context.Context,
-		lease api.WorkerRunLeaseReceipt,
+		lease api.WorkerRunLeaseAssignment,
 	) error {
-		request.Lease = lease
+		request.Lease = lease.Fence()
 		var callErr error
 		response, callErr = control.ExecuteRunWorkspace(callCtx, request)
 		return callErr
@@ -293,9 +293,9 @@ func (task *guestRunLeaseTask) executeWorkspaceRuntime(
 		response = api.WorkerExecuteWorkspaceResponse{}
 		if err := task.callRunSourceRuntime(ctx, func(
 			callCtx context.Context,
-			lease api.WorkerRunLeaseReceipt,
+			lease api.WorkerRunLeaseAssignment,
 		) error {
-			poll.Lease = lease
+			poll.Lease = lease.Fence()
 			var callErr error
 			response, callErr = control.PollRunWorkspaceExec(callCtx, poll)
 			return callErr

@@ -18,7 +18,7 @@ import (
 var errStaleActorTurnCommit = errors.New("Actor turn commit is stale")
 
 type parsedActorTurnCommit struct {
-	lease               parsedRunLeaseReceipt
+	lease               parsedRunLeaseFence
 	correlationID       uuid.UUID
 	targetInputSequence int64
 	baseVersionID       uuid.UUID
@@ -27,7 +27,7 @@ type parsedActorTurnCommit struct {
 }
 
 func parseActorTurnCommitRequest(request api.WorkerCommitActorTurnRequest) (parsedActorTurnCommit, error) {
-	lease, err := parseRunLeaseReceipt(request.Lease)
+	lease, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
 		return parsedActorTurnCommit{}, err
 	}
@@ -38,9 +38,6 @@ func parseActorTurnCommitRequest(request api.WorkerCommitActorTurnRequest) (pars
 	baseVersionID, err := parseCanonicalUUID("base_workspace_version_id", request.BaseWorkspaceVersionID)
 	if err != nil {
 		return parsedActorTurnCommit{}, err
-	}
-	if baseVersionID != lease.baseWorkspaceVersionID || request.BaseWorkspaceVersionID != request.Lease.BaseWorkspaceVersionID {
-		return parsedActorTurnCommit{}, errors.New("base_workspace_version_id must match the Run Lease receipt")
 	}
 	if request.TargetInputSequence <= 0 {
 		return parsedActorTurnCommit{}, errors.New("target_input_sequence must be positive")
@@ -69,9 +66,6 @@ func (s *Server) commitActorTurn(
 	request api.WorkerCommitActorTurnRequest,
 	commit parsedActorTurnCommit,
 ) (api.WorkerCommitActorTurnResponse, error) {
-	if request.Lease.WorkerEpoch != worker.WorkerEpoch || request.Lease.WorkerProtocolVersion != worker.ProtocolVersion {
-		return api.WorkerCommitActorTurnResponse{}, errStaleActorTurnCommit
-	}
 	if commit.artifact != nil {
 		capture := parsedTaskWorkspaceCapture{tree: commit.tree, artifact: *commit.artifact}
 		if _, err := s.verifyTaskWorkspaceCapture(ctx, capture); err != nil {
@@ -81,12 +75,6 @@ func (s *Server) commitActorTurn(
 
 	var response api.WorkerCommitActorTurnResponse
 	err := s.inTx(ctx, func(work *txWork) error {
-		if _, err := secret.LockAttemptDelivery(
-			ctx, work.q, pgvalue.UUID(commit.lease.runID), request.Lease.AttemptNumber,
-			pgvalue.UUID(commit.lease.workspaceID),
-		); err != nil {
-			return fmt.Errorf("lock Actor turn Secret authority: %w", err)
-		}
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(commit.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
 			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
@@ -94,6 +82,12 @@ func (s *Server) commitActorTurn(
 		})
 		if err != nil {
 			return staleActorTurnCommit(err)
+		}
+		if _, err := secret.LockAttemptDelivery(
+			ctx, work.q, locators.RunID, locators.AttemptNumber,
+			locators.WorkspaceID,
+		); err != nil {
+			return fmt.Errorf("lock Actor turn Secret authority: %w", err)
 		}
 		owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
 		if err != nil || !owner.actor.ID.Valid {
@@ -124,13 +118,6 @@ func (s *Server) commitActorTurn(
 		if authority.actor.CommittedInputSequence+1 != commit.targetInputSequence ||
 			commit.targetInputSequence >= authority.actor.NextInputSequence ||
 			authority.workspaceLease.BaseVersionID != pgvalue.UUID(commit.baseVersionID) {
-			return errStaleActorTurnCommit
-		}
-		currentReceipt, err := projectActorTurnLease(authority)
-		if err != nil {
-			return err
-		}
-		if !equalRunLeaseReceipt(currentReceipt, request.Lease) {
 			return errStaleActorTurnCommit
 		}
 		base, err := getActorTurnVersion(ctx, work.q, authority, authority.workspaceLease.BaseVersionID)
@@ -239,7 +226,7 @@ func (s *Server) commitActorTurn(
 		if err != nil {
 			return staleActorTurnCommit(err)
 		}
-		response, err = projectActorTurnResponse(request, commit, authority, versionID)
+		response, err = projectActorTurnResponse(request, commit, versionID)
 		return err
 	})
 	return response, err
@@ -284,15 +271,6 @@ func replayActorTurnCommit(
 		authority.workspaceMount.MaterializedVersionID != authority.workspaceLease.BaseVersionID {
 		return api.WorkerCommitActorTurnResponse{}, false, nil
 	}
-	currentReceipt, err := projectActorTurnLease(authority)
-	if err != nil {
-		return api.WorkerCommitActorTurnResponse{}, false, err
-	}
-	replayReceipt := currentReceipt
-	replayReceipt.BaseWorkspaceVersionID = request.BaseWorkspaceVersionID
-	if !equalRunLeaseReceipt(replayReceipt, request.Lease) {
-		return api.WorkerCommitActorTurnResponse{}, false, nil
-	}
 	version, err := getActorTurnVersion(ctx, store, authority, authority.workspace.HeadVersionID)
 	if err != nil {
 		return api.WorkerCommitActorTurnResponse{}, false, staleActorTurnCommit(err)
@@ -316,7 +294,7 @@ func replayActorTurnCommit(
 		!version.ArtifactMediaType.Valid || version.ArtifactMediaType.String != commit.artifact.MediaType {
 		return api.WorkerCommitActorTurnResponse{}, false, nil
 	}
-	response, err := projectActorTurnResponse(request, commit, authority, authority.workspace.HeadVersionID)
+	response, err := projectActorTurnResponse(request, commit, authority.workspace.HeadVersionID)
 	return response, err == nil, err
 }
 
@@ -332,32 +310,17 @@ func getActorTurnVersion(
 	})
 }
 
-func projectActorTurnLease(authority runLeaseClaimAuthority) (api.WorkerRunLeaseReceipt, error) {
-	return projectRunLeaseReceipt(runLeaseProjectionAuthority{
-		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
-		networkSlot: authority.networkSlot, runLease: authority.runLease,
-		workspace: authority.workspace, workspaceMount: authority.workspaceMount,
-		workspaceLease: authority.workspaceLease,
-	})
-}
-
 func projectActorTurnResponse(
 	request api.WorkerCommitActorTurnRequest,
 	commit parsedActorTurnCommit,
-	authority runLeaseClaimAuthority,
 	versionID pgtype.UUID,
 ) (api.WorkerCommitActorTurnResponse, error) {
-	lease, err := projectActorTurnLease(authority)
-	if err != nil {
-		return api.WorkerCommitActorTurnResponse{}, err
-	}
 	workspaceVersionID, err := requiredClaimUUIDString("Actor turn Workspace version ID", versionID)
 	if err != nil {
 		return api.WorkerCommitActorTurnResponse{}, err
 	}
 	return api.WorkerCommitActorTurnResponse{
-		Lease: lease, RunID: request.Lease.RunID, AttemptNumber: request.Lease.AttemptNumber,
-		RunLeaseID: request.Lease.ID, CorrelationID: commit.correlationID.String(),
+		Lease: request.Lease, CorrelationID: commit.correlationID.String(),
 		CommittedInputSequence: commit.targetInputSequence, WorkspaceVersionID: workspaceVersionID,
 		Tree: request.Tree,
 	}, nil

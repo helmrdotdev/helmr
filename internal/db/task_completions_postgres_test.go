@@ -68,8 +68,7 @@ func TestTaskCompletionQueriesCommitReplayAndRollback(t *testing.T) {
 	}
 
 	replay, err := fixture.queries.GetTaskCompletionReplay(ctx, GetTaskCompletionReplayParams{
-		RunLeaseID: pgvalue.UUID(work.leaseID), RunID: pgvalue.UUID(work.runID),
-		WorkspaceID: pgvalue.UUID(authority.workspaceID), AttemptNumber: 1, LeaseSequence: 1,
+		RunLeaseID: pgvalue.UUID(work.leaseID), LeaseSequence: 1,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
 	})
 	if err != nil || !replay.Valid || replay.String != fingerprint {

@@ -22,7 +22,7 @@ type ControlRunWaits struct {
 }
 
 type RestoreAcknowledgement struct {
-	Lease                api.WorkerRunLeaseReceipt
+	Lease                api.WorkerRunLeaseAssignment
 	RunWaitID            string
 	CheckpointID         string
 	ResumeAttachID       string
@@ -43,17 +43,16 @@ func (w ControlRunWaits) AcknowledgeRestore(ctx context.Context, request Restore
 		return errors.New("exact Run resume release client is required")
 	}
 	response, err := client.AcknowledgeRunResumeRelease(ctx, api.WorkerRunResumeReleaseRequest{
-		Lease:                request.Lease,
+		Lease:                request.Lease.Fence(),
 		RunWaitID:            request.RunWaitID,
 		CheckpointID:         request.CheckpointID,
 		ResumeAttachID:       request.ResumeAttachID,
 		ResumeRequestVersion: request.ResumeRequestVersion,
-		RunLeaseID:           request.Lease.ID,
 	})
 	if err != nil {
 		return err
 	}
-	if !equalRunLeaseReceipt(response.Lease, request.Lease) ||
+	if response.Lease != request.Lease.Fence() ||
 		response.RunWaitID != request.RunWaitID || response.CheckpointID != request.CheckpointID ||
 		response.ResumeAttachID != request.ResumeAttachID ||
 		response.ResumeRequestVersion != request.ResumeRequestVersion {
@@ -83,7 +82,7 @@ func (w ControlRunWaits) ContinueRunWait(
 	if w.Client == nil {
 		return errors.New("run wait control client is required")
 	}
-	lease, err := request.currentLeaseReceipt()
+	lease, err := request.currentLeaseAssignment()
 	if err != nil {
 		return err
 	}
@@ -103,12 +102,12 @@ func (w ControlRunWaits) ContinueRunWait(
 	}
 	pollDelay := 100 * time.Millisecond
 	for {
-		lease, err := request.currentLeaseReceipt()
+		lease, err := request.currentLeaseAssignment()
 		if err != nil {
 			return err
 		}
 		intent, pollErr := w.Client.PollRunWait(ctx, api.WorkerRunWaitPollRequest{
-			Lease:     lease,
+			Lease:     lease.Fence(),
 			RunWaitID: opened.RunWaitID,
 		})
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -137,12 +136,12 @@ func (w ControlRunWaits) ContinueRunWait(
 				return err
 			}
 			if intent.RequireAck {
-				lease, err := request.currentLeaseReceipt()
+				lease, err := request.currentLeaseAssignment()
 				if err != nil {
 					return err
 				}
 				if _, err := w.Client.AcknowledgeRunWaitResume(ctx, api.WorkerRunWaitResumeAckRequest{
-					Lease: lease, RunWaitID: opened.RunWaitID, ResumeRequestVersion: intent.RequestVersion,
+					Lease: lease.Fence(), RunWaitID: opened.RunWaitID, ResumeRequestVersion: intent.RequestVersion,
 				}); err != nil {
 					return fmt.Errorf("acknowledge run wait resume: %w", err)
 				}
@@ -169,12 +168,12 @@ func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request W
 		return errors.New("checkpoint request id and version are required")
 	}
 	failCheckpoint := func(err error) error {
-		lease, leaseErr := request.currentLeaseReceipt()
+		lease, leaseErr := request.currentLeaseAssignment()
 		if leaseErr != nil {
 			return leaseErr
 		}
 		failedRequest := api.WorkerCheckpointFailedRequest{
-			Lease: lease, RequestVersion: intent.RequestVersion,
+			Lease: lease.Fence(), RequestVersion: intent.RequestVersion,
 			RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID, Error: err.Error(),
 		}
 		for {
@@ -190,7 +189,7 @@ func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request W
 	if request.Checkpointer == nil {
 		return failCheckpoint(errors.New("run checkpoint support is required"))
 	}
-	lease, err := request.currentLeaseReceipt()
+	lease, err := request.currentLeaseAssignment()
 	if err != nil {
 		return err
 	}
@@ -215,12 +214,12 @@ func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request W
 		err := errors.New("workspace capture is required before parking")
 		return failCheckpoint(err)
 	}
-	lease, err = request.currentLeaseReceipt()
+	lease, err = request.currentLeaseAssignment()
 	if err != nil {
 		return err
 	}
 	readyRequest := api.WorkerCheckpointReadyRequest{
-		Lease: lease, RequestVersion: intent.RequestVersion,
+		Lease: lease.Fence(), RequestVersion: intent.RequestVersion,
 		RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID,
 		WorkspaceCapture: *workerCheckpointWorkspaceCapture(checkpoint.WorkspaceCapture),
 		Manifest:         checkpoint.Manifest,
@@ -256,12 +255,12 @@ func (w ControlRunWaits) AddRunWait(ctx context.Context, request WaitRequest) (a
 	if w.Client == nil {
 		return api.WorkerCreateRunWaitResponse{}, errors.New("run wait control client is required")
 	}
-	lease, err := request.currentLeaseReceipt()
+	lease, err := request.currentLeaseAssignment()
 	if err != nil {
 		return api.WorkerCreateRunWaitResponse{}, err
 	}
 	return w.Client.CreateRunWait(ctx, api.WorkerCreateRunWaitRequest{
-		Lease:                         lease,
+		Lease:                         lease.Fence(),
 		CorrelationID:                 request.CorrelationID,
 		RunWaitID:                     request.RunWaitID,
 		ResumeAttachID:                request.ResumeAttachID,
@@ -275,18 +274,18 @@ func (w ControlRunWaits) AddRunWait(ctx context.Context, request WaitRequest) (a
 	})
 }
 
-func (request WaitRequest) currentLeaseReceipt() (api.WorkerRunLeaseReceipt, error) {
+func (request WaitRequest) currentLeaseAssignment() (api.WorkerRunLeaseAssignment, error) {
 	if request.Leases != nil {
-		provider, ok := request.Leases.(api.WorkerRunLeaseReceiptProvider)
+		provider, ok := request.Leases.(api.WorkerRunLeaseAssignmentProvider)
 		if !ok {
-			return api.WorkerRunLeaseReceipt{}, errors.New("full Run Lease receipt provider is required for durable waits")
+			return api.WorkerRunLeaseAssignment{}, errors.New("Run Lease assignment provider is required for durable waits")
 		}
-		return provider.CurrentWorkerRunLeaseReceipt(), nil
+		return provider.CurrentWorkerRunLeaseAssignment(), nil
 	}
-	if request.LeaseReceipt.ID == "" {
-		return api.WorkerRunLeaseReceipt{}, errors.New("full Run Lease receipt is required for durable waits")
+	if request.LeaseAssignment.ID == "" {
+		return api.WorkerRunLeaseAssignment{}, errors.New("Run Lease assignment is required for durable waits")
 	}
-	return request.LeaseReceipt, nil
+	return request.LeaseAssignment, nil
 }
 
 func checkpointReadyRetryable(err error) bool {

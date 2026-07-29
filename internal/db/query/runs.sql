@@ -26,7 +26,7 @@ SELECT task_definition.id AS task_definition_id,
  WHERE environments.org_id = sqlc.arg(org_id)
    AND environments.project_id = sqlc.arg(project_id)
    AND environments.id = sqlc.arg(environment_id)
- FOR UPDATE OF environments;
+ FOR NO KEY UPDATE OF environments;
 
 -- name: CreateRootRunFromCurrentDeployment :one
 WITH selected_target AS MATERIALIZED (
@@ -70,7 +70,7 @@ WITH selected_target AS MATERIALIZED (
                   AND idempotency_claims.retired_at IS NULL
            )
        )
-     FOR UPDATE OF environments
+     FOR NO KEY UPDATE OF environments
 ), created_run AS (
     INSERT INTO runs (
         id,

@@ -30,7 +30,7 @@ type RunLeaseControl interface {
 	ClaimRunLease(context.Context, api.WorkerRunLeaseWork) (api.WorkerRunLeaseClaimResponse, error)
 	AcknowledgeRunStart(context.Context, api.WorkerRunStartRequest) (api.WorkerRunStartResponse, error)
 	AcknowledgeRunEntrypoint(context.Context, api.WorkerRunEntrypointRequest) error
-	RenewRunLease(context.Context, api.WorkerRunLeaseReceipt) (api.WorkerRunLeaseRenewResponse, error)
+	RenewRunLease(context.Context, api.WorkerRunLeaseAssignment) (api.WorkerRunLeaseRenewResponse, error)
 	BeginRunFinalization(context.Context, api.WorkerBeginRunFinalizationRequest) (api.WorkerBeginRunFinalizationResponse, error)
 	CompleteTask(context.Context, api.WorkerCompleteTaskRequest) error
 	CompleteActor(context.Context, api.WorkerCompleteActorRequest) error
@@ -38,7 +38,7 @@ type RunLeaseControl interface {
 	SendRunActorInput(context.Context, api.WorkerSendActorInputRequest) (api.WorkerSendActorInputResponse, error)
 	AppendActorOutput(context.Context, api.WorkerAppendActorOutputRequest) (api.WorkerAppendActorOutputResponse, error)
 	CreateRuntimeToken(context.Context, api.WorkerCreateTokenRequest) (api.TokenResponse, error)
-	AppendRunLog(context.Context, api.WorkerRunLeaseReceipt, api.WorkerLogStream, uint64, []byte) error
+	AppendRunLog(context.Context, api.WorkerRunLeaseAssignment, api.WorkerLogStream, uint64, []byte) error
 }
 
 type ActorRuntimeControl interface {
@@ -66,15 +66,15 @@ type RunLeaseTaskResult struct {
 }
 
 type RunLeaseTaskRenewal struct {
-	Previous api.WorkerRunLeaseReceipt
-	Lease    api.WorkerRunLeaseReceipt
+	Previous api.WorkerRunLeaseAssignment
+	Lease    api.WorkerRunLeaseAssignment
 }
 
 type RunLeaseTask interface {
 	Close()
 	Wait(context.Context) (RunLeaseTaskResult, error)
 	RenewRunLease(context.Context) (RunLeaseTaskRenewal, error)
-	BeginWorkspaceFinalization(context.Context, api.WorkerRunLeaseReceipt, api.WorkerRunLeaseReceipt, string, api.WorkerRunFinalizationKind) error
+	BeginWorkspaceFinalization(context.Context, api.WorkerRunLeaseAssignment, api.WorkerRunLeaseAssignment, string, api.WorkerRunFinalizationKind) error
 	CaptureWorkspace(context.Context) (api.WorkerTaskWorkspaceCapture, error)
 	CreateHandoffCheckpoint(context.Context, api.WorkerRunFinalizationHandoff, string, api.WorkerTaskWorkspaceCapture) (api.WorkerCheckpointManifest, error)
 	ResetWorkspace(context.Context) (api.WorkerTaskWorkspaceRollback, error)
@@ -102,7 +102,7 @@ type guestRunLeaseTask struct {
 	orgID         string
 
 	mu             sync.Mutex
-	lease          api.WorkerRunLeaseReceipt
+	lease          api.WorkerRunLeaseAssignment
 	authority      *workspacev0.WorkspaceRunAuthority
 	operationID    string
 	finalizingKind api.WorkerRunFinalizationKind
@@ -111,12 +111,11 @@ type guestRunLeaseTask struct {
 
 func (task *guestRunLeaseTask) callRunSourceRuntime(
 	ctx context.Context,
-	call func(context.Context, api.WorkerRunLeaseReceipt) error,
+	call func(context.Context, api.WorkerRunLeaseAssignment) error,
 ) error {
 	return retryRunLeaseRequest(ctx, func(callCtx context.Context) error {
-		// A Control source fence compares the complete receipt. Hold renewal
-		// only across this bounded HTTP attempt so the receipt cannot change
-		// between attachment and validation. Retry delays stay unlocked.
+		// Keep the local assignment expiry stable while deriving this attempt's
+		// deadline. Retry delays do not hold renewal.
 		task.mu.Lock()
 		defer task.mu.Unlock()
 		if task.finished || task.finalizingKind != "" {
@@ -212,7 +211,7 @@ type runLeaseProgramEventSink struct {
 
 func (sink runLeaseProgramEventSink) AppendRunLog(
 	ctx context.Context,
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseAssignment,
 	stream api.WorkerLogStream,
 	sequence uint64,
 	content []byte,
@@ -222,7 +221,7 @@ func (sink runLeaseProgramEventSink) AppendRunLog(
 
 func (sink runLeaseProgramEventSink) ApplyRunMetadata(
 	ctx context.Context,
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseAssignment,
 	request *runv0.MetadataUpdated,
 ) error {
 	control, err := requireRunObservabilityControl(sink.control)
@@ -234,7 +233,7 @@ func (sink runLeaseProgramEventSink) ApplyRunMetadata(
 
 func (sink runLeaseProgramEventSink) RecordStructuredRunLog(
 	ctx context.Context,
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseAssignment,
 	sequence uint64,
 	request *runv0.StructuredLogRequested,
 ) error {
@@ -248,29 +247,29 @@ func (sink runLeaseProgramEventSink) RecordStructuredRunLog(
 func (task *guestRunLeaseTask) CurrentWorkerRunLease() api.WorkerRunLease {
 	task.mu.Lock()
 	defer task.mu.Unlock()
-	return workerRunLeaseFromReceipt(task.orgID, task.lease)
+	return workerRunLeaseFromAssignment(task.orgID, task.lease)
 }
 
-func (task *guestRunLeaseTask) CurrentWorkerRunLeaseReceipt() api.WorkerRunLeaseReceipt {
+func (task *guestRunLeaseTask) CurrentWorkerRunLeaseAssignment() api.WorkerRunLeaseAssignment {
 	task.mu.Lock()
 	defer task.mu.Unlock()
 	return task.lease
 }
 
-func workerRunLeaseFromReceipt(orgID string, receipt api.WorkerRunLeaseReceipt) api.WorkerRunLease {
+func workerRunLeaseFromAssignment(orgID string, assignment api.WorkerRunLeaseAssignment) api.WorkerRunLease {
 	return api.WorkerRunLease{
-		ID: receipt.ID, OrgID: orgID, RunID: receipt.RunID,
-		WorkerGroupID:         receipt.WorkerGroupID,
-		WorkerInstanceID:      receipt.WorkerInstanceID,
-		WorkerEpoch:           receipt.WorkerEpoch,
-		LeaseSequence:         receipt.LeaseSequence,
-		RuntimeInstanceID:     receipt.RuntimeInstanceID,
-		NetworkSlotID:         receipt.NetworkSlotID,
-		NetworkSlotGeneration: receipt.NetworkSlotGeneration,
-		ProtocolVersion:       receipt.WorkerProtocolVersion,
-		AttemptNumber:         receipt.AttemptNumber,
-		Trace:                 receipt.Trace,
-		ExpiresAt:             receipt.ExpiresAt,
+		ID: assignment.ID, OrgID: orgID, RunID: assignment.RunID,
+		WorkerGroupID:         assignment.WorkerGroupID,
+		WorkerInstanceID:      assignment.WorkerInstanceID,
+		WorkerEpoch:           assignment.WorkerEpoch,
+		LeaseSequence:         assignment.LeaseSequence,
+		RuntimeInstanceID:     assignment.RuntimeInstanceID,
+		NetworkSlotID:         assignment.NetworkSlotID,
+		NetworkSlotGeneration: assignment.NetworkSlotGeneration,
+		ProtocolVersion:       assignment.WorkerProtocolVersion,
+		AttemptNumber:         assignment.AttemptNumber,
+		Trace:                 assignment.Trace,
+		ExpiresAt:             assignment.ExpiresAt,
 	}
 }
 
@@ -313,14 +312,14 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 	task.program.observedEventSeq++
 	switch value := event.Event.(type) {
 	case *runv0.RunEvent_StdoutChunk:
-		return taskControlEvents{task: task}.AppendRunLog(ctx, api.WorkerRunLeaseReceipt{}, api.WorkerLogStreamStdout, task.program.observedEventSeq, value.StdoutChunk)
+		return taskControlEvents{task: task}.AppendRunLog(ctx, api.WorkerRunLeaseAssignment{}, api.WorkerLogStreamStdout, task.program.observedEventSeq, value.StdoutChunk)
 	case *runv0.RunEvent_StderrChunk:
-		return taskControlEvents{task: task}.AppendRunLog(ctx, api.WorkerRunLeaseReceipt{}, api.WorkerLogStreamStderr, task.program.observedEventSeq, value.StderrChunk)
+		return taskControlEvents{task: task}.AppendRunLog(ctx, api.WorkerRunLeaseAssignment{}, api.WorkerLogStreamStderr, task.program.observedEventSeq, value.StderrChunk)
 	case *runv0.RunEvent_MetadataUpdated:
 		return processRunMetadataEvent(
 			ctx,
 			taskControlEvents{task: task},
-			api.WorkerRunLeaseReceipt{},
+			api.WorkerRunLeaseAssignment{},
 			task.program.session.Stream(),
 			value.MetadataUpdated,
 		)
@@ -328,7 +327,7 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 		return processStructuredLogEvent(
 			ctx,
 			taskControlEvents{task: task},
-			api.WorkerRunLeaseReceipt{},
+			api.WorkerRunLeaseAssignment{},
 			task.program.session.Stream(),
 			task.program.observedEventSeq,
 			value.StructuredLogRequested,
@@ -427,7 +426,7 @@ type taskControlEvents struct {
 
 func (events taskControlEvents) AppendRunLog(
 	ctx context.Context,
-	_ api.WorkerRunLeaseReceipt,
+	_ api.WorkerRunLeaseAssignment,
 	stream api.WorkerLogStream,
 	sequence uint64,
 	content []byte,
@@ -445,7 +444,7 @@ func (events taskControlEvents) AppendRunLog(
 
 func (events taskControlEvents) ApplyRunMetadata(
 	ctx context.Context,
-	_ api.WorkerRunLeaseReceipt,
+	_ api.WorkerRunLeaseAssignment,
 	request *runv0.MetadataUpdated,
 ) error {
 	control, err := requireRunObservabilityControl(events.task.control)
@@ -458,16 +457,16 @@ func (events taskControlEvents) ApplyRunMetadata(
 	}
 	return events.task.callRunSourceRuntime(ctx, func(
 		callCtx context.Context,
-		lease api.WorkerRunLeaseReceipt,
+		lease api.WorkerRunLeaseAssignment,
 	) error {
-		controlRequest.Lease = lease
+		controlRequest.Lease = lease.Fence()
 		return sendRunMetadataRequest(callCtx, control, controlRequest)
 	})
 }
 
 func (events taskControlEvents) RecordStructuredRunLog(
 	ctx context.Context,
-	_ api.WorkerRunLeaseReceipt,
+	_ api.WorkerRunLeaseAssignment,
 	sequence uint64,
 	request *runv0.StructuredLogRequested,
 ) error {
@@ -481,9 +480,9 @@ func (events taskControlEvents) RecordStructuredRunLog(
 	}
 	return events.task.callRunSourceRuntime(ctx, func(
 		callCtx context.Context,
-		lease api.WorkerRunLeaseReceipt,
+		lease api.WorkerRunLeaseAssignment,
 	) error {
-		controlRequest.Lease = lease
+		controlRequest.Lease = lease.Fence()
 		return sendStructuredRunLogRequest(callCtx, control, controlRequest)
 	})
 }
@@ -517,12 +516,12 @@ func (task *guestRunLeaseTask) RenewRunLease(
 func renewRunLeaseAuthority(
 	ctx context.Context,
 	control interface {
-		RenewRunLease(context.Context, api.WorkerRunLeaseReceipt) (api.WorkerRunLeaseRenewResponse, error)
+		RenewRunLease(context.Context, api.WorkerRunLeaseAssignment) (api.WorkerRunLeaseRenewResponse, error)
 	},
 	mounts WorkspaceMountSessionRegistry,
-	previous api.WorkerRunLeaseReceipt,
+	previous api.WorkerRunLeaseAssignment,
 	authority *workspacev0.WorkspaceRunAuthority,
-) (api.WorkerRunLeaseReceipt, *workspacev0.WorkspaceAuthorityFence, error) {
+) (api.WorkerRunLeaseAssignment, *workspacev0.WorkspaceAuthorityFence, error) {
 	controlCtx, cancelControl := context.WithDeadline(ctx, previous.ExpiresAt)
 	defer cancelControl()
 	var response api.WorkerRunLeaseRenewResponse
@@ -532,17 +531,25 @@ func renewRunLeaseAuthority(
 		return requestErr
 	}); err != nil {
 		if !previous.ExpiresAt.After(time.Now()) {
-			return api.WorkerRunLeaseReceipt{}, nil, fmt.Errorf("%w: %v", errRunLeaseAuthorityLapsed, err)
+			return api.WorkerRunLeaseAssignment{}, nil, fmt.Errorf("%w: %v", errRunLeaseAuthorityLapsed, err)
 		}
-		return api.WorkerRunLeaseReceipt{}, nil, err
+		return api.WorkerRunLeaseAssignment{}, nil, err
 	}
-	if err := validateReceiptExpiryAdvance(previous, response.Lease); err != nil {
-		return api.WorkerRunLeaseReceipt{}, nil, err
+	if response.Lease != previous.Fence() ||
+		response.BaseWorkspaceVersionID != previous.BaseWorkspaceVersionID {
+		return api.WorkerRunLeaseAssignment{}, nil, errors.New(
+			"Run Lease renewal response changed its fence or Workspace frontier",
+		)
 	}
-	if response.Lease.ExpiresAt.Equal(previous.ExpiresAt) {
+	renewed := previous
+	renewed.ExpiresAt = response.ExpiresAt
+	if err := validateRunLeaseExpiryAdvance(previous, renewed); err != nil {
+		return api.WorkerRunLeaseAssignment{}, nil, err
+	}
+	if renewed.ExpiresAt.Equal(previous.ExpiresAt) {
 		return previous, nil, nil
 	}
-	guestCtx, cancelGuest := context.WithDeadline(context.Background(), response.Lease.ExpiresAt)
+	guestCtx, cancelGuest := context.WithDeadline(context.Background(), renewed.ExpiresAt)
 	defer cancelGuest()
 	var fence *workspacev0.WorkspaceAuthorityFence
 	if err := retryWorkspaceAuthorityTransport(guestCtx, func(requestCtx context.Context) error {
@@ -551,17 +558,17 @@ func renewRunLeaseAuthority(
 			requestCtx,
 			&workspacev0.RenewWorkspaceAuthorityRequest{
 				Previous:             proto.Clone(authority).(*workspacev0.WorkspaceRunAuthority),
-				NewExpiresAtUnixNano: response.Lease.ExpiresAt.UnixNano(),
+				NewExpiresAtUnixNano: renewed.ExpiresAt.UnixNano(),
 			},
 		)
 		return requestErr
 	}); err != nil {
-		if !response.Lease.ExpiresAt.After(time.Now()) {
-			return api.WorkerRunLeaseReceipt{}, nil, fmt.Errorf("%w: %v", errRunLeaseAuthorityLapsed, err)
+		if !renewed.ExpiresAt.After(time.Now()) {
+			return api.WorkerRunLeaseAssignment{}, nil, fmt.Errorf("%w: %v", errRunLeaseAuthorityLapsed, err)
 		}
-		return api.WorkerRunLeaseReceipt{}, nil, err
+		return api.WorkerRunLeaseAssignment{}, nil, err
 	}
-	return response.Lease, proto.Clone(fence).(*workspacev0.WorkspaceAuthorityFence), nil
+	return renewed, proto.Clone(fence).(*workspacev0.WorkspaceAuthorityFence), nil
 }
 
 func retryWorkspaceAuthorityTransport(
@@ -600,8 +607,8 @@ func retryWorkspaceAuthorityTransport(
 
 func (task *guestRunLeaseTask) BeginWorkspaceFinalization(
 	ctx context.Context,
-	previous api.WorkerRunLeaseReceipt,
-	frozen api.WorkerRunLeaseReceipt,
+	previous api.WorkerRunLeaseAssignment,
+	frozen api.WorkerRunLeaseAssignment,
 	operationID string,
 	kind api.WorkerRunFinalizationKind,
 ) error {
@@ -610,10 +617,10 @@ func (task *guestRunLeaseTask) BeginWorkspaceFinalization(
 	if task.finished {
 		return errors.New("Run Lease Task is already finalized")
 	}
-	if !equalRunLeaseReceipt(task.lease, previous) {
+	if !equalRunLeaseAssignment(task.lease, previous) {
 		return errors.New("Workspace finalization previous receipt is not current")
 	}
-	if err := validateReceiptExpiryAdvance(previous, frozen); err != nil {
+	if err := validateRunLeaseExpiryAdvance(previous, frozen); err != nil {
 		return err
 	}
 	if !frozen.ExpiresAt.After(previous.ExpiresAt) {
@@ -772,15 +779,15 @@ func (task *guestRunLeaseTask) clearCapabilities() {
 	}
 }
 
-func validateReceiptExpiryAdvance(
-	previous api.WorkerRunLeaseReceipt,
-	next api.WorkerRunLeaseReceipt,
+func validateRunLeaseExpiryAdvance(
+	previous api.WorkerRunLeaseAssignment,
+	next api.WorkerRunLeaseAssignment,
 ) error {
 	previousExpiry := previous.ExpiresAt
 	nextExpiry := next.ExpiresAt
 	previous.ExpiresAt = time.Time{}
 	next.ExpiresAt = time.Time{}
-	if !equalRunLeaseReceipt(previous, next) {
+	if !equalRunLeaseAssignment(previous, next) {
 		return errors.New("Run Lease renewal changed immutable authority")
 	}
 	if nextExpiry.Before(previousExpiry) {

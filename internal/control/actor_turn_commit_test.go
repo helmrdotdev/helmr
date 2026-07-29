@@ -23,7 +23,7 @@ func TestCommitActorTurnAdvancesOnlyTheNextInputCursor(t *testing.T) {
 
 	response, err := server.commitActorTurn(context.Background(), worker, request, commit)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v; calls=%v", err, store.calls)
 	}
 	if store.cursorWrites != 1 || store.cursor.ExpectedInputSequence != 1 ||
 		store.cursor.TargetInputSequence != 2 {
@@ -75,12 +75,12 @@ func TestCommitActorTurnPublishesUnchangedRestoredCheckpointBase(t *testing.T) {
 	store.resetTarget.ParentVersionID = oldHead
 	store.resetTarget.OwnershipGeneration = store.authority.workspace.OwnershipGeneration
 	store.resetTarget.WriterGeneration = store.authority.workspace.WriterGeneration
-	receipt, err := projectActorTurnLease(store.authority)
+	assignment, err := projectActorTurnTestAssignment(store.authority)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request.Lease = receipt
-	request.BaseWorkspaceVersionID = receipt.BaseWorkspaceVersionID
+	request.Lease = assignment.Fence()
+	request.BaseWorkspaceVersionID = assignment.BaseWorkspaceVersionID
 	commit, err := parseActorTurnCommitRequest(request)
 	if err != nil {
 		t.Fatal(err)
@@ -116,12 +116,12 @@ func TestCommitActorTurnInvalidatesRestoredCheckpointBeforePublishingChangedTurn
 	store.resetTarget.ParentVersionID = oldHead
 	store.resetTarget.OwnershipGeneration = store.authority.workspace.OwnershipGeneration
 	store.resetTarget.WriterGeneration = store.authority.workspace.WriterGeneration
-	receipt, err := projectActorTurnLease(store.authority)
+	assignment, err := projectActorTurnTestAssignment(store.authority)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request.Lease = receipt
-	request.BaseWorkspaceVersionID = receipt.BaseWorkspaceVersionID
+	request.Lease = assignment.Fence()
+	request.BaseWorkspaceVersionID = assignment.BaseWorkspaceVersionID
 
 	root := t.TempDir()
 	if err := os.WriteFile(root+"/state.txt", []byte("updated after restore"), 0o600); err != nil {
@@ -169,6 +169,17 @@ func TestCommitActorTurnInvalidatesRestoredCheckpointBeforePublishingChangedTurn
 		response.WorkspaceVersionID != pgvalue.UUIDString(store.authority.workspace.HeadVersionID) {
 		t.Fatalf("response = %+v, head=%s", response, pgvalue.UUIDString(store.authority.workspace.HeadVersionID))
 	}
+}
+
+func projectActorTurnTestAssignment(
+	authority runLeaseClaimAuthority,
+) (api.WorkerRunLeaseAssignment, error) {
+	return projectRunLeaseAssignment(runLeaseProjectionAuthority{
+		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
+		networkSlot: authority.networkSlot, runLease: authority.runLease,
+		workspace: authority.workspace, workspaceMount: authority.workspaceMount,
+		workspaceLease: authority.workspaceLease,
+	})
 }
 
 func TestCommitActorTurnRollsBackChangedWorkspaceWhenCursorAdvanceFails(t *testing.T) {
@@ -430,7 +441,7 @@ func newActorTurnCommitFixture(t *testing.T) (
 		workspace: authority.workspace, workspaceMount: authority.workspaceMount,
 		workspaceLease: authority.workspaceLease,
 	}
-	receipt, err := projectRunLeaseReceipt(projection)
+	assignment, err := projectRunLeaseAssignment(projection)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,8 +464,8 @@ func newActorTurnCommitFixture(t *testing.T) (
 		committedAt: pgvalue.Timestamptz(now),
 	}
 	request := api.WorkerCommitActorTurnRequest{
-		Lease: receipt, CorrelationID: uuid.Must(uuid.NewV7()).String(),
-		TargetInputSequence: 2, BaseWorkspaceVersionID: receipt.BaseWorkspaceVersionID,
+		Lease: assignment.Fence(), CorrelationID: uuid.Must(uuid.NewV7()).String(),
+		TargetInputSequence: 2, BaseWorkspaceVersionID: assignment.BaseWorkspaceVersionID,
 		Tree: api.WorkerWorkspaceTreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
 	}
 	commit, err := parseActorTurnCommitRequest(request)

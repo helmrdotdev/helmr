@@ -96,7 +96,7 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 		decision.GetDataJson() != `{"sequence":7}` {
 		t.Fatalf("decision = %+v", decision)
 	}
-	if control.request.Lease != lease ||
+	if control.request.Lease != lease.Fence() ||
 		control.request.ActorDeclaredID != "mailbox" ||
 		control.request.ActorKey != "primary" ||
 		control.request.IdempotencyKey != "send-1" {
@@ -104,7 +104,7 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 	}
 }
 
-func TestHandleActorInputSendRetryUsesRenewedReceipt(t *testing.T) {
+func TestHandleActorInputSendRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000113"
@@ -156,27 +156,24 @@ func TestHandleActorInputSendRetryUsesRenewedReceipt(t *testing.T) {
 	if len(control.requests) != 2 {
 		t.Fatalf("requests = %+v", control.requests)
 	}
-	assertRetriedWithRenewedReceipt(t, control.requests[0].Lease, control.requests[1].Lease, len(control.requests))
+	assertRetriedWithStableFence(t, control.requests[0].Lease, control.requests[1].Lease, len(control.requests))
 }
 
 func renewRunSourceReceiptAfterAttempt(task *guestRunLeaseTask, attempted <-chan struct{}) {
 	<-attempted
 	task.mu.Lock()
-	task.lease.LeaseSequence++
 	task.lease.ExpiresAt = task.lease.ExpiresAt.Add(time.Minute)
 	task.mu.Unlock()
 }
 
-func assertRetriedWithRenewedReceipt(
+func assertRetriedWithStableFence(
 	t *testing.T,
-	first api.WorkerRunLeaseReceipt,
-	second api.WorkerRunLeaseReceipt,
+	first api.WorkerRunLeaseFence,
+	second api.WorkerRunLeaseFence,
 	count int,
 ) {
 	t.Helper()
-	if count != 2 ||
-		second.LeaseSequence != first.LeaseSequence+1 ||
-		!second.ExpiresAt.After(first.ExpiresAt) {
+	if count != 2 || second != first {
 		t.Fatalf("request count = %d first lease = %+v second lease = %+v", count, first, second)
 	}
 }

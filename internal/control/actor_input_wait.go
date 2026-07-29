@@ -51,7 +51,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		writeError(w, badRequest(err))
 		return
 	}
-	parsed, worker, _, run, err := s.loadRunWaitRegistrationAuthority(r.Context(), request.Lease)
+	parsed, worker, registrationLocators, run, err := s.loadRunWaitRegistrationAuthority(r.Context(), request.Lease)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -81,8 +81,6 @@ func (s *Server) workerCreateActorInputRunWait(
 		return
 	}
 	normalized := request
-	normalized.Lease.StartDeadlineAt = request.Lease.StartDeadlineAt.UTC()
-	normalized.Lease.ExpiresAt = request.Lease.ExpiresAt.UTC()
 	normalized.Params, err = json.Marshal(workerActorInputWaitParams{
 		ActorID: actorID.String(), AfterInputSequence: params.AfterInputSequence,
 	})
@@ -102,11 +100,6 @@ func (s *Server) workerCreateActorInputRunWait(
 
 	var registered db.RunWait
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		if _, err := secret.LockAttemptDelivery(
-			r.Context(), work.q, pgvalue.UUID(parsed.runID), request.Lease.AttemptNumber, pgvalue.UUID(parsed.workspaceID),
-		); err != nil {
-			return fmt.Errorf("lock Actor input Wait Secret authority: %w", err)
-		}
 		lockedLocators, err := work.q.GetLiveRunLeaseLocators(r.Context(), db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: request.Lease.LeaseSequence,
 			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
@@ -114,6 +107,11 @@ func (s *Server) workerCreateActorInputRunWait(
 		})
 		if err != nil {
 			return staleRunLeaseClaim(err)
+		}
+		if _, err := secret.LockAttemptDelivery(
+			r.Context(), work.q, lockedLocators.RunID, lockedLocators.AttemptNumber, lockedLocators.WorkspaceID,
+		); err != nil {
+			return fmt.Errorf("lock Actor input Wait Secret authority: %w", err)
 		}
 		owner, err := lockRunFinalizationOwner(r.Context(), work.q, lockedLocators)
 		if err != nil {
@@ -128,14 +126,6 @@ func (s *Server) workerCreateActorInputRunWait(
 		authority.actor = owner.actor
 		if authority.run.ParentRunID.Valid || authority.run.EntrypointKind != "actor" ||
 			authority.run.ActorID != pgvalue.UUID(actorID) || authority.runLease.State != db.RunLeaseStateRunning {
-			return errStaleRunLeaseClaim
-		}
-		current, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
-			run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
-			networkSlot: authority.networkSlot, runLease: authority.runLease, workspace: authority.workspace,
-			workspaceMount: authority.workspaceMount, workspaceLease: authority.workspaceLease,
-		})
-		if err != nil || !equalCurrentOrPreviousRunLeaseReceipt(current, request.Lease, authority.runLease.PreviousExpiresAt) {
 			return errStaleRunLeaseClaim
 		}
 		cursor := pgtype.Int8{Int64: params.AfterInputSequence, Valid: true}
@@ -200,13 +190,13 @@ func (s *Server) workerCreateActorInputRunWait(
 		return
 	}
 	if err != nil {
-		s.log.Error("register worker Actor input Wait failed", "run_id", request.Lease.RunID, "error", err)
+		s.log.Error("register worker Actor input Wait failed", "run_id", pgvalue.UUIDString(registrationLocators.RunID), "error", err)
 		writeError(w, errors.New("register worker Actor input Wait"))
 		return
 	}
 	response := api.WorkerCreateRunWaitResponse{
-		RunID: request.Lease.RunID, RunWaitID: waitID.String(), ResumeAttachID: resumeAttachID.String(),
-		RuntimeInstanceID: request.Lease.RuntimeInstanceID, RuntimeEpoch: request.Lease.WorkerEpoch,
+		RunID: pgvalue.UUIDString(registrationLocators.RunID), RunWaitID: waitID.String(), ResumeAttachID: resumeAttachID.String(),
+		RuntimeInstanceID: pgvalue.UUIDString(registrationLocators.RuntimeInstanceID), RuntimeEpoch: worker.WorkerEpoch,
 		CheckpointDelayMs: checkpointDelay.Milliseconds(),
 	}
 	if registered.SuspensionState == db.RunWaitStateReleased {

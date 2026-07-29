@@ -42,7 +42,7 @@ func TestWorkerRunStartRequestClosedUnion(t *testing.T) {
 
 func TestWorkerRunStartRequestMarshalUsesSelectedArm(t *testing.T) {
 	data, err := json.Marshal(WorkerRunStartRequest{
-		Lease: WorkerRunLeaseReceipt{ID: "lease"},
+		Lease: WorkerRunLeaseFence{ID: "lease", LeaseSequence: 1},
 		Fresh: &WorkerRunStartFresh{},
 	})
 	if err != nil {

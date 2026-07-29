@@ -5,18 +5,6 @@ SELECT *
    AND attempt_number = sqlc.arg(attempt_number)
    AND id = sqlc.arg(id);
 
--- name: LockTokenWaitRegistration :exec
-SELECT pg_advisory_xact_lock(
-    hashtextextended(
-        concat_ws(
-            ':',
-            'token_wait.register',
-            sqlc.arg(wait_id)::uuid::text
-        ),
-        0
-    )
-);
-
 -- name: GetTokenWaitRegistrationReplay :one
 SELECT run_waits.id AS wait_id,
        runs.state_version AS run_state_version,
@@ -29,26 +17,19 @@ SELECT run_waits.id AS wait_id,
     ON runs.environment_id = run_waits.environment_id
    AND runs.id = run_waits.run_id
   JOIN run_leases
-    ON run_leases.id = sqlc.arg(current_run_lease_id)
+    ON run_leases.id = sqlc.arg(run_lease_id)
    AND run_leases.run_id = run_waits.run_id
    AND run_leases.attempt_number = run_waits.attempt_number
    AND run_leases.workspace_id = run_waits.workspace_id
-  JOIN workspace_leases
-    ON workspace_leases.id = sqlc.arg(workspace_lease_id)
-   AND workspace_leases.owner_run_lease_id = run_leases.id
-   AND workspace_leases.workspace_id = run_waits.workspace_id
  WHERE run_waits.id = sqlc.arg(wait_id)
-   AND run_waits.environment_id = sqlc.arg(environment_id)
-   AND run_waits.run_id = sqlc.arg(run_id)
    AND run_waits.token_id = sqlc.arg(token_id)
    AND run_waits.kind = 'token'
    AND run_waits.resume_attach_id = sqlc.arg(resume_attach_id)
-   AND run_waits.attempt_number = sqlc.arg(attempt_number)
    AND run_waits.registration_request_fingerprint
        = sqlc.arg(request_fingerprint)::text
    AND (
-       run_waits.current_run_lease_id = sqlc.arg(current_run_lease_id)
-       OR run_waits.prior_run_lease_id = sqlc.arg(current_run_lease_id)
+       run_waits.current_run_lease_id = sqlc.arg(run_lease_id)
+       OR run_waits.prior_run_lease_id = sqlc.arg(run_lease_id)
    )
    AND run_waits.metadata = sqlc.arg(metadata)::jsonb
    AND run_waits.tags = sqlc.arg(tags)::text[]
@@ -57,15 +38,6 @@ SELECT run_waits.id AS wait_id,
    AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
    AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
    AND run_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
-   AND run_leases.runtime_instance_id = sqlc.arg(runtime_instance_id)
-   AND run_leases.runtime_identity_id = sqlc.arg(runtime_identity_id)
-   AND workspace_leases.workspace_mount_id = sqlc.arg(workspace_mount_id)
-   AND workspace_leases.ownership_generation = sqlc.arg(ownership_generation)
-   AND workspace_leases.writer_generation = sqlc.arg(writer_generation)
-   AND workspace_leases.mount_fencing_generation = sqlc.arg(mount_fencing_generation)
-   AND run_leases.network_slot_id = sqlc.arg(network_slot_id)
-   AND run_leases.network_slot_generation = sqlc.arg(network_slot_generation)
-   AND run_leases.region_id = sqlc.arg(region_id)
    AND run_waits.actor_speculative_input_sequence
        IS NOT DISTINCT FROM sqlc.narg(actor_speculative_input_sequence);
 
@@ -98,7 +70,8 @@ SELECT state,
  FOR UPDATE;
 
 -- name: LockTokenWaitWorkspace :one
-SELECT owner_actor_id, owner_run_id, state, desired_state
+SELECT owner_actor_id, owner_run_id, state, desired_state,
+       ownership_generation, writer_generation
   FROM workspaces
  WHERE id = sqlc.arg(workspace_id)
    AND environment_id = sqlc.arg(environment_id)

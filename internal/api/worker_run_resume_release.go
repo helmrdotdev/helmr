@@ -17,7 +17,6 @@ func (request *WorkerRunResumeReleaseRequest) UnmarshalJSON(raw []byte) error {
 		CheckpointID         string          `json:"checkpoint_id"`
 		ResumeAttachID       string          `json:"resume_attach_id"`
 		ResumeRequestVersion int64           `json:"resume_request_version"`
-		RunLeaseID           string          `json:"run_lease_id"`
 	}
 	if err := decodeClosedWorkerRunResumeReleaseJSON(raw, &envelope); err != nil {
 		return fmt.Errorf("decode Run resume release request: %w", err)
@@ -25,7 +24,7 @@ func (request *WorkerRunResumeReleaseRequest) UnmarshalJSON(raw []byte) error {
 	if len(envelope.Lease) == 0 || bytes.Equal(bytes.TrimSpace(envelope.Lease), []byte("null")) {
 		return errors.New("Run resume release lease is required")
 	}
-	var lease WorkerRunLeaseReceipt
+	var lease WorkerRunLeaseFence
 	if err := decodeClosedWorkerRunResumeReleaseJSON(envelope.Lease, &lease); err != nil {
 		return fmt.Errorf("decode Run resume release lease: %w", err)
 	}
@@ -35,7 +34,6 @@ func (request *WorkerRunResumeReleaseRequest) UnmarshalJSON(raw []byte) error {
 		CheckpointID:         envelope.CheckpointID,
 		ResumeAttachID:       envelope.ResumeAttachID,
 		ResumeRequestVersion: envelope.ResumeRequestVersion,
-		RunLeaseID:           envelope.RunLeaseID,
 	}
 	return nil
 }

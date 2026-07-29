@@ -1909,52 +1909,32 @@ SELECT run_waits.id AS wait_id,
    AND run_leases.run_id = run_waits.run_id
    AND run_leases.attempt_number = run_waits.attempt_number
    AND run_leases.workspace_id = run_waits.workspace_id
-  JOIN workspace_leases
-    ON workspace_leases.id = $2
-   AND workspace_leases.owner_run_lease_id = run_leases.id
-   AND workspace_leases.workspace_id = run_waits.workspace_id
- WHERE run_waits.id = $3
-   AND run_waits.environment_id = $4
-   AND run_waits.run_id = $5
-   AND run_waits.token_id = $6
+ WHERE run_waits.id = $2
+   AND run_waits.token_id = $3
    AND run_waits.kind = 'token'
-   AND run_waits.resume_attach_id = $7
-   AND run_waits.attempt_number = $8
+   AND run_waits.resume_attach_id = $4
    AND run_waits.registration_request_fingerprint
-       = $9::text
+       = $5::text
    AND (
        run_waits.current_run_lease_id = $1
        OR run_waits.prior_run_lease_id = $1
    )
-   AND run_waits.metadata = $10::jsonb
-   AND run_waits.tags = $11::text[]
-   AND run_leases.lease_sequence = $12
-   AND run_leases.worker_group_id = $13
-   AND run_leases.worker_instance_id = $14
-   AND run_leases.worker_epoch = $15
-   AND run_leases.worker_protocol_version = $16
-   AND run_leases.runtime_instance_id = $17
-   AND run_leases.runtime_identity_id = $18
-   AND workspace_leases.workspace_mount_id = $19
-   AND workspace_leases.ownership_generation = $20
-   AND workspace_leases.writer_generation = $21
-   AND workspace_leases.mount_fencing_generation = $22
-   AND run_leases.network_slot_id = $23
-   AND run_leases.network_slot_generation = $24
-   AND run_leases.region_id = $25
+   AND run_waits.metadata = $6::jsonb
+   AND run_waits.tags = $7::text[]
+   AND run_leases.lease_sequence = $8
+   AND run_leases.worker_group_id = $9
+   AND run_leases.worker_instance_id = $10
+   AND run_leases.worker_epoch = $11
+   AND run_leases.worker_protocol_version = $12
    AND run_waits.actor_speculative_input_sequence
-       IS NOT DISTINCT FROM $26
+       IS NOT DISTINCT FROM $13
 `
 
 type GetTokenWaitRegistrationReplayParams struct {
-	CurrentRunLeaseID             pgtype.UUID `json:"current_run_lease_id"`
-	WorkspaceLeaseID              pgtype.UUID `json:"workspace_lease_id"`
+	RunLeaseID                    pgtype.UUID `json:"run_lease_id"`
 	WaitID                        pgtype.UUID `json:"wait_id"`
-	EnvironmentID                 pgtype.UUID `json:"environment_id"`
-	RunID                         pgtype.UUID `json:"run_id"`
 	TokenID                       pgtype.UUID `json:"token_id"`
 	ResumeAttachID                pgtype.UUID `json:"resume_attach_id"`
-	AttemptNumber                 int32       `json:"attempt_number"`
 	RequestFingerprint            string      `json:"request_fingerprint"`
 	Metadata                      []byte      `json:"metadata"`
 	Tags                          []string    `json:"tags"`
@@ -1963,15 +1943,6 @@ type GetTokenWaitRegistrationReplayParams struct {
 	WorkerInstanceID              pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch                   int64       `json:"worker_epoch"`
 	WorkerProtocolVersion         string      `json:"worker_protocol_version"`
-	RuntimeInstanceID             pgtype.UUID `json:"runtime_instance_id"`
-	RuntimeIdentityID             string      `json:"runtime_identity_id"`
-	WorkspaceMountID              pgtype.UUID `json:"workspace_mount_id"`
-	OwnershipGeneration           int64       `json:"ownership_generation"`
-	WriterGeneration              int64       `json:"writer_generation"`
-	MountFencingGeneration        int64       `json:"mount_fencing_generation"`
-	NetworkSlotID                 pgtype.UUID `json:"network_slot_id"`
-	NetworkSlotGeneration         int64       `json:"network_slot_generation"`
-	RegionID                      string      `json:"region_id"`
 	ActorSpeculativeInputSequence pgtype.Int8 `json:"actor_speculative_input_sequence"`
 }
 
@@ -1986,14 +1957,10 @@ type GetTokenWaitRegistrationReplayRow struct {
 
 func (q *Queries) GetTokenWaitRegistrationReplay(ctx context.Context, arg GetTokenWaitRegistrationReplayParams) (GetTokenWaitRegistrationReplayRow, error) {
 	row := q.db.QueryRow(ctx, getTokenWaitRegistrationReplay,
-		arg.CurrentRunLeaseID,
-		arg.WorkspaceLeaseID,
+		arg.RunLeaseID,
 		arg.WaitID,
-		arg.EnvironmentID,
-		arg.RunID,
 		arg.TokenID,
 		arg.ResumeAttachID,
-		arg.AttemptNumber,
 		arg.RequestFingerprint,
 		arg.Metadata,
 		arg.Tags,
@@ -2002,15 +1969,6 @@ func (q *Queries) GetTokenWaitRegistrationReplay(ctx context.Context, arg GetTok
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
 		arg.WorkerProtocolVersion,
-		arg.RuntimeInstanceID,
-		arg.RuntimeIdentityID,
-		arg.WorkspaceMountID,
-		arg.OwnershipGeneration,
-		arg.WriterGeneration,
-		arg.MountFencingGeneration,
-		arg.NetworkSlotID,
-		arg.NetworkSlotGeneration,
-		arg.RegionID,
 		arg.ActorSpeculativeInputSequence,
 	)
 	var i GetTokenWaitRegistrationReplayRow
@@ -2918,24 +2876,6 @@ func (q *Queries) LockTokenWaitCondition(ctx context.Context, arg LockTokenWaitC
 	return i, err
 }
 
-const lockTokenWaitRegistration = `-- name: LockTokenWaitRegistration :exec
-SELECT pg_advisory_xact_lock(
-    hashtextextended(
-        concat_ws(
-            ':',
-            'token_wait.register',
-            $1::uuid::text
-        ),
-        0
-    )
-)
-`
-
-func (q *Queries) LockTokenWaitRegistration(ctx context.Context, waitID pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, lockTokenWaitRegistration, waitID)
-	return err
-}
-
 const lockTokenWaitRunLease = `-- name: LockTokenWaitRunLease :one
 SELECT state
   FROM run_leases
@@ -3091,7 +3031,8 @@ func (q *Queries) LockTokenWaitRunLineage(ctx context.Context, arg LockTokenWait
 }
 
 const lockTokenWaitWorkspace = `-- name: LockTokenWaitWorkspace :one
-SELECT owner_actor_id, owner_run_id, state, desired_state
+SELECT owner_actor_id, owner_run_id, state, desired_state,
+       ownership_generation, writer_generation
   FROM workspaces
  WHERE id = $1
    AND environment_id = $2
@@ -3104,10 +3045,12 @@ type LockTokenWaitWorkspaceParams struct {
 }
 
 type LockTokenWaitWorkspaceRow struct {
-	OwnerActorID pgtype.UUID `json:"owner_actor_id"`
-	OwnerRunID   pgtype.UUID `json:"owner_run_id"`
-	State        string      `json:"state"`
-	DesiredState string      `json:"desired_state"`
+	OwnerActorID        pgtype.UUID `json:"owner_actor_id"`
+	OwnerRunID          pgtype.UUID `json:"owner_run_id"`
+	State               string      `json:"state"`
+	DesiredState        string      `json:"desired_state"`
+	OwnershipGeneration int64       `json:"ownership_generation"`
+	WriterGeneration    int64       `json:"writer_generation"`
 }
 
 func (q *Queries) LockTokenWaitWorkspace(ctx context.Context, arg LockTokenWaitWorkspaceParams) (LockTokenWaitWorkspaceRow, error) {
@@ -3118,6 +3061,8 @@ func (q *Queries) LockTokenWaitWorkspace(ctx context.Context, arg LockTokenWaitW
 		&i.OwnerRunID,
 		&i.State,
 		&i.DesiredState,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
 	)
 	return i, err
 }

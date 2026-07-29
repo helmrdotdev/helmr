@@ -17,14 +17,16 @@ import (
 var errStaleRunFinalization = errors.New("Run finalization authority is stale")
 
 type parsedRunFinalization struct {
-	lease       parsedRunLeaseReceipt
+	lease       parsedRunLeaseFence
+	runID       uuid.UUID
+	attempt     int32
 	operationID uuid.UUID
 	kind        api.WorkerRunFinalizationKind
 	fingerprint string
 }
 
 func parseRunFinalization(request api.WorkerBeginRunFinalizationRequest) (parsedRunFinalization, error) {
-	lease, err := parseRunLeaseReceipt(request.Lease)
+	lease, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
 		return parsedRunFinalization{}, err
 	}
@@ -43,14 +45,11 @@ func parseRunFinalization(request api.WorkerBeginRunFinalizationRequest) (parsed
 	if err != nil {
 		return parsedRunFinalization{}, err
 	}
-	if quiescedRunID != lease.runID ||
-		quiescedLeaseID != lease.leaseID ||
-		request.ProgramQuiesced.AttemptNumber != request.Lease.AttemptNumber {
+	if quiescedLeaseID != lease.leaseID ||
+		request.ProgramQuiesced.AttemptNumber <= 0 {
 		return parsedRunFinalization{}, errors.New("program_quiesced does not match the Run Lease")
 	}
 	normalized := request
-	normalized.Lease.StartDeadlineAt = request.Lease.StartDeadlineAt.UTC()
-	normalized.Lease.ExpiresAt = request.Lease.ExpiresAt.UTC()
 	normalized.OperationID = operationID.String()
 	normalized.ProgramQuiesced.RunID = quiescedRunID.String()
 	normalized.ProgramQuiesced.RunLeaseID = quiescedLeaseID.String()
@@ -59,7 +58,8 @@ func parseRunFinalization(request api.WorkerBeginRunFinalizationRequest) (parsed
 		return parsedRunFinalization{}, fmt.Errorf("fingerprint Run finalization: %w", err)
 	}
 	return parsedRunFinalization{
-		lease: lease, operationID: operationID, kind: request.Kind, fingerprint: fingerprint,
+		lease: lease, runID: quiescedRunID, attempt: request.ProgramQuiesced.AttemptNumber,
+		operationID: operationID, kind: request.Kind, fingerprint: fingerprint,
 	}, nil
 }
 
@@ -71,15 +71,6 @@ func (s *Server) beginRunFinalization(
 ) (api.WorkerBeginRunFinalizationResponse, error) {
 	var response api.WorkerBeginRunFinalizationResponse
 	err := s.inTx(ctx, func(work *txWork) error {
-		if _, err := secret.LockAttemptDelivery(
-			ctx,
-			work.q,
-			pgvalue.UUID(parsed.lease.runID),
-			request.Lease.AttemptNumber,
-			pgvalue.UUID(parsed.lease.workspaceID),
-		); err != nil {
-			return fmt.Errorf("lock Run finalization Secret authority: %w", err)
-		}
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(parsed.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
 			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
@@ -87,6 +78,19 @@ func (s *Server) beginRunFinalization(
 		})
 		if err != nil {
 			return staleRunFinalization(err)
+		}
+		if locators.RunID != pgvalue.UUID(parsed.runID) ||
+			locators.AttemptNumber != parsed.attempt {
+			return errStaleRunFinalization
+		}
+		if _, err := secret.LockAttemptDelivery(
+			ctx,
+			work.q,
+			locators.RunID,
+			locators.AttemptNumber,
+			locators.WorkspaceID,
+		); err != nil {
+			return fmt.Errorf("lock Run finalization Secret authority: %w", err)
 		}
 		authority, err := lockLiveRunFinalizationAuthority(
 			ctx,
@@ -109,7 +113,7 @@ func (s *Server) beginRunFinalization(
 		if !authority.attempt.EntrypointEnteredAt.Valid {
 			return errStaleRunFinalization
 		}
-		current, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
+		current, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
 			run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
 			networkSlot: authority.networkSlot, runLease: authority.runLease,
 			workspace: authority.workspace, workspaceMount: authority.workspaceMount,
@@ -128,7 +132,8 @@ func (s *Server) beginRunFinalization(
 				return errStaleRunFinalization
 			}
 			response = api.WorkerBeginRunFinalizationResponse{
-				Lease: current, OperationID: parsed.operationID.String(), Kind: parsed.kind,
+				Lease: request.Lease, BaseWorkspaceVersionID: current.BaseWorkspaceVersionID,
+				ExpiresAt: current.ExpiresAt.UTC(), OperationID: parsed.operationID.String(), Kind: parsed.kind,
 				StartedAt: authority.runLease.FinalizationStartedAt.Time.UTC(),
 				Handoff:   handoff,
 			}
@@ -139,8 +144,7 @@ func (s *Server) beginRunFinalization(
 			authority.runLease.FinalizationOperationID.Valid ||
 			authority.runLease.FinalizationKind.Valid ||
 			authority.runLease.FinalizationStartedAt.Valid ||
-			authority.runLease.FinalizationRequestFingerprint.Valid ||
-			!equalRunLeaseReceipt(current, request.Lease) {
+			authority.runLease.FinalizationRequestFingerprint.Valid {
 			return errStaleRunFinalization
 		}
 		clear, err := work.q.RunFinalizationScopeIsClear(ctx, db.RunFinalizationScopeIsClearParams{
@@ -209,7 +213,7 @@ func (s *Server) beginRunFinalization(
 		if err != nil {
 			return staleRunFinalization(err)
 		}
-		frozen, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
+		frozen, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
 			run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
 			networkSlot: authority.networkSlot, runLease: authority.runLease,
 			workspace: authority.workspace, workspaceMount: authority.workspaceMount,
@@ -219,7 +223,8 @@ func (s *Server) beginRunFinalization(
 			return err
 		}
 		response = api.WorkerBeginRunFinalizationResponse{
-			Lease: frozen, OperationID: parsed.operationID.String(), Kind: parsed.kind,
+			Lease: request.Lease, BaseWorkspaceVersionID: frozen.BaseWorkspaceVersionID,
+			ExpiresAt: frozen.ExpiresAt.UTC(), OperationID: parsed.operationID.String(), Kind: parsed.kind,
 			StartedAt: now.Time.UTC(),
 			Handoff:   handoff,
 		}

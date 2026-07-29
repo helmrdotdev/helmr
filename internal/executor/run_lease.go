@@ -69,7 +69,7 @@ func (e Executor) ExecuteRunLease(
 	}
 	kind := runFinalizationKind(result)
 	beginRequest := api.WorkerBeginRunFinalizationRequest{
-		Lease: current, ProgramQuiesced: result.ProgramQuiesced,
+		Lease: current.Fence(), ProgramQuiesced: result.ProgramQuiesced,
 		OperationID: operationID.String(), Kind: kind,
 	}
 	var begun api.WorkerBeginRunFinalizationResponse
@@ -80,18 +80,23 @@ func (e Executor) ExecuteRunLease(
 	}); err != nil {
 		return fmt.Errorf("begin Run finalization: %w", err)
 	}
-	if begun.OperationID != beginRequest.OperationID || begun.Kind != kind {
+	if begun.Lease != current.Fence() ||
+		begun.OperationID != beginRequest.OperationID ||
+		begun.Kind != kind ||
+		begun.BaseWorkspaceVersionID != current.BaseWorkspaceVersionID {
 		return errors.New("Run finalization response changed its identity")
 	}
-	if err := validateReceiptExpiryAdvance(current, begun.Lease); err != nil {
+	frozen := current
+	frozen.ExpiresAt = begun.ExpiresAt
+	if err := validateRunLeaseExpiryAdvance(current, frozen); err != nil {
 		return fmt.Errorf("validate frozen Run Lease: %w", err)
 	}
-	if !begun.Lease.ExpiresAt.After(current.ExpiresAt) {
+	if !begun.ExpiresAt.After(current.ExpiresAt) {
 		return errors.New("Run finalization response did not advance the expiry")
 	}
 	stageDeadline, replayTail, err := runLeaseFinalizationDeadlines(
 		time.Now(),
-		begun.Lease.ExpiresAt,
+		begun.ExpiresAt,
 	)
 	if err != nil {
 		return err
@@ -102,7 +107,7 @@ func (e Executor) ExecuteRunLease(
 		return task.BeginWorkspaceFinalization(
 			requestCtx,
 			current,
-			begun.Lease,
+			frozen,
 			begun.OperationID,
 			begun.Kind,
 		)
@@ -112,7 +117,7 @@ func (e Executor) ExecuteRunLease(
 
 	completeCtx, cancelComplete := context.WithDeadline(
 		context.Background(),
-		begun.Lease.ExpiresAt,
+		begun.ExpiresAt,
 	)
 	defer cancelComplete()
 	completion := api.WorkerCompleteTaskRequest{Lease: begun.Lease, Outcome: result.Outcome}
@@ -266,8 +271,8 @@ func runLeaseFinalizationDeadlines(
 func (e Executor) awaitRunLeaseTask(
 	ctx context.Context,
 	task RunLeaseTask,
-	current api.WorkerRunLeaseReceipt,
-) (RunLeaseTaskResult, api.WorkerRunLeaseReceipt, error) {
+	current api.WorkerRunLeaseAssignment,
+) (RunLeaseTaskResult, api.WorkerRunLeaseAssignment, error) {
 	waitCtx, cancelWait := context.WithCancel(ctx)
 	defer cancelWait()
 	waited := make(chan runLeaseTaskWait, 1)
@@ -304,18 +309,18 @@ func (e Executor) awaitRunLeaseTask(
 func (e Executor) renewRunLease(
 	ctx context.Context,
 	task RunLeaseTask,
-	current api.WorkerRunLeaseReceipt,
-) (api.WorkerRunLeaseReceipt, error) {
+	current api.WorkerRunLeaseAssignment,
+) (api.WorkerRunLeaseAssignment, error) {
 	renewal, err := task.RenewRunLease(ctx)
 	if err != nil {
 		return current, err
 	}
 	currentAtRenewal := current
 	currentAtRenewal.BaseWorkspaceVersionID = renewal.Previous.BaseWorkspaceVersionID
-	if err := validateReceiptExpiryAdvance(currentAtRenewal, renewal.Previous); err != nil {
+	if err := validateRunLeaseExpiryAdvance(currentAtRenewal, renewal.Previous); err != nil {
 		return current, fmt.Errorf("Run Lease Task changed authority outside an Actor Workspace frontier: %w", err)
 	}
-	if err := validateReceiptExpiryAdvance(renewal.Previous, renewal.Lease); err != nil {
+	if err := validateRunLeaseExpiryAdvance(renewal.Previous, renewal.Lease); err != nil {
 		return current, err
 	}
 	return renewal.Lease, nil

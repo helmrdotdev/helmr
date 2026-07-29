@@ -215,7 +215,7 @@ type buildExpirySweepAdvisoryLockGuard struct {
 }
 
 func (g buildExpirySweepAdvisoryLockGuard) Store(BuildExpirySweepStore) BuildExpirySweepStore {
-	return db.New(g.guard.conn)
+	return db.New(g.guard.guard.Conn())
 }
 
 func (g buildExpirySweepAdvisoryLockGuard) Unlock(ctx context.Context) error {

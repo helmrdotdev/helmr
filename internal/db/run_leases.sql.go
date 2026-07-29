@@ -380,46 +380,22 @@ const getActorInputSendSource = `-- name: GetActorInputSendSource :one
 SELECT environment_id, run_id
   FROM run_leases
  WHERE id = $1
-   AND run_id = $2
-   AND workspace_id = $3
-   AND attempt_number = $4
-   AND lease_sequence = $5
-   AND worker_group_id = $6
-   AND worker_instance_id = $7
-   AND worker_epoch = $8
-   AND worker_protocol_version = $9
-   AND runtime_instance_id = $10
-   AND network_slot_id = $11
-   AND network_slot_generation = $12
-   AND runtime_identity_id = $13
-   AND requested_cpu_millis = $14
-   AND requested_memory_bytes = $15
-   AND requested_guest_ephemeral_disk_bytes = $16
-   AND requested_execution_slots = $17
-   AND start_deadline_at = $18
-   AND expires_at = $19
+   AND lease_sequence = $2
+   AND worker_group_id = $3
+   AND worker_instance_id = $4
+   AND worker_epoch = $5
+   AND worker_protocol_version = $6
+   AND state IN ('running', 'checkpointing', 'finalizing')
+   AND expires_at > transaction_timestamp()
 `
 
 type GetActorInputSendSourceParams struct {
-	ID                               pgtype.UUID        `json:"id"`
-	RunID                            pgtype.UUID        `json:"run_id"`
-	WorkspaceID                      pgtype.UUID        `json:"workspace_id"`
-	AttemptNumber                    int32              `json:"attempt_number"`
-	LeaseSequence                    int64              `json:"lease_sequence"`
-	WorkerGroupID                    string             `json:"worker_group_id"`
-	WorkerInstanceID                 pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch                      int64              `json:"worker_epoch"`
-	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
-	RuntimeInstanceID                pgtype.UUID        `json:"runtime_instance_id"`
-	NetworkSlotID                    pgtype.UUID        `json:"network_slot_id"`
-	NetworkSlotGeneration            int64              `json:"network_slot_generation"`
-	RuntimeIdentityID                string             `json:"runtime_identity_id"`
-	RequestedCpuMillis               int64              `json:"requested_cpu_millis"`
-	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
-	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
-	RequestedExecutionSlots          int32              `json:"requested_execution_slots"`
-	StartDeadlineAt                  pgtype.Timestamptz `json:"start_deadline_at"`
-	ExpiresAt                        pgtype.Timestamptz `json:"expires_at"`
+	ID                    pgtype.UUID `json:"id"`
+	LeaseSequence         int64       `json:"lease_sequence"`
+	WorkerGroupID         string      `json:"worker_group_id"`
+	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch           int64       `json:"worker_epoch"`
+	WorkerProtocolVersion string      `json:"worker_protocol_version"`
 }
 
 type GetActorInputSendSourceRow struct {
@@ -430,24 +406,11 @@ type GetActorInputSendSourceRow struct {
 func (q *Queries) GetActorInputSendSource(ctx context.Context, arg GetActorInputSendSourceParams) (GetActorInputSendSourceRow, error) {
 	row := q.db.QueryRow(ctx, getActorInputSendSource,
 		arg.ID,
-		arg.RunID,
-		arg.WorkspaceID,
-		arg.AttemptNumber,
 		arg.LeaseSequence,
 		arg.WorkerGroupID,
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
 		arg.WorkerProtocolVersion,
-		arg.RuntimeInstanceID,
-		arg.NetworkSlotID,
-		arg.NetworkSlotGeneration,
-		arg.RuntimeIdentityID,
-		arg.RequestedCpuMillis,
-		arg.RequestedMemoryBytes,
-		arg.RequestedGuestEphemeralDiskBytes,
-		arg.RequestedExecutionSlots,
-		arg.StartDeadlineAt,
-		arg.ExpiresAt,
 	)
 	var i GetActorInputSendSourceRow
 	err := row.Scan(&i.EnvironmentID, &i.RunID)
@@ -1722,7 +1685,7 @@ func (q *Queries) LockRunLeaseClaimAttempt(ctx context.Context, arg LockRunLease
 
 const lockRunLeaseClaimLease = `-- name: LockRunLeaseClaimLease :one
 SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, network_slot_id, network_slot_generation, runtime_identity_id, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
-  FROM run_leases
+ FROM run_leases
  WHERE id = $1
    AND run_id = $2
    AND workspace_id = $3

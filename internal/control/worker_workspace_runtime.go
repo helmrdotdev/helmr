@@ -43,7 +43,7 @@ func (s *Server) workerCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
 	source, err := s.workerRunSource(r.Context(), worker, request.Lease)
 	if err != nil {
-		s.writeWorkerWorkspaceSourceError(w, "create", request.Lease.RunID, err)
+		s.writeWorkerWorkspaceSourceError(w, "create", request.Lease.ID, err)
 		return
 	}
 	result, err := s.createWorkspace(r.Context(), workspaceCreateRequest{
@@ -63,7 +63,7 @@ func (s *Server) workerCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, errStaleWorkerRunSource) {
-			s.writeWorkerWorkspaceSourceError(w, "create", request.Lease.RunID, err)
+			s.writeWorkerWorkspaceSourceError(w, "create", request.Lease.ID, err)
 			return
 		}
 		if failure, ok := workerWorkspaceCreateFailure(err); ok {
@@ -72,7 +72,7 @@ func (s *Server) workerCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		s.log.Error("create run-sourced Workspace", "run_id", request.Lease.RunID, "error", err)
+		s.log.Error("create run-sourced Workspace", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("create run-sourced Workspace"))
 		return
 	}
@@ -110,7 +110,7 @@ func (s *Server) workerRetrieveWorkspace(w http.ResponseWriter, r *http.Request)
 		snapshot, err = s.workspaceSnapshot(r.Context(), work.q, record)
 		return err
 	})
-	if s.writeWorkerWorkspaceReadResult(w, request.CorrelationID, request.Lease.RunID, "retrieve", err) {
+	if s.writeWorkerWorkspaceReadResult(w, request.CorrelationID, request.Lease.ID, "retrieve", err) {
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerRetrieveWorkspaceResponse{
@@ -141,7 +141,7 @@ func (s *Server) workerReadWorkspaceFile(w http.ResponseWriter, r *http.Request)
 	if err == nil {
 		content, err = s.readWorkspaceFileSource(r.Context(), source, request.Path)
 	}
-	if failure, handled := s.workerWorkspaceFileFailure(w, request.Lease.RunID, "read", err); handled {
+	if failure, handled := s.workerWorkspaceFileFailure(w, request.Lease.ID, "read", err); handled {
 		if failure != nil {
 			writeJSON(w, http.StatusOK, api.WorkerReadWorkspaceFileResponse{
 				CorrelationID: request.CorrelationID, Failed: failure,
@@ -177,7 +177,7 @@ func (s *Server) workerStatWorkspaceFile(w http.ResponseWriter, r *http.Request)
 	if err == nil {
 		entry, err = s.statWorkspaceFileSource(r.Context(), source, request.Path)
 	}
-	if failure, handled := s.workerWorkspaceFileFailure(w, request.Lease.RunID, "stat", err); handled {
+	if failure, handled := s.workerWorkspaceFileFailure(w, request.Lease.ID, "stat", err); handled {
 		if failure != nil {
 			writeJSON(w, http.StatusOK, api.WorkerStatWorkspaceFileResponse{
 				CorrelationID: request.CorrelationID, Failed: failure,
@@ -236,7 +236,7 @@ func (s *Server) workerListWorkspaceFiles(w http.ResponseWriter, r *http.Request
 			r.Context(), pgvalue.UUIDString(record.ID), source, request.Path, after, request.Limit, now,
 		)
 	}
-	if failure, handled := s.workerWorkspaceFileFailure(w, request.Lease.RunID, "list", err); handled {
+	if failure, handled := s.workerWorkspaceFileFailure(w, request.Lease.ID, "list", err); handled {
 		if failure != nil {
 			writeJSON(w, http.StatusOK, api.WorkerListWorkspaceFilesResponse{
 				CorrelationID: request.CorrelationID, Failed: failure,
@@ -281,7 +281,7 @@ func (s *Server) workerExecuteWorkspace(w http.ResponseWriter, r *http.Request) 
 			})
 			return
 		}
-		s.writeWorkerWorkspaceSourceError(w, "exec", request.Lease.RunID, err)
+		s.writeWorkerWorkspaceSourceError(w, "exec", request.Lease.ID, err)
 		return
 	}
 	admission, err := s.admitWorkspaceExec(r.Context(), workspaceExecRequest{
@@ -299,7 +299,7 @@ func (s *Server) workerExecuteWorkspace(w http.ResponseWriter, r *http.Request) 
 	})
 	if err != nil {
 		if errors.Is(err, errStaleWorkerRunSource) {
-			s.writeWorkerWorkspaceSourceError(w, "exec", request.Lease.RunID, err)
+			s.writeWorkerWorkspaceSourceError(w, "exec", request.Lease.ID, err)
 			return
 		}
 		if failure, ok := workerWorkspaceExecFailure(err); ok {
@@ -320,7 +320,7 @@ func (s *Server) workerExecuteWorkspace(w http.ResponseWriter, r *http.Request) 
 				})
 				return
 			}
-			s.log.Error("project replayed run-sourced Workspace exec", "run_id", request.Lease.RunID, "error", resultErr)
+			s.log.Error("project replayed run-sourced Workspace exec", "run_lease_id", request.Lease.ID, "error", resultErr)
 			writeError(w, errors.New("project run-sourced Workspace exec"))
 			return
 		}
@@ -385,7 +385,7 @@ func (s *Server) workerPollWorkspaceExec(w http.ResponseWriter, r *http.Request)
 			})
 			return
 		}
-		s.writeWorkerWorkspaceSourceError(w, "exec poll", request.Lease.RunID, err)
+		s.writeWorkerWorkspaceSourceError(w, "exec poll", request.Lease.ID, err)
 		return
 	}
 	if !workspaceExecTerminal(process.State) {
@@ -403,7 +403,7 @@ func (s *Server) workerPollWorkspaceExec(w http.ResponseWriter, r *http.Request)
 			})
 			return
 		}
-		s.log.Error("project run-sourced Workspace exec", "run_id", request.Lease.RunID, "error", err)
+		s.log.Error("project run-sourced Workspace exec", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("project run-sourced Workspace exec"))
 		return
 	}
@@ -440,7 +440,7 @@ func (s *Server) workerDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		s.writeWorkerWorkspaceSourceError(w, "delete", request.Lease.RunID, err)
+		s.writeWorkerWorkspaceSourceError(w, "delete", request.Lease.ID, err)
 		return
 	}
 	result, err := s.deleteWorkspace(r.Context(), workspaceDeleteRequest{
@@ -454,7 +454,7 @@ func (s *Server) workerDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, errStaleWorkerRunSource) {
-			s.writeWorkerWorkspaceSourceError(w, "delete", request.Lease.RunID, err)
+			s.writeWorkerWorkspaceSourceError(w, "delete", request.Lease.ID, err)
 			return
 		}
 		if failure, ok := workerWorkspaceDeleteFailure(err); ok {

@@ -10,8 +10,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
+	"github.com/helmrdotdev/helmr/internal/sessionlock"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -39,47 +39,20 @@ func (l *Locker) With(ctx context.Context, digests []string, fn func() error) er
 	if err != nil {
 		return err
 	}
-	connection, err := l.pool.Acquire(ctx)
+	guard, err := sessionlock.Acquire(ctx, l.pool, keys)
 	if err != nil {
-		return fmt.Errorf("acquire platform artifact lock connection: %w", err)
+		return fmt.Errorf("acquire platform artifact lock: %w", err)
 	}
-	// A checked-out session carrying an advisory lock must never return to the
-	// pool. Mark it disposable until every acquired lock is proven released.
-	discard := true
-	defer func() {
-		if discard {
-			raw := connection.Hijack()
-			_ = raw.Close(context.Background())
-			return
-		}
-		connection.Release()
+	var runErr, unlockErr error
+	func() {
+		defer func() {
+			unlockErr = guard.Unlock()
+		}()
+		runErr = fn()
 	}()
-
-	acquired := make([]int64, 0, len(keys))
-	for _, key := range keys {
-		if _, err := connection.Exec(ctx, "SELECT pg_advisory_lock($1)", key); err != nil {
-			return fmt.Errorf("acquire platform artifact lock: %w", err)
-		}
-		acquired = append(acquired, key)
+	if unlockErr != nil {
+		return errors.Join(runErr, fmt.Errorf("release platform artifact lock: %w", unlockErr))
 	}
-
-	runErr := fn()
-	unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	for index := len(acquired) - 1; index >= 0; index-- {
-		var unlocked bool
-		if err := connection.QueryRow(
-			unlockCtx,
-			"SELECT pg_advisory_unlock($1)",
-			acquired[index],
-		).Scan(&unlocked); err != nil || !unlocked {
-			if err == nil {
-				err = errors.New("PostgreSQL did not release the session lock")
-			}
-			return errors.Join(runErr, fmt.Errorf("release platform artifact lock: %w", err))
-		}
-	}
-	discard = false
 	return runErr
 }
 

@@ -119,7 +119,7 @@ func TestRuntimeOperationFailureKeepsSemanticControlError(t *testing.T) {
 	}
 }
 
-func TestTaskControlObservabilityRetryUsesRenewedReceipt(t *testing.T) {
+func TestTaskControlObservabilityRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	transient := func() error {
 		return &client.HTTPError{
 			StatusCode: http.StatusServiceUnavailable,
@@ -136,12 +136,12 @@ func TestTaskControlObservabilityRetryUsesRenewedReceipt(t *testing.T) {
 		}
 		task := &guestRunLeaseTask{
 			control: control,
-			lease:   testRunLeaseReceipt(time.Now().Add(time.Minute)),
+			lease:   testRunLeaseAssignment(time.Now().Add(time.Minute)),
 		}
 		go renewRunSourceReceiptAfterAttempt(task, attempted)
 		err := (taskControlEvents{task: task}).ApplyRunMetadata(
 			t.Context(),
-			api.WorkerRunLeaseReceipt{},
+			api.WorkerRunLeaseAssignment{},
 			&runv0.MetadataUpdated{
 				CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000131",
 				Operation:     "set",
@@ -155,7 +155,7 @@ func TestTaskControlObservabilityRetryUsesRenewedReceipt(t *testing.T) {
 		if len(control.metadataRequests) != 2 {
 			t.Fatalf("requests = %+v", control.metadataRequests)
 		}
-		assertRetriedWithRenewedReceipt(
+		assertRetriedWithStableFence(
 			t,
 			control.metadataRequests[0].Lease,
 			control.metadataRequests[1].Lease,
@@ -171,12 +171,12 @@ func TestTaskControlObservabilityRetryUsesRenewedReceipt(t *testing.T) {
 		}
 		task := &guestRunLeaseTask{
 			control: control,
-			lease:   testRunLeaseReceipt(time.Now().Add(time.Minute)),
+			lease:   testRunLeaseAssignment(time.Now().Add(time.Minute)),
 		}
 		go renewRunSourceReceiptAfterAttempt(task, attempted)
 		err := (taskControlEvents{task: task}).RecordStructuredRunLog(
 			t.Context(),
-			api.WorkerRunLeaseReceipt{},
+			api.WorkerRunLeaseAssignment{},
 			17,
 			&runv0.StructuredLogRequested{
 				CorrelationId:  "019c10d5-a6f7-7af1-8f5f-000000000132",
@@ -191,7 +191,7 @@ func TestTaskControlObservabilityRetryUsesRenewedReceipt(t *testing.T) {
 		if len(control.logRequests) != 2 {
 			t.Fatalf("requests = %+v", control.logRequests)
 		}
-		assertRetriedWithRenewedReceipt(
+		assertRetriedWithStableFence(
 			t,
 			control.logRequests[0].Lease,
 			control.logRequests[1].Lease,
@@ -206,12 +206,12 @@ func TestTaskControlObservabilityRejectsInvalidRequestBeforeControl(t *testing.T
 	}
 	task := &guestRunLeaseTask{
 		control: control,
-		lease:   testRunLeaseReceipt(time.Now().Add(time.Minute)),
+		lease:   testRunLeaseAssignment(time.Now().Add(time.Minute)),
 	}
 	events := taskControlEvents{task: task}
 	if err := events.ApplyRunMetadata(
 		t.Context(),
-		api.WorkerRunLeaseReceipt{},
+		api.WorkerRunLeaseAssignment{},
 		&runv0.MetadataUpdated{
 			CorrelationId: "not-a-correlation-id",
 			Operation:     "set",
@@ -224,7 +224,7 @@ func TestTaskControlObservabilityRejectsInvalidRequestBeforeControl(t *testing.T
 	}
 	if err := events.RecordStructuredRunLog(
 		t.Context(),
-		api.WorkerRunLeaseReceipt{},
+		api.WorkerRunLeaseAssignment{},
 		1,
 		&runv0.StructuredLogRequested{
 			CorrelationId: "not-a-correlation-id",
@@ -248,14 +248,14 @@ func TestFreshAdmissionObservabilityRetriesTransientControlFailure(t *testing.T)
 			Message:    "temporary control failure",
 		}},
 	}
-	lease := testRunLeaseReceipt(time.Now().Add(time.Minute))
+	lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
 	state := &freshAdmissionState{
 		control: control,
 		lease:   lease,
 	}
 	err := state.ApplyRunMetadata(
 		t.Context(),
-		api.WorkerRunLeaseReceipt{},
+		api.WorkerRunLeaseAssignment{},
 		&runv0.MetadataUpdated{
 			CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000133",
 			Operation:     "set",
@@ -267,8 +267,8 @@ func TestFreshAdmissionObservabilityRetriesTransientControlFailure(t *testing.T)
 		t.Fatal(err)
 	}
 	if len(control.metadataRequests) != 2 ||
-		control.metadataRequests[0].Lease != lease ||
-		control.metadataRequests[1].Lease != lease {
+		control.metadataRequests[0].Lease != lease.Fence() ||
+		control.metadataRequests[1].Lease != lease.Fence() {
 		t.Fatalf("metadata requests = %+v", control.metadataRequests)
 	}
 }

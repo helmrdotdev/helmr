@@ -31,28 +31,27 @@ func (s *Server) workerRenewRunLease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("invalid worker Run Lease renewal JSON: trailing value")))
 		return
 	}
-	parsed, err := parseRunLeaseReceipt(request.Lease)
+	parsed, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	worker := workerFromContext(r.Context())
-	if request.Lease.WorkerGroupID != worker.WorkerGroupID ||
-		parsed.workerInstanceID != worker.WorkerInstanceID ||
-		request.Lease.WorkerEpoch != worker.WorkerEpoch ||
-		request.Lease.WorkerProtocolVersion != worker.ProtocolVersion {
-		writeError(w, forbidden(errors.New("worker Run Lease receipt belongs to another worker epoch")))
+	if request.ExpectedExpiresAt.IsZero() {
+		writeError(w, badRequest(errors.New("expected_expires_at is required")))
 		return
 	}
-	renewed, err := s.renewRunLease(r.Context(), worker, pgvalue.UUID(parsed.leaseID), request.Lease)
+	worker := workerFromContext(r.Context())
+	renewed, err := s.renewRunLease(
+		r.Context(), worker, pgvalue.UUID(parsed.leaseID), request.Lease, request.ExpectedExpiresAt,
+	)
 	if errors.Is(err, errStaleRunLeaseClaim) {
-		writeError(w, conflict(errors.New("worker Run Lease receipt is stale")))
+		writeError(w, conflict(errors.New("worker Run Lease fence is stale")))
 		return
 	}
 	if err != nil {
-		s.log.Error("renew worker Run Lease failed", "run_id", request.Lease.RunID, "error", err)
+		s.log.Error("renew worker Run Lease failed", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("renew worker Run Lease"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerRunLeaseRenewResponse{Lease: renewed})
+	writeJSON(w, http.StatusOK, renewed)
 }

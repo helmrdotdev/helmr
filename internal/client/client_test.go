@@ -740,7 +740,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 }
 
 func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
-	receipt := api.WorkerRunLeaseReceipt{
+	receipt := api.WorkerRunLeaseAssignment{
 		ID:                     "00000000-0000-0000-0000-000000000001",
 		RunID:                  "00000000-0000-0000-0000-000000000002",
 		AttemptNumber:          1,
@@ -789,19 +789,19 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					t.Fatal(err)
 				}
-				if request.Lease != receipt || request.Fresh == nil ||
+				if request.Lease != receipt.Fence() || request.Fresh == nil ||
 					request.Restore != nil || request.Attach != nil {
 					t.Fatalf("start request = %+v", request)
 				}
 				_ = json.NewEncoder(w).Encode(
-					api.WorkerRunStartResponse{Lease: receipt},
+					api.WorkerRunStartResponse{Lease: receipt.Fence()},
 				)
 			case "/api/worker/leases/entrypoint":
 				var request api.WorkerRunEntrypointRequest
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					t.Fatal(err)
 				}
-				if request.Lease != receipt ||
+				if request.Lease != receipt.Fence() ||
 					request.EntrypointKind != "task" ||
 					request.EntrypointDeclaredID != "deploy" {
 					t.Fatalf("entrypoint request = %+v", request)
@@ -812,16 +812,20 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					t.Fatal(err)
 				}
-				if request.Lease != receipt {
+				if request.Lease != receipt.Fence() ||
+					!request.ExpectedExpiresAt.Equal(receipt.ExpiresAt) {
 					t.Fatalf("renew request = %+v", request)
 				}
-				_ = json.NewEncoder(w).Encode(api.WorkerRunLeaseRenewResponse{Lease: receipt})
+				_ = json.NewEncoder(w).Encode(api.WorkerRunLeaseRenewResponse{
+					Lease: receipt.Fence(), ExpiresAt: receipt.ExpiresAt,
+					BaseWorkspaceVersionID: receipt.BaseWorkspaceVersionID,
+				})
 			case "/api/worker/leases/run-logs":
 				var request api.WorkerRunLogAppendRequest
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					t.Fatal(err)
 				}
-				if request.Lease != receipt ||
+				if request.Lease != receipt.Fence() ||
 					request.Stream != api.WorkerLogStreamStdout ||
 					request.ObservedSeq != 7 ||
 					request.ContentBase64 != "bG9n" {
@@ -833,7 +837,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					t.Fatal(err)
 				}
-				if request.Lease != receipt ||
+				if request.Lease != receipt.Fence() ||
 					request.OperationID != operationID ||
 					request.Kind != api.WorkerRunFinalizationCapture ||
 					request.ProgramQuiesced.RunID != receipt.RunID ||
@@ -843,7 +847,8 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 				}
 				_ = json.NewEncoder(w).Encode(
 					api.WorkerBeginRunFinalizationResponse{
-						Lease: receipt, OperationID: operationID,
+						Lease: receipt.Fence(), BaseWorkspaceVersionID: receipt.BaseWorkspaceVersionID,
+						ExpiresAt: receipt.ExpiresAt, OperationID: operationID,
 						Kind: api.WorkerRunFinalizationCapture,
 					},
 				)
@@ -852,7 +857,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					t.Fatal(err)
 				}
-				if request.Lease != receipt ||
+				if request.Lease != receipt.Fence() ||
 					request.Outcome.Succeeded == nil ||
 					string(request.Outcome.Succeeded.Output) != `{"ok":true}` ||
 					request.Workspace.Captured == nil ||
@@ -900,18 +905,18 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 	}
 	started, err := client.AcknowledgeRunStart(
 		context.Background(),
-		api.WorkerRunStartRequest{Lease: receipt, Fresh: &api.WorkerRunStartFresh{}},
+		api.WorkerRunStartRequest{Lease: receipt.Fence(), Fresh: &api.WorkerRunStartFresh{}},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if started.Lease != receipt {
+	if started.Lease != receipt.Fence() {
 		t.Fatalf("start response = %+v", started)
 	}
 	if err := client.AcknowledgeRunEntrypoint(
 		context.Background(),
 		api.WorkerRunEntrypointRequest{
-			Lease:                receipt,
+			Lease:                receipt.Fence(),
 			EntrypointKind:       "task",
 			EntrypointDeclaredID: "deploy",
 		},
@@ -922,13 +927,13 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if renewed.Lease != receipt {
+	if renewed.Lease != receipt.Fence() {
 		t.Fatalf("renew response = %+v", renewed)
 	}
 	finalization, err := client.BeginRunFinalization(
 		context.Background(),
 		api.WorkerBeginRunFinalizationRequest{
-			Lease: receipt,
+			Lease: receipt.Fence(),
 			ProgramQuiesced: api.WorkerRunQuiescenceProof{
 				RunID: receipt.RunID, AttemptNumber: receipt.AttemptNumber,
 				RunLeaseID: receipt.ID,
@@ -940,7 +945,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if finalization.Lease != receipt ||
+	if finalization.Lease != receipt.Fence() ||
 		finalization.OperationID != operationID ||
 		finalization.Kind != api.WorkerRunFinalizationCapture {
 		t.Fatalf("finalization response = %+v", finalization)
@@ -948,7 +953,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 	if err := client.CompleteTask(
 		context.Background(),
 		api.WorkerCompleteTaskRequest{
-			Lease: receipt,
+			Lease: receipt.Fence(),
 			Outcome: api.WorkerTaskOutcome{Succeeded: &api.WorkerTaskSucceeded{
 				Output: json.RawMessage(`{"ok":true}`),
 			}},
@@ -1078,7 +1083,7 @@ func TestWorkerClientRefreshesTokenAndReplaysBufferedRequestAfterUnauthorized(t 
 }
 
 func TestWorkerRunWaitClient(t *testing.T) {
-	claim := api.WorkerRunLeaseReceipt{
+	claim := api.WorkerRunLeaseAssignment{
 		ID: "00000000-0000-0000-0000-000000000001", RunID: "00000000-0000-0000-0000-000000000002",
 		WorkerGroupID: "run-us-east-1", WorkerInstanceID: "00000000-0000-0000-0000-000000000401",
 		WorkerEpoch: 1, LeaseSequence: 1, RuntimeInstanceID: "00000000-0000-0000-0000-000000000501",
@@ -1181,7 +1186,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	created, err := client.CreateRunWait(context.Background(), api.WorkerCreateRunWaitRequest{
-		Lease:         claim,
+		Lease:         claim.Fence(),
 		CorrelationID: "corr-1",
 		Kind:          api.WorkerRunWaitKindToken,
 		Params:        json.RawMessage(`{"prompt":"ship?"}`),
@@ -1192,18 +1197,18 @@ func TestWorkerRunWaitClient(t *testing.T) {
 	if created.RunWaitID != "run-wait-id-1" {
 		t.Fatalf("created = %+v", created)
 	}
-	polled, err := client.PollRunWait(context.Background(), api.WorkerRunWaitPollRequest{Lease: claim, RunWaitID: "run-wait-id-1"})
+	polled, err := client.PollRunWait(context.Background(), api.WorkerRunWaitPollRequest{Lease: claim.Fence(), RunWaitID: "run-wait-id-1"})
 	if err != nil || polled.RequestVersion != 7 || polled.ResumeKind != "completed" {
 		t.Fatalf("polled = %+v, err = %v", polled, err)
 	}
 	resumeAck, err := client.AcknowledgeRunWaitResume(context.Background(), api.WorkerRunWaitResumeAckRequest{
-		Lease: claim, RunWaitID: "run-wait-id-1", ResumeRequestVersion: 7,
+		Lease: claim.Fence(), RunWaitID: "run-wait-id-1", ResumeRequestVersion: 7,
 	})
 	if err != nil || resumeAck.ResumeRequestVersion != 7 {
 		t.Fatalf("resume ack = %+v, err = %v", resumeAck, err)
 	}
 	ready, err := client.MarkCheckpointReady(context.Background(), api.WorkerCheckpointReadyRequest{
-		Lease:          claim,
+		Lease:          claim.Fence(),
 		RequestVersion: 42,
 		RunWaitID:      "run-wait-id-1",
 		CheckpointID:   "checkpoint-1",
@@ -1232,7 +1237,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 		t.Fatalf("acknowledged = %+v", acknowledged)
 	}
 	failed, err := client.MarkCheckpointFailed(context.Background(), api.WorkerCheckpointFailedRequest{
-		Lease:          claim,
+		Lease:          claim.Fence(),
 		RequestVersion: 43,
 		RunWaitID:      "run-wait-id-1",
 		CheckpointID:   "checkpoint-1",
@@ -1250,7 +1255,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 }
 
 func TestAcknowledgeRunResumeRelease(t *testing.T) {
-	lease := api.WorkerRunLeaseReceipt{ID: "lease-1", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", LeaseSequence: 3}
+	lease := api.WorkerRunLeaseAssignment{ID: "lease-1", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", LeaseSequence: 3}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/worker/auth/token":
@@ -1265,16 +1270,15 @@ func TestAcknowledgeRunResumeRelease(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Lease.ID != lease.ID ||
+			if request.Lease != lease.Fence() ||
 				request.RunWaitID != "wait-1" ||
 				request.CheckpointID != "checkpoint-1" ||
 				request.ResumeAttachID != "attach-1" ||
-				request.ResumeRequestVersion != 7 ||
-				request.RunLeaseID != lease.ID {
+				request.ResumeRequestVersion != 7 {
 				t.Fatalf("resume release request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerRunResumeReleaseResponse{
-				Lease:                lease,
+				Lease:                lease.Fence(),
 				RunWaitID:            request.RunWaitID,
 				CheckpointID:         request.CheckpointID,
 				ResumeAttachID:       request.ResumeAttachID,
@@ -1296,12 +1300,11 @@ func TestAcknowledgeRunResumeRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	response, err := client.AcknowledgeRunResumeRelease(context.Background(), api.WorkerRunResumeReleaseRequest{
-		Lease:                lease,
+		Lease:                lease.Fence(),
 		RunWaitID:            "wait-1",
 		CheckpointID:         "checkpoint-1",
 		ResumeAttachID:       "attach-1",
 		ResumeRequestVersion: 7,
-		RunLeaseID:           lease.ID,
 	})
 	if err != nil {
 		t.Fatal(err)

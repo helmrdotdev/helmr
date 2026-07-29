@@ -276,7 +276,6 @@ func TestActorRuntimeRetryUsesRenewedReceipt(t *testing.T) {
 	go func() {
 		<-firstAttempt
 		task.mu.Lock()
-		task.lease.LeaseSequence++
 		task.lease.ExpiresAt = task.lease.ExpiresAt.Add(time.Minute)
 		task.mu.Unlock()
 	}()
@@ -308,24 +307,20 @@ func TestActorRuntimeRetryUsesRenewedReceipt(t *testing.T) {
 	}
 	if decision.GetKind() != "completed" ||
 		len(control.startRequests) != 2 ||
-		control.startRequests[1].Lease.LeaseSequence !=
-			control.startRequests[0].Lease.LeaseSequence+1 ||
-		!control.startRequests[1].Lease.ExpiresAt.After(
-			control.startRequests[0].Lease.ExpiresAt,
-		) {
+		control.startRequests[1].Lease != control.startRequests[0].Lease {
 		t.Fatalf("decision=%+v requests=%+v", decision, control.startRequests)
 	}
 }
 
 func TestRunSourceRuntimeRejectsTerminalLocalStateWithoutRetry(t *testing.T) {
 	t.Run("expired receipt", func(t *testing.T) {
-		task := &guestRunLeaseTask{lease: testRunLeaseReceipt(time.Now().Add(-time.Second))}
+		task := &guestRunLeaseTask{lease: testRunLeaseAssignment(time.Now().Add(-time.Second))}
 		calls := 0
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
 		err := task.callRunSourceRuntime(ctx, func(
 			context.Context,
-			api.WorkerRunLeaseReceipt,
+			api.WorkerRunLeaseAssignment,
 		) error {
 			calls++
 			return nil
@@ -336,7 +331,7 @@ func TestRunSourceRuntimeRejectsTerminalLocalStateWithoutRetry(t *testing.T) {
 	})
 	t.Run("finalizing task", func(t *testing.T) {
 		task := &guestRunLeaseTask{
-			lease:          testRunLeaseReceipt(time.Now().Add(time.Minute)),
+			lease:          testRunLeaseAssignment(time.Now().Add(time.Minute)),
 			finalizingKind: api.WorkerRunFinalizationCapture,
 		}
 		calls := 0
@@ -344,7 +339,7 @@ func TestRunSourceRuntimeRejectsTerminalLocalStateWithoutRetry(t *testing.T) {
 		defer cancel()
 		err := task.callRunSourceRuntime(ctx, func(
 			context.Context,
-			api.WorkerRunLeaseReceipt,
+			api.WorkerRunLeaseAssignment,
 		) error {
 			calls++
 			return nil
@@ -355,17 +350,16 @@ func TestRunSourceRuntimeRejectsTerminalLocalStateWithoutRetry(t *testing.T) {
 	})
 }
 
-func TestRunSourceRuntimeCapsAttemptBeforeReceiptExpiry(t *testing.T) {
+func TestRunSourceRuntimeCapsAttemptBeforeAssignmentExpiry(t *testing.T) {
 	task := &guestRunLeaseTask{
-		lease: testRunLeaseReceipt(time.Now().Add(800 * time.Millisecond)),
+		lease: testRunLeaseAssignment(time.Now().Add(800 * time.Millisecond)),
 	}
 	firstAttempt := make(chan struct{})
 	renewed := make(chan struct{})
-	var leases []api.WorkerRunLeaseReceipt
+	var leases []api.WorkerRunLeaseAssignment
 	go func() {
 		<-firstAttempt
 		task.mu.Lock()
-		task.lease.LeaseSequence++
 		task.lease.ExpiresAt = time.Now().Add(time.Minute)
 		task.mu.Unlock()
 		close(renewed)
@@ -374,7 +368,7 @@ func TestRunSourceRuntimeCapsAttemptBeforeReceiptExpiry(t *testing.T) {
 	defer cancel()
 	err := task.callRunSourceRuntime(ctx, func(
 		callCtx context.Context,
-		lease api.WorkerRunLeaseReceipt,
+		lease api.WorkerRunLeaseAssignment,
 	) error {
 		leases = append(leases, lease)
 		if len(leases) == 1 {
@@ -395,7 +389,10 @@ func TestRunSourceRuntimeCapsAttemptBeforeReceiptExpiry(t *testing.T) {
 	if len(leases) != 2 {
 		t.Fatalf("leases = %+v", leases)
 	}
-	assertRetriedWithRenewedReceipt(t, leases[0], leases[1], len(leases))
+	if leases[1].Fence() != leases[0].Fence() ||
+		!leases[1].ExpiresAt.After(leases[0].ExpiresAt) {
+		t.Fatalf("first lease = %+v second lease = %+v", leases[0], leases[1])
+	}
 }
 
 func runActorRuntimeContract(

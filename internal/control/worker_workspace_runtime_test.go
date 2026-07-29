@@ -106,7 +106,7 @@ func TestWorkerWorkspaceFileReadCommitsBeforeCAS(t *testing.T) {
 	}
 	requestBody, err := json.Marshal(api.WorkerReadWorkspaceFileRequest{
 		WorkerRetrieveWorkspaceRequest: api.WorkerRetrieveWorkspaceRequest{
-			Lease:         receipt,
+			Lease:         receipt.Fence(),
 			CorrelationID: uuid.Must(uuid.NewV7()).String(),
 			Workspace:     api.WorkerWorkspaceAddress{WorkspaceID: pgvalue.UUIDString(record.ID)},
 		},

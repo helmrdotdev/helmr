@@ -7,12 +7,11 @@ import (
 
 func TestWorkerRunResumeReleaseRequestJSON(t *testing.T) {
 	request := WorkerRunResumeReleaseRequest{
-		Lease:                WorkerRunLeaseReceipt{ID: "lease-1"},
+		Lease:                WorkerRunLeaseFence{ID: "lease-1", LeaseSequence: 1},
 		RunWaitID:            "wait-1",
 		CheckpointID:         "checkpoint-1",
 		ResumeAttachID:       "attach-1",
 		ResumeRequestVersion: 7,
-		RunLeaseID:           "lease-1",
 	}
 	raw, err := json.Marshal(request)
 	if err != nil {
@@ -24,13 +23,13 @@ func TestWorkerRunResumeReleaseRequestJSON(t *testing.T) {
 	}
 	for _, name := range []string{
 		"lease", "run_wait_id", "checkpoint_id", "resume_attach_id",
-		"resume_request_version", "run_lease_id",
+		"resume_request_version",
 	} {
 		if _, ok := fields[name]; !ok {
 			t.Fatalf("serialized request missing %q: %s", name, raw)
 		}
 	}
-	if len(fields) != 6 {
+	if len(fields) != 5 {
 		t.Fatalf("serialized request fields = %v", fields)
 	}
 	var decoded WorkerRunResumeReleaseRequest
@@ -41,16 +40,15 @@ func TestWorkerRunResumeReleaseRequestJSON(t *testing.T) {
 		decoded.RunWaitID != request.RunWaitID ||
 		decoded.CheckpointID != request.CheckpointID ||
 		decoded.ResumeAttachID != request.ResumeAttachID ||
-		decoded.ResumeRequestVersion != request.ResumeRequestVersion ||
-		decoded.RunLeaseID != request.RunLeaseID {
+		decoded.ResumeRequestVersion != request.ResumeRequestVersion {
 		t.Fatalf("decoded request = %+v", decoded)
 	}
 }
 
 func TestWorkerRunResumeReleaseRequestRejectsOpenOrAmbiguousJSON(t *testing.T) {
 	for _, raw := range [][]byte{
-		[]byte(`{"lease":null,"run_wait_id":"wait-1","checkpoint_id":"checkpoint-1","resume_attach_id":"attach-1","resume_request_version":7,"run_lease_id":"lease-1"}`),
-		[]byte(`{"run_wait_id":"wait-1","checkpoint_id":"checkpoint-1","resume_attach_id":"attach-1","resume_request_version":7,"run_lease_id":"lease-1"}`),
+		[]byte(`{"lease":null,"run_wait_id":"wait-1","checkpoint_id":"checkpoint-1","resume_attach_id":"attach-1","resume_request_version":7}`),
+		[]byte(`{"run_wait_id":"wait-1","checkpoint_id":"checkpoint-1","resume_attach_id":"attach-1","resume_request_version":7}`),
 		[]byte(`{"lease":{},"unknown":true}`),
 		[]byte(`{"lease":{},"lease":{}}`),
 		[]byte(`{"lease":{"id":"first","id":"second"}}`),
@@ -65,7 +63,7 @@ func TestWorkerRunResumeReleaseRequestRejectsOpenOrAmbiguousJSON(t *testing.T) {
 
 func TestWorkerRunResumeReleaseResponseJSON(t *testing.T) {
 	raw, err := json.Marshal(WorkerRunResumeReleaseResponse{
-		Lease:                WorkerRunLeaseReceipt{ID: "lease-1"},
+		Lease:                WorkerRunLeaseFence{ID: "lease-1", LeaseSequence: 1},
 		RunWaitID:            "wait-1",
 		CheckpointID:         "checkpoint-1",
 		ResumeAttachID:       "attach-1",

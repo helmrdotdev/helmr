@@ -40,26 +40,26 @@ type FreshProgramControl interface {
 	) error
 	RenewRunLease(
 		context.Context,
-		api.WorkerRunLeaseReceipt,
+		api.WorkerRunLeaseAssignment,
 	) (api.WorkerRunLeaseRenewResponse, error)
 }
 
 type freshProgramEventSink interface {
 	AppendRunLog(
 		context.Context,
-		api.WorkerRunLeaseReceipt,
+		api.WorkerRunLeaseAssignment,
 		api.WorkerLogStream,
 		uint64,
 		[]byte,
 	) error
 	ApplyRunMetadata(
 		context.Context,
-		api.WorkerRunLeaseReceipt,
+		api.WorkerRunLeaseAssignment,
 		*runv0.MetadataUpdated,
 	) error
 	RecordStructuredRunLog(
 		context.Context,
-		api.WorkerRunLeaseReceipt,
+		api.WorkerRunLeaseAssignment,
 		uint64,
 		*runv0.StructuredLogRequested,
 	) error
@@ -68,7 +68,7 @@ type freshProgramEventSink interface {
 type freshProgram struct {
 	session          vm.Session
 	mount            api.WorkerWorkspaceMount
-	lease            api.WorkerRunLeaseReceipt
+	lease            api.WorkerRunLeaseAssignment
 	authority        *workspacev0.WorkspaceRunAuthority
 	entrypoint       *runv0.EntrypointIdentity
 	observedEventSeq uint64
@@ -82,7 +82,7 @@ type newProgramAdmission struct {
 
 type freshAdmissionState struct {
 	mu        sync.Mutex
-	lease     api.WorkerRunLeaseReceipt
+	lease     api.WorkerRunLeaseAssignment
 	authority *workspacev0.WorkspaceRunAuthority
 	mounts    WorkspaceMountSessionRegistry
 	control   FreshProgramControl
@@ -91,7 +91,7 @@ type freshAdmissionState struct {
 
 func (state *freshAdmissionState) AppendRunLog(
 	ctx context.Context,
-	_ api.WorkerRunLeaseReceipt,
+	_ api.WorkerRunLeaseAssignment,
 	stream api.WorkerLogStream,
 	sequence uint64,
 	content []byte,
@@ -114,7 +114,7 @@ func (state *freshAdmissionState) AppendRunLog(
 
 func (state *freshAdmissionState) ApplyRunMetadata(
 	ctx context.Context,
-	_ api.WorkerRunLeaseReceipt,
+	_ api.WorkerRunLeaseAssignment,
 	request *runv0.MetadataUpdated,
 ) error {
 	state.mu.Lock()
@@ -128,7 +128,7 @@ func (state *freshAdmissionState) ApplyRunMetadata(
 
 func (state *freshAdmissionState) RecordStructuredRunLog(
 	ctx context.Context,
-	_ api.WorkerRunLeaseReceipt,
+	_ api.WorkerRunLeaseAssignment,
 	sequence uint64,
 	request *runv0.StructuredLogRequested,
 ) error {
@@ -709,7 +709,7 @@ func (r ProgramRunner) startNewProgram(
 	var startResponse api.WorkerRunStartResponse
 	if err := retryRunLeaseRequest(ackCtx, func(requestCtx context.Context) error {
 		var requestErr error
-		admission.start.Lease = claim.Lease
+		admission.start.Lease = claim.Lease.Fence()
 		startResponse, requestErr = control.AcknowledgeRunStart(
 			requestCtx,
 			admission.start,
@@ -718,13 +718,13 @@ func (r ProgramRunner) startNewProgram(
 	}); err != nil {
 		return freshProgram{}, fmt.Errorf("acknowledge new Program Run start: %w", err)
 	}
-	if !equalRunLeaseReceipt(startResponse.Lease, claim.Lease) {
+	if startResponse.Lease != claim.Lease.Fence() {
 		return freshProgram{}, errors.New(
-			"Run start acknowledgement changed the Run Lease receipt",
+			"Run start acknowledgement changed the Run Lease fence",
 		)
 	}
 	state := &freshAdmissionState{
-		lease:     startResponse.Lease,
+		lease:     claim.Lease,
 		authority: freshWorkspaceAuthority(claim, opened.ChannelToken),
 		mounts:    r.WorkspaceMounts,
 		control:   control,
@@ -779,7 +779,7 @@ func (r ProgramRunner) startNewProgram(
 		ready, readErr := readFreshEntrypointReady(
 			entrypointCtx,
 			opened.Session,
-			startResponse.Lease,
+			state.lease,
 			state,
 			&observedEventSeq,
 		)
@@ -817,7 +817,7 @@ func (r ProgramRunner) startNewProgram(
 	entrypointAckCtx, cancelEntrypointAck := context.WithDeadline(ctx, state.lease.ExpiresAt)
 	defer cancelEntrypointAck()
 	entrypointRequest := api.WorkerRunEntrypointRequest{
-		Lease:                state.lease,
+		Lease:                state.lease.Fence(),
 		EntrypointKind:       kind,
 		EntrypointDeclaredID: ready.GetEntrypoint().GetDeclaredId(),
 	}
@@ -886,7 +886,7 @@ func writeFreshProgramContext(
 func readFreshEntrypointReady(
 	ctx context.Context,
 	session vm.Session,
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseAssignment,
 	events freshProgramEventSink,
 	observedEventSeq *uint64,
 ) (*runv0.EntrypointReady, error) {
@@ -955,7 +955,7 @@ func validateNewProgramClaim(
 		!lease.StartDeadlineAt.After(time.Now()) ||
 		lease.ExpiresAt.IsZero() ||
 		!lease.ExpiresAt.After(time.Now()) {
-		return newProgramAdmission{}, errors.New("new Program Run Lease receipt is incomplete")
+		return newProgramAdmission{}, errors.New("new Program Run Lease assignment is incomplete")
 	}
 	if strings.TrimSpace(claim.Workspace.WriteCapability) == "" {
 		return newProgramAdmission{}, errors.New(
@@ -1037,7 +1037,7 @@ func validateNewProgramClaim(
 }
 
 func validateNewProgramMount(
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseAssignment,
 	mount api.WorkerWorkspaceMount,
 ) error {
 	if mount.ID != lease.WorkspaceMountID ||
@@ -1187,7 +1187,7 @@ func freshProgramSecret(
 }
 
 func programStartRelease(
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseAssignment,
 ) *runv0.ProgramSupervisorCommand {
 	return &runv0.ProgramSupervisorCommand{
 		Command: &runv0.ProgramSupervisorCommand_StartRelease{
@@ -1202,7 +1202,7 @@ func programStartRelease(
 
 func validateFreshEntrypoint(
 	ready *runv0.EntrypointReady,
-	lease api.WorkerRunLeaseReceipt,
+	lease api.WorkerRunLeaseAssignment,
 ) (string, error) {
 	if ready == nil ||
 		ready.GetRunId() != lease.RunID ||
@@ -1223,9 +1223,9 @@ func validateFreshEntrypoint(
 	}
 }
 
-func equalRunLeaseReceipt(
-	left api.WorkerRunLeaseReceipt,
-	right api.WorkerRunLeaseReceipt,
+func equalRunLeaseAssignment(
+	left api.WorkerRunLeaseAssignment,
+	right api.WorkerRunLeaseAssignment,
 ) bool {
 	if !left.StartDeadlineAt.Equal(right.StartDeadlineAt) ||
 		!left.ExpiresAt.Equal(right.ExpiresAt) {

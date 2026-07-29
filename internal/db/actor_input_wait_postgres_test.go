@@ -279,29 +279,26 @@ func TestActorInputRunSourceTransactionRollbackLeavesNoResidue(t *testing.T) {
 	}
 }
 
-func TestActorInputSendSourceRequiresExactReceiptWithoutGrantingLiveness(t *testing.T) {
+func TestActorInputSendSourceRequiresCurrentLeaseFence(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+	locators := fixture.freshRunStartLocators(t, ctx, work)
+	if _, err := fixture.queries.MarkRunLeaseRunning(
+		ctx,
+		fixture.freshRunLeaseRunningParams(work, locators),
+	); err != nil {
+		t.Fatal(err)
+	}
 	var params GetActorInputSendSourceParams
 	if err := fixture.pool.QueryRow(ctx, `
-		SELECT id, run_id, workspace_id, attempt_number, lease_sequence,
-		       worker_group_id, worker_instance_id, worker_epoch,
-		       worker_protocol_version, runtime_instance_id, network_slot_id,
-		       network_slot_generation, runtime_identity_id, requested_cpu_millis,
-		       requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
-		       requested_execution_slots,
-		       start_deadline_at, expires_at
+		SELECT id, lease_sequence, worker_group_id, worker_instance_id,
+		       worker_epoch, worker_protocol_version
 		  FROM run_leases
 		 WHERE id = $1
 	`, work.leaseID).Scan(
-		&params.ID, &params.RunID, &params.WorkspaceID, &params.AttemptNumber,
-		&params.LeaseSequence, &params.WorkerGroupID, &params.WorkerInstanceID,
-		&params.WorkerEpoch, &params.WorkerProtocolVersion, &params.RuntimeInstanceID,
-		&params.NetworkSlotID, &params.NetworkSlotGeneration, &params.RuntimeIdentityID,
-		&params.RequestedCpuMillis, &params.RequestedMemoryBytes,
-		&params.RequestedGuestEphemeralDiskBytes,
-		&params.RequestedExecutionSlots, &params.StartDeadlineAt, &params.ExpiresAt,
+		&params.ID, &params.LeaseSequence, &params.WorkerGroupID,
+		&params.WorkerInstanceID, &params.WorkerEpoch, &params.WorkerProtocolVersion,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -311,25 +308,19 @@ func TestActorInputSendSourceRequiresExactReceiptWithoutGrantingLiveness(t *test
 		t.Fatalf("exact source receipt = %+v, %v", source, err)
 	}
 
-	previous := params
-	params.ExpiresAt = pgvalue.Timestamptz(params.ExpiresAt.Time.Add(time.Minute))
 	runtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_leases
-		   SET state = 'cancelled', expires_at = $2, terminal_at = now(),
+		   SET state = 'cancelled', terminal_at = now(),
 		       terminal_reason_code = 'test_stale_actor_input_source'
 		 WHERE id = $1
-	`, work.leaseID, params.ExpiresAt)
-	if _, err := fixture.queries.GetActorInputSendSource(ctx, previous); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("superseded receipt error = %v, want no rows", err)
+	`, work.leaseID)
+	if _, err := fixture.queries.GetActorInputSendSource(ctx, params); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("terminal source error = %v, want no rows", err)
 	}
-	if _, err := fixture.queries.GetActorInputSendSource(ctx, params); err != nil {
-		t.Fatalf("current persisted terminal receipt error = %v", err)
-	}
-	if _, err := fixture.queries.GetLiveRunLeaseLocators(ctx, GetLiveRunLeaseLocatorsParams{
-		ID: params.ID, LeaseSequence: params.LeaseSequence,
-		WorkerGroupID: params.WorkerGroupID, WorkerInstanceID: params.WorkerInstanceID,
-		WorkerEpoch: params.WorkerEpoch, WorkerProtocolVersion: params.WorkerProtocolVersion,
-	}); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := fixture.queries.GetLiveRunLeaseLocators(
+		ctx,
+		GetLiveRunLeaseLocatorsParams(params),
+	); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("terminal source liveness error = %v, want no rows", err)
 	}
 }

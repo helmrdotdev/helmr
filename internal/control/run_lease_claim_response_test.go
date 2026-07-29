@@ -65,7 +65,7 @@ func TestProjectRunLeaseClaimResponseOpensSecretsAfterVerifyingCapability(t *tes
 	}
 }
 
-func TestRunLeaseClaimResponseKeepsWorkspaceAuthorityInReceipt(t *testing.T) {
+func TestRunLeaseClaimResponseKeepsWorkspaceAuthorityInAssignment(t *testing.T) {
 	authority, projection, keys := validRunLeaseClaimResponse(t)
 	response, err := projectRunLeaseClaimResponse(
 		context.Background(),

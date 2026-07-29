@@ -34,7 +34,7 @@ type RunWaitAppender interface {
 type WaitRequest struct {
 	Leases                        api.WorkerRunLeaseProvider
 	Lease                         api.WorkerRunLease
-	LeaseReceipt                  api.WorkerRunLeaseReceipt
+	LeaseAssignment               api.WorkerRunLeaseAssignment
 	CorrelationID                 string
 	RunWaitID                     string
 	ResumeAttachID                string

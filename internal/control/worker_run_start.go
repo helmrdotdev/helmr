@@ -64,10 +64,9 @@ func (s *Server) startRun(
 	ctx context.Context,
 	worker workerActor,
 	leaseID pgtype.UUID,
-	expected api.WorkerRunLeaseReceipt,
+	expected api.WorkerRunLeaseFence,
 	requested runStartArm,
-) (api.WorkerRunLeaseReceipt, error) {
-	var receipt api.WorkerRunLeaseReceipt
+) (api.WorkerRunLeaseFence, error) {
 	err := s.inTx(ctx, func(work *txWork) error {
 		locators, err := work.q.GetRunLeaseStartLocators(ctx, db.GetRunLeaseStartLocatorsParams{
 			ID: leaseID, LeaseSequence: expected.LeaseSequence, WorkerGroupID: worker.WorkerGroupID,
@@ -91,18 +90,6 @@ func (s *Server) startRun(
 			workspaceMount: authority.workspaceMount, runWait: authority.runWait,
 		}); err != nil {
 			return err
-		}
-		receipt, err = projectRunLeaseReceipt(runLeaseProjectionAuthority{
-			run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
-			networkSlot: authority.networkSlot, runLease: authority.runLease,
-			workspace: authority.workspace, workspaceMount: authority.workspaceMount,
-			workspaceLease: authority.workspaceLease,
-		})
-		if err != nil {
-			return err
-		}
-		if !equalRunLeaseReceipt(receipt, expected) {
-			return errStaleRunLeaseClaim
 		}
 		switch authority.runLease.State {
 		case db.RunLeaseStateStarting:
@@ -148,9 +135,9 @@ func (s *Server) startRun(
 		return nil
 	})
 	if err != nil {
-		return api.WorkerRunLeaseReceipt{}, err
+		return api.WorkerRunLeaseFence{}, err
 	}
-	return receipt, nil
+	return expected, nil
 }
 
 func lockRunStartAuthority(

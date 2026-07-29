@@ -36,17 +36,12 @@ func (s *Server) workerCompleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if request.Lease.WorkerGroupID != worker.WorkerGroupID ||
-		completion.lease.workerInstanceID != worker.WorkerInstanceID {
-		writeError(w, forbidden(errors.New("Task completion belongs to another worker")))
-		return
-	}
 	if err := s.completeTask(r.Context(), worker, request, completion); err != nil {
 		if errors.Is(err, errStaleTaskCompletion) {
 			writeError(w, conflict(errStaleTaskCompletion))
 			return
 		}
-		s.log.Error("complete Task failed", "run_id", request.Lease.RunID, "error", err)
+		s.log.Error("complete Task failed", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("complete Task"))
 		return
 	}

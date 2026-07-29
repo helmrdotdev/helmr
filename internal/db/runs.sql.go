@@ -968,7 +968,7 @@ WITH selected_target AS MATERIALIZED (
                   AND idempotency_claims.retired_at IS NULL
            )
        )
-     FOR UPDATE OF environments
+     FOR NO KEY UPDATE OF environments
 ), created_run AS (
     INSERT INTO runs (
         id,
@@ -2164,7 +2164,7 @@ SELECT task_definition.id AS task_definition_id,
  WHERE environments.org_id = $2
    AND environments.project_id = $3
    AND environments.id = $4
- FOR UPDATE OF environments
+ FOR NO KEY UPDATE OF environments
 `
 
 type LockTaskStartDeploymentAuthorityParams struct {

@@ -27,11 +27,8 @@ func (control *actorTurnCommitControl) CommitActorTurn(
 	request api.WorkerCommitActorTurnRequest,
 ) (api.WorkerCommitActorTurnResponse, error) {
 	control.request = request
-	lease := request.Lease
-	lease.BaseWorkspaceVersionID = "version-2"
 	return api.WorkerCommitActorTurnResponse{
-		Lease: lease, RunID: request.Lease.RunID, AttemptNumber: request.Lease.AttemptNumber,
-		RunLeaseID: request.Lease.ID, CorrelationID: request.CorrelationID,
+		Lease: request.Lease, CorrelationID: request.CorrelationID,
 		CommittedInputSequence: request.TargetInputSequence, WorkspaceVersionID: "version-2",
 		Tree: request.Tree,
 	}, nil

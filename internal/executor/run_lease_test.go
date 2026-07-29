@@ -18,7 +18,7 @@ import (
 
 func TestExecutorCompletesSuccessfulRunLeaseTask(t *testing.T) {
 	trace := &runLeaseTrace{}
-	lease := testRunLeaseReceipt(time.Now().Add(time.Minute))
+	lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
 	renewed := lease
 	renewed.ExpiresAt = lease.ExpiresAt.Add(time.Minute)
 	frozen := renewed
@@ -39,10 +39,8 @@ func TestExecutorCompletesSuccessfulRunLeaseTask(t *testing.T) {
 	control := &testRunLeaseControl{
 		trace:   trace,
 		claim:   api.WorkerRunLeaseClaimResponse{Lease: lease},
-		renewed: api.WorkerRunLeaseRenewResponse{Lease: renewed},
-		begin: api.WorkerBeginRunFinalizationResponse{
-			Lease: frozen, Kind: api.WorkerRunFinalizationCapture,
-		},
+		renewed: testRunLeaseRenewResponse(renewed),
+		begin:   testRunFinalizationResponse(frozen, api.WorkerRunFinalizationCapture),
 	}
 	runner := &testRunLeaseTaskRunner{trace: trace, task: task}
 	executor := Executor{RunLeases: control, RunLeaseTasks: runner}
@@ -68,7 +66,7 @@ func TestExecutorCompletesSuccessfulRunLeaseTask(t *testing.T) {
 
 func TestExecutorCompletesSuccessfulTaskHandoff(t *testing.T) {
 	trace := &runLeaseTrace{}
-	lease := testRunLeaseReceipt(time.Now().Add(time.Minute))
+	lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
 	frozen := lease
 	frozen.ExpiresAt = lease.ExpiresAt.Add(20 * time.Minute)
 	task := &testRunLeaseTask{
@@ -87,9 +85,11 @@ func TestExecutorCompletesSuccessfulTaskHandoff(t *testing.T) {
 	control := &testRunLeaseControl{
 		trace:   trace,
 		claim:   api.WorkerRunLeaseClaimResponse{Lease: lease},
-		renewed: api.WorkerRunLeaseRenewResponse{Lease: lease},
+		renewed: testRunLeaseRenewResponse(lease),
 		begin: api.WorkerBeginRunFinalizationResponse{
-			Lease: frozen, Kind: api.WorkerRunFinalizationCapture,
+			Lease: frozen.Fence(), ExpiresAt: frozen.ExpiresAt,
+			BaseWorkspaceVersionID: frozen.BaseWorkspaceVersionID,
+			Kind:                   api.WorkerRunFinalizationCapture,
 			Handoff: &api.WorkerRunFinalizationHandoff{
 				ParentRunID: "parent-run", ParentAttemptNumber: 1,
 				RunWaitID: "wait", SuspendCheckpointID: "suspend",
@@ -123,7 +123,7 @@ func TestExecutorCompletesSuccessfulTaskHandoff(t *testing.T) {
 
 func TestExecutorRollsBackFailedRunLeaseTask(t *testing.T) {
 	trace := &runLeaseTrace{}
-	lease := testRunLeaseReceipt(time.Now().Add(time.Minute))
+	lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
 	frozen := lease
 	frozen.ExpiresAt = lease.ExpiresAt.Add(20 * time.Minute)
 	task := &testRunLeaseTask{
@@ -140,10 +140,8 @@ func TestExecutorRollsBackFailedRunLeaseTask(t *testing.T) {
 	control := &testRunLeaseControl{
 		trace:   trace,
 		claim:   api.WorkerRunLeaseClaimResponse{Lease: lease},
-		renewed: api.WorkerRunLeaseRenewResponse{Lease: lease},
-		begin: api.WorkerBeginRunFinalizationResponse{
-			Lease: frozen, Kind: api.WorkerRunFinalizationReset,
-		},
+		renewed: testRunLeaseRenewResponse(lease),
+		begin:   testRunFinalizationResponse(frozen, api.WorkerRunFinalizationReset),
 	}
 	executor := Executor{
 		RunLeases:     control,
@@ -170,7 +168,7 @@ func TestExecutorRollsBackFailedRunLeaseTask(t *testing.T) {
 
 func TestExecutorCompletesSuccessfulActorRunLease(t *testing.T) {
 	trace := &runLeaseTrace{}
-	lease := testRunLeaseReceipt(time.Now().Add(time.Minute))
+	lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
 	frozen := lease
 	frozen.ExpiresAt = lease.ExpiresAt.Add(20 * time.Minute)
 	task := &testRunLeaseTask{
@@ -187,8 +185,8 @@ func TestExecutorCompletesSuccessfulActorRunLease(t *testing.T) {
 	control := &testRunLeaseControl{
 		trace:   trace,
 		claim:   api.WorkerRunLeaseClaimResponse{Lease: lease},
-		renewed: api.WorkerRunLeaseRenewResponse{Lease: lease},
-		begin:   api.WorkerBeginRunFinalizationResponse{Lease: frozen, Kind: api.WorkerRunFinalizationCapture},
+		renewed: testRunLeaseRenewResponse(lease),
+		begin:   testRunFinalizationResponse(frozen, api.WorkerRunFinalizationCapture),
 	}
 	executor := Executor{RunLeases: control, RunLeaseTasks: &testRunLeaseTaskRunner{trace: trace, task: task}}
 	if err := executor.ExecuteRunLease(context.Background(), api.WorkerRunLeaseWork{LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence}); err != nil {
@@ -204,7 +202,7 @@ func TestExecutorCompletesSuccessfulActorRunLease(t *testing.T) {
 
 func TestExecutorReplaysFinalizationWithStableAuthority(t *testing.T) {
 	trace := &runLeaseTrace{}
-	lease := testRunLeaseReceipt(time.Now().Add(time.Minute))
+	lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
 	frozen := lease
 	frozen.ExpiresAt = lease.ExpiresAt.Add(20 * time.Minute)
 	task := &testRunLeaseTask{
@@ -225,7 +223,7 @@ func TestExecutorReplaysFinalizationWithStableAuthority(t *testing.T) {
 	control := &testRunLeaseControl{
 		trace:            trace,
 		claim:            api.WorkerRunLeaseClaimResponse{Lease: lease},
-		begin:            api.WorkerBeginRunFinalizationResponse{Lease: frozen, Kind: api.WorkerRunFinalizationCapture},
+		begin:            testRunFinalizationResponse(frozen, api.WorkerRunFinalizationCapture),
 		beginFailures:    1,
 		completeFailures: 1,
 	}
@@ -252,7 +250,7 @@ func TestExecutorReplaysFinalizationWithStableAuthority(t *testing.T) {
 
 func TestExecutorRenewalAcceptsCommittedActorWorkspaceFrontier(t *testing.T) {
 	trace := &runLeaseTrace{}
-	current := testRunLeaseReceipt(time.Now().Add(time.Minute))
+	current := testRunLeaseAssignment(time.Now().Add(time.Minute))
 	current.BaseWorkspaceVersionID = "version-1"
 	previous := current
 	previous.BaseWorkspaceVersionID = "version-2"
@@ -265,19 +263,19 @@ func TestExecutorRenewalAcceptsCommittedActorWorkspaceFrontier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !equalRunLeaseReceipt(got, renewed) {
+	if !equalRunLeaseAssignment(got, renewed) {
 		t.Fatalf("renewed Lease = %+v, want %+v", got, renewed)
 	}
 }
 
 func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t *testing.T) {
-	previous := testRunLeaseReceipt(time.Now().Add(time.Minute))
+	previous := testRunLeaseAssignment(time.Now().Add(time.Minute))
 	renewed := previous
 	renewed.ExpiresAt = previous.ExpiresAt.Add(time.Minute)
 	ctx, cancel := context.WithCancel(context.Background())
 	control := cancelingRenewalControl{
 		cancel:   cancel,
-		response: api.WorkerRunLeaseRenewResponse{Lease: renewed},
+		response: testRunLeaseRenewResponse(renewed),
 	}
 	host, guest := net.Pipe()
 	defer host.Close()
@@ -323,7 +321,7 @@ func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !equalRunLeaseReceipt(got, renewed) ||
+	if !equalRunLeaseAssignment(got, renewed) ||
 		fence.GetExpiresAtUnixNano() != renewed.ExpiresAt.UnixNano() {
 		t.Fatalf("renewal = (%+v, %+v)", got, fence)
 	}
@@ -333,7 +331,7 @@ func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t
 }
 
 func TestRenewRunLeaseAuthorityStopsAtGuestAcknowledgedExpiry(t *testing.T) {
-	previous := testRunLeaseReceipt(time.Now().Add(250 * time.Millisecond))
+	previous := testRunLeaseAssignment(time.Now().Add(250 * time.Millisecond))
 	control := &failingRenewalControl{}
 	started := time.Now()
 	_, _, err := renewRunLeaseAuthority(
@@ -355,13 +353,13 @@ func TestRenewRunLeaseAuthorityStopsAtGuestAcknowledgedExpiry(t *testing.T) {
 }
 
 func TestRenewRunLeaseAuthorityDoesNotRetryGuestRejection(t *testing.T) {
-	previous := testRunLeaseReceipt(time.Now().Add(time.Minute))
+	previous := testRunLeaseAssignment(time.Now().Add(time.Minute))
 	renewed := previous
 	renewed.ExpiresAt = previous.ExpiresAt.Add(time.Minute)
 	mounts := &rejectingRenewalMounts{}
 	_, _, err := renewRunLeaseAuthority(
 		context.Background(),
-		staticRenewalControl{response: api.WorkerRunLeaseRenewResponse{Lease: renewed}},
+		staticRenewalControl{response: testRunLeaseRenewResponse(renewed)},
 		mounts,
 		previous,
 		&workspacev0.WorkspaceRunAuthority{},
@@ -385,7 +383,7 @@ type failingRenewalControl struct {
 
 func (control *failingRenewalControl) RenewRunLease(
 	context.Context,
-	api.WorkerRunLeaseReceipt,
+	api.WorkerRunLeaseAssignment,
 ) (api.WorkerRunLeaseRenewResponse, error) {
 	control.calls++
 	return api.WorkerRunLeaseRenewResponse{}, errors.New("Control unavailable")
@@ -397,7 +395,7 @@ type staticRenewalControl struct {
 
 func (control staticRenewalControl) RenewRunLease(
 	context.Context,
-	api.WorkerRunLeaseReceipt,
+	api.WorkerRunLeaseAssignment,
 ) (api.WorkerRunLeaseRenewResponse, error) {
 	return control.response, nil
 }
@@ -417,7 +415,7 @@ func (mounts *rejectingRenewalMounts) RenewWorkspaceAuthority(
 
 func (control cancelingRenewalControl) RenewRunLease(
 	context.Context,
-	api.WorkerRunLeaseReceipt,
+	api.WorkerRunLeaseAssignment,
 ) (api.WorkerRunLeaseRenewResponse, error) {
 	control.cancel()
 	return control.response, nil
@@ -451,8 +449,8 @@ func (runner *testRunLeaseTaskRunner) StartRunLeaseTask(
 type testRunLeaseTask struct {
 	trace           *runLeaseTrace
 	result          RunLeaseTaskResult
-	previous        api.WorkerRunLeaseReceipt
-	renewed         api.WorkerRunLeaseReceipt
+	previous        api.WorkerRunLeaseAssignment
+	renewed         api.WorkerRunLeaseAssignment
 	beginFailures   int
 	captureFailures int
 }
@@ -473,8 +471,8 @@ func (task *testRunLeaseTask) RenewRunLease(
 
 func (task *testRunLeaseTask) BeginWorkspaceFinalization(
 	_ context.Context,
-	_ api.WorkerRunLeaseReceipt,
-	_ api.WorkerRunLeaseReceipt,
+	_ api.WorkerRunLeaseAssignment,
+	_ api.WorkerRunLeaseAssignment,
 	_ string,
 	_ api.WorkerRunFinalizationKind,
 ) error {
@@ -547,7 +545,7 @@ func (control *testRunLeaseControl) AcknowledgeRunEntrypoint(
 
 func (control *testRunLeaseControl) RenewRunLease(
 	context.Context,
-	api.WorkerRunLeaseReceipt,
+	api.WorkerRunLeaseAssignment,
 ) (api.WorkerRunLeaseRenewResponse, error) {
 	control.trace.add("renew")
 	return control.renewed, nil
@@ -623,7 +621,7 @@ func (control *testRunLeaseControl) CreateRuntimeToken(
 
 func (control *testRunLeaseControl) AppendRunLog(
 	context.Context,
-	api.WorkerRunLeaseReceipt,
+	api.WorkerRunLeaseAssignment,
 	api.WorkerLogStream,
 	uint64,
 	[]byte,
@@ -631,11 +629,31 @@ func (control *testRunLeaseControl) AppendRunLog(
 	return nil
 }
 
-func testRunLeaseReceipt(expiresAt time.Time) api.WorkerRunLeaseReceipt {
-	return api.WorkerRunLeaseReceipt{
+func testRunLeaseAssignment(expiresAt time.Time) api.WorkerRunLeaseAssignment {
+	return api.WorkerRunLeaseAssignment{
 		ID:            "019c10d5-a6f7-7af1-8f5f-000000000001",
 		RunID:         "019c10d5-a6f7-7af1-8f5f-000000000002",
 		AttemptNumber: 1, LeaseSequence: 1,
 		ExpiresAt: expiresAt.UTC(),
+	}
+}
+
+func testRunLeaseRenewResponse(
+	lease api.WorkerRunLeaseAssignment,
+) api.WorkerRunLeaseRenewResponse {
+	return api.WorkerRunLeaseRenewResponse{
+		Lease: lease.Fence(), ExpiresAt: lease.ExpiresAt,
+		BaseWorkspaceVersionID: lease.BaseWorkspaceVersionID,
+	}
+}
+
+func testRunFinalizationResponse(
+	lease api.WorkerRunLeaseAssignment,
+	kind api.WorkerRunFinalizationKind,
+) api.WorkerBeginRunFinalizationResponse {
+	return api.WorkerBeginRunFinalizationResponse{
+		Lease: lease.Fence(), ExpiresAt: lease.ExpiresAt,
+		BaseWorkspaceVersionID: lease.BaseWorkspaceVersionID,
+		Kind:                   kind,
 	}
 }

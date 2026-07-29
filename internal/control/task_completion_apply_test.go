@@ -19,17 +19,13 @@ import (
 func TestTaskCompletionReplayUsesOnlyTerminalReceipt(t *testing.T) {
 	workerID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 	leaseID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
-	runID := uuid.MustParse("00000000-0000-0000-0000-000000000003")
-	workspaceID := uuid.MustParse("00000000-0000-0000-0000-000000000004")
 	worker := workerActor{WorkerInstanceID: workerID, WorkerGroupID: "workers"}
-	request := api.WorkerCompleteTaskRequest{Lease: api.WorkerRunLeaseReceipt{
-		AttemptNumber: 2,
+	request := api.WorkerCompleteTaskRequest{Lease: api.WorkerRunLeaseFence{
+		ID:            leaseID.String(),
 		LeaseSequence: 7,
 	}}
 	completion := parsedTaskCompletion{
-		lease: parsedRunLeaseReceipt{
-			leaseID: leaseID, runID: runID, workspaceID: workspaceID,
-		},
+		lease:       parsedRunLeaseFence{leaseID: leaseID},
 		fingerprint: "sha256:receipt",
 	}
 	store := &taskCompletionReplayFixture{fingerprint: pgvalue.Text(completion.fingerprint)}
@@ -39,9 +35,7 @@ func TestTaskCompletionReplayUsesOnlyTerminalReceipt(t *testing.T) {
 		t.Fatalf("replay = %t, %v", replayed, err)
 	}
 	if store.last.RunLeaseID != pgvalue.UUID(leaseID) ||
-		store.last.RunID != pgvalue.UUID(runID) ||
-		store.last.WorkspaceID != pgvalue.UUID(workspaceID) ||
-		store.last.AttemptNumber != 2 || store.last.LeaseSequence != 7 ||
+		store.last.LeaseSequence != 7 ||
 		store.last.WorkerGroupID != worker.WorkerGroupID ||
 		store.last.WorkerInstanceID != pgvalue.UUID(workerID) {
 		t.Fatalf("unexpected replay selector: %+v", store.last)
@@ -167,7 +161,7 @@ func TestTaskCompletionRejectsFinalizationKindMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseID := pgvalue.UUID(uuid.MustParse(request.Lease.BaseWorkspaceVersionID))
+	baseID := pgvalue.UUID(uuid.MustParse(request.Workspace.Captured.Receipt.Fence.BaseWorkspaceVersionID))
 	operationID := pgvalue.UUID(uuid.MustParse(completion.capture.receipt.OperationID))
 	authority := runLeaseClaimAuthority{
 		run: db.Run{

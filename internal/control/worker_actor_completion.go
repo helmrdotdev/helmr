@@ -36,16 +36,12 @@ func (s *Server) workerCompleteActor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if request.Lease.WorkerGroupID != worker.WorkerGroupID || completion.lease.workerInstanceID != worker.WorkerInstanceID {
-		writeError(w, forbidden(errors.New("Actor completion belongs to another worker")))
-		return
-	}
 	if err := s.completeActor(r.Context(), worker, request, completion); err != nil {
 		if errors.Is(err, errStaleActorCompletion) {
 			writeError(w, conflict(errStaleActorCompletion))
 			return
 		}
-		s.log.Error("complete Actor failed", "run_id", request.Lease.RunID, "error", err)
+		s.log.Error("complete Actor failed", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("complete Actor"))
 		return
 	}

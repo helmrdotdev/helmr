@@ -44,7 +44,7 @@ func TestStartRestoredProgramOrdersGrantStartProofAndRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer program.session.Close(context.Background())
-	if program.entrypoint.GetTask() == nil || !equalRunLeaseReceipt(program.lease, claim.Lease) {
+	if program.entrypoint.GetTask() == nil || !equalRunLeaseAssignment(program.lease, claim.Lease) {
 		t.Fatalf("restored Program = %+v", program)
 	}
 	for range 2 {
@@ -320,7 +320,7 @@ func (*queuedStreamSession) Wait(ctx context.Context) error { <-ctx.Done(); retu
 
 type restoredProgramControl struct {
 	mu           sync.Mutex
-	lease        api.WorkerRunLeaseReceipt
+	lease        api.WorkerRunLeaseAssignment
 	started      bool
 	released     bool
 	releaseCalls int
@@ -343,17 +343,20 @@ func (c *restoredProgramControl) AcknowledgeRunStart(_ context.Context, request 
 			request.Attach.Parent != nil &&
 			request.Attach.Child == nil
 	}
-	if !validArm || !equalRunLeaseReceipt(request.Lease, c.lease) {
+	if !validArm || request.Lease != c.lease.Fence() {
 		return api.WorkerRunStartResponse{}, errors.New("unexpected restore start")
 	}
 	c.started = true
-	return api.WorkerRunStartResponse{Lease: c.lease}, nil
+	return api.WorkerRunStartResponse{Lease: c.lease.Fence()}, nil
 }
 func (*restoredProgramControl) AcknowledgeRunEntrypoint(context.Context, api.WorkerRunEntrypointRequest) error {
 	return errors.New("unexpected entrypoint")
 }
-func (c *restoredProgramControl) RenewRunLease(context.Context, api.WorkerRunLeaseReceipt) (api.WorkerRunLeaseRenewResponse, error) {
-	return api.WorkerRunLeaseRenewResponse{Lease: c.lease}, nil
+func (c *restoredProgramControl) RenewRunLease(context.Context, api.WorkerRunLeaseAssignment) (api.WorkerRunLeaseRenewResponse, error) {
+	return api.WorkerRunLeaseRenewResponse{
+		Lease: c.lease.Fence(), ExpiresAt: c.lease.ExpiresAt,
+		BaseWorkspaceVersionID: c.lease.BaseWorkspaceVersionID,
+	}, nil
 }
 func (*restoredProgramControl) BeginRunFinalization(context.Context, api.WorkerBeginRunFinalizationRequest) (api.WorkerBeginRunFinalizationResponse, error) {
 	return api.WorkerBeginRunFinalizationResponse{}, errors.New("unexpected finalization")
@@ -377,7 +380,7 @@ func (*restoredProgramControl) AppendActorOutput(context.Context, api.WorkerAppe
 func (*restoredProgramControl) CreateRuntimeToken(context.Context, api.WorkerCreateTokenRequest) (api.TokenResponse, error) {
 	return api.TokenResponse{}, errors.New("unexpected Token create")
 }
-func (*restoredProgramControl) AppendRunLog(context.Context, api.WorkerRunLeaseReceipt, api.WorkerLogStream, uint64, []byte) error {
+func (*restoredProgramControl) AppendRunLog(context.Context, api.WorkerRunLeaseAssignment, api.WorkerLogStream, uint64, []byte) error {
 	return nil
 }
 func (*restoredProgramControl) CreateRunWait(context.Context, api.WorkerCreateRunWaitRequest) (api.WorkerCreateRunWaitResponse, error) {
@@ -399,14 +402,14 @@ func (c *restoredProgramControl) AcknowledgeRunResumeRelease(_ context.Context, 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.releaseCalls++
-	if !c.started || request.RunLeaseID != c.lease.ID {
+	if !c.started || request.Lease != c.lease.Fence() {
 		return api.WorkerRunResumeReleaseResponse{}, errors.New("release before start")
 	}
 	if c.releaseCalls == 1 {
 		return api.WorkerRunResumeReleaseResponse{}, errors.New("transient lost release response")
 	}
 	c.released = true
-	return api.WorkerRunResumeReleaseResponse{Lease: c.lease, RunWaitID: request.RunWaitID,
+	return api.WorkerRunResumeReleaseResponse{Lease: c.lease.Fence(), RunWaitID: request.RunWaitID,
 		CheckpointID: request.CheckpointID, ResumeAttachID: request.ResumeAttachID,
 		ResumeRequestVersion: request.ResumeRequestVersion}, nil
 }

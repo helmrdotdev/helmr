@@ -20,9 +20,10 @@ import (
 func TestWorkerCompleteTaskReplaysPreviousEpochWithoutCAS(t *testing.T) {
 	workerID := uuid.Must(uuid.NewV7())
 	request := validTaskCompletionRequest(t)
-	request.Lease.WorkerInstanceID = workerID.String()
-	request.Lease.WorkerEpoch = 1
-	request.Workspace.Captured = validTaskWorkspaceCapture(t, request.Lease)
+	lease := validRunLeaseAssignment(workerID)
+	lease.WorkerEpoch = 1
+	request.Lease = lease.Fence()
+	request.Workspace.Captured = validTaskWorkspaceCapture(t, lease)
 	parsed, err := parseTaskCompletionRequest(request)
 	if err != nil {
 		t.Fatal(err)
@@ -36,7 +37,7 @@ func TestWorkerCompleteTaskReplaysPreviousEpochWithoutCAS(t *testing.T) {
 	httpRequest := httptest.NewRequest(http.MethodPost, "/api/worker/leases/tasks/complete", bytes.NewReader(body))
 	httpRequest = httpRequest.WithContext(context.WithValue(httpRequest.Context(), workerContextKey{}, workerActor{
 		WorkerInstanceID: workerID,
-		WorkerGroupID:    request.Lease.WorkerGroupID,
+		WorkerGroupID:    lease.WorkerGroupID,
 		WorkerEpoch:      2,
 		ProtocolVersion:  api.CurrentWorkerProtocolVersion,
 	}))
@@ -55,8 +56,9 @@ func TestWorkerCompleteTaskReplaysPreviousEpochWithoutCAS(t *testing.T) {
 func TestWorkerCompleteTaskRejectsChangedTerminalRequest(t *testing.T) {
 	workerID := uuid.Must(uuid.NewV7())
 	request := validTaskCompletionRequest(t)
-	request.Lease.WorkerInstanceID = workerID.String()
-	request.Workspace.Captured = validTaskWorkspaceCapture(t, request.Lease)
+	lease := validRunLeaseAssignment(workerID)
+	request.Lease = lease.Fence()
+	request.Workspace.Captured = validTaskWorkspaceCapture(t, lease)
 	store := &workerTaskCompletionReplayStore{fingerprint: pgvalue.Text("sha256:different")}
 	server := &Server{log: taskCompletionTestLogger(), db: store}
 	body, err := json.Marshal(request)
@@ -66,8 +68,8 @@ func TestWorkerCompleteTaskRejectsChangedTerminalRequest(t *testing.T) {
 	httpRequest := httptest.NewRequest(http.MethodPost, "/api/worker/leases/tasks/complete", bytes.NewReader(body))
 	httpRequest = httpRequest.WithContext(context.WithValue(httpRequest.Context(), workerContextKey{}, workerActor{
 		WorkerInstanceID: workerID,
-		WorkerGroupID:    request.Lease.WorkerGroupID,
-		WorkerEpoch:      request.Lease.WorkerEpoch,
+		WorkerGroupID:    lease.WorkerGroupID,
+		WorkerEpoch:      lease.WorkerEpoch,
 		ProtocolVersion:  api.CurrentWorkerProtocolVersion,
 	}))
 	response := httptest.NewRecorder()
