@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -203,13 +202,13 @@ func TestTokenWaitSchemaRejectsCrossEnvironmentReference(t *testing.T) {
 	otherEnvironmentID := uuid.Must(uuid.NewV7())
 	mustRunLeaseExec(t, ctx, fixture.pool, `
 		INSERT INTO environments (
-		    id, public_id, org_id, project_id, slug, name, color_hex
-		) VALUES ($1, $2, $3, $4, $5, 'Other Environment', '#3366ff')
-	`, otherEnvironmentID, runLeasePublicID(t, publicid.Environment),
-		fixture.orgID, fixture.projectID, "other-"+shortRunLeaseID(otherEnvironmentID))
+		    id, org_id, project_id, slug, name, color_hex
+		) VALUES ($1, $2, $3, $4, 'Other Environment', '#3366ff')
+	`, otherEnvironmentID, fixture.orgID, fixture.projectID,
+		"other-"+shortRunLeaseID(otherEnvironmentID))
 	otherTokenID := uuid.Must(uuid.NewV7())
 	if _, err := fixture.queries.CreateToken(ctx, db.CreateTokenParams{
-		ID: pgvalue.UUID(otherTokenID), PublicID: runLeasePublicID(t, publicid.Token),
+		ID:    pgvalue.UUID(otherTokenID),
 		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 		EnvironmentID:             pgvalue.UUID(otherEnvironmentID),
 		ExpiresAt:                 pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -692,7 +691,7 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 		t.Fatal(err)
 	}
 	if _, err := queries.CreatePrivateCheckpointWorkspaceVersion(ctx, db.CreatePrivateCheckpointWorkspaceVersionParams{
-		ID: pgvalue.UUID(privateVersionID), PublicID: tokenWaitTestPublicID(t, publicid.WorkspaceVersion),
+		ID:            pgvalue.UUID(privateVersionID),
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 		ParentVersionID: pgvalue.UUID(authority.physicalVersionID), ArtifactID: pgvalue.UUID(workspaceArtifactID),
 		ContentDigest: workspaceTreeDigest, SizeBytes: 10, EntryCount: 1,
@@ -1560,15 +1559,6 @@ func tokenWaitTestDigest(seed string) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func tokenWaitTestPublicID(t *testing.T, prefix publicid.Prefix) string {
-	t.Helper()
-	value, err := publicid.New(prefix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return value
-}
-
 type runLeaseClaimFixture struct {
 	pool          *pgxpool.Pool
 	queries       *db.Queries
@@ -1671,11 +1661,6 @@ func mustRunLeaseExec(t *testing.T, ctx context.Context, executor interface {
 }, query string, args ...any) {
 	t.Helper()
 	runtest.MustExec(t, ctx, executor, query, args...)
-}
-
-func runLeasePublicID(t *testing.T, prefix publicid.Prefix) string {
-	t.Helper()
-	return runtest.PublicID(t, prefix)
 }
 
 func shortRunLeaseID(id uuid.UUID) string {

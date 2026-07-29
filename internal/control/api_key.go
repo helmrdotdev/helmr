@@ -7,13 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -105,21 +103,17 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("generate api key"))
 		return
 	}
-	var publicID string
-	record, err := createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.APIKey, value: &publicID}}, func() (db.APIKey, error) {
-		return s.db.IssueAPIKey(r.Context(), db.IssueAPIKeyParams{
-			ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			PublicID:        publicID,
-			OrgID:           pgvalue.UUID(actor.OrgID),
-			ProjectID:       projectUUID,
-			EnvironmentID:   environmentUUID,
-			CreatedByUserID: pgvalue.UUID(actor.UserID),
-			Role:            db.OrgMemberRole(actor.Role),
-			Name:            name,
-			KeyPrefix:       generated.KeyPrefix,
-			TokenHash:       generated.TokenHash,
-			ExpiresAt:       expiresAt,
-		})
+	record, err := s.db.IssueAPIKey(r.Context(), db.IssueAPIKeyParams{
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:           pgvalue.UUID(actor.OrgID),
+		ProjectID:       projectUUID,
+		EnvironmentID:   environmentUUID,
+		CreatedByUserID: pgvalue.UUID(actor.UserID),
+		Role:            db.OrgMemberRole(actor.Role),
+		Name:            name,
+		KeyPrefix:       generated.KeyPrefix,
+		TokenHash:       generated.TokenHash,
+		ExpiresAt:       expiresAt,
 	})
 	if err != nil {
 		writeError(w, errors.New("create api key"))
@@ -156,7 +150,7 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, err := parseUUIDParam(r, "id")
 	if err != nil {
 		writeError(w, notFound(errors.New("api key not found")))
 		return

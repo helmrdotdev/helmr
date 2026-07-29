@@ -261,7 +261,7 @@ RETURNING *;
 -- name: CreateActorContinuationRun :one
 WITH created_run AS (
     INSERT INTO runs (
-        id, public_id, org_id, project_id, environment_id,
+        id, org_id, project_id, environment_id,
         deployment_id, deployment_definition_id, entrypoint_kind,
         entrypoint_declared_id, cause_kind, actor_id,
         actor_start_input_sequence, actor_start_input_high_watermark,
@@ -270,7 +270,7 @@ WITH created_run AS (
         queue_origin_at, queue_score_at, queued_expires_at,
         max_active_duration_ms, retry_policy, trace_id, root_span_id
     )
-    SELECT sqlc.arg(run_id), sqlc.arg(public_id), environments.org_id, environments.project_id, actors.environment_id,
+    SELECT sqlc.arg(run_id), environments.org_id, environments.project_id, actors.environment_id,
            definitions.deployment_id, actors.deployment_definition_id, 'actor',
            actors.actor_declared_id, 'continuation', actors.id,
            actors.committed_input_sequence, actors.next_input_sequence - 1,

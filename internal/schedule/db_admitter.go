@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
@@ -153,10 +152,6 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		return run.ErrWorkspaceReservationConflict
 	}
 	runID := uuid.Must(uuid.NewV7())
-	runPublicID, err := publicid.New(publicid.Run)
-	if err != nil {
-		return err
-	}
 	rootSpanID, err := tracing.NewSpanID()
 	if err != nil {
 		return err
@@ -164,7 +159,6 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 	if _, err := run.CreateTask(ctx, queries, run.TaskRequest{
 		Run: db.CreateAdmittedRootTaskRunParams{
 			ID:                     pgvalue.UUID(runID),
-			PublicID:               runPublicID,
 			OrgID:                  locked.OrgID,
 			ProjectID:              locked.ProjectID,
 			EnvironmentID:          lockedSchedule.EnvironmentID,

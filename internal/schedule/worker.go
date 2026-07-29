@@ -166,7 +166,7 @@ func (w *Worker) tick(ctx context.Context) error {
 				if errors.Is(err, context.Canceled) {
 					return err
 				}
-				w.log.Error("schedule admission failed", "schedule_id", value.PublicID, "error", err)
+				w.log.Error("schedule admission failed", "schedule_id", pgvalue.UUIDString(value.ID), "error", err)
 			}
 			return nil
 		})
@@ -182,7 +182,7 @@ func (w *Worker) bindPending(ctx context.Context, now time.Time) error {
 	for _, candidate := range pending {
 		next, err := NextCronTime(candidate.CronPattern, candidate.Timezone, now)
 		if err != nil {
-			return fmt.Errorf("calculate pending Schedule %s cursor: %w", candidate.PublicID, err)
+			return fmt.Errorf("calculate pending Schedule %s cursor: %w", pgvalue.UUIDString(candidate.ID), err)
 		}
 		_, err = w.store.ActivatePendingSchedule(ctx, db.ActivatePendingScheduleParams{
 			WorkspaceID:        candidate.ResolvedWorkspaceID,

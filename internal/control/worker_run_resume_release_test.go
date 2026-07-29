@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -166,6 +167,31 @@ func TestAcknowledgeRunResumeReleaseRejectsMismatchedRestoreIdentity(t *testing.
 	}
 	if store.releaseWrites != 0 {
 		t.Fatalf("mismatched proof performed %d writes", store.releaseWrites)
+	}
+}
+
+func TestParseRunResumeReleaseProofRequiresCanonicalUUIDv7(t *testing.T) {
+	valid := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
+	base := api.WorkerRunResumeReleaseRequest{
+		RunWaitID: valid, CheckpointID: valid, ResumeAttachID: valid,
+		ResumeRequestVersion: 1,
+	}
+	for _, test := range []struct {
+		name string
+		id   string
+	}{
+		{name: "uuidv4", id: "8fa3431e-c649-4ea0-bf12-b8e9fcdf1d8d"},
+		{name: "uppercase", id: "019C10D5-A6F7-7AF1-8F5F-BB97BCC0DC31"},
+		{name: "whitespace", id: " " + valid},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := base
+			request.RunWaitID = test.id
+			_, err := parseRunResumeReleaseProof(request)
+			if err == nil || !strings.Contains(err.Error(), "canonical UUIDv7") {
+				t.Fatalf("error = %v, want canonical UUIDv7 rejection", err)
+			}
+		})
 	}
 }
 

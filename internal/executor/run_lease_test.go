@@ -633,8 +633,8 @@ func (control *testRunLeaseControl) AppendRunLog(
 
 func testRunLeaseReceipt(expiresAt time.Time) api.WorkerRunLeaseReceipt {
 	return api.WorkerRunLeaseReceipt{
-		ID:            "00000000-0000-0000-0000-000000000001",
-		RunID:         "00000000-0000-0000-0000-000000000002",
+		ID:            "019c10d5-a6f7-7af1-8f5f-000000000001",
+		RunID:         "019c10d5-a6f7-7af1-8f5f-000000000002",
 		AttemptNumber: 1, LeaseSequence: 1,
 		ExpiresAt: expiresAt.UTC(),
 	}

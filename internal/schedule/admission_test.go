@@ -16,7 +16,6 @@ func TestBuildAdmissionProducesStablePlatformInput(t *testing.T) {
 	lastScheduledAt := scheduledAt.Add(-24 * time.Hour)
 	value := db.Schedule{
 		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		PublicID:             "sch_abcdefghijklmnopqrstuvwxyz",
 		CronPattern:          "0 9 * * *",
 		Timezone:             "Asia/Tokyo",
 		CronSemanticsVersion: CronSemanticsVersion,
@@ -37,7 +36,7 @@ func TestBuildAdmissionProducesStablePlatformInput(t *testing.T) {
 	if payload.ScheduledAt != "2026-06-02T00:00:00Z" ||
 		payload.LastScheduledAt != "2026-06-01T00:00:00Z" ||
 		payload.Timezone != "Asia/Tokyo" ||
-		payload.ScheduleID != value.PublicID {
+		payload.ScheduleID != pgvalue.UUIDString(value.ID) {
 		t.Fatalf("payload = %+v", payload)
 	}
 	if len(payload.Upcoming) != upcomingCount || payload.Upcoming[0] != "2026-06-03T00:00:00Z" {
@@ -48,7 +47,7 @@ func TestBuildAdmissionProducesStablePlatformInput(t *testing.T) {
 func TestBuildAdmissionSkipsMissedInstants(t *testing.T) {
 	scheduledAt := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 	admission, err := BuildAdmissionAt(db.Schedule{
-		PublicID:             "sch_abcdefghijklmnopqrstuvwxyz",
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		CronPattern:          "0 9 * * *",
 		Timezone:             "Asia/Tokyo",
 		CronSemanticsVersion: CronSemanticsVersion,

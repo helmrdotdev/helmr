@@ -12,7 +12,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -381,10 +380,6 @@ func actorNeedsContinuation(actor db.Actor) bool {
 
 func createActorContinuation(ctx context.Context, store db.Querier, actor db.Actor, ws db.Workspace, secrets []secret.DeliveryEnvelope, now pgtype.Timestamptz) error {
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	publicID, err := newPublicID(publicid.Run)
-	if err != nil {
-		return err
-	}
 	traceID, err := tracing.NewTraceID()
 	if err != nil {
 		return err
@@ -394,7 +389,7 @@ func createActorContinuation(ctx context.Context, store db.Querier, actor db.Act
 		return err
 	}
 	run, err := store.CreateActorContinuationRun(ctx, db.CreateActorContinuationRunParams{
-		RunID: runID, PublicID: publicID, QueueOriginAt: now, TraceID: pgvalue.Text(traceID), RootSpanID: rootSpanID,
+		RunID: runID, QueueOriginAt: now, TraceID: pgvalue.Text(traceID), RootSpanID: rootSpanID,
 		EnvironmentID: actor.EnvironmentID, ActorID: actor.ID, WorkspaceID: ws.ID, ExpectedRunGeneration: actor.RunGeneration,
 	})
 	if err != nil {

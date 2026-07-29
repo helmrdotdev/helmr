@@ -11,10 +11,10 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -181,7 +181,7 @@ func (s *Server) platformAcquisitionRow(
 	input api.WorkerPlatformAcquisition,
 ) (db.GetDeploymentPlatformAcquisitionRow, error) {
 	worker := workerFromContext(ctx)
-	deploymentID, err := uuid.Parse(input.DeploymentID)
+	deploymentID, err := ids.Parse(input.DeploymentID)
 	if err != nil {
 		return db.GetDeploymentPlatformAcquisitionRow{}, badRequest(errors.New("Platform acquisition Deployment ID is invalid"))
 	}

@@ -89,7 +89,7 @@ export function assertGreenfieldTypes(): void {
     },
   })
   const payloadTaskWait = client.runs.wait<typeof typedOutputTask>(
-    "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
   )
   payloadTaskWait.unwrap().then((output) => {
     output.value satisfies string

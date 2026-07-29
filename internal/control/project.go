@@ -15,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -145,25 +144,15 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		if region.State != db.RegionStateAvailable {
 			return badRequest(errors.New("default region is not available"))
 		}
-		var projectPublicID, productionPublicID, stagingPublicID string
-		project, err = createWithPublicID(r.Context(), []publicIDSlot{
-			{prefix: publicid.Project, value: &projectPublicID},
-			{prefix: publicid.Environment, value: &productionPublicID},
-			{prefix: publicid.Environment, value: &stagingPublicID},
-		}, func() (db.CreateProjectWithDefaultEnvironmentRow, error) {
-			return work.q.CreateProjectWithDefaultEnvironment(r.Context(), db.CreateProjectWithDefaultEnvironmentParams{
-				ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				PublicID:                   projectPublicID,
-				OrgID:                      pgvalue.UUID(actor.OrgID),
-				DefaultRegionID:            region.ID,
-				Slug:                       slug,
-				Name:                       name,
-				IsDefault:                  false,
-				EnvironmentID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				EnvironmentPublicID:        productionPublicID,
-				StagingEnvironmentID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				StagingEnvironmentPublicID: stagingPublicID,
-			})
+		project, err = work.q.CreateProjectWithDefaultEnvironment(r.Context(), db.CreateProjectWithDefaultEnvironmentParams{
+			ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:                pgvalue.UUID(actor.OrgID),
+			DefaultRegionID:      region.ID,
+			Slug:                 slug,
+			Name:                 name,
+			IsDefault:            false,
+			EnvironmentID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			StagingEnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		})
 		if err != nil {
 			if isUniqueViolation(err) {
@@ -383,18 +372,14 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 		} else if err != nil {
 			return errors.New("load project")
 		}
-		var publicID string
-		environment, err = createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.Environment, value: &publicID}}, func() (db.Environment, error) {
-			return work.q.CreateEnvironment(r.Context(), db.CreateEnvironmentParams{
-				ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				PublicID:  publicID,
-				OrgID:     pgvalue.UUID(actor.OrgID),
-				ProjectID: pgvalue.UUID(projectID),
-				Slug:      slug,
-				Name:      name,
-				ColorHex:  colorHex,
-				IsDefault: false,
-			})
+		environment, err = work.q.CreateEnvironment(r.Context(), db.CreateEnvironmentParams{
+			ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OrgID:     pgvalue.UUID(actor.OrgID),
+			ProjectID: pgvalue.UUID(projectID),
+			Slug:      slug,
+			Name:      name,
+			ColorHex:  colorHex,
+			IsDefault: false,
 		})
 		if err != nil {
 			if isUniqueViolation(err) {

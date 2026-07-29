@@ -35,7 +35,7 @@ func TestRunTelemetryCursorIsIntegrityAndScopeBound(t *testing.T) {
 	server := &Server{authKeys: auth.Keys{TelemetryCursor: make([]byte, auth.RootKeySize)}}
 	want := runTelemetryCursor{
 		EnvironmentID: "00000000-0000-0000-0000-000000000001",
-		RunID:         "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		RunID:         "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 		RecordKind:    "logs",
 		Filters:       []string{"error", "warn"},
 		Sequence:      42,
@@ -84,25 +84,25 @@ func TestProjectRunLogRecordDistinguishesStructuredAndStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	structured, err := projectRunLogRecord(api.RunLogChunk{
-		ID: "tc1.structured", RunID: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ID: "tc1.structured", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 		AttemptNumber: 2, Stream: string(api.WorkerLogStreamStructured),
 		ContentBase64: base64.StdEncoding.EncodeToString(structuredBody), At: at,
-	}, "run_bbbbbbbbbbbbbbbbbbbbbbbbbb")
+	}, "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if structured.Kind != "structured" ||
-		structured.RunID != "run_bbbbbbbbbbbbbbbbbbbbbbbbbb" ||
+		structured.RunID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38" ||
 		structured.Level != "error" ||
 		structured.Message != "failed" ||
 		string(structured.Attributes) != `{"step":2}` {
 		t.Fatalf("structured = %+v", structured)
 	}
 	stream, err := projectRunLogRecord(api.RunLogChunk{
-		ID: "tc1.stdout", RunID: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ID: "tc1.stdout", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 		AttemptNumber: 2, Stream: string(api.WorkerLogStreamStdout),
 		ObservedSeq: 3, ContentBase64: "b2sK", Bytes: 3, At: at,
-	}, "run_bbbbbbbbbbbbbbbbbbbbbbbbbb")
+	}, "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,7 +4,6 @@ SELECT transaction_timestamp()::timestamptz;
 -- name: CreateToken :one
 INSERT INTO tokens (
     id,
-    public_id,
     org_id,
     project_id,
     environment_id,
@@ -15,7 +14,6 @@ INSERT INTO tokens (
 )
 VALUES (
     sqlc.arg(id),
-    sqlc.arg(public_id),
     sqlc.arg(org_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
@@ -38,11 +36,6 @@ SELECT *
 SELECT *
   FROM tokens
  WHERE id = sqlc.arg(id);
-
--- name: GetTokenByPublicID :one
-SELECT *
-  FROM tokens
- WHERE public_id = sqlc.arg(public_id);
 
 -- name: ListTokens :many
 WITH cursor_token AS (
@@ -72,7 +65,7 @@ SELECT *
 -- name: GetTokenForCallbackCompletion :one
 SELECT *
  FROM tokens
- WHERE public_id = sqlc.arg(public_id)
+ WHERE id = sqlc.arg(id)
    AND callback_secret_fingerprint = sqlc.arg(callback_secret_fingerprint)
  FOR UPDATE;
 

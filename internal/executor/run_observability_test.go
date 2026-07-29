@@ -59,7 +59,7 @@ func (control *runObservabilityRetryControl) AppendStructuredRunLog(
 func TestWorkerRunMetadataRequestPreservesClosedMutation(t *testing.T) {
 	amount := 2.5
 	request, err := workerRunMetadataRequest(&runv0.MetadataUpdated{
-		CorrelationId: "00000000-0000-0000-0000-000000000001",
+		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000001",
 		Operation:     "increment",
 		Key:           stringPointer("steps"),
 		Amount:        &amount,
@@ -67,7 +67,7 @@ func TestWorkerRunMetadataRequestPreservesClosedMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if request.OperationID != "00000000-0000-0000-0000-000000000001" ||
+	if request.OperationID != "019c10d5-a6f7-7af1-8f5f-000000000001" ||
 		request.Operation != "increment" ||
 		request.Key != "steps" ||
 		request.Amount == nil ||
@@ -79,7 +79,7 @@ func TestWorkerRunMetadataRequestPreservesClosedMutation(t *testing.T) {
 func TestWorkerStructuredLogRequestUsesObservedSequence(t *testing.T) {
 	request, err := workerStructuredLogRequest(
 		&runv0.StructuredLogRequested{
-			CorrelationId:  "00000000-0000-0000-0000-000000000001",
+			CorrelationId:  "019c10d5-a6f7-7af1-8f5f-000000000001",
 			Level:          "warn",
 			Message:        "retrying",
 			AttributesJson: `{"attempt":2}`,
@@ -143,7 +143,7 @@ func TestTaskControlObservabilityRetryUsesRenewedReceipt(t *testing.T) {
 			t.Context(),
 			api.WorkerRunLeaseReceipt{},
 			&runv0.MetadataUpdated{
-				CorrelationId: "00000000-0000-0000-0000-000000000131",
+				CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000131",
 				Operation:     "set",
 				Key:           stringPointer("state"),
 				ValueJson:     stringPointer(`"ready"`),
@@ -179,7 +179,7 @@ func TestTaskControlObservabilityRetryUsesRenewedReceipt(t *testing.T) {
 			api.WorkerRunLeaseReceipt{},
 			17,
 			&runv0.StructuredLogRequested{
-				CorrelationId:  "00000000-0000-0000-0000-000000000132",
+				CorrelationId:  "019c10d5-a6f7-7af1-8f5f-000000000132",
 				Level:          "info",
 				Message:        "ready",
 				AttributesJson: `{}`,
@@ -257,7 +257,7 @@ func TestFreshAdmissionObservabilityRetriesTransientControlFailure(t *testing.T)
 		t.Context(),
 		api.WorkerRunLeaseReceipt{},
 		&runv0.MetadataUpdated{
-			CorrelationId: "00000000-0000-0000-0000-000000000133",
+			CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000133",
 			Operation:     "set",
 			Key:           stringPointer("state"),
 			ValueJson:     stringPointer(`"admitted"`),

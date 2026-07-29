@@ -1,7 +1,6 @@
 package secret
 
 import (
-	"encoding/base32"
 	"errors"
 	"strings"
 	"testing"
@@ -115,14 +114,14 @@ func TestSecretMutationReplayComparesExactEncryptedVersion(t *testing.T) {
 
 func seedSecretEnvironment(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 	t.Helper()
-	orgID := uuid.New()
-	projectID := uuid.New()
-	environmentID := uuid.New()
+	orgID := uuid.Must(uuid.NewV7())
+	projectID := uuid.Must(uuid.NewV7())
+	environmentID := uuid.Must(uuid.NewV7())
 	regionID := "secret-" + environmentID.String()
 	if _, err := pool.Exec(t.Context(), `
-		INSERT INTO organizations (id, public_id, name, slug)
-		VALUES ($1, $2, 'Secrets', $3)
-	`, orgID, secretPublicID("org_", orgID), "secrets-"+orgID.String()); err != nil {
+		INSERT INTO organizations (id, name, slug)
+		VALUES ($1, 'Secrets', $2)
+	`, orgID, "secrets-"+orgID.String()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(t.Context(), `
@@ -132,11 +131,10 @@ func seedSecretEnvironment(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(t.Context(), `
-		INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name)
-		VALUES ($1, $2, $3, $4, $5, 'Secrets')
+		INSERT INTO projects (id, org_id, default_region_id, slug, name)
+		VALUES ($1, $2, $3, $4, 'Secrets')
 	`,
 		projectID,
-		secretPublicID("prj_", projectID),
 		orgID,
 		regionID,
 		"secrets-"+projectID.String(),
@@ -144,9 +142,9 @@ func seedSecretEnvironment(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(t.Context(), `
-		INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex)
-		VALUES ($1, $2, $3, $4, 'production', 'Production', '#000000')
-	`, environmentID, secretPublicID("env_", environmentID), orgID, projectID); err != nil {
+		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
+		VALUES ($1, $2, $3, 'production', 'Production', '#000000')
+	`, environmentID, orgID, projectID); err != nil {
 		t.Fatal(err)
 	}
 	return environmentID
@@ -169,10 +167,4 @@ func currentSecretVersion(
 		t.Fatal(err)
 	}
 	return versionID
-}
-
-func secretPublicID(prefix string, id uuid.UUID) string {
-	return prefix + strings.ToLower(
-		base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(id[:]),
-	)
 }

@@ -96,7 +96,7 @@ func (s *Server) startTaskHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeTaskStartError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, api.StartTaskResponse{RunID: result.RunPublicID})
+	writeJSON(w, http.StatusCreated, api.StartTaskResponse{RunID: result.RunID.String()})
 }
 
 func decodeStartTaskRequest(r *http.Request) (api.StartTaskRequest, bool, error) {

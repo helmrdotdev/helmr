@@ -57,7 +57,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("prepare verifier host: %w", err)
 	}
-	serviceID := uuid.NewString()
+	serviceID := uuid.Must(uuid.NewV7()).String()
 	process, err := workerdaemon.Acquire(workDir, workerdaemon.ProcessIdentity{ServiceID: serviceID, Roles: cfg.WorkerRoles})
 	if err != nil {
 		return fmt.Errorf("acquire worker supervisor singleton: %w", err)

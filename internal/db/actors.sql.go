@@ -14,7 +14,6 @@ import (
 const createActor = `-- name: CreateActor :one
 INSERT INTO actors (
     id,
-    public_id,
     environment_id,
     actor_declared_id,
     deployment_definition_id,
@@ -31,11 +30,11 @@ INSERT INTO actors (
     run_tags
 )
 SELECT $1,
-       $2,
        actor_definition.environment_id,
        actor_definition.declared_id,
        actor_definition.id,
        workspaces.id,
+       $2,
        $3,
        $4,
        $5,
@@ -43,9 +42,8 @@ SELECT $1,
        $7,
        $8,
        $9,
-       $10,
-       coalesce($11::jsonb, '{}'::jsonb),
-       coalesce($12::text[], '{}'::text[])
+       coalesce($10::jsonb, '{}'::jsonb),
+       coalesce($11::text[], '{}'::text[])
   FROM deployment_definitions AS actor_definition
   JOIN environments
     ON environments.id = actor_definition.environment_id
@@ -59,26 +57,25 @@ SELECT $1,
    AND deployments.build_runtime_digest IS NOT NULL
   JOIN workspaces
     ON workspaces.environment_id = actor_definition.environment_id
-   AND workspaces.id = $13
+   AND workspaces.id = $12
   JOIN environments AS actor_environment
     ON actor_environment.id = workspaces.environment_id
-   AND actor_environment.org_id = $14
-   AND actor_environment.project_id = $15
+   AND actor_environment.org_id = $13
+   AND actor_environment.project_id = $14
   JOIN deployment_definitions AS workspace_definition
     ON workspace_definition.environment_id = workspaces.environment_id
    AND workspace_definition.id = workspaces.deployment_definition_id
    AND workspace_definition.kind = 'workspace'
    AND workspace_definition.declared_id = workspaces.workspace_declared_id
- WHERE actor_definition.environment_id = $16
-   AND actor_definition.id = $17
+ WHERE actor_definition.environment_id = $15
+   AND actor_definition.id = $16
    AND actor_definition.kind = 'actor'
-   AND actor_definition.declared_id = $18
-RETURNING id, public_id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+   AND actor_definition.declared_id = $17
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
 `
 
 type CreateActorParams struct {
 	ID                       pgtype.UUID `json:"id"`
-	PublicID                 string      `json:"public_id"`
 	Key                      pgtype.Text `json:"key"`
 	RunQueueName             string      `json:"run_queue_name"`
 	RunConcurrencyKey        pgtype.Text `json:"run_concurrency_key"`
@@ -100,7 +97,6 @@ type CreateActorParams struct {
 func (q *Queries) CreateActor(ctx context.Context, arg CreateActorParams) (Actor, error) {
 	row := q.db.QueryRow(ctx, createActor,
 		arg.ID,
-		arg.PublicID,
 		arg.Key,
 		arg.RunQueueName,
 		arg.RunConcurrencyKey,
@@ -121,7 +117,6 @@ func (q *Queries) CreateActor(ctx context.Context, arg CreateActorParams) (Actor
 	var i Actor
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.EnvironmentID,
 		&i.ActorDeclaredID,
 		&i.DeploymentDefinitionID,
@@ -159,7 +154,7 @@ func (q *Queries) CreateActor(ctx context.Context, arg CreateActorParams) (Actor
 }
 
 const getActor = `-- name: GetActor :one
-SELECT id, public_id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
   FROM actors
  WHERE environment_id = $1
    AND id = $2
@@ -175,7 +170,61 @@ func (q *Queries) GetActor(ctx context.Context, arg GetActorParams) (Actor, erro
 	var i Actor
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
+		&i.EnvironmentID,
+		&i.ActorDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.WorkspaceID,
+		&i.Key,
+		&i.CurrentRunID,
+		&i.RunGeneration,
+		&i.StateVersion,
+		&i.ManualRunCancelled,
+		&i.FailureCode,
+		&i.FailureRunID,
+		&i.NextInputSequence,
+		&i.CommittedInputSequence,
+		&i.NextOutputSequence,
+		&i.InputRetentionFloor,
+		&i.OutputRetentionFloor,
+		&i.RunQueueName,
+		&i.RunConcurrencyKey,
+		&i.RunQueueConcurrencyLimit,
+		&i.RunPriority,
+		&i.RunQueueTtlMs,
+		&i.RunMaxActiveDurationMs,
+		&i.RunRetryPolicy,
+		&i.RunMetadata,
+		&i.RunTags,
+		&i.State,
+		&i.CloseSequence,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClosedAt,
+		&i.CancelledAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
+const getActorByAddressID = `-- name: GetActorByAddressID :one
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+  FROM actors
+ WHERE environment_id = $1
+   AND actor_declared_id = $2
+   AND id = $3
+`
+
+type GetActorByAddressIDParams struct {
+	EnvironmentID   pgtype.UUID `json:"environment_id"`
+	ActorDeclaredID string      `json:"actor_declared_id"`
+	ID              pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetActorByAddressID(ctx context.Context, arg GetActorByAddressIDParams) (Actor, error) {
+	row := q.db.QueryRow(ctx, getActorByAddressID, arg.EnvironmentID, arg.ActorDeclaredID, arg.ID)
+	var i Actor
+	err := row.Scan(
+		&i.ID,
 		&i.EnvironmentID,
 		&i.ActorDeclaredID,
 		&i.DeploymentDefinitionID,
@@ -213,7 +262,7 @@ func (q *Queries) GetActor(ctx context.Context, arg GetActorParams) (Actor, erro
 }
 
 const getActorByKey = `-- name: GetActorByKey :one
-SELECT id, public_id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
   FROM actors
  WHERE environment_id = $1
    AND actor_declared_id = $2
@@ -231,63 +280,6 @@ func (q *Queries) GetActorByKey(ctx context.Context, arg GetActorByKeyParams) (A
 	var i Actor
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
-		&i.EnvironmentID,
-		&i.ActorDeclaredID,
-		&i.DeploymentDefinitionID,
-		&i.WorkspaceID,
-		&i.Key,
-		&i.CurrentRunID,
-		&i.RunGeneration,
-		&i.StateVersion,
-		&i.ManualRunCancelled,
-		&i.FailureCode,
-		&i.FailureRunID,
-		&i.NextInputSequence,
-		&i.CommittedInputSequence,
-		&i.NextOutputSequence,
-		&i.InputRetentionFloor,
-		&i.OutputRetentionFloor,
-		&i.RunQueueName,
-		&i.RunConcurrencyKey,
-		&i.RunQueueConcurrencyLimit,
-		&i.RunPriority,
-		&i.RunQueueTtlMs,
-		&i.RunMaxActiveDurationMs,
-		&i.RunRetryPolicy,
-		&i.RunMetadata,
-		&i.RunTags,
-		&i.State,
-		&i.CloseSequence,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ClosedAt,
-		&i.CancelledAt,
-		&i.FailedAt,
-	)
-	return i, err
-}
-
-const getActorByPublicID = `-- name: GetActorByPublicID :one
-SELECT id, public_id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
-  FROM actors
- WHERE environment_id = $1
-   AND actor_declared_id = $2
-   AND public_id = $3
-`
-
-type GetActorByPublicIDParams struct {
-	EnvironmentID   pgtype.UUID `json:"environment_id"`
-	ActorDeclaredID string      `json:"actor_declared_id"`
-	PublicID        string      `json:"public_id"`
-}
-
-func (q *Queries) GetActorByPublicID(ctx context.Context, arg GetActorByPublicIDParams) (Actor, error) {
-	row := q.db.QueryRow(ctx, getActorByPublicID, arg.EnvironmentID, arg.ActorDeclaredID, arg.PublicID)
-	var i Actor
-	err := row.Scan(
-		&i.ID,
-		&i.PublicID,
 		&i.EnvironmentID,
 		&i.ActorDeclaredID,
 		&i.DeploymentDefinitionID,
@@ -325,24 +317,14 @@ func (q *Queries) GetActorByPublicID(ctx context.Context, arg GetActorByPublicID
 }
 
 const getActorRead = `-- name: GetActorRead :one
-SELECT actors.id, actors.public_id, actors.environment_id, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.run_queue_name, actors.run_concurrency_key, actors.run_queue_concurrency_limit, actors.run_priority, actors.run_queue_ttl_ms, actors.run_max_active_duration_ms, actors.run_retry_policy, actors.run_metadata, actors.run_tags, actors.state, actors.close_sequence, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at,
-       current_runs.public_id AS current_run_public_id,
-       failure_runs.public_id AS failure_run_public_id
+SELECT actors.id, actors.environment_id, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.run_queue_name, actors.run_concurrency_key, actors.run_queue_concurrency_limit, actors.run_priority, actors.run_queue_ttl_ms, actors.run_max_active_duration_ms, actors.run_retry_policy, actors.run_metadata, actors.run_tags, actors.state, actors.close_sequence, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at
   FROM actors
-  LEFT JOIN runs AS current_runs
-    ON current_runs.environment_id = actors.environment_id
-   AND current_runs.actor_id = actors.id
-   AND current_runs.id = actors.current_run_id
-  LEFT JOIN runs AS failure_runs
-    ON failure_runs.environment_id = actors.environment_id
-   AND failure_runs.actor_id = actors.id
-   AND failure_runs.id = actors.failure_run_id
  WHERE actors.environment_id = $1
    AND actors.actor_declared_id = $2
    AND (
        (
-           $3::text IS NOT NULL
-           AND actors.public_id = $3::text
+           $3::uuid IS NOT NULL
+           AND actors.id = $3::uuid
        )
        OR
        (
@@ -355,60 +337,20 @@ SELECT actors.id, actors.public_id, actors.environment_id, actors.actor_declared
 type GetActorReadParams struct {
 	EnvironmentID   pgtype.UUID `json:"environment_id"`
 	ActorDeclaredID string      `json:"actor_declared_id"`
-	AddressPublicID pgtype.Text `json:"address_public_id"`
+	AddressID       pgtype.UUID `json:"address_id"`
 	AddressKey      pgtype.Text `json:"address_key"`
 }
 
-type GetActorReadRow struct {
-	ID                       pgtype.UUID        `json:"id"`
-	PublicID                 string             `json:"public_id"`
-	EnvironmentID            pgtype.UUID        `json:"environment_id"`
-	ActorDeclaredID          string             `json:"actor_declared_id"`
-	DeploymentDefinitionID   pgtype.UUID        `json:"deployment_definition_id"`
-	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
-	Key                      pgtype.Text        `json:"key"`
-	CurrentRunID             pgtype.UUID        `json:"current_run_id"`
-	RunGeneration            int64              `json:"run_generation"`
-	StateVersion             int64              `json:"state_version"`
-	ManualRunCancelled       bool               `json:"manual_run_cancelled"`
-	FailureCode              pgtype.Text        `json:"failure_code"`
-	FailureRunID             pgtype.UUID        `json:"failure_run_id"`
-	NextInputSequence        int64              `json:"next_input_sequence"`
-	CommittedInputSequence   int64              `json:"committed_input_sequence"`
-	NextOutputSequence       int64              `json:"next_output_sequence"`
-	InputRetentionFloor      int64              `json:"input_retention_floor"`
-	OutputRetentionFloor     int64              `json:"output_retention_floor"`
-	RunQueueName             string             `json:"run_queue_name"`
-	RunConcurrencyKey        pgtype.Text        `json:"run_concurrency_key"`
-	RunQueueConcurrencyLimit pgtype.Int8        `json:"run_queue_concurrency_limit"`
-	RunPriority              int32              `json:"run_priority"`
-	RunQueueTtlMs            pgtype.Int8        `json:"run_queue_ttl_ms"`
-	RunMaxActiveDurationMs   int64              `json:"run_max_active_duration_ms"`
-	RunRetryPolicy           []byte             `json:"run_retry_policy"`
-	RunMetadata              []byte             `json:"run_metadata"`
-	RunTags                  []string           `json:"run_tags"`
-	State                    string             `json:"state"`
-	CloseSequence            pgtype.Int8        `json:"close_sequence"`
-	CreatedAt                pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
-	ClosedAt                 pgtype.Timestamptz `json:"closed_at"`
-	CancelledAt              pgtype.Timestamptz `json:"cancelled_at"`
-	FailedAt                 pgtype.Timestamptz `json:"failed_at"`
-	CurrentRunPublicID       pgtype.Text        `json:"current_run_public_id"`
-	FailureRunPublicID       pgtype.Text        `json:"failure_run_public_id"`
-}
-
-func (q *Queries) GetActorRead(ctx context.Context, arg GetActorReadParams) (GetActorReadRow, error) {
+func (q *Queries) GetActorRead(ctx context.Context, arg GetActorReadParams) (Actor, error) {
 	row := q.db.QueryRow(ctx, getActorRead,
 		arg.EnvironmentID,
 		arg.ActorDeclaredID,
-		arg.AddressPublicID,
+		arg.AddressID,
 		arg.AddressKey,
 	)
-	var i GetActorReadRow
+	var i Actor
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.EnvironmentID,
 		&i.ActorDeclaredID,
 		&i.DeploymentDefinitionID,
@@ -441,8 +383,6 @@ func (q *Queries) GetActorRead(ctx context.Context, arg GetActorReadParams) (Get
 		&i.ClosedAt,
 		&i.CancelledAt,
 		&i.FailedAt,
-		&i.CurrentRunPublicID,
-		&i.FailureRunPublicID,
 	)
 	return i, err
 }
@@ -547,7 +487,7 @@ UPDATE actors
    AND current_run_id IS NULL
    AND run_generation = 1
    AND state_version = 1
-RETURNING id, public_id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
 `
 
 type SetActorCurrentRunParams struct {
@@ -567,7 +507,6 @@ func (q *Queries) SetActorCurrentRun(ctx context.Context, arg SetActorCurrentRun
 	var i Actor
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.EnvironmentID,
 		&i.ActorDeclaredID,
 		&i.DeploymentDefinitionID,

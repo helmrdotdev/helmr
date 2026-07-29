@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
@@ -57,12 +57,18 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 		if response.Failed != nil {
 			return errors.New("child Task invocation response contained conflicting outcomes")
 		}
+		if response.OpenedWait.RunWaitID != request.RunWaitID ||
+			response.OpenedWait.ResumeAttachID != request.ResumeAttachID {
+			return errors.New("child Task invocation response Wait IDs did not match")
+		}
 		if task.waits == nil {
 			return errors.New("Run Lease Task wait control is required")
 		}
 		runtimeWait := WaitRequest{
 			Leases:                        task,
 			CorrelationID:                 request.CorrelationID,
+			RunWaitID:                     request.RunWaitID,
+			ResumeAttachID:                request.ResumeAttachID,
 			Kind:                          api.WorkerRunWaitKindChild,
 			ActorSpeculativeInputSequence: request.ActorSpeculativeInputSequence,
 			Workspace:                     task.waitWorkspace,
@@ -75,10 +81,11 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 					decision.Data = json.RawMessage(`null`)
 				}
 				return wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
-					RunWaitId:     response.OpenedWait.RunWaitID,
-					CorrelationId: request.CorrelationID,
-					Kind:          decision.Kind,
-					DataJson:      string(decision.Data),
+					RunWaitId:      response.OpenedWait.RunWaitID,
+					CorrelationId:  request.CorrelationID,
+					ResumeAttachId: response.OpenedWait.ResumeAttachID,
+					Kind:           decision.Kind,
+					DataJson:       string(decision.Data),
 				})
 			},
 		}
@@ -113,12 +120,24 @@ func workerChildTaskInvokeRequest(
 	if requested == nil {
 		return api.WorkerInvokeChildTaskRequest{}, errors.New("child Task invocation request is required")
 	}
-	correlationID, err := uuid.Parse(requested.GetCorrelationId())
-	if err != nil || correlationID == uuid.Nil || correlationID.String() != requested.GetCorrelationId() {
+	if err := ids.Validate(requested.GetCorrelationId()); err != nil {
 		return api.WorkerInvokeChildTaskRequest{}, errors.New("child Task invocation correlation ID is invalid")
+	}
+	switch requested.GetMethod() {
+	case "call":
+		if ids.Validate(requested.GetRunWaitId()) != nil ||
+			ids.Validate(requested.GetResumeAttachId()) != nil {
+			return api.WorkerInvokeChildTaskRequest{}, errors.New("child Task call Wait IDs are invalid")
+		}
+	case "start":
+		if requested.GetRunWaitId() != "" || requested.GetResumeAttachId() != "" {
+			return api.WorkerInvokeChildTaskRequest{}, errors.New("child Task start must not contain Wait IDs")
+		}
 	}
 	request := api.WorkerInvokeChildTaskRequest{
 		CorrelationID:  requested.GetCorrelationId(),
+		RunWaitID:      requested.GetRunWaitId(),
+		ResumeAttachID: requested.GetResumeAttachId(),
 		TaskDeclaredID: requested.GetDeclaredId(),
 		Method:         requested.GetMethod(),
 		PayloadPresent: requested.GetPayloadPresent(),

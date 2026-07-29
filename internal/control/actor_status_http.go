@@ -12,28 +12,26 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type actorReadAddress struct {
-	publicID string
-	key      string
+	id  pgtype.UUID
+	key string
 }
 
 type actorReadRecord struct {
-	publicID           string
-	key                pgtype.Text
-	state              string
-	createdAt          pgtype.Timestamptz
-	updatedAt          pgtype.Timestamptz
-	currentRunID       pgtype.UUID
-	currentRunPublicID pgtype.Text
-	failureCode        pgtype.Text
-	failureRunID       pgtype.UUID
-	failureRunPublicID pgtype.Text
+	id           pgtype.UUID
+	key          pgtype.Text
+	state        string
+	createdAt    pgtype.Timestamptz
+	updatedAt    pgtype.Timestamptz
+	currentRunID pgtype.UUID
+	failureCode  pgtype.Text
+	failureRunID pgtype.UUID
 }
 
 func (s *Server) getActorStatusHTTP(w http.ResponseWriter, r *http.Request) {
@@ -90,8 +88,8 @@ func getActorStatus(
 ) (api.ActorStatus, error) {
 	row, err := store.GetActorRead(ctx, db.GetActorReadParams{
 		EnvironmentID: environmentID, ActorDeclaredID: actorDeclaredID,
-		AddressPublicID: pgvalue.Text(address.publicID),
-		AddressKey:      pgvalue.Text(address.key),
+		AddressID:  address.id,
+		AddressKey: pgvalue.Text(address.key),
 	})
 	if err != nil {
 		return api.ActorStatus{}, err
@@ -112,7 +110,7 @@ func parseActorReadAddress(r *http.Request) (actorReadAddress, error) {
 			return actorReadAddress{}, fmt.Errorf("query parameter %q must appear exactly once", name)
 		}
 	}
-	publicID, hasID, err := singleNonEmptyQueryValue(values, "actor_id")
+	rawID, hasID, err := singleNonEmptyQueryValue(values, "actor_id")
 	if err != nil {
 		return actorReadAddress{}, err
 	}
@@ -124,10 +122,11 @@ func parseActorReadAddress(r *http.Request) (actorReadAddress, error) {
 		return actorReadAddress{}, errors.New("exactly one of actor_id or actor_key is required")
 	}
 	if hasID {
-		if err := api.ValidateActorPublicID(publicID); err != nil {
+		id, err := ids.Parse(rawID)
+		if err != nil {
 			return actorReadAddress{}, err
 		}
-		return actorReadAddress{publicID: publicID}, nil
+		return actorReadAddress{id: pgvalue.UUID(id)}, nil
 	}
 	if err := api.ValidateActorKey(key); err != nil {
 		return actorReadAddress{}, err
@@ -212,7 +211,8 @@ func writeActorReadAuthError(w http.ResponseWriter, log *slog.Logger, err error)
 }
 
 func projectActorStatus(record actorReadRecord) (api.ActorStatus, error) {
-	if err := api.ValidateActorPublicID(record.publicID); err != nil {
+	id := pgvalue.UUIDString(record.id)
+	if err := ids.Validate(id); err != nil {
 		return api.ActorStatus{}, err
 	}
 	status, err := actorPublicStatus(record.state)
@@ -222,24 +222,21 @@ func projectActorStatus(record actorReadRecord) (api.ActorStatus, error) {
 	if !record.createdAt.Valid || !record.updatedAt.Valid {
 		return api.ActorStatus{}, errors.New("Actor timestamps are unavailable")
 	}
-	if record.currentRunID.Valid != record.currentRunPublicID.Valid {
-		return api.ActorStatus{}, errors.New("Actor current Run projection is inconsistent")
-	}
 	failed := status == api.ActorPublicStatusFailed
-	if failed != (record.failureCode.Valid && record.failureRunID.Valid && record.failureRunPublicID.Valid) {
+	if failed != (record.failureCode.Valid && record.failureRunID.Valid) {
 		return api.ActorStatus{}, errors.New("Actor failure projection is inconsistent")
 	}
-	if !failed && (record.failureCode.Valid || record.failureRunID.Valid || record.failureRunPublicID.Valid) {
+	if !failed && (record.failureCode.Valid || record.failureRunID.Valid) {
 		return api.ActorStatus{}, errors.New("Actor failure projection is inconsistent")
 	}
-	if record.currentRunPublicID.Valid {
-		if err := publicid.ValidateFor(publicid.Run, record.currentRunPublicID.String); err != nil {
-			return api.ActorStatus{}, errors.New("Actor current Run public ID is invalid")
+	if record.currentRunID.Valid {
+		if err := ids.Validate(pgvalue.UUIDString(record.currentRunID)); err != nil {
+			return api.ActorStatus{}, errors.New("Actor current Run ID is invalid")
 		}
 	}
-	if record.failureRunPublicID.Valid {
-		if err := publicid.ValidateFor(publicid.Run, record.failureRunPublicID.String); err != nil {
-			return api.ActorStatus{}, errors.New("Actor failure Run public ID is invalid")
+	if record.failureRunID.Valid {
+		if err := ids.Validate(pgvalue.UUIDString(record.failureRunID)); err != nil {
+			return api.ActorStatus{}, errors.New("Actor failure Run ID is invalid")
 		}
 	}
 	if record.failureCode.Valid {
@@ -250,7 +247,7 @@ func projectActorStatus(record actorReadRecord) (api.ActorStatus, error) {
 		}
 	}
 	result := api.ActorStatus{
-		ID:        record.publicID,
+		ID:        id,
 		Status:    status,
 		CreatedAt: record.createdAt.Time.UTC(),
 		UpdatedAt: record.updatedAt.Time.UTC(),
@@ -258,12 +255,13 @@ func projectActorStatus(record actorReadRecord) (api.ActorStatus, error) {
 	if record.key.Valid {
 		result.Key = &record.key.String
 	}
-	if record.currentRunPublicID.Valid {
-		result.CurrentRunID = &record.currentRunPublicID.String
+	if record.currentRunID.Valid {
+		value := pgvalue.UUIDString(record.currentRunID)
+		result.CurrentRunID = &value
 	}
 	if failed {
 		result.Failure = &api.ActorFailure{
-			Code: record.failureCode.String, RunID: record.failureRunPublicID.String,
+			Code: record.failureCode.String, RunID: pgvalue.UUIDString(record.failureRunID),
 		}
 	}
 	return result, nil
@@ -284,12 +282,11 @@ func actorPublicStatus(state string) (api.ActorPublicStatus, error) {
 	}
 }
 
-func actorReadRecordFromGet(row db.GetActorReadRow) actorReadRecord {
+func actorReadRecordFromGet(row db.Actor) actorReadRecord {
 	return actorReadRecord{
-		publicID: row.PublicID, key: row.Key, state: row.State,
+		id: row.ID, key: row.Key, state: row.State,
 		createdAt: row.CreatedAt, updatedAt: row.UpdatedAt,
-		currentRunID: row.CurrentRunID, currentRunPublicID: row.CurrentRunPublicID,
-		failureCode: row.FailureCode, failureRunID: row.FailureRunID,
-		failureRunPublicID: row.FailureRunPublicID,
+		currentRunID: row.CurrentRunID,
+		failureCode:  row.FailureCode, failureRunID: row.FailureRunID,
 	}
 }

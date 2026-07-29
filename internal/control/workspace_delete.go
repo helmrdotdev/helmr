@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
@@ -23,14 +24,14 @@ type workspaceDeleteRequest struct {
 	OrgID          uuid.UUID
 	ProjectID      uuid.UUID
 	EnvironmentID  uuid.UUID
-	WorkspaceID    string
+	WorkspaceID    uuid.UUID
 	IdempotencyKey string
 	Authorize      func(context.Context, db.Querier) error
 }
 
 type workspaceDeleteResult struct {
-	WorkspacePublicID string
-	Replayed          bool
+	WorkspaceID uuid.UUID
+	Replayed    bool
 }
 
 type workspaceDeleteReceipt struct {
@@ -49,7 +50,7 @@ func (s *Server) deleteWorkspace(ctx context.Context, request workspaceDeleteReq
 			OrgID:         pgvalue.UUID(request.OrgID),
 			ProjectID:     pgvalue.UUID(request.ProjectID),
 			EnvironmentID: pgvalue.UUID(request.EnvironmentID),
-			PublicID:      request.WorkspaceID,
+			ID:            pgvalue.UUID(request.WorkspaceID),
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errWorkspaceNotFound
@@ -108,9 +109,9 @@ func (s *Server) deleteWorkspace(ctx context.Context, request workspaceDeleteReq
 				return fmt.Errorf("mark Workspace deleting: %w", err)
 			}
 		}
-		result = workspaceDeleteResult{WorkspacePublicID: authority.PublicID}
+		result = workspaceDeleteResult{WorkspaceID: workspaceID}
 		if claim != nil {
-			receipt, err := json.Marshal(workspaceDeleteReceipt{WorkspaceID: authority.PublicID})
+			receipt, err := json.Marshal(workspaceDeleteReceipt{WorkspaceID: workspaceID.String()})
 			if err != nil {
 				return err
 			}
@@ -129,8 +130,12 @@ func (s *Server) deleteWorkspace(ctx context.Context, request workspaceDeleteReq
 
 func workspaceDeleteResultFromReceipt(raw []byte) (workspaceDeleteResult, error) {
 	var receipt workspaceDeleteReceipt
-	if err := json.Unmarshal(raw, &receipt); err != nil || receipt.WorkspaceID == "" {
+	if err := json.Unmarshal(raw, &receipt); err != nil {
 		return workspaceDeleteResult{}, errWorkspaceDeleteReceipt
 	}
-	return workspaceDeleteResult{WorkspacePublicID: receipt.WorkspaceID}, nil
+	workspaceID, err := ids.Parse(receipt.WorkspaceID)
+	if err != nil {
+		return workspaceDeleteResult{}, errWorkspaceDeleteReceipt
+	}
+	return workspaceDeleteResult{WorkspaceID: workspaceID}, nil
 }

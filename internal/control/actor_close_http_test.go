@@ -30,7 +30,7 @@ func TestActorCloseAPIKeyScopeRoundTripsPermission(t *testing.T) {
 
 func TestDecodeActorCloseRequestIsClosedAndPresenceAware(t *testing.T) {
 	for _, body := range []string{
-		`{"actor_id":"act_aaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+		`{"actor_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"}`,
 		`{"actor_key":"thread:1","idempotency_key":"close-1"}`,
 	} {
 		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))

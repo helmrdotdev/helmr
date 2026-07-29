@@ -12,8 +12,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -25,7 +25,7 @@ type workspaceReference struct {
 	ProjectID     pgtype.UUID
 	EnvironmentID pgtype.UUID
 	DeclaredID    string
-	PublicID      string
+	ID            string
 	Key           *string
 }
 
@@ -77,7 +77,7 @@ func (s *Server) createWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeWorkspaceCreateError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, api.CreateWorkspaceResponse{WorkspaceID: result.WorkspacePublicID})
+	writeJSON(w, http.StatusCreated, api.CreateWorkspaceResponse{WorkspaceID: result.WorkspaceID.String()})
 }
 
 func (s *Server) getWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
@@ -89,8 +89,8 @@ func (s *Server) getWorkspaceByKeyHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
-	workspaceID := chi.URLParam(r, "workspaceID")
-	if publicid.ValidateFor(publicid.Workspace, workspaceID) != nil {
+	workspaceID, err := ids.Parse(chi.URLParam(r, "workspaceID"))
+	if err != nil {
 		writeError(w, badRequest(codedError{
 			code:    "invalid_workspace_reference",
 			message: "Workspace ID is invalid",
@@ -147,7 +147,7 @@ func (s *Server) deleteWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	writeJSON(w, http.StatusAccepted, api.DeleteWorkspaceReceipt{WorkspaceID: result.WorkspacePublicID})
+	writeJSON(w, http.StatusAccepted, api.DeleteWorkspaceReceipt{WorkspaceID: result.WorkspaceID.String()})
 }
 
 func (s *Server) getWorkspaceByReferenceHTTP(w http.ResponseWriter, r *http.Request, byKey bool) {
@@ -169,7 +169,13 @@ func (s *Server) getWorkspaceByReferenceHTTP(w http.ResponseWriter, r *http.Requ
 		reference.DeclaredID = chi.URLParam(r, "workspaceDeclaredID")
 		reference.Key = &key
 	} else {
-		reference.PublicID = chi.URLParam(r, "workspaceID")
+		reference.ID = chi.URLParam(r, "workspaceID")
+		if err := ids.Validate(reference.ID); err != nil {
+			writeError(w, badRequest(codedError{
+				code: "invalid_workspace_reference", message: "workspaceID must be a canonical UUIDv7",
+			}))
+			return
+		}
 	}
 	record, err := s.resolveWorkspaceReference(r.Context(), reference)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -200,20 +206,21 @@ func (s *Server) resolveWorkspaceReference(
 	ctx context.Context,
 	reference workspaceReference,
 ) (db.Workspace, error) {
-	hasPublicID := reference.PublicID != ""
+	hasID := reference.ID != ""
 	hasKey := reference.Key != nil
-	if hasPublicID == hasKey {
+	if hasID == hasKey {
 		return db.Workspace{}, errors.New("Workspace reference requires exactly one of ID or key")
 	}
-	if hasPublicID {
-		if publicid.ValidateFor(publicid.Workspace, reference.PublicID) != nil {
+	if hasID {
+		id, err := ids.Parse(reference.ID)
+		if err != nil {
 			return db.Workspace{}, errors.New("Workspace ID is invalid")
 		}
-		return s.db.GetWorkspaceByPublicID(ctx, db.GetWorkspaceByPublicIDParams{
+		return s.db.GetWorkspace(ctx, db.GetWorkspaceParams{
 			OrgID:         pgvalue.UUID(reference.OrgID),
 			ProjectID:     reference.ProjectID,
 			EnvironmentID: reference.EnvironmentID,
-			PublicID:      reference.PublicID,
+			ID:            pgvalue.UUID(id),
 		})
 	}
 	if err := api.ValidateWorkspaceDeclaredID(reference.DeclaredID); err != nil {
@@ -270,7 +277,7 @@ func (s *Server) workspaceSnapshot(
 		key = &value
 	}
 	return api.WorkspaceSnapshot{
-		ID:             record.PublicID,
+		ID:             pgvalue.UUIDString(record.ID),
 		Key:            key,
 		DeclaredID:     record.WorkspaceDeclaredID.String,
 		Status:         status,

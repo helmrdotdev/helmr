@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
 const (
@@ -312,6 +313,13 @@ func (c *Client) workspaceItemPath(workspaceID string, suffix string, opts Works
 	return environmentScopedResourcePath(path, workspaceID, suffix), nil
 }
 
+func (c *Client) workspaceResourcePath(workspaceID string, suffix string, opts WorkspaceScopeOptions) (string, error) {
+	if err := ids.Validate(workspaceID); err != nil {
+		return "", err
+	}
+	return c.workspaceItemPath(workspaceID, suffix, opts)
+}
+
 func (c *Client) CreateWorkspace(
 	ctx context.Context,
 	declaredID string,
@@ -330,7 +338,7 @@ func (c *Client) CreateWorkspace(
 }
 
 func (c *Client) GetWorkspace(ctx context.Context, workspaceID string, opts WorkspaceScopeOptions) (api.WorkspaceSnapshot, error) {
-	path, err := c.workspaceItemPath(workspaceID, "", opts)
+	path, err := c.workspaceResourcePath(workspaceID, "", opts)
 	if err != nil {
 		return api.WorkspaceSnapshot{}, err
 	}
@@ -373,7 +381,7 @@ func (c *Client) DeleteWorkspace(
 	input api.DeleteWorkspaceRequest,
 	opts WorkspaceScopeOptions,
 ) (api.DeleteWorkspaceReceipt, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/delete", opts)
+	path, err := c.workspaceResourcePath(workspaceID, "/delete", opts)
 	if err != nil {
 		return api.DeleteWorkspaceReceipt{}, err
 	}
@@ -390,7 +398,7 @@ func (c *Client) ReadWorkspaceFile(
 	pathname string,
 	opts WorkspaceScopeOptions,
 ) (api.WorkspaceFileContent, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/files/content", opts)
+	path, err := c.workspaceResourcePath(workspaceID, "/files/content", opts)
 	if err != nil {
 		return api.WorkspaceFileContent{}, err
 	}
@@ -418,7 +426,7 @@ func (c *Client) ListWorkspaceFiles(
 	input WorkspaceFileListOptions,
 	opts WorkspaceScopeOptions,
 ) (api.WorkspaceFilePage, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/files", opts)
+	path, err := c.workspaceResourcePath(workspaceID, "/files", opts)
 	if err != nil {
 		return api.WorkspaceFilePage{}, err
 	}
@@ -452,7 +460,7 @@ func (c *Client) StatWorkspaceFile(
 	pathname string,
 	opts WorkspaceScopeOptions,
 ) (api.WorkspaceFileEntry, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/files/stat", opts)
+	path, err := c.workspaceResourcePath(workspaceID, "/files/stat", opts)
 	if err != nil {
 		return api.WorkspaceFileEntry{}, err
 	}
@@ -474,7 +482,7 @@ func (c *Client) ExecuteWorkspace(
 	input api.ExecuteWorkspaceRequest,
 	opts WorkspaceScopeOptions,
 ) (api.ExecuteWorkspaceResult, error) {
-	path, err := c.workspaceItemPath(workspaceID, "/exec", opts)
+	path, err := c.workspaceResourcePath(workspaceID, "/exec", opts)
 	if err != nil {
 		return api.ExecuteWorkspaceResult{}, err
 	}
@@ -496,6 +504,9 @@ func (c *Client) tokenCollectionPath(opts TokenScopeOptions) (string, error) {
 }
 
 func (c *Client) tokenItemPath(tokenID string, suffix string, opts TokenScopeOptions) (string, error) {
+	if err := ids.Validate(tokenID); err != nil {
+		return "", err
+	}
 	path, err := c.tokenCollectionPath(opts)
 	if err != nil {
 		return "", err

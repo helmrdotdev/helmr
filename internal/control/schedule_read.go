@@ -13,8 +13,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -58,17 +58,22 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var afterTask pgtype.Text
-	var afterPublicID string
+	var afterID pgtype.UUID
 	if cursor != nil {
 		afterTask = pgvalue.Text(cursor.TaskDeclaredID)
-		afterPublicID = cursor.ScheduleID
+		id, err := ids.Parse(cursor.ScheduleID)
+		if err != nil {
+			writeError(w, badRequest(errors.New("schedule cursor is invalid")))
+			return
+		}
+		afterID = pgvalue.UUID(id)
 	}
 	rows, err := s.db.ListSchedules(r.Context(), db.ListSchedulesParams{
 		OrgID:               pgvalue.UUID(actor.OrgID),
 		ProjectID:           projectID,
 		EnvironmentID:       environmentID,
 		AfterTaskDeclaredID: afterTask,
-		AfterPublicID:       afterPublicID,
+		AfterID:             afterID,
 		LimitCount:          limit + 1,
 	})
 	if err != nil {
@@ -84,19 +89,19 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		Schedules: make([]api.ScheduleResponse, 0, len(rows)),
 	}
 	for _, row := range rows {
-		item, err := scheduleResponse(row.Schedule, row.WorkspaceRefPublicID)
+		item, err := scheduleResponse(row)
 		if err != nil {
-			s.log.Error("project schedule failed", "schedule_id", row.Schedule.PublicID, "error", err)
+			s.log.Error("project schedule failed", "schedule_id", pgvalue.UUIDString(row.ID), "error", err)
 			writeError(w, errors.New("list schedules"))
 			return
 		}
 		response.Schedules = append(response.Schedules, item)
 	}
 	if hasMore {
-		last := rows[len(rows)-1].Schedule
+		last := rows[len(rows)-1]
 		response.NextCursor, err = encodeScheduleListCursor(scheduleListCursor{
 			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
-			TaskDeclaredID: last.TaskDeclaredID, ScheduleID: last.PublicID,
+			TaskDeclaredID: last.TaskDeclaredID, ScheduleID: pgvalue.UUIDString(last.ID),
 		})
 		if err != nil {
 			s.log.Error("encode schedule cursor failed", "error", err)
@@ -146,7 +151,7 @@ func parseScheduleListQuery(
 	if err := api.ValidateTaskID(cursor.TaskDeclaredID); err != nil {
 		return 0, nil, errors.New("schedule cursor is invalid")
 	}
-	if publicid.ValidateFor(publicid.Schedule, cursor.ScheduleID) != nil {
+	if ids.Validate(cursor.ScheduleID) != nil {
 		return 0, nil, errors.New("schedule cursor is invalid")
 	}
 	return limit, &cursor, nil
@@ -198,38 +203,42 @@ func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	scheduleID := strings.TrimSpace(chi.URLParam(r, "scheduleID"))
-	if err := api.ValidateScheduleID(scheduleID); err != nil {
+	scheduleID, err := ids.Parse(chi.URLParam(r, "scheduleID"))
+	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	row, err := s.db.GetScheduleByPublicID(r.Context(), db.GetScheduleByPublicIDParams{
+	row, err := s.db.GetScheduleByID(r.Context(), db.GetScheduleByIDParams{
 		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		PublicID:      scheduleID,
+		ID:            pgvalue.UUID(scheduleID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(errors.New("schedule not found")))
 		return
 	}
 	if err != nil {
-		s.log.Error("get schedule failed", "schedule_id", scheduleID, "error", err)
+		s.log.Error("get schedule failed", "schedule_id", scheduleID.String(), "error", err)
 		writeError(w, errors.New("get schedule"))
 		return
 	}
-	response, err := scheduleResponse(row.Schedule, row.WorkspaceRefPublicID)
+	response, err := scheduleResponse(row)
 	if err != nil {
-		s.log.Error("project schedule failed", "schedule_id", row.Schedule.PublicID, "error", err)
+		s.log.Error("project schedule failed", "schedule_id", scheduleID.String(), "error", err)
 		writeError(w, errors.New("get schedule"))
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
 }
 
-func scheduleResponse(row db.Schedule, workspaceRefPublicID pgtype.Text) (api.ScheduleResponse, error) {
+func scheduleResponse(row db.Schedule) (api.ScheduleResponse, error) {
+	scheduleID := pgvalue.UUIDString(row.ID)
+	if ids.Validate(scheduleID) != nil {
+		return api.ScheduleResponse{}, errors.New("schedule identity is invalid")
+	}
 	response := api.ScheduleResponse{
-		ID:         row.PublicID,
+		ID:         scheduleID,
 		Task:       row.TaskDeclaredID,
 		Cron:       api.ScheduleCron{Pattern: row.CronPattern, Timezone: row.Timezone},
 		Status:     strings.ReplaceAll(row.State, "_", "-"),
@@ -245,10 +254,11 @@ func scheduleResponse(row db.Schedule, workspaceRefPublicID pgtype.Text) (api.Sc
 	response.UpdatedAt = row.UpdatedAt.Time.UTC()
 	switch {
 	case row.WorkspaceRefID.Valid:
-		if !workspaceRefPublicID.Valid {
-			return api.ScheduleResponse{}, errors.New("schedule ID-addressed Workspace is absent")
+		workspaceID := pgvalue.UUIDString(row.WorkspaceRefID)
+		if ids.Validate(workspaceID) != nil {
+			return api.ScheduleResponse{}, errors.New("schedule Workspace identity is invalid")
 		}
-		response.Workspace.ID = workspaceRefPublicID.String
+		response.Workspace.ID = workspaceID
 	case row.WorkspaceRefKey.Valid:
 		response.Workspace.Key = row.WorkspaceRefKey.String
 	default:

@@ -75,9 +75,9 @@ func TestDevSeedWithFreshPostgres(t *testing.T) {
 	var projects, environments, deployments int
 	if err := pool.QueryRow(ctx, `
 		SELECT
-		    (SELECT count(*) FROM projects WHERE org_id = '00000000-0000-0000-0000-000000000201'),
-		    (SELECT count(*) FROM environments WHERE org_id = '00000000-0000-0000-0000-000000000201'),
-		    (SELECT count(*) FROM deployments WHERE org_id = '00000000-0000-0000-0000-000000000201')
+		    (SELECT count(*) FROM projects WHERE org_id = '00000000-0000-7000-8000-000000000201'),
+		    (SELECT count(*) FROM environments WHERE org_id = '00000000-0000-7000-8000-000000000201'),
+		    (SELECT count(*) FROM deployments WHERE org_id = '00000000-0000-7000-8000-000000000201')
 	`).Scan(&projects, &environments, &deployments); err != nil {
 		t.Fatal(err)
 	}

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
@@ -74,9 +74,7 @@ func workerActorInputSendRequest(
 	if requested == nil {
 		return api.WorkerSendActorInputRequest{}, errors.New("Actor input send request is required")
 	}
-	correlationID, err := uuid.Parse(requested.GetCorrelationId())
-	if err != nil || correlationID == uuid.Nil ||
-		correlationID.String() != requested.GetCorrelationId() {
+	if err := ids.Validate(requested.GetCorrelationId()); err != nil {
 		return api.WorkerSendActorInputRequest{}, errors.New("Actor input send correlation ID is invalid")
 	}
 	request := api.WorkerSendActorInputRequest{

@@ -10,9 +10,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
@@ -174,19 +174,19 @@ func (s *Server) workerCompleteWorkspaceExec(w http.ResponseWriter, r *http.Requ
 		writeError(w, badRequest(fmt.Errorf("invalid Workspace exec completion JSON: %w", err)))
 		return
 	}
-	orgID, err := uuid.Parse(strings.TrimSpace(request.OrgID))
+	orgID, err := ids.Parse(request.OrgID)
 	if err != nil {
-		writeError(w, badRequest(errors.New("org_id must be a UUID")))
+		writeError(w, badRequest(errors.New("org_id must be a canonical UUIDv7")))
 		return
 	}
-	processID, err := uuid.Parse(strings.TrimSpace(request.ProcessID))
+	processID, err := ids.Parse(request.ProcessID)
 	if err != nil {
-		writeError(w, badRequest(errors.New("process_id must be a UUID")))
+		writeError(w, badRequest(errors.New("process_id must be a canonical UUIDv7")))
 		return
 	}
-	leaseID, err := uuid.Parse(strings.TrimSpace(request.WorkspaceLeaseID))
+	leaseID, err := ids.Parse(request.WorkspaceLeaseID)
 	if err != nil {
-		writeError(w, badRequest(errors.New("workspace_lease_id must be a UUID")))
+		writeError(w, badRequest(errors.New("workspace_lease_id must be a canonical UUIDv7")))
 		return
 	}
 	if len(request.Stdout) > workspaceExecOutputMaxBytes ||

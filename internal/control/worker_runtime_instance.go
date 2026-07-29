@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
@@ -197,12 +198,12 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 		writeError(w, badRequest(fmt.Errorf("invalid worker runtime instance %s request JSON: %w", state, err)))
 		return
 	}
-	id, err := parseRequiredUUID("id", request.ID)
+	id, err := ids.Parse(request.ID)
 	if err != nil {
-		writeError(w, badRequest(err))
+		writeError(w, badRequest(errors.New("id must be a canonical UUIDv7")))
 		return
 	}
-	slotID, err := parseRequiredUUID("network_slot_id", request.NetworkSlotID)
+	slotID, err := ids.Parse(request.NetworkSlotID)
 	if err != nil || request.WorkerEpoch <= 0 || request.NetworkSlotGeneration <= 0 || request.DesiredVersion <= 0 || request.ExpectedObservedVersion < 0 {
 		writeError(w, badRequest(errors.New("runtime epoch, slot generation, desired version, and observed version fences are required")))
 		return
@@ -219,9 +220,9 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 			writeError(w, badRequest(errors.New("network_facts are required when marking a runtime ready")))
 			return
 		}
-		runtimeSubstrateID, substrateErr := parseRequiredUUID("runtime_substrate_id", request.RuntimeSubstrateID)
+		runtimeSubstrateID, substrateErr := ids.Parse(request.RuntimeSubstrateID)
 		if substrateErr != nil {
-			writeError(w, badRequest(substrateErr))
+			writeError(w, badRequest(errors.New("runtime_substrate_id must be a canonical UUIDv7")))
 			return
 		}
 		facts := request.NetworkFacts
@@ -236,9 +237,9 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		row, err = s.db.MarkRuntimeInstanceReady(r.Context(), db.MarkRuntimeInstanceReadyParams{
-			DesiredVersion: request.DesiredVersion, ID: id, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch: worker.WorkerEpoch, NetworkSlotID: slotID, NetworkSlotGeneration: request.NetworkSlotGeneration,
-			ExpectedObservedVersion: request.ExpectedObservedVersion, RuntimeSubstrateID: runtimeSubstrateID,
+			DesiredVersion: request.DesiredVersion, ID: pgvalue.UUID(id), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerEpoch: worker.WorkerEpoch, NetworkSlotID: pgvalue.UUID(slotID), NetworkSlotGeneration: request.NetworkSlotGeneration,
+			ExpectedObservedVersion: request.ExpectedObservedVersion, RuntimeSubstrateID: pgvalue.UUID(runtimeSubstrateID),
 			HostInterfaceName: pgtype.Text{String: strings.TrimSpace(facts.HostInterfaceName), Valid: true}, GuestAddress: &guestAddress,
 			GatewayAddress: &gatewayAddress, Subnet: &subnet, TapName: pgtype.Text{String: strings.TrimSpace(facts.TapName), Valid: true},
 			NetnsName: pgtype.Text{String: strings.TrimSpace(facts.NetNSName), Valid: true}, GuestMac: guestMAC,
@@ -263,8 +264,8 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 		}
 		var closed db.MarkRuntimeInstanceClosedRow
 		closed, err = s.db.MarkRuntimeInstanceClosed(r.Context(), db.MarkRuntimeInstanceClosedParams{
-			ReasonCode: pgtype.Text{String: reason, Valid: true}, ID: id, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
-			DesiredVersion: request.DesiredVersion, NetworkSlotID: slotID, NetworkSlotGeneration: request.NetworkSlotGeneration,
+			ReasonCode: pgtype.Text{String: reason, Valid: true}, ID: pgvalue.UUID(id), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+			DesiredVersion: request.DesiredVersion, NetworkSlotID: pgvalue.UUID(slotID), NetworkSlotGeneration: request.NetworkSlotGeneration,
 			ExpectedObservedVersion: request.ExpectedObservedVersion,
 			CleanupProof:            proof,
 		})
@@ -285,9 +286,9 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			reclaimed, reclaimErr := s.db.ReclaimFailedRuntimeInstance(r.Context(), db.ReclaimFailedRuntimeInstanceParams{
-				ID: id, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+				ID: pgvalue.UUID(id), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
 				DesiredVersion: request.DesiredVersion, ExpectedObservedVersion: request.ExpectedObservedVersion,
-				NetworkSlotID: slotID, NetworkSlotGeneration: request.NetworkSlotGeneration, CleanupProof: proof,
+				NetworkSlotID: pgvalue.UUID(slotID), NetworkSlotGeneration: request.NetworkSlotGeneration, CleanupProof: proof,
 			})
 			if reclaimErr == nil {
 				writeJSON(w, http.StatusOK, runtimeInstanceResponse(db.RuntimeInstance(reclaimed)))
@@ -301,8 +302,8 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 		var failed db.MarkRuntimeInstanceFailedRow
 		failed, err = s.db.MarkRuntimeInstanceFailed(r.Context(), db.MarkRuntimeInstanceFailedParams{
 			ReasonCode: pgtype.Text{String: reason, Valid: true}, Error: normalizedJSONRawMessage(request.Error),
-			ID: id, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
-			NetworkSlotID: slotID, NetworkSlotGeneration: request.NetworkSlotGeneration,
+			ID: pgvalue.UUID(id), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+			NetworkSlotID: pgvalue.UUID(slotID), NetworkSlotGeneration: request.NetworkSlotGeneration,
 			DesiredVersion:          request.DesiredVersion,
 			ExpectedObservedVersion: request.ExpectedObservedVersion,
 		})
@@ -311,9 +312,9 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 			proof, _ := json.Marshal(request.CleanupProof)
 			var reclaimed db.ReclaimFailedRuntimeInstanceRow
 			reclaimed, err = s.db.ReclaimFailedRuntimeInstance(r.Context(), db.ReclaimFailedRuntimeInstanceParams{
-				ID: id, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+				ID: pgvalue.UUID(id), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
 				DesiredVersion: request.DesiredVersion, ExpectedObservedVersion: row.ObservedVersion,
-				NetworkSlotID: slotID, NetworkSlotGeneration: request.NetworkSlotGeneration, CleanupProof: proof,
+				NetworkSlotID: pgvalue.UUID(slotID), NetworkSlotGeneration: request.NetworkSlotGeneration, CleanupProof: proof,
 			})
 			row = db.RuntimeInstance(reclaimed)
 		}

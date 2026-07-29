@@ -15,8 +15,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
@@ -42,9 +42,9 @@ type childTaskOptions struct {
 
 type childTaskReceipt struct {
 	RunID                  string `json:"runId"`
-	RunPublicID            string `json:"runPublicId"`
 	WorkspaceID            string `json:"workspaceId"`
 	RunWaitID              string `json:"runWaitId,omitempty"`
+	ResumeAttachID         string `json:"resumeAttachId,omitempty"`
 	BaseWorkspaceVersionID string `json:"baseWorkspaceVersionId,omitempty"`
 	BaseWorkspaceDigest    string `json:"baseWorkspaceDigest,omitempty"`
 }
@@ -55,6 +55,8 @@ type childTaskInvokeInput struct {
 	Worker            workerActor
 	SourceWorkspaceID uuid.UUID
 	Normalized        normalizedTaskStart
+	RunWaitID         uuid.UUID
+	ResumeAttachID    uuid.UUID
 }
 
 type childTaskInvokeResult struct {
@@ -77,14 +79,36 @@ func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if _, err := parseCanonicalUUID("correlation_id", request.CorrelationID); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
 	if request.Method != "start" && request.Method != "call" {
 		writeError(w, badRequest(codedError{
 			code: "child_task_method_unsupported", message: errChildTaskInvokeUnsupported.Error(),
 		}))
+		return
+	}
+	correlationID, err := ids.Parse(request.CorrelationID)
+	if err != nil {
+		writeError(w, badRequest(errors.New("correlation_id must be a canonical UUIDv7")))
+		return
+	}
+	var runWaitID uuid.UUID
+	var resumeAttachID uuid.UUID
+	if request.Method == "call" {
+		runWaitID, err = ids.Parse(request.RunWaitID)
+		if err != nil {
+			writeError(w, badRequest(errors.New("run_wait_id must be a canonical UUIDv7 for task.call()")))
+			return
+		}
+		resumeAttachID, err = ids.Parse(request.ResumeAttachID)
+		if err != nil {
+			writeError(w, badRequest(errors.New("resume_attach_id must be a canonical UUIDv7 for task.call()")))
+			return
+		}
+		if correlationID == runWaitID || correlationID == resumeAttachID || runWaitID == resumeAttachID {
+			writeError(w, badRequest(errors.New("correlation_id, run_wait_id, and resume_attach_id must be distinct")))
+			return
+		}
+	} else if request.RunWaitID != "" || request.ResumeAttachID != "" {
+		writeError(w, badRequest(errors.New("task.start() must not include run_wait_id or resume_attach_id")))
 		return
 	}
 	idempotencyKey, err := normalizeIdempotencyKey(request.IdempotencyKey)
@@ -124,6 +148,8 @@ func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
 		Request: request, Parsed: parsed, Worker: worker,
 		SourceWorkspaceID: pgvalue.MustUUIDValue(locators.WorkspaceID),
 		Normalized:        normalized,
+		RunWaitID:         runWaitID,
+		ResumeAttachID:    resumeAttachID,
 	})
 	if err != nil {
 		s.writeChildTaskInvokeError(w, request.CorrelationID, request.Method, err)
@@ -133,8 +159,8 @@ func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
 		CorrelationID: request.CorrelationID,
 		OpenedWait:    result.openedWait,
 	}
-	if result.RunPublicID != "" {
-		response.Completed = &api.WorkerChildTaskStartResult{RunID: result.RunPublicID}
+	if result.RunID != uuid.Nil {
+		response.Completed = &api.WorkerChildTaskStartResult{RunID: result.RunID.String()}
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -227,10 +253,18 @@ func (s *Server) invokeChildTask(
 		if replay != nil {
 			targetWorkspaceID = uuid.MustParse(replay.WorkspaceID)
 		} else {
+			var workspaceID pgtype.UUID
+			if input.Normalized.Workspace.ID != nil {
+				id, err := ids.Parse(*input.Normalized.Workspace.ID)
+				if err != nil {
+					return errTaskWorkspaceNotFound
+				}
+				workspaceID = pgvalue.UUID(id)
+			}
 			resolved, err := work.q.ResolveWorkspaceTarget(ctx, db.ResolveWorkspaceTargetParams{
 				OrgID: pgvalue.UUID(input.Normalized.OrgID), ProjectID: pgvalue.UUID(input.Normalized.ProjectID),
 				EnvironmentID: pgvalue.UUID(environmentID),
-				PublicID:      pgvalue.TextPtr(input.Normalized.Workspace.ID),
+				ID:            workspaceID,
 				Key:           pgvalue.TextPtr(input.Normalized.Workspace.Key),
 			})
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -289,18 +323,20 @@ func (s *Server) invokeChildTask(
 			result.openedWait = &opened
 			if replay != nil {
 				result.taskStartResult = taskStartResult{
-					RunID:       uuid.MustParse(replay.RunID),
-					RunPublicID: replay.RunPublicID,
-					Replayed:    true,
+					RunID: uuid.MustParse(replay.RunID), Replayed: true,
 				}
 			}
 			return nil
 		}
 		if replay != nil {
 			result.taskStartResult = taskStartResult{
-				RunID: uuid.MustParse(replay.RunID), RunPublicID: replay.RunPublicID, Replayed: true,
+				RunID: uuid.MustParse(replay.RunID), Replayed: true,
 			}
 			if input.Request.Method == "call" {
+				if replay.RunWaitID != input.RunWaitID.String() ||
+					replay.ResumeAttachID != input.ResumeAttachID.String() {
+					return errTaskStartReceiptInvalid
+				}
 				if edgeClaim == nil {
 					return errTaskStartReceiptInvalid
 				}
@@ -380,10 +416,6 @@ func (s *Server) invokeChildTask(
 			queuedExpiresAt = pgvalue.Timestamptz(now.Add(time.Duration(*admission.QueuedTTLMS) * time.Millisecond))
 		}
 		runID := uuid.Must(uuid.NewV7())
-		runPublicID, err := publicid.New(publicid.Run)
-		if err != nil {
-			return err
-		}
 		rootSpanID, err := tracing.NewSpanID()
 		if err != nil {
 			return err
@@ -404,7 +436,7 @@ func (s *Server) invokeChildTask(
 			EntrypointDeclaredID: input.Normalized.TaskDeclaredID,
 			WorkspaceID:          pgvalue.UUID(targetWorkspaceID), BaseWorkspaceVersionID: workspace.HeadVersionID,
 			ClaimID: claimID, EnvironmentID: authority.run.EnvironmentID, ParentRunID: authority.run.ID,
-			ID: pgvalue.UUID(runID), PublicID: runPublicID,
+			ID:                  pgvalue.UUID(runID),
 			ParentOwnsLifecycle: pgtype.Bool{Bool: parentOwnsLifecycle, Valid: true},
 			Payload:             input.Normalized.Payload, Metadata: input.Normalized.Metadata, Tags: input.Normalized.Tags,
 			QueueName: admission.QueueName, ConcurrencyKey: pgvalue.TextPtr(input.Normalized.ConcurrencyKey),
@@ -440,7 +472,7 @@ func (s *Server) invokeChildTask(
 		}); err != nil {
 			return fmt.Errorf("create child Task admission outbox: %w", err)
 		}
-		result.taskStartResult = taskStartResult{RunID: runID, RunPublicID: runPublicID}
+		result.taskStartResult = taskStartResult{RunID: runID}
 		if input.Request.Method == "call" {
 			if edgeClaim == nil {
 				return errors.New("child Task call claim is unavailable")
@@ -455,9 +487,14 @@ func (s *Server) invokeChildTask(
 			result.openedWait = &opened
 		}
 		if claim != nil {
-			receipt, err := json.Marshal(childTaskReceipt{
-				RunID: runID.String(), RunPublicID: runPublicID, WorkspaceID: targetWorkspaceID.String(),
-			})
+			receiptValue := childTaskReceipt{
+				RunID: runID.String(), WorkspaceID: targetWorkspaceID.String(),
+			}
+			if input.Request.Method == "call" {
+				receiptValue.RunWaitID = input.RunWaitID.String()
+				receiptValue.ResumeAttachID = input.ResumeAttachID.String()
+			}
+			receipt, err := json.Marshal(receiptValue)
 			if err != nil {
 				return err
 			}
@@ -552,22 +589,8 @@ func registerSameWorkspaceChildCall(
 			*replay,
 		)
 	}
-	correlationID, err := uuid.Parse(input.Request.CorrelationID)
-	if err != nil {
-		return api.WorkerCreateRunWaitResponse{}, errChildTaskInvokeStale
-	}
-	waitID := derivedRunWaitID(
-		input.Parsed.runID,
-		input.Request.Lease.AttemptNumber,
-		correlationID,
-		"child-call",
-	)
-	resumeAttachID := derivedRunWaitID(
-		input.Parsed.runID,
-		input.Request.Lease.AttemptNumber,
-		correlationID,
-		"resume-attach",
-	)
+	waitID := input.RunWaitID
+	resumeAttachID := input.ResumeAttachID
 	childRequest, err := json.Marshal(fingerprint)
 	if err != nil {
 		return api.WorkerCreateRunWaitResponse{}, fmt.Errorf(
@@ -665,11 +688,16 @@ func replayBoundSameWorkspaceChildCall(
 	receipt childTaskReceipt,
 ) (api.WorkerCreateRunWaitResponse, error) {
 	if receipt.RunWaitID == "" ||
+		receipt.ResumeAttachID == "" ||
 		receipt.BaseWorkspaceVersionID == "" ||
 		receipt.BaseWorkspaceDigest == "" {
 		return api.WorkerCreateRunWaitResponse{}, errWorkspaceHandoffConflict
 	}
 	waitID := uuid.MustParse(receipt.RunWaitID)
+	resumeAttachID := uuid.MustParse(receipt.ResumeAttachID)
+	if waitID != input.RunWaitID || resumeAttachID != input.ResumeAttachID {
+		return api.WorkerCreateRunWaitResponse{}, errWorkspaceHandoffConflict
+	}
 	childRunID := uuid.MustParse(receipt.RunID)
 	baseID := uuid.MustParse(receipt.BaseWorkspaceVersionID)
 	replayed, err := store.GetBoundSameWorkspaceChildCallReplay(
@@ -705,7 +733,7 @@ func replayBoundSameWorkspaceChildCall(
 	return api.WorkerCreateRunWaitResponse{
 		RunID:             input.Request.Lease.RunID,
 		RunWaitID:         waitID.String(),
-		ResumeAttachID:    pgvalue.MustUUIDValue(replayed.ResumeAttachID).String(),
+		ResumeAttachID:    resumeAttachID.String(),
 		RuntimeInstanceID: input.Request.Lease.RuntimeInstanceID,
 		RuntimeEpoch:      input.Request.Lease.WorkerEpoch,
 		ResolutionKind:    "completed",
@@ -744,16 +772,8 @@ func registerDifferentWorkspaceChildCall(
 	child taskStartResult,
 	childWorkspaceID uuid.UUID,
 ) (api.WorkerCreateRunWaitResponse, error) {
-	correlationID, err := uuid.Parse(input.Request.CorrelationID)
-	if err != nil {
-		return api.WorkerCreateRunWaitResponse{}, errChildTaskInvokeStale
-	}
-	waitID := derivedRunWaitID(
-		input.Parsed.runID, input.Request.Lease.AttemptNumber, correlationID, "child-call",
-	)
-	resumeAttachID := derivedRunWaitID(
-		input.Parsed.runID, input.Request.Lease.AttemptNumber, correlationID, "resume-attach",
-	)
+	waitID := input.RunWaitID
+	resumeAttachID := input.ResumeAttachID
 	requestFingerprint := fmt.Sprintf("sha256:%x", claim.RequestFingerprint)
 	childRequest, err := json.Marshal(fingerprint)
 	if err != nil {
@@ -863,7 +883,8 @@ func registerDifferentWorkspaceChildCall(
 }
 
 func childTaskResult(run db.Run) (json.RawMessage, error) {
-	if err := publicid.ValidateFor(publicid.Run, run.PublicID); err != nil {
+	runID := pgvalue.UUIDString(run.ID)
+	if err := ids.Validate(runID); err != nil {
 		return nil, err
 	}
 	if run.Status == db.RunStatusSucceeded {
@@ -878,7 +899,7 @@ func childTaskResult(run db.Run) (json.RawMessage, error) {
 			} `json:"run"`
 		}{OK: true, Output: run.Output, Run: struct {
 			ID string `json:"id"`
-		}{ID: run.PublicID}})
+		}{ID: runID}})
 	}
 	if !run.TerminalReasonCode.Valid {
 		return nil, errors.New("failed child Task has no terminal reason")
@@ -895,7 +916,7 @@ func childTaskResult(run db.Run) (json.RawMessage, error) {
 		} `json:"run"`
 	}{OK: false, Error: runError, Run: struct {
 		ID string `json:"id"`
-	}{ID: run.PublicID}})
+	}{ID: runID}})
 }
 
 func staleChildTaskInvoke(err error) error {
@@ -956,27 +977,24 @@ func decodeChildTaskReceipt(raw []byte) (childTaskReceipt, error) {
 	if err := decodeClosedJSON(raw, &receipt); err != nil {
 		return childTaskReceipt{}, errTaskStartReceiptInvalid
 	}
-	runID, err := uuid.Parse(receipt.RunID)
-	if err != nil || runID == uuid.Nil || runID.String() != receipt.RunID {
+	if _, err := ids.Parse(receipt.RunID); err != nil {
 		return childTaskReceipt{}, errTaskStartReceiptInvalid
 	}
-	workspaceID, err := uuid.Parse(receipt.WorkspaceID)
-	if err != nil || workspaceID == uuid.Nil || workspaceID.String() != receipt.WorkspaceID {
+	if _, err := ids.Parse(receipt.WorkspaceID); err != nil {
 		return childTaskReceipt{}, errTaskStartReceiptInvalid
 	}
-	if err := publicid.ValidateFor(publicid.Run, receipt.RunPublicID); err != nil {
-		return childTaskReceipt{}, errTaskStartReceiptInvalid
+	hasWait := receipt.RunWaitID != "" || receipt.ResumeAttachID != ""
+	if hasWait {
+		_, waitErr := ids.Parse(receipt.RunWaitID)
+		_, resumeAttachErr := ids.Parse(receipt.ResumeAttachID)
+		if waitErr != nil || resumeAttachErr != nil {
+			return childTaskReceipt{}, errTaskStartReceiptInvalid
+		}
 	}
-	hasHandoff := receipt.RunWaitID != "" ||
-		receipt.BaseWorkspaceVersionID != "" ||
-		receipt.BaseWorkspaceDigest != ""
+	hasHandoff := receipt.BaseWorkspaceVersionID != "" || receipt.BaseWorkspaceDigest != ""
 	if hasHandoff {
-		waitID, waitErr := uuid.Parse(receipt.RunWaitID)
-		baseID, baseErr := uuid.Parse(receipt.BaseWorkspaceVersionID)
-		if waitErr != nil || waitID == uuid.Nil ||
-			waitID.String() != receipt.RunWaitID ||
-			baseErr != nil || baseID == uuid.Nil ||
-			baseID.String() != receipt.BaseWorkspaceVersionID ||
+		_, baseErr := ids.Parse(receipt.BaseWorkspaceVersionID)
+		if !hasWait || baseErr != nil ||
 			!taskWorkspaceDigestPattern.MatchString(receipt.BaseWorkspaceDigest) {
 			return childTaskReceipt{}, errTaskStartReceiptInvalid
 		}

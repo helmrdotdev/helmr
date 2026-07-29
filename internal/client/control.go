@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -108,8 +109,6 @@ func projectEnvironmentPath(projectID string, environmentID string) string {
 }
 
 func (c *Client) environmentScopedPath(projectID string, environmentID string, suffix string) (string, bool, error) {
-	projectID = strings.TrimSpace(projectID)
-	environmentID = strings.TrimSpace(environmentID)
 	if projectID == "" && environmentID == "" {
 		if c.sessionScopedRoutes {
 			return "", false, fmt.Errorf("project and environment are required for session-scoped API routes")
@@ -209,6 +208,9 @@ func (c *Client) createDeploymentAttempt(
 }
 
 func (c *Client) GetDeployment(ctx context.Context, deploymentID string, input api.GetDeploymentRequest) (api.DeploymentResponse, error) {
+	if err := ids.Validate(deploymentID); err != nil {
+		return api.DeploymentResponse{}, err
+	}
 	basePath, _, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/deployments")
 	if err != nil {
 		return api.DeploymentResponse{}, err
@@ -226,6 +228,9 @@ func (c *Client) GetDeployment(ctx context.Context, deploymentID string, input a
 }
 
 func (c *Client) FollowDeploymentEvents(ctx context.Context, deploymentID string, input api.GetDeploymentRequest, cursor string, handle func(api.RunEvent) error) error {
+	if err := ids.Validate(deploymentID); err != nil {
+		return err
+	}
 	basePath, _, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/deployments")
 	if err != nil {
 		return err
@@ -269,6 +274,9 @@ func (c *Client) FollowDeploymentEvents(ctx context.Context, deploymentID string
 }
 
 func (c *Client) PromoteDeployment(ctx context.Context, deployment string, input api.PromoteDeploymentRequest) (api.DeploymentResponse, error) {
+	if err := ids.Validate(deployment); err != nil {
+		return api.DeploymentResponse{}, err
+	}
 	basePath, scoped, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/deployments")
 	if err != nil {
 		return api.DeploymentResponse{}, err
@@ -492,6 +500,9 @@ type ListRunLogsOptions struct {
 }
 
 func (c *Client) runItemPath(id string, suffix string, opts ...RunScopeOptions) (string, error) {
+	if err := ids.Validate(id); err != nil {
+		return "", err
+	}
 	scope := RunScopeOptions{}
 	if len(opts) > 0 {
 		scope = opts[0]

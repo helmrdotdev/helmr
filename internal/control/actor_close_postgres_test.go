@@ -21,10 +21,10 @@ func TestActorClosePostgresClosesIdleActorAndReplaysBoundedReceipt(t *testing.T)
 		t.Fatal(err)
 	}
 	settleActorBootRun(t, fixture, started, 0)
-	actorPublicID := actorPublicIDForTest(t, fixture, started.ActorID)
+	actorID := started.ActorID.String()
 	request := actorCloseRequest{
 		EnvironmentID: fixture.environmentID, ActorID: started.ActorID,
-		ActorPublicID: actorPublicID, WorkspaceID: fixture.workspaceIDs[0],
+		WorkspaceID:    fixture.workspaceIDs[0],
 		IdempotencyKey: "close-idle-1",
 	}
 	var priorOwnershipGeneration int64
@@ -38,7 +38,7 @@ func TestActorClosePostgresClosesIdleActorAndReplaysBoundedReceipt(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if closed.ActorID != actorPublicID || closed.AcceptedAt.IsZero() {
+	if closed.ActorID != actorID || closed.AcceptedAt.IsZero() {
 		t.Fatalf("closed receipt = %+v", closed)
 	}
 
@@ -106,7 +106,7 @@ func TestActorClosePostgresClosesIdleActorAndReplaysBoundedReceipt(t *testing.T)
 		   SET receipt = jsonb_set(
 		       receipt,
 		       '{actor_id}',
-		       '"act_bbbbbbbbbbbbbbbbbbbbbbbbbb"'::jsonb
+		       '"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3b"'::jsonb
 		   )
 		 WHERE operation = 'actor.close'
 	`); err != nil {
@@ -132,10 +132,10 @@ func TestActorClosePostgresClaimsOneBacklogContinuationAndReplays(t *testing.T) 
 	`, started.ActorID); err != nil {
 		t.Fatal(err)
 	}
-	actorPublicID := actorPublicIDForTest(t, fixture, started.ActorID)
+	actorID := started.ActorID.String()
 	closeRequest := actorCloseRequest{
 		EnvironmentID: fixture.environmentID, ActorID: started.ActorID,
-		ActorPublicID: actorPublicID, WorkspaceID: fixture.workspaceIDs[0],
+		WorkspaceID:    fixture.workspaceIDs[0],
 		IdempotencyKey: "close-backlog-1",
 	}
 
@@ -143,7 +143,7 @@ func TestActorClosePostgresClaimsOneBacklogContinuationAndReplays(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if closing.ActorID != actorPublicID || closing.AcceptedAt.IsZero() {
+	if closing.ActorID != actorID || closing.AcceptedAt.IsZero() {
 		t.Fatalf("closing receipt = %+v", closing)
 	}
 	assertActorCloseContinuation(t, fixture, started.ActorID)
@@ -175,10 +175,9 @@ func TestActorClosePostgresRejectsFailedActorWithoutClaimResidue(t *testing.T) {
 	`, started.ActorID, started.BootRunID); err != nil {
 		t.Fatal(err)
 	}
-	actorPublicID := actorPublicIDForTest(t, fixture, started.ActorID)
 	_, err = fixture.server.closeActor(t.Context(), actorCloseRequest{
 		EnvironmentID: fixture.environmentID, ActorID: started.ActorID,
-		ActorPublicID: actorPublicID, WorkspaceID: fixture.workspaceIDs[0],
+		WorkspaceID:    fixture.workspaceIDs[0],
 		IdempotencyKey: "close-failed-1",
 	})
 	if !errors.Is(err, errActorCloseConflict) {
@@ -207,16 +206,16 @@ func TestActorClosePostgresReconcilesAfterWorkspaceAuthorityRecovers(t *testing.
 	`, fixture.workspaceIDs[0]); err != nil {
 		t.Fatal(err)
 	}
-	actorPublicID := actorPublicIDForTest(t, fixture, started.ActorID)
+	actorID := started.ActorID.String()
 	receipt, err := fixture.server.closeActor(t.Context(), actorCloseRequest{
 		EnvironmentID: fixture.environmentID, ActorID: started.ActorID,
-		ActorPublicID: actorPublicID, WorkspaceID: fixture.workspaceIDs[0],
+		WorkspaceID:    fixture.workspaceIDs[0],
 		IdempotencyKey: "close-deferred-1",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if receipt.ActorID != actorPublicID || receipt.AcceptedAt.IsZero() {
+	if receipt.ActorID != actorID || receipt.AcceptedAt.IsZero() {
 		t.Fatalf("receipt = %+v", receipt)
 	}
 	var state string
@@ -273,8 +272,8 @@ func TestActorCloseHTTPPostgresAuthorizesBeforeLookupAndCloses(t *testing.T) {
 		t.Fatal(err)
 	}
 	settleActorBootRun(t, fixture, started, 0)
-	actorPublicID := actorPublicIDForTest(t, fixture, started.ActorID)
-	body := `{"actor_id":"` + actorPublicID + `","idempotency_key":"http-close-1"}`
+	actorID := started.ActorID.String()
+	body := `{"actor_id":"` + actorID + `","idempotency_key":"http-close-1"}`
 	principal := auth.Actor{
 		OrgID: fixture.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper,
 		ProjectID: fixture.projectID.String(), EnvironmentID: fixture.environmentID.String(),
@@ -314,7 +313,7 @@ func TestActorCloseHTTPPostgresAuthorizesBeforeLookupAndCloses(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &receipt); err != nil {
 		t.Fatal(err)
 	}
-	if receipt.ActorID != actorPublicID || receipt.AcceptedAt.IsZero() {
+	if receipt.ActorID != actorID || receipt.AcceptedAt.IsZero() {
 		t.Fatalf("receipt = %+v", receipt)
 	}
 }
@@ -394,21 +393,6 @@ func settleActorBootRun(
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func actorPublicIDForTest(
-	t *testing.T,
-	fixture actorStartPostgresFixture,
-	actorID uuid.UUID,
-) string {
-	t.Helper()
-	var publicID string
-	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT public_id FROM actors WHERE id = $1
-	`, actorID).Scan(&publicID); err != nil {
-		t.Fatal(err)
-	}
-	return publicID
 }
 
 func assertActorCloseContinuation(

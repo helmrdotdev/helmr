@@ -14,7 +14,6 @@ import (
 const createPublicAccessToken = `-- name: CreatePublicAccessToken :one
 INSERT INTO public_access_tokens (
     id,
-    public_id,
     token_id,
     token_hash,
     expires_at,
@@ -26,18 +25,16 @@ VALUES (
     $1,
     $2,
     $3,
-    $4,
-    $5::timestamptz,
-    $6::integer,
-    COALESCE($7::jsonb, '{}'::jsonb),
-    COALESCE($8::jsonb, '{}'::jsonb)
+    $4::timestamptz,
+    $5::integer,
+    COALESCE($6::jsonb, '{}'::jsonb),
+    COALESCE($7::jsonb, '{}'::jsonb)
 )
-RETURNING id, public_id, token_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
+RETURNING id, token_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
 `
 
 type CreatePublicAccessTokenParams struct {
 	ID        pgtype.UUID        `json:"id"`
-	PublicID  string             `json:"public_id"`
 	TokenID   pgtype.UUID        `json:"token_id"`
 	TokenHash []byte             `json:"token_hash"`
 	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
@@ -49,7 +46,6 @@ type CreatePublicAccessTokenParams struct {
 func (q *Queries) CreatePublicAccessToken(ctx context.Context, arg CreatePublicAccessTokenParams) (PublicAccessToken, error) {
 	row := q.db.QueryRow(ctx, createPublicAccessToken,
 		arg.ID,
-		arg.PublicID,
 		arg.TokenID,
 		arg.TokenHash,
 		arg.ExpiresAt,
@@ -60,7 +56,6 @@ func (q *Queries) CreatePublicAccessToken(ctx context.Context, arg CreatePublicA
 	var i PublicAccessToken
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.TokenID,
 		&i.TokenHash,
 		&i.State,
@@ -95,7 +90,7 @@ UPDATE public_access_tokens
   FROM candidates
  WHERE public_access_tokens.id = candidates.id
    AND public_access_tokens.state = 'active'
-RETURNING public_access_tokens.id, public_access_tokens.public_id, public_access_tokens.token_id, public_access_tokens.token_hash, public_access_tokens.state, public_access_tokens.metadata, public_access_tokens.created_by, public_access_tokens.created_at, public_access_tokens.updated_at, public_access_tokens.last_used_at, public_access_tokens.expires_at, public_access_tokens.revoked_at, public_access_tokens.expired_at, public_access_tokens.max_uses, public_access_tokens.used_count
+RETURNING public_access_tokens.id, public_access_tokens.token_id, public_access_tokens.token_hash, public_access_tokens.state, public_access_tokens.metadata, public_access_tokens.created_by, public_access_tokens.created_at, public_access_tokens.updated_at, public_access_tokens.last_used_at, public_access_tokens.expires_at, public_access_tokens.revoked_at, public_access_tokens.expired_at, public_access_tokens.max_uses, public_access_tokens.used_count
 `
 
 func (q *Queries) ExpireDuePublicAccessTokens(ctx context.Context, limitCount int32) ([]PublicAccessToken, error) {
@@ -109,7 +104,6 @@ func (q *Queries) ExpireDuePublicAccessTokens(ctx context.Context, limitCount in
 		var i PublicAccessToken
 		if err := rows.Scan(
 			&i.ID,
-			&i.PublicID,
 			&i.TokenID,
 			&i.TokenHash,
 			&i.State,
@@ -135,7 +129,7 @@ func (q *Queries) ExpireDuePublicAccessTokens(ctx context.Context, limitCount in
 }
 
 const getPublicAccessTokenForToken = `-- name: GetPublicAccessTokenForToken :one
-SELECT public_access_tokens.id, public_access_tokens.public_id, public_access_tokens.token_id, public_access_tokens.token_hash, public_access_tokens.state, public_access_tokens.metadata, public_access_tokens.created_by, public_access_tokens.created_at, public_access_tokens.updated_at, public_access_tokens.last_used_at, public_access_tokens.expires_at, public_access_tokens.revoked_at, public_access_tokens.expired_at, public_access_tokens.max_uses, public_access_tokens.used_count
+SELECT public_access_tokens.id, public_access_tokens.token_id, public_access_tokens.token_hash, public_access_tokens.state, public_access_tokens.metadata, public_access_tokens.created_by, public_access_tokens.created_at, public_access_tokens.updated_at, public_access_tokens.last_used_at, public_access_tokens.expires_at, public_access_tokens.revoked_at, public_access_tokens.expired_at, public_access_tokens.max_uses, public_access_tokens.used_count
   FROM public_access_tokens
  WHERE public_access_tokens.token_id = $1
 `
@@ -145,7 +139,6 @@ func (q *Queries) GetPublicAccessTokenForToken(ctx context.Context, tokenID pgty
 	var i PublicAccessToken
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.TokenID,
 		&i.TokenHash,
 		&i.State,
@@ -164,7 +157,7 @@ func (q *Queries) GetPublicAccessTokenForToken(ctx context.Context, tokenID pgty
 }
 
 const lockPublicAccessTokenByHash = `-- name: LockPublicAccessTokenByHash :one
-SELECT id, public_id, token_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
+SELECT id, token_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
   FROM public_access_tokens
  WHERE token_hash = $1
    AND state = 'active'
@@ -177,7 +170,6 @@ func (q *Queries) LockPublicAccessTokenByHash(ctx context.Context, tokenHash []b
 	var i PublicAccessToken
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.TokenID,
 		&i.TokenHash,
 		&i.State,
@@ -204,7 +196,7 @@ UPDATE public_access_tokens
    AND state = 'active'
    AND expires_at > now()
    AND (max_uses IS NULL OR used_count < max_uses)
-RETURNING id, public_id, token_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
+RETURNING id, token_id, token_hash, state, metadata, created_by, created_at, updated_at, last_used_at, expires_at, revoked_at, expired_at, max_uses, used_count
 `
 
 func (q *Queries) MarkPublicAccessTokenUsed(ctx context.Context, id pgtype.UUID) (PublicAccessToken, error) {
@@ -212,7 +204,6 @@ func (q *Queries) MarkPublicAccessTokenUsed(ctx context.Context, id pgtype.UUID)
 	var i PublicAccessToken
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.TokenID,
 		&i.TokenHash,
 		&i.State,

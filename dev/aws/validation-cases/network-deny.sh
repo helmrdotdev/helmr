@@ -53,7 +53,7 @@ for _ in $(seq 1 90); do
             ON worker_network_slots.id = run_leases.network_slot_id
            AND worker_network_slots.generation = run_leases.network_slot_generation
            AND worker_network_slots.runtime_instance_id = run_leases.runtime_instance_id
-         WHERE runs.public_id = '${run_id}'
+         WHERE runs.id = '${run_id}'
            AND run_leases.state = 'running'
            AND worker_network_slots.state = 'bound'
       ) TO STDOUT;

@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
@@ -29,18 +30,20 @@ func (s *Server) workerRegisterRuntimeSubstrate(w http.ResponseWriter, r *http.R
 		writeError(w, errors.New("runtime substrate CAS is not configured"))
 		return
 	}
-	workspaceDefinitionID, err := parseRequiredUUID("deployment_definition_id", request.DeploymentDefinitionID)
+	workspaceDefinitionID, err := ids.Parse(request.DeploymentDefinitionID)
 	if err != nil {
-		writeError(w, badRequest(err))
+		writeError(w, badRequest(errors.New("deployment_definition_id must be a canonical UUIDv7")))
 		return
 	}
 	runtimeSubstrateID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if strings.TrimSpace(request.ID) != "" {
-		runtimeSubstrateID, err = parseRequiredUUID("id", request.ID)
+		id, parseErr := ids.Parse(request.ID)
+		err = parseErr
 		if err != nil {
-			writeError(w, badRequest(err))
+			writeError(w, badRequest(errors.New("id must be a canonical UUIDv7")))
 			return
 		}
+		runtimeSubstrateID = pgvalue.UUID(id)
 	}
 	worker := workerFromContext(r.Context())
 	stat, err := s.cas.Stat(r.Context(), strings.TrimSpace(request.Artifact.Digest))
@@ -63,7 +66,7 @@ func (s *Server) workerRegisterRuntimeSubstrate(w http.ResponseWriter, r *http.R
 	var row db.RuntimeSubstrate
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		authority, err := work.q.LockRuntimeSubstrateAuthority(r.Context(), db.LockRuntimeSubstrateAuthorityParams{
-			DeploymentDefinitionID: workspaceDefinitionID,
+			DeploymentDefinitionID: pgvalue.UUID(workspaceDefinitionID),
 			WorkerInstanceID:       pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerGroupID:          worker.WorkerGroupID,
 			WorkerEpoch:            worker.WorkerEpoch,
@@ -156,16 +159,16 @@ func (s *Server) workerLookupRuntimeSubstrate(w http.ResponseWriter, r *http.Req
 		writeError(w, badRequest(err))
 		return
 	}
-	workspaceDefinitionID, err := parseRequiredUUID("deployment_definition_id", request.DeploymentDefinitionID)
+	workspaceDefinitionID, err := ids.Parse(request.DeploymentDefinitionID)
 	if err != nil {
-		writeError(w, badRequest(err))
+		writeError(w, badRequest(errors.New("deployment_definition_id must be a canonical UUIDv7")))
 		return
 	}
 	worker := workerFromContext(r.Context())
 	var row db.GetRuntimeSubstrateForWorkspaceDefinitionRow
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		authority, err := work.q.LockRuntimeSubstrateAuthority(r.Context(), db.LockRuntimeSubstrateAuthorityParams{
-			DeploymentDefinitionID: workspaceDefinitionID,
+			DeploymentDefinitionID: pgvalue.UUID(workspaceDefinitionID),
 			WorkerInstanceID:       pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerGroupID:          worker.WorkerGroupID,
 			WorkerEpoch:            worker.WorkerEpoch,

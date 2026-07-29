@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 )
 
 func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T) {
@@ -88,15 +87,14 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 		publicAccessTokenID := uuid.Must(uuid.NewV7())
 		mustRunLeaseExec(t, ctx, fixture.pool, `
 			INSERT INTO public_access_tokens (
-			    id, public_id, token_id, token_hash, created_at, updated_at, expires_at
+			    id, token_id, token_hash, created_at, updated_at, expires_at
 			) VALUES (
-			    $1, $2, $3, $4,
-			    $5::timestamptz - interval '1 hour',
-			    $5::timestamptz - interval '1 hour',
-			    $5::timestamptz
+			    $1, $2, $3,
+			    $4::timestamptz - interval '1 hour',
+			    $4::timestamptz - interval '1 hour',
+			    $4::timestamptz
 			)
-		`, publicAccessTokenID, runLeasePublicID(t, publicid.PublicAccessToken),
-			tokenID, bytes.Repeat([]byte{2}, 32), expiredAt)
+		`, publicAccessTokenID, tokenID, bytes.Repeat([]byte{2}, 32), expiredAt)
 		expired, err := fixture.queries.ExpireDueTokens(ctx, db.ExpireDueTokensParams{
 			OutboxMessageIds: pgvalue.NewUUIDv7Batch(100),
 			LimitCount:       100,
@@ -182,7 +180,7 @@ func createTokenTerminalTestToken(t *testing.T, ctx context.Context, fixture run
 		insertExpiry = time.Now().Add(time.Hour)
 	}
 	row, err := fixture.queries.CreateToken(ctx, db.CreateTokenParams{
-		ID: pgvalue.UUID(id), PublicID: runLeasePublicID(t, publicid.Token),
+		ID:    pgvalue.UUID(id),
 		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ExpiresAt: pgvalue.Timestamptz(insertExpiry),
 		CallbackSecretFingerprint: bytes.Repeat([]byte{1}, 32),

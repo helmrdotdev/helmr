@@ -18,8 +18,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	tokencredential "github.com/helmrdotdev/helmr/internal/token"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -340,12 +340,8 @@ func (s *Server) createTokenInTransaction(
 	if err != nil {
 		return api.TokenResponse{}, nil, err
 	}
-	tokenPublicID, err := publicid.New(publicid.Token)
-	if err != nil {
-		return api.TokenResponse{}, nil, err
-	}
 	tokenRow, err := q.CreateToken(ctx, db.CreateTokenParams{
-		ID: pgvalue.UUID(tokenID), PublicID: tokenPublicID,
+		ID:    pgvalue.UUID(tokenID),
 		OrgID: input.OrgID, ProjectID: input.ProjectID,
 		EnvironmentID: input.EnvironmentID, ExpiresAt: expiresAt,
 		CallbackSecretFingerprint: credentials.CallbackFingerprint,
@@ -355,12 +351,8 @@ func (s *Server) createTokenInTransaction(
 		return api.TokenResponse{}, nil, fmt.Errorf("create Token: %w", err)
 	}
 	publicAccessID := uuid.Must(uuid.NewV7())
-	publicAccessPublicID, err := publicid.New(publicid.PublicAccessToken)
-	if err != nil {
-		return api.TokenResponse{}, nil, err
-	}
 	_, err = q.CreatePublicAccessToken(ctx, db.CreatePublicAccessTokenParams{
-		ID: pgvalue.UUID(publicAccessID), PublicID: publicAccessPublicID,
+		ID:        pgvalue.UUID(publicAccessID),
 		TokenID:   tokenRow.ID,
 		TokenHash: credentials.PublicAccessHash,
 		ExpiresAt: expiresAt, Metadata: []byte(`{}`),
@@ -435,7 +427,7 @@ func (s *Server) replayTokenCreate(
 	if err := decodeClosedJSON(rawReceipt, &receipt); err != nil {
 		return api.TokenResponse{}, errTokenCreateReceipt
 	}
-	tokenID, err := uuid.Parse(receipt.TokenID)
+	tokenID, err := ids.Parse(receipt.TokenID)
 	if err != nil {
 		return api.TokenResponse{}, errTokenCreateReceipt
 	}
@@ -493,7 +485,7 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	afterID := pgtype.UUID{}
 	if raw := strings.TrimSpace(firstNonEmptyString(r.URL.Query().Get("after"), r.URL.Query().Get("cursor"))); raw != "" {
-		cursor, err := uuid.Parse(raw)
+		cursor, err := ids.Parse(raw)
 		if err != nil {
 			writeError(w, badRequest(errors.New("cursor must be a Token UUID")))
 			return
@@ -603,9 +595,9 @@ func (s *Server) completeTokenWithCallback(w http.ResponseWriter, r *http.Reques
 		writeError(w, badRequest(errors.New("result is required")))
 		return
 	}
-	publicID := strings.TrimSpace(chi.URLParam(r, "tokenID"))
+	tokenID, parseErr := ids.Parse(chi.URLParam(r, "tokenID"))
 	callbackSecret := strings.TrimSpace(chi.URLParam(r, "callbackSecret"))
-	if publicid.ValidateFor(publicid.Token, publicID) != nil || callbackSecret == "" {
+	if parseErr != nil || callbackSecret == "" {
 		writeError(w, unauthorized(errTokenScopeDenied))
 		return
 	}
@@ -615,7 +607,7 @@ func (s *Server) completeTokenWithCallback(w http.ResponseWriter, r *http.Reques
 	) (db.Token, *db.PublicAccessToken, error) {
 		fingerprint := tokencredential.HashCredential(callbackSecret)
 		tokenRow, err := q.GetTokenForCallbackCompletion(ctx, db.GetTokenForCallbackCompletionParams{
-			PublicID: publicID, CallbackSecretFingerprint: fingerprint,
+			ID: pgvalue.UUID(tokenID), CallbackSecretFingerprint: fingerprint,
 		})
 		if err != nil {
 			return db.Token{}, nil, errTokenScopeDenied
@@ -648,9 +640,9 @@ func (s *Server) completeTokenWithBearer(w http.ResponseWriter, r *http.Request)
 		writeError(w, badRequest(errors.New("result is required")))
 		return
 	}
-	publicID := strings.TrimSpace(chi.URLParam(r, "tokenID"))
+	tokenID, parseErr := ids.Parse(chi.URLParam(r, "tokenID"))
 	rawBearer, ok := bearerToken(r.Header.Get("Authorization"))
-	if publicid.ValidateFor(publicid.Token, publicID) != nil || !ok {
+	if parseErr != nil || !ok {
 		writeError(w, unauthorized(errTokenScopeDenied))
 		return
 	}
@@ -664,7 +656,7 @@ func (s *Server) completeTokenWithBearer(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			return db.Token{}, nil, errTokenScopeDenied
 		}
-		tokenRow, err := q.GetTokenByPublicID(ctx, publicID)
+		tokenRow, err := q.GetTokenByID(ctx, pgvalue.UUID(tokenID))
 		if err != nil {
 			return db.Token{}, nil, errTokenScopeDenied
 		}
@@ -742,7 +734,7 @@ func (s *Server) completeTokenRecord(
 			}
 			if acquired.Claim.State == "completed" {
 				replayed, err := tokenOperationReceiptFromJSON(acquired.Claim.Receipt)
-				if err != nil || replayed.TokenID != tokenRow.PublicID ||
+				if err != nil || replayed.TokenID != pgvalue.UUIDString(tokenRow.ID) ||
 					replayed.Outcome != "completed" {
 					return errTokenOperationReceipt
 				}
@@ -751,7 +743,7 @@ func (s *Server) completeTokenRecord(
 			}
 			if acquired.Claim.State == "failed" {
 				replayed, err := tokenOperationReceiptFromJSON(acquired.Claim.Receipt)
-				if err != nil || replayed.TokenID != tokenRow.PublicID ||
+				if err != nil || replayed.TokenID != pgvalue.UUIDString(tokenRow.ID) ||
 					replayed.Outcome != "expired" {
 					return errTokenOperationReceipt
 				}
@@ -779,7 +771,7 @@ func (s *Server) completeTokenRecord(
 			completed = tokenFromCompleteRow(row)
 			if claim != nil {
 				receipt, err := json.Marshal(tokenOperationReceipt{
-					TokenID: tokenRow.PublicID,
+					TokenID: pgvalue.UUIDString(tokenRow.ID),
 					Outcome: "expired",
 				})
 				if err != nil {
@@ -802,7 +794,7 @@ func (s *Server) completeTokenRecord(
 		}
 		if claim != nil {
 			receipt, err := json.Marshal(tokenOperationReceipt{
-				TokenID: tokenRow.PublicID,
+				TokenID: pgvalue.UUIDString(tokenRow.ID),
 				Outcome: "completed",
 			})
 			if err != nil {
@@ -849,7 +841,7 @@ func (s *Server) cancelTokenRecord(
 			}
 			if acquired.Claim.State == "completed" {
 				replayed, err := tokenOperationReceiptFromJSON(acquired.Claim.Receipt)
-				if err != nil || replayed.TokenID != tokenRow.PublicID ||
+				if err != nil || replayed.TokenID != pgvalue.UUIDString(tokenRow.ID) ||
 					replayed.Outcome != "cancelled" {
 					return errTokenOperationReceipt
 				}
@@ -858,7 +850,7 @@ func (s *Server) cancelTokenRecord(
 			}
 			if acquired.Claim.State == "failed" {
 				replayed, err := tokenOperationReceiptFromJSON(acquired.Claim.Receipt)
-				if err != nil || replayed.TokenID != tokenRow.PublicID ||
+				if err != nil || replayed.TokenID != pgvalue.UUIDString(tokenRow.ID) ||
 					replayed.Outcome != "expired" {
 					return errTokenOperationReceipt
 				}
@@ -882,7 +874,7 @@ func (s *Server) cancelTokenRecord(
 			cancelled = tokenFromCancelRow(row)
 			if claim != nil {
 				receipt, err := json.Marshal(tokenOperationReceipt{
-					TokenID: tokenRow.PublicID,
+					TokenID: pgvalue.UUIDString(tokenRow.ID),
 					Outcome: "expired",
 				})
 				if err != nil {
@@ -900,7 +892,7 @@ func (s *Server) cancelTokenRecord(
 		cancelled = tokenFromCancelRow(row)
 		if claim != nil {
 			receipt, err := json.Marshal(tokenOperationReceipt{
-				TokenID: tokenRow.PublicID,
+				TokenID: pgvalue.UUIDString(tokenRow.ID),
 				Outcome: "cancelled",
 			})
 			if err != nil {
@@ -921,7 +913,7 @@ func (s *Server) cancelTokenRecord(
 func tokenOperationReceiptFromJSON(raw []byte) (tokenOperationReceipt, error) {
 	var receipt tokenOperationReceipt
 	if err := decodeClosedJSON(raw, &receipt); err != nil ||
-		publicid.ValidateFor(publicid.Token, receipt.TokenID) != nil ||
+		ids.Validate(receipt.TokenID) != nil ||
 		(receipt.Outcome != "completed" &&
 			receipt.Outcome != "cancelled" &&
 			receipt.Outcome != "expired") {
@@ -935,32 +927,33 @@ func (s *Server) authorizeToken(
 	r *http.Request,
 	permission auth.Permission,
 ) (db.Token, bool) {
-	publicID := strings.TrimSpace(chi.URLParam(r, "tokenID"))
-	if publicid.ValidateFor(publicid.Token, publicID) != nil {
+	tokenID, err := ids.Parse(chi.URLParam(r, "tokenID"))
+	if err != nil {
 		writeError(w, notFound(errTokenNotFound))
 		return db.Token{}, false
 	}
-	tokenRow, err := s.db.GetTokenByPublicID(r.Context(), publicID)
+	actor := actorFromContext(r.Context())
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
+	if err != nil {
+		writeError(w, badRequest(err))
+		return db.Token{}, false
+	}
+	if !actor.HasPermission(permission, scope) {
+		writeError(w, forbidden(errPermissionRequired))
+		return db.Token{}, false
+	}
+	tokenRow, err := s.db.GetToken(r.Context(), db.GetTokenParams{
+		OrgID:         pgvalue.UUID(actor.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		ID:            pgvalue.UUID(tokenID),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(errTokenNotFound))
 		return db.Token{}, false
 	}
 	if err != nil {
 		writeError(w, errors.New("load Token"))
-		return db.Token{}, false
-	}
-	actor := actorFromContext(r.Context())
-	if err := s.requireActorScopeForRecord(r, actor, tokenRow.ProjectID, tokenRow.EnvironmentID); err != nil {
-		writeError(w, notFound(errTokenNotFound))
-		return db.Token{}, false
-	}
-	scope := auth.Scope{
-		OrgID:         actor.OrgID,
-		ProjectID:     pgvalue.MustUUIDValue(tokenRow.ProjectID).String(),
-		EnvironmentID: pgvalue.MustUUIDValue(tokenRow.EnvironmentID).String(),
-	}
-	if !actor.HasPermission(permission, scope) {
-		writeError(w, forbidden(errPermissionRequired))
 		return db.Token{}, false
 	}
 	return tokenRow, true
@@ -978,7 +971,7 @@ func tokenResponse(row db.Token) api.TokenResponse {
 		completedAt = &value
 	}
 	response := api.TokenResponse{
-		ID: row.PublicID, Status: string(row.State), TimeoutAt: expiresAt,
+		ID: pgvalue.UUIDString(row.ID), Status: string(row.State), TimeoutAt: expiresAt,
 		Tags: append([]string{}, row.Tags...), Metadata: json.RawMessage(row.Metadata),
 		CompletedAt: completedAt, CreatedAt: row.CreatedAt.Time.UTC(),
 		UpdatedAt: row.UpdatedAt.Time.UTC(),
@@ -1005,14 +998,14 @@ func (s *Server) tokenCreateResponse(
 	response := tokenResponse(creation)
 	response.PublicAccessToken = credentials.PublicAccessToken
 	response.CallbackURL = s.publicURL.ResolveReference(&url.URL{
-		Path: "/api/token-callbacks/" + row.PublicID + "/" + credentials.CallbackSecret,
+		Path: "/api/token-callbacks/" + pgvalue.UUIDString(row.ID) + "/" + credentials.CallbackSecret,
 	}).String()
 	return response
 }
 
 func tokenFromCompleteRow(row db.CompleteTokenRow) db.Token {
 	return db.Token{
-		ID: row.ID, PublicID: row.PublicID, OrgID: row.OrgID, ProjectID: row.ProjectID,
+		ID: row.ID, OrgID: row.OrgID, ProjectID: row.ProjectID,
 		EnvironmentID: row.EnvironmentID, State: row.State, ExpiresAt: row.ExpiresAt,
 		CallbackSecretFingerprint: row.CallbackSecretFingerprint,
 		CompletionFingerprint:     row.CompletionFingerprint,
@@ -1024,7 +1017,7 @@ func tokenFromCompleteRow(row db.CompleteTokenRow) db.Token {
 
 func tokenFromCancelRow(row db.CancelTokenRow) db.Token {
 	return db.Token{
-		ID: row.ID, PublicID: row.PublicID, OrgID: row.OrgID, ProjectID: row.ProjectID,
+		ID: row.ID, OrgID: row.OrgID, ProjectID: row.ProjectID,
 		EnvironmentID: row.EnvironmentID, State: row.State, ExpiresAt: row.ExpiresAt,
 		CallbackSecretFingerprint: row.CallbackSecretFingerprint,
 		CompletionFingerprint:     row.CompletionFingerprint,

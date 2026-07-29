@@ -13,8 +13,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -233,13 +233,8 @@ func reconcileSchedule(
 		}
 		nextFireAt = pgvalue.Timestamptz(next)
 	}
-	publicID, err := publicid.New(publicid.Schedule)
-	if err != nil {
-		return fmt.Errorf("allocate Schedule public ID: %w", err)
-	}
 	if err := store.ReconcileSchedule(ctx, db.ReconcileScheduleParams{
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		PublicID:               publicID,
 		EnvironmentID:          target.EnvironmentID,
 		TaskDeclaredID:         definition.DeclaredID,
 		DeploymentDefinitionID: definition.ID,
@@ -271,7 +266,11 @@ func resolveScheduleWorkspace(
 		EnvironmentID: target.EnvironmentID,
 	}
 	if address.ID != nil {
-		params.PublicID = pgvalue.Text(*address.ID)
+		id, err := ids.Parse(*address.ID)
+		if err != nil {
+			return pgtype.UUID{}, pgtype.Text{}, pgtype.UUID{}, "", badRequest(err)
+		}
+		params.ID = pgvalue.UUID(id)
 		workspaceID, err := store.ResolveWorkspaceTarget(ctx, params)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return pgtype.UUID{}, pgtype.Text{}, pgtype.UUID{}, "", badRequest(

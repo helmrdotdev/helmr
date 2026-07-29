@@ -9006,6 +9006,15 @@ function currentRuntimeOperations() {
   return operations;
 }
 
+// sdk/typescript/src/internal/id.ts
+var uuidV7Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+function resourceID(value, label) {
+  if (typeof value !== "string" || !uuidV7Pattern.test(value)) {
+    throw new Error(`${label} must be a canonical UUIDv7`);
+  }
+  return value;
+}
+
 // sdk/typescript/src/definitions.ts
 var privateDefinitionBrand = Symbol.for("helmr.sdk.v0.definition");
 var privateQueueBrand = Symbol.for("helmr.sdk.v0.queue");
@@ -9153,16 +9162,10 @@ function validateWorkspaceAddress(address) {
     throw new Error("Workspace ref requires exactly one of id or key");
   }
   if ("id" in address && address.id !== undefined) {
-    workspacePublicID(address.id, "Workspace ID");
+    resourceID(address.id, "Workspace ID");
   } else if (address.key.length === 0) {
     throw new Error("Workspace key is required");
   }
-}
-function workspacePublicID(value, label) {
-  if (typeof value !== "string" || !/^wsp_[a-z2-7]{26}$/.test(value)) {
-    throw new Error(`${label} must be a canonical Workspace public ID`);
-  }
-  return value;
 }
 // sdk/typescript/src/internal/jsoncanon.ts
 var textDecoder = new TextDecoder("utf-8", { fatal: true });

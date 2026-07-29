@@ -13,8 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -32,37 +32,70 @@ type workerTokenWaitParams struct {
 	TokenID string `json:"token_id"`
 }
 
+type requestedRunWaitIdentity struct {
+	correlationID  uuid.UUID
+	waitID         uuid.UUID
+	resumeAttachID uuid.UUID
+}
+
+func parseRequestedRunWaitIdentity(request api.WorkerCreateRunWaitRequest) (requestedRunWaitIdentity, error) {
+	correlationID, err := ids.Parse(request.CorrelationID)
+	if err != nil {
+		return requestedRunWaitIdentity{}, errors.New("correlation_id must be a canonical UUIDv7")
+	}
+	waitID, err := ids.Parse(request.RunWaitID)
+	if err != nil {
+		return requestedRunWaitIdentity{}, errors.New("run_wait_id must be a canonical UUIDv7")
+	}
+	resumeAttachID, err := ids.Parse(request.ResumeAttachID)
+	if err != nil {
+		return requestedRunWaitIdentity{}, errors.New("resume_attach_id must be a canonical UUIDv7")
+	}
+	if correlationID == waitID || correlationID == resumeAttachID || waitID == resumeAttachID {
+		return requestedRunWaitIdentity{}, errors.New("correlation_id, run_wait_id, and resume_attach_id must be distinct")
+	}
+	return requestedRunWaitIdentity{
+		correlationID: correlationID, waitID: waitID, resumeAttachID: resumeAttachID,
+	}, nil
+}
+
 func (s *Server) workerCreateRunWait(w http.ResponseWriter, r *http.Request) {
 	var request api.WorkerCreateRunWaitRequest
 	if err := decodeClosedWorkerRequest(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker Run Wait JSON: %w", err)))
 		return
 	}
+	identity, err := parseRequestedRunWaitIdentity(request)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
 	switch request.Kind {
 	case api.WorkerRunWaitKindToken:
-		s.workerCreateTokenRunWait(w, r, request)
+		s.workerCreateTokenRunWait(w, r, request, identity)
 	case api.WorkerRunWaitKindTimer:
-		s.workerCreateTimerRunWait(w, r, request)
+		s.workerCreateTimerRunWait(w, r, request, identity)
 	case api.WorkerRunWaitKindActorInput:
-		s.workerCreateActorInputRunWait(w, r, request)
+		s.workerCreateActorInputRunWait(w, r, request, identity)
 	default:
 		writeError(w, badRequest(fmt.Errorf("Run Wait kind %q is not implemented by the durable runtime", request.Kind)))
 	}
 }
 
-func (s *Server) workerCreateTokenRunWait(w http.ResponseWriter, r *http.Request, request api.WorkerCreateRunWaitRequest) {
-	correlationID, err := parseCanonicalUUID("correlation_id", request.CorrelationID)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
+func (s *Server) workerCreateTokenRunWait(
+	w http.ResponseWriter,
+	r *http.Request,
+	request api.WorkerCreateRunWaitRequest,
+	identity requestedRunWaitIdentity,
+) {
 	var params workerTokenWaitParams
 	if err := decodeClosedJSON(request.Params, &params); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid Token Wait params: %w", err)))
 		return
 	}
-	if err := publicid.ValidateFor(publicid.Token, params.TokenID); err != nil {
-		writeError(w, badRequest(errors.New("params.token_id must be a Token public ID")))
+	tokenID, err := ids.Parse(params.TokenID)
+	if err != nil {
+		writeError(w, badRequest(errors.New("params.token_id must be a Token ID")))
 		return
 	}
 	metadata, tags, err := normalizeWaitAnnotations(request.Metadata, request.Tags)
@@ -85,12 +118,12 @@ func (s *Server) workerCreateTokenRunWait(w http.ResponseWriter, r *http.Request
 		writeError(w, err)
 		return
 	}
-	tokenRow, err := s.db.GetTokenByPublicID(r.Context(), params.TokenID)
+	tokenRow, err := s.db.GetTokenByID(r.Context(), pgvalue.UUID(tokenID))
 	if err != nil || tokenRow.EnvironmentID != locators.EnvironmentID {
 		writeError(w, notFound(errTokenNotFound))
 		return
 	}
-	tokenID := pgvalue.MustUUIDValue(tokenRow.ID)
+	tokenID = pgvalue.MustUUIDValue(tokenRow.ID)
 	normalized.Params, err = json.Marshal(workerTokenWaitParams{TokenID: params.TokenID})
 	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("normalize Token Wait params: %w", err)))
@@ -101,8 +134,8 @@ func (s *Server) workerCreateTokenRunWait(w http.ResponseWriter, r *http.Request
 		writeError(w, badRequest(fmt.Errorf("fingerprint Token Wait registration: %w", err)))
 		return
 	}
-	waitID := derivedRunWaitID(parsed.runID, request.Lease.AttemptNumber, correlationID, "wait")
-	resumeAttachID := derivedRunWaitID(parsed.runID, request.Lease.AttemptNumber, correlationID, "resume-attach")
+	waitID := identity.waitID
+	resumeAttachID := identity.resumeAttachID
 	reconcileDB, ok := s.tx.(token.WaitDB)
 	if !ok {
 		writeError(w, unavailable(errors.New("durable Token Wait storage is not configured")))
@@ -443,12 +476,6 @@ func (s *Server) loadRunWaitLeaseAuthority(
 		return parsedRunLeaseReceipt{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, conflict(errors.New("worker Run Wait receipt fence is stale"))
 	}
 	return parsed, worker, locators, nil
-}
-
-func derivedRunWaitID(runID uuid.UUID, attemptNumber int32, correlationID uuid.UUID, role string) uuid.UUID {
-	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf(
-		"helmr.run-wait.v1:%s:%s:%d:%s", role, runID, attemptNumber, correlationID,
-	)))
 }
 
 func runWaitDeadlines(request api.WorkerCreateRunWaitRequest, defaultIdleTimeout time.Duration) (pgtype.Timestamptz, pgtype.Int8, pgtype.Timestamptz, time.Duration, error) {

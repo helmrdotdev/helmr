@@ -16,8 +16,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -42,7 +42,7 @@ type runTelemetryTarget struct {
 	orgID         pgtype.UUID
 	environmentID pgtype.UUID
 	runID         pgtype.UUID
-	runPublicID   string
+	runIDString   string
 }
 
 func (s *Server) listRunLogsHTTP(w http.ResponseWriter, r *http.Request) {
@@ -89,7 +89,7 @@ func (s *Server) listRunLogsHTTP(w http.ResponseWriter, r *http.Request) {
 			writeRunTelemetryError(w, telemetry.ErrHistoricalUnavailable)
 			return
 		}
-		record, err := projectRunLogRecord(chunk, target.runPublicID)
+		record, err := projectRunLogRecord(chunk, target.runIDString)
 		if err != nil {
 			writeRunTelemetryError(w, telemetry.ErrHistoricalUnavailable)
 			return
@@ -118,7 +118,7 @@ func (s *Server) listRunLogsHTTP(w http.ResponseWriter, r *http.Request) {
 	if last > after {
 		nextCursor, err = s.signRunTelemetryCursor(runTelemetryCursor{
 			EnvironmentID: pgvalue.MustUUIDValue(target.environmentID).String(),
-			RunID:         target.runPublicID, RecordKind: "logs",
+			RunID:         target.runIDString, RecordKind: "logs",
 			Filters: levels, Sequence: last,
 		})
 		if err != nil {
@@ -174,7 +174,7 @@ func (s *Server) listRunEventsHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		last = seq
-		event.RunID = optionalString(target.runPublicID)
+		event.RunID = optionalString(target.runIDString)
 		event.DeploymentID = nil
 		event.Trace = api.TraceContext{}
 	}
@@ -199,7 +199,7 @@ func (s *Server) listRunEventsHTTP(w http.ResponseWriter, r *http.Request) {
 	if last > after {
 		nextCursor, err = s.signRunTelemetryCursor(runTelemetryCursor{
 			EnvironmentID: pgvalue.MustUUIDValue(target.environmentID).String(),
-			RunID:         target.runPublicID, RecordKind: "events",
+			RunID:         target.runIDString, RecordKind: "events",
 			Filters: severities, Sequence: last,
 		})
 		if err != nil {
@@ -226,14 +226,14 @@ func (s *Server) resolveRunTelemetryTarget(
 	if !ok {
 		return runTelemetryTarget{}, false
 	}
-	runPublicID := strings.TrimSpace(chi.URLParam(r, "runID"))
-	if publicid.ValidateFor(publicid.Run, runPublicID) != nil {
+	runID, err := ids.Parse(chi.URLParam(r, "runID"))
+	if err != nil {
 		writeError(w, notFound(codedError{code: "run_not_found", message: "Run not found"}))
 		return runTelemetryTarget{}, false
 	}
 	row, err := s.db.GetRunSnapshot(r.Context(), db.GetRunSnapshotParams{
 		OrgID: pgvalue.UUID(scope.OrgID), ProjectID: projectID,
-		EnvironmentID: environmentID, PublicID: runPublicID,
+		EnvironmentID: environmentID, ID: pgvalue.UUID(runID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(codedError{code: "run_not_found", message: "Run not found"}))
@@ -245,7 +245,7 @@ func (s *Server) resolveRunTelemetryTarget(
 	}
 	return runTelemetryTarget{
 		orgID: row.OrgID, environmentID: row.EnvironmentID,
-		runID: row.ID, runPublicID: row.PublicID,
+		runID: row.ID, runIDString: runID.String(),
 	}, true
 }
 
@@ -266,7 +266,7 @@ func (s *Server) parseRunTelemetryPage(
 	cursor, err := s.parseRunTelemetryCursor(raw)
 	if err != nil ||
 		cursor.EnvironmentID != pgvalue.MustUUIDValue(target.environmentID).String() ||
-		cursor.RunID != target.runPublicID ||
+		cursor.RunID != target.runIDString ||
 		cursor.RecordKind != recordKind ||
 		!slices.Equal(cursor.Filters, filters) {
 		return 0, 0, errTelemetryInvalidCursor
@@ -312,7 +312,7 @@ func hasRunTelemetryPageBoundary(recordCount int, limit int32) bool {
 	return recordCount >= int(limit)
 }
 
-func projectRunLogRecord(chunk api.RunLogChunk, runPublicID string) (api.RunLogRecord, error) {
+func projectRunLogRecord(chunk api.RunLogChunk, runID string) (api.RunLogRecord, error) {
 	if chunk.Stream != string(api.WorkerLogStreamStructured) {
 		if chunk.Stream != string(api.WorkerLogStreamStdout) &&
 			chunk.Stream != string(api.WorkerLogStreamStderr) {
@@ -321,7 +321,7 @@ func projectRunLogRecord(chunk api.RunLogChunk, runPublicID string) (api.RunLogR
 		observed := chunk.ObservedSeq
 		size := chunk.Bytes
 		return api.RunLogRecord{
-			ID: chunk.ID, Kind: chunk.Stream, RunID: runPublicID,
+			ID: chunk.ID, Kind: chunk.Stream, RunID: runID,
 			AttemptNumber:    chunk.AttemptNumber,
 			ObservedSequence: &observed, ContentBase64: chunk.ContentBase64,
 			Bytes: &size, At: chunk.At,
@@ -344,7 +344,7 @@ func projectRunLogRecord(chunk api.RunLogChunk, runPublicID string) (api.RunLogR
 		return api.RunLogRecord{}, errors.New("structured Run log is invalid")
 	}
 	return api.RunLogRecord{
-		ID: chunk.ID, Kind: "structured", RunID: runPublicID,
+		ID: chunk.ID, Kind: "structured", RunID: runID,
 		AttemptNumber: chunk.AttemptNumber, Level: value.Level,
 		Message: value.Message, Attributes: value.Attributes, At: chunk.At,
 	}, nil

@@ -45,7 +45,7 @@ func (control *childTaskControl) InvokeChildTask(
 func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
-	correlationID := "00000000-0000-0000-0000-000000000121"
+	correlationID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc21"
 	payload := `{"imageId":"image-1"}`
 	idempotencyKey := "resize:image-1"
 	control := &childTaskControl{
@@ -53,7 +53,7 @@ func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
 		response: api.WorkerInvokeChildTaskResponse{
 			CorrelationID: correlationID,
 			Completed: &api.WorkerChildTaskStartResult{
-				RunID: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+				RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 			},
 		},
 	}
@@ -92,7 +92,7 @@ func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
 	}
 	if decision.GetCorrelationId() != correlationID ||
 		decision.GetKind() != "completed" ||
-		decision.GetDataJson() != `{"run_id":"run_aaaaaaaaaaaaaaaaaaaaaaaaaa"}` {
+		decision.GetDataJson() != `{"run_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"}` {
 		t.Fatalf("decision = %+v", decision)
 	}
 	if control.request.Lease != lease ||
@@ -110,14 +110,14 @@ func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
 func TestHandleChildTaskInvokeRetryUsesRenewedReceipt(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
-	correlationID := "00000000-0000-0000-0000-000000000124"
+	correlationID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc24"
 	firstAttempt := make(chan struct{})
 	control := &childTaskControl{
 		testRunLeaseControl: &testRunLeaseControl{},
 		response: api.WorkerInvokeChildTaskResponse{
 			CorrelationID: correlationID,
 			Completed: &api.WorkerChildTaskStartResult{
-				RunID: "run_aaaaaaaaaaaaaaaaaaaaaaaaab",
+				RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3a",
 			},
 		},
 		errors: []error{&client.HTTPError{
@@ -166,25 +166,30 @@ func TestHandleChildTaskInvokeRetryUsesRenewedReceipt(t *testing.T) {
 func TestHandleChildTaskCallContinuesOpenedWait(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
-	correlationID := "00000000-0000-0000-0000-000000000123"
+	correlationID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc23"
+	runWaitID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc25"
+	resumeAttachID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc26"
 	actorSequence := int64(9)
 	waitClient := &fakeRunWaitClient{
 		polls: []api.WorkerRunWaitPollResponse{{
-			RunID: "run-1", RunWaitID: "run-wait-id-1",
+			RunID: lease.RunID, RunWaitID: runWaitID,
 			Status:     api.WorkerRunWaitPollStatusResumeRequested,
 			ResumeKind: "completed",
 			ResumePayload: json.RawMessage(
-				`{"ok":true,"output":{"resized":true},"run":{"id":"run_aaaaaaaaaaaaaaaaaaaaaaaaaa"}}`,
+				`{"ok":true,"output":{"resized":true},"run":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"}}`,
 			),
 		}},
 	}
 	openedWait := liveRunWaitResponse()
+	openedWait.RunID = lease.RunID
+	openedWait.RunWaitID = runWaitID
+	openedWait.ResumeAttachID = resumeAttachID
 	control := &childTaskControl{
 		testRunLeaseControl: &testRunLeaseControl{},
 		response: api.WorkerInvokeChildTaskResponse{
 			CorrelationID: correlationID,
 			Completed: &api.WorkerChildTaskStartResult{
-				RunID: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+				RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 			},
 			OpenedWait: &openedWait,
 		},
@@ -202,6 +207,8 @@ func TestHandleChildTaskCallContinuesOpenedWait(t *testing.T) {
 	go func() {
 		result <- task.handleChildTaskInvoke(t.Context(), &runv0.TaskChildInvokeRequested{
 			CorrelationId:                 correlationID,
+			RunWaitId:                     runWaitID,
+			ResumeAttachId:                resumeAttachID,
 			DeclaredId:                    "resize-image",
 			Method:                        "call",
 			WorkspaceJson:                 `{"key":"image-workspace"}`,
@@ -223,12 +230,15 @@ func TestHandleChildTaskCallContinuesOpenedWait(t *testing.T) {
 	}
 	if decision.GetRunWaitId() != openedWait.RunWaitID ||
 		decision.GetCorrelationId() != correlationID ||
+		decision.GetResumeAttachId() != resumeAttachID ||
 		decision.GetKind() != "completed" ||
-		decision.GetDataJson() != `{"ok":true,"output":{"resized":true},"run":{"id":"run_aaaaaaaaaaaaaaaaaaaaaaaaaa"}}` {
+		decision.GetDataJson() != `{"ok":true,"output":{"resized":true},"run":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"}}` {
 		t.Fatalf("decision = %+v", decision)
 	}
 	if control.request.ActorSpeculativeInputSequence == nil ||
-		*control.request.ActorSpeculativeInputSequence != actorSequence {
+		*control.request.ActorSpeculativeInputSequence != actorSequence ||
+		control.request.RunWaitID != runWaitID ||
+		control.request.ResumeAttachID != resumeAttachID {
 		t.Fatalf("request = %+v", control.request)
 	}
 	if waitClient.createdRequest.CorrelationID != "" {
@@ -239,7 +249,7 @@ func TestHandleChildTaskCallContinuesOpenedWait(t *testing.T) {
 func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
-	correlationID := "00000000-0000-0000-0000-000000000122"
+	correlationID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc22"
 	control := &childTaskControl{
 		testRunLeaseControl: &testRunLeaseControl{},
 		err: &client.HTTPError{

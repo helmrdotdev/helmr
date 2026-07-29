@@ -133,8 +133,8 @@ func (s *Server) startActorHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, api.StartActorResponse{
-		ActorID: result.ActorPublicID,
-		RunID:   result.BootRunPublicID,
+		ActorID: result.ActorID.String(),
+		RunID:   result.BootRunID.String(),
 	})
 }
 

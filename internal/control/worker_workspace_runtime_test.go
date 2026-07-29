@@ -26,6 +26,39 @@ func TestWorkerWorkspaceExecFailureDoesNotClassifyUnknownInfrastructureError(t *
 	}
 }
 
+func TestParseWorkspaceWorkerIDsRequiresCanonicalUUIDv7(t *testing.T) {
+	valid := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
+	for _, value := range []string{
+		"8fa3431e-c649-4ea0-bf12-b8e9fcdf1d8d",
+		"019C10D5-A6F7-7AF1-8F5F-BB97BCC0DC31",
+		" " + valid,
+	} {
+		if _, _, err := parseWorkspaceWorkerIDs(value, valid); err == nil {
+			t.Fatalf("parseWorkspaceWorkerIDs accepted org_id %q", value)
+		}
+		if _, _, err := parseWorkspaceWorkerIDs(valid, value); err == nil {
+			t.Fatalf("parseWorkspaceWorkerIDs accepted workspace_mount_id %q", value)
+		}
+	}
+}
+
+func TestWorkerCompleteWorkspaceExecRejectsNonCanonicalUUIDv7(t *testing.T) {
+	body, err := json.Marshal(api.WorkerWorkspaceExecCompleteRequest{
+		OrgID: " 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest("POST", "/worker/workspaces/execs/complete", bytes.NewReader(body))
+	response := httptest.NewRecorder()
+
+	(&Server{}).workerCompleteWorkspaceExec(response, request)
+
+	if response.Code != 400 {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestWorkerWorkspaceFileReadCommitsBeforeCAS(t *testing.T) {
 	_, claimStore, worker, receipt := validRunLeaseRenewalFixture(t)
 	claimStore.authority.attempt.EntrypointEnteredAt = pgtype.Timestamptz{Valid: true}
@@ -35,13 +68,11 @@ func TestWorkerWorkspaceFileReadCommitsBeforeCAS(t *testing.T) {
 	artifactID := pgvalue.UUID(uuid.New())
 	record := claimStore.authority.workspace
 	record.EnvironmentID = claimStore.renewal.EnvironmentID
-	record.PublicID = "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 	store := &workerWorkspaceFileStore{
 		runLeaseClaimStore: claimStore,
 		workspace:          record,
 		version: db.WorkspaceVersion{
 			ID:            versionID,
-			PublicID:      "wsv_aaaaaaaaaaaaaaaaaaaaaaaaaa",
 			EnvironmentID: record.EnvironmentID,
 			WorkspaceID:   workspaceID,
 			ArtifactID:    artifactID,
@@ -77,7 +108,7 @@ func TestWorkerWorkspaceFileReadCommitsBeforeCAS(t *testing.T) {
 		WorkerRetrieveWorkspaceRequest: api.WorkerRetrieveWorkspaceRequest{
 			Lease:         receipt,
 			CorrelationID: uuid.Must(uuid.NewV7()).String(),
-			Workspace:     api.WorkerWorkspaceAddress{WorkspaceID: record.PublicID},
+			Workspace:     api.WorkerWorkspaceAddress{WorkspaceID: pgvalue.UUIDString(record.ID)},
 		},
 		Path: "src/main.txt",
 	})

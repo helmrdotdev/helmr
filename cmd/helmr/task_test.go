@@ -44,7 +44,7 @@ func TestTaskStartCreatesTaskRun(t *testing.T) {
 			t.Fatal(err)
 		}
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "run-1"})
+		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -56,7 +56,7 @@ func TestTaskStartCreatesTaskRun(t *testing.T) {
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{
 		"task", "start", "deploy",
-		"--workspace", "ws_1",
+		"--workspace", testWorkspaceID,
 		"--payload", "env=prod",
 		"--idempotency-key", "start-1",
 		"--metadata-json", `{"source":"cli"}`,
@@ -67,12 +67,12 @@ func TestTaskStartCreatesTaskRun(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"run_id: run-1"} {
+	for _, want := range []string{"run_id: 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output = %q, missing %q", out.String(), want)
 		}
 	}
-	if request.Workspace.ID == nil || *request.Workspace.ID != "ws_1" ||
+	if request.Workspace.ID == nil || *request.Workspace.ID != testWorkspaceID ||
 		request.IdempotencyKey != "start-1" {
 		t.Fatalf("request = %+v", request)
 	}
@@ -106,7 +106,7 @@ func TestTaskStartOmitsPayloadWhenNotSpecified(t *testing.T) {
 			t.Fatalf("request JSON included omitted payload: %s", body)
 		}
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "run-1"})
+		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -115,7 +115,7 @@ func TestTaskStartOmitsPayloadWhenNotSpecified(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", "ws_1"})
+	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", testWorkspaceID})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestTaskCommandReadsPayloadFile(t *testing.T) {
 			t.Fatal(err)
 		}
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "run-1"})
+		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -144,7 +144,7 @@ func TestTaskCommandReadsPayloadFile(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", "ws_1", "--payload-file", payloadPath})
+	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", testWorkspaceID, "--payload-file", payloadPath})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -172,6 +172,14 @@ func TestTaskStartRequiresExistingWorkspace(t *testing.T) {
 	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--workspace is required") {
 		t.Fatalf("err = %v", err)
 	}
+
+	cmd = newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", " " + testWorkspaceID})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "invalid Workspace ID") {
+		t.Fatalf("whitespace Workspace ID error = %v", err)
+	}
 }
 
 func TestTaskStartWaitWaitsForRun(t *testing.T) {
@@ -180,11 +188,11 @@ func TestTaskStartWaitWaitsForRun(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/tasks/deploy/start":
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "run-1"})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1":
+			_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31":
 			getRunCalls++
 			_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{
-				ID: "run-1", Status: api.RunStatusSucceeded,
+				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: api.RunStatusSucceeded,
 				Entrypoint: api.RunEntrypointResponse{Kind: "task", ID: "deploy"},
 			})
 		default:
@@ -199,7 +207,7 @@ func TestTaskStartWaitWaitsForRun(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", "ws_1", "--wait", "--timeout", "1500ms"})
+	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", testWorkspaceID, "--wait", "--timeout", "1500ms"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -217,15 +225,15 @@ func TestTaskStartWaitPollsRunSnapshot(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/tasks/deploy/start":
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "run-1"})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1":
+			_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31":
 			getRunCalls++
 			status := api.RunStatusQueued
 			if getRunCalls > 1 {
 				status = api.RunStatusSucceeded
 			}
 			_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{
-				ID: "run-1", Status: status,
+				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: status,
 				Entrypoint: api.RunEntrypointResponse{Kind: "task", ID: "deploy"},
 			})
 		default:
@@ -240,7 +248,7 @@ func TestTaskStartWaitPollsRunSnapshot(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", "ws_1", "--wait", "--timeout", "1500ms"})
+	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", testWorkspaceID, "--wait", "--timeout", "1500ms"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +272,7 @@ func TestTaskStartRejectsJSONFollow(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", "ws_1", "--json", "--follow"})
+	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", testWorkspaceID, "--json", "--follow"})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "--json cannot be combined with --follow") {
 		t.Fatalf("err = %v", err)
@@ -284,12 +292,12 @@ func TestTaskStartFollowTimeoutReturnsError(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/tasks/deploy/start":
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "run-1"})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1/logs":
+			_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs":
 			_ = json.NewEncoder(w).Encode(api.RunLogPage{})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31":
 			_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{
-				ID: "run-1", Status: api.RunStatusQueued,
+				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: api.RunStatusQueued,
 			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
@@ -303,7 +311,7 @@ func TestTaskStartFollowTimeoutReturnsError(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", "ws_1", "--follow", "--timeout", "1s"})
+	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", testWorkspaceID, "--follow", "--timeout", "1s"})
 	err := cmd.Execute()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v", err)
@@ -324,8 +332,8 @@ func TestTaskCommandRejectsPayloadFileCombinations(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{
-		{"task", "start", "deploy", "--workspace", "ws_1", "--payload-file", payloadPath, "--payload-json", `{"env":"prod"}`},
-		{"task", "start", "deploy", "--workspace", "ws_1", "--payload-file", payloadPath, "--payload", "env=prod"},
+		{"task", "start", "deploy", "--workspace", testWorkspaceID, "--payload-file", payloadPath, "--payload-json", `{"env":"prod"}`},
+		{"task", "start", "deploy", "--workspace", testWorkspaceID, "--payload-file", payloadPath, "--payload", "env=prod"},
 	} {
 		cmd := newRootCommand()
 		cmd.SetOut(&bytes.Buffer{})
@@ -343,9 +351,9 @@ func TestTaskCommandRejectsPayloadFileCombinations(t *testing.T) {
 
 func TestTaskCommandDoesNotExposeInputFlagAliases(t *testing.T) {
 	for _, args := range [][]string{
-		{"task", "start", "deploy", "--workspace", "ws_1", "--input-json", `{"env":"prod"}`},
-		{"task", "start", "deploy", "--workspace", "ws_1", "--input-file", "payload.json"},
-		{"task", "start", "deploy", "--workspace", "ws_1", "--input", "env=prod"},
+		{"task", "start", "deploy", "--workspace", testWorkspaceID, "--input-json", `{"env":"prod"}`},
+		{"task", "start", "deploy", "--workspace", testWorkspaceID, "--input-file", "payload.json"},
+		{"task", "start", "deploy", "--workspace", testWorkspaceID, "--input", "env=prod"},
 	} {
 		cmd := newRootCommand()
 		cmd.SetOut(&bytes.Buffer{})
@@ -370,7 +378,7 @@ func TestTaskCommandRejectsProjectFlagThatLooksLikePayload(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", "ws_1", "-p", "env=prod"})
+	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", testWorkspaceID, "-p", "env=prod"})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "--project must be a project slug or ID") {
 		t.Fatalf("err = %v", err)
@@ -392,7 +400,7 @@ func TestTaskCommandRejectsInvalidTaskIDBeforeRequest(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "bad task", "--workspace", "ws_1"})
+	cmd.SetArgs([]string{"task", "start", "bad task", "--workspace", testWorkspaceID})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "task_id") {
 		t.Fatalf("err = %v", err)

@@ -136,7 +136,7 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := task.handleActorTurnCommit(ctx, &runv0.ActorTurnCommitRequested{
-		CorrelationId: "00000000-0000-0000-0000-000000000099", TargetInputSequence: 1,
+		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000099", TargetInputSequence: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}

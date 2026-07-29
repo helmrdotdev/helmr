@@ -111,19 +111,6 @@ func (fixture postgresFixture) addHandoffChain(
 	}
 }
 
-func (fixture postgresFixture) runPublicID(t *testing.T, runID uuid.UUID) string {
-	t.Helper()
-	var publicID string
-	if err := fixture.pool.QueryRow(
-		t.Context(),
-		`SELECT public_id FROM runs WHERE id = $1`,
-		runID,
-	).Scan(&publicID); err != nil {
-		t.Fatal(err)
-	}
-	return publicID
-}
-
 func mustExec(t *testing.T, ctx context.Context, executor interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 }, query string, args ...any) {

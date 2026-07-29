@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -132,9 +133,17 @@ func (s *Server) resolveActorInputAddress(
 	actorDeclaredID string,
 	request api.SendActorInputRequest,
 ) (db.Actor, error) {
+	address := actorReadAddress{key: request.ActorKey}
+	if request.ActorID != "" {
+		id, err := ids.Parse(request.ActorID)
+		if err != nil {
+			return db.Actor{}, err
+		}
+		address.id = pgvalue.UUID(id)
+	}
 	return resolveActorAddress(
 		r.Context(), s.db, environmentID, actorDeclaredID,
-		actorReadAddress{publicID: request.ActorID, key: request.ActorKey},
+		address,
 	)
 }
 

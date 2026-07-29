@@ -25,6 +25,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/token"
@@ -822,9 +823,9 @@ func (s *Server) effectiveDevicePollEvery() time.Duration {
 }
 
 func parseUUIDParam(r *http.Request, name string) (uuid.UUID, error) {
-	id, err := uuid.Parse(chi.URLParam(r, name))
+	id, err := ids.Parse(chi.URLParam(r, name))
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("%s must be a UUID", name)
+		return uuid.Nil, fmt.Errorf("%s must be a canonical UUIDv7", name)
 	}
 	return id, nil
 }

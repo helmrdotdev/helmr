@@ -12,7 +12,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -47,17 +46,17 @@ func newBuildPlacementFixture(t *testing.T) *buildPlacementFixture {
 INSERT INTO regions (id, provider, provider_region, display_name)
 VALUES ('us-east-1', 'aws', 'us-east-1', 'US East')`)
 	mustDispatchExec(t, ctx, pool, `
-INSERT INTO organizations (id, public_id, name, slug) VALUES ($1, $2, 'Org', $3)`,
-		fixture.orgID, dispatchPublicID(t, publicid.Organization), "org-"+fixture.orgID.String())
+INSERT INTO organizations (id, name, slug) VALUES ($1, 'Org', $2)`,
+		fixture.orgID, "org-"+fixture.orgID.String())
 	mustDispatchExec(t, ctx, pool, `
-INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name)
-VALUES ($1, $2, $3, 'us-east-1', $4, 'Project')`,
-		fixture.projectID, dispatchPublicID(t, publicid.Project), fixture.orgID,
+INSERT INTO projects (id, org_id, default_region_id, slug, name)
+VALUES ($1, $2, 'us-east-1', $3, 'Project')`,
+		fixture.projectID, fixture.orgID,
 		"project-"+fixture.projectID.String())
 	mustDispatchExec(t, ctx, pool, `
-INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex)
-VALUES ($1, $2, $3, $4, $5, 'Environment', '#3366ff')`,
-		fixture.environmentID, dispatchPublicID(t, publicid.Environment), fixture.orgID,
+INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
+VALUES ($1, $2, $3, $4, 'Environment', '#3366ff')`,
+		fixture.environmentID, fixture.orgID,
 		fixture.projectID, "environment-"+fixture.environmentID.String())
 	mustDispatchExec(t, ctx, pool, `
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
@@ -69,20 +68,20 @@ VALUES ($1, $2, $3, $4, $5, 'deployment_source', 1, 'application/vnd.helmr.deplo
 		sourceArtifactID, fixture.orgID, fixture.projectID, fixture.environmentID, sourceDigest)
 	mustDispatchExec(t, ctx, pool, `
 INSERT INTO deployments (
-    id, public_id, org_id, project_id, environment_id, build_region_id,
+    id, org_id, project_id, environment_id, build_region_id,
     build_node_version, build_runtime_digest, build_toolchain_digest,
     build_manager_name, build_manager_version, build_manager_digest,
     build_contract_version, version, content_hash,
     deployment_source_artifact_id, status
 ) VALUES (
-    $1, $2, $3, $4, $5, 'us-east-1', '24.16.0', $6,
+    $1, $2, $3, $4, 'us-east-1', '24.16.0', $5,
     decode(repeat('02', 32), 'hex'),
     'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
     'helmr.program-build.v0',
-    'v1', $7, $8, 'queued'
+    'v1', $6, $7, 'queued'
 )`,
-		fixture.deploymentID, dispatchPublicID(t, publicid.Deployment), fixture.orgID,
-		fixture.projectID, fixture.environmentID, bytes.Repeat([]byte{1}, 32),
+		fixture.deploymentID, fixture.orgID, fixture.projectID,
+		fixture.environmentID, bytes.Repeat([]byte{1}, 32),
 		"sha256:"+strings.Repeat("2", 64), sourceArtifactID)
 	mustDispatchExec(t, ctx, pool, `
 INSERT INTO worker_groups (
@@ -218,15 +217,6 @@ func newDispatchIntegrationDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	return database.Pool
-}
-
-func dispatchPublicID(t *testing.T, prefix publicid.Prefix) string {
-	t.Helper()
-	id, err := publicid.New(prefix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return id
 }
 
 func mustDispatchExec(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sql string, args ...any) {

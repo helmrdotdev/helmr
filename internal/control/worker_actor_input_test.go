@@ -26,7 +26,7 @@ func TestParseWorkerActorInputSendRequiresExactAddress(t *testing.T) {
 		parsed.idempotencyKey != "send-1" {
 		t.Fatalf("parsed = %+v", parsed)
 	}
-	request.ActorID = "act_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	request.ActorID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
 	if _, err := parseWorkerActorInputSend(request); err == nil {
 		t.Fatal("both Actor address variants were accepted")
 	}

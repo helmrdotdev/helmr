@@ -21,7 +21,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/publicid"
+	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 )
@@ -216,7 +217,9 @@ func (s *Server) listWorkspaceFiles(
 	if err != nil {
 		return api.WorkspaceFilePage{}, err
 	}
-	return s.listWorkspaceFileSource(ctx, record.PublicID, source, target, after, limit, now)
+	return s.listWorkspaceFileSource(
+		ctx, pgvalue.UUIDString(record.ID), source, target, after, limit, now,
+	)
 }
 
 func (s *Server) resolveWorkspaceFileListSource(
@@ -230,15 +233,20 @@ func (s *Server) resolveWorkspaceFileListSource(
 	var version db.WorkspaceVersion
 	var after string
 	var err error
+	workspaceID := pgvalue.UUIDString(record.ID)
 	if rawCursor != "" {
-		cursor, parseErr := s.parseWorkspaceFileCursor(rawCursor, record.PublicID, target, now)
+		cursor, parseErr := s.parseWorkspaceFileCursor(rawCursor, workspaceID, target, now)
 		if parseErr != nil {
 			return workspaceFileSource{}, "", parseErr
 		}
-		version, err = q.GetWorkspaceVersionByPublicID(ctx, db.GetWorkspaceVersionByPublicIDParams{
+		versionID, parseErr := ids.Parse(cursor.VersionID)
+		if parseErr != nil {
+			return workspaceFileSource{}, "", errWorkspaceFileCursorInvalid
+		}
+		version, err = q.GetWorkspaceVersion(ctx, db.GetWorkspaceVersionParams{
 			EnvironmentID: record.EnvironmentID,
 			WorkspaceID:   record.ID,
-			PublicID:      cursor.VersionID,
+			ID:            pgvalue.UUID(versionID),
 		})
 		after = cursor.After
 	} else {
@@ -256,7 +264,7 @@ func (s *Server) resolveWorkspaceFileListSource(
 
 func (s *Server) listWorkspaceFileSource(
 	ctx context.Context,
-	workspacePublicID string,
+	workspaceID string,
 	source workspaceFileSource,
 	target string,
 	after string,
@@ -289,8 +297,8 @@ func (s *Server) listWorkspaceFileSource(
 		}
 		if len(items) == int(limit) {
 			nextCursor, err = s.signWorkspaceFileCursor(workspaceFileCursor{
-				WorkspaceID: workspacePublicID,
-				VersionID:   source.version.PublicID,
+				WorkspaceID: workspaceID,
+				VersionID:   pgvalue.UUIDString(source.version.ID),
 				Path:        target,
 				After:       items[len(items)-1].Path,
 				ExpiresAt:   now.Add(workspaceFileCursorTTL).Unix(),
@@ -307,6 +315,13 @@ func (s *Server) listWorkspaceFileSource(
 
 func (s *Server) loadPublicWorkspace(w http.ResponseWriter, r *http.Request, permission auth.Permission) (db.Workspace, bool) {
 	principal := actorFromContext(r.Context())
+	workspaceID := chi.URLParam(r, "workspaceID")
+	if err := ids.Validate(workspaceID); err != nil {
+		writeError(w, badRequest(codedError{
+			code: "invalid_workspace_reference", message: "workspaceID must be a canonical UUIDv7",
+		}))
+		return db.Workspace{}, false
+	}
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal, "", "")
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_workspace_reference", message: err.Error()}))
@@ -320,7 +335,7 @@ func (s *Server) loadPublicWorkspace(w http.ResponseWriter, r *http.Request, per
 		OrgID:         principal.OrgID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		PublicID:      chi.URLParam(r, "workspaceID"),
+		ID:            workspaceID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(codedError{code: "workspace_not_found", message: "Workspace was not found"}))
@@ -510,7 +525,7 @@ func (s *Server) parseWorkspaceFileCursor(raw, workspaceID, target string, now t
 	var cursor workspaceFileCursor
 	if err := json.Unmarshal(payload, &cursor); err != nil ||
 		cursor.WorkspaceID != workspaceID || cursor.Path != target ||
-		publicid.ValidateFor(publicid.WorkspaceVersion, cursor.VersionID) != nil ||
+		ids.Validate(cursor.VersionID) != nil ||
 		cursor.After == "" {
 		return workspaceFileCursor{}, errWorkspaceFileCursorInvalid
 	}

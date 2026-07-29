@@ -1,4 +1,5 @@
 import type { RequestOptions } from "./request"
+import { resourceID } from "./internal/id"
 
 export interface DeploymentSnapshot {
   readonly id: string
@@ -51,7 +52,7 @@ export function createClientDeployments(
       return parseDeployment(
         await transport.request(
           "GET",
-          `/api/deployments/${encodeURIComponent(deploymentPublicID(deploymentId))}`,
+          `/api/deployments/${encodeURIComponent(resourceID(deploymentId, "Deployment ID"))}`,
           options.signal === undefined ? {} : { signal: options.signal },
         ),
       )
@@ -62,7 +63,7 @@ export function createClientDeployments(
 function parseDeployment(value: unknown): DeploymentSnapshot {
   const input = deploymentObject(value, "Deployment response")
   return Object.freeze({
-    id: deploymentPublicID(input["id"]),
+    id: resourceID(input["id"], "Deployment response.id"),
     version: requiredString(input, "version"),
     tasks: stringArray(input["tasks"], "tasks"),
     actors: stringArray(input["actors"], "actors"),
@@ -93,11 +94,4 @@ function stringArray(value: unknown, field: string): readonly string[] {
     throw new Error(`Deployment response.${field} must be an array of strings`)
   }
   return Object.freeze([...value]) as readonly string[]
-}
-
-function deploymentPublicID(value: unknown): string {
-  if (typeof value !== "string" || !/^dep_[a-z2-7]{26}$/.test(value)) {
-    throw new Error("Deployment ID must be a canonical dep_ public ID")
-  }
-  return value
 }

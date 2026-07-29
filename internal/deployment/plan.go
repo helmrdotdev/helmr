@@ -10,9 +10,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 )
 
@@ -562,10 +562,7 @@ func validateWorkspaceTarget(target WorkspaceTarget) error {
 		return errors.New("workspace target must contain exactly one of id or key")
 	}
 	if target.ID != nil {
-		if strings.TrimSpace(*target.ID) != *target.ID {
-			return errors.New("workspace target id must not contain surrounding whitespace")
-		}
-		if err := publicid.ValidateFor(publicid.Workspace, *target.ID); err != nil {
+		if err := ids.Validate(*target.ID); err != nil {
 			return fmt.Errorf("workspace target id: %w", err)
 		}
 		return nil

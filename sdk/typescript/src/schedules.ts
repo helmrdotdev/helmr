@@ -7,6 +7,7 @@ import type {
   WorkspaceTarget,
 } from "./contract"
 import { createScheduledTask } from "./definitions"
+import { resourceID } from "./internal/id"
 import type { PayloadSchema } from "./schema/payload"
 
 export type Cron = Readonly<{
@@ -115,12 +116,21 @@ const scheduledTaskSchema: PayloadSchema<
       if (parsedUpcoming.some((date) => date === undefined)) {
         return { issues: [{ message: "invalid upcoming timestamp" }] }
       }
+      let scheduleId: string
+      try {
+        scheduleId = resourceID(
+          input["scheduleId"],
+          "Scheduled task input.scheduleId",
+        )
+      } catch {
+        return { issues: [{ message: "invalid scheduled task input" }] }
+      }
       return {
         value: {
           scheduledAt,
           ...(lastScheduledAt === undefined ? {} : { lastScheduledAt }),
           timezone: input["timezone"],
-          scheduleId: input["scheduleId"],
+          scheduleId,
           upcoming: parsedUpcoming as Date[],
         },
       }

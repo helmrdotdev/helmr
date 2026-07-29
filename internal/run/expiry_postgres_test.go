@@ -26,7 +26,7 @@ func TestParentOwnedQueuedChildExpiryResolvesEveryWaitState(t *testing.T) {
 			parent := newQueuedChildParent(t, ctx, fixture, suspension)
 			child := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
 			claimID := uuid.Must(uuid.NewV7())
-			childPublicID := fixture.runPublicID(t, child.runID)
+			childID := child.runID.String()
 
 			tx, err := fixture.pool.Begin(ctx)
 			if err != nil {
@@ -147,7 +147,7 @@ SELECT condition_result, condition_state, suspension_state
 			).Scan(&result, &waitState, &suspensionState); err != nil {
 				t.Fatal(err)
 			}
-			wantResult := `{"ok": false, "run": {"id": "` + childPublicID +
+			wantResult := `{"ok": false, "run": {"id": "` + childID +
 				`"}, "error": {"code": "queued_ttl_expired", "message": "Child Run queued TTL expired", "retryable": false}}`
 			var gotValue, wantValue any
 			if err := json.Unmarshal(result, &gotValue); err != nil {

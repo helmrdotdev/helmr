@@ -172,14 +172,14 @@ SELECT id
  WHERE org_id = $1
    AND project_id = $2
    AND environment_id = $3
-   AND public_id = $4
+   AND id = $4
 `
 
 type FindCancellationTargetParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
-	PublicID      string      `json:"public_id"`
+	ID            pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) FindCancellationTarget(ctx context.Context, arg FindCancellationTargetParams) (pgtype.UUID, error) {
@@ -187,7 +187,7 @@ func (q *Queries) FindCancellationTarget(ctx context.Context, arg FindCancellati
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.PublicID,
+		arg.ID,
 	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
@@ -491,7 +491,6 @@ func (q *Queries) LockCancellationMounts(ctx context.Context, runtimeIds []pgtyp
 
 const lockCancellationRun = `-- name: LockCancellationRun :one
 SELECT id,
-       public_id,
        parent_run_id,
        parent_owns_lifecycle,
        environment_id,
@@ -518,7 +517,6 @@ type LockCancellationRunParams struct {
 
 type LockCancellationRunRow struct {
 	ID                   pgtype.UUID `json:"id"`
-	PublicID             string      `json:"public_id"`
 	ParentRunID          pgtype.UUID `json:"parent_run_id"`
 	ParentOwnsLifecycle  pgtype.Bool `json:"parent_owns_lifecycle"`
 	EnvironmentID        pgtype.UUID `json:"environment_id"`
@@ -540,7 +538,6 @@ func (q *Queries) LockCancellationRun(ctx context.Context, arg LockCancellationR
 	var i LockCancellationRunRow
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.ParentRunID,
 		&i.ParentOwnsLifecycle,
 		&i.EnvironmentID,

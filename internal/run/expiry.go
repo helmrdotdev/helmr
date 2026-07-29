@@ -117,7 +117,7 @@ func ExpireParentOwnedChild(
 				"code": "queued_ttl_expired", "message": "Child Run queued TTL expired",
 				"retryable": false,
 			},
-			"run": map[string]any{"id": child.publicID},
+			"run": map[string]any{"id": child.id.String()},
 		})
 		if err != nil {
 			return false, err

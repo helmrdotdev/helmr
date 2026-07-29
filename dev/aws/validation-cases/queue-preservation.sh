@@ -48,7 +48,7 @@ facts="$(
          AND run_leases.run_id = runs.id
         JOIN worker_instances
           ON worker_instances.id = run_leases.worker_instance_id
-       WHERE runs.public_id = '${first_run}'
+       WHERE runs.id = '${first_run}'
          AND run_leases.state = 'running'
     ) TO STDOUT;
   " | grep -E '^queue-facts[|]i-[0-9a-f]{8,17}$' | tail -1

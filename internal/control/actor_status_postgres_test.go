@@ -51,10 +51,10 @@ func TestActorReadPostgresProjectsStableStatus(t *testing.T) {
 	if err := json.Unmarshal(statusRecorder.Body.Bytes(), &status); err != nil {
 		t.Fatal(err)
 	}
-	if status.ID != result.ActorPublicID ||
+	if status.ID != result.ActorID.String() ||
 		status.Status != api.ActorPublicStatusFailed ||
 		status.Failure == nil ||
-		status.Failure.RunID != result.BootRunPublicID ||
+		status.Failure.RunID != result.BootRunID.String() ||
 		status.CurrentRunID != nil {
 		t.Fatalf("status HTTP response = %+v", status)
 	}

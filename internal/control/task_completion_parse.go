@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
@@ -427,9 +428,9 @@ func validateTaskWorkspaceArtifact(label string, artifact api.WorkerWorkspaceArt
 }
 
 func parseCanonicalUUID(name, value string) (uuid.UUID, error) {
-	parsed, err := uuid.Parse(value)
-	if err != nil || parsed == uuid.Nil || parsed.String() != value {
-		return uuid.Nil, fmt.Errorf("%s must be a canonical UUID", name)
+	parsed, err := ids.Parse(value)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("%s must be a canonical UUIDv7", name)
 	}
 	return parsed, nil
 }

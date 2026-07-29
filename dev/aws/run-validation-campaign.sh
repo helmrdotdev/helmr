@@ -1326,6 +1326,9 @@ case_evidence_is_valid() {
   bytes="$(wc -c <"${file}" | tr -d ' ')"
   [ "${bytes}" -le 8192 ] || return 1
   jq -e '
+    def resource_id:
+      type == "string" and
+      test("^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$");
     type == "object" and
     keys == ["checks","objects","observations","reason","schema","status"] and
     .schema == "helmrdotdev.validation-case-source-result.v2" and
@@ -1339,12 +1342,12 @@ case_evidence_is_valid() {
     (.objects | type == "object" and
       keys == ["actor_ids","deployment_ids","run_ids","schedule_ids","token_ids","workspace_ids"] and
       ([.[] | length] | add) <= 128 and
-      all(.run_ids[]; test("^run_[a-z2-7]{26}$")) and
-      all(.workspace_ids[]; test("^wsp_[a-z2-7]{26}$")) and
-      all(.deployment_ids[]; test("^dep_[a-z2-7]{26}$")) and
-      all(.schedule_ids[]; test("^sch_[a-z2-7]{26}$")) and
-      all(.token_ids[]; test("^tok_[a-z2-7]{26}$")) and
-      all(.actor_ids[]; test("^act_[a-z2-7]{26}$")) and
+      all(.run_ids[]; resource_id) and
+      all(.workspace_ids[]; resource_id) and
+      all(.deployment_ids[]; resource_id) and
+      all(.schedule_ids[]; resource_id) and
+      all(.token_ids[]; resource_id) and
+      all(.actor_ids[]; resource_id) and
       all(.[]; type == "array" and length <= 64 and ([.[]] | unique | length) == length)) and
     (.observations | type == "object" and length <= 64 and
       all(keys[]; test("^[a-z][a-z0-9_]{0,63}$")) and

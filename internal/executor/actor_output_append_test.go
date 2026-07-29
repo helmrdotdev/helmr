@@ -44,13 +44,13 @@ func (control *actorOutputAppendControl) AppendActorOutput(
 func TestHandleActorOutputAppendWritesCorrelatedDecision(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
-	correlationID := "00000000-0000-0000-0000-000000000112"
+	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000112"
 	control := &actorOutputAppendControl{
 		testRunLeaseControl: &testRunLeaseControl{},
 		response: api.WorkerAppendActorOutputResponse{
 			CorrelationID: correlationID,
 			Completed: &api.ActorOutputRecord{
-				ID: "arc_aaaaaaaaaaaaaaaaaaaaaaaaaa", Sequence: 8,
+				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34", Sequence: 8,
 				Data: json.RawMessage(`{"status":"working"}`), ContentType: "application/json",
 			},
 		},
@@ -98,14 +98,14 @@ func TestHandleActorOutputAppendWritesCorrelatedDecision(t *testing.T) {
 func TestHandleActorOutputAppendRetryUsesRenewedReceipt(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
-	correlationID := "00000000-0000-0000-0000-000000000114"
+	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000114"
 	firstAttempt := make(chan struct{})
 	control := &actorOutputAppendControl{
 		testRunLeaseControl: &testRunLeaseControl{},
 		response: api.WorkerAppendActorOutputResponse{
 			CorrelationID: correlationID,
 			Completed: &api.ActorOutputRecord{
-				ID: "arc_aaaaaaaaaaaaaaaaaaaaaaaaab", Sequence: 9,
+				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Sequence: 9,
 				Data: json.RawMessage(`{"status":"done"}`), ContentType: "application/json",
 			},
 		},

@@ -12,7 +12,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
@@ -534,12 +533,8 @@ func recordTaskWorkspaceVersion(
 	if err != nil {
 		return pgtype.UUID{}, fmt.Errorf("record Task Workspace Artifact: %w", err)
 	}
-	publicID, err := newPublicID(publicid.WorkspaceVersion)
-	if err != nil {
-		return pgtype.UUID{}, err
-	}
 	version, err := store.PublishTaskWorkspaceVersion(ctx, db.PublishTaskWorkspaceVersionParams{
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), PublicID: publicID,
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
 		ParentVersionID: authority.workspaceLease.BaseVersionID, ArtifactID: artifactRow.ID,
 		ContentDigest: capture.tree.Digest, SizeBytes: capture.tree.SizeBytes, EntryCount: int32(capture.tree.EntryCount),

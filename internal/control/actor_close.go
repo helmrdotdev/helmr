@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
@@ -25,7 +26,6 @@ var (
 type actorCloseRequest struct {
 	EnvironmentID  uuid.UUID
 	ActorID        uuid.UUID
-	ActorPublicID  string
 	WorkspaceID    uuid.UUID
 	IdempotencyKey string
 	Authorize      func(context.Context, db.Querier) error
@@ -70,7 +70,7 @@ func (s *Server) closeActor(
 				if err != nil {
 					return err
 				}
-				if replayed.ActorID != request.ActorPublicID {
+				if replayed.ActorID != request.ActorID.String() {
 					return errActorCloseReceipt
 				}
 				receipt = replayed
@@ -99,8 +99,7 @@ func (s *Server) closeActor(
 		if err != nil {
 			return fmt.Errorf("lock Actor close authority: %w", err)
 		}
-		if actor.WorkspaceID != pgvalue.UUID(request.WorkspaceID) ||
-			actor.PublicID != request.ActorPublicID {
+		if actor.WorkspaceID != pgvalue.UUID(request.WorkspaceID) {
 			return errActorCloseAuthority
 		}
 
@@ -138,7 +137,7 @@ func (s *Server) closeActor(
 			return err
 		}
 		receipt = api.ActorOperationReceipt{
-			ActorID:    actor.PublicID,
+			ActorID:    pgvalue.UUIDString(actor.ID),
 			AcceptedAt: acceptedAt,
 		}
 		if claim != nil {
@@ -182,7 +181,7 @@ func actorCloseReceipt(raw []byte) (api.ActorOperationReceipt, error) {
 	if err := decodeClosedJSON(raw, &receipt); err != nil {
 		return api.ActorOperationReceipt{}, errActorCloseReceipt
 	}
-	if err := api.ValidateActorPublicID(receipt.ActorID); err != nil ||
+	if err := ids.Validate(receipt.ActorID); err != nil ||
 		receipt.AcceptedAt.IsZero() {
 		return api.ActorOperationReceipt{}, errActorCloseReceipt
 	}
@@ -198,18 +197,10 @@ func createActorCloseReconcileIntent(
 	if !actor.CloseSequence.Valid {
 		return errActorCloseAuthority
 	}
-	intentID := uuid.NewSHA1(
-		uuid.NameSpaceOID,
-		[]byte(fmt.Sprintf(
-			"helmr.actor-close-reconcile.v0:%s:%d",
-			pgvalue.UUIDString(actor.ID),
-			actor.CloseSequence.Int64,
-		)),
-	)
 	if err := store.CreateActorCloseReconcileOutbox(
 		ctx,
 		db.CreateActorCloseReconcileOutboxParams{
-			ID:            pgvalue.UUID(intentID),
+			ID:            actor.ID,
 			ActorID:       actor.ID,
 			EnvironmentID: actor.EnvironmentID,
 		},

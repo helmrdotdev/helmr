@@ -35,7 +35,7 @@ facts="$(
          AND run_leases.run_id = runs.id
         JOIN worker_instances
           ON worker_instances.id = run_leases.worker_instance_id
-       WHERE runs.public_id = '${run_id}'
+       WHERE runs.id = '${run_id}'
          AND run_leases.state = 'running'
     ) TO STDOUT;
   " |

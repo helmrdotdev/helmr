@@ -736,6 +736,8 @@ type WorkerDeleteWorkspaceResponse struct {
 type WorkerInvokeChildTaskRequest struct {
 	Lease                         WorkerRunLeaseReceipt `json:"lease"`
 	CorrelationID                 string                `json:"correlation_id"`
+	RunWaitID                     string                `json:"run_wait_id,omitempty"`
+	ResumeAttachID                string                `json:"resume_attach_id,omitempty"`
 	TaskDeclaredID                string                `json:"task_declared_id"`
 	Method                        string                `json:"method"`
 	PayloadPresent                bool                  `json:"payload_present"`
@@ -1274,6 +1276,8 @@ const (
 type WorkerCreateRunWaitRequest struct {
 	Lease                         WorkerRunLeaseReceipt `json:"lease"`
 	CorrelationID                 string                `json:"correlation_id"`
+	RunWaitID                     string                `json:"run_wait_id"`
+	ResumeAttachID                string                `json:"resume_attach_id"`
 	Kind                          WorkerRunWaitKind     `json:"kind"`
 	Params                        json.RawMessage       `json:"params,omitempty"`
 	Metadata                      json.RawMessage       `json:"metadata,omitempty"`

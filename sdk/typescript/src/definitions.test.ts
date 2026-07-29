@@ -63,7 +63,7 @@ describe("private definition inspection", () => {
         return {
           ok: true,
           output: { resized: true },
-          run: { id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
+          run: { id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" },
         }
       },
     } as never)
@@ -87,7 +87,7 @@ describe("private definition inspection", () => {
       expect(await wait).toEqual({
         ok: true,
         output: { resized: true },
-        run: { id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
+        run: { id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" },
       })
       await expect(wait.unwrap()).resolves.toEqual({ resized: true })
       expect(calls).toEqual([{
@@ -114,7 +114,7 @@ describe("private definition inspection", () => {
       const config = { id: "mailbox", run() {} }
       const definition = actor(config)
       config.id = "mutated"
-      const idAddress = { id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa" }
+      const idAddress = { id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" }
       const idRef = definition.ref(idAddress)
       idAddress.id = "act_invalid"
       await expect(idRef.input.send(
@@ -125,7 +125,7 @@ describe("private definition inspection", () => {
       const keyRef = definition.ref(keyAddress)
       keyAddress.key = "mutated"
       await keyRef.input.send(null)
-      expect(idRef.id).toBe("act_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+      expect(idRef.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
       expect(keyRef.key).toBe("primary")
     } finally {
       uninstall()
@@ -134,7 +134,7 @@ describe("private definition inspection", () => {
       {
         target: {
           declaredId: "mailbox",
-          address: { id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
+          address: { id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" },
         },
         input: { message: "hello" },
         options: { idempotencyKey: "send-1" },
@@ -150,7 +150,7 @@ describe("private definition inspection", () => {
   test("rejects malformed Actor ref addresses before runtime dispatch", () => {
     const definition = actor({ id: "mailbox", run() {} })
     expect(() => definition.ref({ id: "act_not-canonical" })).toThrow(
-      "canonical Actor public ID",
+      "Actor ref ID must be a canonical UUIDv7",
     )
     for (const key of [
       "",
@@ -163,7 +163,7 @@ describe("private definition inspection", () => {
       expect(() => definition.ref({ key })).toThrow("actor ref key")
     }
     expect(() => definition.ref({
-      id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
       key: "primary",
     } as never)).toThrow("exactly one")
     expect(definition.ref({ key: "\ufeffprimary" }).key).toBe(
@@ -178,14 +178,14 @@ describe("private definition inspection", () => {
       actorStart: async (declaredId, options) => {
         calls.push({ operation: "start", declaredId, options })
         return {
-          actorId: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
-          runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          actorId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+          runId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
         }
       },
       actorStatus: async (target) => {
         calls.push({ operation: "status", target })
         return {
-          id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
           status: "open",
           createdAt: new Date("2026-07-26T00:00:00Z"),
           updatedAt: new Date("2026-07-26T00:00:01Z"),
@@ -194,7 +194,7 @@ describe("private definition inspection", () => {
       actorClose: async (target, options) => {
         calls.push({ operation: "close", target, options })
         return {
-          actorId: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          actorId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
           acceptedAt: new Date("2026-07-26T00:00:02Z"),
         }
       },
@@ -210,9 +210,9 @@ describe("private definition inspection", () => {
                 contentType: "application/json",
                 createdAt: "2026-07-26T00:00:00Z",
                 provenance: {
-                  runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  runId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
                   attemptNumber: 1,
-                  deploymentId: "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  deploymentId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
                 },
               }],
               nextAfter: 1,
@@ -227,8 +227,8 @@ describe("private definition inspection", () => {
         workspace: workspaces.ref({ key: "actor-workspace" }),
       }
       const started = await definition.start(omitted)
-      expect(started.ref.id).toBe("act_aaaaaaaaaaaaaaaaaaaaaaaaaa")
-      expect(started.run.id).toBe("run_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+      expect(started.ref.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
+      expect(started.run.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31")
       await definition.start({
         workspace: workspaces.ref({ key: "actor-workspace" }),
         input: null,

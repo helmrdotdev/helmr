@@ -13,11 +13,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	rundomain "github.com/helmrdotdev/helmr/internal/run"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -38,19 +39,19 @@ type runListCursor struct {
 }
 
 type runSnapshotRecord struct {
-	publicID             string
+	id                   pgtype.UUID
 	status               db.RunStatus
 	entrypointKind       string
 	entrypointDeclaredID string
-	deploymentPublicID   string
+	deploymentID         pgtype.UUID
 	deploymentVersion    string
-	workspacePublicID    string
-	actorPublicID        pgtype.Text
-	parentRunPublicID    string
+	workspaceID          pgtype.UUID
+	actorID              pgtype.UUID
+	parentRunID          pgtype.UUID
 	parentOwnsLifecycle  pgtype.Bool
 	currentAttemptNumber int32
 	causeKind            string
-	schedulePublicID     pgtype.Text
+	scheduleID           pgtype.UUID
 	scheduledAt          pgtype.Timestamptz
 	previousScheduledAt  pgtype.Timestamptz
 	scheduleTimezone     pgtype.Text
@@ -72,14 +73,14 @@ func (s *Server) getRunSnapshotHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	runID := strings.TrimSpace(chi.URLParam(r, "runID"))
-	if publicid.ValidateFor(publicid.Run, runID) != nil {
+	runID, err := ids.Parse(chi.URLParam(r, "runID"))
+	if err != nil {
 		writeError(w, notFound(codedError{code: "run_not_found", message: "Run not found"}))
 		return
 	}
 	row, err := s.db.GetRunSnapshot(r.Context(), db.GetRunSnapshotParams{
 		OrgID: pgvalue.UUID(scope.OrgID), ProjectID: projectID,
-		EnvironmentID: environmentID, PublicID: runID,
+		EnvironmentID: environmentID, ID: pgvalue.UUID(runID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(codedError{code: "run_not_found", message: "Run not found"}))
@@ -105,8 +106,8 @@ func (s *Server) cancelRunHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	runID := strings.TrimSpace(chi.URLParam(r, "runID"))
-	if publicid.ValidateFor(publicid.Run, runID) != nil {
+	runID, err := ids.Parse(chi.URLParam(r, "runID"))
+	if err != nil {
 		writeError(w, notFound(codedError{code: "run_not_found", message: "Run not found"}))
 		return
 	}
@@ -123,7 +124,7 @@ func (s *Server) cancelRunHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = canceler.Cancel(r.Context(), rundomain.CancellationRequest{
 		OrgID: scope.OrgID, ProjectID: projectUUID, EnvironmentID: environmentUUID,
-		RunPublicID: runID,
+		RunID: runID,
 	})
 	if errors.Is(err, rundomain.ErrCancellationNotFound) {
 		writeError(w, notFound(codedError{code: "run_not_found", message: "Run not found"}))
@@ -141,7 +142,7 @@ func (s *Server) cancelRunHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	row, err := s.db.GetRunSnapshot(r.Context(), db.GetRunSnapshotParams{
 		OrgID: pgvalue.UUID(scope.OrgID), ProjectID: projectID,
-		EnvironmentID: environmentID, PublicID: runID,
+		EnvironmentID: environmentID, ID: pgvalue.UUID(runID),
 	})
 	if err != nil {
 		s.writeRunCancellationAuthorityError(w)
@@ -174,7 +175,7 @@ func (s *Server) listRunSnapshotsHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var afterCreatedAt pgtype.Timestamptz
-	var afterPublicID string
+	var afterID pgtype.UUID
 	if raw := strings.TrimSpace(r.URL.Query().Get("cursor")); raw != "" {
 		cursor, err := parseRunListCursor(raw, scope.ProjectID, scope.EnvironmentID, statuses)
 		if err != nil {
@@ -182,11 +183,11 @@ func (s *Server) listRunSnapshotsHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		afterCreatedAt = pgvalue.Timestamptz(cursor.createdAt)
-		afterPublicID = cursor.runID
+		afterID = pgvalue.UUID(cursor.runID)
 	}
 	rows, err := s.db.ListRunSnapshots(r.Context(), db.ListRunSnapshotsParams{
 		OrgID: pgvalue.UUID(scope.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
-		Statuses: statuses, AfterCreatedAt: afterCreatedAt, AfterPublicID: afterPublicID,
+		Statuses: statuses, AfterCreatedAt: afterCreatedAt, AfterID: afterID,
 		LimitCount: limit + 1,
 	})
 	if err != nil {
@@ -212,7 +213,7 @@ func (s *Server) listRunSnapshotsHTTP(w http.ResponseWriter, r *http.Request) {
 		nextCursor, err = encodeRunListCursor(runListCursor{
 			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
 			Statuses: runStatusStrings(statuses), CreatedAt: last.CreatedAt.Time.UTC().Format(time.RFC3339Nano),
-			RunID: last.PublicID,
+			RunID: pgvalue.UUIDString(last.ID),
 		})
 		if err != nil {
 			s.writeRunReadAuthorityError(w)
@@ -334,7 +335,7 @@ func parseRunListLimit(r *http.Request) (int32, error) {
 
 type parsedRunListCursor struct {
 	createdAt time.Time
-	runID     string
+	runID     uuid.UUID
 }
 
 func encodeRunListCursor(cursor runListCursor) (string, error) {
@@ -374,10 +375,11 @@ func parseRunListCursor(
 	if err != nil {
 		return parsedRunListCursor{}, errors.New("Run cursor is malformed")
 	}
-	if publicid.ValidateFor(publicid.Run, cursor.RunID) != nil {
+	runID, err := ids.Parse(cursor.RunID)
+	if err != nil {
 		return parsedRunListCursor{}, errors.New("Run cursor is malformed")
 	}
-	return parsedRunListCursor{createdAt: createdAt.UTC(), runID: cursor.RunID}, nil
+	return parsedRunListCursor{createdAt: createdAt.UTC(), runID: runID}, nil
 }
 
 func runStatusStrings(statuses []db.RunStatus) []string {
@@ -389,18 +391,21 @@ func runStatusStrings(statuses []db.RunStatus) []string {
 }
 
 func projectRunSnapshot(record runSnapshotRecord) (api.RunSnapshotResponse, error) {
-	if publicid.ValidateFor(publicid.Run, record.publicID) != nil ||
-		publicid.ValidateFor(publicid.Deployment, record.deploymentPublicID) != nil ||
-		publicid.ValidateFor(publicid.Workspace, record.workspacePublicID) != nil ||
+	runID := pgvalue.UUIDString(record.id)
+	deploymentID := pgvalue.UUIDString(record.deploymentID)
+	workspaceID := pgvalue.UUIDString(record.workspaceID)
+	if ids.Validate(runID) != nil ||
+		ids.Validate(deploymentID) != nil ||
+		ids.Validate(workspaceID) != nil ||
 		!record.createdAt.Valid {
 		return api.RunSnapshotResponse{}, errors.New("Run projection authority is invalid")
 	}
-	if record.actorPublicID.Valid &&
-		publicid.ValidateFor(publicid.Actor, record.actorPublicID.String) != nil {
+	actorID := pgvalue.UUIDString(record.actorID)
+	if record.actorID.Valid && ids.Validate(actorID) != nil {
 		return api.RunSnapshotResponse{}, errors.New("Run Actor projection authority is invalid")
 	}
-	if record.parentRunPublicID != "" &&
-		publicid.ValidateFor(publicid.Run, record.parentRunPublicID) != nil {
+	parentRunID := pgvalue.UUIDString(record.parentRunID)
+	if record.parentRunID.Valid && ids.Validate(parentRunID) != nil {
 		return api.RunSnapshotResponse{}, errors.New("Run parent projection authority is invalid")
 	}
 	var metadata map[string]json.RawMessage
@@ -413,22 +418,22 @@ func projectRunSnapshot(record runSnapshotRecord) (api.RunSnapshotResponse, erro
 		return api.RunSnapshotResponse{}, err
 	}
 	response := api.RunSnapshotResponse{
-		ID: record.publicID, Status: status,
+		ID: runID, Status: status,
 		Entrypoint: api.RunEntrypointResponse{
 			Kind: record.entrypointKind, ID: record.entrypointDeclaredID,
 		},
 		Deployment: api.RunDeploymentResponse{
-			ID: record.deploymentPublicID, Version: record.deploymentVersion,
+			ID: deploymentID, Version: record.deploymentVersion,
 		},
-		WorkspaceID: record.workspacePublicID, CurrentAttemptNumber: record.currentAttemptNumber,
+		WorkspaceID: workspaceID, CurrentAttemptNumber: record.currentAttemptNumber,
 		Cause: cause, Metadata: json.RawMessage(record.metadata),
 		Tags: append([]string{}, record.tags...), CreatedAt: record.createdAt.Time.UTC(),
 	}
-	if record.actorPublicID.Valid {
-		response.ActorID = record.actorPublicID.String
+	if record.actorID.Valid {
+		response.ActorID = actorID
 	}
-	if record.parentRunPublicID != "" {
-		response.ParentRunID = record.parentRunPublicID
+	if record.parentRunID.Valid {
+		response.ParentRunID = parentRunID
 	}
 	if record.parentOwnsLifecycle.Valid {
 		value := record.parentOwnsLifecycle.Bool
@@ -461,23 +466,24 @@ func projectRunCause(record runSnapshotRecord) (api.RunCauseResponse, error) {
 	case "api", "manual":
 		return api.RunCauseResponse{Type: record.causeKind}, nil
 	case "child":
-		if record.parentRunPublicID == "" {
-			return api.RunCauseResponse{}, errors.New("child Run has no public parent")
+		if !record.parentRunID.Valid {
+			return api.RunCauseResponse{}, errors.New("child Run has no parent")
 		}
 		return api.RunCauseResponse{
-			Type: "child", ParentRunID: record.parentRunPublicID,
+			Type: "child", ParentRunID: pgvalue.UUIDString(record.parentRunID),
 		}, nil
 	case "schedule":
-		if !record.schedulePublicID.Valid || !record.scheduledAt.Valid ||
+		if !record.scheduleID.Valid || !record.scheduledAt.Valid ||
 			!record.scheduleTimezone.Valid {
 			return api.RunCauseResponse{}, errors.New("scheduled Run cause is incomplete")
 		}
-		if publicid.ValidateFor(publicid.Schedule, record.schedulePublicID.String) != nil {
+		scheduleID := pgvalue.UUIDString(record.scheduleID)
+		if ids.Validate(scheduleID) != nil {
 			return api.RunCauseResponse{}, errors.New("scheduled Run identity is invalid")
 		}
 		scheduledAt := record.scheduledAt.Time.UTC()
 		cause := api.RunCauseResponse{
-			Type: "schedule", ScheduleID: record.schedulePublicID.String,
+			Type: "schedule", ScheduleID: scheduleID,
 			ScheduledAt: &scheduledAt, Timezone: record.scheduleTimezone.String,
 		}
 		if record.previousScheduledAt.Valid {
@@ -527,13 +533,13 @@ func projectRunError(reason string, raw []byte) (api.RunErrorResponse, error) {
 
 func runSnapshotRecordFromGet(row db.GetRunSnapshotRow) runSnapshotRecord {
 	return runSnapshotRecord{
-		publicID: row.PublicID, status: row.Status,
+		id: row.ID, status: row.Status,
 		entrypointKind: row.EntrypointKind, entrypointDeclaredID: row.EntrypointDeclaredID,
-		deploymentPublicID: row.DeploymentPublicID, deploymentVersion: row.DeploymentVersion,
-		workspacePublicID: row.WorkspacePublicID, actorPublicID: row.ActorPublicID,
-		parentRunPublicID: row.ParentRunPublicID, parentOwnsLifecycle: row.ParentOwnsLifecycle,
+		deploymentID: row.DeploymentID, deploymentVersion: row.DeploymentVersion,
+		workspaceID: row.WorkspaceID, actorID: row.ActorID,
+		parentRunID: row.ParentRunID, parentOwnsLifecycle: row.ParentOwnsLifecycle,
 		currentAttemptNumber: row.CurrentAttemptNumber, causeKind: row.CauseKind,
-		schedulePublicID: row.SchedulePublicID, scheduledAt: row.ScheduledAt,
+		scheduleID: row.ScheduleID, scheduledAt: row.ScheduledAt,
 		previousScheduledAt: row.PreviousScheduledAt, scheduleTimezone: row.ScheduleTimezone,
 		metadata: row.Metadata, tags: row.Tags, output: row.Output,
 		terminalReasonCode: row.TerminalReasonCode, runError: row.Error,
@@ -543,13 +549,13 @@ func runSnapshotRecordFromGet(row db.GetRunSnapshotRow) runSnapshotRecord {
 
 func runSnapshotRecordFromList(row db.ListRunSnapshotsRow) runSnapshotRecord {
 	return runSnapshotRecord{
-		publicID: row.PublicID, status: row.Status,
+		id: row.ID, status: row.Status,
 		entrypointKind: row.EntrypointKind, entrypointDeclaredID: row.EntrypointDeclaredID,
-		deploymentPublicID: row.DeploymentPublicID, deploymentVersion: row.DeploymentVersion,
-		workspacePublicID: row.WorkspacePublicID, actorPublicID: row.ActorPublicID,
-		parentRunPublicID: row.ParentRunPublicID, parentOwnsLifecycle: row.ParentOwnsLifecycle,
+		deploymentID: row.DeploymentID, deploymentVersion: row.DeploymentVersion,
+		workspaceID: row.WorkspaceID, actorID: row.ActorID,
+		parentRunID: row.ParentRunID, parentOwnsLifecycle: row.ParentOwnsLifecycle,
 		currentAttemptNumber: row.CurrentAttemptNumber, causeKind: row.CauseKind,
-		schedulePublicID: row.SchedulePublicID, scheduledAt: row.ScheduledAt,
+		scheduleID: row.ScheduleID, scheduledAt: row.ScheduledAt,
 		previousScheduledAt: row.PreviousScheduledAt, scheduleTimezone: row.ScheduleTimezone,
 		metadata: row.Metadata, tags: row.Tags, output: row.Output,
 		terminalReasonCode: row.TerminalReasonCode, runError: row.Error,

@@ -88,7 +88,7 @@ func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 			createResponse: api.WorkerCreateWorkspaceResponse{
 				CorrelationID: correlationID,
 				Completed: &api.CreateWorkspaceResponse{
-					WorkspaceID: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+					WorkspaceID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
 				},
 			},
 		}

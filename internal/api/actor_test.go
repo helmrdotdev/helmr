@@ -4,14 +4,16 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestValidateActorReferenceParts(t *testing.T) {
 	if err := ValidateActorDeclaredID("operator.v1"); err != nil {
 		t.Fatalf("ValidateActorDeclaredID() error = %v", err)
 	}
-	if err := ValidateActorPublicID("act_aaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil {
-		t.Fatalf("ValidateActorPublicID() error = %v", err)
+	if err := ValidateActorID(uuid.Must(uuid.NewV7()).String()); err != nil {
+		t.Fatalf("ValidateActorID() error = %v", err)
 	}
 	if err := ValidateActorKey("thread:東京"); err != nil {
 		t.Fatalf("ValidateActorKey() error = %v", err)
@@ -59,7 +61,7 @@ func TestValidateSendActorInputRequestRejectsAmbiguousIJSON(t *testing.T) {
 }
 
 func TestValidateStartActorRequestPreservesOptionalNullInput(t *testing.T) {
-	workspaceID := "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	workspaceID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
 	if err := ValidateStartActorRequest(StartActorRequest{
 		Workspace: WorkspaceTarget{ID: &workspaceID},
 		Input:     json.RawMessage(`null`),
@@ -115,7 +117,7 @@ func TestNormalizeStartActorRetryFillsPublicDefaults(t *testing.T) {
 }
 
 func TestValidateStartActorRequestRejectsInvalidWorkspaceAndRetry(t *testing.T) {
-	workspaceID := "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	workspaceID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
 	workspaceKey := "thread:1"
 	maxAttempts := int64(3)
 	emptyConcurrencyKey := ""
@@ -152,7 +154,7 @@ func TestValidateStartActorRequestRejectsInvalidWorkspaceAndRetry(t *testing.T) 
 }
 
 func TestValidateActorOperationRequestRequiresOneExactAddress(t *testing.T) {
-	validID := "act_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	validID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
 	for _, request := range []ActorOperationRequest{
 		{ActorID: validID},
 		{ActorKey: "thread:1"},
@@ -189,7 +191,7 @@ func TestValidateActorReadContractUsesClosedEnumsAndReferences(t *testing.T) {
 			t.Fatalf("ValidateActorPublicStatus(%q) succeeded", status)
 		}
 	}
-	validID := "act_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	validID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
 	for _, reference := range []ActorReference{
 		{ActorID: validID},
 		{ActorKey: "thread:1"},

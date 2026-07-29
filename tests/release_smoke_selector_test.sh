@@ -119,7 +119,7 @@ run_expect_status 0 env \
 	SKIP_DEPLOY=1 \
 	bash "$script"
 assert_contains "$stdout" "PASS staging-network" "network contract pass"
-assert_contains "$fake_log" "run get run_aaaaaaaaaaaaaaaaaaaaaaaaaa" "network output inspection"
+assert_contains "$fake_log" "run get 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" "network output inspection"
 assert_equal '["network"]' "$(jq -c '.executed_cases' "$result_json")" "network executed case"
 
 : >"$fake_log"
@@ -152,7 +152,7 @@ run_expect_status 1 env \
 	SKIP_DEPLOY=1 \
 	bash "$script"
 assert_contains "$stderr" "expected error code task_payload_invalid, got wrong_error" "payload error code mismatch"
-assert_contains "$fake_log" "workspace delete --id wsp_bbbbbbbbbbbbbbbbbbbbbbbbbb" "payload mismatch cleanup"
+assert_contains "$fake_log" "workspace delete --id 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3f" "payload mismatch cleanup"
 
 : >"$fake_log"
 run_expect_status 0 env \

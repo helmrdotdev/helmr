@@ -10,7 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-const testScheduleID = "sch_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+const testScheduleID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
 
 func TestScheduleReadsUseAPIKeyRoutes(t *testing.T) {
 	testScheduleReads(

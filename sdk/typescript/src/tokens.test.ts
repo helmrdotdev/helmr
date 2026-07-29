@@ -14,7 +14,7 @@ describe("tokens", () => {
       tokenCreate: async (options) => {
         calls.push({ operation: "create", options })
         return {
-          id: "tok_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
           callbackUrl: "https://api.example.test/callback",
           publicAccessToken: "hlmr_pat_secret",
           timeoutAt: "2026-07-24T12:00:00Z",
@@ -66,7 +66,7 @@ describe("tokens", () => {
       expect(() => expired.unwrap()).toThrow("Token expired")
       waitResult = new DOMException("cancelled locally", "AbortError")
       await expect(Promise.resolve(token.wait())).rejects.toThrow("cancelled locally")
-      expect(token.id).toBe("tok_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+      expect(token.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37")
       expect(calls).toEqual([
         {
           operation: "create",
@@ -79,7 +79,7 @@ describe("tokens", () => {
         },
         {
           operation: "wait",
-          tokenId: "tok_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          tokenId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
           options: {
             timeout: "30m",
             idleTimeout: "45s",
@@ -90,12 +90,12 @@ describe("tokens", () => {
         },
         {
           operation: "wait",
-          tokenId: "tok_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          tokenId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
           options: {},
         },
         {
           operation: "wait",
-          tokenId: "tok_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          tokenId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
           options: {},
         },
       ])
@@ -119,13 +119,13 @@ describe("tokens", () => {
       },
     })
     try {
-      const token = tokens.ref(" tok_aaaaaaaaaaaaaaaaaaaaaaaaaa ")
-      expect(token.id).toBe("tok_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+      const token = tokens.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37")
+      expect(token.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37")
       await expect(token.wait({ idleTimeout: "30s" }).unwrap()).resolves.toEqual({
         approved: true,
       })
       expect(calls).toEqual([{
-        tokenId: "tok_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        tokenId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
         options: { idleTimeout: "30s" },
       }])
     } finally {
@@ -149,10 +149,13 @@ describe("tokens", () => {
     })
     try {
       expect(() => tokens.ref("tok_bad")).toThrow(
-        "Token ID must be a canonical tok_ public ID",
+        "Token ID must be a canonical UUIDv7",
       )
-      expect(() => tokens.ref("run_aaaaaaaaaaaaaaaaaaaaaaaaaa")).toThrow(
-        "Token ID must be a canonical tok_ public ID",
+      expect(() => tokens.ref("019c10d5-a6f7-4af1-8f5f-bb97bcc0dc31")).toThrow(
+        "Token ID must be a canonical UUIDv7",
+      )
+      expect(() => tokens.ref(" 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37 ")).toThrow(
+        "Token ID must be a canonical UUIDv7",
       )
       expect(waits).toBe(0)
     } finally {

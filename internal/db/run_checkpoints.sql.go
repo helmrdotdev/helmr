@@ -559,24 +559,23 @@ func (q *Queries) CommitTerminalCheckpointReady(ctx context.Context, arg CommitT
 
 const createPrivateCheckpointWorkspaceVersion = `-- name: CreatePrivateCheckpointWorkspaceVersion :one
 INSERT INTO workspace_versions (
-    id, public_id, environment_id, workspace_id,
+    id, environment_id, workspace_id,
     parent_version_id, artifact_id, artifact_kind, kind, content_digest,
     size_bytes, entry_count, state, source_workspace_lease_id,
     ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3,
-    $4, $5,
-    $6, 'workspace_version', 'user', $7,
-    $8, $9, 'private',
-    $10, $11,
-    $12
+    $1, $2,
+    $3, $4,
+    $5, 'workspace_version', 'user', $6,
+    $7, $8, 'private',
+    $9, $10,
+    $11
 )
-RETURNING id, public_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+RETURNING id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
 `
 
 type CreatePrivateCheckpointWorkspaceVersionParams struct {
 	ID                     pgtype.UUID `json:"id"`
-	PublicID               string      `json:"public_id"`
 	EnvironmentID          pgtype.UUID `json:"environment_id"`
 	WorkspaceID            pgtype.UUID `json:"workspace_id"`
 	ParentVersionID        pgtype.UUID `json:"parent_version_id"`
@@ -592,7 +591,6 @@ type CreatePrivateCheckpointWorkspaceVersionParams struct {
 func (q *Queries) CreatePrivateCheckpointWorkspaceVersion(ctx context.Context, arg CreatePrivateCheckpointWorkspaceVersionParams) (WorkspaceVersion, error) {
 	row := q.db.QueryRow(ctx, createPrivateCheckpointWorkspaceVersion,
 		arg.ID,
-		arg.PublicID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
 		arg.ParentVersionID,
@@ -607,7 +605,6 @@ func (q *Queries) CreatePrivateCheckpointWorkspaceVersion(ctx context.Context, a
 	var i WorkspaceVersion
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
 		&i.ParentVersionID,

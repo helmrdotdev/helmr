@@ -96,7 +96,7 @@ func checkHardLinkLayout(cfg Config) error {
 }
 
 func proveHardLink(label, source, directory string) error {
-	target := filepath.Join(directory, ".hardlink-"+uuid.NewString())
+	target := filepath.Join(directory, ".hardlink-"+uuid.Must(uuid.NewV7()).String())
 	defer os.Remove(target)
 	if err := os.Link(source, target); err != nil {
 		return fmt.Errorf("prove %s hard-link layout: %w", label, err)

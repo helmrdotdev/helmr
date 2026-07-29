@@ -62,7 +62,7 @@ func TestReconcileSchedulesPinsResolvedWorkspaceAndCursor(t *testing.T) {
 		t,
 		target,
 		"heartbeat",
-		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"*/5 * * * *","timezone":"UTC","workspace":{"id":"wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa"}}}`,
+		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"*/5 * * * *","timezone":"UTC","workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}}}`,
 	)
 	workspaceID := uuid.Must(uuid.NewV7())
 	store := &promotionScheduleStore{
@@ -91,7 +91,7 @@ func TestReconcileSchedulesRejectsMissingIDWorkspaceBeforeMutation(t *testing.T)
 			t,
 			target,
 			"daily-report",
-			`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"id":"wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa"}}}`,
+			`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}}}`,
 		)},
 		workspaceErr: pgx.ErrNoRows,
 	}
@@ -185,8 +185,9 @@ func (s *promotionScheduleStore) ArchiveOmittedSchedules(
 
 func TestScheduleResponseProjectsOnlyPublicAuthority(t *testing.T) {
 	now := time.Date(2026, 7, 24, 3, 0, 0, 0, time.UTC)
+	scheduleID := uuid.Must(uuid.NewV7())
 	row := db.Schedule{
-		PublicID:             "sch_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ID:                   pgvalue.UUID(scheduleID),
 		TaskDeclaredID:       "daily-report",
 		WorkspaceRefKey:      pgvalue.Text("scheduler"),
 		CronPattern:          "0 9 * * *",
@@ -201,11 +202,11 @@ func TestScheduleResponseProjectsOnlyPublicAuthority(t *testing.T) {
 		CreatedAt:            pgvalue.Timestamptz(now.Add(-time.Hour)),
 		UpdatedAt:            pgvalue.Timestamptz(now),
 	}
-	response, err := scheduleResponse(row, pgtype.Text{})
+	response, err := scheduleResponse(row)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.ID != row.PublicID ||
+	if response.ID != scheduleID.String() ||
 		response.Task != row.TaskDeclaredID ||
 		response.Workspace.Key != "scheduler" ||
 		response.Status != "errored" ||
@@ -215,12 +216,14 @@ func TestScheduleResponseProjectsOnlyPublicAuthority(t *testing.T) {
 	}
 }
 
-func TestScheduleResponseUsesWorkspacePublicID(t *testing.T) {
+func TestScheduleResponseUsesWorkspaceID(t *testing.T) {
 	now := time.Date(2026, 7, 24, 3, 0, 0, 0, time.UTC)
+	scheduleID := uuid.Must(uuid.NewV7())
+	workspaceID := uuid.Must(uuid.NewV7())
 	row := db.Schedule{
-		PublicID:             "sch_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ID:                   pgvalue.UUID(scheduleID),
 		TaskDeclaredID:       "daily-report",
-		WorkspaceRefID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		WorkspaceRefID:       pgvalue.UUID(workspaceID),
 		CronPattern:          "0 9 * * *",
 		Timezone:             "UTC",
 		CronSemanticsVersion: "robfig-cron-v3.0.1/standard-5-field",
@@ -231,14 +234,11 @@ func TestScheduleResponseUsesWorkspacePublicID(t *testing.T) {
 		CreatedAt:            pgvalue.Timestamptz(now),
 		UpdatedAt:            pgvalue.Timestamptz(now),
 	}
-	response, err := scheduleResponse(
-		row,
-		pgvalue.Text("wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa"),
-	)
+	response, err := scheduleResponse(row)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.Workspace.ID != "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa" {
+	if response.Workspace.ID != workspaceID.String() {
 		t.Fatalf("workspace ID = %q", response.Workspace.ID)
 	}
 }

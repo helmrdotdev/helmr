@@ -19,7 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
-	"github.com/helmrdotdev/helmr/internal/publicid"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -126,7 +126,7 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 	}
 }
 
-func TestActorStartHTTPPostgresCreatesAndReplaysPublicIDs(t *testing.T) {
+func TestActorStartHTTPPostgresCreatesAndReplaysIDs(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
 	body := fmt.Sprintf(
 		`{"workspace":{"id":%q},"input":null,"idempotency_key":"http-start-1","run":{"ttl":"30m","retry":{"max_attempts":3}}}`,
@@ -152,11 +152,11 @@ func TestActorStartHTTPPostgresCreatesAndReplaysPublicIDs(t *testing.T) {
 		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 			t.Fatal(err)
 		}
-		if err := publicid.ValidateFor(publicid.Actor, response.ActorID); err != nil {
-			t.Fatalf("Actor public ID: %v", err)
+		if err := ids.Validate(response.ActorID); err != nil {
+			t.Fatalf("Actor ID: %v", err)
 		}
-		if err := publicid.ValidateFor(publicid.Run, response.RunID); err != nil {
-			t.Fatalf("Run public ID: %v", err)
+		if err := ids.Validate(response.RunID); err != nil {
+			t.Fatalf("Run ID: %v", err)
 		}
 		if attempt == 0 {
 			first = response
@@ -255,8 +255,8 @@ func TestActorStartHTTPSessionPostgresCreates(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if err := publicid.ValidateFor(publicid.Actor, response.ActorID); err != nil {
-		t.Fatalf("Actor public ID: %v", err)
+	if err := ids.Validate(response.ActorID); err != nil {
+		t.Fatalf("Actor ID: %v", err)
 	}
 }
 
@@ -553,18 +553,18 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		VALUES ('us-east-1', 'aws', 'us-east-1', 'Actor Start Test')
 	`)
 	mustActorStartExec(t, pool, `
-		INSERT INTO organizations (id, public_id, name, slug)
-		VALUES ($1, $2, 'Actor Start Test', $3)
-	`, fixture.orgID, actorStartPublicID(t, publicid.Organization), "actor-start-"+fixture.orgID.String())
+		INSERT INTO organizations (id, name, slug)
+		VALUES ($1, 'Actor Start Test', $2)
+	`, fixture.orgID, "actor-start-"+fixture.orgID.String())
 	mustActorStartExec(t, pool, `
-		INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name)
-		VALUES ($1, $2, $3, 'us-east-1', $4, 'Actor Start Test')
-	`, fixture.projectID, actorStartPublicID(t, publicid.Project), fixture.orgID, "actor-start-"+fixture.projectID.String())
+		INSERT INTO projects (id, org_id, default_region_id, slug, name)
+		VALUES ($1, $2, 'us-east-1', $3, 'Actor Start Test')
+	`, fixture.projectID, fixture.orgID, "actor-start-"+fixture.projectID.String())
 	mustActorStartExec(t, pool, `
-		INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex)
-		VALUES ($1, $2, $3, $4, $5, 'Actor Start Test', '#3366ff')
-	`, fixture.environmentID, actorStartPublicID(t, publicid.Environment), fixture.orgID,
-		fixture.projectID, "actor-start-"+fixture.environmentID.String())
+		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
+		VALUES ($1, $2, $3, $4, 'Actor Start Test', '#3366ff')
+	`, fixture.environmentID, fixture.orgID, fixture.projectID,
+		"actor-start-"+fixture.environmentID.String())
 
 	digests := []string{
 		"sha256:" + fmt.Sprintf("%064x", 1),
@@ -603,19 +603,19 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		fixture.environmentID, digests[0], digests[1], digests[2])
 	mustActorStartExec(t, pool, `
 		INSERT INTO deployments (
-		    id, public_id, org_id, project_id, environment_id, build_region_id,
+		    id, org_id, project_id, environment_id, build_region_id,
 		    build_node_version, build_runtime_digest, build_toolchain_digest,
 		    build_manager_name, build_manager_version, build_manager_digest,
 		    build_contract_version, version, content_hash, deployment_source_artifact_id,
 		    program_artifact_id, program_index_digest, queue_config, status
 		) VALUES (
-		    $1, $2, $3, $4, $5, 'us-east-1', '24.16.0',
+		    $1, $2, $3, $4, 'us-east-1', '24.16.0',
 		    decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
 		    'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
-		    'helmr.program-build.v0', 'actor-start-test', $6, $7, $8,
-		    decode(repeat('03', 32), 'hex'), $9::jsonb, 'deployed'
+		    'helmr.program-build.v0', 'actor-start-test', $5, $6, $7,
+		    decode(repeat('03', 32), 'hex'), $8::jsonb, 'deployed'
 		)
-	`, deploymentID, actorStartPublicID(t, publicid.Deployment), fixture.orgID, fixture.projectID,
+	`, deploymentID, fixture.orgID, fixture.projectID,
 		fixture.environmentID, digests[0], sourceID, programID, queueConfig)
 	mustActorStartExec(t, pool, `
 		INSERT INTO deployment_definitions (
@@ -652,26 +652,24 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	for index := range workspaceCount {
 		workspaceID, versionID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 		fixture.workspaceIDs[index] = workspaceID
-		fixture.workspaceRefs[index] = actorStartPublicID(t, publicid.Workspace)
+		fixture.workspaceRefs[index] = workspaceID.String()
 		fixture.workspaceKeys[index] = fmt.Sprintf("workspace:%d", index)
 		mustActorStartExec(t, tx, `
 			INSERT INTO workspaces (
-			    id, public_id, environment_id, region_id,
+			    id, environment_id, region_id,
 			    workspace_declared_id, deployment_definition_id, head_version_id, key
-			) VALUES ($1, $2, $3, 'us-east-1', 'workspace.v1', $4, $5, $6)
-		`, workspaceID, fixture.workspaceRefs[index],
-			fixture.environmentID, workspaceDefinitionID, versionID,
+			) VALUES ($1, $2, 'us-east-1', 'workspace.v1', $3, $4, $5)
+		`, workspaceID, fixture.environmentID, workspaceDefinitionID, versionID,
 			fixture.workspaceKeys[index])
 		mustActorStartExec(t, tx, `
 			INSERT INTO workspace_versions (
-			    id, public_id, environment_id, workspace_id,
+			    id, environment_id, workspace_id,
 			    kind, state, content_digest, size_bytes, entry_count,
 			    ownership_generation, writer_generation, published_at
-			) VALUES ($1, $2, $3, $4, 'system', 'committed',
+			) VALUES ($1, $2, $3, 'system', 'committed',
 			          'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
 			          0, 0, 0, 0, now())
-		`, versionID, actorStartPublicID(t, publicid.WorkspaceVersion),
-			fixture.environmentID, workspaceID)
+		`, versionID, fixture.environmentID, workspaceID)
 		mustActorStartExec(t, tx, `
 			INSERT INTO workspace_secrets (
 			    workspace_id, environment_id, placement_kind, placement_target, secret_id
@@ -701,13 +699,4 @@ func mustActorStartExec(t *testing.T, executor interface {
 	if _, err := executor.Exec(t.Context(), query, args...); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func actorStartPublicID(t *testing.T, prefix publicid.Prefix) string {
-	t.Helper()
-	value, err := publicid.New(prefix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return value
 }

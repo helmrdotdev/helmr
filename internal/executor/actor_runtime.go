@@ -8,8 +8,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
@@ -317,8 +317,7 @@ func validateWorkerActorReference(
 }
 
 func validateRuntimeActorCorrelation(value string) error {
-	id, err := uuid.Parse(value)
-	if err != nil || id == uuid.Nil || id.String() != value {
+	if err := ids.Validate(value); err != nil {
 		return errors.New("Actor runtime correlation ID is invalid")
 	}
 	return nil

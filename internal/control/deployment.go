@@ -17,8 +17,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -320,8 +320,8 @@ func replayDeploymentCreation(
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return api.DeploymentResponse{}, errors.New("deployment creation receipt is invalid")
 	}
-	deploymentID, err := uuid.Parse(receipt.DeploymentID)
-	if err != nil || deploymentID == uuid.Nil || deploymentID.String() != receipt.DeploymentID {
+	deploymentID, err := ids.Parse(receipt.DeploymentID)
+	if err != nil {
 		return api.DeploymentResponse{}, errors.New("deployment creation receipt is invalid")
 	}
 	record, err := queries.GetDeployment(ctx, db.GetDeploymentParams{
@@ -361,30 +361,27 @@ func createQueuedDeployment(
 	if err != nil {
 		return db.Deployment{}, err
 	}
-	var publicID string
-	deployment, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Deployment, value: &publicID}}, func() (db.Deployment, error) {
-		return store.CreateDeployment(ctx, db.CreateDeploymentParams{
-			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			PublicID:            publicID,
-			OrgID:               pgvalue.UUID(orgID),
-			BuildRegionID:       buildRegionID,
-			BuildNodeVersion:    selection.NodeVersion,
-			BuildManagerName:    string(selection.Manager.Name),
-			BuildManagerVersion: selection.Manager.Version,
-			BuildManagerIntegrity: pgtype.Text{
-				String: selection.Manager.Integrity,
-				Valid:  selection.Manager.Integrity != "",
-			},
-			BuildContractVersion:       deployment.ProgramBuildContractVersion,
-			ProjectID:                  projectID,
-			EnvironmentID:              environmentID,
-			Version:                    deploymentVersion(publicID, time.Now()),
-			ApiVersion:                 metadata.APIVersion,
-			WorkerProtocolVersion:      metadata.WorkerProtocolVersion,
-			ContentHash:                contentHash,
-			DeploymentSourceArtifactID: sourceArtifact.ID,
-			Status:                     db.DeploymentStatusQueued,
-		})
+	deploymentID := uuid.Must(uuid.NewV7())
+	deployment, err := store.CreateDeployment(ctx, db.CreateDeploymentParams{
+		ID:                  pgvalue.UUID(deploymentID),
+		OrgID:               pgvalue.UUID(orgID),
+		BuildRegionID:       buildRegionID,
+		BuildNodeVersion:    selection.NodeVersion,
+		BuildManagerName:    string(selection.Manager.Name),
+		BuildManagerVersion: selection.Manager.Version,
+		BuildManagerIntegrity: pgtype.Text{
+			String: selection.Manager.Integrity,
+			Valid:  selection.Manager.Integrity != "",
+		},
+		BuildContractVersion:       deployment.ProgramBuildContractVersion,
+		ProjectID:                  projectID,
+		EnvironmentID:              environmentID,
+		Version:                    deploymentVersion(deploymentID),
+		ApiVersion:                 metadata.APIVersion,
+		WorkerProtocolVersion:      metadata.WorkerProtocolVersion,
+		ContentHash:                contentHash,
+		DeploymentSourceArtifactID: sourceArtifact.ID,
+		Status:                     db.DeploymentStatusQueued,
 	})
 	if err != nil {
 		return db.Deployment{}, err
@@ -395,9 +392,9 @@ func createQueuedDeployment(
 	return deployment, nil
 }
 
-func deploymentVersion(publicID string, createdAt time.Time) string {
-	return createdAt.UTC().Format("20060102") + "." +
-		strings.TrimPrefix(publicID, publicid.Deployment.String())
+func deploymentVersion(id uuid.UUID) string {
+	seconds, nanoseconds := id.Time().UnixTime()
+	return time.Unix(seconds, nanoseconds).UTC().Format("20060102") + "." + id.String()
 }
 
 func firstNonEmptyString(values ...string) string {

@@ -14,8 +14,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
@@ -54,14 +54,12 @@ type taskStartRequest struct {
 }
 
 type taskStartResult struct {
-	RunID       uuid.UUID
-	RunPublicID string
-	Replayed    bool
+	RunID    uuid.UUID
+	Replayed bool
 }
 
 type taskStartReceipt struct {
-	RunID       string `json:"runId"`
-	RunPublicID string `json:"runPublicId"`
+	RunID string `json:"run_id"`
 }
 
 type normalizedTaskStart struct {
@@ -146,11 +144,19 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			return errTaskPayloadPresenceInvalid
 		}
 
+		var workspaceIDParam pgtype.UUID
+		if normalized.Workspace.ID != nil {
+			id, err := ids.Parse(*normalized.Workspace.ID)
+			if err != nil {
+				return errTaskWorkspaceNotFound
+			}
+			workspaceIDParam = pgvalue.UUID(id)
+		}
 		workspaceID, err := work.q.ResolveWorkspaceTarget(ctx, db.ResolveWorkspaceTargetParams{
 			OrgID:         pgvalue.UUID(normalized.OrgID),
 			ProjectID:     pgvalue.UUID(normalized.ProjectID),
 			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
-			PublicID:      pgvalue.TextPtr(normalized.Workspace.ID),
+			ID:            workspaceIDParam,
 			Key:           pgvalue.TextPtr(normalized.Workspace.Key),
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -193,10 +199,6 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			return errTaskWorkspaceUnavailable
 		}
 		runID := uuid.Must(uuid.NewV7())
-		runPublicID, err := publicid.New(publicid.Run)
-		if err != nil {
-			return err
-		}
 		rootSpanID, err := tracing.NewSpanID()
 		if err != nil {
 			return err
@@ -224,7 +226,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 				OrgID:                pgvalue.UUID(normalized.OrgID), ProjectID: pgvalue.UUID(normalized.ProjectID),
 				BaseWorkspaceVersionID: workspace.HeadVersionID,
 				EnvironmentID:          pgvalue.UUID(normalized.EnvironmentID), ClaimID: claimID,
-				ID: pgvalue.UUID(runID), PublicID: runPublicID, CauseKind: "api",
+				ID: pgvalue.UUID(runID), CauseKind: "api",
 				Payload: normalized.Payload, Metadata: normalized.Metadata, Tags: normalized.Tags,
 				QueueName: admission.QueueName, ConcurrencyKey: pgvalue.TextPtr(normalized.ConcurrencyKey),
 				QueueConcurrencyLimit: int8Ptr(admission.QueueConcurrencyLimit),
@@ -263,10 +265,10 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 		}); err != nil {
 			return fmt.Errorf("create Task Run admission outbox: %w", err)
 		}
-		result = taskStartResult{RunID: runID, RunPublicID: runPublicID}
+		result = taskStartResult{RunID: runID}
 		if claim != nil {
 			receipt, err := json.Marshal(taskStartReceipt{
-				RunID: runID.String(), RunPublicID: runPublicID,
+				RunID: runID.String(),
 			})
 			if err != nil {
 				return err
@@ -368,12 +370,9 @@ func taskStartResultFromReceipt(raw []byte) (taskStartResult, error) {
 	if err := json.Unmarshal(raw, &receipt); err != nil {
 		return taskStartResult{}, errTaskStartReceiptInvalid
 	}
-	runID, err := uuid.Parse(receipt.RunID)
-	if err != nil || runID == uuid.Nil {
+	runID, err := ids.Parse(receipt.RunID)
+	if err != nil {
 		return taskStartResult{}, errTaskStartReceiptInvalid
 	}
-	if err := publicid.ValidateFor(publicid.Run, receipt.RunPublicID); err != nil {
-		return taskStartResult{}, errTaskStartReceiptInvalid
-	}
-	return taskStartResult{RunID: runID, RunPublicID: receipt.RunPublicID}, nil
+	return taskStartResult{RunID: runID}, nil
 }

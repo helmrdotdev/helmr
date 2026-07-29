@@ -37,7 +37,7 @@ run_ids="$(jq -cn --argjson client "${client_run_ids}" --argjson release "${rele
 run_count="$(jq 'length' <<<"${run_ids}")"
 [ "${run_count}" -gt 0 ]
 while IFS= read -r run_id; do
-  validation_require_public_id run "${run_id}" || {
+  validation_require_resource_id "${run_id}" || {
     validation_write_result failed invalid_client_run_id
     exit 1
   }
@@ -49,7 +49,7 @@ validation_db_marker "
   COPY (
     SELECT 'run-group-only'
       FROM runs
-     WHERE runs.public_id IN (${quoted_ids})
+     WHERE runs.id IN (${quoted_ids})
        AND (
          EXISTS (
            SELECT 1

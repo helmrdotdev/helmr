@@ -15,8 +15,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -68,14 +68,12 @@ const (
 )
 
 type workspaceCreateResult struct {
-	WorkspaceID       uuid.UUID
-	WorkspacePublicID string
-	Replayed          bool
+	WorkspaceID uuid.UUID
+	Replayed    bool
 }
 
 type workspaceCreateReceipt struct {
-	WorkspaceID       string `json:"workspaceId"`
-	WorkspacePublicID string `json:"workspacePublicId"`
+	WorkspaceID string `json:"workspace_id"`
 }
 
 type workspaceSecretPlacement struct {
@@ -208,14 +206,6 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 
 		workspaceID := uuid.Must(uuid.NewV7())
 		versionID := uuid.Must(uuid.NewV7())
-		workspacePublicID, err := publicid.New(publicid.Workspace)
-		if err != nil {
-			return err
-		}
-		versionPublicID, err := publicid.New(publicid.WorkspaceVersion)
-		if err != nil {
-			return err
-		}
 		key := pgtype.Text{}
 		if request.Key != nil {
 			key = pgtype.Text{String: *request.Key, Valid: true}
@@ -232,10 +222,8 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 					DeploymentDefinitionID: definition.ID,
 					WorkspaceDeclaredID:    request.DeclaredID,
 					ID:                     pgvalue.UUID(workspaceID),
-					PublicID:               workspacePublicID,
 					InitialVersionID:       pgvalue.UUID(versionID),
 					Key:                    key,
-					InitialVersionPublicID: versionPublicID,
 				},
 			)
 			err = createErr
@@ -244,14 +232,12 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 			created, createErr := work.q.CreateWorkspaceFromRunDeployment(
 				ctx,
 				db.CreateWorkspaceFromRunDeploymentParams{
-					EnvironmentID:          pgvalue.UUID(request.EnvironmentID),
-					RunID:                  pgvalue.UUID(request.Declaration.RunID),
-					WorkspaceDeclaredID:    request.DeclaredID,
-					ID:                     pgvalue.UUID(workspaceID),
-					PublicID:               workspacePublicID,
-					InitialVersionID:       pgvalue.UUID(versionID),
-					Key:                    key,
-					InitialVersionPublicID: versionPublicID,
+					EnvironmentID:       pgvalue.UUID(request.EnvironmentID),
+					RunID:               pgvalue.UUID(request.Declaration.RunID),
+					WorkspaceDeclaredID: request.DeclaredID,
+					ID:                  pgvalue.UUID(workspaceID),
+					InitialVersionID:    pgvalue.UUID(versionID),
+					Key:                 key,
 				},
 			)
 			err = createErr
@@ -280,14 +266,10 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 				return fmt.Errorf("create Workspace Secret placement: %w", err)
 			}
 		}
-		result = workspaceCreateResult{
-			WorkspaceID:       workspaceID,
-			WorkspacePublicID: workspacePublicID,
-		}
+		result = workspaceCreateResult{WorkspaceID: workspaceID}
 		if claim != nil {
 			receipt, err := json.Marshal(workspaceCreateReceipt{
-				WorkspaceID:       workspaceID.String(),
-				WorkspacePublicID: workspacePublicID,
+				WorkspaceID: workspaceID.String(),
 			})
 			if err != nil {
 				return err
@@ -393,12 +375,9 @@ func workspaceCreateResultFromReceipt(raw []byte) (workspaceCreateResult, error)
 	if err := json.Unmarshal(raw, &receipt); err != nil {
 		return workspaceCreateResult{}, errWorkspaceCreateReceipt
 	}
-	workspaceID, err := uuid.Parse(receipt.WorkspaceID)
-	if err != nil || publicid.ValidateFor(publicid.Workspace, receipt.WorkspacePublicID) != nil {
+	workspaceID, err := ids.Parse(receipt.WorkspaceID)
+	if err != nil {
 		return workspaceCreateResult{}, errWorkspaceCreateReceipt
 	}
-	return workspaceCreateResult{
-		WorkspaceID:       workspaceID,
-		WorkspacePublicID: receipt.WorkspacePublicID,
-	}, nil
+	return workspaceCreateResult{WorkspaceID: workspaceID}, nil
 }

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
 type Connector interface {
@@ -201,9 +201,8 @@ func (o Owner) Validate() error {
 	if o.Kind != OwnerRuntime && o.Kind != OwnerBuild {
 		return errors.New("VM owner kind must be runtime or build")
 	}
-	id, err := uuid.Parse(o.ID)
-	if err != nil || id.String() != o.ID {
-		return errors.New("VM owner id must be a canonical UUID")
+	if err := ids.Validate(o.ID); err != nil {
+		return errors.New("VM owner id must be a canonical UUIDv7")
 	}
 	return nil
 }

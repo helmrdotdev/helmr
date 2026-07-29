@@ -45,7 +45,7 @@ fi
 jq -n --argjson checks "$(jq -c '.producer.checks' <<<"${HELMR_VALIDATION_CASE}")" \
   '{schema:"helmrdotdev.validation-case-source-result.v2",status:"passed",reason:null,
     checks:[$checks[]|{id:.,status:"passed"}],
-    objects:{run_ids:["run_aaaaaaaaaaaaaaaaaaaaaaaaaa"],workspace_ids:[],deployment_ids:[],schedule_ids:[],token_ids:[],actor_ids:[]},
+    objects:{run_ids:["019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"],workspace_ids:[],deployment_ids:[],schedule_ids:[],token_ids:[],actor_ids:[]},
     observations:{attempt:1}}' \
   >"${HELMR_VALIDATION_CASE_RESULT_FILE}"
 EOF
@@ -267,7 +267,7 @@ jq -n '{
     {id:"build-group-only",status:"passed"}
   ],
   objects:{
-    run_ids:["run_aaaaaaaaaaaaaaaaaaaaaaaaaa"],
+    run_ids:["019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"],
     workspace_ids:[],deployment_ids:[],schedule_ids:[],token_ids:[],actor_ids:[]
   },
   observations:{attempt:1}
@@ -567,7 +567,7 @@ workload_result="${state_root}/managed-worker-20260714-b/results/05-workload.jso
 jq -e '(.cases | length) == 9 and all(.cases[]; .status == "passed") and .observations.nat_bytes_in_from_destination == 1024' "${workload_result}" >/dev/null ||
   fail "harness-owned workload result"
 case_evidence="${state_root}/managed-worker-20260714-b/case-evidence/run-on-run-worker-01.json"
-jq -e '.schema == "helmrdotdev.validation-case-source-result.v2" and .objects.run_ids == ["run_aaaaaaaaaaaaaaaaaaaaaaaaaa"]' "${case_evidence}" >/dev/null ||
+jq -e '.schema == "helmrdotdev.validation-case-source-result.v2" and .objects.run_ids == ["019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"]' "${case_evidence}" >/dev/null ||
   fail "bounded case evidence should be retained"
 cp "${case_evidence}" "${case_evidence}.original"
 jq '.observations.attempt=2' "${case_evidence}.original" >"${case_evidence}"

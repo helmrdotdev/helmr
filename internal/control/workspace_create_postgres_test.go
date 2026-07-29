@@ -78,8 +78,7 @@ func TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !replayed.Replayed || replayed.WorkspaceID != created.WorkspaceID ||
-		replayed.WorkspacePublicID != created.WorkspacePublicID {
+	if !replayed.Replayed || replayed.WorkspaceID != created.WorkspaceID {
 		t.Fatalf("replayed = %+v, created = %+v", replayed, created)
 	}
 
@@ -102,21 +101,22 @@ func TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim(t *tes
 
 func TestRunSourcedWorkspaceSelfExecAndDeleteAreBusyWithoutSideEffects(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
-	sourceWorkspacePublicID := fixture.workspaceRefs[0]
+	sourceWorkspaceID := fixture.workspaceIDs[0]
+	sourceWorkspaceRef := sourceWorkspaceID.String()
 	source, err := fixture.server.startTask(t.Context(), taskStartRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
 		TaskDeclaredID: "resize-image", PayloadPresent: true,
 		Payload:   []byte(`{"source":"self-workspace"}`),
-		Workspace: api.WorkspaceTarget{ID: &sourceWorkspacePublicID},
+		Workspace: api.WorkspaceTarget{ID: &sourceWorkspaceRef},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := fixture.server.db.GetWorkspaceByPublicID(
+	record, err := fixture.server.db.GetWorkspace(
 		t.Context(),
-		db.GetWorkspaceByPublicIDParams{
+		db.GetWorkspaceParams{
 			OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
-			EnvironmentID: pgvalue.UUID(fixture.environmentID), PublicID: sourceWorkspacePublicID,
+			EnvironmentID: pgvalue.UUID(fixture.environmentID), ID: pgvalue.UUID(sourceWorkspaceID),
 		},
 	)
 	if err != nil {
@@ -146,7 +146,7 @@ func TestRunSourcedWorkspaceSelfExecAndDeleteAreBusyWithoutSideEffects(t *testin
 	}
 	_, err = fixture.server.deleteWorkspace(t.Context(), workspaceDeleteRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
-		WorkspaceID: sourceWorkspacePublicID, IdempotencyKey: "stale-delete",
+		WorkspaceID: sourceWorkspaceID, IdempotencyKey: "stale-delete",
 		Authorize: func(context.Context, db.Querier) error {
 			return stale
 		},
@@ -167,7 +167,7 @@ func TestRunSourcedWorkspaceSelfExecAndDeleteAreBusyWithoutSideEffects(t *testin
 	}
 	_, err = fixture.server.deleteWorkspace(t.Context(), workspaceDeleteRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
-		WorkspaceID: sourceWorkspacePublicID, IdempotencyKey: "self-delete", Authorize: authorize,
+		WorkspaceID: sourceWorkspaceID, IdempotencyKey: "self-delete", Authorize: authorize,
 	})
 	if !errors.Is(err, errWorkspaceBusy) {
 		t.Fatalf("self delete error = %v", err)

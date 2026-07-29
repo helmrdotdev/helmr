@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
@@ -74,10 +73,6 @@ func CreateContinuation(
 	bindings []db.LockWorkspaceSecretsForAdmissionRow,
 ) (pgtype.UUID, error) {
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	publicIDValue, err := publicid.New(publicid.Run)
-	if err != nil {
-		return pgtype.UUID{}, err
-	}
 	traceID, err := tracing.NewTraceID()
 	if err != nil {
 		return pgtype.UUID{}, err
@@ -91,7 +86,7 @@ func CreateContinuation(
 		return pgtype.UUID{}, fmt.Errorf("load Actor input continuation time: %w", err)
 	}
 	run, err := store.CreateActorContinuationRun(ctx, db.CreateActorContinuationRunParams{
-		RunID: runID, PublicID: publicIDValue, QueueOriginAt: now,
+		RunID: runID, QueueOriginAt: now,
 		TraceID: pgvalue.Text(traceID), RootSpanID: rootSpanID,
 		EnvironmentID: actor.EnvironmentID, ActorID: actor.ID, WorkspaceID: workspace.ID,
 		ExpectedRunGeneration: actor.RunGeneration,

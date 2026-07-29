@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -160,16 +159,15 @@ func TestRestoredTaskFailureRollsBackPhysicalFrontier(t *testing.T) {
 	`, artifactID, fixture.orgID, fixture.projectID, fixture.environmentID, digest, fixture.workerID)
 	runtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO workspace_versions (
-			id, public_id, environment_id, workspace_id,
+			id, environment_id, workspace_id,
 			parent_version_id, artifact_id, artifact_kind, kind, content_digest,
 			size_bytes, entry_count, state, source_workspace_lease_id,
 			ownership_generation, writer_generation, published_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, 'workspace_version', 'user', $7,
-			1, 1, 'committed', $8, 1, 1, now()
+			$1, $2, $3, $4, $5, 'workspace_version', 'user', $6,
+			1, 1, 'committed', $7, 1, 1, now()
 		)
-	`, restoredVersionID, runtest.PublicID(t, publicid.WorkspaceVersion),
-		fixture.environmentID, authority.workspaceID, authority.baseVersionID,
+	`, restoredVersionID, fixture.environmentID, authority.workspaceID, authority.baseVersionID,
 		artifactID, digest, authority.workspaceLeaseID)
 	runtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE workspace_mounts SET materialized_version_id = $1 WHERE id = $2

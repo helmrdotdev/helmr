@@ -299,9 +299,11 @@ func (task *guestRunLeaseTask) handleWait(ctx context.Context, wait *runv0.RunWa
 			decision.Data = json.RawMessage(`null`)
 		}
 		if err := wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
-			RunWaitId: wait.GetCorrelationId(),
-			Kind:      decision.Kind,
-			DataJson:  string(decision.Data),
+			RunWaitId:      wait.GetRunWaitId(),
+			CorrelationId:  wait.GetCorrelationId(),
+			ResumeAttachId: wait.GetResumeAttachId(),
+			Kind:           decision.Kind,
+			DataJson:       string(decision.Data),
 		}); err != nil {
 			return err
 		}

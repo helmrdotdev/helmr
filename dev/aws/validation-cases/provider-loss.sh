@@ -57,7 +57,7 @@ lease_fact="$(
         JOIN worker_instances
           ON worker_instances.id = run_leases.worker_instance_id
          AND worker_instances.current_epoch = run_leases.worker_epoch
-       WHERE runs.public_id = '${run_id}'
+       WHERE runs.id = '${run_id}'
          AND run_leases.state = 'running'
          AND worker_instances.state = 'active'
     ) TO STDOUT;

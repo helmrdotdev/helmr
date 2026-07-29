@@ -51,7 +51,7 @@ func (control *actorInputSendControl) AppendActorOutput(
 func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
-	correlationID := "00000000-0000-0000-0000-000000000111"
+	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000111"
 	control := &actorInputSendControl{
 		testRunLeaseControl: &testRunLeaseControl{},
 		response: api.WorkerSendActorInputResponse{
@@ -107,7 +107,7 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 func TestHandleActorInputSendRetryUsesRenewedReceipt(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
-	correlationID := "00000000-0000-0000-0000-000000000113"
+	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000113"
 	firstAttempt := make(chan struct{})
 	control := &actorInputSendControl{
 		testRunLeaseControl: &testRunLeaseControl{},

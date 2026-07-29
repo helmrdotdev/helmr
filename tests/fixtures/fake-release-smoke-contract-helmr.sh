@@ -4,25 +4,25 @@ set -euo pipefail
 : "${FAKE_HELMR_LOG:?FAKE_HELMR_LOG is required}"
 printf '%s\n' "$*" >>"${FAKE_HELMR_LOG}"
 
-network_run=run_aaaaaaaaaaaaaaaaaaaaaaaaaa
-invalid_run=run_bbbbbbbbbbbbbbbbbbbbbbbbbb
-error_run=run_cccccccccccccccccccccccccc
-concurrent_run=run_dddddddddddddddddddddddddd
+network_run=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31
+invalid_run=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38
+error_run=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3c
+concurrent_run=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3d
 
 case "${1:-} ${2:-}" in
   "workspace create")
     case "${3:-}" in
       helmr-network-smoke)
-        printf '{"workspace_id":"wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa"}\n'
+        printf '{"workspace_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}\n'
         ;;
       helmr-runtime-smoke)
-        printf '{"workspace_id":"wsp_bbbbbbbbbbbbbbbbbbbbbbbbbb"}\n'
+        printf '{"workspace_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3f"}\n'
         ;;
       helmr-edge-smoke)
-        printf '{"workspace_id":"wsp_cccccccccccccccccccccccccc"}\n'
+        printf '{"workspace_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc40"}\n'
         ;;
       helmr-secret-smoke)
-        printf '{"workspace_id":"wsp_dddddddddddddddddddddddddd"}\n'
+        printf '{"workspace_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc41"}\n'
         ;;
       *)
         printf 'unexpected Workspace declaration: %s\n' "${3:-}" >&2

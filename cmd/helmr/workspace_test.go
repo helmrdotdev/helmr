@@ -10,12 +10,12 @@ func TestWorkspaceAddressRequiresExactlyOneAddress(t *testing.T) {
 		address workspaceAddressFlags
 		wantErr bool
 	}{
-		{name: "id", address: workspaceAddressFlags{id: "wsp_example"}},
+		{name: "id", address: workspaceAddressFlags{id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}},
 		{name: "key", address: workspaceAddressFlags{key: "repository", declaredID: "repository-agent"}},
 		{name: "missing", wantErr: true},
-		{name: "both", address: workspaceAddressFlags{id: "wsp_example", key: "repository"}, wantErr: true},
+		{name: "both", address: workspaceAddressFlags{id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32", key: "repository"}, wantErr: true},
 		{name: "key without declaration", address: workspaceAddressFlags{key: "repository"}, wantErr: true},
-		{name: "declaration with id", address: workspaceAddressFlags{id: "wsp_example", declaredID: "repository-agent"}, wantErr: true},
+		{name: "declaration with id", address: workspaceAddressFlags{id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32", declaredID: "repository-agent"}, wantErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			err := test.address.validate()

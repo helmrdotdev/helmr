@@ -3,13 +3,16 @@ package control
 import (
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
-func TestDeploymentVersionUsesCreationDateAndPublicIDPayload(t *testing.T) {
-	createdAt := time.Date(2026, time.July, 26, 23, 59, 0, 0, time.FixedZone("test", 9*60*60))
-	const publicID = "dep_abcdefghijklmnopqrstuvwxyz"
+func TestDeploymentVersionUsesCreationDateAndID(t *testing.T) {
+	id := uuid.Must(uuid.NewV7())
+	seconds, nanoseconds := id.Time().UnixTime()
+	createdAt := time.Unix(seconds, nanoseconds)
 
-	if got, want := deploymentVersion(publicID, createdAt), "20260726.abcdefghijklmnopqrstuvwxyz"; got != want {
+	if got, want := deploymentVersion(id), createdAt.UTC().Format("20060102")+"."+id.String(); got != want {
 		t.Fatalf("deploymentVersion() = %q, want %q", got, want)
 	}
 }

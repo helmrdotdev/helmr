@@ -13,18 +13,17 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 )
 
 func TestProjectRunSnapshotPreservesTerminalContract(t *testing.T) {
 	createdAt := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
-	runID := mustRunSnapshotPublicID(t, publicid.Run)
+	runID := uuid.Must(uuid.NewV7())
 	record := runSnapshotRecord{
-		publicID: runID, status: db.RunStatusFailed,
+		id: pgvalue.UUID(runID), status: db.RunStatusFailed,
 		entrypointKind: "task", entrypointDeclaredID: "resize-image",
-		deploymentPublicID:   mustRunSnapshotPublicID(t, publicid.Deployment),
+		deploymentID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		deploymentVersion:    "2026.07.24.1",
-		workspacePublicID:    mustRunSnapshotPublicID(t, publicid.Workspace),
+		workspaceID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		currentAttemptNumber: 3, causeKind: "api",
 		metadata: []byte(`{"source":"backend"}`), tags: []string{"image"},
 		terminalReasonCode: pgvalue.Text("task_failed"),
@@ -37,7 +36,7 @@ func TestProjectRunSnapshotPreservesTerminalContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.ID != runID || snapshot.Status != "failed" ||
+	if snapshot.ID != runID.String() || snapshot.Status != "failed" ||
 		snapshot.Error == nil || snapshot.Error.Code != "task_failed" ||
 		snapshot.Error.Message != "resize failed" || snapshot.Error.Retryable ||
 		snapshot.Output != nil || snapshot.TerminalReasonCode != "task_failed" {
@@ -55,13 +54,13 @@ func TestProjectRunSnapshotPreservesTerminalContract(t *testing.T) {
 func TestProjectRunSnapshotMapsScheduledCause(t *testing.T) {
 	scheduledAt := time.Date(2026, 7, 24, 12, 0, 0, 0, time.FixedZone("offset", 9*60*60))
 	record := runSnapshotRecord{
-		publicID: mustRunSnapshotPublicID(t, publicid.Run), status: db.RunStatusRunning,
+		id: pgvalue.UUID(uuid.Must(uuid.NewV7())), status: db.RunStatusRunning,
 		entrypointKind: "task", entrypointDeclaredID: "cleanup",
-		deploymentPublicID:   mustRunSnapshotPublicID(t, publicid.Deployment),
+		deploymentID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		deploymentVersion:    "2026.07.24.1",
-		workspacePublicID:    mustRunSnapshotPublicID(t, publicid.Workspace),
+		workspaceID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		currentAttemptNumber: 1, causeKind: "schedule",
-		schedulePublicID: pgvalue.Text(mustRunSnapshotPublicID(t, publicid.Schedule)),
+		scheduleID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		scheduledAt:      pgvalue.Timestamptz(scheduledAt),
 		scheduleTimezone: pgvalue.Text("Asia/Tokyo"),
 		metadata:         []byte(`{}`),
@@ -81,12 +80,12 @@ func TestProjectRunSnapshotMapsScheduledCause(t *testing.T) {
 
 func TestRunListCursorIsBoundToScopeAndFilter(t *testing.T) {
 	createdAt := time.Date(2026, 7, 24, 12, 0, 0, 123, time.UTC)
-	runID := mustRunSnapshotPublicID(t, publicid.Run)
+	runID := uuid.Must(uuid.NewV7())
 	statuses := []db.RunStatus{db.RunStatusRunning, db.RunStatusWaiting}
 	raw, err := encodeRunListCursor(runListCursor{
 		ProjectID: "project", EnvironmentID: "environment",
 		Statuses: runStatusStrings(statuses), CreatedAt: createdAt.Format(time.RFC3339Nano),
-		RunID: runID,
+		RunID: runID.String(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -136,13 +135,4 @@ func TestRunReadDeniesBeforeScopeLookup(t *testing.T) {
 	if response.Code != "permission_required" {
 		t.Fatalf("unexpected response: %s", recorder.Body.String())
 	}
-}
-
-func mustRunSnapshotPublicID(t *testing.T, prefix publicid.Prefix) string {
-	t.Helper()
-	value, err := publicid.New(prefix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return value
 }

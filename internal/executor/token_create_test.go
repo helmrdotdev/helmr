@@ -45,7 +45,7 @@ func (control *tokenCreateControl) CreateRuntimeToken(
 func TestHandleTokenCreateReturnsSemanticFailureToRuntime(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
-	correlationID := "00000000-0000-0000-0000-000000000112"
+	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000112"
 	control := &tokenCreateControl{
 		testRunLeaseControl: &testRunLeaseControl{},
 		err: &client.HTTPError{
@@ -91,12 +91,12 @@ func TestHandleTokenCreateReturnsSemanticFailureToRuntime(t *testing.T) {
 func TestHandleTokenCreateRetryUsesRenewedReceipt(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
-	correlationID := "00000000-0000-0000-0000-000000000115"
+	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000115"
 	firstAttempt := make(chan struct{})
 	control := &tokenCreateControl{
 		testRunLeaseControl: &testRunLeaseControl{},
 		response: api.TokenResponse{
-			ID: "tok_aaaaaaaaaaaaaaaaaaaaaaaaab", Status: "pending",
+			ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39", Status: "pending",
 			CallbackURL:       "https://api.example.test/api/token-callbacks/tok/callback",
 			PublicAccessToken: "hlmr_pat_secret",
 			Metadata:          json.RawMessage(`{}`),
@@ -145,13 +145,13 @@ func TestHandleTokenCreateRetryUsesRenewedReceipt(t *testing.T) {
 func TestHandleTokenCreateWritesCorrelatedDecision(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
-	correlationID := "00000000-0000-0000-0000-000000000111"
+	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000111"
 	timeoutMS := uint64(600_000)
 	timeoutAt := time.Now().Add(10 * time.Minute).UTC()
 	control := &tokenCreateControl{
 		testRunLeaseControl: &testRunLeaseControl{},
 		response: api.TokenResponse{
-			ID: "tok_aaaaaaaaaaaaaaaaaaaaaaaaaa", Status: "pending",
+			ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", Status: "pending",
 			CallbackURL:       "https://api.example.test/api/token-callbacks/tok/callback",
 			PublicAccessToken: "hlmr_pat_secret", TimeoutAt: &timeoutAt,
 			Metadata: json.RawMessage(`{"approval":true}`), Tags: []string{"review"},

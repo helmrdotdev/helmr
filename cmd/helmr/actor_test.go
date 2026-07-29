@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	testActorID     = "act_aaaaaaaaaaaaaaaaaaaaaaaaaa"
-	testWorkspaceID = "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	testActorID     = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
+	testWorkspaceID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
 )
 
 func TestActorStartPreservesIdentityInputAndRunTemplate(t *testing.T) {
@@ -29,7 +29,7 @@ func TestActorStartPreservesIdentityInputAndRunTemplate(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(api.StartActorResponse{
 			ActorID: testActorID,
-			RunID:   "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+			RunID:   "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 		})
 	}))
 	defer server.Close()
@@ -57,7 +57,7 @@ func TestActorStartPreservesIdentityInputAndRunTemplate(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != "actor_id: "+testActorID+"\nrun_id: run_aaaaaaaaaaaaaaaaaaaaaaaaaa\n" {
+	if out.String() != "actor_id: "+testActorID+"\nrun_id: 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31\n" {
 		t.Fatalf("output = %q", out.String())
 	}
 	if request.Key == nil || *request.Key != "thread:東京" ||
@@ -106,7 +106,7 @@ func TestActorStartDistinguishesOmittedInput(t *testing.T) {
 }
 
 func TestActorAddressedCommandsUseDeclaredIDAndOneAddress(t *testing.T) {
-	currentRunID := "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	currentRunID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
 	acceptedAt := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -208,7 +208,7 @@ func TestActorOutputReadsFiniteSequencePage(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(api.ActorOutputPage{
 			Records: []api.ActorOutputRecord{{
-				ID:       "arec_aghq6mkmpn6svd23divtytk6n4",
+				ID:       "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
 				Sequence: 8,
 				Data:     json.RawMessage(`{"message":"ready"}`),
 			}},
@@ -246,6 +246,7 @@ func TestActorCommandsRejectInvalidAddressAndMissingInput(t *testing.T) {
 		want string
 	}{
 		{[]string{"actor", "get", "operator.v1"}, "exactly one of --id or --key"},
+		{[]string{"actor", "get", "operator.v1", "--id", " " + testActorID}, "invalid actor ID"},
 		{[]string{"actor", "get", "operator.v1", "--id", testActorID, "--key", "thread"}, "exactly one of --id or --key"},
 		{[]string{"actor", "input", "send", "operator.v1", "--input-json", "null"}, "exactly one of --id or --key"},
 		{[]string{"actor", "input", "send", "operator.v1", "--id", testActorID, "--key", "thread", "--input-json", "null"}, "exactly one of --id or --key"},

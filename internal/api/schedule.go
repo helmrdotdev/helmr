@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/publicid"
+	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
 type ScheduleWorkspace struct {
@@ -43,7 +43,7 @@ type ListSchedulesResponse struct {
 }
 
 func ValidateScheduleID(id string) error {
-	if err := publicid.ValidateFor(publicid.Schedule, id); err != nil {
+	if err := ids.Validate(id); err != nil {
 		return fmt.Errorf("invalid Schedule ID: %w", err)
 	}
 	return nil

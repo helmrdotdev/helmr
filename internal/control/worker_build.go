@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -229,7 +230,7 @@ func (s *Server) workerStartDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		writeError(w, badRequest(err))
 		return
 	}
-	leaseID, err := uuid.Parse(strings.TrimSpace(lease.ID))
+	leaseID, err := ids.Parse(lease.ID)
 	if err != nil || lease.WorkerGroupID != worker.WorkerGroupID || lease.WorkerInstanceID != worker.WorkerInstanceID.String() || lease.WorkerEpoch != worker.WorkerEpoch || lease.LeaseSequence < 1 || lease.LeaseSequence > 3 || lease.WorkerProtocolVersion != worker.ProtocolVersion {
 		writeError(w, conflict(errors.New("deployment build lease is stale")))
 		return
@@ -292,7 +293,7 @@ func (s *Server) workerRenewDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		writeError(w, badRequest(err))
 		return
 	}
-	leaseID, err := uuid.Parse(strings.TrimSpace(lease.ID))
+	leaseID, err := ids.Parse(lease.ID)
 	if err != nil || lease.WorkerGroupID != worker.WorkerGroupID || lease.WorkerInstanceID != worker.WorkerInstanceID.String() || lease.WorkerEpoch != worker.WorkerEpoch || lease.LeaseSequence < 1 || lease.LeaseSequence > 3 || lease.WorkerProtocolVersion != worker.ProtocolVersion {
 		writeError(w, conflict(errors.New("deployment build lease is stale")))
 		return
@@ -333,7 +334,7 @@ func (s *Server) workerRejectDeploymentBuild(w http.ResponseWriter, r *http.Requ
 		writeError(w, badRequest(err))
 		return
 	}
-	leaseID, err := uuid.Parse(strings.TrimSpace(lease.ID))
+	leaseID, err := ids.Parse(lease.ID)
 	if err != nil || lease.WorkerGroupID != worker.WorkerGroupID || lease.WorkerInstanceID != worker.WorkerInstanceID.String() || lease.WorkerEpoch != worker.WorkerEpoch || lease.LeaseSequence < 1 || lease.LeaseSequence > 3 || lease.WorkerProtocolVersion != worker.ProtocolVersion {
 		writeError(w, conflict(errors.New("deployment build lease is stale")))
 		return
@@ -446,7 +447,7 @@ func (s *Server) workerDeploymentBuildDeliveryFailed(w http.ResponseWriter, r *h
 		writeError(w, badRequest(err))
 		return
 	}
-	leaseID, err := uuid.Parse(strings.TrimSpace(lease.ID))
+	leaseID, err := ids.Parse(lease.ID)
 	if err != nil ||
 		lease.WorkerGroupID != worker.WorkerGroupID ||
 		lease.WorkerInstanceID != worker.WorkerInstanceID.String() ||
@@ -738,7 +739,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		writeError(w, badRequest(err))
 		return
 	}
-	buildLeaseUUID, err := uuid.Parse(strings.TrimSpace(request.Lease.ID))
+	buildLeaseUUID, err := ids.Parse(request.Lease.ID)
 	if err != nil ||
 		request.Lease.WorkerGroupID != worker.WorkerGroupID ||
 		request.Lease.WorkerEpoch != worker.WorkerEpoch ||
@@ -1180,21 +1181,21 @@ var errManagerAuthorityMismatch = errors.New(
 )
 
 func parseDeploymentBuildLeaseIDs(lease api.WorkerDeploymentBuildLease) (pgtype.UUID, pgtype.UUID, pgtype.UUID, pgtype.UUID, error) {
-	orgID, err := uuid.Parse(lease.OrgID)
+	orgID, err := ids.Parse(lease.OrgID)
 	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease org_id must be a UUID")
+		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease org_id must be a canonical UUIDv7")
 	}
-	projectID, err := uuid.Parse(lease.ProjectID)
+	projectID, err := ids.Parse(lease.ProjectID)
 	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease project_id must be a UUID")
+		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease project_id must be a canonical UUIDv7")
 	}
-	environmentID, err := uuid.Parse(lease.EnvironmentID)
+	environmentID, err := ids.Parse(lease.EnvironmentID)
 	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease environment_id must be a UUID")
+		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease environment_id must be a canonical UUIDv7")
 	}
-	deploymentID, err := uuid.Parse(lease.DeploymentID)
+	deploymentID, err := ids.Parse(lease.DeploymentID)
 	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease deployment_id must be a UUID")
+		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease deployment_id must be a canonical UUIDv7")
 	}
 	return pgvalue.UUID(orgID), pgvalue.UUID(projectID), pgvalue.UUID(environmentID), pgvalue.UUID(deploymentID), nil
 }

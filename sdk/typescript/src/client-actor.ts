@@ -9,6 +9,7 @@ import type {
 } from "./contract"
 import type { ActorDefinition } from "./contract"
 import type { RequestOptions } from "./request"
+import { resourceID } from "./internal/id"
 import { validateTaskId } from "./schema/task"
 
 export type ClientActorStartRequest = Omit<ActorStartOptions, "signal">
@@ -110,8 +111,8 @@ export function createClientActors(
         ),
         "Actor start response",
       )
-      const actorID = actorPublicID(response["actor_id"])
-      const runID = runPublicID(response["run_id"])
+      const actorID = resourceID(response["actor_id"], "Actor ID")
+      const runID = resourceID(response["run_id"], "Run ID")
       return Object.freeze({
         ref: createClientActorRef(
           actorDeclaredId,
@@ -259,7 +260,7 @@ function createClientActorRef(
         "Actor close response",
       )
       return Object.freeze({
-        actorId: actorPublicID(response["actor_id"]),
+        actorId: resourceID(response["actor_id"], "Actor ID"),
         acceptedAt: timestamp(response["accepted_at"], "Actor close accepted_at"),
       })
     },
@@ -347,7 +348,7 @@ function parseActorStatus(value: unknown): ActorStatus {
     ? undefined
     : parseActorFailure(input["failure"])
   return Object.freeze({
-    id: actorPublicID(input["id"]),
+    id: resourceID(input["id"], "Actor ID"),
     ...(input["key"] === undefined
       ? {}
       : { key: requiredString(input, "key", "Actor status response") }),
@@ -357,8 +358,9 @@ function parseActorStatus(value: unknown): ActorStatus {
     ...(input["current_run_id"] === undefined
       ? {}
       : {
-          currentRunId: runPublicID(
+          currentRunId: resourceID(
             requiredString(input, "current_run_id", "Actor status response"),
+            "Run ID",
           ),
         }),
     ...(failure === undefined ? {} : { failure }),
@@ -378,7 +380,7 @@ function parseActorFailure(value: unknown): ActorFailure {
   }
   return Object.freeze({
     code,
-    runId: runPublicID(requiredString(input, "run_id", "Actor failure")),
+    runId: resourceID(requiredString(input, "run_id", "Actor failure"), "Run ID"),
   })
 }
 
@@ -386,21 +388,24 @@ function parseActorOutputRecord(value: unknown): ActorOutputRecord {
   const input = actorObject(value, "Actor output record")
   const provenance = actorObject(input["provenance"], "Actor output provenance")
   return Object.freeze({
-    id: recordPublicID(input["id"]),
+    id: resourceID(input["id"], "Actor record ID"),
     sequence: safeSequence(input["sequence"], "Actor output sequence"),
     data: input["data"],
     contentType: requiredString(input, "content_type", "Actor output record"),
     createdAt: timestamp(input["created_at"], "Actor output created_at").toISOString(),
     provenance: Object.freeze({
-      runId: runPublicID(requiredString(provenance, "run_id", "Actor output provenance")),
+      runId: resourceID(requiredString(provenance, "run_id", "Actor output provenance"), "Run ID"),
       attemptNumber: safeSequence(
         provenance["attempt_number"],
         "Actor output attempt_number",
       ),
-      deploymentId: requiredString(
-        provenance,
-        "deployment_id",
-        "Actor output provenance",
+      deploymentId: resourceID(
+        requiredString(
+          provenance,
+          "deployment_id",
+          "Actor output provenance",
+        ),
+        "Deployment ID",
       ),
     }),
   })
@@ -418,7 +423,7 @@ function validateActorAddress(
     throw new Error("Actor ref requires exactly one of id or key")
   }
   if ("id" in address && address.id !== undefined) {
-    actorPublicID(address.id)
+    resourceID(address.id, "Actor ID")
   } else if (address.key.length === 0) {
     throw new Error("Actor key is required")
   }
@@ -467,25 +472,4 @@ function timestamp(value: unknown, label: string): Date {
   const result = new Date(value)
   if (Number.isNaN(result.valueOf())) throw new Error(`${label} must be a timestamp`)
   return result
-}
-
-function actorPublicID(value: unknown): string {
-  if (typeof value !== "string" || !/^act_[a-z2-7]{26}$/.test(value)) {
-    throw new Error("Actor ID must be a canonical act_ public ID")
-  }
-  return value
-}
-
-function runPublicID(value: unknown): string {
-  if (typeof value !== "string" || !/^run_[a-z2-7]{26}$/.test(value)) {
-    throw new Error("Run ID must be a canonical run_ public ID")
-  }
-  return value
-}
-
-function recordPublicID(value: unknown): string {
-  if (typeof value !== "string" || !/^arec_[a-z2-7]{26}$/.test(value)) {
-    throw new Error("Actor record ID must be a canonical arec_ public ID")
-  }
-  return value
 }

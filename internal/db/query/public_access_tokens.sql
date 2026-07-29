@@ -1,7 +1,6 @@
 -- name: CreatePublicAccessToken :one
 INSERT INTO public_access_tokens (
     id,
-    public_id,
     token_id,
     token_hash,
     expires_at,
@@ -11,7 +10,6 @@ INSERT INTO public_access_tokens (
 )
 VALUES (
     sqlc.arg(id),
-    sqlc.arg(public_id),
     sqlc.arg(token_id),
     sqlc.arg(token_hash),
     sqlc.arg(expires_at)::timestamptz,

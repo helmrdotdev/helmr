@@ -30,8 +30,8 @@ func TestWorkspaceFileCursorPinsWorkspaceVersionAndPath(t *testing.T) {
 	server := &Server{authKeys: auth.Keys{WorkspaceFileCursor: make([]byte, auth.RootKeySize)}}
 	now := time.Unix(1_800_000_000, 0)
 	cursor := workspaceFileCursor{
-		WorkspaceID: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
-		VersionID:   "wsv_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		WorkspaceID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
+		VersionID:   "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc42",
 		Path:        "src",
 		After:       "src/main.ts",
 		ExpiresAt:   now.Add(workspaceFileCursorTTL).Unix(),

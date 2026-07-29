@@ -617,12 +617,12 @@ WITH authority AS (
      FOR UPDATE OF workspace_mounts, workspace_processes, workspace_leases
 ), created AS (
     INSERT INTO workspace_versions (
-        id, public_id, environment_id, workspace_id,
+        id, environment_id, workspace_id,
         parent_version_id, artifact_id, artifact_kind, kind, content_digest,
         size_bytes, entry_count, state, source_workspace_lease_id,
         ownership_generation, writer_generation
     )
-    SELECT sqlc.arg(workspace_version_id), sqlc.arg(workspace_version_public_id),
+    SELECT sqlc.arg(workspace_version_id),
            authority.environment_id, authority.workspace_id, authority.base_version_id,
            sqlc.arg(artifact_id), 'workspace_version', 'system',
            sqlc.arg(content_digest), sqlc.arg(size_bytes), sqlc.arg(entry_count),

@@ -30,7 +30,7 @@ describe("HelmrClient Tasks", () => {
       fetch: (async (input: URL | RequestInfo, init?: RequestInit) => {
         requests.push({ url: String(input), init })
         return Response.json({
-          run_id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
         }, { status: 201 })
       }) as typeof fetch,
     })
@@ -39,7 +39,7 @@ describe("HelmrClient Tasks", () => {
     const run = await client.tasks.start<typeof resizeImage>("resize-image", {
       payload: { imageId: "image-1" },
       workspace: workspaces.ref({
-        id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
       }),
       idempotencyKey: "image-1",
       concurrencyKey: "customer-1",
@@ -48,13 +48,13 @@ describe("HelmrClient Tasks", () => {
       tags: ["image"],
     }, { signal })
 
-    expect(run).toEqual({ id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa" })
+    expect(run).toEqual({ id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" })
     expect(requests[0]!.url).toBe(
       "https://api.example.test/api/tasks/resize-image/start",
     )
     expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
       payload: { imageId: "image-1" },
-      workspace: { id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      workspace: { id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" },
       idempotency_key: "image-1",
       concurrency_key: "customer-1",
       retry: { max_attempts: 3 },
@@ -69,9 +69,9 @@ describe("HelmrClient Workspaces", () => {
   test("uses declared IDs for typed create and key refs", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
     const responses: unknown[] = [
-      { workspace_id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      { workspace_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" },
       {
-        id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
         key: "repository",
         declared_id: "repository-agent",
         status: "available",
@@ -85,7 +85,7 @@ describe("HelmrClient Workspaces", () => {
         stdout_base64: "b2sK",
         stderr_base64: "",
       },
-      { workspace_id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      { workspace_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" },
     ]
     const client = new HelmrClient({
       url: "https://api.example.test",
@@ -107,7 +107,7 @@ describe("HelmrClient Workspaces", () => {
       },
       { signal },
     )
-    expect(created.id).toBe("wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+    expect(created.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
     expect(requests[0]!.url).toBe(
       "https://api.example.test/api/workspaces/repository-agent/create",
     )
@@ -152,36 +152,36 @@ describe("HelmrClient Actors", () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
     const responses: unknown[] = [
       {
-        actor_id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
-        run_id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        actor_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+        run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
       },
       { sequence: 1 },
       {
-        id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
         key: "thread:1",
         status: "open",
-        current_run_id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        current_run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
         created_at: "2026-07-24T11:50:00Z",
         updated_at: "2026-07-24T11:50:01Z",
       },
       {
         records: [{
-          id: "arec_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
           sequence: 1,
           data: { stage: "started" },
           content_type: "application/json",
           created_at: "2026-07-24T11:50:02Z",
           provenance: {
-            run_id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+            run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
             attempt_number: 1,
-            deployment_id: "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+            deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
           },
         }],
         next_after: 1,
         has_more: false,
       },
       {
-        actor_id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        actor_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
         accepted_at: "2026-07-24T11:50:03Z",
       },
     ]
@@ -195,7 +195,7 @@ describe("HelmrClient Actors", () => {
     })
     const operator = actor({ id: "operator", run: async () => {} })
     const workspace = workspaces.ref({
-      id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
     })
     const signal = new AbortController().signal
 
@@ -215,11 +215,11 @@ describe("HelmrClient Actors", () => {
       },
       { signal },
     )
-    expect(started.run.id).toBe("run_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+    expect(started.run.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31")
     expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
       key: "thread:1",
       input: { type: "start" },
-      workspace: { id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      workspace: { id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" },
       idempotency_key: "actor-1",
       run: {
         concurrency_key: "thread:1",
@@ -236,20 +236,20 @@ describe("HelmrClient Actors", () => {
       { signal },
     )
     expect(JSON.parse(String(requests[1]!.init?.body))).toEqual({
-      actor_id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      actor_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
       input: { type: "continue" },
       idempotency_key: "input-1",
     })
 
     const status = await started.ref.status({ signal })
     expect(status).toMatchObject({
-      id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
       key: "thread:1",
       status: "open",
-      currentRunId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      currentRunId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
     })
     expect(requests[2]!.url).toContain(
-      "/api/actors/operator/status?actor_id=act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "/api/actors/operator/status?actor_id=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
     )
 
     const records = await started.ref.output.list(
@@ -257,17 +257,17 @@ describe("HelmrClient Actors", () => {
       { signal },
     )
     expect(records).toEqual([expect.objectContaining({
-      id: "arec_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
       sequence: 1,
       data: { stage: "started" },
     })])
     expect(requests[3]!.url).toContain(
-      "/api/actors/operator/output?actor_id=act_aaaaaaaaaaaaaaaaaaaaaaaaaa&after=0&limit=10",
+      "/api/actors/operator/output?actor_id=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33&after=0&limit=10",
     )
 
     await started.ref.close({ idempotencyKey: "close-1" }, { signal })
     expect(JSON.parse(String(requests[4]!.init?.body))).toEqual({
-      actor_id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      actor_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
       idempotency_key: "close-1",
     })
   })
@@ -282,7 +282,7 @@ describe("HelmrClient Tokens", () => {
       fetch: (async (input: URL | RequestInfo, init?: RequestInit) => {
         requests.push({ url: String(input), init })
         return Response.json({
-          id: "tok_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
           status: "pending",
           callback_url: "https://api.example.test/api/token-callbacks/token/secret",
           public_access_token: "hlmr_pat_secret",
@@ -303,7 +303,7 @@ describe("HelmrClient Tokens", () => {
       idempotencyKey: "approval-1",
     }, { signal })
 
-    expect(token.id).toBe("tok_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+    expect(token.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37")
     expect(requests).toHaveLength(1)
     expect(requests[0]!.url).toBe("https://api.example.test/api/tokens")
     expect(requests[0]!.init?.method).toBe("POST")
@@ -335,7 +335,7 @@ describe("HelmrClient Tokens", () => {
       })
 
       try {
-        await client.tokens.retrieve("tok_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+        await client.tokens.retrieve("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37")
         throw new Error("expected Token retrieve to fail")
       } catch (error) {
         expect(error).toMatchObject({
@@ -437,6 +437,20 @@ describe("HelmrClient Secrets", () => {
       idempotency_key: "revoke-1",
     })
   })
+
+  test("rejects a non-v7 Secret ID before transport", () => {
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (() => {
+        throw new Error("transport must not run")
+      }) as typeof fetch,
+    })
+
+    expect(() =>
+      client.secrets.ref({ id: "019c8f1e-9b42-4b2c-8a4c-4b3a7f9f6d21" })
+    ).toThrow("Secret ID must be a canonical UUIDv7")
+  })
 })
 
 describe("HelmrClient Deployments", () => {
@@ -444,7 +458,7 @@ describe("HelmrClient Deployments", () => {
     const responses: unknown[] = [
       { deployment: null },
       {
-        id: "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
         version: "2026.07.25.1",
         tasks: ["resize-image"],
         actors: ["operator"],
@@ -460,9 +474,9 @@ describe("HelmrClient Deployments", () => {
 
     await expect(client.deployments.current()).resolves.toBeNull()
     await expect(
-      client.deployments.retrieve("dep_aaaaaaaaaaaaaaaaaaaaaaaaaa"),
+      client.deployments.retrieve("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"),
     ).resolves.toEqual({
-      id: "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
       version: "2026.07.25.1",
       tasks: ["resize-image"],
       actors: ["operator"],
@@ -474,7 +488,7 @@ describe("HelmrClient Deployments", () => {
 describe("HelmrClient Schedules", () => {
   test("retrieves and pages declarative Schedule status", async () => {
     const snapshot = {
-      id: "sch_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
       task: "scheduled-maintenance",
       workspace: { key: "maintenance" },
       cron: { pattern: "0 * * * *", timezone: "UTC" },
@@ -501,7 +515,7 @@ describe("HelmrClient Schedules", () => {
     })
 
     const retrieved = await client.schedules.retrieve(
-      "sch_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
     )
     const listed = await client.schedules.list({
       cursor: "sc1.previous",
@@ -509,7 +523,7 @@ describe("HelmrClient Schedules", () => {
     })
 
     expect(retrieved).toMatchObject({
-      id: "sch_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
       task: "scheduled-maintenance",
       status: "active",
       workspace: { key: "maintenance" },
@@ -520,10 +534,30 @@ describe("HelmrClient Schedules", () => {
       "https://api.example.test/api/schedules?cursor=sc1.previous&limit=10",
     )
   })
+
+  test("rejects a non-v7 Workspace ID in a Schedule response", async () => {
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async () => Response.json({
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
+        task: "scheduled-maintenance",
+        workspace: { id: "60af6067-a253-47b5-915c-2b889fb132c7" },
+        cron: { pattern: "0 * * * *", timezone: "UTC" },
+        status: "active",
+        created_at: "2026-07-24T11:00:00Z",
+        updated_at: "2026-07-24T11:00:00Z",
+      })) as typeof fetch,
+    })
+
+    await expect(client.schedules.retrieve(
+      "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
+    )).rejects.toThrow("Schedule workspace.id")
+  })
 })
 
 describe("HelmrClient Runs", () => {
-  const runID = "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+  const runID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
 
   test("retrieves and lists the exact Run snapshot projection", async () => {
     const requests: string[] = []
@@ -532,10 +566,10 @@ describe("HelmrClient Runs", () => {
       status: "running",
       entrypoint: { kind: "task", id: "resize-image" },
       deployment: {
-        id: "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
         version: "2026.07.24.1",
       },
-      workspace_id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      workspace_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
       current_attempt_number: 2,
       cause: { type: "api" },
       metadata: { source: "backend" },
@@ -693,10 +727,10 @@ describe("HelmrClient Runs", () => {
           status: "cancelled",
           entrypoint: { kind: "task", id: "resize-image" },
           deployment: {
-            id: "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+            id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
             version: "2026.07.24.1",
           },
-          workspace_id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          workspace_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
           current_attempt_number: 1,
           cause: { type: "api" },
           metadata: {},
@@ -742,10 +776,10 @@ describe("HelmrClient Runs", () => {
         status: "succeeded",
         entrypoint: { kind: "task", id: "resize-image" },
         deployment: {
-          id: "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
           version: "2026.07.24.1",
         },
-        workspace_id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        workspace_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
         current_attempt_number: 1,
         cause: { type: "api" },
         metadata: {},
@@ -767,10 +801,10 @@ describe("HelmrClient Runs", () => {
         status: "failed",
         entrypoint: { kind: "task", id: "resize-image" },
         deployment: {
-          id: "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
           version: "2026.07.24.1",
         },
-        workspace_id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        workspace_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
         current_attempt_number: 3,
         cause: { type: "api" },
         metadata: {},
@@ -807,10 +841,10 @@ describe("HelmrClient Runs", () => {
       status: "running",
       entrypoint: { kind: "task", id: "resize-image" },
       deployment: {
-        id: "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
         version: "2026.07.24.1",
       },
-      workspace_id: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      workspace_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
       current_attempt_number: 1,
       cause: { type: "api" },
       metadata: {},
@@ -863,7 +897,7 @@ describe("HelmrClient Runs", () => {
       waitUntil: async () => {},
       actorInputSend: async () => ({ sequence: 1 }),
       tokenCreate: async () => ({
-        id: "tok_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
         status: "pending",
         timeoutAt: "2026-07-24T12:00:00Z",
         metadata: {},

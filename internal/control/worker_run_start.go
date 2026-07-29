@@ -7,11 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -36,9 +35,9 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("invalid worker Run start request JSON: trailing value")))
 		return
 	}
-	leaseID, err := uuid.Parse(strings.TrimSpace(request.Lease.ID))
+	leaseID, err := ids.Parse(request.Lease.ID)
 	if err != nil || request.Lease.LeaseSequence <= 0 {
-		writeError(w, badRequest(errors.New("lease.id must be a UUID and lease.lease_sequence must be positive")))
+		writeError(w, badRequest(errors.New("lease.id must be a canonical UUIDv7 and lease.lease_sequence must be positive")))
 		return
 	}
 	arm, err := parseRunStartArm(request)

@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -75,19 +74,18 @@ func New(t *testing.T) Fixture {
 		) VALUES ($1, $2, $1, 'test-policy', ARRAY['test-attestation'], $3)
 	`, WorkerGroup, Region, WorkerProtocol)
 	MustExec(t, t.Context(), fixture.Pool, `
-		INSERT INTO organizations (id, public_id, name, slug)
-		VALUES ($1, $2, 'Run Lease Test', $3)
-	`, fixture.OrgID, PublicID(t, publicid.Organization), "run-lease-"+ShortID(fixture.OrgID))
+		INSERT INTO organizations (id, name, slug)
+		VALUES ($1, 'Run Lease Test', $2)
+	`, fixture.OrgID, "run-lease-"+ShortID(fixture.OrgID))
 	MustExec(t, t.Context(), fixture.Pool, `
-		INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name)
-		VALUES ($1, $2, $3, $4, $5, 'Run Lease Test')
-	`, fixture.ProjectID, PublicID(t, publicid.Project), fixture.OrgID,
-		Region, "run-lease-"+ShortID(fixture.ProjectID))
+		INSERT INTO projects (id, org_id, default_region_id, slug, name)
+		VALUES ($1, $2, $3, $4, 'Run Lease Test')
+	`, fixture.ProjectID, fixture.OrgID, Region, "run-lease-"+ShortID(fixture.ProjectID))
 	MustExec(t, t.Context(), fixture.Pool, `
-		INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex)
-		VALUES ($1, $2, $3, $4, $5, 'Run Lease Test', '#3366ff')
-	`, fixture.EnvironmentID, PublicID(t, publicid.Environment), fixture.OrgID,
-		fixture.ProjectID, "run-lease-"+ShortID(fixture.EnvironmentID))
+		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
+		VALUES ($1, $2, $3, $4, 'Run Lease Test', '#3366ff')
+	`, fixture.EnvironmentID, fixture.OrgID, fixture.ProjectID,
+		"run-lease-"+ShortID(fixture.EnvironmentID))
 	MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES
@@ -106,20 +104,20 @@ func New(t *testing.T) Fixture {
 		fixture.EnvironmentID, sourceDigest, programDigest, imageDigest)
 	MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO deployments (
-			id, public_id, org_id, project_id, environment_id, build_region_id,
+			id, org_id, project_id, environment_id, build_region_id,
 			build_node_version, build_runtime_digest, build_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
 			build_contract_version, version, content_hash, deployment_source_artifact_id,
 			program_artifact_id, program_index_digest, queue_config, status
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, '24.16.0',
+			$1, $2, $3, $4, $5, '24.16.0',
 			decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
 			'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
-			'helmr.program-build.v0', 'run-lease-test', $7, $8, $9,
+			'helmr.program-build.v0', 'run-lease-test', $6, $7, $8,
 			decode(repeat('03', 32), 'hex'), '{}'::jsonb, 'deployed'
 		)
-	`, fixture.DeploymentID, PublicID(t, publicid.Deployment), fixture.OrgID,
-		fixture.ProjectID, fixture.EnvironmentID, Region, sourceDigest,
+	`, fixture.DeploymentID, fixture.OrgID, fixture.ProjectID,
+		fixture.EnvironmentID, Region, sourceDigest,
 		sourceID, programID)
 	MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO deployment_definitions (
@@ -185,41 +183,39 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 	}
 	MustExec(t, ctx, tx, `
 		INSERT INTO workspaces (
-			id, public_id, environment_id, region_id,
+			id, environment_id, region_id,
 			workspace_declared_id, deployment_definition_id,
 			owner_run_id, ownership_generation, writer_generation, head_version_id
 		) VALUES (
-			$1, $2, $3, $4, 'test-workspace', $5,
-			$6, 1, 1, $7
+			$1, $2, $3, 'test-workspace', $4,
+			$5, 1, 1, $6
 		)
-	`, workspaceID, PublicID(t, publicid.Workspace),
-		fixture.EnvironmentID, Region,
+	`, workspaceID, fixture.EnvironmentID, Region,
 		fixture.WorkspaceDefinitionID, runID, versionID)
 	MustExec(t, ctx, tx, `
 		INSERT INTO workspace_versions (
-			id, public_id, environment_id, workspace_id,
+			id, environment_id, workspace_id,
 			kind, content_digest, state, ownership_generation, writer_generation, published_at
 		) VALUES (
-			$1, $2, $3, $4, 'system',
+			$1, $2, $3, 'system',
 			'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
 			'committed', 0, 0, now()
 		)
-	`, versionID, PublicID(t, publicid.WorkspaceVersion),
-		fixture.EnvironmentID, workspaceID)
+	`, versionID, fixture.EnvironmentID, workspaceID)
 	MustExec(t, ctx, tx, `
 		INSERT INTO runs (
-			id, public_id, org_id, project_id, environment_id, deployment_id,
+			id, org_id, project_id, environment_id, deployment_id,
 			deployment_definition_id, entrypoint_kind, entrypoint_declared_id,
 			cause_kind, workspace_id, base_workspace_version_id, payload,
 			queue_name, queue_origin_at, queue_score_at, max_active_duration_ms,
 			retry_policy, trace_id, root_span_id
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, 'task', 'test-task', 'api',
-			$8, $9, '{}'::jsonb, 'default', now(), now(), 300000,
+			$1, $2, $3, $4, $5, $6, 'task', 'test-task', 'api',
+			$7, $8, '{}'::jsonb, 'default', now(), now(), 300000,
 			'{"enabled":false}'::jsonb,
 			'11111111111111111111111111111111', '2222222222222222'
 		)
-	`, runID, PublicID(t, publicid.Run), fixture.OrgID, fixture.ProjectID,
+	`, runID, fixture.OrgID, fixture.ProjectID,
 		fixture.EnvironmentID, fixture.DeploymentID, fixture.TaskDefinitionID,
 		workspaceID, versionID)
 	MustExec(t, ctx, tx, `
@@ -353,16 +349,15 @@ INSERT INTO deployment_definitions (
 )`, actorDefinitionID, fixture.EnvironmentID, fixture.DeploymentID)
 	MustExec(t, ctx, tx, `
 INSERT INTO actors (
-    id, public_id, environment_id,
+    id, environment_id,
     actor_declared_id, deployment_definition_id, workspace_id, current_run_id,
     next_input_sequence, committed_input_sequence,
     run_queue_name, run_max_active_duration_ms, run_retry_policy
 ) VALUES (
-    $1, $2, $3,
-    'test-actor', $4, $5, $6,
-    3, 1, 'default', 300000, $7::jsonb
-)`, actorID, "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
-		fixture.EnvironmentID, actorDefinitionID, workspaceID, work.RunID, retryPolicy)
+    $1, $2,
+    'test-actor', $3, $4, $5,
+    3, 1, 'default', 300000, $6::jsonb
+)`, actorID, fixture.EnvironmentID, actorDefinitionID, workspaceID, work.RunID, retryPolicy)
 	MustExec(t, ctx, tx, `
 UPDATE workspaces
    SET owner_actor_id = $1, owner_run_id = NULL
@@ -470,25 +465,24 @@ func (fixture Fixture) AddHandoffChain(
 		Hash("inner-slot"), Hash("inner-request"))
 	MustExec(t, ctx, tx, `
 		INSERT INTO runs (
-			id, public_id, org_id, project_id, environment_id, deployment_id,
+			id, org_id, project_id, environment_id, deployment_id,
 			deployment_definition_id, entrypoint_kind, entrypoint_declared_id,
 			cause_kind, parent_run_id, parent_owns_lifecycle, workspace_id,
 			base_workspace_version_id, payload, queue_name, queue_origin_at,
 			queue_score_at, max_active_duration_ms, retry_policy, trace_id,
 			root_span_id, claim_id
 		) VALUES (
-			$1, $2, $5, $6, $7, $8, $9, 'task', 'test-task', 'api',
-			NULL, NULL, $10, $11, '{}'::jsonb, 'default', now(), now(),
+			$1, $3, $4, $5, $6, $7, 'task', 'test-task', 'api',
+			NULL, NULL, $8, $9, '{}'::jsonb, 'default', now(), now(),
 			300000, '{"enabled":false}'::jsonb,
 			'33333333333333333333333333333333', '4444444444444444', NULL
 		), (
-			$3, $4, $5, $6, $7, $8, $9, 'task', 'test-task', 'child',
-			$1, true, $10, $11, '{}'::jsonb, 'default', now(), now(),
+			$2, $3, $4, $5, $6, $7, 'task', 'test-task', 'child',
+			$1, true, $8, $9, '{}'::jsonb, 'default', now(), now(),
 			300000, '{"enabled":false}'::jsonb,
-			'55555555555555555555555555555555', '6666666666666666', $12
+			'55555555555555555555555555555555', '6666666666666666', $10
 		)
-	`, chain.OuterRunID, PublicID(t, publicid.Run),
-		chain.ParentRunID, PublicID(t, publicid.Run),
+	`, chain.OuterRunID, chain.ParentRunID,
 		fixture.OrgID, fixture.ProjectID, fixture.EnvironmentID,
 		fixture.DeploymentID, fixture.TaskDefinitionID, fixture.workspaceID(t, ctx, tx, work.RunID),
 		chain.VersionID, outerClaimID)
@@ -739,15 +733,6 @@ func MustExec(t *testing.T, ctx context.Context, db interface {
 	if _, err := db.Exec(ctx, query, args...); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func PublicID(t *testing.T, prefix publicid.Prefix) string {
-	t.Helper()
-	value, err := publicid.New(prefix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return value
 }
 
 func Digest(seed string) string {

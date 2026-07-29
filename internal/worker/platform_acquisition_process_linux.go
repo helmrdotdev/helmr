@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"golang.org/x/sys/unix"
 )
 
@@ -112,7 +113,7 @@ func validatePlatformAcquisitionProcess(
 	process PlatformAcquisitionProcess,
 	request api.WorkerPlatformAcquisition,
 ) error {
-	if _, err := uuid.Parse(request.DeploymentID); err != nil {
+	if _, err := ids.Parse(request.DeploymentID); err != nil {
 		return errors.New("Platform acquisition Deployment ID is invalid")
 	}
 	for name, value := range map[string]string{
@@ -204,11 +205,11 @@ func createPlatformAcquisitionCgroup(
 	if !filepath.IsAbs(root) {
 		return "", nil, errors.New("Platform acquisition unit cgroup root is invalid")
 	}
-	identity, err := uuid.Parse(deploymentID)
+	identity, err := ids.Parse(deploymentID)
 	if err != nil {
 		return "", nil, errors.New("Platform acquisition Deployment ID is invalid")
 	}
-	leaf := "platform-acquisition-" + identity.String() + "-" + uuid.NewString()
+	leaf := "platform-acquisition-" + identity.String() + "-" + uuid.Must(uuid.NewV7()).String()
 	rootFD, err := unix.Open(
 		root,
 		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW,

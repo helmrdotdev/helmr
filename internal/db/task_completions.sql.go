@@ -682,7 +682,7 @@ UPDATE runs
    AND current_attempt_number = $6
    AND current_run_lease_id = $7
    AND active_started_at IS NULL
-RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
 `
 
 type DelayCheckpointFailureRetryParams struct {
@@ -708,7 +708,6 @@ func (q *Queries) DelayCheckpointFailureRetry(ctx context.Context, arg DelayChec
 	var i Run
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
@@ -779,7 +778,7 @@ UPDATE runs
    AND current_attempt_number = $6
    AND current_run_lease_id = $7
    AND active_started_at IS NULL
-RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
 `
 
 type DelayTaskRunRetryParams struct {
@@ -805,7 +804,6 @@ func (q *Queries) DelayTaskRunRetry(ctx context.Context, arg DelayTaskRunRetryPa
 	var i Run
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
@@ -927,7 +925,7 @@ UPDATE runs
    AND status = 'waiting'
    AND current_attempt_number = $6
    AND current_run_lease_id IS NULL
-RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
 `
 
 type FailNestedSameWorkspaceRunParams struct {
@@ -951,7 +949,6 @@ func (q *Queries) FailNestedSameWorkspaceRun(ctx context.Context, arg FailNested
 	var i Run
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
@@ -1151,7 +1148,7 @@ UPDATE runs
    AND current_attempt_number = $7
    AND current_run_lease_id = $8
    AND active_started_at IS NULL
-RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
 `
 
 type FinishCheckpointFailedTaskRunParams struct {
@@ -1179,7 +1176,6 @@ func (q *Queries) FinishCheckpointFailedTaskRun(ctx context.Context, arg FinishC
 	var i Run
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
@@ -1253,7 +1249,7 @@ UPDATE runs
    AND current_attempt_number = $8
    AND current_run_lease_id = $9
    AND active_started_at IS NULL
-RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
 `
 
 type FinishTaskRunParams struct {
@@ -1283,7 +1279,6 @@ func (q *Queries) FinishTaskRun(ctx context.Context, arg FinishTaskRunParams) (R
 	var i Run
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
@@ -1405,7 +1400,7 @@ func (q *Queries) GetTaskCompletionTime(ctx context.Context) (pgtype.Timestamptz
 }
 
 const getTaskWorkspaceResetVersion = `-- name: GetTaskWorkspaceResetVersion :one
-SELECT id, public_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+SELECT id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
   FROM workspace_versions
  WHERE environment_id = $1
    AND workspace_id = $2
@@ -1424,7 +1419,6 @@ func (q *Queries) GetTaskWorkspaceResetVersion(ctx context.Context, arg GetTaskW
 	var i WorkspaceVersion
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
 		&i.ParentVersionID,
@@ -1448,7 +1442,6 @@ func (q *Queries) GetTaskWorkspaceResetVersion(ctx context.Context, arg GetTaskW
 const publishTaskWorkspaceVersion = `-- name: PublishTaskWorkspaceVersion :one
 INSERT INTO workspace_versions (
     id,
-    public_id,
     environment_id,
     workspace_id,
     parent_version_id,
@@ -1470,24 +1463,22 @@ VALUES (
     $3,
     $4,
     $5,
-    $6,
     'workspace_version',
     'user',
+    $6,
     $7,
     $8,
-    $9,
     'committed',
+    $9,
     $10,
     $11,
-    $12,
-    $13
+    $12
 )
-RETURNING id, public_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+RETURNING id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
 `
 
 type PublishTaskWorkspaceVersionParams struct {
 	ID                     pgtype.UUID        `json:"id"`
-	PublicID               string             `json:"public_id"`
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
 	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
 	ParentVersionID        pgtype.UUID        `json:"parent_version_id"`
@@ -1504,7 +1495,6 @@ type PublishTaskWorkspaceVersionParams struct {
 func (q *Queries) PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTaskWorkspaceVersionParams) (WorkspaceVersion, error) {
 	row := q.db.QueryRow(ctx, publishTaskWorkspaceVersion,
 		arg.ID,
-		arg.PublicID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
 		arg.ParentVersionID,
@@ -1520,7 +1510,6 @@ func (q *Queries) PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTa
 	var i WorkspaceVersion
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
 		&i.ParentVersionID,
@@ -1785,7 +1774,7 @@ UPDATE workspaces
         WHERE workspace_processes.workspace_id = workspaces.id
           AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
    )
-RETURNING environments.id, environments.public_id, org_id, project_id, slug, name, color_hex, is_default, environments.created_at, environments.updated_at, current_deployment_id, workspaces.id, workspaces.public_id, environment_id, region_id, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, workspaces.created_at, workspaces.updated_at, deleted_at
+RETURNING environments.id, org_id, project_id, slug, name, color_hex, is_default, environments.created_at, environments.updated_at, current_deployment_id, workspaces.id, environment_id, region_id, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, workspaces.created_at, workspaces.updated_at, deleted_at
 `
 
 type ReleaseTaskWorkspaceOwnerParams struct {
@@ -1803,7 +1792,6 @@ type ReleaseTaskWorkspaceOwnerParams struct {
 
 type ReleaseTaskWorkspaceOwnerRow struct {
 	ID                     pgtype.UUID        `json:"id"`
-	PublicID               string             `json:"public_id"`
 	OrgID                  pgtype.UUID        `json:"org_id"`
 	ProjectID              pgtype.UUID        `json:"project_id"`
 	Slug                   string             `json:"slug"`
@@ -1814,7 +1802,6 @@ type ReleaseTaskWorkspaceOwnerRow struct {
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 	CurrentDeploymentID    pgtype.UUID        `json:"current_deployment_id"`
 	ID_2                   pgtype.UUID        `json:"id_2"`
-	PublicID_2             string             `json:"public_id_2"`
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
 	RegionID               string             `json:"region_id"`
 	WorkspaceDeclaredID    pgtype.Text        `json:"workspace_declared_id"`
@@ -1851,7 +1838,6 @@ func (q *Queries) ReleaseTaskWorkspaceOwner(ctx context.Context, arg ReleaseTask
 	var i ReleaseTaskWorkspaceOwnerRow
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.OrgID,
 		&i.ProjectID,
 		&i.Slug,
@@ -1862,7 +1848,6 @@ func (q *Queries) ReleaseTaskWorkspaceOwner(ctx context.Context, arg ReleaseTask
 		&i.UpdatedAt,
 		&i.CurrentDeploymentID,
 		&i.ID_2,
-		&i.PublicID_2,
 		&i.EnvironmentID,
 		&i.RegionID,
 		&i.WorkspaceDeclaredID,

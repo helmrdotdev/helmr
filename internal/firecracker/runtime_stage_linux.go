@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"golang.org/x/sys/unix"
 )
@@ -24,9 +25,8 @@ const runtimeManifestMaxBytes = int64(64 * 1024)
 const runtimeAllocationUnit = int64(4096)
 
 func PrepareRuntime(sourceDir, workDir, epoch string) (string, error) {
-	parsed, err := uuid.Parse(epoch)
-	if err != nil || parsed.String() != epoch {
-		return "", fmt.Errorf("runtime epoch %q is not a canonical UUID", epoch)
+	if err := ids.Validate(epoch); err != nil {
+		return "", fmt.Errorf("runtime epoch %q is not a canonical UUIDv7", epoch)
 	}
 	source, err := openRuntimeDirectory(sourceDir)
 	if err != nil {
@@ -54,7 +54,7 @@ func PrepareRuntime(sourceDir, workDir, epoch string) (string, error) {
 	} else if !errors.Is(err, unix.ENOENT) {
 		return "", fmt.Errorf("inspect runtime stage %q: %w", filepath.Join(workDir, finalName), err)
 	}
-	stageName := "." + runtimeStagePrefix + uuid.NewString()
+	stageName := "." + runtimeStagePrefix + uuid.Must(uuid.NewV7()).String()
 	if err := unix.Mkdirat(int(work.Fd()), stageName, 0o700); err != nil {
 		return "", fmt.Errorf("create runtime stage: %w", err)
 	}

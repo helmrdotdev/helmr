@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -360,12 +361,12 @@ func (s *Store) replayMutation(
 	if err := json.Unmarshal(claim.Receipt, &receipt); err != nil {
 		return db.GetSecretSnapshotRow{}, errors.New("secret mutation receipt is invalid")
 	}
-	secretID, err := uuid.Parse(receipt.SecretID)
-	if err != nil || secretID == uuid.Nil || secretID.String() != receipt.SecretID {
+	secretID, err := ids.Parse(receipt.SecretID)
+	if err != nil {
 		return db.GetSecretSnapshotRow{}, errors.New("secret mutation receipt is invalid")
 	}
-	secretVersionID, err := uuid.Parse(receipt.SecretVersionID)
-	if err != nil || secretVersionID == uuid.Nil || secretVersionID.String() != receipt.SecretVersionID {
+	secretVersionID, err := ids.Parse(receipt.SecretVersionID)
+	if err != nil {
 		return db.GetSecretSnapshotRow{}, errors.New("secret mutation receipt is invalid")
 	}
 	version, err := queries.LockSecretVersion(ctx, db.LockSecretVersionParams{

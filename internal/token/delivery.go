@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/outbox"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -218,11 +219,11 @@ func decodeTokenReconcilePayload(raw []byte) (tokenReconcilePayload, error) {
 		}
 		return tokenReconcilePayload{}, errors.New("Token reconciliation payload contains a trailing JSON value")
 	}
-	environmentID, err := uuid.Parse(value.EnvironmentID)
+	environmentID, err := ids.Parse(value.EnvironmentID)
 	if err != nil {
 		return tokenReconcilePayload{}, errors.New("Token reconciliation environmentId is invalid")
 	}
-	tokenID, err := uuid.Parse(value.TokenID)
+	tokenID, err := ids.Parse(value.TokenID)
 	if err != nil {
 		return tokenReconcilePayload{}, errors.New("Token reconciliation tokenId is invalid")
 	}

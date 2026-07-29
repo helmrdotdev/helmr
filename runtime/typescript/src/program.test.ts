@@ -90,7 +90,7 @@ describe("runProgram", () => {
       expect(first.value.actorSpeculativeInputSequence).toBe(0n)
       expect(first.value.timeoutMs).toBe(1n)
       expect(first.value.idleTimeoutMs).toBe(1501n)
-      yield actorDecision(first.value.correlationId, "completed", actorInput(1, "one"))
+      yield actorDecision(first.value.correlationId, "completed", actorInput(1, "one"), first.value)
 
       await events[1]!.promise
       const commit = readEvent(output[2]!).event
@@ -105,7 +105,7 @@ describe("runProgram", () => {
       if (second.case !== "runWaitRequested") return
       expect(JSON.parse(second.value.paramsJson).after_input_sequence).toBe(1)
       expect(second.value.actorSpeculativeInputSequence).toBe(1n)
-      yield actorDecision(second.value.correlationId, "completed", actorInput(2, "two"))
+      yield actorDecision(second.value.correlationId, "completed", actorInput(2, "two"), second.value)
     }
     await runProgram(locatorURL, programIO({
       input: input(),
@@ -149,7 +149,7 @@ describe("runProgram", () => {
       await waitWritten.promise
       const wait = readEvent(output[1]!).event
       if (wait.case !== "runWaitRequested") return
-      yield actorDecision(wait.value.correlationId, "completed", actorInput(1, "one"))
+      yield actorDecision(wait.value.correlationId, "completed", actorInput(1, "one"), wait.value)
     }
     await runProgram(locatorURL, programIO({
       input: input(),
@@ -188,7 +188,7 @@ describe("runProgram", () => {
       await waitWritten.promise
       const wait = readEvent(output[1]!).event
       if (wait.case !== "runWaitRequested") return
-      yield actorDecision(wait.value.correlationId, "completed", actorInput(1, "one"))
+      yield actorDecision(wait.value.correlationId, "completed", actorInput(1, "one"), wait.value)
     }
     await runProgram(locatorURL, programIO({
       input: input(),
@@ -229,6 +229,7 @@ describe("runProgram", () => {
         wait.value.correlationId,
         "cancelled",
         JSON.stringify({ reason_code: "run_cancelled" }),
+        wait.value,
       )
     }
     await expect(runProgram(locatorURL, programIO({
@@ -255,7 +256,7 @@ describe("runProgram", () => {
       await waitWritten.promise
       const wait = readEvent(output[1]!).event
       if (wait.case !== "runWaitRequested") return
-      yield actorDecision(wait.value.correlationId, "completed", actorInput(2, "skipped"))
+      yield actorDecision(wait.value.correlationId, "completed", actorInput(2, "skipped"), wait.value)
     }
     await expect(runProgram(locatorURL, programIO({
       input: input(),
@@ -290,7 +291,7 @@ describe("runProgram", () => {
       await waitWritten.promise
       const wait = readEvent(output[1]!).event
       if (wait.case !== "runWaitRequested") return
-      yield actorDecision(wait.value.correlationId, "completed", actorInput(2, "skipped"))
+      yield actorDecision(wait.value.correlationId, "completed", actorInput(2, "skipped"), wait.value)
     }
     await expect(runProgram(locatorURL, programIO({
       input: input(),
@@ -333,6 +334,7 @@ describe("runProgram", () => {
         wait.value.correlationId,
         "cancelled",
         JSON.stringify({ reason_code: "run_cancelled" }),
+        wait.value,
       )
     }
     await expect(runProgram(locatorURL, programIO({
@@ -368,6 +370,18 @@ describe("runProgram", () => {
           deployment_id: "deployment-1",
         },
       }),
+      JSON.stringify({
+        id: "60af6067-a253-47b5-915c-2b889fb132c7",
+        sequence: 1,
+        data: "value",
+        content_type: "application/json",
+        created_at: "2026-07-22T00:00:00Z",
+        provenance: {
+          run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc52",
+          attempt_number: 1,
+          deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc53",
+        },
+      }),
     ]
     for (const [index, dataJson] of malformed.entries()) {
       const definition = actor({
@@ -390,7 +404,12 @@ describe("runProgram", () => {
           : request.case === "actorOutputAppendRequested"
           ? request.value.correlationId
           : ""
-        yield actorDecision(correlationId, "completed", dataJson)
+        yield actorDecision(
+          correlationId,
+          "completed",
+          dataJson,
+          request.case === "runWaitRequested" ? request.value : undefined,
+        )
       }
       await expect(runProgram(locatorURL, programIO({
         input: input(),
@@ -495,15 +514,15 @@ describe("runProgram", () => {
       expect(event.value.contentType).toBe("application/vnd.helmr.test+json")
       expect(event.value.idempotencyKey).toBe("output-1")
       yield actorDecision(event.value.correlationId, "completed", JSON.stringify({
-        id: "output-1",
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc51",
         sequence: 1,
         data: { event: "ready" },
         content_type: event.value.contentType,
         created_at: "2026-07-22T00:00:00Z",
         provenance: {
-          run_id: "run-1",
+          run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc52",
           attempt_number: 1,
-          deployment_id: "deployment-1",
+          deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc53",
         },
       }))
     }
@@ -514,15 +533,15 @@ describe("runProgram", () => {
       onWrite: () => { if (output.length === 2) appendWritten.resolve() },
     }))
     expect(appended).toEqual({
-      id: "output-1",
+      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc51",
       sequence: 1,
       data: { event: "ready" },
       contentType: "application/vnd.helmr.test+json",
       createdAt: "2026-07-22T00:00:00Z",
       provenance: {
-        runId: "run-1",
+        runId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc52",
         attemptNumber: 1,
-        deploymentId: "deployment-1",
+        deploymentId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc53",
       },
     })
   })
@@ -576,7 +595,7 @@ describe("runProgram", () => {
       id: "deploy",
       async run() {
         sent = await Promise.all([
-          mailbox.ref({ id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa" }).input.send(
+          mailbox.ref({ id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" }).input.send(
             { z: 1, a: 2 },
             { idempotencyKey: "\u0085first\u0085" },
           ),
@@ -601,7 +620,7 @@ describe("runProgram", () => {
       expect(first.value.declaredId).toBe("mailbox")
       expect(first.value.address).toEqual({
         case: "actorId",
-        value: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        value: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
       })
       expect(first.value.dataJson).toBe('{"a":2,"z":1}')
       expect(first.value.idempotencyKey).toBe("first")
@@ -696,7 +715,7 @@ describe("runProgram", () => {
       yield actorDecision(
         event.value.correlationId,
         "completed",
-        '{"run_id":"run_aaaaaaaaaaaaaaaaaaaaaaaaaa"}',
+        '{"run_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"}',
       )
     }
     await runProgram(locatorURL, programIO({
@@ -716,7 +735,7 @@ describe("runProgram", () => {
     expect(outcome.case).toBe("taskOutcome")
     if (outcome.case === "taskOutcome" && outcome.value.outcome.case === "succeeded") {
       expect(outcome.value.outcome.value.outputJson).toBe(
-        '{"id":"run_aaaaaaaaaaaaaaaaaaaaaaaaaa"}',
+        '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"}',
       )
     }
   })
@@ -751,7 +770,7 @@ describe("runProgram", () => {
         yield actorDecision(
           event.value.correlationId,
           "completed",
-          '{"actor_id":"act_aaaaaaaaaaaaaaaaaaaaaaaaaa","run_id":"run_aaaaaaaaaaaaaaaaaaaaaaaaaa"}',
+          '{"actor_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33","run_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"}',
         )
       }
     }
@@ -815,13 +834,13 @@ describe("runProgram", () => {
       yield frameMessage(runProto.ProgramStartSchema, start)
       yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
       const responses = [
-        '{"workspace_id":"wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa"}',
-        '{"id":"wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa","key":"build-cache","declared_id":"cache","status":"available","secrets":[{"name":"TOKEN","env":"TOKEN"}],"last_activity_at":"2026-07-26T00:00:00Z","created_at":"2026-07-26T00:00:00Z","updated_at":"2026-07-26T00:00:00Z"}',
+        '{"workspace_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}',
+        '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","key":"build-cache","declared_id":"cache","status":"available","secrets":[{"name":"TOKEN","env":"TOKEN"}],"last_activity_at":"2026-07-26T00:00:00Z","created_at":"2026-07-26T00:00:00Z","updated_at":"2026-07-26T00:00:00Z"}',
         '{"data_base64":"b2s="}',
         '{"path":"result.txt","kind":"file","mode":420,"size_bytes":2}',
         '{"items":[{"path":"result.txt","kind":"file","mode":420,"size_bytes":2}]}',
         '{"exit_code":0,"stdout_base64":"b2s=","stderr_base64":""}',
-        '{"workspace_id":"wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa"}',
+        '{"workspace_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}',
       ]
       for (let index = 0; index < responses.length; index++) {
         await requested[index]!.promise
@@ -857,7 +876,7 @@ describe("runProgram", () => {
     if (outcome.case === "taskOutcome" &&
       outcome.value.outcome.case === "succeeded") {
       expect(outcome.value.outcome.value.outputJson).toBe(
-        '{"content":"ok","count":1,"deleted":"wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa","exitCode":0,"id":"wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa","kind":"file","stdout":"ok"}',
+        '{"content":"ok","count":1,"deleted":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","exitCode":0,"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","kind":"file","stdout":"ok"}',
       )
     }
   })
@@ -916,8 +935,9 @@ describe("runProgram", () => {
         JSON.stringify({
           ok: true,
           output: { resized: true },
-          run: { id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
+          run: { id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" },
         }),
+        event.value,
       )
     }
     await runProgram(locatorURL, programIO({
@@ -932,7 +952,7 @@ describe("runProgram", () => {
     expect(result).toEqual({
       ok: true,
       output: { resized: true },
-      run: { id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      run: { id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" },
     })
     expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
       "entrypointReady",
@@ -980,8 +1000,9 @@ describe("runProgram", () => {
             retryable: false,
             details: { stage: "decode" },
           },
-          run: { id: "run_bbbbbbbbbbbbbbbbbbbbbbbbbb" },
+          run: { id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38" },
         }),
+        event.value,
       )
     }
     await runProgram(locatorURL, programIO({
@@ -1041,7 +1062,7 @@ describe("runProgram", () => {
         createEvent.value.correlationId,
         "completed",
         JSON.stringify({
-          id: "tok_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+          id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
           status: "pending",
           callback_url: "https://api.example.test/callback",
           public_access_token: "hlmr_pat_secret",
@@ -1062,12 +1083,13 @@ describe("runProgram", () => {
       expect(waitEvent.value.metadataJson).toBe('{"stage":"approval"}')
       expect(waitEvent.value.tags).toEqual(["human"])
       expect(JSON.parse(waitEvent.value.paramsJson)).toEqual({
-        token_id: "tok_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        token_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
       })
       yield actorDecision(
         waitEvent.value.correlationId,
         "completed",
         '{"approved":true}',
+        waitEvent.value,
       )
     }
     await runProgram(locatorURL, programIO({
@@ -1422,6 +1444,7 @@ describe("runProgram", () => {
     const output: Uint8Array[] = []
     const waitWritten = deferred<void>()
 		let correlationId = ""
+		let runWaitId = ""
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(runProto.ProgramStartSchema, start)
       yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
@@ -1430,19 +1453,20 @@ describe("runProgram", () => {
       expect(event.case).toBe("runWaitRequested")
       if (event.case !== "runWaitRequested") return
 			correlationId = event.value.correlationId
+			runWaitId = event.value.runWaitId
       expect(event.value.kind).toBe("timer")
       expect(event.value.timeoutMs).toBe(60_000n)
       expect(JSON.parse(event.value.paramsJson)).toEqual({ duration: "1m" })
       yield frameMessage(runProto.ResumeDecisionSchema, create(
         runProto.ResumeDecisionSchema,
         {
-			runWaitId: "durable-wait-1",
+			runWaitId: event.value.runWaitId,
 			correlationId: event.value.correlationId,
           kind: "completed",
           dataJson: "null",
 			requireConsumedAck: true,
 			checkpointId: "checkpoint-1",
-			resumeAttachId: "attach-1",
+			resumeAttachId: event.value.resumeAttachId,
 			resumeRequestVersion: 4n,
 			runLeaseId: "lease-2",
         },
@@ -1461,7 +1485,7 @@ describe("runProgram", () => {
 		const consumed = readEvent(output[2]!).event
 		expect(consumed.case).toBe("resumeConsumed")
 		if (consumed.case === "resumeConsumed") {
-			expect(consumed.value.runWaitId).toBe("durable-wait-1")
+			expect(consumed.value.runWaitId).toBe(runWaitId)
 			expect(consumed.value.resumeRequestVersion).toBe(4n)
 			expect(consumed.value.correlationId).toBe(correlationId)
 		}
@@ -1471,6 +1495,45 @@ describe("runProgram", () => {
     if (result.case === "taskOutcome" && result.value.outcome.case === "succeeded") {
       expect(result.value.outcome.value.outputJson).toBe('{"resumed":true}')
     }
+  })
+
+  test("rejects a durable Wait decision with mismatched allocated identity", async () => {
+    const definition = task({
+      id: "deploy",
+      async run() {
+        await timers.waitFor("1m")
+      },
+    })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+    const waitWritten = deferred<void>()
+    async function* input(): AsyncIterable<Uint8Array> {
+      yield frameMessage(runProto.ProgramStartSchema, start)
+      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      await waitWritten.promise
+      const event = readEvent(output[1]!).event
+      if (event.case !== "runWaitRequested") return
+      yield frameMessage(runProto.ResumeDecisionSchema, create(
+        runProto.ResumeDecisionSchema,
+        {
+          correlationId: event.value.correlationId,
+          runWaitId: event.value.runWaitId,
+          resumeAttachId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc99",
+          kind: "completed",
+          dataJson: "null",
+        },
+      ))
+    }
+
+    await expect(runProgram(locatorURL, programIO({
+      input: input(),
+      definition,
+      output,
+      onWrite: () => {
+        if (output.length === 2) waitWritten.resolve()
+      },
+    }))).rejects.toThrow("did not match the pending Wait")
+    expect(output).toHaveLength(2)
   })
 
   test("classifies a throwing payload schema as a bounded non-retryable validation failure", async () => {
@@ -1867,10 +1930,21 @@ function actorDecision(
   correlationId: string,
   kind: string,
   dataJson: string,
+  wait?: { runWaitId: string; resumeAttachId: string },
 ): Uint8Array {
   return frameMessage(runProto.ResumeDecisionSchema, create(
     runProto.ResumeDecisionSchema,
-    { correlationId, kind, dataJson },
+    {
+      correlationId,
+      kind,
+      dataJson,
+      ...(wait === undefined
+        ? {}
+        : {
+          runWaitId: wait.runWaitId,
+          resumeAttachId: wait.resumeAttachId,
+        }),
+    },
   ))
 }
 
@@ -1878,7 +1952,7 @@ function actorInput(sequence: number, value: unknown): string {
   return JSON.stringify({
     value,
     record: {
-      id: `record-${sequence}`,
+      id: `019c10d5-a6f7-7af1-8f5f-bb97bcc0d${sequence.toString(16).padStart(3, "0")}`,
       sequence,
       created_at: "2026-07-22T00:00:00Z",
       source: { type: "external" },

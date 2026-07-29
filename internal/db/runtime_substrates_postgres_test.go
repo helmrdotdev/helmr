@@ -11,7 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/runtime"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -251,18 +250,18 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	sourceDigest := testDigest("authority-source-" + deploymentID.String())
 	imageDigest := testDigest("authority-image-" + deploymentID.String())
 	mustAuthorityExec(t, ctx, pool, `
-		INSERT INTO organizations (id, public_id, name, slug)
-		VALUES ($1, $2, 'Default', 'default')
+		INSERT INTO organizations (id, name, slug)
+		VALUES ($1, 'Default', 'default')
 		ON CONFLICT (id) DO NOTHING
-	`, orgID, testPublicID(t, publicid.Organization))
+	`, orgID)
 	mustAuthorityExec(t, ctx, pool, `
-		INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name)
-		VALUES ($1, $2, $3, $4, $5, 'Authority')
-	`, projectID, testPublicID(t, publicid.Project), orgID, dbtest.DefaultRegionID, "authority-"+shortUUID(projectID))
+		INSERT INTO projects (id, org_id, default_region_id, slug, name)
+		VALUES ($1, $2, $3, $4, 'Authority')
+	`, projectID, orgID, dbtest.DefaultRegionID, "authority-"+shortUUID(projectID))
 	mustAuthorityExec(t, ctx, pool, `
-		INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex)
-		VALUES ($1, $2, $3, $4, $5, 'Authority', '#3366ff')
-	`, environmentID, testEnvironmentPublicID(t), orgID, projectID, "authority-"+shortUUID(environmentID))
+		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
+		VALUES ($1, $2, $3, $4, 'Authority', '#3366ff')
+	`, environmentID, orgID, projectID, "authority-"+shortUUID(environmentID))
 	mustAuthorityExec(t, ctx, pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, 'application/octet-stream'), ($1, $3, 1, 'application/octet-stream')
@@ -275,18 +274,18 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	`, sourceArtifactID, imageArtifactID, orgID, projectID, environmentID, sourceDigest, imageDigest)
 	mustAuthorityExec(t, ctx, pool, `
 		INSERT INTO deployments (
-			id, public_id, org_id, build_region_id, project_id, environment_id,
+			id, org_id, build_region_id, project_id, environment_id,
 			build_node_version, build_runtime_digest, build_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
 			build_contract_version, version, content_hash, deployment_source_artifact_id,
 			queue_config, status
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, '24.16.0',
+			$1, $2, $3, $4, $5, '24.16.0',
 			decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
 			'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
-			'helmr.program-build.v0', 'authority', $7, $8, '{}'::jsonb, 'deployed'
+			'helmr.program-build.v0', 'authority', $6, $7, '{}'::jsonb, 'deployed'
 		)
-	`, deploymentID, testPublicID(t, publicid.Deployment), orgID, dbtest.DefaultRegionID,
+	`, deploymentID, orgID, dbtest.DefaultRegionID,
 		projectID, environmentID, sourceDigest, sourceArtifactID)
 	definitionID := uuid.Must(uuid.NewV7())
 	mustAuthorityExec(t, ctx, pool, `
@@ -311,23 +310,22 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO workspaces (
-			id, public_id, environment_id, region_id,
+			id, environment_id, region_id,
 			workspace_declared_id, deployment_definition_id, head_version_id
-		) VALUES ($1, $2, $3, $4, 'authority-workspace', $5, $6)
-	`, workspaceID, testWorkspacePublicID(t), environmentID,
-		dbtest.DefaultRegionID, definitionID, rootVersionID); err != nil {
+		) VALUES ($1, $2, $3, 'authority-workspace', $4, $5)
+	`, workspaceID, environmentID, dbtest.DefaultRegionID, definitionID, rootVersionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, public_id, environment_id, workspace_id,
+			id, environment_id, workspace_id,
 			kind, content_digest, state, ownership_generation, writer_generation, published_at
 		) VALUES (
-			$1, $2, $3, $4, 'system',
+			$1, $2, $3, 'system',
 			'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
 			'committed', 0, 0, now()
 		)
-	`, rootVersionID, testWorkspaceVersionPublicID(t), environmentID, workspaceID); err != nil {
+	`, rootVersionID, environmentID, workspaceID); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {

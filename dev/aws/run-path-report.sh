@@ -26,8 +26,8 @@ EOF
 fi
 
 run_id=$1
-if [ "${#run_id}" -ne 30 ] || [[ ! "${run_id}" =~ ^run_[a-z2-7]{26}$ ]]; then
-  echo "RUN_ID must be a canonical run_ public ID" >&2
+if [[ ! "${run_id}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+  echo "RUN_ID must be a canonical UUIDv7" >&2
   exit 2
 fi
 
@@ -104,7 +104,7 @@ BEGIN
   IF NOT EXISTS (
       SELECT 1
         FROM runs
-       WHERE public_id = '${run_id}'
+       WHERE id = '${run_id}'
   ) THEN
     RAISE EXCEPTION 'run ${run_id} not found';
   END IF;
@@ -113,7 +113,6 @@ END
 
 SELECT 'run' AS section,
        runs.id,
-       runs.public_id,
        runs.entrypoint_kind,
        runs.entrypoint_declared_id,
        runs.status,
@@ -129,7 +128,7 @@ SELECT 'run' AS section,
        runs.terminal_at,
        runs.terminal_reason_code
   FROM runs
- WHERE runs.public_id = '${run_id}';
+ WHERE runs.id = '${run_id}';
 
 SELECT 'run_lease' AS section,
        run_leases.id,
@@ -159,7 +158,7 @@ SELECT 'run_lease' AS section,
          THEN round(extract(epoch FROM run_leases.started_at - run_leases.assigned_at) * 1000)::bigint
        END AS assigned_to_started_ms
   FROM run_leases
- WHERE run_leases.run_id = (SELECT id FROM runs WHERE public_id = '${run_id}')
+ WHERE run_leases.run_id = (SELECT id FROM runs WHERE id = '${run_id}')
  ORDER BY run_leases.lease_sequence;
 
 SELECT 'run_wait' AS section,
@@ -186,7 +185,7 @@ SELECT 'run_wait' AS section,
        run_waits.suspension_terminal_at,
        run_waits.suspension_reason_code
   FROM run_waits
- WHERE run_waits.run_id = (SELECT id FROM runs WHERE public_id = '${run_id}')
+ WHERE run_waits.run_id = (SELECT id FROM runs WHERE id = '${run_id}')
  ORDER BY run_waits.created_at, run_waits.id;
 
 SELECT 'run_checkpoint' AS section,
@@ -206,7 +205,7 @@ SELECT 'run_checkpoint' AS section,
        run_checkpoints.expires_at,
        run_checkpoints.invalidation_reason_code
   FROM run_checkpoints
- WHERE run_checkpoints.run_id = (SELECT id FROM runs WHERE public_id = '${run_id}')
+ WHERE run_checkpoints.run_id = (SELECT id FROM runs WHERE id = '${run_id}')
  ORDER BY run_checkpoints.created_at, run_checkpoints.id;
 
 SELECT 'run_checkpoint_artifact' AS section,
@@ -221,7 +220,7 @@ SELECT 'run_checkpoint_artifact' AS section,
   FROM run_checkpoint_artifacts
   JOIN run_checkpoints ON run_checkpoints.id = run_checkpoint_artifacts.run_checkpoint_id
   JOIN artifacts ON artifacts.id = run_checkpoint_artifacts.artifact_id
- WHERE run_checkpoints.run_id = (SELECT id FROM runs WHERE public_id = '${run_id}')
+ WHERE run_checkpoints.run_id = (SELECT id FROM runs WHERE id = '${run_id}')
  ORDER BY run_checkpoint_artifacts.run_checkpoint_id,
           run_checkpoint_artifacts.role,
           run_checkpoint_artifacts.ordinal;
@@ -255,7 +254,7 @@ SELECT 'runtime_instance' AS section,
   FROM run_leases
   JOIN runtime_instances ON runtime_instances.org_id = run_leases.org_id
                         AND runtime_instances.id = run_leases.runtime_instance_id
- WHERE run_leases.run_id = (SELECT id FROM runs WHERE public_id = '${run_id}')
+ WHERE run_leases.run_id = (SELECT id FROM runs WHERE id = '${run_id}')
  ORDER BY run_leases.lease_sequence;
 
 SELECT 'network_slot' AS section,
@@ -275,7 +274,7 @@ SELECT 'network_slot' AS section,
        worker_network_slots.runtime_instance_id = run_leases.runtime_instance_id AS runtime_matches_lease
   FROM run_leases
   JOIN worker_network_slots ON worker_network_slots.id = run_leases.network_slot_id
- WHERE run_leases.run_id = (SELECT id FROM runs WHERE public_id = '${run_id}')
+ WHERE run_leases.run_id = (SELECT id FROM runs WHERE id = '${run_id}')
  ORDER BY run_leases.lease_sequence;
 
 SELECT 'workspace_mount' AS section,
@@ -302,7 +301,7 @@ SELECT 'workspace_mount' AS section,
   FROM run_leases
   JOIN workspace_mounts ON workspace_mounts.org_id = run_leases.org_id
                        AND workspace_mounts.runtime_instance_id = run_leases.runtime_instance_id
- WHERE run_leases.run_id = (SELECT id FROM runs WHERE public_id = '${run_id}')
+ WHERE run_leases.run_id = (SELECT id FROM runs WHERE id = '${run_id}')
  ORDER BY run_leases.lease_sequence, workspace_mounts.created_at;
 
 WITH lease_evidence AS MATERIALIZED (
@@ -319,7 +318,7 @@ WITH lease_evidence AS MATERIALIZED (
       FROM run_leases
       JOIN runtime_instances ON runtime_instances.org_id = run_leases.org_id
                             AND runtime_instances.id = run_leases.runtime_instance_id
-     WHERE run_leases.run_id = (SELECT id FROM runs WHERE public_id = '${run_id}')
+     WHERE run_leases.run_id = (SELECT id FROM runs WHERE id = '${run_id}')
 ),
 wait_evidence AS MATERIALIZED (
     SELECT bool_or(
@@ -332,7 +331,7 @@ wait_evidence AS MATERIALIZED (
                AND run_waits.resume_request_version > 0
            ) AS has_checkpoint_resume
       FROM run_waits
-     WHERE run_waits.run_id = (SELECT id FROM runs WHERE public_id = '${run_id}')
+     WHERE run_waits.run_id = (SELECT id FROM runs WHERE id = '${run_id}')
 )
 SELECT 'path_hints' AS section,
        lease_evidence.id AS run_lease_id,

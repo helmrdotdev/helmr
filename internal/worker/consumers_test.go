@@ -506,7 +506,7 @@ func TestBuildCleanupAmbiguityRetainsReservationAndTerminatesWorker(t *testing.T
 	}
 	resources := testCapacity(t, capabilities)
 	builder := &cleanupUnprovenTestBuilder{
-		owner: vm.Owner{Kind: vm.OwnerBuild, ID: "00000000-0000-0000-0000-000000000701"},
+		owner: vm.Owner{Kind: vm.OwnerBuild, ID: "019c10d5-a6f7-7af1-8f5f-000000000701"},
 	}
 	runner, err := NewRunner(
 		client,

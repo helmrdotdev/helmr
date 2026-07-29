@@ -23,7 +23,6 @@ WITH selected_definition AS (
 ), created_workspace AS (
     INSERT INTO workspaces (
         id,
-        public_id,
         environment_id,
         region_id,
         workspace_declared_id,
@@ -32,7 +31,6 @@ WITH selected_definition AS (
         key
     )
     SELECT sqlc.arg(id),
-           sqlc.arg(public_id),
            selected_definition.environment_id,
            selected_definition.default_region_id,
            selected_definition.workspace_declared_id,
@@ -44,7 +42,6 @@ WITH selected_definition AS (
 ), created_version AS (
     INSERT INTO workspace_versions (
         id,
-        public_id,
         environment_id,
         workspace_id,
         kind,
@@ -57,7 +54,6 @@ WITH selected_definition AS (
         published_at
     )
     SELECT sqlc.arg(initial_version_id),
-           sqlc.arg(initial_version_public_id),
            created_workspace.environment_id,
            created_workspace.id,
            'system'::workspace_version_kind,
@@ -113,16 +109,6 @@ SELECT workspaces.*
    AND workspaces.id = sqlc.arg(id)
    AND workspaces.deleted_at IS NULL;
 
--- name: GetWorkspaceByPublicID :one
-SELECT workspaces.*
-  FROM workspaces
-  JOIN environments ON environments.id = workspaces.environment_id
- WHERE environments.org_id = sqlc.arg(org_id)
-   AND environments.project_id = sqlc.arg(project_id)
-   AND workspaces.environment_id = sqlc.arg(environment_id)
-   AND workspaces.public_id = sqlc.arg(public_id)
-   AND workspaces.deleted_at IS NULL;
-
 -- name: GetWorkspaceByDeclaredIDAndKey :one
 SELECT workspaces.*
   FROM workspaces
@@ -159,11 +145,11 @@ SELECT workspaces.id
    AND workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.deleted_at IS NULL
    AND (
-       (sqlc.narg(public_id)::text IS NOT NULL
+       (sqlc.narg(id)::uuid IS NOT NULL
         AND sqlc.narg(key)::text IS NULL
-        AND workspaces.public_id = sqlc.narg(public_id)::text)
+        AND workspaces.id = sqlc.narg(id)::uuid)
        OR
-       (sqlc.narg(public_id)::text IS NULL
+       (sqlc.narg(id)::uuid IS NULL
         AND sqlc.narg(key)::text IS NOT NULL
         AND workspaces.key = sqlc.narg(key)::text)
    );
@@ -227,7 +213,7 @@ SELECT workspaces.*,
  WHERE environments.org_id = sqlc.arg(org_id)
    AND environments.project_id = sqlc.arg(project_id)
    AND workspaces.environment_id = sqlc.arg(environment_id)
-   AND workspaces.public_id = sqlc.arg(public_id)
+   AND workspaces.id = sqlc.arg(id)
    AND workspaces.state <> 'deleted'
  FOR UPDATE OF workspaces;
 

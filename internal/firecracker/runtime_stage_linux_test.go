@@ -15,7 +15,7 @@ import (
 func TestPrepareRuntimePublishesVerifiedCorpus(t *testing.T) {
 	cfg, manifest := writeRuntimeArtifactFixture(t)
 	workDir := t.TempDir()
-	epoch := uuid.NewString()
+	epoch := uuid.Must(uuid.NewV7()).String()
 
 	stage, err := PrepareRuntime(filepath.Dir(cfg.RootfsPath), workDir, epoch)
 	if err != nil {
@@ -58,7 +58,7 @@ func TestPrepareRuntimeRejectsSymlink(t *testing.T) {
 	if err := os.Symlink(target, cfg.KernelPath); err != nil {
 		t.Fatal(err)
 	}
-	_, err := PrepareRuntime(filepath.Dir(cfg.RootfsPath), t.TempDir(), uuid.NewString())
+	_, err := PrepareRuntime(filepath.Dir(cfg.RootfsPath), t.TempDir(), uuid.Must(uuid.NewV7()).String())
 	if err == nil || !strings.Contains(err.Error(), "open runtime artifacts kernel") {
 		t.Fatalf("error = %v", err)
 	}
@@ -70,7 +70,7 @@ func TestPrepareRuntimeRejectsSymlinkedDirectory(t *testing.T) {
 	if err := os.Symlink(filepath.Dir(cfg.RootfsPath), link); err != nil {
 		t.Fatal(err)
 	}
-	_, err := PrepareRuntime(link, t.TempDir(), uuid.NewString())
+	_, err := PrepareRuntime(link, t.TempDir(), uuid.Must(uuid.NewV7()).String())
 	if err == nil || !strings.Contains(err.Error(), "open runtime source directory") {
 		t.Fatalf("error = %v", err)
 	}
@@ -81,7 +81,7 @@ func TestPrepareRuntimeRejectsDigestMismatch(t *testing.T) {
 	if err := os.WriteFile(cfg.RootfsPath, []byte("other!"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := PrepareRuntime(filepath.Dir(cfg.RootfsPath), t.TempDir(), uuid.NewString())
+	_, err := PrepareRuntime(filepath.Dir(cfg.RootfsPath), t.TempDir(), uuid.Must(uuid.NewV7()).String())
 	if err == nil || !strings.Contains(err.Error(), "source digest does not match manifest") {
 		t.Fatalf("error = %v", err)
 	}
@@ -89,8 +89,8 @@ func TestPrepareRuntimeRejectsDigestMismatch(t *testing.T) {
 
 func TestCleanRuntimesRetainsCurrentEpoch(t *testing.T) {
 	workDir := t.TempDir()
-	keep := filepath.Join(workDir, runtimeStagePrefix+uuid.NewString())
-	stale := filepath.Join(workDir, runtimeStagePrefix+uuid.NewString())
+	keep := filepath.Join(workDir, runtimeStagePrefix+uuid.Must(uuid.NewV7()).String())
+	stale := filepath.Join(workDir, runtimeStagePrefix+uuid.Must(uuid.NewV7()).String())
 	partial := filepath.Join(workDir, "."+runtimeStagePrefix+"partial")
 	for _, path := range []string{keep, stale, partial} {
 		if err := os.Mkdir(path, 0o700); err != nil {

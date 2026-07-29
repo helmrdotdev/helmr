@@ -470,7 +470,7 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 		ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 	}
 	send := &runv0.ActorInputSendRequested{
-		CorrelationId: "00000000-0000-0000-0000-000000000111",
+		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000111",
 		DeclaredId:    "mailbox",
 		Address: &runv0.ActorInputSendRequested_ActorKey{
 			ActorKey: "primary",
@@ -559,7 +559,7 @@ func TestFreshProgramDispatchesActorOutputAppend(t *testing.T) {
 		ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 	}
 	requested := &runv0.ActorOutputAppendRequested{
-		CorrelationId: "00000000-0000-0000-0000-000000000112",
+		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000112",
 		DataJson:      `{"status":"working"}`,
 		ContentType:   "application/json",
 	}

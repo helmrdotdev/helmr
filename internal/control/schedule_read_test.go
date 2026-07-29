@@ -11,7 +11,7 @@ func TestScheduleListCursorRoundTripAndScope(t *testing.T) {
 		ProjectID:      "project-1",
 		EnvironmentID:  "environment-1",
 		TaskDeclaredID: "scheduled-maintenance",
-		ScheduleID:     "sch_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ScheduleID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +31,7 @@ func TestScheduleListCursorRoundTripAndScope(t *testing.T) {
 	}
 	if limit != 25 || cursor == nil ||
 		cursor.TaskDeclaredID != "scheduled-maintenance" ||
-		cursor.ScheduleID != "sch_aaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		cursor.ScheduleID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36" {
 		t.Fatalf("limit=%d cursor=%+v", limit, cursor)
 	}
 	if _, _, err := parseScheduleListQuery(

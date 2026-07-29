@@ -36,6 +36,7 @@ type WaitRequest struct {
 	Lease                         api.WorkerRunLease
 	LeaseReceipt                  api.WorkerRunLeaseReceipt
 	CorrelationID                 string
+	RunWaitID                     string
 	ResumeAttachID                string
 	Kind                          api.WorkerRunWaitKind
 	Params                        json.RawMessage

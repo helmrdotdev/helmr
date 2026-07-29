@@ -14,8 +14,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -304,7 +304,7 @@ func actorOutputRecordFromReceipt(
 	if err := json.Unmarshal(claim.Receipt, &receipt); err != nil {
 		return db.ActorRecord{}, err
 	}
-	recordID, err := uuid.Parse(receipt.RecordID)
+	recordID, err := ids.Parse(receipt.RecordID)
 	if err != nil || recordID == uuid.Nil || receipt.Sequence <= 0 || receipt.Sequence > maxActorOutputSequence {
 		return db.ActorRecord{}, errActorOutputAppendConflict
 	}
@@ -341,8 +341,7 @@ func projectAppendedActorOutput(
 	if err != nil {
 		return api.ActorOutputRecord{}, errActorOutputAppendConflict
 	}
-	recordID, err := publicid.EncodeActorRecord(recordUUID)
-	if err != nil {
+	if ids.Validate(recordUUID.String()) != nil {
 		return api.ActorOutputRecord{}, errActorOutputAppendConflict
 	}
 	if record.Direction != "output" ||
@@ -362,24 +361,20 @@ func projectAppendedActorOutput(
 	if err != nil || run.ActorID != record.ActorID {
 		return api.ActorOutputRecord{}, errActorOutputAppendConflict
 	}
-	deployment, err := q.GetDeployment(ctx, db.GetDeploymentParams{
-		OrgID: run.OrgID, ProjectID: run.ProjectID, EnvironmentID: run.EnvironmentID, ID: run.DeploymentID,
-	})
-	if err != nil {
-		return api.ActorOutputRecord{}, err
-	}
-	if err := publicid.ValidateFor(publicid.Run, run.PublicID); err != nil {
+	runID := pgvalue.UUIDString(run.ID)
+	deploymentID := pgvalue.UUIDString(run.DeploymentID)
+	if ids.Validate(runID) != nil {
 		return api.ActorOutputRecord{}, errActorOutputAppendConflict
 	}
-	if err := publicid.ValidateFor(publicid.Deployment, deployment.PublicID); err != nil {
+	if ids.Validate(deploymentID) != nil {
 		return api.ActorOutputRecord{}, errActorOutputAppendConflict
 	}
 	return api.ActorOutputRecord{
-		ID: recordID, Sequence: record.Sequence, Data: append(json.RawMessage(nil), record.Data...),
+		ID: recordUUID.String(), Sequence: record.Sequence, Data: append(json.RawMessage(nil), record.Data...),
 		ContentType: record.ContentType, CreatedAt: record.CreatedAt.Time.UTC(),
 		Provenance: api.ActorOutputProvenance{
-			RunID: run.PublicID, AttemptNumber: record.ProducerAttemptNumber.Int32,
-			DeploymentID: deployment.PublicID,
+			RunID: runID, AttemptNumber: record.ProducerAttemptNumber.Int32,
+			DeploymentID: deploymentID,
 		},
 	}, nil
 }

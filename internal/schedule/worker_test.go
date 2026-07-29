@@ -42,7 +42,6 @@ func TestWorkerBindsPendingWorkspaceBeforeClaiming(t *testing.T) {
 	store := &workerStore{
 		pending: []db.ListPendingScheduleBindingsRow{{
 			ID:                  scheduleID,
-			PublicID:            "sch_abcdefghijklmnopqrstuvwxyz",
 			EnvironmentID:       environmentID,
 			WorkspaceRefKey:     pgvalue.Text("scheduler"),
 			CronPattern:         "*/5 * * * *",
@@ -147,7 +146,6 @@ func TestTruncateUTF8SuppliesValidNonemptyDiagnostic(t *testing.T) {
 func scheduleAt(at time.Time) db.Schedule {
 	return db.Schedule{
 		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		PublicID:             "sch_abcdefghijklmnopqrstuvwxyz",
 		EnvironmentID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		CronPattern:          "0 9 * * *",
 		Timezone:             "Asia/Tokyo",

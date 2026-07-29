@@ -24,7 +24,7 @@ func (a *actorAddressFlags) add(cmd *cobra.Command) {
 
 func (a actorAddressFlags) reference() (api.ActorReference, error) {
 	reference := api.ActorReference{
-		ActorID:  strings.TrimSpace(a.id),
+		ActorID:  a.id,
 		ActorKey: a.key,
 	}
 	if (reference.ActorID == "") == (reference.ActorKey == "") {
@@ -93,9 +93,11 @@ func actorStartCommand() *cobra.Command {
 					return fmt.Errorf("parse --retry: %w", err)
 				}
 			}
-			workspaceID = strings.TrimSpace(workspaceID)
 			if workspaceID == "" {
 				return errors.New("--workspace is required")
+			}
+			if err := api.ValidateWorkspaceID(workspaceID); err != nil {
+				return err
 			}
 			var actorKey *string
 			if cmd.Flags().Changed("key") {

@@ -2,11 +2,10 @@ package control
 
 import (
 	"errors"
-	"strings"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -34,9 +33,9 @@ func parseRunStartArm(request api.WorkerRunStartRequest) (runStartArm, error) {
 		values := []string{runWait, checkpoint, attach}
 		parsed := make([]pgtype.UUID, len(values))
 		for index, raw := range values {
-			value, err := uuid.Parse(strings.TrimSpace(raw))
+			value, err := ids.Parse(raw)
 			if err != nil {
-				return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("Run start arm IDs must be UUIDs")
+				return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("Run start arm IDs must be canonical UUIDv7 values")
 			}
 			parsed[index] = pgvalue.UUID(value)
 		}

@@ -12,8 +12,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 )
 
 var (
@@ -158,7 +158,7 @@ func ValidateActorOperationRequest(request ActorOperationRequest) error {
 		return errors.New("exactly one of actor_id or actor_key is required")
 	}
 	if hasID {
-		return ValidateActorPublicID(request.ActorID)
+		return ValidateActorID(request.ActorID)
 	}
 	return ValidateActorKey(request.ActorKey)
 }
@@ -170,7 +170,7 @@ func ValidateActorReference(reference ActorReference) error {
 		return errors.New("exactly one of actor_id or actor_key is required")
 	}
 	if hasID {
-		return ValidateActorPublicID(reference.ActorID)
+		return ValidateActorID(reference.ActorID)
 	}
 	return ValidateActorKey(reference.ActorKey)
 }
@@ -182,15 +182,15 @@ func ValidateActorDeclaredID(id string) error {
 	return nil
 }
 
-func ValidateActorPublicID(id string) error {
-	if err := publicid.ValidateFor(publicid.Actor, id); err != nil {
+func ValidateActorID(id string) error {
+	if err := ids.Validate(id); err != nil {
 		return fmt.Errorf("invalid actor ID: %w", err)
 	}
 	return nil
 }
 
-func ValidateWorkspacePublicID(id string) error {
-	if err := publicid.ValidateFor(publicid.Workspace, id); err != nil {
+func ValidateWorkspaceID(id string) error {
+	if err := ids.Validate(id); err != nil {
 		return fmt.Errorf("invalid Workspace ID: %w", err)
 	}
 	return nil
@@ -232,7 +232,7 @@ func ValidateSendActorInputRequest(request SendActorInputRequest) error {
 		return errors.New("exactly one of actor_id or actor_key is required")
 	}
 	if hasID {
-		if err := ValidateActorPublicID(request.ActorID); err != nil {
+		if err := ValidateActorID(request.ActorID); err != nil {
 			return err
 		}
 	} else if err := ValidateActorKey(request.ActorKey); err != nil {
@@ -302,7 +302,7 @@ func ValidateWorkspaceTarget(workspace WorkspaceTarget) error {
 		return errors.New("workspace must contain exactly one of id or key")
 	}
 	if hasWorkspaceID {
-		if err := ValidateWorkspacePublicID(*workspace.ID); err != nil {
+		if err := ValidateWorkspaceID(*workspace.ID); err != nil {
 			return err
 		}
 	} else if err := ValidateWorkspaceKey(*workspace.Key); err != nil {

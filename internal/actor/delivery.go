@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/outbox"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -219,13 +220,13 @@ func decodeActorInputReconcilePayload(raw []byte) (actorInputReconcilePayload, e
 		return actorInputReconcilePayload{}, errors.New("Actor input reconciliation payload contains a trailing JSON value")
 	}
 	var err error
-	if value.environmentID, err = uuid.Parse(value.EnvironmentID); err != nil {
+	if value.environmentID, err = ids.Parse(value.EnvironmentID); err != nil {
 		return actorInputReconcilePayload{}, errors.New("Actor input reconciliation environmentId is invalid")
 	}
-	if value.actorID, err = uuid.Parse(value.ActorID); err != nil {
+	if value.actorID, err = ids.Parse(value.ActorID); err != nil {
 		return actorInputReconcilePayload{}, errors.New("Actor input reconciliation actorId is invalid")
 	}
-	if value.recordID, err = uuid.Parse(value.RecordID); err != nil {
+	if value.recordID, err = ids.Parse(value.RecordID); err != nil {
 		return actorInputReconcilePayload{}, errors.New("Actor input reconciliation recordId is invalid")
 	}
 	return value, nil
@@ -253,12 +254,12 @@ func decodeActorCloseReconcilePayload(
 		)
 	}
 	var err error
-	if value.environmentID, err = uuid.Parse(value.EnvironmentID); err != nil {
+	if value.environmentID, err = ids.Parse(value.EnvironmentID); err != nil {
 		return actorCloseReconcilePayload{}, errors.New(
 			"Actor close reconciliation environmentId is invalid",
 		)
 	}
-	if value.actorID, err = uuid.Parse(value.ActorID); err != nil {
+	if value.actorID, err = ids.Parse(value.ActorID); err != nil {
 		return actorCloseReconcilePayload{}, errors.New(
 			"Actor close reconciliation actorId is invalid",
 		)

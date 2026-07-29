@@ -148,15 +148,29 @@ func TestActorInputWaitIdleTimeoutReadsFullImmutableManifest(t *testing.T) {
 	}
 }
 
-func TestDerivedRunWaitIDBindsAttemptIdentity(t *testing.T) {
-	runID := uuid.Must(uuid.NewV7())
-	correlationID := uuid.Must(uuid.NewV7())
-	first := derivedRunWaitID(runID, 1, correlationID, "wait")
-	if replay := derivedRunWaitID(runID, 1, correlationID, "wait"); replay != first {
-		t.Fatalf("same Attempt replay ID = %s, want %s", replay, first)
+func TestParseRequestedRunWaitIdentity(t *testing.T) {
+	request := api.WorkerCreateRunWaitRequest{
+		CorrelationID:  uuid.Must(uuid.NewV7()).String(),
+		RunWaitID:      uuid.Must(uuid.NewV7()).String(),
+		ResumeAttachID: uuid.Must(uuid.NewV7()).String(),
 	}
-	if retry := derivedRunWaitID(runID, 2, correlationID, "wait"); retry == first {
-		t.Fatal("retry Attempt reused the prior Run Wait ID")
+	identity, err := parseRequestedRunWaitIdentity(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.correlationID.String() != request.CorrelationID ||
+		identity.waitID.String() != request.RunWaitID ||
+		identity.resumeAttachID.String() != request.ResumeAttachID {
+		t.Fatalf("identity = %+v", identity)
+	}
+	for _, invalid := range []api.WorkerCreateRunWaitRequest{
+		{CorrelationID: uuid.New().String(), RunWaitID: request.RunWaitID, ResumeAttachID: request.ResumeAttachID},
+		{CorrelationID: request.CorrelationID, RunWaitID: " " + request.RunWaitID, ResumeAttachID: request.ResumeAttachID},
+		{CorrelationID: request.CorrelationID, RunWaitID: request.RunWaitID, ResumeAttachID: request.RunWaitID},
+	} {
+		if _, err := parseRequestedRunWaitIdentity(invalid); err == nil {
+			t.Fatalf("invalid identity accepted: %+v", invalid)
+		}
 	}
 }
 

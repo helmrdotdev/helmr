@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -527,13 +526,8 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 	for range 2 {
 		go func() {
 			start.Wait()
-			publicIDValue, err := publicid.New(publicid.Run)
-			if err != nil {
-				results <- result{err: err}
-				return
-			}
 			run, err := fixture.queries.CreateActorContinuationRun(ctx, CreateActorContinuationRunParams{
-				RunID: pgvalue.UUID(uuid.Must(uuid.NewV7())), PublicID: publicIDValue,
+				RunID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				QueueOriginAt: pgvalue.Timestamptz(time.Now().UTC()),
 				TraceID:       pgvalue.Text("11111111111111111111111111111111"), RootSpanID: "2222222222222222",
 				EnvironmentID: pgvalue.UUID(fixture.environmentID), ActorID: pgvalue.UUID(actorID),

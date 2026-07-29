@@ -14,8 +14,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
@@ -70,19 +70,15 @@ type actorStartRequest struct {
 
 type actorStartResult struct {
 	ActorID         uuid.UUID
-	ActorPublicID   string
 	InitialRecordID *uuid.UUID
 	BootRunID       uuid.UUID
-	BootRunPublicID string
 	Replayed        bool
 }
 
 type actorStartReceipt struct {
 	ActorID         string  `json:"actorId"`
-	ActorPublicID   string  `json:"actorPublicId"`
 	InitialRecordID *string `json:"initialRecordId,omitempty"`
 	BootRunID       string  `json:"bootRunId"`
-	BootRunPublicID string  `json:"bootRunPublicId"`
 }
 
 type normalizedActorStart struct {
@@ -159,11 +155,19 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		if err != nil {
 			return fmt.Errorf("lock Actor start deployment authority: %w", err)
 		}
+		var addressedWorkspaceID pgtype.UUID
+		if normalized.Workspace.ID != nil {
+			parsed, err := ids.Parse(*normalized.Workspace.ID)
+			if err != nil {
+				return errActorStartWorkspaceNotFound
+			}
+			addressedWorkspaceID = pgvalue.UUID(parsed)
+		}
 		workspaceID, err := work.q.ResolveWorkspaceTarget(ctx, db.ResolveWorkspaceTargetParams{
 			OrgID:         pgvalue.UUID(normalized.OrgID),
 			ProjectID:     pgvalue.UUID(normalized.ProjectID),
 			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
-			PublicID:      pgvalue.TextPtr(normalized.Workspace.ID),
+			ID:            addressedWorkspaceID,
 			Key:           pgvalue.TextPtr(normalized.Workspace.Key),
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -252,14 +256,6 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		}
 		actorID := uuid.Must(uuid.NewV7())
 		runID := uuid.Must(uuid.NewV7())
-		actorPublicID, err := publicid.New(publicid.Actor)
-		if err != nil {
-			return err
-		}
-		runPublicID, err := publicid.New(publicid.Run)
-		if err != nil {
-			return err
-		}
 		rootSpanID, err := tracing.NewSpanID()
 		if err != nil {
 			return err
@@ -269,7 +265,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			claimID = claim.ID
 		}
 		_, err = work.q.CreateActor(ctx, db.CreateActorParams{
-			ID: pgvalue.UUID(actorID), PublicID: actorPublicID,
+			ID:    pgvalue.UUID(actorID),
 			OrgID: pgvalue.UUID(normalized.OrgID), ProjectID: pgvalue.UUID(normalized.ProjectID),
 			Key: pgvalue.TextPtr(normalized.Key), RunQueueName: runAuthority.QueueName,
 			RunConcurrencyKey:        pgvalue.TextPtr(normalized.ManagedConcurrencyKey),
@@ -309,7 +305,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		run, err := work.q.CreateActorStartRun(ctx, db.CreateActorStartRunParams{
 			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID), ActorID: pgvalue.UUID(actorID),
 			WorkspaceID: authority.ID, ClaimID: claimID,
-			ID: pgvalue.UUID(runID), PublicID: runPublicID,
+			ID:                     pgvalue.UUID(runID),
 			BaseWorkspaceVersionID: authority.HeadVersionID,
 			InputHighWatermark:     pgtype.Int8{Int64: inputHighWatermark, Valid: true},
 			RootSpanID:             rootSpanID,
@@ -345,8 +341,8 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			return fmt.Errorf("create Actor boot Run admission outbox: %w", err)
 		}
 		result = actorStartResult{
-			ActorID: actorID, ActorPublicID: actorPublicID, InitialRecordID: initialRecordID,
-			BootRunID: runID, BootRunPublicID: runPublicID,
+			ActorID: actorID, InitialRecordID: initialRecordID,
+			BootRunID: runID,
 		}
 		if claim != nil {
 			receipt, err := json.Marshal(actorStartReceiptFromResult(result))
@@ -516,8 +512,8 @@ func stringPtrValue(value *string) string {
 
 func actorStartReceiptFromResult(result actorStartResult) actorStartReceipt {
 	receipt := actorStartReceipt{
-		ActorID: result.ActorID.String(), ActorPublicID: result.ActorPublicID,
-		BootRunID: result.BootRunID.String(), BootRunPublicID: result.BootRunPublicID,
+		ActorID:   result.ActorID.String(),
+		BootRunID: result.BootRunID.String(),
 	}
 	if result.InitialRecordID != nil {
 		value := result.InitialRecordID.String()
@@ -531,24 +527,24 @@ func actorStartResultFromReceipt(raw []byte) (actorStartResult, error) {
 	if err := json.Unmarshal(raw, &receipt); err != nil {
 		return actorStartResult{}, errActorStartIdempotencyReceipt
 	}
-	actorID, err := uuid.Parse(receipt.ActorID)
-	if err != nil || publicid.ValidateFor(publicid.Actor, receipt.ActorPublicID) != nil {
+	actorID, err := ids.Parse(receipt.ActorID)
+	if err != nil {
 		return actorStartResult{}, errActorStartIdempotencyReceipt
 	}
-	runID, err := uuid.Parse(receipt.BootRunID)
-	if err != nil || publicid.ValidateFor(publicid.Run, receipt.BootRunPublicID) != nil {
+	runID, err := ids.Parse(receipt.BootRunID)
+	if err != nil {
 		return actorStartResult{}, errActorStartIdempotencyReceipt
 	}
 	var initialRecordID *uuid.UUID
 	if receipt.InitialRecordID != nil {
-		value, err := uuid.Parse(*receipt.InitialRecordID)
+		value, err := ids.Parse(*receipt.InitialRecordID)
 		if err != nil {
 			return actorStartResult{}, errActorStartIdempotencyReceipt
 		}
 		initialRecordID = &value
 	}
 	return actorStartResult{
-		ActorID: actorID, ActorPublicID: receipt.ActorPublicID,
-		InitialRecordID: initialRecordID, BootRunID: runID, BootRunPublicID: receipt.BootRunPublicID,
+		ActorID:         actorID,
+		InitialRecordID: initialRecordID, BootRunID: runID,
 	}, nil
 }

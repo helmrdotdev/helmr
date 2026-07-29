@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -122,7 +123,7 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, api.WorkerStartActorResponse{
 		CorrelationID: request.CorrelationID,
 		Completed: &api.StartActorResponse{
-			ActorID: result.ActorPublicID, RunID: result.BootRunPublicID,
+			ActorID: result.ActorID.String(), RunID: result.BootRunID.String(),
 		},
 	})
 }
@@ -230,7 +231,7 @@ func (s *Server) workerCloseActor(w http.ResponseWriter, r *http.Request) {
 	workspaceID, _ := pgvalue.UUIDValue(actor.WorkspaceID)
 	receipt, err := s.closeActor(r.Context(), actorCloseRequest{
 		EnvironmentID: environmentID, ActorID: actorID,
-		ActorPublicID: actor.PublicID, WorkspaceID: workspaceID,
+		WorkspaceID:    workspaceID,
 		IdempotencyKey: idempotencyKey,
 		Authorize: func(ctx context.Context, q db.Querier) error {
 			_, err := authorizeWorkerRunSource(ctx, q, worker, request.Lease)
@@ -338,7 +339,15 @@ func parseWorkerActorReference(
 	}); err != nil {
 		return actorReadAddress{}, err
 	}
-	return actorReadAddress{publicID: request.ActorID, key: request.ActorKey}, nil
+	var actorID pgtype.UUID
+	if request.ActorID != "" {
+		id, err := ids.Parse(request.ActorID)
+		if err != nil {
+			return actorReadAddress{}, err
+		}
+		actorID = pgvalue.UUID(id)
+	}
+	return actorReadAddress{id: actorID, key: request.ActorKey}, nil
 }
 
 func resolveActorAddress(
@@ -348,10 +357,10 @@ func resolveActorAddress(
 	actorDeclaredID string,
 	address actorReadAddress,
 ) (db.Actor, error) {
-	if address.publicID != "" {
-		return store.GetActorByPublicID(ctx, db.GetActorByPublicIDParams{
+	if address.id.Valid {
+		return store.GetActorByAddressID(ctx, db.GetActorByAddressIDParams{
 			EnvironmentID: environmentID, ActorDeclaredID: actorDeclaredID,
-			PublicID: address.publicID,
+			ID: address.id,
 		})
 	}
 	return store.GetActorByKey(ctx, db.GetActorByKeyParams{

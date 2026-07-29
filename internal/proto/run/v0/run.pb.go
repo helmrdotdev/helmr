@@ -4041,6 +4041,8 @@ type RunWaitRequested struct {
 	MetadataJson                  *string                `protobuf:"bytes,4,opt,name=metadata_json,json=metadataJson,proto3,oneof" json:"metadata_json,omitempty"`
 	TimeoutMs                     *uint64                `protobuf:"varint,5,opt,name=timeout_ms,json=timeoutMs,proto3,oneof" json:"timeout_ms,omitempty"`
 	Tags                          []string               `protobuf:"bytes,6,rep,name=tags,proto3" json:"tags,omitempty"`
+	RunWaitId                     string                 `protobuf:"bytes,7,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
+	ResumeAttachId                string                 `protobuf:"bytes,8,opt,name=resume_attach_id,json=resumeAttachId,proto3" json:"resume_attach_id,omitempty"`
 	IdleTimeoutMs                 *uint64                `protobuf:"varint,9,opt,name=idle_timeout_ms,json=idleTimeoutMs,proto3,oneof" json:"idle_timeout_ms,omitempty"`
 	ActorSpeculativeInputSequence *int64                 `protobuf:"varint,10,opt,name=actor_speculative_input_sequence,json=actorSpeculativeInputSequence,proto3,oneof" json:"actor_speculative_input_sequence,omitempty"`
 	unknownFields                 protoimpl.UnknownFields
@@ -4117,6 +4119,20 @@ func (x *RunWaitRequested) GetTags() []string {
 		return x.Tags
 	}
 	return nil
+}
+
+func (x *RunWaitRequested) GetRunWaitId() string {
+	if x != nil {
+		return x.RunWaitId
+	}
+	return ""
+}
+
+func (x *RunWaitRequested) GetResumeAttachId() string {
+	if x != nil {
+		return x.ResumeAttachId
+	}
+	return ""
 }
 
 func (x *RunWaitRequested) GetIdleTimeoutMs() uint64 {
@@ -4220,6 +4236,8 @@ type TaskChildInvokeRequested struct {
 	OptionsJson                   string                 `protobuf:"bytes,7,opt,name=options_json,json=optionsJson,proto3" json:"options_json,omitempty"`
 	IdempotencyKey                *string                `protobuf:"bytes,8,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
 	ActorSpeculativeInputSequence *int64                 `protobuf:"varint,9,opt,name=actor_speculative_input_sequence,json=actorSpeculativeInputSequence,proto3,oneof" json:"actor_speculative_input_sequence,omitempty"`
+	RunWaitId                     string                 `protobuf:"bytes,10,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
+	ResumeAttachId                string                 `protobuf:"bytes,11,opt,name=resume_attach_id,json=resumeAttachId,proto3" json:"resume_attach_id,omitempty"`
 	unknownFields                 protoimpl.UnknownFields
 	sizeCache                     protoimpl.SizeCache
 }
@@ -4315,6 +4333,20 @@ func (x *TaskChildInvokeRequested) GetActorSpeculativeInputSequence() int64 {
 		return *x.ActorSpeculativeInputSequence
 	}
 	return 0
+}
+
+func (x *TaskChildInvokeRequested) GetRunWaitId() string {
+	if x != nil {
+		return x.RunWaitId
+	}
+	return ""
+}
+
+func (x *TaskChildInvokeRequested) GetResumeAttachId() string {
+	if x != nil {
+		return x.ResumeAttachId
+	}
+	return ""
 }
 
 type CheckpointPauseRequest struct {
@@ -5374,7 +5406,7 @@ const file_run_proto_rawDesc = "" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12%\n" +
 	"\x0eattempt_number\x18\x02 \x01(\rR\rattemptNumber\x12 \n" +
 	"\frun_lease_id\x18\x03 \x01(\tR\n" +
-	"runLeaseId\"\xb1\x03\n" +
+	"runLeaseId\"\xef\x03\n" +
 	"\x10RunWaitRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x1f\n" +
@@ -5383,14 +5415,16 @@ const file_run_proto_rawDesc = "" +
 	"\rmetadata_json\x18\x04 \x01(\tH\x00R\fmetadataJson\x88\x01\x01\x12\"\n" +
 	"\n" +
 	"timeout_ms\x18\x05 \x01(\x04H\x01R\ttimeoutMs\x88\x01\x01\x12\x12\n" +
-	"\x04tags\x18\x06 \x03(\tR\x04tags\x12+\n" +
+	"\x04tags\x18\x06 \x03(\tR\x04tags\x12\x1e\n" +
+	"\vrun_wait_id\x18\a \x01(\tR\trunWaitId\x12(\n" +
+	"\x10resume_attach_id\x18\b \x01(\tR\x0eresumeAttachId\x12+\n" +
 	"\x0fidle_timeout_ms\x18\t \x01(\x04H\x02R\ridleTimeoutMs\x88\x01\x01\x12L\n" +
 	" actor_speculative_input_sequence\x18\n" +
 	" \x01(\x03H\x03R\x1dactorSpeculativeInputSequence\x88\x01\x01B\x10\n" +
 	"\x0e_metadata_jsonB\r\n" +
 	"\v_timeout_msB\x12\n" +
 	"\x10_idle_timeout_msB#\n" +
-	"!_actor_speculative_input_sequenceJ\x04\b\a\x10\bJ\x04\b\b\x10\t\"\x82\x02\n" +
+	"!_actor_speculative_input_sequence\"\x82\x02\n" +
 	"\x14TokenCreateRequested\x12\"\n" +
 	"\n" +
 	"timeout_ms\x18\x01 \x01(\x04H\x00R\ttimeoutMs\x88\x01\x01\x12%\n" +
@@ -5400,7 +5434,7 @@ const file_run_proto_rawDesc = "" +
 	"\rmetadata_json\x18\x05 \x01(\tH\x02R\fmetadataJson\x88\x01\x01B\r\n" +
 	"\v_timeout_msB\x12\n" +
 	"\x10_idempotency_keyB\x10\n" +
-	"\x0e_metadata_json\"\xdb\x03\n" +
+	"\x0e_metadata_json\"\xa5\x04\n" +
 	"\x18TaskChildInvokeRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1f\n" +
 	"\vdeclared_id\x18\x02 \x01(\tR\n" +
@@ -5411,7 +5445,10 @@ const file_run_proto_rawDesc = "" +
 	"\x0eworkspace_json\x18\x06 \x01(\tR\rworkspaceJson\x12!\n" +
 	"\foptions_json\x18\a \x01(\tR\voptionsJson\x12,\n" +
 	"\x0fidempotency_key\x18\b \x01(\tH\x01R\x0eidempotencyKey\x88\x01\x01\x12L\n" +
-	" actor_speculative_input_sequence\x18\t \x01(\x03H\x02R\x1dactorSpeculativeInputSequence\x88\x01\x01B\x0f\n" +
+	" actor_speculative_input_sequence\x18\t \x01(\x03H\x02R\x1dactorSpeculativeInputSequence\x88\x01\x01\x12\x1e\n" +
+	"\vrun_wait_id\x18\n" +
+	" \x01(\tR\trunWaitId\x12(\n" +
+	"\x10resume_attach_id\x18\v \x01(\tR\x0eresumeAttachIdB\x0f\n" +
 	"\r_payload_jsonB\x12\n" +
 	"\x10_idempotency_keyB#\n" +
 	"!_actor_speculative_input_sequence\"\xf9\x02\n" +

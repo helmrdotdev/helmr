@@ -15,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -44,21 +43,18 @@ func TestActorOutputReadUsesStableValidationCodes(t *testing.T) {
 }
 
 func TestParseActorOutputReadRequest(t *testing.T) {
-	actorID, err := publicid.New(publicid.Actor)
-	if err != nil {
-		t.Fatal(err)
-	}
+	actorID := uuid.Must(uuid.NewV7())
 	maxAfter := int64(1<<53 - 1)
 	request := httptest.NewRequest(
 		"GET",
-		"/?actor_id="+actorID+"&after=9007199254740991&limit=100",
+		"/?actor_id="+actorID.String()+"&after=9007199254740991&limit=100",
 		nil,
 	)
 	parsed, err := parseActorOutputReadRequest(request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.address.publicID != actorID ||
+	if parsed.address.id != pgvalue.UUID(actorID) ||
 		parsed.after == nil ||
 		*parsed.after != maxAfter ||
 		parsed.limit != actorOutputReadMaxLimit {
@@ -79,10 +75,7 @@ func TestParseActorOutputReadRequest(t *testing.T) {
 }
 
 func TestParseActorOutputReadRequestRejectsClosedQueryViolations(t *testing.T) {
-	actorID, err := publicid.New(publicid.Actor)
-	if err != nil {
-		t.Fatal(err)
-	}
+	actorID := uuid.Must(uuid.NewV7()).String()
 	tests := []struct {
 		name      string
 		rawQuery  string
@@ -118,14 +111,8 @@ func TestParseActorOutputReadRequestRejectsClosedQueryViolations(t *testing.T) {
 
 func TestProjectActorOutputRecord(t *testing.T) {
 	recordUUID := uuid.Must(uuid.NewV7())
-	runID, err := publicid.New(publicid.Run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	deploymentID, err := publicid.New(publicid.Deployment)
-	if err != nil {
-		t.Fatal(err)
-	}
+	runID := uuid.Must(uuid.NewV7())
+	deploymentID := uuid.Must(uuid.NewV7())
 	createdAt := time.Date(2030, 1, 2, 3, 4, 5, 0, time.FixedZone("offset", 9*60*60))
 	record, err := projectActorOutputRecord(db.ReadPublicActorOutputPageRow{
 		RecordID:              pgvalue.UUID(recordUUID),
@@ -135,24 +122,21 @@ func TestProjectActorOutputRecord(t *testing.T) {
 		Data:                  []byte(`null`),
 		ContentType:           "application/json",
 		CreatedAt:             pgtype.Timestamptz{Time: createdAt, Valid: true},
-		RunPublicID:           runID,
+		RunID:                 pgvalue.UUID(runID),
 		ProducerAttemptNumber: 2,
-		DeploymentPublicID:    deploymentID,
+		DeploymentID:          pgvalue.UUID(deploymentID),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(record.ID, publicid.ActorRecord.String()) ||
+	if record.ID != recordUUID.String() ||
 		record.Sequence != 2 ||
 		string(record.Data) != "null" ||
 		record.CreatedAt.Location() != time.UTC ||
-		record.Provenance.RunID != runID ||
+		record.Provenance.RunID != runID.String() ||
 		record.Provenance.AttemptNumber != 2 ||
-		record.Provenance.DeploymentID != deploymentID {
+		record.Provenance.DeploymentID != deploymentID.String() {
 		t.Fatalf("record = %+v", record)
-	}
-	if _, err := publicid.DecodeActorRecord(record.ID); err != nil {
-		t.Fatalf("record ID = %q: %v", record.ID, err)
 	}
 }
 

@@ -24,10 +24,10 @@ func TestControlRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
 	checkpointer := &fakeCheckpointer{manifest: testRunCheckpointWaitManifest()}
 	checkpointer.workspaceCapture = testCheckpointWorkspaceCapture()
 
-	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
-		LeaseReceipt: testWaitRunLeaseReceipt(), Kind: api.WorkerRunWaitKindToken,
-		ActiveDuration: 1500 * time.Millisecond, Checkpointer: checkpointer,
-	})
+	request := testWaitRequest(api.WorkerRunWaitKindToken)
+	request.ActiveDuration = 1500 * time.Millisecond
+	request.Checkpointer = checkpointer
+	err := ControlRunWaits{Client: client}.Wait(context.Background(), request)
 	if !errors.Is(err, ErrDetached) {
 		t.Fatalf("err = %v, want ErrDetached", err)
 	}
@@ -55,16 +55,14 @@ func TestControlRunWaitsContinuesAlreadyOpenedWaitWithoutCreatingAnother(t *test
 		}},
 	}
 	var resumed WaitResumeDecision
+	request := testWaitRequest(api.WorkerRunWaitKindChild)
+	request.Resume = func(_ context.Context, decision WaitResumeDecision) error {
+		resumed = decision
+		return nil
+	}
 	err := (ControlRunWaits{Client: client}).ContinueRunWait(
 		context.Background(),
-		WaitRequest{
-			LeaseReceipt: testWaitRunLeaseReceipt(),
-			Kind:         api.WorkerRunWaitKindChild,
-			Resume: func(_ context.Context, decision WaitResumeDecision) error {
-				resumed = decision
-				return nil
-			},
-		},
+		request,
 		liveRunWaitResponse(),
 	)
 	if err != nil {
@@ -91,9 +89,9 @@ func TestControlRunWaitsCapturesWorkspaceForTypedCheckpointIntent(t *testing.T) 
 		workspaceCapture: testCheckpointWorkspaceCapture(),
 	}
 
-	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
-		LeaseReceipt: testWaitRunLeaseReceipt(), Kind: api.WorkerRunWaitKindTimer, Checkpointer: checkpointer,
-	})
+	request := testWaitRequest(api.WorkerRunWaitKindTimer)
+	request.Checkpointer = checkpointer
+	err := ControlRunWaits{Client: client}.Wait(context.Background(), request)
 	if !errors.Is(err, ErrDetached) {
 		t.Fatalf("err = %v, want ErrDetached", err)
 	}
@@ -112,13 +110,12 @@ func TestControlRunWaitsResumesAndAcknowledgesTypedVersion(t *testing.T) {
 		}},
 	}
 	var got WaitResumeDecision
-	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
-		LeaseReceipt: testWaitRunLeaseReceipt(), Kind: api.WorkerRunWaitKindActorInput,
-		Resume: func(_ context.Context, decision WaitResumeDecision) error {
-			got = decision
-			return nil
-		},
-	})
+	request := testWaitRequest(api.WorkerRunWaitKindActorInput)
+	request.Resume = func(_ context.Context, decision WaitResumeDecision) error {
+		got = decision
+		return nil
+	}
+	err := ControlRunWaits{Client: client}.Wait(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,17 +131,17 @@ func TestControlRunWaitsResumesAndAcknowledgesTypedVersion(t *testing.T) {
 }
 
 func TestControlRunWaitsReturnsImmediateResumeDecision(t *testing.T) {
-	client := &fakeRunWaitClient{created: api.WorkerCreateRunWaitResponse{
-		RunID: "run-1", ResolutionKind: "completed", Resolution: json.RawMessage(`{"approved":true}`),
-	}}
+	immediate := liveRunWaitResponse()
+	immediate.ResolutionKind = "completed"
+	immediate.Resolution = json.RawMessage(`{"approved":true}`)
+	client := &fakeRunWaitClient{created: immediate}
 	var got WaitResumeDecision
-	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
-		LeaseReceipt: testWaitRunLeaseReceipt(), Kind: api.WorkerRunWaitKindActorInput,
-		Resume: func(_ context.Context, decision WaitResumeDecision) error {
-			got = decision
-			return nil
-		},
-	})
+	request := testWaitRequest(api.WorkerRunWaitKindActorInput)
+	request.Resume = func(_ context.Context, decision WaitResumeDecision) error {
+		got = decision
+		return nil
+	}
+	err := ControlRunWaits{Client: client}.Wait(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,11 +160,40 @@ func TestControlRunWaitsRejectsMismatchedTypedIntent(t *testing.T) {
 			RunID: "another-run", RunWaitID: "run-wait-id-1", Status: "waiting",
 		}},
 	}
-	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
-		LeaseReceipt: testWaitRunLeaseReceipt(), Kind: api.WorkerRunWaitKindTimer,
-	})
+	err := ControlRunWaits{Client: client}.Wait(
+		context.Background(), testWaitRequest(api.WorkerRunWaitKindTimer),
+	)
 	if err == nil || !strings.Contains(err.Error(), "mismatched fence") {
 		t.Fatalf("err = %v, want mismatched fence", err)
+	}
+}
+
+func TestControlRunWaitsRejectsMismatchedCreationIdentity(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		change func(*api.WorkerCreateRunWaitResponse)
+	}{
+		{name: "run", change: func(response *api.WorkerCreateRunWaitResponse) {
+			response.RunID = "another-run"
+		}},
+		{name: "wait", change: func(response *api.WorkerCreateRunWaitResponse) {
+			response.RunWaitID = "another-wait"
+		}},
+		{name: "resume attach", change: func(response *api.WorkerCreateRunWaitResponse) {
+			response.ResumeAttachID = "another-attach"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := liveRunWaitResponse()
+			response.ResolutionKind = "completed"
+			test.change(&response)
+			err := ControlRunWaits{Client: &fakeRunWaitClient{created: response}}.Wait(
+				context.Background(), testWaitRequest(api.WorkerRunWaitKindTimer),
+			)
+			if err == nil || !strings.Contains(err.Error(), "exact request identity") {
+				t.Fatalf("error = %v, want exact identity rejection", err)
+			}
+		})
 	}
 }
 
@@ -179,10 +205,9 @@ func TestControlRunWaitsRecordsTypedCheckpointFailure(t *testing.T) {
 			RequestVersion: 5, CheckpointID: "checkpoint-1",
 		}},
 	}
-	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
-		LeaseReceipt: testWaitRunLeaseReceipt(), Kind: api.WorkerRunWaitKindToken,
-		Checkpointer: &fakeCheckpointer{err: errors.New("snapshot failed")},
-	})
+	request := testWaitRequest(api.WorkerRunWaitKindToken)
+	request.Checkpointer = &fakeCheckpointer{err: errors.New("snapshot failed")}
+	err := ControlRunWaits{Client: client}.Wait(context.Background(), request)
 	if !errors.Is(err, ErrDetached) {
 		t.Fatalf("err = %v, want ErrDetached after attempt-fatal checkpoint failure", err)
 	}
@@ -200,10 +225,9 @@ func TestControlRunWaitsRetriesExactCheckpointFailureRequest(t *testing.T) {
 		}},
 		checkpointFailureErrors: []error{errors.New("temporary checkpoint failure transport error"), nil},
 	}
-	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
-		LeaseReceipt: testWaitRunLeaseReceipt(), Kind: api.WorkerRunWaitKindToken,
-		Checkpointer: &fakeCheckpointer{err: errors.New("snapshot failed")},
-	})
+	request := testWaitRequest(api.WorkerRunWaitKindToken)
+	request.Checkpointer = &fakeCheckpointer{err: errors.New("snapshot failed")}
+	err := ControlRunWaits{Client: client}.Wait(context.Background(), request)
 	if !errors.Is(err, ErrDetached) {
 		t.Fatalf("err = %v, want ErrDetached", err)
 	}
@@ -225,9 +249,11 @@ func TestControlRunWaitsUsesCurrentLeaseForCheckpointCompletion(t *testing.T) {
 	checkpointer := &fakeCheckpointer{manifest: testRunCheckpointWaitManifest(), workspaceCapture: testCheckpointWorkspaceCapture(), onCreate: func() {
 		leases.receipt.ID = "lease-2"
 	}}
-	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
-		Leases: leases, Kind: api.WorkerRunWaitKindTimer, Checkpointer: checkpointer,
-	})
+	request := testWaitRequest(api.WorkerRunWaitKindTimer)
+	request.LeaseReceipt = api.WorkerRunLeaseReceipt{}
+	request.Leases = leases
+	request.Checkpointer = checkpointer
+	err := ControlRunWaits{Client: client}.Wait(context.Background(), request)
 	if !errors.Is(err, ErrDetached) {
 		t.Fatalf("err = %v, want ErrDetached", err)
 	}
@@ -350,6 +376,16 @@ func liveRunWaitResponse() api.WorkerCreateRunWaitResponse {
 	return api.WorkerCreateRunWaitResponse{
 		RunID: "run-1", RunWaitID: "run-wait-id-1", ResumeAttachID: "resume-attach-1",
 		RuntimeInstanceID: "runtime-instance-1", RuntimeEpoch: 42,
+	}
+}
+
+func testWaitRequest(kind api.WorkerRunWaitKind) WaitRequest {
+	return WaitRequest{
+		LeaseReceipt:   testWaitRunLeaseReceipt(),
+		CorrelationID:  "correlation-1",
+		RunWaitID:      "run-wait-id-1",
+		ResumeAttachID: "resume-attach-1",
+		Kind:           kind,
 	}
 }
 

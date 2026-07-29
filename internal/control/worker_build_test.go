@@ -208,12 +208,12 @@ func newDeploymentBuildCompletionFixture(
 		t.Fatal(err)
 	}
 
-	orgID := pgvalue.UUID(uuid.New())
-	projectID := pgvalue.UUID(uuid.New())
-	environmentID := pgvalue.UUID(uuid.New())
-	deploymentID := pgvalue.UUID(uuid.New())
-	buildLeaseID := pgvalue.UUID(uuid.New())
-	workerInstanceID := uuid.New()
+	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	projectID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	deploymentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	buildLeaseID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	workerInstanceID := uuid.Must(uuid.NewV7())
 	authority := db.GetDeploymentBuildCompletionAuthorityRow{
 		State:                      db.DeploymentBuildLeaseStateRunning,
 		ExpiresAt:                  pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -226,7 +226,7 @@ func newDeploymentBuildCompletionFixture(
 		BuildManagerVersion:        "1.3.11",
 		BuildManagerDigest:         managerDigest,
 		BuildContractVersion:       deployment.ProgramBuildContractVersion,
-		DeploymentSourceArtifactID: pgvalue.UUID(uuid.New()),
+		DeploymentSourceArtifactID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		DeploymentSourceDigest:     source.Digest,
 		DeploymentSourceSizeBytes:  source.SizeBytes,
 		DeploymentSourceMediaType:  archive.SourceMediaType,
@@ -373,7 +373,7 @@ func (store *deploymentBuildCompletionStore) CreateArtifact(
 	context.Context,
 	db.CreateArtifactParams,
 ) (db.Artifact, error) {
-	return db.Artifact{ID: pgvalue.UUID(uuid.New())}, nil
+	return db.Artifact{ID: pgvalue.UUID(uuid.Must(uuid.NewV7()))}, nil
 }
 
 func (store *deploymentBuildCompletionStore) CreateDeploymentDefinition(

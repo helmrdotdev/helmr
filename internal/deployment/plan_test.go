@@ -459,7 +459,7 @@ func TestValidateBuildPlanSchedule(t *testing.T) {
 
 	plan := testBuildPlan()
 	plan.Definitions[0].Task.Schedule.Workspace = WorkspaceTarget{
-		ID: pointer("wsp_" + strings.Repeat("a", 26)),
+		ID: pointer("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
 	}
 	if err := ValidateBuildPlan(plan); err != nil {
 		t.Fatalf("workspace ID schedule: %v", err)

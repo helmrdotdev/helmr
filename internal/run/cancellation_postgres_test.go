@@ -32,7 +32,7 @@ UPDATE runs
 	result, err := canceler.Cancel(ctx, CancellationRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID,
 		EnvironmentID: fixture.environmentID,
-		RunPublicID:   fixture.runPublicID(t, parent.runID),
+		RunID:         parent.runID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ SELECT runtime_instances.desired_state, workspace_mounts.state
 	replay, err := canceler.Cancel(ctx, CancellationRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID,
 		EnvironmentID: fixture.environmentID,
-		RunPublicID:   result.RunPublicID,
+		RunID:         result.RunID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -97,19 +97,18 @@ func TestCancelerRejectsTargetOutsideScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runPublicID := fixture.runPublicID(t, work.runID)
 	requests := []CancellationRequest{
 		{
 			OrgID: uuid.New(), ProjectID: fixture.projectID,
-			EnvironmentID: fixture.environmentID, RunPublicID: runPublicID,
+			EnvironmentID: fixture.environmentID, RunID: work.runID,
 		},
 		{
 			OrgID: fixture.orgID, ProjectID: uuid.New(),
-			EnvironmentID: fixture.environmentID, RunPublicID: runPublicID,
+			EnvironmentID: fixture.environmentID, RunID: work.runID,
 		},
 		{
 			OrgID: fixture.orgID, ProjectID: fixture.projectID,
-			EnvironmentID: uuid.New(), RunPublicID: runPublicID,
+			EnvironmentID: uuid.New(), RunID: work.runID,
 		},
 	}
 	for _, request := range requests {
@@ -244,7 +243,7 @@ UPDATE runs
 	_, err = canceler.Cancel(ctx, CancellationRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID,
 		EnvironmentID: fixture.environmentID,
-		RunPublicID:   fixture.runPublicID(t, work.runID),
+		RunID:         work.runID,
 	})
 	if !errors.Is(err, ErrCancellationConflict) {
 		t.Fatalf("cancel succeeded Run error = %v", err)
@@ -273,7 +272,7 @@ func TestCancelerCascadesOwnedHandoffGraph(t *testing.T) {
 	result, err := canceler.Cancel(ctx, CancellationRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID,
 		EnvironmentID: fixture.environmentID,
-		RunPublicID:   fixture.runPublicID(t, chain.outerRunID),
+		RunID:         chain.outerRunID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -392,7 +391,7 @@ SELECT $1, runs.environment_id, runs.id, runs.workspace_id, 'child',
 				OrgID:         fixture.orgID,
 				ProjectID:     fixture.projectID,
 				EnvironmentID: fixture.environmentID,
-				RunPublicID:   fixture.runPublicID(t, child.runID),
+				RunID:         child.runID,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -454,7 +453,7 @@ SELECT runs.status,
 			}
 			if payload.OK ||
 				payload.Error.Code != "child_run_cancelled" ||
-				payload.Run.ID != result.RunPublicID {
+				payload.Run.ID != result.RunID.String() {
 				t.Fatalf("child cancellation result = %+v", payload)
 			}
 		})
@@ -567,7 +566,7 @@ func TestCancelerUnwindsDirectOwnedChildCancellation(t *testing.T) {
 	result, err := canceler.Cancel(ctx, CancellationRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID,
 		EnvironmentID: fixture.environmentID,
-		RunPublicID:   fixture.runPublicID(t, leaf.runID),
+		RunID:         leaf.runID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -716,7 +715,7 @@ func TestCancelerRetainsBoundaryHandoffAcrossNestedCascade(t *testing.T) {
 	result, err := canceler.Cancel(ctx, CancellationRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID,
 		EnvironmentID: fixture.environmentID,
-		RunPublicID:   fixture.runPublicID(t, chain.parentRunID),
+		RunID:         chain.parentRunID,
 	})
 	if err != nil {
 		t.Fatal(err)

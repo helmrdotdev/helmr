@@ -375,9 +375,9 @@ func TestProjectWorkspaceAttachmentProjectsArtifactResetTarget(t *testing.T) {
 }
 
 func validRunLeaseProjectionAuthority() runLeaseProjectionAuthority {
-	runID := pgvalue.UUID(uuid.New())
-	workspaceID := pgvalue.UUID(uuid.New())
-	versionID := pgvalue.UUID(uuid.New())
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	versionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	attemptNumber := int32(1)
 	runtimeID := pgvalue.UUID(uuid.New())
 	slotID := pgvalue.UUID(uuid.New())

@@ -362,13 +362,13 @@ const renderedFeatures = features.map((feature) => ({
           </div>
           <div class="term-body" data-term>
             <p class="t-line"><span class="t-prompt">$</span> <span class="t-cmd">helmr deploy</span></p>
-            <p class="t-line t-dim">Deployment dpl_4e21 queued</p>
+            <p class="t-line t-dim">Deployment 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35 queued</p>
             <p class="t-line"><span class="t-ok">v12</span></p>
-            <p class="t-line t-gap"><span class="t-prompt">$</span> <span class="t-cmd">helmr task start review-pr --workspace ws_7b2d --payload-json '&lbrace;&quot;prNumber&quot;:482&rbrace;'</span></p>
-            <p class="t-line">run_8f3a</p>
+            <p class="t-line t-gap"><span class="t-prompt">$</span> <span class="t-cmd">helmr task start review-pr --workspace 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32 --payload-json '&lbrace;&quot;prNumber&quot;:482&rbrace;'</span></p>
+            <p class="t-line">019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31</p>
             <p class="t-line t-gap"><span class="t-prompt">$</span> <span class="t-cmd">helmr run list</span></p>
             <p class="t-line t-dim">RUN ID    TASK       STATUS</p>
-            <p class="t-line">run_8f3a  review-pr  <span class="t-wait">waiting</span>  <span class="t-accent">token</span></p>
+            <p class="t-line">019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31  review-pr  <span class="t-wait">waiting</span>  <span class="t-accent">token</span></p>
             <p class="t-line t-gap" data-cursor><span class="t-prompt">$</span> <span class="t-cursor"></span></p>
           </div>
           <div class="term-foot" data-term-foot>
@@ -378,7 +378,7 @@ const renderedFeatures = features.map((feature) => ({
                   <rect x={pixel.x} y={pixel.y} width="1" height="1" />
                 ))}
               </svg>
-              run_8f3a waiting on approval input
+              019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31 waiting on approval input
             </span>
             <button
               class="term-approve"
@@ -631,7 +631,7 @@ const renderedFeatures = features.map((feature) => ({
       cursorLine?.removeAttribute("data-cursor");
       const respondCommand = document.createElement("span");
       cursorLine?.appendChild(respondCommand);
-      await typeInto(respondCommand, "curl -sS -H 'authorization: Bearer $TOKEN_PUBLIC_ACCESS_TOKEN' -H 'content-type: application/json' -d '{\"result\":{\"approved\":true}}' $HELMR_API_URL/api/public/tokens/tok_9d2c/complete");
+      await typeInto(respondCommand, "curl -sS -H 'authorization: Bearer $TOKEN_PUBLIC_ACCESS_TOKEN' -H 'content-type: application/json' -d '{\"result\":{\"approved\":true}}' $HELMR_API_URL/api/public/tokens/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37/complete");
       await sleep(reduceMotion ? 0 : 500);
 
       const psLine = appendLine('<span class="t-prompt">$</span> <span class="t-cmd"></span>', "t-line t-gap");
@@ -639,7 +639,7 @@ const renderedFeatures = features.map((feature) => ({
       if (psCommand) await typeInto(psCommand, "helmr run list");
       await sleep(reduceMotion ? 0 : 350);
       appendLine("RUN ID    TASK       STATUS", "t-line t-dim");
-      appendLine('run_8f3a  review-pr  <span class="t-ok">succeeded</span>', "t-line");
+      appendLine('019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31  review-pr  <span class="t-ok">succeeded</span>', "t-line");
       await sleep(reduceMotion ? 0 : 250);
       appendLine('<span class="t-prompt">$</span> <span class="t-cursor"></span>', "t-line t-gap");
       void maybeSweep();

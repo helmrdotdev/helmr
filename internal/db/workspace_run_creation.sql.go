@@ -34,7 +34,6 @@ WITH selected_definition AS (
 ), created_workspace AS (
     INSERT INTO workspaces (
         id,
-        public_id,
         environment_id,
         region_id,
         workspace_declared_id,
@@ -43,19 +42,17 @@ WITH selected_definition AS (
         key
     )
     SELECT $4,
-           $5,
            selected_definition.environment_id,
            selected_definition.default_region_id,
            selected_definition.workspace_declared_id,
            selected_definition.deployment_definition_id,
-           $6,
-           $7
+           $5,
+           $6
       FROM selected_definition
-    RETURNING id, public_id, environment_id, region_id, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+    RETURNING id, environment_id, region_id, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
 ), created_version AS (
     INSERT INTO workspace_versions (
         id,
-        public_id,
         environment_id,
         workspace_id,
         kind,
@@ -67,8 +64,7 @@ WITH selected_definition AS (
         writer_generation,
         published_at
     )
-    SELECT $6,
-           $8,
+    SELECT $5,
            created_workspace.environment_id,
            created_workspace.id,
            'system'::workspace_version_kind,
@@ -82,25 +78,22 @@ WITH selected_definition AS (
       FROM created_workspace
     RETURNING workspace_id
 )
-SELECT created_workspace.id, created_workspace.public_id, created_workspace.environment_id, created_workspace.region_id, created_workspace.workspace_declared_id, created_workspace.deployment_definition_id, created_workspace.key, created_workspace.state_version, created_workspace.owner_actor_id, created_workspace.owner_run_id, created_workspace.ownership_generation, created_workspace.writer_generation, created_workspace.head_version_id, created_workspace.state, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.deleted_at
+SELECT created_workspace.id, created_workspace.environment_id, created_workspace.region_id, created_workspace.workspace_declared_id, created_workspace.deployment_definition_id, created_workspace.key, created_workspace.state_version, created_workspace.owner_actor_id, created_workspace.owner_run_id, created_workspace.ownership_generation, created_workspace.writer_generation, created_workspace.head_version_id, created_workspace.state, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.deleted_at
   FROM created_workspace
   JOIN created_version ON created_version.workspace_id = created_workspace.id
 `
 
 type CreateWorkspaceFromRunDeploymentParams struct {
-	WorkspaceDeclaredID    string      `json:"workspace_declared_id"`
-	EnvironmentID          pgtype.UUID `json:"environment_id"`
-	RunID                  pgtype.UUID `json:"run_id"`
-	ID                     pgtype.UUID `json:"id"`
-	PublicID               string      `json:"public_id"`
-	InitialVersionID       pgtype.UUID `json:"initial_version_id"`
-	Key                    pgtype.Text `json:"key"`
-	InitialVersionPublicID string      `json:"initial_version_public_id"`
+	WorkspaceDeclaredID string      `json:"workspace_declared_id"`
+	EnvironmentID       pgtype.UUID `json:"environment_id"`
+	RunID               pgtype.UUID `json:"run_id"`
+	ID                  pgtype.UUID `json:"id"`
+	InitialVersionID    pgtype.UUID `json:"initial_version_id"`
+	Key                 pgtype.Text `json:"key"`
 }
 
 type CreateWorkspaceFromRunDeploymentRow struct {
 	ID                     pgtype.UUID        `json:"id"`
-	PublicID               string             `json:"public_id"`
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
 	RegionID               string             `json:"region_id"`
 	WorkspaceDeclaredID    pgtype.Text        `json:"workspace_declared_id"`
@@ -127,15 +120,12 @@ func (q *Queries) CreateWorkspaceFromRunDeployment(ctx context.Context, arg Crea
 		arg.EnvironmentID,
 		arg.RunID,
 		arg.ID,
-		arg.PublicID,
 		arg.InitialVersionID,
 		arg.Key,
-		arg.InitialVersionPublicID,
 	)
 	var i CreateWorkspaceFromRunDeploymentRow
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.EnvironmentID,
 		&i.RegionID,
 		&i.WorkspaceDeclaredID,

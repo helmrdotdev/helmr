@@ -1,7 +1,6 @@
 -- name: ReconcileSchedule :exec
 INSERT INTO schedules (
     id,
-    public_id,
     environment_id,
     task_declared_id,
     deployment_definition_id,
@@ -18,7 +17,6 @@ INSERT INTO schedules (
 )
 VALUES (
     sqlc.arg(id),
-    sqlc.arg(public_id),
     sqlc.arg(environment_id),
     sqlc.arg(task_declared_id),
     sqlc.arg(deployment_definition_id),
@@ -91,38 +89,30 @@ SELECT *
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
 
--- name: GetScheduleByPublicID :one
-SELECT sqlc.embed(schedules),
-       workspaces.public_id AS workspace_ref_public_id
+-- name: GetScheduleByID :one
+SELECT schedules.*
   FROM schedules
   JOIN environments
     ON environments.id = schedules.environment_id
-  LEFT JOIN workspaces
-    ON workspaces.environment_id = schedules.environment_id
-   AND workspaces.id = schedules.workspace_ref_id
  WHERE environments.org_id = sqlc.arg(org_id)
    AND environments.project_id = sqlc.arg(project_id)
    AND schedules.environment_id = sqlc.arg(environment_id)
-   AND schedules.public_id = sqlc.arg(public_id);
+   AND schedules.id = sqlc.arg(id);
 
 -- name: ListSchedules :many
-SELECT sqlc.embed(schedules),
-       workspaces.public_id AS workspace_ref_public_id
+SELECT schedules.*
   FROM schedules
   JOIN environments
     ON environments.id = schedules.environment_id
-  LEFT JOIN workspaces
-    ON workspaces.environment_id = schedules.environment_id
-   AND workspaces.id = schedules.workspace_ref_id
  WHERE environments.org_id = sqlc.arg(org_id)
    AND environments.project_id = sqlc.arg(project_id)
    AND schedules.environment_id = sqlc.arg(environment_id)
    AND (
        sqlc.narg(after_task_declared_id)::text IS NULL
-       OR (schedules.task_declared_id, schedules.public_id) >
-          (sqlc.narg(after_task_declared_id)::text, sqlc.arg(after_public_id)::text)
+       OR (schedules.task_declared_id, schedules.id) >
+          (sqlc.narg(after_task_declared_id)::text, sqlc.arg(after_id)::uuid)
    )
- ORDER BY schedules.task_declared_id, schedules.public_id
+ ORDER BY schedules.task_declared_id, schedules.id
  LIMIT sqlc.arg(limit_count)::integer;
 
 -- name: ListPendingScheduleBindings :many

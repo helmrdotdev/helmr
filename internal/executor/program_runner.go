@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/frameio"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"google.golang.org/protobuf/proto"
@@ -147,9 +148,17 @@ func parseWaitRequest(
 	if wait == nil {
 		return WaitRequest{}, errors.New("guest wait request is empty")
 	}
-	correlationID := strings.TrimSpace(wait.GetCorrelationId())
-	if correlationID == "" {
-		return WaitRequest{}, errors.New("guest wait request correlation_id is required")
+	correlationID := wait.GetCorrelationId()
+	if err := ids.Validate(correlationID); err != nil {
+		return WaitRequest{}, errors.New("guest wait request correlation_id must be a canonical UUIDv7")
+	}
+	runWaitID := wait.GetRunWaitId()
+	if err := ids.Validate(runWaitID); err != nil {
+		return WaitRequest{}, errors.New("guest wait request run_wait_id must be a canonical UUIDv7")
+	}
+	resumeAttachID := wait.GetResumeAttachId()
+	if err := ids.Validate(resumeAttachID); err != nil {
+		return WaitRequest{}, errors.New("guest wait request resume_attach_id must be a canonical UUIDv7")
 	}
 	kind := api.WorkerRunWaitKind(strings.TrimSpace(wait.GetKind()))
 	if kind == "" {
@@ -203,6 +212,8 @@ func parseWaitRequest(
 	return WaitRequest{
 		Lease:                         leases.CurrentWorkerRunLease(),
 		CorrelationID:                 correlationID,
+		RunWaitID:                     runWaitID,
+		ResumeAttachID:                resumeAttachID,
 		Kind:                          kind,
 		Params:                        []byte(paramsJSON),
 		Metadata:                      []byte(metadataJSON),

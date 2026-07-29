@@ -13,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -55,19 +54,19 @@ func newDeploymentBuildFixture(t *testing.T) (*deploymentBuildFixture, *pgxpool.
 	deploymentID := uuid.Must(uuid.NewV7())
 	mustExec(t, ctx, pool, `
 		INSERT INTO deployments (
-			id, public_id, org_id, project_id, environment_id, build_region_id,
+			id, org_id, project_id, environment_id, build_region_id,
 			build_node_version, build_runtime_digest, build_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
 			build_contract_version,
 			version, content_hash, deployment_source_artifact_id, status
 		) VALUES (
-			$1, $2, $3, $4, $5, $6,
+			$1, $2, $3, $4, $5,
 			'24.16.0', decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
 			'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
 			'helmr.program-build.v0',
-			$7, $8, $9, 'queued'
+			$6, $7, $8, 'queued'
 		)
-	`, deploymentID, testPublicID(t, publicid.Deployment), ids.orgID, ids.projectID,
+	`, deploymentID, ids.orgID, ids.projectID,
 		ids.environmentID, dbtest.DefaultRegionID, "build-"+shortUUID(deploymentID),
 		testDigest("deployment-build-"+deploymentID.String()), sourceArtifactID)
 

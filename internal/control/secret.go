@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
@@ -447,18 +448,15 @@ func decodeSecretListCursor(raw string) (secretListCursor, error) {
 		cursor.ProjectID == "" ||
 		cursor.EnvironmentID == "" ||
 		cursor.Name == "" ||
-		cursor.ID == "" {
+		ids.Validate(cursor.ID) != nil {
 		return secretListCursor{}, errors.New("secret cursor is invalid")
 	}
 	return cursor, nil
 }
 
 func parseSecretID(raw string) (uuid.UUID, error) {
-	if strings.TrimSpace(raw) != raw {
-		return uuid.Nil, errors.New("secret ID is invalid")
-	}
-	id, err := uuid.Parse(raw)
-	if err != nil || id == uuid.Nil || id.String() != raw {
+	id, err := ids.Parse(raw)
+	if err != nil {
 		return uuid.Nil, errors.New("secret ID is invalid")
 	}
 	return id, nil

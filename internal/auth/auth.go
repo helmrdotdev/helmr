@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
@@ -104,11 +105,11 @@ func (a Actor) EnvironmentScope() (Scope, bool) {
 	if a.ProjectID == "" || a.EnvironmentID == "" {
 		return Scope{}, false
 	}
-	projectID, err := uuid.Parse(a.ProjectID)
+	projectID, err := ids.Parse(a.ProjectID)
 	if err != nil || projectID == uuid.Nil {
 		return Scope{}, false
 	}
-	environmentID, err := uuid.Parse(a.EnvironmentID)
+	environmentID, err := ids.Parse(a.EnvironmentID)
 	if err != nil || environmentID == uuid.Nil {
 		return Scope{}, false
 	}

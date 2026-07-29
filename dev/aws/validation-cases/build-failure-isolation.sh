@@ -30,7 +30,7 @@ deployment_id="$(
     "${VALIDATION_TMP}/deploy.jsonl" |
     tail -1
 )"
-validation_require_public_id dep "${deployment_id}" || {
+validation_require_resource_id "${deployment_id}" || {
   validation_write_result failed failed_deployment_id_missing
   exit 1
 }
@@ -39,7 +39,7 @@ validation_db_marker "
   COPY (
     SELECT 'failed-on-build-worker'
       FROM deployments
-     WHERE deployments.public_id = '${deployment_id}'
+     WHERE deployments.id = '${deployment_id}'
        AND deployments.status = 'failed'
        AND deployments.failure->>'message' LIKE '%intentional build failure%'
        AND EXISTS (
@@ -84,7 +84,7 @@ jq -e '
 }
 run_ids="$(jq -c '[.run_ids[]?] | unique' "${VALIDATION_TMP}/release.json")"
 while IFS= read -r run_id; do
-  validation_require_public_id run "${run_id}" || {
+  validation_require_resource_id "${run_id}" || {
     validation_write_result failed invalid_release_run_id
     exit 1
   }

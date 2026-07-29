@@ -31,11 +31,16 @@ func TestValidatePlatformAcquisitionProcess(t *testing.T) {
 		XZ:               "/nix/store/xz",
 	}
 	request := api.WorkerPlatformAcquisition{
-		DeploymentID: "60af6067-a253-47b5-915c-2b889fb132c7",
+		DeploymentID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
 	}
 	if err := validatePlatformAcquisitionProcess(process, request); err != nil {
 		t.Fatal(err)
 	}
+	request.DeploymentID = "60af6067-a253-47b5-915c-2b889fb132c7"
+	if err := validatePlatformAcquisitionProcess(process, request); err == nil {
+		t.Fatal("UUIDv4 Deployment ID was accepted")
+	}
+	request.DeploymentID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"
 	process.WorkDir = "relative"
 	if err := validatePlatformAcquisitionProcess(process, request); err == nil {
 		t.Fatal("relative acquisition work directory was accepted")
@@ -75,7 +80,7 @@ func TestCreatePlatformAcquisitionCgroupRejectsSymlinkRoot(t *testing.T) {
 	}
 	if _, _, err := createPlatformAcquisitionCgroup(
 		linkRoot,
-		"60af6067-a253-47b5-915c-2b889fb132c7",
+		"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
 	); err == nil {
 		t.Fatal("symlinked acquisition cgroup root was accepted")
 	}
@@ -89,7 +94,7 @@ func TestPlatformAcquisitionCgroupIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deploymentID := "60af6067-a253-47b5-915c-2b889fb132c7"
+	deploymentID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"
 	path, processCgroup, err := createPlatformAcquisitionCgroup(root, deploymentID)
 	if err != nil {
 		t.Fatal(err)

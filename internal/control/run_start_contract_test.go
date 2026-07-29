@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	startWaitID       = "00000000-0000-0000-0000-000000000001"
-	startCheckpointID = "00000000-0000-0000-0000-000000000002"
-	startAttachID     = "00000000-0000-0000-0000-000000000003"
+	startWaitID       = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc41"
+	startCheckpointID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc42"
+	startAttachID     = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc43"
 )
 
 func TestParseRunStartArm(t *testing.T) {

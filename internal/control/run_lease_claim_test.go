@@ -1411,7 +1411,7 @@ func validRunLeaseClaimSecretFixture(
 
 func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, runLeaseClaimAuthority) {
 	id := func() pgtype.UUID {
-		return pgvalue.UUID(uuid.New())
+		return pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	}
 	orgID := id()
 	projectID := id()
@@ -1420,7 +1420,7 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 	workspaceID := id()
 	deploymentID := id()
 	definitionID := id()
-	workerInstanceID := uuid.New()
+	workerInstanceID := uuid.Must(uuid.NewV7())
 	runtimeID := id()
 	networkSlotID := id()
 	runLeaseID := id()

@@ -7,13 +7,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 )
 
 func TestNormalizeActorStartCanonicalizesRunOptionsAndPreservesInputPresence(t *testing.T) {
 	key := "thread:42"
 	ttl := maxQueuedRunTTLMS
-	workspaceID := actorStartTestPublicID(t, publicid.Workspace)
+	workspaceID := uuid.Must(uuid.NewV7()).String()
 	normalized, err := normalizeActorStart(actorStartRequest{
 		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
 		EnvironmentID:   uuid.Must(uuid.NewV7()),
@@ -44,7 +43,7 @@ func TestNormalizeActorStartCanonicalizesRunOptionsAndPreservesInputPresence(t *
 }
 
 func TestNormalizeActorStartLimitsNormalizedTagSet(t *testing.T) {
-	workspaceID := actorStartTestPublicID(t, publicid.Workspace)
+	workspaceID := uuid.Must(uuid.NewV7()).String()
 	request := actorStartRequest{
 		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
 		EnvironmentID:   uuid.Must(uuid.NewV7()),
@@ -61,7 +60,7 @@ func TestNormalizeActorStartLimitsNormalizedTagSet(t *testing.T) {
 }
 
 func TestNormalizeActorStartRejectsInvalidCallerOverridesAndOversizeFields(t *testing.T) {
-	workspaceID := actorStartTestPublicID(t, publicid.Workspace)
+	workspaceID := uuid.Must(uuid.NewV7()).String()
 	base := actorStartRequest{
 		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
 		EnvironmentID:   uuid.Must(uuid.NewV7()),
@@ -87,7 +86,7 @@ func TestNormalizeActorStartRejectsInvalidCallerOverridesAndOversizeFields(t *te
 }
 
 func TestNormalizeActorStartUsesExactConcurrencyKeyBoundaryDomain(t *testing.T) {
-	workspaceID := actorStartTestPublicID(t, publicid.Workspace)
+	workspaceID := uuid.Must(uuid.NewV7()).String()
 	base := actorStartRequest{
 		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
 		EnvironmentID:   uuid.Must(uuid.NewV7()),
@@ -108,18 +107,10 @@ func TestNormalizeActorStartUsesExactConcurrencyKeyBoundaryDomain(t *testing.T) 
 }
 
 func TestActorStartReceiptRoundTrip(t *testing.T) {
-	actorPublicID, err := publicid.New(publicid.Actor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runPublicID, err := publicid.New(publicid.Run)
-	if err != nil {
-		t.Fatal(err)
-	}
 	recordID := uuid.Must(uuid.NewV7())
 	value := actorStartResult{
-		ActorID: uuid.Must(uuid.NewV7()), ActorPublicID: actorPublicID,
-		InitialRecordID: &recordID, BootRunID: uuid.Must(uuid.NewV7()), BootRunPublicID: runPublicID,
+		ActorID:         uuid.Must(uuid.NewV7()),
+		InitialRecordID: &recordID, BootRunID: uuid.Must(uuid.NewV7()),
 	}
 	raw, err := json.Marshal(actorStartReceiptFromResult(value))
 	if err != nil {
@@ -129,18 +120,9 @@ func TestActorStartReceiptRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.ActorID != value.ActorID || decoded.ActorPublicID != value.ActorPublicID ||
+	if decoded.ActorID != value.ActorID ||
 		decoded.InitialRecordID == nil || *decoded.InitialRecordID != recordID ||
-		decoded.BootRunID != value.BootRunID || decoded.BootRunPublicID != value.BootRunPublicID {
+		decoded.BootRunID != value.BootRunID {
 		t.Fatalf("decoded = %+v", decoded)
 	}
-}
-
-func actorStartTestPublicID(t *testing.T, kind publicid.Prefix) string {
-	t.Helper()
-	value, err := publicid.New(kind)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return value
 }

@@ -451,7 +451,6 @@ func (ns NullWorkspaceVersionKind) Value() (driver.Value, error) {
 
 type APIKey struct {
 	ID              pgtype.UUID        `json:"id"`
-	PublicID        string             `json:"public_id"`
 	OrgID           pgtype.UUID        `json:"org_id"`
 	ProjectID       pgtype.UUID        `json:"project_id"`
 	EnvironmentID   pgtype.UUID        `json:"environment_id"`
@@ -468,7 +467,6 @@ type APIKey struct {
 
 type Actor struct {
 	ID                       pgtype.UUID        `json:"id"`
-	PublicID                 string             `json:"public_id"`
 	EnvironmentID            pgtype.UUID        `json:"environment_id"`
 	ActorDeclaredID          string             `json:"actor_declared_id"`
 	DeploymentDefinitionID   pgtype.UUID        `json:"deployment_definition_id"`
@@ -592,7 +590,6 @@ type DeletionJob struct {
 
 type Deployment struct {
 	ID                         pgtype.UUID        `json:"id"`
-	PublicID                   string             `json:"public_id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
 	ProjectID                  pgtype.UUID        `json:"project_id"`
 	EnvironmentID              pgtype.UUID        `json:"environment_id"`
@@ -700,7 +697,6 @@ type DeviceCode struct {
 
 type Environment struct {
 	ID                  pgtype.UUID        `json:"id"`
-	PublicID            string             `json:"public_id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
 	ProjectID           pgtype.UUID        `json:"project_id"`
 	Slug                string             `json:"slug"`
@@ -728,7 +724,6 @@ type IdempotencyClaim struct {
 
 type Invitation struct {
 	ID               pgtype.UUID        `json:"id"`
-	PublicID         string             `json:"public_id"`
 	OrgID            pgtype.UUID        `json:"org_id"`
 	InviteeEmail     string             `json:"invitee_email"`
 	Role             OrgMemberRole      `json:"role"`
@@ -795,7 +790,6 @@ type OrgMember struct {
 
 type Organization struct {
 	ID        pgtype.UUID        `json:"id"`
-	PublicID  string             `json:"public_id"`
 	Name      string             `json:"name"`
 	Slug      string             `json:"slug"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
@@ -820,7 +814,6 @@ type OutboxMessage struct {
 
 type Project struct {
 	ID              pgtype.UUID        `json:"id"`
-	PublicID        string             `json:"public_id"`
 	OrgID           pgtype.UUID        `json:"org_id"`
 	DefaultRegionID string             `json:"default_region_id"`
 	Slug            string             `json:"slug"`
@@ -832,7 +825,6 @@ type Project struct {
 
 type PublicAccessToken struct {
 	ID         pgtype.UUID        `json:"id"`
-	PublicID   string             `json:"public_id"`
 	TokenID    pgtype.UUID        `json:"token_id"`
 	TokenHash  []byte             `json:"token_hash"`
 	State      string             `json:"state"`
@@ -863,7 +855,6 @@ type Region struct {
 
 type Run struct {
 	ID                           pgtype.UUID        `json:"id"`
-	PublicID                     string             `json:"public_id"`
 	OrgID                        pgtype.UUID        `json:"org_id"`
 	ProjectID                    pgtype.UUID        `json:"project_id"`
 	EnvironmentID                pgtype.UUID        `json:"environment_id"`
@@ -1150,7 +1141,6 @@ type RuntimeSubstrate struct {
 
 type Schedule struct {
 	ID                     pgtype.UUID        `json:"id"`
-	PublicID               string             `json:"public_id"`
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
 	TargetKind             string             `json:"target_kind"`
 	TaskDeclaredID         string             `json:"task_declared_id"`
@@ -1266,7 +1256,6 @@ type TelemetryOutbox struct {
 
 type Token struct {
 	ID                        pgtype.UUID        `json:"id"`
-	PublicID                  string             `json:"public_id"`
 	OrgID                     pgtype.UUID        `json:"org_id"`
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
@@ -1287,7 +1276,6 @@ type Token struct {
 
 type User struct {
 	ID              pgtype.UUID        `json:"id"`
-	PublicID        string             `json:"public_id"`
 	DisplayName     string             `json:"display_name"`
 	ProfileImageUrl pgtype.Text        `json:"profile_image_url"`
 	PrimaryEmail    pgtype.Text        `json:"primary_email"`
@@ -1448,7 +1436,6 @@ type WorkerObservation struct {
 
 type Workspace struct {
 	ID                     pgtype.UUID        `json:"id"`
-	PublicID               string             `json:"public_id"`
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
 	RegionID               string             `json:"region_id"`
 	WorkspaceDeclaredID    pgtype.Text        `json:"workspace_declared_id"`
@@ -1580,7 +1567,6 @@ type WorkspaceSecret struct {
 
 type WorkspaceVersion struct {
 	ID                     pgtype.UUID          `json:"id"`
-	PublicID               string               `json:"public_id"`
 	EnvironmentID          pgtype.UUID          `json:"environment_id"`
 	WorkspaceID            pgtype.UUID          `json:"workspace_id"`
 	ParentVersionID        pgtype.UUID          `json:"parent_version_id"`

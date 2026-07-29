@@ -6,10 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
@@ -33,9 +32,9 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("invalid worker Run Lease claim request JSON: trailing value")))
 		return
 	}
-	leaseIDValue, err := uuid.Parse(strings.TrimSpace(request.LeaseID))
+	leaseIDValue, err := ids.Parse(request.LeaseID)
 	if err != nil || request.LeaseSequence <= 0 {
-		writeError(w, badRequest(errors.New("lease_id must be a UUID and lease_sequence must be positive")))
+		writeError(w, badRequest(errors.New("lease_id must be a canonical UUIDv7 and lease_sequence must be positive")))
 		return
 	}
 	leaseID := pgvalue.UUID(leaseIDValue)

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -31,12 +30,11 @@ type CancellationRequest struct {
 	OrgID         uuid.UUID
 	ProjectID     uuid.UUID
 	EnvironmentID uuid.UUID
-	RunPublicID   string
+	RunID         uuid.UUID
 }
 
 type CancellationResult struct {
 	RunID         uuid.UUID
-	RunPublicID   string
 	Changed       bool
 	CancelledRuns int
 }
@@ -47,7 +45,6 @@ type Canceler struct {
 
 type cancellationRun struct {
 	id                   uuid.UUID
-	publicID             string
 	parentRunID          pgtype.UUID
 	parentOwnsLifecycle  pgtype.Bool
 	environmentID        uuid.UUID
@@ -315,7 +312,7 @@ func (g OwnedFinalization) FailCurrentForSecretRevocation(
 					"message":   "A Workspace Secret used by the child Run was revoked",
 					"retryable": false,
 				},
-				"run": map[string]any{"id": target.publicID},
+				"run": map[string]any{"id": target.id.String()},
 			})
 			if err != nil {
 				return 0, err
@@ -340,8 +337,8 @@ func (c *Canceler) Cancel(
 ) (CancellationResult, error) {
 	if request.OrgID == uuid.Nil || request.ProjectID == uuid.Nil ||
 		request.EnvironmentID == uuid.Nil ||
-		strings.TrimSpace(request.RunPublicID) == "" {
-		return CancellationResult{}, errors.New("run cancellation scope and public ID are required")
+		request.RunID == uuid.Nil {
+		return CancellationResult{}, errors.New("run cancellation scope and ID are required")
 	}
 	tx, err := c.db.Begin(ctx)
 	if err != nil {
@@ -386,7 +383,7 @@ func (c *Canceler) Cancel(
 	if !ok {
 		return CancellationResult{}, cancellationAuthority("target Run was not locked", nil)
 	}
-	result := CancellationResult{RunID: target.id, RunPublicID: target.publicID}
+	result := CancellationResult{RunID: target.id}
 	if runStatusTerminal(target.status) {
 		if target.status != db.RunStatusCancelled {
 			return CancellationResult{}, ErrCancellationConflict
@@ -504,7 +501,7 @@ func findCancellationTarget(
 		OrgID:         pgvalue.UUID(request.OrgID),
 		ProjectID:     pgvalue.UUID(request.ProjectID),
 		EnvironmentID: pgvalue.UUID(request.EnvironmentID),
-		PublicID:      request.RunPublicID,
+		ID:            pgvalue.UUID(request.RunID),
 	})
 	return uuid.UUID(id.Bytes), err
 }
@@ -572,7 +569,6 @@ func lockCancellationRun(
 	}
 	return cancellationRun{
 		id:                   uuid.UUID(row.ID.Bytes),
-		publicID:             row.PublicID,
 		parentRunID:          row.ParentRunID,
 		parentOwnsLifecycle:  row.ParentOwnsLifecycle,
 		environmentID:        uuid.UUID(row.EnvironmentID.Bytes),
@@ -1080,7 +1076,7 @@ func resolveCancelledDifferentWorkspaceChildWait(
 			"code": "child_run_cancelled", "message": "Child Run was cancelled",
 			"retryable": false,
 		},
-		"run": map[string]any{"id": child.publicID},
+		"run": map[string]any{"id": child.id.String()},
 	})
 	if err != nil {
 		return err

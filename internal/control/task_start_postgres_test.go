@@ -11,7 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -39,8 +38,7 @@ func TestTaskStartPostgresCommitsAndReplaysOneAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !replayed.Replayed || replayed.RunID != created.RunID ||
-		replayed.RunPublicID != created.RunPublicID {
+	if !replayed.Replayed || replayed.RunID != created.RunID {
 		t.Fatalf("replayed = %+v created = %+v", replayed, created)
 	}
 	changed := request
@@ -72,7 +70,7 @@ func TestTaskStartPostgresCommitsAndReplaysOneAdmission(t *testing.T) {
 	`, created.RunID).Scan(&workspaceOwner, &attempts, &resolutions, &outboxes); err != nil {
 		t.Fatal(err)
 	}
-	if run.PublicID != created.RunPublicID || run.EntrypointKind != "task" ||
+	if run.ID != pgvalue.UUID(created.RunID) || run.EntrypointKind != "task" ||
 		run.EntrypointDeclaredID != "resize-image" || run.CauseKind != "api" ||
 		run.Status != db.RunStatusQueued || workspaceOwner != run.ID ||
 		attempts != 1 || resolutions != 1 || outboxes != 1 {
@@ -83,13 +81,14 @@ func TestTaskStartPostgresCommitsAndReplaysOneAdmission(t *testing.T) {
 	}
 	snapshot, err := queries.GetRunSnapshot(t.Context(), db.GetRunSnapshotParams{
 		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
-		EnvironmentID: pgvalue.UUID(fixture.environmentID), PublicID: created.RunPublicID,
+		EnvironmentID: pgvalue.UUID(fixture.environmentID), ID: pgvalue.UUID(created.RunID),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.PublicID != created.RunPublicID || snapshot.DeploymentPublicID == "" ||
-		snapshot.WorkspacePublicID != workspaceID || snapshot.ParentRunPublicID != "" {
+	if snapshot.ID != pgvalue.UUID(created.RunID) || !snapshot.DeploymentID.Valid ||
+		snapshot.WorkspaceID != pgvalue.UUID(fixture.workspaceIDs[0]) ||
+		snapshot.ParentRunID.Valid {
 		t.Fatalf("snapshot = %+v", snapshot)
 	}
 	listed, err := queries.ListRunSnapshots(t.Context(), db.ListRunSnapshotsParams{
@@ -99,7 +98,7 @@ func TestTaskStartPostgresCommitsAndReplaysOneAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed) != 1 || listed[0].PublicID != created.RunPublicID {
+	if len(listed) != 1 || listed[0].ID != pgvalue.UUID(created.RunID) {
 		t.Fatalf("listed = %+v", listed)
 	}
 }
@@ -126,7 +125,6 @@ func TestCreateKeylessDetachedChildTaskRunFromParentDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	runID := uuid.Must(uuid.NewV7())
-	runPublicID := actorStartTestPublicID(t, publicid.Run)
 	rootSpanID, err := tracing.NewSpanID()
 	if err != nil {
 		t.Fatal(err)
@@ -142,7 +140,6 @@ func TestCreateKeylessDetachedChildTaskRunFromParentDeployment(t *testing.T) {
 			EnvironmentID:          pgvalue.UUID(fixture.environmentID),
 			ParentRunID:            pgvalue.UUID(parent.RunID),
 			ID:                     pgvalue.UUID(runID),
-			PublicID:               runPublicID,
 			ParentOwnsLifecycle:    pgtype.Bool{Bool: false, Valid: true},
 			Payload:                json.RawMessage(`{"imageId":"child"}`),
 			Metadata:               json.RawMessage(`{"source":"parent"}`),
@@ -159,7 +156,6 @@ func TestCreateKeylessDetachedChildTaskRunFromParentDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	if child.ID != pgvalue.UUID(runID) ||
-		child.PublicID != runPublicID ||
 		child.CauseKind != "child" ||
 		child.ParentRunID != pgvalue.UUID(parent.RunID) ||
 		!child.ParentOwnsLifecycle.Valid ||

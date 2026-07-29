@@ -29,6 +29,7 @@ import {
   validateTaskId,
 } from "./schema/task"
 import { currentRuntimeOperations } from "./internal/runtime"
+import { resourceID } from "./internal/id"
 import { trimGoSpace } from "./internal/strings"
 
 const privateDefinitionBrand = Symbol.for("helmr.sdk.v0.definition")
@@ -362,13 +363,7 @@ function validatedActorRefAddress(
     throw new Error("actor ref requires exactly one of id or key")
   }
   if (hasId) {
-    if (
-      typeof value["id"] !== "string" ||
-      !/^act_[a-z2-7]{26}$/.test(value["id"])
-    ) {
-      throw new Error("actor ref id must be a canonical Actor public ID")
-    }
-    return Object.freeze({ id: value["id"] })
+    return Object.freeze({ id: resourceID(value["id"], "Actor ref ID") })
   }
   if (typeof value["key"] !== "string") {
     throw new Error("actor ref key must be a string")

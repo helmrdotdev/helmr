@@ -66,7 +66,6 @@ func (c *Client) GetSchedule(
 	scheduleID string,
 	opts EnvironmentScopeOptions,
 ) (api.ScheduleResponse, error) {
-	scheduleID = strings.TrimSpace(scheduleID)
 	if err := api.ValidateScheduleID(scheduleID); err != nil {
 		return api.ScheduleResponse{}, err
 	}

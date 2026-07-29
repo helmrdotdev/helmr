@@ -44,7 +44,7 @@ func writeDeploymentEventSSE(t *testing.T, w http.ResponseWriter, r *http.Reques
 		t.Fatalf("events query = %s", r.URL.RawQuery)
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
-	_, _ = fmt.Fprintf(w, "id: 1\nevent: deployment_event\ndata: {\"id\":\"1\",\"deployment_id\":\"deployment-1\",\"kind\":%q,\"message\":\"Deployment lifecycle changed\"}\n\n", kind)
+	_, _ = fmt.Fprintf(w, "id: 1\nevent: deployment_event\ndata: {\"id\":\"1\",\"deployment_id\":\"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35\",\"kind\":%q,\"message\":\"Deployment lifecycle changed\"}\n\n", kind)
 }
 
 func deployCommandFixture(t *testing.T) (string, func()) {

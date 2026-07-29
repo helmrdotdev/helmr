@@ -128,7 +128,7 @@ func TestCommandUsesSavedLoginWhenEnvIsUnset(t *testing.T) {
 			t.Fatalf("auth = %s", got)
 		}
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/project-1/environments/env-1/runs/run-1/logs":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/project-1/environments/env-1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs":
 			_ = json.NewEncoder(w).Encode(api.RunLogPage{Logs: []api.RunLogRecord{{
 				Kind: "stdout", ContentBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
 			}}})
@@ -145,7 +145,7 @@ func TestCommandUsesSavedLoginWhenEnvIsUnset(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "logs", "run-1", "--project", "project-1", "--env", "env-1"})
+	cmd.SetArgs([]string{"run", "logs", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", "--project", "project-1", "--env", "env-1"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestRunCommandWithSavedLoginRequiresExplicitScope(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "logs", "run-1"})
+	cmd.SetArgs([]string{"run", "logs", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "--project and --env are required with helmr login") {
 		t.Fatalf("err = %v", err)
@@ -185,7 +185,7 @@ func TestRunCommandWithAPIKeyRejectsExplicitScope(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "get", "run-1", "--project", "project-1", "--env", "env-1"})
+	cmd.SetArgs([]string{"run", "get", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", "--project", "project-1", "--env", "env-1"})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "API keys are already environment scoped") {
 		t.Fatalf("err = %v", err)

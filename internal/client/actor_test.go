@@ -105,15 +105,15 @@ func testReadActorOutputRoute(
 		}
 		_ = json.NewEncoder(w).Encode(api.ActorOutputPage{
 			Records: []api.ActorOutputRecord{{
-				ID:          "arec_aghq6mkmpn6svd23divtytk6n4",
+				ID:          "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
 				Sequence:    8,
 				Data:        json.RawMessage(`null`),
 				ContentType: "application/json",
 				CreatedAt:   time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
 				Provenance: api.ActorOutputProvenance{
-					RunID:         "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+					RunID:         "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 					AttemptNumber: 1,
-					DeploymentID:  "dep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+					DeploymentID:  "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
 				},
 			}},
 			NextAfter: 8,
@@ -212,7 +212,7 @@ func testGetActorStatusRoute(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.ID != "act_aaaaaaaaaaaaaaaaaaaaaaaaaa" ||
+	if response.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" ||
 		response.Status != api.ActorPublicStatusOpen {
 		t.Fatalf("response = %+v", response)
 	}
@@ -220,7 +220,7 @@ func testGetActorStatusRoute(
 
 func actorStatusFixture() api.ActorStatus {
 	return api.ActorStatus{
-		ID:        "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ID:        "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 		Status:    api.ActorPublicStatusOpen,
 		CreatedAt: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
 		UpdatedAt: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
@@ -242,7 +242,7 @@ func testCloseActorRoute(t *testing.T, session bool, wantPath string, scope Envi
 			t.Fatalf("request = %+v", request)
 		}
 		_ = json.NewEncoder(w).Encode(api.ActorOperationReceipt{
-			ActorID:    "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+			ActorID:    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 			AcceptedAt: acceptedAt,
 		})
 	}))
@@ -262,7 +262,7 @@ func testCloseActorRoute(t *testing.T, session bool, wantPath string, scope Envi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.ActorID != "act_aaaaaaaaaaaaaaaaaaaaaaaaaa" ||
+	if response.ActorID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" ||
 		!response.AcceptedAt.Equal(acceptedAt) {
 		t.Fatalf("response = %+v", response)
 	}
@@ -284,8 +284,8 @@ func testStartActorRoute(t *testing.T, session bool, wantPath string, scope Envi
 		}
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(api.StartActorResponse{
-			ActorID: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
-			RunID:   "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+			ActorID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+			RunID:   "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 		})
 	}))
 	defer server.Close()
@@ -306,8 +306,8 @@ func testStartActorRoute(t *testing.T, session bool, wantPath string, scope Envi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.ActorID != "act_aaaaaaaaaaaaaaaaaaaaaaaaaa" ||
-		response.RunID != "run_aaaaaaaaaaaaaaaaaaaaaaaaaa" {
+	if response.ActorID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" ||
+		response.RunID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" {
 		t.Fatalf("response = %+v", response)
 	}
 }
@@ -362,7 +362,7 @@ func TestSendActorInputRejectsInvalidReferenceBeforeTransport(t *testing.T) {
 	for _, request := range []api.SendActorInputRequest{
 		{Input: json.RawMessage(`null`)},
 		{
-			ActorID:  "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+			ActorID:  "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 			ActorKey: "thread:1",
 			Input:    json.RawMessage(`null`),
 		},

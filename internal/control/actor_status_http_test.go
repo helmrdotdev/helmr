@@ -5,15 +5,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestParseActorReadAddressRequiresOneAddress(t *testing.T) {
+	actorID := uuid.Must(uuid.NewV7())
 	for target, want := range map[string]actorReadAddress{
-		"/?actor_id=act_aaaaaaaaaaaaaaaaaaaaaaaaaa": {publicID: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa"},
-		"/?actor_key=thread%3A1":                    {key: "thread:1"},
+		"/?actor_id=" + actorID.String(): {id: pgvalue.UUID(actorID)},
+		"/?actor_key=thread%3A1":         {key: "thread:1"},
 	} {
 		got, err := parseActorReadAddress(httptest.NewRequest("GET", target, nil))
 		if err != nil {
@@ -25,7 +26,7 @@ func TestParseActorReadAddressRequiresOneAddress(t *testing.T) {
 	}
 	for _, target := range []string{
 		"/",
-		"/?actor_id=act_aaaaaaaaaaaaaaaaaaaaaaaaaa&actor_key=thread%3A1",
+		"/?actor_id=" + actorID.String() + "&actor_key=thread%3A1",
 		"/?actor_id=invalid",
 		"/?unknown=value",
 	} {
@@ -37,6 +38,7 @@ func TestParseActorReadAddressRequiresOneAddress(t *testing.T) {
 
 func TestProjectActorStatusCollapsesInternalStates(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	actorID := uuid.Must(uuid.NewV7())
 	for state, want := range map[string]api.ActorPublicStatus{
 		"open":       api.ActorPublicStatusOpen,
 		"closing":    api.ActorPublicStatusOpen,
@@ -45,8 +47,8 @@ func TestProjectActorStatusCollapsesInternalStates(t *testing.T) {
 		"cancelled":  api.ActorPublicStatusCancelled,
 	} {
 		got, err := projectActorStatus(actorReadRecord{
-			publicID: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
-			state:    state, createdAt: pgvalue.Timestamptz(now), updatedAt: pgvalue.Timestamptz(now),
+			id: pgvalue.UUID(actorID), state: state,
+			createdAt: pgvalue.Timestamptz(now), updatedAt: pgvalue.Timestamptz(now),
 		})
 		if err != nil {
 			t.Fatalf("%s: %v", state, err)
@@ -56,19 +58,18 @@ func TestProjectActorStatusCollapsesInternalStates(t *testing.T) {
 		}
 	}
 
-	runID := "run_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	runID := uuid.Must(uuid.NewV7())
 	failed, err := projectActorStatus(actorReadRecord{
-		publicID: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
-		state:    "failed", createdAt: pgvalue.Timestamptz(now), updatedAt: pgvalue.Timestamptz(now),
-		failureCode: pgvalue.Text("run_failed"), failureRunID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
-		failureRunPublicID: pgvalue.Text(runID),
+		id: pgvalue.UUID(actorID), state: "failed",
+		createdAt: pgvalue.Timestamptz(now), updatedAt: pgvalue.Timestamptz(now),
+		failureCode: pgvalue.Text("run_failed"), failureRunID: pgvalue.UUID(runID),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if failed.Status != api.ActorPublicStatusFailed ||
 		failed.Failure == nil ||
-		failed.Failure.RunID != runID {
+		failed.Failure.RunID != runID.String() {
 		t.Fatalf("failed status = %+v", failed)
 	}
 }

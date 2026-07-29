@@ -7,11 +7,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 )
 
 func TestNormalizeTaskStartCanonicalizesCallerSemantics(t *testing.T) {
-	workspaceID := actorStartTestPublicID(t, publicid.Workspace)
+	workspaceID := uuid.Must(uuid.NewV7()).String()
 	ttl := int64(60_000)
 	concurrencyKey := "customer:1"
 	normalized, err := normalizeTaskStart(taskStartRequest{
@@ -38,7 +37,7 @@ func TestNormalizeTaskStartCanonicalizesCallerSemantics(t *testing.T) {
 }
 
 func TestNormalizeTaskStartRejectsInvalidCallerValues(t *testing.T) {
-	workspaceID := actorStartTestPublicID(t, publicid.Workspace)
+	workspaceID := uuid.Must(uuid.NewV7()).String()
 	base := taskStartRequest{
 		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
 		EnvironmentID: uuid.Must(uuid.NewV7()), TaskDeclaredID: "task",
@@ -68,8 +67,7 @@ func TestNormalizeTaskStartRejectsInvalidCallerValues(t *testing.T) {
 
 func TestTaskStartReceiptRoundTrip(t *testing.T) {
 	runID := uuid.Must(uuid.NewV7())
-	runPublicID := actorStartTestPublicID(t, publicid.Run)
-	raw, err := json.Marshal(taskStartReceipt{RunID: runID.String(), RunPublicID: runPublicID})
+	raw, err := json.Marshal(taskStartReceipt{RunID: runID.String()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +75,7 @@ func TestTaskStartReceiptRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.RunID != runID || decoded.RunPublicID != runPublicID {
+	if decoded.RunID != runID {
 		t.Fatalf("decoded = %+v", decoded)
 	}
 }

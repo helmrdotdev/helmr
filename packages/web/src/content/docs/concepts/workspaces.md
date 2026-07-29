@@ -17,7 +17,7 @@ The v0 public lifecycle is deliberately narrow:
 | Action | Meaning |
 | --- | --- |
 | Create | Create a Workspace from a deployed declaration, optionally with a stable key and Secret placements. |
-| Retrieve/ref | Address it by public ID or by declaration plus key. |
+| Retrieve/ref | Address it by resource ID or by declaration plus key. |
 | Read files | Read, list, or stat the current committed filesystem. |
 | Exec | Run one bounded command and receive its terminal stdout, stderr, and exit code. |
 | Delete | Remove the Workspace from normal use. |

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
@@ -403,16 +403,14 @@ func workerWorkspaceExecRequest(
 }
 
 func validateRuntimeWorkspaceCorrelation(value string) error {
-	id, err := uuid.Parse(value)
-	if err != nil || id == uuid.Nil || id.String() != value {
+	if err := ids.Validate(value); err != nil {
 		return errors.New("Workspace runtime correlation ID is invalid")
 	}
 	return nil
 }
 
 func validateRuntimeWorkspaceProcessID(value string) error {
-	id, err := uuid.Parse(value)
-	if err != nil || id == uuid.Nil || id.String() != value {
+	if err := ids.Validate(value); err != nil {
 		return errors.New("Workspace exec process ID is invalid")
 	}
 	return nil

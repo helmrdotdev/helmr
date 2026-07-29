@@ -17,9 +17,9 @@ import (
 )
 
 func TestAppendActorInputCompletedClaimBypassesCurrentActorState(t *testing.T) {
-	environmentID := uuid.New()
-	actorID := uuid.New()
-	recordID := uuid.New()
+	environmentID := uuid.Must(uuid.NewV7())
+	actorID := uuid.Must(uuid.NewV7())
+	recordID := uuid.Must(uuid.NewV7())
 	store := newActorInputClaimStore()
 	completeActorInputClaim(
 		t,
@@ -38,7 +38,7 @@ func TestAppendActorInputCompletedClaimBypassesCurrentActorState(t *testing.T) {
 	record, err := server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID:  environmentID,
 		ActorID:        actorID,
-		RecordID:       uuid.New(),
+		RecordID:       uuid.Must(uuid.NewV7()),
 		Data:           []byte(`{"b":2,"a":1}`),
 		SourceKind:     "external",
 		IdempotencyKey: "message:1",
@@ -68,15 +68,15 @@ func TestAppendActorInputCompletedClaimBypassesCurrentActorState(t *testing.T) {
 }
 
 func TestAppendActorInputRollsBackNewClaimWhenActorIsUnavailable(t *testing.T) {
-	environmentID := uuid.New()
-	actorID := uuid.New()
+	environmentID := uuid.Must(uuid.NewV7())
+	actorID := uuid.Must(uuid.NewV7())
 	store := newActorInputClaimStore()
 	server := &Server{db: store}
 
 	_, err := server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID:  environmentID,
 		ActorID:        actorID,
-		RecordID:       uuid.New(),
+		RecordID:       uuid.Must(uuid.NewV7()),
 		Data:           []byte(`{"message":"queued"}`),
 		SourceKind:     "external",
 		IdempotencyKey: "message:2",
@@ -98,14 +98,14 @@ func TestAppendActorInputRollsBackNewClaimWhenActorIsUnavailable(t *testing.T) {
 }
 
 func TestAppendActorInputRollsBackProvisionalRunSourceWhenAuthorityIsStale(t *testing.T) {
-	environmentID := uuid.New()
-	actorID := uuid.New()
-	sourceRunID := uuid.New()
+	environmentID := uuid.Must(uuid.NewV7())
+	actorID := uuid.Must(uuid.NewV7())
+	sourceRunID := uuid.Must(uuid.NewV7())
 	store := newActorInputClaimStore()
 	store.locator = db.Actor{
 		ID:                pgvalue.UUID(actorID),
 		EnvironmentID:     pgvalue.UUID(environmentID),
-		WorkspaceID:       pgvalue.UUID(uuid.New()),
+		WorkspaceID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		State:             "open",
 		NextInputSequence: 3,
 	}
@@ -115,7 +115,7 @@ func TestAppendActorInputRollsBackProvisionalRunSourceWhenAuthorityIsStale(t *te
 	_, err := server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID:  environmentID,
 		ActorID:        actorID,
-		RecordID:       uuid.New(),
+		RecordID:       uuid.Must(uuid.NewV7()),
 		Data:           []byte(`{"message":"queued"}`),
 		SourceKind:     "run",
 		SourceRunID:    sourceRunID,
@@ -137,8 +137,8 @@ func TestAppendActorInputRollsBackProvisionalRunSourceWhenAuthorityIsStale(t *te
 }
 
 func TestAppendActorInputRejectsOversizedCanonicalInputBeforeTransaction(t *testing.T) {
-	environmentID := uuid.New()
-	actorID := uuid.New()
+	environmentID := uuid.Must(uuid.NewV7())
+	actorID := uuid.Must(uuid.NewV7())
 	store := newActorInputClaimStore()
 	server := &Server{db: store}
 	data := append([]byte{'"'}, bytes.Repeat([]byte{'x'}, maxActorInputBytes)...)
@@ -147,7 +147,7 @@ func TestAppendActorInputRejectsOversizedCanonicalInputBeforeTransaction(t *test
 	_, err := server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID:  environmentID,
 		ActorID:        actorID,
-		RecordID:       uuid.New(),
+		RecordID:       uuid.Must(uuid.NewV7()),
 		Data:           data,
 		SourceKind:     "external",
 		IdempotencyKey: "message:3",
@@ -161,13 +161,13 @@ func TestAppendActorInputRejectsOversizedCanonicalInputBeforeTransaction(t *test
 }
 
 func TestAppendActorInputClassifiesLockedSequenceExhaustion(t *testing.T) {
-	environmentID := uuid.New()
-	actorID := uuid.New()
+	environmentID := uuid.Must(uuid.NewV7())
+	actorID := uuid.Must(uuid.NewV7())
 	store := newActorInputClaimStore()
 	store.locator = db.Actor{
 		ID:                pgvalue.UUID(actorID),
 		EnvironmentID:     pgvalue.UUID(environmentID),
-		WorkspaceID:       pgvalue.UUID(uuid.New()),
+		WorkspaceID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		State:             "open",
 		NextInputSequence: maxActorSequence,
 	}
@@ -184,7 +184,7 @@ func TestAppendActorInputClassifiesLockedSequenceExhaustion(t *testing.T) {
 	_, err := server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID: environmentID,
 		ActorID:       actorID,
-		RecordID:      uuid.New(),
+		RecordID:      uuid.Must(uuid.NewV7()),
 		Data:          []byte(`{"message":"queued"}`),
 		SourceKind:    "external",
 	})

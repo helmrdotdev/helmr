@@ -12,14 +12,14 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5"
 )
 
 func (s *Server) executeWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
-	workspacePublicID := chi.URLParam(r, "workspaceID")
-	if publicid.ValidateFor(publicid.Workspace, workspacePublicID) != nil {
+	workspaceID, err := ids.Parse(chi.URLParam(r, "workspaceID"))
+	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_workspace_reference", message: "Workspace ID is invalid"}))
 		return
 	}
@@ -74,11 +74,11 @@ func (s *Server) executeWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
 		return
 	}
-	record, err := s.db.GetWorkspaceByPublicID(r.Context(), db.GetWorkspaceByPublicIDParams{
+	record, err := s.db.GetWorkspace(r.Context(), db.GetWorkspaceParams{
 		OrgID:         pgvalue.UUID(principal.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		PublicID:      workspacePublicID,
+		ID:            pgvalue.UUID(workspaceID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(codedError{code: "workspace_not_found", message: errWorkspaceNotFound.Error()}))

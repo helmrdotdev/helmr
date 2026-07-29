@@ -28,7 +28,7 @@ func TestTokenCreateResponseRemainsOriginalPendingProjection(t *testing.T) {
 	} {
 		t.Run(string(state), func(t *testing.T) {
 			row := db.Token{
-				PublicID:  "tok_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+				ID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				State:     state,
 				Result:    json.RawMessage(`{"approved":true}`),
 				Error:     json.RawMessage(`{"code":"terminal"}`),
@@ -62,7 +62,6 @@ func TestTokenCreateResponseRemainsOriginalPendingProjection(t *testing.T) {
 func TestExpiredTokenOperationCommitsTerminalTransition(t *testing.T) {
 	tokenRow := db.Token{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		PublicID:      "tok_aaaaaaaaaaaaaaaaaaaaaaaaaa",
 		OrgID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		ProjectID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		EnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
@@ -136,7 +135,7 @@ func (s *expiredTokenOperationStore) CompleteToken(
 ) (db.CompleteTokenRow, error) {
 	s.completions++
 	return db.CompleteTokenRow{
-		ID: s.token.ID, PublicID: s.token.PublicID,
+		ID:    s.token.ID,
 		OrgID: s.token.OrgID, ProjectID: s.token.ProjectID,
 		EnvironmentID:          s.token.EnvironmentID,
 		State:                  db.TokenStateExpired,
@@ -151,7 +150,7 @@ func (s *expiredTokenOperationStore) CancelToken(
 ) (db.CancelTokenRow, error) {
 	s.cancellations++
 	return db.CancelTokenRow{
-		ID: s.token.ID, PublicID: s.token.PublicID,
+		ID:    s.token.ID,
 		OrgID: s.token.OrgID, ProjectID: s.token.ProjectID,
 		EnvironmentID:          s.token.EnvironmentID,
 		State:                  db.TokenStateExpired,

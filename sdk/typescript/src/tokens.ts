@@ -6,6 +6,7 @@ import type {
   WaitTimeoutError,
 } from "./contract"
 import { currentRuntimeOperations } from "./internal/runtime"
+import { resourceID } from "./internal/id"
 import {
   parsePayloadWithSchema,
   type PayloadSchemaOutput,
@@ -93,10 +94,7 @@ export const tokens: Tokens = Object.freeze({
     }) as TokenCreateResult
   },
   ref(id: string): TokenRef {
-    const normalized = id.trim()
-    if (!/^tok_[a-z2-7]{26}$/.test(normalized)) {
-      throw new Error("Token ID must be a canonical tok_ public ID")
-    }
+    const normalized = resourceID(id, "Token ID")
     return Object.freeze({
       id: normalized,
       wait: tokenWait(normalized),

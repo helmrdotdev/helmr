@@ -24,7 +24,7 @@ deployment="$(
     jq -er '.deployments[0] | select(.status == "deployed")'
 )"
 deployment_id="$(jq -er '.id' <<<"${deployment}")"
-validation_require_public_id dep "${deployment_id}"
+validation_require_resource_id "${deployment_id}"
 validation_db_marker "
   COPY (
     SELECT 'build-group-only'
@@ -35,7 +35,7 @@ validation_db_marker "
        AND environments.id = deployments.environment_id
        AND environments.current_deployment_id = deployments.id
        AND environments.slug = '${VALIDATION_ENVIRONMENT}'
-     WHERE deployments.public_id = '${deployment_id}'
+     WHERE deployments.id = '${deployment_id}'
        AND deployments.status = 'deployed'
        AND EXISTS (
            SELECT 1
@@ -66,7 +66,7 @@ validation_db_marker "
 
 run_ids="$(jq -c '[.run_ids[]?] | unique' "${VALIDATION_TMP}/release.json")"
 while IFS= read -r run_id; do
-  validation_require_public_id run "${run_id}" || {
+  validation_require_resource_id "${run_id}" || {
     validation_write_result failed invalid_release_run_id
     exit 1
   }

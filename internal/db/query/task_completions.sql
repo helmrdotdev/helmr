@@ -41,7 +41,6 @@ SELECT *
 -- name: PublishTaskWorkspaceVersion :one
 INSERT INTO workspace_versions (
     id,
-    public_id,
     environment_id,
     workspace_id,
     parent_version_id,
@@ -59,7 +58,6 @@ INSERT INTO workspace_versions (
 )
 VALUES (
     sqlc.arg(id),
-    sqlc.arg(public_id),
     sqlc.arg(environment_id),
     sqlc.arg(workspace_id),
     sqlc.arg(parent_version_id),

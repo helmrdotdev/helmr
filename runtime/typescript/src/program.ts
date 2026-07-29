@@ -10,6 +10,7 @@ import {
   parseWorkspaceFileEntry,
   parseWorkspaceFilePage,
   parseWorkspaceSnapshot,
+  resourceID,
   trimGoSpace,
   type InternalActorDefinition,
   type InternalTaskDefinition,
@@ -52,7 +53,7 @@ import type {
   WorkspaceSnapshot,
 } from "@helmr/sdk"
 import { createWriteStream, promises as fs } from "node:fs"
-import { randomUUID } from "node:crypto"
+import { randomBytes } from "node:crypto"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
@@ -63,6 +64,19 @@ const MAX_RUN_LOG_MESSAGE_BYTES = 4 * 1024
 const MAX_RUN_LOG_ATTRIBUTES_BYTES = 16 * 1024
 const MAX_TASK_ERROR_MESSAGE_BYTES = 1024
 const MAX_ACTOR_INPUT_BYTES = 1 * 1024 * 1024
+
+function newUUIDv7(): string {
+  const bytes = randomBytes(16)
+  let timestamp = Date.now()
+  for (let index = 5; index >= 0; index -= 1) {
+    bytes[index] = timestamp & 0xff
+    timestamp = Math.floor(timestamp / 256)
+  }
+  bytes[6] = (bytes[6]! & 0x0f) | 0x70
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80
+  const hex = bytes.toString("hex")
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
 
 type InputChunk = Uint8Array | string
 
@@ -186,12 +200,11 @@ class ResumeDecisionRouter {
             runProto.ResumeDecisionSchema,
             await this.#reader.read(),
           )
-          const correlationId = decision.correlationId || decision.runWaitId
-          const pending = this.#pending.get(correlationId)
+          const pending = this.#pending.get(decision.correlationId)
           if (pending === undefined) {
             throw new Error("resume decision did not match a pending runtime operation")
           }
-          this.#pending.delete(correlationId)
+          this.#pending.delete(decision.correlationId)
           pending.resolve(decision)
         }
       } catch (error) {
@@ -315,6 +328,27 @@ async function requestRuntimeDecision(
     throw new RuntimeProtocolError("failed to read runtime operation decision", {
       cause: error,
     })
+  }
+}
+
+function requireWaitDecision(
+  decision: runProto.ResumeDecision,
+  correlationId: string,
+  runWaitId: string,
+  resumeAttachId: string,
+  operation: string,
+): void {
+  if (
+    decision.correlationId !== correlationId ||
+    decision.runWaitId !== runWaitId ||
+    decision.resumeAttachId !== resumeAttachId ||
+    (decision.kind !== "completed" &&
+      decision.kind !== "failed" &&
+      decision.kind !== "cancelled")
+  ) {
+    throw new RuntimeProtocolError(
+      `${operation} decision did not match the pending Wait`,
+    )
   }
 }
 
@@ -716,7 +750,7 @@ function programRuntimeOperations(
         { code: "HELMR_KEYLESS_CHILD_TASK_START" },
       )
     }
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
     const payloadJson = target.payloadPresent
       ? new TextDecoder().decode(canonicalizeJsonValue(payload as JsonValue))
       : undefined
@@ -770,10 +804,10 @@ function programRuntimeOperations(
         if (keys.length !== 1 || keys[0] !== "run_id") {
           throw new Error("result fields are invalid")
         }
-        const id = (value as Record<string, unknown>)["run_id"]
-        if (typeof id !== "string" || !/^run_[a-z2-7]{26}$/.test(id)) {
-          throw new Error("run_id is invalid")
-        }
+        const id = resourceID(
+          (value as Record<string, unknown>)["run_id"],
+          "Task child start result.run_id",
+        )
         return Object.freeze({ id })
       })
     })
@@ -790,7 +824,9 @@ function programRuntimeOperations(
     const operation = runOperations.track(async () => {
       const releaseWait = waitGate.acquire()
       try {
-        const correlationId = randomUUID()
+        const correlationId = newUUIDv7()
+        const runWaitId = newUUIDv7()
+        const resumeAttachId = newUUIDv7()
         const payloadJson = target.payloadPresent
           ? new TextDecoder().decode(
               canonicalizeJsonValue(payload as JsonValue),
@@ -828,6 +864,8 @@ function programRuntimeOperations(
             case: "taskChildInvokeRequested",
             value: create(runProto.TaskChildInvokeRequestedSchema, {
               correlationId,
+              runWaitId,
+              resumeAttachId,
               declaredId: target.declaredId,
               method: "call",
               payloadPresent: target.payloadPresent,
@@ -843,16 +881,13 @@ function programRuntimeOperations(
             }),
           },
         )
-        if (
-          (decision.correlationId || decision.runWaitId) !== correlationId ||
-          (decision.kind !== "completed" &&
-            decision.kind !== "failed" &&
-            decision.kind !== "cancelled")
-        ) {
-          throw new RuntimeProtocolError(
-            "Task child call decision did not match the pending Wait",
-          )
-        }
+        requireWaitDecision(
+          decision,
+          correlationId,
+          runWaitId,
+          resumeAttachId,
+          "Task child call",
+        )
         if (decision.requireConsumedAck) {
           await writeRuntimeProtocolEvent(io, {
             case: "resumeConsumed",
@@ -897,12 +932,16 @@ function programRuntimeOperations(
     timeoutMs: number,
   ): Promise<void> => {
     const releaseWait = waitGate.acquire()
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
+    const runWaitId = newUUIDv7()
+    const resumeAttachId = newUUIDv7()
     try {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "runWaitRequested",
         value: create(runProto.RunWaitRequestedSchema, {
           correlationId,
+          runWaitId,
+          resumeAttachId,
           kind: "timer",
           paramsJson: new TextDecoder().decode(canonicalizeJsonValue(params)),
           timeoutMs: BigInt(timeoutMs),
@@ -911,14 +950,13 @@ function programRuntimeOperations(
             : { actorSpeculativeInputSequence: actorCursor.value }),
         }),
       })
-      if (
-        (decision.correlationId || decision.runWaitId) !== correlationId ||
-        (decision.kind !== "completed" &&
-          decision.kind !== "failed" &&
-          decision.kind !== "cancelled")
-      ) {
-        throw new RuntimeProtocolError("timer resume decision did not match the pending Wait")
-      }
+      requireWaitDecision(
+        decision,
+        correlationId,
+        runWaitId,
+        resumeAttachId,
+        "timer resume",
+      )
       if (decision.requireConsumedAck) {
 			await writeRuntimeProtocolEvent(io, {
 				case: "resumeConsumed",
@@ -974,7 +1012,7 @@ function programRuntimeOperations(
         false,
       )
     }
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "actorInputSendRequested",
@@ -1018,7 +1056,7 @@ function programRuntimeOperations(
     options: ActorStartOptions,
   ): Promise<Readonly<{ actorId: string; runId: string }>> => {
     if (options.signal?.aborted) throw abortSignalReason(options.signal)
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
     const run = options.run
     const runOptions = {
       ...(run?.queue === undefined ? {} : { queue: run.queue }),
@@ -1066,12 +1104,14 @@ function programRuntimeOperations(
       return parseRuntimeProtocolValue("Actor start result", () => {
         const value = parseObjectJSON(decision.dataJson, "Actor start result")
         requireExactKeys(value, ["actor_id", "run_id"], "Actor start result")
-        const actorId = stringField(value, "actor_id", "Actor start result")
-        const runId = stringField(value, "run_id", "Actor start result")
-        if (!/^act_[a-z2-7]{26}$/.test(actorId) ||
-          !/^run_[a-z2-7]{26}$/.test(runId)) {
-          throw new Error("Actor start result has invalid public IDs")
-        }
+        const actorId = resourceID(
+          stringField(value, "actor_id", "Actor start result"),
+          "Actor start result.actor_id",
+        )
+        const runId = resourceID(
+          stringField(value, "run_id", "Actor start result"),
+          "Actor start result.run_id",
+        )
         return Object.freeze({ actorId, runId })
       })
     })
@@ -1083,7 +1123,7 @@ function programRuntimeOperations(
       address: { readonly id: string } | { readonly key: string }
     }>,
   ): Promise<ActorStatus> => {
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
     const decision = await requestRuntimeDecision(io, decisions, correlationId, {
       case: "actorStatusRequested",
       value: create(runProto.ActorStatusRequestedSchema, {
@@ -1109,7 +1149,7 @@ function programRuntimeOperations(
     options?: ActorOperationOptions,
   ): Promise<ActorOperationReceipt> => {
     if (options?.signal?.aborted) throw abortSignalReason(options.signal)
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "actorCloseRequested",
@@ -1129,12 +1169,14 @@ function programRuntimeOperations(
       return parseRuntimeProtocolValue("Actor close result", () => {
         const value = parseObjectJSON(decision.dataJson, "Actor close result")
         requireExactKeys(value, ["accepted_at", "actor_id"], "Actor close result")
-        const actorId = stringField(value, "actor_id", "Actor close result")
+        const actorId = resourceID(
+          stringField(value, "actor_id", "Actor close result"),
+          "Actor close result.actor_id",
+        )
         const acceptedAt = new Date(
           stringField(value, "accepted_at", "Actor close result"),
         )
-        if (!/^act_[a-z2-7]{26}$/.test(actorId) ||
-          Number.isNaN(acceptedAt.getTime())) {
+        if (Number.isNaN(acceptedAt.getTime())) {
           throw new Error("Actor close result is invalid")
         }
         return Object.freeze({ actorId, acceptedAt })
@@ -1150,7 +1192,7 @@ function programRuntimeOperations(
     options?: Readonly<{ after?: number; limit?: number; signal?: AbortSignal }>,
   ) => {
     if (options?.signal?.aborted) throw abortSignalReason(options.signal)
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "actorOutputPageRequested",
@@ -1216,7 +1258,7 @@ function programRuntimeOperations(
     options: import("@helmr/sdk").RuntimeWorkspaceCreateOptions = {},
   ): Promise<Readonly<{ workspaceId: string }>> => {
     if (options.signal?.aborted) throw abortSignalReason(options.signal)
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceCreateRequested",
@@ -1244,14 +1286,14 @@ function programRuntimeOperations(
       return parseRuntimeProtocolValue("Workspace create result", () => {
         const value = parseObjectJSON(decision.dataJson, "Workspace create result")
         requireExactKeys(value, ["workspace_id"], "Workspace create result")
-        const workspaceId = stringField(
-          value,
-          "workspace_id",
-          "Workspace create result",
+        const workspaceId = resourceID(
+          stringField(
+            value,
+            "workspace_id",
+            "Workspace create result",
+          ),
+          "Workspace create result.workspace_id",
         )
-        if (!/^wsp_[a-z2-7]{26}$/.test(workspaceId)) {
-          throw new Error("Workspace create result.workspace_id is invalid")
-        }
         return Object.freeze({ workspaceId })
       })
     })
@@ -1262,7 +1304,7 @@ function programRuntimeOperations(
     signal?: AbortSignal,
   ): Promise<WorkspaceSnapshot> => {
     if (signal?.aborted) throw abortSignalReason(signal)
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceRetrieveRequested",
@@ -1288,7 +1330,7 @@ function programRuntimeOperations(
     signal?: AbortSignal,
   ): Promise<Uint8Array> => {
     if (signal?.aborted) throw abortSignalReason(signal)
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceFileReadRequested",
@@ -1315,7 +1357,7 @@ function programRuntimeOperations(
     signal?: AbortSignal,
   ): Promise<WorkspaceFileEntry> => {
     if (signal?.aborted) throw abortSignalReason(signal)
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceFileStatRequested",
@@ -1347,7 +1389,7 @@ function programRuntimeOperations(
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
       throw new Error("Workspace file list limit must be an integer between 1 and 100")
     }
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceFileListRequested",
@@ -1382,7 +1424,7 @@ function programRuntimeOperations(
     if (timeoutMs !== undefined && timeoutMs > 15 * 60 * 1_000) {
       throw new Error("Workspace exec timeout must not exceed 15m")
     }
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceExecRequested",
@@ -1416,7 +1458,7 @@ function programRuntimeOperations(
     signal?: AbortSignal,
   ): Promise<WorkspaceDeleteReceipt> => {
     if (signal?.aborted) throw abortSignalReason(signal)
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "workspaceDeleteRequested",
@@ -1442,7 +1484,7 @@ function programRuntimeOperations(
   const performTokenCreate = async (
     options: TokenCreateOptions,
   ): Promise<Omit<TokenCreateResult, "wait">> => {
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
     const timeoutMs = options.timeout === undefined
       ? undefined
       : durationMilliseconds(options.timeout, "Token timeout")
@@ -1477,7 +1519,9 @@ function programRuntimeOperations(
     options: TokenWaitOptions,
   ): Promise<JsonValue> => {
     const releaseWait = waitGate.acquire()
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
+    const runWaitId = newUUIDv7()
+    const resumeAttachId = newUUIDv7()
     const timeoutMs = options.timeout === undefined
       ? undefined
       : durationMilliseconds(options.timeout, "Token Wait timeout")
@@ -1489,6 +1533,8 @@ function programRuntimeOperations(
         case: "runWaitRequested",
         value: create(runProto.RunWaitRequestedSchema, {
           correlationId,
+          runWaitId,
+          resumeAttachId,
           kind: "token",
           paramsJson: JSON.stringify({ token_id: tokenId }),
           ...(options.metadata === undefined
@@ -1502,14 +1548,13 @@ function programRuntimeOperations(
             : { actorSpeculativeInputSequence: actorCursor.value }),
         }),
       })
-      if (
-        (decision.correlationId || decision.runWaitId) !== correlationId ||
-        (decision.kind !== "completed" &&
-          decision.kind !== "failed" &&
-          decision.kind !== "cancelled")
-      ) {
-        throw new RuntimeProtocolError("Token resume decision did not match the pending Wait")
-      }
+      requireWaitDecision(
+        decision,
+        correlationId,
+        runWaitId,
+        resumeAttachId,
+        "Token resume",
+      )
       if (decision.requireConsumedAck) {
         await writeRuntimeProtocolEvent(io, {
           case: "resumeConsumed",
@@ -1531,6 +1576,9 @@ function programRuntimeOperations(
         throw runOperations.cancel(failure.reasonCode)
       }
       if (decision.kind !== "completed") {
+        if (decision.kind !== "failed" && decision.kind !== "cancelled") {
+          throw new RuntimeProtocolError("Token resume decision kind was invalid")
+        }
         throw tokenWaitFailure(decision.kind, decision.dataJson)
       }
       return parseRuntimeProtocolValue(
@@ -1547,7 +1595,7 @@ function programRuntimeOperations(
       | Readonly<{ operation: "patch"; values: Metadata }>
       | Readonly<{ operation: "increment"; key: string; amount: number }>,
   ): Promise<void> => {
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "metadataUpdated",
@@ -1602,7 +1650,7 @@ function programRuntimeOperations(
       )
     }
     const attributesJson = canonicalizeLogAttributes(attributes)
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "structuredLogRequested",
@@ -1784,7 +1832,10 @@ function parseTokenCreateResult(dataJson: string): Omit<TokenCreateResult, "wait
     throw new Error("Token create result.status must be pending")
   }
   return Object.freeze({
-    id: stringField(value, "id", "Token create result"),
+    id: resourceID(
+      stringField(value, "id", "Token create result"),
+      "Token create result.id",
+    ),
     callbackUrl: stringField(value, "callback_url", "Token create result"),
     publicAccessToken: stringField(value, "public_access_token", "Token create result"),
     timeoutAt: stringField(value, "timeout_at", "Token create result"),
@@ -1882,12 +1933,10 @@ function parseTaskResultRun(
 ): Readonly<{ id: string }> {
   const run = objectField(value, "run", "Task child call result")
   requireExactKeys(run, ["id"], "Task child call result.run")
-  const id = stringField(run, "id", "Task child call result.run")
-  if (!/^run_[a-z2-7]{26}$/.test(id)) {
-    throw new Error(
-      "Task child call result.run.id must be a canonical Run public ID",
-    )
-  }
+  const id = resourceID(
+    stringField(run, "id", "Task child call result.run"),
+    "Task child call result.run.id",
+  )
   return Object.freeze({ id })
 }
 
@@ -2160,7 +2209,7 @@ function actorSelf(
 
   const commitPriorTurn = async (): Promise<void> => {
     if (cursor.value === committedBoundary) return
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
     const decision = await requestRuntimeDecision(io, decisions, correlationId, {
       case: "actorTurnCommitRequested",
       value: create(runProto.ActorTurnCommitRequestedSchema, {
@@ -2178,7 +2227,9 @@ function actorSelf(
   ): Promise<ActorInputResult> => {
     try {
       await commitPriorTurn()
-      const correlationId = randomUUID()
+      const correlationId = newUUIDv7()
+      const runWaitId = newUUIDv7()
+      const resumeAttachId = newUUIDv7()
       const timeoutMs = options?.timeout === undefined
         ? undefined
         : durationMilliseconds(options.timeout)
@@ -2189,6 +2240,8 @@ function actorSelf(
         case: "runWaitRequested",
         value: create(runProto.RunWaitRequestedSchema, {
           correlationId,
+          runWaitId,
+          resumeAttachId,
           kind: "actor_input",
           paramsJson: JSON.stringify({
             actor_id: actorStart.actorId,
@@ -2203,9 +2256,13 @@ function actorSelf(
           actorSpeculativeInputSequence: cursor.value,
         }),
       })
-      if ((decision.correlationId || decision.runWaitId) !== correlationId) {
-        throw new RuntimeProtocolError("Actor input resume decision did not match the pending receive")
-      }
+      requireWaitDecision(
+        decision,
+        correlationId,
+        runWaitId,
+        resumeAttachId,
+        "Actor input resume",
+      )
       if (decision.requireConsumedAck) {
         await writeRuntimeProtocolEvent(io, {
           case: "resumeConsumed",
@@ -2271,7 +2328,7 @@ function actorSelf(
     options?: OutputAppendOptions,
   ): Promise<ActorOutputRecord> => {
     const normalized = canonicalizeJsonValue(value as JsonValue)
-    const correlationId = randomUUID()
+    const correlationId = newUUIDv7()
     const decision = await requestRuntimeDecision(io, decisions, correlationId, {
       case: "actorOutputAppendRequested",
       value: create(runProto.ActorOutputAppendRequestedSchema, {
@@ -2350,7 +2407,7 @@ function requireActorDecision(
   kind: string,
   operation: string,
 ): void {
-  if ((decision.correlationId || decision.runWaitId) !== correlationId || decision.kind !== kind) {
+  if (decision.correlationId !== correlationId || decision.kind !== kind) {
     throw new RuntimeProtocolError(`${operation} decision did not match the pending operation`)
   }
 }
@@ -2380,7 +2437,10 @@ function parseActorInputDelivery(dataJson: string): Extract<ActorInputResult, { 
     requireExactKeys(source, ["run_id", "type"], "Actor input source")
     parsedSource = Object.freeze({
       type: "run",
-      runId: stringField(source, "run_id", "Actor input source"),
+      runId: resourceID(
+        stringField(source, "run_id", "Actor input source"),
+        "Actor input source.run_id",
+      ),
     })
   } else {
     throw new Error("Actor input source type is invalid")
@@ -2390,7 +2450,10 @@ function parseActorInputDelivery(dataJson: string): Extract<ActorInputResult, { 
     ok: true,
     value: jsonValueField(value, "value", "Actor input delivery"),
     record: Object.freeze({
-      id: stringField(record, "id", "Actor input record"),
+      id: resourceID(
+        stringField(record, "id", "Actor input record"),
+        "Actor input record.id",
+      ),
       sequence,
       createdAt: stringField(record, "created_at", "Actor input record"),
       source: parsedSource,
@@ -2412,21 +2475,30 @@ function parseActorOutputRecord(dataJson: string): ActorOutputRecord {
     "Actor output provenance",
   )
   return Object.freeze({
-    id: stringField(value, "id", "Actor output append result"),
+    id: resourceID(
+      stringField(value, "id", "Actor output append result"),
+      "Actor output append result.id",
+    ),
     sequence: safeJSONSequence(value["sequence"], "Actor output sequence"),
     data: jsonValueField(value, "data", "Actor output append result"),
     contentType: stringField(value, "content_type", "Actor output append result"),
     createdAt: stringField(value, "created_at", "Actor output append result"),
     provenance: Object.freeze({
-      runId: stringField(provenance, "run_id", "Actor output provenance"),
+      runId: resourceID(
+        stringField(provenance, "run_id", "Actor output provenance"),
+        "Actor output provenance.run_id",
+      ),
       attemptNumber: safeJSONSequence(
         provenance["attempt_number"],
         "Actor output attempt number",
       ),
-      deploymentId: stringField(
-        provenance,
-        "deployment_id",
-        "Actor output provenance",
+      deploymentId: resourceID(
+        stringField(
+          provenance,
+          "deployment_id",
+          "Actor output provenance",
+        ),
+        "Actor output provenance.deployment_id",
       ),
     }),
   })
@@ -2444,10 +2516,10 @@ function parseActorStatus(dataJson: string): ActorStatus {
   ) {
     throw new Error("Actor status result has unknown or missing fields")
   }
-  const id = stringField(value, "id", "Actor status result")
-  if (!/^act_[a-z2-7]{26}$/.test(id)) {
-    throw new Error("Actor status result.id is invalid")
-  }
+  const id = resourceID(
+    stringField(value, "id", "Actor status result"),
+    "Actor status result.id",
+  )
   const status = stringField(value, "status", "Actor status result")
   if (
     status !== "open" && status !== "closed" &&
@@ -2477,7 +2549,10 @@ function parseActorStatus(dataJson: string): ActorStatus {
     }
     failure = Object.freeze({
       code,
-      runId: stringField(raw, "run_id", "Actor status failure"),
+      runId: resourceID(
+        stringField(raw, "run_id", "Actor status failure"),
+        "Actor status failure.run_id",
+      ),
     })
   }
   return Object.freeze({
@@ -2490,10 +2565,13 @@ function parseActorStatus(dataJson: string): ActorStatus {
       : {}),
     ...(Object.hasOwn(value, "current_run_id")
       ? {
-          currentRunId: stringField(
-            value,
-            "current_run_id",
-            "Actor status result",
+          currentRunId: resourceID(
+            stringField(
+              value,
+              "current_run_id",
+              "Actor status result",
+            ),
+            "Actor status result.current_run_id",
           ),
         }
       : {}),

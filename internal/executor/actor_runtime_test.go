@@ -149,8 +149,8 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 			startResponse: api.WorkerStartActorResponse{
 				CorrelationID: correlationID,
 				Completed: &api.StartActorResponse{
-					ActorID: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
-					RunID:   "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+					ActorID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+					RunID:   "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 				},
 			},
 		}
@@ -260,8 +260,8 @@ func TestActorRuntimeRetryUsesRenewedReceipt(t *testing.T) {
 		startResponse: api.WorkerStartActorResponse{
 			CorrelationID: correlationID,
 			Completed: &api.StartActorResponse{
-				ActorID: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
-				RunID:   "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+				ActorID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+				RunID:   "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 			},
 		},
 	}

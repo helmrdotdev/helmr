@@ -1,7 +1,6 @@
 -- name: CreateActor :one
 INSERT INTO actors (
     id,
-    public_id,
     environment_id,
     actor_declared_id,
     deployment_definition_id,
@@ -18,7 +17,6 @@ INSERT INTO actors (
     run_tags
 )
 SELECT sqlc.arg(id),
-       sqlc.arg(public_id),
        actor_definition.environment_id,
        actor_definition.declared_id,
        actor_definition.id,
@@ -122,12 +120,12 @@ SELECT *
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
 
--- name: GetActorByPublicID :one
+-- name: GetActorByAddressID :one
 SELECT *
   FROM actors
  WHERE environment_id = sqlc.arg(environment_id)
    AND actor_declared_id = sqlc.arg(actor_declared_id)
-   AND public_id = sqlc.arg(public_id);
+   AND id = sqlc.arg(id);
 
 -- name: GetActorByKey :one
 SELECT *
@@ -137,24 +135,14 @@ SELECT *
    AND key = sqlc.arg(key);
 
 -- name: GetActorRead :one
-SELECT actors.*,
-       current_runs.public_id AS current_run_public_id,
-       failure_runs.public_id AS failure_run_public_id
+SELECT actors.*
   FROM actors
-  LEFT JOIN runs AS current_runs
-    ON current_runs.environment_id = actors.environment_id
-   AND current_runs.actor_id = actors.id
-   AND current_runs.id = actors.current_run_id
-  LEFT JOIN runs AS failure_runs
-    ON failure_runs.environment_id = actors.environment_id
-   AND failure_runs.actor_id = actors.id
-   AND failure_runs.id = actors.failure_run_id
  WHERE actors.environment_id = sqlc.arg(environment_id)
    AND actors.actor_declared_id = sqlc.arg(actor_declared_id)
    AND (
        (
-           sqlc.narg(address_public_id)::text IS NOT NULL
-           AND actors.public_id = sqlc.narg(address_public_id)::text
+           sqlc.narg(address_id)::uuid IS NOT NULL
+           AND actors.id = sqlc.narg(address_id)::uuid
        )
        OR
        (

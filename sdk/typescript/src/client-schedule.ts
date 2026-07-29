@@ -3,6 +3,7 @@ import type {
   WorkspaceTarget,
 } from "./contract"
 import type { RequestOptions } from "./request"
+import { resourceID } from "./internal/id"
 
 export interface ScheduleError {
   readonly code:
@@ -62,7 +63,7 @@ export function createClientSchedules(
       return parseSchedule(
         await transport.request(
           "GET",
-          `/api/schedules/${encodeURIComponent(schedulePublicID(scheduleId))}`,
+          `/api/schedules/${encodeURIComponent(resourceID(scheduleId, "Schedule ID"))}`,
           options.signal === undefined ? {} : { signal: options.signal },
         ),
       )
@@ -120,11 +121,11 @@ function parseSchedule(value: unknown): ScheduleSnapshot {
     ? undefined
     : parseScheduleError(input["last_error"])
   return Object.freeze({
-    id: schedulePublicID(input["id"]),
+    id: resourceID(input["id"], "Schedule response.id"),
     task: requiredString(input, "task", "Schedule response"),
     workspace: Object.freeze(
       hasID
-        ? { id: workspace["id"] as string }
+        ? { id: resourceID(workspace["id"], "Schedule workspace.id") }
         : { key: workspace["key"] as string },
     ) as WorkspaceTarget,
     cron: Object.freeze({
@@ -187,13 +188,6 @@ function requiredString(
 function timestamp(value: unknown, field: string): string {
   if (typeof value !== "string" || Number.isNaN(Date.parse(value))) {
     throw new Error(`Schedule response.${field} must be a timestamp`)
-  }
-  return value
-}
-
-function schedulePublicID(value: unknown): string {
-  if (typeof value !== "string" || !/^sch_[a-z2-7]{26}$/.test(value)) {
-    throw new Error("Schedule ID must be a canonical sch_ public ID")
   }
   return value
 }

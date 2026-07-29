@@ -16,6 +16,7 @@ import type {
   TaskWait,
 } from "./contract"
 import { runtimeOperationsInstalled } from "./internal/runtime"
+import { resourceID } from "./internal/id"
 import { validateTaskId } from "./schema/task"
 import type {
   TokenCreateOptions,
@@ -236,10 +237,7 @@ class ClientTasks implements ClientTasksApi {
       ),
       "Task start response",
     )
-    const runId = response["run_id"]
-    if (typeof runId !== "string" || !/^run_[a-z2-7]{26}$/.test(runId)) {
-      throw new Error("Task start response.run_id must be a canonical Run public ID")
-    }
+    const runId = resourceID(response["run_id"], "Task start response.run_id")
     return Object.freeze({ id: runId })
   }
 }
@@ -258,7 +256,7 @@ class ClientRuns implements ClientRunsApi {
     return parseRunSnapshot<TOutput>(
       await this.#transport.request(
         "GET",
-        `/api/runs/${encodeURIComponent(runID(runId))}`,
+        `/api/runs/${encodeURIComponent(resourceID(runId, "Run ID"))}`,
         options.signal === undefined ? {} : { signal: options.signal },
       ),
     )
@@ -304,7 +302,7 @@ class ClientRuns implements ClientRunsApi {
     return parseRunSnapshot(
       await this.#transport.request(
         "POST",
-        `/api/runs/${encodeURIComponent(runID(runId))}/cancel`,
+        `/api/runs/${encodeURIComponent(resourceID(runId, "Run ID"))}/cancel`,
         options.signal === undefined ? {} : { signal: options.signal },
       ),
     )
@@ -324,7 +322,7 @@ class ClientRuns implements ClientRunsApi {
     const response = objectValue(
       await this.#transport.request(
         "GET",
-        `/api/runs/${encodeURIComponent(runID(runId))}/logs${query}`,
+        `/api/runs/${encodeURIComponent(resourceID(runId, "Run ID"))}/logs${query}`,
         options.signal === undefined ? {} : { signal: options.signal },
       ),
       "Run log page",
@@ -353,7 +351,7 @@ class ClientRuns implements ClientRunsApi {
     const response = objectValue(
       await this.#transport.request(
         "GET",
-        `/api/runs/${encodeURIComponent(runID(runId))}/events${query}`,
+        `/api/runs/${encodeURIComponent(resourceID(runId, "Run ID"))}/events${query}`,
         options.signal === undefined ? {} : { signal: options.signal },
       ),
       "Run event page",
@@ -377,7 +375,7 @@ class ClientRuns implements ClientRunsApi {
         "client.runs.wait() is unavailable inside an active Helmr Run; use task.call()",
       )
     }
-    const id = runID(runId)
+    const id = resourceID(runId, "Run ID")
     const result = this.#waitForTerminal<TaskOutput<TTask>>(id, options)
     return Object.freeze({
       then<TResult1 = TaskResult<TaskOutput<TTask>>, TResult2 = never>(
@@ -460,7 +458,7 @@ class ClientTokens implements ClientTokensApi {
     return parseToken(
       await this.#transport.request(
         "GET",
-        `/api/tokens/${encodeURIComponent(tokenID(id))}`,
+        `/api/tokens/${encodeURIComponent(resourceID(id, "Token ID"))}`,
         options.signal === undefined ? {} : { signal: options.signal },
       ),
       false,
@@ -502,7 +500,7 @@ class ClientTokens implements ClientTokensApi {
     const response = objectValue(
       await this.#transport.request(
         "POST",
-        `/api/tokens/${encodeURIComponent(tokenID(id))}/complete`,
+        `/api/tokens/${encodeURIComponent(resourceID(id, "Token ID"))}/complete`,
         {
           body: {
             result: request.result,
@@ -526,7 +524,7 @@ class ClientTokens implements ClientTokensApi {
     return parseToken(
       await this.#transport.request(
         "POST",
-        `/api/tokens/${encodeURIComponent(tokenID(id))}/cancel`,
+        `/api/tokens/${encodeURIComponent(resourceID(id, "Token ID"))}/cancel`,
         {
           body: request.idempotencyKey === undefined
             ? {}
@@ -696,22 +694,6 @@ function clientBaseURL(raw: string): URL {
   return url
 }
 
-function tokenID(value: string): string {
-  const normalized = value.trim()
-  if (!/^tok_[a-z2-7]{26}$/.test(normalized)) {
-    throw new Error("Token ID must be a canonical tok_ public ID")
-  }
-  return normalized
-}
-
-function runID(value: string): string {
-  const normalized = value.trim()
-  if (!/^run_[a-z2-7]{26}$/.test(normalized)) {
-    throw new Error("Run ID must be a canonical run_ public ID")
-  }
-  return normalized
-}
-
 function runStatus(value: string): RunStatus {
   switch (value) {
     case "queued":
@@ -756,23 +738,39 @@ function parseRunSnapshot<TOutput extends JsonValue = JsonValue>(
   }
   const cause = parseRunCause(run["cause"])
   const snapshot: RunSnapshot<TOutput> = {
-    id: runID(requiredStringFrom(run, "id", "Run response")),
+    id: resourceID(requiredStringFrom(run, "id", "Run response"), "Run response.id"),
     status,
     entrypoint: Object.freeze({
       kind: entrypointKind,
       id: requiredStringFrom(entrypoint, "id", "Run response.entrypoint"),
     }),
     deployment: Object.freeze({
-      id: requiredStringFrom(deployment, "id", "Run response.deployment"),
+      id: resourceID(
+        requiredStringFrom(deployment, "id", "Run response.deployment"),
+        "Run response.deployment.id",
+      ),
       version: requiredStringFrom(deployment, "version", "Run response.deployment"),
     }),
-    workspaceId: requiredStringFrom(run, "workspace_id", "Run response"),
+    workspaceId: resourceID(
+      requiredStringFrom(run, "workspace_id", "Run response"),
+      "Run response.workspace_id",
+    ),
     ...(run["actor_id"] === undefined
       ? {}
-      : { actorId: requiredStringFrom(run, "actor_id", "Run response") }),
+      : {
+          actorId: resourceID(
+            requiredStringFrom(run, "actor_id", "Run response"),
+            "Run response.actor_id",
+          ),
+        }),
     ...(run["parent_run_id"] === undefined
       ? {}
-      : { parentRunId: runID(requiredStringFrom(run, "parent_run_id", "Run response")) }),
+      : {
+          parentRunId: resourceID(
+            requiredStringFrom(run, "parent_run_id", "Run response"),
+            "Run response.parent_run_id",
+          ),
+        }),
     ...(run["parent_owns_lifecycle"] === undefined
       ? {}
       : { parentOwnsLifecycle: requiredBoolean(run, "parent_owns_lifecycle", "Run response") }),
@@ -839,14 +837,18 @@ function parseRunCause(value: unknown): RunSnapshot["cause"] {
     case "child":
       return Object.freeze({
         type,
-        parentRunId: runID(
+        parentRunId: resourceID(
           requiredStringFrom(cause, "parent_run_id", "Run response.cause"),
+          "Run response.cause.parent_run_id",
         ),
       })
     case "schedule":
       return Object.freeze({
         type,
-        scheduleId: requiredStringFrom(cause, "schedule_id", "Run response.cause"),
+        scheduleId: resourceID(
+          requiredStringFrom(cause, "schedule_id", "Run response.cause"),
+          "Run response.cause.schedule_id",
+        ),
         scheduledAt: requiredDate(cause, "scheduled_at", "Run response.cause"),
         ...(cause["last_scheduled_at"] === undefined
           ? {}
@@ -901,7 +903,10 @@ function parseRunLogRecord(value: unknown): RunLogRecord {
   const kind = requiredStringFrom(record, "kind", "Run log record")
   const common = {
     id: requiredStringFrom(record, "id", "Run log record"),
-    runId: runID(requiredStringFrom(record, "run_id", "Run log record")),
+    runId: resourceID(
+      requiredStringFrom(record, "run_id", "Run log record"),
+      "Run log record.run_id",
+    ),
     attemptNumber: requiredPositiveInteger(
       record,
       "attempt_number",
@@ -950,7 +955,10 @@ function parseRunEventRecord(value: unknown): RunEventRecord {
   const event = objectValue(value, "Run event record")
   return Object.freeze({
     id: requiredStringFrom(event, "id", "Run event record"),
-    runId: runID(requiredStringFrom(event, "run_id", "Run event record")),
+    runId: resourceID(
+      requiredStringFrom(event, "run_id", "Run event record"),
+      "Run event record.run_id",
+    ),
     ...(event["attempt_number"] === undefined
       ? {}
       : {
@@ -1043,7 +1051,7 @@ function parseToken(value: unknown, credentials: boolean): TokenSnapshot | Clien
     throw new Error("Token response.tags must be an array of strings")
   }
   const snapshot: TokenSnapshot = {
-    id: requiredString(token, "id"),
+    id: resourceID(requiredString(token, "id"), "Token response.id"),
     status,
     ...(token["result"] === undefined ? {} : { result: token["result"] as JsonValue }),
     metadata,

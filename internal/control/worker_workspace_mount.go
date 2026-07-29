@@ -14,8 +14,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -192,25 +192,17 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 		if err != nil {
 			return err
 		}
-		var publicID string
-		staged, err := createWithPublicID(
+		staged, err := work.q.StageWorkspaceExecCapture(
 			r.Context(),
-			[]publicIDSlot{{prefix: publicid.WorkspaceVersion, value: &publicID}},
-			func() (db.StageWorkspaceExecCaptureRow, error) {
-				return work.q.StageWorkspaceExecCapture(
-					r.Context(),
-					db.StageWorkspaceExecCaptureParams{
-						WorkspaceMountID:         params.mount.ID,
-						WorkerInstanceID:         params.workerID,
-						WorkerEpoch:              params.epoch,
-						WorkspaceVersionID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
-						WorkspaceVersionPublicID: publicID,
-						ArtifactID:               artifact.ID,
-						ContentDigest:            strings.TrimSpace(request.ArtifactDigest),
-						SizeBytes:                request.ArtifactSizeBytes,
-						EntryCount:               request.ArtifactEntryCount,
-					},
-				)
+			db.StageWorkspaceExecCaptureParams{
+				WorkspaceMountID:   params.mount.ID,
+				WorkerInstanceID:   params.workerID,
+				WorkerEpoch:        params.epoch,
+				WorkspaceVersionID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				ArtifactID:         artifact.ID,
+				ContentDigest:      strings.TrimSpace(request.ArtifactDigest),
+				SizeBytes:          request.ArtifactSizeBytes,
+				EntryCount:         request.ArtifactEntryCount,
 			},
 		)
 		if err != nil {
@@ -676,13 +668,13 @@ func (s *Server) workspaceMountTransition(
 }
 
 func parseWorkspaceWorkerIDs(rawOrgID, rawMountID string) (pgtype.UUID, pgtype.UUID, error) {
-	orgID, err := uuid.Parse(strings.TrimSpace(rawOrgID))
+	orgID, err := ids.Parse(rawOrgID)
 	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, badRequest(errors.New("org_id must be a UUID"))
+		return pgtype.UUID{}, pgtype.UUID{}, badRequest(errors.New("org_id must be a canonical UUIDv7"))
 	}
-	mountID, err := uuid.Parse(strings.TrimSpace(rawMountID))
+	mountID, err := ids.Parse(rawMountID)
 	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, badRequest(errors.New("workspace_mount_id must be a UUID"))
+		return pgtype.UUID{}, pgtype.UUID{}, badRequest(errors.New("workspace_mount_id must be a canonical UUIDv7"))
 	}
 	return pgvalue.UUID(orgID), pgvalue.UUID(mountID), nil
 }

@@ -1,7 +1,6 @@
 -- name: CreateDeployment :one
 INSERT INTO deployments (
     id,
-    public_id,
     org_id,
     project_id,
     environment_id,
@@ -19,7 +18,6 @@ INSERT INTO deployments (
     status
 )
 SELECT sqlc.arg(id),
-       sqlc.arg(public_id),
        sqlc.arg(org_id),
        sqlc.arg(project_id),
        sqlc.arg(environment_id),

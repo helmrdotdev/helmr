@@ -368,14 +368,14 @@ message ProgramQuiesced {
 }
 
 message RunWaitRequested {
-  reserved 7, 8;
-
   string correlation_id = 1;
   string kind = 2;
   string params_json = 3;
   optional string metadata_json = 4;
   optional uint64 timeout_ms = 5;
   repeated string tags = 6;
+  string run_wait_id = 7;
+  string resume_attach_id = 8;
   optional uint64 idle_timeout_ms = 9;
   optional int64 actor_speculative_input_sequence = 10;
 }
@@ -398,6 +398,8 @@ message TaskChildInvokeRequested {
   string options_json = 7;
   optional string idempotency_key = 8;
   optional int64 actor_speculative_input_sequence = 9;
+  string run_wait_id = 10;
+  string resume_attach_id = 11;
 }
 
 message CheckpointPauseRequest {

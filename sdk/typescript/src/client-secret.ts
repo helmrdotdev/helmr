@@ -1,4 +1,5 @@
 import type { CursorPage } from "./contract"
+import { resourceID } from "./internal/id"
 import type { RequestOptions } from "./request"
 
 export type SecretValue = string
@@ -191,8 +192,7 @@ function secretAddressPath(address: SecretAddress): string {
     if ("name" in address && address.name !== undefined) {
       throw new Error("Secret address must contain exactly one of id or name")
     }
-    validateSecretID(address.id)
-    return `/api/secrets/${encodeURIComponent(address.id)}`
+    return `/api/secrets/${encodeURIComponent(resourceID(address.id, "Secret ID"))}`
   }
   if ("name" in address && address.name !== undefined) {
     validateSecretName(address.name)
@@ -213,10 +213,10 @@ function parseSecretSnapshot(value: unknown): SecretSnapshot {
   if (state !== "active" && state !== "revoked") {
     throw new Error("Secret response.state must be active or revoked")
   }
-  validateSecretID(id)
+  const canonicalID = resourceID(id, "Secret response.id")
   validateSecretName(name)
   return Object.freeze({
-    id,
+    id: canonicalID,
     name,
     state,
     createdAt: dateValue(input["created_at"], "Secret response.created_at"),
@@ -243,16 +243,6 @@ function dateValue(value: unknown, label: string): Date {
     throw new Error(`${label} must be an RFC 3339 timestamp`)
   }
   return parsed
-}
-
-function validateSecretID(value: string): void {
-  if (
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
-      value,
-    )
-  ) {
-    throw new Error("Secret ID must be a canonical UUID")
-  }
 }
 
 function validateSecretName(value: string): void {

@@ -16,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	rundomain "github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
@@ -1220,10 +1219,6 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 		),
 	)
 	childRunID := uuid.Must(uuid.NewV7())
-	childRunPublicID, err := publicid.New(publicid.Run)
-	if err != nil {
-		return err
-	}
 	rootSpanID, err := tracing.NewSpanID()
 	if err != nil {
 		return err
@@ -1241,7 +1236,6 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 			ParentRunID:            authority.run.ID,
 			ParentAttemptNumber:    authority.attempt.Number,
 			ID:                     pgvalue.UUID(childRunID),
-			PublicID:               childRunPublicID,
 			Payload:                request.Payload,
 			Metadata:               request.Metadata,
 			Tags:                   request.Tags,
@@ -1306,9 +1300,9 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 	}
 	receipt, err := json.Marshal(childTaskReceipt{
 		RunID:                  childRunID.String(),
-		RunPublicID:            childRunPublicID,
 		WorkspaceID:            pgvalue.UUIDString(authority.workspace.ID),
 		RunWaitID:              pgvalue.UUIDString(wait.ID),
+		ResumeAttachID:         pgvalue.UUIDString(wait.ResumeAttachID),
 		BaseWorkspaceVersionID: pgvalue.UUIDString(baseWorkspaceVersionID),
 		BaseWorkspaceDigest:    baseWorkspaceContentDigest,
 	})
@@ -1401,12 +1395,8 @@ func recordCheckpointWorkspaceVersion(
 	if err != nil {
 		return pgtype.UUID{}, fmt.Errorf("record checkpoint Workspace Artifact: %w", err)
 	}
-	publicID, err := newPublicID(publicid.WorkspaceVersion)
-	if err != nil {
-		return pgtype.UUID{}, err
-	}
 	version, err := store.CreatePrivateCheckpointWorkspaceVersion(ctx, db.CreatePrivateCheckpointWorkspaceVersionParams{
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), PublicID: publicID,
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		EnvironmentID: authority.run.EnvironmentID,
 		WorkspaceID:   authority.workspace.ID, ParentVersionID: authority.workspaceLease.BaseVersionID,
 		ArtifactID: artifactRow.ID, ContentDigest: capture.tree.Digest,

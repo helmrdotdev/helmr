@@ -19,7 +19,7 @@ import (
 
 func TestDecodeActorInputRequestAcceptsNullInput(t *testing.T) {
 	request := httptest.NewRequest("POST", "/", strings.NewReader(
-		`{"actor_id":"act_aaaaaaaaaaaaaaaaaaaaaaaaaa","input":null}`,
+		`{"actor_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33","input":null}`,
 	))
 	decoded, err := decodeActorInputRequest(request)
 	if err != nil {
@@ -32,10 +32,10 @@ func TestDecodeActorInputRequestAcceptsNullInput(t *testing.T) {
 
 func TestDecodeActorInputRequestRejectsAmbiguousJSON(t *testing.T) {
 	for _, body := range []string{
-		`{"actor_id":"act_aaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
-		`{"actor_id":"act_aaaaaaaaaaaaaaaaaaaaaaaaaa","input":1,"input":2}`,
-		`{"actor_id":"act_aaaaaaaaaaaaaaaaaaaaaaaaaa","input":1,"unknown":true}`,
-		`{"actor_id":"act_aaaaaaaaaaaaaaaaaaaaaaaaaa","input":1} true`,
+		`{"actor_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"}`,
+		`{"actor_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33","input":1,"input":2}`,
+		`{"actor_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33","input":1,"unknown":true}`,
+		`{"actor_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33","input":1} true`,
 	} {
 		request := httptest.NewRequest("POST", "/", strings.NewReader(body))
 		if _, err := decodeActorInputRequest(request); err == nil {
@@ -47,7 +47,7 @@ func TestDecodeActorInputRequestRejectsAmbiguousJSON(t *testing.T) {
 func TestValidateActorInputAddressRequiresExclusiveAddress(t *testing.T) {
 	for _, request := range []api.SendActorInputRequest{
 		{},
-		{ActorID: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa", ActorKey: "thread:1"},
+		{ActorID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33", ActorKey: "thread:1"},
 	} {
 		if err := validateActorInputAddress(request); err == nil {
 			t.Fatalf("validateActorInputAddress(%+v) succeeded, want error", request)
@@ -148,11 +148,11 @@ func TestActorInputBodyLimitAllowsMaximumEscapedEnvelope(t *testing.T) {
 }
 
 func TestSendActorInputEnforcesAPIKeyPermissionAndEnvironmentScope(t *testing.T) {
-	orgID := uuid.New()
-	projectID := uuid.New()
-	environmentID := uuid.New()
-	otherEnvironmentID := uuid.New()
-	actorID := uuid.New()
+	orgID := uuid.Must(uuid.NewV7())
+	projectID := uuid.Must(uuid.NewV7())
+	environmentID := uuid.Must(uuid.NewV7())
+	otherEnvironmentID := uuid.Must(uuid.NewV7())
+	actorID := uuid.Must(uuid.NewV7())
 	body := `{"actor_key":"thread:1","input":{"type":"continue"},"idempotency_key":"message:1"}`
 
 	t.Run("missing permission", func(t *testing.T) {
@@ -211,7 +211,7 @@ func TestSendActorInputEnforcesAPIKeyPermissionAndEnvironmentScope(t *testing.T)
 			actorID,
 			"message:1",
 			[]byte(`{"type":"continue"}`),
-			uuid.New(),
+			uuid.Must(uuid.NewV7()),
 			9,
 		)
 		store.calls = nil
@@ -234,9 +234,9 @@ func TestSendActorInputEnforcesAPIKeyPermissionAndEnvironmentScope(t *testing.T)
 }
 
 func TestSendActorInputDeniesViewerSessionBeforeActorLookup(t *testing.T) {
-	orgID := uuid.New()
-	projectID := uuid.New()
-	environmentID := uuid.New()
+	orgID := uuid.Must(uuid.NewV7())
+	projectID := uuid.Must(uuid.NewV7())
+	environmentID := uuid.Must(uuid.NewV7())
 	store := newActorInputClaimStore()
 	store.project = db.Project{
 		ID:    pgvalue.UUID(projectID),

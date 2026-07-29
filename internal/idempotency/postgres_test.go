@@ -2,9 +2,7 @@ package idempotency
 
 import (
 	"context"
-	"encoding/base32"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 
@@ -174,19 +172,14 @@ func TestPostgresClaimSlotIsScopedByEnvironment(t *testing.T) {
 
 func seedClaimEnvironment(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 	t.Helper()
-	orgID := uuid.New()
-	projectID := uuid.New()
-	environmentID := uuid.New()
+	orgID := uuid.Must(uuid.NewV7())
+	projectID := uuid.Must(uuid.NewV7())
+	environmentID := uuid.Must(uuid.NewV7())
 	regionID := "claim-" + environmentID.String()
-	publicID := func(prefix string, id uuid.UUID) string {
-		return prefix + strings.ToLower(
-			base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(id[:]),
-		)
-	}
 	if _, err := pool.Exec(t.Context(), `
-		INSERT INTO organizations (id, public_id, name, slug)
-		VALUES ($1, $2, 'Claims', $3)
-	`, orgID, publicID("org_", orgID), "claims-"+orgID.String()); err != nil {
+		INSERT INTO organizations (id, name, slug)
+		VALUES ($1, 'Claims', $2)
+	`, orgID, "claims-"+orgID.String()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(t.Context(), `
@@ -196,11 +189,10 @@ func seedClaimEnvironment(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(t.Context(), `
-		INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name)
-		VALUES ($1, $2, $3, $4, $5, 'Claims')
+		INSERT INTO projects (id, org_id, default_region_id, slug, name)
+		VALUES ($1, $2, $3, $4, 'Claims')
 	`,
 		projectID,
-		publicID("prj_", projectID),
 		orgID,
 		regionID,
 		"claims-"+projectID.String(),
@@ -208,9 +200,9 @@ func seedClaimEnvironment(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(t.Context(), `
-		INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex)
-		VALUES ($1, $2, $3, $4, 'production', 'Production', '#000000')
-	`, environmentID, publicID("env_", environmentID), orgID, projectID); err != nil {
+		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
+		VALUES ($1, $2, $3, 'production', 'Production', '#000000')
+	`, environmentID, orgID, projectID); err != nil {
 		t.Fatal(err)
 	}
 	return environmentID

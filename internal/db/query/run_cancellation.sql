@@ -4,7 +4,7 @@ SELECT id
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
-   AND public_id = sqlc.arg(public_id);
+   AND id = sqlc.arg(id);
 
 -- name: ListCancellationLineage :many
 WITH RECURSIVE lineage AS (
@@ -85,7 +85,6 @@ SELECT actors.id
 
 -- name: LockCancellationRun :one
 SELECT id,
-       public_id,
        parent_run_id,
        parent_owns_lifecycle,
        environment_id,

@@ -71,9 +71,9 @@ validation_dry_run() {
     '{"dry_run":true,"cleanup_verified":true}'
 }
 
-validation_require_public_id() {
-  local prefix=$1 value=$2
-  [[ "${value}" =~ ^${prefix}_[a-z2-7]{26}$ ]]
+validation_require_resource_id() {
+  local value=$1
+  [[ "${value}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
 }
 
 validation_wait_run_status() {
@@ -168,7 +168,7 @@ validation_probe_start() {
       --key "${marker}" --idempotency-key "${marker}:workspace" --json
   )"
   workspace_id="$(jq -er '.workspace_id' <<<"${workspace_response}")"
-  validation_require_public_id wsp "${workspace_id}"
+  validation_require_resource_id "${workspace_id}"
   run_response="$(
     validation_run_helmr task start fault-probe \
       --project "${VALIDATION_PROJECT}" --env "${VALIDATION_ENVIRONMENT}" \
@@ -177,18 +177,18 @@ validation_probe_start() {
       --payload-json "${payload}" --json
   )"
   run_id="$(jq -er '.run_id' <<<"${run_response}")"
-  validation_require_public_id run "${run_id}"
+  validation_require_resource_id "${run_id}"
   printf '%s\t%s\n' "${workspace_id}" "${run_id}"
 }
 
 validation_probe_cleanup() {
   local workspace_id=${1:-} run_id=${2:-}
-  if validation_require_public_id run "${run_id}"; then
+  if validation_require_resource_id "${run_id}"; then
     validation_run_helmr run cancel "${run_id}" \
       --project "${VALIDATION_PROJECT}" --env "${VALIDATION_ENVIRONMENT}" \
       --idempotency-key "${VALIDATION_CASE_ID}:cancel" --json >/dev/null 2>&1 || true
   fi
-  if validation_require_public_id wsp "${workspace_id}"; then
+  if validation_require_resource_id "${workspace_id}"; then
     validation_run_helmr workspace delete --id "${workspace_id}" \
       --project "${VALIDATION_PROJECT}" --env "${VALIDATION_ENVIRONMENT}" \
       --idempotency-key "${VALIDATION_CASE_ID}:delete" --json >/dev/null

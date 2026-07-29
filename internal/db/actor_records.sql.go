@@ -27,7 +27,7 @@ WITH selected_claim AS MATERIALIZED (
      WHERE actor_records.actor_id = $3
        AND actor_records.direction = 'input'
 ), locked_actor AS MATERIALIZED (
-    SELECT actors.id, actors.public_id, actors.environment_id, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.run_queue_name, actors.run_concurrency_key, actors.run_queue_concurrency_limit, actors.run_priority, actors.run_queue_ttl_ms, actors.run_max_active_duration_ms, actors.run_retry_policy, actors.run_metadata, actors.run_tags, actors.state, actors.close_sequence, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at
+    SELECT actors.id, actors.environment_id, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.run_queue_name, actors.run_concurrency_key, actors.run_queue_concurrency_limit, actors.run_priority, actors.run_queue_ttl_ms, actors.run_max_active_duration_ms, actors.run_retry_policy, actors.run_metadata, actors.run_tags, actors.state, actors.close_sequence, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at
       FROM actors
      WHERE actors.environment_id = $1
        AND actors.id = $3
@@ -51,7 +51,7 @@ WITH selected_claim AS MATERIALIZED (
            updated_at = now()
       FROM locked_actor
      WHERE actors.id = locked_actor.id
-    RETURNING actors.id, actors.public_id, actors.environment_id, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.run_queue_name, actors.run_concurrency_key, actors.run_queue_concurrency_limit, actors.run_priority, actors.run_queue_ttl_ms, actors.run_max_active_duration_ms, actors.run_retry_policy, actors.run_metadata, actors.run_tags, actors.state, actors.close_sequence, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at, actors.next_input_sequence - 1 AS allocated_sequence
+    RETURNING actors.id, actors.environment_id, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.run_queue_name, actors.run_concurrency_key, actors.run_queue_concurrency_limit, actors.run_priority, actors.run_queue_ttl_ms, actors.run_max_active_duration_ms, actors.run_retry_policy, actors.run_metadata, actors.run_tags, actors.state, actors.close_sequence, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at, actors.next_input_sequence - 1 AS allocated_sequence
 ), inserted_record AS (
     INSERT INTO actor_records (
         id,
@@ -166,7 +166,7 @@ WITH selected_claim AS MATERIALIZED (
      WHERE actor_records.actor_id = $3
        AND actor_records.direction = 'output'
 ), locked_actor AS MATERIALIZED (
-    SELECT actors.id, actors.public_id, actors.environment_id, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.run_queue_name, actors.run_concurrency_key, actors.run_queue_concurrency_limit, actors.run_priority, actors.run_queue_ttl_ms, actors.run_max_active_duration_ms, actors.run_retry_policy, actors.run_metadata, actors.run_tags, actors.state, actors.close_sequence, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at
+    SELECT actors.id, actors.environment_id, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.run_queue_name, actors.run_concurrency_key, actors.run_queue_concurrency_limit, actors.run_priority, actors.run_queue_ttl_ms, actors.run_max_active_duration_ms, actors.run_retry_policy, actors.run_metadata, actors.run_tags, actors.state, actors.close_sequence, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at
       FROM actors
       JOIN runs
         ON runs.actor_id = actors.id
@@ -198,7 +198,7 @@ WITH selected_claim AS MATERIALIZED (
            updated_at = now()
       FROM locked_actor
      WHERE actors.id = locked_actor.id
-    RETURNING actors.id, actors.public_id, actors.environment_id, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.run_queue_name, actors.run_concurrency_key, actors.run_queue_concurrency_limit, actors.run_priority, actors.run_queue_ttl_ms, actors.run_max_active_duration_ms, actors.run_retry_policy, actors.run_metadata, actors.run_tags, actors.state, actors.close_sequence, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at, actors.next_output_sequence - 1 AS allocated_sequence
+    RETURNING actors.id, actors.environment_id, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.run_queue_name, actors.run_concurrency_key, actors.run_queue_concurrency_limit, actors.run_priority, actors.run_queue_ttl_ms, actors.run_max_active_duration_ms, actors.run_retry_policy, actors.run_metadata, actors.run_tags, actors.state, actors.close_sequence, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at, actors.next_output_sequence - 1 AS allocated_sequence
 ), inserted_record AS (
     INSERT INTO actor_records (
         id,
@@ -310,7 +310,7 @@ UPDATE actors
    AND run_generation = $5
    AND committed_input_sequence < $1
    AND $1 < next_input_sequence
-RETURNING id, public_id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
 `
 
 type CommitActorInputCursorParams struct {
@@ -332,7 +332,6 @@ func (q *Queries) CommitActorInputCursor(ctx context.Context, arg CommitActorInp
 	var i Actor
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.EnvironmentID,
 		&i.ActorDeclaredID,
 		&i.DeploymentDefinitionID,
@@ -517,7 +516,7 @@ func (q *Queries) CreateActorInputReconcileOutbox(ctx context.Context, arg Creat
 
 const createActorStartInputRecord = `-- name: CreateActorStartInputRecord :one
 WITH locked_actor AS MATERIALIZED (
-    SELECT actors.id, actors.public_id, actors.environment_id, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.run_queue_name, actors.run_concurrency_key, actors.run_queue_concurrency_limit, actors.run_priority, actors.run_queue_ttl_ms, actors.run_max_active_duration_ms, actors.run_retry_policy, actors.run_metadata, actors.run_tags, actors.state, actors.close_sequence, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at
+    SELECT actors.id, actors.environment_id, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.run_queue_name, actors.run_concurrency_key, actors.run_queue_concurrency_limit, actors.run_priority, actors.run_queue_ttl_ms, actors.run_max_active_duration_ms, actors.run_retry_policy, actors.run_metadata, actors.run_tags, actors.state, actors.close_sequence, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at
       FROM actors
      WHERE actors.environment_id = $4
        AND actors.id = $5
@@ -543,7 +542,7 @@ WITH locked_actor AS MATERIALIZED (
            updated_at = now()
       FROM locked_actor
      WHERE actors.id = locked_actor.id
-    RETURNING actors.id, actors.public_id, actors.environment_id, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.run_queue_name, actors.run_concurrency_key, actors.run_queue_concurrency_limit, actors.run_priority, actors.run_queue_ttl_ms, actors.run_max_active_duration_ms, actors.run_retry_policy, actors.run_metadata, actors.run_tags, actors.state, actors.close_sequence, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at
+    RETURNING actors.id, actors.environment_id, actors.actor_declared_id, actors.deployment_definition_id, actors.workspace_id, actors.key, actors.current_run_id, actors.run_generation, actors.state_version, actors.manual_run_cancelled, actors.failure_code, actors.failure_run_id, actors.next_input_sequence, actors.committed_input_sequence, actors.next_output_sequence, actors.input_retention_floor, actors.output_retention_floor, actors.run_queue_name, actors.run_concurrency_key, actors.run_queue_concurrency_limit, actors.run_priority, actors.run_queue_ttl_ms, actors.run_max_active_duration_ms, actors.run_retry_policy, actors.run_metadata, actors.run_tags, actors.state, actors.close_sequence, actors.created_at, actors.updated_at, actors.closed_at, actors.cancelled_at, actors.failed_at
 )
 INSERT INTO actor_records (
     id,
@@ -605,7 +604,7 @@ func (q *Queries) CreateActorStartInputRecord(ctx context.Context, arg CreateAct
 }
 
 const getActorInputCurrentRun = `-- name: GetActorInputCurrentRun :one
-SELECT runs.id, runs.public_id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.actor_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.actor_start_input_sequence, runs.actor_start_input_high_watermark, runs.payload, runs.output, runs.terminal_reason_code, runs.error, runs.status, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.terminal_at
+SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.actor_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.actor_start_input_sequence, runs.actor_start_input_high_watermark, runs.payload, runs.output, runs.terminal_reason_code, runs.error, runs.status, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.terminal_at
   FROM runs
  WHERE runs.environment_id = $1
    AND runs.id = $2
@@ -623,7 +622,6 @@ func (q *Queries) GetActorInputCurrentRun(ctx context.Context, arg GetActorInput
 	var i Run
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
@@ -929,7 +927,7 @@ func (q *Queries) ListActorOutputRecords(ctx context.Context, arg ListActorOutpu
 }
 
 const lockActorForInputReconcile = `-- name: LockActorForInputReconcile :one
-SELECT id, public_id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, state, close_sequence, created_at, updated_at, closed_at, cancelled_at, failed_at
   FROM actors
  WHERE environment_id = $1
    AND id = $2
@@ -946,7 +944,6 @@ func (q *Queries) LockActorForInputReconcile(ctx context.Context, arg LockActorF
 	var i Actor
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.EnvironmentID,
 		&i.ActorDeclaredID,
 		&i.DeploymentDefinitionID,
@@ -1018,7 +1015,7 @@ func (q *Queries) LockActorInputClaim(ctx context.Context, arg LockActorInputCla
 }
 
 const lockActorInputCurrentRun = `-- name: LockActorInputCurrentRun :one
-SELECT runs.id, runs.public_id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.actor_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.actor_start_input_sequence, runs.actor_start_input_high_watermark, runs.payload, runs.output, runs.terminal_reason_code, runs.error, runs.status, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.terminal_at
+SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.actor_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.actor_start_input_sequence, runs.actor_start_input_high_watermark, runs.payload, runs.output, runs.terminal_reason_code, runs.error, runs.status, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.terminal_at
   FROM runs
  WHERE runs.environment_id = $1
    AND runs.id = $2
@@ -1037,7 +1034,6 @@ func (q *Queries) LockActorInputCurrentRun(ctx context.Context, arg LockActorInp
 	var i Run
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
@@ -1107,8 +1103,8 @@ WITH scoped_actor AS MATERIALIZED (
        AND actors.actor_declared_id = $5
        AND (
            (
-               $6::text IS NOT NULL
-               AND actors.public_id = $6::text
+               $6::uuid IS NOT NULL
+               AND actors.id = $6::uuid
            )
            OR
            (
@@ -1126,9 +1122,9 @@ SELECT scoped_actor.id AS actor_id,
        coalesce(page.data, 'null'::jsonb)::jsonb AS data,
        coalesce(page.content_type, '')::text AS content_type,
        coalesce(page.created_at, 'epoch'::timestamptz)::timestamptz AS created_at,
-       coalesce(page.run_public_id, '')::text AS run_public_id,
+       page.run_id,
        coalesce(page.producer_attempt_number, 0)::integer AS producer_attempt_number,
-       coalesce(page.deployment_public_id, '')::text AS deployment_public_id
+       page.deployment_id
   FROM scoped_actor
   LEFT JOIN LATERAL (
       SELECT actor_records.id AS record_id,
@@ -1136,9 +1132,9 @@ SELECT scoped_actor.id AS actor_id,
              actor_records.data,
              actor_records.content_type,
              actor_records.created_at,
-             runs.public_id AS run_public_id,
+             runs.id AS run_id,
              actor_records.producer_attempt_number,
-             deployments.public_id AS deployment_public_id
+             deployments.id AS deployment_id
         FROM actor_records
         JOIN runs
           ON runs.actor_id = actor_records.actor_id
@@ -1162,7 +1158,7 @@ type ReadPublicActorOutputPageParams struct {
 	AfterSequence   int64       `json:"after_sequence"`
 	EnvironmentID   pgtype.UUID `json:"environment_id"`
 	ActorDeclaredID string      `json:"actor_declared_id"`
-	AddressPublicID pgtype.Text `json:"address_public_id"`
+	AddressID       pgtype.UUID `json:"address_id"`
 	AddressKey      pgtype.Text `json:"address_key"`
 }
 
@@ -1176,9 +1172,9 @@ type ReadPublicActorOutputPageRow struct {
 	Data                  []byte             `json:"data"`
 	ContentType           string             `json:"content_type"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	RunPublicID           string             `json:"run_public_id"`
+	RunID                 pgtype.UUID        `json:"run_id"`
 	ProducerAttemptNumber int32              `json:"producer_attempt_number"`
-	DeploymentPublicID    string             `json:"deployment_public_id"`
+	DeploymentID          pgtype.UUID        `json:"deployment_id"`
 }
 
 func (q *Queries) ReadPublicActorOutputPage(ctx context.Context, arg ReadPublicActorOutputPageParams) ([]ReadPublicActorOutputPageRow, error) {
@@ -1188,7 +1184,7 @@ func (q *Queries) ReadPublicActorOutputPage(ctx context.Context, arg ReadPublicA
 		arg.AfterSequence,
 		arg.EnvironmentID,
 		arg.ActorDeclaredID,
-		arg.AddressPublicID,
+		arg.AddressID,
 		arg.AddressKey,
 	)
 	if err != nil {
@@ -1208,9 +1204,9 @@ func (q *Queries) ReadPublicActorOutputPage(ctx context.Context, arg ReadPublicA
 			&i.Data,
 			&i.ContentType,
 			&i.CreatedAt,
-			&i.RunPublicID,
+			&i.RunID,
 			&i.ProducerAttemptNumber,
-			&i.DeploymentPublicID,
+			&i.DeploymentID,
 		); err != nil {
 			return nil, err
 		}

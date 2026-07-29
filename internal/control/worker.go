@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	runtimeidentity "github.com/helmrdotdev/helmr/internal/runtime/identity"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -198,14 +199,13 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid worker token request JSON: %w", err)))
 		return
 	}
-	request.WorkerInstanceID = strings.TrimSpace(request.WorkerInstanceID)
 	if request.WorkerInstanceID == "" {
 		writeError(w, badRequest(errors.New("worker_instance_id is required")))
 		return
 	}
-	workerInstanceID, err := uuid.Parse(request.WorkerInstanceID)
+	workerInstanceID, err := ids.Parse(request.WorkerInstanceID)
 	if err != nil {
-		writeError(w, badRequest(errors.New("worker_instance_id must be a UUID")))
+		writeError(w, badRequest(errors.New("worker_instance_id must be a canonical UUIDv7")))
 		return
 	}
 	secretHash, err := auth.HashToken(s.authKeys.WorkerInstance, request.WorkerInstanceSecret)
@@ -213,9 +213,9 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unauthorized(errors.New("worker authentication is required")))
 		return
 	}
-	serviceID, err := uuid.Parse(strings.TrimSpace(request.ServiceID))
+	serviceID, err := ids.Parse(request.ServiceID)
 	if err != nil {
-		writeError(w, badRequest(errors.New("service_id must be a UUID")))
+		writeError(w, badRequest(errors.New("service_id must be a canonical UUIDv7")))
 		return
 	}
 	protocolVersion := strings.TrimSpace(request.ProtocolVersion)
@@ -347,59 +347,9 @@ func (s *Server) workerStartupRecovery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid worker startup recovery JSON: %w", err)))
 		return
 	}
-	if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() {
-		writeError(w, badRequest(errors.New("a complete, timestamped physical inventory is required")))
-		return
-	}
-	if request.ObservedAt.After(time.Now().Add(time.Minute)) {
-		writeError(w, badRequest(errors.New("startup inventory observed_at is in the future")))
-		return
-	}
 	worker := workerFromContext(r.Context())
-	if request.ObservedAt.Before(worker.EpochStartedAt) {
-		writeError(w, badRequest(errors.New("startup inventory observed_at predates the current worker epoch")))
-		return
-	}
-	inventory := make(map[uuid.UUID]struct{}, len(request.Inventory))
-	for _, value := range request.Inventory {
-		id, err := uuid.Parse(strings.TrimSpace(value))
-		if err != nil {
-			writeError(w, badRequest(errors.New("inventory runtime id must be a UUID")))
-			return
-		}
-		if _, exists := inventory[id]; exists {
-			writeError(w, badRequest(fmt.Errorf("inventory runtime id %s is duplicated", id)))
-			return
-		}
-		inventory[id] = struct{}{}
-	}
-	seen := make(map[uuid.UUID]string, len(request.Reclaimed)+len(request.Quarantined))
-	validateIDs := func(kind string, values []string) error {
-		for _, value := range values {
-			id, err := uuid.Parse(strings.TrimSpace(value))
-			if err != nil {
-				return fmt.Errorf("%s runtime id must be a UUID", kind)
-			}
-			if previous, exists := seen[id]; exists {
-				return fmt.Errorf("runtime id %s is reported as both %s and %s", id, previous, kind)
-			}
-			if _, owned := inventory[id]; !owned {
-				return fmt.Errorf("%s runtime id %s is outside the owned inventory", kind, id)
-			}
-			seen[id] = kind
-		}
-		return nil
-	}
-	if err := validateIDs("reclaimed", request.Reclaimed); err != nil {
+	if err := validateWorkerStartupRecovery(request, worker.EpochStartedAt, time.Now()); err != nil {
 		writeError(w, badRequest(err))
-		return
-	}
-	if err := validateIDs("quarantined", request.Quarantined); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	if len(seen) != len(inventory) {
-		writeError(w, badRequest(errors.New("every owned inventory runtime must have exactly one recovery outcome")))
 		return
 	}
 	evidence, err := json.Marshal(request)
@@ -419,6 +369,60 @@ func (s *Server) workerStartupRecovery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func validateWorkerStartupRecovery(
+	request api.WorkerStartupRecoveryRequest,
+	epochStartedAt time.Time,
+	now time.Time,
+) error {
+	if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() {
+		return errors.New("a complete, timestamped physical inventory is required")
+	}
+	if request.ObservedAt.After(now.Add(time.Minute)) {
+		return errors.New("startup inventory observed_at is in the future")
+	}
+	if request.ObservedAt.Before(epochStartedAt) {
+		return errors.New("startup inventory observed_at predates the current worker epoch")
+	}
+	inventory := make(map[uuid.UUID]struct{}, len(request.Inventory))
+	for _, value := range request.Inventory {
+		id, err := ids.Parse(value)
+		if err != nil {
+			return errors.New("inventory runtime id must be a canonical UUIDv7")
+		}
+		if _, exists := inventory[id]; exists {
+			return fmt.Errorf("inventory runtime id %s is duplicated", id)
+		}
+		inventory[id] = struct{}{}
+	}
+	seen := make(map[uuid.UUID]string, len(request.Reclaimed)+len(request.Quarantined))
+	validateIDs := func(kind string, values []string) error {
+		for _, value := range values {
+			id, err := ids.Parse(value)
+			if err != nil {
+				return fmt.Errorf("%s runtime id must be a canonical UUIDv7", kind)
+			}
+			if previous, exists := seen[id]; exists {
+				return fmt.Errorf("runtime id %s is reported as both %s and %s", id, previous, kind)
+			}
+			if _, owned := inventory[id]; !owned {
+				return fmt.Errorf("%s runtime id %s is outside the owned inventory", kind, id)
+			}
+			seen[id] = kind
+		}
+		return nil
+	}
+	if err := validateIDs("reclaimed", request.Reclaimed); err != nil {
+		return err
+	}
+	if err := validateIDs("quarantined", request.Quarantined); err != nil {
+		return err
+	}
+	if len(seen) != len(inventory) {
+		return errors.New("every owned inventory runtime must have exactly one recovery outcome")
+	}
+	return nil
 }
 
 func (s *Server) workerObserve(w http.ResponseWriter, r *http.Request) {

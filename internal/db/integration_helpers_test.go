@@ -13,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -31,27 +30,6 @@ func shortUUID(id uuid.UUID) string {
 	return compact[len(compact)-12:]
 }
 
-func testPublicID(t *testing.T, prefix publicid.Prefix) string {
-	t.Helper()
-	id, err := publicid.New(prefix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return id
-}
-
-func testEnvironmentPublicID(t *testing.T) string {
-	return testPublicID(t, publicid.Environment)
-}
-
-func testWorkspacePublicID(t *testing.T) string {
-	return testPublicID(t, publicid.Workspace)
-}
-
-func testWorkspaceVersionPublicID(t *testing.T) string {
-	return testPublicID(t, publicid.WorkspaceVersion)
-}
-
 func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) integrationIDs {
 	t.Helper()
 	ids := integrationIDs{
@@ -63,18 +41,18 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 	projectSlug := "project-" + shortUUID(ids.projectID)
 	environmentSlug := "env-" + shortUUID(ids.environmentID)
 	mustExec(t, ctx, pool, `
-		INSERT INTO organizations (id, public_id, name, slug)
-		VALUES ($1, $2, 'Default', 'default')
+		INSERT INTO organizations (id, name, slug)
+		VALUES ($1, 'Default', 'default')
 		ON CONFLICT (id) DO NOTHING
-	`, ids.orgID, testPublicID(t, publicid.Organization))
+	`, ids.orgID)
 	mustExec(t, ctx, pool, `
-		INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name)
-		VALUES ($1, $5, $2, $3, $4, 'Project')
-	`, ids.projectID, ids.orgID, dbtest.DefaultRegionID, projectSlug, testPublicID(t, publicid.Project))
+		INSERT INTO projects (id, org_id, default_region_id, slug, name)
+		VALUES ($1, $2, $3, $4, 'Project')
+	`, ids.projectID, ids.orgID, dbtest.DefaultRegionID, projectSlug)
 	mustExec(t, ctx, pool, `
-		INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex)
-		VALUES ($1, $5, $2, $3, $4, 'Environment', '#3366ff')
-	`, ids.environmentID, ids.orgID, ids.projectID, environmentSlug, testEnvironmentPublicID(t))
+		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
+		VALUES ($1, $2, $3, $4, 'Environment', '#3366ff')
+	`, ids.environmentID, ids.orgID, ids.projectID, environmentSlug)
 	mustExec(t, ctx, pool, `
 		INSERT INTO runtime_identities (
 			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
@@ -115,7 +93,7 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 	)
 	mustExec(t, ctx, pool, `
 		INSERT INTO deployments (
-			id, public_id, org_id, build_region_id, project_id, environment_id,
+			id, org_id, build_region_id, project_id, environment_id,
 			build_node_version, build_runtime_digest, build_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
 			build_contract_version, version, content_hash, deployment_source_artifact_id,
@@ -123,16 +101,16 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 			status, deployed_at
 		)
 		VALUES (
-			$1, $8, $2, $3, $4, $5,
+			$1, $2, $3, $4, $5,
 			'24.16.0', decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
 			'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
 			'helmr.program-build.v0', 'v1', $6, $7,
-			$9, decode(repeat('03', 32), 'hex'),
+			$8, decode(repeat('03', 32), 'hex'),
 			'{"formatVersion":0,"queues":[]}'::jsonb, 'deployed', now()
 		)
 	`, ids.deploymentID, ids.orgID, dbtest.DefaultRegionID, ids.projectID, ids.environmentID,
 		testDigest("deployment-"+ids.deploymentID.String()), sourceArtifactID,
-		testPublicID(t, publicid.Deployment), programArtifactID)
+		programArtifactID)
 	return ids
 }
 

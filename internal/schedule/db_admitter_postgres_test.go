@@ -14,7 +14,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -171,7 +170,6 @@ func TestReconcileScheduleDoesNotReviveErroredAuthority(t *testing.T) {
 	}
 	if err := queries.ReconcileSchedule(t.Context(), db.ReconcileScheduleParams{
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		PublicID:               schedulePublicID(t, publicid.Schedule),
 		EnvironmentID:          before.EnvironmentID,
 		TaskDeclaredID:         before.TaskDeclaredID,
 		DeploymentDefinitionID: before.DeploymentDefinitionID,
@@ -233,21 +231,21 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	regionID := "schedule-" + environmentID.String()
 
 	mustScheduleExec(t, pool, `
-		INSERT INTO organizations (id, public_id, name, slug)
-		VALUES ($1, $2, 'Schedules', $3)
-	`, orgID, schedulePublicID(t, publicid.Organization), "schedules-"+orgID.String())
+		INSERT INTO organizations (id, name, slug)
+		VALUES ($1, 'Schedules', $2)
+	`, orgID, "schedules-"+orgID.String())
 	mustScheduleExec(t, pool, `
 		INSERT INTO regions (id, provider, provider_region, display_name)
 		VALUES ($1, 'test', $1, 'Schedules')
 	`, regionID)
 	mustScheduleExec(t, pool, `
-		INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name)
-		VALUES ($1, $2, $3, $4, $5, 'Schedules')
-	`, projectID, schedulePublicID(t, publicid.Project), orgID, regionID, "schedules-"+projectID.String())
+		INSERT INTO projects (id, org_id, default_region_id, slug, name)
+		VALUES ($1, $2, $3, $4, 'Schedules')
+	`, projectID, orgID, regionID, "schedules-"+projectID.String())
 	mustScheduleExec(t, pool, `
-		INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex)
-		VALUES ($1, $2, $3, $4, 'production', 'Production', '#000000')
-	`, environmentID, schedulePublicID(t, publicid.Environment), orgID, projectID)
+		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
+		VALUES ($1, $2, $3, 'production', 'Production', '#000000')
+	`, environmentID, orgID, projectID)
 
 	sourceArtifactID := seedScheduleArtifact(t, pool, orgID, projectID, environmentID, "deployment_source", "source")
 	programArtifactID := seedScheduleArtifact(t, pool, orgID, projectID, environmentID, "deployment_program", "program")
@@ -257,21 +255,20 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	queueConfig := `{"formatVersion":0,"queues":[{"name":"default"}]}`
 	mustScheduleExec(t, pool, `
 		INSERT INTO deployments (
-			id, public_id, org_id, project_id, environment_id, build_region_id,
+			id, org_id, project_id, environment_id, build_region_id,
 			build_node_version, build_runtime_digest, build_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
 			build_contract_version, version, content_hash, deployment_source_artifact_id,
 			program_artifact_id, program_index_digest, queue_config, status
 		)
 		VALUES (
-			$1, $2, $3, $4, $5, $6,
-			'24.16.0', decode($7, 'hex'), decode(repeat('02', 32), 'hex'),
+			$1, $2, $3, $4, $5,
+			'24.16.0', decode($6, 'hex'), decode(repeat('02', 32), 'hex'),
 			'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
-			'helmr.program-build.v0', 'v0', $8, $9,
-			$10, decode(repeat('03', 32), 'hex'), $11, 'deployed'
+			'helmr.program-build.v0', 'v0', $7, $8,
+			$9, decode(repeat('03', 32), 'hex'), $10, 'deployed'
 		)
-	`, deploymentID, schedulePublicID(t, publicid.Deployment), orgID, projectID,
-		environmentID, regionID, runtimeBytes,
+	`, deploymentID, orgID, projectID, environmentID, regionID, runtimeBytes,
 		"sha256:"+strings.Repeat("03", 32), sourceArtifactID, programArtifactID,
 		queueConfig)
 	taskManifest := []byte(
@@ -309,26 +306,24 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	}
 	if _, err := tx.Exec(t.Context(), `
 		INSERT INTO workspaces (
-			id, public_id, environment_id, region_id,
+			id, environment_id, region_id,
 			workspace_declared_id, deployment_definition_id,
 			head_version_id, key
 		)
-		VALUES ($1, $2, $3, $4, 'scheduler', $5, $6, 'scheduler')
-	`, workspaceID, schedulePublicID(t, publicid.Workspace),
-		environmentID, regionID, workspaceDefinitionID, workspaceVersionID); err != nil {
+		VALUES ($1, $2, $3, 'scheduler', $4, $5, 'scheduler')
+	`, workspaceID, environmentID, regionID, workspaceDefinitionID, workspaceVersionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(t.Context(), `
 		INSERT INTO workspace_versions (
-			id, public_id, environment_id, workspace_id,
+			id, environment_id, workspace_id,
 			kind, state, content_digest, size_bytes, entry_count,
 			ownership_generation, writer_generation, published_at
 		)
-		VALUES ($1, $2, $3, $4, 'system', 'committed',
+		VALUES ($1, $2, $3, 'system', 'committed',
 		        'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
 		        0, 0, 0, 0, now())
-	`, workspaceVersionID, schedulePublicID(t, publicid.WorkspaceVersion),
-		environmentID, workspaceID); err != nil {
+	`, workspaceVersionID, environmentID, workspaceID); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(t.Context()); err != nil {
@@ -372,21 +367,20 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	claimExpiresAt := time.Now().UTC().Add(5 * time.Minute)
 	mustScheduleExec(t, pool, `
 		INSERT INTO schedules (
-			id, public_id, environment_id,
+			id, environment_id,
 			task_declared_id, deployment_definition_id, deployment_id,
 			workspace_ref_key, workspace_id, cron_pattern, timezone,
 			state, effective_from,
 			next_fire_at, claimed_by, claim_expires_at
 		)
 		VALUES (
-			$1, $2, $3,
-			'daily-report', $4, $5,
-			'scheduler', $6, '0 9 * * *', 'UTC',
+			$1, $2,
+			'daily-report', $3, $4,
+			'scheduler', $5, '0 9 * * *', 'UTC',
 			'active', now() - interval '1 hour',
-			$7, 'scheduler-test', $8
+			$6, 'scheduler-test', $7
 		)
-	`, scheduleID, schedulePublicID(t, publicid.Schedule),
-		environmentID, taskDefinitionID, deploymentID, workspaceID,
+	`, scheduleID, environmentID, taskDefinitionID, deploymentID, workspaceID,
 		scheduledAt, claimExpiresAt)
 	value, err := db.New(pool).GetSchedule(t.Context(), db.GetScheduleParams{
 		EnvironmentID: pgvalue.UUID(environmentID),
@@ -538,15 +532,6 @@ func mustScheduleExec(t *testing.T, pool *pgxpool.Pool, query string, arguments 
 	if _, err := pool.Exec(t.Context(), query, arguments...); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func schedulePublicID(t *testing.T, prefix publicid.Prefix) string {
-	t.Helper()
-	value, err := publicid.New(prefix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return value
 }
 
 type fixedAuthority struct {

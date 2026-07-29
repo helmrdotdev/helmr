@@ -15,8 +15,8 @@ import (
 func TestRecoveryQuarantinesProcessWithoutOwnerMarker(t *testing.T) {
 	workDir := t.TempDir()
 	jailerDir := t.TempDir()
-	id := "00000000-0000-0000-0000-000000000106"
-	unrelated := "00000000-0000-0000-0000-000000000999"
+	id := "019c10d5-a6f7-7af1-8f5f-000000000106"
+	unrelated := "019c10d5-a6f7-7af1-8f5f-000000000999"
 	var stopped []int
 	var deleted []string
 	var matched []string
@@ -71,7 +71,7 @@ func TestRecoveryQuarantinesMalformedOwnedProcess(t *testing.T) {
 }
 
 func TestOwnedVMProcessDetectionIgnoresUnrelatedResources(t *testing.T) {
-	id := "00000000-0000-0000-0000-000000000107"
+	id := "019c10d5-a6f7-7af1-8f5f-000000000107"
 	jailerDir := "/srv/helmr/jailer"
 	tests := []struct {
 		name        string
@@ -101,8 +101,8 @@ func TestRecoveryReclaimsRuntimeAndBuildFromExactOwnerMarkers(t *testing.T) {
 	workDir := t.TempDir()
 	jailerDir := t.TempDir()
 	owners := []vm.Owner{
-		{Kind: vm.OwnerRuntime, ID: "00000000-0000-0000-0000-000000000201"},
-		{Kind: vm.OwnerBuild, ID: "00000000-0000-0000-0000-000000000202"},
+		{Kind: vm.OwnerRuntime, ID: "019c10d5-a6f7-7af1-8f5f-000000000201"},
+		{Kind: vm.OwnerBuild, ID: "019c10d5-a6f7-7af1-8f5f-000000000202"},
 	}
 	for _, owner := range owners {
 		statePath := filepath.Join(workDir, "vms", "guest", owner.ID)
@@ -132,7 +132,7 @@ func TestRecoveryReclaimsRuntimeAndBuildFromExactOwnerMarkers(t *testing.T) {
 func TestRecoveryDoesNotGuessOwnerFromJailerRoot(t *testing.T) {
 	workDir := t.TempDir()
 	jailerDir := t.TempDir()
-	id := "00000000-0000-0000-0000-000000000203"
+	id := "019c10d5-a6f7-7af1-8f5f-000000000203"
 	jailerPath := filepath.Join(jailerDir, "firecracker", id)
 	if err := os.MkdirAll(jailerPath, 0o700); err != nil {
 		t.Fatal(err)
@@ -155,7 +155,7 @@ func TestRecoveryDoesNotGuessOwnerFromJailerRoot(t *testing.T) {
 
 func TestRecoveryQuarantinePreservesStructuredBuildOwner(t *testing.T) {
 	workDir := t.TempDir()
-	owner := vm.Owner{Kind: vm.OwnerBuild, ID: "00000000-0000-0000-0000-000000000204"}
+	owner := vm.Owner{Kind: vm.OwnerBuild, ID: "019c10d5-a6f7-7af1-8f5f-000000000204"}
 	statePath := filepath.Join(workDir, "vms", "guest", owner.ID)
 	if err := os.MkdirAll(statePath, 0o700); err != nil {
 		t.Fatal(err)

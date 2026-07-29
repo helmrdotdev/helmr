@@ -15,8 +15,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -125,7 +125,7 @@ func readActorOutputPage(
 		LimitCount: limit + 1, AfterPresent: afterPresent,
 		AfterSequence: afterSequence, EnvironmentID: environmentID,
 		ActorDeclaredID: actorDeclaredID,
-		AddressPublicID: pgvalue.Text(address.publicID),
+		AddressID:       address.id,
 		AddressKey:      pgvalue.Text(address.key),
 	})
 	if err != nil {
@@ -199,7 +199,7 @@ func parseActorOutputReadRequest(r *http.Request) (actorOutputReadRequest, error
 			return actorOutputReadRequest{}, err
 		}
 	}
-	publicID, hasID, err := singleNonEmptyQueryValue(values, "actor_id")
+	rawID, hasID, err := singleNonEmptyQueryValue(values, "actor_id")
 	if err != nil {
 		return actorOutputReadRequest{}, actorOutputReferenceError{err: err}
 	}
@@ -214,10 +214,11 @@ func parseActorOutputReadRequest(r *http.Request) (actorOutputReadRequest, error
 	}
 	request := actorOutputReadRequest{limit: actorOutputReadDefaultLimit}
 	if hasID {
-		if err := api.ValidateActorPublicID(publicID); err != nil {
+		id, err := ids.Parse(rawID)
+		if err != nil {
 			return actorOutputReadRequest{}, actorOutputReferenceError{err: err}
 		}
-		request.address.publicID = publicID
+		request.address.id = pgvalue.UUID(id)
 	} else {
 		if err := api.ValidateActorKey(key); err != nil {
 			return actorOutputReadRequest{}, actorOutputReferenceError{err: err}
@@ -256,8 +257,8 @@ func parseActorOutputDecimal(raw string, minimum, maximum int64, name string) (i
 
 func projectActorOutputRecord(row db.ReadPublicActorOutputPageRow) (api.ActorOutputRecord, error) {
 	recordUUID := uuid.UUID(row.RecordID.Bytes)
-	recordID, err := publicid.EncodeActorRecord(recordUUID)
-	if err != nil {
+	recordID := recordUUID.String()
+	if err := ids.Validate(recordID); err != nil {
 		return api.ActorOutputRecord{}, err
 	}
 	if row.Sequence <= row.EffectiveAfter ||
@@ -269,11 +270,13 @@ func projectActorOutputRecord(row db.ReadPublicActorOutputPageRow) (api.ActorOut
 		row.ProducerAttemptNumber < 1 {
 		return api.ActorOutputRecord{}, errors.New("actor output record projection is invalid")
 	}
-	if err := publicid.ValidateFor(publicid.Run, row.RunPublicID); err != nil {
-		return api.ActorOutputRecord{}, errors.New("actor output producer Run public ID is invalid")
+	runID := pgvalue.UUIDString(row.RunID)
+	if err := ids.Validate(runID); err != nil {
+		return api.ActorOutputRecord{}, errors.New("actor output producer Run ID is invalid")
 	}
-	if err := publicid.ValidateFor(publicid.Deployment, row.DeploymentPublicID); err != nil {
-		return api.ActorOutputRecord{}, errors.New("actor output Deployment public ID is invalid")
+	deploymentID := pgvalue.UUIDString(row.DeploymentID)
+	if err := ids.Validate(deploymentID); err != nil {
+		return api.ActorOutputRecord{}, errors.New("actor output Deployment ID is invalid")
 	}
 	return api.ActorOutputRecord{
 		ID:          recordID,
@@ -282,9 +285,9 @@ func projectActorOutputRecord(row db.ReadPublicActorOutputPageRow) (api.ActorOut
 		ContentType: row.ContentType,
 		CreatedAt:   row.CreatedAt.Time.UTC(),
 		Provenance: api.ActorOutputProvenance{
-			RunID:         row.RunPublicID,
+			RunID:         runID,
 			AttemptNumber: row.ProducerAttemptNumber,
-			DeploymentID:  row.DeploymentPublicID,
+			DeploymentID:  deploymentID,
 		},
 	}, nil
 }

@@ -314,8 +314,8 @@ WITH scoped_actor AS MATERIALIZED (
        AND actors.actor_declared_id = sqlc.arg(actor_declared_id)
        AND (
            (
-               sqlc.narg(address_public_id)::text IS NOT NULL
-               AND actors.public_id = sqlc.narg(address_public_id)::text
+               sqlc.narg(address_id)::uuid IS NOT NULL
+               AND actors.id = sqlc.narg(address_id)::uuid
            )
            OR
            (
@@ -333,9 +333,9 @@ SELECT scoped_actor.id AS actor_id,
        coalesce(page.data, 'null'::jsonb)::jsonb AS data,
        coalesce(page.content_type, '')::text AS content_type,
        coalesce(page.created_at, 'epoch'::timestamptz)::timestamptz AS created_at,
-       coalesce(page.run_public_id, '')::text AS run_public_id,
+       page.run_id,
        coalesce(page.producer_attempt_number, 0)::integer AS producer_attempt_number,
-       coalesce(page.deployment_public_id, '')::text AS deployment_public_id
+       page.deployment_id
   FROM scoped_actor
   LEFT JOIN LATERAL (
       SELECT actor_records.id AS record_id,
@@ -343,9 +343,9 @@ SELECT scoped_actor.id AS actor_id,
              actor_records.data,
              actor_records.content_type,
              actor_records.created_at,
-             runs.public_id AS run_public_id,
+             runs.id AS run_id,
              actor_records.producer_attempt_number,
-             deployments.public_id AS deployment_public_id
+             deployments.id AS deployment_id
         FROM actor_records
         JOIN runs
           ON runs.actor_id = actor_records.actor_id

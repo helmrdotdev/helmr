@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 const upcomingCount = 5
@@ -62,7 +63,7 @@ func BuildAdmissionAt(value db.Schedule, now time.Time) (Admission, error) {
 	input := scheduledTaskInput{
 		ScheduledAt: scheduledAt.Format(time.RFC3339Nano),
 		Timezone:    value.Timezone,
-		ScheduleID:  value.PublicID,
+		ScheduleID:  pgvalue.UUIDString(value.ID),
 		Upcoming:    encodedUpcoming,
 	}
 	if value.LastFireAt.Valid {

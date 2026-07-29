@@ -21,7 +21,6 @@ WITH selected_definition AS (
 ), created_workspace AS (
     INSERT INTO workspaces (
         id,
-        public_id,
         environment_id,
         region_id,
         workspace_declared_id,
@@ -30,7 +29,6 @@ WITH selected_definition AS (
         key
     )
     SELECT sqlc.arg(id),
-           sqlc.arg(public_id),
            selected_definition.environment_id,
            selected_definition.default_region_id,
            selected_definition.workspace_declared_id,
@@ -42,7 +40,6 @@ WITH selected_definition AS (
 ), created_version AS (
     INSERT INTO workspace_versions (
         id,
-        public_id,
         environment_id,
         workspace_id,
         kind,
@@ -55,7 +52,6 @@ WITH selected_definition AS (
         published_at
     )
     SELECT sqlc.arg(initial_version_id),
-           sqlc.arg(initial_version_public_id),
            created_workspace.environment_id,
            created_workspace.id,
            'system'::workspace_version_kind,

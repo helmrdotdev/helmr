@@ -8,14 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -360,14 +359,8 @@ func commandFlag(args []string, name string) string {
 	return ""
 }
 
-var vmIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-
 func canonicalVMID(name string) bool {
-	if !vmIDPattern.MatchString(name) {
-		return false
-	}
-	id, err := uuid.Parse(name)
-	return err == nil && id.String() == name
+	return ids.Validate(name) == nil
 }
 
 func ownedVMCandidates(workDir string, jailerDir string) ([]ownerCandidate, error) {

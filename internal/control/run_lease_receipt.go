@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -25,14 +26,14 @@ type parsedRunLeaseReceipt struct {
 
 func parseRunLeaseReceipt(receipt api.WorkerRunLeaseReceipt) (parsedRunLeaseReceipt, error) {
 	parseID := func(name, value string) (uuid.UUID, error) {
-		parsed, err := uuid.Parse(value)
-		if err != nil || parsed == uuid.Nil || parsed.String() != value {
-			return uuid.Nil, fmt.Errorf("%s must be a canonical UUID", name)
+		parsed, err := ids.Parse(value)
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("%s must be a canonical UUIDv7", name)
 		}
 		return parsed, nil
 	}
 	var parsed parsedRunLeaseReceipt
-	ids := []struct {
+	fields := []struct {
 		name  string
 		value string
 		dest  *uuid.UUID
@@ -47,7 +48,7 @@ func parseRunLeaseReceipt(receipt api.WorkerRunLeaseReceipt) (parsedRunLeaseRece
 		{"lease.workspace_lease_id", receipt.WorkspaceLeaseID, &parsed.workspaceLeaseID},
 		{"lease.base_workspace_version_id", receipt.BaseWorkspaceVersionID, &parsed.baseWorkspaceVersionID},
 	}
-	for _, id := range ids {
+	for _, id := range fields {
 		value, err := parseID(id.name, id.value)
 		if err != nil {
 			return parsedRunLeaseReceipt{}, err

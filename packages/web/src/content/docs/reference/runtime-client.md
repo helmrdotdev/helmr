@@ -85,7 +85,7 @@ public create input.
 
 Run log and event calls return finite cursor pages. Poll using `nextCursor` when
 following progress. A Run snapshot is the source of truth for terminal status.
-Run records expose public IDs only; internal UUIDs and trace authority are not
+Run records expose canonical resource UUIDv7 values; trace authority is not
 part of this client contract.
 
 Each Actor has exactly two fixed durable channels, `input` and `output`. They

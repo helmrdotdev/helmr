@@ -1005,19 +1005,19 @@ WITH target AS (
      FOR UPDATE OF workspace_mounts, workspaces
 ), created AS (
     INSERT INTO workspace_versions (
-        id, public_id, environment_id, workspace_id,
+        id, environment_id, workspace_id,
         parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes,
         entry_count, state, source_workspace_lease_id, ownership_generation,
         writer_generation, published_at
     )
-    SELECT $12, $13,
+    SELECT $12,
            target.environment_id, target.workspace_id,
-           target.head_version_id, $14, 'workspace_version', 'system',
-           $15, $16,
-           $17, 'committed', target.source_workspace_lease_id,
+           target.head_version_id, $13, 'workspace_version', 'system',
+           $14, $15,
+           $16, 'committed', target.source_workspace_lease_id,
            target.ownership_generation, target.writer_generation, now()
       FROM target
-    RETURNING id, public_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+    RETURNING id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
 ), updated_workspace AS (
     UPDATE workspaces
        SET head_version_id = created.id, dirty_state = 'clean', updated_at = now()
@@ -1034,32 +1034,30 @@ WITH target AS (
        AND workspace_mounts.id = target.id
     RETURNING workspace_mounts.id
 )
-SELECT created.id, created.public_id, created.environment_id, created.workspace_id, created.parent_version_id, created.artifact_id, created.artifact_kind, created.kind, created.content_digest, created.size_bytes, created.entry_count, created.state, created.source_workspace_lease_id, created.ownership_generation, created.writer_generation, created.created_at, created.published_at, created.discarded_at FROM created JOIN updated_mount ON true
+SELECT created.id, created.environment_id, created.workspace_id, created.parent_version_id, created.artifact_id, created.artifact_kind, created.kind, created.content_digest, created.size_bytes, created.entry_count, created.state, created.source_workspace_lease_id, created.ownership_generation, created.writer_generation, created.created_at, created.published_at, created.discarded_at FROM created JOIN updated_mount ON true
 `
 
 type PromoteWorkspaceMountStopCaptureParams struct {
-	OrgID                    pgtype.UUID `json:"org_id"`
-	ProjectID                pgtype.UUID `json:"project_id"`
-	EnvironmentID            pgtype.UUID `json:"environment_id"`
-	WorkspaceID              pgtype.UUID `json:"workspace_id"`
-	ID                       pgtype.UUID `json:"id"`
-	WorkerInstanceID         pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch              int64       `json:"worker_epoch"`
-	RuntimeInstanceID        pgtype.UUID `json:"runtime_instance_id"`
-	FencingGeneration        int64       `json:"fencing_generation"`
-	OwnershipGeneration      int64       `json:"ownership_generation"`
-	WriterGeneration         int64       `json:"writer_generation"`
-	WorkspaceVersionID       pgtype.UUID `json:"workspace_version_id"`
-	WorkspaceVersionPublicID string      `json:"workspace_version_public_id"`
-	ArtifactID               pgtype.UUID `json:"artifact_id"`
-	ContentDigest            string      `json:"content_digest"`
-	SizeBytes                int64       `json:"size_bytes"`
-	EntryCount               int32       `json:"entry_count"`
+	OrgID               pgtype.UUID `json:"org_id"`
+	ProjectID           pgtype.UUID `json:"project_id"`
+	EnvironmentID       pgtype.UUID `json:"environment_id"`
+	WorkspaceID         pgtype.UUID `json:"workspace_id"`
+	ID                  pgtype.UUID `json:"id"`
+	WorkerInstanceID    pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch         int64       `json:"worker_epoch"`
+	RuntimeInstanceID   pgtype.UUID `json:"runtime_instance_id"`
+	FencingGeneration   int64       `json:"fencing_generation"`
+	OwnershipGeneration int64       `json:"ownership_generation"`
+	WriterGeneration    int64       `json:"writer_generation"`
+	WorkspaceVersionID  pgtype.UUID `json:"workspace_version_id"`
+	ArtifactID          pgtype.UUID `json:"artifact_id"`
+	ContentDigest       string      `json:"content_digest"`
+	SizeBytes           int64       `json:"size_bytes"`
+	EntryCount          int32       `json:"entry_count"`
 }
 
 type PromoteWorkspaceMountStopCaptureRow struct {
 	ID                     pgtype.UUID          `json:"id"`
-	PublicID               string               `json:"public_id"`
 	EnvironmentID          pgtype.UUID          `json:"environment_id"`
 	WorkspaceID            pgtype.UUID          `json:"workspace_id"`
 	ParentVersionID        pgtype.UUID          `json:"parent_version_id"`
@@ -1092,7 +1090,6 @@ func (q *Queries) PromoteWorkspaceMountStopCapture(ctx context.Context, arg Prom
 		arg.OwnershipGeneration,
 		arg.WriterGeneration,
 		arg.WorkspaceVersionID,
-		arg.WorkspaceVersionPublicID,
 		arg.ArtifactID,
 		arg.ContentDigest,
 		arg.SizeBytes,
@@ -1101,7 +1098,6 @@ func (q *Queries) PromoteWorkspaceMountStopCapture(ctx context.Context, arg Prom
 	var i PromoteWorkspaceMountStopCaptureRow
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
 		&i.ParentVersionID,

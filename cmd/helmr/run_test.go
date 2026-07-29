@@ -25,7 +25,7 @@ func TestRunListCommandUsesSnapshotPagination(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(api.ListRunSnapshotsResponse{
 			Runs: []api.RunSnapshotResponse{{
-				ID:                   "run_1234567890abcdef",
+				ID:                   "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 				Status:               api.RunStatusRunning,
 				Entrypoint:           api.RunEntrypointResponse{Kind: "task", ID: "deploy"},
 				CurrentAttemptNumber: 2,
@@ -60,11 +60,11 @@ func TestRunListCommandUsesSnapshotPagination(t *testing.T) {
 func TestRunGetCommandPrintsSnapshotSemantics(t *testing.T) {
 	terminalAt := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1" {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{
-			ID:                   "run-1",
+			ID:                   "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 			Status:               api.RunStatusSucceeded,
 			Entrypoint:           api.RunEntrypointResponse{Kind: "task", ID: "deploy"},
 			Deployment:           api.RunDeploymentResponse{ID: "dep-1", Version: "20260726-test"},
@@ -84,7 +84,7 @@ func TestRunGetCommandPrintsSnapshotSemantics(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "get", "run-1"})
+	cmd.SetArgs([]string{"run", "get", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -102,14 +102,14 @@ func TestRunGetCommandPrintsSnapshotSemantics(t *testing.T) {
 
 func TestRunCancelCommandCancelsRun(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/runs/run-1/cancel" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/cancel" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if r.ContentLength > 0 {
 			t.Fatalf("cancel request body length = %d", r.ContentLength)
 		}
 		_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{
-			ID: "run-1", Status: "cancelled",
+			ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: "cancelled",
 		})
 	}))
 	defer server.Close()
@@ -120,12 +120,12 @@ func TestRunCancelCommandCancelsRun(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "cancel", "run-1"})
+	cmd.SetArgs([]string{"run", "cancel", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	expected := strings.Join([]string{
-		"run_id: run-1",
+		"run_id: 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 		"run_status: cancelled",
 		"",
 	}, "\n")

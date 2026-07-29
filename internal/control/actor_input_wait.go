@@ -29,12 +29,8 @@ func (s *Server) workerCreateActorInputRunWait(
 	w http.ResponseWriter,
 	r *http.Request,
 	request api.WorkerCreateRunWaitRequest,
+	identity requestedRunWaitIdentity,
 ) {
-	correlationID, err := parseCanonicalUUID("correlation_id", request.CorrelationID)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
 	var params workerActorInputWaitParams
 	if err := decodeClosedJSON(request.Params, &params); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid Actor input Wait params: %w", err)))
@@ -101,8 +97,8 @@ func (s *Server) workerCreateActorInputRunWait(
 		writeError(w, badRequest(fmt.Errorf("fingerprint Actor input Wait registration: %w", err)))
 		return
 	}
-	waitID := derivedRunWaitID(parsed.runID, request.Lease.AttemptNumber, correlationID, "wait")
-	resumeAttachID := derivedRunWaitID(parsed.runID, request.Lease.AttemptNumber, correlationID, "resume-attach")
+	waitID := identity.waitID
+	resumeAttachID := identity.resumeAttachID
 
 	var registered db.RunWait
 	err = s.inTx(r.Context(), func(work *txWork) error {

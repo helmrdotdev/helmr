@@ -396,30 +396,27 @@ INSERT INTO regions (
     'artifact-test-region', 'test', 'test-1', 'Artifact test'
 );
 INSERT INTO organizations (
-    id, public_id, name, slug
+    id, name, slug
 ) VALUES (
-    '00000000-0000-0000-0000-000000000901',
-    'org_aaaaaaaaaaaaaaaaaaaaaaaaaa',
+    '00000000-0000-7000-8000-000000000901',
     'Artifact test',
     'artifact-test'
 );
 INSERT INTO projects (
-    id, public_id, org_id, default_region_id, slug, name
+    id, org_id, default_region_id, slug, name
 ) VALUES (
-    '00000000-0000-0000-0000-000000000902',
-    'prj_aaaaaaaaaaaaaaaaaaaaaaaaaa',
-    '00000000-0000-0000-0000-000000000901',
+    '00000000-0000-7000-8000-000000000902',
+    '00000000-0000-7000-8000-000000000901',
     'artifact-test-region',
     'artifact-test',
     'Artifact test'
 );
 INSERT INTO environments (
-    id, public_id, org_id, project_id, slug, name, color_hex
+    id, org_id, project_id, slug, name, color_hex
 ) VALUES (
-    '00000000-0000-0000-0000-000000000903',
-    'env_aaaaaaaaaaaaaaaaaaaaaaaaaa',
-    '00000000-0000-0000-0000-000000000901',
-    '00000000-0000-0000-0000-000000000902',
+    '00000000-0000-7000-8000-000000000903',
+    '00000000-0000-7000-8000-000000000901',
+    '00000000-0000-7000-8000-000000000902',
     'artifact-test',
     'Artifact test',
     '#000000'
@@ -437,7 +434,7 @@ INSERT INTO worker_groups (
 INSERT INTO worker_instances (
     id, resource_id, worker_group_id, attestation_fingerprint
 ) VALUES (
-    '00000000-0000-0000-0000-000000000904',
+    '00000000-0000-7000-8000-000000000904',
     'artifact-test-worker',
     'artifact-test-workers',
     'attestation'
@@ -445,7 +442,7 @@ INSERT INTO worker_instances (
 INSERT INTO cas_objects (
     org_id, digest, size_bytes, media_type
 ) VALUES (
-    '00000000-0000-0000-0000-000000000901',
+    '00000000-0000-7000-8000-000000000901',
     'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     1,
     'application/octet-stream'
@@ -454,15 +451,15 @@ INSERT INTO artifacts (
     id, org_id, project_id, environment_id, digest, kind,
     size_bytes, media_type, created_by_worker_instance_id
 ) VALUES (
-    '00000000-0000-0000-0000-000000000905',
-    '00000000-0000-0000-0000-000000000901',
-    '00000000-0000-0000-0000-000000000902',
-    '00000000-0000-0000-0000-000000000903',
+    '00000000-0000-7000-8000-000000000905',
+    '00000000-0000-7000-8000-000000000901',
+    '00000000-0000-7000-8000-000000000902',
+    '00000000-0000-7000-8000-000000000903',
     'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     'deployment_program',
     1,
     'application/vnd.helmr.program.v0+squashfs',
-    '00000000-0000-0000-0000-000000000904'
+    '00000000-0000-7000-8000-000000000904'
 );
 `); err != nil {
 		t.Fatal(err)
@@ -472,7 +469,7 @@ INSERT INTO artifacts (
 	}
 	if _, err := tx.Exec(ctx, `
 DELETE FROM worker_instances
- WHERE id = '00000000-0000-0000-0000-000000000904'
+ WHERE id = '00000000-0000-7000-8000-000000000904'
 `); err == nil {
 		t.Fatal("worker deletion removed immutable Artifact creator authority")
 	}
@@ -483,11 +480,11 @@ DELETE FROM worker_instances
 	if err := tx.QueryRow(ctx, `
 SELECT created_by_worker_instance_id::text
   FROM artifacts
- WHERE id = '00000000-0000-0000-0000-000000000905'
+ WHERE id = '00000000-0000-7000-8000-000000000905'
 `).Scan(&creatorID); err != nil {
 		t.Fatal(err)
 	}
-	if creatorID != "00000000-0000-0000-0000-000000000904" {
+	if creatorID != "00000000-0000-7000-8000-000000000904" {
 		t.Fatalf("Artifact creator = %q", creatorID)
 	}
 }

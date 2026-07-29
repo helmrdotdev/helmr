@@ -251,7 +251,7 @@ func TestActorStartBodyLimitReturnsStableCode(t *testing.T) {
 }
 
 func TestActorStartRejectsOversizeCanonicalInput(t *testing.T) {
-	workspaceID := "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	workspaceID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
 	body := `{"workspace":{"id":"` + workspaceID + `"},"input":"` +
 		strings.Repeat("a", maxActorInputBytes) + `"}`
 	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))

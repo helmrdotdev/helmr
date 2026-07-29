@@ -105,12 +105,12 @@ if ! run_surface_attestation "after"; then
   attestation_failures=$((attestation_failures + 1))
 fi
 
-run_id_egrep='run_[a-z2-7]{26}'
+run_id_egrep='[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
 {
   awk '/^release smoke run ids:/ { for (i = 5; i <= NF; i++) print $i }' "${smoke_log}" |
     grep -E "^${run_id_egrep}$" || true
-  grep -Eo "(^|[[:space:]])[A-Za-z_]*run_id=${run_id_egrep}([^a-z2-7]|$)" "${smoke_log}" |
-    sed -E "s/.*=(${run_id_egrep})([^a-z2-7])?$/\\1/" || true
+  grep -Eo "(^|[[:space:]])[A-Za-z_]*run_id=${run_id_egrep}([^0-9a-f-]|$)" "${smoke_log}" |
+    sed -E "s/.*=(${run_id_egrep})([^0-9a-f-])?$/\\1/" || true
   if command -v jq >/dev/null 2>&1; then
     jq -Rr --arg run_id_re "^${run_id_egrep}$" '
       fromjson?

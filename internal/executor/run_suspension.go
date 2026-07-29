@@ -83,6 +83,15 @@ func (w ControlRunWaits) ContinueRunWait(
 	if w.Client == nil {
 		return errors.New("run wait control client is required")
 	}
+	lease, err := request.currentLeaseReceipt()
+	if err != nil {
+		return err
+	}
+	if opened.RunID != lease.RunID ||
+		opened.RunWaitID != request.RunWaitID ||
+		opened.ResumeAttachID != request.ResumeAttachID {
+		return errors.New("run wait creation response did not match exact request identity")
+	}
 	if opened.ResolutionKind != "" {
 		if request.Resume == nil {
 			return errors.New("runtime resume support is required")
@@ -92,13 +101,6 @@ func (w ControlRunWaits) ContinueRunWait(
 			Data: opened.Resolution,
 		})
 	}
-	if opened.RunWaitID == "" {
-		return errors.New("run wait id is required")
-	}
-	if opened.RunID == "" {
-		return errors.New("run wait Run id is required")
-	}
-	request.ResumeAttachID = opened.ResumeAttachID
 	pollDelay := 100 * time.Millisecond
 	for {
 		lease, err := request.currentLeaseReceipt()
@@ -261,6 +263,8 @@ func (w ControlRunWaits) AddRunWait(ctx context.Context, request WaitRequest) (a
 	return w.Client.CreateRunWait(ctx, api.WorkerCreateRunWaitRequest{
 		Lease:                         lease,
 		CorrelationID:                 request.CorrelationID,
+		RunWaitID:                     request.RunWaitID,
+		ResumeAttachID:                request.ResumeAttachID,
 		Kind:                          request.Kind,
 		Params:                        request.Params,
 		Metadata:                      request.Metadata,

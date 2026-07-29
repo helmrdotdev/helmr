@@ -65,7 +65,7 @@ const client = new HelmrClient({
   fetch: async (input: URL | RequestInfo, init?: RequestInit) => {
     requests.push({ url: String(input), init })
     return Response.json({
-      run_id: "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
     })
   },
 })
@@ -74,7 +74,7 @@ const run = await client.tasks.start<typeof fixture>("packed-consumer", {
   workspace: workspaces.ref({ key: "packed-consumer" }),
   idempotencyKey: "packed-consumer-start",
 })
-if (run.id !== "run_aaaaaaaaaaaaaaaaaaaaaaaaaa") {
+if (run.id !== "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31") {
   throw new Error("packed client did not parse the canonical Run handle")
 }
 if (requests.length !== 1) {

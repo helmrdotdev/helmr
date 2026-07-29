@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/outbox"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -233,11 +234,11 @@ func decodeRunAdmissionPayload(raw []byte) (runAdmissionPayload, error) {
 	if err := ensureDeliveryEOF(decoder); err != nil {
 		return runAdmissionPayload{}, err
 	}
-	environmentID, err := uuid.Parse(payload.EnvironmentID)
+	environmentID, err := ids.Parse(payload.EnvironmentID)
 	if err != nil {
 		return runAdmissionPayload{}, errors.New("Run admission environmentId is invalid")
 	}
-	runID, err := uuid.Parse(payload.RunID)
+	runID, err := ids.Parse(payload.RunID)
 	if err != nil {
 		return runAdmissionPayload{}, errors.New("Run admission runId is invalid")
 	}
@@ -256,15 +257,15 @@ func decodeRunResumePayload(raw []byte) (runResumePayload, error) {
 	if err := ensureDeliveryEOF(decoder); err != nil {
 		return runResumePayload{}, err
 	}
-	environmentID, err := uuid.Parse(payload.EnvironmentID)
+	environmentID, err := ids.Parse(payload.EnvironmentID)
 	if err != nil {
 		return runResumePayload{}, errors.New("Run resume environmentId is invalid")
 	}
-	runID, err := uuid.Parse(payload.RunID)
+	runID, err := ids.Parse(payload.RunID)
 	if err != nil {
 		return runResumePayload{}, errors.New("Run resume runId is invalid")
 	}
-	runWaitID, err := uuid.Parse(payload.RunWaitID)
+	runWaitID, err := ids.Parse(payload.RunWaitID)
 	if err != nil {
 		return runResumePayload{}, errors.New("Run resume runWaitId is invalid")
 	}

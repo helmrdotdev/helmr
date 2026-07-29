@@ -11,8 +11,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -78,7 +78,7 @@ func (s *Server) workerCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, api.WorkerCreateWorkspaceResponse{
 		CorrelationID: request.CorrelationID,
-		Completed:     &api.CreateWorkspaceResponse{WorkspaceID: result.WorkspacePublicID},
+		Completed:     &api.CreateWorkspaceResponse{WorkspaceID: result.WorkspaceID.String()},
 	})
 }
 
@@ -233,7 +233,7 @@ func (s *Server) workerListWorkspaceFiles(w http.ResponseWriter, r *http.Request
 	})
 	if err == nil {
 		page, err = s.listWorkspaceFileSource(
-			r.Context(), record.PublicID, source, request.Path, after, request.Limit, now,
+			r.Context(), pgvalue.UUIDString(record.ID), source, request.Path, after, request.Limit, now,
 		)
 	}
 	if failure, handled := s.workerWorkspaceFileFailure(w, request.Lease.RunID, "list", err); handled {
@@ -445,7 +445,7 @@ func (s *Server) workerDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.deleteWorkspace(r.Context(), workspaceDeleteRequest{
 		OrgID: pgvalue.MustUUIDValue(source.OrgID), ProjectID: pgvalue.MustUUIDValue(source.ProjectID),
-		EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID), WorkspaceID: record.PublicID,
+		EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID), WorkspaceID: pgvalue.MustUUIDValue(record.ID),
 		IdempotencyKey: idempotencyKey,
 		Authorize: func(ctx context.Context, q db.Querier) error {
 			_, err := authorizeWorkerRunSource(ctx, q, worker, request.Lease)
@@ -468,7 +468,7 @@ func (s *Server) workerDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, api.WorkerDeleteWorkspaceResponse{
 		CorrelationID: request.CorrelationID,
-		Completed:     &api.DeleteWorkspaceReceipt{WorkspaceID: result.WorkspacePublicID},
+		Completed:     &api.DeleteWorkspaceReceipt{WorkspaceID: result.WorkspaceID.String()},
 	})
 }
 
@@ -497,16 +497,20 @@ func resolveWorkerWorkspace(
 	source workerRunSourceAuthority,
 	address api.WorkerWorkspaceAddress,
 ) (db.Workspace, error) {
-	publicID := pgtype.Text{}
+	workspaceID := pgtype.UUID{}
 	key := pgtype.Text{}
 	if address.WorkspaceID != "" {
-		publicID = pgtype.Text{String: address.WorkspaceID, Valid: true}
+		id, err := ids.Parse(address.WorkspaceID)
+		if err != nil {
+			return db.Workspace{}, err
+		}
+		workspaceID = pgvalue.UUID(id)
 	} else {
 		key = pgtype.Text{String: address.WorkspaceKey, Valid: true}
 	}
 	id, err := q.ResolveWorkspaceTarget(ctx, db.ResolveWorkspaceTargetParams{
 		OrgID: source.OrgID, ProjectID: source.ProjectID, EnvironmentID: source.EnvironmentID,
-		PublicID: publicID, Key: key,
+		ID: workspaceID, Key: key,
 	})
 	if err != nil {
 		return db.Workspace{}, err
@@ -526,7 +530,7 @@ func validateWorkerWorkspaceRequest(request api.WorkerRetrieveWorkspaceRequest) 
 		return errors.New("Workspace address requires exactly one of workspace_id or workspace_key")
 	}
 	if hasID {
-		if err := publicid.ValidateFor(publicid.Workspace, request.Workspace.WorkspaceID); err != nil {
+		if err := ids.Validate(request.Workspace.WorkspaceID); err != nil {
 			return errors.New("Workspace ID is invalid")
 		}
 	} else if err := validateWorkspaceKey(&request.Workspace.WorkspaceKey); err != nil {
@@ -536,8 +540,7 @@ func validateWorkerWorkspaceRequest(request api.WorkerRetrieveWorkspaceRequest) 
 }
 
 func validateWorkerWorkspaceCorrelation(value string) error {
-	id, err := uuid.Parse(value)
-	if err != nil || id == uuid.Nil || id.String() != value {
+	if err := ids.Validate(value); err != nil {
 		return errors.New("Workspace runtime correlation ID is invalid")
 	}
 	return nil

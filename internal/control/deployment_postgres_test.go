@@ -14,7 +14,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -28,21 +27,21 @@ func TestDeploymentCreateConvergesAcrossTransactions(t *testing.T) {
 	environmentID := uuid.Must(uuid.NewV7())
 	regionID := "deployment-create-" + environmentID.String()
 	mustDeploymentCreateExec(t, database.Pool, `
-		INSERT INTO organizations (id, public_id, name, slug)
-		VALUES ($1, $2, 'Deployment create', $3)
-	`, orgID, deploymentCreatePublicID(t, publicid.Organization), "org-"+orgID.String())
+		INSERT INTO organizations (id, name, slug)
+		VALUES ($1, 'Deployment create', $2)
+	`, orgID, "org-"+orgID.String())
 	mustDeploymentCreateExec(t, database.Pool, `
 		INSERT INTO regions (id, provider, provider_region, display_name)
 		VALUES ($1, 'test', $1, 'Deployment create')
 	`, regionID)
 	mustDeploymentCreateExec(t, database.Pool, `
-		INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name)
-		VALUES ($1, $2, $3, $4, $5, 'Deployment create')
-	`, projectID, deploymentCreatePublicID(t, publicid.Project), orgID, regionID, "project-"+projectID.String())
+		INSERT INTO projects (id, org_id, default_region_id, slug, name)
+		VALUES ($1, $2, $3, $4, 'Deployment create')
+	`, projectID, orgID, regionID, "project-"+projectID.String())
 	mustDeploymentCreateExec(t, database.Pool, `
-		INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex)
-		VALUES ($1, $2, $3, $4, 'production', 'Production', '#000000')
-	`, environmentID, deploymentCreatePublicID(t, publicid.Environment), orgID, projectID)
+		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
+		VALUES ($1, $2, $3, 'production', 'Production', '#000000')
+	`, environmentID, orgID, projectID)
 
 	source := api.DeploymentSourceArtifact{
 		Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -194,13 +193,4 @@ func mustDeploymentCreateExec(
 	if _, err := executor.Exec(t.Context(), query, args...); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func deploymentCreatePublicID(t *testing.T, prefix publicid.Prefix) string {
-	t.Helper()
-	value, err := publicid.New(prefix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return value
 }

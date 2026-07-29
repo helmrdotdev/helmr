@@ -18,7 +18,7 @@ test("loads Actor status from the scoped read API", async () => {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     requestedURL = String(input);
     return Response.json({
-      id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
       status: "open",
       created_at: "2026-07-25T00:00:00Z",
       updated_at: "2026-07-25T00:00:00Z",
@@ -27,13 +27,13 @@ test("loads Actor status from the scoped read API", async () => {
 
   await getActor({
     declaredID: "operator/v1",
-    actorID: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    actorID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
     projectID: "project/1",
     environmentID: "env/1",
   });
 
   expect(requestedURL).toBe(
-    "/api/projects/project%2F1/environments/env%2F1/actors/operator%2Fv1/status?actor_id=act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "/api/projects/project%2F1/environments/env%2F1/actors/operator%2Fv1/status?actor_id=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
   );
 });
 
@@ -46,13 +46,13 @@ test("loads the next Actor output page with a bounded cursor", async () => {
 
   await getActorOutput({
     declaredID: "operator",
-    actorID: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    actorID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
     projectID: "project-1",
     environmentID: "env-1",
   }, { after: 42, limit: 100 });
 
   expect(requestedURL).toBe(
-    "/api/projects/project-1/environments/env-1/actors/operator/output?actor_id=act_aaaaaaaaaaaaaaaaaaaaaaaaaa&after=42&limit=100",
+    "/api/projects/project-1/environments/env-1/actors/operator/output?actor_id=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33&after=42&limit=100",
   );
 });
 
@@ -65,9 +65,9 @@ test("escapes both parts of an Actor console route", () => {
 test("links only Actor Runs and preserves their explicit scope", () => {
   expect(actorRunConsolePath({
     entrypoint: { kind: "actor", id: "operator" },
-    actor_id: "act_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    actor_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
   }, "prj_aaaaaaaaaaaaaaaaaaaaaaaaaa", "env_aaaaaaaaaaaaaaaaaaaaaaaaaa")).toBe(
-    "/actors/operator/act_aaaaaaaaaaaaaaaaaaaaaaaaaa?project_id=prj_aaaaaaaaaaaaaaaaaaaaaaaaaa&environment_id=env_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "/actors/operator/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33?project_id=prj_aaaaaaaaaaaaaaaaaaaaaaaaaa&environment_id=env_aaaaaaaaaaaaaaaaaaaaaaaaaa",
   );
   expect(actorRunConsolePath({
     entrypoint: { kind: "task", id: "resize-image" },

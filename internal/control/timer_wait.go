@@ -28,12 +28,8 @@ func (s *Server) workerCreateTimerRunWait(
 	w http.ResponseWriter,
 	r *http.Request,
 	request api.WorkerCreateRunWaitRequest,
+	identity requestedRunWaitIdentity,
 ) {
-	correlationID, err := parseCanonicalUUID("correlation_id", request.CorrelationID)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
 	params, dueAt, idleTimeout, checkpointDueAt, checkpointDelay, err := timerWaitDeadlines(request)
 	if err != nil {
 		writeError(w, badRequest(err))
@@ -64,8 +60,8 @@ func (s *Server) workerCreateTimerRunWait(
 		writeError(w, badRequest(fmt.Errorf("fingerprint timer Wait registration: %w", err)))
 		return
 	}
-	waitID := derivedRunWaitID(parsed.runID, request.Lease.AttemptNumber, correlationID, "wait")
-	resumeAttachID := derivedRunWaitID(parsed.runID, request.Lease.AttemptNumber, correlationID, "resume-attach")
+	waitID := identity.waitID
+	resumeAttachID := identity.resumeAttachID
 	actorCursor := pgtype.Int8{}
 	if request.ActorSpeculativeInputSequence != nil {
 		actorCursor = pgtype.Int8{Int64: *request.ActorSpeculativeInputSequence, Valid: true}

@@ -11,6 +11,7 @@ import {
 } from "./image"
 import type { RequestOptions } from "./request"
 import { validateTaskId } from "./schema/task"
+import { resourceID } from "./internal/id"
 import { currentRuntimeOperations } from "./internal/runtime"
 
 const workspaceDefinitionBrand = Symbol.for("helmr.sdk.v0.workspace")
@@ -359,7 +360,7 @@ export function createClientWorkspaces(
         ),
         "Workspace create response",
       )
-      const id = workspacePublicID(
+      const id = resourceID(
         response["workspace_id"],
         "Workspace create response.workspace_id",
       )
@@ -468,7 +469,7 @@ function createAuthenticatedWorkspaceRef(
 ): WorkspaceIdRef | WorkspaceKeyRef {
   const resolvePath = (): string => {
     if ("id" in address && address.id !== undefined) {
-      return `/api/workspaces/${encodeURIComponent(workspacePublicID(address.id, "Workspace ID"))}`
+      return `/api/workspaces/${encodeURIComponent(resourceID(address.id, "Workspace ID"))}`
     }
     return `/api/workspaces/by-key/${encodeURIComponent(declaredID)}?${
       new URLSearchParams({ key: address.key }).toString()
@@ -486,7 +487,7 @@ function createAuthenticatedWorkspaceRef(
     )
   const resolveID = async (signal?: AbortSignal): Promise<string> => {
     if ("id" in address && address.id !== undefined) {
-      return workspacePublicID(address.id, "Workspace ID")
+      return resourceID(address.id, "Workspace ID")
     }
     return (await retrieve(signal === undefined ? {} : { signal })).id
   }
@@ -603,7 +604,7 @@ function validateWorkspaceAddress(
     throw new Error("Workspace ref requires exactly one of id or key")
   }
   if ("id" in address && address.id !== undefined) {
-    workspacePublicID(address.id, "Workspace ID")
+    resourceID(address.id, "Workspace ID")
   } else if (address.key.length === 0) {
     throw new Error("Workspace key is required")
   }
@@ -632,7 +633,7 @@ export function parseWorkspaceSnapshot(value: unknown): WorkspaceSnapshot {
     throw new Error("Workspace response.secrets must be an array")
   }
   return Object.freeze({
-    id: workspacePublicID(input["id"], "Workspace response.id"),
+    id: resourceID(input["id"], "Workspace response.id"),
     ...(key === undefined ? {} : { key }),
     declaredId,
     status,
@@ -751,7 +752,7 @@ export function parseWorkspaceDeleteReceipt(
 ): WorkspaceDeleteReceipt {
   const response = workspaceObject(value, "Workspace delete response")
   return Object.freeze({
-    workspaceId: workspacePublicID(
+    workspaceId: resourceID(
       response["workspace_id"],
       "Workspace delete response.workspace_id",
     ),
@@ -766,13 +767,6 @@ function workspaceObject(
     throw new Error(`${label} must be an object`)
   }
   return value as Record<string, unknown>
-}
-
-function workspacePublicID(value: unknown, label: string): string {
-  if (typeof value !== "string" || !/^wsp_[a-z2-7]{26}$/.test(value)) {
-    throw new Error(`${label} must be a canonical Workspace public ID`)
-  }
-  return value
 }
 
 function workspaceDate(value: unknown, field: string): Date {

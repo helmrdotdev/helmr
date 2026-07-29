@@ -369,7 +369,7 @@ func TestSupervisorTerminatesEpochOnFatalWorkError(t *testing.T) {
 
 func TestSupervisorRefusesActivationWithBuildResidue(t *testing.T) {
 	control := &testControl{}
-	owner := vm.Owner{Kind: vm.OwnerBuild, ID: "00000000-0000-0000-0000-000000000701"}
+	owner := vm.Owner{Kind: vm.OwnerBuild, ID: "019c10d5-a6f7-7af1-8f5f-000000000701"}
 	s, err := New(Config{
 		Control: control,
 		Capabilities: api.WorkerCapabilities{

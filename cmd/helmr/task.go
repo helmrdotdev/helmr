@@ -74,9 +74,11 @@ func taskStartCommand() *cobra.Command {
 			if jsonOutput && follow {
 				return errors.New("--json cannot be combined with --follow")
 			}
-			workspaceID = strings.TrimSpace(workspaceID)
 			if workspaceID == "" {
 				return errors.New("--workspace is required")
+			}
+			if err := api.ValidateWorkspaceID(workspaceID); err != nil {
+				return err
 			}
 			timeoutSeconds, err := waitTimeoutSeconds(timeout, "--timeout")
 			if err != nil {
@@ -89,7 +91,6 @@ func taskStartCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			projectID = strings.TrimSpace(projectID)
 			if projectID != "" {
 				if err := validateProjectFlag(projectID); err != nil {
 					return err

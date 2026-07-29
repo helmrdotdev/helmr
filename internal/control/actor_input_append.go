@@ -11,6 +11,7 @@ import (
 	actordomain "github.com/helmrdotdev/helmr/internal/actor"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -209,13 +210,8 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 			}
 		}
 
-		reconcileRecordID, err := pgvalue.UUIDValue(result.ID)
-		if err != nil {
-			return errActorInputAppendConflict
-		}
-		reconcileID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("helmr.actor-input-reconcile.v1:"+reconcileRecordID.String()))
 		return work.q.CreateActorInputReconcileOutbox(ctx, db.CreateActorInputReconcileOutboxParams{
-			ID: pgvalue.UUID(reconcileID), ActorID: result.ActorID,
+			ID: result.ID, ActorID: result.ActorID,
 			EnvironmentID: result.EnvironmentID, RecordID: result.ID,
 		})
 	})
@@ -232,7 +228,7 @@ func actorInputRecordFromReceipt(request appendActorInputRequest, claim db.Idemp
 	if err := json.Unmarshal(claim.Receipt, &receipt); err != nil {
 		return db.ActorRecord{}, err
 	}
-	recordID, err := uuid.Parse(receipt.RecordID)
+	recordID, err := ids.Parse(receipt.RecordID)
 	if err != nil || recordID == uuid.Nil || receipt.Sequence <= 0 || receipt.Sequence > maxActorSequence {
 		return db.ActorRecord{}, errActorInputAppendConflict
 	}

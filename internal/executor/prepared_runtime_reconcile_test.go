@@ -288,7 +288,7 @@ func TestWarmRuntimeTargetRetriesCapacityBackpressureWithoutDurableFailure(t *te
 }
 
 func TestPreparedRuntimeCapacityReservationLivesThroughCheckout(t *testing.T) {
-	target := runtimeCapacityTarget("00000000-0000-0000-0000-000000000510", 7)
+	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000510", 7)
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
 	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
 	if err := pool.reserveRuntimeCapacity(target); err != nil {
@@ -331,9 +331,9 @@ func TestPreparedRuntimeCapacityReservationLivesThroughCheckout(t *testing.T) {
 
 func TestPreparedRuntimeSourcePreservesWorkspaceReservationAuthority(t *testing.T) {
 	source := api.WorkerRuntimeSource{
-		WorkspaceID:            "00000000-0000-0000-0000-000000000701",
-		DeploymentDefinitionID: "00000000-0000-0000-0000-000000000702",
-		BaseVersionID:          "00000000-0000-0000-0000-000000000703",
+		WorkspaceID:            "019c10d5-a6f7-7af1-8f5f-000000000701",
+		DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000702",
+		BaseVersionID:          "019c10d5-a6f7-7af1-8f5f-000000000703",
 		WorkspaceArtifact: api.WorkerWorkspaceArtifact{
 			Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			SizeBytes: 512, MediaType: "application/vnd.helmr.workspace.v0+tar",
@@ -439,13 +439,13 @@ func TestPreparedRuntimeVerifiesReservedWorkspaceArtifactBeforeReady(t *testing.
 func TestPreparedRuntimeCapacityExhaustionIsRetryableBackpressure(t *testing.T) {
 	pool := NewPreparedRuntimePool(nil, nil, 2, nil)
 	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
-	first := runtimeCapacityTarget("00000000-0000-0000-0000-000000000511", 7)
+	first := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000511", 7)
 	if err := pool.reserveRuntimeCapacity(first); err != nil {
 		t.Fatal(err)
 	}
 	assertRuntimeBackpressure(t, pool.reserveRuntimeCapacity(first), PreparedRuntimeBackpressureCapacity)
 
-	err := pool.reserveRuntimeCapacity(runtimeCapacityTarget("00000000-0000-0000-0000-000000000512", 7))
+	err := pool.reserveRuntimeCapacity(runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000512", 7))
 	assertRuntimeBackpressure(t, err, PreparedRuntimeBackpressureCapacity)
 	if got := len(pool.Capacity.Snapshot().Reservations); got != 1 {
 		t.Fatalf("reservations = %d, want 1", got)
@@ -455,7 +455,7 @@ func TestPreparedRuntimeCapacityExhaustionIsRetryableBackpressure(t *testing.T) 
 func TestPreparedRuntimeCapacityRejectsNegativeGuestDisk(t *testing.T) {
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
 	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
-	target := runtimeCapacityTarget("00000000-0000-0000-0000-000000000514", 7)
+	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000514", 7)
 	target.Source.ReservedDiskMiB = -1
 	if err := pool.reserveRuntimeCapacity(target); err == nil {
 		t.Fatal("negative guest disk capacity unexpectedly reserved")
@@ -466,7 +466,7 @@ func TestPreparedRuntimeCapacityRejectsNegativeGuestDisk(t *testing.T) {
 }
 
 func TestPreparedRuntimeCloseFailureRetainsCapacityUntilReclaim(t *testing.T) {
-	target := runtimeCapacityTarget("00000000-0000-0000-0000-000000000513", 7)
+	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000513", 7)
 	connector := &cleanupRuntimeConnector{}
 	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
 	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
@@ -510,7 +510,7 @@ func runtimeCapacityTarget(id string, epoch int64) api.WorkerRuntimeReconcileTar
 	return api.WorkerRuntimeReconcileTarget{
 		ID: id, WorkerEpoch: epoch,
 		Source: api.WorkerRuntimeSource{
-			DeploymentDefinitionID: "00000000-0000-0000-0000-000000000703",
+			DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000703",
 			ReservedCpuMillis:      1000, ReservedMemoryMiB: 512, ReservedDiskMiB: 1024,
 			ReservedExecutionSlots: 5,
 		},
@@ -519,8 +519,8 @@ func runtimeCapacityTarget(id string, epoch int64) api.WorkerRuntimeReconcileTar
 
 func retryableWarmTarget() api.WorkerRuntimeReconcileTarget {
 	return api.WorkerRuntimeReconcileTarget{
-		ID: "00000000-0000-0000-0000-000000000503", WorkerEpoch: 7,
-		Source: api.WorkerRuntimeSource{DeploymentDefinitionID: "00000000-0000-0000-0000-000000000703"},
+		ID: "019c10d5-a6f7-7af1-8f5f-000000000503", WorkerEpoch: 7,
+		Source: api.WorkerRuntimeSource{DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000703"},
 	}
 }
 
@@ -537,8 +537,8 @@ func TestReclaimFailedRuntimeTargetPersistsProofOnlyAfterExactHostCleanup(t *tes
 	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
 	client := &typedRuntimeClient{}
 	target := api.WorkerRuntimeReconcileTarget{
-		ID: "00000000-0000-0000-0000-000000000501", WorkerEpoch: 7,
-		NetworkSlotID: "00000000-0000-0000-0000-000000000601", NetworkSlotGeneration: 3,
+		ID: "019c10d5-a6f7-7af1-8f5f-000000000501", WorkerEpoch: 7,
+		NetworkSlotID: "019c10d5-a6f7-7af1-8f5f-000000000601", NetworkSlotGeneration: 3,
 		DesiredVersion: 2, ObservedVersion: 4, Action: api.WorkerRuntimeReconcileReclaim,
 	}
 	if err := pool.ReclaimFailedRuntimeTarget(context.Background(), client, target); err != nil {
@@ -556,7 +556,7 @@ func TestReclaimFailedRuntimeTargetKeepsQuarantineWhenCleanupIsAmbiguous(t *test
 	connector := &cleanupRuntimeConnector{err: errors.New("process still alive")}
 	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
 	client := &typedRuntimeClient{}
-	target := api.WorkerRuntimeReconcileTarget{ID: "00000000-0000-0000-0000-000000000502", WorkerEpoch: 7}
+	target := api.WorkerRuntimeReconcileTarget{ID: "019c10d5-a6f7-7af1-8f5f-000000000502", WorkerEpoch: 7}
 	if err := pool.ReclaimFailedRuntimeTarget(context.Background(), client, target); err == nil {
 		t.Fatal("ambiguous cleanup unexpectedly succeeded")
 	}
@@ -566,8 +566,8 @@ func TestReclaimFailedRuntimeTargetKeepsQuarantineWhenCleanupIsAmbiguous(t *test
 }
 
 func TestReclaimFailedCheckedOutRuntimeClearsExactCheckoutAfterPhysicalCleanup(t *testing.T) {
-	target := runtimeCapacityTarget("00000000-0000-0000-0000-000000000515", 7)
-	target.NetworkSlotID = "00000000-0000-0000-0000-000000000615"
+	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000515", 7)
+	target.NetworkSlotID = "019c10d5-a6f7-7af1-8f5f-000000000615"
 	target.NetworkSlotGeneration = 3
 	target.DesiredVersion = 2
 	target.ObservedVersion = 4
@@ -579,7 +579,7 @@ func TestReclaimFailedCheckedOutRuntimeClearsExactCheckoutAfterPhysicalCleanup(t
 	}
 	pool.mu.Lock()
 	pool.markRuntimeCheckedOutLocked(target.ID, target.WorkerEpoch)
-	pool.markRuntimeCheckedOutLocked("00000000-0000-0000-0000-000000000516", target.WorkerEpoch)
+	pool.markRuntimeCheckedOutLocked("019c10d5-a6f7-7af1-8f5f-000000000516", target.WorkerEpoch)
 	pool.mu.Unlock()
 	client := &typedRuntimeClient{}
 
@@ -589,7 +589,7 @@ func TestReclaimFailedCheckedOutRuntimeClearsExactCheckoutAfterPhysicalCleanup(t
 	if pool.runtimeCheckedOut(target.ID, target.WorkerEpoch) {
 		t.Fatal("reclaimed runtime remains checked out")
 	}
-	if !pool.runtimeCheckedOut("00000000-0000-0000-0000-000000000516", target.WorkerEpoch) {
+	if !pool.runtimeCheckedOut("019c10d5-a6f7-7af1-8f5f-000000000516", target.WorkerEpoch) {
 		t.Fatal("reclaim cleared a different checkout")
 	}
 	if got := len(pool.Capacity.Snapshot().Reservations); got != 0 {
@@ -605,7 +605,7 @@ func TestReclaimFailedCheckedOutRuntimeClearsExactCheckoutAfterPhysicalCleanup(t
 }
 
 func TestReclaimFailedCheckedOutRuntimeRetainsCheckoutWhenPhysicalCleanupFails(t *testing.T) {
-	target := runtimeCapacityTarget("00000000-0000-0000-0000-000000000517", 7)
+	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000517", 7)
 	connector := &cleanupRuntimeConnector{err: errors.New("runtime still exists")}
 	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
 	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
@@ -632,8 +632,8 @@ func TestReclaimFailedCheckedOutRuntimeRetainsCheckoutWhenPhysicalCleanupFails(t
 }
 
 func TestReclaimFailedCheckedOutRuntimeRetriesProofAfterLocalRelease(t *testing.T) {
-	target := runtimeCapacityTarget("00000000-0000-0000-0000-000000000518", 7)
-	target.NetworkSlotID = "00000000-0000-0000-0000-000000000618"
+	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000518", 7)
+	target.NetworkSlotID = "019c10d5-a6f7-7af1-8f5f-000000000618"
 	target.NetworkSlotGeneration = 3
 	target.DesiredVersion = 2
 	target.ObservedVersion = 4

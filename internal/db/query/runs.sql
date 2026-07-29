@@ -74,7 +74,6 @@ WITH selected_target AS MATERIALIZED (
 ), created_run AS (
     INSERT INTO runs (
         id,
-        public_id,
         org_id,
         project_id,
         environment_id,
@@ -102,7 +101,6 @@ WITH selected_target AS MATERIALIZED (
         claim_id
     )
     SELECT sqlc.arg(id),
-           sqlc.arg(public_id),
            selected_target.org_id,
            selected_target.project_id,
            selected_target.environment_id,
@@ -154,7 +152,6 @@ SELECT created_run.*
 WITH created_run AS (
     INSERT INTO runs (
         id,
-        public_id,
         org_id,
         project_id,
         environment_id,
@@ -188,7 +185,6 @@ WITH created_run AS (
     )
     VALUES (
         sqlc.arg(id),
-        sqlc.arg(public_id),
         sqlc.arg(org_id),
         sqlc.arg(project_id),
         sqlc.arg(environment_id),
@@ -278,7 +274,6 @@ WITH selected_actor AS MATERIALIZED (
 ), created_run AS (
     INSERT INTO runs (
         id,
-        public_id,
         org_id,
         project_id,
         environment_id,
@@ -308,7 +303,6 @@ WITH selected_actor AS MATERIALIZED (
         claim_id
     )
     SELECT sqlc.arg(id),
-           sqlc.arg(public_id),
            selected_actor.org_id,
            selected_actor.project_id,
            selected_actor.environment_id,
@@ -403,7 +397,6 @@ WITH selected_target AS MATERIALIZED (
 ), created_run AS (
     INSERT INTO runs (
         id,
-        public_id,
         org_id,
         project_id,
         environment_id,
@@ -433,7 +426,6 @@ WITH selected_target AS MATERIALIZED (
         claim_id
     )
     SELECT sqlc.arg(id),
-           sqlc.arg(public_id),
            selected_target.org_id,
            selected_target.project_id,
            selected_target.environment_id,
@@ -543,7 +535,6 @@ WITH selected_target AS MATERIALIZED (
 ), created_run AS (
     INSERT INTO runs (
         id,
-        public_id,
         org_id,
         project_id,
         environment_id,
@@ -573,7 +564,6 @@ WITH selected_target AS MATERIALIZED (
         claim_id
     )
     SELECT sqlc.arg(id),
-           sqlc.arg(public_id),
            selected_target.org_id,
            selected_target.project_id,
            selected_target.environment_id,
@@ -631,57 +621,23 @@ SELECT *
 
 -- name: GetRunSnapshot :one
 SELECT runs.*,
-       deployments.public_id AS deployment_public_id,
-       deployments.version AS deployment_version,
-       workspaces.public_id AS workspace_public_id,
-       actors.public_id AS actor_public_id,
-       coalesce(parent.public_id, '')::text AS parent_run_public_id,
-       schedules.public_id AS schedule_public_id
+       deployments.version AS deployment_version
   FROM runs
   JOIN deployments
     ON deployments.environment_id = runs.environment_id
    AND deployments.id = runs.deployment_id
-  JOIN workspaces
-    ON workspaces.environment_id = runs.environment_id
-   AND workspaces.id = runs.workspace_id
-  LEFT JOIN actors
-    ON actors.environment_id = runs.environment_id
-   AND actors.id = runs.actor_id
-  LEFT JOIN runs AS parent
-    ON parent.environment_id = runs.environment_id
-   AND parent.id = runs.parent_run_id
-  LEFT JOIN schedules
-    ON schedules.environment_id = runs.environment_id
-   AND schedules.id = runs.schedule_id
  WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.project_id = sqlc.arg(project_id)
    AND runs.environment_id = sqlc.arg(environment_id)
-   AND runs.public_id = sqlc.arg(public_id);
+   AND runs.id = sqlc.arg(id);
 
 -- name: ListRunSnapshots :many
 SELECT runs.*,
-       deployments.public_id AS deployment_public_id,
-       deployments.version AS deployment_version,
-       workspaces.public_id AS workspace_public_id,
-       actors.public_id AS actor_public_id,
-       coalesce(parent.public_id, '')::text AS parent_run_public_id,
-       schedules.public_id AS schedule_public_id
+       deployments.version AS deployment_version
   FROM runs
   JOIN deployments
     ON deployments.environment_id = runs.environment_id
    AND deployments.id = runs.deployment_id
-  JOIN workspaces
-    ON workspaces.environment_id = runs.environment_id
-   AND workspaces.id = runs.workspace_id
-  LEFT JOIN actors
-    ON actors.environment_id = runs.environment_id
-   AND actors.id = runs.actor_id
-  LEFT JOIN runs AS parent
-    ON parent.environment_id = runs.environment_id
-   AND parent.id = runs.parent_run_id
-  LEFT JOIN schedules
-    ON schedules.environment_id = runs.environment_id
-   AND schedules.id = runs.schedule_id
  WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.project_id = sqlc.arg(project_id)
    AND runs.environment_id = sqlc.arg(environment_id)
@@ -691,12 +647,12 @@ SELECT runs.*,
    )
    AND (
        sqlc.narg(after_created_at)::timestamptz IS NULL
-       OR (runs.created_at, runs.public_id) < (
+       OR (runs.created_at, runs.id) < (
            sqlc.narg(after_created_at)::timestamptz,
-           sqlc.arg(after_public_id)::text
+           sqlc.arg(after_id)::uuid
        )
    )
- ORDER BY runs.created_at DESC, runs.public_id DESC
+ ORDER BY runs.created_at DESC, runs.id DESC
  LIMIT sqlc.arg(limit_count);
 
 -- name: ListQueuedRunsForQueue :many

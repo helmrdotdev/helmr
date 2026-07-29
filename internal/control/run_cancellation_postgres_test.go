@@ -28,7 +28,7 @@ func TestCancelRunHTTPInstallsActorHoldAndInputClearsIt(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	fixture.server.cancelRunHTTP(
 		recorder,
-		runCancellationRequest(t, started.BootRunPublicID, principal),
+		runCancellationRequest(t, started.BootRunID.String(), principal),
 	)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("cancel status=%d body=%s", recorder.Code, recorder.Body.String())
@@ -42,7 +42,7 @@ func TestCancelRunHTTPInstallsActorHoldAndInputClearsIt(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.ID != started.BootRunPublicID || snapshot.Status != "cancelled" ||
+	if snapshot.ID != started.BootRunID.String() || snapshot.Status != "cancelled" ||
 		snapshot.TerminalReasonCode != "run_cancelled" ||
 		snapshot.CurrentAttemptNumber != 1 {
 		t.Fatalf("cancel snapshot = %+v", snapshot)

@@ -14,7 +14,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -30,12 +29,7 @@ func TestActorOutputReadPostgresPagesProvenanceAndRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var deploymentPublicID string
-	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT public_id FROM deployments WHERE id = $1
-	`, fixture.deploymentID).Scan(&deploymentPublicID); err != nil {
-		t.Fatal(err)
-	}
+	deploymentID := fixture.deploymentID.String()
 	if _, err := fixture.pool.Exec(t.Context(), `
 		UPDATE runs
 		   SET status = 'succeeded',
@@ -55,16 +49,11 @@ func TestActorOutputReadPostgresPagesProvenanceAndRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	continuationID := uuid.Must(uuid.NewV7())
-	continuationPublicID, err := publicid.New(publicid.Run)
-	if err != nil {
-		t.Fatal(err)
-	}
 	queueOriginAt := time.Now().UTC()
 	continuation, err := db.New(fixture.pool).CreateActorContinuationRun(
 		t.Context(),
 		db.CreateActorContinuationRunParams{
 			RunID:                 pgvalue.UUID(continuationID),
-			PublicID:              continuationPublicID,
 			QueueOriginAt:         pgtype.Timestamptz{Time: queueOriginAt, Valid: true},
 			RootSpanID:            "0000000000000001",
 			EnvironmentID:         pgvalue.UUID(fixture.environmentID),
@@ -142,34 +131,30 @@ func TestActorOutputReadPostgresPagesProvenanceAndRetention(t *testing.T) {
 		t.Fatalf("first page = %+v", firstPage)
 	}
 	for index, record := range firstPage.Records {
-		decoded, err := publicid.DecodeActorRecord(record.ID)
-		if err != nil {
-			t.Fatalf("record %d ID = %q: %v", index, record.ID, err)
+		if record.ID != recordIDs[index].String() {
+			t.Fatalf("record %d UUID = %s, want %s", index, record.ID, recordIDs[index])
 		}
-		if decoded != recordIDs[index] {
-			t.Fatalf("record %d UUID = %s, want %s", index, decoded, recordIDs[index])
-		}
-		wantRunID := first.BootRunPublicID
+		wantRunID := first.BootRunID.String()
 		if index == 1 {
-			wantRunID = continuationPublicID
+			wantRunID = continuationID.String()
 		}
 		if record.Provenance.RunID != wantRunID ||
 			record.Provenance.AttemptNumber != 1 ||
-			record.Provenance.DeploymentID != deploymentPublicID {
+			record.Provenance.DeploymentID != deploymentID {
 			t.Fatalf("record %d provenance = %+v", index, record.Provenance)
 		}
 	}
 
-	nextPage := readActorOutputPostgresHTTP(t, fixture, principal, "/?actor_id="+first.ActorPublicID+"&after=2&limit=2")
+	nextPage := readActorOutputPostgresHTTP(t, fixture, principal, "/?actor_id="+first.ActorID.String()+"&after=2&limit=2")
 	if len(nextPage.Records) != 1 ||
 		nextPage.Records[0].Sequence != 3 ||
-		nextPage.Records[0].Provenance.RunID != continuationPublicID ||
+		nextPage.Records[0].Provenance.RunID != continuationID.String() ||
 		nextPage.Records[0].Provenance.AttemptNumber != 2 ||
 		nextPage.NextAfter != 3 ||
 		nextPage.HasMore {
 		t.Fatalf("next page = %+v", nextPage)
 	}
-	emptyPage := readActorOutputPostgresHTTP(t, fixture, principal, "/?actor_id="+second.ActorPublicID)
+	emptyPage := readActorOutputPostgresHTTP(t, fixture, principal, "/?actor_id="+second.ActorID.String())
 	if emptyPage.Records == nil ||
 		len(emptyPage.Records) != 0 ||
 		emptyPage.NextAfter != 0 ||
@@ -180,7 +165,7 @@ func TestActorOutputReadPostgresPagesProvenanceAndRetention(t *testing.T) {
 		t,
 		fixture,
 		principal,
-		"/?actor_id="+first.ActorPublicID+"&after=9007199254740991",
+		"/?actor_id="+first.ActorID.String()+"&after=9007199254740991",
 	)
 	if len(futurePage.Records) != 0 ||
 		futurePage.NextAfter != maxActorOutputSequence ||
@@ -206,7 +191,7 @@ func TestActorOutputReadPostgresPagesProvenanceAndRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	beforeCommit := readActorOutputPostgresHTTP(t, fixture, principal, "/?actor_id="+first.ActorPublicID)
+	beforeCommit := readActorOutputPostgresHTTP(t, fixture, principal, "/?actor_id="+first.ActorID.String())
 	if len(beforeCommit.Records) != 3 || beforeCommit.Records[0].Sequence != 1 {
 		t.Fatalf("uncommitted retention mixed into read = %+v", beforeCommit)
 	}
@@ -223,7 +208,7 @@ func TestActorOutputReadPostgresPagesProvenanceAndRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	expiredRequest := actorReadPostgresRequest("/?actor_id="+first.ActorPublicID+"&after=0", principal)
+	expiredRequest := actorReadPostgresRequest("/?actor_id="+first.ActorID.String()+"&after=0", principal)
 	expiredRecorder := httptest.NewRecorder()
 	fixture.server.readActorOutputHTTP(expiredRecorder, expiredRequest)
 	if expiredRecorder.Code != http.StatusGone ||
@@ -231,7 +216,7 @@ func TestActorOutputReadPostgresPagesProvenanceAndRetention(t *testing.T) {
 		!strings.Contains(expiredRecorder.Body.String(), `"retryable":false`) {
 		t.Fatalf("expired response = %d %s", expiredRecorder.Code, expiredRecorder.Body.String())
 	}
-	retainedPage := readActorOutputPostgresHTTP(t, fixture, principal, "/?actor_id="+first.ActorPublicID)
+	retainedPage := readActorOutputPostgresHTTP(t, fixture, principal, "/?actor_id="+first.ActorID.String())
 	if len(retainedPage.Records) != 1 ||
 		retainedPage.Records[0].Sequence != 3 ||
 		retainedPage.NextAfter != 3 {
@@ -241,7 +226,7 @@ func TestActorOutputReadPostgresPagesProvenanceAndRetention(t *testing.T) {
 		t,
 		fixture,
 		principal,
-		"/?actor_id="+first.ActorPublicID+"&after=2",
+		"/?actor_id="+first.ActorID.String()+"&after=2",
 	)
 	if len(floorBoundaryPage.Records) != 1 ||
 		floorBoundaryPage.Records[0].Sequence != 3 ||

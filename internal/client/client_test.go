@@ -77,7 +77,7 @@ func TestClientSendsAPIVersionHeader(t *testing.T) {
 		if got := r.Header.Get(api.APIVersionHeader); got != api.CurrentAPIVersion {
 			t.Fatalf("%s = %q", api.APIVersionHeader, got)
 		}
-		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "run-1"})
+		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
 	}))
 	defer server.Close()
 
@@ -126,7 +126,7 @@ func TestStartTask(t *testing.T) {
 		if request.Workspace.ID == nil || *request.Workspace.ID != "ws_1" {
 			t.Fatalf("request = %+v", request)
 		}
-		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "run-1"})
+		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
 	}))
 	defer server.Close()
 
@@ -142,7 +142,7 @@ func TestStartTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if started.RunID != "run-1" {
+	if started.RunID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" {
 		t.Fatalf("started = %+v", started)
 	}
 }
@@ -182,7 +182,7 @@ func TestStartTaskUsesEnvironmentScopedRoute(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "run-1"})
+		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
 	}))
 	defer server.Close()
 
@@ -196,7 +196,7 @@ func TestStartTaskUsesEnvironmentScopedRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if started.RunID != "run-1" {
+	if started.RunID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" {
 		t.Fatalf("started = %+v", started)
 	}
 }
@@ -206,12 +206,12 @@ func TestRunOperations(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.Method+" "+r.URL.Path)
 		switch r.URL.Path {
-		case "/api/runs/run-1/cancel":
+		case "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/cancel":
 			if r.ContentLength > 0 {
 				t.Fatalf("cancel request body length = %d", r.ContentLength)
 			}
 			_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{
-				ID: "run-1", Status: "cancelled",
+				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: "cancelled",
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
@@ -223,14 +223,14 @@ func TestRunOperations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cancelled, err := client.CancelRun(context.Background(), "run-1")
+	cancelled, err := client.CancelRun(context.Background(), "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cancelled.ID != "run-1" || cancelled.Status != "cancelled" {
+	if cancelled.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" || cancelled.Status != "cancelled" {
 		t.Fatalf("cancelled = %+v", cancelled)
 	}
-	if got := strings.Join(paths, ","); got != "POST /api/runs/run-1/cancel" {
+	if got := strings.Join(paths, ","); got != "POST /api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/cancel" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -274,7 +274,7 @@ func TestCreateDeploymentSendsContentHash(t *testing.T) {
 			}
 			_ = part.Close()
 		}
-		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1"})
+		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"})
 	}))
 	defer server.Close()
 
@@ -290,7 +290,7 @@ func TestCreateDeploymentSendsContentHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.ID != "deployment-1" {
+	if response.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35" {
 		t.Fatalf("response = %+v", response)
 	}
 	if metadata.ProjectID != "" || metadata.EnvironmentID != "" ||
@@ -331,7 +331,7 @@ func TestCreateDeploymentRetriesLostResponseWithSameKey(t *testing.T) {
 			_ = connection.Close()
 			return
 		}
-		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1"})
+		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"})
 	}))
 	defer server.Close()
 
@@ -347,7 +347,7 @@ func TestCreateDeploymentRetriesLostResponseWithSameKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.ID != "deployment-1" {
+	if response.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35" {
 		t.Fatalf("response = %+v", response)
 	}
 	mutex.Lock()
@@ -429,17 +429,17 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(api.ListRunSnapshotsResponse{
 				Runs: []api.RunSnapshotResponse{{
-					ID:         "run-1",
+					ID:         "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 					Status:     "succeeded",
 					Entrypoint: api.RunEntrypointResponse{Kind: "task", ID: "deploy"},
 					CreatedAt:  now,
 				}},
 				NextCursor: "cursor-2",
 			})
-		case "/api/runs/run-1/logs":
+		case "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs":
 			_ = json.NewEncoder(w).Encode(api.RunLogPage{
 				Logs: []api.RunLogRecord{{
-					ID: "rt1.log", Kind: "stdout", RunID: "run-1",
+					ID: "rt1.log", Kind: "stdout", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 					AttemptNumber: 1,
 					ContentBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
 				}},
@@ -463,11 +463,11 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runs.Runs) != 1 || runs.Runs[0].ID != "run-1" ||
+	if len(runs.Runs) != 1 || runs.Runs[0].ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" ||
 		runs.Runs[0].Entrypoint.ID != "deploy" || runs.NextCursor != "cursor-2" {
 		t.Fatalf("runs = %+v", runs)
 	}
-	logs, err := client.ListRunLogs(context.Background(), "run-1")
+	logs, err := client.ListRunLogs(context.Background(), "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,7 +476,7 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 		logs.NextCursor != "rt1.next" {
 		t.Fatalf("logs = %+v", logs)
 	}
-	if got := strings.Join(paths, ","); got != "/api/runs?cursor=cursor-1&limit=25&status=running&status=waiting,/api/runs/run-1/logs" {
+	if got := strings.Join(paths, ","); got != "/api/runs?cursor=cursor-1&limit=25&status=running&status=waiting,/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -519,7 +519,7 @@ func TestSessionScopedClientRequiresEnvironmentScope(t *testing.T) {
 	if _, err := client.ListRuns(context.Background()); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
 		t.Fatalf("ListRuns err = %v", err)
 	}
-	if _, err := client.GetRun(context.Background(), "run-1"); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
+	if _, err := client.GetRun(context.Background(), "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
 		t.Fatalf("GetRun err = %v", err)
 	}
 	if _, err := client.ListSecrets(context.Background()); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
@@ -540,7 +540,7 @@ func TestSessionScopedClientRequiresEnvironmentScope(t *testing.T) {
 
 func TestListRunLogsSendsCursorAndFilters(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1/logs" ||
+		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" ||
 			r.URL.Query().Get("cursor") != "rt1.previous" ||
 			r.URL.Query().Get("limit") != "25" ||
 			strings.Join(r.URL.Query()["level"], ",") != "warn,error" {
@@ -550,7 +550,7 @@ func TestListRunLogsSendsCursorAndFilters(t *testing.T) {
 		bytes := int64(6)
 		_ = json.NewEncoder(w).Encode(api.RunLogPage{Logs: []api.RunLogRecord{{
 			ID:               "rt1.log",
-			RunID:            "run-1",
+			RunID:            "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 			AttemptNumber:    1,
 			Kind:             "stdout",
 			ContentBase64:    base64.StdEncoding.EncodeToString([]byte("hello\n")),
@@ -567,7 +567,7 @@ func TestListRunLogsSendsCursorAndFilters(t *testing.T) {
 	}
 	page, err := client.ListRunLogs(
 		context.Background(),
-		"run-1",
+		"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 		ListRunLogsOptions{
 			Cursor: "rt1.previous", Limit: 25, Levels: []string{"warn", "error"},
 		},
@@ -1250,7 +1250,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 }
 
 func TestAcknowledgeRunResumeRelease(t *testing.T) {
-	lease := api.WorkerRunLeaseReceipt{ID: "lease-1", RunID: "run-1", LeaseSequence: 3}
+	lease := api.WorkerRunLeaseReceipt{ID: "lease-1", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", LeaseSequence: 3}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/worker/auth/token":

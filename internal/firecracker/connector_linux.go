@@ -836,7 +836,7 @@ func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.O
 func (c *Connector) prepareSession(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, network compute.NetworkPolicy, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase)) (_ *guestSession, retErr error) {
 	instanceID = strings.TrimSpace(instanceID)
 	if ownerKind == vm.OwnerBuild && instanceID == "" {
-		instanceID = uuid.NewString()
+		instanceID = uuid.Must(uuid.NewV7()).String()
 	}
 	owner := vm.Owner{Kind: ownerKind, ID: instanceID}
 	if err := owner.Validate(); err != nil {
@@ -2079,7 +2079,7 @@ func ignoreStopSignalError(err error, signal syscall.Signal) error {
 
 func safeSnapshotID(id string) string {
 	if id == "" {
-		return uuid.NewString()
+		return uuid.Must(uuid.NewV7()).String()
 	}
 	out := make([]byte, 0, len(id))
 	for _, r := range id {
@@ -2088,7 +2088,7 @@ func safeSnapshotID(id string) string {
 		}
 	}
 	if len(out) == 0 {
-		return uuid.NewString()
+		return uuid.Must(uuid.NewV7()).String()
 	}
 	return string(out)
 }

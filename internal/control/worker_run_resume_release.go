@@ -5,11 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -66,9 +65,9 @@ func (s *Server) workerAcknowledgeRunResumeRelease(w http.ResponseWriter, r *htt
 
 func parseRunResumeReleaseProof(request api.WorkerRunResumeReleaseRequest) (runResumeReleaseProof, error) {
 	parseID := func(name, raw string) (pgtype.UUID, error) {
-		value, err := uuid.Parse(raw)
-		if err != nil || value == uuid.Nil || value.String() != raw || strings.TrimSpace(raw) != raw {
-			return pgtype.UUID{}, fmt.Errorf("%s must be a canonical UUID", name)
+		value, err := ids.Parse(raw)
+		if err != nil {
+			return pgtype.UUID{}, fmt.Errorf("%s must be a canonical UUIDv7", name)
 		}
 		return pgvalue.UUID(value), nil
 	}
