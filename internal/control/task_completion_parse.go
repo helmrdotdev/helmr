@@ -49,8 +49,6 @@ type parsedTaskHandoffCheckpoint struct {
 	attemptNumber int32
 	manifest      []byte
 	artifacts     []checkpointArtifactProof
-	substrateID   uuid.UUID
-	hasSubstrate  bool
 }
 
 type parsedTaskWorkspaceCapture struct {
@@ -161,7 +159,7 @@ func parseTaskCompletionRequest(request api.WorkerCompleteTaskRequest) (parsedTa
 		if request.Handoff.Manifest.RecoveryPoint.AttemptNumber <= 0 {
 			return parsedTaskCompletion{}, errors.New("handoff manifest parent attempt_number must be positive")
 		}
-		manifest, artifacts, substrateID, hasSubstrate, err := validateCheckpointManifest(
+		manifest, artifacts, err := validateCheckpointManifest(
 			request.Handoff.Manifest,
 			checkpointID.String(),
 			parentRunID.String(),
@@ -187,8 +185,6 @@ func parseTaskCompletionRequest(request api.WorkerCompleteTaskRequest) (parsedTa
 			attemptNumber: request.Handoff.Manifest.RecoveryPoint.AttemptNumber,
 			manifest:      manifest,
 			artifacts:     artifacts,
-			substrateID:   substrateID,
-			hasSubstrate:  hasSubstrate,
 		}
 	}
 

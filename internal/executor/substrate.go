@@ -2,6 +2,8 @@ package executor
 
 import (
 	"context"
+	"errors"
+	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/runtime"
@@ -12,47 +14,17 @@ type RuntimeSubstrateResolver interface {
 	Resolve(context.Context, string, runtime.Source) (runtime.Result, error)
 }
 
-type RuntimeSubstrateDigestLookup interface {
-	LookupDigest(context.Context, string) (runtime.Result, error)
-}
-
 type RuntimeSubstrateRegistrar interface {
 	RegisterRuntimeSubstrate(context.Context, api.WorkerRuntimeSubstrateRegisterRequest) (api.WorkerRuntimeSubstrateRegisterResponse, error)
 }
 
-type RuntimeSubstrateLookup interface {
-	LookupRuntimeSubstrate(context.Context, api.WorkerRuntimeSubstrateLookupRequest) (api.WorkerRuntimeSubstrateLookupResponse, error)
-}
-
 func runtimeSubstrateTopology(ctx context.Context, resolver RuntimeSubstrateResolver, imagePath string, mount api.WorkerWorkspaceMount) (vm.RuntimeTopology, error) {
-	return runtimeSubstrateTopologyFromSource(ctx, resolver, imagePath, api.WorkerRuntimeSubstrateSource{
-		DeploymentDefinitionID: mount.DeploymentDefinitionID,
-		WorkspaceImage:         mount.WorkspaceImage,
-	})
-}
-
-func runtimeSubstrateSourceFromRuntimeSource(source api.WorkerRuntimeSource) *api.WorkerRuntimeSubstrateSource {
-	return &api.WorkerRuntimeSubstrateSource{
-		DeploymentDefinitionID: source.DeploymentDefinitionID,
-		WorkspaceImage:         source.WorkspaceImage,
-		RuntimeSubstrate:       source.RuntimeSubstrate,
-	}
-}
-
-func runtimeSubstrateSourceFromWorkspaceMount(mount api.WorkerWorkspaceMount) *api.WorkerRuntimeSubstrateSource {
-	return &api.WorkerRuntimeSubstrateSource{
-		DeploymentDefinitionID: mount.DeploymentDefinitionID,
-		WorkspaceImage:         mount.WorkspaceImage,
-	}
-}
-
-func runtimeSubstrateTopologyFromSource(ctx context.Context, resolver RuntimeSubstrateResolver, imagePath string, source api.WorkerRuntimeSubstrateSource) (vm.RuntimeTopology, error) {
 	if resolver == nil {
 		return vm.RuntimeTopology{}, nil
 	}
 	result, err := resolver.Resolve(ctx, imagePath, runtime.Source{
-		WorkspaceImageDigest:    source.WorkspaceImage.Digest,
-		WorkspaceImageMediaType: source.WorkspaceImage.MediaType,
+		WorkspaceImageDigest:    mount.WorkspaceImage.Digest,
+		WorkspaceImageMediaType: mount.WorkspaceImage.MediaType,
 	})
 	if err != nil {
 		return vm.RuntimeTopology{}, err
@@ -63,6 +35,7 @@ func runtimeSubstrateTopologyFromSource(ctx context.Context, resolver RuntimeSub
 		Format:     result.Format,
 		BuilderABI: result.BuilderABI,
 		LayoutABI:  result.LayoutABI,
+		SizeBytes:  result.SizeBytes,
 	}}, nil
 }
 
@@ -78,4 +51,37 @@ func runtimeSubstrateID(artifact *api.WorkerRuntimeSubstrate) string {
 		return ""
 	}
 	return artifact.ID
+}
+
+func registerRuntimeSubstrate(
+	ctx context.Context,
+	registrar RuntimeSubstrateRegistrar,
+	deploymentDefinitionID string,
+	substrate *vm.RuntimeSubstrate,
+) (*api.WorkerRuntimeSubstrate, error) {
+	if substrate == nil {
+		return nil, nil
+	}
+	if registrar == nil {
+		return nil, errors.New("runtime substrate registrar is required")
+	}
+	if strings.TrimSpace(deploymentDefinitionID) == "" {
+		return nil, errors.New("runtime substrate deployment_definition_id is required")
+	}
+	response, err := registrar.RegisterRuntimeSubstrate(
+		ctx,
+		api.WorkerRuntimeSubstrateRegisterRequest{
+			DeploymentDefinitionID: strings.TrimSpace(deploymentDefinitionID),
+			SubstrateDigest:        strings.TrimSpace(substrate.Digest),
+			Format:                 strings.TrimSpace(substrate.Format),
+			BuilderABI:             strings.TrimSpace(substrate.BuilderABI),
+			LayoutABI:              strings.TrimSpace(substrate.LayoutABI),
+			SizeBytes:              substrate.SizeBytes,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	registered := response.RuntimeSubstrate
+	return &registered, nil
 }

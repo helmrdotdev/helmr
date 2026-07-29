@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -31,20 +30,17 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 		          decode(repeat('01', 32), 'hex'), $4)
 	`, definitionID, ids.environmentID, ids.deploymentID, ids.workspaceImageArtifactID)
 
-	artifactID := seedRuntimeSubstrateArtifact(t, ctx, pool, ids, "first", 4096)
 	params := db.InsertRuntimeSubstrateParams{
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		DeploymentDefinitionID: pgvalue.UUID(definitionID),
-		ArtifactID:             pgvalue.UUID(artifactID),
 		SubstrateDigest:        testDigest("substrate-first"),
 		SubstrateFormat:        runtime.Format,
 		BuilderAbi:             runtime.BuilderABI,
 		LayoutAbi:              runtime.LayoutABI,
 		SubstrateSizeBytes:     4096,
-		Source:                 []byte(`{"producer":"first"}`),
 	}
 	rows, err := queries.InsertRuntimeSubstrate(ctx, params)
 	if err != nil || rows != 1 {
@@ -54,21 +50,17 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 
 	replay := params
 	replay.ID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	replay.Source = []byte(`{"producer":"replay"}`)
 	rows, err = queries.InsertRuntimeSubstrate(ctx, replay)
 	if err != nil || rows != 0 {
 		t.Fatalf("replay rows=%d error=%v", rows, err)
 	}
 	replayed := getRuntimeSubstrateRegistration(t, ctx, queries, replay)
-	if replayed.ID != first.ID || !replayed.CreatedAt.Time.Equal(first.CreatedAt.Time) || !replayed.UpdatedAt.Time.Equal(first.UpdatedAt.Time) {
+	if replayed.ID != first.ID || !replayed.CreatedAt.Time.Equal(first.CreatedAt.Time) {
 		t.Fatalf("replay mutated registration: first=%+v replay=%+v", first, replayed)
-	}
-	if string(replayed.Source) != string(first.Source) {
-		t.Fatalf("replay replaced first-write provenance: first=%s replay=%s", first.Source, replayed.Source)
 	}
 
 	conflicting := replay
-	conflicting.ArtifactID = pgvalue.UUID(seedRuntimeSubstrateArtifact(t, ctx, pool, ids, "different", 4096))
+	conflicting.SubstrateDigest = testDigest("substrate-conflict")
 	rows, err = queries.InsertRuntimeSubstrate(ctx, conflicting)
 	if err != nil || rows != 0 {
 		t.Fatalf("conflicting insert rows=%d error=%v", rows, err)
@@ -389,28 +381,6 @@ func mustAuthorityExec(t *testing.T, ctx context.Context, pool interface {
 	}
 }
 
-func seedRuntimeSubstrateArtifact(t *testing.T, ctx context.Context, pool interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}, ids integrationIDs, suffix string, size int64) uuid.UUID {
-	t.Helper()
-	id := uuid.Must(uuid.NewV7())
-	digest := testDigest("runtime-substrate-" + suffix + "-" + id.String())
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, $3, $4)
-	`, ids.orgID, digest, size, cas.RuntimeSubstrateMediaType); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO artifacts (
-			id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type
-		) VALUES ($1, $2, $3, $4, $5, 'runtime_substrate', $6, $7)
-	`, id, ids.orgID, ids.projectID, ids.environmentID, digest, size, cas.RuntimeSubstrateMediaType); err != nil {
-		t.Fatal(err)
-	}
-	return id
-}
-
 func getRuntimeSubstrateRegistration(t *testing.T, ctx context.Context, queries *db.Queries, params db.InsertRuntimeSubstrateParams) db.RuntimeSubstrate {
 	t.Helper()
 	row, err := queries.GetRuntimeSubstrateRegistration(ctx, registrationLookup(params))
@@ -426,7 +396,6 @@ func registrationLookup(params db.InsertRuntimeSubstrateParams) db.GetRuntimeSub
 		ProjectID:              params.ProjectID,
 		EnvironmentID:          params.EnvironmentID,
 		DeploymentDefinitionID: params.DeploymentDefinitionID,
-		ArtifactID:             params.ArtifactID,
 		SubstrateDigest:        params.SubstrateDigest,
 		SubstrateFormat:        params.SubstrateFormat,
 		BuilderAbi:             params.BuilderAbi,

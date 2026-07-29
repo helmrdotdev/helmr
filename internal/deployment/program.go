@@ -11,14 +11,12 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
 const (
-	ProgramIndexFormatVersion   = 0
-	ProgramReceiptFormatVersion = 0
-	programVerificationVersion  = 0
+	ProgramIndexFormatVersion  = 0
+	programVerificationVersion = 0
 
 	RuntimeAPIVersion                     = "helmr.runtime.v0"
 	ConfigEvaluatorAPIVersion             = "helmr.config-evaluator.v0"
@@ -27,7 +25,6 @@ const (
 	manifestDigestDomain                  = "helmr.deployment-definition-manifest.v0\x00"
 	maxJSONSafeInteger              int64 = 9007199254740991
 	maxProgramFileSizeBytes         int64 = 16777216
-	maxProgramReceiptSizeBytes            = 16 << 10
 	maxProgramVerificationSizeBytes       = 17891328
 	ArchitectureX8664                     = RuntimeArchitecture("x86_64")
 	DeclarationKindTask                   = DeclarationKind("task")
@@ -113,183 +110,15 @@ type ProgramIndex struct {
 }
 
 // ProgramOutput is the build worker's verified Program publication result.
-// Artifact IDs are assigned by Control, so this is deliberately not the
-// durable ProgramReceipt.
+// Artifact IDs are assigned by Control.
 type ProgramOutput struct {
 	Artifact ProgramDescriptor `json:"artifact"`
 	Index    ProgramIndex      `json:"index"`
 }
 
-type ProgramReceipt struct {
-	Architecture         RuntimeArchitecture    `json:"architecture"`
-	BuildContractVersion string                 `json:"buildContractVersion"`
-	Config               ProgramConfig          `json:"config"`
-	Compiler             ProgramReceiptCompiler `json:"compiler"`
-	FormatVersion        int                    `json:"formatVersion"`
-	Lockfile             ProgramReceiptLockfile `json:"lockfile"`
-	Manager              ProgramReceiptManager  `json:"manager"`
-	Program              ProgramReceiptArtifact `json:"program"`
-	Runtime              ProgramReceiptRuntime  `json:"runtime"`
-	Source               ProgramReceiptSource   `json:"source"`
-	ToolchainDigest      string                 `json:"toolchainDigest"`
-}
-
-type ProgramReceiptLockfile struct {
-	Digest string `json:"digest"`
-	Path   string `json:"path"`
-}
-
-type ProgramReceiptManager struct {
-	Digest  string             `json:"digest"`
-	Name    PackageManagerName `json:"name"`
-	Version string             `json:"version"`
-}
-
-type ProgramReceiptCompiler struct {
-	APIVersion    string `json:"apiVersion"`
-	BinaryDigest  string `json:"binaryDigest"`
-	Name          string `json:"name"`
-	OptionsDigest string `json:"optionsDigest"`
-	Version       string `json:"version"`
-}
-
-type ProgramReceiptArtifact struct {
-	IndexDigest    string `json:"indexDigest"`
-	ManifestDigest string `json:"manifestDigest"`
-	MediaType      string `json:"mediaType"`
-}
-
-type ProgramReceiptRuntime struct {
-	APIVersion  string `json:"apiVersion"`
-	Digest      string `json:"digest"`
-	NodeVersion string `json:"nodeVersion"`
-}
-
-type ProgramReceiptSource struct {
-	Digest    string `json:"digest"`
-	MediaType string `json:"mediaType"`
-	SizeBytes int64  `json:"sizeBytes"`
-}
-
 type programVerification struct {
 	FormatVersion int          `json:"formatVersion"`
 	Index         ProgramIndex `json:"index"`
-}
-
-func ParseProgramReceipt(raw []byte) (ProgramReceipt, error) {
-	if len(raw) == 0 || len(raw) > maxProgramReceiptSizeBytes {
-		return ProgramReceipt{}, fmt.Errorf(
-			"program receipt size is outside [1,%d]",
-			maxProgramReceiptSizeBytes,
-		)
-	}
-	canonical, err := jsoncanon.Transform(raw)
-	if err != nil {
-		return ProgramReceipt{}, fmt.Errorf("canonicalize program receipt: %w", err)
-	}
-	if !bytes.Equal(raw, canonical) {
-		return ProgramReceipt{}, fmt.Errorf("program receipt is not RFC 8785 canonical JSON")
-	}
-
-	var receipt ProgramReceipt
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&receipt); err != nil {
-		return ProgramReceipt{}, fmt.Errorf("decode program receipt: %w", err)
-	}
-	if err := ensureEOF(decoder, "program receipt"); err != nil {
-		return ProgramReceipt{}, err
-	}
-	if err := ValidateProgramReceipt(receipt); err != nil {
-		return ProgramReceipt{}, err
-	}
-	complete, err := CanonicalProgramReceipt(receipt)
-	if err != nil {
-		return ProgramReceipt{}, err
-	}
-	if !bytes.Equal(raw, complete) {
-		return ProgramReceipt{}, fmt.Errorf(
-			"program receipt does not match the complete canonical v0 shape",
-		)
-	}
-	return receipt, nil
-}
-
-func CanonicalProgramReceipt(receipt ProgramReceipt) ([]byte, error) {
-	if err := ValidateProgramReceipt(receipt); err != nil {
-		return nil, err
-	}
-	raw, err := json.Marshal(receipt)
-	if err != nil {
-		return nil, fmt.Errorf("encode program receipt: %w", err)
-	}
-	canonical, err := jsoncanon.Transform(raw)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize program receipt: %w", err)
-	}
-	if len(canonical) > maxProgramReceiptSizeBytes {
-		return nil, fmt.Errorf(
-			"program receipt size is outside [1,%d]",
-			maxProgramReceiptSizeBytes,
-		)
-	}
-	return canonical, nil
-}
-
-func ValidateProgramReceipt(receipt ProgramReceipt) error {
-	if receipt.FormatVersion != ProgramReceiptFormatVersion {
-		return fmt.Errorf(
-			"program receipt formatVersion = %d, want %d",
-			receipt.FormatVersion,
-			ProgramReceiptFormatVersion,
-		)
-	}
-	if !validArchitecture(receipt.Architecture) {
-		return fmt.Errorf("program receipt architecture %q is unsupported", receipt.Architecture)
-	}
-	if receipt.BuildContractVersion != ProgramBuildContractVersion {
-		return fmt.Errorf("program receipt buildContractVersion = %q, want %q", receipt.BuildContractVersion, ProgramBuildContractVersion)
-	}
-	if err := validateProgramConfig(receipt.Config); err != nil {
-		return fmt.Errorf("program receipt config: %w", err)
-	}
-	if receipt.Compiler.APIVersion != "helmr.compiler.v0" ||
-		!sha256DigestPattern.MatchString(receipt.Compiler.BinaryDigest) ||
-		receipt.Compiler.Name != "esbuild" ||
-		!sha256DigestPattern.MatchString(receipt.Compiler.OptionsDigest) ||
-		!exactReleaseVersion(receipt.Compiler.Version) {
-		return errors.New("program receipt compiler is invalid")
-	}
-	if !sha256DigestPattern.MatchString(receipt.Lockfile.Digest) ||
-		!validProgramLockfile(receipt.Manager.Name, receipt.Lockfile.Path) {
-		return errors.New("program receipt lockfile is invalid")
-	}
-	if !sha256DigestPattern.MatchString(receipt.Manager.Digest) ||
-		len(receipt.Manager.Version) == 0 ||
-		len(receipt.Manager.Version) > maxPackageManagerVersionBytes ||
-		!packageManagerVersionPattern.MatchString(receipt.Manager.Version) {
-		return errors.New("program receipt manager is invalid")
-	}
-	if !sha256DigestPattern.MatchString(receipt.Program.IndexDigest) ||
-		!sha256DigestPattern.MatchString(receipt.Program.ManifestDigest) ||
-		receipt.Program.MediaType != ProgramArtifactMediaType {
-		return errors.New("program receipt program identity is invalid")
-	}
-	if receipt.Runtime.APIVersion != RuntimeAPIVersion ||
-		!sha256DigestPattern.MatchString(receipt.Runtime.Digest) ||
-		!exactReleaseVersion(receipt.Runtime.NodeVersion) {
-		return errors.New("program receipt runtime is invalid")
-	}
-	if !sha256DigestPattern.MatchString(receipt.Source.Digest) ||
-		receipt.Source.SizeBytes < 1 ||
-		receipt.Source.SizeBytes > maxJSONSafeInteger ||
-		receipt.Source.MediaType != api.DeploymentSourceArtifactMediaType {
-		return errors.New("program receipt source is invalid")
-	}
-	if !sha256DigestPattern.MatchString(receipt.ToolchainDigest) {
-		return errors.New("program receipt toolchainDigest is invalid")
-	}
-	return nil
 }
 
 func validateProgramDescriptor(
@@ -335,105 +164,6 @@ func ValidateProgramOutput(output ProgramOutput) error {
 		return fmt.Errorf("program output index: %w", err)
 	}
 	return nil
-}
-
-func NewProgramReceipt(
-	index ProgramIndex,
-	provenance BuildProvenance,
-	compiler CompilerInputs,
-	nodeVersion string,
-	manifest ProgramBuildManifest,
-	manifestDigest string,
-	source ProgramReceiptSource,
-) (ProgramReceipt, error) {
-	if err := ValidateProgramIndex(index); err != nil {
-		return ProgramReceipt{}, err
-	}
-	if err := validateBuildProvenance("Program receipt provenance", provenance); err != nil {
-		return ProgramReceipt{}, err
-	}
-	if index.Architecture != provenance.Architecture ||
-		index.ConfigResultDigest != provenance.Config.ResultDigest {
-		return ProgramReceipt{}, errors.New(
-			"Program index does not match Program receipt provenance",
-		)
-	}
-	if source.Digest != provenance.Submitted.SourceDigest {
-		return ProgramReceipt{}, errors.New(
-			"Program receipt source does not match submitted source provenance",
-		)
-	}
-	if err := validateCompilerInputs(compiler); err != nil {
-		return ProgramReceipt{}, err
-	}
-	if err := validateProgramBuildManifest(manifest); err != nil {
-		return ProgramReceipt{}, err
-	}
-	if err := validateProgramBuildAuthority(
-		compilerResultFromManifest(manifest),
-		compiler,
-		nodeVersion,
-	); err != nil {
-		return ProgramReceipt{}, err
-	}
-	if !exactReleaseVersion(nodeVersion) ||
-		!sha256DigestPattern.MatchString(manifestDigest) {
-		return ProgramReceipt{}, errors.New("Program receipt build authority is invalid")
-	}
-	indexRaw, err := CanonicalProgramIndex(index)
-	if err != nil {
-		return ProgramReceipt{}, err
-	}
-	indexHash := sha256.Sum256(indexRaw)
-	if manifest.ProgramIndexDigest !=
-		"sha256:"+fmt.Sprintf("%x", indexHash[:]) {
-		return ProgramReceipt{}, errors.New(
-			"Program build manifest does not bind the Program index",
-		)
-	}
-	receipt := ProgramReceipt{
-		Architecture:         index.Architecture,
-		BuildContractVersion: provenance.BuildContractVersion,
-		Config:               provenance.Config,
-		Compiler: ProgramReceiptCompiler{
-			APIVersion:    compiler.APIVersion,
-			BinaryDigest:  compiler.Esbuild.BinaryDigest,
-			Name:          "esbuild",
-			OptionsDigest: manifest.Execution.OptionsDigest,
-			Version:       compiler.Esbuild.Version,
-		},
-		FormatVersion: ProgramReceiptFormatVersion,
-		Lockfile: ProgramReceiptLockfile{
-			Digest: provenance.Submitted.LockfileDigest,
-			Path:   provenance.Submitted.LockfileName,
-		},
-		Manager: ProgramReceiptManager{
-			Digest:  provenance.Manager.Digest,
-			Name:    provenance.Manager.Name,
-			Version: provenance.Manager.Version,
-		},
-		Program: ProgramReceiptArtifact{
-			IndexDigest:    "sha256:" + fmt.Sprintf("%x", indexHash[:]),
-			ManifestDigest: manifestDigest,
-			MediaType:      ProgramArtifactMediaType,
-		},
-		Runtime: ProgramReceiptRuntime{
-			APIVersion:  RuntimeAPIVersion,
-			Digest:      provenance.RuntimeDigest,
-			NodeVersion: nodeVersion,
-		},
-		Source:          source,
-		ToolchainDigest: provenance.ToolchainDigest,
-	}
-	if err := ValidateProgramReceipt(receipt); err != nil {
-		return ProgramReceipt{}, err
-	}
-	return receipt, nil
-}
-
-func exactReleaseVersion(value string) bool {
-	_, _, _, ok := parseReleaseVersion(value)
-	return ok
 }
 
 func parseProgramVerification(raw []byte) (programVerification, error) {
@@ -692,6 +422,12 @@ func validProgramLockfile(manager PackageManagerName, lockfile string) bool {
 	default:
 		return false
 	}
+}
+
+func validProgramLockfileName(lockfile string) bool {
+	return validProgramLockfile(PackageManagerNPM, lockfile) ||
+		validProgramLockfile(PackageManagerPNPM, lockfile) ||
+		validProgramLockfile(PackageManagerBun, lockfile)
 }
 
 func CanonicalManifestAndDigest(raw []byte) ([]byte, [sha256.Size]byte, error) {

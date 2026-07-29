@@ -20,15 +20,7 @@ SELECT runtime_instances.*,
        COALESCE(program_artifact.size_bytes, 0) AS program_artifact_size_bytes,
        COALESCE(program_artifact.media_type, '') AS program_artifact_media_type,
        runtime_identities.rootfs_digest,
-       runtime_identities.runtime_abi,
-       runtime_substrates.substrate_digest,
-       runtime_substrates.substrate_format,
-       runtime_substrates.builder_abi,
-       runtime_substrates.layout_abi,
-       runtime_substrates.substrate_size_bytes,
-       COALESCE(substrate_artifacts.digest, '') AS runtime_substrate_blob_digest,
-       COALESCE(substrate_artifacts.size_bytes, 0) AS runtime_substrate_blob_size_bytes,
-       COALESCE(substrate_artifacts.media_type, '') AS runtime_substrate_blob_media_type
+       runtime_identities.runtime_abi
   FROM runtime_instances
   JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
                        AND worker_instances.worker_group_id = runtime_instances.worker_group_id
@@ -62,15 +54,6 @@ SELECT runtime_instances.*,
     ON program_artifact.environment_id = program_deployments.environment_id
    AND program_artifact.id = program_deployments.program_artifact_id
    AND program_artifact.kind = 'deployment_program'
-  LEFT JOIN runtime_substrates ON runtime_substrates.org_id = runtime_instances.org_id
-                              AND runtime_substrates.project_id = runtime_instances.project_id
-                              AND runtime_substrates.environment_id = runtime_instances.environment_id
-                              AND runtime_substrates.id = runtime_instances.runtime_substrate_id
-  LEFT JOIN artifacts AS substrate_artifacts
-    ON substrate_artifacts.org_id = runtime_substrates.org_id
-   AND substrate_artifacts.project_id = runtime_substrates.project_id
-   AND substrate_artifacts.environment_id = runtime_substrates.environment_id
-   AND substrate_artifacts.id = runtime_substrates.artifact_id
  WHERE runtime_instances.worker_group_id = sqlc.arg(worker_group_id)
    AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
@@ -559,10 +542,3 @@ UPDATE worker_network_slots
 RETURNING worker_network_slots.id
 )
 SELECT reclaimed_runtime.* FROM reclaimed_runtime JOIN reclaimed_slot ON true;
-
--- name: ListRuntimeSubstratePrepareTargets :many
-SELECT runtime_instances.* FROM runtime_instances
- WHERE worker_instance_id = sqlc.arg(worker_instance_id)
-   AND worker_epoch = sqlc.arg(worker_epoch)
-   AND runtime_substrate_id IS NULL AND observed_state IN ('allocated','preparing')
- ORDER BY allocated_at, id LIMIT sqlc.arg(limit_count);

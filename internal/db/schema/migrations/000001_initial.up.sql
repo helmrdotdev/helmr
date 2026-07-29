@@ -311,7 +311,6 @@ CREATE TYPE artifact_kind AS ENUM (
     'deployment_source',
     'deployment_program',
     'workspace_image',
-    'runtime_substrate',
     'run_checkpoint_config',
     'run_checkpoint_vm_state',
     'run_checkpoint_memory',
@@ -956,16 +955,12 @@ CREATE TABLE runtime_substrates (
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_definition_id UUID NOT NULL,
-    artifact_id UUID NOT NULL,
     substrate_digest TEXT NOT NULL CHECK (btrim(substrate_digest) <> ''),
     substrate_format TEXT NOT NULL CHECK (btrim(substrate_format) <> ''),
     builder_abi TEXT NOT NULL CHECK (btrim(builder_abi) <> ''),
     layout_abi TEXT NOT NULL CHECK (btrim(layout_abi) <> ''),
     substrate_size_bytes BIGINT NOT NULL CHECK (substrate_size_bytes >= 0),
-    source JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_by_worker_instance_id UUID REFERENCES worker_instances(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
     UNIQUE (environment_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
@@ -974,9 +969,6 @@ CREATE TABLE runtime_substrates (
         UNIQUE (org_id, project_id, environment_id, deployment_definition_id, substrate_format, builder_abi, layout_abi),
     FOREIGN KEY (environment_id, deployment_definition_id)
         REFERENCES deployment_definitions(environment_id, id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
         ON DELETE RESTRICT
 );
 
@@ -3541,9 +3533,6 @@ CREATE INDEX artifacts_scope_kind_created_idx
     ON artifacts(org_id, project_id, environment_id, kind, created_at DESC);
 CREATE INDEX artifacts_digest_idx
     ON artifacts(digest);
-CREATE UNIQUE INDEX artifacts_runtime_substrate_digest_uidx
-    ON artifacts(org_id, project_id, environment_id, digest, kind)
-    WHERE kind = 'runtime_substrate';
 CREATE UNIQUE INDEX telemetry_outbox_run_log_observed_idx
     ON telemetry_outbox(org_id, run_id, attempt_number, stream_name, observed_seq)
     WHERE stream_kind = 'run_log';

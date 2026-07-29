@@ -100,17 +100,9 @@ SELECT *
  WHERE id = sqlc.arg(id);
 
 -- name: GetRuntimeSubstrateForCheckpoint :one
-SELECT sqlc.embed(runtime_substrates),
-       artifacts.digest AS artifact_digest,
-       artifacts.size_bytes AS artifact_size_bytes,
-       artifacts.media_type AS artifact_media_type
+SELECT *
   FROM runtime_substrates
-  JOIN artifacts
-    ON artifacts.org_id = runtime_substrates.org_id
-   AND artifacts.project_id = runtime_substrates.project_id
-   AND artifacts.environment_id = runtime_substrates.environment_id
-   AND artifacts.id = runtime_substrates.artifact_id
- WHERE runtime_substrates.id = sqlc.arg(id);
+ WHERE id = sqlc.arg(id);
 
 -- name: CreatePrivateCheckpointWorkspaceVersion :one
 INSERT INTO workspace_versions (

@@ -35,15 +35,7 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
        COALESCE(program_artifact.size_bytes, 0) AS program_artifact_size_bytes,
        COALESCE(program_artifact.media_type, '') AS program_artifact_media_type,
        runtime_identities.rootfs_digest,
-       runtime_identities.runtime_abi,
-       runtime_substrates.substrate_digest,
-       runtime_substrates.substrate_format,
-       runtime_substrates.builder_abi,
-       runtime_substrates.layout_abi,
-       runtime_substrates.substrate_size_bytes,
-       COALESCE(substrate_artifacts.digest, '') AS runtime_substrate_blob_digest,
-       COALESCE(substrate_artifacts.size_bytes, 0) AS runtime_substrate_blob_size_bytes,
-       COALESCE(substrate_artifacts.media_type, '') AS runtime_substrate_blob_media_type
+       runtime_identities.runtime_abi
   FROM runtime_instances
   JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
                        AND worker_instances.worker_group_id = runtime_instances.worker_group_id
@@ -77,15 +69,6 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
     ON program_artifact.environment_id = program_deployments.environment_id
    AND program_artifact.id = program_deployments.program_artifact_id
    AND program_artifact.kind = 'deployment_program'
-  LEFT JOIN runtime_substrates ON runtime_substrates.org_id = runtime_instances.org_id
-                              AND runtime_substrates.project_id = runtime_instances.project_id
-                              AND runtime_substrates.environment_id = runtime_instances.environment_id
-                              AND runtime_substrates.id = runtime_instances.runtime_substrate_id
-  LEFT JOIN artifacts AS substrate_artifacts
-    ON substrate_artifacts.org_id = runtime_substrates.org_id
-   AND substrate_artifacts.project_id = runtime_substrates.project_id
-   AND substrate_artifacts.environment_id = runtime_substrates.environment_id
-   AND substrate_artifacts.id = runtime_substrates.artifact_id
  WHERE runtime_instances.worker_group_id = $1
    AND runtime_instances.worker_instance_id = $2
    AND runtime_instances.worker_epoch = $3
@@ -188,14 +171,6 @@ type GetNextRuntimeReconcileTargetRow struct {
 	ProgramArtifactMediaType        string             `json:"program_artifact_media_type"`
 	RootfsDigest                    string             `json:"rootfs_digest"`
 	RuntimeABI                      string             `json:"runtime_abi"`
-	SubstrateDigest                 pgtype.Text        `json:"substrate_digest"`
-	SubstrateFormat                 pgtype.Text        `json:"substrate_format"`
-	BuilderAbi                      pgtype.Text        `json:"builder_abi"`
-	LayoutAbi                       pgtype.Text        `json:"layout_abi"`
-	SubstrateSizeBytes              pgtype.Int8        `json:"substrate_size_bytes"`
-	RuntimeSubstrateBlobDigest      string             `json:"runtime_substrate_blob_digest"`
-	RuntimeSubstrateBlobSizeBytes   int64              `json:"runtime_substrate_blob_size_bytes"`
-	RuntimeSubstrateBlobMediaType   string             `json:"runtime_substrate_blob_media_type"`
 }
 
 func (q *Queries) GetNextRuntimeReconcileTarget(ctx context.Context, arg GetNextRuntimeReconcileTargetParams) (GetNextRuntimeReconcileTargetRow, error) {
@@ -268,96 +243,8 @@ func (q *Queries) GetNextRuntimeReconcileTarget(ctx context.Context, arg GetNext
 		&i.ProgramArtifactMediaType,
 		&i.RootfsDigest,
 		&i.RuntimeABI,
-		&i.SubstrateDigest,
-		&i.SubstrateFormat,
-		&i.BuilderAbi,
-		&i.LayoutAbi,
-		&i.SubstrateSizeBytes,
-		&i.RuntimeSubstrateBlobDigest,
-		&i.RuntimeSubstrateBlobSizeBytes,
-		&i.RuntimeSubstrateBlobMediaType,
 	)
 	return i, err
-}
-
-const listRuntimeSubstratePrepareTargets = `-- name: ListRuntimeSubstratePrepareTargets :many
-SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at FROM runtime_instances
- WHERE worker_instance_id = $1
-   AND worker_epoch = $2
-   AND runtime_substrate_id IS NULL AND observed_state IN ('allocated','preparing')
- ORDER BY allocated_at, id LIMIT $3
-`
-
-type ListRuntimeSubstratePrepareTargetsParams struct {
-	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch      int64       `json:"worker_epoch"`
-	LimitCount       int32       `json:"limit_count"`
-}
-
-func (q *Queries) ListRuntimeSubstratePrepareTargets(ctx context.Context, arg ListRuntimeSubstratePrepareTargetsParams) ([]RuntimeInstance, error) {
-	rows, err := q.db.Query(ctx, listRuntimeSubstratePrepareTargets, arg.WorkerInstanceID, arg.WorkerEpoch, arg.LimitCount)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []RuntimeInstance
-	for rows.Next() {
-		var i RuntimeInstance
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.WorkerGroupID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.RegionID,
-			&i.WorkerInstanceID,
-			&i.RuntimeIdentityID,
-			&i.DeploymentDefinitionID,
-			&i.RuntimeSubstrateID,
-			&i.WorkerEpoch,
-			&i.NetworkPolicy,
-			&i.ReservedCpuMillis,
-			&i.ReservedMemoryBytes,
-			&i.ReservedGuestEphemeralDiskBytes,
-			&i.ReservedExecutionSlots,
-			&i.WorkspaceID,
-			&i.ProgramDeploymentID,
-			&i.RestoreCheckpointID,
-			&i.ReservedRunID,
-			&i.ReservedAttemptNumber,
-			&i.ReservedProcessID,
-			&i.ReservedWorkspaceVersionID,
-			&i.ReservationExpiresAt,
-			&i.DesiredState,
-			&i.DesiredVersion,
-			&i.DesiredAt,
-			&i.DesiredReason,
-			&i.ObservedState,
-			&i.ObservedVersion,
-			&i.ObservedDesiredVersion,
-			&i.ObservedAt,
-			&i.AllocatedAt,
-			&i.PreparingAt,
-			&i.ReadyAt,
-			&i.ClosingAt,
-			&i.ClosedAt,
-			&i.LostAt,
-			&i.FailedAt,
-			&i.ReclaimedAt,
-			&i.TerminalAt,
-			&i.TerminalReasonCode,
-			&i.TerminalError,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const markRuntimeInstanceClosed = `-- name: MarkRuntimeInstanceClosed :one

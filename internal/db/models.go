@@ -19,7 +19,6 @@ const (
 	ArtifactKindDeploymentSource         ArtifactKind = "deployment_source"
 	ArtifactKindDeploymentProgram        ArtifactKind = "deployment_program"
 	ArtifactKindWorkspaceImage           ArtifactKind = "workspace_image"
-	ArtifactKindRuntimeSubstrate         ArtifactKind = "runtime_substrate"
 	ArtifactKindRunCheckpointConfig      ArtifactKind = "run_checkpoint_config"
 	ArtifactKindRunCheckpointVmState     ArtifactKind = "run_checkpoint_vm_state"
 	ArtifactKindRunCheckpointMemory      ArtifactKind = "run_checkpoint_memory"
@@ -1122,21 +1121,17 @@ type RuntimeInstance struct {
 }
 
 type RuntimeSubstrate struct {
-	ID                        pgtype.UUID        `json:"id"`
-	OrgID                     pgtype.UUID        `json:"org_id"`
-	ProjectID                 pgtype.UUID        `json:"project_id"`
-	EnvironmentID             pgtype.UUID        `json:"environment_id"`
-	DeploymentDefinitionID    pgtype.UUID        `json:"deployment_definition_id"`
-	ArtifactID                pgtype.UUID        `json:"artifact_id"`
-	SubstrateDigest           string             `json:"substrate_digest"`
-	SubstrateFormat           string             `json:"substrate_format"`
-	BuilderAbi                string             `json:"builder_abi"`
-	LayoutAbi                 string             `json:"layout_abi"`
-	SubstrateSizeBytes        int64              `json:"substrate_size_bytes"`
-	Source                    []byte             `json:"source"`
-	CreatedByWorkerInstanceID pgtype.UUID        `json:"created_by_worker_instance_id"`
-	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	ID                     pgtype.UUID        `json:"id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
+	SubstrateDigest        string             `json:"substrate_digest"`
+	SubstrateFormat        string             `json:"substrate_format"`
+	BuilderAbi             string             `json:"builder_abi"`
+	LayoutAbi              string             `json:"layout_abi"`
+	SubstrateSizeBytes     int64              `json:"substrate_size_bytes"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 }
 
 type Schedule struct {

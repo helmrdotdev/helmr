@@ -38,7 +38,6 @@ type ProgramRunner struct {
 	CAS                 cas.Store
 	CheckpointEncryptor *checkpoint.Encryptor
 	WorkspaceMounts     WorkspaceMountSessionRegistry
-	RuntimeSubstrates   RuntimeSubstrateRegistrar
 	TempDir             string
 }
 

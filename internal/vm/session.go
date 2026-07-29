@@ -126,6 +126,7 @@ type RuntimeSubstrate struct {
 	Format     string
 	BuilderABI string
 	LayoutABI  string
+	SizeBytes  int64
 }
 
 type SnapshotRequest struct {

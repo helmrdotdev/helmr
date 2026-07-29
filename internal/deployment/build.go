@@ -267,11 +267,6 @@ func (builder Builder) build(
 			images,
 			toolchainDescriptor.Compiler,
 			runtime.NodeVersion,
-			ProgramReceiptSource{
-				Digest:    work.DeploymentSource.Digest,
-				MediaType: work.DeploymentSource.MediaType,
-				SizeBytes: work.DeploymentSource.SizeBytes,
-			},
 		)
 		if err != nil {
 			return fail(BuildFailureOutputInvalid, err), nil

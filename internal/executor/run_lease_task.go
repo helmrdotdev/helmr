@@ -181,10 +181,6 @@ func (r ProgramRunner) StartRunLeaseTask(
 			BaseVersionID:     program.mount.BaseVersionID,
 			MountPath:         program.mount.WorkspaceMountPath,
 			Artifact:          &program.mount.WorkspaceArtifact,
-			SubstrateSource: &api.WorkerRuntimeSubstrateSource{
-				DeploymentDefinitionID: program.mount.DeploymentDefinitionID,
-				WorkspaceImage:         program.mount.WorkspaceImage,
-			},
 		},
 	}
 	if waitClient, ok := control.(RunWaitClient); ok {
@@ -204,9 +200,7 @@ func (r ProgramRunner) StartRunLeaseTask(
 				ArtifactEncoding:  program.mount.WorkspaceArtifact.Encoding,
 				MountPath:         program.mount.WorkspaceMountPath,
 			},
-			substrateSource:   task.waitWorkspace.SubstrateSource,
-			runtimeSubstrates: r.RuntimeSubstrates,
-			runEvent:          task.processCheckpointRunEvent,
+			runEvent: task.processCheckpointRunEvent,
 		}
 	}
 	return task, nil

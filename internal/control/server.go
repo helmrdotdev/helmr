@@ -618,7 +618,6 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.Post("/runtime-instances/closed", s.workerMarkRuntimeInstanceClosed)
 				r.Post("/runtime-instances/failed", s.workerMarkRuntimeInstanceFailed)
 				r.Post("/runtime-substrates/register", s.workerRegisterRuntimeSubstrate)
-				r.Post("/runtime-substrates/lookup", s.workerLookupRuntimeSubstrate)
 				r.Post("/workspaces/mounts/claim", s.workerClaimWorkspaceMount)
 				r.Post("/workspaces/mounts/renew", s.workerRenewWorkspaceMount)
 				r.Post("/workspaces/mounts/mounted", s.workerMarkWorkspaceMountMounted)

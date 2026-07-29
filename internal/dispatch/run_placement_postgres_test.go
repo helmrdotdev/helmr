@@ -2707,29 +2707,35 @@ func markRunPlacementRuntimeReadyQuery(t *testing.T, fixture runPlacementFixture
 	var desiredVersion, observedVersion, workerEpoch, slotGeneration int64
 	var workerID, slotID, runtimeSubstrateID pgtype.UUID
 	err := fixture.pool.QueryRow(fixture.ctx, `
-INSERT INTO runtime_substrates (
-    id, org_id, project_id, environment_id, deployment_definition_id, artifact_id,
-    substrate_digest, substrate_format, builder_abi, layout_abi,
-    substrate_size_bytes, source, created_by_worker_instance_id
+WITH runtime AS (
+    SELECT runtime_instances.org_id,
+           runtime_instances.project_id,
+           runtime_instances.environment_id,
+           runtime_instances.deployment_definition_id
+      FROM runtime_instances
+     WHERE runtime_instances.id = $1
+),
+inserted AS (
+    INSERT INTO runtime_substrates (
+        id, org_id, project_id, environment_id, deployment_definition_id,
+        substrate_digest, substrate_format, builder_abi, layout_abi,
+        substrate_size_bytes
+    )
+    SELECT $2, org_id, project_id, environment_id, deployment_definition_id,
+           'sha256:test-runtime-substrate', 'squashfs', 'builder-v0', 'layout-v0', 1
+      FROM runtime
+    ON CONFLICT ON CONSTRAINT runtime_substrates_input_key DO NOTHING
+    RETURNING id
 )
-SELECT $2,
-       runtime_instances.org_id,
-       runtime_instances.project_id,
-       runtime_instances.environment_id,
-       runtime_instances.deployment_definition_id,
-       deployment_definitions.artifact_id,
-       'sha256:test-runtime-substrate', 'squashfs', 'builder-v0', 'layout-v0',
-       1, '{}'::jsonb, runtime_instances.worker_instance_id
-  FROM runtime_instances
-  JOIN deployment_definitions
-    ON deployment_definitions.environment_id = runtime_instances.environment_id
-   AND deployment_definitions.id = runtime_instances.deployment_definition_id
- WHERE runtime_instances.id = $1
-ON CONFLICT (
-    org_id, project_id, environment_id, deployment_definition_id,
-    substrate_format, builder_abi, layout_abi
-) DO UPDATE SET updated_at = runtime_substrates.updated_at
-RETURNING id`, runtimeID, pgvalue.NewUUIDv7()).Scan(&runtimeSubstrateID)
+SELECT id FROM inserted
+UNION ALL
+SELECT runtime_substrates.id
+  FROM runtime_substrates
+  JOIN runtime USING (org_id, project_id, environment_id, deployment_definition_id)
+ WHERE substrate_format = 'squashfs'
+   AND builder_abi = 'builder-v0'
+   AND layout_abi = 'layout-v0'
+LIMIT 1`, runtimeID, pgvalue.NewUUIDv7()).Scan(&runtimeSubstrateID)
 	if err != nil {
 		t.Fatal(err)
 	}

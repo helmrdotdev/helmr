@@ -20,11 +20,13 @@ type ProgramBuildManifest struct {
 	AggregateResultDigest string                     `json:"aggregateResultDigest"`
 	Compiler              ProgramCompilerContract    `json:"compiler"`
 	Config                ProgramBuildFile           `json:"config"`
+	ConfigSource          ProgramBuildFile           `json:"configSource"`
 	DiscoveryCandidates   []string                   `json:"discoveryCandidates"`
 	Execution             ProgramBuildExecution      `json:"execution"`
 	ExternalEdges         []ProgramBuildExternalEdge `json:"externalEdges"`
 	Inputs                []ProgramBuildFile         `json:"inputs"`
 	LocalPackages         []ProgramBuildLocalPackage `json:"localPackages"`
+	Lockfile              ProgramBuildFile           `json:"lockfile"`
 	Outputs               []ProgramBuildOutput       `json:"outputs"`
 	ProgramIndexDigest    string                     `json:"programIndexDigest"`
 	Selections            []ProgramBuildSelection    `json:"selections"`
@@ -215,6 +217,14 @@ func canonicalProgramBuildManifest(
 func validateProgramBuildManifest(manifest ProgramBuildManifest) error {
 	if !sha256DigestPattern.MatchString(manifest.ProgramIndexDigest) {
 		return errors.New("Program build manifest index digest is invalid")
+	}
+	if manifest.ConfigSource.Path != "helmr.config.ts" ||
+		!sha256DigestPattern.MatchString(manifest.ConfigSource.Digest) {
+		return errors.New("Program build manifest config source authority is invalid")
+	}
+	if !validProgramLockfileName(manifest.Lockfile.Path) ||
+		!sha256DigestPattern.MatchString(manifest.Lockfile.Digest) {
+		return errors.New("Program build manifest lockfile authority is invalid")
 	}
 	return validateProgramCompilerResult(compilerResultFromManifest(manifest))
 }
@@ -418,16 +428,20 @@ func compilerResultFromManifest(
 func buildManifestFromCompilerResult(
 	result ProgramCompilerResult,
 	indexDigest string,
+	configSource ProgramBuildFile,
+	lockfile ProgramBuildFile,
 ) ProgramBuildManifest {
 	return ProgramBuildManifest{
 		AggregateResultDigest: result.AggregateResultDigest,
 		Compiler:              result.Compiler,
 		Config:                result.Config,
+		ConfigSource:          configSource,
 		DiscoveryCandidates:   result.DiscoveryCandidates,
 		Execution:             result.Execution,
 		ExternalEdges:         result.ExternalEdges,
 		Inputs:                result.Inputs,
 		LocalPackages:         result.LocalPackages,
+		Lockfile:              lockfile,
 		Outputs:               result.Outputs,
 		ProgramIndexDigest:    indexDigest,
 		Selections:            result.Selections,

@@ -14,7 +14,6 @@ type programVerifier struct {
 	artifact *inspectedArtifact
 	index    ProgramIndex
 	manifest ProgramBuildManifest
-	receipt  ProgramReceipt
 }
 
 func (verifier *programVerifier) verify() error {
@@ -31,6 +30,20 @@ func (verifier *programVerifier) verify() error {
 		verifier.ctx,
 		verifier.artifact,
 		compilerResultFromManifest(verifier.manifest),
+	); err != nil {
+		return err
+	}
+	if err := verifyProgramBuildFile(
+		verifier.ctx,
+		verifier.artifact,
+		verifier.manifest.ConfigSource,
+	); err != nil {
+		return err
+	}
+	if err := verifyProgramBuildFile(
+		verifier.ctx,
+		verifier.artifact,
+		verifier.manifest.Lockfile,
 	); err != nil {
 		return err
 	}
@@ -54,14 +67,6 @@ func (verifier *programVerifier) readDocuments() error {
 	if err != nil {
 		return fmt.Errorf("Program build manifest: %w", err)
 	}
-	receiptRaw, err := verifier.artifact.read(
-		verifier.ctx,
-		"helmr/receipt.json",
-		maxProgramReceiptSizeBytes,
-	)
-	if err != nil {
-		return fmt.Errorf("Program receipt: %w", err)
-	}
 	verifier.manifest, err = ParseProgramBuildManifest(manifestRaw)
 	if err != nil {
 		return fmt.Errorf("Program build manifest: %w", err)
@@ -82,14 +87,6 @@ func (verifier *programVerifier) readDocuments() error {
 			"Program build manifest index digest does not match Program index",
 		)
 	}
-	verifier.receipt, err = ParseProgramReceipt(receiptRaw)
-	if err != nil {
-		return fmt.Errorf("Program receipt: %w", err)
-	}
-	if err := verifier.verifyReceipt(indexRaw, manifestRaw); err != nil {
-		return err
-	}
-
 	entryRaw, err := verifier.artifact.read(
 		verifier.ctx,
 		"helmr/entry.mjs",
@@ -124,7 +121,6 @@ func (verifier *programVerifier) verifyLayout() error {
 		"helmr/config.json",
 		"helmr/declarations.json",
 		"helmr/entry.mjs",
-		"helmr/receipt.json",
 	} {
 		if _, err := verifier.artifact.require(required, artifactEntryRegular); err != nil {
 			return fmt.Errorf("Program layout: %w", err)
@@ -134,8 +130,7 @@ func (verifier *programVerifier) verifyLayout() error {
 		if strings.HasPrefix(entry.Path, "helmr/") {
 			switch entry.Path {
 			case "helmr/build-manifest.json", "helmr/config.json",
-				"helmr/declarations.json", "helmr/entry.mjs",
-				"helmr/receipt.json":
+				"helmr/declarations.json", "helmr/entry.mjs":
 			default:
 				return fmt.Errorf(
 					"Program Artifact contains unknown Platform-owned path %q",
@@ -159,46 +154,6 @@ func (verifier *programVerifier) verifyLayout() error {
 			"Program Artifact contains orphan generated path %q",
 			entry.Path,
 		)
-	}
-	return nil
-}
-
-func (verifier *programVerifier) verifyReceipt(indexRaw, manifestRaw []byte) error {
-	indexHash := sha256.Sum256(indexRaw)
-	manifestHash := sha256.Sum256(manifestRaw)
-	if verifier.receipt.Architecture != verifier.index.Architecture ||
-		verifier.receipt.Config.EvaluatorAPIVersion != ConfigEvaluatorAPIVersion ||
-		verifier.receipt.Config.ResultDigest != verifier.index.ConfigResultDigest ||
-		verifier.receipt.Compiler.APIVersion != verifier.manifest.Compiler.APIVersion ||
-		verifier.receipt.Compiler.Version != verifier.manifest.Compiler.EsbuildVersion ||
-		verifier.receipt.Compiler.OptionsDigest != verifier.manifest.Execution.OptionsDigest ||
-		verifier.receipt.Program.IndexDigest !=
-			"sha256:"+hex.EncodeToString(indexHash[:]) ||
-		verifier.receipt.Program.ManifestDigest !=
-			"sha256:"+hex.EncodeToString(manifestHash[:]) ||
-		verifier.receipt.Runtime.APIVersion != verifier.index.RuntimeAPIVersion ||
-		verifier.receipt.Runtime.NodeVersion != verifier.manifest.Execution.NodeVersion {
-		return fmt.Errorf("Program receipt does not match embedded Program authority")
-	}
-	if err := verifyProgramBuildFile(
-		verifier.ctx,
-		verifier.artifact,
-		ProgramBuildFile{
-			Digest: verifier.receipt.Config.SourceDigest,
-			Path:   "helmr.config.ts",
-		},
-	); err != nil {
-		return err
-	}
-	if err := verifyProgramBuildFile(
-		verifier.ctx,
-		verifier.artifact,
-		ProgramBuildFile{
-			Digest: verifier.receipt.Lockfile.Digest,
-			Path:   verifier.receipt.Lockfile.Path,
-		},
-	); err != nil {
-		return err
 	}
 	return nil
 }

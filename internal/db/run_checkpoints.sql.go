@@ -1237,48 +1237,26 @@ func (q *Queries) GetRuntimeIdentityForCheckpoint(ctx context.Context, id string
 }
 
 const getRuntimeSubstrateForCheckpoint = `-- name: GetRuntimeSubstrateForCheckpoint :one
-SELECT runtime_substrates.id, runtime_substrates.org_id, runtime_substrates.project_id, runtime_substrates.environment_id, runtime_substrates.deployment_definition_id, runtime_substrates.artifact_id, runtime_substrates.substrate_digest, runtime_substrates.substrate_format, runtime_substrates.builder_abi, runtime_substrates.layout_abi, runtime_substrates.substrate_size_bytes, runtime_substrates.source, runtime_substrates.created_by_worker_instance_id, runtime_substrates.created_at, runtime_substrates.updated_at,
-       artifacts.digest AS artifact_digest,
-       artifacts.size_bytes AS artifact_size_bytes,
-       artifacts.media_type AS artifact_media_type
+SELECT id, org_id, project_id, environment_id, deployment_definition_id, substrate_digest, substrate_format, builder_abi, layout_abi, substrate_size_bytes, created_at
   FROM runtime_substrates
-  JOIN artifacts
-    ON artifacts.org_id = runtime_substrates.org_id
-   AND artifacts.project_id = runtime_substrates.project_id
-   AND artifacts.environment_id = runtime_substrates.environment_id
-   AND artifacts.id = runtime_substrates.artifact_id
- WHERE runtime_substrates.id = $1
+ WHERE id = $1
 `
 
-type GetRuntimeSubstrateForCheckpointRow struct {
-	RuntimeSubstrate  RuntimeSubstrate `json:"runtime_substrate"`
-	ArtifactDigest    string           `json:"artifact_digest"`
-	ArtifactSizeBytes int64            `json:"artifact_size_bytes"`
-	ArtifactMediaType string           `json:"artifact_media_type"`
-}
-
-func (q *Queries) GetRuntimeSubstrateForCheckpoint(ctx context.Context, id pgtype.UUID) (GetRuntimeSubstrateForCheckpointRow, error) {
+func (q *Queries) GetRuntimeSubstrateForCheckpoint(ctx context.Context, id pgtype.UUID) (RuntimeSubstrate, error) {
 	row := q.db.QueryRow(ctx, getRuntimeSubstrateForCheckpoint, id)
-	var i GetRuntimeSubstrateForCheckpointRow
+	var i RuntimeSubstrate
 	err := row.Scan(
-		&i.RuntimeSubstrate.ID,
-		&i.RuntimeSubstrate.OrgID,
-		&i.RuntimeSubstrate.ProjectID,
-		&i.RuntimeSubstrate.EnvironmentID,
-		&i.RuntimeSubstrate.DeploymentDefinitionID,
-		&i.RuntimeSubstrate.ArtifactID,
-		&i.RuntimeSubstrate.SubstrateDigest,
-		&i.RuntimeSubstrate.SubstrateFormat,
-		&i.RuntimeSubstrate.BuilderAbi,
-		&i.RuntimeSubstrate.LayoutAbi,
-		&i.RuntimeSubstrate.SubstrateSizeBytes,
-		&i.RuntimeSubstrate.Source,
-		&i.RuntimeSubstrate.CreatedByWorkerInstanceID,
-		&i.RuntimeSubstrate.CreatedAt,
-		&i.RuntimeSubstrate.UpdatedAt,
-		&i.ArtifactDigest,
-		&i.ArtifactSizeBytes,
-		&i.ArtifactMediaType,
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentDefinitionID,
+		&i.SubstrateDigest,
+		&i.SubstrateFormat,
+		&i.BuilderAbi,
+		&i.LayoutAbi,
+		&i.SubstrateSizeBytes,
+		&i.CreatedAt,
 	)
 	return i, err
 }

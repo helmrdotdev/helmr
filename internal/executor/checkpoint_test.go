@@ -34,17 +34,14 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	session := &checkpointSession{stream: stream, artifact: artifact}
 	store := &checkpointCAS{}
 	encryptor := testCheckpointEncryptor(t)
-	registrar := &checkpointRuntimeSubstrateRegistrar{id: "019f1790-0000-7000-8000-000000000001"}
 
 	result, err := runtimeCheckpointer{
-		session:           session,
-		cas:               store,
-		encryptor:         encryptor,
-		tempDir:           t.TempDir(),
-		stream:            stream,
-		workspace:         testCheckpointWorkspaceBase(),
-		substrateSource:   &api.WorkerRuntimeSubstrateSource{DeploymentDefinitionID: "019f1790-0000-7000-8000-000000000002"},
-		runtimeSubstrates: registrar,
+		session:   session,
+		cas:       store,
+		encryptor: encryptor,
+		tempDir:   t.TempDir(),
+		stream:    stream,
+		workspace: testCheckpointWorkspaceBase(),
 	}.CreateCheckpoint(context.Background(), CheckpointRequest{
 		RunWaitID:    "run-wait-id-1",
 		CheckpointID: "checkpoint-1",
@@ -61,13 +58,12 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 		t.Fatalf("stream closed %d times", stream.closed)
 	}
 	assertSuspendFrame(t, stream.written.Bytes(), "run-wait-id-1", "checkpoint-1")
-	if len(store.puts) != 5 {
+	if len(store.puts) != 4 {
 		t.Fatalf("puts = %+v", store.puts)
 	}
 	manifestPut := checkpointPutByMediaType(t, store, cas.CheckpointRuntimeConfigMediaType)
 	vmStatePut := checkpointPutByMediaType(t, store, cas.CheckpointVMStateMediaType)
 	scratchPut := checkpointPutByMediaType(t, store, cas.CheckpointScratchDiskMediaType)
-	substratePut := checkpointPutByMediaType(t, store, cas.RuntimeSubstrateMediaType)
 	memoryPut := checkpointPutByMediaType(t, store, cas.CheckpointMemoryMediaType)
 	if manifest.RecoveryPoint.Runtime.Backend != "firecracker" || manifest.RecoveryPoint.Runtime.Arch != "x86_64" || manifest.RecoveryPoint.Runtime.ABI != "helmr.firecracker.snapshot.v0" {
 		t.Fatalf("manifest identity = %+v", manifest)
@@ -92,12 +88,6 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	}
 	if manifest.RuntimeState.ScratchDiskArtifact.Digest != scratchPut.object.Digest {
 		t.Fatalf("scratch disk artifact = %+v puts=%+v", manifest.RuntimeState.ScratchDiskArtifact, store.puts)
-	}
-	if manifest.RuntimeState.RuntimeSubstrate == nil || manifest.RuntimeState.RuntimeSubstrate.ID != registrar.id || manifest.RuntimeState.RuntimeSubstrate.Artifact.Digest != substratePut.object.Digest {
-		t.Fatalf("runtime substrate = %+v puts=%+v", manifest.RuntimeState.RuntimeSubstrate, store.puts)
-	}
-	if len(registrar.requests) != 1 || registrar.requests[0].SubstrateDigest != manifest.RecoveryPoint.Runtime.Substrate.Digest {
-		t.Fatalf("runtime substrate register requests = %+v", registrar.requests)
 	}
 	if len(manifest.RuntimeState.MemoryArtifacts) != 1 || manifest.RuntimeState.MemoryArtifacts[0].Digest != memoryPut.object.Digest {
 		t.Fatalf("memory artifacts = %+v puts=%+v", manifest.RuntimeState.MemoryArtifacts, store.puts)
@@ -636,27 +626,6 @@ func checkpointPutByMediaType(t *testing.T, store *checkpointCAS, mediaType stri
 	}
 	t.Fatalf("missing checkpoint CAS put for media type %q: %+v", mediaType, store.puts)
 	return checkpointCASPut{}
-}
-
-type checkpointRuntimeSubstrateRegistrar struct {
-	id       string
-	requests []api.WorkerRuntimeSubstrateRegisterRequest
-}
-
-func (r *checkpointRuntimeSubstrateRegistrar) RegisterRuntimeSubstrate(_ context.Context, request api.WorkerRuntimeSubstrateRegisterRequest) (api.WorkerRuntimeSubstrateRegisterResponse, error) {
-	r.requests = append(r.requests, request)
-	return api.WorkerRuntimeSubstrateRegisterResponse{
-		RuntimeSubstrate: api.WorkerRuntimeSubstrate{
-			ID:                     r.id,
-			DeploymentDefinitionID: request.DeploymentDefinitionID,
-			Artifact:               request.Artifact,
-			SubstrateDigest:        request.SubstrateDigest,
-			Format:                 request.Format,
-			BuilderABI:             request.BuilderABI,
-			LayoutABI:              request.LayoutABI,
-			SizeBytes:              request.SizeBytes,
-		},
-	}, nil
 }
 
 type checkpointCASStage struct {

@@ -11,104 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const getRuntimeSubstrateForWorkspaceDefinition = `-- name: GetRuntimeSubstrateForWorkspaceDefinition :one
-SELECT runtime_substrates.id, runtime_substrates.org_id, runtime_substrates.project_id, runtime_substrates.environment_id, runtime_substrates.deployment_definition_id, runtime_substrates.artifact_id, runtime_substrates.substrate_digest, runtime_substrates.substrate_format, runtime_substrates.builder_abi, runtime_substrates.layout_abi, runtime_substrates.substrate_size_bytes, runtime_substrates.source, runtime_substrates.created_by_worker_instance_id, runtime_substrates.created_at, runtime_substrates.updated_at,
-       artifacts.digest AS artifact_digest,
-       artifacts.size_bytes AS artifact_size_bytes,
-       artifacts.media_type AS artifact_media_type
-  FROM runtime_substrates
-  JOIN artifacts
-    ON artifacts.org_id = runtime_substrates.org_id
-   AND artifacts.project_id = runtime_substrates.project_id
-   AND artifacts.environment_id = runtime_substrates.environment_id
-   AND artifacts.id = runtime_substrates.artifact_id
-  JOIN deployment_definitions
-    ON deployment_definitions.environment_id = runtime_substrates.environment_id
-   AND deployment_definitions.id = runtime_substrates.deployment_definition_id
-   AND deployment_definitions.kind = 'workspace'
-  JOIN deployments
-    ON deployments.environment_id = deployment_definitions.environment_id
-   AND deployments.id = deployment_definitions.deployment_id
- WHERE runtime_substrates.org_id = $1
-   AND runtime_substrates.project_id = $2
-   AND runtime_substrates.environment_id = $3
-   AND runtime_substrates.deployment_definition_id = $4
-   AND runtime_substrates.substrate_digest = $5
-   AND runtime_substrates.substrate_format = $6
-   AND runtime_substrates.builder_abi = $7
-   AND runtime_substrates.layout_abi = $8
- LIMIT 1
-`
-
-type GetRuntimeSubstrateForWorkspaceDefinitionParams struct {
-	OrgID                  pgtype.UUID `json:"org_id"`
-	ProjectID              pgtype.UUID `json:"project_id"`
-	EnvironmentID          pgtype.UUID `json:"environment_id"`
-	DeploymentDefinitionID pgtype.UUID `json:"deployment_definition_id"`
-	SubstrateDigest        string      `json:"substrate_digest"`
-	SubstrateFormat        string      `json:"substrate_format"`
-	BuilderAbi             string      `json:"builder_abi"`
-	LayoutAbi              string      `json:"layout_abi"`
-}
-
-type GetRuntimeSubstrateForWorkspaceDefinitionRow struct {
-	ID                        pgtype.UUID        `json:"id"`
-	OrgID                     pgtype.UUID        `json:"org_id"`
-	ProjectID                 pgtype.UUID        `json:"project_id"`
-	EnvironmentID             pgtype.UUID        `json:"environment_id"`
-	DeploymentDefinitionID    pgtype.UUID        `json:"deployment_definition_id"`
-	ArtifactID                pgtype.UUID        `json:"artifact_id"`
-	SubstrateDigest           string             `json:"substrate_digest"`
-	SubstrateFormat           string             `json:"substrate_format"`
-	BuilderAbi                string             `json:"builder_abi"`
-	LayoutAbi                 string             `json:"layout_abi"`
-	SubstrateSizeBytes        int64              `json:"substrate_size_bytes"`
-	Source                    []byte             `json:"source"`
-	CreatedByWorkerInstanceID pgtype.UUID        `json:"created_by_worker_instance_id"`
-	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
-	ArtifactDigest            string             `json:"artifact_digest"`
-	ArtifactSizeBytes         int64              `json:"artifact_size_bytes"`
-	ArtifactMediaType         string             `json:"artifact_media_type"`
-}
-
-func (q *Queries) GetRuntimeSubstrateForWorkspaceDefinition(ctx context.Context, arg GetRuntimeSubstrateForWorkspaceDefinitionParams) (GetRuntimeSubstrateForWorkspaceDefinitionRow, error) {
-	row := q.db.QueryRow(ctx, getRuntimeSubstrateForWorkspaceDefinition,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.DeploymentDefinitionID,
-		arg.SubstrateDigest,
-		arg.SubstrateFormat,
-		arg.BuilderAbi,
-		arg.LayoutAbi,
-	)
-	var i GetRuntimeSubstrateForWorkspaceDefinitionRow
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.DeploymentDefinitionID,
-		&i.ArtifactID,
-		&i.SubstrateDigest,
-		&i.SubstrateFormat,
-		&i.BuilderAbi,
-		&i.LayoutAbi,
-		&i.SubstrateSizeBytes,
-		&i.Source,
-		&i.CreatedByWorkerInstanceID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ArtifactDigest,
-		&i.ArtifactSizeBytes,
-		&i.ArtifactMediaType,
-	)
-	return i, err
-}
-
 const getRuntimeSubstrateRegistration = `-- name: GetRuntimeSubstrateRegistration :one
-SELECT id, org_id, project_id, environment_id, deployment_definition_id, artifact_id, substrate_digest, substrate_format, builder_abi, layout_abi, substrate_size_bytes, source, created_by_worker_instance_id, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_definition_id, substrate_digest, substrate_format, builder_abi, layout_abi, substrate_size_bytes, created_at
   FROM runtime_substrates
  WHERE org_id = $1
    AND project_id = $2
@@ -117,9 +21,8 @@ SELECT id, org_id, project_id, environment_id, deployment_definition_id, artifac
    AND substrate_format = $5
    AND builder_abi = $6
    AND layout_abi = $7
-   AND artifact_id = $8
-   AND substrate_digest = $9
-   AND substrate_size_bytes = $10
+   AND substrate_digest = $8
+   AND substrate_size_bytes = $9
  LIMIT 1
 `
 
@@ -131,7 +34,6 @@ type GetRuntimeSubstrateRegistrationParams struct {
 	SubstrateFormat        string      `json:"substrate_format"`
 	BuilderAbi             string      `json:"builder_abi"`
 	LayoutAbi              string      `json:"layout_abi"`
-	ArtifactID             pgtype.UUID `json:"artifact_id"`
 	SubstrateDigest        string      `json:"substrate_digest"`
 	SubstrateSizeBytes     int64       `json:"substrate_size_bytes"`
 }
@@ -145,7 +47,6 @@ func (q *Queries) GetRuntimeSubstrateRegistration(ctx context.Context, arg GetRu
 		arg.SubstrateFormat,
 		arg.BuilderAbi,
 		arg.LayoutAbi,
-		arg.ArtifactID,
 		arg.SubstrateDigest,
 		arg.SubstrateSizeBytes,
 	)
@@ -156,16 +57,12 @@ func (q *Queries) GetRuntimeSubstrateRegistration(ctx context.Context, arg GetRu
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentDefinitionID,
-		&i.ArtifactID,
 		&i.SubstrateDigest,
 		&i.SubstrateFormat,
 		&i.BuilderAbi,
 		&i.LayoutAbi,
 		&i.SubstrateSizeBytes,
-		&i.Source,
-		&i.CreatedByWorkerInstanceID,
 		&i.CreatedAt,
-		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -177,14 +74,11 @@ INSERT INTO runtime_substrates (
     project_id,
     environment_id,
     deployment_definition_id,
-    artifact_id,
     substrate_digest,
     substrate_format,
     builder_abi,
     layout_abi,
-    substrate_size_bytes,
-    source,
-    created_by_worker_instance_id
+    substrate_size_bytes
 ) VALUES (
     $1,
     $2,
@@ -195,28 +89,22 @@ INSERT INTO runtime_substrates (
     $7,
     $8,
     $9,
-    $10,
-    $11,
-    COALESCE($12::jsonb, '{}'::jsonb),
-    $13
+    $10
 )
 ON CONFLICT ON CONSTRAINT runtime_substrates_input_key DO NOTHING
 `
 
 type InsertRuntimeSubstrateParams struct {
-	ID                        pgtype.UUID `json:"id"`
-	OrgID                     pgtype.UUID `json:"org_id"`
-	ProjectID                 pgtype.UUID `json:"project_id"`
-	EnvironmentID             pgtype.UUID `json:"environment_id"`
-	DeploymentDefinitionID    pgtype.UUID `json:"deployment_definition_id"`
-	ArtifactID                pgtype.UUID `json:"artifact_id"`
-	SubstrateDigest           string      `json:"substrate_digest"`
-	SubstrateFormat           string      `json:"substrate_format"`
-	BuilderAbi                string      `json:"builder_abi"`
-	LayoutAbi                 string      `json:"layout_abi"`
-	SubstrateSizeBytes        int64       `json:"substrate_size_bytes"`
-	Source                    []byte      `json:"source"`
-	CreatedByWorkerInstanceID pgtype.UUID `json:"created_by_worker_instance_id"`
+	ID                     pgtype.UUID `json:"id"`
+	OrgID                  pgtype.UUID `json:"org_id"`
+	ProjectID              pgtype.UUID `json:"project_id"`
+	EnvironmentID          pgtype.UUID `json:"environment_id"`
+	DeploymentDefinitionID pgtype.UUID `json:"deployment_definition_id"`
+	SubstrateDigest        string      `json:"substrate_digest"`
+	SubstrateFormat        string      `json:"substrate_format"`
+	BuilderAbi             string      `json:"builder_abi"`
+	LayoutAbi              string      `json:"layout_abi"`
+	SubstrateSizeBytes     int64       `json:"substrate_size_bytes"`
 }
 
 func (q *Queries) InsertRuntimeSubstrate(ctx context.Context, arg InsertRuntimeSubstrateParams) (int64, error) {
@@ -226,14 +114,11 @@ func (q *Queries) InsertRuntimeSubstrate(ctx context.Context, arg InsertRuntimeS
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentDefinitionID,
-		arg.ArtifactID,
 		arg.SubstrateDigest,
 		arg.SubstrateFormat,
 		arg.BuilderAbi,
 		arg.LayoutAbi,
 		arg.SubstrateSizeBytes,
-		arg.Source,
-		arg.CreatedByWorkerInstanceID,
 	)
 	if err != nil {
 		return 0, err

@@ -430,58 +430,6 @@ func (p *PreparedRuntimePool) StopRuntimeTarget(ctx context.Context, client Prep
 	return nil
 }
 
-func (p *PreparedRuntimePool) PrepareRuntimeSubstrateTarget(ctx context.Context, target api.WorkerRuntimeReconcileTarget) error {
-	if p == nil || p.CAS == nil || p.Substrates == nil {
-		return nil
-	}
-	mount := preparedRuntimeWorkspaceMountFromSource(target.Source)
-	if strings.TrimSpace(mount.DeploymentDefinitionID) == "" {
-		return errors.New("runtime substrate target source is required")
-	}
-	backgroundCtx, finish, ok := p.beginBackground(ctx)
-	if !ok {
-		p.logInfo("runtime substrate prepare skipped", "deployment_definition_id", mount.DeploymentDefinitionID, "reason", "foreground_workspace_mount_active")
-		return errPreparedRuntimeBackgroundBusy
-	}
-	defer finish()
-	tempRoot := strings.TrimSpace(p.TempDir)
-	if tempRoot == "" {
-		tempRoot = os.TempDir()
-	}
-	if err := os.MkdirAll(tempRoot, 0o755); err != nil {
-		return err
-	}
-	tempDir, err := os.MkdirTemp(tempRoot, "runtime-substrate-prepare-*")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tempDir)
-	materializer := WorkspaceMaterializer{
-		CAS:                   p.CAS,
-		TempDir:               p.TempDir,
-		ArtifactCacheDir:      p.ArtifactCacheDir,
-		ArtifactCacheMaxBytes: p.ArtifactCacheMaxBytes,
-	}
-	_, cleanupWorkspaceImage, topology, err := p.restoreWorkspaceImageAndRuntimeSubstrate(backgroundCtx, materializer, tempDir, mount,
-		"runtime substrate prepare workspace image restored",
-		"runtime substrate prepared",
-		"deployment_definition_id", mount.DeploymentDefinitionID,
-	)
-	if err != nil {
-		return err
-	}
-	defer cleanupWorkspaceImage()
-	started := time.Now()
-	registered, err := runtimeCheckpointer{
-		cas:               p.CAS,
-		encryptor:         p.CheckpointEncryptor,
-		substrateSource:   runtimeSubstrateSourceFromRuntimeSource(target.Source),
-		runtimeSubstrates: p.RuntimeSubstrates,
-	}.ensureRuntimeSubstrate(backgroundCtx, topology.Substrate)
-	p.logInfo("runtime substrate registered", "deployment_definition_id", mount.DeploymentDefinitionID, "duration_ms", time.Since(started).Milliseconds(), "substrate_digest", runtimeSubstrateDigest(topology), "runtime_substrate_id", runtimeSubstrateID(registered), "error", errorString(err))
-	return err
-}
-
 func (p *PreparedRuntimePool) WarmRuntimeTarget(ctx context.Context, client PreparedRuntimeInstanceClient, target api.WorkerRuntimeReconcileTarget) error {
 	if p == nil {
 		return nil
@@ -706,12 +654,12 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 	var runtimeSubstrateIDValue string
 	if topology.Substrate != nil {
 		started := time.Now()
-		registered, err := runtimeCheckpointer{
-			cas:               p.CAS,
-			encryptor:         p.CheckpointEncryptor,
-			substrateSource:   runtimeSubstrateSourceFromWorkspaceMount(mount),
-			runtimeSubstrates: p.RuntimeSubstrates,
-		}.ensureRuntimeSubstrate(ctx, topology.Substrate)
+		registered, err := registerRuntimeSubstrate(
+			ctx,
+			p.RuntimeSubstrates,
+			mount.DeploymentDefinitionID,
+			topology.Substrate,
+		)
 		p.logInfo("prepared runtime pool substrate resolved", "runtime_instance_id", runtimeInstanceID, "duration_ms", time.Since(started).Milliseconds(), "substrate_digest", runtimeSubstrateDigest(topology), "runtime_substrate_id", runtimeSubstrateID(registered), "error", errorString(err))
 		if err != nil {
 			return failInstance(err)
@@ -1007,7 +955,7 @@ func (p *PreparedRuntimePool) prepareProgram(
 			closeSnapshots(),
 		)
 	}
-	if err := verifyProgramIndexReceipt(programIndex, program.IndexDigest); err != nil {
+	if err := verifyProgramIndexDigest(programIndex, program.IndexDigest); err != nil {
 		return nil, func() error { return nil }, errors.Join(
 			err,
 			closeSnapshots(),
@@ -1027,7 +975,7 @@ func (p *PreparedRuntimePool) prepareProgram(
 	}, closeSnapshots, nil
 }
 
-func verifyProgramIndexReceipt(
+func verifyProgramIndexDigest(
 	index deployment.ProgramIndex,
 	expectedDigest string,
 ) error {
@@ -1036,7 +984,7 @@ func verifyProgramIndexReceipt(
 		return fmt.Errorf("canonicalize verified Program index: %w", err)
 	}
 	if sha256sum.DigestBytes(indexBytes) != expectedDigest {
-		return errors.New("Program index does not match deployment receipt authority")
+		return errors.New("Program index does not match Deployment authority")
 	}
 	return nil
 }
@@ -1445,9 +1393,6 @@ func runtimeTargetStateRequest(target api.WorkerRuntimeReconcileTarget, failure 
 		ID: target.ID, WorkerEpoch: target.WorkerEpoch, NetworkSlotID: target.NetworkSlotID,
 		NetworkSlotGeneration: target.NetworkSlotGeneration, DesiredVersion: target.DesiredVersion,
 		ExpectedObservedVersion: target.ObservedVersion, ReasonCode: "desired_state_reconciled",
-	}
-	if target.Source.RuntimeSubstrate != nil {
-		request.RuntimeSubstrateID = target.Source.RuntimeSubstrate.ID
 	}
 	if failure != nil {
 		request.ReasonCode = "runtime_reconcile_failed"

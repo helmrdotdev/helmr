@@ -46,14 +46,9 @@ func (s *Server) completeTask(
 		completion.capture = &verified
 	}
 	if completion.handoff != nil {
-		var substrateArtifact *api.CASObject
-		if request.Handoff != nil && request.Handoff.Manifest.RuntimeState.RuntimeSubstrate != nil {
-			substrateArtifact = &request.Handoff.Manifest.RuntimeState.RuntimeSubstrate.Artifact
-		}
 		if err := s.verifyCheckpointRuntimeArtifacts(
 			ctx,
 			completion.handoff.artifacts,
-			substrateArtifact,
 		); err != nil {
 			return taskCompletionReplayAfterError(ctx, s.db, worker, request, completion, err)
 		}
@@ -145,8 +140,6 @@ func (s *Server) completeTask(
 				work.q,
 				authority,
 				request.Handoff.Manifest,
-				completion.handoff.substrateID,
-				completion.handoff.hasSubstrate,
 			); err != nil {
 				return staleTaskCompletion(err)
 			}

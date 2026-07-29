@@ -269,14 +269,6 @@ func (c *Client) RegisterRuntimeSubstrate(ctx context.Context, request api.Worke
 	return response, nil
 }
 
-func (c *Client) LookupRuntimeSubstrate(ctx context.Context, request api.WorkerRuntimeSubstrateLookupRequest) (api.WorkerRuntimeSubstrateLookupResponse, error) {
-	var response api.WorkerRuntimeSubstrateLookupResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/runtime-substrates/lookup", request, &response); err != nil {
-		return api.WorkerRuntimeSubstrateLookupResponse{}, err
-	}
-	return response, nil
-}
-
 func (c *Client) ActivateWorker(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerStatusResponse, error) {
 	var response api.WorkerStatusResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/activate", api.WorkerActivateRequest{Capabilities: capabilities}, &response); err != nil {

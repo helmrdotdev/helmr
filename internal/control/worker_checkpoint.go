@@ -31,8 +31,6 @@ type parsedCheckpointReady struct {
 	manifest       []byte
 	fingerprint    string
 	artifacts      []checkpointArtifactProof
-	substrateID    uuid.UUID
-	hasSubstrate   bool
 	requestVersion int64
 	attemptNumber  int32
 }
@@ -88,11 +86,7 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	parsed.capture = verified
-	var substrateArtifact *api.CASObject
-	if normalized.Manifest.RuntimeState.RuntimeSubstrate != nil {
-		substrateArtifact = &normalized.Manifest.RuntimeState.RuntimeSubstrate.Artifact
-	}
-	if err := s.verifyCheckpointRuntimeArtifacts(r.Context(), parsed.artifacts, substrateArtifact); err != nil {
+	if err := s.verifyCheckpointRuntimeArtifacts(r.Context(), parsed.artifacts); err != nil {
 		if response, replayed, replayErr := s.checkpointReadyReplay(r.Context(), parsed); replayErr == nil && replayed {
 			writeJSON(w, http.StatusOK, response)
 			return
@@ -748,7 +742,7 @@ func parseCheckpointReadyRequest(request api.WorkerCheckpointReadyRequest) (pars
 	if err := validateTaskWorkspaceArtifact("workspace_capture.artifact", request.WorkspaceCapture.Artifact); err != nil {
 		return parsedCheckpointReady{}, request, err
 	}
-	manifest, artifacts, substrateID, hasSubstrate, err := validateCheckpointReadyManifest(request)
+	manifest, artifacts, err := validateCheckpointReadyManifest(request)
 	if err != nil {
 		return parsedCheckpointReady{}, request, err
 	}
@@ -764,12 +758,12 @@ func parseCheckpointReadyRequest(request api.WorkerCheckpointReadyRequest) (pars
 		lease: lease, waitID: waitID, checkpointID: checkpointID,
 		capture:  parsedTaskWorkspaceCapture{tree: tree, artifact: request.WorkspaceCapture.Artifact},
 		manifest: manifest, fingerprint: fingerprint, artifacts: artifacts,
-		substrateID: substrateID, hasSubstrate: hasSubstrate, requestVersion: request.RequestVersion,
-		attemptNumber: request.Lease.AttemptNumber,
+		requestVersion: request.RequestVersion,
+		attemptNumber:  request.Lease.AttemptNumber,
 	}, normalized, nil
 }
 
-func validateCheckpointReadyManifest(request api.WorkerCheckpointReadyRequest) ([]byte, []checkpointArtifactProof, uuid.UUID, bool, error) {
+func validateCheckpointReadyManifest(request api.WorkerCheckpointReadyRequest) ([]byte, []checkpointArtifactProof, error) {
 	return validateCheckpointManifest(
 		request.Manifest,
 		request.CheckpointID,
@@ -787,12 +781,12 @@ func validateCheckpointManifest(
 	attemptNumber int32,
 	runWaitID string,
 	runtimeIdentityID string,
-) ([]byte, []checkpointArtifactProof, uuid.UUID, bool, error) {
+) ([]byte, []checkpointArtifactProof, error) {
 	recovery := manifest.RecoveryPoint
 	if recovery.ID != checkpointID || recovery.RunID != runID ||
 		recovery.AttemptNumber != attemptNumber || recovery.RunWaitID != runWaitID ||
 		strings.TrimSpace(recovery.CorrelationID) == "" {
-		return nil, nil, uuid.Nil, false, errors.New("manifest recovery_point does not match checkpoint request")
+		return nil, nil, errors.New("manifest recovery_point does not match checkpoint request")
 	}
 	identity := recovery.Runtime
 	if identity.Backend != "firecracker" ||
@@ -802,7 +796,7 @@ func validateCheckpointManifest(
 		!taskWorkspaceDigestPattern.MatchString(identity.InitramfsDigest) ||
 		!taskWorkspaceDigestPattern.MatchString(identity.RootfsDigest) ||
 		!taskWorkspaceDigestPattern.MatchString(identity.ConfigDigest) {
-		return nil, nil, uuid.Nil, false, errors.New("manifest runtime identity is invalid")
+		return nil, nil, errors.New("manifest runtime identity is invalid")
 	}
 	proofs := []checkpointArtifactProof{
 		{role: db.RunCheckpointArtifactRoleRuntimeConfig, kind: db.ArtifactKindRunCheckpointConfig, artifact: manifest.RuntimeState.ConfigArtifact},
@@ -816,7 +810,7 @@ func validateCheckpointManifest(
 		})
 	}
 	if len(manifest.RuntimeState.MemoryArtifacts) == 0 {
-		return nil, nil, uuid.Nil, false, errors.New("manifest runtime_state.memory_artifacts is required")
+		return nil, nil, errors.New("manifest runtime_state.memory_artifacts is required")
 	}
 	expectedMedia := map[db.RunCheckpointArtifactRole]string{
 		db.RunCheckpointArtifactRoleRuntimeConfig: cas.CheckpointRuntimeConfigMediaType,
@@ -827,47 +821,36 @@ func validateCheckpointManifest(
 	for _, proof := range proofs {
 		if !taskWorkspaceDigestPattern.MatchString(proof.artifact.Digest) || proof.artifact.SizeBytes <= 0 ||
 			proof.artifact.MediaType != expectedMedia[proof.role] {
-			return nil, nil, uuid.Nil, false, fmt.Errorf("manifest checkpoint artifact %s/%d is invalid", proof.role, proof.ordinal)
+			return nil, nil, fmt.Errorf("manifest checkpoint artifact %s/%d is invalid", proof.role, proof.ordinal)
 		}
 	}
 	if len(manifest.RuntimeState.Config) == 0 || !json.Valid(manifest.RuntimeState.Config) {
-		return nil, nil, uuid.Nil, false, errors.New("manifest runtime_state.config must be valid JSON")
+		return nil, nil, errors.New("manifest runtime_state.config must be valid JSON")
 	}
-	var substrateID uuid.UUID
-	hasSubstrate := identity.Substrate != nil || manifest.RuntimeState.RuntimeSubstrate != nil
-	if hasSubstrate {
-		if identity.Substrate == nil || manifest.RuntimeState.RuntimeSubstrate == nil {
-			return nil, nil, uuid.Nil, false, errors.New("manifest runtime substrate proof is incomplete")
-		}
-		substrateID, _ = uuid.Parse(manifest.RuntimeState.RuntimeSubstrate.ID)
-		artifact := manifest.RuntimeState.RuntimeSubstrate.Artifact
-		if substrateID == uuid.Nil || substrateID.String() != manifest.RuntimeState.RuntimeSubstrate.ID ||
-			identity.Substrate.Digest != manifest.RuntimeState.RuntimeSubstrate.SubstrateDigest ||
-			identity.Substrate.Format != manifest.RuntimeState.RuntimeSubstrate.Format ||
-			identity.Substrate.BuilderABI != manifest.RuntimeState.RuntimeSubstrate.BuilderABI ||
-			identity.Substrate.LayoutABI != manifest.RuntimeState.RuntimeSubstrate.LayoutABI ||
-			!taskWorkspaceDigestPattern.MatchString(artifact.Digest) || artifact.SizeBytes <= 0 || strings.TrimSpace(artifact.MediaType) == "" {
-			return nil, nil, uuid.Nil, false, errors.New("manifest runtime substrate proof is invalid")
-		}
+	if identity.Substrate != nil &&
+		(!taskWorkspaceDigestPattern.MatchString(identity.Substrate.Digest) ||
+			strings.TrimSpace(identity.Substrate.Format) == "" ||
+			strings.TrimSpace(identity.Substrate.BuilderABI) == "" ||
+			strings.TrimSpace(identity.Substrate.LayoutABI) == "") {
+		return nil, nil, errors.New("manifest runtime substrate identity is invalid")
 	}
 	encoded, err := json.Marshal(manifest)
 	if err != nil {
-		return nil, nil, uuid.Nil, false, fmt.Errorf("encode checkpoint manifest: %w", err)
+		return nil, nil, fmt.Errorf("encode checkpoint manifest: %w", err)
 	}
 	encoded, err = canonicalJSON(encoded)
 	if err != nil || len(encoded) > 65536 {
 		if err == nil {
 			err = errors.New("checkpoint manifest exceeds 64 KiB")
 		}
-		return nil, nil, uuid.Nil, false, err
+		return nil, nil, err
 	}
-	return encoded, proofs, substrateID, hasSubstrate, nil
+	return encoded, proofs, nil
 }
 
 func (s *Server) verifyCheckpointRuntimeArtifacts(
 	ctx context.Context,
 	proofs []checkpointArtifactProof,
-	substrate *api.CASObject,
 ) error {
 	if s.cas == nil {
 		return errors.New("checkpoint CAS is not configured")
@@ -879,15 +862,6 @@ func (s *Server) verifyCheckpointRuntimeArtifacts(
 		}
 		if object.Digest != proof.artifact.Digest || object.SizeBytes != proof.artifact.SizeBytes || object.MediaType != proof.artifact.MediaType {
 			return fmt.Errorf("checkpoint artifact %s/%d does not match CAS authority", proof.role, proof.ordinal)
-		}
-	}
-	if substrate != nil {
-		object, err := s.cas.Stat(ctx, substrate.Digest)
-		if err != nil {
-			return fmt.Errorf("runtime substrate artifact is missing from CAS: %w", err)
-		}
-		if object.Digest != substrate.Digest || object.SizeBytes != substrate.SizeBytes || object.MediaType != substrate.MediaType {
-			return errors.New("runtime substrate artifact does not match CAS authority")
 		}
 	}
 	return nil
@@ -1024,8 +998,6 @@ func (s *Server) commitCheckpointReady(
 			work.q,
 			authority,
 			request.Manifest,
-			ready.substrateID,
-			ready.hasSubstrate,
 		); err != nil {
 			return err
 		}
@@ -1335,40 +1307,39 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 
 func validateCheckpointSubstrateAuthority(
 	ctx context.Context,
-	store db.Querier,
+	store interface {
+		GetRuntimeSubstrateForCheckpoint(context.Context, pgtype.UUID) (db.RuntimeSubstrate, error)
+	},
 	authority runLeaseClaimAuthority,
 	manifest api.WorkerCheckpointManifest,
-	substrateID uuid.UUID,
-	hasSubstrate bool,
 ) error {
+	identity := manifest.RecoveryPoint.Runtime.Substrate
 	if !authority.runtime.RuntimeSubstrateID.Valid {
-		if hasSubstrate {
+		if identity != nil {
 			return errStaleRunLeaseClaim
 		}
 		return nil
 	}
-	if !hasSubstrate || authority.runtime.RuntimeSubstrateID != pgvalue.UUID(substrateID) {
+	if identity == nil {
 		return errStaleRunLeaseClaim
 	}
-	row, err := store.GetRuntimeSubstrateForCheckpoint(ctx, authority.runtime.RuntimeSubstrateID)
-	proof := manifest.RuntimeState.RuntimeSubstrate
-	identity := manifest.RecoveryPoint.Runtime.Substrate
-	substrate := row.RuntimeSubstrate
-	if err != nil || proof == nil || identity == nil ||
-		substrate.ID != authority.runtime.RuntimeSubstrateID ||
-		substrate.OrgID != authority.run.OrgID || substrate.ProjectID != authority.run.ProjectID ||
+	substrate, err := store.GetRuntimeSubstrateForCheckpoint(
+		ctx,
+		authority.runtime.RuntimeSubstrateID,
+	)
+	if err != nil {
+		return staleRunLeaseClaim(err)
+	}
+	if substrate.ID != authority.runtime.RuntimeSubstrateID ||
+		substrate.OrgID != authority.run.OrgID ||
+		substrate.ProjectID != authority.run.ProjectID ||
 		substrate.EnvironmentID != authority.run.EnvironmentID ||
 		substrate.DeploymentDefinitionID != authority.runtime.DeploymentDefinitionID ||
-		proof.ID != pgvalue.UUIDString(substrate.ID) ||
-		proof.DeploymentDefinitionID != pgvalue.UUIDString(substrate.DeploymentDefinitionID) ||
-		proof.SubstrateDigest != substrate.SubstrateDigest || proof.SubstrateDigest != identity.Digest ||
-		proof.Format != substrate.SubstrateFormat || proof.Format != identity.Format ||
-		proof.BuilderABI != substrate.BuilderAbi || proof.BuilderABI != identity.BuilderABI ||
-		proof.LayoutABI != substrate.LayoutAbi || proof.LayoutABI != identity.LayoutABI ||
-		proof.SizeBytes != substrate.SubstrateSizeBytes ||
-		proof.Artifact.Digest != row.ArtifactDigest || proof.Artifact.SizeBytes != row.ArtifactSizeBytes ||
-		proof.Artifact.MediaType != row.ArtifactMediaType {
-		return staleRunLeaseClaim(err)
+		substrate.SubstrateDigest != identity.Digest ||
+		substrate.SubstrateFormat != identity.Format ||
+		substrate.BuilderAbi != identity.BuilderABI ||
+		substrate.LayoutAbi != identity.LayoutABI {
+		return errStaleRunLeaseClaim
 	}
 	return nil
 }

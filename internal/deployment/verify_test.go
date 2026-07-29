@@ -10,7 +10,6 @@ import (
 	"math"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
@@ -35,8 +34,8 @@ func TestProgramArtifactRejectsContractDivergence(t *testing.T) {
 		"program entry": func(program *testProgram) {
 			program.artifact.files["helmr/entry.mjs"] = []byte("process.exit(0)\n")
 		},
-		"Program receipt": func(program *testProgram) {
-			program.artifact.files["helmr/receipt.json"] = []byte("{}")
+		"reserved receipt path": func(program *testProgram) {
+			program.artifact.addFile("helmr/receipt.json", []byte("{}"), 0o644)
 		},
 		"unknown Platform-owned path": func(program *testProgram) {
 			program.artifact.addFile("helmr/modules.json", []byte("{}"), 0o644)
@@ -176,6 +175,10 @@ func newTestProgram(t *testing.T) *testProgram {
 			Digest: testDigest(string(configRaw)),
 			Path:   "helmr/config.json",
 		},
+		ConfigSource: ProgramBuildFile{
+			Digest: testDigest(string(configSourceRaw)),
+			Path:   "helmr.config.ts",
+		},
 		DiscoveryCandidates: []string{sourcePath},
 		Execution: ProgramBuildExecution{
 			NodeVersion:   "24.16.0",
@@ -187,6 +190,10 @@ func newTestProgram(t *testing.T) *testProgram {
 			Path:   sourcePath,
 		}},
 		LocalPackages: []ProgramBuildLocalPackage{},
+		Lockfile: ProgramBuildFile{
+			Digest: testDigest(string(lockfile)),
+			Path:   "bun.lock",
+		},
 		Outputs: []ProgramBuildOutput{{
 			ModuleDigest:    testDigest(string(moduleRaw)),
 			ModulePath:      modulePath,
@@ -207,110 +214,6 @@ func newTestProgram(t *testing.T) *testProgram {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifestHash := sha256.Sum256(manifestRaw)
-	receipt, err := NewProgramReceipt(
-		ProgramIndex{
-			Architecture:       ArchitectureX8664,
-			ConfigResultDigest: testDigest(string(configRaw)),
-			Declarations: []ProgramIndexDeclaration{{
-				Kind:       DefinitionKindTask,
-				DeclaredID: "build",
-				Task: &TaskManifest{
-					Payload: SchemaManifest{Kind: SchemaKindNone},
-					Run: RunManifest{
-						Queue:         "task/build",
-						MaxDurationMs: 900000,
-						Retry:         RetryManifest{Enabled: false},
-					},
-				},
-				Locator: &ProgramLocator{
-					ExportName: "build",
-					ModulePath: modulePath,
-					Slot:       DeclarationSlotHandler,
-				},
-			}},
-			FormatVersion:     ProgramIndexFormatVersion,
-			Queues:            []QueueInput{{Name: "task/build"}},
-			RuntimeAPIVersion: RuntimeAPIVersion,
-		},
-		BuildProvenance{
-			Architecture:         ArchitectureX8664,
-			BuildContractVersion: ProgramBuildContractVersion,
-			Config: ProgramConfig{
-				EvaluatorAPIVersion: ConfigEvaluatorAPIVersion,
-				SourceDigest:        testDigest(string(configSourceRaw)),
-				ResultDigest:        testDigest(string(configRaw)),
-			},
-			Manager: ProgramManager{
-				Digest:  testDigest("Manager"),
-				Name:    PackageManagerBun,
-				Version: "1.3.10",
-			},
-			RuntimeDigest:   testDigest("Runtime"),
-			ToolchainDigest: testDigest("Toolchain"),
-			Submitted: ProgramSubmittedSource{
-				LockfileDigest: testDigest(string(lockfile)),
-				LockfileName:   "bun.lock",
-				SourceDigest:   testDigest("Source"),
-			},
-		},
-		compiler,
-		"24.16.0",
-		ProgramBuildManifest{
-			AggregateResultDigest: testDigest("aggregate"),
-			Compiler: ProgramCompilerContract{
-				APIVersion:            compiler.APIVersion,
-				EsbuildVersion:        compiler.Esbuild.Version,
-				OptionsContractDigest: compiler.OptionsContractDigest,
-				Output:                compiler.Output,
-				Source:                compiler.Source,
-			},
-			Config: ProgramBuildFile{
-				Digest: testDigest(string(configRaw)),
-				Path:   "helmr/config.json",
-			},
-			DiscoveryCandidates: []string{sourcePath},
-			Execution: ProgramBuildExecution{
-				NodeVersion:   "24.16.0",
-				OptionsDigest: optionsDigest,
-			},
-			ExternalEdges: []ProgramBuildExternalEdge{},
-			Inputs: []ProgramBuildFile{{
-				Digest: testDigest(string(sourceRaw)),
-				Path:   sourcePath,
-			}},
-			LocalPackages: []ProgramBuildLocalPackage{},
-			Outputs: []ProgramBuildOutput{{
-				ModuleDigest:    testDigest(string(moduleRaw)),
-				ModulePath:      modulePath,
-				SourceMapDigest: testDigest(string(sourceMapRaw)),
-				SourceMapPath:   modulePath + ".map",
-				SourcePath:      sourcePath,
-			}},
-			ProgramIndexDigest: testDigest(string(programRaw)),
-			Selections: []ProgramBuildSelection{{
-				DeclaredID: "build",
-				ExportName: "build",
-				Kind:       DeclarationKindTask,
-				SourcePath: sourcePath,
-				Slot:       DeclarationSlotHandler,
-			}},
-			TSConfigs: []ProgramBuildFile{},
-		},
-		"sha256:"+hex.EncodeToString(manifestHash[:]),
-		ProgramReceiptSource{
-			Digest:    testDigest("Source"),
-			MediaType: api.DeploymentSourceArtifactMediaType,
-			SizeBytes: 1,
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	receiptRaw, err := CanonicalProgramReceipt(receipt)
-	if err != nil {
-		t.Fatal(err)
-	}
 	artifact := newMemoryArtifact()
 	artifact.addDirectory("helmr")
 	artifact.addDirectory("node_modules")
@@ -321,7 +224,6 @@ func newTestProgram(t *testing.T) *testProgram {
 	artifact.addFile("helmr/config.json", configRaw, 0644)
 	artifact.addFile("helmr/declarations.json", programRaw, 0644)
 	artifact.addFile("helmr/entry.mjs", []byte(ProgramEntry), 0644)
-	artifact.addFile("helmr/receipt.json", receiptRaw, 0644)
 	artifact.addFile(modulePath, moduleRaw, 0644)
 	artifact.addFile(modulePath+".map", sourceMapRaw, 0644)
 	artifact.addFile(sourcePath, sourceRaw, 0644)

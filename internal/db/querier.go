@@ -282,8 +282,7 @@ type Querier interface {
 	GetRunTelemetryFrontier(ctx context.Context, arg GetRunTelemetryFrontierParams) (GetRunTelemetryFrontierRow, error)
 	GetRunWait(ctx context.Context, arg GetRunWaitParams) (RunWait, error)
 	GetRuntimeIdentityForCheckpoint(ctx context.Context, id string) (RuntimeIdentity, error)
-	GetRuntimeSubstrateForCheckpoint(ctx context.Context, id pgtype.UUID) (GetRuntimeSubstrateForCheckpointRow, error)
-	GetRuntimeSubstrateForWorkspaceDefinition(ctx context.Context, arg GetRuntimeSubstrateForWorkspaceDefinitionParams) (GetRuntimeSubstrateForWorkspaceDefinitionRow, error)
+	GetRuntimeSubstrateForCheckpoint(ctx context.Context, id pgtype.UUID) (RuntimeSubstrate, error)
 	GetRuntimeSubstrateRegistration(ctx context.Context, arg GetRuntimeSubstrateRegistrationParams) (RuntimeSubstrate, error)
 	GetSameWorkspaceChildCallReplay(ctx context.Context, arg GetSameWorkspaceChildCallReplayParams) (RunWait, error)
 	GetSchedule(ctx context.Context, arg GetScheduleParams) (Schedule, error)
@@ -372,7 +371,6 @@ type Querier interface {
 	ListRunCheckpointArtifactAuthority(ctx context.Context, runCheckpointID pgtype.UUID) ([]ListRunCheckpointArtifactAuthorityRow, error)
 	ListRunCheckpointArtifacts(ctx context.Context, runCheckpointID pgtype.UUID) ([]RunCheckpointArtifact, error)
 	ListRunSnapshots(ctx context.Context, arg ListRunSnapshotsParams) ([]ListRunSnapshotsRow, error)
-	ListRuntimeSubstratePrepareTargets(ctx context.Context, arg ListRuntimeSubstratePrepareTargetsParams) ([]RuntimeInstance, error)
 	ListSameWorkspaceHandoffAncestorRuns(ctx context.Context, arg ListSameWorkspaceHandoffAncestorRunsParams) ([]ListSameWorkspaceHandoffAncestorRunsRow, error)
 	ListSchedules(ctx context.Context, arg ListSchedulesParams) ([]Schedule, error)
 	ListScopedDeployments(ctx context.Context, arg ListScopedDeploymentsParams) ([]Deployment, error)
@@ -595,7 +593,6 @@ type Querier interface {
 	UpsertAuthIdentity(ctx context.Context, arg UpsertAuthIdentityParams) (UpsertAuthIdentityRow, error)
 	UpsertCasObject(ctx context.Context, arg UpsertCasObjectParams) (CasObject, error)
 	UpsertMagicLinkAuthIdentity(ctx context.Context, arg UpsertMagicLinkAuthIdentityParams) (UpsertMagicLinkAuthIdentityRow, error)
-	UpsertRuntimeSubstrateBlob(ctx context.Context, arg UpsertRuntimeSubstrateBlobParams) (Artifact, error)
 }
 
 var _ Querier = (*Queries)(nil)

@@ -333,7 +333,6 @@ type WorkerRuntimeSource struct {
 	ReservedExecutionSlots int32                   `json:"reserved_execution_slots"`
 	RuntimeABI             string                  `json:"runtime_abi"`
 	Network                compute.NetworkPolicy   `json:"network"`
-	RuntimeSubstrate       *WorkerRuntimeSubstrate `json:"runtime_substrate,omitempty"`
 	Program                *WorkerRuntimeProgram   `json:"program,omitempty"`
 	Restore                *WorkerRuntimeRestore   `json:"restore,omitempty"`
 }
@@ -1062,59 +1061,36 @@ type WorkerManagerPin struct {
 }
 
 type WorkerWorkspace struct {
-	ID                string                        `json:"id,omitempty"`
-	WorkspaceMountID  string                        `json:"workspace_mount_id,omitempty"`
-	FencingGeneration int64                         `json:"fencing_generation,omitempty"`
-	WriteLeaseID      string                        `json:"write_lease_id,omitempty"`
-	WriteFencingToken string                        `json:"write_fencing_token,omitempty"`
-	BaseVersionID     string                        `json:"base_version_id,omitempty"`
-	MountPath         string                        `json:"mount_path,omitempty"`
-	Artifact          *WorkerWorkspaceArtifact      `json:"artifact,omitempty"`
-	SubstrateSource   *WorkerRuntimeSubstrateSource `json:"substrate_source,omitempty"`
-}
-
-type WorkerRuntimeSubstrateSource struct {
-	DeploymentDefinitionID string                  `json:"deployment_definition_id"`
-	WorkspaceImage         CASObject               `json:"workspace_image"`
-	RuntimeSubstrate       *WorkerRuntimeSubstrate `json:"runtime_substrate,omitempty"`
+	ID                string                   `json:"id,omitempty"`
+	WorkspaceMountID  string                   `json:"workspace_mount_id,omitempty"`
+	FencingGeneration int64                    `json:"fencing_generation,omitempty"`
+	WriteLeaseID      string                   `json:"write_lease_id,omitempty"`
+	WriteFencingToken string                   `json:"write_fencing_token,omitempty"`
+	BaseVersionID     string                   `json:"base_version_id,omitempty"`
+	MountPath         string                   `json:"mount_path,omitempty"`
+	Artifact          *WorkerWorkspaceArtifact `json:"artifact,omitempty"`
 }
 
 type WorkerRuntimeSubstrate struct {
-	ID                     string    `json:"id,omitempty"`
-	DeploymentDefinitionID string    `json:"deployment_definition_id"`
-	Artifact               CASObject `json:"artifact"`
-	SubstrateDigest        string    `json:"substrate_digest"`
-	Format                 string    `json:"format"`
-	BuilderABI             string    `json:"builder_abi"`
-	LayoutABI              string    `json:"layout_abi"`
-	SizeBytes              int64     `json:"size_bytes"`
-}
-
-type WorkerRuntimeSubstrateRegisterRequest struct {
-	ID                     string          `json:"id,omitempty"`
-	DeploymentDefinitionID string          `json:"deployment_definition_id"`
-	Artifact               CASObject       `json:"artifact"`
-	SubstrateDigest        string          `json:"substrate_digest"`
-	Format                 string          `json:"format"`
-	BuilderABI             string          `json:"builder_abi"`
-	LayoutABI              string          `json:"layout_abi"`
-	SizeBytes              int64           `json:"size_bytes"`
-	Source                 json.RawMessage `json:"source,omitempty"`
-}
-
-type WorkerRuntimeSubstrateRegisterResponse struct {
-	RuntimeSubstrate WorkerRuntimeSubstrate `json:"runtime_substrate"`
-}
-
-type WorkerRuntimeSubstrateLookupRequest struct {
+	ID                     string `json:"id,omitempty"`
 	DeploymentDefinitionID string `json:"deployment_definition_id"`
 	SubstrateDigest        string `json:"substrate_digest"`
 	Format                 string `json:"format"`
 	BuilderABI             string `json:"builder_abi"`
 	LayoutABI              string `json:"layout_abi"`
+	SizeBytes              int64  `json:"size_bytes"`
 }
 
-type WorkerRuntimeSubstrateLookupResponse struct {
+type WorkerRuntimeSubstrateRegisterRequest struct {
+	DeploymentDefinitionID string `json:"deployment_definition_id"`
+	SubstrateDigest        string `json:"substrate_digest"`
+	Format                 string `json:"format"`
+	BuilderABI             string `json:"builder_abi"`
+	LayoutABI              string `json:"layout_abi"`
+	SizeBytes              int64  `json:"size_bytes"`
+}
+
+type WorkerRuntimeSubstrateRegisterResponse struct {
 	RuntimeSubstrate WorkerRuntimeSubstrate `json:"runtime_substrate"`
 }
 
@@ -1383,7 +1359,6 @@ type WorkerCheckpointRuntimeState struct {
 	ConfigArtifact      WorkerCheckpointArtifact   `json:"config_artifact"`
 	VMStateArtifact     WorkerCheckpointArtifact   `json:"vm_state_artifact"`
 	ScratchDiskArtifact WorkerCheckpointArtifact   `json:"scratch_disk_artifact"`
-	RuntimeSubstrate    *WorkerRuntimeSubstrate    `json:"runtime_substrate,omitempty"`
 	MemoryArtifacts     []WorkerCheckpointArtifact `json:"memory_artifacts,omitempty"`
 	Config              json.RawMessage            `json:"config,omitempty"`
 }

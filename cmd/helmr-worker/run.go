@@ -427,7 +427,6 @@ func run(log *slog.Logger) error {
 		CheckpointEncryptor: checkpointEncryptor,
 		WorkspaceMounts:     workspaceMountSessions,
 		TempDir:             filepath.Join(workDir, "tmp"),
-		RuntimeSubstrates:   controlClient,
 	}
 	runner, err := workerdaemon.NewRunner(
 		controlClient,

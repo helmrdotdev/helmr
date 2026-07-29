@@ -73,14 +73,6 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 			return
 		}
 	}
-	if row.RuntimeSubstrateID.Valid {
-		source.RuntimeSubstrate = &api.WorkerRuntimeSubstrate{
-			ID: pgvalue.UUIDString(row.RuntimeSubstrateID), DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID),
-			Artifact:        api.CASObject{Digest: row.RuntimeSubstrateBlobDigest, SizeBytes: row.RuntimeSubstrateBlobSizeBytes, MediaType: row.RuntimeSubstrateBlobMediaType},
-			SubstrateDigest: row.SubstrateDigest.String, Format: row.SubstrateFormat.String,
-			BuilderABI: row.BuilderAbi.String, LayoutABI: row.LayoutAbi.String, SizeBytes: row.SubstrateSizeBytes.Int64,
-		}
-	}
 	target := api.WorkerRuntimeReconcileTarget{
 		ID: pgvalue.UUIDString(row.ID), WorkerEpoch: row.WorkerEpoch, NetworkSlotID: pgvalue.UUIDString(row.NetworkSlotID),
 		NetworkSlotGeneration: row.NetworkSlotGeneration, DesiredState: string(row.DesiredState), DesiredVersion: row.DesiredVersion,

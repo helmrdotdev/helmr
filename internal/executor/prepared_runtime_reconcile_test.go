@@ -398,10 +398,10 @@ func TestPreparedRuntimeBindsProgramIndexToDeploymentReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyProgramIndexReceipt(index, sha256sum.DigestBytes(canonical)); err != nil {
+	if err := verifyProgramIndexDigest(index, sha256sum.DigestBytes(canonical)); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyProgramIndexReceipt(
+	if err := verifyProgramIndexDigest(
 		index,
 		"sha256:"+strings.Repeat("b", 64),
 	); err == nil {

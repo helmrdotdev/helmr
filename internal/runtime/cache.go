@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -35,32 +34,6 @@ type cacheMetadata struct {
 	SizeBytes  int64         `json:"size_bytes"`
 	CreatedAt  time.Time     `json:"created_at"`
 	Identity   cacheIdentity `json:"identity"`
-}
-
-func (r *Resolver) LookupDigest(_ context.Context, digest string) (Result, error) {
-	cacheDir := strings.TrimSpace(r.CacheDir)
-	if cacheDir == "" {
-		return Result{}, errors.New("substrate cache dir is required")
-	}
-	digest = strings.TrimSpace(digest)
-	path, err := digestPath(cacheDir, digest)
-	if err != nil {
-		return Result{}, err
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return Result{}, err
-	}
-	if err := validateCachedDigestFile(path, digest, info.Size()); err != nil {
-		return Result{}, err
-	}
-	if err := localcache.Touch(path); err != nil {
-		return Result{}, err
-	}
-	return Result{
-		Path: path, Digest: digest, Format: Format,
-		BuilderABI: BuilderABI, LayoutABI: LayoutABI, SizeBytes: info.Size(),
-	}, nil
 }
 
 func readCachedResult(cacheDir string, key string, expected cacheIdentity) (Result, error) {

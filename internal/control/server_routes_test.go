@@ -196,7 +196,6 @@ POST /api/worker/runtime-instances/closed
 POST /api/worker/runtime-instances/failed
 POST /api/worker/runtime-instances/ready
 POST /api/worker/runtime-instances/reconcile
-POST /api/worker/runtime-substrates/lookup
 POST /api/worker/runtime-substrates/register
 POST /api/worker/startup-recovery
 POST /api/worker/workspaces/execs/claim

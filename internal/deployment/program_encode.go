@@ -28,7 +28,6 @@ func EncodeProgram(
 	workspaceImages []WorkspaceImage,
 	compiler CompilerInputs,
 	nodeVersion string,
-	source ProgramReceiptSource,
 ) (_ *EncodedProgram, returnErr error) {
 	if ctx == nil {
 		return nil, errors.New("Program encoding context is nil")
@@ -110,25 +109,26 @@ func EncodeProgram(
 	manifest := buildManifestFromCompilerResult(
 		compilerResult,
 		"sha256:"+hex.EncodeToString(indexHash[:]),
+		ProgramBuildFile{
+			Digest: provenance.Config.SourceDigest,
+			Path:   "helmr.config.ts",
+		},
+		ProgramBuildFile{
+			Digest: provenance.Submitted.LockfileDigest,
+			Path:   provenance.Submitted.LockfileName,
+		},
 	)
+	if err := verifyProgramBuildFile(
+		ctx,
+		tree.inspected,
+		manifest.ConfigSource,
+	); err != nil {
+		return nil, err
+	}
+	if err := verifyProgramBuildFile(ctx, tree.inspected, manifest.Lockfile); err != nil {
+		return nil, err
+	}
 	manifestRaw, err := canonicalProgramBuildManifest(manifest)
-	if err != nil {
-		return nil, err
-	}
-	manifestHash := sha256.Sum256(manifestRaw)
-	receipt, err := NewProgramReceipt(
-		index,
-		provenance,
-		compiler,
-		nodeVersion,
-		manifest,
-		"sha256:"+hex.EncodeToString(manifestHash[:]),
-		source,
-	)
-	if err != nil {
-		return nil, err
-	}
-	receiptRaw, err := CanonicalProgramReceipt(receipt)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +136,6 @@ func EncodeProgram(
 		"helmr/build-manifest.json": manifestRaw,
 		"helmr/declarations.json":   indexRaw,
 		"helmr/entry.mjs":           []byte(ProgramEntry),
-		"helmr/receipt.json":        receiptRaw,
 	}
 	artifact, err := encodeProgramTree(
 		ctx,
