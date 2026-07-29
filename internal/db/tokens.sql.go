@@ -13,7 +13,7 @@ import (
 
 const cancelToken = `-- name: CancelToken :one
 WITH target AS MATERIALIZED (
-    SELECT tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
+    SELECT tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
      FROM tokens
      WHERE tokens.org_id = $1
        AND tokens.project_id = $2
@@ -30,7 +30,7 @@ expired AS (
      WHERE tokens.id = target.id
        AND target.state = 'pending'
        AND target.expires_at <= transaction_timestamp()
-    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
+    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
 ),
 cancelled AS (
     UPDATE tokens
@@ -41,14 +41,14 @@ cancelled AS (
      WHERE tokens.id = target.id
        AND target.state = 'pending'
        AND target.expires_at > transaction_timestamp()
-    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
+    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
 ),
 selected_token AS (
-    SELECT cancelled.id, cancelled.public_id, cancelled.org_id, cancelled.project_id, cancelled.environment_id, cancelled.state, cancelled.expires_at, cancelled.callback_key_id, cancelled.callback_secret_fingerprint, cancelled.completion_fingerprint, cancelled.result, cancelled.error, cancelled.metadata, cancelled.tags, cancelled.created_at, cancelled.updated_at, cancelled.completed_at, cancelled.expired_at, cancelled.cancelled_at FROM cancelled
+    SELECT cancelled.id, cancelled.public_id, cancelled.org_id, cancelled.project_id, cancelled.environment_id, cancelled.state, cancelled.expires_at, cancelled.callback_secret_fingerprint, cancelled.completion_fingerprint, cancelled.result, cancelled.error, cancelled.metadata, cancelled.tags, cancelled.created_at, cancelled.updated_at, cancelled.completed_at, cancelled.expired_at, cancelled.cancelled_at FROM cancelled
     UNION ALL
-    SELECT expired.id, expired.public_id, expired.org_id, expired.project_id, expired.environment_id, expired.state, expired.expires_at, expired.callback_key_id, expired.callback_secret_fingerprint, expired.completion_fingerprint, expired.result, expired.error, expired.metadata, expired.tags, expired.created_at, expired.updated_at, expired.completed_at, expired.expired_at, expired.cancelled_at FROM expired
+    SELECT expired.id, expired.public_id, expired.org_id, expired.project_id, expired.environment_id, expired.state, expired.expires_at, expired.callback_secret_fingerprint, expired.completion_fingerprint, expired.result, expired.error, expired.metadata, expired.tags, expired.created_at, expired.updated_at, expired.completed_at, expired.expired_at, expired.cancelled_at FROM expired
     UNION ALL
-    SELECT target.id, target.public_id, target.org_id, target.project_id, target.environment_id, target.state, target.expires_at, target.callback_key_id, target.callback_secret_fingerprint, target.completion_fingerprint, target.result, target.error, target.metadata, target.tags, target.created_at, target.updated_at, target.completed_at, target.expired_at, target.cancelled_at
+    SELECT target.id, target.public_id, target.org_id, target.project_id, target.environment_id, target.state, target.expires_at, target.callback_secret_fingerprint, target.completion_fingerprint, target.result, target.error, target.metadata, target.tags, target.created_at, target.updated_at, target.completed_at, target.expired_at, target.cancelled_at
       FROM target
      WHERE NOT EXISTS (SELECT 1 FROM cancelled)
        AND NOT EXISTS (SELECT 1 FROM expired)
@@ -79,7 +79,7 @@ reconciliation_intent AS (
       FROM changed
     RETURNING id
 )
-SELECT selected_token.id, selected_token.public_id, selected_token.org_id, selected_token.project_id, selected_token.environment_id, selected_token.state, selected_token.expires_at, selected_token.callback_key_id, selected_token.callback_secret_fingerprint, selected_token.completion_fingerprint, selected_token.result, selected_token.error, selected_token.metadata, selected_token.tags, selected_token.created_at, selected_token.updated_at, selected_token.completed_at, selected_token.expired_at, selected_token.cancelled_at,
+SELECT selected_token.id, selected_token.public_id, selected_token.org_id, selected_token.project_id, selected_token.environment_id, selected_token.state, selected_token.expires_at, selected_token.callback_secret_fingerprint, selected_token.completion_fingerprint, selected_token.result, selected_token.error, selected_token.metadata, selected_token.tags, selected_token.created_at, selected_token.updated_at, selected_token.completed_at, selected_token.expired_at, selected_token.cancelled_at,
        (
            selected_token.state = 'cancelled'
            AND NOT EXISTS (SELECT 1 FROM cancelled)
@@ -106,7 +106,6 @@ type CancelTokenRow struct {
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
 	State                     string             `json:"state"`
 	ExpiresAt                 pgtype.Timestamptz `json:"expires_at"`
-	CallbackKeyID             string             `json:"callback_key_id"`
 	CallbackSecretFingerprint []byte             `json:"callback_secret_fingerprint"`
 	CompletionFingerprint     []byte             `json:"completion_fingerprint"`
 	Result                    []byte             `json:"result"`
@@ -141,7 +140,6 @@ func (q *Queries) CancelToken(ctx context.Context, arg CancelTokenParams) (Cance
 		&i.EnvironmentID,
 		&i.State,
 		&i.ExpiresAt,
-		&i.CallbackKeyID,
 		&i.CallbackSecretFingerprint,
 		&i.CompletionFingerprint,
 		&i.Result,
@@ -163,7 +161,7 @@ func (q *Queries) CancelToken(ctx context.Context, arg CancelTokenParams) (Cance
 
 const completeToken = `-- name: CompleteToken :one
 WITH target AS MATERIALIZED (
-    SELECT tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
+    SELECT tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
      FROM tokens
      WHERE tokens.org_id = $2
        AND tokens.project_id = $3
@@ -180,7 +178,7 @@ expired AS (
      WHERE tokens.id = target.id
        AND target.state = 'pending'
        AND target.expires_at <= transaction_timestamp()
-    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
+    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
 ),
 completed AS (
     UPDATE tokens
@@ -194,14 +192,14 @@ completed AS (
      WHERE tokens.id = target.id
        AND target.state = 'pending'
        AND target.expires_at > transaction_timestamp()
-    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
+    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
 ),
 selected_token AS (
-    SELECT completed.id, completed.public_id, completed.org_id, completed.project_id, completed.environment_id, completed.state, completed.expires_at, completed.callback_key_id, completed.callback_secret_fingerprint, completed.completion_fingerprint, completed.result, completed.error, completed.metadata, completed.tags, completed.created_at, completed.updated_at, completed.completed_at, completed.expired_at, completed.cancelled_at FROM completed
+    SELECT completed.id, completed.public_id, completed.org_id, completed.project_id, completed.environment_id, completed.state, completed.expires_at, completed.callback_secret_fingerprint, completed.completion_fingerprint, completed.result, completed.error, completed.metadata, completed.tags, completed.created_at, completed.updated_at, completed.completed_at, completed.expired_at, completed.cancelled_at FROM completed
     UNION ALL
-    SELECT expired.id, expired.public_id, expired.org_id, expired.project_id, expired.environment_id, expired.state, expired.expires_at, expired.callback_key_id, expired.callback_secret_fingerprint, expired.completion_fingerprint, expired.result, expired.error, expired.metadata, expired.tags, expired.created_at, expired.updated_at, expired.completed_at, expired.expired_at, expired.cancelled_at FROM expired
+    SELECT expired.id, expired.public_id, expired.org_id, expired.project_id, expired.environment_id, expired.state, expired.expires_at, expired.callback_secret_fingerprint, expired.completion_fingerprint, expired.result, expired.error, expired.metadata, expired.tags, expired.created_at, expired.updated_at, expired.completed_at, expired.expired_at, expired.cancelled_at FROM expired
     UNION ALL
-    SELECT target.id, target.public_id, target.org_id, target.project_id, target.environment_id, target.state, target.expires_at, target.callback_key_id, target.callback_secret_fingerprint, target.completion_fingerprint, target.result, target.error, target.metadata, target.tags, target.created_at, target.updated_at, target.completed_at, target.expired_at, target.cancelled_at
+    SELECT target.id, target.public_id, target.org_id, target.project_id, target.environment_id, target.state, target.expires_at, target.callback_secret_fingerprint, target.completion_fingerprint, target.result, target.error, target.metadata, target.tags, target.created_at, target.updated_at, target.completed_at, target.expired_at, target.cancelled_at
       FROM target
      WHERE NOT EXISTS (SELECT 1 FROM completed)
        AND NOT EXISTS (SELECT 1 FROM expired)
@@ -232,7 +230,7 @@ reconciliation_intent AS (
       FROM changed
     RETURNING id
 )
-SELECT selected_token.id, selected_token.public_id, selected_token.org_id, selected_token.project_id, selected_token.environment_id, selected_token.state, selected_token.expires_at, selected_token.callback_key_id, selected_token.callback_secret_fingerprint, selected_token.completion_fingerprint, selected_token.result, selected_token.error, selected_token.metadata, selected_token.tags, selected_token.created_at, selected_token.updated_at, selected_token.completed_at, selected_token.expired_at, selected_token.cancelled_at,
+SELECT selected_token.id, selected_token.public_id, selected_token.org_id, selected_token.project_id, selected_token.environment_id, selected_token.state, selected_token.expires_at, selected_token.callback_secret_fingerprint, selected_token.completion_fingerprint, selected_token.result, selected_token.error, selected_token.metadata, selected_token.tags, selected_token.created_at, selected_token.updated_at, selected_token.completed_at, selected_token.expired_at, selected_token.cancelled_at,
        (
            selected_token.state = 'completed'
            AND selected_token.completion_fingerprint = $1::bytea
@@ -267,7 +265,6 @@ type CompleteTokenRow struct {
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
 	State                     string             `json:"state"`
 	ExpiresAt                 pgtype.Timestamptz `json:"expires_at"`
-	CallbackKeyID             string             `json:"callback_key_id"`
 	CallbackSecretFingerprint []byte             `json:"callback_secret_fingerprint"`
 	CompletionFingerprint     []byte             `json:"completion_fingerprint"`
 	Result                    []byte             `json:"result"`
@@ -305,7 +302,6 @@ func (q *Queries) CompleteToken(ctx context.Context, arg CompleteTokenParams) (C
 		&i.EnvironmentID,
 		&i.State,
 		&i.ExpiresAt,
-		&i.CallbackKeyID,
 		&i.CallbackSecretFingerprint,
 		&i.CompletionFingerprint,
 		&i.Result,
@@ -334,7 +330,6 @@ INSERT INTO tokens (
     project_id,
     environment_id,
     expires_at,
-    callback_key_id,
     callback_secret_fingerprint,
     metadata,
     tags
@@ -347,11 +342,10 @@ VALUES (
     $5,
     $6::timestamptz,
     $7,
-    $8,
-    COALESCE($9::jsonb, '{}'::jsonb),
-    COALESCE($10::text[], '{}'::text[])
+    COALESCE($8::jsonb, '{}'::jsonb),
+    COALESCE($9::text[], '{}'::text[])
 )
-RETURNING id, public_id, org_id, project_id, environment_id, state, expires_at, callback_key_id, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
+RETURNING id, public_id, org_id, project_id, environment_id, state, expires_at, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
 `
 
 type CreateTokenParams struct {
@@ -361,7 +355,6 @@ type CreateTokenParams struct {
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
 	ExpiresAt                 pgtype.Timestamptz `json:"expires_at"`
-	CallbackKeyID             string             `json:"callback_key_id"`
 	CallbackSecretFingerprint []byte             `json:"callback_secret_fingerprint"`
 	Metadata                  []byte             `json:"metadata"`
 	Tags                      []string           `json:"tags"`
@@ -375,7 +368,6 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (Token
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ExpiresAt,
-		arg.CallbackKeyID,
 		arg.CallbackSecretFingerprint,
 		arg.Metadata,
 		arg.Tags,
@@ -389,7 +381,6 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (Token
 		&i.EnvironmentID,
 		&i.State,
 		&i.ExpiresAt,
-		&i.CallbackKeyID,
 		&i.CallbackSecretFingerprint,
 		&i.CompletionFingerprint,
 		&i.Result,
@@ -430,7 +421,7 @@ expired AS (
        AND tokens.state = 'pending'
        AND cardinality($1::uuid[])
            >= (SELECT count(*) FROM candidates)
-    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
+    RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.expires_at, tokens.callback_secret_fingerprint, tokens.completion_fingerprint, tokens.result, tokens.error, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
 ),
 ordered_expired AS MATERIALIZED (
     SELECT expired.id,
@@ -460,7 +451,7 @@ reconciliation_intents AS (
       JOIN provided_outbox_ids USING (ordinality)
     RETURNING partition_key
 )
-SELECT expired.id, expired.public_id, expired.org_id, expired.project_id, expired.environment_id, expired.state, expired.expires_at, expired.callback_key_id, expired.callback_secret_fingerprint, expired.completion_fingerprint, expired.result, expired.error, expired.metadata, expired.tags, expired.created_at, expired.updated_at, expired.completed_at, expired.expired_at, expired.cancelled_at
+SELECT expired.id, expired.public_id, expired.org_id, expired.project_id, expired.environment_id, expired.state, expired.expires_at, expired.callback_secret_fingerprint, expired.completion_fingerprint, expired.result, expired.error, expired.metadata, expired.tags, expired.created_at, expired.updated_at, expired.completed_at, expired.expired_at, expired.cancelled_at
   FROM expired
   JOIN reconciliation_intents
     ON reconciliation_intents.partition_key = expired.id::text
@@ -480,7 +471,6 @@ type ExpireDueTokensRow struct {
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
 	State                     string             `json:"state"`
 	ExpiresAt                 pgtype.Timestamptz `json:"expires_at"`
-	CallbackKeyID             string             `json:"callback_key_id"`
 	CallbackSecretFingerprint []byte             `json:"callback_secret_fingerprint"`
 	CompletionFingerprint     []byte             `json:"completion_fingerprint"`
 	Result                    []byte             `json:"result"`
@@ -511,7 +501,6 @@ func (q *Queries) ExpireDueTokens(ctx context.Context, arg ExpireDueTokensParams
 			&i.EnvironmentID,
 			&i.State,
 			&i.ExpiresAt,
-			&i.CallbackKeyID,
 			&i.CallbackSecretFingerprint,
 			&i.CompletionFingerprint,
 			&i.Result,
@@ -535,7 +524,7 @@ func (q *Queries) ExpireDueTokens(ctx context.Context, arg ExpireDueTokensParams
 }
 
 const getToken = `-- name: GetToken :one
-SELECT id, public_id, org_id, project_id, environment_id, state, expires_at, callback_key_id, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
+SELECT id, public_id, org_id, project_id, environment_id, state, expires_at, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
  FROM tokens
  WHERE org_id = $1
    AND project_id = $2
@@ -566,7 +555,6 @@ func (q *Queries) GetToken(ctx context.Context, arg GetTokenParams) (Token, erro
 		&i.EnvironmentID,
 		&i.State,
 		&i.ExpiresAt,
-		&i.CallbackKeyID,
 		&i.CallbackSecretFingerprint,
 		&i.CompletionFingerprint,
 		&i.Result,
@@ -583,7 +571,7 @@ func (q *Queries) GetToken(ctx context.Context, arg GetTokenParams) (Token, erro
 }
 
 const getTokenByID = `-- name: GetTokenByID :one
-SELECT id, public_id, org_id, project_id, environment_id, state, expires_at, callback_key_id, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
+SELECT id, public_id, org_id, project_id, environment_id, state, expires_at, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
   FROM tokens
  WHERE id = $1
 `
@@ -599,7 +587,6 @@ func (q *Queries) GetTokenByID(ctx context.Context, id pgtype.UUID) (Token, erro
 		&i.EnvironmentID,
 		&i.State,
 		&i.ExpiresAt,
-		&i.CallbackKeyID,
 		&i.CallbackSecretFingerprint,
 		&i.CompletionFingerprint,
 		&i.Result,
@@ -616,7 +603,7 @@ func (q *Queries) GetTokenByID(ctx context.Context, id pgtype.UUID) (Token, erro
 }
 
 const getTokenByPublicID = `-- name: GetTokenByPublicID :one
-SELECT id, public_id, org_id, project_id, environment_id, state, expires_at, callback_key_id, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
+SELECT id, public_id, org_id, project_id, environment_id, state, expires_at, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
   FROM tokens
  WHERE public_id = $1
 `
@@ -632,7 +619,6 @@ func (q *Queries) GetTokenByPublicID(ctx context.Context, publicID string) (Toke
 		&i.EnvironmentID,
 		&i.State,
 		&i.ExpiresAt,
-		&i.CallbackKeyID,
 		&i.CallbackSecretFingerprint,
 		&i.CompletionFingerprint,
 		&i.Result,
@@ -660,7 +646,7 @@ func (q *Queries) GetTokenCreateTime(ctx context.Context) (pgtype.Timestamptz, e
 }
 
 const getTokenForCallbackCompletion = `-- name: GetTokenForCallbackCompletion :one
-SELECT id, public_id, org_id, project_id, environment_id, state, expires_at, callback_key_id, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
+SELECT id, public_id, org_id, project_id, environment_id, state, expires_at, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
  FROM tokens
  WHERE public_id = $1
    AND callback_secret_fingerprint = $2
@@ -683,7 +669,6 @@ func (q *Queries) GetTokenForCallbackCompletion(ctx context.Context, arg GetToke
 		&i.EnvironmentID,
 		&i.State,
 		&i.ExpiresAt,
-		&i.CallbackKeyID,
 		&i.CallbackSecretFingerprint,
 		&i.CompletionFingerprint,
 		&i.Result,
@@ -708,7 +693,7 @@ WITH cursor_token AS (
        AND environment_id = $3
        AND id = $5::uuid
 )
-SELECT id, public_id, org_id, project_id, environment_id, state, expires_at, callback_key_id, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
+SELECT id, public_id, org_id, project_id, environment_id, state, expires_at, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
  FROM tokens
  WHERE tokens.org_id = $1
    AND tokens.project_id = $2
@@ -758,7 +743,6 @@ func (q *Queries) ListTokens(ctx context.Context, arg ListTokensParams) ([]Token
 			&i.EnvironmentID,
 			&i.State,
 			&i.ExpiresAt,
-			&i.CallbackKeyID,
 			&i.CallbackSecretFingerprint,
 			&i.CompletionFingerprint,
 			&i.Result,

@@ -83,7 +83,7 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 		projection,
 		s.platformStore,
 		s.secretDelivery,
-		s.workspaceFencingKeys,
+		s.workspaceFencingKey,
 	)
 	if err != nil {
 		s.writeRunLeaseClaimFailure(w, authority, err)

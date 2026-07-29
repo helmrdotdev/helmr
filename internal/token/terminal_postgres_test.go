@@ -88,10 +88,9 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 		publicAccessTokenID := uuid.Must(uuid.NewV7())
 		mustRunLeaseExec(t, ctx, fixture.pool, `
 			INSERT INTO public_access_tokens (
-			    id, public_id, token_id, token_hash, credential_key_id,
-			    created_at, updated_at, expires_at
+			    id, public_id, token_id, token_hash, created_at, updated_at, expires_at
 			) VALUES (
-			    $1, $2, $3, $4, 'test-key',
+			    $1, $2, $3, $4,
 			    $5::timestamptz - interval '1 hour',
 			    $5::timestamptz - interval '1 hour',
 			    $5::timestamptz
@@ -186,8 +185,8 @@ func createTokenTerminalTestToken(t *testing.T, ctx context.Context, fixture run
 		ID: pgvalue.UUID(id), PublicID: runLeasePublicID(t, publicid.Token),
 		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ExpiresAt: pgvalue.Timestamptz(insertExpiry),
-		CallbackKeyID: "test-key", CallbackSecretFingerprint: bytes.Repeat([]byte{1}, 32),
-		Metadata: []byte(`{}`), Tags: []string{},
+		CallbackSecretFingerprint: bytes.Repeat([]byte{1}, 32),
+		Metadata:                  []byte(`{}`), Tags: []string{},
 	})
 	if err != nil {
 		t.Fatal(err)

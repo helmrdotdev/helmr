@@ -45,10 +45,12 @@ const (
 	defaultAddr                = ":8080"
 	defaultPublicURL           = "http://127.0.0.1:3000"
 	defaultRedisURL            = "redis://127.0.0.1:6379/0"
-	defaultAuthSecret          = "helmr-dev-auth-secret-32-byte-value"
+	defaultAuthKey             = "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ="
 	defaultSetupToken          = "dev-setup-token"
-	defaultWorkerTokenSecret   = "helmr-dev-worker-token-secret-32"
+	defaultWorkerTokenKey      = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
 	defaultSecretEncryptionKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	defaultWorkspaceFencingKey = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="
+	defaultTokenCredentialKey  = "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM="
 	defaultUserID              = "00000000-0000-0000-0000-000000000101"
 )
 
@@ -201,12 +203,14 @@ func main() {
 		log.Error("configure secret store", "error", err)
 		os.Exit(1)
 	}
-	workspaceFencingKeys, err := workspace.FencingKeysFromBase64JSON(
-		cfg.workspaceFencingKeyFingerprint,
-		cfg.workspaceFencingKeys,
-	)
+	workspaceFencingKey, err := workspace.NewFencingKey(cfg.workspaceFencingKey)
 	if err != nil {
-		log.Error("configure Workspace fencing keys", "error", err)
+		log.Error("configure Workspace fencing key", "error", err)
+		os.Exit(1)
+	}
+	tokenCredentialKey, err := token.NewCredentialKey(cfg.tokenCredentialKey)
+	if err != nil {
+		log.Error("configure Token credential key", "error", err)
 		os.Exit(1)
 	}
 	publicURL, err := url.Parse(cfg.publicURL)
@@ -215,27 +219,28 @@ func main() {
 		os.Exit(1)
 	}
 	app, err := control.NewServer(control.ServerConfig{
-		Log:                  log,
-		DeploymentMode:       cfg.deploymentMode,
-		DB:                   queries,
-		TX:                   pool,
-		ReadinessDB:          pool,
-		Auth:                 auth.NewDBAuthenticator(queries),
-		CAS:                  casStore,
-		BuildPolicy:          buildPolicy,
-		Secrets:              secretStore,
-		SecretDelivery:       secretStore,
-		WorkspaceFencingKeys: workspaceFencingKeys,
-		WorkerTokenSecret:    []byte(cfg.workerTokenSecret),
-		WorkerEnrollment:     devWorkerEnrollmentVerifier{verifier: workerEnrollment},
-		SetupToken:           cfg.setupToken,
-		AuthSecret:           []byte(cfg.authSecret),
-		PublicURL:            publicURL,
-		WorkerGroupID:        cfg.workerGroupID,
-		RegionID:             cfg.regionID,
-		DefaultRegionID:      cfg.defaultRegionID,
-		EventStream:          eventStream,
-		TelemetryReader:      telemetryReader,
+		Log:                   log,
+		DeploymentMode:        cfg.deploymentMode,
+		DB:                    queries,
+		TX:                    pool,
+		ReadinessDB:           pool,
+		Auth:                  auth.NewDBAuthenticator(queries),
+		CAS:                   casStore,
+		BuildPolicy:           buildPolicy,
+		Secrets:               secretStore,
+		SecretDelivery:        secretStore,
+		WorkspaceFencingKey:   workspaceFencingKey,
+		TokenCredentialKey:    tokenCredentialKey,
+		WorkerTokenSigningKey: cfg.workerTokenKey,
+		WorkerEnrollment:      devWorkerEnrollmentVerifier{verifier: workerEnrollment},
+		SetupToken:            cfg.setupToken,
+		AuthKey:               cfg.authKey,
+		PublicURL:             publicURL,
+		WorkerGroupID:         cfg.workerGroupID,
+		RegionID:              cfg.regionID,
+		DefaultRegionID:       cfg.defaultRegionID,
+		EventStream:           eventStream,
+		TelemetryReader:       telemetryReader,
 	})
 	if err != nil {
 		log.Error("configure control server", "error", err)
@@ -270,31 +275,31 @@ func main() {
 }
 
 type devConfig struct {
-	addr                           string
-	deploymentMode                 string
-	databaseURL                    string
-	regionID                       string
-	defaultRegionID                string
-	provider                       string
-	providerRegion                 string
-	regionDisplayName              string
-	workerGroupID                  string
-	workerGroups                   []enrollment.AWSGroupBoundary
-	clickHouseURL                  string
-	clickHouseUser                 string
-	clickHousePassword             string
-	redisURL                       string
-	casDir                         string
-	buildPolicyPath                string
-	publicURL                      string
-	authSecret                     string
-	setupToken                     string
-	workerTokenSecret              string
-	encryptionKey                  []byte
-	workspaceFencingKeyFingerprint string
-	workspaceFencingKeys           string
-	resetDatabase                  bool
-	seedData                       bool
+	addr                string
+	deploymentMode      string
+	databaseURL         string
+	regionID            string
+	defaultRegionID     string
+	provider            string
+	providerRegion      string
+	regionDisplayName   string
+	workerGroupID       string
+	workerGroups        []enrollment.AWSGroupBoundary
+	clickHouseURL       string
+	clickHouseUser      string
+	clickHousePassword  string
+	redisURL            string
+	casDir              string
+	buildPolicyPath     string
+	publicURL           string
+	authKey             []byte
+	setupToken          string
+	workerTokenKey      []byte
+	encryptionKey       []byte
+	workspaceFencingKey []byte
+	tokenCredentialKey  []byte
+	resetDatabase       bool
+	seedData            bool
 }
 
 type devWorkerEnrollmentVerifier struct {
@@ -331,32 +336,27 @@ func loadConfig() (devConfig, error) {
 		casDir:             env("HELMR_DEV_CAS_DIR", filepath.Join(os.TempDir(), "helmr-dev-cas")),
 		buildPolicyPath:    strings.TrimSpace(os.Getenv("HELMR_BUILD_POLICY_PATH")),
 		publicURL:          env("HELMR_PUBLIC_URL", defaultPublicURL),
-		authSecret:         env("HELMR_AUTH_SECRET", defaultAuthSecret),
 		setupToken:         env("HELMR_SETUP_TOKEN", defaultSetupToken),
-		workerTokenSecret:  env("HELMR_WORKER_TOKEN_SIGNING_KEY", defaultWorkerTokenSecret),
-		workspaceFencingKeyFingerprint: env(
-			"HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT",
-			"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26",
-		),
-		workspaceFencingKeys: env(
-			"HELMR_WORKSPACE_FENCING_KEYS",
-			`{"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}`,
-		),
-		resetDatabase: envBool("HELMR_DEV_RESET_DATABASE"),
-		seedData:      envBoolDefault("HELMR_DEV_SEED_DATA", true),
+		resetDatabase:      envBool("HELMR_DEV_RESET_DATABASE"),
+		seedData:           envBoolDefault("HELMR_DEV_SEED_DATA", true),
 	}
-	encodedEncryptionKey := env("ENCRYPTION_KEY", defaultSecretEncryptionKey)
-	encryptionKey, err := base64.StdEncoding.DecodeString(encodedEncryptionKey)
-	if err != nil {
-		return cfg, fmt.Errorf("ENCRYPTION_KEY must be base64: %w", err)
+	var err error
+	for _, key := range []struct {
+		name     string
+		fallback string
+		target   *[]byte
+	}{
+		{name: "AUTH_KEY", fallback: defaultAuthKey, target: &cfg.authKey},
+		{name: "WORKER_TOKEN_SIGNING_KEY", fallback: defaultWorkerTokenKey, target: &cfg.workerTokenKey},
+		{name: "ENCRYPTION_KEY", fallback: defaultSecretEncryptionKey, target: &cfg.encryptionKey},
+		{name: "WORKSPACE_FENCING_KEY", fallback: defaultWorkspaceFencingKey, target: &cfg.workspaceFencingKey},
+		{name: "TOKEN_CREDENTIAL_KEY", fallback: defaultTokenCredentialKey, target: &cfg.tokenCredentialKey},
+	} {
+		*key.target, err = decodeRootKey(key.name, env(key.name, key.fallback))
+		if err != nil {
+			return cfg, err
+		}
 	}
-	if len(encryptionKey) != 32 {
-		return cfg, fmt.Errorf(
-			"ENCRYPTION_KEY must decode to exactly 32 bytes, got %d",
-			len(encryptionKey),
-		)
-	}
-	cfg.encryptionKey = encryptionKey
 	if cfg.databaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")
 	}
@@ -399,13 +399,22 @@ func loadConfig() (devConfig, error) {
 	if cfg.clickHouseURL == "" {
 		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")
 	}
-	if err := auth.ValidateTokenSecret([]byte(cfg.authSecret)); err != nil {
-		return cfg, err
-	}
-	if err := auth.ValidateWorkerTokenSecret([]byte(cfg.workerTokenSecret)); err != nil {
-		return cfg, err
-	}
 	return cfg, nil
+}
+
+func decodeRootKey(name, encoded string) ([]byte, error) {
+	encoded = strings.TrimSpace(encoded)
+	key, err := base64.StdEncoding.Strict().DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be base64: %w", name, err)
+	}
+	if len(key) != 32 {
+		return nil, fmt.Errorf("%s must decode to exactly 32 bytes, got %d", name, len(key))
+	}
+	if base64.StdEncoding.EncodeToString(key) != encoded {
+		return nil, fmt.Errorf("%s must use canonical base64", name)
+	}
+	return key, nil
 }
 
 func env(name string, fallback string) string {
@@ -508,7 +517,12 @@ ON CONFLICT (id) DO UPDATE
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	hash, err := auth.HashToken([]byte(cfg.authSecret), raw)
+	authKeys, err := auth.NewKeys(cfg.authKey)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	hash, err := auth.HashToken(authKeys.Session, raw)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

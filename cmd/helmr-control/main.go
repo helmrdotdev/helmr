@@ -175,19 +175,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}
-	workspaceFencingKeys, err := workspace.FencingKeysFromBase64JSON(
-		cfg.WorkspaceFencingKeyFingerprint,
-		cfg.WorkspaceFencingKeys,
-	)
+	workspaceFencingKey, err := workspace.NewFencingKey(cfg.WorkspaceFencingKey)
 	if err != nil {
-		return fmt.Errorf("configure Workspace fencing keys: %w", err)
+		return fmt.Errorf("configure Workspace fencing key: %w", err)
 	}
-	tokenCredentialKeys, err := token.CredentialKeysFromBase64JSON(
-		cfg.TokenCredentialKeyID,
-		cfg.TokenCredentialKeys,
-	)
+	tokenCredentialKey, err := token.NewCredentialKey(cfg.TokenCredentialKey)
 	if err != nil {
-		return fmt.Errorf("configure Token credential keys: %w", err)
+		return fmt.Errorf("configure Token credential key: %w", err)
 	}
 	casStore, err := cas.NewS3(ctx, cfg.CASURI)
 	if err != nil {
@@ -224,18 +218,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 		PlatformArtifactLocks: platformArtifactLocks,
 		Secrets:               secretStore,
 		SecretDelivery:        secretStore,
-		WorkspaceFencingKeys:  workspaceFencingKeys,
-		TokenCredentialKeys:   tokenCredentialKeys,
+		WorkspaceFencingKey:   workspaceFencingKey,
+		TokenCredentialKey:    tokenCredentialKey,
 		EventStream:           eventStream,
 		TelemetryReader:       telemetryReader,
 		Mailer:                mailer,
 		AuthProvider:          authProvider,
-		WorkerTokenSecret:     []byte(cfg.WorkerTokenSigningKey),
+		WorkerTokenSigningKey: cfg.WorkerTokenSigningKey,
 		RunLeaseTTL:           cfg.RunLeaseTTL,
 		RunFinalizationTTL:    cfg.RunFinalizationTTL,
 		WorkerEnrollment:      workerEnrollment,
 		SetupToken:            cfg.SetupToken,
-		AuthSecret:            []byte(cfg.AuthSecret),
+		AuthKey:               cfg.AuthKey,
 		PublicURL:             publicURL,
 		MagicLinkDebugURLs:    cfg.MagicLinkDebugURLs,
 		BackgroundContext:     backgroundCtx,

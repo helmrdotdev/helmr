@@ -217,7 +217,7 @@ func (s *Server) sessionActorFromToken(r *http.Request, rawSession string) (auth
 	if err := s.userAuthConfigured(); err != nil {
 		return auth.Actor{}, err
 	}
-	tokenHash, err := auth.HashToken(s.authSecret, rawSession)
+	tokenHash, err := auth.HashToken(s.authKeys.Session, rawSession)
 	if err != nil {
 		return auth.Actor{}, err
 	}
@@ -285,7 +285,7 @@ const (
 
 func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.db == nil || len(s.workerTokenSecret) == 0 {
+		if s.db == nil || len(s.workerTokenSigningKey) == 0 {
 			writeError(w, unavailable(errors.New("worker authentication is not configured")))
 			return
 		}
@@ -294,7 +294,7 @@ func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) ht
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
-		payload, err := auth.VerifyWorkerToken(s.workerTokenSecret, token, time.Now())
+		payload, err := auth.VerifyWorkerToken(s.workerTokenSigningKey, token, time.Now())
 		if err != nil {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return

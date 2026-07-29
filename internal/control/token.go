@@ -45,9 +45,7 @@ var (
 )
 
 type tokenCreateReceipt struct {
-	TokenID         string `json:"token_id"`
-	CallbackKeyID   string `json:"callback_key_id"`
-	CredentialKeyID string `json:"credential_key_id"`
+	TokenID string `json:"token_id"`
 }
 
 type tokenOperationReceipt struct {
@@ -338,7 +336,7 @@ func (s *Server) createTokenInTransaction(
 		now.Time.Add(time.Duration(input.TimeoutMS) * time.Millisecond),
 	)
 	tokenID := uuid.Must(uuid.NewV7())
-	credentials, err := s.tokenCredentialKeys.DeriveActive(tokenID)
+	credentials, err := s.tokenCredentialKey.Derive(tokenID)
 	if err != nil {
 		return api.TokenResponse{}, nil, err
 	}
@@ -350,7 +348,6 @@ func (s *Server) createTokenInTransaction(
 		ID: pgvalue.UUID(tokenID), PublicID: tokenPublicID,
 		OrgID: input.OrgID, ProjectID: input.ProjectID,
 		EnvironmentID: input.EnvironmentID, ExpiresAt: expiresAt,
-		CallbackKeyID:             credentials.KeyID.String(),
 		CallbackSecretFingerprint: credentials.CallbackFingerprint,
 		Metadata:                  input.Metadata, Tags: input.Tags,
 	})
@@ -364,20 +361,15 @@ func (s *Server) createTokenInTransaction(
 	}
 	_, err = q.CreatePublicAccessToken(ctx, db.CreatePublicAccessTokenParams{
 		ID: pgvalue.UUID(publicAccessID), PublicID: publicAccessPublicID,
-		TokenID:         tokenRow.ID,
-		TokenHash:       credentials.PublicAccessHash,
-		CredentialKeyID: credentials.KeyID.String(),
-		ExpiresAt:       expiresAt, Metadata: []byte(`{}`),
+		TokenID:   tokenRow.ID,
+		TokenHash: credentials.PublicAccessHash,
+		ExpiresAt: expiresAt, Metadata: []byte(`{}`),
 		CreatedBy: input.CreatedBy,
 	})
 	if err != nil {
 		return api.TokenResponse{}, nil, fmt.Errorf("create Token public access credential: %w", err)
 	}
-	receipt, err := json.Marshal(tokenCreateReceipt{
-		TokenID:         tokenID.String(),
-		CallbackKeyID:   credentials.KeyID.String(),
-		CredentialKeyID: credentials.KeyID.String(),
-	})
+	receipt, err := json.Marshal(tokenCreateReceipt{TokenID: tokenID.String()})
 	if err != nil {
 		return api.TokenResponse{}, nil, err
 	}
@@ -447,36 +439,23 @@ func (s *Server) replayTokenCreate(
 	if err != nil {
 		return api.TokenResponse{}, errTokenCreateReceipt
 	}
-	callbackKeyID, err := tokencredential.ParseCredentialKeyID(receipt.CallbackKeyID)
-	if err != nil {
-		return api.TokenResponse{}, errTokenCreateReceipt
-	}
-	credentialKeyID, err := tokencredential.ParseCredentialKeyID(receipt.CredentialKeyID)
-	if err != nil {
-		return api.TokenResponse{}, errTokenCreateReceipt
-	}
 	tokenRow, err := q.GetTokenByID(ctx, pgvalue.UUID(tokenID))
-	if err != nil || tokenRow.CallbackKeyID != callbackKeyID.String() {
+	if err != nil {
 		return api.TokenResponse{}, errTokenCreateReceipt
 	}
 	publicAccess, err := q.GetPublicAccessTokenForToken(ctx, pgvalue.UUID(tokenID))
-	if err != nil || publicAccess.CredentialKeyID != credentialKeyID.String() {
+	if err != nil {
 		return api.TokenResponse{}, errTokenCreateReceipt
 	}
-	callbackCredentials, err := s.tokenCredentialKeys.Derive(callbackKeyID, tokenID)
+	credentials, err := s.tokenCredentialKey.Derive(tokenID)
 	if err != nil {
 		return api.TokenResponse{}, err
 	}
-	bearerCredentials, err := s.tokenCredentialKeys.Derive(credentialKeyID, tokenID)
-	if err != nil {
-		return api.TokenResponse{}, err
-	}
-	if !hmac.Equal(callbackCredentials.CallbackFingerprint, tokenRow.CallbackSecretFingerprint) ||
-		!hmac.Equal(bearerCredentials.PublicAccessHash, publicAccess.TokenHash) {
+	if !hmac.Equal(credentials.CallbackFingerprint, tokenRow.CallbackSecretFingerprint) ||
+		!hmac.Equal(credentials.PublicAccessHash, publicAccess.TokenHash) {
 		return api.TokenResponse{}, errTokenCreateReceipt
 	}
-	callbackCredentials.PublicAccessToken = bearerCredentials.PublicAccessToken
-	return s.tokenCreateResponse(tokenRow, callbackCredentials), nil
+	return s.tokenCreateResponse(tokenRow, credentials), nil
 }
 
 func normalizeTokenTimeout(raw *int64) (*int64, error) {
@@ -641,11 +620,7 @@ func (s *Server) completeTokenWithCallback(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return db.Token{}, nil, errTokenScopeDenied
 		}
-		keyID, err := tokencredential.ParseCredentialKeyID(tokenRow.CallbackKeyID)
-		if err != nil {
-			return db.Token{}, nil, errTokenScopeDenied
-		}
-		credentials, err := s.tokenCredentialKeys.Derive(keyID, pgvalue.MustUUIDValue(tokenRow.ID))
+		credentials, err := s.tokenCredentialKey.Derive(pgvalue.MustUUIDValue(tokenRow.ID))
 		if err != nil ||
 			!hmac.Equal(credentials.CallbackFingerprint, tokenRow.CallbackSecretFingerprint) ||
 			!hmac.Equal(credentials.CallbackFingerprint, fingerprint) {
@@ -696,11 +671,7 @@ func (s *Server) completeTokenWithBearer(w http.ResponseWriter, r *http.Request)
 		if publicAccess.TokenID != tokenRow.ID {
 			return db.Token{}, nil, errTokenScopeDenied
 		}
-		keyID, err := tokencredential.ParseCredentialKeyID(publicAccess.CredentialKeyID)
-		if err != nil {
-			return db.Token{}, nil, errTokenScopeDenied
-		}
-		credentials, err := s.tokenCredentialKeys.Derive(keyID, pgvalue.MustUUIDValue(tokenRow.ID))
+		credentials, err := s.tokenCredentialKey.Derive(pgvalue.MustUUIDValue(tokenRow.ID))
 		if err != nil || !hmac.Equal(credentials.PublicAccessHash, publicAccess.TokenHash) ||
 			!hmac.Equal(credentials.PublicAccessHash, tokencredential.HashCredential(rawBearer)) {
 			return db.Token{}, nil, errTokenScopeDenied
@@ -1043,7 +1014,6 @@ func tokenFromCompleteRow(row db.CompleteTokenRow) db.Token {
 	return db.Token{
 		ID: row.ID, PublicID: row.PublicID, OrgID: row.OrgID, ProjectID: row.ProjectID,
 		EnvironmentID: row.EnvironmentID, State: row.State, ExpiresAt: row.ExpiresAt,
-		CallbackKeyID:             row.CallbackKeyID,
 		CallbackSecretFingerprint: row.CallbackSecretFingerprint,
 		CompletionFingerprint:     row.CompletionFingerprint,
 		Result:                    row.Result, Error: row.Error, Metadata: row.Metadata, Tags: row.Tags,
@@ -1056,7 +1026,6 @@ func tokenFromCancelRow(row db.CancelTokenRow) db.Token {
 	return db.Token{
 		ID: row.ID, PublicID: row.PublicID, OrgID: row.OrgID, ProjectID: row.ProjectID,
 		EnvironmentID: row.EnvironmentID, State: row.State, ExpiresAt: row.ExpiresAt,
-		CallbackKeyID:             row.CallbackKeyID,
 		CallbackSecretFingerprint: row.CallbackSecretFingerprint,
 		CompletionFingerprint:     row.CompletionFingerprint,
 		Result:                    row.Result, Error: row.Error, Metadata: row.Metadata, Tags: row.Tags,

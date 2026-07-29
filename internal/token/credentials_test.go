@@ -2,28 +2,26 @@ package token
 
 import (
 	"bytes"
-	"encoding/base64"
 	"testing"
 
 	"github.com/google/uuid"
 )
 
-func TestCredentialKeysDeriveStableSeparatedCredentials(t *testing.T) {
-	var key [CredentialKeySize]byte
-	for i := range key {
-		key[i] = byte(i + 1)
+func TestCredentialKeyDerivesStableSeparatedCredentials(t *testing.T) {
+	key := make([]byte, CredentialKeySize)
+	for index := range key {
+		key[index] = byte(index + 1)
 	}
-	id := CredentialKeyIDForKey(key)
-	keys, err := NewCredentialKeys(id.String(), map[string][]byte{id.String(): key[:]})
+	credentialKey, err := NewCredentialKey(key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tokenID := uuid.MustParse("019c1234-5678-7abc-8def-0123456789ab")
-	first, err := keys.DeriveActive(tokenID)
+	first, err := credentialKey.Derive(tokenID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := keys.Derive(id, tokenID)
+	second, err := credentialKey.Derive(tokenID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,14 +41,20 @@ func TestCredentialKeysDeriveStableSeparatedCredentials(t *testing.T) {
 	}
 }
 
-func TestCredentialKeysFromBase64JSONRejectsRetargetedID(t *testing.T) {
-	var key [CredentialKeySize]byte
-	key[0] = 1
-	id := CredentialKeyIDForKey(key)
-	var replacement [CredentialKeySize]byte
-	replacement[0] = 2
-	raw := `{"` + id.String() + `":"` + base64.StdEncoding.EncodeToString(replacement[:]) + `"}`
-	if _, err := CredentialKeysFromBase64JSON(id.String(), raw); err == nil {
-		t.Fatal("retargeted key ID was accepted")
+func TestCredentialKeyRejectsInvalidAuthority(t *testing.T) {
+	for _, size := range []int{0, CredentialKeySize - 1, CredentialKeySize + 1} {
+		if _, err := NewCredentialKey(make([]byte, size)); err == nil {
+			t.Fatalf("accepted %d-byte key", size)
+		}
+	}
+	if _, err := (CredentialKey{}).Derive(uuid.New()); err == nil {
+		t.Fatal("zero-value key was accepted")
+	}
+	key, err := NewCredentialKey(make([]byte, CredentialKeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := key.Derive(uuid.Nil); err == nil {
+		t.Fatal("nil Token ID was accepted")
 	}
 }

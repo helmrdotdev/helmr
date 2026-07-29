@@ -9,7 +9,6 @@ INSERT INTO tokens (
     project_id,
     environment_id,
     expires_at,
-    callback_key_id,
     callback_secret_fingerprint,
     metadata,
     tags
@@ -21,7 +20,6 @@ VALUES (
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(expires_at)::timestamptz,
-    sqlc.arg(callback_key_id),
     sqlc.arg(callback_secret_fingerprint),
     COALESCE(sqlc.arg(metadata)::jsonb, '{}'::jsonb),
     COALESCE(sqlc.arg(tags)::text[], '{}'::text[])

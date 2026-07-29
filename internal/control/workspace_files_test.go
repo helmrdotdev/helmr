@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 )
 
@@ -26,7 +27,7 @@ func TestValidateWorkspaceFilePathRequiresCanonicalRootRelativeUTF8(t *testing.T
 }
 
 func TestWorkspaceFileCursorPinsWorkspaceVersionAndPath(t *testing.T) {
-	server := &Server{authSecret: []byte("01234567890123456789012345678901")}
+	server := &Server{authKeys: auth.Keys{WorkspaceFileCursor: make([]byte, auth.RootKeySize)}}
 	now := time.Unix(1_800_000_000, 0)
 	cursor := workspaceFileCursor{
 		WorkspaceID: "wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa",

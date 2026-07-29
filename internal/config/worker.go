@@ -17,7 +17,6 @@ func LoadWorker() (Worker, error) {
 		WorkerGroupID:                envString("HELMR_WORKER_GROUP_ID"),
 		CASURI:                       envString("HELMR_CAS_URI"),
 		WorkerInstanceCredentialPath: envString("HELMR_WORKER_INSTANCE_CREDENTIAL_PATH"),
-		CheckpointKey:                envString("HELMR_CHECKPOINT_ENCRYPTION_KEY"),
 		RegionID:                     envString("HELMR_REGION_ID"),
 		WorkerProviderRegion:         envString("HELMR_WORKER_PROVIDER_REGION"),
 		BuildPolicyPath:              envString("HELMR_BUILD_POLICY_PATH"),
@@ -258,8 +257,9 @@ func LoadWorker() (Worker, error) {
 		cfg.SubstrateCacheMaxMiB > math.MaxInt64-cfg.ArtifactCacheMaxMiB {
 		return cfg, errors.New("worker cache capacity exceeds the supported byte range")
 	}
-	if cfg.CheckpointKey == "" {
-		return cfg, errors.New("HELMR_CHECKPOINT_ENCRYPTION_KEY is required")
+	cfg.CheckpointKey, err = rootKey("CHECKPOINT_ENCRYPTION_KEY")
+	if err != nil {
+		return cfg, err
 	}
 	if cfg.JailerUID <= 0 {
 		return cfg, errors.New("HELMR_WORKER_FIRECRACKER_JAILER_UID is required")

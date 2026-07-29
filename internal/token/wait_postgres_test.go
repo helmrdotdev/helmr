@@ -211,10 +211,10 @@ func TestTokenWaitSchemaRejectsCrossEnvironmentReference(t *testing.T) {
 	if _, err := fixture.queries.CreateToken(ctx, db.CreateTokenParams{
 		ID: pgvalue.UUID(otherTokenID), PublicID: runLeasePublicID(t, publicid.Token),
 		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
-		EnvironmentID: pgvalue.UUID(otherEnvironmentID),
-		ExpiresAt:     pgvalue.Timestamptz(time.Now().Add(time.Hour)),
-		CallbackKeyID: "test-key", CallbackSecretFingerprint: make([]byte, 32),
-		Metadata: []byte(`{}`), Tags: []string{},
+		EnvironmentID:             pgvalue.UUID(otherEnvironmentID),
+		ExpiresAt:                 pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		CallbackSecretFingerprint: make([]byte, 32),
+		Metadata:                  []byte(`{}`), Tags: []string{},
 	}); err != nil {
 		t.Fatal(err)
 	}

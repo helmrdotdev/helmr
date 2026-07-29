@@ -197,7 +197,7 @@ func TestParentAttachRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
 
 func validRunLeaseClaimResponse(
 	t *testing.T,
-) (runLeaseClaimResponseAuthority, runLeaseClaimProjection, workspace.FencingKeys) {
+) (runLeaseClaimResponseAuthority, runLeaseClaimProjection, workspace.FencingKey) {
 	t.Helper()
 	physical := validRunLeaseProjectionAuthority()
 	run, attempt, definition := validTaskProgramStart(t, deployment.SchemaKindNone)
@@ -214,20 +214,11 @@ func validRunLeaseClaimResponse(
 	physical.runLease.AttemptNumber = attempt.Number
 	physical.workspaceLease.WorkspaceID = run.WorkspaceID
 
-	keys, err := workspace.NewFencingKeys(
-		"sha256:c57461e4ce9af0ed10b8b704cdc10537834475e528e4591d295857177987ee03",
-		map[string][]byte{
-			"sha256:c57461e4ce9af0ed10b8b704cdc10537834475e528e4591d295857177987ee03": make(
-				[]byte,
-				workspace.FencingKeySize,
-			),
-		},
-	)
+	key, err := workspace.NewFencingKey(make([]byte, workspace.FencingKeySize))
 	if err != nil {
 		t.Fatal(err)
 	}
-	physical.workspaceLease.FencingKeyFingerprint = keys.ActiveFingerprint().Bytes()
-	capability, err := deriveWorkspaceCapabilityInput(keys, physical.workspaceLease)
+	capability, err := deriveWorkspaceCapabilityInput(key, physical.workspaceLease)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,20 +254,14 @@ func validRunLeaseClaimResponse(
 		workspace:      physical.workspace,
 		workspaceMount: physical.workspaceMount,
 		workspaceLease: physical.workspaceLease,
-	}, projection, keys
+	}, projection, key
 }
 
 func deriveWorkspaceCapabilityInput(
-	keys workspace.FencingKeys,
+	key workspace.FencingKey,
 	lease db.WorkspaceLease,
 ) (workspace.FencingCapability, error) {
-	fingerprint, err := workspace.FencingKeyFingerprintFromBytes(
-		lease.FencingKeyFingerprint,
-	)
-	if err != nil {
-		return workspace.FencingCapability{}, err
-	}
-	return keys.Derive(fingerprint, workspace.FenceInput{
+	return key.Derive(workspace.FenceInput{
 		LeaseID:                uuid.UUID(lease.ID.Bytes),
 		WorkspaceID:            uuid.UUID(lease.WorkspaceID.Bytes),
 		OwnershipGeneration:    lease.OwnershipGeneration,

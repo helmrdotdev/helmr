@@ -3,7 +3,6 @@ package control
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -469,17 +468,19 @@ var (
 )
 
 func (s *Server) signWorkspaceFileCursor(cursor workspaceFileCursor) (string, error) {
-	if len(s.authSecret) == 0 {
+	if len(s.authKeys.WorkspaceFileCursor) == 0 {
 		return "", errors.New("Workspace file cursor authority is unavailable")
 	}
 	payload, err := json.Marshal(cursor)
 	if err != nil {
 		return "", err
 	}
-	mac := hmac.New(sha256.New, s.authSecret)
-	_, _ = mac.Write(payload)
+	mac, err := auth.MAC(s.authKeys.WorkspaceFileCursor, payload)
+	if err != nil {
+		return "", err
+	}
 	token := base64.RawURLEncoding.EncodeToString(payload) + "." +
-		base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+		base64.RawURLEncoding.EncodeToString(mac)
 	if len(token) > workspaceFileCursorMaxBytes {
 		return "", errors.New("Workspace file cursor exceeds its size limit")
 	}
@@ -487,7 +488,7 @@ func (s *Server) signWorkspaceFileCursor(cursor workspaceFileCursor) (string, er
 }
 
 func (s *Server) parseWorkspaceFileCursor(raw, workspaceID, target string, now time.Time) (workspaceFileCursor, error) {
-	if len(raw) > workspaceFileCursorMaxBytes || len(s.authSecret) == 0 {
+	if len(raw) > workspaceFileCursorMaxBytes || len(s.authKeys.WorkspaceFileCursor) == 0 {
 		return workspaceFileCursor{}, errWorkspaceFileCursorInvalid
 	}
 	payloadPart, signaturePart, ok := strings.Cut(raw, ".")
@@ -502,9 +503,8 @@ func (s *Server) parseWorkspaceFileCursor(raw, workspaceID, target string, now t
 	if err != nil {
 		return workspaceFileCursor{}, errWorkspaceFileCursorInvalid
 	}
-	mac := hmac.New(sha256.New, s.authSecret)
-	_, _ = mac.Write(payload)
-	if !hmac.Equal(signature, mac.Sum(nil)) {
+	expected, err := auth.MAC(s.authKeys.WorkspaceFileCursor, payload)
+	if err != nil || !hmac.Equal(signature, expected) {
 		return workspaceFileCursor{}, errWorkspaceFileCursorInvalid
 	}
 	var cursor workspaceFileCursor

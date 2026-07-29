@@ -95,16 +95,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	queries := db.New(pool)
 	runDispatchQueries := db.New(runDispatchPool)
 	buildDispatchQueries := db.New(buildDispatchPool)
-	workspaceFencingKeys, err := workspace.FencingKeysFromBase64JSON(
-		cfg.WorkspaceFencingKeyFingerprint,
-		cfg.WorkspaceFencingKeys,
-	)
+	workspaceFencingKey, err := workspace.NewFencingKey(cfg.WorkspaceFencingKey)
 	if err != nil {
-		return fmt.Errorf("configure Workspace fencing keys: %w", err)
+		return fmt.Errorf("configure Workspace fencing key: %w", err)
 	}
 	runDispatchAuthority, err := dispatch.NewRunAuthority(
 		runDispatchPool,
-		workspaceFencingKeys,
+		workspaceFencingKey,
 		dispatch.RunPlacementPolicy{
 			PreparationLimit: int64(cfg.RunPreparationLimit),
 			ReservationTTL:   cfg.RunReservationTTL,

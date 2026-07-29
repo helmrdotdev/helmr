@@ -91,11 +91,9 @@ balancers, private endpoints, and telemetry independently from scaling correctne
 Required secret value formats:
 
 - `database_url`: `postgres://helmr:<password>@<postgres_endpoint>/helmr?sslmode=require`
-- `worker_token_signing_key`, `auth_secret`, `setup_token`: high-entropy strings
+- `setup_token`: high-entropy string
 - `setup_token`: read it from Secrets Manager for first organization setup
-- `encryption_key`, `checkpoint_encryption_key`: base64-encoded 32-byte keys
-- `workspace_fencing_keys`: JSON object mapping each content fingerprint to its base64-encoded 32-byte key
-- `token_credential_keys`: JSON object mapping each content-derived key ID to its base64-encoded 32-byte key
+- `worker_token_signing_key`, `auth_key`, `encryption_key`, `checkpoint_encryption_key`, `workspace_fencing_key`, `token_credential_key`: base64-encoded 32-byte keys
 - `github_oauth_client_secret`: GitHub OAuth client secret
 
 The helper script generates the Helmr internal values locally and writes them directly to Secrets
@@ -106,17 +104,7 @@ Manager, outside Terraform state:
 ```
 
 Set `HELMR_DATABASE_URL` and `HELMR_GITHUB_OAUTH_CLIENT_SECRET` to populate external secrets in the same run. Set
-`OVERWRITE_SECRETS=1` only when intentionally rotating values.
-The helper verifies every key against its domain-separated SHA-256 fingerprint
-and writes the exact `workspace_fencing_key_fingerprint` and
-`token_credential_key_id` Terraform inputs before enabling the Control service. Set
-`HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT` to choose among multiple readable
-keys. Rotation adds the new fingerprint-key pair, promotes that fingerprint in
-Terraform only after every claim-serving Control can read it, and retains old
-key bytes while a nonterminal Workspace Lease references them.
-Use `HELMR_TOKEN_CREDENTIAL_KEY_ID` to select among multiple readable Token
-credential keys; retain referenced keys until Control readiness no longer
-reports them.
+`OVERWRITE_SECRETS=1` only during a planned drain/stop/offline-replace/restart.
 
 Email delivery is disabled by default. For Resend, configure:
 

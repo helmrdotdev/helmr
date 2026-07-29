@@ -3,7 +3,6 @@ package control
 import (
 	"bytes"
 	"crypto/hmac"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -395,24 +394,26 @@ func parseRunTelemetryLimit(r *http.Request) (int32, error) {
 }
 
 func (s *Server) signRunTelemetryCursor(cursor runTelemetryCursor) (string, error) {
-	if len(s.authSecret) == 0 || cursor.Sequence < 0 {
+	if len(s.authKeys.TelemetryCursor) == 0 || cursor.Sequence < 0 {
 		return "", errors.New("Run telemetry cursor signer is unavailable")
 	}
 	payload, err := json.Marshal(cursor)
 	if err != nil {
 		return "", err
 	}
-	mac := hmac.New(sha256.New, s.authSecret)
-	_, _ = mac.Write(payload)
+	mac, err := auth.MAC(s.authKeys.TelemetryCursor, payload)
+	if err != nil {
+		return "", err
+	}
 	return runTelemetryCursorPrefix +
 		base64.RawURLEncoding.EncodeToString(payload) + "." +
-		base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+		base64.RawURLEncoding.EncodeToString(mac), nil
 }
 
 func (s *Server) parseRunTelemetryCursor(raw string) (runTelemetryCursor, error) {
 	if len(raw) > runTelemetryCursorMax ||
 		!strings.HasPrefix(raw, runTelemetryCursorPrefix) ||
-		len(s.authSecret) == 0 {
+		len(s.authKeys.TelemetryCursor) == 0 {
 		return runTelemetryCursor{}, errTelemetryInvalidCursor
 	}
 	parts := strings.Split(strings.TrimPrefix(raw, runTelemetryCursorPrefix), ".")
@@ -427,9 +428,8 @@ func (s *Server) parseRunTelemetryCursor(raw string) (runTelemetryCursor, error)
 	if err != nil {
 		return runTelemetryCursor{}, errTelemetryInvalidCursor
 	}
-	mac := hmac.New(sha256.New, s.authSecret)
-	_, _ = mac.Write(payload)
-	if !hmac.Equal(signature, mac.Sum(nil)) {
+	expected, err := auth.MAC(s.authKeys.TelemetryCursor, payload)
+	if err != nil || !hmac.Equal(signature, expected) {
 		return runTelemetryCursor{}, errTelemetryInvalidCursor
 	}
 	var cursor runTelemetryCursor

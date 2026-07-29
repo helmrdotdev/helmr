@@ -99,7 +99,7 @@ func projectRunLeaseClaimResponse(
 	projection runLeaseClaimProjection,
 	platformStore cas.Reader,
 	secretDelivery SecretDeliveryOpener,
-	fencingKeys workspace.FencingKeys,
+	fencingKey workspace.FencingKey,
 ) (api.WorkerRunLeaseClaimResponse, error) {
 	physical := runLeaseProjectionAuthority{
 		run:            authority.run,
@@ -146,7 +146,7 @@ func projectRunLeaseClaimResponse(
 	if err != nil {
 		return api.WorkerRunLeaseClaimResponse{}, err
 	}
-	capability, err := deriveWorkspaceCapability(fencingKeys, authority.workspaceLease)
+	capability, err := deriveWorkspaceCapability(fencingKey, authority.workspaceLease)
 	if err != nil {
 		return api.WorkerRunLeaseClaimResponse{}, err
 	}
@@ -182,15 +182,9 @@ func projectRunLeaseClaimResponse(
 }
 
 func deriveWorkspaceCapability(
-	keys workspace.FencingKeys,
+	key workspace.FencingKey,
 	lease db.WorkspaceLease,
 ) (workspace.FencingCapability, error) {
-	fingerprint, err := workspace.FencingKeyFingerprintFromBytes(
-		lease.FencingKeyFingerprint,
-	)
-	if err != nil {
-		return workspace.FencingCapability{}, err
-	}
 	leaseID, err := pgvalue.UUIDValue(lease.ID)
 	if err != nil {
 		return workspace.FencingCapability{}, errors.New("Workspace Lease ID is invalid")
@@ -199,7 +193,7 @@ func deriveWorkspaceCapability(
 	if err != nil {
 		return workspace.FencingCapability{}, errors.New("Workspace ID is invalid")
 	}
-	capability, err := keys.Derive(fingerprint, workspace.FenceInput{
+	capability, err := key.Derive(workspace.FenceInput{
 		LeaseID:                leaseID,
 		WorkspaceID:            workspaceID,
 		OwnershipGeneration:    lease.OwnershipGeneration,

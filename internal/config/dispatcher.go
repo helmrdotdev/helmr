@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 func LoadDispatcher() (Dispatcher, error) {
@@ -23,10 +22,6 @@ func LoadDispatcher() (Dispatcher, error) {
 		ClickHouseURL:         envString("HELMR_CLICKHOUSE_URL"),
 		ClickHouseUser:        envString("HELMR_CLICKHOUSE_USER"),
 		ClickHousePassword:    envString("HELMR_CLICKHOUSE_PASSWORD"),
-		WorkspaceFencingKeyFingerprint: envString(
-			"HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT",
-		),
-		WorkspaceFencingKeys:  envString("HELMR_WORKSPACE_FENCING_KEYS"),
 		RunPreparationLimit:   32,
 		RunReservationTTL:     5 * time.Minute,
 		RunLeaseStartDeadline: time.Minute,
@@ -91,19 +86,9 @@ func LoadDispatcher() (Dispatcher, error) {
 	if cfg.ClickHouseURL == "" {
 		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")
 	}
-	if cfg.WorkspaceFencingKeyFingerprint == "" {
-		return cfg, errors.New(
-			"HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT is required",
-		)
-	}
-	if cfg.WorkspaceFencingKeys == "" {
-		return cfg, errors.New("HELMR_WORKSPACE_FENCING_KEYS is required")
-	}
-	if _, err := workspace.FencingKeysFromBase64JSON(
-		cfg.WorkspaceFencingKeyFingerprint,
-		cfg.WorkspaceFencingKeys,
-	); err != nil {
-		return cfg, fmt.Errorf("HELMR_WORKSPACE_FENCING_KEYS: %w", err)
+	cfg.WorkspaceFencingKey, err = rootKey("WORKSPACE_FENCING_KEY")
+	if err != nil {
+		return cfg, err
 	}
 	return cfg, nil
 }

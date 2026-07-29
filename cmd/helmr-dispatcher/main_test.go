@@ -61,8 +61,7 @@ func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:1")
 	t.Setenv("HELMR_SCHEDULE_POLL_INTERVAL", "50ms")
 	t.Setenv("HELMR_SCHEDULE_CLAIM_LEASE", "100ms")
-	t.Setenv("HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT", "sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26")
-	t.Setenv("HELMR_WORKSPACE_FENCING_KEYS", `{"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}`)
+	t.Setenv("WORKSPACE_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)

@@ -192,7 +192,7 @@ environment when the run starts.
 ## Checkpoint encryption
 
 Checkpoint artifacts are encrypted before leaving the worker staging directory.
-Workers require `HELMR_CHECKPOINT_ENCRYPTION_KEY`, a base64-encoded 32-byte key.
+Workers require `CHECKPOINT_ENCRYPTION_KEY`, a base64-encoded 32-byte key.
 Use the same key for workers that must restore the same checkpoint state:
 
 ```sh

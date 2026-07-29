@@ -22,7 +22,7 @@ const platformArchitecture = "x86_64"
 
 type Authority struct {
 	pool          *pgxpool.Pool
-	fencingKeys   workspace.FencingKeys
+	fencingKey    workspace.FencingKey
 	runPolicy     RunPlacementPolicy
 	nestedResumes nestedResumeCursor
 }
@@ -36,15 +36,15 @@ type RunPlacementPolicy struct {
 
 func NewRunAuthority(
 	pool *pgxpool.Pool,
-	fencingKeys workspace.FencingKeys,
+	fencingKey workspace.FencingKey,
 	policy RunPlacementPolicy,
 ) (*Authority, error) {
 	authority, err := newAuthority(pool)
 	if err != nil {
 		return nil, err
 	}
-	if !fencingKeys.Has(fencingKeys.ActiveFingerprint()) {
-		return nil, errors.New("run authority Workspace fencing keys are required")
+	if !fencingKey.Valid() {
+		return nil, errors.New("run authority Workspace fencing key is required")
 	}
 	if policy.PreparationLimit <= 0 ||
 		policy.ReservationTTL <= 0 ||
@@ -53,7 +53,7 @@ func NewRunAuthority(
 		policy.StartDeadline > policy.LeaseTTL {
 		return nil, errors.New("run authority placement policy is invalid")
 	}
-	authority.fencingKeys = fencingKeys
+	authority.fencingKey = fencingKey
 	authority.runPolicy = policy
 	return authority, nil
 }

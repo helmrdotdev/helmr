@@ -140,7 +140,7 @@ SELECT transaction_timestamp(),
 	}
 	writerGeneration := authority.writerGeneration + 1
 	mountGeneration := mount.fencingGeneration + 1
-	capability, err := d.fencingKeys.DeriveActive(workspace.FenceInput{
+	capability, err := d.fencingKey.Derive(workspace.FenceInput{
 		LeaseID:                workspaceLeaseUUID,
 		WorkspaceID:            workspaceUUID,
 		OwnershipGeneration:    authority.ownershipGeneration,
@@ -250,7 +250,6 @@ SELECT transaction_timestamp(),
 			OwnershipGeneration:    authority.ownershipGeneration,
 			WriterGeneration:       writerGeneration,
 			MountFencingGeneration: mountGeneration,
-			FencingKeyFingerprint:  capability.KeyFingerprint.Bytes(),
 			FencingTokenHash:       capability.Hash,
 			ExpiresAt:              leaseExpiresAt,
 		},

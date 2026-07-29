@@ -134,18 +134,11 @@ func newWorkerRunLeaseClaimHTTPFixture(
 	definition.DeploymentID = authority.run.DeploymentID
 	definition.DeclaredID = authority.run.EntrypointDeclaredID
 
-	fingerprint := workspace.FencingKeyFingerprintForKey(
-		[workspace.FencingKeySize]byte{},
-	)
-	keys, err := workspace.NewFencingKeys(
-		fingerprint.String(),
-		map[string][]byte{fingerprint.String(): make([]byte, workspace.FencingKeySize)},
-	)
+	key, err := workspace.NewFencingKey(make([]byte, workspace.FencingKeySize))
 	if err != nil {
 		t.Fatal(err)
 	}
-	authority.workspaceLease.FencingKeyFingerprint = fingerprint.Bytes()
-	capability, err := deriveWorkspaceCapabilityInput(keys, authority.workspaceLease)
+	capability, err := deriveWorkspaceCapabilityInput(key, authority.workspaceLease)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,12 +169,12 @@ func newWorkerRunLeaseClaimHTTPFixture(
 		}),
 	}
 	server := &Server{
-		log:                  discardTestLogger(),
-		db:                   store,
-		buildPolicy:          controlBuildPolicy(t),
-		platformStore:        claimResponsePlatformStore{},
-		secretDelivery:       &recordingSecretDeliveryOpener{},
-		workspaceFencingKeys: keys,
+		log:                 discardTestLogger(),
+		db:                  store,
+		buildPolicy:         controlBuildPolicy(t),
+		platformStore:       claimResponsePlatformStore{},
+		secretDelivery:      &recordingSecretDeliveryOpener{},
+		workspaceFencingKey: key,
 	}
 	requestBody := []byte(
 		`{"lease_id":"` +

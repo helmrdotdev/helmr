@@ -65,7 +65,7 @@ func (s *Server) workerEnrollmentChallenge(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(rawNonce)
-	nonceHash, err := auth.HashToken(s.authSecret, nonce)
+	nonceHash, err := auth.HashToken(s.authKeys.WorkerEnrollment, nonce)
 	if err != nil {
 		writeError(w, unavailable(errors.New("worker enrollment is not configured")))
 		return
@@ -121,7 +121,7 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("worker enrollment evidence is missing or too large")))
 		return
 	}
-	nonceHash, err := auth.HashToken(s.authSecret, request.Nonce)
+	nonceHash, err := auth.HashToken(s.authKeys.WorkerEnrollment, request.Nonce)
 	if err != nil {
 		writeError(w, unauthorized(errors.New("worker enrollment challenge is invalid")))
 		return
@@ -151,7 +151,7 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unauthorized(errors.New("worker enrollment identity is invalid")))
 		return
 	}
-	generated, err := auth.GenerateWorkerInstanceSecret(s.authSecret)
+	generated, err := auth.GenerateWorkerInstanceSecret(s.authKeys.WorkerInstance)
 	if err != nil {
 		writeError(w, errors.New("generate worker instance credential"))
 		return
@@ -189,7 +189,7 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil || len(s.authSecret) == 0 || len(s.workerTokenSecret) == 0 {
+	if s.db == nil || !s.authKeys.Valid() || len(s.workerTokenSigningKey) == 0 {
 		writeError(w, unavailable(errors.New("worker authentication is not configured")))
 		return
 	}
@@ -208,7 +208,7 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("worker_instance_id must be a UUID")))
 		return
 	}
-	secretHash, err := auth.HashToken(s.authSecret, request.WorkerInstanceSecret)
+	secretHash, err := auth.HashToken(s.authKeys.WorkerInstance, request.WorkerInstanceSecret)
 	if err != nil {
 		writeError(w, unauthorized(errors.New("worker authentication is required")))
 		return
@@ -279,7 +279,7 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("mint worker token"))
 		return
 	}
-	signed, err := auth.IssueWorkerToken(s.workerTokenSecret, claims)
+	signed, err := auth.IssueWorkerToken(s.workerTokenSigningKey, claims)
 	if err != nil {
 		s.log.Error("mint worker token failed", "worker_instance_id", request.WorkerInstanceID, "error", err)
 		writeError(w, errors.New("mint worker token"))

@@ -43,4 +43,4 @@ the guest.
 
 ## Checkpoint Encryption
 
-Checkpoint artifacts are encrypted before leaving the worker staging directory. Workers require `HELMR_CHECKPOINT_ENCRYPTION_KEY`, a base64-encoded 32-byte key, and workers that must restore the same checkpoint state need the same key.
+Checkpoint artifacts are encrypted before leaving the worker staging directory. Workers require `CHECKPOINT_ENCRYPTION_KEY`, a base64-encoded 32-byte key, and workers that must restore the same checkpoint state need the same key.

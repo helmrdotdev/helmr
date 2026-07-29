@@ -33,7 +33,7 @@ type runPlacementFixture struct {
 	ctx           context.Context
 	pool          *pgxpool.Pool
 	authority     *Authority
-	fencingKeys   workspace.FencingKeys
+	fencingKey    workspace.FencingKey
 	orgID         uuid.UUID
 	projectID     uuid.UUID
 	environmentID uuid.UUID
@@ -127,7 +127,6 @@ UPDATE workspace_mounts
 	var firstLeaseAt pgtype.Timestamptz
 	var stateVersion, writerGeneration, mountGeneration int64
 	var ownerRunLeaseID pgtype.UUID
-	var keyFingerprint []byte
 	var tokenHash string
 	err = fixture.pool.QueryRow(fixture.ctx, `
 SELECT runs.current_run_lease_id,
@@ -138,7 +137,6 @@ SELECT runs.current_run_lease_id,
        workspace_mounts.fencing_generation,
        workspace_leases.id,
        workspace_leases.owner_run_lease_id,
-       workspace_leases.fencing_key_fingerprint,
        workspace_leases.fencing_token_hash
   FROM runs
   JOIN workspaces ON workspaces.id = runs.workspace_id
@@ -157,7 +155,6 @@ SELECT runs.current_run_lease_id,
 		&mountGeneration,
 		&workspaceLeaseID,
 		&ownerRunLeaseID,
-		&keyFingerprint,
 		&tokenHash,
 	)
 	if err != nil {
@@ -185,7 +182,7 @@ SELECT runs.current_run_lease_id,
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayed, err := fixture.fencingKeys.DeriveActive(workspace.FenceInput{
+	replayed, err := fixture.fencingKey.Derive(workspace.FenceInput{
 		LeaseID:                leaseUUID,
 		WorkspaceID:            fixture.workspaceID,
 		OwnershipGeneration:    1,
@@ -195,10 +192,8 @@ SELECT runs.current_run_lease_id,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(keyFingerprint, replayed.KeyFingerprint.Bytes()) ||
-		tokenHash != replayed.Hash ||
-		tokenHash == replayed.Token {
-		t.Fatal("Workspace Lease did not persist the replayable fingerprint and token hash")
+	if tokenHash != replayed.Hash || tokenHash == replayed.Token {
+		t.Fatal("Workspace Lease did not persist the replayable token hash")
 	}
 }
 
@@ -1561,14 +1556,14 @@ INSERT INTO workspace_leases (
     worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
     workspace_mount_id, state, owner_run_lease_id, base_version_id,
     ownership_generation, writer_generation, mount_fencing_generation,
-    fencing_key_fingerprint, fencing_token_hash, acquired_at, renewed_at,
+    fencing_token_hash, acquired_at, renewed_at,
     expires_at, released_at, terminal_at
 )
 SELECT $1, org_id, worker_group_id, project_id, environment_id, region_id,
        worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
        workspace_mount_id, 'released', $2, base_version_id,
-       ownership_generation, 1, $4, fencing_key_fingerprint,
-       fencing_token_hash, acquired_at, renewed_at, expires_at,
+       ownership_generation, 1, $4, fencing_token_hash,
+       acquired_at, renewed_at, expires_at,
        transaction_timestamp(), transaction_timestamp()
   FROM workspace_leases
  WHERE id = $3`,
@@ -1610,14 +1605,14 @@ INSERT INTO workspace_leases (
     worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
     workspace_mount_id, state, owner_run_lease_id, base_version_id,
     ownership_generation, writer_generation, mount_fencing_generation,
-    fencing_key_fingerprint, fencing_token_hash, acquired_at, renewed_at,
+    fencing_token_hash, acquired_at, renewed_at,
     expires_at, released_at, terminal_at
 )
 SELECT $1, org_id, worker_group_id, project_id, environment_id, region_id,
        worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
        workspace_mount_id, 'released', $2, base_version_id,
-       ownership_generation, 2, $4, fencing_key_fingerprint,
-       fencing_token_hash, acquired_at, renewed_at, expires_at,
+       ownership_generation, 2, $4, fencing_token_hash,
+       acquired_at, renewed_at, expires_at,
        transaction_timestamp(), transaction_timestamp()
   FROM workspace_leases
  WHERE id = $3`,
@@ -2881,20 +2876,14 @@ func newRunPlacementFixture(t *testing.T) runPlacementFixture {
 		groupID:       "run-placement-" + strings.ReplaceAll(uuid.NewString(), "-", ""),
 	}
 	key := bytes.Repeat([]byte{7}, workspace.FencingKeySize)
-	var fixedKey [workspace.FencingKeySize]byte
-	copy(fixedKey[:], key)
-	fingerprint := workspace.FencingKeyFingerprintForKey(fixedKey).String()
 	var err error
-	fixture.fencingKeys, err = workspace.NewFencingKeys(
-		fingerprint,
-		map[string][]byte{fingerprint: key},
-	)
+	fixture.fencingKey, err = workspace.NewFencingKey(key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fixture.authority, err = NewRunAuthority(
 		pool,
-		fixture.fencingKeys,
+		fixture.fencingKey,
 		RunPlacementPolicy{
 			PreparationLimit: 8,
 			ReservationTTL:   5 * time.Minute,

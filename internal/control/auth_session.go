@@ -105,7 +105,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) revokeSessionToken(r *http.Request, raw string) {
-	tokenHash, err := auth.HashToken(s.authSecret, raw)
+	tokenHash, err := auth.HashToken(s.authKeys.Session, raw)
 	if err != nil {
 		return
 	}

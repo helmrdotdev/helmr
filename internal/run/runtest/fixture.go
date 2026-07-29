@@ -299,11 +299,10 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 			worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
 			workspace_mount_id, owner_run_lease_id, base_version_id,
 			ownership_generation, writer_generation, mount_fencing_generation,
-			fencing_key_fingerprint, fencing_token_hash, expires_at
+			fencing_token_hash, expires_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, $11, $12,
-			1, 1, 2, decode(repeat('00', 32), 'hex'), 'test-token-hash',
-			now() + interval '10 minutes'
+			1, 1, 2, 'test-token-hash', now() + interval '10 minutes'
 		)
 	`, workspaceLeaseID, fixture.OrgID, WorkerGroup, fixture.ProjectID,
 		fixture.EnvironmentID, Region, fixture.WorkerID, runtimeID,
@@ -628,12 +627,12 @@ func (fixture Fixture) parkHandoff(
 			worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
 			workspace_mount_id, owner_run_lease_id, base_version_id,
 			ownership_generation, writer_generation, mount_fencing_generation,
-			fencing_key_fingerprint, fencing_token_hash, expires_at
+			fencing_token_hash, expires_at
 		)
 		SELECT $1, org_id, worker_group_id, project_id, environment_id, region_id,
 		       worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
 		       workspace_mount_id, $2, base_version_id, ownership_generation, $3,
-		       mount_fencing_generation, fencing_key_fingerprint, fencing_token_hash,
+		       mount_fencing_generation, fencing_token_hash,
 		       now() + interval '10 minutes'
 		  FROM workspace_leases
 		 WHERE workspace_id = $4

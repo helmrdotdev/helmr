@@ -17,7 +17,7 @@ order: 960
 
 ## Control plane
 
-Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CAS_URI`, `HELMR_CLICKHOUSE_URL`, `HELMR_WORKER_TOKEN_SIGNING_KEY`, `HELMR_WORKER_GROUPS`, `HELMR_WORKER_GROUP_ID`, `HELMR_REGION_ID`, `HELMR_DEFAULT_REGION_ID`, `HELMR_AUTH_SECRET`, `ENCRYPTION_KEY`, `HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT`, `HELMR_WORKSPACE_FENCING_KEYS`, `HELMR_TOKEN_CREDENTIAL_KEY_ID`, `HELMR_TOKEN_CREDENTIAL_KEYS`, `HELMR_GITHUB_OAUTH_CLIENT_ID`, and `HELMR_GITHUB_OAUTH_CLIENT_SECRET`.
+Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CAS_URI`, `HELMR_CLICKHOUSE_URL`, `WORKER_TOKEN_SIGNING_KEY`, `HELMR_WORKER_GROUPS`, `HELMR_WORKER_GROUP_ID`, `HELMR_REGION_ID`, `HELMR_DEFAULT_REGION_ID`, `AUTH_KEY`, `ENCRYPTION_KEY`, `WORKSPACE_FENCING_KEY`, `TOKEN_CREDENTIAL_KEY`, `HELMR_GITHUB_OAUTH_CLIENT_ID`, and `HELMR_GITHUB_OAUTH_CLIENT_SECRET`.
 
 Deployment mode: `HELMR_DEPLOYMENT_MODE` defaults to `self-hosted`. In `self-hosted` mode, `HELMR_SETUP_TOKEN` is required to create the first and only organization. In `managed-cloud` mode, authenticated users can create organizations without a setup token.
 
@@ -29,15 +29,10 @@ Optional: `HELMR_CONTROL_ADDR`, `HELMR_PUBLIC_URL`, and `HELMR_MAGIC_LINK_DEBUG_
 
 ClickHouse telemetry: `HELMR_CLICKHOUSE_URL` is required. Set `HELMR_CLICKHOUSE_USER` when the service user is not `default`, and set `HELMR_CLICKHOUSE_PASSWORD` when the service requires a password.
 
-`ENCRYPTION_KEY` is the single Secret encryption key. It must be a
-base64-encoded 32-byte value and must be identical on every Control replica.
-Online key rotation is not supported.
-
-`HELMR_TOKEN_CREDENTIAL_KEYS` is a JSON object from content-derived
-`sha256:<hex>` key IDs to base64-encoded 32-byte keys.
-`HELMR_TOKEN_CREDENTIAL_KEY_ID` selects the active derivation key. Keep every
-key referenced by a Token or its public completion credential readable; Control
-readiness fails closed when a referenced key is absent.
+`AUTH_KEY`, `TOKEN_CREDENTIAL_KEY`, `WORKSPACE_FENCING_KEY`,
+`ENCRYPTION_KEY`, and `WORKER_TOKEN_SIGNING_KEY` are distinct single roots.
+Each must be base64 and decode to exactly 32 bytes. Every Control replica uses
+the same values. Online rotation and multi-key verification are not supported.
 
 Email delivery is disabled by default. Set `HELMR_EMAIL_PROVIDER` to choose a sender:
 
@@ -53,16 +48,12 @@ Email delivery is disabled by default. Set `HELMR_EMAIL_PROVIDER` to choose a se
 ## Dispatcher
 
 Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CLICKHOUSE_URL`,
-`HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT`, and
-`HELMR_WORKSPACE_FENCING_KEYS`.
+and `WORKSPACE_FENCING_KEY`.
 
 `ENCRYPTION_KEY` is control-plane authority and is not provided to the dispatcher.
 
-The dispatcher uses the same content-addressed Workspace fencing key ring as
-the control service. The fingerprint selects the active write key.
-`HELMR_WORKSPACE_FENCING_KEYS` is a JSON object from key fingerprint to
-base64-encoded 32-byte key. Every key referenced by a nonterminal Workspace
-Lease must remain readable during rollout and retirement.
+The dispatcher uses the same single base64-encoded 32-byte
+`WORKSPACE_FENCING_KEY` as the control service.
 
 The AWS control module provisions cluster-mode disabled ElastiCache Valkey/Redis and injects
 `HELMR_REDIS_URL` into both `helmr-control` and `helmr-dispatcher`.
@@ -87,7 +78,7 @@ Optional Schedule worker tuning:
 
 ## Worker
 
-Required: `HELMR_CONTROL_URL`, `HELMR_CAS_URI`, `HELMR_WORKER_GROUP_ID`, `HELMR_WORKER_PROVIDER_REGION`, `HELMR_CHECKPOINT_ENCRYPTION_KEY`, `HELMR_WORKER_FIRECRACKER_JAILER_UID`, and `HELMR_WORKER_FIRECRACKER_JAILER_GID`.
+Required: `HELMR_CONTROL_URL`, `HELMR_CAS_URI`, `HELMR_WORKER_GROUP_ID`, `HELMR_WORKER_PROVIDER_REGION`, `CHECKPOINT_ENCRYPTION_KEY`, `HELMR_WORKER_FIRECRACKER_JAILER_UID`, and `HELMR_WORKER_FIRECRACKER_JAILER_GID`.
 
 The worker requests a one-time enrollment challenge and proves its AWS EC2 identity with the instance identity document and a nonce-bound signed STS request. Control verifies the instance against the configured worker-group policy, then issues a renewable worker credential stored at `HELMR_WORKER_INSTANCE_CREDENTIAL_PATH`. No deployment-mode or shared bootstrap credential is accepted by the worker.
 

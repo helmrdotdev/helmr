@@ -203,7 +203,7 @@ func (s *Server) createPendingMagicLink(r *http.Request, purpose db.MagicLinkPur
 		if err != nil {
 			return err
 		}
-		tokenHash, err := auth.HashToken(s.authSecret, rawToken)
+		tokenHash, err := auth.HashToken(s.authKeys.MagicLink, rawToken)
 		if err != nil {
 			return err
 		}
@@ -301,7 +301,7 @@ func (s *Server) magicLinkFinish(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid magic link finish JSON: %w", err)))
 		return
 	}
-	tokenHash, err := auth.HashToken(s.authSecret, request.Token)
+	tokenHash, err := auth.HashToken(s.authKeys.MagicLink, request.Token)
 	if err != nil {
 		writeAuthError(w, http.StatusBadRequest, errInvalidOrExpiredToken)
 		return

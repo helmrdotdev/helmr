@@ -34,13 +34,7 @@ func TestNewAuthorityRetainsConcretePool(t *testing.T) {
 func TestNewRunAuthorityRequiresFencingAuthorityAndValidPolicy(t *testing.T) {
 	pool := &pgxpool.Pool{}
 	key := bytes.Repeat([]byte{1}, workspace.FencingKeySize)
-	var fixedKey [workspace.FencingKeySize]byte
-	copy(fixedKey[:], key)
-	fingerprint := workspace.FencingKeyFingerprintForKey(fixedKey).String()
-	keys, err := workspace.NewFencingKeys(
-		fingerprint,
-		map[string][]byte{fingerprint: key},
-	)
+	fencingKey, err := workspace.NewFencingKey(key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,21 +44,19 @@ func TestNewRunAuthorityRequiresFencingAuthorityAndValidPolicy(t *testing.T) {
 		StartDeadline:    time.Minute,
 		LeaseTTL:         2 * time.Minute,
 	}
-	if authority, err := NewRunAuthority(pool, workspace.FencingKeys{}, valid); authority != nil || err == nil {
+	if authority, err := NewRunAuthority(pool, workspace.FencingKey{}, valid); authority != nil || err == nil {
 		t.Fatalf("NewRunAuthority() without keys = (%#v, %v), want error", authority, err)
 	}
 	invalid := valid
 	invalid.StartDeadline = 3 * time.Minute
-	if authority, err := NewRunAuthority(pool, keys, invalid); authority != nil || err == nil {
+	if authority, err := NewRunAuthority(pool, fencingKey, invalid); authority != nil || err == nil {
 		t.Fatalf("NewRunAuthority() with invalid policy = (%#v, %v), want error", authority, err)
 	}
-	authority, err := NewRunAuthority(pool, keys, valid)
+	authority, err := NewRunAuthority(pool, fencingKey, valid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if authority.pool != pool ||
-		authority.runPolicy != valid ||
-		authority.fencingKeys.ActiveFingerprint() != keys.ActiveFingerprint() {
+	if authority.pool != pool || authority.runPolicy != valid || !authority.fencingKey.Valid() {
 		t.Fatal("NewRunAuthority() did not retain exact Run grant authority")
 	}
 }

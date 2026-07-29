@@ -591,7 +591,7 @@ func (d *Authority) grantWorkspaceExec(
 	ownershipGeneration := authority.ownershipGeneration + 1
 	writerGeneration := authority.writerGeneration + 1
 	mountGeneration := mount.fencingGeneration + 1
-	capability, err := d.fencingKeys.DeriveActive(workspace.FenceInput{
+	capability, err := d.fencingKey.Derive(workspace.FenceInput{
 		LeaseID:                leaseUUID,
 		WorkspaceID:            workspaceUUID,
 		OwnershipGeneration:    ownershipGeneration,
@@ -666,7 +666,6 @@ func (d *Authority) grantWorkspaceExec(
 		OwnershipGeneration:    ownershipGeneration,
 		WriterGeneration:       writerGeneration,
 		MountFencingGeneration: mountGeneration,
-		FencingKeyFingerprint:  capability.KeyFingerprint.Bytes(),
 		FencingTokenHash:       capability.Hash,
 		ExpiresAt:              pgvalue.Timestamptz(time.Now().Add(workspaceExecLeaseTTL)),
 	}); err != nil {

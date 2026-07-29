@@ -25,12 +25,12 @@ func (s *Server) startDeviceCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("generate device code"))
 		return
 	}
-	deviceHash, err := auth.HashToken(s.authSecret, codes.DeviceCode)
+	deviceHash, err := auth.HashToken(s.authKeys.DeviceCode, codes.DeviceCode)
 	if err != nil {
 		writeError(w, errors.New("hash device code"))
 		return
 	}
-	userHash, err := auth.HashToken(s.authSecret, auth.NormalizeUserCode(codes.UserCode))
+	userHash, err := auth.HashToken(s.authKeys.DeviceCode, auth.NormalizeUserCode(codes.UserCode))
 	if err != nil {
 		writeError(w, errors.New("hash user code"))
 		return
@@ -91,7 +91,7 @@ func (s *Server) resolveDeviceCode(w http.ResponseWriter, r *http.Request, appro
 		return
 	}
 	code := auth.NormalizeUserCode(request.UserCode)
-	hash, err := auth.HashToken(s.authSecret, code)
+	hash, err := auth.HashToken(s.authKeys.DeviceCode, code)
 	if err != nil {
 		writeError(w, badRequest(errors.New("invalid device code")))
 		return
@@ -136,7 +136,7 @@ func (s *Server) deviceToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("invalid device token JSON")))
 		return
 	}
-	hash, err := auth.HashToken(s.authSecret, strings.TrimSpace(request.DeviceCode))
+	hash, err := auth.HashToken(s.authKeys.DeviceCode, strings.TrimSpace(request.DeviceCode))
 	if err != nil {
 		writeDeviceTokenError(w, "invalid_request")
 		return
@@ -187,7 +187,7 @@ func (s *Server) lookupDeviceCodeByUserCode(w http.ResponseWriter, r *http.Reque
 		writeError(w, unavailable(err))
 		return db.DeviceCode{}, false
 	}
-	hash, err := auth.HashToken(s.authSecret, code)
+	hash, err := auth.HashToken(s.authKeys.DeviceCode, code)
 	if err != nil {
 		writeError(w, badRequest(errors.New("invalid device code")))
 		return db.DeviceCode{}, false

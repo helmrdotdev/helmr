@@ -237,8 +237,6 @@ module "control" {
   enable_cloudfront                          = var.enable_cloudfront
   private_control_dns_name                   = local.private_control_dns_name
   github_oauth_client_id                     = var.github_oauth_client_id
-  workspace_fencing_key_fingerprint          = var.workspace_fencing_key_fingerprint
-  token_credential_key_id                    = var.token_credential_key_id
   database_backup_retention_days             = var.database_backup_retention_days
   database_engine_version                    = var.database_engine_version
   database_deletion_protection               = var.database_deletion_protection

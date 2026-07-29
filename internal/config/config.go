@@ -26,61 +26,58 @@ const (
 )
 
 type Control struct {
-	Addr                           string
-	DeploymentMode                 string
-	WorkerGroupID                  string
-	RegionID                       string
-	DefaultRegionID                string
-	DatabaseURL                    string
-	RedisURL                       string
-	ClickHouseURL                  string
-	ClickHouseUser                 string
-	ClickHousePassword             string
-	CASURI                         string
-	BuildPolicyPath                string
-	PlatformStoreURI               string
-	WorkerTokenSigningKey          string
-	WorkerGroupsJSON               string
-	SetupToken                     string
-	AuthSecret                     string
-	EncryptionKey                  []byte
-	WorkspaceFencingKeyFingerprint string
-	WorkspaceFencingKeys           string
-	TokenCredentialKeyID           string
-	TokenCredentialKeys            string
-	PublicURL                      string
-	MagicLinkDebugURLs             bool
-	EmailProvider                  string
-	ResendAPIKey                   string
-	SMTPAddr                       string
-	SMTPUsername                   string
-	SMTPPassword                   string
-	EmailFrom                      string
-	GitHubOAuthClientID            string
-	GitHubOAuthClientSecret        string
-	ScheduleJitter                 time.Duration
-	RunLeaseTTL                    time.Duration
-	RunFinalizationTTL             time.Duration
+	Addr                    string
+	DeploymentMode          string
+	WorkerGroupID           string
+	RegionID                string
+	DefaultRegionID         string
+	DatabaseURL             string
+	RedisURL                string
+	ClickHouseURL           string
+	ClickHouseUser          string
+	ClickHousePassword      string
+	CASURI                  string
+	BuildPolicyPath         string
+	PlatformStoreURI        string
+	WorkerTokenSigningKey   []byte
+	WorkerGroupsJSON        string
+	SetupToken              string
+	AuthKey                 []byte
+	EncryptionKey           []byte
+	WorkspaceFencingKey     []byte
+	TokenCredentialKey      []byte
+	PublicURL               string
+	MagicLinkDebugURLs      bool
+	EmailProvider           string
+	ResendAPIKey            string
+	SMTPAddr                string
+	SMTPUsername            string
+	SMTPPassword            string
+	EmailFrom               string
+	GitHubOAuthClientID     string
+	GitHubOAuthClientSecret string
+	ScheduleJitter          time.Duration
+	RunLeaseTTL             time.Duration
+	RunFinalizationTTL      time.Duration
 }
 
 type Dispatcher struct {
-	WorkerFleets                   []WorkerFleet
-	FleetMetricsNamespace          string
-	DatabaseURL                    string
-	RedisURL                       string
-	ClickHouseURL                  string
-	ClickHouseUser                 string
-	ClickHousePassword             string
-	WorkspaceFencingKeyFingerprint string
-	WorkspaceFencingKeys           string
-	RunPreparationLimit            int
-	RunReservationTTL              time.Duration
-	RunLeaseStartDeadline          time.Duration
-	RunLeaseTTL                    time.Duration
-	SchedulePollInterval           time.Duration
-	ScheduleClaimLimit             int
-	ScheduleConcurrency            int
-	ScheduleClaimLease             time.Duration
+	WorkerFleets          []WorkerFleet
+	FleetMetricsNamespace string
+	DatabaseURL           string
+	RedisURL              string
+	ClickHouseURL         string
+	ClickHouseUser        string
+	ClickHousePassword    string
+	WorkspaceFencingKey   []byte
+	RunPreparationLimit   int
+	RunReservationTTL     time.Duration
+	RunLeaseStartDeadline time.Duration
+	RunLeaseTTL           time.Duration
+	SchedulePollInterval  time.Duration
+	ScheduleClaimLimit    int
+	ScheduleConcurrency   int
+	ScheduleClaimLease    time.Duration
 }
 
 type WorkerFleet struct {
@@ -135,7 +132,7 @@ type Worker struct {
 	WorkerGroupID                string
 	CASURI                       string
 	WorkerInstanceCredentialPath string
-	CheckpointKey                string
+	CheckpointKey                []byte
 	RegionID                     string
 	WorkerProviderRegion         string
 	BuildPolicyPath              string

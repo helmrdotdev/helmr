@@ -298,7 +298,6 @@ INSERT INTO workspace_leases (
     ownership_generation,
     writer_generation,
     mount_fencing_generation,
-    fencing_key_fingerprint,
     fencing_token_hash,
     expires_at
 ) VALUES (
@@ -318,7 +317,6 @@ INSERT INTO workspace_leases (
     sqlc.arg(ownership_generation),
     sqlc.arg(writer_generation),
     sqlc.arg(mount_fencing_generation),
-    sqlc.arg(fencing_key_fingerprint),
     sqlc.arg(fencing_token_hash),
     sqlc.arg(expires_at)
 )

@@ -40,11 +40,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	checkpointKey, err := checkpoint.KeyFromBase64(cfg.CheckpointKey)
-	if err != nil {
-		return fmt.Errorf("load checkpoint encryption key: %w", err)
-	}
-	checkpointEncryptor, err := checkpoint.New(checkpointKey)
+	checkpointEncryptor, err := checkpoint.New(cfg.CheckpointKey)
 	if err != nil {
 		return fmt.Errorf("configure checkpoint encryption: %w", err)
 	}

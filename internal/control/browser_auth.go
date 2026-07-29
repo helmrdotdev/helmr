@@ -279,7 +279,7 @@ func (s *Server) issueSessionForOrg(r *http.Request, queries db.Querier, userID 
 	if err != nil {
 		return "", err
 	}
-	hash, err := auth.HashToken(s.authSecret, raw)
+	hash, err := auth.HashToken(s.authKeys.Session, raw)
 	if err != nil {
 		return "", err
 	}
@@ -300,7 +300,7 @@ func (s *Server) validateInvitationToken(r *http.Request, raw string) ([]byte, e
 	if err := s.userAuthConfigured(); err != nil {
 		return nil, err
 	}
-	tokenHash, err := auth.HashToken(s.authSecret, raw)
+	tokenHash, err := auth.HashToken(s.authKeys.Invitation, raw)
 	if err != nil {
 		return nil, errors.New("invalid invite token")
 	}
@@ -347,9 +347,11 @@ func (s *Server) encodeAuthFlow(flow browserAuthFlow) (string, error) {
 		return "", err
 	}
 	encodedPayload := base64.RawURLEncoding.EncodeToString(payload)
-	mac := hmac.New(sha256.New, s.authSecret)
-	_, _ = mac.Write([]byte(encodedPayload))
-	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	mac, err := auth.MAC(s.authKeys.BrowserAuth, []byte(encodedPayload))
+	if err != nil {
+		return "", err
+	}
+	signature := base64.RawURLEncoding.EncodeToString(mac)
 	return encodedPayload + "." + signature, nil
 }
 
@@ -366,9 +368,8 @@ func (s *Server) decodeAuthFlow(r *http.Request) (browserAuthFlow, error) {
 	if err != nil {
 		return browserAuthFlow{}, errors.New("auth flow is invalid")
 	}
-	mac := hmac.New(sha256.New, s.authSecret)
-	_, _ = mac.Write([]byte(payload))
-	if !hmac.Equal(actual, mac.Sum(nil)) {
+	expected, err := auth.MAC(s.authKeys.BrowserAuth, []byte(payload))
+	if err != nil || !hmac.Equal(actual, expected) {
 		return browserAuthFlow{}, errors.New("auth flow is invalid")
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(payload)

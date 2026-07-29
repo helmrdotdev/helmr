@@ -831,22 +831,21 @@ type Project struct {
 }
 
 type PublicAccessToken struct {
-	ID              pgtype.UUID        `json:"id"`
-	PublicID        string             `json:"public_id"`
-	TokenID         pgtype.UUID        `json:"token_id"`
-	TokenHash       []byte             `json:"token_hash"`
-	CredentialKeyID string             `json:"credential_key_id"`
-	State           string             `json:"state"`
-	Metadata        []byte             `json:"metadata"`
-	CreatedBy       []byte             `json:"created_by"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
-	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
-	RevokedAt       pgtype.Timestamptz `json:"revoked_at"`
-	ExpiredAt       pgtype.Timestamptz `json:"expired_at"`
-	MaxUses         pgtype.Int4        `json:"max_uses"`
-	UsedCount       int32              `json:"used_count"`
+	ID         pgtype.UUID        `json:"id"`
+	PublicID   string             `json:"public_id"`
+	TokenID    pgtype.UUID        `json:"token_id"`
+	TokenHash  []byte             `json:"token_hash"`
+	State      string             `json:"state"`
+	Metadata   []byte             `json:"metadata"`
+	CreatedBy  []byte             `json:"created_by"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
+	ExpiredAt  pgtype.Timestamptz `json:"expired_at"`
+	MaxUses    pgtype.Int4        `json:"max_uses"`
+	UsedCount  int32              `json:"used_count"`
 }
 
 type Region struct {
@@ -1273,7 +1272,6 @@ type Token struct {
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
 	State                     string             `json:"state"`
 	ExpiresAt                 pgtype.Timestamptz `json:"expires_at"`
-	CallbackKeyID             string             `json:"callback_key_id"`
 	CallbackSecretFingerprint []byte             `json:"callback_secret_fingerprint"`
 	CompletionFingerprint     []byte             `json:"completion_fingerprint"`
 	Result                    []byte             `json:"result"`
@@ -1490,7 +1488,6 @@ type WorkspaceLease struct {
 	OwnershipGeneration    int64              `json:"ownership_generation"`
 	WriterGeneration       int64              `json:"writer_generation"`
 	MountFencingGeneration int64              `json:"mount_fencing_generation"`
-	FencingKeyFingerprint  []byte             `json:"fencing_key_fingerprint"`
 	FencingTokenHash       string             `json:"fencing_token_hash"`
 	AcquiredAt             pgtype.Timestamptz `json:"acquired_at"`
 	RenewedAt              pgtype.Timestamptz `json:"renewed_at"`

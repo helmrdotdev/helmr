@@ -58,9 +58,10 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		Auth:                  auth.NewDBAuthenticator(store),
 		WorkerEnrollment:      controltestWorkerEnrollmentVerifier{},
 		SecretDelivery:        controltestSecretDeliveryOpener{},
-		WorkspaceFencingKeys:  controltestWorkspaceFencingKeys(),
-		TokenCredentialKeys:   controltestTokenCredentialKeys(),
-		AuthSecret:            []byte("abcdefghijabcdefghijabcdefghij12"),
+		WorkspaceFencingKey:   controltestWorkspaceFencingKey(),
+		TokenCredentialKey:    controltestTokenCredentialKey(),
+		AuthKey:               make([]byte, auth.RootKeySize),
+		WorkerTokenSigningKey: make([]byte, auth.WorkerTokenSigningKeySize),
 		PublicURL:             publicURL,
 		WorkerGroupID:         "us-east-1-worker-group-1",
 		RegionID:              "us-east-1",
@@ -105,38 +106,24 @@ func (controltestSecretDeliveryOpener) OpenDeliveries(
 	return nil, nil
 }
 
-func controltestWorkspaceFencingKeys() workspace.FencingKeys {
-	keys, err := workspace.NewFencingKeys(
-		"sha256:c57461e4ce9af0ed10b8b704cdc10537834475e528e4591d295857177987ee03",
-		map[string][]byte{
-			"sha256:c57461e4ce9af0ed10b8b704cdc10537834475e528e4591d295857177987ee03": make(
-				[]byte,
-				workspace.FencingKeySize,
-			),
-		},
-	)
+func controltestWorkspaceFencingKey() workspace.FencingKey {
+	key, err := workspace.NewFencingKey(make([]byte, workspace.FencingKeySize))
 	if err != nil {
 		panic(err)
 	}
-	return keys
+	return key
 }
 
-func controltestTokenCredentialKeys() tokencredential.CredentialKeys {
+func controltestTokenCredentialKey() tokencredential.CredentialKey {
 	key := make([]byte, tokencredential.CredentialKeySize)
 	for index := range key {
 		key[index] = 3
 	}
-	var fixed [tokencredential.CredentialKeySize]byte
-	copy(fixed[:], key)
-	id := tokencredential.CredentialKeyIDForKey(fixed)
-	keys, err := tokencredential.NewCredentialKeys(
-		id.String(),
-		map[string][]byte{id.String(): key},
-	)
+	credentialKey, err := tokencredential.NewCredentialKey(key)
 	if err != nil {
 		panic(err)
 	}
-	return keys
+	return credentialKey
 }
 
 func TestRunServesReadyzAndDeviceStart(t *testing.T) {
@@ -167,27 +154,13 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("HELMR_DEFAULT_REGION_ID", "us-east-1")
 	t.Setenv("HELMR_PROVIDER", "aws")
 	t.Setenv("HELMR_PROVIDER_REGION", "us-east-1")
-	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
-	t.Setenv(
-		"HELMR_TOKEN_CREDENTIAL_KEY_ID",
-		"sha256:434f804453bb27ed658e7d3b6a251a2450c6d05c0989b349d6abfa55c1bce882",
-	)
-	t.Setenv(
-		"HELMR_TOKEN_CREDENTIAL_KEYS",
-		`{"sha256:434f804453bb27ed658e7d3b6a251a2450c6d05c0989b349d6abfa55c1bce882":"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM="}`,
-	)
+	t.Setenv("WORKER_TOKEN_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
+	t.Setenv("TOKEN_CREDENTIAL_KEY", "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=")
 	t.Setenv("HELMR_WORKER_GROUPS", `[{"id":"us-east-1-worker-group-1","name":"run","region":"us-east-1","account_id":"123456789012","autoscaling_group":"test-run","instance_profile_arn":"arn:aws:iam::123456789012:instance-profile/test-run","launch_ami_id":"ami-test","ami_ids":["ami-test"],"allows_run":true,"allows_build":false,"instance_capacity":{"milli_cpu":1000,"memory_bytes":1024,"guest_ephemeral_disk_bytes":1024,"vm_slots":1}}]`)
 	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")
-	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
+	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
 	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv(
-		"HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT",
-		"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26",
-	)
-	t.Setenv(
-		"HELMR_WORKSPACE_FENCING_KEYS",
-		`{"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}`,
-	)
+	t.Setenv("WORKSPACE_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 	t.Setenv("HELMR_PUBLIC_URL", "http://"+addr)
 	t.Setenv("HELMR_EMAIL_PROVIDER", "none")
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")

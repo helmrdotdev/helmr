@@ -623,7 +623,6 @@ INSERT INTO workspace_leases (
     ownership_generation,
     writer_generation,
     mount_fencing_generation,
-    fencing_key_fingerprint,
     fencing_token_hash,
     expires_at
 ) VALUES (
@@ -644,10 +643,9 @@ INSERT INTO workspace_leases (
     $15,
     $16,
     $17,
-    $18,
-    $19
+    $18
 )
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_key_fingerprint, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
 `
 
 type InsertRunWorkspaceLeaseParams struct {
@@ -667,7 +665,6 @@ type InsertRunWorkspaceLeaseParams struct {
 	OwnershipGeneration    int64              `json:"ownership_generation"`
 	WriterGeneration       int64              `json:"writer_generation"`
 	MountFencingGeneration int64              `json:"mount_fencing_generation"`
-	FencingKeyFingerprint  []byte             `json:"fencing_key_fingerprint"`
 	FencingTokenHash       string             `json:"fencing_token_hash"`
 	ExpiresAt              pgtype.Timestamptz `json:"expires_at"`
 }
@@ -690,7 +687,6 @@ func (q *Queries) InsertRunWorkspaceLease(ctx context.Context, arg InsertRunWork
 		arg.OwnershipGeneration,
 		arg.WriterGeneration,
 		arg.MountFencingGeneration,
-		arg.FencingKeyFingerprint,
 		arg.FencingTokenHash,
 		arg.ExpiresAt,
 	)
@@ -714,7 +710,6 @@ func (q *Queries) InsertRunWorkspaceLease(ctx context.Context, arg InsertRunWork
 		&i.OwnershipGeneration,
 		&i.WriterGeneration,
 		&i.MountFencingGeneration,
-		&i.FencingKeyFingerprint,
 		&i.FencingTokenHash,
 		&i.AcquiredAt,
 		&i.RenewedAt,

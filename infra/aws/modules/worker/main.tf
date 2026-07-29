@@ -64,7 +64,7 @@ locals {
   } : {}, local.disk_environment, local.capacity_environment, local.cache_environment)
 
   reserved_worker_environment_keys = toset(concat(keys(local.worker_environment), [
-    "HELMR_CHECKPOINT_ENCRYPTION_KEY",
+    "CHECKPOINT_ENCRYPTION_KEY",
     "HELMR_BUILD_POLICY_PATH",
     "HELMR_PLATFORM_STORE_URI",
   ]))

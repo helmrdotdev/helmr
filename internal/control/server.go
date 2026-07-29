@@ -74,18 +74,18 @@ type Server struct {
 	platformArtifactLocks PlatformArtifactLocker
 	secrets               SecretManager
 	secretDelivery        SecretDeliveryOpener
-	workspaceFencingKeys  workspace.FencingKeys
-	tokenCredentialKeys   token.CredentialKeys
+	workspaceFencingKey   workspace.FencingKey
+	tokenCredentialKey    token.CredentialKey
 	eventStream           *EventStream
 	telemetryReader       telemetry.Reader
-	workerTokenSecret     []byte
+	workerTokenSigningKey []byte
 	workerTokenTTL        time.Duration
 	runLeaseTTL           time.Duration
 	runFinalizationTTL    time.Duration
 	workerEnrollment      WorkerEnrollmentVerifier
 	workerEnrollmentGuard *workerEnrollmentGuard
 	setupToken            string
-	authSecret            []byte
+	authKeys              auth.Keys
 	publicURL             *url.URL
 	authProvider          AuthProvider
 	mailer                email.Sender
@@ -123,21 +123,21 @@ type ServerConfig struct {
 	PlatformArtifactLocks PlatformArtifactLocker
 	Secrets               SecretManager
 	SecretDelivery        SecretDeliveryOpener
-	WorkspaceFencingKeys  workspace.FencingKeys
-	TokenCredentialKeys   token.CredentialKeys
+	WorkspaceFencingKey   workspace.FencingKey
+	TokenCredentialKey    token.CredentialKey
 	EventStream           *EventStream
 	TelemetryReader       telemetry.Reader
 	Mailer                email.Sender
 	AuthProvider          AuthProvider
 
-	WorkerTokenSecret  []byte
-	WorkerTokenTTL     time.Duration
-	RunLeaseTTL        time.Duration
-	RunFinalizationTTL time.Duration
-	WorkerEnrollment   WorkerEnrollmentVerifier
-	SetupToken         string
-	AuthSecret         []byte
-	PublicURL          *url.URL
+	WorkerTokenSigningKey []byte
+	WorkerTokenTTL        time.Duration
+	RunLeaseTTL           time.Duration
+	RunFinalizationTTL    time.Duration
+	WorkerEnrollment      WorkerEnrollmentVerifier
+	SetupToken            string
+	AuthKey               []byte
+	PublicURL             *url.URL
 
 	MagicLinkDebugURLs bool
 	SessionTTL         time.Duration
@@ -179,13 +179,18 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if cfg.SecretDelivery == nil {
 		return nil, errors.New("Secret delivery opener is required")
 	}
-	if !cfg.WorkspaceFencingKeys.Has(
-		cfg.WorkspaceFencingKeys.ActiveFingerprint(),
-	) {
-		return nil, errors.New("Workspace fencing keys are required")
+	if !cfg.WorkspaceFencingKey.Valid() {
+		return nil, errors.New("Workspace fencing key is required")
 	}
-	if !cfg.TokenCredentialKeys.Has(cfg.TokenCredentialKeys.ActiveID()) {
-		return nil, errors.New("Token credential keys are required")
+	if !cfg.TokenCredentialKey.Valid() {
+		return nil, errors.New("Token credential key is required")
+	}
+	authKeys, err := auth.NewKeys(cfg.AuthKey)
+	if err != nil {
+		return nil, err
+	}
+	if err := auth.ValidateWorkerTokenSigningKey(cfg.WorkerTokenSigningKey); err != nil {
+		return nil, err
 	}
 	regionID := cfg.RegionID
 	if err := region.ValidateID(regionID); err != nil {
@@ -249,18 +254,18 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		platformArtifactLocks: cfg.PlatformArtifactLocks,
 		secrets:               cfg.Secrets,
 		secretDelivery:        cfg.SecretDelivery,
-		workspaceFencingKeys:  cfg.WorkspaceFencingKeys,
-		tokenCredentialKeys:   cfg.TokenCredentialKeys,
+		workspaceFencingKey:   cfg.WorkspaceFencingKey,
+		tokenCredentialKey:    cfg.TokenCredentialKey,
 		eventStream:           cfg.EventStream,
 		telemetryReader:       telemetryReader,
-		workerTokenSecret:     cfg.WorkerTokenSecret,
+		workerTokenSigningKey: cfg.WorkerTokenSigningKey,
 		workerTokenTTL:        workerTokenTTL,
 		runLeaseTTL:           runLeaseTTL,
 		runFinalizationTTL:    runFinalizationTTL,
 		workerEnrollment:      cfg.WorkerEnrollment,
 		workerEnrollmentGuard: newWorkerEnrollmentGuard(),
 		setupToken:            strings.TrimSpace(cfg.SetupToken),
-		authSecret:            cfg.AuthSecret,
+		authKeys:              authKeys,
 		publicURL:             cfg.PublicURL,
 		authProvider:          cfg.AuthProvider,
 		mailer:                mailer,
@@ -701,105 +706,6 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		s.writeReadinessUnavailable(w, errors.New("regional control database is not ready"))
 		return
 	}
-	var rawFencingKeyFingerprints []byte
-	if err := s.readinessDB.QueryRow(ctx, `
-		SELECT COALESCE(
-			json_agg(referenced.fingerprint ORDER BY referenced.fingerprint),
-			'[]'::json
-		)
-		  FROM (
-			SELECT DISTINCT encode(fencing_key_fingerprint, 'hex') AS fingerprint
-			  FROM workspace_leases
-			 WHERE state IN ('active', 'releasing')
-		  ) AS referenced
-	`).Scan(&rawFencingKeyFingerprints); err != nil {
-		s.writeReadinessUnavailable(w, fmt.Errorf(
-			"read Workspace fencing key references: %w",
-			err,
-		))
-		return
-	}
-	var encodedFingerprints []string
-	if err := json.Unmarshal(
-		rawFencingKeyFingerprints,
-		&encodedFingerprints,
-	); err != nil {
-		s.writeReadinessUnavailable(w, fmt.Errorf("decode Workspace fencing key references: %w", err))
-		return
-	}
-	for _, encoded := range encodedFingerprints {
-		fingerprint, err := workspace.ParseFencingKeyFingerprint(
-			"sha256:" + encoded,
-		)
-		if err != nil || !s.workspaceFencingKeys.Has(fingerprint) {
-			s.writeReadinessUnavailable(w, fmt.Errorf(
-				"Workspace fencing key %q is not readable",
-				encoded,
-			))
-			return
-		}
-	}
-	var rawTokenCredentialKeyIDs []byte
-	if err := s.readinessDB.QueryRow(ctx, `
-		SELECT COALESCE(
-			json_agg(referenced.key_id ORDER BY referenced.key_id),
-			'[]'::json
-		)
-		  FROM (
-			SELECT callback_key_id AS key_id
-			  FROM tokens
-			 WHERE expires_at > transaction_timestamp()
-			   AND callback_key_id <> ''
-			UNION
-			SELECT credential_key_id AS key_id
-			  FROM public_access_tokens
-			 WHERE expires_at > transaction_timestamp()
-			   AND credential_key_id <> ''
-			UNION
-			SELECT receipt->>'callback_key_id' AS key_id
-			  FROM idempotency_claims
-			 WHERE operation = 'token.create'
-			   AND state = 'completed'
-			   AND retired_at IS NULL
-			   AND expires_at > transaction_timestamp()
-			   AND receipt->>'callback_key_id' <> ''
-			UNION
-			SELECT receipt->>'credential_key_id' AS key_id
-			  FROM idempotency_claims
-			 WHERE operation = 'token.create'
-			   AND state = 'completed'
-			   AND retired_at IS NULL
-			   AND expires_at > transaction_timestamp()
-			   AND receipt->>'credential_key_id' <> ''
-		  ) AS referenced
-	`).Scan(&rawTokenCredentialKeyIDs); err != nil {
-		s.writeReadinessUnavailable(w, fmt.Errorf(
-			"read Token credential key references: %w",
-			err,
-		))
-		return
-	}
-	var tokenCredentialKeyIDs []string
-	if err := json.Unmarshal(
-		rawTokenCredentialKeyIDs,
-		&tokenCredentialKeyIDs,
-	); err != nil {
-		s.writeReadinessUnavailable(w, fmt.Errorf(
-			"decode Token credential key references: %w",
-			err,
-		))
-		return
-	}
-	for _, encoded := range tokenCredentialKeyIDs {
-		keyID, err := token.ParseCredentialKeyID(encoded)
-		if err != nil || !s.tokenCredentialKeys.Has(keyID) {
-			s.writeReadinessUnavailable(w, fmt.Errorf(
-				"Token credential key %q is not readable",
-				encoded,
-			))
-			return
-		}
-	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
@@ -878,13 +784,13 @@ func (s *Server) userAuthConfigured() error {
 	if s.db == nil {
 		return errors.New("run storage is not configured")
 	}
-	if len(s.authSecret) == 0 {
+	if !s.authKeys.Valid() {
 		return errors.New("user authentication is not configured")
 	}
 	if s.publicURL == nil {
 		return errors.New("public URL is not configured")
 	}
-	return auth.ValidateTokenSecret(s.authSecret)
+	return nil
 }
 
 func (s *Server) effectiveSessionTTL() time.Duration {

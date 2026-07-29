@@ -36,7 +36,7 @@ checkpoint_key="$(aws secretsmanager get-secret-value --secret-id '${checkpoint_
 {
   printf 'AWS_REGION=%s\n' "$aws_region"
   printf 'AWS_DEFAULT_REGION=%s\n' "$aws_region"
-  printf 'HELMR_CHECKPOINT_ENCRYPTION_KEY=%s\n' "$checkpoint_key"
+  printf 'CHECKPOINT_ENCRYPTION_KEY=%s\n' "$checkpoint_key"
 } >>"$env_tmp"
 
 chown root:root "$env_tmp"

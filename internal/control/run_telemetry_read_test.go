@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -31,7 +32,7 @@ func (store *runTelemetryFrontierStore) GetRunTelemetryFrontier(
 }
 
 func TestRunTelemetryCursorIsIntegrityAndScopeBound(t *testing.T) {
-	server := &Server{authSecret: []byte("01234567890123456789012345678901")}
+	server := &Server{authKeys: auth.Keys{TelemetryCursor: make([]byte, auth.RootKeySize)}}
 	want := runTelemetryCursor{
 		EnvironmentID: "00000000-0000-0000-0000-000000000001",
 		RunID:         "run_aaaaaaaaaaaaaaaaaaaaaaaaaa",

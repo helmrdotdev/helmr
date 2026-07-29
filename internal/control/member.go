@@ -140,7 +140,7 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("generate invitation token"))
 		return
 	}
-	tokenHash, err := auth.HashToken(s.authSecret, rawToken)
+	tokenHash, err := auth.HashToken(s.authKeys.Invitation, rawToken)
 	if err != nil {
 		writeError(w, errors.New("hash invitation token"))
 		return

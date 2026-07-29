@@ -87,7 +87,7 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 			authority.WorkspaceProcess = started
 		}
 		derived, err := deriveWorkspaceCapability(
-			s.workspaceFencingKeys,
+			s.workspaceFencingKey,
 			authority.WorkspaceLease,
 		)
 		if err != nil {
@@ -232,7 +232,7 @@ func (s *Server) workerCompleteWorkspaceExec(w http.ResponseWriter, r *http.Requ
 			hex.EncodeToString(authority.RequestFingerprint) != strings.TrimSpace(request.RequestFingerprint) {
 			return errors.New("Workspace exec completion fence is stale")
 		}
-		capability, err := deriveWorkspaceCapability(s.workspaceFencingKeys, authority.WorkspaceLease)
+		capability, err := deriveWorkspaceCapability(s.workspaceFencingKey, authority.WorkspaceLease)
 		if err != nil {
 			return err
 		}

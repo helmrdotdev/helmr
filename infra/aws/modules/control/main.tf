@@ -82,28 +82,26 @@ locals {
   )
 
   control_environment_defaults = merge({
-    HELMR_CONTROL_ADDR                      = ":${local.control_port}"
-    HELMR_DEPLOYMENT_MODE                   = var.deployment_mode
-    HELMR_CAS_URI                           = "s3://${aws_s3_bucket.cas.bucket}"
-    HELMR_BUILD_POLICY_PATH                 = "/release/build-policy.json"
-    HELMR_PLATFORM_STORE_URI                = var.platform_store_uri
-    HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT = var.workspace_fencing_key_fingerprint
-    HELMR_TOKEN_CREDENTIAL_KEY_ID           = var.token_credential_key_id
-    HELMR_PUBLIC_URL                        = local.control_url
-    HELMR_REDIS_URL                         = local.redis_url
-    HELMR_SCHEDULE_JITTER                   = var.schedule_jitter
-    HELMR_GITHUB_OAUTH_CLIENT_ID            = var.github_oauth_client_id
-    HELMR_WORKER_GROUPS                     = jsonencode(var.worker_groups)
+    HELMR_CONTROL_ADDR           = ":${local.control_port}"
+    HELMR_DEPLOYMENT_MODE        = var.deployment_mode
+    HELMR_CAS_URI                = "s3://${aws_s3_bucket.cas.bucket}"
+    HELMR_BUILD_POLICY_PATH      = "/release/build-policy.json"
+    HELMR_PLATFORM_STORE_URI     = var.platform_store_uri
+    HELMR_PUBLIC_URL             = local.control_url
+    HELMR_REDIS_URL              = local.redis_url
+    HELMR_SCHEDULE_JITTER        = var.schedule_jitter
+    HELMR_GITHUB_OAUTH_CLIENT_ID = var.github_oauth_client_id
+    HELMR_WORKER_GROUPS          = jsonencode(var.worker_groups)
   }, local.telemetry_environment, local.email_environment)
 
   control_secret_defaults = merge({
     HELMR_DATABASE_URL               = aws_secretsmanager_secret.database_url.arn
-    HELMR_WORKER_TOKEN_SIGNING_KEY   = aws_secretsmanager_secret.worker_token_signing_key.arn
+    WORKER_TOKEN_SIGNING_KEY         = aws_secretsmanager_secret.worker_token_signing_key.arn
     HELMR_SETUP_TOKEN                = aws_secretsmanager_secret.setup_token.arn
-    HELMR_AUTH_SECRET                = aws_secretsmanager_secret.auth_secret.arn
+    AUTH_KEY                         = aws_secretsmanager_secret.auth_key.arn
     ENCRYPTION_KEY                   = aws_secretsmanager_secret.encryption_key.arn
-    HELMR_WORKSPACE_FENCING_KEYS     = aws_secretsmanager_secret.workspace_fencing_keys.arn
-    HELMR_TOKEN_CREDENTIAL_KEYS      = aws_secretsmanager_secret.token_credential_keys.arn
+    WORKSPACE_FENCING_KEY            = aws_secretsmanager_secret.workspace_fencing_key.arn
+    TOKEN_CREDENTIAL_KEY             = aws_secretsmanager_secret.token_credential_key.arn
     HELMR_GITHUB_OAUTH_CLIENT_SECRET = aws_secretsmanager_secret.github_oauth_client_secret.arn
     },
     local.telemetry_secrets,
@@ -141,12 +139,11 @@ locals {
   control_secrets                  = local.control_secret_defaults
 
   dispatcher_environment_defaults = merge({
-    HELMR_REDIS_URL                         = local.redis_url
-    HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT = var.workspace_fencing_key_fingerprint
-    HELMR_SCHEDULE_POLL_INTERVAL            = var.schedule_poll_interval
-    HELMR_SCHEDULE_CLAIM_LIMIT              = tostring(var.schedule_claim_limit)
-    HELMR_SCHEDULE_CONCURRENCY              = tostring(var.schedule_concurrency)
-    HELMR_SCHEDULE_CLAIM_LEASE              = var.schedule_claim_lease
+    HELMR_REDIS_URL              = local.redis_url
+    HELMR_SCHEDULE_POLL_INTERVAL = var.schedule_poll_interval
+    HELMR_SCHEDULE_CLAIM_LIMIT   = tostring(var.schedule_claim_limit)
+    HELMR_SCHEDULE_CONCURRENCY   = tostring(var.schedule_concurrency)
+    HELMR_SCHEDULE_CLAIM_LEASE   = var.schedule_claim_lease
     }, length(var.worker_fleets) > 0 ? {
     HELMR_WORKER_FLEETS           = jsonencode(var.worker_fleets)
     HELMR_FLEET_METRICS_NAMESPACE = var.fleet_metrics_namespace
@@ -154,8 +151,8 @@ locals {
   dispatcher_environment = merge(var.dispatcher_environment, local.dispatcher_environment_defaults)
 
   dispatcher_secrets = merge({
-    HELMR_DATABASE_URL           = aws_secretsmanager_secret.database_url.arn
-    HELMR_WORKSPACE_FENCING_KEYS = aws_secretsmanager_secret.workspace_fencing_keys.arn
+    HELMR_DATABASE_URL    = aws_secretsmanager_secret.database_url.arn
+    WORKSPACE_FENCING_KEY = aws_secretsmanager_secret.workspace_fencing_key.arn
     }, local.telemetry_secrets
   )
 
@@ -1455,16 +1452,6 @@ resource "aws_ecs_service" "control" {
       error_message = "certificate_arn is required when create_control_service is true unless allow_insecure_http is explicitly enabled."
     }
 
-    precondition {
-      condition     = var.workspace_fencing_key_fingerprint != ""
-      error_message = "workspace_fencing_key_fingerprint is required when create_control_service is true."
-    }
-
-    precondition {
-      condition     = var.token_credential_key_id != ""
-      error_message = "token_credential_key_id is required when create_control_service is true."
-    }
-
   }
 }
 
@@ -1505,8 +1492,8 @@ resource "aws_secretsmanager_secret" "worker_token_signing_key" {
   tags                    = var.tags
 }
 
-resource "aws_secretsmanager_secret" "auth_secret" {
-  name                    = "${local.name}/control/auth-secret"
+resource "aws_secretsmanager_secret" "auth_key" {
+  name                    = "${local.name}/control/auth-key"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags
@@ -1526,15 +1513,15 @@ resource "aws_secretsmanager_secret" "encryption_key" {
   tags                    = var.tags
 }
 
-resource "aws_secretsmanager_secret" "workspace_fencing_keys" {
-  name                    = "${local.name}/control/workspace-fencing-keys"
+resource "aws_secretsmanager_secret" "workspace_fencing_key" {
+  name                    = "${local.name}/control/workspace-fencing-key"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags
 }
 
-resource "aws_secretsmanager_secret" "token_credential_keys" {
-  name                    = "${local.name}/control/token-credential-keys"
+resource "aws_secretsmanager_secret" "token_credential_key" {
+  name                    = "${local.name}/control/token-credential-key"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags

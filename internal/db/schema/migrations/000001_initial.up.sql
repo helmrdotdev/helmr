@@ -1885,9 +1885,6 @@ CREATE TABLE workspace_leases (
     ownership_generation BIGINT NOT NULL CHECK (ownership_generation > 0),
     writer_generation BIGINT NOT NULL CHECK (writer_generation > 0),
     mount_fencing_generation BIGINT NOT NULL CHECK (mount_fencing_generation > 0),
-    fencing_key_fingerprint BYTEA NOT NULL CHECK (
-        octet_length(fencing_key_fingerprint) = 32
-    ),
     fencing_token_hash TEXT NOT NULL CHECK (btrim(fencing_token_hash) <> ''),
     acquired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     renewed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -2246,7 +2243,6 @@ CREATE TABLE tokens (
     state TEXT NOT NULL DEFAULT 'pending'
         CHECK (state IN ('pending', 'completed', 'expired', 'cancelled')),
     expires_at TIMESTAMPTZ NOT NULL,
-    callback_key_id TEXT NOT NULL DEFAULT '',
     callback_secret_fingerprint BYTEA NOT NULL
         CHECK (octet_length(callback_secret_fingerprint) = 32),
     completion_fingerprint BYTEA
@@ -2276,7 +2272,6 @@ CREATE TABLE public_access_tokens (
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^pat_[a-z2-7]{26}$'),
     token_id UUID NOT NULL UNIQUE,
     token_hash BYTEA NOT NULL UNIQUE CHECK (octet_length(token_hash) = 32),
-    credential_key_id TEXT NOT NULL,
     state TEXT NOT NULL DEFAULT 'active'
         CHECK (state IN ('active', 'revoked', 'expired')),
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -3579,8 +3574,8 @@ CREATE INDEX run_checkpoint_artifacts_role_idx ON run_checkpoint_artifacts(run_c
 CREATE INDEX tokens_scope_state_idx ON tokens(org_id, project_id, environment_id, state, created_at DESC);
 CREATE INDEX tokens_expiry_pending_idx ON tokens(expires_at, id)
     WHERE state = 'pending';
-CREATE INDEX tokens_callback_fingerprint_pending_idx ON tokens(callback_key_id, callback_secret_fingerprint)
-    WHERE state = 'pending' AND callback_key_id <> '' AND callback_secret_fingerprint <> '';
+CREATE INDEX tokens_callback_fingerprint_pending_idx ON tokens(callback_secret_fingerprint)
+    WHERE state = 'pending' AND callback_secret_fingerprint <> '';
 CREATE INDEX run_waits_run_state_idx
     ON run_waits(run_id, suspension_state, created_at DESC);
 CREATE INDEX workspaces_state_idx ON workspaces(environment_id, state, updated_at DESC);

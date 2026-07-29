@@ -134,10 +134,10 @@ output "secret_arns" {
     database_url               = aws_secretsmanager_secret.database_url.arn
     worker_token_signing_key   = aws_secretsmanager_secret.worker_token_signing_key.arn
     setup_token                = aws_secretsmanager_secret.setup_token.arn
-    auth_secret                = aws_secretsmanager_secret.auth_secret.arn
+    auth_key                   = aws_secretsmanager_secret.auth_key.arn
     encryption_key             = aws_secretsmanager_secret.encryption_key.arn
-    workspace_fencing_keys     = aws_secretsmanager_secret.workspace_fencing_keys.arn
-    token_credential_keys      = aws_secretsmanager_secret.token_credential_keys.arn
+    workspace_fencing_key      = aws_secretsmanager_secret.workspace_fencing_key.arn
+    token_credential_key       = aws_secretsmanager_secret.token_credential_key.arn
     github_oauth_client_secret = aws_secretsmanager_secret.github_oauth_client_secret.arn
     checkpoint_encryption_key  = aws_secretsmanager_secret.checkpoint_encryption_key.arn
     },
