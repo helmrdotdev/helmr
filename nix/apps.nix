@@ -54,7 +54,7 @@ in
         bash tests/release_workflow_test.sh
         bash tests/release_worker_ami_cleanup_test.sh
         bash tests/release_worker_image_identity_test.sh
-        bash tests/worker_release_stage_test.sh
+        bash tests/pre_aws_release_gate_test.sh
       '';
   ci-generated =
     app "ci-generated" "check generated artifacts and formatting for CI" toolsets.ciChecks

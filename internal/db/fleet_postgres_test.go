@@ -15,7 +15,7 @@ import (
 
 func TestFleetRunAttestationCoverageTracksCurrentLaunchAMI(t *testing.T) {
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
+	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
 	mustExec(t, ctx, pool, `
 		UPDATE worker_groups
@@ -97,7 +97,7 @@ func TestFleetRunAttestationCoverageTracksCurrentLaunchAMI(t *testing.T) {
 
 func TestFleetTerminationProofFailsClosedWithoutDurableCleanupEvidence(t *testing.T) {
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
+	pool := newPostgresDB(t, ctx)
 	workerID := uuid.Must(uuid.NewV7())
 	mustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
@@ -133,7 +133,7 @@ func TestFleetTerminationProofFailsClosedWithoutDurableCleanupEvidence(t *testin
 
 func TestFleetCooldownIsDurableAndMonotonic(t *testing.T) {
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
+	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
 	first := time.Date(2026, 7, 14, 1, 0, 0, 0, time.UTC)
 	later := first.Add(time.Minute)
@@ -167,7 +167,7 @@ func TestFleetCooldownIsDurableAndMonotonic(t *testing.T) {
 
 func TestFleetTerminationProofAllowsFencedLostWorkerOnlyAfterCredentialRevocation(t *testing.T) {
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
+	pool := newPostgresDB(t, ctx)
 	workerID := uuid.Must(uuid.NewV7())
 	credentialID := uuid.Must(uuid.NewV7())
 	serviceID := uuid.Must(uuid.NewV7())

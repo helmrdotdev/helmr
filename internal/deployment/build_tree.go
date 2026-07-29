@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"path"
 	"strings"
 )
@@ -15,88 +14,11 @@ const buildTreeSnapshotMediaType = "application/vnd.helmr.internal-build-tree.v0
 
 const maxBuildTreeStreamBytes int64 = 11 << 30
 
-type BuildTreeDescriptor struct {
-	Digest    string
-	SizeBytes int64
-}
-
 // BuildTree is the one lease-private, read-only post-lifecycle tree used by
 // analysis, Workspace image construction, and Program encoding.
 type BuildTree struct {
 	content   *artifactSnapshot
 	inspected *inspectedArtifact
-}
-
-func (tree *BuildTree) Descriptor() (BuildTreeDescriptor, error) {
-	if tree == nil || tree.content == nil || tree.inspected == nil {
-		return BuildTreeDescriptor{}, errors.New("build tree is closed")
-	}
-	return BuildTreeDescriptor{
-		Digest:    tree.content.descriptor.Digest,
-		SizeBytes: tree.content.descriptor.SizeBytes,
-	}, nil
-}
-
-func IngestBuildTree(
-	ctx context.Context,
-	directory string,
-	descriptor BuildTreeDescriptor,
-	source io.Reader,
-) (*BuildTree, error) {
-	expected := artifactSnapshotDescriptor{
-		Digest:    descriptor.Digest,
-		SizeBytes: descriptor.SizeBytes,
-		MediaType: buildTreeSnapshotMediaType,
-	}
-	content, err := snapshotArtifact(
-		ctx,
-		directory,
-		buildTreeArtifact,
-		expected,
-		source,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("snapshot build tree: %w", err)
-	}
-	file, err := content.verifierFile()
-	if err != nil {
-		return nil, errors.Join(err, content.Close())
-	}
-	inspected, err := inspectBuildTree(ctx, file, descriptor.SizeBytes)
-	if err != nil {
-		return nil, errors.Join(err, content.Close())
-	}
-	return &BuildTree{content: content, inspected: inspected}, nil
-}
-
-func inspectBuildTree(
-	ctx context.Context,
-	source io.ReaderAt,
-	physicalSize int64,
-) (*inspectedArtifact, error) {
-	reader, err := newSquashFSArtifactReader(
-		ctx,
-		source,
-		physicalSize,
-		buildTreeArtifact,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("open build tree: %w", err)
-	}
-	tree, err := inspectArtifact(
-		ctx,
-		reader,
-		buildTreeArtifact,
-		maxBuildTreeLogicalBytes,
-		physicalSize,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("inspect build tree: %w", err)
-	}
-	if err := validateInspectedBuildTree(ctx, tree); err != nil {
-		return nil, err
-	}
-	return tree, nil
 }
 
 func validateInspectedBuildTree(
@@ -259,18 +181,6 @@ func validateBuildTreeLink(
 		resolved = append(resolved, component)
 	}
 	return nil
-}
-
-func (tree *BuildTree) LinkInto(
-	directory string,
-	name string,
-	uid int,
-	gid int,
-) error {
-	if tree == nil || tree.content == nil {
-		return errors.New("build tree is closed")
-	}
-	return tree.content.LinkInto(directory, name, uid, gid)
 }
 
 func (tree *BuildTree) Close() error {

@@ -108,19 +108,11 @@ func WithStaleWorkerGrace(grace time.Duration) StaleWorkerFencerOption {
 	return func(fencer *StaleWorkerFencer) { fencer.grace = grace }
 }
 
-func WithWorkerRegistrationReadinessGrace(grace time.Duration) StaleWorkerFencerOption {
-	return func(fencer *StaleWorkerFencer) { fencer.registrationGrace = grace }
-}
-
 func WithWorkerGroupFenceGrace(grace map[string]WorkerGroupFenceGrace) StaleWorkerFencerOption {
 	return func(fencer *StaleWorkerFencer) {
 		fencer.groupGrace = make(map[string]WorkerGroupFenceGrace, len(grace))
 		maps.Copy(fencer.groupGrace, grace)
 	}
-}
-
-func WithStaleWorkerFenceBatch(batch int32) StaleWorkerFencerOption {
-	return func(fencer *StaleWorkerFencer) { fencer.batch = batch }
 }
 
 func WithStaleWorkerFenceInterval(every time.Duration) StaleWorkerFencerOption {

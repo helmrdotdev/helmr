@@ -62,13 +62,6 @@ func Interval(duration time.Duration) pgtype.Interval {
 	return pgtype.Interval{Microseconds: duration.Microseconds(), Valid: true}
 }
 
-func Int4Ptr(value *int32) pgtype.Int4 {
-	if value == nil {
-		return pgtype.Int4{}
-	}
-	return pgtype.Int4{Int32: *value, Valid: true}
-}
-
 func Int4Response(value pgtype.Int4) *int32 {
 	if !value.Valid {
 		return nil

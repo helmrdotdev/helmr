@@ -15,8 +15,8 @@ import (
 
 func TestDeploymentDefinitionManifestJSONBRoundTrip(t *testing.T) {
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
-	ids := seedIntegration(t, ctx, pool)
+	pool := newPostgresDB(t, ctx)
+	ids := seedPostgres(t, ctx, pool)
 	fixture := loadDefinitionContractFixture(t)
 
 	canonical, digest, err := deployment.CanonicalManifestAndDigest([]byte(fixture.Manifest.Input))

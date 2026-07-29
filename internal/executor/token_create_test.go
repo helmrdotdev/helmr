@@ -88,7 +88,7 @@ func TestHandleTokenCreateReturnsSemanticFailureToRuntime(t *testing.T) {
 	}
 }
 
-func TestHandleTokenCreateRetryUsesRenewedReceipt(t *testing.T) {
+func TestHandleTokenCreateRetryUsesRenewedAssignment(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000115"

@@ -17,8 +17,8 @@ import (
 
 func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
-	ids := seedIntegration(t, ctx, pool)
+	pool := newPostgresDB(t, ctx)
+	ids := seedPostgres(t, ctx, pool)
 	queries := db.New(pool)
 
 	definitionID := uuid.Must(uuid.NewV7())
@@ -128,7 +128,7 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 
 func TestLockRuntimeSubstrateAuthorityFencesWorkerAndContract(t *testing.T) {
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
+	pool := newPostgresDB(t, ctx)
 	fixture := seedRuntimeSubstrateAuthority(t, ctx, pool)
 	queries := db.New(pool)
 	params := db.LockRuntimeSubstrateAuthorityParams{

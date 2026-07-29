@@ -1,7 +1,6 @@
 package deployment
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -34,43 +33,6 @@ func CanonicalToolchain(value Toolchain) ([]byte, error) {
 		return nil, err
 	}
 	return canonicalToolchainDocument(value)
-}
-
-func ParseToolchain(raw []byte) (Toolchain, error) {
-	if len(raw) == 0 || len(raw) > maxToolchainBytes {
-		return Toolchain{}, fmt.Errorf(
-			"toolchain size is outside [1,%d]",
-			maxToolchainBytes,
-		)
-	}
-	canonical, err := jsoncanon.Transform(raw)
-	if err != nil {
-		return Toolchain{}, fmt.Errorf("canonicalize toolchain: %w", err)
-	}
-	if !bytes.Equal(raw, canonical) {
-		return Toolchain{}, errors.New(
-			"toolchain is not RFC 8785 canonical JSON",
-		)
-	}
-	var value Toolchain
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&value); err != nil {
-		return Toolchain{}, fmt.Errorf("decode toolchain: %w", err)
-	}
-	if err := ensureEOF(decoder, "toolchain"); err != nil {
-		return Toolchain{}, err
-	}
-	complete, err := CanonicalToolchain(value)
-	if err != nil {
-		return Toolchain{}, err
-	}
-	if !bytes.Equal(raw, complete) {
-		return Toolchain{}, errors.New(
-			"toolchain does not match the complete closed v0 shape",
-		)
-	}
-	return value, nil
 }
 
 func ToolchainDigest(value Toolchain) (string, error) {

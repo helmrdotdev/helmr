@@ -17,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type integrationIDs struct {
+type postgresIDs struct {
 	orgID                    uuid.UUID
 	projectID                uuid.UUID
 	environmentID            uuid.UUID
@@ -30,9 +30,9 @@ func shortUUID(id uuid.UUID) string {
 	return compact[len(compact)-12:]
 }
 
-func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) integrationIDs {
+func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgresIDs {
 	t.Helper()
-	ids := integrationIDs{
+	ids := postgresIDs{
 		orgID:         dbtest.DefaultOrgID,
 		projectID:     uuid.Must(uuid.NewV7()),
 		environmentID: uuid.Must(uuid.NewV7()),
@@ -64,7 +64,7 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		ON CONFLICT DO NOTHING
 	`)
 
-	sourceArtifactID := seedIntegrationArtifact(
+	sourceArtifactID := seedPostgresArtifact(
 		t,
 		ctx,
 		pool,
@@ -73,7 +73,7 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		api.DeploymentSourceArtifactMediaType,
 		"source",
 	)
-	programArtifactID := seedIntegrationArtifact(
+	programArtifactID := seedPostgresArtifact(
 		t,
 		ctx,
 		pool,
@@ -82,7 +82,7 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		deployment.ProgramArtifactMediaType,
 		"program",
 	)
-	ids.workspaceImageArtifactID = seedIntegrationArtifact(
+	ids.workspaceImageArtifactID = seedPostgresArtifact(
 		t,
 		ctx,
 		pool,
@@ -114,11 +114,11 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 	return ids
 }
 
-func seedIntegrationArtifact(
+func seedPostgresArtifact(
 	t *testing.T,
 	ctx context.Context,
 	pool *pgxpool.Pool,
-	ids integrationIDs,
+	ids postgresIDs,
 	kind string,
 	mediaType string,
 	label string,
@@ -156,7 +156,7 @@ func testDigest(seed string) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func newIntegrationDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
+func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	t.Helper()
 	database := dbtest.Open(t)
 	if err := schema.Up(ctx, database.DSN); err != nil {

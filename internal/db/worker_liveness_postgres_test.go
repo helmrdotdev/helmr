@@ -18,7 +18,7 @@ import (
 
 func TestStaleWorkerFenceUsesStateAppropriateStrictBoundaries(t *testing.T) {
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
+	pool := newPostgresDB(t, ctx)
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	observationCutoff := now.Add(-dispatch.DefaultStaleWorkerGrace)
 	registrationCutoff := now.Add(-dispatch.DefaultWorkerRegistrationReadinessGrace)
@@ -133,7 +133,7 @@ func TestStaleWorkerFenceUsesStateAppropriateStrictBoundaries(t *testing.T) {
 
 func TestFreshWorkerObservationWinsAgainstStaleFenceRecheck(t *testing.T) {
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
+	pool := newPostgresDB(t, ctx)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	workerID := insertActiveWorkerWithObservation(t, ctx, pool, now.Add(-10*time.Minute))
 
@@ -155,7 +155,7 @@ func TestFreshWorkerObservationWinsAgainstStaleFenceRecheck(t *testing.T) {
 	fencer, err := dispatch.NewStaleWorkerFencer(
 		transactions,
 		dispatch.WithStaleWorkerGrace(2*time.Minute),
-		dispatch.WithStaleWorkerFenceClock(integrationFenceClock{now: now}),
+		dispatch.WithStaleWorkerFenceClock(testFenceClock{now: now}),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +181,7 @@ func TestFreshWorkerObservationWinsAgainstStaleFenceRecheck(t *testing.T) {
 
 func TestStaleFenceWinsBeforeLateWorkerObservation(t *testing.T) {
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
+	pool := newPostgresDB(t, ctx)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	workerID := insertActiveWorkerWithObservation(t, ctx, pool, now.Add(-10*time.Minute))
 	cutoff := now.Add(-2 * time.Minute)
@@ -306,13 +306,13 @@ func assertBlocked[T any](t *testing.T, done <-chan T) {
 	}
 }
 
-type integrationFenceClock struct {
+type testFenceClock struct {
 	now time.Time
 }
 
-func (clock integrationFenceClock) Now() time.Time { return clock.now }
+func (clock testFenceClock) Now() time.Time { return clock.now }
 
-func (integrationFenceClock) Wait(ctx context.Context, _ time.Duration) error {
+func (testFenceClock) Wait(ctx context.Context, _ time.Duration) error {
 	<-ctx.Done()
 	return ctx.Err()
 }

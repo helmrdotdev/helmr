@@ -84,19 +84,6 @@ func (*ServiceFailure) FatalWorker() bool {
 	return true
 }
 
-func Open(ctx context.Context, cfg Config) (*Builder, func() error, error) {
-	addr, err := cfg.endpoint()
-	if err != nil {
-		return nil, nil, err
-	}
-	client, err := bkclient.New(ctx, addr)
-	if err != nil {
-		return nil, nil, err
-	}
-	b := New(client, cfg.OutputRoot, cfg.CacheNamespace)
-	return b, client.Close, nil
-}
-
 func New(client buildkitSolver, outputRoot string, cacheNamespace ...string) *Builder {
 	b := &Builder{
 		client:         client,

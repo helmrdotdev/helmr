@@ -245,7 +245,7 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 	})
 }
 
-func TestActorRuntimeRetryUsesRenewedReceipt(t *testing.T) {
+func TestActorRuntimeRetryUsesRenewedAssignment(t *testing.T) {
 	const correlationID = "019c0225-f0c9-7f66-8a23-7782ca0a8461"
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()

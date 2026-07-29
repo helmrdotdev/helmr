@@ -16,14 +16,6 @@ type ResourceVector struct {
 	Slots     int32 `json:"execution_slots"`
 }
 
-func DefaultRunResources() ResourceVector {
-	return ResourceVector{
-		MilliCPU:  2000,
-		MemoryMiB: 2048,
-		Slots:     1,
-	}
-}
-
 func BuildGuestResources() ResourceVector {
 	return ResourceVector{
 		MilliCPU:  2000,

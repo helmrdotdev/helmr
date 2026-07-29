@@ -172,11 +172,3 @@ func readProtoStreamBody(reader io.Reader, bodyLen uint64, message proto.Message
 	}
 	return proto.Unmarshal(body, message)
 }
-
-func ReadRunEvent(r io.Reader) (*runv0.RunEvent, error) {
-	var event runv0.RunEvent
-	if err := frameio.ReadProtoFrame(r, &event); err != nil {
-		return nil, err
-	}
-	return &event, nil
-}

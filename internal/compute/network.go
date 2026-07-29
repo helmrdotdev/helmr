@@ -1,7 +1,6 @@
 package compute
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -16,14 +15,6 @@ type NetworkPolicy struct {
 
 func DefaultNetworkPolicy() NetworkPolicy {
 	return NetworkPolicy{Internet: true}
-}
-
-func NetworkPolicyJSON(p NetworkPolicy) json.RawMessage {
-	body, _ := json.Marshal(p)
-	if len(body) == 0 {
-		return json.RawMessage(`{}`)
-	}
-	return json.RawMessage(body)
 }
 
 func (p NetworkPolicy) Validate() error {

@@ -204,11 +204,11 @@ func TestWorkerWorkspaceRequestsRequireTypedCanonicalIdentity(t *testing.T) {
 	}
 }
 
-func TestWorkspaceRuntimeRetryUsesRenewedReceipt(t *testing.T) {
+func TestWorkspaceRuntimeRetryUsesRenewedAssignment(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	task := &guestRunLeaseTask{lease: lease}
-	var receipts []api.WorkerRunLeaseAssignment
+	var assignments []api.WorkerRunLeaseAssignment
 	firstAttempt := make(chan struct{})
 	go func() {
 		<-firstAttempt
@@ -221,8 +221,8 @@ func TestWorkspaceRuntimeRetryUsesRenewedReceipt(t *testing.T) {
 		_ context.Context,
 		current api.WorkerRunLeaseAssignment,
 	) error {
-		receipts = append(receipts, current)
-		if len(receipts) == 1 {
+		assignments = append(assignments, current)
+		if len(assignments) == 1 {
 			close(firstAttempt)
 			return &client.HTTPError{
 				StatusCode: 503, Status: "503 Service Unavailable",
@@ -234,10 +234,10 @@ func TestWorkspaceRuntimeRetryUsesRenewedReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(receipts) != 2 ||
-		receipts[1].LeaseSequence != receipts[0].LeaseSequence+1 ||
-		!receipts[1].ExpiresAt.After(receipts[0].ExpiresAt) {
-		t.Fatalf("receipts = %+v", receipts)
+	if len(assignments) != 2 ||
+		assignments[1].LeaseSequence != assignments[0].LeaseSequence+1 ||
+		!assignments[1].ExpiresAt.After(assignments[0].ExpiresAt) {
+		t.Fatalf("assignments = %+v", assignments)
 	}
 }
 

@@ -38,7 +38,7 @@ func activateWorkspaceWorker(t *testing.T, ctx context.Context, pool *pgxpool.Po
 
 func TestWorkerEnrollmentConsumesNonceAndRotatesCredentialAtomically(t *testing.T) {
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
+	pool := newPostgresDB(t, ctx)
 	queries := db.New(pool)
 	assertRegistering := func(workerID pgtype.UUID) {
 		t.Helper()
@@ -220,7 +220,7 @@ func TestWorkerEnrollmentConsumesNonceAndRotatesCredentialAtomically(t *testing.
 
 func TestWorkerGroupPolicyChangeRevokesExistingEnrollment(t *testing.T) {
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
+	pool := newPostgresDB(t, ctx)
 	queries := db.New(pool)
 	groupID := "managed-policy-" + shortUUID(uuid.Must(uuid.NewV7()))
 	ensure := func(fingerprint string, allowed []string) db.ReconcileWorkerGroupRow {
@@ -359,7 +359,7 @@ func TestWorkerGroupPolicyChangeRevokesExistingEnrollment(t *testing.T) {
 
 func TestWorkerGroupPolicyReconciliationSerializesAfterConcurrentEnrollment(t *testing.T) {
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
+	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
 	groupID := "policy-race-" + shortUUID(uuid.Must(uuid.NewV7()))
 	if _, err := q.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
@@ -453,9 +453,9 @@ func TestWorkerGroupPolicyReconciliationSerializesAfterConcurrentEnrollment(t *t
 
 func TestTerminalWorkerCannotReuseItsDurableCredential(t *testing.T) {
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
+	pool := newPostgresDB(t, ctx)
 	queries := db.New(pool)
-	_ = seedIntegration(t, ctx, pool)
+	_ = seedPostgres(t, ctx, pool)
 	nonceHash := []byte("terminal-worker-nonce")
 	secretHash := []byte("terminal-worker-secret")
 	if _, err := queries.CreateWorkerEnrollmentNonce(ctx, db.CreateWorkerEnrollmentNonceParams{
@@ -556,7 +556,7 @@ func TestTerminalWorkerCannotReuseItsDurableCredential(t *testing.T) {
 
 func TestDisableAbsentWorkerGroupsRefusesLiveOrFencedMembers(t *testing.T) {
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
+	pool := newPostgresDB(t, ctx)
 	queries := db.New(pool)
 	groupID := "retire-" + shortUUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
@@ -634,7 +634,7 @@ func TestDisableAbsentWorkerGroupsRefusesLiveOrFencedMembers(t *testing.T) {
 
 func TestAbsentWorkerGroupRemovalSerializesWithEnrollment(t *testing.T) {
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
+	pool := newPostgresDB(t, ctx)
 	desired := []string{dbtest.DefaultWorkerGroupID}
 	createGroupAndNonce := func(suffix string) (string, []byte) {
 		t.Helper()
@@ -761,7 +761,7 @@ func TestAbsentWorkerGroupRemovalSerializesWithEnrollment(t *testing.T) {
 
 func TestWorkerGroupRoleNarrowingFencesExistingCapabilities(t *testing.T) {
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
+	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
 	groupID := "role-narrow-" + shortUUID(uuid.Must(uuid.NewV7()))
 	attestation := "sha256:role-narrow"
@@ -816,7 +816,7 @@ func TestWorkerGroupRoleNarrowingFencesExistingCapabilities(t *testing.T) {
 
 func TestBuildOnlyWorkerCertificationRetainsRuntimeContract(t *testing.T) {
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
+	pool := newPostgresDB(t, ctx)
 	queries := db.New(pool)
 	const workerGroupID = "test-build-workers"
 	if _, err := queries.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{

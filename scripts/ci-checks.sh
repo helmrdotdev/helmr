@@ -20,6 +20,7 @@ bash tests/path_report_wrapper_test.sh
 bash tests/surface_attestation_test.sh
 bash tests/measurement_report_summary_test.sh
 bash tests/release_smoke_selector_test.sh
+bash tests/pre_aws_release_gate_test.sh
 bash tests/measurement_preflight_guard_test.sh
 bash tests/auth_readiness_test.sh
 bash tests/validation_campaign_test.sh

@@ -39,8 +39,8 @@ type deploymentBuildFixture struct {
 func newDeploymentBuildFixture(t *testing.T) (*deploymentBuildFixture, *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
-	ids := seedIntegration(t, ctx, pool)
+	pool := newPostgresDB(t, ctx)
+	ids := seedPostgres(t, ctx, pool)
 
 	var sourceArtifactID pgtype.UUID
 	if err := pool.QueryRow(ctx, `

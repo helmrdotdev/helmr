@@ -262,91 +262,6 @@ func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectT
 	}
 }
 
-func (s *EventStream) ReadTerminalOutput(ctx context.Context, query telemetry.TerminalOutputQuery, cursor int64, limit int32, onChunk func(telemetry.TerminalOutputChunk) error, onIdle func() error) error {
-	query.AfterOffset = cursor
-	query.Limit = limit
-	streamKey := terminalOutputStreamKey(query.OrgID, query.WorkspaceID, query.ResourceKind, query.ResourceID, query.StreamName)
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		nextCursor, hasMore, err := s.readDurableTerminalOutput(ctx, query, cursor, onChunk)
-		durableErr := err
-		if err != nil {
-			s.log.Debug("read durable terminal output failed; continuing with redis live stream", "workspace_id", query.WorkspaceID.String(), "resource_kind", query.ResourceKind, "resource_id", query.ResourceID.String(), "stream", query.StreamName, "error", err)
-			hasMore = false
-		}
-		if nextCursor > cursor {
-			cursor = nextCursor
-			query.AfterOffset = cursor
-		}
-		if hasMore {
-			continue
-		}
-		if durableErr != nil {
-			covers, coverErr := s.redisTerminalStreamCoversCursor(ctx, streamKey, cursor)
-			if coverErr != nil {
-				return coverErr
-			}
-			if !covers {
-				return durableErr
-			}
-		}
-		streams, err := s.redis.XRead(ctx, &redis.XReadArgs{
-			Streams: []string{streamKey, redisEventID(cursor)},
-			Count:   int64(limit),
-			Block:   liveTelemetryStreamBlockEvery,
-		}).Result()
-		if errors.Is(err, redis.Nil) {
-			if onIdle != nil {
-				if idleErr := onIdle(); idleErr != nil {
-					return idleErr
-				}
-			}
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		for _, stream := range streams {
-			for _, message := range stream.Messages {
-				offset, err := redisSeq(message.ID)
-				if err != nil {
-					return err
-				}
-				raw, ok := message.Values["terminal_output"].(string)
-				if !ok {
-					return fmt.Errorf("terminal output stream record %s missing terminal_output field", message.ID)
-				}
-				var chunk telemetry.TerminalOutputChunk
-				if err := json.Unmarshal([]byte(raw), &chunk); err != nil {
-					return fmt.Errorf("decode terminal output stream record %s: %w", message.ID, err)
-				}
-				cursor = offset
-				query.AfterOffset = cursor
-				if err := onChunk(chunk); err != nil {
-					return err
-				}
-			}
-		}
-	}
-}
-
-func (s *EventStream) readDurableTerminalOutput(ctx context.Context, query telemetry.TerminalOutputQuery, cursor int64, onChunk func(telemetry.TerminalOutputChunk) error) (int64, bool, error) {
-	query.AfterOffset = cursor
-	page, err := s.telemetryReader.ListTerminalOutput(ctx, query)
-	if err != nil {
-		return cursor, false, fmt.Errorf("list durable terminal output: %w", err)
-	}
-	for _, chunk := range page.Chunks {
-		cursor = chunk.OffsetEnd
-		if err := onChunk(chunk); err != nil {
-			return cursor, false, err
-		}
-	}
-	return cursor, len(page.Chunks) == int(query.Limit), nil
-}
-
 func (s *EventStream) redisEventStreamCoversCursor(ctx context.Context, streamKey string, cursor int64) (bool, error) {
 	if cursor <= 0 {
 		return true, nil
@@ -363,25 +278,6 @@ func (s *EventStream) redisEventStreamCoversCursor(ctx context.Context, streamKe
 		return false, err
 	}
 	return first <= cursor, nil
-}
-
-func (s *EventStream) redisTerminalStreamCoversCursor(ctx context.Context, streamKey string, cursor int64) (bool, error) {
-	records, err := s.redis.XRangeN(ctx, streamKey, "-", "+", 1).Result()
-	if err != nil {
-		return false, err
-	}
-	if len(records) == 0 {
-		return true, nil
-	}
-	raw, ok := records[0].Values["terminal_output"].(string)
-	if !ok {
-		return false, fmt.Errorf("terminal output stream record %s missing terminal_output field", records[0].ID)
-	}
-	var chunk telemetry.TerminalOutputChunk
-	if err := json.Unmarshal([]byte(raw), &chunk); err != nil {
-		return false, fmt.Errorf("decode terminal output stream record %s: %w", records[0].ID, err)
-	}
-	return chunk.OffsetStart <= cursor, nil
 }
 
 func (s *EventStream) readDurableSubjectEvents(ctx context.Context, orgID uuid.UUID, subjectType string, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error) (int64, bool, error) {
@@ -410,10 +306,6 @@ func (s *EventStream) readDurableSubjectEvents(ctx context.Context, orgID uuid.U
 
 func eventStreamKey(orgID uuid.UUID, subjectType string, subjectID uuid.UUID) string {
 	return "helmr:events:" + orgID.String() + ":" + subjectType + ":" + subjectID.String()
-}
-
-func terminalOutputStreamKey(orgID uuid.UUID, workspaceID uuid.UUID, resourceKind string, resourceID uuid.UUID, streamName string) string {
-	return "helmr:terminal_outputs:" + orgID.String() + ":" + workspaceID.String() + ":" + resourceKind + ":" + resourceID.String() + ":" + streamName
 }
 
 func redisEventID(seq int64) string {

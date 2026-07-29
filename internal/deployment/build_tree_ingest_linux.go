@@ -13,6 +13,36 @@ import (
 	"path/filepath"
 )
 
+func inspectBuildTree(
+	ctx context.Context,
+	source io.ReaderAt,
+	physicalSize int64,
+) (*inspectedArtifact, error) {
+	reader, err := newSquashFSArtifactReader(
+		ctx,
+		source,
+		physicalSize,
+		buildTreeArtifact,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("open build tree: %w", err)
+	}
+	tree, err := inspectArtifact(
+		ctx,
+		reader,
+		buildTreeArtifact,
+		maxBuildTreeLogicalBytes,
+		physicalSize,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("inspect build tree: %w", err)
+	}
+	if err := validateInspectedBuildTree(ctx, tree); err != nil {
+		return nil, err
+	}
+	return tree, nil
+}
+
 func IngestBuildTreeArchive(
 	ctx context.Context,
 	directory string,

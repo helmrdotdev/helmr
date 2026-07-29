@@ -1047,7 +1047,7 @@ func lockSameWorkspaceHandoffChain(
 		return err
 	}
 
-	// The source Run and Workspace Lease receipts are locked before any Wait,
+	// The source Run Lease and Workspace Lease rows are locked before any Wait,
 	// preserving the canonical physical-authority-before-Wait order.
 	for _, edge := range edges {
 		var state string

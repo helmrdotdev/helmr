@@ -57,10 +57,6 @@ func WithPrefix(prefix string) Option {
 	return func(q *Queue) { q.prefix = strings.TrimRight(prefix, ":") }
 }
 
-func WithMessageSafetyTTL(ttl time.Duration) Option {
-	return func(q *Queue) { q.messageTTL = ttl }
-}
-
 func WithClock(now func() time.Time) Option {
 	return func(q *Queue) { q.now = now }
 }

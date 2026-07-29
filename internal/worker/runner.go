@@ -86,12 +86,6 @@ func WithPollEvery(duration time.Duration) Option {
 	}
 }
 
-func WithRenewEvery(duration time.Duration) Option {
-	return func(runner *Runner) {
-		runner.renewEvery = duration
-	}
-}
-
 func WithLogger(log *slog.Logger) Option {
 	return func(runner *Runner) {
 		runner.log = log

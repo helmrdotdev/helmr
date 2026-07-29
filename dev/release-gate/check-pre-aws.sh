@@ -28,7 +28,8 @@ run_check() {
 # code or comments.
 run_check ipv6-host-policy \
   'go test ./internal/firecracker -run TestRunNetworkPolicyContractCountsEveryDenyPath -count=1' \
-  go test ./internal/firecracker -run TestRunNetworkPolicyContractCountsEveryDenyPath -count=1
+  dev/release-gate/run-go-tests.sh \
+  '^TestRunNetworkPolicyContractCountsEveryDenyPath$' ./internal/firecracker
 run_check workflow-samples-typecheck \
   'bun run --cwd dev/workflows typecheck' \
   bun run --cwd dev/workflows typecheck
@@ -46,16 +47,16 @@ run_check campaign-fault-producers \
   bash tests/validation_case_contract_test.sh
 run_check failing-build-source \
   'sync local packages and prove the failing fixture reaches deployment creation' \
-  bash -c "dev/workflows/scripts/sync-local-sdk.sh && HELMR_TEST_PREPARED_FAILING_BUILD_FIXTURE=1 go test ./cmd/helmr -run TestFailingBuildFixtureReachesDeploymentCreation -count=1"
+  bash -c "dev/workflows/scripts/sync-local-sdk.sh && HELMR_TEST_PREPARED_FAILING_BUILD_FIXTURE=1 dev/release-gate/run-go-tests.sh '^TestFailingBuildFixtureReachesDeploymentCreation$' ./cmd/helmr"
 run_check campaign-exact-release-profile \
   'exact ordered release profile and producer contract' \
   bash tests/validation_case_contract_test.sh
 run_check network-deny-evidence-producer \
   'named nft deny counter tests plus bounded evidence-producer contract' \
-  bash -c "go test ./internal/firecracker -run 'TestRunNetworkPolicyContract|TestRunNetworkCounterContract' -count=1 && bash tests/validation_case_contract_test.sh"
+  bash -c "dev/release-gate/run-go-tests.sh '^TestRunNetworkPolicyContract' ./internal/firecracker && dev/release-gate/run-go-tests.sh '^TestRunNetworkCounterContract' ./internal/firecracker && bash tests/validation_case_contract_test.sh"
 run_check same-workspace-call \
   'same-Workspace control, executor, dispatch, and guest Program handoff contracts plus release smoke selector' \
-  bash -c "go test ./internal/control ./internal/executor ./internal/dispatch -run 'SameWorkspace|Same.Workspace' -count=1 && go test ./internal/guestd -run 'ManagedProgramChildAdmission|ProgramCgroupLeaf|WorkspaceProgramAdmission|RestoredWorkspaceRebind' -count=1 && bash tests/release_smoke_selector_test.sh"
+  bash -c "nix develop -c dev/release-gate/run-go-tests.sh 'SameWorkspace|Same.Workspace' ./internal/control ./internal/dispatch && dev/release-gate/run-go-tests.sh '^TestChildAttachStartsNewProgramOnRetainedMount$' ./internal/executor && dev/release-gate/run-go-tests.sh 'ManagedProgramChildAdmission|ProgramCgroupLeaf|WorkspaceProgramAdmission|RestoredWorkspaceRebind' ./internal/guestd && bash tests/release_smoke_selector_test.sh"
 run_check actor-console \
   'Actor detail route data contract and Console typecheck' \
   bash -c "bun test packages/console/src/lib/actors.test.ts && bun run --cwd packages/console typecheck"
@@ -64,10 +65,13 @@ run_check external-token-wait-registration \
   bash -c "bun test sdk/typescript/src/tokens.test.ts && bun run --cwd dev/client typecheck && bun run --cwd dev/workflows typecheck"
 run_check identity-fencing-contract \
   'deterministic stale Lease and prior worker epoch rejection tests' \
-  bash -c "go test ./internal/control -run TestRenewRunLeaseRejectsPriorWorkerEpoch -count=1 && go test ./internal/dispatch -run TestStaleWorkerFencerOldEpochCannotFenceNewEpoch -count=1"
+  bash -c "dev/release-gate/run-go-tests.sh '^TestRenewRunLeaseRejectsPriorWorkerEpoch$' ./internal/control && dev/release-gate/run-go-tests.sh '^TestStaleWorkerFencerOldEpochCannotFenceNewEpoch$' ./internal/dispatch"
+run_check worker-mutation-lock-contract \
+  'minimal Lease fences, renewal CAS/replay, Token Wait linearization, canonical child Workspace locks, and uncertain session unlock discard' \
+  bash -c "dev/release-gate/run-go-tests.sh '^TestRenewRunLeaseReplaysOnlyTheImmediatelyPreviousExpiry$' ./internal/control && dev/release-gate/run-go-tests.sh '^TestRenewRunLeaseRejectsUnexpectedExpiry$' ./internal/control && dev/release-gate/run-go-tests.sh '^TestRenewRunLeaseRejectsAuthorityThatExpiredWhileWaitingForLocks$' ./internal/control && nix develop -c dev/release-gate/run-go-tests.sh '^TestRunLeaseRenewalUpdatesBothLeasesAtomically$' ./internal/db && nix develop -c dev/release-gate/run-go-tests.sh '^TestRunLeaseRenewalRollsBackWhenWorkspaceLeaseCannotAdvance$' ./internal/db && nix develop -c dev/release-gate/run-go-tests.sh '^TestChildWorkspacePairLocksConvergeForOppositeDirections$' ./internal/db && nix develop -c dev/release-gate/run-go-tests.sh '^TestTokenWaitRegistrationConcurrentReplayConverges$' ./internal/token && nix develop -c dev/release-gate/run-go-tests.sh '^TestTokenWaitRegistrationReplaySurvivesParkedCompletion$' ./internal/token && nix develop -c dev/release-gate/run-go-tests.sh '^TestAcquireHoldsAndReleasesEveryKey$' ./internal/sessionlock && nix develop -c dev/release-gate/run-go-tests.sh '^TestGuardDiscardsConnectionWhenReleaseCannotBeConfirmed$' ./internal/sessionlock"
 run_check postgres-primitive-schema \
   'PostgreSQL 18 migration/down-migration contract with no application-owned functions, triggers, views, rules, generated business columns, Run-stream tables, or workspace_process_records' \
-  nix develop -c go test ./internal/db/schema -run TestUpWithPostgres -count=1
+  nix develop -c dev/release-gate/run-go-tests.sh '^TestUpWithPostgres$' ./internal/db/schema
 run_check surface-attestation-contract \
   'typed Deployment declaration and worker/runtime evidence query contract' \
   bash tests/surface_attestation_test.sh
@@ -79,19 +83,19 @@ run_check packed-sdk-consumer \
   bash scripts/check-packed-sdk-consumer.sh
 run_check cli-resource-boundary \
   'go test ./cmd/helmr -run "TestGreenfieldCommandSurface|TestTaskStart" -count=1' \
-  go test ./cmd/helmr -run 'TestGreenfieldCommandSurface|TestTaskStart' -count=1
+  bash -c "dev/release-gate/run-go-tests.sh '^TestGreenfieldCommandSurface$' ./cmd/helmr && dev/release-gate/run-go-tests.sh '^TestTaskStart' ./cmd/helmr"
 run_check actor-cli \
   'go test ./cmd/helmr ./internal/client -run Actor -count=1' \
-  go test ./cmd/helmr ./internal/client -run Actor -count=1
+  dev/release-gate/run-go-tests.sh 'Actor' ./cmd/helmr ./internal/client
 run_check actor-runtime-contract \
-  'typed Actor proto-to-executor worker bridge, semantic failure, and full stale Run source receipt fence' \
-  bash -c "go test ./internal/executor -run 'TestActorRuntimeVerticalContract|TestWorkerActor' -count=1 && go test ./internal/control -run TestAuthorizeWorkerRunSourceRequiresWorkerAndFullReceipt -count=1"
+  'typed Actor proto-to-executor worker bridge, semantic failure, and stale Run source Lease fence' \
+  bash -c "dev/release-gate/run-go-tests.sh '^TestActorRuntimeVerticalContract$' ./internal/executor && dev/release-gate/run-go-tests.sh '^TestWorkerActor' ./internal/executor && dev/release-gate/run-go-tests.sh '^TestAuthorizeWorkerRunSourceRequiresWorkerAndLiveFence$' ./internal/control"
 run_check workspace-runtime-contract \
-  'typed SDK/proto Workspace surface, drained checkpoint pause, executor worker bridge, renewed receipt retry, run-pinned create fence, and error classification' \
-  bash -c "bun test runtime/typescript/src/program.test.ts && go test ./internal/guestd -run TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain -count=1 && go test ./internal/executor -run 'TestWorkspaceRuntimeVerticalContract|TestWorkerWorkspaceRequests|TestWorkspaceRuntimeRetryUsesRenewedReceipt' -count=1 && nix develop -c go test ./internal/control -run 'TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim|TestRunSourcedWorkspaceSelfExecAndDeleteAreBusyWithoutSideEffects|TestWorkerWorkspaceExecFailureDoesNotClassifyUnknownInfrastructureError' -count=1"
+  'typed SDK/proto Workspace surface, drained checkpoint pause, executor worker bridge, renewed assignment retry, run-pinned create fence, and error classification' \
+  bash -c "bun test runtime/typescript/src/program.test.ts && dev/release-gate/run-go-tests.sh '^TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain$' ./internal/guestd && dev/release-gate/run-go-tests.sh '^TestWorkspaceRuntimeVerticalContract$' ./internal/executor && dev/release-gate/run-go-tests.sh '^TestWorkerWorkspaceRequests' ./internal/executor && dev/release-gate/run-go-tests.sh '^TestWorkspaceRuntimeRetryUsesRenewedAssignment$' ./internal/executor && nix develop -c dev/release-gate/run-go-tests.sh '^TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim$' ./internal/control && nix develop -c dev/release-gate/run-go-tests.sh '^TestRunSourcedWorkspaceSelfExecAndDeleteAreBusyWithoutSideEffects$' ./internal/control && nix develop -c dev/release-gate/run-go-tests.sh '^TestWorkerWorkspaceExecFailureDoesNotClassifyUnknownInfrastructureError$' ./internal/control"
 run_check schedule-cli \
   'go test ./cmd/helmr ./internal/client -run Schedule -count=1' \
-  go test ./cmd/helmr ./internal/client -run Schedule -count=1
+  dev/release-gate/run-go-tests.sh 'Schedule' ./cmd/helmr ./internal/client
 
 status=passed
 reason_json=null

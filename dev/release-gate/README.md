@@ -23,6 +23,11 @@ is accepted only through executable tests, type checks, or a packed-package
 consumer. Source strings and the disappearance of an old stub are never
 readiness evidence.
 
+Go test selections are executed through `run-go-tests.sh`. The gate requires
+at least one matching passed test in every selected package, so a renamed or
+deleted test cannot become passing evidence merely because `go test -run`
+exits successfully.
+
 Passing this gate is readiness, not release certification. In particular, the
 local network check proves the named nftables counter and evidence producer
 contract. The AWS case must still attribute a live Run to its exact network

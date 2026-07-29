@@ -94,24 +94,10 @@ type QueueReconciler struct {
 
 type QueueReconcilerOption func(*QueueReconciler)
 
-func WithQueueReconcileInterval(every time.Duration) QueueReconcilerOption {
-	return func(reconciler *QueueReconciler) {
-		reconciler.runEvery = every
-		reconciler.buildEvery = every
-	}
-}
-
 func WithQueueReconcileIntervals(runEvery, buildEvery time.Duration) QueueReconcilerOption {
 	return func(reconciler *QueueReconciler) {
 		reconciler.runEvery = runEvery
 		reconciler.buildEvery = buildEvery
-	}
-}
-
-func WithQueueReconcileLimits(scopeLimit int32, runLimit int32) QueueReconcilerOption {
-	return func(reconciler *QueueReconciler) {
-		reconciler.scopeLimit = scopeLimit
-		reconciler.runLimit = runLimit
 	}
 }
 
@@ -157,12 +143,6 @@ func WithQueueReconcileLock(lock QueueReconcileLock) QueueReconcilerOption {
 func WithBuildQueueReconcileLock(lock QueueReconcileLock) QueueReconcilerOption {
 	return func(reconciler *QueueReconciler) {
 		reconciler.buildLock = lock
-	}
-}
-
-func WithQueueReconcileScopeSelector(selector QueueScopeSelector) QueueReconcilerOption {
-	return func(reconciler *QueueReconciler) {
-		reconciler.selector = selector
 	}
 }
 

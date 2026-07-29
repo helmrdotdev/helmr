@@ -78,10 +78,6 @@ func InspectArtifact(body io.Reader, artifact WorkspaceArtifact) (TreeIdentity, 
 	return tree, nil
 }
 
-func InspectArtifactTree(path string, sizeBytes int64) (TreeIdentity, error) {
-	return InspectArtifactTreeContext(context.Background(), path, sizeBytes)
-}
-
 func InspectArtifactTreeContext(ctx context.Context, path string, sizeBytes int64) (TreeIdentity, error) {
 	if err := ctx.Err(); err != nil {
 		return TreeIdentity{}, err
