@@ -475,12 +475,12 @@ func workerCertificationRenewParams(worker workerActor, c api.WorkerCapabilities
 		RuntimeIdentityID: c.RuntimeID, ProtocolVersion: c.ProtocolVersion, SupportsRun: c.SupportsRun, SupportsBuild: c.SupportsBuild,
 		SubstrateFormat: c.SubstrateFormat, SubstrateBuilderAbi: c.SubstrateBuilderABI, SubstrateLayoutAbi: c.SubstrateLayoutABI,
 		CertifiedCpuMillis: c.MaxVCPUs * 1000, CertifiedMemoryBytes: c.MaxMemoryMiB * 1024 * 1024,
-		CertifiedWorkloadDiskBytes: c.MaxDiskMiB * 1024 * 1024, CertifiedScratchBytes: c.ScratchBytes,
-		CertifiedBuildCacheBytes: c.BuildCacheBytes, CertifiedArtifactCacheBytes: c.ArtifactCacheBytes,
+		CertifiedGuestEphemeralDiskBytes: c.GuestEphemeralDiskBytes,
+		CertifiedBuildCacheBytes:         c.BuildCacheBytes, CertifiedArtifactCacheBytes: c.ArtifactCacheBytes,
 		CertifiedHugepagesBytes: c.HugepagesBytes, CertifiedCheckpointBytes: c.CheckpointBytes,
 		PerVmCpuMillis: c.VMMilliCPU, PerVmMemoryBytes: c.VMMemoryMiB * 1024 * 1024,
-		PerVmWorkloadDiskBytes: c.VMMaxDiskMiB * 1024 * 1024, PerVmScratchBytes: c.VMMaxScratchBytes,
-		MaxVmSlots: c.ExecutionSlotsAvailable, MaxBuildExecutors: c.MaxBuildExecutors, MaxRuntimeStarts: c.MaxRuntimeStarts,
+		PerVmGuestEphemeralDiskBytes: c.VMGuestEphemeralDiskBytes,
+		MaxVmSlots:                   c.ExecutionSlotsAvailable, MaxBuildExecutors: c.MaxBuildExecutors, MaxRuntimeStarts: c.MaxRuntimeStarts,
 	}
 }
 
@@ -683,8 +683,8 @@ func workerObservationParams(worker workerActor, observation api.WorkerObservati
 	}
 	return db.RecordWorkerObservationParams{
 		CpuPressureBps: observation.CPUPressureBPS, MemoryPressureBps: observation.MemoryPressureBPS,
-		WorkloadDiskPressureBps: observation.WorkloadDiskPressureBPS, ScratchPressureBps: observation.ScratchPressureBPS,
-		BuildCachePressureBps: observation.BuildCachePressureBPS, ArtifactCachePressureBps: observation.ArtifactCachePressureBPS,
+		GuestEphemeralDiskPressureBps: observation.GuestEphemeralDiskPressureBPS,
+		BuildCachePressureBps:         observation.BuildCachePressureBPS, ArtifactCachePressureBps: observation.ArtifactCachePressureBPS,
 		CheckpointPressureBps: observation.CheckpointPressureBPS, LeakedSlotCount: observation.LeakedSlotCount,
 		RunQueueDepth: observation.RunQueueDepth, BuildQueueDepth: observation.BuildQueueDepth,
 		RuntimeStartQueueDepth: observation.RuntimeStartQueueDepth,
@@ -710,12 +710,12 @@ func workerCertificationParams(worker workerActor, request api.WorkerActivateReq
 		SupportsRun: supportsRun, SupportsBuild: c.SupportsBuild,
 		SubstrateFormat: c.SubstrateFormat, SubstrateBuilderAbi: c.SubstrateBuilderABI, SubstrateLayoutAbi: c.SubstrateLayoutABI,
 		CertifiedCpuMillis: c.MaxVCPUs * 1000, CertifiedMemoryBytes: c.MaxMemoryMiB * 1024 * 1024,
-		CertifiedWorkloadDiskBytes: c.MaxDiskMiB * 1024 * 1024, CertifiedScratchBytes: c.ScratchBytes,
-		CertifiedBuildCacheBytes: c.BuildCacheBytes, CertifiedArtifactCacheBytes: c.ArtifactCacheBytes,
+		CertifiedGuestEphemeralDiskBytes: c.GuestEphemeralDiskBytes,
+		CertifiedBuildCacheBytes:         c.BuildCacheBytes, CertifiedArtifactCacheBytes: c.ArtifactCacheBytes,
 		CertifiedHugepagesBytes: c.HugepagesBytes, CertifiedCheckpointBytes: c.CheckpointBytes,
 		PerVmCpuMillis: c.VMMilliCPU, PerVmMemoryBytes: c.VMMemoryMiB * 1024 * 1024,
-		PerVmWorkloadDiskBytes: c.VMMaxDiskMiB * 1024 * 1024, PerVmScratchBytes: c.VMMaxScratchBytes,
-		MaxVmSlots: c.ExecutionSlotsAvailable, MaxRunConsumers: c.ExecutionSlotsAvailable,
+		PerVmGuestEphemeralDiskBytes: c.VMGuestEphemeralDiskBytes,
+		MaxVmSlots:                   c.ExecutionSlotsAvailable, MaxRunConsumers: c.ExecutionSlotsAvailable,
 		MaxBuildExecutors: c.MaxBuildExecutors, MaxRuntimeStarts: maxRuntimeStarts,
 		CertificationProfile: request.CertificationProfile, CertificationFingerprint: request.CertificationFingerprint,
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
@@ -725,37 +725,35 @@ func workerCertificationParams(worker workerActor, request api.WorkerActivateReq
 
 func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabilities, error) {
 	capabilities := api.WorkerCapabilities{
-		ProtocolVersion:         strings.TrimSpace(input.ProtocolVersion),
-		WorkerVersion:           strings.TrimSpace(input.WorkerVersion),
-		RuntimeID:               strings.TrimSpace(input.RuntimeID),
-		RuntimeArch:             strings.TrimSpace(input.RuntimeArch),
-		RuntimeABI:              strings.TrimSpace(input.RuntimeABI),
-		KernelDigest:            strings.TrimSpace(input.KernelDigest),
-		InitramfsDigest:         strings.TrimSpace(input.InitramfsDigest),
-		RootfsDigest:            strings.TrimSpace(input.RootfsDigest),
-		CNIProfile:              strings.TrimSpace(input.CNIProfile),
-		SubstrateFormat:         strings.TrimSpace(input.SubstrateFormat),
-		SubstrateBuilderABI:     strings.TrimSpace(input.SubstrateBuilderABI),
-		SubstrateLayoutABI:      strings.TrimSpace(input.SubstrateLayoutABI),
-		Region:                  strings.TrimSpace(input.Region),
-		MaxVCPUs:                input.MaxVCPUs,
-		MaxMemoryMiB:            input.MaxMemoryMiB,
-		VMMilliCPU:              input.VMMilliCPU,
-		VMMemoryMiB:             input.VMMemoryMiB,
-		MaxDiskMiB:              input.MaxDiskMiB,
-		VMMaxDiskMiB:            input.VMMaxDiskMiB,
-		ExecutionSlotsAvailable: input.ExecutionSlotsAvailable,
-		SupportsRun:             input.SupportsRun,
-		SupportsBuild:           input.SupportsBuild,
-		MaxBuildExecutors:       input.MaxBuildExecutors,
-		MaxRuntimeStarts:        input.MaxRuntimeStarts,
-		ScratchBytes:            input.ScratchBytes,
-		VMMaxScratchBytes:       input.VMMaxScratchBytes,
-		BuildCacheBytes:         input.BuildCacheBytes,
-		ArtifactCacheBytes:      input.ArtifactCacheBytes,
-		HugepagesBytes:          input.HugepagesBytes,
-		CheckpointBytes:         input.CheckpointBytes,
-		Observation:             input.Observation,
+		ProtocolVersion:           strings.TrimSpace(input.ProtocolVersion),
+		WorkerVersion:             strings.TrimSpace(input.WorkerVersion),
+		RuntimeID:                 strings.TrimSpace(input.RuntimeID),
+		RuntimeArch:               strings.TrimSpace(input.RuntimeArch),
+		RuntimeABI:                strings.TrimSpace(input.RuntimeABI),
+		KernelDigest:              strings.TrimSpace(input.KernelDigest),
+		InitramfsDigest:           strings.TrimSpace(input.InitramfsDigest),
+		RootfsDigest:              strings.TrimSpace(input.RootfsDigest),
+		CNIProfile:                strings.TrimSpace(input.CNIProfile),
+		SubstrateFormat:           strings.TrimSpace(input.SubstrateFormat),
+		SubstrateBuilderABI:       strings.TrimSpace(input.SubstrateBuilderABI),
+		SubstrateLayoutABI:        strings.TrimSpace(input.SubstrateLayoutABI),
+		Region:                    strings.TrimSpace(input.Region),
+		MaxVCPUs:                  input.MaxVCPUs,
+		MaxMemoryMiB:              input.MaxMemoryMiB,
+		VMMilliCPU:                input.VMMilliCPU,
+		VMMemoryMiB:               input.VMMemoryMiB,
+		GuestEphemeralDiskBytes:   input.GuestEphemeralDiskBytes,
+		VMGuestEphemeralDiskBytes: input.VMGuestEphemeralDiskBytes,
+		ExecutionSlotsAvailable:   input.ExecutionSlotsAvailable,
+		SupportsRun:               input.SupportsRun,
+		SupportsBuild:             input.SupportsBuild,
+		MaxBuildExecutors:         input.MaxBuildExecutors,
+		MaxRuntimeStarts:          input.MaxRuntimeStarts,
+		BuildCacheBytes:           input.BuildCacheBytes,
+		ArtifactCacheBytes:        input.ArtifactCacheBytes,
+		HugepagesBytes:            input.HugepagesBytes,
+		CheckpointBytes:           input.CheckpointBytes,
+		Observation:               input.Observation,
 		Network: api.WorkerNetworkCapabilities{
 			Internet:      input.Network.Internet,
 			BlockInternet: input.Network.BlockInternet,
@@ -828,17 +826,10 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 	if capabilities.VMMemoryMiB <= 0 || capabilities.VMMemoryMiB > capabilities.MaxMemoryMiB {
 		return api.WorkerCapabilities{}, errors.New("worker vm_memory_mib must be positive and not exceed aggregate memory")
 	}
-	if capabilities.MaxDiskMiB <= 0 {
-		return api.WorkerCapabilities{}, errors.New("worker max_disk_mib must be positive")
-	}
-	if capabilities.MaxDiskMiB > math.MaxInt32 {
-		return api.WorkerCapabilities{}, fmt.Errorf("worker max_disk_mib exceeds max %d", math.MaxInt32)
-	}
-	if capabilities.VMMaxDiskMiB <= 0 || capabilities.VMMaxDiskMiB > capabilities.MaxDiskMiB {
-		return api.WorkerCapabilities{}, errors.New("worker vm_max_disk_mib must be positive and not exceed aggregate max_disk_mib")
-	}
-	if capabilities.VMMaxScratchBytes <= 0 || capabilities.VMMaxScratchBytes > capabilities.ScratchBytes {
-		return api.WorkerCapabilities{}, errors.New("worker vm_max_scratch_bytes must be positive and not exceed aggregate scratch_bytes")
+	if capabilities.GuestEphemeralDiskBytes <= 0 ||
+		capabilities.VMGuestEphemeralDiskBytes <= 0 ||
+		capabilities.VMGuestEphemeralDiskBytes > capabilities.GuestEphemeralDiskBytes {
+		return api.WorkerCapabilities{}, errors.New("worker VM guest ephemeral disk must be positive and not exceed aggregate capacity")
 	}
 	if capabilities.ExecutionSlotsAvailable <= 0 {
 		return api.WorkerCapabilities{}, errors.New("worker execution_slots_available must be positive")

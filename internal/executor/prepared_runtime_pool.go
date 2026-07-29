@@ -85,7 +85,6 @@ type PreparedRuntimePool struct {
 	BackgroundGate        *BackgroundWorkGate
 	AdmitRuntimeStart     func(context.Context) error
 	Capacity              *capacity.Ledger
-	RuntimeScratchBytes   int64
 	PlatformStore         cas.Reader
 	RuntimeArchitecture   deployment.RuntimeArchitecture
 	VerifierCgroupRoot    string
@@ -1403,7 +1402,6 @@ func (p *PreparedRuntimePool) reserveRuntimeCapacity(target api.WorkerRuntimeRec
 		int64(target.Source.ReservedCpuMillis),
 		int64(target.Source.ReservedMemoryMiB),
 		target.Source.ReservedDiskMiB,
-		p.RuntimeScratchBytes,
 	)
 	if err != nil {
 		return err

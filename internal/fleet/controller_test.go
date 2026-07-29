@@ -224,7 +224,7 @@ func TestControllerCountsProviderPendingAcrossPreEnrollmentCycles(t *testing.T) 
 	policy.MaxScaleOutPerCycle = 2
 	planner := mustPlanner(t, policy)
 	source := &fakeSource{snapshot: GroupSnapshot{Inputs: Inputs{Demand: Demand{
-		Queued: []WorkloadBucket{workload(Capacity{MilliCPU: 2_000, MemoryBytes: 4_000, ScratchBytes: 10_000, VMSlots: 2, BuildExecutors: 1}, 3)},
+		Queued: []WorkloadBucket{workload(Capacity{MilliCPU: 2_000, MemoryBytes: 4_000, GuestEphemeralDiskBytes: 10_000, VMSlots: 2, BuildExecutors: 1}, 3)},
 	}}}}
 	provider := newFakeProvider(0)
 	controller, err := NewController(ControllerConfig{
@@ -293,7 +293,7 @@ func TestMetricsProjectDemandCapsSupplyAndDrainAge(t *testing.T) {
 	planner := mustPlanner(t, policy)
 	source := &fakeSource{snapshot: GroupSnapshot{
 		Inputs: Inputs{UncertifiedRunLaunchAttestations: 2, Demand: Demand{Queued: []WorkloadBucket{
-			workload(Capacity{MilliCPU: 2_000, MemoryBytes: 4_000, ScratchBytes: 10_000, VMSlots: 2, BuildExecutors: 1}, 3),
+			workload(Capacity{MilliCPU: 2_000, MemoryBytes: 4_000, GuestEphemeralDiskBytes: 10_000, VMSlots: 2, BuildExecutors: 1}, 3),
 		}}},
 	}}
 	metrics := &fakeMetrics{}

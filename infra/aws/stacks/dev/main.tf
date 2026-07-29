@@ -44,16 +44,15 @@ locals {
       allows_run           = true
       allows_build         = false
       instance_capacity = var.create_worker ? {
-        milli_cpu            = coalesce(var.worker_capacity_vcpus, 0) * 1000
-        memory_bytes         = coalesce(var.worker_capacity_memory_mib, 0) * 1048576
-        workload_disk_bytes  = local.run_worker_workload_disk_mib * 1048576
-        scratch_bytes        = local.run_worker_scratch_mib * 1048576
-        build_cache_bytes    = local.run_worker_build_cache_mib * 1048576
-        artifact_cache_bytes = local.run_worker_artifact_cache_mib * 1048576
-        vm_slots             = coalesce(var.worker_execution_slots, 0)
-        build_executors      = 0
+        milli_cpu                  = coalesce(var.worker_capacity_vcpus, 0) * 1000
+        memory_bytes               = coalesce(var.worker_capacity_memory_mib, 0) * 1048576
+        guest_ephemeral_disk_bytes = local.run_worker_guest_ephemeral_disk_mib * 1048576
+        build_cache_bytes          = local.run_worker_build_cache_mib * 1048576
+        artifact_cache_bytes       = local.run_worker_artifact_cache_mib * 1048576
+        vm_slots                   = coalesce(var.worker_execution_slots, 0)
+        build_executors            = 0
         } : {
-        milli_cpu         = 1, memory_bytes = 1, workload_disk_bytes = 1, scratch_bytes = 1,
+        milli_cpu         = 1, memory_bytes = 1, guest_ephemeral_disk_bytes = 1,
         build_cache_bytes = 0, artifact_cache_bytes = 0, vm_slots = 1, build_executors = 0
       }
     },
@@ -70,32 +69,30 @@ locals {
       allows_run           = false
       allows_build         = true
       instance_capacity = var.create_worker ? {
-        milli_cpu            = local.build_worker_cpu_millis
-        memory_bytes         = local.build_worker_memory_mib * 1048576
-        workload_disk_bytes  = local.build_worker_workload_disk_mib * 1048576
-        scratch_bytes        = (local.build_worker_scratch_mib - local.boot_corpus_reserve_mib) * 1048576
-        build_cache_bytes    = local.build_worker_build_cache_mib * 1048576
-        artifact_cache_bytes = local.build_worker_artifact_cache_mib * 1048576
-        vm_slots             = 0
-        build_executors      = coalesce(var.build_worker_execution_slots, var.worker_execution_slots, 0)
+        milli_cpu                  = local.build_worker_cpu_millis
+        memory_bytes               = local.build_worker_memory_mib * 1048576
+        guest_ephemeral_disk_bytes = local.build_worker_guest_ephemeral_disk_mib * 1048576
+        build_cache_bytes          = local.build_worker_build_cache_mib * 1048576
+        artifact_cache_bytes       = local.build_worker_artifact_cache_mib * 1048576
+        vm_slots                   = 0
+        build_executors            = coalesce(var.build_worker_execution_slots, var.worker_execution_slots, 0)
         } : {
-        milli_cpu         = 1, memory_bytes = 1, workload_disk_bytes = 1, scratch_bytes = 1,
+        milli_cpu         = 1, memory_bytes = 1, guest_ephemeral_disk_bytes = 1,
         build_cache_bytes = 0, artifact_cache_bytes = 0, vm_slots = 0, build_executors = 1
       }
     }
   ]
-  run_worker_build_cache_mib      = var.worker_substrate_cache_max_mib
-  run_worker_artifact_cache_mib   = var.worker_artifact_cache_max_mib
-  run_worker_disk_reserve_mib     = var.worker_disk_reserve_mib
-  run_worker_shared_disk_mib      = coalesce(var.worker_disk_mib, 0) - local.run_worker_disk_reserve_mib - local.run_worker_build_cache_mib - local.run_worker_artifact_cache_mib
-  run_worker_workload_disk_mib    = floor(local.run_worker_shared_disk_mib / 2)
-  run_worker_scratch_mib          = ceil(local.run_worker_shared_disk_mib / 2)
-  build_worker_build_cache_mib    = coalesce(var.build_worker_substrate_cache_max_mib, var.worker_substrate_cache_max_mib)
-  build_worker_artifact_cache_mib = coalesce(var.build_worker_artifact_cache_max_mib, var.worker_artifact_cache_max_mib)
-  build_worker_disk_reserve_mib   = coalesce(var.build_worker_disk_reserve_mib, var.worker_disk_reserve_mib)
-  build_worker_shared_disk_mib    = coalesce(var.build_worker_disk_mib, var.worker_disk_mib, 0) - local.build_worker_disk_reserve_mib - local.build_worker_build_cache_mib - local.build_worker_artifact_cache_mib
-  build_worker_workload_disk_mib  = floor(local.build_worker_shared_disk_mib / 2)
-  build_worker_scratch_mib        = ceil(local.build_worker_shared_disk_mib / 2)
+  run_worker_build_cache_mib            = var.worker_substrate_cache_max_mib
+  run_worker_artifact_cache_mib         = var.worker_artifact_cache_max_mib
+  run_worker_disk_reserve_mib           = var.worker_disk_reserve_mib
+  run_worker_shared_disk_mib            = coalesce(var.worker_disk_mib, 0) - local.run_worker_disk_reserve_mib - local.run_worker_build_cache_mib - local.run_worker_artifact_cache_mib
+  run_worker_guest_ephemeral_disk_mib   = local.run_worker_shared_disk_mib
+  build_worker_build_cache_mib          = coalesce(var.build_worker_substrate_cache_max_mib, var.worker_substrate_cache_max_mib)
+  build_worker_artifact_cache_mib       = coalesce(var.build_worker_artifact_cache_max_mib, var.worker_artifact_cache_max_mib)
+  build_worker_disk_reserve_mib         = coalesce(var.build_worker_disk_reserve_mib, var.worker_disk_reserve_mib)
+  build_worker_shared_disk_mib          = coalesce(var.build_worker_disk_mib, var.worker_disk_mib, 0) - local.build_worker_disk_reserve_mib - local.build_worker_build_cache_mib - local.build_worker_artifact_cache_mib
+  build_worker_guest_ephemeral_disk_mib = local.build_worker_scratch_mib - local.boot_corpus_reserve_mib
+  build_worker_scratch_mib              = local.build_worker_shared_disk_mib
   worker_fleets = var.create_worker ? [
     {
       group_id           = local.run_worker_group_id
@@ -103,16 +100,14 @@ locals {
       role               = "run"
       compatibility_keys = [local.run_worker_group_id]
       instance_capacity = {
-        milli_cpu            = coalesce(var.worker_capacity_vcpus, 0) * 1000
-        memory_bytes         = coalesce(var.worker_capacity_memory_mib, 0) * 1048576
-        workload_disk_bytes  = local.run_worker_workload_disk_mib * 1048576
-        scratch_bytes        = local.run_worker_scratch_mib * 1048576
-        build_cache_bytes    = local.run_worker_build_cache_mib * 1048576
-        artifact_cache_bytes = local.run_worker_artifact_cache_mib * 1048576
-        vm_slots             = coalesce(var.worker_execution_slots, 0)
-        build_executors      = 0
+        milli_cpu                  = coalesce(var.worker_capacity_vcpus, 0) * 1000
+        memory_bytes               = coalesce(var.worker_capacity_memory_mib, 0) * 1048576
+        guest_ephemeral_disk_bytes = local.run_worker_guest_ephemeral_disk_mib * 1048576
+        build_cache_bytes          = local.run_worker_build_cache_mib * 1048576
+        artifact_cache_bytes       = local.run_worker_artifact_cache_mib * 1048576
+        vm_slots                   = coalesce(var.worker_execution_slots, 0)
+        build_executors            = 0
       }
-      queued_run_scratch_bytes     = var.worker_vm_scratch_disk_mib * 1048576
       min_workers                  = var.worker_min_size
       warm_workers                 = var.worker_fleet_controller.run_warm_workers
       max_workers                  = coalesce(var.worker_fleet_controller.run_max_workers, var.worker_max_size)
@@ -135,16 +130,14 @@ locals {
       role               = "build"
       compatibility_keys = [local.build_worker_group_id]
       instance_capacity = {
-        milli_cpu            = local.build_worker_cpu_millis
-        memory_bytes         = local.build_worker_memory_mib * 1048576
-        workload_disk_bytes  = local.build_worker_workload_disk_mib * 1048576
-        scratch_bytes        = (local.build_worker_scratch_mib - local.boot_corpus_reserve_mib) * 1048576
-        build_cache_bytes    = local.build_worker_build_cache_mib * 1048576
-        artifact_cache_bytes = local.build_worker_artifact_cache_mib * 1048576
-        vm_slots             = 0
-        build_executors      = coalesce(var.build_worker_execution_slots, var.worker_execution_slots, 0)
+        milli_cpu                  = local.build_worker_cpu_millis
+        memory_bytes               = local.build_worker_memory_mib * 1048576
+        guest_ephemeral_disk_bytes = local.build_worker_guest_ephemeral_disk_mib * 1048576
+        build_cache_bytes          = local.build_worker_build_cache_mib * 1048576
+        artifact_cache_bytes       = local.build_worker_artifact_cache_mib * 1048576
+        vm_slots                   = 0
+        build_executors            = coalesce(var.build_worker_execution_slots, var.worker_execution_slots, 0)
       }
-      queued_run_scratch_bytes     = 0
       min_workers                  = var.build_worker_min_size
       warm_workers                 = var.worker_fleet_controller.build_warm_workers
       max_workers                  = coalesce(var.worker_fleet_controller.build_max_workers, var.build_worker_max_size)
@@ -476,13 +469,12 @@ resource "terraform_data" "worker_preconditions" {
         coalesce(var.worker_capacity_memory_mib, 0) > 0 &&
         coalesce(var.worker_execution_slots, 0) > 0 &&
         local.run_worker_build_cache_mib > 0 && local.run_worker_artifact_cache_mib > 0 &&
-        local.run_worker_workload_disk_mib >= var.worker_vm_scratch_disk_mib &&
-        local.run_worker_scratch_mib >= var.worker_vm_scratch_disk_mib &&
+        local.run_worker_guest_ephemeral_disk_mib >= var.worker_vm_scratch_disk_mib &&
         local.build_worker_cpu_millis >= 2000 &&
         local.build_worker_memory_mib >= 2048 &&
         coalesce(var.build_worker_execution_slots, var.worker_execution_slots, 0) == 1 &&
         local.build_worker_build_cache_mib > 0 && local.build_worker_artifact_cache_mib > 0 &&
-        local.build_worker_workload_disk_mib >= coalesce(var.build_worker_vm_scratch_disk_mib, var.worker_vm_scratch_disk_mib) &&
+        local.build_worker_guest_ephemeral_disk_mib >= coalesce(var.build_worker_vm_scratch_disk_mib, var.worker_vm_scratch_disk_mib) &&
         local.build_worker_scratch_mib >= local.build_scratch_min_mib
       )
       error_message = "worker groups require certified CPU, memory, cache, disk partitions, and concurrency; build capacity must fit one fixed build guest after the service reserve and expose exactly one build executor."

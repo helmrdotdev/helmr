@@ -63,8 +63,7 @@ func parseRunLeaseReceipt(receipt api.WorkerRunLeaseReceipt) (parsedRunLeaseRece
 		receipt.MountFencingGeneration <= 0 ||
 		receipt.RequestedCPUMillis <= 0 ||
 		receipt.RequestedMemoryBytes <= 0 ||
-		receipt.RequestedWorkloadDiskBytes < 0 ||
-		receipt.RequestedScratchBytes < 0 ||
+		receipt.RequestedGuestEphemeralDiskBytes < 0 ||
 		receipt.RequestedExecutionSlots <= 0 ||
 		receipt.MaxActiveDurationMs <= 0 ||
 		receipt.ActiveElapsedMs < 0 {

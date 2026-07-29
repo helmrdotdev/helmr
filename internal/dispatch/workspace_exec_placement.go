@@ -447,28 +447,27 @@ func (d *Authority) createWorkspaceExecRuntime(
 	runtime, err := db.New(tx).CreateWorkspaceExecRuntimeReservation(
 		ctx,
 		db.CreateWorkspaceExecRuntimeReservationParams{
-			ID:                        runtimeID,
-			OrgID:                     authority.orgID,
-			WorkerGroupID:             worker.groupID,
-			ProjectID:                 authority.projectID,
-			EnvironmentID:             authority.environmentID,
-			RegionID:                  authority.regionID,
-			WorkerInstanceID:          worker.workerID,
-			RuntimeIdentityID:         worker.runtimeIdentityID,
-			DeploymentDefinitionID:    authority.workspaceDefinitionID,
-			WorkerEpoch:               worker.workerEpoch,
-			NetworkPolicy:             authority.networkPolicy,
-			ReservedCpuMillis:         authority.resources.cpuMillis,
-			ReservedMemoryBytes:       authority.resources.memoryBytes,
-			ReservedWorkloadDiskBytes: authority.resources.workloadDisk,
-			ReservedScratchBytes:      authority.resources.scratchBytes,
-			ReservedExecutionSlots:    authority.resources.executionSlots,
-			WorkspaceID:               authority.workspaceID,
-			ProcessID:                 authority.processID,
-			BaseWorkspaceVersionID:    authority.baseVersionID,
-			ReservationExpiresAt:      pgvalue.Timestamptz(time.Now().Add(d.runPolicy.ReservationTTL)),
-			NetworkSlotID:             worker.networkSlotID,
-			NetworkSlotGeneration:     worker.networkSlotGeneration,
+			ID:                              runtimeID,
+			OrgID:                           authority.orgID,
+			WorkerGroupID:                   worker.groupID,
+			ProjectID:                       authority.projectID,
+			EnvironmentID:                   authority.environmentID,
+			RegionID:                        authority.regionID,
+			WorkerInstanceID:                worker.workerID,
+			RuntimeIdentityID:               worker.runtimeIdentityID,
+			DeploymentDefinitionID:          authority.workspaceDefinitionID,
+			WorkerEpoch:                     worker.workerEpoch,
+			NetworkPolicy:                   authority.networkPolicy,
+			ReservedCpuMillis:               authority.resources.cpuMillis,
+			ReservedMemoryBytes:             authority.resources.memoryBytes,
+			ReservedGuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes,
+			ReservedExecutionSlots:          authority.resources.executionSlots,
+			WorkspaceID:                     authority.workspaceID,
+			ProcessID:                       authority.processID,
+			BaseWorkspaceVersionID:          authority.baseVersionID,
+			ReservationExpiresAt:            pgvalue.Timestamptz(time.Now().Add(d.runPolicy.ReservationTTL)),
+			NetworkSlotID:                   worker.networkSlotID,
+			NetworkSlotGeneration:           worker.networkSlotGeneration,
 		},
 	)
 	if err != nil {
@@ -515,8 +514,7 @@ func validateWorkspaceExecRuntime(authority workspaceExecAuthority, runtime runR
 		runtime.restoreCheckpoint.Valid ||
 		runtime.cpuMillis != authority.resources.cpuMillis ||
 		runtime.memoryBytes != authority.resources.memoryBytes ||
-		runtime.workloadDiskBytes != authority.resources.workloadDisk ||
-		runtime.scratchBytes != authority.resources.scratchBytes ||
+		runtime.guestEphemeralDiskBytes != authority.resources.guestEphemeralDiskBytes ||
 		runtime.executionSlots != authority.resources.executionSlots ||
 		!bytes.Equal(network, authority.networkPolicy) {
 		return errors.New("Workspace runtime does not match exec authority")

@@ -32,8 +32,8 @@ func TestAdvertisedWorkerDiskCapacityFitsNButNotNPlusOne(t *testing.T) {
 		t.Fatal(err)
 	}
 	capacity := compute.WorkerDiskCapacity{
-		VMWorkloadDiskMiB: 8192, VMScratchBytes: 8192 << 20,
-		HostWorkloadMiB: hostMiB, HostScratchBytes: hostMiB << 20,
+		VMGuestEphemeralDiskBytes:   8192 << 20,
+		HostGuestEphemeralDiskBytes: hostMiB << 20,
 	}
 	if !capacity.FitsVMs(4) {
 		t.Fatal("explicit reserve was not removed before four-slot exact fit")
@@ -55,29 +55,27 @@ func TestAdmissionDiskFloorMatchesWorkerFilesystemContract(t *testing.T) {
 	}
 }
 
-func TestCapScratchCapacityUsesPostStageAvailability(t *testing.T) {
+func TestCapGuestEphemeralDiskCapacityUsesPostStageAvailability(t *testing.T) {
 	capacity := compute.WorkerDiskCapacity{
-		VMWorkloadDiskMiB: 20480,
-		VMScratchBytes:    20480 << 20,
-		HostWorkloadMiB:   65536,
-		HostScratchBytes:  65536 << 20,
+		VMGuestEphemeralDiskBytes:   32768 << 20,
+		HostGuestEphemeralDiskBytes: 65536 << 20,
 	}
-	got, err := capScratchCapacity(capacity, 2048<<20, 32768<<20)
+	got, err := capGuestEphemeralDiskCapacity(capacity, 2048<<20, 32768<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.HostScratchBytes != 32768<<20 {
-		t.Fatalf("scratch capacity = %d, want %d", got.HostScratchBytes, int64(32768<<20))
+	if got.HostGuestEphemeralDiskBytes != 32768<<20 {
+		t.Fatalf("guest disk capacity = %d, want %d", got.HostGuestEphemeralDiskBytes, int64(32768<<20))
 	}
-	capacity.HostScratchBytes = 34816 << 20
-	got, err = capScratchCapacity(capacity, 2048<<20, 33000<<20)
+	capacity.HostGuestEphemeralDiskBytes = 34816 << 20
+	got, err = capGuestEphemeralDiskCapacity(capacity, 2048<<20, 33000<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.HostScratchBytes != 32768<<20 {
-		t.Fatalf("reserved scratch capacity = %d, want %d", got.HostScratchBytes, int64(32768<<20))
+	if got.HostGuestEphemeralDiskBytes != 32768<<20 {
+		t.Fatalf("reserved guest disk capacity = %d, want %d", got.HostGuestEphemeralDiskBytes, int64(32768<<20))
 	}
-	if _, err := capScratchCapacity(capacity, 2048<<20, (20480<<20)-1); err == nil {
+	if _, err := capGuestEphemeralDiskCapacity(capacity, 2048<<20, (32768<<20)-1); err == nil {
 		t.Fatal("available capacity below one VM was accepted")
 	}
 }

@@ -1535,7 +1535,7 @@ INSERT INTO run_leases (
     worker_instance_id, worker_epoch, runtime_instance_id,
     network_slot_id, network_slot_generation, runtime_identity_id,
     worker_protocol_version, requested_cpu_millis, requested_memory_bytes,
-    requested_workload_disk_bytes, requested_scratch_bytes,
+    requested_guest_ephemeral_disk_bytes,
     requested_execution_slots, trace_id, span_id, state, assigned_at,
     start_deadline_at, claimed_at, started_at, expires_at,
     checkpointed_at, terminal_at, terminal_reason_code
@@ -1544,8 +1544,8 @@ SELECT $1, org_id, project_id, environment_id, $2, workspace_id,
        region_id, 1, 1, worker_group_id, worker_instance_id, worker_epoch,
        runtime_instance_id, network_slot_id, network_slot_generation,
        runtime_identity_id, worker_protocol_version, requested_cpu_millis,
-       requested_memory_bytes, requested_workload_disk_bytes,
-       requested_scratch_bytes, requested_execution_slots, trace_id, span_id,
+       requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
+       requested_execution_slots, trace_id, span_id,
        'checkpointed', assigned_at, start_deadline_at, assigned_at, assigned_at,
        expires_at, transaction_timestamp(), transaction_timestamp(),
        'checkpointed'
@@ -1584,7 +1584,7 @@ INSERT INTO run_leases (
     worker_instance_id, worker_epoch, runtime_instance_id,
     network_slot_id, network_slot_generation, runtime_identity_id,
     worker_protocol_version, requested_cpu_millis, requested_memory_bytes,
-    requested_workload_disk_bytes, requested_scratch_bytes,
+    requested_guest_ephemeral_disk_bytes,
     requested_execution_slots, trace_id, span_id, state, assigned_at,
     start_deadline_at, claimed_at, started_at, expires_at,
     checkpointed_at, terminal_at, terminal_reason_code
@@ -1594,7 +1594,7 @@ SELECT $1, org_id, project_id, environment_id, $2, workspace_id,
        worker_epoch, runtime_instance_id, network_slot_id,
        network_slot_generation, runtime_identity_id, worker_protocol_version,
        requested_cpu_millis, requested_memory_bytes,
-       requested_workload_disk_bytes, requested_scratch_bytes,
+       requested_guest_ephemeral_disk_bytes,
        requested_execution_slots, trace_id, span_id, 'checkpointed',
        assigned_at, start_deadline_at, assigned_at, assigned_at, expires_at,
        transaction_timestamp(), transaction_timestamp(), 'checkpointed'
@@ -2821,8 +2821,8 @@ func TestPlaceReadyRunAccountsForActiveBuildResources(t *testing.T) {
 	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances
    SET certified_memory_bytes = 4294967296,
-       certified_scratch_bytes = 68719476736,
-       per_vm_scratch_bytes = 68719476736
+       certified_guest_ephemeral_disk_bytes = 68719476736,
+       per_vm_guest_ephemeral_disk_bytes = 68719476736
  WHERE id = $1`,
 		fixture.workerID,
 	)
@@ -2831,11 +2831,11 @@ INSERT INTO deployment_build_leases (
     id, org_id, project_id, environment_id, deployment_id, build_region_id,
     lease_sequence, worker_group_id, worker_instance_id, worker_epoch,
     worker_protocol_version, requested_cpu_millis, requested_memory_bytes,
-    requested_workload_disk_bytes, requested_scratch_bytes,
-    requested_build_executors, build_snapshot, start_deadline_at, expires_at
+    requested_guest_ephemeral_disk_bytes, requested_build_executors,
+    build_snapshot, start_deadline_at, expires_at
 ) VALUES (
     $1, $2, $3, $4, $5, 'us-east-1', 1, $6, $7, 1,
-    'helmr.worker.v0', 3000, 4294967296, 0, 34359738368,
+    'helmr.worker.v0', 3000, 4294967296, 34359738368,
     1, '{}'::jsonb, now() + interval '1 minute', now() + interval '5 minutes'
 )`,
 		uuid.Must(uuid.NewV7()),
@@ -3036,16 +3036,16 @@ INSERT INTO worker_instances (
     current_epoch, current_service_id, protocol_version, supervisor_version,
     supports_run, runtime_identity_id,
     substrate_format, substrate_builder_abi, substrate_layout_abi,
-    certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes,
-    certified_scratch_bytes, per_vm_cpu_millis, per_vm_memory_bytes,
-    per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots,
+    certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes,
+    per_vm_cpu_millis, per_vm_memory_bytes,
+    per_vm_guest_ephemeral_disk_bytes, max_vm_slots,
     max_run_consumers, max_runtime_starts, certification_profile,
     certification_fingerprint, epoch_started_at, certified_at, activated_at
 ) VALUES (
     $1, $2, $3, 'test-attestation', 'active', 1, $4, 'helmr.worker.v0',
     'test-worker', true, $5, 'squashfs', 'builder-v0', 'layout-v0',
-    8000, 8589934592, 274877906944, 17179869184,
-    1000, 1073741824, 34359738368, 2147483648,
+    8000, 8589934592, 274877906944,
+    1000, 1073741824, 34359738368,
     8, 8, 8, 'run-v0', 'test-cert', now(), now(), now()
 )`,
 		fixture.workerID,
@@ -3057,10 +3057,10 @@ INSERT INTO worker_instances (
 	mustRunPlacementExec(t, ctx, pool, `
 INSERT INTO worker_observations (
     worker_instance_id, worker_epoch, cpu_pressure_bps, memory_pressure_bps,
-    workload_disk_pressure_bps, scratch_pressure_bps, build_cache_pressure_bps,
+    guest_ephemeral_disk_pressure_bps, build_cache_pressure_bps,
     artifact_cache_pressure_bps, checkpoint_pressure_bps, leaked_slot_count,
     run_queue_depth, build_queue_depth, runtime_start_queue_depth, observed_at
-) VALUES ($1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, now())`,
+) VALUES ($1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, now())`,
 		fixture.workerID,
 	)
 	mustRunPlacementExec(t, ctx, pool, `

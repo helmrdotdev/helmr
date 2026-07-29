@@ -231,7 +231,7 @@ resource "terraform_data" "bootstrap_preconditions" {
         trimspace(group.launch_ami_id) != "" && contains(group.ami_ids, group.launch_ami_id) &&
         (group.allows_run || group.allows_build) &&
         group.instance_capacity.milli_cpu > 0 && group.instance_capacity.memory_bytes > 0 &&
-        group.instance_capacity.workload_disk_bytes > 0 && group.instance_capacity.scratch_bytes > 0 &&
+        group.instance_capacity.guest_ephemeral_disk_bytes > 0 &&
         group.instance_capacity.build_cache_bytes >= 0 && group.instance_capacity.artifact_cache_bytes >= 0 &&
         group.instance_capacity.vm_slots >= 0 && group.instance_capacity.build_executors >= 0 &&
         (!group.allows_run || group.instance_capacity.vm_slots > 0) &&
@@ -255,10 +255,9 @@ resource "terraform_data" "bootstrap_preconditions" {
         fleet.max_scale_out_per_cycle > 0 && fleet.max_scale_out_per_cycle <= fleet.max_workers &&
         fleet.max_pending_workers >= 0 && fleet.max_pending_workers <= fleet.max_workers && fleet.max_packing_items > 0 && fleet.max_packing_items <= 1000000 &&
         fleet.instance_capacity.milli_cpu > 0 && fleet.instance_capacity.memory_bytes > 0 &&
-        fleet.instance_capacity.workload_disk_bytes > 0 && fleet.instance_capacity.scratch_bytes > 0 &&
+        fleet.instance_capacity.guest_ephemeral_disk_bytes > 0 &&
         fleet.instance_capacity.build_cache_bytes >= 0 && fleet.instance_capacity.artifact_cache_bytes >= 0 &&
         (fleet.role == "run" ? (fleet.instance_capacity.vm_slots > 0 && fleet.instance_capacity.build_executors == 0) : (fleet.instance_capacity.vm_slots == 0 && fleet.instance_capacity.build_executors > 0 && fleet.instance_capacity.build_cache_bytes > 0 && fleet.instance_capacity.artifact_cache_bytes > 0)) &&
-        (fleet.role == "run" ? (fleet.queued_run_scratch_bytes > 0 && fleet.queued_run_scratch_bytes <= fleet.instance_capacity.scratch_bytes) : fleet.queued_run_scratch_bytes == 0) &&
         fleet.controller_interval_seconds > 0 && fleet.controller_interval_seconds <= 2592000 &&
         fleet.scale_out_cooldown_seconds > 0 && fleet.scale_out_cooldown_seconds <= 2592000 &&
         fleet.scale_in_cooldown_seconds > 0 && fleet.scale_in_cooldown_seconds <= 2592000 &&

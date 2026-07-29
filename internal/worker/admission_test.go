@@ -159,8 +159,8 @@ func TestHardAdmissionPressureObservation(t *testing.T) {
 	}
 	evaluator.Evaluate(context.Background(), AdmissionCheck{State: StateActive, CertifiedAt: now, CertificationTTL: time.Hour})
 	observation := evaluator.Observation()
-	if observation.WorkloadDiskPressureBPS != 5000 || observation.ScratchPressureBPS != 5000 {
-		t.Fatalf("disk pressure = %d/%d, want 5000", observation.WorkloadDiskPressureBPS, observation.ScratchPressureBPS)
+	if observation.GuestEphemeralDiskPressureBPS != 5000 {
+		t.Fatalf("disk pressure = %d, want 5000", observation.GuestEphemeralDiskPressureBPS)
 	}
 	if len(observation.HealthDetails) == 0 {
 		t.Fatal("typed hard admission health details are missing")
@@ -169,12 +169,12 @@ func TestHardAdmissionPressureObservation(t *testing.T) {
 
 func TestBuildLeaseValidatesFixedGuestIndependentlyFromHostEnvelope(t *testing.T) {
 	capabilities := api.WorkerCapabilities{
-		VMMilliCPU: 2000, VMMemoryMiB: 2048, VMMaxDiskMiB: 1,
-		VMMaxScratchBytes: 20 << 30, MaxBuildExecutors: 1,
+		VMMilliCPU: 2000, VMMemoryMiB: 2048,
+		GuestEphemeralDiskBytes: 32 << 30, VMGuestEphemeralDiskBytes: 32 << 30, MaxBuildExecutors: 1,
 	}
 	lease := api.WorkerDeploymentBuildLease{
 		RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
-		RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 32 << 30,
+		RequestedGuestEphemeralDiskBytes: 32 << 30,
 	}
 	if err := validateBuildLeaseShape(capabilities, lease); err != nil {
 		t.Fatal(err)
@@ -185,7 +185,7 @@ func TestBuildLeaseValidatesFixedGuestIndependentlyFromHostEnvelope(t *testing.T
 	}{
 		{name: "cpu", mutate: func(c *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease) { c.VMMilliCPU-- }},
 		{name: "memory", mutate: func(c *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease) { c.VMMemoryMiB-- }},
-		{name: "scratch", mutate: func(c *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease) { c.VMMaxScratchBytes-- }},
+		{name: "guest disk", mutate: func(c *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease) { c.VMGuestEphemeralDiskBytes-- }},
 		{name: "executors", mutate: func(_ *api.WorkerCapabilities, l *api.WorkerDeploymentBuildLease) { l.RequestedBuildExecutors = 2 }},
 	}
 	for _, tt := range tests {

@@ -365,8 +365,7 @@ func projectRunLeaseReceipt(authority runLeaseProjectionAuthority) (api.WorkerRu
 		authority.workspaceLease.MountFencingGeneration <= 0 ||
 		lease.RequestedCpuMillis <= 0 ||
 		lease.RequestedMemoryBytes <= 0 ||
-		lease.RequestedWorkloadDiskBytes <= 0 ||
-		lease.RequestedScratchBytes < 0 ||
+		lease.RequestedGuestEphemeralDiskBytes <= 0 ||
 		lease.RequestedExecutionSlots <= 0 ||
 		authority.run.MaxActiveDurationMs <= 0 ||
 		authority.run.ActiveElapsedMs < 0 ||
@@ -385,32 +384,31 @@ func projectRunLeaseReceipt(authority runLeaseProjectionAuthority) (api.WorkerRu
 		}
 	}
 	return api.WorkerRunLeaseReceipt{
-		ID:                         id,
-		RunID:                      runID,
-		AttemptNumber:              lease.AttemptNumber,
-		LeaseSequence:              lease.LeaseSequence,
-		WorkerGroupID:              lease.WorkerGroupID,
-		WorkerInstanceID:           workerID,
-		WorkerEpoch:                lease.WorkerEpoch,
-		WorkerProtocolVersion:      lease.WorkerProtocolVersion,
-		RuntimeInstanceID:          runtimeID,
-		RuntimeIdentityID:          lease.RuntimeIdentityID,
-		NetworkSlotID:              networkSlotID,
-		NetworkSlotGeneration:      lease.NetworkSlotGeneration,
-		WorkspaceID:                workspaceID,
-		WorkspaceMountID:           mountID,
-		WorkspaceLeaseID:           workspaceLeaseID,
-		BaseWorkspaceVersionID:     baseWorkspaceVersionID,
-		OwnershipGeneration:        authority.workspaceLease.OwnershipGeneration,
-		WriterGeneration:           authority.workspaceLease.WriterGeneration,
-		MountFencingGeneration:     authority.workspaceLease.MountFencingGeneration,
-		RequestedCPUMillis:         lease.RequestedCpuMillis,
-		RequestedMemoryBytes:       lease.RequestedMemoryBytes,
-		RequestedWorkloadDiskBytes: lease.RequestedWorkloadDiskBytes,
-		RequestedScratchBytes:      lease.RequestedScratchBytes,
-		RequestedExecutionSlots:    lease.RequestedExecutionSlots,
-		MaxActiveDurationMs:        authority.run.MaxActiveDurationMs,
-		ActiveElapsedMs:            authority.run.ActiveElapsedMs,
+		ID:                               id,
+		RunID:                            runID,
+		AttemptNumber:                    lease.AttemptNumber,
+		LeaseSequence:                    lease.LeaseSequence,
+		WorkerGroupID:                    lease.WorkerGroupID,
+		WorkerInstanceID:                 workerID,
+		WorkerEpoch:                      lease.WorkerEpoch,
+		WorkerProtocolVersion:            lease.WorkerProtocolVersion,
+		RuntimeInstanceID:                runtimeID,
+		RuntimeIdentityID:                lease.RuntimeIdentityID,
+		NetworkSlotID:                    networkSlotID,
+		NetworkSlotGeneration:            lease.NetworkSlotGeneration,
+		WorkspaceID:                      workspaceID,
+		WorkspaceMountID:                 mountID,
+		WorkspaceLeaseID:                 workspaceLeaseID,
+		BaseWorkspaceVersionID:           baseWorkspaceVersionID,
+		OwnershipGeneration:              authority.workspaceLease.OwnershipGeneration,
+		WriterGeneration:                 authority.workspaceLease.WriterGeneration,
+		MountFencingGeneration:           authority.workspaceLease.MountFencingGeneration,
+		RequestedCPUMillis:               lease.RequestedCpuMillis,
+		RequestedMemoryBytes:             lease.RequestedMemoryBytes,
+		RequestedGuestEphemeralDiskBytes: lease.RequestedGuestEphemeralDiskBytes,
+		RequestedExecutionSlots:          lease.RequestedExecutionSlots,
+		MaxActiveDurationMs:              authority.run.MaxActiveDurationMs,
+		ActiveElapsedMs:                  authority.run.ActiveElapsedMs,
 		Trace: api.TraceContext{
 			TraceID:     lease.TraceID.String,
 			SpanID:      lease.SpanID.String,

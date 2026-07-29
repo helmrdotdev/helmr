@@ -47,7 +47,7 @@ SELECT claimed.id, claimed.org_id, claimed.worker_group_id, claimed.project_id, 
        worker_network_slots.generation AS network_slot_generation,
        runtime_instances.reserved_cpu_millis,
        runtime_instances.reserved_memory_bytes,
-       runtime_instances.reserved_workload_disk_bytes,
+       runtime_instances.reserved_guest_ephemeral_disk_bytes,
        runtime_instances.reserved_execution_slots,
        runtime_instances.network_policy,
        image_artifacts.id AS image_artifact_id,
@@ -90,59 +90,59 @@ type ClaimWorkspaceMountParams struct {
 }
 
 type ClaimWorkspaceMountRow struct {
-	ID                         pgtype.UUID        `json:"id"`
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	WorkerGroupID              string             `json:"worker_group_id"`
-	ProjectID                  pgtype.UUID        `json:"project_id"`
-	EnvironmentID              pgtype.UUID        `json:"environment_id"`
-	RegionID                   string             `json:"region_id"`
-	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch                int64              `json:"worker_epoch"`
-	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
-	MaterializedVersionID      pgtype.UUID        `json:"materialized_version_id"`
-	RuntimeInstanceID          pgtype.UUID        `json:"runtime_instance_id"`
-	ClaimAttempt               int32              `json:"claim_attempt"`
-	GuestChannelTokenHash      string             `json:"guest_channel_token_hash"`
-	GuestChannelTokenExpiresAt pgtype.Timestamptz `json:"guest_channel_token_expires_at"`
-	State                      string             `json:"state"`
-	Request                    []byte             `json:"request"`
-	DirtyGeneration            int64              `json:"dirty_generation"`
-	FencingGeneration          int64              `json:"fencing_generation"`
-	FinalizationKind           pgtype.Text        `json:"finalization_kind"`
-	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
-	FinalizationError          []byte             `json:"finalization_error"`
-	StagedVersionID            pgtype.UUID        `json:"staged_version_id"`
-	RequestedAt                pgtype.Timestamptz `json:"requested_at"`
-	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
-	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
-	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
-	LostAt                     pgtype.Timestamptz `json:"lost_at"`
-	FailedAt                   pgtype.Timestamptz `json:"failed_at"`
-	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
-	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
-	TerminalError              []byte             `json:"terminal_error"`
-	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
-	RuntimeID                  string             `json:"runtime_id"`
-	DeploymentDefinitionID     pgtype.UUID        `json:"deployment_definition_id"`
-	RootfsDigest               string             `json:"rootfs_digest"`
-	RuntimeABI                 string             `json:"runtime_abi"`
-	NetworkSlotID              pgtype.UUID        `json:"network_slot_id"`
-	NetworkSlotGeneration      int64              `json:"network_slot_generation"`
-	ReservedCpuMillis          int64              `json:"reserved_cpu_millis"`
-	ReservedMemoryBytes        int64              `json:"reserved_memory_bytes"`
-	ReservedWorkloadDiskBytes  int64              `json:"reserved_workload_disk_bytes"`
-	ReservedExecutionSlots     int32              `json:"reserved_execution_slots"`
-	NetworkPolicy              []byte             `json:"network_policy"`
-	ImageArtifactID            pgtype.UUID        `json:"image_artifact_id"`
-	ImageArtifactDigest        string             `json:"image_artifact_digest"`
-	ImageArtifactSizeBytes     int64              `json:"image_artifact_size_bytes"`
-	ImageArtifactMediaType     string             `json:"image_artifact_media_type"`
-	WorkspaceArtifactID        pgtype.UUID        `json:"workspace_artifact_id"`
-	WorkspaceArtifactDigest    string             `json:"workspace_artifact_digest"`
-	WorkspaceArtifactSizeBytes int64              `json:"workspace_artifact_size_bytes"`
-	WorkspaceArtifactMediaType string             `json:"workspace_artifact_media_type"`
-	WorkspaceEntryCount        int32              `json:"workspace_entry_count"`
+	ID                              pgtype.UUID        `json:"id"`
+	OrgID                           pgtype.UUID        `json:"org_id"`
+	WorkerGroupID                   string             `json:"worker_group_id"`
+	ProjectID                       pgtype.UUID        `json:"project_id"`
+	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
+	RegionID                        string             `json:"region_id"`
+	WorkerInstanceID                pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                     int64              `json:"worker_epoch"`
+	WorkspaceID                     pgtype.UUID        `json:"workspace_id"`
+	MaterializedVersionID           pgtype.UUID        `json:"materialized_version_id"`
+	RuntimeInstanceID               pgtype.UUID        `json:"runtime_instance_id"`
+	ClaimAttempt                    int32              `json:"claim_attempt"`
+	GuestChannelTokenHash           string             `json:"guest_channel_token_hash"`
+	GuestChannelTokenExpiresAt      pgtype.Timestamptz `json:"guest_channel_token_expires_at"`
+	State                           string             `json:"state"`
+	Request                         []byte             `json:"request"`
+	DirtyGeneration                 int64              `json:"dirty_generation"`
+	FencingGeneration               int64              `json:"fencing_generation"`
+	FinalizationKind                pgtype.Text        `json:"finalization_kind"`
+	FinalizationReasonCode          pgtype.Text        `json:"finalization_reason_code"`
+	FinalizationError               []byte             `json:"finalization_error"`
+	StagedVersionID                 pgtype.UUID        `json:"staged_version_id"`
+	RequestedAt                     pgtype.Timestamptz `json:"requested_at"`
+	MountedAt                       pgtype.Timestamptz `json:"mounted_at"`
+	UnmountedAt                     pgtype.Timestamptz `json:"unmounted_at"`
+	StoppedAt                       pgtype.Timestamptz `json:"stopped_at"`
+	LostAt                          pgtype.Timestamptz `json:"lost_at"`
+	FailedAt                        pgtype.Timestamptz `json:"failed_at"`
+	TerminalAt                      pgtype.Timestamptz `json:"terminal_at"`
+	TerminalReasonCode              pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError                   []byte             `json:"terminal_error"`
+	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
+	RuntimeID                       string             `json:"runtime_id"`
+	DeploymentDefinitionID          pgtype.UUID        `json:"deployment_definition_id"`
+	RootfsDigest                    string             `json:"rootfs_digest"`
+	RuntimeABI                      string             `json:"runtime_abi"`
+	NetworkSlotID                   pgtype.UUID        `json:"network_slot_id"`
+	NetworkSlotGeneration           int64              `json:"network_slot_generation"`
+	ReservedCpuMillis               int64              `json:"reserved_cpu_millis"`
+	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
+	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
+	ReservedExecutionSlots          int32              `json:"reserved_execution_slots"`
+	NetworkPolicy                   []byte             `json:"network_policy"`
+	ImageArtifactID                 pgtype.UUID        `json:"image_artifact_id"`
+	ImageArtifactDigest             string             `json:"image_artifact_digest"`
+	ImageArtifactSizeBytes          int64              `json:"image_artifact_size_bytes"`
+	ImageArtifactMediaType          string             `json:"image_artifact_media_type"`
+	WorkspaceArtifactID             pgtype.UUID        `json:"workspace_artifact_id"`
+	WorkspaceArtifactDigest         string             `json:"workspace_artifact_digest"`
+	WorkspaceArtifactSizeBytes      int64              `json:"workspace_artifact_size_bytes"`
+	WorkspaceArtifactMediaType      string             `json:"workspace_artifact_media_type"`
+	WorkspaceEntryCount             int32              `json:"workspace_entry_count"`
 }
 
 func (q *Queries) ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMountParams) (ClaimWorkspaceMountRow, error) {
@@ -195,7 +195,7 @@ func (q *Queries) ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMou
 		&i.NetworkSlotGeneration,
 		&i.ReservedCpuMillis,
 		&i.ReservedMemoryBytes,
-		&i.ReservedWorkloadDiskBytes,
+		&i.ReservedGuestEphemeralDiskBytes,
 		&i.ReservedExecutionSlots,
 		&i.NetworkPolicy,
 		&i.ImageArtifactID,
@@ -565,7 +565,7 @@ WITH target AS (
        AND runtime_instances.id = target.runtime_instance_id
        AND runtime_instances.worker_instance_id = target.worker_instance_id
        AND runtime_instances.worker_epoch = target.worker_epoch
-    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
+    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
 ), quarantined_slot AS (
     UPDATE worker_network_slots
        SET state = 'quarantined', reclaiming_at = COALESCE(reclaiming_at, now()),
@@ -1407,7 +1407,7 @@ WITH stopped AS (
        AND runtime_instances.worker_instance_id = stopped.worker_instance_id
        AND runtime_instances.worker_epoch = stopped.worker_epoch
        AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
-    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
+    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
 ), reclaimed_slot AS (
     UPDATE worker_network_slots
        SET state = 'available', generation = worker_network_slots.generation + 1,

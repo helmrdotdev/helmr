@@ -151,22 +151,21 @@ func (s *Server) deploymentBuildLeaseResponse(
 	}
 	deploymentID := pgvalue.MustUUIDValue(row.DeploymentID).String()
 	lease := api.WorkerDeploymentBuildLease{
-		ID:                         pgvalue.MustUUIDValue(row.ID).String(),
-		OrgID:                      pgvalue.MustUUIDValue(row.OrgID).String(),
-		ProjectID:                  pgvalue.MustUUIDValue(row.ProjectID).String(),
-		EnvironmentID:              pgvalue.MustUUIDValue(row.EnvironmentID).String(),
-		DeploymentID:               deploymentID,
-		WorkerGroupID:              row.WorkerGroupID,
-		WorkerInstanceID:           pgvalue.MustUUIDValue(row.WorkerInstanceID).String(),
-		WorkerEpoch:                row.WorkerEpoch,
-		LeaseSequence:              row.LeaseSequence,
-		WorkerProtocolVersion:      row.WorkerProtocolVersion,
-		ExpiresAt:                  expiresAt,
-		RequestedWorkloadDiskBytes: row.RequestedWorkloadDiskBytes,
-		RequestedScratchBytes:      row.RequestedScratchBytes,
-		RequestedCPUMillis:         row.RequestedCpuMillis,
-		RequestedMemoryBytes:       row.RequestedMemoryBytes,
-		RequestedBuildExecutors:    row.RequestedBuildExecutors,
+		ID:                               pgvalue.MustUUIDValue(row.ID).String(),
+		OrgID:                            pgvalue.MustUUIDValue(row.OrgID).String(),
+		ProjectID:                        pgvalue.MustUUIDValue(row.ProjectID).String(),
+		EnvironmentID:                    pgvalue.MustUUIDValue(row.EnvironmentID).String(),
+		DeploymentID:                     deploymentID,
+		WorkerGroupID:                    row.WorkerGroupID,
+		WorkerInstanceID:                 pgvalue.MustUUIDValue(row.WorkerInstanceID).String(),
+		WorkerEpoch:                      row.WorkerEpoch,
+		LeaseSequence:                    row.LeaseSequence,
+		WorkerProtocolVersion:            row.WorkerProtocolVersion,
+		ExpiresAt:                        expiresAt,
+		RequestedGuestEphemeralDiskBytes: row.RequestedGuestEphemeralDiskBytes,
+		RequestedCPUMillis:               row.RequestedCpuMillis,
+		RequestedMemoryBytes:             row.RequestedMemoryBytes,
+		RequestedBuildExecutors:          row.RequestedBuildExecutors,
 	}
 	build := api.WorkerDeploymentBuild{
 		ID:                    deploymentID,
@@ -239,9 +238,9 @@ func (s *Server) workerStartDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		OrgID: orgID, DeploymentID: deploymentID, BuildLeaseID: pgvalue.UUID(leaseID),
 		LeaseSequence: lease.LeaseSequence,
 		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
-		WorkerProtocolVersion:      worker.ProtocolVersion,
-		RequestedWorkloadDiskBytes: lease.RequestedWorkloadDiskBytes, RequestedScratchBytes: lease.RequestedScratchBytes,
-		RequestedCpuMillis: lease.RequestedCPUMillis, RequestedMemoryBytes: lease.RequestedMemoryBytes,
+		WorkerProtocolVersion:            worker.ProtocolVersion,
+		RequestedGuestEphemeralDiskBytes: lease.RequestedGuestEphemeralDiskBytes,
+		RequestedCpuMillis:               lease.RequestedCPUMillis, RequestedMemoryBytes: lease.RequestedMemoryBytes,
 		RequestedBuildExecutors: lease.RequestedBuildExecutors,
 	})
 	if err == nil {
@@ -259,11 +258,10 @@ func (s *Server) workerStartDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		BuildLeaseID: pgvalue.UUID(leaseID), LeaseSequence: lease.LeaseSequence,
 		WorkerGroupID:    worker.WorkerGroupID,
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
-		RequestedWorkloadDiskBytes: lease.RequestedWorkloadDiskBytes,
-		RequestedScratchBytes:      lease.RequestedScratchBytes,
-		RequestedCpuMillis:         lease.RequestedCPUMillis,
-		RequestedMemoryBytes:       lease.RequestedMemoryBytes,
-		RequestedBuildExecutors:    lease.RequestedBuildExecutors,
+		RequestedGuestEphemeralDiskBytes: lease.RequestedGuestEphemeralDiskBytes,
+		RequestedCpuMillis:               lease.RequestedCPUMillis,
+		RequestedMemoryBytes:             lease.RequestedMemoryBytes,
+		RequestedBuildExecutors:          lease.RequestedBuildExecutors,
 	})
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("deployment build lease is stale")))

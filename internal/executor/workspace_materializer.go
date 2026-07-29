@@ -47,7 +47,6 @@ type WorkspaceMaterializer struct {
 	RuntimePool           *PreparedRuntimePool
 	BackgroundGate        *BackgroundWorkGate
 	Capacity              *capacity.Ledger
-	RuntimeScratchBytes   int64
 }
 
 func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount api.WorkerWorkspaceMount, client api.WorkerWorkspaceMaterializerControlClient) (runErr error) {
@@ -674,7 +673,7 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 	if m.Capacity == nil {
 		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "workspace_capacity_unavailable", err: errors.New("workspace materializer capacity ledger is required")}
 	}
-	resourceVector, err := runtimeCapacityVector(mount.RequestedMilliCPU, mount.RequestedMemoryMiB, mount.RequestedDiskMiB, m.RuntimeScratchBytes)
+	resourceVector, err := runtimeCapacityVector(mount.RequestedMilliCPU, mount.RequestedMemoryMiB, mount.RequestedDiskMiB)
 	if err != nil {
 		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "workspace_capacity_unavailable", err: err}
 	}

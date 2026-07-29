@@ -5,8 +5,8 @@ import "errors"
 var ErrNoCapacity = errors.New("no compute capacity available")
 
 const (
-	BuildGuestPIDsMax        = int64(1024)
-	WorkspaceWorkloadDiskMiB = int64(32768)
+	BuildGuestPIDsMax              = int64(1024)
+	WorkspaceGuestEphemeralDiskMiB = int64(32768)
 )
 
 type ResourceVector struct {
@@ -28,7 +28,7 @@ func BuildGuestResources() ResourceVector {
 	return ResourceVector{
 		MilliCPU:  2000,
 		MemoryMiB: 2048,
-		DiskMiB:   20480,
+		DiskMiB:   WorkspaceGuestEphemeralDiskMiB,
 		Slots:     1,
 	}
 }

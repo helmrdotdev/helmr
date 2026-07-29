@@ -16,14 +16,13 @@ import (
 type MicroUSD uint64
 
 type Capacity struct {
-	MilliCPU           uint64
-	MemoryBytes        uint64
-	WorkloadDiskBytes  uint64
-	ScratchBytes       uint64
-	BuildCacheBytes    uint64
-	ArtifactCacheBytes uint64
-	VMSlots            uint64
-	BuildExecutors     uint64
+	MilliCPU                uint64
+	MemoryBytes             uint64
+	GuestEphemeralDiskBytes uint64
+	BuildCacheBytes         uint64
+	ArtifactCacheBytes      uint64
+	VMSlots                 uint64
+	BuildExecutors          uint64
 }
 
 // WorkloadBucket preserves indivisible workload shape. Count workloads in a
@@ -138,14 +137,13 @@ const (
 )
 
 type DimensionCeilings struct {
-	MilliCPU           int
-	MemoryBytes        int
-	WorkloadDiskBytes  int
-	ScratchBytes       int
-	BuildCacheBytes    int
-	ArtifactCacheBytes int
-	VMSlots            int
-	BuildExecutors     int
+	MilliCPU                int
+	MemoryBytes             int
+	GuestEphemeralDiskBytes int
+	BuildCacheBytes         int
+	ArtifactCacheBytes      int
+	VMSlots                 int
+	BuildExecutors          int
 }
 
 type CompatibilityRequirement struct {
@@ -592,8 +590,7 @@ func itemsPerWorker(shape, instance Capacity) (uint64, error) {
 	}{
 		{"cpu", shape.MilliCPU, instance.MilliCPU},
 		{"memory", shape.MemoryBytes, instance.MemoryBytes},
-		{"workload disk", shape.WorkloadDiskBytes, instance.WorkloadDiskBytes},
-		{"scratch", shape.ScratchBytes, instance.ScratchBytes},
+		{"guest ephemeral disk", shape.GuestEphemeralDiskBytes, instance.GuestEphemeralDiskBytes},
 		{"build cache", shape.BuildCacheBytes, instance.BuildCacheBytes},
 		{"artifact cache", shape.ArtifactCacheBytes, instance.ArtifactCacheBytes},
 		{"vm slots", shape.VMSlots, instance.VMSlots},
@@ -629,10 +626,7 @@ func multiplyCapacity(capacity Capacity, count uint64) (Capacity, error) {
 	if result.MemoryBytes, err = multiply(capacity.MemoryBytes); err != nil {
 		return Capacity{}, err
 	}
-	if result.WorkloadDiskBytes, err = multiply(capacity.WorkloadDiskBytes); err != nil {
-		return Capacity{}, err
-	}
-	if result.ScratchBytes, err = multiply(capacity.ScratchBytes); err != nil {
+	if result.GuestEphemeralDiskBytes, err = multiply(capacity.GuestEphemeralDiskBytes); err != nil {
 		return Capacity{}, err
 	}
 	if result.BuildCacheBytes, err = multiply(capacity.BuildCacheBytes); err != nil {
@@ -661,8 +655,7 @@ func dominantRatio(shape, instance Capacity) (uint64, uint64) {
 	dimensions := [][2]uint64{
 		{shape.MilliCPU, instance.MilliCPU},
 		{shape.MemoryBytes, instance.MemoryBytes},
-		{shape.WorkloadDiskBytes, instance.WorkloadDiskBytes},
-		{shape.ScratchBytes, instance.ScratchBytes},
+		{shape.GuestEphemeralDiskBytes, instance.GuestEphemeralDiskBytes},
 		{shape.BuildCacheBytes, instance.BuildCacheBytes},
 		{shape.ArtifactCacheBytes, instance.ArtifactCacheBytes},
 		{shape.VMSlots, instance.VMSlots},
@@ -691,8 +684,7 @@ func compareFractions(leftNumerator, leftDenominator, rightNumerator, rightDenom
 func capacityFits(required, remaining Capacity) bool {
 	return required.MilliCPU <= remaining.MilliCPU &&
 		required.MemoryBytes <= remaining.MemoryBytes &&
-		required.WorkloadDiskBytes <= remaining.WorkloadDiskBytes &&
-		required.ScratchBytes <= remaining.ScratchBytes &&
+		required.GuestEphemeralDiskBytes <= remaining.GuestEphemeralDiskBytes &&
 		required.BuildCacheBytes <= remaining.BuildCacheBytes &&
 		required.ArtifactCacheBytes <= remaining.ArtifactCacheBytes &&
 		required.VMSlots <= remaining.VMSlots &&
@@ -701,20 +693,19 @@ func capacityFits(required, remaining Capacity) bool {
 
 func subtractCapacity(remaining, used Capacity) Capacity {
 	return Capacity{
-		MilliCPU:           remaining.MilliCPU - used.MilliCPU,
-		MemoryBytes:        remaining.MemoryBytes - used.MemoryBytes,
-		WorkloadDiskBytes:  remaining.WorkloadDiskBytes - used.WorkloadDiskBytes,
-		ScratchBytes:       remaining.ScratchBytes - used.ScratchBytes,
-		BuildCacheBytes:    remaining.BuildCacheBytes - used.BuildCacheBytes,
-		ArtifactCacheBytes: remaining.ArtifactCacheBytes - used.ArtifactCacheBytes,
-		VMSlots:            remaining.VMSlots - used.VMSlots,
-		BuildExecutors:     remaining.BuildExecutors - used.BuildExecutors,
+		MilliCPU:                remaining.MilliCPU - used.MilliCPU,
+		MemoryBytes:             remaining.MemoryBytes - used.MemoryBytes,
+		GuestEphemeralDiskBytes: remaining.GuestEphemeralDiskBytes - used.GuestEphemeralDiskBytes,
+		BuildCacheBytes:         remaining.BuildCacheBytes - used.BuildCacheBytes,
+		ArtifactCacheBytes:      remaining.ArtifactCacheBytes - used.ArtifactCacheBytes,
+		VMSlots:                 remaining.VMSlots - used.VMSlots,
+		BuildExecutors:          remaining.BuildExecutors - used.BuildExecutors,
 	}
 }
 
 func capacityLess(left, right Capacity) bool {
-	leftValues := [...]uint64{left.MilliCPU, left.MemoryBytes, left.WorkloadDiskBytes, left.ScratchBytes, left.BuildCacheBytes, left.ArtifactCacheBytes, left.VMSlots, left.BuildExecutors}
-	rightValues := [...]uint64{right.MilliCPU, right.MemoryBytes, right.WorkloadDiskBytes, right.ScratchBytes, right.BuildCacheBytes, right.ArtifactCacheBytes, right.VMSlots, right.BuildExecutors}
+	leftValues := [...]uint64{left.MilliCPU, left.MemoryBytes, left.GuestEphemeralDiskBytes, left.BuildCacheBytes, left.ArtifactCacheBytes, left.VMSlots, left.BuildExecutors}
+	rightValues := [...]uint64{right.MilliCPU, right.MemoryBytes, right.GuestEphemeralDiskBytes, right.BuildCacheBytes, right.ArtifactCacheBytes, right.VMSlots, right.BuildExecutors}
 	for index := range leftValues {
 		if leftValues[index] != rightValues[index] {
 			return leftValues[index] > rightValues[index]
@@ -733,8 +724,7 @@ func requiredWorkers(demand, instance Capacity) (DimensionCeilings, int, error) 
 	}{
 		{"cpu", demand.MilliCPU, instance.MilliCPU, func(v int) { ceilings.MilliCPU = v }},
 		{"memory", demand.MemoryBytes, instance.MemoryBytes, func(v int) { ceilings.MemoryBytes = v }},
-		{"workload disk", demand.WorkloadDiskBytes, instance.WorkloadDiskBytes, func(v int) { ceilings.WorkloadDiskBytes = v }},
-		{"scratch", demand.ScratchBytes, instance.ScratchBytes, func(v int) { ceilings.ScratchBytes = v }},
+		{"guest ephemeral disk", demand.GuestEphemeralDiskBytes, instance.GuestEphemeralDiskBytes, func(v int) { ceilings.GuestEphemeralDiskBytes = v }},
 		{"build cache", demand.BuildCacheBytes, instance.BuildCacheBytes, func(v int) { ceilings.BuildCacheBytes = v }},
 		{"artifact cache", demand.ArtifactCacheBytes, instance.ArtifactCacheBytes, func(v int) { ceilings.ArtifactCacheBytes = v }},
 		{"vm slots", demand.VMSlots, instance.VMSlots, func(v int) { ceilings.VMSlots = v }},
@@ -776,10 +766,7 @@ func addCapacity(a, b Capacity) (Capacity, error) {
 	if result.MemoryBytes, ok = add(a.MemoryBytes, b.MemoryBytes); !ok {
 		return Capacity{}, ErrInvalidInputs
 	}
-	if result.WorkloadDiskBytes, ok = add(a.WorkloadDiskBytes, b.WorkloadDiskBytes); !ok {
-		return Capacity{}, ErrInvalidInputs
-	}
-	if result.ScratchBytes, ok = add(a.ScratchBytes, b.ScratchBytes); !ok {
+	if result.GuestEphemeralDiskBytes, ok = add(a.GuestEphemeralDiskBytes, b.GuestEphemeralDiskBytes); !ok {
 		return Capacity{}, ErrInvalidInputs
 	}
 	if result.BuildCacheBytes, ok = add(a.BuildCacheBytes, b.BuildCacheBytes); !ok {

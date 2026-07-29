@@ -573,8 +573,7 @@ SELECT environment_id, run_id
    AND runtime_identity_id = sqlc.arg(runtime_identity_id)
    AND requested_cpu_millis = sqlc.arg(requested_cpu_millis)
    AND requested_memory_bytes = sqlc.arg(requested_memory_bytes)
-   AND requested_workload_disk_bytes = sqlc.arg(requested_workload_disk_bytes)
-   AND requested_scratch_bytes = sqlc.arg(requested_scratch_bytes)
+   AND requested_guest_ephemeral_disk_bytes = sqlc.arg(requested_guest_ephemeral_disk_bytes)
    AND requested_execution_slots = sqlc.arg(requested_execution_slots)
    AND start_deadline_at = sqlc.arg(start_deadline_at)
    AND expires_at = sqlc.arg(expires_at);

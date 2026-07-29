@@ -755,7 +755,7 @@ func projectWorkerWorkspaceMount(row db.ClaimWorkspaceMountRow) (*api.WorkerWork
 		WorkspaceMountPath:      "/workspace",
 		RequestedMilliCPU:       row.ReservedCpuMillis,
 		RequestedMemoryMiB:      row.ReservedMemoryBytes / (1024 * 1024),
-		RequestedDiskMiB:        row.ReservedWorkloadDiskBytes / (1024 * 1024),
+		RequestedDiskMiB:        row.ReservedGuestEphemeralDiskBytes / (1024 * 1024),
 		RequestedExecutionSlots: row.ReservedExecutionSlots,
 		RuntimeABI:              row.RuntimeABI, Network: network,
 		FencingGeneration: row.FencingGeneration,

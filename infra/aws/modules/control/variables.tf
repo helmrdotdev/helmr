@@ -68,14 +68,13 @@ variable "worker_groups" {
     allows_run           = bool
     allows_build         = bool
     instance_capacity = object({
-      milli_cpu            = number
-      memory_bytes         = number
-      workload_disk_bytes  = number
-      scratch_bytes        = number
-      build_cache_bytes    = number
-      artifact_cache_bytes = number
-      vm_slots             = number
-      build_executors      = number
+      milli_cpu                  = number
+      memory_bytes               = number
+      guest_ephemeral_disk_bytes = number
+      build_cache_bytes          = number
+      artifact_cache_bytes       = number
+      vm_slots                   = number
+      build_executors            = number
     })
   }))
   validation {
@@ -92,16 +91,14 @@ variable "worker_fleets" {
     role               = string
     compatibility_keys = list(string)
     instance_capacity = object({
-      milli_cpu            = number
-      memory_bytes         = number
-      workload_disk_bytes  = number
-      scratch_bytes        = number
-      build_cache_bytes    = number
-      artifact_cache_bytes = number
-      vm_slots             = number
-      build_executors      = number
+      milli_cpu                  = number
+      memory_bytes               = number
+      guest_ephemeral_disk_bytes = number
+      build_cache_bytes          = number
+      artifact_cache_bytes       = number
+      vm_slots                   = number
+      build_executors            = number
     })
-    queued_run_scratch_bytes     = number
     min_workers                  = number
     warm_workers                 = number
     max_workers                  = number

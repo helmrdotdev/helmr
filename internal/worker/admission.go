@@ -162,8 +162,7 @@ func (a *HardAdmission) Observation() api.WorkerObservation {
 	if decision.Health.DiskCapacityBytes > 0 {
 		used := decision.Health.DiskCapacityBytes - decision.Health.AvailableDiskBytes
 		used = min(max(used, 0), decision.Health.DiskCapacityBytes)
-		observation.WorkloadDiskPressureBPS = int32(used * 10_000 / decision.Health.DiskCapacityBytes)
-		observation.ScratchPressureBPS = observation.WorkloadDiskPressureBPS
+		observation.GuestEphemeralDiskPressureBPS = int32(used * 10_000 / decision.Health.DiskCapacityBytes)
 	}
 	details, _ := json.Marshal(decisions)
 	observation.HealthDetails = details

@@ -946,8 +946,7 @@ func assertDeploymentBuildCapacitySchema(t *testing.T, ctx context.Context, pool
 		"build_architecture",
 		"build_requested_cpu_millis",
 		"build_requested_memory_bytes",
-		"build_requested_workload_disk_bytes",
-		"build_requested_scratch_bytes",
+		"build_requested_guest_ephemeral_disk_bytes",
 		"build_requested_executors",
 	}).Scan(&deploymentProjections); err != nil {
 		t.Fatal(err)
@@ -965,14 +964,13 @@ func assertDeploymentBuildCapacitySchema(t *testing.T, ctx context.Context, pool
 	`, []string{
 		"requested_cpu_millis",
 		"requested_memory_bytes",
-		"requested_workload_disk_bytes",
-		"requested_scratch_bytes",
+		"requested_guest_ephemeral_disk_bytes",
 		"requested_build_executors",
 	}).Scan(&leaseResources); err != nil {
 		t.Fatal(err)
 	}
-	if leaseResources != 5 {
-		t.Fatalf("build lease resource facts = %d, want 5", leaseResources)
+	if leaseResources != 4 {
+		t.Fatalf("build lease resource facts = %d, want 4", leaseResources)
 	}
 }
 
@@ -1069,18 +1067,18 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	}
 	var shapeColumns int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='worker_instances' AND column_name = ANY($1::text[])`,
-		[]string{"per_vm_cpu_millis", "per_vm_memory_bytes", "per_vm_workload_disk_bytes", "per_vm_scratch_bytes"}).Scan(&shapeColumns); err != nil {
+		[]string{"per_vm_cpu_millis", "per_vm_memory_bytes", "per_vm_guest_ephemeral_disk_bytes"}).Scan(&shapeColumns); err != nil {
 		t.Fatal(err)
 	}
-	if shapeColumns != 4 {
-		t.Fatalf("per-VM shape columns = %d, want 4", shapeColumns)
+	if shapeColumns != 3 {
+		t.Fatalf("per-VM shape columns = %d, want 3", shapeColumns)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO regions (id, provider, provider_region, display_name) VALUES ('shape-region', 'test', 'shape-region', 'Shape Region');
 		INSERT INTO worker_groups (id, region_id, name, enrollment_policy_fingerprint, allowed_attestation_fingerprints)
 		VALUES ('shape-test', 'shape-region', 'shape-test', 'sha256:shape-test', ARRAY['sha256:shape-test']);
-		INSERT INTO worker_instances (id, resource_id, worker_group_id, attestation_fingerprint, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes)
-		VALUES ('00000000-0000-0000-0000-000000000099', 'shape-test', 'shape-test', 'sha256:shape-test', 2000, 2147483648, 8589934592, 8589934592);
+		INSERT INTO worker_instances (id, resource_id, worker_group_id, attestation_fingerprint, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes)
+		VALUES ('00000000-0000-0000-0000-000000000099', 'shape-test', 'shape-test', 'sha256:shape-test', 2000, 2147483648, 8589934592);
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -1088,7 +1086,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if err := pool.QueryRow(ctx, `
 		SELECT per_vm_cpu_millis >= 2000
 		       AND per_vm_memory_bytes >= 2147483648
-		       AND per_vm_scratch_bytes >= 8589934592,
+		       AND per_vm_guest_ephemeral_disk_bytes >= 8589934592,
 		       per_vm_cpu_millis >= 2001
 		  FROM worker_instances
 		 WHERE id = '00000000-0000-0000-0000-000000000099'

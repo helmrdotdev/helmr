@@ -340,8 +340,7 @@ CREATE TABLE worker_groups (
     allows_build BOOLEAN NOT NULL DEFAULT true,
     required_cpu_millis BIGINT NOT NULL DEFAULT 1 CHECK (required_cpu_millis > 0),
     required_memory_bytes BIGINT NOT NULL DEFAULT 1 CHECK (required_memory_bytes > 0),
-    required_workload_disk_bytes BIGINT NOT NULL DEFAULT 1 CHECK (required_workload_disk_bytes > 0),
-    required_scratch_bytes BIGINT NOT NULL DEFAULT 1 CHECK (required_scratch_bytes > 0),
+    required_guest_ephemeral_disk_bytes BIGINT NOT NULL DEFAULT 1 CHECK (required_guest_ephemeral_disk_bytes > 0),
     required_build_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (required_build_cache_bytes >= 0),
     required_artifact_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (required_artifact_cache_bytes >= 0),
     required_vm_slots INTEGER NOT NULL DEFAULT 1 CHECK (required_vm_slots >= 0),
@@ -395,16 +394,14 @@ CREATE TABLE worker_instances (
     substrate_layout_abi TEXT NOT NULL DEFAULT '',
     certified_cpu_millis BIGINT NOT NULL DEFAULT 0 CHECK (certified_cpu_millis >= 0),
     certified_memory_bytes BIGINT NOT NULL DEFAULT 0 CHECK (certified_memory_bytes >= 0),
-    certified_workload_disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (certified_workload_disk_bytes >= 0),
-    certified_scratch_bytes BIGINT NOT NULL DEFAULT 0 CHECK (certified_scratch_bytes >= 0),
+    certified_guest_ephemeral_disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (certified_guest_ephemeral_disk_bytes >= 0),
     certified_build_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (certified_build_cache_bytes >= 0),
     certified_artifact_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (certified_artifact_cache_bytes >= 0),
     certified_hugepages_bytes BIGINT NOT NULL DEFAULT 0 CHECK (certified_hugepages_bytes >= 0),
     certified_checkpoint_bytes BIGINT NOT NULL DEFAULT 0 CHECK (certified_checkpoint_bytes >= 0),
     per_vm_cpu_millis BIGINT NOT NULL DEFAULT 0 CHECK (per_vm_cpu_millis >= 0),
     per_vm_memory_bytes BIGINT NOT NULL DEFAULT 0 CHECK (per_vm_memory_bytes >= 0),
-    per_vm_workload_disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (per_vm_workload_disk_bytes >= 0),
-    per_vm_scratch_bytes BIGINT NOT NULL DEFAULT 0 CHECK (per_vm_scratch_bytes >= 0),
+    per_vm_guest_ephemeral_disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (per_vm_guest_ephemeral_disk_bytes >= 0),
     max_vm_slots INTEGER NOT NULL DEFAULT 0 CHECK (max_vm_slots >= 0),
     max_run_consumers INTEGER NOT NULL DEFAULT 0 CHECK (max_run_consumers >= 0),
     max_build_executors INTEGER NOT NULL DEFAULT 0 CHECK (max_build_executors >= 0),
@@ -451,8 +448,7 @@ CREATE TABLE worker_instances (
             AND certified_memory_bytes > 0
             AND per_vm_cpu_millis > 0
             AND per_vm_memory_bytes > 0
-            AND per_vm_workload_disk_bytes > 0
-            AND per_vm_scratch_bytes > 0
+            AND per_vm_guest_ephemeral_disk_bytes > 0
             AND (supports_run OR supports_build)
         )
         OR (
@@ -466,16 +462,14 @@ CREATE TABLE worker_instances (
             AND substrate_layout_abi = ''
             AND certified_cpu_millis = 0
             AND certified_memory_bytes = 0
-            AND certified_workload_disk_bytes = 0
-            AND certified_scratch_bytes = 0
+            AND certified_guest_ephemeral_disk_bytes = 0
             AND certified_build_cache_bytes = 0
             AND certified_artifact_cache_bytes = 0
             AND certified_hugepages_bytes = 0
             AND certified_checkpoint_bytes = 0
             AND per_vm_cpu_millis = 0
             AND per_vm_memory_bytes = 0
-            AND per_vm_workload_disk_bytes = 0
-            AND per_vm_scratch_bytes = 0
+            AND per_vm_guest_ephemeral_disk_bytes = 0
             AND max_vm_slots = 0
             AND max_run_consumers = 0
             AND max_build_executors = 0
@@ -576,8 +570,7 @@ CREATE TABLE worker_observations (
     worker_epoch BIGINT NOT NULL CHECK (worker_epoch > 0),
     cpu_pressure_bps INTEGER NOT NULL CHECK (cpu_pressure_bps BETWEEN 0 AND 10000),
     memory_pressure_bps INTEGER NOT NULL CHECK (memory_pressure_bps BETWEEN 0 AND 10000),
-    workload_disk_pressure_bps INTEGER NOT NULL CHECK (workload_disk_pressure_bps BETWEEN 0 AND 10000),
-    scratch_pressure_bps INTEGER NOT NULL CHECK (scratch_pressure_bps BETWEEN 0 AND 10000),
+    guest_ephemeral_disk_pressure_bps INTEGER NOT NULL CHECK (guest_ephemeral_disk_pressure_bps BETWEEN 0 AND 10000),
     build_cache_pressure_bps INTEGER NOT NULL CHECK (build_cache_pressure_bps BETWEEN 0 AND 10000),
     artifact_cache_pressure_bps INTEGER NOT NULL CHECK (artifact_cache_pressure_bps BETWEEN 0 AND 10000),
     checkpoint_pressure_bps INTEGER NOT NULL CHECK (checkpoint_pressure_bps BETWEEN 0 AND 10000),
@@ -827,8 +820,7 @@ CREATE TABLE deployment_build_leases (
     worker_protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (worker_protocol_version = 'helmr.worker.v0'),
     requested_cpu_millis BIGINT NOT NULL CHECK (requested_cpu_millis = 3000),
     requested_memory_bytes BIGINT NOT NULL CHECK (requested_memory_bytes = 4294967296),
-    requested_workload_disk_bytes BIGINT NOT NULL CHECK (requested_workload_disk_bytes = 0),
-    requested_scratch_bytes BIGINT NOT NULL CHECK (requested_scratch_bytes = 34359738368),
+    requested_guest_ephemeral_disk_bytes BIGINT NOT NULL CHECK (requested_guest_ephemeral_disk_bytes = 34359738368),
     requested_build_executors INTEGER NOT NULL DEFAULT 1 CHECK (requested_build_executors = 1),
     build_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
     trace_id TEXT,
@@ -2496,8 +2488,7 @@ CREATE TABLE run_leases (
     worker_protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (worker_protocol_version = 'helmr.worker.v0'),
     requested_cpu_millis BIGINT NOT NULL CHECK (requested_cpu_millis > 0),
     requested_memory_bytes BIGINT NOT NULL CHECK (requested_memory_bytes > 0),
-    requested_workload_disk_bytes BIGINT NOT NULL CHECK (requested_workload_disk_bytes >= 0),
-    requested_scratch_bytes BIGINT NOT NULL CHECK (requested_scratch_bytes >= 0),
+    requested_guest_ephemeral_disk_bytes BIGINT NOT NULL CHECK (requested_guest_ephemeral_disk_bytes >= 0),
     requested_execution_slots INTEGER NOT NULL DEFAULT 1 CHECK (requested_execution_slots > 0),
     trace_id TEXT,
     span_id TEXT,
@@ -3270,8 +3261,7 @@ CREATE TABLE runtime_instances (
     network_policy JSONB NOT NULL,
     reserved_cpu_millis BIGINT NOT NULL CHECK (reserved_cpu_millis > 0),
     reserved_memory_bytes BIGINT NOT NULL CHECK (reserved_memory_bytes > 0),
-    reserved_workload_disk_bytes BIGINT NOT NULL CHECK (reserved_workload_disk_bytes >= 0),
-    reserved_scratch_bytes BIGINT NOT NULL CHECK (reserved_scratch_bytes >= 0),
+    reserved_guest_ephemeral_disk_bytes BIGINT NOT NULL CHECK (reserved_guest_ephemeral_disk_bytes >= 0),
     reserved_execution_slots INTEGER NOT NULL CHECK (reserved_execution_slots > 0),
     workspace_id UUID NOT NULL,
     program_deployment_id UUID,

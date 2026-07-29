@@ -20,9 +20,9 @@ import (
 )
 
 const (
-	buildCPU     int64 = 3000
-	buildMemory  int64 = 4 << 30
-	buildScratch int64 = 32 << 30
+	buildCPU       int64 = 3000
+	buildMemory    int64 = 4 << 30
+	buildGuestDisk int64 = 32 << 30
 )
 
 type deploymentBuildFixture struct {
@@ -224,12 +224,10 @@ func TestPlatformAcquisitionRequiresActiveBuildAuthority(t *testing.T) {
 		       supervisor_version = 'test-worker',
 		       certified_cpu_millis = 3000,
 		       certified_memory_bytes = 4294967296,
-		       certified_workload_disk_bytes = 1073741824,
-		       certified_scratch_bytes = 34359738368,
+		       certified_guest_ephemeral_disk_bytes = 34359738368,
 		       per_vm_cpu_millis = 3000,
 		       per_vm_memory_bytes = 4294967296,
-		       per_vm_workload_disk_bytes = 1073741824,
-		       per_vm_scratch_bytes = 34359738368,
+		       per_vm_guest_ephemeral_disk_bytes = 34359738368,
 		       max_build_executors = 1,
 		       certification_profile = 'test',
 		       certification_fingerprint = 'sha256:test-certification',
@@ -373,23 +371,22 @@ func (f *deploymentBuildFixture) lease(t *testing.T, sequence int64) db.LeaseQue
 func (f *deploymentBuildFixture) leaseParams(sequence int64) db.LeaseQueuedDeploymentBuildParams {
 	now := time.Now().UTC()
 	return db.LeaseQueuedDeploymentBuildParams{
-		OrgID:                      pgvalue.UUID(f.orgID),
-		DeploymentID:               pgvalue.UUID(f.deploymentID),
-		BuildRegionID:              dbtest.DefaultRegionID,
-		RequestedCpuMillis:         buildCPU,
-		RequestedMemoryBytes:       buildMemory,
-		RequestedWorkloadDiskBytes: 0,
-		RequestedScratchBytes:      buildScratch,
-		RequestedBuildExecutors:    1,
-		BuildLeaseID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		LeaseSequence:              sequence,
-		WorkerGroupID:              f.groupID,
-		BuildWorkerInstanceID:      pgvalue.UUID(f.workerID),
-		WorkerEpoch:                1,
-		WorkerProtocolVersion:      "helmr.worker.v0",
-		BuildSnapshot:              []byte(`{"source":"test"}`),
-		StartDeadlineAt:            pgvalue.Timestamptz(now.Add(time.Minute)),
-		BuildLeaseExpiresAt:        pgvalue.Timestamptz(now.Add(5 * time.Minute)),
+		OrgID:                            pgvalue.UUID(f.orgID),
+		DeploymentID:                     pgvalue.UUID(f.deploymentID),
+		BuildRegionID:                    dbtest.DefaultRegionID,
+		RequestedCpuMillis:               buildCPU,
+		RequestedMemoryBytes:             buildMemory,
+		RequestedGuestEphemeralDiskBytes: buildGuestDisk,
+		RequestedBuildExecutors:          1,
+		BuildLeaseID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		LeaseSequence:                    sequence,
+		WorkerGroupID:                    f.groupID,
+		BuildWorkerInstanceID:            pgvalue.UUID(f.workerID),
+		WorkerEpoch:                      1,
+		WorkerProtocolVersion:            "helmr.worker.v0",
+		BuildSnapshot:                    []byte(`{"source":"test"}`),
+		StartDeadlineAt:                  pgvalue.Timestamptz(now.Add(time.Minute)),
+		BuildLeaseExpiresAt:              pgvalue.Timestamptz(now.Add(5 * time.Minute)),
 	}
 }
 
@@ -405,8 +402,8 @@ func (f *deploymentBuildFixture) start(t *testing.T, leaseID uuid.UUID, sequence
 		OrgID:     pgvalue.UUID(f.orgID), DeploymentID: pgvalue.UUID(f.deploymentID),
 		BuildLeaseID: pgvalue.UUID(leaseID), LeaseSequence: sequence,
 		WorkerGroupID: f.groupID, WorkerInstanceID: pgvalue.UUID(f.workerID),
-		WorkerEpoch: 1, RequestedWorkloadDiskBytes: 0,
-		RequestedScratchBytes: buildScratch, RequestedCpuMillis: buildCPU,
+		WorkerEpoch: 1, RequestedGuestEphemeralDiskBytes: buildGuestDisk,
+		RequestedCpuMillis:   buildCPU,
 		RequestedMemoryBytes: buildMemory, RequestedBuildExecutors: 1,
 	})
 	if err != nil {
@@ -751,8 +748,8 @@ func TestDeploymentBuildLogicalFailureIsTerminal(t *testing.T) {
 		BuildLeaseID: pgvalue.UUID(leaseID), LeaseSequence: 1,
 		WorkerGroupID: f.groupID, WorkerInstanceID: pgvalue.UUID(f.workerID),
 		WorkerEpoch: 1, WorkerProtocolVersion: "helmr.worker.v0",
-		RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: buildScratch,
-		RequestedCpuMillis: buildCPU, RequestedMemoryBytes: buildMemory,
+		RequestedGuestEphemeralDiskBytes: buildGuestDisk,
+		RequestedCpuMillis:               buildCPU, RequestedMemoryBytes: buildMemory,
 		RequestedBuildExecutors: 1,
 	})
 	if err != nil || recovered.State != db.DeploymentBuildLeaseStateRunning ||

@@ -4,8 +4,7 @@ WITH target_group AS (
            worker_groups.region_id,
            worker_groups.required_cpu_millis,
            worker_groups.required_memory_bytes,
-           worker_groups.required_workload_disk_bytes,
-           worker_groups.required_scratch_bytes,
+           worker_groups.required_guest_ephemeral_disk_bytes,
            worker_groups.required_vm_slots
       FROM worker_groups
      WHERE worker_groups.id = sqlc.arg(worker_group_id) AND worker_groups.allows_run
@@ -14,8 +13,7 @@ WITH target_group AS (
            target_group.id AS compatibility_key,
            target_group.required_cpu_millis AS milli_cpu,
            target_group.required_memory_bytes AS memory_bytes,
-           target_group.required_workload_disk_bytes AS workload_disk_bytes,
-           target_group.required_scratch_bytes AS scratch_bytes,
+           target_group.required_guest_ephemeral_disk_bytes AS guest_ephemeral_disk_bytes,
            target_group.required_vm_slots::bigint AS vm_slots,
            count(*)::bigint AS demand_count
       FROM runs
@@ -27,27 +25,25 @@ WITH target_group AS (
      GROUP BY target_group.id,
               target_group.required_cpu_millis,
               target_group.required_memory_bytes,
-              target_group.required_workload_disk_bytes,
-              target_group.required_scratch_bytes,
+              target_group.required_guest_ephemeral_disk_bytes,
               target_group.required_vm_slots
     UNION ALL
     SELECT 'active'::text,
            target_group.id,
            run_leases.requested_cpu_millis,
            run_leases.requested_memory_bytes,
-           run_leases.requested_workload_disk_bytes,
-           run_leases.requested_scratch_bytes,
+           run_leases.requested_guest_ephemeral_disk_bytes,
            run_leases.requested_execution_slots::bigint,
            count(*)::bigint
       FROM run_leases
       JOIN target_group ON target_group.id = run_leases.worker_group_id
      WHERE run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
      GROUP BY target_group.id, run_leases.requested_cpu_millis,
-              run_leases.requested_memory_bytes, run_leases.requested_workload_disk_bytes,
-              run_leases.requested_scratch_bytes, run_leases.requested_execution_slots
+              run_leases.requested_memory_bytes, run_leases.requested_guest_ephemeral_disk_bytes,
+              run_leases.requested_execution_slots
 )
 SELECT * FROM demand ORDER BY demand_state, compatibility_key, milli_cpu, memory_bytes,
-                              workload_disk_bytes, scratch_bytes, vm_slots;
+                              guest_ephemeral_disk_bytes, vm_slots;
 
 -- name: CountUncertifiedRunLaunchAttestations :one
 SELECT count(*)::bigint
@@ -102,8 +98,7 @@ WITH target_group AS (
            worker_groups.region_id,
            worker_groups.required_cpu_millis,
            worker_groups.required_memory_bytes,
-           worker_groups.required_workload_disk_bytes,
-           worker_groups.required_scratch_bytes,
+           worker_groups.required_guest_ephemeral_disk_bytes,
            worker_groups.required_build_executors
       FROM worker_groups
      WHERE worker_groups.id = sqlc.arg(worker_group_id) AND worker_groups.allows_build
@@ -111,8 +106,7 @@ WITH target_group AS (
     SELECT 'queued'::text AS demand_state,
            target_group.required_cpu_millis AS milli_cpu,
            target_group.required_memory_bytes AS memory_bytes,
-           target_group.required_workload_disk_bytes AS workload_disk_bytes,
-           target_group.required_scratch_bytes AS scratch_bytes,
+           target_group.required_guest_ephemeral_disk_bytes AS guest_ephemeral_disk_bytes,
            target_group.required_build_executors::bigint AS build_executors,
            count(*)::bigint AS demand_count
       FROM deployments
@@ -127,25 +121,24 @@ WITH target_group AS (
               AND active_lease.state IN ('assigned', 'starting', 'running')
        )
      GROUP BY target_group.required_cpu_millis, target_group.required_memory_bytes,
-              target_group.required_workload_disk_bytes, target_group.required_scratch_bytes,
+              target_group.required_guest_ephemeral_disk_bytes,
               target_group.required_build_executors
     UNION ALL
     SELECT 'active'::text,
            deployment_build_leases.requested_cpu_millis,
            deployment_build_leases.requested_memory_bytes,
-           deployment_build_leases.requested_workload_disk_bytes,
-           deployment_build_leases.requested_scratch_bytes,
+           deployment_build_leases.requested_guest_ephemeral_disk_bytes,
            deployment_build_leases.requested_build_executors::bigint,
            count(*)::bigint
       FROM deployment_build_leases
       JOIN target_group ON target_group.id = deployment_build_leases.worker_group_id
      WHERE deployment_build_leases.state IN ('assigned', 'starting', 'running')
      GROUP BY deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes,
-              deployment_build_leases.requested_workload_disk_bytes, deployment_build_leases.requested_scratch_bytes,
+              deployment_build_leases.requested_guest_ephemeral_disk_bytes,
               deployment_build_leases.requested_build_executors
 )
-SELECT * FROM demand ORDER BY demand_state, milli_cpu, memory_bytes, workload_disk_bytes,
-                              scratch_bytes, build_executors;
+SELECT * FROM demand ORDER BY demand_state, milli_cpu, memory_bytes, guest_ephemeral_disk_bytes,
+                              build_executors;
 
 -- name: GetFleetOldestBuildQueueTime :one
 SELECT min(deployments.created_at)::timestamptz
@@ -165,8 +158,8 @@ SELECT min(deployments.created_at)::timestamptz
 
 -- name: ListFleetWorkers :many
 SELECT id, resource_id, state, current_epoch, activated_at, draining_at,
-       certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes,
-       certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes,
+       certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes,
+       certified_build_cache_bytes, certified_artifact_cache_bytes,
        max_vm_slots, max_build_executors
  FROM worker_instances
  WHERE worker_group_id = sqlc.arg(worker_group_id)

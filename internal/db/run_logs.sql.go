@@ -104,16 +104,15 @@ current_run_lease AS (
        AND workspace_leases.mount_fencing_generation = $21
        AND run_leases.requested_cpu_millis = $24
        AND run_leases.requested_memory_bytes = $25
-       AND run_leases.requested_workload_disk_bytes = $26
-       AND run_leases.requested_scratch_bytes = $27
-       AND run_leases.requested_execution_slots = $28
-       AND runs.max_active_duration_ms = $29
-       AND runs.active_elapsed_ms = $30
-       AND COALESCE(run_leases.trace_id, '') = $31
-       AND COALESCE(run_leases.span_id, '') = $32
-       AND COALESCE(run_leases.traceparent, '') = $33
-       AND run_leases.start_deadline_at = $34
-       AND run_leases.expires_at = $35
+       AND run_leases.requested_guest_ephemeral_disk_bytes = $26
+       AND run_leases.requested_execution_slots = $27
+       AND runs.max_active_duration_ms = $28
+       AND runs.active_elapsed_ms = $29
+       AND COALESCE(run_leases.trace_id, '') = $30
+       AND COALESCE(run_leases.span_id, '') = $31
+       AND COALESCE(run_leases.traceparent, '') = $32
+       AND run_leases.start_deadline_at = $33
+       AND run_leases.expires_at = $34
        AND runs.current_run_lease_id = run_leases.id
        AND runs.current_attempt_number = run_leases.attempt_number
        AND runs.status = 'running'
@@ -128,8 +127,7 @@ current_run_lease AS (
        AND worker_instances.runtime_identity_id = run_leases.runtime_identity_id
        AND worker_instances.per_vm_cpu_millis = run_leases.requested_cpu_millis
        AND worker_instances.per_vm_memory_bytes = run_leases.requested_memory_bytes
-       AND worker_instances.per_vm_workload_disk_bytes = run_leases.requested_workload_disk_bytes
-       AND worker_instances.per_vm_scratch_bytes = run_leases.requested_scratch_bytes
+       AND worker_instances.per_vm_guest_ephemeral_disk_bytes = run_leases.requested_guest_ephemeral_disk_bytes
        AND workspaces.state = 'active'
        AND workspaces.desired_state = 'active'
        AND workspaces.ownership_generation = workspace_leases.ownership_generation
@@ -148,8 +146,7 @@ current_run_lease AS (
        AND runtime_instances.reservation_expires_at IS NULL
        AND runtime_instances.reserved_cpu_millis = run_leases.requested_cpu_millis
        AND runtime_instances.reserved_memory_bytes = run_leases.requested_memory_bytes
-       AND runtime_instances.reserved_workload_disk_bytes = run_leases.requested_workload_disk_bytes
-       AND runtime_instances.reserved_scratch_bytes = run_leases.requested_scratch_bytes
+       AND runtime_instances.reserved_guest_ephemeral_disk_bytes = run_leases.requested_guest_ephemeral_disk_bytes
        AND runtime_instances.reserved_execution_slots = run_leases.requested_execution_slots
        AND worker_network_slots.state = 'bound'
        AND workspace_mounts.state = 'mounted'
@@ -160,14 +157,14 @@ current_run_lease AS (
 ),
 candidate AS (
     SELECT current_run_lease.org_id, current_run_lease.project_id, current_run_lease.environment_id, current_run_lease.trace_id, current_run_lease.state_version, current_run_lease.id, current_run_lease.run_lease_id, current_run_lease.span_id, current_run_lease.parent_span_id, current_run_lease.traceparent, current_run_lease.attempt_number,
-           $36::text AS stream,
-           $37::bigint AS observed_seq,
-           $38::bytea AS content,
-           octet_length($38::bytea)::bigint AS size_bytes,
+           $35::text AS stream,
+           $36::bigint AS observed_seq,
+           $37::bytea AS content,
+           octet_length($37::bytea)::bigint AS size_bytes,
            event_args.event_kind,
            event_args.event_payload,
            event_args.receipt_fingerprint,
-           'run_log:' || current_run_lease.attempt_number::text || ':' || $36::text || ':' || ($37::bigint)::text AS idempotency_key
+           'run_log:' || current_run_lease.attempt_number::text || ':' || $35::text || ':' || ($36::bigint)::text AS idempotency_key
       FROM current_run_lease
       CROSS JOIN event_args
 ),
@@ -372,44 +369,43 @@ SELECT selected_chunk.org_id,
 `
 
 type AppendReceiptRunLogChunkParams struct {
-	Kind                       string             `json:"kind"`
-	Payload                    []byte             `json:"payload"`
-	Severity                   string             `json:"severity"`
-	ReceiptFingerprint         string             `json:"receipt_fingerprint"`
-	WorkspaceMountID           pgtype.UUID        `json:"workspace_mount_id"`
-	WorkspaceLeaseID           pgtype.UUID        `json:"workspace_lease_id"`
-	RunLeaseID                 pgtype.UUID        `json:"run_lease_id"`
-	RunID                      pgtype.UUID        `json:"run_id"`
-	AttemptNumber              int32              `json:"attempt_number"`
-	LeaseSequence              int64              `json:"lease_sequence"`
-	WorkerGroupID              string             `json:"worker_group_id"`
-	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch                int64              `json:"worker_epoch"`
-	WorkerProtocolVersion      string             `json:"worker_protocol_version"`
-	RuntimeInstanceID          pgtype.UUID        `json:"runtime_instance_id"`
-	RuntimeIdentityID          string             `json:"runtime_identity_id"`
-	NetworkSlotID              pgtype.UUID        `json:"network_slot_id"`
-	NetworkSlotGeneration      int64              `json:"network_slot_generation"`
-	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
-	BaseWorkspaceVersionID     pgtype.UUID        `json:"base_workspace_version_id"`
-	MountFencingGeneration     int64              `json:"mount_fencing_generation"`
-	OwnershipGeneration        int64              `json:"ownership_generation"`
-	WriterGeneration           int64              `json:"writer_generation"`
-	RequestedCpuMillis         int64              `json:"requested_cpu_millis"`
-	RequestedMemoryBytes       int64              `json:"requested_memory_bytes"`
-	RequestedWorkloadDiskBytes int64              `json:"requested_workload_disk_bytes"`
-	RequestedScratchBytes      int64              `json:"requested_scratch_bytes"`
-	RequestedExecutionSlots    int32              `json:"requested_execution_slots"`
-	MaxActiveDurationMs        int64              `json:"max_active_duration_ms"`
-	ActiveElapsedMs            int64              `json:"active_elapsed_ms"`
-	TraceID                    pgtype.Text        `json:"trace_id"`
-	SpanID                     pgtype.Text        `json:"span_id"`
-	Traceparent                pgtype.Text        `json:"traceparent"`
-	StartDeadlineAt            pgtype.Timestamptz `json:"start_deadline_at"`
-	ExpiresAt                  pgtype.Timestamptz `json:"expires_at"`
-	Stream                     string             `json:"stream"`
-	ObservedSeq                int64              `json:"observed_seq"`
-	Content                    []byte             `json:"content"`
+	Kind                             string             `json:"kind"`
+	Payload                          []byte             `json:"payload"`
+	Severity                         string             `json:"severity"`
+	ReceiptFingerprint               string             `json:"receipt_fingerprint"`
+	WorkspaceMountID                 pgtype.UUID        `json:"workspace_mount_id"`
+	WorkspaceLeaseID                 pgtype.UUID        `json:"workspace_lease_id"`
+	RunLeaseID                       pgtype.UUID        `json:"run_lease_id"`
+	RunID                            pgtype.UUID        `json:"run_id"`
+	AttemptNumber                    int32              `json:"attempt_number"`
+	LeaseSequence                    int64              `json:"lease_sequence"`
+	WorkerGroupID                    string             `json:"worker_group_id"`
+	WorkerInstanceID                 pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                      int64              `json:"worker_epoch"`
+	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
+	RuntimeInstanceID                pgtype.UUID        `json:"runtime_instance_id"`
+	RuntimeIdentityID                string             `json:"runtime_identity_id"`
+	NetworkSlotID                    pgtype.UUID        `json:"network_slot_id"`
+	NetworkSlotGeneration            int64              `json:"network_slot_generation"`
+	WorkspaceID                      pgtype.UUID        `json:"workspace_id"`
+	BaseWorkspaceVersionID           pgtype.UUID        `json:"base_workspace_version_id"`
+	MountFencingGeneration           int64              `json:"mount_fencing_generation"`
+	OwnershipGeneration              int64              `json:"ownership_generation"`
+	WriterGeneration                 int64              `json:"writer_generation"`
+	RequestedCpuMillis               int64              `json:"requested_cpu_millis"`
+	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
+	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
+	RequestedExecutionSlots          int32              `json:"requested_execution_slots"`
+	MaxActiveDurationMs              int64              `json:"max_active_duration_ms"`
+	ActiveElapsedMs                  int64              `json:"active_elapsed_ms"`
+	TraceID                          pgtype.Text        `json:"trace_id"`
+	SpanID                           pgtype.Text        `json:"span_id"`
+	Traceparent                      pgtype.Text        `json:"traceparent"`
+	StartDeadlineAt                  pgtype.Timestamptz `json:"start_deadline_at"`
+	ExpiresAt                        pgtype.Timestamptz `json:"expires_at"`
+	Stream                           string             `json:"stream"`
+	ObservedSeq                      int64              `json:"observed_seq"`
+	Content                          []byte             `json:"content"`
 }
 
 type AppendReceiptRunLogChunkRow struct {
@@ -453,8 +449,7 @@ func (q *Queries) AppendReceiptRunLogChunk(ctx context.Context, arg AppendReceip
 		arg.WriterGeneration,
 		arg.RequestedCpuMillis,
 		arg.RequestedMemoryBytes,
-		arg.RequestedWorkloadDiskBytes,
-		arg.RequestedScratchBytes,
+		arg.RequestedGuestEphemeralDiskBytes,
 		arg.RequestedExecutionSlots,
 		arg.MaxActiveDurationMs,
 		arg.ActiveElapsedMs,

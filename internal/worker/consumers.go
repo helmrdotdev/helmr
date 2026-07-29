@@ -188,11 +188,10 @@ func (c buildConsumer) Claim(ctx context.Context) (Work, bool, error) {
 	}
 	resourceKey := capacity.Key{Kind: "build", Epoch: lease.WorkerEpoch, ID: lease.ID}
 	created, err := r.resources.Reserve(resourceKey, capacity.Vector{
-		CPUMillis:         lease.RequestedCPUMillis,
-		MemoryBytes:       lease.RequestedMemoryBytes,
-		WorkloadDiskBytes: lease.RequestedWorkloadDiskBytes,
-		ScratchBytes:      lease.RequestedScratchBytes,
-		BuildSlots:        int64(lease.RequestedBuildExecutors),
+		CPUMillis:               lease.RequestedCPUMillis,
+		MemoryBytes:             lease.RequestedMemoryBytes,
+		GuestEphemeralDiskBytes: lease.RequestedGuestEphemeralDiskBytes,
+		BuildSlots:              int64(lease.RequestedBuildExecutors),
 	})
 	if err != nil {
 		return nil, true, r.rejectBuild(ctx, lease, "local_capacity_exceeded", err)
@@ -277,8 +276,7 @@ func validateBuildLeaseShape(capabilities api.WorkerCapabilities, lease api.Work
 	guest := compute.BuildGuestResources()
 	if lease.RequestedCPUMillis != envelope.MilliCPU ||
 		lease.RequestedMemoryBytes != envelope.MemoryMiB<<20 ||
-		lease.RequestedWorkloadDiskBytes != 0 ||
-		lease.RequestedScratchBytes != envelope.DiskMiB<<20 ||
+		lease.RequestedGuestEphemeralDiskBytes != guest.DiskMiB<<20 ||
 		lease.RequestedBuildExecutors != 1 {
 		return errors.New("build lease does not match the fixed build envelope")
 	}
@@ -287,7 +285,7 @@ func validateBuildLeaseShape(capabilities api.WorkerCapabilities, lease api.Work
 	}
 	if capabilities.VMMilliCPU < guest.MilliCPU ||
 		capabilities.VMMemoryMiB < guest.MemoryMiB ||
-		capabilities.VMMaxScratchBytes < guest.DiskMiB<<20 {
+		capabilities.VMGuestEphemeralDiskBytes < guest.DiskMiB<<20 {
 		return errors.New("worker VM shape cannot host the fixed build guest")
 	}
 	return nil

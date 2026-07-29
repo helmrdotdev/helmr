@@ -146,17 +146,17 @@ func New(t *testing.T) Fixture {
 			current_epoch, current_service_id, protocol_version, supervisor_version,
 			supports_run, runtime_identity_id,
 			substrate_format, substrate_builder_abi, substrate_layout_abi,
-			certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes,
-			certified_scratch_bytes, per_vm_cpu_millis, per_vm_memory_bytes,
-			per_vm_workload_disk_bytes, per_vm_scratch_bytes,
+			certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes,
+			per_vm_cpu_millis, per_vm_memory_bytes,
+			per_vm_guest_ephemeral_disk_bytes,
 			max_vm_slots, max_run_consumers, max_runtime_starts,
 			certification_profile, certification_fingerprint,
 			epoch_started_at, certified_at, activated_at
 		) VALUES (
 			$1, $2, $3, 'test-attestation', 'active', 1, $4, $5, 'test',
 			true, $6, 'squashfs', 'builder-v0', 'layout-v0',
-			8000, 8589934592, 17179869184, 17179869184,
-			1000, 1073741824, 2147483648, 2147483648,
+			8000, 8589934592, 17179869184,
+			1000, 1073741824, 2147483648,
 			8, 8, 8, 'test', 'test-cert', now(), now(), now()
 		)
 	`, fixture.WorkerID, fixture.WorkerID.String(), WorkerGroup,
@@ -232,12 +232,12 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, runtime_identity_id, deployment_definition_id,
 			worker_epoch, network_policy, reserved_cpu_millis, reserved_memory_bytes,
-			reserved_workload_disk_bytes, reserved_scratch_bytes, reserved_execution_slots,
+			reserved_guest_ephemeral_disk_bytes, reserved_execution_slots,
 			workspace_id, program_deployment_id, desired_reason, observed_state,
 			observed_version, observed_desired_version, preparing_at, ready_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, 1, '{}'::jsonb,
-			1000, 1073741824, 2147483648, 2147483648, 1,
+			1000, 1073741824, 2147483648, 1,
 			$10, $11, 'test', 'ready', 1, 1, now(), now()
 		)
 	`, runtimeID, fixture.OrgID, WorkerGroup, fixture.ProjectID,
@@ -280,12 +280,12 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 			lease_sequence, attempt_number, worker_group_id, worker_instance_id,
 			worker_epoch, runtime_instance_id, network_slot_id, network_slot_generation,
 			runtime_identity_id, worker_protocol_version, requested_cpu_millis,
-			requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes,
+			requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
 			requested_execution_slots, state, assigned_at, start_deadline_at,
 			claimed_at, expires_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, 1, 1, $8, $9, 1, $10, $11, 1,
-			$12, $13, 1000, 1073741824, 2147483648, 2147483648, 1,
+			$12, $13, 1000, 1073741824, 2147483648, 1,
 			$14::text, $15, now() + interval '5 minutes', $16,
 			now() + interval '10 minutes'
 		)
@@ -604,7 +604,7 @@ func (fixture Fixture) parkHandoff(
 			lease_sequence, attempt_number, worker_group_id, worker_instance_id,
 			worker_epoch, runtime_instance_id, network_slot_id, network_slot_generation,
 			runtime_identity_id, worker_protocol_version, requested_cpu_millis,
-			requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes,
+			requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
 			requested_execution_slots, state, assigned_at, start_deadline_at,
 			claimed_at, started_at, expires_at
 		)
@@ -612,8 +612,8 @@ func (fixture Fixture) parkHandoff(
 		       1, 1, worker_group_id, worker_instance_id, worker_epoch,
 		       runtime_instance_id, network_slot_id, network_slot_generation,
 		       runtime_identity_id, worker_protocol_version, requested_cpu_millis,
-		       requested_memory_bytes, requested_workload_disk_bytes,
-		       requested_scratch_bytes, requested_execution_slots, 'running',
+		       requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
+		       requested_execution_slots, 'running',
 		       now() - interval '1 minute', now() + interval '5 minutes',
 		       now() - interval '1 minute', now() - interval '1 minute',
 		       now() + interval '10 minutes'

@@ -84,34 +84,32 @@ type Dispatcher struct {
 }
 
 type WorkerFleet struct {
-	GroupID               string
-	Role                  string
-	ASGName               string
-	CompatibilityKeys     []string
-	MilliCPU              uint64
-	MemoryBytes           uint64
-	WorkloadDiskBytes     uint64
-	ScratchBytes          uint64
-	BuildCacheBytes       uint64
-	ArtifactCacheBytes    uint64
-	VMSlots               uint64
-	BuildExecutors        uint64
-	QueuedRunScratchBytes uint64
-	MinWorkers            int
-	WarmWorkers           int
-	MaxWorkers            int
-	MaxScaleOutPerCycle   int
-	MaxPending            int
-	MaxPackingItems       int
-	ScaleOutCooldown      time.Duration
-	ScaleInCooldown       time.Duration
-	ScaleInHysteresis     time.Duration
-	StaleWorkerTimeout    time.Duration
-	ReadinessTimeout      time.Duration
-	DrainTimeout          time.Duration
-	EmergencyStop         bool
-	ControllerInterval    time.Duration
-	MetricsInterval       time.Duration
+	GroupID                 string
+	Role                    string
+	ASGName                 string
+	CompatibilityKeys       []string
+	MilliCPU                uint64
+	MemoryBytes             uint64
+	GuestEphemeralDiskBytes uint64
+	BuildCacheBytes         uint64
+	ArtifactCacheBytes      uint64
+	VMSlots                 uint64
+	BuildExecutors          uint64
+	MinWorkers              int
+	WarmWorkers             int
+	MaxWorkers              int
+	MaxScaleOutPerCycle     int
+	MaxPending              int
+	MaxPackingItems         int
+	ScaleOutCooldown        time.Duration
+	ScaleInCooldown         time.Duration
+	ScaleInHysteresis       time.Duration
+	StaleWorkerTimeout      time.Duration
+	ReadinessTimeout        time.Duration
+	DrainTimeout            time.Duration
+	EmergencyStop           bool
+	ControllerInterval      time.Duration
+	MetricsInterval         time.Duration
 }
 
 type Database struct {

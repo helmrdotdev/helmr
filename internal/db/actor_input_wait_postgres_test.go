@@ -290,8 +290,8 @@ func TestActorInputSendSourceRequiresExactReceiptWithoutGrantingLiveness(t *test
 		       worker_group_id, worker_instance_id, worker_epoch,
 		       worker_protocol_version, runtime_instance_id, network_slot_id,
 		       network_slot_generation, runtime_identity_id, requested_cpu_millis,
-		       requested_memory_bytes, requested_workload_disk_bytes,
-		       requested_scratch_bytes, requested_execution_slots,
+		       requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
+		       requested_execution_slots,
 		       start_deadline_at, expires_at
 		  FROM run_leases
 		 WHERE id = $1
@@ -301,7 +301,7 @@ func TestActorInputSendSourceRequiresExactReceiptWithoutGrantingLiveness(t *test
 		&params.WorkerEpoch, &params.WorkerProtocolVersion, &params.RuntimeInstanceID,
 		&params.NetworkSlotID, &params.NetworkSlotGeneration, &params.RuntimeIdentityID,
 		&params.RequestedCpuMillis, &params.RequestedMemoryBytes,
-		&params.RequestedWorkloadDiskBytes, &params.RequestedScratchBytes,
+		&params.RequestedGuestEphemeralDiskBytes,
 		&params.RequestedExecutionSlots, &params.StartDeadlineAt, &params.ExpiresAt,
 	); err != nil {
 		t.Fatal(err)

@@ -26,9 +26,9 @@ func activateWorkspaceWorker(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		       supports_run = true, runtime_identity_id = 'test-runtime',
 		       substrate_format = $2, substrate_builder_abi = $3, substrate_layout_abi = $4,
 		       certified_cpu_millis = 4000, certified_memory_bytes = 8589934592,
-		       certified_workload_disk_bytes = 10737418240, certified_scratch_bytes = 10737418240,
+		       certified_guest_ephemeral_disk_bytes = 10737418240,
 		       per_vm_cpu_millis = 2000, per_vm_memory_bytes = 2147483648,
-		       per_vm_workload_disk_bytes = 4294967296, per_vm_scratch_bytes = 4294967296,
+		       per_vm_guest_ephemeral_disk_bytes = 4294967296,
 		       max_vm_slots = 2, max_run_consumers = 2, max_runtime_starts = 2,
 		       certification_profile = 'test', certification_fingerprint = 'test-fingerprint',
 		       certified_at = now(), activated_at = now()
@@ -230,7 +230,7 @@ func TestWorkerGroupPolicyChangeRevokesExistingEnrollment(t *testing.T) {
 			EnrollmentPolicyFingerprint: fingerprint, AllowsRun: true,
 			AllowsBuild: false, ProtocolVersion: auth.WorkerProtocolVersion,
 			AllowedAttestationFingerprints: allowed,
-			RequiredCpuMillis:              1, RequiredMemoryBytes: 1, RequiredWorkloadDiskBytes: 1, RequiredScratchBytes: 1, RequiredVmSlots: 1,
+			RequiredCpuMillis:              1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1, RequiredVmSlots: 1,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -367,7 +367,7 @@ func TestWorkerGroupPolicyReconciliationSerializesAfterConcurrentEnrollment(t *t
 		EnrollmentPolicyFingerprint: "sha256:policy-old", AllowsRun: true,
 		ProtocolVersion:                auth.WorkerProtocolVersion,
 		AllowedAttestationFingerprints: []string{"sha256:attestation-old"},
-		RequiredCpuMillis:              1, RequiredMemoryBytes: 1, RequiredWorkloadDiskBytes: 1, RequiredScratchBytes: 1, RequiredVmSlots: 1,
+		RequiredCpuMillis:              1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1, RequiredVmSlots: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +405,7 @@ func TestWorkerGroupPolicyReconciliationSerializesAfterConcurrentEnrollment(t *t
 				EnrollmentPolicyFingerprint: "sha256:policy-new", AllowsRun: true,
 				ProtocolVersion:                auth.WorkerProtocolVersion,
 				AllowedAttestationFingerprints: []string{"sha256:attestation-new"},
-				RequiredCpuMillis:              1, RequiredMemoryBytes: 1, RequiredWorkloadDiskBytes: 1, RequiredScratchBytes: 1, RequiredVmSlots: 1,
+				RequiredCpuMillis:              1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1, RequiredVmSlots: 1,
 			})
 		}
 		if err == nil {
@@ -510,16 +510,14 @@ func TestTerminalWorkerCannotReuseItsDurableCredential(t *testing.T) {
 		       AND substrate_layout_abi = ''
 		       AND certified_cpu_millis = 0
 		       AND certified_memory_bytes = 0
-		       AND certified_workload_disk_bytes = 0
-		       AND certified_scratch_bytes = 0
+		       AND certified_guest_ephemeral_disk_bytes = 0
 		       AND certified_build_cache_bytes = 0
 		       AND certified_artifact_cache_bytes = 0
 		       AND certified_hugepages_bytes = 0
 		       AND certified_checkpoint_bytes = 0
 		       AND per_vm_cpu_millis = 0
 		       AND per_vm_memory_bytes = 0
-		       AND per_vm_workload_disk_bytes = 0
-		       AND per_vm_scratch_bytes = 0
+		       AND per_vm_guest_ephemeral_disk_bytes = 0
 		       AND max_vm_slots = 0
 		       AND max_run_consumers = 0
 		       AND max_build_executors = 0
@@ -566,7 +564,7 @@ func TestDisableAbsentWorkerGroupsRefusesLiveOrFencedMembers(t *testing.T) {
 		EnrollmentPolicyFingerprint: "sha256:retire", AllowsRun: true,
 		ProtocolVersion:                auth.WorkerProtocolVersion,
 		AllowedAttestationFingerprints: []string{"sha256:retire"},
-		RequiredCpuMillis:              1, RequiredMemoryBytes: 1, RequiredWorkloadDiskBytes: 1, RequiredScratchBytes: 1, RequiredVmSlots: 1,
+		RequiredCpuMillis:              1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1, RequiredVmSlots: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -647,7 +645,7 @@ func TestAbsentWorkerGroupRemovalSerializesWithEnrollment(t *testing.T) {
 			EnrollmentPolicyFingerprint: "sha256:" + suffix, AllowsRun: true,
 			ProtocolVersion:                auth.WorkerProtocolVersion,
 			AllowedAttestationFingerprints: []string{"sha256:" + suffix},
-			RequiredCpuMillis:              1, RequiredMemoryBytes: 1, RequiredWorkloadDiskBytes: 1, RequiredScratchBytes: 1, RequiredVmSlots: 1,
+			RequiredCpuMillis:              1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1, RequiredVmSlots: 1,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -771,7 +769,7 @@ func TestWorkerGroupRoleNarrowingFencesExistingCapabilities(t *testing.T) {
 		ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
 		EnrollmentPolicyFingerprint: "sha256:roles-both", AllowsRun: true, AllowsBuild: true,
 		ProtocolVersion: auth.WorkerProtocolVersion, AllowedAttestationFingerprints: []string{attestation},
-		RequiredCpuMillis: 1, RequiredMemoryBytes: 1, RequiredWorkloadDiskBytes: 1, RequiredScratchBytes: 1, RequiredVmSlots: 1, RequiredBuildExecutors: 1,
+		RequiredCpuMillis: 1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1, RequiredVmSlots: 1, RequiredBuildExecutors: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -797,7 +795,7 @@ func TestWorkerGroupRoleNarrowingFencesExistingCapabilities(t *testing.T) {
 		ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
 		EnrollmentPolicyFingerprint: "sha256:roles-run", AllowsRun: true, AllowsBuild: false,
 		ProtocolVersion: auth.WorkerProtocolVersion, AllowedAttestationFingerprints: []string{attestation},
-		RequiredCpuMillis: 1, RequiredMemoryBytes: 1, RequiredWorkloadDiskBytes: 1, RequiredScratchBytes: 1, RequiredVmSlots: 1,
+		RequiredCpuMillis: 1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1, RequiredVmSlots: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -826,7 +824,7 @@ func TestBuildOnlyWorkerCertificationRetainsRuntimeContract(t *testing.T) {
 		Description: "build workers", AllowsRun: false, AllowsBuild: true,
 		ProtocolVersion: auth.WorkerProtocolVersion, EnrollmentPolicyFingerprint: "sha256:test-build-policy",
 		AllowedAttestationFingerprints: []string{"sha256:test-build-attestation"},
-		RequiredCpuMillis:              1, RequiredMemoryBytes: 1, RequiredWorkloadDiskBytes: 1, RequiredScratchBytes: 1, RequiredBuildExecutors: 1,
+		RequiredCpuMillis:              1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1, RequiredBuildExecutors: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -868,10 +866,10 @@ func TestBuildOnlyWorkerCertificationRetainsRuntimeContract(t *testing.T) {
 		SupportsRun: false, SupportsBuild: true, MaxVmSlots: 0,
 		ProtocolVersion: auth.WorkerProtocolVersion, SupervisorVersion: "test",
 		CertifiedCpuMillis: 4000, CertifiedMemoryBytes: 8 << 30,
-		CertifiedWorkloadDiskBytes: 64 << 30, CertifiedScratchBytes: 16 << 30,
-		CertifiedBuildCacheBytes: 8 << 30, CertifiedArtifactCacheBytes: 4 << 30,
-		PerVmCpuMillis: 2000, PerVmMemoryBytes: 4 << 30, PerVmWorkloadDiskBytes: 32 << 30,
-		PerVmScratchBytes: 8 << 30, MaxBuildExecutors: 1, MaxRuntimeStarts: 1,
+		CertifiedGuestEphemeralDiskBytes: 64 << 30,
+		CertifiedBuildCacheBytes:         8 << 30, CertifiedArtifactCacheBytes: 4 << 30,
+		PerVmCpuMillis: 2000, PerVmMemoryBytes: 4 << 30, PerVmGuestEphemeralDiskBytes: 32 << 30,
+		MaxBuildExecutors: 1, MaxRuntimeStarts: 1,
 		CertificationProfile: "test", CertificationFingerprint: "sha256:certification",
 	})
 	if err != nil {
@@ -895,10 +893,10 @@ func TestBuildOnlyWorkerCertificationRetainsRuntimeContract(t *testing.T) {
 		RuntimeIdentityID: "sha256:build-worker-runtime", ProtocolVersion: auth.WorkerProtocolVersion,
 		SupportsBuild:      true,
 		CertifiedCpuMillis: 4000, CertifiedMemoryBytes: 8 << 30,
-		CertifiedWorkloadDiskBytes: 64 << 30, CertifiedScratchBytes: 16 << 30,
-		CertifiedBuildCacheBytes: 8 << 30, CertifiedArtifactCacheBytes: 4 << 30,
-		PerVmCpuMillis: 2000, PerVmMemoryBytes: 4 << 30, PerVmWorkloadDiskBytes: 32 << 30,
-		PerVmScratchBytes: 8 << 30, MaxVmSlots: 0, MaxBuildExecutors: 1, MaxRuntimeStarts: 1,
+		CertifiedGuestEphemeralDiskBytes: 64 << 30,
+		CertifiedBuildCacheBytes:         8 << 30, CertifiedArtifactCacheBytes: 4 << 30,
+		PerVmCpuMillis: 2000, PerVmMemoryBytes: 4 << 30, PerVmGuestEphemeralDiskBytes: 32 << 30,
+		MaxBuildExecutors: 1, MaxRuntimeStarts: 1,
 	}); err != nil {
 		t.Fatalf("renew build-only certification: %v", err)
 	}

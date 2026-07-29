@@ -44,7 +44,7 @@ func TestReconcileProjectsDesiredGroupAfterLock(t *testing.T) {
 	store := &recordingReconcileStore{}
 	err := Reconcile(context.Background(), store, "us-east-1", []Desired{{
 		Spec:                           Spec{ID: "run-workers", Name: "Run workers", AllowsRun: true},
-		Capacity:                       Capacity{MilliCPU: 1000, MemoryBytes: 1024, WorkloadDiskBytes: 1024, ScratchBytes: 1024, VMSlots: 1},
+		Capacity:                       Capacity{MilliCPU: 1000, MemoryBytes: 1024, GuestEphemeralDiskBytes: 1024, VMSlots: 1},
 		EnrollmentPolicyFingerprint:    "sha256:policy",
 		AllowedAttestationFingerprints: []string{"sha256:attestation"},
 		LaunchAttestationFingerprint:   "sha256:attestation",

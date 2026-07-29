@@ -24,28 +24,28 @@ func TestTerminationCandidatePrefersReadyDisabledThenOldestDrain(t *testing.T) {
 	}
 }
 
-func TestQueuedRunDemandUsesConfiguredScratchPartition(t *testing.T) {
+func TestQueuedRunDemandUsesGroupGuestDisk(t *testing.T) {
 	bucket, err := runDemandBucket(db.ListFleetRunDemandRow{
 		DemandState: "queued", CompatibilityKey: "run-workers", MilliCpu: 1000,
-		MemoryBytes: 1024, WorkloadDiskBytes: 2048, VmSlots: 1, DemandCount: 3,
-	}, 4096)
+		MemoryBytes: 1024, GuestEphemeralDiskBytes: 2048, VmSlots: 1, DemandCount: 3,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bucket.Shape.ScratchBytes != 4096 || bucket.Count != 3 {
+	if bucket.Shape.GuestEphemeralDiskBytes != 2048 || bucket.Count != 3 {
 		t.Fatalf("bucket = %#v", bucket)
 	}
 }
 
-func TestActiveRunDemandKeepsLeaseScratchPartition(t *testing.T) {
+func TestActiveRunDemandUsesLeaseGuestDisk(t *testing.T) {
 	bucket, err := runDemandBucket(db.ListFleetRunDemandRow{
 		DemandState: "active", CompatibilityKey: "run-workers", MilliCpu: 1000,
-		MemoryBytes: 1024, WorkloadDiskBytes: 2048, ScratchBytes: 8192, VmSlots: 1, DemandCount: 1,
-	}, 4096)
+		MemoryBytes: 1024, GuestEphemeralDiskBytes: 8192, VmSlots: 1, DemandCount: 1,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bucket.Shape.ScratchBytes != 8192 {
+	if bucket.Shape.GuestEphemeralDiskBytes != 8192 {
 		t.Fatalf("bucket = %#v", bucket)
 	}
 }

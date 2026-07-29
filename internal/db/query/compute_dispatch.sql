@@ -154,8 +154,7 @@ SELECT worker_instances.*,
 -- name: GetWorkerInstanceRunDispatchCapacity :one
 SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
        GREATEST(worker_instances.certified_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
-       GREATEST(worker_instances.certified_workload_disk_bytes - usage.workload_disk_bytes, 0)::bigint AS available_workload_disk_bytes,
-       GREATEST(worker_instances.certified_scratch_bytes - usage.scratch_bytes, 0)::bigint AS available_scratch_bytes,
+       GREATEST(worker_instances.certified_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
        GREATEST(worker_instances.max_vm_slots - usage.vm_slots, 0)::int AS available_vm_slots,
        GREATEST(worker_instances.max_run_consumers - usage.run_consumers, 0)::int AS available_run_consumers,
        GREATEST(worker_instances.max_build_executors - usage.build_executors, 0)::int AS available_build_executors
@@ -180,24 +179,15 @@ SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bi
                     WHERE worker_instance_id = worker_instances.id
                       AND worker_epoch = worker_instances.current_epoch
                       AND state IN ('assigned','starting','running')), 0) AS memory_bytes,
-        COALESCE((SELECT sum(reserved_workload_disk_bytes) FROM runtime_instances
+        COALESCE((SELECT sum(reserved_guest_ephemeral_disk_bytes) FROM runtime_instances
                     WHERE worker_instance_id = worker_instances.id
                       AND worker_epoch = worker_instances.current_epoch
                       AND (observed_state IN ('allocated','preparing','ready','closing')
                            OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
-        + COALESCE((SELECT sum(requested_workload_disk_bytes) FROM deployment_build_leases
+        + COALESCE((SELECT sum(requested_guest_ephemeral_disk_bytes) FROM deployment_build_leases
                     WHERE worker_instance_id = worker_instances.id
                       AND worker_epoch = worker_instances.current_epoch
-                      AND state IN ('assigned','starting','running')), 0) AS workload_disk_bytes,
-        COALESCE((SELECT sum(reserved_scratch_bytes) FROM runtime_instances
-                    WHERE worker_instance_id = worker_instances.id
-                      AND worker_epoch = worker_instances.current_epoch
-                      AND (observed_state IN ('allocated','preparing','ready','closing')
-                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
-        + COALESCE((SELECT sum(requested_scratch_bytes) FROM deployment_build_leases
-                    WHERE worker_instance_id = worker_instances.id
-                      AND worker_epoch = worker_instances.current_epoch
-                      AND state IN ('assigned','starting','running')), 0) AS scratch_bytes,
+                      AND state IN ('assigned','starting','running')), 0) AS guest_ephemeral_disk_bytes,
         COALESCE((SELECT count(*) FROM runtime_instances
                    WHERE worker_instance_id = worker_instances.id
                      AND worker_epoch = worker_instances.current_epoch
@@ -220,8 +210,7 @@ SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bi
 -- name: GetWorkerInstanceQueueCapacity :one
 SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
        GREATEST(worker_instances.certified_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
-       GREATEST(worker_instances.certified_workload_disk_bytes - usage.workload_disk_bytes, 0)::bigint AS available_workload_disk_bytes,
-       GREATEST(worker_instances.certified_scratch_bytes - usage.scratch_bytes, 0)::bigint AS available_scratch_bytes,
+       GREATEST(worker_instances.certified_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
        GREATEST(worker_instances.max_run_consumers - usage.run_consumers, 0)::int AS available_run_consumers,
        GREATEST(worker_instances.max_build_executors - usage.build_executors, 0)::int AS available_build_executors
   FROM worker_instances
@@ -245,24 +234,15 @@ SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bi
                     WHERE worker_instance_id = worker_instances.id
                       AND worker_epoch = worker_instances.current_epoch
                       AND state IN ('assigned','starting','running')), 0) AS memory_bytes,
-        COALESCE((SELECT sum(reserved_workload_disk_bytes) FROM runtime_instances
+        COALESCE((SELECT sum(reserved_guest_ephemeral_disk_bytes) FROM runtime_instances
                    WHERE worker_instance_id = worker_instances.id
                      AND worker_epoch = worker_instances.current_epoch
                      AND (observed_state IN ('allocated','preparing','ready','closing')
                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
-        + COALESCE((SELECT sum(requested_workload_disk_bytes) FROM deployment_build_leases
+        + COALESCE((SELECT sum(requested_guest_ephemeral_disk_bytes) FROM deployment_build_leases
                     WHERE worker_instance_id = worker_instances.id
                       AND worker_epoch = worker_instances.current_epoch
-                      AND state IN ('assigned','starting','running')), 0) AS workload_disk_bytes,
-        COALESCE((SELECT sum(reserved_scratch_bytes) FROM runtime_instances
-                   WHERE worker_instance_id = worker_instances.id
-                     AND worker_epoch = worker_instances.current_epoch
-                     AND (observed_state IN ('allocated','preparing','ready','closing')
-                          OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
-        + COALESCE((SELECT sum(requested_scratch_bytes) FROM deployment_build_leases
-                    WHERE worker_instance_id = worker_instances.id
-                      AND worker_epoch = worker_instances.current_epoch
-                      AND state IN ('assigned','starting','running')), 0) AS scratch_bytes,
+                      AND state IN ('assigned','starting','running')), 0) AS guest_ephemeral_disk_bytes,
         COALESCE((SELECT sum(requested_execution_slots) FROM run_leases
                    WHERE worker_instance_id = worker_instances.id
                      AND worker_epoch = worker_instances.current_epoch

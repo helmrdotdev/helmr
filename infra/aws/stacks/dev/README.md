@@ -84,7 +84,7 @@ pinning instances on. Raising either ASG maximum above one additionally requires
 `allow_extended_worker_capacity=true`; this makes capacity expansion an explicit cost decision.
 CloudWatch alarms project pending readiness, drain age, and unmet capacity but never write desired
 capacity. Fleet control rejects auto-detected disk capacity and subtracts the explicit per-role disk
-reserve and cache budgets before certifying workload and scratch capacity.
+reserve and cache budgets before certifying guest ephemeral disk capacity.
 Cost reporting measures the worker instance, root gp3 volume, NAT, control, database, Valkey, load
 balancers, private endpoints, and telemetry independently from scaling correctness.
 

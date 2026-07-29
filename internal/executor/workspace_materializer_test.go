@@ -339,8 +339,8 @@ func workspaceTestCapacity(t *testing.T) *capacity.Ledger {
 	t.Helper()
 	resources, err := capacity.New(capacity.Vector{
 		CPUMillis: 16_000, MemoryBytes: 64 << 30,
-		WorkloadDiskBytes: 1 << 40, ScratchBytes: 1 << 40,
-		VMSlots: 64, BuildSlots: 64,
+		GuestEphemeralDiskBytes: 1 << 40,
+		VMSlots:                 64, BuildSlots: 64,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1083,7 +1083,6 @@ func TestRunWorkspaceMountPropagatesCloseFailureAndRetainsPreparedRuntimeCheckou
 	}
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
 	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
-	pool.RuntimeScratchBytes = 256 << 20
 	if err := pool.reserveRuntimeCapacity(target); err != nil {
 		t.Fatal(err)
 	}

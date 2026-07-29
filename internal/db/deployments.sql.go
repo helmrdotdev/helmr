@@ -13,7 +13,7 @@ import (
 
 const claimNextDeploymentBuildLease = `-- name: ClaimNextDeploymentBuildLease :one
 WITH candidate AS (
-    SELECT deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.worker_protocol_version, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_workload_disk_bytes, deployment_build_leases.requested_scratch_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at
+    SELECT deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.worker_protocol_version, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_guest_ephemeral_disk_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at
       FROM deployment_build_leases
       JOIN deployments
         ON deployments.org_id = deployment_build_leases.org_id
@@ -44,9 +44,9 @@ WITH candidate AS (
            expires_at = $5, updated_at = now()
       FROM candidate
      WHERE deployment_build_leases.id = candidate.id
-    RETURNING deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.worker_protocol_version, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_workload_disk_bytes, deployment_build_leases.requested_scratch_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at
+    RETURNING deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.worker_protocol_version, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_guest_ephemeral_disk_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at
 )
-SELECT claimed.id, claimed.org_id, claimed.project_id, claimed.environment_id, claimed.deployment_id, claimed.build_region_id, claimed.lease_sequence, claimed.worker_group_id, claimed.worker_instance_id, claimed.worker_epoch, claimed.worker_protocol_version, claimed.requested_cpu_millis, claimed.requested_memory_bytes, claimed.requested_workload_disk_bytes, claimed.requested_scratch_bytes, claimed.requested_build_executors, claimed.build_snapshot, claimed.trace_id, claimed.span_id, claimed.parent_span_id, claimed.traceparent, claimed.state, claimed.assigned_at, claimed.start_deadline_at, claimed.claimed_at, claimed.started_at, claimed.renewed_at, claimed.expires_at, claimed.terminal_at, claimed.terminal_reason_code, claimed.terminal_error, claimed.terminal_request_fingerprint, claimed.created_at, claimed.updated_at, deployments.version, deployments.api_version,
+SELECT claimed.id, claimed.org_id, claimed.project_id, claimed.environment_id, claimed.deployment_id, claimed.build_region_id, claimed.lease_sequence, claimed.worker_group_id, claimed.worker_instance_id, claimed.worker_epoch, claimed.worker_protocol_version, claimed.requested_cpu_millis, claimed.requested_memory_bytes, claimed.requested_guest_ephemeral_disk_bytes, claimed.requested_build_executors, claimed.build_snapshot, claimed.trace_id, claimed.span_id, claimed.parent_span_id, claimed.traceparent, claimed.state, claimed.assigned_at, claimed.start_deadline_at, claimed.claimed_at, claimed.started_at, claimed.renewed_at, claimed.expires_at, claimed.terminal_at, claimed.terminal_reason_code, claimed.terminal_error, claimed.terminal_request_fingerprint, claimed.created_at, claimed.updated_at, deployments.version, deployments.api_version,
        deployments.content_hash,
        deployments.build_node_version, deployments.build_runtime_digest,
        deployments.build_toolchain_digest,
@@ -77,55 +77,54 @@ type ClaimNextDeploymentBuildLeaseParams struct {
 }
 
 type ClaimNextDeploymentBuildLeaseRow struct {
-	ID                         pgtype.UUID        `json:"id"`
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	ProjectID                  pgtype.UUID        `json:"project_id"`
-	EnvironmentID              pgtype.UUID        `json:"environment_id"`
-	DeploymentID               pgtype.UUID        `json:"deployment_id"`
-	BuildRegionID              string             `json:"build_region_id"`
-	LeaseSequence              int64              `json:"lease_sequence"`
-	WorkerGroupID              string             `json:"worker_group_id"`
-	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch                int64              `json:"worker_epoch"`
-	WorkerProtocolVersion      string             `json:"worker_protocol_version"`
-	RequestedCpuMillis         int64              `json:"requested_cpu_millis"`
-	RequestedMemoryBytes       int64              `json:"requested_memory_bytes"`
-	RequestedWorkloadDiskBytes int64              `json:"requested_workload_disk_bytes"`
-	RequestedScratchBytes      int64              `json:"requested_scratch_bytes"`
-	RequestedBuildExecutors    int32              `json:"requested_build_executors"`
-	BuildSnapshot              []byte             `json:"build_snapshot"`
-	TraceID                    pgtype.Text        `json:"trace_id"`
-	SpanID                     pgtype.Text        `json:"span_id"`
-	ParentSpanID               pgtype.Text        `json:"parent_span_id"`
-	Traceparent                pgtype.Text        `json:"traceparent"`
-	State                      string             `json:"state"`
-	AssignedAt                 pgtype.Timestamptz `json:"assigned_at"`
-	StartDeadlineAt            pgtype.Timestamptz `json:"start_deadline_at"`
-	ClaimedAt                  pgtype.Timestamptz `json:"claimed_at"`
-	StartedAt                  pgtype.Timestamptz `json:"started_at"`
-	RenewedAt                  pgtype.Timestamptz `json:"renewed_at"`
-	ExpiresAt                  pgtype.Timestamptz `json:"expires_at"`
-	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
-	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
-	TerminalError              []byte             `json:"terminal_error"`
-	TerminalRequestFingerprint pgtype.Text        `json:"terminal_request_fingerprint"`
-	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
-	Version                    string             `json:"version"`
-	ApiVersion                 string             `json:"api_version"`
-	ContentHash                string             `json:"content_hash"`
-	BuildNodeVersion           string             `json:"build_node_version"`
-	BuildRuntimeDigest         []byte             `json:"build_runtime_digest"`
-	BuildToolchainDigest       []byte             `json:"build_toolchain_digest"`
-	BuildManagerName           string             `json:"build_manager_name"`
-	BuildManagerVersion        string             `json:"build_manager_version"`
-	BuildManagerIntegrity      pgtype.Text        `json:"build_manager_integrity"`
-	BuildManagerDigest         []byte             `json:"build_manager_digest"`
-	BuildContractVersion       string             `json:"build_contract_version"`
-	DeploymentSourceDigest     string             `json:"deployment_source_digest"`
-	SourceSizeBytes            int64              `json:"source_size_bytes"`
-	SourceMediaType            string             `json:"source_media_type"`
-	DeploymentStatus           string             `json:"deployment_status"`
+	ID                               pgtype.UUID        `json:"id"`
+	OrgID                            pgtype.UUID        `json:"org_id"`
+	ProjectID                        pgtype.UUID        `json:"project_id"`
+	EnvironmentID                    pgtype.UUID        `json:"environment_id"`
+	DeploymentID                     pgtype.UUID        `json:"deployment_id"`
+	BuildRegionID                    string             `json:"build_region_id"`
+	LeaseSequence                    int64              `json:"lease_sequence"`
+	WorkerGroupID                    string             `json:"worker_group_id"`
+	WorkerInstanceID                 pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                      int64              `json:"worker_epoch"`
+	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
+	RequestedCpuMillis               int64              `json:"requested_cpu_millis"`
+	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
+	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
+	RequestedBuildExecutors          int32              `json:"requested_build_executors"`
+	BuildSnapshot                    []byte             `json:"build_snapshot"`
+	TraceID                          pgtype.Text        `json:"trace_id"`
+	SpanID                           pgtype.Text        `json:"span_id"`
+	ParentSpanID                     pgtype.Text        `json:"parent_span_id"`
+	Traceparent                      pgtype.Text        `json:"traceparent"`
+	State                            string             `json:"state"`
+	AssignedAt                       pgtype.Timestamptz `json:"assigned_at"`
+	StartDeadlineAt                  pgtype.Timestamptz `json:"start_deadline_at"`
+	ClaimedAt                        pgtype.Timestamptz `json:"claimed_at"`
+	StartedAt                        pgtype.Timestamptz `json:"started_at"`
+	RenewedAt                        pgtype.Timestamptz `json:"renewed_at"`
+	ExpiresAt                        pgtype.Timestamptz `json:"expires_at"`
+	TerminalAt                       pgtype.Timestamptz `json:"terminal_at"`
+	TerminalReasonCode               pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError                    []byte             `json:"terminal_error"`
+	TerminalRequestFingerprint       pgtype.Text        `json:"terminal_request_fingerprint"`
+	CreatedAt                        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                        pgtype.Timestamptz `json:"updated_at"`
+	Version                          string             `json:"version"`
+	ApiVersion                       string             `json:"api_version"`
+	ContentHash                      string             `json:"content_hash"`
+	BuildNodeVersion                 string             `json:"build_node_version"`
+	BuildRuntimeDigest               []byte             `json:"build_runtime_digest"`
+	BuildToolchainDigest             []byte             `json:"build_toolchain_digest"`
+	BuildManagerName                 string             `json:"build_manager_name"`
+	BuildManagerVersion              string             `json:"build_manager_version"`
+	BuildManagerIntegrity            pgtype.Text        `json:"build_manager_integrity"`
+	BuildManagerDigest               []byte             `json:"build_manager_digest"`
+	BuildContractVersion             string             `json:"build_contract_version"`
+	DeploymentSourceDigest           string             `json:"deployment_source_digest"`
+	SourceSizeBytes                  int64              `json:"source_size_bytes"`
+	SourceMediaType                  string             `json:"source_media_type"`
+	DeploymentStatus                 string             `json:"deployment_status"`
 }
 
 func (q *Queries) ClaimNextDeploymentBuildLease(ctx context.Context, arg ClaimNextDeploymentBuildLeaseParams) (ClaimNextDeploymentBuildLeaseRow, error) {
@@ -151,8 +150,7 @@ func (q *Queries) ClaimNextDeploymentBuildLease(ctx context.Context, arg ClaimNe
 		&i.WorkerProtocolVersion,
 		&i.RequestedCpuMillis,
 		&i.RequestedMemoryBytes,
-		&i.RequestedWorkloadDiskBytes,
-		&i.RequestedScratchBytes,
+		&i.RequestedGuestEphemeralDiskBytes,
 		&i.RequestedBuildExecutors,
 		&i.BuildSnapshot,
 		&i.TraceID,
@@ -203,7 +201,7 @@ WITH completed AS (
        AND deployment_build_leases.worker_epoch = $6
        AND deployment_build_leases.lease_sequence = $7
        AND deployment_build_leases.state = 'running' AND deployment_build_leases.expires_at > now()
-    RETURNING id, org_id, project_id, environment_id, deployment_id, build_region_id, lease_sequence, worker_group_id, worker_instance_id, worker_epoch, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes, requested_build_executors, build_snapshot, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, build_region_id, lease_sequence, worker_group_id, worker_instance_id, worker_epoch, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_build_executors, build_snapshot, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 ), deployed AS (
 UPDATE deployments
    SET status = 'deployed',
@@ -240,8 +238,7 @@ RETURNING deployments.id, deployments.public_id, deployments.org_id, deployments
            jsonb_build_object(
                'outcome','succeeded', 'cpu_millis',completed.requested_cpu_millis,
                'memory_bytes',completed.requested_memory_bytes,
-               'workload_disk_bytes',completed.requested_workload_disk_bytes,
-               'scratch_bytes',completed.requested_scratch_bytes,
+               'guest_ephemeral_disk_bytes',completed.requested_guest_ephemeral_disk_bytes,
                'build_executors',completed.requested_build_executors
            ),
            'build-active:' || completed.id::text,
@@ -251,8 +248,7 @@ RETURNING deployments.id, deployments.public_id, deployments.org_id, deployments
                'measured_to',completed.terminal_at, 'outcome','succeeded',
                'cpu_millis',completed.requested_cpu_millis,
                'memory_bytes',completed.requested_memory_bytes,
-               'workload_disk_bytes',completed.requested_workload_disk_bytes,
-               'scratch_bytes',completed.requested_scratch_bytes,
+               'guest_ephemeral_disk_bytes',completed.requested_guest_ephemeral_disk_bytes,
                'build_executors',completed.requested_build_executors
            )::text
       FROM completed
@@ -520,7 +516,7 @@ WITH failed AS (
        AND deployment_build_leases.worker_epoch = $8
        AND deployment_build_leases.lease_sequence = $9
        AND deployment_build_leases.state = 'running' AND deployment_build_leases.expires_at > now()
-    RETURNING id, org_id, project_id, environment_id, deployment_id, build_region_id, lease_sequence, worker_group_id, worker_instance_id, worker_epoch, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes, requested_build_executors, build_snapshot, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, build_region_id, lease_sequence, worker_group_id, worker_instance_id, worker_epoch, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_build_executors, build_snapshot, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 ), failed_deployment AS (
 UPDATE deployments
    SET status = 'failed', failure = $2, failed_at = now(), updated_at = now()
@@ -544,8 +540,7 @@ RETURNING deployments.id, deployments.public_id, deployments.org_id, deployments
                'outcome','failed', 'reason_code',failed.terminal_reason_code,
                'cpu_millis',failed.requested_cpu_millis,
                'memory_bytes',failed.requested_memory_bytes,
-               'workload_disk_bytes',failed.requested_workload_disk_bytes,
-               'scratch_bytes',failed.requested_scratch_bytes,
+               'guest_ephemeral_disk_bytes',failed.requested_guest_ephemeral_disk_bytes,
                'build_executors',failed.requested_build_executors
            ),
            'build-active:' || failed.id::text,
@@ -556,8 +551,7 @@ RETURNING deployments.id, deployments.public_id, deployments.org_id, deployments
                'reason_code',failed.terminal_reason_code,
                'cpu_millis',failed.requested_cpu_millis,
                'memory_bytes',failed.requested_memory_bytes,
-               'workload_disk_bytes',failed.requested_workload_disk_bytes,
-               'scratch_bytes',failed.requested_scratch_bytes,
+               'guest_ephemeral_disk_bytes',failed.requested_guest_ephemeral_disk_bytes,
                'build_executors',failed.requested_build_executors
            )::text
       FROM failed
@@ -692,7 +686,7 @@ WITH locked_deployment AS MATERIALIZED (
        AND deployments.id = $4
      FOR UPDATE
 ), locked_lease AS MATERIALIZED (
-    SELECT deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.worker_protocol_version, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_workload_disk_bytes, deployment_build_leases.requested_scratch_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at
+    SELECT deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.worker_protocol_version, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_guest_ephemeral_disk_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at
       FROM deployment_build_leases
       JOIN locked_deployment
         ON locked_deployment.org_id = deployment_build_leases.org_id
@@ -731,7 +725,7 @@ WITH locked_deployment AS MATERIALIZED (
       FROM locked_lease
      WHERE deployment_build_leases.id = locked_lease.id
        AND locked_lease.state = 'running'
-    RETURNING deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.worker_protocol_version, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_workload_disk_bytes, deployment_build_leases.requested_scratch_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at
+    RETURNING deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.worker_protocol_version, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_guest_ephemeral_disk_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at
 ), meter_event AS (
     INSERT INTO meter_events (
         org_id, project_id, environment_id, deployment_id,
@@ -750,8 +744,7 @@ WITH locked_deployment AS MATERIALIZED (
                'reason_code', $11,
                'cpu_millis', lost.requested_cpu_millis,
                'memory_bytes', lost.requested_memory_bytes,
-               'workload_disk_bytes', lost.requested_workload_disk_bytes,
-               'scratch_bytes', lost.requested_scratch_bytes,
+               'guest_ephemeral_disk_bytes', lost.requested_guest_ephemeral_disk_bytes,
                'build_executors', lost.requested_build_executors
            ),
            'build-lease-lost:' || lost.id::text,
@@ -764,8 +757,7 @@ WITH locked_deployment AS MATERIALIZED (
                'reason_code', $11,
                'cpu_millis', lost.requested_cpu_millis,
                'memory_bytes', lost.requested_memory_bytes,
-               'workload_disk_bytes', lost.requested_workload_disk_bytes,
-               'scratch_bytes', lost.requested_scratch_bytes,
+               'guest_ephemeral_disk_bytes', lost.requested_guest_ephemeral_disk_bytes,
                'build_executors', lost.requested_build_executors
            )::text
       FROM lost
@@ -1570,7 +1562,7 @@ func (q *Queries) GetNextDeploymentPlatformAcquisition(ctx context.Context, arg 
 }
 
 const getStartedDeploymentBuildLease = `-- name: GetStartedDeploymentBuildLease :one
-SELECT id, org_id, project_id, environment_id, deployment_id, build_region_id, lease_sequence, worker_group_id, worker_instance_id, worker_epoch, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes, requested_build_executors, build_snapshot, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, deployment_id, build_region_id, lease_sequence, worker_group_id, worker_instance_id, worker_epoch, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_build_executors, build_snapshot, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
   FROM deployment_build_leases
  WHERE org_id = $1 AND deployment_id = $2
    AND id = $3
@@ -1579,28 +1571,26 @@ SELECT id, org_id, project_id, environment_id, deployment_id, build_region_id, l
    AND worker_instance_id = $6
    AND worker_epoch = $7
    AND worker_protocol_version = $8
-   AND requested_workload_disk_bytes = $9
-   AND requested_scratch_bytes = $10
-   AND requested_cpu_millis = $11
-   AND requested_memory_bytes = $12
-   AND requested_build_executors = $13
+   AND requested_guest_ephemeral_disk_bytes = $9
+   AND requested_cpu_millis = $10
+   AND requested_memory_bytes = $11
+   AND requested_build_executors = $12
    AND state = 'running'
 `
 
 type GetStartedDeploymentBuildLeaseParams struct {
-	OrgID                      pgtype.UUID `json:"org_id"`
-	DeploymentID               pgtype.UUID `json:"deployment_id"`
-	BuildLeaseID               pgtype.UUID `json:"build_lease_id"`
-	LeaseSequence              int64       `json:"lease_sequence"`
-	WorkerGroupID              string      `json:"worker_group_id"`
-	WorkerInstanceID           pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch                int64       `json:"worker_epoch"`
-	WorkerProtocolVersion      string      `json:"worker_protocol_version"`
-	RequestedWorkloadDiskBytes int64       `json:"requested_workload_disk_bytes"`
-	RequestedScratchBytes      int64       `json:"requested_scratch_bytes"`
-	RequestedCpuMillis         int64       `json:"requested_cpu_millis"`
-	RequestedMemoryBytes       int64       `json:"requested_memory_bytes"`
-	RequestedBuildExecutors    int32       `json:"requested_build_executors"`
+	OrgID                            pgtype.UUID `json:"org_id"`
+	DeploymentID                     pgtype.UUID `json:"deployment_id"`
+	BuildLeaseID                     pgtype.UUID `json:"build_lease_id"`
+	LeaseSequence                    int64       `json:"lease_sequence"`
+	WorkerGroupID                    string      `json:"worker_group_id"`
+	WorkerInstanceID                 pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch                      int64       `json:"worker_epoch"`
+	WorkerProtocolVersion            string      `json:"worker_protocol_version"`
+	RequestedGuestEphemeralDiskBytes int64       `json:"requested_guest_ephemeral_disk_bytes"`
+	RequestedCpuMillis               int64       `json:"requested_cpu_millis"`
+	RequestedMemoryBytes             int64       `json:"requested_memory_bytes"`
+	RequestedBuildExecutors          int32       `json:"requested_build_executors"`
 }
 
 func (q *Queries) GetStartedDeploymentBuildLease(ctx context.Context, arg GetStartedDeploymentBuildLeaseParams) (DeploymentBuildLease, error) {
@@ -1613,8 +1603,7 @@ func (q *Queries) GetStartedDeploymentBuildLease(ctx context.Context, arg GetSta
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
 		arg.WorkerProtocolVersion,
-		arg.RequestedWorkloadDiskBytes,
-		arg.RequestedScratchBytes,
+		arg.RequestedGuestEphemeralDiskBytes,
 		arg.RequestedCpuMillis,
 		arg.RequestedMemoryBytes,
 		arg.RequestedBuildExecutors,
@@ -1634,8 +1623,7 @@ func (q *Queries) GetStartedDeploymentBuildLease(ctx context.Context, arg GetSta
 		&i.WorkerProtocolVersion,
 		&i.RequestedCpuMillis,
 		&i.RequestedMemoryBytes,
-		&i.RequestedWorkloadDiskBytes,
-		&i.RequestedScratchBytes,
+		&i.RequestedGuestEphemeralDiskBytes,
 		&i.RequestedBuildExecutors,
 		&i.BuildSnapshot,
 		&i.TraceID,
@@ -1689,7 +1677,7 @@ inserted AS (
         id, org_id, project_id, environment_id, deployment_id, build_region_id,
         lease_sequence, worker_group_id, worker_instance_id,
         worker_epoch, worker_protocol_version, requested_cpu_millis,
-        requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes,
+        requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
         requested_build_executors, build_snapshot, trace_id, span_id,
         parent_span_id, traceparent, start_deadline_at, expires_at
     )
@@ -1699,12 +1687,12 @@ inserted AS (
            $7,
            $8, $9,
            $10, $11,
-           $12, $13,
-           $14, $15,
-           $16, $17, $18,
-           $19, $20, $21
+           $12,
+           $13, $14,
+           $15, $16, $17,
+           $18, $19, $20
       FROM candidate
-    RETURNING id, org_id, project_id, environment_id, deployment_id, build_region_id, lease_sequence, worker_group_id, worker_instance_id, worker_epoch, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes, requested_build_executors, build_snapshot, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, build_region_id, lease_sequence, worker_group_id, worker_instance_id, worker_epoch, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_build_executors, build_snapshot, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 ),
 advanced AS (
     UPDATE deployments
@@ -1716,7 +1704,7 @@ advanced AS (
      WHERE deployments.id = inserted.deployment_id
     RETURNING deployments.id, deployments.public_id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_node_version, deployments.build_runtime_digest, deployments.build_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_integrity, deployments.build_manager_digest, deployments.build_contract_version, deployments.version, deployments.content_hash, deployments.api_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
 )
-SELECT inserted.id, inserted.org_id, inserted.project_id, inserted.environment_id, inserted.deployment_id, inserted.build_region_id, inserted.lease_sequence, inserted.worker_group_id, inserted.worker_instance_id, inserted.worker_epoch, inserted.worker_protocol_version, inserted.requested_cpu_millis, inserted.requested_memory_bytes, inserted.requested_workload_disk_bytes, inserted.requested_scratch_bytes, inserted.requested_build_executors, inserted.build_snapshot, inserted.trace_id, inserted.span_id, inserted.parent_span_id, inserted.traceparent, inserted.state, inserted.assigned_at, inserted.start_deadline_at, inserted.claimed_at, inserted.started_at, inserted.renewed_at, inserted.expires_at, inserted.terminal_at, inserted.terminal_reason_code, inserted.terminal_error, inserted.terminal_request_fingerprint, inserted.created_at, inserted.updated_at,
+SELECT inserted.id, inserted.org_id, inserted.project_id, inserted.environment_id, inserted.deployment_id, inserted.build_region_id, inserted.lease_sequence, inserted.worker_group_id, inserted.worker_instance_id, inserted.worker_epoch, inserted.worker_protocol_version, inserted.requested_cpu_millis, inserted.requested_memory_bytes, inserted.requested_guest_ephemeral_disk_bytes, inserted.requested_build_executors, inserted.build_snapshot, inserted.trace_id, inserted.span_id, inserted.parent_span_id, inserted.traceparent, inserted.state, inserted.assigned_at, inserted.start_deadline_at, inserted.claimed_at, inserted.started_at, inserted.renewed_at, inserted.expires_at, inserted.terminal_at, inserted.terminal_reason_code, inserted.terminal_error, inserted.terminal_request_fingerprint, inserted.created_at, inserted.updated_at,
        advanced.version,
        advanced.api_version,
        advanced.content_hash,
@@ -1738,75 +1726,73 @@ SELECT inserted.id, inserted.org_id, inserted.project_id, inserted.environment_i
 `
 
 type LeaseQueuedDeploymentBuildParams struct {
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	DeploymentID               pgtype.UUID        `json:"deployment_id"`
-	BuildRegionID              string             `json:"build_region_id"`
-	LeaseSequence              int64              `json:"lease_sequence"`
-	BuildLeaseID               pgtype.UUID        `json:"build_lease_id"`
-	WorkerGroupID              string             `json:"worker_group_id"`
-	BuildWorkerInstanceID      pgtype.UUID        `json:"build_worker_instance_id"`
-	WorkerEpoch                int64              `json:"worker_epoch"`
-	WorkerProtocolVersion      string             `json:"worker_protocol_version"`
-	RequestedCpuMillis         int64              `json:"requested_cpu_millis"`
-	RequestedMemoryBytes       int64              `json:"requested_memory_bytes"`
-	RequestedWorkloadDiskBytes int64              `json:"requested_workload_disk_bytes"`
-	RequestedScratchBytes      int64              `json:"requested_scratch_bytes"`
-	RequestedBuildExecutors    int32              `json:"requested_build_executors"`
-	BuildSnapshot              []byte             `json:"build_snapshot"`
-	TraceID                    pgtype.Text        `json:"trace_id"`
-	SpanID                     pgtype.Text        `json:"span_id"`
-	ParentSpanID               pgtype.Text        `json:"parent_span_id"`
-	Traceparent                pgtype.Text        `json:"traceparent"`
-	StartDeadlineAt            pgtype.Timestamptz `json:"start_deadline_at"`
-	BuildLeaseExpiresAt        pgtype.Timestamptz `json:"build_lease_expires_at"`
+	OrgID                            pgtype.UUID        `json:"org_id"`
+	DeploymentID                     pgtype.UUID        `json:"deployment_id"`
+	BuildRegionID                    string             `json:"build_region_id"`
+	LeaseSequence                    int64              `json:"lease_sequence"`
+	BuildLeaseID                     pgtype.UUID        `json:"build_lease_id"`
+	WorkerGroupID                    string             `json:"worker_group_id"`
+	BuildWorkerInstanceID            pgtype.UUID        `json:"build_worker_instance_id"`
+	WorkerEpoch                      int64              `json:"worker_epoch"`
+	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
+	RequestedCpuMillis               int64              `json:"requested_cpu_millis"`
+	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
+	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
+	RequestedBuildExecutors          int32              `json:"requested_build_executors"`
+	BuildSnapshot                    []byte             `json:"build_snapshot"`
+	TraceID                          pgtype.Text        `json:"trace_id"`
+	SpanID                           pgtype.Text        `json:"span_id"`
+	ParentSpanID                     pgtype.Text        `json:"parent_span_id"`
+	Traceparent                      pgtype.Text        `json:"traceparent"`
+	StartDeadlineAt                  pgtype.Timestamptz `json:"start_deadline_at"`
+	BuildLeaseExpiresAt              pgtype.Timestamptz `json:"build_lease_expires_at"`
 }
 
 type LeaseQueuedDeploymentBuildRow struct {
-	ID                         pgtype.UUID        `json:"id"`
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	ProjectID                  pgtype.UUID        `json:"project_id"`
-	EnvironmentID              pgtype.UUID        `json:"environment_id"`
-	DeploymentID               pgtype.UUID        `json:"deployment_id"`
-	BuildRegionID              string             `json:"build_region_id"`
-	LeaseSequence              int64              `json:"lease_sequence"`
-	WorkerGroupID              string             `json:"worker_group_id"`
-	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch                int64              `json:"worker_epoch"`
-	WorkerProtocolVersion      string             `json:"worker_protocol_version"`
-	RequestedCpuMillis         int64              `json:"requested_cpu_millis"`
-	RequestedMemoryBytes       int64              `json:"requested_memory_bytes"`
-	RequestedWorkloadDiskBytes int64              `json:"requested_workload_disk_bytes"`
-	RequestedScratchBytes      int64              `json:"requested_scratch_bytes"`
-	RequestedBuildExecutors    int32              `json:"requested_build_executors"`
-	BuildSnapshot              []byte             `json:"build_snapshot"`
-	TraceID                    pgtype.Text        `json:"trace_id"`
-	SpanID                     pgtype.Text        `json:"span_id"`
-	ParentSpanID               pgtype.Text        `json:"parent_span_id"`
-	Traceparent                pgtype.Text        `json:"traceparent"`
-	State                      string             `json:"state"`
-	AssignedAt                 pgtype.Timestamptz `json:"assigned_at"`
-	StartDeadlineAt            pgtype.Timestamptz `json:"start_deadline_at"`
-	ClaimedAt                  pgtype.Timestamptz `json:"claimed_at"`
-	StartedAt                  pgtype.Timestamptz `json:"started_at"`
-	RenewedAt                  pgtype.Timestamptz `json:"renewed_at"`
-	ExpiresAt                  pgtype.Timestamptz `json:"expires_at"`
-	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
-	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
-	TerminalError              []byte             `json:"terminal_error"`
-	TerminalRequestFingerprint pgtype.Text        `json:"terminal_request_fingerprint"`
-	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
-	Version                    string             `json:"version"`
-	ApiVersion                 string             `json:"api_version"`
-	ContentHash                string             `json:"content_hash"`
-	BuildNodeVersion           string             `json:"build_node_version"`
-	BuildRuntimeDigest         []byte             `json:"build_runtime_digest"`
-	BuildToolchainDigest       []byte             `json:"build_toolchain_digest"`
-	BuildContractVersion       string             `json:"build_contract_version"`
-	DeploymentSourceDigest     string             `json:"deployment_source_digest"`
-	SourceSizeBytes            int64              `json:"source_size_bytes"`
-	SourceMediaType            string             `json:"source_media_type"`
-	DeploymentStatus           string             `json:"deployment_status"`
+	ID                               pgtype.UUID        `json:"id"`
+	OrgID                            pgtype.UUID        `json:"org_id"`
+	ProjectID                        pgtype.UUID        `json:"project_id"`
+	EnvironmentID                    pgtype.UUID        `json:"environment_id"`
+	DeploymentID                     pgtype.UUID        `json:"deployment_id"`
+	BuildRegionID                    string             `json:"build_region_id"`
+	LeaseSequence                    int64              `json:"lease_sequence"`
+	WorkerGroupID                    string             `json:"worker_group_id"`
+	WorkerInstanceID                 pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                      int64              `json:"worker_epoch"`
+	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
+	RequestedCpuMillis               int64              `json:"requested_cpu_millis"`
+	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
+	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
+	RequestedBuildExecutors          int32              `json:"requested_build_executors"`
+	BuildSnapshot                    []byte             `json:"build_snapshot"`
+	TraceID                          pgtype.Text        `json:"trace_id"`
+	SpanID                           pgtype.Text        `json:"span_id"`
+	ParentSpanID                     pgtype.Text        `json:"parent_span_id"`
+	Traceparent                      pgtype.Text        `json:"traceparent"`
+	State                            string             `json:"state"`
+	AssignedAt                       pgtype.Timestamptz `json:"assigned_at"`
+	StartDeadlineAt                  pgtype.Timestamptz `json:"start_deadline_at"`
+	ClaimedAt                        pgtype.Timestamptz `json:"claimed_at"`
+	StartedAt                        pgtype.Timestamptz `json:"started_at"`
+	RenewedAt                        pgtype.Timestamptz `json:"renewed_at"`
+	ExpiresAt                        pgtype.Timestamptz `json:"expires_at"`
+	TerminalAt                       pgtype.Timestamptz `json:"terminal_at"`
+	TerminalReasonCode               pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError                    []byte             `json:"terminal_error"`
+	TerminalRequestFingerprint       pgtype.Text        `json:"terminal_request_fingerprint"`
+	CreatedAt                        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                        pgtype.Timestamptz `json:"updated_at"`
+	Version                          string             `json:"version"`
+	ApiVersion                       string             `json:"api_version"`
+	ContentHash                      string             `json:"content_hash"`
+	BuildNodeVersion                 string             `json:"build_node_version"`
+	BuildRuntimeDigest               []byte             `json:"build_runtime_digest"`
+	BuildToolchainDigest             []byte             `json:"build_toolchain_digest"`
+	BuildContractVersion             string             `json:"build_contract_version"`
+	DeploymentSourceDigest           string             `json:"deployment_source_digest"`
+	SourceSizeBytes                  int64              `json:"source_size_bytes"`
+	SourceMediaType                  string             `json:"source_media_type"`
+	DeploymentStatus                 string             `json:"deployment_status"`
 }
 
 func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueuedDeploymentBuildParams) (LeaseQueuedDeploymentBuildRow, error) {
@@ -1822,8 +1808,7 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 		arg.WorkerProtocolVersion,
 		arg.RequestedCpuMillis,
 		arg.RequestedMemoryBytes,
-		arg.RequestedWorkloadDiskBytes,
-		arg.RequestedScratchBytes,
+		arg.RequestedGuestEphemeralDiskBytes,
 		arg.RequestedBuildExecutors,
 		arg.BuildSnapshot,
 		arg.TraceID,
@@ -1848,8 +1833,7 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 		&i.WorkerProtocolVersion,
 		&i.RequestedCpuMillis,
 		&i.RequestedMemoryBytes,
-		&i.RequestedWorkloadDiskBytes,
-		&i.RequestedScratchBytes,
+		&i.RequestedGuestEphemeralDiskBytes,
 		&i.RequestedBuildExecutors,
 		&i.BuildSnapshot,
 		&i.TraceID,
@@ -2157,7 +2141,7 @@ WITH locked_deployment AS MATERIALIZED (
        AND deployments.id = $4
      FOR UPDATE
 ), locked_lease AS MATERIALIZED (
-    SELECT deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.worker_protocol_version, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_workload_disk_bytes, deployment_build_leases.requested_scratch_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at
+    SELECT deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.worker_protocol_version, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_guest_ephemeral_disk_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at
       FROM deployment_build_leases
       JOIN locked_deployment
         ON locked_deployment.org_id = deployment_build_leases.org_id
@@ -2172,7 +2156,7 @@ WITH locked_deployment AS MATERIALIZED (
        AND deployment_build_leases.worker_protocol_version = $10
      FOR UPDATE OF deployment_build_leases
 )
-SELECT locked_lease.id, locked_lease.org_id, locked_lease.project_id, locked_lease.environment_id, locked_lease.deployment_id, locked_lease.build_region_id, locked_lease.lease_sequence, locked_lease.worker_group_id, locked_lease.worker_instance_id, locked_lease.worker_epoch, locked_lease.worker_protocol_version, locked_lease.requested_cpu_millis, locked_lease.requested_memory_bytes, locked_lease.requested_workload_disk_bytes, locked_lease.requested_scratch_bytes, locked_lease.requested_build_executors, locked_lease.build_snapshot, locked_lease.trace_id, locked_lease.span_id, locked_lease.parent_span_id, locked_lease.traceparent, locked_lease.state, locked_lease.assigned_at, locked_lease.start_deadline_at, locked_lease.claimed_at, locked_lease.started_at, locked_lease.renewed_at, locked_lease.expires_at, locked_lease.terminal_at, locked_lease.terminal_reason_code, locked_lease.terminal_error, locked_lease.terminal_request_fingerprint, locked_lease.created_at, locked_lease.updated_at,
+SELECT locked_lease.id, locked_lease.org_id, locked_lease.project_id, locked_lease.environment_id, locked_lease.deployment_id, locked_lease.build_region_id, locked_lease.lease_sequence, locked_lease.worker_group_id, locked_lease.worker_instance_id, locked_lease.worker_epoch, locked_lease.worker_protocol_version, locked_lease.requested_cpu_millis, locked_lease.requested_memory_bytes, locked_lease.requested_guest_ephemeral_disk_bytes, locked_lease.requested_build_executors, locked_lease.build_snapshot, locked_lease.trace_id, locked_lease.span_id, locked_lease.parent_span_id, locked_lease.traceparent, locked_lease.state, locked_lease.assigned_at, locked_lease.start_deadline_at, locked_lease.claimed_at, locked_lease.started_at, locked_lease.renewed_at, locked_lease.expires_at, locked_lease.terminal_at, locked_lease.terminal_reason_code, locked_lease.terminal_error, locked_lease.terminal_request_fingerprint, locked_lease.created_at, locked_lease.updated_at,
        locked_deployment.status AS deployment_status,
        locked_deployment.current_build_lease_id,
        locked_deployment.build_node_version,
@@ -2213,54 +2197,53 @@ type LockDeploymentBuildTerminalFenceParams struct {
 }
 
 type LockDeploymentBuildTerminalFenceRow struct {
-	ID                         pgtype.UUID        `json:"id"`
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	ProjectID                  pgtype.UUID        `json:"project_id"`
-	EnvironmentID              pgtype.UUID        `json:"environment_id"`
-	DeploymentID               pgtype.UUID        `json:"deployment_id"`
-	BuildRegionID              string             `json:"build_region_id"`
-	LeaseSequence              int64              `json:"lease_sequence"`
-	WorkerGroupID              string             `json:"worker_group_id"`
-	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch                int64              `json:"worker_epoch"`
-	WorkerProtocolVersion      string             `json:"worker_protocol_version"`
-	RequestedCpuMillis         int64              `json:"requested_cpu_millis"`
-	RequestedMemoryBytes       int64              `json:"requested_memory_bytes"`
-	RequestedWorkloadDiskBytes int64              `json:"requested_workload_disk_bytes"`
-	RequestedScratchBytes      int64              `json:"requested_scratch_bytes"`
-	RequestedBuildExecutors    int32              `json:"requested_build_executors"`
-	BuildSnapshot              []byte             `json:"build_snapshot"`
-	TraceID                    pgtype.Text        `json:"trace_id"`
-	SpanID                     pgtype.Text        `json:"span_id"`
-	ParentSpanID               pgtype.Text        `json:"parent_span_id"`
-	Traceparent                pgtype.Text        `json:"traceparent"`
-	State                      string             `json:"state"`
-	AssignedAt                 pgtype.Timestamptz `json:"assigned_at"`
-	StartDeadlineAt            pgtype.Timestamptz `json:"start_deadline_at"`
-	ClaimedAt                  pgtype.Timestamptz `json:"claimed_at"`
-	StartedAt                  pgtype.Timestamptz `json:"started_at"`
-	RenewedAt                  pgtype.Timestamptz `json:"renewed_at"`
-	ExpiresAt                  pgtype.Timestamptz `json:"expires_at"`
-	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
-	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
-	TerminalError              []byte             `json:"terminal_error"`
-	TerminalRequestFingerprint pgtype.Text        `json:"terminal_request_fingerprint"`
-	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
-	DeploymentStatus           string             `json:"deployment_status"`
-	CurrentBuildLeaseID        pgtype.UUID        `json:"current_build_lease_id"`
-	BuildNodeVersion           string             `json:"build_node_version"`
-	BuildRuntimeDigest         []byte             `json:"build_runtime_digest"`
-	BuildToolchainDigest       []byte             `json:"build_toolchain_digest"`
-	BuildManagerName           string             `json:"build_manager_name"`
-	BuildManagerVersion        string             `json:"build_manager_version"`
-	BuildManagerIntegrity      pgtype.Text        `json:"build_manager_integrity"`
-	BuildManagerDigest         []byte             `json:"build_manager_digest"`
-	BuildContractVersion       string             `json:"build_contract_version"`
-	DeploymentSourceArtifactID pgtype.UUID        `json:"deployment_source_artifact_id"`
-	DeploymentSourceDigest     string             `json:"deployment_source_digest"`
-	DeploymentSourceSizeBytes  int64              `json:"deployment_source_size_bytes"`
-	DeploymentSourceMediaType  string             `json:"deployment_source_media_type"`
+	ID                               pgtype.UUID        `json:"id"`
+	OrgID                            pgtype.UUID        `json:"org_id"`
+	ProjectID                        pgtype.UUID        `json:"project_id"`
+	EnvironmentID                    pgtype.UUID        `json:"environment_id"`
+	DeploymentID                     pgtype.UUID        `json:"deployment_id"`
+	BuildRegionID                    string             `json:"build_region_id"`
+	LeaseSequence                    int64              `json:"lease_sequence"`
+	WorkerGroupID                    string             `json:"worker_group_id"`
+	WorkerInstanceID                 pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                      int64              `json:"worker_epoch"`
+	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
+	RequestedCpuMillis               int64              `json:"requested_cpu_millis"`
+	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
+	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
+	RequestedBuildExecutors          int32              `json:"requested_build_executors"`
+	BuildSnapshot                    []byte             `json:"build_snapshot"`
+	TraceID                          pgtype.Text        `json:"trace_id"`
+	SpanID                           pgtype.Text        `json:"span_id"`
+	ParentSpanID                     pgtype.Text        `json:"parent_span_id"`
+	Traceparent                      pgtype.Text        `json:"traceparent"`
+	State                            string             `json:"state"`
+	AssignedAt                       pgtype.Timestamptz `json:"assigned_at"`
+	StartDeadlineAt                  pgtype.Timestamptz `json:"start_deadline_at"`
+	ClaimedAt                        pgtype.Timestamptz `json:"claimed_at"`
+	StartedAt                        pgtype.Timestamptz `json:"started_at"`
+	RenewedAt                        pgtype.Timestamptz `json:"renewed_at"`
+	ExpiresAt                        pgtype.Timestamptz `json:"expires_at"`
+	TerminalAt                       pgtype.Timestamptz `json:"terminal_at"`
+	TerminalReasonCode               pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError                    []byte             `json:"terminal_error"`
+	TerminalRequestFingerprint       pgtype.Text        `json:"terminal_request_fingerprint"`
+	CreatedAt                        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                        pgtype.Timestamptz `json:"updated_at"`
+	DeploymentStatus                 string             `json:"deployment_status"`
+	CurrentBuildLeaseID              pgtype.UUID        `json:"current_build_lease_id"`
+	BuildNodeVersion                 string             `json:"build_node_version"`
+	BuildRuntimeDigest               []byte             `json:"build_runtime_digest"`
+	BuildToolchainDigest             []byte             `json:"build_toolchain_digest"`
+	BuildManagerName                 string             `json:"build_manager_name"`
+	BuildManagerVersion              string             `json:"build_manager_version"`
+	BuildManagerIntegrity            pgtype.Text        `json:"build_manager_integrity"`
+	BuildManagerDigest               []byte             `json:"build_manager_digest"`
+	BuildContractVersion             string             `json:"build_contract_version"`
+	DeploymentSourceArtifactID       pgtype.UUID        `json:"deployment_source_artifact_id"`
+	DeploymentSourceDigest           string             `json:"deployment_source_digest"`
+	DeploymentSourceSizeBytes        int64              `json:"deployment_source_size_bytes"`
+	DeploymentSourceMediaType        string             `json:"deployment_source_media_type"`
 }
 
 func (q *Queries) LockDeploymentBuildTerminalFence(ctx context.Context, arg LockDeploymentBuildTerminalFenceParams) (LockDeploymentBuildTerminalFenceRow, error) {
@@ -2291,8 +2274,7 @@ func (q *Queries) LockDeploymentBuildTerminalFence(ctx context.Context, arg Lock
 		&i.WorkerProtocolVersion,
 		&i.RequestedCpuMillis,
 		&i.RequestedMemoryBytes,
-		&i.RequestedWorkloadDiskBytes,
-		&i.RequestedScratchBytes,
+		&i.RequestedGuestEphemeralDiskBytes,
 		&i.RequestedBuildExecutors,
 		&i.BuildSnapshot,
 		&i.TraceID,
@@ -2339,7 +2321,7 @@ WITH locked_group AS MATERIALIZED (
        AND worker_groups.allows_build
      FOR UPDATE
 )
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at,
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_guest_ephemeral_disk_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at,
        runtime_identities.rootfs_digest,
        runtime_identities.runtime_abi,
        runtime_identities.runtime_arch
@@ -2365,57 +2347,55 @@ type LockDeploymentBuildWorkerCertificationParams struct {
 }
 
 type LockDeploymentBuildWorkerCertificationRow struct {
-	ID                          pgtype.UUID        `json:"id"`
-	ResourceID                  string             `json:"resource_id"`
-	WorkerGroupID               string             `json:"worker_group_id"`
-	AttestationFingerprint      string             `json:"attestation_fingerprint"`
-	State                       string             `json:"state"`
-	ClaimVersion                int64              `json:"claim_version"`
-	CurrentEpoch                pgtype.Int8        `json:"current_epoch"`
-	CurrentServiceID            pgtype.UUID        `json:"current_service_id"`
-	ProtocolVersion             string             `json:"protocol_version"`
-	SupervisorVersion           string             `json:"supervisor_version"`
-	SupportsRun                 bool               `json:"supports_run"`
-	SupportsBuild               bool               `json:"supports_build"`
-	RuntimeIdentityID           pgtype.Text        `json:"runtime_identity_id"`
-	SubstrateFormat             string             `json:"substrate_format"`
-	SubstrateBuilderAbi         string             `json:"substrate_builder_abi"`
-	SubstrateLayoutAbi          string             `json:"substrate_layout_abi"`
-	CertifiedCpuMillis          int64              `json:"certified_cpu_millis"`
-	CertifiedMemoryBytes        int64              `json:"certified_memory_bytes"`
-	CertifiedWorkloadDiskBytes  int64              `json:"certified_workload_disk_bytes"`
-	CertifiedScratchBytes       int64              `json:"certified_scratch_bytes"`
-	CertifiedBuildCacheBytes    int64              `json:"certified_build_cache_bytes"`
-	CertifiedArtifactCacheBytes int64              `json:"certified_artifact_cache_bytes"`
-	CertifiedHugepagesBytes     int64              `json:"certified_hugepages_bytes"`
-	CertifiedCheckpointBytes    int64              `json:"certified_checkpoint_bytes"`
-	PerVmCpuMillis              int64              `json:"per_vm_cpu_millis"`
-	PerVmMemoryBytes            int64              `json:"per_vm_memory_bytes"`
-	PerVmWorkloadDiskBytes      int64              `json:"per_vm_workload_disk_bytes"`
-	PerVmScratchBytes           int64              `json:"per_vm_scratch_bytes"`
-	MaxVmSlots                  int32              `json:"max_vm_slots"`
-	MaxRunConsumers             int32              `json:"max_run_consumers"`
-	MaxBuildExecutors           int32              `json:"max_build_executors"`
-	MaxRuntimeStarts            int32              `json:"max_runtime_starts"`
-	CertificationProfile        string             `json:"certification_profile"`
-	CertificationFingerprint    string             `json:"certification_fingerprint"`
-	EpochStartedAt              pgtype.Timestamptz `json:"epoch_started_at"`
-	StartupInventoryEpoch       pgtype.Int8        `json:"startup_inventory_epoch"`
-	StartupInventoryEvidence    []byte             `json:"startup_inventory_evidence"`
-	DrainCleanupFingerprint     pgtype.Text        `json:"drain_cleanup_fingerprint"`
-	DrainCleanupEvidence        []byte             `json:"drain_cleanup_evidence"`
-	CertifiedAt                 pgtype.Timestamptz `json:"certified_at"`
-	ActivatedAt                 pgtype.Timestamptz `json:"activated_at"`
-	DrainingAt                  pgtype.Timestamptz `json:"draining_at"`
-	DisabledAt                  pgtype.Timestamptz `json:"disabled_at"`
-	LostAt                      pgtype.Timestamptz `json:"lost_at"`
-	TerminationClaimedAt        pgtype.Timestamptz `json:"termination_claimed_at"`
-	ProviderTerminatedAt        pgtype.Timestamptz `json:"provider_terminated_at"`
-	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
-	RootfsDigest                pgtype.Text        `json:"rootfs_digest"`
-	RuntimeABI                  pgtype.Text        `json:"runtime_abi"`
-	RuntimeArch                 pgtype.Text        `json:"runtime_arch"`
+	ID                               pgtype.UUID        `json:"id"`
+	ResourceID                       string             `json:"resource_id"`
+	WorkerGroupID                    string             `json:"worker_group_id"`
+	AttestationFingerprint           string             `json:"attestation_fingerprint"`
+	State                            string             `json:"state"`
+	ClaimVersion                     int64              `json:"claim_version"`
+	CurrentEpoch                     pgtype.Int8        `json:"current_epoch"`
+	CurrentServiceID                 pgtype.UUID        `json:"current_service_id"`
+	ProtocolVersion                  string             `json:"protocol_version"`
+	SupervisorVersion                string             `json:"supervisor_version"`
+	SupportsRun                      bool               `json:"supports_run"`
+	SupportsBuild                    bool               `json:"supports_build"`
+	RuntimeIdentityID                pgtype.Text        `json:"runtime_identity_id"`
+	SubstrateFormat                  string             `json:"substrate_format"`
+	SubstrateBuilderAbi              string             `json:"substrate_builder_abi"`
+	SubstrateLayoutAbi               string             `json:"substrate_layout_abi"`
+	CertifiedCpuMillis               int64              `json:"certified_cpu_millis"`
+	CertifiedMemoryBytes             int64              `json:"certified_memory_bytes"`
+	CertifiedGuestEphemeralDiskBytes int64              `json:"certified_guest_ephemeral_disk_bytes"`
+	CertifiedBuildCacheBytes         int64              `json:"certified_build_cache_bytes"`
+	CertifiedArtifactCacheBytes      int64              `json:"certified_artifact_cache_bytes"`
+	CertifiedHugepagesBytes          int64              `json:"certified_hugepages_bytes"`
+	CertifiedCheckpointBytes         int64              `json:"certified_checkpoint_bytes"`
+	PerVmCpuMillis                   int64              `json:"per_vm_cpu_millis"`
+	PerVmMemoryBytes                 int64              `json:"per_vm_memory_bytes"`
+	PerVmGuestEphemeralDiskBytes     int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
+	MaxVmSlots                       int32              `json:"max_vm_slots"`
+	MaxRunConsumers                  int32              `json:"max_run_consumers"`
+	MaxBuildExecutors                int32              `json:"max_build_executors"`
+	MaxRuntimeStarts                 int32              `json:"max_runtime_starts"`
+	CertificationProfile             string             `json:"certification_profile"`
+	CertificationFingerprint         string             `json:"certification_fingerprint"`
+	EpochStartedAt                   pgtype.Timestamptz `json:"epoch_started_at"`
+	StartupInventoryEpoch            pgtype.Int8        `json:"startup_inventory_epoch"`
+	StartupInventoryEvidence         []byte             `json:"startup_inventory_evidence"`
+	DrainCleanupFingerprint          pgtype.Text        `json:"drain_cleanup_fingerprint"`
+	DrainCleanupEvidence             []byte             `json:"drain_cleanup_evidence"`
+	CertifiedAt                      pgtype.Timestamptz `json:"certified_at"`
+	ActivatedAt                      pgtype.Timestamptz `json:"activated_at"`
+	DrainingAt                       pgtype.Timestamptz `json:"draining_at"`
+	DisabledAt                       pgtype.Timestamptz `json:"disabled_at"`
+	LostAt                           pgtype.Timestamptz `json:"lost_at"`
+	TerminationClaimedAt             pgtype.Timestamptz `json:"termination_claimed_at"`
+	ProviderTerminatedAt             pgtype.Timestamptz `json:"provider_terminated_at"`
+	CreatedAt                        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                        pgtype.Timestamptz `json:"updated_at"`
+	RootfsDigest                     pgtype.Text        `json:"rootfs_digest"`
+	RuntimeABI                       pgtype.Text        `json:"runtime_abi"`
+	RuntimeArch                      pgtype.Text        `json:"runtime_arch"`
 }
 
 func (q *Queries) LockDeploymentBuildWorkerCertification(ctx context.Context, arg LockDeploymentBuildWorkerCertificationParams) (LockDeploymentBuildWorkerCertificationRow, error) {
@@ -2445,16 +2425,14 @@ func (q *Queries) LockDeploymentBuildWorkerCertification(ctx context.Context, ar
 		&i.SubstrateLayoutAbi,
 		&i.CertifiedCpuMillis,
 		&i.CertifiedMemoryBytes,
-		&i.CertifiedWorkloadDiskBytes,
-		&i.CertifiedScratchBytes,
+		&i.CertifiedGuestEphemeralDiskBytes,
 		&i.CertifiedBuildCacheBytes,
 		&i.CertifiedArtifactCacheBytes,
 		&i.CertifiedHugepagesBytes,
 		&i.CertifiedCheckpointBytes,
 		&i.PerVmCpuMillis,
 		&i.PerVmMemoryBytes,
-		&i.PerVmWorkloadDiskBytes,
-		&i.PerVmScratchBytes,
+		&i.PerVmGuestEphemeralDiskBytes,
 		&i.MaxVmSlots,
 		&i.MaxRunConsumers,
 		&i.MaxBuildExecutors,
@@ -2869,7 +2847,7 @@ WITH target_deployment AS MATERIALIZED (
        AND deployment_build_leases.worker_instance_id = $9
        AND deployment_build_leases.worker_epoch = $10
        AND deployment_build_leases.state IN ('assigned', 'starting')
-    RETURNING deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.worker_protocol_version, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_workload_disk_bytes, deployment_build_leases.requested_scratch_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at
+    RETURNING deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.worker_protocol_version, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_guest_ephemeral_disk_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at
 ), transitioned AS (
     UPDATE deployments
        SET current_build_lease_id = CASE
@@ -2895,7 +2873,7 @@ WITH target_deployment AS MATERIALIZED (
        AND deployments.current_build_lease_id = rejected.id
     RETURNING deployments.id
 )
-SELECT rejected.id, rejected.org_id, rejected.project_id, rejected.environment_id, rejected.deployment_id, rejected.build_region_id, rejected.lease_sequence, rejected.worker_group_id, rejected.worker_instance_id, rejected.worker_epoch, rejected.worker_protocol_version, rejected.requested_cpu_millis, rejected.requested_memory_bytes, rejected.requested_workload_disk_bytes, rejected.requested_scratch_bytes, rejected.requested_build_executors, rejected.build_snapshot, rejected.trace_id, rejected.span_id, rejected.parent_span_id, rejected.traceparent, rejected.state, rejected.assigned_at, rejected.start_deadline_at, rejected.claimed_at, rejected.started_at, rejected.renewed_at, rejected.expires_at, rejected.terminal_at, rejected.terminal_reason_code, rejected.terminal_error, rejected.terminal_request_fingerprint, rejected.created_at, rejected.updated_at
+SELECT rejected.id, rejected.org_id, rejected.project_id, rejected.environment_id, rejected.deployment_id, rejected.build_region_id, rejected.lease_sequence, rejected.worker_group_id, rejected.worker_instance_id, rejected.worker_epoch, rejected.worker_protocol_version, rejected.requested_cpu_millis, rejected.requested_memory_bytes, rejected.requested_guest_ephemeral_disk_bytes, rejected.requested_build_executors, rejected.build_snapshot, rejected.trace_id, rejected.span_id, rejected.parent_span_id, rejected.traceparent, rejected.state, rejected.assigned_at, rejected.start_deadline_at, rejected.claimed_at, rejected.started_at, rejected.renewed_at, rejected.expires_at, rejected.terminal_at, rejected.terminal_reason_code, rejected.terminal_error, rejected.terminal_request_fingerprint, rejected.created_at, rejected.updated_at
   FROM rejected
  WHERE EXISTS (SELECT 1 FROM transitioned)
 `
@@ -2914,40 +2892,39 @@ type RejectDeploymentBuildLeaseParams struct {
 }
 
 type RejectDeploymentBuildLeaseRow struct {
-	ID                         pgtype.UUID        `json:"id"`
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	ProjectID                  pgtype.UUID        `json:"project_id"`
-	EnvironmentID              pgtype.UUID        `json:"environment_id"`
-	DeploymentID               pgtype.UUID        `json:"deployment_id"`
-	BuildRegionID              string             `json:"build_region_id"`
-	LeaseSequence              int64              `json:"lease_sequence"`
-	WorkerGroupID              string             `json:"worker_group_id"`
-	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch                int64              `json:"worker_epoch"`
-	WorkerProtocolVersion      string             `json:"worker_protocol_version"`
-	RequestedCpuMillis         int64              `json:"requested_cpu_millis"`
-	RequestedMemoryBytes       int64              `json:"requested_memory_bytes"`
-	RequestedWorkloadDiskBytes int64              `json:"requested_workload_disk_bytes"`
-	RequestedScratchBytes      int64              `json:"requested_scratch_bytes"`
-	RequestedBuildExecutors    int32              `json:"requested_build_executors"`
-	BuildSnapshot              []byte             `json:"build_snapshot"`
-	TraceID                    pgtype.Text        `json:"trace_id"`
-	SpanID                     pgtype.Text        `json:"span_id"`
-	ParentSpanID               pgtype.Text        `json:"parent_span_id"`
-	Traceparent                pgtype.Text        `json:"traceparent"`
-	State                      string             `json:"state"`
-	AssignedAt                 pgtype.Timestamptz `json:"assigned_at"`
-	StartDeadlineAt            pgtype.Timestamptz `json:"start_deadline_at"`
-	ClaimedAt                  pgtype.Timestamptz `json:"claimed_at"`
-	StartedAt                  pgtype.Timestamptz `json:"started_at"`
-	RenewedAt                  pgtype.Timestamptz `json:"renewed_at"`
-	ExpiresAt                  pgtype.Timestamptz `json:"expires_at"`
-	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
-	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
-	TerminalError              []byte             `json:"terminal_error"`
-	TerminalRequestFingerprint pgtype.Text        `json:"terminal_request_fingerprint"`
-	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	ID                               pgtype.UUID        `json:"id"`
+	OrgID                            pgtype.UUID        `json:"org_id"`
+	ProjectID                        pgtype.UUID        `json:"project_id"`
+	EnvironmentID                    pgtype.UUID        `json:"environment_id"`
+	DeploymentID                     pgtype.UUID        `json:"deployment_id"`
+	BuildRegionID                    string             `json:"build_region_id"`
+	LeaseSequence                    int64              `json:"lease_sequence"`
+	WorkerGroupID                    string             `json:"worker_group_id"`
+	WorkerInstanceID                 pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                      int64              `json:"worker_epoch"`
+	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
+	RequestedCpuMillis               int64              `json:"requested_cpu_millis"`
+	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
+	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
+	RequestedBuildExecutors          int32              `json:"requested_build_executors"`
+	BuildSnapshot                    []byte             `json:"build_snapshot"`
+	TraceID                          pgtype.Text        `json:"trace_id"`
+	SpanID                           pgtype.Text        `json:"span_id"`
+	ParentSpanID                     pgtype.Text        `json:"parent_span_id"`
+	Traceparent                      pgtype.Text        `json:"traceparent"`
+	State                            string             `json:"state"`
+	AssignedAt                       pgtype.Timestamptz `json:"assigned_at"`
+	StartDeadlineAt                  pgtype.Timestamptz `json:"start_deadline_at"`
+	ClaimedAt                        pgtype.Timestamptz `json:"claimed_at"`
+	StartedAt                        pgtype.Timestamptz `json:"started_at"`
+	RenewedAt                        pgtype.Timestamptz `json:"renewed_at"`
+	ExpiresAt                        pgtype.Timestamptz `json:"expires_at"`
+	TerminalAt                       pgtype.Timestamptz `json:"terminal_at"`
+	TerminalReasonCode               pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError                    []byte             `json:"terminal_error"`
+	TerminalRequestFingerprint       pgtype.Text        `json:"terminal_request_fingerprint"`
+	CreatedAt                        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                        pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) RejectDeploymentBuildLease(ctx context.Context, arg RejectDeploymentBuildLeaseParams) (RejectDeploymentBuildLeaseRow, error) {
@@ -2978,8 +2955,7 @@ func (q *Queries) RejectDeploymentBuildLease(ctx context.Context, arg RejectDepl
 		&i.WorkerProtocolVersion,
 		&i.RequestedCpuMillis,
 		&i.RequestedMemoryBytes,
-		&i.RequestedWorkloadDiskBytes,
-		&i.RequestedScratchBytes,
+		&i.RequestedGuestEphemeralDiskBytes,
 		&i.RequestedBuildExecutors,
 		&i.BuildSnapshot,
 		&i.TraceID,
@@ -3013,7 +2989,7 @@ UPDATE deployment_build_leases
    AND worker_instance_id = $7
    AND worker_epoch = $8
    AND state = 'running' AND expires_at > now()
-RETURNING id, org_id, project_id, environment_id, deployment_id, build_region_id, lease_sequence, worker_group_id, worker_instance_id, worker_epoch, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes, requested_build_executors, build_snapshot, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, build_region_id, lease_sequence, worker_group_id, worker_instance_id, worker_epoch, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_build_executors, build_snapshot, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type RenewDeploymentBuildLeaseParams struct {
@@ -3053,8 +3029,7 @@ func (q *Queries) RenewDeploymentBuildLease(ctx context.Context, arg RenewDeploy
 		&i.WorkerProtocolVersion,
 		&i.RequestedCpuMillis,
 		&i.RequestedMemoryBytes,
-		&i.RequestedWorkloadDiskBytes,
-		&i.RequestedScratchBytes,
+		&i.RequestedGuestEphemeralDiskBytes,
 		&i.RequestedBuildExecutors,
 		&i.BuildSnapshot,
 		&i.TraceID,
@@ -3103,7 +3078,7 @@ WITH locked_deployments AS MATERIALIZED (
        AND deployment_build_leases.id = locked_deployments.current_build_lease_id
        AND deployment_build_leases.state IN ('assigned','starting','running')
        AND deployment_build_leases.expires_at <= now()
-    RETURNING deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.worker_protocol_version, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_workload_disk_bytes, deployment_build_leases.requested_scratch_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at
+    RETURNING deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.worker_protocol_version, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_guest_ephemeral_disk_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at
 ), meter_event AS (
     INSERT INTO meter_events (
         org_id, project_id, environment_id, deployment_id,
@@ -3120,16 +3095,14 @@ WITH locked_deployments AS MATERIALIZED (
            jsonb_build_object('outcome','lease_lost_requeued',
                'cpu_millis',expired.requested_cpu_millis,
                'memory_bytes',expired.requested_memory_bytes,
-               'workload_disk_bytes',expired.requested_workload_disk_bytes,
-               'scratch_bytes',expired.requested_scratch_bytes,
+               'guest_ephemeral_disk_bytes',expired.requested_guest_ephemeral_disk_bytes,
                'build_executors',expired.requested_build_executors),
            'build-lease-lost:' || expired.id::text,
            jsonb_build_object('quantity',GREATEST((extract(epoch FROM (expired.expires_at - expired.started_at)) * 1000)::bigint, 0),
                'unit','milliseconds','measured_from',expired.started_at,'measured_to',expired.expires_at,
                'outcome','lease_lost_requeued','cpu_millis',expired.requested_cpu_millis,
                'memory_bytes',expired.requested_memory_bytes,
-               'workload_disk_bytes',expired.requested_workload_disk_bytes,
-               'scratch_bytes',expired.requested_scratch_bytes,
+               'guest_ephemeral_disk_bytes',expired.requested_guest_ephemeral_disk_bytes,
                'build_executors',expired.requested_build_executors)::text
       FROM expired
      WHERE expired.started_at IS NOT NULL AND expired.started_at < expired.expires_at
@@ -3197,29 +3170,27 @@ UPDATE deployment_build_leases
    AND worker_group_id = $6
    AND worker_instance_id = $7
 	   AND worker_epoch = $8
-	   AND requested_workload_disk_bytes = $9
-	   AND requested_scratch_bytes = $10
-	   AND requested_cpu_millis = $11
-	   AND requested_memory_bytes = $12
-	   AND requested_build_executors = $13
+	   AND requested_guest_ephemeral_disk_bytes = $9
+	   AND requested_cpu_millis = $10
+	   AND requested_memory_bytes = $11
+	   AND requested_build_executors = $12
 	   AND state = 'starting' AND start_deadline_at > now() AND expires_at > now()
-RETURNING id, org_id, project_id, environment_id, deployment_id, build_region_id, lease_sequence, worker_group_id, worker_instance_id, worker_epoch, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes, requested_build_executors, build_snapshot, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, build_region_id, lease_sequence, worker_group_id, worker_instance_id, worker_epoch, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_build_executors, build_snapshot, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type StartDeploymentBuildLeaseParams struct {
-	ExpiresAt                  pgtype.Timestamptz `json:"expires_at"`
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	DeploymentID               pgtype.UUID        `json:"deployment_id"`
-	BuildLeaseID               pgtype.UUID        `json:"build_lease_id"`
-	LeaseSequence              int64              `json:"lease_sequence"`
-	WorkerGroupID              string             `json:"worker_group_id"`
-	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch                int64              `json:"worker_epoch"`
-	RequestedWorkloadDiskBytes int64              `json:"requested_workload_disk_bytes"`
-	RequestedScratchBytes      int64              `json:"requested_scratch_bytes"`
-	RequestedCpuMillis         int64              `json:"requested_cpu_millis"`
-	RequestedMemoryBytes       int64              `json:"requested_memory_bytes"`
-	RequestedBuildExecutors    int32              `json:"requested_build_executors"`
+	ExpiresAt                        pgtype.Timestamptz `json:"expires_at"`
+	OrgID                            pgtype.UUID        `json:"org_id"`
+	DeploymentID                     pgtype.UUID        `json:"deployment_id"`
+	BuildLeaseID                     pgtype.UUID        `json:"build_lease_id"`
+	LeaseSequence                    int64              `json:"lease_sequence"`
+	WorkerGroupID                    string             `json:"worker_group_id"`
+	WorkerInstanceID                 pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                      int64              `json:"worker_epoch"`
+	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
+	RequestedCpuMillis               int64              `json:"requested_cpu_millis"`
+	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
+	RequestedBuildExecutors          int32              `json:"requested_build_executors"`
 }
 
 func (q *Queries) StartDeploymentBuildLease(ctx context.Context, arg StartDeploymentBuildLeaseParams) (DeploymentBuildLease, error) {
@@ -3232,8 +3203,7 @@ func (q *Queries) StartDeploymentBuildLease(ctx context.Context, arg StartDeploy
 		arg.WorkerGroupID,
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
-		arg.RequestedWorkloadDiskBytes,
-		arg.RequestedScratchBytes,
+		arg.RequestedGuestEphemeralDiskBytes,
 		arg.RequestedCpuMillis,
 		arg.RequestedMemoryBytes,
 		arg.RequestedBuildExecutors,
@@ -3253,8 +3223,7 @@ func (q *Queries) StartDeploymentBuildLease(ctx context.Context, arg StartDeploy
 		&i.WorkerProtocolVersion,
 		&i.RequestedCpuMillis,
 		&i.RequestedMemoryBytes,
-		&i.RequestedWorkloadDiskBytes,
-		&i.RequestedScratchBytes,
+		&i.RequestedGuestEphemeralDiskBytes,
 		&i.RequestedBuildExecutors,
 		&i.BuildSnapshot,
 		&i.TraceID,

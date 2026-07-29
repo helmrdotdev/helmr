@@ -21,15 +21,14 @@ type PostgresSource struct {
 	pool             *pgxpool.Pool
 	role             string
 	expectedCapacity Capacity
-	queuedRunScratch uint64
 	timeout          time.Duration
 }
 
-func NewPostgresSource(pool *pgxpool.Pool, role string, expected Capacity, queuedRunScratch uint64, timeout time.Duration) (*PostgresSource, error) {
-	if pool == nil || (role != "run" && role != "build") || expected.isZero() || timeout <= 0 || (role == "run" && queuedRunScratch == 0) || (role == "build" && queuedRunScratch != 0) {
+func NewPostgresSource(pool *pgxpool.Pool, role string, expected Capacity, timeout time.Duration) (*PostgresSource, error) {
+	if pool == nil || (role != "run" && role != "build") || expected.isZero() || timeout <= 0 {
 		return nil, errors.New("fleet Postgres source requires pool, run/build role, capacity, and positive timeout")
 	}
-	return &PostgresSource{pool: pool, role: role, expectedCapacity: expected, queuedRunScratch: queuedRunScratch, timeout: timeout}, nil
+	return &PostgresSource{pool: pool, role: role, expectedCapacity: expected, timeout: timeout}, nil
 }
 
 func (s *PostgresSource) Snapshot(ctx context.Context, groupID string) (GroupSnapshot, error) {
@@ -54,7 +53,7 @@ func (s *PostgresSource) Snapshot(ctx context.Context, groupID string) (GroupSna
 			return GroupSnapshot{}, err
 		}
 		for _, row := range rows {
-			bucket, err := runDemandBucket(row, s.queuedRunScratch)
+			bucket, err := runDemandBucket(row)
 			if err != nil {
 				return GroupSnapshot{}, err
 			}
@@ -291,8 +290,8 @@ func (s *PostgresSource) mapWorker(row db.ListFleetWorkersRow, proof db.GetFleet
 	}
 	actual := Capacity{
 		MilliCPU: positive(row.CertifiedCpuMillis), MemoryBytes: positive(row.CertifiedMemoryBytes),
-		WorkloadDiskBytes: positive(row.CertifiedWorkloadDiskBytes), ScratchBytes: positive(row.CertifiedScratchBytes),
-		BuildCacheBytes: positive(row.CertifiedBuildCacheBytes), ArtifactCacheBytes: positive(row.CertifiedArtifactCacheBytes),
+		GuestEphemeralDiskBytes: positive(row.CertifiedGuestEphemeralDiskBytes),
+		BuildCacheBytes:         positive(row.CertifiedBuildCacheBytes), ArtifactCacheBytes: positive(row.CertifiedArtifactCacheBytes),
 		VMSlots: positive(int64(row.MaxVmSlots)), BuildExecutors: positive(int64(row.MaxBuildExecutors)),
 	}
 	if state == WorkerActive && !capacityAtLeast(actual, s.expectedCapacity) {
@@ -313,29 +312,25 @@ func appendDemandBucket(demand *Demand, state string, bucket WorkloadBucket) {
 	}
 }
 
-func runDemandBucket(row db.ListFleetRunDemandRow, queuedScratch uint64) (WorkloadBucket, error) {
-	values := []int64{row.MilliCpu, int64(row.MemoryBytes), int64(row.WorkloadDiskBytes), row.ScratchBytes, row.VmSlots, row.DemandCount}
+func runDemandBucket(row db.ListFleetRunDemandRow) (WorkloadBucket, error) {
+	values := []int64{row.MilliCpu, int64(row.MemoryBytes), int64(row.GuestEphemeralDiskBytes), row.VmSlots, row.DemandCount}
 	if err := requirePositiveDemand(values); err != nil {
 		return WorkloadBucket{}, err
 	}
-	scratch := uint64(row.ScratchBytes)
-	if row.DemandState == "queued" {
-		scratch = queuedScratch
-	}
 	return WorkloadBucket{CompatibilityKey: row.CompatibilityKey, Count: uint64(row.DemandCount), Shape: Capacity{
-		MilliCPU: uint64(row.MilliCpu), MemoryBytes: uint64(row.MemoryBytes), WorkloadDiskBytes: uint64(row.WorkloadDiskBytes),
-		ScratchBytes: scratch, VMSlots: uint64(row.VmSlots),
+		MilliCPU: uint64(row.MilliCpu), MemoryBytes: uint64(row.MemoryBytes), GuestEphemeralDiskBytes: uint64(row.GuestEphemeralDiskBytes),
+		VMSlots: uint64(row.VmSlots),
 	}}, nil
 }
 
 func buildDemandBucket(groupID string, row db.ListFleetBuildDemandRow) (WorkloadBucket, error) {
-	values := []int64{row.MilliCpu, row.MemoryBytes, row.WorkloadDiskBytes, row.ScratchBytes, row.BuildExecutors, row.DemandCount}
+	values := []int64{row.MilliCpu, row.MemoryBytes, row.GuestEphemeralDiskBytes, row.BuildExecutors, row.DemandCount}
 	if err := requirePositiveDemand(values); err != nil {
 		return WorkloadBucket{}, err
 	}
 	return WorkloadBucket{CompatibilityKey: groupID, Count: uint64(row.DemandCount), Shape: Capacity{
-		MilliCPU: uint64(row.MilliCpu), MemoryBytes: uint64(row.MemoryBytes), WorkloadDiskBytes: uint64(row.WorkloadDiskBytes),
-		ScratchBytes: uint64(row.ScratchBytes), BuildExecutors: uint64(row.BuildExecutors),
+		MilliCPU: uint64(row.MilliCpu), MemoryBytes: uint64(row.MemoryBytes), GuestEphemeralDiskBytes: uint64(row.GuestEphemeralDiskBytes),
+		BuildExecutors: uint64(row.BuildExecutors),
 	}}, nil
 }
 
@@ -360,7 +355,7 @@ func positive(value int64) uint64 {
 
 func capacityAtLeast(actual, expected Capacity) bool {
 	return actual.MilliCPU >= expected.MilliCPU && actual.MemoryBytes >= expected.MemoryBytes &&
-		actual.WorkloadDiskBytes >= expected.WorkloadDiskBytes && actual.ScratchBytes >= expected.ScratchBytes &&
+		actual.GuestEphemeralDiskBytes >= expected.GuestEphemeralDiskBytes &&
 		actual.BuildCacheBytes >= expected.BuildCacheBytes && actual.ArtifactCacheBytes >= expected.ArtifactCacheBytes &&
 		actual.VMSlots >= expected.VMSlots && actual.BuildExecutors >= expected.BuildExecutors
 }

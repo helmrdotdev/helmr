@@ -78,7 +78,7 @@ CAPTURED_PREFLIGHT_SQL="$sql_file" \
 
 assert_contains "$sql_file" "certified_cpu_millis >= 3000" "CPU requirement should be embedded in worker fit check"
 assert_contains "$sql_file" "certified_memory_bytes >= 4096 * 1048576::bigint" "memory requirement should be embedded in worker fit check"
-assert_contains "$sql_file" "certified_workload_disk_bytes >= 32768 * 1048576::bigint" "disk requirement should be embedded in worker fit check"
+assert_contains "$sql_file" "certified_guest_ephemeral_disk_bytes >= 32768 * 1048576::bigint" "disk requirement should be embedded in worker fit check"
 assert_contains "$sql_file" "max_vm_slots >= 2" "slot requirement should be embedded in worker fit check"
 assert_contains "$sql_file" "required vector % milli CPU, % memory MiB, % disk MiB, % slot(s)', 3000, 4096, 32768, 2" "required vector diagnostic should include all dimensions"
 assert_contains "$sql_file" "IF 0 = 1 THEN" "deployment freshness should be optional by default"

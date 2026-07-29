@@ -243,7 +243,7 @@ func TestBuildConsumerStartsLeaseInsideRegisteredWork(t *testing.T) {
 		buildLease: api.WorkerDeploymentBuildLease{
 			ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
 			RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
-			RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 32 << 30,
+			RequestedGuestEphemeralDiskBytes: 32 << 30,
 		},
 		deployment: testWorkerDeploymentBuild(),
 	}
@@ -285,13 +285,13 @@ func TestDefaultBuildEnvelopeFitsDefaultBuildWorker(t *testing.T) {
 	capabilities := testCapabilities()
 	capabilities.MaxBuildExecutors = 1
 	capabilities.SupportsBuild = true
-	capabilities.VMMaxScratchBytes = 20 << 30
-	capabilities.ScratchBytes = 32 << 30
+	capabilities.VMGuestEphemeralDiskBytes = 32 << 30
+	capabilities.GuestEphemeralDiskBytes = 32 << 30
 	client := &consumerTestClient{
 		buildLease: api.WorkerDeploymentBuildLease{
 			ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
 			RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
-			RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 32 << 30,
+			RequestedGuestEphemeralDiskBytes: 32 << 30,
 		},
 		deployment: testWorkerDeploymentBuild(),
 	}
@@ -317,7 +317,7 @@ func TestBuildPreStartRejectionsReturnSuccessfulNilWork(t *testing.T) {
 	validLease := api.WorkerDeploymentBuildLease{
 		ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
 		RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
-		RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 32 << 30,
+		RequestedGuestEphemeralDiskBytes: 32 << 30,
 	}
 	tests := []struct {
 		name        string
@@ -401,16 +401,15 @@ func TestBuildAdmissionIncludesRuntimeOccupancy(t *testing.T) {
 	capabilities := testCapabilities()
 	capabilities.MaxVCPUs = 3
 	capabilities.MaxMemoryMiB = 4096
-	capabilities.MaxDiskMiB = 2048
-	capabilities.VMMaxScratchBytes = 20 << 30
-	capabilities.ScratchBytes = 34 << 30
+	capabilities.VMGuestEphemeralDiskBytes = 32 << 30
+	capabilities.GuestEphemeralDiskBytes = 34 << 30
 	capabilities.MaxBuildExecutors = 1
 	capabilities.SupportsBuild = true
 	resources := testCapacity(t, capabilities)
 	runtimeKey := capacity.Key{Kind: "runtime", Epoch: 1, ID: "runtime-1"}
 	created, err := resources.Reserve(runtimeKey, capacity.Vector{
 		CPUMillis: 1500, MemoryBytes: 1536 << 20,
-		WorkloadDiskBytes: 1536 << 20, ScratchBytes: 1536 << 20, VMSlots: 1,
+		GuestEphemeralDiskBytes: 1536 << 20, VMSlots: 1,
 	})
 	if err != nil || !created {
 		t.Fatalf("reserve runtime = (%t, %v)", created, err)
@@ -419,7 +418,7 @@ func TestBuildAdmissionIncludesRuntimeOccupancy(t *testing.T) {
 		buildLease: api.WorkerDeploymentBuildLease{
 			ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
 			RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
-			RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 32 << 30,
+			RequestedGuestEphemeralDiskBytes: 32 << 30,
 		},
 		deployment: testWorkerDeploymentBuild(),
 	}
@@ -499,7 +498,7 @@ func TestBuildCleanupAmbiguityRetainsReservationAndTerminatesWorker(t *testing.T
 	lease := api.WorkerDeploymentBuildLease{
 		ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
 		RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
-		RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 32 << 30,
+		RequestedGuestEphemeralDiskBytes: 32 << 30,
 	}
 	client := &consumerTestClient{
 		buildLease: lease,
@@ -549,7 +548,7 @@ func TestBuildServiceFailureRetainsReservationAndTerminatesWorker(t *testing.T) 
 	lease := api.WorkerDeploymentBuildLease{
 		ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
 		RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
-		RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 32 << 30,
+		RequestedGuestEphemeralDiskBytes: 32 << 30,
 	}
 	client := &consumerTestClient{
 		buildLease: lease,
@@ -593,7 +592,7 @@ func TestCanceledBuildReleasesReservation(t *testing.T) {
 	lease := api.WorkerDeploymentBuildLease{
 		ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
 		RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
-		RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 32 << 30,
+		RequestedGuestEphemeralDiskBytes: 32 << 30,
 	}
 	client := &consumerTestClient{
 		buildLease: lease,

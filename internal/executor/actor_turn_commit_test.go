@@ -45,7 +45,7 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 	claim.Lease.NetworkSlotGeneration = 1
 	claim.Lease.RequestedCPUMillis = 1
 	claim.Lease.RequestedMemoryBytes = 1
-	claim.Lease.RequestedWorkloadDiskBytes = 1
+	claim.Lease.RequestedGuestEphemeralDiskBytes = 1
 	claim.Lease.RequestedExecutionSlots = 1
 	claim.Lease.MaxActiveDurationMs = 1
 	target, err := workspace.EmptyResetTarget("version-1", workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest})

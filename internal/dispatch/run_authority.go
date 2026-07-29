@@ -70,11 +70,10 @@ type runPlacementAuthority struct {
 }
 
 type runResources struct {
-	cpuMillis      int64
-	memoryBytes    int64
-	workloadDisk   int64
-	scratchBytes   int64
-	executionSlots int32
+	cpuMillis               int64
+	memoryBytes             int64
+	guestEphemeralDiskBytes int64
+	executionSlots          int32
 }
 
 func (a runPlacementAuthority) retainedHandoffRuntimeID() (pgtype.UUID, bool) {
@@ -622,8 +621,7 @@ SELECT source_runtime.id,
    AND source_runtime.program_deployment_id = $10
    AND source_runtime.reserved_cpu_millis = source_lease.requested_cpu_millis
    AND source_runtime.reserved_memory_bytes = source_lease.requested_memory_bytes
-   AND source_runtime.reserved_workload_disk_bytes = source_lease.requested_workload_disk_bytes
-   AND source_runtime.reserved_scratch_bytes = source_lease.requested_scratch_bytes
+   AND source_runtime.reserved_guest_ephemeral_disk_bytes = source_lease.requested_guest_ephemeral_disk_bytes
    AND source_runtime.reserved_execution_slots = source_lease.requested_execution_slots
   JOIN runtime_substrates
     ON runtime_substrates.id = source_runtime.runtime_substrate_id
@@ -1317,11 +1315,10 @@ func normalizeRunResources(
 		return runResources{}, errors.New("Workspace resources are outside the Run placement domain")
 	}
 	return runResources{
-		cpuMillis:      resources.MilliCPU,
-		memoryBytes:    resources.MemoryMiB * mebibyte,
-		workloadDisk:   compute.WorkspaceWorkloadDiskMiB * mebibyte,
-		scratchBytes:   0,
-		executionSlots: 1,
+		cpuMillis:               resources.MilliCPU,
+		memoryBytes:             resources.MemoryMiB * mebibyte,
+		guestEphemeralDiskBytes: compute.WorkspaceGuestEphemeralDiskMiB * mebibyte,
+		executionSlots:          1,
 	}, nil
 }
 

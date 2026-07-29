@@ -114,31 +114,29 @@ type workerFleetJSON struct {
 	AutoscalingGroup  string   `json:"autoscaling_group"`
 	CompatibilityKeys []string `json:"compatibility_keys"`
 	InstanceCapacity  struct {
-		MilliCPU           uint64 `json:"milli_cpu"`
-		MemoryBytes        uint64 `json:"memory_bytes"`
-		WorkloadDiskBytes  uint64 `json:"workload_disk_bytes"`
-		ScratchBytes       uint64 `json:"scratch_bytes"`
-		BuildCacheBytes    uint64 `json:"build_cache_bytes"`
-		ArtifactCacheBytes uint64 `json:"artifact_cache_bytes"`
-		VMSlots            uint64 `json:"vm_slots"`
-		BuildExecutors     uint64 `json:"build_executors"`
+		MilliCPU                uint64 `json:"milli_cpu"`
+		MemoryBytes             uint64 `json:"memory_bytes"`
+		GuestEphemeralDiskBytes uint64 `json:"guest_ephemeral_disk_bytes"`
+		BuildCacheBytes         uint64 `json:"build_cache_bytes"`
+		ArtifactCacheBytes      uint64 `json:"artifact_cache_bytes"`
+		VMSlots                 uint64 `json:"vm_slots"`
+		BuildExecutors          uint64 `json:"build_executors"`
 	} `json:"instance_capacity"`
-	MinWorkers                int    `json:"min_workers"`
-	WarmWorkers               int    `json:"warm_workers"`
-	MaxWorkers                int    `json:"max_workers"`
-	MaxScaleOutPerCycle       int    `json:"max_scale_out_per_cycle"`
-	MaxPendingWorkers         int    `json:"max_pending_workers"`
-	MaxPackingItems           int    `json:"max_packing_items"`
-	QueuedRunScratchBytes     uint64 `json:"queued_run_scratch_bytes"`
-	ControllerIntervalSeconds int    `json:"controller_interval_seconds"`
-	ScaleOutCooldownSeconds   int    `json:"scale_out_cooldown_seconds"`
-	ScaleInCooldownSeconds    int    `json:"scale_in_cooldown_seconds"`
-	ScaleInHysteresisSeconds  int    `json:"scale_in_hysteresis_seconds"`
-	StaleWorkerTimeoutSeconds int    `json:"stale_worker_timeout_seconds"`
-	ReadinessTimeoutSeconds   int    `json:"readiness_timeout_seconds"`
-	DrainTimeoutSeconds       int    `json:"drain_timeout_seconds"`
-	EmergencyStop             bool   `json:"emergency_stop"`
-	MetricIntervalSeconds     int    `json:"metric_interval_seconds"`
+	MinWorkers                int  `json:"min_workers"`
+	WarmWorkers               int  `json:"warm_workers"`
+	MaxWorkers                int  `json:"max_workers"`
+	MaxScaleOutPerCycle       int  `json:"max_scale_out_per_cycle"`
+	MaxPendingWorkers         int  `json:"max_pending_workers"`
+	MaxPackingItems           int  `json:"max_packing_items"`
+	ControllerIntervalSeconds int  `json:"controller_interval_seconds"`
+	ScaleOutCooldownSeconds   int  `json:"scale_out_cooldown_seconds"`
+	ScaleInCooldownSeconds    int  `json:"scale_in_cooldown_seconds"`
+	ScaleInHysteresisSeconds  int  `json:"scale_in_hysteresis_seconds"`
+	StaleWorkerTimeoutSeconds int  `json:"stale_worker_timeout_seconds"`
+	ReadinessTimeoutSeconds   int  `json:"readiness_timeout_seconds"`
+	DrainTimeoutSeconds       int  `json:"drain_timeout_seconds"`
+	EmergencyStop             bool `json:"emergency_stop"`
+	MetricIntervalSeconds     int  `json:"metric_interval_seconds"`
 }
 
 func parseWorkerFleets(raw string) ([]WorkerFleet, error) {
@@ -207,17 +205,11 @@ func validateWorkerFleet(value workerFleetJSON) (WorkerFleet, error) {
 		return WorkerFleet{}, errors.New("scale-out step and pending limit must be bounded by max_workers")
 	}
 	capacity := value.InstanceCapacity
-	if capacity.MilliCPU == 0 || capacity.MemoryBytes == 0 || capacity.WorkloadDiskBytes == 0 || capacity.ScratchBytes == 0 {
-		return WorkerFleet{}, errors.New("certified cpu, memory, workload disk, and scratch capacity must be positive")
+	if capacity.MilliCPU == 0 || capacity.MemoryBytes == 0 || capacity.GuestEphemeralDiskBytes == 0 {
+		return WorkerFleet{}, errors.New("certified cpu, memory, and guest ephemeral disk capacity must be positive")
 	}
 	if value.Role == "run" && capacity.VMSlots == 0 {
 		return WorkerFleet{}, errors.New("run fleet vm_slots must be positive")
-	}
-	if value.Role == "run" && (value.QueuedRunScratchBytes == 0 || value.QueuedRunScratchBytes > capacity.ScratchBytes) {
-		return WorkerFleet{}, errors.New("run fleet queued_run_scratch_bytes must be positive and fit instance scratch capacity")
-	}
-	if value.Role == "build" && value.QueuedRunScratchBytes != 0 {
-		return WorkerFleet{}, errors.New("build fleet queued_run_scratch_bytes must be zero")
 	}
 	if value.Role == "build" && (capacity.BuildExecutors == 0 || capacity.BuildCacheBytes == 0 || capacity.ArtifactCacheBytes == 0) {
 		return WorkerFleet{}, errors.New("build fleet executors and cache capacities must be positive")
@@ -263,11 +255,10 @@ func validateWorkerFleet(value workerFleetJSON) (WorkerFleet, error) {
 	}
 	return WorkerFleet{
 		GroupID: value.GroupID, Role: value.Role, ASGName: value.AutoscalingGroup, CompatibilityKeys: keys,
-		MilliCPU: capacity.MilliCPU, MemoryBytes: capacity.MemoryBytes, WorkloadDiskBytes: capacity.WorkloadDiskBytes,
-		ScratchBytes: capacity.ScratchBytes, BuildCacheBytes: capacity.BuildCacheBytes, ArtifactCacheBytes: capacity.ArtifactCacheBytes,
+		MilliCPU: capacity.MilliCPU, MemoryBytes: capacity.MemoryBytes, GuestEphemeralDiskBytes: capacity.GuestEphemeralDiskBytes,
+		BuildCacheBytes: capacity.BuildCacheBytes, ArtifactCacheBytes: capacity.ArtifactCacheBytes,
 		VMSlots: capacity.VMSlots, BuildExecutors: capacity.BuildExecutors, MinWorkers: value.MinWorkers, WarmWorkers: value.WarmWorkers,
-		QueuedRunScratchBytes: value.QueuedRunScratchBytes,
-		MaxWorkers:            value.MaxWorkers, MaxScaleOutPerCycle: value.MaxScaleOutPerCycle, MaxPending: value.MaxPendingWorkers, MaxPackingItems: value.MaxPackingItems,
+		MaxWorkers: value.MaxWorkers, MaxScaleOutPerCycle: value.MaxScaleOutPerCycle, MaxPending: value.MaxPendingWorkers, MaxPackingItems: value.MaxPackingItems,
 		ScaleOutCooldown: *durations[0].out, ScaleInCooldown: *durations[1].out, ScaleInHysteresis: *durations[2].out,
 		StaleWorkerTimeout: *durations[3].out, ReadinessTimeout: *durations[4].out, DrainTimeout: *durations[5].out,
 		EmergencyStop:      value.EmergencyStop,

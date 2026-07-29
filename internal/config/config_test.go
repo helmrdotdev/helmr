@@ -869,9 +869,9 @@ func TestWorkerFleetConfigIsStrict(t *testing.T) {
 	raw := `[{
 		"group_id":"run-workers","role":"run","autoscaling_group":"helmr-run",
 		"compatibility_keys":["run-workers"],
-		"instance_capacity":{"milli_cpu":8000,"memory_bytes":17179869184,"workload_disk_bytes":1000000000,
-		"scratch_bytes":2000000000,"build_cache_bytes":0,"artifact_cache_bytes":0,"vm_slots":4,"build_executors":0},
-		"min_workers":0,"warm_workers":0,"max_workers":4,"max_scale_out_per_cycle":2,"queued_run_scratch_bytes":500000000,
+		"instance_capacity":{"milli_cpu":8000,"memory_bytes":17179869184,"guest_ephemeral_disk_bytes":1000000000,
+		"build_cache_bytes":0,"artifact_cache_bytes":0,"vm_slots":4,"build_executors":0},
+		"min_workers":0,"warm_workers":0,"max_workers":4,"max_scale_out_per_cycle":2,
 		"max_pending_workers":2,"max_packing_items":10000,"scale_out_cooldown_seconds":10,
 		"scale_in_cooldown_seconds":60,"scale_in_hysteresis_seconds":300,"stale_worker_timeout_seconds":120,
 		"readiness_timeout_seconds":600,"drain_timeout_seconds":900,

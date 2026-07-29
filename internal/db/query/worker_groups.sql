@@ -4,8 +4,8 @@ WITH desired_group AS (
         id, region_id, name, description, state, enrollment_policy_fingerprint,
         allowed_attestation_fingerprints, launch_attestation_fingerprint,
         allows_run, allows_build, protocol_version,
-        required_cpu_millis, required_memory_bytes, required_workload_disk_bytes,
-        required_scratch_bytes, required_build_cache_bytes, required_artifact_cache_bytes,
+        required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes,
+        required_build_cache_bytes, required_artifact_cache_bytes,
         required_vm_slots, required_build_executors
     ) VALUES (
         sqlc.arg(id), sqlc.arg(region_id), sqlc.arg(name), sqlc.arg(description),
@@ -13,7 +13,7 @@ WITH desired_group AS (
         sqlc.narg(launch_attestation_fingerprint),
         sqlc.arg(allows_run), sqlc.arg(allows_build), sqlc.arg(protocol_version),
         sqlc.arg(required_cpu_millis), sqlc.arg(required_memory_bytes),
-        sqlc.arg(required_workload_disk_bytes), sqlc.arg(required_scratch_bytes),
+        sqlc.arg(required_guest_ephemeral_disk_bytes),
         sqlc.arg(required_build_cache_bytes), sqlc.arg(required_artifact_cache_bytes),
         sqlc.arg(required_vm_slots), sqlc.arg(required_build_executors)
     )
@@ -25,8 +25,7 @@ WITH desired_group AS (
                  OR worker_groups.allows_build IS DISTINCT FROM EXCLUDED.allows_build
                  OR worker_groups.required_cpu_millis IS DISTINCT FROM EXCLUDED.required_cpu_millis
                  OR worker_groups.required_memory_bytes IS DISTINCT FROM EXCLUDED.required_memory_bytes
-                 OR worker_groups.required_workload_disk_bytes IS DISTINCT FROM EXCLUDED.required_workload_disk_bytes
-                 OR worker_groups.required_scratch_bytes IS DISTINCT FROM EXCLUDED.required_scratch_bytes
+                 OR worker_groups.required_guest_ephemeral_disk_bytes IS DISTINCT FROM EXCLUDED.required_guest_ephemeral_disk_bytes
                  OR worker_groups.required_build_cache_bytes IS DISTINCT FROM EXCLUDED.required_build_cache_bytes
                  OR worker_groups.required_artifact_cache_bytes IS DISTINCT FROM EXCLUDED.required_artifact_cache_bytes
                  OR worker_groups.required_vm_slots IS DISTINCT FROM EXCLUDED.required_vm_slots
@@ -40,8 +39,7 @@ WITH desired_group AS (
            allows_run = EXCLUDED.allows_run, allows_build = EXCLUDED.allows_build,
            required_cpu_millis = EXCLUDED.required_cpu_millis,
            required_memory_bytes = EXCLUDED.required_memory_bytes,
-           required_workload_disk_bytes = EXCLUDED.required_workload_disk_bytes,
-           required_scratch_bytes = EXCLUDED.required_scratch_bytes,
+           required_guest_ephemeral_disk_bytes = EXCLUDED.required_guest_ephemeral_disk_bytes,
            required_build_cache_bytes = EXCLUDED.required_build_cache_bytes,
            required_artifact_cache_bytes = EXCLUDED.required_artifact_cache_bytes,
            required_vm_slots = EXCLUDED.required_vm_slots,
@@ -76,8 +74,7 @@ WITH desired_group AS (
            OR (worker_instances.state <> 'registering' AND (
                worker_instances.certified_cpu_millis < desired_group.required_cpu_millis
                OR worker_instances.certified_memory_bytes < desired_group.required_memory_bytes
-               OR worker_instances.certified_workload_disk_bytes < desired_group.required_workload_disk_bytes
-               OR worker_instances.certified_scratch_bytes < desired_group.required_scratch_bytes
+               OR worker_instances.certified_guest_ephemeral_disk_bytes < desired_group.required_guest_ephemeral_disk_bytes
                OR worker_instances.certified_build_cache_bytes < desired_group.required_build_cache_bytes
                OR worker_instances.certified_artifact_cache_bytes < desired_group.required_artifact_cache_bytes
                OR worker_instances.max_vm_slots < desired_group.required_vm_slots
@@ -264,8 +261,7 @@ WITH runtime AS (
        AND (NOT sqlc.arg(supports_build)::boolean OR worker_groups.allows_build)
        AND sqlc.arg(certified_cpu_millis)::bigint >= worker_groups.required_cpu_millis
        AND sqlc.arg(certified_memory_bytes)::bigint >= worker_groups.required_memory_bytes
-       AND sqlc.arg(certified_workload_disk_bytes)::bigint >= worker_groups.required_workload_disk_bytes
-       AND sqlc.arg(certified_scratch_bytes)::bigint >= worker_groups.required_scratch_bytes
+       AND sqlc.arg(certified_guest_ephemeral_disk_bytes)::bigint >= worker_groups.required_guest_ephemeral_disk_bytes
        AND sqlc.arg(certified_build_cache_bytes)::bigint >= worker_groups.required_build_cache_bytes
        AND sqlc.arg(certified_artifact_cache_bytes)::bigint >= worker_groups.required_artifact_cache_bytes
        AND sqlc.arg(max_vm_slots)::integer >= worker_groups.required_vm_slots
@@ -302,16 +298,14 @@ WITH runtime AS (
            substrate_layout_abi = sqlc.arg(substrate_layout_abi),
            certified_cpu_millis = sqlc.arg(certified_cpu_millis),
            certified_memory_bytes = sqlc.arg(certified_memory_bytes),
-           certified_workload_disk_bytes = sqlc.arg(certified_workload_disk_bytes),
-           certified_scratch_bytes = sqlc.arg(certified_scratch_bytes),
+           certified_guest_ephemeral_disk_bytes = sqlc.arg(certified_guest_ephemeral_disk_bytes),
            certified_build_cache_bytes = sqlc.arg(certified_build_cache_bytes),
            certified_artifact_cache_bytes = sqlc.arg(certified_artifact_cache_bytes),
            certified_hugepages_bytes = sqlc.arg(certified_hugepages_bytes),
            certified_checkpoint_bytes = sqlc.arg(certified_checkpoint_bytes),
            per_vm_cpu_millis = sqlc.arg(per_vm_cpu_millis),
            per_vm_memory_bytes = sqlc.arg(per_vm_memory_bytes),
-           per_vm_workload_disk_bytes = sqlc.arg(per_vm_workload_disk_bytes),
-           per_vm_scratch_bytes = sqlc.arg(per_vm_scratch_bytes),
+           per_vm_guest_ephemeral_disk_bytes = sqlc.arg(per_vm_guest_ephemeral_disk_bytes),
            max_vm_slots = sqlc.arg(max_vm_slots), max_run_consumers = sqlc.arg(max_run_consumers),
            max_build_executors = sqlc.arg(max_build_executors),
            max_runtime_starts = sqlc.arg(max_runtime_starts),
@@ -326,12 +320,12 @@ WITH runtime AS (
 ), observation AS (
     INSERT INTO worker_observations (
         worker_instance_id, worker_epoch, cpu_pressure_bps, memory_pressure_bps,
-        workload_disk_pressure_bps, scratch_pressure_bps, build_cache_pressure_bps,
+        guest_ephemeral_disk_pressure_bps, build_cache_pressure_bps,
         artifact_cache_pressure_bps, checkpoint_pressure_bps, leaked_slot_count,
         run_queue_depth, build_queue_depth, runtime_start_queue_depth, health_details,
         observed_at
     )
-    SELECT certified.id, certified.current_epoch, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    SELECT certified.id, certified.current_epoch, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
            '{}'::jsonb, now() FROM certified
     ON CONFLICT (worker_instance_id, worker_epoch) DO NOTHING
     RETURNING worker_instance_id
@@ -352,7 +346,7 @@ WITH target AS (
 )
 INSERT INTO worker_observations (
     worker_instance_id, worker_epoch, cpu_pressure_bps, memory_pressure_bps,
-    workload_disk_pressure_bps, scratch_pressure_bps, build_cache_pressure_bps,
+    guest_ephemeral_disk_pressure_bps, build_cache_pressure_bps,
     artifact_cache_pressure_bps, checkpoint_pressure_bps, leaked_slot_count,
     run_queue_depth, build_queue_depth, runtime_start_queue_depth,
     run_paused_reason, build_paused_reason, runtime_paused_reason,
@@ -360,7 +354,7 @@ INSERT INTO worker_observations (
 )
 SELECT target.id, target.current_epoch,
        sqlc.arg(cpu_pressure_bps), sqlc.arg(memory_pressure_bps),
-       sqlc.arg(workload_disk_pressure_bps), sqlc.arg(scratch_pressure_bps),
+       sqlc.arg(guest_ephemeral_disk_pressure_bps),
        sqlc.arg(build_cache_pressure_bps), sqlc.arg(artifact_cache_pressure_bps),
        sqlc.arg(checkpoint_pressure_bps), sqlc.arg(leaked_slot_count),
        sqlc.arg(run_queue_depth), sqlc.arg(build_queue_depth),
@@ -371,8 +365,7 @@ SELECT target.id, target.current_epoch,
 ON CONFLICT (worker_instance_id, worker_epoch) DO UPDATE
    SET cpu_pressure_bps = EXCLUDED.cpu_pressure_bps,
        memory_pressure_bps = EXCLUDED.memory_pressure_bps,
-       workload_disk_pressure_bps = EXCLUDED.workload_disk_pressure_bps,
-       scratch_pressure_bps = EXCLUDED.scratch_pressure_bps,
+       guest_ephemeral_disk_pressure_bps = EXCLUDED.guest_ephemeral_disk_pressure_bps,
        build_cache_pressure_bps = EXCLUDED.build_cache_pressure_bps,
        artifact_cache_pressure_bps = EXCLUDED.artifact_cache_pressure_bps,
        checkpoint_pressure_bps = EXCLUDED.checkpoint_pressure_bps,
@@ -406,24 +399,21 @@ UPDATE worker_instances
 	AND worker_instances.substrate_layout_abi = sqlc.arg(substrate_layout_abi)
 	AND worker_instances.certified_cpu_millis = sqlc.arg(certified_cpu_millis)
 	AND worker_instances.certified_memory_bytes = sqlc.arg(certified_memory_bytes)
-	AND worker_instances.certified_workload_disk_bytes = sqlc.arg(certified_workload_disk_bytes)
-	AND worker_instances.certified_scratch_bytes = sqlc.arg(certified_scratch_bytes)
+	AND worker_instances.certified_guest_ephemeral_disk_bytes = sqlc.arg(certified_guest_ephemeral_disk_bytes)
 	AND worker_instances.certified_build_cache_bytes = sqlc.arg(certified_build_cache_bytes)
 	AND worker_instances.certified_artifact_cache_bytes = sqlc.arg(certified_artifact_cache_bytes)
 	AND worker_instances.certified_hugepages_bytes = sqlc.arg(certified_hugepages_bytes)
 	AND worker_instances.certified_checkpoint_bytes = sqlc.arg(certified_checkpoint_bytes)
 	AND worker_instances.per_vm_cpu_millis = sqlc.arg(per_vm_cpu_millis)
 	AND worker_instances.per_vm_memory_bytes = sqlc.arg(per_vm_memory_bytes)
-	AND worker_instances.per_vm_workload_disk_bytes = sqlc.arg(per_vm_workload_disk_bytes)
-	AND worker_instances.per_vm_scratch_bytes = sqlc.arg(per_vm_scratch_bytes)
+	AND worker_instances.per_vm_guest_ephemeral_disk_bytes = sqlc.arg(per_vm_guest_ephemeral_disk_bytes)
 	AND worker_instances.max_vm_slots = sqlc.arg(max_vm_slots)
 	AND worker_instances.max_run_consumers = sqlc.arg(max_run_consumers)
 	AND worker_instances.max_build_executors = sqlc.arg(max_build_executors)
 	AND worker_instances.max_runtime_starts = sqlc.arg(max_runtime_starts)
 	AND worker_instances.certified_cpu_millis >= worker_groups.required_cpu_millis
 	AND worker_instances.certified_memory_bytes >= worker_groups.required_memory_bytes
-	AND worker_instances.certified_workload_disk_bytes >= worker_groups.required_workload_disk_bytes
-	AND worker_instances.certified_scratch_bytes >= worker_groups.required_scratch_bytes
+	AND worker_instances.certified_guest_ephemeral_disk_bytes >= worker_groups.required_guest_ephemeral_disk_bytes
 	AND worker_instances.certified_build_cache_bytes >= worker_groups.required_build_cache_bytes
 	AND worker_instances.certified_artifact_cache_bytes >= worker_groups.required_artifact_cache_bytes
 	AND worker_instances.max_vm_slots >= worker_groups.required_vm_slots

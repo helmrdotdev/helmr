@@ -47,16 +47,16 @@ func admissionDiskFloorMiB(supportsBuild bool, vmScratchMiB, reserveMiB int64) i
 	return reserveMiB + vmScratchMiB
 }
 
-func capScratchCapacity(capacity compute.WorkerDiskCapacity, reserve, available uint64) (compute.WorkerDiskCapacity, error) {
+func capGuestEphemeralDiskCapacity(capacity compute.WorkerDiskCapacity, reserve, available uint64) (compute.WorkerDiskCapacity, error) {
 	if err := capacity.Validate(); err != nil {
 		return compute.WorkerDiskCapacity{}, err
 	}
-	if reserve == 0 || reserve >= uint64(capacity.HostScratchBytes) {
-		return compute.WorkerDiskCapacity{}, errors.New("worker scratch reserve consumes aggregate capacity")
+	if reserve == 0 || reserve >= uint64(capacity.HostGuestEphemeralDiskBytes) {
+		return compute.WorkerDiskCapacity{}, errors.New("worker disk reserve consumes aggregate capacity")
 	}
-	capacity.HostScratchBytes -= int64(reserve)
-	if available < uint64(capacity.HostScratchBytes) {
-		capacity.HostScratchBytes = int64(available)
+	capacity.HostGuestEphemeralDiskBytes -= int64(reserve)
+	if available < uint64(capacity.HostGuestEphemeralDiskBytes) {
+		capacity.HostGuestEphemeralDiskBytes = int64(available)
 	}
 	if err := capacity.Validate(); err != nil {
 		return compute.WorkerDiskCapacity{}, err

@@ -474,8 +474,8 @@ func configureFleetControllers(ctx context.Context, cfg config.Dispatcher) ([]*f
 	for _, configured := range cfg.WorkerFleets {
 		capacity := fleet.Capacity{
 			MilliCPU: configured.MilliCPU, MemoryBytes: configured.MemoryBytes,
-			WorkloadDiskBytes: configured.WorkloadDiskBytes, ScratchBytes: configured.ScratchBytes,
-			BuildCacheBytes: configured.BuildCacheBytes, ArtifactCacheBytes: configured.ArtifactCacheBytes,
+			GuestEphemeralDiskBytes: configured.GuestEphemeralDiskBytes,
+			BuildCacheBytes:         configured.BuildCacheBytes, ArtifactCacheBytes: configured.ArtifactCacheBytes,
 			VMSlots: configured.VMSlots, BuildExecutors: configured.BuildExecutors,
 		}
 		planner, err := fleet.NewPlanner(fleet.Policy{
@@ -491,7 +491,7 @@ func configureFleetControllers(ctx context.Context, cfg config.Dispatcher) ([]*f
 			return nil, nil, fmt.Errorf("configure fleet planner for %q: %w", configured.GroupID, err)
 		}
 		queryTimeout := min(5*time.Second, configured.ControllerInterval)
-		source, err := fleet.NewPostgresSource(sourcePools[configured.Role], configured.Role, capacity, configured.QueuedRunScratchBytes, queryTimeout)
+		source, err := fleet.NewPostgresSource(sourcePools[configured.Role], configured.Role, capacity, queryTimeout)
 		if err != nil {
 			closePools()
 			return nil, nil, fmt.Errorf("configure fleet source for %q: %w", configured.GroupID, err)

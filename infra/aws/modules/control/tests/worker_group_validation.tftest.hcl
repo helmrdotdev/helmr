@@ -95,7 +95,7 @@ run "worker_group_requires_a_role" {
       launch_ami_id     = "ami-0123456789abcdef0", ami_ids = ["ami-0123456789abcdef0"]
       allows_run        = false, allows_build = false
       instance_capacity = {
-        milli_cpu         = 4000, memory_bytes = 8589934592, workload_disk_bytes = 34359738368, scratch_bytes = 34359738368
+        milli_cpu         = 4000, memory_bytes = 8589934592, guest_ephemeral_disk_bytes = 34359738368
         build_cache_bytes = 0, artifact_cache_bytes = 0, vm_slots = 0, build_executors = 0
       }
     }]
@@ -124,7 +124,7 @@ run "inactive_role_capacity_cannot_be_negative" {
       launch_ami_id     = "ami-0123456789abcdef0", ami_ids = ["ami-0123456789abcdef0"]
       allows_run        = true, allows_build = false
       instance_capacity = {
-        milli_cpu         = 4000, memory_bytes = 8589934592, workload_disk_bytes = 34359738368, scratch_bytes = 34359738368
+        milli_cpu         = 4000, memory_bytes = 8589934592, guest_ephemeral_disk_bytes = 34359738368
         build_cache_bytes = 0, artifact_cache_bytes = 0, vm_slots = 2, build_executors = -1
       }
     }]

@@ -108,14 +108,14 @@ INSERT INTO runtime_identities (
 			id, resource_id, worker_group_id, attestation_fingerprint, state,
 			current_epoch, current_service_id, protocol_version, supervisor_version, supports_build,
 			runtime_identity_id, certified_cpu_millis, certified_memory_bytes,
-    certified_workload_disk_bytes, certified_scratch_bytes,
-    per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes,
-    per_vm_scratch_bytes, max_build_executors, certification_profile,
+    certified_guest_ephemeral_disk_bytes, per_vm_cpu_millis,
+    per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes,
+    max_build_executors, certification_profile,
     certification_fingerprint, epoch_started_at, certified_at, activated_at
 ) VALUES (
 			$1, $2, $3, 'sha256:test-attestation', 'active',
-			1, $4, 'helmr.worker.v0', 'test-worker', true, $5, 3000, 4294967296, 1, 34359738368,
-			2000, 2147483648, 1, 21474836480, 1, 'build-v0',
+			1, $4, 'helmr.worker.v0', 'test-worker', true, $5, 3000, 4294967296, 34359738368,
+			2000, 2147483648, 34359738368, 1, 'build-v0',
 			'sha256:test-certification', now(), now(), now()
 )`, workerID, workerID.String(), f.groupID, serviceID, runtimeID)
 	} else {
@@ -132,10 +132,10 @@ INSERT INTO worker_instances (
 	mustDispatchExec(t, f.ctx, f.pool, `
 INSERT INTO worker_observations (
     worker_instance_id, worker_epoch, cpu_pressure_bps, memory_pressure_bps,
-    workload_disk_pressure_bps, scratch_pressure_bps, build_cache_pressure_bps,
+    guest_ephemeral_disk_pressure_bps, build_cache_pressure_bps,
     artifact_cache_pressure_bps, checkpoint_pressure_bps, leaked_slot_count,
     run_queue_depth, build_queue_depth, runtime_start_queue_depth, observed_at
-) VALUES ($1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, now())`, workerID)
+) VALUES ($1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, now())`, workerID)
 	return workerID
 }
 

@@ -18,8 +18,7 @@ func TestNormalizeRunResourcesCopiesWorkspaceAuthority(t *testing.T) {
 	}
 	if resources.cpuMillis != 1500 ||
 		resources.memoryBytes != 2048*mebibyte ||
-		resources.workloadDisk != compute.WorkspaceWorkloadDiskMiB*mebibyte ||
-		resources.scratchBytes != 0 ||
+		resources.guestEphemeralDiskBytes != compute.WorkspaceGuestEphemeralDiskMiB*mebibyte ||
 		resources.executionSlots != 1 {
 		t.Fatalf("normalized resources = %+v", resources)
 	}

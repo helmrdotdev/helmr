@@ -9,7 +9,7 @@ func TestResourceVectorFits(t *testing.T) {
 	capacity := ResourceVector{
 		MilliCPU:  4000,
 		MemoryMiB: 8192,
-		DiskMiB:   20480,
+		DiskMiB:   32768,
 		Slots:     4,
 	}
 
@@ -31,7 +31,7 @@ func TestBuildResourceContracts(t *testing.T) {
 	if BuildGuestPIDsMax != 1024 {
 		t.Fatalf("build guest pids.max = %d, want 1024", BuildGuestPIDsMax)
 	}
-	if got, want := BuildGuestResources(), (ResourceVector{MilliCPU: 2000, MemoryMiB: 2048, DiskMiB: 20480, Slots: 1}); got != want {
+	if got, want := BuildGuestResources(), (ResourceVector{MilliCPU: 2000, MemoryMiB: 2048, DiskMiB: 32768, Slots: 1}); got != want {
 		t.Fatalf("build guest = %+v, want %+v", got, want)
 	}
 	if got, want := BuildEnvelopeResources(), (ResourceVector{MilliCPU: 3000, MemoryMiB: 4096, DiskMiB: 32768, Slots: 1}); got != want {

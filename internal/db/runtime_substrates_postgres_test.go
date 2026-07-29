@@ -208,16 +208,14 @@ func TestLockRuntimeSubstrateAuthorityFencesWorkerAndContract(t *testing.T) {
 		       substrate_layout_abi = '',
 		       certified_cpu_millis = 0,
 		       certified_memory_bytes = 0,
-		       certified_workload_disk_bytes = 0,
-		       certified_scratch_bytes = 0,
+		       certified_guest_ephemeral_disk_bytes = 0,
 		       certified_build_cache_bytes = 0,
 		       certified_artifact_cache_bytes = 0,
 		       certified_hugepages_bytes = 0,
 		       certified_checkpoint_bytes = 0,
 		       per_vm_cpu_millis = 0,
 		       per_vm_memory_bytes = 0,
-		       per_vm_workload_disk_bytes = 0,
-		       per_vm_scratch_bytes = 0,
+		       per_vm_guest_ephemeral_disk_bytes = 0,
 		       max_vm_slots = 0,
 		       max_run_consumers = 0,
 		       max_build_executors = 0,
@@ -349,9 +347,9 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 			current_epoch, current_service_id, protocol_version, supervisor_version,
 			supports_run, runtime_identity_id,
 			substrate_format, substrate_builder_abi, substrate_layout_abi,
-			certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes,
-			certified_scratch_bytes, per_vm_cpu_millis, per_vm_memory_bytes,
-			per_vm_workload_disk_bytes, per_vm_scratch_bytes,
+			certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes,
+			per_vm_cpu_millis, per_vm_memory_bytes,
+			per_vm_guest_ephemeral_disk_bytes,
 			max_vm_slots, max_run_consumers, max_runtime_starts,
 			certification_profile, certification_fingerprint,
 			epoch_started_at, certified_at, activated_at
@@ -359,8 +357,8 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 			$1, $2, $3, 'sha256:test-attestation', 'active',
 			1, $4, 'helmr.worker.v0', 'test-worker',
 			true, $5, $6, $7, $8,
-			2000, 2147483648, 4294967296, 4294967296,
-			1000, 1073741824, 2147483648, 2147483648,
+			2000, 2147483648, 4294967296,
+			1000, 1073741824, 2147483648,
 			1, 1, 1, 'authority', 'authority-cert', now(), now(), now()
 		)
 	`, workerID, "authority-"+workerID.String(), dbtest.DefaultWorkerGroupID,
@@ -371,12 +369,12 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, runtime_identity_id, deployment_definition_id, worker_epoch,
 			network_policy, reserved_cpu_millis, reserved_memory_bytes,
-			reserved_workload_disk_bytes, reserved_scratch_bytes,
+			reserved_guest_ephemeral_disk_bytes,
 			reserved_execution_slots, workspace_id, desired_reason
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, 1,
 			'{}'::jsonb, 1000, 1073741824, 2147483648,
-			2147483648, 1, $10, 'authority-test'
+			1, $10, 'authority-test'
 		)
 	`, runtimeID, orgID, dbtest.DefaultWorkerGroupID, projectID, environmentID,
 		dbtest.DefaultRegionID, workerID, runtimeIdentityID, definitionID,

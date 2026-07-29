@@ -63,7 +63,7 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		WorkspaceArchitecture:  row.WorkspaceArchitecture,
 		RootfsDigest:           row.RootfsDigest,
 		ReservedCpuMillis:      int32(row.ReservedCpuMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
-		ReservedDiskMiB: row.ReservedWorkloadDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
+		ReservedDiskMiB: row.ReservedGuestEphemeralDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
 		RuntimeABI: row.RuntimeABI, Network: network,
 	}
 	if action == api.WorkerRuntimeReconcilePrepare {
@@ -365,6 +365,6 @@ func runtimeInstanceResponse(row db.RuntimeInstance) api.WorkerRuntimeInstance {
 		RuntimeEpoch: row.WorkerEpoch,
 		RuntimeID:    row.RuntimeIdentityID, DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID), State: string(row.ObservedState),
 		ReservedCpuMillis: int32(row.ReservedCpuMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
-		ReservedDiskMiB: row.ReservedWorkloadDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
+		ReservedDiskMiB: row.ReservedGuestEphemeralDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
 	}
 }

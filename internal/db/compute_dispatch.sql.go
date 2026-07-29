@@ -19,7 +19,7 @@ WITH target AS (
        AND worker_instances.worker_group_id = $2
        AND worker_instances.current_epoch = $3
        AND worker_instances.state IN ('active', 'draining')
-    RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
+    RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
 ), idle_mounts AS (
     UPDATE workspace_mounts
        SET state = 'unmounting', stopped_at = COALESCE(stopped_at, now()), updated_at = now()
@@ -55,7 +55,7 @@ WITH target AS (
        )
     RETURNING runtime_instances.id
 )
-SELECT target.id, target.resource_id, target.worker_group_id, target.attestation_fingerprint, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.protocol_version, target.supervisor_version, target.supports_run, target.supports_build, target.runtime_identity_id, target.substrate_format, target.substrate_builder_abi, target.substrate_layout_abi, target.certified_cpu_millis, target.certified_memory_bytes, target.certified_workload_disk_bytes, target.certified_scratch_bytes, target.certified_build_cache_bytes, target.certified_artifact_cache_bytes, target.certified_hugepages_bytes, target.certified_checkpoint_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_workload_disk_bytes, target.per_vm_scratch_bytes, target.max_vm_slots, target.max_run_consumers, target.max_build_executors, target.max_runtime_starts, target.certification_profile, target.certification_fingerprint, target.epoch_started_at, target.startup_inventory_epoch, target.startup_inventory_evidence, target.drain_cleanup_fingerprint, target.drain_cleanup_evidence, target.certified_at, target.activated_at, target.draining_at, target.disabled_at, target.lost_at, target.termination_claimed_at, target.provider_terminated_at, target.created_at, target.updated_at
+SELECT target.id, target.resource_id, target.worker_group_id, target.attestation_fingerprint, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.protocol_version, target.supervisor_version, target.supports_run, target.supports_build, target.runtime_identity_id, target.substrate_format, target.substrate_builder_abi, target.substrate_layout_abi, target.certified_cpu_millis, target.certified_memory_bytes, target.certified_guest_ephemeral_disk_bytes, target.certified_build_cache_bytes, target.certified_artifact_cache_bytes, target.certified_hugepages_bytes, target.certified_checkpoint_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_run_consumers, target.max_build_executors, target.max_runtime_starts, target.certification_profile, target.certification_fingerprint, target.epoch_started_at, target.startup_inventory_epoch, target.startup_inventory_evidence, target.drain_cleanup_fingerprint, target.drain_cleanup_evidence, target.certified_at, target.activated_at, target.draining_at, target.disabled_at, target.lost_at, target.termination_claimed_at, target.provider_terminated_at, target.created_at, target.updated_at
   FROM target
  WHERE (SELECT count(*) FROM idle_mounts) >= 0
    AND (SELECT count(*) FROM idle_runtimes) >= 0
@@ -68,54 +68,52 @@ type DrainWorkerInstanceParams struct {
 }
 
 type DrainWorkerInstanceRow struct {
-	ID                          pgtype.UUID        `json:"id"`
-	ResourceID                  string             `json:"resource_id"`
-	WorkerGroupID               string             `json:"worker_group_id"`
-	AttestationFingerprint      string             `json:"attestation_fingerprint"`
-	State                       string             `json:"state"`
-	ClaimVersion                int64              `json:"claim_version"`
-	CurrentEpoch                pgtype.Int8        `json:"current_epoch"`
-	CurrentServiceID            pgtype.UUID        `json:"current_service_id"`
-	ProtocolVersion             string             `json:"protocol_version"`
-	SupervisorVersion           string             `json:"supervisor_version"`
-	SupportsRun                 bool               `json:"supports_run"`
-	SupportsBuild               bool               `json:"supports_build"`
-	RuntimeIdentityID           pgtype.Text        `json:"runtime_identity_id"`
-	SubstrateFormat             string             `json:"substrate_format"`
-	SubstrateBuilderAbi         string             `json:"substrate_builder_abi"`
-	SubstrateLayoutAbi          string             `json:"substrate_layout_abi"`
-	CertifiedCpuMillis          int64              `json:"certified_cpu_millis"`
-	CertifiedMemoryBytes        int64              `json:"certified_memory_bytes"`
-	CertifiedWorkloadDiskBytes  int64              `json:"certified_workload_disk_bytes"`
-	CertifiedScratchBytes       int64              `json:"certified_scratch_bytes"`
-	CertifiedBuildCacheBytes    int64              `json:"certified_build_cache_bytes"`
-	CertifiedArtifactCacheBytes int64              `json:"certified_artifact_cache_bytes"`
-	CertifiedHugepagesBytes     int64              `json:"certified_hugepages_bytes"`
-	CertifiedCheckpointBytes    int64              `json:"certified_checkpoint_bytes"`
-	PerVmCpuMillis              int64              `json:"per_vm_cpu_millis"`
-	PerVmMemoryBytes            int64              `json:"per_vm_memory_bytes"`
-	PerVmWorkloadDiskBytes      int64              `json:"per_vm_workload_disk_bytes"`
-	PerVmScratchBytes           int64              `json:"per_vm_scratch_bytes"`
-	MaxVmSlots                  int32              `json:"max_vm_slots"`
-	MaxRunConsumers             int32              `json:"max_run_consumers"`
-	MaxBuildExecutors           int32              `json:"max_build_executors"`
-	MaxRuntimeStarts            int32              `json:"max_runtime_starts"`
-	CertificationProfile        string             `json:"certification_profile"`
-	CertificationFingerprint    string             `json:"certification_fingerprint"`
-	EpochStartedAt              pgtype.Timestamptz `json:"epoch_started_at"`
-	StartupInventoryEpoch       pgtype.Int8        `json:"startup_inventory_epoch"`
-	StartupInventoryEvidence    []byte             `json:"startup_inventory_evidence"`
-	DrainCleanupFingerprint     pgtype.Text        `json:"drain_cleanup_fingerprint"`
-	DrainCleanupEvidence        []byte             `json:"drain_cleanup_evidence"`
-	CertifiedAt                 pgtype.Timestamptz `json:"certified_at"`
-	ActivatedAt                 pgtype.Timestamptz `json:"activated_at"`
-	DrainingAt                  pgtype.Timestamptz `json:"draining_at"`
-	DisabledAt                  pgtype.Timestamptz `json:"disabled_at"`
-	LostAt                      pgtype.Timestamptz `json:"lost_at"`
-	TerminationClaimedAt        pgtype.Timestamptz `json:"termination_claimed_at"`
-	ProviderTerminatedAt        pgtype.Timestamptz `json:"provider_terminated_at"`
-	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	ID                               pgtype.UUID        `json:"id"`
+	ResourceID                       string             `json:"resource_id"`
+	WorkerGroupID                    string             `json:"worker_group_id"`
+	AttestationFingerprint           string             `json:"attestation_fingerprint"`
+	State                            string             `json:"state"`
+	ClaimVersion                     int64              `json:"claim_version"`
+	CurrentEpoch                     pgtype.Int8        `json:"current_epoch"`
+	CurrentServiceID                 pgtype.UUID        `json:"current_service_id"`
+	ProtocolVersion                  string             `json:"protocol_version"`
+	SupervisorVersion                string             `json:"supervisor_version"`
+	SupportsRun                      bool               `json:"supports_run"`
+	SupportsBuild                    bool               `json:"supports_build"`
+	RuntimeIdentityID                pgtype.Text        `json:"runtime_identity_id"`
+	SubstrateFormat                  string             `json:"substrate_format"`
+	SubstrateBuilderAbi              string             `json:"substrate_builder_abi"`
+	SubstrateLayoutAbi               string             `json:"substrate_layout_abi"`
+	CertifiedCpuMillis               int64              `json:"certified_cpu_millis"`
+	CertifiedMemoryBytes             int64              `json:"certified_memory_bytes"`
+	CertifiedGuestEphemeralDiskBytes int64              `json:"certified_guest_ephemeral_disk_bytes"`
+	CertifiedBuildCacheBytes         int64              `json:"certified_build_cache_bytes"`
+	CertifiedArtifactCacheBytes      int64              `json:"certified_artifact_cache_bytes"`
+	CertifiedHugepagesBytes          int64              `json:"certified_hugepages_bytes"`
+	CertifiedCheckpointBytes         int64              `json:"certified_checkpoint_bytes"`
+	PerVmCpuMillis                   int64              `json:"per_vm_cpu_millis"`
+	PerVmMemoryBytes                 int64              `json:"per_vm_memory_bytes"`
+	PerVmGuestEphemeralDiskBytes     int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
+	MaxVmSlots                       int32              `json:"max_vm_slots"`
+	MaxRunConsumers                  int32              `json:"max_run_consumers"`
+	MaxBuildExecutors                int32              `json:"max_build_executors"`
+	MaxRuntimeStarts                 int32              `json:"max_runtime_starts"`
+	CertificationProfile             string             `json:"certification_profile"`
+	CertificationFingerprint         string             `json:"certification_fingerprint"`
+	EpochStartedAt                   pgtype.Timestamptz `json:"epoch_started_at"`
+	StartupInventoryEpoch            pgtype.Int8        `json:"startup_inventory_epoch"`
+	StartupInventoryEvidence         []byte             `json:"startup_inventory_evidence"`
+	DrainCleanupFingerprint          pgtype.Text        `json:"drain_cleanup_fingerprint"`
+	DrainCleanupEvidence             []byte             `json:"drain_cleanup_evidence"`
+	CertifiedAt                      pgtype.Timestamptz `json:"certified_at"`
+	ActivatedAt                      pgtype.Timestamptz `json:"activated_at"`
+	DrainingAt                       pgtype.Timestamptz `json:"draining_at"`
+	DisabledAt                       pgtype.Timestamptz `json:"disabled_at"`
+	LostAt                           pgtype.Timestamptz `json:"lost_at"`
+	TerminationClaimedAt             pgtype.Timestamptz `json:"termination_claimed_at"`
+	ProviderTerminatedAt             pgtype.Timestamptz `json:"provider_terminated_at"`
+	CreatedAt                        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                        pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) DrainWorkerInstance(ctx context.Context, arg DrainWorkerInstanceParams) (DrainWorkerInstanceRow, error) {
@@ -140,16 +138,14 @@ func (q *Queries) DrainWorkerInstance(ctx context.Context, arg DrainWorkerInstan
 		&i.SubstrateLayoutAbi,
 		&i.CertifiedCpuMillis,
 		&i.CertifiedMemoryBytes,
-		&i.CertifiedWorkloadDiskBytes,
-		&i.CertifiedScratchBytes,
+		&i.CertifiedGuestEphemeralDiskBytes,
 		&i.CertifiedBuildCacheBytes,
 		&i.CertifiedArtifactCacheBytes,
 		&i.CertifiedHugepagesBytes,
 		&i.CertifiedCheckpointBytes,
 		&i.PerVmCpuMillis,
 		&i.PerVmMemoryBytes,
-		&i.PerVmWorkloadDiskBytes,
-		&i.PerVmScratchBytes,
+		&i.PerVmGuestEphemeralDiskBytes,
 		&i.MaxVmSlots,
 		&i.MaxRunConsumers,
 		&i.MaxBuildExecutors,
@@ -183,7 +179,7 @@ WITH target AS (
        AND worker_instances.worker_group_id = $2
        AND worker_instances.current_epoch = $3
        AND worker_instances.state IN ('active', 'draining')
-    RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
+    RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
 ), revoked_credentials AS (
     UPDATE worker_instance_credentials
        SET revoked_at = COALESCE(revoked_at, now())
@@ -224,7 +220,7 @@ WITH target AS (
        AND worker_network_slots.state IN ('assigned', 'bound', 'reclaiming', 'quarantined')
     RETURNING worker_network_slots.id
 )
-SELECT target.id, target.resource_id, target.worker_group_id, target.attestation_fingerprint, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.protocol_version, target.supervisor_version, target.supports_run, target.supports_build, target.runtime_identity_id, target.substrate_format, target.substrate_builder_abi, target.substrate_layout_abi, target.certified_cpu_millis, target.certified_memory_bytes, target.certified_workload_disk_bytes, target.certified_scratch_bytes, target.certified_build_cache_bytes, target.certified_artifact_cache_bytes, target.certified_hugepages_bytes, target.certified_checkpoint_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_workload_disk_bytes, target.per_vm_scratch_bytes, target.max_vm_slots, target.max_run_consumers, target.max_build_executors, target.max_runtime_starts, target.certification_profile, target.certification_fingerprint, target.epoch_started_at, target.startup_inventory_epoch, target.startup_inventory_evidence, target.drain_cleanup_fingerprint, target.drain_cleanup_evidence, target.certified_at, target.activated_at, target.draining_at, target.disabled_at, target.lost_at, target.termination_claimed_at, target.provider_terminated_at, target.created_at, target.updated_at
+SELECT target.id, target.resource_id, target.worker_group_id, target.attestation_fingerprint, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.protocol_version, target.supervisor_version, target.supports_run, target.supports_build, target.runtime_identity_id, target.substrate_format, target.substrate_builder_abi, target.substrate_layout_abi, target.certified_cpu_millis, target.certified_memory_bytes, target.certified_guest_ephemeral_disk_bytes, target.certified_build_cache_bytes, target.certified_artifact_cache_bytes, target.certified_hugepages_bytes, target.certified_checkpoint_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_run_consumers, target.max_build_executors, target.max_runtime_starts, target.certification_profile, target.certification_fingerprint, target.epoch_started_at, target.startup_inventory_epoch, target.startup_inventory_evidence, target.drain_cleanup_fingerprint, target.drain_cleanup_evidence, target.certified_at, target.activated_at, target.draining_at, target.disabled_at, target.lost_at, target.termination_claimed_at, target.provider_terminated_at, target.created_at, target.updated_at
   FROM target
  WHERE (SELECT count(*) FROM revoked_credentials) >= 0
    AND (SELECT count(*) FROM lost_mounts) >= 0
@@ -240,54 +236,52 @@ type FenceWorkerInstanceParams struct {
 }
 
 type FenceWorkerInstanceRow struct {
-	ID                          pgtype.UUID        `json:"id"`
-	ResourceID                  string             `json:"resource_id"`
-	WorkerGroupID               string             `json:"worker_group_id"`
-	AttestationFingerprint      string             `json:"attestation_fingerprint"`
-	State                       string             `json:"state"`
-	ClaimVersion                int64              `json:"claim_version"`
-	CurrentEpoch                pgtype.Int8        `json:"current_epoch"`
-	CurrentServiceID            pgtype.UUID        `json:"current_service_id"`
-	ProtocolVersion             string             `json:"protocol_version"`
-	SupervisorVersion           string             `json:"supervisor_version"`
-	SupportsRun                 bool               `json:"supports_run"`
-	SupportsBuild               bool               `json:"supports_build"`
-	RuntimeIdentityID           pgtype.Text        `json:"runtime_identity_id"`
-	SubstrateFormat             string             `json:"substrate_format"`
-	SubstrateBuilderAbi         string             `json:"substrate_builder_abi"`
-	SubstrateLayoutAbi          string             `json:"substrate_layout_abi"`
-	CertifiedCpuMillis          int64              `json:"certified_cpu_millis"`
-	CertifiedMemoryBytes        int64              `json:"certified_memory_bytes"`
-	CertifiedWorkloadDiskBytes  int64              `json:"certified_workload_disk_bytes"`
-	CertifiedScratchBytes       int64              `json:"certified_scratch_bytes"`
-	CertifiedBuildCacheBytes    int64              `json:"certified_build_cache_bytes"`
-	CertifiedArtifactCacheBytes int64              `json:"certified_artifact_cache_bytes"`
-	CertifiedHugepagesBytes     int64              `json:"certified_hugepages_bytes"`
-	CertifiedCheckpointBytes    int64              `json:"certified_checkpoint_bytes"`
-	PerVmCpuMillis              int64              `json:"per_vm_cpu_millis"`
-	PerVmMemoryBytes            int64              `json:"per_vm_memory_bytes"`
-	PerVmWorkloadDiskBytes      int64              `json:"per_vm_workload_disk_bytes"`
-	PerVmScratchBytes           int64              `json:"per_vm_scratch_bytes"`
-	MaxVmSlots                  int32              `json:"max_vm_slots"`
-	MaxRunConsumers             int32              `json:"max_run_consumers"`
-	MaxBuildExecutors           int32              `json:"max_build_executors"`
-	MaxRuntimeStarts            int32              `json:"max_runtime_starts"`
-	CertificationProfile        string             `json:"certification_profile"`
-	CertificationFingerprint    string             `json:"certification_fingerprint"`
-	EpochStartedAt              pgtype.Timestamptz `json:"epoch_started_at"`
-	StartupInventoryEpoch       pgtype.Int8        `json:"startup_inventory_epoch"`
-	StartupInventoryEvidence    []byte             `json:"startup_inventory_evidence"`
-	DrainCleanupFingerprint     pgtype.Text        `json:"drain_cleanup_fingerprint"`
-	DrainCleanupEvidence        []byte             `json:"drain_cleanup_evidence"`
-	CertifiedAt                 pgtype.Timestamptz `json:"certified_at"`
-	ActivatedAt                 pgtype.Timestamptz `json:"activated_at"`
-	DrainingAt                  pgtype.Timestamptz `json:"draining_at"`
-	DisabledAt                  pgtype.Timestamptz `json:"disabled_at"`
-	LostAt                      pgtype.Timestamptz `json:"lost_at"`
-	TerminationClaimedAt        pgtype.Timestamptz `json:"termination_claimed_at"`
-	ProviderTerminatedAt        pgtype.Timestamptz `json:"provider_terminated_at"`
-	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	ID                               pgtype.UUID        `json:"id"`
+	ResourceID                       string             `json:"resource_id"`
+	WorkerGroupID                    string             `json:"worker_group_id"`
+	AttestationFingerprint           string             `json:"attestation_fingerprint"`
+	State                            string             `json:"state"`
+	ClaimVersion                     int64              `json:"claim_version"`
+	CurrentEpoch                     pgtype.Int8        `json:"current_epoch"`
+	CurrentServiceID                 pgtype.UUID        `json:"current_service_id"`
+	ProtocolVersion                  string             `json:"protocol_version"`
+	SupervisorVersion                string             `json:"supervisor_version"`
+	SupportsRun                      bool               `json:"supports_run"`
+	SupportsBuild                    bool               `json:"supports_build"`
+	RuntimeIdentityID                pgtype.Text        `json:"runtime_identity_id"`
+	SubstrateFormat                  string             `json:"substrate_format"`
+	SubstrateBuilderAbi              string             `json:"substrate_builder_abi"`
+	SubstrateLayoutAbi               string             `json:"substrate_layout_abi"`
+	CertifiedCpuMillis               int64              `json:"certified_cpu_millis"`
+	CertifiedMemoryBytes             int64              `json:"certified_memory_bytes"`
+	CertifiedGuestEphemeralDiskBytes int64              `json:"certified_guest_ephemeral_disk_bytes"`
+	CertifiedBuildCacheBytes         int64              `json:"certified_build_cache_bytes"`
+	CertifiedArtifactCacheBytes      int64              `json:"certified_artifact_cache_bytes"`
+	CertifiedHugepagesBytes          int64              `json:"certified_hugepages_bytes"`
+	CertifiedCheckpointBytes         int64              `json:"certified_checkpoint_bytes"`
+	PerVmCpuMillis                   int64              `json:"per_vm_cpu_millis"`
+	PerVmMemoryBytes                 int64              `json:"per_vm_memory_bytes"`
+	PerVmGuestEphemeralDiskBytes     int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
+	MaxVmSlots                       int32              `json:"max_vm_slots"`
+	MaxRunConsumers                  int32              `json:"max_run_consumers"`
+	MaxBuildExecutors                int32              `json:"max_build_executors"`
+	MaxRuntimeStarts                 int32              `json:"max_runtime_starts"`
+	CertificationProfile             string             `json:"certification_profile"`
+	CertificationFingerprint         string             `json:"certification_fingerprint"`
+	EpochStartedAt                   pgtype.Timestamptz `json:"epoch_started_at"`
+	StartupInventoryEpoch            pgtype.Int8        `json:"startup_inventory_epoch"`
+	StartupInventoryEvidence         []byte             `json:"startup_inventory_evidence"`
+	DrainCleanupFingerprint          pgtype.Text        `json:"drain_cleanup_fingerprint"`
+	DrainCleanupEvidence             []byte             `json:"drain_cleanup_evidence"`
+	CertifiedAt                      pgtype.Timestamptz `json:"certified_at"`
+	ActivatedAt                      pgtype.Timestamptz `json:"activated_at"`
+	DrainingAt                       pgtype.Timestamptz `json:"draining_at"`
+	DisabledAt                       pgtype.Timestamptz `json:"disabled_at"`
+	LostAt                           pgtype.Timestamptz `json:"lost_at"`
+	TerminationClaimedAt             pgtype.Timestamptz `json:"termination_claimed_at"`
+	ProviderTerminatedAt             pgtype.Timestamptz `json:"provider_terminated_at"`
+	CreatedAt                        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                        pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstanceParams) (FenceWorkerInstanceRow, error) {
@@ -317,16 +311,14 @@ func (q *Queries) FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstan
 		&i.SubstrateLayoutAbi,
 		&i.CertifiedCpuMillis,
 		&i.CertifiedMemoryBytes,
-		&i.CertifiedWorkloadDiskBytes,
-		&i.CertifiedScratchBytes,
+		&i.CertifiedGuestEphemeralDiskBytes,
 		&i.CertifiedBuildCacheBytes,
 		&i.CertifiedArtifactCacheBytes,
 		&i.CertifiedHugepagesBytes,
 		&i.CertifiedCheckpointBytes,
 		&i.PerVmCpuMillis,
 		&i.PerVmMemoryBytes,
-		&i.PerVmWorkloadDiskBytes,
-		&i.PerVmScratchBytes,
+		&i.PerVmGuestEphemeralDiskBytes,
 		&i.MaxVmSlots,
 		&i.MaxRunConsumers,
 		&i.MaxBuildExecutors,
@@ -676,8 +668,7 @@ func (q *Queries) GetRunResumeHintAuthority(ctx context.Context, arg GetRunResum
 const getWorkerInstanceQueueCapacity = `-- name: GetWorkerInstanceQueueCapacity :one
 SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
        GREATEST(worker_instances.certified_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
-       GREATEST(worker_instances.certified_workload_disk_bytes - usage.workload_disk_bytes, 0)::bigint AS available_workload_disk_bytes,
-       GREATEST(worker_instances.certified_scratch_bytes - usage.scratch_bytes, 0)::bigint AS available_scratch_bytes,
+       GREATEST(worker_instances.certified_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
        GREATEST(worker_instances.max_run_consumers - usage.run_consumers, 0)::int AS available_run_consumers,
        GREATEST(worker_instances.max_build_executors - usage.build_executors, 0)::int AS available_build_executors
   FROM worker_instances
@@ -701,24 +692,15 @@ SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bi
                     WHERE worker_instance_id = worker_instances.id
                       AND worker_epoch = worker_instances.current_epoch
                       AND state IN ('assigned','starting','running')), 0) AS memory_bytes,
-        COALESCE((SELECT sum(reserved_workload_disk_bytes) FROM runtime_instances
+        COALESCE((SELECT sum(reserved_guest_ephemeral_disk_bytes) FROM runtime_instances
                    WHERE worker_instance_id = worker_instances.id
                      AND worker_epoch = worker_instances.current_epoch
                      AND (observed_state IN ('allocated','preparing','ready','closing')
                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
-        + COALESCE((SELECT sum(requested_workload_disk_bytes) FROM deployment_build_leases
+        + COALESCE((SELECT sum(requested_guest_ephemeral_disk_bytes) FROM deployment_build_leases
                     WHERE worker_instance_id = worker_instances.id
                       AND worker_epoch = worker_instances.current_epoch
-                      AND state IN ('assigned','starting','running')), 0) AS workload_disk_bytes,
-        COALESCE((SELECT sum(reserved_scratch_bytes) FROM runtime_instances
-                   WHERE worker_instance_id = worker_instances.id
-                     AND worker_epoch = worker_instances.current_epoch
-                     AND (observed_state IN ('allocated','preparing','ready','closing')
-                          OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
-        + COALESCE((SELECT sum(requested_scratch_bytes) FROM deployment_build_leases
-                    WHERE worker_instance_id = worker_instances.id
-                      AND worker_epoch = worker_instances.current_epoch
-                      AND state IN ('assigned','starting','running')), 0) AS scratch_bytes,
+                      AND state IN ('assigned','starting','running')), 0) AS guest_ephemeral_disk_bytes,
         COALESCE((SELECT sum(requested_execution_slots) FROM run_leases
                    WHERE worker_instance_id = worker_instances.id
                      AND worker_epoch = worker_instances.current_epoch
@@ -741,12 +723,11 @@ type GetWorkerInstanceQueueCapacityParams struct {
 }
 
 type GetWorkerInstanceQueueCapacityRow struct {
-	AvailableCpuMillis         int64 `json:"available_cpu_millis"`
-	AvailableMemoryBytes       int64 `json:"available_memory_bytes"`
-	AvailableWorkloadDiskBytes int64 `json:"available_workload_disk_bytes"`
-	AvailableScratchBytes      int64 `json:"available_scratch_bytes"`
-	AvailableRunConsumers      int32 `json:"available_run_consumers"`
-	AvailableBuildExecutors    int32 `json:"available_build_executors"`
+	AvailableCpuMillis               int64 `json:"available_cpu_millis"`
+	AvailableMemoryBytes             int64 `json:"available_memory_bytes"`
+	AvailableGuestEphemeralDiskBytes int64 `json:"available_guest_ephemeral_disk_bytes"`
+	AvailableRunConsumers            int32 `json:"available_run_consumers"`
+	AvailableBuildExecutors          int32 `json:"available_build_executors"`
 }
 
 func (q *Queries) GetWorkerInstanceQueueCapacity(ctx context.Context, arg GetWorkerInstanceQueueCapacityParams) (GetWorkerInstanceQueueCapacityRow, error) {
@@ -755,8 +736,7 @@ func (q *Queries) GetWorkerInstanceQueueCapacity(ctx context.Context, arg GetWor
 	err := row.Scan(
 		&i.AvailableCpuMillis,
 		&i.AvailableMemoryBytes,
-		&i.AvailableWorkloadDiskBytes,
-		&i.AvailableScratchBytes,
+		&i.AvailableGuestEphemeralDiskBytes,
 		&i.AvailableRunConsumers,
 		&i.AvailableBuildExecutors,
 	)
@@ -766,8 +746,7 @@ func (q *Queries) GetWorkerInstanceQueueCapacity(ctx context.Context, arg GetWor
 const getWorkerInstanceRunDispatchCapacity = `-- name: GetWorkerInstanceRunDispatchCapacity :one
 SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
        GREATEST(worker_instances.certified_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
-       GREATEST(worker_instances.certified_workload_disk_bytes - usage.workload_disk_bytes, 0)::bigint AS available_workload_disk_bytes,
-       GREATEST(worker_instances.certified_scratch_bytes - usage.scratch_bytes, 0)::bigint AS available_scratch_bytes,
+       GREATEST(worker_instances.certified_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
        GREATEST(worker_instances.max_vm_slots - usage.vm_slots, 0)::int AS available_vm_slots,
        GREATEST(worker_instances.max_run_consumers - usage.run_consumers, 0)::int AS available_run_consumers,
        GREATEST(worker_instances.max_build_executors - usage.build_executors, 0)::int AS available_build_executors
@@ -792,24 +771,15 @@ SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bi
                     WHERE worker_instance_id = worker_instances.id
                       AND worker_epoch = worker_instances.current_epoch
                       AND state IN ('assigned','starting','running')), 0) AS memory_bytes,
-        COALESCE((SELECT sum(reserved_workload_disk_bytes) FROM runtime_instances
+        COALESCE((SELECT sum(reserved_guest_ephemeral_disk_bytes) FROM runtime_instances
                     WHERE worker_instance_id = worker_instances.id
                       AND worker_epoch = worker_instances.current_epoch
                       AND (observed_state IN ('allocated','preparing','ready','closing')
                            OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
-        + COALESCE((SELECT sum(requested_workload_disk_bytes) FROM deployment_build_leases
+        + COALESCE((SELECT sum(requested_guest_ephemeral_disk_bytes) FROM deployment_build_leases
                     WHERE worker_instance_id = worker_instances.id
                       AND worker_epoch = worker_instances.current_epoch
-                      AND state IN ('assigned','starting','running')), 0) AS workload_disk_bytes,
-        COALESCE((SELECT sum(reserved_scratch_bytes) FROM runtime_instances
-                    WHERE worker_instance_id = worker_instances.id
-                      AND worker_epoch = worker_instances.current_epoch
-                      AND (observed_state IN ('allocated','preparing','ready','closing')
-                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
-        + COALESCE((SELECT sum(requested_scratch_bytes) FROM deployment_build_leases
-                    WHERE worker_instance_id = worker_instances.id
-                      AND worker_epoch = worker_instances.current_epoch
-                      AND state IN ('assigned','starting','running')), 0) AS scratch_bytes,
+                      AND state IN ('assigned','starting','running')), 0) AS guest_ephemeral_disk_bytes,
         COALESCE((SELECT count(*) FROM runtime_instances
                    WHERE worker_instance_id = worker_instances.id
                      AND worker_epoch = worker_instances.current_epoch
@@ -837,13 +807,12 @@ type GetWorkerInstanceRunDispatchCapacityParams struct {
 }
 
 type GetWorkerInstanceRunDispatchCapacityRow struct {
-	AvailableCpuMillis         int64 `json:"available_cpu_millis"`
-	AvailableMemoryBytes       int64 `json:"available_memory_bytes"`
-	AvailableWorkloadDiskBytes int64 `json:"available_workload_disk_bytes"`
-	AvailableScratchBytes      int64 `json:"available_scratch_bytes"`
-	AvailableVmSlots           int32 `json:"available_vm_slots"`
-	AvailableRunConsumers      int32 `json:"available_run_consumers"`
-	AvailableBuildExecutors    int32 `json:"available_build_executors"`
+	AvailableCpuMillis               int64 `json:"available_cpu_millis"`
+	AvailableMemoryBytes             int64 `json:"available_memory_bytes"`
+	AvailableGuestEphemeralDiskBytes int64 `json:"available_guest_ephemeral_disk_bytes"`
+	AvailableVmSlots                 int32 `json:"available_vm_slots"`
+	AvailableRunConsumers            int32 `json:"available_run_consumers"`
+	AvailableBuildExecutors          int32 `json:"available_build_executors"`
 }
 
 func (q *Queries) GetWorkerInstanceRunDispatchCapacity(ctx context.Context, arg GetWorkerInstanceRunDispatchCapacityParams) (GetWorkerInstanceRunDispatchCapacityRow, error) {
@@ -852,8 +821,7 @@ func (q *Queries) GetWorkerInstanceRunDispatchCapacity(ctx context.Context, arg 
 	err := row.Scan(
 		&i.AvailableCpuMillis,
 		&i.AvailableMemoryBytes,
-		&i.AvailableWorkloadDiskBytes,
-		&i.AvailableScratchBytes,
+		&i.AvailableGuestEphemeralDiskBytes,
 		&i.AvailableVmSlots,
 		&i.AvailableRunConsumers,
 		&i.AvailableBuildExecutors,
@@ -862,7 +830,7 @@ func (q *Queries) GetWorkerInstanceRunDispatchCapacity(ctx context.Context, arg 
 }
 
 const getWorkerInstanceState = `-- name: GetWorkerInstanceState :one
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at,
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_guest_ephemeral_disk_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at,
        runtime_identities.rootfs_digest,
        runtime_identities.runtime_abi,
        runtime_identities.runtime_arch,
@@ -894,58 +862,56 @@ type GetWorkerInstanceStateParams struct {
 }
 
 type GetWorkerInstanceStateRow struct {
-	ID                          pgtype.UUID        `json:"id"`
-	ResourceID                  string             `json:"resource_id"`
-	WorkerGroupID               string             `json:"worker_group_id"`
-	AttestationFingerprint      string             `json:"attestation_fingerprint"`
-	State                       string             `json:"state"`
-	ClaimVersion                int64              `json:"claim_version"`
-	CurrentEpoch                pgtype.Int8        `json:"current_epoch"`
-	CurrentServiceID            pgtype.UUID        `json:"current_service_id"`
-	ProtocolVersion             string             `json:"protocol_version"`
-	SupervisorVersion           string             `json:"supervisor_version"`
-	SupportsRun                 bool               `json:"supports_run"`
-	SupportsBuild               bool               `json:"supports_build"`
-	RuntimeIdentityID           pgtype.Text        `json:"runtime_identity_id"`
-	SubstrateFormat             string             `json:"substrate_format"`
-	SubstrateBuilderAbi         string             `json:"substrate_builder_abi"`
-	SubstrateLayoutAbi          string             `json:"substrate_layout_abi"`
-	CertifiedCpuMillis          int64              `json:"certified_cpu_millis"`
-	CertifiedMemoryBytes        int64              `json:"certified_memory_bytes"`
-	CertifiedWorkloadDiskBytes  int64              `json:"certified_workload_disk_bytes"`
-	CertifiedScratchBytes       int64              `json:"certified_scratch_bytes"`
-	CertifiedBuildCacheBytes    int64              `json:"certified_build_cache_bytes"`
-	CertifiedArtifactCacheBytes int64              `json:"certified_artifact_cache_bytes"`
-	CertifiedHugepagesBytes     int64              `json:"certified_hugepages_bytes"`
-	CertifiedCheckpointBytes    int64              `json:"certified_checkpoint_bytes"`
-	PerVmCpuMillis              int64              `json:"per_vm_cpu_millis"`
-	PerVmMemoryBytes            int64              `json:"per_vm_memory_bytes"`
-	PerVmWorkloadDiskBytes      int64              `json:"per_vm_workload_disk_bytes"`
-	PerVmScratchBytes           int64              `json:"per_vm_scratch_bytes"`
-	MaxVmSlots                  int32              `json:"max_vm_slots"`
-	MaxRunConsumers             int32              `json:"max_run_consumers"`
-	MaxBuildExecutors           int32              `json:"max_build_executors"`
-	MaxRuntimeStarts            int32              `json:"max_runtime_starts"`
-	CertificationProfile        string             `json:"certification_profile"`
-	CertificationFingerprint    string             `json:"certification_fingerprint"`
-	EpochStartedAt              pgtype.Timestamptz `json:"epoch_started_at"`
-	StartupInventoryEpoch       pgtype.Int8        `json:"startup_inventory_epoch"`
-	StartupInventoryEvidence    []byte             `json:"startup_inventory_evidence"`
-	DrainCleanupFingerprint     pgtype.Text        `json:"drain_cleanup_fingerprint"`
-	DrainCleanupEvidence        []byte             `json:"drain_cleanup_evidence"`
-	CertifiedAt                 pgtype.Timestamptz `json:"certified_at"`
-	ActivatedAt                 pgtype.Timestamptz `json:"activated_at"`
-	DrainingAt                  pgtype.Timestamptz `json:"draining_at"`
-	DisabledAt                  pgtype.Timestamptz `json:"disabled_at"`
-	LostAt                      pgtype.Timestamptz `json:"lost_at"`
-	TerminationClaimedAt        pgtype.Timestamptz `json:"termination_claimed_at"`
-	ProviderTerminatedAt        pgtype.Timestamptz `json:"provider_terminated_at"`
-	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
-	RootfsDigest                pgtype.Text        `json:"rootfs_digest"`
-	RuntimeABI                  pgtype.Text        `json:"runtime_abi"`
-	RuntimeArch                 pgtype.Text        `json:"runtime_arch"`
-	ActiveExecutions            int32              `json:"active_executions"`
+	ID                               pgtype.UUID        `json:"id"`
+	ResourceID                       string             `json:"resource_id"`
+	WorkerGroupID                    string             `json:"worker_group_id"`
+	AttestationFingerprint           string             `json:"attestation_fingerprint"`
+	State                            string             `json:"state"`
+	ClaimVersion                     int64              `json:"claim_version"`
+	CurrentEpoch                     pgtype.Int8        `json:"current_epoch"`
+	CurrentServiceID                 pgtype.UUID        `json:"current_service_id"`
+	ProtocolVersion                  string             `json:"protocol_version"`
+	SupervisorVersion                string             `json:"supervisor_version"`
+	SupportsRun                      bool               `json:"supports_run"`
+	SupportsBuild                    bool               `json:"supports_build"`
+	RuntimeIdentityID                pgtype.Text        `json:"runtime_identity_id"`
+	SubstrateFormat                  string             `json:"substrate_format"`
+	SubstrateBuilderAbi              string             `json:"substrate_builder_abi"`
+	SubstrateLayoutAbi               string             `json:"substrate_layout_abi"`
+	CertifiedCpuMillis               int64              `json:"certified_cpu_millis"`
+	CertifiedMemoryBytes             int64              `json:"certified_memory_bytes"`
+	CertifiedGuestEphemeralDiskBytes int64              `json:"certified_guest_ephemeral_disk_bytes"`
+	CertifiedBuildCacheBytes         int64              `json:"certified_build_cache_bytes"`
+	CertifiedArtifactCacheBytes      int64              `json:"certified_artifact_cache_bytes"`
+	CertifiedHugepagesBytes          int64              `json:"certified_hugepages_bytes"`
+	CertifiedCheckpointBytes         int64              `json:"certified_checkpoint_bytes"`
+	PerVmCpuMillis                   int64              `json:"per_vm_cpu_millis"`
+	PerVmMemoryBytes                 int64              `json:"per_vm_memory_bytes"`
+	PerVmGuestEphemeralDiskBytes     int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
+	MaxVmSlots                       int32              `json:"max_vm_slots"`
+	MaxRunConsumers                  int32              `json:"max_run_consumers"`
+	MaxBuildExecutors                int32              `json:"max_build_executors"`
+	MaxRuntimeStarts                 int32              `json:"max_runtime_starts"`
+	CertificationProfile             string             `json:"certification_profile"`
+	CertificationFingerprint         string             `json:"certification_fingerprint"`
+	EpochStartedAt                   pgtype.Timestamptz `json:"epoch_started_at"`
+	StartupInventoryEpoch            pgtype.Int8        `json:"startup_inventory_epoch"`
+	StartupInventoryEvidence         []byte             `json:"startup_inventory_evidence"`
+	DrainCleanupFingerprint          pgtype.Text        `json:"drain_cleanup_fingerprint"`
+	DrainCleanupEvidence             []byte             `json:"drain_cleanup_evidence"`
+	CertifiedAt                      pgtype.Timestamptz `json:"certified_at"`
+	ActivatedAt                      pgtype.Timestamptz `json:"activated_at"`
+	DrainingAt                       pgtype.Timestamptz `json:"draining_at"`
+	DisabledAt                       pgtype.Timestamptz `json:"disabled_at"`
+	LostAt                           pgtype.Timestamptz `json:"lost_at"`
+	TerminationClaimedAt             pgtype.Timestamptz `json:"termination_claimed_at"`
+	ProviderTerminatedAt             pgtype.Timestamptz `json:"provider_terminated_at"`
+	CreatedAt                        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                        pgtype.Timestamptz `json:"updated_at"`
+	RootfsDigest                     pgtype.Text        `json:"rootfs_digest"`
+	RuntimeABI                       pgtype.Text        `json:"runtime_abi"`
+	RuntimeArch                      pgtype.Text        `json:"runtime_arch"`
+	ActiveExecutions                 int32              `json:"active_executions"`
 }
 
 func (q *Queries) GetWorkerInstanceState(ctx context.Context, arg GetWorkerInstanceStateParams) (GetWorkerInstanceStateRow, error) {
@@ -970,16 +936,14 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, arg GetWorkerInsta
 		&i.SubstrateLayoutAbi,
 		&i.CertifiedCpuMillis,
 		&i.CertifiedMemoryBytes,
-		&i.CertifiedWorkloadDiskBytes,
-		&i.CertifiedScratchBytes,
+		&i.CertifiedGuestEphemeralDiskBytes,
 		&i.CertifiedBuildCacheBytes,
 		&i.CertifiedArtifactCacheBytes,
 		&i.CertifiedHugepagesBytes,
 		&i.CertifiedCheckpointBytes,
 		&i.PerVmCpuMillis,
 		&i.PerVmMemoryBytes,
-		&i.PerVmWorkloadDiskBytes,
-		&i.PerVmScratchBytes,
+		&i.PerVmGuestEphemeralDiskBytes,
 		&i.MaxVmSlots,
 		&i.MaxRunConsumers,
 		&i.MaxBuildExecutors,
@@ -1415,7 +1379,7 @@ func (q *Queries) ListQueuedRunDispatchCandidatesForScope(ctx context.Context, a
 }
 
 const listWorkerInstances = `-- name: ListWorkerInstances :many
-SELECT id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at FROM worker_instances
+SELECT id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at FROM worker_instances
  WHERE $1::text = 'all' OR state::text = $1::text
  ORDER BY updated_at DESC, created_at ASC
  LIMIT $2
@@ -1454,16 +1418,14 @@ func (q *Queries) ListWorkerInstances(ctx context.Context, arg ListWorkerInstanc
 			&i.SubstrateLayoutAbi,
 			&i.CertifiedCpuMillis,
 			&i.CertifiedMemoryBytes,
-			&i.CertifiedWorkloadDiskBytes,
-			&i.CertifiedScratchBytes,
+			&i.CertifiedGuestEphemeralDiskBytes,
 			&i.CertifiedBuildCacheBytes,
 			&i.CertifiedArtifactCacheBytes,
 			&i.CertifiedHugepagesBytes,
 			&i.CertifiedCheckpointBytes,
 			&i.PerVmCpuMillis,
 			&i.PerVmMemoryBytes,
-			&i.PerVmWorkloadDiskBytes,
-			&i.PerVmScratchBytes,
+			&i.PerVmGuestEphemeralDiskBytes,
 			&i.MaxVmSlots,
 			&i.MaxRunConsumers,
 			&i.MaxBuildExecutors,
@@ -1508,7 +1470,7 @@ UPDATE worker_instances
  WHERE id = $2
    AND worker_group_id = $3
    AND ($4::bigint IS NULL OR current_epoch = $4::bigint)
-RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
+RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
 `
 
 type SetWorkerInstanceStateParams struct {
@@ -1545,16 +1507,14 @@ func (q *Queries) SetWorkerInstanceState(ctx context.Context, arg SetWorkerInsta
 		&i.SubstrateLayoutAbi,
 		&i.CertifiedCpuMillis,
 		&i.CertifiedMemoryBytes,
-		&i.CertifiedWorkloadDiskBytes,
-		&i.CertifiedScratchBytes,
+		&i.CertifiedGuestEphemeralDiskBytes,
 		&i.CertifiedBuildCacheBytes,
 		&i.CertifiedArtifactCacheBytes,
 		&i.CertifiedHugepagesBytes,
 		&i.CertifiedCheckpointBytes,
 		&i.PerVmCpuMillis,
 		&i.PerVmMemoryBytes,
-		&i.PerVmWorkloadDiskBytes,
-		&i.PerVmScratchBytes,
+		&i.PerVmGuestEphemeralDiskBytes,
 		&i.MaxVmSlots,
 		&i.MaxRunConsumers,
 		&i.MaxBuildExecutors,

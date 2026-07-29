@@ -11,12 +11,11 @@ import (
 
 func TestNewValidatesCapacity(t *testing.T) {
 	valid := Vector{
-		CPUMillis:         1,
-		MemoryBytes:       1,
-		WorkloadDiskBytes: 1,
-		ScratchBytes:      1,
-		VMSlots:           1,
-		BuildSlots:        1,
+		CPUMillis:               1,
+		MemoryBytes:             1,
+		GuestEphemeralDiskBytes: 1,
+		VMSlots:                 1,
+		BuildSlots:              1,
 	}
 	tests := []struct {
 		name   string
@@ -26,8 +25,7 @@ func TestNewValidatesCapacity(t *testing.T) {
 		{name: "negative cpu", mutate: func(vector *Vector) { vector.CPUMillis = -1 }},
 		{name: "zero memory", mutate: func(vector *Vector) { vector.MemoryBytes = 0 }},
 		{name: "negative memory", mutate: func(vector *Vector) { vector.MemoryBytes = -1 }},
-		{name: "negative workload disk", mutate: func(vector *Vector) { vector.WorkloadDiskBytes = -1 }},
-		{name: "negative scratch", mutate: func(vector *Vector) { vector.ScratchBytes = -1 }},
+		{name: "negative guest ephemeral disk", mutate: func(vector *Vector) { vector.GuestEphemeralDiskBytes = -1 }},
 		{name: "negative VM slots", mutate: func(vector *Vector) { vector.VMSlots = -1 }},
 		{name: "negative build slots", mutate: func(vector *Vector) { vector.BuildSlots = -1 }},
 	}
@@ -41,8 +39,7 @@ func TestNewValidatesCapacity(t *testing.T) {
 		})
 	}
 
-	valid.WorkloadDiskBytes = 0
-	valid.ScratchBytes = 0
+	valid.GuestEphemeralDiskBytes = 0
 	valid.VMSlots = 0
 	valid.BuildSlots = 0
 	if _, err := New(valid); err != nil {
@@ -52,8 +49,8 @@ func TestNewValidatesCapacity(t *testing.T) {
 
 func TestReserveValidatesKeyAndRequest(t *testing.T) {
 	ledger := newTestLedger(t, Vector{
-		CPUMillis: 10, MemoryBytes: 10, WorkloadDiskBytes: 10,
-		ScratchBytes: 10, VMSlots: 10, BuildSlots: 10,
+		CPUMillis: 10, MemoryBytes: 10, GuestEphemeralDiskBytes: 10,
+		VMSlots: 10, BuildSlots: 10,
 	})
 	validKey := Key{Kind: "run", Epoch: 1, ID: "run-1"}
 	keyTests := []Key{
@@ -79,8 +76,7 @@ func TestReserveValidatesKeyAndRequest(t *testing.T) {
 		{},
 		{CPUMillis: -1},
 		{MemoryBytes: -1},
-		{WorkloadDiskBytes: -1},
-		{ScratchBytes: -1},
+		{GuestEphemeralDiskBytes: -1},
 		{VMSlots: -1},
 		{BuildSlots: -1},
 	}
@@ -98,16 +94,15 @@ func TestReserveAccountsForEveryDimension(t *testing.T) {
 	}{
 		{name: "cpu", vector: Vector{CPUMillis: 1}},
 		{name: "memory", vector: Vector{MemoryBytes: 1}},
-		{name: "workload disk", vector: Vector{WorkloadDiskBytes: 1}},
-		{name: "scratch", vector: Vector{ScratchBytes: 1}},
+		{name: "guest ephemeral disk", vector: Vector{GuestEphemeralDiskBytes: 1}},
 		{name: "VM slots", vector: Vector{VMSlots: 1}},
 		{name: "build slots", vector: Vector{BuildSlots: 1}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			capacity := Vector{
-				CPUMillis: 1, MemoryBytes: 1, WorkloadDiskBytes: 1,
-				ScratchBytes: 1, VMSlots: 1, BuildSlots: 1,
+				CPUMillis: 1, MemoryBytes: 1, GuestEphemeralDiskBytes: 1,
+				VMSlots: 1, BuildSlots: 1,
 			}
 			ledger := newTestLedger(t, capacity)
 			if created, err := ledger.Reserve(Key{Kind: "test", Epoch: 1, ID: "first"}, test.vector); err != nil || !created {
@@ -218,12 +213,12 @@ func TestLedgerConcurrentReserveAndRelease(t *testing.T) {
 	const reservations = 200
 	ledger := newTestLedger(t, Vector{
 		CPUMillis: reservations, MemoryBytes: reservations,
-		WorkloadDiskBytes: reservations, ScratchBytes: reservations,
-		VMSlots: reservations, BuildSlots: reservations,
+		GuestEphemeralDiskBytes: reservations,
+		VMSlots:                 reservations, BuildSlots: reservations,
 	})
 	request := Vector{
-		CPUMillis: 1, MemoryBytes: 1, WorkloadDiskBytes: 1,
-		ScratchBytes: 1, VMSlots: 1, BuildSlots: 1,
+		CPUMillis: 1, MemoryBytes: 1, GuestEphemeralDiskBytes: 1,
+		VMSlots: 1, BuildSlots: 1,
 	}
 
 	runConcurrently(t, reservations, func(index int) error {
@@ -239,8 +234,8 @@ func TestLedgerConcurrentReserveAndRelease(t *testing.T) {
 	snapshot := ledger.Snapshot()
 	want := Vector{
 		CPUMillis: reservations, MemoryBytes: reservations,
-		WorkloadDiskBytes: reservations, ScratchBytes: reservations,
-		VMSlots: reservations, BuildSlots: reservations,
+		GuestEphemeralDiskBytes: reservations,
+		VMSlots:                 reservations, BuildSlots: reservations,
 	}
 	if snapshot.Used != want || len(snapshot.Reservations) != reservations {
 		t.Fatalf("snapshot after reserve = %+v, reservations = %d", snapshot.Used, len(snapshot.Reservations))

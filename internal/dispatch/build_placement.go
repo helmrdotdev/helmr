@@ -30,19 +30,18 @@ type ReadyBuildCandidate struct {
 }
 
 const (
-	fixedBuildGuestCPUMillis    int64 = 2000
-	fixedBuildGuestMemoryBytes  int64 = 2 << 30
-	fixedBuildGuestScratchBytes int64 = 8 << 30
+	fixedBuildGuestCPUMillis   int64 = 2000
+	fixedBuildGuestMemoryBytes int64 = 2 << 30
 )
 
 // PlaceReadyBuild chooses certified build capacity in the deployment's frozen
 // region. The worker never scans or chooses deployment work.
 func (d *Authority) PlaceReadyBuild(ctx context.Context, candidate ReadyBuildCandidate, observationFreshAfter pgtype.Timestamptz) (db.LeaseQueuedDeploymentBuildRow, error) {
 	envelope := compute.BuildEnvelopeResources()
+	guest := compute.BuildGuestResources()
 	requestedCPUMillis := envelope.MilliCPU
 	requestedMemoryBytes := envelope.MemoryMiB << 20
-	requestedWorkloadDiskBytes := int64(0)
-	requestedScratchBytes := envelope.DiskMiB << 20
+	requestedGuestEphemeralDiskBytes := guest.DiskMiB << 20
 	requestedBuildExecutors := int32(1)
 	toolchainDigest, eligible, err := d.readyBuildCandidateToolchainDigest(ctx, candidate)
 	if err != nil {
@@ -81,16 +80,15 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
    AND worker_instances.protocol_version = worker_groups.protocol_version
    AND worker_observations.observed_at >= $2
 	   AND worker_observations.build_paused_reason IS NULL
-	   AND worker_instances.per_vm_cpu_millis >= $8
-	   AND worker_instances.per_vm_memory_bytes >= $9
-	   AND worker_instances.per_vm_scratch_bytes >= $10
+	   AND worker_instances.per_vm_cpu_millis >= $7
+	   AND worker_instances.per_vm_memory_bytes >= $8
+	   AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= $6
 	GROUP BY worker_groups.id, worker_instances.id, worker_instances.current_epoch,
 	         worker_instances.protocol_version, worker_instances.certified_cpu_millis,
 	         worker_instances.certified_memory_bytes,
-	         worker_instances.certified_workload_disk_bytes,
-	         worker_instances.certified_scratch_bytes,
+	         worker_instances.certified_guest_ephemeral_disk_bytes,
 		         worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes,
-		         worker_instances.per_vm_scratch_bytes,
+		         worker_instances.per_vm_guest_ephemeral_disk_bytes,
 	         worker_instances.max_build_executors
  HAVING COALESCE(sum(deployment_build_leases.requested_build_executors),0) + $3
           <= worker_instances.max_build_executors
@@ -108,25 +106,18 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
                          AND worker_epoch = worker_instances.current_epoch
                          AND (observed_state IN ('allocated','preparing','ready','closing')
                            OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))),0) >= $5
-    AND worker_instances.certified_workload_disk_bytes
-          - COALESCE(sum(deployment_build_leases.requested_workload_disk_bytes),0)
-          - COALESCE((SELECT sum(reserved_workload_disk_bytes) FROM runtime_instances
+    AND worker_instances.certified_guest_ephemeral_disk_bytes
+          - COALESCE(sum(deployment_build_leases.requested_guest_ephemeral_disk_bytes),0)
+          - COALESCE((SELECT sum(reserved_guest_ephemeral_disk_bytes) FROM runtime_instances
                        WHERE worker_instance_id = worker_instances.id
                          AND worker_epoch = worker_instances.current_epoch
                          AND (observed_state IN ('allocated','preparing','ready','closing')
                            OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))),0) >= $6
-    AND worker_instances.certified_scratch_bytes
-          - COALESCE(sum(deployment_build_leases.requested_scratch_bytes),0)
-          - COALESCE((SELECT sum(reserved_scratch_bytes) FROM runtime_instances
-                       WHERE worker_instance_id = worker_instances.id
-                         AND worker_epoch = worker_instances.current_epoch
-                         AND (observed_state IN ('allocated','preparing','ready','closing')
-                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))),0) >= $7
  ORDER BY worker_instances.id
 LIMIT 1`, candidate.BuildRegionID, observationFreshAfter, requestedBuildExecutors,
 		requestedCPUMillis, requestedMemoryBytes,
-		requestedWorkloadDiskBytes, requestedScratchBytes,
-		fixedBuildGuestCPUMillis, fixedBuildGuestMemoryBytes, fixedBuildGuestScratchBytes).Scan(
+		requestedGuestEphemeralDiskBytes,
+		fixedBuildGuestCPUMillis, fixedBuildGuestMemoryBytes).Scan(
 		&groupID, &workerID, &workerEpoch, &protocolVersion)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -153,11 +144,10 @@ LIMIT 1`, candidate.BuildRegionID, observationFreshAfter, requestedBuildExecutor
 			BuildLeaseID:  pgvalue.UUID(uuid.Must(uuid.NewV7())), LeaseSequence: candidate.LeaseSequence,
 			WorkerGroupID: groupID, BuildWorkerInstanceID: workerID,
 			WorkerEpoch: workerEpoch, WorkerProtocolVersion: protocolVersion,
-			RequestedCpuMillis:         requestedCPUMillis,
-			RequestedMemoryBytes:       requestedMemoryBytes,
-			RequestedWorkloadDiskBytes: requestedWorkloadDiskBytes,
-			RequestedScratchBytes:      requestedScratchBytes,
-			RequestedBuildExecutors:    requestedBuildExecutors, BuildSnapshot: snapshot,
+			RequestedCpuMillis:               requestedCPUMillis,
+			RequestedMemoryBytes:             requestedMemoryBytes,
+			RequestedGuestEphemeralDiskBytes: requestedGuestEphemeralDiskBytes,
+			RequestedBuildExecutors:          requestedBuildExecutors, BuildSnapshot: snapshot,
 			StartDeadlineAt:     pgvalue.Timestamptz(now.Add(time.Minute)),
 			BuildLeaseExpiresAt: pgvalue.Timestamptz(now.Add(5 * time.Minute)),
 		},
@@ -266,9 +256,9 @@ SELECT (COALESCE((SELECT max(lease_sequence) FROM deployment_build_leases
 	err = tx.QueryRow(ctx, `
 SELECT worker_instances.max_build_executors >=
 	           COALESCE(sum(deployment_build_leases.requested_build_executors), 0) + $3
-	   AND worker_instances.per_vm_cpu_millis >= $8
-	   AND worker_instances.per_vm_memory_bytes >= $9
-	   AND worker_instances.per_vm_scratch_bytes >= $10
+	   AND worker_instances.per_vm_cpu_millis >= $7
+	   AND worker_instances.per_vm_memory_bytes >= $8
+	   AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= $6
    AND worker_instances.certified_cpu_millis >=
            COALESCE(sum(deployment_build_leases.requested_cpu_millis), 0)
            + COALESCE((SELECT sum(reserved_cpu_millis) FROM runtime_instances
@@ -283,20 +273,13 @@ SELECT worker_instances.max_build_executors >=
                           AND worker_epoch = worker_instances.current_epoch
                           AND (observed_state IN ('allocated','preparing','ready','closing')
                             OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0) + $5
-   AND worker_instances.certified_workload_disk_bytes >=
-           COALESCE(sum(deployment_build_leases.requested_workload_disk_bytes), 0)
-           + COALESCE((SELECT sum(reserved_workload_disk_bytes) FROM runtime_instances
+   AND worker_instances.certified_guest_ephemeral_disk_bytes >=
+           COALESCE(sum(deployment_build_leases.requested_guest_ephemeral_disk_bytes), 0)
+           + COALESCE((SELECT sum(reserved_guest_ephemeral_disk_bytes) FROM runtime_instances
                         WHERE worker_instance_id = worker_instances.id
                           AND worker_epoch = worker_instances.current_epoch
                           AND (observed_state IN ('allocated','preparing','ready','closing')
                             OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0) + $6
-   AND worker_instances.certified_scratch_bytes >=
-           COALESCE(sum(deployment_build_leases.requested_scratch_bytes), 0)
-           + COALESCE((SELECT sum(reserved_scratch_bytes) FROM runtime_instances
-                        WHERE worker_instance_id = worker_instances.id
-                          AND worker_epoch = worker_instances.current_epoch
-                          AND (observed_state IN ('allocated','preparing','ready','closing')
-                            OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0) + $7
   FROM worker_instances
   LEFT JOIN deployment_build_leases
     ON deployment_build_leases.worker_instance_id = worker_instances.id
@@ -308,16 +291,14 @@ SELECT worker_instances.max_build_executors >=
           worker_instances.max_build_executors,
           worker_instances.certified_cpu_millis,
           worker_instances.certified_memory_bytes,
-          worker_instances.certified_workload_disk_bytes,
-          worker_instances.certified_scratch_bytes,
+          worker_instances.certified_guest_ephemeral_disk_bytes,
 	          worker_instances.per_vm_cpu_millis,
 	          worker_instances.per_vm_memory_bytes,
-	          worker_instances.per_vm_scratch_bytes`,
+	          worker_instances.per_vm_guest_ephemeral_disk_bytes`,
 		params.Lease.BuildWorkerInstanceID, params.Lease.WorkerEpoch,
 		params.Lease.RequestedBuildExecutors, params.Lease.RequestedCpuMillis,
-		params.Lease.RequestedMemoryBytes, params.Lease.RequestedWorkloadDiskBytes,
-		params.Lease.RequestedScratchBytes, fixedBuildGuestCPUMillis,
-		fixedBuildGuestMemoryBytes, fixedBuildGuestScratchBytes).Scan(&hasCapacity)
+		params.Lease.RequestedMemoryBytes, params.Lease.RequestedGuestEphemeralDiskBytes,
+		fixedBuildGuestCPUMillis, fixedBuildGuestMemoryBytes).Scan(&hasCapacity)
 	if err != nil {
 		return db.LeaseQueuedDeploymentBuildRow{}, fmt.Errorf("check build capacity: %w", err)
 	}

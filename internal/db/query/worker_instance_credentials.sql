@@ -81,13 +81,9 @@ WITH credential AS (
                WHEN worker_instances.current_service_id = sqlc.arg(service_id)
                THEN worker_instances.certified_memory_bytes ELSE 0
            END,
-           certified_workload_disk_bytes = CASE
+           certified_guest_ephemeral_disk_bytes = CASE
                WHEN worker_instances.current_service_id = sqlc.arg(service_id)
-               THEN worker_instances.certified_workload_disk_bytes ELSE 0
-           END,
-           certified_scratch_bytes = CASE
-               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
-               THEN worker_instances.certified_scratch_bytes ELSE 0
+               THEN worker_instances.certified_guest_ephemeral_disk_bytes ELSE 0
            END,
            certified_build_cache_bytes = CASE
                WHEN worker_instances.current_service_id = sqlc.arg(service_id)
@@ -113,13 +109,9 @@ WITH credential AS (
                WHEN worker_instances.current_service_id = sqlc.arg(service_id)
                THEN worker_instances.per_vm_memory_bytes ELSE 0
            END,
-           per_vm_workload_disk_bytes = CASE
+           per_vm_guest_ephemeral_disk_bytes = CASE
                WHEN worker_instances.current_service_id = sqlc.arg(service_id)
-               THEN worker_instances.per_vm_workload_disk_bytes ELSE 0
-           END,
-           per_vm_scratch_bytes = CASE
-               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
-               THEN worker_instances.per_vm_scratch_bytes ELSE 0
+               THEN worker_instances.per_vm_guest_ephemeral_disk_bytes ELSE 0
            END,
            max_vm_slots = CASE
                WHEN worker_instances.current_service_id = sqlc.arg(service_id)
@@ -320,11 +312,11 @@ WITH nonce AS (
            runtime_identity_id = NULL,
            substrate_format = '', substrate_builder_abi = '', substrate_layout_abi = '',
            certified_cpu_millis = 0, certified_memory_bytes = 0,
-           certified_workload_disk_bytes = 0, certified_scratch_bytes = 0,
+           certified_guest_ephemeral_disk_bytes = 0,
            certified_build_cache_bytes = 0, certified_artifact_cache_bytes = 0,
            certified_hugepages_bytes = 0, certified_checkpoint_bytes = 0,
            per_vm_cpu_millis = 0, per_vm_memory_bytes = 0,
-           per_vm_workload_disk_bytes = 0, per_vm_scratch_bytes = 0,
+           per_vm_guest_ephemeral_disk_bytes = 0,
            max_vm_slots = 0, max_run_consumers = 0,
            max_build_executors = 0, max_runtime_starts = 0,
            attestation_fingerprint = EXCLUDED.attestation_fingerprint,

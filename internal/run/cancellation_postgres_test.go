@@ -842,14 +842,14 @@ INSERT INTO run_leases (
     lease_sequence, attempt_number, worker_group_id, worker_instance_id,
     worker_epoch, runtime_instance_id, network_slot_id, network_slot_generation,
     runtime_identity_id, worker_protocol_version, requested_cpu_millis,
-    requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes,
+    requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
     requested_execution_slots, state, assigned_at, start_deadline_at, expires_at
 )
 SELECT $1, org_id, project_id, environment_id, $2, workspace_id, region_id,
        2, attempt_number, worker_group_id, worker_instance_id,
        worker_epoch, runtime_instance_id, network_slot_id, network_slot_generation,
        runtime_identity_id, worker_protocol_version, requested_cpu_millis,
-       requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes,
+       requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
        requested_execution_slots, 'assigned', now(), now() + interval '5 minutes',
        now() + interval '10 minutes'
   FROM run_leases

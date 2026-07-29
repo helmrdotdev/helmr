@@ -205,7 +205,7 @@ inserted AS (
         id, org_id, project_id, environment_id, deployment_id, build_region_id,
         lease_sequence, worker_group_id, worker_instance_id,
         worker_epoch, worker_protocol_version, requested_cpu_millis,
-        requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes,
+        requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
         requested_build_executors, build_snapshot, trace_id, span_id,
         parent_span_id, traceparent, start_deadline_at, expires_at
     )
@@ -215,7 +215,7 @@ inserted AS (
            sqlc.arg(build_worker_instance_id),
            sqlc.arg(worker_epoch), sqlc.arg(worker_protocol_version),
            sqlc.arg(requested_cpu_millis), sqlc.arg(requested_memory_bytes),
-           sqlc.arg(requested_workload_disk_bytes), sqlc.arg(requested_scratch_bytes),
+           sqlc.arg(requested_guest_ephemeral_disk_bytes),
            sqlc.arg(requested_build_executors), sqlc.arg(build_snapshot),
            sqlc.narg(trace_id), sqlc.narg(span_id), sqlc.narg(parent_span_id),
            sqlc.narg(traceparent), sqlc.arg(start_deadline_at), sqlc.arg(build_lease_expires_at)
@@ -294,16 +294,14 @@ WITH locked_deployments AS MATERIALIZED (
            jsonb_build_object('outcome','lease_lost_requeued',
                'cpu_millis',expired.requested_cpu_millis,
                'memory_bytes',expired.requested_memory_bytes,
-               'workload_disk_bytes',expired.requested_workload_disk_bytes,
-               'scratch_bytes',expired.requested_scratch_bytes,
+               'guest_ephemeral_disk_bytes',expired.requested_guest_ephemeral_disk_bytes,
                'build_executors',expired.requested_build_executors),
            'build-lease-lost:' || expired.id::text,
            jsonb_build_object('quantity',GREATEST((extract(epoch FROM (expired.expires_at - expired.started_at)) * 1000)::bigint, 0),
                'unit','milliseconds','measured_from',expired.started_at,'measured_to',expired.expires_at,
                'outcome','lease_lost_requeued','cpu_millis',expired.requested_cpu_millis,
                'memory_bytes',expired.requested_memory_bytes,
-               'workload_disk_bytes',expired.requested_workload_disk_bytes,
-               'scratch_bytes',expired.requested_scratch_bytes,
+               'guest_ephemeral_disk_bytes',expired.requested_guest_ephemeral_disk_bytes,
                'build_executors',expired.requested_build_executors)::text
       FROM expired
      WHERE expired.started_at IS NOT NULL AND expired.started_at < expired.expires_at
@@ -478,8 +476,7 @@ UPDATE deployment_build_leases
    AND worker_group_id = sqlc.arg(worker_group_id)
    AND worker_instance_id = sqlc.arg(worker_instance_id)
 	   AND worker_epoch = sqlc.arg(worker_epoch)
-	   AND requested_workload_disk_bytes = sqlc.arg(requested_workload_disk_bytes)
-	   AND requested_scratch_bytes = sqlc.arg(requested_scratch_bytes)
+	   AND requested_guest_ephemeral_disk_bytes = sqlc.arg(requested_guest_ephemeral_disk_bytes)
 	   AND requested_cpu_millis = sqlc.arg(requested_cpu_millis)
 	   AND requested_memory_bytes = sqlc.arg(requested_memory_bytes)
 	   AND requested_build_executors = sqlc.arg(requested_build_executors)
@@ -496,8 +493,7 @@ SELECT *
    AND worker_instance_id = sqlc.arg(worker_instance_id)
    AND worker_epoch = sqlc.arg(worker_epoch)
    AND worker_protocol_version = sqlc.arg(worker_protocol_version)
-   AND requested_workload_disk_bytes = sqlc.arg(requested_workload_disk_bytes)
-   AND requested_scratch_bytes = sqlc.arg(requested_scratch_bytes)
+   AND requested_guest_ephemeral_disk_bytes = sqlc.arg(requested_guest_ephemeral_disk_bytes)
    AND requested_cpu_millis = sqlc.arg(requested_cpu_millis)
    AND requested_memory_bytes = sqlc.arg(requested_memory_bytes)
    AND requested_build_executors = sqlc.arg(requested_build_executors)
@@ -619,8 +615,7 @@ RETURNING deployments.*
            jsonb_build_object(
                'outcome','succeeded', 'cpu_millis',completed.requested_cpu_millis,
                'memory_bytes',completed.requested_memory_bytes,
-               'workload_disk_bytes',completed.requested_workload_disk_bytes,
-               'scratch_bytes',completed.requested_scratch_bytes,
+               'guest_ephemeral_disk_bytes',completed.requested_guest_ephemeral_disk_bytes,
                'build_executors',completed.requested_build_executors
            ),
            'build-active:' || completed.id::text,
@@ -630,8 +625,7 @@ RETURNING deployments.*
                'measured_to',completed.terminal_at, 'outcome','succeeded',
                'cpu_millis',completed.requested_cpu_millis,
                'memory_bytes',completed.requested_memory_bytes,
-               'workload_disk_bytes',completed.requested_workload_disk_bytes,
-               'scratch_bytes',completed.requested_scratch_bytes,
+               'guest_ephemeral_disk_bytes',completed.requested_guest_ephemeral_disk_bytes,
                'build_executors',completed.requested_build_executors
            )::text
       FROM completed
@@ -823,8 +817,7 @@ RETURNING deployments.*
                'outcome','failed', 'reason_code',failed.terminal_reason_code,
                'cpu_millis',failed.requested_cpu_millis,
                'memory_bytes',failed.requested_memory_bytes,
-               'workload_disk_bytes',failed.requested_workload_disk_bytes,
-               'scratch_bytes',failed.requested_scratch_bytes,
+               'guest_ephemeral_disk_bytes',failed.requested_guest_ephemeral_disk_bytes,
                'build_executors',failed.requested_build_executors
            ),
            'build-active:' || failed.id::text,
@@ -835,8 +828,7 @@ RETURNING deployments.*
                'reason_code',failed.terminal_reason_code,
                'cpu_millis',failed.requested_cpu_millis,
                'memory_bytes',failed.requested_memory_bytes,
-               'workload_disk_bytes',failed.requested_workload_disk_bytes,
-               'scratch_bytes',failed.requested_scratch_bytes,
+               'guest_ephemeral_disk_bytes',failed.requested_guest_ephemeral_disk_bytes,
                'build_executors',failed.requested_build_executors
            )::text
       FROM failed
@@ -931,8 +923,7 @@ WITH locked_deployment AS MATERIALIZED (
                'reason_code', sqlc.arg(reason_code),
                'cpu_millis', lost.requested_cpu_millis,
                'memory_bytes', lost.requested_memory_bytes,
-               'workload_disk_bytes', lost.requested_workload_disk_bytes,
-               'scratch_bytes', lost.requested_scratch_bytes,
+               'guest_ephemeral_disk_bytes', lost.requested_guest_ephemeral_disk_bytes,
                'build_executors', lost.requested_build_executors
            ),
            'build-lease-lost:' || lost.id::text,
@@ -945,8 +936,7 @@ WITH locked_deployment AS MATERIALIZED (
                'reason_code', sqlc.arg(reason_code),
                'cpu_millis', lost.requested_cpu_millis,
                'memory_bytes', lost.requested_memory_bytes,
-               'workload_disk_bytes', lost.requested_workload_disk_bytes,
-               'scratch_bytes', lost.requested_scratch_bytes,
+               'guest_ephemeral_disk_bytes', lost.requested_guest_ephemeral_disk_bytes,
                'build_executors', lost.requested_build_executors
            )::text
       FROM lost

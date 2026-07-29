@@ -170,8 +170,7 @@ func (s *Server) appendReceiptRunLog(
 	input.WriterGeneration = lease.WriterGeneration
 	input.RequestedCpuMillis = lease.RequestedCPUMillis
 	input.RequestedMemoryBytes = lease.RequestedMemoryBytes
-	input.RequestedWorkloadDiskBytes = lease.RequestedWorkloadDiskBytes
-	input.RequestedScratchBytes = lease.RequestedScratchBytes
+	input.RequestedGuestEphemeralDiskBytes = lease.RequestedGuestEphemeralDiskBytes
 	input.RequestedExecutionSlots = lease.RequestedExecutionSlots
 	input.MaxActiveDurationMs = lease.MaxActiveDurationMs
 	input.ActiveElapsedMs = lease.ActiveElapsedMs

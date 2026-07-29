@@ -137,14 +137,13 @@ variables {
     allows_run           = true
     allows_build         = false
     instance_capacity = {
-      milli_cpu            = 4000
-      memory_bytes         = 8589934592
-      workload_disk_bytes  = 34359738368
-      scratch_bytes        = 34359738368
-      build_cache_bytes    = 0
-      artifact_cache_bytes = 0
-      vm_slots             = 2
-      build_executors      = 0
+      milli_cpu                  = 4000
+      memory_bytes               = 8589934592
+      guest_ephemeral_disk_bytes = 34359738368
+      build_cache_bytes          = 0
+      artifact_cache_bytes       = 0
+      vm_slots                   = 2
+      build_executors            = 0
     }
   }]
   region_id                    = "helmr-us-east"

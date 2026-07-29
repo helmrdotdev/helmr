@@ -291,14 +291,13 @@ func TestPreparedRuntimeCapacityReservationLivesThroughCheckout(t *testing.T) {
 	target := runtimeCapacityTarget("00000000-0000-0000-0000-000000000510", 7)
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
 	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
-	pool.RuntimeScratchBytes = 256 << 20
 	if err := pool.reserveRuntimeCapacity(target); err != nil {
 		t.Fatal(err)
 	}
 	wantKey := runtimeCapacityKey(target.ID, target.WorkerEpoch)
 	wantVector := capacity.Vector{
-		CPUMillis: 1000, MemoryBytes: 512 << 20, WorkloadDiskBytes: 1024 << 20,
-		ScratchBytes: 256 << 20, VMSlots: 1,
+		CPUMillis: 1000, MemoryBytes: 512 << 20, GuestEphemeralDiskBytes: 1024 << 20,
+		VMSlots: 1,
 	}
 	if got := pool.Capacity.Snapshot().Reservations[wantKey]; got != wantVector {
 		t.Fatalf("reservation = %+v, want %+v", got, wantVector)
@@ -440,7 +439,6 @@ func TestPreparedRuntimeVerifiesReservedWorkspaceArtifactBeforeReady(t *testing.
 func TestPreparedRuntimeCapacityExhaustionIsRetryableBackpressure(t *testing.T) {
 	pool := NewPreparedRuntimePool(nil, nil, 2, nil)
 	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
-	pool.RuntimeScratchBytes = 256 << 20
 	first := runtimeCapacityTarget("00000000-0000-0000-0000-000000000511", 7)
 	if err := pool.reserveRuntimeCapacity(first); err != nil {
 		t.Fatal(err)
@@ -454,13 +452,13 @@ func TestPreparedRuntimeCapacityExhaustionIsRetryableBackpressure(t *testing.T) 
 	}
 }
 
-func TestPreparedRuntimeCapacityRejectsNegativeScratch(t *testing.T) {
+func TestPreparedRuntimeCapacityRejectsNegativeGuestDisk(t *testing.T) {
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
 	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
-	pool.RuntimeScratchBytes = -1
-
-	if err := pool.reserveRuntimeCapacity(runtimeCapacityTarget("00000000-0000-0000-0000-000000000514", 7)); err == nil {
-		t.Fatal("negative runtime scratch capacity unexpectedly reserved")
+	target := runtimeCapacityTarget("00000000-0000-0000-0000-000000000514", 7)
+	target.Source.ReservedDiskMiB = -1
+	if err := pool.reserveRuntimeCapacity(target); err == nil {
+		t.Fatal("negative guest disk capacity unexpectedly reserved")
 	}
 	if got := len(pool.Capacity.Snapshot().Reservations); got != 0 {
 		t.Fatalf("reservations = %d, want 0", got)
@@ -472,7 +470,6 @@ func TestPreparedRuntimeCloseFailureRetainsCapacityUntilReclaim(t *testing.T) {
 	connector := &cleanupRuntimeConnector{}
 	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
 	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
-	pool.RuntimeScratchBytes = 256 << 20
 	if err := pool.reserveRuntimeCapacity(target); err != nil {
 		t.Fatal(err)
 	}
@@ -500,8 +497,8 @@ func TestPreparedRuntimeCloseFailureRetainsCapacityUntilReclaim(t *testing.T) {
 func newPreparedRuntimeCapacity(t *testing.T, vmSlots int64) *capacity.Ledger {
 	t.Helper()
 	ledger, err := capacity.New(capacity.Vector{
-		CPUMillis: 1000, MemoryBytes: 512 << 20, WorkloadDiskBytes: 1024 << 20,
-		ScratchBytes: 256 << 20, VMSlots: vmSlots,
+		CPUMillis: 1000, MemoryBytes: 512 << 20, GuestEphemeralDiskBytes: 1024 << 20,
+		VMSlots: vmSlots,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -577,7 +574,6 @@ func TestReclaimFailedCheckedOutRuntimeClearsExactCheckoutAfterPhysicalCleanup(t
 	connector := &cleanupRuntimeConnector{}
 	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
 	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
-	pool.RuntimeScratchBytes = 256 << 20
 	if err := pool.reserveRuntimeCapacity(target); err != nil {
 		t.Fatal(err)
 	}
@@ -613,7 +609,6 @@ func TestReclaimFailedCheckedOutRuntimeRetainsCheckoutWhenPhysicalCleanupFails(t
 	connector := &cleanupRuntimeConnector{err: errors.New("runtime still exists")}
 	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
 	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
-	pool.RuntimeScratchBytes = 256 << 20
 	if err := pool.reserveRuntimeCapacity(target); err != nil {
 		t.Fatal(err)
 	}
@@ -645,7 +640,6 @@ func TestReclaimFailedCheckedOutRuntimeRetriesProofAfterLocalRelease(t *testing.
 	connector := &cleanupRuntimeConnector{}
 	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
 	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
-	pool.RuntimeScratchBytes = 256 << 20
 	if err := pool.reserveRuntimeCapacity(target); err != nil {
 		t.Fatal(err)
 	}

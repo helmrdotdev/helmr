@@ -1360,13 +1360,11 @@ func validateClaimPhysicalAuthority(worker workerActor, authority runLeaseClaimA
 		authority.worker.RuntimeIdentityID.String != runtime.RuntimeIdentityID ||
 		runtime.ReservedCpuMillis != lease.RequestedCpuMillis ||
 		runtime.ReservedMemoryBytes != lease.RequestedMemoryBytes ||
-		runtime.ReservedWorkloadDiskBytes != lease.RequestedWorkloadDiskBytes ||
-		runtime.ReservedScratchBytes != lease.RequestedScratchBytes ||
+		runtime.ReservedGuestEphemeralDiskBytes != lease.RequestedGuestEphemeralDiskBytes ||
 		runtime.ReservedExecutionSlots != lease.RequestedExecutionSlots ||
 		authority.worker.PerVmCpuMillis != lease.RequestedCpuMillis ||
 		authority.worker.PerVmMemoryBytes != lease.RequestedMemoryBytes ||
-		authority.worker.PerVmWorkloadDiskBytes != lease.RequestedWorkloadDiskBytes ||
-		authority.worker.PerVmScratchBytes != lease.RequestedScratchBytes {
+		authority.worker.PerVmGuestEphemeralDiskBytes != lease.RequestedGuestEphemeralDiskBytes {
 		return errStaleRunLeaseClaim
 	}
 	return nil
@@ -1479,8 +1477,7 @@ func validateCheckpointSource(authority runLeaseClaimAuthority) error {
 		sourceLease.RuntimeIdentityID != currentLease.RuntimeIdentityID ||
 		sourceLease.RequestedCpuMillis != currentLease.RequestedCpuMillis ||
 		sourceLease.RequestedMemoryBytes != currentLease.RequestedMemoryBytes ||
-		sourceLease.RequestedWorkloadDiskBytes != currentLease.RequestedWorkloadDiskBytes ||
-		sourceLease.RequestedScratchBytes != currentLease.RequestedScratchBytes ||
+		sourceLease.RequestedGuestEphemeralDiskBytes != currentLease.RequestedGuestEphemeralDiskBytes ||
 		sourceLease.RequestedExecutionSlots != currentLease.RequestedExecutionSlots ||
 		sourceRuntime.RuntimeIdentityID != currentRuntime.RuntimeIdentityID ||
 		sourceRuntime.RuntimeSubstrateID != currentRuntime.RuntimeSubstrateID ||
@@ -1489,8 +1486,7 @@ func validateCheckpointSource(authority runLeaseClaimAuthority) error {
 		sourceRuntime.ProgramDeploymentID != currentRuntime.ProgramDeploymentID ||
 		sourceRuntime.ReservedCpuMillis != currentRuntime.ReservedCpuMillis ||
 		sourceRuntime.ReservedMemoryBytes != currentRuntime.ReservedMemoryBytes ||
-		sourceRuntime.ReservedWorkloadDiskBytes != currentRuntime.ReservedWorkloadDiskBytes ||
-		sourceRuntime.ReservedScratchBytes != currentRuntime.ReservedScratchBytes ||
+		sourceRuntime.ReservedGuestEphemeralDiskBytes != currentRuntime.ReservedGuestEphemeralDiskBytes ||
 		sourceRuntime.ReservedExecutionSlots != currentRuntime.ReservedExecutionSlots ||
 		!bytes.Equal(sourceRuntime.NetworkPolicy, currentRuntime.NetworkPolicy) {
 		return errStaleRunLeaseClaim

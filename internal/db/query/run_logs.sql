@@ -91,8 +91,7 @@ current_run_lease AS (
        AND workspace_leases.mount_fencing_generation = sqlc.arg(mount_fencing_generation)
        AND run_leases.requested_cpu_millis = sqlc.arg(requested_cpu_millis)
        AND run_leases.requested_memory_bytes = sqlc.arg(requested_memory_bytes)
-       AND run_leases.requested_workload_disk_bytes = sqlc.arg(requested_workload_disk_bytes)
-       AND run_leases.requested_scratch_bytes = sqlc.arg(requested_scratch_bytes)
+       AND run_leases.requested_guest_ephemeral_disk_bytes = sqlc.arg(requested_guest_ephemeral_disk_bytes)
        AND run_leases.requested_execution_slots = sqlc.arg(requested_execution_slots)
        AND runs.max_active_duration_ms = sqlc.arg(max_active_duration_ms)
        AND runs.active_elapsed_ms = sqlc.arg(active_elapsed_ms)
@@ -115,8 +114,7 @@ current_run_lease AS (
        AND worker_instances.runtime_identity_id = run_leases.runtime_identity_id
        AND worker_instances.per_vm_cpu_millis = run_leases.requested_cpu_millis
        AND worker_instances.per_vm_memory_bytes = run_leases.requested_memory_bytes
-       AND worker_instances.per_vm_workload_disk_bytes = run_leases.requested_workload_disk_bytes
-       AND worker_instances.per_vm_scratch_bytes = run_leases.requested_scratch_bytes
+       AND worker_instances.per_vm_guest_ephemeral_disk_bytes = run_leases.requested_guest_ephemeral_disk_bytes
        AND workspaces.state = 'active'
        AND workspaces.desired_state = 'active'
        AND workspaces.ownership_generation = workspace_leases.ownership_generation
@@ -135,8 +133,7 @@ current_run_lease AS (
        AND runtime_instances.reservation_expires_at IS NULL
        AND runtime_instances.reserved_cpu_millis = run_leases.requested_cpu_millis
        AND runtime_instances.reserved_memory_bytes = run_leases.requested_memory_bytes
-       AND runtime_instances.reserved_workload_disk_bytes = run_leases.requested_workload_disk_bytes
-       AND runtime_instances.reserved_scratch_bytes = run_leases.requested_scratch_bytes
+       AND runtime_instances.reserved_guest_ephemeral_disk_bytes = run_leases.requested_guest_ephemeral_disk_bytes
        AND runtime_instances.reserved_execution_slots = run_leases.requested_execution_slots
        AND worker_network_slots.state = 'bound'
        AND workspace_mounts.state = 'mounted'

@@ -13,7 +13,7 @@ import (
 
 const claimFleetWorkerTermination = `-- name: ClaimFleetWorkerTermination :one
 WITH target AS MATERIALIZED (
-    SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
+    SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_guest_ephemeral_disk_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
       FROM worker_instances
      WHERE worker_instances.id = $1
        AND worker_instances.worker_group_id = $2
@@ -21,7 +21,7 @@ WITH target AS MATERIALIZED (
        AND worker_instances.state IN ('disabled', 'lost')
      FOR UPDATE OF worker_instances
 ), proof AS MATERIALIZED (
-    SELECT target.id, target.resource_id, target.worker_group_id, target.attestation_fingerprint, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.protocol_version, target.supervisor_version, target.supports_run, target.supports_build, target.runtime_identity_id, target.substrate_format, target.substrate_builder_abi, target.substrate_layout_abi, target.certified_cpu_millis, target.certified_memory_bytes, target.certified_workload_disk_bytes, target.certified_scratch_bytes, target.certified_build_cache_bytes, target.certified_artifact_cache_bytes, target.certified_hugepages_bytes, target.certified_checkpoint_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_workload_disk_bytes, target.per_vm_scratch_bytes, target.max_vm_slots, target.max_run_consumers, target.max_build_executors, target.max_runtime_starts, target.certification_profile, target.certification_fingerprint, target.epoch_started_at, target.startup_inventory_epoch, target.startup_inventory_evidence, target.drain_cleanup_fingerprint, target.drain_cleanup_evidence, target.certified_at, target.activated_at, target.draining_at, target.disabled_at, target.lost_at, target.termination_claimed_at, target.provider_terminated_at, target.created_at, target.updated_at,
+    SELECT target.id, target.resource_id, target.worker_group_id, target.attestation_fingerprint, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.protocol_version, target.supervisor_version, target.supports_run, target.supports_build, target.runtime_identity_id, target.substrate_format, target.substrate_builder_abi, target.substrate_layout_abi, target.certified_cpu_millis, target.certified_memory_bytes, target.certified_guest_ephemeral_disk_bytes, target.certified_build_cache_bytes, target.certified_artifact_cache_bytes, target.certified_hugepages_bytes, target.certified_checkpoint_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_run_consumers, target.max_build_executors, target.max_runtime_starts, target.certification_profile, target.certification_fingerprint, target.epoch_started_at, target.startup_inventory_epoch, target.startup_inventory_evidence, target.drain_cleanup_fingerprint, target.drain_cleanup_evidence, target.certified_at, target.activated_at, target.draining_at, target.disabled_at, target.lost_at, target.termination_claimed_at, target.provider_terminated_at, target.created_at, target.updated_at,
            (
                (SELECT count(*) FROM run_leases
                  WHERE worker_instance_id = target.id
@@ -321,8 +321,7 @@ WITH target_group AS (
            worker_groups.region_id,
            worker_groups.required_cpu_millis,
            worker_groups.required_memory_bytes,
-           worker_groups.required_workload_disk_bytes,
-           worker_groups.required_scratch_bytes,
+           worker_groups.required_guest_ephemeral_disk_bytes,
            worker_groups.required_build_executors
       FROM worker_groups
      WHERE worker_groups.id = $1 AND worker_groups.allows_build
@@ -330,8 +329,7 @@ WITH target_group AS (
     SELECT 'queued'::text AS demand_state,
            target_group.required_cpu_millis AS milli_cpu,
            target_group.required_memory_bytes AS memory_bytes,
-           target_group.required_workload_disk_bytes AS workload_disk_bytes,
-           target_group.required_scratch_bytes AS scratch_bytes,
+           target_group.required_guest_ephemeral_disk_bytes AS guest_ephemeral_disk_bytes,
            target_group.required_build_executors::bigint AS build_executors,
            count(*)::bigint AS demand_count
       FROM deployments
@@ -346,35 +344,33 @@ WITH target_group AS (
               AND active_lease.state IN ('assigned', 'starting', 'running')
        )
      GROUP BY target_group.required_cpu_millis, target_group.required_memory_bytes,
-              target_group.required_workload_disk_bytes, target_group.required_scratch_bytes,
+              target_group.required_guest_ephemeral_disk_bytes,
               target_group.required_build_executors
     UNION ALL
     SELECT 'active'::text,
            deployment_build_leases.requested_cpu_millis,
            deployment_build_leases.requested_memory_bytes,
-           deployment_build_leases.requested_workload_disk_bytes,
-           deployment_build_leases.requested_scratch_bytes,
+           deployment_build_leases.requested_guest_ephemeral_disk_bytes,
            deployment_build_leases.requested_build_executors::bigint,
            count(*)::bigint
       FROM deployment_build_leases
       JOIN target_group ON target_group.id = deployment_build_leases.worker_group_id
      WHERE deployment_build_leases.state IN ('assigned', 'starting', 'running')
      GROUP BY deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes,
-              deployment_build_leases.requested_workload_disk_bytes, deployment_build_leases.requested_scratch_bytes,
+              deployment_build_leases.requested_guest_ephemeral_disk_bytes,
               deployment_build_leases.requested_build_executors
 )
-SELECT demand_state, milli_cpu, memory_bytes, workload_disk_bytes, scratch_bytes, build_executors, demand_count FROM demand ORDER BY demand_state, milli_cpu, memory_bytes, workload_disk_bytes,
-                              scratch_bytes, build_executors
+SELECT demand_state, milli_cpu, memory_bytes, guest_ephemeral_disk_bytes, build_executors, demand_count FROM demand ORDER BY demand_state, milli_cpu, memory_bytes, guest_ephemeral_disk_bytes,
+                              build_executors
 `
 
 type ListFleetBuildDemandRow struct {
-	DemandState       string `json:"demand_state"`
-	MilliCpu          int64  `json:"milli_cpu"`
-	MemoryBytes       int64  `json:"memory_bytes"`
-	WorkloadDiskBytes int64  `json:"workload_disk_bytes"`
-	ScratchBytes      int64  `json:"scratch_bytes"`
-	BuildExecutors    int64  `json:"build_executors"`
-	DemandCount       int64  `json:"demand_count"`
+	DemandState             string `json:"demand_state"`
+	MilliCpu                int64  `json:"milli_cpu"`
+	MemoryBytes             int64  `json:"memory_bytes"`
+	GuestEphemeralDiskBytes int64  `json:"guest_ephemeral_disk_bytes"`
+	BuildExecutors          int64  `json:"build_executors"`
+	DemandCount             int64  `json:"demand_count"`
 }
 
 func (q *Queries) ListFleetBuildDemand(ctx context.Context, workerGroupID string) ([]ListFleetBuildDemandRow, error) {
@@ -390,8 +386,7 @@ func (q *Queries) ListFleetBuildDemand(ctx context.Context, workerGroupID string
 			&i.DemandState,
 			&i.MilliCpu,
 			&i.MemoryBytes,
-			&i.WorkloadDiskBytes,
-			&i.ScratchBytes,
+			&i.GuestEphemeralDiskBytes,
 			&i.BuildExecutors,
 			&i.DemandCount,
 		); err != nil {
@@ -411,8 +406,7 @@ WITH target_group AS (
            worker_groups.region_id,
            worker_groups.required_cpu_millis,
            worker_groups.required_memory_bytes,
-           worker_groups.required_workload_disk_bytes,
-           worker_groups.required_scratch_bytes,
+           worker_groups.required_guest_ephemeral_disk_bytes,
            worker_groups.required_vm_slots
       FROM worker_groups
      WHERE worker_groups.id = $1 AND worker_groups.allows_run
@@ -421,8 +415,7 @@ WITH target_group AS (
            target_group.id AS compatibility_key,
            target_group.required_cpu_millis AS milli_cpu,
            target_group.required_memory_bytes AS memory_bytes,
-           target_group.required_workload_disk_bytes AS workload_disk_bytes,
-           target_group.required_scratch_bytes AS scratch_bytes,
+           target_group.required_guest_ephemeral_disk_bytes AS guest_ephemeral_disk_bytes,
            target_group.required_vm_slots::bigint AS vm_slots,
            count(*)::bigint AS demand_count
       FROM runs
@@ -434,38 +427,35 @@ WITH target_group AS (
      GROUP BY target_group.id,
               target_group.required_cpu_millis,
               target_group.required_memory_bytes,
-              target_group.required_workload_disk_bytes,
-              target_group.required_scratch_bytes,
+              target_group.required_guest_ephemeral_disk_bytes,
               target_group.required_vm_slots
     UNION ALL
     SELECT 'active'::text,
            target_group.id,
            run_leases.requested_cpu_millis,
            run_leases.requested_memory_bytes,
-           run_leases.requested_workload_disk_bytes,
-           run_leases.requested_scratch_bytes,
+           run_leases.requested_guest_ephemeral_disk_bytes,
            run_leases.requested_execution_slots::bigint,
            count(*)::bigint
       FROM run_leases
       JOIN target_group ON target_group.id = run_leases.worker_group_id
      WHERE run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
      GROUP BY target_group.id, run_leases.requested_cpu_millis,
-              run_leases.requested_memory_bytes, run_leases.requested_workload_disk_bytes,
-              run_leases.requested_scratch_bytes, run_leases.requested_execution_slots
+              run_leases.requested_memory_bytes, run_leases.requested_guest_ephemeral_disk_bytes,
+              run_leases.requested_execution_slots
 )
-SELECT demand_state, compatibility_key, milli_cpu, memory_bytes, workload_disk_bytes, scratch_bytes, vm_slots, demand_count FROM demand ORDER BY demand_state, compatibility_key, milli_cpu, memory_bytes,
-                              workload_disk_bytes, scratch_bytes, vm_slots
+SELECT demand_state, compatibility_key, milli_cpu, memory_bytes, guest_ephemeral_disk_bytes, vm_slots, demand_count FROM demand ORDER BY demand_state, compatibility_key, milli_cpu, memory_bytes,
+                              guest_ephemeral_disk_bytes, vm_slots
 `
 
 type ListFleetRunDemandRow struct {
-	DemandState       string `json:"demand_state"`
-	CompatibilityKey  string `json:"compatibility_key"`
-	MilliCpu          int64  `json:"milli_cpu"`
-	MemoryBytes       int64  `json:"memory_bytes"`
-	WorkloadDiskBytes int64  `json:"workload_disk_bytes"`
-	ScratchBytes      int64  `json:"scratch_bytes"`
-	VmSlots           int64  `json:"vm_slots"`
-	DemandCount       int64  `json:"demand_count"`
+	DemandState             string `json:"demand_state"`
+	CompatibilityKey        string `json:"compatibility_key"`
+	MilliCpu                int64  `json:"milli_cpu"`
+	MemoryBytes             int64  `json:"memory_bytes"`
+	GuestEphemeralDiskBytes int64  `json:"guest_ephemeral_disk_bytes"`
+	VmSlots                 int64  `json:"vm_slots"`
+	DemandCount             int64  `json:"demand_count"`
 }
 
 func (q *Queries) ListFleetRunDemand(ctx context.Context, workerGroupID string) ([]ListFleetRunDemandRow, error) {
@@ -482,8 +472,7 @@ func (q *Queries) ListFleetRunDemand(ctx context.Context, workerGroupID string) 
 			&i.CompatibilityKey,
 			&i.MilliCpu,
 			&i.MemoryBytes,
-			&i.WorkloadDiskBytes,
-			&i.ScratchBytes,
+			&i.GuestEphemeralDiskBytes,
 			&i.VmSlots,
 			&i.DemandCount,
 		); err != nil {
@@ -499,8 +488,8 @@ func (q *Queries) ListFleetRunDemand(ctx context.Context, workerGroupID string) 
 
 const listFleetWorkers = `-- name: ListFleetWorkers :many
 SELECT id, resource_id, state, current_epoch, activated_at, draining_at,
-       certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes,
-       certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes,
+       certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes,
+       certified_build_cache_bytes, certified_artifact_cache_bytes,
        max_vm_slots, max_build_executors
  FROM worker_instances
  WHERE worker_group_id = $1
@@ -510,20 +499,19 @@ SELECT id, resource_id, state, current_epoch, activated_at, draining_at,
 `
 
 type ListFleetWorkersRow struct {
-	ID                          pgtype.UUID        `json:"id"`
-	ResourceID                  string             `json:"resource_id"`
-	State                       string             `json:"state"`
-	CurrentEpoch                pgtype.Int8        `json:"current_epoch"`
-	ActivatedAt                 pgtype.Timestamptz `json:"activated_at"`
-	DrainingAt                  pgtype.Timestamptz `json:"draining_at"`
-	CertifiedCpuMillis          int64              `json:"certified_cpu_millis"`
-	CertifiedMemoryBytes        int64              `json:"certified_memory_bytes"`
-	CertifiedWorkloadDiskBytes  int64              `json:"certified_workload_disk_bytes"`
-	CertifiedScratchBytes       int64              `json:"certified_scratch_bytes"`
-	CertifiedBuildCacheBytes    int64              `json:"certified_build_cache_bytes"`
-	CertifiedArtifactCacheBytes int64              `json:"certified_artifact_cache_bytes"`
-	MaxVmSlots                  int32              `json:"max_vm_slots"`
-	MaxBuildExecutors           int32              `json:"max_build_executors"`
+	ID                               pgtype.UUID        `json:"id"`
+	ResourceID                       string             `json:"resource_id"`
+	State                            string             `json:"state"`
+	CurrentEpoch                     pgtype.Int8        `json:"current_epoch"`
+	ActivatedAt                      pgtype.Timestamptz `json:"activated_at"`
+	DrainingAt                       pgtype.Timestamptz `json:"draining_at"`
+	CertifiedCpuMillis               int64              `json:"certified_cpu_millis"`
+	CertifiedMemoryBytes             int64              `json:"certified_memory_bytes"`
+	CertifiedGuestEphemeralDiskBytes int64              `json:"certified_guest_ephemeral_disk_bytes"`
+	CertifiedBuildCacheBytes         int64              `json:"certified_build_cache_bytes"`
+	CertifiedArtifactCacheBytes      int64              `json:"certified_artifact_cache_bytes"`
+	MaxVmSlots                       int32              `json:"max_vm_slots"`
+	MaxBuildExecutors                int32              `json:"max_build_executors"`
 }
 
 func (q *Queries) ListFleetWorkers(ctx context.Context, workerGroupID string) ([]ListFleetWorkersRow, error) {
@@ -544,8 +532,7 @@ func (q *Queries) ListFleetWorkers(ctx context.Context, workerGroupID string) ([
 			&i.DrainingAt,
 			&i.CertifiedCpuMillis,
 			&i.CertifiedMemoryBytes,
-			&i.CertifiedWorkloadDiskBytes,
-			&i.CertifiedScratchBytes,
+			&i.CertifiedGuestEphemeralDiskBytes,
 			&i.CertifiedBuildCacheBytes,
 			&i.CertifiedArtifactCacheBytes,
 			&i.MaxVmSlots,
@@ -571,7 +558,7 @@ WITH target AS (
        AND worker_instances.state IN ('active', 'draining')
        AND (($3::text = 'run' AND worker_instances.supports_run)
             OR ($3::text = 'build' AND worker_instances.supports_build))
-    RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
+    RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
 ), idle_mounts AS (
     UPDATE workspace_mounts
        SET state = 'unmounting', stopped_at = COALESCE(stopped_at, now()), updated_at = now()

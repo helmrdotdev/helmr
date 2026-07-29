@@ -687,8 +687,7 @@ func (s *Supervisor) observation(state State, evidence RecoveryEvidence) api.Wor
 		admissionObservation := s.cfg.AdmissionEvaluator.Observation()
 		observation.CPUPressureBPS = admissionObservation.CPUPressureBPS
 		observation.MemoryPressureBPS = admissionObservation.MemoryPressureBPS
-		observation.WorkloadDiskPressureBPS = admissionObservation.WorkloadDiskPressureBPS
-		observation.ScratchPressureBPS = admissionObservation.ScratchPressureBPS
+		observation.GuestEphemeralDiskPressureBPS = admissionObservation.GuestEphemeralDiskPressureBPS
 		if len(admissionObservation.HealthDetails) != 0 {
 			combined, err := json.Marshal(map[string]json.RawMessage{
 				"startup_recovery": evidence.HealthDetails(),

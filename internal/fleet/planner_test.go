@@ -16,7 +16,7 @@ func TestPlanZeroWorkersWithQueuedDemand(t *testing.T) {
 	decision, err := planner.Plan(Inputs{
 		Now: testNow,
 		Demand: Demand{
-			Queued: []WorkloadBucket{workload(Capacity{MilliCPU: 1_000, MemoryBytes: 2_000, ScratchBytes: 200, VMSlots: 1}, 5)},
+			Queued: []WorkloadBucket{workload(Capacity{MilliCPU: 1_000, MemoryBytes: 2_000, GuestEphemeralDiskBytes: 200, VMSlots: 1}, 5)},
 		},
 	})
 	if err != nil {
@@ -121,24 +121,24 @@ func TestNegativeRunAttestationCoverageGapFailsClosed(t *testing.T) {
 func TestPlanUsesLargestResourceDimensionCeiling(t *testing.T) {
 	policy := testPolicy()
 	policy.InstanceCapacity = Capacity{
-		MilliCPU:       4,
-		MemoryBytes:    8,
-		ScratchBytes:   10,
-		VMSlots:        4,
-		BuildExecutors: 2,
+		MilliCPU:                4,
+		MemoryBytes:             8,
+		GuestEphemeralDiskBytes: 10,
+		VMSlots:                 4,
+		BuildExecutors:          2,
 	}
 	planner := mustPlanner(t, policy)
 
 	decision, err := planner.Plan(Inputs{
 		Now: testNow,
 		Demand: Demand{
-			Queued: []WorkloadBucket{workload(Capacity{MilliCPU: 3, MemoryBytes: 7, ScratchBytes: 6, VMSlots: 3, BuildExecutors: 2}, 6)},
+			Queued: []WorkloadBucket{workload(Capacity{MilliCPU: 3, MemoryBytes: 7, GuestEphemeralDiskBytes: 6, VMSlots: 3, BuildExecutors: 2}, 6)},
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := DimensionCeilings{MilliCPU: 5, MemoryBytes: 6, ScratchBytes: 4, VMSlots: 5, BuildExecutors: 6}
+	want := DimensionCeilings{MilliCPU: 5, MemoryBytes: 6, GuestEphemeralDiskBytes: 4, VMSlots: 5, BuildExecutors: 6}
 	if decision.RequiredByDimension != want {
 		t.Fatalf("dimension ceilings = %#v, want %#v", decision.RequiredByDimension, want)
 	}
@@ -147,21 +147,19 @@ func TestPlanUsesLargestResourceDimensionCeiling(t *testing.T) {
 	}
 }
 
-func TestDiskPartitionsAreCapacityIsolated(t *testing.T) {
+func TestGuestDiskAndCachesAreCapacityIsolated(t *testing.T) {
 	policy := testPolicy()
 	policy.InstanceCapacity = Capacity{
-		WorkloadDiskBytes:  100,
-		ScratchBytes:       100,
-		BuildCacheBytes:    100,
-		ArtifactCacheBytes: 100,
+		GuestEphemeralDiskBytes: 100,
+		BuildCacheBytes:         100,
+		ArtifactCacheBytes:      100,
 	}
 	planner := mustPlanner(t, policy)
 
 	decision, err := planner.Plan(Inputs{
 		Now: testNow,
 		Demand: Demand{Queued: []WorkloadBucket{
-			workload(Capacity{WorkloadDiskBytes: 60}, 2),
-			workload(Capacity{ScratchBytes: 60}, 2),
+			workload(Capacity{GuestEphemeralDiskBytes: 60}, 2),
 			workload(Capacity{BuildCacheBytes: 60}, 2),
 			workload(Capacity{ArtifactCacheBytes: 60}, 2),
 		}},
@@ -169,9 +167,9 @@ func TestDiskPartitionsAreCapacityIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := DimensionCeilings{WorkloadDiskBytes: 2, ScratchBytes: 2, BuildCacheBytes: 2, ArtifactCacheBytes: 2}
+	want := DimensionCeilings{GuestEphemeralDiskBytes: 2, BuildCacheBytes: 2, ArtifactCacheBytes: 2}
 	if decision.RequiredByDimension != want || decision.DesiredWorkers != 2 {
-		t.Fatalf("decision = %#v, want four isolated partition ceilings of 2", decision)
+		t.Fatalf("decision = %#v, want three isolated capacity ceilings of 2", decision)
 	}
 }
 
@@ -578,7 +576,7 @@ func testPolicy() Policy {
 		MinWorkers:               0,
 		WarmWorkers:              0,
 		MaxWorkers:               20,
-		InstanceCapacity:         Capacity{MilliCPU: 2_000, MemoryBytes: 4_000, ScratchBytes: 10_000, VMSlots: 2, BuildExecutors: 1},
+		InstanceCapacity:         Capacity{MilliCPU: 2_000, MemoryBytes: 4_000, GuestEphemeralDiskBytes: 10_000, VMSlots: 2, BuildExecutors: 1},
 		AllowedCompatibilityKeys: []string{"linux-amd64"},
 		MaxScaleOutPerCycle:      10,
 		MaxPendingWorkers:        10,

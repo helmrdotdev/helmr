@@ -94,13 +94,9 @@ WITH credential AS (
                WHEN worker_instances.current_service_id = $6
                THEN worker_instances.certified_memory_bytes ELSE 0
            END,
-           certified_workload_disk_bytes = CASE
+           certified_guest_ephemeral_disk_bytes = CASE
                WHEN worker_instances.current_service_id = $6
-               THEN worker_instances.certified_workload_disk_bytes ELSE 0
-           END,
-           certified_scratch_bytes = CASE
-               WHEN worker_instances.current_service_id = $6
-               THEN worker_instances.certified_scratch_bytes ELSE 0
+               THEN worker_instances.certified_guest_ephemeral_disk_bytes ELSE 0
            END,
            certified_build_cache_bytes = CASE
                WHEN worker_instances.current_service_id = $6
@@ -126,13 +122,9 @@ WITH credential AS (
                WHEN worker_instances.current_service_id = $6
                THEN worker_instances.per_vm_memory_bytes ELSE 0
            END,
-           per_vm_workload_disk_bytes = CASE
+           per_vm_guest_ephemeral_disk_bytes = CASE
                WHEN worker_instances.current_service_id = $6
-               THEN worker_instances.per_vm_workload_disk_bytes ELSE 0
-           END,
-           per_vm_scratch_bytes = CASE
-               WHEN worker_instances.current_service_id = $6
-               THEN worker_instances.per_vm_scratch_bytes ELSE 0
+               THEN worker_instances.per_vm_guest_ephemeral_disk_bytes ELSE 0
            END,
            max_vm_slots = CASE
                WHEN worker_instances.current_service_id = $6
@@ -161,7 +153,7 @@ WITH credential AS (
            updated_at = now()
       FROM credential
      WHERE worker_instances.id = credential.worker_instance_id
-    RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
+    RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_guest_ephemeral_disk_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
 )
 SELECT credential.id, credential.worker_group_id,
        credential.worker_instance_id, credential.key_prefix, credential.claim_version,
@@ -669,11 +661,11 @@ WITH nonce AS (
            runtime_identity_id = NULL,
            substrate_format = '', substrate_builder_abi = '', substrate_layout_abi = '',
            certified_cpu_millis = 0, certified_memory_bytes = 0,
-           certified_workload_disk_bytes = 0, certified_scratch_bytes = 0,
+           certified_guest_ephemeral_disk_bytes = 0,
            certified_build_cache_bytes = 0, certified_artifact_cache_bytes = 0,
            certified_hugepages_bytes = 0, certified_checkpoint_bytes = 0,
            per_vm_cpu_millis = 0, per_vm_memory_bytes = 0,
-           per_vm_workload_disk_bytes = 0, per_vm_scratch_bytes = 0,
+           per_vm_guest_ephemeral_disk_bytes = 0,
            max_vm_slots = 0, max_run_consumers = 0,
            max_build_executors = 0, max_runtime_starts = 0,
            attestation_fingerprint = EXCLUDED.attestation_fingerprint,
@@ -688,7 +680,7 @@ WITH nonce AS (
            certification_profile = '', certification_fingerprint = '',
            draining_at = NULL, disabled_at = NULL, lost_at = NULL, updated_at = now()
      WHERE worker_instances.termination_claimed_at IS NULL
-    RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
+    RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
 ), revoked AS (
     UPDATE worker_instance_credentials SET revoked_at = now()
       FROM worker WHERE worker_instance_credentials.worker_instance_id = worker.id

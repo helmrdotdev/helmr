@@ -17,32 +17,31 @@ import (
 )
 
 type runRuntime struct {
-	id                    pgtype.UUID
-	groupID               string
-	workerID              pgtype.UUID
-	workerEpoch           int64
-	protocolVersion       string
-	runtimeIdentityID     string
-	runtimeSubstrateID    pgtype.UUID
-	deploymentDefinition  pgtype.UUID
-	programDeployment     pgtype.UUID
-	restoreCheckpoint     pgtype.UUID
-	reservedRunID         pgtype.UUID
-	reservedAttempt       pgtype.Int4
-	reservedProcessID     pgtype.UUID
-	reservedVersionID     pgtype.UUID
-	reservationExpiresAt  pgtype.Timestamptz
-	reservationActive     bool
-	observedState         db.RuntimeObservedState
-	networkPolicy         []byte
-	cpuMillis             int64
-	memoryBytes           int64
-	workloadDiskBytes     int64
-	scratchBytes          int64
-	executionSlots        int32
-	networkSlotID         pgtype.UUID
-	networkSlotGeneration int64
-	networkSlotState      db.WorkerNetworkSlotState
+	id                      pgtype.UUID
+	groupID                 string
+	workerID                pgtype.UUID
+	workerEpoch             int64
+	protocolVersion         string
+	runtimeIdentityID       string
+	runtimeSubstrateID      pgtype.UUID
+	deploymentDefinition    pgtype.UUID
+	programDeployment       pgtype.UUID
+	restoreCheckpoint       pgtype.UUID
+	reservedRunID           pgtype.UUID
+	reservedAttempt         pgtype.Int4
+	reservedProcessID       pgtype.UUID
+	reservedVersionID       pgtype.UUID
+	reservationExpiresAt    pgtype.Timestamptz
+	reservationActive       bool
+	observedState           db.RuntimeObservedState
+	networkPolicy           []byte
+	cpuMillis               int64
+	memoryBytes             int64
+	guestEphemeralDiskBytes int64
+	executionSlots          int32
+	networkSlotID           pgtype.UUID
+	networkSlotGeneration   int64
+	networkSlotState        db.WorkerNetworkSlotState
 }
 
 func (d *Authority) prepareRunWorkspace(
@@ -143,26 +142,25 @@ func (d *Authority) prepareRunWorkspace(
 	row, err := db.New(tx).CreateRunRuntimeReservation(
 		ctx,
 		db.CreateRunRuntimeReservationParams{
-			ID:                        runtimeID,
-			OrgID:                     authority.orgID,
-			WorkerGroupID:             worker.groupID,
-			ProjectID:                 authority.projectID,
-			EnvironmentID:             authority.environmentID,
-			RegionID:                  authority.regionID,
-			WorkerInstanceID:          worker.workerID,
-			RuntimeIdentityID:         worker.runtimeIdentityID,
-			DeploymentDefinitionID:    authority.workspaceDefinitionID,
-			WorkerEpoch:               worker.workerEpoch,
-			NetworkPolicy:             authority.networkPolicy,
-			ReservedCpuMillis:         authority.resources.cpuMillis,
-			ReservedMemoryBytes:       authority.resources.memoryBytes,
-			ReservedWorkloadDiskBytes: authority.resources.workloadDisk,
-			ReservedScratchBytes:      authority.resources.scratchBytes,
-			ReservedExecutionSlots:    authority.resources.executionSlots,
-			WorkspaceID:               authority.workspaceID,
-			ProgramDeploymentID:       authority.deploymentID,
-			RestoreCheckpointID:       authority.restoreCheckpointID,
-			RunID:                     authority.runID,
+			ID:                              runtimeID,
+			OrgID:                           authority.orgID,
+			WorkerGroupID:                   worker.groupID,
+			ProjectID:                       authority.projectID,
+			EnvironmentID:                   authority.environmentID,
+			RegionID:                        authority.regionID,
+			WorkerInstanceID:                worker.workerID,
+			RuntimeIdentityID:               worker.runtimeIdentityID,
+			DeploymentDefinitionID:          authority.workspaceDefinitionID,
+			WorkerEpoch:                     worker.workerEpoch,
+			NetworkPolicy:                   authority.networkPolicy,
+			ReservedCpuMillis:               authority.resources.cpuMillis,
+			ReservedMemoryBytes:             authority.resources.memoryBytes,
+			ReservedGuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes,
+			ReservedExecutionSlots:          authority.resources.executionSlots,
+			WorkspaceID:                     authority.workspaceID,
+			ProgramDeploymentID:             authority.deploymentID,
+			RestoreCheckpointID:             authority.restoreCheckpointID,
+			RunID:                           authority.runID,
 			AttemptNumber: pgtype.Int4{
 				Int32: authority.attemptNumber,
 				Valid: true,
@@ -361,8 +359,7 @@ SELECT runtime_instances.id,
        runtime_instances.network_policy,
        runtime_instances.reserved_cpu_millis,
        runtime_instances.reserved_memory_bytes,
-       runtime_instances.reserved_workload_disk_bytes,
-       runtime_instances.reserved_scratch_bytes,
+       runtime_instances.reserved_guest_ephemeral_disk_bytes,
        runtime_instances.reserved_execution_slots,
        worker_network_slots.id,
        worker_network_slots.generation,
@@ -404,8 +401,7 @@ SELECT runtime_instances.id,
        runtime_instances.network_policy,
        runtime_instances.reserved_cpu_millis,
        runtime_instances.reserved_memory_bytes,
-       runtime_instances.reserved_workload_disk_bytes,
-       runtime_instances.reserved_scratch_bytes,
+       runtime_instances.reserved_guest_ephemeral_disk_bytes,
        runtime_instances.reserved_execution_slots,
        worker_network_slots.id,
        worker_network_slots.generation,
@@ -456,8 +452,7 @@ func scanRunRuntime(row rowScanner) (runRuntime, error) {
 		&runtime.networkPolicy,
 		&runtime.cpuMillis,
 		&runtime.memoryBytes,
-		&runtime.workloadDiskBytes,
-		&runtime.scratchBytes,
+		&runtime.guestEphemeralDiskBytes,
 		&runtime.executionSlots,
 		&runtime.networkSlotID,
 		&runtime.networkSlotGeneration,
@@ -482,8 +477,7 @@ func validateRunRuntime(
 			runtime.restoreCheckpoint != authority.restoreCheckpointID) ||
 		runtime.cpuMillis != authority.resources.cpuMillis ||
 		runtime.memoryBytes != authority.resources.memoryBytes ||
-		runtime.workloadDiskBytes != authority.resources.workloadDisk ||
-		runtime.scratchBytes != authority.resources.scratchBytes ||
+		runtime.guestEphemeralDiskBytes != authority.resources.guestEphemeralDiskBytes ||
 		runtime.executionSlots != authority.resources.executionSlots ||
 		!bytes.Equal(networkPolicy, authority.networkPolicy) {
 		return errors.New("Workspace runtime does not match Run authority")
@@ -588,7 +582,7 @@ SELECT worker_groups.id,
   JOIN runtime_identities
     ON runtime_identities.id = worker_instances.runtime_identity_id
    AND runtime_identities.runtime_arch = $2
-   AND ($8::text = '' OR runtime_identities.id = $8)
+   AND ($7::text = '' OR runtime_identities.id = $7)
   JOIN worker_observations
     ON worker_observations.worker_instance_id = worker_instances.id
    AND worker_observations.worker_epoch = worker_instances.current_epoch
@@ -629,46 +623,31 @@ SELECT worker_groups.id,
                 AND state IN ('assigned', 'starting', 'running')
          ), 0) AS memory_bytes,
          coalesce((
-             SELECT sum(reserved_workload_disk_bytes)
+             SELECT sum(reserved_guest_ephemeral_disk_bytes)
                FROM runtime_instances
               WHERE worker_instance_id = worker_instances.id
                 AND worker_epoch = worker_instances.current_epoch
                 AND reclaimed_at IS NULL
          ), 0) + coalesce((
-             SELECT sum(requested_workload_disk_bytes)
+             SELECT sum(requested_guest_ephemeral_disk_bytes)
                FROM deployment_build_leases
               WHERE worker_instance_id = worker_instances.id
                 AND worker_epoch = worker_instances.current_epoch
                 AND state IN ('assigned', 'starting', 'running')
-         ), 0) AS workload_disk_bytes,
-         coalesce((
-             SELECT sum(reserved_scratch_bytes)
-               FROM runtime_instances
-              WHERE worker_instance_id = worker_instances.id
-                AND worker_epoch = worker_instances.current_epoch
-                AND reclaimed_at IS NULL
-         ), 0) + coalesce((
-             SELECT sum(requested_scratch_bytes)
-               FROM deployment_build_leases
-              WHERE worker_instance_id = worker_instances.id
-                AND worker_epoch = worker_instances.current_epoch
-                AND state IN ('assigned', 'starting', 'running')
-         ), 0) AS scratch_bytes
+         ), 0) AS guest_ephemeral_disk_bytes
  ) AS usage
  WHERE worker_groups.region_id = $1
    AND worker_groups.state = 'active'
    AND worker_groups.allows_run
    AND worker_instances.per_vm_cpu_millis >= $4
    AND worker_instances.per_vm_memory_bytes >= $5
-   AND worker_instances.per_vm_workload_disk_bytes >= $6
-   AND worker_instances.per_vm_scratch_bytes >= $7
+   AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= $6
    AND worker_instances.certified_cpu_millis - usage.cpu_millis >= $4
    AND worker_instances.certified_memory_bytes - usage.memory_bytes >= $5
-   AND worker_instances.certified_workload_disk_bytes - usage.workload_disk_bytes >= $6
-   AND worker_instances.certified_scratch_bytes - usage.scratch_bytes >= $7
-   AND ($9::text = '' OR worker_instances.substrate_format = $9)
-   AND ($10::text = '' OR worker_instances.substrate_builder_abi = $10)
-   AND ($11::text = '' OR worker_instances.substrate_layout_abi = $11)
+   AND worker_instances.certified_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes >= $6
+   AND ($8::text = '' OR worker_instances.substrate_format = $8)
+   AND ($9::text = '' OR worker_instances.substrate_builder_abi = $9)
+   AND ($10::text = '' OR worker_instances.substrate_layout_abi = $10)
    AND worker_instances.max_vm_slots > (
        SELECT count(*)
          FROM runtime_instances
@@ -697,8 +676,7 @@ SELECT worker_groups.id,
 		observationFreshAfter,
 		authority.resources.cpuMillis,
 		authority.resources.memoryBytes,
-		authority.resources.workloadDisk,
-		authority.resources.scratchBytes,
+		authority.resources.guestEphemeralDiskBytes,
 		authority.restoreRuntimeIdentityID,
 		authority.restoreSubstrateFormat,
 		authority.restoreSubstrateBuilder,
@@ -727,8 +705,7 @@ SELECT worker_network_slots.state = 'available'
        AND worker_network_slots.runtime_instance_id IS NULL
        AND worker_instances.per_vm_cpu_millis >= $6
        AND worker_instances.per_vm_memory_bytes >= $7
-       AND worker_instances.per_vm_workload_disk_bytes >= $8
-       AND worker_instances.per_vm_scratch_bytes >= $9
+       AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= $8
        AND worker_instances.max_vm_slots > (
            SELECT count(*)
              FROM runtime_instances
@@ -751,8 +728,7 @@ SELECT worker_network_slots.state = 'available'
        )
        AND worker_instances.certified_cpu_millis - usage.cpu_millis >= $6
        AND worker_instances.certified_memory_bytes - usage.memory_bytes >= $7
-       AND worker_instances.certified_workload_disk_bytes - usage.workload_disk_bytes >= $8
-       AND worker_instances.certified_scratch_bytes - usage.scratch_bytes >= $9
+       AND worker_instances.certified_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes >= $8
   FROM worker_instances
   JOIN worker_network_slots
    ON worker_network_slots.worker_group_id = worker_instances.worker_group_id
@@ -787,31 +763,18 @@ SELECT worker_network_slots.state = 'available'
                 AND state IN ('assigned', 'starting', 'running')
          ), 0) AS memory_bytes,
          coalesce((
-             SELECT sum(reserved_workload_disk_bytes)
+             SELECT sum(reserved_guest_ephemeral_disk_bytes)
                FROM runtime_instances
               WHERE worker_instance_id = worker_instances.id
                 AND worker_epoch = worker_instances.current_epoch
                 AND reclaimed_at IS NULL
          ), 0) + coalesce((
-             SELECT sum(requested_workload_disk_bytes)
+             SELECT sum(requested_guest_ephemeral_disk_bytes)
                FROM deployment_build_leases
               WHERE worker_instance_id = worker_instances.id
                 AND worker_epoch = worker_instances.current_epoch
                 AND state IN ('assigned', 'starting', 'running')
-         ), 0) AS workload_disk_bytes,
-         coalesce((
-             SELECT sum(reserved_scratch_bytes)
-               FROM runtime_instances
-              WHERE worker_instance_id = worker_instances.id
-                AND worker_epoch = worker_instances.current_epoch
-                AND reclaimed_at IS NULL
-         ), 0) + coalesce((
-             SELECT sum(requested_scratch_bytes)
-               FROM deployment_build_leases
-              WHERE worker_instance_id = worker_instances.id
-                AND worker_epoch = worker_instances.current_epoch
-                AND state IN ('assigned', 'starting', 'running')
-         ), 0) AS scratch_bytes
+         ), 0) AS guest_ephemeral_disk_bytes
  ) AS usage
  WHERE worker_instances.id = $1
    AND worker_instances.worker_group_id = $2
@@ -826,8 +789,7 @@ SELECT worker_network_slots.state = 'available'
 		worker.networkSlotGeneration,
 		authority.resources.cpuMillis,
 		authority.resources.memoryBytes,
-		authority.resources.workloadDisk,
-		authority.resources.scratchBytes,
+		authority.resources.guestEphemeralDiskBytes,
 	).Scan(&available)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

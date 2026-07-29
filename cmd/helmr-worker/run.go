@@ -320,13 +320,13 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("partition worker physical disk capacity: %w", err)
 	}
 	if supportsBuild {
-		diskCapacity, err = capScratchCapacity(
+		diskCapacity, err = capGuestEphemeralDiskCapacity(
 			diskCapacity,
 			uint64(firecracker.BootCorpusMaxMiB)*1024*1024,
 			buildScratchLeaseBytes,
 		)
 		if err != nil {
-			return fmt.Errorf("cap worker scratch capacity after runtime activation: %w", err)
+			return fmt.Errorf("cap worker guest ephemeral disk capacity after runtime activation: %w", err)
 		}
 	}
 	allocatable := compute.ResourceVector{
@@ -344,32 +344,30 @@ func run(log *slog.Logger) error {
 		}
 	}
 	workerCapabilities := api.WorkerCapabilities{
-		ProtocolVersion:         api.CurrentWorkerProtocolVersion,
-		WorkerVersion:           version.Version,
-		RuntimeID:               runtimeIdentity.ID,
-		RuntimeArch:             runtimeIdentity.Arch,
-		RuntimeABI:              runtimeCapabilities.ABI,
-		KernelDigest:            runtimeCapabilities.KernelDigest,
-		InitramfsDigest:         runtimeCapabilities.InitramfsDigest,
-		RootfsDigest:            runtimeCapabilities.RootfsDigest,
-		CNIProfile:              runtimeCapabilities.CNIProfile,
-		Region:                  cfg.RegionID,
-		Labels:                  cfg.WorkerLabels,
-		MaxVCPUs:                allocatable.MilliCPU / 1000,
-		MaxMemoryMiB:            allocatable.MemoryMiB,
-		VMMilliCPU:              certifiedVM.MilliCPU,
-		VMMemoryMiB:             certifiedVM.MemoryMiB,
-		MaxDiskMiB:              diskCapacity.HostWorkloadMiB,
-		VMMaxDiskMiB:            diskCapacity.VMWorkloadDiskMiB,
-		ExecutionSlotsAvailable: cfg.WorkerExecutionSlots,
-		SupportsRun:             supportsRun,
-		SupportsBuild:           supportsBuild,
-		MaxBuildExecutors:       cfg.WorkerBuildExecutors,
-		MaxRuntimeStarts:        int32(runtimeStartLimit),
-		ScratchBytes:            diskCapacity.HostScratchBytes,
-		VMMaxScratchBytes:       diskCapacity.VMScratchBytes,
-		BuildCacheBytes:         substrateCacheMaxBytes,
-		ArtifactCacheBytes:      artifactCacheMaxBytes,
+		ProtocolVersion:           api.CurrentWorkerProtocolVersion,
+		WorkerVersion:             version.Version,
+		RuntimeID:                 runtimeIdentity.ID,
+		RuntimeArch:               runtimeIdentity.Arch,
+		RuntimeABI:                runtimeCapabilities.ABI,
+		KernelDigest:              runtimeCapabilities.KernelDigest,
+		InitramfsDigest:           runtimeCapabilities.InitramfsDigest,
+		RootfsDigest:              runtimeCapabilities.RootfsDigest,
+		CNIProfile:                runtimeCapabilities.CNIProfile,
+		Region:                    cfg.RegionID,
+		Labels:                    cfg.WorkerLabels,
+		MaxVCPUs:                  allocatable.MilliCPU / 1000,
+		MaxMemoryMiB:              allocatable.MemoryMiB,
+		VMMilliCPU:                certifiedVM.MilliCPU,
+		VMMemoryMiB:               certifiedVM.MemoryMiB,
+		GuestEphemeralDiskBytes:   diskCapacity.HostGuestEphemeralDiskBytes,
+		VMGuestEphemeralDiskBytes: diskCapacity.VMGuestEphemeralDiskBytes,
+		ExecutionSlotsAvailable:   cfg.WorkerExecutionSlots,
+		SupportsRun:               supportsRun,
+		SupportsBuild:             supportsBuild,
+		MaxBuildExecutors:         cfg.WorkerBuildExecutors,
+		MaxRuntimeStarts:          int32(runtimeStartLimit),
+		BuildCacheBytes:           substrateCacheMaxBytes,
+		ArtifactCacheBytes:        artifactCacheMaxBytes,
 		Network: api.WorkerNetworkCapabilities{
 			Internet:      true,
 			BlockInternet: true,
@@ -382,12 +380,11 @@ func run(log *slog.Logger) error {
 		workerCapabilities.SubstrateLayoutABI = runtime.LayoutABI
 	}
 	hostCapacity, err := capacity.New(capacity.Vector{
-		CPUMillis:         workerCapabilities.MaxVCPUs * 1000,
-		MemoryBytes:       workerCapabilities.MaxMemoryMiB * 1024 * 1024,
-		WorkloadDiskBytes: workerCapabilities.MaxDiskMiB * 1024 * 1024,
-		ScratchBytes:      workerCapabilities.ScratchBytes,
-		VMSlots:           int64(workerCapabilities.ExecutionSlotsAvailable),
-		BuildSlots:        int64(workerCapabilities.MaxBuildExecutors),
+		CPUMillis:               workerCapabilities.MaxVCPUs * 1000,
+		MemoryBytes:             workerCapabilities.MaxMemoryMiB * 1024 * 1024,
+		GuestEphemeralDiskBytes: workerCapabilities.GuestEphemeralDiskBytes,
+		VMSlots:                 int64(workerCapabilities.ExecutionSlotsAvailable),
+		BuildSlots:              int64(workerCapabilities.MaxBuildExecutors),
 	})
 	if err != nil {
 		return fmt.Errorf("configure worker capacity: %w", err)
@@ -424,7 +421,6 @@ func run(log *slog.Logger) error {
 		preparedRuntimePool.RuntimeInstances = controlClient
 		preparedRuntimePool.BackgroundGate = backgroundGate
 		preparedRuntimePool.Capacity = hostCapacity
-		preparedRuntimePool.RuntimeScratchBytes = workerCapabilities.VMMaxScratchBytes
 		preparedRuntimePool.PlatformStore = platformStore
 		preparedRuntimePool.RuntimeArchitecture = runtimeArchitecture
 		preparedRuntimePool.VerifierCgroupRoot = verifierCgroupRoot
@@ -470,7 +466,6 @@ func run(log *slog.Logger) error {
 			RuntimePool:           preparedRuntimePool,
 			BackgroundGate:        backgroundGate,
 			Capacity:              hostCapacity,
-			RuntimeScratchBytes:   workerCapabilities.VMMaxScratchBytes,
 		}),
 	)
 	if err != nil {
@@ -536,11 +531,10 @@ func run(log *slog.Logger) error {
 				created, err := hostCapacity.Reserve(
 					capacity.Key{Kind: "quarantine", Epoch: 1, ID: owner.ID},
 					capacity.Vector{
-						CPUMillis:         workerCapabilities.VMMilliCPU,
-						MemoryBytes:       workerCapabilities.VMMemoryMiB * 1024 * 1024,
-						WorkloadDiskBytes: workerCapabilities.VMMaxDiskMiB * 1024 * 1024,
-						ScratchBytes:      workerCapabilities.VMMaxScratchBytes,
-						VMSlots:           1,
+						CPUMillis:               workerCapabilities.VMMilliCPU,
+						MemoryBytes:             workerCapabilities.VMMemoryMiB * 1024 * 1024,
+						GuestEphemeralDiskBytes: workerCapabilities.VMGuestEphemeralDiskBytes,
+						VMSlots:                 1,
 					},
 				)
 				if err != nil {
