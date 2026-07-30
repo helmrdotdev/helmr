@@ -13,6 +13,7 @@ fi
 
 cd "$repo_root"
 
+./scripts/check-apko-lock.sh
 bun install --frozen-lockfile --ignore-scripts
 ARCH="$arch" ./scripts/build-guestd-linux.sh
 
