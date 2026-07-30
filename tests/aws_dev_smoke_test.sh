@@ -93,12 +93,82 @@ assert_contains "$script" 'bootstrap_contract_value CONTROL_RELEASE_REPOSITORY_U
 assert_contains "$script" 'with_platform_publisher aws ecr get-login-password' "Control publication must use the bounded release-publisher role"
 assert_contains "$script" 'with_platform_publisher nix develop' "Platform publication must use the bounded release-publisher role"
 # shellcheck disable=SC2016
+assert_contains "$script" 'install -m0400 "${object}"' "Platform publication must seal Nix objects before publisher handoff"
+# shellcheck disable=SC2016
+assert_contains "$script" 'trap '\''rm -rf "${publish_input}"'\'' EXIT' "Platform publication must remove its sealed staging tree"
+# shellcheck disable=SC2016
 assert_contains "$script" 'docker --config "${docker_config}" push' "Control publication must isolate temporary ECR credentials"
 # shellcheck disable=SC2016
 assert_contains "$control_build_script" 'FROM ${base_image}' "Control builds must consume the checked-in digest-pinned base"
 jq -e '.baseImage | test("@sha256:[0-9a-f]{64}$")' "$control_build_contract" >/dev/null ||
   fail "Control base image must be pinned by digest"
 assert_contains "$script" 'run control-image-build and control-image-push first' "dev stack generation must require pre-published Control provenance"
+
+platform_release="$tmp/platform-release"
+platform_release_bin="$tmp/platform-release-bin"
+platform_release_state="$tmp/platform-release-state"
+platform_release_input_marker="$tmp/platform-release-input"
+mkdir -p "$platform_release/objects/sha256" "$platform_release_bin" "$platform_release_state"
+printf '{}' >"$platform_release/platform-release.json"
+printf 'object' >"$platform_release/objects/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+printf 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' >"$platform_release/build-policy.digest"
+chmod 0444 "$platform_release/objects/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+cat >"$platform_release_bin/git" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+cat >"$platform_release_bin/tofu" <<'EOF'
+#!/usr/bin/env bash
+case "${*: -1}" in
+  platform_publisher_role_arn) printf 'arn:aws:iam::123456789012:role/platform-publisher\n' ;;
+  platform_store_uri) printf 's3://platform-store/objects/sha256\n' ;;
+  *) exit 1 ;;
+esac
+EOF
+cat >"$platform_release_bin/aws" <<'EOF'
+#!/usr/bin/env bash
+jq -cn '{Credentials:{AccessKeyId:"test",SecretAccessKey:"test",SessionToken:"test"}}'
+EOF
+cat >"$platform_release_bin/nix" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  build)
+    printf '%s\n' "$MOCK_PLATFORM_RELEASE"
+    ;;
+  develop)
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = "--input" ]; then
+        input="${2:-}"
+        break
+      fi
+      shift
+    done
+    [ -n "${input:-}" ]
+    object="$(find "$input/objects/sha256" -maxdepth 1 -type f -print -quit)"
+    if stat -f '%Lp' "$object" >/dev/null 2>&1; then
+      mode="$(stat -f '%Lp' "$object")"
+    else
+      mode="$(stat -c '%a' "$object")"
+    fi
+    [ "$mode" = 400 ]
+    printf '%s\n' "$input" >"$MOCK_PLATFORM_RELEASE_INPUT_MARKER"
+    exit 42
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$platform_release_bin/"*
+if STATE_DIR="$platform_release_state" \
+  TF_BIN="$platform_release_bin/tofu" \
+  MOCK_PLATFORM_RELEASE="$platform_release" \
+  MOCK_PLATFORM_RELEASE_INPUT_MARKER="$platform_release_input_marker" \
+  PATH="$platform_release_bin:$PATH" \
+  "$script" platform-release-publish >"$stdout" 2>"$stderr"; then
+  fail "platform-release-publish should surface publisher failure"
+fi
+[ -s "$platform_release_input_marker" ] || fail "publisher must receive the sealed release tree"
+[ ! -e "$(cat "$platform_release_input_marker")" ] || fail "failed publisher must remove its sealed release tree"
 
 control_build_bin="$tmp/control-build-bin"
 control_build_context="$tmp/control-build-context"

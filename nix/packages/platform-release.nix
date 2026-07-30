@@ -70,7 +70,7 @@ stdenvNoCC.mkDerivation {
       --argjson sizeBytes "$policy_size" \
       '{digest:$digest,mediaType:$mediaType,sizeBytes:$sizeBytes}')"
 
-    jq -cS -n \
+    jq -cSj -n \
       --argjson formatVersion 0 \
       --argjson policy "$policy_object" \
       --argjson runtimeHarness "$runtime_object" \

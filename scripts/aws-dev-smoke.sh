@@ -600,18 +600,28 @@ source_bundle() {
   printf '%s\n' "${s3_uri}"
 }
 
-platform_release_publish() {
+platform_release_publish() (
+  local release publish_input object
   require_clean_product_checkout
   platform_store_uri="$(bootstrap_contract_value PLATFORM_STORE_URI platform_store_uri)"
   release="$(nix build -L --no-link --print-out-paths "${ROOT}#platformRelease")"
+  mkdir -p "${STATE_DIR}"
+  publish_input="$(mktemp -d "${STATE_DIR}/platform-release-publish.XXXXXX")"
+  chmod 0700 "${publish_input}"
+  trap 'rm -rf "${publish_input}"' EXIT
+  install -d -m0700 "${publish_input}/objects/sha256"
+  install -m0400 "${release}/platform-release.json" "${publish_input}/platform-release.json"
+  while IFS= read -r -d '' object; do
+    install -m0400 "${object}" "${publish_input}/objects/sha256/$(basename "${object}")"
+  done < <(find "${release}/objects/sha256" -maxdepth 1 -type f -print0)
   with_platform_publisher nix develop "${ROOT}" -c go run ./cmd/helmr-control release publish \
     --store "${platform_store_uri}" \
-    --input "${release}"
+    --input "${publish_input}"
   build_policy_digest="$(cat "${release}/build-policy.digest")"
   printf '%s\n' "${build_policy_digest}" >"${BUILD_POLICY_DIGEST_FILE}"
   info "Platform release published: ${build_policy_digest}"
   printf '%s\n' "${build_policy_digest}"
-}
+)
 
 worker_image_source_check() {
   if [ -n "$(source_bundle_uri)" ]; then

@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 workflow="$repo_root/.github/workflows/release.yaml"
 platform_builder="$repo_root/scripts/build-platform-release.sh"
+canonical_json_check="$repo_root/scripts/check-canonical-json.sh"
 control_builder="$repo_root/scripts/build-control-image.sh"
 worker_module="$repo_root/infra/aws/modules/worker-image"
 worker_module_main="$worker_module/main.tf"
@@ -71,6 +72,23 @@ require_text "cosign sign-blob" "$platform_builder" \
   "Platform release archive is not signed"
 require_text "build-policy.digest" "$platform_builder" \
   "Platform release provenance omits the exact Build Policy digest"
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+printf '{"formatVersion":0}' >"$tmp/canonical.json"
+"$canonical_json_check" "$tmp/canonical.json"
+printf '"value"' >"$tmp/canonical-string.json"
+"$canonical_json_check" "$tmp/canonical-string.json"
+: >"$tmp/empty.json"
+if "$canonical_json_check" "$tmp/empty.json" >/dev/null 2>&1; then
+  printf 'canonical JSON check accepted an empty stream\n' >&2
+  exit 1
+fi
+printf '{}[]' >"$tmp/multiple.json"
+if "$canonical_json_check" "$tmp/multiple.json" >/dev/null 2>&1; then
+  printf 'canonical JSON check accepted multiple values\n' >&2
+  exit 1
+fi
 
 require_text "./scripts/build-control-image.sh \"\$IMAGE_URI\"" "$workflow" \
   "Control image is not built from its source-only builder"

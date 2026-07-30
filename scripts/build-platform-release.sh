@@ -5,6 +5,7 @@ repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 output="${1:-$repo_root/dist/platform-release}"
 output=$(mkdir -p "$output" && cd -- "$output" && pwd -P)
 release=$(nix build -L --no-link --print-out-paths "$repo_root#platformRelease")
+"$repo_root/scripts/check-canonical-json.sh" "$release/platform-release.json"
 
 rm -f \
   "$output/platform-release.tar" \
