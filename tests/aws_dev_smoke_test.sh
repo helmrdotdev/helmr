@@ -135,6 +135,40 @@ assert_contains "$tfvars" 'build_worker_root_volume_throughput = null' "build wo
 assert_contains "$tfvars" 'build_worker_capacity_vcpus = null' "build worker CPU inherits certified shape"
 assert_contains "$tfvars" 'build_worker_capacity_memory_mib = null' "build worker memory inherits certified shape"
 assert_contains "$tfvars" 'build_worker_execution_slots = null' "build worker slots inherit certified shape"
+
+WORKER_AMI_ID=ami-0123456789abcdef0 \
+  DEV_TFVARS="$tfvars" \
+  DEV_WORKER_MAX_SIZE=2 \
+  DEV_WORKER_EXECUTION_SLOTS=2 \
+  DEV_RUN_WARM_WORKERS=2 \
+  DEV_RUN_MAX_WORKERS=2 \
+  DEV_MAX_SCALE_OUT_PER_CYCLE=2 \
+  DEV_MAX_PENDING_WORKERS=2 \
+  DEV_ALLOW_EXTENDED_WORKER_CAPACITY=true \
+  "$script" dev-worker-tfvars >"$stdout" 2>"$stderr"
+assert_contains "$tfvars" 'allow_extended_worker_capacity = true' "extended-capacity approval"
+assert_contains "$tfvars" 'worker_max_size = 2' "configured run worker ceiling"
+assert_contains "$tfvars" 'worker_execution_slots = 2' "configured worker concurrency"
+assert_contains "$tfvars" '"run_warm_workers":2' "configured ready run workers"
+assert_contains "$tfvars" '"run_max_workers":2' "configured fleet-controller ceiling"
+assert_contains "$tfvars" '"build_max_workers":1' "configured build-worker ceiling"
+
+WORKER_AMI_ID=ami-0123456789abcdef0 \
+  DEV_TFVARS="$tfvars" \
+  "$script" dev-worker-tfvars >"$stdout" 2>"$stderr"
+assert_contains "$tfvars" 'allow_extended_worker_capacity = false' "ordinary profile restores the extended-capacity guard"
+assert_contains "$tfvars" 'worker_max_size = 1' "ordinary profile restores run worker ceiling"
+assert_contains "$tfvars" 'worker_execution_slots = 1' "ordinary profile restores one slot"
+assert_contains "$tfvars" '"run_warm_workers":0' "ordinary profile restores demand scaling"
+assert_contains "$tfvars" '"run_max_workers":1' "ordinary profile restores fleet-controller ceiling"
+
+if WORKER_AMI_ID=ami-0123456789abcdef0 \
+  DEV_TFVARS="$tfvars" \
+  DEV_WORKER_MAX_SIZE=2 \
+  "$script" dev-worker-tfvars >"$stdout" 2>"$stderr"; then
+  fail "extended Worker capacity should require explicit approval"
+fi
+assert_contains "$stderr" "DEV_ALLOW_EXTENDED_WORKER_CAPACITY=true is required" "extended-capacity approval guard"
 replace_tfvar "$tfvars" worker_min_size 0
 replace_tfvar "$tfvars" build_worker_min_size 0
 

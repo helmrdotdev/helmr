@@ -11,6 +11,8 @@ AWS_REGION="${AWS_REGION:-us-east-1}"
 DEV_TFVARS="${DEV_TFVARS:-${ROOT}/infra/aws/stacks/dev/full-run-smoke.tfvars}"
 DEV_STACK="${DEV_STACK:-${ROOT}/infra/aws/stacks/dev}"
 RELEASE_PROFILE="${ROOT}/dev/aws/release-validation-profile.json"
+DATAPATH_PROFILE="${ROOT}/dev/aws/datapath-validation-profile.json"
+VALIDATION_PROFILE_SELECTOR="${HELMR_VALIDATION_PROFILE:-release}"
 EXPECTED_STAGES='["preflight","control_up","awaiting_human","auth_ready","worker_up","workload","pre_shutdown_publish","cleanup","closed","post_shutdown_publish"]'
 REQUIRED_CASE_CATEGORIES='["build","run","build_failure_isolation","network_deny","worker_restart","identity_fencing","queue_preservation","protected_drain","provider_loss"]'
 TRAP_MANIFEST=""
@@ -98,6 +100,22 @@ canonical_sha256() {
   jq -cS . "$1" | sha256_stdin
 }
 
+selected_profile() {
+  case "${VALIDATION_PROFILE_SELECTOR}" in
+    release|"${RELEASE_PROFILE}") printf '%s\n' "${RELEASE_PROFILE}" ;;
+    "${DATAPATH_PROFILE}") printf '%s\n' "${DATAPATH_PROFILE}" ;;
+    *) die "HELMR_VALIDATION_PROFILE must be release or an exact supported profile path" ;;
+  esac
+}
+
+selected_profile_kind() {
+  if [ "$(selected_profile)" = "${DATAPATH_PROFILE}" ]; then
+    printf 'datapath\n'
+  else
+    printf 'release\n'
+  fi
+}
+
 manifest_namespace() {
   jq -er '.evidence.namespace' "$1"
 }
@@ -123,29 +141,90 @@ atomic_json_write() {
   mv "${tmp}" "${target}"
 }
 
+validate_datapath_manifest_environment() {
+  local manifest=$1 datapath_dev_name datapath_state_key
+  datapath_dev_name="$(jq -r '.environment.dev_name' "${manifest}")"
+  datapath_state_key="$(jq -r '.environment.state_key' "${manifest}")"
+  [[ "${datapath_dev_name}" =~ ^helmr-datapath-[a-z0-9][a-z0-9-]{0,14}$ ]] ||
+    return 1
+  [ "${datapath_state_key}" = "helmr/stacks/dev/datapath/${datapath_dev_name}.tfstate" ]
+}
+
 validate_manifest() {
-  local manifest=$1
+  local manifest=$1 profile profile_kind profile_rel required_categories
+  local run_worker_max build_worker_max nat_gateway_max namespace_pattern
   [ -f "${manifest}" ] || die "manifest does not exist: ${manifest}"
-  [ -f "${RELEASE_PROFILE}" ] || die "release validation profile does not exist: ${RELEASE_PROFILE}"
-  jq -e '
-    type == "object" and keys == ["cases","schema"] and
-    .schema == "helmrdotdev.aws-release-validation-profile.v1" and
-    (.cases | type == "array" and length >= 1 and
-      all(.[];
-        type == "object" and
-        keys == ["category","id","producer","repetitions","task","timeout_seconds"] and
-        (.producer | keys == ["checks","path"]) and
-        (.timeout_seconds | type == "number" and floor == . and . >= 60 and . <= 3600)
+  profile="$(selected_profile)"
+  profile_kind="$(selected_profile_kind)"
+  [ -f "${profile}" ] || die "validation profile does not exist: ${profile}"
+  if [ "${profile_kind}" = datapath ]; then
+    jq -e '
+      type == "object" and keys == ["cases","evidence","schema","topology"] and
+      .schema == "helmrdotdev.aws-datapath-validation-profile.v0" and
+      .topology == {
+        allow_extended_worker_capacity:true,
+        build_worker_max:1,
+        isolated_stack:true,
+        nat_gateway_max:1,
+        ready_run_workers:2,
+        run_worker_execution_slots:2,
+        run_worker_max:2
+      } and
+      .evidence == {
+        artifact_kinds:["packet","rules","binding","topology","cleanup"],
+        max_case_bytes:262144,
+        max_trace_events:256,
+        remote_retrieval:"chunked-byte-count-sha256"
+      } and
+      (.cases | type == "array" and length == 1 and
+        all(.[];
+          type == "object" and
+          keys == ["category","id","producer","repetitions","task","timeout_seconds"] and
+          .category == "datapath" and .task == null and .repetitions == 1 and
+          .timeout_seconds == 3600 and
+          (.producer | keys == ["checks","path"]) and
+          .producer.path == "dev/aws/validation-cases/datapath-validation.sh" and
+          (.producer.checks | length >= 1 and ([.[]] | unique | length) == length)
+        )
       )
-    )
-  ' "${RELEASE_PROFILE}" >/dev/null || die "release validation profile failed strict schema validation"
-  git -C "${ROOT}" cat-file -e "HEAD:dev/aws/release-validation-profile.json" 2>/dev/null ||
-    die "release validation profile is not committed at product HEAD"
-  [ "$(git -C "${ROOT}" show "HEAD:dev/aws/release-validation-profile.json" | sha256_stdin)" = "$(sha256_file "${RELEASE_PROFILE}")" ] ||
-    die "release validation profile differs from product HEAD"
+    ' "${profile}" >/dev/null || die "datapath validation profile failed strict schema validation"
+    profile_rel="dev/aws/datapath-validation-profile.json"
+    required_categories='["datapath"]'
+    run_worker_max=2
+    build_worker_max=1
+    nat_gateway_max=1
+    namespace_pattern='^datapath-[a-z0-9-]{1,84}$'
+  else
+    jq -e '
+      type == "object" and keys == ["cases","schema"] and
+      .schema == "helmrdotdev.aws-release-validation-profile.v1" and
+      (.cases | type == "array" and length >= 1 and
+        all(.[];
+          type == "object" and
+          keys == ["category","id","producer","repetitions","task","timeout_seconds"] and
+          (.producer | keys == ["checks","path"]) and
+          (.timeout_seconds | type == "number" and floor == . and . >= 60 and . <= 3600)
+        )
+      )
+    ' "${profile}" >/dev/null || die "release validation profile failed strict schema validation"
+    profile_rel="dev/aws/release-validation-profile.json"
+    required_categories="${REQUIRED_CASE_CATEGORIES}"
+    run_worker_max=1
+    build_worker_max=1
+    nat_gateway_max=1
+    namespace_pattern='^[a-z][a-z0-9-]{7,95}$'
+  fi
+  git -C "${ROOT}" cat-file -e "HEAD:${profile_rel}" 2>/dev/null ||
+    die "selected validation profile is not committed at product HEAD"
+  [ "$(git -C "${ROOT}" show "HEAD:${profile_rel}" | sha256_stdin)" = "$(sha256_file "${profile}")" ] ||
+    die "selected validation profile differs from product HEAD"
   jq -e \
     --argjson expected_stages "${EXPECTED_STAGES}" \
-    --argjson required_categories "${REQUIRED_CASE_CATEGORIES}" '
+    --argjson required_categories "${required_categories}" \
+    --argjson run_worker_max "${run_worker_max}" \
+    --argjson build_worker_max "${build_worker_max}" \
+    --argjson nat_gateway_max "${nat_gateway_max}" \
+    --arg namespace_pattern "${namespace_pattern}" '
     type == "object" and
     keys == ["artifacts","cost_guard","environment","evidence","governance","harness","retries","schema","source","stages","workload"] and
     .schema == "helmrdotdev.aws-validation-campaign.v2" and
@@ -188,23 +267,27 @@ validate_manifest() {
         ([.[].id] | unique | length) == length and
         ([.[].category] | unique | sort) == ($required_categories | sort))) and
     (.cost_guard | type == "object" and keys == ["build_worker_max","max_bundle_bytes","nat_gateway_max","run_worker_max"] and
-      .run_worker_max == 1 and .build_worker_max == 1 and .nat_gateway_max == 1 and
+      .run_worker_max == $run_worker_max and .build_worker_max == $build_worker_max and .nat_gateway_max == $nat_gateway_max and
       (.max_bundle_bytes | type == "number" and . >= 1048576 and . <= 52428800)) and
     (.evidence | type == "object" and keys == ["bucket_output","claim_prefix","namespace","prefix","retention_days"] and
       .bucket_output == "source_artifact_bucket_name" and .prefix == "helmr/validation-evidence" and .claim_prefix == "helmr/validation-claims" and
-      (.namespace | test("^[a-z][a-z0-9-]{7,95}$")) and .retention_days == 30) and
+      (.namespace | test($namespace_pattern)) and .retention_days == 30) and
     (.retries | type == "object" and keys == ["infrastructure_max_attempts","workload_attempts"] and
       (.infrastructure_max_attempts | type == "number" and . >= 1 and . <= 3) and
       (.workload_attempts | type == "number" and . >= 1 and . <= 3)) and
     .stages == $expected_stages
   ' "${manifest}" >/dev/null || die "manifest failed strict schema validation"
+  if [ "${profile_kind}" = datapath ]; then
+    validate_datapath_manifest_environment "${manifest}" ||
+      die "datapath validation requires a dedicated helmr-datapath stack and state key"
+  fi
 
-  jq -e -n --slurpfile manifest "${manifest}" --slurpfile profile "${RELEASE_PROFILE}" '
+  jq -e -n --slurpfile manifest "${manifest}" --slurpfile profile "${profile}" '
     [$manifest[0].workload.cases[] | {
       id,category,task,repetitions,timeout_seconds,
       producer:{path:.producer.path,checks:.producer.checks}
     }] == $profile[0].cases
-  ' >/dev/null || die "manifest workload differs from the exact release validation profile"
+  ' >/dev/null || die "manifest workload differs from the exact selected validation profile"
 
   local source_commit fixture_tree harness_sha
   source_commit="$(jq -r '.source.commit' "${manifest}")"
@@ -431,6 +514,7 @@ verify_control_cost_guard() {
 
 verify_worker_cost_guard() {
   local manifest=$1 controller run_max build_max nat_max actual_image normalized_image expected_image build_instance
+  local expected_run_warm=0
   [ "$(sha256_file "${DEV_TFVARS}")" = "$(jq -r '.artifacts.worker_tfvars_sha256' "${manifest}")" ] || die "worker tfvars differ from the frozen campaign configuration"
   [ "$(tfvar_raw name | jq -r .)" = "$(jq -r '.environment.dev_name' "${manifest}")" ] || die "tfvars stack name differs from the campaign dev name"
   [ "$(tfvar_raw aws_region | jq -r .)" = "$(jq -r '.environment.region' "${manifest}")" ] || die "tfvars region differs from the campaign region"
@@ -440,6 +524,24 @@ verify_worker_cost_guard() {
   [ "$(tfvar_raw create_worker)" = "true" ] || die "worker stage must create worker infrastructure"
   [ "$(tfvar_raw worker_max_size)" -le "${run_max}" ] || die "run worker ASG exceeds campaign ceiling"
   [ "$(tfvar_raw build_worker_max_size)" -le "${build_max}" ] || die "build worker ASG exceeds campaign ceiling"
+  if [ "$(selected_profile_kind)" = datapath ]; then
+    [ "$(tfvar_raw allow_extended_worker_capacity)" = "true" ] ||
+      die "datapath validation requires allow_extended_worker_capacity=true"
+    [ "$(tfvar_raw worker_max_size)" = "$(jq -r '.topology.run_worker_max' "${DATAPATH_PROFILE}")" ] ||
+      die "datapath validation requires the exact isolated run-worker count"
+    [ "$(tfvar_raw build_worker_max_size)" = "$(jq -r '.topology.build_worker_max' "${DATAPATH_PROFILE}")" ] ||
+      die "datapath validation requires the exact isolated build-worker ceiling"
+    [ "$(tfvar_raw worker_execution_slots)" = "$(jq -r '.topology.run_worker_execution_slots' "${DATAPATH_PROFILE}")" ] ||
+      die "datapath validation requires the exact concurrent run-slot count"
+    expected_run_warm="$(jq -r '.topology.ready_run_workers' "${DATAPATH_PROFILE}")"
+    controller="$(tfvar_raw worker_fleet_controller)"
+    jq -e \
+      --argjson run_max "$(jq -r '.topology.run_worker_max' "${DATAPATH_PROFILE}")" \
+      --argjson build_max "$(jq -r '.topology.build_worker_max' "${DATAPATH_PROFILE}")" '
+      .run_max_workers == $run_max and .build_max_workers == $build_max
+    ' <<<"${controller}" >/dev/null ||
+      die "datapath validation requires the exact Worker fleet ceilings"
+  fi
   if [ "$(tfvar_raw enable_nat_gateway)" = "true" ]; then
     [ "${nat_max}" -ge 1 ] || die "NAT gateway exceeds campaign ceiling"
   fi
@@ -453,8 +555,11 @@ verify_worker_cost_guard() {
   [ "${build_instance}" != "null" ] || build_instance="$(tfvar_raw worker_instance_type | jq -r .)"
   [ "${build_instance}" = "$(jq -r '.artifacts.build_worker_instance_type' "${manifest}")" ] || die "build worker instance type differs from campaign manifest"
   controller="$(tfvar_raw worker_fleet_controller)"
-  jq -e --argjson run_max "${run_max}" --argjson build_max "${build_max}" '
-    .run_warm_workers == 0 and .build_warm_workers == 0 and
+  jq -e \
+    --argjson expected_run_warm "${expected_run_warm}" \
+    --argjson run_max "${run_max}" \
+    --argjson build_max "${build_max}" '
+    .run_warm_workers == $expected_run_warm and .build_warm_workers == 0 and
     .run_max_workers <= $run_max and .build_max_workers <= $build_max and
     .max_scale_out_per_cycle <= ($run_max + $build_max) and
     .max_pending_workers <= ($run_max + $build_max) and .emergency_stop == false
@@ -506,13 +611,17 @@ init_campaign() {
   validate_manifest "${manifest_abs}"
   [ -z "$(git -C "${ROOT}" status --porcelain)" ] || die "product checkout must be clean"
   verify_deployed_artifact_provenance "${manifest_abs}"
+  if [ "$(selected_profile_kind)" = datapath ]; then
+    verify_aws_identity "${manifest_abs}"
+    verify_fresh_datapath_state "${manifest_abs}"
+  fi
   IFS=$'\t' read -r governance_root governance_commit governance_path < <(governance_context "${manifest_abs}")
   namespace="$(manifest_namespace "${manifest_abs}")"
   dir="${STATE_ROOT}/${namespace}"
   [ ! -e "${dir}" ] || die "campaign namespace already exists locally"
   umask 077
-  mkdir -p "${dir}/results" "${dir}/publishes" "${dir}/case-evidence"
-  chmod 0700 "${STATE_ROOT}" "${dir}" "${dir}/results" "${dir}/publishes" "${dir}/case-evidence"
+  mkdir -p "${dir}/results" "${dir}/publishes" "${dir}/case-evidence" "${dir}/case-artifacts"
+  chmod 0700 "${STATE_ROOT}" "${dir}" "${dir}/results" "${dir}/publishes" "${dir}/case-evidence" "${dir}/case-artifacts"
   cp "${manifest_abs}" "${dir}/manifest.json"
   chmod 0600 "${dir}/manifest.json"
   manifest_raw="$(sha256_file "${manifest_abs}")"
@@ -678,11 +787,13 @@ validate_stage_result() {
         .cases == [] and (.observations | has("build") and has("nat") and has("pricing") and has("run") and has("worker_ami_id")) and
         .observations.worker_ami_id == $ami and (.observations.collected_at | fromdateiso8601 | type == "number") and
         all([.observations.run,.observations.build][];
-          (has("asg") and has("desired") and has("instance_type") and has("instances") and has("launch_template_id") and has("max") and has("min")) and
+          (has("asg") and has("desired") and has("instance_type") and has("instances") and has("ready_instances") and has("launch_template_id") and has("max") and has("min")) and
           (.created_at | fromdateiso8601 | type == "number") and
           .min == 0 and .desired >= 0 and .desired <= .max and .lifecycle_hooks == true and .scale_in_protected == true and
           (.launch_template_id | test("^lt-[0-9a-f]{8,17}$")) and (.launch_template_version >= 1) and
-          all(.instances[]; test("^i-[0-9a-f]{8,17}$"))) and
+          all(.instances[]; test("^i-[0-9a-f]{8,17}$")) and
+          all(.ready_instances[]; test("^i-[0-9a-f]{8,17}$")) and
+          (.ready_instances - .instances | length) == 0) and
         .observations.run.instance_type == $instance and .observations.build.instance_type == $build_instance and
         .observations.run.max <= $run_max and .observations.build.max <= $build_max and
         (.observations.nat | has("id") and has("status")) and .observations.nat.status == "available" and
@@ -694,6 +805,16 @@ validate_stage_result() {
         (.observations.pricing.queried_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|[+-][0-9]{2}:[0-9]{2})$")) and (.observations.pricing.worker_microusd_per_hour > 0) and
         (.observations.rds_instance_id | test("^[a-z][a-z0-9-]{0,62}$")) and (.observations.valkey_replication_group_id | test("^[a-z][a-z0-9-]{0,39}$"))
       ' "${result}" >/dev/null || die "worker_up result violates the immutable artifact or cost contract"
+      if [ "$(selected_profile_kind)" = datapath ]; then
+        jq -e \
+          --argjson expected "$(jq -r '.topology.ready_run_workers' "${DATAPATH_PROFILE}")" '
+          .observations.run.desired == $expected and
+          (.observations.run.instances | length) == $expected and
+          (.observations.run.ready_instances | length) == $expected and
+          (.observations.run.instances | sort) == (.observations.run.ready_instances | sort)
+        ' "${result}" >/dev/null ||
+          die "worker_up result does not prove the exact ready datapath topology"
+      fi
       [ "${mode}" = "evidence" ] || verify_worker_cost_guard "${manifest}"
       ;;
     workload)
@@ -963,12 +1084,65 @@ asg_inventory() {
   fi
 }
 
+wait_for_datapath_run_workers() {
+  local asg_name=$1 expected=$2 required_slots=$3 timeout=${4:-900}
+  local deadline asg ids values active
+  deadline=$((SECONDS + timeout))
+  while [ "${SECONDS}" -lt "${deadline}" ]; do
+    asg="$(asg_inventory "${asg_name}")" || {
+      sleep 5
+      continue
+    }
+    ids="$(jq -cS \
+      --argjson expected "${expected}" '
+      [.AutoScalingGroups[0].Instances[]
+        | select(
+            .LifecycleState == "InService" and
+            .HealthStatus == "Healthy" and
+            .ProtectedFromScaleIn == true
+          )
+        | .InstanceId
+      ] | sort | select(length == $expected)
+    ' <<<"${asg}" 2>/dev/null || true)"
+    if [ -z "${ids}" ]; then
+      sleep 5
+      continue
+    fi
+    values="$(jq -r 'map("'"'"'" + . + "'"'"'") | join(",")' <<<"${ids}")"
+    active="$(
+      "${ROOT}/dev/aws/db-query.sh" "
+        COPY (
+          SELECT worker_instances.resource_id
+            FROM worker_instances
+           WHERE worker_instances.resource_id IN (${values})
+             AND worker_instances.state = 'active'
+             AND worker_instances.supports_run = true
+             AND worker_instances.current_epoch IS NOT NULL
+             AND worker_instances.startup_inventory_epoch = worker_instances.current_epoch
+             AND worker_instances.max_vm_slots >= ${required_slots}
+           ORDER BY worker_instances.resource_id
+        ) TO STDOUT;
+      " 2>/dev/null | jq -Rsc 'split("\n") | map(select(length > 0)) | sort'
+    )" || {
+      sleep 5
+      continue
+    }
+    if [ "$(jq -cS . <<<"${active}")" = "${ids}" ]; then
+      jq -cn --argjson instances "${ids}" --argjson asg "${asg}" \
+        '{instances:$instances,asg:$asg}'
+      return 0
+    fi
+    sleep 5
+  done
+  return 124
+}
+
 collect_up_result() {
   local manifest=$1 stage=$2 result=$3 contract dir outputs cluster control_service dispatcher_service services
   local control_task dispatcher_task control_image dispatcher_image rds_id valkey_id rds valkey
   local run_asg_name build_asg_name run_asg build_asg nat_id nat nat_count
   local run_lt_id run_lt_version build_lt_id build_lt_version run_lt build_lt ami run_instance build_instance
-  local run_hooks build_hooks collected_at price_sha
+  local run_hooks build_hooks collected_at price_sha readiness ready_run_instances='[]'
   contract="$(campaign_dir "${manifest}")/manifest.json"
   verify_aws_identity "${contract}"
   verify_dev_backend "${contract}"
@@ -1029,6 +1203,17 @@ collect_up_result() {
       .AutoScalingGroups[0] | .MinSize == 0 and .MaxSize == $build_max and .DesiredCapacity <= $build_max and
       all(.Instances[]; .ProtectedFromScaleIn == true)
     ' <<<"${build_asg}" >/dev/null || die "build worker group violates its live capacity or scale-in protection contract"
+    if [ "$(selected_profile_kind)" = datapath ]; then
+      readiness="$(
+        wait_for_datapath_run_workers \
+          "${run_asg_name}" \
+          "$(jq -r '.topology.ready_run_workers' "${DATAPATH_PROFILE}")" \
+          "$(jq -r '.topology.run_worker_execution_slots' "${DATAPATH_PROFILE}")" \
+          900
+      )" || die "datapath run Workers did not reach the exact ready topology"
+      ready_run_instances="$(jq -c '.instances' <<<"${readiness}")"
+      run_asg="$(jq -c '.asg' <<<"${readiness}")"
+    fi
     [ "$(tf_output_value "${outputs}" worker_protect_from_scale_in | jq -r .)" = true ] || die "run worker group does not start protected from scale in"
     [ "$(tf_output_value "${outputs}" build_worker_protect_from_scale_in | jq -r .)" = true ] || die "build worker group does not start protected from scale in"
     run_hooks="$(aws autoscaling describe-lifecycle-hooks --auto-scaling-group-name "${run_asg_name}")"
@@ -1054,9 +1239,9 @@ collect_up_result() {
       --arg run_lt "${run_lt_id}" --argjson run_lt_version "${run_lt_version}" --arg build_lt "${build_lt_id}" --argjson build_lt_version "${build_lt_version}" \
       --arg run_asg "${run_asg_name}" --arg build_asg "${build_asg_name}" --arg nat_id "${nat_id}" --arg nat_created "$(jq -er '.NatGateways[0].CreateTime' <<<"${nat}")" \
       --arg rds "${rds_id}" --arg valkey "${valkey_id}" --arg price_sha "${price_sha}" --arg effective "$(jq -r '.effective_date' "${PRICE_FIXTURE}")" --arg queried "$(jq -r '.queried_at' "${PRICE_FIXTURE}")" \
-      --argjson hourly "$(jq '.microusd_per_hour' "${PRICE_FIXTURE}")" --argjson run_group "$(jq '.AutoScalingGroups[0] | {created_at:.CreatedTime,min:.MinSize,max:.MaxSize,desired:.DesiredCapacity,instances:[.Instances[].InstanceId]}' <<<"${run_asg}")" \
+      --argjson hourly "$(jq '.microusd_per_hour' "${PRICE_FIXTURE}")" --argjson ready_run_instances "${ready_run_instances}" --argjson run_group "$(jq '.AutoScalingGroups[0] | {created_at:.CreatedTime,min:.MinSize,max:.MaxSize,desired:.DesiredCapacity,instances:[.Instances[].InstanceId]}' <<<"${run_asg}")" \
       --argjson build_group "$(jq '.AutoScalingGroups[0] | {created_at:.CreatedTime,min:.MinSize,max:.MaxSize,desired:.DesiredCapacity,instances:[.Instances[].InstanceId]}' <<<"${build_asg}")" \
-      '{schema:"helmrdotdev.validation-stage-result.v1",stage:"worker_up",status:"passed",reason:null,observations:{collected_at:$at,worker_ami_id:$ami,run:{asg:$run_asg,created_at:$run_group.created_at,instance_type:$run_instance,launch_template_id:$run_lt,launch_template_version:$run_lt_version,min:$run_group.min,max:$run_group.max,desired:$run_group.desired,instances:$run_group.instances,lifecycle_hooks:true,scale_in_protected:true},build:{asg:$build_asg,created_at:$build_group.created_at,instance_type:$build_instance,launch_template_id:$build_lt,launch_template_version:$build_lt_version,min:$build_group.min,max:$build_group.max,desired:$build_group.desired,instances:$build_group.instances,lifecycle_hooks:true,scale_in_protected:true},nat:{id:$nat_id,status:"available",created_at:$nat_created},rds_instance_id:$rds,valkey_replication_group_id:$valkey,pricing:{provider:"aws",region:"us-east-1",currency:"USD",purchase_model:"on-demand",fixture_sha256:$price_sha,effective_at:$effective,queried_at:$queried,worker_microusd_per_hour:$hourly}},cases:[]}' >"${result}"
+      '{schema:"helmrdotdev.validation-stage-result.v1",stage:"worker_up",status:"passed",reason:null,observations:{collected_at:$at,worker_ami_id:$ami,run:{asg:$run_asg,created_at:$run_group.created_at,instance_type:$run_instance,launch_template_id:$run_lt,launch_template_version:$run_lt_version,min:$run_group.min,max:$run_group.max,desired:$run_group.desired,instances:$run_group.instances,ready_instances:$ready_run_instances,lifecycle_hooks:true,scale_in_protected:true},build:{asg:$build_asg,created_at:$build_group.created_at,instance_type:$build_instance,launch_template_id:$build_lt,launch_template_version:$build_lt_version,min:$build_group.min,max:$build_group.max,desired:$build_group.desired,instances:$build_group.instances,ready_instances:[],lifecycle_hooks:true,scale_in_protected:true},nat:{id:$nat_id,status:"available",created_at:$nat_created},rds_instance_id:$rds,valkey_replication_group_id:$valkey,pricing:{provider:"aws",region:"us-east-1",currency:"USD",purchase_model:"on-demand",fixture_sha256:$price_sha,effective_at:$effective,queried_at:$queried,worker_microusd_per_hour:$hourly}},cases:[]}' >"${result}"
   fi
   rm -f "${outputs}"
 }
@@ -1141,6 +1326,30 @@ close_campaign() {
 
 bucket_name() {
   "${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw source_artifact_bucket_name
+}
+
+terraform_state_bucket_name() {
+  "${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw bucket_name
+}
+
+datapath_state_versions_are_fresh() {
+  local versions=$1 key=$2
+  jq -e --arg key "${key}" '
+    ([.Versions[]?,.DeleteMarkers[]?] | all(.Key != $key))
+  ' <<<"${versions}" >/dev/null
+}
+
+verify_fresh_datapath_state() {
+  local manifest=$1 key versions
+  key="$(jq -r '.environment.state_key' "${manifest}")"
+  versions="$(
+    aws s3api list-object-versions \
+      --bucket "$(terraform_state_bucket_name)" \
+      --prefix "${key}" \
+      --output json
+  )"
+  datapath_state_versions_are_fresh "${versions}" "${key}" ||
+    die "datapath validation requires a never-used isolated state key"
 }
 
 kms_key_arn() {
@@ -1301,6 +1510,11 @@ validate_case_evidence_links() {
       $source.reason == $attempt_result.reason
     ' "${workload_result}" >/dev/null ||
       die "case evidence does not match its manifest or workload attempt: ${evidence_file}"
+    if [ "$(selected_profile_kind)" = datapath ] && [ "$(jq -r '.status' "${file}")" = passed ]; then
+      datapath_case_artifacts_are_valid \
+        "${manifest}" "${file}" "${dir}/case-artifacts/${case_id}-$(printf '%02d' "${attempt}")" ||
+        die "datapath case artifacts failed content-addressed validation: ${case_id} attempt ${attempt}"
+    fi
   done < <(
     jq -r '.cases[] as $case | $case.attempts[] |
       [$case.id, (.index | tostring), .evidence_file, .evidence_sha256] | @tsv
@@ -1313,6 +1527,23 @@ validate_case_evidence_links() {
       "${workload_result}" >/dev/null ||
       die "unreferenced case evidence file: ${rel}"
   done
+  if [ "$(selected_profile_kind)" = release ] &&
+    find "${dir}/case-artifacts" -mindepth 1 -print -quit | grep -q .; then
+    die "release validation cannot contain datapath case artifacts"
+  fi
+  if [ "$(selected_profile_kind)" = datapath ]; then
+    local artifact_case_dir artifact_rel
+    for artifact_case_dir in "${dir}"/case-artifacts/*; do
+      [ -d "${artifact_case_dir}" ] || continue
+      artifact_rel="$(basename "${artifact_case_dir}")"
+      jq -e --arg rel "${artifact_rel}" '
+        any(.cases[] as $case | $case.attempts[];
+          .status == "passed" and
+          ($case.id + "-" + (.index | tostring | if length == 1 then "0" + . else . end)) == $rel)
+      ' "${workload_result}" >/dev/null ||
+        die "unreferenced datapath case artifact directory: ${artifact_rel}"
+    done
+  fi
 }
 
 validate_case_evidence_file() {
@@ -1354,6 +1585,86 @@ case_evidence_is_valid() {
       all(.[]; type == "boolean" or type == "number" or
         (type == "string" and test("^[a-zA-Z0-9._:/+-]{1,128}$"))))
   ' "${file}" >/dev/null
+}
+
+datapath_case_artifacts_are_valid() {
+  local manifest=$1 evidence=$2 artifact_dir=$3
+  local max_bytes max_events bytes manifest_sha manifest_file file base kind file_sha
+  max_bytes="$(jq -r '.evidence.max_case_bytes' "${DATAPATH_PROFILE}")"
+  max_events="$(jq -r '.evidence.max_trace_events' "${DATAPATH_PROFILE}")"
+  [ -d "${artifact_dir}" ] || return 1
+  bytes="$(find "${artifact_dir}" -maxdepth 1 -type f -exec wc -c {} + | awk 'END {print $1 + 0}')"
+  [ "${bytes}" -le "${max_bytes}" ] || return 1
+  [ "$(find "${artifact_dir}" -maxdepth 1 -type f | wc -l | tr -d ' ')" = 6 ] || return 1
+  jq -e \
+    --argjson bytes "${bytes}" \
+    --argjson max_events "${max_events}" '
+    .status == "passed" and
+    (.observations | keys == [
+      "artifact_bytes","artifact_count","artifact_manifest_sha256",
+      "cleanup_verified","trace_event_count","truncated"
+    ]) and
+    .observations.artifact_count == 6 and
+    .observations.artifact_bytes == $bytes and
+    (.observations.artifact_manifest_sha256 | test("^[0-9a-f]{64}$")) and
+    (.observations.trace_event_count | type == "number" and floor == . and . >= 0 and . <= $max_events) and
+    .observations.cleanup_verified == true and
+    .observations.truncated == false
+  ' "${evidence}" >/dev/null || return 1
+
+  manifest_sha="$(jq -r '.observations.artifact_manifest_sha256' "${evidence}")"
+  manifest_file="${artifact_dir}/manifest-${manifest_sha}.json"
+  [ -f "${manifest_file}" ] || return 1
+  [ "$(sha256_file "${manifest_file}")" = "${manifest_sha}" ] || return 1
+  jq -e \
+    --arg source_commit "$(jq -r '.source.commit' "${manifest}")" \
+    --arg worker_provenance "$(jq -r '.artifacts.worker_image_provenance_sha256' "${manifest}")" '
+    type == "object" and
+    keys == [
+      "artifacts","candidate_datapath_abi","candidate_hook_set_sha256",
+      "case_verdict_sha256","collector_sha256","probe_sha256","schema",
+      "source_commit","truncated","worker_image_provenance_sha256"
+    ] and
+    .schema == "helmrdotdev.datapath-evidence.v0" and
+    .source_commit == $source_commit and
+    .worker_image_provenance_sha256 == $worker_provenance and
+    (.candidate_datapath_abi | type == "string" and test("^[a-zA-Z0-9._:+/-]{1,128}$")) and
+    ([.candidate_hook_set_sha256,.case_verdict_sha256,.collector_sha256,.probe_sha256] |
+      all(test("^[0-9a-f]{64}$"))) and
+    .truncated == false and
+    (.artifacts | keys == ["binding","cleanup","packet","rules","topology"]) and
+    all(.artifacts[]; test("^[0-9a-f]{64}$"))
+  ' "${manifest_file}" >/dev/null || return 1
+
+  while IFS= read -r kind; do
+    file_sha="$(jq -r --arg kind "${kind}" '.artifacts[$kind]' "${manifest_file}")"
+    file="${artifact_dir}/${kind}-${file_sha}.json"
+    [ -f "${file}" ] || return 1
+    [ "$(sha256_file "${file}")" = "${file_sha}" ] || return 1
+    jq -e --arg kind "${kind}" '
+      type == "object" and
+      .schema == ("helmrdotdev.datapath-" + $kind + "-evidence.v0")
+    ' "${file}" >/dev/null || return 1
+  done < <(jq -r '.evidence.artifact_kinds[]' "${DATAPATH_PROFILE}")
+
+  jq -e \
+    --argjson count "$(jq -r '.observations.trace_event_count' "${evidence}")" \
+    --argjson max_events "${max_events}" '
+    .truncated == false and
+    (.events | type == "array" and length == $count and length <= $max_events)
+  ' "${artifact_dir}/packet-$(jq -r '.artifacts.packet' "${manifest_file}").json" >/dev/null || return 1
+  jq -e '
+    .cleanup_verified == true and
+    .candidate_objects_absent == true and
+    .legacy_defense_present == true
+  ' "${artifact_dir}/cleanup-$(jq -r '.artifacts.cleanup' "${manifest_file}").json" >/dev/null || return 1
+}
+
+remove_case_artifact_dir() {
+  local artifact_dir=$1
+  [ -d "${artifact_dir}" ] || return 0
+  find "${artifact_dir}" -mindepth 1 -maxdepth 1 -type f -delete
+  rmdir "${artifact_dir}"
 }
 
 write_failed_case_evidence() {
@@ -1441,6 +1752,7 @@ stage_names = {
     "08-closed.json", "09-post_shutdown_publish.json",
 }
 publish_names = {"pre-shutdown.json", "post-shutdown.json"}
+artifact_totals = {}
 for path in root.rglob("*.json"):
     rel = path.relative_to(root)
     valid = (
@@ -1448,13 +1760,20 @@ for path in root.rglob("*.json"):
         (len(rel.parts) == 2 and rel.parts[0] == "results" and rel.name in stage_names) or
         (len(rel.parts) == 2 and rel.parts[0] == "publishes" and rel.name in publish_names) or
         (len(rel.parts) == 2 and rel.parts[0] == "case-evidence" and
+         rel.name.endswith(".json") and len(rel.name) <= 96) or
+        (len(rel.parts) == 3 and rel.parts[0] == "case-artifacts" and
+         len(rel.parts[1]) <= 70 and rel.parts[1][0].islower() and
          rel.name.endswith(".json") and len(rel.name) <= 96)
     )
     if not valid:
         raise SystemExit(f"unexpected JSON evidence path: {rel}")
-    max_size = 8192 if rel.parts[0] == "case-evidence" else 65536
+    max_size = 8192 if rel.parts[0] == "case-evidence" else 262144 if rel.parts[0] == "case-artifacts" else 65536
     if path.stat().st_size > max_size:
         raise SystemExit(f"JSON evidence file exceeds {max_size} bytes: {rel}")
+    if rel.parts[0] == "case-artifacts":
+        artifact_totals[rel.parts[1]] = artifact_totals.get(rel.parts[1], 0) + path.stat().st_size
+        if artifact_totals[rel.parts[1]] > 262144:
+            raise SystemExit(f"case artifacts exceed 262144 bytes: {rel.parts[1]}")
     value = json.loads(path.read_text())
     if rel.name == "state.json":
         value["manifest"].pop("path", None)
@@ -1612,7 +1931,7 @@ nat_metric_sum() {
 
 run_workload() {
   local manifest=$1 contract dir outputs run_asg build_asg nat_id result cases_file samples sentinel sampler_pid
-  local started finished case_json case_id producer producer_sha repetitions timeout_seconds attempt raw status reason command_status evidence_sha
+  local started finished case_json case_id producer producer_sha repetitions timeout_seconds attempt raw status reason command_status evidence_sha artifact_dir
   local abort_remaining=0
   contract="$(campaign_dir "${manifest}")/manifest.json"
   verify_frozen "${manifest}" forward
@@ -1657,7 +1976,10 @@ run_workload() {
     local attempts='[]'
     for ((attempt = 1; attempt <= repetitions; attempt++)); do
       raw="${dir}/producer-result.tmp"
+      artifact_dir="${dir}/case-artifacts/${case_id}-$(printf '%02d' "${attempt}")"
       rm -f "${raw}"
+      mkdir -p "${artifact_dir}"
+      chmod 0700 "${artifact_dir}"
       if [ "${abort_remaining}" = 1 ]; then
         write_failed_case_evidence "${case_json}" prior_case_failed "${raw}"
         command_status=1
@@ -1667,12 +1989,22 @@ run_workload() {
         command_status=1
       else
         set +e
-        HELMR_VALIDATION_CASE="${case_json}" HELMR_VALIDATION_CASE_RESULT_FILE="${raw}" HELMR_VALIDATION_CASE_ATTEMPT="${attempt}" \
+        HELMR_VALIDATION_CASE="${case_json}" HELMR_VALIDATION_CASE_RESULT_FILE="${raw}" \
+          HELMR_VALIDATION_CASE_ATTEMPT="${attempt}" HELMR_VALIDATION_CASE_ARTIFACT_DIR="${artifact_dir}" \
+          HELMR_VALIDATION_MANIFEST="${contract}" \
           run_bounded "${timeout_seconds}" "${ROOT}/${producer}"
         command_status=$?
         set -e
       fi
       normalize_case_evidence "${case_json}" "${raw}" "${command_status}" "${raw}.normalized"
+      if [ "$(selected_profile_kind)" = datapath ] &&
+        [ "$(jq -r '.status' "${raw}.normalized")" = passed ] &&
+        ! datapath_case_artifacts_are_valid "${contract}" "${raw}.normalized" "${artifact_dir}"; then
+        write_failed_case_evidence "${case_json}" invalid_case_artifacts "${raw}.normalized"
+        remove_case_artifact_dir "${artifact_dir}"
+      elif [ "$(selected_profile_kind)" != datapath ] || [ "$(jq -r '.status' "${raw}.normalized")" = failed ]; then
+        remove_case_artifact_dir "${artifact_dir}"
+      fi
       if [ "${abort_remaining}" = 0 ] && ! HELMR_VALIDATION_SAMPLE_PHASE=case_after \
         sample_worker_groups "${run_asg}" "${build_asg}" "${samples}"; then
         write_failed_case_evidence "${case_json}" worker_sampling_failed "${raw}.normalized"
@@ -1772,4 +2104,6 @@ main() {
   esac
 }
 
-main "$@"
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi

@@ -155,6 +155,13 @@ Dev optional environment:
                        Set to 1 to leave existing worker capacity settings untouched.
   DEV_WORKER_VM_SCRATCH_DISK_MIB
                        Writable disk in MiB for dev Firecracker task VMs. Defaults to 32768 in run mode.
+  DEV_WORKER_MAX_SIZE  Run-worker ASG ceiling. Defaults to 1.
+  DEV_WORKER_EXECUTION_SLOTS
+                       Execution slots advertised by each run Worker. Defaults to 1.
+  DEV_RUN_WARM_WORKERS Run Workers held ready by the fleet controller. Defaults to 0.
+  DEV_RUN_MAX_WORKERS  Fleet-controller run-worker ceiling. Defaults to DEV_WORKER_MAX_SIZE.
+  DEV_ALLOW_EXTENDED_WORKER_CAPACITY
+                       Must be true when either Worker ASG ceiling exceeds 1.
   WORKER_AMI_ID         AMI ID to inject; defaults to the last worker-image-wait result.
   HELMR_GITHUB_OAUTH_CLIENT_SECRET
                         GitHub OAuth client secret for dev-github-oauth-secret. Use
@@ -1594,6 +1601,33 @@ dev_worker_tfvars() {
   worker_root_volume_size_gb="${DEV_WORKER_ROOT_VOLUME_SIZE_GB:-120}"
   worker_root_volume_iops="${DEV_WORKER_ROOT_VOLUME_IOPS:-3000}"
   worker_root_volume_throughput="${DEV_WORKER_ROOT_VOLUME_THROUGHPUT:-125}"
+  worker_max_size="${DEV_WORKER_MAX_SIZE:-1}"
+  build_worker_max_size="${DEV_BUILD_WORKER_MAX_SIZE:-1}"
+  worker_execution_slots="${DEV_WORKER_EXECUTION_SLOTS:-1}"
+  run_warm_workers="${DEV_RUN_WARM_WORKERS:-0}"
+  run_max_workers="${DEV_RUN_MAX_WORKERS:-${worker_max_size}}"
+  build_max_workers="${DEV_BUILD_MAX_WORKERS:-${build_worker_max_size}}"
+  max_scale_out_per_cycle="${DEV_MAX_SCALE_OUT_PER_CYCLE:-1}"
+  max_pending_workers="${DEV_MAX_PENDING_WORKERS:-1}"
+  allow_extended_worker_capacity="${DEV_ALLOW_EXTENDED_WORKER_CAPACITY:-false}"
+  for value_name in worker_max_size build_worker_max_size worker_execution_slots run_warm_workers run_max_workers build_max_workers max_scale_out_per_cycle max_pending_workers; do
+    value="${!value_name}"
+    case "${value}" in
+      ''|*[!0-9]*) die "${value_name} must be a non-negative integer" ;;
+    esac
+  done
+  case "${allow_extended_worker_capacity}" in
+    true|false) ;;
+    *) die "DEV_ALLOW_EXTENDED_WORKER_CAPACITY must be true or false" ;;
+  esac
+  if { [ "${worker_max_size}" -gt 1 ] || [ "${build_worker_max_size}" -gt 1 ]; } &&
+    [ "${allow_extended_worker_capacity}" != "true" ]; then
+    die "DEV_ALLOW_EXTENDED_WORKER_CAPACITY=true is required when a Worker ASG ceiling exceeds 1"
+  fi
+  [ "${run_max_workers}" -le "${worker_max_size}" ] ||
+    die "DEV_RUN_MAX_WORKERS cannot exceed DEV_WORKER_MAX_SIZE"
+  [ "${build_max_workers}" -le "${build_worker_max_size}" ] ||
+    die "DEV_BUILD_MAX_WORKERS cannot exceed DEV_BUILD_WORKER_MAX_SIZE"
   if [ -z "${ami_id}" ] && [ -f "${AMI_ID_FILE}" ]; then
     ami_id="$(cat "${AMI_ID_FILE}")"
   fi
@@ -1640,10 +1674,11 @@ dev_worker_tfvars() {
   set_tfvar "${DEV_TFVARS}" "worker_allowed_ami_ids" "${allowed_ami_ids}"
   set_tfvar "${DEV_TFVARS}" "worker_instance_type" "$(tf_quote "${worker_instance_type}")"
   set_tfvar "${DEV_TFVARS}" "worker_enable_nested_virtualization" "true"
+  set_tfvar "${DEV_TFVARS}" "allow_extended_worker_capacity" "${allow_extended_worker_capacity}"
   set_tfvar "${DEV_TFVARS}" "worker_min_size" "0"
-  set_tfvar "${DEV_TFVARS}" "worker_max_size" "1"
+  set_tfvar "${DEV_TFVARS}" "worker_max_size" "${worker_max_size}"
   set_tfvar "${DEV_TFVARS}" "build_worker_min_size" "0"
-  set_tfvar "${DEV_TFVARS}" "build_worker_max_size" "1"
+  set_tfvar "${DEV_TFVARS}" "build_worker_max_size" "${build_worker_max_size}"
   set_tfvar "${DEV_TFVARS}" "worker_root_volume_size_gb" "${worker_root_volume_size_gb}"
   set_tfvar "${DEV_TFVARS}" "worker_root_volume_iops" "${worker_root_volume_iops}"
   set_tfvar "${DEV_TFVARS}" "worker_root_volume_throughput" "${worker_root_volume_throughput}"
@@ -1655,7 +1690,7 @@ dev_worker_tfvars() {
   set_tfvar "${DEV_TFVARS}" "worker_artifact_cache_max_mib" "${DEV_WORKER_ARTIFACT_CACHE_MAX_MIB:-2048}"
   set_tfvar "${DEV_TFVARS}" "worker_capacity_vcpus" "${DEV_WORKER_CAPACITY_VCPUS:-4}"
   set_tfvar "${DEV_TFVARS}" "worker_capacity_memory_mib" "${DEV_WORKER_CAPACITY_MEMORY_MIB:-8192}"
-  set_tfvar "${DEV_TFVARS}" "worker_execution_slots" "${DEV_WORKER_EXECUTION_SLOTS:-1}"
+  set_tfvar "${DEV_TFVARS}" "worker_execution_slots" "${worker_execution_slots}"
   set_tfvar "${DEV_TFVARS}" "build_worker_instance_type" "null"
   set_tfvar "${DEV_TFVARS}" "build_worker_enable_nested_virtualization" "null"
   set_tfvar "${DEV_TFVARS}" "build_worker_root_volume_size_gb" "null"
@@ -1672,13 +1707,18 @@ dev_worker_tfvars() {
   set_tfvar "${DEV_TFVARS}" "build_worker_substrate_cache_max_mib" "null"
   set_tfvar "${DEV_TFVARS}" "build_worker_artifact_cache_max_mib" "null"
   set_tfvar "${DEV_TFVARS}" "worker_fleet_controller" "$(jq -cn \
+    --argjson run_warm_workers "${run_warm_workers}" \
+    --argjson run_max_workers "${run_max_workers}" \
+    --argjson build_max_workers "${build_max_workers}" \
+    --argjson max_scale_out_per_cycle "${max_scale_out_per_cycle}" \
+    --argjson max_pending_workers "${max_pending_workers}" \
     '{
-      run_warm_workers:0,
+      run_warm_workers:$run_warm_workers,
       build_warm_workers:0,
-      run_max_workers:1,
-      build_max_workers:1,
-      max_scale_out_per_cycle:1,
-      max_pending_workers:1,
+      run_max_workers:$run_max_workers,
+      build_max_workers:$build_max_workers,
+      max_scale_out_per_cycle:$max_scale_out_per_cycle,
+      max_pending_workers:$max_pending_workers,
       max_packing_items:10000,
       controller_interval_seconds:15,
       scale_out_cooldown_seconds:30,

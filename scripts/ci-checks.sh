@@ -24,6 +24,7 @@ bash tests/pre_aws_release_gate_test.sh
 bash tests/measurement_preflight_guard_test.sh
 bash tests/auth_readiness_test.sh
 bash tests/validation_campaign_test.sh
+bash tests/datapath_validation_test.sh
 bash tests/validation_evidence_guard_test.sh
 bash tests/release_worker_ami_cleanup_test.sh
 bash tests/release_worker_image_identity_test.sh
