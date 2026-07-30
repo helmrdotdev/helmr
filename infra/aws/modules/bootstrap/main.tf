@@ -129,6 +129,34 @@ resource "aws_s3_bucket_public_access_block" "source_artifacts" {
   restrict_public_buckets = true
 }
 
+resource "aws_kms_key" "control_releases" {
+  description             = "KMS key for trusted Helmr Control release images"
+  deletion_window_in_days = 30
+  enable_key_rotation     = true
+  tags                    = var.tags
+}
+
+resource "aws_kms_alias" "control_releases" {
+  name          = "alias/${local.name}-control-releases"
+  target_key_id = aws_kms_key.control_releases.key_id
+}
+
+resource "aws_ecr_repository" "control_releases" {
+  name                 = "${local.name}/control-releases"
+  image_tag_mutability = "IMMUTABLE"
+  force_delete         = false
+  tags                 = var.tags
+
+  encryption_configuration {
+    encryption_type = "KMS"
+    kms_key         = aws_kms_key.control_releases.arn
+  }
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
+
 resource "aws_kms_key" "platform_store" {
   description             = "KMS key for the Helmr immutable release store"
   deletion_window_in_days = 30
@@ -247,6 +275,27 @@ resource "aws_iam_role_policy" "platform_publisher" {
             "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
           }
         }
+      },
+      {
+        Sid      = "AuthenticateControlReleaseRegistry"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
+        Sid    = "PublishAndVerifyControlReleaseImages"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:BatchGetImage",
+          "ecr:CompleteLayerUpload",
+          "ecr:DescribeImages",
+          "ecr:DescribeRepositories",
+          "ecr:InitiateLayerUpload",
+          "ecr:PutImage",
+          "ecr:UploadLayerPart"
+        ]
+        Resource = aws_ecr_repository.control_releases.arn
       }
     ]
   })

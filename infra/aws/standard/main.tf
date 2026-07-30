@@ -194,6 +194,7 @@ module "control" {
   additional_control_security_group_ids = var.additional_control_security_group_ids
   cloudfront_origin_domain_name         = var.cloudfront_origin_domain_name
   control_image                         = module.release_artifacts.control_image
+  control_image_repository_arn          = var.control_image_repository_arn
   platform_store_uri                    = var.platform_store_uri
   platform_store_bucket_arn             = var.platform_store_bucket_arn
   platform_store_kms_key_arn            = var.platform_store_kms_key_arn

@@ -506,56 +506,6 @@ resource "aws_vpc_security_group_ingress_rule" "postgres_control" {
   to_port                      = 5432
 }
 
-resource "aws_ecr_repository" "control" {
-  count = var.create_control_repository ? 1 : 0
-
-  name                 = "${local.name}/control"
-  image_tag_mutability = "MUTABLE"
-  force_delete         = var.control_repository_force_delete
-  tags                 = var.tags
-
-  image_scanning_configuration {
-    scan_on_push = true
-  }
-}
-
-resource "aws_ecr_lifecycle_policy" "control" {
-  count = var.create_control_repository && (var.control_ecr_max_images != null || var.control_ecr_untagged_image_expiration_days != null) ? 1 : 0
-
-  repository = aws_ecr_repository.control[0].name
-
-  policy = jsonencode({
-    rules = concat(
-      var.control_ecr_max_images == null ? [] : [{
-        rulePriority = 1
-        description  = "Keep the most recent tagged control images"
-        selection = {
-          tagStatus      = "tagged"
-          tagPatternList = ["*"]
-          countType      = "imageCountMoreThan"
-          countNumber    = var.control_ecr_max_images
-        }
-        action = {
-          type = "expire"
-        }
-      }],
-      var.control_ecr_untagged_image_expiration_days == null ? [] : [{
-        rulePriority = 2
-        description  = "Expire untagged control images"
-        selection = {
-          tagStatus   = "untagged"
-          countType   = "sinceImagePushed"
-          countUnit   = "days"
-          countNumber = var.control_ecr_untagged_image_expiration_days
-        }
-        action = {
-          type = "expire"
-        }
-      }]
-    )
-  })
-}
-
 resource "aws_cloudwatch_log_group" "control" {
   name              = "/aws/ecs/${local.name}/control"
   retention_in_days = var.control_log_retention_days
@@ -899,11 +849,6 @@ resource "aws_iam_role" "control_execution" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "control_execution" {
-  role       = aws_iam_role.control_execution.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-}
-
 resource "aws_iam_role" "dispatcher_execution" {
   name = "${local.name}-dispatcher-execution"
   tags = var.tags
@@ -920,18 +865,19 @@ resource "aws_iam_role" "dispatcher_execution" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "dispatcher_execution" {
-  role       = aws_iam_role.dispatcher_execution.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-}
-
 resource "aws_iam_role_policy" "control_execution" {
   name = "${local.name}-control-execution"
   role = aws_iam_role.control_execution.id
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
+      {
+        Sid      = "WriteControlLogs"
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = "${aws_cloudwatch_log_group.control.arn}:*"
+      },
       {
         Effect = "Allow"
         Action = [
@@ -951,7 +897,23 @@ resource "aws_iam_role_policy" "control_execution" {
           }
         }
       }
-    ]
+      ], var.control_image_repository_arn == null ? [] : [
+      {
+        Sid      = "AuthenticateControlReleaseRegistry"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
+        Sid    = "PullControlReleaseImage"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer"
+        ]
+        Resource = var.control_image_repository_arn
+      }
+    ])
   })
 }
 
@@ -961,7 +923,13 @@ resource "aws_iam_role_policy" "dispatcher_execution" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
+      {
+        Sid      = "WriteDispatcherLogs"
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = "${aws_cloudwatch_log_group.control.arn}:*"
+      },
       {
         Effect = "Allow"
         Action = [
@@ -981,7 +949,23 @@ resource "aws_iam_role_policy" "dispatcher_execution" {
           }
         }
       }
-    ]
+      ], var.control_image_repository_arn == null ? [] : [
+      {
+        Sid      = "AuthenticateControlReleaseRegistry"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
+        Sid    = "PullControlReleaseImage"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer"
+        ]
+        Resource = var.control_image_repository_arn
+      }
+    ])
   })
 }
 

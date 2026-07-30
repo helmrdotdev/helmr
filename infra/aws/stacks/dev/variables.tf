@@ -216,6 +216,16 @@ variable "control_image" {
   type        = string
 }
 
+variable "control_image_repository_arn" {
+  description = "Durable same-account ECR repository ARN from which ECS may pull the digest-pinned Control image."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:[^:]+:ecr:[a-z0-9-]+:[0-9]{12}:repository/[a-z0-9._/-]+$", var.control_image_repository_arn))
+    error_message = "control_image_repository_arn must be an ECR repository ARN."
+  }
+}
+
 variable "create_control_service" {
   description = "Create the ECS service. Keep false until image, secrets, and migrations are ready."
   type        = bool
@@ -338,24 +348,6 @@ variable "database_skip_final_snapshot" {
   description = "Skip the final RDS snapshot on destroy."
   type        = bool
   default     = true
-}
-
-variable "control_repository_force_delete" {
-  description = "Delete the control ECR repository even when it contains images."
-  type        = bool
-  default     = true
-}
-
-variable "control_ecr_max_images" {
-  description = "Maximum tagged control images to retain in ECR."
-  type        = number
-  default     = 10
-}
-
-variable "control_ecr_untagged_image_expiration_days" {
-  description = "Days before untagged control images expire in ECR."
-  type        = number
-  default     = 1
 }
 
 variable "redis_node_type" {

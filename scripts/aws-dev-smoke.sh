@@ -111,8 +111,7 @@ Worker image optional environment:
   SKIP_SOURCE_REF_CHECK    Set to 1 to skip the remote ref check.
 
 Control image environment:
-  CONTROL_IMAGE_REPOSITORY  ECR repository URI. Defaults to the dev stack output.
-  CONTROL_IMAGE_TAG         Image tag. Defaults to the current short Git revision.
+  CONTROL_IMAGE_TAG         Immutable image tag. Defaults to a unique source/time/process tag.
   CONTROL_IMAGE_PLATFORM    Docker platform. Defaults to linux/amd64.
   ROTATE_DEV_SECRETS        Set to 1 to replace generated dev secret values except immutable Workspace fencing authority.
 
@@ -122,7 +121,7 @@ Dev optional environment:
   DEV_PUBLIC_URL        External URL placeholder. Defaults to http://localhost.
   DEV_ENABLE_NAT_GATEWAY
                        Create a NAT Gateway for private egress. Defaults to false for control mode.
-  DEV_CONTROL_IMAGE     Initial task definition image. Defaults to public.ecr.aws/docker/library/busybox:latest.
+  DEV_CONTROL_IMAGE     Digest-pinned Control release image. Defaults to the last control-image-push result.
   DEV_CONTROL_ASSIGN_PUBLIC_IP
                        Run control tasks in public subnets. Defaults to 1 for control mode.
   DEV_GITHUB_OAUTH_CLIENT_ID
@@ -325,6 +324,9 @@ bootstrap_output() {
   printf 'export STATE_REGION=%q\n' "${STATE_REGION}"
   printf 'export SOURCE_BUNDLE_BUCKET=%q\n' "${artifact_bucket}"
   for output_name in \
+    control_release_repository_url \
+    control_release_repository_arn \
+    platform_publisher_role_arn \
     platform_store_uri \
     platform_store_bucket_arn \
     platform_store_kms_key_arn \
@@ -345,6 +347,67 @@ bootstrap_contract_value() {
   fi
   [ -n "${value}" ] || die "${environment_name} is required"
   printf '%s\n' "${value}"
+}
+
+with_platform_publisher() {
+  local role_arn credentials access_key_id secret_access_key session_token
+  role_arn="$(bootstrap_contract_value PLATFORM_PUBLISHER_ROLE_ARN platform_publisher_role_arn)"
+  credentials="$(
+    aws sts assume-role \
+      --region "${AWS_REGION}" \
+      --role-arn "${role_arn}" \
+      --role-session-name "helmr-release-$(date -u +%s)-$$" \
+      --output json
+  )"
+  printf '%s\n' "${credentials}" | jq -e '
+    .Credentials |
+    (.AccessKeyId | type == "string" and length > 0) and
+    (.SecretAccessKey | type == "string" and length > 0) and
+    (.SessionToken | type == "string" and length > 0)
+  ' >/dev/null || die "platform publisher role did not return complete temporary credentials"
+
+  access_key_id="$(printf '%s\n' "${credentials}" | jq -r '.Credentials.AccessKeyId')"
+  secret_access_key="$(printf '%s\n' "${credentials}" | jq -r '.Credentials.SecretAccessKey')"
+  session_token="$(printf '%s\n' "${credentials}" | jq -r '.Credentials.SessionToken')"
+  env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE \
+    AWS_ACCESS_KEY_ID="${access_key_id}" \
+    AWS_SECRET_ACCESS_KEY="${secret_access_key}" \
+    AWS_SESSION_TOKEN="${session_token}" \
+    "$@"
+}
+
+delete_all_ecr_images() {
+  repository=$1
+  while :; do
+    image_ids_file="$(mktemp "${STATE_DIR}/ecr-image-ids.XXXXXX.json")"
+    trap 'rm -f "${image_ids_file}"' RETURN
+    aws ecr list-images \
+      --region "${AWS_REGION}" \
+      --repository-name "${repository}" \
+      --filter tagStatus=ANY \
+      --max-items 100 \
+      --query 'imageIds' \
+      --output json >"${image_ids_file}"
+    if [ "$(jq 'length' <"${image_ids_file}")" -eq 0 ]; then
+      rm -f "${image_ids_file}"
+      trap - RETURN
+      break
+    fi
+    delete_response="$(
+      aws ecr batch-delete-image \
+        --region "${AWS_REGION}" \
+        --repository-name "${repository}" \
+        --image-ids "file://${image_ids_file}" \
+        --output json
+    )"
+    if ! jq -e '(.failures // []) | length == 0' <<<"${delete_response}" >/dev/null; then
+      failure_summary="$(jq -c '[.failures[] | {failureCode, failureReason, imageId}]' <<<"${delete_response}")"
+      die "ECR image deletion returned failures: ${failure_summary}"
+    fi
+    rm -f "${image_ids_file}"
+    trap - RETURN
+  done
+  info "emptied ECR repository: ${repository}"
 }
 
 delete_all_s3_object_versions() {
@@ -379,6 +442,7 @@ bootstrap_destroy_prepare() {
   artifact_bucket="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw source_artifact_bucket_name)"
   runtime_bucket_arn="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw platform_store_bucket_arn)"
   retained_bucket_arn="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw retained_cas_bucket_arn)"
+  control_release_repository="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw control_release_repository_name)"
   if [ "${ALLOW_VALIDATION_EVIDENCE_DELETE:-0}" != "1" ]; then
     for protected_prefix in helmr/validation-evidence/ helmr/validation-claims/; do
       evidence_versions="$(
@@ -405,6 +469,7 @@ bootstrap_destroy_prepare() {
   delete_all_s3_object_versions "${retained_bucket}"
   delete_all_s3_object_versions "${artifact_bucket}"
   delete_all_s3_object_versions "${state_bucket}"
+  delete_all_ecr_images "${control_release_repository}"
 }
 
 state_bucket_arn() {
@@ -539,7 +604,7 @@ platform_release_publish() {
   require_clean_product_checkout
   platform_store_uri="$(bootstrap_contract_value PLATFORM_STORE_URI platform_store_uri)"
   release="$(nix build -L --no-link --print-out-paths "${ROOT}#platformRelease")"
-  nix develop "${ROOT}" -c go run ./cmd/helmr-control release publish \
+  with_platform_publisher nix develop "${ROOT}" -c go run ./cmd/helmr-control release publish \
     --store "${platform_store_uri}" \
     --input "${release}"
   build_policy_digest="$(cat "${release}/build-policy.digest")"
@@ -560,6 +625,7 @@ worker_image_source_check() {
 worker_image_apply() {
   require_clean_product_checkout
   worker_image_source_check
+  nix develop "${ROOT}#images" -c "${ROOT}/scripts/check-apko-lock.sh"
   bundle_uri="$(source_bundle_uri)"
   version_args=(-var="image_version=$(worker_image_version)")
   instance_profile_args=()
@@ -728,16 +794,12 @@ worker_image_amis() {
 }
 
 control_image_repository() {
-  if [ -n "${CONTROL_IMAGE_REPOSITORY:-}" ]; then
-    printf '%s\n' "${CONTROL_IMAGE_REPOSITORY}"
-  else
-    "${TF_BIN}" -chdir="${DEV_STACK}" output -raw control_ecr_repository_url
-  fi
+  bootstrap_contract_value CONTROL_RELEASE_REPOSITORY_URL control_release_repository_url
 }
 
 control_image_uri() {
   repository="$(control_image_repository)"
-  tag="${CONTROL_IMAGE_TAG:-$(git -C "${ROOT}" rev-parse --short=12 HEAD)}"
+  tag="${CONTROL_IMAGE_TAG:-$(git -C "${ROOT}" rev-parse --short=12 HEAD)-$(date -u +%Y%m%d%H%M%S)-$$}"
   printf '%s:%s\n' "${repository}" "${tag}"
 }
 
@@ -751,7 +813,7 @@ control_image_digest_uri() {
   [ -n "${repository_name}" ] && [ "${repository_name}" != "${repository}" ] || die "control image URI must include an ECR registry: ${image_uri}"
   [ -n "${tag}" ] && [ "${tag}" != "${image_uri}" ] || die "control image URI must include a tag: ${image_uri}"
 
-  digest="$(aws ecr describe-images \
+  digest="$(with_platform_publisher aws ecr describe-images \
     --region "${AWS_REGION}" \
     --repository-name "${repository_name}" \
     --image-ids "imageTag=${tag}" \
@@ -796,20 +858,31 @@ control_image_push() {
     image_uri="$(cat "${CONTROL_IMAGE_URI_FILE}")"
   fi
   [ -n "${image_uri}" ] || die "CONTROL_IMAGE_URI is required, or run control-image-build first"
+  build_inputs_file="$(control_image_context)/build-inputs.json"
+  [ -f "${build_inputs_file}" ] || die "Control image build-input receipt is missing; run control-image-build first"
+  expected_source_commit="$(git -C "${ROOT}" rev-parse HEAD)"
+  "${ROOT}/scripts/verify-control-image-build.sh" "${build_inputs_file}" "${image_uri}" ||
+    die "Control image build-input verification failed"
   registry="${image_uri%%/*}"
-  aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${registry}"
-  docker push "${image_uri}"
+  (
+    docker_config="$(mktemp -d "${STATE_DIR}/docker-config.XXXXXX")"
+    trap 'docker --config "${docker_config}" logout "${registry}" >/dev/null 2>&1 || true; rm -rf "${docker_config}"' EXIT
+    with_platform_publisher aws ecr get-login-password --region "${AWS_REGION}" |
+      docker --config "${docker_config}" login --username AWS --password-stdin "${registry}"
+    docker --config "${docker_config}" push "${image_uri}"
+  )
   digest_image_uri="$(control_image_digest_uri "${image_uri}")"
-  source_commit="$(git -C "${ROOT}" rev-parse HEAD)"
   repository="${digest_image_uri%@*}"
   repository_name="${repository#*/}"
   digest="${digest_image_uri#*@}"
   jq -cn \
     --arg digest "${digest}" \
     --arg repository "${repository_name}" \
-    --arg source_commit "${source_commit}" \
+    --arg source_commit "${expected_source_commit}" \
+    --slurpfile build_inputs "${build_inputs_file}" \
     '{
-      formatVersion: 0,
+      buildInputs: $build_inputs[0],
+      formatVersion: 1,
       image: {digest: $digest, repository: $repository},
       sourceCommit: $source_commit
     }' >"${CONTROL_IMAGE_PROVENANCE_FILE}"
@@ -873,9 +946,9 @@ dev_base_tfvars() {
   if [ -z "${control_image}" ] && [ -f "${CONTROL_IMAGE_URI_FILE}" ]; then
     control_image="$(cat "${CONTROL_IMAGE_URI_FILE}")"
   fi
-  if [ -z "${control_image}" ]; then
-    control_image="public.ecr.aws/docker/library/busybox:latest"
-  fi
+  [ -n "${control_image}" ] ||
+    die "a digest-pinned Control release image is required; run control-image-build and control-image-push first"
+  control_image_repository_arn="$(bootstrap_contract_value CONTROL_RELEASE_REPOSITORY_ARN control_release_repository_arn)"
   certificate_arn_value="null"
   if [ -n "${DEV_CERTIFICATE_ARN:-}" ]; then
     certificate_arn_value="$(tf_quote "${DEV_CERTIFICATE_ARN}")"
@@ -896,6 +969,7 @@ default_region_id = "$(dev_default_region_id)"
 public_url                    = "${DEV_PUBLIC_URL:-http://localhost}"
 enable_nat_gateway            = ${DEV_ENABLE_NAT_GATEWAY:-false}
 control_image                 = "${control_image}"
+control_image_repository_arn  = "${control_image_repository_arn}"
 certificate_arn               = ${certificate_arn_value}
 allow_insecure_http           = ${DEV_ALLOW_INSECURE_HTTP:-true}
 enable_cloudfront             = ${DEV_ENABLE_CLOUDFRONT:-false}
@@ -918,9 +992,6 @@ kms_deletion_window_in_days                 = ${DEV_KMS_DELETION_WINDOW_IN_DAYS:
 secret_recovery_window_in_days              = ${DEV_SECRET_RECOVERY_WINDOW_IN_DAYS:-0}
 cas_object_expiration_days                  = ${DEV_CAS_OBJECT_EXPIRATION_DAYS:-7}
 cas_noncurrent_version_expiration_days      = ${DEV_CAS_NONCURRENT_VERSION_EXPIRATION_DAYS:-1}
-control_ecr_max_images                      = ${DEV_CONTROL_ECR_MAX_IMAGES:-10}
-control_ecr_untagged_image_expiration_days  = ${DEV_CONTROL_ECR_UNTAGGED_IMAGE_EXPIRATION_DAYS:-1}
-
 worker_instance_type                = "c8i.xlarge"
 worker_enable_nested_virtualization = true
 worker_min_size                     = 0
@@ -1400,6 +1471,8 @@ EOF
   unset_tfvar "${DEV_TFVARS}" "enable_private_control_dns"
   set_tfvar "${DEV_TFVARS}" "enable_nat_gateway" "${DEV_ENABLE_NAT_GATEWAY:-false}"
   set_tfvar "${DEV_TFVARS}" "control_image" "$(tf_quote "${control_image}")"
+  set_tfvar "${DEV_TFVARS}" "control_image_repository_arn" \
+    "$(tf_quote "$(bootstrap_contract_value CONTROL_RELEASE_REPOSITORY_ARN control_release_repository_arn)")"
   if env_is_set DEV_CERTIFICATE_ARN; then
     set_tfvar "${DEV_TFVARS}" "certificate_arn" "$(tf_quote "${DEV_CERTIFICATE_ARN}")"
   else
@@ -1435,8 +1508,6 @@ EOF
   set_tfvar "${DEV_TFVARS}" "secret_recovery_window_in_days" "${DEV_SECRET_RECOVERY_WINDOW_IN_DAYS:-0}"
   set_tfvar "${DEV_TFVARS}" "cas_object_expiration_days" "${DEV_CAS_OBJECT_EXPIRATION_DAYS:-7}"
   set_tfvar "${DEV_TFVARS}" "cas_noncurrent_version_expiration_days" "${DEV_CAS_NONCURRENT_VERSION_EXPIRATION_DAYS:-1}"
-  set_tfvar "${DEV_TFVARS}" "control_ecr_max_images" "${DEV_CONTROL_ECR_MAX_IMAGES:-10}"
-  set_tfvar "${DEV_TFVARS}" "control_ecr_untagged_image_expiration_days" "${DEV_CONTROL_ECR_UNTAGGED_IMAGE_EXPIRATION_DAYS:-1}"
   if [ "${DEV_CONTROL_KEEP_WORKER:-0}" != "1" ]; then
     set_tfvar "${DEV_TFVARS}" "create_worker" "false"
     set_tfvar "${DEV_TFVARS}" "enable_nat_gateway" "false"
@@ -1780,10 +1851,6 @@ dev_migrate() {
   [ "${exit_code}" = "0" ] || die "migration task exited with ${exit_code}"
 }
 
-json_array_length() {
-  jq 'length'
-}
-
 worker_asg_instance_count() {
   local asg_name=$1
   local group_json
@@ -1863,7 +1930,6 @@ dev_destroy_prepare() {
   mkdir -p "${STATE_DIR}"
   name="$(printf '%s' "${DEV_NAME:-helmr-smoke}" | tr '[:upper:]' '[:lower:]')"
   db_identifier="${name}-postgres"
-  repository_name="${name}/control"
   account_id="$(aws sts get-caller-identity --region "${AWS_REGION}" --query Account --output text)"
   cas_bucket="${name}-${account_id}-${AWS_REGION}-cas"
 
@@ -1967,28 +2033,6 @@ dev_destroy_prepare() {
       --region "${AWS_REGION}" \
       --db-instance-identifier "${db_identifier}"
     info "disabled deletion protection for ${db_identifier}"
-  fi
-
-  if aws ecr describe-repositories \
-    --region "${AWS_REGION}" \
-    --repository-names "${repository_name}" >/dev/null 2>&1; then
-    image_ids_file="$(mktemp "${STATE_DIR}/ecr-image-ids.XXXXXX.json")"
-    trap 'rm -f "${image_ids_file}"' RETURN
-    aws ecr list-images \
-      --region "${AWS_REGION}" \
-      --repository-name "${repository_name}" \
-      --filter tagStatus=ANY \
-      --query 'imageIds' \
-      --output json >"${image_ids_file}"
-    if [ "$(json_array_length <"${image_ids_file}")" -gt 0 ]; then
-      aws ecr batch-delete-image \
-        --region "${AWS_REGION}" \
-        --repository-name "${repository_name}" \
-        --image-ids "file://${image_ids_file}" >/dev/null
-      info "deleted images from ${repository_name}"
-    fi
-    rm -f "${image_ids_file}"
-    trap - RETURN
   fi
 
   if aws s3api head-bucket --bucket "${cas_bucket}" >/dev/null 2>&1; then

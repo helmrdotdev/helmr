@@ -23,6 +23,26 @@ output "source_artifact_kms_key_arn" {
   value       = aws_kms_key.source_artifacts.arn
 }
 
+output "control_release_repository_url" {
+  description = "Durable ECR repository URL for trusted Control release images."
+  value       = aws_ecr_repository.control_releases.repository_url
+}
+
+output "control_release_repository_name" {
+  description = "Durable ECR repository name for trusted Control release images."
+  value       = aws_ecr_repository.control_releases.name
+}
+
+output "control_release_repository_arn" {
+  description = "Durable ECR repository ARN for trusted Control release images."
+  value       = aws_ecr_repository.control_releases.arn
+}
+
+output "control_release_kms_key_arn" {
+  description = "KMS key ARN for trusted Control release images."
+  value       = aws_kms_key.control_releases.arn
+}
+
 output "platform_store_uri" {
   description = "Immutable Helmr release store URI ending at the objects prefix."
   value       = "s3://${aws_s3_bucket.platform_store.bucket}/objects"

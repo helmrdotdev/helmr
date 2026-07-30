@@ -187,6 +187,21 @@ variable "control_image" {
   nullable    = true
 }
 
+variable "control_image_repository_arn" {
+  description = "Exact private ECR repository ARN needed by the ECS execution roles. Leave null for public or non-ECR images."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.control_image_repository_arn == null ||
+      can(regex("^arn:[^:]+:ecr:[a-z0-9-]+:[0-9]{12}:repository/[a-z0-9._/-]+$", var.control_image_repository_arn))
+    )
+    error_message = "control_image_repository_arn must be null or an ECR repository ARN."
+  }
+}
+
 variable "create_control_service" {
   description = "Create the ECS service after image, secrets, and migrations are ready."
   type        = bool

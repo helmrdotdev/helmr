@@ -16,7 +16,8 @@ build_policy_digest       = "sha256:replace-with-64-lowercase-hexadecimal-digits
 
 enable_nat_gateway = true
 
-control_image        = "<account>.dkr.ecr.us-east-1.amazonaws.com/helmr-smoke/control@sha256:<digest>"
+control_image                = "<account>.dkr.ecr.us-east-1.amazonaws.com/helmr-dev/control-releases@sha256:<digest>"
+control_image_repository_arn = "arn:aws:ecr:us-east-1:<account>:repository/helmr-dev/control-releases"
 certificate_arn      = "arn:aws:acm:us-east-1:123456789012:certificate/replace-me"
 allow_insecure_http  = false
 enable_cloudfront    = true
@@ -43,7 +44,6 @@ control_assign_public_ip = false
 database_deletion_protection    = false
 database_backup_retention_days  = 1
 database_skip_final_snapshot    = true
-control_repository_force_delete = true
 secret_recovery_window_in_days  = 0
 
 create_control_service = true

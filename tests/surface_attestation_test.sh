@@ -102,10 +102,10 @@ JSON
 		done
 		case "$task_definition" in
 			*helmr-dev-control:12)
-				printf '123456789012.dkr.ecr.us-east-1.amazonaws.com/helmr/control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
+				printf '123456789012.dkr.ecr.us-east-1.amazonaws.com/helmr-dev/control-releases@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
 				;;
 			*helmr-dev-dispatcher:34)
-				printf '123456789012.dkr.ecr.us-east-1.amazonaws.com/helmr/control@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n'
+				printf '123456789012.dkr.ecr.us-east-1.amazonaws.com/helmr-dev/control-releases@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n'
 				;;
 			*)
 				exit 1

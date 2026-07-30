@@ -337,21 +337,56 @@ validate_manifest() {
 
 verify_deployed_artifact_provenance() {
   local manifest=$1 source_commit
-  local control_repository control_digest control_json
+  local control_repository control_digest control_json foundation_repository foundation_repository_arn foundation_repository_url
+  local expected_base_image expected_flake_lock_sha256
+  local repository_partition repository_service repository_region repository_account repository_resource
   local worker_ami worker_build_arn worker_json ami_json
   need_command aws
 
+  verify_aws_identity "${manifest}"
   source_commit="$(jq -r '.source.commit' "${manifest}")"
 
   control_repository="$(jq -r '.artifacts.control_image_repository' "${manifest}")"
   control_digest="$(jq -r '.artifacts.control_image_digest' "${manifest}")"
+  foundation_repository="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw control_release_repository_name)"
+  foundation_repository_arn="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw control_release_repository_arn)"
+  foundation_repository_url="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw control_release_repository_url)"
+  [ "${control_repository}" = "${foundation_repository}" ] ||
+    die "Control image repository is not the foundation-owned release repository"
+  IFS=: read -r _ repository_partition repository_service repository_region repository_account repository_resource <<<"${foundation_repository_arn}"
+  [ -n "${repository_partition}" ] &&
+    [ "${repository_service}" = "ecr" ] &&
+    [ "${repository_region}" = "${AWS_REGION}" ] &&
+    [ "${repository_account}" = "${AWS_ACCOUNT_ID}" ] &&
+    [ "${repository_resource}" = "repository/${foundation_repository}" ] ||
+    die "Control release repository is not in the manifest-bound account and Region"
+  [ "$(tfvar_raw control_image_repository_arn | jq -r .)" = "${foundation_repository_arn}" ] ||
+    die "Control tfvars do not grant ECS the exact foundation release repository"
+  [ "$(tfvar_raw control_image | jq -r .)" = "${foundation_repository_url}@${control_digest}" ] ||
+    die "Control tfvars do not pin the exact foundation release digest"
+  expected_base_image="$(jq -er '.baseImage' "${ROOT}/images/control-image-build.json")"
+  expected_flake_lock_sha256="$(sha256_file "${ROOT}/flake.lock")"
   jq -e \
     --arg commit "${source_commit}" \
     --arg digest "${control_digest}" \
-    --arg repository "${control_repository}" '
+    --arg repository "${control_repository}" \
+    --arg base_image "${expected_base_image}" \
+    --arg flake_lock_sha256 "${expected_flake_lock_sha256}" '
     type == "object" and
-    keys == ["formatVersion","image","sourceCommit"] and
-    .formatVersion == 0 and .sourceCommit == $commit and
+    keys == ["buildInputs","formatVersion","image","sourceCommit"] and
+    .formatVersion == 1 and .sourceCommit == $commit and
+    .buildInputs == {
+      baseImage: $base_image,
+      buildVersion: "",
+      formatVersion: 1,
+      localImageId: .buildInputs.localImageId,
+      platform: "linux/amd64",
+      sourceCommit: $commit,
+      toolchain: {
+        kind: "nix-flake-lock",
+        sha256: $flake_lock_sha256
+      }
+    } and (.buildInputs.localImageId | test("^sha256:[0-9a-f]{64}$")) and
     .image == {digest: $digest, repository: $repository}
   ' "${CONTROL_IMAGE_PROVENANCE}" >/dev/null ||
     die "Control image provenance is not closed over the campaign source and image"

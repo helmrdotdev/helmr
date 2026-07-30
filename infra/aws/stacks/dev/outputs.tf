@@ -33,11 +33,6 @@ output "control_cloudfront_domain_name" {
   value       = module.control.cloudfront_distribution_domain_name
 }
 
-output "control_ecr_repository_url" {
-  description = "ECR repository URL for the control-plane image."
-  value       = module.control.control_ecr_repository_url
-}
-
 output "control_cluster_name" {
   description = "ECS cluster name for helmr-control."
   value       = module.control.control_cluster_name

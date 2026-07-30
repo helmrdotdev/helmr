@@ -15,7 +15,7 @@ product="${tmp}/helmr"
 ops="${tmp}/ops"
 state_root="${tmp}/state"
 smoke_state_root="${tmp}/aws-smoke"
-mkdir -p "${product}/dev/workflows/tasks/smoke" "${product}/dev/aws/validation-cases" "${ops}/docs/validation"
+mkdir -p "${product}/dev/workflows/tasks/smoke" "${product}/dev/aws/validation-cases" "${product}/images" "${ops}/docs/validation"
 mkdir -p "${smoke_state_root}"
 
 for repo in "${product}" "${ops}"; do
@@ -67,19 +67,38 @@ jq -n '{
 }' >"${profile}"
 cp "${repo_root}/dev/aws/run-auth-readiness.sh" "${product}/dev/aws/run-auth-readiness.sh"
 cp "${repo_root}/dev/aws/worker-price-fixture.json" "${product}/dev/aws/worker-price-fixture.json"
+cp "${repo_root}/flake.lock" "${product}/flake.lock"
+cp "${repo_root}/images/control-image-build.json" "${product}/images/control-image-build.json"
 git -C "${product}" add .
 git -C "${product}" commit -qm fixture
 source_commit="$(git -C "${product}" rev-parse HEAD)"
 fixture_tree="$(git -C "${product}" rev-parse HEAD:dev/workflows)"
 build_policy_digest="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 printf '%s\n' "${build_policy_digest}" >"${smoke_state_root}/build-policy-digest"
+control_base_image="$(jq -r '.baseImage' "${product}/images/control-image-build.json")"
+if command -v sha256sum >/dev/null 2>&1; then
+  flake_lock_sha256="$(sha256sum "${product}/flake.lock" | awk '{print $1}')"
+else
+  flake_lock_sha256="$(shasum -a 256 "${product}/flake.lock" | awk '{print $1}')"
+fi
 worker_image_build_version_arn="arn:aws:imagebuilder:us-east-1:000000000000:image/helmr-test-worker/0.1.2/1"
 worker_image_recipe_arn="arn:aws:imagebuilder:us-east-1:000000000000:image-recipe/helmr-test-worker/0.1.2"
 jq -cn \
+  --arg base_image "${control_base_image}" \
   --arg commit "${source_commit}" \
+  --arg flake_lock_sha256 "${flake_lock_sha256}" \
   '{
-    formatVersion:0,
-    image:{digest:"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",repository:"helmr/control"},
+    buildInputs:{
+      baseImage:$base_image,
+      buildVersion:"",
+      formatVersion:1,
+      localImageId:"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      platform:"linux/amd64",
+      sourceCommit:$commit,
+      toolchain:{kind:"nix-flake-lock",sha256:$flake_lock_sha256}
+    },
+    formatVersion:1,
+    image:{digest:"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",repository:"helmr-dev/control-releases"},
     sourceCommit:$commit
   }' >"${smoke_state_root}/control-image-provenance.json"
 jq -cn \
@@ -124,7 +143,8 @@ create_worker = false
 name = "managed-worker"
 aws_region = "us-east-1"
 enable_nat_gateway = false
-control_image = "000000000000.dkr.ecr.us-east-1.amazonaws.com/helmr/control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+control_image = "000000000000.dkr.ecr.us-east-1.amazonaws.com/helmr-dev/control-releases@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+control_image_repository_arn = "arn:aws:ecr:us-east-1:000000000000:repository/helmr-dev/control-releases"
 worker_ami_id = "ami-0123456789abcdef0"
 worker_instance_type = "c8i.xlarge"
 build_worker_instance_type = null
@@ -137,7 +157,8 @@ create_worker = true
 name = "managed-worker"
 aws_region = "us-east-1"
 enable_nat_gateway = true
-control_image = "000000000000.dkr.ecr.us-east-1.amazonaws.com/helmr/control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+control_image = "000000000000.dkr.ecr.us-east-1.amazonaws.com/helmr-dev/control-releases@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+control_image_repository_arn = "arn:aws:ecr:us-east-1:000000000000:repository/helmr-dev/control-releases"
 worker_ami_id = "ami-0123456789abcdef0"
 worker_instance_type = "c8i.xlarge"
 build_worker_instance_type = null
@@ -172,7 +193,7 @@ jq -n \
     governance:{repo:"ops"},
     source:{repo:"helmr",commit:$source_commit},
     harness:{version:1,sha256:$harness_sha},
-    artifacts:{build_policy_digest:$build_policy_digest,control_image_repository:"helmr/control",control_image_digest:"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",control_image_provenance_sha256:$control_image_provenance_sha,control_tfvars_sha256:$control_tfvars_sha,worker_tfvars_sha256:$worker_tfvars_sha,worker_ami_id:"ami-0123456789abcdef0",worker_image_build_version_arn:$worker_image_build_version_arn,worker_image_provenance_sha256:$worker_image_provenance_sha,worker_instance_type:"c8i.xlarge",build_worker_instance_type:"c8i.xlarge"},
+    artifacts:{build_policy_digest:$build_policy_digest,control_image_repository:"helmr-dev/control-releases",control_image_digest:"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",control_image_provenance_sha256:$control_image_provenance_sha,control_tfvars_sha256:$control_tfvars_sha,worker_tfvars_sha256:$worker_tfvars_sha,worker_ami_id:"ami-0123456789abcdef0",worker_image_build_version_arn:$worker_image_build_version_arn,worker_image_provenance_sha256:$worker_image_provenance_sha,worker_instance_type:"c8i.xlarge",build_worker_instance_type:"c8i.xlarge"},
     environment:{provider:"aws",region:"us-east-1",dev_name:"managed-worker",state_key:"dev/managed-worker.tfstate",account_id_env:"AWS_ACCOUNT_ID"},
     workload:{
       fixtures_root:"dev/workflows",fixture_tree:$fixture_tree,project:"helmr",environments:["staging","production"],
@@ -201,6 +222,9 @@ cat >"${tmp}/early-bin/aws" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
+  *"sts get-caller-identity"*)
+    printf '000000000000\n'
+    ;;
   *"ecr describe-images"*)
     printf '{"imageDetails":[{"imageDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}\n'
     ;;
@@ -214,12 +238,25 @@ case "$*" in
 esac
 EOF
 chmod +x "${tmp}/early-bin/aws"
+cat >"${tmp}/early-bin/tofu" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  *"output -raw control_release_repository_name"*) printf 'helmr-dev/control-releases\n' ;;
+  *"output -raw control_release_repository_arn"*) printf 'arn:aws:ecr:us-east-1:000000000000:repository/helmr-dev/control-releases\n' ;;
+  *"output -raw control_release_repository_url"*) printf '000000000000.dkr.ecr.us-east-1.amazonaws.com/helmr-dev/control-releases\n' ;;
+  *) exit 2 ;;
+esac
+EOF
+chmod +x "${tmp}/early-bin/tofu"
 
 campaign() {
   PATH="${tmp}/early-bin:${PATH}" \
   MOCK_SOURCE_COMMIT="${source_commit}" \
+  AWS_ACCOUNT_ID="000000000000" \
   DEV_NAME="managed-worker" \
   STATE_KEY="dev/managed-worker.tfstate" \
+  DEV_TFVARS="${CAMPAIGN_TFVARS_OVERRIDE:-${control_tfvars_fixture}}" \
   HELMR_VALIDATION_PRODUCT_ROOT="${product}" \
   HELMR_VALIDATION_STATE_ROOT="${state_root}" \
   HELMR_AWS_SMOKE_STATE_ROOT="${smoke_state_root}" \
@@ -227,6 +264,21 @@ campaign() {
 }
 
 campaign validate "${manifest}"
+
+mismatched_repository_tfvars="${tmp}/mismatched-repository.tfvars"
+sed 's#repository/helmr-dev/control-releases#repository/other/control-releases#' \
+  "${control_tfvars_fixture}" >"${mismatched_repository_tfvars}"
+if CAMPAIGN_TFVARS_OVERRIDE="${mismatched_repository_tfvars}" campaign init "${manifest}" >/dev/null 2>&1; then
+  fail "campaign init must reject an ECS pull grant for a different ECR repository"
+fi
+
+mismatched_image_tfvars="${tmp}/mismatched-image.tfvars"
+sed 's#helmr-dev/control-releases@sha256:#other/control-releases@sha256:#' \
+  "${control_tfvars_fixture}" >"${mismatched_image_tfvars}"
+if CAMPAIGN_TFVARS_OVERRIDE="${mismatched_image_tfvars}" campaign init "${manifest}" >/dev/null 2>&1; then
+  fail "campaign init must reject a Control image outside the foundation repository"
+fi
+
 campaign init "${manifest}" >/dev/null
 [ "$(campaign status "${manifest}" | jq -r '.status')" = "ready" ] || fail "initialized campaign status"
 
@@ -333,6 +385,9 @@ mkdir -p "${tmp}/bin" "${tmp}/s3"
 cat >"${tmp}/bin/tofu" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
+  *"output -raw control_release_repository_name"*) printf 'helmr-dev/control-releases\n' ;;
+  *"output -raw control_release_repository_arn"*) printf 'arn:aws:ecr:us-east-1:000000000000:repository/helmr-dev/control-releases\n' ;;
+  *"output -raw control_release_repository_url"*) printf '000000000000.dkr.ecr.us-east-1.amazonaws.com/helmr-dev/control-releases\n' ;;
   *"output -raw source_artifact_bucket_name"*) printf 'artifact-bucket\n' ;;
   *"output -raw source_artifact_kms_key_arn"*) printf 'arn:aws:kms:us-east-1:000000000000:key/test\n' ;;
   *"output -json"*)
@@ -358,7 +413,7 @@ case "${command_line}" in
   *"get-bucket-encryption"*) printf '{"ServerSideEncryptionConfiguration":{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"aws:kms","KMSMasterKeyID":"arn:aws:kms:us-east-1:000000000000:key/test"}}]}}\n' ;;
   *"get-bucket-lifecycle-configuration"*) printf '{"Rules":[{"ID":"expire-validation-evidence","Status":"Enabled","Filter":{"Prefix":"helmr/validation-evidence/"},"Expiration":{"Days":30},"NoncurrentVersionExpiration":{"NoncurrentDays":30}}]}\n' ;;
   *"ecs describe-services"*) if [ -e "${MOCK_UNHEALTHY_CONTROL_FILE}" ]; then running=0; else running=1; fi; printf '{"failures":[],"services":[{"serviceName":"control","desiredCount":1,"runningCount":%s,"pendingCount":0,"taskDefinition":"control-task","deployments":[{"status":"PRIMARY","rolloutState":"COMPLETED"}]},{"serviceName":"dispatcher","desiredCount":1,"runningCount":%s,"pendingCount":0,"taskDefinition":"dispatcher-task","deployments":[{"status":"PRIMARY","rolloutState":"COMPLETED"}]}]}\n' "${running}" "${running}" ;;
-  *"ecs describe-task-definition"*) if [[ "${command_line}" == *dispatcher-task* ]]; then name=dispatcher; else name=control; fi; printf '{"taskDefinition":{"containerDefinitions":[{"name":"%s","image":"000000000000.dkr.ecr.us-east-1.amazonaws.com/helmr/control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}\n' "${name}" ;;
+  *"ecs describe-task-definition"*) if [[ "${command_line}" == *dispatcher-task* ]]; then name=dispatcher; else name=control; fi; printf '{"taskDefinition":{"containerDefinitions":[{"name":"%s","image":"000000000000.dkr.ecr.us-east-1.amazonaws.com/helmr-dev/control-releases@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}\n' "${name}" ;;
   *"rds describe-db-instances"*"--db-instance-identifier"*) printf '{"DBInstances":[{"DBInstanceIdentifier":"helmr-db","DBInstanceStatus":"available","DBInstanceClass":"db.t4g.micro","EngineVersion":"16.3","InstanceCreateTime":"2026-07-14T00:00:00Z"}]}\n' ;;
   *"rds describe-db-instances"*) printf '{"DBInstances":[]}\n' ;;
   *"elasticache describe-replication-groups"*"--replication-group-id"*) printf '{"ReplicationGroups":[{"ReplicationGroupId":"managed-worker-dispatch","Status":"available","Engine":"valkey","MemberClusters":["cache-1"],"ReplicationGroupCreateTime":"2026-07-14T00:00:00Z"}]}\n' ;;
@@ -498,6 +553,10 @@ git -C "${product}" checkout -q -- .
 alternate_state="${tmp}/alternate-state"
 PATH="${tmp}/early-bin:${PATH}" \
 MOCK_SOURCE_COMMIT="${source_commit}" \
+AWS_ACCOUNT_ID="000000000000" \
+DEV_NAME="managed-worker" \
+STATE_KEY="dev/managed-worker.tfstate" \
+DEV_TFVARS="${control_tfvars_fixture}" \
 HELMR_VALIDATION_PRODUCT_ROOT="${product}" \
 HELMR_VALIDATION_STATE_ROOT="${alternate_state}" \
 HELMR_AWS_SMOKE_STATE_ROOT="${smoke_state_root}" \
@@ -517,7 +576,7 @@ pass_stage() {
       jq -n --arg stage "${stage}" '{schema:"helmrdotdev.validation-stage-result.v1",stage:$stage,status:"passed",reason:null,observations:{},cases:[]}' >"${result}"
       ;;
     control_up)
-      jq -n '{schema:"helmrdotdev.validation-stage-result.v1",stage:"control_up",status:"passed",reason:null,observations:{control_image:"helmr/control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",control_desired_count:1,dispatcher_desired_count:1,nat_gateway_count:0,run_worker_count:0,build_worker_count:0,rds_instance_id:"helmr-db",valkey_replication_group_id:"helmr-cache"},cases:[]}' >"${result}"
+      jq -n '{schema:"helmrdotdev.validation-stage-result.v1",stage:"control_up",status:"passed",reason:null,observations:{control_image:"helmr-dev/control-releases@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",control_desired_count:1,dispatcher_desired_count:1,nat_gateway_count:0,run_worker_count:0,build_worker_count:0,rds_instance_id:"helmr-db",valkey_replication_group_id:"helmr-cache"},cases:[]}' >"${result}"
       ;;
     auth_ready)
       jq -n '{schema:"helmrdotdev.validation-stage-result.v1",stage:"auth_ready",status:"passed",reason:null,observations:{project_slug:"helmr",environment_slugs:["staging","production"],authenticated_cli_probe:true,exit_code:0},cases:[]}' >"${result}"

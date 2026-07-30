@@ -225,6 +225,21 @@ variable "control_image" {
   }
 }
 
+variable "control_image_repository_arn" {
+  description = "Exact ECR repository ARN from which ECS task execution roles may pull the Control image. Leave null only for a non-ECR self-hosted image."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.control_image_repository_arn == null ||
+      can(regex("^arn:[^:]+:ecr:[a-z0-9-]+:[0-9]{12}:repository/[a-z0-9._/-]+$", var.control_image_repository_arn))
+    )
+    error_message = "control_image_repository_arn must be null or an ECR repository ARN."
+  }
+}
+
 variable "platform_store_uri" {
   description = "Dedicated immutable Platform Artifact store URI ending in /objects."
   type        = string
@@ -542,32 +557,6 @@ variable "database_skip_final_snapshot" {
   description = "Skip the final RDS snapshot on destroy. Intended for ephemeral development stacks."
   type        = bool
   default     = false
-}
-
-variable "create_control_repository" {
-  description = "Create an ECR repository for custom control images. Official release deployments can leave this false."
-  type        = bool
-  default     = false
-}
-
-variable "control_repository_force_delete" {
-  description = "Delete the control ECR repository even when it contains images. Intended for ephemeral development stacks."
-  type        = bool
-  default     = false
-}
-
-variable "control_ecr_max_images" {
-  description = "Maximum tagged control images to retain in ECR. Set null to disable this lifecycle rule."
-  type        = number
-  default     = null
-  nullable    = true
-}
-
-variable "control_ecr_untagged_image_expiration_days" {
-  description = "Days before untagged control images expire in ECR. Set null to disable this lifecycle rule."
-  type        = number
-  default     = null
-  nullable    = true
 }
 
 variable "control_log_retention_days" {

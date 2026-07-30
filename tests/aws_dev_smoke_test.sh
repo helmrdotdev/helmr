@@ -3,6 +3,10 @@ set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 script="$repo_root/scripts/aws-dev-smoke.sh"
+control_build_script="$repo_root/scripts/build-control-image.sh"
+control_build_contract="$repo_root/images/control-image-build.json"
+control_module="$repo_root/infra/aws/modules/control/main.tf"
+dev_stack="$repo_root/infra/aws/stacks/dev/main.tf"
 
 fail() {
   printf 'not ok - %s\n' "$1" >&2
@@ -81,6 +85,90 @@ trap 'rm -rf "$tmp"' EXIT
 tfvars="$tmp/dev.tfvars"
 stdout="$tmp/stdout"
 stderr="$tmp/stderr"
+
+assert_not_contains "$control_module" 'resource "aws_ecr_repository"' "Control module must not own release-image storage"
+assert_not_contains "$dev_stack" 'resource "aws_ecr_repository"' "ephemeral dev stack must not own release-image storage"
+assert_not_contains "$script" 'CONTROL_IMAGE_REPOSITORY' "Control repository override must be absent"
+assert_contains "$script" 'bootstrap_contract_value CONTROL_RELEASE_REPOSITORY_URL control_release_repository_url' "Control publication must resolve the durable foundation repository"
+assert_contains "$script" 'with_platform_publisher aws ecr get-login-password' "Control publication must use the bounded release-publisher role"
+assert_contains "$script" 'with_platform_publisher nix develop' "Platform publication must use the bounded release-publisher role"
+# shellcheck disable=SC2016
+assert_contains "$script" 'docker --config "${docker_config}" push' "Control publication must isolate temporary ECR credentials"
+# shellcheck disable=SC2016
+assert_contains "$control_build_script" 'FROM ${base_image}' "Control builds must consume the checked-in digest-pinned base"
+jq -e '.baseImage | test("@sha256:[0-9a-f]{64}$")' "$control_build_contract" >/dev/null ||
+  fail "Control base image must be pinned by digest"
+assert_contains "$script" 'run control-image-build and control-image-push first' "dev stack generation must require pre-published Control provenance"
+
+control_build_bin="$tmp/control-build-bin"
+control_build_context="$tmp/control-build-context"
+mkdir -p "$control_build_bin"
+for command in bun make go; do
+  cat >"$control_build_bin/$command" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$control_build_bin/$command"
+done
+cat >"$control_build_bin/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  build) ;;
+  image)
+    [ "${2:-}" = "inspect" ]
+    printf '%s\n' "${MOCK_LOCAL_IMAGE_ID:-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$control_build_bin/docker"
+PATH="$control_build_bin:$PATH" \
+  CONTROL_IMAGE_CONTEXT="$control_build_context" \
+  CONTROL_IMAGE_PLATFORM=linux/amd64 \
+  "$control_build_script" example.invalid/helmr-control:test
+base_image="$(jq -r '.baseImage' "$control_build_contract")"
+assert_contains "$control_build_context/Dockerfile" "FROM ${base_image}" "generated Control Dockerfile must use the digest-pinned base"
+if command -v sha256sum >/dev/null 2>&1; then
+  flake_lock_sha256="$(sha256sum "$repo_root/flake.lock" | awk '{print $1}')"
+else
+  flake_lock_sha256="$(shasum -a 256 "$repo_root/flake.lock" | awk '{print $1}')"
+fi
+jq -e \
+  --arg base_image "$base_image" \
+  --arg flake_lock_sha256 "$flake_lock_sha256" \
+  --arg source_commit "$(git -C "$repo_root" rev-parse HEAD)" '
+  . == {
+    baseImage: $base_image,
+    buildVersion: "",
+    formatVersion: 1,
+    localImageId: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    platform: "linux/amd64",
+    sourceCommit: $source_commit,
+    toolchain: {kind: "nix-flake-lock", sha256: $flake_lock_sha256}
+  }
+' "$control_build_context/build-inputs.json" >/dev/null ||
+  fail "Control build-input receipt must close over base, platform, and Nix toolchain"
+PATH="$control_build_bin:$PATH" \
+  "$repo_root/scripts/verify-control-image-build.sh" \
+  "$control_build_context/build-inputs.json" \
+  example.invalid/helmr-control:test
+drifted_build_inputs="$tmp/drifted-build-inputs.json"
+jq '.sourceCommit = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
+  "$control_build_context/build-inputs.json" >"$drifted_build_inputs"
+if PATH="$control_build_bin:$PATH" \
+  "$repo_root/scripts/verify-control-image-build.sh" \
+  "$drifted_build_inputs" \
+  example.invalid/helmr-control:test >/dev/null 2>&1; then
+  fail "Control image publication must reject source-commit drift"
+fi
+if PATH="$control_build_bin:$PATH" \
+  MOCK_LOCAL_IMAGE_ID=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  "$repo_root/scripts/verify-control-image-build.sh" \
+  "$control_build_context/build-inputs.json" \
+  example.invalid/helmr-control:test >/dev/null 2>&1; then
+  fail "Control image publication must reject local image substitution"
+fi
 
 write_tfvars "$tfvars" '"http://localhost"' null false null
 if WORKER_AMI_ID=ami-0123456789abcdef0 DEV_TFVARS="$tfvars" "$script" dev-worker-tfvars >"$stdout" 2>"$stderr"; then
@@ -374,6 +462,7 @@ DEV_TFVARS="$tfvars" \
   PLATFORM_STORE_URI=s3://platform-store/runtime \
   PLATFORM_STORE_BUCKET_ARN=arn:aws:s3:::platform-store \
   PLATFORM_STORE_KMS_KEY_ARN=arn:aws:kms:us-west-2:123456789012:key/runtime \
+  CONTROL_RELEASE_REPOSITORY_ARN=arn:aws:ecr:us-west-2:123456789012:repository/helmr-dev/control-releases \
   DEV_BUILD_POLICY_DIGEST=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   DEV_CLICKHOUSE_URL=https://example.clickhouse.cloud:8443 \
   DEV_CLICKHOUSE_PASSWORD_SECRET_ARN=arn:aws:secretsmanager:us-west-2:123456789012:secret:clickhouse \
@@ -402,6 +491,7 @@ if DEV_TFVARS="$tfvars" \
   PLATFORM_STORE_URI=s3://platform-store/runtime \
   PLATFORM_STORE_BUCKET_ARN=arn:aws:s3:::platform-store \
   PLATFORM_STORE_KMS_KEY_ARN=arn:aws:kms:us-west-2:123456789012:key/runtime \
+  CONTROL_RELEASE_REPOSITORY_ARN=arn:aws:ecr:us-west-2:123456789012:repository/helmr-dev/control-releases \
   DEV_BUILD_POLICY_DIGEST=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   DEV_CLICKHOUSE_URL=https://example.clickhouse.cloud:8443 \
   DEV_CLICKHOUSE_PASSWORD_SECRET_ARN=arn:aws:secretsmanager:us-west-2:123456789012:secret:clickhouse \
@@ -550,7 +640,7 @@ case "$service:$operation" in
     ;;
   ecs:update-service|ecs:wait)
     ;;
-  ecr:describe-repositories|s3api:head-bucket)
+  s3api:head-bucket)
     exit 1
     ;;
   *)
@@ -571,7 +661,7 @@ assert_contains "$destroy_log" "autoscaling describe-auto-scaling-groups --regio
 assert_not_contains "$destroy_log" "complete-lifecycle-action" "destroy must not bypass worker drain proof"
 assert_not_contains "$destroy_log" "split-smoke-worker" "removed shared worker compatibility name"
 assert_contains "$destroy_log" "rds describe-db-instances --region us-east-1 --db-instance-identifier split-smoke-postgres" "normalized database cleanup name"
-assert_contains "$destroy_log" "ecr describe-repositories --region us-east-1 --repository-names split-smoke/control" "normalized repository cleanup name"
+assert_not_contains "$destroy_log" "ecr " "ephemeral dev teardown must not inspect or mutate the foundation release repository"
 assert_contains "$destroy_log" "s3api head-bucket --bucket split-smoke-123456789012-us-east-1-cas" "normalized CAS cleanup name"
 
 : >"$destroy_log"

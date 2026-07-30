@@ -98,11 +98,6 @@ output "control_assign_public_ip" {
   value       = var.control_assign_public_ip
 }
 
-output "control_ecr_repository_url" {
-  description = "ECR repository URL for custom control-plane images when create_control_repository is true."
-  value       = try(aws_ecr_repository.control[0].repository_url, null)
-}
-
 output "control_cluster_name" {
   description = "ECS cluster name for helmr-control."
   value       = aws_ecs_cluster.control.name

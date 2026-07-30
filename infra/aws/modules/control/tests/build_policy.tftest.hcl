@@ -149,6 +149,7 @@ variables {
   region_id                    = "helmr-us-east"
   default_region_id            = "helmr-us-east"
   control_image                = "example.invalid/helmr@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  control_image_repository_arn = "arn:aws:ecr:us-east-1:000000000000:repository/helmr-test/control-releases"
   platform_store_uri           = "s3://helmr-test-runtime/objects"
   platform_store_bucket_arn    = "arn:aws:s3:::helmr-test-runtime"
   platform_store_kms_key_arn   = "arn:aws:kms:us-east-1:000000000000:key/11111111-1111-1111-1111-111111111111"
@@ -224,5 +225,23 @@ run "control_installs_exact_policy_before_start" {
       aws_iam_role.migration_task.name == "helmr-test-migration-task"
     )
     error_message = "Control IAM must read only runtime objects, exclude Manager storage, rollout lineage, and retained artifacts, and not leak to migration."
+  }
+}
+
+run "execution_roles_are_pull_only_for_the_exact_control_repository" {
+  command = plan
+
+  assert {
+    condition = (
+      strcontains(aws_iam_role_policy.control_execution.policy, var.control_image_repository_arn) &&
+      strcontains(aws_iam_role_policy.dispatcher_execution.policy, var.control_image_repository_arn) &&
+      strcontains(aws_iam_role_policy.control_execution.policy, "ecr:BatchGetImage") &&
+      strcontains(aws_iam_role_policy.dispatcher_execution.policy, "ecr:GetDownloadUrlForLayer") &&
+      !strcontains(aws_iam_role_policy.control_execution.policy, "ecr:PutImage") &&
+      !strcontains(aws_iam_role_policy.dispatcher_execution.policy, "ecr:PutImage") &&
+      !strcontains(aws_iam_role_policy.control_execution.policy, "ecr:Delete") &&
+      !strcontains(aws_iam_role_policy.dispatcher_execution.policy, "ecr:Delete")
+    )
+    error_message = "ECS execution roles must have pull-only access to the exact Control release repository."
   }
 }

@@ -21,6 +21,7 @@ case "$*" in
   *"output -raw source_artifact_bucket_name"*) printf 'artifact-bucket\n' ;;
   *"output -raw platform_store_bucket_arn"*) printf 'arn:aws:s3:::runtime-bucket\n' ;;
   *"output -raw retained_cas_bucket_arn"*) printf 'arn:aws:s3:::retained-bucket\n' ;;
+  *"output -raw control_release_repository_name"*) printf 'helmr-dev/control-releases\n' ;;
   *) exit 2 ;;
 esac
 EOF
@@ -35,6 +36,16 @@ case "$*" in
   *"list-object-versions"*) printf '{"Versions":[],"DeleteMarkers":[]}' ;;
   *"delete-bucket-policy"*) printf '{}\n' ;;
   *"delete-objects"*) printf '{}\n' ;;
+  *"ecr list-images"*)
+    if [ "${MOCK_ECR_DELETE_FAILURE:-0}" = "1" ]; then
+      printf '[{"imageDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]\n'
+    else
+      printf '[]\n'
+    fi
+    ;;
+  *"ecr batch-delete-image"*)
+    printf '{"imageIds":[],"failures":[{"imageId":{"imageDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"failureCode":"ImageReferencedByManifestList","failureReason":"still referenced"}]}\n'
+    ;;
   *) exit 2 ;;
 esac
 EOF
@@ -47,5 +58,12 @@ grep -Fq 'contains retained validation claims or evidence' "${tmp}/stderr" || fa
 
 PATH="${tmp}/bin:${PATH}" TF_BIN=tofu ALLOW_VALIDATION_EVIDENCE_DELETE=1 ALLOW_RETAINED_STORE_DELETE=1 \
   "${script}" bootstrap-destroy-prepare >"${tmp}/stdout" 2>"${tmp}/stderr"
+
+if PATH="${tmp}/bin:${PATH}" TF_BIN=tofu \
+  ALLOW_VALIDATION_EVIDENCE_DELETE=1 ALLOW_RETAINED_STORE_DELETE=1 MOCK_ECR_DELETE_FAILURE=1 \
+  "${script}" bootstrap-destroy-prepare >"${tmp}/stdout" 2>"${tmp}/stderr"; then
+  fail "bootstrap destruction should stop on partial ECR image-deletion failure"
+fi
+grep -Fq 'ECR image deletion returned failures' "${tmp}/stderr" || fail "ECR partial-failure reason"
 
 printf 'ok - validation evidence guard tests\n'
