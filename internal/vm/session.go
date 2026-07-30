@@ -89,8 +89,6 @@ type ConnectRequest struct {
 	OwnerKind      OwnerKind
 	Resources      compute.ResourceVector
 	PIDsMax        int64
-	Networkless    bool
-	Network        compute.NetworkPolicy
 	Topology       RuntimeTopology
 	ReadOnlyDrives []ReadOnlyDrive
 }
@@ -168,7 +166,6 @@ type RestoreRequest struct {
 	MemoryMediaTypes     []string
 	Manifest             []byte
 	Checkpoint           CheckpointIdentity
-	Network              compute.NetworkPolicy
 	Topology             RuntimeTopology
 	ReadOnlyDrives       []ReadOnlyDrive
 	RecordPhase          func(RuntimePhase)
@@ -181,7 +178,6 @@ type MaterializeRequest struct {
 	WorkspaceMountPath string
 	BaseVersionID      string
 	Resources          compute.ResourceVector
-	Network            compute.NetworkPolicy
 	Topology           RuntimeTopology
 	ReadOnlyDrives     []ReadOnlyDrive
 }

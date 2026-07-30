@@ -694,7 +694,7 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 			WorkspaceMountPath: mount.WorkspaceMountPath, BaseVersionID: mount.BaseVersionID,
 			Resources: compute.ResourceVector{MilliCPU: mount.RequestedMilliCPU, MemoryMiB: mount.RequestedMemoryMiB,
 				DiskMiB: mount.RequestedDiskMiB, Slots: mount.RequestedExecutionSlots},
-			Network: mount.Network, Topology: topology, ReadOnlyDrives: readOnlyDrives,
+			Topology: topology, ReadOnlyDrives: readOnlyDrives,
 		})
 	}
 	closeProgramErr := closeProgram()
@@ -1231,7 +1231,6 @@ func preparedRuntimeWorkspaceMountFromSource(source api.WorkerRuntimeSource) api
 		RequestedDiskMiB:        source.ReservedDiskMiB,
 		RequestedExecutionSlots: source.ReservedExecutionSlots,
 		RuntimeABI:              strings.TrimSpace(source.RuntimeABI),
-		Network:                 source.Network,
 	}
 }
 

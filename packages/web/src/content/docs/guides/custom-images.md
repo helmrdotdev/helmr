@@ -11,16 +11,14 @@ order: 350
 Declare an image in TypeScript and attach it to a Workspace declaration:
 
 ```ts
-import { cache, image, source, workspace } from "@helmr/sdk"
+import { image, source, workspace } from "@helmr/sdk"
 
 const base = image("cli-tooling")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
   .run(["npm", "install", "-g", "bun@1.3.10"])
   .copy("/workspace/package.json", source.file("package.json"))
-  .run(["bun", "install"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("cli-tooling-bun") }],
-  })
+  .run(["bun", "install"])
   .run([
     "sh",
     "-ceu",

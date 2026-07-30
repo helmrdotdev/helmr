@@ -227,12 +227,12 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 		INSERT INTO runtime_instances (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, runtime_identity_id, deployment_definition_id,
-			worker_epoch, network_policy, reserved_cpu_millis, reserved_memory_bytes,
+			worker_epoch, reserved_cpu_millis, reserved_memory_bytes,
 			reserved_guest_ephemeral_disk_bytes, reserved_execution_slots,
 			workspace_id, program_deployment_id, desired_reason, observed_state,
 			observed_version, observed_desired_version, preparing_at, ready_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, 1, '{}'::jsonb,
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, 1,
 			1000, 1073741824, 2147483648, 1,
 			$10, $11, 'test', 'ready', 1, 1, now(), now()
 		)

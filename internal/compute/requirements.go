@@ -22,7 +22,6 @@ type Placement struct {
 type RunRuntimeRequirements struct {
 	Resources ResourceVector
 	Runtime   runtimeidentity.Selector
-	Network   NetworkPolicy
 	Placement Placement
 }
 
@@ -38,26 +37,14 @@ type RunRuntimeRequirementFields struct {
 	InitramfsDigest         string
 	RootfsDigest            string
 	CNIProfile              string
-	NetworkPolicyJSON       []byte
-	NetworkPolicyLabel      string
 	PlacementJSON           []byte
 	PlacementLabel          string
 }
 
 func RunRuntimeRequirementsFromFields(fields RunRuntimeRequirementFields) (RunRuntimeRequirements, error) {
-	networkLabel := fields.NetworkPolicyLabel
-	if networkLabel == "" {
-		networkLabel = "network policy"
-	}
 	placementLabel := fields.PlacementLabel
 	if placementLabel == "" {
 		placementLabel = "placement"
-	}
-	network := DefaultNetworkPolicy()
-	if len(fields.NetworkPolicyJSON) > 0 {
-		if err := json.Unmarshal(fields.NetworkPolicyJSON, &network); err != nil {
-			return RunRuntimeRequirements{}, fmt.Errorf("%s: %w", networkLabel, err)
-		}
 	}
 	var placement Placement
 	if len(fields.PlacementJSON) > 0 {
@@ -86,7 +73,6 @@ func RunRuntimeRequirementsFromFields(fields RunRuntimeRequirementFields) (RunRu
 			RootfsDigest:    fields.RootfsDigest,
 			CNIProfile:      fields.CNIProfile,
 		},
-		Network:   network,
 		Placement: placement,
 	}
 	return requirements, requirements.Validate()
@@ -117,9 +103,6 @@ func (r RunRuntimeRequirements) Validate() error {
 	}
 	if r.Runtime.CNIProfile == "" {
 		problems = append(problems, errors.New("runtime cni profile is required"))
-	}
-	if err := r.Network.Validate(); err != nil {
-		problems = append(problems, err)
 	}
 	if strings.TrimSpace(r.Placement.Region) != "" {
 		problems = append(problems, errors.New("placement region is not supported; use the environment region route"))

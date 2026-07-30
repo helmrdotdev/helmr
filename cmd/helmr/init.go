@@ -152,16 +152,14 @@ const starterTSConfig = `{
 }
 `
 
-const starterHelloTask = `import { cache, image, source, task, workspace } from "@helmr/sdk"
+const starterHelloTask = `import { image, source, task, workspace } from "@helmr/sdk"
 
 const runtime = image("hello")
   .from("node:24-bookworm-slim")
   .workdir("/app")
   .run(["npm", "install", "-g", "bun@1.3.10"])
   .copy("/app/package.json", source.file("package.json"))
-  .run(["bun", "install"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("hello-bun") }],
-  })
+  .run(["bun", "install"])
 
 export const helloWorkspace = workspace("hello")
   .image(runtime)

@@ -15,7 +15,6 @@ import (
 func planDeclaredImage(
 	build imagebuild.Build,
 	sourceRoot string,
-	cacheNamespace string,
 ) (llbPlan, error) {
 	if len(build.Images) == 0 {
 		return llbPlan{}, errors.New("image build images must be non-empty")
@@ -23,10 +22,6 @@ func planDeclaredImage(
 	architecture := build.Images[0].Platform.Architecture
 	if err := imagebuild.Validate(build, architecture); err != nil {
 		return llbPlan{}, err
-	}
-	cacheNamespace = safeNamespace(cacheNamespace)
-	if cacheNamespace == "" || cacheNamespace == "_" {
-		cacheNamespace = defaultCacheNS
 	}
 	images := make(map[string]imagebuild.Spec, len(build.Images))
 	for _, image := range build.Images {
@@ -36,7 +31,6 @@ func planDeclaredImage(
 		sourceRoot:  sourceRoot,
 		images:      images,
 		localMounts: map[string]fsutil.FS{},
-		cacheNS:     cacheNamespace,
 	}
 	state, config, err := planner.plan(build.Root, nil)
 	if err != nil {
@@ -63,7 +57,6 @@ type declaredImagePlanner struct {
 	sourceRoot  string
 	images      map[string]imagebuild.Spec
 	localMounts map[string]fsutil.FS
-	cacheNS     string
 	contextID   int
 }
 
@@ -172,11 +165,7 @@ func (planner *declaredImagePlanner) plan(
 					index,
 				)
 			}
-			options, err := planner.runOptions(*step.Run)
-			if err != nil {
-				return llb.State{}, imageAccumulator{}, err
-			}
-			state = state.Run(options...).Root()
+			state = state.Run(llb.Args(step.Run.Argv)).Root()
 		default:
 			return llb.State{}, imageAccumulator{}, fmt.Errorf(
 				"image %q step %d has no operation",
@@ -192,32 +181,6 @@ func (planner *declaredImagePlanner) plan(
 		)
 	}
 	return state, config, nil
-}
-
-func (planner *declaredImagePlanner) runOptions(
-	run imagebuild.Run,
-) ([]llb.RunOption, error) {
-	if len(run.SecretMounts) != 0 {
-		return nil, errors.New(
-			"Workspace image build cannot receive Deployment or Workspace Secrets",
-		)
-	}
-	options := []llb.RunOption{llb.Args(run.Argv)}
-	for _, mount := range run.CacheMounts {
-		sharing, err := cacheSharing(mount.Sharing)
-		if err != nil {
-			return nil, err
-		}
-		options = append(options, llb.AddMount(
-			mount.Dst,
-			llb.Scratch(),
-			llb.AsPersistentCacheDir(
-				planner.cacheNS+"/"+safeSegment(mount.CacheID),
-				sharing,
-			),
-		))
-	}
-	return options, nil
 }
 
 func (planner *declaredImagePlanner) sourceFile(

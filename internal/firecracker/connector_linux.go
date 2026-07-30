@@ -62,10 +62,9 @@ var nextGuestCID atomic.Uint32
 var dialVsock = vsock.DialContext
 
 type Connector struct {
-	cfg         Config
-	artifacts   runtimeArtifacts
-	kernelArgs  string
-	networkless bool
+	cfg        Config
+	artifacts  runtimeArtifacts
+	kernelArgs string
 }
 
 func NewConnector(cfg Config) (*Connector, error) {
@@ -125,7 +124,6 @@ func (c *Connector) Connect(ctx context.Context, request vm.ConnectRequest) (vm.
 		"",
 		"",
 		nil,
-		request.Network,
 		request.Topology,
 		request.ReadOnlyDrives,
 		nil,
@@ -137,13 +135,12 @@ func (c *Connector) connectorForRequest(
 ) (*Connector, error) {
 	cfg := c.cfg
 	var kernelArgs string
-	networkless := false
 	if request.OwnerKind == vm.OwnerBuild {
 		if err := validateReadOnlyDrives(request.ReadOnlyDrives); err != nil {
 			return nil, err
 		}
 		var err error
-		kernelArgs, networkless, err = buildGuestProfile(request)
+		kernelArgs, err = buildGuestProfile(request)
 		if err != nil {
 			return nil, err
 		}
@@ -158,7 +155,7 @@ func (c *Connector) connectorForRequest(
 		if request.Resources != (compute.ResourceVector{}) {
 			return nil, errors.New("runtime attachment cannot change resources")
 		}
-		if request.PIDsMax != 0 || request.Networkless {
+		if request.PIDsMax != 0 {
 			return nil, errors.New("runtime attachment cannot change physical isolation")
 		}
 		kernelArgs = runtimeKernelArgs(request.Topology, nil)
@@ -166,28 +163,24 @@ func (c *Connector) connectorForRequest(
 	child := *c
 	child.cfg = cfg
 	child.kernelArgs = kernelArgs
-	child.networkless = networkless
 	return &child, nil
 }
 
-func buildGuestProfile(request vm.ConnectRequest) (string, bool, error) {
+func buildGuestProfile(request vm.ConnectRequest) (string, error) {
 	noSubstrate := request.Topology.Substrate == nil
 	switch {
 	case request.Resources == compute.BuildGuestResources() &&
 		request.PIDsMax == compute.BuildGuestPIDsMax &&
-		!request.Networkless &&
-		request.Network.Internet &&
 		noSubstrate &&
 		isBuildInstallDriveSet(request.ReadOnlyDrives):
-		return buildKernelArgs, false, nil
+		return buildKernelArgs, nil
 	case request.Resources == compute.BuildGuestResources() &&
 		request.PIDsMax == 0 &&
-		!request.Networkless &&
 		noSubstrate &&
 		len(request.ReadOnlyDrives) == 0:
-		return defaultKernelArgs, false, nil
+		return defaultKernelArgs, nil
 	default:
-		return "", false, errors.New("build guest resources do not match the platform profile")
+		return "", errors.New("build guest resources do not match the platform profile")
 	}
 }
 
@@ -254,7 +247,6 @@ func (c *Connector) Materialize(ctx context.Context, request vm.MaterializeReque
 		"",
 		"",
 		nil,
-		request.Network,
 		request.Topology,
 		request.ReadOnlyDrives,
 		nil,
@@ -625,7 +617,7 @@ func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	child := *c
 	child.cfg = restoreCfg
 	child.kernelArgs = kernelArgs
-	session, err := child.start(ctx, request.RuntimeInstanceID, request.OwnerKind, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Network, request.Topology, request.ReadOnlyDrives, recordPhase)
+	session, err := child.start(ctx, request.RuntimeInstanceID, request.OwnerKind, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Topology, request.ReadOnlyDrives, recordPhase)
 	if err != nil {
 		removeFiles(cleanup)
 		return nil, err
@@ -822,8 +814,8 @@ func removeFiles(paths []string) {
 	}
 }
 
-func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, network compute.NetworkPolicy, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase)) (vm.CheckpointableSession, error) {
-	session, err := c.prepareSession(ctx, instanceID, ownerKind, snapshotMemoryPath, snapshotStatePath, scratchDiskRestorePath, restoreNetwork, network, topology, readOnlyDrives, recordPhase)
+func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase)) (vm.CheckpointableSession, error) {
+	session, err := c.prepareSession(ctx, instanceID, ownerKind, snapshotMemoryPath, snapshotStatePath, scratchDiskRestorePath, restoreNetwork, topology, readOnlyDrives, recordPhase)
 	if err != nil {
 		return nil, err
 	}
@@ -833,7 +825,7 @@ func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.O
 	return session, nil
 }
 
-func (c *Connector) prepareSession(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, network compute.NetworkPolicy, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase)) (_ *guestSession, retErr error) {
+func (c *Connector) prepareSession(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase)) (_ *guestSession, retErr error) {
 	instanceID = strings.TrimSpace(instanceID)
 	if ownerKind == vm.OwnerBuild && instanceID == "" {
 		instanceID = uuid.Must(uuid.NewV7()).String()
@@ -929,20 +921,16 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 			Smt:        firecracker.Bool(false),
 		},
 	}
-	if !c.networkless {
-		machineCfg.NetNS = filepath.Join("/var/run/netns", instanceID)
-		machineCfg.NetworkInterfaces = firecracker.NetworkInterfaces{c.networkInterface(restoreNetwork)}
-	}
+	machineCfg.NetNS = filepath.Join("/var/run/netns", instanceID)
+	machineCfg.NetworkInterfaces = firecracker.NetworkInterfaces{c.networkInterface(restoreNetwork)}
 	opts := []firecracker.Opt{}
 	restoring := snapshotMemoryPath != "" || snapshotStatePath != ""
 	if restoring {
 		opts = append(opts, withSnapshotRestore(snapshotMemoryPath, snapshotStatePath))
 		opts = append(opts, withJailedRestoreFiles(c.cfg.RootfsPath, scratchDiskPath, substrateDiskPath, snapshotMemoryPath, snapshotStatePath))
 	}
-	if !c.networkless {
-		opts = append(opts, c.withTapOwner())
-		opts = append(opts, c.withNetworkPolicy(instanceID, network))
-	}
+	opts = append(opts, c.withTapOwner())
+	opts = append(opts, c.withNetworkPolicy(instanceID))
 	// firecracker-go-sdk binds this context to the jailer/firecracker process.
 	// Keep it separate from the startup request so prepared sessions can outlive
 	// a background warm command after boot succeeds.

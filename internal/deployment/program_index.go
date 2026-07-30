@@ -178,9 +178,6 @@ func validateProgramIndexDeclaration(
 		if err := validateResourcesManifest(declaration.Workspace.Resources); err != nil {
 			return fmt.Errorf("Workspace resources: %w", err)
 		}
-		if err := validateNetworkManifest(declaration.Workspace.Network); err != nil {
-			return fmt.Errorf("Workspace network: %w", err)
-		}
 		return nil
 	default:
 		return fmt.Errorf("kind %q is unsupported", declaration.Kind)
@@ -234,7 +231,6 @@ func cloneProgramIndexDeclaration(
 	}
 	if declaration.Workspace != nil {
 		value := *declaration.Workspace
-		value.Network.DenyCIDRs = append([]string(nil), value.Network.DenyCIDRs...)
 		declaration.Workspace = &value
 	}
 	if declaration.Locator != nil {
@@ -313,7 +309,6 @@ func buildProgramIndex(
 					MediaType:      image.MediaType,
 				},
 				Resources: definition.Workspace.Resources,
-				Network:   definition.Workspace.Network,
 			}
 		default:
 			return ProgramIndex{}, fmt.Errorf(

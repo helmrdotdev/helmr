@@ -8,7 +8,6 @@
     "sdk/typescript",
     "proto/typescript",
     "runtime/typescript",
-    "examples/dependency-cache",
     "examples/cli-tooling",
     "examples/github-pr-review",
     "examples/hello-world",

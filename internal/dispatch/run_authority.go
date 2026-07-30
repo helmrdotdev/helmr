@@ -11,7 +11,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -65,7 +64,6 @@ type runPlacementAuthority struct {
 	traceID                   pgtype.Text
 	rootSpanID                string
 	resources                 runResources
-	networkPolicy             []byte
 	architecture              string
 }
 
@@ -722,16 +720,7 @@ SELECT deployments.id
 	if err != nil {
 		return runPlacementAuthority{}, err
 	}
-	network, err := json.Marshal(workspaceManifest.Network)
-	if err != nil {
-		return runPlacementAuthority{}, fmt.Errorf("encode Workspace network policy: %w", err)
-	}
-	network, err = jsoncanon.Transform(network)
-	if err != nil {
-		return runPlacementAuthority{}, fmt.Errorf("canonicalize Workspace network policy: %w", err)
-	}
 	authority.resources = resources
-	authority.networkPolicy = network
 	authority.architecture = platformArchitecture
 	return authority, nil
 }

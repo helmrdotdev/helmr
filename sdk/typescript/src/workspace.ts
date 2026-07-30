@@ -23,16 +23,6 @@ export interface WorkspaceResources {
   readonly memory: WorkspaceMemory
 }
 
-export type WorkspaceNetwork =
-  | Readonly<{
-      internet?: true
-      denyCidrs?: readonly string[]
-    }>
-  | Readonly<{
-      internet: false
-      denyCidrs?: never
-    }>
-
 export interface WorkspaceBuilder {
   readonly id: string
   image(value: ImageBuilder): WorkspaceResourceBuilder
@@ -155,7 +145,6 @@ export type WorkspaceRef = WorkspaceIdRef | WorkspaceKeyRef
 
 export interface WorkspaceDefinition {
   readonly id: string
-  network(value: WorkspaceNetwork): WorkspaceDefinition
   create(options?: RuntimeWorkspaceCreateOptions): Promise<WorkspaceIdRef>
 }
 
@@ -199,7 +188,6 @@ export interface InternalWorkspaceDefinition {
   readonly id: string
   readonly image: InternalImage
   readonly resources: WorkspaceResources
-  readonly network?: WorkspaceNetwork
 }
 
 class Builder implements WorkspaceBuilder {
@@ -247,7 +235,6 @@ class Definition implements WorkspaceDefinition {
     id: string,
     imageValue: InternalImage,
     resources: WorkspaceResources,
-    network?: WorkspaceNetwork,
   ) {
     this.id = id
     this.internal = Object.freeze({
@@ -255,28 +242,9 @@ class Definition implements WorkspaceDefinition {
       id,
       image: imageValue,
       resources,
-      ...(network === undefined ? {} : { network }),
     })
     Object.defineProperty(this, workspaceDefinitionBrand, { value: true })
     Object.freeze(this)
-  }
-
-  network(value: WorkspaceNetwork): WorkspaceDefinition {
-    const network: WorkspaceNetwork =
-      value.internet === false
-        ? Object.freeze({ internet: false })
-        : Object.freeze({
-            ...(value.internet === undefined ? {} : { internet: true as const }),
-            ...(value.denyCidrs === undefined
-              ? {}
-              : { denyCidrs: Object.freeze([...value.denyCidrs]) }),
-          })
-    return new Definition(
-      this.id,
-      this.internal.image,
-      this.internal.resources,
-      network,
-    )
   }
 
   create(

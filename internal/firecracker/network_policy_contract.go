@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -18,34 +17,20 @@ const (
 )
 
 func renderRunNetworkPolicy(
-	policy compute.NetworkPolicy,
 	blockedIPv4CIDRs []string,
 ) string {
-	chainPolicy := "accept"
-	terminalDeny := ""
-	if !policy.Internet {
-		chainPolicy = "drop"
-		terminalDeny = fmt.Sprintf(
-			"add rule inet %s forward counter name %s drop",
-			networkPolicyTableName,
-			runNetworkDeniedCounterName,
-		)
-	}
 	return fmt.Sprintf(strings.TrimSpace(`
 add table inet %[1]s
 add counter inet %[1]s %[2]s
-add chain inet %[1]s forward { type filter hook forward priority 0; policy %[3]s; }
+add chain inet %[1]s forward { type filter hook forward priority 0; policy accept; }
 add rule inet %[1]s forward meta nfproto ipv6 counter name %[2]s drop
 add rule inet %[1]s forward ct state established,related accept
-%[4]s
+%[3]s
 add rule inet %[1]s forward ip daddr @blocked_ipv4 counter name %[2]s drop
-%[5]s
 	`)+"\n",
 		networkPolicyTableName,
 		runNetworkDeniedCounterName,
-		chainPolicy,
 		runNetworkPolicySet("blocked_ipv4", "ipv4_addr", blockedIPv4CIDRs),
-		terminalDeny,
 	)
 }
 

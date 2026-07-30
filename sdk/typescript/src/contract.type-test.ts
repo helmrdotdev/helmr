@@ -36,13 +36,10 @@ export function assertGreenfieldTypes(): void {
   // @ts-expect-error v0 ephemeral disk capacity is not public input.
   resourceBuilder.resources({ cpu: 1, memory: "1GiB", disk: "64GiB" })
 
-  const definition = resourceBuilder.resources({
+  resourceBuilder.resources({
     cpu: 1,
     memory: "1GiB",
   })
-  definition.network({ internet: false })
-  // @ts-expect-error denyCidrs is meaningless when internet is disabled.
-  definition.network({ internet: false, denyCidrs: ["10.0.0.0/8"] })
 
   const payloadTask = task({
     id: "payload",

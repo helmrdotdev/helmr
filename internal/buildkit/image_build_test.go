@@ -42,7 +42,7 @@ func TestPlanDeclaredImageCopiesTheAddressedApplicationView(t *testing.T) {
 				}},
 			},
 		}},
-	}, root, "test")
+	}, root)
 	if err != nil {
 		t.Fatal(err)
 	}

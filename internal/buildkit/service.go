@@ -254,7 +254,7 @@ func openFresh(
 		_ = client.Close()
 		return nil, nil, fmt.Errorf("wait for fresh BuildKit API: %w", err)
 	}
-	builder := New(client, cfg.OutputRoot, cfg.CacheNamespace)
+	builder := New(client, cfg.OutputRoot)
 	builder.health = serviceHealth{controller: controller, client: client, invocation: started.Invocation}
 	return builder, client.Close, nil
 }

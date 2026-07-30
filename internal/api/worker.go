@@ -3,8 +3,6 @@ package api
 import (
 	"encoding/json"
 	"time"
-
-	"github.com/helmrdotdev/helmr/internal/compute"
 )
 
 type WorkerTokenRequest struct {
@@ -332,7 +330,6 @@ type WorkerRuntimeSource struct {
 	ReservedDiskMiB        int64                   `json:"reserved_disk_mib"`
 	ReservedExecutionSlots int32                   `json:"reserved_execution_slots"`
 	RuntimeABI             string                  `json:"runtime_abi"`
-	Network                compute.NetworkPolicy   `json:"network"`
 	Program                *WorkerRuntimeProgram   `json:"program,omitempty"`
 	Restore                *WorkerRuntimeRestore   `json:"restore,omitempty"`
 }

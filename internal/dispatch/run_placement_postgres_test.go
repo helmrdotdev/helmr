@@ -2978,7 +2978,7 @@ INSERT INTO deployments (
 		programID,
 	)
 	workspaceManifest := fmt.Sprintf(
-		`{"image":{"artifactDigest":%q,"mediaType":"application/octet-stream"},"resources":{"milliCpu":1000,"memoryMiB":1024},"network":{"internet":true,"denyCidrs":[]}}`,
+		`{"image":{"artifactDigest":%q,"mediaType":"application/octet-stream"},"resources":{"milliCpu":1000,"memoryMiB":1024}}`,
 		imageDigest,
 	)
 	mustRunPlacementExec(t, ctx, pool, `

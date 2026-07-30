@@ -18,14 +18,10 @@ func TestRunRuntimeRequirementsFromFields(t *testing.T) {
 		InitramfsDigest:         "sha256:initramfs",
 		RootfsDigest:            "sha256:rootfs",
 		CNIProfile:              "helmr/v0",
-		NetworkPolicyJSON:       []byte(`{"internet":false,"deny":["10.0.0.0/8"]}`),
 		PlacementJSON:           []byte(`{"tags":{"pool":"warm"}}`),
 	})
 	if err != nil {
 		t.Fatalf("RunRuntimeRequirementsFromFields() error = %v", err)
-	}
-	if requirements.Network.Internet || len(requirements.Network.Deny) != 1 {
-		t.Fatalf("Network = %#v", requirements.Network)
 	}
 	if requirements.Placement.Tags["pool"] != "warm" {
 		t.Fatalf("Placement.Tags = %#v", requirements.Placement.Tags)
@@ -49,19 +45,6 @@ func TestRunRuntimeRequirementsRejectsPlacementRegion(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("RunRuntimeRequirementsFromFields() error = nil")
-	}
-}
-
-func TestRunRuntimeRequirementsFromFieldsLabelsJSONErrors(t *testing.T) {
-	_, err := RunRuntimeRequirementsFromFields(RunRuntimeRequirementFields{
-		NetworkPolicyJSON:  []byte(`{`),
-		NetworkPolicyLabel: "worker run network policy",
-	})
-	if err == nil {
-		t.Fatalf("RunRuntimeRequirementsFromFields() error = nil")
-	}
-	if got, want := err.Error(), "worker run network policy:"; len(got) < len(want) || got[:len(want)] != want {
-		t.Fatalf("error = %q, want prefix %q", got, want)
 	}
 }
 

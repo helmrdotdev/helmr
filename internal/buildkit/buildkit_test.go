@@ -54,7 +54,7 @@ func TestBuildImageWritesOCIArtifactAndManifest(t *testing.T) {
 			ExporterResponse: map[string]string{"digest": "sha256:test"},
 		}, nil
 	}}
-	builder := New(solver, t.TempDir(), "workspace")
+	builder := New(solver, t.TempDir())
 	artifact, err := builder.BuildImage(t.Context(), testImageRequest(t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +138,6 @@ func testImageRequest(root string) imagebuild.Request {
 	return imagebuild.Request{
 		RunID:       "run",
 		WorkspaceID: "workspace",
-		CacheScope:  "deployment",
 		Source: imagebuild.Source{
 			ProjectRoot: root,
 			SHA:         "sha256:source",

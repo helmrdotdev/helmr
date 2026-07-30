@@ -765,7 +765,6 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 					DiskMiB:   mount.RequestedDiskMiB,
 					Slots:     mount.RequestedExecutionSlots,
 				},
-				Network: mount.Network,
 			})
 			session = materialized
 			m.logWorkspaceMountPhase(*mount, "workspace mount connector materialized", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
@@ -803,7 +802,6 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 				DiskMiB:   mount.RequestedDiskMiB,
 				Slots:     mount.RequestedExecutionSlots,
 			},
-			Network:  mount.Network,
 			Topology: topology,
 		})
 		session = materialized

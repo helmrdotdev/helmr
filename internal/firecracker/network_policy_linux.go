@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -47,7 +46,7 @@ var buildBlockedIPv4CIDRs = []string{
 	"240.0.0.0/4",
 }
 
-func (c *Connector) withNetworkPolicy(netns string, policy compute.NetworkPolicy) firecracker.Opt {
+func (c *Connector) withNetworkPolicy(netns string) firecracker.Opt {
 	return func(machine *firecracker.Machine) {
 		machine.Handlers.FcInit = machine.Handlers.FcInit.AppendAfter(firecracker.SetupNetworkHandlerName, firecracker.Handler{
 			Name: "fcinit.ApplyHelmrNetworkPolicy",
@@ -60,12 +59,11 @@ func (c *Connector) withNetworkPolicy(netns string, policy compute.NetworkPolicy
 					return c.applyBuildNetworkPolicy(
 						ctx,
 						netns,
-						policy,
 						tap,
 						resolvers,
 					)
 				}
-				return c.applyNetworkPolicy(ctx, netns, policy)
+				return c.applyNetworkPolicy(ctx, netns)
 			},
 		})
 	}
@@ -74,12 +72,10 @@ func (c *Connector) withNetworkPolicy(netns string, policy compute.NetworkPolicy
 func (c *Connector) applyBuildNetworkPolicy(
 	ctx context.Context,
 	netns string,
-	policy compute.NetworkPolicy,
 	tap string,
 	resolvers []string,
 ) error {
 	blockedIPv4CIDRs, err := effectiveBuildBlockedCIDRs(
-		policy,
 		c.cfg.NetworkBlockedIPv4CIDRs,
 	)
 	if err != nil {
@@ -128,17 +124,12 @@ func (c *Connector) applyNetworkPolicyScript(
 	return nil
 }
 
-func (c *Connector) applyNetworkPolicy(ctx context.Context, netns string, policy compute.NetworkPolicy) error {
-	blockedIPv4CIDRs, err := effectiveBlockedCIDRs(policy, c.cfg.NetworkBlockedIPv4CIDRs)
-	if err != nil {
-		return err
-	}
+func (c *Connector) applyNetworkPolicy(ctx context.Context, netns string) error {
 	return c.applyNetworkPolicyScript(
 		ctx,
 		netns,
 		renderRunNetworkPolicy(
-			policy,
-			blockedIPv4CIDRs,
+			c.cfg.NetworkBlockedIPv4CIDRs,
 		),
 	)
 }
@@ -167,37 +158,9 @@ func isMissingNetworkPolicyNamespaceOrTable(detail string) bool {
 		strings.Contains(detail, "no such process")
 }
 
-func effectiveBlockedCIDRs(policy compute.NetworkPolicy, configuredIPv4CIDRs []string) ([]string, error) {
-	if err := policy.Validate(); err != nil {
-		return nil, fmt.Errorf("firecracker network policy: %w", err)
-	}
-	blockedIPv4CIDRs := append([]string(nil), configuredIPv4CIDRs...)
-	for _, entry := range policy.Deny {
-		prefix, err := netip.ParsePrefix(strings.TrimSpace(entry))
-		if err != nil {
-			return nil, fmt.Errorf("firecracker network policy deny %q: %w", entry, err)
-		}
-		if prefix.Addr().Is4() {
-			blockedIPv4CIDRs = append(blockedIPv4CIDRs, prefix.String())
-		}
-	}
-	return blockedIPv4CIDRs, nil
-}
-
 func effectiveBuildBlockedCIDRs(
-	policy compute.NetworkPolicy,
 	configuredIPv4CIDRs []string,
 ) ([]string, error) {
-	if err := policy.Validate(); err != nil {
-		return nil, fmt.Errorf("build network policy: %w", err)
-	}
-	if !policy.Internet ||
-		len(policy.Allow) != 0 ||
-		len(policy.Deny) != 0 {
-		return nil, errors.New(
-			"build network policy must use the fixed public-egress contract",
-		)
-	}
 	ipv4, err := canonicalPrefixSet(
 		append(
 			append([]string(nil), buildBlockedIPv4CIDRs...),

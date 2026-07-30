@@ -21,7 +21,6 @@ const (
 	maxImageArguments       = 1024
 	maxImageArgumentBytes   = 65536
 	maxImageArgumentsBytes  = 1 << 20
-	maxImageMounts          = 256
 	maxEnvKeyBytes          = 256
 	maxEnvValueBytes        = 1 << 20
 	maxEnvBytes             = 1 << 20
@@ -31,7 +30,6 @@ const (
 
 var (
 	imageEnvKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,255}$`)
-	imageSecretPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 	imageUserPattern   = regexp.MustCompile(`^[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?$`)
 )
 
@@ -68,20 +66,7 @@ type From struct {
 }
 
 type Run struct {
-	Argv         []string      `json:"argv"`
-	CacheMounts  []CacheMount  `json:"cacheMounts"`
-	SecretMounts []SecretMount `json:"secretMounts"`
-}
-
-type CacheMount struct {
-	Dst     string `json:"dst"`
-	CacheID string `json:"cacheId"`
-	Sharing string `json:"sharing"`
-}
-
-type SecretMount struct {
-	Dst  string `json:"dst"`
-	Name string `json:"name"`
+	Argv []string `json:"argv"`
 }
 
 type CopySourceFile struct {
@@ -330,48 +315,6 @@ func validateRun(run Run, label string) error {
 	}
 	if argumentBytes > maxImageArgumentsBytes {
 		return fmt.Errorf("%s argv exceeds %d bytes", label, maxImageArgumentsBytes)
-	}
-	if run.CacheMounts == nil {
-		return fmt.Errorf("%s cacheMounts must be an array", label)
-	}
-	if run.SecretMounts == nil {
-		return fmt.Errorf("%s secretMounts must be an array", label)
-	}
-	if len(run.CacheMounts) > maxImageMounts {
-		return fmt.Errorf("%s has more than %d cache mounts", label, maxImageMounts)
-	}
-	if len(run.SecretMounts) > maxImageMounts {
-		return fmt.Errorf("%s has more than %d Secret mounts", label, maxImageMounts)
-	}
-	destinations := make(map[string]struct{}, len(run.CacheMounts)+len(run.SecretMounts))
-	for index, mount := range run.CacheMounts {
-		if err := validateImageAbsolutePath(mount.Dst, fmt.Sprintf("%s cacheMounts[%d].dst", label, index)); err != nil {
-			return err
-		}
-		if _, ok := destinations[mount.Dst]; ok {
-			return fmt.Errorf("%s has duplicate mount destination %q", label, mount.Dst)
-		}
-		destinations[mount.Dst] = struct{}{}
-		if err := validateImageIdentifier(mount.CacheID, fmt.Sprintf("%s cacheMounts[%d].cacheId", label, index)); err != nil {
-			return err
-		}
-		switch mount.Sharing {
-		case "shared", "private", "locked":
-		default:
-			return fmt.Errorf("%s cacheMounts[%d].sharing is unsupported", label, index)
-		}
-	}
-	for index, mount := range run.SecretMounts {
-		if err := validateImageAbsolutePath(mount.Dst, fmt.Sprintf("%s secretMounts[%d].dst", label, index)); err != nil {
-			return err
-		}
-		if _, ok := destinations[mount.Dst]; ok {
-			return fmt.Errorf("%s has duplicate mount destination %q", label, mount.Dst)
-		}
-		destinations[mount.Dst] = struct{}{}
-		if !imageSecretPattern.MatchString(mount.Name) {
-			return fmt.Errorf("%s secretMounts[%d].name is invalid", label, index)
-		}
 	}
 	return nil
 }

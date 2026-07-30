@@ -1,6 +1,6 @@
 export { actor } from "./actor"
 export { HelmrClient } from "./client"
-export { cache, image, source } from "./image"
+export { image, source } from "./image"
 export { logger } from "./logger"
 export { metadata } from "./metadata"
 export { defineConfig } from "./config"
@@ -143,12 +143,8 @@ export type {
 } from "./contract"
 
 export type {
-  Cache,
-  CacheMountBinding,
   ImageBuilder,
   ImageCopyInput,
-  ImageRunOptions,
-  SecretMountBinding,
   SourceDirectoryRef,
   SourceFileRef,
 } from "./image"
@@ -192,7 +188,6 @@ export type {
   WorkspaceIdRef,
   WorkspaceKeyRef,
   WorkspaceMemory,
-  WorkspaceNetwork,
   WorkspaceRef,
   WorkspaceRefBase,
   WorkspaceResources,

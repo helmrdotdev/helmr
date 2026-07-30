@@ -1,4 +1,4 @@
-import { cache, image, source, task, workspace } from "@helmr/sdk"
+import { image, source, task, workspace } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 import { z } from "zod"
 
@@ -8,9 +8,7 @@ const base = image("hello-world")
   .run(["npm", "install", "-g", "bun@1.3.10"])
   .copy("/opt/helmr-task/package.json", source.file("package.json"))
   .workdir("/opt/helmr-task")
-  .run(["bun", "install"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("hello-world-bun") }],
-  })
+  .run(["bun", "install"])
   .workdir("/workspace")
 
 export const helloWorldWorkspace = workspace("hello-world")

@@ -1,4 +1,4 @@
-import { cache, image, source, task, workspace } from "@helmr/sdk"
+import { image, source, task, workspace } from "@helmr/sdk"
 import { spawn } from "node:child_process"
 import { writeFile } from "node:fs/promises"
 import { z } from "zod"
@@ -16,9 +16,7 @@ const base = image("cli-tooling")
   .run(["sh", "-ceu", installTools])
   .copy("/opt/helmr-task/package.json", source.file("package.json"))
   .workdir("/opt/helmr-task")
-  .run(["bun", "install"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("cli-tooling-bun") }],
-  })
+  .run(["bun", "install"])
   .workdir("/workspace")
 
 export const cliToolingWorkspace = workspace("cli-tooling")

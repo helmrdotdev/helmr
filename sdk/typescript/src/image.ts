@@ -2,25 +2,6 @@ const imageBrand = Symbol.for("helmr.sdk.v0.image")
 const sourceFileBrand = Symbol.for("helmr.sdk.v0.source-file")
 const sourceDirectoryBrand = Symbol.for("helmr.sdk.v0.source-directory")
 
-export interface Cache {
-  readonly id: string
-}
-
-export interface CacheMountBinding {
-  readonly mountPath: string
-  readonly cache: Cache
-}
-
-export interface SecretMountBinding {
-  readonly mountPath: string
-  readonly secret: string
-}
-
-export interface ImageRunOptions {
-  readonly cache?: readonly CacheMountBinding[]
-  readonly secrets?: readonly SecretMountBinding[]
-}
-
 export interface SourceFileRef {
   readonly path: string
 }
@@ -34,7 +15,7 @@ export type ImageCopyInput = SourceFileRef | SourceDirectoryRef | ImageBuilder
 export interface ImageBuilder {
   readonly id: string
   from(ref: string): ImageBuilder
-  run(argv: readonly string[], options?: ImageRunOptions): ImageBuilder
+  run(argv: readonly string[]): ImageBuilder
   copy(destination: string, source: SourceFileRef | SourceDirectoryRef): ImageBuilder
   copyFrom(
     destination: string,
@@ -51,8 +32,6 @@ export type InternalImageStep =
   | Readonly<{
       kind: "run"
       argv: readonly string[]
-      cache: readonly CacheMountBinding[]
-      secrets: readonly SecretMountBinding[]
     }>
   | Readonly<{
       kind: "copy_source_file"
@@ -97,14 +76,18 @@ class Image implements ImageBuilder {
     return new Image(this.id, [...this.steps, { kind: "from", ref }])
   }
 
-  run(argv: readonly string[], options: ImageRunOptions = {}): ImageBuilder {
+  run(
+    argv: readonly string[],
+    ...unexpected: readonly unknown[]
+  ): ImageBuilder {
+    if (unexpected.length !== 0) {
+      throw new Error("image.run() accepts only argv")
+    }
     return new Image(this.id, [
       ...this.steps,
       {
         kind: "run",
         argv: Object.freeze([...argv]),
-        cache: Object.freeze([...(options.cache ?? [])]),
-        secrets: Object.freeze([...(options.secrets ?? [])]),
       },
     ])
   }
@@ -175,11 +158,6 @@ class SourceDirectory implements SourceDirectoryRef {
 
 export function image(id: string): ImageBuilder {
   return new Image(id)
-}
-
-export function cache(id: string): Cache {
-  if (id.length === 0) throw new Error("cache id must be non-empty")
-  return Object.freeze({ id })
 }
 
 export const source = Object.freeze({

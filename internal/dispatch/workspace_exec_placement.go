@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
@@ -63,7 +62,6 @@ type workspaceExecAuthority struct {
 	ownershipGeneration   int64
 	writerGeneration      int64
 	resources             runResources
-	networkPolicy         []byte
 	architecture          string
 }
 
@@ -77,7 +75,6 @@ func (a workspaceExecAuthority) runAuthority() runPlacementAuthority {
 		baseVersionID:         a.baseVersionID,
 		regionID:              a.regionID,
 		resources:             a.resources,
-		networkPolicy:         a.networkPolicy,
 		architecture:          a.architecture,
 	}
 }
@@ -397,16 +394,7 @@ SELECT workspace_processes.id,
 	if err != nil {
 		return workspaceExecAuthority{}, err
 	}
-	network, err := json.Marshal(workspaceManifest.Network)
-	if err != nil {
-		return workspaceExecAuthority{}, fmt.Errorf("encode Workspace exec network policy: %w", err)
-	}
-	network, err = jsoncanon.Transform(network)
-	if err != nil {
-		return workspaceExecAuthority{}, fmt.Errorf("canonicalize Workspace exec network policy: %w", err)
-	}
 	authority.resources = resources
-	authority.networkPolicy = network
 	authority.architecture = platformArchitecture
 	return authority, nil
 }
@@ -457,7 +445,6 @@ func (d *Authority) createWorkspaceExecRuntime(
 			RuntimeIdentityID:               worker.runtimeIdentityID,
 			DeploymentDefinitionID:          authority.workspaceDefinitionID,
 			WorkerEpoch:                     worker.workerEpoch,
-			NetworkPolicy:                   authority.networkPolicy,
 			ReservedCpuMillis:               authority.resources.cpuMillis,
 			ReservedMemoryBytes:             authority.resources.memoryBytes,
 			ReservedGuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes,
@@ -506,17 +493,12 @@ SELECT count(*)
 }
 
 func validateWorkspaceExecRuntime(authority workspaceExecAuthority, runtime runRuntime) error {
-	network, err := jsoncanon.Transform(runtime.networkPolicy)
-	if err != nil {
-		return err
-	}
 	if runtime.deploymentDefinition != authority.workspaceDefinitionID ||
 		runtime.restoreCheckpoint.Valid ||
 		runtime.cpuMillis != authority.resources.cpuMillis ||
 		runtime.memoryBytes != authority.resources.memoryBytes ||
 		runtime.guestEphemeralDiskBytes != authority.resources.guestEphemeralDiskBytes ||
-		runtime.executionSlots != authority.resources.executionSlots ||
-		!bytes.Equal(network, authority.networkPolicy) {
+		runtime.executionSlots != authority.resources.executionSlots {
 		return errors.New("Workspace runtime does not match exec authority")
 	}
 	if runtime.reservedRunID.Valid {

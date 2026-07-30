@@ -254,9 +254,8 @@ func run(log *slog.Logger) error {
 	closeBuilder := func() error { return nil }
 	if supportsBuild {
 		imageBuilder, closeBuilder, err = buildkit.OpenFresh(ctx, buildkit.Config{
-			Addr:           cfg.BuildKitAddr,
-			OutputRoot:     filepath.Join(workDir, "builds"),
-			CacheNamespace: cfg.BuildKitCacheNS,
+			Addr:       cfg.BuildKitAddr,
+			OutputRoot: filepath.Join(workDir, "builds"),
 		})
 		if err != nil {
 			return fmt.Errorf("configure buildkit: %w", err)

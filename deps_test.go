@@ -23,7 +23,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 
 	expected := map[string][]string{
 		"actor":               {"db", "ids", "outbox", "pgvalue", "run", "secret", "tracing"},
-		"api":                 {"archive", "compute", "ids", "jsoncanon"},
+		"api":                 {"archive", "ids", "jsoncanon"},
 		"archive":             {"safepath", "sha256sum"},
 		"auth":                {"db", "ids", "pgvalue", "token"},
 		"buildkit":            {"imagebuild", "safepath"},
@@ -41,12 +41,12 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"compute":             {"runtime/identity"},
 		"config":              {"api", "region"},
 		"console":             {},
-		"control":             {"actor", "api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "email", "frameio", "idempotency", "ids", "jsoncanon", "pgvalue", "proto/run/v0", "region", "run", "runtime/identity", "schedule", "secret", "sha256sum", "telemetry", "token", "tracing", "workspace"},
+		"control":             {"actor", "api", "archive", "auth", "cas", "console", "db", "db/schema", "deployment", "email", "frameio", "idempotency", "ids", "jsoncanon", "pgvalue", "proto/run/v0", "region", "run", "runtime/identity", "schedule", "secret", "sha256sum", "telemetry", "token", "tracing", "workspace"},
 		"db":                  {},
 		"db/dbtest":           {},
 		"db/schema":           {},
 		"deployment":          {"api", "archive", "cas", "compute", "frameio", "ids", "imagebuild", "jsoncanon", "oci", "runtime/identity", "safepath", "schedule", "vm", "wire"},
-		"dispatch":            {"compute", "db", "deployment", "jsoncanon", "pgvalue", "sessionlock", "workspace"},
+		"dispatch":            {"compute", "db", "deployment", "pgvalue", "sessionlock", "workspace"},
 		"dispatch/redis":      {"dispatch", "pgvalue"},
 		"email":               {},
 		"enrollment":          {"api", "auth", "workergroup"},

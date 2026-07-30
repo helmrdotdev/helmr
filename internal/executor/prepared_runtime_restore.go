@@ -84,7 +84,7 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 			KernelDigest: runtimeInfo.KernelDigest, InitramfsDigest: runtimeInfo.InitramfsDigest,
 			RootfsDigest: runtimeInfo.RootfsDigest, RuntimeConfigDigest: runtimeInfo.ConfigDigest,
 		},
-		Network: target.Source.Network, Topology: topology, ReadOnlyDrives: readOnlyDrives,
+		Topology: topology, ReadOnlyDrives: readOnlyDrives,
 		RecordPhase: record,
 	})
 	if err != nil {

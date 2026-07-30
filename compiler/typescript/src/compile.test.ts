@@ -15,7 +15,6 @@ import {
 import {
   PROGRAM_ENTRYPOINT,
   analyze,
-  normalizeWorkspaceNetwork,
   normalizeWorkspaceResources,
 } from "./compile"
 import {
@@ -58,13 +57,6 @@ describe("declaration analysis", () => {
     const machine = workspace("machine")
       .image(image("root").from("debian:bookworm"))
       .resources({ cpu: 0.125, memory: "1024MiB" })
-      .network({
-        denyCidrs: [
-          "10.0.0.5/24",
-          "2001:0db8:0000:0000:0000:0000:0000:0001/64",
-          "10.0.0.0/24",
-        ],
-      })
     const exports = [
       { modulePath: "src/machine.ts", exportName: "machine", value: machine },
       { modulePath: "src/tasks.ts", exportName: "toString", value: noPayloadTask },
@@ -123,10 +115,6 @@ describe("declaration analysis", () => {
     expect(workspaceDefinition.manifest.resources).toEqual({
       milliCpu: 125,
       memoryMiB: 1024,
-    })
-    expect(workspaceDefinition.manifest.network).toEqual({
-      internet: true,
-      denyCidrs: ["10.0.0.0/24", "2001:db8::/64"],
     })
     expect(new TextDecoder().decode(result.entrypointBytes)).toBe(
       PROGRAM_ENTRYPOINT,
@@ -284,17 +272,6 @@ describe("declaration analysis", () => {
     }
   })
 
-  test("pins the omitted and disabled network policies", () => {
-    expect(normalizeWorkspaceNetwork(undefined)).toEqual({
-      internet: true,
-      denyCidrs: [],
-    })
-    expect(normalizeWorkspaceNetwork({ internet: false })).toEqual({
-      internet: false,
-      denyCidrs: [],
-    })
-  })
-
   test("emits source copies without caller-provided integrity fields", () => {
     const machine = workspace("source-copy")
       .image(
@@ -329,6 +306,35 @@ describe("declaration analysis", () => {
         },
       },
     ])
+  })
+
+  test("rejects image steps with unknown members", () => {
+    const root = image("root").from("debian:bookworm")
+    const run = root.run as (...args: readonly unknown[]) => unknown
+    expect(() =>
+      run.call(root, ["true"], { ignored: true }),
+    ).toThrow("image.run() accepts only argv")
+
+    const forged = root.run(["true"]) as unknown as {
+      readonly steps: readonly Record<string, unknown>[]
+    }
+    Object.defineProperty(
+      forged.steps[1] as Record<string, unknown>,
+      "unknown",
+      { value: true, enumerable: true },
+    )
+    expect(() =>
+      analyze({
+        architecture: "x86_64",
+        exports: [{
+          modulePath: "src/workspace.ts",
+          exportName: "machine",
+          value: workspace("machine")
+            .image(forged as never)
+            .resources({ cpu: 1, memory: "1GiB" }),
+        }],
+      }),
+    ).toThrow("image run step has unknown members")
   })
 
   test("normalizes scheduler-owned payload and declarative workspace", () => {

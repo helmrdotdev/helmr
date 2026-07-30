@@ -163,10 +163,6 @@ func newDeploymentBuildCompletionFixture(
 							MilliCPU:  1,
 							MemoryMiB: 1,
 						},
-						Network: deployment.NetworkManifest{
-							Internet:  false,
-							DenyCIDRs: []string{},
-						},
 					},
 				}},
 				Queues: []deployment.QueueInput{},

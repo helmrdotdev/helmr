@@ -27,7 +27,6 @@ func LoadWorker() (Worker, error) {
 		ImagesDir:                    envString("HELMR_WORKER_IMAGES_DIR"),
 		GitPath:                      env("HELMR_GIT_PATH", "git"),
 		BuildKitAddr:                 envString("HELMR_WORKER_BUILDKIT_ADDR"),
-		BuildKitCacheNS:              env("HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE", "helmr"),
 		FirecrackerPath:              env("HELMR_WORKER_FIRECRACKER_PATH", "firecracker"),
 		JailerPath:                   env("HELMR_WORKER_FIRECRACKER_JAILER_PATH", "jailer"),
 		JailerNumaNode:               0,

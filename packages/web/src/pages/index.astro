@@ -3,7 +3,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import { pixelsFromRows } from "../lib/pixels";
 import { breadcrumbJsonLd, softwareJsonLd } from "../lib/seo";
 
-const runtimeCode = `import { cache, image, source, task, tokens, workspace } from "@helmr/sdk"
+const runtimeCode = `import { image, source, task, tokens, workspace } from "@helmr/sdk"
 import { Codex } from "@openai/codex-sdk"
 import { z } from "zod"
 
@@ -12,9 +12,7 @@ const base = image("repo-agent")
   .workdir("/workspace")
   .run(["sh", "-ceu", "apt-get update && apt-get install -y git ripgrep"])
   .copy("/workspace/package.json", source.file("package.json"))
-  .run(["bun", "install"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("bun") }]
-  })
+  .run(["bun", "install"])
 
 export const repoWorkspace = workspace("repo-agent")
   .image(base)

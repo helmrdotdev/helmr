@@ -81,7 +81,7 @@ Task can call any agent SDK or tool; Helmr owns the adapter protocol around it.
 Create a task project with `helmr.config.ts` and one or more task modules:
 
 ```ts
-import { cache, image, source, task, tokens, workspace } from "@helmr/sdk"
+import { image, source, task, tokens, workspace } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 import { z } from "zod"
 
@@ -94,9 +94,7 @@ const base = image("repo-agent")
   .workdir("/workspace")
   .run(["npm", "install", "-g", "bun@1.3.10"])
   .copy("/workspace/package.json", source.file("package.json"))
-  .run(["bun", "install"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("repo-agent-bun") }],
-  })
+  .run(["bun", "install"])
   .run([
     "sh",
     "-ceu",

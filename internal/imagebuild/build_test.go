@@ -158,34 +158,6 @@ func TestValidateRejectsInvalidOperations(t *testing.T) {
 			errMsg: "argv[0]",
 		},
 		{
-			name: "nil cache mounts",
-			change: func(build *Build) {
-				build.Images[0].Steps[1].Run.CacheMounts = nil
-			},
-			errMsg: "cacheMounts must be an array",
-		},
-		{
-			name: "duplicate mount destination",
-			change: func(build *Build) {
-				build.Images[0].Steps[1].Run.SecretMounts[0].Dst = "/cache"
-			},
-			errMsg: "duplicate mount destination",
-		},
-		{
-			name: "cache sharing",
-			change: func(build *Build) {
-				build.Images[0].Steps[1].Run.CacheMounts[0].Sharing = "exclusive"
-			},
-			errMsg: "sharing is unsupported",
-		},
-		{
-			name: "secret name",
-			change: func(build *Build) {
-				build.Images[0].Steps[1].Run.SecretMounts[0].Name = "../TOKEN"
-			},
-			errMsg: "name is invalid",
-		},
-		{
 			name: "destination path",
 			change: func(build *Build) {
 				build.Images[0].Steps[2].CopySourceFile.Dst = "app"
@@ -278,11 +250,6 @@ func TestValidateEnforcesIndependentBounds(t *testing.T) {
 		build.Images[0].Steps[1].Run.Argv = []string{strings.Repeat("a", maxImageArgumentBytes+1)}
 		assertBuildError(t, build, "x86_64", "argv[0]")
 	})
-	t.Run("mount count", func(t *testing.T) {
-		build := validBuild()
-		build.Images[0].Steps[1].Run.CacheMounts = make([]CacheMount, maxImageMounts+1)
-		assertBuildError(t, build, "x86_64", "cache mounts")
-	})
 	t.Run("step count", func(t *testing.T) {
 		build := validBuild()
 		steps := make([]Step, maxBuildSteps+1)
@@ -311,15 +278,6 @@ func validBuild() Build {
 					{From: &From{Ref: "debian:bookworm-slim"}},
 					{Run: &Run{
 						Argv: []string{"sh", "-c", "mkdir -p /app /out"},
-						CacheMounts: []CacheMount{{
-							Dst:     "/cache",
-							CacheID: "pnpm",
-							Sharing: "locked",
-						}},
-						SecretMounts: []SecretMount{{
-							Dst:  "/run/secrets/TOKEN",
-							Name: "TOKEN",
-						}},
 					}},
 					{CopySourceFile: &CopySourceFile{
 						Dst:  "/app/package.json",

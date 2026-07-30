@@ -106,7 +106,6 @@ func (guest BuildGuest) Execute(
 		OwnerKind: vm.OwnerBuild,
 		Resources: compute.BuildGuestResources(),
 		PIDsMax:   compute.BuildGuestPIDsMax,
-		Network:   compute.DefaultNetworkPolicy(),
 		ReadOnlyDrives: []vm.ReadOnlyDrive{
 			{ID: vm.ManagerDrive, Source: manager},
 			{ID: vm.ManagedRuntimeDrive, Source: runtime},

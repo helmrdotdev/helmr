@@ -1,7 +1,6 @@
 package control
 
 import (
-	"bytes"
 	"context"
 	"errors"
 
@@ -1487,8 +1486,7 @@ func validateCheckpointSource(authority runLeaseClaimAuthority) error {
 		sourceRuntime.ReservedCpuMillis != currentRuntime.ReservedCpuMillis ||
 		sourceRuntime.ReservedMemoryBytes != currentRuntime.ReservedMemoryBytes ||
 		sourceRuntime.ReservedGuestEphemeralDiskBytes != currentRuntime.ReservedGuestEphemeralDiskBytes ||
-		sourceRuntime.ReservedExecutionSlots != currentRuntime.ReservedExecutionSlots ||
-		!bytes.Equal(sourceRuntime.NetworkPolicy, currentRuntime.NetworkPolicy) {
+		sourceRuntime.ReservedExecutionSlots != currentRuntime.ReservedExecutionSlots {
 		return errStaleRunLeaseClaim
 	}
 	return nil

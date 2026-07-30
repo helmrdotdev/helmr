@@ -8,12 +8,10 @@ import (
 	"testing"
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
-	"github.com/helmrdotdev/helmr/internal/compute"
 )
 
 func TestNFTBuildNetworkPolicyScriptClosesProgramBuildEgress(t *testing.T) {
 	ipv4, err := effectiveBuildBlockedCIDRs(
-		compute.DefaultNetworkPolicy(),
 		[]string{"54.240.0.0/16"},
 	)
 	if err != nil {
@@ -56,19 +54,6 @@ func TestNFTBuildNetworkPolicyScriptClosesProgramBuildEgress(t *testing.T) {
 	}
 }
 
-func TestEffectiveBuildBlockedCIDRsRejectsCallerPolicy(t *testing.T) {
-	_, err := effectiveBuildBlockedCIDRs(
-		compute.NetworkPolicy{
-			Internet: true,
-			Deny:     []string{"203.0.113.0/24"},
-		},
-		nil,
-	)
-	if err == nil {
-		t.Fatal("caller-controlled build network policy was accepted")
-	}
-}
-
 func TestParseBuildNetworkStatusRequiresBothCounters(t *testing.T) {
 	status, err := parseBuildNetworkStatus([]byte(`{
 		"nftables": [
@@ -94,7 +79,6 @@ func TestParseBuildNetworkStatusRequiresBothCounters(t *testing.T) {
 
 func TestNFTNetworkPolicyScriptBlocksConfiguredCIDRs(t *testing.T) {
 	script := renderRunNetworkPolicy(
-		compute.DefaultNetworkPolicy(),
 		[]string{"10.0.0.0/8", "100.64.0.0/10", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16"},
 	)
 	for _, want := range []string{
@@ -127,7 +111,7 @@ func TestNFTNetworkPolicyScriptBlocksConfiguredCIDRs(t *testing.T) {
 }
 
 func TestNFTNetworkPolicyScriptUsesConfiguredCIDRs(t *testing.T) {
-	script := renderRunNetworkPolicy(compute.DefaultNetworkPolicy(), []string{"198.18.0.0/15"})
+	script := renderRunNetworkPolicy([]string{"198.18.0.0/15"})
 	for _, want := range []string{"198.18.0.0/15"} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing configured CIDR %q:\n%s", want, script)
@@ -140,21 +124,8 @@ func TestNFTNetworkPolicyScriptUsesConfiguredCIDRs(t *testing.T) {
 	}
 }
 
-func TestNFTNetworkPolicyScriptDropsWhenInternetDisabled(t *testing.T) {
-	script := renderRunNetworkPolicy(compute.NetworkPolicy{Internet: false}, nil)
-	if !strings.Contains(script, "type filter hook forward priority 0; policy drop;") {
-		t.Fatalf("script does not default-drop outbound traffic:\n%s", script)
-	}
-	if strings.Contains(script, "policy accept;") {
-		t.Fatalf("script unexpectedly defaults to accept:\n%s", script)
-	}
-	if !strings.Contains(script, "forward counter name run_denied drop") {
-		t.Fatalf("script does not count the terminal deny path:\n%s", script)
-	}
-}
-
 func TestNFTNetworkPolicyScriptDropsIPv6BeforeEstablishedTraffic(t *testing.T) {
-	script := renderRunNetworkPolicy(compute.DefaultNetworkPolicy(), nil)
+	script := renderRunNetworkPolicy(nil)
 	ipv6Drop := strings.Index(script, "meta nfproto ipv6 counter name run_denied drop")
 	established := strings.Index(script, "ct state established,related accept")
 	if ipv6Drop < 0 || established < 0 || ipv6Drop > established {
@@ -188,28 +159,13 @@ func TestParseRunNetworkStatusRequiresOneDeniedCounter(t *testing.T) {
 	}
 }
 
-func TestEffectiveBlockedCIDRsIncludesRunDenyCIDRs(t *testing.T) {
-	ipv4, err := effectiveBlockedCIDRs(
-		compute.NetworkPolicy{Internet: true, Deny: []string{"198.18.0.0/15", "2001:db8::/32"}},
-		[]string{"10.0.0.0/8"},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"10.0.0.0/8", "198.18.0.0/15"} {
-		if !containsString(ipv4, want) {
-			t.Fatalf("ipv4 deny set missing %q: %+v", want, ipv4)
-		}
-	}
-}
-
 func TestWithNetworkPolicySurvivesSnapshotHandlerReplacement(t *testing.T) {
 	connector := &Connector{cfg: (Config{}).WithDefaults()}
 	machine, err := firecracker.NewMachine(
 		context.Background(),
 		firecracker.Config{},
 		firecracker.WithSnapshot("/tmp/mem", "/tmp/state"),
-		connector.withNetworkPolicy("vm-1", compute.DefaultNetworkPolicy()),
+		connector.withNetworkPolicy("vm-1"),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -217,13 +173,4 @@ func TestWithNetworkPolicySurvivesSnapshotHandlerReplacement(t *testing.T) {
 	if !machine.Handlers.FcInit.Has("fcinit.ApplyHelmrNetworkPolicy") {
 		t.Fatal("network policy handler was not installed after snapshot handlers")
 	}
-}
-
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
 }

@@ -23,14 +23,12 @@ const (
 	defaultBuildKitAddr = "unix:///run/helmr/buildkit/buildkitd.sock"
 	defaultOutputRoot   = "helmr-worker-builds"
 	defaultPlatform     = "linux/amd64"
-	defaultCacheNS      = "helmr"
 	buildKitService     = "helmr-buildkit.service"
 )
 
 type Config struct {
-	Addr           string
-	OutputRoot     string
-	CacheNamespace string
+	Addr       string
+	OutputRoot string
 }
 
 func (cfg Config) addr() string {
@@ -54,10 +52,9 @@ type buildkitSolver interface {
 }
 
 type Builder struct {
-	client         buildkitSolver
-	outputRoot     string
-	cacheNamespace string
-	health         interface {
+	client     buildkitSolver
+	outputRoot string
+	health     interface {
 		Check(context.Context) error
 	}
 }
@@ -84,14 +81,10 @@ func (*ServiceFailure) FatalWorker() bool {
 	return true
 }
 
-func New(client buildkitSolver, outputRoot string, cacheNamespace ...string) *Builder {
+func New(client buildkitSolver, outputRoot string) *Builder {
 	b := &Builder{
-		client:         client,
-		outputRoot:     outputRoot,
-		cacheNamespace: defaultCacheNS,
-	}
-	if len(cacheNamespace) > 0 && strings.TrimSpace(cacheNamespace[0]) != "" {
-		b.cacheNamespace = safeNamespace(cacheNamespace[0])
+		client:     client,
+		outputRoot: outputRoot,
 	}
 	if strings.TrimSpace(b.outputRoot) == "" {
 		b.outputRoot = filepath.Join(os.TempDir(), defaultOutputRoot)
@@ -112,7 +105,6 @@ func (b *Builder) BuildImage(
 	plan, err := planDeclaredImage(
 		request.Build,
 		request.Source.ProjectRoot,
-		b.cacheNamespaceFor(request.CacheScope, request.WorkspaceID),
 	)
 	if err != nil {
 		return imagebuild.Artifact{}, err
@@ -253,17 +245,6 @@ func (b *Builder) output(runID, itemID string) (buildOutput, error) {
 	}, nil
 }
 
-func (b *Builder) cacheNamespaceFor(scope, itemID string) string {
-	scope = safeNamespace(scope)
-	if scope == "_" {
-		scope = safeSegment(itemID)
-	}
-	if scope == "_" {
-		return b.cacheNamespace
-	}
-	return b.cacheNamespace + "/" + scope
-}
-
 type buildOutput struct {
 	root     string
 	imageTar string
@@ -304,22 +285,6 @@ func safeSegment(value string) string {
 		}
 	}
 	return builder.String()
-}
-
-func safeNamespace(value string) string {
-	segments := strings.FieldsFunc(value, func(r rune) bool {
-		return r == '/' || r == '\\'
-	})
-	safe := make([]string, 0, len(segments))
-	for _, segment := range segments {
-		if next := safeSegment(segment); next != "_" {
-			safe = append(safe, next)
-		}
-	}
-	if len(safe) == 0 {
-		return "_"
-	}
-	return strings.Join(safe, "/")
 }
 
 func exporterResponse(response *bkclient.SolveResponse) map[string]string {

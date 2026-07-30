@@ -10271,20 +10271,6 @@ function normalizeWorkspaceResources(resources) {
     memoryMiB: normalizeIecMiB(resources.memory, "memory")
   });
 }
-function normalizeWorkspaceNetwork(network) {
-  if (network === undefined) {
-    return Object.freeze({ internet: true, denyCidrs: Object.freeze([]) });
-  }
-  if (network.internet === false) {
-    return Object.freeze({ internet: false, denyCidrs: Object.freeze([]) });
-  }
-  const denyCidrs = [...new Set((network.denyCidrs ?? []).map(canonicalCidr))];
-  denyCidrs.sort(compareUtf82);
-  return Object.freeze({
-    internet: true,
-    denyCidrs: Object.freeze(denyCidrs)
-  });
-}
 function discoverDefinitions(exports) {
   const identities = new Map;
   for (const item of exports) {
@@ -10356,8 +10342,7 @@ function compileDefinition(definition, options, queues) {
         declaredId: definition.id,
         manifest: {
           imageBuild: compileImageBuild(definition.image, options),
-          resources: normalizeWorkspaceResources(definition.resources),
-          network: normalizeWorkspaceNetwork(definition.network)
+          resources: normalizeWorkspaceResources(definition.resources)
         }
       };
   }
@@ -10491,23 +10476,17 @@ function compileImageBuild(root, options) {
 function compileImageStep(step, options) {
   switch (step.kind) {
     case "from":
+      assertExactKeys(step, ["kind", "ref"], "image from step");
       return { from: { ref: step.ref } };
     case "run":
+      assertExactKeys(step, ["argv", "kind"], "image run step");
       return {
         run: {
-          argv: [...step.argv],
-          cacheMounts: step.cache.map((binding) => ({
-            dst: binding.mountPath,
-            cacheId: binding.cache.id,
-            sharing: "locked"
-          })),
-          secretMounts: step.secrets.map((binding) => ({
-            dst: binding.mountPath,
-            name: binding.secret
-          }))
+          argv: [...step.argv]
         }
       };
     case "copy_source_file":
+      assertExactKeys(step, ["destination", "kind", "source"], "image source-file copy step");
       return {
         copySourceFile: {
           dst: step.destination,
@@ -10515,6 +10494,7 @@ function compileImageStep(step, options) {
         }
       };
     case "copy_source_directory":
+      assertExactKeys(step, ["destination", "kind", "source"], "image source-directory copy step");
       return {
         copySourceDir: {
           dst: step.destination,
@@ -10522,6 +10502,7 @@ function compileImageStep(step, options) {
         }
       };
     case "copy_from_image": {
+      assertExactKeys(step, ["destination", "kind", "source", "sourcePath"], "image cross-image copy step");
       const source2 = inspectImage(step.source);
       if (source2 === undefined)
         throw new Error("invalid copyFrom image");
@@ -10534,11 +10515,20 @@ function compileImageStep(step, options) {
       };
     }
     case "workdir":
+      assertExactKeys(step, ["kind", "path"], "image workdir step");
       return { workdir: { path: step.path } };
     case "env":
+      assertExactKeys(step, ["key", "kind", "value"], "image env step");
       return { env: { key: step.key, value: step.value } };
     case "user":
+      assertExactKeys(step, ["kind", "name"], "image user step");
       return { user: { name: step.name } };
+  }
+}
+function assertExactKeys(value, expected, label) {
+  const actual = Object.keys(value).sort(compareUtf82);
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    throw new Error(`${label} has unknown members`);
   }
 }
 function locatorEntry(item) {
@@ -10625,86 +10615,6 @@ function safePositiveNumber(value, label) {
     throw new Error(`${label} must be a positive safe integer`);
   }
   return Number(value);
-}
-function canonicalCidr(value) {
-  const parts = value.split("/");
-  if (parts.length !== 2)
-    throw new Error(`invalid CIDR ${JSON.stringify(value)}`);
-  const address = parts[0];
-  const prefixText = parts[1];
-  if (!/^(0|[1-9]\d*)$/.test(prefixText)) {
-    throw new Error(`invalid CIDR prefix ${JSON.stringify(value)}`);
-  }
-  const ipv4 = parseIpv4(address);
-  if (ipv4 !== undefined) {
-    const prefix2 = Number(prefixText);
-    if (prefix2 > 32)
-      throw new Error(`invalid IPv4 CIDR prefix ${prefix2}`);
-    const mask = prefix2 === 0 ? 0 : 4294967295 << 32 - prefix2 >>> 0;
-    const network = (ipv4 & mask) >>> 0;
-    return `${[network >>> 24 & 255, network >>> 16 & 255, network >>> 8 & 255, network & 255].join(".")}/${prefix2}`;
-  }
-  const words = parseIpv6(address);
-  const prefix = Number(prefixText);
-  if (prefix > 128)
-    throw new Error(`invalid IPv6 CIDR prefix ${prefix}`);
-  for (let bit = prefix;bit < 128; bit += 1) {
-    const word = Math.floor(bit / 16);
-    const shift = 15 - bit % 16;
-    words[word] = words[word] & ~(1 << shift);
-  }
-  return `${formatIpv6(words)}/${prefix}`;
-}
-function parseIpv4(value) {
-  const parts = value.split(".");
-  if (parts.length !== 4 || parts.some((part) => !/^(0|[1-9]\d{0,2})$/.test(part))) {
-    return;
-  }
-  const values = parts.map(Number);
-  if (values.some((part) => part > 255))
-    return;
-  return (values[0] << 24 | values[1] << 16 | values[2] << 8 | values[3]) >>> 0;
-}
-function parseIpv6(value) {
-  if (value.includes("."))
-    throw new Error(`invalid IPv6 address ${JSON.stringify(value)}`);
-  const halves = value.split("::");
-  if (halves.length > 2)
-    throw new Error(`invalid IPv6 address ${JSON.stringify(value)}`);
-  const left = halves[0] === "" ? [] : halves[0].split(":");
-  const right = halves.length === 1 || halves[1] === "" ? [] : halves[1].split(":");
-  if ([...left, ...right].some((part) => !/^[0-9A-Fa-f]{1,4}$/.test(part)) || halves.length === 1 && left.length !== 8 || halves.length === 2 && left.length + right.length >= 8) {
-    throw new Error(`invalid IPv6 address ${JSON.stringify(value)}`);
-  }
-  const zeros = halves.length === 2 ? 8 - left.length - right.length : 0;
-  return [
-    ...left.map((part) => Number.parseInt(part, 16)),
-    ...Array.from({ length: zeros }, () => 0),
-    ...right.map((part) => Number.parseInt(part, 16))
-  ];
-}
-function formatIpv6(words) {
-  let bestStart = -1;
-  let bestLength = 0;
-  for (let index = 0;index < words.length; ) {
-    if (words[index] !== 0) {
-      index += 1;
-      continue;
-    }
-    let end = index;
-    while (end < words.length && words[end] === 0)
-      end += 1;
-    if (end - index > bestLength && end - index >= 2) {
-      bestStart = index;
-      bestLength = end - index;
-    }
-    index = end;
-  }
-  if (bestStart === -1)
-    return words.map((word) => word.toString(16)).join(":");
-  const left = words.slice(0, bestStart).map((word) => word.toString(16)).join(":");
-  const right = words.slice(bestStart + bestLength).map((word) => word.toString(16)).join(":");
-  return `${left}::${right}`;
 }
 function validateModulePath(path) {
   const suffixes = [

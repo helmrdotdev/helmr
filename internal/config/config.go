@@ -144,7 +144,6 @@ type Worker struct {
 	ImagesDir                    string
 	GitPath                      string
 	BuildKitAddr                 string
-	BuildKitCacheNS              string
 	FirecrackerPath              string
 	JailerPath                   string
 	JailerUID                    int

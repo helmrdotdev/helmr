@@ -71,7 +71,6 @@ in
       export HELMR_WORKER_CNI_BIN_DIR=''${HELMR_WORKER_CNI_BIN_DIR:-$PWD/.helmr-smoke/cni/bin}
       export HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS=''${HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS:-0.0.0.0/8,10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.168.0.0/16,224.0.0.0/4,240.0.0.0/4}
       export HELMR_WORKER_BUILDKIT_ADDR=''${HELMR_WORKER_BUILDKIT_ADDR:-unix:///run/helmr/buildkit/buildkitd.sock}
-      export HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE=''${HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE:-helmr-smoke}
       export HELMR_VM_E2E=''${HELMR_VM_E2E:-1}
       export XDG_DATA_HOME=''${XDG_DATA_HOME:-$PWD/.helmr-smoke/data}
       export XDG_RUNTIME_DIR=''${XDG_RUNTIME_DIR:-$PWD/.helmr-smoke/runtime}

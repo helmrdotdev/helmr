@@ -23,7 +23,6 @@ export {
   parseWorkspaceFileEntry,
   parseWorkspaceFilePage,
   parseWorkspaceSnapshot,
-  type WorkspaceNetwork,
   type WorkspaceResources,
   type InternalWorkspaceDefinition,
 } from "./workspace"

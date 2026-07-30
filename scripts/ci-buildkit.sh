@@ -128,7 +128,6 @@ solve_through_helmr() {
 		cd "$repo_root"
 		HELMR_BUILDKIT_E2E=1 \
 			HELMR_WORKER_BUILDKIT_ADDR="$addr" \
-			HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE="gha-smoke" \
 			go test ./internal/buildkit -run TestBuildKitE2E -count=1 -v
 	)
 }
@@ -139,7 +138,6 @@ configure_rootless_host
 start_buildkit
 
 export HELMR_WORKER_BUILDKIT_ADDR="$addr"
-export HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE="gha-smoke"
 "$repo_root/scripts/doctor.sh" buildkit
 solve_without_docker
 solve_through_helmr

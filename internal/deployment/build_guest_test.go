@@ -75,11 +75,7 @@ func TestBuildGuestUsesOneNetworkedVM(t *testing.T) {
 		)
 	}
 	vmRequest := connector.request
-	if vmRequest.Networkless ||
-		!vmRequest.Network.Internet ||
-		len(vmRequest.Network.Allow) != 0 ||
-		len(vmRequest.Network.Deny) != 0 ||
-		vmRequest.Resources != compute.BuildGuestResources() ||
+	if vmRequest.Resources != compute.BuildGuestResources() ||
 		vmRequest.PIDsMax != compute.BuildGuestPIDsMax {
 		t.Fatalf("build VM request = %+v", vmRequest)
 	}

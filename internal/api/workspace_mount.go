@@ -3,8 +3,6 @@ package api
 import (
 	"encoding/json"
 	"time"
-
-	"github.com/helmrdotdev/helmr/internal/compute"
 )
 
 type WorkspaceMaterializeRequest struct {
@@ -78,7 +76,6 @@ type WorkerWorkspaceMount struct {
 	RequestedDiskMiB        int64                   `json:"requested_disk_mib"`
 	RequestedExecutionSlots int32                   `json:"requested_execution_slots"`
 	RuntimeABI              string                  `json:"runtime_abi"`
-	Network                 compute.NetworkPolicy   `json:"network"`
 	FencingGeneration       int64                   `json:"fencing_generation"`
 	ExpiresAt               time.Time               `json:"expires_at"`
 }

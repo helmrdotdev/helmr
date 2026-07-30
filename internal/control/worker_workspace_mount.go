@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -54,11 +53,7 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 		writeError(w, errors.New("claim Workspace mount"))
 		return
 	}
-	mount, err := projectWorkerWorkspaceMount(row)
-	if err != nil {
-		writeError(w, errors.New("project Workspace mount"))
-		return
-	}
+	mount := projectWorkerWorkspaceMount(row)
 	mount.GuestdChannelToken = channelToken
 	writeJSON(w, http.StatusOK, api.WorkerWorkspaceMountClaimResponse{Mount: mount})
 }
@@ -710,14 +705,7 @@ func pgTime(value pgtype.Timestamptz) *time.Time {
 	return &result
 }
 
-func projectWorkerWorkspaceMount(row db.ClaimWorkspaceMountRow) (*api.WorkerWorkspaceMount, error) {
-	var network compute.NetworkPolicy
-	if err := json.Unmarshal(row.NetworkPolicy, &network); err != nil {
-		return nil, err
-	}
-	if err := network.Validate(); err != nil {
-		return nil, err
-	}
+func projectWorkerWorkspaceMount(row db.ClaimWorkspaceMountRow) *api.WorkerWorkspaceMount {
 	return &api.WorkerWorkspaceMount{
 		ID:                     pgvalue.MustUUIDValue(row.ID).String(),
 		OrgID:                  pgvalue.MustUUIDValue(row.OrgID).String(),
@@ -749,10 +737,10 @@ func projectWorkerWorkspaceMount(row db.ClaimWorkspaceMountRow) (*api.WorkerWork
 		RequestedMemoryMiB:      row.ReservedMemoryBytes / (1024 * 1024),
 		RequestedDiskMiB:        row.ReservedGuestEphemeralDiskBytes / (1024 * 1024),
 		RequestedExecutionSlots: row.ReservedExecutionSlots,
-		RuntimeABI:              row.RuntimeABI, Network: network,
-		FencingGeneration: row.FencingGeneration,
-		ExpiresAt:         row.GuestChannelTokenExpiresAt.Time,
-	}, nil
+		RuntimeABI:              row.RuntimeABI,
+		FencingGeneration:       row.FencingGeneration,
+		ExpiresAt:               row.GuestChannelTokenExpiresAt.Time,
+	}
 }
 
 func workspaceMountFromStop(row db.StopWorkspaceMountRow) db.WorkspaceMount {

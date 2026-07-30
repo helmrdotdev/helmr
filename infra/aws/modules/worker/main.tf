@@ -39,7 +39,6 @@ locals {
     HELMR_WORKER_GROUP_ID                   = var.worker_group_id
     HELMR_WORKER_PROVIDER_REGION            = data.aws_region.current.region
     HELMR_WORKER_BUILDKIT_ADDR              = "unix:///run/helmr/buildkit/buildkitd.sock"
-    HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE   = local.name
     HELMR_WORKER_FIRECRACKER_PATH           = "/usr/local/bin/firecracker"
     HELMR_WORKER_FIRECRACKER_JAILER_PATH    = "/usr/local/bin/jailer"
     HELMR_WORKER_FIRECRACKER_JAILER_UID     = tostring(var.jailer_uid)

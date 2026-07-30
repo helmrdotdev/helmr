@@ -69,19 +69,6 @@ func resolveWorkdir(current, next string) string {
 	return path.Clean(path.Join(base, next))
 }
 
-func cacheSharing(value string) (llb.CacheMountSharingMode, error) {
-	switch strings.TrimSpace(value) {
-	case "", "shared":
-		return llb.CacheMountShared, nil
-	case "private":
-		return llb.CacheMountPrivate, nil
-	case "locked":
-		return llb.CacheMountLocked, nil
-	default:
-		return 0, fmt.Errorf("unsupported cache mount sharing %q", value)
-	}
-}
-
 func resolveApplicationSourcePath(root, raw string) (string, string, error) {
 	if strings.TrimSpace(root) == "" {
 		return "", "", errors.New("source root is required")

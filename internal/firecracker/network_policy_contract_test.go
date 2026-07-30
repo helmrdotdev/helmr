@@ -3,20 +3,16 @@ package firecracker
 import (
 	"strings"
 	"testing"
-
-	"github.com/helmrdotdev/helmr/internal/compute"
 )
 
 func TestRunNetworkPolicyContractCountsEveryDenyPath(t *testing.T) {
 	script := renderRunNetworkPolicy(
-		compute.NetworkPolicy{Internet: false},
 		[]string{"169.254.0.0/16"},
 	)
 	for _, want := range []string{
 		"add counter inet helmr_network_policy run_denied",
 		"meta nfproto ipv6 counter name run_denied drop",
 		"ip daddr @blocked_ipv4 counter name run_denied drop",
-		"forward counter name run_denied drop",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)

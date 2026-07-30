@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/netip"
 	"strings"
 	"unicode/utf8"
 
@@ -33,7 +32,6 @@ const (
 	maxBuildDefinitions        = 10000
 	maxBuildQueues             = 1000
 	maxBuildImageSteps         = 10000
-	maxNetworkDenyCIDRs        = 1024
 	maxWorkspaceKeyBytes       = 512
 	minRunDurationMs     int64 = 5000
 	maxRunDurationMs     int64 = 86400000
@@ -74,13 +72,11 @@ type ActorManifest struct {
 type WorkspaceInputManifest struct {
 	ImageBuild imagebuild.Build  `json:"imageBuild"`
 	Resources  ResourcesManifest `json:"resources"`
-	Network    NetworkManifest   `json:"network"`
 }
 
 type WorkspaceManifest struct {
 	Image     WorkspaceArtifactManifest `json:"image"`
 	Resources ResourcesManifest         `json:"resources"`
-	Network   NetworkManifest           `json:"network"`
 }
 
 type WorkspaceArtifactManifest struct {
@@ -126,11 +122,6 @@ type WorkspaceTarget struct {
 type ResourcesManifest struct {
 	MilliCPU  int64 `json:"milliCpu"`
 	MemoryMiB int64 `json:"memoryMiB"`
-}
-
-type NetworkManifest struct {
-	Internet  bool     `json:"internet"`
-	DenyCIDRs []string `json:"denyCidrs"`
 }
 
 type QueueInput struct {
@@ -450,9 +441,6 @@ func validateDefinitionInput(input DefinitionInput, queues map[string]struct{}) 
 		if err := validateResourcesManifest(input.Workspace.Resources); err != nil {
 			return fmt.Errorf("workspace resources: %w", err)
 		}
-		if err := validateNetworkManifest(input.Workspace.Network); err != nil {
-			return fmt.Errorf("workspace network: %w", err)
-		}
 	default:
 		return fmt.Errorf("definition input kind %q is unsupported", input.Kind)
 	}
@@ -584,31 +572,6 @@ func validateResourcesManifest(resources ResourcesManifest) error {
 	}
 	if !positiveSafeInteger(resources.MemoryMiB) {
 		return errors.New("memoryMiB must be a positive JavaScript-safe integer")
-	}
-	return nil
-}
-
-func validateNetworkManifest(network NetworkManifest) error {
-	if network.DenyCIDRs == nil {
-		return errors.New("denyCidrs must be an array")
-	}
-	if !network.Internet && len(network.DenyCIDRs) > 0 {
-		return errors.New("denyCidrs must be empty when internet is disabled")
-	}
-	if len(network.DenyCIDRs) > maxNetworkDenyCIDRs {
-		return fmt.Errorf("denyCidrs contains more than %d prefixes", maxNetworkDenyCIDRs)
-	}
-	for index, raw := range network.DenyCIDRs {
-		prefix, err := netip.ParsePrefix(raw)
-		if err != nil || prefix.Masked() != prefix || prefix.String() != raw {
-			return fmt.Errorf("denyCidrs[%d] is not a canonical masked IP prefix", index)
-		}
-		if index > 0 && bytes.Compare(
-			[]byte(network.DenyCIDRs[index-1]),
-			[]byte(raw),
-		) >= 0 {
-			return fmt.Errorf("denyCidrs is not in canonical order at position %d", index)
-		}
 	}
 	return nil
 }

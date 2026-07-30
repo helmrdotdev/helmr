@@ -11,7 +11,6 @@ type Engine interface {
 type Request struct {
 	RunID       string
 	WorkspaceID string
-	CacheScope  string
 	Build       Build
 	Source      Source
 }

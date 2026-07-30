@@ -187,12 +187,6 @@ in
       description = "Persistent state directory for the Helmr BuildKit daemon.";
     };
 
-    buildKitCacheNamespace = lib.mkOption {
-      type = lib.types.str;
-      default = "helmr";
-      description = "Default BuildKit persistent cache namespace for Helmr workers.";
-    };
-
     buildKitSlirpCIDR = lib.mkOption {
       type = lib.types.str;
       default = "198.18.0.0/24";
@@ -269,7 +263,6 @@ in
         }
         // lib.optionalAttrs cfg.enableBuildKit {
           HELMR_WORKER_BUILDKIT_ADDR = "unix://${cfg.buildKitSocket}";
-          HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE = cfg.buildKitCacheNamespace;
         };
 
         environment.etc."helmr/guest-resolv.conf".text =

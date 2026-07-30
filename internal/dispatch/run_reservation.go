@@ -1,7 +1,6 @@
 package dispatch
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -34,7 +32,6 @@ type runRuntime struct {
 	reservationExpiresAt    pgtype.Timestamptz
 	reservationActive       bool
 	observedState           db.RuntimeObservedState
-	networkPolicy           []byte
 	cpuMillis               int64
 	memoryBytes             int64
 	guestEphemeralDiskBytes int64
@@ -152,7 +149,6 @@ func (d *Authority) prepareRunWorkspace(
 			RuntimeIdentityID:               worker.runtimeIdentityID,
 			DeploymentDefinitionID:          authority.workspaceDefinitionID,
 			WorkerEpoch:                     worker.workerEpoch,
-			NetworkPolicy:                   authority.networkPolicy,
 			ReservedCpuMillis:               authority.resources.cpuMillis,
 			ReservedMemoryBytes:             authority.resources.memoryBytes,
 			ReservedGuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes,
@@ -356,7 +352,6 @@ SELECT runtime_instances.id,
            false
        ),
        runtime_instances.observed_state,
-       runtime_instances.network_policy,
        runtime_instances.reserved_cpu_millis,
        runtime_instances.reserved_memory_bytes,
        runtime_instances.reserved_guest_ephemeral_disk_bytes,
@@ -398,7 +393,6 @@ SELECT runtime_instances.id,
            false
        ),
        runtime_instances.observed_state,
-       runtime_instances.network_policy,
        runtime_instances.reserved_cpu_millis,
        runtime_instances.reserved_memory_bytes,
        runtime_instances.reserved_guest_ephemeral_disk_bytes,
@@ -449,7 +443,6 @@ func scanRunRuntime(row rowScanner) (runRuntime, error) {
 		&runtime.reservationExpiresAt,
 		&runtime.reservationActive,
 		&runtime.observedState,
-		&runtime.networkPolicy,
 		&runtime.cpuMillis,
 		&runtime.memoryBytes,
 		&runtime.guestEphemeralDiskBytes,
@@ -465,10 +458,6 @@ func validateRunRuntime(
 	authority runPlacementAuthority,
 	runtime runRuntime,
 ) error {
-	networkPolicy, err := jsoncanon.Transform(runtime.networkPolicy)
-	if err != nil {
-		return fmt.Errorf("canonicalize Workspace runtime network policy: %w", err)
-	}
 	retainedHandoff := authority.usesRetainedHandoff(runtime.id)
 	if runtime.deploymentDefinition != authority.workspaceDefinitionID ||
 		!runtime.programDeployment.Valid ||
@@ -478,8 +467,7 @@ func validateRunRuntime(
 		runtime.cpuMillis != authority.resources.cpuMillis ||
 		runtime.memoryBytes != authority.resources.memoryBytes ||
 		runtime.guestEphemeralDiskBytes != authority.resources.guestEphemeralDiskBytes ||
-		runtime.executionSlots != authority.resources.executionSlots ||
-		!bytes.Equal(networkPolicy, authority.networkPolicy) {
+		runtime.executionSlots != authority.resources.executionSlots {
 		return errors.New("Workspace runtime does not match Run authority")
 	}
 	if authority.restoreCheckpointID.Valid && !retainedHandoff &&

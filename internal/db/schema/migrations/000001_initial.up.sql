@@ -3231,7 +3231,6 @@ CREATE TABLE runtime_instances (
     deployment_definition_id UUID NOT NULL,
     runtime_substrate_id UUID,
     worker_epoch BIGINT NOT NULL CHECK (worker_epoch > 0),
-    network_policy JSONB NOT NULL,
     reserved_cpu_millis BIGINT NOT NULL CHECK (reserved_cpu_millis > 0),
     reserved_memory_bytes BIGINT NOT NULL CHECK (reserved_memory_bytes > 0),
     reserved_guest_ephemeral_disk_bytes BIGINT NOT NULL CHECK (reserved_guest_ephemeral_disk_bytes >= 0),
@@ -3331,7 +3330,6 @@ CREATE TABLE runtime_instances (
          AND reserved_workspace_version_id IS NOT NULL
          AND reservation_expires_at IS NOT NULL)
     ),
-    CHECK (jsonb_typeof(network_policy) = 'object'),
     CHECK (reserved_workspace_version_id IS NULL OR observed_state IN ('allocated', 'preparing', 'ready')),
     CHECK (restore_checkpoint_id IS NULL OR reserved_process_id IS NULL),
     CHECK (desired_state <> 'closed' OR desired_version > 1),

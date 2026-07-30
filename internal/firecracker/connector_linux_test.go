@@ -1419,15 +1419,13 @@ func TestMaterializeAcceptsOnlyCompleteProgramDriveSet(t *testing.T) {
 func TestBuildGuestProfilesUseExactDriveSets(t *testing.T) {
 	source := &recordingReadOnlyDriveSource{}
 	tests := map[string]struct {
-		request     vm.ConnectRequest
-		kernelArgs  string
-		networkless bool
+		request    vm.ConnectRequest
+		kernelArgs string
 	}{
 		"build": {
 			request: vm.ConnectRequest{
 				Resources: compute.BuildGuestResources(),
 				PIDsMax:   compute.BuildGuestPIDsMax,
-				Network:   compute.DefaultNetworkPolicy(),
 				ReadOnlyDrives: []vm.ReadOnlyDrive{
 					{ID: vm.ToolchainDrive, Source: source},
 					{ID: vm.ManagerDrive, Source: source},
@@ -1439,18 +1437,12 @@ func TestBuildGuestProfilesUseExactDriveSets(t *testing.T) {
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			kernelArgs, networkless, err := buildGuestProfile(test.request)
+			kernelArgs, err := buildGuestProfile(test.request)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if kernelArgs != test.kernelArgs || networkless != test.networkless {
-				t.Fatalf(
-					"profile = (%q, %t), want (%q, %t)",
-					kernelArgs,
-					networkless,
-					test.kernelArgs,
-					test.networkless,
-				)
+			if kernelArgs != test.kernelArgs {
+				t.Fatalf("profile = %q, want %q", kernelArgs, test.kernelArgs)
 			}
 		})
 	}
@@ -1467,26 +1459,16 @@ func TestBuildGuestProfileRejectsOpenProfiles(t *testing.T) {
 		"missing component": {
 			Resources:      compute.BuildGuestResources(),
 			PIDsMax:        compute.BuildGuestPIDsMax,
-			Networkless:    true,
 			ReadOnlyDrives: required[:2],
 		},
 		"wrong process limit": {
 			Resources:      compute.BuildGuestResources(),
 			PIDsMax:        compute.BuildGuestPIDsMax - 1,
-			Networkless:    true,
-			ReadOnlyDrives: required,
-		},
-		"network policy": {
-			Resources:      compute.BuildGuestResources(),
-			PIDsMax:        compute.BuildGuestPIDsMax,
-			Networkless:    true,
-			Network:        compute.DefaultNetworkPolicy(),
 			ReadOnlyDrives: required,
 		},
 		"workspace substrate": {
-			Resources:   compute.BuildGuestResources(),
-			PIDsMax:     compute.BuildGuestPIDsMax,
-			Networkless: true,
+			Resources: compute.BuildGuestResources(),
+			PIDsMax:   compute.BuildGuestPIDsMax,
 			Topology: vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{
 				Path: "workspace.ext4",
 			}},
@@ -1499,7 +1481,7 @@ func TestBuildGuestProfileRejectsOpenProfiles(t *testing.T) {
 	}
 	for name, request := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, _, err := buildGuestProfile(request); err == nil {
+			if _, err := buildGuestProfile(request); err == nil {
 				t.Fatal("buildGuestProfile error = nil")
 			}
 		})

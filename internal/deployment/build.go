@@ -556,7 +556,6 @@ func (builder Builder) buildWorkspaceImages(
 		artifact, err := builder.Images.BuildImage(ctx, buildmodel.Request{
 			RunID:       lease.ID,
 			WorkspaceID: definition.DeclaredID,
-			CacheScope:  lease.EnvironmentID,
 			Build:       definition.Workspace.ImageBuild,
 			Source:      buildmodel.Source{ProjectRoot: sourceRoot},
 		})

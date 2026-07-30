@@ -349,10 +349,6 @@ func TestValidateBuildResultAppliesPlanSizeBound(t *testing.T) {
 					MilliCPU:  1000,
 					MemoryMiB: 1024,
 				},
-				Network: NetworkManifest{
-					Internet:  true,
-					DenyCIDRs: []string{},
-				},
 			},
 		}
 		images[index] = WorkspaceImage{

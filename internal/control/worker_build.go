@@ -1280,7 +1280,6 @@ func deploymentDefinitionManifest(
 				MediaType:      workspaceImage.MediaType,
 			},
 			Resources: definition.Workspace.Resources,
-			Network:   definition.Workspace.Network,
 		}
 	default:
 		return nil, [sha256.Size]byte{}, fmt.Errorf(

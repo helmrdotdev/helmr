@@ -13,7 +13,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -40,15 +39,6 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		writeError(w, errors.New("get runtime reconcile target"))
 		return
 	}
-	var network compute.NetworkPolicy
-	if err := json.Unmarshal(row.NetworkPolicy, &network); err != nil {
-		writeError(w, errors.New("decode runtime network policy"))
-		return
-	}
-	if err := network.Validate(); err != nil {
-		writeError(w, errors.New("validate runtime network policy"))
-		return
-	}
 	action := api.WorkerRuntimeReconcilePrepare
 	switch {
 	case row.ObservedState == db.RuntimeObservedStateFailed:
@@ -65,7 +55,7 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		RootfsDigest:           row.RootfsDigest,
 		ReservedCpuMillis:      int32(row.ReservedCpuMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
 		ReservedDiskMiB: row.ReservedGuestEphemeralDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
-		RuntimeABI: row.RuntimeABI, Network: network,
+		RuntimeABI: row.RuntimeABI,
 	}
 	if action == api.WorkerRuntimeReconcilePrepare {
 		if err := populateRuntimePrepareSource(r.Context(), s.db, s.platformStore, &source, row); err != nil {

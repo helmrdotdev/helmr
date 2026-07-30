@@ -121,11 +121,6 @@ check_buildkit() {
 			fail "BuildKit daemon is not reachable at $buildkit_addr"
 		fi
 	fi
-	if [ -n "${HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE:-}" ]; then
-		ok "BuildKit cache namespace is configured: $HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE"
-	else
-		warn "HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE is unset; worker will use helmr"
-	fi
 }
 
 check_linux() {

@@ -1,4 +1,4 @@
-import { cache, image, source, task, workspace } from "@helmr/sdk"
+import { image, source, task, workspace } from "@helmr/sdk"
 import { z } from "zod"
 
 const base = image("github-pr-review")
@@ -7,9 +7,7 @@ const base = image("github-pr-review")
   .run(["npm", "install", "-g", "bun@1.3.10"])
   .copy("/opt/helmr-task/package.json", source.file("package.json"))
   .workdir("/opt/helmr-task")
-  .run(["bun", "install"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("github-pr-review-bun") }],
-  })
+  .run(["bun", "install"])
   .workdir("/workspace")
 
 export const githubPRReviewWorkspace = workspace("github-pr-review")

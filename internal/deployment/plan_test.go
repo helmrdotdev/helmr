@@ -230,37 +230,6 @@ func TestValidateBuildPlanDefinitions(t *testing.T) {
 			},
 			errMsg: "memoryMiB",
 		},
-		{
-			name: "workspace network array",
-			change: func(plan *BuildPlan) {
-				plan.Definitions[2].Workspace.Network.DenyCIDRs = nil
-			},
-			errMsg: "denyCidrs must be an array",
-		},
-		{
-			name: "workspace network canonical prefix",
-			change: func(plan *BuildPlan) {
-				plan.Definitions[2].Workspace.Network.DenyCIDRs = []string{"10.1.0.1/8"}
-			},
-			errMsg: "canonical masked",
-		},
-		{
-			name: "workspace network disabled deny",
-			change: func(plan *BuildPlan) {
-				plan.Definitions[2].Workspace.Network.Internet = false
-			},
-			errMsg: "empty when internet is disabled",
-		},
-		{
-			name: "workspace network order",
-			change: func(plan *BuildPlan) {
-				plan.Definitions[2].Workspace.Network.DenyCIDRs = []string{
-					"2001:db8::/32",
-					"10.0.0.0/8",
-				}
-			},
-			errMsg: "canonical order",
-		},
 	}
 
 	for _, test := range tests {
@@ -570,10 +539,6 @@ func testBuildPlan() BuildPlan {
 					Resources: ResourcesManifest{
 						MilliCPU:  2000,
 						MemoryMiB: 4096,
-					},
-					Network: NetworkManifest{
-						Internet:  true,
-						DenyCIDRs: []string{"10.0.0.0/8", "2001:db8::/32"},
 					},
 				},
 			},
