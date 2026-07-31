@@ -187,7 +187,7 @@ func (entry *workspaceMountEntry) executeWorkspaceBasicExec(
 		env,
 		entry.imageRoot,
 		entry.runtimeUser,
-		imageCommandOptions{ManagedProgram: true},
+		workspaceBasicExecImageCommandOptions(),
 	)
 	if err != nil {
 		return workspaceBasicExecFailure(fingerprint, "workspace_exec_launch_failed", err)
@@ -257,6 +257,12 @@ func (entry *workspaceMountEntry) executeWorkspaceBasicExec(
 		Outcome:            "exited",
 		RequestFingerprint: fingerprint,
 	}
+}
+
+func workspaceBasicExecImageCommandOptions() imageCommandOptions {
+	// Direct Workspace exec is Workspace-tool authority. It must not mount the
+	// Program Artifact or Managed Runtime drives into the image namespace.
+	return imageCommandOptions{}
 }
 
 func workspaceBasicExecSecrets(

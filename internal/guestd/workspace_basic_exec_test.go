@@ -95,6 +95,17 @@ func TestWorkspaceBasicExecRejectsFingerprintChange(t *testing.T) {
 	}
 }
 
+func TestWorkspaceBasicExecDoesNotRequestManagedProgramMounts(t *testing.T) {
+	options := workspaceBasicExecImageCommandOptions()
+	if options.ManagedProgram ||
+		options.CgroupNamespace ||
+		options.CgroupLeaf != "" ||
+		options.StartProof ||
+		options.Pty {
+		t.Fatalf("Workspace BasicExec image command options = %+v", options)
+	}
+}
+
 func testWorkspaceBasicExecRequest(
 	processID string,
 	fingerprint string,

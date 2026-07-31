@@ -17,6 +17,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -742,7 +743,13 @@ func (c *Connector) networkInterface(restoreNetwork *snapshotNetworkManifest) fi
 		VMIfName:    c.cfg.CNIVMIfName,
 	}
 	if restoreNetwork != nil && restoreNetwork.GuestIPCIDR != "" {
-		cni.Args = [][2]string{{"IP", restoreNetwork.GuestIPCIDR}}
+		cni.Args = [][2]string{
+			{"IgnoreUnknown", "true"},
+			{"IP", restoreNetwork.GuestIPCIDR},
+		}
+		if restoreNetwork.GuestMAC != "" {
+			cni.Args = append(cni.Args, [2]string{"MAC", restoreNetwork.GuestMAC})
+		}
 	}
 	return firecracker.NetworkInterface{CNIConfiguration: cni}
 }
@@ -962,6 +969,13 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 	}()
 	if restoring {
 		phaseStarted = time.Now()
+		if err := validateRestoredNetworkConfig(*restoreNetwork, snapshotNetworkConfig(c.cfg, machine)); err != nil {
+			recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_validate_network", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+			started = false
+			return nil, err
+		}
+		recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_validate_network", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
+		phaseStarted = time.Now()
 		if err := machine.ResumeVM(ctx); err != nil {
 			recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_resume_firecracker_snapshot", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 			started = false
@@ -983,6 +997,7 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 		machineCancel:  machineCancel,
 		machineExit:    machineExit,
 		cfg:            c.cfg,
+		kernelArgs:     c.kernelArgsValue(),
 		artifacts:      c.artifacts,
 		vsockHostPath:  vsockHostPath,
 		instanceDir:    instanceDir,
@@ -1620,6 +1635,7 @@ type guestSession struct {
 	machineCancel  context.CancelFunc
 	machineExit    *machineExit
 	cfg            Config
+	kernelArgs     string
 	artifacts      runtimeArtifacts
 	vsockHostPath  string
 	instanceDir    string
@@ -1848,7 +1864,7 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		return vm.SnapshotArtifact{}, err
 	}
 	started = time.Now()
-	configDigest, manifest, err := snapshotRuntimeConfig(s.cfg, s.machine, checkpointID, runtimeID, kernelDigest, initramfsDigest, rootfsDigest, s.topology, s.readOnlyDrives)
+	configDigest, manifest, err := snapshotRuntimeConfig(s.cfg, s.machine, checkpointID, runtimeID, kernelDigest, initramfsDigest, rootfsDigest, s.kernelArgs, s.topology, s.readOnlyDrives)
 	if err != nil {
 		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, err
@@ -2181,12 +2197,16 @@ type snapshotNetworkIdentityManifest struct {
 }
 
 type snapshotNetworkManifest struct {
-	Mode        string `json:"mode"`
-	Profile     string `json:"profile"`
-	NetworkName string `json:"network_name"`
-	IfName      string `json:"if_name"`
-	VMIfName    string `json:"vm_if_name"`
-	GuestIPCIDR string `json:"guest_ip_cidr,omitempty"`
+	Mode           string   `json:"mode"`
+	Profile        string   `json:"profile"`
+	NetworkName    string   `json:"network_name"`
+	IfName         string   `json:"if_name"`
+	VMIfName       string   `json:"vm_if_name"`
+	GuestIPCIDR    string   `json:"guest_ip_cidr"`
+	GuestMAC       string   `json:"guest_mac"`
+	GatewayAddress string   `json:"gateway_address"`
+	Subnet         string   `json:"subnet"`
+	Nameservers    []string `json:"nameservers"`
 }
 
 func snapshotSubstrateManifest(substrate *vm.RuntimeSubstrate) (*snapshotRuntimeSubstrate, error) {
@@ -2234,7 +2254,7 @@ func validateRuntimeSubstrateTopology(substrate *vm.RuntimeSubstrate) error {
 	return nil
 }
 
-func snapshotRuntimeConfig(cfg Config, machine *firecracker.Machine, checkpointID string, runtimeID string, kernelDigest string, initramfsDigest string, rootfsDigest string, topology vm.RuntimeTopology, readOnlyDrives ...[]vm.ReadOnlyDrive) (string, []byte, error) {
+func snapshotRuntimeConfig(cfg Config, machine *firecracker.Machine, checkpointID string, runtimeID string, kernelDigest string, initramfsDigest string, rootfsDigest string, kernelArgs string, topology vm.RuntimeTopology, readOnlyDrives ...[]vm.ReadOnlyDrive) (string, []byte, error) {
 	workerArchitecture, err := runtimeidentity.ArchitectureFromGo(runtime.GOARCH)
 	if err != nil {
 		return "", nil, err
@@ -2258,9 +2278,8 @@ func snapshotRuntimeConfig(cfg Config, machine *firecracker.Machine, checkpointI
 	if err != nil {
 		return "", nil, err
 	}
-	kernelArgs := defaultKernelArgs
-	if machine != nil && strings.TrimSpace(machine.Cfg.KernelArgs) != "" {
-		kernelArgs = machine.Cfg.KernelArgs
+	if strings.TrimSpace(kernelArgs) == "" {
+		return "", nil, errors.New("canonical runtime kernel args are required for checkpoint restore")
 	}
 	manifest, err := json.Marshal(snapshotManifest{
 		RecoveryPoint: snapshotRecoveryPointManifest{
@@ -2315,8 +2334,81 @@ func snapshotNetworkConfig(cfg Config, machine *firecracker.Machine) snapshotNet
 	if static == nil || static.IPConfiguration == nil {
 		return network
 	}
-	network.GuestIPCIDR = static.IPConfiguration.IPAddr.String()
+	ipConfig := static.IPConfiguration
+	network.GuestIPCIDR = ipConfig.IPAddr.String()
+	network.GuestMAC = static.MacAddress
+	if ipConfig.Gateway != nil {
+		network.GatewayAddress = ipConfig.Gateway.String()
+	}
+	if ipConfig.IPAddr.IP != nil && ipConfig.IPAddr.Mask != nil {
+		network.Subnet = (&net.IPNet{
+			IP:   ipConfig.IPAddr.IP.Mask(ipConfig.IPAddr.Mask),
+			Mask: ipConfig.IPAddr.Mask,
+		}).String()
+	}
+	for _, nameserver := range ipConfig.Nameservers {
+		network.Nameservers = append(network.Nameservers, nameserver)
+	}
 	return network
+}
+
+func validateSnapshotNetwork(network snapshotNetworkManifest) error {
+	guestIP, guestCIDR, err := net.ParseCIDR(network.GuestIPCIDR)
+	if err != nil || guestIP.To4() == nil {
+		return errors.New("checkpoint manifest guest_ip_cidr must be canonical IPv4 CIDR")
+	}
+	if guestIP.String()+"/"+strconv.Itoa(maskSize(guestCIDR.Mask)) != network.GuestIPCIDR {
+		return errors.New("checkpoint manifest guest_ip_cidr is not canonical")
+	}
+	mac, err := net.ParseMAC(network.GuestMAC)
+	if err != nil || len(mac) != 6 || mac.String() != network.GuestMAC {
+		return errors.New("checkpoint manifest guest_mac must be canonical EUI-48")
+	}
+	gateway := net.ParseIP(network.GatewayAddress)
+	if gateway == nil || gateway.To4() == nil {
+		return errors.New("checkpoint manifest gateway_address must be IPv4")
+	}
+	_, subnet, err := net.ParseCIDR(network.Subnet)
+	if err != nil || subnet.String() != network.Subnet || !subnet.Contains(guestIP) || !subnet.Contains(gateway) {
+		return errors.New("checkpoint manifest subnet must canonically contain guest and gateway")
+	}
+	if len(network.Nameservers) == 0 || len(network.Nameservers) > 2 {
+		return errors.New("checkpoint manifest must contain one or two IPv4 nameservers")
+	}
+	for _, nameserver := range network.Nameservers {
+		ip := net.ParseIP(nameserver)
+		if ip == nil || ip.To4() == nil || ip.String() != nameserver {
+			return errors.New("checkpoint manifest nameservers must be canonical IPv4 addresses")
+		}
+	}
+	return nil
+}
+
+func maskSize(mask net.IPMask) int {
+	ones, _ := mask.Size()
+	return ones
+}
+
+func validateRestoredNetworkConfig(expected snapshotNetworkManifest, actual snapshotNetworkManifest) error {
+	if err := validateSnapshotNetwork(expected); err != nil {
+		return fmt.Errorf("validate checkpoint network manifest: %w", err)
+	}
+	if err := validateSnapshotNetwork(actual); err != nil {
+		return fmt.Errorf("validate recreated checkpoint network: %w", err)
+	}
+	if expected.Mode != actual.Mode ||
+		expected.Profile != actual.Profile ||
+		expected.NetworkName != actual.NetworkName ||
+		expected.IfName != actual.IfName ||
+		expected.VMIfName != actual.VMIfName ||
+		expected.GuestIPCIDR != actual.GuestIPCIDR ||
+		expected.GuestMAC != actual.GuestMAC ||
+		expected.GatewayAddress != actual.GatewayAddress ||
+		expected.Subnet != actual.Subnet ||
+		!slices.Equal(expected.Nameservers, actual.Nameservers) {
+		return errors.New("recreated checkpoint network does not exactly match manifest")
+	}
+	return nil
 }
 
 func validateRuntimeManifest(
@@ -2392,6 +2484,9 @@ func validateRuntimeManifest(
 	}
 	if network.GuestIPCIDR == "" {
 		return errors.New("checkpoint manifest guest_ip_cidr is required for CNI restore")
+	}
+	if err := validateSnapshotNetwork(network); err != nil {
+		return err
 	}
 	return nil
 }

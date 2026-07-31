@@ -175,7 +175,7 @@ in
         export HELMR_WORKER_FIRECRACKER_JAILER_GID=''${HELMR_WORKER_FIRECRACKER_JAILER_GID:-$(id -g)}
         export HELMR_WORKER_FIRECRACKER_CGROUP_VERSION=''${HELMR_WORKER_FIRECRACKER_CGROUP_VERSION:-2}
         export HELMR_WORKER_CNI_NETWORK=''${HELMR_WORKER_CNI_NETWORK:-helmr}
-        export HELMR_WORKER_CNI_PROFILE=''${HELMR_WORKER_CNI_PROFILE:-$HELMR_WORKER_CNI_NETWORK/v1}
+        export HELMR_WORKER_CNI_PROFILE=''${HELMR_WORKER_CNI_PROFILE:-$HELMR_WORKER_CNI_NETWORK/v0}
         export HELMR_WORKER_CNI_CONF_DIR=''${HELMR_WORKER_CNI_CONF_DIR:-$PWD/.helmr-smoke/cni/conf.d}
         export HELMR_WORKER_CNI_BIN_DIR=''${HELMR_WORKER_CNI_BIN_DIR:-$PWD/.helmr-smoke/cni/bin}
         export HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS=''${HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS:-0.0.0.0/8,10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.168.0.0/16,224.0.0.0/4,240.0.0.0/4}
@@ -186,7 +186,7 @@ in
         mkdir -p "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR" "$HELMR_WORKER_CNI_CONF_DIR" "$HELMR_WORKER_CNI_BIN_DIR"
         guest_resolv_conf="$HELMR_WORKER_CNI_CONF_DIR/guest-resolv.conf"
         printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > "$guest_resolv_conf"
-        for plugin in ptp host-local firewall tc-redirect-tap; do
+        for plugin in ptp host-local tuning firewall tc-redirect-tap; do
           ln -sf "$(command -v "$plugin")" "$HELMR_WORKER_CNI_BIN_DIR/$plugin"
         done
         printf '%s\n' \
@@ -203,6 +203,7 @@ in
           '        "resolvConf": "'"$guest_resolv_conf"'"' \
           '      }' \
           '    },' \
+          '    { "type": "tuning" },' \
           '    { "type": "firewall" },' \
           '    { "type": "tc-redirect-tap" }' \
           '  ]' \

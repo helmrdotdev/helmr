@@ -93,7 +93,7 @@ install -m 0755 "$(command -v gpgv)" /usr/local/bin/gpgv
 install -m 0755 "$(command -v mksquashfs)" /usr/local/bin/mksquashfs
 install -m 0755 "$(command -v patchelf)" /usr/local/bin/patchelf
 install -m 0755 "$(command -v xz)" /usr/local/bin/xz
-for plugin in ptp host-local firewall tc-redirect-tap; do
+for plugin in ptp host-local tuning firewall tc-redirect-tap; do
   install -m 0755 "$(command -v "$plugin")" "/opt/cni/bin/$plugin"
 done
 EOF
@@ -150,6 +150,7 @@ cat >/etc/cni/conf.d/helmr.conflist <<'EOF'
         "resolvConf": "/etc/helmr/guest-resolv.conf"
       }
     },
+    { "type": "tuning" },
     { "type": "firewall" },
     { "type": "tc-redirect-tap" }
   ]

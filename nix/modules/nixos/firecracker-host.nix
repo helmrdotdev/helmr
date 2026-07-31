@@ -251,7 +251,7 @@ in
           HELMR_WORKER_FIRECRACKER_JAILER_GID = toString cfg.jailerGID;
           HELMR_WORKER_FIRECRACKER_CGROUP_VERSION = "2";
           HELMR_WORKER_CNI_NETWORK = cfg.cniNetworkName;
-          HELMR_WORKER_CNI_PROFILE = "${cfg.cniNetworkName}/v1";
+          HELMR_WORKER_CNI_PROFILE = "${cfg.cniNetworkName}/v0";
           HELMR_WORKER_CNI_CONF_DIR = "/etc/cni/conf.d";
           HELMR_WORKER_CNI_BIN_DIR = "${cniPlugins}/bin";
           HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS =
@@ -281,6 +281,7 @@ in
                 resolvConf = "/etc/helmr/guest-resolv.conf";
               };
             }
+            { type = "tuning"; }
             { type = "firewall"; }
             { type = "tc-redirect-tap"; }
           ];
