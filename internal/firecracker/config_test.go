@@ -14,7 +14,7 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.JailerPath != DefaultJailerPath || cfg.JailerChrootBaseDir == "" || cfg.CgroupVersion != DefaultCgroupVersion {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.GuestPort != DefaultGuestPort || cfg.HealthPort != HealthPort || cfg.StateDir == "" || cfg.HealthTimeout != DefaultHealthTimeout || cfg.HealthAttemptTimeout != DefaultHealthAttemptTimeout {
+	if cfg.GuestPort != DefaultGuestPort || cfg.HealthPort != HealthPort || cfg.StateDir == "" || cfg.InitTimeout != DefaultInitTimeout || cfg.HealthTimeout != DefaultHealthTimeout || cfg.HealthAttemptTimeout != DefaultHealthAttemptTimeout {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -36,6 +36,17 @@ func TestConfigValidateRejectsHealthAttemptLongerThanHealthTimeout(t *testing.T)
 		t.Fatal("expected validation errors")
 	}
 	if got, want := err.Error(), "guest health attempt timeout"; !strings.Contains(got, want) {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+func TestConfigValidateRejectsNonPositiveInitTimeout(t *testing.T) {
+	cfg := (Config{InitTimeout: -time.Second}).WithDefaults()
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation errors")
+	}
+	if got, want := err.Error(), "VMM API initialization timeout"; !strings.Contains(got, want) {
 		t.Fatalf("error = %q, want %q", got, want)
 	}
 }

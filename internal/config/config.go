@@ -169,6 +169,7 @@ type Worker struct {
 	WorkerBuildExecutors         int32
 	WorkerRuntimeStarts          int32
 	WorkerCertificationTTL       time.Duration
+	VMInitTimeout                time.Duration
 	VMHealthTimeout              time.Duration
 	VMHealthAttemptTimeout       time.Duration
 	WorkspaceMountStartupTimeout time.Duration

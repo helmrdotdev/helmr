@@ -940,7 +940,7 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 	// a background warm command after boot succeeds.
 	machineCtx, machineCancel := context.WithCancel(context.Background())
 	phaseStarted = time.Now()
-	machine, err := firecracker.NewMachine(machineCtx, machineCfg, opts...)
+	machine, err := newSDKMachine(machineCtx, machineCfg, c.cfg.InitTimeout, opts...)
 	recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_create_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 	if err != nil {
 		machineCancel()

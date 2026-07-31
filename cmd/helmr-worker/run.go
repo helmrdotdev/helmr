@@ -165,6 +165,7 @@ func run(log *slog.Logger) error {
 	connectorConfig.VCPUCount = cfg.VMVCPUCount
 	connectorConfig.MemoryMiB = cfg.VMMemoryMiB
 	connectorConfig.ScratchDiskMiB = cfg.VMScratchDiskMiB
+	connectorConfig.InitTimeout = cfg.VMInitTimeout
 	connectorConfig.HealthTimeout = cfg.VMHealthTimeout
 	connectorConfig.HealthAttemptTimeout = cfg.VMHealthAttemptTimeout
 	connector, err := firecracker.NewConnector(connectorConfig)

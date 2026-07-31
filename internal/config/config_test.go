@@ -568,6 +568,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("HELMR_WORKER_EXECUTION_SLOTS", " 4 ")
 	t.Setenv("HELMR_WORKER_ROLES", " build,run ")
 	t.Setenv("HELMR_WORKER_CERTIFICATION_TTL", " 12h ")
+	t.Setenv("HELMR_VM_INIT_TIMEOUT", " 45s ")
 	t.Setenv("HELMR_VM_HEALTH_TIMEOUT", " 90s ")
 	t.Setenv("HELMR_VM_HEALTH_ATTEMPT_TIMEOUT", " 7s ")
 	t.Setenv("HELMR_WORKSPACE_MOUNT_STARTUP_TIMEOUT", " 3m ")
@@ -579,7 +580,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if cfg.CASURI != "s3://helmr-cas" || cfg.WorkDir != "/var/lib/helmr/scratch/worker" || cfg.BuildCacheDir != "/var/lib/helmr/cache" || cfg.BuildScratchDir != "/var/lib/helmr/scratch" || cfg.ImagesDir != "/var/lib/helmr/images" || cfg.GitPath != "/usr/bin/git" || cfg.BuildKitAddr != "unix:///run/helmr/buildkit/buildkitd.sock" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.NetworkLinkPool != "169.254.128.0/18" || cfg.NetworkTranslationPool != "100.97.0.0/16" || cfg.NetworkResolverIPv4 != "1.0.0.1" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.WorkerDiskReserveMiB != 2048 || cfg.SubstrateCacheMaxMiB != 32768 || cfg.ArtifactCacheMaxMiB != 16384 || cfg.WorkerExecutionSlots != 4 || cfg.WorkerCertificationTTL != 12*time.Hour || cfg.VMHealthTimeout != 90*time.Second || cfg.VMHealthAttemptTimeout != 7*time.Second || cfg.WorkspaceMountStartupTimeout != 3*time.Minute {
+	if cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.NetworkLinkPool != "169.254.128.0/18" || cfg.NetworkTranslationPool != "100.97.0.0/16" || cfg.NetworkResolverIPv4 != "1.0.0.1" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.WorkerDiskReserveMiB != 2048 || cfg.SubstrateCacheMaxMiB != 32768 || cfg.ArtifactCacheMaxMiB != 16384 || cfg.WorkerExecutionSlots != 4 || cfg.WorkerCertificationTTL != 12*time.Hour || cfg.VMInitTimeout != 45*time.Second || cfg.VMHealthTimeout != 90*time.Second || cfg.VMHealthAttemptTimeout != 7*time.Second || cfg.WorkspaceMountStartupTimeout != 3*time.Minute {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if len(cfg.NetworkBlockedIPv4CIDRs) != 2 || cfg.NetworkBlockedIPv4CIDRs[1].String() != "169.254.0.0/16" {

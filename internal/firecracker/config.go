@@ -23,6 +23,7 @@ const (
 	DefaultMemoryMiB            = int64(2048)
 	DefaultScratchDiskMiB       = int64(8192)
 	DefaultCgroupVersion        = "2"
+	DefaultInitTimeout          = 30 * time.Second
 	DefaultHealthTimeout        = 30 * time.Second
 	DefaultHealthAttemptTimeout = 5 * time.Second
 	runtimeABI                  = "helmr.firecracker.snapshot.v0"
@@ -63,6 +64,7 @@ type Config struct {
 	ScratchDiskMiB          int64
 	GuestPort               uint32
 	HealthPort              uint32
+	InitTimeout             time.Duration
 	HealthTimeout           time.Duration
 	HealthAttemptTimeout    time.Duration
 }
@@ -124,6 +126,9 @@ func (cfg Config) WithDefaults() Config {
 	}
 	if cfg.HealthPort == 0 {
 		cfg.HealthPort = HealthPort
+	}
+	if cfg.InitTimeout == 0 {
+		cfg.InitTimeout = DefaultInitTimeout
 	}
 	if cfg.HealthTimeout == 0 {
 		cfg.HealthTimeout = DefaultHealthTimeout
@@ -201,6 +206,9 @@ func (cfg Config) Validate() error {
 	}
 	if strings.TrimSpace(cfg.KVMPath) == "" {
 		problems = append(problems, errors.New("firecracker KVM path is required"))
+	}
+	if cfg.InitTimeout <= 0 {
+		problems = append(problems, fmt.Errorf("VMM API initialization timeout must be positive, got %s", cfg.InitTimeout))
 	}
 	if cfg.HealthTimeout <= 0 {
 		problems = append(problems, fmt.Errorf("guest health timeout must be positive, got %s", cfg.HealthTimeout))

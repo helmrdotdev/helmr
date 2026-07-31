@@ -63,6 +63,7 @@ locals {
     HELMR_VM_VCPUS                          = tostring(var.vm_vcpus)
     HELMR_VM_MEMORY_MIB                     = tostring(var.vm_memory_mib)
     HELMR_VM_SCRATCH_DISK_MIB               = tostring(var.vm_scratch_disk_mib)
+    HELMR_VM_INIT_TIMEOUT                   = "30s"
     HELMR_VM_HEALTH_TIMEOUT                 = "300s"
     }, contains(var.worker_roles, "build") ? {
     HELMR_BUILD_POLICY_PATH        = "/etc/helmr/build-policy.json"

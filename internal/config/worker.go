@@ -37,6 +37,7 @@ func LoadWorker() (Worker, error) {
 		VMMemoryMiB:                  2048,
 		VMScratchDiskMiB:             8192,
 		WorkerDiskReserveMiB:         1024,
+		VMInitTimeout:                30 * time.Second,
 		VMHealthTimeout:              30 * time.Second,
 		VMHealthAttemptTimeout:       5 * time.Second,
 		WorkspaceMountStartupTimeout: 20 * time.Minute,
@@ -162,6 +163,12 @@ func LoadWorker() (Worker, error) {
 	}
 	if cfg.WorkerCertificationTTL <= 0 {
 		return cfg, errors.New("HELMR_WORKER_CERTIFICATION_TTL must be positive")
+	}
+	if cfg.VMInitTimeout, err = envDuration("HELMR_VM_INIT_TIMEOUT", cfg.VMInitTimeout); err != nil {
+		return cfg, err
+	}
+	if cfg.VMInitTimeout <= 0 {
+		return cfg, errors.New("HELMR_VM_INIT_TIMEOUT must be positive")
 	}
 	if cfg.VMHealthTimeout, err = envDuration("HELMR_VM_HEALTH_TIMEOUT", cfg.VMHealthTimeout); err != nil {
 		return cfg, err
