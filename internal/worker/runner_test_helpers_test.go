@@ -31,6 +31,5 @@ func testCapabilities() api.WorkerCapabilities {
 		MaxVCPUs: 3, MaxMemoryMiB: 4096, ExecutionSlotsAvailable: 1,
 		VMMilliCPU: 2000, VMMemoryMiB: 2048,
 		GuestEphemeralDiskBytes: 32768 << 20, VMGuestEphemeralDiskBytes: 32768 << 20,
-		Network: api.WorkerNetworkCapabilities{Internet: true, BlockInternet: true, DenyCIDRs: true},
 	}
 }

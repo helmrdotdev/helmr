@@ -139,46 +139,37 @@ type WorkerObservation struct {
 }
 
 type WorkerCapabilities struct {
-	ProtocolVersion           string                    `json:"protocol_version"`
-	WorkerVersion             string                    `json:"worker_version,omitempty"`
-	RuntimeID                 string                    `json:"runtime_id"`
-	RuntimeArch               string                    `json:"runtime_arch"`
-	RuntimeABI                string                    `json:"runtime_abi"`
-	KernelDigest              string                    `json:"kernel_digest"`
-	InitramfsDigest           string                    `json:"initramfs_digest"`
-	RootfsDigest              string                    `json:"rootfs_digest"`
-	CNIProfile                string                    `json:"cni_profile"`
-	SubstrateFormat           string                    `json:"substrate_format,omitempty"`
-	SubstrateBuilderABI       string                    `json:"substrate_builder_abi,omitempty"`
-	SubstrateLayoutABI        string                    `json:"substrate_layout_abi,omitempty"`
-	Region                    string                    `json:"region,omitempty"`
-	Labels                    map[string]string         `json:"labels,omitempty"`
-	MaxVCPUs                  int64                     `json:"max_vcpus"`
-	MaxMemoryMiB              int64                     `json:"max_memory_mib"`
-	VMMilliCPU                int64                     `json:"vm_milli_cpu"`
-	VMMemoryMiB               int64                     `json:"vm_memory_mib"`
-	GuestEphemeralDiskBytes   int64                     `json:"guest_ephemeral_disk_bytes"`
-	VMGuestEphemeralDiskBytes int64                     `json:"vm_guest_ephemeral_disk_bytes"`
-	ExecutionSlotsAvailable   int32                     `json:"execution_slots_available"`
-	SupportsRun               bool                      `json:"supports_run"`
-	SupportsBuild             bool                      `json:"supports_build"`
-	MaxBuildExecutors         int32                     `json:"max_build_executors"`
-	MaxRuntimeStarts          int32                     `json:"max_runtime_starts"`
-	BuildCacheBytes           int64                     `json:"build_cache_bytes"`
-	ArtifactCacheBytes        int64                     `json:"artifact_cache_bytes"`
-	HugepagesBytes            int64                     `json:"hugepages_bytes"`
-	CheckpointBytes           int64                     `json:"checkpoint_bytes"`
-	Observation               WorkerObservation         `json:"observation"`
-	Network                   WorkerNetworkCapabilities `json:"network"`
+	ProtocolVersion           string            `json:"protocol_version"`
+	WorkerVersion             string            `json:"worker_version,omitempty"`
+	RuntimeID                 string            `json:"runtime_id"`
+	RuntimeArch               string            `json:"runtime_arch"`
+	RuntimeABI                string            `json:"runtime_abi"`
+	KernelDigest              string            `json:"kernel_digest"`
+	InitramfsDigest           string            `json:"initramfs_digest"`
+	RootfsDigest              string            `json:"rootfs_digest"`
+	CNIProfile                string            `json:"cni_profile"`
+	SubstrateFormat           string            `json:"substrate_format,omitempty"`
+	SubstrateBuilderABI       string            `json:"substrate_builder_abi,omitempty"`
+	SubstrateLayoutABI        string            `json:"substrate_layout_abi,omitempty"`
+	MaxVCPUs                  int64             `json:"max_vcpus"`
+	MaxMemoryMiB              int64             `json:"max_memory_mib"`
+	VMMilliCPU                int64             `json:"vm_milli_cpu"`
+	VMMemoryMiB               int64             `json:"vm_memory_mib"`
+	GuestEphemeralDiskBytes   int64             `json:"guest_ephemeral_disk_bytes"`
+	VMGuestEphemeralDiskBytes int64             `json:"vm_guest_ephemeral_disk_bytes"`
+	ExecutionSlotsAvailable   int32             `json:"execution_slots_available"`
+	SupportsRun               bool              `json:"supports_run"`
+	SupportsBuild             bool              `json:"supports_build"`
+	MaxBuildExecutors         int32             `json:"max_build_executors"`
+	MaxRuntimeStarts          int32             `json:"max_runtime_starts"`
+	BuildCacheBytes           int64             `json:"build_cache_bytes"`
+	ArtifactCacheBytes        int64             `json:"artifact_cache_bytes"`
+	HugepagesBytes            int64             `json:"hugepages_bytes"`
+	CheckpointBytes           int64             `json:"checkpoint_bytes"`
+	Observation               WorkerObservation `json:"observation"`
 }
 
-type WorkerNetworkCapabilities struct {
-	Internet      bool `json:"internet"`
-	BlockInternet bool `json:"block_internet"`
-	DenyCIDRs     bool `json:"deny_cidrs"`
-	AllowCIDRs    bool `json:"allow_cidrs"`
-	AllowDomains  bool `json:"allow_domains"`
-}
+const WorkerCNIProfileV0 = "helmr/v0"
 
 type TraceContext struct {
 	TraceID     string `json:"trace_id"`
@@ -288,10 +279,22 @@ const (
 )
 
 type WorkerStatusResponse struct {
-	WorkerInstanceID string       `json:"worker_instance_id"`
-	WorkerGroupID    string       `json:"worker_group_id"`
-	Status           WorkerStatus `json:"status"`
-	ActiveExecutions int32        `json:"active_executions"`
+	WorkerInstanceID string          `json:"worker_instance_id"`
+	WorkerGroupID    string          `json:"worker_group_id"`
+	Status           WorkerStatus    `json:"status"`
+	ActiveExecutions int32           `json:"active_executions"`
+	Readiness        WorkerReadiness `json:"readiness"`
+}
+
+type WorkerReadiness struct {
+	Run     *WorkerRoleReadiness `json:"run,omitempty"`
+	Build   *WorkerRoleReadiness `json:"build,omitempty"`
+	Runtime *WorkerRoleReadiness `json:"runtime,omitempty"`
+}
+
+type WorkerRoleReadiness struct {
+	Ready        bool   `json:"ready"`
+	PausedReason string `json:"paused_reason,omitempty"`
 }
 
 type WorkerFenceRequest struct {

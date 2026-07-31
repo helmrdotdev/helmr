@@ -82,7 +82,6 @@ func (a workspaceExecAuthority) runAuthority() runPlacementAuthority {
 func (d *Authority) PlaceWorkspaceExec(
 	ctx context.Context,
 	candidate ReadyWorkspaceExecCandidate,
-	observationFreshAfter pgtype.Timestamptz,
 ) (WorkspaceExecPlacement, error) {
 	tx, err := d.begin(ctx)
 	if err != nil {
@@ -105,7 +104,7 @@ func (d *Authority) PlaceWorkspaceExec(
 	}
 	runtime, err := discoverRunRuntime(ctx, tx, authority.workspaceID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		placement, err := d.createWorkspaceExecRuntime(ctx, tx, authority, observationFreshAfter)
+		placement, err := d.createWorkspaceExecRuntime(ctx, tx, authority)
 		if err != nil {
 			return WorkspaceExecPlacement{}, err
 		}
@@ -123,7 +122,6 @@ func (d *Authority) PlaceWorkspaceExec(
 		WorkerInstanceID:      runtime.workerID,
 		WorkerEpoch:           runtime.workerEpoch,
 		WorkerProtocolVersion: runtime.protocolVersion,
-		ObservationFreshAfter: observationFreshAfter,
 		Role:                  "run",
 		RunArchitecture:       authority.architecture,
 	}); err != nil {
@@ -403,13 +401,12 @@ func (d *Authority) createWorkspaceExecRuntime(
 	ctx context.Context,
 	tx pgx.Tx,
 	authority workspaceExecAuthority,
-	observationFreshAfter pgtype.Timestamptz,
 ) (WorkspaceExecPlacement, error) {
 	runAuthority := authority.runAuthority()
 	if err := d.checkWorkspaceExecPreparationBudget(ctx, tx, authority); err != nil {
 		return WorkspaceExecPlacement{}, err
 	}
-	worker, err := selectRunWorker(ctx, tx, runAuthority, observationFreshAfter)
+	worker, err := selectRunWorker(ctx, tx, runAuthority)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WorkspaceExecPlacement{}, ErrCapacityUnavailable
 	}
@@ -422,7 +419,6 @@ func (d *Authority) createWorkspaceExecRuntime(
 		WorkerInstanceID:      worker.workerID,
 		WorkerEpoch:           worker.workerEpoch,
 		WorkerProtocolVersion: worker.protocolVersion,
-		ObservationFreshAfter: observationFreshAfter,
 		Role:                  "run",
 		RunArchitecture:       authority.architecture,
 	}); err != nil {

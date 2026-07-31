@@ -322,6 +322,12 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := fixture.pool.Exec(ctx,
+		`UPDATE worker_groups SET state = 'draining' WHERE id = $1`,
+		runLeaseTestWorkerGroup,
+	); err != nil {
+		t.Fatal(err)
+	}
 	drainingRows, err := fixture.queries.DiscoverWorkerRunLeaseWork(ctx, DiscoverWorkerRunLeaseWorkParams{
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerProtocolVersion: runLeaseTestProtocol,
 		RowLimit: 8, WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
@@ -354,6 +360,13 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
 	}); err != nil {
 		t.Fatalf("draining replay Secret locator: %v", err)
+	}
+	if _, err := fixture.queries.GetRunLeaseClaimLocators(ctx, GetRunLeaseClaimLocatorsParams{
+		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
+	}); err != nil {
+		t.Fatalf("draining replay claim locator: %v", err)
 	}
 }
 

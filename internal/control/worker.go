@@ -322,16 +322,15 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 		request.CertificationFingerprint = capabilities.RuntimeID
 	}
 	worker := workerFromContext(r.Context())
-	if _, err := s.db.CertifyWorkerInstance(r.Context(), workerCertificationParams(worker, request, capabilities)); isNoRows(err) {
+	_, err = s.db.CertifyWorkerInstance(
+		r.Context(), workerCertificationParams(worker, request, capabilities),
+	)
+	if isNoRows(err) {
 		writeError(w, conflict(errors.New("worker certification is stale")))
 		return
 	} else if err != nil {
 		s.log.Error("worker activate failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
 		writeError(w, errors.New("certify worker"))
-		return
-	}
-	if err := s.recordWorkerObservation(r.Context(), worker, capabilities.Observation); err != nil {
-		writeError(w, err)
 		return
 	}
 	s.writeWorkerStatus(w, r, worker)
@@ -463,7 +462,11 @@ func (s *Server) workerRenewCertification(w http.ResponseWriter, r *http.Request
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if _, err := s.db.RenewWorkerCertification(r.Context(), workerCertificationRenewParams(worker, capabilities)); isNoRows(err) {
+	_, err = s.db.RenewWorkerCertification(
+		r.Context(),
+		workerCertificationRenewParams(worker, capabilities),
+	)
+	if isNoRows(err) {
 		writeError(w, conflict(errors.New("worker certification facts changed")))
 		return
 	} else if err != nil {
@@ -663,16 +666,50 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 		writeError(w, errors.New("get worker status"))
 		return
 	}
+	readiness := api.WorkerReadiness{}
+	if state.SupportsRun {
+		readiness.Run = workerRoleReadiness(state, state.RunReady, state.RunPausedReason)
+		readiness.Runtime = workerRoleReadiness(state, state.RuntimeReady, state.RuntimePausedReason)
+	}
+	if state.SupportsBuild {
+		readiness.Build = workerRoleReadiness(state, state.BuildReady, state.BuildPausedReason)
+	}
 	writeJSON(w, http.StatusOK, api.WorkerStatusResponse{
 		WorkerInstanceID: pgvalue.MustUUIDValue(state.ID).String(),
 		WorkerGroupID:    state.WorkerGroupID,
 		Status:           api.WorkerStatus(state.State),
 		ActiveExecutions: state.ActiveExecutions,
+		Readiness:        readiness,
 	})
 }
 
+func workerRoleReadiness(
+	state db.GetWorkerInstanceStateRow,
+	ready bool,
+	pausedReason pgtype.Text,
+) *api.WorkerRoleReadiness {
+	result := &api.WorkerRoleReadiness{Ready: ready}
+	if ready {
+		return result
+	}
+	switch {
+	case pausedReason.Valid:
+		result.PausedReason = pausedReason.String
+	case state.State != string(db.WorkerInstanceStateActive):
+		result.PausedReason = "worker_not_active"
+	case !state.ObservedAt.Valid:
+		result.PausedReason = "observation_missing"
+	default:
+		result.PausedReason = "observation_stale"
+	}
+	return result
+}
+
 func (s *Server) recordWorkerObservation(ctx context.Context, worker workerActor, observation api.WorkerObservation) error {
-	if _, err := s.db.RecordWorkerObservation(ctx, workerObservationParams(worker, observation)); isNoRows(err) {
+	if _, err := s.db.RecordWorkerObservation(
+		ctx,
+		workerObservationParams(worker, observation),
+	); isNoRows(err) {
 		return forbidden(errors.New("worker observation conflicts with this worker epoch"))
 	} else if err != nil {
 		return errors.New("record worker observation")
@@ -701,7 +738,11 @@ func workerObservationParams(worker workerActor, observation api.WorkerObservati
 	}
 }
 
-func workerCertificationParams(worker workerActor, request api.WorkerActivateRequest, c api.WorkerCapabilities) db.CertifyWorkerInstanceParams {
+func workerCertificationParams(
+	worker workerActor,
+	request api.WorkerActivateRequest,
+	c api.WorkerCapabilities,
+) db.CertifyWorkerInstanceParams {
 	supportsRun := c.SupportsRun
 	maxRuntimeStarts := c.MaxRuntimeStarts
 	if supportsRun && maxRuntimeStarts == 0 {
@@ -741,7 +782,6 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 		SubstrateFormat:           strings.TrimSpace(input.SubstrateFormat),
 		SubstrateBuilderABI:       strings.TrimSpace(input.SubstrateBuilderABI),
 		SubstrateLayoutABI:        strings.TrimSpace(input.SubstrateLayoutABI),
-		Region:                    strings.TrimSpace(input.Region),
 		MaxVCPUs:                  input.MaxVCPUs,
 		MaxMemoryMiB:              input.MaxMemoryMiB,
 		VMMilliCPU:                input.VMMilliCPU,
@@ -758,19 +798,7 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 		HugepagesBytes:            input.HugepagesBytes,
 		CheckpointBytes:           input.CheckpointBytes,
 		Observation:               input.Observation,
-		Network: api.WorkerNetworkCapabilities{
-			Internet:      input.Network.Internet,
-			BlockInternet: input.Network.BlockInternet,
-			DenyCIDRs:     input.Network.DenyCIDRs,
-			AllowCIDRs:    input.Network.AllowCIDRs,
-			AllowDomains:  input.Network.AllowDomains,
-		},
 	}
-	labels, err := normalizeWorkerLabels(input.Labels)
-	if err != nil {
-		return api.WorkerCapabilities{}, err
-	}
-	capabilities.Labels = labels
 	if capabilities.ProtocolVersion == "" {
 		return api.WorkerCapabilities{}, errors.New("worker protocol_version is required")
 	}
@@ -795,8 +823,8 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 	if capabilities.RootfsDigest == "" {
 		return api.WorkerCapabilities{}, errors.New("worker rootfs_digest is required")
 	}
-	if capabilities.CNIProfile == "" {
-		return api.WorkerCapabilities{}, errors.New("worker cni_profile is required")
+	if capabilities.CNIProfile != api.WorkerCNIProfileV0 {
+		return api.WorkerCapabilities{}, fmt.Errorf("worker cni_profile must be %s", api.WorkerCNIProfileV0)
 	}
 	expectedRuntimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{
 		Arch:            capabilities.RuntimeArch,
@@ -863,15 +891,6 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 	} else if capabilities.SubstrateFormat != "" || capabilities.SubstrateBuilderABI != "" || capabilities.SubstrateLayoutABI != "" {
 		return api.WorkerCapabilities{}, errors.New("worker without run role must not report a substrate contract")
 	}
-	if !capabilities.Network.Internet {
-		return api.WorkerCapabilities{}, errors.New("worker network.internet capability is required")
-	}
-	if !capabilities.Network.BlockInternet {
-		return api.WorkerCapabilities{}, errors.New("worker network.block_internet capability is required")
-	}
-	if !capabilities.Network.DenyCIDRs {
-		return api.WorkerCapabilities{}, errors.New("worker network.deny_cidrs capability is required")
-	}
 	return capabilities, nil
 }
 
@@ -883,17 +902,4 @@ func (s *Server) validateWorkerBuildPolicy(capabilities api.WorkerCapabilities) 
 		return errors.New("build policy is not configured")
 	}
 	return nil
-}
-
-func normalizeWorkerLabels(input map[string]string) (map[string]string, error) {
-	labels := make(map[string]string, len(input))
-	for key, value := range input {
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		if key == "" {
-			return nil, errors.New("worker label key is required")
-		}
-		labels[key] = value
-	}
-	return labels, nil
 }

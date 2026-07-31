@@ -48,6 +48,7 @@ func TestReconcileProjectsDesiredGroupAfterLock(t *testing.T) {
 		EnrollmentPolicyFingerprint:    "sha256:policy",
 		AllowedAttestationFingerprints: []string{"sha256:attestation"},
 		LaunchAttestationFingerprint:   "sha256:attestation",
+		ObservationTTLSeconds:          120,
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -74,8 +75,8 @@ func TestReconcileRejectsRemovingLiveGroup(t *testing.T) {
 func TestReconcileRejectsDuplicateGroupIDsBeforeStoreAccess(t *testing.T) {
 	store := &recordingReconcileStore{}
 	err := Reconcile(context.Background(), store, "us-east-1", []Desired{
-		{Spec: Spec{ID: "duplicate", AllowsRun: true}},
-		{Spec: Spec{ID: " duplicate ", AllowsBuild: true}},
+		{Spec: Spec{ID: "duplicate", AllowsRun: true}, ObservationTTLSeconds: 120},
+		{Spec: Spec{ID: " duplicate ", AllowsBuild: true}, ObservationTTLSeconds: 120},
 	})
 	if err == nil {
 		t.Fatal("Reconcile() accepted duplicate worker groups")

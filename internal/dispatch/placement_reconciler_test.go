@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type isolationQueue struct{}
@@ -60,11 +58,11 @@ func (blockingBuildPlacementDiscovery) ListQueuedDeploymentBuildCandidates(conte
 
 type isolationRunAuthority struct{}
 
-func (isolationRunAuthority) PlaceReadyRun(context.Context, ReadyRunCandidate, pgtype.Timestamptz) (ReadyRunPlacement, error) {
+func (isolationRunAuthority) PlaceReadyRun(context.Context, ReadyRunCandidate) (ReadyRunPlacement, error) {
 	return ReadyRunPlacement{}, nil
 }
 
-func (isolationRunAuthority) PlaceWorkspaceExec(context.Context, ReadyWorkspaceExecCandidate, pgtype.Timestamptz) (WorkspaceExecPlacement, error) {
+func (isolationRunAuthority) PlaceWorkspaceExec(context.Context, ReadyWorkspaceExecCandidate) (WorkspaceExecPlacement, error) {
 	return WorkspaceExecPlacement{}, nil
 }
 
@@ -88,7 +86,7 @@ func (noopWorkspaceExecDiscovery) ListRecoverableWorkspaceExecCandidates(context
 
 type isolationBuildAuthority struct{}
 
-func (isolationBuildAuthority) PlaceReadyBuild(context.Context, ReadyBuildCandidate, pgtype.Timestamptz) (db.LeaseQueuedDeploymentBuildRow, error) {
+func (isolationBuildAuthority) PlaceReadyBuild(context.Context, ReadyBuildCandidate) (db.LeaseQueuedDeploymentBuildRow, error) {
 	return db.LeaseQueuedDeploymentBuildRow{}, nil
 }
 

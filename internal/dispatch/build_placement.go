@@ -17,7 +17,6 @@ import (
 
 type placeBuildParams struct {
 	Lease                   db.LeaseQueuedDeploymentBuildParams
-	ObservationFreshAfter   pgtype.Timestamptz
 	ExpectedLeaseSequence   int64
 	ExpectedToolchainDigest []byte
 }
@@ -36,7 +35,7 @@ const (
 
 // PlaceReadyBuild chooses certified build capacity in the deployment's frozen
 // region. The worker never scans or chooses deployment work.
-func (d *Authority) PlaceReadyBuild(ctx context.Context, candidate ReadyBuildCandidate, observationFreshAfter pgtype.Timestamptz) (db.LeaseQueuedDeploymentBuildRow, error) {
+func (d *Authority) PlaceReadyBuild(ctx context.Context, candidate ReadyBuildCandidate) (db.LeaseQueuedDeploymentBuildRow, error) {
 	envelope := compute.BuildEnvelopeResources()
 	guest := compute.BuildGuestResources()
 	requestedCPUMillis := envelope.MilliCPU
@@ -66,6 +65,7 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
   JOIN runtime_identities
     ON runtime_identities.id = worker_instances.runtime_identity_id
    AND runtime_identities.runtime_arch = 'x86_64'
+   AND runtime_identities.cni_profile = 'helmr/v0'
   JOIN worker_observations
     ON worker_observations.worker_instance_id = worker_instances.id
    AND worker_observations.worker_epoch = worker_instances.current_epoch
@@ -78,11 +78,12 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
 	   AND worker_instances.state = 'active' AND worker_instances.supports_build
 	   AND worker_instances.certified_at IS NOT NULL
    AND worker_instances.protocol_version = worker_groups.protocol_version
-   AND worker_observations.observed_at >= $2
+   AND worker_observations.observed_at >= transaction_timestamp()
+       - worker_groups.observation_ttl_seconds * interval '1 second'
 	   AND worker_observations.build_paused_reason IS NULL
-	   AND worker_instances.per_vm_cpu_millis >= $7
-	   AND worker_instances.per_vm_memory_bytes >= $8
-	   AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= $6
+	   AND worker_instances.per_vm_cpu_millis >= $6
+	   AND worker_instances.per_vm_memory_bytes >= $7
+	   AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= $5
 	GROUP BY worker_groups.id, worker_instances.id, worker_instances.current_epoch,
 	         worker_instances.protocol_version, worker_instances.certified_cpu_millis,
 	         worker_instances.certified_memory_bytes,
@@ -90,7 +91,7 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
 		         worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes,
 		         worker_instances.per_vm_guest_ephemeral_disk_bytes,
 	         worker_instances.max_build_executors
- HAVING COALESCE(sum(deployment_build_leases.requested_build_executors),0) + $3
+ HAVING COALESCE(sum(deployment_build_leases.requested_build_executors),0) + $2
           <= worker_instances.max_build_executors
     AND worker_instances.certified_cpu_millis
           - COALESCE(sum(deployment_build_leases.requested_cpu_millis),0)
@@ -98,23 +99,23 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
                        WHERE worker_instance_id = worker_instances.id
                          AND worker_epoch = worker_instances.current_epoch
                          AND (observed_state IN ('allocated','preparing','ready','closing')
-                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))),0) >= $4
+                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))),0) >= $3
     AND worker_instances.certified_memory_bytes
           - COALESCE(sum(deployment_build_leases.requested_memory_bytes),0)
           - COALESCE((SELECT sum(reserved_memory_bytes) FROM runtime_instances
                        WHERE worker_instance_id = worker_instances.id
                          AND worker_epoch = worker_instances.current_epoch
                          AND (observed_state IN ('allocated','preparing','ready','closing')
-                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))),0) >= $5
+                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))),0) >= $4
     AND worker_instances.certified_guest_ephemeral_disk_bytes
           - COALESCE(sum(deployment_build_leases.requested_guest_ephemeral_disk_bytes),0)
           - COALESCE((SELECT sum(reserved_guest_ephemeral_disk_bytes) FROM runtime_instances
                        WHERE worker_instance_id = worker_instances.id
                          AND worker_epoch = worker_instances.current_epoch
                          AND (observed_state IN ('allocated','preparing','ready','closing')
-                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))),0) >= $6
+                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))),0) >= $5
  ORDER BY worker_instances.id
-LIMIT 1`, candidate.BuildRegionID, observationFreshAfter, requestedBuildExecutors,
+LIMIT 1`, candidate.BuildRegionID, requestedBuildExecutors,
 		requestedCPUMillis, requestedMemoryBytes,
 		requestedGuestEphemeralDiskBytes,
 		fixedBuildGuestCPUMillis, fixedBuildGuestMemoryBytes).Scan(
@@ -135,7 +136,6 @@ LIMIT 1`, candidate.BuildRegionID, observationFreshAfter, requestedBuildExecutor
 	now := time.Now().UTC()
 	snapshot, _ := json.Marshal(map[string]any{"source": "dispatcher", "lease_sequence": candidate.LeaseSequence})
 	row, err := d.placeBuild(ctx, placeBuildParams{
-		ObservationFreshAfter:   observationFreshAfter,
 		ExpectedLeaseSequence:   candidate.LeaseSequence,
 		ExpectedToolchainDigest: toolchainDigest,
 		Lease: db.LeaseQueuedDeploymentBuildParams{
@@ -231,7 +231,7 @@ LIMIT 1`, params.Lease.BuildRegionID, params.Lease.DeploymentID,
 		GroupID: params.Lease.WorkerGroupID, RegionID: params.Lease.BuildRegionID,
 		WorkerInstanceID: params.Lease.BuildWorkerInstanceID, WorkerEpoch: params.Lease.WorkerEpoch,
 		WorkerProtocolVersion: params.Lease.WorkerProtocolVersion,
-		ObservationFreshAfter: params.ObservationFreshAfter, Role: "build",
+		Role:                  "build",
 	}); err != nil {
 		return db.LeaseQueuedDeploymentBuildRow{}, err
 	}

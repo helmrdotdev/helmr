@@ -32,17 +32,18 @@ locals {
   build_worker_memory_mib      = coalesce(var.build_worker_capacity_memory_mib, var.worker_capacity_memory_mib, 0) - local.buildkit_memory_reserve_mib
   worker_groups = [
     {
-      id                   = local.run_worker_group_id
-      name                 = "run"
-      description          = "Run workers"
-      region               = var.aws_region
-      account_id           = data.aws_caller_identity.current.account_id
-      autoscaling_group    = "${local.run_worker_name}-worker"
-      instance_profile_arn = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${local.run_worker_name}-worker"
-      launch_ami_id        = local.worker_ami_id
-      ami_ids              = local.worker_allowed_ami_ids
-      allows_run           = true
-      allows_build         = false
+      id                      = local.run_worker_group_id
+      name                    = "run"
+      description             = "Run workers"
+      region                  = var.aws_region
+      account_id              = data.aws_caller_identity.current.account_id
+      autoscaling_group       = "${local.run_worker_name}-worker"
+      instance_profile_arn    = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${local.run_worker_name}-worker"
+      launch_ami_id           = local.worker_ami_id
+      ami_ids                 = local.worker_allowed_ami_ids
+      allows_run              = true
+      allows_build            = false
+      observation_ttl_seconds = var.worker_fleet_controller.stale_worker_timeout_seconds
       instance_capacity = var.create_worker ? {
         milli_cpu                  = coalesce(var.worker_capacity_vcpus, 0) * 1000
         memory_bytes               = coalesce(var.worker_capacity_memory_mib, 0) * 1048576
@@ -57,17 +58,18 @@ locals {
       }
     },
     {
-      id                   = local.build_worker_group_id
-      name                 = "build"
-      description          = "Build workers"
-      region               = var.aws_region
-      account_id           = data.aws_caller_identity.current.account_id
-      autoscaling_group    = "${local.build_worker_name}-worker"
-      instance_profile_arn = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${local.build_worker_name}-worker"
-      launch_ami_id        = local.worker_ami_id
-      ami_ids              = local.worker_allowed_ami_ids
-      allows_run           = false
-      allows_build         = true
+      id                      = local.build_worker_group_id
+      name                    = "build"
+      description             = "Build workers"
+      region                  = var.aws_region
+      account_id              = data.aws_caller_identity.current.account_id
+      autoscaling_group       = "${local.build_worker_name}-worker"
+      instance_profile_arn    = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${local.build_worker_name}-worker"
+      launch_ami_id           = local.worker_ami_id
+      ami_ids                 = local.worker_allowed_ami_ids
+      allows_run              = false
+      allows_build            = true
+      observation_ttl_seconds = var.worker_fleet_controller.stale_worker_timeout_seconds
       instance_capacity = var.create_worker ? {
         milli_cpu                  = local.build_worker_cpu_millis
         memory_bytes               = local.build_worker_memory_mib * 1048576

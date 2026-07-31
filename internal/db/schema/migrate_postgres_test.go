@@ -423,13 +423,14 @@ INSERT INTO environments (
 );
 INSERT INTO worker_groups (
     id, region_id, name, enrollment_policy_fingerprint,
-    allowed_attestation_fingerprints
+    allowed_attestation_fingerprints, observation_ttl_seconds
 ) VALUES (
     'artifact-test-workers',
     'artifact-test-region',
     'Artifact test',
     'policy',
-    ARRAY['attestation']
+    ARRAY['attestation'],
+    120
 );
 INSERT INTO worker_instances (
     id, resource_id, worker_group_id, attestation_fingerprint
@@ -1072,8 +1073,8 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO regions (id, provider, provider_region, display_name) VALUES ('shape-region', 'test', 'shape-region', 'Shape Region');
-		INSERT INTO worker_groups (id, region_id, name, enrollment_policy_fingerprint, allowed_attestation_fingerprints)
-		VALUES ('shape-test', 'shape-region', 'shape-test', 'sha256:shape-test', ARRAY['sha256:shape-test']);
+		INSERT INTO worker_groups (id, region_id, name, enrollment_policy_fingerprint, allowed_attestation_fingerprints, observation_ttl_seconds)
+		VALUES ('shape-test', 'shape-region', 'shape-test', 'sha256:shape-test', ARRAY['sha256:shape-test'], 120);
 		INSERT INTO worker_instances (id, resource_id, worker_group_id, attestation_fingerprint, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes)
 		VALUES ('00000000-0000-0000-0000-000000000099', 'shape-test', 'shape-test', 'sha256:shape-test', 2000, 2147483648, 8589934592);
 	`); err != nil {

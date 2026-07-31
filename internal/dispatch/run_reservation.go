@@ -44,7 +44,6 @@ type runRuntime struct {
 func (d *Authority) prepareRunWorkspace(
 	ctx context.Context,
 	candidate ReadyRunCandidate,
-	observationFreshAfter pgtype.Timestamptz,
 ) (runWorkspaceMount, error) {
 	tx, err := d.begin(ctx)
 	if err != nil {
@@ -85,7 +84,6 @@ func (d *Authority) prepareRunWorkspace(
 			tx,
 			authority,
 			runtime,
-			observationFreshAfter,
 		)
 		if err != nil {
 			return runWorkspaceMount{}, err
@@ -108,7 +106,6 @@ func (d *Authority) prepareRunWorkspace(
 		ctx,
 		tx,
 		authority,
-		observationFreshAfter,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -122,7 +119,6 @@ func (d *Authority) prepareRunWorkspace(
 		WorkerInstanceID:      worker.workerID,
 		WorkerEpoch:           worker.workerEpoch,
 		WorkerProtocolVersion: worker.protocolVersion,
-		ObservationFreshAfter: observationFreshAfter,
 		Role:                  "run",
 		RunArchitecture:       authority.architecture,
 	}); err != nil {
@@ -191,7 +187,6 @@ func (d *Authority) useRunRuntime(
 	tx pgx.Tx,
 	authority runPlacementAuthority,
 	runtime runRuntime,
-	observationFreshAfter pgtype.Timestamptz,
 ) (runWorkspaceMount, error) {
 	if err := lockWorkerFence(ctx, tx, workerFence{
 		GroupID:               runtime.groupID,
@@ -199,7 +194,6 @@ func (d *Authority) useRunRuntime(
 		WorkerInstanceID:      runtime.workerID,
 		WorkerEpoch:           runtime.workerEpoch,
 		WorkerProtocolVersion: runtime.protocolVersion,
-		ObservationFreshAfter: observationFreshAfter,
 		Role:                  "run",
 		RunArchitecture:       authority.architecture,
 	}); err != nil {
@@ -549,7 +543,6 @@ func selectRunWorker(
 	ctx context.Context,
 	tx pgx.Tx,
 	authority runPlacementAuthority,
-	observationFreshAfter pgtype.Timestamptz,
 ) (runWorker, error) {
 	var worker runWorker
 	err := tx.QueryRow(ctx, `
@@ -570,11 +563,13 @@ SELECT worker_groups.id,
   JOIN runtime_identities
     ON runtime_identities.id = worker_instances.runtime_identity_id
    AND runtime_identities.runtime_arch = $2
-   AND ($7::text = '' OR runtime_identities.id = $7)
+   AND runtime_identities.cni_profile = 'helmr/v0'
+   AND ($6::text = '' OR runtime_identities.id = $6)
   JOIN worker_observations
-    ON worker_observations.worker_instance_id = worker_instances.id
+   ON worker_observations.worker_instance_id = worker_instances.id
    AND worker_observations.worker_epoch = worker_instances.current_epoch
-   AND worker_observations.observed_at >= $3
+   AND worker_observations.observed_at >= transaction_timestamp()
+       - worker_groups.observation_ttl_seconds * interval '1 second'
    AND worker_observations.run_paused_reason IS NULL
   JOIN worker_network_slots
     ON worker_network_slots.worker_group_id = worker_groups.id
@@ -627,15 +622,15 @@ SELECT worker_groups.id,
  WHERE worker_groups.region_id = $1
    AND worker_groups.state = 'active'
    AND worker_groups.allows_run
-   AND worker_instances.per_vm_cpu_millis >= $4
-   AND worker_instances.per_vm_memory_bytes >= $5
-   AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= $6
-   AND worker_instances.certified_cpu_millis - usage.cpu_millis >= $4
-   AND worker_instances.certified_memory_bytes - usage.memory_bytes >= $5
-   AND worker_instances.certified_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes >= $6
-   AND ($8::text = '' OR worker_instances.substrate_format = $8)
-   AND ($9::text = '' OR worker_instances.substrate_builder_abi = $9)
-   AND ($10::text = '' OR worker_instances.substrate_layout_abi = $10)
+   AND worker_instances.per_vm_cpu_millis >= $3
+   AND worker_instances.per_vm_memory_bytes >= $4
+   AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= $5
+   AND worker_instances.certified_cpu_millis - usage.cpu_millis >= $3
+   AND worker_instances.certified_memory_bytes - usage.memory_bytes >= $4
+   AND worker_instances.certified_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes >= $5
+   AND ($7::text = '' OR worker_instances.substrate_format = $7)
+   AND ($8::text = '' OR worker_instances.substrate_builder_abi = $8)
+   AND ($9::text = '' OR worker_instances.substrate_layout_abi = $9)
    AND worker_instances.max_vm_slots > (
        SELECT count(*)
          FROM runtime_instances
@@ -661,7 +656,6 @@ SELECT worker_groups.id,
  LIMIT 1`,
 		authority.regionID,
 		authority.architecture,
-		observationFreshAfter,
 		authority.resources.cpuMillis,
 		authority.resources.memoryBytes,
 		authority.resources.guestEphemeralDiskBytes,

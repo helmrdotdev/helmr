@@ -348,8 +348,6 @@ func run(log *slog.Logger) error {
 		InitramfsDigest:           runtimeCapabilities.InitramfsDigest,
 		RootfsDigest:              runtimeCapabilities.RootfsDigest,
 		CNIProfile:                runtimeCapabilities.CNIProfile,
-		Region:                    cfg.RegionID,
-		Labels:                    cfg.WorkerLabels,
 		MaxVCPUs:                  allocatable.MilliCPU / 1000,
 		MaxMemoryMiB:              allocatable.MemoryMiB,
 		VMMilliCPU:                certifiedVM.MilliCPU,
@@ -363,11 +361,6 @@ func run(log *slog.Logger) error {
 		MaxRuntimeStarts:          int32(runtimeStartLimit),
 		BuildCacheBytes:           substrateCacheMaxBytes,
 		ArtifactCacheBytes:        artifactCacheMaxBytes,
-		Network: api.WorkerNetworkCapabilities{
-			Internet:      true,
-			BlockInternet: true,
-			DenyCIDRs:     true,
-		},
 	}
 	if supportsRun {
 		workerCapabilities.SubstrateFormat = runtime.Format

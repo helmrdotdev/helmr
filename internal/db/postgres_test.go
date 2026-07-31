@@ -177,6 +177,7 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		ID:                              dbtest.DefaultWorkerGroupID,
 		RegionID:                        dbtest.DefaultRegionID,
 		Name:                            dbtest.DefaultWorkerGroupID,
+		ObservationTtlSeconds:           120,
 		EnrollmentPolicyFingerprint:     "sha256:test-worker-group",
 		AllowsRun:                       true,
 		AllowsBuild:                     true,

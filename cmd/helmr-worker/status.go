@@ -44,6 +44,24 @@ func runStatus(log *slog.Logger) error {
 	if status.Status != api.WorkerStatusActive {
 		return fmt.Errorf("worker status is %s", status.Status)
 	}
-	log.Info("worker active", "worker_instance_id", status.WorkerInstanceID, "active_executions", status.ActiveExecutions)
+	if supportsRun {
+		if status.Readiness.Run == nil || !status.Readiness.Run.Ready {
+			return fmt.Errorf("worker run role is not ready: %s", workerPauseReason(status.Readiness.Run))
+		}
+		if status.Readiness.Runtime == nil || !status.Readiness.Runtime.Ready {
+			return fmt.Errorf("worker runtime role is not ready: %s", workerPauseReason(status.Readiness.Runtime))
+		}
+	}
+	if supportsBuild && (status.Readiness.Build == nil || !status.Readiness.Build.Ready) {
+		return fmt.Errorf("worker build role is not ready: %s", workerPauseReason(status.Readiness.Build))
+	}
+	log.Info("worker ready", "worker_instance_id", status.WorkerInstanceID, "active_executions", status.ActiveExecutions)
 	return nil
+}
+
+func workerPauseReason(readiness *api.WorkerRoleReadiness) string {
+	if readiness == nil || readiness.PausedReason == "" {
+		return "unavailable"
+	}
+	return readiness.PausedReason
 }

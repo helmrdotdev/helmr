@@ -38,11 +38,11 @@ type BuildPlacementDiscovery interface {
 }
 
 type RunPlacementAuthority interface {
-	PlaceReadyRun(context.Context, ReadyRunCandidate, pgtype.Timestamptz) (ReadyRunPlacement, error)
+	PlaceReadyRun(context.Context, ReadyRunCandidate) (ReadyRunPlacement, error)
 }
 
 type BuildPlacementAuthority interface {
-	PlaceReadyBuild(context.Context, ReadyBuildCandidate, pgtype.Timestamptz) (db.LeaseQueuedDeploymentBuildRow, error)
+	PlaceReadyBuild(context.Context, ReadyBuildCandidate) (db.LeaseQueuedDeploymentBuildRow, error)
 }
 
 type WorkspaceExecPlacementDiscovery interface {
@@ -60,7 +60,6 @@ type WorkspaceExecPlacementAuthority interface {
 	PlaceWorkspaceExec(
 		context.Context,
 		ReadyWorkspaceExecCandidate,
-		pgtype.Timestamptz,
 	) (WorkspaceExecPlacement, error)
 	RecoverWorkspaceExec(
 		context.Context,
@@ -211,10 +210,6 @@ func (r *PlacementReconciler) ReconcileWorkspaceExecs(ctx context.Context) error
 		return fmt.Errorf("list pending Workspace execs: %w", err)
 	}
 	expiredBefore := time.Now().UTC().Add(-defaultWorkspaceExecPendingTimeout)
-	freshAfter := pgtype.Timestamptz{
-		Time:  time.Now().UTC().Add(-2 * time.Minute),
-		Valid: true,
-	}
 	for _, row := range rows {
 		candidate := ReadyWorkspaceExecCandidate{
 			OrgID:                row.OrgID,
@@ -238,7 +233,6 @@ func (r *PlacementReconciler) ReconcileWorkspaceExecs(ctx context.Context) error
 		placement, err := r.workspaceExecAuthority.PlaceWorkspaceExec(
 			ctx,
 			candidate,
-			freshAfter,
 		)
 		if err != nil {
 			if errors.Is(err, ErrCandidateChanged) ||
@@ -292,7 +286,6 @@ func (r *PlacementReconciler) runLoop(ctx context.Context, domain string, policy
 }
 
 func (r *PlacementReconciler) ReconcileRuns(ctx context.Context) error {
-	freshAfter := pgtype.Timestamptz{Time: time.Now().UTC().Add(-2 * time.Minute), Valid: true}
 	remaining := r.runPolicy.limit
 	attempted := make(map[string]struct{}, r.runPolicy.limit)
 	var problems []error
@@ -325,7 +318,7 @@ func (r *PlacementReconciler) ReconcileRuns(ctx context.Context) error {
 				attempted[message.RunID] = struct{}{}
 				remaining--
 				if err := r.placeRunCandidate(ctx, ReadyRunCandidate{OrgID: orgID, RunID: runID,
-					ExpectedRunStateVersion: message.RunStateVersion}, freshAfter, message.RunID); err != nil {
+					ExpectedRunStateVersion: message.RunStateVersion}, message.RunID); err != nil {
 					problems = append(problems, err)
 				}
 			}
@@ -375,7 +368,7 @@ func (r *PlacementReconciler) ReconcileRuns(ctx context.Context) error {
 			if err := r.placeRunCandidate(ctx, ReadyRunCandidate{
 				OrgID: candidate.OrgID, RunID: candidate.RunID,
 				ExpectedRunStateVersion: candidate.StateVersion,
-			}, freshAfter, runID); err != nil {
+			}, runID); err != nil {
 				problems = append(problems, err)
 			}
 		}
@@ -383,8 +376,8 @@ func (r *PlacementReconciler) ReconcileRuns(ctx context.Context) error {
 	return errors.Join(problems...)
 }
 
-func (r *PlacementReconciler) placeRunCandidate(ctx context.Context, candidate ReadyRunCandidate, freshAfter pgtype.Timestamptz, runID string) error {
-	placement, err := r.runAuthority.PlaceReadyRun(ctx, candidate, freshAfter)
+func (r *PlacementReconciler) placeRunCandidate(ctx context.Context, candidate ReadyRunCandidate, runID string) error {
+	placement, err := r.runAuthority.PlaceReadyRun(ctx, candidate)
 	if err != nil {
 		if errors.Is(err, ErrCandidateChanged) {
 			if cleanupErr := r.ready.RemoveReady(ctx, WorkKindRun, runID, fmt.Sprintf("run:%d", candidate.ExpectedRunStateVersion)); cleanupErr != nil {
@@ -427,7 +420,6 @@ func parseUUID(value string) (pgtype.UUID, error) {
 }
 
 func (r *PlacementReconciler) ReconcileBuilds(ctx context.Context) error {
-	freshAfter := pgtype.Timestamptz{Time: time.Now().UTC().Add(-2 * time.Minute), Valid: true}
 	var problems []error
 	remaining := r.buildPolicy.limit
 	attempted := make(map[string]struct{}, r.buildPolicy.limit)
@@ -452,7 +444,7 @@ func (r *PlacementReconciler) ReconcileBuilds(ctx context.Context) error {
 				attempted[message.DeploymentID] = struct{}{}
 				remaining--
 				if err := r.placeBuildCandidate(ctx, ReadyBuildCandidate{OrgID: orgID, DeploymentID: deploymentID,
-					BuildRegionID: message.RegionID, LeaseSequence: message.LeaseSequence}, freshAfter, message.DeploymentID); err != nil {
+					BuildRegionID: message.RegionID, LeaseSequence: message.LeaseSequence}, message.DeploymentID); err != nil {
 					problems = append(problems, err)
 				}
 			}
@@ -486,7 +478,7 @@ func (r *PlacementReconciler) ReconcileBuilds(ctx context.Context) error {
 				OrgID: candidate.OrgID, DeploymentID: candidate.DeploymentID,
 				BuildRegionID: candidate.BuildRegionID,
 				LeaseSequence: candidate.LeaseSequence,
-			}, freshAfter, deploymentID); err != nil {
+			}, deploymentID); err != nil {
 				problems = append(problems, err)
 			}
 		}
@@ -494,8 +486,8 @@ func (r *PlacementReconciler) ReconcileBuilds(ctx context.Context) error {
 	return errors.Join(problems...)
 }
 
-func (r *PlacementReconciler) placeBuildCandidate(ctx context.Context, candidate ReadyBuildCandidate, freshAfter pgtype.Timestamptz, deploymentID string) error {
-	lease, err := r.buildAuthority.PlaceReadyBuild(ctx, candidate, freshAfter)
+func (r *PlacementReconciler) placeBuildCandidate(ctx context.Context, candidate ReadyBuildCandidate, deploymentID string) error {
+	lease, err := r.buildAuthority.PlaceReadyBuild(ctx, candidate)
 	fence := fmt.Sprintf("build:%d", candidate.LeaseSequence)
 	if err != nil {
 		if errors.Is(err, ErrCandidateChanged) {

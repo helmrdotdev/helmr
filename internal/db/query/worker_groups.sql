@@ -6,7 +6,7 @@ WITH desired_group AS (
         allows_run, allows_build, protocol_version,
         required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes,
         required_build_cache_bytes, required_artifact_cache_bytes,
-        required_vm_slots, required_build_executors
+        required_vm_slots, required_build_executors, observation_ttl_seconds
     ) VALUES (
         sqlc.arg(id), sqlc.arg(region_id), sqlc.arg(name), sqlc.arg(description),
         'active', sqlc.arg(enrollment_policy_fingerprint), sqlc.arg(allowed_attestation_fingerprints),
@@ -15,7 +15,8 @@ WITH desired_group AS (
         sqlc.arg(required_cpu_millis), sqlc.arg(required_memory_bytes),
         sqlc.arg(required_guest_ephemeral_disk_bytes),
         sqlc.arg(required_build_cache_bytes), sqlc.arg(required_artifact_cache_bytes),
-        sqlc.arg(required_vm_slots), sqlc.arg(required_build_executors)
+        sqlc.arg(required_vm_slots), sqlc.arg(required_build_executors),
+        sqlc.arg(observation_ttl_seconds)
     )
     ON CONFLICT (id) DO UPDATE
        SET claim_version = CASE
@@ -30,9 +31,10 @@ WITH desired_group AS (
                  OR worker_groups.required_artifact_cache_bytes IS DISTINCT FROM EXCLUDED.required_artifact_cache_bytes
                  OR worker_groups.required_vm_slots IS DISTINCT FROM EXCLUDED.required_vm_slots
                  OR worker_groups.required_build_executors IS DISTINCT FROM EXCLUDED.required_build_executors
+                 OR worker_groups.observation_ttl_seconds IS DISTINCT FROM EXCLUDED.observation_ttl_seconds
                THEN worker_groups.claim_version + 1 ELSE worker_groups.claim_version END,
            region_id = EXCLUDED.region_id, name = EXCLUDED.name,
-           description = EXCLUDED.description, state = 'active',
+           description = EXCLUDED.description,
            enrollment_policy_fingerprint = EXCLUDED.enrollment_policy_fingerprint,
            allowed_attestation_fingerprints = EXCLUDED.allowed_attestation_fingerprints,
            launch_attestation_fingerprint = EXCLUDED.launch_attestation_fingerprint,
@@ -44,6 +46,7 @@ WITH desired_group AS (
            required_artifact_cache_bytes = EXCLUDED.required_artifact_cache_bytes,
            required_vm_slots = EXCLUDED.required_vm_slots,
            required_build_executors = EXCLUDED.required_build_executors,
+           observation_ttl_seconds = EXCLUDED.observation_ttl_seconds,
            protocol_version = EXCLUDED.protocol_version,
            updated_at = now()
     RETURNING *
@@ -230,32 +233,14 @@ SELECT id AS worker_group_id,
  WHERE id = sqlc.arg(worker_group_id);
 
 -- name: CertifyWorkerInstance :one
-WITH runtime AS (
-    INSERT INTO runtime_identities (
-        id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
-        rootfs_digest, cni_profile, last_seen_at
-    ) VALUES (
-        sqlc.arg(runtime_identity_id), sqlc.arg(runtime_arch), sqlc.arg(runtime_abi),
-        sqlc.arg(kernel_digest), sqlc.arg(initramfs_digest), sqlc.arg(rootfs_digest),
-        sqlc.arg(cni_profile), now()
-    )
-    ON CONFLICT (id) DO UPDATE SET last_seen_at = now()
-     WHERE runtime_identities.runtime_arch = EXCLUDED.runtime_arch
-       AND runtime_identities.runtime_abi = EXCLUDED.runtime_abi
-       AND runtime_identities.kernel_digest = EXCLUDED.kernel_digest
-       AND runtime_identities.initramfs_digest = EXCLUDED.initramfs_digest
-       AND runtime_identities.rootfs_digest = EXCLUDED.rootfs_digest
-       AND runtime_identities.cni_profile = EXCLUDED.cni_profile
-    RETURNING id
-), activation AS (
-    SELECT worker_instances.id, worker_instances.worker_group_id,
-           worker_instances.current_epoch
+WITH activation AS (
+    SELECT worker_instances.*,
+           worker_instances.state AS prior_state
       FROM worker_instances
       JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
      WHERE worker_instances.id = sqlc.arg(worker_instance_id)
        AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
        AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
-       AND worker_instances.state = 'registering'
        AND btrim(sqlc.arg(supervisor_version)::text) <> ''
        AND (NOT sqlc.arg(supports_run)::boolean OR worker_groups.allows_run)
        AND (NOT sqlc.arg(supports_build)::boolean OR worker_groups.allows_build)
@@ -268,7 +253,54 @@ WITH runtime AS (
        AND sqlc.arg(max_build_executors)::integer >= worker_groups.required_build_executors
        AND (NOT sqlc.arg(supports_run)::boolean
             OR worker_instances.startup_inventory_epoch = worker_instances.current_epoch)
-     FOR UPDATE
+       AND (
+           worker_instances.state = 'registering'
+           OR (
+               worker_instances.state = 'active'
+               AND worker_instances.runtime_identity_id = sqlc.arg(runtime_identity_id)::text
+               AND worker_instances.protocol_version = sqlc.arg(protocol_version)
+               AND worker_instances.supervisor_version = sqlc.arg(supervisor_version)
+               AND worker_instances.supports_run = sqlc.arg(supports_run)
+               AND worker_instances.supports_build = sqlc.arg(supports_build)
+               AND worker_instances.substrate_format = sqlc.arg(substrate_format)
+               AND worker_instances.substrate_builder_abi = sqlc.arg(substrate_builder_abi)
+               AND worker_instances.substrate_layout_abi = sqlc.arg(substrate_layout_abi)
+               AND worker_instances.certified_cpu_millis = sqlc.arg(certified_cpu_millis)
+               AND worker_instances.certified_memory_bytes = sqlc.arg(certified_memory_bytes)
+               AND worker_instances.certified_guest_ephemeral_disk_bytes = sqlc.arg(certified_guest_ephemeral_disk_bytes)
+               AND worker_instances.certified_build_cache_bytes = sqlc.arg(certified_build_cache_bytes)
+               AND worker_instances.certified_artifact_cache_bytes = sqlc.arg(certified_artifact_cache_bytes)
+               AND worker_instances.certified_hugepages_bytes = sqlc.arg(certified_hugepages_bytes)
+               AND worker_instances.certified_checkpoint_bytes = sqlc.arg(certified_checkpoint_bytes)
+               AND worker_instances.per_vm_cpu_millis = sqlc.arg(per_vm_cpu_millis)
+               AND worker_instances.per_vm_memory_bytes = sqlc.arg(per_vm_memory_bytes)
+               AND worker_instances.per_vm_guest_ephemeral_disk_bytes = sqlc.arg(per_vm_guest_ephemeral_disk_bytes)
+               AND worker_instances.max_vm_slots = sqlc.arg(max_vm_slots)
+               AND worker_instances.max_run_consumers = sqlc.arg(max_run_consumers)
+               AND worker_instances.max_build_executors = sqlc.arg(max_build_executors)
+               AND worker_instances.max_runtime_starts = sqlc.arg(max_runtime_starts)
+               AND worker_instances.certification_profile = sqlc.arg(certification_profile)
+               AND worker_instances.certification_fingerprint = sqlc.arg(certification_fingerprint)
+           )
+       )
+     FOR UPDATE OF worker_instances
+), runtime AS (
+    INSERT INTO runtime_identities (
+        id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
+        rootfs_digest, cni_profile, last_seen_at
+    )
+    SELECT sqlc.arg(runtime_identity_id), sqlc.arg(runtime_arch), sqlc.arg(runtime_abi),
+           sqlc.arg(kernel_digest), sqlc.arg(initramfs_digest), sqlc.arg(rootfs_digest),
+           sqlc.arg(cni_profile), now()
+      FROM activation
+    ON CONFLICT (id) DO UPDATE SET last_seen_at = now()
+     WHERE runtime_identities.runtime_arch = EXCLUDED.runtime_arch
+       AND runtime_identities.runtime_abi = EXCLUDED.runtime_abi
+       AND runtime_identities.kernel_digest = EXCLUDED.kernel_digest
+       AND runtime_identities.initramfs_digest = EXCLUDED.initramfs_digest
+       AND runtime_identities.rootfs_digest = EXCLUDED.rootfs_digest
+       AND runtime_identities.cni_profile = EXCLUDED.cni_profile
+    RETURNING id
 ), slots AS (
     INSERT INTO worker_network_slots (
         id, worker_group_id, worker_instance_id, worker_epoch, slot_name,
@@ -286,6 +318,7 @@ WITH runtime AS (
       FROM activation
       CROSS JOIN LATERAL generate_series(1, sqlc.arg(max_vm_slots)::integer) AS slot(ordinal)
      WHERE sqlc.arg(supports_run)::boolean
+    ON CONFLICT (id) DO NOTHING
     RETURNING worker_instance_id
 ), certified AS (
     UPDATE worker_instances
@@ -311,10 +344,13 @@ WITH runtime AS (
            max_runtime_starts = sqlc.arg(max_runtime_starts),
            certification_profile = sqlc.arg(certification_profile),
            certification_fingerprint = sqlc.arg(certification_fingerprint),
-           certified_at = now(), activated_at = now(), updated_at = now()
+           certified_at = now(),
+           activated_at = COALESCE(worker_instances.activated_at, now()),
+           updated_at = now()
       FROM runtime, activation
      WHERE worker_instances.id = activation.id
-       AND (NOT sqlc.arg(supports_run)::boolean
+       AND (activation.prior_state = 'active'
+            OR NOT sqlc.arg(supports_run)::boolean
             OR (SELECT count(*) FROM slots) = sqlc.arg(max_vm_slots)::integer)
     RETURNING worker_instances.*
 ), observation AS (
@@ -323,16 +359,22 @@ WITH runtime AS (
         guest_ephemeral_disk_pressure_bps, build_cache_pressure_bps,
         artifact_cache_pressure_bps, checkpoint_pressure_bps, leaked_slot_count,
         run_queue_depth, build_queue_depth, runtime_start_queue_depth, health_details,
-        observed_at
+        run_paused_reason, build_paused_reason, runtime_paused_reason, observed_at
     )
     SELECT certified.id, certified.current_epoch, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-           '{}'::jsonb, now() FROM certified
+           '{}'::jsonb,
+           CASE WHEN certified.supports_run THEN 'datapath_unverified' END,
+           CASE WHEN certified.supports_build THEN 'datapath_unverified' END,
+           CASE WHEN certified.supports_run THEN 'datapath_unverified' END,
+           now()
+      FROM certified
     ON CONFLICT (worker_instance_id, worker_epoch) DO NOTHING
     RETURNING worker_instance_id
 )
 SELECT certified.*
   FROM certified
-  JOIN observation ON observation.worker_instance_id = certified.id;
+ WHERE EXISTS (SELECT 1 FROM observation)
+    OR EXISTS (SELECT 1 FROM activation WHERE activation.prior_state = 'active');
 
 -- name: RecordWorkerObservation :one
 WITH target AS (
@@ -342,7 +384,7 @@ WITH target AS (
        AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
        AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
        AND worker_instances.state IN ('active','draining')
-     FOR UPDATE
+     FOR UPDATE OF worker_instances
 )
 INSERT INTO worker_observations (
     worker_instance_id, worker_epoch, cpu_pressure_bps, memory_pressure_bps,
@@ -387,38 +429,38 @@ UPDATE worker_instances
   FROM worker_groups
  WHERE worker_instances.id = sqlc.arg(worker_instance_id)
    AND worker_groups.id = worker_instances.worker_group_id
-	AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
-	AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
-	AND worker_instances.state = 'active'
-	AND worker_instances.runtime_identity_id = sqlc.arg(runtime_identity_id)::text
-	AND worker_instances.protocol_version = sqlc.arg(protocol_version)
-	AND worker_instances.supports_run = sqlc.arg(supports_run)
-	AND worker_instances.supports_build = sqlc.arg(supports_build)
-	AND worker_instances.substrate_format = sqlc.arg(substrate_format)
-	AND worker_instances.substrate_builder_abi = sqlc.arg(substrate_builder_abi)
-	AND worker_instances.substrate_layout_abi = sqlc.arg(substrate_layout_abi)
-	AND worker_instances.certified_cpu_millis = sqlc.arg(certified_cpu_millis)
-	AND worker_instances.certified_memory_bytes = sqlc.arg(certified_memory_bytes)
-	AND worker_instances.certified_guest_ephemeral_disk_bytes = sqlc.arg(certified_guest_ephemeral_disk_bytes)
-	AND worker_instances.certified_build_cache_bytes = sqlc.arg(certified_build_cache_bytes)
-	AND worker_instances.certified_artifact_cache_bytes = sqlc.arg(certified_artifact_cache_bytes)
-	AND worker_instances.certified_hugepages_bytes = sqlc.arg(certified_hugepages_bytes)
-	AND worker_instances.certified_checkpoint_bytes = sqlc.arg(certified_checkpoint_bytes)
-	AND worker_instances.per_vm_cpu_millis = sqlc.arg(per_vm_cpu_millis)
-	AND worker_instances.per_vm_memory_bytes = sqlc.arg(per_vm_memory_bytes)
-	AND worker_instances.per_vm_guest_ephemeral_disk_bytes = sqlc.arg(per_vm_guest_ephemeral_disk_bytes)
-	AND worker_instances.max_vm_slots = sqlc.arg(max_vm_slots)
-	AND worker_instances.max_run_consumers = sqlc.arg(max_run_consumers)
-	AND worker_instances.max_build_executors = sqlc.arg(max_build_executors)
-	AND worker_instances.max_runtime_starts = sqlc.arg(max_runtime_starts)
-	AND worker_instances.certified_cpu_millis >= worker_groups.required_cpu_millis
-	AND worker_instances.certified_memory_bytes >= worker_groups.required_memory_bytes
-	AND worker_instances.certified_guest_ephemeral_disk_bytes >= worker_groups.required_guest_ephemeral_disk_bytes
-	AND worker_instances.certified_build_cache_bytes >= worker_groups.required_build_cache_bytes
-	AND worker_instances.certified_artifact_cache_bytes >= worker_groups.required_artifact_cache_bytes
-	AND worker_instances.max_vm_slots >= worker_groups.required_vm_slots
-	AND worker_instances.max_build_executors >= worker_groups.required_build_executors
-RETURNING *;
+   AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
+   AND worker_instances.state = 'active'
+   AND worker_instances.runtime_identity_id = sqlc.arg(runtime_identity_id)::text
+   AND worker_instances.protocol_version = sqlc.arg(protocol_version)
+   AND worker_instances.supports_run = sqlc.arg(supports_run)
+   AND worker_instances.supports_build = sqlc.arg(supports_build)
+   AND worker_instances.substrate_format = sqlc.arg(substrate_format)
+   AND worker_instances.substrate_builder_abi = sqlc.arg(substrate_builder_abi)
+   AND worker_instances.substrate_layout_abi = sqlc.arg(substrate_layout_abi)
+   AND worker_instances.certified_cpu_millis = sqlc.arg(certified_cpu_millis)
+   AND worker_instances.certified_memory_bytes = sqlc.arg(certified_memory_bytes)
+   AND worker_instances.certified_guest_ephemeral_disk_bytes = sqlc.arg(certified_guest_ephemeral_disk_bytes)
+   AND worker_instances.certified_build_cache_bytes = sqlc.arg(certified_build_cache_bytes)
+   AND worker_instances.certified_artifact_cache_bytes = sqlc.arg(certified_artifact_cache_bytes)
+   AND worker_instances.certified_hugepages_bytes = sqlc.arg(certified_hugepages_bytes)
+   AND worker_instances.certified_checkpoint_bytes = sqlc.arg(certified_checkpoint_bytes)
+   AND worker_instances.per_vm_cpu_millis = sqlc.arg(per_vm_cpu_millis)
+   AND worker_instances.per_vm_memory_bytes = sqlc.arg(per_vm_memory_bytes)
+   AND worker_instances.per_vm_guest_ephemeral_disk_bytes = sqlc.arg(per_vm_guest_ephemeral_disk_bytes)
+   AND worker_instances.max_vm_slots = sqlc.arg(max_vm_slots)
+   AND worker_instances.max_run_consumers = sqlc.arg(max_run_consumers)
+   AND worker_instances.max_build_executors = sqlc.arg(max_build_executors)
+   AND worker_instances.max_runtime_starts = sqlc.arg(max_runtime_starts)
+   AND worker_instances.certified_cpu_millis >= worker_groups.required_cpu_millis
+   AND worker_instances.certified_memory_bytes >= worker_groups.required_memory_bytes
+   AND worker_instances.certified_guest_ephemeral_disk_bytes >= worker_groups.required_guest_ephemeral_disk_bytes
+   AND worker_instances.certified_build_cache_bytes >= worker_groups.required_build_cache_bytes
+   AND worker_instances.certified_artifact_cache_bytes >= worker_groups.required_artifact_cache_bytes
+   AND worker_instances.max_vm_slots >= worker_groups.required_vm_slots
+   AND worker_instances.max_build_executors >= worker_groups.required_build_executors
+RETURNING worker_instances.*;
 
 -- name: RecordWorkerStartupRecovery :one
 WITH target AS (

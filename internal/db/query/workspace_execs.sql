@@ -353,6 +353,34 @@ SELECT sqlc.embed(workspace_processes),
    AND workspace_leases.owner_process_id = workspace_processes.id
   JOIN workspaces
     ON workspaces.id = workspace_processes.workspace_id
+  JOIN worker_groups
+    ON worker_groups.id = workspace_processes.worker_group_id
+   AND worker_groups.region_id = workspace_processes.region_id
+  JOIN worker_instances
+    ON worker_instances.id = workspace_processes.worker_instance_id
+   AND worker_instances.worker_group_id = workspace_processes.worker_group_id
+   AND worker_instances.current_epoch = workspace_processes.worker_epoch
+  JOIN worker_observations
+    ON worker_observations.worker_instance_id = worker_instances.id
+   AND worker_observations.worker_epoch = worker_instances.current_epoch
+  JOIN runtime_instances
+    ON runtime_instances.id = workspace_processes.runtime_instance_id
+   AND runtime_instances.org_id = workspace_processes.org_id
+   AND runtime_instances.project_id = workspace_processes.project_id
+   AND runtime_instances.environment_id = workspace_processes.environment_id
+   AND runtime_instances.region_id = workspace_processes.region_id
+   AND runtime_instances.worker_group_id = workspace_processes.worker_group_id
+   AND runtime_instances.worker_instance_id = workspace_processes.worker_instance_id
+   AND runtime_instances.worker_epoch = workspace_processes.worker_epoch
+   AND runtime_instances.workspace_id = workspace_processes.workspace_id
+  JOIN runtime_identities
+    ON runtime_identities.id = runtime_instances.runtime_identity_id
+  JOIN runtime_substrates
+    ON runtime_substrates.id = runtime_instances.runtime_substrate_id
+   AND runtime_substrates.org_id = runtime_instances.org_id
+   AND runtime_substrates.project_id = runtime_instances.project_id
+   AND runtime_substrates.environment_id = runtime_instances.environment_id
+   AND runtime_substrates.deployment_definition_id = runtime_instances.deployment_definition_id
   JOIN idempotency_claims
     ON idempotency_claims.environment_id = workspace_processes.environment_id
    AND idempotency_claims.id = workspace_processes.claim_id
@@ -370,7 +398,37 @@ SELECT sqlc.embed(workspace_processes),
    AND workspace_leases.ownership_generation = workspaces.ownership_generation
    AND workspace_leases.writer_generation = workspaces.writer_generation
    AND workspace_leases.mount_fencing_generation = workspace_mounts.fencing_generation
- FOR UPDATE OF workspace_processes, workspace_mounts, workspace_leases;
+   AND (
+       workspace_processes.state <> 'starting'
+       OR (
+           worker_groups.state = 'active'
+           AND worker_groups.allows_run
+           AND worker_groups.protocol_version = worker_instances.protocol_version
+           AND worker_instances.state = 'active'
+           AND worker_instances.supports_run
+           AND worker_instances.certified_at IS NOT NULL
+           AND worker_instances.runtime_identity_id = runtime_instances.runtime_identity_id
+           AND runtime_identities.cni_profile = 'helmr/v0'
+           AND worker_observations.observed_at >= transaction_timestamp()
+               - worker_groups.observation_ttl_seconds * interval '1 second'
+           AND worker_observations.run_paused_reason IS NULL
+           AND runtime_instances.desired_state = 'ready'
+           AND runtime_instances.observed_state = 'ready'
+           AND runtime_instances.observed_desired_version = runtime_instances.desired_version
+           AND runtime_instances.reclaimed_at IS NULL
+           AND worker_instances.per_vm_cpu_millis >= runtime_instances.reserved_cpu_millis
+           AND worker_instances.per_vm_memory_bytes >= runtime_instances.reserved_memory_bytes
+           AND worker_instances.per_vm_guest_ephemeral_disk_bytes >=
+               runtime_instances.reserved_guest_ephemeral_disk_bytes
+           AND runtime_instances.runtime_substrate_id IS NOT NULL
+           AND runtime_substrates.substrate_format = worker_instances.substrate_format
+           AND runtime_substrates.builder_abi = worker_instances.substrate_builder_abi
+           AND runtime_substrates.layout_abi = worker_instances.substrate_layout_abi
+       )
+   )
+ FOR UPDATE OF worker_groups, worker_instances, worker_observations,
+               runtime_instances, workspace_processes, workspace_mounts,
+               workspace_leases;
 
 -- name: GetWorkspaceExecLocatorForMount :one
 SELECT workspace_processes.id,

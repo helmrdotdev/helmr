@@ -36,7 +36,7 @@ func activateWorkspaceWorker(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	`, workerID, runtime.Format, runtime.BuilderABI, runtime.LayoutABI)
 }
 
-func TestWorkerEnrollmentConsumesNonceAndRotatesCredentialAtomically(t *testing.T) {
+func TestDisabledWorkerRecommissionConsumesNonceAndRotatesCredentialAtomically(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	queries := db.New(pool)
@@ -127,6 +127,11 @@ func TestWorkerEnrollmentConsumesNonceAndRotatesCredentialAtomically(t *testing.
 
 	secondNonce := []byte("second-nonce-hash")
 	createNonce(secondNonce)
+	mustExec(t, ctx, pool, `
+		UPDATE worker_instances
+		   SET state = 'disabled', disabled_at = now()
+		 WHERE id = $1
+	`, first.WorkerInstanceID)
 	secondSecret := []byte("second-secret")
 	second := createCredential(secondNonce, "i-stable", secondSecret)
 	if first.WorkerInstanceID != second.WorkerInstanceID {
@@ -227,6 +232,7 @@ func TestWorkerGroupPolicyChangeRevokesExistingEnrollment(t *testing.T) {
 		t.Helper()
 		group, err := queries.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
 			ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
+			ObservationTtlSeconds:       120,
 			EnrollmentPolicyFingerprint: fingerprint, AllowsRun: true,
 			AllowsBuild: false, ProtocolVersion: auth.WorkerProtocolVersion,
 			AllowedAttestationFingerprints: allowed,
@@ -364,6 +370,7 @@ func TestWorkerGroupPolicyReconciliationSerializesAfterConcurrentEnrollment(t *t
 	groupID := "policy-race-" + shortUUID(uuid.Must(uuid.NewV7()))
 	if _, err := q.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
 		ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
+		ObservationTtlSeconds:       120,
 		EnrollmentPolicyFingerprint: "sha256:policy-old", AllowsRun: true,
 		ProtocolVersion:                auth.WorkerProtocolVersion,
 		AllowedAttestationFingerprints: []string{"sha256:attestation-old"},
@@ -402,6 +409,7 @@ func TestWorkerGroupPolicyReconciliationSerializesAfterConcurrentEnrollment(t *t
 		}); err == nil {
 			_, err = qt.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
 				ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
+				ObservationTtlSeconds:       120,
 				EnrollmentPolicyFingerprint: "sha256:policy-new", AllowsRun: true,
 				ProtocolVersion:                auth.WorkerProtocolVersion,
 				AllowedAttestationFingerprints: []string{"sha256:attestation-new"},
@@ -561,6 +569,7 @@ func TestDisableAbsentWorkerGroupsRefusesLiveOrFencedMembers(t *testing.T) {
 	groupID := "retire-" + shortUUID(uuid.Must(uuid.NewV7()))
 	if _, err := queries.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
 		ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
+		ObservationTtlSeconds:       120,
 		EnrollmentPolicyFingerprint: "sha256:retire", AllowsRun: true,
 		ProtocolVersion:                auth.WorkerProtocolVersion,
 		AllowedAttestationFingerprints: []string{"sha256:retire"},
@@ -642,6 +651,7 @@ func TestAbsentWorkerGroupRemovalSerializesWithEnrollment(t *testing.T) {
 		q := db.New(pool)
 		if _, err := q.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
 			ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
+			ObservationTtlSeconds:       120,
 			EnrollmentPolicyFingerprint: "sha256:" + suffix, AllowsRun: true,
 			ProtocolVersion:                auth.WorkerProtocolVersion,
 			AllowedAttestationFingerprints: []string{"sha256:" + suffix},
@@ -767,6 +777,7 @@ func TestWorkerGroupRoleNarrowingFencesExistingCapabilities(t *testing.T) {
 	attestation := "sha256:role-narrow"
 	if _, err := q.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
 		ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
+		ObservationTtlSeconds:       120,
 		EnrollmentPolicyFingerprint: "sha256:roles-both", AllowsRun: true, AllowsBuild: true,
 		ProtocolVersion: auth.WorkerProtocolVersion, AllowedAttestationFingerprints: []string{attestation},
 		RequiredCpuMillis: 1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1, RequiredVmSlots: 1, RequiredBuildExecutors: 1,
@@ -793,6 +804,7 @@ func TestWorkerGroupRoleNarrowingFencesExistingCapabilities(t *testing.T) {
 	}
 	if _, err := q.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
 		ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
+		ObservationTtlSeconds:       120,
 		EnrollmentPolicyFingerprint: "sha256:roles-run", AllowsRun: true, AllowsBuild: false,
 		ProtocolVersion: auth.WorkerProtocolVersion, AllowedAttestationFingerprints: []string{attestation},
 		RequiredCpuMillis: 1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1, RequiredVmSlots: 1,
@@ -814,6 +826,136 @@ func TestWorkerGroupRoleNarrowingFencesExistingCapabilities(t *testing.T) {
 	}
 }
 
+func TestLostWorkerIdentityCannotReenroll(t *testing.T) {
+	ctx := context.Background()
+	pool := newPostgresDB(t, ctx)
+	q := db.New(pool)
+	groupID := "lost-terminal-" + shortUUID(uuid.Must(uuid.NewV7()))
+	const resourceID = "i-lost-terminal"
+	const policy = "sha256:lost-terminal-policy"
+	const attestation = "sha256:lost-terminal-attestation"
+	if _, err := q.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
+		ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
+		ObservationTtlSeconds:       120,
+		EnrollmentPolicyFingerprint: policy,
+		AllowsBuild:                 true, ProtocolVersion: auth.WorkerProtocolVersion,
+		AllowedAttestationFingerprints: []string{attestation},
+		RequiredCpuMillis:              1, RequiredMemoryBytes: 1,
+		RequiredGuestEphemeralDiskBytes: 1, RequiredBuildExecutors: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	enroll := func(nonce []byte) (db.EnrollWorkerInstanceRow, error) {
+		if _, err := q.CreateWorkerEnrollmentNonce(ctx, db.CreateWorkerEnrollmentNonceParams{
+			ID: pgvalue.NewUUIDv7(), NonceHash: nonce, WorkerGroupID: groupID,
+			ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return q.EnrollWorkerInstance(ctx, db.EnrollWorkerInstanceParams{
+			NonceHash: nonce, WorkerGroupID: groupID,
+			AllowsRun: false, AllowsBuild: true, ProtocolVersion: auth.WorkerProtocolVersion,
+			WorkerInstanceID: pgvalue.NewUUIDv7(), ResourceID: resourceID,
+			CurrentServiceID: pgvalue.NewUUIDv7(), CredentialID: pgvalue.NewUUIDv7(),
+			KeyPrefix: uuid.NewString(), SecretHash: []byte(uuid.NewString()),
+			EnrollmentPolicyFingerprint: policy, AttestationFingerprint: attestation,
+		})
+	}
+	credential, err := enroll([]byte("lost-terminal-first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE worker_instances
+		   SET state = 'lost',
+		       current_epoch = 1,
+		       current_service_id = $2,
+		       epoch_started_at = now(),
+		       lost_at = now(),
+		       updated_at = now()
+		 WHERE id = $1
+	`, credential.WorkerInstanceID, uuid.Must(uuid.NewV7())); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := enroll([]byte("lost-terminal-second")); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("lost identity re-enrollment error = %v, want pgx.ErrNoRows", err)
+	}
+}
+
+func TestWorkerIdentityCannotReenrollBeforeDisabled(t *testing.T) {
+	for _, state := range []db.WorkerInstanceState{
+		db.WorkerInstanceStateRegistering,
+		db.WorkerInstanceStateActive,
+		db.WorkerInstanceStateDraining,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			ctx := context.Background()
+			pool := newPostgresDB(t, ctx)
+			q := db.New(pool)
+			_ = seedPostgres(t, ctx, pool)
+			resourceID := "i-reenroll-" + string(state)
+			enroll := func(nonce []byte, secret []byte) (db.EnrollWorkerInstanceRow, error) {
+				if _, err := q.CreateWorkerEnrollmentNonce(ctx, db.CreateWorkerEnrollmentNonceParams{
+					ID: pgvalue.NewUUIDv7(), NonceHash: nonce,
+					WorkerGroupID: dbtest.DefaultWorkerGroupID,
+					ExpiresAt:     pgvalue.Timestamptz(time.Now().Add(time.Minute)),
+				}); err != nil {
+					t.Fatal(err)
+				}
+				return q.EnrollWorkerInstance(ctx, db.EnrollWorkerInstanceParams{
+					NonceHash: nonce, WorkerGroupID: dbtest.DefaultWorkerGroupID,
+					AllowsRun: true, AllowsBuild: true, ProtocolVersion: auth.WorkerProtocolVersion,
+					WorkerInstanceID: pgvalue.NewUUIDv7(), ResourceID: resourceID,
+					CurrentServiceID: pgvalue.NewUUIDv7(), CredentialID: pgvalue.NewUUIDv7(),
+					KeyPrefix: uuid.NewString(), SecretHash: secret,
+					EnrollmentPolicyFingerprint: "sha256:test-worker-group",
+					AttestationFingerprint:      "sha256:test-attestation",
+				})
+			}
+
+			firstSecret := []byte("first-" + string(state))
+			first, err := enroll([]byte("first-"+string(state)), firstSecret)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state != db.WorkerInstanceStateRegistering {
+				authenticated, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
+					SupportsRun: true, SupportsBuild: true,
+					WorkerInstanceID: first.WorkerInstanceID, SecretHash: firstSecret,
+					ProtocolVersion: auth.WorkerProtocolVersion, ServiceID: pgvalue.NewUUIDv7(),
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				activateWorkspaceWorker(t, ctx, pool, pgvalue.MustUUIDValue(first.WorkerInstanceID))
+				if state == db.WorkerInstanceStateDraining {
+					if _, err := q.DrainWorkerInstance(ctx, db.DrainWorkerInstanceParams{
+						ID: first.WorkerInstanceID, WorkerGroupID: dbtest.DefaultWorkerGroupID,
+						ExpectedEpoch: authenticated.CurrentEpoch,
+					}); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+
+			secondNonce := []byte("second-" + string(state))
+			if _, err := enroll(secondNonce, []byte("second-"+string(state))); !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("%s identity re-enrollment error = %v, want pgx.ErrNoRows", state, err)
+			}
+			var consumed bool
+			if err := pool.QueryRow(ctx,
+				`SELECT consumed_at IS NOT NULL FROM worker_enrollment_nonces WHERE nonce_hash = $1`,
+				secondNonce,
+			).Scan(&consumed); err != nil {
+				t.Fatal(err)
+			}
+			if consumed {
+				t.Fatalf("%s identity rejection consumed its enrollment nonce", state)
+			}
+		})
+	}
+}
+
 func TestBuildOnlyWorkerCertificationRetainsRuntimeContract(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
@@ -821,7 +963,8 @@ func TestBuildOnlyWorkerCertificationRetainsRuntimeContract(t *testing.T) {
 	const workerGroupID = "test-build-workers"
 	if _, err := queries.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
 		ID: workerGroupID, RegionID: dbtest.DefaultRegionID, Name: "build",
-		Description: "build workers", AllowsRun: false, AllowsBuild: true,
+		ObservationTtlSeconds: 120,
+		Description:           "build workers", AllowsRun: false, AllowsBuild: true,
 		ProtocolVersion: auth.WorkerProtocolVersion, EnrollmentPolicyFingerprint: "sha256:test-build-policy",
 		AllowedAttestationFingerprints: []string{"sha256:test-build-attestation"},
 		RequiredCpuMillis:              1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1, RequiredBuildExecutors: 1,

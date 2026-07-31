@@ -30,6 +30,9 @@ func Reconcile(ctx context.Context, store ReconcileStore, regionID string, desir
 		if err := group.Capacity.Validate(spec); err != nil {
 			return fmt.Errorf("validate worker group %q capacity: %w", spec.ID, err)
 		}
+		if group.ObservationTTLSeconds <= 0 {
+			return fmt.Errorf("validate worker group %q: observation TTL must be positive", spec.ID)
+		}
 		if _, duplicate := seen[spec.ID]; duplicate {
 			return fmt.Errorf("worker group %q is duplicated", spec.ID)
 		}
@@ -52,6 +55,7 @@ func Reconcile(ctx context.Context, store ReconcileStore, regionID string, desir
 			RequiredGuestEphemeralDiskBytes: group.Capacity.GuestEphemeralDiskBytes,
 			RequiredBuildCacheBytes:         group.Capacity.BuildCacheBytes, RequiredArtifactCacheBytes: group.Capacity.ArtifactCacheBytes,
 			RequiredVmSlots: group.Capacity.VMSlots, RequiredBuildExecutors: group.Capacity.BuildExecutors,
+			ObservationTtlSeconds:          group.ObservationTTLSeconds,
 			ProtocolVersion:                auth.WorkerProtocolVersion,
 			EnrollmentPolicyFingerprint:    group.EnrollmentPolicyFingerprint,
 			AllowedAttestationFingerprints: group.AllowedAttestationFingerprints,

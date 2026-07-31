@@ -46,12 +46,10 @@ type runPlacementFixture struct {
 func TestPlaceReadyRunPreparesMountAndGrantsFencedLeases(t *testing.T) {
 	fixture := newRunPlacementFixture(t)
 	candidate := fixture.candidate()
-	freshAfter := pgvalue.Timestamptz(time.Now().Add(-time.Minute))
 
 	reserved, err := fixture.authority.PlaceReadyRun(
 		fixture.ctx,
 		candidate,
-		freshAfter,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +88,6 @@ UPDATE worker_network_slots
 	mounting, err := fixture.authority.PlaceReadyRun(
 		fixture.ctx,
 		candidate,
-		freshAfter,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +108,6 @@ UPDATE workspace_mounts
 	granted, err := fixture.authority.PlaceReadyRun(
 		fixture.ctx,
 		candidate,
-		freshAfter,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -198,12 +194,10 @@ SELECT runs.current_run_lease_id,
 
 func TestPlaceReadyRunGrantsSameWorkspaceChildOnRetainedRuntime(t *testing.T) {
 	fixture := newRunPlacementFixture(t)
-	freshAfter := pgvalue.Timestamptz(time.Now().Add(-time.Minute))
 	parentCandidate := fixture.candidate()
 	reserved, err := fixture.authority.PlaceReadyRun(
 		fixture.ctx,
 		parentCandidate,
-		freshAfter,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -212,7 +206,6 @@ func TestPlaceReadyRunGrantsSameWorkspaceChildOnRetainedRuntime(t *testing.T) {
 	mounting, err := fixture.authority.PlaceReadyRun(
 		fixture.ctx,
 		parentCandidate,
-		freshAfter,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -221,7 +214,6 @@ func TestPlaceReadyRunGrantsSameWorkspaceChildOnRetainedRuntime(t *testing.T) {
 	parent, err := fixture.authority.PlaceReadyRun(
 		fixture.ctx,
 		parentCandidate,
-		freshAfter,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -453,7 +445,6 @@ UPDATE workspace_mounts
 	granted, err := fixture.authority.PlaceReadyRun(
 		fixture.ctx,
 		childCandidate,
-		freshAfter,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -669,7 +660,6 @@ UPDATE run_waits
 			OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(fixture.runID),
 			ExpectedRunStateVersion: 4,
 		},
-		freshAfter,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -795,7 +785,6 @@ SELECT runs.state_version, run_waits.resume_writer_generation,
 			OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(fixture.runID),
 			ExpectedRunStateVersion: recoveredRunVersion,
 		},
-		freshAfter,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -908,21 +897,21 @@ UPDATE workspace_leases
 			ExpectedRunStateVersion: currentRunVersion(),
 		}
 		reservedRestore, err := fixture.authority.PlaceReadyRun(
-			fixture.ctx, candidate, freshAfter,
+			fixture.ctx, candidate,
 		)
 		if err != nil {
 			t.Fatal(err)
 		}
 		markRunPlacementRuntimeReady(t, fixture, reservedRestore.RuntimeInstanceID)
 		mountingRestore, err := fixture.authority.PlaceReadyRun(
-			fixture.ctx, candidate, freshAfter,
+			fixture.ctx, candidate,
 		)
 		if err != nil {
 			t.Fatal(err)
 		}
 		markRunPlacementMountReady(t, fixture, mountingRestore.WorkspaceMountID)
 		grantedRestore, err := fixture.authority.PlaceReadyRun(
-			fixture.ctx, candidate, freshAfter,
+			fixture.ctx, candidate,
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -1347,12 +1336,10 @@ func prepareNestedResumeRecovery(
 	fixture runPlacementFixture,
 ) nestedResumeRecoveryState {
 	t.Helper()
-	freshAfter := pgvalue.Timestamptz(time.Now().Add(-time.Minute))
 	candidate := fixture.candidate()
 	reserved, err := fixture.authority.PlaceReadyRun(
 		fixture.ctx,
 		candidate,
-		freshAfter,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1361,7 +1348,6 @@ func prepareNestedResumeRecovery(
 	mounting, err := fixture.authority.PlaceReadyRun(
 		fixture.ctx,
 		candidate,
-		freshAfter,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1370,7 +1356,6 @@ func prepareNestedResumeRecovery(
 	granted, err := fixture.authority.PlaceReadyRun(
 		fixture.ctx,
 		candidate,
-		freshAfter,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1790,19 +1775,17 @@ UPDATE workspace_leases
 func TestPlaceReadyRunRecreatesExactSuspendedRuntimeAndBindsWait(t *testing.T) {
 	fixture := newRunPlacementFixture(t)
 	candidate := fixture.candidate()
-	freshAfter := pgvalue.Timestamptz(time.Now().Add(-time.Minute))
-
-	reserved, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate, freshAfter)
+	reserved, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate)
 	if err != nil {
 		t.Fatal(err)
 	}
 	markRunPlacementRuntimeReady(t, fixture, reserved.RuntimeInstanceID)
-	mounting, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate, freshAfter)
+	mounting, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate)
 	if err != nil {
 		t.Fatal(err)
 	}
 	markRunPlacementMountReady(t, fixture, mounting.WorkspaceMountID)
-	granted, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate, freshAfter)
+	granted, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1930,12 +1913,12 @@ UPDATE worker_network_slots
 	}
 	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances SET substrate_layout_abi = 'incompatible-layout' WHERE id = $1`, fixture.workerID)
-	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate, freshAfter); !errors.Is(err, ErrCapacityUnavailable) {
+	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate); !errors.Is(err, ErrCapacityUnavailable) {
 		t.Fatalf("restore placement with incompatible substrate contract error = %v, want ErrCapacityUnavailable", err)
 	}
 	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances SET substrate_layout_abi = 'layout-v0' WHERE id = $1`, fixture.workerID)
-	restored, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate, freshAfter)
+	restored, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1966,12 +1949,12 @@ UPDATE run_checkpoints
 	if err := markRunPlacementRuntimeReadyQuery(t, fixture, restored.RuntimeInstanceID); err != nil {
 		t.Fatal(err)
 	}
-	restoreMount, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate, freshAfter)
+	restoreMount, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate)
 	if err != nil {
 		t.Fatal(err)
 	}
 	markRunPlacementMountReady(t, fixture, restoreMount.WorkspaceMountID)
-	restoreGrant, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate, freshAfter)
+	restoreGrant, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2126,17 +2109,17 @@ UPDATE worker_network_slots
 		OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(fixture.runID),
 		ExpectedRunStateVersion: 6,
 	}
-	secondRestored, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondRestoreCandidate, freshAfter)
+	secondRestored, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondRestoreCandidate)
 	if err != nil {
 		t.Fatal(err)
 	}
 	markRunPlacementRuntimeReady(t, fixture, secondRestored.RuntimeInstanceID)
-	secondRestoreMount, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondRestoreCandidate, freshAfter)
+	secondRestoreMount, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondRestoreCandidate)
 	if err != nil {
 		t.Fatal(err)
 	}
 	markRunPlacementMountReady(t, fixture, secondRestoreMount.WorkspaceMountID)
-	secondRestoreGrant, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondRestoreCandidate, freshAfter)
+	secondRestoreGrant, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondRestoreCandidate)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2210,9 +2193,37 @@ UPDATE runs
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = startupTx.Rollback(fixture.ctx) }()
 	if _, err := startupTx.Exec(fixture.ctx, `
 UPDATE worker_instances
    SET state = 'registering', current_epoch = 2,
+       supervisor_version = '',
+       supports_run = false,
+       supports_build = false,
+       runtime_identity_id = NULL,
+       substrate_format = '',
+       substrate_builder_abi = '',
+       substrate_layout_abi = '',
+       certified_cpu_millis = 0,
+       certified_memory_bytes = 0,
+       certified_guest_ephemeral_disk_bytes = 0,
+       certified_build_cache_bytes = 0,
+       certified_artifact_cache_bytes = 0,
+       certified_hugepages_bytes = 0,
+       certified_checkpoint_bytes = 0,
+       per_vm_cpu_millis = 0,
+       per_vm_memory_bytes = 0,
+       per_vm_guest_ephemeral_disk_bytes = 0,
+       max_vm_slots = 0,
+       max_run_consumers = 0,
+       max_build_executors = 0,
+       max_runtime_starts = 0,
+       certification_profile = '',
+       certification_fingerprint = '',
+       certified_at = NULL,
+       activated_at = NULL,
+       startup_inventory_epoch = NULL,
+       startup_inventory_evidence = NULL,
        epoch_started_at = transaction_timestamp(), updated_at = transaction_timestamp()
  WHERE id = $1`, fixture.workerID); err != nil {
 		t.Fatal(err)
@@ -2448,7 +2459,6 @@ func TestActorCurrentRunRecreatedRestoreAndRecovery(t *testing.T) {
 			if err != nil || len(scopes) != 1 || scopes[0].EnvironmentID != pgvalue.UUID(fixture.environmentID) {
 				t.Fatalf("Actor restore candidate scopes = %+v, error = %v", scopes, err)
 			}
-			freshAfter := pgvalue.Timestamptz(time.Now().Add(-time.Minute))
 			if tc.invalidCursor {
 				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_checkpoints SET actor_speculative_input_sequence = 2 WHERE id = $1`, checkpointID)
@@ -2468,7 +2478,7 @@ UPDATE run_checkpoints SET actor_speculative_input_sequence = 2 WHERE id = $1`, 
 				if err != nil || len(queued) != 0 {
 					t.Fatalf("out-of-bounds Actor dispatch candidates = %+v, error = %v", queued, err)
 				}
-				if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate, freshAfter); !errors.Is(err, ErrCandidateChanged) {
+				if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate); !errors.Is(err, ErrCandidateChanged) {
 					t.Fatalf("Actor restore with out-of-bounds cursor error = %v, want ErrCandidateChanged", err)
 				}
 				if _, err := fixture.pool.Exec(fixture.ctx, `
@@ -2480,17 +2490,17 @@ UPDATE run_attempts
 				}
 				return
 			}
-			reserved, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate, freshAfter)
+			reserved, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate)
 			if err != nil {
 				t.Fatal(err)
 			}
 			markRunPlacementRuntimeReady(t, fixture, reserved.RuntimeInstanceID)
-			mount, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate, freshAfter)
+			mount, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate)
 			if err != nil {
 				t.Fatal(err)
 			}
 			markRunPlacementMountReady(t, fixture, mount.WorkspaceMountID)
-			grant, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate, freshAfter)
+			grant, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -2576,18 +2586,17 @@ SELECT actors.state, actors.current_run_id, actors.run_generation, actors.state_
 
 func prepareActorSuspendedRestore(t *testing.T, fixture runPlacementFixture) (uuid.UUID, uuid.UUID, uuid.UUID) {
 	t.Helper()
-	freshAfter := pgvalue.Timestamptz(time.Now().Add(-time.Minute))
-	reserved, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate(), freshAfter)
+	reserved, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
 	if err != nil {
 		t.Fatal(err)
 	}
 	markRunPlacementRuntimeReady(t, fixture, reserved.RuntimeInstanceID)
-	mount, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate(), freshAfter)
+	mount, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
 	if err != nil {
 		t.Fatal(err)
 	}
 	markRunPlacementMountReady(t, fixture, mount.WorkspaceMountID)
-	grant, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate(), freshAfter)
+	grant, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2789,7 +2798,6 @@ UPDATE worker_instances
 	_, err := fixture.authority.PlaceReadyRun(
 		fixture.ctx,
 		fixture.candidate(),
-		pgvalue.Timestamptz(time.Now().Add(-time.Minute)),
 	)
 	if err != ErrCapacityUnavailable {
 		t.Fatalf("PlaceReadyRun() error = %v, want ErrCapacityUnavailable", err)
@@ -2841,7 +2849,6 @@ INSERT INTO deployment_build_leases (
 	_, err := fixture.authority.PlaceReadyRun(
 		fixture.ctx,
 		fixture.candidate(),
-		pgvalue.Timestamptz(time.Now().Add(-time.Minute)),
 	)
 	if err != ErrCapacityUnavailable {
 		t.Fatalf("PlaceReadyRun() error = %v, want ErrCapacityUnavailable", err)
@@ -3000,15 +3007,15 @@ INSERT INTO deployment_definitions (
 	mustRunPlacementExec(t, ctx, pool, `
 INSERT INTO worker_groups (
     id, region_id, name, enrollment_policy_fingerprint,
-    allowed_attestation_fingerprints, allows_run, allows_build
-) VALUES ($1, 'us-east-1', $1, 'test-policy', ARRAY['test-attestation'], true, false)`,
+    allowed_attestation_fingerprints, allows_run, allows_build, observation_ttl_seconds
+) VALUES ($1, 'us-east-1', $1, 'test-policy', ARRAY['test-attestation'], true, false, 120)`,
 		fixture.groupID,
 	)
 	mustRunPlacementExec(t, ctx, pool, `
 INSERT INTO runtime_identities (
     id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
     rootfs_digest, cni_profile
-) VALUES ($1, 'x86_64', 'helmr.runtime.v0', 'kernel', 'initramfs', 'rootfs', 'default')`,
+) VALUES ($1, 'x86_64', 'helmr.runtime.v0', 'kernel', 'initramfs', 'rootfs', 'helmr/v0')`,
 		runtimeIdentityID,
 	)
 	mustRunPlacementExec(t, ctx, pool, `

@@ -16,7 +16,6 @@ import (
 )
 
 const (
-	DefaultStaleWorkerGrace                 = 2 * time.Minute
 	DefaultWorkerRegistrationReadinessGrace = 15 * time.Minute
 	DefaultStaleWorkerFenceBatch            = int32(100)
 	DefaultStaleWorkerFenceEvery            = 5 * time.Second
@@ -82,9 +81,8 @@ type StaleWorkerFenceCycle struct {
 type StaleWorkerFencer struct {
 	transactions      StaleWorkerFenceTransactions
 	lock              StaleWorkerFenceLock
-	grace             time.Duration
 	registrationGrace time.Duration
-	groupGrace        map[string]WorkerGroupFenceGrace
+	groupGrace        map[string]WorkerGroupRegistrationGrace
 	batch             int32
 	every             time.Duration
 	timeout           time.Duration
@@ -95,8 +93,7 @@ type StaleWorkerFencer struct {
 
 type StaleWorkerFencerOption func(*StaleWorkerFencer)
 
-type WorkerGroupFenceGrace struct {
-	Observation  time.Duration
+type WorkerGroupRegistrationGrace struct {
 	Registration time.Duration
 }
 
@@ -104,13 +101,9 @@ func WithStaleWorkerFenceLock(lock StaleWorkerFenceLock) StaleWorkerFencerOption
 	return func(fencer *StaleWorkerFencer) { fencer.lock = lock }
 }
 
-func WithStaleWorkerGrace(grace time.Duration) StaleWorkerFencerOption {
-	return func(fencer *StaleWorkerFencer) { fencer.grace = grace }
-}
-
-func WithWorkerGroupFenceGrace(grace map[string]WorkerGroupFenceGrace) StaleWorkerFencerOption {
+func WithWorkerGroupRegistrationGrace(grace map[string]WorkerGroupRegistrationGrace) StaleWorkerFencerOption {
 	return func(fencer *StaleWorkerFencer) {
-		fencer.groupGrace = make(map[string]WorkerGroupFenceGrace, len(grace))
+		fencer.groupGrace = make(map[string]WorkerGroupRegistrationGrace, len(grace))
 		maps.Copy(fencer.groupGrace, grace)
 	}
 }
@@ -141,7 +134,6 @@ func NewStaleWorkerFencer(transactions StaleWorkerFenceTransactions, opts ...Sta
 	}
 	fencer := &StaleWorkerFencer{
 		transactions:      transactions,
-		grace:             DefaultStaleWorkerGrace,
 		registrationGrace: DefaultWorkerRegistrationReadinessGrace,
 		batch:             DefaultStaleWorkerFenceBatch,
 		every:             DefaultStaleWorkerFenceEvery,
@@ -153,15 +145,12 @@ func NewStaleWorkerFencer(transactions StaleWorkerFenceTransactions, opts ...Sta
 	for _, opt := range opts {
 		opt(fencer)
 	}
-	if fencer.grace <= 0 {
-		return nil, errors.New("stale worker grace must be positive")
-	}
 	if fencer.registrationGrace <= 0 {
 		return nil, errors.New("worker registration grace must be positive")
 	}
 	for groupID, grace := range fencer.groupGrace {
-		if groupID == "" || grace.Observation <= 0 || grace.Registration <= 0 {
-			return nil, errors.New("worker group fence grace requires a group ID and positive durations")
+		if groupID == "" || grace.Registration <= 0 {
+			return nil, errors.New("worker group registration grace requires a group ID and positive duration")
 		}
 	}
 	if fencer.batch <= 0 {
@@ -251,12 +240,11 @@ func (f *StaleWorkerFencer) ReconcileOnce(ctx context.Context) (StaleWorkerFence
 	now := f.clock.Now()
 	type fenceScope struct {
 		groupID      string
-		observation  time.Duration
 		registration time.Duration
 	}
 	scopes := make([]fenceScope, 0, max(1, len(f.groupGrace)))
 	if len(f.groupGrace) == 0 {
-		scopes = append(scopes, fenceScope{observation: f.grace, registration: f.registrationGrace})
+		scopes = append(scopes, fenceScope{registration: f.registrationGrace})
 	} else {
 		groupIDs := make([]string, 0, len(f.groupGrace))
 		for groupID := range f.groupGrace {
@@ -265,17 +253,15 @@ func (f *StaleWorkerFencer) ReconcileOnce(ctx context.Context) (StaleWorkerFence
 		sort.Strings(groupIDs)
 		for _, groupID := range groupIDs {
 			grace := f.groupGrace[groupID]
-			scopes = append(scopes, fenceScope{groupID: groupID, observation: grace.Observation, registration: grace.Registration})
+			scopes = append(scopes, fenceScope{groupID: groupID, registration: grace.Registration})
 		}
 	}
 	err := transactions.WithinStaleWorkerFenceTransaction(ctx, func(queries StaleWorkerFenceQueries) error {
 		cycle.Results = make([]StaleWorkerFenceResult, 0, int(f.batch)*len(scopes))
 		for _, scope := range scopes {
-			observationStaleBefore := now.Add(-scope.observation)
 			registrationStaleBefore := now.Add(-scope.registration)
 			candidates, err := queries.ListStaleWorkerFenceCandidates(ctx, db.ListStaleWorkerFenceCandidatesParams{
 				WorkerGroupID:           scope.groupID,
-				ObservationStaleBefore:  pgtype.Timestamptz{Time: observationStaleBefore, Valid: true},
 				RegistrationStaleBefore: pgtype.Timestamptz{Time: registrationStaleBefore, Valid: true},
 				RowLimit:                f.batch,
 			})
@@ -296,7 +282,6 @@ func (f *StaleWorkerFencer) ReconcileOnce(ctx context.Context) (StaleWorkerFence
 					ID:                      candidate.ID,
 					WorkerGroupID:           candidate.WorkerGroupID,
 					ExpectedEpoch:           candidate.CurrentEpoch,
-					ObservationStaleBefore:  pgtype.Timestamptz{Time: observationStaleBefore, Valid: true},
 					RegistrationStaleBefore: pgtype.Timestamptz{Time: registrationStaleBefore, Valid: true},
 					ReasonCode:              pgtype.Text{String: staleWorkerReasonCode, Valid: true},
 				})

@@ -36,17 +36,18 @@ locals {
     }
   }
   worker_groups = [for pool in values(local.worker_pools) : {
-    id                   = pool.group_id
-    name                 = one(pool.roles)
-    description          = "${title(one(pool.roles))} workers"
-    region               = var.aws_region
-    account_id           = data.aws_caller_identity.current.account_id
-    autoscaling_group    = "${pool.name}-worker"
-    instance_profile_arn = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${pool.name}-worker"
-    launch_ami_id        = local.worker_ami_id
-    ami_ids              = local.worker_allowed_ami_ids
-    allows_run           = pool.allows_run
-    allows_build         = pool.allows_build
+    id                      = pool.group_id
+    name                    = one(pool.roles)
+    description             = "${title(one(pool.roles))} workers"
+    region                  = var.aws_region
+    account_id              = data.aws_caller_identity.current.account_id
+    autoscaling_group       = "${pool.name}-worker"
+    instance_profile_arn    = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${pool.name}-worker"
+    launch_ami_id           = local.worker_ami_id
+    ami_ids                 = local.worker_allowed_ami_ids
+    allows_run              = pool.allows_run
+    allows_build            = pool.allows_build
+    observation_ttl_seconds = var.worker_fleet_controller.stale_worker_timeout_seconds
     instance_capacity = !var.create_worker ? {
       milli_cpu         = 1, memory_bytes = 1, guest_ephemeral_disk_bytes = 1,
       build_cache_bytes = 0, artifact_cache_bytes = 0,

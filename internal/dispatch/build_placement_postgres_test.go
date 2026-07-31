@@ -6,7 +6,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -85,8 +84,9 @@ INSERT INTO deployments (
 		"sha256:"+strings.Repeat("2", 64), sourceArtifactID)
 	mustDispatchExec(t, ctx, pool, `
 INSERT INTO worker_groups (
-    id, region_id, name, enrollment_policy_fingerprint, allowed_attestation_fingerprints
-) VALUES ($1, 'us-east-1', $1, 'sha256:test-policy', ARRAY['sha256:test-attestation'])`,
+    id, region_id, name, enrollment_policy_fingerprint, allowed_attestation_fingerprints,
+    observation_ttl_seconds
+) VALUES ($1, 'us-east-1', $1, 'sha256:test-policy', ARRAY['sha256:test-attestation'], 120)`,
 		fixture.groupID)
 	return fixture
 }
@@ -165,7 +165,6 @@ UPDATE worker_instances
 			}
 			_, err := fixture.authority.PlaceReadyBuild(
 				fixture.ctx, fixture.candidate(),
-				pgvalue.Timestamptz(time.Now().UTC().Add(-time.Minute)),
 			)
 			if !errors.Is(err, ErrCapacityUnavailable) {
 				t.Fatalf("PlaceReadyBuild() error = %v, want ErrCapacityUnavailable", err)
@@ -188,7 +187,6 @@ func TestPlaceReadyBuildRequiresV0WorkerRuntimeIdentity(t *testing.T) {
 	workerID := fixture.addWorker(t, true)
 	lease, err := fixture.authority.PlaceReadyBuild(
 		fixture.ctx, fixture.candidate(),
-		pgvalue.Timestamptz(time.Now().UTC().Add(-time.Minute)),
 	)
 	if err != nil {
 		t.Fatal(err)

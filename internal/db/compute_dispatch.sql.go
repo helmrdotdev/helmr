@@ -834,6 +834,41 @@ SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worke
        runtime_identities.rootfs_digest,
        runtime_identities.runtime_abi,
        runtime_identities.runtime_arch,
+       worker_observations.observed_at,
+       worker_observations.run_paused_reason,
+       worker_observations.build_paused_reason,
+       worker_observations.runtime_paused_reason,
+       COALESCE((
+           worker_instances.state = 'active'
+           AND worker_instances.supports_run
+           AND worker_observations.observed_at >= transaction_timestamp()
+               - worker_groups.observation_ttl_seconds * interval '1 second'
+           AND worker_observations.run_paused_reason IS NULL
+       ), false)::boolean AS run_ready,
+       COALESCE((
+           worker_instances.state = 'active'
+           AND worker_instances.supports_build
+           AND worker_observations.observed_at >= transaction_timestamp()
+               - worker_groups.observation_ttl_seconds * interval '1 second'
+           AND worker_observations.build_paused_reason IS NULL
+       ), false)::boolean AS build_ready,
+       COALESCE((
+           worker_instances.state = 'active'
+           AND worker_instances.supports_run
+           AND worker_observations.observed_at >= transaction_timestamp()
+               - worker_groups.observation_ttl_seconds * interval '1 second'
+           AND worker_observations.runtime_paused_reason IS NULL
+       ), false)::boolean AS runtime_ready,
+       COALESCE((
+           worker_instances.state = 'active'
+           AND worker_observations.observed_at >= transaction_timestamp()
+               - worker_groups.observation_ttl_seconds * interval '1 second'
+           AND (NOT worker_instances.supports_run OR (
+               worker_observations.run_paused_reason IS NULL
+               AND worker_observations.runtime_paused_reason IS NULL
+           ))
+           AND (NOT worker_instances.supports_build OR worker_observations.build_paused_reason IS NULL)
+       ), false)::boolean AS all_configured_roles_ready,
        ((SELECT count(*) FROM run_leases
          WHERE run_leases.worker_instance_id = worker_instances.id
            AND run_leases.worker_epoch = worker_instances.current_epoch
@@ -851,7 +886,11 @@ SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worke
            AND runtime_instances.worker_epoch = worker_instances.current_epoch
            AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')))::int AS active_executions
   FROM worker_instances
+  JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
   LEFT JOIN runtime_identities ON runtime_identities.id = worker_instances.runtime_identity_id
+  LEFT JOIN worker_observations
+    ON worker_observations.worker_instance_id = worker_instances.id
+   AND worker_observations.worker_epoch = worker_instances.current_epoch
  WHERE worker_instances.id = $1
    AND worker_instances.worker_group_id = $2
 `
@@ -911,6 +950,14 @@ type GetWorkerInstanceStateRow struct {
 	RootfsDigest                     pgtype.Text        `json:"rootfs_digest"`
 	RuntimeABI                       pgtype.Text        `json:"runtime_abi"`
 	RuntimeArch                      pgtype.Text        `json:"runtime_arch"`
+	ObservedAt                       pgtype.Timestamptz `json:"observed_at"`
+	RunPausedReason                  pgtype.Text        `json:"run_paused_reason"`
+	BuildPausedReason                pgtype.Text        `json:"build_paused_reason"`
+	RuntimePausedReason              pgtype.Text        `json:"runtime_paused_reason"`
+	RunReady                         bool               `json:"run_ready"`
+	BuildReady                       bool               `json:"build_ready"`
+	RuntimeReady                     bool               `json:"runtime_ready"`
+	AllConfiguredRolesReady          bool               `json:"all_configured_roles_ready"`
 	ActiveExecutions                 int32              `json:"active_executions"`
 }
 
@@ -967,6 +1014,14 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, arg GetWorkerInsta
 		&i.RootfsDigest,
 		&i.RuntimeABI,
 		&i.RuntimeArch,
+		&i.ObservedAt,
+		&i.RunPausedReason,
+		&i.BuildPausedReason,
+		&i.RuntimePausedReason,
+		&i.RunReady,
+		&i.BuildReady,
+		&i.RuntimeReady,
+		&i.AllConfiguredRolesReady,
 		&i.ActiveExecutions,
 	)
 	return i, err
@@ -1455,86 +1510,4 @@ func (q *Queries) ListWorkerInstances(ctx context.Context, arg ListWorkerInstanc
 		return nil, err
 	}
 	return items, nil
-}
-
-const setWorkerInstanceState = `-- name: SetWorkerInstanceState :one
-UPDATE worker_instances
-   SET state = $1::text,
-       draining_at = CASE WHEN $1::text = 'draining'
-                          THEN COALESCE(draining_at, now()) ELSE draining_at END,
-       disabled_at = CASE WHEN $1::text = 'disabled'
-                          THEN COALESCE(disabled_at, now()) ELSE disabled_at END,
-       lost_at = CASE WHEN $1::text = 'lost'
-                      THEN COALESCE(lost_at, now()) ELSE lost_at END,
-       updated_at = now()
- WHERE id = $2
-   AND worker_group_id = $3
-   AND ($4::bigint IS NULL OR current_epoch = $4::bigint)
-RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
-`
-
-type SetWorkerInstanceStateParams struct {
-	State         string      `json:"state"`
-	ID            pgtype.UUID `json:"id"`
-	WorkerGroupID string      `json:"worker_group_id"`
-	ExpectedEpoch pgtype.Int8 `json:"expected_epoch"`
-}
-
-func (q *Queries) SetWorkerInstanceState(ctx context.Context, arg SetWorkerInstanceStateParams) (WorkerInstance, error) {
-	row := q.db.QueryRow(ctx, setWorkerInstanceState,
-		arg.State,
-		arg.ID,
-		arg.WorkerGroupID,
-		arg.ExpectedEpoch,
-	)
-	var i WorkerInstance
-	err := row.Scan(
-		&i.ID,
-		&i.ResourceID,
-		&i.WorkerGroupID,
-		&i.AttestationFingerprint,
-		&i.State,
-		&i.ClaimVersion,
-		&i.CurrentEpoch,
-		&i.CurrentServiceID,
-		&i.ProtocolVersion,
-		&i.SupervisorVersion,
-		&i.SupportsRun,
-		&i.SupportsBuild,
-		&i.RuntimeIdentityID,
-		&i.SubstrateFormat,
-		&i.SubstrateBuilderAbi,
-		&i.SubstrateLayoutAbi,
-		&i.CertifiedCpuMillis,
-		&i.CertifiedMemoryBytes,
-		&i.CertifiedGuestEphemeralDiskBytes,
-		&i.CertifiedBuildCacheBytes,
-		&i.CertifiedArtifactCacheBytes,
-		&i.CertifiedHugepagesBytes,
-		&i.CertifiedCheckpointBytes,
-		&i.PerVmCpuMillis,
-		&i.PerVmMemoryBytes,
-		&i.PerVmGuestEphemeralDiskBytes,
-		&i.MaxVmSlots,
-		&i.MaxRunConsumers,
-		&i.MaxBuildExecutors,
-		&i.MaxRuntimeStarts,
-		&i.CertificationProfile,
-		&i.CertificationFingerprint,
-		&i.EpochStartedAt,
-		&i.StartupInventoryEpoch,
-		&i.StartupInventoryEvidence,
-		&i.DrainCleanupFingerprint,
-		&i.DrainCleanupEvidence,
-		&i.CertifiedAt,
-		&i.ActivatedAt,
-		&i.DrainingAt,
-		&i.DisabledAt,
-		&i.LostAt,
-		&i.TerminationClaimedAt,
-		&i.ProviderTerminatedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
 }

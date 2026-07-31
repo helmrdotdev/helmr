@@ -338,6 +338,7 @@ CREATE TABLE worker_groups (
     required_artifact_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (required_artifact_cache_bytes >= 0),
     required_vm_slots INTEGER NOT NULL DEFAULT 1 CHECK (required_vm_slots >= 0),
     required_build_executors INTEGER NOT NULL DEFAULT 1 CHECK (required_build_executors >= 0),
+    observation_ttl_seconds INTEGER NOT NULL CHECK (observation_ttl_seconds > 0),
     last_scale_out_at TIMESTAMPTZ,
     last_scale_in_at TIMESTAMPTZ,
     protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (protocol_version = 'helmr.worker.v0'),
@@ -500,7 +501,8 @@ CREATE TABLE worker_instances (
     CHECK (state <> 'lost' OR lost_at IS NOT NULL),
     CHECK (termination_claimed_at IS NULL OR state IN ('disabled', 'lost')),
     CHECK (provider_terminated_at IS NULL OR termination_claimed_at IS NOT NULL),
-    CHECK (provider_terminated_at IS NULL OR provider_terminated_at >= termination_claimed_at)
+    CHECK (provider_terminated_at IS NULL OR provider_terminated_at >= termination_claimed_at),
+    CHECK (state <> 'registering' OR certified_at IS NULL)
 );
 
 CREATE INDEX worker_instances_active_placement_idx

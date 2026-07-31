@@ -18,7 +18,6 @@ func (d *Authority) grantFreshRun(
 	ctx context.Context,
 	candidate ReadyRunCandidate,
 	expectedMount runWorkspaceMount,
-	observationFreshAfter pgtype.Timestamptz,
 ) (db.RunLease, error) {
 	tx, err := d.begin(ctx)
 	if err != nil {
@@ -76,7 +75,6 @@ func (d *Authority) grantFreshRun(
 		WorkerInstanceID:      runtime.workerID,
 		WorkerEpoch:           runtime.workerEpoch,
 		WorkerProtocolVersion: runtime.protocolVersion,
-		ObservationFreshAfter: observationFreshAfter,
 		Role:                  "run",
 		RunArchitecture:       authority.architecture,
 	}); err != nil {

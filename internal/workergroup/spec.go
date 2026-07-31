@@ -33,6 +33,7 @@ func Normalize(spec Spec) (Spec, error) {
 type Desired struct {
 	Spec                           Spec
 	Capacity                       Capacity
+	ObservationTTLSeconds          int32
 	EnrollmentPolicyFingerprint    string
 	AllowedAttestationFingerprints []string
 	LaunchAttestationFingerprint   string

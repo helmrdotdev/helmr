@@ -339,7 +339,23 @@ UPDATE worker_instance_credentials
    AND worker_instance_credentials.protocol_version = worker_instances.protocol_version
    AND worker_instance_credentials.protocol_version = worker_groups.protocol_version
    AND worker_instances.current_epoch = $5
-   AND worker_instances.state = 'registering'
+   AND (
+       worker_instances.state = 'registering'
+       OR (
+           worker_instances.state = 'active'
+           AND EXISTS (
+               SELECT 1
+                 FROM worker_observations
+                WHERE worker_observations.worker_instance_id = worker_instances.id
+                  AND worker_observations.worker_epoch = worker_instances.current_epoch
+                  AND (
+                      worker_observations.run_paused_reason = 'datapath_unverified'
+                      OR worker_observations.build_paused_reason = 'datapath_unverified'
+                      OR worker_observations.runtime_paused_reason = 'datapath_unverified'
+                  )
+           )
+       )
+   )
    AND worker_groups.state IN ('active','draining')
 RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.protocol_version, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
           worker_instances.current_epoch, worker_instances.state AS worker_state,
@@ -678,8 +694,9 @@ WITH nonce AS (
            drain_cleanup_fingerprint = NULL, drain_cleanup_evidence = NULL,
            certified_at = NULL, activated_at = NULL,
            certification_profile = '', certification_fingerprint = '',
-           draining_at = NULL, disabled_at = NULL, lost_at = NULL, updated_at = now()
-     WHERE worker_instances.termination_claimed_at IS NULL
+           draining_at = NULL, disabled_at = NULL, updated_at = now()
+     WHERE worker_instances.state = 'disabled'
+       AND worker_instances.termination_claimed_at IS NULL
     RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
 ), revoked AS (
     UPDATE worker_instance_credentials SET revoked_at = now()

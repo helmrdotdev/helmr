@@ -37,9 +37,8 @@ type runWorkspaceMount struct {
 func (d *Authority) PlaceReadyRun(
 	ctx context.Context,
 	candidate ReadyRunCandidate,
-	observationFreshAfter pgtype.Timestamptz,
 ) (ReadyRunPlacement, error) {
-	mount, err := d.prepareRunWorkspace(ctx, candidate, observationFreshAfter)
+	mount, err := d.prepareRunWorkspace(ctx, candidate)
 	if err != nil {
 		return ReadyRunPlacement{}, err
 	}
@@ -52,7 +51,7 @@ func (d *Authority) PlaceReadyRun(
 	if mount.state != db.WorkspaceMountStateMounted {
 		return placement, nil
 	}
-	lease, err := d.grantFreshRun(ctx, candidate, mount, observationFreshAfter)
+	lease, err := d.grantFreshRun(ctx, candidate, mount)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			stillQueued, revalidateErr := d.readyRunCandidateExists(ctx, candidate)

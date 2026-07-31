@@ -17,6 +17,7 @@ type configuredWorkerGroup struct {
 	AMIIDs             []string             `json:"ami_ids"`
 	AllowsRun          bool                 `json:"allows_run"`
 	AllowsBuild        bool                 `json:"allows_build"`
+	ObservationTTL     int32                `json:"observation_ttl_seconds"`
 	InstanceCapacity   workergroup.Capacity `json:"instance_capacity"`
 }
 

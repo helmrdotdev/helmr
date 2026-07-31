@@ -70,8 +70,8 @@ func New(t *testing.T) Fixture {
 	MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO worker_groups (
 			id, region_id, name, enrollment_policy_fingerprint,
-			allowed_attestation_fingerprints, protocol_version
-		) VALUES ($1, $2, $1, 'test-policy', ARRAY['test-attestation'], $3)
+			allowed_attestation_fingerprints, protocol_version, observation_ttl_seconds
+		) VALUES ($1, $2, $1, 'test-policy', ARRAY['test-attestation'], $3, 120)
 	`, WorkerGroup, Region, WorkerProtocol)
 	MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO organizations (id, name, slug)
@@ -136,7 +136,7 @@ func New(t *testing.T) Fixture {
 		INSERT INTO runtime_identities (
 			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
 			rootfs_digest, cni_profile
-		) VALUES ($1, 'x86_64', 'test', 'kernel', 'initramfs', 'rootfs', 'default')
+		) VALUES ($1, 'x86_64', 'test', 'kernel', 'initramfs', 'rootfs', 'helmr/v0')
 	`, fixture.RuntimeIdentityID)
 	MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO worker_instances (

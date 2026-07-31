@@ -48,9 +48,6 @@ func TestStaleWorkerFencerExcludesFreshDisabledAndLostWorkers(t *testing.T) {
 	if cycle.Selected != 0 || cycle.Fenced != 0 || len(store.rechecks) != 0 {
 		t.Fatalf("cycle = %+v rechecks = %+v, want no eligible workers", cycle, store.rechecks)
 	}
-	if got := store.listParams[0].ObservationStaleBefore.Time; !got.Equal(now.Add(-DefaultStaleWorkerGrace)) {
-		t.Fatalf("observation stale cutoff = %v, want %v", got, now.Add(-DefaultStaleWorkerGrace))
-	}
 	if got := store.listParams[0].RegistrationStaleBefore.Time; !got.Equal(now.Add(-DefaultWorkerRegistrationReadinessGrace)) {
 		t.Fatalf("registration stale cutoff = %v, want %v", got, now.Add(-DefaultWorkerRegistrationReadinessGrace))
 	}
@@ -138,7 +135,7 @@ func TestStaleWorkerFencerIsDeploymentModeAgnostic(t *testing.T) {
 	}
 }
 
-func TestStaleWorkerFencerUsesWorkerGroupCutoffs(t *testing.T) {
+func TestStaleWorkerFencerUsesWorkerGroupRegistrationCutoffs(t *testing.T) {
 	now := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
 	run := staleWorkerCandidate(7, db.WorkerInstanceStateActive, now.Add(-time.Minute), "worker_observation_stale")
 	run.WorkerGroupID = "run"
@@ -149,9 +146,9 @@ func TestStaleWorkerFencerUsesWorkerGroupCutoffs(t *testing.T) {
 		fakeStaleWorkerFenceTransactions{queries: store},
 		WithStaleWorkerFenceLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 		WithStaleWorkerFenceClock(fixedStaleWorkerFenceClock{now: now}),
-		WithWorkerGroupFenceGrace(map[string]WorkerGroupFenceGrace{
-			"run":   {Observation: 30 * time.Second, Registration: time.Minute},
-			"build": {Observation: 5 * time.Minute, Registration: 20 * time.Minute},
+		WithWorkerGroupRegistrationGrace(map[string]WorkerGroupRegistrationGrace{
+			"run":   {Registration: time.Minute},
+			"build": {Registration: 20 * time.Minute},
 		}),
 	)
 	if err != nil {
@@ -162,12 +159,6 @@ func TestStaleWorkerFencerUsesWorkerGroupCutoffs(t *testing.T) {
 	}
 	if len(store.listParams) != 2 || store.listParams[0].WorkerGroupID != "build" || store.listParams[1].WorkerGroupID != "run" {
 		t.Fatalf("list scopes = %+v", store.listParams)
-	}
-	if got, want := store.listParams[1].ObservationStaleBefore.Time, now.Add(-30*time.Second); !got.Equal(want) {
-		t.Fatalf("run selection observation cutoff = %v, want %v", got, want)
-	}
-	if got, want := store.rechecks[1].ObservationStaleBefore.Time, now.Add(-30*time.Second); !got.Equal(want) {
-		t.Fatalf("run observation cutoff = %v, want %v", got, want)
 	}
 	if got, want := store.rechecks[0].RegistrationStaleBefore.Time, now.Add(-20*time.Minute); !got.Equal(want) {
 		t.Fatalf("build registration cutoff = %v, want %v", got, want)
@@ -196,9 +187,9 @@ func TestStaleWorkerFencerScopesBatchLimitPerGroup(t *testing.T) {
 		fakeStaleWorkerFenceTransactions{queries: store},
 		WithStaleWorkerFenceLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 		WithStaleWorkerFenceClock(fixedStaleWorkerFenceClock{now: now}),
-		WithWorkerGroupFenceGrace(map[string]WorkerGroupFenceGrace{
-			"run":   {Observation: 30 * time.Second, Registration: time.Minute},
-			"build": {Observation: 5 * time.Minute, Registration: 20 * time.Minute},
+		WithWorkerGroupRegistrationGrace(map[string]WorkerGroupRegistrationGrace{
+			"run":   {Registration: time.Minute},
+			"build": {Registration: 20 * time.Minute},
 		}),
 	)
 	if err != nil {

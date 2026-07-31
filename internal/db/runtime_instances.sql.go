@@ -39,7 +39,12 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
   FROM runtime_instances
   JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
                        AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+  JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
   JOIN runtime_identities ON runtime_identities.id = runtime_instances.runtime_identity_id
+                         AND runtime_identities.cni_profile = 'helmr/v0'
+  LEFT JOIN worker_observations
+    ON worker_observations.worker_instance_id = worker_instances.id
+   AND worker_observations.worker_epoch = worker_instances.current_epoch
   JOIN worker_network_slots ON worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
                     AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
                     AND worker_network_slots.runtime_instance_id = runtime_instances.id
@@ -77,9 +82,13 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
    AND worker_instances.state IN ('active', 'draining')
    AND (
        (runtime_instances.desired_state = 'ready'
-        AND runtime_instances.observed_state IN ('allocated', 'preparing')
-        AND runtime_instances.observed_desired_version < runtime_instances.desired_version
-        AND worker_instances.state = 'active')
+       AND runtime_instances.observed_state IN ('allocated', 'preparing')
+       AND runtime_instances.observed_desired_version < runtime_instances.desired_version
+        AND worker_instances.state = 'active'
+        AND worker_observations.observed_at >= transaction_timestamp()
+            - worker_groups.observation_ttl_seconds * interval '1 second'
+        AND worker_observations.runtime_paused_reason IS NULL
+       )
        OR
        (runtime_instances.desired_state = 'closed'
         AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing'))

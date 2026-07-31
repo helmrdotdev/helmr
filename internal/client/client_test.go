@@ -1360,10 +1360,5 @@ func workerClientCapabilities() api.WorkerCapabilities {
 		GuestEphemeralDiskBytes:   32768 << 20,
 		VMGuestEphemeralDiskBytes: 32768 << 20,
 		ExecutionSlotsAvailable:   1,
-		Network: api.WorkerNetworkCapabilities{
-			Internet:      true,
-			BlockInternet: true,
-			DenyCIDRs:     true,
-		},
 	}
 }

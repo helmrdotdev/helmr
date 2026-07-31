@@ -216,7 +216,23 @@ UPDATE worker_instance_credentials
    AND worker_instance_credentials.protocol_version = worker_instances.protocol_version
    AND worker_instance_credentials.protocol_version = worker_groups.protocol_version
    AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
-   AND worker_instances.state = 'registering'
+   AND (
+       worker_instances.state = 'registering'
+       OR (
+           worker_instances.state = 'active'
+           AND EXISTS (
+               SELECT 1
+                 FROM worker_observations
+                WHERE worker_observations.worker_instance_id = worker_instances.id
+                  AND worker_observations.worker_epoch = worker_instances.current_epoch
+                  AND (
+                      worker_observations.run_paused_reason = 'datapath_unverified'
+                      OR worker_observations.build_paused_reason = 'datapath_unverified'
+                      OR worker_observations.runtime_paused_reason = 'datapath_unverified'
+                  )
+           )
+       )
+   )
    AND worker_groups.state IN ('active','draining')
 RETURNING worker_instance_credentials.*, worker_instances.resource_id,
           worker_instances.current_epoch, worker_instances.state AS worker_state,
@@ -329,8 +345,9 @@ WITH nonce AS (
            drain_cleanup_fingerprint = NULL, drain_cleanup_evidence = NULL,
            certified_at = NULL, activated_at = NULL,
            certification_profile = '', certification_fingerprint = '',
-           draining_at = NULL, disabled_at = NULL, lost_at = NULL, updated_at = now()
-     WHERE worker_instances.termination_claimed_at IS NULL
+           draining_at = NULL, disabled_at = NULL, updated_at = now()
+     WHERE worker_instances.state = 'disabled'
+       AND worker_instances.termination_claimed_at IS NULL
     RETURNING *
 ), revoked AS (
     UPDATE worker_instance_credentials SET revoked_at = now()

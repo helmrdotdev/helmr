@@ -45,7 +45,6 @@ func (a *workspaceExecRecoveryAuthority) RecoverWorkspaceExec(
 func (a *workspaceExecRecoveryAuthority) PlaceWorkspaceExec(
 	context.Context,
 	ReadyWorkspaceExecCandidate,
-	pgtype.Timestamptz,
 ) (WorkspaceExecPlacement, error) {
 	a.calls = append(a.calls, "place")
 	return WorkspaceExecPlacement{}, nil

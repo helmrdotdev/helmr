@@ -109,6 +109,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("prepare worker group %q: %w", configuredGroup.ID, err)
 		}
+		desired.ObservationTTLSeconds = configuredGroup.ObservationTTL
 		awsGroups = append(awsGroups, boundary)
 		desiredGroups = append(desiredGroups, desired)
 	}

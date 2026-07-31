@@ -76,8 +76,8 @@ func newDeploymentBuildFixture(t *testing.T) (*deploymentBuildFixture, *pgxpool.
 	mustExec(t, ctx, pool, `
 		INSERT INTO worker_groups (
 			id, region_id, name, enrollment_policy_fingerprint,
-			allowed_attestation_fingerprints
-		) VALUES ($1, $2, $1, 'sha256:test-enrollment-policy', ARRAY['sha256:test-attestation'])
+			allowed_attestation_fingerprints, observation_ttl_seconds
+		) VALUES ($1, $2, $1, 'sha256:test-enrollment-policy', ARRAY['sha256:test-attestation'], 120)
 	`, groupID, dbtest.DefaultRegionID)
 	mustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
@@ -386,6 +386,111 @@ func (f *deploymentBuildFixture) leaseParams(sequence int64) db.LeaseQueuedDeplo
 		BuildSnapshot:                    []byte(`{"source":"test"}`),
 		StartDeadlineAt:                  pgvalue.Timestamptz(now.Add(time.Minute)),
 		BuildLeaseExpiresAt:              pgvalue.Timestamptz(now.Add(5 * time.Minute)),
+	}
+}
+
+func (f *deploymentBuildFixture) activateBuildWorker(t *testing.T) {
+	t.Helper()
+	runtimeIdentityID := "build-runtime-" + shortUUID(f.workerID)
+	mustExec(t, f.ctx, f.pool, `
+		INSERT INTO runtime_identities (
+			id, runtime_arch, runtime_abi, kernel_digest,
+			initramfs_digest, rootfs_digest, cni_profile
+		) VALUES (
+			$1, 'x86_64', 'helmr.runtime.v0', 'sha256:test-kernel',
+			'sha256:test-initramfs', 'sha256:test-rootfs', 'helmr/v0'
+		)
+	`, runtimeIdentityID)
+	mustExec(t, f.ctx, f.pool, `
+		UPDATE worker_instances
+		   SET state = 'active',
+		       supports_build = true,
+		       runtime_identity_id = $2,
+		       supervisor_version = 'test-worker',
+		       certified_cpu_millis = $3,
+		       certified_memory_bytes = $4,
+		       certified_guest_ephemeral_disk_bytes = $5,
+		       per_vm_cpu_millis = $3,
+		       per_vm_memory_bytes = $4,
+		       per_vm_guest_ephemeral_disk_bytes = $5,
+		       max_build_executors = 1,
+		       certification_profile = 'test',
+		       certification_fingerprint = 'sha256:test-certification',
+		       certified_at = now(),
+		       activated_at = now()
+		 WHERE id = $1
+	`, f.workerID, runtimeIdentityID, buildCPU, buildMemory, buildGuestDisk)
+	mustExec(t, f.ctx, f.pool, `
+		INSERT INTO worker_observations (
+			worker_instance_id, worker_epoch,
+			cpu_pressure_bps, memory_pressure_bps,
+			guest_ephemeral_disk_pressure_bps,
+			build_cache_pressure_bps, artifact_cache_pressure_bps,
+			checkpoint_pressure_bps, leaked_slot_count, run_queue_depth,
+			build_queue_depth, runtime_start_queue_depth, observed_at
+		) VALUES (
+			$1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, now()
+		)
+	`, f.workerID)
+}
+
+func TestClaimNextDeploymentBuildLeaseRechecksGroupAdmission(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		groupState string
+		wantClaim  bool
+	}{
+		{name: "active", groupState: "active", wantClaim: true},
+		{name: "draining", groupState: "draining", wantClaim: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f, _ := newDeploymentBuildFixture(t)
+			f.activateBuildWorker(t)
+			lease := f.lease(t, 1)
+			leaseID := pgvalue.MustUUIDValue(lease.ID)
+			mustExec(t, f.ctx, f.pool, `
+				UPDATE worker_groups
+				   SET state = $2
+				 WHERE id = $1
+			`, f.groupID, test.groupState)
+
+			claimed, err := f.queries.ClaimNextDeploymentBuildLease(
+				f.ctx,
+				db.ClaimNextDeploymentBuildLeaseParams{
+					WorkerGroupID:         f.groupID,
+					WorkerInstanceID:      pgvalue.UUID(f.workerID),
+					WorkerEpoch:           1,
+					WorkerProtocolVersion: "helmr.worker.v0",
+					ExpiresAt: pgvalue.Timestamptz(
+						time.Now().UTC().Add(10 * time.Minute),
+					),
+				},
+			)
+			if test.wantClaim {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if pgvalue.MustUUIDValue(claimed.ID) != leaseID ||
+					claimed.State != db.DeploymentBuildLeaseStateStarting {
+					t.Fatalf("claimed lease = %+v", claimed)
+				}
+				return
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("claim error = %v, want pgx.ErrNoRows", err)
+			}
+			var state string
+			if err := f.pool.QueryRow(f.ctx, `
+				SELECT state
+				  FROM deployment_build_leases
+				 WHERE id = $1
+			`, leaseID).Scan(&state); err != nil {
+				t.Fatal(err)
+			}
+			if state != db.DeploymentBuildLeaseStateAssigned {
+				t.Fatalf("lease state = %q, want assigned", state)
+			}
+		})
 	}
 }
 

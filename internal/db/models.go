@@ -1307,6 +1307,7 @@ type WorkerGroup struct {
 	RequiredArtifactCacheBytes      int64              `json:"required_artifact_cache_bytes"`
 	RequiredVmSlots                 int32              `json:"required_vm_slots"`
 	RequiredBuildExecutors          int32              `json:"required_build_executors"`
+	ObservationTtlSeconds           int32              `json:"observation_ttl_seconds"`
 	LastScaleOutAt                  pgtype.Timestamptz `json:"last_scale_out_at"`
 	LastScaleInAt                   pgtype.Timestamptz `json:"last_scale_in_at"`
 	ProtocolVersion                 string             `json:"protocol_version"`

@@ -10,6 +10,8 @@ SELECT workers.id,
            ELSE 'worker_observation_stale'
        END::text AS reason
   FROM worker_instances AS workers
+  JOIN worker_groups AS groups
+    ON groups.id = workers.worker_group_id
   LEFT JOIN worker_observations AS observations
     ON observations.worker_instance_id = workers.id
    AND observations.worker_epoch = workers.current_epoch
@@ -23,7 +25,8 @@ SELECT workers.id,
        OR
        (workers.state IN ('active', 'draining')
         AND COALESCE(observations.observed_at, workers.epoch_started_at, workers.updated_at)
-            < sqlc.arg(observation_stale_before))
+            < transaction_timestamp()
+              - groups.observation_ttl_seconds * interval '1 second')
    )
  ORDER BY COALESCE(observations.observed_at, workers.epoch_started_at, workers.updated_at),
           workers.id
@@ -47,7 +50,9 @@ WITH target AS (
                ELSE workers.lost_at
            END,
            updated_at = now()
+      FROM worker_groups AS groups
      WHERE workers.id = sqlc.arg(id)
+       AND groups.id = workers.worker_group_id
        AND workers.worker_group_id = sqlc.arg(worker_group_id)
        AND workers.current_epoch IS NOT DISTINCT FROM sqlc.arg(expected_epoch)
        AND workers.state IN ('registering', 'active', 'draining')
@@ -70,7 +75,8 @@ WITH target AS (
                         AND observations.worker_epoch = workers.current_epoch),
                     workers.epoch_started_at,
                     workers.updated_at
-                ) < sqlc.arg(observation_stale_before))
+                ) < transaction_timestamp()
+                  - groups.observation_ttl_seconds * interval '1 second')
        )
     RETURNING workers.*
 ), revoked_credentials AS (

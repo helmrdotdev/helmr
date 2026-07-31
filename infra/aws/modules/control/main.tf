@@ -215,9 +215,10 @@ resource "terraform_data" "bootstrap_preconditions" {
         for fleet in var.worker_fleets :
         contains(keys(local.worker_groups_by_id), fleet.group_id) &&
         local.worker_groups_by_id[fleet.group_id].autoscaling_group == fleet.autoscaling_group &&
+        local.worker_groups_by_id[fleet.group_id].observation_ttl_seconds == fleet.stale_worker_timeout_seconds &&
         local.worker_groups_by_id[fleet.group_id].instance_capacity == fleet.instance_capacity
       ])
-      error_message = "each worker fleet must project the Auto Scaling group and capacity declared by its worker group."
+      error_message = "each worker fleet must project the Auto Scaling group, observation TTL, and capacity declared by its worker group."
     }
 
     precondition {
@@ -227,6 +228,7 @@ resource "terraform_data" "bootstrap_preconditions" {
         trimspace(group.autoscaling_group) != "" && trimspace(group.instance_profile_arn) != "" &&
         trimspace(group.launch_ami_id) != "" && contains(group.ami_ids, group.launch_ami_id) &&
         (group.allows_run || group.allows_build) &&
+        group.observation_ttl_seconds > 0 && group.observation_ttl_seconds <= 2592000 &&
         group.instance_capacity.milli_cpu > 0 && group.instance_capacity.memory_bytes > 0 &&
         group.instance_capacity.guest_ephemeral_disk_bytes > 0 &&
         group.instance_capacity.build_cache_bytes >= 0 && group.instance_capacity.artifact_cache_bytes >= 0 &&

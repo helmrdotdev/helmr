@@ -302,12 +302,13 @@ WITH worker AS (
     SELECT worker_instances.id,
            worker_instances.current_epoch,
            worker_instances.state,
-           worker_instances.max_run_consumers
+           worker_instances.max_run_consumers,
+           worker_groups.state AS group_state,
+           worker_groups.allows_run
       FROM worker_instances
       JOIN worker_groups
         ON worker_groups.id = worker_instances.worker_group_id
-       AND worker_groups.state = 'active'
-       AND worker_groups.allows_run
+       AND worker_groups.state IN ('active', 'draining')
        AND worker_groups.protocol_version = worker_instances.protocol_version
      WHERE worker_instances.id = $4
        AND worker_instances.worker_group_id = $1
@@ -327,7 +328,14 @@ SELECT run_leases.id,
    AND run_leases.state IN ('assigned', 'starting')
    AND run_leases.start_deadline_at > transaction_timestamp()
    AND run_leases.expires_at > transaction_timestamp()
-   AND (run_leases.state = 'starting' OR worker.state = 'active')
+   AND (
+       run_leases.state = 'starting'
+       OR (
+           worker.group_state = 'active'
+           AND worker.allows_run
+           AND worker.state = 'active'
+       )
+   )
  ORDER BY CASE run_leases.state
               WHEN 'starting' THEN 0
               ELSE 1
@@ -849,8 +857,7 @@ SELECT run_leases.org_id,
   JOIN worker_groups
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
-   AND worker_groups.state = 'active'
-   AND worker_groups.allows_run
+   AND worker_groups.state IN ('active', 'draining')
    AND worker_groups.protocol_version = run_leases.worker_protocol_version
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
@@ -920,7 +927,14 @@ SELECT run_leases.org_id,
    AND run_leases.state IN ('assigned', 'starting')
    AND run_leases.start_deadline_at > transaction_timestamp()
    AND run_leases.expires_at > transaction_timestamp()
-   AND (run_leases.state = 'starting' OR worker_instances.state = 'active')
+   AND (
+       run_leases.state = 'starting'
+       OR (
+           worker_groups.state = 'active'
+           AND worker_groups.allows_run
+           AND worker_instances.state = 'active'
+       )
+   )
 `
 
 type GetRunLeaseClaimLocatorsParams struct {
@@ -1070,8 +1084,7 @@ SELECT run_leases.environment_id,
   JOIN worker_groups
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
-   AND worker_groups.state = 'active'
-   AND worker_groups.allows_run
+   AND worker_groups.state IN ('active', 'draining')
    AND worker_groups.protocol_version = run_leases.worker_protocol_version
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
@@ -1089,7 +1102,14 @@ SELECT run_leases.environment_id,
    AND run_leases.state IN ('assigned', 'starting')
    AND run_leases.start_deadline_at > transaction_timestamp()
    AND run_leases.expires_at > transaction_timestamp()
-   AND (run_leases.state = 'starting' OR worker_instances.state = 'active')
+   AND (
+       run_leases.state = 'starting'
+       OR (
+           worker_groups.state = 'active'
+           AND worker_groups.allows_run
+           AND worker_instances.state = 'active'
+       )
+   )
 `
 
 type GetRunLeaseSecretDeliveryLocatorsParams struct {
@@ -1905,6 +1925,76 @@ func (q *Queries) LockRunLeaseClaimNetworkSlot(ctx context.Context, arg LockRunL
 	return i, err
 }
 
+const lockRunLeaseClaimObservation = `-- name: LockRunLeaseClaimObservation :one
+SELECT worker_observations.worker_instance_id, worker_observations.worker_epoch, worker_observations.cpu_pressure_bps, worker_observations.memory_pressure_bps, worker_observations.guest_ephemeral_disk_pressure_bps, worker_observations.build_cache_pressure_bps, worker_observations.artifact_cache_pressure_bps, worker_observations.checkpoint_pressure_bps, worker_observations.leaked_slot_count, worker_observations.run_queue_depth, worker_observations.build_queue_depth, worker_observations.runtime_start_queue_depth, worker_observations.run_paused_reason, worker_observations.build_paused_reason, worker_observations.runtime_paused_reason, worker_observations.health_details, worker_observations.observed_at, worker_observations.updated_at,
+       (
+           worker_observations.observed_at >= transaction_timestamp()
+               - worker_groups.observation_ttl_seconds * interval '1 second'
+           AND worker_observations.run_paused_reason IS NULL
+       )::boolean AS run_ready
+  FROM worker_observations
+  JOIN worker_groups
+    ON worker_groups.id = $1
+ WHERE worker_observations.worker_instance_id = $2
+   AND worker_observations.worker_epoch = $3
+ FOR UPDATE OF worker_observations
+`
+
+type LockRunLeaseClaimObservationParams struct {
+	WorkerGroupID    string      `json:"worker_group_id"`
+	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch      int64       `json:"worker_epoch"`
+}
+
+type LockRunLeaseClaimObservationRow struct {
+	WorkerInstanceID              pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                   int64              `json:"worker_epoch"`
+	CpuPressureBps                int32              `json:"cpu_pressure_bps"`
+	MemoryPressureBps             int32              `json:"memory_pressure_bps"`
+	GuestEphemeralDiskPressureBps int32              `json:"guest_ephemeral_disk_pressure_bps"`
+	BuildCachePressureBps         int32              `json:"build_cache_pressure_bps"`
+	ArtifactCachePressureBps      int32              `json:"artifact_cache_pressure_bps"`
+	CheckpointPressureBps         int32              `json:"checkpoint_pressure_bps"`
+	LeakedSlotCount               int32              `json:"leaked_slot_count"`
+	RunQueueDepth                 int32              `json:"run_queue_depth"`
+	BuildQueueDepth               int32              `json:"build_queue_depth"`
+	RuntimeStartQueueDepth        int32              `json:"runtime_start_queue_depth"`
+	RunPausedReason               pgtype.Text        `json:"run_paused_reason"`
+	BuildPausedReason             pgtype.Text        `json:"build_paused_reason"`
+	RuntimePausedReason           pgtype.Text        `json:"runtime_paused_reason"`
+	HealthDetails                 []byte             `json:"health_details"`
+	ObservedAt                    pgtype.Timestamptz `json:"observed_at"`
+	UpdatedAt                     pgtype.Timestamptz `json:"updated_at"`
+	RunReady                      bool               `json:"run_ready"`
+}
+
+func (q *Queries) LockRunLeaseClaimObservation(ctx context.Context, arg LockRunLeaseClaimObservationParams) (LockRunLeaseClaimObservationRow, error) {
+	row := q.db.QueryRow(ctx, lockRunLeaseClaimObservation, arg.WorkerGroupID, arg.WorkerInstanceID, arg.WorkerEpoch)
+	var i LockRunLeaseClaimObservationRow
+	err := row.Scan(
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.CpuPressureBps,
+		&i.MemoryPressureBps,
+		&i.GuestEphemeralDiskPressureBps,
+		&i.BuildCachePressureBps,
+		&i.ArtifactCachePressureBps,
+		&i.CheckpointPressureBps,
+		&i.LeakedSlotCount,
+		&i.RunQueueDepth,
+		&i.BuildQueueDepth,
+		&i.RuntimeStartQueueDepth,
+		&i.RunPausedReason,
+		&i.BuildPausedReason,
+		&i.RuntimePausedReason,
+		&i.HealthDetails,
+		&i.ObservedAt,
+		&i.UpdatedAt,
+		&i.RunReady,
+	)
+	return i, err
+}
+
 const lockRunLeaseClaimRun = `-- name: LockRunLeaseClaimRun :one
 SELECT id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
   FROM runs
@@ -2239,7 +2329,7 @@ func (q *Queries) LockRunLeaseClaimWorker(ctx context.Context, arg LockRunLeaseC
 }
 
 const lockRunLeaseClaimWorkerGroup = `-- name: LockRunLeaseClaimWorkerGroup :one
-SELECT id, region_id, name, description, state, enrollment_policy_fingerprint, allowed_attestation_fingerprints, launch_attestation_fingerprint, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, last_scale_out_at, last_scale_in_at, protocol_version, created_at, updated_at
+SELECT id, region_id, name, description, state, enrollment_policy_fingerprint, allowed_attestation_fingerprints, launch_attestation_fingerprint, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, last_scale_out_at, last_scale_in_at, protocol_version, created_at, updated_at
   FROM worker_groups
  WHERE id = $1
    AND region_id = $2
@@ -2273,6 +2363,7 @@ func (q *Queries) LockRunLeaseClaimWorkerGroup(ctx context.Context, arg LockRunL
 		&i.RequiredArtifactCacheBytes,
 		&i.RequiredVmSlots,
 		&i.RequiredBuildExecutors,
+		&i.ObservationTtlSeconds,
 		&i.LastScaleOutAt,
 		&i.LastScaleInAt,
 		&i.ProtocolVersion,

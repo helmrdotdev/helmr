@@ -1,18 +1,3 @@
--- name: SetWorkerInstanceState :one
-UPDATE worker_instances
-   SET state = sqlc.arg(state)::text,
-       draining_at = CASE WHEN sqlc.arg(state)::text = 'draining'
-                          THEN COALESCE(draining_at, now()) ELSE draining_at END,
-       disabled_at = CASE WHEN sqlc.arg(state)::text = 'disabled'
-                          THEN COALESCE(disabled_at, now()) ELSE disabled_at END,
-       lost_at = CASE WHEN sqlc.arg(state)::text = 'lost'
-                      THEN COALESCE(lost_at, now()) ELSE lost_at END,
-       updated_at = now()
- WHERE id = sqlc.arg(id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
-   AND (sqlc.narg(expected_epoch)::bigint IS NULL OR current_epoch = sqlc.narg(expected_epoch)::bigint)
-RETURNING *;
-
 -- name: DrainWorkerInstance :one
 WITH target AS (
     UPDATE worker_instances
@@ -130,6 +115,41 @@ SELECT worker_instances.*,
        runtime_identities.rootfs_digest,
        runtime_identities.runtime_abi,
        runtime_identities.runtime_arch,
+       worker_observations.observed_at,
+       worker_observations.run_paused_reason,
+       worker_observations.build_paused_reason,
+       worker_observations.runtime_paused_reason,
+       COALESCE((
+           worker_instances.state = 'active'
+           AND worker_instances.supports_run
+           AND worker_observations.observed_at >= transaction_timestamp()
+               - worker_groups.observation_ttl_seconds * interval '1 second'
+           AND worker_observations.run_paused_reason IS NULL
+       ), false)::boolean AS run_ready,
+       COALESCE((
+           worker_instances.state = 'active'
+           AND worker_instances.supports_build
+           AND worker_observations.observed_at >= transaction_timestamp()
+               - worker_groups.observation_ttl_seconds * interval '1 second'
+           AND worker_observations.build_paused_reason IS NULL
+       ), false)::boolean AS build_ready,
+       COALESCE((
+           worker_instances.state = 'active'
+           AND worker_instances.supports_run
+           AND worker_observations.observed_at >= transaction_timestamp()
+               - worker_groups.observation_ttl_seconds * interval '1 second'
+           AND worker_observations.runtime_paused_reason IS NULL
+       ), false)::boolean AS runtime_ready,
+       COALESCE((
+           worker_instances.state = 'active'
+           AND worker_observations.observed_at >= transaction_timestamp()
+               - worker_groups.observation_ttl_seconds * interval '1 second'
+           AND (NOT worker_instances.supports_run OR (
+               worker_observations.run_paused_reason IS NULL
+               AND worker_observations.runtime_paused_reason IS NULL
+           ))
+           AND (NOT worker_instances.supports_build OR worker_observations.build_paused_reason IS NULL)
+       ), false)::boolean AS all_configured_roles_ready,
        ((SELECT count(*) FROM run_leases
          WHERE run_leases.worker_instance_id = worker_instances.id
            AND run_leases.worker_epoch = worker_instances.current_epoch
@@ -147,7 +167,11 @@ SELECT worker_instances.*,
            AND runtime_instances.worker_epoch = worker_instances.current_epoch
            AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')))::int AS active_executions
   FROM worker_instances
+  JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
   LEFT JOIN runtime_identities ON runtime_identities.id = worker_instances.runtime_identity_id
+  LEFT JOIN worker_observations
+    ON worker_observations.worker_instance_id = worker_instances.id
+   AND worker_observations.worker_epoch = worker_instances.current_epoch
  WHERE worker_instances.id = sqlc.arg(id)
    AND worker_instances.worker_group_id = sqlc.arg(worker_group_id);
 

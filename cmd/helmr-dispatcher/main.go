@@ -183,15 +183,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure stale worker fence lock: %w", err)
 	}
-	workerGroupFenceGrace := make(map[string]dispatch.WorkerGroupFenceGrace, len(cfg.WorkerFleets))
+	workerGroupFenceGrace := make(map[string]dispatch.WorkerGroupRegistrationGrace, len(cfg.WorkerFleets))
 	for _, configuredFleet := range cfg.WorkerFleets {
-		workerGroupFenceGrace[configuredFleet.GroupID] = dispatch.WorkerGroupFenceGrace{
-			Observation: configuredFleet.StaleWorkerTimeout, Registration: configuredFleet.ReadinessTimeout,
+		workerGroupFenceGrace[configuredFleet.GroupID] = dispatch.WorkerGroupRegistrationGrace{
+			Registration: configuredFleet.ReadinessTimeout,
 		}
 	}
 	staleWorkerFencer, err := dispatch.NewStaleWorkerFencer(staleWorkerTransactions,
 		dispatch.WithStaleWorkerFenceLock(staleWorkerLock),
-		dispatch.WithWorkerGroupFenceGrace(workerGroupFenceGrace),
+		dispatch.WithWorkerGroupRegistrationGrace(workerGroupFenceGrace),
 		dispatch.WithStaleWorkerFenceLogger(log),
 	)
 	if err != nil {

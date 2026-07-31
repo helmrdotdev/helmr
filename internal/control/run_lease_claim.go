@@ -24,6 +24,7 @@ type runLeaseClaimAuthority struct {
 	attempt              db.RunAttempt
 	workerGroup          db.WorkerGroup
 	worker               db.WorkerInstance
+	workerObservation    db.LockRunLeaseClaimObservationRow
 	networkSlot          db.WorkerNetworkSlot
 	runtime              db.RuntimeInstance
 	runLease             db.RunLease
@@ -1173,8 +1174,8 @@ func claimRunLeasePhysicalInTx(
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
-	if authority.workerGroup.State != db.WorkerGroupStateActive ||
-		!authority.workerGroup.AllowsRun ||
+	if (authority.workerGroup.State != db.WorkerGroupStateActive &&
+		authority.workerGroup.State != db.WorkerGroupStateDraining) ||
 		authority.workerGroup.ClaimVersion != worker.GroupClaimVersion ||
 		authority.workerGroup.ProtocolVersion != worker.ProtocolVersion {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
@@ -1189,6 +1190,17 @@ func claimRunLeasePhysicalInTx(
 	}
 	if err := validateClaimWorker(worker, authority.worker); err != nil {
 		return runLeaseClaimAuthority{}, err
+	}
+	authority.workerObservation, err = q.LockRunLeaseClaimObservation(
+		ctx,
+		db.LockRunLeaseClaimObservationParams{
+			WorkerGroupID:    worker.WorkerGroupID,
+			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerEpoch:      worker.WorkerEpoch,
+		},
+	)
+	if err != nil {
+		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
 
 	authority.networkSlot, err = q.LockRunLeaseClaimNetworkSlot(ctx, db.LockRunLeaseClaimNetworkSlotParams{
@@ -1340,6 +1352,14 @@ func validateClaimPhysicalAuthority(worker workerActor, authority runLeaseClaimA
 		return errStaleRunLeaseClaim
 	}
 	if lease.State == db.RunLeaseStateAssigned && authority.worker.State != db.WorkerInstanceStateActive {
+		return errStaleRunLeaseClaim
+	}
+	if lease.State == db.RunLeaseStateAssigned &&
+		(authority.workerGroup.State != db.WorkerGroupStateActive ||
+			!authority.workerGroup.AllowsRun) {
+		return errStaleRunLeaseClaim
+	}
+	if lease.State == db.RunLeaseStateAssigned && !authority.workerObservation.RunReady {
 		return errStaleRunLeaseClaim
 	}
 	if runtime.DesiredState != db.RuntimeDesiredStateReady ||

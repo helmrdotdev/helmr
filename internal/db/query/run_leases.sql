@@ -22,12 +22,13 @@ WITH worker AS (
     SELECT worker_instances.id,
            worker_instances.current_epoch,
            worker_instances.state,
-           worker_instances.max_run_consumers
+           worker_instances.max_run_consumers,
+           worker_groups.state AS group_state,
+           worker_groups.allows_run
       FROM worker_instances
       JOIN worker_groups
         ON worker_groups.id = worker_instances.worker_group_id
-       AND worker_groups.state = 'active'
-       AND worker_groups.allows_run
+       AND worker_groups.state IN ('active', 'draining')
        AND worker_groups.protocol_version = worker_instances.protocol_version
      WHERE worker_instances.id = sqlc.arg(worker_instance_id)
        AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
@@ -47,7 +48,14 @@ SELECT run_leases.id,
    AND run_leases.state IN ('assigned', 'starting')
    AND run_leases.start_deadline_at > transaction_timestamp()
    AND run_leases.expires_at > transaction_timestamp()
-   AND (run_leases.state = 'starting' OR worker.state = 'active')
+   AND (
+       run_leases.state = 'starting'
+       OR (
+           worker.group_state = 'active'
+           AND worker.allows_run
+           AND worker.state = 'active'
+       )
+   )
  ORDER BY CASE run_leases.state
               WHEN 'starting' THEN 0
               ELSE 1
@@ -120,8 +128,7 @@ SELECT run_leases.org_id,
   JOIN worker_groups
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
-   AND worker_groups.state = 'active'
-   AND worker_groups.allows_run
+   AND worker_groups.state IN ('active', 'draining')
    AND worker_groups.protocol_version = run_leases.worker_protocol_version
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
@@ -191,7 +198,14 @@ SELECT run_leases.org_id,
    AND run_leases.state IN ('assigned', 'starting')
    AND run_leases.start_deadline_at > transaction_timestamp()
    AND run_leases.expires_at > transaction_timestamp()
-   AND (run_leases.state = 'starting' OR worker_instances.state = 'active');
+   AND (
+       run_leases.state = 'starting'
+       OR (
+           worker_groups.state = 'active'
+           AND worker_groups.allows_run
+           AND worker_instances.state = 'active'
+       )
+   );
 
 -- name: GetRunLeaseStartLocators :one
 SELECT run_leases.org_id,
@@ -295,8 +309,7 @@ SELECT run_leases.environment_id,
   JOIN worker_groups
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
-   AND worker_groups.state = 'active'
-   AND worker_groups.allows_run
+   AND worker_groups.state IN ('active', 'draining')
    AND worker_groups.protocol_version = run_leases.worker_protocol_version
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
@@ -314,7 +327,14 @@ SELECT run_leases.environment_id,
    AND run_leases.state IN ('assigned', 'starting')
    AND run_leases.start_deadline_at > transaction_timestamp()
    AND run_leases.expires_at > transaction_timestamp()
-   AND (run_leases.state = 'starting' OR worker_instances.state = 'active');
+   AND (
+       run_leases.state = 'starting'
+       OR (
+           worker_groups.state = 'active'
+           AND worker_groups.allows_run
+           AND worker_instances.state = 'active'
+       )
+   );
 
 -- name: GetRunEntrypointLocators :one
 SELECT run_leases.org_id,
@@ -479,6 +499,20 @@ SELECT *
  WHERE id = sqlc.arg(id)
    AND worker_group_id = sqlc.arg(worker_group_id)
  FOR UPDATE;
+
+-- name: LockRunLeaseClaimObservation :one
+SELECT worker_observations.*,
+       (
+           worker_observations.observed_at >= transaction_timestamp()
+               - worker_groups.observation_ttl_seconds * interval '1 second'
+           AND worker_observations.run_paused_reason IS NULL
+       )::boolean AS run_ready
+  FROM worker_observations
+  JOIN worker_groups
+    ON worker_groups.id = sqlc.arg(worker_group_id)
+ WHERE worker_observations.worker_instance_id = sqlc.arg(worker_instance_id)
+   AND worker_observations.worker_epoch = sqlc.arg(worker_epoch)
+ FOR UPDATE OF worker_observations;
 
 -- name: LockRunLeaseClaimNetworkSlot :one
 SELECT *
