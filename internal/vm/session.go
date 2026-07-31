@@ -171,7 +171,8 @@ type MaterializeRequest struct {
 // WorkloadBinding is the closed logical authority that a connector binds to
 // its locally owned network attachment before a guest can receive input or
 // network access. Runtime workloads use their immutable Runtime Instance ID
-// with generation 1; build workloads use the current Build Lease sequence.
+// with generation 1; Program builds use the current Build Lease sequence; each
+// physical image-build attempt uses its fresh owner UUID and generation 1.
 type WorkloadBinding struct {
 	WorkerEpoch       int64
 	OwnerID           string
@@ -203,6 +204,10 @@ func (binding WorkloadBinding) Validate(owner Owner) error {
 		if binding.RuntimeInstanceID != "" {
 			return errors.New("build workload binding contains runtime authority")
 		}
+	case OwnerImageBuild:
+		if binding.RuntimeInstanceID != "" || binding.Generation != 1 {
+			return errors.New("image-build workload binding is incomplete")
+		}
 	default:
 		return errors.New("workload binding owner kind is invalid")
 	}
@@ -212,8 +217,9 @@ func (binding WorkloadBinding) Validate(owner Owner) error {
 type OwnerKind string
 
 const (
-	OwnerRuntime OwnerKind = "runtime"
-	OwnerBuild   OwnerKind = "build"
+	OwnerRuntime    OwnerKind = "runtime"
+	OwnerBuild      OwnerKind = "build"
+	OwnerImageBuild OwnerKind = "image_build"
 )
 
 type Owner struct {
@@ -222,8 +228,8 @@ type Owner struct {
 }
 
 func (o Owner) Validate() error {
-	if o.Kind != OwnerRuntime && o.Kind != OwnerBuild {
-		return errors.New("VM owner kind must be runtime or build")
+	if o.Kind != OwnerRuntime && o.Kind != OwnerBuild && o.Kind != OwnerImageBuild {
+		return errors.New("VM owner kind must be runtime, build, or image_build")
 	}
 	if err := ids.Validate(o.ID); err != nil {
 		return errors.New("VM owner id must be a canonical UUIDv7")

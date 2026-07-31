@@ -12,6 +12,7 @@ type StreamType string
 
 const (
 	StreamTypeBuild                      StreamType = "build"
+	StreamTypeImageBuild                 StreamType = "image-build"
 	StreamTypeRunImage                   StreamType = "run-image"
 	StreamTypeWorkspaceArtifact          StreamType = "workspace-artifact"
 	StreamTypeCheckpointPauseRequest     StreamType = "checkpoint-pause-request"

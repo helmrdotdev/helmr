@@ -331,6 +331,13 @@ func TestValidateRejectsInvalidOperations(t *testing.T) {
 			errMsg: "Deployment-relative",
 		},
 		{
+			name: "Platform compiler output",
+			change: func(build *Build) {
+				build.Images[0].Steps[3].CopySourceDir.Path = "helmr/generated"
+			},
+			errMsg: "Deployment-relative",
+		},
+		{
 			name: "workdir parent",
 			change: func(build *Build) {
 				build.Images[0].Steps[4].Workdir.Path = "../app"

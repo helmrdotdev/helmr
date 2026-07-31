@@ -87,7 +87,7 @@ configure_process_limit() {
 	mkdir -p /sys/fs/cgroup
 	is_mounted /sys/fs/cgroup || mount -t cgroup2 cgroup2 /sys/fs/cgroup
 	case "$profile" in
-		build)
+		build|image-build)
 			;;
 		*)
 		if ! grep -qw pids /sys/fs/cgroup/cgroup.controllers; then
@@ -311,7 +311,7 @@ guest_profile() {
 		return 1
 	fi
 	case "$profile" in
-		""|build)
+		""|build|image-build)
 			echo "$profile"
 			;;
 		*)
@@ -425,6 +425,9 @@ configure_runtime_identity() {
 mount_base
 profile=$(guest_profile)
 configure_process_limit "$profile"
+if [ "$profile" = image-build ]; then
+	export BUILDKIT_NO_CLIENT_TOKEN=1
+fi
 if [ -z "$profile" ]; then
 	enable_user_namespaces
 else

@@ -35,6 +35,9 @@ func TestOwnerValidation(t *testing.T) {
 	if err := valid.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	if err := (Owner{Kind: OwnerImageBuild, ID: valid.ID}).Validate(); err != nil {
+		t.Fatal(err)
+	}
 	for _, owner := range []Owner{
 		{Kind: "other", ID: valid.ID},
 		{Kind: OwnerRuntime, ID: "not-a-uuid"},
@@ -68,6 +71,16 @@ func TestWorkloadBindingValidation(t *testing.T) {
 	if err := buildBinding.Validate(buildOwner); err != nil {
 		t.Fatal(err)
 	}
+	imageOwner := Owner{Kind: OwnerImageBuild, ID: "019c10d5-a6f7-7af1-8f5f-000000000012"}
+	imageBinding := WorkloadBinding{
+		WorkerEpoch:       4,
+		OwnerID:           imageOwner.ID,
+		Generation:        1,
+		RuntimeIdentityID: "runtime-identity",
+	}
+	if err := imageBinding.Validate(imageOwner); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := map[string]struct {
 		owner   Owner
@@ -87,6 +100,11 @@ func TestWorkloadBindingValidation(t *testing.T) {
 		"missing runtime identity": {buildOwner, func() WorkloadBinding {
 			value := buildBinding
 			value.RuntimeIdentityID = ""
+			return value
+		}()},
+		"image generation is not canonical": {imageOwner, func() WorkloadBinding {
+			value := imageBinding
+			value.Generation++
 			return value
 		}()},
 	}

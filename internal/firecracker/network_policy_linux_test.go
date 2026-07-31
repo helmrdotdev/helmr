@@ -217,7 +217,11 @@ func TestWithNetworkBindingSurvivesSnapshotHandlerReplacement(t *testing.T) {
 		context.Background(),
 		firecracker.Config{},
 		firecracker.WithSnapshot("/tmp/mem", "/tmp/state"),
-		connector.withNetworkBinding(logical, &installed),
+		connector.withNetworkBinding(
+			vm.Owner{Kind: vm.OwnerRuntime, ID: logical.OwnerID},
+			logical,
+			&installed,
+		),
 	)
 	if err != nil {
 		t.Fatal(err)

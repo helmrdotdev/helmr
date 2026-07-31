@@ -92,6 +92,7 @@ type installedNetworkBinding struct {
 }
 
 func (c *Connector) withNetworkBinding(
+	owner vm.Owner,
 	logical vm.WorkloadBinding,
 	installed **installedNetworkBinding,
 ) firecracker.Opt {
@@ -99,11 +100,7 @@ func (c *Connector) withNetworkBinding(
 		machine.Handlers.FcInit = machine.Handlers.FcInit.Prepend(firecracker.Handler{
 			Name: "helmr.InstallNetworkBinding",
 			Fn: func(ctx context.Context, _ *firecracker.Machine) error {
-				ownerKind := vm.OwnerRuntime
-				if logical.RuntimeInstanceID == "" {
-					ownerKind = vm.OwnerBuild
-				}
-				binding, err := c.prepareNetworkBinding(ctx, vm.Owner{Kind: ownerKind, ID: logical.OwnerID}, logical)
+				binding, err := c.prepareNetworkBinding(ctx, owner, logical)
 				if err != nil {
 					return err
 				}
@@ -149,7 +146,7 @@ func (c *Connector) prepareNetworkBinding(
 	if err := c.createRoutedAttachment(ctx, binding); err != nil {
 		return nil, err
 	}
-	if err := c.installRoutedPolicy(ctx, binding, owner.Kind == vm.OwnerBuild); err != nil {
+	if err := c.installRoutedPolicy(ctx, binding, owner.Kind != vm.OwnerRuntime); err != nil {
 		return nil, err
 	}
 	if err := c.persistInstalledNetworkOwner(binding); err != nil {

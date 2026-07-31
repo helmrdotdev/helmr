@@ -13,6 +13,7 @@ type Request struct {
 	WorkspaceID string
 	Build       Build
 	Source      Source
+	Cache       *CacheBinding
 }
 
 type Source struct {

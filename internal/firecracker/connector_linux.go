@@ -42,6 +42,7 @@ import (
 
 const defaultKernelArgs = "console=ttyS0 reboot=k panic=1 root=/dev/vda rootfstype=ext4 ro init=/init"
 const buildKernelArgs = defaultKernelArgs + " helmr.profile=build helmr.pids_max=1024"
+const imageBuildKernelArgs = defaultKernelArgs + " helmr.profile=image-build helmr.pids_max=1024"
 const stopTimeout = 10 * time.Second
 const apiSocketName = "api.sock"
 const vsockSocketName = "vsock.sock"
@@ -151,7 +152,8 @@ func (c *Connector) connectorForRequest(
 ) (*Connector, error) {
 	cfg := c.cfg
 	var kernelArgs string
-	if request.OwnerKind == vm.OwnerBuild {
+	switch request.OwnerKind {
+	case vm.OwnerBuild, vm.OwnerImageBuild:
 		if err := validateReadOnlyDrives(request.ReadOnlyDrives); err != nil {
 			return nil, err
 		}
@@ -160,11 +162,11 @@ func (c *Connector) connectorForRequest(
 		if err != nil {
 			return nil, err
 		}
-		cfg, err = c.configForResources(request.Resources, "build guest")
+		cfg, err = c.configForResources(request.Resources, string(request.OwnerKind)+" guest")
 		if err != nil {
 			return nil, err
 		}
-	} else {
+	case vm.OwnerRuntime:
 		if len(request.ReadOnlyDrives) != 0 {
 			return nil, errors.New("runtime attachment cannot add read-only drives")
 		}
@@ -175,6 +177,8 @@ func (c *Connector) connectorForRequest(
 			return nil, errors.New("runtime attachment cannot change physical isolation")
 		}
 		kernelArgs = runtimeKernelArgs(request.Topology, nil)
+	default:
+		return nil, errors.New("firecracker owner kind is invalid")
 	}
 	child := *c
 	child.cfg = cfg
@@ -187,14 +191,16 @@ func buildGuestProfile(request vm.ConnectRequest) (string, error) {
 	switch {
 	case request.Resources == compute.BuildGuestResources() &&
 		request.PIDsMax == compute.BuildGuestPIDsMax &&
+		request.OwnerKind == vm.OwnerBuild &&
 		noSubstrate &&
 		isBuildInstallDriveSet(request.ReadOnlyDrives):
 		return buildKernelArgs, nil
-	case request.Resources == compute.BuildGuestResources() &&
-		request.PIDsMax == 0 &&
+	case request.Resources == compute.ImageBuildGuestResources() &&
+		request.PIDsMax == compute.ImageBuildGuestPIDsMax &&
+		request.OwnerKind == vm.OwnerImageBuild &&
 		noSubstrate &&
 		len(request.ReadOnlyDrives) == 0:
-		return defaultKernelArgs, nil
+		return imageBuildKernelArgs, nil
 	default:
 		return "", errors.New("build guest resources do not match the platform profile")
 	}
@@ -822,9 +828,6 @@ func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.O
 
 func (c *Connector) prepareSession(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase)) (_ *guestSession, retErr error) {
 	instanceID = strings.TrimSpace(instanceID)
-	if ownerKind == vm.OwnerBuild && instanceID == "" {
-		instanceID = uuid.Must(uuid.NewV7()).String()
-	}
 	owner := vm.Owner{Kind: ownerKind, ID: instanceID}
 	if err := owner.Validate(); err != nil {
 		return nil, fmt.Errorf("firecracker owner: %w", err)
@@ -934,7 +937,7 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 		opts = append(opts, withJailedRestoreFiles(c.cfg.RootfsPath, scratchDiskPath, substrateDiskPath, snapshotMemoryPath, snapshotStatePath))
 	}
 	opts = append(opts, c.withTapOwner())
-	opts = append(opts, c.withNetworkBinding(binding, &networkBinding))
+	opts = append(opts, c.withNetworkBinding(owner, binding, &networkBinding))
 	// firecracker-go-sdk binds this context to the jailer/firecracker process.
 	// Keep it separate from the startup request so prepared sessions can outlive
 	// a background warm command after boot succeeds.
@@ -1004,7 +1007,7 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 		readOnlyDrives: append([]vm.ReadOnlyDrive(nil), readOnlyDrives...),
 		owner:          owner,
 		cleaner:        c,
-		buildNetwork:   c.kernelArgsValue() == buildKernelArgs,
+		buildNetwork:   isBuildGuestKernelArgs(c.kernelArgsValue()),
 		networkBinding: networkBinding,
 	}
 	session.watchNetworkFailure()
@@ -1075,12 +1078,14 @@ func (c *Connector) createScratchDisk(ctx context.Context, scratchDiskPath strin
 }
 
 func (c *Connector) scratchUsableFloor() uint64 {
-	switch c.kernelArgsValue() {
-	case buildKernelArgs:
+	if isBuildGuestKernelArgs(c.kernelArgsValue()) {
 		return 19 * 1024 * 1024 * 1024
-	default:
-		return 0
 	}
+	return 0
+}
+
+func isBuildGuestKernelArgs(value string) bool {
+	return value == buildKernelArgs || value == imageBuildKernelArgs
 }
 
 func ext4FreeBytes(path string) (uint64, error) {

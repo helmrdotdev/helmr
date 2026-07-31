@@ -306,7 +306,35 @@ func RegistryAuthority(value string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parse image reference: %w", err)
 	}
-	authority, err := normalizeRegistryAuthority(reference.Domain(named))
+	authority, err := CanonicalRegistryAuthority(reference.Domain(named))
+	if err != nil {
+		return "", err
+	}
+	return authority, nil
+}
+
+func ValidateCacheReference(value string) error {
+	if err := validateImageReference(value, "image-build cache ref"); err != nil {
+		return err
+	}
+	named, err := reference.ParseNormalizedNamed(value)
+	if err != nil {
+		return fmt.Errorf("parse image-build cache ref: %w", err)
+	}
+	if named.String() != value {
+		return errors.New("image-build cache ref must be a canonical fully qualified reference")
+	}
+	if _, ok := named.(reference.Canonical); ok {
+		return errors.New("image-build cache ref must not contain a digest")
+	}
+	if _, ok := named.(reference.Tagged); !ok {
+		return errors.New("image-build cache ref must contain an explicit tag")
+	}
+	return nil
+}
+
+func CanonicalRegistryAuthority(value string) (string, error) {
+	authority, err := normalizeRegistryAuthority(value)
 	if err != nil {
 		return "", err
 	}
@@ -540,6 +568,7 @@ func validateImageSourcePath(value string, allowDot bool, label string) error {
 		path.IsAbs(value) ||
 		path.Clean(value) != value ||
 		hasParentPathComponent(value) ||
+		value == "helmr" || strings.HasPrefix(value, "helmr/") ||
 		(value == "." && !allowDot) {
 		return fmt.Errorf("%s must be a clean Deployment-relative POSIX path", label)
 	}

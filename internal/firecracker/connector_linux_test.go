@@ -94,6 +94,7 @@ func TestScratchUsableFloorMatchesBuildProfiles(t *testing.T) {
 		want       uint64
 	}{
 		{name: "staged build", kernelArgs: buildKernelArgs, want: 19 * 1024 * 1024 * 1024},
+		{name: "image build", kernelArgs: imageBuildKernelArgs, want: 19 * 1024 * 1024 * 1024},
 		{name: "runtime", kernelArgs: defaultKernelArgs},
 	}
 	for _, test := range tests {
@@ -1391,6 +1392,7 @@ func TestBuildGuestProfilesUseExactDriveSets(t *testing.T) {
 	}{
 		"build": {
 			request: vm.ConnectRequest{
+				OwnerKind: vm.OwnerBuild,
 				Resources: compute.BuildGuestResources(),
 				PIDsMax:   compute.BuildGuestPIDsMax,
 				ReadOnlyDrives: []vm.ReadOnlyDrive{
@@ -1400,6 +1402,14 @@ func TestBuildGuestProfilesUseExactDriveSets(t *testing.T) {
 				},
 			},
 			kernelArgs: buildKernelArgs,
+		},
+		"image build": {
+			request: vm.ConnectRequest{
+				OwnerKind: vm.OwnerImageBuild,
+				Resources: compute.ImageBuildGuestResources(),
+				PIDsMax:   compute.ImageBuildGuestPIDsMax,
+			},
+			kernelArgs: imageBuildKernelArgs,
 		},
 	}
 	for name, test := range tests {
@@ -1424,16 +1434,19 @@ func TestBuildGuestProfileRejectsOpenProfiles(t *testing.T) {
 	}
 	tests := map[string]vm.ConnectRequest{
 		"missing component": {
+			OwnerKind:      vm.OwnerBuild,
 			Resources:      compute.BuildGuestResources(),
 			PIDsMax:        compute.BuildGuestPIDsMax,
 			ReadOnlyDrives: required[:2],
 		},
 		"wrong process limit": {
+			OwnerKind:      vm.OwnerBuild,
 			Resources:      compute.BuildGuestResources(),
 			PIDsMax:        compute.BuildGuestPIDsMax - 1,
 			ReadOnlyDrives: required,
 		},
 		"workspace substrate": {
+			OwnerKind: vm.OwnerBuild,
 			Resources: compute.BuildGuestResources(),
 			PIDsMax:   compute.BuildGuestPIDsMax,
 			Topology: vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{
@@ -1442,8 +1455,15 @@ func TestBuildGuestProfileRejectsOpenProfiles(t *testing.T) {
 			ReadOnlyDrives: required,
 		},
 		"build drives on standard build": {
+			OwnerKind:      vm.OwnerBuild,
 			Resources:      compute.BuildGuestResources(),
 			ReadOnlyDrives: required,
+		},
+		"image build with drive": {
+			OwnerKind:      vm.OwnerImageBuild,
+			Resources:      compute.ImageBuildGuestResources(),
+			PIDsMax:        compute.ImageBuildGuestPIDsMax,
+			ReadOnlyDrives: required[:1],
 		},
 	}
 	for name, request := range tests {

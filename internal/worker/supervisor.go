@@ -487,7 +487,7 @@ func activationQuarantines(evidence RecoveryEvidence) (int, error) {
 		switch owner.Kind {
 		case vm.OwnerRuntime:
 			runtimeCount++
-		case vm.OwnerBuild:
+		case vm.OwnerBuild, vm.OwnerImageBuild:
 			return 0, errors.New("worker activation is blocked by quarantined build residue")
 		default:
 			return 0, errors.New("worker activation is blocked by unknown VM owner kind")

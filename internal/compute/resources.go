@@ -6,6 +6,7 @@ var ErrNoCapacity = errors.New("no compute capacity available")
 
 const (
 	BuildGuestPIDsMax              = int64(1024)
+	ImageBuildGuestPIDsMax         = int64(1024)
 	WorkspaceGuestEphemeralDiskMiB = int64(32768)
 )
 
@@ -32,6 +33,10 @@ func BuildEnvelopeResources() ResourceVector {
 		DiskMiB:   32768,
 		Slots:     1,
 	}
+}
+
+func ImageBuildGuestResources() ResourceVector {
+	return BuildEnvelopeResources()
 }
 
 func BuildHostReserve() ResourceVector {

@@ -28,6 +28,7 @@ type guestProfile uint8
 const (
 	ordinaryGuestProfile guestProfile = iota
 	buildGuestProfile
+	imageBuildGuestProfile
 )
 
 func parseGuestProfile(value string) (guestProfile, error) {
@@ -36,6 +37,8 @@ func parseGuestProfile(value string) (guestProfile, error) {
 		return ordinaryGuestProfile, nil
 	case "build":
 		return buildGuestProfile, nil
+	case "image-build":
+		return imageBuildGuestProfile, nil
 	default:
 		return 0, fmt.Errorf("unsupported guest profile %q", value)
 	}
@@ -52,9 +55,10 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, 
 	}
 	if profile != ordinaryGuestProfile {
 		if start.attach != nil {
-			return false, errors.New("build guest rejects resume attach")
+			return false, errors.New("one-shot guest rejects resume attach")
 		}
-		if profile == buildGuestProfile {
+		switch profile {
+		case buildGuestProfile:
 			if start.streamHeader.Type != wire.StreamTypeBuild {
 				return false, fmt.Errorf(
 					"build guest rejects input type %q",
@@ -62,6 +66,14 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, 
 				)
 			}
 			return false, handleBuild(ctx, conn, start.bodyLen)
+		case imageBuildGuestProfile:
+			if start.streamHeader.Type != wire.StreamTypeImageBuild {
+				return false, fmt.Errorf(
+					"image-build guest rejects input type %q",
+					start.streamHeader.Type,
+				)
+			}
+			return false, handleImageBuild(ctx, conn, start.bodyLen)
 		}
 	}
 	if start.attach != nil {

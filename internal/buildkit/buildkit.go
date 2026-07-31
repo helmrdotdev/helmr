@@ -9,11 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	bkclient "github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
+	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/util/grpcerrors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -52,15 +54,25 @@ type buildkitSolver interface {
 }
 
 type Builder struct {
-	client     buildkitSolver
-	outputRoot string
-	health     interface {
+	client         buildkitSolver
+	outputRoot     string
+	ociOutputLimit int64
+	sessions       []session.Attachable
+	health         interface {
 		Check(context.Context) error
 	}
 }
 
 type ServiceFailure struct {
 	Cause error
+}
+
+type OutputQuotaFailure struct {
+	LimitBytes int64
+}
+
+func (failure *OutputQuotaFailure) Error() string {
+	return fmt.Sprintf("image-build OCI output exceeds the %d-byte contract", failure.LimitBytes)
 }
 
 func (e *ServiceFailure) Error() string {
@@ -83,8 +95,9 @@ func (*ServiceFailure) FatalWorker() bool {
 
 func New(client buildkitSolver, outputRoot string) *Builder {
 	b := &Builder{
-		client:     client,
-		outputRoot: outputRoot,
+		client:         client,
+		outputRoot:     outputRoot,
+		ociOutputLimit: imagebuild.MaxOCIArchiveBytes,
 	}
 	if strings.TrimSpace(b.outputRoot) == "" {
 		b.outputRoot = filepath.Join(os.TempDir(), defaultOutputRoot)
@@ -114,6 +127,7 @@ func (b *Builder) BuildImage(
 		itemID:    request.WorkspaceID,
 		sourceSHA: request.Source.SHA,
 		plan:      plan,
+		cache:     request.Cache,
 	})
 }
 
@@ -122,6 +136,7 @@ type imageSolveRequest struct {
 	itemID    string
 	sourceSHA string
 	plan      llbPlan
+	cache     *imagebuild.CacheBinding
 }
 
 func (b *Builder) solve(
@@ -157,9 +172,14 @@ func (b *Builder) solve(
 		return err
 	}
 	defer func() { _ = closeImage() }()
+	imageOutput := &boundedWriteCloser{
+		writer: imageFile,
+		limit:  b.ociOutputLimit,
+	}
 
-	response, err := b.client.Solve(ctx, definition, bkclient.SolveOpt{
+	solveOptions := bkclient.SolveOpt{
 		LocalMounts: request.plan.LocalMounts,
+		Session:     b.sessions,
 		Exports: []bkclient.ExportEntry{{
 			Type: bkclient.ExporterOCI,
 			Attrs: map[string]string{
@@ -168,10 +188,32 @@ func (b *Builder) solve(
 				exptypes.ExporterImageConfigKey: string(configJSON),
 			},
 			Output: func(map[string]string) (io.WriteCloser, error) {
-				return noCloseWriteCloser{Writer: imageFile}, nil
+				return imageOutput, nil
 			},
 		}},
-	}, nil)
+	}
+	if request.cache != nil {
+		solveOptions.CacheImports = []bkclient.CacheOptionsEntry{{
+			Type: "registry",
+			Attrs: map[string]string{
+				"ref": request.cache.Ref,
+			},
+		}}
+		solveOptions.CacheExports = []bkclient.CacheOptionsEntry{{
+			Type: "registry",
+			Attrs: map[string]string{
+				"ref":            request.cache.Ref,
+				"mode":           "max",
+				"oci-mediatypes": "true",
+				"image-manifest": "true",
+				"ignore-error":   "true",
+			},
+		}}
+	}
+	response, err := b.client.Solve(ctx, definition, solveOptions, nil)
+	if imageOutput.exceededQuota() {
+		err = &OutputQuotaFailure{LimitBytes: b.ociOutputLimit}
+	}
 	if err != nil {
 		closeErr := closeImage()
 		removeErr := os.RemoveAll(output.root)
@@ -252,11 +294,47 @@ type buildOutput struct {
 	manifest string
 }
 
-type noCloseWriteCloser struct {
-	io.Writer
+type boundedWriteCloser struct {
+	mu       sync.Mutex
+	writer   io.Writer
+	limit    int64
+	written  int64
+	exceeded bool
 }
 
-func (noCloseWriteCloser) Close() error { return nil }
+func (writer *boundedWriteCloser) Write(content []byte) (int, error) {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	remaining := writer.limit - writer.written
+	if remaining >= int64(len(content)) {
+		written, err := writer.writer.Write(content)
+		writer.written += int64(written)
+		return written, err
+	}
+	allowed := max(remaining, 0)
+	written := 0
+	if allowed > 0 {
+		count, err := writer.writer.Write(content[:allowed])
+		written = count
+		writer.written += int64(count)
+		if err != nil {
+			return written, err
+		}
+		if int64(count) != allowed {
+			return written, io.ErrShortWrite
+		}
+	}
+	writer.exceeded = true
+	return written, &OutputQuotaFailure{LimitBytes: writer.limit}
+}
+
+func (*boundedWriteCloser) Close() error { return nil }
+
+func (writer *boundedWriteCloser) exceededQuota() bool {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	return writer.exceeded
+}
 
 func writeJSONFile(path string, value any) error {
 	content, err := json.MarshalIndent(value, "", "  ")

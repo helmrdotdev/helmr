@@ -1,9 +1,11 @@
 package buildkit
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -39,6 +41,9 @@ func TestBuildImageWritesOCIArtifactAndManifest(t *testing.T) {
 		}
 		if len(options.Exports) != 1 || options.Exports[0].Type != bkclient.ExporterOCI {
 			t.Fatalf("exports = %#v", options.Exports)
+		}
+		if len(options.CacheImports) != 0 || len(options.CacheExports) != 0 {
+			t.Fatalf("unexpected cache options: imports=%#v exports=%#v", options.CacheImports, options.CacheExports)
 		}
 		output, err := options.Exports[0].Output(nil)
 		if err != nil {
@@ -91,6 +96,92 @@ func TestBuildImageWritesOCIArtifactAndManifest(t *testing.T) {
 	}
 	if artifact.RootPath != filepath.Dir(artifact.ImageTarPath) {
 		t.Fatalf("artifact root = %q, image = %q", artifact.RootPath, artifact.ImageTarPath)
+	}
+}
+
+func TestBuildImagePinsRegistryCacheOptions(t *testing.T) {
+	const cacheRef = "123456789012.dkr.ecr.us-east-1.amazonaws.com/helmr/cache:workspace-v0"
+	solver := testSolver{solve: func(
+		_ context.Context,
+		_ *llb.Definition,
+		options bkclient.SolveOpt,
+	) (*bkclient.SolveResponse, error) {
+		if len(options.CacheImports) != 1 || options.CacheImports[0].Type != "registry" ||
+			options.CacheImports[0].Attrs["ref"] != cacheRef {
+			t.Fatalf("cache imports = %#v", options.CacheImports)
+		}
+		if len(options.CacheExports) != 1 || options.CacheExports[0].Type != "registry" {
+			t.Fatalf("cache exports = %#v", options.CacheExports)
+		}
+		want := map[string]string{
+			"ref":            cacheRef,
+			"mode":           "max",
+			"oci-mediatypes": "true",
+			"image-manifest": "true",
+			"ignore-error":   "true",
+		}
+		if !maps.Equal(options.CacheExports[0].Attrs, want) {
+			t.Fatalf("cache export attrs = %#v, want %#v", options.CacheExports[0].Attrs, want)
+		}
+		output, err := options.Exports[0].Output(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := output.Write([]byte("oci bytes")); err != nil {
+			t.Fatal(err)
+		}
+		return &bkclient.SolveResponse{}, output.Close()
+	}}
+	request := testImageRequest(t.TempDir())
+	request.Cache = &imagebuild.CacheBinding{
+		Authority: "123456789012.dkr.ecr.us-east-1.amazonaws.com",
+		Username:  "AWS",
+		Ref:       cacheRef,
+	}
+	if _, err := New(solver, t.TempDir()).BuildImage(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBoundedOCIWriterStopsAtOutputContract(t *testing.T) {
+	var output bytes.Buffer
+	writer := &boundedWriteCloser{writer: &output, limit: 4}
+	written, err := writer.Write([]byte("12345"))
+	var quotaFailure *OutputQuotaFailure
+	if written != 4 || !errors.As(err, &quotaFailure) || quotaFailure.LimitBytes != 4 {
+		t.Fatalf("Write = (%d, %v), want 4-byte quota failure", written, err)
+	}
+	if output.String() != "1234" || !writer.exceededQuota() {
+		t.Fatalf("output = %q, exceeded = %t", output.String(), writer.exceededQuota())
+	}
+	if written, err := writer.Write([]byte("6")); written != 0 || !errors.As(err, &quotaFailure) {
+		t.Fatalf("second Write = (%d, %v), want quota failure", written, err)
+	}
+}
+
+func TestBuildImageReturnsTypedOutputQuotaFailureAndRemovesPartialArtifact(t *testing.T) {
+	solver := testSolver{solve: func(
+		_ context.Context,
+		_ *llb.Definition,
+		options bkclient.SolveOpt,
+	) (*bkclient.SolveResponse, error) {
+		output, err := options.Exports[0].Output(nil)
+		if err != nil {
+			return nil, err
+		}
+		_, err = output.Write([]byte("12345"))
+		return nil, err
+	}}
+	outputRoot := t.TempDir()
+	builder := New(solver, outputRoot)
+	builder.ociOutputLimit = 4
+	_, err := builder.BuildImage(t.Context(), testImageRequest(t.TempDir()))
+	var quotaFailure *OutputQuotaFailure
+	if !errors.As(err, &quotaFailure) || quotaFailure.LimitBytes != 4 {
+		t.Fatalf("BuildImage error = %v, want typed 4-byte quota failure", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(outputRoot, "run", "workspace")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("partial OCI output remains: %v", statErr)
 	}
 }
 
