@@ -217,15 +217,6 @@ func (r *WaitReconciler) RegisterWait(
 		!worker.RuntimeIdentityID.Valid {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current worker epoch", err)
 	}
-	slot, err := q.LockRunLeaseClaimNetworkSlot(ctx, db.LockRunLeaseClaimNetworkSlotParams{
-		ID: locators.NetworkSlotID, WorkerGroupID: request.WorkerGroupID,
-		WorkerInstanceID: pgtype.UUID{Bytes: request.WorkerInstanceID, Valid: true},
-		WorkerEpoch:      request.WorkerEpoch, Generation: locators.NetworkSlotGeneration,
-		RuntimeInstanceID: locators.RuntimeInstanceID,
-	})
-	if err != nil || slot.State != db.WorkerNetworkSlotStateBound {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock bound worker network slot", err)
-	}
 	runtime, err := q.LockRunLeaseClaimRuntime(ctx, db.LockRunLeaseClaimRuntimeParams{
 		ID: locators.RuntimeInstanceID, OrgID: locator.OrgID,
 		ProjectID: locator.ProjectID, EnvironmentID: locators.EnvironmentID,
@@ -248,8 +239,6 @@ func (r *WaitReconciler) RegisterWait(
 		WorkerInstanceID:      pgvalue.UUID(request.WorkerInstanceID),
 		WorkerEpoch:           request.WorkerEpoch,
 		RuntimeInstanceID:     locators.RuntimeInstanceID,
-		NetworkSlotID:         locators.NetworkSlotID,
-		NetworkSlotGeneration: locators.NetworkSlotGeneration,
 		RuntimeIdentityID:     runtime.RuntimeIdentityID,
 		WorkerProtocolVersion: request.WorkerProtocolVersion,
 		RegionID:              locators.RegionID,

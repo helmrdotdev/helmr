@@ -249,7 +249,6 @@ func validRunLeaseClaimResponse(
 		run:            run,
 		attempt:        attempt,
 		runtime:        physical.runtime,
-		networkSlot:    physical.networkSlot,
 		runLease:       physical.runLease,
 		workspace:      physical.workspace,
 		workspaceMount: physical.workspaceMount,

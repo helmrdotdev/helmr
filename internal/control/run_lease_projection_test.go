@@ -380,7 +380,6 @@ func validRunLeaseProjectionAuthority() runLeaseProjectionAuthority {
 	versionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	attemptNumber := int32(1)
 	runtimeID := pgvalue.UUID(uuid.New())
-	slotID := pgvalue.UUID(uuid.New())
 	mountID := pgvalue.UUID(uuid.New())
 	runLeaseID := pgvalue.UUID(uuid.New())
 	workspaceLeaseID := pgvalue.UUID(uuid.New())
@@ -390,16 +389,14 @@ func validRunLeaseProjectionAuthority() runLeaseProjectionAuthority {
 			ID: runID, WorkspaceID: workspaceID, CurrentAttemptNumber: attemptNumber,
 			MaxActiveDurationMs: 300000, ActiveElapsedMs: 1000,
 		},
-		attempt:     db.RunAttempt{RunID: runID, Number: attemptNumber},
-		runtime:     db.RuntimeInstance{ID: runtimeID},
-		networkSlot: db.WorkerNetworkSlot{ID: slotID},
+		attempt: db.RunAttempt{RunID: runID, Number: attemptNumber},
+		runtime: db.RuntimeInstance{ID: runtimeID},
 		runLease: db.RunLease{
 			ID: runLeaseID, RunID: runID, WorkspaceID: workspaceID,
 			AttemptNumber: attemptNumber, LeaseSequence: 2,
 			WorkerGroupID: "workers", WorkerInstanceID: pgvalue.UUID(uuid.New()),
 			WorkerEpoch: 3, WorkerProtocolVersion: "helmr.worker.v0",
 			RuntimeInstanceID: runtimeID, RuntimeIdentityID: "runtime",
-			NetworkSlotID: slotID, NetworkSlotGeneration: 4,
 			RequestedCpuMillis: 1000, RequestedMemoryBytes: 1024,
 			RequestedGuestEphemeralDiskBytes: 2048,
 			RequestedExecutionSlots:          1,

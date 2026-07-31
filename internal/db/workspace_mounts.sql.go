@@ -43,8 +43,6 @@ SELECT claimed.id, claimed.org_id, claimed.worker_group_id, claimed.project_id, 
        runtime_instances.deployment_definition_id,
        runtime_identities.rootfs_digest,
        runtime_identities.runtime_abi,
-       worker_network_slots.id AS network_slot_id,
-       worker_network_slots.generation AS network_slot_generation,
        runtime_instances.reserved_cpu_millis,
        runtime_instances.reserved_memory_bytes,
        runtime_instances.reserved_guest_ephemeral_disk_bytes,
@@ -72,10 +70,6 @@ SELECT claimed.id, claimed.org_id, claimed.worker_group_id, claimed.project_id, 
   LEFT JOIN artifacts AS workspace_artifacts
     ON workspace_artifacts.environment_id = workspace_versions.environment_id
    AND workspace_artifacts.id = workspace_versions.artifact_id
-  JOIN worker_network_slots ON worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
-                    AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
-                    AND worker_network_slots.runtime_instance_id = runtime_instances.id
-                    AND worker_network_slots.state = 'bound'
   JOIN artifacts AS image_artifacts
     ON image_artifacts.environment_id = deployment_definitions.environment_id
    AND image_artifacts.id = deployment_definitions.artifact_id
@@ -126,8 +120,6 @@ type ClaimWorkspaceMountRow struct {
 	DeploymentDefinitionID          pgtype.UUID        `json:"deployment_definition_id"`
 	RootfsDigest                    string             `json:"rootfs_digest"`
 	RuntimeABI                      string             `json:"runtime_abi"`
-	NetworkSlotID                   pgtype.UUID        `json:"network_slot_id"`
-	NetworkSlotGeneration           int64              `json:"network_slot_generation"`
 	ReservedCpuMillis               int64              `json:"reserved_cpu_millis"`
 	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
 	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
@@ -189,8 +181,6 @@ func (q *Queries) ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMou
 		&i.DeploymentDefinitionID,
 		&i.RootfsDigest,
 		&i.RuntimeABI,
-		&i.NetworkSlotID,
-		&i.NetworkSlotGeneration,
 		&i.ReservedCpuMillis,
 		&i.ReservedMemoryBytes,
 		&i.ReservedGuestEphemeralDiskBytes,
@@ -535,11 +525,6 @@ WITH target AS (
        AND runtime_instances.worker_epoch = workspace_mounts.worker_epoch
        AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
        AND runtime_instances.reclaimed_at IS NULL
-      JOIN worker_network_slots
-        ON worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
-       AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
-       AND worker_network_slots.runtime_instance_id = runtime_instances.id
-       AND worker_network_slots.state IN ('assigned','bound')
      WHERE workspace_mounts.org_id = $3
        AND workspace_mounts.id = $4
        AND workspace_mounts.worker_instance_id = $5
@@ -547,7 +532,7 @@ WITH target AS (
        AND workspace_mounts.runtime_instance_id = $7
        AND workspace_mounts.fencing_generation = $8
        AND workspace_mounts.state IN ('mounting','mounted','unmounting')
-     FOR UPDATE OF workspace_mounts, runtime_instances, worker_network_slots
+     FOR UPDATE OF workspace_mounts, runtime_instances
 ), failed_runtime AS (
     UPDATE runtime_instances
        SET observed_state = 'failed', observed_version = observed_version + 1,
@@ -562,25 +547,13 @@ WITH target AS (
        AND runtime_instances.id = target.runtime_instance_id
        AND runtime_instances.worker_instance_id = target.worker_instance_id
        AND runtime_instances.worker_epoch = target.worker_epoch
-    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
-), quarantined_slot AS (
-    UPDATE worker_network_slots
-       SET state = 'quarantined', reclaiming_at = COALESCE(reclaiming_at, now()),
-           quarantined_at = now(),
-           state_reason_code = 'runtime_physical_cleanup_pending',
-           state_error = $2, updated_at = now()
-      FROM target, failed_runtime
-     WHERE worker_network_slots.worker_instance_id = failed_runtime.worker_instance_id
-       AND worker_network_slots.worker_epoch = failed_runtime.worker_epoch
-       AND worker_network_slots.runtime_instance_id = failed_runtime.id
-       AND worker_network_slots.state IN ('assigned','bound')
-    RETURNING worker_network_slots.id
+    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
 )
 UPDATE workspace_mounts
    SET state = 'failed', failed_at = now(), terminal_at = now(),
        terminal_reason_code = $1, terminal_error = $2,
        updated_at = now()
-  FROM target, failed_runtime, quarantined_slot
+  FROM target, failed_runtime
  WHERE workspace_mounts.org_id = target.org_id
    AND workspace_mounts.id = target.id
    AND failed_runtime.id = target.runtime_instance_id
@@ -1391,6 +1364,7 @@ WITH stopped AS (
            observed_at = now(), closing_at = COALESCE(runtime_instances.closing_at, now()),
            closed_at = now(), terminal_at = now(), terminal_reason_code = 'workspace_unmounted',
            terminal_error = NULL, reclaimed_at = now(),
+           reclaim_evidence = $8::jsonb,
            reserved_run_id = NULL, reserved_attempt_number = NULL,
            reserved_process_id = NULL, reserved_workspace_version_id = NULL,
            reservation_expires_at = NULL, updated_at = now()
@@ -1400,26 +1374,10 @@ WITH stopped AS (
        AND runtime_instances.worker_instance_id = stopped.worker_instance_id
        AND runtime_instances.worker_epoch = stopped.worker_epoch
        AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
-    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
-), reclaimed_slot AS (
-    UPDATE worker_network_slots
-       SET state = 'available', generation = worker_network_slots.generation + 1,
-           runtime_instance_id = NULL, host_interface_name = NULL, guest_address = NULL,
-           gateway_address = NULL, subnet = NULL, tap_name = NULL, netns_name = NULL,
-           guest_mac = NULL, reclaiming_at = NULL, quarantined_at = NULL, lost_at = NULL,
-           reclaimed_at = now(),
-           reclaim_evidence = jsonb_build_object('reason_code', 'workspace_unmounted'),
-           state_reason_code = NULL, state_error = NULL, updated_at = now()
-      FROM closed_runtime
-     WHERE worker_network_slots.worker_instance_id = closed_runtime.worker_instance_id
-       AND worker_network_slots.worker_epoch = closed_runtime.worker_epoch
-       AND worker_network_slots.runtime_instance_id = closed_runtime.id
-       AND worker_network_slots.state IN ('bound','reclaiming')
-    RETURNING worker_network_slots.id
+    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
 )
 SELECT stopped.id, stopped.org_id, stopped.worker_group_id, stopped.project_id, stopped.environment_id, stopped.region_id, stopped.worker_instance_id, stopped.worker_epoch, stopped.workspace_id, stopped.materialized_version_id, stopped.runtime_instance_id, stopped.claim_attempt, stopped.guest_channel_token_hash, stopped.guest_channel_token_expires_at, stopped.state, stopped.request, stopped.dirty_generation, stopped.fencing_generation, stopped.finalization_kind, stopped.finalization_reason_code, stopped.finalization_error, stopped.staged_version_id, stopped.requested_at, stopped.mounted_at, stopped.unmounted_at, stopped.stopped_at, stopped.lost_at, stopped.failed_at, stopped.terminal_at, stopped.terminal_reason_code, stopped.terminal_error, stopped.created_at, stopped.updated_at FROM stopped
   JOIN closed_runtime ON closed_runtime.id = stopped.runtime_instance_id
-  JOIN reclaimed_slot ON true
 `
 
 type StopWorkspaceMountParams struct {
@@ -1430,6 +1388,7 @@ type StopWorkspaceMountParams struct {
 	WorkerEpoch       int64       `json:"worker_epoch"`
 	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
 	FencingGeneration int64       `json:"fencing_generation"`
+	CleanupProof      []byte      `json:"cleanup_proof"`
 }
 
 type StopWorkspaceMountRow struct {
@@ -1477,6 +1436,7 @@ func (q *Queries) StopWorkspaceMount(ctx context.Context, arg StopWorkspaceMount
 		arg.WorkerEpoch,
 		arg.RuntimeInstanceID,
 		arg.FencingGeneration,
+		arg.CleanupProof,
 	)
 	var i StopWorkspaceMountRow
 	err := row.Scan(

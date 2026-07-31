@@ -29,7 +29,7 @@ func TestRenewRunLeaseReplaysOnlyTheImmediatelyPreviousExpiry(t *testing.T) {
 	}
 	wantCalls := []string{
 		"renewal_locators", "run", "workspace", "attempt", "worker_group", "worker",
-		"network_slot", "runtime", "renewal_lease", "workspace_mount", "workspace_lease",
+		"runtime", "renewal_lease", "workspace_mount", "workspace_lease",
 		"renewal_time", "renew_run_lease", "renew_workspace_lease", "commit",
 	}
 	if !slices.Equal(store.calls, wantCalls) {
@@ -121,7 +121,7 @@ func TestRenewRunLeaseUsesRestoredPhysicalFrontier(t *testing.T) {
 	store.authority.workspaceMount.MaterializedVersionID = restored
 	assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
 		run: store.authority.run, attempt: store.authority.attempt, runtime: store.authority.runtime,
-		networkSlot: store.authority.networkSlot, runLease: store.authority.runLease,
+		runLease:  store.authority.runLease,
 		workspace: store.authority.workspace, workspaceMount: store.authority.workspaceMount,
 		workspaceLease: store.authority.workspaceLease,
 	})
@@ -230,16 +230,14 @@ func validRunLeaseRenewalFixture(
 			EnvironmentID: claimLocators.EnvironmentID, RunID: claimLocators.RunID,
 			WorkspaceID: claimLocators.WorkspaceID, AttemptNumber: claimLocators.AttemptNumber,
 			RegionID: claimLocators.RegionID, RuntimeInstanceID: claimLocators.RuntimeInstanceID,
-			NetworkSlotID:         claimLocators.NetworkSlotID,
-			NetworkSlotGeneration: claimLocators.NetworkSlotGeneration,
-			WorkspaceLeaseID:      claimLocators.WorkspaceLeaseID,
-			WorkspaceMountID:      claimLocators.WorkspaceMountID,
+			WorkspaceLeaseID: claimLocators.WorkspaceLeaseID,
+			WorkspaceMountID: claimLocators.WorkspaceMountID,
 		},
 		renewalTime: pgvalue.Timestamptz(now),
 	}
 	assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
 		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
-		networkSlot: authority.networkSlot, runLease: authority.runLease,
+		runLease:  authority.runLease,
 		workspace: authority.workspace, workspaceMount: authority.workspaceMount,
 		workspaceLease: authority.workspaceLease,
 	})

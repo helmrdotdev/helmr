@@ -33,7 +33,7 @@ func TestFleetRunAttestationCoverageTracksCurrentLaunchAMI(t *testing.T) {
 
 	mustExec(t, ctx, pool, `
 		INSERT INTO runtime_identities (
-			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
+			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, network_abi
 		) VALUES ('fleet-runtime', 'x86_64', 'fleet-test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
 	`)
 	oldWorkerID := uuid.Must(uuid.NewV7())

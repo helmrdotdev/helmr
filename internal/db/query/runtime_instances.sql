@@ -1,7 +1,5 @@
 -- name: GetNextRuntimeReconcileTarget :one
 SELECT runtime_instances.*,
-       worker_network_slots.id AS network_slot_id,
-       worker_network_slots.generation AS network_slot_generation,
        artifacts.digest AS workspace_image_digest,
        artifacts.size_bytes AS workspace_image_size_bytes,
        artifacts.media_type AS workspace_image_media_type,
@@ -26,14 +24,10 @@ SELECT runtime_instances.*,
                        AND worker_instances.worker_group_id = runtime_instances.worker_group_id
   JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
   JOIN runtime_identities ON runtime_identities.id = runtime_instances.runtime_identity_id
-                         AND runtime_identities.cni_profile = 'helmr/v0'
+                         AND runtime_identities.network_abi = 'helmr/v0'
   LEFT JOIN worker_observations
     ON worker_observations.worker_instance_id = worker_instances.id
    AND worker_observations.worker_epoch = worker_instances.current_epoch
-  JOIN worker_network_slots ON worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
-                    AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
-                    AND worker_network_slots.runtime_instance_id = runtime_instances.id
-                    AND worker_network_slots.state IN ('assigned', 'bound', 'reclaiming', 'quarantined')
   JOIN deployment_definitions
     ON deployment_definitions.environment_id = runtime_instances.environment_id
    AND deployment_definitions.id = runtime_instances.deployment_definition_id
@@ -85,8 +79,7 @@ SELECT runtime_instances.*,
               FROM run_leases
              WHERE run_leases.runtime_instance_id = runtime_instances.id
                AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
-        )
-        AND worker_network_slots.state IN ('reclaiming', 'quarantined'))
+        ))
    )
  ORDER BY runtime_instances.desired_at, runtime_instances.id
  LIMIT 1;
@@ -94,15 +87,8 @@ SELECT runtime_instances.*,
 -- name: RenewRuntimeInstance :one
 UPDATE runtime_instances
    SET observed_at = now(), observed_version = observed_version + 1, updated_at = now()
-  FROM worker_network_slots
  WHERE runtime_instances.id = sqlc.arg(id) AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
-   AND worker_network_slots.id = sqlc.arg(network_slot_id)
-   AND worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
-   AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
-   AND worker_network_slots.generation = sqlc.arg(network_slot_generation)
-   AND worker_network_slots.runtime_instance_id = runtime_instances.id
-   AND worker_network_slots.state IN ('assigned', 'bound', 'reclaiming')
    AND observed_version = sqlc.arg(expected_observed_version)
    AND observed_state IN ('allocated', 'preparing', 'ready', 'closing')
 RETURNING runtime_instances.*;
@@ -267,22 +253,11 @@ WITH restore_secret_authority AS MATERIALIZED (
             ))
      ORDER BY worker_instances.id, runtime_substrates.id
      FOR UPDATE OF worker_instances, runtime_substrates
-), slot_authority AS MATERIALIZED (
-    SELECT substrate_authority.runtime_instance_id
-      FROM substrate_authority
-      JOIN worker_network_slots
-        ON worker_network_slots.id = sqlc.arg(network_slot_id)
-       AND worker_network_slots.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND worker_network_slots.worker_epoch = sqlc.arg(worker_epoch)
-       AND worker_network_slots.generation = sqlc.arg(network_slot_generation)
-       AND worker_network_slots.runtime_instance_id = substrate_authority.runtime_instance_id
-       AND worker_network_slots.state = 'assigned'
-     FOR UPDATE OF worker_network_slots
 ), runtime_authority AS MATERIALIZED (
     SELECT runtime_instances.id AS runtime_instance_id
-      FROM slot_authority
+      FROM substrate_authority
       JOIN runtime_instances
-        ON runtime_instances.id = slot_authority.runtime_instance_id
+        ON runtime_instances.id = substrate_authority.runtime_instance_id
        AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
        AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
        AND runtime_instances.desired_version = sqlc.arg(desired_version)
@@ -377,38 +352,6 @@ WITH restore_secret_authority AS MATERIALIZED (
            = (SELECT count(*) FROM restore_secret_authority
                WHERE restore_secret_authority.runtime_instance_id = runtime_instances.id)
      FOR UPDATE OF run_waits, run_checkpoints, workspace_versions
-), bound AS (
-    UPDATE worker_network_slots
-       SET state = 'bound', host_interface_name = sqlc.arg(host_interface_name),
-           guest_address = sqlc.arg(guest_address), gateway_address = sqlc.arg(gateway_address),
-           subnet = sqlc.arg(subnet), tap_name = sqlc.arg(tap_name),
-           netns_name = sqlc.arg(netns_name), guest_mac = sqlc.arg(guest_mac),
-           updated_at = now()
-      FROM runtime_authority
-      JOIN runtime_instances
-        ON runtime_instances.id = runtime_authority.runtime_instance_id
-     WHERE worker_network_slots.id = sqlc.arg(network_slot_id)
-       AND worker_network_slots.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND worker_network_slots.worker_epoch = sqlc.arg(worker_epoch)
-       AND worker_network_slots.generation = sqlc.arg(network_slot_generation)
-       AND worker_network_slots.runtime_instance_id = sqlc.arg(id)
-       AND worker_network_slots.state = 'assigned'
-       AND runtime_authority.runtime_instance_id = worker_network_slots.runtime_instance_id
-       AND runtime_instances.worker_instance_id = worker_network_slots.worker_instance_id
-       AND runtime_instances.worker_epoch = worker_network_slots.worker_epoch
-       AND runtime_instances.desired_version = sqlc.arg(desired_version)
-       AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
-       AND runtime_instances.observed_state IN ('allocated','preparing')
-       AND (runtime_instances.runtime_substrate_id IS NULL
-            OR runtime_instances.runtime_substrate_id = sqlc.arg(runtime_substrate_id))
-       AND (
-           runtime_instances.restore_checkpoint_id IS NULL
-           OR EXISTS (
-               SELECT 1 FROM restore_authority
-                WHERE restore_authority.runtime_instance_id = runtime_instances.id
-           )
-       )
-    RETURNING worker_network_slots.runtime_instance_id
 )
 UPDATE runtime_instances
    SET runtime_substrate_id = sqlc.arg(runtime_substrate_id),
@@ -416,60 +359,40 @@ UPDATE runtime_instances
        observed_desired_version = sqlc.arg(desired_version), observed_at = now(),
        preparing_at = COALESCE(preparing_at, now()), ready_at = COALESCE(ready_at, now()),
        updated_at = now()
-  FROM bound
+  FROM runtime_authority
  WHERE runtime_instances.id = sqlc.arg(id) AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
-   AND bound.runtime_instance_id = runtime_instances.id
+   AND runtime_authority.runtime_instance_id = runtime_instances.id
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch) AND runtime_instances.desired_version = sqlc.arg(desired_version)
    AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
    AND runtime_instances.observed_state IN ('allocated', 'preparing')
    AND (runtime_instances.runtime_substrate_id IS NULL
         OR runtime_instances.runtime_substrate_id = sqlc.arg(runtime_substrate_id))
+   AND (runtime_instances.restore_checkpoint_id IS NULL
+        OR EXISTS (
+            SELECT 1 FROM restore_authority
+             WHERE restore_authority.runtime_instance_id = runtime_instances.id
+        ))
 RETURNING runtime_instances.*;
 
 -- name: MarkRuntimeInstanceClosed :one
-WITH closed AS (
 UPDATE runtime_instances
    SET observed_state = 'closed', observed_version = observed_version + 1,
        observed_desired_version = desired_version, observed_at = now(),
        closing_at = COALESCE(closing_at, now()), closed_at = now(),
        terminal_at = now(), terminal_reason_code = sqlc.arg(reason_code),
        terminal_error = NULL, reclaimed_at = now(),
+       reclaim_evidence = sqlc.arg(cleanup_proof)::jsonb,
        reserved_run_id = NULL, reserved_attempt_number = NULL,
        reserved_process_id = NULL, reserved_workspace_version_id = NULL,
        reservation_expires_at = NULL, updated_at = now()
-  FROM worker_network_slots
  WHERE runtime_instances.id = sqlc.arg(id) AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
    AND runtime_instances.desired_state = 'closed' AND runtime_instances.desired_version = sqlc.arg(desired_version)
-   AND worker_network_slots.id = sqlc.arg(network_slot_id)
-   AND worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
-   AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
-   AND worker_network_slots.generation = sqlc.arg(network_slot_generation)
-   AND worker_network_slots.runtime_instance_id = runtime_instances.id
-   AND worker_network_slots.state IN ('assigned', 'bound', 'reclaiming')
    AND observed_version = sqlc.arg(expected_observed_version)
    AND observed_state IN ('allocated','preparing','ready','closing')
-RETURNING runtime_instances.*
-), reclaimed AS (
-UPDATE worker_network_slots
-   SET state = 'available', generation = generation + 1, runtime_instance_id = NULL,
-       host_interface_name = NULL, guest_address = NULL, gateway_address = NULL, subnet = NULL,
-       tap_name = NULL, netns_name = NULL, guest_mac = NULL,
-       reclaiming_at = NULL, quarantined_at = NULL, lost_at = NULL,
-       reclaimed_at = now(), reclaim_evidence = sqlc.arg(cleanup_proof)::jsonb,
-       state_reason_code = NULL, state_error = NULL, updated_at = now()
-  FROM closed
- WHERE worker_network_slots.id = sqlc.arg(network_slot_id)
-   AND worker_network_slots.worker_instance_id = closed.worker_instance_id
-   AND worker_network_slots.worker_epoch = closed.worker_epoch
-   AND worker_network_slots.generation = sqlc.arg(network_slot_generation)
-   AND worker_network_slots.runtime_instance_id = closed.id
-RETURNING worker_network_slots.id
-)
-SELECT closed.* FROM closed JOIN reclaimed ON true;
+RETURNING runtime_instances.*;
 
 -- name: MarkRuntimeInstanceFailed :one
-WITH failed AS (
 UPDATE runtime_instances
    SET observed_state = 'failed', observed_version = observed_version + 1,
        observed_at = now(), failed_at = now(), terminal_at = now(),
@@ -478,42 +401,20 @@ UPDATE runtime_instances
        reserved_process_id = NULL, reserved_workspace_version_id = NULL,
        reservation_expires_at = NULL,
        updated_at = now()
-  FROM worker_network_slots
  WHERE runtime_instances.id = sqlc.arg(id) AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
-   AND worker_network_slots.id = sqlc.arg(network_slot_id)
-   AND worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
-   AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
-   AND worker_network_slots.generation = sqlc.arg(network_slot_generation)
-   AND worker_network_slots.runtime_instance_id = runtime_instances.id
-   AND worker_network_slots.state IN ('assigned', 'bound')
    AND runtime_instances.desired_version = sqlc.arg(desired_version)
    AND observed_version = sqlc.arg(expected_observed_version)
    AND observed_state IN ('allocated','preparing','ready','closing')
-RETURNING runtime_instances.*
-), quarantined AS (
-UPDATE worker_network_slots
-   SET state = 'quarantined', reclaiming_at = COALESCE(reclaiming_at, now()),
-       quarantined_at = now(), state_reason_code = 'runtime_physical_cleanup_pending',
-       state_error = sqlc.narg(error), updated_at = now()
-  FROM failed
- WHERE worker_network_slots.id = sqlc.arg(network_slot_id)
-   AND worker_network_slots.worker_instance_id = failed.worker_instance_id
-   AND worker_network_slots.worker_epoch = failed.worker_epoch
-   AND worker_network_slots.generation = sqlc.arg(network_slot_generation)
-   AND worker_network_slots.runtime_instance_id = failed.id
-RETURNING worker_network_slots.id
-)
-SELECT failed.* FROM failed JOIN quarantined ON true;
+RETURNING runtime_instances.*;
 
 -- name: ReclaimFailedRuntimeInstance :one
-WITH reclaimed_runtime AS (
 UPDATE runtime_instances
    SET reclaimed_at = now(),
+       reclaim_evidence = sqlc.arg(cleanup_proof)::jsonb,
        reserved_run_id = NULL, reserved_attempt_number = NULL,
        reserved_process_id = NULL, reserved_workspace_version_id = NULL,
        reservation_expires_at = NULL, updated_at = now()
-  FROM worker_network_slots
  WHERE runtime_instances.id = sqlc.arg(id)
    AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
@@ -527,27 +428,4 @@ UPDATE runtime_instances
         WHERE run_leases.runtime_instance_id = runtime_instances.id
           AND run_leases.state IN ('assigned', 'starting', 'running')
    )
-   AND worker_network_slots.id = sqlc.arg(network_slot_id)
-   AND worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
-   AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
-   AND worker_network_slots.generation = sqlc.arg(network_slot_generation)
-   AND worker_network_slots.runtime_instance_id = runtime_instances.id
-   AND worker_network_slots.state IN ('reclaiming', 'quarantined')
-RETURNING runtime_instances.*
-), reclaimed_slot AS (
-UPDATE worker_network_slots
-   SET state = 'available', generation = generation + 1, runtime_instance_id = NULL,
-       host_interface_name = NULL, guest_address = NULL, gateway_address = NULL, subnet = NULL,
-       tap_name = NULL, netns_name = NULL, guest_mac = NULL,
-       reclaiming_at = NULL, quarantined_at = NULL, lost_at = NULL,
-       reclaimed_at = now(), reclaim_evidence = sqlc.arg(cleanup_proof)::jsonb,
-       state_reason_code = NULL, state_error = NULL, updated_at = now()
-  FROM reclaimed_runtime
- WHERE worker_network_slots.id = sqlc.arg(network_slot_id)
-   AND worker_network_slots.worker_instance_id = reclaimed_runtime.worker_instance_id
-   AND worker_network_slots.worker_epoch = reclaimed_runtime.worker_epoch
-   AND worker_network_slots.generation = sqlc.arg(network_slot_generation)
-   AND worker_network_slots.runtime_instance_id = reclaimed_runtime.id
-RETURNING worker_network_slots.id
-)
-SELECT reclaimed_runtime.* FROM reclaimed_runtime JOIN reclaimed_slot ON true;
+RETURNING runtime_instances.*;

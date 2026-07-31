@@ -395,7 +395,7 @@ func testWaitRunLeaseAssignment() api.WorkerRunLeaseAssignment {
 	return api.WorkerRunLeaseAssignment{
 		ID: "lease-1", RunID: "run-1", AttemptNumber: 2, WorkerGroupID: "run-us-east-1",
 		WorkerInstanceID: "worker-1", WorkerEpoch: 42, LeaseSequence: 1,
-		RuntimeInstanceID: "runtime-instance-1", NetworkSlotID: "network-slot-1", NetworkSlotGeneration: 1,
+		RuntimeInstanceID: "runtime-instance-1",
 	}
 }
 

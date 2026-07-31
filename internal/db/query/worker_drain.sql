@@ -65,11 +65,6 @@ WITH target AS MATERIALIZED (
             WHERE workspace_processes.worker_instance_id = target.id
               AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
        )
-       AND NOT EXISTS (
-           SELECT 1 FROM worker_network_slots
-            WHERE worker_network_slots.worker_instance_id = target.id
-              AND worker_network_slots.state IN ('assigned', 'bound', 'reclaiming', 'quarantined')
-       )
     RETURNING worker_instances.id, worker_instances.worker_group_id, worker_instances.state,
               worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence
 ), result AS (

@@ -464,6 +464,10 @@ func setControlTokenCredentialEnv(t *testing.T) {
 func setWorkerRuntimeEnv(t *testing.T, build bool) {
 	t.Helper()
 	t.Setenv("HELMR_PLATFORM_STORE_URI", "s3://helmr-runtime")
+	t.Setenv("HELMR_WORKER_NETWORK_LINK_POOL", "169.254.64.0/18")
+	t.Setenv("HELMR_WORKER_NETWORK_TRANSLATION_POOL", "100.96.0.0/16")
+	t.Setenv("HELMR_WORKER_NETWORK_RESOLVER_IPV4", "1.1.1.1")
+	t.Setenv("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS", "[]")
 	if build {
 		t.Setenv("HELMR_BUILD_POLICY_PATH", "/etc/helmr/build-policy.json")
 		t.Setenv("HELMR_WORKER_BUILD_CACHE_DIR", "/var/lib/helmr/cache")
@@ -547,14 +551,12 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("HELMR_WORKER_FIRECRACKER_NUMA_NODE", " 1 ")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_CHROOT_DIR", " /var/lib/helmr/scratch/jailer ")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_CGROUP_VERSION", " 2 ")
-	t.Setenv("HELMR_WORKER_CNI_NETWORK", " helmr-ci ")
-	t.Setenv("HELMR_WORKER_CNI_PROFILE", " helmr-ci/v2 ")
-	t.Setenv("HELMR_WORKER_CNI_CONF_DIR", " /etc/helmr/cni ")
-	t.Setenv("HELMR_WORKER_CNI_BIN_DIR", " /opt/helmr/cni/bin ")
-	t.Setenv("HELMR_WORKER_CNI_CACHE_DIR", " /var/lib/helmr/cni ")
+	t.Setenv("HELMR_WORKER_NETWORK_LINK_POOL", " 169.254.128.0/18 ")
+	t.Setenv("HELMR_WORKER_NETWORK_TRANSLATION_POOL", " 100.97.0.0/16 ")
+	t.Setenv("HELMR_WORKER_NETWORK_RESOLVER_IPV4", " 1.0.0.1 ")
+	t.Setenv("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS", `["10.0.0.0/8","169.254.0.0/16"]`)
 	t.Setenv("HELMR_WORKER_IP_PATH", " /usr/sbin/ip ")
 	t.Setenv("HELMR_WORKER_NFT_PATH", " /usr/sbin/nft ")
-	t.Setenv("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS", "10.0.0.0/8,169.254.0.0/16")
 	t.Setenv("HELMR_VM_VCPUS", " 4 ")
 	t.Setenv("HELMR_VM_MEMORY_MIB", " 4096 ")
 	t.Setenv("HELMR_VM_SCRATCH_DISK_MIB", " 12288 ")
@@ -577,13 +579,13 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if cfg.CASURI != "s3://helmr-cas" || cfg.WorkDir != "/var/lib/helmr/scratch/worker" || cfg.BuildCacheDir != "/var/lib/helmr/cache" || cfg.BuildScratchDir != "/var/lib/helmr/scratch" || cfg.ImagesDir != "/var/lib/helmr/images" || cfg.GitPath != "/usr/bin/git" || cfg.BuildKitAddr != "unix:///run/helmr/buildkit/buildkitd.sock" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.CNINetworkName != "helmr-ci" || cfg.CNIConfDir != "/etc/helmr/cni" || cfg.CNIBinDir != "/opt/helmr/cni/bin" || cfg.CNICacheDir != "/var/lib/helmr/cni" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.WorkerDiskReserveMiB != 2048 || cfg.SubstrateCacheMaxMiB != 32768 || cfg.ArtifactCacheMaxMiB != 16384 || cfg.WorkerExecutionSlots != 4 || cfg.WorkerCertificationTTL != 12*time.Hour || cfg.VMHealthTimeout != 90*time.Second || cfg.VMHealthAttemptTimeout != 7*time.Second || cfg.WorkspaceMountStartupTimeout != 3*time.Minute {
+	if cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.NetworkLinkPool != "169.254.128.0/18" || cfg.NetworkTranslationPool != "100.97.0.0/16" || cfg.NetworkResolverIPv4 != "1.0.0.1" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.WorkerDiskReserveMiB != 2048 || cfg.SubstrateCacheMaxMiB != 32768 || cfg.ArtifactCacheMaxMiB != 16384 || cfg.WorkerExecutionSlots != 4 || cfg.WorkerCertificationTTL != 12*time.Hour || cfg.VMHealthTimeout != 90*time.Second || cfg.VMHealthAttemptTimeout != 7*time.Second || cfg.WorkspaceMountStartupTimeout != 3*time.Minute {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.JailerPath != "/usr/bin/jailer" || cfg.JailerUID != 1001 || cfg.JailerGID != 1002 || cfg.JailerNumaNode != 1 || cfg.JailerChrootDir != "/var/lib/helmr/scratch/jailer" || cfg.CgroupVersion != "2" || cfg.CNIProfile != "helmr-ci/v2" || cfg.IPPath != "/usr/sbin/ip" || cfg.NFTPath != "/usr/sbin/nft" {
-		t.Fatalf("config = %+v", cfg)
+	if len(cfg.NetworkBlockedIPv4CIDRs) != 2 || cfg.NetworkBlockedIPv4CIDRs[1].String() != "169.254.0.0/16" {
+		t.Fatalf("blocked IPv4 CIDRs = %v", cfg.NetworkBlockedIPv4CIDRs)
 	}
-	if !stringSlicesEqual(cfg.NetworkBlockedIPv4CIDRs, []string{"10.0.0.0/8", "169.254.0.0/16"}) {
+	if cfg.JailerPath != "/usr/bin/jailer" || cfg.JailerUID != 1001 || cfg.JailerGID != 1002 || cfg.JailerNumaNode != 1 || cfg.JailerChrootDir != "/var/lib/helmr/scratch/jailer" || cfg.CgroupVersion != "2" || cfg.IPPath != "/usr/sbin/ip" || cfg.NFTPath != "/usr/sbin/nft" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.WorkerGroupID != "run-workers" {
@@ -597,29 +599,21 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	}
 }
 
-func TestLoadWorkerAllowsEmptyNetworkBlockedCIDRs(t *testing.T) {
-	setWorkerRuntimeEnv(t, true)
-	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
-	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
-	t.Setenv("HELMR_WORKER_GROUP_ID", "run-workers")
-	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=")
-	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
-	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
-	t.Setenv("HELMR_WORKER_ROLES", "build,run")
-	t.Setenv("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS", "none")
-
-	cfg, err := LoadWorker()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.NetworkBlockedIPv4CIDRs == nil || len(cfg.NetworkBlockedIPv4CIDRs) != 0 {
-		t.Fatalf("config = %+v", cfg)
-	}
-}
-
 func TestLoadWorkerRequiresGroup(t *testing.T) {
 	if _, err := LoadWorker(); err == nil || !strings.Contains(err.Error(), "HELMR_WORKER_GROUP_ID") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestLoadWorkerRequiresExplicitCanonicalBlockedIPv4CIDRs(t *testing.T) {
+	for _, raw := range []string{"", `null`, `["10.0.0.1/8"]`, `["169.254.0.0/16","10.0.0.0/8"]`} {
+		t.Run(raw, func(t *testing.T) {
+			setValidWorkerEnv(t, false)
+			t.Setenv("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS", raw)
+			if _, err := LoadWorker(); err == nil || !strings.Contains(err.Error(), "HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS") {
+				t.Fatalf("error = %v", err)
+			}
+		})
 	}
 }
 
@@ -676,7 +670,7 @@ func TestLoadWorkerRejectsMultipleBuildExecutors(t *testing.T) {
 		"HELMR_WORKER_CAPACITY_MEMORY_MIB":        "8192",
 		"HELMR_WORKER_SUBSTRATE_CACHE_MAX_MIB":    "4096",
 		"HELMR_WORKER_ARTIFACT_CACHE_MAX_MIB":     "2048",
-		"HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS": "none",
+		"HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS": "[]",
 	} {
 		t.Setenv(key, value)
 	}
@@ -745,6 +739,7 @@ func TestLoadWorkerDoesNotReadGenericBuildKitHost(t *testing.T) {
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
 	t.Setenv("HELMR_WORKER_ROLES", "build,run")
+	t.Setenv("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS", "[]")
 	t.Setenv("BUILDKIT_HOST", "tcp://buildkit.example.test:1234")
 
 	cfg, err := LoadWorker()
@@ -772,6 +767,7 @@ func TestLoadWorkerRejectsInvalidVMNumbers(t *testing.T) {
 }
 
 func TestLoadWorkerRejectsHealthAttemptLongerThanHealthTimeout(t *testing.T) {
+	t.Setenv("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS", "[]")
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_GROUP_ID", "run-workers")

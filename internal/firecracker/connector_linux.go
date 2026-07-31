@@ -35,6 +35,7 @@ import (
 	runtimeidentity "github.com/helmrdotdev/helmr/internal/runtime/identity"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/worker/datapath"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/unix"
 )
@@ -66,6 +67,7 @@ type Connector struct {
 	cfg        Config
 	artifacts  runtimeArtifacts
 	kernelArgs string
+	datapath   *datapath.Manager
 }
 
 func NewConnector(cfg Config) (*Connector, error) {
@@ -81,7 +83,15 @@ func NewConnector(cfg Config) (*Connector, error) {
 		cfg:        cfg,
 		artifacts:  artifacts,
 		kernelArgs: defaultKernelArgs,
+		datapath:   datapath.NewManager(),
 	}, nil
+}
+
+func (c *Connector) DatapathHealth() error {
+	if c == nil {
+		return errors.New("firecracker connector is nil")
+	}
+	return c.datapath.Health()
 }
 
 func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
@@ -94,7 +104,7 @@ func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 		KernelDigest:    kernelDigest,
 		InitramfsDigest: initramfsDigest,
 		RootfsDigest:    rootfsDigest,
-		CNIProfile:      c.cfg.CNIProfile,
+		NetworkABI:      NetworkABIV0,
 	})
 	if err != nil {
 		return RuntimeCapabilities{}, err
@@ -106,13 +116,17 @@ func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 		KernelDigest:    kernelDigest,
 		InitramfsDigest: initramfsDigest,
 		RootfsDigest:    rootfsDigest,
-		CNIProfile:      c.cfg.CNIProfile,
+		NetworkABI:      NetworkABIV0,
 		VCPUCount:       c.cfg.VCPUCount,
 		MemoryMiB:       c.cfg.MemoryMiB,
 	}, nil
 }
 
 func (c *Connector) Connect(ctx context.Context, request vm.ConnectRequest) (vm.Session, error) {
+	owner := vm.Owner{Kind: request.OwnerKind, ID: request.ID}
+	if err := request.Binding.Validate(owner); err != nil {
+		return nil, fmt.Errorf("firecracker workload binding: %w", err)
+	}
 	child, err := c.connectorForRequest(request)
 	if err != nil {
 		return nil, err
@@ -121,6 +135,7 @@ func (c *Connector) Connect(ctx context.Context, request vm.ConnectRequest) (vm.
 		ctx,
 		request.ID,
 		request.OwnerKind,
+		request.Binding,
 		"",
 		"",
 		"",
@@ -244,6 +259,7 @@ func (c *Connector) Materialize(ctx context.Context, request vm.MaterializeReque
 		ctx,
 		request.ID,
 		request.OwnerKind,
+		request.Binding,
 		"",
 		"",
 		"",
@@ -290,13 +306,8 @@ func (c *Connector) Cleanup(ctx context.Context, owner vm.Owner) error {
 			return cleanupUnproven(owner, fmt.Errorf("stop firecracker process %d: %w", pid, err))
 		}
 	}
-	if netns {
-		if err := c.cleanupNetworkPolicy(ctx, owner.ID); err != nil {
-			return cleanupUnproven(owner, err)
-		}
-		if err := exec.CommandContext(ctx, c.cfg.IPPath, "netns", "delete", owner.ID).Run(); err != nil {
-			return cleanupUnproven(owner, fmt.Errorf("delete firecracker netns: %w", err))
-		}
+	if err := c.cleanupNetworkAttachment(ctx, owner); err != nil {
+		return cleanupUnproven(owner, err)
 	}
 	if err := os.RemoveAll(jailerPath); err != nil {
 		return cleanupUnproven(owner, fmt.Errorf("remove firecracker jailer state: %w", err))
@@ -463,6 +474,9 @@ func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) er
 	if request.OwnerKind != vm.OwnerRuntime {
 		return errors.New("firecracker materialize owner must be runtime")
 	}
+	if err := request.Binding.Validate(vm.Owner{Kind: request.OwnerKind, ID: request.ID}); err != nil {
+		return fmt.Errorf("firecracker workload binding: %w", err)
+	}
 	if err := validateReadOnlyDrives(request.ReadOnlyDrives); err != nil {
 		return err
 	}
@@ -540,6 +554,9 @@ func (c *Connector) kernelArgsValue() string {
 }
 
 func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.Session, error) {
+	if err := request.Binding.Validate(vm.Owner{Kind: request.OwnerKind, ID: request.RuntimeInstanceID}); err != nil {
+		return nil, fmt.Errorf("firecracker workload binding: %w", err)
+	}
 	if len(request.Memory) != 1 {
 		return nil, fmt.Errorf("firecracker restore requires exactly one memory file, got %d", len(request.Memory))
 	}
@@ -618,7 +635,7 @@ func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	child := *c
 	child.cfg = restoreCfg
 	child.kernelArgs = kernelArgs
-	session, err := child.start(ctx, request.RuntimeInstanceID, request.OwnerKind, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Topology, request.ReadOnlyDrives, recordPhase)
+	session, err := child.start(ctx, request.RuntimeInstanceID, request.OwnerKind, request.Binding, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Topology, request.ReadOnlyDrives, recordPhase)
 	if err != nil {
 		removeFiles(cleanup)
 		return nil, err
@@ -678,7 +695,7 @@ func (c *Connector) validateRestoreIdentity(
 		KernelDigest:    kernelDigest,
 		InitramfsDigest: initramfsDigest,
 		RootfsDigest:    rootfsDigest,
-		CNIProfile:      c.cfg.CNIProfile,
+		NetworkABI:      NetworkABIV0,
 	})
 	if err != nil {
 		return manifest, Config{}, err
@@ -733,27 +750,6 @@ func (c *Connector) configForRestoreManifest(manifest snapshotManifest) (Config,
 	return cfg, nil
 }
 
-func (c *Connector) networkInterface(restoreNetwork *snapshotNetworkManifest) firecracker.NetworkInterface {
-	cni := &firecracker.CNIConfiguration{
-		NetworkName: c.cfg.CNINetworkName,
-		ConfDir:     c.cfg.CNIConfDir,
-		BinPath:     []string{c.cfg.CNIBinDir},
-		CacheDir:    c.cfg.CNICacheDir,
-		IfName:      c.cfg.CNIIfName,
-		VMIfName:    c.cfg.CNIVMIfName,
-	}
-	if restoreNetwork != nil && restoreNetwork.GuestIPCIDR != "" {
-		cni.Args = [][2]string{
-			{"IgnoreUnknown", "true"},
-			{"IP", restoreNetwork.GuestIPCIDR},
-		}
-		if restoreNetwork.GuestMAC != "" {
-			cni.Args = append(cni.Args, [2]string{"MAC", restoreNetwork.GuestMAC})
-		}
-	}
-	return firecracker.NetworkInterface{CNIConfiguration: cni}
-}
-
 func (c *Connector) unpackRestoreArtifact(ctx context.Context, artifactPath string, role string, suffix string, expectedLogicalSize int64, mediaType string) (string, vm.RuntimePhase, error) {
 	started := time.Now()
 	phase := vm.RuntimePhase{
@@ -801,14 +797,6 @@ type restoreCleanupSession struct {
 	paths []string
 }
 
-func (s restoreCleanupSession) NetworkFacts() (vm.NetworkFacts, error) {
-	networkSession, ok := s.CheckpointableSession.(vm.NetworkFactSession)
-	if !ok {
-		return vm.NetworkFacts{}, errors.New("restored firecracker session does not expose CNI network facts")
-	}
-	return networkSession.NetworkFacts()
-}
-
 func (s restoreCleanupSession) Close(ctx context.Context) error {
 	err := s.CheckpointableSession.Close(ctx)
 	removeFiles(s.paths)
@@ -821,8 +809,8 @@ func removeFiles(paths []string) {
 	}
 }
 
-func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase)) (vm.CheckpointableSession, error) {
-	session, err := c.prepareSession(ctx, instanceID, ownerKind, snapshotMemoryPath, snapshotStatePath, scratchDiskRestorePath, restoreNetwork, topology, readOnlyDrives, recordPhase)
+func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase)) (vm.CheckpointableSession, error) {
+	session, err := c.prepareSession(ctx, instanceID, ownerKind, binding, snapshotMemoryPath, snapshotStatePath, scratchDiskRestorePath, restoreNetwork, topology, readOnlyDrives, recordPhase)
 	if err != nil {
 		return nil, err
 	}
@@ -832,7 +820,7 @@ func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.O
 	return session, nil
 }
 
-func (c *Connector) prepareSession(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase)) (_ *guestSession, retErr error) {
+func (c *Connector) prepareSession(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase)) (_ *guestSession, retErr error) {
 	instanceID = strings.TrimSpace(instanceID)
 	if ownerKind == vm.OwnerBuild && instanceID == "" {
 		instanceID = uuid.Must(uuid.NewV7()).String()
@@ -840,6 +828,9 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 	owner := vm.Owner{Kind: ownerKind, ID: instanceID}
 	if err := owner.Validate(); err != nil {
 		return nil, fmt.Errorf("firecracker owner: %w", err)
+	}
+	if err := binding.Validate(owner); err != nil {
+		return nil, fmt.Errorf("firecracker workload binding: %w", err)
 	}
 	instanceDir := filepath.Join(c.cfg.StateDir, instanceID)
 	if err := os.MkdirAll(instanceDir, 0o700); err != nil {
@@ -929,7 +920,13 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 		},
 	}
 	machineCfg.NetNS = filepath.Join("/var/run/netns", instanceID)
-	machineCfg.NetworkInterfaces = firecracker.NetworkInterfaces{c.networkInterface(restoreNetwork)}
+	machineCfg.NetworkInterfaces = firecracker.NetworkInterfaces{staticNetworkInterface(c.cfg.NetworkResolverIPv4)}
+	var networkBinding *installedNetworkBinding
+	defer func() {
+		if retErr != nil && networkBinding != nil {
+			retErr = errors.Join(retErr, networkBinding.Close())
+		}
+	}()
 	opts := []firecracker.Opt{}
 	restoring := snapshotMemoryPath != "" || snapshotStatePath != ""
 	if restoring {
@@ -937,7 +934,7 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 		opts = append(opts, withJailedRestoreFiles(c.cfg.RootfsPath, scratchDiskPath, substrateDiskPath, snapshotMemoryPath, snapshotStatePath))
 	}
 	opts = append(opts, c.withTapOwner())
-	opts = append(opts, c.withNetworkPolicy(instanceID))
+	opts = append(opts, c.withNetworkBinding(binding, &networkBinding))
 	// firecracker-go-sdk binds this context to the jailer/firecracker process.
 	// Keep it separate from the startup request so prepared sessions can outlive
 	// a background warm command after boot succeeds.
@@ -969,7 +966,7 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 	}()
 	if restoring {
 		phaseStarted = time.Now()
-		if err := validateRestoredNetworkConfig(*restoreNetwork, snapshotNetworkConfig(c.cfg, machine)); err != nil {
+		if err := validateRestoredNetworkConfig(*restoreNetwork, snapshotNetworkConfig(c.cfg)); err != nil {
 			recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_validate_network", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 			started = false
 			return nil, err
@@ -992,7 +989,7 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 		return nil, err
 	}
 	machine.Logger().Printf("guest health ready")
-	return &guestSession{
+	session := &guestSession{
 		machine:        machine,
 		machineCancel:  machineCancel,
 		machineExit:    machineExit,
@@ -1008,7 +1005,10 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 		owner:          owner,
 		cleaner:        c,
 		buildNetwork:   c.kernelArgsValue() == buildKernelArgs,
-	}, nil
+		networkBinding: networkBinding,
+	}
+	session.watchNetworkFailure()
+	return session, nil
 }
 
 func startMachineContext(ctx context.Context, machine *firecracker.Machine, machineCtx context.Context, machineCancel context.CancelFunc) error {
@@ -1627,28 +1627,32 @@ func healthProbeErrorBucket(err error) string {
 }
 
 type guestSession struct {
-	mu             sync.Mutex
-	stream         vm.Stream
-	opened         bool
-	closed         bool
-	machine        *firecracker.Machine
-	machineCancel  context.CancelFunc
-	machineExit    *machineExit
-	cfg            Config
-	kernelArgs     string
-	artifacts      runtimeArtifacts
-	vsockHostPath  string
-	instanceDir    string
-	jailRoot       string
-	scratchDisk    string
-	topology       vm.RuntimeTopology
-	readOnlyDrives []vm.ReadOnlyDrive
-	owner          vm.Owner
-	cleaner        vm.Cleaner
-	buildNetwork   bool
-	paused         atomic.Bool
-	once           sync.Once
-	err            error
+	mu              sync.Mutex
+	stream          vm.Stream
+	opened          bool
+	closed          bool
+	machine         *firecracker.Machine
+	machineCancel   context.CancelFunc
+	machineExit     *machineExit
+	cfg             Config
+	kernelArgs      string
+	artifacts       runtimeArtifacts
+	vsockHostPath   string
+	instanceDir     string
+	jailRoot        string
+	scratchDisk     string
+	topology        vm.RuntimeTopology
+	readOnlyDrives  []vm.ReadOnlyDrive
+	owner           vm.Owner
+	cleaner         vm.Cleaner
+	buildNetwork    bool
+	networkBinding  *installedNetworkBinding
+	paused          atomic.Bool
+	once            sync.Once
+	machineStopOnce sync.Once
+	machineStopErr  error
+	networkErr      error
+	err             error
 }
 
 func (s *guestSession) Stream() vm.Stream {
@@ -1698,33 +1702,6 @@ func (s *guestSession) OpenStream(ctx context.Context) (vm.Stream, error) {
 	return (&Connector{cfg: s.cfg}).connectGuestPort(ctx, s.vsockHostPath, s.machineExit)
 }
 
-func (s *guestSession) NetworkFacts() (vm.NetworkFacts, error) {
-	if s.machine == nil || len(s.machine.Cfg.NetworkInterfaces) != 1 {
-		return vm.NetworkFacts{}, errors.New("firecracker session has no unique CNI interface")
-	}
-	static := s.machine.Cfg.NetworkInterfaces[0].StaticConfiguration
-	if static == nil || static.IPConfiguration == nil {
-		return vm.NetworkFacts{}, errors.New("firecracker CNI facts are unavailable")
-	}
-	ip := static.IPConfiguration.IPAddr
-	if static.HostDevName == "" || static.MacAddress == "" || ip.IP == nil || ip.Mask == nil || static.IPConfiguration.Gateway == nil {
-		return vm.NetworkFacts{}, errors.New("firecracker CNI facts are incomplete")
-	}
-	ones, bits := ip.Mask.Size()
-	if ones < 0 || bits <= 0 {
-		return vm.NetworkFacts{}, errors.New("firecracker CNI subnet is invalid")
-	}
-	return vm.NetworkFacts{
-		HostInterfaceName: static.HostDevName,
-		GuestAddress:      ip.IP.String(),
-		GatewayAddress:    static.IPConfiguration.Gateway.String(),
-		Subnet:            (&net.IPNet{IP: ip.IP.Mask(ip.Mask), Mask: ip.Mask}).String(),
-		TapName:           static.HostDevName,
-		NetNSName:         filepath.Base(s.machine.Cfg.NetNS),
-		GuestMAC:          static.MacAddress,
-	}, nil
-}
-
 func (s *guestSession) BuildNetworkStatus(
 	ctx context.Context,
 ) (vm.BuildNetworkStatus, error) {
@@ -1757,7 +1734,39 @@ func (s *guestSession) Wait(ctx context.Context) error {
 	if s.machineExit == nil {
 		return errors.New("firecracker session exit watcher is not configured")
 	}
-	return s.machineExit.Wait(ctx)
+	waitErr := s.machineExit.Wait(ctx)
+	s.mu.Lock()
+	networkErr := s.networkErr
+	s.mu.Unlock()
+	return errors.Join(waitErr, networkErr)
+}
+
+func (s *guestSession) watchNetworkFailure() {
+	if s.networkBinding == nil || s.machineExit == nil {
+		return
+	}
+	go func() {
+		select {
+		case failure := <-s.networkBinding.Failure():
+			if failure == nil {
+				failure = errors.New("network binding failed without a cause")
+			}
+			s.mu.Lock()
+			s.networkErr = fmt.Errorf("firecracker datapath binding failed: %w", failure)
+			s.mu.Unlock()
+			stopCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
+			defer cancel()
+			_ = s.stopMachine(stopCtx)
+		case <-s.machineExit.done:
+		}
+	}()
+}
+
+func (s *guestSession) stopMachine(ctx context.Context) error {
+	s.machineStopOnce.Do(func() {
+		s.machineStopErr = stopSessionMachine(ctx, s.machine, s.machineExit)
+	})
+	return s.machineStopErr
 }
 
 func (s *guestSession) Close(ctx context.Context) error {
@@ -1766,7 +1775,11 @@ func (s *guestSession) Close(ctx context.Context) error {
 		s.closed = true
 		stream := s.stream
 		s.mu.Unlock()
-		stopErr := stopSessionMachine(ctx, s.machine, s.machineExit)
+		var deactivateErr error
+		if s.networkBinding != nil {
+			deactivateErr = s.networkBinding.Deactivate()
+		}
+		stopErr := s.stopMachine(ctx)
 		if s.machineCancel != nil {
 			s.machineCancel()
 		}
@@ -1777,16 +1790,24 @@ func (s *guestSession) Close(ctx context.Context) error {
 		if errors.Is(streamErr, net.ErrClosed) || errors.Is(streamErr, os.ErrClosed) {
 			streamErr = nil
 		}
+		var bindingCloseErr error
+		if s.networkBinding != nil {
+			bindingCloseErr = s.networkBinding.Close()
+		}
 		var cleanupErr error
-		if s.cleaner != nil {
-			cleanupErr = s.cleaner.Cleanup(ctx, s.owner)
-		} else {
-			cleanupErr = cleanupUnproven(s.owner, errors.New("firecracker session cleaner is not configured"))
+		if bindingCloseErr == nil {
+			if s.cleaner != nil {
+				cleanupErr = s.cleaner.Cleanup(ctx, s.owner)
+			} else {
+				cleanupErr = cleanupUnproven(s.owner, errors.New("firecracker session cleaner is not configured"))
+			}
 		}
 		s.err = errors.Join(
 			streamErr,
+			deactivateErr,
 			stopErr,
 			cleanupErr,
+			bindingCloseErr,
 		)
 	})
 	return s.err
@@ -1857,14 +1878,14 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		KernelDigest:    kernelDigest,
 		InitramfsDigest: initramfsDigest,
 		RootfsDigest:    rootfsDigest,
-		CNIProfile:      s.cfg.CNIProfile,
+		NetworkABI:      NetworkABIV0,
 	})
 	if err != nil {
 		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, err
 	}
 	started = time.Now()
-	configDigest, manifest, err := snapshotRuntimeConfig(s.cfg, s.machine, checkpointID, runtimeID, kernelDigest, initramfsDigest, rootfsDigest, s.kernelArgs, s.topology, s.readOnlyDrives)
+	configDigest, manifest, err := snapshotRuntimeConfig(s.cfg, checkpointID, runtimeID, kernelDigest, initramfsDigest, rootfsDigest, s.kernelArgs, s.topology, s.readOnlyDrives)
 	if err != nil {
 		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, err
@@ -2189,24 +2210,18 @@ type snapshotRuntimeStateManifest struct {
 }
 
 type snapshotNetworkIdentityManifest struct {
-	Mode        string `json:"mode"`
-	Profile     string `json:"profile"`
-	NetworkName string `json:"network_name"`
-	IfName      string `json:"if_name"`
-	VMIfName    string `json:"vm_if_name"`
+	NetworkABI string `json:"network_abi"`
 }
 
 type snapshotNetworkManifest struct {
-	Mode           string   `json:"mode"`
-	Profile        string   `json:"profile"`
-	NetworkName    string   `json:"network_name"`
-	IfName         string   `json:"if_name"`
-	VMIfName       string   `json:"vm_if_name"`
-	GuestIPCIDR    string   `json:"guest_ip_cidr"`
-	GuestMAC       string   `json:"guest_mac"`
-	GatewayAddress string   `json:"gateway_address"`
-	Subnet         string   `json:"subnet"`
-	Nameservers    []string `json:"nameservers"`
+	NetworkABI         string   `json:"network_abi"`
+	GuestIPv4CIDR      string   `json:"guest_ipv4_cidr"`
+	GuestMAC           string   `json:"guest_mac"`
+	GatewayIPv4        string   `json:"gateway_ipv4"`
+	GatewayMAC         string   `json:"gateway_mac"`
+	ResolverAddresses  []string `json:"resolver_addresses"`
+	GuestInterfaceName string   `json:"guest_interface_name"`
+	MTU                int      `json:"mtu"`
 }
 
 func snapshotSubstrateManifest(substrate *vm.RuntimeSubstrate) (*snapshotRuntimeSubstrate, error) {
@@ -2254,14 +2269,14 @@ func validateRuntimeSubstrateTopology(substrate *vm.RuntimeSubstrate) error {
 	return nil
 }
 
-func snapshotRuntimeConfig(cfg Config, machine *firecracker.Machine, checkpointID string, runtimeID string, kernelDigest string, initramfsDigest string, rootfsDigest string, kernelArgs string, topology vm.RuntimeTopology, readOnlyDrives ...[]vm.ReadOnlyDrive) (string, []byte, error) {
+func snapshotRuntimeConfig(cfg Config, checkpointID string, runtimeID string, kernelDigest string, initramfsDigest string, rootfsDigest string, kernelArgs string, topology vm.RuntimeTopology, readOnlyDrives ...[]vm.ReadOnlyDrive) (string, []byte, error) {
 	workerArchitecture, err := runtimeidentity.ArchitectureFromGo(runtime.GOARCH)
 	if err != nil {
 		return "", nil, err
 	}
-	network := snapshotNetworkConfig(cfg, machine)
-	if network.GuestIPCIDR == "" {
-		return "", nil, errors.New("firecracker CNI guest IP is required for checkpoint restore")
+	network := snapshotNetworkConfig(cfg)
+	if err := validateSnapshotNetwork(network); err != nil {
+		return "", nil, fmt.Errorf("build checkpoint network manifest: %w", err)
 	}
 	substrate, err := snapshotSubstrateManifest(topology.Substrate)
 	if err != nil {
@@ -2300,13 +2315,7 @@ func snapshotRuntimeConfig(cfg Config, machine *firecracker.Machine, checkpointI
 				Program:         program,
 				GuestPort:       cfg.GuestPort,
 				HealthPort:      cfg.HealthPort,
-				Network: snapshotNetworkIdentityManifest{
-					Mode:        network.Mode,
-					Profile:     network.Profile,
-					NetworkName: network.NetworkName,
-					IfName:      network.IfName,
-					VMIfName:    network.VMIfName,
-				},
+				Network:         snapshotNetworkIdentityManifest{NetworkABI: network.NetworkABI},
 			},
 		},
 		RuntimeState: snapshotRuntimeStateManifest{
@@ -2319,67 +2328,56 @@ func snapshotRuntimeConfig(cfg Config, machine *firecracker.Machine, checkpointI
 	return sha256sum.DigestBytes(manifest), manifest, nil
 }
 
-func snapshotNetworkConfig(cfg Config, machine *firecracker.Machine) snapshotNetworkManifest {
-	network := snapshotNetworkManifest{
-		Mode:        "cni",
-		Profile:     cfg.CNIProfile,
-		NetworkName: cfg.CNINetworkName,
-		IfName:      cfg.CNIIfName,
-		VMIfName:    cfg.CNIVMIfName,
+func snapshotNetworkConfig(cfg Config) snapshotNetworkManifest {
+	return snapshotNetworkManifest{
+		NetworkABI:         NetworkABIV0,
+		GuestIPv4CIDR:      GuestNetworkCIDRV0,
+		GuestMAC:           GuestMACV0,
+		GatewayIPv4:        GuestGatewayIPv4V0,
+		GatewayMAC:         GuestGatewayMACV0,
+		ResolverAddresses:  []string{strings.TrimSpace(cfg.NetworkResolverIPv4)},
+		GuestInterfaceName: GuestInterfaceNameV0,
+		MTU:                GuestMTUV0,
 	}
-	if machine == nil || len(machine.Cfg.NetworkInterfaces) == 0 {
-		return network
-	}
-	static := machine.Cfg.NetworkInterfaces[0].StaticConfiguration
-	if static == nil || static.IPConfiguration == nil {
-		return network
-	}
-	ipConfig := static.IPConfiguration
-	network.GuestIPCIDR = ipConfig.IPAddr.String()
-	network.GuestMAC = static.MacAddress
-	if ipConfig.Gateway != nil {
-		network.GatewayAddress = ipConfig.Gateway.String()
-	}
-	if ipConfig.IPAddr.IP != nil && ipConfig.IPAddr.Mask != nil {
-		network.Subnet = (&net.IPNet{
-			IP:   ipConfig.IPAddr.IP.Mask(ipConfig.IPAddr.Mask),
-			Mask: ipConfig.IPAddr.Mask,
-		}).String()
-	}
-	for _, nameserver := range ipConfig.Nameservers {
-		network.Nameservers = append(network.Nameservers, nameserver)
-	}
-	return network
 }
 
 func validateSnapshotNetwork(network snapshotNetworkManifest) error {
-	guestIP, guestCIDR, err := net.ParseCIDR(network.GuestIPCIDR)
-	if err != nil || guestIP.To4() == nil {
-		return errors.New("checkpoint manifest guest_ip_cidr must be canonical IPv4 CIDR")
+	if network.NetworkABI != NetworkABIV0 {
+		return fmt.Errorf("checkpoint manifest network_abi %q is not supported", network.NetworkABI)
 	}
-	if guestIP.String()+"/"+strconv.Itoa(maskSize(guestCIDR.Mask)) != network.GuestIPCIDR {
-		return errors.New("checkpoint manifest guest_ip_cidr is not canonical")
+	guestIP, guestCIDR, err := net.ParseCIDR(network.GuestIPv4CIDR)
+	if err != nil || guestIP.To4() == nil {
+		return errors.New("checkpoint manifest guest_ipv4_cidr must be canonical IPv4 CIDR")
+	}
+	if guestIP.String()+"/"+strconv.Itoa(maskSize(guestCIDR.Mask)) != network.GuestIPv4CIDR || network.GuestIPv4CIDR != GuestNetworkCIDRV0 {
+		return errors.New("checkpoint manifest guest_ipv4_cidr does not match network ABI")
 	}
 	mac, err := net.ParseMAC(network.GuestMAC)
-	if err != nil || len(mac) != 6 || mac.String() != network.GuestMAC {
-		return errors.New("checkpoint manifest guest_mac must be canonical EUI-48")
+	if err != nil || len(mac) != 6 || mac.String() != network.GuestMAC || network.GuestMAC != GuestMACV0 {
+		return errors.New("checkpoint manifest guest_mac does not match network ABI")
 	}
-	gateway := net.ParseIP(network.GatewayAddress)
-	if gateway == nil || gateway.To4() == nil {
-		return errors.New("checkpoint manifest gateway_address must be IPv4")
+	gateway := net.ParseIP(network.GatewayIPv4)
+	if gateway == nil || gateway.To4() == nil || gateway.String() != network.GatewayIPv4 || network.GatewayIPv4 != GuestGatewayIPv4V0 || !guestCIDR.Contains(gateway) {
+		return errors.New("checkpoint manifest gateway_ipv4 does not match network ABI")
 	}
-	_, subnet, err := net.ParseCIDR(network.Subnet)
-	if err != nil || subnet.String() != network.Subnet || !subnet.Contains(guestIP) || !subnet.Contains(gateway) {
-		return errors.New("checkpoint manifest subnet must canonically contain guest and gateway")
+	gatewayMAC, err := net.ParseMAC(network.GatewayMAC)
+	if err != nil || len(gatewayMAC) != 6 || gatewayMAC.String() != network.GatewayMAC || network.GatewayMAC != GuestGatewayMACV0 {
+		return errors.New("checkpoint manifest gateway_mac does not match network ABI")
 	}
-	if len(network.Nameservers) == 0 || len(network.Nameservers) > 2 {
-		return errors.New("checkpoint manifest must contain one or two IPv4 nameservers")
+	if len(network.ResolverAddresses) != 1 {
+		return errors.New("checkpoint manifest must contain exactly one IPv4 resolver")
 	}
-	for _, nameserver := range network.Nameservers {
-		ip := net.ParseIP(nameserver)
-		if ip == nil || ip.To4() == nil || ip.String() != nameserver {
-			return errors.New("checkpoint manifest nameservers must be canonical IPv4 addresses")
+	for _, resolver := range network.ResolverAddresses {
+		ip := net.ParseIP(resolver)
+		if ip == nil || ip.To4() == nil || ip.String() != resolver {
+			return errors.New("checkpoint manifest resolver_addresses must contain canonical IPv4 addresses")
 		}
+	}
+	if network.GuestInterfaceName != GuestInterfaceNameV0 {
+		return errors.New("checkpoint manifest guest_interface_name does not match network ABI")
+	}
+	if network.MTU != GuestMTUV0 {
+		return errors.New("checkpoint manifest mtu does not match network ABI")
 	}
 	return nil
 }
@@ -2396,16 +2394,14 @@ func validateRestoredNetworkConfig(expected snapshotNetworkManifest, actual snap
 	if err := validateSnapshotNetwork(actual); err != nil {
 		return fmt.Errorf("validate recreated checkpoint network: %w", err)
 	}
-	if expected.Mode != actual.Mode ||
-		expected.Profile != actual.Profile ||
-		expected.NetworkName != actual.NetworkName ||
-		expected.IfName != actual.IfName ||
-		expected.VMIfName != actual.VMIfName ||
-		expected.GuestIPCIDR != actual.GuestIPCIDR ||
+	if expected.NetworkABI != actual.NetworkABI ||
+		expected.GuestIPv4CIDR != actual.GuestIPv4CIDR ||
 		expected.GuestMAC != actual.GuestMAC ||
-		expected.GatewayAddress != actual.GatewayAddress ||
-		expected.Subnet != actual.Subnet ||
-		!slices.Equal(expected.Nameservers, actual.Nameservers) {
+		expected.GatewayIPv4 != actual.GatewayIPv4 ||
+		expected.GatewayMAC != actual.GatewayMAC ||
+		expected.GuestInterfaceName != actual.GuestInterfaceName ||
+		expected.MTU != actual.MTU ||
+		!slices.Equal(expected.ResolverAddresses, actual.ResolverAddresses) {
 		return errors.New("recreated checkpoint network does not exactly match manifest")
 	}
 	return nil
@@ -2469,24 +2465,15 @@ func validateRuntimeManifest(
 		return errors.New("checkpoint manifest runtime ports or kernel args do not match worker runtime")
 	}
 	networkIdentity := runtimeManifest.Network
-	if networkIdentity.Mode != "cni" {
-		return fmt.Errorf("checkpoint manifest network mode %q is not supported", networkIdentity.Mode)
-	}
-	if networkIdentity.Profile != cfg.CNIProfile || networkIdentity.NetworkName != cfg.CNINetworkName || networkIdentity.IfName != cfg.CNIIfName || networkIdentity.VMIfName != cfg.CNIVMIfName {
-		return errors.New("checkpoint manifest CNI configuration does not match worker CNI configuration")
+	if networkIdentity.NetworkABI != NetworkABIV0 {
+		return fmt.Errorf("checkpoint manifest network_abi %q does not match worker network ABI %q", networkIdentity.NetworkABI, NetworkABIV0)
 	}
 	network := manifest.RuntimeState.Network
-	if network.Mode != "cni" {
-		return fmt.Errorf("checkpoint manifest network mode %q is not supported", network.Mode)
-	}
-	if network.Profile != cfg.CNIProfile || network.NetworkName != cfg.CNINetworkName || network.IfName != cfg.CNIIfName || network.VMIfName != cfg.CNIVMIfName {
-		return errors.New("checkpoint manifest CNI configuration does not match worker CNI configuration")
-	}
-	if network.GuestIPCIDR == "" {
-		return errors.New("checkpoint manifest guest_ip_cidr is required for CNI restore")
-	}
 	if err := validateSnapshotNetwork(network); err != nil {
 		return err
+	}
+	if err := validateRestoredNetworkConfig(snapshotNetworkConfig(cfg), network); err != nil {
+		return fmt.Errorf("checkpoint manifest network does not match worker network ABI: %w", err)
 	}
 	return nil
 }

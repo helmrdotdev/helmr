@@ -7,7 +7,7 @@ CONSOLE_OUT := $(CURDIR)/internal/console/out
 
 MIGRATE_VERSION ?= v4.19.1
 
-.PHONY: all tools generate proto sqlc fmt modernize modernize-check test go-test test-race go-test-race test-linux-compile lint go-lint build go-build console-build verify dev dev-console-stack images boot-artifacts clean migration migrate-up migrate-down doctor doctor-linux
+.PHONY: all tools generate datapath-bpf proto sqlc fmt modernize modernize-check test go-test test-race go-test-race test-linux-compile lint go-lint build go-build console-build verify dev dev-console-stack images boot-artifacts clean migration migrate-up migrate-down doctor doctor-linux
 
 all: verify
 
@@ -15,7 +15,10 @@ tools:
 	@command -v protoc-gen-go >/dev/null
 	@command -v protoc-gen-es >/dev/null
 
-generate: proto sqlc
+generate: datapath-bpf proto sqlc
+
+datapath-bpf:
+	$(GO) generate ./internal/worker/datapath
 
 proto: tools
 	$(BUF) generate proto --template proto/buf.gen.yaml --path proto/run.proto --path proto/workspace.proto

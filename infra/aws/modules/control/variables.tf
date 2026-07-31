@@ -504,13 +504,6 @@ variable "cloudfront_origin_domain_name" {
   nullable    = true
 }
 
-variable "private_control_dns_name" {
-  description = "Optional VPC-private DNS name for worker-to-control traffic. Use a hostname covered by certificate_arn."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
 variable "database_instance_class" {
   description = "RDS Postgres instance class."
   type        = string

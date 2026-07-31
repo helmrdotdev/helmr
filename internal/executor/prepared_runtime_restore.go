@@ -74,6 +74,7 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 	runtimeInfo := checkpoint.RecoveryPoint.Runtime
 	session, err := restoring.Restore(ctx, vm.RestoreRequest{
 		ID: restore.CheckpointID, RuntimeInstanceID: target.ID, OwnerKind: vm.OwnerRuntime,
+		Binding: runtimeTargetWorkloadBinding(target),
 		VMState: paths[1], VMStateMediaType: runtimeState.VMStateArtifact.MediaType,
 		Memory: []string{paths[2]}, MemoryMediaTypes: []string{runtimeState.MemoryArtifacts[0].MediaType},
 		ScratchDisk: paths[3], ScratchDiskMediaType: runtimeState.ScratchDiskArtifact.MediaType,

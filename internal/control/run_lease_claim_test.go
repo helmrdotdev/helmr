@@ -48,7 +48,7 @@ func TestClaimRunLeaseLocksSecretsBeforeExecutionAuthority(t *testing.T) {
 	if !slices.Equal(store.calls, []string{
 		"secret_locators", "secrets", "secret_version", "locators",
 		"run", "workspace", "attempt",
-		"worker_group", "worker", "observation", "network_slot", "runtime", "run_lease",
+		"worker_group", "worker", "observation", "runtime", "run_lease",
 		"workspace_mount", "workspace_lease", "mark_starting", "commit",
 	}) {
 		t.Fatalf("claim order = %v", store.calls)
@@ -111,7 +111,6 @@ func TestClaimFreshTaskRunLeaseInTxLocksCanonicalOrderAndTransitionsOnce(t *test
 		"worker_group",
 		"worker",
 		"observation",
-		"network_slot",
 		"runtime",
 		"run_lease",
 		"workspace_mount",
@@ -360,7 +359,6 @@ func TestClaimActorRunLeaseInTxLocksActorBeforeRun(t *testing.T) {
 		"worker_group",
 		"worker",
 		"observation",
-		"network_slot",
 		"runtime",
 		"run_lease",
 		"workspace_mount",
@@ -494,7 +492,6 @@ func TestClaimCheckpointRestoreRunLeaseInTxUsesCheckpointBase(t *testing.T) {
 		"worker_group",
 		"worker",
 		"observation",
-		"network_slot",
 		"runtime",
 		"run_lease",
 		"workspace_mount",
@@ -718,7 +715,6 @@ func TestClaimSameWorkspaceChildRunLeaseInTxLocksParentBeforeChild(t *testing.T)
 			"worker_group",
 			"worker",
 			"observation",
-			"network_slot",
 			"runtime",
 			"run_lease",
 			"workspace_mount",
@@ -865,7 +861,7 @@ func TestClaimSameWorkspaceChildRunLeaseInTxExtendsEnclosingHandoff(t *testing.T
 	}
 	if !slices.Equal(store.calls, []string{
 		"parent_run", "run", "workspace", "parent_attempt", "attempt",
-		"worker_group", "worker", "observation", "network_slot", "runtime", "run_lease",
+		"worker_group", "worker", "observation", "runtime", "run_lease",
 		"workspace_mount", "workspace_lease", "enclosing_wait", "handoff_wait",
 		"checkpoint", "checkpoint_source", "mark_starting",
 	}) {
@@ -931,7 +927,6 @@ func TestClaimSameWorkspaceParentResumeRunLeaseInTxUsesHandoffCheckpoint(t *test
 			"worker_group",
 			"worker",
 			"observation",
-			"network_slot",
 			"runtime",
 			"run_lease",
 			"workspace_mount",
@@ -993,7 +988,7 @@ func TestClaimSameWorkspaceParentResumeRunLeaseInTxUpdatesEnclosingAuthority(t *
 	}
 	if !slices.Equal(store.calls, []string{
 		"parent_run", "run", "child_run", "workspace", "attempt", "child_attempt",
-		"worker_group", "worker", "observation", "network_slot", "runtime", "run_lease",
+		"worker_group", "worker", "observation", "runtime", "run_lease",
 		"workspace_mount", "workspace_lease", "enclosing_wait", "run_wait",
 		"checkpoint", "checkpoint_source", "mark_starting",
 	}) {
@@ -1038,7 +1033,6 @@ func TestClaimSameWorkspaceParentResumeRunLeaseInTxRestoresSuccessfulHandoffAfte
 	authority.runtime.ID = recreatedRuntimeID
 	authority.runtime.RestoreCheckpointID = authority.checkpoint.ID
 	authority.runLease.RuntimeInstanceID = recreatedRuntimeID
-	authority.networkSlot.RuntimeInstanceID = recreatedRuntimeID
 	authority.workspaceMount.ID = recreatedMountID
 	authority.workspaceMount.FencingGeneration++
 	authority.workspaceLease.WorkspaceMountID = recreatedMountID
@@ -1124,7 +1118,7 @@ func TestClaimCheckpointRestoreRunLeaseInTxPreservesEnclosingHandoff(t *testing.
 	}
 	if !slices.Equal(store.calls, []string{
 		"parent_run", "run", "workspace", "attempt",
-		"worker_group", "worker", "observation", "network_slot", "runtime", "run_lease",
+		"worker_group", "worker", "observation", "runtime", "run_lease",
 		"workspace_mount", "workspace_lease", "enclosing_wait", "run_wait",
 		"checkpoint", "checkpoint_source", "mark_starting",
 	}) {
@@ -1332,11 +1326,6 @@ func (s *runLeaseClaimStore) LockRunLeaseClaimObservation(
 	return s.authority.workerObservation, nil
 }
 
-func (s *runLeaseClaimStore) LockRunLeaseClaimNetworkSlot(context.Context, db.LockRunLeaseClaimNetworkSlotParams) (db.WorkerNetworkSlot, error) {
-	s.calls = append(s.calls, "network_slot")
-	return s.authority.networkSlot, nil
-}
-
 func (s *runLeaseClaimStore) LockRunLeaseClaimRuntime(context.Context, db.LockRunLeaseClaimRuntimeParams) (db.RuntimeInstance, error) {
 	s.calls = append(s.calls, "runtime")
 	return s.authority.runtime, nil
@@ -1459,7 +1448,6 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 	definitionID := id()
 	workerInstanceID := uuid.Must(uuid.NewV7())
 	runtimeID := id()
-	networkSlotID := id()
 	runLeaseID := id()
 	mountID := id()
 	workspaceLeaseID := id()
@@ -1479,18 +1467,16 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 		ProtocolVersion:   protocol,
 	}
 	locators := db.GetRunLeaseClaimLocatorsRow{
-		OrgID:                 orgID,
-		ProjectID:             projectID,
-		EnvironmentID:         environmentID,
-		RunID:                 runID,
-		WorkspaceID:           workspaceID,
-		AttemptNumber:         1,
-		RegionID:              regionID,
-		RuntimeInstanceID:     runtimeID,
-		NetworkSlotID:         networkSlotID,
-		NetworkSlotGeneration: 2,
-		WorkspaceLeaseID:      workspaceLeaseID,
-		WorkspaceMountID:      mountID,
+		OrgID:             orgID,
+		ProjectID:         projectID,
+		EnvironmentID:     environmentID,
+		RunID:             runID,
+		WorkspaceID:       workspaceID,
+		AttemptNumber:     1,
+		RegionID:          regionID,
+		RuntimeInstanceID: runtimeID,
+		WorkspaceLeaseID:  workspaceLeaseID,
+		WorkspaceMountID:  mountID,
 	}
 	authority := runLeaseClaimAuthority{
 		run: db.Run{
@@ -1543,12 +1529,6 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 			PerVmGuestEphemeralDiskBytes: 4096,
 		},
 		workerObservation: db.LockRunLeaseClaimObservationRow{RunReady: true},
-		networkSlot: db.WorkerNetworkSlot{
-			ID:                networkSlotID,
-			State:             db.WorkerNetworkSlotStateBound,
-			Generation:        2,
-			RuntimeInstanceID: runtimeID,
-		},
 		runtime: db.RuntimeInstance{
 			ID:                              runtimeID,
 			RuntimeIdentityID:               runtimeIDValue,
@@ -1573,8 +1553,6 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 			WorkerInstanceID:                 pgvalue.UUID(workerInstanceID),
 			WorkerEpoch:                      7,
 			RuntimeInstanceID:                runtimeID,
-			NetworkSlotID:                    networkSlotID,
-			NetworkSlotGeneration:            2,
 			RuntimeIdentityID:                runtimeIDValue,
 			WorkerProtocolVersion:            protocol,
 			RequestedCpuMillis:               1000,
@@ -1971,7 +1949,6 @@ func validSameWorkspaceParentResumeRunLeaseClaimFixture(
 		authority.runtime.ID = recreatedRuntimeID
 		authority.runtime.RestoreCheckpointID = authority.checkpoint.ID
 		authority.runLease.RuntimeInstanceID = recreatedRuntimeID
-		authority.networkSlot.RuntimeInstanceID = recreatedRuntimeID
 		authority.workspaceMount.ID = recreatedMountID
 		authority.workspaceMount.FencingGeneration++
 		authority.workspaceLease.WorkspaceMountID = recreatedMountID

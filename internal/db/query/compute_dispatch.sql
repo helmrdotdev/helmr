@@ -87,22 +87,12 @@ WITH target AS (
        AND runtime_instances.reclaimed_at IS NULL
        AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
     RETURNING runtime_instances.id
-), lost_slots AS (
-    UPDATE worker_network_slots
-       SET state = 'lost', generation = generation + 1,
-           lost_at = now(), state_reason_code = sqlc.arg(reason_code), updated_at = now()
-      FROM target
-     WHERE worker_network_slots.worker_instance_id = target.id
-       AND worker_network_slots.worker_epoch = target.current_epoch
-       AND worker_network_slots.state IN ('assigned', 'bound', 'reclaiming', 'quarantined')
-    RETURNING worker_network_slots.id
 )
 SELECT target.*
   FROM target
  WHERE (SELECT count(*) FROM revoked_credentials) >= 0
    AND (SELECT count(*) FROM lost_mounts) >= 0
-   AND (SELECT count(*) FROM lost_runtimes) >= 0
-   AND (SELECT count(*) FROM lost_slots) >= 0;
+   AND (SELECT count(*) FROM lost_runtimes) >= 0;
 
 -- name: ListWorkerInstances :many
 SELECT * FROM worker_instances

@@ -18,6 +18,15 @@ import (
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
 
+func buildWorkloadBindingForTest() vm.WorkloadBinding {
+	return vm.WorkloadBinding{
+		WorkerEpoch:       1,
+		OwnerID:           "01926eae-b7ac-7c35-8000-000000000001",
+		Generation:        1,
+		RuntimeIdentityID: "01926eae-b7ac-7c35-8000-000000000002",
+	}
+}
+
 func TestBuildGuestUsesOneNetworkedVM(t *testing.T) {
 	request, source := buildGuestRequestForTest(t)
 	failed := buildGuestFailureForTest(t, BuildFailureDeclarationAnalysis)
@@ -48,7 +57,7 @@ func TestBuildGuestUsesOneNetworkedVM(t *testing.T) {
 	}
 	_, err := (BuildGuest{Connector: connector}).Execute(
 		context.Background(),
-		"run",
+		buildWorkloadBindingForTest(),
 		request,
 		strings.NewReader(string(source)),
 		&ArtifactSnapshot{content: &artifactSnapshot{}},
@@ -107,7 +116,7 @@ func TestBuildGuestNetworkLimitOverridesGuestResult(t *testing.T) {
 	}
 	_, err := (BuildGuest{Connector: connector}).Execute(
 		context.Background(),
-		"run",
+		buildWorkloadBindingForTest(),
 		request,
 		strings.NewReader(string(source)),
 		&ArtifactSnapshot{content: &artifactSnapshot{}},
@@ -131,7 +140,7 @@ func TestBuildGuestDeniedPacketsDoNotOverrideGuestResult(t *testing.T) {
 	}
 	_, err := (BuildGuest{Connector: connector}).Execute(
 		context.Background(),
-		"run",
+		buildWorkloadBindingForTest(),
 		request,
 		strings.NewReader(string(source)),
 		&ArtifactSnapshot{content: &artifactSnapshot{}},
@@ -156,7 +165,7 @@ func TestBuildGuestNetworkStatusFailureIsInfrastructureError(t *testing.T) {
 	}
 	_, err := (BuildGuest{Connector: connector}).Execute(
 		context.Background(),
-		"run",
+		buildWorkloadBindingForTest(),
 		request,
 		strings.NewReader(string(source)),
 		&ArtifactSnapshot{content: &artifactSnapshot{}},

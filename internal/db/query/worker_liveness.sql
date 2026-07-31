@@ -109,22 +109,12 @@ WITH target AS (
        AND runtimes.reclaimed_at IS NULL
        AND runtimes.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
     RETURNING runtimes.id
-), lost_slots AS (
-    UPDATE worker_network_slots AS slots
-       SET state = 'lost', generation = slots.generation + 1,
-           lost_at = now(), state_reason_code = sqlc.arg(reason_code), updated_at = now()
-      FROM target
-     WHERE slots.worker_instance_id = target.id
-       AND slots.worker_epoch = target.current_epoch
-       AND slots.state IN ('assigned', 'bound', 'reclaiming', 'quarantined')
-    RETURNING slots.id
 )
--- Immediate fencing revokes credentials and terminalizes mount/runtime/slot
+-- Immediate fencing revokes credentials and terminalizes mount/runtime
 -- observations. Run/build/workspace authority is recovered by its canonical
 -- expiry and recovery loops; this transition does not imply zero authority.
 SELECT target.id, target.worker_group_id, target.current_epoch, target.state
   FROM target
  WHERE (SELECT count(*) FROM revoked_credentials) >= 0
    AND (SELECT count(*) FROM lost_mounts) >= 0
-   AND (SELECT count(*) FROM lost_runtimes) >= 0
-   AND (SELECT count(*) FROM lost_slots) >= 0;
+   AND (SELECT count(*) FROM lost_runtimes) >= 0;

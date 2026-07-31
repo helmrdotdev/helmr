@@ -14,7 +14,7 @@ type Selector struct {
 	KernelDigest    string `json:"kernel_digest"`
 	InitramfsDigest string `json:"initramfs_digest"`
 	RootfsDigest    string `json:"rootfs_digest"`
-	CNIProfile      string `json:"cni_profile"`
+	NetworkABI      string `json:"network_abi"`
 }
 
 const Schema = "helmr.runtime.identity.v0"
@@ -35,7 +35,7 @@ func Digest(runtime Selector) (string, error) {
 		KernelDigest    string `json:"kernel_digest"`
 		InitramfsDigest string `json:"initramfs_digest"`
 		RootfsDigest    string `json:"rootfs_digest"`
-		CNIProfile      string `json:"cni_profile"`
+		NetworkABI      string `json:"network_abi"`
 	}{
 		Schema:          Schema,
 		Backend:         "firecracker",
@@ -44,7 +44,7 @@ func Digest(runtime Selector) (string, error) {
 		KernelDigest:    runtime.KernelDigest,
 		InitramfsDigest: runtime.InitramfsDigest,
 		RootfsDigest:    runtime.RootfsDigest,
-		CNIProfile:      runtime.CNIProfile,
+		NetworkABI:      runtime.NetworkABI,
 	})
 	if err != nil {
 		return "", err

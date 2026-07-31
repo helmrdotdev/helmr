@@ -1004,7 +1004,7 @@ func TestBuildOnlyWorkerCertificationRetainsRuntimeContract(t *testing.T) {
 	certified, err := queries.CertifyWorkerInstance(ctx, db.CertifyWorkerInstanceParams{
 		RuntimeIdentityID: "sha256:build-worker-runtime", RuntimeArch: "x86_64", RuntimeABI: runtimeABI,
 		KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: rootfsDigest,
-		CniProfile: "helmr/v0", WorkerInstanceID: enrollment.WorkerInstanceID,
+		NetworkAbi: "helmr/v0", WorkerInstanceID: enrollment.WorkerInstanceID,
 		WorkerGroupID: workerGroupID, WorkerEpoch: authenticated.CurrentEpoch,
 		SupportsRun: false, SupportsBuild: true, MaxVmSlots: 0,
 		ProtocolVersion: auth.WorkerProtocolVersion, SupervisorVersion: "test",

@@ -60,13 +60,11 @@ type WorkerWorkspaceMount struct {
 	BaseVersionID           string                  `json:"base_version_id,omitempty"`
 	RuntimeInstanceID       string                  `json:"runtime_instance_id,omitempty"`
 	RestoreCheckpointID     string                  `json:"restore_checkpoint_id,omitempty"`
-	NetworkSlotID           string                  `json:"network_slot_id"`
-	NetworkSlotGeneration   int64                   `json:"network_slot_generation"`
 	RuntimeEpoch            int64                   `json:"runtime_epoch"`
 	GuestdChannelToken      string                  `json:"guestd_channel_token"`
 	GuestdChannelTokenHash  string                  `json:"guestd_channel_token_hash"`
 	State                   string                  `json:"state"`
-	RuntimeID               string                  `json:"runtime_id"`
+	RuntimeIdentityID       string                  `json:"runtime_identity_id"`
 	WorkspaceImage          CASObject               `json:"workspace_image"`
 	RootfsDigest            string                  `json:"rootfs_digest"`
 	WorkspaceArtifact       WorkerWorkspaceArtifact `json:"workspace_artifact"`
@@ -91,8 +89,9 @@ type WorkerWorkspaceMountMountedRequest struct {
 }
 
 type WorkerWorkspaceMountStopRequest struct {
-	OrgID            string `json:"org_id"`
-	WorkspaceMountID string `json:"workspace_mount_id"`
+	OrgID            string                    `json:"org_id"`
+	WorkspaceMountID string                    `json:"workspace_mount_id"`
+	CleanupProof     WorkerRuntimeCleanupProof `json:"cleanup_proof"`
 }
 
 type WorkerWorkspaceMountCaptureRequest struct {

@@ -169,25 +169,9 @@ WITH created_runtime AS (
         'workspace_exec_reservation'
     )
     RETURNING *
-), assigned_slot AS (
-    UPDATE worker_network_slots
-       SET state = 'assigned',
-           runtime_instance_id = created_runtime.id,
-           assigned_at = transaction_timestamp(),
-           updated_at = transaction_timestamp()
-      FROM created_runtime
-     WHERE worker_network_slots.id = sqlc.arg(network_slot_id)
-       AND worker_network_slots.worker_group_id = created_runtime.worker_group_id
-       AND worker_network_slots.worker_instance_id = created_runtime.worker_instance_id
-       AND worker_network_slots.worker_epoch = created_runtime.worker_epoch
-       AND worker_network_slots.generation = sqlc.arg(network_slot_generation)
-       AND worker_network_slots.state = 'available'
-       AND worker_network_slots.runtime_instance_id IS NULL
-    RETURNING worker_network_slots.id
 )
 SELECT created_runtime.*
-  FROM created_runtime
-  JOIN assigned_slot ON true;
+  FROM created_runtime;
 
 -- name: ReserveReadyRuntimeForWorkspaceExec :one
 UPDATE runtime_instances
@@ -408,7 +392,7 @@ SELECT sqlc.embed(workspace_processes),
            AND worker_instances.supports_run
            AND worker_instances.certified_at IS NOT NULL
            AND worker_instances.runtime_identity_id = runtime_instances.runtime_identity_id
-           AND runtime_identities.cni_profile = 'helmr/v0'
+           AND runtime_identities.network_abi = 'helmr/v0'
            AND worker_observations.observed_at >= transaction_timestamp()
                - worker_groups.observation_ttl_seconds * interval '1 second'
            AND worker_observations.run_paused_reason IS NULL

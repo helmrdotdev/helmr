@@ -81,7 +81,7 @@ type BuildExecution struct {
 
 func (guest BuildGuest) Execute(
 	ctx context.Context,
-	runID string,
+	binding vm.WorkloadBinding,
 	request BuildGuestRequest,
 	source io.Reader,
 	manager *ArtifactSnapshot,
@@ -102,8 +102,9 @@ func (guest BuildGuest) Execute(
 		return nil, err
 	}
 	session, err := guest.Connector.Connect(ctx, vm.ConnectRequest{
-		ID:        runID,
+		ID:        binding.OwnerID,
 		OwnerKind: vm.OwnerBuild,
+		Binding:   binding,
 		Resources: compute.BuildGuestResources(),
 		PIDsMax:   compute.BuildGuestPIDsMax,
 		ReadOnlyDrives: []vm.ReadOnlyDrive{
@@ -128,7 +129,7 @@ func (guest BuildGuest) Execute(
 	bodySize := uint64(4+len(raw)) + uint64(request.SourceSizeBytes)
 	if err := wire.WriteStreamFrameHeader(
 		stream,
-		wire.StreamHeader{Type: wire.StreamTypeBuild, RunID: runID},
+		wire.StreamHeader{Type: wire.StreamTypeBuild, RunID: binding.OwnerID},
 		bodySize,
 	); err != nil {
 		return nil, vm.NewGuestError(fmt.Errorf("write build header: %w", err))

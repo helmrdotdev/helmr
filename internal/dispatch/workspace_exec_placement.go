@@ -159,8 +159,7 @@ func (d *Authority) PlaceWorkspaceExec(
 		return WorkspaceExecPlacement{}, ErrCapacityUnavailable
 	}
 	if !runtime.reservedProcessID.Valid {
-		if runtime.observedState != db.RuntimeObservedStateReady ||
-			runtime.networkSlotState != db.WorkerNetworkSlotStateBound {
+		if !runRuntimeReady(runtime) {
 			return WorkspaceExecPlacement{
 				WorkerInstanceID:  runtime.workerID,
 				WorkerEpoch:       runtime.workerEpoch,
@@ -192,8 +191,7 @@ func (d *Authority) PlaceWorkspaceExec(
 
 	mount, err := getWorkspaceExecMount(ctx, tx, authority, runtime)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if runtime.observedState != db.RuntimeObservedStateReady ||
-			runtime.networkSlotState != db.WorkerNetworkSlotStateBound {
+		if !runRuntimeReady(runtime) {
 			return WorkspaceExecPlacement{
 				WorkerInstanceID:  runtime.workerID,
 				WorkerEpoch:       runtime.workerEpoch,
@@ -449,8 +447,6 @@ func (d *Authority) createWorkspaceExecRuntime(
 			ProcessID:                       authority.processID,
 			BaseWorkspaceVersionID:          authority.baseVersionID,
 			ReservationExpiresAt:            pgvalue.Timestamptz(time.Now().Add(d.runPolicy.ReservationTTL)),
-			NetworkSlotID:                   worker.networkSlotID,
-			NetworkSlotGeneration:           worker.networkSlotGeneration,
 		},
 	)
 	if err != nil {

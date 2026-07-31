@@ -368,7 +368,7 @@ func validateTaskCompletionAuthority(
 	}
 	assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
 		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
-		networkSlot: authority.networkSlot, runLease: authority.runLease,
+		runLease:  authority.runLease,
 		workspace: authority.workspace, workspaceMount: authority.workspaceMount,
 		workspaceLease: authority.workspaceLease,
 	})

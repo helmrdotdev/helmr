@@ -42,23 +42,6 @@ type Session interface {
 	Close(context.Context) error
 }
 
-// NetworkFacts are CNI-assigned facts observed after runtime materialization.
-// Placement authority must not synthesize them.
-type NetworkFacts struct {
-	HostInterfaceName string
-	GuestAddress      string
-	GatewayAddress    string
-	Subnet            string
-	TapName           string
-	NetNSName         string
-	GuestMAC          string
-}
-
-type NetworkFactSession interface {
-	Session
-	NetworkFacts() (NetworkFacts, error)
-}
-
 type BuildNetworkStatus struct {
 	DeniedPackets uint64
 	LimitPackets  uint64
@@ -87,6 +70,7 @@ type CheckpointableSession interface {
 type ConnectRequest struct {
 	ID             string
 	OwnerKind      OwnerKind
+	Binding        WorkloadBinding
 	Resources      compute.ResourceVector
 	PIDsMax        int64
 	Topology       RuntimeTopology
@@ -158,6 +142,7 @@ type RestoreRequest struct {
 	ID                   string
 	RuntimeInstanceID    string
 	OwnerKind            OwnerKind
+	Binding              WorkloadBinding
 	VMState              string
 	VMStateMediaType     string
 	ScratchDisk          string
@@ -174,12 +159,54 @@ type RestoreRequest struct {
 type MaterializeRequest struct {
 	ID                 string
 	OwnerKind          OwnerKind
+	Binding            WorkloadBinding
 	RootfsDigest       string
 	WorkspaceMountPath string
 	BaseVersionID      string
 	Resources          compute.ResourceVector
 	Topology           RuntimeTopology
 	ReadOnlyDrives     []ReadOnlyDrive
+}
+
+// WorkloadBinding is the closed logical authority that a connector binds to
+// its locally owned network attachment before a guest can receive input or
+// network access. Runtime workloads use their immutable Runtime Instance ID
+// with generation 1; build workloads use the current Build Lease sequence.
+type WorkloadBinding struct {
+	WorkerEpoch       int64
+	OwnerID           string
+	Generation        int64
+	RuntimeInstanceID string
+	RuntimeIdentityID string
+}
+
+func (binding WorkloadBinding) Validate(owner Owner) error {
+	if binding.WorkerEpoch <= 0 {
+		return errors.New("workload binding worker epoch must be positive")
+	}
+	if binding.OwnerID != owner.ID {
+		return errors.New("workload binding owner does not exact-match VM owner")
+	}
+	if binding.Generation <= 0 {
+		return errors.New("workload binding generation must be positive")
+	}
+	if strings.TrimSpace(binding.RuntimeIdentityID) == "" {
+		return errors.New("workload binding runtime identity is required")
+	}
+	switch owner.Kind {
+	case OwnerRuntime:
+		if binding.RuntimeInstanceID != owner.ID ||
+			binding.Generation != 1 {
+			return errors.New("runtime workload binding is incomplete")
+		}
+	case OwnerBuild:
+		if binding.RuntimeInstanceID != "" {
+			return errors.New("build workload binding contains runtime authority")
+		}
+	default:
+		return errors.New("workload binding owner kind is invalid")
+	}
+	return nil
 }
 
 type OwnerKind string

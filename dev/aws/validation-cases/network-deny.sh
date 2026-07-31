@@ -16,13 +16,6 @@ if validation_dry_run; then
   exit 0
 fi
 
-grep -Eq '169[.]254[.]0[.]0/16' \
-  "${DEV_TFVARS:-${VALIDATION_ROOT}/infra/aws/stacks/dev/full-run-smoke.tfvars}" ||
-  {
-    validation_write_result failed metadata_cidr_not_blocked
-    exit 1
-  }
-
 marker="network-deny-${HELMR_VALIDATION_CASE_ATTEMPT:-1}"
 payload="$(
   jq -cn --arg marker "${marker}" '{
@@ -42,20 +35,16 @@ for _ in $(seq 1 90); do
     validation_db_query "
       COPY (
         SELECT 'network-facts|' || worker_instances.resource_id || '|' ||
-               worker_network_slots.netns_name
+               run_leases.runtime_instance_id
           FROM runs
           JOIN run_leases
             ON run_leases.id = runs.current_run_lease_id
            AND run_leases.run_id = runs.id
           JOIN worker_instances
             ON worker_instances.id = run_leases.worker_instance_id
-          JOIN worker_network_slots
-            ON worker_network_slots.id = run_leases.network_slot_id
-           AND worker_network_slots.generation = run_leases.network_slot_generation
-           AND worker_network_slots.runtime_instance_id = run_leases.runtime_instance_id
          WHERE runs.id = '${run_id}'
            AND run_leases.state = 'running'
-           AND worker_network_slots.state = 'bound'
+           AND run_leases.runtime_instance_id IS NOT NULL
       ) TO STDOUT;
     " 2>/dev/null |
       grep -E '^network-facts[|]i-[0-9a-f]{8,17}[|][0-9a-f-]{36}$' |

@@ -84,17 +84,6 @@ const (
 	RuntimeObservedStateLost      RuntimeObservedState = "lost"
 )
 
-type WorkerNetworkSlotState = string
-
-const (
-	WorkerNetworkSlotStateAvailable   WorkerNetworkSlotState = "available"
-	WorkerNetworkSlotStateAssigned    WorkerNetworkSlotState = "assigned"
-	WorkerNetworkSlotStateBound       WorkerNetworkSlotState = "bound"
-	WorkerNetworkSlotStateReclaiming  WorkerNetworkSlotState = "reclaiming"
-	WorkerNetworkSlotStateQuarantined WorkerNetworkSlotState = "quarantined"
-	WorkerNetworkSlotStateLost        WorkerNetworkSlotState = "lost"
-)
-
 type DeploymentBuildLeaseState = string
 
 const (

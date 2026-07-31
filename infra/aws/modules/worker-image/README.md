@@ -1,7 +1,7 @@
 # Worker image module
 
 This module builds the Helmr Worker AMI from one exact source ref. The image
-contains the Worker binaries, Firecracker guest images, BuildKit, CNI, and the
+contains the Worker binaries, Firecracker guest images, BuildKit, and the
 host tools needed for Platform Artifact acquisition.
 
 Managed Runtime, Manager, and standard-toolchain trees are not baked into the

@@ -3,10 +3,7 @@ data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 
 locals {
-  public_url_host              = regex("^https?://([^/:]+)", var.public_url)[0]
-  worker_control_dns_name      = var.enable_cloudfront ? var.cloudfront_origin_domain_name : local.public_url_host
-  private_control_dns_name     = var.create_worker ? local.worker_control_dns_name : null
-  worker_control_url           = module.control.private_control_url
+  worker_control_url           = module.control.control_url
   external_clickhouse_url      = var.clickhouse_url == null ? null : trimspace(var.clickhouse_url)
   managed_clickhouse_url       = one(module.clickhouse[*].clickhouse_url)
   managed_clickhouse_user      = one(module.clickhouse[*].clickhouse_user)
@@ -24,12 +21,23 @@ locals {
   build_worker_name            = "${lower(var.name)}-build"
   worker_ami_id                = coalesce(var.worker_ami_id, "ami-unconfigured")
   worker_allowed_ami_ids       = distinct(compact(concat([local.worker_ami_id], var.worker_allowed_ami_ids)))
-  buildkit_cpu_reserve_millis  = 1000
-  buildkit_memory_reserve_mib  = 2048
-  boot_corpus_reserve_mib      = 2048
-  build_scratch_min_mib        = max(32768, coalesce(var.build_worker_vm_scratch_disk_mib, var.worker_vm_scratch_disk_mib)) + local.boot_corpus_reserve_mib
-  build_worker_cpu_millis      = coalesce(var.build_worker_capacity_vcpus, var.worker_capacity_vcpus, 0) * 1000 - local.buildkit_cpu_reserve_millis
-  build_worker_memory_mib      = coalesce(var.build_worker_capacity_memory_mib, var.worker_capacity_memory_mib, 0) - local.buildkit_memory_reserve_mib
+  cloud_worker_blocked_ipv4_cidrs = [
+    "0.0.0.0/8",
+    "10.0.0.0/8",
+    "100.64.0.0/10",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "224.0.0.0/4",
+    "240.0.0.0/4",
+  ]
+  buildkit_cpu_reserve_millis = 1000
+  buildkit_memory_reserve_mib = 2048
+  boot_corpus_reserve_mib     = 2048
+  build_scratch_min_mib       = max(32768, coalesce(var.build_worker_vm_scratch_disk_mib, var.worker_vm_scratch_disk_mib)) + local.boot_corpus_reserve_mib
+  build_worker_cpu_millis     = coalesce(var.build_worker_capacity_vcpus, var.worker_capacity_vcpus, 0) * 1000 - local.buildkit_cpu_reserve_millis
+  build_worker_memory_mib     = coalesce(var.build_worker_capacity_memory_mib, var.worker_capacity_memory_mib, 0) - local.buildkit_memory_reserve_mib
   worker_groups = [
     {
       id                      = local.run_worker_group_id
@@ -166,10 +174,37 @@ locals {
   }
 }
 
-module "network" {
+resource "terraform_data" "cloud_worker_network_policy" {
+  input = {
+    blocked_ipv4_cidrs = local.cloud_worker_blocked_ipv4_cidrs
+    execution_vpc_cidr = var.execution_vpc_cidr
+  }
+
+  lifecycle {
+    precondition {
+      condition = anytrue([
+        for blocked in local.cloud_worker_blocked_ipv4_cidrs :
+        cidrcontains(blocked, cidrhost(var.execution_vpc_cidr, 0)) && cidrcontains(blocked, cidrhost(var.execution_vpc_cidr, -1))
+      ])
+      error_message = "execution_vpc_cidr must be wholly contained by the Cloud Worker blocked IPv4 CIDRs."
+    }
+  }
+}
+
+module "control_network" {
   source = "../../modules/network"
 
-  name               = var.name
+  name               = "${var.name}-control"
+  vpc_cidr           = var.control_vpc_cidr
+  enable_nat_gateway = var.enable_nat_gateway
+  tags               = local.tags
+}
+
+module "execution_network" {
+  source = "../../modules/network"
+
+  name               = "${var.name}-execution"
+  vpc_cidr           = var.execution_vpc_cidr
   enable_nat_gateway = var.enable_nat_gateway
   tags               = local.tags
 }
@@ -183,8 +218,8 @@ module "clickhouse" {
   service_name                     = var.clickhouse_cloud_service_name
   clickhouse_region                = var.clickhouse_cloud_region
   secret_kms_key_id                = var.clickhouse_secret_kms_key_id
-  vpc_id                           = module.network.vpc_id
-  subnet_ids                       = module.network.private_subnet_ids
+  vpc_id                           = module.control_network.vpc_id
+  subnet_ids                       = module.control_network.private_subnet_ids
   min_replica_memory_gb            = var.clickhouse_min_replica_memory_gb
   max_replica_memory_gb            = var.clickhouse_max_replica_memory_gb
   idle_scaling                     = var.clickhouse_idle_scaling
@@ -198,9 +233,9 @@ module "control" {
   source = "../../modules/control"
 
   name                                   = var.name
-  vpc_id                                 = module.network.vpc_id
-  public_subnet_ids                      = module.network.public_subnet_ids
-  private_subnet_ids                     = module.network.private_subnet_ids
+  vpc_id                                 = module.control_network.vpc_id
+  public_subnet_ids                      = module.control_network.public_subnet_ids
+  private_subnet_ids                     = module.control_network.private_subnet_ids
   public_url                             = var.public_url
   deployment_mode                        = var.deployment_mode
   worker_group_id                        = var.worker_group_id
@@ -237,7 +272,6 @@ module "control" {
   certificate_arn                        = var.certificate_arn
   allow_insecure_http                    = var.allow_insecure_http
   enable_cloudfront                      = var.enable_cloudfront
-  private_control_dns_name               = local.private_control_dns_name
   github_oauth_client_id                 = var.github_oauth_client_id
   database_backup_retention_days         = var.database_backup_retention_days
   database_engine_version                = var.database_engine_version
@@ -259,8 +293,12 @@ module "run_worker" {
   name                                       = local.run_worker_name
   worker_group_id                            = local.run_worker_group_id
   worker_roles                               = ["run"]
-  vpc_id                                     = module.network.vpc_id
-  subnet_ids                                 = module.network.private_subnet_ids
+  network_blocked_ipv4_cidrs                 = local.cloud_worker_blocked_ipv4_cidrs
+  network_link_pool                          = var.worker_network_link_pool
+  network_translation_pool                   = var.worker_network_translation_pool
+  network_resolver_ipv4                      = var.worker_network_resolver_ipv4
+  vpc_id                                     = module.execution_network.vpc_id
+  subnet_ids                                 = module.execution_network.private_subnet_ids
   ami_id                                     = var.worker_ami_id
   instance_type                              = var.worker_instance_type
   enable_nested_virtualization               = var.worker_enable_nested_virtualization
@@ -307,8 +345,12 @@ module "build_worker" {
   name                                       = local.build_worker_name
   worker_group_id                            = local.build_worker_group_id
   worker_roles                               = ["build"]
-  vpc_id                                     = module.network.vpc_id
-  subnet_ids                                 = module.network.private_subnet_ids
+  network_blocked_ipv4_cidrs                 = local.cloud_worker_blocked_ipv4_cidrs
+  network_link_pool                          = var.worker_network_link_pool
+  network_translation_pool                   = var.worker_network_translation_pool
+  network_resolver_ipv4                      = var.worker_network_resolver_ipv4
+  vpc_id                                     = module.execution_network.vpc_id
+  subnet_ids                                 = module.execution_network.private_subnet_ids
   ami_id                                     = var.worker_ami_id
   instance_type                              = coalesce(var.build_worker_instance_type, var.worker_instance_type)
   enable_nested_virtualization               = var.build_worker_enable_nested_virtualization != null ? var.build_worker_enable_nested_virtualization : var.worker_enable_nested_virtualization
@@ -443,11 +485,6 @@ resource "terraform_data" "worker_preconditions" {
     precondition {
       condition     = !var.create_worker || var.worker_ami_id != null
       error_message = "worker_ami_id is required when create_worker is true."
-    }
-
-    precondition {
-      condition     = !var.create_worker || (try(trimspace(local.worker_control_dns_name) != "", false) && try(trimspace(var.certificate_arn) != "", false))
-      error_message = "create_worker requires certificate_arn and a private worker control DNS name derived from public_url or cloudfront_origin_domain_name."
     }
 
     precondition {

@@ -37,31 +37,13 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
-	cfg := (Config{}).WithDefaults()
-	machine := &firecracker.Machine{
-		Cfg: firecracker.Config{
-			NetworkInterfaces: firecracker.NetworkInterfaces{{
-				StaticConfiguration: &firecracker.StaticNetworkConfiguration{
-					MacAddress: "06:00:ac:10:00:02",
-					IPConfiguration: &firecracker.IPConfiguration{
-						IPAddr: net.IPNet{
-							IP:   net.IPv4(192, 168, 127, 2),
-							Mask: net.CIDRMask(24, 32),
-						},
-						Gateway:     net.IPv4(192, 168, 127, 1),
-						Nameservers: []string{"10.0.0.2"},
-					},
-				},
-			}},
-		},
-	}
-
-	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", CNIProfile: cfg.CNIProfile})
+func TestSnapshotRuntimeConfigIncludesNetworkABI(t *testing.T) {
+	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
+	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", NetworkABI: NetworkABIV0})
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest, manifestBytes, err := snapshotRuntimeConfig(cfg, machine, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", defaultKernelArgs, vm.RuntimeTopology{})
+	digest, manifestBytes, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", defaultKernelArgs, vm.RuntimeTopology{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,8 +55,11 @@ func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	network := manifest.RuntimeState.Network
-	if network.Mode != "cni" || network.Profile != cfg.CNIProfile || network.NetworkName != cfg.CNINetworkName || network.IfName != cfg.CNIIfName || network.VMIfName != cfg.CNIVMIfName || network.GuestIPCIDR != "192.168.127.2/24" || network.GuestMAC != "06:00:ac:10:00:02" || network.GatewayAddress != "192.168.127.1" || network.Subnet != "192.168.127.0/24" || len(network.Nameservers) != 1 || network.Nameservers[0] != "10.0.0.2" {
+	if network.NetworkABI != NetworkABIV0 || network.GuestIPv4CIDR != GuestNetworkCIDRV0 || network.GuestMAC != GuestMACV0 || network.GatewayIPv4 != GuestGatewayIPv4V0 || network.GatewayMAC != GuestGatewayMACV0 || network.GuestInterfaceName != GuestInterfaceNameV0 || network.MTU != GuestMTUV0 || len(network.ResolverAddresses) != 1 || network.ResolverAddresses[0] != "10.0.0.2" {
 		t.Fatalf("network = %+v", network)
+	}
+	if manifest.RecoveryPoint.Runtime.Network.NetworkABI != NetworkABIV0 {
+		t.Fatalf("network identity = %+v", manifest.RecoveryPoint.Runtime.Network)
 	}
 	if manifest.RecoveryPoint.Runtime.ID != runtimeID || manifest.RecoveryPoint.Runtime.InitramfsDigest != "sha256:initramfs" {
 		t.Fatalf("runtime = %+v", manifest.RecoveryPoint.Runtime)
@@ -122,29 +107,18 @@ func TestScratchUsableFloorMatchesBuildProfiles(t *testing.T) {
 }
 
 func TestSnapshotRuntimeConfigBindsManagedProgramTopology(t *testing.T) {
-	cfg := (Config{}).WithDefaults()
-	machine := &firecracker.Machine{Cfg: firecracker.Config{
-		KernelArgs: defaultKernelArgs + " ip=192.168.127.2::192.168.127.1:255.255.255.0::eth0:off:10.0.0.2:10.0.0.3",
-		NetworkInterfaces: firecracker.NetworkInterfaces{{
-			StaticConfiguration: &firecracker.StaticNetworkConfiguration{
-				MacAddress: "06:00:ac:10:00:02",
-				IPConfiguration: &firecracker.IPConfiguration{IPAddr: net.IPNet{
-					IP: net.IPv4(192, 168, 127, 2), Mask: net.CIDRMask(24, 32),
-				}, Gateway: net.IPv4(192, 168, 127, 1), Nameservers: []string{"10.0.0.2"}},
-			},
-		}},
-	}}
+	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
 	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{
 		Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel",
 		InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs",
-		CNIProfile: cfg.CNIProfile,
+		NetworkABI: NetworkABIV0,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	drives := testProgramDrives(&recordingReadOnlyDriveSource{})
 	_, manifestBytes, err := snapshotRuntimeConfig(
-		cfg, machine, "checkpoint-1", runtimeID, "sha256:kernel",
+		cfg, "checkpoint-1", runtimeID, "sha256:kernel",
 		"sha256:initramfs", "sha256:rootfs", defaultKernelArgs+" helmr.program=1", vm.RuntimeTopology{}, drives,
 	)
 	if err != nil {
@@ -227,49 +201,8 @@ func TestCleanupRemovesExactBuildOwnerAndMarkerLast(t *testing.T) {
 	}
 }
 
-func TestGuestSessionExposesActualCNINetworkFacts(t *testing.T) {
-	cfg := (Config{}).WithDefaults()
-	session := &guestSession{cfg: cfg, machine: &firecracker.Machine{Cfg: firecracker.Config{
-		NetNS: "/var/run/netns/0190f9c2-aaaa-7bbb-8ccc-0123456789ab",
-		NetworkInterfaces: firecracker.NetworkInterfaces{{StaticConfiguration: &firecracker.StaticNetworkConfiguration{
-			HostDevName: "tap7f3a", MacAddress: "06:00:ac:10:00:02",
-			IPConfiguration: &firecracker.IPConfiguration{
-				IPAddr:  net.IPNet{IP: net.IPv4(172, 16, 0, 2), Mask: net.CIDRMask(24, 32)},
-				Gateway: net.IPv4(172, 16, 0, 1),
-			},
-		}}},
-	}}}
-	facts, err := session.NetworkFacts()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if facts.HostInterfaceName != "tap7f3a" || facts.TapName != "tap7f3a" ||
-		facts.NetNSName != "0190f9c2-aaaa-7bbb-8ccc-0123456789ab" ||
-		facts.GuestAddress != "172.16.0.2" || facts.GatewayAddress != "172.16.0.1" ||
-		facts.Subnet != "172.16.0.0/24" || facts.GuestMAC != "06:00:ac:10:00:02" {
-		t.Fatalf("network facts = %+v", facts)
-	}
-}
-
 func TestSnapshotRuntimeConfigIncludesSubstrateIdentity(t *testing.T) {
-	cfg := (Config{}).WithDefaults()
-	machine := &firecracker.Machine{
-		Cfg: firecracker.Config{
-			NetworkInterfaces: firecracker.NetworkInterfaces{{
-				StaticConfiguration: &firecracker.StaticNetworkConfiguration{
-					MacAddress: "06:00:ac:10:00:02",
-					IPConfiguration: &firecracker.IPConfiguration{
-						IPAddr: net.IPNet{
-							IP:   net.IPv4(192, 168, 127, 2),
-							Mask: net.CIDRMask(24, 32),
-						},
-						Gateway:     net.IPv4(192, 168, 127, 1),
-						Nameservers: []string{"10.0.0.2"},
-					},
-				},
-			}},
-		},
-	}
+	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
 	topology := vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{
 		Path:       filepath.Join(t.TempDir(), "substrate.ext4"),
 		Digest:     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -277,11 +210,11 @@ func TestSnapshotRuntimeConfigIncludesSubstrateIdentity(t *testing.T) {
 		BuilderABI: "builder-v1",
 		LayoutABI:  "layout-v1",
 	}}
-	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", CNIProfile: cfg.CNIProfile})
+	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", NetworkABI: NetworkABIV0})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, manifestBytes, err := snapshotRuntimeConfig(cfg, machine, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", defaultKernelArgs+" helmr.substrate=1", topology)
+	_, manifestBytes, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", defaultKernelArgs+" helmr.substrate=1", topology)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,51 +321,31 @@ func (e testWrappedErrors) WrappedErrors() []error {
 	return []error(e)
 }
 
-func TestSnapshotRuntimeConfigRequiresCNIIP(t *testing.T) {
+func TestSnapshotRuntimeConfigRequiresResolver(t *testing.T) {
 	cfg := (Config{}).WithDefaults()
-	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", CNIProfile: cfg.CNIProfile})
+	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", NetworkABI: NetworkABIV0})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = snapshotRuntimeConfig(cfg, &firecracker.Machine{}, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", defaultKernelArgs, vm.RuntimeTopology{})
+	_, _, err = snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", defaultKernelArgs, vm.RuntimeTopology{})
 	if err == nil {
-		t.Fatal("expected missing guest IP error")
+		t.Fatal("expected missing resolver error")
 	}
 }
 
-func TestRestoreNetworkInterfaceRequestsCheckpointIP(t *testing.T) {
-	connector := &Connector{cfg: (Config{}).WithDefaults()}
-	iface := connector.networkInterface(&snapshotNetworkManifest{
-		GuestIPCIDR: "192.168.127.2/24",
-		GuestMAC:    "06:00:ac:10:00:02",
-	})
-	if iface.CNIConfiguration == nil || len(iface.CNIConfiguration.Args) != 3 {
+func TestStaticNetworkInterfaceMatchesNetworkABI(t *testing.T) {
+	iface := staticNetworkInterface("10.0.0.2")
+	if iface.StaticConfiguration == nil || iface.StaticConfiguration.IPConfiguration == nil {
 		t.Fatalf("interface = %+v", iface)
 	}
-	if got := iface.CNIConfiguration.Args[0]; got != [2]string{"IgnoreUnknown", "true"} {
-		t.Fatalf("args = %+v", iface.CNIConfiguration.Args)
-	}
-	if got := iface.CNIConfiguration.Args[1]; got != [2]string{"IP", "192.168.127.2/24"} {
-		t.Fatalf("args = %+v", iface.CNIConfiguration.Args)
-	}
-	if got := iface.CNIConfiguration.Args[2]; got != [2]string{"MAC", "06:00:ac:10:00:02"} {
-		t.Fatalf("args = %+v", iface.CNIConfiguration.Args)
+	static := iface.StaticConfiguration
+	if static.HostDevName != GuestTapNameV0 || static.MacAddress != GuestMACV0 || static.IPConfiguration.IPAddr.String() != GuestNetworkCIDRV0 || static.IPConfiguration.Gateway.String() != GuestGatewayIPv4V0 || static.IPConfiguration.IfName != GuestInterfaceNameV0 || len(static.IPConfiguration.Nameservers) != 1 || static.IPConfiguration.Nameservers[0] != "10.0.0.2" {
+		t.Fatalf("static interface = %+v", static)
 	}
 }
 
 func TestValidateRestoredNetworkConfigRequiresExactGuestVisibleIdentity(t *testing.T) {
-	expected := snapshotNetworkManifest{
-		Mode:           "cni",
-		Profile:        "helmr/v0",
-		NetworkName:    "helmr",
-		IfName:         "veth0",
-		VMIfName:       "eth0",
-		GuestIPCIDR:    "192.168.127.2/24",
-		GuestMAC:       "06:00:ac:10:00:02",
-		GatewayAddress: "192.168.127.1",
-		Subnet:         "192.168.127.0/24",
-		Nameservers:    []string{"10.0.0.2"},
-	}
+	expected := snapshotNetworkConfig(Config{NetworkResolverIPv4: "10.0.0.2"})
 	if err := validateRestoredNetworkConfig(expected, expected); err != nil {
 		t.Fatal(err)
 	}
@@ -441,25 +354,31 @@ func TestValidateRestoredNetworkConfigRequiresExactGuestVisibleIdentity(t *testi
 		edit func(*snapshotNetworkManifest)
 	}{
 		{name: "guest IP", edit: func(network *snapshotNetworkManifest) {
-			network.GuestIPCIDR = "192.168.127.3/24"
+			network.GuestIPv4CIDR = "192.168.127.3/30"
 		}},
 		{name: "guest MAC", edit: func(network *snapshotNetworkManifest) {
 			network.GuestMAC = "06:00:ac:10:00:03"
 		}},
 		{name: "gateway", edit: func(network *snapshotNetworkManifest) {
-			network.GatewayAddress = "192.168.127.254"
+			network.GatewayIPv4 = "192.168.127.254"
 		}},
-		{name: "subnet", edit: func(network *snapshotNetworkManifest) {
-			network.Subnet = "192.168.0.0/16"
+		{name: "gateway MAC", edit: func(network *snapshotNetworkManifest) {
+			network.GatewayMAC = "02:fc:00:00:00:03"
 		}},
 		{name: "resolver", edit: func(network *snapshotNetworkManifest) {
-			network.Nameservers = []string{"10.0.0.3"}
+			network.ResolverAddresses = []string{"10.0.0.3"}
+		}},
+		{name: "guest interface", edit: func(network *snapshotNetworkManifest) {
+			network.GuestInterfaceName = "eth1"
+		}},
+		{name: "mtu", edit: func(network *snapshotNetworkManifest) {
+			network.MTU++
 		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			actual := expected
-			actual.Nameservers = append([]string(nil), expected.Nameservers...)
+			actual.ResolverAddresses = append([]string(nil), expected.ResolverAddresses...)
 			test.edit(&actual)
 			if err := validateRestoredNetworkConfig(expected, actual); err == nil {
 				t.Fatal("expected network mismatch")
@@ -539,7 +458,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 	kernelDigest := testDigest([]byte("kernel"))
 	initramfsDigest := testDigest([]byte("initramfs"))
 	rootfsDigest := testDigest([]byte("rootfs"))
-	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, CNIProfile: cfg.CNIProfile})
+	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, NetworkABI: NetworkABIV0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -562,28 +481,11 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 				RootfsDigest:    rootfsDigest,
 				GuestPort:       cfg.GuestPort,
 				HealthPort:      cfg.HealthPort,
-				Network: snapshotNetworkIdentityManifest{
-					Mode:        "cni",
-					Profile:     cfg.CNIProfile,
-					NetworkName: cfg.CNINetworkName,
-					IfName:      cfg.CNIIfName,
-					VMIfName:    cfg.CNIVMIfName,
-				},
+				Network:         snapshotNetworkIdentityManifest{NetworkABI: NetworkABIV0},
 			},
 		},
 		RuntimeState: snapshotRuntimeStateManifest{
-			Network: snapshotNetworkManifest{
-				Mode:           "cni",
-				Profile:        cfg.CNIProfile,
-				NetworkName:    cfg.CNINetworkName,
-				IfName:         cfg.CNIIfName,
-				VMIfName:       cfg.CNIVMIfName,
-				GuestIPCIDR:    "192.168.127.2/24",
-				GuestMAC:       "06:00:ac:10:00:02",
-				GatewayAddress: "192.168.127.1",
-				Subnet:         "192.168.127.0/24",
-				Nameservers:    []string{"10.0.0.2"},
-			},
+			Network: snapshotNetworkConfig(cfg),
 		},
 	}
 
@@ -620,12 +522,9 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 		{name: "manifest kernel args", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.KernelArgs = "other" }, want: "checkpoint manifest runtime ports or kernel args do not match"},
 		{name: "manifest guest port", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.GuestPort++ }, want: "checkpoint manifest runtime ports or kernel args do not match"},
 		{name: "manifest health port", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.HealthPort++ }, want: "checkpoint manifest runtime ports or kernel args do not match"},
-		{name: "manifest network mode", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Network.Mode = "tap" }, want: `checkpoint manifest network mode "tap" is not supported`},
-		{name: "manifest CNI profile", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Network.Profile = "other/v1" }, want: "checkpoint manifest CNI configuration does not match"},
-		{name: "manifest CNI network", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Network.NetworkName = "other" }, want: "checkpoint manifest CNI configuration does not match"},
-		{name: "manifest CNI if", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Network.IfName = "other0" }, want: "checkpoint manifest CNI configuration does not match"},
-		{name: "manifest CNI vm if", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Network.VMIfName = "other0" }, want: "checkpoint manifest CNI configuration does not match"},
-		{name: "manifest guest ip", editManifest: func(m *snapshotManifest) { m.RuntimeState.Network.GuestIPCIDR = "" }, want: "checkpoint manifest guest_ip_cidr is required"},
+		{name: "manifest network abi", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Network.NetworkABI = "other/v1" }, want: "checkpoint manifest network_abi"},
+		{name: "manifest state network abi", editManifest: func(m *snapshotManifest) { m.RuntimeState.Network.NetworkABI = "other/v1" }, want: "checkpoint manifest network_abi"},
+		{name: "manifest guest ip", editManifest: func(m *snapshotManifest) { m.RuntimeState.Network.GuestIPv4CIDR = "" }, want: "checkpoint manifest guest_ipv4_cidr"},
 	}
 
 	for _, tt := range tests {
@@ -1939,22 +1838,6 @@ func TestRestoreCleanupSessionPreservesCheckpointSupport(t *testing.T) {
 	if !inner.snapshotCalled {
 		t.Fatal("snapshot call did not reach inner session")
 	}
-	wantFacts := vm.NetworkFacts{
-		HostInterfaceName: "veth-host", GuestAddress: "10.0.0.2",
-		GatewayAddress: "10.0.0.1", Subnet: "10.0.0.0/24",
-	}
-	inner.networkFacts = wantFacts
-	networkSession, ok := any(session).(vm.NetworkFactSession)
-	if !ok {
-		t.Fatal("restore cleanup session must preserve network facts")
-	}
-	gotFacts, err := networkSession.NetworkFacts()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotFacts != wantFacts {
-		t.Fatalf("network facts = %+v, want %+v", gotFacts, wantFacts)
-	}
 	if err := session.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1982,11 +1865,12 @@ func testRestoreConfig(t *testing.T) Config {
 		t.Fatal(err)
 	}
 	cfg := (Config{
-		KernelPath:    kernelPath,
-		InitramfsPath: initramfsPath,
-		RootfsPath:    rootfsPath,
-		VCPUCount:     2,
-		MemoryMiB:     256,
+		KernelPath:          kernelPath,
+		InitramfsPath:       initramfsPath,
+		RootfsPath:          rootfsPath,
+		NetworkResolverIPv4: "10.0.0.2",
+		VCPUCount:           2,
+		MemoryMiB:           256,
 	}).WithDefaults()
 	manifest := runtimeArtifacts{
 		Schema:     runtimeArtifactsSchema,
@@ -2029,7 +1913,7 @@ func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID strin
 	kernelDigest := testDigest([]byte("kernel"))
 	initramfsDigest := testDigest([]byte("initramfs"))
 	rootfsDigest := testDigest([]byte("rootfs"))
-	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, CNIProfile: cfg.CNIProfile})
+	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, NetworkABI: NetworkABIV0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2050,28 +1934,11 @@ func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID strin
 				RootfsDigest:    rootfsDigest,
 				GuestPort:       cfg.GuestPort,
 				HealthPort:      cfg.HealthPort,
-				Network: snapshotNetworkIdentityManifest{
-					Mode:        "cni",
-					Profile:     cfg.CNIProfile,
-					NetworkName: cfg.CNINetworkName,
-					IfName:      cfg.CNIIfName,
-					VMIfName:    cfg.CNIVMIfName,
-				},
+				Network:         snapshotNetworkIdentityManifest{NetworkABI: NetworkABIV0},
 			},
 		},
 		RuntimeState: snapshotRuntimeStateManifest{
-			Network: snapshotNetworkManifest{
-				Mode:           "cni",
-				Profile:        cfg.CNIProfile,
-				NetworkName:    cfg.CNINetworkName,
-				IfName:         cfg.CNIIfName,
-				VMIfName:       cfg.CNIVMIfName,
-				GuestIPCIDR:    "192.168.127.2/24",
-				GuestMAC:       "06:00:ac:10:00:02",
-				GatewayAddress: "192.168.127.1",
-				Subnet:         "192.168.127.0/24",
-				Nameservers:    []string{"10.0.0.2"},
-			},
+			Network: snapshotNetworkConfig(cfg),
 		},
 	}
 	manifestBytes, err := json.Marshal(manifest)
@@ -2120,7 +1987,6 @@ func testDigest(body []byte) string {
 type checkpointableTestSession struct {
 	closed         bool
 	snapshotCalled bool
-	networkFacts   vm.NetworkFacts
 }
 
 func (s *checkpointableTestSession) Stream() vm.Stream {
@@ -2148,10 +2014,6 @@ func (s *checkpointableTestSession) CreateSnapshot(context.Context, vm.SnapshotR
 
 func (s *checkpointableTestSession) Resume(context.Context) error {
 	return nil
-}
-
-func (s *checkpointableTestSession) NetworkFacts() (vm.NetworkFacts, error) {
-	return s.networkFacts, nil
 }
 
 type readWriteNopCloser struct{}

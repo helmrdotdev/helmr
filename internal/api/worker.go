@@ -102,16 +102,6 @@ type WorkerDrainCompletionRequest struct {
 	Errors            []string  `json:"errors,omitempty"`
 }
 
-type WorkerNetworkFacts struct {
-	HostInterfaceName string `json:"host_interface_name"`
-	GuestAddress      string `json:"guest_address"`
-	GatewayAddress    string `json:"gateway_address"`
-	Subnet            string `json:"subnet"`
-	TapName           string `json:"tap_name"`
-	NetNSName         string `json:"netns_name"`
-	GuestMAC          string `json:"guest_mac"`
-}
-
 type WorkerObservation struct {
 	CPUPressureBPS                int32           `json:"cpu_pressure_bps"`
 	MemoryPressureBPS             int32           `json:"memory_pressure_bps"`
@@ -119,7 +109,7 @@ type WorkerObservation struct {
 	BuildCachePressureBPS         int32           `json:"build_cache_pressure_bps"`
 	ArtifactCachePressureBPS      int32           `json:"artifact_cache_pressure_bps"`
 	CheckpointPressureBPS         int32           `json:"checkpoint_pressure_bps"`
-	LeakedSlotCount               int32           `json:"leaked_slot_count"`
+	QuarantinedResourceCount      int32           `json:"quarantined_resource_count"`
 	RunQueueDepth                 int32           `json:"run_queue_depth"`
 	BuildQueueDepth               int32           `json:"build_queue_depth"`
 	RuntimeStartQueueDepth        int32           `json:"runtime_start_queue_depth"`
@@ -138,7 +128,7 @@ type WorkerCapabilities struct {
 	KernelDigest              string            `json:"kernel_digest"`
 	InitramfsDigest           string            `json:"initramfs_digest"`
 	RootfsDigest              string            `json:"rootfs_digest"`
-	CNIProfile                string            `json:"cni_profile"`
+	NetworkABI                string            `json:"network_abi"`
 	SubstrateFormat           string            `json:"substrate_format,omitempty"`
 	SubstrateBuilderABI       string            `json:"substrate_builder_abi,omitempty"`
 	SubstrateLayoutABI        string            `json:"substrate_layout_abi,omitempty"`
@@ -160,7 +150,7 @@ type WorkerCapabilities struct {
 	Observation               WorkerObservation `json:"observation"`
 }
 
-const WorkerCNIProfileV0 = "helmr/v0"
+const WorkerNetworkABIV0 = "helmr/v0"
 
 type TraceContext struct {
 	TraceID     string `json:"trace_id"`
@@ -313,7 +303,7 @@ type WorkerRuntimeInstance struct {
 type WorkerRuntimeSource struct {
 	DeploymentDefinitionID string                  `json:"deployment_definition_id"`
 	WorkspaceID            string                  `json:"workspace_id"`
-	RuntimeID              string                  `json:"runtime_id"`
+	RuntimeIdentityID      string                  `json:"runtime_identity_id"`
 	WorkspaceImage         CASObject               `json:"workspace_image"`
 	WorkspaceArchitecture  string                  `json:"workspace_architecture"`
 	BaseVersionID          string                  `json:"base_version_id"`
@@ -349,12 +339,9 @@ type WorkerRuntimeProgram struct {
 type WorkerRuntimeInstanceStateRequest struct {
 	ID                      string                     `json:"id"`
 	WorkerEpoch             int64                      `json:"worker_epoch"`
-	NetworkSlotID           string                     `json:"network_slot_id"`
-	NetworkSlotGeneration   int64                      `json:"network_slot_generation"`
 	DesiredVersion          int64                      `json:"desired_version"`
 	ExpectedObservedVersion int64                      `json:"expected_observed_version"`
 	RuntimeSubstrateID      string                     `json:"runtime_substrate_id,omitempty"`
-	NetworkFacts            *WorkerNetworkFacts        `json:"network_facts,omitempty"`
 	ReasonCode              string                     `json:"reason_code,omitempty"`
 	Error                   json.RawMessage            `json:"error,omitempty"`
 	CleanupProof            *WorkerRuntimeCleanupProof `json:"cleanup_proof,omitempty"`
@@ -380,8 +367,6 @@ type WorkerRuntimeReconcileResponse struct {
 type WorkerRuntimeReconcileTarget struct {
 	ID                     string              `json:"id"`
 	WorkerEpoch            int64               `json:"worker_epoch"`
-	NetworkSlotID          string              `json:"network_slot_id"`
-	NetworkSlotGeneration  int64               `json:"network_slot_generation"`
 	DesiredState           string              `json:"desired_state"`
 	DesiredVersion         int64               `json:"desired_version"`
 	ObservedState          string              `json:"observed_state"`
@@ -866,8 +851,6 @@ type WorkerRunLeaseAssignment struct {
 	WorkerProtocolVersion            string       `json:"worker_protocol_version"`
 	RuntimeInstanceID                string       `json:"runtime_instance_id"`
 	RuntimeIdentityID                string       `json:"runtime_identity_id"`
-	NetworkSlotID                    string       `json:"network_slot_id"`
-	NetworkSlotGeneration            int64        `json:"network_slot_generation"`
 	WorkspaceID                      string       `json:"workspace_id"`
 	WorkspaceMountID                 string       `json:"workspace_mount_id"`
 	WorkspaceLeaseID                 string       `json:"workspace_lease_id"`
@@ -999,21 +982,19 @@ type WorkerRunLeaseCancelled struct {
 }
 
 type WorkerRunLease struct {
-	ID                    string       `json:"id"`
-	OrgID                 string       `json:"org_id"`
-	RunID                 string       `json:"run_id"`
-	WorkerGroupID         string       `json:"worker_group_id"`
-	WorkerInstanceID      string       `json:"worker_instance_id"`
-	WorkerEpoch           int64        `json:"worker_epoch"`
-	LeaseSequence         int64        `json:"lease_sequence"`
-	SnapshotVersion       int64        `json:"snapshot_version"`
-	RuntimeInstanceID     string       `json:"runtime_instance_id"`
-	NetworkSlotID         string       `json:"network_slot_id"`
-	NetworkSlotGeneration int64        `json:"network_slot_generation"`
-	ProtocolVersion       string       `json:"protocol_version"`
-	AttemptNumber         int32        `json:"attempt_number"`
-	Trace                 TraceContext `json:"trace"`
-	ExpiresAt             time.Time    `json:"expires_at"`
+	ID                string       `json:"id"`
+	OrgID             string       `json:"org_id"`
+	RunID             string       `json:"run_id"`
+	WorkerGroupID     string       `json:"worker_group_id"`
+	WorkerInstanceID  string       `json:"worker_instance_id"`
+	WorkerEpoch       int64        `json:"worker_epoch"`
+	LeaseSequence     int64        `json:"lease_sequence"`
+	SnapshotVersion   int64        `json:"snapshot_version"`
+	RuntimeInstanceID string       `json:"runtime_instance_id"`
+	ProtocolVersion   string       `json:"protocol_version"`
+	AttemptNumber     int32        `json:"attempt_number"`
+	Trace             TraceContext `json:"trace"`
+	ExpiresAt         time.Time    `json:"expires_at"`
 }
 
 type WorkerRunLeaseProvider interface {

@@ -56,7 +56,7 @@ func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgre
 	mustExec(t, ctx, pool, `
 		INSERT INTO runtime_identities (
 			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
-			rootfs_digest, cni_profile
+			rootfs_digest, network_abi
 		) VALUES (
 			'test-runtime', 'x86_64', 'test', 'sha256:kernel',
 			'sha256:initramfs', 'sha256:rootfs', 'default'

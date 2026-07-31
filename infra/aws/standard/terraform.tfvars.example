@@ -50,6 +50,10 @@ database_skip_final_snapshot   = false
 control_image = null
 worker_ami_id = null
 worker_allowed_ami_ids = []
+worker_network_blocked_ipv4_cidrs = [
+  "10.0.0.0/8",
+  "169.254.0.0/16",
+]
 
 create_worker           = false
 worker_min_size         = 0

@@ -392,7 +392,7 @@ case "$*" in
   *"output -raw source_artifact_kms_key_arn"*) printf 'arn:aws:kms:us-east-1:000000000000:key/test\n' ;;
   *"output -json"*)
     if grep -q '^create_worker = true$' "${DEV_TFVARS}"; then run='"managed-worker-run-worker"'; build='"managed-worker-build-worker"'; nat='"nat-0123456789abcdef0"'; else run=null; build=null; nat=null; fi
-    printf '{"control_cluster_name":{"value":"managed-worker-control"},"control_service_name":{"value":"control"},"dispatcher_service_name":{"value":"dispatcher"},"postgres_identifier":{"value":"helmr-db"},"worker_autoscaling_group_name":{"value":%s},"build_worker_autoscaling_group_name":{"value":%s},"worker_protect_from_scale_in":{"value":true},"build_worker_protect_from_scale_in":{"value":true},"nat_gateway_id":{"value":%s}}\n' "${run}" "${build}" "${nat}"
+    printf '{"control_cluster_name":{"value":"managed-worker-control"},"control_service_name":{"value":"control"},"dispatcher_service_name":{"value":"dispatcher"},"postgres_identifier":{"value":"helmr-db"},"worker_autoscaling_group_name":{"value":%s},"build_worker_autoscaling_group_name":{"value":%s},"worker_protect_from_scale_in":{"value":true},"build_worker_protect_from_scale_in":{"value":true},"execution_nat_gateway_id":{"value":%s}}\n' "${run}" "${build}" "${nat}"
     ;;
   *"state list"*) exit 0 ;;
   *"workspace show"*) printf 'default\n' ;;

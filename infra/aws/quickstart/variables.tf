@@ -26,10 +26,24 @@ variable "tags" {
   default     = {}
 }
 
-variable "vpc_cidr" {
-  description = "CIDR block for the Helmr VPC."
+variable "control_vpc_cidr" {
+  description = "CIDR block for the unrouted Control VPC."
   type        = string
   default     = "10.80.0.0/16"
+}
+
+variable "execution_vpc_cidr" {
+  description = "CIDR block for the unrouted Execution VPC. The complete prefix must be covered by the deployment-supplied Worker deny set."
+  type        = string
+  default     = "10.81.0.0/16"
+
+  validation {
+    condition = can(cidrnetmask(var.execution_vpc_cidr)) && anytrue([
+      for blocked in var.worker_network_blocked_ipv4_cidrs :
+      try(cidrcontains(blocked, cidrhost(var.execution_vpc_cidr, 0)) && cidrcontains(blocked, cidrhost(var.execution_vpc_cidr, -1)), false)
+    ])
+    error_message = "execution_vpc_cidr must be an IPv4 prefix wholly contained by worker_network_blocked_ipv4_cidrs."
+  }
 }
 
 variable "availability_zone_count" {
@@ -463,6 +477,37 @@ variable "worker_enable_ssm" {
   description = "Enable SSM Session Manager access for worker instances."
   type        = bool
   default     = true
+}
+
+variable "worker_network_blocked_ipv4_cidrs" {
+  description = "Canonical ordered IPv4 CIDRs blocked for all guest egress. Supply [] only when the deployment intentionally has no additional destination deny."
+  type        = list(string)
+
+  validation {
+    condition = length(distinct(var.worker_network_blocked_ipv4_cidrs)) == length(var.worker_network_blocked_ipv4_cidrs) && alltrue([
+      for cidr in var.worker_network_blocked_ipv4_cidrs : can(cidrnetmask(cidr)) && try(cidrhost(cidr, 0) == split("/", cidr)[0], false)
+    ])
+    error_message = "worker_network_blocked_ipv4_cidrs must contain unique canonical IPv4 CIDRs."
+  }
+}
+
+variable "worker_network_link_pool" {
+  description = "Worker-local IPv4 pool used for routed veth links."
+  type        = string
+  default     = "169.254.64.0/18"
+}
+
+variable "worker_network_translation_pool" {
+  description = "Worker-local IPv4 pool used for routed guest translation identities."
+  type        = string
+  default     = "100.96.0.0/16"
+}
+
+variable "worker_network_resolver_ipv4" {
+  description = "Exact IPv4 resolver exposed to guests. Null selects the VPC resolver."
+  type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "worker_min_size" {

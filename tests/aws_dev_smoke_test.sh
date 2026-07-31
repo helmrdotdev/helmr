@@ -518,9 +518,6 @@ cat >"$tfvars" <<'EOF'
 aws_region="us-west-2"
 name="compact-smoke"
 public_url="https://old.example.com"
-control_url="https://stale.example.com"
-worker_control_url="https://worker-stale.example.com"
-enable_private_control_dns=true
 create_worker=false
 EOF
 DEV_TFVARS="$tfvars" \
@@ -539,9 +536,6 @@ DEV_TFVARS="$tfvars" \
   "$script" dev-control-tfvars >"$stdout" 2>"$stderr"
 assert_contains "$tfvars" 'public_url = "https://replacement.example.com"' "compact tfvar replacement"
 assert_tfvar_count "$tfvars" public_url 1 "compact tfvar replacement should not duplicate"
-assert_tfvar_count "$tfvars" control_url 0 "compact control_url removal"
-assert_tfvar_count "$tfvars" worker_control_url 0 "compact worker_control_url removal"
-assert_tfvar_count "$tfvars" enable_private_control_dns 0 "compact enable_private_control_dns removal"
 assert_not_contains "$tfvars" "https://old.example.com" "compact old value removal"
 assert_contains "$tfvars" 'worker_fleet_controller = {}' "control mode has no worker fleet policy"
 

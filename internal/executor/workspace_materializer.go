@@ -648,8 +648,8 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 	if mount.RuntimeInstanceID == "" {
 		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "runtime_instance_missing", err: errors.New("workspace mount claim must include a runtime instance id")}
 	}
-	if mount.RuntimeEpoch <= 0 || strings.TrimSpace(mount.NetworkSlotID) == "" || mount.NetworkSlotGeneration <= 0 {
-		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "runtime_instance_fence_missing", err: errors.New("workspace mount claim must include runtime epoch and network slot generation")}
+	if mount.RuntimeEpoch <= 0 {
+		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "runtime_instance_fence_missing", err: errors.New("workspace mount claim must include the runtime epoch")}
 	}
 	runtimeInstanceID := runtimeInstanceIDFromWorkspaceMount(*mount)
 	m.logWorkspaceMountPhase(*mount, "workspace mount runtime instance claimed", "runtime_instance_id", runtimeInstanceID)
@@ -756,6 +756,7 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 			materialized, err := connector.Materialize(ctx, vm.MaterializeRequest{
 				ID:                 mount.RuntimeInstanceID,
 				OwnerKind:          vm.OwnerRuntime,
+				Binding:            workspaceMountWorkloadBinding(*mount),
 				RootfsDigest:       mount.RootfsDigest,
 				WorkspaceMountPath: mount.WorkspaceMountPath,
 				BaseVersionID:      mount.BaseVersionID,
@@ -793,6 +794,7 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 		materialized, err := connector.Materialize(ctx, vm.MaterializeRequest{
 			ID:                 mount.RuntimeInstanceID,
 			OwnerKind:          vm.OwnerRuntime,
+			Binding:            workspaceMountWorkloadBinding(*mount),
 			RootfsDigest:       mount.RootfsDigest,
 			WorkspaceMountPath: mount.WorkspaceMountPath,
 			BaseVersionID:      mount.BaseVersionID,
@@ -821,6 +823,16 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 		}
 	}
 	return session, workspaceImagePath, workspacePath, cleanup, runtimeInstanceID, false, resourceKey, nil
+}
+
+func workspaceMountWorkloadBinding(mount api.WorkerWorkspaceMount) vm.WorkloadBinding {
+	return vm.WorkloadBinding{
+		WorkerEpoch:       mount.RuntimeEpoch,
+		OwnerID:           mount.RuntimeInstanceID,
+		Generation:        1,
+		RuntimeInstanceID: mount.RuntimeInstanceID,
+		RuntimeIdentityID: mount.RuntimeIdentityID,
+	}
 }
 
 func (m WorkspaceMaterializer) restoreCASObject(ctx context.Context, tempDir string, label string, artifact api.CASObject) (string, func(), error) {
@@ -1314,6 +1326,9 @@ func (m WorkspaceMaterializer) stopControlledWorkspaceMount(ctx context.Context,
 	}
 	if _, err := client.StopWorkspaceMount(context.Background(), api.WorkerWorkspaceMountStopRequest{
 		OrgID: mount.OrgID, WorkspaceMountID: mount.ID,
+		CleanupProof: api.WorkerRuntimeCleanupProof{
+			Method: api.WorkerRuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC(),
+		},
 	}); err != nil {
 		return fmt.Errorf("stop workspace mount: %w", err)
 	}

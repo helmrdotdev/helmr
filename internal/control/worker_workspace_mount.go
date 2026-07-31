@@ -225,6 +225,15 @@ func (s *Server) workerStopWorkspaceMount(w http.ResponseWriter, r *http.Request
 		writeError(w, badRequest(fmt.Errorf("invalid Workspace stop JSON: %w", err)))
 		return
 	}
+	if err := validateRuntimeClosedCleanupProof(request.CleanupProof, time.Now()); err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	cleanupProof, err := json.Marshal(request.CleanupProof)
+	if err != nil {
+		writeError(w, badRequest(errors.New("encode runtime cleanup proof")))
+		return
+	}
 	params, err := s.workspaceMountTransition(r.Context(), request.OrgID, request.WorkspaceMountID)
 	if err != nil {
 		writeError(w, err)
@@ -285,6 +294,7 @@ func (s *Server) workerStopWorkspaceMount(w http.ResponseWriter, r *http.Request
 			WorkerInstanceID: params.workerID, WorkerEpoch: params.epoch,
 			RuntimeInstanceID: params.mount.RuntimeInstanceID,
 			FencingGeneration: params.mount.FencingGeneration,
+			CleanupProof:      cleanupProof,
 		})
 		if err != nil {
 			return err
@@ -715,11 +725,9 @@ func projectWorkerWorkspaceMount(row db.ClaimWorkspaceMountRow) *api.WorkerWorks
 		DeploymentDefinitionID: pgvalue.MustUUIDValue(row.DeploymentDefinitionID).String(),
 		BaseVersionID:          pgvalue.MustUUIDValue(row.MaterializedVersionID).String(),
 		RuntimeInstanceID:      pgvalue.MustUUIDValue(row.RuntimeInstanceID).String(),
-		NetworkSlotID:          pgvalue.MustUUIDValue(row.NetworkSlotID).String(),
-		NetworkSlotGeneration:  row.NetworkSlotGeneration,
 		RuntimeEpoch:           row.WorkerEpoch,
 		GuestdChannelTokenHash: row.GuestChannelTokenHash,
-		State:                  string(row.State), RuntimeID: row.RuntimeID,
+		State:                  string(row.State), RuntimeIdentityID: row.RuntimeID,
 		WorkspaceImage: api.CASObject{
 			Digest: row.ImageArtifactDigest, SizeBytes: row.ImageArtifactSizeBytes,
 			MediaType: row.ImageArtifactMediaType,

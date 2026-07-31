@@ -51,7 +51,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"email":               {},
 		"enrollment":          {"api", "auth", "workergroup"},
 		"executor":            {"api", "capacity", "cas", "checkpoint", "client", "compute", "deployment", "frameio", "ids", "jsoncanon", "localcache", "proto/run/v0", "proto/workspace/v0", "runtime", "sha256sum", "vm", "wire", "workspace"},
-		"firecracker":         {"cas", "compute", "ids", "runtime/identity", "sha256sum", "vm"},
+		"firecracker":         {"cas", "compute", "ids", "runtime/identity", "sha256sum", "vm", "worker/datapath"},
 		"fleet":               {"db", "sessionlock"},
 		"frameio":             {"sha256sum"},
 		"guestd":              {"archive", "deployment", "frameio", "jsoncanon", "oci", "proto/run/v0", "proto/workspace/v0", "safepath", "sha256sum", "wire", "workspace"},
@@ -83,6 +83,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"vm":                  {"compute", "ids"},
 		"wire":                {"frameio", "proto/run/v0"},
 		"worker":              {"api", "capacity", "client", "compute", "deployment", "ids", "vm"},
+		"worker/datapath":     {},
 		"workergroup":         {"auth", "db", "pgvalue"},
 		"workspace":           {"archive", "jsoncanon", "proto/workspace/v0", "safepath", "sha256sum"},
 	}

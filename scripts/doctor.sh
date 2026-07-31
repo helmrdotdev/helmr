@@ -173,11 +173,6 @@ check_linux() {
 		fail "HELMR_WORKER_FIRECRACKER_JAILER_GID must be a positive integer"
 	fi
 	ok "Firecracker built-in seccomp filter will be used"
-	if [ -n "${HELMR_WORKER_CNI_PROFILE:-}" ]; then
-		ok "CNI profile is configured: $HELMR_WORKER_CNI_PROFILE"
-	else
-		warn "HELMR_WORKER_CNI_PROFILE is unset; checkpoint restore compatibility will default to <network>/v0"
-	fi
 	if [ -d /sys/fs/cgroup ]; then
 		ok "cgroup filesystem is mounted"
 	else
@@ -186,32 +181,21 @@ check_linux() {
 	if [ -c /dev/net/tun ]; then
 		ok "/dev/net/tun exists"
 	else
-		fail "/dev/net/tun is missing; CNI tap setup requires tun support"
+		fail "/dev/net/tun is missing; routed TAP setup requires tun support"
 	fi
-
-	cni_conf_dir=${HELMR_WORKER_CNI_CONF_DIR:-/etc/cni/conf.d}
-	cni_bin_dir=${HELMR_WORKER_CNI_BIN_DIR:-/opt/cni/bin}
-	cni_network=${HELMR_WORKER_CNI_NETWORK:-helmr}
-	if [ -d "$cni_conf_dir" ]; then
-		ok "CNI config directory exists: $cni_conf_dir"
-	else
-		fail "CNI config directory is missing: $cni_conf_dir"
-	fi
-	if [ -d "$cni_bin_dir" ]; then
-		ok "CNI plugin directory exists: $cni_bin_dir"
-	else
-		fail "CNI plugin directory is missing: $cni_bin_dir"
-	fi
-	if find "$cni_conf_dir" -maxdepth 1 \( -name '*.conf' -o -name '*.conflist' \) -type f -exec grep -l "\"name\"[[:space:]]*:[[:space:]]*\"$cni_network\"" {} + >/dev/null 2>&1; then
-		ok "CNI network is configured: $cni_network"
-	else
-		fail "CNI network is not configured: $cni_network"
-	fi
-	for plugin in ptp host-local firewall tc-redirect-tap; do
-		if [ -x "$cni_bin_dir/$plugin" ]; then
-			ok "CNI plugin is executable: $plugin"
+	for variable in HELMR_WORKER_NETWORK_LINK_POOL HELMR_WORKER_NETWORK_TRANSLATION_POOL HELMR_WORKER_NETWORK_RESOLVER_IPV4; do
+		eval "value=\${$variable:-}"
+		if [ -n "$value" ]; then
+			ok "$variable is configured"
 		else
-			fail "CNI plugin is missing or not executable: $cni_bin_dir/$plugin"
+			fail "$variable is required for the routed network ABI"
+		fi
+	done
+	for command in "${HELMR_WORKER_IP_PATH:-ip}" "${HELMR_WORKER_NFT_PATH:-nft}"; do
+		if command -v "$command" >/dev/null 2>&1 || [ -x "$command" ]; then
+			ok "routed network command is available: $command"
+		else
+			fail "routed network command is missing: $command"
 		fi
 	done
 

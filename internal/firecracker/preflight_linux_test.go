@@ -28,19 +28,6 @@ func TestCheckCommandRequiresExecutable(t *testing.T) {
 	}
 }
 
-func TestCheckCNINetworkConfig(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "helmr.conflist"), []byte(`{"cniVersion":"1.0.0","name":"helmr","plugins":[]}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := checkCNINetworkConfig(dir, "helmr"); err != nil {
-		t.Fatal(err)
-	}
-	if err := checkCNINetworkConfig(dir, "missing"); err == nil || !strings.Contains(err.Error(), "was not found") {
-		t.Fatalf("error = %v", err)
-	}
-}
-
 func TestPreflightChecksContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

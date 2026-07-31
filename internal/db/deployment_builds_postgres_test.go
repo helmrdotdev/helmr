@@ -395,7 +395,7 @@ func (f *deploymentBuildFixture) activateBuildWorker(t *testing.T) {
 	mustExec(t, f.ctx, f.pool, `
 		INSERT INTO runtime_identities (
 			id, runtime_arch, runtime_abi, kernel_digest,
-			initramfs_digest, rootfs_digest, cni_profile
+			initramfs_digest, rootfs_digest, network_abi
 		) VALUES (
 			$1, 'x86_64', 'helmr.runtime.v0', 'sha256:test-kernel',
 			'sha256:test-initramfs', 'sha256:test-rootfs', 'helmr/v0'
@@ -426,7 +426,7 @@ func (f *deploymentBuildFixture) activateBuildWorker(t *testing.T) {
 			cpu_pressure_bps, memory_pressure_bps,
 			guest_ephemeral_disk_pressure_bps,
 			build_cache_pressure_bps, artifact_cache_pressure_bps,
-			checkpoint_pressure_bps, leaked_slot_count, run_queue_depth,
+			checkpoint_pressure_bps, quarantined_resource_count, run_queue_depth,
 			build_queue_depth, runtime_start_queue_depth, observed_at
 		) VALUES (
 			$1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, now()

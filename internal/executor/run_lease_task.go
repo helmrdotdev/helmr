@@ -259,17 +259,15 @@ func (task *guestRunLeaseTask) CurrentWorkerRunLeaseAssignment() api.WorkerRunLe
 func workerRunLeaseFromAssignment(orgID string, assignment api.WorkerRunLeaseAssignment) api.WorkerRunLease {
 	return api.WorkerRunLease{
 		ID: assignment.ID, OrgID: orgID, RunID: assignment.RunID,
-		WorkerGroupID:         assignment.WorkerGroupID,
-		WorkerInstanceID:      assignment.WorkerInstanceID,
-		WorkerEpoch:           assignment.WorkerEpoch,
-		LeaseSequence:         assignment.LeaseSequence,
-		RuntimeInstanceID:     assignment.RuntimeInstanceID,
-		NetworkSlotID:         assignment.NetworkSlotID,
-		NetworkSlotGeneration: assignment.NetworkSlotGeneration,
-		ProtocolVersion:       assignment.WorkerProtocolVersion,
-		AttemptNumber:         assignment.AttemptNumber,
-		Trace:                 assignment.Trace,
-		ExpiresAt:             assignment.ExpiresAt,
+		WorkerGroupID:     assignment.WorkerGroupID,
+		WorkerInstanceID:  assignment.WorkerInstanceID,
+		WorkerEpoch:       assignment.WorkerEpoch,
+		LeaseSequence:     assignment.LeaseSequence,
+		RuntimeInstanceID: assignment.RuntimeInstanceID,
+		ProtocolVersion:   assignment.WorkerProtocolVersion,
+		AttemptNumber:     assignment.AttemptNumber,
+		Trace:             assignment.Trace,
+		ExpiresAt:         assignment.ExpiresAt,
 	}
 }
 

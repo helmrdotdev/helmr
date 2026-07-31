@@ -108,7 +108,6 @@ func assertPrimitiveLifecycleSchema(
 		"run_lease_state",
 		"runtime_desired_state",
 		"runtime_observed_state",
-		"worker_network_slot_state",
 		"deployment_build_lease_state",
 		"deployment_status",
 		"workspace_state",
@@ -147,7 +146,6 @@ func assertPrimitiveLifecycleSchema(
 		"run_leases",
 		"runtime_instances",
 		"runtime_instances",
-		"worker_network_slots",
 		"deployment_build_leases",
 		"deployments",
 		"workspaces",
@@ -175,7 +173,6 @@ func assertPrimitiveLifecycleSchema(
 		"state",
 		"desired_state",
 		"observed_state",
-		"state",
 		"state",
 		"status",
 		"state",
@@ -493,7 +490,6 @@ SELECT created_by_worker_instance_id::text
 func assertExecutionAttachmentConstraints(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	constraints := map[string]string{
-		"run_leases_network_slot_id_fkey":                     "FOREIGN KEY (network_slot_id) REFERENCES worker_network_slots(id)",
 		"workspace_leases_owner_run_lease_fk":                 "FOREIGN KEY (workspace_id, runtime_instance_id, owner_run_lease_id) REFERENCES run_leases(workspace_id, runtime_instance_id, id)",
 		"runtime_instances_restore_checkpoint_workspace_fkey": "FOREIGN KEY (restore_checkpoint_id, workspace_id) REFERENCES run_checkpoints(id, workspace_id)",
 		"runtime_instances_restore_checkpoint_execution_fkey": "FOREIGN KEY (restore_checkpoint_id, reserved_run_id, reserved_attempt_number, workspace_id) REFERENCES run_checkpoints(id, run_id, attempt_number, workspace_id)",
@@ -1134,7 +1130,6 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		"runtime_instances_reserved_run_uidx",
 		"runtime_instances_reserved_process_uidx",
 		"runtime_instances_restore_checkpoint_idx",
-		"network_slots_runtime_active_uidx",
 		"workspace_mounts_workspace_active_uidx",
 		"workspace_mounts_runtime_active_uidx",
 		"workspace_leases_workspace_active_uidx",

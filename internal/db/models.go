@@ -7,8 +7,6 @@ package db
 import (
 	"database/sql/driver"
 	"fmt"
-	"net"
-	"net/netip"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -966,8 +964,6 @@ type RunLease struct {
 	WorkerInstanceID                 pgtype.UUID        `json:"worker_instance_id"`
 	WorkerEpoch                      int64              `json:"worker_epoch"`
 	RuntimeInstanceID                pgtype.UUID        `json:"runtime_instance_id"`
-	NetworkSlotID                    pgtype.UUID        `json:"network_slot_id"`
-	NetworkSlotGeneration            int64              `json:"network_slot_generation"`
 	RuntimeIdentityID                string             `json:"runtime_identity_id"`
 	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
 	RequestedCpuMillis               int64              `json:"requested_cpu_millis"`
@@ -1066,7 +1062,7 @@ type RuntimeIdentity struct {
 	KernelDigest    string             `json:"kernel_digest"`
 	InitramfsDigest string             `json:"initramfs_digest"`
 	RootfsDigest    string             `json:"rootfs_digest"`
-	CniProfile      string             `json:"cni_profile"`
+	NetworkAbi      string             `json:"network_abi"`
 	FirstSeenAt     pgtype.Timestamptz `json:"first_seen_at"`
 	LastSeenAt      pgtype.Timestamptz `json:"last_seen_at"`
 }
@@ -1111,6 +1107,7 @@ type RuntimeInstance struct {
 	LostAt                          pgtype.Timestamptz `json:"lost_at"`
 	FailedAt                        pgtype.Timestamptz `json:"failed_at"`
 	ReclaimedAt                     pgtype.Timestamptz `json:"reclaimed_at"`
+	ReclaimEvidence                 []byte             `json:"reclaim_evidence"`
 	TerminalAt                      pgtype.Timestamptz `json:"terminal_at"`
 	TerminalReasonCode              pgtype.Text        `json:"terminal_reason_code"`
 	TerminalError                   []byte             `json:"terminal_error"`
@@ -1379,34 +1376,6 @@ type WorkerInstanceCredential struct {
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 }
 
-type WorkerNetworkSlot struct {
-	ID                pgtype.UUID        `json:"id"`
-	WorkerGroupID     string             `json:"worker_group_id"`
-	WorkerInstanceID  pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch       int64              `json:"worker_epoch"`
-	SlotName          string             `json:"slot_name"`
-	Generation        int64              `json:"generation"`
-	State             string             `json:"state"`
-	RuntimeInstanceID pgtype.UUID        `json:"runtime_instance_id"`
-	HostInterfaceName pgtype.Text        `json:"host_interface_name"`
-	GuestAddress      *netip.Addr        `json:"guest_address"`
-	GatewayAddress    *netip.Addr        `json:"gateway_address"`
-	Subnet            *netip.Prefix      `json:"subnet"`
-	TapName           pgtype.Text        `json:"tap_name"`
-	NetnsName         pgtype.Text        `json:"netns_name"`
-	GuestMac          net.HardwareAddr   `json:"guest_mac"`
-	AssignedAt        pgtype.Timestamptz `json:"assigned_at"`
-	ReclaimingAt      pgtype.Timestamptz `json:"reclaiming_at"`
-	QuarantinedAt     pgtype.Timestamptz `json:"quarantined_at"`
-	LostAt            pgtype.Timestamptz `json:"lost_at"`
-	ReclaimedAt       pgtype.Timestamptz `json:"reclaimed_at"`
-	ReclaimEvidence   []byte             `json:"reclaim_evidence"`
-	StateReasonCode   pgtype.Text        `json:"state_reason_code"`
-	StateError        []byte             `json:"state_error"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
-}
-
 type WorkerObservation struct {
 	WorkerInstanceID              pgtype.UUID        `json:"worker_instance_id"`
 	WorkerEpoch                   int64              `json:"worker_epoch"`
@@ -1416,7 +1385,7 @@ type WorkerObservation struct {
 	BuildCachePressureBps         int32              `json:"build_cache_pressure_bps"`
 	ArtifactCachePressureBps      int32              `json:"artifact_cache_pressure_bps"`
 	CheckpointPressureBps         int32              `json:"checkpoint_pressure_bps"`
-	LeakedSlotCount               int32              `json:"leaked_slot_count"`
+	QuarantinedResourceCount      int32              `json:"quarantined_resource_count"`
 	RunQueueDepth                 int32              `json:"run_queue_depth"`
 	BuildQueueDepth               int32              `json:"build_queue_depth"`
 	RuntimeStartQueueDepth        int32              `json:"runtime_start_queue_depth"`

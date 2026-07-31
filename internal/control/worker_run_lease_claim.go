@@ -61,7 +61,6 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 		run:            authority.run,
 		attempt:        authority.attempt,
 		runtime:        authority.runtime,
-		networkSlot:    authority.networkSlot,
 		runLease:       authority.runLease,
 		workspace:      authority.workspace,
 		workspaceMount: authority.workspaceMount,

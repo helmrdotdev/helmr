@@ -107,8 +107,6 @@ type preparedRuntimeEntry struct {
 	poolKey           string
 	runtimeInstanceID string
 	runtimeEpoch      int64
-	networkSlotID     string
-	networkGeneration int64
 	target            api.WorkerRuntimeReconcileTarget
 	exit              *preparedRuntimeSignal
 	ready             *preparedRuntimeSignal
@@ -231,11 +229,6 @@ func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount api.WorkerWork
 		p.logInfo("prepared runtime pool miss", "runtime_instance_id", runtimeInstanceID, "reason", "reserved_session_exited")
 		return nil, key, false
 	}
-	if entry.networkSlotID != mount.NetworkSlotID || entry.networkGeneration != mount.NetworkSlotGeneration {
-		p.mu.Unlock()
-		p.logInfo("prepared runtime pool miss", "runtime_instance_id", runtimeInstanceID, "reason", "network_slot_generation_mismatch")
-		return nil, key, false
-	}
 	p.mu.Unlock()
 	if err, readyFinished := entry.ready.wait(ctx); err != nil {
 		reason := "runtime_ready_failed"
@@ -260,7 +253,7 @@ func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount api.WorkerWork
 	entries = p.entries[key]
 	index = -1
 	for i := range entries {
-		if entries[i].runtimeInstanceID == runtimeInstanceID && entries[i].runtimeEpoch == mount.RuntimeEpoch && entries[i].networkSlotID == mount.NetworkSlotID && entries[i].networkGeneration == mount.NetworkSlotGeneration {
+		if entries[i].runtimeInstanceID == runtimeInstanceID && entries[i].runtimeEpoch == mount.RuntimeEpoch {
 			index = i
 			break
 		}
@@ -691,6 +684,7 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		}
 		session, materializeErr = connector.Materialize(ctx, vm.MaterializeRequest{
 			ID: runtimeInstanceID, OwnerKind: vm.OwnerRuntime, RootfsDigest: mount.RootfsDigest,
+			Binding:            runtimeTargetWorkloadBinding(target),
 			WorkspaceMountPath: mount.WorkspaceMountPath, BaseVersionID: mount.BaseVersionID,
 			Resources: compute.ResourceVector{MilliCPU: mount.RequestedMilliCPU, MemoryMiB: mount.RequestedMemoryMiB,
 				DiskMiB: mount.RequestedDiskMiB, Slots: mount.RequestedExecutionSlots},
@@ -723,8 +717,6 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		poolKey:           key,
 		runtimeInstanceID: runtimeInstanceID,
 		runtimeEpoch:      runtimeEpoch,
-		networkSlotID:     target.NetworkSlotID,
-		networkGeneration: target.NetworkSlotGeneration,
 		target:            target,
 		exit:              newPreparedRuntimeSignal(),
 		ready:             newPreparedRuntimeSignal(),
@@ -769,32 +761,6 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 	}
 	readyRequest := runtimeTargetStateRequest(target, nil)
 	readyRequest.RuntimeSubstrateID = runtimeSubstrateIDValue
-	networkSession, ok := session.(vm.NetworkFactSession)
-	if !ok {
-		err := errors.New("materialized runtime does not expose CNI network facts")
-		entry.ready.finish(err)
-		if failErr := p.removeReadyEntryAndFail(key, entry, err, true); failErr != nil {
-			return errors.Join(err, failErr)
-		}
-		return nil
-	}
-	networkFacts, err := networkSession.NetworkFacts()
-	if err != nil {
-		entry.ready.finish(err)
-		if failErr := p.removeReadyEntryAndFail(key, entry, err, true); failErr != nil {
-			return errors.Join(err, failErr)
-		}
-		return nil
-	}
-	readyRequest.NetworkFacts = &api.WorkerNetworkFacts{
-		HostInterfaceName: networkFacts.HostInterfaceName,
-		GuestAddress:      networkFacts.GuestAddress,
-		GatewayAddress:    networkFacts.GatewayAddress,
-		Subnet:            networkFacts.Subnet,
-		TapName:           networkFacts.TapName,
-		NetNSName:         networkFacts.NetNSName,
-		GuestMAC:          networkFacts.GuestMAC,
-	}
 	if _, err := p.RuntimeInstances.MarkRuntimeInstanceReady(ctx, readyRequest); err != nil {
 		entry.ready.finish(err)
 		p.logInfo("prepared runtime pool instance ready transition failed", "runtime_instance_id", runtimeInstanceID, "error", err.Error())
@@ -809,7 +775,7 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 	available := p.readyCountLocked()
 	stillReady := false
 	for _, candidate := range p.entries[key] {
-		if candidate.runtimeInstanceID == entry.runtimeInstanceID && candidate.runtimeEpoch == entry.runtimeEpoch && candidate.networkSlotID == entry.networkSlotID && candidate.networkGeneration == entry.networkGeneration {
+		if candidate.runtimeInstanceID == entry.runtimeInstanceID && candidate.runtimeEpoch == entry.runtimeEpoch {
 			stillReady = true
 			break
 		}
@@ -820,6 +786,16 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 	}
 	p.logInfo("prepared runtime pool refilled", "runtime_instance_id", runtimeInstanceID, "available", available)
 	return nil
+}
+
+func runtimeTargetWorkloadBinding(target api.WorkerRuntimeReconcileTarget) vm.WorkloadBinding {
+	return vm.WorkloadBinding{
+		WorkerEpoch:       target.WorkerEpoch,
+		OwnerID:           target.ID,
+		Generation:        1,
+		RuntimeInstanceID: target.ID,
+		RuntimeIdentityID: target.Source.RuntimeIdentityID,
+	}
 }
 
 func (p *PreparedRuntimePool) verifyReservedWorkspaceVersion(
@@ -1181,7 +1157,7 @@ func (p *PreparedRuntimePool) forgetReadyEntry(key string, entry preparedRuntime
 	p.mu.Lock()
 	entries := p.entries[key]
 	for i := range entries {
-		if entries[i].runtimeInstanceID == entry.runtimeInstanceID && entries[i].runtimeEpoch == entry.runtimeEpoch && entries[i].networkSlotID == entry.networkSlotID && entries[i].networkGeneration == entry.networkGeneration {
+		if entries[i].runtimeInstanceID == entry.runtimeInstanceID && entries[i].runtimeEpoch == entry.runtimeEpoch {
 			p.removeReadyEntryAtLocked(key, entries, i)
 			removed = true
 			break
@@ -1221,7 +1197,7 @@ func preparedRuntimeWorkspaceMountFromSource(source api.WorkerRuntimeSource) api
 		WorkspaceID:             strings.TrimSpace(source.WorkspaceID),
 		DeploymentDefinitionID:  strings.TrimSpace(source.DeploymentDefinitionID),
 		BaseVersionID:           strings.TrimSpace(source.BaseVersionID),
-		RuntimeID:               strings.TrimSpace(source.RuntimeID),
+		RuntimeIdentityID:       strings.TrimSpace(source.RuntimeIdentityID),
 		WorkspaceImage:          source.WorkspaceImage,
 		WorkspaceArtifact:       source.WorkspaceArtifact,
 		RootfsDigest:            strings.TrimSpace(source.RootfsDigest),
@@ -1389,8 +1365,7 @@ func (p *PreparedRuntimePool) closeSession(parent context.Context, session vm.Se
 
 func runtimeTargetStateRequest(target api.WorkerRuntimeReconcileTarget, failure error) api.WorkerRuntimeInstanceStateRequest {
 	request := api.WorkerRuntimeInstanceStateRequest{
-		ID: target.ID, WorkerEpoch: target.WorkerEpoch, NetworkSlotID: target.NetworkSlotID,
-		NetworkSlotGeneration: target.NetworkSlotGeneration, DesiredVersion: target.DesiredVersion,
+		ID: target.ID, WorkerEpoch: target.WorkerEpoch, DesiredVersion: target.DesiredVersion,
 		ExpectedObservedVersion: target.ObservedVersion, ReasonCode: "desired_state_reconciled",
 	}
 	if failure != nil {

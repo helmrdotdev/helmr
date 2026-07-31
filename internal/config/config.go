@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -148,14 +149,12 @@ type Worker struct {
 	JailerNumaNode               int
 	JailerChrootDir              string
 	CgroupVersion                string
-	CNINetworkName               string
-	CNIProfile                   string
-	CNIConfDir                   string
-	CNIBinDir                    string
-	CNICacheDir                  string
+	NetworkLinkPool              string
+	NetworkTranslationPool       string
+	NetworkResolverIPv4          string
+	NetworkBlockedIPv4CIDRs      []netip.Prefix
 	IPPath                       string
 	NFTPath                      string
-	NetworkBlockedIPv4CIDRs      []string
 	VMVCPUCount                  int64
 	VMMemoryMiB                  int64
 	VMScratchDiskMiB             int64
@@ -268,26 +267,6 @@ func envString(name string) string {
 
 func envLower(name string) string {
 	return strings.ToLower(envString(name))
-}
-
-func envList(name string) []string {
-	value := envString(name)
-	if value == "" {
-		return nil
-	}
-	if strings.EqualFold(value, "none") {
-		return []string{}
-	}
-	parts := strings.FieldsFunc(value, func(r rune) bool {
-		return r == ',' || r == '\n' || r == '\t' || r == ' '
-	})
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if trimmed := strings.TrimSpace(part); trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-	return out
 }
 
 func envInt64(name string, fallback int64) (int64, error) {

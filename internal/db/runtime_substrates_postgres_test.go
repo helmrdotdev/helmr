@@ -327,7 +327,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	runtimeIdentityID := "authority-" + shortUUID(uuid.Must(uuid.NewV7()))
 	mustAuthorityExec(t, ctx, pool, `
 		INSERT INTO runtime_identities (
-			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
+			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, network_abi
 		) VALUES ($1, 'x86_64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
 	`, runtimeIdentityID)
 	workerID := uuid.Must(uuid.NewV7())

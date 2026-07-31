@@ -101,8 +101,7 @@ func (s *Server) startRun(
 				AttemptNumber: authority.attempt.Number, LeaseSequence: authority.runLease.LeaseSequence,
 				WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 				WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
-				RuntimeInstanceID: authority.runtime.ID, NetworkSlotID: authority.networkSlot.ID,
-				NetworkSlotGeneration: authority.networkSlot.Generation, RuntimeIdentityID: authority.runtime.RuntimeIdentityID,
+				RuntimeInstanceID: authority.runtime.ID, RuntimeIdentityID: authority.runtime.RuntimeIdentityID,
 			})
 			if err != nil {
 				return staleRunLeaseClaim(err)
@@ -221,17 +220,6 @@ func lockRunStartAuthority(
 	}
 	if err := validateClaimWorker(worker, authority.worker); err != nil {
 		return runLeaseClaimAuthority{}, err
-	}
-	authority.networkSlot, err = q.LockRunLeaseClaimNetworkSlot(ctx, db.LockRunLeaseClaimNetworkSlotParams{
-		ID: locators.NetworkSlotID, WorkerGroupID: worker.WorkerGroupID,
-		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
-		Generation: locators.NetworkSlotGeneration, RuntimeInstanceID: locators.RuntimeInstanceID,
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
-	}
-	if authority.networkSlot.State != db.WorkerNetworkSlotStateBound {
-		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 	authority.runtime, err = q.LockRunLeaseClaimRuntime(ctx, db.LockRunLeaseClaimRuntimeParams{
 		ID: locators.RuntimeInstanceID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,

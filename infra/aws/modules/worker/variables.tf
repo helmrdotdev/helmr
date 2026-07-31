@@ -35,7 +35,7 @@ variable "subnet_ids" {
 }
 
 variable "ami_id" {
-  description = "Worker AMI with Firecracker, jailer, BuildKit, CNI plugins, and helmr-worker installed."
+  description = "Worker AMI with Firecracker, jailer, BuildKit, routed-TAP prerequisites, and helmr-worker installed."
   type        = string
 }
 
@@ -383,8 +383,55 @@ variable "worker_environment" {
   default     = {}
 }
 
+variable "network_blocked_ipv4_cidrs" {
+  description = "Canonical IPv4 CIDRs added to the Worker-wide guest destination deny set. Use an explicit empty list for no additional deny."
+  type        = list(string)
+
+  validation {
+    condition = length(distinct(var.network_blocked_ipv4_cidrs)) == length(var.network_blocked_ipv4_cidrs) && alltrue([
+      for cidr in var.network_blocked_ipv4_cidrs : can(cidrnetmask(cidr)) && try(cidrhost(cidr, 0) == split("/", cidr)[0], false)
+    ])
+    error_message = "network_blocked_ipv4_cidrs must contain unique canonical IPv4 CIDRs."
+  }
+}
+
+variable "network_link_pool" {
+  description = "Canonical IPv4 pool used to allocate one host/namespace veth /31 per concurrent VM."
+  type        = string
+
+  validation {
+    condition     = can(cidrnetmask(var.network_link_pool)) && try(cidrhost(var.network_link_pool, 0) == split("/", var.network_link_pool)[0], false)
+    error_message = "network_link_pool must be a canonical IPv4 CIDR."
+  }
+}
+
+variable "network_translation_pool" {
+  description = "Canonical IPv4 pool used to allocate one routed translation address per concurrent VM."
+  type        = string
+
+  validation {
+    condition     = can(cidrnetmask(var.network_translation_pool)) && try(cidrhost(var.network_translation_pool, 0) == split("/", var.network_translation_pool)[0], false)
+    error_message = "network_translation_pool must be a canonical IPv4 CIDR."
+  }
+}
+
+variable "network_resolver_ipv4" {
+  description = "Optional exact IPv4 resolver exposed to guests. Null selects the VPC resolver."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = var.network_resolver_ipv4 == null || (
+      can(cidrnetmask("${var.network_resolver_ipv4}/32")) &&
+      try(cidrhost("${var.network_resolver_ipv4}/32", 0) == var.network_resolver_ipv4, false)
+    )
+    error_message = "network_resolver_ipv4 must be an IPv4 address when set."
+  }
+}
+
 variable "buildkit_slirp_cidr" {
-  description = "IPv4 CIDR used by rootlesskit/slirp4netns inside the BuildKit service namespace. It must not overlap network_blocked_ipv4_cidrs."
+  description = "IPv4 CIDR used by rootlesskit/slirp4netns inside the BuildKit service namespace. It must not overlap the internal host-service deny set."
   type        = string
   default     = "198.18.0.0/24"
 
@@ -392,42 +439,6 @@ variable "buildkit_slirp_cidr" {
     condition     = can(cidrnetmask(var.buildkit_slirp_cidr))
     error_message = "buildkit_slirp_cidr must be an IPv4 CIDR prefix."
   }
-}
-
-variable "network_blocked_ipv4_cidrs" {
-  description = "IPv4 CIDRs blocked from Firecracker task egress. This is the infra-owned baseline policy passed to helmr-worker."
-  type        = list(string)
-  default = [
-    "0.0.0.0/8",
-    "10.0.0.0/8",
-    "100.64.0.0/10",
-    "127.0.0.0/8",
-    "169.254.0.0/16",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
-    "224.0.0.0/4",
-    "240.0.0.0/4",
-  ]
-
-  validation {
-    condition = alltrue([
-      for cidr in var.network_blocked_ipv4_cidrs :
-      can(cidrnetmask(cidr))
-    ])
-    error_message = "network_blocked_ipv4_cidrs must contain only IPv4 CIDR prefixes."
-  }
-}
-
-variable "network_blocked_ipv6_cidrs" {
-  description = "IPv6 CIDRs blocked from Firecracker task egress. This is the infra-owned baseline policy passed to helmr-worker."
-  type        = list(string)
-  default = [
-    "::/128",
-    "::1/128",
-    "fc00::/7",
-    "fe80::/10",
-    "ff00::/8",
-  ]
 }
 
 variable "tags" {

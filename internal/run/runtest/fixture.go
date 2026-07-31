@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -135,7 +134,7 @@ func New(t *testing.T) Fixture {
 	MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO runtime_identities (
 			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
-			rootfs_digest, cni_profile
+			rootfs_digest, network_abi
 		) VALUES ($1, 'x86_64', 'test', 'kernel', 'initramfs', 'rootfs', 'helmr/v0')
 	`, fixture.RuntimeIdentityID)
 	MustExec(t, t.Context(), fixture.Pool, `
@@ -169,7 +168,6 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 	versionID := uuid.Must(uuid.NewV7())
 	runID := uuid.Must(uuid.NewV7())
 	runtimeID := uuid.Must(uuid.NewV7())
-	slotID := uuid.Must(uuid.NewV7())
 	mountID := uuid.Must(uuid.NewV7())
 	leaseID := uuid.Must(uuid.NewV7())
 	workspaceLeaseID := uuid.Must(uuid.NewV7())
@@ -241,21 +239,6 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 		fixture.RuntimeIdentityID, fixture.WorkspaceDefinitionID, workspaceID,
 		fixture.DeploymentID)
 	MustExec(t, ctx, tx, `
-		INSERT INTO worker_network_slots (
-			id, worker_group_id, worker_instance_id, worker_epoch, slot_name,
-			generation, state, runtime_instance_id, host_interface_name,
-			guest_address, gateway_address, subnet, tap_name, netns_name,
-			guest_mac, assigned_at
-		) VALUES (
-			$1, $2, $3, 1, $4, 1, 'bound', $5, $6,
-			$9, '10.0.0.1', '10.0.0.0/8', $7, $8,
-			'02:00:00:00:00:01', now()
-		)
-	`, slotID, WorkerGroup, fixture.WorkerID, "slot-"+ShortID(slotID),
-		runtimeID, "veth-"+ShortID(slotID), "tap-"+ShortID(slotID),
-		"netns-"+ShortID(slotID),
-		fmt.Sprintf("10.%d.%d.%d", slotID[13], slotID[14], slotID[15]))
-	MustExec(t, ctx, tx, `
 		INSERT INTO workspace_mounts (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, worker_epoch, workspace_id, materialized_version_id,
@@ -274,20 +257,20 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 		INSERT INTO run_leases (
 			id, org_id, project_id, environment_id, run_id, workspace_id, region_id,
 			lease_sequence, attempt_number, worker_group_id, worker_instance_id,
-			worker_epoch, runtime_instance_id, network_slot_id, network_slot_generation,
+			worker_epoch, runtime_instance_id,
 			runtime_identity_id, worker_protocol_version, requested_cpu_millis,
 			requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
 			requested_execution_slots, state, assigned_at, start_deadline_at,
 			claimed_at, expires_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, 1, 1, $8, $9, 1, $10, $11, 1,
-			$12, $13, 1000, 1073741824, 2147483648, 1,
-			$14::text, $15, now() + interval '5 minutes', $16,
+			$1, $2, $3, $4, $5, $6, $7, 1, 1, $8, $9, 1, $10,
+			$11, $12, 1000, 1073741824, 2147483648, 1,
+			$13::text, $14, now() + interval '5 minutes', $15,
 			now() + interval '10 minutes'
 		)
 	`, leaseID, fixture.OrgID, fixture.ProjectID, fixture.EnvironmentID, runID,
 		workspaceID, Region, WorkerGroup, fixture.WorkerID,
-		runtimeID, slotID, fixture.RuntimeIdentityID, WorkerProtocol,
+		runtimeID, fixture.RuntimeIdentityID, WorkerProtocol,
 		state, assignedAt, claimedAt)
 	MustExec(t, ctx, tx, `
 		INSERT INTO workspace_leases (
@@ -595,7 +578,7 @@ func (fixture Fixture) parkHandoff(
 		INSERT INTO run_leases (
 			id, org_id, project_id, environment_id, run_id, workspace_id, region_id,
 			lease_sequence, attempt_number, worker_group_id, worker_instance_id,
-			worker_epoch, runtime_instance_id, network_slot_id, network_slot_generation,
+			worker_epoch, runtime_instance_id,
 			runtime_identity_id, worker_protocol_version, requested_cpu_millis,
 			requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
 			requested_execution_slots, state, assigned_at, start_deadline_at,
@@ -603,7 +586,7 @@ func (fixture Fixture) parkHandoff(
 		)
 		SELECT $1, org_id, project_id, environment_id, $2, workspace_id, region_id,
 		       1, 1, worker_group_id, worker_instance_id, worker_epoch,
-		       runtime_instance_id, network_slot_id, network_slot_generation,
+		       runtime_instance_id,
 		       runtime_identity_id, worker_protocol_version, requested_cpu_millis,
 		       requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
 		       requested_execution_slots, 'running',

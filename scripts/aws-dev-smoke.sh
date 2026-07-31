@@ -1395,7 +1395,7 @@ require_cloudfront_origin_domain_name() {
   require_non_loopback_control_host "cloudfront_origin_domain_name" "${value}"
 }
 
-ensure_worker_control_url_ready() {
+ensure_public_worker_control_url_ready() {
   if [ -n "${DEV_CERTIFICATE_ARN:-}" ]; then
     set_tfvar "${DEV_TFVARS}" "certificate_arn" "$(tf_quote "${DEV_CERTIFICATE_ARN}")"
   fi
@@ -1411,17 +1411,17 @@ ensure_worker_control_url_ready() {
   fi
 
   certificate_arn="$(tfvar_string_value "${DEV_TFVARS}" "certificate_arn" || true)"
-  [ -n "${certificate_arn}" ] || die "dev-worker-tfvars requires DEV_CERTIFICATE_ARN or an existing certificate_arn tfvar before enabling workers; the dev stack only derives a private worker control URL when create_worker=true and certificate_arn is set."
+  [ -n "${certificate_arn}" ] || die "dev-worker-tfvars requires DEV_CERTIFICATE_ARN or an existing certificate_arn tfvar before enabling workers; worker enrollment must use the public HTTPS control URL."
 
   enable_cloudfront="$(tfvar_value "${DEV_TFVARS}" "enable_cloudfront" 2>/dev/null || printf 'false')"
   validate_tf_bool enable_cloudfront "${enable_cloudfront}"
   if [ "${enable_cloudfront}" = "true" ]; then
     cloudfront_origin="$(tfvar_string_value "${DEV_TFVARS}" "cloudfront_origin_domain_name" || true)"
-    [ -n "${cloudfront_origin}" ] || die "dev-worker-tfvars requires DEV_CLOUDFRONT_ORIGIN_DOMAIN_NAME or an existing cloudfront_origin_domain_name tfvar when enable_cloudfront=true; workers use that origin hostname for their private control URL."
+    [ -n "${cloudfront_origin}" ] || die "dev-worker-tfvars requires DEV_CLOUDFRONT_ORIGIN_DOMAIN_NAME or an existing cloudfront_origin_domain_name tfvar when enable_cloudfront=true."
     require_cloudfront_origin_domain_name "${cloudfront_origin}"
   else
     public_url="$(tfvar_string_value "${DEV_TFVARS}" "public_url" || true)"
-    [ -n "${public_url}" ] || die "dev-worker-tfvars requires DEV_PUBLIC_URL or an existing public_url tfvar when enable_cloudfront=false; workers use that hostname for their private control URL."
+    [ -n "${public_url}" ] || die "dev-worker-tfvars requires DEV_PUBLIC_URL or an existing public_url tfvar when enable_cloudfront=false; workers use this public control URL."
     require_non_loopback_control_host "public_url" "${public_url}"
   fi
 }
@@ -1476,9 +1476,6 @@ EOF
   set_tfvar "${DEV_TFVARS}" "region_id" "$(tf_quote "$(dev_region_id)")"
   set_tfvar "${DEV_TFVARS}" "default_region_id" "$(tf_quote "$(dev_default_region_id)")"
   set_tfvar "${DEV_TFVARS}" "public_url" "$(tf_quote "${DEV_PUBLIC_URL:-http://localhost}")"
-  unset_tfvar "${DEV_TFVARS}" "control_url"
-  unset_tfvar "${DEV_TFVARS}" "worker_control_url"
-  unset_tfvar "${DEV_TFVARS}" "enable_private_control_dns"
   set_tfvar "${DEV_TFVARS}" "enable_nat_gateway" "${DEV_ENABLE_NAT_GATEWAY:-false}"
   set_tfvar "${DEV_TFVARS}" "control_image" "$(tf_quote "${control_image}")"
   set_tfvar "${DEV_TFVARS}" "control_image_repository_arn" \
@@ -1745,7 +1742,7 @@ dev_worker_tfvars() {
     'type == "array" and all(.[]; type == "string" and test("^ami-[0-9a-fA-F]+$"))' >/dev/null || \
     die "DEV_WORKER_ALLOWED_AMI_IDS must be a JSON array of AWS AMI IDs"
 
-  ensure_worker_control_url_ready
+  ensure_public_worker_control_url_ready
   set_tfvar "${DEV_TFVARS}" "create_worker" "true"
   set_tfvar "${DEV_TFVARS}" "enable_nat_gateway" "true"
   set_tfvar "${DEV_TFVARS}" "control_assign_public_ip" "false"

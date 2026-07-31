@@ -4,10 +4,7 @@ data "aws_partition" "current" {}
 
 locals {
   name                        = lower(var.name)
-  public_url_host             = var.public_url == null ? null : regex("^https?://([^/:]+)", var.public_url)[0]
-  worker_control_dns_name     = var.enable_cloudfront ? var.cloudfront_origin_domain_name : local.public_url_host
-  private_control_dns_name    = var.create_worker ? local.worker_control_dns_name : null
-  worker_control_url          = module.control.private_control_url
+  worker_control_url          = module.control.control_url
   worker_ami_id               = coalesce(module.release_artifacts.worker_ami_id, "ami-unconfigured")
   worker_allowed_ami_ids      = distinct(compact(concat([local.worker_ami_id], var.worker_allowed_ami_ids)))
   buildkit_cpu_reserve_millis = 1000
@@ -154,11 +151,21 @@ locals {
   }, var.tags)
 }
 
-module "network" {
+module "control_network" {
   source = "../modules/network"
 
-  name                    = local.name
-  vpc_cidr                = var.vpc_cidr
+  name                    = "${local.name}-control"
+  vpc_cidr                = var.control_vpc_cidr
+  availability_zone_count = var.availability_zone_count
+  enable_nat_gateway      = var.enable_nat_gateway
+  tags                    = local.tags
+}
+
+module "execution_network" {
+  source = "../modules/network"
+
+  name                    = "${local.name}-execution"
+  vpc_cidr                = var.execution_vpc_cidr
   availability_zone_count = var.availability_zone_count
   enable_nat_gateway      = var.enable_nat_gateway
   tags                    = local.tags
@@ -181,9 +188,9 @@ module "control" {
 
   name                                   = local.name
   bucket_name_prefix                     = var.bucket_name_prefix
-  vpc_id                                 = module.network.vpc_id
-  public_subnet_ids                      = module.network.public_subnet_ids
-  private_subnet_ids                     = module.network.private_subnet_ids
+  vpc_id                                 = module.control_network.vpc_id
+  public_subnet_ids                      = module.control_network.public_subnet_ids
+  private_subnet_ids                     = module.control_network.private_subnet_ids
   public_url                             = var.public_url
   deployment_mode                        = var.deployment_mode
   worker_group_id                        = var.worker_group_id
@@ -219,7 +226,6 @@ module "control" {
   certificate_arn                        = var.certificate_arn
   allow_insecure_http                    = var.allow_insecure_http
   enable_cloudfront                      = var.enable_cloudfront
-  private_control_dns_name               = local.private_control_dns_name
   github_oauth_client_id                 = var.github_oauth_client_id
   database_instance_class                = var.database_instance_class
   database_engine_version                = var.database_engine_version
@@ -244,8 +250,12 @@ module "worker_group" {
   name                                       = each.value.name
   worker_group_id                            = each.value.group_id
   worker_roles                               = each.value.roles
-  vpc_id                                     = module.network.vpc_id
-  subnet_ids                                 = module.network.private_subnet_ids
+  network_blocked_ipv4_cidrs                 = var.worker_network_blocked_ipv4_cidrs
+  network_link_pool                          = var.worker_network_link_pool
+  network_translation_pool                   = var.worker_network_translation_pool
+  network_resolver_ipv4                      = var.worker_network_resolver_ipv4
+  vpc_id                                     = module.execution_network.vpc_id
+  subnet_ids                                 = module.execution_network.private_subnet_ids
   ami_id                                     = module.release_artifacts.worker_ami_id
   instance_type                              = each.key == "build" ? coalesce(var.build_worker_instance_type, var.worker_instance_type) : var.worker_instance_type
   enable_nested_virtualization               = each.key == "build" && var.build_worker_enable_nested_virtualization != null ? var.build_worker_enable_nested_virtualization : var.worker_enable_nested_virtualization
@@ -316,11 +326,6 @@ resource "terraform_data" "quickstart_preconditions" {
     precondition {
       condition     = !var.create_worker || var.enable_nat_gateway
       error_message = "enable_nat_gateway must be true when create_worker is true because workers run in private subnets."
-    }
-
-    precondition {
-      condition     = !var.create_worker || (try(trimspace(local.worker_control_dns_name) != "", false) && try(trimspace(var.certificate_arn) != "", false))
-      error_message = "create_worker requires certificate_arn and a private worker control DNS name derived from public_url or cloudfront_origin_domain_name."
     }
 
     precondition {

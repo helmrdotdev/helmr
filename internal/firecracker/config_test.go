@@ -14,16 +14,7 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.JailerPath != DefaultJailerPath || cfg.JailerChrootBaseDir == "" || cfg.CgroupVersion != DefaultCgroupVersion {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.CNINetworkName != DefaultCNINetworkName || cfg.CNIConfDir != DefaultCNIConfDir || cfg.CNIBinDir != DefaultCNIBinDir || cfg.CNIIfName != DefaultCNIIfName || cfg.CNIVMIfName != DefaultCNIVMIfName {
-		t.Fatalf("config = %+v", cfg)
-	}
-	if cfg.CNIProfile != "helmr/v0" {
-		t.Fatalf("config = %+v", cfg)
-	}
 	if cfg.GuestPort != DefaultGuestPort || cfg.HealthPort != HealthPort || cfg.StateDir == "" || cfg.HealthTimeout != DefaultHealthTimeout || cfg.HealthAttemptTimeout != DefaultHealthAttemptTimeout {
-		t.Fatalf("config = %+v", cfg)
-	}
-	if cfg.NetworkBlockedIPv4CIDRs != nil {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -35,41 +26,10 @@ func TestConfigDefaultsClampHealthAttemptToShortHealthTimeout(t *testing.T) {
 	}
 }
 
-func TestConfigValidateNetworkBlockedCIDRs(t *testing.T) {
-	cfg := (Config{
-		NetworkBlockedIPv4CIDRs: []string{"fc00::/7"},
-	}).WithDefaults()
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected validation errors")
-	}
-	text := err.Error()
-	for _, want := range []string{`"fc00::/7" must be IPv4`} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("error %q does not contain %q", text, want)
-		}
-	}
-}
-
-func TestConfigValidateRequiresNetworkPolicy(t *testing.T) {
-	cfg := (Config{}).WithDefaults()
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected validation errors")
-	}
-	text := err.Error()
-	for _, want := range []string{"firecracker network blocked IPv4 CIDRs are required"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("error %q does not contain %q", text, want)
-		}
-	}
-}
-
 func TestConfigValidateRejectsHealthAttemptLongerThanHealthTimeout(t *testing.T) {
 	cfg := (Config{
-		HealthTimeout:           time.Second,
-		HealthAttemptTimeout:    2 * time.Second,
-		NetworkBlockedIPv4CIDRs: []string{},
+		HealthTimeout:        time.Second,
+		HealthAttemptTimeout: 2 * time.Second,
 	}).WithDefaults()
 	err := cfg.Validate()
 	if err == nil {
@@ -80,31 +40,14 @@ func TestConfigValidateRejectsHealthAttemptLongerThanHealthTimeout(t *testing.T)
 	}
 }
 
-func TestConfigValidateRejectsEmptyNetworkPolicy(t *testing.T) {
-	cfg := (Config{
-		NetworkBlockedIPv4CIDRs: []string{},
-	}).WithDefaults()
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected boot input validation errors")
-	}
-	text := err.Error()
-	for _, want := range []string{"firecracker network blocked IPv4 CIDRs are required"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("error %q does not contain %q", text, want)
-		}
-	}
-}
-
 func TestConfigValidateRequiresBootInputs(t *testing.T) {
 	cfg := (Config{}).WithDefaults()
-	cfg.CNINetworkName = ""
 	err := cfg.Validate()
 	if err == nil {
 		t.Fatal("expected validation errors")
 	}
 	text := err.Error()
-	for _, want := range []string{"firecracker jailer uid", "firecracker jailer gid", "guest kernel path", "guest initramfs path", "guest rootfs path", "guest CNI network name"} {
+	for _, want := range []string{"firecracker jailer uid", "firecracker jailer gid", "guest kernel path", "guest initramfs path", "guest rootfs path", "worker network link pool", "worker network translation pool", "worker network resolver IPv4", "worker network capacity"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("error %q does not contain %q", text, want)
 		}

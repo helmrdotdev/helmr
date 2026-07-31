@@ -98,7 +98,7 @@ func (f *buildPlacementFixture) addWorker(t *testing.T, certified bool) uuid.UUI
 	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	mustDispatchExec(t, f.ctx, f.pool, `
 INSERT INTO runtime_identities (
-    id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
+    id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, network_abi
 ) VALUES ($1, $2, 'helmr.runtime.v0', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0')`,
 		runtimeID, platformArchitecture)
 	if certified {
@@ -132,7 +132,7 @@ INSERT INTO worker_instances (
 INSERT INTO worker_observations (
     worker_instance_id, worker_epoch, cpu_pressure_bps, memory_pressure_bps,
     guest_ephemeral_disk_pressure_bps, build_cache_pressure_bps,
-    artifact_cache_pressure_bps, checkpoint_pressure_bps, leaked_slot_count,
+    artifact_cache_pressure_bps, checkpoint_pressure_bps, quarantined_resource_count,
     run_queue_depth, build_queue_depth, runtime_start_queue_depth, observed_at
 ) VALUES ($1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, now())`, workerID)
 	return workerID

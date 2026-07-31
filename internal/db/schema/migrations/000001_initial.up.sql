@@ -362,7 +362,7 @@ CREATE TABLE runtime_identities (
     kernel_digest TEXT NOT NULL CHECK (btrim(kernel_digest) <> ''),
     initramfs_digest TEXT NOT NULL CHECK (btrim(initramfs_digest) <> ''),
     rootfs_digest TEXT NOT NULL CHECK (btrim(rootfs_digest) <> ''),
-    cni_profile TEXT NOT NULL CHECK (btrim(cni_profile) <> ''),
+    network_abi TEXT NOT NULL CHECK (btrim(network_abi) <> ''),
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -568,7 +568,7 @@ CREATE TABLE worker_observations (
     build_cache_pressure_bps INTEGER NOT NULL CHECK (build_cache_pressure_bps BETWEEN 0 AND 10000),
     artifact_cache_pressure_bps INTEGER NOT NULL CHECK (artifact_cache_pressure_bps BETWEEN 0 AND 10000),
     checkpoint_pressure_bps INTEGER NOT NULL CHECK (checkpoint_pressure_bps BETWEEN 0 AND 10000),
-    leaked_slot_count INTEGER NOT NULL CHECK (leaked_slot_count >= 0),
+    quarantined_resource_count INTEGER NOT NULL CHECK (quarantined_resource_count >= 0),
     run_queue_depth INTEGER NOT NULL CHECK (run_queue_depth >= 0),
     build_queue_depth INTEGER NOT NULL CHECK (build_queue_depth >= 0),
     runtime_start_queue_depth INTEGER NOT NULL CHECK (runtime_start_queue_depth >= 0),
@@ -2456,8 +2456,6 @@ CREATE TABLE run_leases (
     worker_instance_id UUID NOT NULL,
     worker_epoch BIGINT NOT NULL CHECK (worker_epoch > 0),
     runtime_instance_id UUID NOT NULL,
-    network_slot_id UUID NOT NULL,
-    network_slot_generation BIGINT NOT NULL CHECK (network_slot_generation > 0),
     runtime_identity_id TEXT NOT NULL CHECK (btrim(runtime_identity_id) <> ''),
     worker_protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (worker_protocol_version = 'helmr.worker.v0'),
     requested_cpu_millis BIGINT NOT NULL CHECK (requested_cpu_millis > 0),
@@ -3262,6 +3260,7 @@ CREATE TABLE runtime_instances (
     lost_at TIMESTAMPTZ,
     failed_at TIMESTAMPTZ,
     reclaimed_at TIMESTAMPTZ,
+    reclaim_evidence JSONB,
     terminal_at TIMESTAMPTZ,
     terminal_reason_code TEXT,
     terminal_error JSONB,
@@ -3343,6 +3342,8 @@ CREATE TABLE runtime_instances (
     CHECK (lost_at IS NULL OR lost_at >= GREATEST(allocated_at, COALESCE(preparing_at, allocated_at), COALESCE(ready_at, allocated_at), COALESCE(closing_at, allocated_at))),
     CHECK (terminal_at IS NULL OR terminal_at >= GREATEST(allocated_at, COALESCE(preparing_at, allocated_at), COALESCE(ready_at, allocated_at), COALESCE(closing_at, allocated_at))),
     CHECK (reclaimed_at IS NULL OR (observed_state IN ('closed', 'failed', 'lost') AND terminal_at IS NOT NULL AND reclaimed_at >= terminal_at)),
+    CHECK ((reclaimed_at IS NULL) = (reclaim_evidence IS NULL)),
+    CHECK (reclaim_evidence IS NULL OR jsonb_typeof(reclaim_evidence) = 'object'),
     CHECK (
         (observed_state = 'allocated' AND preparing_at IS NULL AND ready_at IS NULL AND closing_at IS NULL AND closed_at IS NULL AND failed_at IS NULL AND lost_at IS NULL AND reclaimed_at IS NULL AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL)
         OR (observed_state = 'preparing' AND preparing_at IS NOT NULL AND ready_at IS NULL AND closing_at IS NULL AND closed_at IS NULL AND failed_at IS NULL AND lost_at IS NULL AND reclaimed_at IS NULL AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL)
@@ -3356,81 +3357,10 @@ CREATE TABLE runtime_instances (
     CHECK (terminal_error IS NULL OR jsonb_typeof(terminal_error) = 'object')
 );
 
-CREATE TABLE worker_network_slots (
-    id UUID PRIMARY KEY,
-    worker_group_id TEXT NOT NULL,
-    worker_instance_id UUID NOT NULL,
-    worker_epoch BIGINT NOT NULL CHECK (worker_epoch > 0),
-    slot_name TEXT NOT NULL CHECK (btrim(slot_name) <> ''),
-    generation BIGINT NOT NULL CHECK (generation > 0),
-    state TEXT NOT NULL DEFAULT 'available'
-        CHECK (state IN ('available', 'assigned', 'bound', 'reclaiming', 'quarantined', 'lost')),
-    runtime_instance_id UUID,
-    host_interface_name TEXT,
-    guest_address INET,
-    gateway_address INET,
-    subnet CIDR,
-    tap_name TEXT,
-    netns_name TEXT,
-    guest_mac MACADDR,
-    assigned_at TIMESTAMPTZ,
-    reclaiming_at TIMESTAMPTZ,
-    quarantined_at TIMESTAMPTZ,
-    lost_at TIMESTAMPTZ,
-    reclaimed_at TIMESTAMPTZ,
-    reclaim_evidence JSONB,
-    state_reason_code TEXT,
-    state_error JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (worker_instance_id, worker_epoch, slot_name),
-    UNIQUE (worker_instance_id, worker_epoch, id, generation),
-    UNIQUE (id, generation, runtime_instance_id),
-    UNIQUE (worker_instance_id, worker_epoch, guest_address),
-    FOREIGN KEY (worker_instance_id, worker_group_id)
-        REFERENCES worker_instances(id, worker_group_id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id)
-        REFERENCES runtime_instances(worker_group_id, worker_instance_id, worker_epoch, id)
-        ON DELETE RESTRICT,
-    CHECK (reclaim_evidence IS NULL OR jsonb_typeof(reclaim_evidence) = 'object'),
-    CHECK (state_error IS NULL OR jsonb_typeof(state_error) = 'object'),
-    CHECK (state_reason_code IS NULL OR (btrim(state_reason_code) <> '' AND octet_length(state_reason_code) <= 128)),
-    CHECK (host_interface_name IS NULL OR btrim(host_interface_name) <> ''),
-    CHECK (tap_name IS NULL OR btrim(tap_name) <> ''),
-    CHECK (netns_name IS NULL OR btrim(netns_name) <> ''),
-    CHECK (
-        (state = 'available' AND runtime_instance_id IS NULL AND host_interface_name IS NULL AND guest_address IS NULL AND gateway_address IS NULL AND subnet IS NULL AND tap_name IS NULL AND netns_name IS NULL AND guest_mac IS NULL AND state_reason_code IS NULL AND state_error IS NULL)
-        OR (state = 'assigned' AND runtime_instance_id IS NOT NULL AND host_interface_name IS NULL AND guest_address IS NULL AND gateway_address IS NULL AND subnet IS NULL AND tap_name IS NULL AND netns_name IS NULL AND guest_mac IS NULL AND assigned_at IS NOT NULL AND state_reason_code IS NULL AND state_error IS NULL)
-        OR (state = 'bound' AND runtime_instance_id IS NOT NULL AND host_interface_name IS NOT NULL AND guest_address IS NOT NULL AND gateway_address IS NOT NULL AND subnet IS NOT NULL AND tap_name IS NOT NULL AND netns_name IS NOT NULL AND guest_mac IS NOT NULL AND assigned_at IS NOT NULL AND state_reason_code IS NULL AND state_error IS NULL)
-        OR (state = 'reclaiming' AND runtime_instance_id IS NOT NULL AND reclaiming_at IS NOT NULL)
-        OR (state = 'quarantined' AND quarantined_at IS NOT NULL AND state_reason_code IS NOT NULL)
-        OR (state = 'lost' AND lost_at IS NOT NULL AND state_reason_code IS NOT NULL)
-    ),
-    CHECK (generation = 1 OR state <> 'available' OR (reclaimed_at IS NOT NULL AND reclaim_evidence IS NOT NULL))
-);
-
-CREATE UNIQUE INDEX network_slots_runtime_active_uidx
-    ON worker_network_slots (runtime_instance_id)
-    WHERE state IN ('assigned', 'bound', 'reclaiming');
-
-CREATE INDEX network_slots_worker_replay_idx
-    ON worker_network_slots (worker_instance_id, worker_epoch, state, slot_name);
-
-CREATE INDEX network_slots_reclaim_idx
-    ON worker_network_slots (state, updated_at, id)
-    WHERE state IN ('reclaiming', 'quarantined', 'lost');
-
 ALTER TABLE run_leases
     ADD CONSTRAINT run_leases_runtime_instance_id_fkey
     FOREIGN KEY (org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id)
     REFERENCES runtime_instances(org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, id)
-    ON DELETE RESTRICT;
-
-ALTER TABLE run_leases
-    ADD CONSTRAINT run_leases_network_slot_id_fkey
-    FOREIGN KEY (network_slot_id)
-    REFERENCES worker_network_slots(id)
     ON DELETE RESTRICT;
 
 ALTER TABLE workspace_mounts

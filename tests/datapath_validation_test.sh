@@ -153,7 +153,7 @@ for kind in packet rules binding topology cleanup; do
         schema:"helmrdotdev.datapath-cleanup-evidence.v0",
         cleanup_verified:true,
         candidate_objects_absent:true,
-        legacy_defense_present:true
+        network_policy_present:true
       }' >"${tmp}/${kind}.json"
       ;;
     *)

@@ -11,6 +11,12 @@ mock_provider "aws" {
     }
   }
 
+  mock_data "aws_vpc" {
+    defaults = {
+      cidr_block = "10.20.0.0/16"
+    }
+  }
+
   mock_resource "aws_launch_template" {
     defaults = {
       id = "lt-00000000000000000"
@@ -22,6 +28,9 @@ variables {
   name                       = "helmr-test-run"
   worker_group_id            = "run-workers"
   worker_roles               = ["run"]
+  network_blocked_ipv4_cidrs = ["10.0.0.0/8", "169.254.0.0/16"]
+  network_link_pool          = "169.254.64.0/18"
+  network_translation_pool   = "100.96.0.0/16"
   vpc_id                     = "vpc-00000000000000000"
   subnet_ids                 = ["subnet-00000000000000000"]
   ami_id                     = "ami-00000000000000000"
@@ -50,6 +59,18 @@ run "controller_owns_protected_capacity" {
   assert {
     condition     = aws_autoscaling_group.worker.protect_from_scale_in
     error_message = "managed controller capacity must start protected from scale in"
+  }
+
+  assert {
+    condition = (
+      strcontains(base64decode(aws_launch_template.worker.user_data), "ExecStart=helmr-worker") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "nameserver 10.20.0.2") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS=[\"10.0.0.0/8\",\"169.254.0.0/16\"]") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_NETWORK_LINK_POOL=169.254.64.0/18") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_NETWORK_RESOLVER_IPV4=10.20.0.2") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_NETWORK_TRANSLATION_POOL=100.96.0.0/16")
+    )
+    error_message = "worker user data must receive the complete generic routed-network configuration"
   }
 
   assert {

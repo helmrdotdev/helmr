@@ -27,7 +27,7 @@ func testCapabilities() api.WorkerCapabilities {
 	return api.WorkerCapabilities{
 		ProtocolVersion: api.CurrentWorkerProtocolVersion, RuntimeID: "sha256:runtime",
 		RuntimeArch: "x86_64", RuntimeABI: "helmr.firecracker.snapshot.v0",
-		KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", CNIProfile: "helmr/v0",
+		KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", NetworkABI: "helmr/v0",
 		MaxVCPUs: 3, MaxMemoryMiB: 4096, ExecutionSlotsAvailable: 1,
 		VMMilliCPU: 2000, VMMemoryMiB: 2048,
 		GuestEphemeralDiskBytes: 32768 << 20, VMGuestEphemeralDiskBytes: 32768 << 20,

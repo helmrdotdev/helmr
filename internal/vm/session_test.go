@@ -46,6 +46,59 @@ func TestOwnerValidation(t *testing.T) {
 	}
 }
 
+func TestWorkloadBindingValidation(t *testing.T) {
+	runtimeOwner := Owner{Kind: OwnerRuntime, ID: "019c10d5-a6f7-7af1-8f5f-000000000010"}
+	runtimeBinding := WorkloadBinding{
+		WorkerEpoch:       4,
+		OwnerID:           runtimeOwner.ID,
+		Generation:        1,
+		RuntimeInstanceID: runtimeOwner.ID,
+		RuntimeIdentityID: "runtime-identity",
+	}
+	if err := runtimeBinding.Validate(runtimeOwner); err != nil {
+		t.Fatal(err)
+	}
+	buildOwner := Owner{Kind: OwnerBuild, ID: "019c10d5-a6f7-7af1-8f5f-000000000011"}
+	buildBinding := WorkloadBinding{
+		WorkerEpoch:       4,
+		OwnerID:           buildOwner.ID,
+		Generation:        3,
+		RuntimeIdentityID: "runtime-identity",
+	}
+	if err := buildBinding.Validate(buildOwner); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := map[string]struct {
+		owner   Owner
+		binding WorkloadBinding
+	}{
+		"owner mismatch": {runtimeOwner, func() WorkloadBinding { value := runtimeBinding; value.OwnerID = buildOwner.ID; return value }()},
+		"runtime generation is not canonical": {runtimeOwner, func() WorkloadBinding {
+			value := runtimeBinding
+			value.Generation++
+			return value
+		}()},
+		"runtime authority on build": {buildOwner, func() WorkloadBinding {
+			value := buildBinding
+			value.RuntimeInstanceID = runtimeOwner.ID
+			return value
+		}()},
+		"missing runtime identity": {buildOwner, func() WorkloadBinding {
+			value := buildBinding
+			value.RuntimeIdentityID = ""
+			return value
+		}()},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			if err := test.binding.Validate(test.owner); err == nil {
+				t.Fatal("invalid workload binding was accepted")
+			}
+		})
+	}
+}
+
 func TestCleanupUnprovenErrorPreservesOwnerAndCause(t *testing.T) {
 	cause := errors.New("marker mismatch")
 	owner := Owner{Kind: OwnerRuntime, ID: "019c10d5-a6f7-7af1-8f5f-000000000002"}

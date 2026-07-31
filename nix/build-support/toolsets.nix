@@ -12,28 +12,10 @@ let
     doCheck = false;
   });
 
-  tcRedirectTap = pkgs.buildGoModule rec {
-    pname = "tc-redirect-tap";
-    version = "34bf829";
+  bpfClang = pkgs.writeShellScriptBin "bpf-clang" ''
+    exec ${pkgs.llvmPackages.clang-unwrapped}/bin/clang "$@"
+  '';
 
-    src = pkgs.fetchFromGitHub {
-      owner = "awslabs";
-      repo = "tc-redirect-tap";
-      rev = "34bf829e9a5c99df47318c7feeb637576df239fc";
-      hash = "sha256-yeokm0aTwlMXmnMcNVRER9cZVuuNqk/RW0HY9vjiPPA=";
-    };
-
-    vendorHash = "sha256-gKkWzy+PVlLSOSljFG/T5RmROmfaK/nfXDId4kTeZKM=";
-    subPackages = [ "cmd/tc-redirect-tap" ];
-  };
-
-  cniPlugins = pkgs.symlinkJoin {
-    name = "helmr-cni-plugins";
-    paths = [
-      pkgs.cni-plugins
-      tcRedirectTap
-    ];
-  };
 in
 rec {
   repoChecks = [
@@ -47,6 +29,7 @@ rec {
     pkgs.ripgrep
     pkgs.rsync
     pkgs.stdenv.cc
+    bpfClang
     goPackage
     pkgsUnstable.gopls
     pkgs.gotools
@@ -91,7 +74,6 @@ rec {
 
   smokeLinux = lib.optionals (stdenv.isLinux && stdenv.isx86_64) [
     helmrPackages.firecrackerRuntime
-    cniPlugins
     pkgs.buildkit
     pkgs.rootlesskit
     pkgs.slirp4netns

@@ -538,7 +538,6 @@ func TestReclaimFailedRuntimeTargetPersistsProofOnlyAfterExactHostCleanup(t *tes
 	client := &typedRuntimeClient{}
 	target := api.WorkerRuntimeReconcileTarget{
 		ID: "019c10d5-a6f7-7af1-8f5f-000000000501", WorkerEpoch: 7,
-		NetworkSlotID: "019c10d5-a6f7-7af1-8f5f-000000000601", NetworkSlotGeneration: 3,
 		DesiredVersion: 2, ObservedVersion: 4, Action: api.WorkerRuntimeReconcileReclaim,
 	}
 	if err := pool.ReclaimFailedRuntimeTarget(context.Background(), client, target); err != nil {
@@ -567,8 +566,6 @@ func TestReclaimFailedRuntimeTargetKeepsQuarantineWhenCleanupIsAmbiguous(t *test
 
 func TestReclaimFailedCheckedOutRuntimeClearsExactCheckoutAfterPhysicalCleanup(t *testing.T) {
 	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000515", 7)
-	target.NetworkSlotID = "019c10d5-a6f7-7af1-8f5f-000000000615"
-	target.NetworkSlotGeneration = 3
 	target.DesiredVersion = 2
 	target.ObservedVersion = 4
 	connector := &cleanupRuntimeConnector{}
@@ -633,8 +630,6 @@ func TestReclaimFailedCheckedOutRuntimeRetainsCheckoutWhenPhysicalCleanupFails(t
 
 func TestReclaimFailedCheckedOutRuntimeRetriesProofAfterLocalRelease(t *testing.T) {
 	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000518", 7)
-	target.NetworkSlotID = "019c10d5-a6f7-7af1-8f5f-000000000618"
-	target.NetworkSlotGeneration = 3
 	target.DesiredVersion = 2
 	target.ObservedVersion = 4
 	connector := &cleanupRuntimeConnector{}

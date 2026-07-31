@@ -22,7 +22,7 @@ UPDATE run_leases
    AND lease_sequence = $5
    AND state = 'running'
    AND expires_at > transaction_timestamp()
-RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, network_slot_id, network_slot_generation, runtime_identity_id, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type BeginRunLeaseCheckpointParams struct {
@@ -56,8 +56,6 @@ func (q *Queries) BeginRunLeaseCheckpoint(ctx context.Context, arg BeginRunLease
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
 		&i.RuntimeInstanceID,
-		&i.NetworkSlotID,
-		&i.NetworkSlotGeneration,
 		&i.RuntimeIdentityID,
 		&i.WorkerProtocolVersion,
 		&i.RequestedCpuMillis,
@@ -2888,11 +2886,9 @@ SELECT state
    AND worker_instance_id = $7
    AND worker_epoch = $8
    AND runtime_instance_id = $9
-   AND network_slot_id = $10
-   AND network_slot_generation = $11
-   AND runtime_identity_id = $12
-   AND worker_protocol_version = $13
-   AND region_id = $14
+   AND runtime_identity_id = $10
+   AND worker_protocol_version = $11
+   AND region_id = $12
    AND state = 'running'
    AND expires_at > transaction_timestamp()
  FOR UPDATE
@@ -2908,8 +2904,6 @@ type LockTokenWaitRunLeaseParams struct {
 	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch           int64       `json:"worker_epoch"`
 	RuntimeInstanceID     pgtype.UUID `json:"runtime_instance_id"`
-	NetworkSlotID         pgtype.UUID `json:"network_slot_id"`
-	NetworkSlotGeneration int64       `json:"network_slot_generation"`
 	RuntimeIdentityID     string      `json:"runtime_identity_id"`
 	WorkerProtocolVersion string      `json:"worker_protocol_version"`
 	RegionID              string      `json:"region_id"`
@@ -2926,8 +2920,6 @@ func (q *Queries) LockTokenWaitRunLease(ctx context.Context, arg LockTokenWaitRu
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
 		arg.RuntimeInstanceID,
-		arg.NetworkSlotID,
-		arg.NetworkSlotGeneration,
 		arg.RuntimeIdentityID,
 		arg.WorkerProtocolVersion,
 		arg.RegionID,

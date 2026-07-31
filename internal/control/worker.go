@@ -729,7 +729,7 @@ func workerObservationParams(worker workerActor, observation api.WorkerObservati
 		CpuPressureBps: observation.CPUPressureBPS, MemoryPressureBps: observation.MemoryPressureBPS,
 		GuestEphemeralDiskPressureBps: observation.GuestEphemeralDiskPressureBPS,
 		BuildCachePressureBps:         observation.BuildCachePressureBPS, ArtifactCachePressureBps: observation.ArtifactCachePressureBPS,
-		CheckpointPressureBps: observation.CheckpointPressureBPS, LeakedSlotCount: observation.LeakedSlotCount,
+		CheckpointPressureBps: observation.CheckpointPressureBPS, QuarantinedResourceCount: observation.QuarantinedResourceCount,
 		RunQueueDepth: observation.RunQueueDepth, BuildQueueDepth: observation.BuildQueueDepth,
 		RuntimeStartQueueDepth: observation.RuntimeStartQueueDepth,
 		RunPausedReason:        pgtype.Text{String: observation.RunPausedReason, Valid: observation.RunPausedReason != ""},
@@ -754,7 +754,7 @@ func workerCertificationParams(
 	return db.CertifyWorkerInstanceParams{
 		RuntimeIdentityID: c.RuntimeID, RuntimeArch: c.RuntimeArch, RuntimeABI: c.RuntimeABI,
 		KernelDigest: c.KernelDigest, InitramfsDigest: c.InitramfsDigest, RootfsDigest: c.RootfsDigest,
-		CniProfile: c.CNIProfile, ProtocolVersion: c.ProtocolVersion, SupervisorVersion: c.WorkerVersion,
+		NetworkAbi: c.NetworkABI, ProtocolVersion: c.ProtocolVersion, SupervisorVersion: c.WorkerVersion,
 		SupportsRun: supportsRun, SupportsBuild: c.SupportsBuild,
 		SubstrateFormat: c.SubstrateFormat, SubstrateBuilderAbi: c.SubstrateBuilderABI, SubstrateLayoutAbi: c.SubstrateLayoutABI,
 		CertifiedCpuMillis: c.MaxVCPUs * 1000, CertifiedMemoryBytes: c.MaxMemoryMiB * 1024 * 1024,
@@ -781,7 +781,7 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 		KernelDigest:              strings.TrimSpace(input.KernelDigest),
 		InitramfsDigest:           strings.TrimSpace(input.InitramfsDigest),
 		RootfsDigest:              strings.TrimSpace(input.RootfsDigest),
-		CNIProfile:                strings.TrimSpace(input.CNIProfile),
+		NetworkABI:                strings.TrimSpace(input.NetworkABI),
 		SubstrateFormat:           strings.TrimSpace(input.SubstrateFormat),
 		SubstrateBuilderABI:       strings.TrimSpace(input.SubstrateBuilderABI),
 		SubstrateLayoutABI:        strings.TrimSpace(input.SubstrateLayoutABI),
@@ -826,8 +826,8 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 	if capabilities.RootfsDigest == "" {
 		return api.WorkerCapabilities{}, errors.New("worker rootfs_digest is required")
 	}
-	if capabilities.CNIProfile != api.WorkerCNIProfileV0 {
-		return api.WorkerCapabilities{}, fmt.Errorf("worker cni_profile must be %s", api.WorkerCNIProfileV0)
+	if capabilities.NetworkABI != api.WorkerNetworkABIV0 {
+		return api.WorkerCapabilities{}, fmt.Errorf("worker network_abi must be %s", api.WorkerNetworkABIV0)
 	}
 	expectedRuntimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{
 		Arch:            capabilities.RuntimeArch,
@@ -835,7 +835,7 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 		KernelDigest:    capabilities.KernelDigest,
 		InitramfsDigest: capabilities.InitramfsDigest,
 		RootfsDigest:    capabilities.RootfsDigest,
-		CNIProfile:      capabilities.CNIProfile,
+		NetworkABI:      capabilities.NetworkABI,
 	})
 	if err != nil {
 		return api.WorkerCapabilities{}, fmt.Errorf("worker runtime identity: %w", err)

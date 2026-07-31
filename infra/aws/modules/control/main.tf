@@ -3,7 +3,6 @@ locals {
   control_port        = 8080
   bucket_prefix       = lower(coalesce(var.bucket_name_prefix, "${local.name}-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}"))
   control_url         = var.enable_cloudfront ? "https://${aws_cloudfront_distribution.control[0].domain_name}" : var.public_url
-  private_control_url = var.private_control_dns_name == null ? null : "https://${var.private_control_dns_name}"
   control_subnet_ids  = var.control_assign_public_ip ? var.public_subnet_ids : var.private_subnet_ids
   email_from          = var.email_from == null ? "" : var.email_from
   smtp_addr           = var.smtp_addr == null ? "" : var.smtp_addr
@@ -159,16 +158,11 @@ locals {
   redis_url = "rediss://${aws_elasticache_replication_group.dispatch.primary_endpoint_address}:${aws_elasticache_replication_group.dispatch.port}/0"
 }
 
-data "aws_vpc" "control" {
-  id = var.vpc_id
-}
-
 resource "terraform_data" "bootstrap_preconditions" {
   input = {
     certificate_arn                   = var.certificate_arn
     cloudfront_origin                 = var.cloudfront_origin_domain_name
     enable_cloudfront                 = var.enable_cloudfront
-    private_control_dns               = var.private_control_dns_name
     public_url                        = var.public_url
     reserved_env_conflicts            = local.control_environment_conflicts
     reserved_dispatcher_env_conflicts = local.dispatcher_environment_conflicts
@@ -310,10 +304,6 @@ resource "terraform_data" "bootstrap_preconditions" {
       error_message = "enable_cloudfront requires certificate_arn and cloudfront_origin_domain_name so CloudFront can use a TLS ALB origin without pointing at its own viewer hostname."
     }
 
-    precondition {
-      condition     = var.private_control_dns_name == null || var.certificate_arn != null
-      error_message = "certificate_arn is required when private_control_dns_name is set because workers must use HTTPS for registration credentials."
-    }
   }
 }
 
@@ -581,15 +571,6 @@ resource "aws_vpc_security_group_ingress_rule" "control_alb" {
   to_port                      = local.control_port
 }
 
-resource "aws_vpc_security_group_ingress_rule" "control_private_alb" {
-  count                        = var.private_control_dns_name == null ? 0 : 1
-  security_group_id            = aws_security_group.control.id
-  referenced_security_group_id = aws_security_group.private_alb[0].id
-  from_port                    = local.control_port
-  ip_protocol                  = "tcp"
-  to_port                      = local.control_port
-}
-
 resource "aws_vpc_security_group_egress_rule" "control" {
   security_group_id = aws_security_group.control.id
   cidr_ipv4         = "0.0.0.0/0"
@@ -605,62 +586,8 @@ resource "aws_lb" "control" {
   tags               = var.tags
 }
 
-resource "aws_security_group" "private_alb" {
-  count       = var.private_control_dns_name == null ? 0 : 1
-  name        = "${local.name}-private-alb"
-  description = "Helmr private worker-to-control load balancer"
-  vpc_id      = var.vpc_id
-  tags        = var.tags
-}
-
-resource "aws_vpc_security_group_ingress_rule" "private_alb_https" {
-  count             = var.private_control_dns_name == null ? 0 : 1
-  security_group_id = aws_security_group.private_alb[0].id
-  cidr_ipv4         = data.aws_vpc.control.cidr_block
-  from_port         = 443
-  ip_protocol       = "tcp"
-  to_port           = 443
-}
-
-resource "aws_vpc_security_group_egress_rule" "private_alb" {
-  count             = var.private_control_dns_name == null ? 0 : 1
-  security_group_id = aws_security_group.private_alb[0].id
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1"
-}
-
-resource "aws_lb" "private_control" {
-  count              = var.private_control_dns_name == null ? 0 : 1
-  name               = "${local.name}-private"
-  load_balancer_type = "application"
-  internal           = true
-  security_groups    = [aws_security_group.private_alb[0].id]
-  subnets            = var.private_subnet_ids
-  tags               = var.tags
-}
-
 resource "aws_lb_target_group" "control" {
   name        = "${local.name}-control"
-  port        = local.control_port
-  protocol    = "HTTP"
-  target_type = "ip"
-  vpc_id      = var.vpc_id
-  tags        = var.tags
-
-  health_check {
-    enabled             = true
-    healthy_threshold   = 2
-    interval            = 30
-    matcher             = "200"
-    path                = var.control_health_check_path
-    timeout             = 5
-    unhealthy_threshold = 2
-  }
-}
-
-resource "aws_lb_target_group" "private_control" {
-  count       = var.private_control_dns_name == null ? 0 : 1
-  name        = "${local.name}-private"
   port        = local.control_port
   protocol    = "HTTP"
   target_type = "ip"
@@ -718,46 +645,6 @@ resource "aws_lb_listener" "https" {
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.control.arn
-  }
-}
-
-resource "aws_lb_listener" "private_https" {
-  count             = var.private_control_dns_name == null ? 0 : 1
-  load_balancer_arn = aws_lb.private_control[0].arn
-  port              = 443
-  protocol          = "HTTPS"
-  certificate_arn   = var.certificate_arn
-  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.private_control[0].arn
-  }
-}
-
-resource "aws_route53_zone" "private_control" {
-  count = var.private_control_dns_name == null ? 0 : 1
-
-  name = var.private_control_dns_name
-
-  vpc {
-    vpc_id = var.vpc_id
-  }
-
-  tags = var.tags
-}
-
-resource "aws_route53_record" "private_control" {
-  count = var.private_control_dns_name == null ? 0 : 1
-
-  zone_id = aws_route53_zone.private_control[0].zone_id
-  name    = var.private_control_dns_name
-  type    = "A"
-
-  alias {
-    name                   = aws_lb.private_control[0].dns_name
-    zone_id                = aws_lb.private_control[0].zone_id
-    evaluate_target_health = true
   }
 }
 
@@ -1409,16 +1296,6 @@ resource "aws_ecs_service" "control" {
     container_port   = local.control_port
   }
 
-  dynamic "load_balancer" {
-    for_each = var.private_control_dns_name == null ? [] : [aws_lb_target_group.private_control[0].arn]
-
-    content {
-      target_group_arn = load_balancer.value
-      container_name   = "control"
-      container_port   = local.control_port
-    }
-  }
-
   deployment_circuit_breaker {
     enable   = true
     rollback = true
@@ -1428,7 +1305,6 @@ resource "aws_ecs_service" "control" {
     aws_lb_listener.http,
     aws_lb_listener.http_redirect,
     aws_lb_listener.https,
-    aws_lb_listener.private_https,
     aws_cloudfront_distribution.control
   ]
 

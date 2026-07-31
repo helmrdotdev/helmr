@@ -15,7 +15,6 @@ func validRunLeaseAssignment(workerID uuid.UUID) api.WorkerRunLeaseAssignment {
 		WorkerInstanceID: workerID.String(), WorkerEpoch: 1,
 		WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
 		RuntimeInstanceID:     uuid.Must(uuid.NewV7()).String(), RuntimeIdentityID: "runtime-identity",
-		NetworkSlotID: uuid.Must(uuid.NewV7()).String(), NetworkSlotGeneration: 1,
 		WorkspaceID:            uuid.Must(uuid.NewV7()).String(),
 		WorkspaceMountID:       uuid.Must(uuid.NewV7()).String(),
 		WorkspaceLeaseID:       uuid.Must(uuid.NewV7()).String(),

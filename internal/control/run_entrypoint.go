@@ -136,21 +136,6 @@ func lockRunEntrypointAuthority(
 		return runLeaseClaimAuthority{}, err
 	}
 
-	authority.networkSlot, err = q.LockRunLeaseClaimNetworkSlot(ctx, db.LockRunLeaseClaimNetworkSlotParams{
-		ID:                locators.NetworkSlotID,
-		WorkerGroupID:     worker.WorkerGroupID,
-		WorkerInstanceID:  pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch:       worker.WorkerEpoch,
-		Generation:        locators.NetworkSlotGeneration,
-		RuntimeInstanceID: locators.RuntimeInstanceID,
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
-	}
-	if authority.networkSlot.State != db.WorkerNetworkSlotStateBound {
-		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
-	}
-
 	authority.runtime, err = q.LockRunLeaseClaimRuntime(ctx, db.LockRunLeaseClaimRuntimeParams{
 		ID:               locators.RuntimeInstanceID,
 		OrgID:            locators.OrgID,

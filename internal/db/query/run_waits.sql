@@ -97,8 +97,6 @@ SELECT state
    AND worker_instance_id = sqlc.arg(worker_instance_id)
    AND worker_epoch = sqlc.arg(worker_epoch)
    AND runtime_instance_id = sqlc.arg(runtime_instance_id)
-   AND network_slot_id = sqlc.arg(network_slot_id)
-   AND network_slot_generation = sqlc.arg(network_slot_generation)
    AND runtime_identity_id = sqlc.arg(runtime_identity_id)
    AND worker_protocol_version = sqlc.arg(worker_protocol_version)
    AND region_id = sqlc.arg(region_id)

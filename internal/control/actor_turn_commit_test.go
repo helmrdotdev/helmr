@@ -176,7 +176,7 @@ func projectActorTurnTestAssignment(
 ) (api.WorkerRunLeaseAssignment, error) {
 	return projectRunLeaseAssignment(runLeaseProjectionAuthority{
 		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
-		networkSlot: authority.networkSlot, runLease: authority.runLease,
+		runLease:  authority.runLease,
 		workspace: authority.workspace, workspaceMount: authority.workspaceMount,
 		workspaceLease: authority.workspaceLease,
 	})
@@ -437,7 +437,7 @@ func newActorTurnCommitFixture(t *testing.T) (
 
 	projection := runLeaseProjectionAuthority{
 		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
-		networkSlot: authority.networkSlot, runLease: authority.runLease,
+		runLease:  authority.runLease,
 		workspace: authority.workspace, workspaceMount: authority.workspaceMount,
 		workspaceLease: authority.workspaceLease,
 	}
@@ -454,9 +454,8 @@ func newActorTurnCommitFixture(t *testing.T) (
 				EnvironmentID: locators.EnvironmentID, RunID: locators.RunID,
 				WorkspaceID: locators.WorkspaceID, AttemptNumber: locators.AttemptNumber,
 				ActorID: authority.actor.ID, RegionID: locators.RegionID,
-				RuntimeInstanceID: locators.RuntimeInstanceID, NetworkSlotID: locators.NetworkSlotID,
-				NetworkSlotGeneration: locators.NetworkSlotGeneration,
-				WorkspaceLeaseID:      locators.WorkspaceLeaseID, WorkspaceMountID: locators.WorkspaceMountID,
+				RuntimeInstanceID: locators.RuntimeInstanceID,
+				WorkspaceLeaseID:  locators.WorkspaceLeaseID, WorkspaceMountID: locators.WorkspaceMountID,
 			},
 			finalizationClear: pgtype.Bool{Bool: true, Valid: true},
 			resetTarget:       resetTarget,

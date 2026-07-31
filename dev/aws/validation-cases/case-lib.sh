@@ -354,17 +354,11 @@ validation_exact_run_placements() {
         'worker_instance_id', worker_instances.resource_id,
         'worker_epoch', run_leases.worker_epoch,
         'runtime_instance_id', run_leases.runtime_instance_id,
-        'slot_id', worker_network_slots.id,
-        'slot_name', worker_network_slots.slot_name,
-        'slot_generation', worker_network_slots.generation,
-        'slot_state', worker_network_slots.state,
-        'host_interface_name', worker_network_slots.host_interface_name,
-        'guest_address', host(worker_network_slots.guest_address),
-        'gateway_address', host(worker_network_slots.gateway_address),
-        'subnet', worker_network_slots.subnet::text,
-        'tap_name', worker_network_slots.tap_name,
-        'netns_name', worker_network_slots.netns_name,
-        'guest_mac', worker_network_slots.guest_mac::text
+        'network_owner_id', run_leases.runtime_instance_id,
+        'network_generation', 1,
+        'network_abi', 'helmr/v0',
+        'netns_name', run_leases.runtime_instance_id,
+        'tap_name', 'tap0'
       )::text
       FROM requested
       JOIN runs ON runs.id = requested.run_id
@@ -374,12 +368,8 @@ validation_exact_run_placements() {
       JOIN worker_instances
         ON worker_instances.id = run_leases.worker_instance_id
        AND worker_instances.current_epoch = run_leases.worker_epoch
-      JOIN worker_network_slots
-        ON worker_network_slots.id = run_leases.network_slot_id
-       AND worker_network_slots.generation = run_leases.network_slot_generation
-       AND worker_network_slots.runtime_instance_id = run_leases.runtime_instance_id
       WHERE run_leases.state = 'running'
-        AND worker_network_slots.state = 'bound'
+        AND run_leases.runtime_instance_id IS NOT NULL
       ORDER BY requested.run_id
     ) TO STDOUT;
   "
@@ -528,21 +518,6 @@ validation_wait_run_reclaimed() {
                      ON runtime_instances.id = run_leases.runtime_instance_id
                   WHERE run_leases.run_id = runs.id
                     AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
-               )
-           AND NOT EXISTS (
-                 SELECT 1
-                   FROM run_leases
-                   JOIN worker_network_slots
-                     ON worker_network_slots.id = run_leases.network_slot_id
-                    AND worker_network_slots.generation = run_leases.network_slot_generation
-                  WHERE run_leases.run_id = runs.id
-                    AND (
-                      worker_network_slots.state <> 'available'
-                      OR worker_network_slots.runtime_instance_id IS NOT NULL
-                      OR worker_network_slots.host_interface_name IS NOT NULL
-                      OR worker_network_slots.tap_name IS NOT NULL
-                      OR worker_network_slots.netns_name IS NOT NULL
-                    )
                )
       ) TO STDOUT;
     " reclaimed 2>/dev/null; then

@@ -36,7 +36,7 @@ func TestEnterRunEntrypointCommitsOnceAndReplaysTheSameFence(t *testing.T) {
 	}
 	wantCalls := []string{
 		"entrypoint_locators", "run", "workspace", "attempt",
-		"worker_group", "worker", "network_slot", "runtime",
+		"worker_group", "worker", "runtime",
 		"entrypoint_lease", "workspace_mount", "workspace_lease",
 		"mark_entrypoint", "commit",
 	}
@@ -173,7 +173,6 @@ func validRunEntrypointFixture(
 		run:            authority.run,
 		attempt:        authority.attempt,
 		runtime:        authority.runtime,
-		networkSlot:    authority.networkSlot,
 		runLease:       authority.runLease,
 		workspace:      authority.workspace,
 		workspaceMount: authority.workspaceMount,
@@ -183,17 +182,15 @@ func validRunEntrypointFixture(
 		t.Fatal(err)
 	}
 	return worker, db.GetRunEntrypointLocatorsRow{
-		OrgID:                 claimLocators.OrgID,
-		ProjectID:             claimLocators.ProjectID,
-		EnvironmentID:         claimLocators.EnvironmentID,
-		RunID:                 claimLocators.RunID,
-		WorkspaceID:           claimLocators.WorkspaceID,
-		AttemptNumber:         claimLocators.AttemptNumber,
-		RegionID:              claimLocators.RegionID,
-		RuntimeInstanceID:     claimLocators.RuntimeInstanceID,
-		NetworkSlotID:         claimLocators.NetworkSlotID,
-		NetworkSlotGeneration: claimLocators.NetworkSlotGeneration,
-		WorkspaceLeaseID:      claimLocators.WorkspaceLeaseID,
-		WorkspaceMountID:      claimLocators.WorkspaceMountID,
+		OrgID:             claimLocators.OrgID,
+		ProjectID:         claimLocators.ProjectID,
+		EnvironmentID:     claimLocators.EnvironmentID,
+		RunID:             claimLocators.RunID,
+		WorkspaceID:       claimLocators.WorkspaceID,
+		AttemptNumber:     claimLocators.AttemptNumber,
+		RegionID:          claimLocators.RegionID,
+		RuntimeInstanceID: claimLocators.RuntimeInstanceID,
+		WorkspaceLeaseID:  claimLocators.WorkspaceLeaseID,
+		WorkspaceMountID:  claimLocators.WorkspaceMountID,
 	}, authority, assignment
 }

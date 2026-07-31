@@ -48,6 +48,22 @@ func run(log *slog.Logger) error {
 	if workDir == "" {
 		workDir = executor.DefaultWorkDir()
 	}
+	networkConfig := firecracker.Config{
+		JailerUID:               cfg.JailerUID,
+		JailerGID:               cfg.JailerGID,
+		StateDir:                filepath.Join(workDir, "vms", "guest"),
+		NetworkLinkPool:         cfg.NetworkLinkPool,
+		NetworkTranslationPool:  cfg.NetworkTranslationPool,
+		NetworkResolverIPv4:     cfg.NetworkResolverIPv4,
+		NetworkBlockedIPv4CIDRs: cfg.NetworkBlockedIPv4CIDRs,
+		NetworkCapacity:         int(cfg.WorkerExecutionSlots + cfg.WorkerBuildExecutors),
+		IPPath:                  cfg.IPPath,
+		NFTPath:                 cfg.NFTPath,
+	}
+	networkReclaimer, err := firecracker.NewNetworkReclaimer(networkConfig)
+	if err != nil {
+		return fmt.Errorf("configure routed network reclaimer: %w", err)
+	}
 	supportsRun := slices.Contains(cfg.WorkerRoles, "run")
 	supportsBuild := slices.Contains(cfg.WorkerRoles, "build")
 	var buildPolicy *deployment.BuildPolicy
@@ -87,7 +103,7 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("prove build storage: %w", err)
 		}
-		evidence, err := workerdaemon.RecoverLocalVMState(ctx, workDir, cfg.JailerChrootDir, cfg.IPPath)
+		evidence, err := workerdaemon.RecoverLocalVMState(ctx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
 		if err != nil {
 			return fmt.Errorf("recover local worker state before build activation: %w", err)
 		}
@@ -136,33 +152,22 @@ func run(log *slog.Logger) error {
 		)
 	}
 	rootfsPath := filepath.Join(guestImageDir, "rootfs.ext4")
-	connector, err := firecracker.NewConnector(firecracker.Config{
-		FirecrackerPath:         cfg.FirecrackerPath,
-		JailerPath:              cfg.JailerPath,
-		JailerUID:               cfg.JailerUID,
-		JailerGID:               cfg.JailerGID,
-		JailerNumaNode:          cfg.JailerNumaNode,
-		JailerChrootBaseDir:     cfg.JailerChrootDir,
-		CgroupVersion:           cfg.CgroupVersion,
-		KernelPath:              filepath.Join(guestImageDir, "vmlinuz"),
-		InitramfsPath:           filepath.Join(guestImageDir, "initramfs"),
-		RootfsPath:              rootfsPath,
-		RuntimeArtifactsPath:    filepath.Join(guestImageDir, "runtime-artifacts.json"),
-		StateDir:                filepath.Join(workDir, "vms", "guest"),
-		CNINetworkName:          cfg.CNINetworkName,
-		CNIProfile:              cfg.CNIProfile,
-		CNIConfDir:              cfg.CNIConfDir,
-		CNIBinDir:               cfg.CNIBinDir,
-		CNICacheDir:             cfg.CNICacheDir,
-		IPPath:                  cfg.IPPath,
-		NFTPath:                 cfg.NFTPath,
-		NetworkBlockedIPv4CIDRs: cfg.NetworkBlockedIPv4CIDRs,
-		VCPUCount:               cfg.VMVCPUCount,
-		MemoryMiB:               cfg.VMMemoryMiB,
-		ScratchDiskMiB:          cfg.VMScratchDiskMiB,
-		HealthTimeout:           cfg.VMHealthTimeout,
-		HealthAttemptTimeout:    cfg.VMHealthAttemptTimeout,
-	})
+	connectorConfig := networkConfig
+	connectorConfig.FirecrackerPath = cfg.FirecrackerPath
+	connectorConfig.JailerPath = cfg.JailerPath
+	connectorConfig.JailerNumaNode = cfg.JailerNumaNode
+	connectorConfig.JailerChrootBaseDir = cfg.JailerChrootDir
+	connectorConfig.CgroupVersion = cfg.CgroupVersion
+	connectorConfig.KernelPath = filepath.Join(guestImageDir, "vmlinuz")
+	connectorConfig.InitramfsPath = filepath.Join(guestImageDir, "initramfs")
+	connectorConfig.RootfsPath = rootfsPath
+	connectorConfig.RuntimeArtifactsPath = filepath.Join(guestImageDir, "runtime-artifacts.json")
+	connectorConfig.VCPUCount = cfg.VMVCPUCount
+	connectorConfig.MemoryMiB = cfg.VMMemoryMiB
+	connectorConfig.ScratchDiskMiB = cfg.VMScratchDiskMiB
+	connectorConfig.HealthTimeout = cfg.VMHealthTimeout
+	connectorConfig.HealthAttemptTimeout = cfg.VMHealthAttemptTimeout
+	connector, err := firecracker.NewConnector(connectorConfig)
 	if err != nil {
 		return fmt.Errorf("configure firecracker connector: %w", err)
 	}
@@ -183,7 +188,7 @@ func run(log *slog.Logger) error {
 		KernelDigest:    runtimeCapabilities.KernelDigest,
 		InitramfsDigest: runtimeCapabilities.InitramfsDigest,
 		RootfsDigest:    runtimeCapabilities.RootfsDigest,
-		CNIProfile:      runtimeCapabilities.CNIProfile,
+		NetworkABI:      runtimeCapabilities.NetworkABI,
 	}
 	runtimeIdentity.ID, err = runtimeidentity.Digest(runtimeIdentity)
 	if err != nil {
@@ -347,7 +352,7 @@ func run(log *slog.Logger) error {
 		KernelDigest:              runtimeCapabilities.KernelDigest,
 		InitramfsDigest:           runtimeCapabilities.InitramfsDigest,
 		RootfsDigest:              runtimeCapabilities.RootfsDigest,
-		CNIProfile:                runtimeCapabilities.CNIProfile,
+		NetworkABI:                runtimeCapabilities.NetworkABI,
 		MaxVCPUs:                  allocatable.MilliCPU / 1000,
 		MaxMemoryMiB:              allocatable.MemoryMiB,
 		VMMilliCPU:                certifiedVM.MilliCPU,
@@ -433,12 +438,13 @@ func run(log *slog.Logger) error {
 		workerdaemon.WithBuildPolicy(buildPolicy),
 		workerdaemon.WithPlatformAcquirer(platformAcquirer),
 		workerdaemon.WithBuildExecutor(deployment.Builder{
-			WorkDir:       workDir,
-			CAS:           store,
-			PlatformStore: platformStore,
-			Connector:     runtimeConnector,
-			Encoder:       squashfsEncoder,
-			Images:        imageBuilder,
+			WorkDir:           workDir,
+			CAS:               store,
+			PlatformStore:     platformStore,
+			Connector:         runtimeConnector,
+			RuntimeIdentityID: runtimeIdentity.ID,
+			Encoder:           squashfsEncoder,
+			Images:            imageBuilder,
 		}),
 		workerdaemon.WithMaterializer(executor.WorkspaceMaterializer{
 			Connector:             workspaceMountConnector,
@@ -489,6 +495,7 @@ func run(log *slog.Logger) error {
 		DiskFloorBytes:   admissionDiskFloorMiB(supportsBuild, cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB) * 1024 * 1024,
 		FDHeadroom:       256,
 		RuntimeSlotCount: cfg.WorkerExecutionSlots,
+		DatapathHealth:   connector.DatapathHealth,
 	})
 	if err != nil {
 		return fmt.Errorf("configure worker hard admission: %w", err)
@@ -503,7 +510,7 @@ func run(log *slog.Logger) error {
 				evidence = *startupRecovery
 			} else {
 				var err error
-				evidence, err = workerdaemon.RecoverLocalVMState(recoveryCtx, workDir, cfg.JailerChrootDir, cfg.IPPath)
+				evidence, err = workerdaemon.RecoverLocalVMState(recoveryCtx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
 				if err != nil {
 					return evidence, err
 				}
@@ -537,7 +544,7 @@ func run(log *slog.Logger) error {
 			if err := closePreparedRuntime.Close(finalizeCtx); err != nil {
 				return workerdaemon.RecoveryEvidence{}, fmt.Errorf("close prepared runtime pool: %w", err)
 			}
-			first, err := workerdaemon.RecoverLocalVMState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath)
+			first, err := workerdaemon.RecoverLocalVMState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
 			if err != nil {
 				return workerdaemon.RecoveryEvidence{}, err
 			}
@@ -546,7 +553,7 @@ func run(log *slog.Logger) error {
 			}
 			// The first pass reclaims any residue. A second complete inventory is
 			// the proof submitted to control and therefore must be empty.
-			return workerdaemon.RecoverLocalVMState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath)
+			return workerdaemon.RecoverLocalVMState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
 		},
 		DrainCompleted: func(status api.WorkerStatusResponse) error {
 			return writeDrainCompleteMarker(workDir, status.WorkerInstanceID)

@@ -28,14 +28,11 @@ func LoadWorker() (Worker, error) {
 		JailerNumaNode:               0,
 		JailerChrootDir:              envString("HELMR_WORKER_FIRECRACKER_CHROOT_DIR"),
 		CgroupVersion:                env("HELMR_WORKER_FIRECRACKER_CGROUP_VERSION", "2"),
-		CNINetworkName:               env("HELMR_WORKER_CNI_NETWORK", "helmr"),
-		CNIProfile:                   envString("HELMR_WORKER_CNI_PROFILE"),
-		CNIConfDir:                   env("HELMR_WORKER_CNI_CONF_DIR", "/etc/cni/conf.d"),
-		CNIBinDir:                    env("HELMR_WORKER_CNI_BIN_DIR", "/opt/cni/bin"),
-		CNICacheDir:                  envString("HELMR_WORKER_CNI_CACHE_DIR"),
+		NetworkLinkPool:              envString("HELMR_WORKER_NETWORK_LINK_POOL"),
+		NetworkTranslationPool:       envString("HELMR_WORKER_NETWORK_TRANSLATION_POOL"),
+		NetworkResolverIPv4:          envString("HELMR_WORKER_NETWORK_RESOLVER_IPV4"),
 		IPPath:                       env("HELMR_WORKER_IP_PATH", "ip"),
 		NFTPath:                      env("HELMR_WORKER_NFT_PATH", "nft"),
-		NetworkBlockedIPv4CIDRs:      envList("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS"),
 		VMVCPUCount:                  2,
 		VMMemoryMiB:                  2048,
 		VMScratchDiskMiB:             8192,
@@ -51,6 +48,12 @@ func LoadWorker() (Worker, error) {
 		return cfg, errors.New("HELMR_WORKER_GROUP_ID is required")
 	}
 	var err error
+	cfg.NetworkBlockedIPv4CIDRs, err = parseCanonicalBlockedIPv4Prefixes(
+		envString("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS"),
+	)
+	if err != nil {
+		return cfg, fmt.Errorf("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS: %w", err)
+	}
 	if cfg.VMVCPUCount, err = envInt64("HELMR_VM_VCPUS", cfg.VMVCPUCount); err != nil {
 		return cfg, err
 	}
@@ -206,9 +209,6 @@ func LoadWorker() (Worker, error) {
 	if cfg.JailerNumaNode, err = envInt("HELMR_WORKER_FIRECRACKER_NUMA_NODE", cfg.JailerNumaNode); err != nil {
 		return cfg, err
 	}
-	if cfg.CNIProfile == "" {
-		cfg.CNIProfile = cfg.CNINetworkName + "/v0"
-	}
 	if cfg.ControlURL == "" {
 		return cfg, errors.New("HELMR_CONTROL_URL is required")
 	}
@@ -249,6 +249,15 @@ func LoadWorker() (Worker, error) {
 	}
 	if cfg.JailerGID <= 0 {
 		return cfg, errors.New("HELMR_WORKER_FIRECRACKER_JAILER_GID is required")
+	}
+	if cfg.NetworkLinkPool == "" {
+		return cfg, errors.New("HELMR_WORKER_NETWORK_LINK_POOL is required")
+	}
+	if cfg.NetworkTranslationPool == "" {
+		return cfg, errors.New("HELMR_WORKER_NETWORK_TRANSLATION_POOL is required")
+	}
+	if cfg.NetworkResolverIPv4 == "" {
+		return cfg, errors.New("HELMR_WORKER_NETWORK_RESOLVER_IPV4 is required")
 	}
 	return cfg, nil
 }

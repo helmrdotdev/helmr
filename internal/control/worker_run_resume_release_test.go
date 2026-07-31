@@ -215,7 +215,6 @@ func validRunResumeReleaseFixture(
 		EnvironmentID: claimLocators.EnvironmentID, RunID: claimLocators.RunID,
 		WorkspaceID: claimLocators.WorkspaceID, AttemptNumber: claimLocators.AttemptNumber,
 		RegionID: claimLocators.RegionID, RuntimeInstanceID: claimLocators.RuntimeInstanceID,
-		NetworkSlotID: claimLocators.NetworkSlotID, NetworkSlotGeneration: claimLocators.NetworkSlotGeneration,
 		WorkspaceLeaseID: claimLocators.WorkspaceLeaseID, WorkspaceMountID: claimLocators.WorkspaceMountID,
 		RunWaitID: authority.runWait.ID, RunWaitCheckpointID: authority.runWait.SuspendCheckpointID,
 		ResumeAttachID:       authority.runWait.ResumeAttachID,
@@ -227,7 +226,7 @@ func validRunResumeReleaseFixture(
 	}
 	expected, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
 		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
-		networkSlot: authority.networkSlot, runLease: authority.runLease,
+		runLease:  authority.runLease,
 		workspace: authority.workspace, workspaceMount: authority.workspaceMount,
 		workspaceLease: authority.workspaceLease,
 	})
@@ -263,7 +262,6 @@ func validParentAttachRunResumeReleaseFixture(
 		EnvironmentID: claimLocators.EnvironmentID, RunID: claimLocators.RunID,
 		WorkspaceID: claimLocators.WorkspaceID, AttemptNumber: claimLocators.AttemptNumber,
 		RegionID: claimLocators.RegionID, RuntimeInstanceID: claimLocators.RuntimeInstanceID,
-		NetworkSlotID: claimLocators.NetworkSlotID, NetworkSlotGeneration: claimLocators.NetworkSlotGeneration,
 		WorkspaceLeaseID: claimLocators.WorkspaceLeaseID, WorkspaceMountID: claimLocators.WorkspaceMountID,
 		RunWaitID: authority.runWait.ID, RunWaitCheckpointID: authority.runWait.HandoffResumeCheckpointID,
 		ResumeAttachID:         authority.runWait.ResumeAttachID,
@@ -277,7 +275,7 @@ func validParentAttachRunResumeReleaseFixture(
 	}
 	expected, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
 		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
-		networkSlot: authority.networkSlot, runLease: authority.runLease,
+		runLease:  authority.runLease,
 		workspace: authority.workspace, workspaceMount: authority.workspaceMount,
 		workspaceLease: authority.workspaceLease,
 	})

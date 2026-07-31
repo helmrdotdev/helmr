@@ -4,81 +4,162 @@ package firecracker
 
 import (
 	"context"
-	"strings"
+	"encoding/json"
+	"net"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
+	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/worker/datapath"
+	"github.com/vishvananda/netlink"
 )
 
-func TestNFTBuildNetworkPolicyScriptClosesProgramBuildEgress(t *testing.T) {
-	ipv4, err := effectiveBuildBlockedCIDRs(
-		[]string{"54.240.0.0/16"},
-	)
+func TestRoutedNetworkLifecyclePrivileged(t *testing.T) {
+	if os.Getenv("HELMR_NETWORK_E2E") != "1" {
+		t.Skip("set HELMR_NETWORK_E2E=1 on a privileged Linux host")
+	}
+	if os.Geteuid() != 0 {
+		t.Fatal("privileged routed network test requires root")
+	}
+	stateDir := t.TempDir()
+	connector := &Connector{
+		cfg: Config{
+			StateDir: stateDir, NetworkLinkPool: "198.18.0.0/29",
+			NetworkTranslationPool: "198.19.0.0/30", NetworkResolverIPv4: "1.1.1.1",
+			NetworkCapacity: 2, IPPath: "ip", NFTPath: "nft",
+			JailerUID: 65534, JailerGID: 65534,
+		},
+		datapath: datapath.NewManager(),
+	}
+	if err := connector.datapath.VerifyKernel(); err != nil {
+		t.Fatal(err)
+	}
+	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: uuid.Must(uuid.NewV7()).String()}
+	statePath := filepath.Join(stateDir, owner.ID)
+	if err := os.Mkdir(statePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(string(owner.Kind)+"\n"+owner.ID+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binding, err := connector.prepareNetworkBinding(context.Background(), owner, vm.WorkloadBinding{
+		WorkerEpoch: 4, OwnerID: owner.ID, Generation: 1,
+		RuntimeInstanceID: owner.ID, RuntimeIdentityID: NetworkABIV0,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	script, err := nftBuildNetworkPolicyScript(
-		"tap0",
-		[]string{"1.1.1.1", "2606:4700:4700::1111"},
-		ipv4,
-	)
+	if err := binding.verify(true); err != nil {
+		t.Fatal(err)
+	}
+	rootVeth, err := netlink.LinkByName(binding.manifest.RootVethName)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"policy drop",
-		"ct state new ct count over 256 counter name build_limit drop",
-		"quota name build_sent counter name build_limit drop",
-		"quota name build_received counter name build_limit drop",
-		`iifname "tap0" ip daddr @resolver_ipv4 udp dport 53 jump egress`,
-		`iifname "tap0" ip daddr @resolver_ipv4 tcp dport 53 jump egress`,
-		`iifname "tap0" ip daddr @blocked_ipv4 counter name build_denied drop`,
-		"meta nfproto ipv6 counter name build_denied drop",
-		`iifname "tap0" tcp jump egress`,
-		"counter name build_denied drop",
-		"198.18.0.0/15",
-		"203.0.113.0/24",
-		"54.240.0.0/16",
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("build policy script missing %q:\n%s", want, script)
-		}
+	if err := netlink.LinkSetMTU(rootVeth, GuestMTUV0-1); err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(script, "udp accept") {
-		t.Fatalf("build policy contains a broad UDP allowance:\n%s", script)
-	}
-	for _, unreachable := range []string{"blocked_ipv6", "resolver_ipv6"} {
-		if strings.Contains(script, unreachable) {
-			t.Fatalf("build policy contains unreachable %q state:\n%s", unreachable, script)
+	select {
+	case err := <-binding.Failure():
+		if err == nil {
+			t.Fatal("drift monitor reported a nil failure")
 		}
+	case <-time.After(2 * datapathRescanInterval):
+		t.Fatal("drift monitor did not fence the attachment")
+	}
+	rootVeth, err = netlink.LinkByName(binding.manifest.RootVethName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rootVeth.Attrs().Flags&net.FlagUp != 0 {
+		t.Fatal("drifted root veth was not fenced")
+	}
+	if err := netlink.LinkSetMTU(rootVeth, GuestMTUV0); err != nil {
+		t.Fatal(err)
+	}
+	if err := binding.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := connector.cleanupNetworkAttachment(context.Background(), owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeStateRootLast(statePath, owner); err != nil {
+		t.Fatal(err)
+	}
+	if exists, err := connector.runtimeNetNSExists(context.Background(), owner.ID); err != nil || exists {
+		t.Fatalf("namespace remains: exists=%t err=%v", exists, err)
+	}
+	if _, err := netlink.LinkByName(binding.manifest.RootVethName); err == nil {
+		t.Fatal("root veth remains")
+	} else if _, ok := err.(netlink.LinkNotFoundError); !ok {
+		t.Fatal(err)
 	}
 }
 
-func TestBuildNetworkPolicyRendererAcceptsExactManagedCloudSet(t *testing.T) {
-	script, err := nftBuildNetworkPolicyScript(
-		"tap0",
-		[]string{"10.0.0.2"},
-		managedCloudDenyPrefixStrings(),
-	)
+func TestNetworkOwnerManifestIsExactAndAtomicallyReplaceable(t *testing.T) {
+	connector := &Connector{cfg: Config{
+		NetworkLinkPool: "198.18.0.0/29", NetworkTranslationPool: "198.19.0.0/30",
+		NetworkResolverIPv4: "1.1.1.1", NetworkCapacity: 2,
+	}}
+	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: "019c10d5-a6f7-7af1-8f5f-000000000021"}
+	manifest, err := connector.networkOwnerManifest(owner, 7, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantElements := "elements = { " +
-		strings.Join(managedCloudDenyPrefixStrings(), ", ") +
-		" }"
-	if strings.Count(script, wantElements) != 1 {
-		t.Fatalf("script does not contain exact managed-Cloud set %q:\n%s", wantElements, script)
+	if err := connector.validateNetworkOwnerManifest(manifest, owner); err != nil {
+		t.Fatal(err)
 	}
-	for _, legacy := range []string{
-		"192.0.0.0/24",
-		"192.0.2.0/24",
-		"198.18.0.0/15",
-		"198.51.100.0/24",
-		"203.0.113.0/24",
-	} {
-		if strings.Contains(script, legacy) {
-			t.Fatalf("script contains legacy broad-catalog prefix %q:\n%s", legacy, script)
-		}
+	path := filepath.Join(t.TempDir(), networkManifestName)
+	if err := writeNetworkOwnerManifest(path, manifest, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeNetworkOwnerManifest(path, manifest, true); err == nil {
+		t.Fatal("exclusive crash anchor was overwritten")
+	}
+	manifest.Installed = true
+	manifest.RootIfindex = 11
+	manifest.NamespaceIfindex = 12
+	manifest.TapIfindex = 13
+	manifest.NamespacePolicyHash = "namespace-policy"
+	manifest.RootPolicyHash = "root-policy"
+	manifest.BPFProgramID = 14
+	manifest.BPFProgramTag = "program-tag"
+	manifest.BPFFilterHandle = 15
+	manifest.PacketMark = 16
+	if err := connector.validateNetworkOwnerManifest(manifest, owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeNetworkOwnerManifest(path, manifest, false); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted networkOwnerManifest
+	if err := json.Unmarshal(raw, &persisted); err != nil || persisted != manifest {
+		t.Fatalf("persisted manifest = %+v, error = %v", persisted, err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != networkManifestName {
+		t.Fatalf("manifest directory contains replacement residue: %v", entries)
+	}
+	changed := manifest
+	changed.GuestMAC = "02:fc:00:00:00:03"
+	if err := connector.validateNetworkOwnerManifest(changed, owner); err == nil {
+		t.Fatal("changed guest identity was accepted")
+	}
+	changed = manifest
+	changed.RootIfindex = 0
+	if err := connector.validateNetworkOwnerManifest(changed, owner); err == nil {
+		t.Fatal("incomplete installed identity was accepted")
 	}
 }
 
@@ -105,100 +186,29 @@ func TestParseBuildNetworkStatusRequiresBothCounters(t *testing.T) {
 	}
 }
 
-func TestNFTNetworkPolicyScriptBlocksConfiguredCIDRs(t *testing.T) {
-	script := renderRunNetworkPolicy(
-		[]string{"10.0.0.0/8", "100.64.0.0/10", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16"},
-	)
-	for _, want := range []string{
-		"add table inet helmr_network_policy",
-		"add counter inet helmr_network_policy run_denied",
-		"type filter hook forward priority 0; policy accept;",
-		"meta nfproto ipv6 counter name run_denied drop",
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		"169.254.0.0/16",
-		"100.64.0.0/10",
-		"ip daddr @blocked_ipv4 counter name run_denied drop",
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("script missing %q:\n%s", want, script)
-		}
+func TestWithNetworkBindingSurvivesSnapshotHandlerReplacement(t *testing.T) {
+	connector := &Connector{
+		cfg:      (Config{}).WithDefaults(),
+		datapath: datapath.NewManager(),
 	}
-	if strings.Contains(script, "blocked_ipv6") {
-		t.Fatalf("script contains an unreachable IPv6 set:\n%s", script)
+	logical := vm.WorkloadBinding{
+		WorkerEpoch:       1,
+		OwnerID:           "019c10d5-a6f7-7af1-8f5f-000000000020",
+		Generation:        1,
+		RuntimeInstanceID: "019c10d5-a6f7-7af1-8f5f-000000000020",
+		RuntimeIdentityID: "runtime-identity",
 	}
-	for _, unexpected := range []string{
-		"udp dport 53 accept",
-		"tcp dport 53 accept",
-	} {
-		if strings.Contains(script, unexpected) {
-			t.Fatalf("script unexpectedly contains broad DNS exception %q:\n%s", unexpected, script)
-		}
-	}
-}
-
-func TestNFTNetworkPolicyScriptUsesConfiguredCIDRs(t *testing.T) {
-	script := renderRunNetworkPolicy([]string{"198.18.0.0/15"})
-	for _, want := range []string{"198.18.0.0/15"} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("script missing configured CIDR %q:\n%s", want, script)
-		}
-	}
-	for _, blockedDefault := range []string{"10.0.0.0/8"} {
-		if strings.Contains(script, blockedDefault) {
-			t.Fatalf("script unexpectedly contains default CIDR %q:\n%s", blockedDefault, script)
-		}
-	}
-}
-
-func TestNFTNetworkPolicyScriptDropsIPv6BeforeEstablishedTraffic(t *testing.T) {
-	script := renderRunNetworkPolicy(nil)
-	ipv6Drop := strings.Index(script, "meta nfproto ipv6 counter name run_denied drop")
-	established := strings.Index(script, "ct state established,related accept")
-	if ipv6Drop < 0 || established < 0 || ipv6Drop > established {
-		t.Fatalf("IPv6 must be dropped before established traffic is accepted:\n%s", script)
-	}
-}
-
-func TestParseRunNetworkStatusRequiresOneDeniedCounter(t *testing.T) {
-	status, err := parseRunNetworkStatus([]byte(`{
-		"nftables": [
-			{"metainfo": {"json_schema_version": 1}},
-			{"counter": {"family": "inet", "name": "run_denied", "table": "helmr_network_policy", "packets": 7, "bytes": 420}}
-		]
-	}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status.DeniedPackets != 7 {
-		t.Fatalf("Run network status = %+v", status)
-	}
-	for _, raw := range []string{
-		`{"nftables":[]}`,
-		`{"nftables":[
-			{"counter":{"name":"run_denied","packets":1}},
-			{"counter":{"name":"run_denied","packets":2}}
-		]}`,
-	} {
-		if _, err := parseRunNetworkStatus([]byte(raw)); err == nil {
-			t.Fatalf("invalid Run counters were accepted: %s", raw)
-		}
-	}
-}
-
-func TestWithNetworkPolicySurvivesSnapshotHandlerReplacement(t *testing.T) {
-	connector := &Connector{cfg: (Config{}).WithDefaults()}
+	var installed *installedNetworkBinding
 	machine, err := firecracker.NewMachine(
 		context.Background(),
 		firecracker.Config{},
 		firecracker.WithSnapshot("/tmp/mem", "/tmp/state"),
-		connector.withNetworkPolicy("vm-1"),
+		connector.withNetworkBinding(logical, &installed),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !machine.Handlers.FcInit.Has("fcinit.ApplyHelmrNetworkPolicy") {
-		t.Fatal("network policy handler was not installed after snapshot handlers")
+	if !machine.Handlers.FcInit.Has("helmr.InstallNetworkBinding") {
+		t.Fatal("network binding handler was not installed after snapshot handlers")
 	}
 }

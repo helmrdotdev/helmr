@@ -53,11 +53,6 @@ output "control_url" {
   value       = local.control_url
 }
 
-output "private_control_url" {
-  description = "Private worker-facing control-plane URL when private_control_dns_name is set."
-  value       = local.private_control_url
-}
-
 output "load_balancer_dns_name" {
   description = "Control-plane load balancer DNS name."
   value       = aws_lb.control.dns_name
@@ -66,11 +61,6 @@ output "load_balancer_dns_name" {
 output "load_balancer_zone_id" {
   description = "Control-plane load balancer Route53 hosted zone ID."
   value       = aws_lb.control.zone_id
-}
-
-output "private_load_balancer_dns_name" {
-  description = "Private worker-facing load balancer DNS name when private_control_dns_name is set."
-  value       = try(aws_lb.private_control[0].dns_name, null)
 }
 
 output "cloudfront_distribution_domain_name" {

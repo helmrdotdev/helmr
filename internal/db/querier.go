@@ -429,7 +429,6 @@ type Querier interface {
 	LockRunLeaseClaimAttempt(ctx context.Context, arg LockRunLeaseClaimAttemptParams) (RunAttempt, error)
 	LockRunLeaseClaimLease(ctx context.Context, arg LockRunLeaseClaimLeaseParams) (RunLease, error)
 	LockRunLeaseClaimMount(ctx context.Context, arg LockRunLeaseClaimMountParams) (WorkspaceMount, error)
-	LockRunLeaseClaimNetworkSlot(ctx context.Context, arg LockRunLeaseClaimNetworkSlotParams) (WorkerNetworkSlot, error)
 	LockRunLeaseClaimObservation(ctx context.Context, arg LockRunLeaseClaimObservationParams) (LockRunLeaseClaimObservationRow, error)
 	LockRunLeaseClaimRun(ctx context.Context, arg LockRunLeaseClaimRunParams) (Run, error)
 	LockRunLeaseClaimRuntime(ctx context.Context, arg LockRunLeaseClaimRuntimeParams) (RuntimeInstance, error)
@@ -477,8 +476,8 @@ type Querier interface {
 	MarkRunLeaseStarting(ctx context.Context, arg MarkRunLeaseStartingParams) (RunLease, error)
 	MarkRunRunning(ctx context.Context, arg MarkRunRunningParams) (Run, error)
 	MarkRunWaitParked(ctx context.Context, arg MarkRunWaitParkedParams) (RunWait, error)
-	MarkRuntimeInstanceClosed(ctx context.Context, arg MarkRuntimeInstanceClosedParams) (MarkRuntimeInstanceClosedRow, error)
-	MarkRuntimeInstanceFailed(ctx context.Context, arg MarkRuntimeInstanceFailedParams) (MarkRuntimeInstanceFailedRow, error)
+	MarkRuntimeInstanceClosed(ctx context.Context, arg MarkRuntimeInstanceClosedParams) (RuntimeInstance, error)
+	MarkRuntimeInstanceFailed(ctx context.Context, arg MarkRuntimeInstanceFailedParams) (RuntimeInstance, error)
 	MarkRuntimeInstanceReady(ctx context.Context, arg MarkRuntimeInstanceReadyParams) (RuntimeInstance, error)
 	MarkScheduleAdmissionErrored(ctx context.Context, arg MarkScheduleAdmissionErroredParams) (Schedule, error)
 	MarkScheduleAdmissionRetryable(ctx context.Context, arg MarkScheduleAdmissionRetryableParams) (Schedule, error)
@@ -497,11 +496,11 @@ type Querier interface {
 	PublishTerminalChildResume(ctx context.Context, arg PublishTerminalChildResumeParams) (int64, error)
 	ReadPublicActorOutputPage(ctx context.Context, arg ReadPublicActorOutputPageParams) ([]ReadPublicActorOutputPageRow, error)
 	ReadyRunRetries(ctx context.Context, arg ReadyRunRetriesParams) ([]ReadyRunRetriesRow, error)
-	// Immediate fencing revokes credentials and terminalizes mount/runtime/slot
+	// Immediate fencing revokes credentials and terminalizes mount/runtime
 	// observations. Run/build/workspace authority is recovered by its canonical
 	// expiry and recovery loops; this transition does not imply zero authority.
 	RecheckAndFenceStaleWorkerInstance(ctx context.Context, arg RecheckAndFenceStaleWorkerInstanceParams) (RecheckAndFenceStaleWorkerInstanceRow, error)
-	ReclaimFailedRuntimeInstance(ctx context.Context, arg ReclaimFailedRuntimeInstanceParams) (ReclaimFailedRuntimeInstanceRow, error)
+	ReclaimFailedRuntimeInstance(ctx context.Context, arg ReclaimFailedRuntimeInstanceParams) (RuntimeInstance, error)
 	ReconcileActorTerminalRun(ctx context.Context, arg ReconcileActorTerminalRunParams) (Actor, error)
 	ReconcileSchedule(ctx context.Context, arg ReconcileScheduleParams) error
 	ReconcileWorkerGroup(ctx context.Context, arg ReconcileWorkerGroupParams) (ReconcileWorkerGroupRow, error)

@@ -4,16 +4,15 @@ package firecracker
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"syscall"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
 func (c *Connector) Preflight(ctx context.Context) error {
@@ -30,21 +29,58 @@ func (c *Connector) Preflight(ctx context.Context) error {
 		checkReadWriteFile("KVM device", c.cfg.KVMPath),
 		checkReadWriteFile("TUN device", "/dev/net/tun"),
 		checkCgroup(c.cfg.CgroupVersion),
-		checkDirectory("CNI config directory", c.cfg.CNIConfDir),
-		checkDirectory("CNI plugin directory", c.cfg.CNIBinDir),
-		checkCommand("CNI tc-redirect-tap plugin", filepath.Join(c.cfg.CNIBinDir, "tc-redirect-tap")),
-		checkCNINetworkConfig(c.cfg.CNIConfDir, c.cfg.CNINetworkName),
 	)
-	if c.cfg.CNICacheDir != "" {
-		problems = append(problems, ensureDirectory("CNI cache directory", c.cfg.CNICacheDir))
-	}
+	_, _, poolErr := validateNetworkPools(c.cfg)
+	problems = append(problems, poolErr)
 	problems = append(problems, ensureDirectory("firecracker state directory", c.cfg.StateDir))
 	problems = append(problems, ensureDirectory("firecracker jailer chroot directory", c.cfg.JailerChrootBaseDir))
 	problems = append(problems, checkHardLinkLayout(c.cfg))
+	problems = append(problems, c.datapath.VerifyKernel())
 	if err := ctx.Err(); err != nil {
 		problems = append(problems, err)
 	}
-	return errors.Join(problems...)
+	if err := errors.Join(problems...); err != nil {
+		return err
+	}
+	return c.proveRoutedNetworkLifecycle(ctx)
+}
+
+func (c *Connector) proveRoutedNetworkLifecycle(ctx context.Context) error {
+	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: uuid.Must(uuid.NewV7()).String()}
+	statePath := filepath.Join(c.cfg.StateDir, owner.ID)
+	if err := os.Mkdir(statePath, 0o700); err != nil {
+		return fmt.Errorf("create routed network proof owner: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(string(owner.Kind)+"\n"+owner.ID+"\n"), 0o600); err != nil {
+		_ = os.Remove(statePath)
+		return fmt.Errorf("write routed network proof owner: %w", err)
+	}
+	binding, err := c.prepareNetworkBinding(ctx, owner, vm.WorkloadBinding{
+		WorkerEpoch: 1, OwnerID: owner.ID, Generation: 1,
+		RuntimeInstanceID: owner.ID, RuntimeIdentityID: NetworkABIV0,
+	})
+	if err != nil {
+		cleanupErr := c.Cleanup(context.Background(), owner)
+		return fmt.Errorf("exercise routed network lifecycle: %w", errors.Join(err, cleanupErr))
+	}
+	deactivateErr := binding.Deactivate()
+	closeErr := binding.Close()
+	if closeErr != nil {
+		return fmt.Errorf("close routed network proof: %w", errors.Join(deactivateErr, closeErr))
+	}
+	if err := c.cleanupNetworkAttachment(ctx, owner); err != nil {
+		return fmt.Errorf("reclaim routed network proof: %w", errors.Join(deactivateErr, err))
+	}
+	if err := removeStateRootLast(statePath, owner); err != nil {
+		return fmt.Errorf("remove routed network proof state: %w", err)
+	}
+	if err := syncDirectory(c.cfg.StateDir); err != nil {
+		return err
+	}
+	if exists, err := pathExists(statePath); err != nil || exists {
+		return fmt.Errorf("prove routed network proof state absence: exists=%t: %v", exists, err)
+	}
+	return deactivateErr
 }
 
 func checkHardLinkLayout(cfg Config) error {
@@ -206,34 +242,4 @@ func checkCgroup(version string) error {
 		return fmt.Errorf("unsupported firecracker cgroup version %q", version)
 	}
 	return nil
-}
-
-func checkCNINetworkConfig(confDir string, networkName string) error {
-	entries, err := os.ReadDir(confDir)
-	if err != nil {
-		return fmt.Errorf("read CNI config directory %q: %w", confDir, err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".conf") && !strings.HasSuffix(name, ".conflist") && !strings.HasSuffix(name, ".json") {
-			continue
-		}
-		raw, err := os.ReadFile(filepath.Join(confDir, name))
-		if err != nil {
-			return fmt.Errorf("read CNI config %q: %w", name, err)
-		}
-		var cfg struct {
-			Name string `json:"name"`
-		}
-		if err := json.Unmarshal(raw, &cfg); err != nil {
-			return fmt.Errorf("decode CNI config %q: %w", name, err)
-		}
-		if cfg.Name == networkName {
-			return nil
-		}
-	}
-	return fmt.Errorf("CNI network %q was not found in %q", networkName, confDir)
 }

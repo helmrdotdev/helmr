@@ -32,8 +32,8 @@
         "path": "dev/aws/validation-cases/datapath-validation.sh",
         "checks": [
           "tap-path-observed",
-          "cni-peer-path-observed",
-          "legacy-hook-correlation-measured",
+          "namespace-veth-path-observed",
+          "forward-hook-correlation-measured",
           "cleanup-proven"
         ]
       }

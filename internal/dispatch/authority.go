@@ -131,7 +131,7 @@ SELECT worker_instances.id
    AND (($5 = 'run' AND worker_observations.run_paused_reason IS NULL)
         OR ($5 = 'build' AND worker_observations.build_paused_reason IS NULL))
 	   AND runtime_identities.runtime_arch = $6
-   AND runtime_identities.cni_profile = 'helmr/v0'
+	   AND runtime_identities.network_abi = 'helmr/v0'
  FOR UPDATE OF worker_instances`, fence.WorkerInstanceID, fence.GroupID,
 		fence.WorkerEpoch, fence.WorkerProtocolVersion, fence.Role, architecture,
 	).Scan(&workerID)

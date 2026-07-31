@@ -54,12 +54,10 @@ func testWorkspaceMountArtifacts(t *testing.T) (*fakeCAS, api.WorkerWorkspaceMou
 		t.Fatal(closeErr)
 	}
 	return store, api.WorkerWorkspaceMount{
-		BaseVersionID:         "version-1",
-		RuntimeInstanceID:     "runtime-instance-1",
-		RuntimeEpoch:          1,
-		NetworkSlotID:         "network-slot-1",
-		NetworkSlotGeneration: 1,
-		RuntimeID:             "runtime-1",
+		BaseVersionID:     "version-1",
+		RuntimeInstanceID: "runtime-instance-1",
+		RuntimeEpoch:      1,
+		RuntimeIdentityID: "runtime-1",
 		WorkspaceImage: api.CASObject{
 			Digest: imageObject.Digest, SizeBytes: imageObject.SizeBytes, MediaType: imageObject.MediaType,
 		},
@@ -1073,8 +1071,6 @@ func TestRunWorkspaceMountPropagatesCloseFailureAndRetainsPreparedRuntimeCheckou
 	workspaceMount.GuestdChannelToken = "channel-token"
 	workspaceMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
 	target := runtimeCapacityTarget(workspaceMount.RuntimeInstanceID, workspaceMount.RuntimeEpoch)
-	target.NetworkSlotID = workspaceMount.NetworkSlotID
-	target.NetworkSlotGeneration = workspaceMount.NetworkSlotGeneration
 	closeFailure := errors.New("prepared runtime cleanup failed")
 	session := &workspaceMaterializerTestSession{
 		streams:   []io.ReadWriteCloser{preparedClient, newBlockingReadWriteCloser()},
@@ -1091,8 +1087,7 @@ func TestRunWorkspaceMountPropagatesCloseFailureAndRetainsPreparedRuntimeCheckou
 	ready.finish(nil)
 	pool.entries[key] = []preparedRuntimeEntry{{
 		session: session, poolKey: key, runtimeInstanceID: target.ID,
-		runtimeEpoch: target.WorkerEpoch, networkSlotID: target.NetworkSlotID,
-		networkGeneration: target.NetworkSlotGeneration, target: target,
+		runtimeEpoch: target.WorkerEpoch, target: target,
 		exit: newPreparedRuntimeSignal(), ready: ready,
 	}}
 	go acknowledgePreparedWorkspaceMount(t, preparedServer, workspaceMount, key)

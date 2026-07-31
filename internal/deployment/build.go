@@ -23,12 +23,13 @@ import (
 )
 
 type Builder struct {
-	WorkDir       string
-	CAS           cas.Store
-	PlatformStore cas.Reader
-	Connector     vm.Connector
-	Encoder       string
-	Images        buildmodel.Engine
+	WorkDir           string
+	CAS               cas.Store
+	PlatformStore     cas.Reader
+	Connector         vm.Connector
+	RuntimeIdentityID string
+	Encoder           string
+	Images            buildmodel.Engine
 }
 
 func (builder Builder) Build(
@@ -172,7 +173,12 @@ func (builder Builder) build(
 	}
 	execution, err := guest.Execute(
 		ctx,
-		lease.ID,
+		vm.WorkloadBinding{
+			WorkerEpoch:       lease.WorkerEpoch,
+			OwnerID:           lease.ID,
+			Generation:        lease.LeaseSequence,
+			RuntimeIdentityID: builder.RuntimeIdentityID,
+		},
 		BuildGuestRequest{
 			FormatVersion:   BuildGuestFormatVersion,
 			Manager:         manager,
@@ -319,6 +325,8 @@ func (builder Builder) validate() error {
 		return errors.New("Platform Artifact store is required")
 	case builder.Connector == nil:
 		return errors.New("build guest connector is required")
+	case strings.TrimSpace(builder.RuntimeIdentityID) == "":
+		return errors.New("build worker runtime identity is required")
 	case builder.Images == nil:
 		return errors.New("Workspace image builder is required")
 	}

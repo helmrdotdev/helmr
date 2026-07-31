@@ -233,13 +233,6 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := locked.LockRunLeaseClaimNetworkSlot(ctx, LockRunLeaseClaimNetworkSlotParams{
-		ID: locators.NetworkSlotID, WorkerGroupID: runLeaseTestWorkerGroup,
-		WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
-		Generation: locators.NetworkSlotGeneration, RuntimeInstanceID: locators.RuntimeInstanceID,
-	}); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := locked.LockRunLeaseClaimRuntime(ctx, LockRunLeaseClaimRuntimeParams{
 		ID: locators.RuntimeInstanceID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
 		EnvironmentID: locators.EnvironmentID, RegionID: locators.RegionID,

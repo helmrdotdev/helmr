@@ -47,6 +47,10 @@ redis_node_count = 1
 control_image = null
 worker_ami_id = null
 worker_allowed_ami_ids = []
+worker_network_blocked_ipv4_cidrs = [
+  "10.0.0.0/8",
+  "169.254.0.0/16",
+]
 
 # Optional smoke worker. The official worker AMI is resolved from helmr_version
 # and aws_region. NAT Gateway is required because workers run in private subnets.

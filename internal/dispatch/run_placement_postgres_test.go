@@ -5,8 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
-	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +18,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestRunRuntimeReadyRequiresConvergedReadyIntent(t *testing.T) {
+	ready := runRuntime{
+		desiredState: db.RuntimeDesiredStateReady, desiredVersion: 3,
+		observedState: db.RuntimeObservedStateReady, observedDesiredVersion: 3,
+	}
+	if !runRuntimeReady(ready) {
+		t.Fatal("converged ready runtime was rejected")
+	}
+	for name, mutate := range map[string]func(*runRuntime){
+		"close requested":      func(runtime *runRuntime) { runtime.desiredState = db.RuntimeDesiredStateClosed },
+		"not physically ready": func(runtime *runRuntime) { runtime.observedState = db.RuntimeObservedStatePreparing },
+		"stale observation":    func(runtime *runRuntime) { runtime.observedDesiredVersion-- },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := ready
+			mutate(&candidate)
+			if runRuntimeReady(candidate) {
+				t.Fatal("non-converged runtime was accepted")
+			}
+		})
+	}
+}
 
 func recoverExpiredRunResumesParams(limit int32) db.RecoverExpiredRunResumesParams {
 	return db.RecoverExpiredRunResumesParams{
@@ -71,20 +92,6 @@ UPDATE runtime_instances
  WHERE id = $1`,
 		reserved.RuntimeInstanceID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_network_slots
-   SET state = 'bound',
-       host_interface_name = 'veth-test',
-       guest_address = '10.0.0.2',
-       gateway_address = '10.0.0.1',
-       subnet = '10.0.0.0/24',
-       tap_name = 'tap-test',
-       netns_name = 'netns-test',
-       guest_mac = '02:00:00:00:00:01'
- WHERE runtime_instance_id = $1`,
-		reserved.RuntimeInstanceID,
-	)
-
 	mounting, err := fixture.authority.PlaceReadyRun(
 		fixture.ctx,
 		candidate,
@@ -734,9 +741,6 @@ SELECT jsonb_build_object(
     'mountGeneration', workspace_mounts.fencing_generation,
     'runtimeRestore', runtime_instances.restore_checkpoint_id,
     'runtimeReclaimed', runtime_instances.reclaimed_at,
-    'slotState', worker_network_slots.state,
-    'slotGeneration', worker_network_slots.generation,
-    'leaseSlotGeneration', run_leases.network_slot_generation,
     'waitCondition', run_waits.condition_state,
     'waitHandoffRuntime', run_waits.handoff_runtime_instance_id,
     'waitHandoffMount', run_waits.handoff_workspace_mount_id,
@@ -754,7 +758,6 @@ SELECT jsonb_build_object(
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
   JOIN workspace_mounts ON workspace_mounts.id = workspace_leases.workspace_mount_id
   JOIN runtime_instances ON runtime_instances.id = run_leases.runtime_instance_id
-  JOIN worker_network_slots ON worker_network_slots.id = run_leases.network_slot_id
  WHERE run_waits.id = $1`, waitID, parentResume.Lease.ID).Scan(&authorityJSON); scanErr != nil {
 			t.Fatal(scanErr)
 		}
@@ -853,17 +856,10 @@ UPDATE runtime_instances
        closing_at = COALESCE(closing_at, transaction_timestamp()),
        closed_at = transaction_timestamp(), terminal_at = transaction_timestamp(),
        terminal_reason_code = 'test_reclaimed', reclaimed_at = transaction_timestamp(),
+       reclaim_evidence = jsonb_build_object('method', 'session_closed', 'completed_at', to_char(transaction_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
        reserved_run_id = NULL, reserved_attempt_number = NULL,
        reserved_workspace_version_id = NULL, reservation_expires_at = NULL
  WHERE id = $1 AND desired_state = 'closed'`, runtimeID)
-		mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_network_slots
-   SET state = 'available', runtime_instance_id = NULL,
-       host_interface_name = NULL, guest_address = NULL, gateway_address = NULL,
-       subnet = NULL, tap_name = NULL, netns_name = NULL, guest_mac = NULL,
-       reclaimed_at = transaction_timestamp(), state_reason_code = NULL,
-       state_error = NULL
- WHERE runtime_instance_id = $1`, runtimeID)
 	}
 	expireResumeLease := func(leaseID pgtype.UUID) {
 		mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
@@ -1505,8 +1501,7 @@ UPDATE run_leases
 INSERT INTO run_leases (
     id, org_id, project_id, environment_id, run_id, workspace_id,
     region_id, lease_sequence, attempt_number, worker_group_id,
-    worker_instance_id, worker_epoch, runtime_instance_id,
-    network_slot_id, network_slot_generation, runtime_identity_id,
+    worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id,
     worker_protocol_version, requested_cpu_millis, requested_memory_bytes,
     requested_guest_ephemeral_disk_bytes,
     requested_execution_slots, trace_id, span_id, state, assigned_at,
@@ -1515,7 +1510,7 @@ INSERT INTO run_leases (
 )
 SELECT $1, org_id, project_id, environment_id, $2, workspace_id,
        region_id, 1, 1, worker_group_id, worker_instance_id, worker_epoch,
-       runtime_instance_id, network_slot_id, network_slot_generation,
+       runtime_instance_id,
        runtime_identity_id, worker_protocol_version, requested_cpu_millis,
        requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
        requested_execution_slots, trace_id, span_id,
@@ -1554,8 +1549,7 @@ SELECT $1, org_id, worker_group_id, project_id, environment_id, region_id,
 INSERT INTO run_leases (
     id, org_id, project_id, environment_id, run_id, workspace_id,
     region_id, lease_sequence, attempt_number, worker_group_id,
-    worker_instance_id, worker_epoch, runtime_instance_id,
-    network_slot_id, network_slot_generation, runtime_identity_id,
+    worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id,
     worker_protocol_version, requested_cpu_millis, requested_memory_bytes,
     requested_guest_ephemeral_disk_bytes,
     requested_execution_slots, trace_id, span_id, state, assigned_at,
@@ -1564,8 +1558,7 @@ INSERT INTO run_leases (
 )
 SELECT $1, org_id, project_id, environment_id, $2, workspace_id,
        region_id, lease_sequence - 1, 1, worker_group_id, worker_instance_id,
-       worker_epoch, runtime_instance_id, network_slot_id,
-       network_slot_generation, runtime_identity_id, worker_protocol_version,
+       worker_epoch, runtime_instance_id, runtime_identity_id, worker_protocol_version,
        requested_cpu_millis, requested_memory_bytes,
        requested_guest_ephemeral_disk_bytes,
        requested_execution_slots, trace_id, span_id, 'checkpointed',
@@ -1894,15 +1887,11 @@ UPDATE runtime_instances
        observed_state = 'closed', observed_desired_version = desired_version + 1,
        observed_version = observed_version + 1, closing_at = now(), closed_at = now(),
        terminal_at = now(), terminal_reason_code = 'checkpointed',
-       reclaimed_at = now(), reserved_run_id = NULL, reserved_attempt_number = NULL,
+       reclaimed_at = now(),
+       reclaim_evidence = jsonb_build_object('method', 'session_closed', 'completed_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
+       reserved_run_id = NULL, reserved_attempt_number = NULL,
        reserved_workspace_version_id = NULL, reservation_expires_at = NULL
  WHERE id = $1`, reserved.RuntimeInstanceID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
-UPDATE worker_network_slots
-   SET state = 'available', runtime_instance_id = NULL,
-       host_interface_name = NULL, guest_address = NULL, gateway_address = NULL,
-       subnet = NULL, tap_name = NULL, netns_name = NULL, guest_mac = NULL
- WHERE runtime_instance_id = $1`, reserved.RuntimeInstanceID)
 	if err := tx.Commit(fixture.ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -2082,7 +2071,7 @@ SELECT count(*)
 	// Reclaim the first recreated runtime and grant once more. The final branch
 	// proves that physical loss discovered after the Lease deadline still
 	// closes the retained runtime; cleanup remains blocked until recovery fences
-	// the Lease and must tolerate the slot's historical generation.
+	// the Lease.
 	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspace_mounts
    SET state = 'unmounted', unmounted_at = transaction_timestamp(),
@@ -2094,17 +2083,9 @@ UPDATE runtime_instances
        observed_desired_version = desired_version, observed_at = transaction_timestamp(),
        closing_at = transaction_timestamp(), closed_at = transaction_timestamp(),
        terminal_at = transaction_timestamp(), terminal_reason_code = 'test_reclaimed',
-       reclaimed_at = transaction_timestamp()
- WHERE id = $1 AND desired_state = 'closed'`, restored.RuntimeInstanceID)
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_network_slots
-   SET state = 'available', runtime_instance_id = NULL,
-       host_interface_name = NULL, guest_address = NULL, gateway_address = NULL,
-       subnet = NULL, tap_name = NULL, netns_name = NULL, guest_mac = NULL,
        reclaimed_at = transaction_timestamp(),
-       reclaim_evidence = '{"reason":"test_reclaimed"}'::jsonb
- WHERE runtime_instance_id = $1`, restored.RuntimeInstanceID)
-
+       reclaim_evidence = jsonb_build_object('method', 'session_closed', 'completed_at', to_char(transaction_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+ WHERE id = $1 AND desired_state = 'closed'`, restored.RuntimeInstanceID)
 	secondRestoreCandidate := ReadyRunCandidate{
 		OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(fixture.runID),
 		ExpectedRunStateVersion: 6,
@@ -2238,25 +2219,16 @@ UPDATE worker_instances
 		t.Fatalf("startup recovery with active prior-epoch Run Lease error = %v, want pgx.ErrNoRows", err)
 	}
 	var startupReclaimedAt pgtype.Timestamptz
-	var startupRuntimeID pgtype.UUID
-	var startupSlotGeneration int64
 	if err := startupTx.QueryRow(fixture.ctx, `
-SELECT runtime_instances.reclaimed_at,
-       worker_network_slots.runtime_instance_id,
-       worker_network_slots.generation
+SELECT runtime_instances.reclaimed_at
   FROM runtime_instances
-  JOIN worker_network_slots
-    ON worker_network_slots.id = $2
  WHERE runtime_instances.id = $1`,
 		secondRestored.RuntimeInstanceID,
-		secondRestoreGrant.Lease.NetworkSlotID,
-	).Scan(&startupReclaimedAt, &startupRuntimeID, &startupSlotGeneration); err != nil {
+	).Scan(&startupReclaimedAt); err != nil {
 		t.Fatal(err)
 	}
-	if startupReclaimedAt.Valid || startupRuntimeID != secondRestored.RuntimeInstanceID ||
-		startupSlotGeneration != secondRestoreGrant.Lease.NetworkSlotGeneration {
-		t.Fatalf("startup cleanup erased active restore fence: reclaimed=%v runtime=%s generation=%d",
-			startupReclaimedAt.Valid, pgvalue.UUIDString(startupRuntimeID), startupSlotGeneration)
+	if startupReclaimedAt.Valid {
+		t.Fatalf("startup cleanup reclaimed active restore runtime")
 	}
 	if err := startupTx.Rollback(fixture.ctx); err != nil {
 		t.Fatal(err)
@@ -2287,12 +2259,6 @@ UPDATE runtime_instances
        reserved_run_id = NULL, reserved_attempt_number = NULL,
        reserved_workspace_version_id = NULL, reservation_expires_at = NULL
  WHERE id = $1`, secondRestored.RuntimeInstanceID)
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_network_slots
-   SET state = 'quarantined', reclaiming_at = transaction_timestamp(),
-       quarantined_at = transaction_timestamp(),
-       state_reason_code = 'runtime_physical_cleanup_pending'
- WHERE runtime_instance_id = $1`, secondRestored.RuntimeInstanceID)
 	var failedDesiredVersion, failedObservedVersion int64
 	if err := fixture.pool.QueryRow(fixture.ctx, `
 SELECT desired_version, observed_version
@@ -2306,9 +2272,7 @@ SELECT desired_version, observed_version
 		WorkerEpoch:             secondRestoreGrant.Lease.WorkerEpoch,
 		DesiredVersion:          failedDesiredVersion,
 		ExpectedObservedVersion: failedObservedVersion,
-		NetworkSlotID:           secondRestoreGrant.Lease.NetworkSlotID,
-		NetworkSlotGeneration:   secondRestoreGrant.Lease.NetworkSlotGeneration,
-		CleanupProof:            []byte(`{"reason":"test_cleanup"}`),
+		CleanupProof:            []byte(`{"method":"host_reconciled","completed_at":"2026-07-31T00:00:00Z"}`),
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("reclaim failed restore runtime with active Lease error = %v, want pgx.ErrNoRows", err)
@@ -2317,11 +2281,6 @@ SELECT desired_version, observed_version
 UPDATE worker_instances
    SET state = 'lost', lost_at = transaction_timestamp()
  WHERE id = $1`, fixture.workerID)
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_network_slots
-   SET state = 'lost', generation = generation + 1,
-       lost_at = transaction_timestamp(), state_reason_code = 'test_worker_lost'
- WHERE runtime_instance_id = $1`, secondRestored.RuntimeInstanceID)
 	recovered, err = db.New(fixture.pool).RecoverExpiredRunResumes(fixture.ctx, recoverExpiredRunResumesParams(10))
 	if err != nil {
 		t.Fatal(err)
@@ -2333,7 +2292,7 @@ UPDATE worker_network_slots
 	var lostRunLeaseState, lostRunLeaseReason, lostWorkspaceLeaseState, lostWorkspaceLeaseReason string
 	var lostAttemptOutcome, lostRunReason pgtype.Text
 	var lostAttemptTerminalAt, lostRunTerminalAt pgtype.Timestamptz
-	var lostActiveElapsed, lostRunVersion, lostResumeRequestVersion, lostSlotGeneration int64
+	var lostActiveElapsed, lostRunVersion, lostResumeRequestVersion int64
 	var lostWaitLeaseID pgtype.UUID
 	var ownerRunID pgtype.UUID
 	err = fixture.pool.QueryRow(fixture.ctx, `
@@ -2343,7 +2302,7 @@ SELECT runs.status, run_waits.suspension_state, run_waits.current_run_lease_id,
        runs.terminal_reason_code, runs.terminal_at, runs.active_elapsed_ms,
        workspaces.owner_run_id, run_leases.state, run_leases.terminal_reason_code,
        workspace_leases.state, workspace_leases.terminal_reason_code,
-       workspace_mounts.state, worker_network_slots.generation
+       workspace_mounts.state
   FROM runs
   JOIN run_waits ON run_waits.run_id = runs.id
   JOIN run_attempts
@@ -2353,7 +2312,6 @@ SELECT runs.status, run_waits.suspension_state, run_waits.current_run_lease_id,
   JOIN run_leases ON run_leases.id = $2
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
   JOIN workspace_mounts ON workspace_mounts.id = workspace_leases.workspace_mount_id
-  JOIN worker_network_slots ON worker_network_slots.id = run_leases.network_slot_id
  WHERE runs.id = $1`, fixture.runID, secondRestoreGrant.Lease.ID).Scan(
 		&lostRunState, &lostWaitState, &lostWaitLeaseID,
 		&lostRunVersion, &lostResumeRequestVersion,
@@ -2361,7 +2319,7 @@ SELECT runs.status, run_waits.suspension_state, run_waits.current_run_lease_id,
 		&lostRunReason, &lostRunTerminalAt, &lostActiveElapsed,
 		&ownerRunID, &lostRunLeaseState, &lostRunLeaseReason,
 		&lostWorkspaceLeaseState, &lostWorkspaceLeaseReason,
-		&lostMountState, &lostSlotGeneration,
+		&lostMountState,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -2374,14 +2332,13 @@ SELECT runs.status, run_waits.suspension_state, run_waits.current_run_lease_id,
 		ownerRunID != pgvalue.UUID(fixture.runID) ||
 		lostRunLeaseState != "expired" || lostRunLeaseReason != "lease_expired" ||
 		lostWorkspaceLeaseState != "expired" || lostWorkspaceLeaseReason != "lease_expired" ||
-		lostMountState != "failed" ||
-		lostSlotGeneration != secondRestoreGrant.Lease.NetworkSlotGeneration+1 {
-		t.Fatalf("worker-loss recovery run=%s wait=%s wait_lease=%s run_version=%d request_version=%d attempt=%v attempt_at=%v run_reason=%v run_at=%v active=%d owner=%s run_lease=%s/%s workspace_lease=%s/%s mount=%s slot_generation=%d",
+		lostMountState != "failed" {
+		t.Fatalf("worker-loss recovery run=%s wait=%s wait_lease=%s run_version=%d request_version=%d attempt=%v attempt_at=%v run_reason=%v run_at=%v active=%d owner=%s run_lease=%s/%s workspace_lease=%s/%s mount=%s",
 			lostRunState, lostWaitState, pgvalue.UUIDString(lostWaitLeaseID), lostRunVersion,
 			lostResumeRequestVersion, lostAttemptOutcome, lostAttemptTerminalAt,
 			lostRunReason, lostRunTerminalAt, lostActiveElapsed, pgvalue.UUIDString(ownerRunID),
 			lostRunLeaseState, lostRunLeaseReason, lostWorkspaceLeaseState,
-			lostWorkspaceLeaseReason, lostMountState, lostSlotGeneration)
+			lostWorkspaceLeaseReason, lostMountState)
 	}
 	var secondResumeAdmissionCount, terminalEventCount int
 	if err := fixture.pool.QueryRow(fixture.ctx, `
@@ -2698,13 +2655,9 @@ UPDATE runtime_instances SET desired_state = 'closed', desired_version = desired
        observed_state = 'closed', observed_desired_version = desired_version + 1,
        observed_version = observed_version + 1, closing_at = now(), closed_at = now(),
        terminal_at = now(), terminal_reason_code = 'checkpointed', reclaimed_at = now(),
+       reclaim_evidence = jsonb_build_object('method', 'session_closed', 'completed_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
        reserved_run_id = NULL, reserved_attempt_number = NULL,
        reserved_workspace_version_id = NULL, reservation_expires_at = NULL WHERE id = $1`, reserved.RuntimeInstanceID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
-UPDATE worker_network_slots SET state = 'available', runtime_instance_id = NULL,
-       host_interface_name = NULL, guest_address = NULL, gateway_address = NULL,
-       subnet = NULL, tap_name = NULL, netns_name = NULL, guest_mac = NULL
- WHERE runtime_instance_id = $1`, reserved.RuntimeInstanceID)
 	if err := tx.Commit(fixture.ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -2713,8 +2666,8 @@ UPDATE worker_network_slots SET state = 'available', runtime_instance_id = NULL,
 
 func markRunPlacementRuntimeReadyQuery(t *testing.T, fixture runPlacementFixture, runtimeID pgtype.UUID) error {
 	t.Helper()
-	var desiredVersion, observedVersion, workerEpoch, slotGeneration int64
-	var workerID, slotID, runtimeSubstrateID pgtype.UUID
+	var desiredVersion, observedVersion, workerEpoch int64
+	var workerID, runtimeSubstrateID pgtype.UUID
 	err := fixture.pool.QueryRow(fixture.ctx, `
 WITH runtime AS (
     SELECT runtime_instances.org_id,
@@ -2752,30 +2705,18 @@ LIMIT 1`, runtimeID, pgvalue.NewUUIDv7()).Scan(&runtimeSubstrateID)
 SELECT runtime_instances.desired_version,
        runtime_instances.observed_version,
        runtime_instances.worker_instance_id,
-       runtime_instances.worker_epoch,
-       worker_network_slots.id,
-       worker_network_slots.generation
+       runtime_instances.worker_epoch
   FROM runtime_instances
-  JOIN worker_network_slots ON worker_network_slots.runtime_instance_id = runtime_instances.id
  WHERE runtime_instances.id = $1`, runtimeID).Scan(
-		&desiredVersion, &observedVersion, &workerID, &workerEpoch, &slotID, &slotGeneration,
+		&desiredVersion, &observedVersion, &workerID, &workerEpoch,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	guestAddress := netip.MustParseAddr("10.0.0.2")
-	gatewayAddress := netip.MustParseAddr("10.0.0.1")
-	subnet := netip.MustParsePrefix("10.0.0.0/24")
 	_, err = db.New(fixture.pool).MarkRuntimeInstanceReady(fixture.ctx, db.MarkRuntimeInstanceReadyParams{
 		RuntimeSubstrateID: runtimeSubstrateID,
 		DesiredVersion:     desiredVersion, ID: runtimeID, WorkerInstanceID: workerID,
 		WorkerEpoch: workerEpoch, ExpectedObservedVersion: observedVersion,
-		HostInterfaceName: pgtype.Text{String: "veth-test", Valid: true},
-		GuestAddress:      &guestAddress, GatewayAddress: &gatewayAddress, Subnet: &subnet,
-		TapName:       pgtype.Text{String: "tap-test", Valid: true},
-		NetnsName:     pgtype.Text{String: "netns-test", Valid: true},
-		GuestMac:      net.HardwareAddr{0x02, 0, 0, 0, 0, 1},
-		NetworkSlotID: slotID, NetworkSlotGeneration: slotGeneration,
 	})
 	return err
 }
@@ -3014,7 +2955,7 @@ INSERT INTO worker_groups (
 	mustRunPlacementExec(t, ctx, pool, `
 INSERT INTO runtime_identities (
     id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
-    rootfs_digest, cni_profile
+    rootfs_digest, network_abi
 ) VALUES ($1, 'x86_64', 'helmr.runtime.v0', 'kernel', 'initramfs', 'rootfs', 'helmr/v0')`,
 		runtimeIdentityID,
 	)
@@ -3046,20 +2987,11 @@ INSERT INTO worker_instances (
 INSERT INTO worker_observations (
     worker_instance_id, worker_epoch, cpu_pressure_bps, memory_pressure_bps,
     guest_ephemeral_disk_pressure_bps, build_cache_pressure_bps,
-    artifact_cache_pressure_bps, checkpoint_pressure_bps, leaked_slot_count,
+    artifact_cache_pressure_bps, checkpoint_pressure_bps, quarantined_resource_count,
     run_queue_depth, build_queue_depth, runtime_start_queue_depth, observed_at
 ) VALUES ($1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, now())`,
 		fixture.workerID,
 	)
-	mustRunPlacementExec(t, ctx, pool, `
-INSERT INTO worker_network_slots (
-    id, worker_group_id, worker_instance_id, worker_epoch, slot_name, generation
-) VALUES ($1, $2, $3, 1, 'slot-1', 1)`,
-		uuid.Must(uuid.NewV7()),
-		fixture.groupID,
-		fixture.workerID,
-	)
-
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)

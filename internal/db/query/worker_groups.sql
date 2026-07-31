@@ -110,19 +110,11 @@ WITH desired_group AS (
        AND runtime_instances.reclaimed_at IS NULL
        AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
     RETURNING runtime_instances.id
-), lost_slots AS (
-    UPDATE worker_network_slots
-       SET state = 'lost', generation = generation + 1, lost_at = now(),
-           state_reason_code = 'enrollment_policy_changed', updated_at = now()
-     WHERE worker_network_slots.worker_instance_id IN (SELECT id FROM lost_workers)
-       AND worker_network_slots.state IN ('assigned', 'bound', 'reclaiming', 'quarantined')
-    RETURNING worker_network_slots.id
 )
 SELECT desired_group.* FROM desired_group
  WHERE (SELECT count(*) FROM revoked) >= 0
    AND (SELECT count(*) FROM lost_mounts) >= 0
-   AND (SELECT count(*) FROM lost_runtimes) >= 0
-   AND (SELECT count(*) FROM lost_slots) >= 0;
+   AND (SELECT count(*) FROM lost_runtimes) >= 0;
 
 -- name: LockWorkerGroupsForReconciliation :many
 SELECT worker_groups.id
@@ -190,19 +182,11 @@ WITH disabled_groups AS (
        AND reclaimed_at IS NULL
        AND observed_state IN ('allocated', 'preparing', 'ready', 'closing')
     RETURNING runtime_instances.id
-), lost_slots AS (
-    UPDATE worker_network_slots
-       SET state = 'lost', generation = generation + 1, lost_at = now(),
-           state_reason_code = 'worker_group_removed', updated_at = now()
-     WHERE worker_instance_id IN (SELECT id FROM lost_workers)
-       AND state IN ('assigned', 'bound', 'reclaiming', 'quarantined')
-    RETURNING worker_network_slots.id
 )
 SELECT disabled_groups.* FROM disabled_groups
  WHERE (SELECT count(*) FROM revoked) >= 0
    AND (SELECT count(*) FROM lost_mounts) >= 0
    AND (SELECT count(*) FROM lost_runtimes) >= 0
-   AND (SELECT count(*) FROM lost_slots) >= 0
  ORDER BY disabled_groups.id;
 
 -- name: ListLiveAbsentWorkerGroupIDs :many
@@ -287,11 +271,11 @@ WITH activation AS (
 ), runtime AS (
     INSERT INTO runtime_identities (
         id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
-        rootfs_digest, cni_profile, last_seen_at
+        rootfs_digest, network_abi, last_seen_at
     )
     SELECT sqlc.arg(runtime_identity_id), sqlc.arg(runtime_arch), sqlc.arg(runtime_abi),
            sqlc.arg(kernel_digest), sqlc.arg(initramfs_digest), sqlc.arg(rootfs_digest),
-           sqlc.arg(cni_profile), now()
+           sqlc.arg(network_abi), now()
       FROM activation
     ON CONFLICT (id) DO UPDATE SET last_seen_at = now()
      WHERE runtime_identities.runtime_arch = EXCLUDED.runtime_arch
@@ -299,27 +283,8 @@ WITH activation AS (
        AND runtime_identities.kernel_digest = EXCLUDED.kernel_digest
        AND runtime_identities.initramfs_digest = EXCLUDED.initramfs_digest
        AND runtime_identities.rootfs_digest = EXCLUDED.rootfs_digest
-       AND runtime_identities.cni_profile = EXCLUDED.cni_profile
+       AND runtime_identities.network_abi = EXCLUDED.network_abi
     RETURNING id
-), slots AS (
-    INSERT INTO worker_network_slots (
-        id, worker_group_id, worker_instance_id, worker_epoch, slot_name,
-        generation, state
-    )
-    SELECT (
-               substr(md5(activation.id::text || ':' || activation.current_epoch::text || ':' || slot.ordinal::text), 1, 8) || '-' ||
-               substr(md5(activation.id::text || ':' || activation.current_epoch::text || ':' || slot.ordinal::text), 9, 4) || '-' ||
-               substr(md5(activation.id::text || ':' || activation.current_epoch::text || ':' || slot.ordinal::text), 13, 4) || '-' ||
-               substr(md5(activation.id::text || ':' || activation.current_epoch::text || ':' || slot.ordinal::text), 17, 4) || '-' ||
-               substr(md5(activation.id::text || ':' || activation.current_epoch::text || ':' || slot.ordinal::text), 21, 12)
-           )::uuid,
-           activation.worker_group_id, activation.id, activation.current_epoch,
-           'vm-' || lpad(slot.ordinal::text, 4, '0'), 1, 'available'
-      FROM activation
-      CROSS JOIN LATERAL generate_series(1, sqlc.arg(max_vm_slots)::integer) AS slot(ordinal)
-     WHERE sqlc.arg(supports_run)::boolean
-    ON CONFLICT (id) DO NOTHING
-    RETURNING worker_instance_id
 ), certified AS (
     UPDATE worker_instances
        SET state = 'active', protocol_version = sqlc.arg(protocol_version),
@@ -349,15 +314,12 @@ WITH activation AS (
            updated_at = now()
       FROM runtime, activation
      WHERE worker_instances.id = activation.id
-       AND (activation.prior_state = 'active'
-            OR NOT sqlc.arg(supports_run)::boolean
-            OR (SELECT count(*) FROM slots) = sqlc.arg(max_vm_slots)::integer)
     RETURNING worker_instances.*
 ), observation AS (
     INSERT INTO worker_observations (
         worker_instance_id, worker_epoch, cpu_pressure_bps, memory_pressure_bps,
         guest_ephemeral_disk_pressure_bps, build_cache_pressure_bps,
-        artifact_cache_pressure_bps, checkpoint_pressure_bps, leaked_slot_count,
+        artifact_cache_pressure_bps, checkpoint_pressure_bps, quarantined_resource_count,
         run_queue_depth, build_queue_depth, runtime_start_queue_depth, health_details,
         run_paused_reason, build_paused_reason, runtime_paused_reason, observed_at
     )
@@ -389,7 +351,7 @@ WITH target AS (
 INSERT INTO worker_observations (
     worker_instance_id, worker_epoch, cpu_pressure_bps, memory_pressure_bps,
     guest_ephemeral_disk_pressure_bps, build_cache_pressure_bps,
-    artifact_cache_pressure_bps, checkpoint_pressure_bps, leaked_slot_count,
+    artifact_cache_pressure_bps, checkpoint_pressure_bps, quarantined_resource_count,
     run_queue_depth, build_queue_depth, runtime_start_queue_depth,
     run_paused_reason, build_paused_reason, runtime_paused_reason,
     health_details, observed_at
@@ -398,7 +360,7 @@ SELECT target.id, target.current_epoch,
        sqlc.arg(cpu_pressure_bps), sqlc.arg(memory_pressure_bps),
        sqlc.arg(guest_ephemeral_disk_pressure_bps),
        sqlc.arg(build_cache_pressure_bps), sqlc.arg(artifact_cache_pressure_bps),
-       sqlc.arg(checkpoint_pressure_bps), sqlc.arg(leaked_slot_count),
+       sqlc.arg(checkpoint_pressure_bps), sqlc.arg(quarantined_resource_count),
        sqlc.arg(run_queue_depth), sqlc.arg(build_queue_depth),
        sqlc.arg(runtime_start_queue_depth), sqlc.narg(run_paused_reason),
        sqlc.narg(build_paused_reason), sqlc.narg(runtime_paused_reason),
@@ -411,7 +373,7 @@ ON CONFLICT (worker_instance_id, worker_epoch) DO UPDATE
        build_cache_pressure_bps = EXCLUDED.build_cache_pressure_bps,
        artifact_cache_pressure_bps = EXCLUDED.artifact_cache_pressure_bps,
        checkpoint_pressure_bps = EXCLUDED.checkpoint_pressure_bps,
-       leaked_slot_count = EXCLUDED.leaked_slot_count,
+       quarantined_resource_count = EXCLUDED.quarantined_resource_count,
        run_queue_depth = EXCLUDED.run_queue_depth,
        build_queue_depth = EXCLUDED.build_queue_depth,
        runtime_start_queue_depth = EXCLUDED.runtime_start_queue_depth,
@@ -500,6 +462,10 @@ WITH target AS (
            terminal_at = COALESCE(terminal_at, now()),
            terminal_reason_code = COALESCE(terminal_reason_code, 'startup_inventory_reclaimed'),
            reclaimed_at = now(),
+           reclaim_evidence = jsonb_build_object(
+               'method', 'host_reconciled',
+               'completed_at', sqlc.arg(recovery_evidence)::jsonb ->> 'observed_at'
+           ),
            reserved_run_id = NULL, reserved_attempt_number = NULL,
            reserved_process_id = NULL, reserved_workspace_version_id = NULL,
            reservation_expires_at = NULL, updated_at = now()
@@ -515,41 +481,6 @@ WITH target AS (
               AND run_leases.state IN ('assigned', 'starting', 'running')
        )
     RETURNING runtime_instances.id
-), reclaimed_slots AS (
-    UPDATE worker_network_slots
-       SET state = 'lost', generation = generation + 1,
-           runtime_instance_id = NULL, host_interface_name = NULL,
-           guest_address = NULL, gateway_address = NULL, subnet = NULL,
-           tap_name = NULL, netns_name = NULL, guest_mac = NULL,
-           reclaiming_at = NULL, quarantined_at = NULL, lost_at = now(),
-           reclaimed_at = now(), reclaim_evidence = sqlc.arg(recovery_evidence)::jsonb,
-           state_reason_code = 'startup_inventory_reclaimed', state_error = NULL, updated_at = now()
-      FROM target
-     WHERE worker_network_slots.worker_instance_id = target.id
-       AND worker_network_slots.worker_epoch < target.current_epoch
-       AND NOT EXISTS (
-           SELECT 1 FROM quarantined
-            WHERE quarantined.id = worker_network_slots.runtime_instance_id
-       )
-       AND NOT EXISTS (
-           SELECT 1
-             FROM run_leases
-            WHERE (run_leases.network_slot_id = worker_network_slots.id
-                   OR run_leases.runtime_instance_id = worker_network_slots.runtime_instance_id)
-              AND run_leases.state IN ('assigned', 'starting', 'running')
-       )
-       AND (worker_network_slots.state <> 'lost' OR worker_network_slots.reclaimed_at IS NULL)
-    RETURNING worker_network_slots.id
-), quarantined_slots AS (
-    UPDATE worker_network_slots
-       SET state = 'quarantined', quarantined_at = now(),
-           state_reason_code = 'startup_inventory_quarantined',
-           state_error = sqlc.arg(recovery_evidence)::jsonb, updated_at = now()
-      FROM target
-     WHERE worker_network_slots.worker_instance_id = target.id
-       AND worker_network_slots.worker_epoch < target.current_epoch
-       AND worker_network_slots.runtime_instance_id IN (SELECT id FROM quarantined)
-    RETURNING worker_network_slots.id
 )
 UPDATE worker_instances
    SET startup_inventory_epoch = target.current_epoch,
@@ -558,6 +489,4 @@ UPDATE worker_instances
   FROM target
  WHERE worker_instances.id = target.id
    AND (SELECT count(*) FROM reclaimed_runtimes) >= 0
-   AND (SELECT count(*) FROM quarantined_slots) >= 0
-   AND (SELECT count(*) FROM reclaimed_slots) >= 0
 RETURNING worker_instances.*;

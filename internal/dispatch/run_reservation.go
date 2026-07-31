@@ -31,14 +31,14 @@ type runRuntime struct {
 	reservedVersionID       pgtype.UUID
 	reservationExpiresAt    pgtype.Timestamptz
 	reservationActive       bool
+	desiredState            db.RuntimeDesiredState
+	desiredVersion          int64
 	observedState           db.RuntimeObservedState
+	observedDesiredVersion  int64
 	cpuMillis               int64
 	memoryBytes             int64
 	guestEphemeralDiskBytes int64
 	executionSlots          int32
-	networkSlotID           pgtype.UUID
-	networkSlotGeneration   int64
-	networkSlotState        db.WorkerNetworkSlotState
 }
 
 func (d *Authority) prepareRunWorkspace(
@@ -162,8 +162,6 @@ func (d *Authority) prepareRunWorkspace(
 				Time:  reservedAt.Add(d.runPolicy.ReservationTTL),
 				Valid: true,
 			},
-			NetworkSlotID:         worker.networkSlotID,
-			NetworkSlotGeneration: worker.networkSlotGeneration,
 		},
 	)
 	if err != nil {
@@ -229,7 +227,7 @@ func (d *Authority) useRunRuntime(
 		authority.usesRetainedHandoff(locked.id) {
 		return runWorkspaceMount{}, ErrCapacityUnavailable
 	}
-	if locked.observedState != db.RuntimeObservedStateReady ||
+	if !runRuntimeReady(locked) ||
 		!locked.reservedRunID.Valid ||
 		locked.reservedRunID != authority.runID {
 		return runWorkspaceMount{
@@ -290,36 +288,12 @@ func lockRunRuntime(
 	tx pgx.Tx,
 	runtime runRuntime,
 ) (runRuntime, error) {
-	var slotID pgtype.UUID
-	err := tx.QueryRow(ctx, `
-SELECT id
-  FROM worker_network_slots
- WHERE id = $1
-   AND worker_group_id = $2
-   AND worker_instance_id = $3
-   AND worker_epoch = $4
-   AND generation = $5
-   AND runtime_instance_id = $6
-   AND state IN ('assigned', 'bound')
- FOR UPDATE`,
-		runtime.networkSlotID,
-		runtime.groupID,
-		runtime.workerID,
-		runtime.workerEpoch,
-		runtime.networkSlotGeneration,
-		runtime.id,
-	).Scan(&slotID)
-	if err != nil {
-		return runRuntime{}, err
-	}
 	return scanRunRuntime(tx.QueryRow(
 		ctx,
 		runRuntimeSQL(true),
 		runtime.id,
 		runtime.workerID,
 		runtime.workerEpoch,
-		runtime.networkSlotID,
-		runtime.networkSlotGeneration,
 	))
 }
 
@@ -345,24 +319,18 @@ SELECT runtime_instances.id,
            runtime_instances.reservation_expires_at > transaction_timestamp(),
            false
        ),
+       runtime_instances.desired_state,
+       runtime_instances.desired_version,
        runtime_instances.observed_state,
+       runtime_instances.observed_desired_version,
        runtime_instances.reserved_cpu_millis,
        runtime_instances.reserved_memory_bytes,
        runtime_instances.reserved_guest_ephemeral_disk_bytes,
-       runtime_instances.reserved_execution_slots,
-       worker_network_slots.id,
-       worker_network_slots.generation,
-       worker_network_slots.state
+       runtime_instances.reserved_execution_slots
   FROM runtime_instances
   JOIN worker_instances
     ON worker_instances.id = runtime_instances.worker_instance_id
    AND worker_instances.worker_group_id = runtime_instances.worker_group_id
-  JOIN worker_network_slots
-    ON worker_network_slots.worker_group_id = runtime_instances.worker_group_id
-   AND worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
-   AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
-   AND worker_network_slots.runtime_instance_id = runtime_instances.id
-   AND worker_network_slots.state IN ('assigned', 'bound')
  WHERE runtime_instances.workspace_id = $1
    AND runtime_instances.reclaimed_at IS NULL`
 	}
@@ -386,30 +354,22 @@ SELECT runtime_instances.id,
            runtime_instances.reservation_expires_at > transaction_timestamp(),
            false
        ),
+       runtime_instances.desired_state,
+       runtime_instances.desired_version,
        runtime_instances.observed_state,
+       runtime_instances.observed_desired_version,
        runtime_instances.reserved_cpu_millis,
        runtime_instances.reserved_memory_bytes,
        runtime_instances.reserved_guest_ephemeral_disk_bytes,
-       runtime_instances.reserved_execution_slots,
-       worker_network_slots.id,
-       worker_network_slots.generation,
-       worker_network_slots.state
+       runtime_instances.reserved_execution_slots
   FROM runtime_instances
   JOIN worker_instances
     ON worker_instances.id = runtime_instances.worker_instance_id
    AND worker_instances.worker_group_id = runtime_instances.worker_group_id
-  JOIN worker_network_slots
-    ON worker_network_slots.worker_group_id = runtime_instances.worker_group_id
-   AND worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
-   AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
-   AND worker_network_slots.runtime_instance_id = runtime_instances.id
  WHERE runtime_instances.id = $1
    AND runtime_instances.worker_instance_id = $2
    AND runtime_instances.worker_epoch = $3
    AND runtime_instances.reclaimed_at IS NULL
-   AND worker_network_slots.id = $4
-   AND worker_network_slots.generation = $5
-   AND worker_network_slots.state IN ('assigned', 'bound')
  FOR UPDATE OF runtime_instances`
 }
 
@@ -436,16 +396,22 @@ func scanRunRuntime(row rowScanner) (runRuntime, error) {
 		&runtime.reservedVersionID,
 		&runtime.reservationExpiresAt,
 		&runtime.reservationActive,
+		&runtime.desiredState,
+		&runtime.desiredVersion,
 		&runtime.observedState,
+		&runtime.observedDesiredVersion,
 		&runtime.cpuMillis,
 		&runtime.memoryBytes,
 		&runtime.guestEphemeralDiskBytes,
 		&runtime.executionSlots,
-		&runtime.networkSlotID,
-		&runtime.networkSlotGeneration,
-		&runtime.networkSlotState,
 	)
 	return runtime, err
+}
+
+func runRuntimeReady(runtime runRuntime) bool {
+	return runtime.desiredState == db.RuntimeDesiredStateReady &&
+		runtime.observedState == db.RuntimeObservedStateReady &&
+		runtime.observedDesiredVersion == runtime.desiredVersion
 }
 
 func validateRunRuntime(
@@ -530,13 +496,11 @@ SELECT id, worker_instance_id, worker_epoch, runtime_instance_id, state,
 }
 
 type runWorker struct {
-	groupID               string
-	workerID              pgtype.UUID
-	workerEpoch           int64
-	protocolVersion       string
-	runtimeIdentityID     string
-	networkSlotID         pgtype.UUID
-	networkSlotGeneration int64
+	groupID           string
+	workerID          pgtype.UUID
+	workerEpoch       int64
+	protocolVersion   string
+	runtimeIdentityID string
 }
 
 func selectRunWorker(
@@ -550,9 +514,7 @@ SELECT worker_groups.id,
        worker_instances.id,
        worker_instances.current_epoch,
        worker_instances.protocol_version,
-       worker_instances.runtime_identity_id,
-       worker_network_slots.id,
-       worker_network_slots.generation
+       worker_instances.runtime_identity_id
   FROM worker_groups
   JOIN worker_instances
     ON worker_instances.worker_group_id = worker_groups.id
@@ -563,7 +525,7 @@ SELECT worker_groups.id,
   JOIN runtime_identities
     ON runtime_identities.id = worker_instances.runtime_identity_id
    AND runtime_identities.runtime_arch = $2
-   AND runtime_identities.cni_profile = 'helmr/v0'
+   AND runtime_identities.network_abi = 'helmr/v0'
    AND ($6::text = '' OR runtime_identities.id = $6)
   JOIN worker_observations
    ON worker_observations.worker_instance_id = worker_instances.id
@@ -571,12 +533,6 @@ SELECT worker_groups.id,
    AND worker_observations.observed_at >= transaction_timestamp()
        - worker_groups.observation_ttl_seconds * interval '1 second'
    AND worker_observations.run_paused_reason IS NULL
-  JOIN worker_network_slots
-    ON worker_network_slots.worker_group_id = worker_groups.id
-   AND worker_network_slots.worker_instance_id = worker_instances.id
-   AND worker_network_slots.worker_epoch = worker_instances.current_epoch
-   AND worker_network_slots.state = 'available'
-   AND worker_network_slots.runtime_instance_id IS NULL
  CROSS JOIN LATERAL (
      SELECT
          coalesce((
@@ -651,8 +607,7 @@ SELECT worker_groups.id,
           AND runtime_instances.worker_epoch = worker_instances.current_epoch
           AND runtime_instances.observed_state IN ('allocated', 'preparing')
    )
- ORDER BY worker_instances.updated_at, worker_instances.id,
-          worker_network_slots.slot_name, worker_network_slots.id
+ ORDER BY worker_instances.updated_at, worker_instances.id
  LIMIT 1`,
 		authority.regionID,
 		authority.architecture,
@@ -669,8 +624,6 @@ SELECT worker_groups.id,
 		&worker.workerEpoch,
 		&worker.protocolVersion,
 		&worker.runtimeIdentityID,
-		&worker.networkSlotID,
-		&worker.networkSlotGeneration,
 	)
 	return worker, err
 }
@@ -683,11 +636,9 @@ func lockRunWorkerCapacity(
 ) error {
 	var available bool
 	err := tx.QueryRow(ctx, `
-SELECT worker_network_slots.state = 'available'
-       AND worker_network_slots.runtime_instance_id IS NULL
-       AND worker_instances.per_vm_cpu_millis >= $6
-       AND worker_instances.per_vm_memory_bytes >= $7
-       AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= $8
+SELECT worker_instances.per_vm_cpu_millis >= $4
+       AND worker_instances.per_vm_memory_bytes >= $5
+       AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= $6
        AND worker_instances.max_vm_slots > (
            SELECT count(*)
              FROM runtime_instances
@@ -708,14 +659,10 @@ SELECT worker_network_slots.state = 'available'
               AND runtime_instances.worker_epoch = worker_instances.current_epoch
               AND runtime_instances.observed_state IN ('allocated', 'preparing')
        )
-       AND worker_instances.certified_cpu_millis - usage.cpu_millis >= $6
-       AND worker_instances.certified_memory_bytes - usage.memory_bytes >= $7
-       AND worker_instances.certified_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes >= $8
+       AND worker_instances.certified_cpu_millis - usage.cpu_millis >= $4
+       AND worker_instances.certified_memory_bytes - usage.memory_bytes >= $5
+       AND worker_instances.certified_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes >= $6
   FROM worker_instances
-  JOIN worker_network_slots
-   ON worker_network_slots.worker_group_id = worker_instances.worker_group_id
-   AND worker_network_slots.worker_instance_id = worker_instances.id
-   AND worker_network_slots.worker_epoch = worker_instances.current_epoch
  CROSS JOIN LATERAL (
      SELECT
          coalesce((
@@ -761,14 +708,10 @@ SELECT worker_network_slots.state = 'available'
  WHERE worker_instances.id = $1
    AND worker_instances.worker_group_id = $2
    AND worker_instances.current_epoch = $3
-   AND worker_network_slots.id = $4
-   AND worker_network_slots.generation = $5
- FOR UPDATE OF worker_network_slots`,
+ FOR UPDATE OF worker_instances`,
 		worker.workerID,
 		worker.groupID,
 		worker.workerEpoch,
-		worker.networkSlotID,
-		worker.networkSlotGeneration,
 		authority.resources.cpuMillis,
 		authority.resources.memoryBytes,
 		authority.resources.guestEphemeralDiskBytes,

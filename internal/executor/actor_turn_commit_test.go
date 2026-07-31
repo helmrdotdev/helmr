@@ -38,8 +38,6 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 	claim := testFreshProgramClaim(t)
 	claim.Lease.WorkerGroupID = "workers"
 	claim.Lease.WorkerProtocolVersion = api.CurrentWorkerProtocolVersion
-	claim.Lease.NetworkSlotID = "slot-1"
-	claim.Lease.NetworkSlotGeneration = 1
 	claim.Lease.RequestedCPUMillis = 1
 	claim.Lease.RequestedMemoryBytes = 1
 	claim.Lease.RequestedGuestEphemeralDiskBytes = 1

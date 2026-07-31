@@ -36,7 +36,7 @@ type RunRuntimeRequirementFields struct {
 	KernelDigest            string
 	InitramfsDigest         string
 	RootfsDigest            string
-	CNIProfile              string
+	NetworkABI              string
 	PlacementJSON           []byte
 	PlacementLabel          string
 }
@@ -71,7 +71,7 @@ func RunRuntimeRequirementsFromFields(fields RunRuntimeRequirementFields) (RunRu
 			KernelDigest:    fields.KernelDigest,
 			InitramfsDigest: fields.InitramfsDigest,
 			RootfsDigest:    fields.RootfsDigest,
-			CNIProfile:      fields.CNIProfile,
+			NetworkABI:      fields.NetworkABI,
 		},
 		Placement: placement,
 	}
@@ -101,8 +101,8 @@ func (r RunRuntimeRequirements) Validate() error {
 	if r.Runtime.RootfsDigest == "" {
 		problems = append(problems, errors.New("runtime rootfs digest is required"))
 	}
-	if r.Runtime.CNIProfile == "" {
-		problems = append(problems, errors.New("runtime cni profile is required"))
+	if r.Runtime.NetworkABI == "" {
+		problems = append(problems, errors.New("runtime network abi is required"))
 	}
 	if strings.TrimSpace(r.Placement.Region) != "" {
 		problems = append(problems, errors.New("placement region is not supported; use the environment region route"))

@@ -85,12 +85,10 @@ type nestedResumePhysical struct {
 	workerDisabledAt     pgtype.Timestamptz
 	runtimeID            pgtype.UUID
 	runtimeDesired       db.RuntimeDesiredState
+	runtimeObserved      db.RuntimeObservedState
+	runtimeConverged     bool
 	runtimeLostAt        pgtype.Timestamptz
 	runtimeFailedAt      pgtype.Timestamptz
-	slotID               pgtype.UUID
-	slotGeneration       int64
-	slotState            db.WorkerNetworkSlotState
-	slotLostAt           pgtype.Timestamptz
 	mountID              pgtype.UUID
 	mountGeneration      int64
 	mountState           db.WorkspaceMountState
@@ -336,8 +334,6 @@ SELECT runs.id, runs.org_id, runs.workspace_id, resume_wait.id,
    AND workspace_mounts.workspace_id = runs.workspace_id
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
-  JOIN worker_network_slots
-    ON worker_network_slots.id = run_leases.network_slot_id
  WHERE runs.entrypoint_kind = 'task'
    AND runs.actor_id IS NULL
    AND runs.parent_owns_lifecycle IS TRUE
@@ -355,7 +351,6 @@ SELECT runs.id, runs.org_id, runs.workspace_id, resume_wait.id,
        OR worker_instances.lost_at <= transaction_timestamp()
        OR worker_instances.disabled_at <= transaction_timestamp()
        OR worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
-       OR worker_network_slots.lost_at <= transaction_timestamp()
    )
  ORDER BY runs.id
  LIMIT $1`,
@@ -718,7 +713,8 @@ SELECT source_run_lease_id,
 		physical.mountGeneration == physical.leaseMountGeneration &&
 		physical.mountGeneration >= wait.mountGeneration &&
 		physical.runtimeDesired == db.RuntimeDesiredStateReady &&
-		physical.slotState == db.WorkerNetworkSlotStateBound &&
+		physical.runtimeObserved == db.RuntimeObservedStateReady &&
+		physical.runtimeConverged &&
 		physical.mountState == db.WorkspaceMountStateMounted &&
 		workspaceOwnership == wait.ownershipGeneration &&
 		workspaceWriter == wait.resumeWriterGeneration &&
@@ -928,7 +924,6 @@ func lockNestedResumePhysical(
 SELECT run_leases.id, run_leases.state, run_leases.expires_at,
        run_leases.start_deadline_at, run_leases.worker_instance_id,
        run_leases.worker_epoch, run_leases.runtime_instance_id,
-       run_leases.network_slot_id, run_leases.network_slot_generation,
        workspace_leases.id, workspace_leases.state, workspace_leases.expires_at,
        workspace_leases.writer_generation,
        workspace_leases.mount_fencing_generation,
@@ -956,8 +951,6 @@ SELECT run_leases.id, run_leases.state, run_leases.expires_at,
 		&physical.workerID,
 		&physical.workerEpoch,
 		&physical.runtimeID,
-		&physical.slotID,
-		&physical.slotGeneration,
 		&physical.workspaceLeaseID,
 		&physical.workspaceLeaseState,
 		&physical.workspaceLeaseExpiry,
@@ -984,7 +977,8 @@ SELECT state, current_epoch, lost_at, disabled_at
 		return nestedResumePhysical{}, err
 	}
 	err = tx.QueryRow(ctx, `
-SELECT desired_state, lost_at, failed_at
+SELECT desired_state, observed_state, observed_desired_version = desired_version,
+       lost_at, failed_at
   FROM runtime_instances
  WHERE id = $1
    AND workspace_id = $2
@@ -998,28 +992,11 @@ SELECT desired_state, lost_at, failed_at
 		physical.workerEpoch,
 	).Scan(
 		&physical.runtimeDesired,
+		&physical.runtimeObserved,
+		&physical.runtimeConverged,
 		&physical.runtimeLostAt,
 		&physical.runtimeFailedAt,
 	)
-	if err != nil {
-		return nestedResumePhysical{}, err
-	}
-	err = tx.QueryRow(ctx, `
-SELECT state, lost_at
-  FROM worker_network_slots
- WHERE id = $1
-   AND worker_instance_id = $2
-   AND runtime_instance_id = $3
-   AND (
-       (generation = $4 AND state IN ('bound', 'reclaiming', 'quarantined'))
-       OR (generation = $4 + 1 AND state = 'lost')
-   )
- FOR UPDATE`,
-		physical.slotID,
-		physical.workerID,
-		physical.runtimeID,
-		physical.slotGeneration,
-	).Scan(&physical.slotState, &physical.slotLostAt)
 	if err != nil {
 		return nestedResumePhysical{}, err
 	}
@@ -1333,7 +1310,6 @@ func nestedResumeLossReason(
 		atOrBefore(physical.workerDisabledAt, now) ||
 		atOrBefore(physical.runtimeLostAt, now) ||
 		atOrBefore(physical.runtimeFailedAt, now) ||
-		atOrBefore(physical.slotLostAt, now) ||
 		atOrBefore(physical.mountLostAt, now) ||
 		atOrBefore(physical.mountFailedAt, now)
 	if physicalLost {

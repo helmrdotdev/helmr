@@ -17,7 +17,7 @@ func TestRunRuntimeRequirementsFromFields(t *testing.T) {
 		KernelDigest:            "sha256:kernel",
 		InitramfsDigest:         "sha256:initramfs",
 		RootfsDigest:            "sha256:rootfs",
-		CNIProfile:              "helmr/v0",
+		NetworkABI:              "helmr/v0",
 		PlacementJSON:           []byte(`{"tags":{"pool":"warm"}}`),
 	})
 	if err != nil {
@@ -40,7 +40,7 @@ func TestRunRuntimeRequirementsRejectsPlacementRegion(t *testing.T) {
 		KernelDigest:            "sha256:kernel",
 		InitramfsDigest:         "sha256:initramfs",
 		RootfsDigest:            "sha256:rootfs",
-		CNIProfile:              "helmr/v0",
+		NetworkABI:              "helmr/v0",
 		PlacementJSON:           []byte(`{"region":"local"}`),
 	})
 	if err == nil {
@@ -60,7 +60,7 @@ func TestRunRuntimeRequirementsFromFieldsRejectsPhysicalPlacementAuthority(t *te
 		KernelDigest:            "sha256:kernel",
 		InitramfsDigest:         "sha256:initramfs",
 		RootfsDigest:            "sha256:rootfs",
-		CNIProfile:              "default",
+		NetworkABI:              "default",
 		PlacementJSON:           []byte(`{"worker_group_id":"hidden-authority"}`),
 	})
 	if err == nil || !strings.Contains(err.Error(), "unknown field") {

@@ -42,7 +42,7 @@ type vmRecoveryOps struct {
 	matchingPIDs    func(string) ([]int, error)
 	stopPID         func(context.Context, int) error
 	netnsExists     func(context.Context, string) (bool, error)
-	deleteNetns     func(context.Context, string) error
+	reclaimNetwork  func(context.Context, vm.Owner) error
 	removeAll       func(string) error
 	removeState     func(string, vm.Owner) error
 }
@@ -59,9 +59,12 @@ type ownedVMProcess struct {
 	Problem string
 }
 
-func RecoverLocalVMState(ctx context.Context, workDir string, jailerDir string, ipPath string) (RecoveryEvidence, error) {
+func RecoverLocalVMState(ctx context.Context, workDir string, jailerDir string, ipPath string, reclaimNetwork func(context.Context, vm.Owner) error) (RecoveryEvidence, error) {
 	if strings.TrimSpace(ipPath) == "" {
 		ipPath = "ip"
+	}
+	if reclaimNetwork == nil {
+		return RecoveryEvidence{}, errors.New("exact network reclaimer is required")
 	}
 	ops := vmRecoveryOps{
 		ownerCandidates: func(context.Context) ([]ownerCandidate, error) { return ownedVMCandidates(workDir, jailerDir) },
@@ -94,11 +97,9 @@ func RecoverLocalVMState(ctx context.Context, workDir string, jailerDir string, 
 			}
 			return false, nil
 		},
-		deleteNetns: func(ctx context.Context, id string) error {
-			return exec.CommandContext(ctx, ipPath, "netns", "delete", id).Run()
-		},
-		removeAll:   os.RemoveAll,
-		removeState: removeOwnedRecoveryState,
+		reclaimNetwork: reclaimNetwork,
+		removeAll:      os.RemoveAll,
+		removeState:    removeOwnedRecoveryState,
 	}
 	return recoverLocalVMState(ctx, workDir, jailerDir, ops)
 }
@@ -209,21 +210,20 @@ func recoverLocalVMState(ctx context.Context, workDir string, jailerDir string, 
 				cleanupErrs = append(cleanupErrs, fmt.Errorf("stop pid %d: %w", pid, err))
 			}
 		}
-		exists, err := ops.netnsExists(ctx, id)
-		if err != nil {
-			cleanupErrs = append(cleanupErrs, fmt.Errorf("inventory netns: %w", err))
-		} else if exists {
-			if err := ops.deleteNetns(ctx, id); err != nil {
-				cleanupErrs = append(cleanupErrs, fmt.Errorf("delete netns: %w", err))
-			}
-		}
 		owner, hasOwner := owners[id]
+		if !hasOwner {
+			cleanupErrs = append(cleanupErrs, errors.New("exact VM owner is unavailable for network reclaim"))
+		} else if ops.reclaimNetwork == nil {
+			cleanupErrs = append(cleanupErrs, errors.New("exact network reclaimer is unavailable"))
+		} else if err := ops.reclaimNetwork(ctx, owner); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("reclaim exact network attachment: %w", err))
+		}
 		if hasOwner && len(cleanupErrs) == 0 {
 			remaining, verifyErr := ops.matchingPIDs(id)
 			if verifyErr != nil || len(remaining) != 0 {
 				cleanupErrs = append(cleanupErrs, fmt.Errorf("verify process absence: pids=%v: %v", remaining, verifyErr))
 			}
-			exists, verifyErr = ops.netnsExists(ctx, id)
+			exists, verifyErr := ops.netnsExists(ctx, id)
 			if verifyErr != nil || exists {
 				cleanupErrs = append(cleanupErrs, fmt.Errorf("verify netns absence: exists=%t: %v", exists, verifyErr))
 			}

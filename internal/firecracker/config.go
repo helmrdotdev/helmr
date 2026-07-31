@@ -16,11 +16,6 @@ const (
 
 	DefaultFirecrackerPath      = "firecracker"
 	DefaultJailerPath           = "jailer"
-	DefaultCNINetworkName       = "helmr"
-	DefaultCNIConfDir           = "/etc/cni/conf.d"
-	DefaultCNIBinDir            = "/opt/cni/bin"
-	DefaultCNIIfName            = "veth0"
-	DefaultCNIVMIfName          = "eth0"
 	DefaultIPPath               = "ip"
 	DefaultNFTPath              = "nft"
 	DefaultKVMPath              = "/dev/kvm"
@@ -31,6 +26,14 @@ const (
 	DefaultHealthTimeout        = 30 * time.Second
 	DefaultHealthAttemptTimeout = 5 * time.Second
 	runtimeABI                  = "helmr.firecracker.snapshot.v0"
+	NetworkABIV0                = "helmr/v0"
+	GuestNetworkCIDRV0          = "192.168.127.2/30"
+	GuestGatewayIPv4V0          = "192.168.127.1"
+	GuestGatewayMACV0           = "02:fc:00:00:00:01"
+	GuestMACV0                  = "02:fc:00:00:00:02"
+	GuestTapNameV0              = "tap0"
+	GuestInterfaceNameV0        = "eth0"
+	GuestMTUV0                  = 1500
 )
 
 type Config struct {
@@ -46,17 +49,14 @@ type Config struct {
 	RootfsPath              string
 	RuntimeArtifactsPath    string
 	StateDir                string
-	CNINetworkName          string
-	CNIProfile              string
-	CNIConfDir              string
-	CNIBinDir               string
-	CNICacheDir             string
-	CNIIfName               string
-	CNIVMIfName             string
+	NetworkLinkPool         string
+	NetworkTranslationPool  string
+	NetworkResolverIPv4     string
+	NetworkBlockedIPv4CIDRs []netip.Prefix
+	NetworkCapacity         int
 	IPPath                  string
 	NFTPath                 string
 	MkfsExt4Path            string
-	NetworkBlockedIPv4CIDRs []string
 	KVMPath                 string
 	VCPUCount               int64
 	MemoryMiB               int64
@@ -74,7 +74,7 @@ type RuntimeCapabilities struct {
 	KernelDigest    string
 	InitramfsDigest string
 	RootfsDigest    string
-	CNIProfile      string
+	NetworkABI      string
 	VCPUCount       int64
 	MemoryMiB       int64
 }
@@ -97,24 +97,6 @@ func (cfg Config) WithDefaults() Config {
 	}
 	if strings.TrimSpace(cfg.RuntimeArtifactsPath) == "" && strings.TrimSpace(cfg.RootfsPath) != "" {
 		cfg.RuntimeArtifactsPath = filepath.Join(filepath.Dir(cfg.RootfsPath), "runtime-artifacts.json")
-	}
-	if strings.TrimSpace(cfg.CNINetworkName) == "" {
-		cfg.CNINetworkName = DefaultCNINetworkName
-	}
-	if strings.TrimSpace(cfg.CNIProfile) == "" {
-		cfg.CNIProfile = cfg.CNINetworkName + "/v0"
-	}
-	if strings.TrimSpace(cfg.CNIConfDir) == "" {
-		cfg.CNIConfDir = DefaultCNIConfDir
-	}
-	if strings.TrimSpace(cfg.CNIBinDir) == "" {
-		cfg.CNIBinDir = DefaultCNIBinDir
-	}
-	if strings.TrimSpace(cfg.CNIIfName) == "" {
-		cfg.CNIIfName = DefaultCNIIfName
-	}
-	if strings.TrimSpace(cfg.CNIVMIfName) == "" {
-		cfg.CNIVMIfName = DefaultCNIVMIfName
 	}
 	if strings.TrimSpace(cfg.IPPath) == "" {
 		cfg.IPPath = DefaultIPPath
@@ -193,23 +175,17 @@ func (cfg Config) Validate() error {
 	if strings.TrimSpace(cfg.StateDir) == "" {
 		problems = append(problems, errors.New("firecracker state dir is required"))
 	}
-	if strings.TrimSpace(cfg.CNINetworkName) == "" {
-		problems = append(problems, errors.New("guest CNI network name is required"))
+	if strings.TrimSpace(cfg.NetworkLinkPool) == "" {
+		problems = append(problems, errors.New("worker network link pool is required"))
 	}
-	if strings.TrimSpace(cfg.CNIProfile) == "" {
-		problems = append(problems, errors.New("guest CNI profile is required"))
+	if strings.TrimSpace(cfg.NetworkTranslationPool) == "" {
+		problems = append(problems, errors.New("worker network translation pool is required"))
 	}
-	if strings.TrimSpace(cfg.CNIConfDir) == "" {
-		problems = append(problems, errors.New("guest CNI config directory is required"))
+	if strings.TrimSpace(cfg.NetworkResolverIPv4) == "" {
+		problems = append(problems, errors.New("worker network resolver IPv4 is required"))
 	}
-	if strings.TrimSpace(cfg.CNIBinDir) == "" {
-		problems = append(problems, errors.New("guest CNI plugin directory is required"))
-	}
-	if strings.TrimSpace(cfg.CNIIfName) == "" {
-		problems = append(problems, errors.New("guest CNI interface name is required"))
-	}
-	if strings.TrimSpace(cfg.CNIVMIfName) == "" {
-		problems = append(problems, errors.New("guest VM network interface name is required"))
+	if cfg.NetworkCapacity <= 0 {
+		problems = append(problems, errors.New("worker network capacity must be positive"))
 	}
 	if cfg.VCPUCount <= 0 {
 		problems = append(problems, fmt.Errorf("guest vcpu count must be positive, got %d", cfg.VCPUCount))
@@ -226,12 +202,6 @@ func (cfg Config) Validate() error {
 	if strings.TrimSpace(cfg.KVMPath) == "" {
 		problems = append(problems, errors.New("firecracker KVM path is required"))
 	}
-	if len(cfg.NetworkBlockedIPv4CIDRs) == 0 {
-		problems = append(problems, errors.New("firecracker network blocked IPv4 CIDRs are required"))
-	}
-	if err := validateNetworkPolicyCIDRs("firecracker network blocked IPv4 CIDR", cfg.NetworkBlockedIPv4CIDRs, true); err != nil {
-		problems = append(problems, err)
-	}
 	if cfg.HealthTimeout <= 0 {
 		problems = append(problems, fmt.Errorf("guest health timeout must be positive, got %s", cfg.HealthTimeout))
 	}
@@ -240,29 +210,6 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.HealthAttemptTimeout > cfg.HealthTimeout {
 		problems = append(problems, fmt.Errorf("guest health attempt timeout %s must be less than or equal to guest health timeout %s", cfg.HealthAttemptTimeout, cfg.HealthTimeout))
-	}
-	return errors.Join(problems...)
-}
-
-func validateNetworkPolicyCIDRs(name string, cidrs []string, ipv4 bool) error {
-	var problems []error
-	for _, cidr := range cidrs {
-		cidr = strings.TrimSpace(cidr)
-		if cidr == "" {
-			problems = append(problems, fmt.Errorf("%s must not be empty", name))
-			continue
-		}
-		prefix, err := netip.ParsePrefix(cidr)
-		if err != nil {
-			problems = append(problems, fmt.Errorf("%s %q must be a CIDR prefix: %w", name, cidr, err))
-			continue
-		}
-		if ipv4 && !prefix.Addr().Is4() {
-			problems = append(problems, fmt.Errorf("%s %q must be IPv4", name, cidr))
-		}
-		if !ipv4 && !prefix.Addr().Is6() {
-			problems = append(problems, fmt.Errorf("%s %q must be IPv6", name, cidr))
-		}
 	}
 	return errors.Join(problems...)
 }

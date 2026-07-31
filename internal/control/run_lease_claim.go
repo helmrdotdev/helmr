@@ -25,7 +25,6 @@ type runLeaseClaimAuthority struct {
 	workerGroup          db.WorkerGroup
 	worker               db.WorkerInstance
 	workerObservation    db.LockRunLeaseClaimObservationRow
-	networkSlot          db.WorkerNetworkSlot
 	runtime              db.RuntimeInstance
 	runLease             db.RunLease
 	workspaceMount       db.WorkspaceMount
@@ -1203,21 +1202,6 @@ func claimRunLeasePhysicalInTx(
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
 
-	authority.networkSlot, err = q.LockRunLeaseClaimNetworkSlot(ctx, db.LockRunLeaseClaimNetworkSlotParams{
-		ID:                locators.NetworkSlotID,
-		WorkerGroupID:     worker.WorkerGroupID,
-		WorkerInstanceID:  pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch:       worker.WorkerEpoch,
-		Generation:        locators.NetworkSlotGeneration,
-		RuntimeInstanceID: locators.RuntimeInstanceID,
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
-	}
-	if authority.networkSlot.State != db.WorkerNetworkSlotStateBound {
-		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
-	}
-
 	authority.runtime, err = q.LockRunLeaseClaimRuntime(ctx, db.LockRunLeaseClaimRuntimeParams{
 		ID:               locators.RuntimeInstanceID,
 		OrgID:            locators.OrgID,
@@ -1346,8 +1330,6 @@ func validateClaimPhysicalAuthority(worker workerActor, authority runLeaseClaimA
 		lease.WorkerEpoch != worker.WorkerEpoch ||
 		lease.WorkerProtocolVersion != worker.ProtocolVersion ||
 		lease.RuntimeInstanceID != runtime.ID ||
-		lease.NetworkSlotID != authority.networkSlot.ID ||
-		lease.NetworkSlotGeneration != authority.networkSlot.Generation ||
 		lease.RuntimeIdentityID != runtime.RuntimeIdentityID {
 		return errStaleRunLeaseClaim
 	}

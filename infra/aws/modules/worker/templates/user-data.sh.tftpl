@@ -5,8 +5,9 @@ date +%s >/run/helmr-launch-started-at
 
 install -d -m 0750 -o root -g root /etc/helmr
 cat >/etc/helmr/guest-resolv.conf <<'EOF'
-nameserver 1.1.1.1
-nameserver 8.8.8.8
+%{ for nameserver in guest_nameservers ~}
+nameserver ${nameserver}
+%{ endfor ~}
 EOF
 chown root:root /etc/helmr/guest-resolv.conf
 chmod 0644 /etc/helmr/guest-resolv.conf
@@ -304,10 +305,10 @@ cat >/etc/systemd/system/helmr-buildkit.service.d/10-network-policy.conf <<'EOF'
 BindReadOnlyPaths=/etc/helmr/guest-resolv.conf:/etc/resolv.conf
 ExecStart=
 ExecStart=/usr/local/bin/rootlesskit --net=slirp4netns --cidr=${buildkit_slirp_cidr} --copy-up=/etc --disable-host-loopback /usr/local/bin/buildkitd --addr unix:///run/helmr/buildkit/buildkitd.sock --root /var/lib/helmr/cache/buildkit --oci-worker=true --oci-worker-snapshotter=fuse-overlayfs
-%{ for cidr in network_blocked_ipv4_cidrs ~}
+%{ for cidr in buildkit_service_blocked_ipv4_cidrs ~}
 IPAddressDeny=${cidr}
 %{ endfor ~}
-%{ for cidr in network_blocked_ipv6_cidrs ~}
+%{ for cidr in buildkit_service_blocked_ipv6_cidrs ~}
 IPAddressDeny=${cidr}
 %{ endfor ~}
 EOF
@@ -399,5 +400,12 @@ systemctl enable --now helmr-buildkit.service
 %{ else ~}
 systemctl disable --now helmr-buildkit.service || true
 %{ endif ~}
+install -d -m 0755 '/etc/systemd/system/${worker_service_name}.service.d'
+cat >'/etc/systemd/system/${worker_service_name}.service.d/10-entry.conf' <<'EOF'
+[Service]
+ExecStart=
+ExecStart=${worker_binary_path}
+EOF
+systemctl daemon-reload
 systemctl enable --now '${worker_service_name}'
 systemctl enable --now helmr-asg-lifecycle.service

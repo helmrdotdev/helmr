@@ -22,9 +22,7 @@ ALTER TABLE runtime_instances DROP CONSTRAINT IF EXISTS runtime_instances_reserv
 DROP TABLE IF EXISTS workspace_processes;
 DROP TABLE IF EXISTS workspace_leases;
 ALTER TABLE workspace_mounts DROP CONSTRAINT IF EXISTS workspace_mounts_runtime_instance_id_fkey;
-ALTER TABLE run_leases DROP CONSTRAINT IF EXISTS run_leases_network_slot_id_fkey;
 ALTER TABLE run_leases DROP CONSTRAINT IF EXISTS run_leases_runtime_instance_id_fkey;
-DROP TABLE IF EXISTS worker_network_slots;
 DROP TABLE IF EXISTS runtime_instances;
 DROP TABLE IF EXISTS workspace_mounts;
 ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_org_id_project_id_environment_id_workspace_id_fkey;

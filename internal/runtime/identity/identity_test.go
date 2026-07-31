@@ -14,7 +14,7 @@ func TestRuntimeIdentityDigestMatchesCASDigest(t *testing.T) {
 		KernelDigest:    "sha256:kernel",
 		InitramfsDigest: "sha256:initramfs",
 		RootfsDigest:    "sha256:rootfs",
-		CNIProfile:      "default",
+		NetworkABI:      "default",
 	}
 	got, err := Digest(runtime)
 	if err != nil {
@@ -28,7 +28,7 @@ func TestRuntimeIdentityDigestMatchesCASDigest(t *testing.T) {
 		KernelDigest    string `json:"kernel_digest"`
 		InitramfsDigest string `json:"initramfs_digest"`
 		RootfsDigest    string `json:"rootfs_digest"`
-		CNIProfile      string `json:"cni_profile"`
+		NetworkABI      string `json:"network_abi"`
 	}{
 		Schema:          Schema,
 		Backend:         "firecracker",
@@ -37,7 +37,7 @@ func TestRuntimeIdentityDigestMatchesCASDigest(t *testing.T) {
 		KernelDigest:    runtime.KernelDigest,
 		InitramfsDigest: runtime.InitramfsDigest,
 		RootfsDigest:    runtime.RootfsDigest,
-		CNIProfile:      runtime.CNIProfile,
+		NetworkABI:      runtime.NetworkABI,
 	})
 	if err != nil {
 		t.Fatal(err)

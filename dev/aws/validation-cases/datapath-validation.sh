@@ -84,7 +84,7 @@ wait_for_placement() {
   return 1
 }
 
-legacy_counter() {
+denied_counter() {
   local netns=$1
   validation_ssm "${instance_id}" \
     "ip netns exec ${netns} nft list counter inet helmr_network_policy run_denied | awk '/counter run_denied/ {for (i=1;i<=NF;i++) if (\$i==\"packets\") {print \$(i+1); exit}}'" \
@@ -92,7 +92,7 @@ legacy_counter() {
 }
 
 snapshot_rules() {
-  local netns=$1 tap=$2 peer=$3 output=$4 legacy_before=$5 legacy_after=$6
+  local netns=$1 tap=$2 peer=$3 output=$4 denied_before=$5 denied_after=$6
   local nft_json tap_qdisc tap_filters peer_qdisc peer_filters
   nft_json="$(validation_ssm "${instance_id}" \
     "ip netns exec ${netns} nft -j list table inet helmr_network_policy" 120)"
@@ -110,16 +110,16 @@ snapshot_rules() {
     --argjson tap_filters "${tap_filters}" \
     --argjson peer_qdisc "${peer_qdisc}" \
     --argjson peer_filters "${peer_filters}" \
-    --argjson legacy_before "${legacy_before}" \
-    --argjson legacy_after "${legacy_after}" \
+    --argjson denied_before "${denied_before}" \
+    --argjson denied_after "${denied_after}" \
     '{
       schema:"helmrdotdev.datapath-rules-evidence.v0",
-      selected_hook:null,
-      legacy_forward_counter:{before:$legacy_before,after:$legacy_after},
+      selected_hook:"inet-forward",
+      forward_denied_counter:{before:$denied_before,after:$denied_after},
       nftables:$nft,
       traffic_control:{
         tap:{qdisc:$tap_qdisc,filters:$tap_filters},
-        cni_peer:{qdisc:$peer_qdisc,filters:$peer_filters}
+        namespace_veth:{qdisc:$peer_qdisc,filters:$peer_filters}
       }
     }' >"${output}"
 }
@@ -252,15 +252,15 @@ main() {
 
   links="$(validation_ssm "${instance_id}" "ip netns exec ${netns} ip -j link show" 120)"
   peer="$(jq -er --arg tap "${tap}" '[.[] | select(.ifname != "lo" and .ifname != $tap) | .ifname] | select(length == 1) | .[0]' <<<"${links}")" ||
-    fail_case cni_peer_not_unique
-  [[ "${peer}" =~ ^[a-zA-Z0-9_.-]{1,15}$ ]] || fail_case invalid_cni_peer
+    fail_case namespace_veth_not_unique
+  [[ "${peer}" =~ ^[a-zA-Z0-9_.-]{1,15}$ ]] || fail_case invalid_namespace_veth
   tap_ifindex="$(jq -er --arg tap "${tap}" '.[] | select(.ifname == $tap) | .ifindex' <<<"${links}")"
   peer_ifindex="$(jq -er --arg peer "${peer}" '.[] | select(.ifname == $peer) | .ifindex' <<<"${links}")"
   netns_inode="$(validation_ssm "${instance_id}" "stat -Lc '%i' /var/run/netns/${netns}" 120)"
   [[ "${netns_inode}" =~ ^[0-9]+$ ]] || fail_case invalid_netns_inode
 
-  baseline="$(legacy_counter "${netns}")"
-  [[ "${baseline}" =~ ^[0-9]+$ ]] || fail_case legacy_counter_unavailable
+  baseline="$(denied_counter "${netns}")"
+  [[ "${baseline}" =~ ^[0-9]+$ ]] || fail_case denied_counter_unavailable
   validation_ssm "${instance_id}" \
     "${remote_bin}/datapath-host-collector.sh start ${campaign_id} public-tcp ${netns} 180 ${tap} ${peer}" \
     120 >/dev/null || fail_case collector_start_failed
@@ -287,8 +287,8 @@ main() {
   validation_ssm "${instance_id}" \
     "${remote_bin}/datapath-host-collector.sh stop ${campaign_id} public-tcp" \
     120 >/dev/null || fail_case collector_stop_failed
-  after="$(legacy_counter "${netns}")"
-  [[ "${after}" =~ ^[0-9]+$ ]] || fail_case legacy_counter_unavailable
+  after="$(denied_counter "${netns}")"
+  [[ "${after}" =~ ^[0-9]+$ ]] || fail_case denied_counter_unavailable
   validation_ssm "${instance_id}" \
     "${remote_bin}/datapath-host-collector.sh export ${campaign_id} public-tcp >/dev/null" \
     120 >/dev/null || fail_case packet_export_failed
@@ -325,7 +325,7 @@ main() {
       .source_port == $source_port and .destination_port == $destination_port
     )
   ' "${packet_tmp}" >/dev/null ||
-    fail_case cni_peer_path_not_observed
+    fail_case namespace_veth_path_not_observed
 
   rules_tmp="${artifact_dir}/rules.json"
   snapshot_rules "${netns}" "${tap}" "${peer}" "${rules_tmp}" "${baseline}" "${after}"
@@ -341,11 +341,11 @@ main() {
     '{
       schema:"helmrdotdev.datapath-binding-evidence.v0",
       placement:$placement,
-      local_slot_facts:{
+      local_binding_facts:{
         netns_inode:$netns_inode,
         tap_ifindex:$tap_ifindex,
-        cni_peer_ifindex:$peer_ifindex,
-        cni_peer_name:$peer
+        namespace_veth_ifindex:$peer_ifindex,
+        namespace_veth_name:$peer
       },
       probe_flow:$probe_flow,
       observed_links:$links
@@ -355,7 +355,7 @@ main() {
 
   [ "$(validation_ssm "${instance_id}" \
     "ip netns exec ${netns} nft list table inet helmr_network_policy >/dev/null && printf present" 120)" = present ] ||
-    fail_case legacy_defense_missing
+    fail_case network_policy_missing
   validation_ssm "${instance_id}" \
     "${remote_bin}/datapath-host-collector.sh cleanup ${campaign_id}" 120 >/dev/null ||
     fail_case collector_cleanup_failed
@@ -393,7 +393,7 @@ main() {
       schema:"helmrdotdev.datapath-cleanup-evidence.v0",
       cleanup_verified:true,
       candidate_objects_absent:true,
-      legacy_defense_present:true,
+      network_policy_present:true,
       ledger:$ledger
     }' >"${cleanup_tmp}"
 
@@ -405,7 +405,7 @@ main() {
   probe_sha="$(validation_sha256_file "${probe_source}")"
   hook_sha="${rules_sha}"
   verdict_sha="$(
-    printf '%s\n' 'tap-path-observed,cni-peer-path-observed,legacy-hook-correlation-measured,cleanup-proven' |
+    printf '%s\n' 'tap-path-observed,namespace-veth-path-observed,forward-hook-correlation-measured,cleanup-proven' |
       validation_sha256_file /dev/stdin
   )"
   manifest_tmp="${artifact_dir}/manifest.json"

@@ -5,6 +5,15 @@ locals {
   termination_hook_name   = "${local.name}-worker-terminate"
   boot_corpus_reserve_mib = 2048
   build_scratch_min_mib   = max(32768, var.vm_scratch_disk_mib) + local.boot_corpus_reserve_mib
+  buildkit_service_blocked_ipv6_cidrs = [
+    "::/128",
+    "::1/128",
+    "fc00::/7",
+    "fe80::/10",
+    "ff00::/8",
+  ]
+  network_resolver_ipv4 = coalesce(var.network_resolver_ipv4, cidrhost(data.aws_vpc.selected.cidr_block, 2))
+  guest_nameservers     = [local.network_resolver_ipv4]
 
   disk_environment = merge({
     HELMR_WORKER_DISK_RESERVE_MIB = tostring(var.worker_disk_reserve_mib)
@@ -42,14 +51,15 @@ locals {
     HELMR_WORKER_FIRECRACKER_JAILER_UID     = tostring(var.jailer_uid)
     HELMR_WORKER_FIRECRACKER_JAILER_GID     = tostring(var.jailer_gid)
     HELMR_WORKER_FIRECRACKER_CGROUP_VERSION = "2"
-    HELMR_WORKER_CNI_NETWORK                = "helmr"
-    HELMR_WORKER_CNI_PROFILE                = "helmr/v0"
+    HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS = jsonencode(var.network_blocked_ipv4_cidrs)
+    HELMR_WORKER_NETWORK_LINK_POOL          = var.network_link_pool
+    HELMR_WORKER_NETWORK_RESOLVER_IPV4      = local.network_resolver_ipv4
+    HELMR_WORKER_NETWORK_TRANSLATION_POOL   = var.network_translation_pool
     HELMR_WORKER_WORK_DIR                   = contains(var.worker_roles, "build") ? "/var/lib/helmr/scratch/worker" : "/var/lib/helmr"
     HELMR_WORKER_INSTANCE_CREDENTIAL_PATH   = "/var/lib/helmr/worker-credential.json"
     HELMR_WORKER_ROLES                      = join(",", sort(tolist(var.worker_roles)))
     HELMR_WORKER_IMAGES_DIR                 = "/var/lib/helmr/images"
     HELMR_WORKER_FIRECRACKER_CHROOT_DIR     = contains(var.worker_roles, "build") ? "/var/lib/helmr/scratch/jailer" : "/var/lib/helmr/jailer"
-    HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS = length(var.network_blocked_ipv4_cidrs) == 0 ? "none" : join(",", var.network_blocked_ipv4_cidrs)
     HELMR_VM_VCPUS                          = tostring(var.vm_vcpus)
     HELMR_VM_MEMORY_MIB                     = tostring(var.vm_memory_mib)
     HELMR_VM_SCRATCH_DISK_MIB               = tostring(var.vm_scratch_disk_mib)
@@ -75,26 +85,26 @@ locals {
   buildkit_slirp_cidr_start   = local.buildkit_slirp_cidr_address - local.buildkit_slirp_cidr_address % local.buildkit_slirp_cidr_size
   buildkit_slirp_cidr_end     = local.buildkit_slirp_cidr_start + local.buildkit_slirp_cidr_size - 1
 
-  network_blocked_ipv4_cidr_parts = [
+  buildkit_service_blocked_ipv4_cidr_parts = [
     for cidr in var.network_blocked_ipv4_cidrs :
     regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)\\.([0-9]+)/([0-9]+)$", cidr)
   ]
-  network_blocked_ipv4_cidr_prefixes = [
-    for parts in local.network_blocked_ipv4_cidr_parts :
+  buildkit_service_blocked_ipv4_cidr_prefixes = [
+    for parts in local.buildkit_service_blocked_ipv4_cidr_parts :
     tonumber(parts[4])
   ]
-  network_blocked_ipv4_cidr_addresses = [
-    for parts in local.network_blocked_ipv4_cidr_parts :
+  buildkit_service_blocked_ipv4_cidr_addresses = [
+    for parts in local.buildkit_service_blocked_ipv4_cidr_parts :
     tonumber(parts[0]) * 16777216 + tonumber(parts[1]) * 65536 + tonumber(parts[2]) * 256 + tonumber(parts[3])
   ]
-  network_blocked_ipv4_cidr_sizes = [
-    for prefix in local.network_blocked_ipv4_cidr_prefixes :
+  buildkit_service_blocked_ipv4_cidr_sizes = [
+    for prefix in local.buildkit_service_blocked_ipv4_cidr_prefixes :
     pow(2, 32 - prefix)
   ]
-  network_blocked_ipv4_ranges = [
-    for i, address in local.network_blocked_ipv4_cidr_addresses : {
-      start = address - address % local.network_blocked_ipv4_cidr_sizes[i]
-      end   = address - address % local.network_blocked_ipv4_cidr_sizes[i] + local.network_blocked_ipv4_cidr_sizes[i] - 1
+  buildkit_service_blocked_ipv4_ranges = [
+    for i, address in local.buildkit_service_blocked_ipv4_cidr_addresses : {
+      start = address - address % local.buildkit_service_blocked_ipv4_cidr_sizes[i]
+      end   = address - address % local.buildkit_service_blocked_ipv4_cidr_sizes[i] + local.buildkit_service_blocked_ipv4_cidr_sizes[i] - 1
     }
   ]
 }
@@ -266,8 +276,9 @@ resource "aws_launch_template" "worker" {
     lifecycle_heartbeat_interval_seconds = var.lifecycle_heartbeat_interval_seconds
     worker_work_dir                      = local.base_worker_environment.HELMR_WORKER_WORK_DIR
     buildkit_slirp_cidr                  = var.buildkit_slirp_cidr
-    network_blocked_ipv4_cidrs           = var.network_blocked_ipv4_cidrs
-    network_blocked_ipv6_cidrs           = var.network_blocked_ipv6_cidrs
+    buildkit_service_blocked_ipv4_cidrs  = var.network_blocked_ipv4_cidrs
+    buildkit_service_blocked_ipv6_cidrs  = local.buildkit_service_blocked_ipv6_cidrs
+    guest_nameservers                    = local.guest_nameservers
     aws_region                           = data.aws_region.current.region
     platform_store_uri                   = var.platform_store_uri
     build_policy_digest                  = var.build_policy_digest == null ? "" : var.build_policy_digest
@@ -317,13 +328,18 @@ resource "aws_launch_template" "worker" {
 
 resource "terraform_data" "network_preconditions" {
   input = {
-    buildkit_slirp_cidr        = var.buildkit_slirp_cidr
-    network_blocked_ipv4_cidrs = var.network_blocked_ipv4_cidrs
-    reserved_env_conflicts     = local.worker_environment_conflicts
-    platform_store_uri         = var.platform_store_uri
-    build_policy_digest        = var.build_policy_digest
-    build_cache_mib            = var.build_cache_mib
-    build_scratch_mib          = var.build_scratch_mib
+    buildkit_slirp_cidr = var.buildkit_slirp_cidr
+    network_policy = jsonencode({
+      blocked_ipv4_cidrs = var.network_blocked_ipv4_cidrs
+      link_pool          = var.network_link_pool
+      resolver_ipv4      = local.network_resolver_ipv4
+      translation_pool   = var.network_translation_pool
+    })
+    reserved_env_conflicts = local.worker_environment_conflicts
+    platform_store_uri     = var.platform_store_uri
+    build_policy_digest    = var.build_policy_digest
+    build_cache_mib        = var.build_cache_mib
+    build_scratch_mib      = var.build_scratch_mib
   }
 
   lifecycle {
@@ -381,10 +397,10 @@ resource "terraform_data" "network_preconditions" {
 
     precondition {
       condition = alltrue([
-        for blocked in local.network_blocked_ipv4_ranges :
+        for blocked in local.buildkit_service_blocked_ipv4_ranges :
         local.buildkit_slirp_cidr_start > blocked.end || blocked.start > local.buildkit_slirp_cidr_end
       ])
-      error_message = "buildkit_slirp_cidr must not overlap network_blocked_ipv4_cidrs because BuildKit rootless DNS and NAT must remain reachable inside the service namespace."
+      error_message = "buildkit_slirp_cidr must not overlap the internal BuildKit service deny set because BuildKit rootless DNS and NAT must remain reachable inside the service namespace."
     }
   }
 }

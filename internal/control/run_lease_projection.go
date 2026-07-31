@@ -295,7 +295,6 @@ type runLeaseProjectionAuthority struct {
 	run            db.Run
 	attempt        db.RunAttempt
 	runtime        db.RuntimeInstance
-	networkSlot    db.WorkerNetworkSlot
 	runLease       db.RunLease
 	workspace      db.Workspace
 	workspaceMount db.WorkspaceMount
@@ -317,10 +316,6 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (api.Worke
 		return api.WorkerRunLeaseAssignment{}, err
 	}
 	runtimeID, err := requiredClaimUUIDString("runtime instance ID", lease.RuntimeInstanceID)
-	if err != nil {
-		return api.WorkerRunLeaseAssignment{}, err
-	}
-	networkSlotID, err := requiredClaimUUIDString("network slot ID", lease.NetworkSlotID)
 	if err != nil {
 		return api.WorkerRunLeaseAssignment{}, err
 	}
@@ -347,7 +342,6 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (api.Worke
 		lease.AttemptNumber != authority.attempt.Number ||
 		lease.WorkspaceID != authority.workspace.ID ||
 		lease.RuntimeInstanceID != authority.runtime.ID ||
-		lease.NetworkSlotID != authority.networkSlot.ID ||
 		authority.workspaceMount.RuntimeInstanceID != lease.RuntimeInstanceID ||
 		authority.workspaceLease.OwnerRunLeaseID != lease.ID ||
 		authority.workspaceLease.RuntimeInstanceID != lease.RuntimeInstanceID ||
@@ -359,7 +353,6 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (api.Worke
 	if lease.AttemptNumber <= 0 ||
 		lease.LeaseSequence <= 0 ||
 		lease.WorkerEpoch <= 0 ||
-		lease.NetworkSlotGeneration <= 0 ||
 		authority.workspaceLease.OwnershipGeneration <= 0 ||
 		authority.workspaceLease.WriterGeneration <= 0 ||
 		authority.workspaceLease.MountFencingGeneration <= 0 ||
@@ -394,8 +387,6 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (api.Worke
 		WorkerProtocolVersion:            lease.WorkerProtocolVersion,
 		RuntimeInstanceID:                runtimeID,
 		RuntimeIdentityID:                lease.RuntimeIdentityID,
-		NetworkSlotID:                    networkSlotID,
-		NetworkSlotGeneration:            lease.NetworkSlotGeneration,
 		WorkspaceID:                      workspaceID,
 		WorkspaceMountID:                 mountID,
 		WorkspaceLeaseID:                 workspaceLeaseID,

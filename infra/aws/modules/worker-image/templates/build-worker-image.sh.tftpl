@@ -71,7 +71,7 @@ retry() {
   done
 }
 
-install -d -m 0755 /usr/local/bin /opt/cni/bin /etc/cni/conf.d
+install -d -m 0755 /usr/local/bin
 bun install --frozen-lockfile --ignore-scripts
 make console-build
 retry 4 go mod download
@@ -93,9 +93,6 @@ install -m 0755 "$(command -v gpgv)" /usr/local/bin/gpgv
 install -m 0755 "$(command -v mksquashfs)" /usr/local/bin/mksquashfs
 install -m 0755 "$(command -v patchelf)" /usr/local/bin/patchelf
 install -m 0755 "$(command -v xz)" /usr/local/bin/xz
-for plugin in ptp host-local tuning firewall tc-redirect-tap; do
-  install -m 0755 "$(command -v "$plugin")" "/opt/cni/bin/$plugin"
-done
 EOF
 
 install -d -m 0755 /var/lib/helmr/images/guest
@@ -136,27 +133,6 @@ profile rootlesskit /usr/local/bin/rootlesskit flags=(unconfined) {
   include if exists <local/usr.local.bin.rootlesskit>
 }
 EOF
-cat >/etc/cni/conf.d/helmr.conflist <<'EOF'
-{
-  "name": "helmr",
-  "cniVersion": "1.0.0",
-  "plugins": [
-    {
-      "type": "ptp",
-      "ipMasq": true,
-      "ipam": {
-        "type": "host-local",
-        "subnet": "192.168.127.0/24",
-        "resolvConf": "/etc/helmr/guest-resolv.conf"
-      }
-    },
-    { "type": "tuning" },
-    { "type": "firewall" },
-    { "type": "tc-redirect-tap" }
-  ]
-}
-EOF
-
 cat >/etc/systemd/system/helmr-buildkit.service <<'EOF'
 [Unit]
 Description=BuildKit daemon for Helmr workers

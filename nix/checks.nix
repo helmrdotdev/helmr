@@ -47,6 +47,7 @@ let
           services.helmr.firecrackerHost = {
             enable = true;
             users = [ "helmr-ci" ];
+            buildKitBlockedIPv4CIDRs = [ "10.0.0.0/8" ];
           };
         }
       )
@@ -70,6 +71,8 @@ let
     && require (buildkitService.MemorySwapMax == 0) "helmr-buildkit swap limit changed"
     && require (buildkitService.TasksMax == 1024) "helmr-buildkit task limit changed"
     && require (buildkitService.MemoryOOMGroup == true) "helmr-buildkit OOM group policy changed"
+    && require (lib.elem "10.0.0.0/8" buildkitService.IPAddressDeny) "deployment-supplied BuildKit IPv4 deny is missing"
+    && require (lib.elem "::/128" buildkitService.IPAddressDeny) "BuildKit IPv6 fail-closed policy is missing"
     && require (cfg.boot.kernel.sysctl."net.ipv4.ip_forward" == 1) "IPv4 forwarding is not enabled"
     && require (
       cfg.boot.kernel.sysctl."user.max_user_namespaces" == 16384

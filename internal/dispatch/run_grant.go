@@ -85,8 +85,7 @@ func (d *Authority) grantFreshRun(
 		return db.RunLease{}, err
 	}
 	if err := validateRunRuntime(authority, runtime); err != nil ||
-		runtime.observedState != db.RuntimeObservedStateReady ||
-		runtime.networkSlotState != db.WorkerNetworkSlotStateBound {
+		!runRuntimeReady(runtime) {
 		return db.RunLease{}, ErrCapacityUnavailable
 	}
 	mount, err := getActiveRunMount(ctx, tx, authority, runtime)
@@ -169,8 +168,6 @@ SELECT transaction_timestamp(),
 			WorkerInstanceID:                 runtime.workerID,
 			WorkerEpoch:                      runtime.workerEpoch,
 			RuntimeInstanceID:                runtime.id,
-			NetworkSlotID:                    runtime.networkSlotID,
-			NetworkSlotGeneration:            runtime.networkSlotGeneration,
 			RuntimeIdentityID:                runtime.runtimeIdentityID,
 			WorkerProtocolVersion:            runtime.protocolVersion,
 			RequestedCpuMillis:               authority.resources.cpuMillis,

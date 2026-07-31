@@ -301,18 +301,6 @@ func lockRunLeasePhysicalAuthority(
 		return err
 	}
 
-	authority.networkSlot, err = q.LockRunLeaseClaimNetworkSlot(ctx, db.LockRunLeaseClaimNetworkSlotParams{
-		ID: locators.NetworkSlotID, WorkerGroupID: worker.WorkerGroupID,
-		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
-		Generation: locators.NetworkSlotGeneration, RuntimeInstanceID: locators.RuntimeInstanceID,
-	})
-	if err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	if authority.networkSlot.State != db.WorkerNetworkSlotStateBound {
-		return errStaleRunLeaseClaim
-	}
-
 	authority.runtime, err = q.LockRunLeaseClaimRuntime(ctx, db.LockRunLeaseClaimRuntimeParams{
 		ID: locators.RuntimeInstanceID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
 		EnvironmentID: locators.EnvironmentID, RegionID: locators.RegionID,

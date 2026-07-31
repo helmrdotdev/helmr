@@ -8,6 +8,23 @@ variable "name" {
   type        = string
 }
 
+variable "control_vpc_cidr" {
+  description = "CIDR block for the unrouted Control VPC."
+  type        = string
+  default     = "10.80.0.0/16"
+}
+
+variable "execution_vpc_cidr" {
+  description = "CIDR block for the unrouted Execution VPC. The complete prefix must remain inside the Cloud Worker deny set."
+  type        = string
+  default     = "10.81.0.0/16"
+
+  validation {
+    condition     = can(cidrnetmask(var.execution_vpc_cidr))
+    error_message = "execution_vpc_cidr must be an IPv4 CIDR prefix."
+  }
+}
+
 variable "public_url" {
   description = "External HTTPS URL for the direct ALB control plane when enable_cloudfront is false."
   type        = string
@@ -393,7 +410,7 @@ variable "cas_noncurrent_version_expiration_days" {
 }
 
 variable "worker_ami_id" {
-  description = "Worker AMI with Firecracker, jailer, BuildKit, CNI plugins, and helmr-worker installed."
+  description = "Worker AMI with Firecracker, jailer, BuildKit, routed-TAP prerequisites, and helmr-worker installed."
   type        = string
   default     = null
   nullable    = true
@@ -461,6 +478,25 @@ variable "worker_enable_ssm" {
   description = "Enable SSM Session Manager access for worker instances."
   type        = bool
   default     = true
+}
+
+variable "worker_network_link_pool" {
+  description = "Worker-local IPv4 pool used for routed veth links."
+  type        = string
+  default     = "169.254.64.0/18"
+}
+
+variable "worker_network_translation_pool" {
+  description = "Worker-local IPv4 pool used for routed guest translation identities."
+  type        = string
+  default     = "100.96.0.0/16"
+}
+
+variable "worker_network_resolver_ipv4" {
+  description = "Exact IPv4 resolver exposed to guests. Null selects the VPC resolver."
+  type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "worker_buildkit_slirp_cidr" {

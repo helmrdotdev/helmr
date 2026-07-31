@@ -682,7 +682,7 @@ func (s *Supervisor) observation(state State, evidence RecoveryEvidence) api.Wor
 	if s.cfg.Observation != nil {
 		return s.cfg.Observation(state, s.registry.snapshot(), evidence)
 	}
-	observation := api.WorkerObservation{HealthDetails: evidence.HealthDetails(), LeakedSlotCount: int32(len(evidence.Quarantined))}
+	observation := api.WorkerObservation{HealthDetails: evidence.HealthDetails(), QuarantinedResourceCount: int32(len(evidence.Quarantined))}
 	if s.cfg.AdmissionEvaluator != nil {
 		admissionObservation := s.cfg.AdmissionEvaluator.Observation()
 		observation.CPUPressureBPS = admissionObservation.CPUPressureBPS
@@ -701,7 +701,7 @@ func (s *Supervisor) observation(state State, evidence RecoveryEvidence) api.Wor
 		observation.BuildPausedReason = admissionObservation.BuildPausedReason
 		observation.RuntimePausedReason = admissionObservation.RuntimePausedReason
 	}
-	if observation.LeakedSlotCount > 0 {
+	if observation.QuarantinedResourceCount > 0 {
 		observation.RunPausedReason = "startup_recovery_leak"
 		observation.BuildPausedReason = "startup_recovery_leak"
 		observation.RuntimePausedReason = "startup_recovery_leak"

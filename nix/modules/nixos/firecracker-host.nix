@@ -7,6 +7,13 @@
 
 let
   cfg = config.services.helmr.firecrackerHost;
+  buildKitServiceBlockedIPv6CIDRs = [
+    "::/128"
+    "::1/128"
+    "fc00::/7"
+    "fe80::/10"
+    "ff00::/8"
+  ];
   firecrackerReleaseVersion = "1.13.2";
   firecrackerPackage =
     assert lib.assertMsg pkgs.stdenv.hostPlatform.isx86_64
@@ -35,27 +42,6 @@ let
   direnvPackage = pkgs.direnv.overrideAttrs (_: {
     doCheck = false;
   });
-  tcRedirectTap = pkgs.buildGoModule rec {
-    pname = "tc-redirect-tap";
-    version = "34bf829";
-
-    src = pkgs.fetchFromGitHub {
-      owner = "awslabs";
-      repo = "tc-redirect-tap";
-      rev = "34bf829e9a5c99df47318c7feeb637576df239fc";
-      hash = "sha256-yeokm0aTwlMXmnMcNVRER9cZVuuNqk/RW0HY9vjiPPA=";
-    };
-
-    vendorHash = "sha256-gKkWzy+PVlLSOSljFG/T5RmROmfaK/nfXDId4kTeZKM=";
-    subPackages = [ "cmd/tc-redirect-tap" ];
-  };
-  cniPlugins = pkgs.symlinkJoin {
-    name = "helmr-cni-plugins";
-    paths = [
-      pkgs.cni-plugins
-      tcRedirectTap
-    ];
-  };
   pow2 = n: if n == 0 then 1 else 2 * pow2 (n - 1);
   parseIPv4CIDR =
     cidr:
@@ -85,10 +71,17 @@ let
         start = address - (lib.mod address size);
       in
       {
+        inherit address prefix;
         inherit start;
         end = start + size - 1;
       };
   validIPv4CIDR = cidr: parseIPv4CIDR cidr != null;
+  canonicalIPv4CIDR =
+    cidr:
+    let
+      parsed = parseIPv4CIDR cidr;
+    in
+    parsed != null && parsed.address == parsed.start;
   ipv4CIDROverlaps =
     left: right:
     let
@@ -108,18 +101,6 @@ in
       description = "Users that should be allowed to access KVM and the Helmr BuildKit socket.";
     };
 
-    cniNetworkName = lib.mkOption {
-      type = lib.types.str;
-      default = "helmr";
-      description = "CNI network name used by Helmr Firecracker workers.";
-    };
-
-    guestSubnet = lib.mkOption {
-      type = lib.types.str;
-      default = "192.168.127.0/24";
-      description = "IPv4 subnet allocated to Helmr Firecracker guests.";
-    };
-
     guestNameservers = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [
@@ -127,34 +108,6 @@ in
         "8.8.8.8"
       ];
       description = "DNS resolver addresses advertised to Helmr Firecracker guests.";
-    };
-
-    networkBlockedIPv4CIDRs = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [
-        "0.0.0.0/8"
-        "10.0.0.0/8"
-        "100.64.0.0/10"
-        "127.0.0.0/8"
-        "169.254.0.0/16"
-        "172.16.0.0/12"
-        "192.168.0.0/16"
-        "224.0.0.0/4"
-        "240.0.0.0/4"
-      ];
-      description = "IPv4 CIDRs blocked from Helmr Firecracker task egress.";
-    };
-
-    networkBlockedIPv6CIDRs = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [
-        "::/128"
-        "::1/128"
-        "fc00::/7"
-        "fe80::/10"
-        "ff00::/8"
-      ];
-      description = "IPv6 CIDRs blocked from Helmr Firecracker task egress.";
     };
 
     jailerUID = lib.mkOption {
@@ -193,6 +146,11 @@ in
       description = "IPv4 CIDR used by rootlesskit/slirp4netns inside the Helmr BuildKit service namespace.";
     };
 
+    buildKitBlockedIPv4CIDRs = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      description = "Deployment-supplied canonical IPv4 CIDRs denied from the Helmr BuildKit service. Set an explicit empty list to disable additional IPv4 destination denies.";
+    };
+
     buildKitSubuidStart = lib.mkOption {
       type = lib.types.int;
       default = 231072;
@@ -229,7 +187,6 @@ in
       {
         environment.systemPackages = [
           firecrackerPackage
-          cniPlugins
           pkgs.iproute2
           pkgs.iptables
           pkgs.jq
@@ -250,15 +207,6 @@ in
           HELMR_WORKER_FIRECRACKER_JAILER_UID = toString cfg.jailerUID;
           HELMR_WORKER_FIRECRACKER_JAILER_GID = toString cfg.jailerGID;
           HELMR_WORKER_FIRECRACKER_CGROUP_VERSION = "2";
-          HELMR_WORKER_CNI_NETWORK = cfg.cniNetworkName;
-          HELMR_WORKER_CNI_PROFILE = "${cfg.cniNetworkName}/v0";
-          HELMR_WORKER_CNI_CONF_DIR = "/etc/cni/conf.d";
-          HELMR_WORKER_CNI_BIN_DIR = "${cniPlugins}/bin";
-          HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS =
-            if cfg.networkBlockedIPv4CIDRs == [ ] then
-              "none"
-            else
-              lib.concatStringsSep "," cfg.networkBlockedIPv4CIDRs;
           HELMR_VM_E2E = "1";
         }
         // lib.optionalAttrs cfg.enableBuildKit {
@@ -268,35 +216,12 @@ in
         environment.etc."helmr/guest-resolv.conf".text =
           lib.concatMapStringsSep "\n" (nameserver: "nameserver ${nameserver}") cfg.guestNameservers + "\n";
 
-        environment.etc."cni/conf.d/helmr.conflist".text = builtins.toJSON {
-          name = cfg.cniNetworkName;
-          cniVersion = "1.0.0";
-          plugins = [
-            {
-              type = "ptp";
-              ipMasq = true;
-              ipam = {
-                type = "host-local";
-                subnet = cfg.guestSubnet;
-                resolvConf = "/etc/helmr/guest-resolv.conf";
-              };
-            }
-            { type = "tuning"; }
-            { type = "firewall"; }
-            { type = "tc-redirect-tap"; }
-          ];
-        };
-
         boot.kernelModules = [ "kvm" ];
         networking.firewall.checkReversePath = lib.mkDefault false;
         assertions = [
           {
             assertion = pkgs.stdenv.hostPlatform.isx86_64;
             message = "services.helmr.firecrackerHost supports only x86_64-linux.";
-          }
-          {
-            assertion = lib.all validIPv4CIDR cfg.networkBlockedIPv4CIDRs;
-            message = "services.helmr.firecrackerHost.networkBlockedIPv4CIDRs must contain valid IPv4 CIDR prefixes.";
           }
         ]
         ++ lib.optionals cfg.enableBuildKit [
@@ -305,8 +230,14 @@ in
             message = "services.helmr.firecrackerHost.buildKitSlirpCIDR must be a valid IPv4 CIDR prefix.";
           }
           {
-            assertion = !lib.any (ipv4CIDROverlaps cfg.buildKitSlirpCIDR) cfg.networkBlockedIPv4CIDRs;
-            message = "services.helmr.firecrackerHost.buildKitSlirpCIDR must not overlap networkBlockedIPv4CIDRs because rootless BuildKit DNS and NAT must remain reachable inside the service namespace.";
+            assertion =
+              lib.all canonicalIPv4CIDR cfg.buildKitBlockedIPv4CIDRs
+              && lib.length (lib.unique cfg.buildKitBlockedIPv4CIDRs) == lib.length cfg.buildKitBlockedIPv4CIDRs;
+            message = "services.helmr.firecrackerHost.buildKitBlockedIPv4CIDRs must contain unique canonical IPv4 CIDRs.";
+          }
+          {
+            assertion = !lib.any (ipv4CIDROverlaps cfg.buildKitSlirpCIDR) cfg.buildKitBlockedIPv4CIDRs;
+            message = "services.helmr.firecrackerHost.buildKitSlirpCIDR must not overlap the deployment-supplied BuildKit service deny set because rootless BuildKit DNS and NAT must remain reachable inside the service namespace.";
           }
         ];
 
@@ -404,7 +335,7 @@ in
             MemoryOOMGroup = true;
             KillMode = "mixed";
             BindReadOnlyPaths = [ "/etc/helmr/guest-resolv.conf:/etc/resolv.conf" ];
-            IPAddressDeny = cfg.networkBlockedIPv4CIDRs ++ cfg.networkBlockedIPv6CIDRs;
+            IPAddressDeny = cfg.buildKitBlockedIPv4CIDRs ++ buildKitServiceBlockedIPv6CIDRs;
           };
         };
       })

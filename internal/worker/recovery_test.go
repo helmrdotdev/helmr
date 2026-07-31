@@ -18,7 +18,7 @@ func TestRecoveryQuarantinesProcessWithoutOwnerMarker(t *testing.T) {
 	id := "019c10d5-a6f7-7af1-8f5f-000000000106"
 	unrelated := "019c10d5-a6f7-7af1-8f5f-000000000999"
 	var stopped []int
-	var deleted []string
+	var reclaimed []vm.Owner
 	var matched []string
 	evidence, err := recoverLocalVMState(context.Background(), workDir, jailerDir, vmRecoveryOps{
 		ownerCandidates: func(context.Context) ([]ownerCandidate, error) { return nil, nil },
@@ -33,19 +33,19 @@ func TestRecoveryQuarantinesProcessWithoutOwnerMarker(t *testing.T) {
 			}
 			return nil, nil
 		},
-		stopPID:     func(_ context.Context, pid int) error { stopped = append(stopped, pid); return nil },
-		netnsExists: func(_ context.Context, candidate string) (bool, error) { return candidate == id, nil },
-		deleteNetns: func(_ context.Context, candidate string) error { deleted = append(deleted, candidate); return nil },
-		removeAll:   os.RemoveAll,
+		stopPID:        func(_ context.Context, pid int) error { stopped = append(stopped, pid); return nil },
+		netnsExists:    func(_ context.Context, candidate string) (bool, error) { return candidate == id, nil },
+		reclaimNetwork: func(_ context.Context, owner vm.Owner) error { reclaimed = append(reclaimed, owner); return nil },
+		removeAll:      os.RemoveAll,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(evidence.Quarantined, []string{"process:42"}) || len(evidence.QuarantineErrors) != 1 {
-		t.Fatalf("evidence=%+v stopped=%v deleted=%v", evidence, stopped, deleted)
+		t.Fatalf("evidence=%+v stopped=%v reclaimed=%v", evidence, stopped, reclaimed)
 	}
-	if len(matched) != 0 || len(stopped) != 0 || len(deleted) != 0 {
-		t.Fatalf("ownerless process was selected for cleanup: matched=%v stopped=%v deleted=%v", matched, stopped, deleted)
+	if len(matched) != 0 || len(stopped) != 0 || len(reclaimed) != 0 {
+		t.Fatalf("ownerless process was selected for cleanup: matched=%v stopped=%v reclaimed=%v", matched, stopped, reclaimed)
 	}
 }
 
@@ -55,12 +55,12 @@ func TestRecoveryQuarantinesMalformedOwnedProcess(t *testing.T) {
 		ownedProcesses: func(context.Context) ([]ownedVMProcess, error) {
 			return []ownedVMProcess{{PID: 43, ID: "not-a-runtime", Problem: "owned jailer process has non-canonical --id"}}, nil
 		},
-		netnsNames:   func(context.Context) ([]string, error) { return []string{"not-a-runtime"}, nil },
-		matchingPIDs: func(string) ([]int, error) { t.Fatal("unsafe residue was selected for cleanup"); return nil, nil },
-		stopPID:      func(context.Context, int) error { return nil },
-		netnsExists:  func(context.Context, string) (bool, error) { return false, nil },
-		deleteNetns:  func(context.Context, string) error { return nil },
-		removeAll:    os.RemoveAll,
+		netnsNames:     func(context.Context) ([]string, error) { return []string{"not-a-runtime"}, nil },
+		matchingPIDs:   func(string) ([]int, error) { t.Fatal("unsafe residue was selected for cleanup"); return nil, nil },
+		stopPID:        func(context.Context, int) error { return nil },
+		netnsExists:    func(context.Context, string) (bool, error) { return false, nil },
+		reclaimNetwork: func(context.Context, vm.Owner) error { return nil },
+		removeAll:      os.RemoveAll,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func TestRecoveryReclaimsRuntimeAndBuildFromExactOwnerMarkers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	evidence, err := RecoverLocalVMState(context.Background(), workDir, jailerDir, truePath)
+	evidence, err := RecoverLocalVMState(context.Background(), workDir, jailerDir, truePath, func(context.Context, vm.Owner) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestRecoveryDoesNotGuessOwnerFromJailerRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	evidence, err := RecoverLocalVMState(context.Background(), workDir, jailerDir, truePath)
+	evidence, err := RecoverLocalVMState(context.Background(), workDir, jailerDir, truePath, func(context.Context, vm.Owner) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,12 +167,12 @@ func TestRecoveryQuarantinePreservesStructuredBuildOwner(t *testing.T) {
 		ownerCandidates: func(context.Context) ([]ownerCandidate, error) {
 			return []ownerCandidate{{Owner: owner}}, nil
 		},
-		matchingPIDs: func(string) ([]int, error) { return []int{42}, nil },
-		stopPID:      func(context.Context, int) error { return errors.New("still running") },
-		netnsExists:  func(context.Context, string) (bool, error) { return false, nil },
-		deleteNetns:  func(context.Context, string) error { return nil },
-		removeAll:    os.RemoveAll,
-		removeState:  removeOwnedRecoveryState,
+		matchingPIDs:   func(string) ([]int, error) { return []int{42}, nil },
+		stopPID:        func(context.Context, int) error { return errors.New("still running") },
+		netnsExists:    func(context.Context, string) (bool, error) { return false, nil },
+		reclaimNetwork: func(context.Context, vm.Owner) error { return nil },
+		removeAll:      os.RemoveAll,
+		removeState:    removeOwnedRecoveryState,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -30,7 +30,6 @@ type runLeaseClaimResponseAuthority struct {
 	run            db.Run
 	attempt        db.RunAttempt
 	runtime        db.RuntimeInstance
-	networkSlot    db.WorkerNetworkSlot
 	runLease       db.RunLease
 	workspace      db.Workspace
 	workspaceMount db.WorkspaceMount
@@ -105,7 +104,6 @@ func projectRunLeaseClaimResponse(
 		run:            authority.run,
 		attempt:        authority.attempt,
 		runtime:        authority.runtime,
-		networkSlot:    authority.networkSlot,
 		runLease:       authority.runLease,
 		workspace:      authority.workspace,
 		workspaceMount: authority.workspaceMount,

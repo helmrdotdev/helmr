@@ -139,8 +139,6 @@ SELECT 'run_lease' AS section,
        run_leases.worker_instance_id,
        run_leases.worker_epoch,
        run_leases.runtime_instance_id,
-       run_leases.network_slot_id,
-       run_leases.network_slot_generation,
        run_leases.assigned_at,
        run_leases.claimed_at,
        run_leases.started_at,
@@ -250,30 +248,11 @@ SELECT 'runtime_instance' AS section,
        runtime_instances.closed_at,
        runtime_instances.lost_at,
        runtime_instances.reclaimed_at,
+       runtime_instances.reclaim_evidence,
        runtime_instances.terminal_reason_code
   FROM run_leases
   JOIN runtime_instances ON runtime_instances.org_id = run_leases.org_id
                         AND runtime_instances.id = run_leases.runtime_instance_id
- WHERE run_leases.run_id = (SELECT id FROM runs WHERE id = '${run_id}')
- ORDER BY run_leases.lease_sequence;
-
-SELECT 'network_slot' AS section,
-       run_leases.id AS run_lease_id,
-       run_leases.network_slot_generation AS leased_generation,
-       worker_network_slots.id AS network_slot_id,
-       worker_network_slots.generation AS current_generation,
-       worker_network_slots.state,
-       worker_network_slots.runtime_instance_id,
-       worker_network_slots.assigned_at,
-       worker_network_slots.reclaiming_at,
-       worker_network_slots.quarantined_at,
-       worker_network_slots.lost_at,
-       worker_network_slots.reclaimed_at,
-       worker_network_slots.state_reason_code,
-       worker_network_slots.generation = run_leases.network_slot_generation AS generation_matches_lease,
-       worker_network_slots.runtime_instance_id = run_leases.runtime_instance_id AS runtime_matches_lease
-  FROM run_leases
-  JOIN worker_network_slots ON worker_network_slots.id = run_leases.network_slot_id
  WHERE run_leases.run_id = (SELECT id FROM runs WHERE id = '${run_id}')
  ORDER BY run_leases.lease_sequence;
 

@@ -23,6 +23,13 @@ func main() {
 		return
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	if len(os.Args) == 1 {
+		if err := run(log); err != nil {
+			log.Error("worker stopped", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "drain":
@@ -53,10 +60,6 @@ func main() {
 			log.Error("unknown command", "command", os.Args[1])
 			os.Exit(1)
 		}
-	}
-	if err := run(log); err != nil {
-		log.Error("worker stopped", "error", err)
-		os.Exit(1)
 	}
 }
 

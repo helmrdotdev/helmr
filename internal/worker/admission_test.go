@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -106,6 +107,39 @@ func TestHardAdmissionKeepsVerifierFailureInBuildDomain(t *testing.T) {
 			observation.RuntimePausedReason,
 			observation.BuildPausedReason,
 		)
+	}
+}
+
+func TestHardAdmissionFailsClosedWhenDatapathChanges(t *testing.T) {
+	now := time.Now()
+	datapathHealthy := true
+	evaluator, err := NewHardAdmission(HardAdmissionConfig{
+		Probe:          &staticHealthProbe{health: healthyHost(now)},
+		DiskFloorBytes: 1, FDHeadroom: 1, RuntimeSlotCount: 1,
+		Now: func() time.Time { return now },
+		DatapathHealth: func() error {
+			if datapathHealthy {
+				return nil
+			}
+			return errors.New("binding changed")
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := AdmissionCheck{Consumer: "run", State: StateActive, CertifiedAt: now, CertificationTTL: time.Hour}
+	if decision := evaluator.Evaluate(context.Background(), check); !decision.Allowed {
+		t.Fatalf("healthy datapath decision = %+v", decision)
+	}
+	datapathHealthy = false
+	if decision := evaluator.Evaluate(context.Background(), check); decision.Allowed || decision.Reason != AdmissionDatapathUnverified {
+		t.Fatalf("changed datapath decision = %+v", decision)
+	}
+	observation := evaluator.Observation()
+	if observation.RunPausedReason != string(AdmissionDatapathUnverified) ||
+		observation.BuildPausedReason != string(AdmissionDatapathUnverified) ||
+		observation.RuntimePausedReason != string(AdmissionDatapathUnverified) {
+		t.Fatalf("datapath observation = %+v", observation)
 	}
 }
 

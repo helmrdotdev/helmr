@@ -299,7 +299,6 @@ func TestLockLiveRunFinalizationAuthorityLocksLineageBeforePhysicalAuthority(t *
 		"attempt",
 		"worker_group",
 		"worker",
-		"network_slot",
 		"runtime",
 		"renewal_lease",
 		"workspace_mount",

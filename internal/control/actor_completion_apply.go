@@ -196,7 +196,7 @@ func validateActorCompletionAuthority(
 		return errStaleActorCompletion
 	}
 	assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
-		run: authority.run, attempt: authority.attempt, runtime: authority.runtime, networkSlot: authority.networkSlot,
+		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
 		runLease: authority.runLease, workspace: authority.workspace, workspaceMount: authority.workspaceMount, workspaceLease: authority.workspaceLease,
 	})
 	if err != nil {

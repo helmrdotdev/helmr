@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
-	"net/netip"
 	"strings"
 	"time"
 
@@ -49,7 +47,7 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 	source := api.WorkerRuntimeSource{
 		DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID),
 		WorkspaceID:            pgvalue.UUIDString(row.WorkspaceID),
-		RuntimeID:              row.RuntimeIdentityID,
+		RuntimeIdentityID:      row.RuntimeIdentityID,
 		WorkspaceImage:         api.CASObject{Digest: row.WorkspaceImageDigest, SizeBytes: row.WorkspaceImageSizeBytes, MediaType: row.WorkspaceImageMediaType},
 		WorkspaceArchitecture:  row.WorkspaceArchitecture,
 		RootfsDigest:           row.RootfsDigest,
@@ -64,8 +62,8 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		}
 	}
 	target := api.WorkerRuntimeReconcileTarget{
-		ID: pgvalue.UUIDString(row.ID), WorkerEpoch: row.WorkerEpoch, NetworkSlotID: pgvalue.UUIDString(row.NetworkSlotID),
-		NetworkSlotGeneration: row.NetworkSlotGeneration, DesiredState: string(row.DesiredState), DesiredVersion: row.DesiredVersion,
+		ID: pgvalue.UUIDString(row.ID), WorkerEpoch: row.WorkerEpoch,
+		DesiredState: string(row.DesiredState), DesiredVersion: row.DesiredVersion,
 		ObservedState: string(row.ObservedState), ObservedVersion: row.ObservedVersion, ObservedDesiredVersion: row.ObservedDesiredVersion,
 		Action: action, Source: source,
 	}
@@ -185,9 +183,8 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 		writeError(w, badRequest(errors.New("id must be a canonical UUIDv7")))
 		return
 	}
-	slotID, err := ids.Parse(request.NetworkSlotID)
-	if err != nil || request.WorkerEpoch <= 0 || request.NetworkSlotGeneration <= 0 || request.DesiredVersion <= 0 || request.ExpectedObservedVersion < 0 {
-		writeError(w, badRequest(errors.New("runtime epoch, slot generation, desired version, and observed version fences are required")))
+	if request.WorkerEpoch <= 0 || request.DesiredVersion <= 0 || request.ExpectedObservedVersion < 0 {
+		writeError(w, badRequest(errors.New("runtime epoch, desired version, and observed version fences are required")))
 		return
 	}
 	worker := workerFromContext(r.Context())
@@ -198,33 +195,15 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 	var row db.RuntimeInstance
 	switch state {
 	case "ready":
-		if request.NetworkFacts == nil {
-			writeError(w, badRequest(errors.New("network_facts are required when marking a runtime ready")))
-			return
-		}
 		runtimeSubstrateID, substrateErr := ids.Parse(request.RuntimeSubstrateID)
 		if substrateErr != nil {
 			writeError(w, badRequest(errors.New("runtime_substrate_id must be a canonical UUIDv7")))
 			return
 		}
-		facts := request.NetworkFacts
-		guestAddress, guestErr := netip.ParseAddr(strings.TrimSpace(facts.GuestAddress))
-		gatewayAddress, gatewayErr := netip.ParseAddr(strings.TrimSpace(facts.GatewayAddress))
-		subnet, subnetErr := netip.ParsePrefix(strings.TrimSpace(facts.Subnet))
-		guestMAC, macErr := net.ParseMAC(strings.TrimSpace(facts.GuestMAC))
-		if guestErr != nil || gatewayErr != nil || subnetErr != nil || macErr != nil ||
-			strings.TrimSpace(facts.HostInterfaceName) == "" || strings.TrimSpace(facts.TapName) == "" || strings.TrimSpace(facts.NetNSName) == "" ||
-			!subnet.Contains(guestAddress) || !subnet.Contains(gatewayAddress) {
-			writeError(w, badRequest(errors.New("complete, internally consistent CNI network_facts are required")))
-			return
-		}
 		row, err = s.db.MarkRuntimeInstanceReady(r.Context(), db.MarkRuntimeInstanceReadyParams{
 			DesiredVersion: request.DesiredVersion, ID: pgvalue.UUID(id), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch: worker.WorkerEpoch, NetworkSlotID: pgvalue.UUID(slotID), NetworkSlotGeneration: request.NetworkSlotGeneration,
+			WorkerEpoch:             worker.WorkerEpoch,
 			ExpectedObservedVersion: request.ExpectedObservedVersion, RuntimeSubstrateID: pgvalue.UUID(runtimeSubstrateID),
-			HostInterfaceName: pgtype.Text{String: strings.TrimSpace(facts.HostInterfaceName), Valid: true}, GuestAddress: &guestAddress,
-			GatewayAddress: &gatewayAddress, Subnet: &subnet, TapName: pgtype.Text{String: strings.TrimSpace(facts.TapName), Valid: true},
-			NetnsName: pgtype.Text{String: strings.TrimSpace(facts.NetNSName), Valid: true}, GuestMac: guestMAC,
 		})
 	case "closed":
 		if request.CleanupProof == nil {
@@ -244,14 +223,12 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 		if reason == "" {
 			reason = "desired_state_reconciled"
 		}
-		var closed db.MarkRuntimeInstanceClosedRow
-		closed, err = s.db.MarkRuntimeInstanceClosed(r.Context(), db.MarkRuntimeInstanceClosedParams{
+		row, err = s.db.MarkRuntimeInstanceClosed(r.Context(), db.MarkRuntimeInstanceClosedParams{
 			ReasonCode: pgtype.Text{String: reason, Valid: true}, ID: pgvalue.UUID(id), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
-			DesiredVersion: request.DesiredVersion, NetworkSlotID: pgvalue.UUID(slotID), NetworkSlotGeneration: request.NetworkSlotGeneration,
+			DesiredVersion:          request.DesiredVersion,
 			ExpectedObservedVersion: request.ExpectedObservedVersion,
 			CleanupProof:            proof,
 		})
-		row = db.RuntimeInstance(closed)
 	case "failed":
 		reason := strings.TrimSpace(request.ReasonCode)
 		if reason == "" {
@@ -270,7 +247,7 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 			reclaimed, reclaimErr := s.db.ReclaimFailedRuntimeInstance(r.Context(), db.ReclaimFailedRuntimeInstanceParams{
 				ID: pgvalue.UUID(id), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
 				DesiredVersion: request.DesiredVersion, ExpectedObservedVersion: request.ExpectedObservedVersion,
-				NetworkSlotID: pgvalue.UUID(slotID), NetworkSlotGeneration: request.NetworkSlotGeneration, CleanupProof: proof,
+				CleanupProof: proof,
 			})
 			if reclaimErr == nil {
 				writeJSON(w, http.StatusOK, runtimeInstanceResponse(db.RuntimeInstance(reclaimed)))
@@ -281,24 +258,19 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 				return
 			}
 		}
-		var failed db.MarkRuntimeInstanceFailedRow
-		failed, err = s.db.MarkRuntimeInstanceFailed(r.Context(), db.MarkRuntimeInstanceFailedParams{
+		row, err = s.db.MarkRuntimeInstanceFailed(r.Context(), db.MarkRuntimeInstanceFailedParams{
 			ReasonCode: pgtype.Text{String: reason, Valid: true}, Error: normalizedJSONRawMessage(request.Error),
 			ID: pgvalue.UUID(id), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
-			NetworkSlotID: pgvalue.UUID(slotID), NetworkSlotGeneration: request.NetworkSlotGeneration,
 			DesiredVersion:          request.DesiredVersion,
 			ExpectedObservedVersion: request.ExpectedObservedVersion,
 		})
-		row = db.RuntimeInstance(failed)
 		if err == nil && request.CleanupProof != nil {
 			proof, _ := json.Marshal(request.CleanupProof)
-			var reclaimed db.ReclaimFailedRuntimeInstanceRow
-			reclaimed, err = s.db.ReclaimFailedRuntimeInstance(r.Context(), db.ReclaimFailedRuntimeInstanceParams{
+			row, err = s.db.ReclaimFailedRuntimeInstance(r.Context(), db.ReclaimFailedRuntimeInstanceParams{
 				ID: pgvalue.UUID(id), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
 				DesiredVersion: request.DesiredVersion, ExpectedObservedVersion: row.ObservedVersion,
-				NetworkSlotID: pgvalue.UUID(slotID), NetworkSlotGeneration: request.NetworkSlotGeneration, CleanupProof: proof,
+				CleanupProof: proof,
 			})
-			row = db.RuntimeInstance(reclaimed)
 		}
 	default:
 		writeError(w, errors.New("unsupported runtime instance state"))
@@ -343,11 +315,18 @@ func normalizedJSONRawMessage(raw json.RawMessage) []byte {
 
 func runtimeInstanceResponse(row db.RuntimeInstance) api.WorkerRuntimeInstance {
 	return api.WorkerRuntimeInstance{
-		ID: pgvalue.UUIDString(row.ID), OrgID: pgvalue.UUIDString(row.OrgID), ProjectID: pgvalue.UUIDString(row.ProjectID),
-		EnvironmentID: pgvalue.UUIDString(row.EnvironmentID), WorkerInstanceID: pgvalue.UUIDString(row.WorkerInstanceID),
-		RuntimeEpoch: row.WorkerEpoch,
-		RuntimeID:    row.RuntimeIdentityID, DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID), State: string(row.ObservedState),
-		ReservedCpuMillis: int32(row.ReservedCpuMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
-		ReservedDiskMiB: row.ReservedGuestEphemeralDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
+		ID:                     pgvalue.UUIDString(row.ID),
+		OrgID:                  pgvalue.UUIDString(row.OrgID),
+		ProjectID:              pgvalue.UUIDString(row.ProjectID),
+		EnvironmentID:          pgvalue.UUIDString(row.EnvironmentID),
+		WorkerInstanceID:       pgvalue.UUIDString(row.WorkerInstanceID),
+		RuntimeEpoch:           row.WorkerEpoch,
+		RuntimeID:              row.RuntimeIdentityID,
+		DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID),
+		State:                  string(row.ObservedState),
+		ReservedCpuMillis:      int32(row.ReservedCpuMillis),
+		ReservedMemoryMiB:      int32(row.ReservedMemoryBytes / 1048576),
+		ReservedDiskMiB:        row.ReservedGuestEphemeralDiskBytes / 1048576,
+		ReservedExecutionSlots: row.ReservedExecutionSlots,
 	}
 }

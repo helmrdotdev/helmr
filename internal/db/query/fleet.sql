@@ -245,10 +245,6 @@ SELECT worker_instances.id, worker_instances.resource_id, worker_instances.state
              WHERE worker_instance_id = worker_instances.id
                AND worker_epoch = worker_instances.current_epoch
                AND state IN ('starting', 'running', 'exit_requested'))
-         + (SELECT count(*) FROM worker_network_slots
-             WHERE worker_instance_id = worker_instances.id
-               AND worker_epoch = worker_instances.current_epoch
-               AND state IN ('assigned', 'bound', 'reclaiming', 'quarantined'))
        )::bigint AS authority_count,
        (worker_instances.state = 'disabled'
         AND worker_instances.drain_cleanup_fingerprint IS NOT NULL
@@ -304,10 +300,6 @@ WITH target AS MATERIALIZED (
                  WHERE worker_instance_id = target.id
                    AND worker_epoch = target.current_epoch
                    AND state IN ('starting', 'running', 'exit_requested'))
-             + (SELECT count(*) FROM worker_network_slots
-                 WHERE worker_instance_id = target.id
-                   AND worker_epoch = target.current_epoch
-                   AND state IN ('assigned', 'bound', 'reclaiming', 'quarantined'))
            )::bigint AS authority_count,
            (target.state = 'disabled'
             AND target.drain_cleanup_fingerprint IS NOT NULL

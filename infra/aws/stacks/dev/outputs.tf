@@ -13,19 +13,9 @@ output "worker_control_url" {
   value       = local.worker_control_url
 }
 
-output "private_control_dns_name" {
-  description = "Private Route53 control DNS name when enabled."
-  value       = local.private_control_dns_name
-}
-
 output "control_load_balancer_dns_name" {
   description = "Control-plane load balancer DNS name."
   value       = module.control.load_balancer_dns_name
-}
-
-output "private_control_load_balancer_dns_name" {
-  description = "Private worker-facing load balancer DNS name when enabled."
-  value       = module.control.private_load_balancer_dns_name
 }
 
 output "control_cloudfront_domain_name" {
@@ -98,9 +88,14 @@ output "control_assign_public_ip" {
   value       = module.control.control_assign_public_ip
 }
 
-output "nat_gateway_id" {
-  description = "NAT Gateway ID when enabled."
-  value       = module.network.nat_gateway_id
+output "control_nat_gateway_id" {
+  description = "Control VPC NAT Gateway ID when enabled."
+  value       = module.control_network.nat_gateway_id
+}
+
+output "execution_nat_gateway_id" {
+  description = "Execution VPC NAT Gateway ID when enabled."
+  value       = module.execution_network.nat_gateway_id
 }
 
 output "migration_task_definition_arn" {
@@ -108,9 +103,14 @@ output "migration_task_definition_arn" {
   value       = module.control.migration_task_definition_arn
 }
 
-output "private_subnet_ids" {
-  description = "Private subnet IDs for ECS run-task network configuration."
-  value       = module.network.private_subnet_ids
+output "control_private_subnet_ids" {
+  description = "Control VPC private subnet IDs for ECS run-task network configuration."
+  value       = module.control_network.private_subnet_ids
+}
+
+output "execution_private_subnet_ids" {
+  description = "Execution VPC private subnet IDs for Worker placement."
+  value       = module.execution_network.private_subnet_ids
 }
 
 output "postgres_endpoint" {

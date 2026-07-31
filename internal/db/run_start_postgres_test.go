@@ -368,7 +368,6 @@ func (fixture runLeaseClaimFixture) freshRunLeaseRunningParams(
 		LeaseSequence: 1, WorkerGroupID: runLeaseTestWorkerGroup,
 		WorkerInstanceID: workUUID(fixture.workerID), WorkerEpoch: 1,
 		WorkerProtocolVersion: runLeaseTestProtocol, RuntimeInstanceID: locators.RuntimeInstanceID,
-		NetworkSlotID: locators.NetworkSlotID, NetworkSlotGeneration: locators.NetworkSlotGeneration,
 		RuntimeIdentityID: fixture.runtimeIdentityID,
 	}
 }

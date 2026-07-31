@@ -167,8 +167,6 @@ SELECT claimed.*, runtime_instances.runtime_identity_id AS runtime_id,
        runtime_instances.deployment_definition_id,
        runtime_identities.rootfs_digest,
        runtime_identities.runtime_abi,
-       worker_network_slots.id AS network_slot_id,
-       worker_network_slots.generation AS network_slot_generation,
        runtime_instances.reserved_cpu_millis,
        runtime_instances.reserved_memory_bytes,
        runtime_instances.reserved_guest_ephemeral_disk_bytes,
@@ -196,10 +194,6 @@ SELECT claimed.*, runtime_instances.runtime_identity_id AS runtime_id,
   LEFT JOIN artifacts AS workspace_artifacts
     ON workspace_artifacts.environment_id = workspace_versions.environment_id
    AND workspace_artifacts.id = workspace_versions.artifact_id
-  JOIN worker_network_slots ON worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
-                    AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
-                    AND worker_network_slots.runtime_instance_id = runtime_instances.id
-                    AND worker_network_slots.state = 'bound'
   JOIN artifacts AS image_artifacts
     ON image_artifacts.environment_id = deployment_definitions.environment_id
    AND image_artifacts.id = deployment_definitions.artifact_id;
@@ -327,6 +321,7 @@ WITH stopped AS (
            observed_at = now(), closing_at = COALESCE(runtime_instances.closing_at, now()),
            closed_at = now(), terminal_at = now(), terminal_reason_code = 'workspace_unmounted',
            terminal_error = NULL, reclaimed_at = now(),
+           reclaim_evidence = sqlc.arg(cleanup_proof)::jsonb,
            reserved_run_id = NULL, reserved_attempt_number = NULL,
            reserved_process_id = NULL, reserved_workspace_version_id = NULL,
            reservation_expires_at = NULL, updated_at = now()
@@ -337,25 +332,9 @@ WITH stopped AS (
        AND runtime_instances.worker_epoch = stopped.worker_epoch
        AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
     RETURNING runtime_instances.*
-), reclaimed_slot AS (
-    UPDATE worker_network_slots
-       SET state = 'available', generation = worker_network_slots.generation + 1,
-           runtime_instance_id = NULL, host_interface_name = NULL, guest_address = NULL,
-           gateway_address = NULL, subnet = NULL, tap_name = NULL, netns_name = NULL,
-           guest_mac = NULL, reclaiming_at = NULL, quarantined_at = NULL, lost_at = NULL,
-           reclaimed_at = now(),
-           reclaim_evidence = jsonb_build_object('reason_code', 'workspace_unmounted'),
-           state_reason_code = NULL, state_error = NULL, updated_at = now()
-      FROM closed_runtime
-     WHERE worker_network_slots.worker_instance_id = closed_runtime.worker_instance_id
-       AND worker_network_slots.worker_epoch = closed_runtime.worker_epoch
-       AND worker_network_slots.runtime_instance_id = closed_runtime.id
-       AND worker_network_slots.state IN ('bound','reclaiming')
-    RETURNING worker_network_slots.id
 )
 SELECT stopped.* FROM stopped
-  JOIN closed_runtime ON closed_runtime.id = stopped.runtime_instance_id
-  JOIN reclaimed_slot ON true;
+  JOIN closed_runtime ON closed_runtime.id = stopped.runtime_instance_id;
 
 -- name: RequestCapacityPressureIdleWorkspaceMountStopsForWorker :many
 WITH candidates AS (
@@ -381,11 +360,6 @@ WITH target AS (
        AND runtime_instances.worker_epoch = workspace_mounts.worker_epoch
        AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
        AND runtime_instances.reclaimed_at IS NULL
-      JOIN worker_network_slots
-        ON worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
-       AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
-       AND worker_network_slots.runtime_instance_id = runtime_instances.id
-       AND worker_network_slots.state IN ('assigned','bound')
      WHERE workspace_mounts.org_id = sqlc.arg(org_id)
        AND workspace_mounts.id = sqlc.arg(id)
        AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
@@ -393,7 +367,7 @@ WITH target AS (
        AND workspace_mounts.runtime_instance_id = sqlc.arg(runtime_instance_id)
        AND workspace_mounts.fencing_generation = sqlc.arg(fencing_generation)
        AND workspace_mounts.state IN ('mounting','mounted','unmounting')
-     FOR UPDATE OF workspace_mounts, runtime_instances, worker_network_slots
+     FOR UPDATE OF workspace_mounts, runtime_instances
 ), failed_runtime AS (
     UPDATE runtime_instances
        SET observed_state = 'failed', observed_version = observed_version + 1,
@@ -409,24 +383,12 @@ WITH target AS (
        AND runtime_instances.worker_instance_id = target.worker_instance_id
        AND runtime_instances.worker_epoch = target.worker_epoch
     RETURNING runtime_instances.*
-), quarantined_slot AS (
-    UPDATE worker_network_slots
-       SET state = 'quarantined', reclaiming_at = COALESCE(reclaiming_at, now()),
-           quarantined_at = now(),
-           state_reason_code = 'runtime_physical_cleanup_pending',
-           state_error = sqlc.narg(error), updated_at = now()
-      FROM target, failed_runtime
-     WHERE worker_network_slots.worker_instance_id = failed_runtime.worker_instance_id
-       AND worker_network_slots.worker_epoch = failed_runtime.worker_epoch
-       AND worker_network_slots.runtime_instance_id = failed_runtime.id
-       AND worker_network_slots.state IN ('assigned','bound')
-    RETURNING worker_network_slots.id
 )
 UPDATE workspace_mounts
    SET state = 'failed', failed_at = now(), terminal_at = now(),
        terminal_reason_code = sqlc.arg(reason_code), terminal_error = sqlc.narg(error),
        updated_at = now()
-  FROM target, failed_runtime, quarantined_slot
+  FROM target, failed_runtime
  WHERE workspace_mounts.org_id = target.org_id
    AND workspace_mounts.id = target.id
    AND failed_runtime.id = target.runtime_instance_id

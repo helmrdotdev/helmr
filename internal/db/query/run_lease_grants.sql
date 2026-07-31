@@ -48,25 +48,9 @@ WITH created_runtime AS (
         'run_reservation'
     )
     RETURNING *
-), assigned_slot AS (
-    UPDATE worker_network_slots
-       SET state = 'assigned',
-           runtime_instance_id = created_runtime.id,
-           assigned_at = transaction_timestamp(),
-           updated_at = transaction_timestamp()
-      FROM created_runtime
-     WHERE worker_network_slots.id = sqlc.arg(network_slot_id)
-       AND worker_network_slots.worker_group_id = created_runtime.worker_group_id
-       AND worker_network_slots.worker_instance_id = created_runtime.worker_instance_id
-       AND worker_network_slots.worker_epoch = created_runtime.worker_epoch
-       AND worker_network_slots.generation = sqlc.arg(network_slot_generation)
-       AND worker_network_slots.state = 'available'
-       AND worker_network_slots.runtime_instance_id IS NULL
-    RETURNING worker_network_slots.id
 )
 SELECT created_runtime.*
-  FROM created_runtime
-  JOIN assigned_slot ON true;
+  FROM created_runtime;
 
 -- name: InsertAssignedRunLease :one
 INSERT INTO run_leases (
@@ -83,8 +67,6 @@ INSERT INTO run_leases (
     worker_instance_id,
     worker_epoch,
     runtime_instance_id,
-    network_slot_id,
-    network_slot_generation,
     runtime_identity_id,
     worker_protocol_version,
     requested_cpu_millis,
@@ -111,8 +93,6 @@ INSERT INTO run_leases (
     sqlc.arg(worker_instance_id),
     sqlc.arg(worker_epoch),
     sqlc.arg(runtime_instance_id),
-    sqlc.arg(network_slot_id),
-    sqlc.arg(network_slot_generation),
     sqlc.arg(runtime_identity_id),
     sqlc.arg(worker_protocol_version),
     sqlc.arg(requested_cpu_millis),

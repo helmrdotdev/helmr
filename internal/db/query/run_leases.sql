@@ -74,8 +74,6 @@ SELECT run_leases.org_id,
        run_leases.region_id,
        run_leases.runtime_instance_id,
        runtime_instances.restore_checkpoint_id AS runtime_restore_checkpoint_id,
-       run_leases.network_slot_id,
-       run_leases.network_slot_generation,
        runs.actor_id,
        actors.run_generation AS actor_run_generation,
        workspace_leases.id AS workspace_lease_id,
@@ -217,8 +215,6 @@ SELECT run_leases.org_id,
        run_leases.region_id,
        run_leases.runtime_instance_id,
        runtime_instances.restore_checkpoint_id AS runtime_restore_checkpoint_id,
-       run_leases.network_slot_id,
-       run_leases.network_slot_generation,
        runs.actor_id,
        runs.parent_run_id,
        workspace_leases.id AS workspace_lease_id,
@@ -345,8 +341,6 @@ SELECT run_leases.org_id,
        run_leases.attempt_number,
        run_leases.region_id,
        run_leases.runtime_instance_id,
-       run_leases.network_slot_id,
-       run_leases.network_slot_generation,
        workspace_leases.id AS workspace_lease_id,
        workspace_leases.workspace_mount_id
   FROM run_leases
@@ -403,8 +397,6 @@ SELECT run_leases.org_id,
        runs.parent_owns_lifecycle,
        run_leases.region_id,
        run_leases.runtime_instance_id,
-       run_leases.network_slot_id,
-       run_leases.network_slot_generation,
        workspace_leases.id AS workspace_lease_id,
        workspace_leases.workspace_mount_id
   FROM run_leases
@@ -513,17 +505,6 @@ SELECT worker_observations.*,
  WHERE worker_observations.worker_instance_id = sqlc.arg(worker_instance_id)
    AND worker_observations.worker_epoch = sqlc.arg(worker_epoch)
  FOR UPDATE OF worker_observations;
-
--- name: LockRunLeaseClaimNetworkSlot :one
-SELECT *
-  FROM worker_network_slots
- WHERE id = sqlc.arg(id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
-   AND worker_instance_id = sqlc.arg(worker_instance_id)
-   AND worker_epoch = sqlc.arg(worker_epoch)
-   AND generation = sqlc.arg(generation)
-   AND runtime_instance_id = sqlc.arg(runtime_instance_id)
- FOR UPDATE;
 
 -- name: LockRunLeaseClaimRuntime :one
 SELECT *
@@ -828,8 +809,6 @@ UPDATE run_leases
    AND worker_epoch = sqlc.arg(worker_epoch)
    AND worker_protocol_version = sqlc.arg(worker_protocol_version)
    AND runtime_instance_id = sqlc.arg(runtime_instance_id)
-   AND network_slot_id = sqlc.arg(network_slot_id)
-   AND network_slot_generation = sqlc.arg(network_slot_generation)
    AND runtime_identity_id = sqlc.arg(runtime_identity_id)
    AND state = 'starting'
    AND start_deadline_at > transaction_timestamp()
@@ -895,8 +874,6 @@ candidates AS MATERIALIZED (
            run_leases.id AS run_lease_id,
            run_leases.worker_instance_id,
            run_leases.worker_epoch,
-           run_leases.network_slot_id,
-           run_leases.network_slot_generation,
            run_leases.runtime_instance_id,
            workspace_leases.id AS workspace_lease_id,
            workspace_mounts.id AS workspace_mount_id,
@@ -980,15 +957,6 @@ candidates AS MATERIALIZED (
        AND runtime_instances.reclaimed_at IS NULL
       JOIN worker_instances
         ON worker_instances.id = run_leases.worker_instance_id
-      JOIN worker_network_slots
-        ON worker_network_slots.id = run_leases.network_slot_id
-       AND worker_network_slots.worker_instance_id = run_leases.worker_instance_id
-       AND worker_network_slots.worker_epoch = run_leases.worker_epoch
-       AND worker_network_slots.runtime_instance_id = run_leases.runtime_instance_id
-       AND ((worker_network_slots.generation = run_leases.network_slot_generation
-             AND worker_network_slots.state IN ('bound', 'reclaiming', 'quarantined'))
-            OR (worker_network_slots.state = 'lost'
-                AND worker_network_slots.generation = run_leases.network_slot_generation + 1))
      WHERE (run_leases.expires_at <= transaction_timestamp()
             OR (run_leases.state IN ('assigned', 'starting')
                 AND run_leases.start_deadline_at <= transaction_timestamp())
@@ -1003,8 +971,7 @@ candidates AS MATERIALIZED (
             OR worker_instances.disabled_at <= transaction_timestamp()
             OR worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
             OR workspace_mounts.lost_at <= transaction_timestamp()
-            OR workspace_mounts.failed_at <= transaction_timestamp()
-            OR worker_network_slots.lost_at <= transaction_timestamp())
+            OR workspace_mounts.failed_at <= transaction_timestamp())
      ORDER BY runs.id
      LIMIT sqlc.arg(limit_count)
 ), locked_actor_candidates AS MATERIALIZED (
@@ -1052,8 +1019,6 @@ candidates AS MATERIALIZED (
            placement_candidates.run_lease_id,
            placement_candidates.worker_instance_id,
            placement_candidates.worker_epoch,
-           placement_candidates.network_slot_id,
-           placement_candidates.network_slot_generation,
            placement_candidates.runtime_instance_id,
            placement_candidates.workspace_lease_id,
            placement_candidates.workspace_mount_id,
@@ -1130,34 +1095,19 @@ candidates AS MATERIALIZED (
         ON worker_instances.id = locked_attempts.worker_instance_id
      ORDER BY worker_instances.id
      FOR UPDATE OF worker_instances
-), locked_slots AS MATERIALIZED (
-    SELECT locked_workers.*,
-           worker_network_slots.lost_at AS slot_lost_at
-      FROM locked_workers
-      JOIN worker_network_slots
-        ON worker_network_slots.id = locked_workers.network_slot_id
-       AND worker_network_slots.worker_instance_id = locked_workers.worker_instance_id
-       AND worker_network_slots.worker_epoch = locked_workers.worker_epoch
-       AND worker_network_slots.runtime_instance_id = locked_workers.runtime_instance_id
-       AND ((worker_network_slots.generation = locked_workers.network_slot_generation
-             AND worker_network_slots.state IN ('bound', 'reclaiming', 'quarantined'))
-            OR (worker_network_slots.state = 'lost'
-                AND worker_network_slots.generation = locked_workers.network_slot_generation + 1))
-     ORDER BY worker_network_slots.id
-     FOR UPDATE OF worker_network_slots
 ), locked_runtimes AS MATERIALIZED (
-    SELECT locked_slots.*,
+    SELECT locked_workers.*,
            runtime_instances.lost_at AS runtime_lost_at,
            runtime_instances.failed_at AS runtime_failed_at
-      FROM locked_slots
+      FROM locked_workers
       JOIN runtime_instances
-        ON runtime_instances.id = locked_slots.runtime_instance_id
-       AND runtime_instances.org_id = locked_slots.org_id
-       AND runtime_instances.worker_instance_id = locked_slots.worker_instance_id
-       AND runtime_instances.worker_epoch = locked_slots.worker_epoch
-       AND runtime_instances.workspace_id = locked_slots.workspace_id
-       AND (locked_slots.retained_resume
-            OR runtime_instances.restore_checkpoint_id = locked_slots.restore_checkpoint_id)
+        ON runtime_instances.id = locked_workers.runtime_instance_id
+       AND runtime_instances.org_id = locked_workers.org_id
+       AND runtime_instances.worker_instance_id = locked_workers.worker_instance_id
+       AND runtime_instances.worker_epoch = locked_workers.worker_epoch
+       AND runtime_instances.workspace_id = locked_workers.workspace_id
+       AND (locked_workers.retained_resume
+            OR runtime_instances.restore_checkpoint_id = locked_workers.restore_checkpoint_id)
        AND runtime_instances.reclaimed_at IS NULL
      ORDER BY runtime_instances.id
      FOR UPDATE OF runtime_instances
@@ -1175,8 +1125,6 @@ candidates AS MATERIALIZED (
        AND run_leases.workspace_id = locked_runtimes.workspace_id
        AND run_leases.worker_instance_id = locked_runtimes.worker_instance_id
        AND run_leases.worker_epoch = locked_runtimes.worker_epoch
-       AND run_leases.network_slot_id = locked_runtimes.network_slot_id
-       AND run_leases.network_slot_generation = locked_runtimes.network_slot_generation
        AND run_leases.runtime_instance_id = locked_runtimes.runtime_instance_id
        AND run_leases.state IN ('assigned', 'starting', 'running')
      ORDER BY run_leases.id
@@ -1287,7 +1235,6 @@ candidates AS MATERIALIZED (
       CROSS JOIN LATERAL (
           SELECT LEAST(
               COALESCE(locked_waits.worker_lost_at, 'infinity'::timestamptz),
-              COALESCE(locked_waits.slot_lost_at, 'infinity'::timestamptz),
               COALESCE(locked_waits.runtime_lost_at, 'infinity'::timestamptz),
               COALESCE(locked_waits.mount_lost_at, 'infinity'::timestamptz)
           ) AS physical_loss_at

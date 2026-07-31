@@ -1211,7 +1211,7 @@ collect_up_result() {
   build_asg_name="$(tf_output_value "${outputs}" build_worker_autoscaling_group_name | jq -r .)"
   run_asg="$(asg_inventory "${run_asg_name}")"
   build_asg="$(asg_inventory "${build_asg_name}")"
-  nat_id="$(tf_output_value "${outputs}" nat_gateway_id | jq -r .)"
+  nat_id="$(tf_output_value "${outputs}" execution_nat_gateway_id | jq -r .)"
   if [ "${nat_id}" = "null" ]; then
     nat='{"NatGateways":[]}'
     nat_count=0
@@ -1691,7 +1691,7 @@ datapath_case_artifacts_are_valid() {
   jq -e '
     .cleanup_verified == true and
     .candidate_objects_absent == true and
-    .legacy_defense_present == true
+    .network_policy_present == true
   ' "${artifact_dir}/cleanup-$(jq -r '.artifacts.cleanup' "${manifest_file}").json" >/dev/null || return 1
 }
 
@@ -1985,7 +1985,7 @@ run_workload() {
   "${TF_BIN}" -chdir="${DEV_STACK}" output -json >"${outputs}"
   run_asg="$(tf_output_value "${outputs}" worker_autoscaling_group_name | jq -r .)"
   build_asg="$(tf_output_value "${outputs}" build_worker_autoscaling_group_name | jq -r .)"
-  nat_id="$(tf_output_value "${outputs}" nat_gateway_id | jq -r .)"
+  nat_id="$(tf_output_value "${outputs}" execution_nat_gateway_id | jq -r .)"
   : >"${samples}"
   printf '[]\n' >"${cases_file}"
   : >"${sentinel}"

@@ -31,7 +31,7 @@ execution_role="$(
     --query "taskDefinition.executionRoleArn" \
     --output text
 )"
-subnets="$("${TF_BIN}" -chdir="${DEV_STACK}" output -json private_subnet_ids 2>/dev/null || "${TF_BIN}" -chdir="${DEV_STACK}" output -json public_subnet_ids)"
+subnets="$("${TF_BIN}" -chdir="${DEV_STACK}" output -json control_private_subnet_ids)"
 security_group="$("${TF_BIN}" -chdir="${DEV_STACK}" output -raw control_security_group_id)"
 database_secret="$("${TF_BIN}" -chdir="${DEV_STACK}" output -json secret_arns | jq -r .database_url)"
 

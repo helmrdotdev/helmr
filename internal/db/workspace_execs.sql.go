@@ -607,26 +607,10 @@ WITH created_runtime AS (
         $18,
         'workspace_exec_reservation'
     )
-    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, preparing_at, ready_at, closing_at, closed_at, lost_at, failed_at, reclaimed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
-), assigned_slot AS (
-    UPDATE worker_network_slots
-       SET state = 'assigned',
-           runtime_instance_id = created_runtime.id,
-           assigned_at = transaction_timestamp(),
-           updated_at = transaction_timestamp()
-      FROM created_runtime
-     WHERE worker_network_slots.id = $19
-       AND worker_network_slots.worker_group_id = created_runtime.worker_group_id
-       AND worker_network_slots.worker_instance_id = created_runtime.worker_instance_id
-       AND worker_network_slots.worker_epoch = created_runtime.worker_epoch
-       AND worker_network_slots.generation = $20
-       AND worker_network_slots.state = 'available'
-       AND worker_network_slots.runtime_instance_id IS NULL
-    RETURNING worker_network_slots.id
+    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, preparing_at, ready_at, closing_at, closed_at, lost_at, failed_at, reclaimed_at, reclaim_evidence, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 )
-SELECT created_runtime.id, created_runtime.org_id, created_runtime.worker_group_id, created_runtime.project_id, created_runtime.environment_id, created_runtime.region_id, created_runtime.worker_instance_id, created_runtime.runtime_identity_id, created_runtime.deployment_definition_id, created_runtime.runtime_substrate_id, created_runtime.worker_epoch, created_runtime.reserved_cpu_millis, created_runtime.reserved_memory_bytes, created_runtime.reserved_guest_ephemeral_disk_bytes, created_runtime.reserved_execution_slots, created_runtime.workspace_id, created_runtime.program_deployment_id, created_runtime.restore_checkpoint_id, created_runtime.reserved_run_id, created_runtime.reserved_attempt_number, created_runtime.reserved_process_id, created_runtime.reserved_workspace_version_id, created_runtime.reservation_expires_at, created_runtime.desired_state, created_runtime.desired_version, created_runtime.desired_at, created_runtime.desired_reason, created_runtime.observed_state, created_runtime.observed_version, created_runtime.observed_desired_version, created_runtime.observed_at, created_runtime.allocated_at, created_runtime.preparing_at, created_runtime.ready_at, created_runtime.closing_at, created_runtime.closed_at, created_runtime.lost_at, created_runtime.failed_at, created_runtime.reclaimed_at, created_runtime.terminal_at, created_runtime.terminal_reason_code, created_runtime.terminal_error, created_runtime.created_at, created_runtime.updated_at
+SELECT created_runtime.id, created_runtime.org_id, created_runtime.worker_group_id, created_runtime.project_id, created_runtime.environment_id, created_runtime.region_id, created_runtime.worker_instance_id, created_runtime.runtime_identity_id, created_runtime.deployment_definition_id, created_runtime.runtime_substrate_id, created_runtime.worker_epoch, created_runtime.reserved_cpu_millis, created_runtime.reserved_memory_bytes, created_runtime.reserved_guest_ephemeral_disk_bytes, created_runtime.reserved_execution_slots, created_runtime.workspace_id, created_runtime.program_deployment_id, created_runtime.restore_checkpoint_id, created_runtime.reserved_run_id, created_runtime.reserved_attempt_number, created_runtime.reserved_process_id, created_runtime.reserved_workspace_version_id, created_runtime.reservation_expires_at, created_runtime.desired_state, created_runtime.desired_version, created_runtime.desired_at, created_runtime.desired_reason, created_runtime.observed_state, created_runtime.observed_version, created_runtime.observed_desired_version, created_runtime.observed_at, created_runtime.allocated_at, created_runtime.preparing_at, created_runtime.ready_at, created_runtime.closing_at, created_runtime.closed_at, created_runtime.lost_at, created_runtime.failed_at, created_runtime.reclaimed_at, created_runtime.reclaim_evidence, created_runtime.terminal_at, created_runtime.terminal_reason_code, created_runtime.terminal_error, created_runtime.created_at, created_runtime.updated_at
   FROM created_runtime
-  JOIN assigned_slot ON true
 `
 
 type CreateWorkspaceExecRuntimeReservationParams struct {
@@ -648,8 +632,6 @@ type CreateWorkspaceExecRuntimeReservationParams struct {
 	ProcessID                       pgtype.UUID        `json:"process_id"`
 	BaseWorkspaceVersionID          pgtype.UUID        `json:"base_workspace_version_id"`
 	ReservationExpiresAt            pgtype.Timestamptz `json:"reservation_expires_at"`
-	NetworkSlotID                   pgtype.UUID        `json:"network_slot_id"`
-	NetworkSlotGeneration           int64              `json:"network_slot_generation"`
 }
 
 type CreateWorkspaceExecRuntimeReservationRow struct {
@@ -692,6 +674,7 @@ type CreateWorkspaceExecRuntimeReservationRow struct {
 	LostAt                          pgtype.Timestamptz `json:"lost_at"`
 	FailedAt                        pgtype.Timestamptz `json:"failed_at"`
 	ReclaimedAt                     pgtype.Timestamptz `json:"reclaimed_at"`
+	ReclaimEvidence                 []byte             `json:"reclaim_evidence"`
 	TerminalAt                      pgtype.Timestamptz `json:"terminal_at"`
 	TerminalReasonCode              pgtype.Text        `json:"terminal_reason_code"`
 	TerminalError                   []byte             `json:"terminal_error"`
@@ -719,8 +702,6 @@ func (q *Queries) CreateWorkspaceExecRuntimeReservation(ctx context.Context, arg
 		arg.ProcessID,
 		arg.BaseWorkspaceVersionID,
 		arg.ReservationExpiresAt,
-		arg.NetworkSlotID,
-		arg.NetworkSlotGeneration,
 	)
 	var i CreateWorkspaceExecRuntimeReservationRow
 	err := row.Scan(
@@ -763,6 +744,7 @@ func (q *Queries) CreateWorkspaceExecRuntimeReservation(ctx context.Context, arg
 		&i.LostAt,
 		&i.FailedAt,
 		&i.ReclaimedAt,
+		&i.ReclaimEvidence,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
 		&i.TerminalError,
@@ -2138,7 +2120,7 @@ SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.p
            AND worker_instances.supports_run
            AND worker_instances.certified_at IS NOT NULL
            AND worker_instances.runtime_identity_id = runtime_instances.runtime_identity_id
-           AND runtime_identities.cni_profile = 'helmr/v0'
+           AND runtime_identities.network_abi = 'helmr/v0'
            AND worker_observations.observed_at >= transaction_timestamp()
                - worker_groups.observation_ttl_seconds * interval '1 second'
            AND worker_observations.run_paused_reason IS NULL
@@ -2619,7 +2601,7 @@ UPDATE runtime_instances
    AND reserved_process_id IS NULL
    AND reserved_workspace_version_id IS NULL
    AND reservation_expires_at IS NULL
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, preparing_at, ready_at, closing_at, closed_at, lost_at, failed_at, reclaimed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, preparing_at, ready_at, closing_at, closed_at, lost_at, failed_at, reclaimed_at, reclaim_evidence, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 `
 
 type ReserveReadyRuntimeForWorkspaceExecParams struct {
@@ -2681,6 +2663,7 @@ func (q *Queries) ReserveReadyRuntimeForWorkspaceExec(ctx context.Context, arg R
 		&i.LostAt,
 		&i.FailedAt,
 		&i.ReclaimedAt,
+		&i.ReclaimEvidence,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
 		&i.TerminalError,

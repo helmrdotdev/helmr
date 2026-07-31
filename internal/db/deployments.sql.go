@@ -34,7 +34,7 @@ WITH candidate AS (
       JOIN runtime_identities
         ON runtime_identities.id = worker_instances.runtime_identity_id
        AND runtime_identities.runtime_arch = 'x86_64'
-       AND runtime_identities.cni_profile = 'helmr/v0'
+       AND runtime_identities.network_abi = 'helmr/v0'
       JOIN worker_observations
         ON worker_observations.worker_instance_id = worker_instances.id
        AND worker_observations.worker_epoch = worker_instances.current_epoch
