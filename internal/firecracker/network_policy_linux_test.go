@@ -54,6 +54,34 @@ func TestNFTBuildNetworkPolicyScriptClosesProgramBuildEgress(t *testing.T) {
 	}
 }
 
+func TestBuildNetworkPolicyRendererAcceptsExactManagedCloudSet(t *testing.T) {
+	script, err := nftBuildNetworkPolicyScript(
+		"tap0",
+		[]string{"10.0.0.2"},
+		managedCloudDenyPrefixStrings(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantElements := "elements = { " +
+		strings.Join(managedCloudDenyPrefixStrings(), ", ") +
+		" }"
+	if strings.Count(script, wantElements) != 1 {
+		t.Fatalf("script does not contain exact managed-Cloud set %q:\n%s", wantElements, script)
+	}
+	for _, legacy := range []string{
+		"192.0.0.0/24",
+		"192.0.2.0/24",
+		"198.18.0.0/15",
+		"198.51.100.0/24",
+		"203.0.113.0/24",
+	} {
+		if strings.Contains(script, legacy) {
+			t.Fatalf("script contains legacy broad-catalog prefix %q:\n%s", legacy, script)
+		}
+	}
+}
+
 func TestParseBuildNetworkStatusRequiresBothCounters(t *testing.T) {
 	status, err := parseBuildNetworkStatus([]byte(`{
 		"nftables": [

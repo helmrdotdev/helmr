@@ -3,7 +3,39 @@ package firecracker
 import (
 	"strings"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/worker/datapath"
 )
+
+func managedCloudDenyPrefixStrings() []string {
+	prefixes := datapath.ManagedCloudPublicIPv4DenyPrefixes()
+	result := make([]string, len(prefixes))
+	for i, prefix := range prefixes {
+		result[i] = prefix.String()
+	}
+	return result
+}
+
+func TestRunNetworkPolicyRendererAcceptsExactManagedCloudSet(t *testing.T) {
+	script := renderRunNetworkPolicy(managedCloudDenyPrefixStrings())
+	wantElements := "elements = { " +
+		strings.Join(managedCloudDenyPrefixStrings(), ", ") +
+		" }"
+	if strings.Count(script, wantElements) != 1 {
+		t.Fatalf("script does not contain exact managed-Cloud set %q:\n%s", wantElements, script)
+	}
+	for _, legacy := range []string{
+		"192.0.0.0/24",
+		"192.0.2.0/24",
+		"198.18.0.0/15",
+		"198.51.100.0/24",
+		"203.0.113.0/24",
+	} {
+		if strings.Contains(script, legacy) {
+			t.Fatalf("script contains legacy broad-catalog prefix %q:\n%s", legacy, script)
+		}
+	}
+}
 
 func TestRunNetworkPolicyContractCountsEveryDenyPath(t *testing.T) {
 	script := renderRunNetworkPolicy(
