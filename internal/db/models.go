@@ -847,7 +847,6 @@ type Region struct {
 	State          string             `json:"state"`
 	Visibility     RegionVisibility   `json:"visibility"`
 	Location       string             `json:"location"`
-	StaticIps      []string           `json:"static_ips"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }

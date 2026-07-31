@@ -258,7 +258,6 @@ module "run_worker" {
 
   name                                       = local.run_worker_name
   worker_group_id                            = local.run_worker_group_id
-  region_id                                  = var.region_id
   worker_roles                               = ["run"]
   vpc_id                                     = module.network.vpc_id
   subnet_ids                                 = module.network.private_subnet_ids
@@ -307,7 +306,6 @@ module "build_worker" {
 
   name                                       = local.build_worker_name
   worker_group_id                            = local.build_worker_group_id
-  region_id                                  = var.region_id
   worker_roles                               = ["build"]
   vpc_id                                     = module.network.vpc_id
   subnet_ids                                 = module.network.private_subnet_ids

@@ -54,7 +54,6 @@ func Ensure(ctx context.Context, store RegionStore, cfg BootstrapConfig) error {
 		State:          db.RegionStateAvailable,
 		Visibility:     db.RegionVisibilityPublic,
 		Location:       "",
-		StaticIps:      []string{},
 	})
 	if err != nil {
 		return fmt.Errorf("ensure region: %w", err)

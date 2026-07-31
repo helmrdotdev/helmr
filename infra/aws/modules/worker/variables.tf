@@ -13,21 +13,6 @@ variable "worker_group_id" {
   }
 }
 
-variable "region_id" {
-  description = "Explicit Helmr region ID advertised by this worker group."
-  type        = string
-
-  validation {
-    condition = (
-      var.region_id != "" &&
-      var.region_id == trimspace(var.region_id) &&
-      length(base64encode(var.region_id)) <= 340 &&
-      length(regexall("[[:cntrl:]]", var.region_id)) == 0
-    )
-    error_message = "region_id must be normalized control-free UTF-8 of 1-255 bytes."
-  }
-}
-
 variable "worker_roles" {
   description = "Roles this worker group is permitted to advertise."
   type        = set(string)

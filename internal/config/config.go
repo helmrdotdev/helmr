@@ -133,11 +133,8 @@ type Worker struct {
 	CASURI                       string
 	WorkerInstanceCredentialPath string
 	CheckpointKey                []byte
-	RegionID                     string
-	WorkerProviderRegion         string
 	BuildPolicyPath              string
 	PlatformStoreURI             string
-	WorkerLabels                 map[string]string
 	WorkDir                      string
 	BuildCacheDir                string
 	BuildScratchDir              string

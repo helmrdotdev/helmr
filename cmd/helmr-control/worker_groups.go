@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/helmrdotdev/helmr/internal/enrollment"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
@@ -32,4 +35,22 @@ func (group configuredWorkerGroup) awsWorkerGroup() enrollment.AWSGroupBoundary 
 		AutoScalingGroup: group.AutoScalingGroup, InstanceProfileARN: group.InstanceProfileARN,
 		LaunchAMIID: group.LaunchAMIID, AMIIDs: group.AMIIDs,
 	}
+}
+
+func validateAWSRegionMapping(provider, providerRegion string, groups []configuredWorkerGroup) error {
+	if strings.TrimSpace(provider) != "aws" {
+		return fmt.Errorf("HELMR_PROVIDER must be aws for the AWS control entry")
+	}
+	providerRegion = strings.TrimSpace(providerRegion)
+	for _, group := range groups {
+		if strings.TrimSpace(group.Region) != providerRegion {
+			return fmt.Errorf(
+				"worker group %q region %q must match HELMR_PROVIDER_REGION %q",
+				group.ID,
+				group.Region,
+				providerRegion,
+			)
+		}
+	}
+	return nil
 }

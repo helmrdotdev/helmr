@@ -21,7 +21,6 @@ mock_provider "aws" {
 variables {
   name                       = "helmr-test-run"
   worker_group_id            = "run-workers"
-  region_id                  = "helmr-us-east"
   worker_roles               = ["run"]
   vpc_id                     = "vpc-00000000000000000"
   subnet_ids                 = ["subnet-00000000000000000"]
@@ -60,7 +59,6 @@ run "controller_owns_protected_capacity" {
 
   assert {
     condition = (
-      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_REGION_ID=helmr-us-east") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_PLATFORM_STORE_URI=s3://helmr-test-runtime/objects") &&
       strcontains(aws_iam_role_policy.worker.policy, "${var.platform_store_bucket_arn}/objects/sha256/*") &&
       strcontains(aws_iam_role_policy.worker.policy, var.platform_store_kms_key_arn) &&

@@ -102,6 +102,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err := json.Unmarshal([]byte(cfg.WorkerGroupsJSON), &groups); err != nil {
 		return fmt.Errorf("decode HELMR_WORKER_GROUPS: %w", err)
 	}
+	if err := validateAWSRegionMapping(bootstrapCfg.Provider, bootstrapCfg.ProviderRegion, groups); err != nil {
+		return fmt.Errorf("validate Region mapping: %w", err)
+	}
 	awsGroups := make([]enrollment.AWSGroupBoundary, 0, len(groups))
 	desiredGroups := make([]workergroup.Desired, 0, len(groups))
 	for _, configuredGroup := range groups {

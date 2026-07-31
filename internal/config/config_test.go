@@ -463,7 +463,6 @@ func setControlTokenCredentialEnv(t *testing.T) {
 
 func setWorkerRuntimeEnv(t *testing.T, build bool) {
 	t.Helper()
-	t.Setenv("HELMR_REGION_ID", "us-east-1")
 	t.Setenv("HELMR_PLATFORM_STORE_URI", "s3://helmr-runtime")
 	if build {
 		t.Setenv("HELMR_BUILD_POLICY_PATH", "/etc/helmr/build-policy.json")
@@ -480,7 +479,6 @@ func setValidWorkerEnv(t *testing.T, build bool) {
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_GROUP_ID", "run-workers")
-	t.Setenv("HELMR_WORKER_PROVIDER_REGION", "us-east-1")
 	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
@@ -537,8 +535,6 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("HELMR_CONTROL_URL", " https://api.example.test ")
 	t.Setenv("HELMR_CAS_URI", "\ns3://helmr-cas")
 	t.Setenv("HELMR_WORKER_GROUP_ID", " run-workers ")
-	t.Setenv("HELMR_WORKER_PROVIDER_REGION", " us-east-1 ")
-	t.Setenv("HELMR_WORKER_LABELS", "pool=standard,dedicated_key=tenant-a")
 	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", " AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= ")
 	t.Setenv("HELMR_WORKER_WORK_DIR", " /var/lib/helmr/scratch/worker ")
 	t.Setenv("HELMR_WORKER_IMAGES_DIR", " /var/lib/helmr/images ")
@@ -593,10 +589,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if cfg.WorkerGroupID != "run-workers" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.WorkerProviderRegion != "us-east-1" || cfg.WorkerLabels["pool"] != "standard" || cfg.WorkerLabels["dedicated_key"] != "tenant-a" {
-		t.Fatalf("config = %+v", cfg)
-	}
-	if cfg.RegionID != "us-east-1" || cfg.BuildPolicyPath != "/etc/helmr/build-policy.json" || cfg.PlatformStoreURI != "s3://helmr-runtime" {
+	if cfg.BuildPolicyPath != "/etc/helmr/build-policy.json" || cfg.PlatformStoreURI != "s3://helmr-runtime" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if !bytes.Equal(cfg.CheckpointKey, make([]byte, 32)) {
@@ -609,7 +602,6 @@ func TestLoadWorkerAllowsEmptyNetworkBlockedCIDRs(t *testing.T) {
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_GROUP_ID", "run-workers")
-	t.Setenv("HELMR_WORKER_PROVIDER_REGION", "us-east-1")
 	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
@@ -636,7 +628,6 @@ func TestLoadWorkerReadsEnrollmentBoundary(t *testing.T) {
 	t.Setenv("HELMR_WORKER_GROUP_ID", "run-workers")
 	t.Setenv("HELMR_CONTROL_URL", "https://control.example.test")
 	t.Setenv("HELMR_CAS_URI", "s3://cas")
-	t.Setenv("HELMR_WORKER_PROVIDER_REGION", "us-east-1")
 	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1001")
@@ -655,7 +646,6 @@ func TestLoadWorkerReadsExplicitRolesAndCapacities(t *testing.T) {
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_GROUP_ID", "run-workers")
-	t.Setenv("HELMR_WORKER_PROVIDER_REGION", "us-east-1")
 	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
@@ -677,7 +667,6 @@ func TestLoadWorkerRejectsMultipleBuildExecutors(t *testing.T) {
 		"HELMR_CONTROL_URL":                       "https://api.example.test",
 		"HELMR_CAS_URI":                           "s3://helmr-cas",
 		"HELMR_WORKER_GROUP_ID":                   "build-workers",
-		"HELMR_WORKER_PROVIDER_REGION":            "us-east-1",
 		"CHECKPOINT_ENCRYPTION_KEY":               "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=",
 		"HELMR_WORKER_FIRECRACKER_JAILER_UID":     "1001",
 		"HELMR_WORKER_FIRECRACKER_JAILER_GID":     "1002",
@@ -697,7 +686,7 @@ func TestLoadWorkerRejectsMultipleBuildExecutors(t *testing.T) {
 }
 
 func TestLoadWorkerRejectsRuntimePoolBelowRuntimeStarts(t *testing.T) {
-	for key, value := range map[string]string{"HELMR_CONTROL_URL": "https://api.example.test", "HELMR_CAS_URI": "s3://helmr-cas", "HELMR_WORKER_GROUP_ID": "run-workers", "HELMR_WORKER_PROVIDER_REGION": "us-east-1", "CHECKPOINT_ENCRYPTION_KEY": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=", "HELMR_WORKER_FIRECRACKER_JAILER_UID": "1001", "HELMR_WORKER_FIRECRACKER_JAILER_GID": "1002", "HELMR_WORKER_ROLES": "run", "HELMR_WORKER_RUNTIME_STARTS": "2", "HELMR_WORKER_PREPARED_RUNTIME_POOL_SIZE": "1"} {
+	for key, value := range map[string]string{"HELMR_CONTROL_URL": "https://api.example.test", "HELMR_CAS_URI": "s3://helmr-cas", "HELMR_WORKER_GROUP_ID": "run-workers", "CHECKPOINT_ENCRYPTION_KEY": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=", "HELMR_WORKER_FIRECRACKER_JAILER_UID": "1001", "HELMR_WORKER_FIRECRACKER_JAILER_GID": "1002", "HELMR_WORKER_ROLES": "run", "HELMR_WORKER_RUNTIME_STARTS": "2", "HELMR_WORKER_PREPARED_RUNTIME_POOL_SIZE": "1"} {
 		t.Setenv(key, value)
 	}
 	if _, err := LoadWorker(); err == nil {
@@ -711,7 +700,6 @@ func TestLoadWorkerRejectsEmptyOrUnknownRoles(t *testing.T) {
 			t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 			t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 			t.Setenv("HELMR_WORKER_GROUP_ID", "run-workers")
-			t.Setenv("HELMR_WORKER_PROVIDER_REGION", "us-east-1")
 			t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=")
 			t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
 			t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
@@ -753,7 +741,6 @@ func TestLoadWorkerDoesNotReadGenericBuildKitHost(t *testing.T) {
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_GROUP_ID", "run-workers")
-	t.Setenv("HELMR_WORKER_PROVIDER_REGION", "us-east-1")
 	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
@@ -809,7 +796,6 @@ func TestLoadWorkerClampsDefaultHealthAttemptToShortHealthTimeout(t *testing.T) 
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_GROUP_ID", "run-workers")
-	t.Setenv("HELMR_WORKER_PROVIDER_REGION", "us-east-1")
 	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
@@ -822,44 +808,6 @@ func TestLoadWorkerClampsDefaultHealthAttemptToShortHealthTimeout(t *testing.T) 
 	}
 	if cfg.VMHealthAttemptTimeout != time.Second {
 		t.Fatalf("VMHealthAttemptTimeout = %s, want 1s", cfg.VMHealthAttemptTimeout)
-	}
-}
-
-func TestLoadWorkerRequiresProviderRegion(t *testing.T) {
-	setWorkerRuntimeEnv(t, true)
-	t.Setenv("HELMR_DEPLOYMENT_MODE", DeploymentModeManagedCloud)
-	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
-	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
-	t.Setenv("HELMR_WORKER_GROUP_ID", "run-workers")
-	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
-	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
-	t.Setenv("HELMR_WORKER_ROLES", "build,run")
-
-	_, err := LoadWorker()
-	if err == nil {
-		t.Fatal("expected provider region error")
-	}
-	if got, want := err.Error(), "HELMR_WORKER_PROVIDER_REGION"; !strings.HasPrefix(got, want) {
-		t.Fatalf("error = %q", got)
-	}
-}
-
-func TestLoadWorkerRejectsInvalidLabels(t *testing.T) {
-	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
-	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
-	t.Setenv("HELMR_WORKER_GROUP_ID", "run-workers")
-	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
-	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
-	t.Setenv("HELMR_WORKER_LABELS", "pool")
-
-	_, err := LoadWorker()
-	if err == nil {
-		t.Fatal("expected invalid label error")
-	}
-	if got, want := err.Error(), "HELMR_WORKER_LABELS"; !strings.HasPrefix(got, want) {
-		t.Fatalf("error = %q", got)
 	}
 }
 

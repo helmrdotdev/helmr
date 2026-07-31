@@ -35,7 +35,6 @@ CREATE TABLE regions (
         CHECK (state IN ('available', 'draining', 'disabled')),
     visibility region_visibility NOT NULL DEFAULT 'public',
     location TEXT NOT NULL DEFAULT '',
-    static_ips TEXT[] NOT NULL DEFAULT '{}'::text[],
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (provider, provider_region)

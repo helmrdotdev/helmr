@@ -7,8 +7,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/helmrdotdev/helmr/internal/region"
 )
 
 func LoadWorker() (Worker, error) {
@@ -17,8 +15,6 @@ func LoadWorker() (Worker, error) {
 		WorkerGroupID:                envString("HELMR_WORKER_GROUP_ID"),
 		CASURI:                       envString("HELMR_CAS_URI"),
 		WorkerInstanceCredentialPath: envString("HELMR_WORKER_INSTANCE_CREDENTIAL_PATH"),
-		RegionID:                     envString("HELMR_REGION_ID"),
-		WorkerProviderRegion:         envString("HELMR_WORKER_PROVIDER_REGION"),
 		BuildPolicyPath:              envString("HELMR_BUILD_POLICY_PATH"),
 		PlatformStoreURI:             envString("HELMR_PLATFORM_STORE_URI"),
 		WorkDir:                      envString("HELMR_WORKER_WORK_DIR"),
@@ -55,9 +51,6 @@ func LoadWorker() (Worker, error) {
 		return cfg, errors.New("HELMR_WORKER_GROUP_ID is required")
 	}
 	var err error
-	if cfg.WorkerLabels, err = envLabels("HELMR_WORKER_LABELS"); err != nil {
-		return cfg, err
-	}
 	if cfg.VMVCPUCount, err = envInt64("HELMR_VM_VCPUS", cfg.VMVCPUCount); err != nil {
 		return cfg, err
 	}
@@ -222,15 +215,6 @@ func LoadWorker() (Worker, error) {
 	if cfg.CASURI == "" {
 		return cfg, errors.New("HELMR_CAS_URI is required")
 	}
-	if cfg.WorkerProviderRegion == "" {
-		return cfg, errors.New("HELMR_WORKER_PROVIDER_REGION is required")
-	}
-	if cfg.RegionID == "" {
-		return cfg, errors.New("HELMR_REGION_ID is required")
-	}
-	if err := region.ValidateID(cfg.RegionID); err != nil {
-		return cfg, fmt.Errorf("HELMR_REGION_ID: %w", err)
-	}
 	if (slices.Contains(cfg.WorkerRoles, "run") ||
 		slices.Contains(cfg.WorkerRoles, "build")) &&
 		cfg.PlatformStoreURI == "" {
@@ -288,31 +272,6 @@ func parseWorkerRoles(value string) ([]string, error) {
 		return nil, errors.New("HELMR_WORKER_ROLES must enable run, build, or both")
 	}
 	return roles, nil
-}
-
-func envLabels(name string) (map[string]string, error) {
-	value := envString(name)
-	if value == "" {
-		return map[string]string{}, nil
-	}
-	labels := map[string]string{}
-	for part := range strings.SplitSeq(value, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		key, rawValue, ok := strings.Cut(part, "=")
-		if !ok {
-			return nil, fmt.Errorf("%s label %q must be key=value", name, part)
-		}
-		key = strings.TrimSpace(key)
-		rawValue = strings.TrimSpace(rawValue)
-		if key == "" {
-			return nil, fmt.Errorf("%s label key is required", name)
-		}
-		labels[key] = rawValue
-	}
-	return labels, nil
 }
 
 func LoadWorkerControl() (WorkerControl, error) {

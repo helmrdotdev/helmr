@@ -39,7 +39,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"client":              {"api", "ids", "sha256sum"},
 		"cmd/platform-policy": {"deployment"},
 		"compute":             {"runtime/identity"},
-		"config":              {"api", "region"},
+		"config":              {"api"},
 		"console":             {},
 		"control":             {"actor", "api", "archive", "auth", "cas", "console", "db", "db/schema", "deployment", "email", "frameio", "idempotency", "ids", "jsoncanon", "pgvalue", "proto/run/v0", "region", "run", "runtime/identity", "schedule", "secret", "sha256sum", "telemetry", "token", "tracing", "workspace"},
 		"db":                  {},

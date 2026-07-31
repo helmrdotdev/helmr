@@ -16,14 +16,13 @@ type CreateOrganizationRequest struct {
 }
 
 type RegionSummary struct {
-	ID             string   `json:"id"`
-	Provider       string   `json:"provider"`
-	ProviderRegion string   `json:"provider_region"`
-	DisplayName    string   `json:"display_name"`
-	State          string   `json:"state"`
-	Visibility     string   `json:"visibility"`
-	Location       string   `json:"location,omitempty"`
-	StaticIPs      []string `json:"static_ips,omitempty"`
+	ID             string `json:"id"`
+	Provider       string `json:"provider"`
+	ProviderRegion string `json:"provider_region"`
+	DisplayName    string `json:"display_name"`
+	State          string `json:"state"`
+	Visibility     string `json:"visibility"`
+	Location       string `json:"location,omitempty"`
 }
 
 type ListRegionsResponse struct {

@@ -390,6 +390,14 @@ func loadConfig() (devConfig, error) {
 		if err != nil {
 			return cfg, err
 		}
+		if normalized.Region != cfg.providerRegion {
+			return cfg, fmt.Errorf(
+				"worker group %q region %q must match HELMR_PROVIDER_REGION %q",
+				normalized.ID,
+				normalized.Region,
+				cfg.providerRegion,
+			)
+		}
 		cfg.workerGroups[i] = normalized
 		foundDefaultGroup = foundDefaultGroup || normalized.ID == cfg.workerGroupID
 	}

@@ -96,7 +96,6 @@ func (s *Server) listRegions(w http.ResponseWriter, r *http.Request) {
 			State:          string(region.State),
 			Visibility:     string(region.Visibility),
 			Location:       region.Location,
-			StaticIPs:      region.StaticIps,
 		})
 	}
 	writeJSON(w, http.StatusOK, response)

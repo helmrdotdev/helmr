@@ -243,7 +243,6 @@ module "worker_group" {
 
   name                                       = each.value.name
   worker_group_id                            = each.value.group_id
-  region_id                                  = var.region_id
   worker_roles                               = each.value.roles
   vpc_id                                     = module.network.vpc_id
   subnet_ids                                 = module.network.private_subnet_ids
