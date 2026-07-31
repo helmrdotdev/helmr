@@ -10,6 +10,10 @@ import {
   type InternalImage,
 } from "./image"
 import type { RequestOptions } from "./request"
+import {
+  inspectSecretNameRef,
+  type SecretNameRef,
+} from "./secret"
 import { validateTaskId } from "./schema/task"
 import { resourceID } from "./internal/id"
 import { currentRuntimeOperations } from "./internal/runtime"
@@ -42,12 +46,15 @@ export type WorkspaceSecretPlacement =
   | Readonly<{ env: string; file?: never }>
   | Readonly<{ env?: never; file: string }>
 
-export type WorkspaceSecret = Readonly<{ name: string }> &
+export type WorkspaceSecretInput = Readonly<{ secret: SecretNameRef }> &
+  WorkspaceSecretPlacement
+
+export type WorkspaceSecretSnapshot = Readonly<{ name: string }> &
   WorkspaceSecretPlacement
 
 export interface WorkspaceCreateRequest {
   readonly key?: string
-  readonly secrets?: readonly WorkspaceSecret[]
+  readonly secrets?: readonly WorkspaceSecretInput[]
   readonly idempotencyKey?: string
 }
 
@@ -60,7 +67,7 @@ export interface WorkspaceSnapshot {
   readonly key?: string
   readonly declaredId: string
   readonly status: WorkspaceStatus
-  readonly secrets: readonly WorkspaceSecret[]
+  readonly secrets: readonly WorkspaceSecretSnapshot[]
   readonly lastActivityAt: Date
   readonly createdAt: Date
   readonly updatedAt: Date
@@ -313,7 +320,7 @@ export function createClientWorkspaces(
                 ? {}
                 : {
                     secrets: request.secrets.map((secret) => ({
-                      name: secret.name,
+                      name: requireSecretName(secret.secret),
                       ...("env" in secret
                         ? { env: secret.env }
                         : { file: secret.file }),
@@ -612,7 +619,7 @@ export function parseWorkspaceSnapshot(value: unknown): WorkspaceSnapshot {
   })
 }
 
-function parseWorkspaceSecret(value: unknown): WorkspaceSecret {
+function parseWorkspaceSecret(value: unknown): WorkspaceSecretSnapshot {
   const input = workspaceObject(value, "Workspace Secret")
   if (typeof input["name"] !== "string") {
     throw new Error("Workspace Secret.name must be a string")
@@ -626,6 +633,14 @@ function parseWorkspaceSecret(value: unknown): WorkspaceSecret {
     name: input["name"],
     ...(hasEnv ? { env: input["env"] as string } : { file: input["file"] as string }),
   })
+}
+
+function requireSecretName(value: unknown): string {
+  const name = inspectSecretNameRef(value)
+  if (name === undefined) {
+    throw new Error("Workspace Secret requires secrets.fromName()")
+  }
+  return name
 }
 
 export function parseWorkspaceFileEntry(value: unknown): WorkspaceFileEntry {

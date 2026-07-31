@@ -1,6 +1,8 @@
 package imagebuild
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -12,6 +14,150 @@ func TestValidate(t *testing.T) {
 	}
 	if got := StepCount(build); got != 10 {
 		t.Fatalf("StepCount = %d, want 10", got)
+	}
+}
+
+func TestRegistryAuthority(t *testing.T) {
+	tests := map[string]string{
+		"debian:bookworm":                              "docker.io",
+		"docker.io/library/debian:bookworm":            "docker.io",
+		"index.docker.io/library/debian:bookworm":      "docker.io",
+		"registry-1.docker.io/library/debian:bookworm": "docker.io",
+		"GHCR.IO/acme/base:1":                          "ghcr.io",
+		"registry.example.com:443/acme/base:1":         "registry.example.com",
+		"registry.example.com:05000/acme/base:1":       "registry.example.com:5000",
+		"registry.example.com:5000/acme/base:1":        "registry.example.com:5000",
+	}
+	for imageReference, want := range tests {
+		t.Run(imageReference, func(t *testing.T) {
+			got, err := RegistryAuthority(imageReference)
+			if err != nil {
+				t.Fatalf("RegistryAuthority: %v", err)
+			}
+			if got != want {
+				t.Fatalf("RegistryAuthority = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestRegistryCredentials(t *testing.T) {
+	build := validBuild()
+	build.Images[0].Steps[0].From = &From{
+		Ref: "ghcr.io/acme/base:1",
+		Auth: &RegistryAuth{
+			Username:       "aktky",
+			PasswordSecret: "GHCR_TOKEN",
+		},
+	}
+	build.Images[1].Steps[0].From = &From{
+		Ref: "docker.io/library/alpine:3.23",
+		Auth: &RegistryAuth{
+			Username:       "docker-user",
+			PasswordSecret: "DOCKER_TOKEN",
+		},
+	}
+	credentials, err := RegistryCredentials(build, "x86_64")
+	if err != nil {
+		t.Fatalf("RegistryCredentials: %v", err)
+	}
+	want := []RegistryCredential{
+		{Authority: "docker.io", Username: "docker-user", PasswordSecret: "DOCKER_TOKEN"},
+		{Authority: "ghcr.io", Username: "aktky", PasswordSecret: "GHCR_TOKEN"},
+	}
+	if !slices.Equal(credentials, want) {
+		t.Fatalf("RegistryCredentials = %#v, want %#v", credentials, want)
+	}
+
+	deduplicated := validBuild()
+	for _, image := range deduplicated.Images {
+		image.Steps[0].From.Auth = &RegistryAuth{
+			Username:       "docker-user",
+			PasswordSecret: "DOCKER_TOKEN",
+		}
+	}
+	deduplicated.Images[1].Steps[0].From.Ref =
+		"index.docker.io/library/alpine:3.23"
+	credentials, err = RegistryCredentials(deduplicated, "x86_64")
+	if err != nil {
+		t.Fatalf("RegistryCredentials aliases: %v", err)
+	}
+	if len(credentials) != 1 || credentials[0].Authority != "docker.io" {
+		t.Fatalf("RegistryCredentials aliases = %#v", credentials)
+	}
+}
+
+func TestRegistryCredentialsRejectConflictsAndExcessAuthorities(t *testing.T) {
+	t.Run("invalid binding", func(t *testing.T) {
+		for name, auth := range map[string]RegistryAuth{
+			"empty username":  {PasswordSecret: "TOKEN"},
+			"spaced username": {Username: " user", PasswordSecret: "TOKEN"},
+			"invalid Secret":  {Username: "user", PasswordSecret: "bad/name"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				build := validBuild()
+				build.Images[0].Steps[0].From.Auth = &auth
+				assertBuildError(t, build, "x86_64", "from.auth")
+			})
+		}
+	})
+
+	t.Run("conflict", func(t *testing.T) {
+		build := validBuild()
+		build.Images[0].Steps[0].From.Auth = &RegistryAuth{
+			Username:       "first",
+			PasswordSecret: "FIRST_TOKEN",
+		}
+		build.Images[1].Steps[0].From = &From{
+			Ref: "index.docker.io/library/alpine:3.23",
+			Auth: &RegistryAuth{
+				Username:       "second",
+				PasswordSecret: "SECOND_TOKEN",
+			},
+		}
+		assertBuildError(t, build, "x86_64", "conflicts with the existing authentication")
+	})
+
+	t.Run("authority limit", func(t *testing.T) {
+		build := Build{
+			FormatVersion: FormatVersion,
+			Root:          "image-0",
+			Images:        make([]Spec, maxRegistryAuthorities+1),
+		}
+		for index := range build.Images {
+			key := fmt.Sprintf("image-%d", index)
+			build.Images[index] = Spec{
+				Key:      key,
+				Platform: Platform{OS: "linux", Architecture: "x86_64"},
+				Steps: []Step{{From: &From{
+					Ref: fmt.Sprintf("registry-%d.example.com/base:1", index),
+					Auth: &RegistryAuth{
+						Username:       "user",
+						PasswordSecret: "TOKEN",
+					},
+				}}},
+			}
+		}
+		assertBuildError(t, build, "x86_64", "more than 8 authenticated")
+	})
+}
+
+func TestDigestBindsRegistryAuthentication(t *testing.T) {
+	build := validBuild()
+	withoutAuth, err := Digest(build, "x86_64")
+	if err != nil {
+		t.Fatalf("Digest without auth: %v", err)
+	}
+	build.Images[0].Steps[0].From.Auth = &RegistryAuth{
+		Username:       "aktky",
+		PasswordSecret: "GHCR_TOKEN",
+	}
+	withAuth, err := Digest(build, "x86_64")
+	if err != nil {
+		t.Fatalf("Digest with auth: %v", err)
+	}
+	if withoutAuth == withAuth {
+		t.Fatal("registry authentication did not change the image plan digest")
 	}
 }
 

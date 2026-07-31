@@ -5,6 +5,7 @@ export { logger } from "./logger"
 export { metadata } from "./metadata"
 export { defineConfig } from "./config"
 export { schedules } from "./schedules"
+export { secrets } from "./secret"
 export { queue, task } from "./task"
 export { timers } from "./timers"
 export { tokens } from "./tokens"
@@ -60,6 +61,11 @@ export type {
 } from "./client"
 
 export type { RequestOptions } from "./request"
+
+export type {
+  SecretNameRef,
+  SecretReferences,
+} from "./secret"
 
 export type {
   LogAttributes,
@@ -145,6 +151,8 @@ export type {
 export type {
   ImageBuilder,
   ImageCopyInput,
+  ImageFromOptions,
+  ImageRegistryAuth,
   SourceDirectoryRef,
   SourceFileRef,
 } from "./image"
@@ -192,7 +200,8 @@ export type {
   WorkspaceRefBase,
   WorkspaceResources,
   WorkspaceResourceBuilder,
-  WorkspaceSecret,
+  WorkspaceSecretInput,
+  WorkspaceSecretSnapshot,
   WorkspaceSecretPlacement,
   WorkspaceSnapshot,
   WorkspaceStatus,

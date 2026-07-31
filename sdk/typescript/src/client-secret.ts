@@ -1,6 +1,7 @@
 import type { CursorPage } from "./contract"
 import { resourceID } from "./internal/id"
 import type { RequestOptions } from "./request"
+import { validateSecretName } from "./secret"
 
 export type SecretValue = string
 export type SecretState = "active" | "revoked"
@@ -243,12 +244,6 @@ function dateValue(value: unknown, label: string): Date {
     throw new Error(`${label} must be an RFC 3339 timestamp`)
   }
   return parsed
-}
-
-function validateSecretName(value: string): void {
-  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value)) {
-    throw new Error("Secret name is invalid")
-  }
 }
 
 function validateOptionalIdempotencyKey(value: string | undefined): void {

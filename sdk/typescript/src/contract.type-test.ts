@@ -1,6 +1,7 @@
 import {
   actor,
   image,
+  secrets,
   source,
   task,
   workspace,
@@ -26,6 +27,19 @@ export function assertGreenfieldTypes(): void {
   builder.resources({ cpu: 1, memory: "1GiB" })
 
   const resourceBuilder = builder.image(image("root").from("debian"))
+  image("private").from("ghcr.io/acme/base:1", {
+    auth: {
+      username: "aktky",
+      password: secrets.fromName("GHCR_TOKEN"),
+    },
+  })
+  image("invalid-private").from("ghcr.io/acme/base:1", {
+    auth: {
+      username: "aktky",
+      // @ts-expect-error registry passwords require a branded Secret name reference.
+      password: "GHCR_TOKEN",
+    },
+  })
   source.directory("./src")
   // @ts-expect-error v0 directory copy has no implementation-defined ignore language.
   source.directory("./src", { ignore: ["**/*.test.ts"] })

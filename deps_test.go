@@ -57,7 +57,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"guestd":              {"archive", "deployment", "frameio", "jsoncanon", "oci", "proto/run/v0", "proto/workspace/v0", "safepath", "sha256sum", "wire", "workspace"},
 		"idempotency":         {"db", "jsoncanon", "pgvalue"},
 		"ids":                 {},
-		"imagebuild":          {},
+		"imagebuild":          {"jsoncanon"},
 		"jsoncanon":           {},
 		"localcache":          {},
 		"oci":                 {"sha256sum"},

@@ -5,6 +5,7 @@ import {
   image,
   logger,
   metadata,
+  secrets,
   task,
   timers,
   tokens,
@@ -802,7 +803,7 @@ describe("runProgram", () => {
       async run() {
         const created = await cache.create({
           key: "build-cache",
-          secrets: [{ name: "TOKEN", env: "TOKEN" }],
+          secrets: [{ secret: secrets.fromName("TOKEN"), env: "TOKEN" }],
           idempotencyKey: "create:cache",
         })
         const snapshot = await created.retrieve()

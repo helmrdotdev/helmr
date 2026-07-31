@@ -9070,6 +9070,30 @@ function isInternalDefinition(value) {
       return false;
   }
 }
+// sdk/typescript/src/secret.ts
+var secretNameRefBrand = Symbol.for("helmr.sdk.v0.secret-name-ref");
+var secretNamePattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+
+class SecretName {
+  name;
+  constructor(name) {
+    validateSecretName(name);
+    this.name = name;
+    Object.defineProperty(this, secretNameRefBrand, { value: true });
+    Object.freeze(this);
+  }
+}
+var secrets = Object.freeze({
+  fromName(name) {
+    return new SecretName(name);
+  }
+});
+function validateSecretName(value) {
+  if (!secretNamePattern.test(value)) {
+    throw new Error("Secret name is invalid");
+  }
+}
+
 // sdk/typescript/src/image.ts
 var imageBrand = Symbol.for("helmr.sdk.v0.image");
 var sourceFileBrand = Symbol.for("helmr.sdk.v0.source-file");
@@ -10476,8 +10500,19 @@ function compileImageBuild(root, options) {
 function compileImageStep(step, options) {
   switch (step.kind) {
     case "from":
-      assertExactKeys(step, ["kind", "ref"], "image from step");
-      return { from: { ref: step.ref } };
+      assertExactKeys(step, step.auth === undefined ? ["kind", "ref"] : ["auth", "kind", "ref"], "image from step");
+      if (step.auth === undefined)
+        return { from: { ref: step.ref } };
+      assertExactKeys(step.auth, ["passwordSecret", "username"], "image from auth");
+      return {
+        from: {
+          ref: step.ref,
+          auth: {
+            username: step.auth.username,
+            passwordSecret: step.auth.passwordSecret
+          }
+        }
+      };
     case "run":
       assertExactKeys(step, ["argv", "kind"], "image run step");
       return {

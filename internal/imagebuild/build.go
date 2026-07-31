@@ -1,36 +1,46 @@
 package imagebuild
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"path"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/distribution/reference"
+	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
 const (
 	FormatVersion = 0
 
-	maxImageIdentifierBytes = 512
-	maxImageReferenceBytes  = 4096
-	maxImagePathBytes       = 4096
-	maxImageArguments       = 1024
-	maxImageArgumentBytes   = 65536
-	maxImageArgumentsBytes  = 1 << 20
-	maxEnvKeyBytes          = 256
-	maxEnvValueBytes        = 1 << 20
-	maxEnvBytes             = 1 << 20
-	maxUserBytes            = 256
-	maxBuildSteps           = 10000
+	maxImageIdentifierBytes  = 512
+	maxImageReferenceBytes   = 4096
+	maxImagePathBytes        = 4096
+	maxImageArguments        = 1024
+	maxImageArgumentBytes    = 65536
+	maxImageArgumentsBytes   = 1 << 20
+	maxEnvKeyBytes           = 256
+	maxEnvValueBytes         = 1 << 20
+	maxEnvBytes              = 1 << 20
+	maxUserBytes             = 256
+	maxRegistryUsernameBytes = 256
+	maxRegistryAuthorities   = 8
+	maxImageBuildBytes       = 16 << 20
+	maxBuildSteps            = 10000
 )
 
 var (
 	imageEnvKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,255}$`)
 	imageUserPattern   = regexp.MustCompile(`^[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?$`)
+	secretNamePattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 )
 
 type Build struct {
@@ -62,7 +72,19 @@ type Step struct {
 }
 
 type From struct {
-	Ref string `json:"ref"`
+	Ref  string        `json:"ref"`
+	Auth *RegistryAuth `json:"auth,omitempty"`
+}
+
+type RegistryAuth struct {
+	Username       string `json:"username"`
+	PasswordSecret string `json:"passwordSecret"`
+}
+
+type RegistryCredential struct {
+	Authority      string
+	Username       string
+	PasswordSecret string
 }
 
 type Run struct {
@@ -117,6 +139,7 @@ func Validate(build Build, architecture string) error {
 	}
 
 	images := make(map[string]int, len(build.Images))
+	registryCredentials := make(map[string]RegistryCredential)
 	totalSteps := 0
 	for index := range build.Images {
 		image := &build.Images[index]
@@ -157,6 +180,15 @@ func Validate(build Build, architecture string) error {
 			addedEnvBytes, err := validateStep(step, image.Key, stepIndex)
 			if err != nil {
 				return err
+			}
+			if step.From != nil {
+				if err := validateRegistryBinding(
+					*step.From,
+					fmt.Sprintf("image %q step %d", image.Key, stepIndex),
+					registryCredentials,
+				); err != nil {
+					return err
+				}
 			}
 			envBytes += addedEnvBytes
 			if envBytes > maxEnvBytes {
@@ -206,6 +238,112 @@ func Validate(build Build, architecture string) error {
 		}
 	}
 	return nil
+}
+
+func Canonical(build Build, architecture string) ([]byte, error) {
+	if err := Validate(build, architecture); err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(build)
+	if err != nil {
+		return nil, fmt.Errorf("encode image build: %w", err)
+	}
+	canonical, err := jsoncanon.Transform(raw)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize image build: %w", err)
+	}
+	if len(canonical) > maxImageBuildBytes {
+		return nil, fmt.Errorf("image build exceeds %d bytes", maxImageBuildBytes)
+	}
+	return canonical, nil
+}
+
+func Digest(build Build, architecture string) (string, error) {
+	canonical, err := Canonical(build, architecture)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(canonical)
+	return fmt.Sprintf("sha256:%x", digest), nil
+}
+
+func RegistryCredentials(build Build, architecture string) ([]RegistryCredential, error) {
+	if err := Validate(build, architecture); err != nil {
+		return nil, err
+	}
+	byAuthority := make(map[string]RegistryCredential)
+	for _, image := range build.Images {
+		for _, step := range image.Steps {
+			if step.From == nil || step.From.Auth == nil {
+				continue
+			}
+			authority, err := RegistryAuthority(step.From.Ref)
+			if err != nil {
+				return nil, err
+			}
+			byAuthority[authority] = RegistryCredential{
+				Authority:      authority,
+				Username:       step.From.Auth.Username,
+				PasswordSecret: step.From.Auth.PasswordSecret,
+			}
+		}
+	}
+	credentials := make([]RegistryCredential, 0, len(byAuthority))
+	for _, credential := range byAuthority {
+		credentials = append(credentials, credential)
+	}
+	slices.SortFunc(credentials, func(left, right RegistryCredential) int {
+		return strings.Compare(left.Authority, right.Authority)
+	})
+	return credentials, nil
+}
+
+func RegistryAuthority(value string) (string, error) {
+	if err := validateImageReference(value, "image reference"); err != nil {
+		return "", err
+	}
+	named, err := reference.ParseNormalizedNamed(value)
+	if err != nil {
+		return "", fmt.Errorf("parse image reference: %w", err)
+	}
+	authority, err := normalizeRegistryAuthority(reference.Domain(named))
+	if err != nil {
+		return "", err
+	}
+	switch authority {
+	case "docker.io", "index.docker.io", "registry-1.docker.io":
+		return "docker.io", nil
+	default:
+		return authority, nil
+	}
+}
+
+func normalizeRegistryAuthority(value string) (string, error) {
+	authority := strings.ToLower(value)
+	if !strings.Contains(authority, ":") {
+		return authority, nil
+	}
+	host, portValue, err := net.SplitHostPort(authority)
+	if err != nil {
+		if strings.HasPrefix(authority, "[") && strings.HasSuffix(authority, "]") {
+			if net.ParseIP(strings.Trim(authority, "[]")) == nil {
+				return "", fmt.Errorf("registry authority %q is invalid", value)
+			}
+			return authority, nil
+		}
+		return "", fmt.Errorf("registry authority %q is invalid: %w", value, err)
+	}
+	port, err := strconv.Atoi(portValue)
+	if err != nil || port < 1 || port > 65535 {
+		return "", fmt.Errorf("registry authority %q has an invalid port", value)
+	}
+	if port == 443 {
+		if strings.Contains(host, ":") {
+			return "[" + host + "]", nil
+		}
+		return host, nil
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port)), nil
 }
 
 func StepCount(build Build) int {
@@ -328,6 +466,51 @@ func validateImageReference(value string, label string) error {
 	if _, err := reference.ParseNormalizedNamed(value); err != nil {
 		return fmt.Errorf("%s is not a Docker-compatible OCI reference: %w", label, err)
 	}
+	return nil
+}
+
+func validateRegistryBinding(
+	from From,
+	label string,
+	credentials map[string]RegistryCredential,
+) error {
+	if from.Auth == nil {
+		return nil
+	}
+	if !validImageString(from.Auth.Username, maxRegistryUsernameBytes) ||
+		from.Auth.Username == "" ||
+		strings.TrimSpace(from.Auth.Username) != from.Auth.Username {
+		return fmt.Errorf("%s from.auth.username is invalid", label)
+	}
+	for _, character := range from.Auth.Username {
+		if unicode.IsControl(character) {
+			return fmt.Errorf("%s from.auth.username contains a control character", label)
+		}
+	}
+	if !secretNamePattern.MatchString(from.Auth.PasswordSecret) {
+		return fmt.Errorf("%s from.auth.passwordSecret is invalid", label)
+	}
+	authority, err := RegistryAuthority(from.Ref)
+	if err != nil {
+		return fmt.Errorf("%s from auth authority: %w", label, err)
+	}
+	binding := RegistryCredential{
+		Authority:      authority,
+		Username:       from.Auth.Username,
+		PasswordSecret: from.Auth.PasswordSecret,
+	}
+	existing, ok := credentials[authority]
+	if ok {
+		if existing.Username != binding.Username ||
+			existing.PasswordSecret != binding.PasswordSecret {
+			return fmt.Errorf("%s conflicts with the existing authentication for registry %q", label, authority)
+		}
+		return nil
+	}
+	if len(credentials) == maxRegistryAuthorities {
+		return fmt.Errorf("image build has more than %d authenticated registry authorities", maxRegistryAuthorities)
+	}
+	credentials[authority] = binding
 	return nil
 }
 

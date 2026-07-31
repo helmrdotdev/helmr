@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { HelmrClient, actor, task, workspaces } from "./index"
+import { HelmrClient, actor, secrets, task, workspaces } from "./index"
 import type { WorkspaceDefinition } from "./index"
 import { installRuntimeOperations } from "./internal"
 import {
@@ -102,7 +102,7 @@ describe("HelmrClient Workspaces", () => {
       "repository-agent",
       {
         key: "repository",
-        secrets: [{ name: "github", env: "GITHUB_TOKEN" }],
+        secrets: [{ secret: secrets.fromName("github"), env: "GITHUB_TOKEN" }],
         idempotencyKey: "create-repository",
       },
       { signal },

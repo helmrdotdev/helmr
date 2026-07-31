@@ -1,3 +1,8 @@
+import {
+  inspectSecretNameRef,
+  type SecretNameRef,
+} from "./secret"
+
 const imageBrand = Symbol.for("helmr.sdk.v0.image")
 const sourceFileBrand = Symbol.for("helmr.sdk.v0.source-file")
 const sourceDirectoryBrand = Symbol.for("helmr.sdk.v0.source-directory")
@@ -12,9 +17,18 @@ export interface SourceDirectoryRef {
 
 export type ImageCopyInput = SourceFileRef | SourceDirectoryRef | ImageBuilder
 
+export interface ImageRegistryAuth {
+  readonly username: string
+  readonly password: SecretNameRef
+}
+
+export interface ImageFromOptions {
+  readonly auth?: ImageRegistryAuth
+}
+
 export interface ImageBuilder {
   readonly id: string
-  from(ref: string): ImageBuilder
+  from(ref: string, options?: ImageFromOptions): ImageBuilder
   run(argv: readonly string[]): ImageBuilder
   copy(destination: string, source: SourceFileRef | SourceDirectoryRef): ImageBuilder
   copyFrom(
@@ -28,7 +42,14 @@ export interface ImageBuilder {
 }
 
 export type InternalImageStep =
-  | Readonly<{ kind: "from"; ref: string }>
+  | Readonly<{
+      kind: "from"
+      ref: string
+      auth?: Readonly<{
+        username: string
+        passwordSecret: string
+      }>
+    }>
   | Readonly<{
       kind: "run"
       argv: readonly string[]
@@ -72,8 +93,35 @@ class Image implements ImageBuilder {
     Object.freeze(this)
   }
 
-  from(ref: string): ImageBuilder {
-    return new Image(this.id, [...this.steps, { kind: "from", ref }])
+  from(ref: string, options?: ImageFromOptions): ImageBuilder {
+    if (options === undefined) {
+      return new Image(this.id, [...this.steps, { kind: "from", ref }])
+    }
+    assertExactMembers(options, ["auth"], "image.from() options")
+    if (options.auth === undefined) {
+      throw new Error("image.from() options.auth is required")
+    }
+    assertExactMembers(
+      options.auth,
+      ["password", "username"],
+      "image.from() auth",
+    )
+    validateRegistryUsername(options.auth.username)
+    const passwordSecret = inspectSecretNameRef(options.auth.password)
+    if (passwordSecret === undefined) {
+      throw new Error("image.from() auth.password requires secrets.fromName()")
+    }
+    return new Image(this.id, [
+      ...this.steps,
+      {
+        kind: "from",
+        ref,
+        auth: Object.freeze({
+          username: options.auth.username,
+          passwordSecret,
+        }),
+      },
+    ])
   }
 
   run(
@@ -195,4 +243,33 @@ function isSourceDirectoryRef(value: unknown): value is SourceDirectoryRef {
     value !== null &&
     (value as Record<PropertyKey, unknown>)[sourceDirectoryBrand] === true
   )
+}
+
+function assertExactMembers(
+  value: unknown,
+  expected: readonly string[],
+  label: string,
+): void {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`)
+  }
+  const actual = Object.keys(value).sort()
+  if (
+    actual.length !== expected.length ||
+    actual.some((key, index) => key !== expected[index])
+  ) {
+    throw new Error(`${label} has unknown members`)
+  }
+}
+
+function validateRegistryUsername(value: unknown): asserts value is string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.trim() !== value ||
+    new TextEncoder().encode(value).length > 256 ||
+    /[\0-\x1f\x7f-\x9f]/u.test(value)
+  ) {
+    throw new Error("image.from() auth.username is invalid")
+  }
 }

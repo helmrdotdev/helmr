@@ -42,5 +42,6 @@ export {
   type RuntimeOperations,
 } from "./internal/runtime"
 export { resourceID } from "./internal/id"
+export { inspectSecretNameRef } from "./secret"
 export { trimGoSpace } from "./internal/strings"
 export { validateQueueName } from "./schema/task"

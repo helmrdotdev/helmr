@@ -3530,6 +3530,41 @@ function isInternalDefinition(value) {
       return false;
   }
 }
+// sdk/typescript/src/secret.ts
+var secretNameRefBrand = Symbol.for("helmr.sdk.v0.secret-name-ref");
+var secretNamePattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+
+class SecretName {
+  name;
+  constructor(name) {
+    validateSecretName(name);
+    this.name = name;
+    Object.defineProperty(this, secretNameRefBrand, { value: true });
+    Object.freeze(this);
+  }
+}
+var secrets = Object.freeze({
+  fromName(name) {
+    return new SecretName(name);
+  }
+});
+function inspectSecretNameRef(value) {
+  if (typeof value !== "object" || value === null || value[secretNameRefBrand] !== true) {
+    return;
+  }
+  const name = value.name;
+  if (typeof name !== "string") {
+    throw new Error("private Secret name reference is invalid");
+  }
+  validateSecretName(name);
+  return name;
+}
+function validateSecretName(value) {
+  if (!secretNamePattern.test(value)) {
+    throw new Error("Secret name is invalid");
+  }
+}
+
 // sdk/typescript/src/image.ts
 var imageBrand = Symbol.for("helmr.sdk.v0.image");
 var sourceFileBrand = Symbol.for("helmr.sdk.v0.source-file");
@@ -3849,6 +3884,13 @@ var MAX_RUN_LOG_MESSAGE_BYTES = 4 * 1024;
 var MAX_RUN_LOG_ATTRIBUTES_BYTES = 16 * 1024;
 var MAX_TASK_ERROR_MESSAGE_BYTES = 1024;
 var MAX_ACTOR_INPUT_BYTES = 1 * 1024 * 1024;
+function requireSecretName(value) {
+  const name = inspectSecretNameRef(value);
+  if (name === undefined) {
+    throw new Error("Workspace Secret requires secrets.fromName()");
+  }
+  return name;
+}
 function newUUIDv7() {
   const bytes = randomBytes(16);
   let timestamp = Date.now();
@@ -4622,7 +4664,7 @@ function programRuntimeOperations(start, io, decisions, waitGate, runOperations,
           declaredId,
           ...options.key === undefined ? {} : { key: options.key },
           secrets: options.secrets?.map((secret) => create(exports_run_pb.WorkspaceSecretPlacementSchema, {
-            name: secret.name,
+            name: requireSecretName(secret.secret),
             placement: "env" in secret ? { case: "env", value: secret.env } : { case: "file", value: secret.file }
           })) ?? [],
           ...options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }

@@ -3,6 +3,7 @@ import { runProto } from "@helmr/proto"
 import {
   canonicalizeJsonValue,
   inspectDefinition,
+  inspectSecretNameRef,
   installRuntimeOperations,
   parseWorkspaceDeleteReceipt,
   parseWorkspaceExecResult,
@@ -64,6 +65,14 @@ const MAX_RUN_LOG_MESSAGE_BYTES = 4 * 1024
 const MAX_RUN_LOG_ATTRIBUTES_BYTES = 16 * 1024
 const MAX_TASK_ERROR_MESSAGE_BYTES = 1024
 const MAX_ACTOR_INPUT_BYTES = 1 * 1024 * 1024
+
+function requireSecretName(value: unknown): string {
+  const name = inspectSecretNameRef(value)
+  if (name === undefined) {
+    throw new Error("Workspace Secret requires secrets.fromName()")
+  }
+  return name
+}
 
 function newUUIDv7(): string {
   const bytes = randomBytes(16)
@@ -1268,7 +1277,7 @@ function programRuntimeOperations(
           ...(options.key === undefined ? {} : { key: options.key }),
           secrets: options.secrets?.map((secret) =>
             create(runProto.WorkspaceSecretPlacementSchema, {
-              name: secret.name,
+              name: requireSecretName(secret.secret),
               placement: "env" in secret
                 ? { case: "env", value: secret.env }
                 : { case: "file", value: secret.file },

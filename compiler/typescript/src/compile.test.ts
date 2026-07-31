@@ -5,6 +5,7 @@ import {
   image,
   queue,
   schedules,
+  secrets,
   source,
   task,
   workspace,
@@ -306,6 +307,40 @@ describe("declaration analysis", () => {
         },
       },
     ])
+  })
+
+  test("emits closed registry authentication without credential bytes", () => {
+    const machine = workspace("private-base")
+      .image(image("root").from("ghcr.io/acme/base:1", {
+        auth: {
+          username: "aktky",
+          password: secrets.fromName("GHCR_TOKEN"),
+        },
+      }))
+      .resources({ cpu: 1, memory: "1GiB" })
+    const result = analyze({
+      architecture: "x86_64",
+      exports: [{
+        modulePath: "src/workspace.ts",
+        exportName: "machine",
+        value: machine,
+      }],
+    })
+    const definition = result.buildPlan.definitions[0]
+    expect(definition?.kind).toBe("workspace")
+    if (definition?.kind !== "workspace") throw new Error("workspace missing")
+    expect(definition.manifest.imageBuild.images[0]?.steps[0]).toEqual({
+      from: {
+        ref: "ghcr.io/acme/base:1",
+        auth: {
+          username: "aktky",
+          passwordSecret: "GHCR_TOKEN",
+        },
+      },
+    })
+    expect(new TextDecoder().decode(result.buildPlanBytes)).not.toContain(
+      "credential-bytes",
+    )
   })
 
   test("rejects image steps with unknown members", () => {
