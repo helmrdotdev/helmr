@@ -290,7 +290,11 @@ type controlWorkerEnrollmentVerifier struct {
 	verifier *enrollment.AWSVerifier
 }
 
-func (v controlWorkerEnrollmentVerifier) VerifyWorkerEnrollment(ctx context.Context, request api.WorkerEnrollmentRequest) (control.VerifiedWorkerEnrollment, error) {
+func (v controlWorkerEnrollmentVerifier) ParseWorkerEnrollment(request json.RawMessage) (api.WorkerEnrollmentIntent, error) {
+	return v.verifier.ParseWorkerEnrollment(request)
+}
+
+func (v controlWorkerEnrollmentVerifier) VerifyWorkerEnrollment(ctx context.Context, request json.RawMessage) (control.VerifiedWorkerEnrollment, error) {
 	verified, err := v.verifier.VerifyWorkerEnrollment(ctx, request)
 	if err != nil {
 		return control.VerifiedWorkerEnrollment{}, err

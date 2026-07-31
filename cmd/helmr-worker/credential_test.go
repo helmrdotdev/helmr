@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/config"
 )
@@ -20,15 +21,11 @@ import (
 func TestResolveWorkerInstanceCredentialUsesEnrollment(t *testing.T) {
 	tempDir := t.TempDir()
 	originalBuilder := buildWorkerEnrollmentRequest
-	buildWorkerEnrollmentRequest = func(_ context.Context, groupID string, nonce string) (api.WorkerEnrollmentRequest, error) {
-		if groupID != "run-workers" || nonce != "fresh-nonce" {
-			t.Fatalf("builder group=%q nonce=%q", groupID, nonce)
+	buildWorkerEnrollmentRequest = func(_ context.Context, groupID string, nonce string, supportsRun bool, supportsBuild bool) (json.RawMessage, error) {
+		if groupID != "run-workers" || nonce != "fresh-nonce" || !supportsRun || supportsBuild {
+			t.Fatalf("builder group=%q nonce=%q run=%t build=%t", groupID, nonce, supportsRun, supportsBuild)
 		}
-		return api.WorkerEnrollmentRequest{
-			WorkerGroupID: groupID, Nonce: nonce,
-			InstanceIdentityDocument: json.RawMessage(`{"instanceId":"i-managed"}`),
-			SignedSTSRequest:         api.SignedHTTPRequest{Method: http.MethodPost, URL: "https://sts.us-east-1.amazonaws.com/"},
-		}, nil
+		return testWorkerEnrollmentJSON(t, groupID, nonce, supportsRun, supportsBuild), nil
 	}
 	t.Cleanup(func() { buildWorkerEnrollmentRequest = originalBuilder })
 
@@ -44,11 +41,11 @@ func TestResolveWorkerInstanceCredentialUsesEnrollment(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerEnrollmentChallengeResponse{Nonce: "fresh-nonce", WorkerGroupID: "run-workers"})
 		case "/api/worker/enrollment":
-			var request api.WorkerEnrollmentRequest
+			var request api.WorkerEnrollmentIntent
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.WorkerGroupID != "run-workers" || request.Nonce != "fresh-nonce" {
+			if request.WorkerGroupID != "run-workers" || request.Nonce != "fresh-nonce" || !request.SupportsRun || request.SupportsBuild || request.ProtocolVersion != auth.WorkerProtocolVersion {
 				t.Fatalf("enrollment = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerEnrollmentResponse{
@@ -75,8 +72,8 @@ func TestResolveWorkerInstanceCredentialUsesEnrollment(t *testing.T) {
 func TestResolveWorkerInstanceCredentialSerializesEnrollment(t *testing.T) {
 	tempDir := t.TempDir()
 	originalBuilder := buildWorkerEnrollmentRequest
-	buildWorkerEnrollmentRequest = func(_ context.Context, groupID string, nonce string) (api.WorkerEnrollmentRequest, error) {
-		return api.WorkerEnrollmentRequest{WorkerGroupID: groupID, Nonce: nonce}, nil
+	buildWorkerEnrollmentRequest = func(_ context.Context, groupID string, nonce string, supportsRun bool, supportsBuild bool) (json.RawMessage, error) {
+		return testWorkerEnrollmentJSON(t, groupID, nonce, supportsRun, supportsBuild), nil
 	}
 	t.Cleanup(func() { buildWorkerEnrollmentRequest = originalBuilder })
 	var requests atomic.Int32
@@ -177,8 +174,8 @@ func TestResolveAuthenticatedWorkerCredentialReenrollsAfterUnauthorized(t *testi
 		t.Fatal(err)
 	}
 	originalBuilder := buildWorkerEnrollmentRequest
-	buildWorkerEnrollmentRequest = func(_ context.Context, groupID string, nonce string) (api.WorkerEnrollmentRequest, error) {
-		return api.WorkerEnrollmentRequest{WorkerGroupID: groupID, Nonce: nonce}, nil
+	buildWorkerEnrollmentRequest = func(_ context.Context, groupID string, nonce string, supportsRun bool, supportsBuild bool) (json.RawMessage, error) {
+		return testWorkerEnrollmentJSON(t, groupID, nonce, supportsRun, supportsBuild), nil
 	}
 	t.Cleanup(func() { buildWorkerEnrollmentRequest = originalBuilder })
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -225,6 +222,18 @@ func TestResolveAuthenticatedWorkerCredentialReenrollsAfterUnauthorized(t *testi
 	if stored.WorkerInstanceSecret != "replacement-secret" {
 		t.Fatalf("stored credential secret = %q", stored.WorkerInstanceSecret)
 	}
+}
+
+func testWorkerEnrollmentJSON(t *testing.T, groupID string, nonce string, supportsRun bool, supportsBuild bool) json.RawMessage {
+	t.Helper()
+	encoded, err := json.Marshal(api.WorkerEnrollmentIntent{
+		WorkerGroupID: groupID, Nonce: nonce, SupportsRun: supportsRun, SupportsBuild: supportsBuild,
+		ProtocolVersion: auth.WorkerProtocolVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }
 
 func TestResolveAuthenticatedWorkerCredentialPreservesNonUnauthorizedCredential(t *testing.T) {

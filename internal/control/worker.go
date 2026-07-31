@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"strings"
@@ -40,7 +41,8 @@ type VerifiedWorkerEnrollment struct {
 }
 
 type WorkerEnrollmentVerifier interface {
-	VerifyWorkerEnrollment(context.Context, api.WorkerEnrollmentRequest) (VerifiedWorkerEnrollment, error)
+	ParseWorkerEnrollment(json.RawMessage) (api.WorkerEnrollmentIntent, error)
+	VerifyWorkerEnrollment(context.Context, json.RawMessage) (VerifiedWorkerEnrollment, error)
 }
 
 func (s *Server) workerEnrollmentChallenge(w http.ResponseWriter, r *http.Request) {
@@ -102,9 +104,14 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-	var request api.WorkerEnrollmentRequest
-	if err := decodeJSON(r, &request); err != nil {
+	rawRequest, err := io.ReadAll(r.Body)
+	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker enrollment JSON: %w", err)))
+		return
+	}
+	request, err := s.workerEnrollment.ParseWorkerEnrollment(rawRequest)
+	if err != nil {
+		writeError(w, badRequest(errors.New("invalid worker enrollment JSON")))
 		return
 	}
 	request.WorkerGroupID = strings.TrimSpace(request.WorkerGroupID)
@@ -116,10 +123,6 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 	if request.Nonce == "" {
 		writeError(w, badRequest(errors.New("nonce is required")))
-		return
-	}
-	if len(request.InstanceIdentityDocument) == 0 || len(request.InstanceIdentityDocument) > 16<<10 || len(request.SignedSTSRequest.Body) > 4<<10 || len(request.SignedSTSRequest.Headers) > 32 {
-		writeError(w, badRequest(errors.New("worker enrollment evidence is missing or too large")))
 		return
 	}
 	nonceHash, err := auth.HashToken(s.authKeys.WorkerEnrollment, request.Nonce)
@@ -142,9 +145,9 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.workerEnrollmentGuard.endVerification()
-	verified, err := s.workerEnrollment.VerifyWorkerEnrollment(r.Context(), request)
+	verified, err := s.workerEnrollment.VerifyWorkerEnrollment(r.Context(), rawRequest)
 	if err != nil {
-		s.log.Warn("worker enrollment evidence rejected", "worker_group_id", request.WorkerGroupID, "error", err)
+		s.log.Warn("worker enrollment evidence rejected", "worker_group_id", request.WorkerGroupID)
 		writeError(w, unauthorized(errors.New("worker enrollment evidence is invalid")))
 		return
 	}

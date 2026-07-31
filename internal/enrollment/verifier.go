@@ -1,6 +1,7 @@
 package enrollment
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -46,6 +47,19 @@ type AWSVerifiedIdentity struct {
 	ProtocolVersion             string
 	EnrollmentPolicyFingerprint string
 	AttestationFingerprint      string
+}
+
+type awsWorkerEnrollmentRequest struct {
+	api.WorkerEnrollmentIntent
+	InstanceIdentityDocument json.RawMessage   `json:"instance_identity_document"`
+	SignedSTSRequest         signedHTTPRequest `json:"signed_sts_request"`
+}
+
+type signedHTTPRequest struct {
+	Method  string              `json:"method"`
+	URL     string              `json:"url"`
+	Headers map[string][]string `json:"headers"`
+	Body    string              `json:"body"`
 }
 
 type EC2Client interface {
@@ -186,7 +200,19 @@ func AWSAttestationFingerprint(group AWSGroupBoundary, amiID string) (string, er
 	return fmt.Sprintf("sha256:%x", sum[:]), nil
 }
 
-func (v *AWSVerifier) VerifyWorkerEnrollment(ctx context.Context, request api.WorkerEnrollmentRequest) (AWSVerifiedIdentity, error) {
+func (v *AWSVerifier) ParseWorkerEnrollment(raw json.RawMessage) (api.WorkerEnrollmentIntent, error) {
+	request, err := decodeAWSWorkerEnrollment(raw)
+	if err != nil {
+		return api.WorkerEnrollmentIntent{}, err
+	}
+	return request.WorkerEnrollmentIntent, nil
+}
+
+func (v *AWSVerifier) VerifyWorkerEnrollment(ctx context.Context, raw json.RawMessage) (AWSVerifiedIdentity, error) {
+	request, err := decodeAWSWorkerEnrollment(raw)
+	if err != nil {
+		return AWSVerifiedIdentity{}, err
+	}
 	group, ok := v.groups[strings.TrimSpace(request.WorkerGroupID)]
 	if !ok {
 		return AWSVerifiedIdentity{}, errors.New("worker group is not configured")
@@ -236,6 +262,22 @@ func (v *AWSVerifier) VerifyWorkerEnrollment(ctx context.Context, request api.Wo
 	}, nil
 }
 
+func decodeAWSWorkerEnrollment(raw json.RawMessage) (awsWorkerEnrollmentRequest, error) {
+	var request awsWorkerEnrollmentRequest
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		return awsWorkerEnrollmentRequest{}, fmt.Errorf("decode AWS worker enrollment request: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return awsWorkerEnrollmentRequest{}, errors.New("AWS worker enrollment request must contain one JSON value")
+	}
+	if len(request.InstanceIdentityDocument) == 0 || len(request.InstanceIdentityDocument) > 16<<10 || len(request.SignedSTSRequest.Body) > 4<<10 || len(request.SignedSTSRequest.Headers) > 32 {
+		return awsWorkerEnrollmentRequest{}, errors.New("AWS worker enrollment evidence is missing or too large")
+	}
+	return request, nil
+}
+
 func (v *AWSVerifier) VerifyWorkerLiveness(ctx context.Context, workerGroupID string, resourceID string, attestationFingerprint string) error {
 	group, ok := v.groups[strings.TrimSpace(workerGroupID)]
 	if !ok {
@@ -279,7 +321,7 @@ type callerIdentity struct {
 	Account string `xml:"GetCallerIdentityResult>Account"`
 }
 
-func (v *AWSVerifier) verifySignedCallerIdentity(ctx context.Context, group AWSGroupBoundary, enrollment api.WorkerEnrollmentRequest) (callerIdentity, error) {
+func (v *AWSVerifier) verifySignedCallerIdentity(ctx context.Context, group AWSGroupBoundary, enrollment awsWorkerEnrollmentRequest) (callerIdentity, error) {
 	signed := enrollment.SignedSTSRequest
 	if signed.Method != http.MethodPost || signed.URL != "https://sts."+group.Region+".amazonaws.com/" || signed.Body != "Action=GetCallerIdentity&Version=2011-06-15" {
 		return callerIdentity{}, errors.New("signed STS request target is invalid")

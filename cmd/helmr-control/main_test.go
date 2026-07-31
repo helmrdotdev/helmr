@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -202,7 +203,11 @@ type emptyStore struct {
 
 type controltestWorkerEnrollmentVerifier struct{}
 
-func (controltestWorkerEnrollmentVerifier) VerifyWorkerEnrollment(context.Context, api.WorkerEnrollmentRequest) (control.VerifiedWorkerEnrollment, error) {
+func (controltestWorkerEnrollmentVerifier) ParseWorkerEnrollment(json.RawMessage) (api.WorkerEnrollmentIntent, error) {
+	return api.WorkerEnrollmentIntent{}, nil
+}
+
+func (controltestWorkerEnrollmentVerifier) VerifyWorkerEnrollment(context.Context, json.RawMessage) (control.VerifiedWorkerEnrollment, error) {
 	return control.VerifiedWorkerEnrollment{}, nil
 }
 

@@ -39,21 +39,12 @@ type WorkerEnrollmentChallengeResponse struct {
 	ProtocolVersion string    `json:"protocol_version"`
 }
 
-type WorkerEnrollmentRequest struct {
-	WorkerGroupID            string            `json:"worker_group_id"`
-	Nonce                    string            `json:"nonce,omitempty"`
-	InstanceIdentityDocument json.RawMessage   `json:"instance_identity_document,omitempty"`
-	SignedSTSRequest         SignedHTTPRequest `json:"signed_sts_request"`
-	SupportsRun              bool              `json:"supports_run"`
-	SupportsBuild            bool              `json:"supports_build"`
-	ProtocolVersion          string            `json:"protocol_version"`
-}
-
-type SignedHTTPRequest struct {
-	Method  string              `json:"method"`
-	URL     string              `json:"url"`
-	Headers map[string][]string `json:"headers"`
-	Body    string              `json:"body"`
+type WorkerEnrollmentIntent struct {
+	WorkerGroupID   string `json:"worker_group_id"`
+	Nonce           string `json:"nonce,omitempty"`
+	SupportsRun     bool   `json:"supports_run"`
+	SupportsBuild   bool   `json:"supports_build"`
+	ProtocolVersion string `json:"protocol_version"`
 }
 
 type WorkerRunLeaseDiscoveryRequest struct{}

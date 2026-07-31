@@ -2,6 +2,7 @@ package enrollment
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
@@ -84,10 +86,10 @@ func TestVerifierBindsNonceAndAWSResourceBoundaries(t *testing.T) {
 			)), Header: make(http.Header)}, nil
 		})},
 	}
-	request := api.WorkerEnrollmentRequest{
-		WorkerGroupID: "run-workers", Nonce: "fresh-nonce",
+	request := awsWorkerEnrollmentRequest{
+		WorkerEnrollmentIntent:   api.WorkerEnrollmentIntent{WorkerGroupID: "run-workers", Nonce: "fresh-nonce", SupportsRun: true, ProtocolVersion: auth.WorkerProtocolVersion},
 		InstanceIdentityDocument: []byte(`{"accountId":"123456789012","region":"us-east-1","instanceId":"i-0123456789abcdef0","imageId":"ami-allowed"}`),
-		SignedSTSRequest: api.SignedHTTPRequest{
+		SignedSTSRequest: signedHTTPRequest{
 			Method: http.MethodPost, URL: "https://sts.us-east-1.amazonaws.com/",
 			Body: "Action=GetCallerIdentity&Version=2011-06-15",
 			Headers: map[string][]string{
@@ -97,7 +99,15 @@ func TestVerifierBindsNonceAndAWSResourceBoundaries(t *testing.T) {
 			},
 		},
 	}
-	verified, err := verifier.VerifyWorkerEnrollment(context.Background(), request)
+	raw := encodeAWSWorkerEnrollment(t, request)
+	intent, err := verifier.ParseWorkerEnrollment(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if intent.WorkerGroupID != "run-workers" || intent.Nonce != "fresh-nonce" || !intent.SupportsRun {
+		t.Fatalf("intent = %+v", intent)
+	}
+	verified, err := verifier.VerifyWorkerEnrollment(context.Background(), raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,19 +116,35 @@ func TestVerifierBindsNonceAndAWSResourceBoundaries(t *testing.T) {
 	}
 
 	request.Nonce = "different-nonce"
-	if _, err := verifier.VerifyWorkerEnrollment(context.Background(), request); err == nil || !strings.Contains(err.Error(), "nonce") {
+	if _, err := verifier.VerifyWorkerEnrollment(context.Background(), encodeAWSWorkerEnrollment(t, request)); err == nil || !strings.Contains(err.Error(), "nonce") {
 		t.Fatalf("nonce mismatch error = %v", err)
 	}
 
 	request.Nonce = "fresh-nonce"
 	verifier.autoscaling = fakeAutoScaling{lifecycle: "Terminating:Wait"}
-	if _, err := verifier.VerifyWorkerEnrollment(context.Background(), request); err == nil || !strings.Contains(err.Error(), "lifecycle") {
+	if _, err := verifier.VerifyWorkerEnrollment(context.Background(), encodeAWSWorkerEnrollment(t, request)); err == nil || !strings.Contains(err.Error(), "lifecycle") {
 		t.Fatalf("terminating lifecycle error = %v", err)
 	}
 	verifier.autoscaling = fakeAutoScaling{health: "UNHEALTHY"}
-	if _, err := verifier.VerifyWorkerEnrollment(context.Background(), request); err == nil || !strings.Contains(err.Error(), "lifecycle") {
+	if _, err := verifier.VerifyWorkerEnrollment(context.Background(), encodeAWSWorkerEnrollment(t, request)); err == nil || !strings.Contains(err.Error(), "lifecycle") {
 		t.Fatalf("unhealthy lifecycle error = %v", err)
 	}
+}
+
+func TestAWSWorkerEnrollmentDecoderRejectsUnknownFields(t *testing.T) {
+	verifier := &AWSVerifier{}
+	if _, err := verifier.ParseWorkerEnrollment([]byte(`{"worker_group_id":"run-workers","unknown":true}`)); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("unknown field error = %v", err)
+	}
+}
+
+func encodeAWSWorkerEnrollment(t *testing.T, request awsWorkerEnrollmentRequest) json.RawMessage {
+	t.Helper()
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }
 
 func TestVerifierRevalidatesWorkerLivenessDuringCredentialAuthentication(t *testing.T) {

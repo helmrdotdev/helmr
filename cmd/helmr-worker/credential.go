@@ -58,13 +58,10 @@ func resolveWorkerInstanceCredential(ctx context.Context, cfg config.Worker, wor
 		if strings.TrimSpace(challenge.WorkerGroupID) != cfg.WorkerGroupID || strings.TrimSpace(challenge.Nonce) == "" {
 			return errors.New("worker enrollment challenge is invalid")
 		}
-		evidence, err := buildWorkerEnrollmentRequest(ctx, cfg.WorkerGroupID, challenge.Nonce)
+		evidence, err := buildWorkerEnrollmentRequest(ctx, cfg.WorkerGroupID, challenge.Nonce, supportsRun, supportsBuild)
 		if err != nil {
 			return err
 		}
-		evidence.SupportsRun = supportsRun
-		evidence.SupportsBuild = supportsBuild
-		evidence.ProtocolVersion = auth.WorkerProtocolVersion
 		registered, err := controlClient.EnrollWorker(ctx, evidence)
 		if err != nil {
 			return fmt.Errorf("enroll worker: %w", err)
