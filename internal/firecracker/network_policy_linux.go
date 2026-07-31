@@ -481,12 +481,16 @@ func rejectLiveNetworkOverlap(pools ...netip.Prefix) error {
 			continue
 		}
 		for _, pool := range pools {
-			if prefixesOverlap(pool, routePrefix) {
+			if networkPoolRouteConflict(pool, routePrefix) {
 				return fmt.Errorf("worker network pool %s overlaps live route %s", pool, routePrefix)
 			}
 		}
 	}
 	return nil
+}
+
+func networkPoolRouteConflict(pool, routePrefix netip.Prefix) bool {
+	return routePrefix.Bits() > 0 && prefixesOverlap(pool, routePrefix)
 }
 
 func (c *Connector) createRoutedAttachment(ctx context.Context, binding *installedNetworkBinding) error {
