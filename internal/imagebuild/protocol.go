@@ -378,7 +378,7 @@ func validateRegistryBindings(bindings []RegistryBinding) error {
 		if err := ids.Validate(binding.SecretVersionID); err != nil {
 			return fmt.Errorf("image-build registry binding %d Secret version ID is invalid", index)
 		}
-		if binding.RevocationGeneration < 1 {
+		if binding.RevocationGeneration < 0 {
 			return fmt.Errorf("image-build registry binding %d revocation generation is invalid", index)
 		}
 		if index > 0 && bindings[index-1].Authority >= binding.Authority {

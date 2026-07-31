@@ -58,7 +58,7 @@ func TestGuestProtocolRejectsMismatchedCredentialEnvelope(t *testing.T) {
 		ResolutionID:         uuid.Must(uuid.NewV7()).String(),
 		SecretID:             uuid.Must(uuid.NewV7()).String(),
 		SecretVersionID:      uuid.Must(uuid.NewV7()).String(),
-		RevocationGeneration: 1,
+		RevocationGeneration: 0,
 	}}
 	request.ResolutionSetDigest = ResolutionSetDigest(request.RegistryBindings)
 	envelope := CredentialEnvelope{
