@@ -180,10 +180,11 @@ SELECT disabled_groups.* FROM disabled_groups
    AND (SELECT count(*) FROM lost_runtimes) >= 0
  ORDER BY disabled_groups.id;
 
--- name: ListLiveAbsentWorkerGroupIDs :many
+-- name: ListActiveAbsentWorkerGroupIDs :many
 SELECT worker_groups.id
  FROM worker_groups
  WHERE worker_groups.region_id = sqlc.arg(region_id)
+   AND worker_groups.state = 'active'
    AND NOT (worker_groups.id = ANY(sqlc.arg(desired_ids)::text[]))
    AND EXISTS (
        SELECT 1 FROM worker_instances

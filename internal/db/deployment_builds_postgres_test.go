@@ -70,14 +70,9 @@ func newDeploymentBuildFixture(t *testing.T) (*deploymentBuildFixture, *pgxpool.
 		ids.environmentID, dbtest.DefaultRegionID, "build-"+shortUUID(deploymentID),
 		testDigest("deployment-build-"+deploymentID.String()), sourceArtifactID)
 
-	groupID := "build-" + shortUUID(deploymentID)
+	groupID := dbtest.DefaultWorkerGroupID
 	workerID := uuid.Must(uuid.NewV7())
 	serviceID := uuid.Must(uuid.NewV7())
-	mustExec(t, ctx, pool, `
-		INSERT INTO worker_groups (
-			id, region_id, name, observation_ttl_seconds
-		) VALUES ($1, $2, $1, 120)
-	`, groupID, dbtest.DefaultRegionID)
 	mustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, state,
@@ -258,7 +253,7 @@ func TestPlatformAcquisitionRequiresActiveBuildAuthority(t *testing.T) {
 
 }
 
-func TestFleetBuildDemandExcludesUnpinnedDeployments(t *testing.T) {
+func TestFleetBuildDemandIsContinuousFromAcquisitionThroughLease(t *testing.T) {
 	f, _ := newDeploymentBuildFixture(t)
 	mustExec(t, f.ctx, f.pool, `
 		UPDATE deployments
@@ -271,15 +266,137 @@ func TestFleetBuildDemandExcludesUnpinnedDeployments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(demand) != 1 || demand[0].DemandState != "queued" || demand[0].DemandCount != 1 {
+		t.Fatalf("unpinned build demand = %+v, want one queued item", demand)
+	}
+	oldest, err := f.queries.GetFleetOldestBuildQueueTime(f.ctx, f.groupID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !oldest.Valid {
+		t.Fatal("unpinned build demand has no oldest queue time")
+	}
+
+	pins := db.PinDeploymentPlatformArtifactsParams{
+		BuildRuntimeDigest:   bytes.Repeat([]byte{1}, 32),
+		BuildToolchainDigest: bytes.Repeat([]byte{2}, 32),
+		BuildManagerDigest:   bytes.Repeat([]byte{3}, 32),
+		OrgID:                pgvalue.UUID(f.orgID),
+		ProjectID:            pgvalue.UUID(f.projectID),
+		EnvironmentID:        pgvalue.UUID(f.environmentID),
+		ID:                   pgvalue.UUID(f.deploymentID),
+	}
+	if _, err := f.queries.PinDeploymentPlatformArtifacts(f.ctx, pins); err != nil {
+		t.Fatal(err)
+	}
+	demand, err = f.queries.ListFleetBuildDemand(f.ctx, f.groupID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(demand) != 1 || demand[0].DemandState != "queued" || demand[0].DemandCount != 1 {
+		t.Fatalf("pinned build demand = %+v, want the same queued item", demand)
+	}
+
+	lease := f.lease(t, 1)
+	demand, err = f.queries.ListFleetBuildDemand(f.ctx, f.groupID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(demand) != 1 || demand[0].DemandState != "active" || demand[0].DemandCount != 1 {
+		t.Fatalf("leased build demand = %+v, want one active item", demand)
+	}
+
+	f.reject(t, pgvalue.MustUUIDValue(lease.ID), 1)
+	demand, err = f.queries.ListFleetBuildDemand(f.ctx, f.groupID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(demand) != 1 || demand[0].DemandState != "queued" || demand[0].DemandCount != 1 {
+		t.Fatalf("replacement build demand = %+v, want one queued item", demand)
+	}
+	oldestAfterReplacement, err := f.queries.GetFleetOldestBuildQueueTime(f.ctx, f.groupID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !oldestAfterReplacement.Valid || !oldestAfterReplacement.Time.Equal(oldest.Time) {
+		t.Fatalf("replacement oldest queue time = %v, want %s", oldestAfterReplacement, oldest.Time)
+	}
+}
+
+func TestFleetBuildDemandStopsAfterTerminalAcquisitionFailure(t *testing.T) {
+	f, _ := newDeploymentBuildFixture(t)
+	mustExec(t, f.ctx, f.pool, `
+		UPDATE deployments
+		   SET build_runtime_digest = NULL,
+		       build_toolchain_digest = NULL,
+		       build_manager_digest = NULL
+		 WHERE id = $1
+	`, f.deploymentID)
+	if _, err := f.queries.FailDeploymentPlatformAcquisition(
+		f.ctx,
+		db.FailDeploymentPlatformAcquisitionParams{
+			Failure:       []byte(`{"reason_code":"unsupported_selector"}`),
+			ID:            pgvalue.UUID(f.deploymentID),
+			OrgID:         pgvalue.UUID(f.orgID),
+			ProjectID:     pgvalue.UUID(f.projectID),
+			EnvironmentID: pgvalue.UUID(f.environmentID),
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	demand, err := f.queries.ListFleetBuildDemand(f.ctx, f.groupID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(demand) != 0 {
-		t.Fatalf("unpinned build demand = %+v", demand)
+		t.Fatalf("terminal acquisition demand = %+v, want none", demand)
 	}
 	oldest, err := f.queries.GetFleetOldestBuildQueueTime(f.ctx, f.groupID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if oldest.Valid {
-		t.Fatalf("unpinned oldest build queue time = %s", oldest.Time)
+		t.Fatalf("terminal acquisition oldest queue time = %s, want none", oldest.Time)
+	}
+}
+
+func TestFleetBuildQueuedDemandMovesToActiveReplacementGroup(t *testing.T) {
+	f, _ := newDeploymentBuildFixture(t)
+	mustExec(t, f.ctx, f.pool, `
+		UPDATE worker_groups
+		   SET state = 'draining'
+		 WHERE id = $1
+	`, f.groupID)
+	replacementID := "replacement-" + shortUUID(uuid.Must(uuid.NewV7()))
+	mustExec(t, f.ctx, f.pool, `
+		INSERT INTO worker_groups (
+			id, region_id, name, allows_run, allows_build,
+			required_vm_slots, required_build_executors,
+			observation_ttl_seconds
+		) VALUES ($1, $2, $1, false, true, 0, 1, 120)
+	`, replacementID, dbtest.DefaultRegionID)
+
+	drainingDemand, err := f.queries.ListFleetBuildDemand(f.ctx, f.groupID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drainingDemand) != 0 {
+		t.Fatalf("draining group demand = %+v, want no queued demand", drainingDemand)
+	}
+	drainingOldest, err := f.queries.GetFleetOldestBuildQueueTime(f.ctx, f.groupID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if drainingOldest.Valid {
+		t.Fatalf("draining group oldest queue time = %s, want none", drainingOldest.Time)
+	}
+
+	replacementDemand, err := f.queries.ListFleetBuildDemand(f.ctx, replacementID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replacementDemand) != 1 || replacementDemand[0].DemandState != "queued" || replacementDemand[0].DemandCount != 1 {
+		t.Fatalf("replacement group demand = %+v, want one queued item", replacementDemand)
 	}
 }
 

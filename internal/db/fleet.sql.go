@@ -167,10 +167,8 @@ SELECT min(deployments.created_at)::timestamptz
   JOIN worker_groups ON worker_groups.id = $1
                     AND worker_groups.region_id = deployments.build_region_id
                     AND worker_groups.allows_build
+                    AND worker_groups.state = 'active'
  WHERE deployments.status IN ('queued', 'building')
-   AND deployments.build_runtime_digest IS NOT NULL
-   AND deployments.build_toolchain_digest IS NOT NULL
-   AND deployments.build_manager_digest IS NOT NULL
    AND NOT EXISTS (
        SELECT 1 FROM deployment_build_leases active_lease
         WHERE active_lease.deployment_id = deployments.id
@@ -193,6 +191,7 @@ SELECT min(runs.queue_origin_at)::timestamptz
   JOIN worker_groups ON worker_groups.id = $1
                     AND worker_groups.region_id = workspaces.region_id
                     AND worker_groups.allows_run
+                    AND worker_groups.state = 'active'
  WHERE runs.status = 'queued' AND runs.current_run_lease_id IS NULL
    AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
 `
@@ -285,6 +284,7 @@ const listFleetBuildDemand = `-- name: ListFleetBuildDemand :many
 WITH target_group AS (
     SELECT worker_groups.id,
            worker_groups.region_id,
+           worker_groups.state,
            worker_groups.required_cpu_millis,
            worker_groups.required_memory_bytes,
            worker_groups.required_guest_ephemeral_disk_bytes,
@@ -300,10 +300,8 @@ WITH target_group AS (
            count(*)::bigint AS demand_count
       FROM deployments
       JOIN target_group ON target_group.region_id = deployments.build_region_id
-     WHERE deployments.status IN ('queued', 'building')
-       AND deployments.build_runtime_digest IS NOT NULL
-       AND deployments.build_toolchain_digest IS NOT NULL
-       AND deployments.build_manager_digest IS NOT NULL
+     WHERE target_group.state = 'active'
+       AND deployments.status IN ('queued', 'building')
        AND NOT EXISTS (
            SELECT 1 FROM deployment_build_leases active_lease
             WHERE active_lease.deployment_id = deployments.id
@@ -370,6 +368,7 @@ const listFleetRunDemand = `-- name: ListFleetRunDemand :many
 WITH target_group AS (
     SELECT worker_groups.id,
            worker_groups.region_id,
+           worker_groups.state,
            worker_groups.required_cpu_millis,
            worker_groups.required_memory_bytes,
            worker_groups.required_guest_ephemeral_disk_bytes,
@@ -388,7 +387,8 @@ WITH target_group AS (
       JOIN workspaces ON workspaces.environment_id = runs.environment_id
                      AND workspaces.id = runs.workspace_id
       JOIN target_group ON target_group.region_id = workspaces.region_id
-     WHERE runs.status = 'queued' AND runs.current_run_lease_id IS NULL
+     WHERE target_group.state = 'active'
+       AND runs.status = 'queued' AND runs.current_run_lease_id IS NULL
        AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
      GROUP BY target_group.id,
               target_group.required_cpu_millis,

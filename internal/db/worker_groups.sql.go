@@ -508,10 +508,11 @@ func (q *Queries) GetWorkerInstanceLifecycle(ctx context.Context, arg GetWorkerI
 	return i, err
 }
 
-const listLiveAbsentWorkerGroupIDs = `-- name: ListLiveAbsentWorkerGroupIDs :many
+const listActiveAbsentWorkerGroupIDs = `-- name: ListActiveAbsentWorkerGroupIDs :many
 SELECT worker_groups.id
  FROM worker_groups
  WHERE worker_groups.region_id = $1
+   AND worker_groups.state = 'active'
    AND NOT (worker_groups.id = ANY($2::text[]))
    AND EXISTS (
        SELECT 1 FROM worker_instances
@@ -522,13 +523,13 @@ SELECT worker_groups.id
  ORDER BY worker_groups.id
 `
 
-type ListLiveAbsentWorkerGroupIDsParams struct {
+type ListActiveAbsentWorkerGroupIDsParams struct {
 	RegionID   string   `json:"region_id"`
 	DesiredIds []string `json:"desired_ids"`
 }
 
-func (q *Queries) ListLiveAbsentWorkerGroupIDs(ctx context.Context, arg ListLiveAbsentWorkerGroupIDsParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, listLiveAbsentWorkerGroupIDs, arg.RegionID, arg.DesiredIds)
+func (q *Queries) ListActiveAbsentWorkerGroupIDs(ctx context.Context, arg ListActiveAbsentWorkerGroupIDsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listActiveAbsentWorkerGroupIDs, arg.RegionID, arg.DesiredIds)
 	if err != nil {
 		return nil, err
 	}

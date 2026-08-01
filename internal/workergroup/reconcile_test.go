@@ -35,7 +35,7 @@ func (s *recordingReconcileStore) DisableAbsentWorkerGroups(context.Context, db.
 	return nil, nil
 }
 
-func (s *recordingReconcileStore) ListLiveAbsentWorkerGroupIDs(context.Context, db.ListLiveAbsentWorkerGroupIDsParams) ([]string, error) {
+func (s *recordingReconcileStore) ListActiveAbsentWorkerGroupIDs(context.Context, db.ListActiveAbsentWorkerGroupIDsParams) ([]string, error) {
 	s.calls = append(s.calls, "check-live")
 	return s.live, nil
 }

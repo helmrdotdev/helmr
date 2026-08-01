@@ -595,6 +595,7 @@ func (s *Supervisor) consume(
 			continue
 		}
 		finish := s.registry.begin(spec.Name)
+		retryDelay := time.Duration(0)
 		if err := work(workCtx); err != nil && !errors.Is(err, context.Canceled) {
 			var fatal FatalWorkError
 			if errors.As(err, &fatal) && fatal.FatalWorker() {
@@ -607,10 +608,11 @@ func (s *Supervisor) consume(
 				return
 			}
 			s.cfg.Log.Error("worker execution failed", "consumer", spec.Name, "error", err)
+			retryDelay = s.cfg.PollEvery
 		}
 		finish()
 		releaseAdmission()
-		timer.Reset(0)
+		timer.Reset(retryDelay)
 	}
 }
 

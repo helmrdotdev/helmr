@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -78,6 +79,109 @@ func TestWorkerGroupReconcileDoesNotReactivateDrainingGroup(t *testing.T) {
 	}
 	if reconciled.State != db.WorkerGroupStateDraining {
 		t.Fatalf("reconciled state = %s, want draining", reconciled.State)
+	}
+}
+
+func TestWorkerGroupHasOneActiveGroupPerRoleAndRegion(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		allowsRun   bool
+		allowsBuild bool
+		vmSlots     int32
+		buildSlots  int32
+	}{
+		{name: "run", allowsRun: true, vmSlots: 1},
+		{name: "build", allowsBuild: true, buildSlots: 1},
+		{name: "dual-role", allowsRun: true, allowsBuild: true, vmSlots: 1, buildSlots: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			pool := newPostgresDB(t, ctx)
+			_, err := db.New(pool).ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
+				ID: "second-" + tc.name, RegionID: dbtest.DefaultRegionID, Name: "second-" + tc.name,
+				ObservationTtlSeconds: 120, AllowsRun: tc.allowsRun, AllowsBuild: tc.allowsBuild,
+				RequiredCpuMillis: 1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1,
+				RequiredVmSlots: tc.vmSlots, RequiredBuildExecutors: tc.buildSlots,
+				ProtocolVersion: auth.WorkerProtocolVersion,
+			})
+			if err == nil {
+				t.Fatalf("second active %s group unexpectedly reconciled", tc.name)
+			}
+		})
+	}
+}
+
+func TestWorkerGroupReplacementAllowsDrainingPredecessor(t *testing.T) {
+	ctx := context.Background()
+	pool := newPostgresDB(t, ctx)
+	workerID := uuid.Must(uuid.NewV7())
+	mustExec(t, ctx, pool, `
+		INSERT INTO worker_instances (id, resource_id, worker_group_id, state)
+		VALUES ($1, $2, $3, 'registering')
+	`, workerID, "predecessor-"+workerID.String(), dbtest.DefaultWorkerGroupID)
+	mustExec(t, ctx, pool, `UPDATE worker_groups SET state = 'draining' WHERE id = $1`, dbtest.DefaultWorkerGroupID)
+	replacementID := "replacement-" + shortUUID(uuid.Must(uuid.NewV7()))
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if err := workergroup.Reconcile(ctx, db.New(tx), dbtest.DefaultRegionID, []workergroup.Desired{{
+		Spec: workergroup.Spec{ID: replacementID, Name: replacementID, AllowsRun: true, AllowsBuild: true},
+		Capacity: workergroup.Capacity{
+			MilliCPU: 1, MemoryBytes: 1, GuestEphemeralDiskBytes: 1,
+			VMSlots: 1, BuildExecutors: 1,
+		},
+		ObservationTTLSeconds: 120,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var predecessorState, replacementState string
+	if err := pool.QueryRow(ctx, `SELECT state FROM worker_groups WHERE id = $1`, dbtest.DefaultWorkerGroupID).Scan(&predecessorState); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT state FROM worker_groups WHERE id = $1`, replacementID).Scan(&replacementState); err != nil {
+		t.Fatal(err)
+	}
+	if predecessorState != "draining" || replacementState != "active" {
+		t.Fatalf("replacement states = predecessor:%s replacement:%s", predecessorState, replacementState)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE worker_groups SET state = 'active' WHERE id = $1`, dbtest.DefaultWorkerGroupID); err == nil {
+		t.Fatal("draining predecessor reactivated while replacement was active")
+	}
+}
+
+func TestOnlyActiveAbsentGroupsBlockReconciliation(t *testing.T) {
+	ctx := context.Background()
+	pool := newPostgresDB(t, ctx)
+	q := db.New(pool)
+	workerID := uuid.Must(uuid.NewV7())
+	mustExec(t, ctx, pool, `
+		INSERT INTO worker_instances (id, resource_id, worker_group_id, state)
+		VALUES ($1, $2, $3, 'registering')
+	`, workerID, "retiring-"+workerID.String(), dbtest.DefaultWorkerGroupID)
+
+	active, err := q.ListActiveAbsentWorkerGroupIDs(ctx, db.ListActiveAbsentWorkerGroupIDsParams{
+		RegionID: dbtest.DefaultRegionID, DesiredIds: []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 1 || active[0] != dbtest.DefaultWorkerGroupID {
+		t.Fatalf("active absent groups = %#v", active)
+	}
+	mustExec(t, ctx, pool, `UPDATE worker_groups SET state = 'draining' WHERE id = $1`, dbtest.DefaultWorkerGroupID)
+	active, err = q.ListActiveAbsentWorkerGroupIDs(ctx, db.ListActiveAbsentWorkerGroupIDsParams{
+		RegionID: dbtest.DefaultRegionID, DesiredIds: []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("draining absent group blocked reconciliation: %#v", active)
 	}
 }
 

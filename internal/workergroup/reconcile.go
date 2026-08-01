@@ -14,7 +14,7 @@ type ReconcileStore interface {
 	ReconcileWorkerGroup(context.Context, db.ReconcileWorkerGroupParams) (db.ReconcileWorkerGroupRow, error)
 	LockAbsentWorkerGroups(context.Context, db.LockAbsentWorkerGroupsParams) ([]string, error)
 	DisableAbsentWorkerGroups(context.Context, db.DisableAbsentWorkerGroupsParams) ([]db.DisableAbsentWorkerGroupsRow, error)
-	ListLiveAbsentWorkerGroupIDs(context.Context, db.ListLiveAbsentWorkerGroupIDsParams) ([]string, error)
+	ListActiveAbsentWorkerGroupIDs(context.Context, db.ListActiveAbsentWorkerGroupIDsParams) ([]string, error)
 }
 
 func Reconcile(ctx context.Context, store ReconcileStore, regionID string, desired []Desired) error {
@@ -70,14 +70,14 @@ func Reconcile(ctx context.Context, store ReconcileStore, regionID string, desir
 	}); err != nil {
 		return fmt.Errorf("disable removed worker groups: %w", err)
 	}
-	live, err := store.ListLiveAbsentWorkerGroupIDs(ctx, db.ListLiveAbsentWorkerGroupIDsParams{
+	active, err := store.ListActiveAbsentWorkerGroupIDs(ctx, db.ListActiveAbsentWorkerGroupIDsParams{
 		RegionID: regionID, DesiredIds: ids,
 	})
 	if err != nil {
-		return fmt.Errorf("check removed worker groups: %w", err)
+		return fmt.Errorf("check active removed worker groups: %w", err)
 	}
-	if len(live) > 0 {
-		return fmt.Errorf("worker groups %s still have live or fenced instances; drain and terminate every member before removing the group", strings.Join(live, ", "))
+	if len(active) > 0 {
+		return fmt.Errorf("active worker groups %s still have live or fenced instances; transition each group to draining before replacing or removing it", strings.Join(active, ", "))
 	}
 	return nil
 }

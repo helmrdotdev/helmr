@@ -1521,6 +1521,9 @@ dev_worker_tfvars() {
   worker_root_volume_throughput="${DEV_WORKER_ROOT_VOLUME_THROUGHPUT:-125}"
   worker_max_size="${DEV_WORKER_MAX_SIZE:-1}"
   build_worker_max_size="${DEV_BUILD_WORKER_MAX_SIZE:-1}"
+  build_worker_vm_vcpus="${DEV_BUILD_WORKER_VM_VCPUS:-3}"
+  build_worker_vm_memory_mib="${DEV_BUILD_WORKER_VM_MEMORY_MIB:-4096}"
+  build_worker_vm_scratch_disk_mib="${DEV_BUILD_WORKER_VM_SCRATCH_DISK_MIB:-32768}"
   worker_execution_slots="${DEV_WORKER_EXECUTION_SLOTS:-1}"
   run_warm_workers="${DEV_RUN_WARM_WORKERS:-0}"
   run_max_workers="${DEV_RUN_MAX_WORKERS:-${worker_max_size}}"
@@ -1528,7 +1531,7 @@ dev_worker_tfvars() {
   max_scale_out_per_cycle="${DEV_MAX_SCALE_OUT_PER_CYCLE:-1}"
   max_pending_workers="${DEV_MAX_PENDING_WORKERS:-1}"
   allow_extended_worker_capacity="${DEV_ALLOW_EXTENDED_WORKER_CAPACITY:-false}"
-  for value_name in worker_max_size build_worker_max_size worker_execution_slots run_warm_workers run_max_workers build_max_workers max_scale_out_per_cycle max_pending_workers; do
+  for value_name in worker_max_size build_worker_max_size build_worker_vm_vcpus build_worker_vm_memory_mib build_worker_vm_scratch_disk_mib worker_execution_slots run_warm_workers run_max_workers build_max_workers max_scale_out_per_cycle max_pending_workers; do
     value="${!value_name}"
     case "${value}" in
       ''|*[!0-9]*) die "${value_name} must be a non-negative integer" ;;
@@ -1582,9 +1585,9 @@ dev_worker_tfvars() {
   set_tfvar "${DEV_TFVARS}" "build_worker_root_volume_throughput" "null"
   set_tfvar "${DEV_TFVARS}" "build_worker_disk_mib" "null"
   set_tfvar "${DEV_TFVARS}" "build_worker_disk_reserve_mib" "null"
-  set_tfvar "${DEV_TFVARS}" "build_worker_vm_vcpus" "null"
-  set_tfvar "${DEV_TFVARS}" "build_worker_vm_memory_mib" "null"
-  set_tfvar "${DEV_TFVARS}" "build_worker_vm_scratch_disk_mib" "null"
+  set_tfvar "${DEV_TFVARS}" "build_worker_vm_vcpus" "${build_worker_vm_vcpus}"
+  set_tfvar "${DEV_TFVARS}" "build_worker_vm_memory_mib" "${build_worker_vm_memory_mib}"
+  set_tfvar "${DEV_TFVARS}" "build_worker_vm_scratch_disk_mib" "${build_worker_vm_scratch_disk_mib}"
   set_tfvar "${DEV_TFVARS}" "build_worker_capacity_vcpus" "null"
   set_tfvar "${DEV_TFVARS}" "build_worker_capacity_memory_mib" "null"
   set_tfvar "${DEV_TFVARS}" "build_worker_execution_slots" "null"

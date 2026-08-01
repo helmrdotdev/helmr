@@ -282,6 +282,57 @@ func TestSupervisorRunsConcurrentWorkAndDrainsLocally(t *testing.T) {
 	}
 }
 
+func TestSupervisorDelaysRetryAfterNonfatalWorkFailure(t *testing.T) {
+	control := &testControl{}
+	started := make(chan time.Time, 2)
+	consumer := &queuedConsumer{work: []Work{
+		func(context.Context) error {
+			started <- time.Now()
+			return errors.New("temporary acquisition failure")
+		},
+		func(context.Context) error {
+			started <- time.Now()
+			return nil
+		},
+	}}
+	pollEvery := 50 * time.Millisecond
+	s, err := New(Config{
+		Control: control, PollEvery: pollEvery,
+		Consumers: []ConsumerSpec{{Name: "platform-acquisition", Concurrency: 1, Consumer: consumer}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	waitStarted := func() time.Time {
+		t.Helper()
+		select {
+		case at := <-started:
+			return at
+		case <-time.After(time.Second):
+			cancel()
+			t.Fatal("worker retry did not start")
+			return time.Time{}
+		}
+	}
+	first := waitStarted()
+	second := waitStarted()
+	cancel()
+	if delay := second.Sub(first); delay < pollEvery-10*time.Millisecond {
+		t.Fatalf("retry delay = %s, want at least %s", delay, pollEvery-10*time.Millisecond)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("run error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("supervisor did not stop")
+	}
+}
+
 func TestSupervisorDrainTimeoutBoundsHungWork(t *testing.T) {
 	control := &testControl{}
 	started := make(chan struct{})

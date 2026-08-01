@@ -351,6 +351,14 @@ CREATE INDEX worker_groups_active_placement_idx
     ON worker_groups (region_id, id)
     WHERE state = 'active';
 
+CREATE UNIQUE INDEX worker_groups_one_active_run_per_region_idx
+    ON worker_groups (region_id)
+    WHERE state = 'active' AND allows_run;
+
+CREATE UNIQUE INDEX worker_groups_one_active_build_per_region_idx
+    ON worker_groups (region_id)
+    WHERE state = 'active' AND allows_build;
+
 CREATE TABLE runtime_identities (
     id TEXT PRIMARY KEY CHECK (btrim(id) <> ''),
     runtime_arch TEXT NOT NULL CHECK (runtime_arch = 'x86_64'),
