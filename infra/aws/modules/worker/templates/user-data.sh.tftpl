@@ -390,7 +390,7 @@ for path in "$scratch_mount/worker" "$scratch_mount/jailer"; do
 done
 install -d -m 0755 "$scratch_mount/worker" "$scratch_mount/jailer"
 
-"$worker_binary" release install \
+"${worker_binary_path}" release install \
   --store '${platform_store_uri}' \
   --digest '${build_policy_digest}' \
   --output /etc/helmr/build-policy.json

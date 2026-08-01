@@ -267,7 +267,7 @@ run "build_worker_installs_exact_policy_before_service" {
   assert {
     condition = (
       strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_BUILD_POLICY_PATH=/etc/helmr/build-policy.json") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "\"$worker_binary\" release install") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "\"helmr-worker\" release install") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "--store 's3://helmr-test-runtime/objects'") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "--digest 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "--output /etc/helmr/build-policy.json")
