@@ -24,7 +24,6 @@ type BuildStorageProof struct {
 	Scratch           BuildStorageMount
 	WorkDir           string
 	JailerRoot        string
-	BuildKitRoot      string
 	SubstrateCacheDir string
 	ArtifactCacheDir  string
 }

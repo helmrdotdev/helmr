@@ -14,9 +14,9 @@ order: 800
 | `/readyz` fails | Database URL or `HELMR_REDIS_URL` is wrong, RDS or Redis/Valkey is unavailable, or migrations have not run successfully. |
 | GitHub login fails | Callback URL must be `<control_url>/auth/github/callback`; OAuth client secret must match the OAuth app. |
 | Run stays queued | Dispatcher is not running, Redis/Valkey is unavailable, no active workers exist, desired capacity is zero, worker enrollment failed, or worker cannot reach the control plane. |
-| Worker does not activate | Check KVM, Firecracker, jailer, CNI, BuildKit, guest artifacts, AWS identity enrollment policy, and outbound network access. |
+| Worker does not activate | Check KVM, Firecracker, jailer, CNI, certified guest artifacts, AWS identity enrollment policy, and outbound network access. |
 | External repository access fails | Check the task secret, token scope, payload values, and worker egress. |
-| Image build fails | Check BuildKit service status and worker egress to registries and AWS APIs. |
+| Image build fails | Check the certified guest-rootfs digest, image-build guest result, and guest egress to registries and AWS APIs. BuildKit runs inside the fresh image-build guest, not as a worker-host service. |
 | Parked wait resume fails | Check worker availability and checkpoint runtime compatibility. |
 
 For control or dispatcher task failures, inspect ECS service events and CloudWatch logs for the affected ECS service. For worker failures, use SSM to inspect systemd journals on the worker instance.

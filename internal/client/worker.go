@@ -174,6 +174,39 @@ func (c *Client) RenewDeploymentBuild(ctx context.Context, lease api.WorkerDeplo
 	return response, nil
 }
 
+func (c *Client) AdmitWorkspaceImage(
+	ctx context.Context,
+	request api.WorkerWorkspaceImageAdmissionRequest,
+) (api.WorkerWorkspaceImageAssignment, error) {
+	var response api.WorkerWorkspaceImageAssignment
+	if err := c.postWorkerJSON(ctx, "/api/worker/deployments/workspace-images/admit", request, &response); err != nil {
+		return api.WorkerWorkspaceImageAssignment{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) FetchWorkspaceImageCredentials(
+	ctx context.Context,
+	request api.WorkerWorkspaceImageCredentialRequest,
+) (api.WorkerWorkspaceImageCredentialResponse, error) {
+	var response api.WorkerWorkspaceImageCredentialResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/deployments/workspace-images/credentials", request, &response); err != nil {
+		return api.WorkerWorkspaceImageCredentialResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CompleteWorkspaceImage(
+	ctx context.Context,
+	request api.WorkerWorkspaceImageOperationResultRequest,
+) (api.WorkerWorkspaceImageOperationResultResponse, error) {
+	var response api.WorkerWorkspaceImageOperationResultResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/deployments/workspace-images/complete", request, &response); err != nil {
+		return api.WorkerWorkspaceImageOperationResultResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) RejectDeploymentBuild(ctx context.Context, request api.WorkerDeploymentBuildRejectRequest) error {
 	return c.postWorkerJSON(ctx, "/api/worker/deployments/reject", request, nil)
 }

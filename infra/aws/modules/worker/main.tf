@@ -5,15 +5,7 @@ locals {
   termination_hook_name   = "${local.name}-worker-terminate"
   boot_corpus_reserve_mib = 2048
   build_scratch_min_mib   = max(32768, var.vm_scratch_disk_mib) + local.boot_corpus_reserve_mib
-  buildkit_service_blocked_ipv6_cidrs = [
-    "::/128",
-    "::1/128",
-    "fc00::/7",
-    "fe80::/10",
-    "ff00::/8",
-  ]
-  network_resolver_ipv4 = coalesce(var.network_resolver_ipv4, cidrhost(data.aws_vpc.selected.cidr_block, 2))
-  guest_nameservers     = [local.network_resolver_ipv4]
+  network_resolver_ipv4   = coalesce(var.network_resolver_ipv4, cidrhost(data.aws_vpc.selected.cidr_block, 2))
 
   disk_environment = merge({
     HELMR_WORKER_DISK_RESERVE_MIB = tostring(var.worker_disk_reserve_mib)
@@ -45,7 +37,6 @@ locals {
     HELMR_CAS_URI                           = var.cas_uri
     HELMR_PLATFORM_STORE_URI                = var.platform_store_uri
     HELMR_WORKER_GROUP_ID                   = var.worker_group_id
-    HELMR_WORKER_BUILDKIT_ADDR              = "unix:///run/helmr/buildkit/buildkitd.sock"
     HELMR_WORKER_FIRECRACKER_PATH           = "/usr/local/bin/firecracker"
     HELMR_WORKER_FIRECRACKER_JAILER_PATH    = "/usr/local/bin/jailer"
     HELMR_WORKER_FIRECRACKER_JAILER_UID     = tostring(var.jailer_uid)
@@ -66,9 +57,13 @@ locals {
     HELMR_VM_INIT_TIMEOUT                   = "30s"
     HELMR_VM_HEALTH_TIMEOUT                 = "300s"
     }, contains(var.worker_roles, "build") ? {
-    HELMR_BUILD_POLICY_PATH        = "/etc/helmr/build-policy.json"
-    HELMR_WORKER_BUILD_CACHE_DIR   = "/var/lib/helmr/cache"
-    HELMR_WORKER_BUILD_SCRATCH_DIR = "/var/lib/helmr/scratch"
+    HELMR_BUILD_POLICY_PATH                 = "/etc/helmr/build-policy.json"
+    HELMR_WORKER_BUILD_CACHE_DIR            = "/var/lib/helmr/cache"
+    HELMR_WORKER_BUILD_SCRATCH_DIR          = "/var/lib/helmr/scratch"
+    HELMR_IMAGE_CACHE_REGISTRY_AUTHORITY    = var.image_cache_registry_authority
+    HELMR_IMAGE_CACHE_REPOSITORY_PREFIX     = var.image_cache_repository_prefix
+    HELMR_IMAGE_CACHE_ROLE_ARN              = var.image_cache_role_arn
+    HELMR_IMAGE_CACHE_REPOSITORY_ARN_PREFIX = var.image_cache_repository_arn_prefix
   } : {}, local.disk_environment, local.capacity_environment, local.cache_environment)
 
   reserved_worker_environment_keys = toset(concat(keys(local.worker_environment), [
@@ -79,71 +74,7 @@ locals {
   worker_environment_conflicts = setintersection(keys(var.worker_environment), local.reserved_worker_environment_keys)
   base_worker_environment      = merge(local.worker_environment, var.worker_environment)
 
-  buildkit_slirp_cidr_parts   = regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)\\.([0-9]+)/([0-9]+)$", var.buildkit_slirp_cidr)
-  buildkit_slirp_cidr_prefix  = tonumber(local.buildkit_slirp_cidr_parts[4])
-  buildkit_slirp_cidr_address = tonumber(local.buildkit_slirp_cidr_parts[0]) * 16777216 + tonumber(local.buildkit_slirp_cidr_parts[1]) * 65536 + tonumber(local.buildkit_slirp_cidr_parts[2]) * 256 + tonumber(local.buildkit_slirp_cidr_parts[3])
-  buildkit_slirp_cidr_size    = pow(2, 32 - local.buildkit_slirp_cidr_prefix)
-  buildkit_slirp_cidr_start   = local.buildkit_slirp_cidr_address - local.buildkit_slirp_cidr_address % local.buildkit_slirp_cidr_size
-  buildkit_slirp_cidr_end     = local.buildkit_slirp_cidr_start + local.buildkit_slirp_cidr_size - 1
-
-  buildkit_service_blocked_ipv4_cidr_parts = [
-    for cidr in var.network_blocked_ipv4_cidrs :
-    regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)\\.([0-9]+)/([0-9]+)$", cidr)
-  ]
-  buildkit_service_blocked_ipv4_cidr_prefixes = [
-    for parts in local.buildkit_service_blocked_ipv4_cidr_parts :
-    tonumber(parts[4])
-  ]
-  buildkit_service_blocked_ipv4_cidr_addresses = [
-    for parts in local.buildkit_service_blocked_ipv4_cidr_parts :
-    tonumber(parts[0]) * 16777216 + tonumber(parts[1]) * 65536 + tonumber(parts[2]) * 256 + tonumber(parts[3])
-  ]
-  buildkit_service_blocked_ipv4_cidr_sizes = [
-    for prefix in local.buildkit_service_blocked_ipv4_cidr_prefixes :
-    pow(2, 32 - prefix)
-  ]
-  buildkit_service_blocked_ipv4_ranges = [
-    for i, address in local.buildkit_service_blocked_ipv4_cidr_addresses : {
-      start = address - address % local.buildkit_service_blocked_ipv4_cidr_sizes[i]
-      end   = address - address % local.buildkit_service_blocked_ipv4_cidr_sizes[i] + local.buildkit_service_blocked_ipv4_cidr_sizes[i] - 1
-    }
-  ]
-}
-
-resource "aws_security_group" "worker" {
-  name        = "${local.name}-worker"
-  description = "Helmr worker instances"
-  vpc_id      = var.vpc_id
-  tags        = var.tags
-}
-
-resource "aws_vpc_security_group_egress_rule" "worker" {
-  security_group_id = aws_security_group.worker.id
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1"
-}
-
-resource "aws_iam_role" "worker" {
-  name = "${local.name}-worker"
-  tags = var.tags
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "ec2.amazonaws.com"
-      }
-      Action = "sts:AssumeRole"
-    }]
-  })
-}
-
-resource "aws_iam_role_policy" "worker" {
-  name = "${local.name}-worker"
-  role = aws_iam_role.worker.id
-
-  policy = jsonencode({
+  worker_permission_policy = {
     Version = "2012-10-17"
     Statement = concat([
       {
@@ -217,6 +148,12 @@ resource "aws_iam_role_policy" "worker" {
       ], [
       for statement in [
         {
+          Sid      = "AssumeExecutionImageCacheRole"
+          Effect   = "Allow"
+          Action   = ["sts:AssumeRole"]
+          Resource = var.image_cache_role_arn
+        },
+        {
           Sid    = "CreatePlatformObjects"
           Effect = "Allow"
           Action = [
@@ -242,7 +179,85 @@ resource "aws_iam_role_policy" "worker" {
         },
       ] : statement if contains(var.worker_roles, "build")
     ])
+  }
+  worker_boundary_policy = {
+    Version = local.worker_permission_policy.Version
+    Statement = concat(local.worker_permission_policy.Statement, var.enable_ssm ? [{
+      Sid    = "SSMManagedInstanceCore"
+      Effect = "Allow"
+      Action = [
+        "ec2messages:AcknowledgeMessage",
+        "ec2messages:DeleteMessage",
+        "ec2messages:FailMessage",
+        "ec2messages:GetEndpoint",
+        "ec2messages:GetMessages",
+        "ec2messages:SendReply",
+        "ssm:DescribeAssociation",
+        "ssm:DescribeDocument",
+        "ssm:GetDeployablePatchSnapshotForInstance",
+        "ssm:GetDocument",
+        "ssm:GetManifest",
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:ListAssociations",
+        "ssm:ListInstanceAssociations",
+        "ssm:PutComplianceItems",
+        "ssm:PutConfigurePackageResult",
+        "ssm:PutInventory",
+        "ssm:UpdateAssociationStatus",
+        "ssm:UpdateInstanceAssociationStatus",
+        "ssm:UpdateInstanceInformation",
+        "ssmmessages:CreateControlChannel",
+        "ssmmessages:CreateDataChannel",
+        "ssmmessages:OpenControlChannel",
+        "ssmmessages:OpenDataChannel"
+      ]
+      Resource = "*"
+    }] : [])
+  }
+}
+
+resource "aws_security_group" "worker" {
+  name        = "${local.name}-worker"
+  description = "Helmr worker instances"
+  vpc_id      = var.vpc_id
+  tags        = var.tags
+}
+
+resource "aws_vpc_security_group_egress_rule" "worker" {
+  security_group_id = aws_security_group.worker.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+}
+
+resource "aws_iam_policy" "worker_boundary" {
+  name   = "${local.name}-worker-boundary"
+  policy = jsonencode(local.worker_boundary_policy)
+  tags   = var.tags
+}
+
+resource "aws_iam_role" "worker" {
+  name                 = "${local.name}-worker"
+  permissions_boundary = aws_iam_policy.worker_boundary.arn
+  tags                 = var.tags
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
   })
+}
+
+resource "aws_iam_role_policy" "worker" {
+  name = "${local.name}-worker"
+  role = aws_iam_role.worker.id
+
+  policy = jsonencode(local.worker_permission_policy)
 }
 
 resource "aws_iam_role_policy_attachment" "ssm" {
@@ -276,10 +291,6 @@ resource "aws_launch_template" "worker" {
     termination_drain_timeout_seconds    = var.termination_drain_timeout_seconds
     lifecycle_heartbeat_interval_seconds = var.lifecycle_heartbeat_interval_seconds
     worker_work_dir                      = local.base_worker_environment.HELMR_WORKER_WORK_DIR
-    buildkit_slirp_cidr                  = var.buildkit_slirp_cidr
-    buildkit_service_blocked_ipv4_cidrs  = var.network_blocked_ipv4_cidrs
-    buildkit_service_blocked_ipv6_cidrs  = local.buildkit_service_blocked_ipv6_cidrs
-    guest_nameservers                    = local.guest_nameservers
     aws_region                           = data.aws_region.current.region
     platform_store_uri                   = var.platform_store_uri
     build_policy_digest                  = var.build_policy_digest == null ? "" : var.build_policy_digest
@@ -329,7 +340,6 @@ resource "aws_launch_template" "worker" {
 
 resource "terraform_data" "network_preconditions" {
   input = {
-    buildkit_slirp_cidr = var.buildkit_slirp_cidr
     network_policy = jsonencode({
       blocked_ipv4_cidrs = var.network_blocked_ipv4_cidrs
       link_pool          = var.network_link_pool
@@ -388,20 +398,21 @@ resource "terraform_data" "network_preconditions" {
 
     precondition {
       condition = !contains(var.worker_roles, "build") || (
+        var.vm_vcpus >= 3 &&
+        var.vm_memory_mib >= 4096 &&
+        var.vm_scratch_disk_mib >= 32768
+      )
+      error_message = "build workers require a VM shape that fits the fixed 3000 milli-CPU, 4096 MiB, and 32768 MiB image-build guest."
+    }
+
+    precondition {
+      condition = !contains(var.worker_roles, "build") || (
         var.worker_capacity_vcpus != null &&
         var.worker_capacity_memory_mib != null &&
         var.worker_capacity_vcpus >= (contains(var.worker_roles, "run") ? max(3, var.vm_vcpus + 1) : 3) &&
         var.worker_capacity_memory_mib >= (contains(var.worker_roles, "run") ? max(4096, var.vm_memory_mib + 2048) : 4096)
       )
-      error_message = "build workers require a host pool that still fits the worker VM shape and fixed build guest after subtracting the 1-vCPU, 2048-MiB BuildKit reserve."
-    }
-
-    precondition {
-      condition = alltrue([
-        for blocked in local.buildkit_service_blocked_ipv4_ranges :
-        local.buildkit_slirp_cidr_start > blocked.end || blocked.start > local.buildkit_slirp_cidr_end
-      ])
-      error_message = "buildkit_slirp_cidr must not overlap the internal BuildKit service deny set because BuildKit rootless DNS and NAT must remain reachable inside the service namespace."
+      error_message = "build workers require a host pool that fits the fixed image-build guest and any configured run VM shape."
     }
   }
 }

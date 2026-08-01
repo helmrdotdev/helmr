@@ -73,10 +73,11 @@ type BuildGuest struct {
 }
 
 type BuildExecution struct {
-	Tree         *BuildTree
-	Config       BuildConfig
-	Verification VerificationResult
-	Logs         BuildLogs
+	Tree           *BuildTree
+	TreeDescriptor BuildTreeDescriptor
+	Config         BuildConfig
+	Verification   VerificationResult
+	Logs           BuildLogs
 }
 
 func (guest BuildGuest) Execute(
@@ -203,11 +204,17 @@ func (guest BuildGuest) Execute(
 			Logs:    result.Logs,
 		}
 	}
+	treeDescriptor, err := tree.Descriptor()
+	if err != nil {
+		_ = tree.Close()
+		return nil, err
+	}
 	return &BuildExecution{
-		Tree:         tree,
-		Config:       cloneBuildConfig(*result.Config),
-		Verification: *result.Verification,
-		Logs:         *result.Logs,
+		Tree:           tree,
+		TreeDescriptor: treeDescriptor,
+		Config:         cloneBuildConfig(*result.Config),
+		Verification:   *result.Verification,
+		Logs:           *result.Logs,
 	}, nil
 }
 

@@ -24,23 +24,24 @@ const (
 type operation string
 
 const (
-	operationDeploymentCreate  operation = "deployment.create"
-	operationSecretCreate      operation = "secret.create"
-	operationSecretRotate      operation = "secret.rotate"
-	operationSecretRevoke      operation = "secret.revoke"
-	operationRunMetadata       operation = "run.metadata"
-	operationActorStart        operation = "actor.start"
-	operationActorInputSend    operation = "actor.input.send"
-	operationActorOutputAppend operation = "actor.output.append"
-	operationActorClose        operation = "actor.close"
-	operationTaskStart         operation = "task.start"
-	operationTaskChildInvoke   operation = "task.child.invoke"
-	operationTokenCreate       operation = "token.create"
-	operationTokenComplete     operation = "token.complete"
-	operationTokenCancel       operation = "token.cancel"
-	operationWorkspaceCreate   operation = "workspace.create"
-	operationWorkspaceExec     operation = "workspace.exec"
-	operationWorkspaceDelete   operation = "workspace.delete"
+	operationDeploymentCreate    operation = "deployment.create"
+	operationSecretCreate        operation = "secret.create"
+	operationSecretRotate        operation = "secret.rotate"
+	operationSecretRevoke        operation = "secret.revoke"
+	operationRunMetadata         operation = "run.metadata"
+	operationActorStart          operation = "actor.start"
+	operationActorInputSend      operation = "actor.input.send"
+	operationActorOutputAppend   operation = "actor.output.append"
+	operationActorClose          operation = "actor.close"
+	operationTaskStart           operation = "task.start"
+	operationTaskChildInvoke     operation = "task.child.invoke"
+	operationTokenCreate         operation = "token.create"
+	operationTokenComplete       operation = "token.complete"
+	operationTokenCancel         operation = "token.cancel"
+	operationWorkspaceCreate     operation = "workspace.create"
+	operationWorkspaceExec       operation = "workspace.exec"
+	operationWorkspaceDelete     operation = "workspace.delete"
+	operationWorkspaceImageBuild operation = "workspace.image.build"
 )
 
 type Transaction struct {
@@ -96,6 +97,7 @@ type DeploymentCreateFingerprint struct {
 	ManagerVersion       string `json:"managerVersion"`
 	ManagerIntegrity     string `json:"managerIntegrity,omitempty"`
 	BuildContractVersion string `json:"buildContractVersion"`
+	ImageCacheMode       string `json:"imageCacheMode"`
 }
 
 type TokenCreateFingerprint struct {
@@ -144,6 +146,41 @@ type WorkspaceExecFingerprint struct {
 	TimeoutMS int64
 }
 
+type WorkspaceImageBuildFingerprint struct {
+	Architecture           string                            `json:"architecture"`
+	PlanDigest             string                            `json:"planDigest"`
+	SubmittedSourceDigest  string                            `json:"submittedSourceDigest"`
+	BuildTreeDigest        string                            `json:"buildTreeDigest"`
+	BuildTreeSizeBytes     int64                             `json:"buildTreeSizeBytes"`
+	AdmittedPathSetDigest  string                            `json:"admittedPathSetDigest"`
+	SourceArchiveDigest    string                            `json:"sourceArchiveDigest"`
+	SourceArchiveSizeBytes int64                             `json:"sourceArchiveSizeBytes"`
+	SourceArchiveEntries   int                               `json:"sourceArchiveEntries"`
+	ImageCacheMode         string                            `json:"imageCacheMode"`
+	CacheScope             string                            `json:"cacheScope"`
+	ExecutionABI           string                            `json:"executionAbi"`
+	LLBABI                 string                            `json:"llbAbi"`
+	CacheABI               string                            `json:"cacheAbi"`
+	Quotas                 WorkspaceImageBuildQuotas         `json:"quotas"`
+	Output                 WorkspaceImageBuildOutputContract `json:"output"`
+}
+
+type WorkspaceImageBuildQuotas struct {
+	CPUMillis               int64 `json:"cpuMillis"`
+	MemoryBytes             int64 `json:"memoryBytes"`
+	ScratchBytes            int64 `json:"scratchBytes"`
+	PIDs                    int64 `json:"pids"`
+	MaxSourceArchiveBytes   int64 `json:"maxSourceArchiveBytes"`
+	MaxSourceArchiveEntries int   `json:"maxSourceArchiveEntries"`
+	MaxOCIArchiveBytes      int64 `json:"maxOciArchiveBytes"`
+}
+
+type WorkspaceImageBuildOutputContract struct {
+	Architecture string `json:"architecture"`
+	MediaType    string `json:"mediaType"`
+	MaxSizeBytes int64  `json:"maxSizeBytes"`
+}
+
 type ConflictError struct {
 	ClaimID uuid.UUID
 }
@@ -164,6 +201,9 @@ func NewDeploymentCreateRequest(
 	if projectID == uuid.Nil {
 		return nil, errors.New("project ID is required")
 	}
+	if fingerprint.ImageCacheMode != "prefer" && fingerprint.ImageCacheMode != "bypass" {
+		return nil, errors.New("Deployment image cache mode is invalid")
+	}
 	encoded, err := json.Marshal(fingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("encode Deployment creation fingerprint: %w", err)
@@ -181,6 +221,133 @@ func NewDeploymentCreateRequest(
 			return operationFingerprint(operationDeploymentCreate, canonical), nil
 		},
 	}}, nil
+}
+
+func NewWorkspaceImageBuildRequest(
+	environmentID uuid.UUID,
+	buildLeaseID uuid.UUID,
+	buildLeaseGeneration int64,
+	declarationSlot string,
+	fingerprint WorkspaceImageBuildFingerprint,
+) (Request, error) {
+	authority, err := workspaceImageBuildAuthority(
+		environmentID,
+		buildLeaseID,
+		buildLeaseGeneration,
+		declarationSlot,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateWorkspaceImageBuildFingerprint(fingerprint); err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(fingerprint)
+	if err != nil {
+		return nil, fmt.Errorf("encode Workspace image build fingerprint: %w", err)
+	}
+	canonical, err := jsoncanon.Transform(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize Workspace image build fingerprint: %w", err)
+	}
+	authority.fingerprint = func() ([sha256.Size]byte, error) {
+		return operationFingerprint(operationWorkspaceImageBuild, canonical), nil
+	}
+	return sealedRequest{value: authority}, nil
+}
+
+// WorkspaceImageBuildSlotHash returns the exact authority hash used by the
+// generic claim. Completion paths use it to prove that a terminal receipt
+// belongs to the current Build Lease generation and declaration slot without
+// decoding or duplicating the claim's opaque framing.
+func WorkspaceImageBuildSlotHash(
+	environmentID uuid.UUID,
+	buildLeaseID uuid.UUID,
+	buildLeaseGeneration int64,
+	declarationSlot string,
+) ([sha256.Size]byte, error) {
+	authority, err := workspaceImageBuildAuthority(
+		environmentID,
+		buildLeaseID,
+		buildLeaseGeneration,
+		declarationSlot,
+	)
+	if err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	return idempotencySlotHash(authority), nil
+}
+
+func workspaceImageBuildAuthority(
+	environmentID uuid.UUID,
+	buildLeaseID uuid.UUID,
+	buildLeaseGeneration int64,
+	declarationSlot string,
+) (request, error) {
+	if environmentID == uuid.Nil {
+		return request{}, errors.New("idempotency environment is required")
+	}
+	if buildLeaseID == uuid.Nil {
+		return request{}, errors.New("Build Lease ID is required")
+	}
+	if buildLeaseGeneration <= 0 {
+		return request{}, errors.New("Build Lease generation must be positive")
+	}
+	if declarationSlot == "" {
+		return request{}, errors.New("Workspace declaration slot is required")
+	}
+	scope := make([]byte, 0, len(buildLeaseID)+8)
+	scope = append(scope, buildLeaseID[:]...)
+	scope = binary.BigEndian.AppendUint64(scope, uint64(buildLeaseGeneration))
+	return request{
+		environmentID: environmentID,
+		operation:     operationWorkspaceImageBuild,
+		scope:         scope,
+		key:           declarationSlot,
+	}, nil
+}
+
+func validateWorkspaceImageBuildFingerprint(
+	fingerprint WorkspaceImageBuildFingerprint,
+) error {
+	for label, value := range map[string]string{
+		"architecture":             fingerprint.Architecture,
+		"plan digest":              fingerprint.PlanDigest,
+		"submitted source digest":  fingerprint.SubmittedSourceDigest,
+		"Build tree digest":        fingerprint.BuildTreeDigest,
+		"admitted path-set digest": fingerprint.AdmittedPathSetDigest,
+		"source archive digest":    fingerprint.SourceArchiveDigest,
+		"cache scope":              fingerprint.CacheScope,
+		"execution ABI":            fingerprint.ExecutionABI,
+		"LLB ABI":                  fingerprint.LLBABI,
+		"cache ABI":                fingerprint.CacheABI,
+		"output architecture":      fingerprint.Output.Architecture,
+		"output media type":        fingerprint.Output.MediaType,
+	} {
+		if value == "" {
+			return fmt.Errorf("Workspace image build %s is required", label)
+		}
+	}
+	if fingerprint.Architecture != fingerprint.Output.Architecture {
+		return errors.New("Workspace image build output architecture does not match the request")
+	}
+	if fingerprint.ImageCacheMode != "prefer" && fingerprint.ImageCacheMode != "bypass" {
+		return errors.New("Workspace image build cache mode is invalid")
+	}
+	if fingerprint.BuildTreeSizeBytes < 1 ||
+		fingerprint.SourceArchiveSizeBytes < 1 ||
+		fingerprint.SourceArchiveEntries < 0 ||
+		fingerprint.Quotas.CPUMillis < 1 ||
+		fingerprint.Quotas.MemoryBytes < 1 ||
+		fingerprint.Quotas.ScratchBytes < 1 ||
+		fingerprint.Quotas.PIDs < 1 ||
+		fingerprint.Quotas.MaxSourceArchiveBytes < 1 ||
+		fingerprint.Quotas.MaxSourceArchiveEntries < 1 ||
+		fingerprint.Quotas.MaxOCIArchiveBytes < 1 ||
+		fingerprint.Output.MaxSizeBytes < 1 {
+		return errors.New("Workspace image build fingerprint contains an invalid bound")
+	}
+	return nil
 }
 
 func NewSecretCreateRequest(environmentID uuid.UUID, name string, key string) (Request, error) {
@@ -887,7 +1054,7 @@ func supportedOperation(value operation) bool {
 	case operationDeploymentCreate, operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationRunMetadata,
 		operationActorStart, operationActorInputSend, operationActorOutputAppend, operationActorClose,
 		operationTaskStart, operationTaskChildInvoke, operationTokenCreate, operationTokenComplete, operationTokenCancel,
-		operationWorkspaceCreate, operationWorkspaceExec, operationWorkspaceDelete:
+		operationWorkspaceCreate, operationWorkspaceExec, operationWorkspaceDelete, operationWorkspaceImageBuild:
 		return true
 	default:
 		return false

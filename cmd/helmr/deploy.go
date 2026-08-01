@@ -31,6 +31,7 @@ func deployCommand() *cobra.Command {
 	var timeout time.Duration
 	var jsonOutput bool
 	var idempotencyKey string
+	var noImageCache bool
 	cmd := &cobra.Command{
 		Use:   "deploy [path]",
 		Short: "Deploy tasks from a helmr.config.ts project.",
@@ -102,6 +103,10 @@ func deployCommand() *cobra.Command {
 				ContentHash:           tarArchive.Digest,
 				APIVersion:            api.CurrentAPIVersion,
 				WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
+				ImageCacheMode:        "prefer",
+			}
+			if noImageCache {
+				deployRequest.ImageCacheMode = "bypass"
 			}
 			if deployRequest.IdempotencyKey == "" {
 				deployRequest.IdempotencyKey = uuid.Must(uuid.NewV7()).String()
@@ -153,6 +158,7 @@ func deployCommand() *cobra.Command {
 	cmd.Flags().DurationVar(&timeout, "timeout", deployDefaultWaitTimeout, "Maximum time to wait for deployment completion.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit JSON lines for deployment progress.")
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for retrying deployment creation.")
+	cmd.Flags().BoolVar(&noImageCache, "no-image-cache", false, "Build Workspace images without importing or exporting the Platform layer cache.")
 	return cmd
 }
 

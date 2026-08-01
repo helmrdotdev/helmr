@@ -8,7 +8,7 @@ warnings=0
 
 usage() {
 	cat <<'EOF'
-Usage: scripts/doctor.sh [auto|common|buildkit|linux|all]
+Usage: scripts/doctor.sh [auto|common|linux|all]
 
 Checks whether the current host has the tools and OS facilities needed by
 Helmr development and Linux Firecracker smoke tests.
@@ -84,43 +84,6 @@ check_common() {
 	version_line jq
 	version_line nix
 	version_line direnv
-}
-
-check_buildkit() {
-	printf '== buildkit ==\n'
-	if [ "$(uname -s)" != "Linux" ]; then
-		fail "BuildKit worker smoke requires a Linux host"
-		return
-	fi
-
-	need_command buildkitd "BuildKit daemon binary is available"
-	need_command buildctl "BuildKit client is available"
-	need_command runc "OCI runtime for BuildKit is available"
-	want_command rootlesskit "RootlessKit is available for isolated BuildKit"
-	want_command slirp4netns "slirp4netns is available for rootless BuildKit networking"
-	want_command fuse-overlayfs "fuse-overlayfs is available for rootless BuildKit snapshots"
-
-	buildkit_addr=${HELMR_WORKER_BUILDKIT_ADDR:-unix:///run/helmr/buildkit/buildkitd.sock}
-	case "$buildkit_addr" in
-		unix://*)
-			buildkit_sock=${buildkit_addr#unix://}
-			if [ -S "$buildkit_sock" ]; then
-				ok "BuildKit socket exists: $buildkit_sock"
-			else
-				fail "BuildKit socket is missing: $buildkit_sock"
-			fi
-			;;
-		*)
-			warn "BuildKit address is not a unix socket: $buildkit_addr"
-			;;
-	esac
-	if command -v buildctl >/dev/null 2>&1; then
-		if buildctl --addr "$buildkit_addr" debug workers >/dev/null 2>&1; then
-			ok "BuildKit daemon is reachable"
-		else
-			fail "BuildKit daemon is not reachable at $buildkit_addr"
-		fi
-	fi
 }
 
 check_linux() {
@@ -211,8 +174,6 @@ check_linux() {
 		warn "XDG_RUNTIME_DIR is unset; smoke-linux will default it under .helmr-smoke"
 	fi
 
-	check_buildkit
-
 	ip_forward=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || printf 'unknown')
 	if [ "$ip_forward" = "1" ]; then
 		ok "IPv4 forwarding is enabled"
@@ -236,9 +197,6 @@ case "$mode" in
 		;;
 	common)
 		check_common
-		;;
-	buildkit)
-		check_buildkit
 		;;
 	linux)
 		check_common

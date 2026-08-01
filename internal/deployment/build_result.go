@@ -9,6 +9,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
@@ -73,8 +75,21 @@ type BuildLogs struct {
 }
 
 type WorkspaceImage struct {
-	DeclaredID string                 `json:"declaredId"`
-	Artifact   WorkspaceImageArtifact `json:"artifact"`
+	DeclaredID string                          `json:"declaredId"`
+	Operation  WorkspaceImageOperationEvidence `json:"operation"`
+	Artifact   WorkspaceImageArtifact          `json:"artifact"`
+}
+
+type WorkspaceImageOperationEvidence struct {
+	BuildLeaseID         string               `json:"buildLeaseId"`
+	BuildLeaseGeneration int64                `json:"buildLeaseGeneration"`
+	DeclarationSlot      string               `json:"declarationSlot"`
+	OperationID          string               `json:"operationId"`
+	RequestFingerprint   string               `json:"requestFingerprint"`
+	AttemptID            string               `json:"attemptId"`
+	PlanDigest           string               `json:"planDigest"`
+	ResolutionSetDigest  string               `json:"resolutionSetDigest"`
+	RequestedCacheMode   imagebuild.CacheMode `json:"requestedCacheMode"`
 }
 
 type WorkspaceImageArtifact struct {
@@ -369,6 +384,9 @@ func validateBuildSucceeded(succeeded BuildSucceeded) error {
 				index,
 			)
 		}
+		if err := validateWorkspaceImageOperationEvidence(image.Operation, workspace, image.Artifact); err != nil {
+			return fmt.Errorf("build result workspaceImages[%d] operation: %w", index, err)
+		}
 	}
 	if succeeded.Program != nil {
 		if err := validateProgramIndexBuild(
@@ -379,6 +397,48 @@ func validateBuildSucceeded(succeeded BuildSucceeded) error {
 		); err != nil {
 			return fmt.Errorf("build result Program index: %w", err)
 		}
+	}
+	return nil
+}
+
+func validateWorkspaceImageOperationEvidence(
+	evidence WorkspaceImageOperationEvidence,
+	workspace buildPlanWorkspace,
+	artifact WorkspaceImageArtifact,
+) error {
+	if ids.Validate(evidence.BuildLeaseID) != nil ||
+		ids.Validate(evidence.OperationID) != nil ||
+		ids.Validate(evidence.AttemptID) != nil {
+		return errors.New("IDs must be canonical UUIDv7 values")
+	}
+	if evidence.BuildLeaseGeneration < 1 {
+		return errors.New("Build Lease generation must be positive")
+	}
+	if evidence.DeclarationSlot != workspace.DeclaredID {
+		return errors.New("declaration slot does not match the Workspace")
+	}
+	for label, digest := range map[string]string{
+		"request fingerprint": evidence.RequestFingerprint,
+		"plan digest":         evidence.PlanDigest,
+		"resolution set":      evidence.ResolutionSetDigest,
+	} {
+		if !sha256DigestPattern.MatchString(digest) {
+			return fmt.Errorf("%s is not a lowercase SHA-256 digest", label)
+		}
+	}
+	if evidence.RequestedCacheMode != imagebuild.CachePrefer &&
+		evidence.RequestedCacheMode != imagebuild.CacheBypass {
+		return errors.New("requested cache mode is invalid")
+	}
+	planDigest, err := imagebuild.Digest(
+		workspace.ImageBuild,
+		string(artifact.Architecture),
+	)
+	if err != nil {
+		return fmt.Errorf("derive image plan digest: %w", err)
+	}
+	if evidence.PlanDigest != planDigest {
+		return errors.New("plan digest does not match the Workspace image plan")
 	}
 	return nil
 }
@@ -430,6 +490,7 @@ func validateBuildLogs(logs BuildLogs) error {
 
 type buildPlanWorkspace struct {
 	DeclaredID string
+	ImageBuild imagebuild.Build
 }
 
 func buildPlanWorkspaces(plan BuildPlan) []buildPlanWorkspace {
@@ -440,6 +501,7 @@ func buildPlanWorkspaces(plan BuildPlan) []buildPlanWorkspace {
 		}
 		workspaces = append(workspaces, buildPlanWorkspace{
 			DeclaredID: definition.DeclaredID,
+			ImageBuild: definition.Workspace.ImageBuild,
 		})
 	}
 	return workspaces

@@ -43,7 +43,7 @@ run "image_contains_worker_tools_without_platform_artifacts" {
     condition = (
       strcontains(aws_imagebuilder_component.worker.data, "/usr/local/bin/helmr-worker") &&
       strcontains(aws_imagebuilder_component.worker.data, "/usr/local/bin/firecracker") &&
-      strcontains(aws_imagebuilder_component.worker.data, "/usr/local/bin/buildkitd") &&
+      !strcontains(aws_imagebuilder_component.worker.data, "helmr-buildkit.service") &&
       strcontains(aws_imagebuilder_component.worker.data, "gpgv") &&
       strcontains(aws_imagebuilder_component.worker.data, "mksquashfs")
     )

@@ -374,6 +374,7 @@ func createQueuedDeployment(
 			Valid:  selection.Manager.Integrity != "",
 		},
 		BuildContractVersion:       deployment.ProgramBuildContractVersion,
+		ImageCacheMode:             metadata.ImageCacheMode,
 		ProjectID:                  projectID,
 		EnvironmentID:              environmentID,
 		Version:                    deploymentVersion(deploymentID),

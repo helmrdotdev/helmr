@@ -65,6 +65,21 @@ type GuestRequest struct {
 	CacheBinding           *CacheBinding     `json:"cacheBinding"`
 }
 
+// SourceAdmission is the exact non-secret Worker measurement submitted to
+// Control before registry Secret resolution and physical-attempt allocation.
+type SourceAdmission struct {
+	Architecture           string
+	Plan                   Build
+	PlanDigest             string
+	SubmittedSourceDigest  string
+	BuildTreeDigest        string
+	AdmittedPaths          []SourcePath
+	AdmittedPathSetDigest  string
+	SourceArchiveDigest    string
+	SourceArchiveSizeBytes int64
+	SourceArchiveEntries   int
+}
+
 type RegistryBinding struct {
 	Authority            string `json:"authority"`
 	Username             string `json:"username"`
@@ -116,8 +131,9 @@ const (
 type GuestFailureReason string
 
 const (
-	GuestFailureImage       GuestFailureReason = "image_failed"
-	GuestFailureOutputQuota GuestFailureReason = "output_quota_exceeded"
+	GuestFailureImage        GuestFailureReason = "image_failed"
+	GuestFailureOutputQuota  GuestFailureReason = "output_quota_exceeded"
+	GuestFailureNetworkQuota GuestFailureReason = "network_quota_exceeded"
 )
 
 type GuestResult struct {
@@ -164,12 +180,12 @@ func parseCredentialEnvelope(raw []byte, envelope *CredentialEnvelope) error {
 }
 
 func CanonicalGuestResult(result GuestResult) ([]byte, error) {
-	return canonicalDocument(result, ValidateGuestResult, RequestDocumentMaxBytes)
+	return canonicalDocument(result, validateGuestWireResult, RequestDocumentMaxBytes)
 }
 
 func ParseGuestResult(raw []byte) (GuestResult, error) {
 	var result GuestResult
-	if err := parseDocument(raw, &result, ValidateGuestResult, RequestDocumentMaxBytes); err != nil {
+	if err := parseDocument(raw, &result, validateGuestWireResult, RequestDocumentMaxBytes); err != nil {
 		return GuestResult{}, err
 	}
 	return result, nil
@@ -197,53 +213,15 @@ func ValidateGuestRequest(request GuestRequest) error {
 	if request.BuildLeaseGeneration < 1 || request.WorkerEpoch < 1 {
 		return errors.New("image-build Lease generation or Worker epoch is invalid")
 	}
-	if err := Validate(request.Plan, request.Architecture); err != nil {
+	if err := ValidateSourceAdmission(SourceAdmission{
+		Architecture: request.Architecture, Plan: request.Plan, PlanDigest: request.PlanDigest,
+		SubmittedSourceDigest: request.SubmittedSourceDigest, BuildTreeDigest: request.BuildTreeDigest,
+		AdmittedPaths: request.AdmittedPaths, AdmittedPathSetDigest: request.AdmittedPathSetDigest,
+		SourceArchiveDigest:    request.SourceArchiveDigest,
+		SourceArchiveSizeBytes: request.SourceArchiveSizeBytes,
+		SourceArchiveEntries:   request.SourceArchiveEntries,
+	}); err != nil {
 		return err
-	}
-	planDigest, err := Digest(request.Plan, request.Architecture)
-	if err != nil {
-		return err
-	}
-	if planDigest != request.PlanDigest {
-		return errors.New("image-build plan digest does not match the canonical plan")
-	}
-	for _, descriptor := range []struct {
-		label  string
-		digest string
-	}{
-		{label: "submitted source", digest: request.SubmittedSourceDigest},
-		{label: "Build tree", digest: request.BuildTreeDigest},
-		{label: "admitted path set", digest: request.AdmittedPathSetDigest},
-		{label: "source archive", digest: request.SourceArchiveDigest},
-		{label: "resolution set", digest: request.ResolutionSetDigest},
-	} {
-		if !validDigest(descriptor.digest) {
-			return fmt.Errorf("image-build %s digest is invalid", descriptor.label)
-		}
-	}
-	if request.AdmittedPaths == nil || !slices.IsSortedFunc(request.AdmittedPaths, func(left, right SourcePath) int {
-		return strings.Compare(left.Path, right.Path)
-	}) {
-		return errors.New("image-build admitted paths must be a sorted array")
-	}
-	for index, sourcePath := range request.AdmittedPaths {
-		if !validSourcePath(sourcePath) {
-			return fmt.Errorf("image-build admitted path %d is invalid", index)
-		}
-		if index > 0 && request.AdmittedPaths[index-1].Path == sourcePath.Path {
-			return errors.New("image-build admitted paths must be unique")
-		}
-	}
-	if err := validateAdmittedPaths(request.Plan, request.AdmittedPaths); err != nil {
-		return err
-	}
-	if PathSetDigest(request.AdmittedPaths) != request.AdmittedPathSetDigest {
-		return errors.New("image-build admitted path-set digest does not match its paths")
-	}
-	if request.SourceArchiveSizeBytes < 1 || request.SourceArchiveSizeBytes > MaxSourceArchiveBytes ||
-		request.SourceArchiveEntries < 0 || request.SourceArchiveEntries > MaxSourceArchiveEntries ||
-		request.SourceArchiveEntries != len(request.AdmittedPaths) {
-		return errors.New("image-build source archive descriptor is invalid")
 	}
 	if request.RequestedCacheMode != CachePrefer && request.RequestedCacheMode != CacheBypass {
 		return errors.New("image-build requested cache mode is invalid")
@@ -259,6 +237,57 @@ func ValidateGuestRequest(request GuestRequest) error {
 	}
 	if err := validateCacheBinding(request.RequestedCacheMode, request.CacheBinding, request.RegistryBindings); err != nil {
 		return err
+	}
+	return nil
+}
+
+func ValidateSourceAdmission(admission SourceAdmission) error {
+	if err := Validate(admission.Plan, admission.Architecture); err != nil {
+		return err
+	}
+	planDigest, err := Digest(admission.Plan, admission.Architecture)
+	if err != nil {
+		return err
+	}
+	if planDigest != admission.PlanDigest {
+		return errors.New("image-build plan digest does not match the canonical plan")
+	}
+	for _, descriptor := range []struct {
+		label  string
+		digest string
+	}{
+		{label: "submitted source", digest: admission.SubmittedSourceDigest},
+		{label: "Build tree", digest: admission.BuildTreeDigest},
+		{label: "admitted path set", digest: admission.AdmittedPathSetDigest},
+		{label: "source archive", digest: admission.SourceArchiveDigest},
+	} {
+		if !validDigest(descriptor.digest) {
+			return fmt.Errorf("image-build %s digest is invalid", descriptor.label)
+		}
+	}
+	if admission.AdmittedPaths == nil || !slices.IsSortedFunc(admission.AdmittedPaths, func(left, right SourcePath) int {
+		return strings.Compare(left.Path, right.Path)
+	}) {
+		return errors.New("image-build admitted paths must be a sorted array")
+	}
+	for index, sourcePath := range admission.AdmittedPaths {
+		if !validSourcePath(sourcePath) {
+			return fmt.Errorf("image-build admitted path %d is invalid", index)
+		}
+		if index > 0 && admission.AdmittedPaths[index-1].Path == sourcePath.Path {
+			return errors.New("image-build admitted paths must be unique")
+		}
+	}
+	if err := validateAdmittedPaths(admission.Plan, admission.AdmittedPaths); err != nil {
+		return err
+	}
+	if PathSetDigest(admission.AdmittedPaths) != admission.AdmittedPathSetDigest {
+		return errors.New("image-build admitted path-set digest does not match its paths")
+	}
+	if admission.SourceArchiveSizeBytes < 1 || admission.SourceArchiveSizeBytes > MaxSourceArchiveBytes ||
+		admission.SourceArchiveEntries < 0 || admission.SourceArchiveEntries > MaxSourceArchiveEntries ||
+		admission.SourceArchiveEntries != len(admission.AdmittedPaths) {
+		return errors.New("image-build source archive descriptor is invalid")
 	}
 	return nil
 }
@@ -347,12 +376,24 @@ func ValidateGuestResult(result GuestResult) error {
 			return errors.New("successful image-build result is incomplete")
 		}
 	case GuestFailed:
-		if result.FailureReason != GuestFailureImage && result.FailureReason != GuestFailureOutputQuota ||
+		if result.FailureReason != GuestFailureImage &&
+			result.FailureReason != GuestFailureOutputQuota &&
+			result.FailureReason != GuestFailureNetworkQuota ||
 			result.OCIDigest != "" || result.OCISizeBytes != 0 || result.Error == "" || len(result.Error) > 4096 || !utf8.ValidString(result.Error) {
 			return errors.New("failed image-build result is incomplete")
 		}
 	default:
 		return errors.New("image-build result outcome is invalid")
+	}
+	return nil
+}
+
+func validateGuestWireResult(result GuestResult) error {
+	if err := ValidateGuestResult(result); err != nil {
+		return err
+	}
+	if result.FailureReason == GuestFailureNetworkQuota {
+		return errors.New("image-build network quota is host-authoritative")
 	}
 	return nil
 }

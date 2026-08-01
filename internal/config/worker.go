@@ -22,7 +22,6 @@ func LoadWorker() (Worker, error) {
 		BuildScratchDir:              envString("HELMR_WORKER_BUILD_SCRATCH_DIR"),
 		ImagesDir:                    envString("HELMR_WORKER_IMAGES_DIR"),
 		GitPath:                      env("HELMR_GIT_PATH", "git"),
-		BuildKitAddr:                 envString("HELMR_WORKER_BUILDKIT_ADDR"),
 		FirecrackerPath:              env("HELMR_WORKER_FIRECRACKER_PATH", "firecracker"),
 		JailerPath:                   env("HELMR_WORKER_FIRECRACKER_JAILER_PATH", "jailer"),
 		JailerNumaNode:               0,
@@ -49,6 +48,9 @@ func LoadWorker() (Worker, error) {
 		return cfg, errors.New("HELMR_WORKER_GROUP_ID is required")
 	}
 	var err error
+	if cfg.ImageCache, err = loadImageCache(); err != nil {
+		return cfg, err
+	}
 	cfg.NetworkBlockedIPv4CIDRs, err = parseCanonicalBlockedIPv4Prefixes(
 		envString("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS"),
 	)

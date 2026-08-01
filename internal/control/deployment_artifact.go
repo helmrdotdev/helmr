@@ -26,6 +26,7 @@ import (
 type deploymentVersionMetadata struct {
 	APIVersion            string
 	WorkerProtocolVersion string
+	ImageCacheMode        string
 }
 
 type casObjectLookupStore interface {
@@ -107,6 +108,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 			ManagerVersion:       selection.Manager.Version,
 			ManagerIntegrity:     selection.Manager.Integrity,
 			BuildContractVersion: deployment.ProgramBuildContractVersion,
+			ImageCacheMode:       metadata.ImageCacheMode,
 		},
 	)
 	if err != nil {
@@ -211,9 +213,14 @@ func deploymentMetadataFromRequest(request api.CreateDeploymentRequest) (deploym
 	if workerProtocolVersion != api.CurrentWorkerProtocolVersion {
 		return deploymentVersionMetadata{}, fmt.Errorf("unsupported worker_protocol_version %q; current version is %s", workerProtocolVersion, api.CurrentWorkerProtocolVersion)
 	}
+	imageCacheMode := firstPresentString(request.ImageCacheMode, "prefer")
+	if imageCacheMode != "prefer" && imageCacheMode != "bypass" {
+		return deploymentVersionMetadata{}, fmt.Errorf("unsupported image_cache_mode %q; expected prefer or bypass", imageCacheMode)
+	}
 	return deploymentVersionMetadata{
 		APIVersion:            apiVersion,
 		WorkerProtocolVersion: workerProtocolVersion,
+		ImageCacheMode:        imageCacheMode,
 	}, nil
 }
 

@@ -139,3 +139,23 @@ output "worker_fleets" {
   description = "Exact non-secret fleet-controller configuration delivered to helmr-dispatcher."
   value       = var.worker_fleets
 }
+
+output "image_cache_registry_authority" {
+  description = "Canonical ECR registry authority injected into Control and Workers."
+  value       = local.image_cache_registry_authority
+}
+
+output "image_cache_repository_prefix" {
+  description = "Execution image-cache repository namespace."
+  value       = local.image_cache_repository_prefix
+}
+
+output "image_cache_role_arn" {
+  description = "Regional Execution image-cache role assumed only by build-capable Workers."
+  value       = aws_iam_role.image_cache.arn
+}
+
+output "image_cache_repository_arn_prefix" {
+  description = "Exact Environment repository ARN prefix used to derive Worker session policy resources."
+  value       = local.image_cache_repository_arn_prefix
+}

@@ -74,11 +74,6 @@ rec {
 
   smokeLinux = lib.optionals (stdenv.isLinux && stdenv.isx86_64) [
     helmrPackages.firecrackerRuntime
-    pkgs.buildkit
-    pkgs.rootlesskit
-    pkgs.slirp4netns
-    pkgs.fuse-overlayfs
-    pkgs.runc
     pkgs.iptables
     pkgs.iproute2
     pkgs.nftables

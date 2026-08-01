@@ -26,6 +26,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/imagecache"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/token"
@@ -59,6 +60,10 @@ type PlatformArtifactLocker interface {
 	With(context.Context, []string, func() error) error
 }
 
+type RegistryCredentialOpener interface {
+	OpenRegistryCredential(uuid.UUID, db.Secret, db.SecretVersion) ([]byte, error)
+}
+
 type Server struct {
 	log                   *slog.Logger
 	deploymentMode        string
@@ -75,6 +80,8 @@ type Server struct {
 	platformArtifactLocks PlatformArtifactLocker
 	secrets               SecretManager
 	secretDelivery        SecretDeliveryOpener
+	registryCredentials   RegistryCredentialOpener
+	cacheRepositories     imagecache.RepositoryProvisioner
 	workspaceFencingKey   workspace.FencingKey
 	tokenCredentialKey    token.CredentialKey
 	eventStream           *EventStream
@@ -124,6 +131,8 @@ type ServerConfig struct {
 	PlatformArtifactLocks PlatformArtifactLocker
 	Secrets               SecretManager
 	SecretDelivery        SecretDeliveryOpener
+	RegistryCredentials   RegistryCredentialOpener
+	CacheRepositories     imagecache.RepositoryProvisioner
 	WorkspaceFencingKey   workspace.FencingKey
 	TokenCredentialKey    token.CredentialKey
 	EventStream           *EventStream
@@ -179,6 +188,9 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	if cfg.SecretDelivery == nil {
 		return nil, errors.New("Secret delivery opener is required")
+	}
+	if cfg.RegistryCredentials == nil {
+		return nil, errors.New("registry credential opener is required")
 	}
 	if !cfg.WorkspaceFencingKey.Valid() {
 		return nil, errors.New("Workspace fencing key is required")
@@ -255,6 +267,8 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		platformArtifactLocks: cfg.PlatformArtifactLocks,
 		secrets:               cfg.Secrets,
 		secretDelivery:        cfg.SecretDelivery,
+		registryCredentials:   cfg.RegistryCredentials,
+		cacheRepositories:     cfg.CacheRepositories,
 		workspaceFencingKey:   cfg.WorkspaceFencingKey,
 		tokenCredentialKey:    cfg.TokenCredentialKey,
 		eventStream:           cfg.EventStream,
@@ -609,6 +623,9 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.Post("/deployments/renew", s.workerRenewDeploymentBuild)
 				r.Post("/deployments/reject", s.workerRejectDeploymentBuild)
 				r.Post("/deployments/delivery-failed", s.workerDeploymentBuildDeliveryFailed)
+				r.Post("/deployments/workspace-images/admit", s.workerAdmitWorkspaceImage)
+				r.Post("/deployments/workspace-images/credentials", s.workerFetchWorkspaceImageCredentials)
+				r.Post("/deployments/workspace-images/complete", s.workerCompleteWorkspaceImage)
 				r.Post("/deployments/complete", s.workerCompleteDeploymentBuild)
 			})
 			r.Group(func(r chi.Router) {

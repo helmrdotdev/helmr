@@ -229,6 +229,7 @@ func main() {
 		BuildPolicy:           buildPolicy,
 		Secrets:               secretStore,
 		SecretDelivery:        secretStore,
+		RegistryCredentials:   secretStore,
 		WorkspaceFencingKey:   workspaceFencingKey,
 		TokenCredentialKey:    tokenCredentialKey,
 		WorkerTokenSigningKey: cfg.workerTokenKey,

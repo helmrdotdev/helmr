@@ -60,6 +60,7 @@ type Control struct {
 	ScheduleJitter          time.Duration
 	RunLeaseTTL             time.Duration
 	RunFinalizationTTL      time.Duration
+	ImageCache              *ImageCache
 }
 
 type Dispatcher struct {
@@ -141,7 +142,6 @@ type Worker struct {
 	BuildScratchDir              string
 	ImagesDir                    string
 	GitPath                      string
-	BuildKitAddr                 string
 	FirecrackerPath              string
 	JailerPath                   string
 	JailerUID                    int
@@ -175,6 +175,16 @@ type Worker struct {
 	WorkspaceMountStartupTimeout time.Duration
 	PreparedRuntimePoolSize      int
 	PollEvery                    time.Duration
+	ImageCache                   *ImageCache
+}
+
+// ImageCache is shared entry configuration for the Control provisioner and
+// Worker credential adapter. It is either completely configured or absent.
+type ImageCache struct {
+	RegistryAuthority   string
+	RepositoryPrefix    string
+	CacheRoleARN        string
+	RepositoryARNPrefix string
 }
 
 type WorkerControl struct {
@@ -202,6 +212,32 @@ func LoadClickHouse() (ClickHouse, error) {
 		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")
 	}
 	return cfg, nil
+}
+
+func loadImageCache() (*ImageCache, error) {
+	config := ImageCache{
+		RegistryAuthority:   envString("HELMR_IMAGE_CACHE_REGISTRY_AUTHORITY"),
+		RepositoryPrefix:    envString("HELMR_IMAGE_CACHE_REPOSITORY_PREFIX"),
+		CacheRoleARN:        envString("HELMR_IMAGE_CACHE_ROLE_ARN"),
+		RepositoryARNPrefix: envString("HELMR_IMAGE_CACHE_REPOSITORY_ARN_PREFIX"),
+	}
+	values := []string{
+		config.RegistryAuthority, config.RepositoryPrefix,
+		config.CacheRoleARN, config.RepositoryARNPrefix,
+	}
+	configured := 0
+	for _, value := range values {
+		if value != "" {
+			configured++
+		}
+	}
+	if configured == 0 {
+		return nil, nil
+	}
+	if configured != len(values) {
+		return nil, errors.New("HELMR_IMAGE_CACHE_REGISTRY_AUTHORITY, HELMR_IMAGE_CACHE_REPOSITORY_PREFIX, HELMR_IMAGE_CACHE_ROLE_ARN, and HELMR_IMAGE_CACHE_REPOSITORY_ARN_PREFIX must be configured together")
+	}
+	return &config, nil
 }
 
 func LoadWorkerGroupBootstrap() (WorkerGroupBootstrap, error) {

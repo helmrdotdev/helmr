@@ -73,14 +73,12 @@ func proveBuildStorage(config BuildStorageConfig, probe storageProbe) (BuildStor
 		return BuildStorageProof{}, errors.New("firecracker jailer root must be a strict descendant of build scratch")
 	}
 
-	buildKitRoot := filepath.Join(config.CacheRoot, "buildkit")
 	substrateCache := filepath.Join(config.CacheRoot, "substrate-cache")
 	artifactCache := filepath.Join(config.CacheRoot, "artifact-cache")
 	for _, layout := range []struct {
 		name string
 		path string
 	}{
-		{"BuildKit root", buildKitRoot},
 		{"substrate cache", substrateCache},
 		{"Artifact cache", artifactCache},
 	} {
@@ -88,10 +86,6 @@ func proveBuildStorage(config BuildStorageConfig, probe storageProbe) (BuildStor
 			return BuildStorageProof{}, fmt.Errorf("%s escapes build cache", layout.name)
 		}
 	}
-	if err := validateStoragePath("BuildKit root", buildKitRoot, probe); err != nil {
-		return BuildStorageProof{}, err
-	}
-
 	rawMountInfo, err := probe.ReadFile("/proc/self/mountinfo")
 	if err != nil {
 		return BuildStorageProof{}, fmt.Errorf("read mountinfo: %w", err)
@@ -155,7 +149,6 @@ func proveBuildStorage(config BuildStorageConfig, probe storageProbe) (BuildStor
 		Scratch:           scratch,
 		WorkDir:           config.WorkDir,
 		JailerRoot:        config.JailerRoot,
-		BuildKitRoot:      buildKitRoot,
 		SubstrateCacheDir: substrateCache,
 		ArtifactCacheDir:  artifactCache,
 	}, nil

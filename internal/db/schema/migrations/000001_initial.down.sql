@@ -44,6 +44,7 @@ ALTER TABLE actors DROP CONSTRAINT IF EXISTS actors_failure_run_fk;
 DROP TABLE IF EXISTS runs;
 DROP TABLE IF EXISTS actors;
 DROP TABLE IF EXISTS schedules;
+DROP TABLE IF EXISTS registry_credential_resolutions;
 DROP TABLE IF EXISTS idempotency_claims;
 DROP TABLE IF EXISTS runtime_substrates;
 DROP TABLE IF EXISTS deployment_definitions;

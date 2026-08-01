@@ -16,9 +16,31 @@ locals {
   worker_groups_by_id = {
     for group in var.worker_groups : group.id => group
   }
+  worker_groups_config = [for group in var.worker_groups : {
+    id                      = group.id
+    name                    = group.name
+    description             = group.description
+    region                  = group.region
+    account_id              = group.account_id
+    autoscaling_group       = group.autoscaling_group
+    instance_profile_arn    = group.instance_profile_arn
+    launch_ami_id           = group.launch_ami_id
+    ami_ids                 = group.ami_ids
+    allows_run              = group.allows_run
+    allows_build            = group.allows_build
+    observation_ttl_seconds = group.observation_ttl_seconds
+    instance_capacity       = group.instance_capacity
+  }]
   worker_fleets_by_group = {
     for fleet in var.worker_fleets : fleet.group_id => fleet
   }
+  image_cache_repository_prefix     = "${local.name}/image-cache"
+  image_cache_repository_arn_prefix = "arn:${data.aws_partition.current.partition}:ecr:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:repository/${local.image_cache_repository_prefix}/"
+  image_cache_registry_authority    = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${data.aws_region.current.region}.${data.aws_partition.current.dns_suffix}"
+  image_cache_worker_role_arns = sort(distinct([
+    for group in var.worker_groups : group.instance_role_arn
+    if group.allows_build
+  ]))
   secret_kms_key_arns = distinct(concat(
     [aws_kms_key.helmr.arn],
     var.clickhouse_password_kms_key_arns
@@ -81,16 +103,20 @@ locals {
   )
 
   control_environment_defaults = merge({
-    HELMR_CONTROL_ADDR           = ":${local.control_port}"
-    HELMR_DEPLOYMENT_MODE        = var.deployment_mode
-    HELMR_CAS_URI                = "s3://${aws_s3_bucket.cas.bucket}"
-    HELMR_BUILD_POLICY_PATH      = "/release/build-policy.json"
-    HELMR_PLATFORM_STORE_URI     = var.platform_store_uri
-    HELMR_PUBLIC_URL             = local.control_url
-    HELMR_REDIS_URL              = local.redis_url
-    HELMR_SCHEDULE_JITTER        = var.schedule_jitter
-    HELMR_GITHUB_OAUTH_CLIENT_ID = var.github_oauth_client_id
-    HELMR_WORKER_GROUPS          = jsonencode(var.worker_groups)
+    HELMR_CONTROL_ADDR                      = ":${local.control_port}"
+    HELMR_DEPLOYMENT_MODE                   = var.deployment_mode
+    HELMR_CAS_URI                           = "s3://${aws_s3_bucket.cas.bucket}"
+    HELMR_BUILD_POLICY_PATH                 = "/release/build-policy.json"
+    HELMR_PLATFORM_STORE_URI                = var.platform_store_uri
+    HELMR_PUBLIC_URL                        = local.control_url
+    HELMR_REDIS_URL                         = local.redis_url
+    HELMR_SCHEDULE_JITTER                   = var.schedule_jitter
+    HELMR_GITHUB_OAUTH_CLIENT_ID            = var.github_oauth_client_id
+    HELMR_WORKER_GROUPS                     = jsonencode(local.worker_groups_config)
+    HELMR_IMAGE_CACHE_REGISTRY_AUTHORITY    = local.image_cache_registry_authority
+    HELMR_IMAGE_CACHE_REPOSITORY_PREFIX     = local.image_cache_repository_prefix
+    HELMR_IMAGE_CACHE_ROLE_ARN              = aws_iam_role.image_cache.arn
+    HELMR_IMAGE_CACHE_REPOSITORY_ARN_PREFIX = local.image_cache_repository_arn_prefix
   }, local.telemetry_environment, local.email_environment)
 
   control_secret_defaults = merge({
@@ -179,6 +205,11 @@ resource "terraform_data" "bootstrap_preconditions" {
     }
 
     precondition {
+      condition     = length(local.image_cache_worker_role_arns) > 0
+      error_message = "worker_groups must contain at least one build-capable Worker role for the regional image-cache trust boundary."
+    }
+
+    precondition {
       condition     = length(local.dispatcher_environment_conflicts) == 0
       error_message = "dispatcher_environment must not set managed Helmr variables. Use explicit module inputs and secret containers for managed settings."
     }
@@ -219,7 +250,7 @@ resource "terraform_data" "bootstrap_preconditions" {
       condition = alltrue([
         for group in var.worker_groups :
         trimspace(group.id) != "" && trimspace(group.region) != "" && trimspace(group.account_id) != "" &&
-        trimspace(group.autoscaling_group) != "" && trimspace(group.instance_profile_arn) != "" &&
+        trimspace(group.autoscaling_group) != "" && trimspace(group.instance_profile_arn) != "" && trimspace(group.instance_role_arn) != "" &&
         trimspace(group.launch_ami_id) != "" && contains(group.ami_ids, group.launch_ami_id) &&
         (group.allows_run || group.allows_build) &&
         group.observation_ttl_seconds > 0 && group.observation_ttl_seconds <= 2592000 &&
@@ -231,6 +262,16 @@ resource "terraform_data" "bootstrap_preconditions" {
         (!group.allows_build || group.instance_capacity.build_executors > 0)
       ])
       error_message = "worker_groups must define a complete AWS identity boundary and a positive role-compatible capacity floor."
+    }
+
+    precondition {
+      condition = alltrue([
+        for group in var.worker_groups :
+        group.account_id == data.aws_caller_identity.current.account_id &&
+        startswith(group.instance_profile_arn, "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:instance-profile/") &&
+        startswith(group.instance_role_arn, "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/")
+      ])
+      error_message = "v0 worker_groups, instance profiles, and instance roles must belong to the Control AWS account."
     }
 
     precondition {
@@ -858,6 +899,66 @@ resource "aws_iam_role_policy" "dispatcher_execution" {
   })
 }
 
+resource "aws_iam_policy" "image_cache_boundary" {
+  name = "${local.name}-image-cache-boundary"
+  tags = var.tags
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "AuthenticateExecutionCacheRegistry"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
+        Sid    = "UseExecutionCacheRepositories"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:BatchGetImage",
+          "ecr:CompleteLayerUpload",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:InitiateLayerUpload",
+          "ecr:PutImage",
+          "ecr:UploadLayerPart"
+        ]
+        Resource = "${local.image_cache_repository_arn_prefix}environments/*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role" "image_cache" {
+  name                 = "${local.name}-image-cache"
+  permissions_boundary = aws_iam_policy.image_cache_boundary.arn
+  tags                 = var.tags
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        AWS = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"
+      }
+      Action = "sts:AssumeRole"
+      Condition = {
+        ArnEquals = {
+          "aws:PrincipalArn" = local.image_cache_worker_role_arns
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "image_cache" {
+  name = "${local.name}-image-cache"
+  role = aws_iam_role.image_cache.id
+
+  policy = aws_iam_policy.image_cache_boundary.policy
+}
+
 resource "aws_iam_role" "control_task" {
   name = "${local.name}-control-task"
   tags = var.tags
@@ -940,6 +1041,22 @@ resource "aws_iam_role_policy" "control_task" {
           Effect   = "Allow"
           Action   = ["iam:GetInstanceProfile"]
           Resource = [for group in var.worker_groups : group.instance_profile_arn]
+        },
+        {
+          Sid    = "ProvisionExecutionImageCache"
+          Effect = "Allow"
+          Action = [
+            "ecr:CreateRepository",
+            "ecr:DeleteRepository",
+            "ecr:DescribeRepositories",
+            "ecr:ListTagsForResource",
+            "ecr:PutImageTagMutability",
+            "ecr:PutLifecyclePolicy",
+            "ecr:SetRepositoryPolicy",
+            "ecr:TagResource",
+            "ecr:UntagResource"
+          ]
+          Resource = "${local.image_cache_repository_arn_prefix}environments/*"
         }
     ] : statement])
   })

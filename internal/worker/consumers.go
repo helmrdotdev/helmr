@@ -240,6 +240,12 @@ func validateBuildEnvelope(
 			build.BuildContractVersion,
 		)
 	}
+	if build.ImageCacheMode != "prefer" && build.ImageCacheMode != "bypass" {
+		return fmt.Errorf(
+			"deployment image cache mode %q is unsupported",
+			build.ImageCacheMode,
+		)
+	}
 	if !capabilities.SupportsBuild {
 		return errors.New("worker is not certified for builds")
 	}
@@ -303,15 +309,23 @@ func (r *Runner) executeStartedBuild(ctx context.Context, lease api.WorkerDeploy
 	buildCtx, cancelBuild := context.WithCancel(ctx)
 	defer cancelBuild()
 	leaseState := &buildLeaseState{lease: lease}
+	revocations := newImageOperationRevocations()
 	renewDone := make(chan error, 1)
-	go func() { renewDone <- r.renewBuildUntilDone(buildCtx, leaseState) }()
+	go func() {
+		renewDone <- r.renewBuildUntilDone(buildCtx, leaseState, revocations)
+	}()
 	type buildOutcome struct {
 		result json.RawMessage
 		err    error
 	}
 	resultDone := make(chan buildOutcome, 1)
 	go func() {
-		result, err := r.buildExecutor.Build(buildCtx, lease, deployment)
+		result, err := r.buildExecutor.Build(
+			buildCtx,
+			lease,
+			deployment,
+			revocations,
+		)
 		resultDone <- buildOutcome{result: result, err: err}
 	}()
 	var outcome buildOutcome
@@ -375,7 +389,11 @@ func (r *Runner) executeStartedBuild(ctx context.Context, lease api.WorkerDeploy
 	return nil
 }
 
-func (r *Runner) renewBuildUntilDone(ctx context.Context, state *buildLeaseState) error {
+func (r *Runner) renewBuildUntilDone(
+	ctx context.Context,
+	state *buildLeaseState,
+	revocations *imageOperationRevocations,
+) error {
 	ticker := time.NewTicker(r.renewEvery)
 	defer ticker.Stop()
 	for {
@@ -395,6 +413,9 @@ func (r *Runner) renewBuildUntilDone(ctx context.Context, state *buildLeaseState
 		}
 		if strings.TrimSpace(response.Lease.ID) == "" {
 			return errors.New("renew deployment build response did not include a lease")
+		}
+		if err := revocations.apply(response.RevokedImageOperationIDs); err != nil {
+			return fmt.Errorf("apply revoked Workspace image operations: %w", err)
 		}
 		state.set(response.Lease)
 	}

@@ -35,7 +35,7 @@ variable "subnet_ids" {
 }
 
 variable "ami_id" {
-  description = "Worker AMI with Firecracker, jailer, BuildKit, routed-TAP prerequisites, and helmr-worker installed."
+  description = "Worker AMI with Firecracker, jailer, routed-TAP prerequisites, and helmr-worker installed."
   type        = string
 }
 
@@ -208,7 +208,7 @@ variable "vm_scratch_disk_mib" {
 }
 
 variable "worker_capacity_vcpus" {
-  description = "Worker host vCPU pool after kernel and supervisor reserves. Build workers subtract the fixed BuildKit service reserve before certification."
+  description = "Worker host vCPU pool after kernel and supervisor reserves."
   type        = number
   default     = null
   nullable    = true
@@ -220,7 +220,7 @@ variable "worker_capacity_vcpus" {
 }
 
 variable "worker_capacity_memory_mib" {
-  description = "Worker host memory pool after kernel and supervisor reserves. Build workers subtract the fixed BuildKit service reserve before certification."
+  description = "Worker host memory pool after kernel and supervisor reserves."
   type        = number
   default     = null
   nullable    = true
@@ -430,15 +430,29 @@ variable "network_resolver_ipv4" {
   }
 }
 
-variable "buildkit_slirp_cidr" {
-  description = "IPv4 CIDR used by rootlesskit/slirp4netns inside the BuildKit service namespace. It must not overlap the internal host-service deny set."
+variable "image_cache_registry_authority" {
+  description = "Canonical regional ECR registry authority for the Platform image cache."
   type        = string
-  default     = "198.18.0.0/24"
 
   validation {
-    condition     = can(cidrnetmask(var.buildkit_slirp_cidr))
-    error_message = "buildkit_slirp_cidr must be an IPv4 CIDR prefix."
+    condition     = can(regex("^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com(\\.cn)?$", var.image_cache_registry_authority))
+    error_message = "image_cache_registry_authority must be a canonical private ECR registry authority."
   }
+}
+
+variable "image_cache_repository_prefix" {
+  description = "Bounded ECR repository namespace for Environment image caches."
+  type        = string
+}
+
+variable "image_cache_role_arn" {
+  description = "Exact regional Execution image-cache role ARN."
+  type        = string
+}
+
+variable "image_cache_repository_arn_prefix" {
+  description = "Exact ECR repository ARN prefix matching image_cache_repository_prefix."
+  type        = string
 }
 
 variable "tags" {

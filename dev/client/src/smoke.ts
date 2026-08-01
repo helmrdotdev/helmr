@@ -3,6 +3,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import {
   HelmrClient,
+  secrets,
   type ActorStatus,
   type ClientActorIdRef,
   type JsonValue,
@@ -94,7 +95,7 @@ async function runSmoke(): Promise<Evidence> {
       ? {}
       : {
           secrets: [{
-            name: config.secretName,
+            secret: secrets.fromName(config.secretName),
             env: "HELMR_SMOKE_SECRET_VALUE",
           }],
         }),

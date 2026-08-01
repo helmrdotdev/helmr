@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/imagebuild"
 )
 
 type WorkerTokenRequest struct {
@@ -230,7 +232,117 @@ type WorkerDeploymentBuildRenewRequest struct {
 }
 
 type WorkerDeploymentBuildRenewResponse struct {
-	Lease WorkerDeploymentBuildLease `json:"lease"`
+	Lease                    WorkerDeploymentBuildLease `json:"lease"`
+	RevokedImageOperationIDs []string                   `json:"revoked_image_operation_ids"`
+}
+
+type WorkerWorkspaceImageAdmissionRequest struct {
+	Lease                  WorkerDeploymentBuildLease `json:"lease"`
+	DeclarationSlot        string                     `json:"declaration_slot"`
+	RuntimeIdentityID      string                     `json:"runtime_identity_id"`
+	Architecture           string                     `json:"architecture"`
+	Plan                   imagebuild.Build           `json:"plan"`
+	SubmittedSourceDigest  string                     `json:"submitted_source_digest"`
+	BuildTreeDigest        string                     `json:"build_tree_digest"`
+	BuildTreeSizeBytes     int64                      `json:"build_tree_size_bytes"`
+	AdmittedPaths          []imagebuild.SourcePath    `json:"admitted_paths"`
+	SourceArchiveDigest    string                     `json:"source_archive_digest"`
+	SourceArchiveSizeBytes int64                      `json:"source_archive_size_bytes"`
+	SourceArchiveEntries   int                        `json:"source_archive_entries"`
+}
+
+type WorkerWorkspaceImageQuotas struct {
+	CPUMillis               int64 `json:"cpu_millis"`
+	MemoryBytes             int64 `json:"memory_bytes"`
+	ScratchBytes            int64 `json:"scratch_bytes"`
+	PIDs                    int64 `json:"pids"`
+	MaxSourceArchiveBytes   int64 `json:"max_source_archive_bytes"`
+	MaxSourceArchiveEntries int   `json:"max_source_archive_entries"`
+	MaxOCIArchiveBytes      int64 `json:"max_oci_archive_bytes"`
+}
+
+type WorkerWorkspaceImageOutputContract struct {
+	Architecture string `json:"architecture"`
+	MediaType    string `json:"media_type"`
+	MaxSizeBytes int64  `json:"max_size_bytes"`
+}
+
+type WorkerWorkspaceImageCacheColdReason string
+
+const (
+	WorkerWorkspaceImageCacheRegistryAuthorityCollision WorkerWorkspaceImageCacheColdReason = "registry_authority_collision"
+	WorkerWorkspaceImageCacheUnavailable                WorkerWorkspaceImageCacheColdReason = "cache_unavailable"
+)
+
+type WorkerWorkspaceImageCacheTarget struct {
+	Binding imagebuild.CacheBinding `json:"binding"`
+}
+
+type WorkerWorkspaceImageAssignment struct {
+	Lease                    WorkerDeploymentBuildLease          `json:"lease"`
+	DeclarationSlot          string                              `json:"declaration_slot"`
+	OperationID              string                              `json:"operation_id"`
+	RequestFingerprint       string                              `json:"request_fingerprint"`
+	RuntimeIdentityID        string                              `json:"runtime_identity_id"`
+	Architecture             string                              `json:"architecture"`
+	Plan                     imagebuild.Build                    `json:"plan"`
+	PlanDigest               string                              `json:"plan_digest"`
+	SubmittedSourceDigest    string                              `json:"submitted_source_digest"`
+	BuildTreeDigest          string                              `json:"build_tree_digest"`
+	BuildTreeSizeBytes       int64                               `json:"build_tree_size_bytes"`
+	AdmittedPaths            []imagebuild.SourcePath             `json:"admitted_paths"`
+	AdmittedPathSetDigest    string                              `json:"admitted_path_set_digest"`
+	SourceArchiveDigest      string                              `json:"source_archive_digest"`
+	SourceArchiveSizeBytes   int64                               `json:"source_archive_size_bytes"`
+	SourceArchiveEntries     int                                 `json:"source_archive_entries"`
+	RequestedCacheMode       imagebuild.CacheMode                `json:"requested_cache_mode"`
+	CacheScope               string                              `json:"cache_scope"`
+	ExecutionABI             string                              `json:"execution_abi"`
+	LLBABI                   string                              `json:"llb_abi"`
+	CacheABI                 string                              `json:"cache_abi"`
+	Quotas                   WorkerWorkspaceImageQuotas          `json:"quotas"`
+	Output                   WorkerWorkspaceImageOutputContract  `json:"output"`
+	RegistryBindings         []imagebuild.RegistryBinding        `json:"registry_bindings"`
+	ResolutionSetDigest      string                              `json:"resolution_set_digest"`
+	CacheTarget              *WorkerWorkspaceImageCacheTarget    `json:"cache_target,omitempty"`
+	EffectiveCacheColdReason WorkerWorkspaceImageCacheColdReason `json:"effective_cache_cold_reason,omitempty"`
+	TerminalResult           *WorkerWorkspaceImageTerminalResult `json:"terminal_result,omitempty"`
+}
+
+type WorkerWorkspaceImageTerminalResult struct {
+	AttemptID string                 `json:"attempt_id"`
+	Result    imagebuild.GuestResult `json:"result"`
+}
+
+type WorkerWorkspaceImageCredentialRequest struct {
+	Lease               WorkerDeploymentBuildLease `json:"lease"`
+	OperationID         string                     `json:"operation_id"`
+	AttemptID           string                     `json:"attempt_id"`
+	PlanDigest          string                     `json:"plan_digest"`
+	ResolutionSetDigest string                     `json:"resolution_set_digest"`
+}
+
+type WorkerWorkspaceImageCredentialResponse struct {
+	Envelope imagebuild.CredentialEnvelope `json:"envelope"`
+}
+
+type WorkerWorkspaceImageOperationResultRequest struct {
+	Lease               WorkerDeploymentBuildLease `json:"lease"`
+	DeclarationSlot     string                     `json:"declaration_slot"`
+	OperationID         string                     `json:"operation_id"`
+	AttemptID           string                     `json:"attempt_id"`
+	RequestFingerprint  string                     `json:"request_fingerprint"`
+	PlanDigest          string                     `json:"plan_digest"`
+	ResolutionSetDigest string                     `json:"resolution_set_digest"`
+	RequestedCacheMode  imagebuild.CacheMode       `json:"requested_cache_mode"`
+	Result              imagebuild.GuestResult     `json:"result"`
+}
+
+type WorkerWorkspaceImageOperationResultResponse struct {
+	OperationID string                 `json:"operation_id"`
+	AttemptID   string                 `json:"attempt_id"`
+	State       string                 `json:"state"`
+	Result      imagebuild.GuestResult `json:"result"`
 }
 
 type WorkerDeploymentBuildRejectRequest struct {
@@ -1036,6 +1148,7 @@ type WorkerDeploymentBuild struct {
 	Manager               WorkerManagerPin         `json:"manager"`
 	Toolchain             CASObject                `json:"toolchain"`
 	BuildContractVersion  string                   `json:"build_contract_version"`
+	ImageCacheMode        string                   `json:"image_cache_mode"`
 }
 
 type WorkerManagerPin struct {

@@ -36,6 +36,12 @@ WITH candidates AS (
              FROM workspace_processes
             WHERE workspace_processes.claim_id = idempotency_claims.id
        )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM registry_credential_resolutions
+            WHERE registry_credential_resolutions.environment_id = idempotency_claims.environment_id
+              AND registry_credential_resolutions.image_operation_id = idempotency_claims.id
+       )
      ORDER BY retired_at, id
      LIMIT $1
      FOR UPDATE SKIP LOCKED

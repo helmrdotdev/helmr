@@ -4,13 +4,6 @@ umask 077
 date +%s >/run/helmr-launch-started-at
 
 install -d -m 0750 -o root -g root /etc/helmr
-cat >/etc/helmr/guest-resolv.conf <<'EOF'
-%{ for nameserver in guest_nameservers ~}
-nameserver ${nameserver}
-%{ endfor ~}
-EOF
-chown root:root /etc/helmr/guest-resolv.conf
-chmod 0644 /etc/helmr/guest-resolv.conf
 
 metadata_url=http://169.254.169.254/latest
 metadata_token() {
@@ -116,7 +109,7 @@ prepare_backing "$scratch_backing" "$scratch_raw_bytes"
 cat >/etc/systemd/system/var-lib-helmr-cache.mount <<'EOF'
 [Unit]
 Description=Helmr build cache filesystem
-Before=helmr-buildkit.service ${worker_service_name}.service
+Before=${worker_service_name}.service
 
 [Mount]
 What=/var/lib/helmr/storage/build-cache.ext4
@@ -228,9 +221,6 @@ complete_launch() {
   if [ -z "$launch_hook" ]; then
     return 0
   fi
-%{ if worker_supports_build ~}
-  systemctl is-active --quiet 'helmr-buildkit.service'
-%{ endif ~}
   systemctl is-active --quiet '${worker_service_name}'
   load_worker_env
   "$worker_binary" status >/dev/null
@@ -298,48 +288,10 @@ esac
 EOF
 chmod 0755 /usr/local/bin/helmr-asg-lifecycle
 
-%{ if worker_supports_build ~}
-install -d -m 0755 /etc/systemd/system/helmr-buildkit.service.d
-cat >/etc/systemd/system/helmr-buildkit.service.d/10-network-policy.conf <<'EOF'
-[Service]
-BindReadOnlyPaths=/etc/helmr/guest-resolv.conf:/etc/resolv.conf
-ExecStart=
-ExecStart=/usr/local/bin/rootlesskit --net=slirp4netns --cidr=${buildkit_slirp_cidr} --copy-up=/etc --disable-host-loopback /usr/local/bin/buildkitd --addr unix:///run/helmr/buildkit/buildkitd.sock --root /var/lib/helmr/cache/buildkit --oci-worker=true --oci-worker-snapshotter=fuse-overlayfs
-%{ for cidr in buildkit_service_blocked_ipv4_cidrs ~}
-IPAddressDeny=${cidr}
-%{ endfor ~}
-%{ for cidr in buildkit_service_blocked_ipv6_cidrs ~}
-IPAddressDeny=${cidr}
-%{ endfor ~}
-EOF
-
-cat >/etc/systemd/system/helmr-buildkit.service.d/20-resource-limits.conf <<'EOF'
-[Unit]
-RequiresMountsFor=/var/lib/helmr/cache
-After=var-lib-helmr-cache.mount
-
-[Service]
-Delegate=yes
-CPUQuota=100%
-MemoryMax=2G
-MemorySwapMax=0
-TasksMax=1024
-MemoryOOMGroup=yes
-EOF
-%{ else ~}
-install -d -m 0755 "/etc/systemd/system/${worker_service_name}.service.d"
-cat >"/etc/systemd/system/${worker_service_name}.service.d/20-run-only.conf" <<'EOF'
-[Unit]
-Wants=
-After=
-After=network-online.target
-EOF
-%{ endif ~}
-
 cat >/etc/systemd/system/helmr-asg-lifecycle.service <<'EOF'
 [Unit]
 Description=Helmr Auto Scaling lifecycle integration
-After=network-online.target%{ if worker_supports_build } helmr-buildkit.service%{ endif } ${worker_service_name}.service
+After=network-online.target ${worker_service_name}.service
 Wants=network-online.target
 
 [Service]
@@ -384,21 +336,18 @@ losetup -j "$scratch_backing" | cut -d: -f1 | grep -Fx "$scratch_source" >/dev/n
   echo "build scratch filesystem has less usable capacity than configured" >&2
   exit 1
 }
-for path in "$cache_mount/buildkit" "$scratch_mount/worker" "$scratch_mount/jailer"; do
+for path in "$scratch_mount/worker" "$scratch_mount/jailer"; do
   [ ! -L "$path" ] || {
     echo "$path must not be a symlink" >&2
     exit 1
   }
 done
-install -d -m 0755 "$cache_mount/buildkit" "$scratch_mount/worker" "$scratch_mount/jailer"
+install -d -m 0755 "$scratch_mount/worker" "$scratch_mount/jailer"
 
 "$worker_binary" release install \
   --store '${platform_store_uri}' \
   --digest '${build_policy_digest}' \
   --output /etc/helmr/build-policy.json
-systemctl enable --now helmr-buildkit.service
-%{ else ~}
-systemctl disable --now helmr-buildkit.service || true
 %{ endif ~}
 install -d -m 0755 '/etc/systemd/system/${worker_service_name}.service.d'
 cat >'/etc/systemd/system/${worker_service_name}.service.d/10-entry.conf' <<'EOF'

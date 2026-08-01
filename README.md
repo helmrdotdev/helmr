@@ -223,7 +223,6 @@ nix run .#ci-go-race
 nix run .#ci-linux-compile
 nix run .#ci-linux-lint
 nix run .#ci-postgres
-nix run .#ci-buildkit
 ```
 
 On Linux, `nix flake check` also evaluates the Firecracker host NixOS module.

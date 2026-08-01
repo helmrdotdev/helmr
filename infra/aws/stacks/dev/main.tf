@@ -32,12 +32,25 @@ locals {
     "224.0.0.0/4",
     "240.0.0.0/4",
   ]
-  buildkit_cpu_reserve_millis = 1000
-  buildkit_memory_reserve_mib = 2048
-  boot_corpus_reserve_mib     = 2048
-  build_scratch_min_mib       = max(32768, coalesce(var.build_worker_vm_scratch_disk_mib, var.worker_vm_scratch_disk_mib)) + local.boot_corpus_reserve_mib
-  build_worker_cpu_millis     = coalesce(var.build_worker_capacity_vcpus, var.worker_capacity_vcpus, 0) * 1000 - local.buildkit_cpu_reserve_millis
-  build_worker_memory_mib     = coalesce(var.build_worker_capacity_memory_mib, var.worker_capacity_memory_mib, 0) - local.buildkit_memory_reserve_mib
+  execution_vpc_cidr_parts = try(
+    regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)\\.([0-9]+)/([0-9]+)$", var.execution_vpc_cidr),
+    ["0", "0", "0", "0", "0"]
+  )
+  execution_vpc_octets = [for index in range(4) : tonumber(local.execution_vpc_cidr_parts[index])]
+  execution_vpc_prefix = tonumber(local.execution_vpc_cidr_parts[4])
+  execution_vpc_is_canonical = try(
+    "${cidrhost(var.execution_vpc_cidr, 0)}/${local.execution_vpc_prefix}" == var.execution_vpc_cidr,
+    false
+  )
+  execution_vpc_is_private = local.execution_vpc_is_canonical && (
+    (local.execution_vpc_octets[0] == 10 && local.execution_vpc_prefix >= 8) ||
+    (local.execution_vpc_octets[0] == 172 && local.execution_vpc_octets[1] >= 16 && local.execution_vpc_octets[1] <= 31 && local.execution_vpc_prefix >= 12) ||
+    (local.execution_vpc_octets[0] == 192 && local.execution_vpc_octets[1] == 168 && local.execution_vpc_prefix >= 16)
+  )
+  boot_corpus_reserve_mib = 2048
+  build_scratch_min_mib   = max(32768, coalesce(var.build_worker_vm_scratch_disk_mib, var.worker_vm_scratch_disk_mib)) + local.boot_corpus_reserve_mib
+  build_worker_cpu_millis = coalesce(var.build_worker_capacity_vcpus, var.worker_capacity_vcpus, 0) * 1000
+  build_worker_memory_mib = coalesce(var.build_worker_capacity_memory_mib, var.worker_capacity_memory_mib, 0)
   worker_groups = [
     {
       id                      = local.run_worker_group_id
@@ -47,6 +60,7 @@ locals {
       account_id              = data.aws_caller_identity.current.account_id
       autoscaling_group       = "${local.run_worker_name}-worker"
       instance_profile_arn    = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${local.run_worker_name}-worker"
+      instance_role_arn       = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${local.run_worker_name}-worker"
       launch_ami_id           = local.worker_ami_id
       ami_ids                 = local.worker_allowed_ami_ids
       allows_run              = true
@@ -73,6 +87,7 @@ locals {
       account_id              = data.aws_caller_identity.current.account_id
       autoscaling_group       = "${local.build_worker_name}-worker"
       instance_profile_arn    = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${local.build_worker_name}-worker"
+      instance_role_arn       = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${local.build_worker_name}-worker"
       launch_ami_id           = local.worker_ami_id
       ami_ids                 = local.worker_allowed_ami_ids
       allows_run              = false
@@ -182,11 +197,8 @@ resource "terraform_data" "cloud_worker_network_policy" {
 
   lifecycle {
     precondition {
-      condition = anytrue([
-        for blocked in local.cloud_worker_blocked_ipv4_cidrs :
-        cidrcontains(blocked, cidrhost(var.execution_vpc_cidr, 0)) && cidrcontains(blocked, cidrhost(var.execution_vpc_cidr, -1))
-      ])
-      error_message = "execution_vpc_cidr must be wholly contained by the Cloud Worker blocked IPv4 CIDRs."
+      condition     = local.execution_vpc_is_private
+      error_message = "execution_vpc_cidr must be a canonical RFC1918 prefix wholly contained by the Cloud Worker blocked IPv4 CIDRs."
     }
   }
 }
@@ -320,7 +332,6 @@ module "run_worker" {
   substrate_cache_max_mib                    = var.worker_substrate_cache_max_mib
   artifact_cache_max_mib                     = var.worker_artifact_cache_max_mib
   worker_environment                         = var.worker_environment
-  buildkit_slirp_cidr                        = var.worker_buildkit_slirp_cidr
   worker_control_url                         = local.worker_control_url
   cas_uri                                    = module.control.cas_uri
   cas_bucket_arn                             = module.control.cas_bucket_arn
@@ -329,6 +340,10 @@ module "run_worker" {
   platform_store_bucket_arn                  = var.platform_store_bucket_arn
   platform_store_kms_key_arn                 = var.platform_store_kms_key_arn
   build_policy_digest                        = null
+  image_cache_registry_authority             = module.control.image_cache_registry_authority
+  image_cache_repository_prefix              = module.control.image_cache_repository_prefix
+  image_cache_role_arn                       = module.control.image_cache_role_arn
+  image_cache_repository_arn_prefix          = module.control.image_cache_repository_arn_prefix
 
   secret_arns = {
     checkpoint_encryption_key = module.control.secret_arns.checkpoint_encryption_key
@@ -374,7 +389,6 @@ module "build_worker" {
   build_cache_mib                            = local.build_worker_build_cache_mib + local.build_worker_artifact_cache_mib
   build_scratch_mib                          = local.build_worker_scratch_mib
   worker_environment                         = var.worker_environment
-  buildkit_slirp_cidr                        = var.worker_buildkit_slirp_cidr
   worker_control_url                         = local.worker_control_url
   cas_uri                                    = module.control.cas_uri
   cas_bucket_arn                             = module.control.cas_bucket_arn
@@ -383,6 +397,10 @@ module "build_worker" {
   platform_store_bucket_arn                  = var.platform_store_bucket_arn
   platform_store_kms_key_arn                 = var.platform_store_kms_key_arn
   build_policy_digest                        = var.build_policy_digest
+  image_cache_registry_authority             = module.control.image_cache_registry_authority
+  image_cache_repository_prefix              = module.control.image_cache_repository_prefix
+  image_cache_role_arn                       = module.control.image_cache_role_arn
+  image_cache_repository_arn_prefix          = module.control.image_cache_repository_arn_prefix
 
   secret_arns = {
     checkpoint_encryption_key = module.control.secret_arns.checkpoint_encryption_key

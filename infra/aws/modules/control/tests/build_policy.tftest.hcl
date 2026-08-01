@@ -13,7 +13,8 @@ mock_provider "aws" {
 
   mock_data "aws_partition" {
     defaults = {
-      partition = "aws"
+      partition  = "aws"
+      dns_suffix = "amazonaws.com"
     }
   }
 
@@ -38,6 +39,12 @@ mock_provider "aws" {
   mock_resource "aws_iam_role" {
     defaults = {
       arn = "arn:aws:iam::000000000000:role/mock"
+    }
+  }
+
+  mock_resource "aws_iam_policy" {
+    defaults = {
+      arn = "arn:aws:iam::000000000000:policy/mock"
     }
   }
 
@@ -93,6 +100,13 @@ override_resource {
 }
 
 override_resource {
+  target = aws_iam_role.image_cache
+  values = {
+    arn = "arn:aws:iam::000000000000:role/helmr-test-image-cache"
+  }
+}
+
+override_resource {
   target = aws_iam_role.dispatcher_task
   values = {
     arn = "arn:aws:iam::000000000000:role/helmr-test-dispatcher-task"
@@ -132,10 +146,11 @@ variables {
     account_id              = "000000000000"
     autoscaling_group       = "helmr-run"
     instance_profile_arn    = "arn:aws:iam::000000000000:instance-profile/helmr-run"
+    instance_role_arn       = "arn:aws:iam::000000000000:role/helmr-run"
     launch_ami_id           = "ami-0123456789abcdef0"
     ami_ids                 = ["ami-0123456789abcdef0"]
     allows_run              = true
-    allows_build            = false
+    allows_build            = true
     observation_ttl_seconds = 120
     instance_capacity = {
       milli_cpu                  = 4000
@@ -144,7 +159,7 @@ variables {
       build_cache_bytes          = 0
       artifact_cache_bytes       = 0
       vm_slots                   = 2
-      build_executors            = 0
+      build_executors            = 1
     }
   }]
   region_id                    = "helmr-us-east"
@@ -161,7 +176,7 @@ variables {
 }
 
 run "control_installs_exact_policy_before_start" {
-  command = plan
+  command = apply
 
   assert {
     condition = (
@@ -244,5 +259,46 @@ run "execution_roles_are_pull_only_for_the_exact_control_repository" {
       !strcontains(aws_iam_role_policy.dispatcher_execution.policy, "ecr:Delete")
     )
     error_message = "ECS execution roles must have pull-only access to the exact Control release repository."
+  }
+}
+
+run "workspace_image_cache_is_exact_and_control_only" {
+  command = plan
+
+  assert {
+    condition = (
+      { for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_IMAGE_CACHE_REGISTRY_AUTHORITY == "000000000000.dkr.ecr.us-east-1.amazonaws.com" &&
+      { for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_IMAGE_CACHE_REPOSITORY_PREFIX == "helmr-test/image-cache" &&
+      { for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_IMAGE_CACHE_ROLE_ARN == "arn:aws:iam::000000000000:role/helmr-test-image-cache" &&
+      { for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_IMAGE_CACHE_REPOSITORY_ARN_PREFIX == "arn:aws:ecr:us-east-1:000000000000:repository/helmr-test/image-cache/" &&
+      !strcontains({ for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_WORKER_GROUPS, "instance_role_arn") &&
+      !contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name], "HELMR_IMAGE_CACHE_ROLE_ARN") &&
+      !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "HELMR_IMAGE_CACHE_ROLE_ARN")
+    )
+    error_message = "only Control must receive the complete exact Execution image-cache configuration"
+  }
+
+  assert {
+    condition = (
+      strcontains(aws_iam_role_policy.control_task.policy, "ProvisionExecutionImageCache") &&
+      strcontains(aws_iam_role_policy.control_task.policy, "arn:aws:ecr:us-east-1:000000000000:repository/helmr-test/image-cache/environments/*") &&
+      strcontains(aws_iam_role_policy.control_task.policy, "ecr:CreateRepository") &&
+      strcontains(aws_iam_role_policy.control_task.policy, "ecr:SetRepositoryPolicy") &&
+      length(jsondecode(aws_iam_role.image_cache.assume_role_policy).Statement) == 1 &&
+      jsondecode(aws_iam_role.image_cache.assume_role_policy).Statement[0].Effect == "Allow" &&
+      jsondecode(aws_iam_role.image_cache.assume_role_policy).Statement[0].Action == "sts:AssumeRole" &&
+      keys(jsondecode(aws_iam_role.image_cache.assume_role_policy).Statement[0].Principal) == ["AWS"] &&
+      jsondecode(aws_iam_role.image_cache.assume_role_policy).Statement[0].Principal.AWS == "arn:aws:iam::000000000000:root" &&
+      keys(jsondecode(aws_iam_role.image_cache.assume_role_policy).Statement[0].Condition) == ["ArnEquals"] &&
+      keys(jsondecode(aws_iam_role.image_cache.assume_role_policy).Statement[0].Condition.ArnEquals) == ["aws:PrincipalArn"] &&
+      jsondecode(aws_iam_role.image_cache.assume_role_policy).Statement[0].Condition.ArnEquals["aws:PrincipalArn"] == ["arn:aws:iam::000000000000:role/helmr-run"] &&
+      !strcontains(aws_iam_role.image_cache.assume_role_policy, "*") &&
+      !strcontains(aws_iam_role.image_cache.assume_role_policy, "ArnLike") &&
+      !strcontains(aws_iam_role.image_cache.assume_role_policy, ":sts::") &&
+      !strcontains(aws_iam_role.image_cache.assume_role_policy, "instance-profile") &&
+      strcontains(aws_iam_policy.image_cache_boundary.policy, "ecr:GetAuthorizationToken") &&
+      strcontains(aws_iam_policy.image_cache_boundary.policy, "ecr:UploadLayerPart")
+    )
+    error_message = "Control provisioning and Worker cache-role authority must be bounded to the Environment repository namespace"
   }
 }

@@ -1,9 +1,6 @@
 package compute
 
-import (
-	"errors"
-	"testing"
-)
+import "testing"
 
 func TestResourceVectorFits(t *testing.T) {
 	capacity := ResourceVector{
@@ -42,32 +39,5 @@ func TestBuildResourceContracts(t *testing.T) {
 	}
 	if got, want := ImageBuildGuestResources(), BuildEnvelopeResources(); got != want {
 		t.Fatalf("ImageBuildGuestResources = %+v, want %+v", got, want)
-	}
-}
-
-func TestBuildAllocatableResourcesSubtractsFixedServiceReserve(t *testing.T) {
-	got, err := BuildAllocatableResources(ResourceVector{
-		MilliCPU:  4000,
-		MemoryMiB: 8192,
-		Slots:     1,
-	})
-	if err != nil {
-		t.Fatalf("BuildAllocatableResources(): %v", err)
-	}
-	want := ResourceVector{MilliCPU: 3000, MemoryMiB: 6144, Slots: 1}
-	if got != want {
-		t.Fatalf("allocatable = %+v, want %+v", got, want)
-	}
-}
-
-func TestBuildAllocatableResourcesRequiresCapacityBeyondReserve(t *testing.T) {
-	tests := []ResourceVector{
-		{MilliCPU: 1000, MemoryMiB: 4096, Slots: 1},
-		{MilliCPU: 4000, MemoryMiB: 2048, Slots: 1},
-	}
-	for _, hostPool := range tests {
-		if _, err := BuildAllocatableResources(hostPool); !errors.Is(err, ErrNoCapacity) {
-			t.Fatalf("BuildAllocatableResources(%+v) error = %v, want %v", hostPool, err, ErrNoCapacity)
-		}
 	}
 }

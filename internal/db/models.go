@@ -599,6 +599,7 @@ type Deployment struct {
 	BuildManagerIntegrity      pgtype.Text        `json:"build_manager_integrity"`
 	BuildManagerDigest         []byte             `json:"build_manager_digest"`
 	BuildContractVersion       string             `json:"build_contract_version"`
+	ImageCacheMode             string             `json:"image_cache_mode"`
 	Version                    string             `json:"version"`
 	ContentHash                string             `json:"content_hash"`
 	ApiVersion                 string             `json:"api_version"`
@@ -847,6 +848,21 @@ type Region struct {
 	Location       string             `json:"location"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RegistryCredentialResolution struct {
+	ID                   pgtype.UUID        `json:"id"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	DeploymentID         pgtype.UUID        `json:"deployment_id"`
+	BuildLeaseID         pgtype.UUID        `json:"build_lease_id"`
+	ImageOperationID     pgtype.UUID        `json:"image_operation_id"`
+	PlanDigest           []byte             `json:"plan_digest"`
+	RegistryAuthority    string             `json:"registry_authority"`
+	Username             string             `json:"username"`
+	SecretID             pgtype.UUID        `json:"secret_id"`
+	SecretVersionID      pgtype.UUID        `json:"secret_version_id"`
+	RevocationGeneration int64              `json:"revocation_generation"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 }
 
 type Run struct {

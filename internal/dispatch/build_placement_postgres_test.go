@@ -70,13 +70,13 @@ INSERT INTO deployments (
     id, org_id, project_id, environment_id, build_region_id,
     build_node_version, build_runtime_digest, build_toolchain_digest,
     build_manager_name, build_manager_version, build_manager_digest,
-    build_contract_version, version, content_hash,
+    build_contract_version, image_cache_mode, version, content_hash,
     deployment_source_artifact_id, status
 ) VALUES (
     $1, $2, $3, $4, 'us-east-1', '24.16.0', $5,
     decode(repeat('02', 32), 'hex'),
     'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
-    'helmr.program-build.v0',
+    'helmr.program-build.v0', 'prefer',
     'v1', $6, $7, 'queued'
 )`,
 		fixture.deploymentID, fixture.orgID, fixture.projectID,

@@ -63,6 +63,7 @@ variable "worker_groups" {
     account_id              = string
     autoscaling_group       = string
     instance_profile_arn    = string
+    instance_role_arn       = string
     launch_ami_id           = string
     ami_ids                 = list(string)
     allows_run              = bool

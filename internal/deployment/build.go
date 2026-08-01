@@ -18,7 +18,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	buildmodel "github.com/helmrdotdev/helmr/internal/imagebuild"
-	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -29,15 +28,19 @@ type Builder struct {
 	Connector         vm.Connector
 	RuntimeIdentityID string
 	Encoder           string
-	Images            buildmodel.Engine
+	Images            buildmodel.WorkerImageBuilder
 }
 
 func (builder Builder) Build(
 	ctx context.Context,
 	lease api.WorkerDeploymentBuildLease,
 	deployment api.WorkerDeploymentBuild,
+	revocations ImageOperationRevocations,
 ) (json.RawMessage, error) {
-	result, err := builder.build(ctx, lease, deployment)
+	if revocations == nil {
+		return nil, errors.New("Workspace image operation revocations are required")
+	}
+	result, err := builder.build(ctx, lease, deployment, revocations)
 	if err != nil {
 		var guestError *vm.GuestError
 		if errors.As(err, &guestError) {
@@ -60,12 +63,20 @@ func (builder Builder) build(
 	ctx context.Context,
 	lease api.WorkerDeploymentBuildLease,
 	work api.WorkerDeploymentBuild,
+	revocations ImageOperationRevocations,
 ) (_ BuildResult, returnErr error) {
 	if err := builder.validate(); err != nil {
 		return BuildResult{}, err
 	}
 	if work.BuildContractVersion != ProgramBuildContractVersion {
 		return failedBuild(BuildFailureUnsupportedToolchain, errors.New("Deployment build contract is unsupported")), nil
+	}
+	if work.ImageCacheMode != string(buildmodel.CachePrefer) &&
+		work.ImageCacheMode != string(buildmodel.CacheBypass) {
+		return failedBuild(
+			BuildFailureInvalidPlan,
+			fmt.Errorf("Deployment image cache mode %q is unsupported", work.ImageCacheMode),
+		), nil
 	}
 	managerPin := PackageManager{
 		Integrity: work.Manager.Integrity,
@@ -249,16 +260,19 @@ func (builder Builder) build(
 	images, err := builder.buildWorkspaceImages(
 		ctx,
 		lease,
+		work,
 		plan,
 		tree,
+		execution.TreeDescriptor,
 		ArchitectureX8664,
+		revocations,
 	)
 	if err != nil {
 		var fatal interface{ FatalWorker() bool }
 		if errors.As(err, &fatal) && fatal.FatalWorker() {
 			return BuildResult{}, err
 		}
-		return fail(BuildFailureWorkspaceImageFailed, err), nil
+		return fail(workspaceImageFailureReason(err), err), nil
 	}
 
 	var programOutput *ProgramOutput
@@ -311,6 +325,14 @@ func (builder Builder) build(
 		return BuildResult{}, err
 	}
 	return result, nil
+}
+
+func workspaceImageFailureReason(err error) BuildFailureReason {
+	var imageFailure *buildmodel.WorkerGuestFailure
+	if errors.As(err, &imageFailure) && imageFailure.Reason == buildmodel.GuestFailureNetworkQuota {
+		return BuildFailureNetworkLimit
+	}
+	return BuildFailureWorkspaceImageFailed
 }
 
 func (builder Builder) validate() error {
@@ -539,10 +561,13 @@ func (builder Builder) snapshotSource(
 func (builder Builder) buildWorkspaceImages(
 	ctx context.Context,
 	lease api.WorkerDeploymentBuildLease,
+	work api.WorkerDeploymentBuild,
 	plan BuildPlan,
 	tree *BuildTree,
+	treeDescriptor BuildTreeDescriptor,
 	architecture RuntimeArchitecture,
-) (_ []WorkspaceImage, returnErr error) {
+	revocations ImageOperationRevocations,
+) ([]WorkspaceImage, error) {
 	workspaces := make([]DefinitionInput, 0)
 	for _, definition := range plan.Definitions {
 		if definition.Kind == DefinitionKindWorkspace {
@@ -552,35 +577,63 @@ func (builder Builder) buildWorkspaceImages(
 	if len(workspaces) == 0 {
 		return []WorkspaceImage{}, nil
 	}
-	sourceRoot, cleanup, err := tree.MaterializeApplication(ctx, builder.WorkDir)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		returnErr = errors.Join(returnErr, cleanup())
-	}()
 	images := make([]WorkspaceImage, 0, len(workspaces))
 	for _, definition := range workspaces {
-		artifact, err := builder.Images.BuildImage(ctx, buildmodel.Request{
-			RunID:       lease.ID,
-			WorkspaceID: definition.DeclaredID,
-			Build:       definition.Workspace.ImageBuild,
-			Source:      buildmodel.Source{ProjectRoot: sourceRoot},
-		})
+		source, err := tree.SelectImageSource(ctx, definition.Workspace.ImageBuild)
+		if err != nil {
+			return nil, fmt.Errorf("select Workspace %q image source: %w", definition.DeclaredID, err)
+		}
+		artifact, err := builder.Images.BuildWorkspaceImage(ctx, buildmodel.WorkerBuildRequest{
+			Lease: buildmodel.BuildLeaseAuthority{
+				ID: lease.ID, OrgID: lease.OrgID, ProjectID: lease.ProjectID,
+				EnvironmentID: lease.EnvironmentID, DeploymentID: lease.DeploymentID,
+				WorkerGroupID: lease.WorkerGroupID, WorkerInstanceID: lease.WorkerInstanceID,
+				WorkerEpoch: lease.WorkerEpoch, Generation: lease.LeaseSequence,
+				WorkerProtocolVersion:            lease.WorkerProtocolVersion,
+				RequestedGuestEphemeralDiskBytes: lease.RequestedGuestEphemeralDiskBytes,
+				RequestedCPUMillis:               lease.RequestedCPUMillis,
+				RequestedMemoryBytes:             lease.RequestedMemoryBytes,
+				RequestedBuildExecutors:          lease.RequestedBuildExecutors,
+			},
+			RuntimeIdentityID:     builder.RuntimeIdentityID,
+			DeclarationSlot:       definition.DeclaredID,
+			Architecture:          string(architecture),
+			Plan:                  definition.Workspace.ImageBuild,
+			SubmittedSourceDigest: work.DeploymentSource.Digest,
+			BuildTreeDigest:       treeDescriptor.Digest,
+			BuildTreeSizeBytes:    treeDescriptor.SizeBytes,
+			RequestedCacheMode:    buildmodel.CacheMode(work.ImageCacheMode),
+			Source:                source,
+		}, revocations)
 		if err != nil {
 			return nil, fmt.Errorf("build Workspace %q image: %w", definition.DeclaredID, err)
 		}
 		object, verifyErr := builder.storeWorkspaceImage(
 			ctx,
 			artifact,
-			architecture,
 		)
-		cleanupErr := cleanupImageArtifact(artifact)
+		if verifyErr == nil {
+			verifyErr = builder.Images.CompleteWorkspaceImage(ctx, artifact, buildmodel.PublishedArtifact{
+				Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType,
+			})
+		}
+		cleanupErr := artifact.Close()
 		if verifyErr != nil || cleanupErr != nil {
 			return nil, errors.Join(verifyErr, cleanupErr)
 		}
 		images = append(images, WorkspaceImage{
 			DeclaredID: definition.DeclaredID,
+			Operation: WorkspaceImageOperationEvidence{
+				BuildLeaseID:         artifact.Evidence.Lease.ID,
+				BuildLeaseGeneration: artifact.Evidence.Lease.Generation,
+				DeclarationSlot:      artifact.Evidence.DeclarationSlot,
+				OperationID:          artifact.Evidence.OperationID,
+				RequestFingerprint:   artifact.Evidence.RequestFingerprint,
+				AttemptID:            artifact.Evidence.AttemptID,
+				PlanDigest:           artifact.Evidence.PlanDigest,
+				ResolutionSetDigest:  artifact.Evidence.ResolutionSetDigest,
+				RequestedCacheMode:   artifact.Evidence.RequestedCacheMode,
+			},
 			Artifact: WorkspaceImageArtifact{
 				Digest:       object.Digest,
 				SizeBytes:    object.SizeBytes,
@@ -594,43 +647,25 @@ func (builder Builder) buildWorkspaceImages(
 
 func (builder Builder) storeWorkspaceImage(
 	ctx context.Context,
-	artifact buildmodel.Artifact,
-	architecture RuntimeArchitecture,
+	artifact *buildmodel.WorkerArtifact,
 ) (cas.Object, error) {
-	info, err := os.Stat(artifact.ImageTarPath)
-	if err != nil {
-		return cas.Object{}, err
-	}
-	if !info.Mode().IsRegular() ||
-		info.Size() < 1 ||
-		info.Size() > maxWorkspaceImageBytes {
+	if artifact == nil || artifact.SizeBytes < 1 || artifact.SizeBytes > maxWorkspaceImageBytes {
 		return cas.Object{}, errors.New(
 			"Workspace image size is outside the build contract",
 		)
 	}
-	image, err := os.Open(artifact.ImageTarPath)
-	if err != nil {
-		return cas.Object{}, err
-	}
-	metadata, verifyErr := oci.Inspect(image)
-	if verifyErr == nil {
-		if metadata.ManifestCount != 1 {
-			verifyErr = errors.New(
-				"Workspace image must contain exactly one OCI manifest",
-			)
+	if artifact.Replayed {
+		object, err := builder.CAS.Stat(ctx, artifact.Digest)
+		if err != nil {
+			return cas.Object{}, fmt.Errorf("stat replayed Workspace image: %w", err)
 		}
+		if object.Digest != artifact.Digest || object.SizeBytes != artifact.SizeBytes ||
+			object.MediaType != WorkspaceImageArtifactMediaType {
+			return cas.Object{}, errors.New("replayed Workspace image does not exact-match CAS")
+		}
+		return object, nil
 	}
-	if verifyErr == nil {
-		verifyErr = validateWorkspaceImagePlatform(
-			metadata.Platform,
-			architecture,
-		)
-	}
-	closeErr := image.Close()
-	if verifyErr != nil || closeErr != nil {
-		return cas.Object{}, errors.Join(verifyErr, closeErr)
-	}
-	image, err = os.Open(artifact.ImageTarPath)
+	image, err := artifact.Open()
 	if err != nil {
 		return cas.Object{}, err
 	}
@@ -639,58 +674,17 @@ func (builder Builder) storeWorkspaceImage(
 		WorkspaceImageArtifactMediaType,
 		io.LimitReader(image, maxWorkspaceImageBytes+1),
 	)
-	closeErr = image.Close()
+	closeErr := image.Close()
 	if putErr != nil || closeErr != nil {
 		return cas.Object{}, errors.Join(putErr, closeErr)
 	}
 	if object.SizeBytes < 1 || object.SizeBytes > maxWorkspaceImageBytes {
 		return cas.Object{}, errors.New("Workspace image size is outside the build contract")
 	}
+	if object.Digest != artifact.Digest || object.SizeBytes != artifact.SizeBytes {
+		return cas.Object{}, errors.New("Workspace image CAS result does not match the guest result")
+	}
 	return object, nil
-}
-
-func cleanupImageArtifact(artifact buildmodel.Artifact) error {
-	root := filepath.Clean(strings.TrimSpace(artifact.RootPath))
-	if root == "" ||
-		!filepath.IsAbs(root) ||
-		root == string(filepath.Separator) {
-		return errors.New("Workspace image artifact root is unsafe")
-	}
-	for _, name := range []string{
-		artifact.ImageTarPath,
-		artifact.ConfigPath,
-		artifact.ManifestPath,
-	} {
-		candidate := filepath.Clean(strings.TrimSpace(name))
-		relative, err := filepath.Rel(root, candidate)
-		if err != nil ||
-			relative == "." ||
-			relative == ".." ||
-			strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			return errors.New("Workspace image artifact paths are not confined")
-		}
-	}
-	return os.RemoveAll(root)
-}
-
-func validateWorkspaceImagePlatform(
-	platform *oci.Platform,
-	architecture RuntimeArchitecture,
-) error {
-	if architecture != ArchitectureX8664 {
-		return fmt.Errorf(
-			"Workspace image architecture %q is unsupported",
-			architecture,
-		)
-	}
-	if platform == nil ||
-		platform.OS != "linux" ||
-		platform.Architecture != "amd64" {
-		return fmt.Errorf(
-			"Workspace image platform does not match linux/amd64",
-		)
-	}
-	return nil
 }
 
 func truncateUTF8(value string, maxBytes int) string {

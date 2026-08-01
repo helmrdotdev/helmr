@@ -13,9 +13,10 @@ import (
 	"sync"
 	"syscall"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/buildkit"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
@@ -26,6 +27,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
+	imagecacheecr "github.com/helmrdotdev/helmr/internal/imagecache/ecr"
 	"github.com/helmrdotdev/helmr/internal/runtime"
 	runtimeidentity "github.com/helmrdotdev/helmr/internal/runtime/identity"
 	"github.com/helmrdotdev/helmr/internal/version"
@@ -256,22 +258,6 @@ func run(log *slog.Logger) error {
 			XZ:               xz,
 		}
 	}
-	var imageBuilder imagebuild.Engine
-	closeBuilder := func() error { return nil }
-	if supportsBuild {
-		imageBuilder, closeBuilder, err = buildkit.OpenFresh(ctx, buildkit.Config{
-			Addr:       cfg.BuildKitAddr,
-			OutputRoot: filepath.Join(workDir, "builds"),
-		})
-		if err != nil {
-			return fmt.Errorf("configure buildkit: %w", err)
-		}
-	}
-	defer func() {
-		if err := closeBuilder(); err != nil {
-			log.Warn("close buildkit", "error", err)
-		}
-	}()
 	store, err := cas.NewS3(ctx, cfg.CASURI, cas.WithS3TempDir(filepath.Join(workDir, "tmp", "cas")))
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
@@ -294,22 +280,48 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure authenticated control client: %w", err)
 	}
-	certifiedVM := compute.ResourceVector{
-		MilliCPU:  cfg.VMVCPUCount * 1000,
-		MemoryMiB: cfg.VMMemoryMiB,
-		DiskMiB:   cfg.VMScratchDiskMiB,
-		Slots:     1,
-	}
-	if supportsBuild && !certifiedVM.Fits(compute.BuildGuestResources()) {
-		return errors.New("configured VM shape cannot host the fixed build guest")
-	}
-	if supportsBuild && !supportsRun {
-		certifiedVM = compute.BuildGuestResources()
+	certifiedVM, err := certifyVMResources(cfg, supportsRun, supportsBuild)
+	if err != nil {
+		return err
 	}
 	runtimeStartLimit := max(int(cfg.WorkerRuntimeStarts), int(cfg.WorkerBuildExecutors))
 	runtimeConnector, err := vm.NewStartLimiter(connector, runtimeStartLimit)
 	if err != nil {
 		return fmt.Errorf("configure host runtime start limit: %w", err)
+	}
+	var imageBuilder imagebuild.WorkerImageBuilder
+	if supportsBuild {
+		imageBuildWorkDir := filepath.Join(workDir, "image-builds")
+		if err := ensurePrivateDirectory(imageBuildWorkDir); err != nil {
+			return fmt.Errorf("prepare Workspace image build directory: %w", err)
+		}
+		imageControl := workerImageControl{client: controlClient}
+		var cacheCredentials imagebuild.CacheCredentialFetcher
+		if cfg.ImageCache != nil {
+			awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
+			if err != nil {
+				return fmt.Errorf("load Workspace image cache AWS configuration: %w", err)
+			}
+			cacheConfig := imagecacheecr.Config{
+				RegistryAuthority:   cfg.ImageCache.RegistryAuthority,
+				RepositoryPrefix:    cfg.ImageCache.RepositoryPrefix,
+				CacheRoleARN:        cfg.ImageCache.CacheRoleARN,
+				RepositoryARNPrefix: cfg.ImageCache.RepositoryARNPrefix,
+			}
+			provider, err := imagecacheecr.NewCredentialProvider(
+				cacheConfig,
+				sts.NewFromConfig(awsCfg),
+				imagecacheecr.NewTokenClientFactory(awsCfg),
+			)
+			if err != nil {
+				return fmt.Errorf("configure Workspace image cache credentials: %w", err)
+			}
+			cacheCredentials = workerImageCacheCredentials{provider: provider}
+		}
+		imageBuilder = imagebuild.VMEngine{
+			Connector: runtimeConnector, Admission: imageControl, Credentials: imageControl,
+			Cache: cacheCredentials, Completion: imageControl, WorkDir: imageBuildWorkDir,
+		}
 	}
 	hostDiskMiB, err := advertisedWorkerDiskMiB(workDir, cfg.WorkerDiskMiB, cfg.WorkerDiskReserveMiB)
 	if err != nil {
@@ -336,10 +348,6 @@ func run(log *slog.Logger) error {
 		Slots:     cfg.WorkerExecutionSlots,
 	}
 	if supportsBuild {
-		allocatable, err = compute.BuildAllocatableResources(allocatable)
-		if err != nil {
-			return fmt.Errorf("reserve build worker service capacity: %w", err)
-		}
 		if !fitsBuildHostCompute(allocatable) {
 			return errors.New("build worker allocatable capacity cannot host the fixed build guest")
 		}
@@ -571,6 +579,22 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+func certifyVMResources(cfg config.Worker, supportsRun bool, supportsBuild bool) (compute.ResourceVector, error) {
+	resources := compute.ResourceVector{
+		MilliCPU:  cfg.VMVCPUCount * 1000,
+		MemoryMiB: cfg.VMMemoryMiB,
+		DiskMiB:   cfg.VMScratchDiskMiB,
+		Slots:     1,
+	}
+	if supportsBuild && !resources.Fits(compute.ImageBuildGuestResources()) {
+		return compute.ResourceVector{}, errors.New("configured VM shape cannot host the fixed image-build guest")
+	}
+	if supportsBuild && !supportsRun {
+		return compute.ImageBuildGuestResources(), nil
+	}
+	return resources, nil
 }
 
 func requireExecutable(name string) (string, error) {

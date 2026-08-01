@@ -111,7 +111,13 @@ func IngestBuildTreeArchive(
 	if err != nil {
 		return nil, err
 	}
-	tree := &BuildTree{content: snapshot, inspected: inspected}
+	tree, err := newBuildTree(snapshot, inspected, BuildTreeDescriptor{
+		Digest:    archiveDigest,
+		SizeBytes: archiveSize,
+	})
+	if err != nil {
+		return nil, err
+	}
 	snapshot = nil
 	return tree, nil
 }

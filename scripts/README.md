@@ -17,8 +17,7 @@ nix run .#ci-checks
 
 Use the narrower Nix apps when iterating on one CI area: `ci-policy`,
 `ci-generated`, `ci-typescript`, `ci-go-test`, `ci-go-lint`, `ci-go-build`,
-`ci-go-race`, `ci-linux-compile`, `ci-linux-lint`, `ci-postgres`, and
-`ci-buildkit`.
+`ci-go-race`, `ci-linux-compile`, `ci-linux-lint`, and `ci-postgres`.
 
 `ci-linux-compile` cross-compiles the Linux-only Firecracker worker packages
 without trying to launch a VM. Firecracker execution smoke tests need a real

@@ -127,6 +127,9 @@ func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
 	if metadata.IdempotencyKey != "deploy-1" {
 		t.Fatalf("deployment idempotency key = %q", metadata.IdempotencyKey)
 	}
+	if metadata.ImageCacheMode != "prefer" {
+		t.Fatalf("deployment image cache mode = %q", metadata.ImageCacheMode)
+	}
 	if strings.TrimSpace(out.String()) != "20260101.1" {
 		t.Fatalf("output = %q", out.String())
 	}
@@ -440,12 +443,15 @@ func TestDeployCommandJSONUsesProjectAndEnv(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", root, "--project", "project-override", "--env", "prod", "--detach", "--json"})
+	cmd.SetArgs([]string{"deploy", root, "--project", "project-override", "--env", "prod", "--detach", "--json", "--no-image-cache"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	if metadata.ProjectID != "" || metadata.EnvironmentID != "" {
 		t.Fatalf("metadata = %+v", metadata)
+	}
+	if metadata.ImageCacheMode != "bypass" {
+		t.Fatalf("deployment image cache mode = %q", metadata.ImageCacheMode)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	if len(lines) == 0 {

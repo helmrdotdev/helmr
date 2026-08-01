@@ -603,12 +603,12 @@ variable "build_worker_disk_reserve_mib" {
 }
 variable "build_worker_vm_vcpus" {
   type     = number
-  default  = null
+  default  = 3
   nullable = true
 }
 variable "build_worker_vm_memory_mib" {
   type     = number
-  default  = null
+  default  = 4096
   nullable = true
 }
 variable "build_worker_vm_scratch_disk_mib" {

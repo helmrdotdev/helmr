@@ -29,6 +29,27 @@ func TestFitsBuildHostComputeUsesDiskIndependentHostPool(t *testing.T) {
 	}
 }
 
+func TestCertifyBuildOnlyVMUsesCompleteImageBuildEnvelope(t *testing.T) {
+	cfg := config.Worker{
+		VMVCPUCount:      3,
+		VMMemoryMiB:      4096,
+		VMScratchDiskMiB: 32768,
+	}
+	resources, err := certifyVMResources(cfg, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resources != compute.ImageBuildGuestResources() {
+		t.Fatalf("certified resources = %+v, want %+v", resources, compute.ImageBuildGuestResources())
+	}
+
+	cfg.VMVCPUCount = 2
+	if _, err := certifyVMResources(cfg, false, true); err == nil ||
+		!strings.Contains(err.Error(), "image-build guest") {
+		t.Fatalf("undersized image-build VM error = %v", err)
+	}
+}
+
 func TestValidateWorkerStoresRequiresDisjointNamespaces(t *testing.T) {
 	base := config.Worker{
 		CASURI:           "s3://ordinary",

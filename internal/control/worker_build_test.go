@@ -22,6 +22,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -82,6 +83,62 @@ func TestWorkerCompleteDeploymentBuildReplaysConcurrentCompletion(
 	}
 }
 
+func TestValidateCompletedWorkspaceImageOperationsRejectsAuthorityMismatch(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(*deploymentBuildCompletionStore, *deployment.BuildResult)
+		mode   imagebuild.CacheMode
+	}{
+		{
+			name: "claim slot",
+			change: func(store *deploymentBuildCompletionStore, _ *deployment.BuildResult) {
+				store.imageClaim.SlotHash[0] ^= 0xff
+			},
+			mode: imagebuild.CachePrefer,
+		},
+		{
+			name: "physical attempt",
+			change: func(_ *deploymentBuildCompletionStore, result *deployment.BuildResult) {
+				result.Succeeded.WorkspaceImages[0].Operation.AttemptID = uuid.Must(uuid.NewV7()).String()
+			},
+			mode: imagebuild.CachePrefer,
+		},
+		{
+			name:   "Deployment cache mode",
+			change: func(*deploymentBuildCompletionStore, *deployment.BuildResult) {},
+			mode:   imagebuild.CacheBypass,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, store, request, _ := newDeploymentBuildCompletionFixture(t)
+			var completion struct {
+				Result json.RawMessage `json:"result"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&completion); err != nil {
+				t.Fatal(err)
+			}
+			result, err := deployment.ParseBuildResult(completion.Result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			test.change(store, &result)
+			err = validateCompletedWorkspaceImageOperations(
+				t.Context(),
+				store,
+				pgvalue.MustUUIDValue(store.locked.EnvironmentID),
+				pgvalue.MustUUIDValue(store.locked.CurrentBuildLeaseID),
+				1,
+				test.mode,
+				result.Succeeded.WorkspaceImages,
+			)
+			if err == nil {
+				t.Fatal("mismatched Workspace image operation was accepted")
+			}
+		})
+	}
+}
+
 func newDeploymentBuildCompletionFixture(
 	t *testing.T,
 ) (*Server, *deploymentBuildCompletionStore, *http.Request, string) {
@@ -134,6 +191,34 @@ func newDeploymentBuildCompletionFixture(
 	lockfileHash := sha256.Sum256(lockfile)
 	lockfileDigest := "sha256:" + hex.EncodeToString(lockfileHash[:])
 
+	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	projectID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	deploymentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	buildLeaseID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	workerInstanceID := uuid.Must(uuid.NewV7())
+	operationID := uuid.Must(uuid.NewV7())
+	attemptID := uuid.Must(uuid.NewV7())
+	imagePlan := imagebuild.Build{
+		FormatVersion: imagebuild.FormatVersion,
+		Root:          "repo",
+		Images: []imagebuild.Spec{{
+			Key: "repo",
+			Platform: imagebuild.Platform{
+				OS:           "linux",
+				Architecture: string(deployment.ArchitectureX8664),
+			},
+			Steps: []imagebuild.Step{{
+				From: &imagebuild.From{Ref: "alpine:3.23"},
+			}},
+		}},
+	}
+	planDigest, err := imagebuild.Digest(imagePlan, string(deployment.ArchitectureX8664))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestFingerprint := controlDigest("Workspace image request")
+	resolutionSetDigest := imagebuild.ResolutionSetDigest([]imagebuild.RegistryBinding{})
 	imageDigest := "sha256:" + strings.Repeat("d", sha256.Size*2)
 	result := deployment.BuildResult{
 		FormatVersion: deployment.BuildResultFormatVersion,
@@ -145,20 +230,7 @@ func newDeploymentBuildCompletionFixture(
 					Kind:       deployment.DefinitionKindWorkspace,
 					DeclaredID: "repo",
 					Workspace: &deployment.WorkspaceInputManifest{
-						ImageBuild: imagebuild.Build{
-							FormatVersion: imagebuild.FormatVersion,
-							Root:          "repo",
-							Images: []imagebuild.Spec{{
-								Key: "repo",
-								Platform: imagebuild.Platform{
-									OS:           "linux",
-									Architecture: string(deployment.ArchitectureX8664),
-								},
-								Steps: []imagebuild.Step{{
-									From: &imagebuild.From{Ref: "alpine:3.23"},
-								}},
-							}},
-						},
+						ImageBuild: imagePlan,
 						Resources: deployment.ResourcesManifest{
 							MilliCPU:  1,
 							MemoryMiB: 1,
@@ -190,6 +262,17 @@ func newDeploymentBuildCompletionFixture(
 			},
 			WorkspaceImages: []deployment.WorkspaceImage{{
 				DeclaredID: "repo",
+				Operation: deployment.WorkspaceImageOperationEvidence{
+					BuildLeaseID:         pgvalue.UUIDString(buildLeaseID),
+					BuildLeaseGeneration: 1,
+					DeclarationSlot:      "repo",
+					OperationID:          operationID.String(),
+					RequestFingerprint:   requestFingerprint,
+					AttemptID:            attemptID.String(),
+					PlanDigest:           planDigest,
+					ResolutionSetDigest:  resolutionSetDigest,
+					RequestedCacheMode:   imagebuild.CachePrefer,
+				},
 				Artifact: deployment.WorkspaceImageArtifact{
 					Digest:       imageDigest,
 					SizeBytes:    1,
@@ -203,13 +286,49 @@ func newDeploymentBuildCompletionFixture(
 	if err != nil {
 		t.Fatal(err)
 	}
+	requestFingerprintBytes, err := deployment.SHA256DigestBytes(requestFingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slotHash, err := idempotency.WorkspaceImageBuildSlotHash(
+		pgvalue.MustUUIDValue(environmentID),
+		pgvalue.MustUUIDValue(buildLeaseID),
+		1,
+		"repo",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := json.Marshal(workspaceImageOperationReceipt{
+		BuildLeaseID:         pgvalue.UUIDString(buildLeaseID),
+		BuildLeaseGeneration: 1,
+		DeclarationSlot:      "repo",
+		OperationID:          operationID.String(),
+		AttemptID:            attemptID.String(),
+		RequestFingerprint:   requestFingerprint,
+		PlanDigest:           planDigest,
+		ResolutionSetDigest:  resolutionSetDigest,
+		RequestedCacheMode:   imagebuild.CachePrefer,
+		Result: imagebuild.GuestResult{
+			ExecutionABI: imagebuild.ExecutionABI,
+			Outcome:      imagebuild.GuestSucceeded,
+			OCIDigest:    imageDigest,
+			OCISizeBytes: 1,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageClaim := db.IdempotencyClaim{
+		ID:                 pgvalue.UUID(operationID),
+		EnvironmentID:      environmentID,
+		Operation:          "workspace.image.build",
+		SlotHash:           slotHash[:],
+		RequestFingerprint: requestFingerprintBytes,
+		State:              "completed",
+		Receipt:            receipt,
+	}
 
-	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	projectID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	deploymentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	buildLeaseID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	workerInstanceID := uuid.Must(uuid.NewV7())
 	authority := db.GetDeploymentBuildCompletionAuthorityRow{
 		State:                      db.DeploymentBuildLeaseStateRunning,
 		ExpiresAt:                  pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -222,6 +341,7 @@ func newDeploymentBuildCompletionFixture(
 		BuildManagerVersion:        "1.3.11",
 		BuildManagerDigest:         managerDigest,
 		BuildContractVersion:       deployment.ProgramBuildContractVersion,
+		ImageCacheMode:             string(imagebuild.CachePrefer),
 		DeploymentSourceArtifactID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		DeploymentSourceDigest:     source.Digest,
 		DeploymentSourceSizeBytes:  source.SizeBytes,
@@ -245,12 +365,14 @@ func newDeploymentBuildCompletionFixture(
 			BuildManagerVersion:        authority.BuildManagerVersion,
 			BuildManagerDigest:         authority.BuildManagerDigest,
 			BuildContractVersion:       authority.BuildContractVersion,
+			ImageCacheMode:             authority.ImageCacheMode,
 			DeploymentSourceArtifactID: authority.DeploymentSourceArtifactID,
 			DeploymentSourceDigest:     authority.DeploymentSourceDigest,
 			DeploymentSourceSizeBytes:  authority.DeploymentSourceSizeBytes,
 			DeploymentSourceMediaType:  authority.DeploymentSourceMediaType,
 		},
 		deploymentID: deploymentID,
+		imageClaim:   imageClaim,
 	}
 	server := &Server{
 		db: store,
@@ -308,9 +430,21 @@ type deploymentBuildCompletionStore struct {
 	authority     db.GetDeploymentBuildCompletionAuthorityRow
 	locked        db.LockDeploymentBuildTerminalFenceRow
 	deploymentID  pgtype.UUID
+	imageClaim    db.IdempotencyClaim
 	inTransaction bool
 	committed     bool
 	completed     int
+}
+
+func (store *deploymentBuildCompletionStore) LockCompletedWorkspaceImageOperation(
+	_ context.Context,
+	params db.LockCompletedWorkspaceImageOperationParams,
+) (db.IdempotencyClaim, error) {
+	if params.EnvironmentID != store.imageClaim.EnvironmentID ||
+		params.ImageOperationID != store.imageClaim.ID {
+		return db.IdempotencyClaim{}, pgx.ErrNoRows
+	}
+	return store.imageClaim, nil
 }
 
 func (store *deploymentBuildCompletionStore) GetDeploymentBuildTerminalResult(

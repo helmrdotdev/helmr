@@ -103,17 +103,6 @@ variable "root_volume_size_gb" {
   default     = 120
 }
 
-variable "buildkit_slirp_cidr" {
-  description = "Default IPv4 CIDR used by rootlesskit/slirp4netns in the AMI BuildKit service. Worker launch configuration can override this service at boot."
-  type        = string
-  default     = "198.18.0.0/24"
-
-  validation {
-    condition     = can(cidrnetmask(var.buildkit_slirp_cidr))
-    error_message = "buildkit_slirp_cidr must be an IPv4 CIDR prefix."
-  }
-}
-
 variable "image_version" {
   description = "Semantic version used by EC2 Image Builder resources."
   type        = string

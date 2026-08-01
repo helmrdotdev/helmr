@@ -1,4 +1,17 @@
-mock_provider "aws" {}
+mock_provider "aws" {
+  mock_data "aws_caller_identity" {
+    defaults = { account_id = "000000000000" }
+  }
+  mock_data "aws_partition" {
+    defaults = { partition = "aws", dns_suffix = "amazonaws.com" }
+  }
+  mock_data "aws_region" {
+    defaults = { region = "us-east-1" }
+  }
+  mock_resource "aws_iam_policy" {
+    defaults = { arn = "arn:aws:iam::000000000000:policy/mock" }
+  }
+}
 mock_provider "random" {}
 
 override_resource {
@@ -92,7 +105,7 @@ run "worker_group_requires_a_role" {
     database_skip_final_snapshot = true
     worker_groups = [{
       id                      = "run-workers", name = "Run workers", region = "us-east-1", account_id = "000000000000"
-      autoscaling_group       = "helmr-run", instance_profile_arn = "arn:aws:iam::000000000000:instance-profile/helmr-run"
+      autoscaling_group       = "helmr-run", instance_profile_arn = "arn:aws:iam::000000000000:instance-profile/helmr-run", instance_role_arn = "arn:aws:iam::000000000000:role/helmr-run"
       launch_ami_id           = "ami-0123456789abcdef0", ami_ids = ["ami-0123456789abcdef0"]
       allows_run              = false, allows_build = false
       observation_ttl_seconds = 120
@@ -122,7 +135,7 @@ run "inactive_role_capacity_cannot_be_negative" {
     database_skip_final_snapshot = true
     worker_groups = [{
       id                      = "run-workers", name = "Run workers", region = "us-east-1", account_id = "000000000000"
-      autoscaling_group       = "helmr-run", instance_profile_arn = "arn:aws:iam::000000000000:instance-profile/helmr-run"
+      autoscaling_group       = "helmr-run", instance_profile_arn = "arn:aws:iam::000000000000:instance-profile/helmr-run", instance_role_arn = "arn:aws:iam::000000000000:role/helmr-run"
       launch_ami_id           = "ami-0123456789abcdef0", ami_ids = ["ami-0123456789abcdef0"]
       allows_run              = true, allows_build = false
       observation_ttl_seconds = 120

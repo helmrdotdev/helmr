@@ -5,7 +5,61 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
+
+func TestNetworkQuotaFailureIsHostOnlyTerminalEvidence(t *testing.T) {
+	result := GuestResult{
+		ExecutionABI:  ExecutionABI,
+		Outcome:       GuestFailed,
+		FailureReason: GuestFailureNetworkQuota,
+		Error:         "image-build public-egress limit was exceeded",
+	}
+	if err := ValidateGuestResult(result); err != nil {
+		t.Fatalf("terminal result validation = %v", err)
+	}
+	if _, err := CanonicalGuestResult(result); err == nil ||
+		!strings.Contains(err.Error(), "host-authoritative") {
+		t.Fatalf("guest wire result error = %v", err)
+	}
+}
+
+func TestCacheScopeBindsEnvironmentDeclarationArchitectureAndPinnedABIs(t *testing.T) {
+	environmentID := uuid.MustParse("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
+	scope, err := CacheScope(environmentID, "workspace", "x86_64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := CacheScope(environmentID, "workspace", "x86_64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scope != replay || !strings.HasPrefix(scope, "sha256:") || len(scope) != 71 {
+		t.Fatalf("cache scope = %q, replay = %q", scope, replay)
+	}
+	for name, changed := range map[string]func() (string, error){
+		"environment": func() (string, error) {
+			return CacheScope(uuid.MustParse("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"), "workspace", "x86_64")
+		},
+		"declaration": func() (string, error) {
+			return CacheScope(environmentID, "other", "x86_64")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			value, err := changed()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if value == scope {
+				t.Fatalf("changed %s did not change cache scope", name)
+			}
+		})
+	}
+	if _, err := CacheScope(environmentID, "workspace", "aarch64"); err == nil {
+		t.Fatal("cache scope accepted an unsupported architecture")
+	}
+}
 
 func TestValidate(t *testing.T) {
 	build := validBuild()

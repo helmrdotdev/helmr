@@ -26,6 +26,28 @@ func TestRootKeyRequiresBase64EncodingOf32Bytes(t *testing.T) {
 	}
 }
 
+func TestLoadImageCacheIsAbsentOrCompletelyConfigured(t *testing.T) {
+	config, err := loadImageCache()
+	if err != nil || config != nil {
+		t.Fatalf("empty config = %+v, %v", config, err)
+	}
+
+	t.Setenv("HELMR_IMAGE_CACHE_REGISTRY_AUTHORITY", "123456789012.dkr.ecr.us-east-1.amazonaws.com")
+	if _, err := loadImageCache(); err == nil {
+		t.Fatal("partial image cache configuration accepted")
+	}
+	t.Setenv("HELMR_IMAGE_CACHE_REPOSITORY_PREFIX", "helmr-cache")
+	t.Setenv("HELMR_IMAGE_CACHE_ROLE_ARN", "arn:aws:iam::123456789012:role/helmr-cache")
+	t.Setenv("HELMR_IMAGE_CACHE_REPOSITORY_ARN_PREFIX", "arn:aws:ecr:us-east-1:123456789012:repository/helmr-cache/")
+	config, err = loadImageCache()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config == nil || config.RepositoryPrefix != "helmr-cache" || config.CacheRoleARN == "" {
+		t.Fatalf("config = %+v", config)
+	}
+}
+
 func TestLoadDispatcherReadsScheduleClaimConfig(t *testing.T) {
 	setDispatcherFencing(t)
 	t.Setenv("HELMR_DATABASE_URL", " postgres://example ")
@@ -543,7 +565,6 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("HELMR_WORKER_WORK_DIR", " /var/lib/helmr/scratch/worker ")
 	t.Setenv("HELMR_WORKER_IMAGES_DIR", " /var/lib/helmr/images ")
 	t.Setenv("HELMR_GIT_PATH", " /usr/bin/git ")
-	t.Setenv("HELMR_WORKER_BUILDKIT_ADDR", " unix:///run/helmr/buildkit/buildkitd.sock ")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_PATH", " /usr/bin/firecracker ")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_PATH", " /usr/bin/jailer ")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", " 1001 ")
@@ -577,7 +598,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.CASURI != "s3://helmr-cas" || cfg.WorkDir != "/var/lib/helmr/scratch/worker" || cfg.BuildCacheDir != "/var/lib/helmr/cache" || cfg.BuildScratchDir != "/var/lib/helmr/scratch" || cfg.ImagesDir != "/var/lib/helmr/images" || cfg.GitPath != "/usr/bin/git" || cfg.BuildKitAddr != "unix:///run/helmr/buildkit/buildkitd.sock" {
+	if cfg.CASURI != "s3://helmr-cas" || cfg.WorkDir != "/var/lib/helmr/scratch/worker" || cfg.BuildCacheDir != "/var/lib/helmr/cache" || cfg.BuildScratchDir != "/var/lib/helmr/scratch" || cfg.ImagesDir != "/var/lib/helmr/images" || cfg.GitPath != "/usr/bin/git" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.NetworkLinkPool != "169.254.128.0/18" || cfg.NetworkTranslationPool != "100.97.0.0/16" || cfg.NetworkResolverIPv4 != "1.0.0.1" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.WorkerDiskReserveMiB != 2048 || cfg.SubstrateCacheMaxMiB != 32768 || cfg.ArtifactCacheMaxMiB != 16384 || cfg.WorkerExecutionSlots != 4 || cfg.WorkerCertificationTTL != 12*time.Hour || cfg.VMInitTimeout != 45*time.Second || cfg.VMHealthTimeout != 90*time.Second || cfg.VMHealthAttemptTimeout != 7*time.Second || cfg.WorkspaceMountStartupTimeout != 3*time.Minute {
@@ -727,27 +748,6 @@ func TestLoadWorkerControlReadsOnlyControlAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.ControlURL != "https://api.example.test" || cfg.WorkerInstanceCredentialPath != "/run/helmr/worker-credential.json" || cfg.PollEvery <= 0 {
-		t.Fatalf("config = %+v", cfg)
-	}
-}
-
-func TestLoadWorkerDoesNotReadGenericBuildKitHost(t *testing.T) {
-	setWorkerRuntimeEnv(t, true)
-	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
-	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
-	t.Setenv("HELMR_WORKER_GROUP_ID", "run-workers")
-	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
-	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
-	t.Setenv("HELMR_WORKER_ROLES", "build,run")
-	t.Setenv("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS", "[]")
-	t.Setenv("BUILDKIT_HOST", "tcp://buildkit.example.test:1234")
-
-	cfg, err := LoadWorker()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.BuildKitAddr != "" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }

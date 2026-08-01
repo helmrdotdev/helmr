@@ -15,6 +15,7 @@ import (
 	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	awsecr "github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -27,6 +28,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
+	"github.com/helmrdotdev/helmr/internal/imagecache"
+	imagecacheecr "github.com/helmrdotdev/helmr/internal/imagecache/ecr"
 	"github.com/helmrdotdev/helmr/internal/platformlock"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -206,6 +209,29 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if cfg.GitHubOAuthClientID != "" && cfg.GitHubOAuthClientSecret != "" {
 		authProvider = control.NewGitHubOAuthProvider(cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, publicURL)
 	}
+	var cacheRepositories imagecache.RepositoryProvisioner
+	var cacheRetirer imagecache.RepositoryRetirer
+	if cfg.ImageCache != nil {
+		awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
+		if err != nil {
+			return fmt.Errorf("load Workspace image cache AWS configuration: %w", err)
+		}
+		provisioner, err := imagecacheecr.NewProvisioner(
+			imagecacheecr.Config{
+				RegistryAuthority:   cfg.ImageCache.RegistryAuthority,
+				RepositoryPrefix:    cfg.ImageCache.RepositoryPrefix,
+				CacheRoleARN:        cfg.ImageCache.CacheRoleARN,
+				RepositoryARNPrefix: cfg.ImageCache.RepositoryARNPrefix,
+			},
+			awsecr.NewFromConfig(awsCfg),
+		)
+		if err != nil {
+			return fmt.Errorf("configure Workspace image cache repositories: %w", err)
+		}
+		cacheRepositories = provisioner
+		cacheRetirer = provisioner
+		go control.RunImageCacheRetirement(backgroundCtx, log, queries, cacheRetirer)
+	}
 	handler, err := control.NewServer(control.ServerConfig{
 		Log:                   log,
 		DeploymentMode:        cfg.DeploymentMode,
@@ -222,6 +248,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		PlatformArtifactLocks: platformArtifactLocks,
 		Secrets:               secretStore,
 		SecretDelivery:        secretStore,
+		RegistryCredentials:   secretStore,
+		CacheRepositories:     cacheRepositories,
 		WorkspaceFencingKey:   workspaceFencingKey,
 		TokenCredentialKey:    tokenCredentialKey,
 		EventStream:           eventStream,

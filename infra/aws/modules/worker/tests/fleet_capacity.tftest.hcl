@@ -22,28 +22,38 @@ mock_provider "aws" {
       id = "lt-00000000000000000"
     }
   }
+
+  mock_resource "aws_iam_policy" {
+    defaults = {
+      arn = "arn:aws:iam::111122223333:policy/helmr-test-worker-boundary"
+    }
+  }
 }
 
 variables {
-  name                       = "helmr-test-run"
-  worker_group_id            = "run-workers"
-  worker_roles               = ["run"]
-  network_blocked_ipv4_cidrs = ["10.0.0.0/8", "169.254.0.0/16"]
-  network_link_pool          = "169.254.64.0/18"
-  network_translation_pool   = "100.96.0.0/16"
-  vpc_id                     = "vpc-00000000000000000"
-  subnet_ids                 = ["subnet-00000000000000000"]
-  ami_id                     = "ami-00000000000000000"
-  worker_control_url         = "https://control.example.test"
-  cas_uri                    = "s3://helmr-test-cas"
-  cas_bucket_arn             = "arn:aws:s3:::helmr-test-cas"
-  kms_key_arn                = "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000000"
-  platform_store_uri         = "s3://helmr-test-runtime/objects"
-  platform_store_bucket_arn  = "arn:aws:s3:::helmr-test-runtime"
-  platform_store_kms_key_arn = "arn:aws:kms:us-east-1:111122223333:key/11111111-1111-1111-1111-111111111111"
-  build_policy_digest        = null
-  min_size                   = 0
-  max_size                   = 1
+  name                              = "helmr-test-run"
+  worker_group_id                   = "run-workers"
+  worker_roles                      = ["run"]
+  network_blocked_ipv4_cidrs        = ["10.0.0.0/8", "169.254.0.0/16"]
+  network_link_pool                 = "169.254.64.0/18"
+  network_translation_pool          = "100.96.0.0/16"
+  vpc_id                            = "vpc-00000000000000000"
+  subnet_ids                        = ["subnet-00000000000000000"]
+  ami_id                            = "ami-00000000000000000"
+  worker_control_url                = "https://control.example.test"
+  cas_uri                           = "s3://helmr-test-cas"
+  cas_bucket_arn                    = "arn:aws:s3:::helmr-test-cas"
+  kms_key_arn                       = "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000000"
+  platform_store_uri                = "s3://helmr-test-runtime/objects"
+  platform_store_bucket_arn         = "arn:aws:s3:::helmr-test-runtime"
+  platform_store_kms_key_arn        = "arn:aws:kms:us-east-1:111122223333:key/11111111-1111-1111-1111-111111111111"
+  image_cache_registry_authority    = "111122223333.dkr.ecr.us-east-1.amazonaws.com"
+  image_cache_repository_prefix     = "helmr-test/image-cache"
+  image_cache_role_arn              = "arn:aws:iam::111122223333:role/helmr-test-image-cache"
+  image_cache_repository_arn_prefix = "arn:aws:ecr:us-east-1:111122223333:repository/helmr-test/image-cache/"
+  build_policy_digest               = null
+  min_size                          = 0
+  max_size                          = 1
   secret_arns = {
     checkpoint_encryption_key = "arn:aws:secretsmanager:us-east-1:111122223333:secret:checkpoint"
   }
@@ -64,7 +74,6 @@ run "controller_owns_protected_capacity" {
   assert {
     condition = (
       strcontains(base64decode(aws_launch_template.worker.user_data), "ExecStart=helmr-worker") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "nameserver 10.20.0.2") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS=[\"10.0.0.0/8\",\"169.254.0.0/16\"]") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_NETWORK_LINK_POOL=169.254.64.0/18") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_NETWORK_RESOLVER_IPV4=10.20.0.2") &&
@@ -80,13 +89,58 @@ run "controller_owns_protected_capacity" {
 
   assert {
     condition = (
+      aws_iam_role.worker.permissions_boundary == aws_iam_policy.worker_boundary.arn &&
+      length(jsondecode(aws_iam_policy.worker_boundary.policy).Statement) == length(jsondecode(aws_iam_role_policy.worker.policy).Statement) + 1 &&
+      alltrue([
+        for statement in jsondecode(aws_iam_role_policy.worker.policy).Statement :
+        contains([for boundary_statement in jsondecode(aws_iam_policy.worker_boundary.policy).Statement : jsonencode(boundary_statement)], jsonencode(statement))
+      ]) &&
+      toset(one([
+        for statement in jsondecode(aws_iam_policy.worker_boundary.policy).Statement : statement.Action
+        if try(statement.Sid, "") == "SSMManagedInstanceCore"
+        ])) == toset([
+        "ec2messages:AcknowledgeMessage",
+        "ec2messages:DeleteMessage",
+        "ec2messages:FailMessage",
+        "ec2messages:GetEndpoint",
+        "ec2messages:GetMessages",
+        "ec2messages:SendReply",
+        "ssm:DescribeAssociation",
+        "ssm:DescribeDocument",
+        "ssm:GetDeployablePatchSnapshotForInstance",
+        "ssm:GetDocument",
+        "ssm:GetManifest",
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:ListAssociations",
+        "ssm:ListInstanceAssociations",
+        "ssm:PutComplianceItems",
+        "ssm:PutConfigurePackageResult",
+        "ssm:PutInventory",
+        "ssm:UpdateAssociationStatus",
+        "ssm:UpdateInstanceAssociationStatus",
+        "ssm:UpdateInstanceInformation",
+        "ssmmessages:CreateControlChannel",
+        "ssmmessages:CreateDataChannel",
+        "ssmmessages:OpenControlChannel",
+        "ssmmessages:OpenDataChannel"
+      ]) &&
+      !contains(flatten([for statement in jsondecode(aws_iam_policy.worker_boundary.policy).Statement : tolist(statement.Action)]), "*")
+    )
+    error_message = "every worker role must have its exact permissions plus only explicit SSM core actions bounded by a mandatory permissions boundary"
+  }
+
+  assert {
+    condition = (
       strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_PLATFORM_STORE_URI=s3://helmr-test-runtime/objects") &&
       strcontains(aws_iam_role_policy.worker.policy, "${var.platform_store_bucket_arn}/objects/sha256/*") &&
       strcontains(aws_iam_role_policy.worker.policy, var.platform_store_kms_key_arn) &&
       !strcontains(aws_iam_role_policy.worker.policy, "CreatePlatformObjects") &&
-      !strcontains(aws_iam_role_policy.worker.policy, "EncryptPlatformObjects")
+      !strcontains(aws_iam_role_policy.worker.policy, "EncryptPlatformObjects") &&
+      !strcontains(aws_iam_role_policy.worker.policy, "AssumeExecutionImageCacheRole") &&
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_IMAGE_CACHE_")
     )
-    error_message = "run-only workers must receive read-only Platform Artifact authority"
+    error_message = "run-only workers must receive read-only Platform Artifact authority without image-cache config or IAM"
   }
 
   assert {
@@ -98,14 +152,30 @@ run "controller_owns_protected_capacity" {
     condition = (
       !strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_BUILD_CACHE_DIR") &&
       !strcontains(base64decode(aws_launch_template.worker.user_data), "build-cache.ext4") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "20-run-only.conf")
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "helmr-buildkit")
     )
-    error_message = "run-only workers must not receive build filesystems and must remove the image's BuildKit dependency"
+    error_message = "run-only workers must not receive build filesystems or a host BuildKit service"
   }
 
   assert {
     condition     = strcontains(base64decode(aws_launch_template.worker.user_data), "launch_timeout='321'") && strcontains(base64decode(aws_launch_template.worker.user_data), "drain-complete") && strcontains(base64decode(aws_launch_template.worker.user_data), "ABANDON")
     error_message = "worker lifecycle handling must bound launch readiness and bypass repeated drain after durable local completion"
+  }
+}
+
+run "worker_without_ssm_has_exact_permission_boundary" {
+  command = plan
+
+  variables {
+    enable_ssm = false
+  }
+
+  assert {
+    condition = (
+      aws_iam_role.worker.permissions_boundary == aws_iam_policy.worker_boundary.arn &&
+      jsondecode(aws_iam_policy.worker_boundary.policy) == jsondecode(aws_iam_role_policy.worker.policy)
+    )
+    error_message = "workers without SSM must retain a mandatory boundary exactly equal to their worker permissions"
   }
 }
 
@@ -119,6 +189,9 @@ run "build_worker_installs_exact_policy_before_service" {
     worker_capacity_vcpus      = 4
     worker_capacity_memory_mib = 8192
     worker_execution_slots     = 1
+    vm_vcpus                   = 3
+    vm_memory_mib              = 4096
+    vm_scratch_disk_mib        = 32768
     build_policy_digest        = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     build_cache_mib            = 8192
     build_scratch_mib          = 34816
@@ -151,11 +224,30 @@ run "build_worker_installs_exact_policy_before_service" {
       strcontains(base64decode(aws_launch_template.worker.user_data), "build-scratch.ext4") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "mkfs.ext4 -F -q -m 0") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "Options=loop,nosuid,nodev,nodiscard") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "--root /var/lib/helmr/cache/buildkit") &&
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "helmr-buildkit") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_WORK_DIR=/var/lib/helmr/scratch/worker") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_FIRECRACKER_CHROOT_DIR=/var/lib/helmr/scratch/jailer")
     )
-    error_message = "build workers must mount distinct fixed ext4 filesystems and keep BuildKit on cache while build jail and worker roots stay on scratch"
+    error_message = "build workers must mount distinct fixed ext4 filesystems for Worker cache and image-build VM scratch without host BuildKit"
+  }
+
+  assert {
+    condition = (
+      one([for statement in jsondecode(aws_iam_role_policy.worker.policy).Statement : statement if try(statement.Sid, "") == "AssumeExecutionImageCacheRole"]) == {
+        Action   = ["sts:AssumeRole"]
+        Effect   = "Allow"
+        Resource = var.image_cache_role_arn
+        Sid      = "AssumeExecutionImageCacheRole"
+      } &&
+      one([for statement in jsondecode(aws_iam_policy.worker_boundary.policy).Statement : statement if try(statement.Sid, "") == "AssumeExecutionImageCacheRole"]) == {
+        Action   = ["sts:AssumeRole"]
+        Effect   = "Allow"
+        Resource = var.image_cache_role_arn
+        Sid      = "AssumeExecutionImageCacheRole"
+      } &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_IMAGE_CACHE_REPOSITORY_ARN_PREFIX=${var.image_cache_repository_arn_prefix}")
+    )
+    error_message = "build Workers must receive the exact ECR cache config and independently allow only the exact cache role in their identity policy and mandatory boundary"
   }
 
   assert {

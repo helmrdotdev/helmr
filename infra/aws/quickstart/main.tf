@@ -3,16 +3,14 @@ data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 
 locals {
-  name                        = lower(var.name)
-  worker_control_url          = module.control.control_url
-  worker_ami_id               = coalesce(module.release_artifacts.worker_ami_id, "ami-unconfigured")
-  worker_allowed_ami_ids      = distinct(compact(concat([local.worker_ami_id], var.worker_allowed_ami_ids)))
-  buildkit_cpu_reserve_millis = 1000
-  buildkit_memory_reserve_mib = 2048
-  boot_corpus_reserve_mib     = 2048
-  build_scratch_min_mib       = max(32768, coalesce(var.build_worker_vm_scratch_disk_mib, var.worker_vm_scratch_disk_mib)) + local.boot_corpus_reserve_mib
-  build_worker_cpu_millis     = coalesce(var.build_worker_capacity_vcpus, var.worker_capacity_vcpus, 0) * 1000 - local.buildkit_cpu_reserve_millis
-  build_worker_memory_mib     = coalesce(var.build_worker_capacity_memory_mib, var.worker_capacity_memory_mib, 0) - local.buildkit_memory_reserve_mib
+  name                    = lower(var.name)
+  worker_control_url      = module.control.control_url
+  worker_ami_id           = coalesce(module.release_artifacts.worker_ami_id, "ami-unconfigured")
+  worker_allowed_ami_ids  = distinct(compact(concat([local.worker_ami_id], var.worker_allowed_ami_ids)))
+  boot_corpus_reserve_mib = 2048
+  build_scratch_min_mib   = max(32768, coalesce(var.build_worker_vm_scratch_disk_mib, var.worker_vm_scratch_disk_mib)) + local.boot_corpus_reserve_mib
+  build_worker_cpu_millis = coalesce(var.build_worker_capacity_vcpus, var.worker_capacity_vcpus, 0) * 1000
+  build_worker_memory_mib = coalesce(var.build_worker_capacity_memory_mib, var.worker_capacity_memory_mib, 0)
   worker_pools = {
     run = {
       name         = "${local.name}-run"
@@ -41,6 +39,7 @@ locals {
     account_id              = data.aws_caller_identity.current.account_id
     autoscaling_group       = "${pool.name}-worker"
     instance_profile_arn    = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${pool.name}-worker"
+    instance_role_arn       = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${pool.name}-worker"
     launch_ami_id           = local.worker_ami_id
     ami_ids                 = local.worker_allowed_ami_ids
     allows_run              = pool.allows_run
@@ -286,6 +285,10 @@ module "worker_group" {
   platform_store_bucket_arn                  = var.platform_store_bucket_arn
   platform_store_kms_key_arn                 = var.platform_store_kms_key_arn
   build_policy_digest                        = each.key == "build" ? var.build_policy_digest : null
+  image_cache_registry_authority             = module.control.image_cache_registry_authority
+  image_cache_repository_prefix              = module.control.image_cache_repository_prefix
+  image_cache_role_arn                       = module.control.image_cache_role_arn
+  image_cache_repository_arn_prefix          = module.control.image_cache_repository_arn_prefix
 
   secret_arns = {
     checkpoint_encryption_key = module.control.secret_arns.checkpoint_encryption_key

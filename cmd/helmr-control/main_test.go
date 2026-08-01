@@ -59,6 +59,7 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		Auth:                  auth.NewDBAuthenticator(store),
 		WorkerEnrollment:      controltestWorkerEnrollmentVerifier{},
 		SecretDelivery:        controltestSecretDeliveryOpener{},
+		RegistryCredentials:   controltestRegistryCredentialOpener{},
 		WorkspaceFencingKey:   controltestWorkspaceFencingKey(),
 		TokenCredentialKey:    controltestTokenCredentialKey(),
 		AuthKey:               make([]byte, auth.RootKeySize),
@@ -105,6 +106,16 @@ func (controltestSecretDeliveryOpener) OpenDeliveries(
 	[]secret.DeliveryEnvelope,
 ) ([]secret.DeliveryMaterial, error) {
 	return nil, nil
+}
+
+type controltestRegistryCredentialOpener struct{}
+
+func (controltestRegistryCredentialOpener) OpenRegistryCredential(
+	uuid.UUID,
+	db.Secret,
+	db.SecretVersion,
+) ([]byte, error) {
+	return []byte("registry-password"), nil
 }
 
 func controltestWorkspaceFencingKey() workspace.FencingKey {

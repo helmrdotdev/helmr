@@ -69,6 +69,7 @@ func TestDeploymentCreateConvergesAcrossTransactions(t *testing.T) {
 			ManagerName:          string(selection.Manager.Name),
 			ManagerVersion:       selection.Manager.Version,
 			BuildContractVersion: deployment.ProgramBuildContractVersion,
+			ImageCacheMode:       "prefer",
 		},
 	)
 	if err != nil {
@@ -120,6 +121,7 @@ func TestDeploymentCreateConvergesAcrossTransactions(t *testing.T) {
 					deploymentVersionMetadata{
 						APIVersion:            api.CurrentAPIVersion,
 						WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
+						ImageCacheMode:        "prefer",
 					},
 				)
 				if err != nil {

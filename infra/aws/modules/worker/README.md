@@ -9,12 +9,11 @@ volume. The module does not build the worker AMI.
 The AMI must provide:
 
 - `helmr-worker` at `worker_binary_path`
-- the worker unit named by `worker_service_name` and the fixed `helmr-buildkit` unit
+- the worker unit named by `worker_service_name`
 - AWS CLI v2 and `curl`
 - Firecracker and jailer binaries
 - `/dev/kvm` capable instance support
 - CNI config and plugins, including `tc-redirect-tap`
-- BuildKit daemon listening on `HELMR_WORKER_BUILDKIT_ADDR`
 - guest boot artifacts under `HELMR_WORKER_IMAGES_DIR`
 
 For cost-controlled smoke environments, set `enable_nested_virtualization = true` and use an AWS
@@ -23,11 +22,11 @@ metal worker instances and for instance families that do not support the option.
 
 The module writes `/etc/helmr/worker.env` from Terraform inputs and Secrets Manager values, then
 starts `helmr-worker` and a small lifecycle watcher. Build-capable workers additionally allocate
-and mount fixed build-cache and build-scratch ext4 filesystems before starting BuildKit; run-only
-workers do not start BuildKit or receive build storage paths.
+and mount fixed Worker-cache and image-build scratch ext4 filesystems; all untrusted BuildKit
+execution stays inside the fresh image-build VM.
 
 `worker_environment` is only for additional non-secret worker variables. It cannot override
-infra-owned `HELMR_*` routing, storage, enrollment, Firecracker, BuildKit, or network policy
+infra-owned `HELMR_*` routing, storage, enrollment, Firecracker, image-cache, or network policy
 settings; use the module inputs for those values.
 
 Size `root_volume_size_gb`, `root_volume_iops`, and `root_volume_throughput` for expected
@@ -52,7 +51,7 @@ The application controller is the only desired-capacity writer. Terraform enforc
 drain selection. Fixed capacity is expressed with equal minimum and maximum values.
 
 When capacity is raised, the launch lifecycle hook keeps the instance out of service until the
-BuildKit and worker systemd units are active. During scale-in or instance refresh, the termination
+worker systemd unit is active. During scale-in or instance refresh, the termination
 lifecycle hook gives `helmr-worker drain` time to stop accepting leases and wait for active
 executions before the instance terminates.
 

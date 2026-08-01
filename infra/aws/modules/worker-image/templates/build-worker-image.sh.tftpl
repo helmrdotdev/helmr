@@ -83,12 +83,6 @@ make images
 
 install -m 0755 "$(command -v firecracker)" /usr/local/bin/firecracker
 install -m 0755 "$(command -v jailer)" /usr/local/bin/jailer
-install -m 0755 "$(command -v buildkitd)" /usr/local/bin/buildkitd
-install -m 0755 "$(command -v buildctl)" /usr/local/bin/buildctl
-install -m 0755 "$(command -v rootlesskit)" /usr/local/bin/rootlesskit
-install -m 0755 "$(command -v slirp4netns)" /usr/local/bin/slirp4netns
-install -m 0755 "$(command -v fuse-overlayfs)" /usr/local/bin/fuse-overlayfs
-install -m 0755 "$(command -v runc)" /usr/local/bin/runc
 install -m 0755 "$(command -v gpgv)" /usr/local/bin/gpgv
 install -m 0755 "$(command -v mksquashfs)" /usr/local/bin/mksquashfs
 install -m 0755 "$(command -v patchelf)" /usr/local/bin/patchelf
@@ -101,9 +95,6 @@ cp -R "$repo/images/guest/out" /var/lib/helmr/images/guest/out
 
 groupadd --system --gid 1001 helmr-vmm 2>/dev/null || true
 useradd --system --uid 1001 --gid 1001 --groups kvm --no-create-home --shell /usr/sbin/nologin helmr-vmm 2>/dev/null || true
-groupadd --system helmr-buildkit 2>/dev/null || true
-useradd --system --gid helmr-buildkit --home-dir /var/lib/helmr/buildkit-home --create-home --shell /usr/sbin/nologin helmr-buildkit 2>/dev/null || true
-usermod --add-subuids 200000-265535 --add-subgids 200000-265535 helmr-buildkit
 groupadd --system helmr-verifier 2>/dev/null || true
 useradd --system --gid helmr-verifier --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin helmr-verifier 2>/dev/null || true
 cat >/etc/udev/rules.d/99-helmr-kvm.rules <<'EOF'
@@ -115,60 +106,11 @@ if [ -e /dev/kvm ]; then
 fi
 
 install -d -m 0755 /run/helmr /etc/helmr /var/lib/helmr /var/lib/helmr/jailer
-install -d -m 0770 -o helmr-buildkit -g helmr-buildkit /run/helmr/buildkit
-install -d -m 0700 -o helmr-buildkit -g helmr-buildkit /run/helmr/buildkit-runtime /var/lib/helmr/buildkit /var/lib/helmr/buildkit-home
-cat >/etc/helmr/guest-resolv.conf <<'EOF'
-nameserver 1.1.1.1
-nameserver 8.8.8.8
-EOF
-cat >/etc/tmpfiles.d/helmr-buildkit.conf <<'EOF'
-d /run/helmr/buildkit-runtime 0700 helmr-buildkit helmr-buildkit -
-EOF
-cat >/etc/apparmor.d/usr.local.bin.rootlesskit <<'EOF'
-abi <abi/4.0>,
-include <tunables/global>
-
-profile rootlesskit /usr/local/bin/rootlesskit flags=(unconfined) {
-  userns,
-  include if exists <local/usr.local.bin.rootlesskit>
-}
-EOF
-cat >/etc/systemd/system/helmr-buildkit.service <<'EOF'
-[Unit]
-Description=BuildKit daemon for Helmr workers
-After=network-online.target apparmor.service
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=helmr-buildkit
-Group=helmr-buildkit
-UMask=0007
-Environment=HOME=/var/lib/helmr/buildkit-home
-Environment=XDG_RUNTIME_DIR=/run/helmr/buildkit-runtime
-ExecStartPre=+/usr/bin/install -d -m 0700 -o helmr-buildkit -g helmr-buildkit /run/helmr/buildkit-runtime
-ExecStart=/usr/local/bin/rootlesskit --net=slirp4netns --cidr=${buildkit_slirp_cidr} --copy-up=/etc --disable-host-loopback /usr/local/bin/buildkitd --addr unix:///run/helmr/buildkit/buildkitd.sock --root /var/lib/helmr/buildkit --oci-worker=true --oci-worker-snapshotter=fuse-overlayfs
-RuntimeDirectory=helmr/buildkit
-RuntimeDirectoryMode=0770
-Restart=on-failure
-RestartSec=3
-Delegate=yes
-CPUQuota=100%
-MemoryMax=2G
-MemorySwapMax=0
-TasksMax=1024
-MemoryOOMGroup=yes
-KillMode=mixed
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
 cat >/etc/systemd/system/helmr-worker.service <<'EOF'
 [Unit]
 Description=Helmr worker
-After=network-online.target helmr-buildkit.service
-Wants=network-online.target helmr-buildkit.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple

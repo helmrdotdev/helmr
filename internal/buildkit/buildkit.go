@@ -16,38 +16,12 @@ import (
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	"github.com/moby/buildkit/session"
-	"github.com/moby/buildkit/util/grpcerrors"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 const (
-	defaultBuildKitAddr = "unix:///run/helmr/buildkit/buildkitd.sock"
-	defaultOutputRoot   = "helmr-worker-builds"
-	defaultPlatform     = "linux/amd64"
-	buildKitService     = "helmr-buildkit.service"
+	defaultOutputRoot = "helmr-worker-builds"
+	defaultPlatform   = "linux/amd64"
 )
-
-type Config struct {
-	Addr       string
-	OutputRoot string
-}
-
-func (cfg Config) addr() string {
-	if addr := strings.TrimSpace(cfg.Addr); addr != "" {
-		return addr
-	}
-	return defaultBuildKitAddr
-}
-
-func (cfg Config) endpoint() (string, error) {
-	addr := cfg.addr()
-	lower := strings.ToLower(addr)
-	if strings.Contains(lower, "/var/run/docker.sock") || strings.Contains(lower, "/run/docker.sock") || strings.HasPrefix(lower, "docker-container://") || strings.HasPrefix(lower, "npipe://") {
-		return "", fmt.Errorf("buildkit addr must point to buildkitd, not a Docker endpoint: %s", addr)
-	}
-	return addr, nil
-}
 
 type buildkitSolver interface {
 	Solve(context.Context, *llb.Definition, bkclient.SolveOpt, chan *bkclient.SolveStatus) (*bkclient.SolveResponse, error)
@@ -58,13 +32,6 @@ type Builder struct {
 	outputRoot     string
 	ociOutputLimit int64
 	sessions       []session.Attachable
-	health         interface {
-		Check(context.Context) error
-	}
-}
-
-type ServiceFailure struct {
-	Cause error
 }
 
 type OutputQuotaFailure struct {
@@ -73,24 +40,6 @@ type OutputQuotaFailure struct {
 
 func (failure *OutputQuotaFailure) Error() string {
 	return fmt.Sprintf("image-build OCI output exceeds the %d-byte contract", failure.LimitBytes)
-}
-
-func (e *ServiceFailure) Error() string {
-	if e == nil || e.Cause == nil {
-		return "build service failure"
-	}
-	return "build service failure: " + e.Cause.Error()
-}
-
-func (e *ServiceFailure) Unwrap() error {
-	if e == nil {
-		return nil
-	}
-	return e.Cause
-}
-
-func (*ServiceFailure) FatalWorker() bool {
-	return true
 }
 
 func New(client buildkitSolver, outputRoot string) *Builder {
@@ -217,15 +166,11 @@ func (b *Builder) solve(
 	if err != nil {
 		closeErr := closeImage()
 		removeErr := os.RemoveAll(output.root)
-		solveErr := b.solveError(ctx, err)
-		if closeErr != nil || removeErr != nil {
-			return imagebuild.Artifact{}, &ServiceFailure{Cause: errors.Join(solveErr, closeErr, removeErr)}
-		}
-		return imagebuild.Artifact{}, solveErr
+		return imagebuild.Artifact{}, errors.Join(b.solveError(ctx, err), closeErr, removeErr)
 	}
 	if err := closeImage(); err != nil {
 		removeErr := os.RemoveAll(output.root)
-		return imagebuild.Artifact{}, &ServiceFailure{Cause: errors.Join(fmt.Errorf("close image tar: %w", err), removeErr)}
+		return imagebuild.Artifact{}, errors.Join(fmt.Errorf("close image tar: %w", err), removeErr)
 	}
 	if err := os.WriteFile(output.config, configJSON, 0o644); err != nil {
 		return imagebuild.Artifact{}, err
@@ -245,30 +190,10 @@ func (b *Builder) solve(
 
 func (b *Builder) solveError(ctx context.Context, solveErr error) error {
 	failure := fmt.Errorf("solve build graph: %w", solveErr)
-	switch solveErrorCode(solveErr) {
-	case codes.Unavailable, codes.Internal, codes.ResourceExhausted:
-		return &ServiceFailure{Cause: failure}
-	}
-	if b.health == nil {
-		return failure
-	}
-	healthCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), buildKitHealthTimeout)
-	defer cancel()
-	if err := b.health.Check(healthCtx); err != nil {
-		return &ServiceFailure{Cause: errors.Join(failure, fmt.Errorf("prove BuildKit service generation healthy: %w", err))}
-	}
 	if ctx.Err() != nil {
 		return errors.Join(failure, context.Cause(ctx))
 	}
 	return failure
-}
-
-func solveErrorCode(err error) codes.Code {
-	code := grpcerrors.Code(err)
-	if direct := status.Code(err); direct != codes.Unknown {
-		return direct
-	}
-	return code
 }
 
 func (b *Builder) output(runID, itemID string) (buildOutput, error) {

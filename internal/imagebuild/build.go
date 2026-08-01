@@ -15,7 +15,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/distribution/reference"
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 const (
@@ -265,6 +267,42 @@ func Digest(build Build, architecture string) (string, error) {
 	}
 	digest := sha256.Sum256(canonical)
 	return fmt.Sprintf("sha256:%x", digest), nil
+}
+
+// CacheScope derives the one opaque logical cache identity shared by Control
+// and provider adapters. Provider repository names and refs are projections of
+// this digest and never become operation authority themselves.
+func CacheScope(
+	environmentID uuid.UUID,
+	declarationSlot string,
+	architecture string,
+) (string, error) {
+	if environmentID == uuid.Nil {
+		return "", errors.New("image cache Environment ID is required")
+	}
+	if !secretNamePattern.MatchString(declarationSlot) {
+		return "", errors.New("image cache declaration slot is invalid")
+	}
+	if !validImageArchitecture(architecture) {
+		return "", errors.New("image cache architecture is invalid")
+	}
+	raw, err := json.Marshal(struct {
+		Domain          string `json:"domain"`
+		EnvironmentID   string `json:"environmentId"`
+		DeclarationSlot string `json:"declarationSlot"`
+		Architecture    string `json:"architecture"`
+		ExecutionABI    string `json:"executionAbi"`
+		LLBABI          string `json:"llbAbi"`
+		CacheABI        string `json:"cacheAbi"`
+	}{
+		Domain: "helmr.image-cache-scope.v0", EnvironmentID: environmentID.String(),
+		DeclarationSlot: declarationSlot, Architecture: architecture,
+		ExecutionABI: ExecutionABI, LLBABI: LLBABI, CacheABI: CacheABI,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode image cache scope: %w", err)
+	}
+	return sha256sum.DigestBytes(raw), nil
 }
 
 func RegistryCredentials(build Build, architecture string) ([]RegistryCredential, error) {

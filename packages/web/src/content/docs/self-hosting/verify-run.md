@@ -40,6 +40,6 @@ A complete smoke test proves that:
 - The control plane can read project metadata.
 - A worker is active and can lease work.
 - The worker can reach S3, ECR, AWS APIs, the control plane, and any external services used by the task.
-- Firecracker, BuildKit, CNI, and guest artifacts are present on the worker.
+- Firecracker and CNI are present on the worker, and the certified guest rootfs contains the pinned BuildKit daemon used by image-build guests.
 
 If a run stays queued, check worker capacity first. If a task cannot reach an external repository or API, check the task secret and worker egress path.

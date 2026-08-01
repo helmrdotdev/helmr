@@ -73,6 +73,7 @@ type CreateDeploymentRequest struct {
 	EnvironmentID         string `json:"environment_id,omitempty"`
 	IdempotencyKey        string `json:"idempotency_key"`
 	ContentHash           string `json:"content_hash"`
+	ImageCacheMode        string `json:"image_cache_mode,omitempty"`
 	APIVersion            string `json:"api_version,omitempty"`
 	WorkerProtocolVersion string `json:"worker_protocol_version,omitempty"`
 }

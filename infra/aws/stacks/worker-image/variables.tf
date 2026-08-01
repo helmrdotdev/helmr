@@ -97,9 +97,3 @@ variable "image_version" {
   type        = string
   default     = "0.1.0"
 }
-
-variable "buildkit_slirp_cidr" {
-  description = "Default IPv4 CIDR used by rootlesskit/slirp4netns in the AMI BuildKit service."
-  type        = string
-  default     = "198.18.0.0/24"
-}

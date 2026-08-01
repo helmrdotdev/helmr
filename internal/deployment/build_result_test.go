@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
@@ -38,6 +39,19 @@ func TestBuildResultCanonicalRoundTrip(t *testing.T) {
 				t.Fatalf("reencoded result differs:\n%s\n%s", reencoded, raw)
 			}
 		})
+	}
+}
+
+func TestWorkspaceImageNetworkQuotaUsesBuildResourceLimitReason(t *testing.T) {
+	err := fmt.Errorf("build workspace image: %w", &imagebuild.WorkerGuestFailure{
+		Reason:  imagebuild.GuestFailureNetworkQuota,
+		Message: "image-build public-egress limit was exceeded",
+	})
+	if got := workspaceImageFailureReason(err); got != BuildFailureNetworkLimit {
+		t.Fatalf("failure reason = %q, want %q", got, BuildFailureNetworkLimit)
+	}
+	if got := workspaceImageFailureReason(fmt.Errorf("ordinary image failure")); got != BuildFailureWorkspaceImageFailed {
+		t.Fatalf("ordinary failure reason = %q, want %q", got, BuildFailureWorkspaceImageFailed)
 	}
 }
 
@@ -224,6 +238,35 @@ func TestValidateBuildSucceeded(t *testing.T) {
 			},
 			errMsg: "architecture",
 		},
+		{
+			name: "workspace operation attempt",
+			change: func(result *BuildResult) {
+				result.Succeeded.WorkspaceImages[0].Operation.AttemptID = "invalid"
+			},
+			errMsg: "UUIDv7",
+		},
+		{
+			name: "workspace operation declaration",
+			change: func(result *BuildResult) {
+				result.Succeeded.WorkspaceImages[0].Operation.DeclarationSlot = "other"
+			},
+			errMsg: "declaration slot",
+		},
+		{
+			name: "workspace operation plan",
+			change: func(result *BuildResult) {
+				result.Succeeded.WorkspaceImages[0].Operation.PlanDigest =
+					"sha256:" + strings.Repeat("c", 64)
+			},
+			errMsg: "plan digest",
+		},
+		{
+			name: "workspace operation cache mode",
+			change: func(result *BuildResult) {
+				result.Succeeded.WorkspaceImages[0].Operation.RequestedCacheMode = "disabled"
+			},
+			errMsg: "cache mode",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -353,6 +396,7 @@ func TestValidateBuildResultAppliesPlanSizeBound(t *testing.T) {
 		}
 		images[index] = WorkspaceImage{
 			DeclaredID: id,
+			Operation:  testWorkspaceImageOperation(t, plan.Definitions[index]),
 			Artifact: WorkspaceImageArtifact{
 				Digest:       "sha256:" + strings.Repeat("d", 64),
 				SizeBytes:    4096,
@@ -445,6 +489,7 @@ func testSucceededBuildResult(t *testing.T) BuildResult {
 	program := testProgramOutput(t)
 	images := []WorkspaceImage{{
 		DeclaredID: "repo",
+		Operation:  testWorkspaceImageOperation(t, plan.Definitions[2]),
 		Artifact: WorkspaceImageArtifact{
 			Digest:       "sha256:" + strings.Repeat("d", 64),
 			SizeBytes:    4096,
@@ -476,6 +521,34 @@ func testSucceededBuildResult(t *testing.T) BuildResult {
 			Program:         &program,
 			WorkspaceImages: images,
 		},
+	}
+}
+
+func testWorkspaceImageOperation(
+	t *testing.T,
+	definition DefinitionInput,
+) WorkspaceImageOperationEvidence {
+	t.Helper()
+	if definition.Workspace == nil {
+		t.Fatal("test Workspace definition is missing")
+	}
+	planDigest, err := imagebuild.Digest(
+		definition.Workspace.ImageBuild,
+		string(ArchitectureX8664),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return WorkspaceImageOperationEvidence{
+		BuildLeaseID:         uuid.Must(uuid.NewV7()).String(),
+		BuildLeaseGeneration: 1,
+		DeclarationSlot:      definition.DeclaredID,
+		OperationID:          uuid.Must(uuid.NewV7()).String(),
+		RequestFingerprint:   "sha256:" + strings.Repeat("a", 64),
+		AttemptID:            uuid.Must(uuid.NewV7()).String(),
+		PlanDigest:           planDigest,
+		ResolutionSetDigest:  "sha256:" + strings.Repeat("b", 64),
+		RequestedCacheMode:   imagebuild.CachePrefer,
 	}
 }
 

@@ -23,7 +23,6 @@ module "worker_image" {
   instance_profile_name     = var.instance_profile_name
   subnet_id                 = var.subnet_id
   security_group_ids        = var.security_group_ids
-  buildkit_slirp_cidr       = var.buildkit_slirp_cidr
   image_version             = var.image_version
   tags                      = local.tags
 }

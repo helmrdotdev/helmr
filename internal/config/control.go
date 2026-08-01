@@ -53,6 +53,9 @@ func LoadControl() (Control, error) {
 	if cfg.RunFinalizationTTL, err = envDuration("HELMR_RUN_FINALIZATION_TTL", cfg.RunFinalizationTTL); err != nil {
 		return cfg, err
 	}
+	if cfg.ImageCache, err = loadImageCache(); err != nil {
+		return cfg, err
+	}
 	if cfg.RunLeaseTTL < api.WorkerRunLeaseMinTTL {
 		return cfg, fmt.Errorf(
 			"HELMR_RUN_LEASE_TTL must be at least %s",

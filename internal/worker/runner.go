@@ -42,7 +42,12 @@ type RunLeaseExecutor interface {
 }
 
 type BuildExecutor interface {
-	Build(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) (json.RawMessage, error)
+	Build(
+		ctx context.Context,
+		lease api.WorkerDeploymentBuildLease,
+		deployment api.WorkerDeploymentBuild,
+		revocations deployment.ImageOperationRevocations,
+	) (json.RawMessage, error)
 }
 
 type PlatformAcquirer interface {

@@ -149,6 +149,9 @@ POST /api/worker/deployments/lease
 POST /api/worker/deployments/reject
 POST /api/worker/deployments/renew
 POST /api/worker/deployments/start
+POST /api/worker/deployments/workspace-images/admit
+POST /api/worker/deployments/workspace-images/complete
+POST /api/worker/deployments/workspace-images/credentials
 POST /api/worker/drain
 POST /api/worker/drain/complete
 POST /api/worker/enrollment

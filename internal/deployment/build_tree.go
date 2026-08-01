@@ -17,8 +17,51 @@ const maxBuildTreeStreamBytes int64 = 11 << 30
 // BuildTree is the one lease-private, read-only post-lifecycle tree used by
 // analysis, Workspace image construction, and Program encoding.
 type BuildTree struct {
-	content   *artifactSnapshot
-	inspected *inspectedArtifact
+	content    *artifactSnapshot
+	inspected  *inspectedArtifact
+	descriptor BuildTreeDescriptor
+}
+
+// BuildTreeDescriptor identifies the exact post-lifecycle stream accepted
+// from the Build guest. It describes that verified stream, not the internal
+// SquashFS snapshot used to retain it on the Worker.
+type BuildTreeDescriptor struct {
+	Digest    string
+	SizeBytes int64
+}
+
+func newBuildTree(
+	content *artifactSnapshot,
+	inspected *inspectedArtifact,
+	descriptor BuildTreeDescriptor,
+) (*BuildTree, error) {
+	if content == nil || inspected == nil {
+		return nil, errors.New("build tree snapshot is incomplete")
+	}
+	if inspected.role != buildTreeArtifact {
+		return nil, errors.New("build tree snapshot has the wrong artifact role")
+	}
+	if !sha256DigestPattern.MatchString(descriptor.Digest) {
+		return nil, errors.New("build tree stream digest is not a lowercase SHA-256 digest")
+	}
+	if descriptor.SizeBytes < 1 || descriptor.SizeBytes > maxBuildTreeStreamBytes {
+		return nil, fmt.Errorf(
+			"build tree stream size is outside [1,%d]",
+			maxBuildTreeStreamBytes,
+		)
+	}
+	return &BuildTree{
+		content:    content,
+		inspected:  inspected,
+		descriptor: descriptor,
+	}, nil
+}
+
+func (tree *BuildTree) Descriptor() (BuildTreeDescriptor, error) {
+	if tree == nil || tree.content == nil || tree.inspected == nil {
+		return BuildTreeDescriptor{}, errors.New("build tree is closed")
+	}
+	return tree.descriptor, nil
 }
 
 func validateInspectedBuildTree(

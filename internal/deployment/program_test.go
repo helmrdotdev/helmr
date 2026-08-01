@@ -153,11 +153,13 @@ func TestManifestDigestMatchesSharedGoldenFixture(t *testing.T) {
 
 func testProgramIndex(t *testing.T) ProgramIndex {
 	t.Helper()
+	plan := testBuildPlan()
 	index, err := buildProgramIndex(
-		testBuildPlan(),
+		plan,
 		testAnalysisDeclarationLocator(),
 		[]WorkspaceImage{{
 			DeclaredID: "repo",
+			Operation:  testWorkspaceImageOperation(t, plan.Definitions[2]),
 			Artifact: WorkspaceImageArtifact{
 				Digest:       "sha256:" + strings.Repeat("d", 64),
 				SizeBytes:    4096,

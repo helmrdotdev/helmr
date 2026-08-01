@@ -47,7 +47,6 @@ let
           services.helmr.firecrackerHost = {
             enable = true;
             users = [ "helmr-ci" ];
-            buildKitBlockedIPv4CIDRs = [ "10.0.0.0/8" ];
           };
         }
       )
@@ -59,32 +58,12 @@ let
   checkedFirecrackerHostModule =
     let
       cfg = firecrackerHostEval.config;
-      buildkitService = cfg.systemd.services.helmr-buildkit.serviceConfig;
-      buildkitExecStart = buildkitService.ExecStart;
       workerGroups = cfg.users.users.helmr-ci.extraGroups;
     in
-    require (buildkitService.User == "helmr-buildkit") "helmr-buildkit service user changed"
-    && require (buildkitService.Group == "helmr-buildkit") "helmr-buildkit service group changed"
-    && require (buildkitService.Delegate == true) "helmr-buildkit service delegation changed"
-    && require (buildkitService.CPUQuota == "100%") "helmr-buildkit CPU limit changed"
-    && require (buildkitService.MemoryMax == "2G") "helmr-buildkit memory limit changed"
-    && require (buildkitService.MemorySwapMax == 0) "helmr-buildkit swap limit changed"
-    && require (buildkitService.TasksMax == 1024) "helmr-buildkit task limit changed"
-    && require (buildkitService.MemoryOOMGroup == true) "helmr-buildkit OOM group policy changed"
-    && require (lib.elem "10.0.0.0/8" buildkitService.IPAddressDeny) "deployment-supplied BuildKit IPv4 deny is missing"
-    && require (lib.elem "::/128" buildkitService.IPAddressDeny) "BuildKit IPv6 fail-closed policy is missing"
-    && require (cfg.boot.kernel.sysctl."net.ipv4.ip_forward" == 1) "IPv4 forwarding is not enabled"
-    && require (
-      cfg.boot.kernel.sysctl."user.max_user_namespaces" == 16384
-    ) "user namespace limit changed"
+    require (cfg.boot.kernel.sysctl."net.ipv4.ip_forward" == 1) "IPv4 forwarding is not enabled"
     && require (lib.elem "kvm" cfg.boot.kernelModules) "kvm kernel module is not requested"
     && require (lib.elem "kvm" workerGroups) "firecracker users are not added to kvm"
-    && require (lib.elem "helmr-buildkit" workerGroups) "firecracker users are not added to helmr-buildkit"
-    && require (lib.hasInfix ''KERNEL=="kvm", GROUP="helmr-vmm", MODE="0660"'' cfg.services.udev.extraRules) "kvm udev rule changed"
-    && require (lib.hasInfix "rootlesskit" buildkitExecStart) "BuildKit service no longer starts through rootlesskit"
-    && require (lib.hasInfix "--net=slirp4netns" buildkitExecStart) "BuildKit service no longer uses slirp4netns"
-    && require (lib.hasInfix "buildkitd" buildkitExecStart) "BuildKit service no longer starts buildkitd"
-    && require (lib.hasInfix "unix:///run/helmr/buildkit/buildkitd.sock" buildkitExecStart) "BuildKit socket path changed";
+    && require (lib.hasInfix ''KERNEL=="kvm", GROUP="helmr-vmm", MODE="0660"'' cfg.services.udev.extraRules) "kvm udev rule changed";
 
   firecrackerHostModuleCheck =
     assert checkedFirecrackerHostModule;

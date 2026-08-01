@@ -26,7 +26,6 @@ locals {
     source_repository_url = var.source_repository_url
     source_ref            = var.source_ref
     source_bundle_s3_uri  = var.source_bundle_s3_uri == null ? "" : var.source_bundle_s3_uri
-    buildkit_slirp_cidr   = var.buildkit_slirp_cidr
   })
 }
 
@@ -133,14 +132,12 @@ resource "aws_imagebuilder_component" "worker" {
                 "test -x /usr/local/bin/helmr-worker",
                 "test -x /usr/local/bin/firecracker",
                 "test -x /usr/local/bin/jailer",
-                "test -x /usr/local/bin/buildkitd",
                 "test -r /var/lib/helmr/images/guest/out/vmlinuz",
                 "test -r /var/lib/helmr/images/guest/out/initramfs",
                 "test -r /var/lib/helmr/images/guest/out/rootfs.ext4",
                 "test -r /var/lib/helmr/images/guest/out/runtime-artifacts.json",
                 "cd /var/lib/helmr/images/guest/out && jq -e '.schema == \"helmr.runtime-artifacts.v0\" and .arch == \"amd64\" and .runtime_abi == \"helmr.firecracker.snapshot.v0\"' runtime-artifacts.json >/dev/null && test \"$(sha256sum vmlinuz | awk '{print $1}')\" = \"$(jq -r .kernel.digest runtime-artifacts.json | sed 's/^sha256://')\" && test \"$(sha256sum initramfs | awk '{print $1}')\" = \"$(jq -r .initramfs.digest runtime-artifacts.json | sed 's/^sha256://')\" && test \"$(sha256sum rootfs.ext4 | awk '{print $1}')\" = \"$(jq -r .rootfs.digest runtime-artifacts.json | sed 's/^sha256://')\" && test \"$(stat -c %s vmlinuz)\" = \"$(jq -r .kernel.size_bytes runtime-artifacts.json)\" && test \"$(stat -c %s initramfs)\" = \"$(jq -r .initramfs.size_bytes runtime-artifacts.json)\" && test \"$(stat -c %s rootfs.ext4)\" = \"$(jq -r .rootfs.size_bytes runtime-artifacts.json)\"",
                 "command -v fallocate findmnt losetup mountpoint blkid mkfs.ext4 >/dev/null",
-                "systemctl cat helmr-buildkit.service >/dev/null",
                 "systemctl cat helmr-worker.service >/dev/null",
                 "systemd-analyze verify /etc/systemd/system/helmr-worker.service",
                 "test \"$(systemctl show helmr-worker.service -p Delegate --value)\" = yes",

@@ -88,8 +88,7 @@ func TestProveBuildStorage(t *testing.T) {
 	if proof.Scratch.Root != "/scratch" || proof.Scratch.MountID != 32 || proof.Scratch.Source != "/dev/scratch" {
 		t.Fatalf("unexpected scratch proof: %+v", proof.Scratch)
 	}
-	if proof.BuildKitRoot != "/cache/buildkit" ||
-		proof.SubstrateCacheDir != "/cache/substrate-cache" ||
+	if proof.SubstrateCacheDir != "/cache/substrate-cache" ||
 		proof.ArtifactCacheDir != "/cache/artifact-cache" {
 		t.Fatalf("unexpected cache layout: %+v", proof)
 	}
@@ -154,13 +153,6 @@ func TestProveBuildStorageRejectsInvalidBoundary(t *testing.T) {
 				probe.files["/cache"] = storageFile{Kind: storageFileSymlink}
 			},
 			want: `build cache root component "/cache" is a symlink`,
-		},
-		{
-			name: "symlink layout",
-			change: func(_ *BuildStorageConfig, probe *fakeStorageProbe) {
-				probe.files["/cache/buildkit"] = storageFile{Kind: storageFileSymlink}
-			},
-			want: `BuildKit root component "/cache/buildkit" is a symlink`,
 		},
 		{
 			name: "work outside scratch",

@@ -96,7 +96,7 @@ func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgre
 			id, org_id, build_region_id, project_id, environment_id,
 			build_node_version, build_runtime_digest, build_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
-			build_contract_version, version, content_hash, deployment_source_artifact_id,
+			build_contract_version, image_cache_mode, version, content_hash, deployment_source_artifact_id,
 			program_artifact_id, program_index_digest, queue_config,
 			status, deployed_at
 		)
@@ -104,7 +104,7 @@ func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgre
 			$1, $2, $3, $4, $5,
 			'24.16.0', decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
 			'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
-			'helmr.program-build.v0', 'v1', $6, $7,
+			'helmr.program-build.v0', 'prefer', 'v1', $6, $7,
 			$8, decode(repeat('03', 32), 'hex'),
 			'{"formatVersion":0,"queues":[]}'::jsonb, 'deployed', now()
 		)

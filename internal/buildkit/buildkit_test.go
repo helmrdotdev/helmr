@@ -13,8 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	bkclient "github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 type testSolver struct {
@@ -182,46 +180,6 @@ func TestBuildImageReturnsTypedOutputQuotaFailureAndRemovesPartialArtifact(t *te
 	}
 	if _, statErr := os.Stat(filepath.Join(outputRoot, "run", "workspace")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("partial OCI output remains: %v", statErr)
-	}
-}
-
-func TestBuildImageClassifiesUnavailableBuildKitAsWorkerFatal(t *testing.T) {
-	solveErr := status.Error(codes.Unavailable, "daemon stopped")
-	if got := solveErrorCode(solveErr); got != codes.Unavailable {
-		t.Fatalf("solve error code = %s, want Unavailable", got)
-	}
-	solver := testSolver{solve: func(
-		context.Context,
-		*llb.Definition,
-		bkclient.SolveOpt,
-	) (*bkclient.SolveResponse, error) {
-		return nil, solveErr
-	}}
-	outputRoot := t.TempDir()
-	builder := New(solver, outputRoot)
-	_, err := builder.BuildImage(t.Context(), testImageRequest(t.TempDir()))
-	var failure *ServiceFailure
-	if !errors.As(err, &failure) || !failure.FatalWorker() {
-		t.Fatalf("BuildImage error = %v, want fatal service failure", err)
-	}
-	if _, statErr := os.Stat(filepath.Join(outputRoot, "run", "workspace")); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("failed build output remains: %v", statErr)
-	}
-}
-
-func TestConfigRejectsDockerEndpoints(t *testing.T) {
-	for _, addr := range []string{
-		"unix:///var/run/docker.sock",
-		"unix:///run/docker.sock",
-		"docker-container://builder",
-		"npipe:////./pipe/docker_engine",
-	} {
-		if _, err := (Config{Addr: addr}).endpoint(); err == nil {
-			t.Errorf("endpoint accepted %q", addr)
-		}
-	}
-	if got, err := (Config{}).endpoint(); err != nil || got != defaultBuildKitAddr {
-		t.Fatalf("default endpoint = %q, %v", got, err)
 	}
 }
 

@@ -38,9 +38,8 @@ Official worker AMIs are resolved from the Helmr release artifact manifest for t
 - `helmr-worker` binary.
 - Firecracker and jailer.
 - CNI configuration and plugins, including `tc-redirect-tap`.
-- BuildKit service.
 - AWS CLI v2 and curl.
-- Guest kernel, initramfs, and rootfs artifacts.
+- Certified guest kernel, initramfs, and rootfs artifacts; the rootfs contains the pinned BuildKit daemon used only inside fresh image-build guests.
 - SSM agent for maintenance.
 
 Workers are filesystem-first Firecracker hosts. Size the root EBS volume for build cache, runtime

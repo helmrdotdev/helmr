@@ -135,9 +135,6 @@ in
   ci-postgres = app "ci-postgres" "run Postgres-backed CI tests" toolsets.appRuntime ''
     exec ./scripts/ci-postgres.sh "$@"
   '';
-  ci-buildkit = app "ci-buildkit" "run the BuildKit CI smoke test" toolsets.appRuntime ''
-    exec ./scripts/ci-buildkit.sh "$@"
-  '';
   ci-boot-artifacts =
     app "ci-boot-artifacts" "build and stage guest boot artifacts for CI" toolsets.appRuntime
       ''
@@ -174,7 +171,6 @@ in
         export HELMR_WORKER_FIRECRACKER_JAILER_UID=''${HELMR_WORKER_FIRECRACKER_JAILER_UID:-$(id -u)}
         export HELMR_WORKER_FIRECRACKER_JAILER_GID=''${HELMR_WORKER_FIRECRACKER_JAILER_GID:-$(id -g)}
         export HELMR_WORKER_FIRECRACKER_CGROUP_VERSION=''${HELMR_WORKER_FIRECRACKER_CGROUP_VERSION:-2}
-        export HELMR_WORKER_BUILDKIT_ADDR=''${HELMR_WORKER_BUILDKIT_ADDR:-unix:///run/helmr/buildkit/buildkitd.sock}
         export HELMR_VM_E2E=''${HELMR_VM_E2E:-1}
         export XDG_DATA_HOME=''${XDG_DATA_HOME:-$PWD/.helmr-smoke/data}
         export XDG_RUNTIME_DIR=''${XDG_RUNTIME_DIR:-$PWD/.helmr-smoke/runtime}

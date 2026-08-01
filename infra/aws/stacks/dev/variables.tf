@@ -410,7 +410,7 @@ variable "cas_noncurrent_version_expiration_days" {
 }
 
 variable "worker_ami_id" {
-  description = "Worker AMI with Firecracker, jailer, BuildKit, routed-TAP prerequisites, and helmr-worker installed."
+  description = "Worker AMI with Firecracker, jailer, routed-TAP prerequisites, and helmr-worker installed."
   type        = string
   default     = null
   nullable    = true
@@ -499,12 +499,6 @@ variable "worker_network_resolver_ipv4" {
   nullable    = true
 }
 
-variable "worker_buildkit_slirp_cidr" {
-  description = "IPv4 CIDR used by rootlesskit/slirp4netns inside the worker BuildKit service namespace."
-  type        = string
-  default     = "198.18.0.0/24"
-}
-
 variable "worker_min_size" {
   description = "Minimum worker instance count."
   type        = number
@@ -584,16 +578,16 @@ variable "build_worker_disk_reserve_mib" {
 }
 
 variable "build_worker_vm_vcpus" {
-  description = "vCPUs for the build indexing VM. Defaults to worker_vm_vcpus."
+  description = "vCPUs for the fixed Workspace image-build VM."
   type        = number
-  default     = null
+  default     = 3
   nullable    = true
 }
 
 variable "build_worker_vm_memory_mib" {
-  description = "Memory for the build indexing VM. Defaults to worker_vm_memory_mib."
+  description = "Memory for the fixed Workspace image-build VM."
   type        = number
-  default     = null
+  default     = 4096
   nullable    = true
 }
 

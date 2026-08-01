@@ -19,6 +19,7 @@ func testWorkerDeploymentBuild() api.WorkerDeploymentBuild {
 		ID:                   "deployment-1",
 		NodeVersion:          "24.16.0",
 		BuildContractVersion: deployment.ProgramBuildContractVersion,
+		ImageCacheMode:       "prefer",
 		Runtime: api.CASObject{
 			Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			MediaType: deployment.RuntimeArtifactMediaType,
@@ -125,14 +126,14 @@ func (e *detachedTestExecutor) ExecuteRunLease(context.Context, api.WorkerRunLea
 
 type successfulTestBuilder struct{ calls atomic.Int32 }
 
-func (b *successfulTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (json.RawMessage, error) {
+func (b *successfulTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild, deployment.ImageOperationRevocations) (json.RawMessage, error) {
 	b.calls.Add(1)
 	return json.RawMessage(`{"error":{"message":"test","reasonCode":"verification_failed"},"formatVersion":0,"outcome":"failed"}`), nil
 }
 
 type deliveryFailureTestBuilder struct{}
 
-func (*deliveryFailureTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (json.RawMessage, error) {
+func (*deliveryFailureTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild, deployment.ImageOperationRevocations) (json.RawMessage, error) {
 	return nil, deliveryFailureTestError{}
 }
 
@@ -148,7 +149,7 @@ func (deliveryFailureTestError) DeploymentBuildDeliveryFailureReason() api.Worke
 
 type unclassifiedFailureTestBuilder struct{}
 
-func (*unclassifiedFailureTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (json.RawMessage, error) {
+func (*unclassifiedFailureTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild, deployment.ImageOperationRevocations) (json.RawMessage, error) {
 	return nil, errors.New("unclassified infrastructure failure")
 }
 
@@ -156,7 +157,7 @@ type cleanupUnprovenTestBuilder struct {
 	owner vm.Owner
 }
 
-func (b *cleanupUnprovenTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (json.RawMessage, error) {
+func (b *cleanupUnprovenTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild, deployment.ImageOperationRevocations) (json.RawMessage, error) {
 	return nil, vm.NewGuestError(&vm.CleanupUnprovenError{
 		Owner: b.owner,
 		Cause: errors.New("guest process absence could not be proven"),
@@ -165,7 +166,7 @@ func (b *cleanupUnprovenTestBuilder) Build(context.Context, api.WorkerDeployment
 
 type fatalBuildTestBuilder struct{}
 
-func (*fatalBuildTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (json.RawMessage, error) {
+func (*fatalBuildTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild, deployment.ImageOperationRevocations) (json.RawMessage, error) {
 	return nil, fatalBuildTestError{}
 }
 
@@ -176,7 +177,7 @@ func (fatalBuildTestError) FatalWorker() bool { return true }
 
 type canceledBuildTestBuilder struct{}
 
-func (*canceledBuildTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild) (json.RawMessage, error) {
+func (*canceledBuildTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild, deployment.ImageOperationRevocations) (json.RawMessage, error) {
 	return nil, context.Canceled
 }
 

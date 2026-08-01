@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -38,6 +39,7 @@ type deploymentBuildCompletionAuthority struct {
 	buildManagerIntegrity pgtype.Text
 	buildManagerDigest    []byte
 	buildContractVersion  string
+	imageCacheMode        string
 	sourceArtifactID      pgtype.UUID
 	sourceDigest          string
 	sourceSizeBytes       int64
@@ -190,6 +192,7 @@ func (s *Server) deploymentBuildLeaseResponse(
 		},
 		Toolchain:            toolchainObject,
 		BuildContractVersion: row.BuildContractVersion,
+		ImageCacheMode:       row.ImageCacheMode,
 	}
 	return api.WorkerDeploymentBuildLeaseResponse{Lease: &lease, Deployment: &build}, nil
 }
@@ -299,22 +302,47 @@ func (s *Server) workerRenewDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	expiresAt := time.Now().Add(deploymentBuildLeaseDuration)
-	renewed, err := s.db.RenewDeploymentBuildLease(r.Context(), db.RenewDeploymentBuildLeaseParams{
-		ExpiresAt: pgvalue.Timestamptz(expiresAt), OrgID: orgID, DeploymentID: deploymentID,
-		BuildLeaseID: pgvalue.UUID(leaseID), LeaseSequence: lease.LeaseSequence,
-		WorkerGroupID:    worker.WorkerGroupID,
-		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+	var renewed db.DeploymentBuildLease
+	revokedOperationIDs := make([]string, 0)
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		row, err := work.q.RenewDeploymentBuildLease(r.Context(), db.RenewDeploymentBuildLeaseParams{
+			ExpiresAt: pgvalue.Timestamptz(expiresAt), OrgID: orgID, DeploymentID: deploymentID,
+			BuildLeaseID: pgvalue.UUID(leaseID), LeaseSequence: lease.LeaseSequence,
+			WorkerGroupID:    worker.WorkerGroupID,
+			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+		})
+		if isNoRows(err) {
+			return conflict(errors.New("deployment build lease is stale"))
+		}
+		if err != nil {
+			return errors.New("renew deployment build")
+		}
+		rows, err := work.q.ListRevokedImageOperationIDsForBuildLease(
+			r.Context(),
+			pgvalue.UUID(leaseID),
+		)
+		if err != nil {
+			return errors.New("list revoked Workspace image operations")
+		}
+		for _, operationID := range rows {
+			value, err := pgvalue.UUIDValue(operationID)
+			if err != nil {
+				return errors.New("revoked Workspace image operation ID is invalid")
+			}
+			revokedOperationIDs = append(revokedOperationIDs, value.String())
+		}
+		renewed = row
+		return nil
 	})
-	if isNoRows(err) {
-		writeError(w, conflict(errors.New("deployment build lease is stale")))
-		return
-	}
 	if err != nil {
-		writeError(w, errors.New("renew deployment build"))
+		writeError(w, err)
 		return
 	}
 	lease.ExpiresAt = pgvalue.Time(renewed.ExpiresAt)
-	writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildRenewResponse{Lease: lease})
+	writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildRenewResponse{
+		Lease:                    lease,
+		RevokedImageOperationIDs: revokedOperationIDs,
+	})
 }
 
 func (s *Server) workerRejectDeploymentBuild(w http.ResponseWriter, r *http.Request) {
@@ -509,6 +537,7 @@ func deploymentBuildAuthority(
 		buildManagerIntegrity: row.BuildManagerIntegrity,
 		buildManagerDigest:    append([]byte(nil), row.BuildManagerDigest...),
 		buildContractVersion:  row.BuildContractVersion,
+		imageCacheMode:        row.ImageCacheMode,
 		sourceArtifactID:      row.DeploymentSourceArtifactID,
 		sourceDigest:          row.DeploymentSourceDigest,
 		sourceSizeBytes:       row.DeploymentSourceSizeBytes,
@@ -528,6 +557,7 @@ func lockedDeploymentBuildAuthority(
 		buildManagerIntegrity: row.BuildManagerIntegrity,
 		buildManagerDigest:    row.BuildManagerDigest,
 		buildContractVersion:  row.BuildContractVersion,
+		imageCacheMode:        row.ImageCacheMode,
 		sourceArtifactID:      row.DeploymentSourceArtifactID,
 		sourceDigest:          row.DeploymentSourceDigest,
 		sourceSizeBytes:       row.DeploymentSourceSizeBytes,
@@ -976,6 +1006,21 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		objects := prepared.objects
 		definitions := prepared.definitions
 		queueConfigJSON := prepared.queueConfigJSON
+		if err := validateCompletedWorkspaceImageOperations(
+			r.Context(),
+			work.q,
+			pgvalue.MustUUIDValue(environmentID),
+			buildLeaseUUID,
+			request.Lease.LeaseSequence,
+			imagebuild.CacheMode(authority.imageCacheMode),
+			succeeded.WorkspaceImages,
+		); err != nil {
+			var invalid invalidDeploymentBuildOutput
+			if errors.As(err, &invalid) {
+				return failInvalid(err.Error())
+			}
+			return err
+		}
 
 		for _, object := range objects {
 			if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{

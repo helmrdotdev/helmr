@@ -58,7 +58,7 @@ dispatcher_desired_count = 1
 redis_node_type  = "cache.t4g.micro"
 redis_node_count = 1
 
-# Worker instances require an AMI with Firecracker, jailer, BuildKit, routed-TAP prerequisites,
+# Worker instances require an AMI with Firecracker, jailer, routed-TAP prerequisites,
 # guest boot artifacts, AWS CLI, and helmr-worker already installed.
 create_worker                       = true
 worker_ami_id                       = "ami-..."

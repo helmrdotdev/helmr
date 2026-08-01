@@ -658,6 +658,7 @@ CREATE TABLE deployments (
         build_manager_digest IS NULL OR octet_length(build_manager_digest) = 32
     ),
     build_contract_version TEXT NOT NULL CHECK (build_contract_version = 'helmr.program-build.v0'),
+    image_cache_mode TEXT NOT NULL CHECK (image_cache_mode IN ('prefer', 'bypass')),
     version TEXT NOT NULL CHECK (btrim(version) <> ''),
     content_hash TEXT NOT NULL CHECK (content_hash ~ '^sha256:[0-9a-f]{64}$'),
     api_version TEXT NOT NULL DEFAULT '2026-06-06' CHECK (
@@ -844,6 +845,8 @@ CREATE TABLE deployment_build_leases (
     terminal_request_fingerprint TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT deployment_build_leases_deployment_id_id_key
+        UNIQUE (deployment_id, id),
     UNIQUE (org_id, deployment_id, id),
     UNIQUE (deployment_id, lease_sequence),
     UNIQUE (org_id, project_id, environment_id, deployment_id, id),
@@ -1015,6 +1018,54 @@ CREATE INDEX idempotency_claims_live_expiry_idx
 CREATE INDEX idempotency_claims_retired_idx
     ON idempotency_claims (retired_at, id)
     WHERE retired_at IS NOT NULL;
+
+CREATE TABLE registry_credential_resolutions (
+    id UUID PRIMARY KEY,
+    environment_id UUID NOT NULL,
+    deployment_id UUID NOT NULL,
+    build_lease_id UUID NOT NULL,
+    image_operation_id UUID NOT NULL,
+    plan_digest BYTEA NOT NULL CHECK (octet_length(plan_digest) = 32),
+    registry_authority TEXT NOT NULL CHECK (
+        registry_authority = btrim(registry_authority)
+        AND octet_length(registry_authority) BETWEEN 1 AND 512
+    ),
+    username TEXT NOT NULL CHECK (
+        username = btrim(username)
+        AND octet_length(username) BETWEEN 1 AND 256
+    ),
+    secret_id UUID NOT NULL,
+    secret_version_id UUID NOT NULL,
+    revocation_generation BIGINT NOT NULL CHECK (revocation_generation >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT registry_credential_resolutions_binding_key
+        UNIQUE (build_lease_id, image_operation_id, registry_authority),
+    CONSTRAINT registry_credential_resolutions_build_lease_fk
+        FOREIGN KEY (deployment_id, build_lease_id)
+        REFERENCES deployment_build_leases(deployment_id, id)
+        ON DELETE RESTRICT,
+    CONSTRAINT registry_credential_resolutions_image_operation_fk
+        FOREIGN KEY (environment_id, image_operation_id)
+        REFERENCES idempotency_claims(environment_id, id)
+        ON DELETE RESTRICT,
+    CONSTRAINT registry_credential_resolutions_secret_fk
+        FOREIGN KEY (environment_id, secret_id)
+        REFERENCES secrets(environment_id, id)
+        ON DELETE RESTRICT,
+    CONSTRAINT registry_credential_resolutions_secret_version_fk
+        FOREIGN KEY (secret_id, secret_version_id)
+        REFERENCES secret_versions(secret_id, id)
+        ON DELETE RESTRICT
+);
+
+CREATE INDEX registry_credential_resolutions_image_operation_idx
+    ON registry_credential_resolutions (environment_id, image_operation_id);
+
+CREATE INDEX registry_credential_resolutions_secret_idx
+    ON registry_credential_resolutions (environment_id, secret_id);
+
+CREATE INDEX registry_credential_resolutions_secret_version_idx
+    ON registry_credential_resolutions (secret_id, secret_version_id);
 
 CREATE TABLE schedules (
     id UUID PRIMARY KEY,
