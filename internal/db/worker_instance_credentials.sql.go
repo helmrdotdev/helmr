@@ -153,7 +153,7 @@ WITH credential AS (
            updated_at = now()
       FROM credential
      WHERE worker_instances.id = credential.worker_instance_id
-    RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_guest_ephemeral_disk_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
+    RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_guest_ephemeral_disk_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
 )
 SELECT credential.id, credential.worker_group_id,
        credential.worker_instance_id, credential.key_prefix, credential.claim_version,
@@ -654,20 +654,18 @@ WITH nonce AS (
        AND worker_enrollment_nonces.consumed_at IS NULL
        AND worker_enrollment_nonces.expires_at > now()
        AND worker_groups.state = 'active'
-       AND worker_groups.allows_run = $3
-       AND worker_groups.allows_build = $4
+       AND (NOT $3::boolean OR worker_groups.allows_run)
+       AND (NOT $4::boolean OR worker_groups.allows_build)
        AND worker_groups.protocol_version = $5
-       AND worker_groups.enrollment_policy_fingerprint = $6
-       AND $7::text = ANY(worker_groups.allowed_attestation_fingerprints)
      FOR UPDATE OF worker_enrollment_nonces, worker_groups
 ), worker AS (
     INSERT INTO worker_instances (
         id, worker_group_id, resource_id, state, claim_version,
-        protocol_version, supports_run, supports_build, attestation_fingerprint
+        protocol_version, supports_run, supports_build
     )
-    SELECT $8, nonce.worker_group_id,
-           $9, 'registering', 1, nonce.protocol_version,
-           false, false, $7
+    SELECT $6, nonce.worker_group_id,
+           $7, 'registering', 1, nonce.protocol_version,
+           false, false
       FROM nonce
     ON CONFLICT (worker_group_id, resource_id) DO UPDATE
        SET claim_version = worker_instances.claim_version + 1,
@@ -684,10 +682,9 @@ WITH nonce AS (
            per_vm_guest_ephemeral_disk_bytes = 0,
            max_vm_slots = 0, max_run_consumers = 0,
            max_build_executors = 0, max_runtime_starts = 0,
-           attestation_fingerprint = EXCLUDED.attestation_fingerprint,
            current_service_id = CASE
                WHEN worker_instances.current_epoch IS NULL THEN NULL
-               ELSE $10::uuid
+               ELSE $8::uuid
            END,
            epoch_started_at = CASE WHEN worker_instances.current_epoch IS NULL THEN NULL ELSE now() END,
            startup_inventory_epoch = NULL, startup_inventory_evidence = NULL,
@@ -695,9 +692,9 @@ WITH nonce AS (
            certified_at = NULL, activated_at = NULL,
            certification_profile = '', certification_fingerprint = '',
            draining_at = NULL, disabled_at = NULL, updated_at = now()
-     WHERE worker_instances.state = 'disabled'
+     WHERE worker_instances.state IN ('registering', 'disabled')
        AND worker_instances.termination_claimed_at IS NULL
-    RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
+    RETURNING id, resource_id, worker_group_id, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
 ), revoked AS (
     UPDATE worker_instance_credentials SET revoked_at = now()
       FROM worker WHERE worker_instance_credentials.worker_instance_id = worker.id
@@ -708,10 +705,10 @@ WITH nonce AS (
         id, worker_group_id, worker_instance_id, key_prefix, secret_hash,
         claim_version, allows_run, allows_build, protocol_version, expires_at
     )
-    SELECT $11, worker.worker_group_id, worker.id,
-           $12, $13, worker.claim_version,
+    SELECT $9, worker.worker_group_id, worker.id,
+           $10, $11, worker.claim_version,
            $3, $4, worker.protocol_version,
-           $14
+           $12
       FROM worker WHERE (SELECT count(*) FROM revoked) >= 0
     RETURNING id, worker_group_id, worker_instance_id, key_prefix, claim_version, allows_run, allows_build, protocol_version, expires_at, secret_hash, created_at, last_used_at, revoked_at
 ), consumed AS (
@@ -725,20 +722,18 @@ SELECT credential.id, credential.worker_group_id, credential.worker_instance_id,
 `
 
 type EnrollWorkerInstanceParams struct {
-	NonceHash                   []byte             `json:"nonce_hash"`
-	WorkerGroupID               string             `json:"worker_group_id"`
-	AllowsRun                   bool               `json:"allows_run"`
-	AllowsBuild                 bool               `json:"allows_build"`
-	ProtocolVersion             string             `json:"protocol_version"`
-	EnrollmentPolicyFingerprint string             `json:"enrollment_policy_fingerprint"`
-	AttestationFingerprint      string             `json:"attestation_fingerprint"`
-	WorkerInstanceID            pgtype.UUID        `json:"worker_instance_id"`
-	ResourceID                  string             `json:"resource_id"`
-	CurrentServiceID            pgtype.UUID        `json:"current_service_id"`
-	CredentialID                pgtype.UUID        `json:"credential_id"`
-	KeyPrefix                   string             `json:"key_prefix"`
-	SecretHash                  []byte             `json:"secret_hash"`
-	CredentialExpiresAt         pgtype.Timestamptz `json:"credential_expires_at"`
+	NonceHash           []byte             `json:"nonce_hash"`
+	WorkerGroupID       string             `json:"worker_group_id"`
+	AllowsRun           bool               `json:"allows_run"`
+	AllowsBuild         bool               `json:"allows_build"`
+	ProtocolVersion     string             `json:"protocol_version"`
+	WorkerInstanceID    pgtype.UUID        `json:"worker_instance_id"`
+	ResourceID          string             `json:"resource_id"`
+	CurrentServiceID    pgtype.UUID        `json:"current_service_id"`
+	CredentialID        pgtype.UUID        `json:"credential_id"`
+	KeyPrefix           string             `json:"key_prefix"`
+	SecretHash          []byte             `json:"secret_hash"`
+	CredentialExpiresAt pgtype.Timestamptz `json:"credential_expires_at"`
 }
 
 type EnrollWorkerInstanceRow struct {
@@ -764,8 +759,6 @@ func (q *Queries) EnrollWorkerInstance(ctx context.Context, arg EnrollWorkerInst
 		arg.AllowsRun,
 		arg.AllowsBuild,
 		arg.ProtocolVersion,
-		arg.EnrollmentPolicyFingerprint,
-		arg.AttestationFingerprint,
 		arg.WorkerInstanceID,
 		arg.ResourceID,
 		arg.CurrentServiceID,

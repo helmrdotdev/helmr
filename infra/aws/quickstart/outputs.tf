@@ -113,6 +113,11 @@ output "secret_arns" {
   value       = module.control.secret_arns
 }
 
+output "worker_enrollment_secret_arns" {
+  description = "Per-worker-group enrollment secret ARNs."
+  value       = module.control.worker_enrollment_secret_arns
+}
+
 output "control_nat_gateway_id" {
   description = "Control VPC NAT Gateway ID when enabled."
   value       = module.control_network.nat_gateway_id

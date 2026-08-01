@@ -13,7 +13,7 @@ import (
 
 const claimFleetWorkerTermination = `-- name: ClaimFleetWorkerTermination :one
 WITH target AS MATERIALIZED (
-    SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_guest_ephemeral_disk_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
+    SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_guest_ephemeral_disk_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
       FROM worker_instances
      WHERE worker_instances.id = $1
        AND worker_instances.worker_group_id = $2
@@ -21,7 +21,7 @@ WITH target AS MATERIALIZED (
        AND worker_instances.state IN ('disabled', 'lost')
      FOR UPDATE OF worker_instances
 ), proof AS MATERIALIZED (
-    SELECT target.id, target.resource_id, target.worker_group_id, target.attestation_fingerprint, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.protocol_version, target.supervisor_version, target.supports_run, target.supports_build, target.runtime_identity_id, target.substrate_format, target.substrate_builder_abi, target.substrate_layout_abi, target.certified_cpu_millis, target.certified_memory_bytes, target.certified_guest_ephemeral_disk_bytes, target.certified_build_cache_bytes, target.certified_artifact_cache_bytes, target.certified_hugepages_bytes, target.certified_checkpoint_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_run_consumers, target.max_build_executors, target.max_runtime_starts, target.certification_profile, target.certification_fingerprint, target.epoch_started_at, target.startup_inventory_epoch, target.startup_inventory_evidence, target.drain_cleanup_fingerprint, target.drain_cleanup_evidence, target.certified_at, target.activated_at, target.draining_at, target.disabled_at, target.lost_at, target.termination_claimed_at, target.provider_terminated_at, target.created_at, target.updated_at,
+    SELECT target.id, target.resource_id, target.worker_group_id, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.protocol_version, target.supervisor_version, target.supports_run, target.supports_build, target.runtime_identity_id, target.substrate_format, target.substrate_builder_abi, target.substrate_layout_abi, target.certified_cpu_millis, target.certified_memory_bytes, target.certified_guest_ephemeral_disk_bytes, target.certified_build_cache_bytes, target.certified_artifact_cache_bytes, target.certified_hugepages_bytes, target.certified_checkpoint_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_run_consumers, target.max_build_executors, target.max_runtime_starts, target.certification_profile, target.certification_fingerprint, target.epoch_started_at, target.startup_inventory_epoch, target.startup_inventory_evidence, target.drain_cleanup_fingerprint, target.drain_cleanup_evidence, target.certified_at, target.activated_at, target.draining_at, target.disabled_at, target.lost_at, target.termination_claimed_at, target.provider_terminated_at, target.created_at, target.updated_at,
            (
                (SELECT count(*) FROM run_leases
                  WHERE worker_instance_id = target.id
@@ -53,7 +53,6 @@ WITH target AS MATERIALIZED (
             AND target.drain_cleanup_evidence IS NOT NULL
             AND jsonb_typeof(target.drain_cleanup_evidence) = 'object')::boolean AS local_cleanup_complete,
            (((target.state = 'lost'
-              AND target.current_epoch IS NOT NULL
               AND target.lost_at IS NOT NULL)
              OR (target.state = 'disabled'
                  AND target.current_epoch IS NULL))
@@ -143,38 +142,14 @@ func (q *Queries) ConfirmFleetWorkerProviderTermination(ctx context.Context, arg
 	return id, err
 }
 
-const countUncertifiedRunLaunchAttestations = `-- name: CountUncertifiedRunLaunchAttestations :one
-SELECT count(*)::bigint
-  FROM worker_groups
- WHERE worker_groups.id = $1
-   AND worker_groups.state = 'active'
-   AND worker_groups.allows_run
-   AND worker_groups.launch_attestation_fingerprint IS NOT NULL
-   AND NOT EXISTS (
-       SELECT 1
-         FROM worker_instances
-        WHERE worker_instances.worker_group_id = worker_groups.id
-          AND worker_instances.attestation_fingerprint = worker_groups.launch_attestation_fingerprint
-          AND worker_instances.supports_run
-          AND worker_instances.runtime_identity_id IS NOT NULL
-          AND worker_instances.certified_at IS NOT NULL
-   )
-`
-
-func (q *Queries) CountUncertifiedRunLaunchAttestations(ctx context.Context, workerGroupID string) (int64, error) {
-	row := q.db.QueryRow(ctx, countUncertifiedRunLaunchAttestations, workerGroupID)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const getFleetCooldown = `-- name: GetFleetCooldown :one
-SELECT last_scale_out_at, last_scale_in_at
+SELECT state, last_scale_out_at, last_scale_in_at
   FROM worker_groups
  WHERE id = $1
 `
 
 type GetFleetCooldownRow struct {
+	State          string             `json:"state"`
 	LastScaleOutAt pgtype.Timestamptz `json:"last_scale_out_at"`
 	LastScaleInAt  pgtype.Timestamptz `json:"last_scale_in_at"`
 }
@@ -182,7 +157,7 @@ type GetFleetCooldownRow struct {
 func (q *Queries) GetFleetCooldown(ctx context.Context, workerGroupID string) (GetFleetCooldownRow, error) {
 	row := q.db.QueryRow(ctx, getFleetCooldown, workerGroupID)
 	var i GetFleetCooldownRow
-	err := row.Scan(&i.LastScaleOutAt, &i.LastScaleInAt)
+	err := row.Scan(&i.State, &i.LastScaleOutAt, &i.LastScaleInAt)
 	return i, err
 }
 
@@ -263,7 +238,6 @@ SELECT worker_instances.id, worker_instances.resource_id, worker_instances.state
         AND worker_instances.drain_cleanup_evidence IS NOT NULL
         AND jsonb_typeof(worker_instances.drain_cleanup_evidence) = 'object')::boolean AS local_cleanup_complete,
        (((worker_instances.state = 'lost'
-          AND worker_instances.current_epoch IS NOT NULL
           AND worker_instances.lost_at IS NOT NULL)
          OR (worker_instances.state = 'disabled'
              AND worker_instances.current_epoch IS NULL))
@@ -550,7 +524,7 @@ WITH target AS (
        AND worker_instances.state IN ('active', 'draining')
        AND (($3::text = 'run' AND worker_instances.supports_run)
             OR ($3::text = 'build' AND worker_instances.supports_build))
-    RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
+    RETURNING id, resource_id, worker_group_id, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
 ), idle_mounts AS (
     UPDATE workspace_mounts
        SET state = 'unmounting', stopped_at = COALESCE(stopped_at, now()), updated_at = now()

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,7 +15,6 @@ import (
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awsecr "github.com/aws/aws-sdk-go-v2/service/ecr"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
@@ -65,6 +63,18 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "worker-group":
+			if err := runWorkerGroupLifecycleCommand(context.Background(), os.Stdout, os.Args[2:]); err != nil {
+				log.Error("manage worker group lifecycle", "error", err)
+				os.Exit(1)
+			}
+			return
+		case "worker-instance":
+			if err := runWorkerInstanceLifecycleCommand(context.Background(), os.Stdout, os.Args[2:]); err != nil {
+				log.Error("manage worker instance lifecycle", "error", err)
+				os.Exit(1)
+			}
+			return
 		default:
 			log.Error("unknown command", "command", os.Args[1])
 			os.Exit(1)
@@ -101,27 +111,26 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load worker group bootstrap config: %w", err)
 	}
-	var groups []configuredWorkerGroup
-	if err := json.Unmarshal([]byte(cfg.WorkerGroupsJSON), &groups); err != nil {
+	groups, err := workergroup.DecodeConfig(cfg.WorkerGroupsJSON)
+	if err != nil {
 		return fmt.Errorf("decode HELMR_WORKER_GROUPS: %w", err)
 	}
-	if err := validateAWSRegionMapping(bootstrapCfg.Provider, bootstrapCfg.ProviderRegion, groups); err != nil {
-		return fmt.Errorf("validate Region mapping: %w", err)
+	if bootstrapCfg.Provider != "aws" {
+		return fmt.Errorf("HELMR_PROVIDER must be aws for the AWS control entry")
 	}
-	awsGroups := make([]enrollment.AWSGroupBoundary, 0, len(groups))
 	desiredGroups := make([]workergroup.Desired, 0, len(groups))
+	enrollmentSecrets := make([]enrollment.GroupSecret, 0, len(groups))
 	for _, configuredGroup := range groups {
-		boundary, desired, err := enrollment.PrepareAWSGroup(configuredGroup.awsWorkerGroup())
+		desired, groupSecret, err := configuredGroup.Prepare(os.LookupEnv)
 		if err != nil {
 			return fmt.Errorf("prepare worker group %q: %w", configuredGroup.ID, err)
 		}
-		desired.ObservationTTLSeconds = configuredGroup.ObservationTTL
-		awsGroups = append(awsGroups, boundary)
 		desiredGroups = append(desiredGroups, desired)
+		enrollmentSecrets = append(enrollmentSecrets, groupSecret)
 	}
-	verifier, err := loadAWSWorkerEnrollmentVerifier(ctx, awsGroups)
+	workerEnrollment, err := enrollment.NewVerifier(enrollmentSecrets)
 	if err != nil {
-		return err
+		return fmt.Errorf("configure worker enrollment: %w", err)
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -144,7 +153,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit worker group reconciliation: %w", err)
 	}
-	workerEnrollment := controlWorkerEnrollmentVerifier{verifier: verifier}
 	clickHouseClient, err := clickhouse.New(clickhouse.Config{
 		URL:      cfg.ClickHouseURL,
 		User:     cfg.ClickHouseUser,
@@ -300,40 +308,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	cancelBackground()
 	cancelServer()
 	return nil
-}
-
-var loadAWSWorkerEnrollmentVerifier = func(ctx context.Context, groups []enrollment.AWSGroupBoundary) (*enrollment.AWSVerifier, error) {
-	awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("load AWS worker enrollment configuration: %w", err)
-	}
-	verifier, err := enrollment.NewAWSVerifier(awsCfg, groups)
-	if err != nil {
-		return nil, fmt.Errorf("configure AWS worker enrollment: %w", err)
-	}
-	return verifier, nil
-}
-
-type controlWorkerEnrollmentVerifier struct {
-	verifier *enrollment.AWSVerifier
-}
-
-func (v controlWorkerEnrollmentVerifier) ParseWorkerEnrollment(request json.RawMessage) (api.WorkerEnrollmentIntent, error) {
-	return v.verifier.ParseWorkerEnrollment(request)
-}
-
-func (v controlWorkerEnrollmentVerifier) VerifyWorkerEnrollment(ctx context.Context, request json.RawMessage) (control.VerifiedWorkerEnrollment, error) {
-	verified, err := v.verifier.VerifyWorkerEnrollment(ctx, request)
-	if err != nil {
-		return control.VerifiedWorkerEnrollment{}, err
-	}
-	return control.VerifiedWorkerEnrollment{
-		WorkerGroupID: verified.WorkerGroupID, ResourceID: verified.ResourceID,
-		AllowsRun: verified.AllowsRun, AllowsBuild: verified.AllowsBuild,
-		ProtocolVersion:             verified.ProtocolVersion,
-		EnrollmentPolicyFingerprint: verified.EnrollmentPolicyFingerprint,
-		AttestationFingerprint:      verified.AttestationFingerprint,
-	}, nil
 }
 
 func configuredEmailSender(log *slog.Logger, cfg config.Control) email.Sender {

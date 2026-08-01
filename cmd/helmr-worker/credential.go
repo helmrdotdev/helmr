@@ -22,7 +22,7 @@ import (
 
 const workerCredentialFileName = "worker-credential.json"
 
-var buildWorkerEnrollmentRequest = enrollment.BuildAWSRequest
+var buildWorkerEnrollmentRequest = enrollment.BuildRequest
 
 type workerCredentialFile struct {
 	WorkerInstanceID     string    `json:"worker_instance_id"`
@@ -45,6 +45,10 @@ func resolveWorkerInstanceCredential(ctx context.Context, cfg config.Worker, wor
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
+		enrollmentSecret, err := readWorkerEnrollmentSecret(cfg.WorkerEnrollmentSecretFile)
+		if err != nil {
+			return err
+		}
 		controlClient, err := client.New(cfg.ControlURL)
 		if err != nil {
 			return fmt.Errorf("configure worker enrollment client: %w", err)
@@ -58,7 +62,14 @@ func resolveWorkerInstanceCredential(ctx context.Context, cfg config.Worker, wor
 		if strings.TrimSpace(challenge.WorkerGroupID) != cfg.WorkerGroupID || strings.TrimSpace(challenge.Nonce) == "" {
 			return errors.New("worker enrollment challenge is invalid")
 		}
-		evidence, err := buildWorkerEnrollmentRequest(ctx, cfg.WorkerGroupID, challenge.Nonce, supportsRun, supportsBuild)
+		evidence, err := buildWorkerEnrollmentRequest(
+			cfg.WorkerGroupID,
+			challenge.Nonce,
+			supportsRun,
+			supportsBuild,
+			cfg.WorkerResourceID,
+			enrollmentSecret,
+		)
 		if err != nil {
 			return err
 		}
@@ -150,6 +161,45 @@ func workerCredentialPath(workDir string, configured string) string {
 		return configured
 	}
 	return filepath.Join(workDir, workerCredentialFileName)
+}
+
+func readWorkerEnrollmentSecret(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", errors.New("HELMR_WORKER_ENROLLMENT_SECRET_FILE is required for worker enrollment")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", fmt.Errorf("read HELMR_WORKER_ENROLLMENT_SECRET_FILE: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("HELMR_WORKER_ENROLLMENT_SECRET_FILE must be a regular file")
+	}
+	if permissions := info.Mode().Perm(); permissions != 0o400 && permissions != 0o600 {
+		return "", errors.New("HELMR_WORKER_ENROLLMENT_SECRET_FILE must have mode 0400 or 0600")
+	}
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return "", fmt.Errorf("open HELMR_WORKER_ENROLLMENT_SECRET_FILE without following links: %w", err)
+	}
+	file := os.NewFile(uintptr(fd), path)
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return "", fmt.Errorf("inspect HELMR_WORKER_ENROLLMENT_SECRET_FILE: %w", err)
+	}
+	if !opened.Mode().IsRegular() || opened.Mode().Perm() != info.Mode().Perm() {
+		return "", errors.New("HELMR_WORKER_ENROLLMENT_SECRET_FILE changed type or permissions while opening")
+	}
+	secretBytes, err := io.ReadAll(file)
+	if err != nil {
+		return "", fmt.Errorf("read HELMR_WORKER_ENROLLMENT_SECRET_FILE: %w", err)
+	}
+	secret := string(secretBytes)
+	if err := enrollment.ValidateSecret(secret); err != nil {
+		return "", fmt.Errorf("HELMR_WORKER_ENROLLMENT_SECRET_FILE: %w", err)
+	}
+	return secret, nil
 }
 
 func readWorkerInstanceCredential(path string) (workerCredentialFile, error) {

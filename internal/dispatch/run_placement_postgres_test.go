@@ -2947,9 +2947,8 @@ INSERT INTO deployment_definitions (
 	)
 	mustRunPlacementExec(t, ctx, pool, `
 INSERT INTO worker_groups (
-    id, region_id, name, enrollment_policy_fingerprint,
-    allowed_attestation_fingerprints, allows_run, allows_build, observation_ttl_seconds
-) VALUES ($1, 'us-east-1', $1, 'test-policy', ARRAY['test-attestation'], true, false, 120)`,
+    id, region_id, name, allows_run, allows_build, observation_ttl_seconds
+) VALUES ($1, 'us-east-1', $1, true, false, 120)`,
 		fixture.groupID,
 	)
 	mustRunPlacementExec(t, ctx, pool, `
@@ -2961,7 +2960,7 @@ INSERT INTO runtime_identities (
 	)
 	mustRunPlacementExec(t, ctx, pool, `
 INSERT INTO worker_instances (
-    id, resource_id, worker_group_id, attestation_fingerprint, state,
+    id, resource_id, worker_group_id, state,
     current_epoch, current_service_id, protocol_version, supervisor_version,
     supports_run, runtime_identity_id,
     substrate_format, substrate_builder_abi, substrate_layout_abi,
@@ -2971,7 +2970,7 @@ INSERT INTO worker_instances (
     max_run_consumers, max_runtime_starts, certification_profile,
     certification_fingerprint, epoch_started_at, certified_at, activated_at
 ) VALUES (
-    $1, $2, $3, 'test-attestation', 'active', 1, $4, 'helmr.worker.v0',
+    $1, $2, $3, 'active', 1, $4, 'helmr.worker.v0',
     'test-worker', true, $5, 'squashfs', 'builder-v0', 'layout-v0',
     8000, 8589934592, 274877906944,
     1000, 1073741824, 34359738368,

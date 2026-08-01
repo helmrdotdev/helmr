@@ -62,7 +62,6 @@ redis_node_count = 1
 # guest boot artifacts, AWS CLI, and helmr-worker already installed.
 create_worker                       = true
 worker_ami_id                       = "ami-..."
-worker_allowed_ami_ids              = []
 worker_instance_type                = "c8i.xlarge"
 worker_enable_nested_virtualization = true
 worker_min_size                     = 0

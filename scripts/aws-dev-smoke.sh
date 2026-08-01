@@ -32,7 +32,6 @@ BUILD_POLICY_DIGEST_FILE="${STATE_DIR}/build-policy-digest"
 WORKER_IMAGE_PROVENANCE_FILE="${STATE_DIR}/worker-image-provenance.json"
 CONTROL_IMAGE_PROVENANCE_FILE="${STATE_DIR}/control-image-provenance.json"
 CONTROL_IMAGE_URI_FILE="${STATE_DIR}/control-image-uri"
-DEV_APPLY_MARKER_FILE="${STATE_DIR}/dev-apply-success.json"
 IMAGE_WAIT_INTERVAL_SECONDS="${IMAGE_WAIT_INTERVAL_SECONDS:-60}"
 IMAGE_WAIT_TIMEOUT_SECONDS="${IMAGE_WAIT_TIMEOUT_SECONDS:-7200}"
 
@@ -89,9 +88,6 @@ Common optional environment:
   ALLOW_VALIDATION_EVIDENCE_DELETE
                         Set to 1 only when intentionally deleting retained validation evidence
                         during bootstrap destruction.
-  DEV_WORKER_ALLOWED_AMI_IDS
-                        JSON array of additional AMIs accepted while workers roll to WORKER_AMI_ID.
-
 Worker image optional environment:
   BOOTSTRAP_NAME           Bootstrap resource name. Defaults to helmr-dev.
   WORKER_IMAGE_NAME        Stack name. Defaults to helmr-dev-image.
@@ -992,7 +988,6 @@ control_desired_count   = ${DEV_CONTROL_DESIRED_COUNT:-1}
 dispatcher_desired_count = ${DEV_DISPATCHER_DESIRED_COUNT:-1}
 control_assign_public_ip = ${DEV_CONTROL_ASSIGN_PUBLIC_IP:-true}
 create_worker           = false
-worker_allowed_ami_ids  = []
 
 database_backup_retention_days              = ${DEV_DATABASE_BACKUP_RETENTION_DAYS:-1}
 redis_node_type                             = "${DEV_REDIS_NODE_TYPE:-cache.t4g.micro}"
@@ -1021,170 +1016,12 @@ EOF
   info "wrote ${DEV_TFVARS}"
 }
 
-current_control_worker_policy() {
-  local cluster=$1
-  local service=$2
-  local service_json
-  local task_definition
-  local desired
-  local task_arns_json
-  local task_details
-  local task_definition_json
-  local worker_groups
-  local ami_ids
-  local task_arn
-  local -a task_arns=()
-
-  service_json="$(
-    aws ecs describe-services \
-      --region "${AWS_REGION}" \
-      --cluster "${cluster}" \
-      --services "${service}"
-  )"
-  printf '%s\n' "${service_json}" | jq -e '
-    (.failures | length) == 0 and
-    (.services | length) == 1 and
-    (.services[0].desiredCount > 0) and
-    (.services[0].runningCount == .services[0].desiredCount) and
-    (.services[0].pendingCount == 0) and
-    (.services[0].deployments | length) == 1 and
-    (.services[0].deployments[0].status == "PRIMARY") and
-    (.services[0].deployments[0].rolloutState == "COMPLETED")
-  ' >/dev/null || return 1
-  task_definition="$(printf '%s\n' "${service_json}" | jq -er '.services[0].taskDefinition')"
-  desired="$(printf '%s\n' "${service_json}" | jq -er '.services[0].desiredCount')"
-  task_arns_json="$(
-    aws ecs list-tasks \
-      --region "${AWS_REGION}" \
-      --cluster "${cluster}" \
-      --service-name "${service}" \
-      --desired-status RUNNING \
-      --output json
-  )"
-  while IFS= read -r task_arn; do
-    [ -n "${task_arn}" ] && task_arns+=("${task_arn}")
-  done < <(printf '%s\n' "${task_arns_json}" | jq -r '.taskArns[]')
-  [ "${#task_arns[@]}" -eq "${desired}" ] || return 1
-  task_details="$(
-    aws ecs describe-tasks \
-      --region "${AWS_REGION}" \
-      --cluster "${cluster}" \
-      --tasks "${task_arns[@]}"
-  )"
-  printf '%s\n' "${task_details}" | jq -e --arg task_definition "${task_definition}" --argjson desired "${desired}" '
-    (.failures | length) == 0 and
-    (.tasks | length) == $desired and
-    all(.tasks[]; .lastStatus == "RUNNING" and .taskDefinitionArn == $task_definition)
-  ' >/dev/null || return 1
-  task_definition_json="$(
-    aws ecs describe-task-definition \
-      --region "${AWS_REGION}" \
-      --task-definition "${task_definition}" \
-      --output json
-  )"
-  worker_groups="$(
-    printf '%s\n' "${task_definition_json}" | jq -cer '
-      .taskDefinition.containerDefinitions[]
-      | select(.name == "control")
-      | .environment[]
-      | select(.name == "HELMR_WORKER_GROUPS")
-      | .value
-      | fromjson
-    '
-  )" || return 2
-  printf '%s\n' "${worker_groups}" | jq -e '
-    if length == 0 then
-      false
-    else
-      ([.[0].ami_ids[]] | unique) as $expected
-      | all(.[]; ([.ami_ids[]] | unique) == $expected)
-    end
-  ' >/dev/null || return 2
-  ami_ids="$(printf '%s\n' "${worker_groups}" | jq -c '[.[0].ami_ids[]] | unique')"
-  jq -cn --arg task_definition "${task_definition}" --argjson ami_ids "${ami_ids}" \
-    '{task_definition:$task_definition,ami_ids:$ami_ids}'
-}
-
-stable_control_worker_policy() {
-  local cluster
-  local service
-  local deadline
-  local snapshot
-  local status
-
-  cluster="$("${TF_BIN}" -chdir="${DEV_STACK}" output -raw control_cluster_name 2>/dev/null || true)"
-  service="$("${TF_BIN}" -chdir="${DEV_STACK}" output -raw control_service_name 2>/dev/null || true)"
-  [ -n "${cluster}" ] && [ "${cluster}" != "null" ] && [ -n "${service}" ] && [ "${service}" != "null" ] || return 2
-
-  aws ecs wait services-stable \
-    --region "${AWS_REGION}" \
-    --cluster "${cluster}" \
-    --services "${service}"
-  deadline=$((SECONDS + ${DEV_CONTROL_STABILITY_TIMEOUT_SECONDS:-900}))
-  while :; do
-    if snapshot="$(current_control_worker_policy "${cluster}" "${service}")"; then
-      printf '%s\n' "${snapshot}"
-      return 0
-    else
-      status=$?
-    fi
-    [ "${status}" -ne 2 ] || return 2
-    [ "${SECONDS}" -lt "${deadline}" ] || return 1
-    sleep "${DEV_CONTROL_STABILITY_POLL_SECONDS:-5}"
-  done
-}
-
-record_dev_apply_success() {
-  local service
-  local desired_count
-  local snapshot
-  local applied_ami_ids
-  local marker_tmp
-
-  service="$("${TF_BIN}" -chdir="${DEV_STACK}" output -raw control_service_name 2>/dev/null || true)"
-  if [ -z "${service}" ] || [ "${service}" = "null" ]; then
-    rm -f "${DEV_APPLY_MARKER_FILE}"
-    return 0
-  fi
-  desired_count="$(tfvar_value "${DEV_TFVARS}" control_desired_count 2>/dev/null || printf '1')"
-  if [ "${desired_count}" = "0" ]; then
-    rm -f "${DEV_APPLY_MARKER_FILE}"
-    return 0
-  fi
-  snapshot="$(stable_control_worker_policy)" || die "dev apply completed but the control service did not stabilize on one task definition"
-  applied_ami_ids="$("${TF_BIN}" -chdir="${DEV_STACK}" output -json worker_allowed_ami_ids | jq -cer 'select(type == "array")')"
-  printf '%s\n' "${snapshot}" | jq -e --argjson applied "${applied_ami_ids}" '.ami_ids == ($applied | unique)' >/dev/null || \
-    die "stable control task worker policy does not match the applied worker AMI allowlist"
-  mkdir -p "${STATE_DIR}"
-  marker_tmp="$(mktemp "${STATE_DIR}/dev-apply-success.XXXXXX")"
-  chmod 0600 "${marker_tmp}"
-  printf '%s\n' "${snapshot}" >"${marker_tmp}"
-  mv "${marker_tmp}" "${DEV_APPLY_MARKER_FILE}"
-  info "recorded stable control deployment: ${DEV_APPLY_MARKER_FILE}"
-}
-
-stable_control_policy_proves_ami() {
-  local ami_id=$1
-  local marker
-  local live
-
-  [ -f "${DEV_APPLY_MARKER_FILE}" ] || return 1
-  marker="$(jq -cer 'select(.task_definition | type == "string") | select(.ami_ids | type == "array")' "${DEV_APPLY_MARKER_FILE}" 2>/dev/null)" || return 1
-  printf '%s\n' "${marker}" | jq -e --arg ami_id "${ami_id}" '.ami_ids | index($ami_id) != null' >/dev/null || return 1
-  live="$(stable_control_worker_policy 2>/dev/null)" || return 1
-  jq -en --argjson marker "${marker}" --argjson live "${live}" --arg ami_id "${ami_id}" '
-    $marker.task_definition == $live.task_definition and
-    ($live.ami_ids | index($ami_id) != null)
-  ' >/dev/null
-}
-
 dev_apply() {
   [ -f "${DEV_TFVARS}" ] || die "${DEV_TFVARS} does not exist; run dev-tfvars and fill required values first"
   tf_apply "${DEV_STACK}" -var-file="${DEV_TFVARS}"
   # A fresh database cannot make the control service healthy until its schema
   # exists. Run the idempotent migration task before waiting for ECS stability.
   dev_migrate
-  record_dev_apply_success
 }
 
 tf_quote() {
@@ -1601,6 +1438,10 @@ random_base64() {
   dd if=/dev/urandom bs=32 count=1 2>/dev/null | base64 | tr -d '\n'
 }
 
+random_base64url() {
+  dd if=/dev/urandom bs=32 count=1 2>/dev/null | base64 | tr '+/' '-_' | tr -d '=\n'
+}
+
 dev_root_key() {
   secret_id="$(dev_secret_arn "$1")"
   put_secret_value_if_missing "${secret_id}" "$(random_base64)"
@@ -1653,6 +1494,10 @@ dev_generated_secrets() {
   dev_root_key token_credential_key
   put_secret_value_if_missing "$(dev_secret_arn checkpoint_encryption_key)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn setup_token)" "$(random_hex)"
+  while IFS=$'\t' read -r group_id secret_arn; do
+    [ -n "${group_id}" ] || continue
+    put_secret_value_if_missing "${secret_arn}" "$(random_base64url)"
+  done < <("${TF_BIN}" -chdir="${DEV_STACK}" output -json worker_enrollment_secret_arns | jq -r 'to_entries[] | [.key, .value] | @tsv')
   dev_resend_api_key_secret
   info "generated secrets populated"
 }
@@ -1670,11 +1515,6 @@ dev_github_oauth_secret() {
 
 dev_worker_tfvars() {
   ami_id="${WORKER_AMI_ID:-}"
-  previous_ami_id=""
-  existing_allowed_ami_ids="[]"
-  applied_allowed_ami_ids="[]"
-  allowed_ami_ids="${DEV_WORKER_ALLOWED_AMI_IDS:-}"
-  rollout_staged=0
   worker_instance_type="${WORKER_INSTANCE_TYPE:-c8i.xlarge}"
   worker_root_volume_size_gb="${DEV_WORKER_ROOT_VOLUME_SIZE_GB:-120}"
   worker_root_volume_iops="${DEV_WORKER_ROOT_VOLUME_IOPS:-3000}"
@@ -1711,45 +1551,11 @@ dev_worker_tfvars() {
   fi
   [ -n "${ami_id}" ] || die "WORKER_AMI_ID is required, or run worker-image-wait first"
   [ -f "${DEV_TFVARS}" ] || die "${DEV_TFVARS} does not exist; run dev-control-tfvars first"
-  previous_ami_id="$(tfvar_value "${DEV_TFVARS}" worker_ami_id 2>/dev/null | jq -er 'select(type == "string")' 2>/dev/null || true)"
-  existing_allowed_ami_ids="$(tfvar_value "${DEV_TFVARS}" worker_allowed_ami_ids 2>/dev/null | jq -cer 'select(type == "array")' 2>/dev/null || printf '[]')"
-  applied_allowed_ami_ids="$("${TF_BIN}" -chdir="${DEV_STACK}" output -json worker_allowed_ami_ids 2>/dev/null | jq -cer 'select(type == "array")' 2>/dev/null || printf '[]')"
-  if [ -n "${allowed_ami_ids}" ]; then
-    printf '%s\n' "${allowed_ami_ids}" | jq -e \
-      'type == "array" and all(.[]; type == "string" and test("^ami-[0-9a-fA-F]+$"))' >/dev/null || \
-      die "DEV_WORKER_ALLOWED_AMI_IDS must be a JSON array of AWS AMI IDs"
-  fi
-  if [ -z "${allowed_ami_ids}" ]; then
-    allowed_ami_ids="${existing_allowed_ami_ids}"
-  fi
-  if printf '%s\n' "${previous_ami_id}" | jq -eR --arg current "${ami_id}" \
-    'test("^ami-[0-9a-fA-F]+$") and . != $current' >/dev/null; then
-    allowed_ami_ids="$(
-      jq -cn --argjson requested "${allowed_ami_ids}" --arg previous "${previous_ami_id}" --arg current "${ami_id}" \
-        '$requested + [$previous, $current] | map(select(test("^ami-[0-9a-fA-F]+$"))) | unique'
-    )"
-    if ! printf '%s\n' "${applied_allowed_ami_ids}" | jq -e --arg current "${ami_id}" 'index($current) != null' >/dev/null || \
-      ! stable_control_policy_proves_ami "${ami_id}"; then
-      rollout_staged=1
-    fi
-  else
-    allowed_ami_ids="$(
-      jq -cn --argjson requested "${allowed_ami_ids}" --arg previous "${previous_ami_id}" --arg current "${ami_id}" \
-        '$requested + [$previous] | map(select(test("^ami-[0-9a-fA-F]+$") and . != $current)) | unique'
-    )"
-  fi
-  printf '%s\n' "${allowed_ami_ids}" | jq -e \
-    'type == "array" and all(.[]; type == "string" and test("^ami-[0-9a-fA-F]+$"))' >/dev/null || \
-    die "DEV_WORKER_ALLOWED_AMI_IDS must be a JSON array of AWS AMI IDs"
-
   ensure_public_worker_control_url_ready
   set_tfvar "${DEV_TFVARS}" "create_worker" "true"
   set_tfvar "${DEV_TFVARS}" "enable_nat_gateway" "true"
   set_tfvar "${DEV_TFVARS}" "control_assign_public_ip" "false"
-  if [ "${rollout_staged}" = "0" ]; then
-    set_tfvar "${DEV_TFVARS}" "worker_ami_id" "$(tf_quote "${ami_id}")"
-  fi
-  set_tfvar "${DEV_TFVARS}" "worker_allowed_ami_ids" "${allowed_ami_ids}"
+  set_tfvar "${DEV_TFVARS}" "worker_ami_id" "$(tf_quote "${ami_id}")"
   set_tfvar "${DEV_TFVARS}" "worker_instance_type" "$(tf_quote "${worker_instance_type}")"
   set_tfvar "${DEV_TFVARS}" "worker_enable_nested_virtualization" "true"
   set_tfvar "${DEV_TFVARS}" "allow_extended_worker_capacity" "${allow_extended_worker_capacity}"
@@ -1808,11 +1614,7 @@ dev_worker_tfvars() {
       emergency_stop:false,
       metric_interval_seconds:60
     }')"
-  if [ "${rollout_staged}" = "1" ]; then
-    info "staged ${ami_id} in the worker enrollment allowlist; apply once, then rerun dev-worker-tfvars after the applied state includes the AMI"
-  else
-    info "updated ${DEV_TFVARS} for cost-bounded run/build fleets"
-  fi
+  info "updated ${DEV_TFVARS} for cost-bounded run/build fleets"
 }
 
 dev_migrate() {

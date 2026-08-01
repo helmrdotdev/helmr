@@ -238,9 +238,9 @@ func insertRegisteringWorker(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, attestation_fingerprint, state, updated_at,
+			id, resource_id, worker_group_id, state, updated_at,
 			current_epoch, current_service_id, epoch_started_at
-		) VALUES ($1, $2, $3, 'sha256:test-attestation', 'registering', $4, $5, $6, $7)
+		) VALUES ($1, $2, $3, 'registering', $4, $5, $6, $7)
 	`, id, "registering-"+id.String(), dbtest.DefaultWorkerGroupID, updatedAt, epoch, serviceID, epochStartedAt); err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func insertActiveWorkerWithObservation(t *testing.T, ctx context.Context, pool *
 	serviceID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, attestation_fingerprint, state,
+			id, resource_id, worker_group_id, state,
 			current_epoch, current_service_id, supervisor_version, supports_build,
 			certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes,
 			per_vm_cpu_millis, per_vm_memory_bytes,
@@ -261,7 +261,7 @@ func insertActiveWorkerWithObservation(t *testing.T, ctx context.Context, pool *
 			certification_profile, certification_fingerprint, epoch_started_at,
 			certified_at, activated_at
 		) VALUES (
-			$1, $2, $3, 'sha256:test-attestation', 'active',
+			$1, $2, $3, 'active',
 			1, $4, 'test-worker', true,
 			1000, 1073741824, 1073741824,
 			1000, 1073741824,

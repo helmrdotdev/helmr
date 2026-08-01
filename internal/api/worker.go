@@ -49,6 +49,12 @@ type WorkerEnrollmentIntent struct {
 	ProtocolVersion string `json:"protocol_version"`
 }
 
+type WorkerEnrollmentRequest struct {
+	WorkerEnrollmentIntent
+	ResourceID string `json:"resource_id"`
+	Proof      string `json:"proof"`
+}
+
 type WorkerRunLeaseDiscoveryRequest struct{}
 
 const (

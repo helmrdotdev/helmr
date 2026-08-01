@@ -1,17 +1,13 @@
 -- name: ReconcileWorkerGroup :one
 WITH desired_group AS (
     INSERT INTO worker_groups (
-        id, region_id, name, description, state, enrollment_policy_fingerprint,
-        allowed_attestation_fingerprints, launch_attestation_fingerprint,
-        allows_run, allows_build, protocol_version,
+        id, region_id, name, description, state, allows_run, allows_build, protocol_version,
         required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes,
         required_build_cache_bytes, required_artifact_cache_bytes,
         required_vm_slots, required_build_executors, observation_ttl_seconds
     ) VALUES (
         sqlc.arg(id), sqlc.arg(region_id), sqlc.arg(name), sqlc.arg(description),
-        'active', sqlc.arg(enrollment_policy_fingerprint), sqlc.arg(allowed_attestation_fingerprints),
-        sqlc.narg(launch_attestation_fingerprint),
-        sqlc.arg(allows_run), sqlc.arg(allows_build), sqlc.arg(protocol_version),
+        'active', sqlc.arg(allows_run), sqlc.arg(allows_build), sqlc.arg(protocol_version),
         sqlc.arg(required_cpu_millis), sqlc.arg(required_memory_bytes),
         sqlc.arg(required_guest_ephemeral_disk_bytes),
         sqlc.arg(required_build_cache_bytes), sqlc.arg(required_artifact_cache_bytes),
@@ -20,8 +16,7 @@ WITH desired_group AS (
     )
     ON CONFLICT (id) DO UPDATE
        SET claim_version = CASE
-               WHEN worker_groups.enrollment_policy_fingerprint IS DISTINCT FROM EXCLUDED.enrollment_policy_fingerprint
-                 OR worker_groups.protocol_version IS DISTINCT FROM EXCLUDED.protocol_version
+               WHEN worker_groups.protocol_version IS DISTINCT FROM EXCLUDED.protocol_version
                  OR worker_groups.allows_run IS DISTINCT FROM EXCLUDED.allows_run
                  OR worker_groups.allows_build IS DISTINCT FROM EXCLUDED.allows_build
                  OR worker_groups.required_cpu_millis IS DISTINCT FROM EXCLUDED.required_cpu_millis
@@ -35,9 +30,6 @@ WITH desired_group AS (
                THEN worker_groups.claim_version + 1 ELSE worker_groups.claim_version END,
            region_id = EXCLUDED.region_id, name = EXCLUDED.name,
            description = EXCLUDED.description,
-           enrollment_policy_fingerprint = EXCLUDED.enrollment_policy_fingerprint,
-           allowed_attestation_fingerprints = EXCLUDED.allowed_attestation_fingerprints,
-           launch_attestation_fingerprint = EXCLUDED.launch_attestation_fingerprint,
            allows_run = EXCLUDED.allows_run, allows_build = EXCLUDED.allows_build,
            required_cpu_millis = EXCLUDED.required_cpu_millis,
            required_memory_bytes = EXCLUDED.required_memory_bytes,
@@ -61,8 +53,7 @@ WITH desired_group AS (
      WHERE worker_instances.worker_group_id = desired_group.id
        AND worker_instances.state IN ('registering', 'active', 'draining')
        AND (
-           NOT (worker_instances.attestation_fingerprint = ANY(sqlc.arg(allowed_attestation_fingerprints)::text[]))
-           OR (worker_instances.supports_run AND NOT desired_group.allows_run)
+           (worker_instances.supports_run AND NOT desired_group.allows_run)
            OR (worker_instances.supports_build AND NOT desired_group.allows_build)
            OR EXISTS (
                SELECT 1
@@ -94,7 +85,7 @@ WITH desired_group AS (
 ), lost_mounts AS (
     UPDATE workspace_mounts
        SET state = 'lost', lost_at = now(), terminal_at = now(),
-           terminal_reason_code = 'enrollment_policy_changed', updated_at = now()
+           terminal_reason_code = 'worker_group_contract_changed', updated_at = now()
      WHERE workspace_mounts.worker_instance_id IN (SELECT id FROM lost_workers)
        AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
     RETURNING workspace_mounts.id
@@ -102,7 +93,7 @@ WITH desired_group AS (
     UPDATE runtime_instances
        SET observed_state = 'lost', observed_version = observed_version + 1,
            observed_at = now(), lost_at = now(), terminal_at = now(),
-           terminal_reason_code = 'enrollment_policy_changed',
+           terminal_reason_code = 'worker_group_contract_changed',
            reserved_run_id = NULL, reserved_attempt_number = NULL,
            reserved_process_id = NULL, reserved_workspace_version_id = NULL,
            reservation_expires_at = NULL, updated_at = now()
@@ -215,6 +206,107 @@ SELECT id AS worker_group_id,
        state = 'active' AS routable
   FROM worker_groups
  WHERE id = sqlc.arg(worker_group_id);
+
+-- name: GetWorkerGroupLifecycle :one
+SELECT id, state, claim_version
+  FROM worker_groups
+ WHERE id = sqlc.arg(worker_group_id);
+
+-- name: TransitionWorkerGroupLifecycle :one
+WITH transitioned AS (
+    UPDATE worker_groups
+       SET state = sqlc.arg(target_state),
+           claim_version = worker_groups.claim_version + 1,
+           updated_at = now()
+     WHERE worker_groups.id = sqlc.arg(worker_group_id)
+       AND worker_groups.claim_version = sqlc.arg(expected_claim_version)
+       AND (
+           (worker_groups.state = 'active' AND sqlc.arg(target_state)::text = 'draining')
+           OR (worker_groups.state = 'draining' AND sqlc.arg(target_state)::text = 'active')
+       )
+    RETURNING worker_groups.id, worker_groups.state, worker_groups.claim_version
+)
+SELECT id, state, claim_version, true AS transition_applied
+  FROM transitioned
+UNION ALL
+SELECT worker_groups.id, worker_groups.state, worker_groups.claim_version,
+       false AS transition_applied
+  FROM worker_groups
+ WHERE worker_groups.id = sqlc.arg(worker_group_id)
+   AND worker_groups.state = sqlc.arg(target_state)::text
+   AND worker_groups.claim_version = sqlc.arg(expected_claim_version) + 1
+   AND NOT EXISTS (SELECT 1 FROM transitioned)
+LIMIT 1;
+
+-- name: GetWorkerInstanceLifecycle :one
+SELECT id, resource_id, worker_group_id, state, claim_version, current_epoch
+  FROM worker_instances
+ WHERE worker_group_id = sqlc.arg(worker_group_id)
+   AND resource_id = sqlc.arg(resource_id);
+
+-- name: LoseWorkerInstanceForDrift :one
+WITH target AS (
+    UPDATE worker_instances
+       SET state = 'lost', claim_version = worker_instances.claim_version + 1,
+           lost_at = COALESCE(worker_instances.lost_at, now()), updated_at = now()
+     WHERE worker_instances.worker_group_id = sqlc.arg(worker_group_id)
+       AND worker_instances.resource_id = sqlc.arg(resource_id)
+       AND worker_instances.claim_version = sqlc.arg(expected_claim_version)
+       AND worker_instances.state IN ('registering', 'active', 'draining')
+    RETURNING worker_instances.id, worker_instances.resource_id,
+              worker_instances.worker_group_id, worker_instances.state,
+              worker_instances.claim_version, worker_instances.current_epoch
+), revoked_credentials AS (
+    UPDATE worker_instance_credentials
+       SET revoked_at = COALESCE(revoked_at, now())
+      FROM target
+     WHERE worker_instance_credentials.worker_instance_id = target.id
+       AND worker_instance_credentials.revoked_at IS NULL
+    RETURNING worker_instance_credentials.id
+), lost_mounts AS (
+    UPDATE workspace_mounts
+       SET state = 'lost', lost_at = now(), terminal_at = now(),
+           terminal_reason_code = 'external_instance_drift', updated_at = now()
+      FROM target
+     WHERE workspace_mounts.worker_instance_id = target.id
+       AND workspace_mounts.worker_epoch = target.current_epoch
+       AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+    RETURNING workspace_mounts.id
+), lost_runtimes AS (
+    UPDATE runtime_instances
+       SET observed_state = 'lost', observed_version = observed_version + 1,
+           observed_at = now(), lost_at = now(), terminal_at = now(),
+           terminal_reason_code = 'external_instance_drift',
+           reserved_run_id = NULL, reserved_attempt_number = NULL,
+           reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+           reservation_expires_at = NULL, updated_at = now()
+      FROM target
+     WHERE runtime_instances.worker_instance_id = target.id
+       AND runtime_instances.worker_epoch = target.current_epoch
+       AND runtime_instances.reclaimed_at IS NULL
+       AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
+    RETURNING runtime_instances.id
+), completed AS (
+    SELECT target.id, target.resource_id, target.worker_group_id, target.state,
+           target.claim_version, target.current_epoch, true AS transition_applied
+      FROM target
+     WHERE (SELECT count(*) FROM revoked_credentials) >= 0
+       AND (SELECT count(*) FROM lost_mounts) >= 0
+       AND (SELECT count(*) FROM lost_runtimes) >= 0
+)
+SELECT * FROM completed
+UNION ALL
+SELECT worker_instances.id, worker_instances.resource_id,
+       worker_instances.worker_group_id, worker_instances.state,
+       worker_instances.claim_version, worker_instances.current_epoch,
+       false AS transition_applied
+  FROM worker_instances
+ WHERE worker_instances.worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_instances.resource_id = sqlc.arg(resource_id)
+   AND worker_instances.state = 'lost'
+   AND worker_instances.claim_version = sqlc.arg(expected_claim_version) + 1
+   AND NOT EXISTS (SELECT 1 FROM completed)
+LIMIT 1;
 
 -- name: CertifyWorkerInstance :one
 WITH activation AS (

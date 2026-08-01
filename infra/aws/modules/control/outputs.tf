@@ -135,6 +135,11 @@ output "secret_arns" {
   )
 }
 
+output "worker_enrollment_secret_arns" {
+  description = "Per-logical-group enrollment secrets populated and distributed by the deployment."
+  value       = { for group_id, secret in aws_secretsmanager_secret.worker_enrollment : group_id => secret.arn }
+}
+
 output "worker_fleets" {
   description = "Exact non-secret fleet-controller configuration delivered to helmr-dispatcher."
   value       = var.worker_fleets

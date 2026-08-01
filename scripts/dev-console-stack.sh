@@ -76,8 +76,10 @@ export HELMR_PROVIDER="${HELMR_PROVIDER:-"local"}"
 export HELMR_PROVIDER_REGION="${HELMR_PROVIDER_REGION:-"${HELMR_REGION_ID}"}"
 export HELMR_REGION_DISPLAY_NAME="${HELMR_REGION_DISPLAY_NAME:-"Local"}"
 export HELMR_WORKER_GROUP_ID="${HELMR_WORKER_GROUP_ID:-"${HELMR_REGION_ID}-worker-group-1"}"
+export HELMR_WORKER_ENROLLMENT_SECRET_LOCAL="${HELMR_WORKER_ENROLLMENT_SECRET_LOCAL:-"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"}"
+export HELMR_WORKER_RESOURCE_ID="${HELMR_WORKER_RESOURCE_ID:-"local-worker"}"
 if [ -z "${HELMR_WORKER_GROUPS:-}" ]; then
-  export HELMR_WORKER_GROUPS="[{\"id\":\"${HELMR_WORKER_GROUP_ID}\",\"name\":\"local\",\"region\":\"${HELMR_PROVIDER_REGION}\",\"account_id\":\"000000000000\",\"autoscaling_group\":\"helmr-local\",\"instance_profile_arn\":\"arn:aws:iam::000000000000:instance-profile/helmr-local\",\"ami_ids\":[\"ami-local\"],\"allows_run\":true,\"allows_build\":true}]"
+  export HELMR_WORKER_GROUPS="[{\"id\":\"${HELMR_WORKER_GROUP_ID}\",\"name\":\"local\",\"enrollment_secret_env\":\"HELMR_WORKER_ENROLLMENT_SECRET_LOCAL\",\"allows_run\":true,\"allows_build\":true,\"observation_ttl_seconds\":120,\"instance_capacity\":{\"milli_cpu\":1000,\"memory_bytes\":1073741824,\"guest_ephemeral_disk_bytes\":1073741824,\"build_cache_bytes\":1073741824,\"artifact_cache_bytes\":1073741824,\"vm_slots\":1,\"build_executors\":1}}]"
 fi
 if ! bun -e 'const groups = JSON.parse(process.env.HELMR_WORKER_GROUPS); if (!Array.isArray(groups) || groups.length === 0) process.exit(1)' >/dev/null; then
   echo "HELMR_WORKER_GROUPS must be a non-empty JSON array" >&2

@@ -20,7 +20,7 @@ func (c *Client) CreateWorkerEnrollmentChallenge(ctx context.Context, workerGrou
 	return response, nil
 }
 
-func (c *Client) EnrollWorker(ctx context.Context, request json.RawMessage) (api.WorkerEnrollmentResponse, error) {
+func (c *Client) EnrollWorker(ctx context.Context, request api.WorkerEnrollmentRequest) (api.WorkerEnrollmentResponse, error) {
 	var response api.WorkerEnrollmentResponse
 	if err := c.postJSON(ctx, "/api/worker/enrollment", request, &response); err != nil {
 		return api.WorkerEnrollmentResponse{}, err

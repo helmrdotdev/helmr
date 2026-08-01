@@ -511,9 +511,7 @@ func (c *Controller) publish(ctx context.Context, snapshot GroupSnapshot, decisi
 		UnmetDeficit: decision.UnmetRequiredWorkers, CapReason: decision.CapReason,
 		Desired: decision.DesiredWorkers, Supply: decision.PlannedWorkers,
 		Pending: decision.PendingWorkers, Billable: decision.BillableWorkers,
-		UncertifiedRunLaunchAttestations: snapshot.Inputs.UncertifiedRunLaunchAttestations,
-		BootstrapPending:                 snapshot.Inputs.UncertifiedRunLaunchAttestations > 0,
-		Action:                           decision.Action, Outcome: outcome, DrainAge: drainAge, QueueAge: queueAge,
+		Action: decision.Action, Outcome: outcome, DrainAge: drainAge, QueueAge: queueAge,
 		DrainTimedOut: drainAge >= c.config.DrainTimeout,
 	})
 }

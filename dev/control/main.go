@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -18,9 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
@@ -65,21 +62,17 @@ func main() {
 		os.Exit(1)
 	}
 	desiredWorkerGroups := make([]workergroup.Desired, 0, len(cfg.workerGroups))
-	for i, group := range cfg.workerGroups {
-		boundary, desired, err := enrollment.PrepareAWSGroup(group)
+	enrollmentSecrets := make([]enrollment.GroupSecret, 0, len(cfg.workerGroups))
+	for _, group := range cfg.workerGroups {
+		desired, groupSecret, err := group.Prepare(os.LookupEnv)
 		if err != nil {
 			log.Error("prepare worker group", "worker_group_id", group.ID, "error", err)
 			os.Exit(1)
 		}
-		cfg.workerGroups[i] = boundary
 		desiredWorkerGroups = append(desiredWorkerGroups, desired)
+		enrollmentSecrets = append(enrollmentSecrets, groupSecret)
 	}
-	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.providerRegion))
-	if err != nil {
-		log.Error("load AWS config", "error", err)
-		os.Exit(1)
-	}
-	workerEnrollment, err := enrollment.NewAWSVerifier(awsCfg, cfg.workerGroups)
+	workerEnrollment, err := enrollment.NewVerifier(enrollmentSecrets)
 	if err != nil {
 		log.Error("configure worker enrollment", "error", err)
 		os.Exit(1)
@@ -233,7 +226,7 @@ func main() {
 		WorkspaceFencingKey:   workspaceFencingKey,
 		TokenCredentialKey:    tokenCredentialKey,
 		WorkerTokenSigningKey: cfg.workerTokenKey,
-		WorkerEnrollment:      devWorkerEnrollmentVerifier{verifier: workerEnrollment},
+		WorkerEnrollment:      workerEnrollment,
 		SetupToken:            cfg.setupToken,
 		AuthKey:               cfg.authKey,
 		PublicURL:             publicURL,
@@ -285,7 +278,7 @@ type devConfig struct {
 	providerRegion      string
 	regionDisplayName   string
 	workerGroupID       string
-	workerGroups        []enrollment.AWSGroupBoundary
+	workerGroups        []workergroup.Config
 	clickHouseURL       string
 	clickHouseUser      string
 	clickHousePassword  string
@@ -301,26 +294,6 @@ type devConfig struct {
 	tokenCredentialKey  []byte
 	resetDatabase       bool
 	seedData            bool
-}
-
-type devWorkerEnrollmentVerifier struct {
-	verifier *enrollment.AWSVerifier
-}
-
-func (v devWorkerEnrollmentVerifier) ParseWorkerEnrollment(request json.RawMessage) (api.WorkerEnrollmentIntent, error) {
-	return v.verifier.ParseWorkerEnrollment(request)
-}
-
-func (v devWorkerEnrollmentVerifier) VerifyWorkerEnrollment(ctx context.Context, request json.RawMessage) (control.VerifiedWorkerEnrollment, error) {
-	verified, err := v.verifier.VerifyWorkerEnrollment(ctx, request)
-	if err != nil {
-		return control.VerifiedWorkerEnrollment{}, err
-	}
-	return control.VerifiedWorkerEnrollment{
-		WorkerGroupID: verified.WorkerGroupID, ResourceID: verified.ResourceID,
-		AllowsRun: verified.AllowsRun, AllowsBuild: verified.AllowsBuild,
-		ProtocolVersion: verified.ProtocolVersion, AttestationFingerprint: verified.AttestationFingerprint,
-	}, nil
 }
 
 func loadConfig() (devConfig, error) {
@@ -386,25 +359,13 @@ func loadConfig() (devConfig, error) {
 	if cfg.workerGroupID == "" {
 		return cfg, errors.New("HELMR_WORKER_GROUP_ID is required")
 	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(os.Getenv("HELMR_WORKER_GROUPS"))), &cfg.workerGroups); err != nil || len(cfg.workerGroups) == 0 {
-		return cfg, errors.New("HELMR_WORKER_GROUPS must be a non-empty JSON array")
+	cfg.workerGroups, err = workergroup.DecodeConfig(strings.TrimSpace(os.Getenv("HELMR_WORKER_GROUPS")))
+	if err != nil {
+		return cfg, fmt.Errorf("HELMR_WORKER_GROUPS: %w", err)
 	}
 	foundDefaultGroup := false
-	for i, group := range cfg.workerGroups {
-		normalized, err := enrollment.NormalizeAWSGroupBoundary(group)
-		if err != nil {
-			return cfg, err
-		}
-		if normalized.Region != cfg.providerRegion {
-			return cfg, fmt.Errorf(
-				"worker group %q region %q must match HELMR_PROVIDER_REGION %q",
-				normalized.ID,
-				normalized.Region,
-				cfg.providerRegion,
-			)
-		}
-		cfg.workerGroups[i] = normalized
-		foundDefaultGroup = foundDefaultGroup || normalized.ID == cfg.workerGroupID
+	for _, group := range cfg.workerGroups {
+		foundDefaultGroup = foundDefaultGroup || group.ID == cfg.workerGroupID
 	}
 	if !foundDefaultGroup {
 		return cfg, errors.New("HELMR_WORKER_GROUP_ID must identify a group in HELMR_WORKER_GROUPS")

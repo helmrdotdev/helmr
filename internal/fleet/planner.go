@@ -84,17 +84,13 @@ type Worker struct {
 }
 
 type Inputs struct {
-	Now     time.Time
-	Demand  Demand
-	Workers []Worker
-	// UncertifiedRunLaunchAttestations is the number of current launch
-	// attestations that have never supplied a certified run runtime identity.
-	// Historical certifications remain valid after a worker is disabled or its
-	// provider instance terminates, matching run routing's identity authority.
-	UncertifiedRunLaunchAttestations int
-	LastScaleOutAt                   time.Time
-	LastScaleInAt                    time.Time
-	UnderutilizedSince               time.Time
+	Now                time.Time
+	Demand             Demand
+	Workers            []Worker
+	ScaleOutStopped    bool
+	LastScaleOutAt     time.Time
+	LastScaleInAt      time.Time
+	UnderutilizedSince time.Time
 
 	// TerminationCandidateID is the exact worker selected by the surrounding
 	// lifecycle operation. The planner may finish termination only for this ID.
@@ -116,6 +112,7 @@ const (
 	ReasonAtDesiredCapacity       Reason = "at_desired_capacity"
 	ReasonLaunchCapacity          Reason = "launch_capacity"
 	ReasonEmergencyStop           Reason = "emergency_stop"
+	ReasonAdmissionStopped        Reason = "admission_stopped"
 	ReasonScaleOutCooldown        Reason = "scale_out_cooldown"
 	ReasonPendingLimit            Reason = "pending_limit"
 	ReasonHardCapacityLimit       Reason = "hard_capacity_limit"
@@ -207,11 +204,7 @@ func (p *Planner) Plan(in Inputs) (Decision, error) {
 		return Decision{}, err
 	}
 
-	bootstrapFloor := 0
-	if in.UncertifiedRunLaunchAttestations > 0 {
-		bootstrapFloor = 1
-	}
-	floor := maxInt(p.policy.MinWorkers, p.policy.WarmWorkers, bootstrapFloor)
+	floor := maxInt(p.policy.MinWorkers, p.policy.WarmWorkers)
 	uncappedRequired := maxInt(required, floor)
 	desired := uncappedRequired
 	desired = minInt(desired, p.policy.MaxWorkers)
@@ -267,6 +260,10 @@ func (p *Planner) Plan(in Inputs) (Decision, error) {
 	}
 
 	if decision.PlannedWorkers < desired {
+		if in.ScaleOutStopped {
+			decision.Reason = ReasonAdmissionStopped
+			return decision, nil
+		}
 		if p.policy.EmergencyStop {
 			decision.Reason = ReasonEmergencyStop
 			return decision, nil
@@ -390,9 +387,6 @@ func validatePolicy(policy Policy) error {
 func validateInputs(in Inputs) error {
 	if in.Now.IsZero() {
 		return fmt.Errorf("%w: current time is required", ErrInvalidInputs)
-	}
-	if in.UncertifiedRunLaunchAttestations < 0 {
-		return fmt.Errorf("%w: uncertified run attestation count must not be negative", ErrInvalidInputs)
 	}
 	if !in.Demand.OldestQueuedAt.IsZero() && in.Demand.OldestQueuedAt.After(in.Now) {
 		return fmt.Errorf("%w: oldest queued time is in the future", ErrInvalidInputs)

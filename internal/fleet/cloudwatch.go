@@ -71,8 +71,6 @@ func (p *CloudWatchPublisher) Publish(ctx context.Context, metric FleetMetrics) 
 		{"SupplyWorkers", float64(metric.Supply), types.StandardUnitCount},
 		{"PendingWorkers", float64(metric.Pending), types.StandardUnitCount},
 		{"BillableWorkers", float64(metric.Billable), types.StandardUnitCount},
-		{"UncertifiedRunLaunchAttestations", float64(metric.UncertifiedRunLaunchAttestations), types.StandardUnitCount},
-		{"BootstrapPending", boolFloat(metric.BootstrapPending), types.StandardUnitCount},
 		{"DrainAgeSeconds", metric.DrainAge.Seconds(), types.StandardUnitSeconds},
 		{"OldestQueueAgeSeconds", metric.QueueAge.Seconds(), types.StandardUnitSeconds},
 		{"DrainTimedOut", boolFloat(metric.DrainTimedOut), types.StandardUnitCount},

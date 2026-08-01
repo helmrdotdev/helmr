@@ -15,21 +15,19 @@ const (
 
 // Publisher failures never affect authoritative reconciliation.
 type FleetMetrics struct {
-	GroupID                          string
-	UncappedRequired                 int
-	UnmetDeficit                     int
-	CapReason                        CapReason
-	Desired                          int
-	Supply                           int
-	Pending                          int
-	Billable                         int
-	UncertifiedRunLaunchAttestations int
-	BootstrapPending                 bool
-	Action                           Action
-	Outcome                          Outcome
-	DrainAge                         time.Duration
-	QueueAge                         time.Duration
-	DrainTimedOut                    bool
+	GroupID          string
+	UncappedRequired int
+	UnmetDeficit     int
+	CapReason        CapReason
+	Desired          int
+	Supply           int
+	Pending          int
+	Billable         int
+	Action           Action
+	Outcome          Outcome
+	DrainAge         time.Duration
+	QueueAge         time.Duration
+	DrainTimedOut    bool
 }
 
 type MetricsPublisher interface {

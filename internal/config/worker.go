@@ -13,6 +13,8 @@ func LoadWorker() (Worker, error) {
 	cfg := Worker{
 		ControlURL:                   envString("HELMR_CONTROL_URL"),
 		WorkerGroupID:                envString("HELMR_WORKER_GROUP_ID"),
+		WorkerResourceID:             envString("HELMR_WORKER_RESOURCE_ID"),
+		WorkerEnrollmentSecretFile:   envString("HELMR_WORKER_ENROLLMENT_SECRET_FILE"),
 		CASURI:                       envString("HELMR_CAS_URI"),
 		WorkerInstanceCredentialPath: envString("HELMR_WORKER_INSTANCE_CREDENTIAL_PATH"),
 		BuildPolicyPath:              envString("HELMR_BUILD_POLICY_PATH"),
@@ -46,6 +48,12 @@ func LoadWorker() (Worker, error) {
 	}
 	if cfg.WorkerGroupID == "" {
 		return cfg, errors.New("HELMR_WORKER_GROUP_ID is required")
+	}
+	if cfg.WorkerResourceID == "" || len(cfg.WorkerResourceID) > 512 {
+		return cfg, errors.New("HELMR_WORKER_RESOURCE_ID is required and must not exceed 512 bytes")
+	}
+	if cfg.WorkerEnrollmentSecretFile == "" {
+		return cfg, errors.New("HELMR_WORKER_ENROLLMENT_SECRET_FILE is required")
 	}
 	var err error
 	if cfg.ImageCache, err = loadImageCache(); err != nil {

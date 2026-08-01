@@ -333,7 +333,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	workerID := uuid.Must(uuid.NewV7())
 	mustAuthorityExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, attestation_fingerprint, state,
+			id, resource_id, worker_group_id, state,
 			current_epoch, current_service_id, protocol_version, supervisor_version,
 			supports_run, runtime_identity_id,
 			substrate_format, substrate_builder_abi, substrate_layout_abi,
@@ -344,7 +344,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 			certification_profile, certification_fingerprint,
 			epoch_started_at, certified_at, activated_at
 		) VALUES (
-			$1, $2, $3, 'sha256:test-attestation', 'active',
+			$1, $2, $3, 'active',
 			1, $4, 'helmr.worker.v0', 'test-worker',
 			true, $5, $6, $7, $8,
 			2000, 2147483648, 4294967296,

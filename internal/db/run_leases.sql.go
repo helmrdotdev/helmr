@@ -2166,7 +2166,7 @@ func (q *Queries) LockRunLeaseClaimWait(ctx context.Context, arg LockRunLeaseCla
 }
 
 const lockRunLeaseClaimWorker = `-- name: LockRunLeaseClaimWorker :one
-SELECT id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
+SELECT id, resource_id, worker_group_id, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
   FROM worker_instances
  WHERE id = $1
    AND worker_group_id = $2
@@ -2185,7 +2185,6 @@ func (q *Queries) LockRunLeaseClaimWorker(ctx context.Context, arg LockRunLeaseC
 		&i.ID,
 		&i.ResourceID,
 		&i.WorkerGroupID,
-		&i.AttestationFingerprint,
 		&i.State,
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
@@ -2233,7 +2232,7 @@ func (q *Queries) LockRunLeaseClaimWorker(ctx context.Context, arg LockRunLeaseC
 }
 
 const lockRunLeaseClaimWorkerGroup = `-- name: LockRunLeaseClaimWorkerGroup :one
-SELECT id, region_id, name, description, state, enrollment_policy_fingerprint, allowed_attestation_fingerprints, launch_attestation_fingerprint, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, last_scale_out_at, last_scale_in_at, protocol_version, created_at, updated_at
+SELECT id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, last_scale_out_at, last_scale_in_at, protocol_version, created_at, updated_at
   FROM worker_groups
  WHERE id = $1
    AND region_id = $2
@@ -2254,9 +2253,6 @@ func (q *Queries) LockRunLeaseClaimWorkerGroup(ctx context.Context, arg LockRunL
 		&i.Name,
 		&i.Description,
 		&i.State,
-		&i.EnrollmentPolicyFingerprint,
-		&i.AllowedAttestationFingerprints,
-		&i.LaunchAttestationFingerprint,
 		&i.ClaimVersion,
 		&i.AllowsRun,
 		&i.AllowsBuild,

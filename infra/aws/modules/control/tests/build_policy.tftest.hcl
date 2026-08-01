@@ -142,13 +142,6 @@ variables {
   worker_groups = [{
     id                      = "run-workers"
     name                    = "Run workers"
-    region                  = "helmr-us-east"
-    account_id              = "000000000000"
-    autoscaling_group       = "helmr-run"
-    instance_profile_arn    = "arn:aws:iam::000000000000:instance-profile/helmr-run"
-    instance_role_arn       = "arn:aws:iam::000000000000:role/helmr-run"
-    launch_ami_id           = "ami-0123456789abcdef0"
-    ami_ids                 = ["ami-0123456789abcdef0"]
     allows_run              = true
     allows_build            = true
     observation_ttl_seconds = 120
@@ -162,6 +155,7 @@ variables {
       build_executors            = 1
     }
   }]
+  image_cache_worker_role_arns = ["arn:aws:iam::000000000000:role/helmr-run"]
   region_id                    = "helmr-us-east"
   default_region_id            = "helmr-us-east"
   control_image                = "example.invalid/helmr@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -219,6 +213,35 @@ run "control_installs_exact_policy_before_start" {
       !contains([for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name], "HELMR_RETAINED_CAS_URI")
     )
     error_message = "Only the main Control container must load the installed policy and immutable Platform Artifact store."
+  }
+
+  assert {
+    condition = (
+      jsondecode({ for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_WORKER_GROUPS)[0].id == "run-workers" &&
+      jsondecode({ for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_WORKER_GROUPS)[0].enrollment_secret_env == "HELMR_WORKER_ENROLLMENT_SECRET_${upper(substr(sha256("run-workers"), 0, 16))}" &&
+      contains(
+        [for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].secrets : item.name],
+        "HELMR_WORKER_ENROLLMENT_SECRET_${upper(substr(sha256("run-workers"), 0, 16))}"
+      ) &&
+      !strcontains({ for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_WORKER_GROUPS, "account_id") &&
+      !strcontains({ for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_WORKER_GROUPS, "region") &&
+      !strcontains({ for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_WORKER_GROUPS, "autoscaling_group") &&
+      !strcontains({ for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_WORKER_GROUPS, "ami") &&
+      !strcontains({ for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_WORKER_GROUPS, "instance_profile")
+    )
+    error_message = "Worker Group configuration must remain logical and resolve enrollment authority only through its deployment-injected secret."
+  }
+
+  assert {
+    condition = (
+      !strcontains(aws_iam_role_policy.control_execution.policy, "ec2:DescribeInstances") &&
+      !strcontains(aws_iam_role_policy.control_execution.policy, "autoscaling:DescribeAutoScalingInstances") &&
+      !strcontains(aws_iam_role_policy.control_execution.policy, "iam:GetInstanceProfile") &&
+      !strcontains(aws_iam_role_policy.control_task.policy, "ec2:DescribeInstances") &&
+      !strcontains(aws_iam_role_policy.control_task.policy, "autoscaling:DescribeAutoScalingInstances") &&
+      !strcontains(aws_iam_role_policy.control_task.policy, "iam:GetInstanceProfile")
+    )
+    error_message = "Control enrollment must not regain AWS inventory authority."
   }
 
   assert {

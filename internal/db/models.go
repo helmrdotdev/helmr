@@ -1306,9 +1306,6 @@ type WorkerGroup struct {
 	Name                            string             `json:"name"`
 	Description                     string             `json:"description"`
 	State                           string             `json:"state"`
-	EnrollmentPolicyFingerprint     string             `json:"enrollment_policy_fingerprint"`
-	AllowedAttestationFingerprints  []string           `json:"allowed_attestation_fingerprints"`
-	LaunchAttestationFingerprint    pgtype.Text        `json:"launch_attestation_fingerprint"`
 	ClaimVersion                    int64              `json:"claim_version"`
 	AllowsRun                       bool               `json:"allows_run"`
 	AllowsBuild                     bool               `json:"allows_build"`
@@ -1331,7 +1328,6 @@ type WorkerInstance struct {
 	ID                               pgtype.UUID        `json:"id"`
 	ResourceID                       string             `json:"resource_id"`
 	WorkerGroupID                    string             `json:"worker_group_id"`
-	AttestationFingerprint           string             `json:"attestation_fingerprint"`
 	State                            string             `json:"state"`
 	ClaimVersion                     int64              `json:"claim_version"`
 	CurrentEpoch                     pgtype.Int8        `json:"current_epoch"`

@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -485,6 +486,7 @@ func setControlTokenCredentialEnv(t *testing.T) {
 
 func setWorkerRuntimeEnv(t *testing.T, build bool) {
 	t.Helper()
+	setWorkerEnrollmentEnv(t)
 	t.Setenv("HELMR_PLATFORM_STORE_URI", "s3://helmr-runtime")
 	t.Setenv("HELMR_WORKER_NETWORK_LINK_POOL", "169.254.64.0/18")
 	t.Setenv("HELMR_WORKER_NETWORK_TRANSLATION_POOL", "100.96.0.0/16")
@@ -497,6 +499,16 @@ func setWorkerRuntimeEnv(t *testing.T, build bool) {
 		t.Setenv("HELMR_WORKER_SUBSTRATE_CACHE_MAX_MIB", "8192")
 		t.Setenv("HELMR_WORKER_ARTIFACT_CACHE_MAX_MIB", "4096")
 	}
+}
+
+func setWorkerEnrollmentEnv(t *testing.T) {
+	t.Helper()
+	secretFile := t.TempDir() + "/worker-enrollment-secret"
+	if err := os.WriteFile(secretFile, []byte("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HELMR_WORKER_RESOURCE_ID", "host-1")
+	t.Setenv("HELMR_WORKER_ENROLLMENT_SECRET_FILE", secretFile)
 }
 
 func setValidWorkerEnv(t *testing.T, build bool) {
@@ -652,7 +664,20 @@ func TestLoadWorkerReadsEnrollmentBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.WorkerGroupID != "run-workers" {
+	if cfg.WorkerGroupID != "run-workers" || cfg.WorkerEnrollmentSecretFile != os.Getenv("HELMR_WORKER_ENROLLMENT_SECRET_FILE") {
+		t.Fatalf("config = %+v", cfg)
+	}
+}
+
+func TestLoadWorkerDoesNotRequireEnrollmentSecretFileToExistAtStartup(t *testing.T) {
+	setValidWorkerEnv(t, false)
+	secretFile := t.TempDir() + "/not-yet-materialized"
+	t.Setenv("HELMR_WORKER_ENROLLMENT_SECRET_FILE", secretFile)
+	cfg, err := LoadWorker()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WorkerEnrollmentSecretFile != secretFile {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -679,6 +704,7 @@ func TestLoadWorkerReadsExplicitRolesAndCapacities(t *testing.T) {
 }
 
 func TestLoadWorkerRejectsMultipleBuildExecutors(t *testing.T) {
+	setWorkerEnrollmentEnv(t)
 	for key, value := range map[string]string{
 		"HELMR_CONTROL_URL":                       "https://api.example.test",
 		"HELMR_CAS_URI":                           "s3://helmr-cas",
@@ -702,6 +728,7 @@ func TestLoadWorkerRejectsMultipleBuildExecutors(t *testing.T) {
 }
 
 func TestLoadWorkerRejectsRuntimePoolBelowRuntimeStarts(t *testing.T) {
+	setWorkerEnrollmentEnv(t)
 	for key, value := range map[string]string{"HELMR_CONTROL_URL": "https://api.example.test", "HELMR_CAS_URI": "s3://helmr-cas", "HELMR_WORKER_GROUP_ID": "run-workers", "CHECKPOINT_ENCRYPTION_KEY": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=", "HELMR_WORKER_FIRECRACKER_JAILER_UID": "1001", "HELMR_WORKER_FIRECRACKER_JAILER_GID": "1002", "HELMR_WORKER_ROLES": "run", "HELMR_WORKER_RUNTIME_STARTS": "2", "HELMR_WORKER_PREPARED_RUNTIME_POOL_SIZE": "1"} {
 		t.Setenv(key, value)
 	}
@@ -713,6 +740,7 @@ func TestLoadWorkerRejectsRuntimePoolBelowRuntimeStarts(t *testing.T) {
 func TestLoadWorkerRejectsEmptyOrUnknownRoles(t *testing.T) {
 	for _, roles := range []string{"", ",", "run,other"} {
 		t.Run(roles, func(t *testing.T) {
+			setWorkerEnrollmentEnv(t)
 			t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 			t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 			t.Setenv("HELMR_WORKER_GROUP_ID", "run-workers")
@@ -753,6 +781,7 @@ func TestLoadWorkerControlReadsOnlyControlAuth(t *testing.T) {
 }
 
 func TestLoadWorkerRejectsInvalidVMNumbers(t *testing.T) {
+	setWorkerEnrollmentEnv(t)
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
 	t.Setenv("HELMR_WORKER_GROUP_ID", "run-workers")
@@ -768,6 +797,7 @@ func TestLoadWorkerRejectsInvalidVMNumbers(t *testing.T) {
 }
 
 func TestLoadWorkerRejectsHealthAttemptLongerThanHealthTimeout(t *testing.T) {
+	setWorkerEnrollmentEnv(t)
 	t.Setenv("HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS", "[]")
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")

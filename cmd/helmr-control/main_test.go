@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -18,7 +16,6 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/control"
@@ -34,17 +31,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestWorkerEnrollmentConfigurationAlwaysLoadsAWS(t *testing.T) {
-	original := loadAWSWorkerEnrollmentVerifier
-	loadAWSWorkerEnrollmentVerifier = func(context.Context, []enrollment.AWSGroupBoundary) (*enrollment.AWSVerifier, error) {
-		return nil, errors.New("aws unavailable")
-	}
-	t.Cleanup(func() { loadAWSWorkerEnrollmentVerifier = original })
-	if _, err := loadAWSWorkerEnrollmentVerifier(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "aws unavailable") {
-		t.Fatalf("error = %v", err)
-	}
-}
-
 func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 	store := &emptyStore{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -57,7 +43,7 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		DB:                    store,
 		TX:                    panicTxBeginner{},
 		Auth:                  auth.NewDBAuthenticator(store),
-		WorkerEnrollment:      controltestWorkerEnrollmentVerifier{},
+		WorkerEnrollment:      controltestWorkerEnrollmentVerifier(),
 		SecretDelivery:        controltestSecretDeliveryOpener{},
 		RegistryCredentials:   controltestRegistryCredentialOpener{},
 		WorkspaceFencingKey:   controltestWorkspaceFencingKey(),
@@ -168,7 +154,8 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("HELMR_PROVIDER_REGION", "us-east-1")
 	t.Setenv("WORKER_TOKEN_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
 	t.Setenv("TOKEN_CREDENTIAL_KEY", "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=")
-	t.Setenv("HELMR_WORKER_GROUPS", `[{"id":"us-east-1-worker-group-1","name":"run","region":"us-east-1","account_id":"123456789012","autoscaling_group":"test-run","instance_profile_arn":"arn:aws:iam::123456789012:instance-profile/test-run","launch_ami_id":"ami-test","ami_ids":["ami-test"],"allows_run":true,"allows_build":false,"observation_ttl_seconds":3600,"instance_capacity":{"milli_cpu":1000,"memory_bytes":1024,"guest_ephemeral_disk_bytes":1024,"vm_slots":1}}]`)
+	t.Setenv("HELMR_WORKER_GROUPS", `[{"id":"us-east-1-worker-group-1","name":"run","enrollment_secret_env":"HELMR_WORKER_ENROLLMENT_SECRET_RUN","allows_run":true,"allows_build":false,"observation_ttl_seconds":3600,"instance_capacity":{"milli_cpu":1000,"memory_bytes":1024,"guest_ephemeral_disk_bytes":1024,"vm_slots":1}}]`)
+	t.Setenv("HELMR_WORKER_ENROLLMENT_SECRET_RUN", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
 	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")
 	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
 	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
@@ -212,14 +199,15 @@ type emptyStore struct {
 	db.Querier
 }
 
-type controltestWorkerEnrollmentVerifier struct{}
-
-func (controltestWorkerEnrollmentVerifier) ParseWorkerEnrollment(json.RawMessage) (api.WorkerEnrollmentIntent, error) {
-	return api.WorkerEnrollmentIntent{}, nil
-}
-
-func (controltestWorkerEnrollmentVerifier) VerifyWorkerEnrollment(context.Context, json.RawMessage) (control.VerifiedWorkerEnrollment, error) {
-	return control.VerifiedWorkerEnrollment{}, nil
+func controltestWorkerEnrollmentVerifier() *enrollment.Verifier {
+	verifier, err := enrollment.NewVerifier([]enrollment.GroupSecret{{
+		GroupID: "us-east-1-worker-group-1",
+		Secret:  "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+	}})
+	if err != nil {
+		panic(err)
+	}
+	return verifier
 }
 
 type controltestTelemetryReader struct {

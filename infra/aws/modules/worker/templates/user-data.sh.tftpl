@@ -4,6 +4,7 @@ umask 077
 date +%s >/run/helmr-launch-started-at
 
 install -d -m 0750 -o root -g root /etc/helmr
+install -d -m 0700 -o root -g root /run/helmr
 
 metadata_url=http://169.254.169.254/latest
 metadata_token() {
@@ -26,16 +27,51 @@ ${key}=${value}
 EOF
 
 checkpoint_key="$(aws secretsmanager get-secret-value --secret-id '${checkpoint_key_secret_arn}' --query SecretString --output text)"
+worker_resource_id="$(metadata_get meta-data/instance-id)"
+worker_enrollment_secret_file=/run/helmr/worker-enrollment-secret
 
 {
   printf 'AWS_REGION=%s\n' "$aws_region"
   printf 'AWS_DEFAULT_REGION=%s\n' "$aws_region"
   printf 'CHECKPOINT_ENCRYPTION_KEY=%s\n' "$checkpoint_key"
+  printf 'HELMR_WORKER_ENROLLMENT_SECRET_FILE=%s\n' "$worker_enrollment_secret_file"
+  printf 'HELMR_WORKER_RESOURCE_ID=%s\n' "$worker_resource_id"
 } >>"$env_tmp"
 
 chown root:root "$env_tmp"
 chmod 0600 "$env_tmp"
 mv "$env_tmp" /etc/helmr/worker.env
+
+cat >/usr/local/sbin/helmr-worker-enrollment-secret <<'EOF'
+#!/bin/sh
+set -eu
+umask 077
+
+export AWS_REGION='${aws_region}'
+export AWS_DEFAULT_REGION="$AWS_REGION"
+secret="$(aws secretsmanager get-secret-value --secret-id '${worker_enrollment_secret_arn}' --query SecretString --output text)"
+install -d -m 0700 -o root -g root /run/helmr
+secret_tmp="$(mktemp /run/helmr/worker-enrollment-secret.XXXXXX)"
+printf '%s' "$secret" >"$secret_tmp"
+chmod 0400 "$secret_tmp"
+mv "$secret_tmp" /run/helmr/worker-enrollment-secret
+unset secret
+EOF
+chmod 0700 /usr/local/sbin/helmr-worker-enrollment-secret
+
+cat >/etc/systemd/system/helmr-worker-enrollment-secret.service <<'EOF'
+[Unit]
+Description=Materialize the Helmr Worker enrollment secret
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/helmr-worker-enrollment-secret
+Restart=on-failure
+RestartSec=30s
+EOF
 
 %{ if worker_supports_build ~}
 storage_dir=/var/lib/helmr/storage
@@ -351,6 +387,10 @@ install -d -m 0755 "$scratch_mount/worker" "$scratch_mount/jailer"
 %{ endif ~}
 install -d -m 0755 '/etc/systemd/system/${worker_service_name}.service.d'
 cat >'/etc/systemd/system/${worker_service_name}.service.d/10-entry.conf' <<'EOF'
+[Unit]
+Wants=helmr-worker-enrollment-secret.service
+After=helmr-worker-enrollment-secret.service
+
 [Service]
 ExecStart=
 ExecStart=${worker_binary_path}

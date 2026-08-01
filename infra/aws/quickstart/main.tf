@@ -6,7 +6,6 @@ locals {
   name                    = lower(var.name)
   worker_control_url      = module.control.control_url
   worker_ami_id           = coalesce(module.release_artifacts.worker_ami_id, "ami-unconfigured")
-  worker_allowed_ami_ids  = distinct(compact(concat([local.worker_ami_id], var.worker_allowed_ami_ids)))
   boot_corpus_reserve_mib = 2048
   build_scratch_min_mib   = max(32768, coalesce(var.build_worker_vm_scratch_disk_mib, var.worker_vm_scratch_disk_mib)) + local.boot_corpus_reserve_mib
   build_worker_cpu_millis = coalesce(var.build_worker_capacity_vcpus, var.worker_capacity_vcpus, 0) * 1000
@@ -35,13 +34,6 @@ locals {
     id                      = pool.group_id
     name                    = one(pool.roles)
     description             = "${title(one(pool.roles))} workers"
-    region                  = var.aws_region
-    account_id              = data.aws_caller_identity.current.account_id
-    autoscaling_group       = "${pool.name}-worker"
-    instance_profile_arn    = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${pool.name}-worker"
-    instance_role_arn       = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${pool.name}-worker"
-    launch_ami_id           = local.worker_ami_id
-    ami_ids                 = local.worker_allowed_ami_ids
     allows_run              = pool.allows_run
     allows_build            = pool.allows_build
     observation_ttl_seconds = var.worker_fleet_controller.stale_worker_timeout_seconds
@@ -195,6 +187,7 @@ module "control" {
   worker_group_id                        = var.worker_group_id
   worker_groups                          = local.worker_groups
   worker_fleets                          = local.worker_fleets
+  image_cache_worker_role_arns           = [for pool in values(local.worker_pools) : "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${pool.name}-worker" if pool.allows_build]
   region_id                              = var.region_id
   default_region_id                      = var.default_region_id
   clickhouse_url                         = var.clickhouse_url
@@ -292,6 +285,7 @@ module "worker_group" {
 
   secret_arns = {
     checkpoint_encryption_key = module.control.secret_arns.checkpoint_encryption_key
+    worker_enrollment         = module.control.worker_enrollment_secret_arns[each.value.group_id]
   }
 
   tags = local.tags

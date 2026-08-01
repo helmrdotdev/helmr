@@ -132,6 +132,8 @@ type WorkerGroupBootstrap struct {
 type Worker struct {
 	ControlURL                   string
 	WorkerGroupID                string
+	WorkerResourceID             string
+	WorkerEnrollmentSecretFile   string
 	CASURI                       string
 	WorkerInstanceCredentialPath string
 	CheckpointKey                []byte

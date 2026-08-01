@@ -45,25 +45,8 @@ WITH target_group AS (
 SELECT * FROM demand ORDER BY demand_state, compatibility_key, milli_cpu, memory_bytes,
                               guest_ephemeral_disk_bytes, vm_slots;
 
--- name: CountUncertifiedRunLaunchAttestations :one
-SELECT count(*)::bigint
-  FROM worker_groups
- WHERE worker_groups.id = sqlc.arg(worker_group_id)
-   AND worker_groups.state = 'active'
-   AND worker_groups.allows_run
-   AND worker_groups.launch_attestation_fingerprint IS NOT NULL
-   AND NOT EXISTS (
-       SELECT 1
-         FROM worker_instances
-        WHERE worker_instances.worker_group_id = worker_groups.id
-          AND worker_instances.attestation_fingerprint = worker_groups.launch_attestation_fingerprint
-          AND worker_instances.supports_run
-          AND worker_instances.runtime_identity_id IS NOT NULL
-          AND worker_instances.certified_at IS NOT NULL
-   );
-
 -- name: GetFleetCooldown :one
-SELECT last_scale_out_at, last_scale_in_at
+SELECT state, last_scale_out_at, last_scale_in_at
   FROM worker_groups
  WHERE id = sqlc.arg(worker_group_id);
 
@@ -251,7 +234,6 @@ SELECT worker_instances.id, worker_instances.resource_id, worker_instances.state
         AND worker_instances.drain_cleanup_evidence IS NOT NULL
         AND jsonb_typeof(worker_instances.drain_cleanup_evidence) = 'object')::boolean AS local_cleanup_complete,
        (((worker_instances.state = 'lost'
-          AND worker_instances.current_epoch IS NOT NULL
           AND worker_instances.lost_at IS NOT NULL)
          OR (worker_instances.state = 'disabled'
              AND worker_instances.current_epoch IS NULL))
@@ -306,7 +288,6 @@ WITH target AS MATERIALIZED (
             AND target.drain_cleanup_evidence IS NOT NULL
             AND jsonb_typeof(target.drain_cleanup_evidence) = 'object')::boolean AS local_cleanup_complete,
            (((target.state = 'lost'
-              AND target.current_epoch IS NOT NULL
               AND target.lost_at IS NOT NULL)
              OR (target.state = 'disabled'
                  AND target.current_epoch IS NULL))

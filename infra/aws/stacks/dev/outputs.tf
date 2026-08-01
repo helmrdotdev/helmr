@@ -143,6 +143,11 @@ output "secret_arns" {
   value       = module.control.secret_arns
 }
 
+output "worker_enrollment_secret_arns" {
+  description = "Per-worker-group enrollment secret ARNs."
+  value       = module.control.worker_enrollment_secret_arns
+}
+
 output "worker_autoscaling_group_name" {
   description = "Run-worker Auto Scaling group name."
   value       = try(module.run_worker[0].autoscaling_group_name, null)
@@ -161,11 +166,6 @@ output "worker_protect_from_scale_in" {
 output "worker_ami_id" {
   description = "Worker AMI currently applied to the launch templates."
   value       = var.worker_ami_id
-}
-
-output "worker_allowed_ami_ids" {
-  description = "Worker AMIs currently applied to the enrollment policy."
-  value       = local.worker_allowed_ami_ids
 }
 
 output "worker_iam_role_name" {

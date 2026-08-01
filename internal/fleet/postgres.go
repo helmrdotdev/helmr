@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/sessionlock"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -43,12 +44,7 @@ func (s *PostgresSource) Snapshot(ctx context.Context, groupID string) (GroupSna
 	q := db.New(s.pool).WithTx(tx)
 
 	var demand Demand
-	uncertifiedRunLaunchAttestations := 0
 	if s.role == "run" {
-		uncovered, err := q.CountUncertifiedRunLaunchAttestations(ctx, groupID)
-		if err != nil {
-			return GroupSnapshot{}, err
-		}
 		rows, err := q.ListFleetRunDemand(ctx, groupID)
 		if err != nil {
 			return GroupSnapshot{}, err
@@ -66,10 +62,6 @@ func (s *PostgresSource) Snapshot(ctx context.Context, groupID string) (GroupSna
 		}
 		if oldest.Valid {
 			demand.OldestQueuedAt = oldest.Time
-		}
-		uncertifiedRunLaunchAttestations = int(uncovered)
-		if int64(uncertifiedRunLaunchAttestations) != uncovered {
-			return GroupSnapshot{}, errors.New("uncertified run attestation count overflows int")
 		}
 	} else {
 		rows, err := q.ListFleetBuildDemand(ctx, groupID)
@@ -96,7 +88,7 @@ func (s *PostgresSource) Snapshot(ctx context.Context, groupID string) (GroupSna
 	if err != nil {
 		return GroupSnapshot{}, err
 	}
-	snapshot := GroupSnapshot{Inputs: Inputs{Demand: demand, UncertifiedRunLaunchAttestations: uncertifiedRunLaunchAttestations}, ResourceIDs: make(map[string]string, len(rows))}
+	snapshot := GroupSnapshot{Inputs: Inputs{Demand: demand}, ResourceIDs: make(map[string]string, len(rows))}
 	cooldown, err := q.GetFleetCooldown(ctx, groupID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return GroupSnapshot{}, err
@@ -107,6 +99,7 @@ func (s *PostgresSource) Snapshot(ctx context.Context, groupID string) (GroupSna
 	if cooldown.LastScaleInAt.Valid {
 		snapshot.Inputs.LastScaleInAt = cooldown.LastScaleInAt.Time
 	}
+	snapshot.Inputs.ScaleOutStopped = cooldown.State != string(db.WorkerGroupStateActive)
 	drainStarted := make(map[string]time.Time)
 	for _, row := range rows {
 		workerID := uuid.UUID(row.ID.Bytes).String()
@@ -400,7 +393,7 @@ func NewPGLeaderElector(pool *pgxpool.Pool) (*PGLeaderElector, error) {
 
 func (e *PGLeaderElector) TryAcquire(ctx context.Context, groupID string) (LeaderLease, bool, error) {
 	guard, acquired, err := sessionlock.TryAcquire(
-		ctx, e.pool, sessionlock.Key("helmr:fleet:"+groupID),
+		ctx, e.pool, workergroup.LifecycleLockKey(groupID),
 	)
 	if err != nil || !acquired {
 		return nil, acquired, err

@@ -25,6 +25,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
+	"github.com/helmrdotdev/helmr/internal/enrollment"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/imagecache"
 	"github.com/helmrdotdev/helmr/internal/region"
@@ -90,7 +91,7 @@ type Server struct {
 	workerTokenTTL        time.Duration
 	runLeaseTTL           time.Duration
 	runFinalizationTTL    time.Duration
-	workerEnrollment      WorkerEnrollmentVerifier
+	workerEnrollment      *enrollment.Verifier
 	workerEnrollmentGuard *workerEnrollmentGuard
 	setupToken            string
 	authKeys              auth.Keys
@@ -144,7 +145,7 @@ type ServerConfig struct {
 	WorkerTokenTTL        time.Duration
 	RunLeaseTTL           time.Duration
 	RunFinalizationTTL    time.Duration
-	WorkerEnrollment      WorkerEnrollmentVerifier
+	WorkerEnrollment      *enrollment.Verifier
 	SetupToken            string
 	AuthKey               []byte
 	PublicURL             *url.URL
@@ -184,7 +185,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		return nil, errors.New("deployment mode must be self-hosted or managed-cloud")
 	}
 	if cfg.WorkerEnrollment == nil {
-		return nil, errors.New("worker enrollment verifier is required")
+		return nil, errors.New("worker enrollment configuration is required")
 	}
 	if cfg.SecretDelivery == nil {
 		return nil, errors.New("Secret delivery opener is required")

@@ -356,6 +356,7 @@ variable "secret_arns" {
   description = "Secret ARNs required by the worker."
   type = object({
     checkpoint_encryption_key = string
+    worker_enrollment         = string
   })
 }
 

@@ -7,7 +7,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 type ReconcileStore interface {
@@ -55,11 +54,8 @@ func Reconcile(ctx context.Context, store ReconcileStore, regionID string, desir
 			RequiredGuestEphemeralDiskBytes: group.Capacity.GuestEphemeralDiskBytes,
 			RequiredBuildCacheBytes:         group.Capacity.BuildCacheBytes, RequiredArtifactCacheBytes: group.Capacity.ArtifactCacheBytes,
 			RequiredVmSlots: group.Capacity.VMSlots, RequiredBuildExecutors: group.Capacity.BuildExecutors,
-			ObservationTtlSeconds:          group.ObservationTTLSeconds,
-			ProtocolVersion:                auth.WorkerProtocolVersion,
-			EnrollmentPolicyFingerprint:    group.EnrollmentPolicyFingerprint,
-			AllowedAttestationFingerprints: group.AllowedAttestationFingerprints,
-			LaunchAttestationFingerprint:   pgvalue.Text(group.LaunchAttestationFingerprint),
+			ObservationTtlSeconds: group.ObservationTTLSeconds,
+			ProtocolVersion:       auth.WorkerProtocolVersion,
 		}); err != nil {
 			return fmt.Errorf("reconcile worker group %q: %w", spec.ID, err)
 		}

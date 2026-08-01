@@ -13,7 +13,7 @@ import (
 
 const certifyWorkerInstance = `-- name: CertifyWorkerInstance :one
 WITH activation AS (
-    SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_guest_ephemeral_disk_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at,
+    SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_guest_ephemeral_disk_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at,
            worker_instances.state AS prior_state
       FROM worker_instances
       JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
@@ -109,7 +109,7 @@ WITH activation AS (
            updated_at = now()
       FROM runtime, activation
      WHERE worker_instances.id = activation.id
-    RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_guest_ephemeral_disk_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
+    RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_guest_ephemeral_disk_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
 ), observation AS (
     INSERT INTO worker_observations (
         worker_instance_id, worker_epoch, cpu_pressure_bps, memory_pressure_bps,
@@ -128,7 +128,7 @@ WITH activation AS (
     ON CONFLICT (worker_instance_id, worker_epoch) DO NOTHING
     RETURNING worker_instance_id
 )
-SELECT certified.id, certified.resource_id, certified.worker_group_id, certified.attestation_fingerprint, certified.state, certified.claim_version, certified.current_epoch, certified.current_service_id, certified.protocol_version, certified.supervisor_version, certified.supports_run, certified.supports_build, certified.runtime_identity_id, certified.substrate_format, certified.substrate_builder_abi, certified.substrate_layout_abi, certified.certified_cpu_millis, certified.certified_memory_bytes, certified.certified_guest_ephemeral_disk_bytes, certified.certified_build_cache_bytes, certified.certified_artifact_cache_bytes, certified.certified_hugepages_bytes, certified.certified_checkpoint_bytes, certified.per_vm_cpu_millis, certified.per_vm_memory_bytes, certified.per_vm_guest_ephemeral_disk_bytes, certified.max_vm_slots, certified.max_run_consumers, certified.max_build_executors, certified.max_runtime_starts, certified.certification_profile, certified.certification_fingerprint, certified.epoch_started_at, certified.startup_inventory_epoch, certified.startup_inventory_evidence, certified.drain_cleanup_fingerprint, certified.drain_cleanup_evidence, certified.certified_at, certified.activated_at, certified.draining_at, certified.disabled_at, certified.lost_at, certified.termination_claimed_at, certified.provider_terminated_at, certified.created_at, certified.updated_at
+SELECT certified.id, certified.resource_id, certified.worker_group_id, certified.state, certified.claim_version, certified.current_epoch, certified.current_service_id, certified.protocol_version, certified.supervisor_version, certified.supports_run, certified.supports_build, certified.runtime_identity_id, certified.substrate_format, certified.substrate_builder_abi, certified.substrate_layout_abi, certified.certified_cpu_millis, certified.certified_memory_bytes, certified.certified_guest_ephemeral_disk_bytes, certified.certified_build_cache_bytes, certified.certified_artifact_cache_bytes, certified.certified_hugepages_bytes, certified.certified_checkpoint_bytes, certified.per_vm_cpu_millis, certified.per_vm_memory_bytes, certified.per_vm_guest_ephemeral_disk_bytes, certified.max_vm_slots, certified.max_run_consumers, certified.max_build_executors, certified.max_runtime_starts, certified.certification_profile, certified.certification_fingerprint, certified.epoch_started_at, certified.startup_inventory_epoch, certified.startup_inventory_evidence, certified.drain_cleanup_fingerprint, certified.drain_cleanup_evidence, certified.certified_at, certified.activated_at, certified.draining_at, certified.disabled_at, certified.lost_at, certified.termination_claimed_at, certified.provider_terminated_at, certified.created_at, certified.updated_at
   FROM certified
  WHERE EXISTS (SELECT 1 FROM observation)
     OR EXISTS (SELECT 1 FROM activation WHERE activation.prior_state = 'active')
@@ -174,7 +174,6 @@ type CertifyWorkerInstanceRow struct {
 	ID                               pgtype.UUID        `json:"id"`
 	ResourceID                       string             `json:"resource_id"`
 	WorkerGroupID                    string             `json:"worker_group_id"`
-	AttestationFingerprint           string             `json:"attestation_fingerprint"`
 	State                            string             `json:"state"`
 	ClaimVersion                     int64              `json:"claim_version"`
 	CurrentEpoch                     pgtype.Int8        `json:"current_epoch"`
@@ -260,7 +259,6 @@ func (q *Queries) CertifyWorkerInstance(ctx context.Context, arg CertifyWorkerIn
 		&i.ID,
 		&i.ResourceID,
 		&i.WorkerGroupID,
-		&i.AttestationFingerprint,
 		&i.State,
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
@@ -320,7 +318,7 @@ WITH disabled_groups AS (
               AND worker_instances.state IN ('registering', 'active', 'draining', 'disabled', 'lost')
               AND worker_instances.provider_terminated_at IS NULL
        )
-    RETURNING id, region_id, name, description, state, enrollment_policy_fingerprint, allowed_attestation_fingerprints, launch_attestation_fingerprint, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, last_scale_out_at, last_scale_in_at, protocol_version, created_at, updated_at
+    RETURNING id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, last_scale_out_at, last_scale_in_at, protocol_version, created_at, updated_at
 ), revoked AS (
     UPDATE worker_instance_credentials
        SET revoked_at = COALESCE(revoked_at, now())
@@ -357,7 +355,7 @@ WITH disabled_groups AS (
        AND observed_state IN ('allocated', 'preparing', 'ready', 'closing')
     RETURNING runtime_instances.id
 )
-SELECT disabled_groups.id, disabled_groups.region_id, disabled_groups.name, disabled_groups.description, disabled_groups.state, disabled_groups.enrollment_policy_fingerprint, disabled_groups.allowed_attestation_fingerprints, disabled_groups.launch_attestation_fingerprint, disabled_groups.claim_version, disabled_groups.allows_run, disabled_groups.allows_build, disabled_groups.required_cpu_millis, disabled_groups.required_memory_bytes, disabled_groups.required_guest_ephemeral_disk_bytes, disabled_groups.required_build_cache_bytes, disabled_groups.required_artifact_cache_bytes, disabled_groups.required_vm_slots, disabled_groups.required_build_executors, disabled_groups.observation_ttl_seconds, disabled_groups.last_scale_out_at, disabled_groups.last_scale_in_at, disabled_groups.protocol_version, disabled_groups.created_at, disabled_groups.updated_at FROM disabled_groups
+SELECT disabled_groups.id, disabled_groups.region_id, disabled_groups.name, disabled_groups.description, disabled_groups.state, disabled_groups.claim_version, disabled_groups.allows_run, disabled_groups.allows_build, disabled_groups.required_cpu_millis, disabled_groups.required_memory_bytes, disabled_groups.required_guest_ephemeral_disk_bytes, disabled_groups.required_build_cache_bytes, disabled_groups.required_artifact_cache_bytes, disabled_groups.required_vm_slots, disabled_groups.required_build_executors, disabled_groups.observation_ttl_seconds, disabled_groups.last_scale_out_at, disabled_groups.last_scale_in_at, disabled_groups.protocol_version, disabled_groups.created_at, disabled_groups.updated_at FROM disabled_groups
  WHERE (SELECT count(*) FROM revoked) >= 0
    AND (SELECT count(*) FROM lost_mounts) >= 0
    AND (SELECT count(*) FROM lost_runtimes) >= 0
@@ -375,9 +373,6 @@ type DisableAbsentWorkerGroupsRow struct {
 	Name                            string             `json:"name"`
 	Description                     string             `json:"description"`
 	State                           string             `json:"state"`
-	EnrollmentPolicyFingerprint     string             `json:"enrollment_policy_fingerprint"`
-	AllowedAttestationFingerprints  []string           `json:"allowed_attestation_fingerprints"`
-	LaunchAttestationFingerprint    pgtype.Text        `json:"launch_attestation_fingerprint"`
 	ClaimVersion                    int64              `json:"claim_version"`
 	AllowsRun                       bool               `json:"allows_run"`
 	AllowsBuild                     bool               `json:"allows_build"`
@@ -411,9 +406,6 @@ func (q *Queries) DisableAbsentWorkerGroups(ctx context.Context, arg DisableAbse
 			&i.Name,
 			&i.Description,
 			&i.State,
-			&i.EnrollmentPolicyFingerprint,
-			&i.AllowedAttestationFingerprints,
-			&i.LaunchAttestationFingerprint,
 			&i.ClaimVersion,
 			&i.AllowsRun,
 			&i.AllowsBuild,
@@ -462,6 +454,60 @@ func (q *Queries) GetControlWorkerGroupReadiness(ctx context.Context, workerGrou
 	return i, err
 }
 
+const getWorkerGroupLifecycle = `-- name: GetWorkerGroupLifecycle :one
+SELECT id, state, claim_version
+  FROM worker_groups
+ WHERE id = $1
+`
+
+type GetWorkerGroupLifecycleRow struct {
+	ID           string `json:"id"`
+	State        string `json:"state"`
+	ClaimVersion int64  `json:"claim_version"`
+}
+
+func (q *Queries) GetWorkerGroupLifecycle(ctx context.Context, workerGroupID string) (GetWorkerGroupLifecycleRow, error) {
+	row := q.db.QueryRow(ctx, getWorkerGroupLifecycle, workerGroupID)
+	var i GetWorkerGroupLifecycleRow
+	err := row.Scan(&i.ID, &i.State, &i.ClaimVersion)
+	return i, err
+}
+
+const getWorkerInstanceLifecycle = `-- name: GetWorkerInstanceLifecycle :one
+SELECT id, resource_id, worker_group_id, state, claim_version, current_epoch
+  FROM worker_instances
+ WHERE worker_group_id = $1
+   AND resource_id = $2
+`
+
+type GetWorkerInstanceLifecycleParams struct {
+	WorkerGroupID string `json:"worker_group_id"`
+	ResourceID    string `json:"resource_id"`
+}
+
+type GetWorkerInstanceLifecycleRow struct {
+	ID            pgtype.UUID `json:"id"`
+	ResourceID    string      `json:"resource_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
+	State         string      `json:"state"`
+	ClaimVersion  int64       `json:"claim_version"`
+	CurrentEpoch  pgtype.Int8 `json:"current_epoch"`
+}
+
+func (q *Queries) GetWorkerInstanceLifecycle(ctx context.Context, arg GetWorkerInstanceLifecycleParams) (GetWorkerInstanceLifecycleRow, error) {
+	row := q.db.QueryRow(ctx, getWorkerInstanceLifecycle, arg.WorkerGroupID, arg.ResourceID)
+	var i GetWorkerInstanceLifecycleRow
+	err := row.Scan(
+		&i.ID,
+		&i.ResourceID,
+		&i.WorkerGroupID,
+		&i.State,
+		&i.ClaimVersion,
+		&i.CurrentEpoch,
+	)
+	return i, err
+}
+
 const listLiveAbsentWorkerGroupIDs = `-- name: ListLiveAbsentWorkerGroupIDs :many
 SELECT worker_groups.id
  FROM worker_groups
@@ -502,7 +548,7 @@ func (q *Queries) ListLiveAbsentWorkerGroupIDs(ctx context.Context, arg ListLive
 }
 
 const listWorkerGroups = `-- name: ListWorkerGroups :many
-SELECT id, region_id, name, description, state, enrollment_policy_fingerprint, allowed_attestation_fingerprints, launch_attestation_fingerprint, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, last_scale_out_at, last_scale_in_at, protocol_version, created_at, updated_at
+SELECT id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, last_scale_out_at, last_scale_in_at, protocol_version, created_at, updated_at
   FROM worker_groups
  WHERE region_id = $1
  ORDER BY name ASC
@@ -529,9 +575,6 @@ func (q *Queries) ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsPara
 			&i.Name,
 			&i.Description,
 			&i.State,
-			&i.EnrollmentPolicyFingerprint,
-			&i.AllowedAttestationFingerprints,
-			&i.LaunchAttestationFingerprint,
 			&i.ClaimVersion,
 			&i.AllowsRun,
 			&i.AllowsBuild,
@@ -628,30 +671,121 @@ func (q *Queries) LockWorkerGroupsForReconciliation(ctx context.Context, arg Loc
 	return items, nil
 }
 
+const loseWorkerInstanceForDrift = `-- name: LoseWorkerInstanceForDrift :one
+WITH target AS (
+    UPDATE worker_instances
+       SET state = 'lost', claim_version = worker_instances.claim_version + 1,
+           lost_at = COALESCE(worker_instances.lost_at, now()), updated_at = now()
+     WHERE worker_instances.worker_group_id = $1
+       AND worker_instances.resource_id = $2
+       AND worker_instances.claim_version = $3
+       AND worker_instances.state IN ('registering', 'active', 'draining')
+    RETURNING worker_instances.id, worker_instances.resource_id,
+              worker_instances.worker_group_id, worker_instances.state,
+              worker_instances.claim_version, worker_instances.current_epoch
+), revoked_credentials AS (
+    UPDATE worker_instance_credentials
+       SET revoked_at = COALESCE(revoked_at, now())
+      FROM target
+     WHERE worker_instance_credentials.worker_instance_id = target.id
+       AND worker_instance_credentials.revoked_at IS NULL
+    RETURNING worker_instance_credentials.id
+), lost_mounts AS (
+    UPDATE workspace_mounts
+       SET state = 'lost', lost_at = now(), terminal_at = now(),
+           terminal_reason_code = 'external_instance_drift', updated_at = now()
+      FROM target
+     WHERE workspace_mounts.worker_instance_id = target.id
+       AND workspace_mounts.worker_epoch = target.current_epoch
+       AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+    RETURNING workspace_mounts.id
+), lost_runtimes AS (
+    UPDATE runtime_instances
+       SET observed_state = 'lost', observed_version = observed_version + 1,
+           observed_at = now(), lost_at = now(), terminal_at = now(),
+           terminal_reason_code = 'external_instance_drift',
+           reserved_run_id = NULL, reserved_attempt_number = NULL,
+           reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+           reservation_expires_at = NULL, updated_at = now()
+      FROM target
+     WHERE runtime_instances.worker_instance_id = target.id
+       AND runtime_instances.worker_epoch = target.current_epoch
+       AND runtime_instances.reclaimed_at IS NULL
+       AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
+    RETURNING runtime_instances.id
+), completed AS (
+    SELECT target.id, target.resource_id, target.worker_group_id, target.state,
+           target.claim_version, target.current_epoch, true AS transition_applied
+      FROM target
+     WHERE (SELECT count(*) FROM revoked_credentials) >= 0
+       AND (SELECT count(*) FROM lost_mounts) >= 0
+       AND (SELECT count(*) FROM lost_runtimes) >= 0
+)
+SELECT id, resource_id, worker_group_id, state, claim_version, current_epoch, transition_applied FROM completed
+UNION ALL
+SELECT worker_instances.id, worker_instances.resource_id,
+       worker_instances.worker_group_id, worker_instances.state,
+       worker_instances.claim_version, worker_instances.current_epoch,
+       false AS transition_applied
+  FROM worker_instances
+ WHERE worker_instances.worker_group_id = $1
+   AND worker_instances.resource_id = $2
+   AND worker_instances.state = 'lost'
+   AND worker_instances.claim_version = $3 + 1
+   AND NOT EXISTS (SELECT 1 FROM completed)
+LIMIT 1
+`
+
+type LoseWorkerInstanceForDriftParams struct {
+	WorkerGroupID        string `json:"worker_group_id"`
+	ResourceID           string `json:"resource_id"`
+	ExpectedClaimVersion int64  `json:"expected_claim_version"`
+}
+
+type LoseWorkerInstanceForDriftRow struct {
+	ID                pgtype.UUID `json:"id"`
+	ResourceID        string      `json:"resource_id"`
+	WorkerGroupID     string      `json:"worker_group_id"`
+	State             string      `json:"state"`
+	ClaimVersion      int64       `json:"claim_version"`
+	CurrentEpoch      pgtype.Int8 `json:"current_epoch"`
+	TransitionApplied bool        `json:"transition_applied"`
+}
+
+func (q *Queries) LoseWorkerInstanceForDrift(ctx context.Context, arg LoseWorkerInstanceForDriftParams) (LoseWorkerInstanceForDriftRow, error) {
+	row := q.db.QueryRow(ctx, loseWorkerInstanceForDrift, arg.WorkerGroupID, arg.ResourceID, arg.ExpectedClaimVersion)
+	var i LoseWorkerInstanceForDriftRow
+	err := row.Scan(
+		&i.ID,
+		&i.ResourceID,
+		&i.WorkerGroupID,
+		&i.State,
+		&i.ClaimVersion,
+		&i.CurrentEpoch,
+		&i.TransitionApplied,
+	)
+	return i, err
+}
+
 const reconcileWorkerGroup = `-- name: ReconcileWorkerGroup :one
 WITH desired_group AS (
     INSERT INTO worker_groups (
-        id, region_id, name, description, state, enrollment_policy_fingerprint,
-        allowed_attestation_fingerprints, launch_attestation_fingerprint,
-        allows_run, allows_build, protocol_version,
+        id, region_id, name, description, state, allows_run, allows_build, protocol_version,
         required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes,
         required_build_cache_bytes, required_artifact_cache_bytes,
         required_vm_slots, required_build_executors, observation_ttl_seconds
     ) VALUES (
         $1, $2, $3, $4,
-        'active', $5, $6,
-        $7,
-        $8, $9, $10,
+        'active', $5, $6, $7,
+        $8, $9,
+        $10,
         $11, $12,
-        $13,
-        $14, $15,
-        $16, $17,
-        $18
+        $13, $14,
+        $15
     )
     ON CONFLICT (id) DO UPDATE
        SET claim_version = CASE
-               WHEN worker_groups.enrollment_policy_fingerprint IS DISTINCT FROM EXCLUDED.enrollment_policy_fingerprint
-                 OR worker_groups.protocol_version IS DISTINCT FROM EXCLUDED.protocol_version
+               WHEN worker_groups.protocol_version IS DISTINCT FROM EXCLUDED.protocol_version
                  OR worker_groups.allows_run IS DISTINCT FROM EXCLUDED.allows_run
                  OR worker_groups.allows_build IS DISTINCT FROM EXCLUDED.allows_build
                  OR worker_groups.required_cpu_millis IS DISTINCT FROM EXCLUDED.required_cpu_millis
@@ -665,9 +799,6 @@ WITH desired_group AS (
                THEN worker_groups.claim_version + 1 ELSE worker_groups.claim_version END,
            region_id = EXCLUDED.region_id, name = EXCLUDED.name,
            description = EXCLUDED.description,
-           enrollment_policy_fingerprint = EXCLUDED.enrollment_policy_fingerprint,
-           allowed_attestation_fingerprints = EXCLUDED.allowed_attestation_fingerprints,
-           launch_attestation_fingerprint = EXCLUDED.launch_attestation_fingerprint,
            allows_run = EXCLUDED.allows_run, allows_build = EXCLUDED.allows_build,
            required_cpu_millis = EXCLUDED.required_cpu_millis,
            required_memory_bytes = EXCLUDED.required_memory_bytes,
@@ -679,7 +810,7 @@ WITH desired_group AS (
            observation_ttl_seconds = EXCLUDED.observation_ttl_seconds,
            protocol_version = EXCLUDED.protocol_version,
            updated_at = now()
-    RETURNING id, region_id, name, description, state, enrollment_policy_fingerprint, allowed_attestation_fingerprints, launch_attestation_fingerprint, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, last_scale_out_at, last_scale_in_at, protocol_version, created_at, updated_at
+    RETURNING id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, last_scale_out_at, last_scale_in_at, protocol_version, created_at, updated_at
 ), lost_workers AS (
     UPDATE worker_instances
        SET state = CASE WHEN current_epoch IS NULL THEN 'disabled' ELSE 'lost' END,
@@ -691,8 +822,7 @@ WITH desired_group AS (
      WHERE worker_instances.worker_group_id = desired_group.id
        AND worker_instances.state IN ('registering', 'active', 'draining')
        AND (
-           NOT (worker_instances.attestation_fingerprint = ANY($6::text[]))
-           OR (worker_instances.supports_run AND NOT desired_group.allows_run)
+           (worker_instances.supports_run AND NOT desired_group.allows_run)
            OR (worker_instances.supports_build AND NOT desired_group.allows_build)
            OR EXISTS (
                SELECT 1
@@ -724,7 +854,7 @@ WITH desired_group AS (
 ), lost_mounts AS (
     UPDATE workspace_mounts
        SET state = 'lost', lost_at = now(), terminal_at = now(),
-           terminal_reason_code = 'enrollment_policy_changed', updated_at = now()
+           terminal_reason_code = 'worker_group_contract_changed', updated_at = now()
      WHERE workspace_mounts.worker_instance_id IN (SELECT id FROM lost_workers)
        AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
     RETURNING workspace_mounts.id
@@ -732,7 +862,7 @@ WITH desired_group AS (
     UPDATE runtime_instances
        SET observed_state = 'lost', observed_version = observed_version + 1,
            observed_at = now(), lost_at = now(), terminal_at = now(),
-           terminal_reason_code = 'enrollment_policy_changed',
+           terminal_reason_code = 'worker_group_contract_changed',
            reserved_run_id = NULL, reserved_attempt_number = NULL,
            reserved_process_id = NULL, reserved_workspace_version_id = NULL,
            reservation_expires_at = NULL, updated_at = now()
@@ -741,31 +871,28 @@ WITH desired_group AS (
        AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
     RETURNING runtime_instances.id
 )
-SELECT desired_group.id, desired_group.region_id, desired_group.name, desired_group.description, desired_group.state, desired_group.enrollment_policy_fingerprint, desired_group.allowed_attestation_fingerprints, desired_group.launch_attestation_fingerprint, desired_group.claim_version, desired_group.allows_run, desired_group.allows_build, desired_group.required_cpu_millis, desired_group.required_memory_bytes, desired_group.required_guest_ephemeral_disk_bytes, desired_group.required_build_cache_bytes, desired_group.required_artifact_cache_bytes, desired_group.required_vm_slots, desired_group.required_build_executors, desired_group.observation_ttl_seconds, desired_group.last_scale_out_at, desired_group.last_scale_in_at, desired_group.protocol_version, desired_group.created_at, desired_group.updated_at FROM desired_group
+SELECT desired_group.id, desired_group.region_id, desired_group.name, desired_group.description, desired_group.state, desired_group.claim_version, desired_group.allows_run, desired_group.allows_build, desired_group.required_cpu_millis, desired_group.required_memory_bytes, desired_group.required_guest_ephemeral_disk_bytes, desired_group.required_build_cache_bytes, desired_group.required_artifact_cache_bytes, desired_group.required_vm_slots, desired_group.required_build_executors, desired_group.observation_ttl_seconds, desired_group.last_scale_out_at, desired_group.last_scale_in_at, desired_group.protocol_version, desired_group.created_at, desired_group.updated_at FROM desired_group
  WHERE (SELECT count(*) FROM revoked) >= 0
    AND (SELECT count(*) FROM lost_mounts) >= 0
    AND (SELECT count(*) FROM lost_runtimes) >= 0
 `
 
 type ReconcileWorkerGroupParams struct {
-	ID                              string      `json:"id"`
-	RegionID                        string      `json:"region_id"`
-	Name                            string      `json:"name"`
-	Description                     string      `json:"description"`
-	EnrollmentPolicyFingerprint     string      `json:"enrollment_policy_fingerprint"`
-	AllowedAttestationFingerprints  []string    `json:"allowed_attestation_fingerprints"`
-	LaunchAttestationFingerprint    pgtype.Text `json:"launch_attestation_fingerprint"`
-	AllowsRun                       bool        `json:"allows_run"`
-	AllowsBuild                     bool        `json:"allows_build"`
-	ProtocolVersion                 string      `json:"protocol_version"`
-	RequiredCpuMillis               int64       `json:"required_cpu_millis"`
-	RequiredMemoryBytes             int64       `json:"required_memory_bytes"`
-	RequiredGuestEphemeralDiskBytes int64       `json:"required_guest_ephemeral_disk_bytes"`
-	RequiredBuildCacheBytes         int64       `json:"required_build_cache_bytes"`
-	RequiredArtifactCacheBytes      int64       `json:"required_artifact_cache_bytes"`
-	RequiredVmSlots                 int32       `json:"required_vm_slots"`
-	RequiredBuildExecutors          int32       `json:"required_build_executors"`
-	ObservationTtlSeconds           int32       `json:"observation_ttl_seconds"`
+	ID                              string `json:"id"`
+	RegionID                        string `json:"region_id"`
+	Name                            string `json:"name"`
+	Description                     string `json:"description"`
+	AllowsRun                       bool   `json:"allows_run"`
+	AllowsBuild                     bool   `json:"allows_build"`
+	ProtocolVersion                 string `json:"protocol_version"`
+	RequiredCpuMillis               int64  `json:"required_cpu_millis"`
+	RequiredMemoryBytes             int64  `json:"required_memory_bytes"`
+	RequiredGuestEphemeralDiskBytes int64  `json:"required_guest_ephemeral_disk_bytes"`
+	RequiredBuildCacheBytes         int64  `json:"required_build_cache_bytes"`
+	RequiredArtifactCacheBytes      int64  `json:"required_artifact_cache_bytes"`
+	RequiredVmSlots                 int32  `json:"required_vm_slots"`
+	RequiredBuildExecutors          int32  `json:"required_build_executors"`
+	ObservationTtlSeconds           int32  `json:"observation_ttl_seconds"`
 }
 
 type ReconcileWorkerGroupRow struct {
@@ -774,9 +901,6 @@ type ReconcileWorkerGroupRow struct {
 	Name                            string             `json:"name"`
 	Description                     string             `json:"description"`
 	State                           string             `json:"state"`
-	EnrollmentPolicyFingerprint     string             `json:"enrollment_policy_fingerprint"`
-	AllowedAttestationFingerprints  []string           `json:"allowed_attestation_fingerprints"`
-	LaunchAttestationFingerprint    pgtype.Text        `json:"launch_attestation_fingerprint"`
 	ClaimVersion                    int64              `json:"claim_version"`
 	AllowsRun                       bool               `json:"allows_run"`
 	AllowsBuild                     bool               `json:"allows_build"`
@@ -801,9 +925,6 @@ func (q *Queries) ReconcileWorkerGroup(ctx context.Context, arg ReconcileWorkerG
 		arg.RegionID,
 		arg.Name,
 		arg.Description,
-		arg.EnrollmentPolicyFingerprint,
-		arg.AllowedAttestationFingerprints,
-		arg.LaunchAttestationFingerprint,
 		arg.AllowsRun,
 		arg.AllowsBuild,
 		arg.ProtocolVersion,
@@ -823,9 +944,6 @@ func (q *Queries) ReconcileWorkerGroup(ctx context.Context, arg ReconcileWorkerG
 		&i.Name,
 		&i.Description,
 		&i.State,
-		&i.EnrollmentPolicyFingerprint,
-		&i.AllowedAttestationFingerprints,
-		&i.LaunchAttestationFingerprint,
 		&i.ClaimVersion,
 		&i.AllowsRun,
 		&i.AllowsBuild,
@@ -1025,7 +1143,7 @@ UPDATE worker_instances
   FROM target
  WHERE worker_instances.id = target.id
    AND (SELECT count(*) FROM reclaimed_runtimes) >= 0
-RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_guest_ephemeral_disk_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
+RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_guest_ephemeral_disk_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
 `
 
 type RecordWorkerStartupRecoveryParams struct {
@@ -1047,7 +1165,6 @@ func (q *Queries) RecordWorkerStartupRecovery(ctx context.Context, arg RecordWor
 		&i.ID,
 		&i.ResourceID,
 		&i.WorkerGroupID,
-		&i.AttestationFingerprint,
 		&i.State,
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
@@ -1131,7 +1248,7 @@ UPDATE worker_instances
    AND worker_instances.certified_artifact_cache_bytes >= worker_groups.required_artifact_cache_bytes
    AND worker_instances.max_vm_slots >= worker_groups.required_vm_slots
    AND worker_instances.max_build_executors >= worker_groups.required_build_executors
-RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_guest_ephemeral_disk_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
+RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_guest_ephemeral_disk_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
 `
 
 type RenewWorkerCertificationParams struct {
@@ -1193,7 +1310,6 @@ func (q *Queries) RenewWorkerCertification(ctx context.Context, arg RenewWorkerC
 		&i.ID,
 		&i.ResourceID,
 		&i.WorkerGroupID,
-		&i.AttestationFingerprint,
 		&i.State,
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
@@ -1236,6 +1352,58 @@ func (q *Queries) RenewWorkerCertification(ctx context.Context, arg RenewWorkerC
 		&i.ProviderTerminatedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const transitionWorkerGroupLifecycle = `-- name: TransitionWorkerGroupLifecycle :one
+WITH transitioned AS (
+    UPDATE worker_groups
+       SET state = $1,
+           claim_version = worker_groups.claim_version + 1,
+           updated_at = now()
+     WHERE worker_groups.id = $2
+       AND worker_groups.claim_version = $3
+       AND (
+           (worker_groups.state = 'active' AND $1::text = 'draining')
+           OR (worker_groups.state = 'draining' AND $1::text = 'active')
+       )
+    RETURNING worker_groups.id, worker_groups.state, worker_groups.claim_version
+)
+SELECT id, state, claim_version, true AS transition_applied
+  FROM transitioned
+UNION ALL
+SELECT worker_groups.id, worker_groups.state, worker_groups.claim_version,
+       false AS transition_applied
+  FROM worker_groups
+ WHERE worker_groups.id = $2
+   AND worker_groups.state = $1::text
+   AND worker_groups.claim_version = $3 + 1
+   AND NOT EXISTS (SELECT 1 FROM transitioned)
+LIMIT 1
+`
+
+type TransitionWorkerGroupLifecycleParams struct {
+	TargetState          string `json:"target_state"`
+	WorkerGroupID        string `json:"worker_group_id"`
+	ExpectedClaimVersion int64  `json:"expected_claim_version"`
+}
+
+type TransitionWorkerGroupLifecycleRow struct {
+	ID                string `json:"id"`
+	State             string `json:"state"`
+	ClaimVersion      int64  `json:"claim_version"`
+	TransitionApplied bool   `json:"transition_applied"`
+}
+
+func (q *Queries) TransitionWorkerGroupLifecycle(ctx context.Context, arg TransitionWorkerGroupLifecycleParams) (TransitionWorkerGroupLifecycleRow, error) {
+	row := q.db.QueryRow(ctx, transitionWorkerGroupLifecycle, arg.TargetState, arg.WorkerGroupID, arg.ExpectedClaimVersion)
+	var i TransitionWorkerGroupLifecycleRow
+	err := row.Scan(
+		&i.ID,
+		&i.State,
+		&i.ClaimVersion,
+		&i.TransitionApplied,
 	)
 	return i, err
 }

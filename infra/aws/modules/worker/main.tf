@@ -121,7 +121,10 @@ locals {
         Action = [
           "secretsmanager:GetSecretValue"
         ]
-        Resource = [var.secret_arns.checkpoint_encryption_key]
+        Resource = [
+          var.secret_arns.checkpoint_encryption_key,
+          var.secret_arns.worker_enrollment,
+        ]
       },
       ], [
       {
@@ -281,6 +284,7 @@ resource "aws_launch_template" "worker" {
   user_data = base64encode(templatefile("${path.module}/templates/user-data.sh.tftpl", {
     environment                          = local.base_worker_environment
     checkpoint_key_secret_arn            = var.secret_arns.checkpoint_encryption_key
+    worker_enrollment_secret_arn         = var.secret_arns.worker_enrollment
     worker_supports_build                = contains(var.worker_roles, "build")
     worker_service_name                  = var.worker_service_name
     worker_binary_path                   = var.worker_binary_path
@@ -431,6 +435,18 @@ resource "aws_autoscaling_group" "worker" {
   launch_template {
     id      = aws_launch_template.worker.id
     version = aws_launch_template.worker.latest_version
+  }
+
+  instance_refresh {
+    strategy = "Rolling"
+
+    preferences {
+      min_healthy_percentage       = 100
+      max_healthy_percentage       = 100
+      scale_in_protected_instances = "Refresh"
+      standby_instances            = "Terminate"
+      skip_matching                = true
+    }
   }
 
   dynamic "initial_lifecycle_hook" {

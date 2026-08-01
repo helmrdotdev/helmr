@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/sessionlock"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func TestLeaderLeaseDiscardsConnectionWhenUnlockIsNotConfirmed(t *testing.T) {
@@ -30,7 +30,7 @@ func TestLeaderLeaseDiscardsConnectionWhenUnlockIsNotConfirmed(t *testing.T) {
 	if err := conn.QueryRow(
 		t.Context(),
 		"select pg_advisory_unlock($1)",
-		sessionlock.Key("helmr:fleet:discard-unconfirmed"),
+		workergroup.LifecycleLockKey("discard-unconfirmed"),
 	).Scan(&unlocked); err != nil {
 		t.Fatal(err)
 	}

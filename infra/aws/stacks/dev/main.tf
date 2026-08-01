@@ -20,7 +20,6 @@ locals {
   run_worker_name              = "${lower(var.name)}-run"
   build_worker_name            = "${lower(var.name)}-build"
   worker_ami_id                = coalesce(var.worker_ami_id, "ami-unconfigured")
-  worker_allowed_ami_ids       = distinct(compact(concat([local.worker_ami_id], var.worker_allowed_ami_ids)))
   cloud_worker_blocked_ipv4_cidrs = [
     "0.0.0.0/8",
     "10.0.0.0/8",
@@ -56,13 +55,6 @@ locals {
       id                      = local.run_worker_group_id
       name                    = "run"
       description             = "Run workers"
-      region                  = var.aws_region
-      account_id              = data.aws_caller_identity.current.account_id
-      autoscaling_group       = "${local.run_worker_name}-worker"
-      instance_profile_arn    = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${local.run_worker_name}-worker"
-      instance_role_arn       = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${local.run_worker_name}-worker"
-      launch_ami_id           = local.worker_ami_id
-      ami_ids                 = local.worker_allowed_ami_ids
       allows_run              = true
       allows_build            = false
       observation_ttl_seconds = var.worker_fleet_controller.stale_worker_timeout_seconds
@@ -83,13 +75,6 @@ locals {
       id                      = local.build_worker_group_id
       name                    = "build"
       description             = "Build workers"
-      region                  = var.aws_region
-      account_id              = data.aws_caller_identity.current.account_id
-      autoscaling_group       = "${local.build_worker_name}-worker"
-      instance_profile_arn    = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${local.build_worker_name}-worker"
-      instance_role_arn       = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${local.build_worker_name}-worker"
-      launch_ami_id           = local.worker_ami_id
-      ami_ids                 = local.worker_allowed_ami_ids
       allows_run              = false
       allows_build            = true
       observation_ttl_seconds = var.worker_fleet_controller.stale_worker_timeout_seconds
@@ -253,6 +238,7 @@ module "control" {
   worker_group_id                        = var.worker_group_id
   worker_groups                          = local.worker_groups
   worker_fleets                          = local.worker_fleets
+  image_cache_worker_role_arns           = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${local.build_worker_name}-worker"]
   region_id                              = var.region_id
   default_region_id                      = var.default_region_id
   clickhouse_url                         = local.clickhouse_url
@@ -347,6 +333,7 @@ module "run_worker" {
 
   secret_arns = {
     checkpoint_encryption_key = module.control.secret_arns.checkpoint_encryption_key
+    worker_enrollment         = module.control.worker_enrollment_secret_arns[local.run_worker_group_id]
   }
 
   tags = local.tags
@@ -404,6 +391,7 @@ module "build_worker" {
 
   secret_arns = {
     checkpoint_encryption_key = module.control.secret_arns.checkpoint_encryption_key
+    worker_enrollment         = module.control.worker_enrollment_secret_arns[local.build_worker_group_id]
   }
 
   tags = local.tags

@@ -324,9 +324,6 @@ CREATE TABLE worker_groups (
     description TEXT NOT NULL DEFAULT '',
     state TEXT NOT NULL DEFAULT 'active'
         CHECK (state IN ('active', 'draining', 'disabled')),
-    enrollment_policy_fingerprint TEXT NOT NULL CHECK (btrim(enrollment_policy_fingerprint) <> ''),
-    allowed_attestation_fingerprints TEXT[] NOT NULL CHECK (cardinality(allowed_attestation_fingerprints) > 0),
-    launch_attestation_fingerprint TEXT CHECK (launch_attestation_fingerprint IS NULL OR btrim(launch_attestation_fingerprint) <> ''),
     claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
     allows_run BOOLEAN NOT NULL DEFAULT true,
     allows_build BOOLEAN NOT NULL DEFAULT true,
@@ -347,8 +344,7 @@ CREATE TABLE worker_groups (
     UNIQUE (region_id, name),
     CHECK (allows_run OR allows_build),
     CHECK (NOT allows_run OR required_vm_slots > 0),
-    CHECK (NOT allows_build OR required_build_executors > 0),
-    CHECK (launch_attestation_fingerprint IS NULL OR launch_attestation_fingerprint = ANY(allowed_attestation_fingerprints))
+    CHECK (NOT allows_build OR required_build_executors > 0)
 );
 
 CREATE INDEX worker_groups_active_placement_idx
@@ -371,7 +367,6 @@ CREATE TABLE worker_instances (
     id UUID PRIMARY KEY,
     resource_id TEXT NOT NULL CHECK (btrim(resource_id) <> ''),
     worker_group_id TEXT NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
-    attestation_fingerprint TEXT NOT NULL CHECK (btrim(attestation_fingerprint) <> ''),
     state TEXT NOT NULL DEFAULT 'registering'
         CHECK (state IN ('registering', 'active', 'draining', 'disabled', 'lost')),
     claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
@@ -421,7 +416,7 @@ CREATE TABLE worker_instances (
         (current_epoch IS NULL AND current_service_id IS NULL AND epoch_started_at IS NULL)
         OR (current_epoch IS NOT NULL AND current_service_id IS NOT NULL AND epoch_started_at IS NOT NULL)
     ),
-    CHECK (state NOT IN ('active', 'draining', 'lost') OR current_epoch IS NOT NULL),
+    CHECK (state NOT IN ('active', 'draining') OR current_epoch IS NOT NULL),
     CHECK ((startup_inventory_epoch IS NULL) = (startup_inventory_evidence IS NULL)),
     CHECK (startup_inventory_epoch IS NULL OR startup_inventory_epoch = current_epoch),
     CHECK (startup_inventory_evidence IS NULL OR jsonb_typeof(startup_inventory_evidence) = 'object'),

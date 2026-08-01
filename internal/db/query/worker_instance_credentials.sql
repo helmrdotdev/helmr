@@ -305,20 +305,18 @@ WITH nonce AS (
        AND worker_enrollment_nonces.consumed_at IS NULL
        AND worker_enrollment_nonces.expires_at > now()
        AND worker_groups.state = 'active'
-       AND worker_groups.allows_run = sqlc.arg(allows_run)
-       AND worker_groups.allows_build = sqlc.arg(allows_build)
+       AND (NOT sqlc.arg(allows_run)::boolean OR worker_groups.allows_run)
+       AND (NOT sqlc.arg(allows_build)::boolean OR worker_groups.allows_build)
        AND worker_groups.protocol_version = sqlc.arg(protocol_version)
-       AND worker_groups.enrollment_policy_fingerprint = sqlc.arg(enrollment_policy_fingerprint)
-       AND sqlc.arg(attestation_fingerprint)::text = ANY(worker_groups.allowed_attestation_fingerprints)
      FOR UPDATE OF worker_enrollment_nonces, worker_groups
 ), worker AS (
     INSERT INTO worker_instances (
         id, worker_group_id, resource_id, state, claim_version,
-        protocol_version, supports_run, supports_build, attestation_fingerprint
+        protocol_version, supports_run, supports_build
     )
     SELECT sqlc.arg(worker_instance_id), nonce.worker_group_id,
            sqlc.arg(resource_id), 'registering', 1, nonce.protocol_version,
-           false, false, sqlc.arg(attestation_fingerprint)
+           false, false
       FROM nonce
     ON CONFLICT (worker_group_id, resource_id) DO UPDATE
        SET claim_version = worker_instances.claim_version + 1,
@@ -335,7 +333,6 @@ WITH nonce AS (
            per_vm_guest_ephemeral_disk_bytes = 0,
            max_vm_slots = 0, max_run_consumers = 0,
            max_build_executors = 0, max_runtime_starts = 0,
-           attestation_fingerprint = EXCLUDED.attestation_fingerprint,
            current_service_id = CASE
                WHEN worker_instances.current_epoch IS NULL THEN NULL
                ELSE sqlc.arg(current_service_id)::uuid
@@ -346,7 +343,7 @@ WITH nonce AS (
            certified_at = NULL, activated_at = NULL,
            certification_profile = '', certification_fingerprint = '',
            draining_at = NULL, disabled_at = NULL, updated_at = now()
-     WHERE worker_instances.state = 'disabled'
+     WHERE worker_instances.state IN ('registering', 'disabled')
        AND worker_instances.termination_claimed_at IS NULL
     RETURNING *
 ), revoked AS (

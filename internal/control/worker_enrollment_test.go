@@ -3,8 +3,6 @@ package control
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,43 +12,37 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/enrollment"
 	"github.com/jackc/pgx/v5"
 )
 
-func TestWorkerEnrollmentValidatesNonceBeforeExactProofVerification(t *testing.T) {
-	rawRequest := json.RawMessage(" \n{\"worker_group_id\":\"run-workers\",\"nonce\":\"fresh-nonce\"}\n")
+const enrollmentTestSecret = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
 
-	t.Run("invalid nonce does not verify", func(t *testing.T) {
-		verifier := &recordingEnrollmentVerifier{}
-		server := testEnrollmentServer(t, enrollmentNonceStore{active: false}, verifier, io.Discard)
-		response := serveWorkerEnrollment(server, rawRequest)
+func TestWorkerEnrollmentChecksNonceBeforeProofVerification(t *testing.T) {
+	request, err := enrollment.BuildRequest("run-workers", "fresh-nonce", true, false, "host-1", enrollmentTestSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("inactive nonce rejects an otherwise valid proof", func(t *testing.T) {
+		server := testEnrollmentServer(t, enrollmentNonceStore{active: false}, io.Discard)
+		response := serveWorkerEnrollment(server, request)
 		if response.Code != http.StatusUnauthorized {
 			t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
-		}
-		if verifier.verifyCalls != 0 {
-			t.Fatalf("verify calls = %d", verifier.verifyCalls)
-		}
-		if !bytes.Equal(verifier.parsed, rawRequest) {
-			t.Fatalf("parse bytes = %q, want %q", verifier.parsed, rawRequest)
 		}
 	})
 
-	t.Run("valid nonce verifies the same bytes without logging proof error", func(t *testing.T) {
-		verifier := &recordingEnrollmentVerifier{}
+	t.Run("active nonce rejects invalid proof without logging it", func(t *testing.T) {
 		var logs bytes.Buffer
-		server := testEnrollmentServer(t, enrollmentNonceStore{active: true}, verifier, &logs)
-		response := serveWorkerEnrollment(server, rawRequest)
+		server := testEnrollmentServer(t, enrollmentNonceStore{active: true}, &logs)
+		invalid := request
+		invalid.Proof = "sensitive-proof-value"
+		response := serveWorkerEnrollment(server, invalid)
 		if response.Code != http.StatusUnauthorized {
 			t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
 		}
-		if verifier.verifyCalls != 1 {
-			t.Fatalf("verify calls = %d", verifier.verifyCalls)
-		}
-		if !bytes.Equal(verifier.parsed, rawRequest) || !bytes.Equal(verifier.verified, rawRequest) {
-			t.Fatalf("parse bytes = %q verify bytes = %q, want %q", verifier.parsed, verifier.verified, rawRequest)
-		}
-		if bytes.Contains(logs.Bytes(), []byte("sensitive-proof-value")) {
-			t.Fatalf("proof-derived verifier error was logged: %s", logs.String())
+		if bytes.Contains(logs.Bytes(), []byte(invalid.Proof)) {
+			t.Fatalf("enrollment proof was logged: %s", logs.String())
 		}
 	})
 }
@@ -67,29 +59,13 @@ func (s enrollmentNonceStore) GetActiveWorkerEnrollmentNonce(context.Context, db
 	return db.WorkerEnrollmentNonce{WorkerGroupID: "run-workers"}, nil
 }
 
-type recordingEnrollmentVerifier struct {
-	parsed      json.RawMessage
-	verified    json.RawMessage
-	verifyCalls int
-}
-
-func (v *recordingEnrollmentVerifier) ParseWorkerEnrollment(raw json.RawMessage) (api.WorkerEnrollmentIntent, error) {
-	v.parsed = bytes.Clone(raw)
-	return api.WorkerEnrollmentIntent{
-		WorkerGroupID: "run-workers", Nonce: "fresh-nonce", SupportsRun: true,
-		ProtocolVersion: auth.WorkerProtocolVersion,
-	}, nil
-}
-
-func (v *recordingEnrollmentVerifier) VerifyWorkerEnrollment(_ context.Context, raw json.RawMessage) (VerifiedWorkerEnrollment, error) {
-	v.verifyCalls++
-	v.verified = bytes.Clone(raw)
-	return VerifiedWorkerEnrollment{}, errors.New("sensitive-proof-value")
-}
-
-func testEnrollmentServer(t *testing.T, store enrollmentNonceStore, verifier *recordingEnrollmentVerifier, logOutput io.Writer) *Server {
+func testEnrollmentServer(t *testing.T, store enrollmentNonceStore, logOutput io.Writer) *Server {
 	t.Helper()
 	keys, err := auth.NewKeys(make([]byte, auth.RootKeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := enrollment.NewVerifier([]enrollment.GroupSecret{{GroupID: "run-workers", Secret: enrollmentTestSecret}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,9 +78,10 @@ func testEnrollmentServer(t *testing.T, store enrollmentNonceStore, verifier *re
 	}
 }
 
-func serveWorkerEnrollment(server *Server, raw json.RawMessage) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodPost, "/api/worker/enrollment", bytes.NewReader(raw))
+func serveWorkerEnrollment(server *Server, request api.WorkerEnrollmentRequest) *httptest.ResponseRecorder {
+	body := bytes.NewBufferString(`{"worker_group_id":"` + request.WorkerGroupID + `","nonce":"` + request.Nonce + `","supports_run":true,"supports_build":false,"protocol_version":"` + request.ProtocolVersion + `","resource_id":"` + request.ResourceID + `","proof":"` + request.Proof + `"}`)
+	httpRequest := httptest.NewRequest(http.MethodPost, "/api/worker/enrollment", body)
 	response := httptest.NewRecorder()
-	server.workerEnroll(response, request)
+	server.workerEnroll(response, httpRequest)
 	return response
 }

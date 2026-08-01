@@ -75,15 +75,14 @@ func newDeploymentBuildFixture(t *testing.T) (*deploymentBuildFixture, *pgxpool.
 	serviceID := uuid.Must(uuid.NewV7())
 	mustExec(t, ctx, pool, `
 		INSERT INTO worker_groups (
-			id, region_id, name, enrollment_policy_fingerprint,
-			allowed_attestation_fingerprints, observation_ttl_seconds
-		) VALUES ($1, $2, $1, 'sha256:test-enrollment-policy', ARRAY['sha256:test-attestation'], 120)
+			id, region_id, name, observation_ttl_seconds
+		) VALUES ($1, $2, $1, 120)
 	`, groupID, dbtest.DefaultRegionID)
 	mustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, attestation_fingerprint, state,
+			id, resource_id, worker_group_id, state,
 			current_epoch, current_service_id, epoch_started_at
-		) VALUES ($1, $2, $3, 'sha256:test-attestation', 'registering', 1, $4, now())
+		) VALUES ($1, $2, $3, 'registering', 1, $4, now())
 	`, workerID, workerID.String(), groupID, serviceID)
 
 	return &deploymentBuildFixture{

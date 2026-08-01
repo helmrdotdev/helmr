@@ -36,7 +36,7 @@ func TestCloudWatchPublisherThrottlesAndUsesGroupRoleDimensions(t *testing.T) {
 	if err := publisher.Publish(context.Background(), metric); err != nil {
 		t.Fatal(err)
 	}
-	if client.calls != 1 || len(client.inputs[0].MetricData) != 13 {
+	if client.calls != 1 || len(client.inputs[0].MetricData) != 11 {
 		t.Fatalf("calls=%d input=%#v", client.calls, client.inputs)
 	}
 	for _, datum := range client.inputs[0].MetricData {

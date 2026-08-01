@@ -68,9 +68,8 @@ func New(t *testing.T) Fixture {
 	`, Region)
 	MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO worker_groups (
-			id, region_id, name, enrollment_policy_fingerprint,
-			allowed_attestation_fingerprints, protocol_version, observation_ttl_seconds
-		) VALUES ($1, $2, $1, 'test-policy', ARRAY['test-attestation'], $3, 120)
+			id, region_id, name, protocol_version, observation_ttl_seconds
+		) VALUES ($1, $2, $1, $3, 120)
 	`, WorkerGroup, Region, WorkerProtocol)
 	MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO organizations (id, name, slug)
@@ -139,7 +138,7 @@ func New(t *testing.T) Fixture {
 	`, fixture.RuntimeIdentityID)
 	MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, attestation_fingerprint, state,
+			id, resource_id, worker_group_id, state,
 			current_epoch, current_service_id, protocol_version, supervisor_version,
 			supports_run, runtime_identity_id,
 			substrate_format, substrate_builder_abi, substrate_layout_abi,
@@ -150,7 +149,7 @@ func New(t *testing.T) Fixture {
 			certification_profile, certification_fingerprint,
 			epoch_started_at, certified_at, activated_at
 		) VALUES (
-			$1, $2, $3, 'test-attestation', 'active', 1, $4, $5, 'test',
+			$1, $2, $3, 'active', 1, $4, $5, 'test',
 			true, $6, 'squashfs', 'builder-v0', 'layout-v0',
 			8000, 8589934592, 17179869184,
 			1000, 1073741824, 2147483648,

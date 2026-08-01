@@ -450,17 +450,6 @@ variable "worker_ami_id" {
   nullable    = true
 }
 
-variable "worker_allowed_ami_ids" {
-  description = "Additional worker AMIs accepted during a rolling worker replacement. Remove superseded AMIs after the refresh completes."
-  type        = list(string)
-  default     = []
-
-  validation {
-    condition     = alltrue([for ami_id in var.worker_allowed_ami_ids : can(regex("^ami-[0-9a-fA-F]+$", ami_id))])
-    error_message = "worker_allowed_ami_ids must contain AWS AMI IDs."
-  }
-}
-
 variable "worker_instance_type" {
   description = "EC2 instance type for the smoke worker."
   type        = string

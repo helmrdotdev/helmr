@@ -178,7 +178,6 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		RegionID:                        dbtest.DefaultRegionID,
 		Name:                            dbtest.DefaultWorkerGroupID,
 		ObservationTtlSeconds:           120,
-		EnrollmentPolicyFingerprint:     "sha256:test-worker-group",
 		AllowsRun:                       true,
 		AllowsBuild:                     true,
 		RequiredCpuMillis:               1,
@@ -187,9 +186,6 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		RequiredVmSlots:                 1,
 		RequiredBuildExecutors:          1,
 		ProtocolVersion:                 api.CurrentWorkerProtocolVersion,
-		AllowedAttestationFingerprints: []string{
-			"sha256:test-attestation",
-		},
 	}); err != nil {
 		t.Fatal(err)
 	}

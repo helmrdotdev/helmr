@@ -54,18 +54,11 @@ variable "worker_group_id" {
 }
 
 variable "worker_groups" {
-  description = "EC2 identity, enrollment, and scheduling boundaries for worker groups."
+  description = "Logical enrollment, role, and scheduling boundaries for worker groups."
   type = list(object({
     id                      = string
     name                    = string
     description             = optional(string, "")
-    region                  = string
-    account_id              = string
-    autoscaling_group       = string
-    instance_profile_arn    = string
-    instance_role_arn       = string
-    launch_ami_id           = string
-    ami_ids                 = list(string)
     allows_run              = bool
     allows_build            = bool
     observation_ttl_seconds = number
@@ -83,6 +76,12 @@ variable "worker_groups" {
     condition     = length(var.worker_groups) > 0
     error_message = "worker_groups must be non-empty."
   }
+}
+
+variable "image_cache_worker_role_arns" {
+  description = "Deployment-owned IAM roles permitted to assume the Execution image-cache role."
+  type        = list(string)
+  default     = []
 }
 
 variable "worker_fleets" {

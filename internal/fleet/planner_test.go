@@ -45,79 +45,6 @@ func TestPlanZeroDemandHonorsWarmFloor(t *testing.T) {
 	}
 }
 
-func TestRunAttestationCoverageGapRaisesOneWorkerFloor(t *testing.T) {
-	planner := mustPlanner(t, testPolicy())
-	decision, err := planner.Plan(Inputs{Now: testNow, UncertifiedRunLaunchAttestations: 2})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decision.Action != ActionLaunch || decision.LaunchCount != 1 || decision.DesiredWorkers != 1 || decision.UncappedRequiredWorkers != 1 {
-		t.Fatalf("decision = %#v, want one certification worker", decision)
-	}
-}
-
-func TestRunAttestationCoverageGapDoesNotAddToWarmFloor(t *testing.T) {
-	policy := testPolicy()
-	policy.WarmWorkers = 2
-	planner := mustPlanner(t, policy)
-	decision, err := planner.Plan(Inputs{Now: testNow, UncertifiedRunLaunchAttestations: 3})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decision.DesiredWorkers != 2 || decision.LaunchCount != 2 {
-		t.Fatalf("decision = %#v, want existing warm floor of two", decision)
-	}
-}
-
-func TestRunAttestationCoverageGapReusesPendingSupply(t *testing.T) {
-	planner := mustPlanner(t, testPolicy())
-	decision, err := planner.Plan(Inputs{
-		Now: testNow, UncertifiedRunLaunchAttestations: 1,
-		Workers: []Worker{{ID: "provider-pending", State: WorkerPending}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decision.Action != ActionNone || decision.DesiredWorkers != 1 || decision.PlannedWorkers != 1 {
-		t.Fatalf("decision = %#v, want pending supply to prevent relaunch", decision)
-	}
-}
-
-func TestRunAttestationCoverageGapRespectsLaunchGuards(t *testing.T) {
-	tests := []struct {
-		name       string
-		mutate     func(*Policy)
-		inputs     Inputs
-		wantReason Reason
-		wantCap    CapReason
-	}{
-		{name: "emergency stop", mutate: func(policy *Policy) { policy.EmergencyStop = true }, inputs: Inputs{Now: testNow}, wantReason: ReasonEmergencyStop},
-		{name: "cooldown", mutate: func(policy *Policy) { policy.ScaleOutCooldown = time.Hour }, inputs: Inputs{Now: testNow, LastScaleOutAt: testNow.Add(-time.Minute)}, wantReason: ReasonScaleOutCooldown},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			policy := testPolicy()
-			tt.mutate(&policy)
-			planner := mustPlanner(t, policy)
-			tt.inputs.UncertifiedRunLaunchAttestations = 1
-			decision, err := planner.Plan(tt.inputs)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if decision.Action != ActionNone || decision.Reason != tt.wantReason || decision.CapReason != tt.wantCap {
-				t.Fatalf("decision = %#v, want reason=%q cap=%q", decision, tt.wantReason, tt.wantCap)
-			}
-		})
-	}
-}
-
-func TestNegativeRunAttestationCoverageGapFailsClosed(t *testing.T) {
-	_, err := mustPlanner(t, testPolicy()).Plan(Inputs{Now: testNow, UncertifiedRunLaunchAttestations: -1})
-	if !errors.Is(err, ErrInvalidInputs) {
-		t.Fatalf("error = %v, want invalid inputs", err)
-	}
-}
-
 func TestPlanUsesLargestResourceDimensionCeiling(t *testing.T) {
 	policy := testPolicy()
 	policy.InstanceCapacity = Capacity{
@@ -448,6 +375,25 @@ func TestEmergencyStopBlocksScaleOutWithoutKillingActiveWork(t *testing.T) {
 	}
 	if decision.Action != ActionNone || decision.Reason != ReasonEmergencyStop {
 		t.Fatalf("decision = %#v, want no new scale-out", decision)
+	}
+}
+
+func TestDrainingGroupBlocksScaleOutWithoutKillingActiveWork(t *testing.T) {
+	planner := mustPlanner(t, testPolicy())
+	decision, err := planner.Plan(Inputs{
+		Now:             testNow,
+		ScaleOutStopped: true,
+		Demand: Demand{
+			Active: []WorkloadBucket{workload(Capacity{MilliCPU: 1_000, MemoryBytes: 2_000, VMSlots: 1}, 2)},
+			Queued: []WorkloadBucket{workload(Capacity{MilliCPU: 1_000, MemoryBytes: 2_000, VMSlots: 1}, 4)},
+		},
+		Workers: activeWorkers(1),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionNone || decision.Reason != ReasonAdmissionStopped {
+		t.Fatalf("decision = %#v, want no new scale-out for stopped admission", decision)
 	}
 }
 

@@ -18,14 +18,17 @@ import (
 	"github.com/helmrdotdev/helmr/internal/config"
 )
 
+const testWorkerEnrollmentSecret = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+
 func TestResolveWorkerInstanceCredentialUsesEnrollment(t *testing.T) {
 	tempDir := t.TempDir()
+	enrollmentSecretFile := writeTestWorkerEnrollmentSecret(t, testWorkerEnrollmentSecret)
 	originalBuilder := buildWorkerEnrollmentRequest
-	buildWorkerEnrollmentRequest = func(_ context.Context, groupID string, nonce string, supportsRun bool, supportsBuild bool) (json.RawMessage, error) {
-		if groupID != "run-workers" || nonce != "fresh-nonce" || !supportsRun || supportsBuild {
-			t.Fatalf("builder group=%q nonce=%q run=%t build=%t", groupID, nonce, supportsRun, supportsBuild)
+	buildWorkerEnrollmentRequest = func(groupID string, nonce string, supportsRun bool, supportsBuild bool, resourceID string, secret string) (api.WorkerEnrollmentRequest, error) {
+		if groupID != "run-workers" || nonce != "fresh-nonce" || !supportsRun || supportsBuild || resourceID != "host-1" || secret != testWorkerEnrollmentSecret {
+			t.Fatalf("builder group=%q nonce=%q run=%t build=%t resource=%q secret=%q", groupID, nonce, supportsRun, supportsBuild, resourceID, secret)
 		}
-		return testWorkerEnrollmentJSON(t, groupID, nonce, supportsRun, supportsBuild), nil
+		return testWorkerEnrollmentRequest(groupID, nonce, supportsRun, supportsBuild), nil
 	}
 	t.Cleanup(func() { buildWorkerEnrollmentRequest = originalBuilder })
 
@@ -60,6 +63,7 @@ func TestResolveWorkerInstanceCredentialUsesEnrollment(t *testing.T) {
 
 	credential, err := resolveWorkerInstanceCredential(context.Background(), config.Worker{
 		ControlURL: server.URL, WorkerGroupID: "run-workers", WorkerRoles: []string{"run"},
+		WorkerResourceID: "host-1", WorkerEnrollmentSecretFile: enrollmentSecretFile,
 	}, tempDir)
 	if err != nil {
 		t.Fatal(err)
@@ -71,9 +75,10 @@ func TestResolveWorkerInstanceCredentialUsesEnrollment(t *testing.T) {
 
 func TestResolveWorkerInstanceCredentialSerializesEnrollment(t *testing.T) {
 	tempDir := t.TempDir()
+	enrollmentSecretFile := writeTestWorkerEnrollmentSecret(t, testWorkerEnrollmentSecret)
 	originalBuilder := buildWorkerEnrollmentRequest
-	buildWorkerEnrollmentRequest = func(_ context.Context, groupID string, nonce string, supportsRun bool, supportsBuild bool) (json.RawMessage, error) {
-		return testWorkerEnrollmentJSON(t, groupID, nonce, supportsRun, supportsBuild), nil
+	buildWorkerEnrollmentRequest = func(groupID string, nonce string, supportsRun bool, supportsBuild bool, _ string, _ string) (api.WorkerEnrollmentRequest, error) {
+		return testWorkerEnrollmentRequest(groupID, nonce, supportsRun, supportsBuild), nil
 	}
 	t.Cleanup(func() { buildWorkerEnrollmentRequest = originalBuilder })
 	var requests atomic.Int32
@@ -92,7 +97,10 @@ func TestResolveWorkerInstanceCredentialSerializesEnrollment(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	cfg := config.Worker{ControlURL: server.URL, WorkerGroupID: "run-workers", WorkerRoles: []string{"run"}}
+	cfg := config.Worker{
+		ControlURL: server.URL, WorkerGroupID: "run-workers", WorkerRoles: []string{"run"},
+		WorkerEnrollmentSecretFile: enrollmentSecretFile,
+	}
 
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
@@ -167,6 +175,7 @@ func TestReadWorkerInstanceCredentialRejectsSymlinkAndBroadMode(t *testing.T) {
 
 func TestResolveAuthenticatedWorkerCredentialReenrollsAfterUnauthorized(t *testing.T) {
 	tempDir := t.TempDir()
+	enrollmentSecretFile := writeTestWorkerEnrollmentSecret(t, testWorkerEnrollmentSecret)
 	path := workerCredentialPath(tempDir, "")
 	if err := writeWorkerInstanceSecret(path, workerCredentialFile{
 		WorkerInstanceID: "00000000-0000-0000-0000-000000000401", WorkerInstanceSecret: "rejected-secret",
@@ -174,8 +183,8 @@ func TestResolveAuthenticatedWorkerCredentialReenrollsAfterUnauthorized(t *testi
 		t.Fatal(err)
 	}
 	originalBuilder := buildWorkerEnrollmentRequest
-	buildWorkerEnrollmentRequest = func(_ context.Context, groupID string, nonce string, supportsRun bool, supportsBuild bool) (json.RawMessage, error) {
-		return testWorkerEnrollmentJSON(t, groupID, nonce, supportsRun, supportsBuild), nil
+	buildWorkerEnrollmentRequest = func(groupID string, nonce string, supportsRun bool, supportsBuild bool, _ string, _ string) (api.WorkerEnrollmentRequest, error) {
+		return testWorkerEnrollmentRequest(groupID, nonce, supportsRun, supportsBuild), nil
 	}
 	t.Cleanup(func() { buildWorkerEnrollmentRequest = originalBuilder })
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -196,6 +205,7 @@ func TestResolveAuthenticatedWorkerCredentialReenrollsAfterUnauthorized(t *testi
 	var attempts int
 	credential, err := resolveAuthenticatedWorkerCredential(context.Background(), config.Worker{
 		ControlURL: server.URL, WorkerGroupID: "build-workers", WorkerRoles: []string{"build"},
+		WorkerEnrollmentSecretFile: enrollmentSecretFile,
 	}, tempDir, func(candidate workerCredentialFile) error {
 		attempts++
 		if candidate.WorkerInstanceSecret == "rejected-secret" {
@@ -224,16 +234,65 @@ func TestResolveAuthenticatedWorkerCredentialReenrollsAfterUnauthorized(t *testi
 	}
 }
 
-func testWorkerEnrollmentJSON(t *testing.T, groupID string, nonce string, supportsRun bool, supportsBuild bool) json.RawMessage {
-	t.Helper()
-	encoded, err := json.Marshal(api.WorkerEnrollmentIntent{
-		WorkerGroupID: groupID, Nonce: nonce, SupportsRun: supportsRun, SupportsBuild: supportsBuild,
-		ProtocolVersion: auth.WorkerProtocolVersion,
+func TestResolveWorkerInstanceCredentialRequiresUsableEnrollmentSecretOnlyWhenEnrollmentIsNeeded(t *testing.T) {
+	t.Run("missing", func(t *testing.T) {
+		_, err := resolveWorkerInstanceCredential(context.Background(), config.Worker{
+			WorkerEnrollmentSecretFile: filepath.Join(t.TempDir(), "missing"),
+		}, t.TempDir())
+		if err == nil || !strings.Contains(err.Error(), "HELMR_WORKER_ENROLLMENT_SECRET_FILE") {
+			t.Fatalf("error = %v", err)
+		}
 	})
-	if err != nil {
+
+	t.Run("noncanonical", func(t *testing.T) {
+		secretFile := writeTestWorkerEnrollmentSecret(t, " "+testWorkerEnrollmentSecret+"\n")
+		_, err := resolveWorkerInstanceCredential(context.Background(), config.Worker{
+			WorkerEnrollmentSecretFile: secretFile,
+		}, t.TempDir())
+		if err == nil || !strings.Contains(err.Error(), "canonical base64url-no-pad") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("stored credential", func(t *testing.T) {
+		workDir := t.TempDir()
+		want := workerCredentialFile{WorkerInstanceID: "worker", WorkerInstanceSecret: "secret"}
+		if err := writeWorkerInstanceSecret(workerCredentialPath(workDir, ""), want); err != nil {
+			t.Fatal(err)
+		}
+		got, err := resolveWorkerInstanceCredential(context.Background(), config.Worker{
+			WorkerEnrollmentSecretFile: filepath.Join(t.TempDir(), "missing"),
+		}, workDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.WorkerInstanceID != want.WorkerInstanceID || got.WorkerInstanceSecret != want.WorkerInstanceSecret {
+			t.Fatalf("credential = %+v", got)
+		}
+	})
+}
+
+func writeTestWorkerEnrollmentSecret(t *testing.T, secret string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "worker-enrollment-secret")
+	if err := os.WriteFile(path, []byte(secret), 0o400); err != nil {
 		t.Fatal(err)
 	}
-	return encoded
+	if err := os.Chmod(path, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func testWorkerEnrollmentRequest(groupID string, nonce string, supportsRun bool, supportsBuild bool) api.WorkerEnrollmentRequest {
+	return api.WorkerEnrollmentRequest{
+		WorkerEnrollmentIntent: api.WorkerEnrollmentIntent{
+			WorkerGroupID: groupID, Nonce: nonce, SupportsRun: supportsRun, SupportsBuild: supportsBuild,
+			ProtocolVersion: auth.WorkerProtocolVersion,
+		},
+		ResourceID: "host-1",
+		Proof:      "proof",
+	}
 }
 
 func TestResolveAuthenticatedWorkerCredentialPreservesNonUnauthorizedCredential(t *testing.T) {

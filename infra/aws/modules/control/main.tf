@@ -16,16 +16,14 @@ locals {
   worker_groups_by_id = {
     for group in var.worker_groups : group.id => group
   }
+  worker_enrollment_secret_env_by_group = {
+    for group in var.worker_groups : group.id => "HELMR_WORKER_ENROLLMENT_SECRET_${upper(substr(sha256(group.id), 0, 16))}"
+  }
   worker_groups_config = [for group in var.worker_groups : {
     id                      = group.id
     name                    = group.name
     description             = group.description
-    region                  = group.region
-    account_id              = group.account_id
-    autoscaling_group       = group.autoscaling_group
-    instance_profile_arn    = group.instance_profile_arn
-    launch_ami_id           = group.launch_ami_id
-    ami_ids                 = group.ami_ids
+    enrollment_secret_env   = local.worker_enrollment_secret_env_by_group[group.id]
     allows_run              = group.allows_run
     allows_build            = group.allows_build
     observation_ttl_seconds = group.observation_ttl_seconds
@@ -37,10 +35,11 @@ locals {
   image_cache_repository_prefix     = "${local.name}/image-cache"
   image_cache_repository_arn_prefix = "arn:${data.aws_partition.current.partition}:ecr:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:repository/${local.image_cache_repository_prefix}/"
   image_cache_registry_authority    = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${data.aws_region.current.region}.${data.aws_partition.current.dns_suffix}"
-  image_cache_worker_role_arns = sort(distinct([
-    for group in var.worker_groups : group.instance_role_arn
-    if group.allows_build
-  ]))
+  image_cache_worker_role_arns      = sort(distinct(var.image_cache_worker_role_arns))
+  worker_enrollment_secrets = {
+    for group_id, environment_name in local.worker_enrollment_secret_env_by_group :
+    environment_name => aws_secretsmanager_secret.worker_enrollment[group_id].arn
+  }
   secret_kms_key_arns = distinct(concat(
     [aws_kms_key.helmr.arn],
     var.clickhouse_password_kms_key_arns
@@ -129,6 +128,7 @@ locals {
     TOKEN_CREDENTIAL_KEY             = aws_secretsmanager_secret.token_credential_key.arn
     HELMR_GITHUB_OAUTH_CLIENT_SECRET = aws_secretsmanager_secret.github_oauth_client_secret.arn
     },
+    local.worker_enrollment_secrets,
     local.telemetry_secrets,
     local.email_secrets
   )
@@ -206,7 +206,7 @@ resource "terraform_data" "bootstrap_preconditions" {
 
     precondition {
       condition     = length(local.image_cache_worker_role_arns) > 0
-      error_message = "worker_groups must contain at least one build-capable Worker role for the regional image-cache trust boundary."
+      error_message = "image_cache_worker_role_arns must contain at least one deployment-owned build Worker role."
     }
 
     precondition {
@@ -239,19 +239,16 @@ resource "terraform_data" "bootstrap_preconditions" {
       condition = alltrue([
         for fleet in var.worker_fleets :
         contains(keys(local.worker_groups_by_id), fleet.group_id) &&
-        local.worker_groups_by_id[fleet.group_id].autoscaling_group == fleet.autoscaling_group &&
         local.worker_groups_by_id[fleet.group_id].observation_ttl_seconds == fleet.stale_worker_timeout_seconds &&
         local.worker_groups_by_id[fleet.group_id].instance_capacity == fleet.instance_capacity
       ])
-      error_message = "each worker fleet must project the Auto Scaling group, observation TTL, and capacity declared by its worker group."
+      error_message = "each worker fleet must project the observation TTL and capacity declared by its logical worker group."
     }
 
     precondition {
       condition = alltrue([
         for group in var.worker_groups :
-        trimspace(group.id) != "" && trimspace(group.region) != "" && trimspace(group.account_id) != "" &&
-        trimspace(group.autoscaling_group) != "" && trimspace(group.instance_profile_arn) != "" && trimspace(group.instance_role_arn) != "" &&
-        trimspace(group.launch_ami_id) != "" && contains(group.ami_ids, group.launch_ami_id) &&
+        trimspace(group.id) != "" && trimspace(group.name) != "" &&
         (group.allows_run || group.allows_build) &&
         group.observation_ttl_seconds > 0 && group.observation_ttl_seconds <= 2592000 &&
         group.instance_capacity.milli_cpu > 0 && group.instance_capacity.memory_bytes > 0 &&
@@ -261,17 +258,15 @@ resource "terraform_data" "bootstrap_preconditions" {
         (!group.allows_run || group.instance_capacity.vm_slots > 0) &&
         (!group.allows_build || group.instance_capacity.build_executors > 0)
       ])
-      error_message = "worker_groups must define a complete AWS identity boundary and a positive role-compatible capacity floor."
+      error_message = "worker_groups must define a complete logical role boundary and a positive role-compatible capacity floor."
     }
 
     precondition {
       condition = alltrue([
-        for group in var.worker_groups :
-        group.account_id == data.aws_caller_identity.current.account_id &&
-        startswith(group.instance_profile_arn, "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:instance-profile/") &&
-        startswith(group.instance_role_arn, "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/")
+        for role_arn in var.image_cache_worker_role_arns :
+        startswith(role_arn, "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/")
       ])
-      error_message = "v0 worker_groups, instance profiles, and instance roles must belong to the Control AWS account."
+      error_message = "image_cache_worker_role_arns must identify roles in the Control AWS account."
     }
 
     precondition {
@@ -1030,19 +1025,6 @@ resource "aws_iam_role_policy" "control_task" {
       },
       ], [for statement in [
         {
-          Effect = "Allow"
-          Action = [
-            "ec2:DescribeInstances",
-            "autoscaling:DescribeAutoScalingInstances"
-          ]
-          Resource = "*"
-        },
-        {
-          Effect   = "Allow"
-          Action   = ["iam:GetInstanceProfile"]
-          Resource = [for group in var.worker_groups : group.instance_profile_arn]
-        },
-        {
           Sid    = "ProvisionExecutionImageCache"
           Effect = "Allow"
           Action = [
@@ -1161,7 +1143,7 @@ resource "aws_cloudwatch_metric_alarm" "fleet_run_identity_bootstrap" {
   } : {}
 
   alarm_name          = "${local.name}-${each.value.role}-identity-bootstrap"
-  alarm_description   = "A run worker attestation has not produced a certified runtime identity within the readiness window. This alarm never writes desired capacity."
+  alarm_description   = "A run worker has not produced a ready certified runtime identity within the readiness window. This alarm never writes desired capacity."
   namespace           = var.fleet_metrics_namespace
   metric_name         = "BootstrapPending"
   dimensions          = { WorkerGroupID = each.key, Role = each.value.role }
@@ -1531,6 +1513,15 @@ resource "aws_secretsmanager_secret" "smtp_password" {
 
 resource "aws_secretsmanager_secret" "checkpoint_encryption_key" {
   name                    = "${local.name}/worker/checkpoint-encryption-key"
+  kms_key_id              = aws_kms_key.helmr.arn
+  recovery_window_in_days = var.secret_recovery_window_in_days
+  tags                    = var.tags
+}
+
+resource "aws_secretsmanager_secret" "worker_enrollment" {
+  for_each = local.worker_groups_by_id
+
+  name                    = "${local.name}/worker-enrollment/${substr(sha256(each.key), 0, 16)}"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags

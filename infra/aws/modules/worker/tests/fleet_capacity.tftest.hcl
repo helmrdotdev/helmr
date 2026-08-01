@@ -56,6 +56,7 @@ variables {
   max_size                          = 1
   secret_arns = {
     checkpoint_encryption_key = "arn:aws:secretsmanager:us-east-1:111122223333:secret:checkpoint"
+    worker_enrollment         = "arn:aws:secretsmanager:us-east-1:111122223333:secret:worker-enrollment"
   }
 }
 
@@ -73,6 +74,55 @@ run "controller_owns_protected_capacity" {
 
   assert {
     condition = (
+      aws_autoscaling_group.worker.instance_refresh[0].strategy == "Rolling" &&
+      aws_autoscaling_group.worker.instance_refresh[0].preferences[0].min_healthy_percentage == 100 &&
+      aws_autoscaling_group.worker.instance_refresh[0].preferences[0].max_healthy_percentage == 100 &&
+      aws_autoscaling_group.worker.instance_refresh[0].preferences[0].scale_in_protected_instances == "Refresh" &&
+      aws_autoscaling_group.worker.instance_refresh[0].preferences[0].standby_instances == "Terminate" &&
+      aws_autoscaling_group.worker.instance_refresh[0].preferences[0].skip_matching
+    )
+    error_message = "launch-template changes must launch before termination and refresh protected and standby workers"
+  }
+
+  assert {
+    condition = (
+      toset(aws_autoscaling_group.worker.vpc_zone_identifier) == toset(var.subnet_ids) &&
+      aws_autoscaling_group.worker.launch_template[0].id == aws_launch_template.worker.id &&
+      aws_autoscaling_group.worker.launch_template[0].version == tostring(aws_launch_template.worker.latest_version)
+    )
+    error_message = "the worker ASG must use only the supplied Execution subnets and exact launch template version"
+  }
+
+  assert {
+    condition = (
+      toset(aws_launch_template.worker.vpc_security_group_ids) == toset([aws_security_group.worker.id]) &&
+      aws_launch_template.worker.iam_instance_profile[0].name == aws_iam_instance_profile.worker.name &&
+      aws_launch_template.worker.image_id == var.ami_id
+    )
+    error_message = "the launch template must pin the Execution security group, instance profile, and AMI"
+  }
+
+  assert {
+    condition = (
+      aws_launch_template.worker.metadata_options[0].http_endpoint == "enabled" &&
+      aws_launch_template.worker.metadata_options[0].http_tokens == "required" &&
+      aws_launch_template.worker.metadata_options[0].http_put_response_hop_limit == 1
+    )
+    error_message = "worker metadata must require IMDSv2 with a one-hop response limit"
+  }
+
+  assert {
+    condition = (
+      length(aws_security_group.worker.ingress) == 0 &&
+      aws_vpc_security_group_egress_rule.worker.security_group_id == aws_security_group.worker.id &&
+      aws_vpc_security_group_egress_rule.worker.cidr_ipv4 == "0.0.0.0/0" &&
+      aws_vpc_security_group_egress_rule.worker.ip_protocol == "-1"
+    )
+    error_message = "the worker security group must have no ingress and only explicit public-capable egress"
+  }
+
+  assert {
+    condition = (
       strcontains(base64decode(aws_launch_template.worker.user_data), "ExecStart=helmr-worker") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS=[\"10.0.0.0/8\",\"169.254.0.0/16\"]") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_NETWORK_LINK_POOL=169.254.64.0/18") &&
@@ -80,6 +130,23 @@ run "controller_owns_protected_capacity" {
       strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_NETWORK_TRANSLATION_POOL=100.96.0.0/16")
     )
     error_message = "worker user data must receive the complete generic routed-network configuration"
+  }
+
+  assert {
+    condition = (
+      strcontains(base64decode(aws_launch_template.worker.user_data), var.secret_arns.worker_enrollment) &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_ENROLLMENT_SECRET_FILE=%s") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "/run/helmr/worker-enrollment-secret") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "helmr-worker-enrollment-secret.service") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "Wants=helmr-worker-enrollment-secret.service") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "After=helmr-worker-enrollment-secret.service") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "Restart=on-failure") &&
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "Requires=helmr-worker-enrollment-secret.service") &&
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_ENROLLMENT_SECRET=%s") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_RESOURCE_ID=%s") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "meta-data/instance-id")
+    )
+    error_message = "worker bootstrap must refresh the volatile group secret without making an existing credential depend on the secret store, and report only an opaque host locator"
   }
 
   assert {

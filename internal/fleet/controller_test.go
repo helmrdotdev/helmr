@@ -292,7 +292,7 @@ func TestMetricsProjectDemandCapsSupplyAndDrainAge(t *testing.T) {
 	policy.MaxScaleOutPerCycle = 1
 	planner := mustPlanner(t, policy)
 	source := &fakeSource{snapshot: GroupSnapshot{
-		Inputs: Inputs{UncertifiedRunLaunchAttestations: 2, Demand: Demand{Queued: []WorkloadBucket{
+		Inputs: Inputs{Demand: Demand{Queued: []WorkloadBucket{
 			workload(Capacity{MilliCPU: 2_000, MemoryBytes: 4_000, GuestEphemeralDiskBytes: 10_000, VMSlots: 2, BuildExecutors: 1}, 3),
 		}}},
 	}}
@@ -308,7 +308,7 @@ func TestMetricsProjectDemandCapsSupplyAndDrainAge(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := metrics.values[0]
-	if got.UncappedRequired != 3 || got.UnmetDeficit != 3 || got.CapReason != CapMaximum || got.Desired != 1 || got.Supply != 0 || got.Pending != 0 || got.Billable != 0 || got.UncertifiedRunLaunchAttestations != 2 || !got.BootstrapPending || got.Action != ActionLaunch || got.DrainAge != 0 || got.DrainTimedOut || got.Outcome != OutcomePlanned {
+	if got.UncappedRequired != 3 || got.UnmetDeficit != 3 || got.CapReason != CapMaximum || got.Desired != 1 || got.Supply != 0 || got.Pending != 0 || got.Billable != 0 || got.Action != ActionLaunch || got.DrainAge != 0 || got.DrainTimedOut || got.Outcome != OutcomePlanned {
 		t.Fatalf("metric projection = %#v", got)
 	}
 }

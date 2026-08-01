@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"strings"
@@ -30,21 +29,6 @@ const defaultWorkerTokenTTL = 15 * time.Minute
 
 const workerEnrollmentNonceTTL = 2 * time.Minute
 
-type VerifiedWorkerEnrollment struct {
-	WorkerGroupID               string
-	ResourceID                  string
-	AllowsRun                   bool
-	AllowsBuild                 bool
-	ProtocolVersion             string
-	EnrollmentPolicyFingerprint string
-	AttestationFingerprint      string
-}
-
-type WorkerEnrollmentVerifier interface {
-	ParseWorkerEnrollment(json.RawMessage) (api.WorkerEnrollmentIntent, error)
-	VerifyWorkerEnrollment(context.Context, json.RawMessage) (VerifiedWorkerEnrollment, error)
-}
-
 func (s *Server) workerEnrollmentChallenge(w http.ResponseWriter, r *http.Request) {
 	if !s.workerEnrollmentGuard.allowChallenge(workerEnrollmentSource(r), time.Now()) {
 		w.Header().Set("Retry-After", "60")
@@ -60,6 +44,10 @@ func (s *Server) workerEnrollmentChallenge(w http.ResponseWriter, r *http.Reques
 	request.WorkerGroupID = strings.TrimSpace(request.WorkerGroupID)
 	if request.WorkerGroupID == "" {
 		writeError(w, badRequest(errors.New("worker_group_id is required")))
+		return
+	}
+	if !s.workerEnrollment.HasGroup(request.WorkerGroupID) {
+		writeError(w, notFound(errors.New("worker group not found")))
 		return
 	}
 	rawNonce := make([]byte, 32)
@@ -104,19 +92,11 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-	rawRequest, err := io.ReadAll(r.Body)
-	if err != nil {
+	var request api.WorkerEnrollmentRequest
+	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker enrollment JSON: %w", err)))
 		return
 	}
-	request, err := s.workerEnrollment.ParseWorkerEnrollment(rawRequest)
-	if err != nil {
-		writeError(w, badRequest(errors.New("invalid worker enrollment JSON")))
-		return
-	}
-	request.WorkerGroupID = strings.TrimSpace(request.WorkerGroupID)
-	request.Nonce = strings.TrimSpace(request.Nonce)
-	request.ProtocolVersion = strings.TrimSpace(request.ProtocolVersion)
 	if request.WorkerGroupID == "" || request.ProtocolVersion != auth.WorkerProtocolVersion || (!request.SupportsRun && !request.SupportsBuild) {
 		writeError(w, badRequest(errors.New("worker_group_id, protocol_version, and at least one supported role are required")))
 		return
@@ -145,14 +125,9 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.workerEnrollmentGuard.endVerification()
-	verified, err := s.workerEnrollment.VerifyWorkerEnrollment(r.Context(), rawRequest)
-	if err != nil {
+	if err := s.workerEnrollment.Verify(request); err != nil {
 		s.log.Warn("worker enrollment evidence rejected", "worker_group_id", request.WorkerGroupID)
 		writeError(w, unauthorized(errors.New("worker enrollment evidence is invalid")))
-		return
-	}
-	if verified.WorkerGroupID != request.WorkerGroupID || strings.TrimSpace(verified.ResourceID) == "" || strings.TrimSpace(verified.EnrollmentPolicyFingerprint) == "" || strings.TrimSpace(verified.AttestationFingerprint) == "" || (!verified.AllowsRun && !verified.AllowsBuild) || verified.ProtocolVersion != auth.WorkerProtocolVersion || (request.SupportsRun && !verified.AllowsRun) || (request.SupportsBuild && !verified.AllowsBuild) {
-		writeError(w, unauthorized(errors.New("worker enrollment identity is invalid")))
 		return
 	}
 	generated, err := auth.GenerateWorkerInstanceSecret(s.authKeys.WorkerInstance)
@@ -162,26 +137,24 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 	workerInstanceID := uuid.Must(uuid.NewV7())
 	credential, err := s.db.EnrollWorkerInstance(r.Context(), db.EnrollWorkerInstanceParams{
-		NonceHash:                   nonceHash,
-		WorkerGroupID:               verified.WorkerGroupID,
-		AllowsRun:                   request.SupportsRun,
-		AllowsBuild:                 request.SupportsBuild,
-		ProtocolVersion:             verified.ProtocolVersion,
-		EnrollmentPolicyFingerprint: verified.EnrollmentPolicyFingerprint,
-		WorkerInstanceID:            pgvalue.UUID(workerInstanceID),
-		CurrentServiceID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		ResourceID:                  verified.ResourceID,
-		CredentialID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		KeyPrefix:                   generated.KeyPrefix,
-		SecretHash:                  generated.TokenHash,
-		AttestationFingerprint:      verified.AttestationFingerprint,
+		NonceHash:        nonceHash,
+		WorkerGroupID:    request.WorkerGroupID,
+		AllowsRun:        request.SupportsRun,
+		AllowsBuild:      request.SupportsBuild,
+		ProtocolVersion:  request.ProtocolVersion,
+		WorkerInstanceID: pgvalue.UUID(workerInstanceID),
+		CurrentServiceID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ResourceID:       request.ResourceID,
+		CredentialID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		KeyPrefix:        generated.KeyPrefix,
+		SecretHash:       generated.TokenHash,
 	})
 	if isNoRows(err) {
 		writeError(w, unauthorized(errors.New("worker enrollment challenge is invalid or expired")))
 		return
 	}
 	if err != nil {
-		s.log.Error("worker enrollment failed", "worker_group_id", verified.WorkerGroupID, "resource_id", verified.ResourceID, "error", err)
+		s.log.Error("worker enrollment failed", "worker_group_id", request.WorkerGroupID, "resource_id", request.ResourceID, "error", err)
 		writeError(w, errors.New("enroll worker"))
 		return
 	}
