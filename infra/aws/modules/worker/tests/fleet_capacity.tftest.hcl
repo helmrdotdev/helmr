@@ -225,7 +225,13 @@ run "controller_owns_protected_capacity" {
   }
 
   assert {
-    condition     = strcontains(base64decode(aws_launch_template.worker.user_data), "launch_timeout='321'") && strcontains(base64decode(aws_launch_template.worker.user_data), "drain-complete") && strcontains(base64decode(aws_launch_template.worker.user_data), "ABANDON")
+    condition = (
+      strcontains(base64decode(aws_launch_template.worker.user_data), "launch_timeout='321'") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "systemctl is-active --quiet 'helmr-worker' || return 1") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "\"$worker_binary\" status >/dev/null || return 1") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "drain-complete") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "ABANDON")
+    )
     error_message = "worker lifecycle handling must bound launch readiness and bypass repeated drain after durable local completion"
   }
 }

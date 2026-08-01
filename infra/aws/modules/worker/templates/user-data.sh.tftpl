@@ -267,9 +267,9 @@ complete_launch() {
   if [ -z "$launch_hook" ]; then
     return 0
   fi
-  systemctl is-active --quiet '${worker_service_name}'
+  systemctl is-active --quiet '${worker_service_name}' || return 1
   load_worker_env
-  "$worker_binary" status >/dev/null
+  "$worker_binary" status >/dev/null || return 1
   complete_lifecycle_action "$launch_hook" CONTINUE
 }
 
