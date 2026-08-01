@@ -289,6 +289,10 @@ run "build_worker_installs_exact_policy_before_service" {
     condition = (
       strcontains(base64decode(aws_launch_template.worker.user_data), "build-cache.ext4") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "build-scratch.ext4") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "cache_headroom_bytes=$((512 * 1048576 + cache_usable_bytes / 100))") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "scratch_headroom_bytes=$((512 * 1048576 + scratch_usable_bytes / 100))") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "cache_raw_bytes=$((cache_usable_bytes + cache_headroom_bytes))") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "scratch_raw_bytes=$((scratch_usable_bytes + scratch_headroom_bytes))") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "mkfs.ext4 -F -q -m 0") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "[ \"$allocated_bytes\" -ge \"$raw_bytes\" ]") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "did not preserve its fixed reserve after build filesystem allocation") &&

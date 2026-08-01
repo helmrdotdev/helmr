@@ -81,9 +81,10 @@ cache_backing="$storage_dir/build-cache.ext4"
 scratch_backing="$storage_dir/build-scratch.ext4"
 cache_usable_bytes=$((${build_cache_mib} * 1048576))
 scratch_usable_bytes=$((${build_scratch_mib} * 1048576))
-filesystem_headroom_bytes=$((256 * 1048576))
-cache_raw_bytes=$((cache_usable_bytes + filesystem_headroom_bytes))
-scratch_raw_bytes=$((scratch_usable_bytes + filesystem_headroom_bytes))
+cache_headroom_bytes=$((512 * 1048576 + cache_usable_bytes / 100))
+scratch_headroom_bytes=$((512 * 1048576 + scratch_usable_bytes / 100))
+cache_raw_bytes=$((cache_usable_bytes + cache_headroom_bytes))
+scratch_raw_bytes=$((scratch_usable_bytes + scratch_headroom_bytes))
 fixed_reserve_bytes=$((${worker_disk_reserve_mib} * 1048576))
 required_free_bytes=$fixed_reserve_bytes
 
