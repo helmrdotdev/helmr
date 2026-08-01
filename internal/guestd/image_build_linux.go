@@ -95,9 +95,6 @@ func handleImageBuild(
 	if body.N != 0 {
 		return errors.New("image-build request contains trailing framed bytes")
 	}
-	if err := requireBuildRequestEOF(conn); err != nil {
-		return err
-	}
 
 	daemon, closeDaemon, err := openImageBuildKit(ctx, root)
 	if err != nil {

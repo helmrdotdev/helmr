@@ -951,75 +951,7 @@ func TestConnectGuestPortReturnsMachineExitWithoutHealthTimeout(t *testing.T) {
 	}
 }
 
-func TestConnectGuestPortPreservesWriteHalfClose(t *testing.T) {
-	previousDial := dialVsock
-	defer func() { dialVsock = previousDial }()
-
-	socketPath := filepath.Join(t.TempDir(), "stream.sock")
-	address := &net.UnixAddr{Name: socketPath, Net: "unix"}
-	listener, err := net.ListenUnix("unix", address)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-
-	accepted := make(chan *net.UnixConn, 1)
-	acceptErr := make(chan error, 1)
-	go func() {
-		conn, err := listener.AcceptUnix()
-		if err != nil {
-			acceptErr <- err
-			return
-		}
-		accepted <- conn
-	}()
-	dialVsock = func(context.Context, string, uint32, ...vsock.DialOption) (net.Conn, error) {
-		return net.DialUnix("unix", nil, address)
-	}
-
-	connector := &Connector{cfg: (Config{HealthTimeout: time.Second}).WithDefaults()}
-	stream, err := connector.connectGuestPort(context.Background(), socketPath, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer stream.Close()
-
-	var peer *net.UnixConn
-	select {
-	case peer = <-accepted:
-	case err := <-acceptErr:
-		t.Fatal(err)
-	case <-time.After(time.Second):
-		t.Fatal("timed out accepting guest stream")
-	}
-	defer peer.Close()
-
-	if _, err := io.WriteString(stream, "request"); err != nil {
-		t.Fatal(err)
-	}
-	if err := stream.CloseWrite(); err != nil {
-		t.Fatal(err)
-	}
-	request, err := io.ReadAll(peer)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(request) != "request" {
-		t.Fatalf("request = %q, want request", request)
-	}
-	if _, err := io.WriteString(peer, "response"); err != nil {
-		t.Fatal(err)
-	}
-	response := make([]byte, len("response"))
-	if _, err := io.ReadFull(stream, response); err != nil {
-		t.Fatal(err)
-	}
-	if string(response) != "response" {
-		t.Fatalf("response = %q, want response", response)
-	}
-}
-
-func TestConnectGuestPortRejectsStreamWithoutWriteHalfClose(t *testing.T) {
+func TestConnectGuestPortUsesFullDuplexStream(t *testing.T) {
 	previousDial := dialVsock
 	defer func() { dialVsock = previousDial }()
 
@@ -1030,9 +962,38 @@ func TestConnectGuestPortRejectsStreamWithoutWriteHalfClose(t *testing.T) {
 	}
 
 	connector := &Connector{cfg: (Config{HealthTimeout: time.Second}).WithDefaults()}
-	_, err := connector.connectGuestPort(context.Background(), "vsock.sock", nil)
-	if err == nil || !strings.Contains(err.Error(), "does not support write half-close") {
-		t.Fatalf("connectGuestPort error = %v, want missing half-close error", err)
+	stream, err := connector.connectGuestPort(context.Background(), "vsock.sock", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	errChannel := make(chan error, 1)
+	go func() {
+		request := make([]byte, len("request"))
+		if _, err := io.ReadFull(server, request); err != nil {
+			errChannel <- err
+			return
+		}
+		if string(request) != "request" {
+			errChannel <- fmt.Errorf("request = %q, want request", request)
+			return
+		}
+		_, err := io.WriteString(server, "response")
+		errChannel <- err
+	}()
+	if _, err := io.WriteString(stream, "request"); err != nil {
+		t.Fatal(err)
+	}
+	response := make([]byte, len("response"))
+	if _, err := io.ReadFull(stream, response); err != nil {
+		t.Fatal(err)
+	}
+	if string(response) != "response" {
+		t.Fatalf("response = %q, want response", response)
+	}
+	if err := <-errChannel; err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -1113,7 +1074,7 @@ func TestPreparedGuestSeparatesHealthFromGuestPort(t *testing.T) {
 			<-time.After(10 * time.Millisecond)
 			_ = server.Close()
 		}()
-		return halfCloseTestConn{Conn: client}, nil
+		return client, nil
 	}
 
 	connector := &Connector{cfg: (Config{HealthTimeout: time.Second}).WithDefaults()}
@@ -2047,17 +2008,5 @@ func (readWriteNopCloser) Write(p []byte) (int, error) {
 }
 
 func (readWriteNopCloser) Close() error {
-	return nil
-}
-
-func (readWriteNopCloser) CloseWrite() error {
-	return nil
-}
-
-type halfCloseTestConn struct {
-	net.Conn
-}
-
-func (halfCloseTestConn) CloseWrite() error {
 	return nil
 }

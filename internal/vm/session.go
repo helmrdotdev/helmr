@@ -32,7 +32,6 @@ type Cleaner interface {
 
 type Stream interface {
 	io.ReadWriteCloser
-	CloseWrite() error
 }
 
 type Session interface {

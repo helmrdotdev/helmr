@@ -142,9 +142,6 @@ func (guest BuildGuest) Execute(
 	if err != nil || written != request.SourceSizeBytes {
 		return nil, vm.NewGuestError(fmt.Errorf("write submitted source: %w", err))
 	}
-	if err := stream.CloseWrite(); err != nil {
-		return nil, vm.NewGuestError(fmt.Errorf("half-close build request: %w", err))
-	}
 	resultRaw, err := frameio.ReadMessageFrameBounded(
 		stream,
 		maxBuildGuestResultBytes,

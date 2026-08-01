@@ -40,10 +40,6 @@ type testStream struct {
 	io.ReadWriteCloser
 }
 
-func (s testStream) CloseWrite() error {
-	return nil
-}
-
 func testVMStream(stream io.ReadWriteCloser) vm.Stream {
 	if stream == nil {
 		return nil

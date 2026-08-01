@@ -76,12 +76,8 @@ func TestBuildGuestUsesOneNetworkedVM(t *testing.T) {
 		) {
 		t.Fatalf("build failure logs = %+v", failure.Logs)
 	}
-	if connector.statusCount != 1 || connector.closeWriteCount != 1 {
-		t.Fatalf(
-			"network status count = %d, close-write count = %d",
-			connector.statusCount,
-			connector.closeWriteCount,
-		)
+	if connector.statusCount != 1 {
+		t.Fatalf("network status count = %d", connector.statusCount)
 	}
 	vmRequest := connector.request
 	if vmRequest.Resources != compute.BuildGuestResources() ||
@@ -266,7 +262,6 @@ type buildGuestTestConnector struct {
 	network                vm.BuildNetworkStatus
 	statusErr              error
 	statusCount            int
-	closeWriteCount        int
 	eofRead                bool
 	requireEOFBeforeStatus bool
 }
@@ -310,11 +305,6 @@ func (session *buildGuestTestProtocolSession) Stream() vm.Stream {
 	return buildGuestTestStream{
 		Conn:      session.host,
 		connector: session.connector,
-		closeWrite: func() {
-			session.connector.mu.Lock()
-			defer session.connector.mu.Unlock()
-			session.connector.closeWriteCount++
-		},
 	}
 }
 
@@ -351,13 +341,7 @@ func (session *buildGuestTestProtocolSession) BuildNetworkStatus(
 
 type buildGuestTestStream struct {
 	net.Conn
-	closeWrite func()
-	connector  *buildGuestTestConnector
-}
-
-func (stream buildGuestTestStream) CloseWrite() error {
-	stream.closeWrite()
-	return nil
+	connector *buildGuestTestConnector
 }
 
 func (stream buildGuestTestStream) Read(buffer []byte) (int, error) {

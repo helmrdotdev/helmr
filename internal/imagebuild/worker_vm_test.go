@@ -658,21 +658,24 @@ func (session *workerTestSession) BuildNetworkStatus(context.Context) (vm.BuildN
 }
 
 type workerTestStream struct {
-	request  bytes.Buffer
-	response *bytes.Reader
-	inspect  func([]byte)
-	closed   bool
+	request   bytes.Buffer
+	response  *bytes.Reader
+	inspect   func([]byte)
+	inspected bool
+	closed    bool
 }
 
-func (stream *workerTestStream) Read(body []byte) (int, error)  { return stream.response.Read(body) }
+func (stream *workerTestStream) Read(body []byte) (int, error) {
+	if !stream.inspected {
+		stream.inspected = true
+		if stream.inspect != nil {
+			stream.inspect(stream.request.Bytes())
+		}
+	}
+	return stream.response.Read(body)
+}
 func (stream *workerTestStream) Write(body []byte) (int, error) { return stream.request.Write(body) }
 func (stream *workerTestStream) Close() error                   { stream.closed = true; return nil }
-func (stream *workerTestStream) CloseWrite() error {
-	if stream.inspect != nil {
-		stream.inspect(stream.request.Bytes())
-	}
-	return nil
-}
 
 func validWorkerBuildRequest(t *testing.T, plan Build, source SourceArchive) WorkerBuildRequest {
 	t.Helper()

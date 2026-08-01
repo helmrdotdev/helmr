@@ -117,9 +117,6 @@ func handleBuild(
 	if body.N != 0 {
 		return errors.New("submitted source stream is truncated")
 	}
-	if err := requireBuildRequestEOF(conn); err != nil {
-		return err
-	}
 	actualSourceDigest := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
 	if actualSourceDigest != request.SourceDigest {
 		return errors.New("submitted source stream digest does not match request")
@@ -823,13 +820,4 @@ func writeBuildFailure(
 		return err
 	}
 	return frameio.WriteMessageFrame(conn, raw)
-}
-
-func requireBuildRequestEOF(reader io.Reader) error {
-	var trailing [1]byte
-	count, err := reader.Read(trailing[:])
-	if count != 0 || !errors.Is(err, io.EOF) {
-		return errors.New("build request contains trailing data")
-	}
-	return nil
 }

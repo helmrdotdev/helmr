@@ -1396,12 +1396,7 @@ func (c *Connector) connectGuestPortAt(ctx context.Context, vsockPath string, po
 		}
 		conn, err := dialVsock(connectCtx, vsockPath, port)
 		if err == nil {
-			stream, ok := conn.(vm.Stream)
-			if !ok {
-				_ = conn.Close()
-				return nil, errors.New("guest stream does not support write half-close")
-			}
-			return stream, nil
+			return conn, nil
 		}
 		lastErr = err
 		if connectCtx.Err() != nil {

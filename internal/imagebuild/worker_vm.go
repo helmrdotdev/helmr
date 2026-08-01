@@ -424,9 +424,6 @@ func (engine VMEngine) BuildWorkspaceImage(
 	}
 	clear(envelopeRaw)
 	clearCredentialValues(credentials)
-	if err := stream.CloseWrite(); err != nil {
-		return nil, vm.NewGuestError(fmt.Errorf("half-close image-build request: %w", err))
-	}
 
 	resultRaw, err := frameio.ReadMessageFrameBounded(stream, RequestDocumentMaxBytes)
 	if err != nil {
