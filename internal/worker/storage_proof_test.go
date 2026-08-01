@@ -69,8 +69,8 @@ func validStorageFixture() (BuildStorageConfig, *fakeStorageProbe) {
 			"/sys/dev/block/8:2/loop/backing_file": fs.ErrNotExist,
 		},
 		filesystems: map[string]storageFS{
-			"/cache":   {Blocks: 16 << 20, Free: 10 << 20, Available: 10 << 20, BlockSize: 4096},
-			"/scratch": {Blocks: 10 << 20, Free: 9 << 20, Available: 9 << 20, BlockSize: 4096},
+			"/cache":   {Blocks: 16 << 20, Available: 10 << 20, BlockSize: 4096},
+			"/scratch": {Blocks: 10 << 20, Available: 9 << 20, BlockSize: 4096},
 		},
 	}
 	return config, probe
@@ -106,7 +106,7 @@ func TestProveBuildStorageDoesNotInspectCallerOwnedCacheDirectories(t *testing.T
 func TestProveBuildStorageAllowsOccupiedPersistentCache(t *testing.T) {
 	config, probe := validStorageFixture()
 	probe.filesystems["/cache"] = storageFS{
-		Blocks: 16 << 20, Free: 1, Available: 1, BlockSize: 4096,
+		Blocks: 16 << 20, Available: 1, BlockSize: 4096,
 	}
 	if _, err := proveBuildStorage(config, probe); err != nil {
 		t.Fatal(err)
@@ -254,7 +254,7 @@ func TestProveBuildStorageRejectsInvalidBoundary(t *testing.T) {
 		{
 			name: "insufficient cache",
 			change: func(_ *BuildStorageConfig, probe *fakeStorageProbe) {
-				probe.filesystems["/cache"] = storageFS{Blocks: 1, Free: 1, Available: 1, BlockSize: 4096}
+				probe.filesystems["/cache"] = storageFS{Blocks: 1, Available: 1, BlockSize: 4096}
 			},
 			want: "bytes of usable capacity; need",
 		},
@@ -262,19 +262,10 @@ func TestProveBuildStorageRejectsInvalidBoundary(t *testing.T) {
 			name: "insufficient available scratch",
 			change: func(_ *BuildStorageConfig, probe *fakeStorageProbe) {
 				probe.filesystems["/scratch"] = storageFS{
-					Blocks: 10 << 20, Free: 1, Available: 1, BlockSize: 4096,
+					Blocks: 10 << 20, Available: 1, BlockSize: 4096,
 				}
 			},
 			want: "available bytes; need",
-		},
-		{
-			name: "reserved filesystem blocks",
-			change: func(_ *BuildStorageConfig, probe *fakeStorageProbe) {
-				probe.filesystems["/cache"] = storageFS{
-					Blocks: 16 << 20, Free: 10 << 20, Available: 9 << 20, BlockSize: 4096,
-				}
-			},
-			want: "reserves filesystem blocks",
 		},
 		{
 			name: "source symlink",
@@ -303,7 +294,7 @@ func TestProveBuildStorageValidatesLoopBackingAllocation(t *testing.T) {
 	probe.files["/cache"] = storageFile{Kind: storageFileDirectory, Device: cacheDevice}
 	probe.files["/dev/loop1"] = storageFile{Kind: storageFileBlock, RDev: cacheDevice}
 	probe.files["/var/lib/helmr/storage/build-cache.ext4"] = storageFile{
-		Kind: storageFileRegular, Size: 8192, Blocks: 16,
+		Kind: storageFileRegular, Size: 8192, Blocks: 17,
 	}
 	probe.fileData["/proc/self/mountinfo"] = []byte(strings.Join([]string{
 		"31 1 7:1 / /cache rw - ext4 /dev/loop1 rw,nodiscard",
@@ -324,7 +315,7 @@ func TestProveBuildStorageValidatesLoopBackingAllocation(t *testing.T) {
 		Kind: storageFileRegular, Size: 8192, Blocks: 1,
 	}
 	_, err = proveBuildStorage(config, probe)
-	if err == nil || !strings.Contains(err.Error(), "allocation does not equal its size") {
+	if err == nil || !strings.Contains(err.Error(), "allocation is smaller than its size") {
 		t.Fatalf("got %v, want backing allocation error", err)
 	}
 }

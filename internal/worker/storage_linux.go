@@ -36,7 +36,6 @@ func (systemStorageProbe) StatFS(path string) (storageFS, error) {
 	}
 	return storageFS{
 		Blocks:    stat.Blocks,
-		Free:      stat.Bfree,
 		Available: stat.Bavail,
 		BlockSize: blockSize,
 	}, nil

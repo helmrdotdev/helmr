@@ -30,7 +30,6 @@ type storageFile struct {
 
 type storageFS struct {
 	Blocks    uint64
-	Free      uint64
 	Available uint64
 	BlockSize uint64
 }
@@ -352,9 +351,6 @@ func proveStorageMount(root string, required uint64, requiredAvailable uint64, m
 	if err != nil {
 		return BuildStorageMount{}, "", fmt.Errorf("statfs mount root: %w", err)
 	}
-	if statfs.Free != statfs.Available {
-		return BuildStorageMount{}, "", fmt.Errorf("%q reserves filesystem blocks", root)
-	}
 	high, capacity := bits.Mul64(statfs.Blocks, statfs.BlockSize)
 	if high != 0 {
 		return BuildStorageMount{}, "", fmt.Errorf("%q capacity overflows uint64", root)
@@ -433,8 +429,8 @@ func proveMountSource(mount storageMountInfo, probe storageProbe) (string, error
 		return "", fmt.Errorf("backing file %q is not a non-empty regular file", backing)
 	}
 	allocatedHigh, allocated := bits.Mul64(uint64(stat.Blocks), 512)
-	if allocatedHigh != 0 || allocated != uint64(stat.Size) {
-		return "", fmt.Errorf("backing file %q allocation does not equal its size", backing)
+	if allocatedHigh != 0 || allocated < uint64(stat.Size) {
+		return "", fmt.Errorf("backing file %q allocation is smaller than its size", backing)
 	}
 	return backing, nil
 }
