@@ -265,11 +265,9 @@ func TestEnrollmentRoleMustBeAllowedByLogicalWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
-	groupID := "run-only-" + uuid.NewString()
-	reconcileTestWorkerGroup(t, ctx, q, groupID, true, false)
-	nonce := createTestEnrollmentNonce(t, ctx, q, groupID)
+	reconcileTestWorkerGroup(t, ctx, q, dbtest.DefaultWorkerGroupID, true, false)
+	nonce := createTestEnrollmentNonce(t, ctx, q, dbtest.DefaultWorkerGroupID)
 	params := enrollmentParams(nonce, uuid.Must(uuid.NewV7()), "operator-host-2", false, true, []byte("build-secret"))
-	params.WorkerGroupID = groupID
 	if _, err := q.EnrollWorkerInstance(ctx, params); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("disallowed build role error = %v, want pgx.ErrNoRows", err)
 	}

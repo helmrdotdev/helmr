@@ -18,13 +18,13 @@ import (
 func TestWorkerGroupObservationTTLIsPositiveClaimAuthority(t *testing.T) {
 	ctx := context.Background()
 	q := db.New(newPostgresDB(t, ctx))
-	groupID := "ttl-" + shortUUID(uuid.Must(uuid.NewV7()))
+	groupID := dbtest.DefaultWorkerGroupID
 	params := db.ReconcileWorkerGroupParams{
 		ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
 		ObservationTtlSeconds: 120,
-		AllowsBuild:           true, ProtocolVersion: auth.WorkerProtocolVersion,
+		AllowsRun:             true, AllowsBuild: true, ProtocolVersion: auth.WorkerProtocolVersion,
 		RequiredCpuMillis: 1, RequiredMemoryBytes: 1,
-		RequiredGuestEphemeralDiskBytes: 1, RequiredBuildExecutors: 1,
+		RequiredGuestEphemeralDiskBytes: 1, RequiredVmSlots: 1, RequiredBuildExecutors: 1,
 	}
 	first, err := q.ReconcileWorkerGroup(ctx, params)
 	if err != nil {
@@ -55,13 +55,13 @@ func TestWorkerGroupReconcileDoesNotReactivateDrainingGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
-	groupID := "drift-" + shortUUID(uuid.Must(uuid.NewV7()))
+	groupID := dbtest.DefaultWorkerGroupID
 	params := db.ReconcileWorkerGroupParams{
 		ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
 		ObservationTtlSeconds: 120,
-		AllowsBuild:           true, ProtocolVersion: auth.WorkerProtocolVersion,
+		AllowsRun:             true, AllowsBuild: true, ProtocolVersion: auth.WorkerProtocolVersion,
 		RequiredCpuMillis: 1, RequiredMemoryBytes: 1,
-		RequiredGuestEphemeralDiskBytes: 1, RequiredBuildExecutors: 1,
+		RequiredGuestEphemeralDiskBytes: 1, RequiredVmSlots: 1, RequiredBuildExecutors: 1,
 	}
 	if _, err := q.ReconcileWorkerGroup(ctx, params); err != nil {
 		t.Fatal(err)
