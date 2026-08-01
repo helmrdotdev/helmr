@@ -84,7 +84,8 @@ scratch_usable_bytes=$((${build_scratch_mib} * 1048576))
 filesystem_headroom_bytes=$((256 * 1048576))
 cache_raw_bytes=$((cache_usable_bytes + filesystem_headroom_bytes))
 scratch_raw_bytes=$((scratch_usable_bytes + filesystem_headroom_bytes))
-required_free_bytes=$((${worker_disk_reserve_mib} * 1048576))
+fixed_reserve_bytes=$((${worker_disk_reserve_mib} * 1048576))
+required_free_bytes=$fixed_reserve_bytes
 
 for path in "$storage_dir" "$cache_mount" "$scratch_mount" "$cache_backing" "$scratch_backing"; do
   [ ! -L "$path" ] || {
@@ -128,9 +129,11 @@ prepare_backing() {
       -E nodiscard,lazy_itable_init=0,lazy_journal_init=0 "$path"
   fi
 
-  allocated_bytes=$(($(stat -c %b "$path") * 512))
-  [ "$allocated_bytes" -eq "$raw_bytes" ] || {
-    echo "$path allocation does not equal its configured raw size" >&2
+  allocated_blocks=$(stat -c %b "$path")
+  allocated_block_bytes=$(stat -c %B "$path")
+  allocated_bytes=$((allocated_blocks * allocated_block_bytes))
+  [ "$allocated_bytes" -ge "$raw_bytes" ] || {
+    echo "$path allocation is smaller than its configured raw size" >&2
     exit 1
   }
   [ "$(blkid -p -s TYPE -o value "$path")" = ext4 ] || {
@@ -141,6 +144,12 @@ prepare_backing() {
 
 prepare_backing "$cache_backing" "$cache_raw_bytes"
 prepare_backing "$scratch_backing" "$scratch_raw_bytes"
+
+parent_available_bytes="$(df -B1 --output=avail /var/lib/helmr | tail -n 1 | tr -d ' ')"
+[ "$parent_available_bytes" -ge "$fixed_reserve_bytes" ] || {
+  echo "the root data extent did not preserve its fixed reserve after build filesystem allocation" >&2
+  exit 1
+}
 
 cat >/etc/systemd/system/var-lib-helmr-cache.mount <<'EOF'
 [Unit]

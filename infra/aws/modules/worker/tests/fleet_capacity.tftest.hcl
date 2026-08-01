@@ -290,6 +290,8 @@ run "build_worker_installs_exact_policy_before_service" {
       strcontains(base64decode(aws_launch_template.worker.user_data), "build-cache.ext4") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "build-scratch.ext4") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "mkfs.ext4 -F -q -m 0") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "[ \"$allocated_bytes\" -ge \"$raw_bytes\" ]") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "did not preserve its fixed reserve after build filesystem allocation") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "Options=loop,nosuid,nodev,nodiscard") &&
       !strcontains(base64decode(aws_launch_template.worker.user_data), "helmr-buildkit") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_WORK_DIR=/var/lib/helmr/scratch/worker") &&
