@@ -103,6 +103,16 @@ output "migration_task_definition_arn" {
   value       = module.control.migration_task_definition_arn
 }
 
+output "capacity_task_definition_arn" {
+  description = "One-shot Managed Cloud capacity task definition ARN."
+  value       = module.capacity.task_definition_arn
+}
+
+output "capacity_schedule_arn" {
+  description = "Managed Cloud capacity reconciliation schedule ARN."
+  value       = module.capacity.schedule_arn
+}
+
 output "control_private_subnet_ids" {
   description = "Control VPC private subnet IDs for ECS run-task network configuration."
   value       = module.control_network.private_subnet_ids
@@ -153,6 +163,11 @@ output "worker_autoscaling_group_name" {
   value       = try(module.run_worker[0].autoscaling_group_name, null)
 }
 
+output "worker_group_id" {
+  description = "Logical run-worker group ID used by deployment capacity tooling."
+  value       = local.run_worker_group_id
+}
+
 output "worker_autoscaling_group_arn" {
   description = "Exact run-worker Auto Scaling group ARN."
   value       = try(module.run_worker[0].autoscaling_group_arn, null)
@@ -176,6 +191,11 @@ output "worker_iam_role_name" {
 output "build_worker_autoscaling_group_name" {
   description = "Build-worker Auto Scaling group name."
   value       = try(module.build_worker[0].autoscaling_group_name, null)
+}
+
+output "build_worker_group_id" {
+  description = "Logical build-worker group ID used by deployment capacity tooling."
+  value       = local.build_worker_group_id
 }
 
 output "build_worker_autoscaling_group_arn" {

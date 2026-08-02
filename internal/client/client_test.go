@@ -651,7 +651,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() || len(request.Inventory) != 0 {
 				t.Fatalf("worker drain completion = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerStatusResponse{WorkerInstanceID: "00000000-0000-0000-0000-000000000401", Status: api.WorkerStatusDisabled})
+			_ = json.NewEncoder(w).Encode(api.WorkerStatusResponse{WorkerInstanceID: "00000000-0000-0000-0000-000000000401", Status: api.WorkerStatusTerminationReady})
 		case "/api/worker/status":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
@@ -717,7 +717,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 		InventoryScope:    "worker_runtime_state_roots_v0",
 		ObservedAt:        time.Now().UTC(),
 		Inventory:         []string{},
-	}); err != nil || status.Status != api.WorkerStatusDisabled {
+	}); err != nil || status.Status != api.WorkerStatusTerminationReady {
 		t.Fatalf("complete worker drain status = %+v, err = %v", status, err)
 	}
 	if _, err := client.StartRun(context.Background(), claim); err != nil {
@@ -1000,7 +1000,7 @@ func TestCompleteWorkerDrainRetriesTheIdenticalProofAfterAmbiguousResponse(t *te
 				http.Error(w, "ambiguous upstream failure", http.StatusServiceUnavailable)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerStatusResponse{Status: api.WorkerStatusDisabled})
+			_ = json.NewEncoder(w).Encode(api.WorkerStatusResponse{Status: api.WorkerStatusTerminationReady})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -1015,8 +1015,44 @@ func TestCompleteWorkerDrainRetriesTheIdenticalProofAfterAmbiguousResponse(t *te
 		ObservedAt: time.Now().UTC(), Inventory: []string{},
 	}
 	status, err := client.CompleteWorkerDrain(context.Background(), request)
-	if err != nil || status.Status != api.WorkerStatusDisabled {
+	if err != nil || status.Status != api.WorkerStatusTerminationReady {
 		t.Fatalf("status = %+v, err = %v", status, err)
+	}
+	if attempts != 2 || len(bodies) != 2 || !bytes.Equal(bodies[0], bodies[1]) {
+		t.Fatalf("attempts = %d, request bodies differ: %q != %q", attempts, bodies[0], bodies[1])
+	}
+}
+
+func TestFenceWorkerRetriesTheIdenticalRequestAfterAmbiguousResponse(t *testing.T) {
+	attempts := 0
+	var bodies [][]byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/worker/auth/token":
+			_ = json.NewEncoder(w).Encode(api.WorkerTokenResponse{Token: "worker-token", ExpiresInSeconds: 3600})
+		case "/api/worker/fence":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bodies = append(bodies, body)
+			attempts++
+			if attempts == 1 {
+				http.Error(w, "ambiguous upstream failure", http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithWorkerAuth("worker", "secret"), WithWorkerService("service", api.CurrentWorkerProtocolVersion, true, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.FenceWorker(context.Background(), "termination_drain_failed"); err != nil {
+		t.Fatal(err)
 	}
 	if attempts != 2 || len(bodies) != 2 || !bytes.Equal(bodies[0], bodies[1]) {
 		t.Fatalf("attempts = %d, request bodies differ: %q != %q", attempts, bodies[0], bodies[1])

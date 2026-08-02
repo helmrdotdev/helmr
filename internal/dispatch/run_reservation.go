@@ -520,7 +520,6 @@ SELECT worker_groups.id,
     ON worker_instances.worker_group_id = worker_groups.id
    AND worker_instances.state = 'active'
    AND worker_instances.supports_run
-   AND worker_instances.certified_at IS NOT NULL
    AND worker_instances.protocol_version = worker_groups.protocol_version
   JOIN runtime_identities
     ON runtime_identities.id = worker_instances.runtime_identity_id
@@ -581,9 +580,9 @@ SELECT worker_groups.id,
    AND worker_instances.per_vm_cpu_millis >= $3
    AND worker_instances.per_vm_memory_bytes >= $4
    AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= $5
-   AND worker_instances.certified_cpu_millis - usage.cpu_millis >= $3
-   AND worker_instances.certified_memory_bytes - usage.memory_bytes >= $4
-   AND worker_instances.certified_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes >= $5
+   AND worker_instances.epoch_cpu_millis - usage.cpu_millis >= $3
+   AND worker_instances.epoch_memory_bytes - usage.memory_bytes >= $4
+   AND worker_instances.epoch_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes >= $5
    AND ($7::text = '' OR worker_instances.substrate_format = $7)
    AND ($8::text = '' OR worker_instances.substrate_builder_abi = $8)
    AND ($9::text = '' OR worker_instances.substrate_layout_abi = $9)
@@ -659,9 +658,9 @@ SELECT worker_instances.per_vm_cpu_millis >= $4
               AND runtime_instances.worker_epoch = worker_instances.current_epoch
               AND runtime_instances.observed_state IN ('allocated', 'preparing')
        )
-       AND worker_instances.certified_cpu_millis - usage.cpu_millis >= $4
-       AND worker_instances.certified_memory_bytes - usage.memory_bytes >= $5
-       AND worker_instances.certified_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes >= $6
+       AND worker_instances.epoch_cpu_millis - usage.cpu_millis >= $4
+       AND worker_instances.epoch_memory_bytes - usage.memory_bytes >= $5
+       AND worker_instances.epoch_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes >= $6
   FROM worker_instances
  CROSS JOIN LATERAL (
      SELECT

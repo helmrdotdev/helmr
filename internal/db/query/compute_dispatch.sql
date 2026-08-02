@@ -1,12 +1,26 @@
 -- name: DrainWorkerInstance :one
-WITH target AS (
+WITH transitioned AS (
     UPDATE worker_instances
-       SET state = 'draining', draining_at = COALESCE(draining_at, now()), updated_at = now()
+       SET state = 'draining',
+           claim_version = worker_instances.claim_version + 1,
+           draining_at = COALESCE(draining_at, now()), updated_at = now()
      WHERE worker_instances.id = sqlc.arg(id)
        AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
        AND worker_instances.current_epoch = sqlc.arg(expected_epoch)
-       AND worker_instances.state IN ('active', 'draining')
+       AND worker_instances.claim_version = sqlc.arg(expected_claim_version)
+       AND worker_instances.state = 'active'
     RETURNING *
+), target AS (
+    SELECT transitioned.* FROM transitioned
+    UNION ALL
+    SELECT worker_instances.*
+      FROM worker_instances
+     WHERE worker_instances.id = sqlc.arg(id)
+       AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
+       AND worker_instances.current_epoch = sqlc.arg(expected_epoch)
+       AND worker_instances.state = 'draining'
+       AND worker_instances.claim_version = sqlc.arg(expected_claim_version) + 1
+       AND NOT EXISTS (SELECT 1 FROM transitioned)
 ), idle_mounts AS (
     UPDATE workspace_mounts
        SET state = 'unmounting', stopped_at = COALESCE(stopped_at, now()), updated_at = now()
@@ -41,11 +55,20 @@ WITH target AS (
               AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
        )
     RETURNING runtime_instances.id
+), credential_fence AS (
+    UPDATE worker_instance_credentials
+       SET claim_version = target.claim_version
+      FROM target
+     WHERE worker_instance_credentials.worker_instance_id = target.id
+       AND worker_instance_credentials.revoked_at IS NULL
+       AND worker_instance_credentials.claim_version < target.claim_version
+    RETURNING worker_instance_credentials.id
 )
 SELECT target.*
   FROM target
  WHERE (SELECT count(*) FROM idle_mounts) >= 0
-   AND (SELECT count(*) FROM idle_runtimes) >= 0;
+   AND (SELECT count(*) FROM idle_runtimes) >= 0
+   AND (SELECT count(*) FROM credential_fence) >= 0;
 
 -- name: FenceWorkerInstance :one
 WITH target AS (
@@ -55,6 +78,7 @@ WITH target AS (
      WHERE worker_instances.id = sqlc.arg(id)
        AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
        AND worker_instances.current_epoch = sqlc.arg(expected_epoch)
+       AND worker_instances.claim_version = sqlc.arg(expected_claim_version)
        AND worker_instances.state IN ('active', 'draining')
     RETURNING *
 ), revoked_credentials AS (
@@ -92,7 +116,17 @@ SELECT target.*
   FROM target
  WHERE (SELECT count(*) FROM revoked_credentials) >= 0
    AND (SELECT count(*) FROM lost_mounts) >= 0
-   AND (SELECT count(*) FROM lost_runtimes) >= 0;
+   AND (SELECT count(*) FROM lost_runtimes) >= 0
+UNION ALL
+SELECT worker_instances.*
+  FROM worker_instances
+ WHERE worker_instances.id = sqlc.arg(id)
+   AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_instances.current_epoch = sqlc.arg(expected_epoch)
+   AND worker_instances.state = 'lost'
+   AND worker_instances.claim_version = sqlc.arg(expected_claim_version) + 1
+   AND NOT EXISTS (SELECT 1 FROM target)
+LIMIT 1;
 
 -- name: ListWorkerInstances :many
 SELECT * FROM worker_instances
@@ -111,6 +145,7 @@ SELECT worker_instances.*,
        worker_observations.runtime_paused_reason,
        COALESCE((
            worker_instances.state = 'active'
+           AND worker_groups.state = 'active'
            AND worker_instances.supports_run
            AND worker_observations.observed_at >= transaction_timestamp()
                - worker_groups.observation_ttl_seconds * interval '1 second'
@@ -118,6 +153,7 @@ SELECT worker_instances.*,
        ), false)::boolean AS run_ready,
        COALESCE((
            worker_instances.state = 'active'
+           AND worker_groups.state = 'active'
            AND worker_instances.supports_build
            AND worker_observations.observed_at >= transaction_timestamp()
                - worker_groups.observation_ttl_seconds * interval '1 second'
@@ -125,6 +161,7 @@ SELECT worker_instances.*,
        ), false)::boolean AS build_ready,
        COALESCE((
            worker_instances.state = 'active'
+           AND worker_groups.state = 'active'
            AND worker_instances.supports_run
            AND worker_observations.observed_at >= transaction_timestamp()
                - worker_groups.observation_ttl_seconds * interval '1 second'
@@ -132,6 +169,7 @@ SELECT worker_instances.*,
        ), false)::boolean AS runtime_ready,
        COALESCE((
            worker_instances.state = 'active'
+           AND worker_groups.state = 'active'
            AND worker_observations.observed_at >= transaction_timestamp()
                - worker_groups.observation_ttl_seconds * interval '1 second'
            AND (NOT worker_instances.supports_run OR (
@@ -166,9 +204,9 @@ SELECT worker_instances.*,
    AND worker_instances.worker_group_id = sqlc.arg(worker_group_id);
 
 -- name: GetWorkerInstanceRunDispatchCapacity :one
-SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
-       GREATEST(worker_instances.certified_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
-       GREATEST(worker_instances.certified_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
+SELECT GREATEST(worker_instances.epoch_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
+       GREATEST(worker_instances.epoch_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
+       GREATEST(worker_instances.epoch_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
        GREATEST(worker_instances.max_vm_slots - usage.vm_slots, 0)::int AS available_vm_slots,
        GREATEST(worker_instances.max_run_consumers - usage.run_consumers, 0)::int AS available_run_consumers,
        GREATEST(worker_instances.max_build_executors - usage.build_executors, 0)::int AS available_build_executors
@@ -222,9 +260,9 @@ SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bi
    AND worker_instances.current_epoch = sqlc.arg(worker_epoch);
 
 -- name: GetWorkerInstanceQueueCapacity :one
-SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
-       GREATEST(worker_instances.certified_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
-       GREATEST(worker_instances.certified_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
+SELECT GREATEST(worker_instances.epoch_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
+       GREATEST(worker_instances.epoch_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
+       GREATEST(worker_instances.epoch_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
        GREATEST(worker_instances.max_run_consumers - usage.run_consumers, 0)::int AS available_run_consumers,
        GREATEST(worker_instances.max_build_executors - usage.build_executors, 0)::int AS available_build_executors
   FROM worker_instances

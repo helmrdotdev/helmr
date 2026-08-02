@@ -2185,13 +2185,13 @@ UPDATE worker_instances
        substrate_format = '',
        substrate_builder_abi = '',
        substrate_layout_abi = '',
-       certified_cpu_millis = 0,
-       certified_memory_bytes = 0,
-       certified_guest_ephemeral_disk_bytes = 0,
-       certified_build_cache_bytes = 0,
-       certified_artifact_cache_bytes = 0,
-       certified_hugepages_bytes = 0,
-       certified_checkpoint_bytes = 0,
+       epoch_cpu_millis = 0,
+       epoch_memory_bytes = 0,
+       epoch_guest_ephemeral_disk_bytes = 0,
+       epoch_build_cache_bytes = 0,
+       epoch_artifact_cache_bytes = 0,
+       epoch_hugepages_bytes = 0,
+       epoch_checkpoint_bytes = 0,
        per_vm_cpu_millis = 0,
        per_vm_memory_bytes = 0,
        per_vm_guest_ephemeral_disk_bytes = 0,
@@ -2199,17 +2199,12 @@ UPDATE worker_instances
        max_run_consumers = 0,
        max_build_executors = 0,
        max_runtime_starts = 0,
-       certification_profile = '',
-       certification_fingerprint = '',
-       certified_at = NULL,
        activated_at = NULL,
-       startup_inventory_epoch = NULL,
-       startup_inventory_evidence = NULL,
        epoch_started_at = transaction_timestamp(), updated_at = transaction_timestamp()
  WHERE id = $1`, fixture.workerID); err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.New(startupTx).RecordWorkerStartupRecovery(fixture.ctx, db.RecordWorkerStartupRecoveryParams{
+	_, err = db.New(startupTx).CompleteWorkerStartupRecovery(fixture.ctx, db.CompleteWorkerStartupRecoveryParams{
 		RecoveryEvidence: []byte(`{"quarantined":[]}`),
 		WorkerInstanceID: pgvalue.UUID(fixture.workerID),
 		WorkerGroupID:    fixture.groupID,
@@ -2760,8 +2755,8 @@ func TestPlaceReadyRunAccountsForActiveBuildResources(t *testing.T) {
 	fixture := newRunPlacementFixture(t)
 	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances
-   SET certified_memory_bytes = 4294967296,
-       certified_guest_ephemeral_disk_bytes = 68719476736,
+   SET epoch_memory_bytes = 4294967296,
+       epoch_guest_ephemeral_disk_bytes = 68719476736,
        per_vm_guest_ephemeral_disk_bytes = 68719476736
  WHERE id = $1`,
 		fixture.workerID,
@@ -2964,17 +2959,16 @@ INSERT INTO worker_instances (
     current_epoch, current_service_id, protocol_version, supervisor_version,
     supports_run, runtime_identity_id,
     substrate_format, substrate_builder_abi, substrate_layout_abi,
-    certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes,
+    epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
     per_vm_cpu_millis, per_vm_memory_bytes,
     per_vm_guest_ephemeral_disk_bytes, max_vm_slots,
-    max_run_consumers, max_runtime_starts, certification_profile,
-    certification_fingerprint, epoch_started_at, certified_at, activated_at
+    max_run_consumers, max_runtime_starts, epoch_started_at, activated_at
 ) VALUES (
     $1, $2, $3, 'active', 1, $4, 'helmr.worker.v0',
     'test-worker', true, $5, 'squashfs', 'builder-v0', 'layout-v0',
     8000, 8589934592, 274877906944,
     1000, 1073741824, 34359738368,
-    8, 8, 8, 'run-v0', 'test-cert', now(), now(), now()
+    8, 8, 8, now(), now()
 )`,
 		fixture.workerID,
 		fixture.workerID.String(),

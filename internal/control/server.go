@@ -93,6 +93,7 @@ type Server struct {
 	runFinalizationTTL    time.Duration
 	workerEnrollment      *enrollment.Verifier
 	workerEnrollmentGuard *workerEnrollmentGuard
+	operatorTokenHash     []byte
 	setupToken            string
 	authKeys              auth.Keys
 	publicURL             *url.URL
@@ -146,6 +147,7 @@ type ServerConfig struct {
 	RunLeaseTTL           time.Duration
 	RunFinalizationTTL    time.Duration
 	WorkerEnrollment      *enrollment.Verifier
+	OperatorToken         string
 	SetupToken            string
 	AuthKey               []byte
 	PublicURL             *url.URL
@@ -186,6 +188,10 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	if cfg.WorkerEnrollment == nil {
 		return nil, errors.New("worker enrollment configuration is required")
+	}
+	operatorTokenHash, err := hashOperatorToken(cfg.OperatorToken)
+	if err != nil {
+		return nil, err
 	}
 	if cfg.SecretDelivery == nil {
 		return nil, errors.New("Secret delivery opener is required")
@@ -280,6 +286,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		runFinalizationTTL:    runFinalizationTTL,
 		workerEnrollment:      cfg.WorkerEnrollment,
 		workerEnrollmentGuard: newWorkerEnrollmentGuard(),
+		operatorTokenHash:     operatorTokenHash,
 		setupToken:            strings.TrimSpace(cfg.SetupToken),
 		authKeys:              authKeys,
 		publicURL:             cfg.PublicURL,
@@ -357,6 +364,7 @@ func (s *Server) mountAPIRoutes(r chi.Router) {
 	r.Options("/public/tokens/{tokenID}/complete", s.completeTokenBearerPreflight)
 	s.mountAuthRoutes(r)
 	s.mountOwnerRoutes(r)
+	s.mountOperatorRoutes(r)
 	s.mountWorkerRoutes(r)
 }
 
@@ -606,14 +614,13 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 		r.Post("/auth/token", s.workerAuthToken)
 		r.With(s.requireRecoveringWorker).Post("/startup-recovery", s.workerStartupRecovery)
 		r.With(s.requireRegisteringWorker).Post("/activate", s.workerActivate)
-		r.With(s.requireTerminalWorker).Get("/status", s.workerStatus)
-		r.With(s.requireTerminalWorker).Post("/drain/complete", s.workerCompleteDrain)
+		r.With(s.requireWorker).Get("/status", s.workerStatus)
+		r.With(s.requireWorkerDrainCompletion).Post("/drain/complete", s.workerCompleteDrain)
+		r.With(s.requireWorkerFence).Post("/fence", s.workerFence)
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireWorker)
 			r.Post("/observe", s.workerObserve)
-			r.Post("/certification/renew", s.workerRenewCertification)
 			r.Post("/drain", s.workerDrain)
-			r.Post("/fence", s.workerFence)
 			r.Group(func(r chi.Router) {
 				r.Use(func(next http.Handler) http.Handler { return requireWorkerRole(auth.WorkerRoleBuild, next) })
 				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleBuild, next) }).Post("/platform-acquisitions/next", s.workerNextPlatformAcquisition)

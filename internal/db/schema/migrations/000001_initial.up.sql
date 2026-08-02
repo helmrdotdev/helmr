@@ -323,7 +323,7 @@ CREATE TABLE worker_groups (
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     description TEXT NOT NULL DEFAULT '',
     state TEXT NOT NULL DEFAULT 'active'
-        CHECK (state IN ('active', 'draining', 'disabled')),
+        CHECK (state IN ('active', 'paused', 'draining', 'disabled')),
     claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
     allows_run BOOLEAN NOT NULL DEFAULT true,
     allows_build BOOLEAN NOT NULL DEFAULT true,
@@ -335,8 +335,6 @@ CREATE TABLE worker_groups (
     required_vm_slots INTEGER NOT NULL DEFAULT 1 CHECK (required_vm_slots >= 0),
     required_build_executors INTEGER NOT NULL DEFAULT 1 CHECK (required_build_executors >= 0),
     observation_ttl_seconds INTEGER NOT NULL CHECK (observation_ttl_seconds > 0),
-    last_scale_out_at TIMESTAMPTZ,
-    last_scale_in_at TIMESTAMPTZ,
     protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (protocol_version = 'helmr.worker.v0'),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -353,11 +351,11 @@ CREATE INDEX worker_groups_active_placement_idx
 
 CREATE UNIQUE INDEX worker_groups_one_active_run_per_region_idx
     ON worker_groups (region_id)
-    WHERE state = 'active' AND allows_run;
+    WHERE state IN ('active', 'paused') AND allows_run;
 
 CREATE UNIQUE INDEX worker_groups_one_active_build_per_region_idx
     ON worker_groups (region_id)
-    WHERE state = 'active' AND allows_build;
+    WHERE state IN ('active', 'paused') AND allows_build;
 
 CREATE TABLE runtime_identities (
     id TEXT PRIMARY KEY CHECK (btrim(id) <> ''),
@@ -376,7 +374,7 @@ CREATE TABLE worker_instances (
     resource_id TEXT NOT NULL CHECK (btrim(resource_id) <> ''),
     worker_group_id TEXT NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
     state TEXT NOT NULL DEFAULT 'registering'
-        CHECK (state IN ('registering', 'active', 'draining', 'disabled', 'lost')),
+        CHECK (state IN ('registering', 'active', 'draining', 'termination_ready', 'lost')),
     claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
     current_epoch BIGINT CHECK (current_epoch IS NULL OR current_epoch > 0),
     current_service_id UUID,
@@ -388,13 +386,13 @@ CREATE TABLE worker_instances (
     substrate_format TEXT NOT NULL DEFAULT '',
     substrate_builder_abi TEXT NOT NULL DEFAULT '',
     substrate_layout_abi TEXT NOT NULL DEFAULT '',
-    certified_cpu_millis BIGINT NOT NULL DEFAULT 0 CHECK (certified_cpu_millis >= 0),
-    certified_memory_bytes BIGINT NOT NULL DEFAULT 0 CHECK (certified_memory_bytes >= 0),
-    certified_guest_ephemeral_disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (certified_guest_ephemeral_disk_bytes >= 0),
-    certified_build_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (certified_build_cache_bytes >= 0),
-    certified_artifact_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (certified_artifact_cache_bytes >= 0),
-    certified_hugepages_bytes BIGINT NOT NULL DEFAULT 0 CHECK (certified_hugepages_bytes >= 0),
-    certified_checkpoint_bytes BIGINT NOT NULL DEFAULT 0 CHECK (certified_checkpoint_bytes >= 0),
+    epoch_cpu_millis BIGINT NOT NULL DEFAULT 0 CHECK (epoch_cpu_millis >= 0),
+    epoch_memory_bytes BIGINT NOT NULL DEFAULT 0 CHECK (epoch_memory_bytes >= 0),
+    epoch_guest_ephemeral_disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (epoch_guest_ephemeral_disk_bytes >= 0),
+    epoch_build_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (epoch_build_cache_bytes >= 0),
+    epoch_artifact_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (epoch_artifact_cache_bytes >= 0),
+    epoch_hugepages_bytes BIGINT NOT NULL DEFAULT 0 CHECK (epoch_hugepages_bytes >= 0),
+    epoch_checkpoint_bytes BIGINT NOT NULL DEFAULT 0 CHECK (epoch_checkpoint_bytes >= 0),
     per_vm_cpu_millis BIGINT NOT NULL DEFAULT 0 CHECK (per_vm_cpu_millis >= 0),
     per_vm_memory_bytes BIGINT NOT NULL DEFAULT 0 CHECK (per_vm_memory_bytes >= 0),
     per_vm_guest_ephemeral_disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (per_vm_guest_ephemeral_disk_bytes >= 0),
@@ -402,82 +400,35 @@ CREATE TABLE worker_instances (
     max_run_consumers INTEGER NOT NULL DEFAULT 0 CHECK (max_run_consumers >= 0),
     max_build_executors INTEGER NOT NULL DEFAULT 0 CHECK (max_build_executors >= 0),
     max_runtime_starts INTEGER NOT NULL DEFAULT 0 CHECK (max_runtime_starts >= 0),
-    certification_profile TEXT NOT NULL DEFAULT '',
-    certification_fingerprint TEXT NOT NULL DEFAULT '',
     epoch_started_at TIMESTAMPTZ,
-    startup_inventory_epoch BIGINT CHECK (startup_inventory_epoch IS NULL OR startup_inventory_epoch > 0),
-    startup_inventory_evidence JSONB,
-    drain_cleanup_fingerprint TEXT,
-    drain_cleanup_evidence JSONB,
-    certified_at TIMESTAMPTZ,
     activated_at TIMESTAMPTZ,
     draining_at TIMESTAMPTZ,
-    disabled_at TIMESTAMPTZ,
+    termination_ready_at TIMESTAMPTZ,
     lost_at TIMESTAMPTZ,
-    termination_claimed_at TIMESTAMPTZ,
-    provider_terminated_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (worker_group_id, resource_id),
     UNIQUE (id, worker_group_id),
+    CHECK (octet_length(resource_id) <= 512),
     CHECK (
         (current_epoch IS NULL AND current_service_id IS NULL AND epoch_started_at IS NULL)
         OR (current_epoch IS NOT NULL AND current_service_id IS NOT NULL AND epoch_started_at IS NOT NULL)
     ),
-    CHECK (state NOT IN ('active', 'draining') OR current_epoch IS NOT NULL),
-    CHECK ((startup_inventory_epoch IS NULL) = (startup_inventory_evidence IS NULL)),
-    CHECK (startup_inventory_epoch IS NULL OR startup_inventory_epoch = current_epoch),
-    CHECK (startup_inventory_evidence IS NULL OR jsonb_typeof(startup_inventory_evidence) = 'object'),
-    CHECK ((drain_cleanup_fingerprint IS NULL) = (drain_cleanup_evidence IS NULL)),
-    CHECK (drain_cleanup_fingerprint IS NULL OR drain_cleanup_fingerprint ~ '^[0-9a-f]{64}$'),
-    CHECK (drain_cleanup_evidence IS NULL OR jsonb_typeof(drain_cleanup_evidence) = 'object'),
-    CHECK (drain_cleanup_evidence IS NULL OR state = 'disabled'),
-    CONSTRAINT worker_instances_certification_shape_check CHECK (
-        state NOT IN ('active', 'draining')
+    CHECK (state NOT IN ('active', 'draining', 'termination_ready') OR current_epoch IS NOT NULL),
+    CONSTRAINT worker_instances_epoch_shape_check CHECK (
+        state <> 'active'
         OR (
             btrim(supervisor_version) <> ''
-            AND certified_at IS NOT NULL
             AND activated_at IS NOT NULL
-            AND btrim(certification_profile) <> ''
-            AND btrim(certification_fingerprint) <> ''
-            AND certified_cpu_millis > 0
-            AND certified_memory_bytes > 0
+            AND epoch_cpu_millis > 0
+            AND epoch_memory_bytes > 0
             AND per_vm_cpu_millis > 0
             AND per_vm_memory_bytes > 0
             AND per_vm_guest_ephemeral_disk_bytes > 0
             AND (supports_run OR supports_build)
         )
-        OR (
-            state = 'draining'
-            AND supervisor_version = ''
-            AND NOT supports_run
-            AND NOT supports_build
-            AND runtime_identity_id IS NULL
-            AND substrate_format = ''
-            AND substrate_builder_abi = ''
-            AND substrate_layout_abi = ''
-            AND certified_cpu_millis = 0
-            AND certified_memory_bytes = 0
-            AND certified_guest_ephemeral_disk_bytes = 0
-            AND certified_build_cache_bytes = 0
-            AND certified_artifact_cache_bytes = 0
-            AND certified_hugepages_bytes = 0
-            AND certified_checkpoint_bytes = 0
-            AND per_vm_cpu_millis = 0
-            AND per_vm_memory_bytes = 0
-            AND per_vm_guest_ephemeral_disk_bytes = 0
-            AND max_vm_slots = 0
-            AND max_run_consumers = 0
-            AND max_build_executors = 0
-            AND max_runtime_starts = 0
-            AND certification_profile = ''
-            AND certification_fingerprint = ''
-            AND certified_at IS NULL
-            AND activated_at IS NULL
-        )
     ),
     CHECK (
-        state NOT IN ('active', 'draining')
+        state <> 'active'
         OR NOT supports_run
         OR (
             runtime_identity_id IS NOT NULL
@@ -486,7 +437,8 @@ CREATE TABLE worker_instances (
             AND max_runtime_starts > 0
         )
     ),
-    CHECK (state NOT IN ('active', 'draining') OR NOT supports_build OR max_build_executors > 0),
+    CHECK (state <> 'active' OR NOT supports_build OR max_build_executors > 0),
+    CHECK (state <> 'active' OR runtime_identity_id IS NOT NULL),
     CHECK (
         (supports_run
          AND btrim(substrate_format) <> ''
@@ -498,14 +450,15 @@ CREATE TABLE worker_instances (
          AND substrate_builder_abi = ''
          AND substrate_layout_abi = '')
     ),
-    CHECK (state <> 'draining' OR draining_at IS NOT NULL),
-    CHECK (state <> 'disabled' OR disabled_at IS NOT NULL),
-    CHECK (state <> 'lost' OR lost_at IS NOT NULL),
-    CHECK (termination_claimed_at IS NULL OR state IN ('disabled', 'lost')),
-    CHECK (provider_terminated_at IS NULL OR termination_claimed_at IS NOT NULL),
-    CHECK (provider_terminated_at IS NULL OR provider_terminated_at >= termination_claimed_at),
-    CHECK (state <> 'registering' OR certified_at IS NULL)
+    CHECK (state <> 'active' OR activated_at IS NOT NULL),
+    CHECK (state NOT IN ('draining', 'termination_ready') OR draining_at IS NOT NULL),
+    CHECK ((state = 'termination_ready') = (termination_ready_at IS NOT NULL)),
+    CHECK ((state = 'lost') = (lost_at IS NOT NULL))
 );
+
+CREATE UNIQUE INDEX worker_instances_one_live_locator_idx
+    ON worker_instances (worker_group_id, resource_id)
+    WHERE state IN ('registering', 'active', 'draining');
 
 CREATE INDEX worker_instances_active_placement_idx
     ON worker_instances (worker_group_id, id)

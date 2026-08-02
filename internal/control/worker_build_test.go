@@ -473,11 +473,11 @@ func (store *deploymentBuildCompletionStore) BeginQuerier(
 	return store, deploymentBuildCompletionTransaction{store: store}, nil
 }
 
-func (store *deploymentBuildCompletionStore) LockDeploymentBuildWorkerCertification(
+func (store *deploymentBuildCompletionStore) LockDeploymentBuildWorkerAuthority(
 	context.Context,
-	db.LockDeploymentBuildWorkerCertificationParams,
-) (db.LockDeploymentBuildWorkerCertificationRow, error) {
-	return db.LockDeploymentBuildWorkerCertificationRow{
+	db.LockDeploymentBuildWorkerAuthorityParams,
+) (db.LockDeploymentBuildWorkerAuthorityRow, error) {
+	return db.LockDeploymentBuildWorkerAuthorityRow{
 		RuntimeArch: pgtype.Text{
 			String: string(deployment.ArchitectureX8664),
 			Valid:  true,

@@ -968,7 +968,7 @@ candidates AS MATERIALIZED (
             OR runtime_instances.lost_at <= transaction_timestamp()
             OR runtime_instances.failed_at <= transaction_timestamp()
             OR worker_instances.lost_at <= transaction_timestamp()
-            OR worker_instances.disabled_at <= transaction_timestamp()
+            OR worker_instances.termination_ready_at <= transaction_timestamp()
             OR worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
             OR workspace_mounts.lost_at <= transaction_timestamp()
             OR workspace_mounts.failed_at <= transaction_timestamp())
@@ -1083,7 +1083,7 @@ candidates AS MATERIALIZED (
     SELECT locked_attempts.*,
            LEAST(
                COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
-               COALESCE(worker_instances.disabled_at, 'infinity'::timestamptz),
+               COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),
                CASE
                    WHEN worker_instances.current_epoch IS DISTINCT FROM locked_attempts.worker_epoch
                    THEN COALESCE(worker_instances.epoch_started_at, worker_instances.updated_at)

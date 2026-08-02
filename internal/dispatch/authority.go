@@ -14,7 +14,7 @@ import (
 
 var (
 	ErrNilPool             = errors.New("dispatch: nil pgx pool")
-	ErrCapacityUnavailable = errors.New("dispatch: certified capacity unavailable")
+	ErrCapacityUnavailable = errors.New("dispatch: ready capacity unavailable")
 	ErrCandidateChanged    = errors.New("dispatch: placement candidate changed while locking")
 )
 
@@ -122,7 +122,6 @@ SELECT worker_instances.id
    AND worker_instances.worker_group_id = $2
    AND worker_instances.current_epoch = $3
    AND worker_instances.state = 'active'
-   AND worker_instances.certified_at IS NOT NULL
    AND worker_instances.protocol_version = $4
    AND worker_observations.observed_at >= transaction_timestamp()
        - worker_groups.observation_ttl_seconds * interval '1 second'

@@ -60,7 +60,7 @@ variables {
   }
 }
 
-run "controller_owns_protected_capacity" {
+run "deployment_owns_protected_capacity" {
   command = plan
 
   variables {
@@ -69,7 +69,7 @@ run "controller_owns_protected_capacity" {
 
   assert {
     condition     = aws_autoscaling_group.worker.protect_from_scale_in
-    error_message = "managed controller capacity must start protected from scale in"
+    error_message = "deployment-owned capacity must start protected from scale in"
   }
 
   assert {
@@ -151,7 +151,7 @@ run "controller_owns_protected_capacity" {
 
   assert {
     condition     = strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_DISK_RESERVE_MIB=1024")
-    error_message = "worker user data must pin the disk reserve used by certified capacity math"
+    error_message = "worker user data must pin the disk reserve used by configured capacity math"
   }
 
   assert {
@@ -377,7 +377,7 @@ run "run_only_worker_rejects_current_policy" {
   expect_failures = [terraform_data.network_preconditions]
 }
 
-run "controller_requires_lifecycle_hooks" {
+run "deployment_requires_lifecycle_hooks" {
   command = plan
 
   variables {

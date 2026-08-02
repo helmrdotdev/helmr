@@ -154,37 +154,6 @@ func TestWorkerGroupReplacementAllowsDrainingPredecessor(t *testing.T) {
 	}
 }
 
-func TestOnlyActiveAbsentGroupsBlockReconciliation(t *testing.T) {
-	ctx := context.Background()
-	pool := newPostgresDB(t, ctx)
-	q := db.New(pool)
-	workerID := uuid.Must(uuid.NewV7())
-	mustExec(t, ctx, pool, `
-		INSERT INTO worker_instances (id, resource_id, worker_group_id, state)
-		VALUES ($1, $2, $3, 'registering')
-	`, workerID, "retiring-"+workerID.String(), dbtest.DefaultWorkerGroupID)
-
-	active, err := q.ListActiveAbsentWorkerGroupIDs(ctx, db.ListActiveAbsentWorkerGroupIDsParams{
-		RegionID: dbtest.DefaultRegionID, DesiredIds: []string{},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(active) != 1 || active[0] != dbtest.DefaultWorkerGroupID {
-		t.Fatalf("active absent groups = %#v", active)
-	}
-	mustExec(t, ctx, pool, `UPDATE worker_groups SET state = 'draining' WHERE id = $1`, dbtest.DefaultWorkerGroupID)
-	active, err = q.ListActiveAbsentWorkerGroupIDs(ctx, db.ListActiveAbsentWorkerGroupIDsParams{
-		RegionID: dbtest.DefaultRegionID, DesiredIds: []string{},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(active) != 0 {
-		t.Fatalf("draining absent group blocked reconciliation: %#v", active)
-	}
-}
-
 func TestDeploymentWorkerGroupLifecycleIsFencedAndReplaySafe(t *testing.T) {
 	ctx := context.Background()
 	q := db.New(newPostgresDB(t, ctx))
@@ -192,25 +161,45 @@ func TestDeploymentWorkerGroupLifecycleIsFencedAndReplaySafe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stopped, err := q.TransitionWorkerGroupLifecycle(ctx, db.TransitionWorkerGroupLifecycleParams{
-		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStateDraining),
+	paused, err := q.TransitionWorkerGroupLifecycle(ctx, db.TransitionWorkerGroupLifecycleParams{
+		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStatePaused),
 		ExpectedClaimVersion: initial.ClaimVersion,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stopped.State != db.WorkerGroupStateDraining || stopped.ClaimVersion != initial.ClaimVersion+1 || !stopped.TransitionApplied {
-		t.Fatalf("stopped = %+v", stopped)
+	if paused.State != db.WorkerGroupStatePaused || paused.ClaimVersion != initial.ClaimVersion+1 || !paused.TransitionApplied {
+		t.Fatalf("paused = %+v", paused)
 	}
 	replayed, err := q.TransitionWorkerGroupLifecycle(ctx, db.TransitionWorkerGroupLifecycleParams{
-		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStateDraining),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStatePaused),
 		ExpectedClaimVersion: initial.ClaimVersion,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replayed.ClaimVersion != stopped.ClaimVersion || replayed.TransitionApplied {
-		t.Fatalf("replayed stop = %+v", replayed)
+	if replayed.ClaimVersion != paused.ClaimVersion || replayed.TransitionApplied {
+		t.Fatalf("replayed pause = %+v", replayed)
+	}
+	active, err := q.TransitionWorkerGroupLifecycle(ctx, db.TransitionWorkerGroupLifecycleParams{
+		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStateActive),
+		ExpectedClaimVersion: paused.ClaimVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.State != db.WorkerGroupStateActive || active.ClaimVersion != paused.ClaimVersion+1 || !active.TransitionApplied {
+		t.Fatalf("active = %+v", active)
+	}
+	draining, err := q.TransitionWorkerGroupLifecycle(ctx, db.TransitionWorkerGroupLifecycleParams{
+		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStateDraining),
+		ExpectedClaimVersion: active.ClaimVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if draining.State != db.WorkerGroupStateDraining || draining.ClaimVersion != active.ClaimVersion+1 || !draining.TransitionApplied {
+		t.Fatalf("draining = %+v", draining)
 	}
 	if _, err := q.TransitionWorkerGroupLifecycle(ctx, db.TransitionWorkerGroupLifecycleParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStateActive),
@@ -218,21 +207,15 @@ func TestDeploymentWorkerGroupLifecycleIsFencedAndReplaySafe(t *testing.T) {
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("stale reactivation error = %v", err)
 	}
-	active, err := q.TransitionWorkerGroupLifecycle(ctx, db.TransitionWorkerGroupLifecycleParams{
-		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStateActive),
-		ExpectedClaimVersion: stopped.ClaimVersion,
+	disabled, err := q.TransitionWorkerGroupLifecycle(ctx, db.TransitionWorkerGroupLifecycleParams{
+		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStateDisabled),
+		ExpectedClaimVersion: draining.ClaimVersion,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if active.State != db.WorkerGroupStateActive || active.ClaimVersion != stopped.ClaimVersion+1 || !active.TransitionApplied {
-		t.Fatalf("reactivated = %+v", active)
-	}
-	if _, err := q.TransitionWorkerGroupLifecycle(ctx, db.TransitionWorkerGroupLifecycleParams{
-		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStateDraining),
-		ExpectedClaimVersion: initial.ClaimVersion,
-	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("delayed stop error = %v", err)
+	if disabled.State != db.WorkerGroupStateDisabled || disabled.ClaimVersion != draining.ClaimVersion+1 || !disabled.TransitionApplied {
+		t.Fatalf("disabled = %+v", disabled)
 	}
 }
 
@@ -254,10 +237,10 @@ func TestDeploymentWorkerInstanceLossIsFencedAndReplaySafe(t *testing.T) {
 			id, worker_group_id, worker_instance_id, key_prefix, claim_version,
 			allows_run, allows_build, secret_hash
 		) VALUES ($1, $2, $3, $4, $5, false, true, $6)
-	`, credentialID, dbtest.DefaultWorkerGroupID, workerID, uuid.NewString(), initial.ClaimVersion, []byte("drift-secret")); err != nil {
+	`, credentialID, dbtest.DefaultWorkerGroupID, workerID, uuid.NewString(), initial.ClaimVersion, []byte("loss-secret")); err != nil {
 		t.Fatal(err)
 	}
-	lost, err := q.LoseWorkerInstanceForDrift(ctx, db.LoseWorkerInstanceForDriftParams{
+	lost, err := q.MarkWorkerInstanceLost(ctx, db.MarkWorkerInstanceLostParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, ResourceID: resourceID,
 		ExpectedClaimVersion: initial.ClaimVersion,
 	})
@@ -267,7 +250,7 @@ func TestDeploymentWorkerInstanceLossIsFencedAndReplaySafe(t *testing.T) {
 	if lost.ID != pgvalue.UUID(workerID) || lost.State != db.WorkerInstanceStateLost || lost.ClaimVersion != initial.ClaimVersion+1 || !lost.TransitionApplied {
 		t.Fatalf("lost = %+v", lost)
 	}
-	replayed, err := q.LoseWorkerInstanceForDrift(ctx, db.LoseWorkerInstanceForDriftParams{
+	replayed, err := q.MarkWorkerInstanceLost(ctx, db.MarkWorkerInstanceLostParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, ResourceID: resourceID,
 		ExpectedClaimVersion: initial.ClaimVersion,
 	})
@@ -277,7 +260,7 @@ func TestDeploymentWorkerInstanceLossIsFencedAndReplaySafe(t *testing.T) {
 	if replayed.ClaimVersion != lost.ClaimVersion || replayed.TransitionApplied {
 		t.Fatalf("replayed loss = %+v", replayed)
 	}
-	if _, err := q.LoseWorkerInstanceForDrift(ctx, db.LoseWorkerInstanceForDriftParams{
+	if _, err := q.MarkWorkerInstanceLost(ctx, db.MarkWorkerInstanceLostParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, ResourceID: resourceID,
 		ExpectedClaimVersion: lost.ClaimVersion,
 	}); !errors.Is(err, pgx.ErrNoRows) {
@@ -288,7 +271,7 @@ func TestDeploymentWorkerInstanceLossIsFencedAndReplaySafe(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !revoked {
-		t.Fatal("drift loss did not revoke the Worker credential")
+		t.Fatal("worker loss did not revoke the Worker credential")
 	}
 }
 
@@ -297,8 +280,8 @@ func TestDeploymentWorkerInstanceLossTerminallyFencesRegisteringIdentity(t *test
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
 	workerID := uuid.Must(uuid.NewV7())
-	resourceID := "registering-drift-" + workerID.String()
-	secretHash := []byte("registering-drift-secret")
+	resourceID := "registering-lost-" + workerID.String()
+	secretHash := []byte("registering-lost-secret")
 	credential := enrollTestWorker(t, ctx, q, workerID, resourceID, true, false, secretHash)
 	initial, err := q.GetWorkerInstanceLifecycle(ctx, db.GetWorkerInstanceLifecycleParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, ResourceID: resourceID,
@@ -309,7 +292,7 @@ func TestDeploymentWorkerInstanceLossTerminallyFencesRegisteringIdentity(t *test
 	if initial.State != db.WorkerInstanceStateRegistering || initial.CurrentEpoch.Valid {
 		t.Fatalf("initial lifecycle = %+v, want pre-epoch registering", initial)
 	}
-	lost, err := q.LoseWorkerInstanceForDrift(ctx, db.LoseWorkerInstanceForDriftParams{
+	lost, err := q.MarkWorkerInstanceLost(ctx, db.MarkWorkerInstanceLostParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, ResourceID: resourceID,
 		ExpectedClaimVersion: initial.ClaimVersion,
 	})
@@ -326,27 +309,26 @@ func TestDeploymentWorkerInstanceLossTerminallyFencesRegisteringIdentity(t *test
 		t.Fatalf("lost registering credential authentication error = %v, want pgx.ErrNoRows", err)
 	}
 	nonce := createTestEnrollmentNonce(t, ctx, q, dbtest.DefaultWorkerGroupID)
-	if _, err := q.EnrollWorkerInstance(ctx, enrollmentParams(
-		nonce, uuid.Must(uuid.NewV7()), resourceID, true, false, []byte("replacement-secret"),
-	)); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("lost registering identity re-enrollment error = %v, want pgx.ErrNoRows", err)
-	}
-	proof, err := q.GetFleetTerminationProof(ctx, db.GetFleetTerminationProofParams{
-		WorkerInstanceID: credential.WorkerInstanceID, WorkerGroupID: dbtest.DefaultWorkerGroupID,
-	})
+	replacementID := uuid.Must(uuid.NewV7())
+	replacement, err := q.EnrollWorkerInstance(ctx, enrollmentParams(
+		nonce, replacementID, resourceID, true, false, []byte("replacement-secret"),
+	))
 	if err != nil {
+		t.Fatalf("enroll replacement identity: %v", err)
+	}
+	if replacement.WorkerInstanceID.Bytes != replacementID || replacement.WorkerInstanceID.Bytes == credential.WorkerInstanceID.Bytes {
+		t.Fatalf("replacement Worker instance ID = %v, want new ID %s", replacement.WorkerInstanceID, replacementID)
+	}
+	var lostCount, registeringCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE state = 'lost'),
+		       count(*) FILTER (WHERE state = 'registering')
+		  FROM worker_instances
+		 WHERE worker_group_id = $1 AND resource_id = $2
+	`, dbtest.DefaultWorkerGroupID, resourceID).Scan(&lostCount, &registeringCount); err != nil {
 		t.Fatal(err)
 	}
-	if !proof.FencedForTermination || proof.AuthorityCount != 0 || proof.CurrentEpoch.Valid {
-		t.Fatalf("termination proof = %+v, want pre-epoch terminal fence", proof)
-	}
-	claimed, err := q.ClaimFleetWorkerTermination(ctx, db.ClaimFleetWorkerTerminationParams{
-		WorkerInstanceID: credential.WorkerInstanceID, WorkerGroupID: dbtest.DefaultWorkerGroupID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !claimed.FencedForTermination || claimed.CurrentEpoch.Valid || claimed.ResourceID != resourceID {
-		t.Fatalf("termination claim = %+v, want pre-epoch terminal fence", claimed)
+	if lostCount != 1 || registeringCount != 1 {
+		t.Fatalf("locator identities = lost %d registering %d, want 1 and 1", lostCount, registeringCount)
 	}
 }

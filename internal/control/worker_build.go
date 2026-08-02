@@ -863,9 +863,9 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 	}
 	var response api.WorkerDeploymentBuildResponse
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		workerState, err := work.q.LockDeploymentBuildWorkerCertification(
+		workerState, err := work.q.LockDeploymentBuildWorkerAuthority(
 			r.Context(),
-			db.LockDeploymentBuildWorkerCertificationParams{
+			db.LockDeploymentBuildWorkerAuthorityParams{
 				WorkerGroupID:         worker.WorkerGroupID,
 				WorkerInstanceID:      buildWorkerInstanceID,
 				WorkerEpoch:           worker.WorkerEpoch,
@@ -873,10 +873,10 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			},
 		)
 		if isNoRows(err) {
-			return conflict(errors.New("deployment build worker certification was withdrawn"))
+			return conflict(errors.New("deployment build worker authority was withdrawn"))
 		}
 		if err != nil {
-			return errors.New("lock deployment build worker certification")
+			return errors.New("lock deployment build worker authority")
 		}
 		locked, err := work.q.LockDeploymentBuildTerminalFence(r.Context(), db.LockDeploymentBuildTerminalFenceParams{
 			OrgID:                 orgID,
@@ -990,7 +990,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		}
 		if !workerState.RuntimeArch.Valid ||
 			workerState.RuntimeArch.String != string(deployment.ArchitectureX8664) {
-			return conflict(errors.New("deployment build worker certification was withdrawn"))
+			return conflict(errors.New("deployment build worker authority was withdrawn"))
 		}
 		var invalid invalidDeploymentBuildOutput
 		if errors.As(preparationErr, &invalid) {

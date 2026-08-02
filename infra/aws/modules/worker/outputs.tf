@@ -27,3 +27,8 @@ output "protect_from_scale_in" {
   description = "Whether new worker instances start protected from scale in."
   value       = aws_autoscaling_group.worker.protect_from_scale_in
 }
+
+output "termination_lifecycle_hook_name" {
+  description = "Exact termination hook completed by deployment automation after a termination-ready receipt."
+  value       = var.enable_lifecycle_hooks ? local.termination_hook_name : null
+}

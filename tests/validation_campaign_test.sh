@@ -150,7 +150,10 @@ worker_instance_type = "c8i.xlarge"
 build_worker_instance_type = null
 worker_max_size = 1
 build_worker_max_size = 1
-worker_fleet_controller = {}
+worker_min_size = 0
+build_worker_min_size = 0
+worker_observation_ttl_seconds = 120
+worker_launch_timeout_seconds = 900
 EOF
 cat >"${worker_tfvars_fixture}" <<'EOF'
 create_worker = true
@@ -164,7 +167,10 @@ worker_instance_type = "c8i.xlarge"
 build_worker_instance_type = null
 worker_max_size = 1
 build_worker_max_size = 1
-worker_fleet_controller = {"run_warm_workers":0,"build_warm_workers":0,"run_max_workers":1,"build_max_workers":1,"max_scale_out_per_cycle":1,"max_pending_workers":1,"emergency_stop":false}
+worker_min_size = 0
+build_worker_min_size = 0
+worker_observation_ttl_seconds = 120
+worker_launch_timeout_seconds = 900
 EOF
 if command -v sha256sum >/dev/null 2>&1; then
   control_tfvars_sha="$(sha256sum "${control_tfvars_fixture}" | awk '{print $1}')"

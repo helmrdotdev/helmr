@@ -153,8 +153,10 @@ Dev optional environment:
   DEV_WORKER_MAX_SIZE  Run-worker ASG ceiling. Defaults to 1.
   DEV_WORKER_EXECUTION_SLOTS
                        Execution slots advertised by each run Worker. Defaults to 1.
-  DEV_RUN_WARM_WORKERS Run Workers held ready by the fleet controller. Defaults to 0.
-  DEV_RUN_MAX_WORKERS  Fleet-controller run-worker ceiling. Defaults to DEV_WORKER_MAX_SIZE.
+  DEV_WORKER_OBSERVATION_TTL_SECONDS
+                       Freshness window for Worker readiness. Defaults to 120.
+  DEV_WORKER_LAUNCH_TIMEOUT_SECONDS
+                       ASG launch-hook timeout. Defaults to 900.
   DEV_ALLOW_EXTENDED_WORKER_CAPACITY
                        Must be true when either Worker ASG ceiling exceeds 1.
   WORKER_AMI_ID         AMI ID to inject; defaults to the last worker-image-wait result.
@@ -1356,7 +1358,6 @@ EOF
     set_tfvar "${DEV_TFVARS}" "create_worker" "false"
     set_tfvar "${DEV_TFVARS}" "enable_nat_gateway" "false"
     set_tfvar "${DEV_TFVARS}" "control_assign_public_ip" "true"
-    set_tfvar "${DEV_TFVARS}" "worker_fleet_controller" '{}'
   else
     set_tfvar "${DEV_TFVARS}" "enable_nat_gateway" "true"
     set_tfvar "${DEV_TFVARS}" "control_assign_public_ip" "false"
@@ -1488,6 +1489,10 @@ dev_resend_api_key_secret() {
 dev_generated_secrets() {
   dev_database_url
   put_secret_value_if_missing "$(dev_secret_arn worker_token_signing_key)" "$(random_base64)"
+  operator_token_arn="$(dev_secret_arn_optional operator_token)"
+  if [ -n "${operator_token_arn}" ] && [ "${operator_token_arn}" != "null" ]; then
+    put_secret_value_if_missing "${operator_token_arn}" "$(random_base64url)"
+  fi
   put_secret_value_if_missing "$(dev_secret_arn auth_key)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn encryption_key)" "$(random_base64)"
   dev_root_key workspace_fencing_key
@@ -1525,13 +1530,8 @@ dev_worker_tfvars() {
   build_worker_vm_memory_mib="${DEV_BUILD_WORKER_VM_MEMORY_MIB:-4096}"
   build_worker_vm_scratch_disk_mib="${DEV_BUILD_WORKER_VM_SCRATCH_DISK_MIB:-32768}"
   worker_execution_slots="${DEV_WORKER_EXECUTION_SLOTS:-1}"
-  run_warm_workers="${DEV_RUN_WARM_WORKERS:-0}"
-  run_max_workers="${DEV_RUN_MAX_WORKERS:-${worker_max_size}}"
-  build_max_workers="${DEV_BUILD_MAX_WORKERS:-${build_worker_max_size}}"
-  max_scale_out_per_cycle="${DEV_MAX_SCALE_OUT_PER_CYCLE:-1}"
-  max_pending_workers="${DEV_MAX_PENDING_WORKERS:-1}"
   allow_extended_worker_capacity="${DEV_ALLOW_EXTENDED_WORKER_CAPACITY:-false}"
-  for value_name in worker_max_size build_worker_max_size build_worker_vm_vcpus build_worker_vm_memory_mib build_worker_vm_scratch_disk_mib worker_execution_slots run_warm_workers run_max_workers build_max_workers max_scale_out_per_cycle max_pending_workers; do
+  for value_name in worker_max_size build_worker_max_size build_worker_vm_vcpus build_worker_vm_memory_mib build_worker_vm_scratch_disk_mib worker_execution_slots; do
     value="${!value_name}"
     case "${value}" in
       ''|*[!0-9]*) die "${value_name} must be a non-negative integer" ;;
@@ -1545,10 +1545,6 @@ dev_worker_tfvars() {
     [ "${allow_extended_worker_capacity}" != "true" ]; then
     die "DEV_ALLOW_EXTENDED_WORKER_CAPACITY=true is required when a Worker ASG ceiling exceeds 1"
   fi
-  [ "${run_max_workers}" -le "${worker_max_size}" ] ||
-    die "DEV_RUN_MAX_WORKERS cannot exceed DEV_WORKER_MAX_SIZE"
-  [ "${build_max_workers}" -le "${build_worker_max_size}" ] ||
-    die "DEV_BUILD_MAX_WORKERS cannot exceed DEV_BUILD_WORKER_MAX_SIZE"
   if [ -z "${ami_id}" ] && [ -f "${AMI_ID_FILE}" ]; then
     ami_id="$(cat "${AMI_ID_FILE}")"
   fi
@@ -1593,31 +1589,9 @@ dev_worker_tfvars() {
   set_tfvar "${DEV_TFVARS}" "build_worker_execution_slots" "null"
   set_tfvar "${DEV_TFVARS}" "build_worker_substrate_cache_max_mib" "null"
   set_tfvar "${DEV_TFVARS}" "build_worker_artifact_cache_max_mib" "null"
-  set_tfvar "${DEV_TFVARS}" "worker_fleet_controller" "$(jq -cn \
-    --argjson run_warm_workers "${run_warm_workers}" \
-    --argjson run_max_workers "${run_max_workers}" \
-    --argjson build_max_workers "${build_max_workers}" \
-    --argjson max_scale_out_per_cycle "${max_scale_out_per_cycle}" \
-    --argjson max_pending_workers "${max_pending_workers}" \
-    '{
-      run_warm_workers:$run_warm_workers,
-      build_warm_workers:0,
-      run_max_workers:$run_max_workers,
-      build_max_workers:$build_max_workers,
-      max_scale_out_per_cycle:$max_scale_out_per_cycle,
-      max_pending_workers:$max_pending_workers,
-      max_packing_items:10000,
-      controller_interval_seconds:15,
-      scale_out_cooldown_seconds:30,
-      scale_in_cooldown_seconds:300,
-      scale_in_hysteresis_seconds:300,
-      stale_worker_timeout_seconds:120,
-      readiness_timeout_seconds:900,
-      drain_timeout_seconds:1800,
-      emergency_stop:false,
-      metric_interval_seconds:60
-    }')"
-  info "updated ${DEV_TFVARS} for cost-bounded run/build fleets"
+  set_tfvar "${DEV_TFVARS}" "worker_observation_ttl_seconds" "${DEV_WORKER_OBSERVATION_TTL_SECONDS:-120}"
+  set_tfvar "${DEV_TFVARS}" "worker_launch_timeout_seconds" "${DEV_WORKER_LAUNCH_TIMEOUT_SECONDS:-900}"
+  info "updated ${DEV_TFVARS} for deployment-owned run/build capacity"
 }
 
 dev_migrate() {
@@ -1686,24 +1660,87 @@ worker_asg_instance_count() {
   '
 }
 
-require_fleet_controller_for_active_workers() {
-  local cluster=$1
-  local service_json
+drain_worker_asg() {
+  local asg_name=$1
+  local worker_group_id=$2
+  local control_url=$3
+  local operator_header_file=$4
+  local drain_timeout=${DEV_DESTROY_WORKER_DRAIN_TIMEOUT_SECONDS:-2400}
+  local deadline
+  local instance_id
+  local instance_ids
+  local instance_json
+  local worker_instance_id
+  local worker_state
+  local expected_epoch
+  local expected_claim_version
+  local request_file
+  local response_file
 
-  service_json="$(
-    aws ecs describe-services \
+  instance_ids="$(
+    aws autoscaling describe-auto-scaling-groups \
       --region "${AWS_REGION}" \
-      --cluster "${cluster}" \
-      --services dispatcher \
-      --output json 2>/dev/null || true
+      --auto-scaling-group-names "${asg_name}" \
+      --query 'AutoScalingGroups[0].Instances[].InstanceId' \
+      --output text 2>/dev/null || true
   )"
-  printf '%s\n' "${service_json}" | jq -e '
-    (.failures | length) == 0 and
-    (.services | length) == 1 and
-    .services[0].status == "ACTIVE" and
-    .services[0].desiredCount > 0 and
-    .services[0].runningCount > 0
-  ' >/dev/null || die "active workers require a running application fleet controller to drain before destroy"
+  for instance_id in ${instance_ids}; do
+    instance_json="$(
+      curl --fail-with-body --silent --show-error \
+        --header "@${operator_header_file}" \
+        --header 'Accept: application/json' \
+        "${control_url%/}/api/operator/worker-instances?worker_group_id=$(jq -rn --arg value "${worker_group_id}" '$value|@uri')&limit=500"
+    )" || die "failed to resolve logical Worker for ${instance_id}"
+    instance_json="$(
+      jq -cer --arg instance_id "${instance_id}" '
+        [.worker_instances[] |
+          select(.resource_id == $instance_id and (.state == "active" or .state == "draining" or .state == "termination_ready"))]
+        | select(length == 1)
+        | .[0]
+      ' <<<"${instance_json}"
+    )" || die "expected one live logical Worker for ${instance_id}"
+    worker_instance_id="$(jq -er '.id' <<<"${instance_json}")"
+    worker_state="$(jq -er '.state' <<<"${instance_json}")"
+    if [ "${worker_state}" = "active" ]; then
+      expected_epoch="$(jq -er '.current_epoch | select(. > 0)' <<<"${instance_json}")"
+      expected_claim_version="$(jq -er '.claim_version | select(. > 0)' <<<"${instance_json}")"
+      request_file="$(sensitive_mktemp operator-drain-request.json)"
+      response_file="$(sensitive_mktemp operator-drain-response.json)"
+      jq -n \
+        --argjson expected_epoch "${expected_epoch}" \
+        --argjson expected_claim_version "${expected_claim_version}" \
+        '{expected_epoch:$expected_epoch,expected_claim_version:$expected_claim_version}' >"${request_file}"
+      curl --fail-with-body --silent --show-error \
+        --request POST \
+        --header "@${operator_header_file}" \
+        --header 'Accept: application/json' \
+        --header 'Content-Type: application/json' \
+        --data-binary "@${request_file}" \
+        --output "${response_file}" \
+        "${control_url%/}/api/operator/worker-instances/${worker_instance_id}/drain" \
+        || die "failed to request exact Worker drain for ${instance_id}"
+      rm -f "${request_file}" "${response_file}"
+    fi
+    deadline=$((SECONDS + drain_timeout))
+    while [ "${SECONDS}" -lt "${deadline}" ]; do
+      instance_json="$(
+        curl --fail-with-body --silent --show-error \
+          --header "@${operator_header_file}" \
+          --header 'Accept: application/json' \
+          "${control_url%/}/api/operator/worker-instances/${worker_instance_id}"
+      )" || die "failed to read exact Worker lifecycle for ${instance_id}"
+      worker_state="$(jq -er '.state' <<<"${instance_json}")"
+      [ "${worker_state}" = "termination_ready" ] && break
+      [ "${worker_state}" = "draining" ] || die "Worker ${instance_id} entered unexpected lifecycle ${worker_state}"
+      sleep "${DEV_DESTROY_WORKER_DRAIN_POLL_SECONDS:-15}"
+    done
+    [ "${worker_state}" = "termination_ready" ] || die "Worker ${instance_id} did not reach termination_ready"
+    aws autoscaling terminate-instance-in-auto-scaling-group \
+      --region "${AWS_REGION}" \
+      --instance-id "${instance_id}" \
+      --should-decrement-desired-capacity >/dev/null \
+      || die "failed to terminate exact drained Worker ${instance_id}"
+  done
 }
 
 wait_for_worker_asgs_empty() {
@@ -1725,19 +1762,20 @@ wait_for_worker_asgs_empty() {
       fi
     done
     if [ "${#remaining[@]}" -eq 0 ]; then
-      info "worker fleets reached zero through the application drain path"
+      info "Worker capacity reached zero through the exact deployment drain path"
       return 0
     fi
     if [ "${SECONDS}" -ge "${deadline}" ]; then
-      die "worker fleets did not drain to zero before destroy: ${remaining[*]}"
+      die "Worker capacity did not drain to zero before destroy: ${remaining[*]}"
     fi
-    info "waiting for the application fleet controller to drain workers: ${remaining[*]}"
+    info "waiting for deployment-owned Worker termination: ${remaining[*]}"
     sleep "${poll}"
   done
 }
 
 dev_destroy_prepare() {
   need_command aws
+  need_command curl
   need_command jq
   mkdir -p "${STATE_DIR}"
   name="$(printf '%s' "${DEV_NAME:-helmr-smoke}" | tr '[:upper:]' '[:lower:]')"
@@ -1745,88 +1783,43 @@ dev_destroy_prepare() {
   account_id="$(aws sts get-caller-identity --region "${AWS_REGION}" --query Account --output text)"
   cas_bucket="${name}-${account_id}-${AWS_REGION}-cas"
 
+  control_url="$("${TF_BIN}" -chdir="${DEV_STACK}" output -raw control_url)"
+  operator_token_arn="$(dev_secret_arn operator_token)"
+  operator_token="$(
+    aws secretsmanager get-secret-value \
+      --region "${AWS_REGION}" \
+      --secret-id "${operator_token_arn}" \
+      --query SecretString \
+      --output text
+  )"
+  operator_header_file="$(sensitive_mktemp operator-header.txt)"
+  printf 'Authorization: Bearer %s\n' "${operator_token}" >"${operator_header_file}"
+  unset operator_token
+
   worker_asgs=()
-  for output in worker_autoscaling_group_name build_worker_autoscaling_group_name; do
-    asg_name="$("${TF_BIN}" -chdir="${DEV_STACK}" output -raw "${output}" 2>/dev/null || true)"
+  worker_group_ids=()
+  for pair in \
+    "worker_autoscaling_group_name:worker_group_id" \
+    "build_worker_autoscaling_group_name:build_worker_group_id"; do
+    asg_output=${pair%%:*}
+    group_output=${pair#*:}
+    asg_name="$("${TF_BIN}" -chdir="${DEV_STACK}" output -raw "${asg_output}" 2>/dev/null || true)"
     [ -n "${asg_name}" ] && [ "${asg_name}" != "null" ] || continue
     worker_asgs+=("${asg_name}")
-  done
-  for asg_name in "${name}-run-worker" "${name}-build-worker"; do
-    if ! printf '%s\n' "${worker_asgs[@]}" | grep -Fxq "${asg_name}"; then
-      worker_asgs+=("${asg_name}")
-    fi
+    worker_group_ids+=("$("${TF_BIN}" -chdir="${DEV_STACK}" output -raw "${group_output}")")
   done
 
-  active_workers=0
-  for asg_name in "${worker_asgs[@]}"; do
+  for index in "${!worker_asgs[@]}"; do
+    asg_name=${worker_asgs[$index]}
     if ! asg_count="$(worker_asg_instance_count "${asg_name}")"; then
       die "failed to inspect worker Auto Scaling group ${asg_name} before destroy"
     fi
     if [ "${asg_count}" -gt 0 ]; then
-      active_workers=1
+      drain_worker_asg "${asg_name}" "${worker_group_ids[$index]}" "${control_url}" "${operator_header_file}"
     fi
   done
-  if [ "${active_workers}" = "1" ]; then
-    require_fleet_controller_for_active_workers "${name}-control"
-  fi
   wait_for_worker_asgs_empty "${worker_asgs[@]}"
-
-  dispatcher_stopped=0
-  dispatcher_error="$(sensitive_mktemp dispatcher-stop.err)"
-  trap 'rm -f "${dispatcher_error}"' RETURN
-  if aws ecs update-service \
-    --region "${AWS_REGION}" \
-    --cluster "${name}-control" \
-    --service dispatcher \
-    --desired-count 0 >/dev/null 2>"${dispatcher_error}"; then
-    aws ecs wait services-stable \
-      --region "${AWS_REGION}" \
-      --cluster "${name}-control" \
-      --services dispatcher
-    dispatcher_stopped=1
-    info "stopped the application fleet controller after worker drain proof"
-  elif grep -Eq 'ClusterNotFoundException|ServiceNotFoundException' "${dispatcher_error}"; then
-    info "application fleet controller is already absent"
-  else
-    cat "${dispatcher_error}" >&2
-    die "failed to stop the application fleet controller after worker drain proof"
-  fi
-
-  post_stop_active=0
-  post_stop_unproven=0
-  for asg_name in "${worker_asgs[@]}"; do
-    if ! asg_count="$(worker_asg_instance_count "${asg_name}")"; then
-      post_stop_unproven=1
-      continue
-    fi
-    if [ "${asg_count}" -gt 0 ]; then
-      post_stop_active=1
-    fi
-  done
-  if [ "${post_stop_active}" = "1" ] || [ "${post_stop_unproven}" = "1" ]; then
-    if [ "${dispatcher_stopped}" = "1" ]; then
-      aws ecs update-service \
-        --region "${AWS_REGION}" \
-        --cluster "${name}-control" \
-        --service dispatcher \
-        --desired-count 1 >/dev/null
-      aws ecs wait services-stable \
-        --region "${AWS_REGION}" \
-        --cluster "${name}-control" \
-        --services dispatcher
-      if [ "${post_stop_unproven}" = "1" ]; then
-        die "worker zero could not be proved after stopping the fleet controller; dispatcher was restored so the normal drain path can finish"
-      fi
-      die "worker capacity reappeared while stopping the fleet controller; dispatcher was restored so the normal drain path can finish"
-    fi
-    if [ "${post_stop_unproven}" = "1" ]; then
-      die "worker zero could not be proved after the fleet controller was absent"
-    fi
-    die "worker capacity reappeared after the fleet controller was absent"
-  fi
-  info "worker fleets remained at zero after the application fleet controller stopped"
-  rm -f "${dispatcher_error}"
-  trap - RETURN
+  rm -f "${operator_header_file}"
 
   deletion_protection="$(
     aws rds describe-db-instances \

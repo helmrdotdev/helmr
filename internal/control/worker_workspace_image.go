@@ -172,7 +172,7 @@ func (s *Server) admitWorkspaceImage(
 		}
 		if !authority.RuntimeIdentityID.Valid ||
 			authority.RuntimeIdentityID.String != normalized.request.RuntimeIdentityID {
-			return conflict(errors.New("Workspace image runtime identity does not match the current Worker certification"))
+			return conflict(errors.New("Workspace image runtime identity does not match the current Worker authority"))
 		}
 		cacheMode := imagebuild.CacheMode(authority.Deployment.ImageCacheMode)
 		if cacheMode != imagebuild.CachePrefer && cacheMode != imagebuild.CacheBypass {

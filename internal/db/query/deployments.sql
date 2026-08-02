@@ -452,7 +452,6 @@ WITH candidate AS (
        AND deployment_build_leases.worker_epoch = sqlc.arg(worker_epoch)
        AND deployment_build_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
        AND worker_instances.protocol_version = deployment_build_leases.worker_protocol_version
-       AND worker_instances.certified_at IS NOT NULL
        AND worker_instances.per_vm_cpu_millis >= deployment_build_leases.requested_cpu_millis
        AND worker_instances.per_vm_memory_bytes >= deployment_build_leases.requested_memory_bytes
        AND worker_instances.per_vm_guest_ephemeral_disk_bytes >=
@@ -774,7 +773,7 @@ SELECT deployment_build_leases.state,
    AND deployment_build_leases.worker_epoch = sqlc.arg(worker_epoch)
    AND deployment_build_leases.worker_protocol_version = sqlc.arg(worker_protocol_version);
 
--- name: LockDeploymentBuildWorkerCertification :one
+-- name: LockDeploymentBuildWorkerAuthority :one
 WITH locked_group AS MATERIALIZED (
     SELECT worker_groups.id
       FROM worker_groups
@@ -796,7 +795,6 @@ SELECT worker_instances.*,
    AND worker_instances.current_epoch = sqlc.arg(worker_epoch)::bigint
    AND worker_instances.protocol_version = sqlc.arg(worker_protocol_version)
    AND worker_instances.state IN ('active', 'draining')
-   AND worker_instances.certified_at IS NOT NULL
    AND worker_instances.supports_build
  FOR UPDATE OF worker_instances;
 

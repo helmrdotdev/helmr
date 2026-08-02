@@ -84,52 +84,6 @@ variable "image_cache_worker_role_arns" {
   default     = []
 }
 
-variable "worker_fleets" {
-  description = "Run/build fleet policy passed to helmr-dispatcher. An empty list disables fleet control."
-  type = list(object({
-    group_id           = string
-    autoscaling_group  = string
-    role               = string
-    compatibility_keys = list(string)
-    instance_capacity = object({
-      milli_cpu                  = number
-      memory_bytes               = number
-      guest_ephemeral_disk_bytes = number
-      build_cache_bytes          = number
-      artifact_cache_bytes       = number
-      vm_slots                   = number
-      build_executors            = number
-    })
-    min_workers                  = number
-    warm_workers                 = number
-    max_workers                  = number
-    max_scale_out_per_cycle      = number
-    max_pending_workers          = number
-    max_packing_items            = number
-    controller_interval_seconds  = number
-    scale_out_cooldown_seconds   = number
-    scale_in_cooldown_seconds    = number
-    scale_in_hysteresis_seconds  = number
-    stale_worker_timeout_seconds = number
-    readiness_timeout_seconds    = number
-    drain_timeout_seconds        = number
-    emergency_stop               = bool
-    metric_interval_seconds      = number
-  }))
-  default = []
-}
-
-variable "fleet_metrics_namespace" {
-  description = "CloudWatch namespace used only for fleet-controller metric projection and alarms."
-  type        = string
-  default     = "Helmr/WorkerFleet"
-
-  validation {
-    condition     = trimspace(var.fleet_metrics_namespace) != ""
-    error_message = "fleet_metrics_namespace must be non-empty."
-  }
-}
-
 variable "region_id" {
   description = "Helmr region primitive for this control-plane stack. Defaults to the AWS provider region."
   type        = string
@@ -217,7 +171,7 @@ variable "clickhouse_password_kms_key_arns" {
 }
 
 variable "control_image" {
-  description = "Container image URI containing helmr-control and helmr-dispatcher. Managed release flows should pass a digest-pinned image."
+  description = "Container image URI containing helmr-control, helmr-dispatcher, and deployment tooling. Managed release flows should pass a digest-pinned image."
   type        = string
 
   validation {
@@ -396,6 +350,12 @@ variable "control_health_check_path" {
 
 variable "create_control_service" {
   description = "Create the ECS service. Keep false until image, secrets, and migrations are ready."
+  type        = bool
+  default     = false
+}
+
+variable "enable_operator_api" {
+  description = "Create and inject the deployment-operator credential. Capacity automation is otherwise absent."
   type        = bool
   default     = false
 }

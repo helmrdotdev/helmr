@@ -22,7 +22,6 @@ type Control interface {
 	CompleteWorkerDrain(context.Context, api.WorkerDrainCompletionRequest) (api.WorkerStatusResponse, error)
 	ActivateWorker(context.Context, api.WorkerCapabilities) (api.WorkerStatusResponse, error)
 	ObserveWorker(context.Context, api.WorkerObservation) (api.WorkerStatusResponse, error)
-	RenewWorkerCertification(context.Context, api.WorkerCapabilities) (api.WorkerStatusResponse, error)
 }
 
 type Work func(context.Context) error
@@ -63,7 +62,6 @@ type Config struct {
 	Admission          map[string]int
 	Background         []BackgroundSpec
 	ObservationEvery   time.Duration
-	CertificationTTL   time.Duration
 	PollEvery          time.Duration
 	DrainTimeout       time.Duration
 	Observation        func(State, Snapshot, RecoveryEvidence) api.WorkerObservation
@@ -128,13 +126,11 @@ func (r *Registry) notify() {
 }
 
 type Supervisor struct {
-	cfg                   Config
-	registry              *Registry
-	admission             map[string]chan struct{}
-	state                 atomic.Value
-	certifiedAt           atomic.Value
-	recovery              RecoveryEvidence
-	certifiedCapabilities api.WorkerCapabilities
+	cfg       Config
+	registry  *Registry
+	admission map[string]chan struct{}
+	state     atomic.Value
+	recovery  RecoveryEvidence
 }
 
 func New(cfg Config) (*Supervisor, error) {
@@ -146,9 +142,6 @@ func New(cfg Config) (*Supervisor, error) {
 	}
 	if cfg.PollEvery <= 0 {
 		cfg.PollEvery = 2 * time.Second
-	}
-	if cfg.CertificationTTL <= 0 {
-		cfg.CertificationTTL = 24 * time.Hour
 	}
 	if cfg.DrainTimeout <= 0 {
 		cfg.DrainTimeout = 30 * time.Minute
@@ -220,7 +213,6 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		}
 	}
 	capabilities.Observation = s.observation(StateStarting, evidence)
-	s.certifiedCapabilities = capabilities
 	status, err := s.cfg.Control.ActivateWorker(ctx, capabilities)
 	if err != nil {
 		return fmt.Errorf("activate worker: %w", err)
@@ -228,7 +220,6 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	if status.Status != api.WorkerStatusActive && status.Status != api.WorkerStatusDraining {
 		return fmt.Errorf("activated worker returned status %s", status.Status)
 	}
-	s.certifiedAt.Store(time.Now().UTC())
 	s.recovery = evidence
 	if status.Status == api.WorkerStatusActive {
 		s.state.Store(StateActive)
@@ -465,8 +456,8 @@ func (s *Supervisor) completeServerDirectedDrain(
 	if err != nil {
 		return fail(fmt.Errorf("complete worker drain with clean local inventory: %w", err))
 	}
-	if status.Status != api.WorkerStatusDisabled {
-		return fail(fmt.Errorf("complete worker drain returned status %s, want disabled", status.Status))
+	if status.Status != api.WorkerStatusTerminationReady {
+		return fail(fmt.Errorf("complete worker drain returned status %s, want termination_ready", status.Status))
 	}
 	if s.cfg.DrainCompleted != nil {
 		if err := s.cfg.DrainCompleted(status); err != nil {
@@ -563,10 +554,9 @@ func (s *Supervisor) consume(
 		// Host admission (for example, low disk or unavailable KVM) must not
 		// deadlock that cleanup once the server has durably closed placement.
 		if s.cfg.AdmissionEvaluator != nil && !(spec.DrainEligible && state == StateDraining) {
-			certifiedAt, _ := s.certifiedAt.Load().(time.Time)
 			decision := s.cfg.AdmissionEvaluator.Evaluate(claimCtx, AdmissionCheck{
 				Consumer: spec.Name, State: s.state.Load().(State), Snapshot: s.registry.snapshot(),
-				Recovery: evidence, CertifiedAt: certifiedAt, CertificationTTL: s.cfg.CertificationTTL,
+				Recovery: evidence,
 			})
 			if !decision.Allowed {
 				releaseAdmission()
@@ -631,11 +621,7 @@ func (s *Supervisor) acquireAdmission(ctx context.Context, name string) (func(),
 }
 
 func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, statusReturned func(api.WorkerStatusResponse)) {
-	interval := min(s.cfg.ObservationEvery, s.cfg.CertificationTTL/2)
-	if interval <= 0 {
-		interval = s.cfg.CertificationTTL
-	}
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(s.cfg.ObservationEvery)
 	defer ticker.Stop()
 	for {
 		select {
@@ -644,19 +630,6 @@ func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, sta
 		case <-ticker.C:
 		}
 		state := s.state.Load().(State)
-		certifiedAt, _ := s.certifiedAt.Load().(time.Time)
-		if state == StateActive && time.Now().After(certifiedAt.Add(s.cfg.CertificationTTL/2)) {
-			capabilities := s.certifiedCapabilities
-			capabilities.Observation = s.observation(state, evidence)
-			if status, err := s.cfg.Control.RenewWorkerCertification(ctx, capabilities); err != nil {
-				s.cfg.Log.Warn("worker certification renewal failed", "error", err)
-			} else {
-				statusReturned(status)
-				if status.Status == api.WorkerStatusActive {
-					s.certifiedAt.Store(time.Now().UTC())
-				}
-			}
-		}
 		if status, err := s.cfg.Control.ObserveWorker(ctx, s.observation(state, evidence)); err != nil && ctx.Err() == nil {
 			s.cfg.Log.Warn("worker observation failed", "error", err)
 		} else if err == nil {
@@ -669,10 +642,8 @@ func (s *Supervisor) AdmitRuntimeStart(ctx context.Context) error {
 	if s.cfg.AdmissionEvaluator == nil {
 		return nil
 	}
-	certifiedAt, _ := s.certifiedAt.Load().(time.Time)
 	decision := s.cfg.AdmissionEvaluator.Evaluate(ctx, AdmissionCheck{
 		Consumer: "runtime", State: s.state.Load().(State), Snapshot: s.registry.snapshot(), Recovery: s.recovery,
-		CertifiedAt: certifiedAt, CertificationTTL: s.cfg.CertificationTTL,
 	})
 	if !decision.Allowed {
 		return fmt.Errorf("runtime start admission paused: %s", decision.Reason)

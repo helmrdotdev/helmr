@@ -45,7 +45,7 @@ func proveBuildStorage(config BuildStorageConfig, probe storageProbe) (BuildStor
 		return BuildStorageProof{}, errors.New("storage probe is required")
 	}
 	if config.RequiredCacheBytes == 0 || config.RequiredScratchBytes == 0 {
-		return BuildStorageProof{}, errors.New("certified build storage sizes must be positive")
+		return BuildStorageProof{}, errors.New("configured build storage sizes must be positive")
 	}
 	if config.RequiredScratchAvailableBytes == 0 || config.RequiredScratchAvailableBytes > config.RequiredScratchBytes {
 		return BuildStorageProof{}, errors.New("required build scratch availability must be positive and no greater than its capacity")

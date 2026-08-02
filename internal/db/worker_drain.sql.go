@@ -13,91 +13,111 @@ import (
 
 const completeWorkerDrain = `-- name: CompleteWorkerDrain :one
 WITH target AS MATERIALIZED (
-    SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_guest_ephemeral_disk_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
+    SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.epoch_build_cache_bytes, worker_instances.epoch_artifact_cache_bytes, worker_instances.epoch_hugepages_bytes, worker_instances.epoch_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
       FROM worker_instances
       JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
      WHERE worker_instances.id = $1
        AND worker_instances.worker_group_id = $2
        AND worker_instances.current_epoch = $3
-       AND worker_instances.state IN ('draining', 'disabled')
-       AND worker_groups.state IN ('active', 'draining')
+       AND worker_instances.state IN ('draining', 'termination_ready')
+       AND worker_instances.claim_version IN (
+           $4::bigint,
+           $4::bigint + 1
+       )
+       AND worker_groups.state IN ('active', 'paused', 'draining')
      FOR UPDATE OF worker_instances
-), completed AS (
-    UPDATE worker_instances
-       SET state = 'disabled',
-           disabled_at = COALESCE(worker_instances.disabled_at, now()),
-           drain_cleanup_fingerprint = $4,
-           drain_cleanup_evidence = $5,
-           updated_at = now()
-      FROM target
-     WHERE worker_instances.id = target.id
-       AND target.state = 'draining'
-       AND target.epoch_started_at IS NOT NULL
-       AND target.startup_inventory_epoch = target.current_epoch
-       AND target.startup_inventory_evidence IS NOT NULL
-       AND $6::timestamptz >= target.epoch_started_at
-       AND $6::timestamptz <= now() + interval '1 minute'
+), eligible AS (
+    SELECT drain_target.id
+      FROM target AS drain_target
+     WHERE drain_target.state = 'draining'
+       AND drain_target.epoch_started_at IS NOT NULL
+       AND $5::timestamptz >= drain_target.epoch_started_at
+       AND $5::timestamptz <= now() + interval '1 minute'
+       AND EXISTS (
+           SELECT 1 FROM worker_instance_credentials
+            WHERE worker_instance_credentials.worker_instance_id = drain_target.id
+              AND worker_instance_credentials.claim_version = drain_target.claim_version
+              AND worker_instance_credentials.revoked_at IS NULL
+       )
        AND NOT EXISTS (
            SELECT 1 FROM run_leases
-            WHERE run_leases.worker_instance_id = target.id
+            WHERE run_leases.worker_instance_id = drain_target.id
               AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
        )
        AND NOT EXISTS (
            SELECT 1 FROM deployment_build_leases
-            WHERE deployment_build_leases.worker_instance_id = target.id
+            WHERE deployment_build_leases.worker_instance_id = drain_target.id
               AND deployment_build_leases.state IN ('assigned', 'starting', 'running')
        )
        AND NOT EXISTS (
            SELECT 1 FROM runtime_instances
-            WHERE runtime_instances.worker_instance_id = target.id
+            WHERE runtime_instances.worker_instance_id = drain_target.id
               AND runtime_instances.reclaimed_at IS NULL
        )
        AND NOT EXISTS (
            SELECT 1 FROM workspace_mounts
-            WHERE workspace_mounts.worker_instance_id = target.id
+            WHERE workspace_mounts.worker_instance_id = drain_target.id
               AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
        )
        AND NOT EXISTS (
            SELECT 1 FROM workspace_leases
-            WHERE workspace_leases.worker_instance_id = target.id
+            WHERE workspace_leases.worker_instance_id = drain_target.id
               AND workspace_leases.state IN ('active', 'releasing')
        )
        AND NOT EXISTS (
            SELECT 1 FROM workspace_processes
-            WHERE workspace_processes.worker_instance_id = target.id
+            WHERE workspace_processes.worker_instance_id = drain_target.id
               AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
        )
-    RETURNING worker_instances.id, worker_instances.worker_group_id, worker_instances.state,
-              worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence
+), completed AS (
+    UPDATE worker_instances
+       SET state = 'termination_ready',
+           claim_version = worker_instances.claim_version + 1,
+           termination_ready_at = now(),
+           updated_at = now()
+      FROM eligible
+     WHERE worker_instances.id = eligible.id
+    RETURNING worker_instances.id, worker_instances.worker_group_id,
+              worker_instances.current_epoch, worker_instances.state,
+              worker_instances.claim_version, worker_instances.termination_ready_at
+), revoked AS (
+    UPDATE worker_instance_credentials
+       SET revoked_at = now()
+      FROM completed
+     WHERE worker_instance_credentials.worker_instance_id = completed.id
+       AND worker_instance_credentials.revoked_at IS NULL
+    RETURNING worker_instance_credentials.id
 ), result AS (
-    SELECT completed.id, completed.worker_group_id, completed.state, completed.drain_cleanup_fingerprint, completed.drain_cleanup_evidence FROM completed
+    SELECT completed.id, completed.worker_group_id, completed.current_epoch, completed.state, completed.claim_version, completed.termination_ready_at
+      FROM completed
+     WHERE (SELECT count(*) FROM revoked) = 1
     UNION ALL
-    SELECT target.id, target.worker_group_id, target.state,
-           target.drain_cleanup_fingerprint, target.drain_cleanup_evidence
+    SELECT target.id, target.worker_group_id, target.current_epoch, target.state,
+           target.claim_version, target.termination_ready_at
       FROM target
-     WHERE target.state = 'disabled'
-       AND target.drain_cleanup_fingerprint = $4
-       AND target.drain_cleanup_evidence = $5
+     WHERE target.state = 'termination_ready'
+       AND target.claim_version = $4 + 1
+       AND target.termination_ready_at IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM completed)
 )
-SELECT id, worker_group_id, state, drain_cleanup_fingerprint, drain_cleanup_evidence FROM result
+SELECT id, worker_group_id, current_epoch, state, claim_version, termination_ready_at FROM result
 `
 
 type CompleteWorkerDrainParams struct {
-	WorkerInstanceID   pgtype.UUID        `json:"worker_instance_id"`
-	WorkerGroupID      string             `json:"worker_group_id"`
-	WorkerEpoch        pgtype.Int8        `json:"worker_epoch"`
-	CleanupFingerprint pgtype.Text        `json:"cleanup_fingerprint"`
-	CleanupEvidence    []byte             `json:"cleanup_evidence"`
-	ObservedAt         pgtype.Timestamptz `json:"observed_at"`
+	WorkerInstanceID     pgtype.UUID        `json:"worker_instance_id"`
+	WorkerGroupID        string             `json:"worker_group_id"`
+	WorkerEpoch          pgtype.Int8        `json:"worker_epoch"`
+	ExpectedClaimVersion int64              `json:"expected_claim_version"`
+	ObservedAt           pgtype.Timestamptz `json:"observed_at"`
 }
 
 type CompleteWorkerDrainRow struct {
-	ID                      pgtype.UUID `json:"id"`
-	WorkerGroupID           string      `json:"worker_group_id"`
-	State                   string      `json:"state"`
-	DrainCleanupFingerprint pgtype.Text `json:"drain_cleanup_fingerprint"`
-	DrainCleanupEvidence    []byte      `json:"drain_cleanup_evidence"`
+	ID                 pgtype.UUID        `json:"id"`
+	WorkerGroupID      string             `json:"worker_group_id"`
+	CurrentEpoch       pgtype.Int8        `json:"current_epoch"`
+	State              string             `json:"state"`
+	ClaimVersion       int64              `json:"claim_version"`
+	TerminationReadyAt pgtype.Timestamptz `json:"termination_ready_at"`
 }
 
 func (q *Queries) CompleteWorkerDrain(ctx context.Context, arg CompleteWorkerDrainParams) (CompleteWorkerDrainRow, error) {
@@ -105,30 +125,31 @@ func (q *Queries) CompleteWorkerDrain(ctx context.Context, arg CompleteWorkerDra
 		arg.WorkerInstanceID,
 		arg.WorkerGroupID,
 		arg.WorkerEpoch,
-		arg.CleanupFingerprint,
-		arg.CleanupEvidence,
+		arg.ExpectedClaimVersion,
 		arg.ObservedAt,
 	)
 	var i CompleteWorkerDrainRow
 	err := row.Scan(
 		&i.ID,
 		&i.WorkerGroupID,
+		&i.CurrentEpoch,
 		&i.State,
-		&i.DrainCleanupFingerprint,
-		&i.DrainCleanupEvidence,
+		&i.ClaimVersion,
+		&i.TerminationReadyAt,
 	)
 	return i, err
 }
 
 const lockWorkerDrainCompletion = `-- name: LockWorkerDrainCompletion :one
-SELECT worker_instances.id
+SELECT worker_instances.id, worker_instances.state, worker_instances.claim_version,
+       worker_instances.current_epoch, worker_instances.termination_ready_at
   FROM worker_instances
   JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
  WHERE worker_instances.id = $1
    AND worker_instances.worker_group_id = $2
    AND worker_instances.current_epoch = $3
-   AND worker_instances.state IN ('draining', 'disabled')
-   AND worker_groups.state IN ('active', 'draining')
+   AND worker_instances.state IN ('draining', 'termination_ready')
+   AND worker_groups.state IN ('active', 'paused', 'draining')
  FOR UPDATE OF worker_instances
 `
 
@@ -138,9 +159,23 @@ type LockWorkerDrainCompletionParams struct {
 	WorkerEpoch      pgtype.Int8 `json:"worker_epoch"`
 }
 
-func (q *Queries) LockWorkerDrainCompletion(ctx context.Context, arg LockWorkerDrainCompletionParams) (pgtype.UUID, error) {
+type LockWorkerDrainCompletionRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	State              string             `json:"state"`
+	ClaimVersion       int64              `json:"claim_version"`
+	CurrentEpoch       pgtype.Int8        `json:"current_epoch"`
+	TerminationReadyAt pgtype.Timestamptz `json:"termination_ready_at"`
+}
+
+func (q *Queries) LockWorkerDrainCompletion(ctx context.Context, arg LockWorkerDrainCompletionParams) (LockWorkerDrainCompletionRow, error) {
 	row := q.db.QueryRow(ctx, lockWorkerDrainCompletion, arg.WorkerInstanceID, arg.WorkerGroupID, arg.WorkerEpoch)
-	var id pgtype.UUID
-	err := row.Scan(&id)
-	return id, err
+	var i LockWorkerDrainCompletionRow
+	err := row.Scan(
+		&i.ID,
+		&i.State,
+		&i.ClaimVersion,
+		&i.CurrentEpoch,
+		&i.TerminationReadyAt,
+	)
+	return i, err
 }

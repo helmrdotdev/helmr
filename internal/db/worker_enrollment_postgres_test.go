@@ -26,13 +26,12 @@ func activateWorkspaceWorker(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		   SET state = 'active', supervisor_version = 'test-worker',
 		       supports_run = true, runtime_identity_id = 'test-runtime',
 		       substrate_format = $2, substrate_builder_abi = $3, substrate_layout_abi = $4,
-		       certified_cpu_millis = 4000, certified_memory_bytes = 8589934592,
-		       certified_guest_ephemeral_disk_bytes = 10737418240,
+		       epoch_cpu_millis = 4000, epoch_memory_bytes = 8589934592,
+		       epoch_guest_ephemeral_disk_bytes = 10737418240,
 		       per_vm_cpu_millis = 2000, per_vm_memory_bytes = 2147483648,
 		       per_vm_guest_ephemeral_disk_bytes = 4294967296,
 		       max_vm_slots = 2, max_run_consumers = 2, max_runtime_starts = 2,
-		       certification_profile = 'test', certification_fingerprint = 'test-fingerprint',
-		       certified_at = now(), activated_at = now()
+		       activated_at = now()
 		 WHERE id = $1
 	`, workerID, runtime.Format, runtime.BuilderABI, runtime.LayoutABI)
 }
@@ -173,12 +172,12 @@ func TestConcurrentRegisteringEnrollmentSerializesCredentialReplacement(t *testi
 	}
 }
 
-func TestDisabledEnrollmentRecommissionsIdentityWithFreshEpochFence(t *testing.T) {
+func TestTerminalEnrollmentCreatesFreshControlIdentity(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
 	workerID := uuid.Must(uuid.NewV7())
-	resourceID := "operator-host-disabled"
+	resourceID := "operator-host-reused"
 	first := enrollTestWorker(t, ctx, q, workerID, resourceID, true, false, []byte("first-secret"))
 	serviceID := pgvalue.NewUUIDv7()
 	firstAuth, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
@@ -188,10 +187,11 @@ func TestDisabledEnrollmentRecommissionsIdentityWithFreshEpochFence(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustExec(t, ctx, pool, `UPDATE worker_instances SET state = 'disabled', disabled_at = now() WHERE id = $1`, workerID)
-	second := enrollTestWorker(t, ctx, q, uuid.Must(uuid.NewV7()), resourceID, true, false, []byte("second-secret"))
-	if second.WorkerInstanceID != pgvalue.UUID(workerID) || second.ClaimVersion != first.ClaimVersion+1 {
-		t.Fatalf("disabled recommission changed identity or missed claim fence: first=%#v second=%#v", first, second)
+	mustExec(t, ctx, pool, `UPDATE worker_instances SET state = 'lost', lost_at = now() WHERE id = $1`, workerID)
+	secondWorkerID := uuid.Must(uuid.NewV7())
+	second := enrollTestWorker(t, ctx, q, secondWorkerID, resourceID, true, false, []byte("second-secret"))
+	if second.WorkerInstanceID != pgvalue.UUID(secondWorkerID) || second.ClaimVersion != 1 {
+		t.Fatalf("terminal locator reuse did not create a fresh identity: first=%#v second=%#v", first, second)
 	}
 	secondAuth, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 		SupportsRun: true, WorkerInstanceID: second.WorkerInstanceID, SecretHash: []byte("second-secret"),
@@ -200,12 +200,12 @@ func TestDisabledEnrollmentRecommissionsIdentityWithFreshEpochFence(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !firstAuth.CurrentEpoch.Valid || !secondAuth.CurrentEpoch.Valid || secondAuth.CurrentEpoch.Int64 != firstAuth.CurrentEpoch.Int64+1 {
+	if !firstAuth.CurrentEpoch.Valid || !secondAuth.CurrentEpoch.Valid || secondAuth.CurrentEpoch.Int64 != 1 {
 		t.Fatalf("epochs first=%v second=%v", firstAuth.CurrentEpoch, secondAuth.CurrentEpoch)
 	}
 }
 
-func TestEnrollmentRetryRejectsNonRecommissionableIdentityStates(t *testing.T) {
+func TestEnrollmentRetryRejectsLiveIdentityStates(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
@@ -214,7 +214,7 @@ func TestEnrollmentRetryRejectsNonRecommissionableIdentityStates(t *testing.T) {
 			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, network_abi
 		) VALUES ('test-runtime', 'x86_64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0')
 	`)
-	for _, state := range []string{"active", "draining", "lost", "termination claimed"} {
+	for _, state := range []string{"active", "draining"} {
 		t.Run(state, func(t *testing.T) {
 			workerID := uuid.Must(uuid.NewV7())
 			resourceID := "operator-host-reject-" + uuid.NewString()
@@ -227,11 +227,6 @@ func TestEnrollmentRetryRejectsNonRecommissionableIdentityStates(t *testing.T) {
 				if state == "draining" {
 					mustExec(t, ctx, pool, `UPDATE worker_instances SET state = 'draining', draining_at = now() WHERE id = $1`, workerID)
 				}
-			case "lost":
-				authenticateTestWorker(t, ctx, q, credential, initialSecretHash)
-				mustExec(t, ctx, pool, `UPDATE worker_instances SET state = 'lost', lost_at = now() WHERE id = $1`, workerID)
-			case "termination claimed":
-				mustExec(t, ctx, pool, `UPDATE worker_instances SET state = 'disabled', disabled_at = now(), termination_claimed_at = now() WHERE id = $1`, workerID)
 			}
 			nonce := createTestEnrollmentNonce(t, ctx, q, dbtest.DefaultWorkerGroupID)
 			_, err := q.EnrollWorkerInstance(ctx, enrollmentParams(

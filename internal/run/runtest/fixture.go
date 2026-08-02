@@ -142,18 +142,17 @@ func New(t *testing.T) Fixture {
 			current_epoch, current_service_id, protocol_version, supervisor_version,
 			supports_run, runtime_identity_id,
 			substrate_format, substrate_builder_abi, substrate_layout_abi,
-			certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes,
+			epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
 			per_vm_cpu_millis, per_vm_memory_bytes,
 			per_vm_guest_ephemeral_disk_bytes,
 			max_vm_slots, max_run_consumers, max_runtime_starts,
-			certification_profile, certification_fingerprint,
-			epoch_started_at, certified_at, activated_at
+			epoch_started_at, activated_at
 		) VALUES (
 			$1, $2, $3, 'active', 1, $4, $5, 'test',
 			true, $6, 'squashfs', 'builder-v0', 'layout-v0',
 			8000, 8589934592, 17179869184,
 			1000, 1073741824, 2147483648,
-			8, 8, 8, 'test', 'test-cert', now(), now(), now()
+			8, 8, 8, now(), now()
 		)
 	`, fixture.WorkerID, fixture.WorkerID.String(), WorkerGroup,
 		uuid.Must(uuid.NewV7()), WorkerProtocol, fixture.RuntimeIdentityID)

@@ -3,7 +3,6 @@ package workergroup
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -13,8 +12,7 @@ type ReconcileStore interface {
 	LockWorkerGroupsForReconciliation(context.Context, db.LockWorkerGroupsForReconciliationParams) ([]string, error)
 	ReconcileWorkerGroup(context.Context, db.ReconcileWorkerGroupParams) (db.ReconcileWorkerGroupRow, error)
 	LockAbsentWorkerGroups(context.Context, db.LockAbsentWorkerGroupsParams) ([]string, error)
-	DisableAbsentWorkerGroups(context.Context, db.DisableAbsentWorkerGroupsParams) ([]db.DisableAbsentWorkerGroupsRow, error)
-	ListActiveAbsentWorkerGroupIDs(context.Context, db.ListActiveAbsentWorkerGroupIDsParams) ([]string, error)
+	DrainAbsentWorkerGroups(context.Context, db.DrainAbsentWorkerGroupsParams) ([]db.DrainAbsentWorkerGroupsRow, error)
 }
 
 func Reconcile(ctx context.Context, store ReconcileStore, regionID string, desired []Desired) error {
@@ -65,19 +63,10 @@ func Reconcile(ctx context.Context, store ReconcileStore, regionID string, desir
 	}); err != nil {
 		return fmt.Errorf("lock removed worker groups: %w", err)
 	}
-	if _, err := store.DisableAbsentWorkerGroups(ctx, db.DisableAbsentWorkerGroupsParams{
+	if _, err := store.DrainAbsentWorkerGroups(ctx, db.DrainAbsentWorkerGroupsParams{
 		RegionID: regionID, DesiredIds: ids,
 	}); err != nil {
-		return fmt.Errorf("disable removed worker groups: %w", err)
-	}
-	active, err := store.ListActiveAbsentWorkerGroupIDs(ctx, db.ListActiveAbsentWorkerGroupIDsParams{
-		RegionID: regionID, DesiredIds: ids,
-	})
-	if err != nil {
-		return fmt.Errorf("check active removed worker groups: %w", err)
-	}
-	if len(active) > 0 {
-		return fmt.Errorf("active worker groups %s still have live or fenced instances; transition each group to draining before replacing or removing it", strings.Join(active, ", "))
+		return fmt.Errorf("drain removed worker groups: %w", err)
 	}
 	return nil
 }

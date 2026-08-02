@@ -74,17 +74,11 @@ type WorkerRunLeaseDiscoveryResponse struct {
 }
 
 type WorkerActivateRequest struct {
-	Capabilities             WorkerCapabilities `json:"capabilities"`
-	CertificationProfile     string             `json:"certification_profile"`
-	CertificationFingerprint string             `json:"certification_fingerprint"`
+	Capabilities WorkerCapabilities `json:"capabilities"`
 }
 
 type WorkerObserveRequest struct {
 	Observation WorkerObservation `json:"observation"`
-}
-
-type WorkerCertificationRenewRequest struct {
-	Capabilities WorkerCapabilities `json:"capabilities"`
 }
 
 type WorkerStartupRecoveryRequest struct {
@@ -372,9 +366,9 @@ type WorkerDeploymentBuildDeliveryFailureRequest struct {
 type WorkerStatus string
 
 const (
-	WorkerStatusActive   WorkerStatus = "active"
-	WorkerStatusDraining WorkerStatus = "draining"
-	WorkerStatusDisabled WorkerStatus = "disabled"
+	WorkerStatusActive           WorkerStatus = "active"
+	WorkerStatusDraining         WorkerStatus = "draining"
+	WorkerStatusTerminationReady WorkerStatus = "termination_ready"
 )
 
 type WorkerStatusResponse struct {

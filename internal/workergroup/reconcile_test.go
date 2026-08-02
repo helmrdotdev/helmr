@@ -11,7 +11,6 @@ import (
 type recordingReconcileStore struct {
 	calls      []string
 	reconciled []db.ReconcileWorkerGroupParams
-	live       []string
 }
 
 func (s *recordingReconcileStore) LockWorkerGroupsForReconciliation(_ context.Context, arg db.LockWorkerGroupsForReconciliationParams) ([]string, error) {
@@ -30,14 +29,9 @@ func (s *recordingReconcileStore) LockAbsentWorkerGroups(context.Context, db.Loc
 	return nil, nil
 }
 
-func (s *recordingReconcileStore) DisableAbsentWorkerGroups(context.Context, db.DisableAbsentWorkerGroupsParams) ([]db.DisableAbsentWorkerGroupsRow, error) {
-	s.calls = append(s.calls, "disable-absent")
+func (s *recordingReconcileStore) DrainAbsentWorkerGroups(context.Context, db.DrainAbsentWorkerGroupsParams) ([]db.DrainAbsentWorkerGroupsRow, error) {
+	s.calls = append(s.calls, "drain-absent")
 	return nil, nil
-}
-
-func (s *recordingReconcileStore) ListActiveAbsentWorkerGroupIDs(context.Context, db.ListActiveAbsentWorkerGroupIDsParams) ([]string, error) {
-	s.calls = append(s.calls, "check-live")
-	return s.live, nil
 }
 
 func TestReconcileProjectsDesiredGroupAfterLock(t *testing.T) {
@@ -50,7 +44,7 @@ func TestReconcileProjectsDesiredGroupAfterLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := store.calls; len(got) != 5 || got[0] != "lock-present" || got[1] != "reconcile" || got[2] != "lock-absent" || got[3] != "disable-absent" || got[4] != "check-live" {
+	if got := store.calls; len(got) != 4 || got[0] != "lock-present" || got[1] != "reconcile" || got[2] != "lock-absent" || got[3] != "drain-absent" {
 		t.Fatalf("calls = %#v", got)
 	}
 	if len(store.reconciled) != 1 {
@@ -59,13 +53,6 @@ func TestReconcileProjectsDesiredGroupAfterLock(t *testing.T) {
 	group := store.reconciled[0]
 	if group.ID != "run-workers" || group.RegionID != "us-east-1" || group.ProtocolVersion != auth.WorkerProtocolVersion || group.RequiredCpuMillis != 1000 || group.RequiredVmSlots != 1 {
 		t.Fatalf("reconciled group = %#v", group)
-	}
-}
-
-func TestReconcileRejectsRemovingLiveGroup(t *testing.T) {
-	store := &recordingReconcileStore{live: []string{"old-workers"}}
-	if err := Reconcile(context.Background(), store, "us-east-1", nil); err == nil {
-		t.Fatal("Reconcile() removed a live worker group")
 	}
 }
 

@@ -2166,7 +2166,7 @@ func (q *Queries) LockRunLeaseClaimWait(ctx context.Context, arg LockRunLeaseCla
 }
 
 const lockRunLeaseClaimWorker = `-- name: LockRunLeaseClaimWorker :one
-SELECT id, resource_id, worker_group_id, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
+SELECT id, resource_id, worker_group_id, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, epoch_build_cache_bytes, epoch_artifact_cache_bytes, epoch_hugepages_bytes, epoch_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
   FROM worker_instances
  WHERE id = $1
    AND worker_group_id = $2
@@ -2197,13 +2197,13 @@ func (q *Queries) LockRunLeaseClaimWorker(ctx context.Context, arg LockRunLeaseC
 		&i.SubstrateFormat,
 		&i.SubstrateBuilderAbi,
 		&i.SubstrateLayoutAbi,
-		&i.CertifiedCpuMillis,
-		&i.CertifiedMemoryBytes,
-		&i.CertifiedGuestEphemeralDiskBytes,
-		&i.CertifiedBuildCacheBytes,
-		&i.CertifiedArtifactCacheBytes,
-		&i.CertifiedHugepagesBytes,
-		&i.CertifiedCheckpointBytes,
+		&i.EpochCpuMillis,
+		&i.EpochMemoryBytes,
+		&i.EpochGuestEphemeralDiskBytes,
+		&i.EpochBuildCacheBytes,
+		&i.EpochArtifactCacheBytes,
+		&i.EpochHugepagesBytes,
+		&i.EpochCheckpointBytes,
 		&i.PerVmCpuMillis,
 		&i.PerVmMemoryBytes,
 		&i.PerVmGuestEphemeralDiskBytes,
@@ -2211,20 +2211,11 @@ func (q *Queries) LockRunLeaseClaimWorker(ctx context.Context, arg LockRunLeaseC
 		&i.MaxRunConsumers,
 		&i.MaxBuildExecutors,
 		&i.MaxRuntimeStarts,
-		&i.CertificationProfile,
-		&i.CertificationFingerprint,
 		&i.EpochStartedAt,
-		&i.StartupInventoryEpoch,
-		&i.StartupInventoryEvidence,
-		&i.DrainCleanupFingerprint,
-		&i.DrainCleanupEvidence,
-		&i.CertifiedAt,
 		&i.ActivatedAt,
 		&i.DrainingAt,
-		&i.DisabledAt,
+		&i.TerminationReadyAt,
 		&i.LostAt,
-		&i.TerminationClaimedAt,
-		&i.ProviderTerminatedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -2232,7 +2223,7 @@ func (q *Queries) LockRunLeaseClaimWorker(ctx context.Context, arg LockRunLeaseC
 }
 
 const lockRunLeaseClaimWorkerGroup = `-- name: LockRunLeaseClaimWorkerGroup :one
-SELECT id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, last_scale_out_at, last_scale_in_at, protocol_version, created_at, updated_at
+SELECT id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, protocol_version, created_at, updated_at
   FROM worker_groups
  WHERE id = $1
    AND region_id = $2
@@ -2264,8 +2255,6 @@ func (q *Queries) LockRunLeaseClaimWorkerGroup(ctx context.Context, arg LockRunL
 		&i.RequiredVmSlots,
 		&i.RequiredBuildExecutors,
 		&i.ObservationTtlSeconds,
-		&i.LastScaleOutAt,
-		&i.LastScaleInAt,
 		&i.ProtocolVersion,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -3093,7 +3082,7 @@ candidates AS MATERIALIZED (
             OR runtime_instances.lost_at <= transaction_timestamp()
             OR runtime_instances.failed_at <= transaction_timestamp()
             OR worker_instances.lost_at <= transaction_timestamp()
-            OR worker_instances.disabled_at <= transaction_timestamp()
+            OR worker_instances.termination_ready_at <= transaction_timestamp()
             OR worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
             OR workspace_mounts.lost_at <= transaction_timestamp()
             OR workspace_mounts.failed_at <= transaction_timestamp())
@@ -3208,7 +3197,7 @@ candidates AS MATERIALIZED (
     SELECT locked_attempts.org_id, locked_attempts.project_id, locked_attempts.environment_id, locked_attempts.workspace_id, locked_attempts.run_id, locked_attempts.state_version, locked_attempts.current_attempt_number, locked_attempts.actor_start_input_sequence, locked_attempts.actor_start_input_high_watermark, locked_attempts.max_active_duration_ms, locked_attempts.active_elapsed_ms, locked_attempts.active_started_at, locked_attempts.entrypoint_kind, locked_attempts.actor_id, locked_attempts.actor_run_generation, locked_attempts.actor_committed_input_sequence, locked_attempts.actor_next_input_sequence, locked_attempts.run_lease_id, locked_attempts.worker_instance_id, locked_attempts.worker_epoch, locked_attempts.runtime_instance_id, locked_attempts.workspace_lease_id, locked_attempts.workspace_mount_id, locked_attempts.run_wait_id, locked_attempts.restore_checkpoint_id, locked_attempts.condition_state, locked_attempts.same_workspace_resume, locked_attempts.retained_resume, locked_attempts.ownership_generation, locked_attempts.writer_generation,
            LEAST(
                COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
-               COALESCE(worker_instances.disabled_at, 'infinity'::timestamptz),
+               COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),
                CASE
                    WHEN worker_instances.current_epoch IS DISTINCT FROM locked_attempts.worker_epoch
                    THEN COALESCE(worker_instances.epoch_started_at, worker_instances.updated_at)

@@ -43,7 +43,6 @@ func LoadWorker() (Worker, error) {
 		VMHealthAttemptTimeout:       5 * time.Second,
 		WorkspaceMountStartupTimeout: 20 * time.Minute,
 		PreparedRuntimePoolSize:      0,
-		WorkerCertificationTTL:       24 * time.Hour,
 		PollEvery:                    2 * time.Second,
 	}
 	if cfg.WorkerGroupID == "" {
@@ -168,12 +167,6 @@ func LoadWorker() (Worker, error) {
 		return cfg, errors.New("HELMR_WORKER_RUNTIME_STARTS must be zero when run role is disabled")
 	}
 	cfg.WorkerRuntimeStarts = int32(runtimeStarts)
-	if cfg.WorkerCertificationTTL, err = envDuration("HELMR_WORKER_CERTIFICATION_TTL", cfg.WorkerCertificationTTL); err != nil {
-		return cfg, err
-	}
-	if cfg.WorkerCertificationTTL <= 0 {
-		return cfg, errors.New("HELMR_WORKER_CERTIFICATION_TTL must be positive")
-	}
 	if cfg.VMInitTimeout, err = envDuration("HELMR_VM_INIT_TIMEOUT", cfg.VMInitTimeout); err != nil {
 		return cfg, err
 	}

@@ -2118,7 +2118,6 @@ SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.p
            AND worker_groups.protocol_version = worker_instances.protocol_version
            AND worker_instances.state = 'active'
            AND worker_instances.supports_run
-           AND worker_instances.certified_at IS NOT NULL
            AND worker_instances.runtime_identity_id = runtime_instances.runtime_identity_id
            AND runtime_identities.network_abi = 'helmr/v0'
            AND worker_observations.observed_at >= transaction_timestamp()

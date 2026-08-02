@@ -17,7 +17,7 @@ import (
 
 func runWorkerGroupLifecycleCommand(ctx context.Context, output io.Writer, args []string) error {
 	if len(args) == 0 {
-		return errors.New("worker-group command is required: status, stop, or reactivate")
+		return errors.New("worker-group command is required: status, pause, activate, drain, or disable")
 	}
 	command := args[0]
 	flags := flag.NewFlagSet("worker-group "+command, flag.ContinueOnError)
@@ -25,7 +25,7 @@ func runWorkerGroupLifecycleCommand(ctx context.Context, output io.Writer, args 
 	var groupID string
 	var expectedClaimVersion int64
 	flags.StringVar(&groupID, "group-id", "", "logical Worker group ID")
-	if command == "stop" || command == "reactivate" {
+	if command != "status" {
 		flags.Int64Var(&expectedClaimVersion, "expected-claim-version", 0, "observed Worker group claim fence")
 	}
 	if err := flags.Parse(args[1:]); err != nil {
@@ -34,23 +34,33 @@ func runWorkerGroupLifecycleCommand(ctx context.Context, output io.Writer, args 
 	if flags.NArg() != 0 {
 		return errors.New("worker-group command has unexpected positional arguments")
 	}
-	if command != "status" && command != "stop" && command != "reactivate" {
+	if command != "status" && command != "pause" && command != "activate" && command != "drain" && command != "disable" {
 		return fmt.Errorf("unknown worker-group command %q", command)
 	}
-	return withWorkerLifecycleStore(ctx, func(pool *pgxpool.Pool, store workergroup.LifecycleStore) error {
+	return withWorkerStore(ctx, func(pool *pgxpool.Pool, store *db.Queries) error {
 		var result workergroup.GroupLifecycle
 		var err error
 		switch command {
 		case "status":
 			result, err = workergroup.InspectGroupLifecycle(ctx, store, groupID)
-		case "stop":
+		case "pause":
+			err = withWorkerGroupLifecycleLease(ctx, pool, groupID, func() error {
+				result, err = workergroup.TransitionGroupLifecycle(ctx, store, groupID, expectedClaimVersion, string(db.WorkerGroupStatePaused))
+				return err
+			})
+		case "activate":
+			err = withWorkerGroupLifecycleLease(ctx, pool, groupID, func() error {
+				result, err = workergroup.TransitionGroupLifecycle(ctx, store, groupID, expectedClaimVersion, string(db.WorkerGroupStateActive))
+				return err
+			})
+		case "drain":
 			err = withWorkerGroupLifecycleLease(ctx, pool, groupID, func() error {
 				result, err = workergroup.TransitionGroupLifecycle(ctx, store, groupID, expectedClaimVersion, string(db.WorkerGroupStateDraining))
 				return err
 			})
-		case "reactivate":
+		case "disable":
 			err = withWorkerGroupLifecycleLease(ctx, pool, groupID, func() error {
-				result, err = workergroup.TransitionGroupLifecycle(ctx, store, groupID, expectedClaimVersion, string(db.WorkerGroupStateActive))
+				result, err = workergroup.TransitionGroupLifecycle(ctx, store, groupID, expectedClaimVersion, string(db.WorkerGroupStateDisabled))
 				return err
 			})
 		}
@@ -85,7 +95,7 @@ func runWorkerInstanceLifecycleCommand(ctx context.Context, output io.Writer, ar
 	if command != "status" && command != "lose" {
 		return fmt.Errorf("unknown worker-instance command %q", command)
 	}
-	return withWorkerLifecycleStore(ctx, func(pool *pgxpool.Pool, store workergroup.LifecycleStore) error {
+	return withWorkerStore(ctx, func(pool *pgxpool.Pool, store *db.Queries) error {
 		var result workergroup.InstanceLifecycle
 		var err error
 		switch command {
@@ -93,7 +103,7 @@ func runWorkerInstanceLifecycleCommand(ctx context.Context, output io.Writer, ar
 			result, err = workergroup.InspectInstanceLifecycle(ctx, store, groupID, resourceID)
 		case "lose":
 			err = withWorkerGroupLifecycleLease(ctx, pool, groupID, func() error {
-				result, err = workergroup.LoseInstanceForDrift(ctx, store, groupID, resourceID, expectedClaimVersion)
+				result, err = workergroup.MarkInstanceLost(ctx, store, groupID, resourceID, expectedClaimVersion)
 				return err
 			})
 		}
@@ -104,7 +114,7 @@ func runWorkerInstanceLifecycleCommand(ctx context.Context, output io.Writer, ar
 	})
 }
 
-func withWorkerLifecycleStore(ctx context.Context, run func(*pgxpool.Pool, workergroup.LifecycleStore) error) error {
+func withWorkerStore(ctx context.Context, run func(*pgxpool.Pool, *db.Queries) error) error {
 	cfg, err := config.LoadDatabase()
 	if err != nil {
 		return fmt.Errorf("load database config: %w", err)

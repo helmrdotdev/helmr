@@ -33,7 +33,7 @@ const (
 	fixedBuildGuestMemoryBytes int64 = 2 << 30
 )
 
-// PlaceReadyBuild chooses certified build capacity in the deployment's frozen
+// PlaceReadyBuild chooses ready current-epoch build capacity in the deployment's frozen
 // region. The worker never scans or chooses deployment work.
 func (d *Authority) PlaceReadyBuild(ctx context.Context, candidate ReadyBuildCandidate) (db.LeaseQueuedDeploymentBuildRow, error) {
 	envelope := compute.BuildEnvelopeResources()
@@ -76,7 +76,6 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
 	 WHERE worker_groups.region_id = $1 AND worker_groups.state = 'active'
 	   AND worker_groups.allows_build
 	   AND worker_instances.state = 'active' AND worker_instances.supports_build
-	   AND worker_instances.certified_at IS NOT NULL
    AND worker_instances.protocol_version = worker_groups.protocol_version
    AND worker_observations.observed_at >= transaction_timestamp()
        - worker_groups.observation_ttl_seconds * interval '1 second'
@@ -85,29 +84,29 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
 	   AND worker_instances.per_vm_memory_bytes >= $7
 	   AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= $5
 	GROUP BY worker_groups.id, worker_instances.id, worker_instances.current_epoch,
-	         worker_instances.protocol_version, worker_instances.certified_cpu_millis,
-	         worker_instances.certified_memory_bytes,
-	         worker_instances.certified_guest_ephemeral_disk_bytes,
+	         worker_instances.protocol_version, worker_instances.epoch_cpu_millis,
+	         worker_instances.epoch_memory_bytes,
+	         worker_instances.epoch_guest_ephemeral_disk_bytes,
 		         worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes,
 		         worker_instances.per_vm_guest_ephemeral_disk_bytes,
 	         worker_instances.max_build_executors
  HAVING COALESCE(sum(deployment_build_leases.requested_build_executors),0) + $2
           <= worker_instances.max_build_executors
-    AND worker_instances.certified_cpu_millis
+    AND worker_instances.epoch_cpu_millis
           - COALESCE(sum(deployment_build_leases.requested_cpu_millis),0)
           - COALESCE((SELECT sum(reserved_cpu_millis) FROM runtime_instances
                        WHERE worker_instance_id = worker_instances.id
                          AND worker_epoch = worker_instances.current_epoch
                          AND (observed_state IN ('allocated','preparing','ready','closing')
                            OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))),0) >= $3
-    AND worker_instances.certified_memory_bytes
+    AND worker_instances.epoch_memory_bytes
           - COALESCE(sum(deployment_build_leases.requested_memory_bytes),0)
           - COALESCE((SELECT sum(reserved_memory_bytes) FROM runtime_instances
                        WHERE worker_instance_id = worker_instances.id
                          AND worker_epoch = worker_instances.current_epoch
                          AND (observed_state IN ('allocated','preparing','ready','closing')
                            OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))),0) >= $4
-    AND worker_instances.certified_guest_ephemeral_disk_bytes
+    AND worker_instances.epoch_guest_ephemeral_disk_bytes
           - COALESCE(sum(deployment_build_leases.requested_guest_ephemeral_disk_bytes),0)
           - COALESCE((SELECT sum(reserved_guest_ephemeral_disk_bytes) FROM runtime_instances
                        WHERE worker_instance_id = worker_instances.id
@@ -259,21 +258,21 @@ SELECT worker_instances.max_build_executors >=
 	   AND worker_instances.per_vm_cpu_millis >= $7
 	   AND worker_instances.per_vm_memory_bytes >= $8
 	   AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= $6
-   AND worker_instances.certified_cpu_millis >=
+   AND worker_instances.epoch_cpu_millis >=
            COALESCE(sum(deployment_build_leases.requested_cpu_millis), 0)
            + COALESCE((SELECT sum(reserved_cpu_millis) FROM runtime_instances
                         WHERE worker_instance_id = worker_instances.id
                           AND worker_epoch = worker_instances.current_epoch
                           AND (observed_state IN ('allocated','preparing','ready','closing')
                             OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0) + $4
-   AND worker_instances.certified_memory_bytes >=
+   AND worker_instances.epoch_memory_bytes >=
            COALESCE(sum(deployment_build_leases.requested_memory_bytes), 0)
            + COALESCE((SELECT sum(reserved_memory_bytes) FROM runtime_instances
                         WHERE worker_instance_id = worker_instances.id
                           AND worker_epoch = worker_instances.current_epoch
                           AND (observed_state IN ('allocated','preparing','ready','closing')
                             OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0) + $5
-   AND worker_instances.certified_guest_ephemeral_disk_bytes >=
+   AND worker_instances.epoch_guest_ephemeral_disk_bytes >=
            COALESCE(sum(deployment_build_leases.requested_guest_ephemeral_disk_bytes), 0)
            + COALESCE((SELECT sum(reserved_guest_ephemeral_disk_bytes) FROM runtime_instances
                         WHERE worker_instance_id = worker_instances.id
@@ -289,9 +288,9 @@ SELECT worker_instances.max_build_executors >=
  GROUP BY worker_instances.id,
           worker_instances.current_epoch,
           worker_instances.max_build_executors,
-          worker_instances.certified_cpu_millis,
-          worker_instances.certified_memory_bytes,
-          worker_instances.certified_guest_ephemeral_disk_bytes,
+          worker_instances.epoch_cpu_millis,
+          worker_instances.epoch_memory_bytes,
+          worker_instances.epoch_guest_ephemeral_disk_bytes,
 	          worker_instances.per_vm_cpu_millis,
 	          worker_instances.per_vm_memory_bytes,
 	          worker_instances.per_vm_guest_ephemeral_disk_bytes`,

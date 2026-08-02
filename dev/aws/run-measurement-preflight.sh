@@ -144,15 +144,15 @@ SELECT (SELECT count(*) FROM active_workers) AS active_workers,
        max(updated_at) AS latest_worker_heartbeat_at,
        count(*) FILTER (
            WHERE max_vm_slots >= ${required_execution_slots}
-             AND certified_cpu_millis >= ${required_milli_cpu}
-             AND certified_memory_bytes >= ${required_memory_mib} * 1048576::bigint
-             AND certified_guest_ephemeral_disk_bytes >= ${required_disk_mib} * 1048576::bigint
+             AND epoch_cpu_millis >= ${required_milli_cpu}
+             AND epoch_memory_bytes >= ${required_memory_mib} * 1048576::bigint
+             AND epoch_guest_ephemeral_disk_bytes >= ${required_disk_mib} * 1048576::bigint
        ) AS recent_schedulable_workers,
        COALESCE(sum(max_vm_slots), 0)::bigint AS recent_raw_available_slots,
        COALESCE(sum(max_vm_slots), 0)::bigint AS recent_effective_available_slots,
-       COALESCE(sum(certified_cpu_millis), 0)::bigint AS recent_effective_available_milli_cpu,
-       COALESCE(sum(certified_memory_bytes / 1048576), 0)::bigint AS recent_effective_available_memory_mib,
-       COALESCE(sum(certified_guest_ephemeral_disk_bytes / 1048576), 0)::bigint AS recent_effective_available_disk_mib
+       COALESCE(sum(epoch_cpu_millis), 0)::bigint AS recent_effective_available_milli_cpu,
+       COALESCE(sum(epoch_memory_bytes / 1048576), 0)::bigint AS recent_effective_available_memory_mib,
+       COALESCE(sum(epoch_guest_ephemeral_disk_bytes / 1048576), 0)::bigint AS recent_effective_available_disk_mib
   FROM recent_workers;
 
 SELECT 'setup' AS section,

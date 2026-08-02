@@ -322,14 +322,6 @@ func (c *Client) ObserveWorker(ctx context.Context, observation api.WorkerObserv
 	return response, nil
 }
 
-func (c *Client) RenewWorkerCertification(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerStatusResponse, error) {
-	var response api.WorkerStatusResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/certification/renew", api.WorkerCertificationRenewRequest{Capabilities: capabilities}, &response); err != nil {
-		return api.WorkerStatusResponse{}, err
-	}
-	return response, nil
-}
-
 func (c *Client) DrainWorker(ctx context.Context) (api.WorkerStatusResponse, error) {
 	var response api.WorkerStatusResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/drain", struct{}{}, &response); err != nil {
@@ -347,7 +339,7 @@ func (c *Client) CompleteWorkerDrain(ctx context.Context, request api.WorkerDrai
 		if lastErr == nil {
 			return response, nil
 		}
-		if !ambiguousWorkerDrainCompletion(lastErr) || attempt == attempts-1 {
+		if !ambiguousWorkerTerminalMutation(lastErr) || attempt == attempts-1 {
 			break
 		}
 		delay := time.Duration(attempt+1) * 100 * time.Millisecond
@@ -362,7 +354,7 @@ func (c *Client) CompleteWorkerDrain(ctx context.Context, request api.WorkerDrai
 	return api.WorkerStatusResponse{}, fmt.Errorf("worker drain completion was not confirmed after %d identical attempts: %w", attempts, lastErr)
 }
 
-func ambiguousWorkerDrainCompletion(err error) bool {
+func ambiguousWorkerTerminalMutation(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
@@ -380,7 +372,27 @@ func ambiguousWorkerDrainCompletion(err error) bool {
 }
 
 func (c *Client) FenceWorker(ctx context.Context, reasonCode string) error {
-	return c.postWorkerJSON(ctx, "/api/worker/fence", api.WorkerFenceRequest{ReasonCode: reasonCode}, nil)
+	const attempts = 3
+	var lastErr error
+	request := api.WorkerFenceRequest{ReasonCode: reasonCode}
+	for attempt := range attempts {
+		lastErr = c.postWorkerJSON(ctx, "/api/worker/fence", request, nil)
+		if lastErr == nil {
+			return nil
+		}
+		if !ambiguousWorkerTerminalMutation(lastErr) || attempt == attempts-1 {
+			break
+		}
+		delay := time.Duration(attempt+1) * 100 * time.Millisecond
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return fmt.Errorf("worker fence was not confirmed after %d identical attempts: %w", attempts, lastErr)
 }
 
 func (c *Client) GetWorkerStatus(ctx context.Context) (api.WorkerStatusResponse, error) {

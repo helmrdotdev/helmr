@@ -90,7 +90,7 @@ INSERT INTO worker_groups (
 	return fixture
 }
 
-func (f *buildPlacementFixture) addWorker(t *testing.T, certified bool) uuid.UUID {
+func (f *buildPlacementFixture) addWorker(t *testing.T, ready bool) uuid.UUID {
 	t.Helper()
 	workerID := uuid.Must(uuid.NewV7())
 	serviceID := uuid.Must(uuid.NewV7())
@@ -100,21 +100,20 @@ INSERT INTO runtime_identities (
     id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, network_abi
 ) VALUES ($1, $2, 'helmr.runtime.v0', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0')`,
 		runtimeID, platformArchitecture)
-	if certified {
+	if ready {
 		mustDispatchExec(t, f.ctx, f.pool, `
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, state,
 			current_epoch, current_service_id, protocol_version, supervisor_version, supports_build,
-			runtime_identity_id, certified_cpu_millis, certified_memory_bytes,
-    certified_guest_ephemeral_disk_bytes, per_vm_cpu_millis,
+			runtime_identity_id,
+			epoch_cpu_millis, epoch_memory_bytes,
+    epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis,
     per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes,
-    max_build_executors, certification_profile,
-    certification_fingerprint, epoch_started_at, certified_at, activated_at
+    max_build_executors, epoch_started_at, activated_at
 ) VALUES (
 			$1, $2, $3, 'active',
 			1, $4, 'helmr.worker.v0', 'test-worker', true, $5, 3000, 4294967296, 34359738368,
-			2000, 2147483648, 34359738368, 1, 'build-v0',
-			'sha256:test-certification', now(), now(), now()
+			2000, 2147483648, 34359738368, 1, now(), now()
 )`, workerID, workerID.String(), f.groupID, serviceID, runtimeID)
 	} else {
 		mustDispatchExec(t, f.ctx, f.pool, `
@@ -146,20 +145,20 @@ func (f *buildPlacementFixture) candidate() ReadyBuildCandidate {
 
 func TestPlaceReadyBuildExcludesIneligibleWorkers(t *testing.T) {
 	for _, test := range []struct {
-		name                     string
-		certified                bool
-		insufficientCertifiedCPU bool
+		name                 string
+		ready                bool
+		insufficientEpochCPU bool
 	}{
-		{name: "insufficient certified CPU", certified: true, insufficientCertifiedCPU: true},
-		{name: "uncertified worker", certified: false},
+		{name: "insufficient epoch CPU", ready: true, insufficientEpochCPU: true},
+		{name: "unready worker", ready: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newBuildPlacementFixture(t)
-			workerID := fixture.addWorker(t, test.certified)
-			if test.insufficientCertifiedCPU {
+			workerID := fixture.addWorker(t, test.ready)
+			if test.insufficientEpochCPU {
 				mustDispatchExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances
-   SET certified_cpu_millis = 2999
+   SET epoch_cpu_millis = 2999
  WHERE id = $1`, workerID)
 			}
 			_, err := fixture.authority.PlaceReadyBuild(

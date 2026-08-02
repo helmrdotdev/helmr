@@ -27,7 +27,6 @@ const (
 	AdmissionKVMUnavailable             AdmissionReason = "kvm_unavailable"
 	AdmissionFirecrackerUnavailable     AdmissionReason = "firecracker_unavailable"
 	AdmissionRuntimeSlotsQuarantined    AdmissionReason = "runtime_slots_quarantined"
-	AdmissionCertificationStale         AdmissionReason = "certification_stale"
 	AdmissionProbeFailed                AdmissionReason = "host_probe_failed"
 	AdmissionDatapathUnverified         AdmissionReason = "datapath_unverified"
 )
@@ -49,12 +48,10 @@ type HostHealthProbe interface {
 }
 
 type AdmissionCheck struct {
-	Consumer         string
-	State            State
-	Snapshot         Snapshot
-	Recovery         RecoveryEvidence
-	CertifiedAt      time.Time
-	CertificationTTL time.Duration
+	Consumer string
+	State    State
+	Snapshot Snapshot
+	Recovery RecoveryEvidence
 }
 
 type AdmissionDecision struct {
@@ -116,9 +113,6 @@ func (a *HardAdmission) Evaluate(ctx context.Context, check AdmissionCheck) Admi
 		decision.Reason = AdmissionDatapathUnverified
 	case check.State != StateActive:
 		decision.Reason = AdmissionReason(check.State)
-	case check.CertifiedAt.IsZero(), check.CertificationTTL <= 0,
-		a.cfg.Now().After(check.CertifiedAt.Add(check.CertificationTTL)):
-		decision.Reason = AdmissionCertificationStale
 	case health.AvailableDiskBytes < a.cfg.DiskFloorBytes:
 		decision.Reason = AdmissionDiskFloor
 	case health.FileDescriptorLimit <= health.OpenFileDescriptors ||

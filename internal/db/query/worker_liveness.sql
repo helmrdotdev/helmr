@@ -36,19 +36,9 @@ SELECT workers.id,
 -- name: RecheckAndFenceStaleWorkerInstance :one
 WITH target AS (
     UPDATE worker_instances AS workers
-       SET state = CASE
-               WHEN workers.current_epoch IS NULL THEN 'disabled'
-               ELSE 'lost'
-           END,
+       SET state = 'lost',
            claim_version = workers.claim_version + 1,
-           disabled_at = CASE
-               WHEN workers.current_epoch IS NULL THEN COALESCE(workers.disabled_at, now())
-               ELSE workers.disabled_at
-           END,
-           lost_at = CASE
-               WHEN workers.current_epoch IS NOT NULL THEN COALESCE(workers.lost_at, now())
-               ELSE workers.lost_at
-           END,
+           lost_at = COALESCE(workers.lost_at, now()),
            updated_at = now()
       FROM worker_groups AS groups
      WHERE workers.id = sqlc.arg(id)

@@ -600,7 +600,6 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("HELMR_WORKER_ARTIFACT_CACHE_MAX_MIB", " 16384 ")
 	t.Setenv("HELMR_WORKER_EXECUTION_SLOTS", " 4 ")
 	t.Setenv("HELMR_WORKER_ROLES", " build,run ")
-	t.Setenv("HELMR_WORKER_CERTIFICATION_TTL", " 12h ")
 	t.Setenv("HELMR_VM_INIT_TIMEOUT", " 45s ")
 	t.Setenv("HELMR_VM_HEALTH_TIMEOUT", " 90s ")
 	t.Setenv("HELMR_VM_HEALTH_ATTEMPT_TIMEOUT", " 7s ")
@@ -613,7 +612,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if cfg.CASURI != "s3://helmr-cas" || cfg.WorkDir != "/var/lib/helmr/scratch/worker" || cfg.BuildCacheDir != "/var/lib/helmr/cache" || cfg.BuildScratchDir != "/var/lib/helmr/scratch" || cfg.ImagesDir != "/var/lib/helmr/images" || cfg.GitPath != "/usr/bin/git" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.NetworkLinkPool != "169.254.128.0/18" || cfg.NetworkTranslationPool != "100.97.0.0/16" || cfg.NetworkResolverIPv4 != "1.0.0.1" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.WorkerDiskReserveMiB != 2048 || cfg.SubstrateCacheMaxMiB != 32768 || cfg.ArtifactCacheMaxMiB != 16384 || cfg.WorkerExecutionSlots != 4 || cfg.WorkerCertificationTTL != 12*time.Hour || cfg.VMInitTimeout != 45*time.Second || cfg.VMHealthTimeout != 90*time.Second || cfg.VMHealthAttemptTimeout != 7*time.Second || cfg.WorkspaceMountStartupTimeout != 3*time.Minute {
+	if cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.NetworkLinkPool != "169.254.128.0/18" || cfg.NetworkTranslationPool != "100.97.0.0/16" || cfg.NetworkResolverIPv4 != "1.0.0.1" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.WorkerDiskReserveMiB != 2048 || cfg.SubstrateCacheMaxMiB != 32768 || cfg.ArtifactCacheMaxMiB != 16384 || cfg.WorkerExecutionSlots != 4 || cfg.VMInitTimeout != 45*time.Second || cfg.VMHealthTimeout != 90*time.Second || cfg.VMHealthAttemptTimeout != 7*time.Second || cfg.WorkspaceMountStartupTimeout != 3*time.Minute {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if len(cfg.NetworkBlockedIPv4CIDRs) != 2 || cfg.NetworkBlockedIPv4CIDRs[1].String() != "169.254.0.0/16" {
@@ -835,38 +834,5 @@ func TestLoadWorkerClampsDefaultHealthAttemptToShortHealthTimeout(t *testing.T) 
 	}
 	if cfg.VMHealthAttemptTimeout != time.Second {
 		t.Fatalf("VMHealthAttemptTimeout = %s, want 1s", cfg.VMHealthAttemptTimeout)
-	}
-}
-
-func TestWorkerFleetConfigIsStrict(t *testing.T) {
-	raw := `[{
-		"group_id":"run-workers","role":"run","autoscaling_group":"helmr-run",
-		"compatibility_keys":["run-workers"],
-		"instance_capacity":{"milli_cpu":8000,"memory_bytes":17179869184,"guest_ephemeral_disk_bytes":1000000000,
-		"build_cache_bytes":0,"artifact_cache_bytes":0,"vm_slots":4,"build_executors":0},
-		"min_workers":0,"warm_workers":0,"max_workers":4,"max_scale_out_per_cycle":2,
-		"max_pending_workers":2,"max_packing_items":10000,"scale_out_cooldown_seconds":10,
-		"scale_in_cooldown_seconds":60,"scale_in_hysteresis_seconds":300,"stale_worker_timeout_seconds":120,
-		"readiness_timeout_seconds":600,"drain_timeout_seconds":900,
-		"controller_interval_seconds":5,"metric_interval_seconds":60
-	}]`
-	fleets, err := parseWorkerFleets(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(fleets) != 1 || fleets[0].CompatibilityKeys[0] != "run-workers" || fleets[0].MaxWorkers != 4 {
-		t.Fatalf("fleets = %#v", fleets)
-	}
-	if _, err := parseWorkerFleets(strings.Replace(raw, `"max_pending_workers":2`, `"max_pending_workers":0`, 1)); err != nil {
-		t.Fatalf("zero max_pending_workers: %v", err)
-	}
-	for _, invalid := range []string{
-		strings.Replace(raw, `"max_workers":4`, `"max_workers":0`, 1),
-		strings.Replace(raw, `"role":"run"`, `"role":"both"`, 1),
-		strings.Replace(raw, `"group_id":"run-workers"`, `"group_id":"run-workers","unknown":true`, 1),
-	} {
-		if _, err := parseWorkerFleets(invalid); err == nil {
-			t.Fatalf("parseWorkerFleets(%s) succeeded", invalid)
-		}
 	}
 }

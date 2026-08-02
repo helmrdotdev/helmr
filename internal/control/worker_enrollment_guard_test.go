@@ -45,7 +45,7 @@ func TestWorkerEnrollmentGuardAllowsTargetFleetBurstFromOneSource(t *testing.T) 
 	now := time.Now()
 	for index := range 200 {
 		if !guard.allowChallenge("192.0.2.1", now) || !guard.allowEnrollment("192.0.2.1", now) {
-			t.Fatalf("target fleet request %d was rate limited", index+1)
+			t.Fatalf("target worker-group request %d was rate limited", index+1)
 		}
 	}
 }

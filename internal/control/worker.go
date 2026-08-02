@@ -3,9 +3,7 @@ package control
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -291,22 +289,16 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if strings.TrimSpace(request.CertificationProfile) == "" {
-		request.CertificationProfile = "helmr-runtime-v0"
-	}
-	if strings.TrimSpace(request.CertificationFingerprint) == "" {
-		request.CertificationFingerprint = capabilities.RuntimeID
-	}
 	worker := workerFromContext(r.Context())
-	_, err = s.db.CertifyWorkerInstance(
-		r.Context(), workerCertificationParams(worker, request, capabilities),
+	_, err = s.db.ActivateWorkerInstance(
+		r.Context(), workerActivationParams(worker, capabilities),
 	)
 	if isNoRows(err) {
-		writeError(w, conflict(errors.New("worker certification is stale")))
+		writeError(w, conflict(errors.New("worker activation is stale")))
 		return
 	} else if err != nil {
 		s.log.Error("worker activate failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, errors.New("certify worker"))
+		writeError(w, errors.New("activate worker"))
 		return
 	}
 	s.writeWorkerStatus(w, r, worker)
@@ -332,7 +324,7 @@ func (s *Server) workerStartupRecovery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("encode startup recovery evidence")))
 		return
 	}
-	if _, err := s.db.RecordWorkerStartupRecovery(r.Context(), db.RecordWorkerStartupRecoveryParams{
+	if _, err := s.db.CompleteWorkerStartupRecovery(r.Context(), db.CompleteWorkerStartupRecoveryParams{
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
 		WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true}, RecoveryEvidence: evidence,
 	}); isNoRows(err) {
@@ -418,55 +410,6 @@ func (s *Server) workerObserve(w http.ResponseWriter, r *http.Request) {
 	s.writeWorkerStatus(w, r, worker)
 }
 
-func (s *Server) workerRenewCertification(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("worker storage is not configured")))
-		return
-	}
-	var request api.WorkerCertificationRenewRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker certification renewal JSON: %w", err)))
-		return
-	}
-	capabilities, err := normalizeWorkerCapabilities(request.Capabilities)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	if err := s.validateWorkerBuildPolicy(capabilities); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	worker := workerFromContext(r.Context())
-	_, err = s.db.RenewWorkerCertification(
-		r.Context(),
-		workerCertificationRenewParams(worker, capabilities),
-	)
-	if isNoRows(err) {
-		writeError(w, conflict(errors.New("worker certification facts changed")))
-		return
-	} else if err != nil {
-		writeError(w, errors.New("renew worker certification"))
-		return
-	}
-	s.writeWorkerStatus(w, r, worker)
-}
-
-func workerCertificationRenewParams(worker workerActor, c api.WorkerCapabilities) db.RenewWorkerCertificationParams {
-	return db.RenewWorkerCertificationParams{
-		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID, WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
-		RuntimeIdentityID: c.RuntimeID, ProtocolVersion: c.ProtocolVersion, SupportsRun: c.SupportsRun, SupportsBuild: c.SupportsBuild,
-		SubstrateFormat: c.SubstrateFormat, SubstrateBuilderAbi: c.SubstrateBuilderABI, SubstrateLayoutAbi: c.SubstrateLayoutABI,
-		CertifiedCpuMillis: c.MaxVCPUs * 1000, CertifiedMemoryBytes: c.MaxMemoryMiB * 1024 * 1024,
-		CertifiedGuestEphemeralDiskBytes: c.GuestEphemeralDiskBytes,
-		CertifiedBuildCacheBytes:         c.BuildCacheBytes, CertifiedArtifactCacheBytes: c.ArtifactCacheBytes,
-		CertifiedHugepagesBytes: c.HugepagesBytes, CertifiedCheckpointBytes: c.CheckpointBytes,
-		PerVmCpuMillis: c.VMMilliCPU, PerVmMemoryBytes: c.VMMemoryMiB * 1024 * 1024,
-		PerVmGuestEphemeralDiskBytes: c.VMGuestEphemeralDiskBytes,
-		MaxVmSlots:                   c.ExecutionSlotsAvailable, MaxBuildExecutors: c.MaxBuildExecutors, MaxRuntimeStarts: c.MaxRuntimeStarts,
-	}
-}
-
 func (s *Server) workerDrain(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
@@ -474,9 +417,10 @@ func (s *Server) workerDrain(w http.ResponseWriter, r *http.Request) {
 	}
 	worker := workerFromContext(r.Context())
 	if _, err := s.db.DrainWorkerInstance(r.Context(), db.DrainWorkerInstanceParams{
-		ID:            pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerGroupID: worker.WorkerGroupID,
-		ExpectedEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
+		ID:                   pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerGroupID:        worker.WorkerGroupID,
+		ExpectedEpoch:        pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
+		ExpectedClaimVersion: worker.ClaimVersion,
 	}); isNoRows(err) {
 		writeError(w, notFound(errors.New("worker is not registered")))
 		return
@@ -486,16 +430,6 @@ func (s *Server) workerDrain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeWorkerStatus(w, r, worker)
-}
-
-type canonicalWorkerDrainCleanupEvidence struct {
-	InventoryComplete bool      `json:"inventory_complete"`
-	InventoryScope    string    `json:"inventory_scope"`
-	ObservedAt        time.Time `json:"observed_at"`
-	Inventory         []string  `json:"inventory"`
-	Reclaimed         []string  `json:"reclaimed"`
-	Quarantined       []string  `json:"quarantined"`
-	Errors            []string  `json:"errors"`
 }
 
 func (s *Server) workerCompleteDrain(w http.ResponseWriter, r *http.Request) {
@@ -523,35 +457,15 @@ func (s *Server) workerCompleteDrain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("drain completion requires empty inventory, reclaimed, quarantined, and errors lists")))
 		return
 	}
-	evidence, err := json.Marshal(canonicalWorkerDrainCleanupEvidence{
-		InventoryComplete: true,
-		InventoryScope:    "worker_runtime_state_roots_v0",
-		ObservedAt:        request.ObservedAt.UTC(),
-		Inventory:         []string{},
-		Reclaimed:         []string{},
-		Quarantined:       []string{},
-		Errors:            []string{},
-	})
-	if err != nil {
-		writeError(w, errors.New("encode worker drain cleanup evidence"))
-		return
-	}
-	if len(evidence) > 16<<10 {
-		writeError(w, badRequest(errors.New("worker drain cleanup evidence is too large")))
-		return
-	}
-	sum := sha256.Sum256(evidence)
-	fingerprint := hex.EncodeToString(sum[:])
 	completed, err := s.completeWorkerDrain(r.Context(), db.CompleteWorkerDrainParams{
-		WorkerInstanceID:   pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerGroupID:      worker.WorkerGroupID,
-		WorkerEpoch:        pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
-		CleanupFingerprint: pgtype.Text{String: fingerprint, Valid: true},
-		CleanupEvidence:    evidence,
-		ObservedAt:         pgvalue.Timestamptz(request.ObservedAt),
+		WorkerInstanceID:     pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerGroupID:        worker.WorkerGroupID,
+		WorkerEpoch:          pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
+		ExpectedClaimVersion: worker.ClaimVersion,
+		ObservedAt:           pgvalue.Timestamptz(request.ObservedAt),
 	})
 	if isNoRows(err) {
-		writeError(w, conflict(errors.New("worker drain is not complete or cleanup proof conflicts with the recorded proof")))
+		writeError(w, conflict(errors.New("worker drain is not complete or its claim fence is stale")))
 		return
 	}
 	if err != nil {
@@ -559,14 +473,14 @@ func (s *Server) workerCompleteDrain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("complete worker drain"))
 		return
 	}
-	if completed.State != db.WorkerInstanceStateDisabled {
+	if completed.State != db.WorkerInstanceStateTerminationReady {
 		writeError(w, errors.New("complete worker drain returned a non-terminal worker state"))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerStatusResponse{
 		WorkerInstanceID: pgvalue.MustUUIDValue(completed.ID).String(),
 		WorkerGroupID:    completed.WorkerGroupID,
-		Status:           api.WorkerStatusDisabled,
+		Status:           api.WorkerStatusTerminationReady,
 		ActiveExecutions: 0,
 	})
 }
@@ -605,10 +519,11 @@ func (s *Server) workerFence(w http.ResponseWriter, r *http.Request) {
 	}
 	worker := workerFromContext(r.Context())
 	if _, err := s.db.FenceWorkerInstance(r.Context(), db.FenceWorkerInstanceParams{
-		ID:            pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerGroupID: worker.WorkerGroupID,
-		ExpectedEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
-		ReasonCode:    pgtype.Text{String: reasonCode, Valid: true},
+		ID:                   pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerGroupID:        worker.WorkerGroupID,
+		ExpectedEpoch:        pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
+		ExpectedClaimVersion: worker.ClaimVersion,
+		ReasonCode:           pgtype.Text{String: reasonCode, Valid: true},
 	}); isNoRows(err) {
 		writeError(w, notFound(errors.New("worker is not registered")))
 		return
@@ -714,31 +629,29 @@ func workerObservationParams(worker workerActor, observation api.WorkerObservati
 	}
 }
 
-func workerCertificationParams(
+func workerActivationParams(
 	worker workerActor,
-	request api.WorkerActivateRequest,
 	c api.WorkerCapabilities,
-) db.CertifyWorkerInstanceParams {
+) db.ActivateWorkerInstanceParams {
 	supportsRun := c.SupportsRun
 	maxRuntimeStarts := c.MaxRuntimeStarts
 	if supportsRun && maxRuntimeStarts == 0 {
 		maxRuntimeStarts = c.ExecutionSlotsAvailable
 	}
-	return db.CertifyWorkerInstanceParams{
+	return db.ActivateWorkerInstanceParams{
 		RuntimeIdentityID: c.RuntimeID, RuntimeArch: c.RuntimeArch, RuntimeABI: c.RuntimeABI,
 		KernelDigest: c.KernelDigest, InitramfsDigest: c.InitramfsDigest, RootfsDigest: c.RootfsDigest,
 		NetworkAbi: c.NetworkABI, ProtocolVersion: c.ProtocolVersion, SupervisorVersion: c.WorkerVersion,
 		SupportsRun: supportsRun, SupportsBuild: c.SupportsBuild,
 		SubstrateFormat: c.SubstrateFormat, SubstrateBuilderAbi: c.SubstrateBuilderABI, SubstrateLayoutAbi: c.SubstrateLayoutABI,
-		CertifiedCpuMillis: c.MaxVCPUs * 1000, CertifiedMemoryBytes: c.MaxMemoryMiB * 1024 * 1024,
-		CertifiedGuestEphemeralDiskBytes: c.GuestEphemeralDiskBytes,
-		CertifiedBuildCacheBytes:         c.BuildCacheBytes, CertifiedArtifactCacheBytes: c.ArtifactCacheBytes,
-		CertifiedHugepagesBytes: c.HugepagesBytes, CertifiedCheckpointBytes: c.CheckpointBytes,
+		EpochCpuMillis: c.MaxVCPUs * 1000, EpochMemoryBytes: c.MaxMemoryMiB * 1024 * 1024,
+		EpochGuestEphemeralDiskBytes: c.GuestEphemeralDiskBytes,
+		EpochBuildCacheBytes:         c.BuildCacheBytes, EpochArtifactCacheBytes: c.ArtifactCacheBytes,
+		EpochHugepagesBytes: c.HugepagesBytes, EpochCheckpointBytes: c.CheckpointBytes,
 		PerVmCpuMillis: c.VMMilliCPU, PerVmMemoryBytes: c.VMMemoryMiB * 1024 * 1024,
 		PerVmGuestEphemeralDiskBytes: c.VMGuestEphemeralDiskBytes,
 		MaxVmSlots:                   c.ExecutionSlotsAvailable, MaxRunConsumers: c.ExecutionSlotsAvailable,
 		MaxBuildExecutors: c.MaxBuildExecutors, MaxRuntimeStarts: maxRuntimeStarts,
-		CertificationProfile: request.CertificationProfile, CertificationFingerprint: request.CertificationFingerprint,
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
 		WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
 	}

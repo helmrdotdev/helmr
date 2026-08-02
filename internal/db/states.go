@@ -15,6 +15,7 @@ type WorkerGroupState = string
 
 const (
 	WorkerGroupStateActive   WorkerGroupState = "active"
+	WorkerGroupStatePaused   WorkerGroupState = "paused"
 	WorkerGroupStateDraining WorkerGroupState = "draining"
 	WorkerGroupStateDisabled WorkerGroupState = "disabled"
 )
@@ -50,11 +51,11 @@ const (
 type WorkerInstanceState = string
 
 const (
-	WorkerInstanceStateRegistering WorkerInstanceState = "registering"
-	WorkerInstanceStateActive      WorkerInstanceState = "active"
-	WorkerInstanceStateDraining    WorkerInstanceState = "draining"
-	WorkerInstanceStateDisabled    WorkerInstanceState = "disabled"
-	WorkerInstanceStateLost        WorkerInstanceState = "lost"
+	WorkerInstanceStateRegistering      WorkerInstanceState = "registering"
+	WorkerInstanceStateActive           WorkerInstanceState = "active"
+	WorkerInstanceStateDraining         WorkerInstanceState = "draining"
+	WorkerInstanceStateTerminationReady WorkerInstanceState = "termination_ready"
+	WorkerInstanceStateLost             WorkerInstanceState = "lost"
 )
 
 type PublicAccessTokenState = string

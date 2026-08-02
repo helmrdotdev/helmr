@@ -263,7 +263,7 @@ func runLeaseFinalizationDeadlines(
 		return time.Time{}, 0, errors.New("Run finalization authority is expired")
 	}
 	if remaining <= runLeaseTerminalTail {
-		return time.Time{}, 0, errors.New("Run finalization authority is below the certified terminal window")
+		return time.Time{}, 0, errors.New("Run finalization authority is below the required terminal window")
 	}
 	return expiresAt.Add(-runLeaseTerminalTail), runLeaseReplayTail, nil
 }

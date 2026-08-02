@@ -42,6 +42,7 @@ type Control struct {
 	PlatformStoreURI        string
 	WorkerTokenSigningKey   []byte
 	WorkerGroupsJSON        string
+	OperatorToken           string
 	SetupToken              string
 	AuthKey                 []byte
 	EncryptionKey           []byte
@@ -64,8 +65,6 @@ type Control struct {
 }
 
 type Dispatcher struct {
-	WorkerFleets          []WorkerFleet
-	FleetMetricsNamespace string
 	DatabaseURL           string
 	RedisURL              string
 	ClickHouseURL         string
@@ -80,35 +79,6 @@ type Dispatcher struct {
 	ScheduleClaimLimit    int
 	ScheduleConcurrency   int
 	ScheduleClaimLease    time.Duration
-}
-
-type WorkerFleet struct {
-	GroupID                 string
-	Role                    string
-	ASGName                 string
-	CompatibilityKeys       []string
-	MilliCPU                uint64
-	MemoryBytes             uint64
-	GuestEphemeralDiskBytes uint64
-	BuildCacheBytes         uint64
-	ArtifactCacheBytes      uint64
-	VMSlots                 uint64
-	BuildExecutors          uint64
-	MinWorkers              int
-	WarmWorkers             int
-	MaxWorkers              int
-	MaxScaleOutPerCycle     int
-	MaxPending              int
-	MaxPackingItems         int
-	ScaleOutCooldown        time.Duration
-	ScaleInCooldown         time.Duration
-	ScaleInHysteresis       time.Duration
-	StaleWorkerTimeout      time.Duration
-	ReadinessTimeout        time.Duration
-	DrainTimeout            time.Duration
-	EmergencyStop           bool
-	ControllerInterval      time.Duration
-	MetricsInterval         time.Duration
 }
 
 type Database struct {
@@ -170,7 +140,6 @@ type Worker struct {
 	WorkerRoles                  []string
 	WorkerBuildExecutors         int32
 	WorkerRuntimeStarts          int32
-	WorkerCertificationTTL       time.Duration
 	VMInitTimeout                time.Duration
 	VMHealthTimeout              time.Duration
 	VMHealthAttemptTimeout       time.Duration

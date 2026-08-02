@@ -25,6 +25,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"actor":               {"db", "ids", "outbox", "pgvalue", "run", "secret", "tracing"},
 		"api":                 {"archive", "ids", "imagebuild", "jsoncanon"},
 		"archive":             {"safepath", "sha256sum"},
+		"awscapacity":         {"api"},
 		"auth":                {"db", "ids", "pgvalue", "token"},
 		"buildkit":            {"imagebuild", "safepath"},
 		"capacity":            {},
@@ -41,7 +42,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"compute":             {"runtime/identity"},
 		"config":              {"api"},
 		"console":             {},
-		"control":             {"actor", "api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "email", "enrollment", "frameio", "idempotency", "ids", "imagebuild", "imagecache", "jsoncanon", "pgvalue", "proto/run/v0", "region", "run", "runtime/identity", "schedule", "secret", "sha256sum", "telemetry", "token", "tracing", "workspace"},
+		"control":             {"actor", "api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "email", "enrollment", "frameio", "idempotency", "ids", "imagebuild", "imagecache", "jsoncanon", "pgvalue", "proto/run/v0", "region", "run", "runtime/identity", "schedule", "secret", "sha256sum", "telemetry", "token", "tracing", "workergroup", "workspace"},
 		"db":                  {},
 		"db/dbtest":           {},
 		"db/schema":           {},
@@ -52,7 +53,6 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"enrollment":          {"api", "auth"},
 		"executor":            {"api", "capacity", "cas", "checkpoint", "client", "compute", "deployment", "frameio", "ids", "jsoncanon", "localcache", "proto/run/v0", "proto/workspace/v0", "runtime", "sha256sum", "vm", "wire", "workspace"},
 		"firecracker":         {"cas", "compute", "ids", "runtime/identity", "sha256sum", "vm", "worker/datapath"},
-		"fleet":               {"db", "sessionlock", "workergroup"},
 		"frameio":             {"sha256sum"},
 		"guestd":              {"archive", "buildkit", "deployment", "frameio", "imagebuild", "jsoncanon", "oci", "proto/run/v0", "proto/workspace/v0", "safepath", "sha256sum", "wire", "workspace"},
 		"idempotency":         {"db", "jsoncanon", "pgvalue"},
@@ -63,6 +63,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"jsoncanon":           {},
 		"localcache":          {},
 		"oci":                 {"sha256sum"},
+		"operatorclient":      {"api"},
 		"outbox":              {},
 		"pgvalue":             {},
 		"platformlock":        {"sessionlock"},
@@ -86,7 +87,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"wire":                {"frameio", "proto/run/v0"},
 		"worker":              {"api", "capacity", "client", "compute", "deployment", "ids", "vm"},
 		"worker/datapath":     {},
-		"workergroup":         {"auth", "db", "enrollment", "sessionlock"},
+		"workergroup":         {"auth", "compute", "db", "enrollment", "sessionlock"},
 		"workspace":           {"archive", "jsoncanon", "proto/workspace/v0", "safepath", "sha256sum"},
 	}
 	normalizeGraph(expected)
@@ -103,12 +104,13 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 	}
 
 	for source, targets := range map[string][]string{
-		"frameio":   {"api", "db", "proto/run/v0", "wire"},
-		"wire":      {"api", "control", "db", "executor", "guestd", "workspace"},
-		"guestd":    {"control", "db", "executor"},
-		"workspace": {"api", "control", "db", "executor", "guestd", "pgvalue", "wire"},
-		"control":   {"executor", "firecracker", "guestd"},
-		"secret":    {"run"},
+		"frameio":     {"api", "db", "proto/run/v0", "wire"},
+		"wire":        {"api", "control", "db", "executor", "guestd", "workspace"},
+		"guestd":      {"control", "db", "executor"},
+		"workspace":   {"api", "control", "db", "executor", "guestd", "pgvalue", "wire"},
+		"control":     {"executor", "firecracker", "guestd"},
+		"awscapacity": {"auth", "control", "db", "dispatch", "executor", "worker"},
+		"secret":      {"run"},
 	} {
 		for _, target := range targets {
 			if slices.Contains(actual[source], target) {

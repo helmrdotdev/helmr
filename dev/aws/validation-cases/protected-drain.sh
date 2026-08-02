@@ -37,36 +37,114 @@ aws autoscaling describe-auto-scaling-groups \
 
 validation_wait_run_status "${run_id}" succeeded 300 >/dev/null
 
+control_url="$(validation_tf_output control_url)"
+worker_group_id="$(validation_tf_output worker_group_id)"
+operator_token_arn="$(
+  "${TF_BIN:-tofu}" -chdir="${DEV_STACK:-${VALIDATION_ROOT}/infra/aws/stacks/dev}" \
+    output -json secret_arns | jq -er '.operator_token'
+)"
+operator_token="$(
+  aws secretsmanager get-secret-value \
+    --secret-id "${operator_token_arn}" \
+    --query SecretString \
+    --output text
+)"
+operator_header="${VALIDATION_TMP}/operator-header"
+printf 'Authorization: Bearer %s\n' "${operator_token}" >"${operator_header}"
+chmod 0600 "${operator_header}"
+unset operator_token
+
+instance_json="$(
+  curl --fail-with-body --silent --show-error \
+    --header "@${operator_header}" \
+    --header 'Accept: application/json' \
+    "${control_url%/}/api/operator/worker-instances?worker_group_id=$(jq -rn --arg value "${worker_group_id}" '$value|@uri')&limit=500"
+)"
+instance_json="$(
+  jq -cer --arg instance_id "${instance_id}" '
+    [.worker_instances[] |
+      select(.resource_id == $instance_id and .state == "active")]
+    | select(length == 1)
+    | .[0]
+  ' <<<"${instance_json}"
+)" || {
+  validation_write_result failed logical_worker_not_resolved
+  exit 1
+}
+worker_instance_id="$(jq -er '.id' <<<"${instance_json}")"
+drain_request="${VALIDATION_TMP}/operator-drain-request.json"
+jq -n \
+  --argjson expected_epoch "$(jq -er '.current_epoch | select(. > 0)' <<<"${instance_json}")" \
+  --argjson expected_claim_version "$(jq -er '.claim_version | select(. > 0)' <<<"${instance_json}")" \
+  '{expected_epoch:$expected_epoch,expected_claim_version:$expected_claim_version}' >"${drain_request}"
+curl --fail-with-body --silent --show-error \
+  --request POST \
+  --header "@${operator_header}" \
+  --header 'Accept: application/json' \
+  --header 'Content-Type: application/json' \
+  --data-binary "@${drain_request}" \
+  "${control_url%/}/api/operator/worker-instances/${worker_instance_id}/drain" >/dev/null || {
+  validation_write_result failed exact_drain_request_failed
+  exit 1
+}
+
+termination_ready=0
+for _ in $(seq 1 330); do
+  worker_state="$(
+    curl --fail-with-body --silent --show-error \
+      --header "@${operator_header}" \
+      --header 'Accept: application/json' \
+      "${control_url%/}/api/operator/worker-instances/${worker_instance_id}" |
+      jq -er '.state'
+  )" || true
+  if [ "${worker_state}" = "termination_ready" ]; then
+    termination_ready=1
+    break
+  fi
+  [ "${worker_state}" = "draining" ] || break
+  sleep 2
+done
+[ "${termination_ready}" = 1 ] || {
+  validation_write_result failed termination_ready_not_observed
+  exit 1
+}
+
+validation_db_marker "
+  COPY (
+    SELECT 'termination-ready'
+      FROM worker_instances
+     WHERE resource_id = '${instance_id}'
+       AND state = 'termination_ready'
+       AND termination_ready_at IS NOT NULL
+       AND NOT EXISTS (
+         SELECT 1
+           FROM run_leases
+          WHERE run_leases.worker_instance_id = worker_instances.id
+            AND run_leases.state IN ('assigned','starting','running','checkpointing','finalizing')
+       )
+  ) TO STDOUT;
+" termination-ready || {
+  validation_write_result failed termination_ready_not_observed
+  exit 1
+}
+
+aws autoscaling terminate-instance-in-auto-scaling-group \
+  --instance-id "${instance_id}" \
+  --should-decrement-desired-capacity >/dev/null
+
 drained=0
 for _ in $(seq 1 420); do
-  if validation_db_marker "
-    COPY (
-      SELECT 'drain-complete'
-        FROM worker_instances
-       WHERE resource_id = '${instance_id}'
-         AND state = 'disabled'
-         AND drain_cleanup_fingerprint IS NOT NULL
-         AND drain_cleanup_evidence IS NOT NULL
-         AND NOT EXISTS (
-           SELECT 1
-             FROM run_leases
-            WHERE run_leases.worker_instance_id = worker_instances.id
-              AND run_leases.state IN ('assigned','starting','running')
-         )
-    ) TO STDOUT;
-  " drain-complete; then
-    live="$(
-      aws autoscaling describe-auto-scaling-groups \
-        --auto-scaling-group-names "${run_asg}" |
-        jq -r --arg instance "${instance_id}" '
-          [.AutoScalingGroups[0].Instances[]? | select(.InstanceId == $instance)]
-          | length
-        '
-    )"
-    if [ "${live}" = 0 ]; then
-      drained=1
-      break
-    fi
+  live="$(
+    aws autoscaling describe-auto-scaling-groups \
+      --auto-scaling-group-names "${run_asg}" |
+      jq -r --arg instance "${instance_id}" '
+        [.AutoScalingGroups[0].Instances[]? | select(.InstanceId == $instance)]
+        | length
+      '
+  )"
+  if [ "${live}" = 0 ]; then
+    drained=1
+    break
   fi
   sleep 2
 done
@@ -88,8 +166,8 @@ run_id=""
 validation_write_result passed null "${objects}" '{
   scale_in_protection_held:true,
   zero_authority_proved:true,
-  drain_cleanup_recorded:true,
+  termination_ready_recorded:true,
   termination_after_drain:true,
-  direct_termination_used:false,
+  exact_instance_termination_used:true,
   cleanup_verified:true
 }'

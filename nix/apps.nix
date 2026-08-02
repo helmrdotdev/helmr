@@ -114,7 +114,7 @@ in
   ci-infra-test =
     app "ci-infra-test" "run AWS module tests with pinned OpenTofu" toolsets.infraTest
       ''
-        for module in bootstrap control network worker worker-image; do
+        for module in bootstrap capacity control network worker worker-image; do
           (
             cd "infra/aws/modules/$module"
             tofu init -backend=false -input=false

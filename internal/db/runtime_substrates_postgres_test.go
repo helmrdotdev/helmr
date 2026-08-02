@@ -187,7 +187,7 @@ func TestLockRuntimeSubstrateAuthorityFencesWorkerAndContract(t *testing.T) {
 		 WHERE id = $1
 	`, fixture.workerID)
 	if _, err := queries.LockRuntimeSubstrateAuthority(ctx, params); err != nil {
-		t.Fatalf("certified draining authority: %v", err)
+		t.Fatalf("draining authority: %v", err)
 	}
 	mustExec(t, ctx, pool, `
 		UPDATE worker_instances
@@ -197,13 +197,13 @@ func TestLockRuntimeSubstrateAuthorityFencesWorkerAndContract(t *testing.T) {
 		       substrate_format = '',
 		       substrate_builder_abi = '',
 		       substrate_layout_abi = '',
-		       certified_cpu_millis = 0,
-		       certified_memory_bytes = 0,
-		       certified_guest_ephemeral_disk_bytes = 0,
-		       certified_build_cache_bytes = 0,
-		       certified_artifact_cache_bytes = 0,
-		       certified_hugepages_bytes = 0,
-		       certified_checkpoint_bytes = 0,
+		       epoch_cpu_millis = 0,
+		       epoch_memory_bytes = 0,
+		       epoch_guest_ephemeral_disk_bytes = 0,
+		       epoch_build_cache_bytes = 0,
+		       epoch_artifact_cache_bytes = 0,
+		       epoch_hugepages_bytes = 0,
+		       epoch_checkpoint_bytes = 0,
 		       per_vm_cpu_millis = 0,
 		       per_vm_memory_bytes = 0,
 		       per_vm_guest_ephemeral_disk_bytes = 0,
@@ -211,9 +211,6 @@ func TestLockRuntimeSubstrateAuthorityFencesWorkerAndContract(t *testing.T) {
 		       max_run_consumers = 0,
 		       max_build_executors = 0,
 		       max_runtime_starts = 0,
-		       certification_profile = '',
-		       certification_fingerprint = '',
-		       certified_at = NULL,
 		       activated_at = NULL
 		 WHERE id = $1
 	`, fixture.workerID)
@@ -337,19 +334,18 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 			current_epoch, current_service_id, protocol_version, supervisor_version,
 			supports_run, runtime_identity_id,
 			substrate_format, substrate_builder_abi, substrate_layout_abi,
-			certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes,
+			epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
 			per_vm_cpu_millis, per_vm_memory_bytes,
 			per_vm_guest_ephemeral_disk_bytes,
 			max_vm_slots, max_run_consumers, max_runtime_starts,
-			certification_profile, certification_fingerprint,
-			epoch_started_at, certified_at, activated_at
+			epoch_started_at, activated_at
 		) VALUES (
 			$1, $2, $3, 'active',
 			1, $4, 'helmr.worker.v0', 'test-worker',
 			true, $5, $6, $7, $8,
 			2000, 2147483648, 4294967296,
 			1000, 1073741824, 2147483648,
-			1, 1, 1, 'authority', 'authority-cert', now(), now(), now()
+			1, 1, 1, now(), now()
 		)
 	`, workerID, "authority-"+workerID.String(), dbtest.DefaultWorkerGroupID,
 		uuid.Must(uuid.NewV7()), runtimeIdentityID, runtime.Format, runtime.BuilderABI, runtime.LayoutABI)

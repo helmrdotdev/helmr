@@ -420,27 +420,26 @@ variable "create_worker" {
   default     = false
 }
 
-variable "worker_fleet_controller" {
-  description = "Run/build fleet-controller policy used whenever worker groups are created."
-  type = object({
-    run_warm_workers             = optional(number, 0)
-    build_warm_workers           = optional(number, 0)
-    run_max_workers              = optional(number)
-    build_max_workers            = optional(number)
-    max_scale_out_per_cycle      = optional(number, 1)
-    max_pending_workers          = optional(number, 1)
-    max_packing_items            = optional(number, 10000)
-    controller_interval_seconds  = optional(number, 15)
-    scale_out_cooldown_seconds   = optional(number, 30)
-    scale_in_cooldown_seconds    = optional(number, 300)
-    scale_in_hysteresis_seconds  = optional(number, 300)
-    stale_worker_timeout_seconds = optional(number, 120)
-    readiness_timeout_seconds    = optional(number, 900)
-    drain_timeout_seconds        = optional(number, 1800)
-    emergency_stop               = optional(bool, false)
-    metric_interval_seconds      = optional(number, 60)
-  })
-  default = {}
+variable "worker_observation_ttl_seconds" {
+  description = "Freshness window for provider-neutral Worker readiness observations."
+  type        = number
+  default     = 120
+
+  validation {
+    condition     = var.worker_observation_ttl_seconds > 0 && var.worker_observation_ttl_seconds <= 2592000
+    error_message = "worker_observation_ttl_seconds must be between 1 and 2592000."
+  }
+}
+
+variable "worker_launch_timeout_seconds" {
+  description = "Deployment-owned ASG launch-hook timeout while a Worker reaches Control readiness."
+  type        = number
+  default     = 900
+
+  validation {
+    condition     = var.worker_launch_timeout_seconds > 30
+    error_message = "worker_launch_timeout_seconds must exceed the Worker lifecycle heartbeat interval."
+  }
 }
 
 variable "worker_ami_id" {

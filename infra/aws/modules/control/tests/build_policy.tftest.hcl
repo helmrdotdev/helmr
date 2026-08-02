@@ -285,6 +285,29 @@ run "execution_roles_are_pull_only_for_the_exact_control_repository" {
   }
 }
 
+run "operator_api_credential_is_explicit_composition" {
+  command = plan
+
+  variables {
+    enable_operator_api = true
+  }
+
+  assert {
+    condition = (
+      length(aws_secretsmanager_secret.operator_token) == 1 &&
+      contains(
+        [for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].secrets : item.name],
+        "HELMR_OPERATOR_TOKEN"
+      ) &&
+      !contains(
+        [for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].secrets : item.name],
+        "HELMR_OPERATOR_TOKEN"
+      )
+    )
+    error_message = "only an explicitly composed Control operator surface receives the dedicated credential"
+  }
+}
+
 run "workspace_image_cache_is_exact_and_control_only" {
   command = plan
 

@@ -282,10 +282,10 @@ WORKER_AMI_ID=ami-0123456789abcdef0 \
 assert_contains "$tfvars" 'public_url = "https://control.example.com"' "public URL override"
 assert_contains "$tfvars" 'certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/example"' "certificate override"
 assert_contains "$tfvars" 'create_worker = true' "worker enabled"
-assert_contains "$tfvars" 'worker_disk_mib = 98304' "certified worker disk ceiling"
-assert_contains "$tfvars" 'worker_capacity_vcpus = 4' "certified worker CPU capacity"
-assert_contains "$tfvars" 'worker_capacity_memory_mib = 8192' "certified worker memory capacity"
-assert_contains "$tfvars" 'worker_execution_slots = 1' "certified worker execution slots"
+assert_contains "$tfvars" 'worker_disk_mib = 98304' "configured worker disk ceiling"
+assert_contains "$tfvars" 'worker_capacity_vcpus = 4' "configured worker CPU capacity"
+assert_contains "$tfvars" 'worker_capacity_memory_mib = 8192' "configured worker memory capacity"
+assert_contains "$tfvars" 'worker_execution_slots = 1' "configured worker execution slots"
 assert_contains "$tfvars" 'build_worker_vm_vcpus = 3' "fixed image-build VM CPU"
 assert_contains "$tfvars" 'build_worker_vm_memory_mib = 4096' "fixed image-build VM memory"
 assert_contains "$tfvars" 'build_worker_vm_scratch_disk_mib = 32768' "fixed image-build VM scratch disk"
@@ -293,26 +293,21 @@ assert_contains "$tfvars" 'build_worker_instance_type = null' "build worker inst
 assert_contains "$tfvars" 'build_worker_root_volume_size_gb = null' "build worker volume inherits priced shape"
 assert_contains "$tfvars" 'build_worker_root_volume_iops = null' "build worker IOPS inherits priced shape"
 assert_contains "$tfvars" 'build_worker_root_volume_throughput = null' "build worker throughput inherits priced shape"
-assert_contains "$tfvars" 'build_worker_capacity_vcpus = null' "build worker CPU inherits certified shape"
-assert_contains "$tfvars" 'build_worker_capacity_memory_mib = null' "build worker memory inherits certified shape"
-assert_contains "$tfvars" 'build_worker_execution_slots = null' "build worker slots inherit certified shape"
+assert_contains "$tfvars" 'build_worker_capacity_vcpus = null' "build worker CPU inherits configured shape"
+assert_contains "$tfvars" 'build_worker_capacity_memory_mib = null' "build worker memory inherits configured shape"
+assert_contains "$tfvars" 'build_worker_execution_slots = null' "build worker slots inherit configured shape"
 
 WORKER_AMI_ID=ami-0123456789abcdef0 \
   DEV_TFVARS="$tfvars" \
   DEV_WORKER_MAX_SIZE=2 \
   DEV_WORKER_EXECUTION_SLOTS=2 \
-  DEV_RUN_WARM_WORKERS=2 \
-  DEV_RUN_MAX_WORKERS=2 \
-  DEV_MAX_SCALE_OUT_PER_CYCLE=2 \
-  DEV_MAX_PENDING_WORKERS=2 \
   DEV_ALLOW_EXTENDED_WORKER_CAPACITY=true \
   "$script" dev-worker-tfvars >"$stdout" 2>"$stderr"
 assert_contains "$tfvars" 'allow_extended_worker_capacity = true' "extended-capacity approval"
 assert_contains "$tfvars" 'worker_max_size = 2' "configured run worker ceiling"
 assert_contains "$tfvars" 'worker_execution_slots = 2' "configured worker concurrency"
-assert_contains "$tfvars" '"run_warm_workers":2' "configured ready run workers"
-assert_contains "$tfvars" '"run_max_workers":2' "configured fleet-controller ceiling"
-assert_contains "$tfvars" '"build_max_workers":1' "configured build-worker ceiling"
+assert_contains "$tfvars" 'worker_observation_ttl_seconds = 120' "configured readiness freshness"
+assert_contains "$tfvars" 'worker_launch_timeout_seconds = 900' "configured launch timeout"
 
 WORKER_AMI_ID=ami-0123456789abcdef0 \
   DEV_TFVARS="$tfvars" \
@@ -320,8 +315,6 @@ WORKER_AMI_ID=ami-0123456789abcdef0 \
 assert_contains "$tfvars" 'allow_extended_worker_capacity = false' "ordinary profile restores the extended-capacity guard"
 assert_contains "$tfvars" 'worker_max_size = 1' "ordinary profile restores run worker ceiling"
 assert_contains "$tfvars" 'worker_execution_slots = 1' "ordinary profile restores one slot"
-assert_contains "$tfvars" '"run_warm_workers":0' "ordinary profile restores demand scaling"
-assert_contains "$tfvars" '"run_max_workers":1' "ordinary profile restores fleet-controller ceiling"
 
 if WORKER_AMI_ID=ami-0123456789abcdef0 \
   DEV_TFVARS="$tfvars" \
@@ -378,14 +371,13 @@ DEV_TFVARS="$tfvars" \
 assert_contains "$tfvars" 'public_url = "https://replacement.example.com"' "compact tfvar replacement"
 assert_tfvar_count "$tfvars" public_url 1 "compact tfvar replacement should not duplicate"
 assert_not_contains "$tfvars" "https://old.example.com" "compact old value removal"
-assert_contains "$tfvars" 'worker_fleet_controller = {}' "control mode has no worker fleet policy"
 
 cat >"$tfvars" <<'EOF'
 aws_region="us-west-2"
 name="worker-smoke"
 public_url="https://worker.example.com"
 create_worker=true
-worker_fleet_controller={run_max_workers=1}
+worker_observation_ttl_seconds=120
 EOF
 worker_tfvars_before="$(sha256_stdin <"$tfvars")"
 if DEV_TFVARS="$tfvars" \
@@ -508,7 +500,16 @@ destroy_log="$tmp/destroy.log"
 mkdir -p "$destroy_bin"
 cat >"$destroy_bin/tofu" <<'EOF'
 #!/usr/bin/env bash
-exit 1
+set -euo pipefail
+case "$*" in
+  *"output -raw control_url"*) printf '%s\n' 'https://control.example.test' ;;
+  *"output -raw worker_autoscaling_group_name"*) printf '%s\n' 'split-smoke-run-worker' ;;
+  *"output -raw build_worker_autoscaling_group_name"*) printf '%s\n' 'split-smoke-build-worker' ;;
+  *"output -raw worker_group_id"*) printf '%s\n' 'run-workers' ;;
+  *"output -raw build_worker_group_id"*) printf '%s\n' 'run-workers-build' ;;
+  *"output -json secret_arns"*) printf '%s\n' '{"operator_token":"arn:aws:secretsmanager:us-east-1:123456789012:secret:operator"}' ;;
+  *) exit 1 ;;
+esac
 EOF
 cat >"$destroy_bin/aws" <<'EOF'
 #!/usr/bin/env bash
@@ -516,12 +517,13 @@ set -euo pipefail
 printf '%s\n' "$*" >>"$MOCK_DESTROY_LOG"
 service="${1:-}"
 operation="${2:-}"
+args="$*"
 case "$service:$operation" in
   sts:get-caller-identity)
     printf '123456789012\n'
     ;;
   autoscaling:describe-auto-scaling-groups)
-    if [ "${MOCK_ASG_DESCRIBE_FAIL:-0}" = "1" ] || { [ "${MOCK_POST_STOP_DESCRIBE_FAIL:-0}" = "1" ] && grep -q 'ecs update-service .*--desired-count 0' "$MOCK_DESTROY_LOG"; }; then
+    if [ "${MOCK_ASG_DESCRIBE_FAIL:-0}" = "1" ]; then
       exit 42
     fi
     asg=""
@@ -531,19 +533,23 @@ case "$service:$operation" in
         *) shift ;;
       esac
     done
-    if [ "${MOCK_ACTIVE_ASG:-0}" = "1" ] || { [ "${MOCK_POST_STOP_ACTIVE:-0}" = "1" ] && grep -q 'ecs update-service .*--desired-count 0' "$MOCK_DESTROY_LOG"; }; then
-      printf '{"AutoScalingGroups":[{"AutoScalingGroupName":"%s","DesiredCapacity":1,"Instances":[{"InstanceId":"i-active","LifecycleState":"InService","ProtectedFromScaleIn":true}]}]}\n' "$asg"
+    if [ "${MOCK_ACTIVE_ASG:-0}" = "1" ] && ! grep -q "autoscaling terminate-instance-in-auto-scaling-group .*--instance-id i-active" "$MOCK_DESTROY_LOG"; then
+      if [[ "$args" == *"--output text"* ]]; then
+        printf 'i-active\n'
+      else
+        printf '{"AutoScalingGroups":[{"AutoScalingGroupName":"%s","DesiredCapacity":1,"Instances":[{"InstanceId":"i-active","LifecycleState":"InService","ProtectedFromScaleIn":true}]}]}\n' "$asg"
+      fi
     else
       printf '{"AutoScalingGroups":[{"AutoScalingGroupName":"%s","DesiredCapacity":0,"Instances":[]}]}\n' "$asg"
     fi
     ;;
-  ecs:describe-services)
-    printf '%s\n' '{"failures":[],"services":[{"status":"ACTIVE","desiredCount":1,"runningCount":1}]}'
+  secretsmanager:get-secret-value)
+    printf '%s\n' 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+    ;;
+  autoscaling:terminate-instance-in-auto-scaling-group)
     ;;
   rds:describe-db-instances)
     printf 'False\n'
-    ;;
-  ecs:update-service|ecs:wait)
     ;;
   s3api:head-bucket)
     exit 1
@@ -553,7 +559,42 @@ case "$service:$operation" in
     ;;
 esac
 EOF
-chmod +x "$destroy_bin/aws" "$destroy_bin/tofu"
+cat >"$destroy_bin/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'curl %s\n' "$*" >>"$MOCK_DESTROY_LOG"
+[ "${MOCK_OPERATOR_FAIL:-0}" != "1" ] || exit 22
+method=GET
+output_file=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --request) method="${2:-}"; shift 2 ;;
+    --output) output_file="${2:-}"; shift 2 ;;
+    http://*|https://*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+case "$url" in
+  *'/api/operator/worker-instances?'*)
+    response='{"worker_instances":[{"id":"01984b4c-7c5e-7b7c-8e9f-a1b2c3d4e5f6","resource_id":"i-active","worker_group_id":"run-workers","state":"active","claim_version":5,"current_epoch":3,"supports_run":true,"supports_build":false,"created_at":"2026-08-01T00:00:00Z","updated_at":"2026-08-01T00:00:00Z"}]}'
+    ;;
+  *'/drain')
+    [ "$method" = POST ] || exit 2
+    response='{"id":"01984b4c-7c5e-7b7c-8e9f-a1b2c3d4e5f6","resource_id":"i-active","worker_group_id":"run-workers","state":"draining","claim_version":6,"current_epoch":3,"supports_run":true,"supports_build":false,"created_at":"2026-08-01T00:00:00Z","updated_at":"2026-08-01T00:00:00Z"}'
+    ;;
+  *'/api/operator/worker-instances/'*)
+    response='{"id":"01984b4c-7c5e-7b7c-8e9f-a1b2c3d4e5f6","resource_id":"i-active","worker_group_id":"run-workers","state":"termination_ready","claim_version":7,"current_epoch":3,"supports_run":true,"supports_build":false,"termination_ready_at":"2026-08-01T00:00:00Z","created_at":"2026-08-01T00:00:00Z","updated_at":"2026-08-01T00:00:00Z"}'
+    ;;
+  *) exit 2 ;;
+esac
+if [ -n "$output_file" ]; then
+  printf '%s\n' "$response" >"$output_file"
+else
+  printf '%s\n' "$response"
+fi
+EOF
+chmod +x "$destroy_bin/aws" "$destroy_bin/tofu" "$destroy_bin/curl"
 MOCK_DESTROY_LOG="$destroy_log" \
   DEV_NAME=Split-Smoke \
   STATE_DIR="$tmp/destroy-state" \
@@ -561,7 +602,6 @@ MOCK_DESTROY_LOG="$destroy_log" \
   PATH="$destroy_bin:$PATH" \
   "$script" dev-destroy-prepare >"$stdout" 2>"$stderr"
 assert_contains "$destroy_log" "autoscaling describe-auto-scaling-groups --region us-east-1 --auto-scaling-group-names split-smoke-run-worker" "run worker destroy preparation"
-assert_contains "$destroy_log" "ecs update-service --region us-east-1 --cluster split-smoke-control --service dispatcher --desired-count 0" "fleet controller stopped after worker drain proof"
 assert_contains "$destroy_log" "autoscaling describe-auto-scaling-groups --region us-east-1 --auto-scaling-group-names split-smoke-build-worker" "build worker destroy preparation"
 assert_not_contains "$destroy_log" "complete-lifecycle-action" "destroy must not bypass worker drain proof"
 assert_not_contains "$destroy_log" "split-smoke-worker" "removed shared worker compatibility name"
@@ -570,46 +610,31 @@ assert_not_contains "$destroy_log" "ecr " "ephemeral dev teardown must not inspe
 assert_contains "$destroy_log" "s3api head-bucket --bucket split-smoke-123456789012-us-east-1-cas" "normalized CAS cleanup name"
 
 : >"$destroy_log"
+MOCK_ACTIVE_ASG=1 \
+  MOCK_DESTROY_LOG="$destroy_log" \
+  DEV_NAME=Split-Smoke \
+  STATE_DIR="$tmp/destroy-state" \
+  TF_BIN="$destroy_bin/tofu" \
+  PATH="$destroy_bin:$PATH" \
+  "$script" dev-destroy-prepare >"$stdout" 2>"$stderr"
+assert_contains "$destroy_log" "/api/operator/worker-instances/01984b4c-7c5e-7b7c-8e9f-a1b2c3d4e5f6/drain" "active Worker receives exact Control drain request"
+assert_contains "$destroy_log" "/api/operator/worker-instances/01984b4c-7c5e-7b7c-8e9f-a1b2c3d4e5f6" "destroy reads exact termination receipt"
+assert_contains "$destroy_log" "autoscaling terminate-instance-in-auto-scaling-group --region us-east-1 --instance-id i-active --should-decrement-desired-capacity" "drained Worker host is terminated exactly"
+assert_not_contains "$destroy_log" "ssm " "planned scale-in must not use SSM"
+
+: >"$destroy_log"
 if MOCK_ACTIVE_ASG=1 \
-  DEV_DESTROY_WORKER_DRAIN_TIMEOUT_SECONDS=0 \
+  MOCK_OPERATOR_FAIL=1 \
   MOCK_DESTROY_LOG="$destroy_log" \
   DEV_NAME=Split-Smoke \
   STATE_DIR="$tmp/destroy-state" \
   TF_BIN="$destroy_bin/tofu" \
   PATH="$destroy_bin:$PATH" \
   "$script" dev-destroy-prepare >"$stdout" 2>"$stderr"; then
-  fail "dev-destroy-prepare should refuse active protected workers that have not drained"
+  fail "dev-destroy-prepare should fail closed when exact Worker drain cannot start"
 fi
-assert_contains "$destroy_log" "ecs describe-services --region us-east-1 --cluster split-smoke-control --services dispatcher" "active worker drain requires fleet controller"
-assert_not_contains "$destroy_log" "ecs update-service" "fleet controller remains running until workers reach zero"
-assert_contains "$stderr" "worker fleets did not drain to zero before destroy" "active protected worker drain guard"
-
-: >"$destroy_log"
-if MOCK_POST_STOP_ACTIVE=1 \
-  MOCK_DESTROY_LOG="$destroy_log" \
-  DEV_NAME=Split-Smoke \
-  STATE_DIR="$tmp/destroy-state" \
-  TF_BIN="$destroy_bin/tofu" \
-  PATH="$destroy_bin:$PATH" \
-  "$script" dev-destroy-prepare >"$stdout" 2>"$stderr"; then
-  fail "dev-destroy-prepare should restore the controller if capacity reappears during shutdown"
-fi
-assert_contains "$destroy_log" "ecs update-service --region us-east-1 --cluster split-smoke-control --service dispatcher --desired-count 0" "fleet controller stop attempted after zero proof"
-assert_contains "$destroy_log" "ecs update-service --region us-east-1 --cluster split-smoke-control --service dispatcher --desired-count 1" "fleet controller restored after post-stop race"
-assert_contains "$stderr" "dispatcher was restored so the normal drain path can finish" "post-stop worker race guard"
-
-: >"$destroy_log"
-if MOCK_POST_STOP_DESCRIBE_FAIL=1 \
-  MOCK_DESTROY_LOG="$destroy_log" \
-  DEV_NAME=Split-Smoke \
-  STATE_DIR="$tmp/destroy-state" \
-  TF_BIN="$destroy_bin/tofu" \
-  PATH="$destroy_bin:$PATH" \
-  "$script" dev-destroy-prepare >"$stdout" 2>"$stderr"; then
-  fail "dev-destroy-prepare should restore the controller if post-stop zero proof is unavailable"
-fi
-assert_contains "$destroy_log" "ecs update-service --region us-east-1 --cluster split-smoke-control --service dispatcher --desired-count 1" "fleet controller restored after post-stop API failure"
-assert_contains "$stderr" "worker zero could not be proved after stopping the fleet controller; dispatcher was restored" "post-stop zero proof failure guard"
+assert_not_contains "$destroy_log" "autoscaling terminate-instance-in-auto-scaling-group" "failed drain cannot reduce physical capacity"
+assert_contains "$stderr" "failed to resolve logical Worker for i-active" "exact drain failure guard"
 
 : >"$destroy_log"
 if MOCK_ASG_DESCRIBE_FAIL=1 \

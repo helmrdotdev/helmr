@@ -42,7 +42,7 @@ cd "$repo_root"
 bun install --frozen-lockfile --ignore-scripts
 make console-build
 
-for command in helmr-control helmr-dispatcher; do
+for command in helmr-control helmr-dispatcher helmr-aws-capacity; do
   GOFLAGS='' GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build \
     -tags embed_console \
     -trimpath \
@@ -55,6 +55,7 @@ cat >"$context/Dockerfile" <<EOF
 FROM ${base_image}
 COPY helmr-control /usr/local/bin/helmr-control
 COPY helmr-dispatcher /usr/local/bin/helmr-dispatcher
+COPY helmr-aws-capacity /usr/local/bin/helmr-aws-capacity
 ENTRYPOINT ["/usr/local/bin/helmr-control"]
 EOF
 

@@ -19,12 +19,10 @@ type testControl struct {
 	activated      atomic.Bool
 	recoveryCalls  atomic.Int32
 	recovery409s   atomic.Int32
-	renewed        atomic.Int32
 	completed      atomic.Int32
 	status         atomic.Value
 	activateStatus atomic.Value
 	observeStatus  atomic.Value
-	renewStatus    atomic.Value
 	completeErr    error
 }
 
@@ -73,7 +71,7 @@ func (c *testControl) CompleteWorkerDrain(_ context.Context, request api.WorkerD
 	if c.completeErr != nil {
 		return api.WorkerStatusResponse{}, c.completeErr
 	}
-	return api.WorkerStatusResponse{Status: api.WorkerStatusDisabled}, nil
+	return api.WorkerStatusResponse{Status: api.WorkerStatusTerminationReady}, nil
 }
 func (c *testControl) returnedStatus() api.WorkerStatusResponse {
 	if status, ok := c.status.Load().(api.WorkerStatusResponse); ok {
@@ -86,13 +84,6 @@ func (c *testControl) ObserveWorker(_ context.Context, observation api.WorkerObs
 		return c.returnedStatus(), nil
 	}
 	if status, ok := c.observeStatus.Load().(api.WorkerStatusResponse); ok {
-		return status, nil
-	}
-	return c.returnedStatus(), nil
-}
-func (c *testControl) RenewWorkerCertification(context.Context, api.WorkerCapabilities) (api.WorkerStatusResponse, error) {
-	c.renewed.Add(1)
-	if status, ok := c.renewStatus.Load().(api.WorkerStatusResponse); ok {
 		return status, nil
 	}
 	return c.returnedStatus(), nil
@@ -543,7 +534,7 @@ func TestSupervisorHardAdmissionPausesClaimsButNotShutdown(t *testing.T) {
 	}
 	consumer := &queuedConsumer{work: []Work{func(context.Context) error { return nil }}}
 	s, err := New(Config{
-		Control: control, PollEvery: time.Millisecond, CertificationTTL: time.Hour,
+		Control: control, PollEvery: time.Millisecond,
 		AdmissionEvaluator: evaluator,
 		Consumers:          []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: consumer}},
 	})
@@ -585,7 +576,6 @@ func TestSupervisorObservationKeepsBuildOnlyAdmissionPause(t *testing.T) {
 	}
 	evaluator.Evaluate(context.Background(), AdmissionCheck{
 		Consumer: "build", State: StateActive,
-		CertifiedAt: now, CertificationTTL: time.Hour,
 	})
 	supervisor, err := New(Config{
 		Control: &testControl{}, AdmissionEvaluator: evaluator,
@@ -604,27 +594,6 @@ func TestSupervisorObservationKeepsBuildOnlyAdmissionPause(t *testing.T) {
 			observation.BuildPausedReason,
 		)
 	}
-}
-
-func TestSupervisorRenewsCertificationBeforeExpiry(t *testing.T) {
-	control := &testControl{}
-	s, err := New(Config{Control: control, ObservationEvery: time.Millisecond, CertificationTTL: 10 * time.Millisecond})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx) }()
-	deadline := time.After(time.Second)
-	for control.renewed.Load() == 0 {
-		select {
-		case <-deadline:
-			t.Fatal("certification was not renewed")
-		case <-time.After(time.Millisecond):
-		}
-	}
-	cancel()
-	<-done
 }
 
 func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T) {
@@ -646,7 +615,7 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 	}}}}
 	finalized := make(chan struct{})
 	s, err := New(Config{
-		Control: control, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond, CertificationTTL: time.Hour, DrainTimeout: time.Second,
+		Control: control, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond, DrainTimeout: time.Second,
 		Consumers: []ConsumerSpec{
 			{Name: "run", Concurrency: 1, Consumer: runs},
 			{Name: "workspace-cleanup", Concurrency: 1, DrainEligible: true, Consumer: cleanup},
@@ -733,7 +702,7 @@ func TestDurableDrainLatchWinsWhenShutdownIsAlsoReady(t *testing.T) {
 	control := &testControl{}
 	control.status.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining})
 	s, err := New(Config{
-		Control: control, PollEvery: time.Millisecond, ObservationEvery: time.Hour, CertificationTTL: 24 * time.Hour, DrainTimeout: time.Second,
+		Control: control, PollEvery: time.Millisecond, ObservationEvery: time.Hour, DrainTimeout: time.Second,
 		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
 			return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
 		},
@@ -809,7 +778,7 @@ func TestSignalDuringDurableDrainDoesNotCancelCompletion(t *testing.T) {
 	}
 }
 
-func TestObservationAndRenewalResponsesTriggerDurableDrain(t *testing.T) {
+func TestObservationResponseTriggersDurableDrain(t *testing.T) {
 	tests := []struct {
 		name  string
 		setup func(*testControl)
@@ -820,13 +789,6 @@ func TestObservationAndRenewalResponsesTriggerDurableDrain(t *testing.T) {
 				control.observeStatus.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining})
 			},
 		},
-		{
-			name: "certification renewal",
-			setup: func(control *testControl) {
-				control.observeStatus.Store(api.WorkerStatusResponse{Status: api.WorkerStatusActive})
-				control.renewStatus.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining})
-			},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -834,7 +796,7 @@ func TestObservationAndRenewalResponsesTriggerDurableDrain(t *testing.T) {
 			control.status.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining})
 			tt.setup(control)
 			s, err := New(Config{
-				Control: control, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond, CertificationTTL: 2 * time.Millisecond, DrainTimeout: time.Second,
+				Control: control, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond, DrainTimeout: time.Second,
 				FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
 					return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
 				},

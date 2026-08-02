@@ -559,7 +559,6 @@ WITH restore_secret_authority AS MATERIALIZED (
        AND worker_instances.current_epoch = runtime_instances.worker_epoch
        AND worker_instances.state IN ('active', 'draining')
        AND worker_instances.supports_run
-       AND worker_instances.certified_at IS NOT NULL
       JOIN runtime_substrates
         ON runtime_substrates.id = $1
        AND runtime_substrates.org_id = runtime_instances.org_id

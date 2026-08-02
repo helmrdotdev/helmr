@@ -15,7 +15,7 @@ import (
 var ErrLifecycleConflict = errors.New("worker lifecycle fence conflict")
 
 // LifecycleLockKey serializes one logical Worker group's deployment lifecycle
-// transitions with fleet provider mutations. It is intentionally provider-neutral.
+// transitions with deployment provider mutations. It is intentionally provider-neutral.
 func LifecycleLockKey(groupID string) int64 {
 	return sessionlock.Key("helmr:worker-group-lifecycle:" + strings.TrimSpace(groupID))
 }
@@ -24,7 +24,7 @@ type LifecycleStore interface {
 	GetWorkerGroupLifecycle(context.Context, string) (db.GetWorkerGroupLifecycleRow, error)
 	TransitionWorkerGroupLifecycle(context.Context, db.TransitionWorkerGroupLifecycleParams) (db.TransitionWorkerGroupLifecycleRow, error)
 	GetWorkerInstanceLifecycle(context.Context, db.GetWorkerInstanceLifecycleParams) (db.GetWorkerInstanceLifecycleRow, error)
-	LoseWorkerInstanceForDrift(context.Context, db.LoseWorkerInstanceForDriftParams) (db.LoseWorkerInstanceForDriftRow, error)
+	MarkWorkerInstanceLost(context.Context, db.MarkWorkerInstanceLostParams) (db.MarkWorkerInstanceLostRow, error)
 }
 
 type GroupLifecycle struct {
@@ -64,8 +64,9 @@ func TransitionGroupLifecycle(ctx context.Context, store LifecycleStore, groupID
 	if expectedClaimVersion <= 0 {
 		return GroupLifecycle{}, errors.New("expected claim version must be positive")
 	}
-	if targetState != string(db.WorkerGroupStateActive) && targetState != string(db.WorkerGroupStateDraining) {
-		return GroupLifecycle{}, errors.New("worker group lifecycle target must be active or draining")
+	if targetState != string(db.WorkerGroupStateActive) && targetState != string(db.WorkerGroupStatePaused) &&
+		targetState != string(db.WorkerGroupStateDraining) && targetState != string(db.WorkerGroupStateDisabled) {
+		return GroupLifecycle{}, errors.New("worker group lifecycle target must be active, paused, draining, or disabled")
 	}
 	row, err := store.TransitionWorkerGroupLifecycle(ctx, db.TransitionWorkerGroupLifecycleParams{
 		WorkerGroupID: groupID, ExpectedClaimVersion: expectedClaimVersion, TargetState: targetState,
@@ -96,7 +97,7 @@ func InspectInstanceLifecycle(ctx context.Context, store LifecycleStore, groupID
 	return instanceLifecycle(row.ID.Bytes, row.ResourceID, row.WorkerGroupID, row.State, row.ClaimVersion, row.CurrentEpoch.Int64, row.CurrentEpoch.Valid, false), nil
 }
 
-func LoseInstanceForDrift(ctx context.Context, store LifecycleStore, groupID string, resourceID string, expectedClaimVersion int64) (InstanceLifecycle, error) {
+func MarkInstanceLost(ctx context.Context, store LifecycleStore, groupID string, resourceID string, expectedClaimVersion int64) (InstanceLifecycle, error) {
 	groupID, resourceID, err := lifecycleInstanceLocator(groupID, resourceID)
 	if err != nil {
 		return InstanceLifecycle{}, err
@@ -104,7 +105,7 @@ func LoseInstanceForDrift(ctx context.Context, store LifecycleStore, groupID str
 	if expectedClaimVersion <= 0 {
 		return InstanceLifecycle{}, errors.New("expected claim version must be positive")
 	}
-	row, err := store.LoseWorkerInstanceForDrift(ctx, db.LoseWorkerInstanceForDriftParams{
+	row, err := store.MarkWorkerInstanceLost(ctx, db.MarkWorkerInstanceLostParams{
 		WorkerGroupID: groupID, ResourceID: resourceID, ExpectedClaimVersion: expectedClaimVersion,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {

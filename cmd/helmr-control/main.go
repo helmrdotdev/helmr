@@ -115,9 +115,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("decode HELMR_WORKER_GROUPS: %w", err)
 	}
-	if bootstrapCfg.Provider != "aws" {
-		return fmt.Errorf("HELMR_PROVIDER must be aws for the AWS control entry")
-	}
 	desiredGroups := make([]workergroup.Desired, 0, len(groups))
 	enrollmentSecrets := make([]enrollment.GroupSecret, 0, len(groups))
 	for _, configuredGroup := range groups {
@@ -268,6 +265,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		RunLeaseTTL:           cfg.RunLeaseTTL,
 		RunFinalizationTTL:    cfg.RunFinalizationTTL,
 		WorkerEnrollment:      workerEnrollment,
+		OperatorToken:         cfg.OperatorToken,
 		SetupToken:            cfg.SetupToken,
 		AuthKey:               cfg.AuthKey,
 		PublicURL:             publicURL,

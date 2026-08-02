@@ -172,7 +172,7 @@ PY
     '{
       schema:"helmrdotdev.datapath-topology-evidence.v0",
       topology_facts:{
-        schema:"helmrdotdev.certified-topology-facts.candidate.v0",
+        schema:"helmrdotdev.datapath-topology-facts.candidate.v0",
         subject:{
           provider:"aws",
           account_id:$account_id,

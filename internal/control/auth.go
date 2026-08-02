@@ -259,7 +259,7 @@ func (s *Server) sessionActorFromToken(r *http.Request, rawSession string) (auth
 }
 
 func (s *Server) requireWorker(next http.Handler) http.Handler {
-	return s.requireWorkerState(workerAuthCertified, next)
+	return s.requireWorkerState(workerAuthActive, next)
 }
 
 func (s *Server) requireRegisteringWorker(next http.Handler) http.Handler {
@@ -270,17 +270,22 @@ func (s *Server) requireRecoveringWorker(next http.Handler) http.Handler {
 	return s.requireWorkerState(workerAuthRecovering, next)
 }
 
-func (s *Server) requireTerminalWorker(next http.Handler) http.Handler {
-	return s.requireWorkerState(workerAuthTerminal, next)
+func (s *Server) requireWorkerDrainCompletion(next http.Handler) http.Handler {
+	return s.requireWorkerState(workerAuthDrainCompletion, next)
+}
+
+func (s *Server) requireWorkerFence(next http.Handler) http.Handler {
+	return s.requireWorkerState(workerAuthFence, next)
 }
 
 type workerAuthState uint8
 
 const (
-	workerAuthCertified workerAuthState = iota
+	workerAuthActive workerAuthState = iota
 	workerAuthRegistering
 	workerAuthRecovering
-	workerAuthTerminal
+	workerAuthDrainCompletion
+	workerAuthFence
 )
 
 func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) http.Handler {
@@ -325,9 +330,24 @@ func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) ht
 		case workerAuthRecovering:
 			recoveryRow, recoveryErr := s.db.AuthorizeRecoveringWorkerInstanceCredential(r.Context(), db.AuthorizeRecoveringWorkerInstanceCredentialParams(params))
 			row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(recoveryRow), recoveryErr
-		case workerAuthTerminal:
-			terminalRow, terminalErr := s.db.AuthorizeTerminalWorkerInstanceCredential(r.Context(), db.AuthorizeTerminalWorkerInstanceCredentialParams(params))
-			row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(terminalRow), terminalErr
+		case workerAuthDrainCompletion:
+			row, authorizationErr = s.db.AuthorizeWorkerInstanceCredential(r.Context(), params)
+			if isNoRows(authorizationErr) {
+				replayRow, replayErr := s.db.AuthorizeWorkerDrainReplay(r.Context(), db.AuthorizeWorkerDrainReplayParams{
+					CredentialID: params.CredentialID, ClaimVersion: params.ClaimVersion,
+					ProtocolVersion: params.ProtocolVersion, WorkerEpoch: params.WorkerEpoch,
+				})
+				row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(replayRow), replayErr
+			}
+		case workerAuthFence:
+			row, authorizationErr = s.db.AuthorizeWorkerInstanceCredential(r.Context(), params)
+			if isNoRows(authorizationErr) {
+				replayRow, replayErr := s.db.AuthorizeWorkerFenceReplay(r.Context(), db.AuthorizeWorkerFenceReplayParams{
+					CredentialID: params.CredentialID, ClaimVersion: params.ClaimVersion,
+					ProtocolVersion: params.ProtocolVersion, WorkerEpoch: params.WorkerEpoch,
+				})
+				row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(replayRow), replayErr
+			}
 		default:
 			row, authorizationErr = s.db.AuthorizeWorkerInstanceCredential(r.Context(), params)
 		}

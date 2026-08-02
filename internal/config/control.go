@@ -29,6 +29,7 @@ func LoadControl() (Control, error) {
 		BuildPolicyPath:         envString("HELMR_BUILD_POLICY_PATH"),
 		PlatformStoreURI:        envString("HELMR_PLATFORM_STORE_URI"),
 		WorkerGroupsJSON:        envString("HELMR_WORKER_GROUPS"),
+		OperatorToken:           envString("HELMR_OPERATOR_TOKEN"),
 		SetupToken:              envString("HELMR_SETUP_TOKEN"),
 		PublicURL:               publicURL,
 		MagicLinkDebugURLs:      magicLinkDebugURLs,

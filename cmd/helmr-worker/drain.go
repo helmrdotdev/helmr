@@ -66,7 +66,7 @@ func runDrain(log *slog.Logger, args []string) error {
 	if !*wait {
 		return nil
 	}
-	if status.Status == api.WorkerStatusDisabled {
+	if status.Status == api.WorkerStatusTerminationReady {
 		return writeDrainCompleteMarker(workDir, status.WorkerInstanceID)
 	}
 	deadline := time.NewTimer(*timeout)
@@ -85,7 +85,7 @@ func runDrain(log *slog.Logger, args []string) error {
 				return fmt.Errorf("get worker drain status: %w", err)
 			}
 			log.Info("worker drain status", "worker_instance_id", status.WorkerInstanceID, "status", status.Status, "active_executions", status.ActiveExecutions)
-			if status.Status == api.WorkerStatusDisabled {
+			if status.Status == api.WorkerStatusTerminationReady {
 				log.Info("worker drain completed", "worker_instance_id", status.WorkerInstanceID)
 				return writeDrainCompleteMarker(workDir, status.WorkerInstanceID)
 			}

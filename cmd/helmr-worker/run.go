@@ -101,10 +101,31 @@ func run(log *slog.Logger) error {
 			RequiredScratchBytes:          uint64(scratchFloorMiB+firecracker.BootCorpusMaxMiB) * mib,
 			RequiredScratchAvailableBytes: 1,
 		}
-		storageProof, err := workerdaemon.ProveBuildStorage(storage)
-		if err != nil {
+		if _, err := workerdaemon.ProveBuildStorage(storage); err != nil {
 			return fmt.Errorf("prove build storage: %w", err)
 		}
+		buildStorageConfig = &storage
+	}
+	var controlClient *client.Client
+	workerCredential, err := resolveAuthenticatedWorkerCredential(ctx, cfg, workDir, func(credential workerCredentialFile) error {
+		candidate, candidateErr := client.New(cfg.ControlURL,
+			client.WithWorkerAuth(credential.WorkerInstanceID, credential.WorkerInstanceSecret),
+			client.WithWorkerService(serviceID, api.CurrentWorkerProtocolVersion, supportsRun, supportsBuild),
+		)
+		if candidateErr != nil {
+			return candidateErr
+		}
+		if candidateErr = candidate.AuthenticateWorker(ctx); candidateErr != nil {
+			return candidateErr
+		}
+		controlClient = candidate
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("configure authenticated control client: %w", err)
+	}
+	if supportsBuild {
+		storage := *buildStorageConfig
 		evidence, err := workerdaemon.RecoverLocalVMState(ctx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
 		if err != nil {
 			return fmt.Errorf("recover local worker state before build activation: %w", err)
@@ -116,12 +137,11 @@ func run(log *slog.Logger) error {
 		if err := firecracker.CleanRuntimes(workDir, ""); err != nil {
 			return fmt.Errorf("clean stale firecracker runtimes: %w", err)
 		}
-		storage.RequiredScratchAvailableBytes = uint64(firecracker.BootCorpusMaxMiB) * mib
-		storageProof, err = workerdaemon.ProveBuildStorage(storage)
+		storage.RequiredScratchAvailableBytes = uint64(firecracker.BootCorpusMaxMiB) * 1024 * 1024
+		storageProof, err := workerdaemon.ProveBuildStorage(storage)
 		if err != nil {
 			return fmt.Errorf("prove build storage after recovery: %w", err)
 		}
-		buildStorageConfig = &storage
 		if err := ensureBuildCacheDirectory(storageProof.SubstrateCacheDir); err != nil {
 			return fmt.Errorf("prepare substrate cache: %w", err)
 		}
@@ -262,25 +282,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
-	var controlClient *client.Client
-	workerCredential, err := resolveAuthenticatedWorkerCredential(ctx, cfg, workDir, func(credential workerCredentialFile) error {
-		candidate, candidateErr := client.New(cfg.ControlURL,
-			client.WithWorkerAuth(credential.WorkerInstanceID, credential.WorkerInstanceSecret),
-			client.WithWorkerService(serviceID, api.CurrentWorkerProtocolVersion, supportsRun, supportsBuild),
-		)
-		if candidateErr != nil {
-			return candidateErr
-		}
-		if candidateErr = candidate.AuthenticateWorker(ctx); candidateErr != nil {
-			return candidateErr
-		}
-		controlClient = candidate
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("configure authenticated control client: %w", err)
-	}
-	certifiedVM, err := certifyVMResources(cfg, supportsRun, supportsBuild)
+	vmResources, err := resolveVMResources(cfg, supportsRun, supportsBuild)
 	if err != nil {
 		return err
 	}
@@ -328,7 +330,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("inspect worker disk capacity: %w", err)
 	}
 	substrateCacheMaxBytes, artifactCacheMaxBytes := workerCacheBudgetsBytes(cfg.SubstrateCacheMaxMiB, cfg.ArtifactCacheMaxMiB, hostDiskMiB)
-	diskCapacity, err := compute.PartitionWorkerDiskCapacity(hostDiskMiB, certifiedVM.DiskMiB, substrateCacheMaxBytes+artifactCacheMaxBytes)
+	diskCapacity, err := compute.PartitionWorkerDiskCapacity(hostDiskMiB, vmResources.DiskMiB, substrateCacheMaxBytes+artifactCacheMaxBytes)
 	if err != nil {
 		return fmt.Errorf("partition worker physical disk capacity: %w", err)
 	}
@@ -364,8 +366,8 @@ func run(log *slog.Logger) error {
 		NetworkABI:                runtimeCapabilities.NetworkABI,
 		MaxVCPUs:                  allocatable.MilliCPU / 1000,
 		MaxMemoryMiB:              allocatable.MemoryMiB,
-		VMMilliCPU:                certifiedVM.MilliCPU,
-		VMMemoryMiB:               certifiedVM.MemoryMiB,
+		VMMilliCPU:                vmResources.MilliCPU,
+		VMMemoryMiB:               vmResources.MemoryMiB,
 		GuestEphemeralDiskBytes:   diskCapacity.HostGuestEphemeralDiskBytes,
 		VMGuestEphemeralDiskBytes: diskCapacity.VMGuestEphemeralDiskBytes,
 		ExecutionSlotsAvailable:   cfg.WorkerExecutionSlots,
@@ -511,7 +513,7 @@ func run(log *slog.Logger) error {
 	}
 	supervisor, err := workerdaemon.New(workerdaemon.Config{
 		Control: controlClient, Capabilities: workerCapabilities, Consumers: consumerSpecs, Admission: admission,
-		Background: background, PollEvery: cfg.PollEvery, CertificationTTL: cfg.WorkerCertificationTTL,
+		Background: background, PollEvery: cfg.PollEvery,
 		AdmissionEvaluator: hardAdmission, Log: log,
 		Recover: func(recoveryCtx context.Context) (workerdaemon.RecoveryEvidence, error) {
 			var evidence workerdaemon.RecoveryEvidence
@@ -581,7 +583,7 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-func certifyVMResources(cfg config.Worker, supportsRun bool, supportsBuild bool) (compute.ResourceVector, error) {
+func resolveVMResources(cfg config.Worker, supportsRun bool, supportsBuild bool) (compute.ResourceVector, error) {
 	resources := compute.ResourceVector{
 		MilliCPU:  cfg.VMVCPUCount * 1000,
 		MemoryMiB: cfg.VMMemoryMiB,

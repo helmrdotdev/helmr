@@ -34,7 +34,7 @@ func TestHardAdmissionFailClosedChecks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := AdmissionCheck{Consumer: "run", State: StateActive, CertifiedAt: now.Add(-time.Minute), CertificationTTL: time.Hour}
+	base := AdmissionCheck{Consumer: "run", State: StateActive}
 	tests := []struct {
 		name   string
 		mutate func(*HostHealth, *AdmissionCheck)
@@ -62,7 +62,6 @@ func TestHardAdmissionFailClosedChecks(t *testing.T) {
 			c.Recovery.Quarantined = []string{"one"}
 			c.Snapshot = Snapshot{Active: map[string]int{"workspace": 1}}
 		}, want: AdmissionRuntimeSlotsQuarantined},
-		{name: "certification", mutate: func(_ *HostHealth, c *AdmissionCheck) { c.CertifiedAt = now.Add(-2 * time.Hour) }, want: AdmissionCertificationStale},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -92,7 +91,7 @@ func TestHardAdmissionKeepsVerifierFailureInBuildDomain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	check := AdmissionCheck{State: StateActive, CertifiedAt: now, CertificationTTL: time.Hour}
+	check := AdmissionCheck{State: StateActive}
 	for _, consumer := range []string{"run", "workspace", "build"} {
 		check.Consumer = consumer
 		evaluator.Evaluate(context.Background(), check)
@@ -127,7 +126,7 @@ func TestHardAdmissionFailsClosedWhenDatapathChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	check := AdmissionCheck{Consumer: "run", State: StateActive, CertifiedAt: now, CertificationTTL: time.Hour}
+	check := AdmissionCheck{Consumer: "run", State: StateActive}
 	if decision := evaluator.Evaluate(context.Background(), check); !decision.Allowed {
 		t.Fatalf("healthy datapath decision = %+v", decision)
 	}
@@ -150,7 +149,7 @@ func TestHardAdmissionKeepsRuntimeSlotPressureOutOfBuildDomain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	check := AdmissionCheck{State: StateActive, CertifiedAt: now, CertificationTTL: time.Hour, Recovery: RecoveryEvidence{Quarantined: []string{"slot"}}}
+	check := AdmissionCheck{State: StateActive, Recovery: RecoveryEvidence{Quarantined: []string{"slot"}}}
 	check.Consumer = "run"
 	evaluator.Evaluate(context.Background(), check)
 	check.Consumer = "runtime"
@@ -174,7 +173,7 @@ func TestHardAdmissionAllowsRunInsideActiveWorkspaceSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	decision := evaluator.Evaluate(context.Background(), AdmissionCheck{
-		Consumer: "run", State: StateActive, CertifiedAt: now, CertificationTTL: time.Hour,
+		Consumer: "run", State: StateActive,
 		Snapshot: Snapshot{Active: map[string]int{"workspace": 1}},
 	})
 	if !decision.Allowed {
@@ -191,7 +190,7 @@ func TestHardAdmissionPressureObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	evaluator.Evaluate(context.Background(), AdmissionCheck{State: StateActive, CertifiedAt: now, CertificationTTL: time.Hour})
+	evaluator.Evaluate(context.Background(), AdmissionCheck{State: StateActive})
 	observation := evaluator.Observation()
 	if observation.GuestEphemeralDiskPressureBPS != 5000 {
 		t.Fatalf("disk pressure = %d, want 5000", observation.GuestEphemeralDiskPressureBPS)

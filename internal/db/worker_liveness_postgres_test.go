@@ -67,8 +67,8 @@ func TestStaleWorkerFenceUsesStateAppropriateStrictBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fenced.State != db.WorkerInstanceStateDisabled {
-		t.Fatalf("pre-epoch registering fence state = %q, want disabled", fenced.State)
+	if fenced.State != db.WorkerInstanceStateLost {
+		t.Fatalf("pre-epoch registering fence state = %q, want lost", fenced.State)
 	}
 	fencedWithEpoch, err := txQueries.RecheckAndFenceStaleWorkerInstance(ctx, db.RecheckAndFenceStaleWorkerInstanceParams{
 		ID: pgvalue.UUID(staleEpochID), WorkerGroupID: dbtest.DefaultWorkerGroupID,
@@ -122,7 +122,7 @@ func TestStaleWorkerFenceUsesStateAppropriateStrictBoundaries(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT state FROM worker_instances WHERE id = $1`, activeStaleID).Scan(&activeStaleState); err != nil {
 		t.Fatal(err)
 	}
-	if exactState != db.WorkerInstanceStateRegistering || freshUnderActiveCutoffState != db.WorkerInstanceStateRegistering || staleState != db.WorkerInstanceStateDisabled || staleEpochState != db.WorkerInstanceStateLost || activeExactState != db.WorkerInstanceStateActive || activeStaleState != db.WorkerInstanceStateLost {
+	if exactState != db.WorkerInstanceStateRegistering || freshUnderActiveCutoffState != db.WorkerInstanceStateRegistering || staleState != db.WorkerInstanceStateLost || staleEpochState != db.WorkerInstanceStateLost || activeExactState != db.WorkerInstanceStateActive || activeStaleState != db.WorkerInstanceStateLost {
 		t.Fatalf("states exact=%q fresh_under_active_cutoff=%q stale=%q stale_epoch=%q active_exact=%q active_stale=%q", exactState, freshUnderActiveCutoffState, staleState, staleEpochState, activeExactState, activeStaleState)
 	}
 }
@@ -251,25 +251,31 @@ func insertActiveWorkerWithObservation(t *testing.T, ctx context.Context, pool *
 	t.Helper()
 	id := uuid.Must(uuid.NewV7())
 	serviceID := uuid.Must(uuid.NewV7())
+	runtimeIdentityID := "active-runtime-" + id.String()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runtime_identities (
+			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, network_abi
+		) VALUES ($1, 'x86_64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0')
+	`, runtimeIdentityID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, state,
-			current_epoch, current_service_id, supervisor_version, supports_build,
-			certified_cpu_millis, certified_memory_bytes, certified_guest_ephemeral_disk_bytes,
+			current_epoch, current_service_id, supervisor_version, supports_build, runtime_identity_id,
+			epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
 			per_vm_cpu_millis, per_vm_memory_bytes,
 			per_vm_guest_ephemeral_disk_bytes, max_build_executors,
-			certification_profile, certification_fingerprint, epoch_started_at,
-			certified_at, activated_at
+			epoch_started_at, activated_at
 		) VALUES (
 			$1, $2, $3, 'active',
-			1, $4, 'test-worker', true,
+			1, $4, 'test-worker', true, $6,
 			1000, 1073741824, 1073741824,
 			1000, 1073741824,
 			1073741824, 1,
-			'test', 'sha256:test-certification', $5,
 			$5, $5
 		)
-	`, id, "active-"+id.String(), dbtest.DefaultWorkerGroupID, serviceID, observedAt); err != nil {
+	`, id, "active-"+id.String(), dbtest.DefaultWorkerGroupID, serviceID, observedAt, runtimeIdentityID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.New(pool).RecordWorkerObservation(ctx, workerObservation(id, observedAt)); err != nil {

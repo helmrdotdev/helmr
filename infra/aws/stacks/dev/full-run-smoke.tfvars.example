@@ -64,9 +64,9 @@ create_worker                       = true
 worker_ami_id                       = "ami-..."
 worker_instance_type                = "c8i.xlarge"
 worker_enable_nested_virtualization = true
-worker_min_size                     = 0
+worker_min_size                     = 1
 worker_max_size                     = 1
-build_worker_min_size               = 0
+build_worker_min_size               = 1
 build_worker_max_size               = 1
 worker_root_volume_size_gb          = 120
 worker_root_volume_iops             = 3000
@@ -79,22 +79,6 @@ worker_capacity_vcpus               = 4
 worker_capacity_memory_mib          = 8192
 worker_execution_slots              = 1
 
-# Queued build/run demand scales each application-owned ASG to one.
-worker_fleet_controller = {
-  run_warm_workers             = 0
-  build_warm_workers           = 0
-  run_max_workers              = 1
-  build_max_workers            = 1
-  max_scale_out_per_cycle      = 1
-  max_pending_workers          = 1
-  max_packing_items            = 10000
-  controller_interval_seconds  = 15
-  scale_out_cooldown_seconds   = 30
-  scale_in_cooldown_seconds    = 300
-  scale_in_hysteresis_seconds  = 300
-  stale_worker_timeout_seconds = 120
-  readiness_timeout_seconds    = 900
-  drain_timeout_seconds        = 1800
-  emergency_stop               = false
-  metric_interval_seconds      = 60
-}
+# The disposable campaign uses fixed deployment-owned capacity.
+worker_observation_ttl_seconds = 120
+worker_launch_timeout_seconds  = 900

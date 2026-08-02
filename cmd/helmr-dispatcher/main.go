@@ -9,11 +9,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
-	"time"
 
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
-	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/helmrdotdev/helmr/internal/actor"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	"github.com/helmrdotdev/helmr/internal/config"
@@ -22,7 +18,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
 
-	"github.com/helmrdotdev/helmr/internal/fleet"
 	rundomain "github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -39,11 +34,7 @@ const (
 	baseMaxConns          = int32(12)
 	runDispatchMaxConns   = int32(4)
 	buildDispatchMaxConns = int32(2)
-	fleetSourceMaxConns   = int32(2)
-	fleetLockMaxConns     = int32(2)
 )
-
-var loadAWSConfig = awsconfig.LoadDefaultConfig
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -78,20 +69,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure build dispatch database pool: %w", err)
 	}
 	defer buildDispatchPool.Close()
-	fleetControllers, fleetPools, err := configureFleetControllers(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	for _, fleetPool := range fleetPools {
-		defer fleetPool.Close()
-	}
 	connectionBudget := baseMaxConns + runDispatchMaxConns + buildDispatchMaxConns
-	if len(fleetPools) > 0 {
-		connectionBudget += fleetLockMaxConns + int32(len(fleetPools)-1)*fleetSourceMaxConns
-	}
 	log.Info("dispatcher database connection budget", "max_connections", connectionBudget,
-		"base", baseMaxConns, "run_dispatch", runDispatchMaxConns, "build_dispatch", buildDispatchMaxConns,
-		"fleet_controllers", len(fleetControllers))
+		"base", baseMaxConns, "run_dispatch", runDispatchMaxConns, "build_dispatch", buildDispatchMaxConns)
 	queries := db.New(pool)
 	runDispatchQueries := db.New(runDispatchPool)
 	buildDispatchQueries := db.New(buildDispatchPool)
@@ -183,15 +163,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure stale worker fence lock: %w", err)
 	}
-	workerGroupFenceGrace := make(map[string]dispatch.WorkerGroupRegistrationGrace, len(cfg.WorkerFleets))
-	for _, configuredFleet := range cfg.WorkerFleets {
-		workerGroupFenceGrace[configuredFleet.GroupID] = dispatch.WorkerGroupRegistrationGrace{
-			Registration: configuredFleet.ReadinessTimeout,
-		}
-	}
 	staleWorkerFencer, err := dispatch.NewStaleWorkerFencer(staleWorkerTransactions,
 		dispatch.WithStaleWorkerFenceLock(staleWorkerLock),
-		dispatch.WithWorkerGroupRegistrationGrace(workerGroupFenceGrace),
 		dispatch.WithStaleWorkerFenceLogger(log),
 	)
 	if err != nil {
@@ -363,9 +336,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 		func() error { return actorInputDelivery.Run(runCtx) },
 		func() error { return telemetryIngestor.Run(runCtx) },
 	}
-	for _, controller := range fleetControllers {
-		runners = append(runners, func() error { return controller.Run(runCtx) })
-	}
 	errc := make(chan error, len(runners))
 	var wg sync.WaitGroup
 	wg.Add(len(runners))
@@ -417,98 +387,4 @@ func newDispatchPool(ctx context.Context, databaseURL string, maxConns int32) (*
 		return nil, err
 	}
 	return pool, nil
-}
-
-func configureFleetControllers(ctx context.Context, cfg config.Dispatcher) ([]*fleet.Controller, []*pgxpool.Pool, error) {
-	if len(cfg.WorkerFleets) == 0 {
-		return nil, nil, nil
-	}
-	awsCfg, err := loadAWSConfig(ctx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("load AWS config for worker fleet controller: %w", err)
-	}
-	groups := make(map[string]string, len(cfg.WorkerFleets))
-	roles := make(map[string]struct{}, 2)
-	for _, configured := range cfg.WorkerFleets {
-		groups[configured.GroupID] = configured.ASGName
-		roles[configured.Role] = struct{}{}
-	}
-	actuator, err := fleet.NewAWSActuator(autoscaling.NewFromConfig(awsCfg), groups)
-	if err != nil {
-		return nil, nil, fmt.Errorf("configure AWS fleet actuator: %w", err)
-	}
-	cloudWatchClient := cloudwatch.NewFromConfig(awsCfg)
-	pools := make([]*pgxpool.Pool, 0, len(roles)+1)
-	closePools := func() {
-		for _, pool := range pools {
-			pool.Close()
-		}
-	}
-	lockPool, err := newDispatchPool(ctx, cfg.DatabaseURL, fleetLockMaxConns)
-	if err != nil {
-		return nil, nil, fmt.Errorf("configure fleet leader database pool: %w", err)
-	}
-	pools = append(pools, lockPool)
-	leaders, err := fleet.NewPGLeaderElector(lockPool)
-	if err != nil {
-		closePools()
-		return nil, nil, fmt.Errorf("configure fleet leaders: %w", err)
-	}
-	sourcePools := make(map[string]*pgxpool.Pool, len(roles))
-	for _, role := range []string{"run", "build"} {
-		if _, exists := roles[role]; !exists {
-			continue
-		}
-		pool, err := newDispatchPool(ctx, cfg.DatabaseURL, fleetSourceMaxConns)
-		if err != nil {
-			closePools()
-			return nil, nil, fmt.Errorf("configure %s fleet source database pool: %w", role, err)
-		}
-		pools = append(pools, pool)
-		sourcePools[role] = pool
-	}
-	controllers := make([]*fleet.Controller, 0, len(cfg.WorkerFleets))
-	for _, configured := range cfg.WorkerFleets {
-		capacity := fleet.Capacity{
-			MilliCPU: configured.MilliCPU, MemoryBytes: configured.MemoryBytes,
-			GuestEphemeralDiskBytes: configured.GuestEphemeralDiskBytes,
-			BuildCacheBytes:         configured.BuildCacheBytes, ArtifactCacheBytes: configured.ArtifactCacheBytes,
-			VMSlots: configured.VMSlots, BuildExecutors: configured.BuildExecutors,
-		}
-		planner, err := fleet.NewPlanner(fleet.Policy{
-			MinWorkers: configured.MinWorkers, WarmWorkers: configured.WarmWorkers, MaxWorkers: configured.MaxWorkers,
-			InstanceCapacity: capacity, AllowedCompatibilityKeys: configured.CompatibilityKeys,
-			MaxScaleOutPerCycle: configured.MaxScaleOutPerCycle, MaxPendingWorkers: configured.MaxPending,
-			MaxPackingItems: configured.MaxPackingItems, ScaleOutCooldown: configured.ScaleOutCooldown,
-			ScaleInCooldown: configured.ScaleInCooldown, ScaleInHysteresis: configured.ScaleInHysteresis,
-			EmergencyStop: configured.EmergencyStop,
-		})
-		if err != nil {
-			closePools()
-			return nil, nil, fmt.Errorf("configure fleet planner for %q: %w", configured.GroupID, err)
-		}
-		queryTimeout := min(5*time.Second, configured.ControllerInterval)
-		source, err := fleet.NewPostgresSource(sourcePools[configured.Role], configured.Role, capacity, queryTimeout)
-		if err != nil {
-			closePools()
-			return nil, nil, fmt.Errorf("configure fleet source for %q: %w", configured.GroupID, err)
-		}
-		publisher, err := fleet.NewCloudWatchPublisher(cloudWatchClient, cfg.FleetMetricsNamespace, configured.Role, configured.MetricsInterval)
-		if err != nil {
-			closePools()
-			return nil, nil, fmt.Errorf("configure fleet metrics for %q: %w", configured.GroupID, err)
-		}
-		controller, err := fleet.NewController(fleet.ControllerConfig{
-			GroupID: configured.GroupID, Interval: configured.ControllerInterval,
-			InitialBackoff: configured.ControllerInterval, MaxBackoff: max(30*time.Second, configured.ControllerInterval),
-			MetricsTimeout: min(2*time.Second, configured.ControllerInterval), OperationTimeout: 30 * time.Second,
-			DrainTimeout: configured.DrainTimeout,
-		}, planner, source, leaders, actuator, publisher, nil, nil)
-		if err != nil {
-			closePools()
-			return nil, nil, fmt.Errorf("configure fleet controller for %q: %w", configured.GroupID, err)
-		}
-		controllers = append(controllers, controller)
-	}
-	return controllers, pools, nil
 }

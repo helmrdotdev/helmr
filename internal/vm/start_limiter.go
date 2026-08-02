@@ -5,7 +5,7 @@ import (
 	"errors"
 )
 
-// Permits cover startup only; certified execution slots govern steady state.
+// Permits cover startup only; current-epoch execution slots govern steady state.
 type StartLimiter struct {
 	connector interface {
 		Connector

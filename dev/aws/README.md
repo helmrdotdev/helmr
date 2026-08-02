@@ -123,10 +123,10 @@ after the zero-resource inventory has been recorded.
 The evidence namespace must be claimed before any spend-increasing stage.
 AWS-mutating stages verify region, dev name, state key, and STS account identity.
 The control and worker stages hash the complete generated tfvars, so instance,
-volume, guest/runtime, RDS, Valkey, ClickHouse, and fleet-controller drift is
+volume, guest/runtime, RDS, Valkey, ClickHouse, and deployment-capacity drift is
 rejected before apply without committing private account identifiers. The
 worker stage also rejects nonzero
-initial desired capacity, ASG/fleet-controller values over 1+1, more than one
+initial desired capacity, ASG ceilings over 1+1, more than one
 NAT gateway, or image/AMI/instance drift. Run and build launch-template IDs and
 versions are then captured from AWS. A filesystem lock prevents concurrent
 local state transitions; a live stage PID prevents recovery from racing an

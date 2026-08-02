@@ -548,8 +548,7 @@ verify_control_cost_guard() {
 }
 
 verify_worker_cost_guard() {
-  local manifest=$1 controller run_max build_max nat_max actual_image normalized_image expected_image build_instance
-  local expected_run_warm=0
+  local manifest=$1 run_max build_max nat_max actual_image normalized_image expected_image build_instance run_min build_min
   [ "$(sha256_file "${DEV_TFVARS}")" = "$(jq -r '.artifacts.worker_tfvars_sha256' "${manifest}")" ] || die "worker tfvars differ from the frozen campaign configuration"
   [ "$(tfvar_raw name | jq -r .)" = "$(jq -r '.environment.dev_name' "${manifest}")" ] || die "tfvars stack name differs from the campaign dev name"
   [ "$(tfvar_raw aws_region | jq -r .)" = "$(jq -r '.environment.region' "${manifest}")" ] || die "tfvars region differs from the campaign region"
@@ -559,6 +558,10 @@ verify_worker_cost_guard() {
   [ "$(tfvar_raw create_worker)" = "true" ] || die "worker stage must create worker infrastructure"
   [ "$(tfvar_raw worker_max_size)" -le "${run_max}" ] || die "run worker ASG exceeds campaign ceiling"
   [ "$(tfvar_raw build_worker_max_size)" -le "${build_max}" ] || die "build worker ASG exceeds campaign ceiling"
+  run_min="$(tfvar_raw worker_min_size)"
+  build_min="$(tfvar_raw build_worker_min_size)"
+  [ "${run_min}" -le "${run_max}" ] || die "run Worker deployment floor exceeds campaign ceiling"
+  [ "${build_min}" -le "${build_max}" ] || die "Build Worker deployment floor exceeds campaign ceiling"
   if [ "$(selected_profile_kind)" = datapath ]; then
     [ "$(tfvar_raw allow_extended_worker_capacity)" = "true" ] ||
       die "datapath validation requires allow_extended_worker_capacity=true"
@@ -568,14 +571,8 @@ verify_worker_cost_guard() {
       die "datapath validation requires the exact isolated build-worker ceiling"
     [ "$(tfvar_raw worker_execution_slots)" = "$(jq -r '.topology.run_worker_execution_slots' "${DATAPATH_PROFILE}")" ] ||
       die "datapath validation requires the exact concurrent run-slot count"
-    expected_run_warm="$(jq -r '.topology.ready_run_workers' "${DATAPATH_PROFILE}")"
-    controller="$(tfvar_raw worker_fleet_controller)"
-    jq -e \
-      --argjson run_max "$(jq -r '.topology.run_worker_max' "${DATAPATH_PROFILE}")" \
-      --argjson build_max "$(jq -r '.topology.build_worker_max' "${DATAPATH_PROFILE}")" '
-      .run_max_workers == $run_max and .build_max_workers == $build_max
-    ' <<<"${controller}" >/dev/null ||
-      die "datapath validation requires the exact Worker fleet ceilings"
+    [ "${run_min}" = "$(jq -r '.topology.ready_run_workers' "${DATAPATH_PROFILE}")" ] ||
+      die "datapath validation requires the exact deployment-owned ready Run Worker floor"
   fi
   if [ "$(tfvar_raw enable_nat_gateway)" = "true" ]; then
     [ "${nat_max}" -ge 1 ] || die "NAT gateway exceeds campaign ceiling"
@@ -589,16 +586,6 @@ verify_worker_cost_guard() {
   build_instance="$(tfvar_raw build_worker_instance_type | jq -r .)"
   [ "${build_instance}" != "null" ] || build_instance="$(tfvar_raw worker_instance_type | jq -r .)"
   [ "${build_instance}" = "$(jq -r '.artifacts.build_worker_instance_type' "${manifest}")" ] || die "build worker instance type differs from campaign manifest"
-  controller="$(tfvar_raw worker_fleet_controller)"
-  jq -e \
-    --argjson expected_run_warm "${expected_run_warm}" \
-    --argjson run_max "${run_max}" \
-    --argjson build_max "${build_max}" '
-    .run_warm_workers == $expected_run_warm and .build_warm_workers == 0 and
-    .run_max_workers <= $run_max and .build_max_workers <= $build_max and
-    .max_scale_out_per_cycle <= ($run_max + $build_max) and
-    .max_pending_workers <= ($run_max + $build_max) and .emergency_stop == false
-  ' <<<"${controller}" >/dev/null || die "fleet controller exceeds campaign cost guard"
 }
 
 verify_aws_identity() {
@@ -1149,12 +1136,20 @@ wait_for_datapath_run_workers() {
         COPY (
           SELECT worker_instances.resource_id
             FROM worker_instances
+            JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
+            JOIN worker_observations
+              ON worker_observations.worker_instance_id = worker_instances.id
+             AND worker_observations.worker_epoch = worker_instances.current_epoch
            WHERE worker_instances.resource_id IN (${values})
              AND worker_instances.state = 'active'
              AND worker_instances.supports_run = true
              AND worker_instances.current_epoch IS NOT NULL
-             AND worker_instances.startup_inventory_epoch = worker_instances.current_epoch
+             AND worker_instances.runtime_identity_id IS NOT NULL
              AND worker_instances.max_vm_slots >= ${required_slots}
+             AND worker_observations.observed_at >= transaction_timestamp()
+                 - worker_groups.observation_ttl_seconds * interval '1 second'
+             AND worker_observations.run_paused_reason IS NULL
+             AND worker_observations.runtime_paused_reason IS NULL
            ORDER BY worker_instances.resource_id
         ) TO STDOUT;
       " 2>/dev/null | jq -Rsc 'split("\n") | map(select(length > 0)) | sort'
@@ -1230,12 +1225,12 @@ collect_up_result() {
       '{schema:"helmrdotdev.validation-stage-result.v1",stage:"control_up",status:"passed",reason:null,observations:{collected_at:$at,control_image:$image,services:{control:{desired:1,running:1,pending:0,rollout:"COMPLETED"},dispatcher:{desired:1,running:1,pending:0,rollout:"COMPLETED"}},rds:{id:$rds_id,status:"available",class:$rds_class,engine_version:$rds_engine,created_at:$rds_created},valkey:{id:$valkey_id,status:"available",engine:$valkey_engine,node_count:$valkey_nodes,created_at:$valkey_created},nat_gateway_count:0,run_worker_count:0,build_worker_count:0},cases:[]}' >"${result}"
   else
     [ "$(jq '.AutoScalingGroups | length' <<<"${run_asg}")" = 1 ] && [ "$(jq '.AutoScalingGroups | length' <<<"${build_asg}")" = 1 ] || die "collector could not resolve both worker groups"
-    jq -e --argjson run_max "$(tfvar_raw worker_max_size)" '
-      .AutoScalingGroups[0] | .MinSize == 0 and .MaxSize == $run_max and .DesiredCapacity <= $run_max and
+    jq -e --argjson run_min "$(tfvar_raw worker_min_size)" --argjson run_max "$(tfvar_raw worker_max_size)" '
+      .AutoScalingGroups[0] | .MinSize == $run_min and .MaxSize == $run_max and .DesiredCapacity <= $run_max and
       all(.Instances[]; .ProtectedFromScaleIn == true)
     ' <<<"${run_asg}" >/dev/null || die "run worker group violates its live capacity or scale-in protection contract"
-    jq -e --argjson build_max "$(tfvar_raw build_worker_max_size)" '
-      .AutoScalingGroups[0] | .MinSize == 0 and .MaxSize == $build_max and .DesiredCapacity <= $build_max and
+    jq -e --argjson build_min "$(tfvar_raw build_worker_min_size)" --argjson build_max "$(tfvar_raw build_worker_max_size)" '
+      .AutoScalingGroups[0] | .MinSize == $build_min and .MaxSize == $build_max and .DesiredCapacity <= $build_max and
       all(.Instances[]; .ProtectedFromScaleIn == true)
     ' <<<"${build_asg}" >/dev/null || die "build worker group violates its live capacity or scale-in protection contract"
     if [ "$(selected_profile_kind)" = datapath ]; then

@@ -57,7 +57,7 @@ locals {
       description             = "Run workers"
       allows_run              = true
       allows_build            = false
-      observation_ttl_seconds = var.worker_fleet_controller.stale_worker_timeout_seconds
+      observation_ttl_seconds = var.worker_observation_ttl_seconds
       instance_capacity = var.create_worker ? {
         milli_cpu                  = coalesce(var.worker_capacity_vcpus, 0) * 1000
         memory_bytes               = coalesce(var.worker_capacity_memory_mib, 0) * 1048576
@@ -77,7 +77,7 @@ locals {
       description             = "Build workers"
       allows_run              = false
       allows_build            = true
-      observation_ttl_seconds = var.worker_fleet_controller.stale_worker_timeout_seconds
+      observation_ttl_seconds = var.worker_observation_ttl_seconds
       instance_capacity = var.create_worker ? {
         milli_cpu                  = local.build_worker_cpu_millis
         memory_bytes               = local.build_worker_memory_mib * 1048576
@@ -103,69 +103,6 @@ locals {
   build_worker_shared_disk_mib          = coalesce(var.build_worker_disk_mib, var.worker_disk_mib, 0) - local.build_worker_disk_reserve_mib - local.build_worker_build_cache_mib - local.build_worker_artifact_cache_mib
   build_worker_guest_ephemeral_disk_mib = local.build_worker_scratch_mib - local.boot_corpus_reserve_mib
   build_worker_scratch_mib              = local.build_worker_shared_disk_mib
-  worker_fleets = var.create_worker ? [
-    {
-      group_id           = local.run_worker_group_id
-      autoscaling_group  = "${local.run_worker_name}-worker"
-      role               = "run"
-      compatibility_keys = [local.run_worker_group_id]
-      instance_capacity = {
-        milli_cpu                  = coalesce(var.worker_capacity_vcpus, 0) * 1000
-        memory_bytes               = coalesce(var.worker_capacity_memory_mib, 0) * 1048576
-        guest_ephemeral_disk_bytes = local.run_worker_guest_ephemeral_disk_mib * 1048576
-        build_cache_bytes          = local.run_worker_build_cache_mib * 1048576
-        artifact_cache_bytes       = local.run_worker_artifact_cache_mib * 1048576
-        vm_slots                   = coalesce(var.worker_execution_slots, 0)
-        build_executors            = 0
-      }
-      min_workers                  = var.worker_min_size
-      warm_workers                 = var.worker_fleet_controller.run_warm_workers
-      max_workers                  = coalesce(var.worker_fleet_controller.run_max_workers, var.worker_max_size)
-      max_scale_out_per_cycle      = var.worker_fleet_controller.max_scale_out_per_cycle
-      max_pending_workers          = var.worker_fleet_controller.max_pending_workers
-      max_packing_items            = var.worker_fleet_controller.max_packing_items
-      controller_interval_seconds  = var.worker_fleet_controller.controller_interval_seconds
-      scale_out_cooldown_seconds   = var.worker_fleet_controller.scale_out_cooldown_seconds
-      scale_in_cooldown_seconds    = var.worker_fleet_controller.scale_in_cooldown_seconds
-      scale_in_hysteresis_seconds  = var.worker_fleet_controller.scale_in_hysteresis_seconds
-      stale_worker_timeout_seconds = var.worker_fleet_controller.stale_worker_timeout_seconds
-      readiness_timeout_seconds    = var.worker_fleet_controller.readiness_timeout_seconds
-      drain_timeout_seconds        = var.worker_fleet_controller.drain_timeout_seconds
-      emergency_stop               = var.worker_fleet_controller.emergency_stop
-      metric_interval_seconds      = var.worker_fleet_controller.metric_interval_seconds
-    },
-    {
-      group_id           = local.build_worker_group_id
-      autoscaling_group  = "${local.build_worker_name}-worker"
-      role               = "build"
-      compatibility_keys = [local.build_worker_group_id]
-      instance_capacity = {
-        milli_cpu                  = local.build_worker_cpu_millis
-        memory_bytes               = local.build_worker_memory_mib * 1048576
-        guest_ephemeral_disk_bytes = local.build_worker_guest_ephemeral_disk_mib * 1048576
-        build_cache_bytes          = local.build_worker_build_cache_mib * 1048576
-        artifact_cache_bytes       = local.build_worker_artifact_cache_mib * 1048576
-        vm_slots                   = 0
-        build_executors            = coalesce(var.build_worker_execution_slots, var.worker_execution_slots, 0)
-      }
-      min_workers                  = var.build_worker_min_size
-      warm_workers                 = var.worker_fleet_controller.build_warm_workers
-      max_workers                  = coalesce(var.worker_fleet_controller.build_max_workers, var.build_worker_max_size)
-      max_scale_out_per_cycle      = var.worker_fleet_controller.max_scale_out_per_cycle
-      max_pending_workers          = var.worker_fleet_controller.max_pending_workers
-      max_packing_items            = var.worker_fleet_controller.max_packing_items
-      controller_interval_seconds  = var.worker_fleet_controller.controller_interval_seconds
-      scale_out_cooldown_seconds   = var.worker_fleet_controller.scale_out_cooldown_seconds
-      scale_in_cooldown_seconds    = var.worker_fleet_controller.scale_in_cooldown_seconds
-      scale_in_hysteresis_seconds  = var.worker_fleet_controller.scale_in_hysteresis_seconds
-      stale_worker_timeout_seconds = var.worker_fleet_controller.stale_worker_timeout_seconds
-      readiness_timeout_seconds    = var.worker_fleet_controller.readiness_timeout_seconds
-      drain_timeout_seconds        = var.worker_fleet_controller.drain_timeout_seconds
-      emergency_stop               = var.worker_fleet_controller.emergency_stop
-      metric_interval_seconds      = var.worker_fleet_controller.metric_interval_seconds
-    }
-  ] : []
-
   tags = {
     Project     = "helmr"
     Environment = "dev"
@@ -237,7 +174,6 @@ module "control" {
   deployment_mode                        = var.deployment_mode
   worker_group_id                        = var.worker_group_id
   worker_groups                          = local.worker_groups
-  worker_fleets                          = local.worker_fleets
   image_cache_worker_role_arns           = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${local.build_worker_name}-worker"]
   region_id                              = var.region_id
   default_region_id                      = var.default_region_id
@@ -254,6 +190,7 @@ module "control" {
   platform_store_kms_key_arn             = var.platform_store_kms_key_arn
   build_policy_digest                    = var.build_policy_digest
   create_control_service                 = var.create_control_service
+  enable_operator_api                    = var.create_control_service
   control_desired_count                  = var.control_desired_count
   control_environment                    = var.control_environment
   dispatcher_desired_count               = var.dispatcher_desired_count
@@ -301,7 +238,7 @@ module "run_worker" {
   instance_type                              = var.worker_instance_type
   enable_nested_virtualization               = var.worker_enable_nested_virtualization
   enable_ssm                                 = var.worker_enable_ssm
-  launch_lifecycle_heartbeat_timeout_seconds = var.worker_fleet_controller.readiness_timeout_seconds
+  launch_lifecycle_heartbeat_timeout_seconds = var.worker_launch_timeout_seconds
   min_size                                   = var.worker_min_size
   max_size                                   = var.worker_max_size
   root_volume_size_gb                        = var.worker_root_volume_size_gb
@@ -357,7 +294,7 @@ module "build_worker" {
   instance_type                              = coalesce(var.build_worker_instance_type, var.worker_instance_type)
   enable_nested_virtualization               = var.build_worker_enable_nested_virtualization != null ? var.build_worker_enable_nested_virtualization : var.worker_enable_nested_virtualization
   enable_ssm                                 = var.worker_enable_ssm
-  launch_lifecycle_heartbeat_timeout_seconds = var.worker_fleet_controller.readiness_timeout_seconds
+  launch_lifecycle_heartbeat_timeout_seconds = var.worker_launch_timeout_seconds
   min_size                                   = var.build_worker_min_size
   max_size                                   = var.build_worker_max_size
   root_volume_size_gb                        = coalesce(var.build_worker_root_volume_size_gb, var.worker_root_volume_size_gb)
@@ -393,6 +330,62 @@ module "build_worker" {
     checkpoint_encryption_key = module.control.secret_arns.checkpoint_encryption_key
     worker_enrollment         = module.control.worker_enrollment_secret_arns[local.build_worker_group_id]
   }
+
+  tags = local.tags
+}
+
+module "capacity" {
+  source = "../../modules/capacity"
+
+  name                         = var.name
+  enabled                      = var.create_control_service && var.create_worker
+  vpc_id                       = module.control_network.vpc_id
+  subnet_ids                   = module.control.control_task_subnet_ids
+  assign_public_ip             = module.control.control_assign_public_ip
+  ecs_cluster_arn              = module.control.control_cluster_arn
+  control_url                  = module.control.control_url
+  operator_token_secret_arn    = try(module.control.secret_arns.operator_token, "")
+  operator_token_kms_key_arn   = module.control.kms_key_arn
+  control_image                = var.control_image
+  control_image_repository_arn = var.control_image_repository_arn
+  observation_max_age          = var.capacity_observation_max_age
+  schedule_expression          = var.capacity_schedule_expression
+  log_retention_days           = var.control_log_retention_days
+
+  groups = !var.create_worker ? [] : [
+    {
+      worker_group_id                 = local.run_worker_group_id
+      autoscaling_group_name          = module.run_worker[0].autoscaling_group_name
+      autoscaling_group_arn           = module.run_worker[0].autoscaling_group_arn
+      termination_lifecycle_hook_name = module.run_worker[0].termination_lifecycle_hook_name
+      allows_run                      = true
+      allows_build                    = false
+      instance_capacity = {
+        cpu_millis                 = local.worker_groups[0].instance_capacity.milli_cpu
+        memory_bytes               = local.worker_groups[0].instance_capacity.memory_bytes
+        guest_ephemeral_disk_bytes = local.worker_groups[0].instance_capacity.guest_ephemeral_disk_bytes
+        vm_slots                   = local.worker_groups[0].instance_capacity.vm_slots
+        run_consumers              = local.worker_groups[0].instance_capacity.vm_slots
+        build_executors            = 0
+      }
+    },
+    {
+      worker_group_id                 = local.build_worker_group_id
+      autoscaling_group_name          = module.build_worker[0].autoscaling_group_name
+      autoscaling_group_arn           = module.build_worker[0].autoscaling_group_arn
+      termination_lifecycle_hook_name = module.build_worker[0].termination_lifecycle_hook_name
+      allows_run                      = false
+      allows_build                    = true
+      instance_capacity = {
+        cpu_millis                 = local.worker_groups[1].instance_capacity.milli_cpu
+        memory_bytes               = local.worker_groups[1].instance_capacity.memory_bytes
+        guest_ephemeral_disk_bytes = local.worker_groups[1].instance_capacity.guest_ephemeral_disk_bytes
+        vm_slots                   = 0
+        run_consumers              = 0
+        build_executors            = local.worker_groups[1].instance_capacity.build_executors
+      }
+    }
+  ]
 
   tags = local.tags
 }
@@ -515,15 +508,8 @@ resource "terraform_data" "worker_preconditions" {
         local.build_worker_guest_ephemeral_disk_mib >= coalesce(var.build_worker_vm_scratch_disk_mib, var.worker_vm_scratch_disk_mib) &&
         local.build_worker_scratch_mib >= local.build_scratch_min_mib
       )
-      error_message = "worker groups require certified CPU, memory, cache, disk partitions, and concurrency; build capacity must fit one fixed build guest after the service reserve and expose exactly one build executor."
+      error_message = "worker groups require configured CPU, memory, cache, disk partitions, and concurrency; build capacity must fit one fixed build guest after the service reserve and expose exactly one build executor."
     }
 
-    precondition {
-      condition = !var.create_worker || (
-        coalesce(var.worker_fleet_controller.run_max_workers, var.worker_max_size) <= var.worker_max_size &&
-        coalesce(var.worker_fleet_controller.build_max_workers, var.build_worker_max_size) <= var.build_worker_max_size
-      )
-      error_message = "fleet policy max_workers cannot exceed its Auto Scaling group max_size."
-    }
   }
 }

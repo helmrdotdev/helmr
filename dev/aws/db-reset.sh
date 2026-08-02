@@ -5,10 +5,10 @@ if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
   cat <<'EOF'
 usage: dev/aws/db-reset.sh
 
-Require both worker fleets to be drained to zero, safely quiesce control and
+Require both Worker capacity pools to be drained to zero, safely quiesce control and
 dispatcher, drop and recreate the AWS dev database public schema from a one-off
 ECS/Fargate task, flush Redis, and run the branch migration task. Worker
-capacity is owned by the application controller and is never changed by this
+capacity is owned by deployment infrastructure and is never changed by this
 command. Services remain stopped after reset.
 EOF
   exit 0
@@ -271,7 +271,7 @@ quiesce_control_services() {
   done
 }
 
-require_worker_fleets_stopped() {
+require_worker_capacity_stopped() {
   local output_name
   local asg_name
   local asg_json
@@ -319,11 +319,11 @@ require_cluster_tasks_absent() {
 }
 
 require_reset_quiescence() {
-  require_worker_fleets_stopped
+  require_worker_capacity_stopped
   quiesce_control_services
   require_cluster_tasks_absent
-  require_worker_fleets_stopped
-  echo "control and dispatcher are stopped and worker fleets remained at zero for database reset"
+  require_worker_capacity_stopped
+  echo "control and dispatcher are stopped and Worker capacity remained at zero for database reset"
 }
 
 jq -n \

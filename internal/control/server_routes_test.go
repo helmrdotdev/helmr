@@ -41,6 +41,9 @@ GET /api/deployments/{deploymentID}/events
 GET /api/invitations
 GET /api/me
 GET /api/members
+GET /api/operator/capacity/observations
+GET /api/operator/worker-instances
+GET /api/operator/worker-instances/{workerInstanceID}
 GET /api/projects
 GET /api/projects/{projectID}
 GET /api/projects/{projectID}/environments/{environmentID}
@@ -106,6 +109,7 @@ POST /api/auth/magic-link/start
 POST /api/deployments
 POST /api/deployments/{deploymentID}/promote
 POST /api/invitations
+POST /api/operator/worker-instances/{workerInstanceID}/drain
 POST /api/organizations
 POST /api/projects
 POST /api/projects/{projectID}/environments
@@ -142,7 +146,6 @@ POST /api/tokens/{tokenID}/cancel
 POST /api/tokens/{tokenID}/complete
 POST /api/worker/activate
 POST /api/worker/auth/token
-POST /api/worker/certification/renew
 POST /api/worker/deployments/complete
 POST /api/worker/deployments/delivery-failed
 POST /api/worker/deployments/lease

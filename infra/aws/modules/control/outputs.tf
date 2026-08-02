@@ -93,6 +93,11 @@ output "control_cluster_name" {
   value       = aws_ecs_cluster.control.name
 }
 
+output "control_cluster_arn" {
+  description = "ECS cluster ARN shared with one-shot deployment tasks."
+  value       = aws_ecs_cluster.control.arn
+}
+
 output "control_service_name" {
   description = "ECS service name for helmr-control."
   value       = try(aws_ecs_service.control[0].name, null)
@@ -126,6 +131,9 @@ output "secret_arns" {
     github_oauth_client_secret = aws_secretsmanager_secret.github_oauth_client_secret.arn
     checkpoint_encryption_key  = aws_secretsmanager_secret.checkpoint_encryption_key.arn
     },
+    var.enable_operator_api ? {
+      operator_token = aws_secretsmanager_secret.operator_token[0].arn
+    } : {},
     var.email_provider == "resend" ? {
       resend_api_key = aws_secretsmanager_secret.resend_api_key[0].arn
     } : {},
@@ -138,11 +146,6 @@ output "secret_arns" {
 output "worker_enrollment_secret_arns" {
   description = "Per-logical-group enrollment secrets populated and distributed by the deployment."
   value       = { for group_id, secret in aws_secretsmanager_secret.worker_enrollment : group_id => secret.arn }
-}
-
-output "worker_fleets" {
-  description = "Exact non-secret fleet-controller configuration delivered to helmr-dispatcher."
-  value       = var.worker_fleets
 }
 
 output "image_cache_registry_authority" {

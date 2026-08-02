@@ -73,32 +73,32 @@ type nestedResumeRun struct {
 }
 
 type nestedResumePhysical struct {
-	leaseID              pgtype.UUID
-	leaseState           db.RunLeaseState
-	leaseExpiresAt       pgtype.Timestamptz
-	startDeadlineAt      pgtype.Timestamptz
-	workerID             pgtype.UUID
-	workerEpoch          int64
-	workerCurrentEpoch   int64
-	workerState          db.WorkerInstanceState
-	workerLostAt         pgtype.Timestamptz
-	workerDisabledAt     pgtype.Timestamptz
-	runtimeID            pgtype.UUID
-	runtimeDesired       db.RuntimeDesiredState
-	runtimeObserved      db.RuntimeObservedState
-	runtimeConverged     bool
-	runtimeLostAt        pgtype.Timestamptz
-	runtimeFailedAt      pgtype.Timestamptz
-	mountID              pgtype.UUID
-	mountGeneration      int64
-	mountState           db.WorkspaceMountState
-	mountLostAt          pgtype.Timestamptz
-	mountFailedAt        pgtype.Timestamptz
-	workspaceLeaseID     pgtype.UUID
-	workspaceLeaseState  db.WorkspaceLeaseState
-	workspaceLeaseExpiry pgtype.Timestamptz
-	writerGeneration     int64
-	leaseMountGeneration int64
+	leaseID                  pgtype.UUID
+	leaseState               db.RunLeaseState
+	leaseExpiresAt           pgtype.Timestamptz
+	startDeadlineAt          pgtype.Timestamptz
+	workerID                 pgtype.UUID
+	workerEpoch              int64
+	workerCurrentEpoch       int64
+	workerState              db.WorkerInstanceState
+	workerLostAt             pgtype.Timestamptz
+	workerTerminationReadyAt pgtype.Timestamptz
+	runtimeID                pgtype.UUID
+	runtimeDesired           db.RuntimeDesiredState
+	runtimeObserved          db.RuntimeObservedState
+	runtimeConverged         bool
+	runtimeLostAt            pgtype.Timestamptz
+	runtimeFailedAt          pgtype.Timestamptz
+	mountID                  pgtype.UUID
+	mountGeneration          int64
+	mountState               db.WorkspaceMountState
+	mountLostAt              pgtype.Timestamptz
+	mountFailedAt            pgtype.Timestamptz
+	workspaceLeaseID         pgtype.UUID
+	workspaceLeaseState      db.WorkspaceLeaseState
+	workspaceLeaseExpiry     pgtype.Timestamptz
+	writerGeneration         int64
+	leaseMountGeneration     int64
 }
 
 type nestedResumeWait struct {
@@ -349,7 +349,7 @@ SELECT runs.id, runs.org_id, runs.workspace_id, resume_wait.id,
        OR workspace_mounts.lost_at <= transaction_timestamp()
        OR workspace_mounts.failed_at <= transaction_timestamp()
        OR worker_instances.lost_at <= transaction_timestamp()
-       OR worker_instances.disabled_at <= transaction_timestamp()
+       OR worker_instances.termination_ready_at <= transaction_timestamp()
        OR worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
    )
  ORDER BY runs.id
@@ -962,7 +962,7 @@ SELECT run_leases.id, run_leases.state, run_leases.expires_at,
 		return nestedResumePhysical{}, err
 	}
 	err = tx.QueryRow(ctx, `
-SELECT state, current_epoch, lost_at, disabled_at
+SELECT state, current_epoch, lost_at, termination_ready_at
   FROM worker_instances
  WHERE id = $1
  FOR UPDATE`,
@@ -971,7 +971,7 @@ SELECT state, current_epoch, lost_at, disabled_at
 		&physical.workerState,
 		&physical.workerCurrentEpoch,
 		&physical.workerLostAt,
-		&physical.workerDisabledAt,
+		&physical.workerTerminationReadyAt,
 	)
 	if err != nil {
 		return nestedResumePhysical{}, err
@@ -1307,7 +1307,7 @@ func nestedResumeLossReason(
 	physicalLost := physical.workerState != db.WorkerInstanceStateActive ||
 		physical.workerCurrentEpoch != physical.workerEpoch ||
 		atOrBefore(physical.workerLostAt, now) ||
-		atOrBefore(physical.workerDisabledAt, now) ||
+		atOrBefore(physical.workerTerminationReadyAt, now) ||
 		atOrBefore(physical.runtimeLostAt, now) ||
 		atOrBefore(physical.runtimeFailedAt, now) ||
 		atOrBefore(physical.mountLostAt, now) ||

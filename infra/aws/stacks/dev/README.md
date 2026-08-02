@@ -132,9 +132,9 @@ aws ecs run-task \
 
 Worker resources are not created until `create_worker=true`. Build and publish a worker AMI that
 satisfies the worker module contract, set `worker_ami_id`, ensure `certificate_arn` and the worker
-control DNS name are configured, and apply the fleet policy. Keep minimum and warm capacity at zero
-for demand-only smoke runs; queued demand drives capacity through the application controller within
-the configured per-role maximum.
+control DNS name are configured, and apply the deployment capacity policy. The disposable
+full-run fixture uses one fixed Worker per role; deployment-owned automation may instead consume
+the best-effort demand observation while Control remains unaware of physical host count.
 Workers are filesystem-first Firecracker hosts; size
 `worker_root_volume_size_gb` for build/cache/runtime data and use `worker_disk_mib` only to override
 advertised filesystem capacity.
@@ -151,8 +151,8 @@ the staging step.
 After the first successful apply, rerun the helper and apply again to start the rolling
 replacement. Remove the old AMI explicitly only after the refresh completes.
 
-`dev/aws/db-reset.sh` first requires both application-owned worker fleets to have min and desired
-capacity zero with no instances. It then stops control and dispatcher, re-proves both fleets remain
+`dev/aws/db-reset.sh` first requires both deployment-owned Worker pools to have min and desired
+capacity zero with no instances. It then stops control and dispatcher, re-proves both pools remain
 at zero, waits for every captured ECS task ARN to reach `STOPPED`, and only then drops the schema.
 It also requires the cluster to contain no remaining running or pending one-off task. If capacity
 reappears or physical task stop cannot be proved before the reset,
@@ -169,7 +169,8 @@ scripts expose this as `scripts/aws-dev-smoke.sh dev-destroy` and `scripts/aws-d
 dev-destroy`, which run pre-destroy cleanup before Terraform/OpenTofu destroy. When the stack owns
 ClickHouse Cloud, run those commands through `scripts/dev-secrets.sh` so provider credentials are
 available only to the destroy process.
-When scaling down, finish or cancel workload demand and let the application controller complete its
-protected drain to zero while NAT and control remain present. Then use `dev-destroy` to remove the
+When scaling down, deployment automation must request exact Worker drain and wait for
+`termination_ready` before deleting that host while NAT and control remain present. Then use
+`dev-destroy` to remove the
 ephemeral worker topology, NAT, and shared stack resources. The worker topology is not handed back
 to Terraform-owned desired capacity in place.

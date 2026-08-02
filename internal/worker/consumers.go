@@ -247,7 +247,7 @@ func validateBuildEnvelope(
 		)
 	}
 	if !capabilities.SupportsBuild {
-		return errors.New("worker is not certified for builds")
+		return errors.New("worker is not enabled for builds")
 	}
 	manager := deployment.PackageManager{
 		Integrity: build.Manager.Integrity,

@@ -59,11 +59,16 @@ for _ in $(seq 1 120); do
     COPY (
       SELECT 'epoch-advanced'
         FROM worker_instances
-       WHERE resource_id = '${instance_id}'
-         AND current_epoch > ${old_epoch}
-         AND startup_inventory_epoch = current_epoch
-         AND startup_inventory_evidence IS NOT NULL
-         AND state = 'active'
+        JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
+        JOIN worker_observations
+          ON worker_observations.worker_instance_id = worker_instances.id
+         AND worker_observations.worker_epoch = worker_instances.current_epoch
+       WHERE worker_instances.resource_id = '${instance_id}'
+         AND worker_instances.current_epoch > ${old_epoch}
+         AND worker_instances.state = 'active'
+         AND worker_instances.runtime_identity_id IS NOT NULL
+         AND worker_observations.observed_at >= transaction_timestamp()
+             - worker_groups.observation_ttl_seconds * interval '1 second'
     ) TO STDOUT;
   " epoch-advanced; then
     advanced=1
@@ -90,7 +95,7 @@ objects="$(jq -cn --arg run "${run_id}" --arg workspace "${workspace_id}" '{
 observations="$(jq -cn --argjson attempt "${attempt}" '{
   service_restarted:true,
   epoch_advanced:true,
-  startup_recovery_recorded:true,
+  current_epoch_readiness_recorded:true,
   terminal_attempt:$attempt,
   cleanup_verified:true
 }')"

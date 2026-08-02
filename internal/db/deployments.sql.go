@@ -46,7 +46,6 @@ WITH candidate AS (
        AND deployment_build_leases.worker_epoch = $3
        AND deployment_build_leases.worker_protocol_version = $4
        AND worker_instances.protocol_version = deployment_build_leases.worker_protocol_version
-       AND worker_instances.certified_at IS NOT NULL
        AND worker_instances.per_vm_cpu_millis >= deployment_build_leases.requested_cpu_millis
        AND worker_instances.per_vm_memory_bytes >= deployment_build_leases.requested_memory_bytes
        AND worker_instances.per_vm_guest_ephemeral_disk_bytes >=
@@ -2351,7 +2350,7 @@ func (q *Queries) LockDeploymentBuildTerminalFence(ctx context.Context, arg Lock
 	return i, err
 }
 
-const lockDeploymentBuildWorkerCertification = `-- name: LockDeploymentBuildWorkerCertification :one
+const lockDeploymentBuildWorkerAuthority = `-- name: LockDeploymentBuildWorkerAuthority :one
 WITH locked_group AS MATERIALIZED (
     SELECT worker_groups.id
       FROM worker_groups
@@ -2360,7 +2359,7 @@ WITH locked_group AS MATERIALIZED (
        AND worker_groups.allows_build
      FOR UPDATE
 )
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_guest_ephemeral_disk_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at,
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.epoch_build_cache_bytes, worker_instances.epoch_artifact_cache_bytes, worker_instances.epoch_hugepages_bytes, worker_instances.epoch_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at,
        runtime_identities.rootfs_digest,
        runtime_identities.runtime_abi,
        runtime_identities.runtime_arch
@@ -2373,77 +2372,67 @@ SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worke
    AND worker_instances.current_epoch = $2::bigint
    AND worker_instances.protocol_version = $3
    AND worker_instances.state IN ('active', 'draining')
-   AND worker_instances.certified_at IS NOT NULL
    AND worker_instances.supports_build
  FOR UPDATE OF worker_instances
 `
 
-type LockDeploymentBuildWorkerCertificationParams struct {
+type LockDeploymentBuildWorkerAuthorityParams struct {
 	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch           int64       `json:"worker_epoch"`
 	WorkerProtocolVersion string      `json:"worker_protocol_version"`
 	WorkerGroupID         string      `json:"worker_group_id"`
 }
 
-type LockDeploymentBuildWorkerCertificationRow struct {
-	ID                               pgtype.UUID        `json:"id"`
-	ResourceID                       string             `json:"resource_id"`
-	WorkerGroupID                    string             `json:"worker_group_id"`
-	State                            string             `json:"state"`
-	ClaimVersion                     int64              `json:"claim_version"`
-	CurrentEpoch                     pgtype.Int8        `json:"current_epoch"`
-	CurrentServiceID                 pgtype.UUID        `json:"current_service_id"`
-	ProtocolVersion                  string             `json:"protocol_version"`
-	SupervisorVersion                string             `json:"supervisor_version"`
-	SupportsRun                      bool               `json:"supports_run"`
-	SupportsBuild                    bool               `json:"supports_build"`
-	RuntimeIdentityID                pgtype.Text        `json:"runtime_identity_id"`
-	SubstrateFormat                  string             `json:"substrate_format"`
-	SubstrateBuilderAbi              string             `json:"substrate_builder_abi"`
-	SubstrateLayoutAbi               string             `json:"substrate_layout_abi"`
-	CertifiedCpuMillis               int64              `json:"certified_cpu_millis"`
-	CertifiedMemoryBytes             int64              `json:"certified_memory_bytes"`
-	CertifiedGuestEphemeralDiskBytes int64              `json:"certified_guest_ephemeral_disk_bytes"`
-	CertifiedBuildCacheBytes         int64              `json:"certified_build_cache_bytes"`
-	CertifiedArtifactCacheBytes      int64              `json:"certified_artifact_cache_bytes"`
-	CertifiedHugepagesBytes          int64              `json:"certified_hugepages_bytes"`
-	CertifiedCheckpointBytes         int64              `json:"certified_checkpoint_bytes"`
-	PerVmCpuMillis                   int64              `json:"per_vm_cpu_millis"`
-	PerVmMemoryBytes                 int64              `json:"per_vm_memory_bytes"`
-	PerVmGuestEphemeralDiskBytes     int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
-	MaxVmSlots                       int32              `json:"max_vm_slots"`
-	MaxRunConsumers                  int32              `json:"max_run_consumers"`
-	MaxBuildExecutors                int32              `json:"max_build_executors"`
-	MaxRuntimeStarts                 int32              `json:"max_runtime_starts"`
-	CertificationProfile             string             `json:"certification_profile"`
-	CertificationFingerprint         string             `json:"certification_fingerprint"`
-	EpochStartedAt                   pgtype.Timestamptz `json:"epoch_started_at"`
-	StartupInventoryEpoch            pgtype.Int8        `json:"startup_inventory_epoch"`
-	StartupInventoryEvidence         []byte             `json:"startup_inventory_evidence"`
-	DrainCleanupFingerprint          pgtype.Text        `json:"drain_cleanup_fingerprint"`
-	DrainCleanupEvidence             []byte             `json:"drain_cleanup_evidence"`
-	CertifiedAt                      pgtype.Timestamptz `json:"certified_at"`
-	ActivatedAt                      pgtype.Timestamptz `json:"activated_at"`
-	DrainingAt                       pgtype.Timestamptz `json:"draining_at"`
-	DisabledAt                       pgtype.Timestamptz `json:"disabled_at"`
-	LostAt                           pgtype.Timestamptz `json:"lost_at"`
-	TerminationClaimedAt             pgtype.Timestamptz `json:"termination_claimed_at"`
-	ProviderTerminatedAt             pgtype.Timestamptz `json:"provider_terminated_at"`
-	CreatedAt                        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                        pgtype.Timestamptz `json:"updated_at"`
-	RootfsDigest                     pgtype.Text        `json:"rootfs_digest"`
-	RuntimeABI                       pgtype.Text        `json:"runtime_abi"`
-	RuntimeArch                      pgtype.Text        `json:"runtime_arch"`
+type LockDeploymentBuildWorkerAuthorityRow struct {
+	ID                           pgtype.UUID        `json:"id"`
+	ResourceID                   string             `json:"resource_id"`
+	WorkerGroupID                string             `json:"worker_group_id"`
+	State                        string             `json:"state"`
+	ClaimVersion                 int64              `json:"claim_version"`
+	CurrentEpoch                 pgtype.Int8        `json:"current_epoch"`
+	CurrentServiceID             pgtype.UUID        `json:"current_service_id"`
+	ProtocolVersion              string             `json:"protocol_version"`
+	SupervisorVersion            string             `json:"supervisor_version"`
+	SupportsRun                  bool               `json:"supports_run"`
+	SupportsBuild                bool               `json:"supports_build"`
+	RuntimeIdentityID            pgtype.Text        `json:"runtime_identity_id"`
+	SubstrateFormat              string             `json:"substrate_format"`
+	SubstrateBuilderAbi          string             `json:"substrate_builder_abi"`
+	SubstrateLayoutAbi           string             `json:"substrate_layout_abi"`
+	EpochCpuMillis               int64              `json:"epoch_cpu_millis"`
+	EpochMemoryBytes             int64              `json:"epoch_memory_bytes"`
+	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
+	EpochBuildCacheBytes         int64              `json:"epoch_build_cache_bytes"`
+	EpochArtifactCacheBytes      int64              `json:"epoch_artifact_cache_bytes"`
+	EpochHugepagesBytes          int64              `json:"epoch_hugepages_bytes"`
+	EpochCheckpointBytes         int64              `json:"epoch_checkpoint_bytes"`
+	PerVmCpuMillis               int64              `json:"per_vm_cpu_millis"`
+	PerVmMemoryBytes             int64              `json:"per_vm_memory_bytes"`
+	PerVmGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
+	MaxVmSlots                   int32              `json:"max_vm_slots"`
+	MaxRunConsumers              int32              `json:"max_run_consumers"`
+	MaxBuildExecutors            int32              `json:"max_build_executors"`
+	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
+	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
+	ActivatedAt                  pgtype.Timestamptz `json:"activated_at"`
+	DrainingAt                   pgtype.Timestamptz `json:"draining_at"`
+	TerminationReadyAt           pgtype.Timestamptz `json:"termination_ready_at"`
+	LostAt                       pgtype.Timestamptz `json:"lost_at"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	RootfsDigest                 pgtype.Text        `json:"rootfs_digest"`
+	RuntimeABI                   pgtype.Text        `json:"runtime_abi"`
+	RuntimeArch                  pgtype.Text        `json:"runtime_arch"`
 }
 
-func (q *Queries) LockDeploymentBuildWorkerCertification(ctx context.Context, arg LockDeploymentBuildWorkerCertificationParams) (LockDeploymentBuildWorkerCertificationRow, error) {
-	row := q.db.QueryRow(ctx, lockDeploymentBuildWorkerCertification,
+func (q *Queries) LockDeploymentBuildWorkerAuthority(ctx context.Context, arg LockDeploymentBuildWorkerAuthorityParams) (LockDeploymentBuildWorkerAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, lockDeploymentBuildWorkerAuthority,
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
 		arg.WorkerProtocolVersion,
 		arg.WorkerGroupID,
 	)
-	var i LockDeploymentBuildWorkerCertificationRow
+	var i LockDeploymentBuildWorkerAuthorityRow
 	err := row.Scan(
 		&i.ID,
 		&i.ResourceID,
@@ -2460,13 +2449,13 @@ func (q *Queries) LockDeploymentBuildWorkerCertification(ctx context.Context, ar
 		&i.SubstrateFormat,
 		&i.SubstrateBuilderAbi,
 		&i.SubstrateLayoutAbi,
-		&i.CertifiedCpuMillis,
-		&i.CertifiedMemoryBytes,
-		&i.CertifiedGuestEphemeralDiskBytes,
-		&i.CertifiedBuildCacheBytes,
-		&i.CertifiedArtifactCacheBytes,
-		&i.CertifiedHugepagesBytes,
-		&i.CertifiedCheckpointBytes,
+		&i.EpochCpuMillis,
+		&i.EpochMemoryBytes,
+		&i.EpochGuestEphemeralDiskBytes,
+		&i.EpochBuildCacheBytes,
+		&i.EpochArtifactCacheBytes,
+		&i.EpochHugepagesBytes,
+		&i.EpochCheckpointBytes,
 		&i.PerVmCpuMillis,
 		&i.PerVmMemoryBytes,
 		&i.PerVmGuestEphemeralDiskBytes,
@@ -2474,20 +2463,11 @@ func (q *Queries) LockDeploymentBuildWorkerCertification(ctx context.Context, ar
 		&i.MaxRunConsumers,
 		&i.MaxBuildExecutors,
 		&i.MaxRuntimeStarts,
-		&i.CertificationProfile,
-		&i.CertificationFingerprint,
 		&i.EpochStartedAt,
-		&i.StartupInventoryEpoch,
-		&i.StartupInventoryEvidence,
-		&i.DrainCleanupFingerprint,
-		&i.DrainCleanupEvidence,
-		&i.CertifiedAt,
 		&i.ActivatedAt,
 		&i.DrainingAt,
-		&i.DisabledAt,
+		&i.TerminationReadyAt,
 		&i.LostAt,
-		&i.TerminationClaimedAt,
-		&i.ProviderTerminatedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RootfsDigest,

@@ -46,9 +46,9 @@ the same scoped worker credential used by the runtime path.
 
 ## Lifecycle
 
-The application controller is the only desired-capacity writer. Terraform enforces `min_size` and
-`max_size`, and new instances start protected from scale in so provider policies cannot bypass
-drain selection. Fixed capacity is expressed with equal minimum and maximum values.
+Deployment infrastructure is the only desired-capacity writer. Terraform enforces `min_size` and
+`max_size`, and new instances start protected from scale in so provider policy cannot bypass the
+exact drain path. Fixed capacity is expressed with equal minimum and maximum values.
 
 When capacity is raised, the launch lifecycle hook keeps the instance out of service until the
 worker systemd unit is active. During scale-in or instance refresh, the termination

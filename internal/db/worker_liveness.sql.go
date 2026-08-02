@@ -92,19 +92,9 @@ func (q *Queries) ListStaleWorkerFenceCandidates(ctx context.Context, arg ListSt
 const recheckAndFenceStaleWorkerInstance = `-- name: RecheckAndFenceStaleWorkerInstance :one
 WITH target AS (
     UPDATE worker_instances AS workers
-       SET state = CASE
-               WHEN workers.current_epoch IS NULL THEN 'disabled'
-               ELSE 'lost'
-           END,
+       SET state = 'lost',
            claim_version = workers.claim_version + 1,
-           disabled_at = CASE
-               WHEN workers.current_epoch IS NULL THEN COALESCE(workers.disabled_at, now())
-               ELSE workers.disabled_at
-           END,
-           lost_at = CASE
-               WHEN workers.current_epoch IS NOT NULL THEN COALESCE(workers.lost_at, now())
-               ELSE workers.lost_at
-           END,
+           lost_at = COALESCE(workers.lost_at, now()),
            updated_at = now()
       FROM worker_groups AS groups
      WHERE workers.id = $1
@@ -134,7 +124,7 @@ WITH target AS (
                 ) < transaction_timestamp()
                   - groups.observation_ttl_seconds * interval '1 second')
        )
-    RETURNING workers.id, workers.resource_id, workers.worker_group_id, workers.state, workers.claim_version, workers.current_epoch, workers.current_service_id, workers.protocol_version, workers.supervisor_version, workers.supports_run, workers.supports_build, workers.runtime_identity_id, workers.substrate_format, workers.substrate_builder_abi, workers.substrate_layout_abi, workers.certified_cpu_millis, workers.certified_memory_bytes, workers.certified_guest_ephemeral_disk_bytes, workers.certified_build_cache_bytes, workers.certified_artifact_cache_bytes, workers.certified_hugepages_bytes, workers.certified_checkpoint_bytes, workers.per_vm_cpu_millis, workers.per_vm_memory_bytes, workers.per_vm_guest_ephemeral_disk_bytes, workers.max_vm_slots, workers.max_run_consumers, workers.max_build_executors, workers.max_runtime_starts, workers.certification_profile, workers.certification_fingerprint, workers.epoch_started_at, workers.startup_inventory_epoch, workers.startup_inventory_evidence, workers.drain_cleanup_fingerprint, workers.drain_cleanup_evidence, workers.certified_at, workers.activated_at, workers.draining_at, workers.disabled_at, workers.lost_at, workers.termination_claimed_at, workers.provider_terminated_at, workers.created_at, workers.updated_at
+    RETURNING workers.id, workers.resource_id, workers.worker_group_id, workers.state, workers.claim_version, workers.current_epoch, workers.current_service_id, workers.protocol_version, workers.supervisor_version, workers.supports_run, workers.supports_build, workers.runtime_identity_id, workers.substrate_format, workers.substrate_builder_abi, workers.substrate_layout_abi, workers.epoch_cpu_millis, workers.epoch_memory_bytes, workers.epoch_guest_ephemeral_disk_bytes, workers.epoch_build_cache_bytes, workers.epoch_artifact_cache_bytes, workers.epoch_hugepages_bytes, workers.epoch_checkpoint_bytes, workers.per_vm_cpu_millis, workers.per_vm_memory_bytes, workers.per_vm_guest_ephemeral_disk_bytes, workers.max_vm_slots, workers.max_run_consumers, workers.max_build_executors, workers.max_runtime_starts, workers.epoch_started_at, workers.activated_at, workers.draining_at, workers.termination_ready_at, workers.lost_at, workers.created_at, workers.updated_at
 ), revoked_credentials AS (
     UPDATE worker_instance_credentials AS credentials
        SET revoked_at = COALESCE(credentials.revoked_at, now())
