@@ -167,12 +167,26 @@ func (c *Connector) allocateNetworkOwner(owner vm.Owner, logical vm.WorkloadBind
 	if _, _, err := configuredNetworkPools(c.cfg); err != nil {
 		return networkOwnerManifest{}, err
 	}
-	lockPath := filepath.Join(c.cfg.StateDir, ".network.lock")
-	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err := checkSecureDirectory("firecracker coordination directory", stateCoordinationDir(c.cfg.StateDir)); err != nil {
+		return networkOwnerManifest{}, err
+	}
+	lockPath := networkAllocationLockPath(c.cfg.StateDir)
+	lockFD, err := unix.Open(lockPath, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return networkOwnerManifest{}, fmt.Errorf("open network allocation lock: %w", err)
 	}
+	lock := os.NewFile(uintptr(lockFD), lockPath)
 	defer lock.Close()
+	var lockStat unix.Stat_t
+	if err := unix.Fstat(lockFD, &lockStat); err != nil {
+		return networkOwnerManifest{}, fmt.Errorf("inspect network allocation lock: %w", err)
+	}
+	if lockStat.Mode&unix.S_IFMT != unix.S_IFREG || lockStat.Uid != uint32(os.Geteuid()) {
+		return networkOwnerManifest{}, errors.New("network allocation lock must be a regular file owned by the worker user")
+	}
+	if err := unix.Fchmod(lockFD, 0o600); err != nil {
+		return networkOwnerManifest{}, fmt.Errorf("secure network allocation lock: %w", err)
+	}
 	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
 		return networkOwnerManifest{}, fmt.Errorf("lock network allocation: %w", err)
 	}

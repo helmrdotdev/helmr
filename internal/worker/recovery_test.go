@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -150,6 +151,42 @@ func TestRecoveryDoesNotGuessOwnerFromJailerRoot(t *testing.T) {
 	}
 	if _, err := os.Stat(jailerPath); err != nil {
 		t.Fatalf("ownerless jailer evidence was removed: %v", err)
+	}
+}
+
+func TestOwnedVMCandidatesIgnoreSiblingCoordinationState(t *testing.T) {
+	workDir := t.TempDir()
+	stateDir := filepath.Join(workDir, "vms", "guest")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateDir+".network.lock", nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := ownedVMCandidates(workDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("sibling coordination state became VM ownership state: %+v", candidates)
+	}
+}
+
+func TestOwnedVMCandidatesQuarantineStrayStateEntry(t *testing.T) {
+	workDir := t.TempDir()
+	stateDir := filepath.Join(workDir, "vms", "guest")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "unexpected-state"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := ownedVMCandidates(workDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || !strings.Contains(candidates[0].Problem, "non-canonical VM id") {
+		t.Fatalf("owner-root contamination was not quarantined: %+v", candidates)
 	}
 }
 

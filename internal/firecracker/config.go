@@ -92,7 +92,7 @@ func (cfg Config) WithDefaults() Config {
 		cfg.StateDir = filepath.Join(os.TempDir(), "helmr-worker", "vms", "guest")
 	}
 	if strings.TrimSpace(cfg.JailerChrootBaseDir) == "" {
-		cfg.JailerChrootBaseDir = filepath.Join(cfg.StateDir, "jailer")
+		cfg.JailerChrootBaseDir = filepath.Join(filepath.Dir(filepath.Clean(cfg.StateDir)), "jailer")
 	}
 	if strings.TrimSpace(cfg.CgroupVersion) == "" {
 		cfg.CgroupVersion = DefaultCgroupVersion
@@ -180,6 +180,9 @@ func (cfg Config) Validate() error {
 	if strings.TrimSpace(cfg.StateDir) == "" {
 		problems = append(problems, errors.New("firecracker state dir is required"))
 	}
+	if pathsOverlap(cfg.StateDir, cfg.JailerChrootBaseDir) {
+		problems = append(problems, errors.New("firecracker state dir and jailer chroot base directory must be disjoint"))
+	}
 	if strings.TrimSpace(cfg.NetworkLinkPool) == "" {
 		problems = append(problems, errors.New("worker network link pool is required"))
 	}
@@ -220,4 +223,29 @@ func (cfg Config) Validate() error {
 		problems = append(problems, fmt.Errorf("guest health attempt timeout %s must be less than or equal to guest health timeout %s", cfg.HealthAttemptTimeout, cfg.HealthTimeout))
 	}
 	return errors.Join(problems...)
+}
+
+func pathsOverlap(left string, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" || right == "" {
+		return false
+	}
+	if absolute, err := filepath.Abs(left); err == nil {
+		left = absolute
+	}
+	if absolute, err := filepath.Abs(right); err == nil {
+		right = absolute
+	}
+	left = filepath.Clean(left)
+	right = filepath.Clean(right)
+	return pathContains(left, right) || pathContains(right, left)
+}
+
+func pathContains(parent string, child string) bool {
+	relative, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)))
 }

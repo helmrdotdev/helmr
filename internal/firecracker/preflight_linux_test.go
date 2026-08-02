@@ -82,3 +82,43 @@ func TestCheckHardLinkLayoutRejectsSeparateBindMount(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestSecureDirectoryRejectsSymlinkAndBroadWritePermission(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "state")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkSecureDirectory("state", directory); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(directory, 0o720); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkSecureDirectory("state", directory); err == nil || !strings.Contains(err.Error(), "group or world") {
+		t.Fatalf("broad write permission error = %v", err)
+	}
+	link := filepath.Join(root, "state-link")
+	if err := os.Symlink(directory, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkSecureDirectory("state", link); err == nil || !strings.Contains(err.Error(), "non-symlink") {
+		t.Fatalf("symlink error = %v", err)
+	}
+}
+
+func TestResolvedStateLayoutRejectsPhysicalAlias(t *testing.T) {
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "state")
+	if err := os.Mkdir(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	jailerAlias := filepath.Join(root, "jailer")
+	if err := os.Symlink(stateDir, jailerAlias); err != nil {
+		t.Fatal(err)
+	}
+	err := checkResolvedStateLayout(Config{StateDir: stateDir, JailerChrootBaseDir: jailerAlias})
+	if err == nil || !strings.Contains(err.Error(), "must be disjoint") {
+		t.Fatalf("error = %v", err)
+	}
+}

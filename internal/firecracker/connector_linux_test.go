@@ -28,6 +28,7 @@ import (
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
 	"github.com/firecracker-microvm/firecracker-go-sdk/vsock"
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	runtimeidentity "github.com/helmrdotdev/helmr/internal/runtime/identity"
@@ -642,11 +643,18 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifestBytes, identity := testRestoreManifestAndIdentity(t, cfg, "checkpoint-1")
+	runtimeInstanceID := uuid.Must(uuid.NewV7()).String()
 	var mu sync.Mutex
 	var phases []vm.RuntimePhase
 
 	_, err := connector.Restore(context.Background(), vm.RestoreRequest{
-		ID:                   "checkpoint-1",
+		ID:                "checkpoint-1",
+		RuntimeInstanceID: runtimeInstanceID,
+		OwnerKind:         vm.OwnerRuntime,
+		Binding: vm.WorkloadBinding{
+			WorkerEpoch: 1, OwnerID: runtimeInstanceID, Generation: 1,
+			RuntimeInstanceID: runtimeInstanceID, RuntimeIdentityID: NetworkABIV0,
+		},
 		VMState:              statePath,
 		VMStateMediaType:     cas.CheckpointVMStateMediaType,
 		ScratchDisk:          scratchPack,
@@ -674,6 +682,10 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 	if !hasRuntimePhase(phases, "restore_unpack_memory_filepack", "io") {
 		t.Fatalf("missing memory unpack failure phase: %+v", phases)
 	}
+	entries, readErr := os.ReadDir(cfg.StateDir)
+	if readErr != nil || len(entries) != 0 {
+		t.Fatalf("failed restore left owner state: entries=%v err=%v", entries, readErr)
+	}
 }
 
 func TestUnpackRestoreArtifactReturnsFilepackStats(t *testing.T) {
@@ -689,12 +701,20 @@ func TestUnpackRestoreArtifactReturnsFilepackStats(t *testing.T) {
 	if _, err := packRuntimeFile(context.Background(), raw, pack, filepackScratchRole); err != nil {
 		t.Fatal(err)
 	}
-
-	restored, phase, err := connector.unpackRestoreArtifact(context.Background(), pack, filepackScratchRole, "scratch.ext4", 1<<20, cas.CheckpointScratchDiskMediaType)
+	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: uuid.Must(uuid.NewV7()).String()}
+	ownerDir, err := createOwnerStateRoot(cfg.StateDir, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(restored)
+
+	restored, phase, err := connector.unpackRestoreArtifact(context.Background(), ownerDir, pack, filepackScratchRole, "scratch.ext4", 1<<20, cas.CheckpointScratchDiskMediaType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer removeStateRootLast(ownerDir, owner)
+	if filepath.Dir(restored) != ownerDir {
+		t.Fatalf("restore artifact path = %q, want owner directory %q", restored, ownerDir)
+	}
 	if phase.Name != "restore_unpack_scratch_filepack" || phase.ErrorClass != "" || phase.Filepack == nil || phase.Filepack.LogicalBytes != 1<<20 {
 		t.Fatalf("phase = %+v", phase)
 	}
@@ -1803,33 +1823,6 @@ func TestConfigForRestoreManifestRejectsInvalidOrOversizedRuntimeShape(t *testin
 	}
 }
 
-func TestRestoreCleanupSessionPreservesCheckpointSupport(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "restore.raw")
-	if err := os.WriteFile(path, []byte("restore"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	inner := &checkpointableTestSession{}
-	session := restoreCleanupSession{CheckpointableSession: inner, paths: []string{path}}
-	if _, ok := any(session).(vm.CheckpointableSession); !ok {
-		t.Fatal("restore cleanup session must remain checkpointable")
-	}
-	if _, err := session.CreateSnapshot(context.Background(), vm.SnapshotRequest{ID: "checkpoint-1"}); err != nil {
-		t.Fatal(err)
-	}
-	if !inner.snapshotCalled {
-		t.Fatal("snapshot call did not reach inner session")
-	}
-	if err := session.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if !inner.closed {
-		t.Fatal("close call did not reach inner session")
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("restore file still exists: %v", err)
-	}
-}
-
 func testRestoreConfig(t *testing.T) Config {
 	t.Helper()
 	dir := t.TempDir()
@@ -1963,38 +1956,6 @@ func hasRuntimePhase(phases []vm.RuntimePhase, name string, errorClass string) b
 func testDigest(body []byte) string {
 	sum := sha256.Sum256(body)
 	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-type checkpointableTestSession struct {
-	closed         bool
-	snapshotCalled bool
-}
-
-func (s *checkpointableTestSession) Stream() vm.Stream {
-	return readWriteNopCloser{}
-}
-
-func (s *checkpointableTestSession) OpenStream(context.Context) (vm.Stream, error) {
-	return readWriteNopCloser{}, nil
-}
-
-func (s *checkpointableTestSession) Close(context.Context) error {
-	s.closed = true
-	return nil
-}
-
-func (s *checkpointableTestSession) Wait(ctx context.Context) error {
-	<-ctx.Done()
-	return ctx.Err()
-}
-
-func (s *checkpointableTestSession) CreateSnapshot(context.Context, vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
-	s.snapshotCalled = true
-	return vm.SnapshotArtifact{}, nil
-}
-
-func (s *checkpointableTestSession) Resume(context.Context) error {
-	return nil
 }
 
 type readWriteNopCloser struct{}

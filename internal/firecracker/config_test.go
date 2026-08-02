@@ -1,6 +1,7 @@
 package firecracker
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,8 +15,33 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.JailerPath != DefaultJailerPath || cfg.JailerChrootBaseDir == "" || cfg.CgroupVersion != DefaultCgroupVersion {
 		t.Fatalf("config = %+v", cfg)
 	}
+	if filepath.Dir(cfg.StateDir) != filepath.Dir(cfg.JailerChrootBaseDir) || pathsOverlap(cfg.StateDir, cfg.JailerChrootBaseDir) {
+		t.Fatalf("state and jailer directories are not disjoint siblings: state=%q jailer=%q", cfg.StateDir, cfg.JailerChrootBaseDir)
+	}
 	if cfg.GuestPort != DefaultGuestPort || cfg.HealthPort != HealthPort || cfg.StateDir == "" || cfg.InitTimeout != DefaultInitTimeout || cfg.HealthTimeout != DefaultHealthTimeout || cfg.HealthAttemptTimeout != DefaultHealthAttemptTimeout {
 		t.Fatalf("config = %+v", cfg)
+	}
+}
+
+func TestConfigValidateRejectsStateAndJailerOverlap(t *testing.T) {
+	cfg := (Config{
+		StateDir:            "/srv/helmr/vms/guest",
+		JailerChrootBaseDir: "/srv/helmr/vms/guest/jailer",
+	}).WithDefaults()
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "must be disjoint") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestConfigValidateRejectsRelativeStateAndJailerAlias(t *testing.T) {
+	cfg := (Config{
+		StateDir:            "worker-state",
+		JailerChrootBaseDir: filepath.Join(".", "worker-state", "jailer"),
+	}).WithDefaults()
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "must be disjoint") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

@@ -32,8 +32,10 @@ func (c *Connector) Preflight(ctx context.Context) error {
 	)
 	_, _, poolErr := validateNetworkPools(c.cfg)
 	problems = append(problems, poolErr)
-	problems = append(problems, ensureDirectory("firecracker state directory", c.cfg.StateDir))
-	problems = append(problems, ensureDirectory("firecracker jailer chroot directory", c.cfg.JailerChrootBaseDir))
+	problems = append(problems, ensureSecureDirectory("firecracker coordination directory", stateCoordinationDir(c.cfg.StateDir)))
+	problems = append(problems, ensureSecureDirectory("firecracker state directory", c.cfg.StateDir))
+	problems = append(problems, ensureSecureDirectory("firecracker jailer chroot directory", c.cfg.JailerChrootBaseDir))
+	problems = append(problems, checkResolvedStateLayout(c.cfg))
 	problems = append(problems, checkHardLinkLayout(c.cfg))
 	problems = append(problems, c.datapath.VerifyKernel())
 	if err := ctx.Err(); err != nil {
@@ -47,13 +49,9 @@ func (c *Connector) Preflight(ctx context.Context) error {
 
 func (c *Connector) proveRoutedNetworkLifecycle(ctx context.Context) error {
 	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: uuid.Must(uuid.NewV7()).String()}
-	statePath := filepath.Join(c.cfg.StateDir, owner.ID)
-	if err := os.Mkdir(statePath, 0o700); err != nil {
+	statePath, err := createOwnerStateRoot(c.cfg.StateDir, owner)
+	if err != nil {
 		return fmt.Errorf("create routed network proof owner: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(string(owner.Kind)+"\n"+owner.ID+"\n"), 0o600); err != nil {
-		_ = os.Remove(statePath)
-		return fmt.Errorf("write routed network proof owner: %w", err)
 	}
 	binding, err := c.prepareNetworkBinding(ctx, owner, vm.WorkloadBinding{
 		WorkerEpoch: 1, OwnerID: owner.ID, Generation: 1,
@@ -118,7 +116,7 @@ func checkHardLinkLayout(cfg Config) error {
 			return err
 		}
 	}
-	probe, err := os.CreateTemp(cfg.StateDir, ".hardlink-")
+	probe, err := os.CreateTemp(stateCoordinationDir(cfg.StateDir), ".hardlink-")
 	if err != nil {
 		return fmt.Errorf("create firecracker hard-link probe: %w", err)
 	}

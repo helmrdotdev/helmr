@@ -144,6 +144,7 @@ func (c *Connector) Connect(ctx context.Context, request vm.ConnectRequest) (vm.
 		request.Topology,
 		request.ReadOnlyDrives,
 		nil,
+		false,
 	)
 }
 
@@ -273,6 +274,7 @@ func (c *Connector) Materialize(ctx context.Context, request vm.MaterializeReque
 		request.Topology,
 		request.ReadOnlyDrives,
 		nil,
+		false,
 	)
 }
 
@@ -610,13 +612,18 @@ func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	if request.MemoryMediaTypes[0] != cas.CheckpointMemoryMediaType {
 		return nil, fmt.Errorf("firecracker restore memory media type %q is not supported", request.MemoryMediaTypes[0])
 	}
+	owner := vm.Owner{Kind: request.OwnerKind, ID: request.RuntimeInstanceID}
+	ownerDir, err := createOwnerStateRoot(c.cfg.StateDir, owner)
+	if err != nil {
+		return nil, err
+	}
 	expectedScratchSize := manifest.RecoveryPoint.Runtime.ScratchDiskMiB * 1024 * 1024
 	expectedMemorySize := manifest.RecoveryPoint.Runtime.MemoryMiB * 1024 * 1024
 	var rawScratch string
 	var rawMemory string
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.Go(func() error {
-		path, phase, err := c.unpackRestoreArtifact(groupCtx, request.ScratchDisk, filepackScratchRole, "scratch.ext4", expectedScratchSize, cas.CheckpointScratchDiskMediaType)
+		path, phase, err := c.unpackRestoreArtifact(groupCtx, ownerDir, request.ScratchDisk, filepackScratchRole, "scratch.ext4", expectedScratchSize, cas.CheckpointScratchDiskMediaType)
 		recordRuntimePhase(recordPhase, phase)
 		if err != nil {
 			return fmt.Errorf("unpack checkpoint scratch disk: %w", err)
@@ -625,7 +632,7 @@ func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.
 		return nil
 	})
 	group.Go(func() error {
-		path, phase, err := c.unpackRestoreArtifact(groupCtx, request.Memory[0], filepackMemoryRole, "memory.mem", expectedMemorySize, cas.CheckpointMemoryMediaType)
+		path, phase, err := c.unpackRestoreArtifact(groupCtx, ownerDir, request.Memory[0], filepackMemoryRole, "memory.mem", expectedMemorySize, cas.CheckpointMemoryMediaType)
 		recordRuntimePhase(recordPhase, phase)
 		if err != nil {
 			return fmt.Errorf("unpack checkpoint memory: %w", err)
@@ -635,18 +642,16 @@ func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	})
 	if err := group.Wait(); err != nil {
 		removeFiles([]string{rawScratch, rawMemory})
-		return nil, err
+		return nil, errors.Join(err, removeStateRootLast(ownerDir, owner))
 	}
-	cleanup := []string{rawScratch, rawMemory}
 	child := *c
 	child.cfg = restoreCfg
 	child.kernelArgs = kernelArgs
-	session, err := child.start(ctx, request.RuntimeInstanceID, request.OwnerKind, request.Binding, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Topology, request.ReadOnlyDrives, recordPhase)
+	session, err := child.start(ctx, request.RuntimeInstanceID, request.OwnerKind, request.Binding, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Topology, request.ReadOnlyDrives, recordPhase, true)
 	if err != nil {
-		removeFiles(cleanup)
 		return nil, err
 	}
-	return restoreCleanupSession{CheckpointableSession: session, paths: cleanup}, nil
+	return session, nil
 }
 
 func (c *Connector) validateRestoreIdentity(
@@ -756,7 +761,7 @@ func (c *Connector) configForRestoreManifest(manifest snapshotManifest) (Config,
 	return cfg, nil
 }
 
-func (c *Connector) unpackRestoreArtifact(ctx context.Context, artifactPath string, role string, suffix string, expectedLogicalSize int64, mediaType string) (string, vm.RuntimePhase, error) {
+func (c *Connector) unpackRestoreArtifact(ctx context.Context, ownerDir string, artifactPath string, role string, suffix string, expectedLogicalSize int64, mediaType string) (string, vm.RuntimePhase, error) {
 	started := time.Now()
 	phase := vm.RuntimePhase{
 		Name:      "restore_unpack_" + strings.ReplaceAll(role, "-", "_") + "_filepack",
@@ -766,12 +771,7 @@ func (c *Connector) unpackRestoreArtifact(ctx context.Context, artifactPath stri
 	if role == filepackScratchRole {
 		phase.Name = "restore_unpack_scratch_filepack"
 	}
-	if err := os.MkdirAll(c.cfg.StateDir, 0o700); err != nil {
-		phase.DurationMs = vm.RuntimeDurationMilliseconds(time.Since(started))
-		phase.ErrorClass = vm.RuntimeErrorClass(err)
-		return "", phase, err
-	}
-	file, err := os.CreateTemp(c.cfg.StateDir, "restore-*."+suffix)
+	file, err := os.CreateTemp(ownerDir, "restore-*."+suffix)
 	if err != nil {
 		phase.DurationMs = vm.RuntimeDurationMilliseconds(time.Since(started))
 		phase.ErrorClass = vm.RuntimeErrorClass(err)
@@ -798,25 +798,14 @@ func (c *Connector) unpackRestoreArtifact(ctx context.Context, artifactPath stri
 	return targetPath, phase, nil
 }
 
-type restoreCleanupSession struct {
-	vm.CheckpointableSession
-	paths []string
-}
-
-func (s restoreCleanupSession) Close(ctx context.Context) error {
-	err := s.CheckpointableSession.Close(ctx)
-	removeFiles(s.paths)
-	return err
-}
-
 func removeFiles(paths []string) {
 	for _, path := range paths {
 		_ = os.Remove(path)
 	}
 }
 
-func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase)) (vm.CheckpointableSession, error) {
-	session, err := c.prepareSession(ctx, instanceID, ownerKind, binding, snapshotMemoryPath, snapshotStatePath, scratchDiskRestorePath, restoreNetwork, topology, readOnlyDrives, recordPhase)
+func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase), ownerPrepared bool) (vm.CheckpointableSession, error) {
+	session, err := c.prepareSession(ctx, instanceID, ownerKind, binding, snapshotMemoryPath, snapshotStatePath, scratchDiskRestorePath, restoreNetwork, topology, readOnlyDrives, recordPhase, ownerPrepared)
 	if err != nil {
 		return nil, err
 	}
@@ -826,7 +815,7 @@ func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.O
 	return session, nil
 }
 
-func (c *Connector) prepareSession(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase)) (_ *guestSession, retErr error) {
+func (c *Connector) prepareSession(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase), ownerPrepared bool) (_ *guestSession, retErr error) {
 	instanceID = strings.TrimSpace(instanceID)
 	owner := vm.Owner{Kind: ownerKind, ID: instanceID}
 	if err := owner.Validate(); err != nil {
@@ -836,12 +825,16 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 		return nil, fmt.Errorf("firecracker workload binding: %w", err)
 	}
 	instanceDir := filepath.Join(c.cfg.StateDir, instanceID)
-	if err := os.MkdirAll(instanceDir, 0o700); err != nil {
-		return nil, fmt.Errorf("create firecracker instance dir: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(instanceDir, "owner"), []byte(string(owner.Kind)+"\n"+owner.ID+"\n"), 0o600); err != nil {
-		_ = os.RemoveAll(instanceDir)
-		return nil, fmt.Errorf("write firecracker ownership evidence: %w", err)
+	if ownerPrepared {
+		if err := validateOwnerMarker(instanceDir, owner); err != nil {
+			return nil, fmt.Errorf("validate prepared firecracker ownership evidence: %w", err)
+		}
+	} else {
+		var err error
+		instanceDir, err = createOwnerStateRoot(c.cfg.StateDir, owner)
+		if err != nil {
+			return nil, err
+		}
 	}
 	defer func() {
 		if retErr != nil {
