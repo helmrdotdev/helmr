@@ -31,7 +31,10 @@ docker run --rm \
   -w /work \
   "${BUILDER_IMAGE}" \
   sh -ceu '
-    nix --extra-experimental-features "nix-command flakes" develop /work \
+    nix --extra-experimental-features "nix-command flakes" \
+      --option sandbox false \
+      --option filter-syscalls false \
+      develop /work \
       -c go -C /work run ./cmd/helmr-control release publish \
         --store "${PLATFORM_STORE_URI}" \
         --input /input

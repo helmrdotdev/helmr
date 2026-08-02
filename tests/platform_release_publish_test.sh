@@ -9,6 +9,7 @@ rg -F 'target=/work,readonly' "${script}" >/dev/null
 rg -F 'target=/input,readonly' "${script}" >/dev/null
 rg -F -- '--env AWS_ACCESS_KEY_ID' "${script}" >/dev/null
 rg -F 'go -C /work run ./cmd/helmr-control release publish' "${script}" >/dev/null
+rg -F -- '--option filter-syscalls false' "${script}" >/dev/null
 if rg -F -- '--privileged' "${script}" >/dev/null || rg -F 'seccomp=unconfined' "${script}" >/dev/null; then
   printf 'not ok - platform publisher must not receive elevated container privileges\n' >&2
   exit 1
