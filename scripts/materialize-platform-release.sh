@@ -44,7 +44,7 @@ docker run --rm \
       --option sandbox false \
       --option filter-syscalls false \
       /work#packages.x86_64-linux.platformRelease)"
-    cp -a "${release}/." /output/
+    cp -r --no-preserve=mode,ownership,timestamps "${release}/." /output/
     chown -R "${HOST_UID}:${HOST_GID}" /output
     find /output -type d -exec chmod u+rwx {} +
     find /output -type f -exec chmod u+rw {} +
