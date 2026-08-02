@@ -1,4 +1,4 @@
-package operatorclient
+package operatorapi
 
 import (
 	"bytes"
@@ -13,12 +13,25 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-const maximumResponseBytes = int64(4 << 20)
-const operatorTokenDecodedBytes = 32
+const (
+	RoutePrefix               = "/operator"
+	CapacityObservationsPath  = "/capacity/observations"
+	WorkerInstancesPath       = "/worker-instances"
+	maximumResponseBytes      = int64(4 << 20)
+	operatorTokenDecodedBytes = 32
+)
+
+type HTTPError struct {
+	StatusCode int
+	Status     string
+	Body       string
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("operator Control returned %s: %s", e.Status, e.Body)
+}
 
 type Client struct {
 	baseURL *url.URL
@@ -36,12 +49,13 @@ func WithHTTPClient(client *http.Client) Option {
 	}
 }
 
-func New(rawBaseURL, token string, options ...Option) (*Client, error) {
+func NewClient(rawBaseURL, token string, options ...Option) (*Client, error) {
 	baseURL, err := url.Parse(strings.TrimSpace(rawBaseURL))
 	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" {
 		return nil, errors.New("operator Control URL must be an absolute URL")
 	}
-	if baseURL.Scheme != "https" && baseURL.Hostname() != "127.0.0.1" && baseURL.Hostname() != "localhost" {
+	localHTTP := baseURL.Scheme == "http" && (baseURL.Hostname() == "127.0.0.1" || baseURL.Hostname() == "localhost")
+	if baseURL.Scheme != "https" && !localHTTP {
 		return nil, errors.New("operator Control URL must use HTTPS outside localhost")
 	}
 	token = strings.TrimSpace(token)
@@ -52,9 +66,7 @@ func New(rawBaseURL, token string, options ...Option) (*Client, error) {
 	client := &Client{
 		baseURL: baseURL,
 		token:   token,
-		http: &http.Client{
-			Timeout: 20 * time.Second,
-		},
+		http:    &http.Client{Timeout: 20 * time.Second},
 	}
 	for _, option := range options {
 		option(client)
@@ -62,15 +74,13 @@ func New(rawBaseURL, token string, options ...Option) (*Client, error) {
 	return client, nil
 }
 
-func (c *Client) CapacityObservations(ctx context.Context) (api.OperatorCapacityObservationsResponse, error) {
-	var response api.OperatorCapacityObservationsResponse
-	if err := c.do(ctx, http.MethodGet, "/api/operator/capacity/observations", nil, &response); err != nil {
-		return response, err
-	}
-	return response, nil
+func (c *Client) CapacityObservations(ctx context.Context) (CapacityObservationsResponse, error) {
+	var response CapacityObservationsResponse
+	err := c.do(ctx, http.MethodGet, "/api"+RoutePrefix+CapacityObservationsPath, nil, &response)
+	return response, err
 }
 
-func (c *Client) WorkerInstances(ctx context.Context, workerGroupID string, resourceIDs, states []string, limit int32) (api.OperatorWorkerInstancesResponse, error) {
+func (c *Client) WorkerInstances(ctx context.Context, workerGroupID string, resourceIDs, states []string, limit int32) (WorkerInstancesResponse, error) {
 	query := url.Values{}
 	if workerGroupID = strings.TrimSpace(workerGroupID); workerGroupID != "" {
 		query.Set("worker_group_id", workerGroupID)
@@ -84,36 +94,30 @@ func (c *Client) WorkerInstances(ctx context.Context, workerGroupID string, reso
 	if limit > 0 {
 		query.Set("limit", strconv.FormatInt(int64(limit), 10))
 	}
-	path := "/api/operator/worker-instances"
+	path := "/api" + RoutePrefix + WorkerInstancesPath
 	if encoded := query.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	var response api.OperatorWorkerInstancesResponse
-	if err := c.do(ctx, http.MethodGet, path, nil, &response); err != nil {
-		return response, err
-	}
-	return response, nil
+	var response WorkerInstancesResponse
+	err := c.do(ctx, http.MethodGet, path, nil, &response)
+	return response, err
 }
 
-func (c *Client) WorkerInstance(ctx context.Context, workerInstanceID string) (api.OperatorWorkerInstance, error) {
-	var response api.OperatorWorkerInstance
-	path := "/api/operator/worker-instances/" + url.PathEscape(workerInstanceID)
-	if err := c.do(ctx, http.MethodGet, path, nil, &response); err != nil {
-		return response, err
-	}
-	return response, nil
+func (c *Client) WorkerInstance(ctx context.Context, workerInstanceID string) (WorkerInstance, error) {
+	var response WorkerInstance
+	path := "/api" + RoutePrefix + WorkerInstancesPath + "/" + url.PathEscape(workerInstanceID)
+	err := c.do(ctx, http.MethodGet, path, nil, &response)
+	return response, err
 }
 
-func (c *Client) DrainWorkerInstance(ctx context.Context, workerInstanceID string, request api.OperatorDrainWorkerInstanceRequest) (api.OperatorWorkerInstance, error) {
-	var response api.OperatorWorkerInstance
-	path := "/api/operator/worker-instances/" + url.PathEscape(workerInstanceID) + "/drain"
-	if err := c.do(ctx, http.MethodPost, path, request, &response); err != nil {
-		return response, err
-	}
-	return response, nil
+func (c *Client) DrainWorkerInstance(ctx context.Context, workerInstanceID string, request DrainWorkerInstanceRequest) (WorkerInstance, error) {
+	var response WorkerInstance
+	path := "/api" + RoutePrefix + WorkerInstancesPath + "/" + url.PathEscape(workerInstanceID) + "/drain"
+	err := c.do(ctx, http.MethodPost, path, request, &response)
+	return response, err
 }
 
-func (c *Client) do(ctx context.Context, method, path string, requestBody any, responseBody any) error {
+func (c *Client) do(ctx context.Context, method, path string, requestBody, responseBody any) error {
 	reference, err := url.Parse(path)
 	if err != nil {
 		return err
@@ -149,7 +153,7 @@ func (c *Client) do(ctx context.Context, method, path string, requestBody any, r
 		return errors.New("operator Control response exceeds the maximum size")
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("operator Control returned %s: %s", response.Status, strings.TrimSpace(string(payload)))
+		return &HTTPError{StatusCode: response.StatusCode, Status: response.Status, Body: strings.TrimSpace(string(payload))}
 	}
 	if responseBody == nil {
 		return nil

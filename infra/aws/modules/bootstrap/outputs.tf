@@ -62,18 +62,3 @@ output "platform_publisher_role_arn" {
   description = "Create-only Platform Artifact publisher role ARN."
   value       = aws_iam_role.platform_publisher.arn
 }
-
-output "retained_cas_uri" {
-  description = "Retained deployment Artifact CAS URI."
-  value       = "s3://${aws_s3_bucket.retained_cas.bucket}"
-}
-
-output "retained_cas_bucket_arn" {
-  description = "S3 bucket ARN for retained deployment artifacts."
-  value       = aws_s3_bucket.retained_cas.arn
-}
-
-output "retained_cas_kms_key_arn" {
-  description = "KMS key ARN for retained deployment artifacts."
-  value       = aws_kms_key.retained_cas.arn
-}

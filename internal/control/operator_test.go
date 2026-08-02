@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,9 +13,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/deployment/operatorapi"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -87,33 +88,62 @@ func TestOperatorDrainUsesExactEpochAndClaimFence(t *testing.T) {
 	server := &Server{db: store, operatorTokenHash: hash}
 	router := chi.NewRouter()
 	router.Route("/api", server.mountOperatorRoutes)
-	payload, err := json.Marshal(api.OperatorDrainWorkerInstanceRequest{
+	httpServer := httptest.NewServer(router)
+	defer httpServer.Close()
+	client, err := operatorapi.NewClient(httpServer.URL, operatorTestToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), operatorapi.DrainWorkerInstanceRequest{
 		ExpectedEpoch: 4, ExpectedClaimVersion: 7,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(
-		http.MethodPost,
-		"/api/operator/worker-instances/"+uuid.UUID(workerID.Bytes).String()+"/drain",
-		bytes.NewReader(payload),
-	)
-	request.Header.Set("Authorization", "Bearer "+operatorTestToken())
-	request.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
-	}
 	if store.params.ExpectedEpoch.Int64 != 4 || store.params.ExpectedClaimVersion != 7 || store.params.WorkerGroupID != "run-workers" {
 		t.Fatalf("drain params = %+v", store.params)
 	}
-	var result api.OperatorWorkerInstance
-	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
-		t.Fatal(err)
-	}
 	if result.State != string(db.WorkerInstanceStateDraining) || result.ClaimVersion != 8 {
 		t.Fatalf("drain result = %+v", result)
+	}
+	replayed, err := client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), operatorapi.DrainWorkerInstanceRequest{
+		ExpectedEpoch: 4, ExpectedClaimVersion: 7,
+	})
+	if err != nil || replayed.ID != result.ID || replayed.State != result.State ||
+		replayed.ClaimVersion != result.ClaimVersion || replayed.CurrentEpoch == nil ||
+		result.CurrentEpoch == nil || *replayed.CurrentEpoch != *result.CurrentEpoch {
+		t.Fatalf("exact replay = %+v, %v", replayed, err)
+	}
+}
+
+func TestOperatorClientDecodesStaleDrainConflict(t *testing.T) {
+	workerID := pgvalue.NewUUIDv7()
+	store := &operatorDrainStore{
+		instance: db.GetOperatorWorkerInstanceRow{
+			ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: "run-workers",
+			State: string(db.WorkerInstanceStateActive), ClaimVersion: 7,
+			CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
+		},
+		drainErr: pgx.ErrNoRows,
+	}
+	hash, err := hashOperatorToken(operatorTestToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := chi.NewRouter()
+	router.Route("/api", (&Server{db: store, operatorTokenHash: hash}).mountOperatorRoutes)
+	httpServer := httptest.NewServer(router)
+	defer httpServer.Close()
+	client, err := operatorapi.NewClient(httpServer.URL, operatorTestToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), operatorapi.DrainWorkerInstanceRequest{
+		ExpectedEpoch: 4, ExpectedClaimVersion: 6,
+	})
+	var httpErr *operatorapi.HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict {
+		t.Fatalf("stale drain error = %#v", err)
 	}
 }
 
@@ -138,6 +168,7 @@ type operatorDrainStore struct {
 	instance db.GetOperatorWorkerInstanceRow
 	draining db.DrainWorkerInstanceRow
 	params   db.DrainWorkerInstanceParams
+	drainErr error
 }
 
 func (s *operatorDrainStore) GetOperatorWorkerInstance(context.Context, pgtype.UUID) (db.GetOperatorWorkerInstanceRow, error) {
@@ -146,7 +177,7 @@ func (s *operatorDrainStore) GetOperatorWorkerInstance(context.Context, pgtype.U
 
 func (s *operatorDrainStore) DrainWorkerInstance(_ context.Context, params db.DrainWorkerInstanceParams) (db.DrainWorkerInstanceRow, error) {
 	s.params = params
-	return s.draining, nil
+	return s.draining, s.drainErr
 }
 
 func operatorTestToken() string {

@@ -25,7 +25,6 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"actor":               {"db", "ids", "outbox", "pgvalue", "run", "secret", "tracing"},
 		"api":                 {"archive", "ids", "imagebuild", "jsoncanon"},
 		"archive":             {"safepath", "sha256sum"},
-		"awscapacity":         {"api"},
 		"auth":                {"db", "ids", "pgvalue", "token"},
 		"buildkit":            {"imagebuild", "safepath"},
 		"capacity":            {},
@@ -63,7 +62,6 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"jsoncanon":           {},
 		"localcache":          {},
 		"oci":                 {"sha256sum"},
-		"operatorclient":      {"api"},
 		"outbox":              {},
 		"pgvalue":             {},
 		"platformlock":        {"sessionlock"},
@@ -104,13 +102,12 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 	}
 
 	for source, targets := range map[string][]string{
-		"frameio":     {"api", "db", "proto/run/v0", "wire"},
-		"wire":        {"api", "control", "db", "executor", "guestd", "workspace"},
-		"guestd":      {"control", "db", "executor"},
-		"workspace":   {"api", "control", "db", "executor", "guestd", "pgvalue", "wire"},
-		"control":     {"executor", "firecracker", "guestd"},
-		"awscapacity": {"auth", "control", "db", "dispatch", "executor", "worker"},
-		"secret":      {"run"},
+		"frameio":   {"api", "db", "proto/run/v0", "wire"},
+		"wire":      {"api", "control", "db", "executor", "guestd", "workspace"},
+		"guestd":    {"control", "db", "executor"},
+		"workspace": {"api", "control", "db", "executor", "guestd", "pgvalue", "wire"},
+		"control":   {"executor", "firecracker", "guestd"},
+		"secret":    {"run"},
 	} {
 		for _, target := range targets {
 			if slices.Contains(actual[source], target) {

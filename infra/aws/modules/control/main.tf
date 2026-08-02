@@ -39,7 +39,8 @@ locals {
   }
   secret_kms_key_arns = distinct(concat(
     [aws_kms_key.helmr.arn],
-    var.clickhouse_password_kms_key_arns
+    var.clickhouse_password_kms_key_arns,
+    var.operator_token_kms_key_arn == null ? [] : [var.operator_token_kms_key_arn]
   ))
   dispatcher_secret_kms_key_arns = distinct(concat(
     [aws_kms_key.helmr.arn],
@@ -125,9 +126,9 @@ locals {
     TOKEN_CREDENTIAL_KEY             = aws_secretsmanager_secret.token_credential_key.arn
     HELMR_GITHUB_OAUTH_CLIENT_SECRET = aws_secretsmanager_secret.github_oauth_client_secret.arn
     },
-    var.enable_operator_api ? {
-      HELMR_OPERATOR_TOKEN = aws_secretsmanager_secret.operator_token[0].arn
-    } : {},
+    var.operator_token_secret_arn == null ? {} : {
+      HELMR_OPERATOR_TOKEN = var.operator_token_secret_arn
+    },
     local.worker_enrollment_secrets,
     local.telemetry_secrets,
     local.email_secrets
@@ -151,7 +152,7 @@ locals {
     "HELMR_CLICKHOUSE_PASSWORD",
   ])
   reserved_control_environment_keys = toset(keys(local.control_environment_defaults))
-  reserved_control_secret_keys      = toset(keys(local.control_secret_defaults))
+  reserved_control_secret_keys      = setunion(toset(keys(local.control_secret_defaults)), toset(["HELMR_OPERATOR_TOKEN"]))
   reserved_control_keys             = setunion(local.reserved_control_environment_keys, local.reserved_control_secret_keys, local.reserved_email_keys)
   reserved_dispatcher_keys = setunion(toset(keys(local.dispatcher_environment_defaults)), toset(keys(local.dispatcher_secrets)), toset([
     "HELMR_CLICKHOUSE_PASSWORD",
@@ -1282,15 +1283,6 @@ resource "aws_secretsmanager_secret" "auth_key" {
 
 resource "aws_secretsmanager_secret" "setup_token" {
   name                    = "${local.name}/control/setup-token"
-  kms_key_id              = aws_kms_key.helmr.arn
-  recovery_window_in_days = var.secret_recovery_window_in_days
-  tags                    = var.tags
-}
-
-resource "aws_secretsmanager_secret" "operator_token" {
-  count = var.enable_operator_api ? 1 : 0
-
-  name                    = "${local.name}/control/operator-token"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags

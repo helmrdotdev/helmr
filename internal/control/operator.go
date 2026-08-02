@@ -11,7 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/deployment/operatorapi"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -50,13 +50,13 @@ func hashOperatorToken(raw string) ([]byte, error) {
 }
 
 func (s *Server) mountOperatorRoutes(r chi.Router) {
-	r.Route("/operator", func(r chi.Router) {
+	r.Route(operatorapi.RoutePrefix, func(r chi.Router) {
 		r.Use(s.requireOperator)
-		r.Get("/capacity/observations", s.operatorCapacityObservations)
-		r.Get("/worker-instances", s.operatorListWorkerInstances)
-		r.Get("/worker-instances/{workerInstanceID}", s.operatorGetWorkerInstance)
+		r.Get(operatorapi.CapacityObservationsPath, s.operatorCapacityObservations)
+		r.Get(operatorapi.WorkerInstancesPath, s.operatorListWorkerInstances)
+		r.Get(operatorapi.WorkerInstancesPath+"/{workerInstanceID}", s.operatorGetWorkerInstance)
 		r.With(limitRequestBody(operatorRequestBodyLimit)).
-			Post("/worker-instances/{workerInstanceID}/drain", s.operatorDrainWorkerInstance)
+			Post(operatorapi.WorkerInstancesPath+"/{workerInstanceID}/drain", s.operatorDrainWorkerInstance)
 	})
 }
 
@@ -79,8 +79,8 @@ func (s *Server) operatorCapacityObservations(w http.ResponseWriter, r *http.Req
 		writeError(w, errors.New("observe deployment capacity demand"))
 		return
 	}
-	response := api.OperatorCapacityObservationsResponse{
-		Observations: make([]api.OperatorCapacityObservation, 0, len(observations)),
+	response := operatorapi.CapacityObservationsResponse{
+		Observations: make([]operatorapi.CapacityObservation, 0, len(observations)),
 	}
 	for _, observation := range observations {
 		response.Observations = append(response.Observations, operatorCapacityObservation(observation))
@@ -100,8 +100,8 @@ func (s *Server) operatorListWorkerInstances(w http.ResponseWriter, r *http.Requ
 		writeError(w, errors.New("list operator Worker instances"))
 		return
 	}
-	response := api.OperatorWorkerInstancesResponse{
-		WorkerInstances: make([]api.OperatorWorkerInstance, 0, len(rows)),
+	response := operatorapi.WorkerInstancesResponse{
+		WorkerInstances: make([]operatorapi.WorkerInstance, 0, len(rows)),
 	}
 	for _, row := range rows {
 		response.WorkerInstances = append(response.WorkerInstances, operatorWorkerInstance(
@@ -142,7 +142,7 @@ func (s *Server) operatorDrainWorkerInstance(w http.ResponseWriter, r *http.Requ
 		writeError(w, badRequest(err))
 		return
 	}
-	var request api.OperatorDrainWorkerInstanceRequest
+	var request operatorapi.DrainWorkerInstanceRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid Worker drain JSON: %w", err)))
 		return
@@ -232,8 +232,8 @@ func operatorWorkerInstanceListParams(r *http.Request) (db.ListOperatorWorkerIns
 	return params, nil
 }
 
-func operatorCapacityObservation(observation workergroup.DemandObservation) api.OperatorCapacityObservation {
-	result := api.OperatorCapacityObservation{
+func operatorCapacityObservation(observation workergroup.DemandObservation) operatorapi.CapacityObservation {
+	result := operatorapi.CapacityObservation{
 		WorkerGroupID:      observation.WorkerGroupID,
 		RegionID:           observation.RegionID,
 		GroupState:         observation.GroupState,
@@ -246,11 +246,11 @@ func operatorCapacityObservation(observation workergroup.DemandObservation) api.
 	return result
 }
 
-func operatorRoleDemand(role *workergroup.RoleDemand) *api.OperatorRoleDemand {
+func operatorRoleDemand(role *workergroup.RoleDemand) *operatorapi.RoleDemand {
 	if role == nil {
 		return nil
 	}
-	return &api.OperatorRoleDemand{
+	return &operatorapi.RoleDemand{
 		QueuedItems:       role.QueuedItems,
 		QueuedResources:   operatorResourceVector(role.QueuedResources),
 		ReadyWorkers:      role.ReadyWorkers,
@@ -258,8 +258,8 @@ func operatorRoleDemand(role *workergroup.RoleDemand) *api.OperatorRoleDemand {
 	}
 }
 
-func operatorResourceVector(vector workergroup.ResourceVector) api.OperatorResourceVector {
-	return api.OperatorResourceVector{
+func operatorResourceVector(vector workergroup.ResourceVector) operatorapi.ResourceVector {
+	return operatorapi.ResourceVector{
 		CPUMillis: vector.CPUMillis, MemoryBytes: vector.MemoryBytes,
 		GuestEphemeralDiskBytes: vector.GuestEphemeralDiskBytes,
 		VMSlots:                 vector.VMSlots, RunConsumers: vector.RunConsumers,
@@ -281,8 +281,8 @@ func operatorWorkerInstance(
 	lostAt pgtype.Timestamptz,
 	createdAt pgtype.Timestamptz,
 	updatedAt pgtype.Timestamptz,
-) api.OperatorWorkerInstance {
-	result := api.OperatorWorkerInstance{
+) operatorapi.WorkerInstance {
+	result := operatorapi.WorkerInstance{
 		ID: uuid.UUID(id.Bytes).String(), ResourceID: resourceID,
 		WorkerGroupID: workerGroupID, State: state, ClaimVersion: claimVersion,
 		SupportsRun: supportsRun, SupportsBuild: supportsBuild,

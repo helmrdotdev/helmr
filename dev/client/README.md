@@ -46,6 +46,6 @@ verify immutable Secret delivery to BasicExec. The secret value is never
 printed; the smoke only reports that a non-empty value was present.
 
 Set `HELMR_CLIENT_SMOKE_RESULT_FILE` to produce the bounded machine result
-consumed by `dev/aws/validation-cases/client-smoke.sh`. The result contains
+consumed by deployment validation. The result contains
 only check IDs and public resource IDs; it does not contain logs, payloads, or
 secret values.

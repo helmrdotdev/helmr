@@ -289,12 +289,12 @@ run "operator_api_credential_is_explicit_composition" {
   command = plan
 
   variables {
-    enable_operator_api = true
+    operator_token_secret_arn  = "arn:aws:secretsmanager:us-east-1:111122223333:secret:helmr/operator-token"
+    operator_token_kms_key_arn = "arn:aws:kms:us-east-1:111122223333:key/12345678-1234-1234-1234-123456789012"
   }
 
   assert {
     condition = (
-      length(aws_secretsmanager_secret.operator_token) == 1 &&
       contains(
         [for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].secrets : item.name],
         "HELMR_OPERATOR_TOKEN"
@@ -304,8 +304,20 @@ run "operator_api_credential_is_explicit_composition" {
         "HELMR_OPERATOR_TOKEN"
       )
     )
-    error_message = "only an explicitly composed Control operator surface receives the dedicated credential"
+    error_message = "only Control receives the externally composed deployment-operator credential"
   }
+}
+
+run "operator_api_credential_rejects_plaintext_environment" {
+  command = plan
+
+  variables {
+    control_environment = {
+      HELMR_OPERATOR_TOKEN = "plaintext-must-not-enter-task-definition"
+    }
+  }
+
+  expect_failures = [terraform_data.bootstrap_preconditions]
 }
 
 run "workspace_image_cache_is_exact_and_control_only" {

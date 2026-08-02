@@ -1,91 +1,34 @@
 # Helmr AWS Infrastructure
 
-This directory contains the AWS infrastructure entrypoint for Helmr.
-
-Terraform/OpenTofu manages AWS resources. It does not build release artifacts. Customer-facing
-examples resolve the official control image and region-specific worker AMI from a versioned release
-manifest, while the dev stacks keep the local build and AMI pipeline workflows.
+This directory contains provider-generic AWS building blocks and public release
+artifact tooling for Helmr. It does not contain the Managed Cloud root stack,
+capacity policy, provider credentials, or Cloud validation campaign.
 
 ## Layout
 
-- `modules/bootstrap` creates a state bucket for teams that do not already have a backend.
-- `modules/network` creates the VPC, public subnets, private subnets, and NAT gateway.
-- `modules/control` creates Postgres, cluster-mode disabled ElastiCache Valkey/Redis for
-  `HELMR_REDIS_URL`, CAS storage, secret placeholders, and separate `helmr-control` and
-  `helmr-dispatcher` ECS services.
-- `modules/release-artifacts` resolves the official control image and worker AMI for a Helmr
-  release.
-- `modules/worker` creates filesystem-first Firecracker worker instances, including root EBS volume
-  settings and optional advertised disk capacity.
-- `modules/worker-image` creates an EC2 Image Builder pipeline for the worker AMI.
-- `quickstart` is the low-cost self-hosted evaluation profile.
-- `standard` is the customer production baseline profile.
-- `stacks/dev` is the deployable AWS development and full-run smoke environment.
-- `stacks/worker-image` is the deployable worker AMI build pipeline.
+- `modules/bootstrap` creates durable release/state foundations.
+- `modules/network` creates a reusable VPC and subnet topology.
+- `modules/control` creates the Product Control data plane and accepts external
+  deployment-owned secret ARNs.
+- `modules/release-artifacts` resolves public Control images and Worker AMIs.
+- `modules/worker` creates a generic Firecracker Worker host group.
+- `modules/worker-image` defines the public Worker AMI build.
+- `quickstart` and `standard` are self-hosted compositions.
+- `stacks/worker-image` is the public Worker AMI build pipeline.
 
-For full-run smoke testing, start from `stacks/dev/full-run-smoke.tfvars.example`. It keeps
-worker capacity to one host and enables EC2 nested virtualization for supported C8i/M8i/R8i
-instances, so Firecracker can be exercised without a large bare-metal worker.
+Self-hosting operators own their surrounding network, ClickHouse service,
+capacity policy, credentials, and drift management. Managed Cloud composes
+these modules from its private deployment repository without changing their
+Product contract.
 
-Use `scripts/aws-dev-smoke.sh` from the repository root to reproduce the worker AMI and dev stack
-workflow without storing AWS credentials or secret values in the repository.
+## Release artifacts
 
-Typical flow:
+Run Product artifact operations through `scripts/aws-release-artifacts.sh`.
+The release workflow publishes a digest-pinned Control image, regional Worker
+AMIs, and the signed Platform release. The Control image contains only
+`helmr-control` and `helmr-dispatcher`; deployment capacity automation is not a
+Product release artifact.
 
-```sh
-nix develop .#infra
-scripts/aws-dev-smoke.sh check
-scripts/aws-dev-smoke.sh bootstrap-init
-scripts/aws-dev-smoke.sh bootstrap-apply
-eval "$(scripts/aws-dev-smoke.sh bootstrap-output)"
-scripts/aws-dev-smoke.sh source-bundle
-scripts/aws-dev-smoke.sh platform-release-publish
-scripts/aws-dev-smoke.sh worker-image-source-check
-scripts/aws-dev-smoke.sh worker-image-init
-scripts/aws-dev-smoke.sh worker-image-apply
-scripts/aws-dev-smoke.sh worker-image-start
-scripts/aws-dev-smoke.sh worker-image-wait
-scripts/dev-secrets.sh aws-dev-smoke dev-base-tfvars
-scripts/aws-dev-smoke.sh dev-init
-scripts/dev-secrets.sh aws-dev-smoke dev-apply
-scripts/aws-dev-smoke.sh dev-secrets
-scripts/dev-secrets.sh aws-dev-smoke dev-github-oauth-secret
-scripts/aws-dev-smoke.sh dev-migrate
-```
-
-## Deployment
-
-Run the migration task for the image before enabling or updating `helmr-control` and
-`helmr-dispatcher`. Keep the control target group health check on `/healthz` while rolling out an
-older image; use `/readyz` once the deployed image serves readiness checks so tasks only receive
-traffic after the database schema has been migrated to at least the version required by that binary.
-
-## Release Artifacts
-
-AWS examples resolve release inputs from `aws-artifacts.json` attached to the GitHub Release for the
-selected `helmr_version`. The release workflow publishes:
-
-- `ghcr.io/helmrdotdev/helmr-control:<version>`, which contains `helmr-control`
-  and `helmr-dispatcher`, with its immutable digest recorded in `aws-artifacts.json`.
-- `worker_amis`, a JSON object keyed by AWS region.
-- `platform_release`, the signed deterministic Platform release archive and its
-  exact build-policy digest.
-
-Worker AMIs are built through the Image Builder stack because they are AWS account and region
-artifacts. They contain Helmr executables, guest images, and acquisition tools,
-but no Node, Manager, or toolchain catalog. For official releases, build the
-worker AMI once in the release account and distribute public copies to the
-initial supported regions:
-
-- `us-east-1`
-- `us-west-2`
-- `ap-northeast-1`
-
-The release workflow builds these AMIs automatically through GitHub OIDC from
-the exact source commit. The image recipe and AMI provenance bind the result to
-that commit. Platform Runtime, Manager, and runtime-specific toolchain trees are
-resolved later through the Platform artifact acquisition pipeline and pinned
-per Deployment.
-
-Guest boot artifacts are still built and released by `.github/workflows/boot-artifacts.yaml`; the
-worker AMI build embeds those artifacts under `/var/lib/helmr/images/guest/out`.
+Before enabling or updating Control services, run the database migration task
+for the exact image. Keep `/healthz` for process health and use `/readyz` for
+traffic readiness after the schema is current.

@@ -119,41 +119,9 @@ dev/release-gate/check-pre-aws.sh
 The command exits nonzero while a required product contract is still absent.
 It does not turn known implementation gaps into skipped or passing smoke cases.
 
-Before interpreting AWS dev latency numbers, run the measurement preflight:
-
-```sh
-AWS_PROFILE=helmr-dev HELMR_MEASUREMENT_PREFLIGHT_ALLOW_ECS_TASK=1 \
-nix develop .#infra -c dev/aws/run-measurement-preflight.sh
-```
-
-Run it again with `--require-deployments` after the first deploy and before
-using `SKIP_DEPLOY=1` for focused measurements. The `LABEL` passed to
-`dev/aws/run-smoke-with-path-report.sh` is only an output directory label such
-as `hot-60s`; `SMOKE_CASES` must use the script selectors such as `runtime`,
-`token`, `timer`, `edge-workspace`, and `production-secrets`.
-For latency measurements, set `HELMR_PATH_REPORT_REQUIRE_RUNS=1` on the wrapper
-so a smoke that accidentally creates no runs is rejected before analysis. Leave
-it unset for smoke cases such as `missing-secrets` that are expected to pass
-before run creation. Strict latency measurements also capture sanitized
-pre/post surface attestation files in the same report directory, including the
-control/dispatcher ECS task definition revision, digest-pinned control image,
-current deployment, sandbox ABI/digests, observed runtime identities, and worker
-heartbeat/capacity evidence. This keeps wall-clock results tied to the actual
-runtime surface that produced them.
-
-After collecting repeated samples, summarize one or more report directories:
-
-```sh
-dev/aws/summarize-measurement-reports.sh \
-  .helmr-aws-dev-smoke/path-reports/20260629T000000Z-token-hot-60s \
-  .helmr-aws-dev-smoke/path-reports/20260629T000100Z-token-hot-60s
-```
-
-The summary emits per-report metadata, per-run runtime path classification,
-checkpoint artifact role size/encrypt/store timing, per UX timing delta, and
-aggregate count/min/p50/p95/max by case, metric, and detail. Use that output
-instead of a single wall-clock number when deciding whether an optimization
-improved the user experience.
+Deployment-specific latency collection, provider attribution, and disposable
+AWS evidence are maintained outside the Product repository. These fixtures
+remain the Product workload source used by that deployment validation.
 
 For token UX checks, start a run and complete the pending token from the
 console or a trusted bridge:

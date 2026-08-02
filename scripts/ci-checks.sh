@@ -14,23 +14,11 @@ bash -n scripts/dev-console-stack.sh
 bash tests/install_test.sh
 bash tests/release_manifest_test.sh
 bash tests/release_workflow_test.sh
-bash tests/db_query_service_file_test.sh
-bash tests/run_path_report_local_test.sh
-bash tests/path_report_wrapper_test.sh
-bash tests/surface_attestation_test.sh
-bash tests/measurement_report_summary_test.sh
+bash tests/aws_release_artifacts_test.sh
 bash tests/release_smoke_selector_test.sh
 bash tests/pre_aws_release_gate_test.sh
-bash tests/measurement_preflight_guard_test.sh
-bash tests/auth_readiness_test.sh
-bash tests/validation_campaign_test.sh
-bash tests/datapath_validation_test.sh
-bash tests/validation_evidence_guard_test.sh
 bash tests/release_worker_ami_cleanup_test.sh
 bash tests/release_worker_image_identity_test.sh
-bash tests/aws_dev_smoke_test.sh
-bash tests/aws_dev_debug_test.sh
-bash tests/aws_db_reset_test.sh
 bun run typecheck
 bun run test:ts
 make verify

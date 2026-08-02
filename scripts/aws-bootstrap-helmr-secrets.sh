@@ -76,10 +76,6 @@ random_base64url_32() {
 }
 
 put_secret worker_token_signing_key "$(random_base64_32)"
-operator_token_arn="$(jq -r '.operator_token // empty' <<<"$secret_arns")"
-if [ -n "$operator_token_arn" ]; then
-  put_secret_arn operator_token "$operator_token_arn" "$(random_base64url_32)"
-fi
 put_secret auth_key "$(random_base64_32)"
 put_secret encryption_key "$(random_base64_32)"
 put_secret workspace_fencing_key "$(random_base64_32)"

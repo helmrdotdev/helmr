@@ -354,10 +354,28 @@ variable "create_control_service" {
   default     = false
 }
 
-variable "enable_operator_api" {
-  description = "Create and inject the deployment-operator credential. Capacity automation is otherwise absent."
-  type        = bool
-  default     = false
+variable "operator_token_secret_arn" {
+  description = "Optional externally owned Secrets Manager ARN containing the provider-neutral deployment-operator credential."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.operator_token_secret_arn == null || can(regex("^arn:[^:]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$", var.operator_token_secret_arn))
+    error_message = "operator_token_secret_arn must be a Secrets Manager secret ARN."
+  }
+}
+
+variable "operator_token_kms_key_arn" {
+  description = "Optional KMS key ARN required to decrypt operator_token_secret_arn."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.operator_token_kms_key_arn == null || can(regex("^arn:[^:]+:kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]+$", var.operator_token_kms_key_arn))
+    error_message = "operator_token_kms_key_arn must be a KMS key ARN."
+  }
 }
 
 variable "control_environment" {

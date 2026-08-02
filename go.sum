@@ -108,10 +108,6 @@ github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.30 h1:jn46zC9LdsVR/ZpMIJ
 github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.30/go.mod h1:1hTMsAgbdS/AtUi4bw8+gUuh1pceo+eXRLfpSuSQj3M=
 github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.24 h1:OQqn11BtaYv1WLUowvcA30MpzIu8Ti4pcLPIIyoKZrA=
 github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.24/go.mod h1:X5ZJyfwVrWA96GzPmUCWFQaEARPR7gCrpq2E92PJwAE=
-github.com/aws/aws-sdk-go-v2/service/autoscaling v1.69.0 h1:4FLdMjJIMLOM/yiwXRj250GvDNVy9rc3J1Ho3p8KGOk=
-github.com/aws/aws-sdk-go-v2/service/autoscaling v1.69.0/go.mod h1:sN7IK8djnxCOQDGVhOvUlIA83i1wIA5jYnzr2TlY9a8=
-github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.63.0 h1:08KUBEtOMByhBOjXsbWYGx4ECPCatdJSMKWP8zMpm1g=
-github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.63.0/go.mod h1:lipiF9DI3EmTTkEn2sgLug3iEO1dXM50FDFooey6vYU=
 github.com/aws/aws-sdk-go-v2/service/ecr v1.59.1 h1:UhEWpfs77k8rSMJ3HdcLzBLTXzTqV+2fik/rfXr6YPs=
 github.com/aws/aws-sdk-go-v2/service/ecr v1.59.1/go.mod h1:UzfjIuiQOpusteIHBCLIikQpxh8ctmdQCvSWWzbcYYI=
 github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.13 h1:mbRIur/BiHK6SKPjoBIXSE/hJ6g6JGRLuxQy1jGjlN4=

@@ -59,6 +59,7 @@ require_text "platform-release/platform-release-provenance.json" "$workflow" \
   "GitHub release omits Platform release provenance"
 require_text 'VERIFY_RELEASE_ARTIFACTS: "1"' "$workflow" \
   "AWS release manifest does not verify published image and AMI visibility"
+# shellcheck disable=SC2016
 require_text 'REQUIRED_WORKER_AMI_REGIONS: ${{ env.WORKER_AMI_REGIONS }}' "$workflow" \
   "AWS release manifest does not verify every configured Worker AMI region"
 
@@ -97,8 +98,10 @@ require_text "COPY helmr-control /usr/local/bin/helmr-control" "$control_builder
 require_text "COPY helmr-dispatcher /usr/local/bin/helmr-dispatcher" "$control_builder" \
   "Control image omits the Dispatcher binary"
 
-require_text "scripts/aws-dev-smoke.sh worker-image-start" "$workflow" \
+require_text "scripts/aws-release-artifacts.sh worker-image-start" "$workflow" \
   "Worker release does not build a fresh AMI"
+reject_text "scripts/aws-dev-smoke.sh" "$workflow" \
+  "Product release workflow still depends on the removed Managed Cloud orchestrator"
 require_text "workerAMIs" "$workflow" \
   "Worker release artifact omits region-to-AMI identity"
 require_text "gpgv" "$worker_image_builder" \

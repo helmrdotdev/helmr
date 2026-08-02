@@ -1,8 +1,8 @@
-package api
+package operatorapi
 
 import "time"
 
-type OperatorResourceVector struct {
+type ResourceVector struct {
 	CPUMillis               int64 `json:"cpu_millis"`
 	MemoryBytes             int64 `json:"memory_bytes"`
 	GuestEphemeralDiskBytes int64 `json:"guest_ephemeral_disk_bytes"`
@@ -11,29 +11,29 @@ type OperatorResourceVector struct {
 	BuildExecutors          int64 `json:"build_executors,omitempty"`
 }
 
-type OperatorRoleDemand struct {
-	QueuedItems       int64                  `json:"queued_items"`
-	QueuedResources   OperatorResourceVector `json:"queued_resources"`
-	ReadyWorkers      int64                  `json:"ready_workers"`
-	AvailableCapacity OperatorResourceVector `json:"available_capacity"`
+type RoleDemand struct {
+	QueuedItems       int64          `json:"queued_items"`
+	QueuedResources   ResourceVector `json:"queued_resources"`
+	ReadyWorkers      int64          `json:"ready_workers"`
+	AvailableCapacity ResourceVector `json:"available_capacity"`
 }
 
-type OperatorCapacityObservation struct {
-	WorkerGroupID      string              `json:"worker_group_id"`
-	RegionID           string              `json:"region_id"`
-	GroupState         string              `json:"group_state"`
-	Run                *OperatorRoleDemand `json:"run,omitempty"`
-	Build              *OperatorRoleDemand `json:"build,omitempty"`
-	RegisteringWorkers int64               `json:"registering_workers"`
-	DrainingWorkers    int64               `json:"draining_workers"`
-	ObservedAt         time.Time           `json:"observed_at"`
+type CapacityObservation struct {
+	WorkerGroupID      string      `json:"worker_group_id"`
+	RegionID           string      `json:"region_id"`
+	GroupState         string      `json:"group_state"`
+	Run                *RoleDemand `json:"run,omitempty"`
+	Build              *RoleDemand `json:"build,omitempty"`
+	RegisteringWorkers int64       `json:"registering_workers"`
+	DrainingWorkers    int64       `json:"draining_workers"`
+	ObservedAt         time.Time   `json:"observed_at"`
 }
 
-type OperatorCapacityObservationsResponse struct {
-	Observations []OperatorCapacityObservation `json:"observations"`
+type CapacityObservationsResponse struct {
+	Observations []CapacityObservation `json:"observations"`
 }
 
-type OperatorWorkerInstance struct {
+type WorkerInstance struct {
 	ID                 string     `json:"id"`
 	ResourceID         string     `json:"resource_id"`
 	WorkerGroupID      string     `json:"worker_group_id"`
@@ -49,11 +49,11 @@ type OperatorWorkerInstance struct {
 	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
-type OperatorWorkerInstancesResponse struct {
-	WorkerInstances []OperatorWorkerInstance `json:"worker_instances"`
+type WorkerInstancesResponse struct {
+	WorkerInstances []WorkerInstance `json:"worker_instances"`
 }
 
-type OperatorDrainWorkerInstanceRequest struct {
+type DrainWorkerInstanceRequest struct {
 	ExpectedEpoch        int64 `json:"expected_epoch"`
 	ExpectedClaimVersion int64 `json:"expected_claim_version"`
 }

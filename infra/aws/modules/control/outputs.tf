@@ -131,9 +131,6 @@ output "secret_arns" {
     github_oauth_client_secret = aws_secretsmanager_secret.github_oauth_client_secret.arn
     checkpoint_encryption_key  = aws_secretsmanager_secret.checkpoint_encryption_key.arn
     },
-    var.enable_operator_api ? {
-      operator_token = aws_secretsmanager_secret.operator_token[0].arn
-    } : {},
     var.email_provider == "resend" ? {
       resend_api_key = aws_secretsmanager_secret.resend_api_key[0].arn
     } : {},
