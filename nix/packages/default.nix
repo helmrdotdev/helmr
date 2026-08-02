@@ -80,7 +80,7 @@ in
             ../../internal
           ];
         };
-        vendorHash = "sha256-i7bss95xYfZMc+aOPWzmIAUEA5fy5ktibsbxIt71d6M=";
+        vendorHash = "sha256-H1tGYmaOree6IBkfqIBNcx8HapUqEvtjUUeHxVEKcYk=";
         subPackages = [ "internal/cmd/platform-policy" ];
       };
     in
