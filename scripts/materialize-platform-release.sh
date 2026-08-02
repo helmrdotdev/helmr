@@ -15,6 +15,7 @@ output=$1
   exit 1
 }
 command -v docker >/dev/null 2>&1 || { printf 'docker is required to build the linux/amd64 platform release\n' >&2; exit 1; }
+command -v tar >/dev/null 2>&1 || { printf 'tar is required to materialize the platform release\n' >&2; exit 1; }
 
 mkdir -p "$(dirname "${output}")"
 output="$(cd "$(dirname "${output}")" && pwd)/$(basename "${output}")"
@@ -32,10 +33,7 @@ trap cleanup_on_error EXIT
 
 docker run --rm \
   --platform linux/amd64 \
-  --env "HOST_UID=$(id -u)" \
-  --env "HOST_GID=$(id -g)" \
   --mount "type=bind,source=${ROOT},target=/work,readonly" \
-  --mount "type=bind,source=${output},target=/output" \
   -w /work \
   "${BUILDER_IMAGE}" \
   sh -ceu '
@@ -44,11 +42,11 @@ docker run --rm \
       --option sandbox false \
       --option filter-syscalls false \
       /work#packages.x86_64-linux.platformRelease)"
-    cp -r --no-preserve=mode,ownership,timestamps "${release}/." /output/
-    chown -R "${HOST_UID}:${HOST_GID}" /output
-    find /output -type d -exec chmod u+rwx {} +
-    find /output -type f -exec chmod u+rw {} +
-  '
+    tar -C "${release}" -cf - .
+  ' | tar -xof - -C "${output}"
+
+find "${output}" -type d -exec chmod u+rwx {} +
+find "${output}" -type f -exec chmod u+rw {} +
 
 [ -f "${output}/platform-release.json" ] || { printf 'platform release manifest is missing\n' >&2; exit 1; }
 [ -f "${output}/build-policy.digest" ] || { printf 'platform release build policy digest is missing\n' >&2; exit 1; }
