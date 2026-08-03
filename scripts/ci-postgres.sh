@@ -43,7 +43,6 @@ CGO_ENABLED=1 go test -race \
 	./internal/db/schema \
 	./internal/dispatch \
 	./internal/idempotency \
-	./internal/platformlock \
 	./internal/run \
 	./internal/schedule \
 	./internal/secret \

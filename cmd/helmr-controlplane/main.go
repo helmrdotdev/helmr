@@ -32,7 +32,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/imagecache"
 	imagecacheecr "github.com/helmrdotdev/helmr/internal/imagecache/ecr"
 	"github.com/helmrdotdev/helmr/internal/imagecache/retirement"
-	"github.com/helmrdotdev/helmr/internal/platformlock"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -204,7 +203,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Platform Artifact store: %w", err)
 	}
-	platformArtifactLocks, err := platformlock.New(pool)
+	platformArtifactLocks, err := newPlatformArtifactLocker(pool)
 	if err != nil {
 		return fmt.Errorf("configure Platform Artifact locks: %w", err)
 	}

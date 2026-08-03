@@ -1,4 +1,4 @@
-package platformlock
+package main
 
 import (
 	"bytes"
@@ -15,27 +15,27 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const lockDomain = "helmr.platform-artifact-lock.v0\x00"
+const platformArtifactLockDomain = "helmr.platform-artifact-lock.v0\x00"
 
-type Locker struct {
+type platformArtifactLocker struct {
 	pool *pgxpool.Pool
 }
 
-func New(pool *pgxpool.Pool) (*Locker, error) {
+func newPlatformArtifactLocker(pool *pgxpool.Pool) (*platformArtifactLocker, error) {
 	if pool == nil {
 		return nil, errors.New("platform artifact lock pool is required")
 	}
-	return &Locker{pool: pool}, nil
+	return &platformArtifactLocker{pool: pool}, nil
 }
 
-func (l *Locker) With(ctx context.Context, digests []string, fn func() error) error {
+func (l *platformArtifactLocker) With(ctx context.Context, digests []string, fn func() error) error {
 	if ctx == nil {
 		return errors.New("platform artifact lock context is required")
 	}
 	if fn == nil {
 		return errors.New("platform artifact lock function is required")
 	}
-	keys, err := lockKeys(digests)
+	keys, err := platformArtifactLockKeys(digests)
 	if err != nil {
 		return err
 	}
@@ -56,7 +56,7 @@ func (l *Locker) With(ctx context.Context, digests []string, fn func() error) er
 	return runErr
 }
 
-func lockKeys(values []string) ([]int64, error) {
+func platformArtifactLockKeys(values []string) ([]int64, error) {
 	if len(values) == 0 {
 		return nil, errors.New("at least one platform artifact digest is required")
 	}
@@ -82,7 +82,7 @@ func lockKeys(values []string) ([]int64, error) {
 	seenKeys := make(map[int64]struct{}, len(digests))
 	for _, digest := range digests {
 		hash := sha256.New()
-		_, _ = hash.Write([]byte(lockDomain))
+		_, _ = hash.Write([]byte(platformArtifactLockDomain))
 		_, _ = hash.Write(digest[:])
 		key := int64(binary.BigEndian.Uint64(hash.Sum(nil)[:8]))
 		if _, seen := seenKeys[key]; seen {
