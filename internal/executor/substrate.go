@@ -5,13 +5,13 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/runtime"
+	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type RuntimeSubstrateResolver interface {
-	Resolve(context.Context, string, runtime.Source) (runtime.Result, error)
+	Resolve(context.Context, string, substrate.Source) (substrate.Result, error)
 }
 
 type RuntimeSubstrateRegistrar interface {
@@ -22,7 +22,7 @@ func runtimeSubstrateTopology(ctx context.Context, resolver RuntimeSubstrateReso
 	if resolver == nil {
 		return vm.RuntimeTopology{}, nil
 	}
-	result, err := resolver.Resolve(ctx, imagePath, runtime.Source{
+	result, err := resolver.Resolve(ctx, imagePath, substrate.Source{
 		WorkspaceImageDigest:    mount.WorkspaceImage.Digest,
 		WorkspaceImageMediaType: mount.WorkspaceImage.MediaType,
 	})

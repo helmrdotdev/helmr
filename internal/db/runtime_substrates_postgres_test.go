@@ -10,7 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/runtime"
+	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -37,9 +37,9 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		DeploymentDefinitionID: pgvalue.UUID(definitionID),
 		SubstrateDigest:        testDigest("substrate-first"),
-		SubstrateFormat:        runtime.Format,
-		BuilderAbi:             runtime.BuilderABI,
-		LayoutAbi:              runtime.LayoutABI,
+		SubstrateFormat:        substrate.Format,
+		BuilderAbi:             substrate.BuilderABI,
+		LayoutAbi:              substrate.LayoutABI,
 		SubstrateSizeBytes:     4096,
 	}
 	rows, err := queries.InsertRuntimeSubstrate(ctx, params)
@@ -71,7 +71,7 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 
 	concurrent := params
 	concurrent.ID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	concurrent.BuilderAbi = runtime.BuilderABI + ".concurrent"
+	concurrent.BuilderAbi = substrate.BuilderABI + ".concurrent"
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -136,9 +136,9 @@ func TestLockRuntimeSubstrateAuthorityFencesWorkerAndContract(t *testing.T) {
 		WorkerInstanceID:       pgvalue.UUID(fixture.workerID),
 		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		WorkerEpoch:            1,
-		SubstrateFormat:        runtime.Format,
-		BuilderAbi:             runtime.BuilderABI,
-		LayoutAbi:              runtime.LayoutABI,
+		SubstrateFormat:        substrate.Format,
+		BuilderAbi:             substrate.BuilderABI,
+		LayoutAbi:              substrate.LayoutABI,
 	}
 	if _, err := queries.LockRuntimeSubstrateAuthority(ctx, params); err != nil {
 		t.Fatal(err)
@@ -348,7 +348,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 			1, 1, 1, now(), now()
 		)
 	`, workerID, "authority-"+workerID.String(), dbtest.DefaultWorkerGroupID,
-		uuid.Must(uuid.NewV7()), runtimeIdentityID, runtime.Format, runtime.BuilderABI, runtime.LayoutABI)
+		uuid.Must(uuid.NewV7()), runtimeIdentityID, substrate.Format, substrate.BuilderABI, substrate.LayoutABI)
 	runtimeID := uuid.Must(uuid.NewV7())
 	mustAuthorityExec(t, ctx, pool, `
 		INSERT INTO runtime_instances (

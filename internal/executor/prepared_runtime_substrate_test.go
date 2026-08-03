@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/runtime"
+	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -27,12 +27,12 @@ func TestPreparedRuntimeRestoreRebuildsAndRegistersSubstrateWithoutSubstrateCAS(
 		t.Fatal(err)
 	}
 	resolver := &restoreSubstrateResolver{
-		result: runtime.Result{
+		result: substrate.Result{
 			Path:       substratePath,
 			Digest:     "sha256:" + strings.Repeat("a", 64),
-			Format:     runtime.Format,
-			BuilderABI: runtime.BuilderABI,
-			LayoutABI:  runtime.LayoutABI,
+			Format:     substrate.Format,
+			BuilderABI: substrate.BuilderABI,
+			LayoutABI:  substrate.LayoutABI,
 			SizeBytes:  int64(len("rebuilt substrate")),
 		},
 	}
@@ -73,9 +73,9 @@ func TestPreparedRuntimeRestoreRebuildsAndRegistersSubstrateWithoutSubstrateCAS(
 	}
 	if registered.ID != registrar.id ||
 		registrar.request.SubstrateDigest != resolver.result.Digest ||
-		registrar.request.Format != runtime.Format ||
-		registrar.request.BuilderABI != runtime.BuilderABI ||
-		registrar.request.LayoutABI != runtime.LayoutABI ||
+		registrar.request.Format != substrate.Format ||
+		registrar.request.BuilderABI != substrate.BuilderABI ||
+		registrar.request.LayoutABI != substrate.LayoutABI ||
 		registrar.request.SizeBytes != resolver.result.SizeBytes {
 		t.Fatalf("registration = %+v, request = %+v", registered, registrar.request)
 	}
@@ -100,21 +100,21 @@ func TestPreparedRuntimeRestoreRebuildsAndRegistersSubstrateWithoutSubstrateCAS(
 
 type restoreSubstrateResolver struct {
 	calls  int
-	source runtime.Source
-	result runtime.Result
+	source substrate.Source
+	result substrate.Result
 }
 
 func (r *restoreSubstrateResolver) Resolve(
 	_ context.Context,
 	imagePath string,
-	source runtime.Source,
-) (runtime.Result, error) {
+	source substrate.Source,
+) (substrate.Result, error) {
 	image, err := os.ReadFile(imagePath)
 	if err != nil {
-		return runtime.Result{}, err
+		return substrate.Result{}, err
 	}
 	if string(image) != "oci image" {
-		return runtime.Result{}, errors.New("unexpected Workspace image")
+		return substrate.Result{}, errors.New("unexpected Workspace image")
 	}
 	r.calls++
 	r.source = source

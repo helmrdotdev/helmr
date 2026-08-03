@@ -12,7 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/runtime"
+	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -33,7 +33,7 @@ func activateWorkspaceWorker(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		       max_vm_slots = 2, max_run_consumers = 2, max_runtime_starts = 2,
 		       activated_at = now()
 		 WHERE id = $1
-	`, workerID, runtime.Format, runtime.BuilderABI, runtime.LayoutABI)
+	`, workerID, substrate.Format, substrate.BuilderABI, substrate.LayoutABI)
 }
 
 func TestRegisteringEnrollmentRetryUsesFreshNonceAndRotatesCredential(t *testing.T) {
